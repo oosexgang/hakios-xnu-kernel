@@ -25,6 +25,10 @@
 #import <Metal/Metal.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
 
 static Class gBase;                     /* Metal's private _MTLDevice */
 static unsigned int gPort;              /* the IOAcceleratorES service this device was made for */
@@ -309,10 +313,53 @@ registerQueueClass(void)
 	say(@"the class HakiosMetalQueue is registered (a subclass of _MTLCommandQueue)");
 }
 
+/*
+ * Whether this process may be shown the device, by the level of boot-arg metal (read from sysctl kern.bootargs):
+ *
+ *   metal=1  only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
+ *   metal=2  every process but backboardd
+ *   metal=3  every process, backboardd too, to find out what the window server asks
+ *
+ * Why not simply everyone. CoreAnimation's window server tries Metal FIRST and goes to its OpenGL ES path (which works on this port)
+ * only when no Metal device exists; with ours it takes Metal and stops on "metallib_url != nil": its own shader library,
+ * QuartzCore.framework/default.metallib, is not in this system image (the framework has only a default.pipelinelib that names
+ * it), so the window server cannot run on Metal here at all. And mediaserverd, given a device that cannot do anything, ends and
+ * is started again. A device that is shown to a process that cannot use it costs that process, so it is shown to as few as the
+ * experiment needs.
+ */
+static BOOL
+shownToThisProcess(void)
+{
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+	const char * name = getprogname();
+	int level = 1;
+
+	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+		const char * at = strstr(args, "metal=");
+
+		if (at != NULL) {
+			level = atoi(at + 6);
+		}
+	}
+	if (name == NULL) {
+		return NO;
+	}
+	if (level >= 3 || (level == 2 && strcmp(name, "backboardd") != 0) || (level == 1 && strcmp(name, "metal_test") == 0)) {
+		return YES;
+	}
+	say([NSString stringWithFormat:@"%s is not shown the device (metal=%d; 1 is metal_test only, 2 all but backboardd, 3 all)", name, level]);
+	return NO;
+}
+
 __attribute__((constructor)) static void
 registerDevice(void)
 {
 	Class device;
+
+	if (!shownToThisProcess()) {
+		return;
+	}
 
 	gBase = objc_getClass("_MTLDevice");
 	if (gBase == Nil) {
