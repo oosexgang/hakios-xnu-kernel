@@ -1,30 +1,34 @@
 /*
- * HakiosMetal: the plug-in Metal loads when the kernel names it (boot-arg metal=1), STEP ONE: a device that exists.
+ * HakiosMetal: the plug-in Metal loads when the kernel names it (boot-arg metal=N): a device, and the first objects it makes
+ * that hold something (buffers, libraries, functions: "STEP TWO" below).
  *
  * What Metal does (docs/ru/metal.md section 1): it finds the IOKit service of class IOAcceleratorES, reads its
  * properties MetalPluginName ("HakiosMetal") and MetalPluginClassName ("HakiosMetalDevice"), opens
  * /System/Library/Extensions/HakiosMetal.bundle, takes that class, insists that it is a subclass of Metal's private
  * _MTLDevice, and sends it -initWithAcceleratorPort:. That object is the system's one device.
  *
- * What this is, and is not. It is the first link of that chain and nothing more: HakiosMetalDevice is a subclass of
- * _MTLDevice that answers -initWithAcceleratorPort: and -name. It cannot make a buffer, a library, a pipeline or a command
- * queue yet, and says so: a message it does not know is logged ("HakiosMetal: not implemented: -newBufferWithLength:...")
- * and answers nil/0/NO instead of crashing, so that the question "what does iOS ask a device first, and in what order?" can
- * be read off the log rather than guessed. The compiler for the shaders is a separate piece and is largely done
+ * What this is, and is not. HakiosMetalDevice is a subclass of _MTLDevice that answers -initWithAcceleratorPort: and -name,
+ * makes buffers that hold memory and libraries read from a .metallib, and stand-ins for the rest (a queue that queues nothing,
+ * pipeline and state objects that hold nothing). It cannot run anything on the GPU yet, and says so: a message it does not know
+ * is logged ("HakiosMetal: asked and not implemented: -...") and answers nil/0/NO instead of crashing, so that the question
+ * "what does iOS ask a device first, and in what order?" can be read off the log rather than guessed. The compiler for the shaders is a separate piece and is largely done
  * (docs/air.md: Apple's shader bitcode into Mesa's NIR); the command queue and the kernel side are not started (docs/metal-plan.md).
  *
  * _MTLDevice is not in the SDK's Metal.tbd (it lives in the system's own copy of the framework), so the class is made at run
  * time, in the constructor that runs when the bundle is loaded, by objc_allocateClassPair on the _MTLDevice that is there.
  * If there is none, nothing is registered, and Metal drops this plug-in as it does any that is not a _MTLDevice.
  *
- * Status: written without having been run. Whether _MTLDevice's own -init is safe to call, what Metal asks of the device right
- * after it is made, and whether -name is enough for MTLCreateSystemDefaultDevice() to hand it out, are what the first run (QEMU,
- * userland/rc.jobs.metal with metal=1) is for.
+ * Status. Step one ran in QEMU (docs/metal-plan.md: what it found). Step two -- buffers, libraries, functions -- was built for
+ * iOS 16.5 and run on a Mac only, against the Mac's own Metal (tools/metal-plugin-test.sh, under the address sanitizer: every
+ * buffer written and read back and freed, the system's five MTLB libraries read, all of their functions by name with their
+ * bitcode); it has not run on iOS yet: metal_test's "what the device makes" is the check for that (QEMU, metal=1).
  */
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <dlfcn.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysctl.h>
@@ -32,6 +36,7 @@
 
 static Class gBase;                     /* Metal's private _MTLDevice */
 static unsigned int gPort;              /* the IOAcceleratorES service this device was made for */
+static id gDevice;                      /* the device, once made: there is one */
 
 static void
 say(NSString * text)
@@ -48,6 +53,7 @@ deviceInit(id self, SEL _cmd, unsigned int port)
 
 	self = send(&sup, @selector(init));
 	gPort = port;
+	gDevice = self;                         /* what the objects it hands out answer to -device */
 	say([NSString stringWithFormat:@"a device for the accelerator port %u (%@)", port, self ? @"made" : @"_MTLDevice's init gave nil"]);
 	return self;
 }
@@ -78,7 +84,6 @@ deviceMaxBufferLength(__unused id self, __unused SEL _cmd)
  * nil, and the log says so, which is the next step's list.
  */
 static Class gQueueClass;
-static id gDevice;
 
 static id
 queueDevice(__unused id self, __unused SEL _cmd)
@@ -120,7 +125,7 @@ deviceNewQueueMax(id self, SEL _cmd, __unused unsigned long maxBuffers)
 }
 
 /* the protocols the class declares (the ones Metal checks for), for the signatures below */
-static Protocol * gProtocols[16];
+static Protocol * gProtocols[64];
 static unsigned gProtocolCount;
 
 /*
@@ -227,6 +232,737 @@ stubFactory(__unused id self, SEL _cmd)
 	return nil;
 }
 
+/*
+ * STEP TWO (docs/metal-plan.md, steps 3 and 4 as far as they go without the GPU): objects that hold something.
+ *
+ *   buffers     -newBufferWithLength:options:, ...WithBytes:..., ...WithBytesNoCopy:...: memory a program writes and reads back
+ *               through -contents. The Adreno shares the system's memory, so a buffer in shared storage is the same bytes
+ *               for the CPU and, later, the GPU; until the GPU is used (hakios.gpu.cpp's buffers, mapped into its address
+ *               space) it is ordinary memory of this process, zeroed, and -gpuAddress is 0.
+ *   libraries   -newLibraryWithData:error:, -newLibraryWithURL:error:, -newLibraryWithFile:error:, -newDefaultLibrary...:
+ *               the .metallib read (hakios_metallib.c, every offset checked), its functions listed by name and type, and
+ *               -newFunctionWithName: giving a function that knows its name, its type and its module (the AIR bitcode the
+ *               shader compiler of docs/air.md takes). Nothing is compiled yet: a pipeline made of such a function is still
+ *               the empty stub above, and the log says so.
+ *
+ * Each is a class of ours made at load time, as the others are (a subclass of Metal's private _MTLResource, _MTLLibrary and
+ * _MTLFunction where this system has them), with one instance variable, _hakios, pointing at its state in C.
+ */
+#include "hakios_metallib.h"
+#include <dispatch/dispatch.h>
+#include <sys/mman.h>
+
+static Class gBufferClass, gLibraryClass, gFunctionClass;
+
+struct buffer {
+	void *memory;
+	uint64_t length;
+	unsigned long options;                  /* MTLResourceOptions: cache mode, storage mode, hazard tracking */
+	void (^deallocator)(void *, NSUInteger); /* for ...NoCopy: the caller's, called with its memory when the buffer goes */
+	BOOL mapped;                            /* ours, from mmap */
+	id label;
+};
+
+struct library {
+	NSData *data;                           /* the file's bytes, kept for as long as a function of it may want its module */
+	struct hakios_metallib info;
+	struct hakios_metallib_function *functions;
+	id label;
+	id names;                               /* NSArray of the functions' names, made once */
+};
+
+struct function {
+	id library;                             /* retained: the module is in its bytes */
+	struct hakios_metallib_function f;
+	id name;
+	id label;
+};
+
+static struct library *libraryOf(id self);
+
+static void **
+stateOf(id self)
+{
+	Ivar ivar = class_getInstanceVariable(object_getClass(self), "_hakios");
+
+	return ivar != NULL ? (void **)((char *)(__bridge void *)self + ivar_getOffset(ivar)) : NULL;
+}
+
+/* -dealloc: the state freed by FREE, then the superclass's own */
+static void
+deallocWith(id self, SEL _cmd, Class cls, void (*free_state)(void *))
+{
+	void **slot = stateOf(self);
+	struct objc_super sup = { self, class_getSuperclass(cls) };
+
+	if (slot != NULL && *slot != NULL) {
+		free_state(*slot);
+		*slot = NULL;
+	}
+	((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&sup, _cmd);
+}
+
+static id
+labelGet(id self, __unused SEL _cmd)
+{
+	id *label = NULL;
+	void **slot = stateOf(self);
+
+	if (slot == NULL || *slot == NULL) {
+		return nil;
+	}
+	if (object_getClass(self) == gBufferClass) {
+		label = &((struct buffer *)*slot)->label;
+	} else if (object_getClass(self) == gLibraryClass) {
+		label = &((struct library *)*slot)->label;
+	} else {
+		label = &((struct function *)*slot)->label;
+	}
+	return *label;
+}
+
+static void
+labelSet(id self, __unused SEL _cmd, id text)
+{
+	void **slot = stateOf(self);
+	id *label;
+
+	if (slot == NULL || *slot == NULL) {
+		return;
+	}
+	if (object_getClass(self) == gBufferClass) {
+		label = &((struct buffer *)*slot)->label;
+	} else if (object_getClass(self) == gLibraryClass) {
+		label = &((struct library *)*slot)->label;
+	} else {
+		label = &((struct function *)*slot)->label;
+	}
+	[*label release];
+	*label = [text copy];
+}
+
+static id
+objectDevice(__unused id self, __unused SEL _cmd)
+{
+	return gDevice;
+}
+
+/* ---- buffers ---- */
+
+static void
+bufferFree(void *state)
+{
+	struct buffer *b = state;
+
+	if (b->mapped) {
+		munmap(b->memory, b->length ? b->length : 1);
+	} else if (b->deallocator != nil) {
+		b->deallocator(b->memory, (NSUInteger)b->length);
+	}
+	[b->deallocator release];
+	[b->label release];
+	free(b);
+}
+
+static void
+bufferDealloc(id self, SEL _cmd)
+{
+	deallocWith(self, _cmd, gBufferClass, bufferFree);
+}
+
+static struct buffer *
+bufferOf(id self)
+{
+	void **slot = stateOf(self);
+
+	return slot != NULL ? *slot : NULL;
+}
+
+static void *
+bufferContents(id self, __unused SEL _cmd)
+{
+	struct buffer *b = bufferOf(self);
+
+	return b != NULL ? b->memory : NULL;
+}
+
+static unsigned long
+bufferLength(id self, __unused SEL _cmd)
+{
+	struct buffer *b = bufferOf(self);
+
+	return b != NULL ? (unsigned long)b->length : 0;
+}
+
+static unsigned long
+bufferOptions(id self, __unused SEL _cmd)
+{
+	struct buffer *b = bufferOf(self);
+
+	return b != NULL ? b->options : 0;
+}
+
+static unsigned long
+bufferStorageMode(id self, SEL _cmd)
+{
+	return bufferOptions(self, _cmd) >> MTLResourceStorageModeShift & 0xf;
+}
+
+static unsigned long
+bufferCacheMode(id self, SEL _cmd)
+{
+	return bufferOptions(self, _cmd) >> MTLResourceCPUCacheModeShift & 0xf;
+}
+
+static unsigned long
+bufferHazardMode(id self, SEL _cmd)
+{
+	return bufferOptions(self, _cmd) >> MTLResourceHazardTrackingModeShift & 0x3;
+}
+
+/* the memory a buffer takes: its pages */
+static unsigned long
+bufferAllocatedSize(id self, SEL _cmd)
+{
+	unsigned long page = (unsigned long)getpagesize();
+
+	return (bufferLength(self, _cmd) + page - 1) / page * page;
+}
+
+/* shared memory: what the CPU wrote is what there is; nothing to tell anyone */
+static void
+bufferDidModify(__unused id self, __unused SEL _cmd, __unused NSRange range)
+{
+}
+
+/* no GPU address until the GPU's own buffers are used (hakios.gpu.cpp) */
+static uint64_t
+bufferGPUAddress(__unused id self, __unused SEL _cmd)
+{
+	return 0;
+}
+
+static unsigned long
+bufferPurgeable(__unused id self, __unused SEL _cmd, __unused unsigned long state)
+{
+	return MTLPurgeableStateNonVolatile;
+}
+
+static id
+bufferMake(void *memory, uint64_t length, unsigned long options, BOOL mapped, void (^deallocator)(void *, NSUInteger))
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	struct buffer *b;
+	id buffer;
+	void **slot;
+
+	if (gBufferClass == Nil || (buffer = plain(plain((id)gBufferClass, sel_registerName("alloc")), sel_registerName("init"))) == nil) {
+		say(@"a buffer: the class could not make one (its base's -init gave nil)");
+		return nil;
+	}
+	b = calloc(1, sizeof(*b));
+	slot = stateOf(buffer);
+	if (b == NULL || slot == NULL) {
+		free(b);
+		[buffer release];
+		return nil;
+	}
+	b->memory = memory;
+	b->length = length;
+	b->options = options;
+	b->mapped = mapped;
+	b->deallocator = [deallocator copy];
+	*slot = b;
+	return buffer;
+}
+
+static void *
+pages(uint64_t length)
+{
+	void *memory = mmap(NULL, length ? length : 1, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+
+	return memory == MAP_FAILED ? NULL : memory;
+}
+
+static id
+deviceNewBuffer(__unused id self, __unused SEL _cmd, unsigned long length, unsigned long options)
+{
+	void *memory;
+	id buffer;
+
+	if (length > deviceMaxBufferLength(nil, NULL) || (memory = pages(length)) == NULL) {
+		say([NSString stringWithFormat:@"newBufferWithLength:%lu: no (more than maxBufferLength, or no memory): nil", length]);
+		return nil;
+	}
+	buffer = bufferMake(memory, length, options, YES, nil);
+	if (buffer == nil) {
+		munmap(memory, length ? length : 1);
+	}
+	return buffer;
+}
+
+static id
+deviceNewBufferBytes(id self, SEL _cmd, const void *bytes, unsigned long length, unsigned long options)
+{
+	id buffer = deviceNewBuffer(self, _cmd, length, options);
+
+	if (buffer != nil && bytes != NULL && length != 0) {
+		memcpy(bufferContents(buffer, NULL), bytes, length);
+	}
+	return buffer;
+}
+
+static id
+deviceNewBufferNoCopy(__unused id self, __unused SEL _cmd, void *bytes, unsigned long length, unsigned long options,
+    void (^deallocator)(void *, NSUInteger))
+{
+	if (bytes == NULL || ((uintptr_t)bytes & (uintptr_t)(getpagesize() - 1)) != 0) {
+		say(@"newBufferWithBytesNoCopy: the memory must start on a page (as Metal says): nil");
+		return nil;
+	}
+	return bufferMake(bytes, length, options, NO, deallocator);
+}
+
+/* ---- functions ---- */
+
+static void
+functionFree(void *state)
+{
+	struct function *f = state;
+
+	[f->library release];
+	[f->name release];
+	[f->label release];
+	free(f);
+}
+
+static void
+functionDealloc(id self, SEL _cmd)
+{
+	deallocWith(self, _cmd, gFunctionClass, functionFree);
+}
+
+static struct function *
+functionOf(id self)
+{
+	void **slot = stateOf(self);
+
+	return slot != NULL ? *slot : NULL;
+}
+
+static id
+functionName(id self, __unused SEL _cmd)
+{
+	struct function *f = functionOf(self);
+
+	return f != NULL ? f->name : nil;
+}
+
+/* MTLFunctionType: the metallib's TYPE as Metal numbers it */
+static unsigned long
+functionType(id self, __unused SEL _cmd)
+{
+	struct function *f = functionOf(self);
+
+	switch (f != NULL ? f->f.type : HAKIOS_METALLIB_NO_TYPE) {
+	case HAKIOS_METALLIB_VERTEX:
+		return MTLFunctionTypeVertex;
+	case HAKIOS_METALLIB_FRAGMENT:
+		return MTLFunctionTypeFragment;
+	case HAKIOS_METALLIB_KERNEL:
+		return MTLFunctionTypeKernel;
+	case HAKIOS_METALLIB_INTERSECTION:
+		return MTLFunctionTypeIntersection;
+	default:
+		return MTLFunctionTypeVisible;
+	}
+}
+
+static id
+functionNoAttributes(__unused id self, __unused SEL _cmd)
+{
+	return [NSArray array];
+}
+
+static id
+functionNoConstants(__unused id self, __unused SEL _cmd)
+{
+	return [NSDictionary dictionary];
+}
+
+/* not Metal's: the function's AIR module, for the shader compiler (docs/air.md) */
+static id
+functionBitcode(id self, __unused SEL _cmd)
+{
+	struct function *f = functionOf(self);
+	struct library *l;
+	const uint8_t *bitcode;
+	uint64_t length;
+
+	if (f == NULL || (l = libraryOf(f->library)) == NULL ||
+	    hakios_metallib_bitcode([l->data bytes], [l->data length], &f->f, &bitcode, &length) != 0) {
+		return nil;
+	}
+	return [NSData dataWithBytesNoCopy:(void *)bitcode length:(NSUInteger)length freeWhenDone:NO];
+}
+
+/* ---- libraries ---- */
+
+static void
+libraryFree(void *state)
+{
+	struct library *l = state;
+
+	[l->data release];
+	[l->names release];
+	[l->label release];
+	free(l->functions);
+	free(l);
+}
+
+static void
+libraryDealloc(id self, SEL _cmd)
+{
+	deallocWith(self, _cmd, gLibraryClass, libraryFree);
+}
+
+static struct library *
+libraryOf(id self)
+{
+	void **slot = stateOf(self);
+
+	return slot != NULL ? *slot : NULL;
+}
+
+static id
+libraryFunctionNames(id self, __unused SEL _cmd)
+{
+	struct library *l = libraryOf(self);
+
+	return l != NULL ? l->names : nil;
+}
+
+static id
+libraryNewFunction(id self, __unused SEL _cmd, id name)
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	struct library *l = libraryOf(self);
+	const char *wanted = [name UTF8String];
+	size_t length = wanted != NULL ? strlen(wanted) : 0;
+
+	if (l == NULL || wanted == NULL) {
+		return nil;
+	}
+	for (uint32_t i = 0; i < l->info.count; i++) {
+		struct hakios_metallib_function *f = &l->functions[i];
+
+		if (f->name_length == length && memcmp(f->name, wanted, length) == 0) {
+			struct function *state = calloc(1, sizeof(*state));
+			id function = gFunctionClass != Nil ? plain(plain((id)gFunctionClass, sel_registerName("alloc")), sel_registerName("init")) : nil;
+			void **slot = function != nil ? stateOf(function) : NULL;
+
+			if (state == NULL || slot == NULL) {
+				free(state);
+				[function release];
+				say([NSString stringWithFormat:@"newFunctionWithName:%@: the function class could not make one: nil", name]);
+				return nil;
+			}
+			state->library = [self retain];
+			state->f = *f;
+			state->name = [name copy];
+			*slot = state;
+			return function;
+		}
+	}
+	return nil;
+}
+
+/* the same, with function constants: there is no compiler yet to specialise with them, so they are only said */
+static id
+libraryNewFunctionConstants(id self, SEL _cmd, id name, id constants, NSError **error)
+{
+	id function = libraryNewFunction(self, _cmd, name);
+
+	say([NSString stringWithFormat:@"newFunctionWithName:%@ constantValues: the constants are not applied (no compiler yet)", name]);
+	(void)constants;
+	if (function == nil && error != NULL) {
+		*error = [NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorFunctionNotFound
+		    userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"no function %@ in the library", name] }];
+	}
+	return function;
+}
+
+static unsigned long
+libraryType(__unused id self, __unused SEL _cmd)
+{
+	return MTLLibraryTypeExecutable;
+}
+
+static id
+libraryError(MTLLibraryError code, NSString *text, NSError **error)
+{
+	say(text);
+	if (error != NULL) {
+		*error = [NSError errorWithDomain:MTLLibraryErrorDomain code:code userInfo:@{ NSLocalizedDescriptionKey: text }];
+	}
+	return nil;
+}
+
+/* a library of the bytes of a .metallib (DATA retained by the library); WHERE names them in the log */
+static id
+libraryMake(NSData *data, NSString *where, NSError **error)
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	struct library *l;
+	const char *why = NULL;
+	id library;
+	void **slot;
+	unsigned kinds[8] = { 0 };
+
+	if (gLibraryClass == Nil) {
+		return libraryError(MTLLibraryErrorInternal, @"a library: this system has no class for one", error);
+	}
+	/* a universal file (AIR64 beside code for Apple's GPUs): its AIR64 slice is the library, as Metal itself takes it */
+	const uint8_t *thin;
+	size_t thin_size;
+	if (hakios_metallib_thin([data bytes], [data length], &thin, &thin_size, &why) != 0) {
+		return libraryError(MTLLibraryErrorInternal, [NSString stringWithFormat:@"a library from %@: %s", where, why], error);
+	}
+	if (thin != [data bytes]) {
+		data = [data subdataWithRange:NSMakeRange((NSUInteger)(thin - (const uint8_t *)[data bytes]), thin_size)];
+		say([NSString stringWithFormat:@"a library from %@: a universal file, its AIR64 slice taken (%zu bytes)", where, thin_size]);
+	}
+	l = calloc(1, sizeof(*l));
+	if (l == NULL) {
+		return libraryError(MTLLibraryErrorInternal, @"a library: no memory", error);
+	}
+	if (hakios_metallib_parse([data bytes], [data length], &l->info, NULL, 0, &why) != 0 ||
+	    (l->functions = calloc(l->info.count ? l->info.count : 1, sizeof(*l->functions))) == NULL ||
+	    hakios_metallib_parse([data bytes], [data length], &l->info, l->functions, l->info.count, &why) != 0) {
+		free(l->functions);
+		free(l);
+		return libraryError(MTLLibraryErrorInternal, [NSString stringWithFormat:@"a library from %@: %s", where,
+		    why ? why : "no memory"], error);
+	}
+	NSMutableArray *names = [NSMutableArray arrayWithCapacity:l->info.count];
+	for (uint32_t i = 0; i < l->info.count; i++) {
+		NSString *name = [[NSString alloc] initWithBytes:l->functions[i].name length:l->functions[i].name_length encoding:NSUTF8StringEncoding];
+
+		if (name != nil) {
+			[names addObject:name];
+			[name release];
+		}
+		kinds[l->functions[i].type < 7 ? l->functions[i].type : 7]++;
+	}
+	library = plain(plain((id)gLibraryClass, sel_registerName("alloc")), sel_registerName("init"));
+	slot = library != nil ? stateOf(library) : NULL;
+	if (slot == NULL) {
+		free(l->functions);
+		free(l);
+		[library release];
+		return libraryError(MTLLibraryErrorInternal, @"a library: the class could not make one (its base's -init gave nil)", error);
+	}
+	l->data = [data retain];
+	l->names = [names copy];
+	*slot = l;
+	say([NSString stringWithFormat:@"a library from %@: %u functions (%u vertex, %u fragment, %u kernel, %u other), container %u.%u",
+	    where, l->info.count, kinds[0], kinds[1], kinds[2], l->info.count - kinds[0] - kinds[1] - kinds[2],
+	    l->info.version[0], l->info.version[1]]);
+	return library;
+}
+
+static id
+deviceNewLibraryURL(__unused id self, __unused SEL _cmd, NSURL *url, NSError **error)
+{
+	NSData *data = url != nil ? [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:NULL] : nil;
+
+	if (data == nil) {
+		return libraryError(MTLLibraryErrorFileNotFound, [NSString stringWithFormat:@"a library from %@: no such file", url], error);
+	}
+	return libraryMake(data, [url path], error);
+}
+
+static id
+deviceNewLibraryFile(id self, SEL _cmd, NSString *path, NSError **error)
+{
+	return deviceNewLibraryURL(self, _cmd, path != nil ? [NSURL fileURLWithPath:path] : nil, error);
+}
+
+static id
+deviceNewLibraryData(__unused id self, __unused SEL _cmd, dispatch_data_t data, NSError **error)
+{
+	const void *bytes = NULL;
+	size_t size = 0;
+	dispatch_data_t map;
+	NSData *copy;
+
+	if (data == nil) {
+		return libraryError(MTLLibraryErrorFileNotFound, @"a library from data: no data", error);
+	}
+	map = dispatch_data_create_map(data, &bytes, &size);
+	copy = [NSData dataWithBytes:bytes length:size];        /* the caller may let go of its data; the library keeps its own */
+	dispatch_release(map);
+	return libraryMake(copy, @"data", error);
+}
+
+/* a bundle's default.metallib: the main bundle's for -newDefaultLibrary */
+static id
+deviceNewDefaultLibraryBundle(id self, SEL _cmd, NSBundle *bundle, NSError **error)
+{
+	NSURL *url = [bundle URLForResource:@"default" withExtension:@"metallib"];
+
+	if (url == nil) {
+		return libraryError(MTLLibraryErrorFileNotFound, [NSString stringWithFormat:@"the default library of %@: no default.metallib",
+		    [bundle bundlePath]], error);
+	}
+	return deviceNewLibraryURL(self, _cmd, url, error);
+}
+
+static id
+deviceNewDefaultLibrary(id self, SEL _cmd)
+{
+	return deviceNewDefaultLibraryBundle(self, _cmd, [NSBundle mainBundle], NULL);
+}
+
+static BOOL
+deviceUnifiedMemory(__unused id self, __unused SEL _cmd)
+{
+	return YES;                             /* the Adreno has no memory of its own */
+}
+
+/*
+ * What CoreImage's CIMetalDeviceGetLimits reads of a device and _MTLDevice does not answer (Apple's own GPU devices do): without
+ * them every CIContext creation throws, and a process drawing symbols through CoreImage (iconservicesagent) ends. UniXNU's
+ * AdrenoMetal found this on iPadOS 17; the answers are the same here: no memory of its own, the system's shared.
+ */
+static uint64_t
+deviceNoDedicatedMemory(__unused id self, __unused SEL _cmd)
+{
+	return 0;
+}
+
+static uint64_t
+deviceSharedMemory(__unused id self, __unused SEL _cmd)
+{
+	return [[NSProcessInfo processInfo] physicalMemory];
+}
+
+static BOOL
+deviceNo(__unused id self, __unused SEL _cmd)
+{
+	return NO;
+}
+
+/* no legacy feature set is claimed: _MTLDevice's own answer reads tables of Apple's GPUs */
+static BOOL
+deviceNoFeatureSet(__unused id self, __unused SEL _cmd, __unused unsigned long set)
+{
+	return NO;
+}
+
+/*
+ * The public protocol and Metal's private one of the same name (MTLBufferSPI ...), where this system has it: not every protocol
+ * whose name begins the same, as for the stub objects, because MTLFunction begins a dozen others (MTLFunctionStitchingNode ...)
+ * that a function is not.
+ */
+static void
+declareProtocols(Class cls, const char *const *names)
+{
+	char spi[96];
+
+	for (; *names != NULL; names++) {
+		for (int private = 0; private < 2; private++) {
+			Protocol *protocol;
+
+			snprintf(spi, sizeof(spi), "%s%s", *names, private ? "SPI" : "");
+			if ((protocol = objc_getProtocol(spi)) == NULL) {
+				continue;
+			}
+			class_addProtocol(cls, protocol);
+			if (gProtocolCount < sizeof(gProtocols) / sizeof(gProtocols[0])) {
+				gProtocols[gProtocolCount++] = protocol;
+			}
+		}
+	}
+}
+
+/* a class of ours with the _hakios slot, on Metal's private BASE where there is one */
+static Class
+objectClass(const char *name, const char *base, const char *const *protocols, IMP dealloc)
+{
+	Class super = objc_getClass(base);
+	Class cls = objc_allocateClassPair(super != Nil ? super : objc_getClass("NSObject"), name, 0);
+
+	if (cls == Nil) {
+		say([NSString stringWithFormat:@"could not make the class %s", name]);
+		return Nil;
+	}
+	class_addIvar(cls, "_hakios", sizeof(void *), sizeof(void *) == 8 ? 3 : 2, "^v");
+	declareProtocols(cls, protocols);
+	class_addMethod(cls, sel_registerName("dealloc"), dealloc, "v@:");
+	class_addMethod(cls, sel_registerName("device"), (IMP)objectDevice, "@@:");
+	class_addMethod(cls, sel_registerName("label"), (IMP)labelGet, "@@:");
+	class_addMethod(cls, sel_registerName("setLabel:"), (IMP)labelSet, "v@:@");
+	class_addMethod(cls, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
+	class_addMethod(cls, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
+	say([NSString stringWithFormat:@"%s is registered (a subclass of %s)", name, super != Nil ? base : "NSObject: this system has no such class"]);
+	return cls;
+}
+
+static void
+registerObjectClasses(Class device)
+{
+	static const char *const buffer[] = { "MTLBuffer", "MTLResource", NULL }, *const function[] = { "MTLFunction", NULL },
+	    *const library[] = { "MTLLibrary", NULL };
+
+	if ((gBufferClass = objectClass("HakiosMetalBuffer", "_MTLResource", buffer, (IMP)bufferDealloc)) != Nil) {
+		class_addMethod(gBufferClass, sel_registerName("contents"), (IMP)bufferContents, "^v@:");
+		class_addMethod(gBufferClass, sel_registerName("length"), (IMP)bufferLength, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("resourceOptions"), (IMP)bufferOptions, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("storageMode"), (IMP)bufferStorageMode, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("cpuCacheMode"), (IMP)bufferCacheMode, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("hazardTrackingMode"), (IMP)bufferHazardMode, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("allocatedSize"), (IMP)bufferAllocatedSize, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("didModifyRange:"), (IMP)bufferDidModify, "v@:{_NSRange=QQ}");
+		class_addMethod(gBufferClass, sel_registerName("gpuAddress"), (IMP)bufferGPUAddress, "Q@:");
+		class_addMethod(gBufferClass, sel_registerName("setPurgeableState:"), (IMP)bufferPurgeable, "Q@:Q");
+		objc_registerClassPair(gBufferClass);
+		class_addMethod(device, sel_registerName("newBufferWithLength:options:"), (IMP)deviceNewBuffer, "@@:QQ");
+		class_addMethod(device, sel_registerName("newBufferWithBytes:length:options:"), (IMP)deviceNewBufferBytes, "@@:r^vQQ");
+		class_addMethod(device, sel_registerName("newBufferWithBytesNoCopy:length:options:deallocator:"), (IMP)deviceNewBufferNoCopy,
+		    "@@:^vQQ@?");
+	}
+	if ((gFunctionClass = objectClass("HakiosMetalFunction", "_MTLFunction", function, (IMP)functionDealloc)) != Nil) {
+		class_addMethod(gFunctionClass, sel_registerName("name"), (IMP)functionName, "@@:");
+		class_addMethod(gFunctionClass, sel_registerName("functionType"), (IMP)functionType, "Q@:");
+		class_addMethod(gFunctionClass, sel_registerName("vertexAttributes"), (IMP)functionNoAttributes, "@@:");
+		class_addMethod(gFunctionClass, sel_registerName("stageInputAttributes"), (IMP)functionNoAttributes, "@@:");
+		class_addMethod(gFunctionClass, sel_registerName("functionConstantsDictionary"), (IMP)functionNoConstants, "@@:");
+		class_addMethod(gFunctionClass, sel_registerName("hakiosBitcode"), (IMP)functionBitcode, "@@:");
+		objc_registerClassPair(gFunctionClass);
+	}
+	if ((gLibraryClass = objectClass("HakiosMetalLibrary", "_MTLLibrary", library, (IMP)libraryDealloc)) != Nil) {
+		class_addMethod(gLibraryClass, sel_registerName("functionNames"), (IMP)libraryFunctionNames, "@@:");
+		class_addMethod(gLibraryClass, sel_registerName("newFunctionWithName:"), (IMP)libraryNewFunction, "@@:@");
+		class_addMethod(gLibraryClass, sel_registerName("newFunctionWithName:constantValues:error:"), (IMP)libraryNewFunctionConstants,
+		    "@@:@@^@");
+		class_addMethod(gLibraryClass, sel_registerName("type"), (IMP)libraryType, "Q@:");
+		objc_registerClassPair(gLibraryClass);
+		class_addMethod(device, sel_registerName("newLibraryWithURL:error:"), (IMP)deviceNewLibraryURL, "@@:@^@");
+		class_addMethod(device, sel_registerName("newLibraryWithFile:error:"), (IMP)deviceNewLibraryFile, "@@:@^@");
+		class_addMethod(device, sel_registerName("newLibraryWithData:error:"), (IMP)deviceNewLibraryData, "@@:@^@");
+		class_addMethod(device, sel_registerName("newDefaultLibrary"), (IMP)deviceNewDefaultLibrary, "@@:");
+		class_addMethod(device, sel_registerName("newDefaultLibraryWithBundle:error:"), (IMP)deviceNewDefaultLibraryBundle, "@@:@^@");
+	}
+	class_addMethod(device, sel_registerName("hasUnifiedMemory"), (IMP)deviceUnifiedMemory, "B@:");
+	class_addMethod(device, sel_registerName("dedicatedMemorySize"), (IMP)deviceNoDedicatedMemory, "Q@:");
+	class_addMethod(device, sel_registerName("sharedMemorySize"), (IMP)deviceSharedMemory, "Q@:");
+	class_addMethod(device, sel_registerName("isLowPower"), (IMP)deviceNo, "B@:");
+	class_addMethod(device, sel_registerName("isRemovable"), (IMP)deviceNo, "B@:");
+	class_addMethod(device, sel_registerName("isHeadless"), (IMP)deviceNo, "B@:");
+	class_addMethod(device, sel_registerName("supportsFeatureSet:"), (IMP)deviceNoFeatureSet, "B@:Q");
+}
+
 /* Declares `protocol` and every private protocol whose name begins with it on `cls`, and keeps them for the stub's signatures. */
 static void
 declareProtocolFamily(Class cls, const char * protocolName)
@@ -326,7 +1062,42 @@ registerQueueClass(void)
  * it), so the window server cannot run on Metal here at all. And mediaserverd, given a device that cannot do anything, ends and
  * is started again. A device that is shown to a process that cannot use it costs that process, so it is shown to as few as the
  * experiment needs.
+ *
+ * Besides the level, a file HakiosMetal.clients beside the bundle (the way UniXNU's AdrenoMetal chooses its clients) names more
+ * processes, one per line, "*" for every one: an image can show the device to the one program being worked on without a boot-arg.
  */
+static BOOL
+listedBesideTheBundle(const char *name)
+{
+	Dl_info info;
+	char path[1024], line[256];
+	char *slash;
+	FILE *file;
+	BOOL listed = NO;
+
+	if (dladdr((const void *)&listedBesideTheBundle, &info) == 0 || info.dli_fname == NULL) {
+		return NO;
+	}
+	strlcpy(path, info.dli_fname, sizeof(path));            /* <Extensions>/HakiosMetal.bundle/HakiosMetal */
+	if ((slash = strrchr(path, '/')) == NULL) {
+		return NO;
+	}
+	*slash = '\0';
+	if ((slash = strrchr(path, '/')) == NULL) {
+		return NO;
+	}
+	strlcpy(slash + 1, "HakiosMetal.clients", sizeof(path) - (size_t)(slash + 1 - path));
+	if ((file = fopen(path, "r")) == NULL) {
+		return NO;
+	}
+	while (!listed && fgets(line, sizeof(line), file) != NULL) {
+		line[strcspn(line, " \t\r\n#")] = '\0';
+		listed = strcmp(line, "*") == 0 || (line[0] != '\0' && strcmp(line, name) == 0);
+	}
+	fclose(file);
+	return listed;
+}
+
 static BOOL
 shownToThisProcess(void)
 {
@@ -346,6 +1117,10 @@ shownToThisProcess(void)
 		return NO;
 	}
 	if (level >= 3 || (level == 2 && strcmp(name, "backboardd") != 0) || (level == 1 && strcmp(name, "metal_test") == 0)) {
+		return YES;
+	}
+	if (listedBesideTheBundle(name)) {
+		say([NSString stringWithFormat:@"%s is shown the device: HakiosMetal.clients beside the bundle names it", name]);
 		return YES;
 	}
 	say([NSString stringWithFormat:@"%s is not shown the device (metal=%d; 1 is metal_test only, 2 all but backboardd, 3 all)", name, level]);
@@ -408,4 +1183,5 @@ registerDevice(void)
 	say(@"the class HakiosMetalDevice is registered (a subclass of _MTLDevice)");
 	registerQueueClass();
 	registerStubClasses(device);
+	registerObjectClasses(device);
 }
