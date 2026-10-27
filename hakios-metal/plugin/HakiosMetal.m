@@ -60,8 +60,63 @@ deviceRegistryID(__unused id self, __unused SEL _cmd)
 	return gPort;
 }
 
+/* the largest buffer: what the GPU memory could hold, not a promise (nothing allocates a buffer yet) */
+static uint64_t
+deviceMaxBufferLength(__unused id self, __unused SEL _cmd)
+{
+	return 256ull << 20;
+}
+
+/*
+ * The command queue: the first thing the window server wants after the device (the second run's log: "[Metal] Failed to create
+ * MTLCommandQueue", then the process ends). Made as a subclass of Metal's private _MTLCommandQueue, at the same time as the device's
+ * class, with the same stub for what it does not answer. It queues nothing and executes nothing: a command buffer asked of it is
+ * nil, and the log says so, which is the next step's list.
+ */
+static Class gQueueClass;
+static id gDevice;
+
+static id
+queueDevice(__unused id self, __unused SEL _cmd)
+{
+	return gDevice;
+}
+
+static id
+queueLabel(__unused id self, __unused SEL _cmd)
+{
+	return @"HakiosMetalQueue";
+}
+
+static void
+queueSetGPUPriority(__unused id self, __unused SEL _cmd, __unused unsigned long priority)
+{
+}
+
+static id
+deviceNewQueue(id self, __unused SEL _cmd)
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	id queue;
+
+	gDevice = self;
+	if (gQueueClass == Nil) {
+		say(@"newCommandQueue: no queue class (this system has no _MTLCommandQueue): nil");
+		return nil;
+	}
+	queue = plain(plain((id)gQueueClass, sel_registerName("alloc")), sel_registerName("init"));
+	say([NSString stringWithFormat:@"newCommandQueue: a queue that queues nothing (%@)", queue ? @"made" : @"_MTLCommandQueue's init gave nil"]);
+	return queue;
+}
+
+static id
+deviceNewQueueMax(id self, SEL _cmd, __unused unsigned long maxBuffers)
+{
+	return deviceNewQueue(self, _cmd);
+}
+
 /* the protocols the class declares (the ones Metal checks for), for the signatures below */
-static Protocol * gProtocols[4];
+static Protocol * gProtocols[16];
 static unsigned gProtocolCount;
 
 /*
@@ -108,7 +163,10 @@ deviceForward(id self, SEL _cmd, id invocation)
 		}
 		if (![seen containsObject:name]) {
 			[seen addObject:name];
-			say([NSString stringWithFormat:@"asked and not implemented: -%@ (returns %lu bytes; answered with zero)", name, (unsigned long)length]);
+			const char * encoding = ((const char * (*)(id, SEL))objc_msgSend)(signature, sel_registerName("methodReturnType"));
+
+			say([NSString stringWithFormat:@"asked and not implemented: -%@ (returns %lu bytes, type %s; answered with zero)", name,
+			    (unsigned long)length, encoding ? encoding : "?"]);
 		}
 	}
 	if (length != 0) {
@@ -117,6 +175,138 @@ deviceForward(id self, SEL _cmd, id invocation)
 		((void (*)(id, SEL, void *))objc_msgSend)(invocation, sel_registerName("setReturnValue:"), zero);
 		free(zero);
 	}
+}
+
+/*
+ * The objects a device hands out. Every one is a class of ours made at load time, a subclass of Metal's private base where this
+ * system has one (and of NSObject where it does not), declaring the protocol Metal checks and any private protocol of the same
+ * name family, answering the rest through the same logged zero stub as the device. None of them does anything: a state object
+ * holds nothing, a buffer has memory and a length and nothing else. They exist so that the next question reaches the log, which is
+ * the work list of this plug-in (docs/metal-plan.md).
+ */
+static const struct stubSpec {
+	const char * selector;          /* the device's method that makes it */
+	const char * cls;               /* our class */
+	const char * base;              /* Metal's private base class, if the system has it */
+	const char * protocol;          /* the public protocol, and the family of private ones beginning with it */
+} gStubSpecs[] = {
+	{ "newDepthStencilStateWithDescriptor:", "HakiosMetalDepthStencilState", "_MTLDepthStencilState", "MTLDepthStencilState" },
+	{ "newSamplerStateWithDescriptor:", "HakiosMetalSamplerState", "_MTLSamplerState", "MTLSamplerState" },
+	{ "newTextureWithDescriptor:", "HakiosMetalTexture", "_MTLTexture", "MTLTexture" },
+	{ "newRenderPipelineStateWithDescriptor:error:", "HakiosMetalRenderPipelineState", "_MTLRenderPipelineState", "MTLRenderPipelineState" },
+	{ "newComputePipelineStateWithFunction:error:", "HakiosMetalComputePipelineState", "_MTLComputePipelineState", "MTLComputePipelineState" },
+	{ "newEventWithOptions:", "HakiosMetalEvent", "_MTLEvent", "MTLEvent" },
+	{ "newFence", "HakiosMetalFence", "_MTLFence", "MTLFence" },
+};
+#define STUB_COUNT (sizeof(gStubSpecs) / sizeof(gStubSpecs[0]))
+static Class gStubClass[STUB_COUNT];
+
+/* a device method that makes one of the objects above: the class is found by the selector it was called by */
+static id
+stubFactory(__unused id self, SEL _cmd)
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	const char * called = sel_getName(_cmd);
+
+	for (unsigned i = 0; i < STUB_COUNT; i++) {
+		if (strcmp(gStubSpecs[i].selector, called) == 0) {
+			id object;
+
+			if (gStubClass[i] == Nil) {
+				return nil;
+			}
+			object = plain(plain((id)gStubClass[i], sel_registerName("alloc")), sel_registerName("init"));
+			say([NSString stringWithFormat:@"%s: a %s that holds nothing (%@)", called, gStubSpecs[i].cls, object ? @"made" : @"init gave nil"]);
+			return object;
+		}
+	}
+	return nil;
+}
+
+/* Declares `protocol` and every private protocol whose name begins with it on `cls`, and keeps them for the stub's signatures. */
+static void
+declareProtocolFamily(Class cls, const char * protocolName)
+{
+	unsigned int count = 0;
+	Protocol * __unsafe_unretained * all = objc_copyProtocolList(&count);
+
+	for (unsigned int i = 0; i < count; i++) {
+		if (strncmp(protocol_getName(all[i]), protocolName, strlen(protocolName)) == 0) {
+			class_addProtocol(cls, all[i]);
+			if (gProtocolCount < sizeof(gProtocols) / sizeof(gProtocols[0])) {
+				gProtocols[gProtocolCount++] = all[i];
+			}
+		}
+	}
+	free(all);
+}
+
+static void
+registerStubClasses(Class device)
+{
+	for (unsigned i = 0; i < STUB_COUNT; i++) {
+		Class base = objc_getClass(gStubSpecs[i].base);
+		Class cls = objc_allocateClassPair(base != Nil ? base : objc_getClass("NSObject"), gStubSpecs[i].cls, 0);
+
+		if (cls == Nil) {
+			say([NSString stringWithFormat:@"could not make the class %s", gStubSpecs[i].cls]);
+			continue;
+		}
+		declareProtocolFamily(cls, gStubSpecs[i].protocol);
+		class_addMethod(cls, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
+		class_addMethod(cls, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
+		objc_registerClassPair(cls);
+		gStubClass[i] = cls;
+		class_addMethod(device, sel_registerName(gStubSpecs[i].selector), (IMP)stubFactory, "@@:@");
+		say([NSString stringWithFormat:@"%s is a %s (a subclass of %s)", gStubSpecs[i].selector, gStubSpecs[i].cls,
+		    base != Nil ? gStubSpecs[i].base : "NSObject: this system has no such class"]);
+	}
+}
+
+static void
+registerQueueClass(void)
+{
+	Class base = objc_getClass("_MTLCommandQueue");
+	Protocol * protocol = @protocol(MTLCommandQueue);
+
+	if (base == Nil) {
+		say(@"this system has no _MTLCommandQueue: no queue class is registered");
+		return;
+	}
+	gQueueClass = objc_allocateClassPair(base, "HakiosMetalQueue", 0);
+	if (gQueueClass == Nil) {
+		say(@"could not make the class HakiosMetalQueue");
+		return;
+	}
+	class_addProtocol(gQueueClass, protocol);
+	if (gProtocolCount < sizeof(gProtocols) / sizeof(gProtocols[0])) {
+		gProtocols[gProtocolCount++] = protocol;
+	}
+	/*
+	 * The third run: -setCompletionQueue: is not in MTLCommandQueue but in a private protocol of Metal's own (as MTLDeviceSPI is
+	 * for the device), and the window server sends it. Every protocol of this process whose name begins with MTLCommandQueue is
+	 * taken, so that the stub answers what any of them declares; their names go to the log, which is how the next one is found.
+	 */
+	unsigned int count = 0;
+	Protocol * __unsafe_unretained * all = objc_copyProtocolList(&count);
+
+	for (unsigned int i = 0; i < count; i++) {
+		const char * name = protocol_getName(all[i]);
+
+		if (strncmp(name, "MTLCommandQueue", 15) == 0 && all[i] != protocol && gProtocolCount < sizeof(gProtocols) / sizeof(gProtocols[0])) {
+			class_addProtocol(gQueueClass, all[i]);
+			gProtocols[gProtocolCount++] = all[i];
+			say([NSString stringWithFormat:@"the queue also declares the protocol %s", name]);
+		}
+	}
+	free(all);
+	class_addMethod(gQueueClass, sel_registerName("device"), (IMP)queueDevice, "@@:");
+	class_addMethod(gQueueClass, sel_registerName("label"), (IMP)queueLabel, "@@:");
+	class_addMethod(gQueueClass, sel_registerName("setGPUPriority:"), (IMP)queueSetGPUPriority, "v@:Q");
+	class_addMethod(gQueueClass, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
+	class_addMethod(gQueueClass, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
+	objc_registerClassPair(gQueueClass);
+	say(@"the class HakiosMetalQueue is registered (a subclass of _MTLCommandQueue)");
 }
 
 __attribute__((constructor)) static void
@@ -162,8 +352,13 @@ registerDevice(void)
 	class_addMethod(device, @selector(initWithAcceleratorPort:), (IMP)deviceInit, "@@:I");
 	class_addMethod(device, @selector(name), (IMP)deviceName, "@@:");
 	class_addMethod(device, @selector(registryID), (IMP)deviceRegistryID, "Q@:");
+	class_addMethod(device, sel_registerName("maxBufferLength"), (IMP)deviceMaxBufferLength, "Q@:");
+	class_addMethod(device, sel_registerName("newCommandQueue"), (IMP)deviceNewQueue, "@@:");
+	class_addMethod(device, sel_registerName("newCommandQueueWithMaxCommandBufferCount:"), (IMP)deviceNewQueueMax, "@@:Q");
 	class_addMethod(device, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
 	class_addMethod(device, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
 	objc_registerClassPair(device);
 	say(@"the class HakiosMetalDevice is registered (a subclass of _MTLDevice)");
+	registerQueueClass();
+	registerStubClasses(device);
 }
