@@ -532,7 +532,7 @@ int main(int argc, char** argv) {
         const uint32_t one[3] = {1, 1, 1};
         for (const Variant& v : variants) {
             auto cb = queue->commandBuffer();
-            cb->dispatch(kernels::end_only, one, nullptr, {}, nullptr, v.o);
+            cb->dispatch(kernels::end_only, one, nullptr, std::vector<Binding>{}, nullptr, v.o);
             cb->commit();
             cb->waitUntilCompleted();
             bool ok = cb->status() == CommandBuffer::kCompleted;

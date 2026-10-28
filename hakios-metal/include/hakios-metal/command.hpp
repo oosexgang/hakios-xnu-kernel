@@ -70,6 +70,9 @@ public:
     // The program and the descriptors go into buffers of their own that live until this completes.
     bool dispatch(const Kernel& kernel, const uint32_t groups[3], const uint32_t* local, const std::vector<Binding>& buffers,
                   const uint32_t* immediates = nullptr, const compute::Options& options = compute::Options{});
+    // the same with textures and samplers (compute.hpp: Bindings); the textures' memory is used and kept as buffers are
+    bool dispatch(const Kernel& kernel, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
+                  const uint32_t* immediates = nullptr, const compute::Options& options = compute::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state
     void refuse(const std::string& why) { fail(why); }
     // a buffer it uses, kept alive until it completes (the owner may let go of it before that)

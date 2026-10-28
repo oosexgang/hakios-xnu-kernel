@@ -48,10 +48,18 @@ enum hakios_metal_resource_kind {
 	HAKIOS_METAL_RESOURCE_CONSTANT_BUFFER = 0,   /* [[buffer(n)]] of constant address space */
 	HAKIOS_METAL_RESOURCE_DEVICE_BUFFER = 1,     /* [[buffer(n)]] of device address space */
 	HAKIOS_METAL_RESOURCE_THREADGROUP_BUFFER = 2,
-	HAKIOS_METAL_RESOURCE_TEXTURE = 3,           /* not served yet: such a kernel compiles and is refused at dispatch */
-	HAKIOS_METAL_RESOURCE_IMAGE = 4,
-	HAKIOS_METAL_RESOURCE_SAMPLER = 5,
+	HAKIOS_METAL_RESOURCE_TEXTURE = 3,           /* [[texture(n)]] declared read or sample: sampled through the texture table */
+	HAKIOS_METAL_RESOURCE_IMAGE = 4,             /* [[texture(n)]] declared write or read_write: stored through an IBO slot */
+	HAKIOS_METAL_RESOURCE_SAMPLER = 5,           /* [[sampler(m)]] */
 };
+
+/* Textures: MTLTextureType, MTLPixelFormat, MTLTextureUsage and MTLSamplerDescriptor's fields are passed as Metal's own
+ * numbers (MTLTexture.h, MTLPixelFormat.h, MTLSampler.h, MTLDepthStencil.h), so the plug-in hands them through. What
+ * is served: type 2 (2D), one level, one slice, formats 10 (R8Unorm), 30 (RG8Unorm), 53 (R32Uint), 55 (R32Float),
+ * 70 (RGBA8Unorm), 71 (RGBA8Unorm_sRGB), 80 (BGRA8Unorm), 81 (BGRA8Unorm_sRGB), 115 (RGBA16Float), 123 (RGBA32Uint),
+ * 125 (RGBA32Float); usage bits 1 (shader read) and 2 (shader write). Anything else: NULL with the reason. */
+typedef struct hakios_metal_texture hakios_metal_texture;
+typedef struct hakios_metal_sampler hakios_metal_sampler;
 
 /* the last failure on this thread, in words */
 const char *hakios_metal_error(void);
@@ -95,6 +103,51 @@ unsigned hakios_metal_kernel_max_threads(hakios_metal_kernel *kernel);
 unsigned hakios_metal_kernel_execution_width(hakios_metal_kernel *kernel);
 unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel *kernel);   /* bytes it declares statically */
 
+/* a texture of the GPU's own layout (linear rows of hakios_metal_texture_bytes_per_row bytes, the memory behind them a
+ * buffer the command buffers keep alive while they use it) */
+hakios_metal_texture *hakios_metal_texture_new(hakios_metal_device *device, unsigned type, unsigned pixel_format,
+    unsigned width, unsigned height, unsigned usage);
+void hakios_metal_texture_free(hakios_metal_texture *texture);
+void *hakios_metal_texture_contents(hakios_metal_texture *texture);        /* the GPU's rows, write-combined */
+uint64_t hakios_metal_texture_bytes_per_row(hakios_metal_texture *texture); /* the GPU's pitch (MTLTexture.bufferBytesPerRow) */
+uint64_t hakios_metal_texture_gpu_address(hakios_metal_texture *texture);
+unsigned hakios_metal_texture_width(hakios_metal_texture *texture);
+unsigned hakios_metal_texture_height(hakios_metal_texture *texture);
+unsigned hakios_metal_texture_format(hakios_metal_texture *texture);
+unsigned hakios_metal_texture_type(hakios_metal_texture *texture);
+unsigned hakios_metal_texture_usage(hakios_metal_texture *texture);
+/* -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
+ * BYTES_PER_ROW apart, into the texture at (X, Y); the pitch conversion happens here. -1 with the reason: a region outside
+ * the texture, a stride shorter than W pixels. */
+int hakios_metal_texture_replace(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned w, unsigned h,
+    const void *bytes, uint64_t bytes_per_row);
+/* -getBytes:bytesPerRow:fromRegion:mipmapLevel:, the other way */
+int hakios_metal_texture_read(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned w, unsigned h,
+    void *bytes, uint64_t bytes_per_row);
+
+/* MTLSamplerDescriptor's fields, Metal's numbering and defaults (zero everywhere but normalized_coordinates 1,
+ * lod_max_clamp FLT_MAX, max_anisotropy 1) */
+struct hakios_metal_sampler_desc {
+	unsigned min_filter, mag_filter;      /* MTLSamplerMinMagFilter: Nearest 0, Linear 1 */
+	unsigned mip_filter;                  /* MTLSamplerMipFilter: NotMipmapped 0, Nearest 1, Linear 2 */
+	unsigned s_address, t_address, r_address;   /* MTLSamplerAddressMode: ClampToEdge 0, MirrorClampToEdge 1, Repeat 2, MirrorRepeat 3, ClampToZero 4, ClampToBorderColor 5 */
+	int normalized_coordinates;
+	float lod_min_clamp, lod_max_clamp;
+	unsigned max_anisotropy;
+	unsigned compare_function;            /* MTLCompareFunction: Never 0 .. Always 7 */
+	unsigned border_color;                /* MTLSamplerBorderColor: TransparentBlack 0, OpaqueBlack 1, OpaqueWhite 2 */
+};
+/* NULL with the reason for a mode not served (texture.hpp: makeSampler) */
+hakios_metal_sampler *hakios_metal_sampler_new(hakios_metal_device *device, const struct hakios_metal_sampler_desc *desc);
+void hakios_metal_sampler_free(hakios_metal_sampler *sampler);
+const uint32_t *hakios_metal_sampler_words(hakios_metal_sampler *sampler);   /* the four TEX_SAMP dwords, for the tests */
+
+/* resource I of a kernel when it is a texture, image or sampler: the dimension (MTLTextureType numbering, 2 for 2D),
+ * the element class the kernel addresses it as (0 float, 1 uint, 2 int) and the access it makes (bit 1 read, bit 2 write);
+ * -1 for a buffer */
+int hakios_metal_kernel_resource_texture(hakios_metal_kernel *kernel, unsigned i, unsigned *texture_type, unsigned *element,
+    unsigned *access);
+
 hakios_metal_queue *hakios_metal_queue_new(hakios_metal_device *device);
 void hakios_metal_queue_free(hakios_metal_queue *queue);
 
@@ -111,6 +164,14 @@ int hakios_metal_cb_fill(hakios_metal_cb *cb, hakios_metal_buffer *buffer, uint6
  * until the command buffer completes, whatever the caller frees meanwhile. */
 int hakios_metal_cb_dispatch(hakios_metal_cb *cb, hakios_metal_kernel *kernel, const unsigned groups[3], const unsigned threads[3],
     hakios_metal_buffer *const *buffers, const uint64_t *offsets, unsigned count);
+/* the same with TEXTURES[n] at Metal texture index n for n < TEXTURE_COUNT (a sampled texture or an image, whichever the
+ * kernel declared at n; NULL: nothing there) and SAMPLERS[m] at sampler index m for m < SAMPLER_COUNT. -1 with the reason:
+ * a declared texture or sampler missing, a texture whose dimension or element class is not the kernel's, one made without
+ * write usage where the kernel writes. hakios_metal_cb_dispatch is this with no textures and no samplers. */
+int hakios_metal_cb_dispatch2(hakios_metal_cb *cb, hakios_metal_kernel *kernel, const unsigned groups[3], const unsigned threads[3],
+    hakios_metal_buffer *const *buffers, const uint64_t *offsets, unsigned count,
+    hakios_metal_texture *const *textures, unsigned texture_count,
+    hakios_metal_sampler *const *samplers, unsigned sampler_count);
 /* something the caller could not record: the command buffer will end in HAKIOS_METAL_ERROR, saying WHY */
 void hakios_metal_cb_fail(hakios_metal_cb *cb, const char *why);
 /* CALLBACK(CB, CONTEXT) runs once, after completion or error, on the queue's thread; may be NULL */

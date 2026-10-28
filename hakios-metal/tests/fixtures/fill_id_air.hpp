@@ -121,6 +121,9 @@ define void @fill_id(ptr addrspace(1) %out, ptr addrspace(2) %c, i32 %gid) local
 !6 = !{i32 1, !"air.buffer", !"air.buffer_size", i32 4, !"air.location_index", i32 1, i32 1, !"air.read", !"air.address_space", i32 2, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"uint", !"air.arg_name", !"c"}
 !7 = !{i32 2, !"air.thread_position_in_grid", !"air.arg_type_name", !"uint", !"air.arg_name", !"gid"}
 )ir3",
+    /* .textures = */ {},
+    /* .numTextureSlots = */ 0,
+    /* .samplerMask = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

@@ -207,6 +207,7 @@ SPDX-License-Identifier: MIT
 +   fprintf(out, "    /* .name = */ \"%s\",\n", name);
 +   fprintf(out, "    /* .source = */ R\"ir3(%.*s)ir3\",\n", (int)source_size,
 +           source ? (const char *)source : "");
++   fprintf(out, "    /* .textures = */ {},\n    /* .numTextureSlots = */ 0,\n    /* .samplerMask = */ 0,\n");
 +   fputs("};\n\n", out);
 +
 +   fputs("// The listing (ir3_shader_disasm):\n", out);

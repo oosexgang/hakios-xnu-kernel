@@ -48,9 +48,32 @@ struct KernelBuf {
 constexpr uint32_t kNoRegid = 0xfc;
 // "no const register" for KernelBuf::constRegid and Kernel::numwgConstRegid.
 constexpr uint32_t kNoConstRegid = 0xff;
-// Sizes of the fixed arrays below. kMaxBufs is the assembler's MAX_BUFS.
+// Sizes of the fixed arrays below. kMaxBufs is the assembler's MAX_BUFS. kMaxTextureSlots is the front end's
+// AIR_MAX_TEXTURES, and 16 is also where ir3 stops folding t#/s# into the instruction (ir3_cp.c: the fold is < 16);
+// a kernel declaring a texture or sampler index at or above it is refused by name when compiled.
 constexpr uint32_t kMaxUboRanges = 8;
 constexpr uint32_t kMaxBufs = 4;
+constexpr uint32_t kMaxTextureSlots = 16;
+
+// What one Metal texture index is to a kernel, as its instructions use it (see Kernel::textures).
+enum KernelTextureKind : uint8_t {
+    kTexNone = 0,      // the index is not declared
+    kTexSampled = 1,   // declared read or sample: a TEX_CONST in the texture table, read by sam/saml (with a sampler) or isaml (texture.read)
+    kTexImage = 2,     // declared write or read_write: a storage descriptor at IBO slot numSsbos + index, written by stib, read by ldib
+};
+enum KernelTextureDim : uint8_t { kTexDimNone = 0, kTexDim1D = 1, kTexDim2D = 2, kTexDim3D = 3, kTexDimCube = 4 };
+// the class of the values the instructions move, which the bound format must agree with (texture.hpp: FormatInfo::element)
+enum KernelElement : uint8_t { kElemFloat = 0, kElemUint = 1, kElemInt = 2 };
+struct KernelTexture {
+    uint8_t kind;      // KernelTextureKind
+    uint8_t dim;       // KernelTextureDim, from nir_tex_instr::sampler_dim or the image intrinsic's image_dim
+    uint8_t isArray;   // 1 for the array forms
+    uint8_t element;   // KernelElement, from the tex's dest_type or the image store's src_type / load's dest_type
+    uint8_t bits;      // the value's width the image is stored or loaded with (32, or 16 for half): the descriptor's FMT must convert from it; 0 for a sampled texture
+    uint8_t read;      // the instructions read it (isaml/sam on a sampled texture, ldib on an image)
+    uint8_t write;     // the instructions write it (stib)
+    uint8_t pad;
+};
 
 struct Kernel {
     // The shader binary: instructions, their padding to instrlen, and the NIR
@@ -117,6 +140,19 @@ struct Kernel {
 
     const char* name;    // the kernel's name: the .asm file's stem, or the AIR entry point
     const char* source;  // the kernel text it was built from, for the record (the .asm, or the .ll when the patch was given one)
+
+    // Textures, images and samplers as the kernel's INSTRUCTIONS address them, read off the NIR before ir3 ran, because
+    // ir3's own numSamp counts sampled textures and images together and ignores sampler indices (ir3_compiler_nir.c:
+    // num_samp = last texture used + 1 + num_images). The front end keeps Metal's own indices (air_intrinsics.c:
+    // texture_index = [[texture(n)]], sampler_index = [[sampler(m)]]; image index = [[texture(n)]] of a texture
+    // declared write or read_write), and ir3 passes them through:
+    //   t#n of sam/saml/isaml  = slot n of the texture table (TEX_CONST, 64 bytes each, SP_CS_TEX_CONST)
+    //   s#m of sam/saml        = slot m of the sampler table (TEX_SAMP, 16 bytes each, SP_CS_TEX_SAMP); an isaml names s#0
+    //   image n of stib/ldib   = IBO slot numSsbos + n (ir3_image.c:50-52), a 2D storage descriptor, not a buffer's
+    // A text kernel has none of these. Every AIR kernel has textures[] filled for every index it declares.
+    KernelTexture textures[kMaxTextureSlots];   // by Metal texture index
+    uint32_t numTextureSlots;   // highest SAMPLED index + 1: SP_CS_TEX_COUNT and the texture table's size; 0 = no texture state (an image-only kernel, as Gallium emits it: no CS_TEX group at all)
+    uint32_t samplerMask;       // bit m set: some sam names s#m. The sampler table has (highest bit + 1) entries, and at least 1 whenever numTextureSlots > 0, since isaml names s#0
 };
 
 } // namespace hakios::metal

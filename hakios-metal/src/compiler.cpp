@@ -143,7 +143,11 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
                               : r.kind == AIR_RESOURCE_TEXTURE         ? Resource::kTexture
                               : r.kind == AIR_RESOURCE_IMAGE           ? Resource::kImage
                                                                        : Resource::kSampler;
-        out->resources.push_back(Resource{kind, r.index, r.size, r.read, r.write, r.ir_write});
+        // the texture/sampler shape fields stay zero here; the core fills them from the NIR walk (Kernel::textures) in its step
+        Resource res{};
+        res.kind = kind; res.index = r.index; res.sizeBytes = r.size; res.read = r.read; res.write = r.write; res.irWrite = r.ir_write;
+        res.typeName = r.type_name ? r.type_name : "";
+        out->resources.push_back(std::move(res));
     }
     out->words.assign(bin, bin + v->info.size / 4);
     out->immediates.assign(cs->immediates, cs->immediates + cs->immediates_count);

@@ -427,6 +427,8 @@ int main(int argc, char** argv)
         fprintf(out, "    /* .constantDataSize = */ %u,\n", k.constantDataSize);
         fprintf(out, "    /* .name = */ \"%s\",\n", k.name);
         fprintf(out, "    /* .source = */ R\"ir3(%s)ir3\",\n", k.source);
+        // a text kernel addresses no textures: the fields are zero, but written so that -Wextra sees every member initialized
+        fprintf(out, "    /* .textures = */ {},\n    /* .numTextureSlots = */ 0,\n    /* .samplerMask = */ 0,\n");
         fputs("};\n\n", out);
 
         fputs("// The disassembly (ir3_shader_disasm), and whether it read back as the source:\n", out);

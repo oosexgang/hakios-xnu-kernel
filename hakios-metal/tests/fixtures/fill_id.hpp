@@ -129,6 +129,9 @@ add.u r3.x, r3.x, c0.x           ; + c
 stib.b.untyped.1d.u32.1.imm r3.x, r1.x, 0   ; out[gid] = r3.x (IBO 0, element r1.x)
 end
 )ir3",
+    /* .textures = */ {},
+    /* .numTextureSlots = */ 0,
+    /* .samplerMask = */ 0,
 };
 
 // The disassembly (ir3_shader_disasm), and whether it read back as the source:

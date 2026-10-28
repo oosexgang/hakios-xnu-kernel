@@ -31,6 +31,8 @@
 namespace hakios::metal {
 
 class Buffer;
+class Texture;
+struct Sampler;
 
 // a buffer bound at an index: Metal's [[buffer(i)]], a text kernel's @buf i
 struct Binding {
@@ -38,13 +40,42 @@ struct Binding {
     uint64_t offset = 0;      // bytes into it; a multiple of 4 (the descriptors address elements)
 };
 
+// Everything a dispatch binds, each by Metal's own index: buffers[i] is [[buffer(i)]], textures[n] is [[texture(n)]]
+// (a sampled texture or an image, whichever the kernel declared at n: Kernel::textures[n].kind decides, so the plug-in's
+// -setTexture:atIndex: stores by index and never looks at the kernel), samplers[m] is [[sampler(m)]]. A nullptr entry
+// is nothing bound there; an entry past what the kernel declares is ignored, as Metal ignores it.
+struct Bindings {
+    std::vector<Binding> buffers;
+    std::vector<const Texture*> textures;
+    std::vector<const Sampler*> samplers;
+};
+
 namespace compute {
 
 constexpr uint32_t kMaxLocalThreads = 1024;     // the hardware's threadgroup limit, and the NDRANGE fields' (10 bits)
-// what a dispatch owns in GPU memory besides the program: the IBO descriptors, then the end-of-dispatch timestamps
-constexpr uint32_t kTableBytes = 4096;
-constexpr uint32_t kTableTimestampsAt = 2048;   // the two timestamp words the cache flush writes and waits for
-constexpr uint32_t kMaxIbos = kTableTimestampsAt / 64;
+// What a dispatch owns in GPU memory besides the program, one 16 KiB page on the phone whatever the size (gpu.cpp rounds
+// to it): the IBO descriptors (64 bytes each; NIBO is 7 bits and SSBO slots go up to Metal's 31 buffers plus 16 images),
+// the texture table (TEX_CONST, 64 bytes each, 64-aligned: SP_CS_TEX_CONST's alignment), the sampler table (TEX_SAMP,
+// 16 bytes each, 16-aligned), a border colour entry of zeros (128 bytes, 128-aligned: SP_TP_BORDER_COLOR_BASE_ADDR's
+// entry 0, what a CLAMP_TO_BORDER sampler reads for Metal's clamp_to_zero), a hole descriptor (see below), and the two
+// end-of-dispatch timestamp words.
+constexpr uint32_t kTableBytes = 8192;
+constexpr uint32_t kTableIbosAt = 0;
+constexpr uint32_t kMaxIbos = 64;
+constexpr uint32_t kTableTexConstAt = 4096;     // kMaxTextureSlots * 64 = 1024 bytes
+constexpr uint32_t kTableTexSampAt = 5120;      // kMaxTextureSlots * 16 = 256 bytes
+constexpr uint32_t kTableBorderColorAt = 5376;  // 128 bytes of zeros
+constexpr uint32_t kTableHoleAt = 5504;         // 64 bytes nobody addresses: what the hole descriptors point at
+constexpr uint32_t kTableTimestampsAt = 5632;   // the two timestamp words the cache flush writes and waits for
+static_assert(kTableTexConstAt % 64 == 0 && kTableTexSampAt % 16 == 0 && kTableBorderColorAt % 128 == 0, "the tables' alignments");
+static_assert(kTableIbosAt + kMaxIbos * 64 <= kTableTexConstAt && kTableTexConstAt + kMaxTextureSlots * 64 <= kTableTexSampAt &&
+              kTableTexSampAt + kMaxTextureSlots * 16 <= kTableBorderColorAt && kTableBorderColorAt + 128 <= kTableHoleAt &&
+              kTableHoleAt + 64 <= kTableTimestampsAt && kTableTimestampsAt + 16 <= kTableBytes, "the table's parts fit");
+// An IBO slot ir3 counts but the kernel never addresses (a device buffer at [[buffer(5)]] alone leaves slots 0-4; a
+// sampled texture at [[texture(0)]] beside an image at [[texture(1)]] leaves IBO slot 0) gets a valid one-element buffer
+// descriptor over the table's own kTableHoleAt words rather than zeros: real memory the kernel never names, so a wrong
+// slot cannot read as a fault. (Gallium's zero dummy_view is blessed for the TEXTURE table only; no Mesa driver runs a
+// bound IBO table with a zero entry. The texture table's unused slots ARE zeros, as Gallium's are.)
 
 // What the dispatch stream is made of, each part switchable. The defaults are the whole sequence; a part switched off
 // is for finding, on the phone, which part a hang needs (hakios-metal-probe --bisect runs end_only under each), since
@@ -64,6 +95,14 @@ struct Options {
     // dispatch hung on its own tail, each half of it, until the bit was cleared; computerator leaves it clear, and so does
     // the kernel's own fence write). True is here for the fake GPU's test of that, nothing else.
     bool tailTimestampBit = false;
+    // The texture state: the TEX_SAMP and TEX_CONST loads into SB6_CS_TEX, SP_CS_TEX_SAMP/CONST/COUNT (Gallium's
+    // fd6_texture.cc:593-687), emitted only for a kernel with numTextureSlots > 0, as Gallium builds the CS_TEX group
+    // only for a shader with textures. Off for the bisect: an image-only kernel never has it.
+    bool texState = true;
+    // SP_TP_MODE_CNTL (the TP's own ISAMMODE copy, beside SP_MODE_CONTROL's that the prelude writes) and the two border
+    // colour base registers pointing at the table's zero entry, in the prelude. Gallium writes all three at every batch
+    // start (fd6_emit.cc:977-981, 1035-1038); nothing wrote a TP register here before textures.
+    bool tpState = true;
 };
 
 // The whole dispatch into STREAM: KERNEL over GROUPS work groups of LOCAL threads each, BUFFERS bound by index,
@@ -73,6 +112,15 @@ struct Options {
 bool encode(pm4::Stream& stream, const Kernel& kernel, const uint32_t groups[3], const uint32_t local[3],
             const std::vector<Binding>& buffers, const uint32_t* immediates, uint64_t program, uint64_t table,
             uint8_t* tableCpu, std::string* why, const Options& options = Options{});
+// The same with textures and samplers bound too (the form above is this with none). Refused by name, with nothing
+// added to the stream: a declared texture or sampler index with nothing bound; a texture bound to an index the kernel
+// addresses as another dimension or element class than the texture's format has (texture.hpp: FormatInfo::element);
+// a texture made without write usage at an index the kernel writes; a kernel whose numSamp does not fit NSAMP's 5 bits;
+// a kernel with UBO descriptors left unpushed (numUbos > 0: an indexed `constant` load ir3 kept as an ldc, which no
+// descriptor serves yet); a kernel asking for the front end's null texture or a constexpr sampler (not served yet).
+bool encode(pm4::Stream& stream, const Kernel& kernel, const uint32_t groups[3], const uint32_t local[3],
+            const Bindings& bindings, const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu,
+            std::string* why, const Options& options = Options{});
 
 }  // namespace compute
 

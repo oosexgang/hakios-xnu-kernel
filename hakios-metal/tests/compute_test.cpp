@@ -128,7 +128,7 @@ TEST(a_dispatch_of_end_only_needs_no_buffers) {
     Rig r;
     const uint32_t one[3] = {1, 1, 1};
     auto cb = r.queue->commandBuffer();
-    CHECK(cb->dispatch(kernels::end_only, one, nullptr, {}));
+    CHECK(cb->dispatch(kernels::end_only, one, nullptr, std::vector<Binding>{}));
     cb->commit();
     cb->waitUntilCompleted();
     CHECK(cb->status() == CommandBuffer::kCompleted);
@@ -207,7 +207,7 @@ TEST(a_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the_gpu) {
     }
     {
         auto cb = r.queue->commandBuffer();
-        CHECK(!cb->dispatch(kernels::fill_id, kGroups16, nullptr, {}));
+        CHECK(!cb->dispatch(kernels::fill_id, kGroups16, nullptr, std::vector<Binding>{}));
         CHECK(cb->error().find("no buffer bound at index 0") != std::string::npos);
     }
     {
@@ -340,7 +340,7 @@ TEST(an_event_with_the_timestamp_bit_writes_a_timestamp_not_the_value) {
     compute::Options bit;
     bit.tailTimestampBit = true;
     auto cb = r.queue->commandBuffer();
-    CHECK(cb->dispatch(kernels::end_only, kGroups16, nullptr, {}, nullptr, bit));
+    CHECK(cb->dispatch(kernels::end_only, kGroups16, nullptr, std::vector<Binding>{}, nullptr, bit));
     cb->commit();
     cb->waitUntilCompleted();
     CHECK(cb->status() == CommandBuffer::kError);
@@ -348,7 +348,7 @@ TEST(an_event_with_the_timestamp_bit_writes_a_timestamp_not_the_value) {
     // and the default form, the bit clear, completes
     Rig r2;
     auto cb2 = r2.queue->commandBuffer();
-    CHECK(cb2->dispatch(kernels::end_only, kGroups16, nullptr, {}));
+    CHECK(cb2->dispatch(kernels::end_only, kGroups16, nullptr, std::vector<Binding>{}));
     cb2->commit();
     cb2->waitUntilCompleted();
     CHECK(cb2->status() == CommandBuffer::kCompleted);

@@ -28,6 +28,16 @@ struct Resource {
     uint32_t sizeBytes;     // air.buffer_size when the metadata gives one (a `constant T&`), else 0
     bool read, write;       // Apple's declaration (air.read, air.write, air.read_write)
     bool irWrite;           // whether the translated code stores through it, which is a different fact
+    // textures, images and samplers (the other kinds leave these at their zeros): the shape the kernel's instructions
+    // address the index with, as Kernel::textures[index] carries it, and what Apple declared it as (air.arg_type_name,
+    // e.g. "texture2d<half, write>": the declaration is the one to judge a bound format by, the instructions' type is
+    // the transport -- a half image is stored with a 16-bit stib into whatever format is bound)
+    uint8_t textureDim;     // KernelTextureDim
+    uint8_t textureArray;   // 1 for the array forms
+    uint8_t element;        // KernelElement
+    bool nullTexture;       // the front end's reserved slot for air.get_null_texture_*: not served by the dispatch yet
+    bool inlineSampler;     // a constexpr sampler (air_resource.inline_sampler): not served by the dispatch yet
+    std::string typeName;   // air.arg_type_name as declared
 };
 
 // a kernel compiled here, owning what its Kernel points into
