@@ -4,6 +4,8 @@
 #
 #   make ir3-kernel      build out/host/ir3-kernel against a Mesa host build
 #   make fixtures        regenerate tests/fixtures/*.hpp from tools/kernels/*.asm
+#   make air-fixtures    regenerate tests/fixtures/*_air.hpp from tools/kernels/*.ll, with out/host/ir3_compiler:
+#                        Mesa's ir3_compiler carrying tools/mesa/ir3-dump.patch, built here from the host build
 #
 # The tool links Mesa's ir3 assembler, so it needs a Mesa source tree and a
 # meson build of it (the static libraries, and the generated headers). Point
@@ -86,14 +88,35 @@ fixtures: $(KERNEL_FIXTURES)
 
 # The AIR path. A Metal kernel written as LLVM IR (tools/kernels/*.ll) goes
 # through llvm-as, then through Mesa's ir3_compiler with the AIR front end --
-# built with tools/mesa/ir3-dump.patch applied, which gives it -o (the fixture)
-# and -n (its name): the stock ir3_compiler, and the one in the default
-# MESA_BUILD today, prints a listing and nothing else. So this is a target of
-# its own, not part of `fixtures`, until MESA_BUILD carries the patch.
+# built with tools/mesa/ir3-dump.patch applied, which gives it -o (the fixture),
+# -s (the text to carry) and -n (its name): the stock ir3_compiler, and the one
+# in MESA_BUILD, prints a listing and nothing else. The patched one is built
+# here, as out/host/ir3_compiler, from MESA_BUILD's own compile and link lines
+# for that program (read off its build.ninja, as MESA_DEFS is) over a copy of
+# ir3_cmdline.c with the patch applied: one object and one link, no Mesa
+# rebuild, and nothing written into the Mesa tree. IR3_COMPILER= names another
+# (a Mesa build that carries the patch itself).
 LLVM_AS      ?= llvm-as
-IR3_COMPILER ?= $(MESA_BUILD)/src/gallium/drivers/freedreno/ir3_compiler
+IR3_COMPILER ?= out/host/ir3_compiler
+IR3_CMDLINE_C = $(MESA_SRC)/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
+IR3_CMDLINE_ARGS = $(shell grep -m1 -A4 '^build src/gallium/drivers/freedreno/ir3_compiler.p/ir3_ir3_cmdline.c.o:' $(MESA_BUILD)/build.ninja \
+	| grep -m1 ' ARGS = ' | sed 's/^ ARGS = //')
+IR3_COMPILER_LINK_ARGS = $(shell grep -m1 -A4 '^build src/gallium/drivers/freedreno/ir3_compiler:' $(MESA_BUILD)/build.ninja \
+	| grep -m1 ' LINK_ARGS = ' | sed 's/^ LINK_ARGS = //')
 KERNEL_LL        = $(wildcard tools/kernels/*.ll)
+KERNEL_BC        = $(patsubst tools/kernels/%.ll,out/host/kernels/%.bc,$(KERNEL_LL))
 KERNEL_AIR_FIXTURES = $(patsubst tools/kernels/%.ll,tests/fixtures/%_air.hpp,$(KERNEL_LL))
+
+out/host/ir3-dump/ir3_cmdline.c: tools/mesa/ir3-dump.patch $(IR3_CMDLINE_C)
+	@mkdir -p $(dir $@)
+	patch -s -o $@ $(IR3_CMDLINE_C) tools/mesa/ir3-dump.patch
+
+# The compile runs in MESA_BUILD because the -I paths of its ninja line are relative to it; the object and the program
+# land here. $(CC) and $(CXX) stand in for the build's `ccache cc` and `c++`.
+out/host/ir3_compiler: out/host/ir3-dump/ir3_cmdline.c tools/kernels.mk
+	@test -n "$(IR3_CMDLINE_ARGS)" || { echo "tools/kernels.mk: no compile line for ir3_cmdline.c in $(MESA_BUILD)/build.ninja"; exit 1; }
+	cd $(MESA_BUILD) && $(CC) $(IR3_CMDLINE_ARGS) -c $(abspath $<) -o $(abspath out/host/ir3-dump/ir3_cmdline.o)
+	cd $(MESA_BUILD) && $(CXX) -o $(abspath $@) $(abspath out/host/ir3-dump/ir3_cmdline.o) $(IR3_COMPILER_LINK_ARGS)
 
 .PHONY: air-fixtures
 # keep the .bc: make would otherwise delete it as an intermediate and re-run llvm-as each time
@@ -103,7 +126,7 @@ out/host/kernels/%.bc: tools/kernels/%.ll
 	@mkdir -p $(dir $@)
 	$(LLVM_AS) -o $@ $<
 
-tests/fixtures/%_air.hpp: out/host/kernels/%.bc tools/kernels/%.ll
+tests/fixtures/%_air.hpp: out/host/kernels/%.bc tools/kernels/%.ll $(IR3_COMPILER)
 	$(IR3_COMPILER) --chip-id $(CHIP_ID) -o $@ -s tools/kernels/$*.ll -n $*_air $< > out/host/kernels/$*.listing
 
 air-fixtures: $(KERNEL_AIR_FIXTURES)

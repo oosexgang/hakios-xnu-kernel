@@ -18,6 +18,17 @@ appends to the binary, so dump_info now takes the binary rather than calling it.
 Applies after air-frontend.patch, air-ir3.patch and ir3-round-default.patch
 (tools/air/mk-host.sh's order) on mesa-25.0.7, with the AIR frontend copied in.
 
+-o also writes the Kernel's texture fields (textures[], numTextureSlots,
+samplerMask) from a walk of the NIR before ir3 lowers it: which Metal texture
+index the code samples (sam/saml/isaml through the texture table) or stores
+to as an image (stib/ldib at IBO slot num_ssbos + index), with what dimension
+and element class and width, and which sampler indices it names. The dispatch
+sizes its tables from these, not from ir3's num_samp, which counts textures and
+images together and ignores sampler indices (ir3_compiler_nir.c), nor from the
+front end's resource list, which says what was declared and not what the code
+does. The same walk lives in hakios-metal's src/compiler.cpp, and compiler_test
+holds the two to each other over tools/kernels/*.ll.
+
 SPDX-License-Identifier: MIT
 --- a/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
 +++ b/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
@@ -31,7 +42,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,185 @@
+@@ -35,19 +37,387 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -84,12 +95,176 @@ SPDX-License-Identifier: MIT
 +   }
 +}
 +
++/* -o: the kernel's textures, images and samplers as its INSTRUCTIONS address
++ * them (kernel.hpp: Kernel::textures, numTextureSlots, samplerMask), read off
++ * the NIR the front end produced, before ir3 lowers it. ir3's own num_samp
++ * counts sampled textures and images together and never looks at a sampler
++ * index (ir3_compiler_nir.c: num_samp = last texture used + 1 + num_images),
++ * so the dispatch cannot size its tables from it; and the front end's resource
++ * list says what was declared, not what the code does with it. The walk is the
++ * one hakios-metal's compileAir makes in-process (src/compiler.cpp), so that a
++ * fixture and an in-process compile agree field for field (compiler_test):
++ *
++ *   nir_tex_instr          slot texture_index, kind sampled (1): sam/saml with
++ *                          a sampler, isaml for texture.read (txf). dim from
++ *                          sampler_dim, element from dest_type -- but not from
++ *                          a query (txs, lod, query_levels...), whose int
++ *                          result is not the texture's class. The ops that take
++ *                          a sampler (tex, txb, txl, txd, tg4, lod:
++ *                          nir_tex_instr_need_sampler) set the sampler's bit;
++ *                          txf, txf_ms and the queries do not.
++ *   image_load/store       slot src[0] (always an immediate from the front end),
++ *                          kind image (2): ldib/stib at IBO slot num_ssbos +
++ *                          index (ir3_image.c:50-52). element from dest_type /
++ *                          src_type and the WIDTH from the value's bit size, as
++ *                          ir3_get_type_for_image_intrinsic reads them
++ *                          (ir3_image.c:96-141): a half image is a 16-bit stib
++ *                          into whatever descriptor is bound.
++ *   image_atomic(_swap)    the same, read and written, the atomic op's type.
++ *   image_size/levels/samples   the slot's kind and dimension only.
++ *
++ * A texture or sampler chosen at run time, an index at or past the Kernel's
++ * sixteen slots, a dimension or element class the Kernel has no name for, or
++ * one index used two ways are refused by name: the Kernel has no field for them.
++ */
++#define FIXTURE_TEXTURE_SLOTS 16   /* kernel.hpp's kMaxTextureSlots */
++
++struct fixture_texture {
++   uint8_t kind, dim, is_array, element, bits, read, write;   /* KernelTexture, less its pad */
++};
++
++struct fixture_textures {
++   struct fixture_texture slot[FIXTURE_TEXTURE_SLOTS];
++   unsigned num_slots;      /* highest SAMPLED index + 1: Kernel::numTextureSlots */
++   uint32_t sampler_mask;   /* Kernel::samplerMask */
++};
++
++static uint8_t
++fixture_dim(enum glsl_sampler_dim dim, const char *what, unsigned index)
++{
++   switch (dim) {
++   case GLSL_SAMPLER_DIM_1D:   return 1;   /* kTexDim1D */
++   case GLSL_SAMPLER_DIM_2D:
++   case GLSL_SAMPLER_DIM_RECT: return 2;   /* kTexDim2D */
++   case GLSL_SAMPLER_DIM_3D:   return 3;   /* kTexDim3D */
++   case GLSL_SAMPLER_DIM_CUBE: return 4;   /* kTexDimCube */
++   default:
++      errx(1, "-o: %s %u has a dimension (glsl_sampler_dim %d) KernelTextureDim has no name for",
++           what, index, (int)dim);
++   }
++}
++
++static uint8_t
++fixture_element(nir_alu_type type, const char *what, unsigned index)
++{
++   switch (nir_alu_type_get_base_type(type)) {
++   case nir_type_float: return 0;   /* kElemFloat */
++   case nir_type_uint:  return 1;   /* kElemUint */
++   case nir_type_int:   return 2;   /* kElemInt */
++   default:
++      errx(1, "-o: %s %u moves values of nir_alu_type %d, which is not float, uint or int",
++           what, index, (int)type);
++   }
++}
++
++static struct fixture_texture *
++fixture_slot(struct fixture_textures *t, unsigned index, uint8_t kind, const char *what)
++{
++   if (index >= FIXTURE_TEXTURE_SLOTS)
++      errx(1, "-o: %s index %u: the Kernel holds %u texture slots", what, index,
++           FIXTURE_TEXTURE_SLOTS);
++   struct fixture_texture *s = &t->slot[index];
++   if (s->kind && s->kind != kind)
++      errx(1, "-o: texture index %u is both sampled and addressed as an image", index);
++   s->kind = kind;
++   return s;
++}
++
++static void
++walk_textures(nir_shader *nir, struct fixture_textures *t)
++{
++   memset(t, 0, sizeof(*t));
++   nir_foreach_function_impl(impl, nir) {
++      nir_foreach_block(block, impl) {
++         nir_foreach_instr(instr, block) {
++            if (instr->type == nir_instr_type_tex) {
++               nir_tex_instr *tex = nir_instr_as_tex(instr);
++               if (nir_tex_instr_src_index(tex, nir_tex_src_texture_offset) >= 0 ||
++                   nir_tex_instr_src_index(tex, nir_tex_src_sampler_offset) >= 0 ||
++                   nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0 ||
++                   nir_tex_instr_src_index(tex, nir_tex_src_sampler_handle) >= 0)
++                  errx(1, "-o: a texture or sampler chosen at run time: the Kernel addresses them by Metal's own indices only");
++               struct fixture_texture *s = fixture_slot(t, tex->texture_index, 1, "texture");
++               s->dim = fixture_dim(tex->sampler_dim, "texture", tex->texture_index);
++               s->is_array = tex->is_array;
++               s->read = 1;
++               if (!nir_tex_instr_is_query(tex))
++                  s->element = fixture_element(tex->dest_type, "texture", tex->texture_index);
++               if (nir_tex_instr_need_sampler(tex)) {
++                  if (tex->sampler_index >= FIXTURE_TEXTURE_SLOTS)
++                     errx(1, "-o: sampler index %u: the Kernel holds %u sampler slots",
++                          tex->sampler_index, FIXTURE_TEXTURE_SLOTS);
++                  t->sampler_mask |= 1u << tex->sampler_index;
++               }
++               if (tex->texture_index + 1 > t->num_slots)
++                  t->num_slots = tex->texture_index + 1;
++            } else if (instr->type == nir_instr_type_intrinsic) {
++               nir_intrinsic_instr *in = nir_instr_as_intrinsic(instr);
++               nir_alu_type type = nir_type_invalid;
++               bool read = false, write = false, typed = true;
++               switch (in->intrinsic) {
++               case nir_intrinsic_image_load:
++                  type = nir_intrinsic_dest_type(in);
++                  read = true;
++                  break;
++               case nir_intrinsic_image_store:
++                  type = nir_intrinsic_src_type(in);
++                  write = true;
++                  break;
++               case nir_intrinsic_image_atomic:
++               case nir_intrinsic_image_atomic_swap:
++                  type = nir_atomic_op_type(nir_intrinsic_atomic_op(in));
++                  read = write = true;
++                  break;
++               case nir_intrinsic_image_size:
++               case nir_intrinsic_image_levels:
++               case nir_intrinsic_image_samples:
++                  typed = false;
++                  break;
++               default:
++                  continue;
++               }
++               if (!nir_src_is_const(in->src[0]))
++                  errx(1, "-o: an image chosen at run time: the Kernel addresses images by Metal's own indices only");
++               unsigned index = nir_src_as_uint(in->src[0]);
++               struct fixture_texture *s = fixture_slot(t, index, 2, "image");
++               s->dim = fixture_dim(nir_intrinsic_image_dim(in), "image", index);
++               s->is_array = nir_intrinsic_image_array(in);
++               s->read |= read;
++               s->write |= write;
++               if (typed) {
++                  const nir_intrinsic_info *info = &nir_intrinsic_infos[in->intrinsic];
++                  unsigned bits = info->has_dest ? in->def.bit_size : nir_src_bit_size(in->src[3]);
++                  uint8_t element = fixture_element(type, "image", index);
++                  if (s->bits && (s->bits != bits || s->element != element))
++                     errx(1, "-o: image %u is addressed as %u-bit values of element class %u and as %u-bit values of class %u",
++                          index, s->bits, s->element, bits, element);
++                  s->element = element;
++                  s->bits = bits;
++               }
++            }
++         }
++      }
++   }
++}
++
 +static int read_file(const char *filename, void **ptr, size_t *size);
 +
 +static void
 +dump_fixture(struct ir3_shader_variant *v, uint32_t *bin, const char *path,
 +             const char *in_path, const char *source_path,
-+             const char *kernel_name, const struct fd_dev_id *dev_id)
++             const char *kernel_name, const struct fd_dev_id *dev_id,
++             const struct fixture_textures *tex)
 +{
 +   const struct ir3_const_state *cs = ir3_const_state(v);
 +   const struct fd_dev_info *dev_info = fd_dev_info_raw(dev_id);
@@ -207,7 +382,44 @@ SPDX-License-Identifier: MIT
 +   fprintf(out, "    /* .name = */ \"%s\",\n", name);
 +   fprintf(out, "    /* .source = */ R\"ir3(%.*s)ir3\",\n", (int)source_size,
 +           source ? (const char *)source : "");
-+   fprintf(out, "    /* .textures = */ {},\n    /* .numTextureSlots = */ 0,\n    /* .samplerMask = */ 0,\n");
++   /* The texture slots: `{}` when the kernel addresses none (the text kernels'
++    * form, tools/ir3-kernel.cc), else every slot up to the highest addressed,
++    * all eight members of each (the pad too) so that -Wextra sees them
++    * initialized, with what each is in words beside it.
++    */
++   unsigned last_slot = 0;
++   bool any_slot = false;
++   for (unsigned i = 0; i < FIXTURE_TEXTURE_SLOTS; i++) {
++      if (tex->slot[i].kind) {
++         any_slot = true;
++         last_slot = i;
++      }
++   }
++   if (!any_slot) {
++      fputs("    /* .textures = */ {},\n", out);
++   } else {
++      static const char *const dims[] = { "?", "1D", "2D", "3D", "cube" };
++      static const char *const elements[] = { "float", "uint", "int" };
++      fputs("    /* .textures = */ {\n", out);
++      for (unsigned i = 0; i <= last_slot; i++) {
++         const struct fixture_texture *s = &tex->slot[i];
++         fprintf(out, "        /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, 0},", i, s->kind, s->dim,
++                 s->is_array, s->element, s->bits, s->read, s->write);
++         if (!s->kind)
++            fputs("   // not addressed\n", out);
++         else
++            fprintf(out, "   // %s %s%s of %s%s%s%s\n", s->kind == 1 ? "sampled" : "image",
++                    dims[s->dim], s->is_array ? " array" : "", elements[s->element],
++                    s->bits == 16 ? " as 16-bit" : s->bits ? " as 32-bit" : "",
++                    s->read ? ", read" : "", s->write ? ", written" : "");
++      }
++      fputs("    },\n", out);
++   }
++   fprintf(out, "    /* .numTextureSlots = */ %u,\n", tex->num_slots);
++   if (tex->sampler_mask)
++      fprintf(out, "    /* .samplerMask = */ 0x%x,\n", tex->sampler_mask);
++   else
++      fputs("    /* .samplerMask = */ 0,\n", out);
 +   fputs("};\n\n", out);
 +
 +   fputs("// The listing (ir3_shader_disasm):\n", out);
@@ -221,7 +433,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -299,13 +467,16 @@
+@@ -306,13 +676,16 @@
     return nir;
  }
  
@@ -239,7 +451,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -317,6 +488,9 @@
+@@ -324,6 +697,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -249,7 +461,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -334,6 +508,7 @@
+@@ -341,6 +717,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -257,7 +469,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -348,6 +523,15 @@
+@@ -355,6 +732,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -273,7 +485,21 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -496,6 +680,15 @@
+@@ -486,6 +872,13 @@
+       return -1;
+    }
+ 
++   /* The fixture's texture fields are read now, before ir3_finalize_nir's
++    * nir_lower_tex and the image lowering rewrite what the walk reads.
++    */
++   struct fixture_textures textures = { 0 };
++   if (out_path)
++      walk_textures(nir, &textures);
++
+    const struct ir3_shader_nir_options options = {};
+ 
+    ir3_nir_lower_io_to_temporaries(nir);
+@@ -503,6 +896,15 @@
     v->compiler = compiler;
     v->key = key;
     v->const_state = rzalloc_size(v, sizeof(*v->const_state));
@@ -289,7 +515,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -513,7 +706,14 @@
+@@ -520,7 +922,15 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }
@@ -301,7 +527,8 @@ SPDX-License-Identifier: MIT
 +   dump_info(v, bin, info);
 +   if (out_path)
 +      dump_fixture(v, bin, out_path, air_file ? air_file : filenames[0],
-+                   source_path, out_name ? out_name : nir->info.name, &dev_id);
++                   source_path, out_name ? out_name : nir->info.name, &dev_id,
++                   &textures);
  
     return 0;
  }

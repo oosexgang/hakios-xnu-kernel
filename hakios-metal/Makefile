@@ -56,7 +56,8 @@ $(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wild
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
 
-test: $(HOSTOUT)/tests $(if $(strip $(MESA)),out/host/kernels/fill_id.bc out/host/kernels/tex_fill.bc out/host/kernels/tex_copy.bc out/host/kernels/tex_sample_gid.bc)
+# (with the compiler in, compiler_test compiles every tools/kernels/*.ll against its fixture: their bitcode must be there)
+test: $(HOSTOUT)/tests $(if $(strip $(MESA)),$(KERNEL_BC))
 	$(HOSTOUT)/tests
 
 tsan:
