@@ -2,6 +2,7 @@
 // for field and word for word, the fixture tools/mesa/ir3-dump.patch had Mesa's ir3_compiler write (tests/fixtures/
 // *_air.hpp) -- the texture fields included, which hold the core's walk of the NIR (src/compiler.cpp) to the patch's.
 // Without Mesa's libraries in the build (no MESA_BUILD) the compiler is a refusal, and that is checked instead.
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -11,6 +12,7 @@
 #include "fixtures/tex_copy_air.hpp"
 #include "fixtures/tex_fill_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
+#include "fixtures/tex_fill_h_air.hpp"
 #include "test.hpp"
 
 using namespace hakios::metal;
@@ -176,6 +178,35 @@ TEST(compiler_matches_the_texture_fixtures) {
         CHECK(samplerAt0);
         CHECK(sample->listing.find("s#0, t#0") != std::string::npos);
     }
+    // the half image: the store typed by its VALUE (f16), the slot's class float as declared, 16-bit values
+    auto half = compareWithFixture("tex_fill_h", kernels::tex_fill_h_air, "tex_fill_h", "stib.b.typed.2d.f16.4");
+    if (half) {
+        CHECK_EQ(half->kernel.textures[0].element, uint8_t(kElemFloat));
+        CHECK_EQ(half->kernel.textures[0].bits, 16u);
+        bool declared = false;
+        for (const Resource& r : half->resources) declared = declared || (r.kind == Resource::kImage && r.typeName == "texture2d<half, write>");
+        CHECK(declared);
+    }
+}
+
+// What Apple declared and what the instructions do must name the same class: until 29 October the front end typed
+// every texture write by the call's void return type, so a texture2d<half, write> stored u16 and the dispatch refused
+// RGBA16Float for it. The compiler refuses such a kernel now, naming both; here the disagreement is made on purpose by
+// rewriting the declaration in the module's own bytes (the type name is a plain string in the bitcode's string table).
+TEST(compiler_refuses_a_declaration_that_disagrees_with_the_instructions) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("tex_fill_h");
+    CHECK(!bc.empty());
+    const std::string from = "texture2d<half, write>", to = "texture2d<uint, write>";
+    auto it = std::search(bc.begin(), bc.end(), from.begin(), from.end());
+    CHECK(it != bc.end());   // the declaration must be there as bytes, or this test checks nothing
+    if (it == bc.end()) return;
+    std::copy(to.begin(), to.end(), it);
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why);
+    CHECK(k == nullptr);
+    CHECK(why.find("declares texture 0 as texture2d<uint, write> but its instructions move float values") != std::string::npos);
+    if (k != nullptr || why.find("declares texture 0") == std::string::npos) std::printf("       %s\n", why.c_str());
 }
 
 // --- the texture kernels a second way: the NIR walk's numbers as the listings predict them, with no fixture in between ---

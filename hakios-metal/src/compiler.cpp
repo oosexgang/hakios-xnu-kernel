@@ -66,6 +66,24 @@ bool textureDim(glsl_sampler_dim dim, uint8_t* out, const char** name) {
     }
 }
 
+// The element class Apple DECLARED for a texture argument, read off air.arg_type_name ("texture2d<half, write>",
+// "texture2d<uint, read>", "texture2d_array<ushort, sample>" ...): the scalar type between the first '<' and the next ','
+// or '>'. False when the name has no such type (a sampler, a buffer, an unknown spelling).
+bool declaredElement(const std::string& typeName, uint8_t* element) {
+    size_t lt = typeName.find('<');
+    if (lt == std::string::npos) return false;
+    size_t b = lt + 1;
+    while (b < typeName.size() && typeName[b] == ' ') b++;
+    size_t e = b;
+    while (e < typeName.size() && typeName[e] != ',' && typeName[e] != '>' && typeName[e] != ' ') e++;
+    std::string t = typeName.substr(b, e - b);
+    if (t == "half" || t == "float" || t == "bfloat") *element = kElemFloat;
+    else if (t == "uint" || t == "ushort" || t == "uchar") *element = kElemUint;
+    else if (t == "int" || t == "short" || t == "char") *element = kElemInt;
+    else return false;
+    return true;
+}
+
 uint8_t elementOf(nir_alu_type t) {
     switch (nir_alu_type_get_base_type(t)) {
     case nir_type_uint: return kElemUint;
@@ -322,6 +340,21 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
                 res.textureArray = t.isArray;
                 res.element = t.element;
             }
+        }
+        // The declaration and the instructions must name the same class. They did not for every half or float image
+        // until 29 October: the front end typed a texture write by the call's return type (void, so uint), ir3 emitted
+        // stib.b.typed.*.u16/u32 for half and float values, and a typed store converts its source as its type says. The
+        // dispatch judges a bound format by the instructions' class, so a disagreement here would refuse the right
+        // format or convert the wrong way; it is refused at compile time, naming both.
+        uint8_t declared = 0;
+        if ((kind == Resource::kTexture || kind == Resource::kImage) && res.textureDim != 0 && declaredElement(res.typeName, &declared) &&
+            declared != res.element) {
+            static const char* const names[] = {"float", "uint", "int"};
+            refuse(why, out->name + " declares texture " + std::to_string(r.index) + " as " + res.typeName + " but its instructions move " +
+                            names[res.element] + " values through it: the front end's typing of the access is off");
+            ralloc_free(shader);
+            ralloc_free(mem);
+            return nullptr;
         }
         out->resources.push_back(std::move(res));
     }
