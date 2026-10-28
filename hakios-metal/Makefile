@@ -28,7 +28,7 @@ else
 # On Linux the cross compiler is hakios's wrapper around clang and the cctools linker (xnu-deps/host/bin, laid out by
 # xnu-deps/setup.sh), and the archive must be in the form Apple's ld reads: with GNU ar's symbol table the probe failed
 # to link against every symbol of the library.
-IOS_CXX   ?= $(HAKIOS)/xnu-deps/host/bin/xnu-clang++ -arch arm64 -isysroot $(SDK) -miphoneos-version-min=16.0
+IOS_CXX   ?= $(abspath $(HAKIOS))/xnu-deps/host/bin/xnu-clang++ -arch arm64 -isysroot $(SDK) -miphoneos-version-min=16.0
 IOS_AR    ?= llvm-ar --format=darwin rcs
 endif
 

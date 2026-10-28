@@ -20,7 +20,11 @@ static void report(bool ok, const std::string& what) {
     failures += !ok;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    bool recover = false;
+    for (int i = 1; i < argc; i++) {
+        recover = recover || strcmp(argv[i], "--recover") == 0;
+    }
     std::string why;
     auto transport = openKernelGpu(&why);
     if (transport == nullptr) {
@@ -28,10 +32,14 @@ int main() {
         return 100;
     }
     Gpu gpu(std::move(transport));
-    uint64_t id = 0, chip = 0;
+    uint64_t id = 0, chip = 0, freq = 0;
     gpu.param(kParamGpuId, &id);
     gpu.param(kParamChipId, &chip);
-    std::printf("probe: GPU %llu, chip id 0x%llx\n", (unsigned long long)id, (unsigned long long)chip);
+    gpu.param(kParamMaxFreq, &freq);
+    // (the chip id with the speed bin above it; FAULTS is how many times the kernel has reset a hung GPU in this run)
+    std::printf("probe: GPU %llu, chip id 0x%llx, %llu MHz, FAULTS %llu%s\n", (unsigned long long)id, (unsigned long long)chip,
+                (unsigned long long)(freq / 1000000), (unsigned long long)gpu.faults(),
+                recover ? "; the GPU will be hung on purpose at the end (--recover)" : "");
     auto queue = CommandQueue::make(gpu, &why);
     if (queue == nullptr) {
         report(false, "a queue: " + why);
@@ -130,6 +138,58 @@ int main() {
                           : "16 MB by CP_MEMCPY: " + why);
         } else {
             report(false, "two buffers of 16 MB: " + why);
+        }
+    }
+
+    // 5. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
+    // 4 Mi words in one CP_MEMCPY stopped the command processor on 27 October (125 000 took 4.2 ms), and the run and
+    // the system with it. With boot-arg gpu_recover=1 the kernel resets the core when a wait of a second or more
+    // comes to nothing, FAULTS rises by one, and the next command buffer is the core's own again. This goes last,
+    // because without that boot-arg it is the end of the run; the line says which it was.
+    if (recover) {
+        auto big1 = newBuffer(gpu, 16 * mb, &why), big2 = newBuffer(gpu, 16 * mb, &why);
+        if (big1 && big2) {
+            memset(b->contents(), 0x33, 4096);
+            uint64_t before = gpu.faults();
+            pm4::Stream s;
+            s.memcpy(big2->gpuAddress(), big1->gpuAddress(), 4u << 20);
+            s.waitForIdle();
+            int e = 0;
+            auto commands = gpu.newBo(4096, kBoGpuReadOnly | kBoWriteCombined, &e);
+            memcpy(commands->cpu(), s.words().data(), 4 * s.words().size());
+            uint32_t fence = 0;
+            int64_t began = gpu.transport().nowNs();
+            int sub = gpu.submit(0, *commands, 0, uint32_t(s.words().size()), {BoUse{&big1->bo(), false}, BoUse{&big2->bo(), true}},
+                                 &fence);
+            int w = sub == 0 ? gpu.wait(0, fence, 2000000000) : -1;   // 2 s: over the kernel's one-second line
+            int64_t took = (gpu.transport().nowNs() - began) / 1000000;
+            uint64_t after = gpu.faults();
+            if (sub != 0) {
+                report(false, "hang on purpose: the submission was refused: " + std::string(strerror(sub)));
+            } else if (w == 0) {
+                report(false, "hang on purpose: 4 Mi words in one CP_MEMCPY COMPLETED in " + std::to_string(took) +
+                                  " ms; the 27 October hang did not reproduce, so nothing here tests the recovery");
+            } else {
+                report(after == before + 1, "hang on purpose: the wait ended with " + std::string(strerror(w)) + " after " +
+                                                std::to_string(took) + " ms, FAULTS " + std::to_string(before) + " -> " +
+                                                std::to_string(after) +
+                                                (after == before + 1 ? " (the kernel reset the GPU)"
+                                                 : after == before ? " (NO reset: gpu_recover=1 missing, or recovery failed)"
+                                                                   : " (MORE than one reset)"));
+            }
+            // and after it: a command buffer committed now must run, and its bytes must land
+            auto cb = queue->commandBuffer();
+            cb->fill(*b, 0, 4096, 0xc3);
+            cb->commit();
+            cb->waitUntilCompleted();
+            std::vector<uint8_t> back(4096);
+            memcpy(back.data(), b->contents(), 4096);
+            bool ok = cb->status() == CommandBuffer::kCompleted;
+            for (size_t i = 0; i < 4096; i++) ok = ok && back[i] == 0xc3;
+            report(ok, "after the hang: a fill of 4096 bytes " + std::string(ok ? "ran and landed" : "did NOT land") +
+                           (cb->error().empty() ? "" : " (" + cb->error() + ")") + ", FAULTS now " + std::to_string(gpu.faults()));
+        } else {
+            report(false, "two buffers of 16 MB for the hang: " + why);
         }
     }
 
