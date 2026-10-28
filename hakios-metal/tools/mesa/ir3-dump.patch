@@ -1,0 +1,306 @@
+Teach ir3_compiler to write the variant out: -o FILE, a hakios::metal::Kernel fixture.
+
+ir3_compiler prints a listing of what it compiled and keeps the binary to itself.
+hakios-metal dispatches kernels with raw PM4, as Mesa's computerator does, and
+needs the words together with the layout ir3 chose around them: where the driver
+params go, which UBO ranges were pushed to consts and to where, the immediates
+and their offset, the register ids of the ids the hardware loads, constlen,
+instrlen, the register footprint. No listing carries all of that, and the AIR
+path has no other place where the variant exists -- the frontend is reached only
+through this tool. So -o FILE writes the variant as the same C++ fixture that
+hakios-metal's tools/ir3-kernel writes for a text kernel (its
+include/hakios-metal/kernel.hpp documents every field and the register that
+reads it), and -s FILE carries the kernel text (the .ll) into it for the record.
+
+The variant is assembled once: ir3_shader_assemble frees the constant data it
+appends to the binary, so dump_info now takes the binary rather than calling it.
+
+Applies after air-frontend.patch, air-ir3.patch and ir3-round-default.patch
+(tools/air/mk-host.sh's order) on mesa-25.0.7, with the AIR frontend copied in.
+
+SPDX-License-Identifier: MIT
+--- a/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
++++ b/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
+@@ -6,7 +6,9 @@
+  *    Rob Clark <robclark@freedesktop.org>
+  */
+ 
++#include <ctype.h>
+ #include <err.h>
++#include <inttypes.h>
+ #include <fcntl.h>
+ #include <getopt.h>
+ #include <stdint.h>
+@@ -35,19 +37,185 @@
+ #include "compiler/spirv/nir_spirv.h"
+ #include "compiler/spirv/spirv_info.h"
+ #include "compiler/air/nir_air.h"
++#include "common/freedreno_dev_info.h"
+ 
+ #include "pipe/p_context.h"
+ 
+ static void
+-dump_info(struct ir3_shader_variant *so, const char *str)
++dump_info(struct ir3_shader_variant *so, uint32_t *bin, const char *str)
+ {
+-   uint32_t *bin;
+    const char *type = ir3_shader_stage(so);
+-   bin = ir3_shader_assemble(so);
+    printf("; %s: %s\n", type, str);
+    ir3_shader_disasm(so, bin, stdout);
+ }
+ 
++/* -o FILE: the compiled variant written out as a hakios::metal::Kernel fixture,
++ * in the format hakios-metal's tools/ir3-kernel writes for a text kernel (its
++ * include/hakios-metal/kernel.hpp documents every field and the register that
++ * reads it): constexpr arrays of the words and the immediates, a constexpr
++ * Kernel with every field in order, and the listing as comments. The two
++ * writers are kept in step by hand; a field added to the struct is added to
++ * both. It lives here because this is the only place where an AIR kernel's
++ * variant exists: ir3_compiler has no binary output of its own, and the driver
++ * needs the words together with the layout ir3 chose for them -- where the
++ * driver params and the pushed UBO ranges go -- which no listing carries whole.
++ */
++static void
++emit_words(FILE *out, const char *name, const uint32_t *words, uint32_t count)
++{
++   fprintf(out, "constexpr uint32_t %s[] = {", name);
++   for (uint32_t i = 0; i < count; i++) {
++      if (i % 4 == 0)
++         fputs("\n   ", out);
++      fprintf(out, " 0x%08x,", words[i]);
++   }
++   fputs("\n};\n", out);
++}
++
++static void
++emit_comment_block(FILE *out, const char *text)
++{
++   while (*text) {
++      const char *nl = strchr(text, '\n');
++      size_t len = nl ? (size_t)(nl - text) : strlen(text);
++      fprintf(out, "// %.*s\n", (int)len, text);
++      text += len + (nl ? 1 : 0);
++   }
++}
++
++static int read_file(const char *filename, void **ptr, size_t *size);
++
++static void
++dump_fixture(struct ir3_shader_variant *v, uint32_t *bin, const char *path,
++             const char *in_path, const char *source_path,
++             const char *kernel_name, const struct fd_dev_id *dev_id)
++{
++   const struct ir3_const_state *cs = ir3_const_state(v);
++   const struct fd_dev_info *dev_info = fd_dev_info_raw(dev_id);
++   const unsigned max_ubo_ranges = 8;   /* kernel.hpp's kMaxUboRanges */
++   const unsigned max_bufs = 4;         /* kMaxBufs */
++   const unsigned no_const_regid = 0xff;
++
++   /* The kernel's name: -n, else the entry point's (nir->info.name); made an identifier. */
++   char name[128];
++   const char *nir_name = kernel_name ? kernel_name : "kernel";
++   unsigned n = 0;
++   for (const char *c = nir_name; *c && n + 1 < sizeof(name); c++)
++      name[n++] = isalnum((unsigned char)*c) ? *c : '_';
++   name[n] = 0;
++   if (!n || isdigit((unsigned char)name[0]))
++      errx(1, "-o: cannot name the kernel after \"%s\"", nir_name);
++
++   /* The kernel text, when given (-s): the .ll of an AIR kernel, for the record. */
++   void *source = NULL;
++   size_t source_size = 0;
++   if (source_path && read_file(source_path, &source, &source_size))
++      errx(1, "-s %s: cannot read it", source_path);
++
++   if (cs->ubo_state.num_enabled > max_ubo_ranges)
++      errx(1, "-o: %u UBO ranges, the Kernel struct holds %u",
++           cs->ubo_state.num_enabled, max_ubo_ranges);
++
++   char *listing = NULL;
++   size_t listing_size = 0;
++   FILE *ls = open_memstream(&listing, &listing_size);
++   ir3_shader_disasm(v, bin, ls);
++   fclose(ls);
++
++   FILE *out = fopen(path, "w");
++   if (!out)
++      errx(1, "%s: cannot write it", path);
++
++   uint32_t num_words = v->info.size / 4;
++   uint32_t local_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
++   uint32_t wg_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_WORKGROUP_ID);
++   int32_t driver_params =
++      ir3_const_can_upload(&cs->allocs, IR3_CONST_ALLOC_DRIVER_PARAMS, v->constlen)
++         ? (int32_t)cs->allocs.consts[IR3_CONST_ALLOC_DRIVER_PARAMS].offset_vec4
++         : -1;
++
++   fprintf(out,
++           "// %s: hakios::metal::Kernel fixture, generated by ir3_compiler -o (tools/mesa/ir3-dump.patch)\n"
++           "// from %s for %s (chip id 0x%" PRIx64 ", gen %u). Do not edit; recompile the kernel.\n"
++           "// SPDX-License-Identifier: MIT\n"
++           "#pragma once\n\n"
++           "#include \"hakios-metal/kernel.hpp\"\n\n"
++           "namespace hakios::metal::kernels {\n\n",
++           name, in_path, fd_dev_name(dev_id), dev_id->chip_id, dev_info->chip);
++
++   char words_name[160], imm_name[160];
++   snprintf(words_name, sizeof(words_name), "%s_words", name);
++   snprintf(imm_name, sizeof(imm_name), "%s_immediates", name);
++   emit_words(out, words_name, bin, num_words);
++   fputc('\n', out);
++   if (cs->immediates_count) {
++      emit_words(out, imm_name, cs->immediates, cs->immediates_count);
++      fputc('\n', out);
++   }
++
++   fprintf(out, "constexpr Kernel %s = {\n", name);
++   fprintf(out, "    /* .words = */ %s,\n", words_name);
++   fprintf(out, "    /* .numWords = */ %u,\n", num_words);
++   fprintf(out, "    /* .instrlen = */ %u,\n", v->instrlen);
++   fprintf(out, "    /* .constlen = */ %u,\n", v->constlen);
++   fprintf(out, "    /* .maxReg = */ %d,\n", v->info.max_reg);
++   fprintf(out, "    /* .maxHalfReg = */ %d,\n", v->info.max_half_reg);
++   fprintf(out, "    /* .doubleThreadsize = */ %s,\n", v->info.double_threadsize ? "true" : "false");
++   fprintf(out, "    /* .mergedRegs = */ %s,\n", v->mergedregs ? "true" : "false");
++   fprintf(out, "    /* .earlyPreamble = */ %s,\n", v->early_preamble ? "true" : "false");
++   fprintf(out, "    /* .branchstackHw = */ %u,\n", ir3_shader_branchstack_hw(v));
++   fprintf(out, "    /* .sharedSize = */ %u,\n", v->shared_size);
++   fprintf(out, "    /* .pvtmemSize = */ %u,\n", v->pvtmem_size);
++   fprintf(out, "    /* .pvtmemPerWave = */ %s,\n", v->pvtmem_per_wave ? "true" : "false");
++   fprintf(out, "    /* .localSize = */ {%u, %u, %u},\n", v->local_size[0], v->local_size[1],
++           v->local_size[2]);
++   fprintf(out, "    /* .localSizeVariable = */ %s,\n", v->local_size_variable ? "true" : "false");
++   fprintf(out, "    /* .localIdRegid = */ 0x%02x,\n", local_id);
++   fprintf(out, "    /* .workGroupIdRegid = */ 0x%02x,\n", wg_id);
++   fprintf(out, "    /* .immediates = */ %s,\n", cs->immediates_count ? imm_name : "nullptr");
++   fprintf(out, "    /* .numImmediates = */ %u,\n", cs->immediates_count);
++   fprintf(out, "    /* .immediatesOffsetVec4 = */ %u,\n", cs->allocs.max_const_offset_vec4);
++   fprintf(out, "    /* .driverParamsOffsetVec4 = */ %d,\n", driver_params);
++   fprintf(out, "    /* .numUbos = */ %u,\n", cs->num_ubos);
++   fprintf(out, "    /* .numSsbos = */ %u,\n", v->num_ssbos);
++   fprintf(out, "    /* .numIbos = */ %u,\n", v->num_ibos);
++   fprintf(out, "    /* .numSamp = */ %d,\n", v->num_samp);
++   fputs("    /* .uboRanges = */ {", out);
++   for (unsigned i = 0; i < max_ubo_ranges; i++) {
++      if (i < cs->ubo_state.num_enabled) {
++         const struct ir3_ubo_range *r = &cs->ubo_state.range[i];
++         fprintf(out, "%s{%u, %u, %u, %u}", i ? ", " : "", r->ubo.block, r->offset / 16,
++                 r->start / 4, (r->end - r->start) / 4);
++      } else {
++         fprintf(out, "%s{0, 0, 0, 0}", i ? ", " : "");
++      }
++   }
++   fputs("},\n", out);
++   fprintf(out, "    /* .numUboRanges = */ %u,\n", cs->ubo_state.num_enabled);
++   /* @buf and @numwg are the text assembler's; a compiled kernel binds its
++    * buffers as SSBOs/UBOs and reads its grid from the driver params.
++    */
++   fputs("    /* .numBufs = */ 0,\n", out);
++   fputs("    /* .bufs = */ {", out);
++   for (unsigned i = 0; i < max_bufs; i++)
++      fprintf(out, "%s{0, 0x%02x}", i ? ", " : "", no_const_regid);
++   fputs("},\n", out);
++   fprintf(out, "    /* .numwgConstRegid = */ 0x%02x,\n", no_const_regid);
++   fprintf(out, "    /* .constantDataOffset = */ %u,\n", v->info.constant_data_offset);
++   fprintf(out, "    /* .constantDataSize = */ %u,\n", v->constant_data_size);
++   fprintf(out, "    /* .name = */ \"%s\",\n", name);
++   fprintf(out, "    /* .source = */ R\"ir3(%.*s)ir3\",\n", (int)source_size,
++           source ? (const char *)source : "");
++   fputs("};\n\n", out);
++
++   fputs("// The listing (ir3_shader_disasm):\n", out);
++   emit_comment_block(out, listing);
++   fputs("\n} // namespace hakios::metal::kernels\n", out);
++   fclose(out);
++   free(listing);
++   printf("wrote %s\n", path);
++}
++
+ static void
+ insert_sorted(struct exec_list *var_list, nir_variable *new_var)
+ {
+@@ -299,13 +467,16 @@
+    return nir;
+ }
+ 
+-static const char *shortopts = "g:c:hv";
++static const char *shortopts = "g:c:hvo:s:n:";
+ 
+ static const struct option longopts[] = {
+    {"gpu",     required_argument, 0, 'g'},
+    {"chip-id", required_argument, 0, 'c'},
+    {"help",    no_argument,       0, 'h'},
+    {"verbose", no_argument,       0, 'v'},
++   {"output",  required_argument, 0, 'o'},
++   {"source",  required_argument, 0, 's'},
++   {"name",    required_argument, 0, 'n'},
+ };
+ 
+ static void
+@@ -317,6 +488,9 @@
+    printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
+    printf("    -h, --help       - show this message\n");
+    printf("    -v, --verbose    - verbose compiler/debug messages\n");
++   printf("    -o, --output FILE - write the variant as a hakios::metal::Kernel fixture\n");
++   printf("    -s, --source FILE - the kernel text to carry in the fixture (with -o)\n");
++   printf("    -n, --name NAME   - the fixture's name (with -o; default: the entry point's)\n");
+ }
+ 
+ int
+@@ -334,6 +508,7 @@
+    void *ptr;
+    bool from_tgsi = false;
+    const char *air_file = NULL, *air_entry = NULL;
++   const char *out_path = NULL, *source_path = NULL, *out_name = NULL;
+    size_t size;
+ 
+    while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
+@@ -348,6 +523,15 @@
+       case 'v':
+          ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
+          break;
++      case 'o':
++         out_path = optarg;
++         break;
++      case 's':
++         source_path = optarg;
++         break;
++      case 'n':
++         out_name = optarg;
++         break;
+       default:
+          printf("unrecognized arg: %c\n", opt);
+          FALLTHROUGH;
+@@ -496,6 +680,15 @@
+    v->compiler = compiler;
+    v->key = key;
+    v->const_state = rzalloc_size(v, sizeof(*v->const_state));
++   /* What ir3_shader.c's alloc_variant sets and this hand-built variant did
++    * not: the merged register file (every gen 6 driver compiles with it, and
++    * SP_CS_CTRL_REG0.MERGEDREGS must say what the code was allocated for), the
++    * IBO counts the dispatch programs (SP_CS_CONFIG.NIBO), and the name.
++    */
++   v->mergedregs = compiler->gen >= 6;
++   v->num_ssbos = nir->info.num_ssbos;
++   v->num_ibos = nir->info.num_ssbos + nir->info.num_images;
++   v->name = ralloc_strdup(v, nir->info.name);
+ 
+    shader->variants = v;
+    shader->variant_count = 1;
+@@ -513,7 +706,14 @@
+       fprintf(stderr, "compiler failed!\n");
+       return ret;
+    }
+-   dump_info(v, info);
++   /* Assembled once: ir3_shader_assemble frees the variant's constant data
++    * as it appends it to the binary, so a second call would copy from NULL.
++    */
++   uint32_t *bin = ir3_shader_assemble(v);
++   dump_info(v, bin, info);
++   if (out_path)
++      dump_fixture(v, bin, out_path, air_file ? air_file : filenames[0],
++                   source_path, out_name ? out_name : nir->info.name, &dev_id);
+ 
+    return 0;
+ }
