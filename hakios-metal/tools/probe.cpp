@@ -26,6 +26,7 @@
 #include "../tests/fixtures/tex_fill_air.hpp"
 #include "../tests/fixtures/tex_fill_bc.hpp"
 #include "../tests/fixtures/tex_fill_h_air.hpp"
+#include "../tests/fixtures/tex_fill_h_bc.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 
@@ -988,7 +989,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // 7d. the three kernels compiled on the phone: the same words, layout and texture fields as the host's
+            // 7d. the four kernels compiled on the phone: the same words, layout and texture fields as the host's
             // fixtures (the core's walk of the NIR against the fixture writer's), and tex_fill dispatched from the
             // phone's own compile
             if (!hasCompiler()) {
@@ -1000,9 +1001,12 @@ int main(int argc, char** argv) {
                     const Kernel* fixture;
                     const char* name;
                 };
+                // tex_fill_h last: its store is typed f16 only by the front end as fixed on 29 October, so this line is also
+                // the proof that the phone's compiler carries that front end (and not the one that typed every write as uint)
                 const Pair pairs[] = {{kernels::tex_fill_bc, kernels::tex_fill_bc_size, &kernels::tex_fill_air, "tex_fill.ll"},
                                       {kernels::tex_copy_bc, kernels::tex_copy_bc_size, &kernels::tex_copy_air, "tex_copy.ll"},
-                                      {kernels::tex_sample_gid_bc, kernels::tex_sample_gid_bc_size, &kernels::tex_sample_gid_air, "tex_sample_gid.ll"}};
+                                      {kernels::tex_sample_gid_bc, kernels::tex_sample_gid_bc_size, &kernels::tex_sample_gid_air, "tex_sample_gid.ll"},
+                                      {kernels::tex_fill_h_bc, kernels::tex_fill_h_bc_size, &kernels::tex_fill_h_air, "tex_fill_h.ll"}};
                 for (const Pair& p : pairs) {
                     std::string whyCompile;
                     auto compiled = compileAir(p.bc, p.size, &whyCompile);

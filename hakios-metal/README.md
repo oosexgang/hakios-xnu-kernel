@@ -52,10 +52,19 @@ failed twice without the GPU being wrong: the driver refused a 4-byte binding ag
 the probe's line and expected four words where six were measured. Render encoders, textures, samplers, heaps, fences
 and events refuse by name.
 Textures and samplers in 2D compute are served (sampled textures, images written with `stib`, Metal's samplers with
-clamp-to-zero through the border table) and checked on the fake GPU; nothing of them has run on the phone yet, and
-`tools/kernels/tex_fill.ll`, `tex_copy.ll`, `tex_sample_gid.ll` are the kernels to measure them with. Not yet: textures
-other than 2D, one level, one slice (1D, 3D, cube, arrays, mipmaps, MSAA), border colours other than transparent black,
-compare samplers, constexpr samplers, the front end's null texture, textures over buffers (`bytesPerRow` of the caller's
+clamp-to-zero through the border table), checked on the fake GPU, and measured on the phone on 29 October (hakios
+`logs/011104-run.log`, `012127-run.log`) with `tools/kernels/tex_fill.ll`, `tex_copy.ll`, `tex_sample_gid.ll` and
+`tex_fill_h.ll`: an image written through the IBO table lands every pixel of R32Uint and all four lanes of RGBA32Uint
+(2048 of 2048, the row padding untouched, a half grid leaving the other half canary), a texture read through the texture
+table beside it copies 2048 of 2048, a sampler of Metal's returns the texel exactly at the centres with nearest and with
+linear filtering and the bilinear mean at quarter positions within 0.000123 (60 of 64 pixels differing from nearest, as
+expected), and a half image receives 2048 of 2048 exact half bit patterns. That last one found a bug in hakios's front
+end: it typed every texture write by the call's void return type, so half and float values were stored as integers
+(`stib.b.typed.2d.u16`), and the driver, reading the kernel's class off that, refused RGBA16Float for Apple's
+`MetalFaceMask_Clear`; the front end types the store by its value now, and a declaration that disagrees with the
+instructions' class is refused at compile time, by the compiler here and by the fixture writer. Not yet: textures other
+than 2D, one level, one slice (1D, 3D, cube, arrays, mipmaps, MSAA), border colours other than transparent black, compare
+samplers, constexpr samplers, the front end's null texture, textures over buffers (`bytesPerRow` of the caller's
 choosing), UBO descriptors for an indexed `constant` load ir3 did not push, private memory, threadgroup memory, anything
 that draws (each refused by name, not served).
 CoreAnimation drawing through Metal is behind all of that.
