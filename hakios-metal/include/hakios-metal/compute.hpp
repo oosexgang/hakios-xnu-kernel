@@ -57,6 +57,13 @@ struct Options {
     bool invalidate = true;     // CP_EVENT_WRITE CACHE_INVALIDATE before the dispatch (Gallium's barrier)
     bool marker = true;         // CP_SET_MARKER RM6_COMPUTE
     bool tail = true;           // the end: RB_DONE_TS, a wait for it, CACHE_FLUSH_TS, a wait for it
+    bool tailRbDone = true;     // ... the RB_DONE_TS half of it
+    bool tailCacheFlush = true; // ... the CACHE_FLUSH_TS half of it
+    // CP_EVENT_WRITE_0_TIMESTAMP on the two events. Off: with it the GPU writes a timestamp where the wait expects the
+    // value (the XML says "write back timestamp instead of value from packet", and the phone said so on 28 October: every
+    // dispatch hung on its own tail, each half of it, until the bit was cleared; computerator leaves it clear, and so does
+    // the kernel's own fence write). True is here for the fake GPU's test of that, nothing else.
+    bool tailTimestampBit = false;
 };
 
 // The whole dispatch into STREAM: KERNEL over GROUPS work groups of LOCAL threads each, BUFFERS bound by index,

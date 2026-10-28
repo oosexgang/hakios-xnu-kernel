@@ -52,8 +52,8 @@ void event(pm4::Stream& st, vgt_event_type e) {
 }
 
 // an event that writes VALUE to ADDRESS when it has completed: how the GPU says the caches are flushed
-void eventTimestamp(pm4::Stream& st, vgt_event_type e, uint64_t address, uint32_t value) {
-    uint32_t w[4] = {eventWrite0(e, true), uint32_t(address), uint32_t(address >> 32), value};
+void eventTimestamp(pm4::Stream& st, vgt_event_type e, uint64_t address, uint32_t value, bool timestampBit) {
+    uint32_t w[4] = {eventWrite0(e, timestampBit), uint32_t(address), uint32_t(address >> 32), value};
     st.packet(CP_EVENT_WRITE, w, 4);
 }
 
@@ -299,10 +299,14 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     if (o.tail) {
         // the end, as computerator's cache_flush: the GPU says it is done, the caches are flushed, and the flush is waited for
         uint64_t ts = table + kTableTimestampsAt;
-        eventTimestamp(stream, RB_DONE_TS, ts, 1);
-        waitForWord(stream, ts, 1);
-        eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2);
-        waitForWordAtLeast(stream, ts + 4, 2);
+        if (o.tailRbDone) {
+            eventTimestamp(stream, RB_DONE_TS, ts, 1, o.tailTimestampBit);
+            waitForWord(stream, ts, 1);
+        }
+        if (o.tailCacheFlush) {
+            eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2, o.tailTimestampBit);
+            waitForWordAtLeast(stream, ts + 4, 2);
+        }
     }
     return true;
 }

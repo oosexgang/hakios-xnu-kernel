@@ -419,12 +419,21 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 }
                 if (h.count == 4) {
                     uint64_t to = p[1] | uint64_t(p[2]) << 32;
-                    uint8_t* d = at(to, 4);
+                    // With the TIMESTAMP bit the GPU writes a timestamp of its own, not the packet's value (the XML says so,
+                    // and on the phone a wait for the value then never ended: 28 October, every dispatch); here a 64-bit
+                    // count no wait for a small value can match, 8 bytes as the GPU's timestamp is.
+                    bool timestamp = (p[0] & CP_EVENT_WRITE_0_TIMESTAMP) != 0;
+                    uint8_t* d = at(to, timestamp ? 8 : 4);
                     if (d == nullptr || to % 4 != 0) {
                         fault(text("CP_EVENT_WRITE's timestamp at %#llx: outside every buffer", to));
                         return false;
                     }
-                    memcpy(d, p + 3, 4);
+                    if (timestamp) {
+                        uint64_t ticks = 0x0001000000000000ull + stats_.packets;
+                        memcpy(d, &ticks, 8);
+                    } else {
+                        memcpy(d, p + 3, 4);
+                    }
                 }
                 break;
             }

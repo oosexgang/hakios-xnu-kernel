@@ -91,9 +91,13 @@ static std::string status(const CommandBuffer& cb, Gpu& gpu) {
 
 int main(int argc, char** argv) {
     bool recover = false, bisect = false;
+    compute::Options chosen;   // what the dispatches of stage 5 are encoded with
     for (int i = 1; i < argc; i++) {
         recover = recover || strcmp(argv[i], "--recover") == 0;
         bisect = bisect || strcmp(argv[i], "--bisect") == 0;
+        // --notail: no end-of-dispatch events and waits of our own; the kernel's own CACHE_FLUSH_TS fence closes the
+        // submission (28 October: with them every dispatch hung, without them end_only completed in 48 us)
+        if (strcmp(argv[i], "--notail") == 0) chosen.tail = false;
     }
     std::string why;
     auto transport = openKernelGpu(&why);
@@ -229,7 +233,7 @@ int main(int argc, char** argv) {
                            const uint32_t* imm) -> std::shared_ptr<CommandBuffer> {
                 const uint32_t g[3] = {groups, 1, 1};
                 auto cb = queue->commandBuffer();
-                cb->dispatch(k, g, local, bufs, imm);
+                cb->dispatch(k, g, local, bufs, imm, chosen);
                 cb->commit();
                 cb->waitUntilCompleted();
                 return cb;
@@ -334,13 +338,19 @@ int main(int argc, char** argv) {
             off(o);
             variants.push_back(Variant{name, o});
         };
+        // 28 October, first round: every variant with the end hung, both without it completed. So the end it is; now its parts.
         without("without the end (RB_DONE_TS, CACHE_FLUSH_TS and their waits)", [](compute::Options& o) { o.tail = false; });
-        without("without CACHE_INVALIDATE", [](compute::Options& o) { o.invalidate = false; });
-        without("without CP_SET_MARKER", [](compute::Options& o) { o.marker = false; });
-        without("without the private-memory registers", [](compute::Options& o) { o.pvtmemZero = false; });
-        without("without SP_MODE_CONTROL, SP_PERFCTR_ENABLE, SP_FLOAT_CNTL", [](compute::Options& o) { o.prelude = false; });
-        without("without the HLSQ/SP copies (HLSQ_CS_CTRL_REG1, SP_CS_CNTL_0/1)", [](compute::Options& o) { o.hlsqCopies = false; });
-        without("without HLSQ_INVALIDATE_CMD", [](compute::Options& o) { o.invalidateCmd = false; });
+        without("with the end, the TIMESTAMP bit off (computerator's form)", [](compute::Options& o) { o.tailTimestampBit = false; });
+        without("with only RB_DONE_TS and its wait", [](compute::Options& o) { o.tailCacheFlush = false; });
+        without("with only CACHE_FLUSH_TS and its wait", [](compute::Options& o) { o.tailRbDone = false; });
+        without("with only CACHE_FLUSH_TS and its wait, TIMESTAMP bit off", [](compute::Options& o) {
+            o.tailRbDone = false;
+            o.tailTimestampBit = false;
+        });
+        without("with only RB_DONE_TS and its wait, TIMESTAMP bit off", [](compute::Options& o) {
+            o.tailCacheFlush = false;
+            o.tailTimestampBit = false;
+        });
         variants.push_back(Variant{"with none of those: the registers, the loads, NDRANGE, CP_EXEC_CS, CP_WAIT_FOR_IDLE", minimal});
         const uint32_t one[3] = {1, 1, 1};
         for (const Variant& v : variants) {

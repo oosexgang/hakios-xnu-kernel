@@ -305,6 +305,29 @@ TEST(the_fake_refuses_a_wait_that_nothing_satisfies) {
     CHECK_EQ(r2.fake->stats().faults, 0u);
 }
 
+TEST(an_event_with_the_timestamp_bit_writes_a_timestamp_not_the_value) {
+    // the hang of 28 October: the dispatch's end waited for a value the event never wrote, because the TIMESTAMP bit
+    // makes the GPU write a timestamp there instead. The fake does the same now, so that tail fails here.
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    compute::Options bit;
+    bit.tailTimestampBit = true;
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->dispatch(kernels::end_only, kGroups16, nullptr, {}, nullptr, bit));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kError);
+    CHECK(r.fake->stats().lastFault.find("would wait forever") != std::string::npos);
+    // and the default form, the bit clear, completes
+    Rig r2;
+    auto cb2 = r2.queue->commandBuffer();
+    CHECK(cb2->dispatch(kernels::end_only, kGroups16, nullptr, {}));
+    cb2->commit();
+    cb2->waitUntilCompleted();
+    CHECK(cb2->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r2.fake->stats().faults, 0u);
+}
+
 TEST(the_fake_refuses_id_registers_whose_two_copies_differ) {
     Rig r;
     auto out = buffer(r, 4096, 0);
