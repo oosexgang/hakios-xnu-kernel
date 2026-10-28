@@ -10,6 +10,7 @@
 
 #include "hakios-metal/command.hpp"
 #include "hakios-metal/compiler.hpp"
+#include "hakios-metal/metallib.hpp"
 #include "../tests/fixtures/end_only.hpp"
 #include "../tests/fixtures/fill_id.hpp"
 #include "../tests/fixtures/fill_id_air.hpp"
@@ -94,12 +95,17 @@ static std::string status(const CommandBuffer& cb, Gpu& gpu) {
 int main(int argc, char** argv) {
     bool recover = false, bisect = false;
     compute::Options chosen;   // what the dispatches of stage 5 are encoded with
+    std::vector<std::pair<std::string, std::string>> metallibs;   // --metallib FILE FUNCTION: a kernel of the phone's own image
     for (int i = 1; i < argc; i++) {
         recover = recover || strcmp(argv[i], "--recover") == 0;
         bisect = bisect || strcmp(argv[i], "--bisect") == 0;
         // --notail: no end-of-dispatch events and waits of our own; the kernel's own CACHE_FLUSH_TS fence closes the
         // submission (28 October: with them every dispatch hung, without them end_only completed in 48 us)
         if (strcmp(argv[i], "--notail") == 0) chosen.tail = false;
+        if (strcmp(argv[i], "--metallib") == 0 && i + 2 < argc) {
+            metallibs.emplace_back(argv[i + 1], argv[i + 2]);
+            i += 2;
+        }
     }
     std::string why;
     auto transport = openKernelGpu(&why);
@@ -366,7 +372,123 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 7. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
+    // 7. (--metallib FILE FUNCTION) a kernel of the image's own: read off the phone's filesystem, compiled here, and run
+    // over the buffers its metadata names, each prefilled with a canary. What is known afterwards: whether the front end
+    // and ir3 took it, whether the GPU finished it, and which buffers it wrote and how much. What is NOT known: whether
+    // the values are right -- there is no reference here; that is the next instrument, not this one.
+    for (const auto& [path, function] : metallibs) {
+        std::string what = function + " of " + path;
+        if (!hasCompiler()) {
+            report(false, what + ": no compiler in this build (MESA=1)");
+            continue;
+        }
+        std::vector<uint8_t> file;
+        {
+            FILE* f = fopen(path.c_str(), "rb");
+            if (f == nullptr) {
+                report(false, what + ": cannot open the file");
+                continue;
+            }
+            uint8_t chunk[65536];
+            size_t n;
+            while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) file.insert(file.end(), chunk, chunk + n);
+            fclose(f);
+        }
+        MetalLibrary lib;
+        if (!lib.parse(file.data(), file.size())) {
+            report(false, what + ": " + lib.why());
+            continue;
+        }
+        const MetalFunction* fn = lib.find(function);
+        const uint8_t* bitcode = nullptr;
+        uint64_t length = 0;
+        if (fn == nullptr || !lib.bitcode(*fn, &bitcode, &length)) {
+            report(false, what + ": no such function in its " + std::to_string(lib.functions().size()));
+            continue;
+        }
+        std::string why3;
+        auto k = compileAir(bitcode, size_t(length), &why3);
+        if (k == nullptr) {
+            report(false, "compile " + what + ": " + why3);
+            continue;
+        }
+        uint32_t deviceBuffers = 0, constantBuffers = 0, others = 0, highest = 0;
+        for (const Resource& r : k->resources) {
+            if (r.kind == Resource::kDeviceBuffer) deviceBuffers++;
+            else if (r.kind == Resource::kConstantBuffer) constantBuffers++;
+            else others++;
+            if (r.kind == Resource::kDeviceBuffer || r.kind == Resource::kConstantBuffer) highest = std::max(highest, r.index);
+        }
+        report(true, "compile " + what + ": " + std::to_string(k->kernel.numWords) + " words, instrlen " + std::to_string(k->kernel.instrlen) +
+                         ", constlen " + std::to_string(k->kernel.constlen) + ", " + std::to_string(deviceBuffers) + " device and " +
+                         std::to_string(constantBuffers) + " constant buffers, " + std::to_string(others) + " other resources, " +
+                         std::to_string(k->threadgroupBytes) + " bytes of threadgroup memory" +
+                         (k->kernel.localSizeVariable ? "" : ", a fixed threadgroup"));
+        if (others != 0) {
+            report(false, what + ": binds textures, images or samplers, which this driver does not serve yet; not dispatched");
+            continue;
+        }
+        // the buffers: a constant one as long as its metadata says (or a page), a device one of a megabyte, every slot
+        // up to the highest index bound so that the descriptor table has no hole, all of them canary
+        const uint32_t canary = 0xa5a5a5a5u;
+        std::vector<std::shared_ptr<Buffer>> owned;
+        std::vector<Binding> bindings(highest + 1);
+        bool ok = true;
+        for (uint32_t index = 0; index <= highest && ok; index++) {
+            uint64_t bytes = 4096;
+            for (const Resource& r : k->resources) {
+                if ((r.kind == Resource::kDeviceBuffer || r.kind == Resource::kConstantBuffer) && r.index == index) {
+                    bytes = r.kind == Resource::kDeviceBuffer ? (1u << 20) : std::max<uint64_t>(r.sizeBytes, 4096);
+                }
+            }
+            auto b = newBuffer(gpu, bytes, &why);
+            if (b == nullptr) {
+                report(false, what + ": a buffer of " + std::to_string(bytes) + " bytes for index " + std::to_string(index) + ": " + why);
+                ok = false;
+                break;
+            }
+            auto* w = static_cast<uint32_t*>(b->contents());
+            for (uint64_t i = 0; i < bytes / 4; i++) w[i] = canary;
+            bindings[index] = Binding{b.get(), 0};
+            owned.push_back(b);
+        }
+        if (!ok) continue;
+        const uint32_t g[3] = {1, 1, 1}, local[3] = {64, 1, 1};
+        auto cb = queue->commandBuffer();
+        if (!cb->dispatch(k->kernel, g, k->kernel.localSizeVariable ? local : nullptr, bindings, nullptr, chosen)) {
+            report(false, "dispatch " + what + ": " + cb->error());
+            continue;
+        }
+        cb->commit();
+        cb->waitUntilCompleted();
+        std::string written;
+        for (uint32_t index = 0; index <= highest; index++) {
+            const Buffer& b = *bindings[index].buffer;
+            std::vector<uint32_t> back(b.length() / 4);
+            memcpy(back.data(), b.contents(), b.length());
+            uint32_t changed = 0, first = 0;
+            for (uint32_t i = 0; i < back.size(); i++) {
+                if (back[i] != canary) {
+                    if (changed == 0) first = i;
+                    changed++;
+                }
+            }
+            char text[160];
+            if (changed == 0) {
+                snprintf(text, sizeof text, "; buffer %u: untouched", index);
+            } else {
+                snprintf(text, sizeof text, "; buffer %u: %u words written from %u on, the first 0x%08x 0x%08x 0x%08x 0x%08x", index, changed, first,
+                         back[first], first + 1 < back.size() ? back[first + 1] : 0, first + 2 < back.size() ? back[first + 2] : 0,
+                         first + 3 < back.size() ? back[first + 3] : 0);
+            }
+            written += text;
+        }
+        report(cb->status() == CommandBuffer::kCompleted,
+               "dispatch " + what + ", 1 group of 64: " + (cb->status() == CommandBuffer::kCompleted ? "completed" : "did NOT complete") + written +
+                   status(*cb, gpu));
+    }
+
+    // 8. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
     // every dispatch hangs (28 October: HLSQ busy, SP idle, the CP through its IB), this says which part the hang needs,
     // one boot for all of it, each hang costing the kernel one reset. A variant that completes is the finding.
     if (bisect) {
@@ -407,7 +529,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 8. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
+    // 9. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
     // 4 Mi words in one CP_MEMCPY stopped the command processor on 27 October (125 000 took 4.2 ms), and the run and
     // the system with it. With boot-arg gpu_recover=1 the kernel resets the core when a wait of a second or more
     // comes to nothing, FAULTS rises by one, and the next command buffer is the core's own again. This goes last,

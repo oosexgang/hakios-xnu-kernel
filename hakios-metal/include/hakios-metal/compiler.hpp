@@ -21,13 +21,24 @@
 
 namespace hakios::metal {
 
+// what a kernel binds, as the front end read it off the function's metadata: the runtime's half of the match
+struct Resource {
+    enum Kind { kConstantBuffer, kDeviceBuffer, kThreadgroupBuffer, kTexture, kImage, kSampler } kind;
+    uint32_t index;         // Metal's [[buffer(n)]], [[texture(n)]], [[sampler(n)]]
+    uint32_t sizeBytes;     // air.buffer_size when the metadata gives one (a `constant T&`), else 0
+    bool read, write;       // Apple's declaration (air.read, air.write, air.read_write)
+    bool irWrite;           // whether the translated code stores through it, which is a different fact
+};
+
 // a kernel compiled here, owning what its Kernel points into
 struct CompiledKernel {
     Kernel kernel{};
     std::vector<uint32_t> words;
     std::vector<uint32_t> immediates;
+    std::vector<Resource> resources;
     std::string name;       // the entry point's
     std::string listing;    // ir3's disassembly, for the record and for the eye
+    uint32_t threadgroupBytes = 0;   // static threadgroup memory the kernel declares
 };
 
 // whether a compiler is in this build

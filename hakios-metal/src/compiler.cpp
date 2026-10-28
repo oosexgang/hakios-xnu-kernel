@@ -134,6 +134,17 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     // --- the Kernel, field for field as tools/mesa/ir3-dump.patch writes a fixture ---
     auto out = std::make_unique<CompiledKernel>();
     out->name = nir->info.name ? nir->info.name : "kernel";
+    out->threadgroupBytes = info.threadgroup_bytes;
+    for (unsigned i = 0; i < info.num_resources; i++) {
+        const air_resource& r = info.resources[i];
+        Resource::Kind kind = r.kind == AIR_RESOURCE_CONSTANT_BUFFER   ? Resource::kConstantBuffer
+                              : r.kind == AIR_RESOURCE_DEVICE_BUFFER   ? Resource::kDeviceBuffer
+                              : r.kind == AIR_RESOURCE_THREADGROUP_BUFFER ? Resource::kThreadgroupBuffer
+                              : r.kind == AIR_RESOURCE_TEXTURE         ? Resource::kTexture
+                              : r.kind == AIR_RESOURCE_IMAGE           ? Resource::kImage
+                                                                       : Resource::kSampler;
+        out->resources.push_back(Resource{kind, r.index, r.size, r.read, r.write, r.ir_write});
+    }
     out->words.assign(bin, bin + v->info.size / 4);
     out->immediates.assign(cs->immediates, cs->immediates + cs->immediates_count);
     {
