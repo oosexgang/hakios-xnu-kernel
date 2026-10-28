@@ -8,6 +8,7 @@
 #include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/command.hpp"
 #include "hakios-metal/fake_gpu.hpp"
+#include "hakios-metal/texture.hpp"
 #include "fixtures/end_only.hpp"
 #include "fixtures/fill_id.hpp"
 #include "fixtures/fill_id_air.hpp"
@@ -375,4 +376,138 @@ TEST(the_fake_refuses_id_registers_whose_two_copies_differ) {
     Raw raw(r);
     CHECK_EQ(raw.submit(words), ETIMEDOUT);
     CHECK(r.fake->stats().lastFault.find("copies of the id registers") != std::string::npos);
+}
+
+// --- textures and samplers in a dispatch -------------------------------------------------------------------------------------
+// The fake runs no instruction, so a kernel here needs only a well-formed program and the layout fields of the kernel it
+// stands for: fill_id_air's words carry the texture fields read off tools/kernels/tex_*.ll (the listings' numbers,
+// compiler_test checks the compiler reads the same off the bitcode). With MESA=1 the bitcode itself is compiled too.
+
+namespace {
+Kernel kernelLike(const char* name, uint32_t numSsbos, uint32_t numIbos, uint32_t numSamp, uint32_t numTextureSlots, uint32_t samplerMask) {
+    Kernel k = kernels::fill_id_air;
+    k.name = name;
+    k.numUboRanges = 0;   // no constant buffer to bind
+    k.numSsbos = numSsbos;
+    k.numIbos = numIbos;
+    k.numSamp = numSamp;
+    k.numTextureSlots = numTextureSlots;
+    k.samplerMask = samplerMask;
+    for (uint32_t i = 0; i < kMaxTextureSlots; i++) k.textures[i] = KernelTexture{};
+    return k;
+}
+KernelTexture image2dUint() { return KernelTexture{kTexImage, kTexDim2D, 0, kElemUint, 32, 0, 1, 0}; }
+KernelTexture sampled2d(uint8_t element) { return KernelTexture{kTexSampled, kTexDim2D, 0, element, 0, 1, 0, 0}; }
+// tex_fill: image 0, nothing else (numSamp 1 = 0 textures + 1 image)
+Kernel texFillLike() {
+    Kernel k = kernelLike("tex_fill", 0, 1, 1, 0, 0);
+    k.textures[0] = image2dUint();
+    return k;
+}
+// tex_copy: in at texture 1 (sampled, isaml), out at texture 0 (image, IBO 0); numSamp 3 = texture 1 + 1, plus 1 image
+Kernel texCopyLike() {
+    Kernel k = kernelLike("tex_copy", 0, 1, 3, 2, 0);
+    k.textures[0] = image2dUint();
+    k.textures[1] = sampled2d(kElemUint);
+    return k;
+}
+// tex_sample_gid: texture 0 sampled with sampler 0, out at buffer 0 (SSBO, IBO 0)
+Kernel texSampleLike() {
+    Kernel k = kernelLike("tex_sample_gid", 1, 1, 1, 1, 1);
+    k.textures[0] = sampled2d(kElemFloat);
+    return k;
+}
+
+std::shared_ptr<Texture> texture(Rig& r, PixelFormat f, uint32_t w, uint32_t h, uint32_t usage = kTextureUsageRead | kTextureUsageWrite) {
+    TextureDesc d;
+    d.format = f;
+    d.width = w;
+    d.height = h;
+    d.usage = usage;
+    std::string why;
+    auto t = Texture::make(*r.gpu, d, &why);
+    CHECK(t != nullptr);
+    return t;
+}
+
+Sampler sampler(uint32_t filter = 0, uint32_t address = 0) {
+    SamplerDesc d;
+    d.minFilter = d.magFilter = filter;
+    d.sAddress = d.tAddress = d.rAddress = address;
+    Sampler s;
+    std::string why;
+    CHECK(makeSampler(d, &s, &why));
+    return s;
+}
+
+Bindings bind(std::vector<Binding> buffers, std::vector<const Texture*> textures, std::vector<const Sampler*> samplers = {}) {
+    Bindings b;
+    b.buffers = std::move(buffers);
+    b.textures = std::move(textures);
+    b.samplers = std::move(samplers);
+    return b;
+}
+
+// the dispatch refused, and what it said
+std::string refused(Rig& r, const Kernel& k, const Bindings& b) {
+    const uint32_t groups[3] = {8, 4, 1}, local[3] = {8, 8, 1};
+    auto cb = r.queue->commandBuffer();
+    CHECK(!cb->dispatch(k, groups, local, b));
+    return cb->error();
+}
+bool has(const std::string& text, const char* part) { return text.find(part) != std::string::npos; }
+}  // namespace
+
+TEST(a_texture_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the_gpu) {
+    Rig r;
+    auto rgba = texture(r, PixelFormat::kRGBA8Unorm, 64, 32);
+    auto u32 = texture(r, PixelFormat::kR32Uint, 64, 32);
+    auto f32 = texture(r, PixelFormat::kR32Float, 64, 32);
+    auto readOnly = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageRead);
+    auto writeOnly = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageWrite);
+    auto out = buffer(r, 4096, 0);
+    Sampler s = sampler();
+    // an image with nothing at its index, or something of the wrong class, usage or dimension
+    CHECK(has(refused(r, texFillLike(), bind({}, {})), "tex_fill: no texture bound at index 0"));
+    CHECK(has(refused(r, texFillLike(), bind({}, {nullptr})), "tex_fill: no texture bound at index 0"));
+    CHECK(has(refused(r, texFillLike(), bind({}, {f32.get()})), "texture 0 is R32Float (float); tex_fill stores through it as texture2d<uint>"));
+    CHECK(has(refused(r, texFillLike(), bind({}, {rgba.get()})), "texture 0 is RGBA8Unorm (float); tex_fill stores through it as texture2d<uint>"));
+    CHECK(has(refused(r, texFillLike(), bind({}, {readOnly.get()})), "texture 0 was made without shader-write usage; tex_fill writes it"));
+    {
+        Kernel k = texFillLike();
+        k.textures[0].dim = kTexDim3D;
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses texture 0 as 3D; texture 0 is 2D"));
+        k.textures[0].dim = kTexDim2D;
+        k.textures[0].isArray = 1;
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses texture 0 as 2D array; texture 0 is 2D"));
+        k = texFillLike();
+        k.textures[0].read = 1;   // read_write: a load needs read usage too
+        CHECK(has(refused(r, k, bind({}, {writeOnly.get()})), "texture 0 was made without shader-read usage; tex_fill loads from it"));
+    }
+    // a sampled texture with nothing at its index, or the wrong class or usage; the image at 0 is fine
+    CHECK(has(refused(r, texCopyLike(), bind({}, {u32.get()})), "tex_copy: no texture bound at index 1"));
+    CHECK(has(refused(r, texCopyLike(), bind({}, {u32.get(), nullptr})), "tex_copy: no texture bound at index 1"));
+    CHECK(has(refused(r, texCopyLike(), bind({}, {u32.get(), f32.get()})), "texture 1 is R32Float (float); tex_copy reads it as texture2d<uint>"));
+    CHECK(has(refused(r, texCopyLike(), bind({}, {u32.get(), writeOnly.get()})), "texture 1 was made without shader-read usage; tex_copy reads it"));
+    // a sampler the kernel names with nothing at its index
+    CHECK(has(refused(r, texSampleLike(), bind({Binding{out.get(), 0}}, {rgba.get()})), "tex_sample_gid: no sampler bound at index 0"));
+    CHECK(has(refused(r, texSampleLike(), bind({Binding{out.get(), 0}}, {rgba.get()}, {nullptr})), "tex_sample_gid: no sampler bound at index 0"));
+    // ... and its buffer, as before
+    CHECK(has(refused(r, texSampleLike(), bind({}, {rgba.get()}, {&s})), "tex_sample_gid: no buffer bound at index 0"));
+    // the kernel's own counts: NSAMP's 5 bits, UBO descriptors nobody binds, indices past the tables
+    {
+        Kernel k = texFillLike();
+        k.numSamp = 32;
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill: numSamp 32 does not fit SP_CS_CONFIG.NSAMP's 5 bits (31 at most)"));
+        k = texFillLike();
+        k.numUbos = 2;
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses 2 UBO descriptors that ir3 did not push to constants: not served yet"));
+        k = texCopyLike();
+        k.numTextureSlots = 17;
+        CHECK(has(refused(r, k, bind({}, {u32.get(), u32.get()})), "tex_copy names texture or sampler indices past 15: the tables hold 16"));
+        k = texSampleLike();
+        k.samplerMask = 1u << 16;
+        CHECK(has(refused(r, k, bind({Binding{out.get(), 0}}, {rgba.get()}, {&s})), "tex_sample_gid names texture or sampler indices past 15"));
+    }
+    CHECK_EQ(r.fake->stats().submits, 0u);
 }

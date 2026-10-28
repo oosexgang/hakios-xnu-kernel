@@ -117,7 +117,8 @@ bool encode(pm4::Stream& stream, const Kernel& kernel, const uint32_t groups[3],
 // addresses as another dimension or element class than the texture's format has (texture.hpp: FormatInfo::element);
 // a texture made without write usage at an index the kernel writes; a kernel whose numSamp does not fit NSAMP's 5 bits;
 // a kernel with UBO descriptors left unpushed (numUbos > 0: an indexed `constant` load ir3 kept as an ldc, which no
-// descriptor serves yet); a kernel asking for the front end's null texture or a constexpr sampler (not served yet).
+// descriptor serves yet). A kernel asking for the front end's null texture or a constexpr sampler (not served yet) is
+// refused by name where it is compiled (compiler.cpp), since a Kernel does not carry those two facts.
 bool encode(pm4::Stream& stream, const Kernel& kernel, const uint32_t groups[3], const uint32_t local[3],
             const Bindings& bindings, const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu,
             std::string* why, const Options& options = Options{});

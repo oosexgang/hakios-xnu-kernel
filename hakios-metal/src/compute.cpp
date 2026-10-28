@@ -5,6 +5,7 @@
 
 #include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/command.hpp"
+#include "hakios-metal/texture.hpp"
 
 namespace hakios::metal {
 
@@ -28,9 +29,12 @@ void reg64(pm4::Stream& st, uint32_t r, uint64_t a) {
     st.registers(r, v, 2);
 }
 
-// CP_LOAD_STATE6_FRAG with the data already in GPU memory
-void loadIndirect(pm4::Stream& st, a6xx_state_type type, uint32_t dstOff, uint32_t units, uint64_t from) {
-    uint32_t w[3] = {loadState6_0(dstOff, type, SS6_INDIRECT, SB6_CS_SHADER, units),
+// CP_LOAD_STATE6_FRAG with the data already in GPU memory. The block is the compute shader's (program, constants,
+// IBOs) or, for the texture and sampler tables, SB6_CS_TEX, where ST6_SHADER means sampler descriptors of 16 bytes and
+// ST6_CONSTANTS texture descriptors of 64 (Gallium's fd6_texture.cc:593-687 is the only reading of that double meaning).
+void loadIndirect(pm4::Stream& st, a6xx_state_type type, uint32_t dstOff, uint32_t units, uint64_t from,
+                  a6xx_state_block block = SB6_CS_SHADER) {
+    uint32_t w[3] = {loadState6_0(dstOff, type, SS6_INDIRECT, block, units),
                      CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(from)), CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t(from >> 32))};
     st.packet(CP_LOAD_STATE6_FRAG, w, 3);
 }
@@ -75,12 +79,27 @@ uint32_t log2u(uint32_t v) {
     return r;
 }
 
+const char* elementName(uint8_t e) { return e == kElemFloat ? "float" : e == kElemUint ? "uint" : e == kElemInt ? "int" : "?"; }
+
+std::string dimName(const KernelTexture& t) {
+    const char* d = t.dim == kTexDim1D ? "1D" : t.dim == kTexDim2D ? "2D" : t.dim == kTexDim3D ? "3D" : t.dim == kTexDimCube ? "a cube" : "an unknown dimension";
+    return std::string(d) + (t.isArray ? " array" : "");
+}
+
 }  // namespace
 
 bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], const uint32_t local[3],
             const std::vector<Binding>& buffers, const uint32_t* immediates, uint64_t program, uint64_t table,
             uint8_t* tableCpu, std::string* why, const Options& o) {
+    Bindings b;
+    b.buffers = buffers;
+    return encode(stream, k, groups, local, b, immediates, program, table, tableCpu, why, o);
+}
+
+bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], const uint32_t local[3], const Bindings& bindings,
+            const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
     static const char* const axis = "xyz";
+    const std::vector<Binding>& buffers = bindings.buffers;
     // --- the grid ---
     uint64_t threads = 1;
     for (int i = 0; i < 3; i++) {
@@ -119,8 +138,17 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     if (k.pvtmemSize != 0) {
         return refuse(why, std::string(k.name) + " wants " + n(k.pvtmemSize) + " bytes of private memory a fiber: not served yet");
     }
-    if (k.numSamp != 0) {
-        return refuse(why, std::string(k.name) + " samples textures: none are served yet");
+    if (k.numSamp > 31) {
+        // SP_CS_CONFIG.NSAMP is 5 bits (a6xx.hpp: A6XX_SP_CS_CONFIG_NSAMP__MASK) and field() masks silently: 32 would be written as 0
+        return refuse(why, std::string(k.name) + ": numSamp " + n(k.numSamp) + " does not fit SP_CS_CONFIG.NSAMP's 5 bits (31 at most)");
+    }
+    if (k.numUbos != 0) {
+        // an indexed `constant` load ir3 kept as an ldc from a UBO descriptor: nothing here binds a UBO table (no ST6_UBO
+        // load), so the ldc would read a descriptor nobody wrote and the kernel garbage it cannot tell from a sampler bug
+        return refuse(why, std::string(k.name) + " addresses " + n(k.numUbos) + " UBO descriptors that ir3 did not push to constants: not served yet");
+    }
+    if (k.numTextureSlots > kMaxTextureSlots || (k.samplerMask >> kMaxTextureSlots) != 0) {
+        return refuse(why, std::string(k.name) + " names texture or sampler indices past " + n(kMaxTextureSlots - 1) + ": the tables hold " + n(kMaxTextureSlots));
     }
     a6xx_threadsize threadsize = k.doubleThreadsize ? THREAD128 : THREAD64;
     uint32_t subgroup = k.doubleThreadsize ? 2 * kThreadsizeBase : kThreadsizeBase;
@@ -145,25 +173,104 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         if (mapped != nullptr) *mapped = b.buffer->bo().size() - b.offset;
         return true;
     };
-    for (uint32_t slot = 0; slot < nibo; slot++) {
-        uint64_t address = 0, bytes = 0;
-        if (!bound(slot, &address, &bytes)) {
-            return false;
+    // the texture at Metal index I as the kernel's instructions address it: the kernel's shape (textures[I]) against the
+    // texture's; a sampled texture is read through the texture table, an image stored (and loaded) through an IBO slot
+    auto boundTexture = [&](uint32_t i, const Texture** out) -> bool {
+        const KernelTexture& t = k.textures[i];
+        if (i >= bindings.textures.size() || bindings.textures[i] == nullptr) {
+            return refuse(why, std::string(k.name) + ": no texture bound at index " + n(i));
         }
-        if (slot < k.numBufs) {
-            if (bytes < k.bufs[slot].sizeBytes) {
-                return refuse(why, std::string(k.name) + " declares buffer " + n(slot) + " as " + n(k.bufs[slot].sizeBytes) + " bytes; " +
-                                       n(bytes) + " are bound");
+        const Texture* tex = bindings.textures[i];
+        if (t.dim != kTexDim2D || t.isArray != 0 || tex->type() != TextureType::k2D) {
+            return refuse(why, std::string(k.name) + " addresses texture " + n(i) + " as " + dimName(t) + "; texture " + n(i) + " is 2D");
+        }
+        if (t.element != tex->info().element) {
+            return refuse(why, "texture " + n(i) + " is " + tex->info().name + " (" + elementName(tex->info().element) + "); " + k.name +
+                                   (t.kind == kTexImage ? " stores through it as texture2d<" : " reads it as texture2d<") + elementName(t.element) + ">");
+        }
+        if (t.kind == kTexImage) {
+            if (t.write && (tex->usage() & kTextureUsageWrite) == 0) {
+                return refuse(why, "texture " + n(i) + " was made without shader-write usage; " + k.name + " writes it");
             }
-            bytes = k.bufs[slot].sizeBytes;   // the descriptor covers what the kernel declared, not what lies beyond
+            if (t.read && (tex->usage() & kTextureUsageRead) == 0) {
+                return refuse(why, "texture " + n(i) + " was made without shader-read usage; " + k.name + " loads from it");
+            }
+        } else if ((tex->usage() & kTextureUsageRead) == 0) {
+            return refuse(why, "texture " + n(i) + " was made without shader-read usage; " + k.name + " reads it");
         }
-        if (bytes / 4 >= (1ull << 30)) {
-            return refuse(why, "buffer " + n(slot) + " is longer than a descriptor counts");
+        *out = tex;
+        return true;
+    };
+    for (uint32_t slot = 0; slot < nibo; slot++) {
+        TexConst d{};
+        if (k.numBufs != 0 || slot < k.numSsbos) {
+            // a text kernel's @buf, or a device buffer (an SSBO) of an AIR kernel: Metal's [[buffer(slot)]]
+            uint64_t address = 0, bytes = 0;
+            if (!bound(slot, &address, &bytes)) {
+                return false;
+            }
+            if (slot < k.numBufs) {
+                if (bytes < k.bufs[slot].sizeBytes) {
+                    return refuse(why, std::string(k.name) + " declares buffer " + n(slot) + " as " + n(k.bufs[slot].sizeBytes) + " bytes; " +
+                                           n(bytes) + " are bound");
+                }
+                bytes = k.bufs[slot].sizeBytes;   // the descriptor covers what the kernel declared, not what lies beyond
+            }
+            if (bytes / 4 >= (1ull << 30)) {
+                return refuse(why, "buffer " + n(slot) + " is longer than a descriptor counts");
+            }
+            d = bufferIbo(address, uint32_t(bytes / 4));
+        } else {
+            // an image slot: Metal's [[texture(i)]] declared write or read_write lands at IBO numSsbos + i (ir3_image.c:50-52).
+            // An index in that range the kernel does not store through (tex_copy: in at texture 1 is sampled, out at 0 is
+            // the image, and ir3 counts images up to the highest index) gets the hole descriptor: one FMT6_32_UINT element
+            // over the table's own kTableHoleAt bytes, real memory nothing names (compute.hpp says why not zeros).
+            uint32_t i = slot - k.numSsbos;
+            if (i < kMaxTextureSlots && k.textures[i].kind == kTexImage) {
+                const Texture* tex = nullptr;
+                if (!boundTexture(i, &tex)) {
+                    return false;
+                }
+                d = tex->storageDescriptor();
+            } else {
+                d = bufferIbo(table + kTableHoleAt, 1);
+            }
         }
-        TexConst d = bufferIbo(address, uint32_t(bytes / 4));
-        memcpy(tableCpu + 64 * slot, d.dword, sizeof d.dword);
+        memcpy(tableCpu + kTableIbosAt + 64 * slot, d.dword, sizeof d.dword);
     }
+    memset(tableCpu + kTableHoleAt, 0, 64);
+    memset(tableCpu + kTableBorderColorAt, 0, 128);   // border colour entry 0: transparent black, what BCOLOR 0 reads
     memset(tableCpu + kTableTimestampsAt, 0, 64);
+
+    // --- the textures and samplers: the two tables, only for a kernel with sampled textures (Gallium builds the CS_TEX
+    // group only when num_textures > 0, fd6_emit.cc:43-44, and leaves SP_CS_TEX_* stale otherwise) ---
+    uint32_t numTex = k.numTextureSlots, numSampDesc = 0;
+    if (numTex != 0) {
+        memset(tableCpu + kTableTexConstAt, 0, kMaxTextureSlots * 64);   // an unaddressed slot is a zero descriptor, Gallium's dummy_view
+        memset(tableCpu + kTableTexSampAt, 0, kMaxTextureSlots * 16);    // ... and dummy_sampler
+        for (uint32_t t = 0; t < numTex; t++) {
+            if (k.textures[t].kind != kTexSampled) continue;
+            const Texture* tex = nullptr;
+            if (!boundTexture(t, &tex)) {
+                return false;
+            }
+            TexConst d = tex->sampledDescriptor();
+            memcpy(tableCpu + kTableTexConstAt + 64 * t, d.dword, sizeof d.dword);
+        }
+        // at least one sampler descriptor whenever textures are loaded: an isaml (texture.read) names s#0 and reads no
+        // sampler, and whether the TP consults TEX_SAMP for it is unverified (Mesa never leaves a bound texture without one)
+        numSampDesc = 1;
+        for (uint32_t m = 0; m < kMaxTextureSlots; m++) {
+            if ((k.samplerMask >> m) & 1) numSampDesc = m + 1;
+        }
+        for (uint32_t m = 0; m < numSampDesc; m++) {
+            if (((k.samplerMask >> m) & 1) == 0) continue;
+            if (m >= bindings.samplers.size() || bindings.samplers[m] == nullptr) {
+                return refuse(why, std::string(k.name) + ": no sampler bound at index " + n(m));
+            }
+            memcpy(tableCpu + kTableTexSampAt + 16 * m, bindings.samplers[m]->words, 16);
+        }
+    }
 
     // --- the constants ---
     std::vector<uint32_t> imm(k.immediates, k.immediates + k.numImmediates);
@@ -232,6 +339,14 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         reg(stream, REG_A6XX_SP_PERFCTR_ENABLE, A6XX_SP_PERFCTR_ENABLE_CS);
         reg(stream, REG_A6XX_SP_FLOAT_CNTL, 0);
     }
+    if (o.tpState) {
+        // the TP's own copy of ISAMMODE (isaml's coordinate convention depends on it, and SP_MODE_CONTROL's copy above is
+        // not it: Gallium writes both, fd6_emit.cc:977-981), and the border colour table both TP base registers read for
+        // a CLAMP_TO_BORDER sampler (fd6_emit.cc:1035-1038): entry 0 of it, zeros, is in the dispatch's own table
+        reg(stream, REG_A6XX_SP_TP_MODE_CNTL, spTpModeCntl());
+        reg64(stream, REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
+        reg64(stream, REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
+    }
     if (o.invalidateCmd) {
         // whatever state loads are still queued for any stage are dropped before the new program's
         reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD,
@@ -280,9 +395,19 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         loadIndirect(stream, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
     }
     if (nibo != 0) {
-        loadIndirect(stream, ST6_IBO, 0, nibo, table);
-        reg64(stream, REG_A6XX_SP_CS_IBO, table);
+        loadIndirect(stream, ST6_IBO, 0, nibo, table + kTableIbosAt);
+        reg64(stream, REG_A6XX_SP_CS_IBO, table + kTableIbosAt);
         reg(stream, REG_A6XX_SP_CS_IBO_COUNT, nibo);
+    }
+    if (numTex != 0 && o.texState) {
+        // Gallium's CS_TEX group, in its order (fd6_texture.cc:593-687): the samplers, their pointer, the textures, their
+        // pointer, the count. SP_CS_CONFIG's NTEX and NSAMP (above) stay ir3's num_samp, which counts images too and so may
+        // exceed this count, as in every Gallium dispatch of a shader with an image.
+        loadIndirect(stream, ST6_SHADER, 0, numSampDesc, table + kTableTexSampAt, SB6_CS_TEX);
+        reg64(stream, REG_A6XX_SP_CS_TEX_SAMP, table + kTableTexSampAt);
+        loadIndirect(stream, ST6_CONSTANTS, 0, numTex, table + kTableTexConstAt, SB6_CS_TEX);
+        reg64(stream, REG_A6XX_SP_CS_TEX_CONST, table + kTableTexConstAt);
+        reg(stream, REG_A6XX_SP_CS_TEX_COUNT, numTex);
     }
     if (o.invalidate) {
         // what the CPU or a blit wrote last is what the kernel reads
@@ -322,6 +447,13 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
 
 bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const uint32_t* local, const std::vector<Binding>& buffers,
                              const uint32_t* immediates, const compute::Options& options) {
+    Bindings b;
+    b.buffers = buffers;
+    return dispatch(k, groups, local, b, immediates, options);
+}
+
+bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
+                             const uint32_t* immediates, const compute::Options& options) {
     if (status_ > kEnqueued) {
         return fail("dispatch after commit");
     }
@@ -340,7 +472,7 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         for (int i = 0; i < 3; i++) loc[i] = local[i];
     }
     pm4::Stream added;
-    if (!compute::encode(added, k, groups, loc, buffers, immediates, program->gpuAddress(), table->gpuAddress(),
+    if (!compute::encode(added, k, groups, loc, bindings, immediates, program->gpuAddress(), table->gpuAddress(),
                          static_cast<uint8_t*>(table->contents()), &why, options)) {
         return fail(why);
     }
@@ -358,10 +490,19 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
     }
     use(*program, false);
     use(*table, true);
-    for (const Binding& b : buffers) {
+    for (const Binding& b : bindings.buffers) {
         if (b.buffer != nullptr) {
             use(*b.buffer, true);
         }
+    }
+    // every texture bound, the kernel's or not (an extra one is harmless to name): its memory is used for the flight and
+    // kept alive until completion, written when the kernel stores through it
+    for (size_t i = 0; i < bindings.textures.size(); i++) {
+        const Texture* t = bindings.textures[i];
+        if (t == nullptr) continue;
+        bool writes = i < kMaxTextureSlots && k.textures[i].kind == kTexImage && k.textures[i].write;
+        use(*t->buffer(), writes);
+        keep(t->buffer());
     }
     keep(program);
     keep(table);
