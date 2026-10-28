@@ -13,6 +13,7 @@
 #include "hakios-metal/fake_gpu.hpp"
 #include "hakios-metal/hakios_metal.h"
 #include "hakios-metal/metallib.hpp"
+#include "hakios-metal/texture.hpp"
 
 using namespace hakios::metal;
 
@@ -43,6 +44,12 @@ struct hakios_metal_queue {
 };
 struct hakios_metal_cb {
     std::shared_ptr<CommandBuffer> cb;
+};
+struct hakios_metal_texture {
+    std::shared_ptr<Texture> texture;   // its Buffer is kept by every command buffer that dispatched over it
+};
+struct hakios_metal_sampler {
+    Sampler sampler;                    // four words, copied into each dispatch's table: nothing of it stays on the GPU
 };
 
 extern "C" {
@@ -166,6 +173,108 @@ void* hakios_metal_buffer_contents(hakios_metal_buffer* b) { return b->buffer->c
 uint64_t hakios_metal_buffer_length(hakios_metal_buffer* b) { return b->buffer->length(); }
 uint64_t hakios_metal_buffer_gpu_address(hakios_metal_buffer* b) { return b->buffer->gpuAddress(); }
 
+// --- textures and samplers ---------------------------------------------------------------------------------------------
+
+hakios_metal_texture* hakios_metal_texture_new(hakios_metal_device* d, unsigned type, unsigned pixelFormat, unsigned width, unsigned height,
+                                               unsigned usage) {
+    TextureDesc desc;
+    desc.type = TextureType(type);           // Metal's own numbers, as the header says: an unknown one is refused by name
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
+void hakios_metal_texture_free(hakios_metal_texture* t) { delete t; }
+void* hakios_metal_texture_contents(hakios_metal_texture* t) { return t->texture->contents(); }
+uint64_t hakios_metal_texture_bytes_per_row(hakios_metal_texture* t) { return t->texture->bytesPerRow(); }
+uint64_t hakios_metal_texture_gpu_address(hakios_metal_texture* t) { return t->texture->gpuAddress(); }
+unsigned hakios_metal_texture_width(hakios_metal_texture* t) { return t->texture->width(); }
+unsigned hakios_metal_texture_height(hakios_metal_texture* t) { return t->texture->height(); }
+unsigned hakios_metal_texture_format(hakios_metal_texture* t) { return unsigned(t->texture->format()); }
+unsigned hakios_metal_texture_type(hakios_metal_texture* t) { return unsigned(t->texture->type()); }
+unsigned hakios_metal_texture_usage(hakios_metal_texture* t) { return t->texture->usage(); }
+
+int hakios_metal_texture_replace(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, const void* bytes, uint64_t bytesPerRow) {
+    std::string why;
+    if (!t->texture->replace(x, y, w, h, bytes, bytesPerRow, &why)) {
+        failed(why);
+        return -1;
+    }
+    return 0;
+}
+
+int hakios_metal_texture_read(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, void* bytes, uint64_t bytesPerRow) {
+    std::string why;
+    if (!t->texture->read(x, y, w, h, bytes, bytesPerRow, &why)) {
+        failed(why);
+        return -1;
+    }
+    return 0;
+}
+
+hakios_metal_sampler* hakios_metal_sampler_new(hakios_metal_device*, const struct hakios_metal_sampler_desc* c) {
+    SamplerDesc d;
+    d.minFilter = c->min_filter;
+    d.magFilter = c->mag_filter;
+    d.mipFilter = c->mip_filter;
+    d.sAddress = c->s_address;
+    d.tAddress = c->t_address;
+    d.rAddress = c->r_address;
+    d.normalizedCoordinates = c->normalized_coordinates != 0;
+    d.lodMinClamp = c->lod_min_clamp;
+    d.lodMaxClamp = c->lod_max_clamp;
+    d.maxAnisotropy = c->max_anisotropy;
+    d.compareFunction = c->compare_function;
+    d.borderColor = c->border_color;
+    auto* r = new hakios_metal_sampler;
+    std::string why;
+    if (!makeSampler(d, &r->sampler, &why)) {
+        delete r;
+        failed(why);
+        return nullptr;
+    }
+    return r;
+}
+
+void hakios_metal_sampler_free(hakios_metal_sampler* s) { delete s; }
+const uint32_t* hakios_metal_sampler_words(hakios_metal_sampler* s) { return s->sampler.words; }
+
+int hakios_metal_kernel_resource_texture(hakios_metal_kernel* k, unsigned i, unsigned* textureType, unsigned* element, unsigned* access) {
+    if (i >= k->kernel->resources.size()) return -1;
+    const Resource& r = k->kernel->resources[i];
+    if (r.kind != Resource::kTexture && r.kind != Resource::kImage && r.kind != Resource::kSampler) return -1;
+    // MTLTextureType's numbers (MTLTexture.h) from the dimension the instructions address: 1D 0 / 1DArray 1, 2D 2 /
+    // 2DArray 3, Cube 5 / CubeArray 6, 3D 7; ~0u for a sampler or a declared texture no instruction touches
+    unsigned type = ~0u;
+    switch (r.textureDim) {
+    case kTexDim1D: type = r.textureArray ? 1 : 0; break;
+    case kTexDim2D: type = r.textureArray ? 3 : 2; break;
+    case kTexDimCube: type = r.textureArray ? 6 : 5; break;
+    case kTexDim3D: type = 7; break;
+    default: break;
+    }
+    // the access the instructions make, when they address the index (Kernel::textures); the declaration's otherwise
+    unsigned bits = (r.read ? 1u : 0u) | (r.write ? 2u : 0u);
+    if (r.kind != Resource::kSampler && r.index < kMaxTextureSlots) {
+        const KernelTexture& t = k->kernel->kernel.textures[r.index];
+        if (t.kind != kTexNone) bits = (t.read ? 1u : 0u) | (t.write ? 2u : 0u);
+    }
+    if (textureType) *textureType = type;
+    if (element) *element = r.element;
+    if (access) *access = bits;
+    return 0;
+}
+
 hakios_metal_queue* hakios_metal_queue_new(hakios_metal_device* d) {
     std::string why;
     auto q = CommandQueue::make(*d->gpu, &why);
@@ -218,25 +327,49 @@ int hakios_metal_cb_fill(hakios_metal_cb* cb, hakios_metal_buffer* b, uint64_t o
     return 0;
 }
 
-int hakios_metal_cb_dispatch(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
-                             hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
-    std::vector<Binding> bindings(count);
+int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
+                              hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count,
+                              hakios_metal_texture* const* textures, unsigned textureCount,
+                              hakios_metal_sampler* const* samplers, unsigned samplerCount) {
+    Bindings b;
+    b.buffers.resize(count);
     for (unsigned i = 0; i < count; i++) {
         if (buffers[i] != nullptr) {
-            bindings[i] = Binding{buffers[i]->buffer.get(), offsets != nullptr ? offsets[i] : 0};
+            b.buffers[i] = Binding{buffers[i]->buffer.get(), offsets != nullptr ? offsets[i] : 0};
         }
+    }
+    b.textures.resize(textureCount, nullptr);
+    for (unsigned i = 0; i < textureCount; i++) {
+        if (textures[i] != nullptr) b.textures[i] = textures[i]->texture.get();
+    }
+    b.samplers.resize(samplerCount, nullptr);
+    for (unsigned i = 0; i < samplerCount; i++) {
+        if (samplers[i] != nullptr) b.samplers[i] = &samplers[i]->sampler;
     }
     uint32_t g[3] = {groups[0], groups[1], groups[2]};
     uint32_t t[3] = {threads[0], threads[1], threads[2]};
-    if (!cb->cb->dispatch(k->kernel->kernel, g, t, bindings)) {
+    if (!cb->cb->dispatch(k->kernel->kernel, g, t, b)) {
         failed(cb->cb->error());
         return -1;
     }
     for (unsigned i = 0; i < count; i++) {
         if (buffers[i] != nullptr) cb->cb->keep(buffers[i]->buffer);
     }
+    // the textures' memory as the buffers': kept until the GPU is done, whatever the caller frees meanwhile (the
+    // dispatch keeps the Buffer already; the Texture object itself is kept so that a freed handle leaves nothing dangling)
+    for (unsigned i = 0; i < textureCount; i++) {
+        if (textures[i] != nullptr) {
+            cb->cb->keep(textures[i]->texture->buffer());
+            cb->cb->keepAlive(textures[i]->texture);
+        }
+    }
     cb->cb->keepAlive(k->kernel);   // the words the dispatch names live until the GPU is done with them
     return 0;
+}
+
+int hakios_metal_cb_dispatch(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
+                             hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
+    return hakios_metal_cb_dispatch2(cb, k, groups, threads, buffers, offsets, count, nullptr, 0, nullptr, 0);
 }
 
 void hakios_metal_cb_fail(hakios_metal_cb* cb, const char* why) { cb->cb->refuse(why != nullptr ? why : "refused"); }
