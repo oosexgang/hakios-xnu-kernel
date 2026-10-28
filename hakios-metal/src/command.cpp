@@ -9,6 +9,10 @@ namespace {
 constexpr size_t kCommandBo = 64 * 1024;           // one command buffer's packets, at most (grown when needed)
 constexpr int64_t kPatienceNs = 5000000000;        // a fence not passed in 5 s: the GPU is hung, the buffer is an error
 constexpr uint32_t kFillHead = 64;                 // words written by CP_MEM_WRITE before the copies double them
+// The most one CP_MEMCPY moves. On the phone (27 October) 125 000 words in one packet took 4.2 ms, and 4 Mi words (16 MB)
+// in one packet hung the GPU ("no answer" from the kernel's driver, and the system after it). Cut into packets of this
+// size, each waited for before the next, the same copy is a row of small ones.
+constexpr uint32_t kMemcpyMax = 64 * 1024;
 }  // namespace
 
 std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why) {
@@ -83,16 +87,15 @@ bool CommandBuffer::copy(const Buffer& from, uint64_t fromOffset, const Buffer& 
     if (length == 0) {
         return true;
     }
-    // one packet moves up to 2^32 - 1 words; buffers are far smaller than that, but a copy is cut all the same
     uint64_t words = length / 4, done = 0;
     while (done < words) {
-        uint32_t n = uint32_t(std::min<uint64_t>(words - done, 0x40000000ull));
+        uint32_t n = uint32_t(std::min<uint64_t>(words - done, kMemcpyMax));
         stream_.memcpy(to.gpuAddress() + toOffset + 4 * done, from.gpuAddress() + fromOffset + 4 * done, n);
+        // what comes after may read what this wrote: the copy lands before the next packet is taken
+        stream_.waitMemWrites();
+        stream_.waitForMe();
         done += n;
     }
-    // what comes after may read what this wrote: the copy lands before the next packet is taken
-    stream_.waitMemWrites();
-    stream_.waitForMe();
     use(from, false);
     use(to, true);
     return true;
@@ -123,7 +126,7 @@ bool CommandBuffer::fill(const Buffer& b, uint64_t offset, uint64_t length, uint
     // ... and the rest copied from what is already filled, twice as much each time
     uint64_t have = head;
     while (have < words) {
-        uint32_t n = uint32_t(std::min<uint64_t>(have, words - have));
+        uint32_t n = uint32_t(std::min<uint64_t>(std::min<uint64_t>(have, words - have), kMemcpyMax));
         stream_.memcpy(base + 4 * have, base, n);
         stream_.waitMemWrites();
         stream_.waitForMe();

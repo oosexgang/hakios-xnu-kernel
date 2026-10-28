@@ -113,16 +113,21 @@ int main() {
         auto big1 = newBuffer(gpu, 16 * mb, &why), big2 = newBuffer(gpu, 16 * mb, &why);
         if (big1 && big2) {
             int64_t best = 0;
-            for (int i = 0; i < 5; i++) {
+            bool ok = true;
+            std::string why;
+            for (int i = 0; i < 5 && ok; i++) {
                 auto cb = queue->commandBuffer();
                 cb->copy(*big1, 0, *big2, 0, 16 * mb);
                 cb->commit();
                 cb->waitUntilCompleted();
-                if (best == 0 || cb->gpuNanoseconds() < best) best = cb->gpuNanoseconds();
+                ok = cb->status() == CommandBuffer::kCompleted;
+                why = cb->error();
+                if (ok && (best == 0 || cb->gpuNanoseconds() < best)) best = cb->gpuNanoseconds();
             }
-            double gbs = best > 0 ? 16.0 * mb / best : 0;
-            std::printf("probe: speed: 16 MB by CP_MEMCPY in %lld us at best (%.2f GB/s, commit to fence)\n",
-                        (long long)(best / 1000), gbs);
+            // (a speed is only a speed of a copy that completed)
+            report(ok, ok ? "16 MB by CP_MEMCPY in " + std::to_string(best / 1000) + " us at best (" +
+                                std::to_string(int(16.0 * mb / best * 1000)) + " MB/s, commit to fence)"
+                          : "16 MB by CP_MEMCPY: " + why);
         } else {
             report(false, "two buffers of 16 MB: " + why);
         }

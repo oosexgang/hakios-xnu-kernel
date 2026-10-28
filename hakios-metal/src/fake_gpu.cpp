@@ -130,6 +130,11 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     return false;
                 }
                 uint64_t n = p[0], from = p[1] | uint64_t(p[2]) << 32, to = p[3] | uint64_t(p[4]) << 32;
+                // as the phone's GPU: 4 Mi words in one packet hung it (27 October); the fake one refuses past 64 Ki
+                if (n > 64 * 1024) {
+                    fault("CP_MEMCPY of more words in one packet than the GPU was seen to take");
+                    return false;
+                }
                 uint8_t* s = at(from, 4 * n);
                 uint8_t* d = at(to, 4 * n);
                 if (s == nullptr || d == nullptr || from % 4 != 0 || to % 4 != 0) {

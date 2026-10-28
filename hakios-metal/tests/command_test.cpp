@@ -185,3 +185,19 @@ TEST(a_bad_stream_is_a_fault_not_a_crash) {
     CHECK_EQ(r.gpu->wait(0, fence, 1000000000), 0);
     CHECK_EQ(r.fake->stats().faults, 1u);
 }
+
+TEST(big_copies_are_cut_into_packets_the_gpu_takes) {
+    Rig r;
+    auto a = buffer(r, 16 << 20), b = buffer(r, 16 << 20);
+    auto* pa = static_cast<uint32_t*>(a->contents());
+    for (size_t i = 0; i < (4u << 20); i++) pa[i] = uint32_t(i * 2654435761u);
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->copy(*a, 0, *b, 0, 16 << 20));
+    CHECK(cb->fill(*a, 0, 16 << 20, 0x77));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(static_cast<uint32_t*>(b->contents())[(4u << 20) - 1], uint32_t(((4u << 20) - 1) * 2654435761u));
+    CHECK_EQ(static_cast<uint8_t*>(a->contents())[(16 << 20) - 1], 0x77);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
