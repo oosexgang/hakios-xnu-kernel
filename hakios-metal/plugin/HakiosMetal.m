@@ -85,6 +85,48 @@ deviceMaxBufferLength(__unused id self, __unused SEL _cmd)
  */
 static Class gQueueClass;
 
+#ifdef HAKIOS_METAL_GPU
+/*
+ * The GPU itself, through hakios-metal (github.com/oosexgang/hakios-metal, C++, its C interface hakios_metal.h): buffers in
+ * the GPU's memory, command buffers, and blits done by the GPU's command processor. Without the kernel's GPU (no gpu=1,
+ * QEMU) nothing of this is used and the device is what it was: buffers in plain memory, a queue that queues nothing.
+ */
+#include "hakios-metal/hakios_metal.h"
+
+static void **stateOf(id self);
+
+static hakios_metal_device *gGPU;               /* opened once; NULL: the kernel has no GPU to give */
+static Class gCommandBufferClass, gBlitEncoderClass;
+
+struct commandbuffer {
+	hakios_metal_cb *cb;
+	id queue;                               /* retained */
+	NSMutableArray *handlers;               /* the completed handlers, copied */
+	NSMutableArray *scheduled;              /* the scheduled handlers, copied */
+	BOOL committed;
+	id label;
+};
+
+struct blitencoder {
+	id commandBuffer;                       /* retained */
+	BOOL ended;
+	id label;
+};
+
+static hakios_metal_device *
+gpu(void)
+{
+	static dispatch_once_t once;
+
+	dispatch_once(&once, ^{
+		gGPU = hakios_metal_open();
+		say(gGPU != NULL ? [NSString stringWithFormat:@"the GPU: Adreno %llu, through hakios-metal", hakios_metal_gpu_id(gGPU)]
+		                 : [NSString stringWithFormat:@"no GPU (%s): buffers in plain memory, no command buffers", hakios_metal_error()]);
+	});
+	return gGPU;
+}
+#endif
+
 static id
 queueDevice(__unused id self, __unused SEL _cmd)
 {
@@ -114,6 +156,19 @@ deviceNewQueue(id self, __unused SEL _cmd)
 		return nil;
 	}
 	queue = plain(plain((id)gQueueClass, sel_registerName("alloc")), sel_registerName("init"));
+#ifdef HAKIOS_METAL_GPU
+	if (queue != nil && gpu() != NULL) {
+		void **slot = stateOf(queue);
+		hakios_metal_queue *q = hakios_metal_queue_new(gGPU);
+
+		if (slot != NULL && q != NULL) {
+			*slot = q;
+			say(@"newCommandQueue: a queue of the GPU's");
+			return queue;
+		}
+		say([NSString stringWithFormat:@"newCommandQueue: no GPU queue (%s)", hakios_metal_error()]);
+	}
+#endif
 	say([NSString stringWithFormat:@"newCommandQueue: a queue that queues nothing (%@)", queue ? @"made" : @"_MTLCommandQueue's init gave nil"]);
 	return queue;
 }
@@ -261,6 +316,7 @@ struct buffer {
 	void (^deallocator)(void *, NSUInteger); /* for ...NoCopy: the caller's, called with its memory when the buffer goes */
 	BOOL mapped;                            /* ours, from mmap */
 	id label;
+	void *gpu;                              /* (HAKIOS_METAL_GPU) GPU memory of hakios-metal's, when the kernel has a GPU */
 };
 
 struct library {
@@ -279,6 +335,7 @@ struct function {
 };
 
 static struct library *libraryOf(id self);
+
 
 static void **
 stateOf(id self)
@@ -315,6 +372,12 @@ labelGet(id self, __unused SEL _cmd)
 		label = &((struct buffer *)*slot)->label;
 	} else if (object_getClass(self) == gLibraryClass) {
 		label = &((struct library *)*slot)->label;
+#ifdef HAKIOS_METAL_GPU
+	} else if (object_getClass(self) == gCommandBufferClass) {
+		label = &((struct commandbuffer *)*slot)->label;
+	} else if (object_getClass(self) == gBlitEncoderClass) {
+		label = &((struct blitencoder *)*slot)->label;
+#endif
 	} else {
 		label = &((struct function *)*slot)->label;
 	}
@@ -334,6 +397,12 @@ labelSet(id self, __unused SEL _cmd, id text)
 		label = &((struct buffer *)*slot)->label;
 	} else if (object_getClass(self) == gLibraryClass) {
 		label = &((struct library *)*slot)->label;
+#ifdef HAKIOS_METAL_GPU
+	} else if (object_getClass(self) == gCommandBufferClass) {
+		label = &((struct commandbuffer *)*slot)->label;
+	} else if (object_getClass(self) == gBlitEncoderClass) {
+		label = &((struct blitencoder *)*slot)->label;
+#endif
 	} else {
 		label = &((struct function *)*slot)->label;
 	}
@@ -356,6 +425,10 @@ bufferFree(void *state)
 
 	if (b->mapped) {
 		munmap(b->memory, b->length ? b->length : 1);
+#ifdef HAKIOS_METAL_GPU
+	} else if (b->gpu != NULL) {
+		hakios_metal_buffer_free(b->gpu);       /* (a command buffer still using it keeps the memory until it is done) */
+#endif
 	} else if (b->deallocator != nil) {
 		b->deallocator(b->memory, (NSUInteger)b->length);
 	}
@@ -439,6 +512,13 @@ bufferDidModify(__unused id self, __unused SEL _cmd, __unused NSRange range)
 static uint64_t
 bufferGPUAddress(__unused id self, __unused SEL _cmd)
 {
+#ifdef HAKIOS_METAL_GPU
+	struct buffer *b = bufferOf(self);
+
+	if (b != NULL && b->gpu != NULL) {
+		return hakios_metal_buffer_gpu_address(b->gpu);
+	}
+#endif
 	return 0;
 }
 
@@ -490,6 +570,22 @@ deviceNewBuffer(__unused id self, __unused SEL _cmd, unsigned long length, unsig
 	void *memory;
 	id buffer;
 
+#ifdef HAKIOS_METAL_GPU
+	if (gpu() != NULL && length <= deviceMaxBufferLength(nil, NULL)) {
+		hakios_metal_buffer *g = hakios_metal_buffer_new(gGPU, length);
+
+		if (g != NULL) {
+			buffer = bufferMake(hakios_metal_buffer_contents(g), length, options, NO, nil);
+			if (buffer == nil) {
+				hakios_metal_buffer_free(g);
+				return nil;
+			}
+			bufferOf(buffer)->gpu = g;
+			return buffer;
+		}
+		say([NSString stringWithFormat:@"newBufferWithLength:%lu: no GPU memory (%s): plain memory instead", length, hakios_metal_error()]);
+	}
+#endif
 	if (length > deviceMaxBufferLength(nil, NULL) || (memory = pages(length)) == NULL) {
 		say([NSString stringWithFormat:@"newBufferWithLength:%lu: no (more than maxBufferLength, or no memory): nil", length]);
 		return nil;
@@ -1003,6 +1099,316 @@ registerStubClasses(Class device)
 	}
 }
 
+#ifdef HAKIOS_METAL_GPU
+/* ---- command buffers and blits, on the GPU (hakios-metal) ---- */
+
+static void *
+slotState(id self)
+{
+	void **slot = stateOf(self);
+
+	return slot != NULL ? *slot : NULL;
+}
+
+static void
+queueDealloc(id self, SEL _cmd)
+{
+	/* (no command buffer is in flight: each holds its queue) */
+	deallocWith(self, _cmd, gQueueClass, (void (*)(void *))hakios_metal_queue_free);
+}
+
+static void
+commandBufferFree(void *state)
+{
+	struct commandbuffer *c = state;
+
+	hakios_metal_cb_free(c->cb);
+	[c->handlers release];
+	[c->scheduled release];
+	[c->queue release];
+	[c->label release];
+	free(c);
+}
+
+static void
+commandBufferDealloc(id self, SEL _cmd)
+{
+	deallocWith(self, _cmd, gCommandBufferClass, commandBufferFree);
+}
+
+static id
+queueCommandBuffer(id self, __unused SEL _cmd)
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	hakios_metal_queue *q = slotState(self);
+	struct commandbuffer *c;
+	void **slot;
+	id cb;
+
+	if (q == NULL || gCommandBufferClass == Nil) {
+		say(@"commandBuffer: the queue has no GPU queue: nil");
+		return nil;
+	}
+	if ((cb = plain(plain((id)gCommandBufferClass, sel_registerName("alloc")), sel_registerName("init"))) == nil) {
+		return nil;
+	}
+	c = calloc(1, sizeof(*c));
+	slot = stateOf(cb);
+	if (c == NULL || slot == NULL || (c->cb = hakios_metal_cb_new(q)) == NULL) {
+		free(c);
+		[cb release];
+		return nil;
+	}
+	c->queue = [self retain];
+	c->handlers = [[NSMutableArray alloc] init];
+	c->scheduled = [[NSMutableArray alloc] init];
+	*slot = c;
+	return [cb autorelease];
+}
+
+/* on the queue's thread, once the GPU is done with it (or it ended in error): its handlers, then the reference commit took */
+static void
+commandBufferDone(__unused hakios_metal_cb *cb, void *context)
+{
+	id self = (id)context;
+	struct commandbuffer *c = slotState(self);
+
+	@autoreleasepool {
+		for (void (^handler)(id) in c->handlers) {
+			handler(self);
+		}
+	}
+	[self release];
+}
+
+static void
+commandBufferCommit(id self, __unused SEL _cmd)
+{
+	struct commandbuffer *c = slotState(self);
+
+	if (c == NULL || c->committed) {
+		return;
+	}
+	c->committed = YES;
+	for (void (^handler)(id) in c->scheduled) {
+		handler(self);
+	}
+	hakios_metal_cb_commit(c->cb, commandBufferDone, [self retain]);
+}
+
+static void
+commandBufferEnqueue(__unused id self, __unused SEL _cmd)
+{
+}
+
+static void
+commandBufferWait(id self, __unused SEL _cmd)
+{
+	struct commandbuffer *c = slotState(self);
+
+	if (c != NULL && c->committed) {
+		hakios_metal_cb_wait(c->cb);    /* (its completed handlers have run when this returns) */
+	}
+}
+
+static void
+commandBufferWaitScheduled(__unused id self, __unused SEL _cmd)
+{
+}
+
+static void
+commandBufferAddHandler(id self, __unused SEL _cmd, void (^handler)(id))
+{
+	struct commandbuffer *c = slotState(self);
+
+	if (c != NULL && !c->committed && handler != nil) {
+		[c->handlers addObject:[[handler copy] autorelease]];
+	}
+}
+
+static void
+commandBufferAddScheduled(id self, __unused SEL _cmd, void (^handler)(id))
+{
+	struct commandbuffer *c = slotState(self);
+
+	if (c != NULL && !c->committed && handler != nil) {
+		[c->scheduled addObject:[[handler copy] autorelease]];
+	}
+}
+
+static unsigned long
+commandBufferStatus(id self, __unused SEL _cmd)
+{
+	struct commandbuffer *c = slotState(self);
+
+	return c == NULL || !c->committed ? MTLCommandBufferStatusNotEnqueued : (unsigned long)hakios_metal_cb_status(c->cb);
+}
+
+static id
+commandBufferError(id self, __unused SEL _cmd)
+{
+	struct commandbuffer *c = slotState(self);
+
+	if (c == NULL || !c->committed || hakios_metal_cb_status(c->cb) != HAKIOS_METAL_ERROR) {
+		return nil;
+	}
+	return [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal
+	    userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithUTF8String:hakios_metal_cb_error(c->cb)] }];
+}
+
+static id
+commandBufferQueue(id self, __unused SEL _cmd)
+{
+	struct commandbuffer *c = slotState(self);
+
+	return c != NULL ? c->queue : nil;
+}
+
+static double
+commandBufferNoTime(__unused id self, __unused SEL _cmd)
+{
+	return 0;
+}
+
+static void
+blitEncoderFree(void *state)
+{
+	struct blitencoder *e = state;
+
+	[e->commandBuffer release];
+	[e->label release];
+	free(e);
+}
+
+static void
+blitEncoderDealloc(id self, SEL _cmd)
+{
+	deallocWith(self, _cmd, gBlitEncoderClass, blitEncoderFree);
+}
+
+static id
+commandBufferBlitEncoder(id self, __unused SEL _cmd)
+{
+	id (*plain)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+	struct commandbuffer *c = slotState(self);
+	struct blitencoder *e;
+	void **slot;
+	id encoder;
+
+	if (c == NULL || c->committed || gBlitEncoderClass == Nil ||
+	    (encoder = plain(plain((id)gBlitEncoderClass, sel_registerName("alloc")), sel_registerName("init"))) == nil) {
+		return nil;
+	}
+	e = calloc(1, sizeof(*e));
+	slot = stateOf(encoder);
+	if (e == NULL || slot == NULL) {
+		free(e);
+		[encoder release];
+		return nil;
+	}
+	e->commandBuffer = [self retain];
+	*slot = e;
+	return [encoder autorelease];
+}
+
+/* the command buffer an encoder records into, while it may */
+static struct commandbuffer *
+recording(id encoder)
+{
+	struct blitencoder *e = slotState(encoder);
+	struct commandbuffer *c = e != NULL && !e->ended ? slotState(e->commandBuffer) : NULL;
+
+	return c != NULL && !c->committed ? c : NULL;
+}
+
+/* a buffer of the GPU's, or NULL (made from the caller's memory, or not ours at all) */
+static hakios_metal_buffer *
+gpuBufferOf(id buffer)
+{
+	struct buffer *b = object_getClass(buffer) == gBufferClass ? bufferOf(buffer) : NULL;
+
+	return b != NULL ? b->gpu : NULL;
+}
+
+static void
+blitCopy(id self, __unused SEL _cmd, id from, unsigned long fromOffset, id to, unsigned long toOffset, unsigned long size)
+{
+	struct commandbuffer *c = recording(self);
+	hakios_metal_buffer *a = gpuBufferOf(from), *b = gpuBufferOf(to);
+
+	if (c == NULL) {
+		return;
+	}
+	if (a == NULL || b == NULL) {
+		hakios_metal_cb_fail(c->cb, "copyFromBuffer: a buffer that is not in the GPU's memory (made with ...BytesNoCopy?)");
+	} else if (hakios_metal_cb_copy(c->cb, a, fromOffset, b, toOffset, size) != 0) {
+		say([NSString stringWithFormat:@"copyFromBuffer: %s", hakios_metal_error()]);
+	}
+}
+
+static void
+blitFill(id self, __unused SEL _cmd, id buffer, NSRange range, unsigned char value)
+{
+	struct commandbuffer *c = recording(self);
+	hakios_metal_buffer *b = gpuBufferOf(buffer);
+
+	if (c == NULL) {
+		return;
+	}
+	if (b == NULL) {
+		hakios_metal_cb_fail(c->cb, "fillBuffer: a buffer that is not in the GPU's memory");
+	} else if (hakios_metal_cb_fill(c->cb, b, range.location, range.length, value) != 0) {
+		say([NSString stringWithFormat:@"fillBuffer: %s", hakios_metal_error()]);
+	}
+}
+
+static void
+blitEnd(id self, __unused SEL _cmd)
+{
+	struct blitencoder *e = slotState(self);
+
+	if (e != NULL) {
+		e->ended = YES;
+	}
+}
+
+static void
+blitNothing(__unused id self, __unused SEL _cmd, __unused id resource)
+{
+	/* synchronizeResource: the memory is the CPU's and the GPU's both (write-combined): there is nothing to copy back */
+}
+
+static void
+registerCommandClasses(void)
+{
+	static const char *const cb[] = { "MTLCommandBuffer", NULL }, *const blit[] = { "MTLBlitCommandEncoder", "MTLCommandEncoder", NULL };
+
+	if ((gCommandBufferClass = objectClass("HakiosMetalCommandBuffer", "_MTLCommandBuffer", cb, (IMP)commandBufferDealloc)) != Nil) {
+		class_addMethod(gCommandBufferClass, sel_registerName("commit"), (IMP)commandBufferCommit, "v@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("enqueue"), (IMP)commandBufferEnqueue, "v@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("waitUntilCompleted"), (IMP)commandBufferWait, "v@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("waitUntilScheduled"), (IMP)commandBufferWaitScheduled, "v@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("addCompletedHandler:"), (IMP)commandBufferAddHandler, "v@:@?");
+		class_addMethod(gCommandBufferClass, sel_registerName("addScheduledHandler:"), (IMP)commandBufferAddScheduled, "v@:@?");
+		class_addMethod(gCommandBufferClass, sel_registerName("status"), (IMP)commandBufferStatus, "Q@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("error"), (IMP)commandBufferError, "@@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("commandQueue"), (IMP)commandBufferQueue, "@@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("blitCommandEncoder"), (IMP)commandBufferBlitEncoder, "@@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("GPUStartTime"), (IMP)commandBufferNoTime, "d@:");
+		class_addMethod(gCommandBufferClass, sel_registerName("GPUEndTime"), (IMP)commandBufferNoTime, "d@:");
+		objc_registerClassPair(gCommandBufferClass);
+	}
+	if ((gBlitEncoderClass = objectClass("HakiosMetalBlitEncoder", "_MTLCommandEncoder", blit, (IMP)blitEncoderDealloc)) != Nil) {
+		class_addMethod(gBlitEncoderClass, sel_registerName("copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:"),
+		    (IMP)blitCopy, "v@:@Q@QQ");
+		class_addMethod(gBlitEncoderClass, sel_registerName("fillBuffer:range:value:"), (IMP)blitFill, "v@:@{_NSRange=QQ}C");
+		class_addMethod(gBlitEncoderClass, sel_registerName("endEncoding"), (IMP)blitEnd, "v@:");
+		class_addMethod(gBlitEncoderClass, sel_registerName("synchronizeResource:"), (IMP)blitNothing, "v@:@");
+		objc_registerClassPair(gBlitEncoderClass);
+	}
+}
+#endif
+
 static void
 registerQueueClass(void)
 {
@@ -1045,8 +1451,17 @@ registerQueueClass(void)
 	class_addMethod(gQueueClass, sel_registerName("setGPUPriority:"), (IMP)queueSetGPUPriority, "v@:Q");
 	class_addMethod(gQueueClass, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
 	class_addMethod(gQueueClass, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
+#ifdef HAKIOS_METAL_GPU
+	class_addIvar(gQueueClass, "_hakios", sizeof(void *), sizeof(void *) == 8 ? 3 : 2, "^v");
+	class_addMethod(gQueueClass, sel_registerName("dealloc"), (IMP)queueDealloc, "v@:");
+	class_addMethod(gQueueClass, sel_registerName("commandBuffer"), (IMP)queueCommandBuffer, "@@:");
+	class_addMethod(gQueueClass, sel_registerName("commandBufferWithUnretainedReferences"), (IMP)queueCommandBuffer, "@@:");
+#endif
 	objc_registerClassPair(gQueueClass);
 	say(@"the class HakiosMetalQueue is registered (a subclass of _MTLCommandQueue)");
+#ifdef HAKIOS_METAL_GPU
+	registerCommandClasses();
+#endif
 }
 
 /*
