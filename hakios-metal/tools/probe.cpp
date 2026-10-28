@@ -473,13 +473,24 @@ int main(int argc, char** argv) {
                     changed++;
                 }
             }
-            char text[160];
+            // FNV-1a over the whole buffer, so that a host reference (tools/air/kernelref.py in hakios) running the same
+            // kernel through LLVM over the same canary-filled buffers can print the same line and the two be compared
+            uint64_t hash = 0xcbf29ce484222325ull;
+            for (uint32_t w : back) {
+                for (int b = 0; b < 4; b++) {
+                    hash ^= (w >> (8 * b)) & 0xff;
+                    hash *= 0x100000001b3ull;
+                }
+            }
+            char text[240];
             if (changed == 0) {
                 snprintf(text, sizeof text, "; buffer %u: untouched", index);
             } else {
-                snprintf(text, sizeof text, "; buffer %u: %u words written from %u on, the first 0x%08x 0x%08x 0x%08x 0x%08x", index, changed, first,
-                         back[first], first + 1 < back.size() ? back[first + 1] : 0, first + 2 < back.size() ? back[first + 2] : 0,
-                         first + 3 < back.size() ? back[first + 3] : 0);
+                snprintf(text, sizeof text, "; buffer %u: %u words written from %u on, fnv1a %016llx, the first 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x",
+                         index, changed, first, (unsigned long long)hash, back[first], first + 1 < back.size() ? back[first + 1] : 0,
+                         first + 2 < back.size() ? back[first + 2] : 0, first + 3 < back.size() ? back[first + 3] : 0,
+                         first + 4 < back.size() ? back[first + 4] : 0, first + 5 < back.size() ? back[first + 5] : 0,
+                         first + 6 < back.size() ? back[first + 6] : 0, first + 7 < back.size() ? back[first + 7] : 0);
             }
             written += text;
         }
