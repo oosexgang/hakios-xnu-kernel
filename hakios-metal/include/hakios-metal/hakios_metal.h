@@ -38,6 +38,7 @@ hakios_metal_device *hakios_metal_open(void);
 /* (for the tests: a device on the fake GPU, which runs the packets in this process) */
 hakios_metal_device *hakios_metal_open_fake(void);
 void hakios_metal_close(hakios_metal_device *device);
+/* the chip id (0x06030500 on the phone: the kernel's GPU_ID is 0, the chip id is what names the GPU) */
 uint64_t hakios_metal_gpu_id(hakios_metal_device *device);
 
 hakios_metal_buffer *hakios_metal_buffer_new(hakios_metal_device *device, uint64_t length);

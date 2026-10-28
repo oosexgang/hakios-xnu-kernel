@@ -8,8 +8,38 @@
 
 namespace hakios::metal {
 
-FakeGpu::FakeGpu(bool async, uint32_t delayUs) : async_(async), delayUs_(delayUs) {
-    submitted_[0] = completed_[0] = 0;
+namespace {
+// The fake GPU reads a header with arithmetic of its own and not with pm4::decode: while the two were one function an
+// encoder whose parity bit was even passed every test here, and only the comparison with Mesa's formula (pm4_test.cpp)
+// said so. The command processor does not share the encoder's code either. Odd parity: the bit is 1 when the field has
+// an even number of ones, so that field and bit together have an odd count.
+uint32_t oddBit(uint32_t field) { return (__builtin_popcount(field) & 1) ^ 1u; }
+
+pm4::Header readHeader(uint32_t w) {
+    pm4::Header h;
+    switch (w >> 28) {
+    case 4:
+        h.count = w & 0x7f;
+        h.reg = (w >> 8) & 0x3ffff;
+        if (((w >> 7) & 1) == oddBit(h.count) && ((w >> 27) & 1) == oddBit(h.reg)) {
+            h.kind = pm4::Header::kRegisters;
+        }
+        break;
+    case 7:
+        h.count = w & 0x3fff;
+        h.opcode = (w >> 16) & 0x7f;
+        if (((w >> 15) & 1) == oddBit(h.count) && ((w >> 23) & 1) == oddBit(h.opcode)) {
+            h.kind = pm4::Header::kCommand;
+        }
+        break;
+    default:
+        break;
+    }
+    return h;
+}
+}  // namespace
+
+FakeGpu::FakeGpu(bool async, uint32_t delayUs, bool recovers) : async_(async), recovers_(recovers), delayUs_(delayUs) {
     if (async_) {
         thread_ = std::thread([this] { worker(); });
     }
@@ -88,7 +118,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
         return false;
     }
     for (uint32_t i = 0; i < words;) {
-        pm4::Header h = pm4::decode(w[i]);
+        pm4::Header h = readHeader(w[i]);
         if (h.kind == pm4::Header::kBad) {
             char text[80];
             snprintf(text, sizeof(text), "word %u (0x%08x): not a packet, or its parity is wrong", i, w[i]);
@@ -130,9 +160,10 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     return false;
                 }
                 uint64_t n = p[0], from = p[1] | uint64_t(p[2]) << 32, to = p[3] | uint64_t(p[4]) << 32;
-                // as the phone's GPU: 4 Mi words in one packet hung it (27 October); the fake one refuses past 64 Ki
+                // The phone's GPU took 125 000 words in one packet (4.2 ms) and hung on 4 Mi (27 October); where between
+                // the two it stops taking them is not measured. The driver cuts at 64 Ki, and the fake holds it to that.
                 if (n > 64 * 1024) {
-                    fault("CP_MEMCPY of more words in one packet than the GPU was seen to take");
+                    fault("CP_MEMCPY of more words in one packet than the driver's own limit of 64 Ki");
                     return false;
                 }
                 uint8_t* s = at(from, 4 * n);
@@ -168,11 +199,28 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
     return true;
 }
 
+// A submission the GPU never finishes, as the kernel treats it. With recovery, the GPU is reset and everything it
+// had been given is given up as done: the fence word is set to the last submission's number (hakios_gpu_recover),
+// so every wait ends, the hung submission's own with the timeout it was found by, and FAULTS says it happened.
+// Without recovery nothing is waited for again in this run.
+void FakeGpu::hung() {
+    jobs_.clear();
+    if (recovers_) {
+        stats_.recoveries++;
+        completed_ = submitted_;
+    } else {
+        wedged_ = true;
+    }
+}
+
 void FakeGpu::run(const Job& job) {
     stats_.submits++;
-    execute(job.address, job.words, 0);
-    // a faulting submission is still over: the real driver recovers the GPU and signals the fence
-    completed_[job.queue] = job.fence;
+    if (execute(job.address, job.words, 0)) {
+        completed_ = job.fence;
+        return;
+    }
+    hungFences_.insert(job.fence);
+    hung();
 }
 
 void FakeGpu::worker() {
@@ -203,11 +251,23 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
     case kGetParam: {
         if (size != sizeof(MsmParam)) return EINVAL;
         auto* p = static_cast<MsmParam*>(data);
+        // the kernel's table (bsd/dev/hakios.adreno.c, hakios_gpu_parameter), number for number
         switch (p->param) {
-        case kParamGpuId: p->value = 660; return 0;
-        case kParamChipId: p->value = 0x06060001; return 0;
-        case kParamGmemSize: p->value = 512 * 1024; return 0;
-        default: return EINVAL;
+        case kParamGpuId: p->value = 0; return 0;                   // "none, the chip ID says it"
+        case kParamGmemSize: p->value = kGmemBytes; return 0;
+        case kParamChipId: p->value = kChipId | kSpeedBin << 32; return 0;
+        case kParamMaxFreq: p->value = kMaxFrequencyHz; return 0;
+        case kParamTimestamp: p->value = uint64_t(nowNs()); return 0;
+        case kParamGmemBase: p->value = 0; return 0;
+        case kParamPriorities: p->value = 1; return 0;
+        case kParamPpPgtable: p->value = 0; return 0;
+        case kParamFaults: p->value = stats_.recoveries; return 0;
+        case kParamSuspends: p->value = 0; return 0;
+        case kParamHighestBankBit: p->value = 14; return 0;
+        case kParamRaytracing: p->value = 0; return 0;
+        case kParamUbwcSwizzle: p->value = 6; return 0;
+        case kParamMacrotileMode: p->value = 1; return 0;
+        default: return EINVAL;                                      // (kIOReturnBadArgument there: VA_START, VA_SIZE among them)
         }
     }
     case kGemNew: {
@@ -237,7 +297,7 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         if (size != sizeof(MsmSubmitQueue)) return EINVAL;
         auto* q = static_cast<MsmSubmitQueue*>(data);
         q->id = nextQueue_++;
-        submitted_[q->id] = completed_[q->id] = 0;
+        queues_.insert(q->id);
         return 0;
     }
     case kSubmitQueueClose:
@@ -245,7 +305,7 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
     case kGemSubmit: {
         if (size != sizeof(MsmGemSubmit)) return EINVAL;
         auto* s = static_cast<MsmGemSubmit*>(data);
-        if (s->nr_cmds != 1 || s->nr_bos == 0 || submitted_.count(s->queueid) == 0) return EINVAL;
+        if (s->nr_cmds != 1 || s->nr_bos == 0 || (s->queueid != 0 && queues_.count(s->queueid) == 0)) return EINVAL;
         auto* bos = reinterpret_cast<const MsmSubmitBo*>(uintptr_t(s->bos));
         auto* cmd = reinterpret_cast<const MsmSubmitCmd*>(uintptr_t(s->cmds));
         if (cmd->submit_idx >= s->nr_bos || cmd->type != kSubmitCmdBuf || cmd->size % 4 != 0) return EINVAL;
@@ -254,8 +314,12 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         }
         Buffer& c = buffers_.at(bos[cmd->submit_idx].handle);
         if (uint64_t(cmd->submit_offset) + cmd->size > c.bytes.size()) return EINVAL;
-        Job job{s->queueid, ++submitted_[s->queueid], c.iova + cmd->submit_offset, cmd->size / 4};
+        Job job{++submitted_, c.iova + cmd->submit_offset, cmd->size / 4};
         s->fence = job.fence;
+        // (a wedged GPU still takes submissions, as the kernel's ring does until it is full: they are never run)
+        if (wedged_) {
+            return 0;
+        }
         if (async_) {
             jobs_.push_back(job);
             changed_.notify_all();
@@ -267,13 +331,24 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
     case kWaitFence: {
         if (size != sizeof(MsmWaitFence)) return EINVAL;
         auto* w = static_cast<MsmWaitFence*>(data);
-        if (completed_.count(w->queueid) == 0) return EINVAL;
-        if (w->fence > submitted_[w->queueid]) return EINVAL;     // a fence never handed out
+        if (w->queueid != 0 && queues_.count(w->queueid) == 0) return EINVAL;
+        if (w->fence > submitted_) {
+            // The kernel does not know this fence was never handed out: it waits the caller's whole patience for a word
+            // that never comes, and that is a hang like any other. Here it is one at once.
+            fault("a fence that was never handed out was waited for");
+            hung();
+            return ETIMEDOUT;
+        }
+        if (wedged_ || hungFences_.count(w->fence) != 0) {
+            // (the kernel takes the caller's whole patience to say so; the fake knows already)
+            return ETIMEDOUT;
+        }
         int64_t deadline = w->timeout.seconds * 1000000000 + w->timeout.nanoseconds;
-        while (completed_[w->queueid] < w->fence) {
+        while (completed_ < w->fence) {
             int64_t left = deadline - nowNs();
             if (left <= 0) return ETIMEDOUT;
             changed_.wait_for(g, std::chrono::nanoseconds(left));
+            if (wedged_ || hungFences_.count(w->fence) != 0) return ETIMEDOUT;
         }
         return 0;
     }

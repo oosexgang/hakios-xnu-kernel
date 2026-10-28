@@ -207,6 +207,7 @@ void CommandQueue::submit(std::shared_ptr<CommandBuffer> cb) {
     memcpy(cb->commands_->cpu(), w.data(), 4 * w.size());
     std::unique_lock<std::mutex> g(lock_);  // the fences of one queue are handed out in commit order
     cb->status_ = CommandBuffer::kCommitted;
+    cb->faultsAtCommit_ = gpu_.faults();
     int e = gpu_.submit(id_, *cb->commands_, 0, uint32_t(w.size()), cb->uses_, &cb->fence_);
     if (e != 0) {
         cb->error_ = std::string("the driver refused the submission: ") + strerror(e);
@@ -231,9 +232,22 @@ void CommandQueue::waiter() {
         g.unlock();
         int e = gpu_.wait(id_, cb->fence_, kPatienceNs);
         cb->completedAt_ = gpu_.transport().nowNs();
-        if (e != 0) {
-            cb->error_ = e == ETIMEDOUT ? "the GPU did not finish it in 5 s (hung?)"
-                                        : std::string("waiting for it failed: ") + strerror(e);
+        // A fence that passed is not yet a submission that ran. When the kernel resets a hung GPU (gpu_recover=1) it
+        // gives up everything the GPU had been given, the hung submission and those behind it in the ring, by setting
+        // the fence word to the last submission's number -- so their waits end as if they had run (hakios_gpu_recover:
+        // "submissions up to N are given up as done"). FAULTS counts the resets; one more since the commit says so.
+        uint64_t faults = gpu_.faults();
+        bool givenUp = faults > cb->faultsAtCommit_;
+        if (e == 0 && givenUp) {
+            cb->error_ = "given up by a reset of the GPU (it hung on this submission or on one before it): not run";
+            e = EIO;
+        } else if (e == ETIMEDOUT) {
+            cb->error_ = givenUp ? "the GPU did not finish it in 5 s: it hung, and the kernel has reset it (reset " +
+                                       std::to_string(faults) + " of this run)"
+                                 : "the GPU did not finish it in 5 s and is not answering; without gpu_recover=1 the "
+                                   "kernel waits for nothing again in this run";
+        } else if (e != 0) {
+            cb->error_ = std::string("waiting for it failed: ") + strerror(e);
         }
         cb->finish(e == 0 ? CommandBuffer::kCompleted : CommandBuffer::kError);
         g.lock();

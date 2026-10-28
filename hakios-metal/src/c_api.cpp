@@ -63,11 +63,7 @@ hakios_metal_device* hakios_metal_open_fake(void) { return deviceOn(std::make_un
 
 void hakios_metal_close(hakios_metal_device* d) { delete d; }
 
-uint64_t hakios_metal_gpu_id(hakios_metal_device* d) {
-    uint64_t id = 0;
-    d->gpu->param(kParamGpuId, &id);
-    return id;
-}
+uint64_t hakios_metal_gpu_id(hakios_metal_device* d) { return d->gpu->chipId(); }
 
 hakios_metal_buffer* hakios_metal_buffer_new(hakios_metal_device* d, uint64_t length) {
     std::string why;

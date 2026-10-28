@@ -16,7 +16,7 @@ void counted(hakios_metal_cb* cb, void* context) {
 TEST(c_api_copy_and_callbacks) {
     hakios_metal_device* d = hakios_metal_open_fake();
     CHECK(d != nullptr);
-    CHECK_EQ(hakios_metal_gpu_id(d), 660ull);
+    CHECK_EQ(hakios_metal_gpu_id(d), 0x06030500ull);
     hakios_metal_buffer* a = hakios_metal_buffer_new(d, 4096);
     hakios_metal_buffer* b = hakios_metal_buffer_new(d, 4096);
     CHECK_EQ(hakios_metal_buffer_length(a), 4096ull);

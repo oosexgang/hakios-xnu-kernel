@@ -30,6 +30,16 @@ int Gpu::param(uint32_t which, uint64_t* value) {
     return e;
 }
 
+uint32_t Gpu::chipId() {
+    uint64_t v = 0;
+    return param(kParamChipId, &v) == 0 ? uint32_t(v) : 0;
+}
+
+uint64_t Gpu::faults() {
+    uint64_t v = 0;
+    return param(kParamFaults, &v) == 0 ? v : 0;
+}
+
 std::unique_ptr<Bo> Gpu::newBo(uint64_t size, uint32_t flags, int* error) {
     *error = 0;
     if (size == 0) {

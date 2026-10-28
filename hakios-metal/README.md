@@ -45,7 +45,7 @@ XL_CMDLINE="... gpu=1" ./xl run
    v
  Transport     iokit_transport.cpp on the phone  |  fake_gpu.cpp in the tests
    v
- the kernel's HakiosGPU (hakios: drivers/gpu/hakios.gpu.cpp) -> the Adreno 660
+ the kernel's HakiosGPU (hakios: drivers/gpu/hakios.gpu.cpp) -> the Adreno 7c+ Gen 3 (chip id 0x06030500)
 ```
 
 UniXNU's AdrenoMetal goes another way (Metal to Vulkan, then Mesa's Turnip). This driver does not use its code.

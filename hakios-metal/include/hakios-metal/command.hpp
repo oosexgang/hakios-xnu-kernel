@@ -88,6 +88,7 @@ private:
     std::condition_variable done_;
     bool finished_ = false;                             // (under lock_) the handlers have run: waitUntilCompleted returns
     uint32_t fence_ = 0;
+    uint64_t faultsAtCommit_ = 0;                       // the GPU's reset count then: one more by completion = given up, not run
     std::unique_ptr<Bo> commands_;
     int64_t committedAt_ = 0, completedAt_ = 0;
 };

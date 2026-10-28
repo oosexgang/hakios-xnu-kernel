@@ -1,6 +1,7 @@
 // The Metal model against the fake GPU, which runs the packets: what a blit leaves in memory, the order of
 // completion, the states, and the refusals.
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <random>
 
@@ -12,8 +13,8 @@ using namespace hakios::metal;
 
 namespace {
 struct Rig {
-    explicit Rig(bool async = false, uint32_t delayUs = 0) {
-        auto f = std::make_unique<FakeGpu>(async, delayUs);
+    explicit Rig(bool async = false, uint32_t delayUs = 0, bool recovers = true) {
+        auto f = std::make_unique<FakeGpu>(async, delayUs, recovers);
         fake = f.get();
         gpu = std::make_unique<Gpu>(std::move(f));
         std::string why;
@@ -36,10 +37,33 @@ std::shared_ptr<Buffer> buffer(Rig& r, uint64_t n) {
 }  // namespace
 
 TEST(gpu_params) {
+    // what the kernel answers (hakios: bsd/dev/hakios.adreno.c, hakios_gpu_parameter), written here from that source by
+    // hand, so that the fake and this test are two readings of it and not one
     Rig r;
-    uint64_t id = 0;
-    CHECK_EQ(r.gpu->param(kParamGpuId, &id), 0);
-    CHECK_EQ(id, 660ull);
+    uint64_t v = 0;
+    CHECK_EQ(r.gpu->param(kParamGpuId, &v), 0);
+    CHECK_EQ(v, 0ull);                                      // "GPU_ID: none, the chip ID says it"
+    CHECK_EQ(r.gpu->param(kParamChipId, &v), 0);
+    CHECK_EQ(uint32_t(v), 0x06030500u);                     // GPU_CHIP_ID (dt qcom,chipid) ...
+    CHECK_EQ(v >> 32, FakeGpu::kSpeedBin);                  // ... "with the speed bin above it"
+    CHECK_EQ(r.gpu->chipId(), 0x06030500u);
+    CHECK_EQ(r.gpu->param(kParamGmemSize, &v), 0);
+    CHECK_EQ(v, 512ull * 1024);
+    CHECK_EQ(r.gpu->param(kParamMaxFreq, &v), 0);
+    CHECK_EQ(v, 550000000ull);                              // core_khz * 1000, the default clock
+    CHECK_EQ(r.gpu->param(kParamFaults, &v), 0);
+    CHECK_EQ(v, 0ull);
+    CHECK_EQ(r.gpu->param(kParamPriorities, &v), 0);
+    CHECK_EQ(v, 1ull);
+    CHECK_EQ(r.gpu->param(kParamHighestBankBit, &v), 0);
+    CHECK_EQ(v, 14ull);
+    CHECK_EQ(r.gpu->param(kParamUbwcSwizzle, &v), 0);
+    CHECK_EQ(v, 6ull);
+    CHECK_EQ(r.gpu->param(kParamMacrotileMode, &v), 0);
+    CHECK_EQ(v, 1ull);
+    CHECK_EQ(r.gpu->param(0x0e, &v), EINVAL);               // VA_START: "addresses are ours to give"
+    CHECK_EQ(r.gpu->param(0x0f, &v), EINVAL);               // VA_SIZE
+    CHECK_EQ(r.gpu->param(0x99, &v), EINVAL);
 }
 
 TEST(copy_moves_the_bytes) {
@@ -173,17 +197,84 @@ TEST(buffers_are_given_back) {
     CHECK_EQ(r.fake->liveBuffers(), 0u);
 }
 
-TEST(a_bad_stream_is_a_fault_not_a_crash) {
-    // what the fake GPU does with a packet the real one would hang on: counted, and the fence still passes
+TEST(a_bad_stream_is_a_hang_the_kernel_resets_the_gpu_for) {
+    // a packet the real GPU hangs on, with the kernel's gpu_recover=1: the hung submission's own wait fails, FAULTS
+    // counts the reset, and the GPU takes work again
     Rig r;
     int e = 0;
     auto bo = r.gpu->newBo(4096, 0, &e);
     auto* w = static_cast<uint32_t*>(bo->cpu());
-    w[0] = hakios::metal::pm4::type7(0x7f, 0) ^ (1u << 15);   // parity broken
+    w[0] = pm4::type7(0x7f, 0) ^ (1u << 15);   // parity broken
     uint32_t fence = 0;
     CHECK_EQ(r.gpu->submit(0, *bo, 0, 1, {}, &fence), 0);
-    CHECK_EQ(r.gpu->wait(0, fence, 1000000000), 0);
+    CHECK_EQ(r.gpu->wait(0, fence, 1000000000), ETIMEDOUT);
     CHECK_EQ(r.fake->stats().faults, 1u);
+    CHECK_EQ(r.gpu->faults(), 1ull);
+    w[0] = pm4::type7(pm4::kNop, 0);
+    CHECK_EQ(r.gpu->submit(0, *bo, 0, 1, {}, &fence), 0);
+    CHECK_EQ(r.gpu->wait(0, fence, 1000000000), 0);
+    CHECK_EQ(r.gpu->faults(), 1ull);
+}
+
+TEST(a_command_buffer_behind_a_hang_is_given_up_not_run) {
+    // The reset gives up everything the GPU had been given: the fence word is set to the last submission's number, so
+    // a command buffer behind the hung one completes without having run. It must say so, not claim completion over
+    // memory it never touched (two zero buffers were once counted as a match that way).
+    Rig r(true);
+    auto b = buffer(r, 4096);
+    memset(b->contents(), 0, 4096);
+    r.fake->pause();
+    int e = 0;
+    auto bad = r.gpu->newBo(4096, 0, &e);
+    static_cast<uint32_t*>(bad->cpu())[0] = pm4::type7(0x7f, 0) ^ (1u << 15);
+    uint32_t fence = 0;
+    CHECK_EQ(r.gpu->submit(0, *bad, 0, 1, {}, &fence), 0);   // first in the ring: hangs
+    auto cb = r.queue->commandBuffer();                        // behind it
+    CHECK(cb->fill(*b, 0, 4096, 0xee));
+    cb->commit();
+    r.fake->resume();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kError);
+    CHECK(cb->error().find("given up") != std::string::npos);
+    CHECK_EQ(static_cast<uint8_t*>(b->contents())[0], 0);     // and indeed nothing of it ran
+    CHECK_EQ(r.gpu->faults(), 1ull);
+    // committed after the reset: runs
+    auto cb2 = r.queue->commandBuffer();
+    CHECK(cb2->fill(*b, 0, 4096, 0xee));
+    cb2->commit();
+    cb2->waitUntilCompleted();
+    CHECK(cb2->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(static_cast<uint8_t*>(b->contents())[4095], 0xee);
+}
+
+TEST(without_recovery_the_first_hang_ends_every_later_wait) {
+    // the kernel without gpu_recover=1: gGPUReported is set by the first wait that times out and never cleared
+    Rig r(false, 0, false);
+    int e = 0;
+    auto bo = r.gpu->newBo(4096, 0, &e);
+    auto* w = static_cast<uint32_t*>(bo->cpu());
+    w[0] = pm4::type7(0x7f, 0) ^ (1u << 15);
+    uint32_t fence = 0;
+    CHECK_EQ(r.gpu->submit(0, *bo, 0, 1, {}, &fence), 0);
+    CHECK_EQ(r.gpu->wait(0, fence, 1000000000), ETIMEDOUT);
+    CHECK_EQ(r.gpu->faults(), 0ull);                           // no reset to count
+    w[0] = pm4::type7(pm4::kNop, 0);
+    CHECK_EQ(r.gpu->submit(0, *bo, 0, 1, {}, &fence), 0);     // still taken, as the ring takes them ...
+    CHECK_EQ(r.gpu->wait(0, fence, 1000000000), ETIMEDOUT);    // ... and never run
+    auto b = buffer(r, 4096);
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->fill(*b, 0, 4096, 0x11));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kError);
+    CHECK(cb->error().find("without gpu_recover=1") != std::string::npos);
+}
+
+TEST(a_fence_never_handed_out_is_a_hang) {
+    // the kernel does not know such a fence: it waits the whole patience, and that is a hang like any other
+    Rig r;
+    CHECK_EQ(r.gpu->wait(0, 7, 1000000), ETIMEDOUT);
+    CHECK_EQ(r.gpu->faults(), 1ull);
 }
 
 TEST(big_copies_are_cut_into_packets_the_gpu_takes) {

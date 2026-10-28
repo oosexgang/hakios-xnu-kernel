@@ -55,12 +55,26 @@ static_assert(sizeof(MsmParam) == 24 && sizeof(MsmGemNew) == 16 && sizeof(MsmGem
 static_assert(sizeof(MsmSubmitCmd) == 32 && sizeof(MsmSubmitBo) == 16 && sizeof(MsmGemSubmit) == 72, "msm_drm.h layout");
 static_assert(sizeof(MsmWaitFence) == 32, "msm_drm.h layout");
 
+// GET_PARAM's numbers (msm_drm.h's MSM_PARAM_*), the ones the kernel answers. GPU_ID is 0 there: the chip id says
+// what the GPU is, 0x06030500 (dt qcom,chipid, an A635-family part, "Adreno 7c+ Gen 3" to Mesa) with the phone's
+// speed bin in the word above it. FAULTS counts the GPU's resets after hangs (boot-arg gpu_recover=1): a submission
+// that completes after the count rose was given up by a reset, not run (command.cpp uses it that way).
 enum : uint32_t {
     kPipe3D = 1,
     kParamGpuId = 1,
     kParamGmemSize = 2,
     kParamChipId = 3,
     kParamMaxFreq = 4,
+    kParamTimestamp = 5,
+    kParamGmemBase = 6,
+    kParamPriorities = 7,
+    kParamPpPgtable = 8,
+    kParamFaults = 9,
+    kParamSuspends = 10,
+    kParamHighestBankBit = 0x10,
+    kParamRaytracing = 0x11,
+    kParamUbwcSwizzle = 0x12,
+    kParamMacrotileMode = 0x13,
     kInfoGetOffset = 0,
     kInfoGetIova = 1,
     kBoGpuReadOnly = 0x2,
@@ -124,8 +138,12 @@ class Gpu {
 public:
     explicit Gpu(std::unique_ptr<Transport> transport) : t_(std::move(transport)) {}
 
-    // what the driver says about the GPU (GPU_ID 660 on the SC7280): 0 and *value, or an errno
+    // what the driver says about the GPU (kParam...): 0 and *value, or an errno
     int param(uint32_t which, uint64_t* value);
+    // the chip id without the speed bin above it: 0x06030500 on the phone, 0 if the driver does not say
+    uint32_t chipId();
+    // how many times the kernel has reset a hung GPU in this run (0 when it cannot say)
+    uint64_t faults();
 
     // a buffer of SIZE bytes (rounded up to a page), its GPU address and its mapping; nullptr with *error set
     std::unique_ptr<Bo> newBo(uint64_t size, uint32_t flags, int* error);
