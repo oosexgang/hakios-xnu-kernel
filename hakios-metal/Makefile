@@ -25,6 +25,9 @@ HOSTOUT   = out/host$(if $(SAN),-$(SAN))
 # host build with hakios's AIR front end in it) and compiler_test compares it with the fixture; without MESA=1 the
 # tests build on any C++17 and compileAir() is a refusal by name. Included here, before the rules, so that HOSTOUT and
 # the flags are settled when the rules are read.
+# the hakios tree (HAKIOS=), named before the fragments: compiler.mk reads the iOS Mesa build's -D set from
+# $(HAKIOS)/xnu-deps/build/mesa at parse time, which an unset HAKIOS would turn into a silent empty set
+HAKIOS    ?= ../workspace
 -include tools/kernels.mk
 -include tools/compiler.mk
 ifneq ($(strip $(MESA)),)
@@ -32,8 +35,7 @@ override CXXFLAGS += -DHAKIOS_METAL_MESA $(HAKIOS_METAL_MESA_CXXFLAGS)
 HOSTLIBS  += $(HAKIOS_METAL_MESA_LIBS)
 HOSTOUT   = out/host-mesa$(if $(SAN),-$(SAN))
 endif
-# the SDK as hakios lays it out: theos, or on macOS xnu-deps/theos-mac (HAKIOS= the hakios tree)
-HAKIOS    ?= ../workspace
+# the SDK as hakios lays it out: theos, or on macOS xnu-deps/theos-mac
 SDK       ?= $(abspath $(firstword $(wildcard $(THEOS)/sdks/iPhoneOS16.5.sdk $(HAKIOS)/xnu-deps/theos-mac/sdks/iPhoneOS16.5.sdk $(HOME)/theos/sdks/iPhoneOS16.5.sdk)))
 ifeq ($(shell uname),Darwin)
 IOS_CXX   ?= xcrun clang++ -arch arm64 -isysroot $(SDK) -miphoneos-version-min=16.0

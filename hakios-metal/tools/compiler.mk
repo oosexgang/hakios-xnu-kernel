@@ -31,14 +31,15 @@ HAKIOS_METAL_MESA_CXXFLAGS = $(MESA_DEFS) $(MESA_INC) -isystem $(MESA_SRC)/src/c
 HAKIOS_METAL_MESA_LIBS = -Wl,--start-group $(MESA_BUILD)/src/compiler/air/libair.a $(MESA_ARCHIVES) -Wl,--end-group -lz -lm -pthread
 
 # --- iOS ----------------------------------------------------------------------
-# The cross build: Mesa built for arm64 iOS by the Darwin-on-redwood tree's
-# tools/mk-mesa.sh (meson cross file xnu-deps/build/mesa/cross.ini there, the
-# same xnu-clang as hakios's). hakios's own tools/mk-mesa.sh would put the
-# equivalent in /home/vcvk/hakios/workspace/xnu-deps/build/mesa, but it has not
-# been run, so the default is the private build; override IOS_MESA_SRC and
-# IOS_MESA_BUILD when it has.
-IOS_MESA_SRC   ?= /home/vcvk/darwin-redwood-air/xnu-deps/build/mesa/mesa-25.0.7
-IOS_MESA_BUILD ?= /home/vcvk/darwin-redwood-air/xnu-deps/build/mesa/build-softpipe-freedreno
+# The cross build: Mesa built for arm64 iOS by hakios's tools/mk-mesa.sh (meson
+# cross file xnu-deps/build/mesa/cross.ini, the same xnu-clang the Makefile
+# uses), with the AIR front end from hakios's tools/mesa/air copied in. Its
+# libair.a is not a target of the default build (nothing of libOSMesa links it):
+# `ninja -C <build> src/compiler/air/libair.a` once after mk-mesa.sh. Override
+# IOS_MESA_SRC and IOS_MESA_BUILD for a build elsewhere.
+IOS_MESA_ROOT  ?= $(abspath $(HAKIOS))/xnu-deps/build/mesa
+IOS_MESA_SRC   ?= $(IOS_MESA_ROOT)/mesa-25.0.7
+IOS_MESA_BUILD ?= $(IOS_MESA_ROOT)/build-softpipe-freedreno
 
 # Its -D set, read the same way as the host's (kernels.mk): off the ir3.c.o line
 # of its ninja file. It differs from the host's where the libc does (no
@@ -48,6 +49,10 @@ IOS_MESA_BUILD ?= /home/vcvk/darwin-redwood-air/xnu-deps/build/mesa/build-softpi
 ifeq ($(origin IOS_MESA_DEFS), undefined)
 IOS_MESA_DEFS := $(shell grep -m1 -A4 '^build src/freedreno/ir3/libfreedreno_ir3.a.p/ir3.c.o:' $(IOS_MESA_BUILD)/build.ninja \
 	| grep -m1 ' ARGS = ' | tr ' ' '\n' | grep '^-D' | tr '\n' ' ')
+# an empty set compiles Mesa's headers for the wrong libc (c11/threads.h: "Not supported on this platform"): say so
+ifeq ($(strip $(IOS_MESA_DEFS)),)
+$(warning tools/compiler.mk: no -D set for the iOS Mesa build in $(IOS_MESA_BUILD)/build.ninja (not built, or HAKIOS unset?); make ios MESA=1 will not compile)
+endif
 endif
 
 IOS_MESA_INC = \
