@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstring>
 
+#include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/pm4.hpp"
 
 namespace hakios::metal {
@@ -37,6 +38,15 @@ pm4::Header readHeader(uint32_t w) {
     }
     return h;
 }
+
+std::string text(const char* format, uint64_t a = 0, uint64_t b = 0, uint64_t c = 0) {
+    char buffer[160];
+    snprintf(buffer, sizeof buffer, format, (unsigned long long)a, (unsigned long long)b, (unsigned long long)c);
+    return buffer;
+}
+
+// a field read back the way the registers hold it, from a6xx.hpp's masks (the fake decodes; the encoder encodes)
+uint32_t fieldOf(uint32_t word, uint32_t mask, uint32_t shift) { return (word & mask) >> shift; }
 }  // namespace
 
 FakeGpu::FakeGpu(bool async, uint32_t delayUs, bool recovers) : async_(async), recovers_(recovers), delayUs_(delayUs) {
@@ -110,8 +120,210 @@ void FakeGpu::fault(const std::string& why) {
     stats_.lastFault = why;
 }
 
+uint32_t FakeGpu::reg(uint32_t r) const {
+    auto it = regs_.find(r);
+    return it == regs_.end() ? 0 : it->second;
+}
+
+uint64_t FakeGpu::reg64(uint32_t r) const { return reg(r) | uint64_t(reg(r + 1)) << 32; }
+
+// CP_LOAD_STATE6_FRAG: the program, constants or descriptors of the compute stage, from the packet or from memory
+bool FakeGpu::loadState(const uint32_t* p, uint32_t count) {
+    using namespace a6xx;
+    if (count < 3) {
+        fault("CP_LOAD_STATE6_FRAG shorter than its three words");
+        return false;
+    }
+    uint32_t w0 = p[0];
+    uint32_t dstOff = fieldOf(w0, CP_LOAD_STATE6_0_DST_OFF__MASK, CP_LOAD_STATE6_0_DST_OFF__SHIFT);
+    uint32_t type = fieldOf(w0, CP_LOAD_STATE6_0_STATE_TYPE__MASK, CP_LOAD_STATE6_0_STATE_TYPE__SHIFT);
+    uint32_t src = fieldOf(w0, CP_LOAD_STATE6_0_STATE_SRC__MASK, CP_LOAD_STATE6_0_STATE_SRC__SHIFT);
+    uint32_t block = fieldOf(w0, CP_LOAD_STATE6_0_STATE_BLOCK__MASK, CP_LOAD_STATE6_0_STATE_BLOCK__SHIFT);
+    uint32_t units = fieldOf(w0, CP_LOAD_STATE6_0_NUM_UNIT__MASK, CP_LOAD_STATE6_0_NUM_UNIT__SHIFT);
+    if (block != SB6_CS_SHADER && block != SB6_CS_TEX) {
+        fault(text("CP_LOAD_STATE6_FRAG for state block %llu: not the compute stage's", block));
+        return false;
+    }
+    uint32_t unitBytes = type == ST6_SHADER ? 128 : type == ST6_CONSTANTS ? 16 : type == ST6_UBO ? 8 : 64;
+    if (type == ST6_SHADER && units > kInstrCacheSize) {
+        fault(text("a program preload of %llu units: 128 hangs this GPU, the instruction cache holds %llu", units, kInstrCacheSize));
+        return false;
+    }
+    uint64_t from = 0;
+    if (src == SS6_DIRECT) {
+        if (type == ST6_SHADER) {
+            fault("a program loaded from the packet itself: not what this GPU model runs");
+            return false;
+        }
+        if (count != 3 + units * unitBytes / 4) {
+            fault(text("a direct load of %llu units carries %llu words, not %llu", units, count - 3, units * unitBytes / 4));
+            return false;
+        }
+    } else if (src == SS6_INDIRECT) {
+        if (count != 3) {
+            fault(text("an indirect load with %llu words after its header, not 3", count));
+            return false;
+        }
+        from = (p[1] & CP_LOAD_STATE6_1_EXT_SRC_ADDR__MASK) | uint64_t(p[2]) << 32;
+        if (at(from, uint64_t(units) * unitBytes) == nullptr) {
+            fault(text("a load of %llu units from %#llx: outside every buffer", units, from));
+            return false;
+        }
+    } else {
+        fault("a bindless or UBO-sourced load: not what this GPU model runs");
+        return false;
+    }
+    switch (type) {
+    case ST6_SHADER:
+        cs_.programLoaded = true;
+        cs_.programFrom = from;
+        cs_.programUnits = units;
+        break;
+    case ST6_CONSTANTS:
+        cs_.consts.push_back(ConstLoad{dstOff, units, src == SS6_DIRECT});
+        break;
+    case ST6_IBO:
+        cs_.ibosLoaded = true;
+        cs_.ibosFrom = from;
+        cs_.iboUnits = units;
+        break;
+    default:
+        break;   // ST6_UBO: taken, not checked further
+    }
+    return true;
+}
+
+// CP_EXEC_CS: the dispatch itself. Everything the registers and the loads say about it has to hold together; what
+// the real GPU does with state that does not is hang, and that is what a fault stands for here.
+bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
+    using namespace a6xx;
+    if (count != 4) {
+        fault(text("CP_EXEC_CS of %llu words, not 4", count));
+        return false;
+    }
+    uint32_t config = reg(REG_A6XX_SP_CS_CONFIG), hlsq = reg(REG_A6XX_HLSQ_CS_CNTL);
+    if ((config & A6XX_SP_CS_CONFIG_ENABLED) == 0 || (hlsq & A6XX_HLSQ_CS_CNTL_ENABLED) == 0) {
+        fault("CP_EXEC_CS with the compute stage not enabled in SP_CS_CONFIG and HLSQ_CS_CNTL");
+        return false;
+    }
+    uint32_t instrlen = reg(REG_A6XX_SP_CS_INSTRLEN);
+    uint64_t program = reg64(REG_A6XX_SP_CS_OBJ_START);
+    if (instrlen == 0) {
+        fault("CP_EXEC_CS with SP_CS_INSTRLEN 0");
+        return false;
+    }
+    if (program % kSpCsObjStartAlign != 0 || at(program, uint64_t(instrlen) * 128) == nullptr) {
+        fault(text("the program at SP_CS_OBJ_START %#llx, %llu units: outside every buffer or not 32-byte aligned", program, instrlen));
+        return false;
+    }
+    if (!cs_.programLoaded || cs_.programFrom != program) {
+        fault("CP_EXEC_CS without the program preloaded from where SP_CS_OBJ_START points");
+        return false;
+    }
+    if (cs_.programUnits > instrlen) {
+        fault(text("a preload of %llu units for a program of %llu", cs_.programUnits, instrlen));
+        return false;
+    }
+    uint32_t constlen = fieldOf(hlsq, A6XX_HLSQ_CS_CNTL_CONSTLEN__MASK, A6XX_HLSQ_CS_CNTL_CONSTLEN__SHIFT) << A6XX_HLSQ_CS_CNTL_CONSTLEN__SCALE;
+    for (const ConstLoad& c : cs_.consts) {
+        if (c.dstOffVec4 + c.units > constlen) {
+            fault(text("constants at vec4 %llu, %llu of them: past the program's constlen of %llu", c.dstOffVec4, c.units, constlen));
+            return false;
+        }
+    }
+    uint32_t ctrl0 = reg(REG_A6XX_SP_CS_CTRL_REG0);
+    uint32_t spThreads = fieldOf(ctrl0, A6XX_SP_CS_CTRL_REG0_THREADSIZE__MASK, A6XX_SP_CS_CTRL_REG0_THREADSIZE__SHIFT);
+    uint32_t hlsqThreads = fieldOf(reg(REG_A6XX_HLSQ_CS_CNTL_1), A6XX_HLSQ_CS_CNTL_1_THREADSIZE__MASK, A6XX_HLSQ_CS_CNTL_1_THREADSIZE__SHIFT);
+    if (spThreads != hlsqThreads) {
+        fault("SP_CS_CTRL_REG0 and HLSQ_CS_CNTL_1 disagree about the thread size");
+        return false;
+    }
+    if (reg(REG_A6XX_HLSQ_CS_CNTL_0) != reg(REG_A6XX_SP_CS_CNTL_0) || reg(REG_A6XX_HLSQ_CS_CNTL_1) != reg(REG_A6XX_SP_CS_CNTL_1)) {
+        fault("the HLSQ's and the SP's copies of the id registers (CS_CNTL_0, CS_CNTL_1) differ");
+        return false;
+    }
+    if (reg(REG_A6XX_SP_CS_CTRL_REG1) != reg(REG_A6XX_HLSQ_CS_CTRL_REG1)) {
+        fault("SP_CS_CTRL_REG1 and HLSQ_CS_CTRL_REG1 differ about shared memory and the constant split");
+        return false;
+    }
+    uint32_t nd0 = reg(REG_A6XX_HLSQ_CS_NDRANGE_0);
+    uint32_t dim = fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_KERNELDIM__MASK, A6XX_HLSQ_CS_NDRANGE_0_KERNELDIM__SHIFT);
+    uint32_t local[3] = {fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX__MASK, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX__SHIFT) + 1,
+                         fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEY__MASK, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEY__SHIFT) + 1,
+                         fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEZ__MASK, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEZ__SHIFT) + 1};
+    if (dim == 0) {
+        fault("HLSQ_CS_NDRANGE_0 with a kernel dimension of 0");
+        return false;
+    }
+    if (uint64_t(local[0]) * local[1] * local[2] > 1024) {
+        fault(text("a threadgroup of %llu x %llu x %llu threads: more than the 1024 the GPU runs", local[0], local[1], local[2]));
+        return false;
+    }
+    const uint32_t* groups = p + 1;
+    uint32_t global[3] = {reg(REG_A6XX_HLSQ_CS_NDRANGE_1), reg(REG_A6XX_HLSQ_CS_NDRANGE_3), reg(REG_A6XX_HLSQ_CS_NDRANGE_5)};
+    for (int i = 0; i < 3; i++) {
+        if (groups[i] == 0) {
+            fault("CP_EXEC_CS with 0 work groups along an axis");
+            return false;
+        }
+        if (global[i] != local[i] * groups[i]) {
+            fault(text("HLSQ_CS_NDRANGE global size %llu is not the local size %llu times the %llu groups CP_EXEC_CS asks for", global[i],
+                       local[i], groups[i]));
+            return false;
+        }
+    }
+    uint32_t nibo = fieldOf(config, A6XX_SP_CS_CONFIG_NIBO__MASK, A6XX_SP_CS_CONFIG_NIBO__SHIFT);
+    if (nibo != reg(REG_A6XX_SP_CS_IBO_COUNT)) {
+        fault(text("SP_CS_CONFIG names %llu IBOs and SP_CS_IBO_COUNT %llu", nibo, reg(REG_A6XX_SP_CS_IBO_COUNT)));
+        return false;
+    }
+    if (nibo != 0) {
+        uint64_t table = reg64(REG_A6XX_SP_CS_IBO);
+        if (!cs_.ibosLoaded || cs_.ibosFrom != table || cs_.iboUnits != nibo) {
+            fault("the IBO descriptors were not loaded from where SP_CS_IBO points, or not as many as SP_CS_IBO_COUNT says");
+            return false;
+        }
+        const uint8_t* bytes = at(table, uint64_t(nibo) * 64);
+        if (table % kSpCsTexConstAlign != 0 || bytes == nullptr) {
+            fault(text("the IBO descriptors at %#llx: outside every buffer or not 64-byte aligned", table));
+            return false;
+        }
+        for (uint32_t i = 0; i < nibo; i++) {
+            uint32_t d[kTexConstDwords];
+            memcpy(d, bytes + 64 * i, sizeof d);
+            if (fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_BUFFER) {
+                fault(text("IBO %llu is not a buffer descriptor", i));
+                return false;
+            }
+            uint64_t elements = fieldOf(d[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT) |
+                                uint64_t(fieldOf(d[1], A6XX_TEX_CONST_1_HEIGHT__MASK, A6XX_TEX_CONST_1_HEIGHT__SHIFT)) << 15;
+            uint64_t base = (d[4] & A6XX_TEX_CONST_4_BASE_LO__MASK) |
+                            uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
+            uint64_t start = 4ull * fieldOf(d[2], A6XX_TEX_CONST_2_STARTOFFSETTEXELS__MASK, A6XX_TEX_CONST_2_STARTOFFSETTEXELS__SHIFT);
+            if (elements == 0 || at(base + start, 4 * elements) == nullptr) {
+                fault(text("IBO %llu: %llu elements at %#llx: outside every buffer", i, elements, base + start));
+                return false;
+            }
+        }
+    }
+    stats_.dispatches++;
+    Dispatch& d = stats_.lastDispatch;
+    for (int i = 0; i < 3; i++) {
+        d.groups[i] = groups[i];
+        d.local[i] = local[i];
+    }
+    d.program = program;
+    d.instrlen = instrlen;
+    d.constlen = constlen;
+    d.ibos = nibo;
+    d.consts = cs_.consts;
+    cs_ = CsState{};   // the next dispatch loads its own
+    return true;
+}
+
 // the packets from ADDRESS on, WORDS of them; false on a fault (the submission stops there)
 bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
+    using namespace a6xx;
     const uint32_t* w = reinterpret_cast<const uint32_t*>(at(address, 4ull * words));
     if (w == nullptr) {
         fault("the command stream is not inside a buffer");
@@ -120,9 +332,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
     for (uint32_t i = 0; i < words;) {
         pm4::Header h = readHeader(w[i]);
         if (h.kind == pm4::Header::kBad) {
-            char text[80];
-            snprintf(text, sizeof(text), "word %u (0x%08x): not a packet, or its parity is wrong", i, w[i]);
-            fault(text);
+            fault(text("word %llu (0x%08llx): not a packet, or its parity is wrong", i, w[i]));
             return false;
         }
         if (h.count > words - i - 1) {
@@ -132,7 +342,9 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
         const uint32_t* p = w + i + 1;
         stats_.packets++;
         if (h.kind == pm4::Header::kRegisters) {
-            // registers are not modelled: what a test checks is memory
+            for (uint32_t j = 0; j < h.count; j++) {
+                regs_[h.reg + j] = p[j];   // kept as written; a dispatch is checked against them
+            }
         } else {
             switch (h.opcode) {
             case pm4::kNop:
@@ -186,10 +398,99 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 }
                 break;
             }
+            // --- the compute dispatch's packets ---
+            case CP_LOAD_STATE6_FRAG:
+                if (!loadState(p, h.count)) {
+                    return false;
+                }
+                break;
+            case CP_SET_MARKER:
+                if (h.count != 1) {
+                    fault("CP_SET_MARKER of other than 1 word");
+                    return false;
+                }
+                break;
+            case CP_EVENT_WRITE: {
+                // 1 word: the event; 4: and the address and value written when it completes (at once here: the model
+                // is in order, so what a later wait reads is what an earlier event wrote)
+                if (h.count != 1 && h.count != 4) {
+                    fault(text("CP_EVENT_WRITE of %llu words, not 1 or 4", h.count));
+                    return false;
+                }
+                if (h.count == 4) {
+                    uint64_t to = p[1] | uint64_t(p[2]) << 32;
+                    uint8_t* d = at(to, 4);
+                    if (d == nullptr || to % 4 != 0) {
+                        fault(text("CP_EVENT_WRITE's timestamp at %#llx: outside every buffer", to));
+                        return false;
+                    }
+                    memcpy(d, p + 3, 4);
+                }
+                break;
+            }
+            case CP_WAIT_REG_MEM: {
+                if (h.count != 6) {
+                    fault(text("CP_WAIT_REG_MEM of %llu words, not 6", h.count));
+                    return false;
+                }
+                if (fieldOf(p[0], CP_WAIT_REG_MEM_0_POLL__MASK, CP_WAIT_REG_MEM_0_POLL__SHIFT) != POLL_MEMORY) {
+                    fault("CP_WAIT_REG_MEM on a register: not what this GPU model runs");
+                    return false;
+                }
+                uint64_t a = p[1] | uint64_t(p[2]) << 32;
+                const uint8_t* m = at(a, 4);
+                if (m == nullptr || a % 4 != 0) {
+                    fault(text("CP_WAIT_REG_MEM on %#llx: outside every buffer", a));
+                    return false;
+                }
+                uint32_t value;
+                memcpy(&value, m, 4);
+                value &= p[4];
+                uint32_t ref = p[3];
+                bool holds = false;
+                switch (fieldOf(p[0], CP_WAIT_REG_MEM_0_FUNCTION__MASK, CP_WAIT_REG_MEM_0_FUNCTION__SHIFT)) {
+                case WRITE_ALWAYS: holds = true; break;
+                case WRITE_LT: holds = value < ref; break;
+                case WRITE_LE: holds = value <= ref; break;
+                case WRITE_EQ: holds = value == ref; break;
+                case WRITE_NE: holds = value != ref; break;
+                case WRITE_GE: holds = value >= ref; break;
+                case WRITE_GT: holds = value > ref; break;
+                default: break;
+                }
+                if (!holds) {
+                    // nothing after this packet can change the word, so the real command processor would spin forever
+                    fault(text("CP_WAIT_REG_MEM would wait forever: the word at %#llx is %#llx, the reference %#llx", a, value, ref));
+                    return false;
+                }
+                break;
+            }
+            case CP_WAIT_MEM_GTE: {
+                if (h.count != 4) {
+                    fault(text("CP_WAIT_MEM_GTE of %llu words, not 4", h.count));
+                    return false;
+                }
+                uint64_t a = p[1] | uint64_t(p[2]) << 32;
+                const uint8_t* m = at(a, 4);
+                if (m == nullptr || a % 4 != 0) {
+                    fault(text("CP_WAIT_MEM_GTE on %#llx: outside every buffer", a));
+                    return false;
+                }
+                uint32_t value;
+                memcpy(&value, m, 4);
+                if (int32_t(value - p[3]) < 0) {
+                    fault(text("CP_WAIT_MEM_GTE would wait forever: the word at %#llx is %#llx, below %#llx", a, value, p[3]));
+                    return false;
+                }
+                break;
+            }
+            case CP_EXEC_CS:
+                if (!execCs(p, h.count)) {
+                    return false;
+                }
+                break;
             default: {
-                char text[64];
-                snprintf(text, sizeof(text), "opcode 0x%02x is not one this GPU model runs", h.opcode);
-                fault(text);
+                fault(text("opcode 0x%02llx is not one this GPU model runs", h.opcode));
                 return false;
             }
             }
@@ -215,6 +516,7 @@ void FakeGpu::hung() {
 
 void FakeGpu::run(const Job& job) {
     stats_.submits++;
+    cs_ = CsState{};   // (a submission starts with nothing loaded: the hardware keeps no state across them that this models)
     if (execute(job.address, job.words, 0)) {
         completed_ = job.fence;
         return;

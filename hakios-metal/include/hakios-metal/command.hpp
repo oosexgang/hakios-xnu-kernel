@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "hakios-metal/compute.hpp"
 #include "hakios-metal/gpu.hpp"
 #include "hakios-metal/pm4.hpp"
 
@@ -64,6 +65,11 @@ public:
     // --- the blit encoder's work, recorded into this command buffer ---
     bool copy(const Buffer& from, uint64_t fromOffset, const Buffer& to, uint64_t toOffset, uint64_t length);
     bool fill(const Buffer& buffer, uint64_t offset, uint64_t length, uint8_t value);
+    // --- the compute encoder's work (compute.hpp): KERNEL over GROUPS work groups of LOCAL threads each (nullptr:
+    // the kernel's own size), BUFFERS bound by index, IMMEDIATES in place of the kernel's constants (nullptr: its own).
+    // The program and the descriptors go into buffers of their own that live until this completes.
+    bool dispatch(const Kernel& kernel, const uint32_t groups[3], const uint32_t* local, const std::vector<Binding>& buffers,
+                  const uint32_t* immediates = nullptr, const compute::Options& options = compute::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state
     void refuse(const std::string& why) { fail(why); }
     // a buffer it uses, kept alive until it completes (the owner may let go of it before that)

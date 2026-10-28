@@ -71,6 +71,8 @@ public:
     void memWrite(uint64_t address, const uint32_t* values, uint32_t count);
     void memcpy(uint64_t destination, uint64_t source, uint32_t words);
     void indirect(uint64_t address, uint32_t words);
+    // any type-7 packet: OPCODE with WORDS after its header (the compute dispatch's packets, compute.cpp)
+    void packet(uint32_t opcode, const uint32_t* words, uint32_t count);
 
     const std::vector<uint32_t>& words() const { return words_; }
     size_t size() const { return words_.size(); }

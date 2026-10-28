@@ -9,6 +9,9 @@
 #include <vector>
 
 #include "hakios-metal/command.hpp"
+#include "../tests/fixtures/end_only.hpp"
+#include "../tests/fixtures/fill_id.hpp"
+#include "../tests/fixtures/fill_id_air.hpp"
 
 using namespace hakios::metal;
 
@@ -20,10 +23,77 @@ static void report(bool ok, const std::string& what) {
     failures += !ok;
 }
 
+// fill_id's answer for one invocation: gid * K + c, modulo 2^32 (K odd: no two invocations write the same word)
+static uint32_t expectedWord(uint32_t gid, uint32_t c) { return gid * 0x9E3779B1u + c; }
+
+// A value no invocation of a grid of WORDS can write with this C, so that a word still holding it was not written: a
+// dispatch that did not run then reads as "did not run" and not as a result. (Checked, not assumed: K is a bijection,
+// so the candidate collides with exactly one gid of all 2^32, and that gid may be inside the grid.)
+static uint32_t canaryFor(uint32_t words, uint32_t c) {
+    uint32_t canary = 0xa5a5a5a5u;
+    for (;;) {
+        bool clash = false;
+        for (uint32_t gid = 0; gid < words && !clash; gid++) clash = expectedWord(gid, c) == canary;
+        if (!clash) return canary;
+        canary += 0x01010101u;
+    }
+}
+
+// What a buffer holds after a dispatch, against the kernel's answer for WRITTEN words and the canary beyond them
+struct Readback {
+    uint32_t right = 0, canary = 0, wrong = 0;   // of the WRITTEN words
+    uint32_t beyondCanary = 0, beyondOther = 0;  // of the words after them
+    uint32_t firstWrongAt = 0, firstWrongValue = 0;
+};
+
+static Readback readBack(const Buffer& b, uint32_t written, uint32_t c, uint32_t canaryValue) {
+    std::vector<uint32_t> back(b.length() / 4);
+    memcpy(back.data(), b.contents(), b.length());   // one read of the write-combined memory, in order
+    Readback r;
+    for (uint32_t i = 0; i < back.size(); i++) {
+        if (i < written) {
+            if (back[i] == expectedWord(i, c)) {
+                r.right++;
+            } else if (back[i] == canaryValue) {
+                r.canary++;
+            } else {
+                if (r.wrong == 0) {
+                    r.firstWrongAt = i;
+                    r.firstWrongValue = back[i];
+                }
+                r.wrong++;
+            }
+        } else {
+            (back[i] == canaryValue ? r.beyondCanary : r.beyondOther)++;
+        }
+    }
+    return r;
+}
+
+static std::string describe(const Readback& r, uint32_t written, uint32_t beyond) {
+    char text[200];
+    snprintf(text, sizeof text, "%u of %u words as the kernel computes them, %u still canary, %u wrong%s; beyond them %u of %u canary", r.right,
+             written, r.canary, r.wrong, r.wrong ? (" (first at " + std::to_string(r.firstWrongAt) + ": 0x" + [&] {
+                                                        char h[12];
+                                                        snprintf(h, sizeof h, "%08x", r.firstWrongValue);
+                                                        return std::string(h);
+                                                    }() + ")")
+                                                           .c_str()
+                                                     : "",
+             r.beyondCanary, beyond);
+    return text;
+}
+
+static std::string status(const CommandBuffer& cb, Gpu& gpu) {
+    return (cb.error().empty() ? "" : " (" + cb.error() + ")") + ", " + std::to_string(cb.gpuNanoseconds() / 1000) + " us, FAULTS " +
+           std::to_string(gpu.faults());
+}
+
 int main(int argc, char** argv) {
-    bool recover = false;
+    bool recover = false, bisect = false;
     for (int i = 1; i < argc; i++) {
         recover = recover || strcmp(argv[i], "--recover") == 0;
+        bisect = bisect || strcmp(argv[i], "--bisect") == 0;
     }
     std::string why;
     auto transport = openKernelGpu(&why);
@@ -141,7 +211,149 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 5. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
+    // 5. compute, in order of hazard: the first shader instructions this driver has ever had the GPU run. The fake GPU
+    // checked that the dispatch holds together; only this says whether the GPU runs it, and what it writes.
+    {
+        const uint32_t words = 1024, c = 0x00001234;
+        const uint32_t canary = canaryFor(words, c);
+        auto out = newBuffer(gpu, 4 * words, &why);
+        auto cbuf = newBuffer(gpu, 64, &why);
+        if (out == nullptr || cbuf == nullptr) {
+            report(false, "buffers for the dispatches: " + why);
+        } else {
+            auto prefill = [&] {
+                auto* w = static_cast<uint32_t*>(out->contents());
+                for (uint32_t i = 0; i < words; i++) w[i] = canary;
+            };
+            auto run = [&](const Kernel& k, uint32_t groups, const uint32_t* local, const std::vector<Binding>& bufs,
+                           const uint32_t* imm) -> std::shared_ptr<CommandBuffer> {
+                const uint32_t g[3] = {groups, 1, 1};
+                auto cb = queue->commandBuffer();
+                cb->dispatch(k, g, local, bufs, imm);
+                cb->commit();
+                cb->waitUntilCompleted();
+                return cb;
+            };
+            // 5a. a kernel of one `end`: the smallest CP_EXEC_CS there is. The fence must pass and nothing may be written.
+            prefill();
+            {
+                auto cb = run(kernels::end_only, 1, nullptr, {}, nullptr);
+                Readback r = readBack(*out, 0, c, canary);
+                report(cb->status() == CommandBuffer::kCompleted && r.beyondCanary == words,
+                       "dispatch of end_only, 1 group: " + std::string(cb->status() == CommandBuffer::kCompleted ? "completed" : "did NOT complete") +
+                           ", " + std::to_string(r.beyondCanary) + " of " + std::to_string(words) + " words untouched" + status(*cb, gpu));
+            }
+            // 5b. fill_id (the text kernel) over 16 groups of 64: every word says which invocation wrote it
+            prefill();
+            uint32_t imm[4] = {c, 0, 0, 0};
+            {
+                auto cb = run(kernels::fill_id, 16, nullptr, {Binding{out.get(), 0}}, imm);
+                Readback r = readBack(*out, words, c, canary);
+                report(cb->status() == CommandBuffer::kCompleted && r.right == words,
+                       "dispatch of fill_id, 16 groups of 64, c = 0x1234: " + describe(r, words, 0) + status(*cb, gpu));
+            }
+            // 5c. the controls, in the same run: another c moves every word by the same amount; half the grid leaves half
+            // the canary; end_only over the same buffer leaves all of it
+            {
+                uint32_t c2 = c + 0x1000;
+                uint32_t imm2[4] = {c2, 0, 0, 0};
+                prefill();
+                auto cb = run(kernels::fill_id, 16, nullptr, {Binding{out.get(), 0}}, imm2);
+                Readback r = readBack(*out, words, c2, canaryFor(words, c2));
+                report(cb->status() == CommandBuffer::kCompleted && r.right == words,
+                       "control, c = 0x2234: " + describe(r, words, 0) + status(*cb, gpu));
+            }
+            {
+                prefill();
+                auto cb = run(kernels::fill_id, 8, nullptr, {Binding{out.get(), 0}}, imm);
+                Readback r = readBack(*out, 512, c, canary);
+                report(cb->status() == CommandBuffer::kCompleted && r.right == 512 && r.beyondCanary == 512,
+                       "control, 8 groups of the same 1024-word buffer: " + describe(r, 512, 512) + status(*cb, gpu));
+            }
+            {
+                prefill();
+                auto cb = run(kernels::end_only, 16, nullptr, {}, nullptr);
+                Readback r = readBack(*out, 0, c, canary);
+                report(cb->status() == CommandBuffer::kCompleted && r.beyondCanary == words,
+                       "control, end_only over 16 groups: " + std::to_string(r.beyondCanary) + " of " + std::to_string(words) + " words canary" +
+                           status(*cb, gpu));
+            }
+            // 5d. the same kernel compiled from AIR (tools/kernels/fill_id.ll): its threadgroup size comes from the driver
+            // params and c from a constant buffer; the buffer must come out the same as 5b's
+            {
+                const uint32_t local[3] = {64, 1, 1};
+                static_cast<uint32_t*>(cbuf->contents())[0] = c;
+                prefill();
+                auto cb = run(kernels::fill_id_air, 16, local, {Binding{out.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                Readback r = readBack(*out, words, c, canary);
+                report(cb->status() == CommandBuffer::kCompleted && r.right == words,
+                       "dispatch of fill_id_air (AIR -> NIR -> ir3), 16 groups of 64, c from a constant buffer: " + describe(r, words, 0) +
+                           status(*cb, gpu));
+                // and its half-grid control, which here changes only the group count: the descriptor covers the whole buffer
+                prefill();
+                auto cb2 = run(kernels::fill_id_air, 8, local, {Binding{out.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                Readback r2 = readBack(*out, 512, c, canary);
+                report(cb2->status() == CommandBuffer::kCompleted && r2.right == 512 && r2.beyondCanary == 512,
+                       "control, fill_id_air over 8 groups: " + describe(r2, 512, 512) + status(*cb2, gpu));
+            }
+            // 5e. how long a dispatch takes as the grid grows (fill_id_air: its descriptor is the buffer's size). Sizes that
+            // complete, never a search by hanging: the number for a size that did not complete is the error, not a time.
+            for (uint32_t groups : {64u, 256u, 1024u, 4096u}) {
+                uint32_t n = 64 * groups;
+                auto big = newBuffer(gpu, 4ull * n, &why);
+                if (big == nullptr) {
+                    report(false, "a buffer of " + std::to_string(4ull * n) + " bytes for " + std::to_string(groups) + " groups: " + why);
+                    break;
+                }
+                uint32_t cv = canaryFor(n, c);
+                auto* w = static_cast<uint32_t*>(big->contents());
+                for (uint32_t i = 0; i < n; i++) w[i] = cv;
+                const uint32_t local[3] = {64, 1, 1};
+                auto cb = run(kernels::fill_id_air, groups, local, {Binding{big.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                Readback r = readBack(*big, n, c, cv);
+                bool ok = cb->status() == CommandBuffer::kCompleted && r.right == n;
+                report(ok, "fill_id_air over " + std::to_string(groups) + " groups (" + std::to_string(n) + " words): " + describe(r, n, 0) + status(*cb, gpu));
+                if (!ok) break;
+            }
+        }
+    }
+
+    // 6. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
+    // every dispatch hangs (28 October: HLSQ busy, SP idle, the CP through its IB), this says which part the hang needs,
+    // one boot for all of it, each hang costing the kernel one reset. A variant that completes is the finding.
+    if (bisect) {
+        struct Variant {
+            const char* name;
+            compute::Options o;
+        };
+        compute::Options minimal;
+        minimal.prelude = minimal.invalidateCmd = minimal.hlsqCopies = minimal.pvtmemZero = minimal.invalidate = minimal.marker = minimal.tail = false;
+        std::vector<Variant> variants = {{"the whole stream", compute::Options{}}};
+        auto without = [&](const char* name, void (*off)(compute::Options&)) {
+            compute::Options o;
+            off(o);
+            variants.push_back(Variant{name, o});
+        };
+        without("without the end (RB_DONE_TS, CACHE_FLUSH_TS and their waits)", [](compute::Options& o) { o.tail = false; });
+        without("without CACHE_INVALIDATE", [](compute::Options& o) { o.invalidate = false; });
+        without("without CP_SET_MARKER", [](compute::Options& o) { o.marker = false; });
+        without("without the private-memory registers", [](compute::Options& o) { o.pvtmemZero = false; });
+        without("without SP_MODE_CONTROL, SP_PERFCTR_ENABLE, SP_FLOAT_CNTL", [](compute::Options& o) { o.prelude = false; });
+        without("without the HLSQ/SP copies (HLSQ_CS_CTRL_REG1, SP_CS_CNTL_0/1)", [](compute::Options& o) { o.hlsqCopies = false; });
+        without("without HLSQ_INVALIDATE_CMD", [](compute::Options& o) { o.invalidateCmd = false; });
+        variants.push_back(Variant{"with none of those: the registers, the loads, NDRANGE, CP_EXEC_CS, CP_WAIT_FOR_IDLE", minimal});
+        const uint32_t one[3] = {1, 1, 1};
+        for (const Variant& v : variants) {
+            auto cb = queue->commandBuffer();
+            cb->dispatch(kernels::end_only, one, nullptr, {}, nullptr, v.o);
+            cb->commit();
+            cb->waitUntilCompleted();
+            bool ok = cb->status() == CommandBuffer::kCompleted;
+            report(ok, std::string("bisect: end_only ") + v.name + ": " + (ok ? "COMPLETED" : "hung") + status(*cb, gpu));
+        }
+    }
+
+    // 7. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
     // 4 Mi words in one CP_MEMCPY stopped the command processor on 27 October (125 000 took 4.2 ms), and the run and
     // the system with it. With boot-arg gpu_recover=1 the kernel resets the core when a wait of a second or more
     // comes to nothing, FAULTS rises by one, and the next command buffer is the core's own again. This goes last,
