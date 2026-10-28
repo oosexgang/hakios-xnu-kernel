@@ -64,6 +64,8 @@ public:
     // --- the blit encoder's work, recorded into this command buffer ---
     bool copy(const Buffer& from, uint64_t fromOffset, const Buffer& to, uint64_t toOffset, uint64_t length);
     bool fill(const Buffer& buffer, uint64_t offset, uint64_t length, uint8_t value);
+    // a buffer it uses, kept alive until it completes (the owner may let go of it before that)
+    void keep(std::shared_ptr<const Buffer> b) { kept_.push_back(std::move(b)); }
 
 private:
     friend class CommandQueue;
@@ -99,8 +101,6 @@ public:
     // the buffers kept for command streams, idle (to see that they are given back and used again)
     size_t idleCommandBuffers();
 
-    // a command buffer's buffer that keeps its users alive: copy() and fill() take it this way when they can
-    void keep(CommandBuffer& cb, std::shared_ptr<const Buffer> b) { cb.kept_.push_back(std::move(b)); }
 
 private:
     friend class CommandBuffer;

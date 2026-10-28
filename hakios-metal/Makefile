@@ -14,7 +14,7 @@ HAKIOS    ?= ../workspace
 SDK       ?= $(abspath $(firstword $(wildcard $(THEOS)/sdks/iPhoneOS16.5.sdk $(HAKIOS)/xnu-deps/theos-mac/sdks/iPhoneOS16.5.sdk $(HOME)/theos/sdks/iPhoneOS16.5.sdk)))
 IOS_CXX   ?= xcrun clang++ -arch arm64 -isysroot $(SDK) -miphoneos-version-min=16.0
 
-CORE      = src/pm4.cpp src/gpu.cpp src/command.cpp src/metallib.cpp
+CORE      = src/pm4.cpp src/gpu.cpp src/command.cpp src/metallib.cpp src/c_api.cpp
 HOST      = $(CORE) src/fake_gpu.cpp
 TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 
@@ -29,9 +29,9 @@ test: out/host/tests
 
 ios: out/ios/hakios-metal-probe out/ios/libhakios-metal.a
 
-out/ios/libhakios-metal.a: $(CORE) src/iokit_transport.cpp $(wildcard include/hakios-metal/*.hpp)
+out/ios/libhakios-metal.a: $(CORE) src/fake_gpu.cpp src/iokit_transport.cpp $(wildcard include/hakios-metal/*.hpp)
 	@mkdir -p out/ios/obj
-	cd out/ios/obj && for f in $(CORE) src/iokit_transport.cpp; do \
+	cd out/ios/obj && for f in $(CORE) src/fake_gpu.cpp src/iokit_transport.cpp; do \
 		$(IOS_CXX) -std=c++17 -O2 -Wall -Wextra -Werror -I../../../include -c ../../../$$f || exit 1; done
 	rm -f $@ && ar rcs $@ out/ios/obj/*.o
 
