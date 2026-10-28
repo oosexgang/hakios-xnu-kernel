@@ -7,11 +7,19 @@
 #
 # The tool links Mesa's ir3 assembler, so it needs a Mesa source tree and a
 # meson build of it (the static libraries, and the generated headers). Point
-# MESA_SRC and MESA_BUILD at them. The defaults are the Darwin-on-redwood host
-# build (tools/air/mk-host.sh there) until hakios has a public build of its own;
-# nothing of that tree is copied, only linked against.
-MESA_SRC   ?= /home/vcvk/darwin-redwood-air/build/mesa-host/mesa-25.0.7
-MESA_BUILD ?= /home/vcvk/darwin-redwood-air/build/mesa-host/build
+# MESA_SRC and MESA_BUILD at them. The default is hakios's own host build in
+# the frontend-port worktree (tools/air/mk-host.sh there), recognised by its
+# libair.a; when that is not built, the Darwin-on-redwood host build stands in.
+# Nothing of either tree is copied, only linked against.
+MESA_PUBLIC_HOST  ?= /home/vcvk/hakios/workspace-air/build/mesa-host
+MESA_PRIVATE_HOST ?= /home/vcvk/darwin-redwood-air/build/mesa-host
+ifneq ($(wildcard $(MESA_PUBLIC_HOST)/build/src/compiler/air/libair.a),)
+MESA_SRC   ?= $(MESA_PUBLIC_HOST)/mesa-25.0.7
+MESA_BUILD ?= $(MESA_PUBLIC_HOST)/build
+else
+MESA_SRC   ?= $(MESA_PRIVATE_HOST)/mesa-25.0.7
+MESA_BUILD ?= $(MESA_PRIVATE_HOST)/build
+endif
 
 # The chip id the fixtures are assembled for: the phone's Adreno 7c+ Gen 3
 # (A635). Mesa's table matches it through its 0xffff06030500 wildcard row.
@@ -43,19 +51,22 @@ MESA_INC = \
 # ir3 consumer Mesa builds), read off the build's ninja file: ir3 and its
 # encoder/decoder, nir (ir3 pulls its headers and a few symbols), the util
 # library and its parts, and the device table. No gallium, no drm.
-MESA_LIBS = -Wl,--start-group \
-	$(MESA_BUILD)/src/freedreno/ir3/libfreedreno_ir3.a \
-	$(MESA_BUILD)/src/freedreno/isa/libir3encode.a \
-	$(MESA_BUILD)/src/freedreno/isa/libir3decode.a \
-	$(MESA_BUILD)/src/compiler/isaspec/libisaspec.a \
-	$(MESA_BUILD)/src/compiler/nir/libnir.a \
-	$(MESA_BUILD)/src/compiler/libcompiler.a \
-	$(MESA_BUILD)/src/freedreno/common/libfreedreno_common.a \
-	$(MESA_BUILD)/src/util/libmesa_util.a \
-	$(MESA_BUILD)/src/util/libmesa_util_sse41.a \
-	$(MESA_BUILD)/src/util/blake3/libblake3.a \
-	$(MESA_BUILD)/src/c11/impl/libmesa_util_c11.a \
-	-Wl,--end-group -lz -lm -pthread
+# The archives as paths under a build directory, so that compiler.mk can take
+# the same list from the iOS cross build (MESA_ARCHIVE_PATHS) and add libair.
+MESA_ARCHIVE_PATHS = \
+	src/freedreno/ir3/libfreedreno_ir3.a \
+	src/freedreno/isa/libir3encode.a \
+	src/freedreno/isa/libir3decode.a \
+	src/compiler/isaspec/libisaspec.a \
+	src/compiler/nir/libnir.a \
+	src/compiler/libcompiler.a \
+	src/freedreno/common/libfreedreno_common.a \
+	src/util/libmesa_util.a \
+	src/util/libmesa_util_sse41.a \
+	src/util/blake3/libblake3.a \
+	src/c11/impl/libmesa_util_c11.a
+MESA_ARCHIVES = $(addprefix $(MESA_BUILD)/,$(MESA_ARCHIVE_PATHS))
+MESA_LIBS = -Wl,--start-group $(MESA_ARCHIVES) -Wl,--end-group -lz -lm -pthread
 
 KERNEL_ASM      = $(wildcard tools/kernels/*.asm)
 KERNEL_FIXTURES = $(patsubst tools/kernels/%.asm,tests/fixtures/%.hpp,$(KERNEL_ASM))

@@ -9,9 +9,11 @@
 #include <vector>
 
 #include "hakios-metal/command.hpp"
+#include "hakios-metal/compiler.hpp"
 #include "../tests/fixtures/end_only.hpp"
 #include "../tests/fixtures/fill_id.hpp"
 #include "../tests/fixtures/fill_id_air.hpp"
+#include "../tests/fixtures/fill_id_bc.hpp"
 
 using namespace hakios::metal;
 
@@ -322,7 +324,49 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 6. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
+    // 6. the compiler on the phone: fill_id.ll's bitcode through the AIR front end and ir3 here, on the device, and the
+    // result against what the host's compiler made of the same bitcode (tests/fixtures/fill_id_air.hpp): the same words,
+    // and the same buffer when dispatched. A probe built without MESA=1 says so and moves on.
+    if (!hasCompiler()) {
+        std::printf("probe: (no compiler in this build: nothing compiled on the phone; build with MESA=1 for that)\n");
+    } else {
+        std::string why2;
+        auto compiled = compileAir(kernels::fill_id_bc, kernels::fill_id_bc_size, &why2);
+        if (compiled == nullptr) {
+            report(false, "compile fill_id.ll on the phone: " + why2);
+        } else {
+            const Kernel& a = compiled->kernel;
+            const Kernel& b = kernels::fill_id_air;
+            bool sameWords = a.numWords == b.numWords && memcmp(a.words, b.words, 4 * a.numWords) == 0;
+            bool sameLayout = a.instrlen == b.instrlen && a.constlen == b.constlen && a.maxReg == b.maxReg &&
+                              a.localIdRegid == b.localIdRegid && a.workGroupIdRegid == b.workGroupIdRegid &&
+                              a.driverParamsOffsetVec4 == b.driverParamsOffsetVec4 && a.numUboRanges == b.numUboRanges &&
+                              a.immediatesOffsetVec4 == b.immediatesOffsetVec4 && a.numIbos == b.numIbos;
+            report(sameWords && sameLayout, "compile fill_id.ll on the phone: " + std::to_string(a.numWords) + " words, " +
+                                                (sameWords ? "the same as the host's" : "DIFFERENT from the host's") + ", layout " +
+                                                (sameLayout ? "the same" : "DIFFERENT") + " (instrlen " + std::to_string(a.instrlen) +
+                                                ", constlen " + std::to_string(a.constlen) + ")");
+            const uint32_t words = 1024, c = 0x00004321;
+            const uint32_t canary = canaryFor(words, c);
+            auto out = newBuffer(gpu, 4 * words, &why);
+            auto cbuf = newBuffer(gpu, 64, &why);
+            if (out && cbuf) {
+                auto* w = static_cast<uint32_t*>(out->contents());
+                for (uint32_t i = 0; i < words; i++) w[i] = canary;
+                static_cast<uint32_t*>(cbuf->contents())[0] = c;
+                const uint32_t g[3] = {16, 1, 1}, local[3] = {64, 1, 1};
+                auto cb = queue->commandBuffer();
+                cb->dispatch(compiled->kernel, g, local, {Binding{out.get(), 0}, Binding{cbuf.get(), 0}}, nullptr, chosen);
+                cb->commit();
+                cb->waitUntilCompleted();
+                Readback r = readBack(*out, words, c, canary);
+                report(cb->status() == CommandBuffer::kCompleted && r.right == words,
+                       "dispatch of the kernel compiled on the phone, 16 groups of 64, c = 0x4321: " + describe(r, words, 0) + status(*cb, gpu));
+            }
+        }
+    }
+
+    // 7. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
     // every dispatch hangs (28 October: HLSQ busy, SP idle, the CP through its IB), this says which part the hang needs,
     // one boot for all of it, each hang costing the kernel one reset. A variant that completes is the finding.
     if (bisect) {
@@ -363,7 +407,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 7. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
+    // 8. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
     // 4 Mi words in one CP_MEMCPY stopped the command processor on 27 October (125 000 took 4.2 ms), and the run and
     // the system with it. With boot-arg gpu_recover=1 the kernel resets the core when a wait of a second or more
     // comes to nothing, FAULTS rises by one, and the next command buffer is the core's own again. This goes last,

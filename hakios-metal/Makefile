@@ -18,6 +18,20 @@ ifneq ($(SAN),)
 override CXXFLAGS += -fsanitize=$(SAN) -fno-omit-frame-pointer
 endif
 HOSTOUT   = out/host$(if $(SAN),-$(SAN))
+.DEFAULT_GOAL := test
+
+# The host tools that make shader kernels into fixtures (tools/kernels.mk), and the link of Mesa's compiler libraries
+# (tools/compiler.mk). `make test MESA=1` puts the compiler into the test binary (against MESA_SRC/MESA_BUILD, a Mesa
+# host build with hakios's AIR front end in it) and compiler_test compares it with the fixture; without MESA=1 the
+# tests build on any C++17 and compileAir() is a refusal by name. Included here, before the rules, so that HOSTOUT and
+# the flags are settled when the rules are read.
+-include tools/kernels.mk
+-include tools/compiler.mk
+ifneq ($(strip $(MESA)),)
+override CXXFLAGS += -DHAKIOS_METAL_MESA $(HAKIOS_METAL_MESA_CXXFLAGS)
+HOSTLIBS  += $(HAKIOS_METAL_MESA_LIBS)
+HOSTOUT   = out/host-mesa$(if $(SAN),-$(SAN))
+endif
 # the SDK as hakios lays it out: theos, or on macOS xnu-deps/theos-mac (HAKIOS= the hakios tree)
 HAKIOS    ?= ../workspace
 SDK       ?= $(abspath $(firstword $(wildcard $(THEOS)/sdks/iPhoneOS16.5.sdk $(HAKIOS)/xnu-deps/theos-mac/sdks/iPhoneOS16.5.sdk $(HOME)/theos/sdks/iPhoneOS16.5.sdk)))
@@ -32,7 +46,7 @@ IOS_CXX   ?= $(abspath $(HAKIOS))/xnu-deps/host/bin/xnu-clang++ -arch arm64 -isy
 IOS_AR    ?= llvm-ar --format=darwin rcs
 endif
 
-CORE      = src/pm4.cpp src/gpu.cpp src/command.cpp src/compute.cpp src/metallib.cpp src/c_api.cpp
+CORE      = src/pm4.cpp src/gpu.cpp src/command.cpp src/compute.cpp src/compiler.cpp src/metallib.cpp src/c_api.cpp
 HOST      = $(CORE) src/fake_gpu.cpp
 TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 
@@ -40,9 +54,9 @@ TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 
 $(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wildcard tests/fixtures/*.hpp) tests/test.hpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS)
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
 
-test: $(HOSTOUT)/tests
+test: $(HOSTOUT)/tests $(if $(strip $(MESA)),out/host/kernels/fill_id.bc)
 	$(HOSTOUT)/tests
 
 tsan:
@@ -53,18 +67,28 @@ asan:
 
 ios: out/ios/hakios-metal-probe out/ios/libhakios-metal.a
 
+# with MESA=1 the compiler goes to the phone too, against the iOS build of Mesa's libraries (IOS_MESA_BUILD, tools/compiler.mk)
+IOS_CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Werror
+IOS_LIBS     =
+ifneq ($(strip $(MESA)),)
+IOS_CXXFLAGS += -DHAKIOS_METAL_MESA $(HAKIOS_METAL_IOS_MESA_CXXFLAGS)
+IOS_LIBS     += $(HAKIOS_METAL_IOS_MESA_LIBS)
+endif
+
 out/ios/libhakios-metal.a: $(CORE) src/fake_gpu.cpp src/iokit_transport.cpp $(wildcard include/hakios-metal/*.hpp)
 	@mkdir -p out/ios/obj
 	cd out/ios/obj && for f in $(CORE) src/fake_gpu.cpp src/iokit_transport.cpp; do \
-		$(IOS_CXX) -std=c++17 -O2 -Wall -Wextra -Werror -I../../../include -c ../../../$$f || exit 1; done
+		$(IOS_CXX) $(IOS_CXXFLAGS) -I../../../include -c ../../../$$f || exit 1; done
 	rm -f $@ && $(IOS_AR) $@ out/ios/obj/*.o
 
 out/ios/hakios-metal-probe: tools/probe.cpp out/ios/libhakios-metal.a $(wildcard tests/fixtures/*.hpp)
-	$(IOS_CXX) -std=c++17 -O2 -Wall -Wextra -Werror -Iinclude -o $@ tools/probe.cpp out/ios/libhakios-metal.a \
+	$(IOS_CXX) $(IOS_CXXFLAGS) -Iinclude -o $@ tools/probe.cpp out/ios/libhakios-metal.a $(IOS_LIBS) \
 		-framework IOKit -framework CoreFoundation
 
-# the host tools that make shader kernels into fixtures (tools/kernels.mk, when it is there)
--include tools/kernels.mk
+
+# a kernel's bitcode as a header, for a probe that compiles it on the phone (our own kernels only: tools/kernels/*.ll)
+tests/fixtures/%_bc.hpp: out/host/kernels/%.bc tools/bc-header.py
+	python3 -I tools/bc-header.py $< $* > $@
 
 clean:
 	rm -rf out
