@@ -47,6 +47,28 @@ std::string text(const char* format, uint64_t a = 0, uint64_t b = 0, uint64_t c 
 
 // a field read back the way the registers hold it, from a6xx.hpp's masks (the fake decodes; the encoder encodes)
 uint32_t fieldOf(uint32_t word, uint32_t mask, uint32_t shift) { return (word & mask) >> shift; }
+
+// the pixel size of the formats this model knows (texture.hpp's eleven, by their FMT: fd6_format_table.c); 0 for another
+uint32_t bytesPerPixel(uint32_t fmt) {
+    switch (fmt) {
+    case a6xx::FMT6_8_UNORM: return 1;
+    case a6xx::FMT6_8_8_UNORM: return 2;
+    case a6xx::FMT6_8_8_8_8_UNORM: return 4;
+    case a6xx::FMT6_32_FLOAT: return 4;
+    case a6xx::FMT6_32_UINT: return 4;
+    case a6xx::FMT6_16_16_16_16_FLOAT: return 8;
+    case a6xx::FMT6_32_32_32_32_FLOAT: return 16;
+    case a6xx::FMT6_32_32_32_32_UINT: return 16;
+    default: return 0;
+    }
+}
+
+bool allZero(const uint32_t* d, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) {
+        if (d[i] != 0) return false;
+    }
+    return true;
+}
 }  // namespace
 
 FakeGpu::FakeGpu(bool async, uint32_t delayUs, bool recovers) : async_(async), recovers_(recovers), delayUs_(delayUs) {
@@ -144,15 +166,25 @@ bool FakeGpu::loadState(const uint32_t* p, uint32_t count) {
         fault(text("CP_LOAD_STATE6_FRAG for state block %llu: not the compute stage's", block));
         return false;
     }
-    uint32_t unitBytes = type == ST6_SHADER ? 128 : type == ST6_CONSTANTS ? 16 : type == ST6_UBO ? 8 : 64;
-    if (type == ST6_SHADER && units > kInstrCacheSize) {
+    // what a unit is depends on the block as well as the type: in the compute shader's block ST6_SHADER is 16
+    // instructions (128 bytes), ST6_CONSTANTS a vec4, ST6_IBO a 64-byte descriptor; in the texture block ST6_SHADER is a
+    // 16-byte sampler descriptor and ST6_CONSTANTS a 64-byte texture descriptor (Gallium's fd6_texture.cc:593-687 is the
+    // only reading of the block's two types, and nothing else may be loaded into it)
+    bool texBlock = block == SB6_CS_TEX;
+    if (texBlock && type != ST6_SHADER && type != ST6_CONSTANTS) {
+        fault(text("a load of type %llu into the compute texture block (SB6_CS_TEX): not samplers (ST6_SHADER) or textures (ST6_CONSTANTS)", type));
+        return false;
+    }
+    uint32_t unitBytes = texBlock ? (type == ST6_SHADER ? 16 : 64) : type == ST6_SHADER ? 128 : type == ST6_CONSTANTS ? 16 : type == ST6_UBO ? 8 : 64;
+    if (!texBlock && type == ST6_SHADER && units > kInstrCacheSize) {
         fault(text("a program preload of %llu units: 128 hangs this GPU, the instruction cache holds %llu", units, kInstrCacheSize));
         return false;
     }
     uint64_t from = 0;
     if (src == SS6_DIRECT) {
-        if (type == ST6_SHADER) {
-            fault("a program loaded from the packet itself: not what this GPU model runs");
+        if (type == ST6_SHADER || texBlock) {
+            fault(texBlock ? "a texture or sampler table loaded from the packet itself: not what this GPU model runs"
+                           : "a program loaded from the packet itself: not what this GPU model runs");
             return false;
         }
         if (count != 3 + units * unitBytes / 4) {
@@ -173,6 +205,18 @@ bool FakeGpu::loadState(const uint32_t* p, uint32_t count) {
         fault("a bindless or UBO-sourced load: not what this GPU model runs");
         return false;
     }
+    if (texBlock) {
+        if (type == ST6_SHADER) {
+            cs_.sampLoaded = true;
+            cs_.sampFrom = from;
+            cs_.sampUnits = units;
+        } else {
+            cs_.texLoaded = true;
+            cs_.texFrom = from;
+            cs_.texUnits = units;
+        }
+        return true;
+    }
     switch (type) {
     case ST6_SHADER:
         cs_.programLoaded = true;
@@ -189,6 +233,91 @@ bool FakeGpu::loadState(const uint32_t* p, uint32_t count) {
         break;
     default:
         break;   // ST6_UBO: taken, not checked further
+    }
+    return true;
+}
+
+// A 2D descriptor of a linear texture or image, as fdl6_view_init writes one (fd6_view.c:232-250 for the sampled view,
+// 383-397 for the storage one): a format this model knows, a width and height of at least 1, a pitch that holds a row
+// and is a multiple of 64 bytes (of 64 << PITCHALIGN for the sampled view, which carries the alignment the layout chose;
+// the storage view carries no PITCHALIGN), a base 64-byte aligned (fdl6_layout's base_align), the rows inside a buffer
+// counted to a multiple of 4 as the layout counts them for its last level (fd6_layout.c:249-250: the TP may over-fetch
+// them), one level and one layer.
+bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool sampled) {
+    using namespace a6xx;
+    const std::string who = std::string(what) + " " + std::to_string(i);
+    uint32_t fmt = fieldOf(d[0], A6XX_TEX_CONST_0_FMT__MASK, A6XX_TEX_CONST_0_FMT__SHIFT);
+    uint32_t bpp = bytesPerPixel(fmt);
+    if (bpp == 0) {
+        fault(who + text(": FMT %llu is not one this GPU model knows", fmt));
+        return false;
+    }
+    uint32_t width = fieldOf(d[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT);
+    uint32_t height = fieldOf(d[1], A6XX_TEX_CONST_1_HEIGHT__MASK, A6XX_TEX_CONST_1_HEIGHT__SHIFT);
+    if (width == 0 || height == 0) {
+        fault(who + text(": %llu x %llu pixels", width, height));
+        return false;
+    }
+    uint64_t pitch = fieldOf(d[2], A6XX_TEX_CONST_2_PITCH__MASK, A6XX_TEX_CONST_2_PITCH__SHIFT);
+    uint32_t pitchalign = sampled ? fieldOf(d[2], A6XX_TEX_CONST_2_PITCHALIGN__MASK, A6XX_TEX_CONST_2_PITCHALIGN__SHIFT) : 0;
+    uint64_t unit = 64ull << pitchalign;
+    if (pitch < uint64_t(width) * bpp || pitch % unit != 0) {
+        fault(who + text(": pitch %llu for rows of %llu pixels of %llu bytes: shorter than a row or not a multiple of ", pitch, width, bpp) +
+              text("%llu bytes (64 << PITCHALIGN %llu)", unit, pitchalign));
+        return false;
+    }
+    uint64_t base = d[4] | uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
+    uint64_t rows = (uint64_t(height) + 3) & ~uint64_t(3);
+    uint64_t reach = (rows - 1) * pitch + uint64_t(width) * bpp;
+    if (base % 64 != 0 || at(base, reach) == nullptr) {
+        fault(who + text(": %llu rows (%llu counted) of %llu bytes", height, rows, pitch) +
+              text(" at %#llx: outside every buffer or not 64-byte aligned", base));
+        return false;
+    }
+    if (sampled && (fieldOf(d[0], A6XX_TEX_CONST_0_MIPLVLS__MASK, A6XX_TEX_CONST_0_MIPLVLS__SHIFT) != 0 ||
+                    fieldOf(d[0], A6XX_TEX_CONST_0_SAMPLES__MASK, A6XX_TEX_CONST_0_SAMPLES__SHIFT) != 0)) {
+        fault(who + ": more than one level or sample: not what this GPU model runs");
+        return false;
+    }
+    uint32_t depth = fieldOf(d[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT);
+    if (depth != 1) {
+        fault(who + text(": DEPTH %llu, not the one layer this GPU model runs", depth));
+        return false;
+    }
+    return true;
+}
+
+// A sampler descriptor: the last word has no fields and both Mesa drivers write 0; the wrap modes are a6xx_tex_clamp's
+// (0 to 4); a border clamp (CLAMP_TO_BORDER, 3) reads entry BCOLOR of the table at SP_TP_BORDER_COLOR_BASE_ADDR, so
+// that register must have been written (Gallium writes it at every batch start) and point at an entry inside a buffer.
+bool FakeGpu::checkSampler(const uint32_t* d, uint32_t i) {
+    using namespace a6xx;
+    if (d[3] != 0) {
+        fault(text("sampler %llu: dword 3 is %#llx, and it has no fields", i, d[3]));
+        return false;
+    }
+    uint32_t wraps[3] = {fieldOf(d[0], A6XX_TEX_SAMP_0_WRAP_S__MASK, A6XX_TEX_SAMP_0_WRAP_S__SHIFT),
+                         fieldOf(d[0], A6XX_TEX_SAMP_0_WRAP_T__MASK, A6XX_TEX_SAMP_0_WRAP_T__SHIFT),
+                         fieldOf(d[0], A6XX_TEX_SAMP_0_WRAP_R__MASK, A6XX_TEX_SAMP_0_WRAP_R__SHIFT)};
+    bool border = false;
+    for (uint32_t w : wraps) {
+        if (w > A6XX_TEX_MIRROR_CLAMP) {
+            fault(text("sampler %llu: wrap mode %llu is not one a6xx_tex_clamp names", i, w));
+            return false;
+        }
+        border = border || w == A6XX_TEX_CLAMP_TO_BORDER;
+    }
+    if (border) {
+        if (regs_.find(REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR) == regs_.end()) {
+            fault(text("sampler %llu: a border-clamping sampler with no border colour table (SP_TP_BORDER_COLOR_BASE_ADDR was never written)", i));
+            return false;
+        }
+        uint64_t table = reg64(REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR);
+        uint64_t entry = table + uint64_t(fieldOf(d[2], A6XX_TEX_SAMP_2_BCOLOR__MASK, A6XX_TEX_SAMP_2_BCOLOR__SHIFT)) * kBorderColorAlign;
+        if (table % kBorderColorAlign != 0 || at(entry, kBorderColorAlign) == nullptr) {
+            fault(text("sampler %llu: its border colour entry at %#llx: outside every buffer or the table not 128-byte aligned", i, entry));
+            return false;
+        }
     }
     return true;
 }
@@ -291,8 +420,21 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
         for (uint32_t i = 0; i < nibo; i++) {
             uint32_t d[kTexConstDwords];
             memcpy(d, bytes + 64 * i, sizeof d);
-            if (fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_BUFFER) {
-                fault(text("IBO %llu is not a buffer descriptor", i));
+            if (allZero(d, kTexConstDwords)) {
+                // an unaddressed slot gets a hole descriptor over real memory (compute.hpp); a zero one is what no Mesa
+                // driver puts in a bound IBO table, and what a slot nobody wrote would look like
+                fault(text("IBO %llu is all zeros: an unaddressed slot gets a hole descriptor, not zeros", i));
+                return false;
+            }
+            uint32_t type = fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT);
+            if (type == A6XX_TEX_2D) {
+                if (!check2d(d, "IBO", i, false)) {
+                    return false;
+                }
+                continue;
+            }
+            if (type != A6XX_TEX_BUFFER) {
+                fault(text("IBO %llu is of type %llu: not a buffer or a 2D image descriptor", i, type));
                 return false;
             }
             uint64_t elements = fieldOf(d[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT) |
@@ -306,8 +448,63 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
             }
         }
     }
+    // --- the texture state, when the dispatch has any: Gallium's CS_TEX group (fd6_texture.cc:582-687) ---
+    uint32_t texCount = reg(REG_A6XX_SP_CS_TEX_COUNT);
+    uint64_t texTable = 0, sampTable = 0;
+    if (texCount != 0) {
+        texTable = reg64(REG_A6XX_SP_CS_TEX_CONST);
+        sampTable = reg64(REG_A6XX_SP_CS_TEX_SAMP);
+        if (!cs_.texLoaded || cs_.texFrom != texTable || cs_.texUnits != texCount) {
+            fault("the texture descriptors were not loaded from where SP_CS_TEX_CONST points, or not as many as SP_CS_TEX_COUNT says");
+            return false;
+        }
+        const uint8_t* texBytes = at(texTable, uint64_t(texCount) * 64);
+        if (texTable % kSpCsTexConstAlign != 0 || texBytes == nullptr) {
+            fault(text("the texture descriptors at %#llx: outside every buffer or not 64-byte aligned", texTable));
+            return false;
+        }
+        // one sampler at least: an isaml names s#0 whether or not the kernel has a sampler, and Mesa never leaves a bound
+        // texture without one
+        if (!cs_.sampLoaded || cs_.sampFrom != sampTable || cs_.sampUnits == 0) {
+            fault("the sampler descriptors were not loaded from where SP_CS_TEX_SAMP points (a texture load needs at least one)");
+            return false;
+        }
+        const uint8_t* sampBytes = at(sampTable, uint64_t(cs_.sampUnits) * 16);
+        if (sampTable % kSpCsTexSampAlign != 0 || sampBytes == nullptr) {
+            fault(text("the sampler descriptors at %#llx: outside every buffer or not 16-byte aligned", sampTable));
+            return false;
+        }
+        uint32_t ntex = fieldOf(config, A6XX_SP_CS_CONFIG_NTEX__MASK, A6XX_SP_CS_CONFIG_NTEX__SHIFT);
+        uint32_t nsamp = fieldOf(config, A6XX_SP_CS_CONFIG_NSAMP__MASK, A6XX_SP_CS_CONFIG_NSAMP__SHIFT);
+        if (ntex < texCount || ntex != nsamp) {
+            // ir3's num_samp counts the images too, so NTEX may exceed the table (Gallium's stream for every shader with
+            // an image); less than the table, or NTEX and NSAMP apart, is a stream nobody emits
+            fault(text("SP_CS_CONFIG names %llu textures and %llu samplers; SP_CS_TEX_COUNT says %llu (NTEX must cover it and equal NSAMP)", ntex, nsamp, texCount));
+            return false;
+        }
+        for (uint32_t i = 0; i < texCount; i++) {
+            uint32_t d[kTexConstDwords];
+            memcpy(d, texBytes + 64 * i, sizeof d);
+            if (allZero(d, kTexConstDwords)) continue;   // Gallium's dummy_view for a slot the kernel does not read
+            if (fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_2D) {
+                fault(text("texture %llu is of type %llu: not the 2D descriptor this GPU model runs", i, fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
+                return false;
+            }
+            if (!check2d(d, "texture", i, true)) {
+                return false;
+            }
+        }
+        for (uint32_t i = 0; i < cs_.sampUnits; i++) {
+            uint32_t d[kTexSampDwords];
+            memcpy(d, sampBytes + 16 * i, sizeof d);
+            if (!checkSampler(d, i)) {
+                return false;
+            }
+        }
+    }
     stats_.dispatches++;
     Dispatch& d = stats_.lastDispatch;
+    d = Dispatch{};
     for (int i = 0; i < 3; i++) {
         d.groups[i] = groups[i];
         d.local[i] = local[i];
@@ -317,6 +514,22 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
     d.constlen = constlen;
     d.ibos = nibo;
     d.consts = cs_.consts;
+    d.textureCount = texCount;
+    d.samplerCount = texCount != 0 ? cs_.sampUnits : 0;
+    d.iboTable = nibo != 0 ? reg64(REG_A6XX_SP_CS_IBO) : 0;
+    d.texConstTable = texTable;
+    d.texSampTable = sampTable;
+    if (nibo != 0) {
+        const uint8_t* bytes = at(d.iboTable, uint64_t(nibo) * 64);
+        d.ibo.resize(nibo);
+        memcpy(d.ibo.data(), bytes, uint64_t(nibo) * 64);
+    }
+    if (texCount != 0) {
+        d.tex.resize(texCount);
+        memcpy(d.tex.data(), at(texTable, uint64_t(texCount) * 64), uint64_t(texCount) * 64);
+        d.samp.resize(cs_.sampUnits);
+        memcpy(d.samp.data(), at(sampTable, uint64_t(cs_.sampUnits) * 16), uint64_t(cs_.sampUnits) * 16);
+    }
     cs_ = CsState{};   // the next dispatch loads its own
     return true;
 }

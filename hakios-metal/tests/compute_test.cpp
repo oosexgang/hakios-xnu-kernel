@@ -67,7 +67,10 @@ struct Raw {
 
 // the dispatch's own words, as compute::encode writes them, for a test to mutate
 struct Encoded {
-    Encoded(Rig& r, const Kernel& k, const uint32_t groups[3], const uint32_t* local, const std::vector<Binding>& buffers) {
+    Encoded(Rig& r, const Kernel& k, const uint32_t groups[3], const uint32_t* local, const std::vector<Binding>& buffers)
+        : Encoded(r, k, groups, local, Bindings{buffers, {}, {}}, compute::Options{}) {}
+    Encoded(Rig& r, const Kernel& k, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
+            const compute::Options& options = compute::Options{}) {
         std::string why;
         program = newBuffer(*r.gpu, 4ull * k.numWords, &why);
         table = newBuffer(*r.gpu, compute::kTableBytes, &why);
@@ -75,8 +78,8 @@ struct Encoded {
         memcpy(program->contents(), k.words, 4ull * k.numWords);
         uint32_t loc[3] = {k.localSize[0], k.localSize[1], k.localSize[2]};
         if (local) for (int i = 0; i < 3; i++) loc[i] = local[i];
-        ok = compute::encode(stream, k, groups, loc, buffers, nullptr, program->gpuAddress(), table->gpuAddress(),
-                             static_cast<uint8_t*>(table->contents()), &why);
+        ok = compute::encode(stream, k, groups, loc, bindings, nullptr, program->gpuAddress(), table->gpuAddress(),
+                             static_cast<uint8_t*>(table->contents()), &why, options);
         error = why;
     }
     // the index of the first word that is a type-7 header of OPCODE
@@ -89,6 +92,33 @@ struct Encoded {
         }
         return size_t(-1);
     }
+    // the index of the VALUE word of the first type-4 write that covers register REG
+    size_t findReg(uint32_t reg) const {
+        const auto& w = stream.words();
+        for (size_t i = 0; i < w.size();) {
+            pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kRegisters && reg >= h.reg && reg < h.reg + h.count) return i + 1 + (reg - h.reg);
+            i += 1 + h.count;
+        }
+        return size_t(-1);
+    }
+    // the index of the first CP_LOAD_STATE6_FRAG header whose word 0 names TYPE into BLOCK
+    size_t findLoad(a6xx::a6xx_state_type type, a6xx::a6xx_state_block block) const {
+        const auto& w = stream.words();
+        for (size_t i = 0; i < w.size();) {
+            pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kCommand && h.opcode == a6xx::CP_LOAD_STATE6_FRAG && h.count >= 1) {
+                uint32_t w0 = w[i + 1];
+                if (((w0 & a6xx::CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> a6xx::CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) == type &&
+                    ((w0 & a6xx::CP_LOAD_STATE6_0_STATE_BLOCK__MASK) >> a6xx::CP_LOAD_STATE6_0_STATE_BLOCK__SHIFT) == block) {
+                    return i;
+                }
+            }
+            i += 1 + h.count;
+        }
+        return size_t(-1);
+    }
+    uint32_t* tableWords() const { return static_cast<uint32_t*>(table->contents()); }
     std::shared_ptr<Buffer> program, table;
     pm4::Stream stream;
     bool ok = false;
@@ -510,4 +540,380 @@ TEST(a_texture_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the
         CHECK(has(refused(r, k, bind({Binding{out.get(), 0}}, {rgba.get()}, {&s})), "tex_sample_gid names texture or sampler indices past 15"));
     }
     CHECK_EQ(r.fake->stats().submits, 0u);
+}
+
+// --- positive dispatches: the descriptors the fake reads back are the textures' ----------------------------------------------
+
+namespace {
+const uint32_t kGroups8x4[3] = {8, 4, 1}, kLocal8x8[3] = {8, 8, 1};
+
+// a dispatch through the command buffer, completed on the fake, no faults
+FakeGpu::Stats dispatched(Rig& r, const Kernel& k, const Bindings& b, const compute::Options& o = compute::Options{}) {
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->dispatch(k, kGroups8x4, kLocal8x8, b, nullptr, o));
+    CHECK(cb->error().empty());
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    if (s.faults != 0) std::fprintf(stderr, "       %s\n", s.lastFault.c_str());
+    return s;
+}
+
+uint32_t fieldOf(uint32_t word, uint32_t mask, uint32_t shift) { return (word & mask) >> shift; }
+
+// the fields of a 2D descriptor against the texture it was made from
+void checkIs2d(const a6xx::TexConst& d, const Texture& t, bool sampled) {
+    using namespace a6xx;
+    CHECK_EQ(fieldOf(d.dword[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT), uint32_t(A6XX_TEX_2D));
+    CHECK_EQ(fieldOf(d.dword[0], A6XX_TEX_CONST_0_FMT__MASK, A6XX_TEX_CONST_0_FMT__SHIFT), uint32_t(t.info().fmt6));
+    CHECK_EQ(fieldOf(d.dword[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT), t.width());
+    CHECK_EQ(fieldOf(d.dword[1], A6XX_TEX_CONST_1_HEIGHT__MASK, A6XX_TEX_CONST_1_HEIGHT__SHIFT), t.height());
+    CHECK_EQ(fieldOf(d.dword[2], A6XX_TEX_CONST_2_PITCH__MASK, A6XX_TEX_CONST_2_PITCH__SHIFT), uint32_t(t.bytesPerRow()));
+    CHECK_EQ(d.dword[4] | uint64_t(fieldOf(d.dword[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32, t.gpuAddress());
+    CHECK_EQ(fieldOf(d.dword[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT), 1u);
+    // the sampled view carries the pitch alignment the layout chose, the storage view does not
+    uint32_t cpp = t.info().bytesPerPixel, log2cpp = 0;
+    while ((1u << (log2cpp + 1)) <= cpp) log2cpp++;
+    CHECK_EQ(fieldOf(d.dword[2], A6XX_TEX_CONST_2_PITCHALIGN__MASK, A6XX_TEX_CONST_2_PITCHALIGN__SHIFT), sampled ? log2cpp : 0u);
+}
+
+bool allZero(const uint32_t* w, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (w[i] != 0) return false;
+    }
+    return true;
+}
+}  // namespace
+
+TEST(a_dispatch_of_an_image_only_kernel_puts_a_storage_descriptor_at_ibo_0_and_no_texture_state) {
+    // tex_fill's shape: the image at [[texture(0)]] of a kernel with no device buffer is IBO slot 0; no sampled texture,
+    // so no CS_TEX group at all, as Gallium emits for such a shader (SP_CS_TEX_COUNT is never written: it reads 0)
+    Rig r;
+    auto out = texture(r, PixelFormat::kR32Uint, 64, 32);
+    memset(out->contents(), 0xcc, size_t(out->buffer()->length()));
+    FakeGpu::Stats s = dispatched(r, texFillLike(), bind({}, {out.get()}));
+    CHECK_EQ(s.dispatches, 1u);
+    CHECK_EQ(s.lastDispatch.ibos, 1u);
+    CHECK_EQ(s.lastDispatch.ibo.size(), size_t(1));
+    if (!s.lastDispatch.ibo.empty()) checkIs2d(s.lastDispatch.ibo[0], *out, false);
+    CHECK_EQ(s.lastDispatch.textureCount, 0u);
+    CHECK_EQ(s.lastDispatch.samplerCount, 0u);
+    CHECK_EQ(s.lastDispatch.texConstTable, 0u);
+    CHECK_EQ(s.lastDispatch.tex.size(), size_t(0));
+    CHECK_EQ(s.lastDispatch.iboTable % 64, 0u);
+    // the fake runs no instruction: the texture is as the test left it
+    CHECK(allWords(*out->buffer(), 0xcccccccc));
+    // and the same with RGBA32Uint, the four-channel format tex_fill's probe uses second
+    auto wide = texture(r, PixelFormat::kRGBA32Uint, 64, 32);
+    s = dispatched(r, texFillLike(), bind({}, {wide.get()}));
+    CHECK_EQ(s.dispatches, 2u);
+    if (!s.lastDispatch.ibo.empty()) checkIs2d(s.lastDispatch.ibo[0], *wide, false);
+}
+
+TEST(a_dispatch_of_tex_copy_loads_the_texture_table_with_a_zero_slot_0_and_one_zero_sampler) {
+    // in at [[texture(1)]]: TEX_CONST slot 1, slot 0 Gallium's zero dummy; out at [[texture(0)]]: IBO slot 0; no
+    // sampler named, one zero TEX_SAMP loaded all the same for the isaml's s#0; NTEX = NSAMP = 3 > TEX_COUNT 2
+    Rig r;
+    auto in = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageRead);
+    auto out = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageWrite);
+    FakeGpu::Stats s = dispatched(r, texCopyLike(), bind({}, {out.get(), in.get()}));
+    CHECK_EQ(s.lastDispatch.ibos, 1u);
+    if (!s.lastDispatch.ibo.empty()) checkIs2d(s.lastDispatch.ibo[0], *out, false);
+    CHECK_EQ(s.lastDispatch.textureCount, 2u);
+    CHECK_EQ(s.lastDispatch.samplerCount, 1u);
+    CHECK_EQ(s.lastDispatch.tex.size(), size_t(2));
+    CHECK_EQ(s.lastDispatch.samp.size(), size_t(1));
+    if (s.lastDispatch.tex.size() == 2) {
+        CHECK(allZero(s.lastDispatch.tex[0].dword, 16));
+        checkIs2d(s.lastDispatch.tex[1], *in, true);
+    }
+    if (!s.lastDispatch.samp.empty()) CHECK(allZero(s.lastDispatch.samp[0].dword, 4));
+    CHECK_EQ(s.lastDispatch.texConstTable % 64, 0u);
+    CHECK_EQ(s.lastDispatch.texSampTable % 16, 0u);
+    CHECK_EQ(s.lastDispatch.texSampTable, s.lastDispatch.texConstTable + (compute::kTableTexSampAt - compute::kTableTexConstAt));
+    CHECK_EQ(s.lastDispatch.iboTable, s.lastDispatch.texConstTable - compute::kTableTexConstAt);
+}
+
+TEST(a_dispatch_of_tex_sample_gid_loads_the_sampler_it_was_given) {
+    // texture 0 sampled with sampler 0, out at [[buffer(0)]] (IBO 0 a buffer descriptor); the sampler's four words land
+    // at TEX_SAMP slot 0 as makeSampler made them
+    Rig r;
+    auto tex = texture(r, PixelFormat::kRGBA8Unorm, 8, 8, kTextureUsageRead);
+    auto out = buffer(r, 4096, 0x7fc00001);
+    Sampler linear = sampler(1, 0);
+    FakeGpu::Stats s = dispatched(r, texSampleLike(), bind({Binding{out.get(), 0}}, {tex.get()}, {&linear}));
+    CHECK_EQ(s.lastDispatch.ibos, 1u);
+    if (!s.lastDispatch.ibo.empty()) {
+        CHECK_EQ(fieldOf(s.lastDispatch.ibo[0].dword[2], a6xx::A6XX_TEX_CONST_2_TYPE__MASK, a6xx::A6XX_TEX_CONST_2_TYPE__SHIFT), uint32_t(a6xx::A6XX_TEX_BUFFER));
+    }
+    CHECK_EQ(s.lastDispatch.textureCount, 1u);
+    CHECK_EQ(s.lastDispatch.samplerCount, 1u);
+    if (!s.lastDispatch.tex.empty()) checkIs2d(s.lastDispatch.tex[0], *tex, true);
+    if (!s.lastDispatch.samp.empty()) {
+        CHECK_EQ(s.lastDispatch.samp[0].dword[0], 0x92au);
+        CHECK_EQ(s.lastDispatch.samp[0].dword[1], 0x000fff40u);
+        CHECK_EQ(s.lastDispatch.samp[0].dword[2], 0x20u);
+        CHECK_EQ(s.lastDispatch.samp[0].dword[3], 0u);
+    }
+    CHECK(allWords(*out, 0x7fc00001));
+    // a clamp-to-zero sampler: CLAMP_TO_BORDER with the border registers pointing at the table's zero entry
+    Sampler zero = sampler(0, 4);
+    s = dispatched(r, texSampleLike(), bind({Binding{out.get(), 0}}, {tex.get()}, {&zero}));
+    CHECK_EQ(s.dispatches, 2u);
+    if (!s.lastDispatch.samp.empty()) CHECK_EQ(s.lastDispatch.samp[0].dword[0], 0x1b60u);
+}
+
+TEST(an_image_slot_the_kernel_never_addresses_gets_a_hole_descriptor_over_the_table) {
+    // in at [[texture(0)]] sampled, out at [[texture(1)]] an image: IBO 1 is the image and IBO 0, which ir3 counts and
+    // nothing addresses, is a one-element buffer descriptor at the table's own kTableHoleAt bytes
+    Rig r;
+    Kernel k = kernelLike("tex_copy_swapped", 0, 2, 3, 1, 0);
+    k.textures[0] = sampled2d(kElemUint);
+    k.textures[1] = image2dUint();
+    auto in = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageRead);
+    auto out = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageWrite);
+    Encoded e(r, k, kGroups8x4, kLocal8x8, bind({}, {in.get(), out.get()}));
+    CHECK(e.ok);
+    if (!e.ok) std::fprintf(stderr, "       %s\n", e.error.c_str());
+    Raw raw(r);
+    CHECK_EQ(raw.submit(e.stream.words()), 0);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK_EQ(s.lastDispatch.ibos, 2u);
+    CHECK_EQ(s.lastDispatch.ibo.size(), size_t(2));
+    if (s.lastDispatch.ibo.size() == 2) {
+        using namespace a6xx;
+        const TexConst& hole = s.lastDispatch.ibo[0];
+        CHECK_EQ(fieldOf(hole.dword[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT), uint32_t(A6XX_TEX_BUFFER));
+        CHECK_EQ(fieldOf(hole.dword[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT), 1u);
+        CHECK_EQ((hole.dword[4] & A6XX_TEX_CONST_4_BASE_LO__MASK) | uint64_t(fieldOf(hole.dword[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32,
+                 e.table->gpuAddress() + compute::kTableHoleAt);
+        checkIs2d(s.lastDispatch.ibo[1], *out, false);
+    }
+    CHECK_EQ(s.lastDispatch.textureCount, 1u);
+    if (!s.lastDispatch.tex.empty()) checkIs2d(s.lastDispatch.tex[0], *in, true);
+    // the tables' addresses are the dispatch's own
+    CHECK_EQ(s.lastDispatch.iboTable, e.table->gpuAddress() + compute::kTableIbosAt);
+    CHECK_EQ(s.lastDispatch.texConstTable, e.table->gpuAddress() + compute::kTableTexConstAt);
+    CHECK_EQ(s.lastDispatch.texSampTable, e.table->gpuAddress() + compute::kTableTexSampAt);
+    // and the TP registers point at the zero entry
+    size_t tp = e.findReg(a6xx::REG_A6XX_SP_TP_MODE_CNTL);
+    CHECK(tp != size_t(-1));
+    if (tp != size_t(-1)) CHECK_EQ(e.stream.words()[tp], 0xa2u);
+    size_t border = e.findReg(a6xx::REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR);
+    CHECK(border != size_t(-1));
+    if (border != size_t(-1)) CHECK_EQ(e.stream.words()[border], uint32_t(e.table->gpuAddress() + compute::kTableBorderColorAt));
+}
+
+#ifdef HAKIOS_METAL_MESA
+#include "hakios-metal/compiler.hpp"
+#include <cstdio>
+namespace {
+std::unique_ptr<CompiledKernel> compiledKernel(const char* name) {
+    std::vector<uint8_t> bytes;
+    FILE* f = fopen((std::string("out/host/kernels/") + name + ".bc").c_str(), "rb");
+    CHECK(f != nullptr);
+    if (f == nullptr) return nullptr;
+    uint8_t buffer[4096];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof buffer, f)) > 0) bytes.insert(bytes.end(), buffer, buffer + n);
+    fclose(f);
+    std::string why;
+    auto k = compileAir(bytes.data(), bytes.size(), &why);
+    CHECK(k != nullptr);
+    if (k == nullptr) std::fprintf(stderr, "       %s\n", why.c_str());
+    return k;
+}
+}  // namespace
+
+TEST(the_three_texture_kernels_compiled_in_process_dispatch_on_the_fake) {
+    // the real kernels, not the hand-built likenesses: what the compiler read off the NIR drives the dispatch
+    Rig r;
+    auto fill = compiledKernel("tex_fill");
+    auto copy = compiledKernel("tex_copy");
+    auto sample = compiledKernel("tex_sample_gid");
+    if (fill == nullptr || copy == nullptr || sample == nullptr) return;
+    auto in = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageRead);
+    auto out = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageWrite);
+    auto c = buffer(r, 64, 0x5678);
+    auto rgba = texture(r, PixelFormat::kRGBA8Unorm, 8, 8, kTextureUsageRead);
+    auto result = buffer(r, 4096, 0);
+    Sampler s0 = sampler();
+    FakeGpu::Stats s = dispatched(r, fill->kernel, bind({Binding{c.get(), 0}}, {out.get()}));
+    CHECK_EQ(s.lastDispatch.ibos, 1u);
+    CHECK_EQ(s.lastDispatch.textureCount, 0u);
+    if (!s.lastDispatch.ibo.empty()) checkIs2d(s.lastDispatch.ibo[0], *out, false);
+    s = dispatched(r, copy->kernel, bind({}, {out.get(), in.get()}));
+    CHECK_EQ(s.lastDispatch.ibos, 1u);
+    CHECK_EQ(s.lastDispatch.textureCount, 2u);
+    CHECK_EQ(s.lastDispatch.samplerCount, 1u);
+    if (s.lastDispatch.tex.size() == 2) checkIs2d(s.lastDispatch.tex[1], *in, true);
+    s = dispatched(r, sample->kernel, bind({Binding{result.get(), 0}}, {rgba.get()}, {&s0}));
+    CHECK_EQ(s.lastDispatch.textureCount, 1u);
+    CHECK_EQ(s.lastDispatch.samplerCount, 1u);
+    if (!s.lastDispatch.samp.empty()) CHECK_EQ(s.lastDispatch.samp[0].dword[0], 0x920u);
+    CHECK_EQ(s.dispatches, 3u);
+    // the refusals hold for the real kernels too
+    CHECK(has(refused(r, copy->kernel, bind({}, {out.get()})), "tex_copy: no texture bound at index 1"));
+    CHECK(has(refused(r, sample->kernel, bind({Binding{result.get(), 0}}, {rgba.get()})), "tex_sample_gid: no sampler bound at index 0"));
+    CHECK(has(refused(r, fill->kernel, bind({Binding{c.get(), 0}}, {in.get()})), "texture 0 was made without shader-write usage; tex_fill writes it"));
+}
+#endif
+
+// --- the fake can fail on texture state: one class of fault at a time ------------------------------------------------------
+
+namespace {
+// an Encoded dispatch of tex_copy's shape over two 64x32 R32Uint textures, for the mutations below
+struct CopyCase {
+    explicit CopyCase(Rig& r, const compute::Options& o = compute::Options{})
+        : in(texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageRead)),
+          out(texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageWrite)),
+          e(r, texCopyLike(), kGroups8x4, kLocal8x8, bind({}, {out.get(), in.get()}), o) {
+        CHECK(e.ok);
+    }
+    std::shared_ptr<Texture> in, out;
+    Encoded e;
+};
+std::string faultOf(Rig& r, const std::vector<uint32_t>& words) {
+    Raw raw(r);
+    CHECK_EQ(raw.submit(words), ETIMEDOUT);
+    return r.fake->stats().lastFault;
+}
+}  // namespace
+
+TEST(the_fake_refuses_a_texture_count_the_load_does_not_match) {
+    Rig r;
+    CopyCase c(r);
+    std::vector<uint32_t> words = c.e.stream.words();
+    size_t at = c.e.findReg(a6xx::REG_A6XX_SP_CS_TEX_COUNT);
+    CHECK(at != size_t(-1));
+    CHECK_EQ(words[at], 2u);
+    words[at] = 1;
+    CHECK(has(faultOf(r, words), "not loaded from where SP_CS_TEX_CONST points, or not as many as SP_CS_TEX_COUNT says"));
+}
+
+TEST(the_fake_refuses_a_texture_outside_every_buffer) {
+    Rig r;
+    CopyCase c(r);
+    uint32_t* table = c.e.tableWords();
+    table[compute::kTableTexConstAt / 4 + 16 * 1 + 4] = 0xfff00000u;   // texture 1's base, moved where no buffer is
+    table[compute::kTableTexConstAt / 4 + 16 * 1 + 5] = (table[compute::kTableTexConstAt / 4 + 16 * 1 + 5] & ~a6xx::A6XX_TEX_CONST_5_BASE_HI__MASK) | 0x7u;
+    std::string f = faultOf(r, c.e.stream.words());
+    CHECK(has(f, "texture 1"));
+    CHECK(has(f, "outside every buffer"));
+}
+
+TEST(the_fake_refuses_a_texture_pitch_shorter_than_a_row) {
+    Rig r;
+    CopyCase c(r);
+    uint32_t* table = c.e.tableWords();
+    uint32_t& d2 = table[compute::kTableTexConstAt / 4 + 16 * 1 + 2];
+    d2 = (d2 & ~a6xx::A6XX_TEX_CONST_2_PITCH__MASK) | a6xx::A6XX_TEX_CONST_2_PITCH(64 * 4 - 64);   // 192 < 256
+    std::string f = faultOf(r, c.e.stream.words());
+    CHECK(has(f, "texture 1: pitch 192 for rows of 64 pixels of 4 bytes: shorter than a row"));
+    // and a pitch that holds the row but is not a multiple of 64 << PITCHALIGN (2): 320 is a multiple of 64, not of 256
+    Rig r2;
+    CopyCase c2(r2);
+    uint32_t& d2b = c2.e.tableWords()[compute::kTableTexConstAt / 4 + 16 * 1 + 2];
+    d2b = (d2b & ~a6xx::A6XX_TEX_CONST_2_PITCH__MASK) | a6xx::A6XX_TEX_CONST_2_PITCH(320);
+    CHECK(has(faultOf(r2, c2.e.stream.words()), "pitch 320 for rows of 64 pixels of 4 bytes: shorter than a row or not a multiple of 256 bytes (64 << PITCHALIGN 2)"));
+}
+
+TEST(the_fake_refuses_a_texture_of_a_format_it_does_not_know) {
+    Rig r;
+    CopyCase c(r);
+    uint32_t& d0 = c.e.tableWords()[compute::kTableTexConstAt / 4 + 16 * 1 + 0];
+    d0 = (d0 & ~a6xx::A6XX_TEX_CONST_0_FMT__MASK) | a6xx::A6XX_TEX_CONST_0_FMT(a6xx::FMT6_NONE);
+    CHECK(has(faultOf(r, c.e.stream.words()), "texture 1: FMT 255 is not one this GPU model knows"));
+}
+
+TEST(the_fake_refuses_a_texture_load_without_a_sampler) {
+    Rig r;
+    CopyCase c(r);
+    std::vector<uint32_t> words = c.e.stream.words();
+    size_t load = c.e.findLoad(a6xx::ST6_SHADER, a6xx::SB6_CS_TEX);
+    CHECK(load != size_t(-1));
+    words[load + 1] &= ~a6xx::CP_LOAD_STATE6_0_NUM_UNIT__MASK;   // NUM_UNIT 0: a load of no samplers
+    CHECK(has(faultOf(r, words), "sampler descriptors were not loaded from where SP_CS_TEX_SAMP points (a texture load needs at least one)"));
+}
+
+TEST(the_fake_refuses_a_border_clamp_with_the_border_registers_unwritten) {
+    // the same dispatch with tpState off: the clamp-to-zero sampler's CLAMP_TO_BORDER has no table to read
+    Rig r;
+    auto tex = texture(r, PixelFormat::kRGBA8Unorm, 8, 8, kTextureUsageRead);
+    auto out = buffer(r, 4096, 0);
+    Sampler zero = sampler(0, 4);
+    compute::Options noTp;
+    noTp.tpState = false;
+    Encoded e(r, texSampleLike(), kGroups8x4, kLocal8x8, bind({Binding{out.get(), 0}}, {tex.get()}, {&zero}), noTp);
+    CHECK(e.ok);
+    CHECK(has(faultOf(r, e.stream.words()), "sampler 0: a border-clamping sampler with no border colour table (SP_TP_BORDER_COLOR_BASE_ADDR was never written)"));
+    // and with the registers written (the default) the same words pass
+    Rig r2;
+    auto tex2 = texture(r2, PixelFormat::kRGBA8Unorm, 8, 8, kTextureUsageRead);
+    auto out2 = buffer(r2, 4096, 0);
+    Encoded e2(r2, texSampleLike(), kGroups8x4, kLocal8x8, bind({Binding{out2.get(), 0}}, {tex2.get()}, {&zero}));
+    Raw raw(r2);
+    CHECK_EQ(raw.submit(e2.stream.words()), 0);
+    CHECK_EQ(r2.fake->stats().faults, 0u);
+    // a wrap mode the enum does not have, and a sampler with its last word set
+    Rig r3;
+    CopyCase c(r3);
+    c.e.tableWords()[compute::kTableTexSampAt / 4 + 0] = a6xx::A6XX_TEX_SAMP_0_WRAP_S__MASK;   // WRAP_S 7
+    CHECK(has(faultOf(r3, c.e.stream.words()), "sampler 0: wrap mode 7 is not one a6xx_tex_clamp names"));
+    Rig r4;
+    CopyCase c4(r4);
+    c4.e.tableWords()[compute::kTableTexSampAt / 4 + 3] = 1;
+    CHECK(has(faultOf(r4, c4.e.stream.words()), "sampler 0: dword 3 is 0x1, and it has no fields"));
+}
+
+TEST(the_fake_refuses_an_image_whose_rows_run_off_its_buffer) {
+    // a 64x64 R32Uint texture is exactly one 16 KiB object; HEIGHT 65 reaches past it
+    Rig r;
+    auto out = texture(r, PixelFormat::kR32Uint, 64, 64, kTextureUsageWrite);
+    CHECK_EQ(out->buffer()->length(), 16384u);
+    Encoded e(r, texFillLike(), kGroups8x4, kLocal8x8, bind({}, {out.get()}));
+    CHECK(e.ok);
+    uint32_t& d1 = e.tableWords()[compute::kTableIbosAt / 4 + 1];
+    d1 = (d1 & ~a6xx::A6XX_TEX_CONST_1_HEIGHT__MASK) | a6xx::A6XX_TEX_CONST_1_HEIGHT(65);
+    std::string f = faultOf(r, e.stream.words());
+    CHECK(has(f, "IBO 0: 65 rows (68 counted) of 256 bytes"));
+    CHECK(has(f, "outside every buffer"));
+    // the storage descriptor's pitch rule: a multiple of 64 but short of the row
+    Rig r2;
+    auto out2 = texture(r2, PixelFormat::kR32Uint, 64, 64, kTextureUsageWrite);
+    Encoded e2(r2, texFillLike(), kGroups8x4, kLocal8x8, bind({}, {out2.get()}));
+    uint32_t& d2 = e2.tableWords()[compute::kTableIbosAt / 4 + 2];
+    d2 = (d2 & ~a6xx::A6XX_TEX_CONST_2_PITCH__MASK) | a6xx::A6XX_TEX_CONST_2_PITCH(128);
+    CHECK(has(faultOf(r2, e2.stream.words()), "IBO 0: pitch 128 for rows of 64 pixels of 4 bytes: shorter than a row or not a multiple of 64 bytes (64 << PITCHALIGN 0)"));
+}
+
+TEST(the_fake_refuses_a_load_of_ibos_into_the_texture_block) {
+    Rig r;
+    CopyCase c(r);
+    std::vector<uint32_t> words = c.e.stream.words();
+    size_t load = c.e.findLoad(a6xx::ST6_SHADER, a6xx::SB6_CS_TEX);
+    CHECK(load != size_t(-1));
+    words[load + 1] = (words[load + 1] & ~a6xx::CP_LOAD_STATE6_0_STATE_TYPE__MASK) | a6xx::CP_LOAD_STATE6_0_STATE_TYPE(a6xx::ST6_IBO);
+    CHECK(has(faultOf(r, words), "a load of type 3 into the compute texture block (SB6_CS_TEX): not samplers (ST6_SHADER) or textures (ST6_CONSTANTS)"));
+}
+
+TEST(the_fake_refuses_a_zero_ibo_descriptor) {
+    Rig r;
+    auto out = texture(r, PixelFormat::kR32Uint, 64, 32, kTextureUsageWrite);
+    Encoded e(r, texFillLike(), kGroups8x4, kLocal8x8, bind({}, {out.get()}));
+    CHECK(e.ok);
+    memset(e.tableWords() + compute::kTableIbosAt / 4, 0, 64);
+    CHECK(has(faultOf(r, e.stream.words()), "IBO 0 is all zeros: an unaddressed slot gets a hole descriptor, not zeros"));
+    // a texture table slot of zeros, by contrast, is Gallium's dummy and passes (tex_copy's slot 0 above); NTEX below
+    // the count does not
+    Rig r2;
+    CopyCase c(r2);
+    std::vector<uint32_t> words = c.e.stream.words();
+    size_t cfg = c.e.findReg(a6xx::REG_A6XX_SP_CS_CONFIG);
+    CHECK(cfg != size_t(-1));
+    words[cfg] = (words[cfg] & ~(a6xx::A6XX_SP_CS_CONFIG_NTEX__MASK | a6xx::A6XX_SP_CS_CONFIG_NSAMP__MASK)) | a6xx::A6XX_SP_CS_CONFIG_NTEX(1) | a6xx::A6XX_SP_CS_CONFIG_NSAMP(1);
+    CHECK(has(faultOf(r2, words), "SP_CS_CONFIG names 1 textures and 1 samplers; SP_CS_TEX_COUNT says 2 (NTEX must cover it and equal NSAMP)"));
 }

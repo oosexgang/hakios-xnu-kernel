@@ -7,11 +7,18 @@
 // memory the GPU was given, and a compute dispatch whose state holds together: the program preloaded from where
 // SP_CS_OBJ_START points and no longer than the instruction cache (128 units hang this GPU; 127 is the limit), every
 // constant load within the program's constlen, the IBO descriptors loaded from where SP_CS_IBO points, each a buffer
-// view inside a buffer the GPU was given, the two copies of the id registers equal, the thread size the same in both
-// places that state it, the grid's global size the local size times the group count, and the end-of-dispatch waits
-// satisfiable by what the stream itself wrote (a wait on a word nothing writes is a hang, and is a fault here). What it
-// does NOT do: run a single shader instruction (no ir3 interpreter: the memory a dispatch would write stays as it was),
-// or judge the VALUE of a register beyond those checks. That is the phone's to prove, with hakios-metal-probe.
+// view or a 2D image inside a buffer the GPU was given (a zero descriptor is a fault: an unaddressed slot gets a hole
+// descriptor), the two copies of the id registers equal, the thread size the same in both places that state it, the
+// grid's global size the local size times the group count, and the end-of-dispatch waits satisfiable by what the
+// stream itself wrote (a wait on a word nothing writes is a hang, and is a fault here). When SP_CS_TEX_COUNT is not 0:
+// the texture descriptors loaded from where SP_CS_TEX_CONST points (64-byte units, as many as the count, 64-aligned),
+// at least one sampler descriptor from where SP_CS_TEX_SAMP points (16-byte units, 16-aligned), SP_CS_CONFIG's NTEX
+// covering the count and equal to NSAMP (Gallium's stream, where ir3's num_samp counts images too), every non-zero
+// TEX_CONST a 2D linear view of a known format whose rows lie inside a buffer and whose pitch is a multiple of
+// 64 << PITCHALIGN, every TEX_SAMP with its last word 0, wrap modes the enum has, and a border clamp only with the
+// border colour base registers written at a 128-aligned entry inside a buffer. What it does NOT do: run a single
+// shader instruction (no ir3 interpreter: the memory a dispatch would write stays as it was), or judge the VALUE of a
+// register beyond those checks. That is the phone's to prove, with hakios-metal-probe.
 //
 // What it answers is what hakios's kernel driver answers (bsd/dev/hakios.adreno.c, hakios_gpu_parameter): GPU_ID 0,
 // the chip id 0x06030500 with a speed bin above it, 512 KiB of GMEM, 550 MHz. And it fails as that kernel fails. A
@@ -31,6 +38,7 @@
 #include <thread>
 #include <vector>
 
+#include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/gpu.hpp"
 
 namespace hakios::metal {
@@ -48,6 +56,14 @@ public:
         uint64_t program = 0;
         uint32_t instrlen = 0, constlen = 0, ibos = 0;
         std::vector<ConstLoad> consts;
+        // the texture state: SP_CS_TEX_COUNT, the sampler load's NUM_UNIT, the three tables' addresses (SP_CS_IBO,
+        // SP_CS_TEX_CONST, SP_CS_TEX_SAMP), and the descriptors as read from memory at CP_EXEC_CS, so a test can hold
+        // a field of them against the texture it bound
+        uint32_t textureCount = 0, samplerCount = 0;
+        uint64_t iboTable = 0, texConstTable = 0, texSampTable = 0;
+        std::vector<a6xx::TexConst> ibo;
+        std::vector<a6xx::TexConst> tex;
+        std::vector<a6xx::TexSamp> samp;
     };
     struct Stats {
         uint32_t submits = 0;
@@ -102,6 +118,13 @@ private:
         bool ibosLoaded = false;
         uint64_t ibosFrom = 0;
         uint32_t iboUnits = 0;
+        // the two loads into SB6_CS_TEX: ST6_SHADER is samplers (16 bytes a unit), ST6_CONSTANTS textures (64)
+        bool sampLoaded = false;
+        uint64_t sampFrom = 0;
+        uint32_t sampUnits = 0;
+        bool texLoaded = false;
+        uint64_t texFrom = 0;
+        uint32_t texUnits = 0;
         std::vector<ConstLoad> consts;
     };
 
@@ -110,6 +133,9 @@ private:
     bool execute(uint64_t address, uint32_t words, int depth);
     bool loadState(const uint32_t* p, uint32_t count);
     bool execCs(const uint32_t* p, uint32_t count);
+    // a 2D descriptor's rule (a texture of the texture table when SAMPLED, an image at an IBO slot otherwise)
+    bool check2d(const uint32_t* d, const char* what, uint32_t i, bool sampled);
+    bool checkSampler(const uint32_t* d, uint32_t i);
     uint32_t reg(uint32_t r) const;
     uint64_t reg64(uint32_t r) const;
     void fault(const std::string& why);
