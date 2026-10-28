@@ -1,5 +1,6 @@
-// The compiler inside the driver against the compiler outside it: fill_id.ll compiled here must be, field for field
-// and word for word, the fixture tools/mesa/ir3-dump.patch had Mesa's ir3_compiler write (tests/fixtures/fill_id_air.hpp).
+// The compiler inside the driver against the compiler outside it: each tools/kernels/*.ll compiled here must be, field
+// for field and word for word, the fixture tools/mesa/ir3-dump.patch had Mesa's ir3_compiler write (tests/fixtures/
+// *_air.hpp) -- the texture fields included, which hold the core's walk of the NIR (src/compiler.cpp) to the patch's.
 // Without Mesa's libraries in the build (no MESA_BUILD) the compiler is a refusal, and that is checked instead.
 #include <cstdio>
 #include <cstring>
@@ -7,6 +8,9 @@
 
 #include "hakios-metal/compiler.hpp"
 #include "fixtures/fill_id_air.hpp"
+#include "fixtures/tex_copy_air.hpp"
+#include "fixtures/tex_fill_air.hpp"
+#include "fixtures/tex_sample_gid_air.hpp"
 #include "test.hpp"
 
 using namespace hakios::metal;
@@ -15,7 +19,8 @@ namespace {
 // the bitcode llvm-as made of tools/kernels/NAME.ll (tools/kernels.mk: out/host/kernels/NAME.bc), when it is there
 std::vector<uint8_t> bitcodeOf(const char* name) {
     std::vector<uint8_t> bytes;
-    FILE* f = fopen((std::string("out/host/kernels/") + name + ".bc").c_str(), "rb");
+    std::string path = std::string("out/host/kernels/") + name + ".bc";
+    FILE* f = fopen(path.c_str(), "rb");
     if (f == nullptr) return bytes;
     uint8_t buffer[4096];
     size_t n;
@@ -24,45 +29,24 @@ std::vector<uint8_t> bitcodeOf(const char* name) {
     return bytes;
 }
 
-// compiled in this process, or nullptr with the reason printed (a build with the compiler and no bitcode is a broken
-// build, not a pass: the caller CHECKs the result)
-std::unique_ptr<CompiledKernel> compiled(const char* name) {
+// NAME.ll compiled here against its fixture B: every field of the Kernel, the words, and what the compiler reported
+// about the resources; NEEDLE is an instruction the listing must carry. Returns the compiled kernel for more checks.
+std::unique_ptr<CompiledKernel> compareWithFixture(const char* name, const Kernel& b, const char* entry, const char* needle) {
     std::vector<uint8_t> bc = bitcodeOf(name);
-    CHECK(!bc.empty());
-    std::string why;
-    auto k = compileAir(bc.data(), bc.size(), &why);
-    if (k == nullptr) std::printf("       %s: %s\n", name, why.c_str());
-    return k;
-}
-
-const Resource* resourceAt(const CompiledKernel& k, Resource::Kind kind, uint32_t index) {
-    for (const Resource& r : k.resources) {
-        if (r.kind == kind && r.index == index) return &r;
-    }
-    return nullptr;
-}
-}  // namespace
-
-TEST(compiler_without_mesa_refuses_by_name_and_with_it_matches_the_fixture) {
-    std::vector<uint8_t> bc = bitcodeOf("fill_id");
-    std::string why;
-    if (!hasCompiler()) {
-        auto k = compileAir(bc.data(), bc.size(), &why);
-        CHECK(k == nullptr);
-        CHECK(why.find("MESA_BUILD") != std::string::npos);
-        std::printf("       (no compiler in this build: the fixture comparison did not run)\n");
-        return;
-    }
     // a build with the compiler and no bitcode is a broken build, not a pass
     CHECK(!bc.empty());
+    if (bc.empty()) {
+        std::printf("       out/host/kernels/%s.bc is missing (make test MESA=1 assembles it)\n", name);
+        return nullptr;
+    }
+    std::string why;
     auto k = compileAir(bc.data(), bc.size(), &why);
     CHECK(k != nullptr);
     if (k == nullptr) {
-        std::printf("       %s\n", why.c_str());
-        return;
+        std::printf("       %s: %s\n", name, why.c_str());
+        return nullptr;
     }
     const Kernel& a = k->kernel;
-    const Kernel& b = kernels::fill_id_air;
     CHECK_EQ(a.numWords, b.numWords);
     CHECK(memcmp(a.words, b.words, 4 * std::min(a.numWords, b.numWords)) == 0);
     CHECK_EQ(a.instrlen, b.instrlen);
@@ -97,30 +81,121 @@ TEST(compiler_without_mesa_refuses_by_name_and_with_it_matches_the_fixture) {
     }
     CHECK_EQ(a.constantDataOffset, b.constantDataOffset);
     CHECK_EQ(a.constantDataSize, b.constantDataSize);
+    // the texture fields: the compiler's walk of the NIR against the fixture writer's, slot by slot
+    for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
+        const KernelTexture& x = a.textures[i];
+        const KernelTexture& y = b.textures[i];
+        bool same = x.kind == y.kind && x.dim == y.dim && x.isArray == y.isArray && x.element == y.element && x.bits == y.bits &&
+                    x.read == y.read && x.write == y.write && x.pad == y.pad;
+        CHECK(same);
+        if (!same) {
+            std::fprintf(stderr, "  %s: texture slot %u compiled {%u, %u, %u, %u, %u, %u, %u, %u}, fixture {%u, %u, %u, %u, %u, %u, %u, %u}\n", name, i,
+                         x.kind, x.dim, x.isArray, x.element, x.bits, x.read, x.write, x.pad, y.kind, y.dim, y.isArray, y.element, y.bits, y.read,
+                         y.write, y.pad);
+        }
+    }
     CHECK_EQ(a.numTextureSlots, b.numTextureSlots);
     CHECK_EQ(a.samplerMask, b.samplerMask);
-    for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
-        CHECK_EQ(a.textures[i].kind, b.textures[i].kind);
-        CHECK_EQ(a.textures[i].dim, b.textures[i].dim);
-        CHECK_EQ(a.textures[i].isArray, b.textures[i].isArray);
-        CHECK_EQ(a.textures[i].element, b.textures[i].element);
-        CHECK_EQ(a.textures[i].bits, b.textures[i].bits);
-        CHECK_EQ(a.textures[i].read, b.textures[i].read);
-        CHECK_EQ(a.textures[i].write, b.textures[i].write);
+    // the resources the front end reported (what was declared) against what the fixture says the code does with them:
+    // a declared texture is the slot's sampled kind, a declared image its image kind, a declared sampler a bit of the mask
+    for (const Resource& r : k->resources) {
+        if (r.kind == Resource::kTexture || r.kind == Resource::kImage) {
+            CHECK(r.index < kMaxTextureSlots);
+            if (r.index >= kMaxTextureSlots) continue;
+            const KernelTexture& t = b.textures[r.index];
+            CHECK_EQ(t.kind, r.kind == Resource::kTexture ? kTexSampled : kTexImage);
+            CHECK_EQ(r.textureDim, t.dim);
+            CHECK_EQ(r.textureArray, t.isArray);
+            CHECK_EQ(r.element, t.element);
+            CHECK(!r.nullTexture);
+            CHECK(!r.typeName.empty());
+        } else if (r.kind == Resource::kSampler) {
+            CHECK((b.samplerMask >> r.index) & 1);
+            CHECK(!r.inlineSampler);
+        }
     }
-    CHECK(k->name == "fill_id");
-    CHECK(k->listing.find("stib") != std::string::npos);
+    CHECK(k->name == entry);
+    CHECK(k->listing.find(needle) != std::string::npos);
+    return k;
+}
+}  // namespace
+
+TEST(compiler_without_mesa_refuses_by_name_and_with_it_matches_the_fixture) {
+    std::vector<uint8_t> bc = bitcodeOf("fill_id");
+    std::string why;
+    if (!hasCompiler()) {
+        auto k = compileAir(bc.data(), bc.size(), &why);
+        CHECK(k == nullptr);
+        CHECK(why.find("MESA_BUILD") != std::string::npos);
+        std::printf("       (no compiler in this build: the fixture comparison did not run)\n");
+        return;
+    }
+    compareWithFixture("fill_id", kernels::fill_id_air, "fill_id", "stib");
     // and a module that is not a kernel is refused by name, not compiled into something else
     uint8_t garbage[16] = {'B', 'C', 0xc0, 0xde, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     CHECK(compileAir(garbage, sizeof garbage, &why) == nullptr);
     CHECK(why.find("refused") != std::string::npos);
 }
 
-// --- the texture kernels: what the NIR walk reads off tools/kernels/tex_*.ll, against the listings -------------------------
-// The numbers are the listings' (tools/kernels/*.ll head comments; the readers' drafts): tex_fill writes image 0 with a
-// 32-bit uint stib and has no sampled texture; tex_copy reads texture 1 with isaml (t#1, s#0: a txf names no sampler)
-// and writes image 0; tex_sample_gid samples texture 0 with sampler 0 (saml s#0 t#0) and stores to SSBO 0. ir3's num_samp
-// is textures_used's last bit plus the image count: 1, 3 and 1.
+// The three texture kernels: the fixture writer's walk of the NIR (tools/mesa/ir3-dump.patch) and the core's
+// (src/compiler.cpp) must name the same slots, dimensions, element classes, widths and samplers, or the dispatch
+// would bind a kernel compiled on the phone otherwise than the one the fixture describes
+TEST(compiler_matches_the_texture_fixtures) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the texture fixture comparison did not run)\n");
+        return;
+    }
+    auto fill = compareWithFixture("tex_fill", kernels::tex_fill_air, "tex_fill", "stib.b.typed.2d.u32.4");
+    if (fill) {
+        // the image is the one resource with a texture kind; c is a constant buffer
+        unsigned images = 0, textures = 0, samplers = 0;
+        for (const Resource& r : fill->resources) {
+            images += r.kind == Resource::kImage;
+            textures += r.kind == Resource::kTexture;
+            samplers += r.kind == Resource::kSampler;
+        }
+        CHECK_EQ(images, 1u);
+        CHECK_EQ(textures, 0u);
+        CHECK_EQ(samplers, 0u);
+    }
+    auto copy = compareWithFixture("tex_copy", kernels::tex_copy_air, "tex_copy", "isaml");
+    if (copy) {
+        bool inAt1 = false, outAt0 = false;
+        for (const Resource& r : copy->resources) {
+            inAt1 = inAt1 || (r.kind == Resource::kTexture && r.index == 1 && r.read && !r.write);
+            outAt0 = outAt0 || (r.kind == Resource::kImage && r.index == 0 && r.write);
+        }
+        CHECK(inAt1);
+        CHECK(outAt0);
+        CHECK(copy->listing.find("t#1") != std::string::npos);
+    }
+    auto sample = compareWithFixture("tex_sample_gid", kernels::tex_sample_gid_air, "tex_sample_gid", "saml");
+    if (sample) {
+        bool samplerAt0 = false;
+        for (const Resource& r : sample->resources) samplerAt0 = samplerAt0 || (r.kind == Resource::kSampler && r.index == 0);
+        CHECK(samplerAt0);
+        CHECK(sample->listing.find("s#0, t#0") != std::string::npos);
+    }
+}
+
+// --- the texture kernels a second way: the NIR walk's numbers as the listings predict them, with no fixture in between ---
+namespace {
+std::unique_ptr<CompiledKernel> compiled(const char* name) {
+    std::vector<uint8_t> bc = bitcodeOf(name);
+    CHECK(!bc.empty());
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why);
+    if (k == nullptr) std::printf("       %s: %s\n", name, why.c_str());
+    return k;
+}
+
+const Resource* resourceAt(const CompiledKernel& k, Resource::Kind kind, uint32_t index) {
+    for (const Resource& r : k.resources) {
+        if (r.kind == kind && r.index == index) return &r;
+    }
+    return nullptr;
+}
+}  // namespace
 
 TEST(compiler_reads_the_image_only_kernel_off_the_nir) {
     if (!hasCompiler()) return;
