@@ -29,13 +29,15 @@ Apple's shaders, so far: the probe reads a `.metallib` off the phone's own files
 device and runs it over canary-filled buffers (`--metallib FILE FUNCTION`), printing per buffer the words written, a
 hash of the whole buffer and the first eight words. The reference is hakios's `tools/air/kernelref.py`: the same kernel
 run on a Linux host through LLVM over the same buffers, printing the same line, so the two logs diff. On 28 October
-(hakios `logs/215528-run.log`) eight buffer-only kernels of PortraitFilters compiled on the phone and completed; seven
-came out identical to LLVM's execution, hash included (`MetalFaceMask_InitMinMax`, `MetalFaceMask_InitSpanTable`,
-`image_calcminmax0`, `image_calcminmax2`, `fbs_bistochastize_init`, `fbs_pcg_iter3`, `MetalFaceMask_PropagateParents`),
-and one, `MetalFaceMask_CalcCubeInputScaling`, differs in three floats by one unit in the last place (0x437effff on the
-GPU, 0x437efffe from LLVM): the words its one `fdiv` writes, which ir3 lowers to a reciprocal and a multiply where LLVM
-divides exactly, and which Metal's default fast math permits. Kernels with textures, samplers, threadgroup memory,
-barriers or atomics are not run (refused by name on the phone, out of the reference's scope on the host).
+(hakios `logs/215528-run.log`) eight buffer-only kernels of PortraitFilters compiled on the phone and completed, and all
+eight came out identical to LLVM's execution, hash included (`MetalFaceMask_InitMinMax`, `MetalFaceMask_InitSpanTable`,
+`image_calcminmax0`, `image_calcminmax2`, `fbs_bistochastize_init`, `fbs_pcg_iter3`, `MetalFaceMask_PropagateParents`,
+`MetalFaceMask_CalcCubeInputScaling`). The last one first read as a GPU difference of one unit in the last place in three
+floats, and the unit was the host's: under the fast-math flags Apple's IR carries, LLVM's x86 backend had divided a vector
+by a reciprocal estimate and one Newton step, one ulp low, where the Adreno's reciprocal and multiply by 32 was correctly
+rounded; the reference divides exactly now. Kernels with textures, samplers, threadgroup memory, barriers or atomics are
+not run (refused by name on the phone, out of the reference's scope on the host; the two `InitMinMax`/`InitSpanTable`
+atomic stores are compared as plain stores, which says something about the values and nothing about ordering).
 Not yet: textures, samplers, private memory, threadgroup memory, anything that draws (refused by name, not served),
 and a Metal program's road to all this (the plug-in). CoreAnimation drawing through Metal is behind all of that.
 
