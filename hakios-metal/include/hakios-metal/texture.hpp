@@ -53,9 +53,9 @@ constexpr uint32_t kTextureUsageWrite = 2;
 
 struct FormatInfo {
     PixelFormat format;
-    a6xx_format fmt6;          // TEX_CONST_0.FMT: fd6_format_table.c's .tex column, which is also its storage format for every format here
+    a6xx::a6xx_format fmt6;    // TEX_CONST_0.FMT: fd6_format_table.c's .tex column, which is also its storage format for every format here
     uint32_t bytesPerPixel;
-    a3xx_color_swap swap;      // WZYX for RGBA-ordered formats, WXYZ for BGRA (fd6_format_table.c:163, 174)
+    a6xx::a3xx_color_swap swap; // WZYX for RGBA-ordered formats, WXYZ for BGRA (fd6_format_table.c:163, 174)
     bool hasAlpha;             // without one SWIZ_W reads ONE (fdl6_format_swiz, fd6_view.c:117-120): Metal's (x, y, z, 1) for such formats
     bool srgb;                 // TEX_CONST_0.SRGB
     KernelElement element;     // the class a kernel may address it as: float for unorm/snorm/float/sRGB, uint for *Uint, int for *Sint
