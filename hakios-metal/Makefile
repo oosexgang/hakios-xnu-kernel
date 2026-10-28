@@ -56,7 +56,7 @@ $(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wild
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
 
-test: $(HOSTOUT)/tests $(if $(strip $(MESA)),out/host/kernels/fill_id.bc)
+test: $(HOSTOUT)/tests $(if $(strip $(MESA)),out/host/kernels/fill_id.bc out/host/kernels/tex_fill.bc out/host/kernels/tex_copy.bc out/host/kernels/tex_sample_gid.bc)
 	$(HOSTOUT)/tests
 
 tsan:
