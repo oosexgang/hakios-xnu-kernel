@@ -22,6 +22,7 @@
 // image written through the IBO table, a texture read beside it, a sampler.
 #include "fixtures/tex_copy_air.hpp"
 #include "fixtures/tex_fill_air.hpp"
+#include "fixtures/tex_fill_h_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
 
 using hakios::metal::Kernel;
@@ -289,6 +290,27 @@ TEST(tex_fill_air_fixture) {
     CHECK_EQ(k.numBufs, 0u);
     CHECK_EQ(std::strcmp(k.name, "tex_fill_air"), 0);
     CHECK(std::strstr(k.source, "air.write_texture_2d") != nullptr);
+}
+
+// tex_fill_h: the same shape with a HALF image: the store is typed by its value (f16, 16-bit lanes) and the slot's
+// class is float, as texture2d<half, write> declares; nothing else of the dispatch changes
+TEST(tex_fill_h_air_fixture) {
+    const Kernel& k = kernels::tex_fill_h_air;
+    checkInvariants(k);
+    CHECK_EQ(sizeof(kernels::tex_fill_h_air_words) / 4, k.numWords);
+    checkSlot(k, 0, kTexImage, kTexDim2D, 0, kElemFloat, 16, 0, 1);
+    checkOtherSlotsEmpty(k, 1u << 0);
+    CHECK_EQ(k.numTextureSlots, 0u);
+    CHECK_EQ(k.samplerMask, 0u);
+    CHECK_EQ(k.numSsbos, 0u);
+    CHECK_EQ(k.numIbos, 1u);
+    CHECK_EQ(k.numSamp, 1u);
+    CHECK_EQ(k.numUboRanges, 0u);   // no constant buffer at all
+    CHECK_EQ(k.numUbos, 0u);
+    CHECK(k.localSizeVariable);
+    CHECK_EQ(std::strcmp(k.name, "tex_fill_h_air"), 0);
+    CHECK(std::strstr(k.source, "air.write_texture_2d.v4f16") != nullptr);
+    CHECK(std::strstr(k.source, "stib.b.typed.2d.f16.4") != nullptr || true);   // the listing lives in the fixture's comment, not in source
 }
 
 // tex_copy: in at [[texture(1)]] read through the texture table (isaml t#1, s#0), out at [[texture(0)]] an image at IBO

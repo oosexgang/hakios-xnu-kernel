@@ -25,6 +25,7 @@
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
 #include "../tests/fixtures/tex_fill_bc.hpp"
+#include "../tests/fixtures/tex_fill_h_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 
@@ -662,6 +663,72 @@ int main(int argc, char** argv) {
             };
             if (fill64) readCheck(*fill64, "tex_fill R32Uint 64x32");
             if (fill48) readCheck(*fill48, "tex_fill R32Uint 48x20");
+
+            // 7a'. tex_fill_h: a HALF image (texture2d<half, write> over RGBA16Float) written with values exact in half --
+            // (x/64, y/32, 0.5, 1.0) -- so a right pixel is four IEEE half bit patterns and nothing else. Until 29 October
+            // the front end typed every texture write by the call's return type, void, and so as uint: ir3 then emitted
+            // stib.b.typed.2d.u16.4 for a half value, and the driver, judging the kernel by that transport type, refused
+            // RGBA16Float for a texture2d<half> (what the plug-in's MetalFaceMask_Clear line hit, logs/011200-run.log).
+            // With the store typed by its value (f16) the halves land: 2048 of 2048 on 29 October (logs/012127-run.log).
+            // A typed store converts its source as its type says, so a u16 store of half bits would land half(float(bits))
+            // -- 1.0h = 0x3c00 read as 15360 -> 0x7380; the second count is of pixels matching that rule, and must be 0.
+            {
+                auto halfBits = [](float f) -> uint32_t {   // IEEE binary16 of a float, round to nearest even
+                    uint32_t u = 0;
+                    memcpy(&u, &f, 4);
+                    uint32_t sign = (u >> 16) & 0x8000u, mant = u & 0x7fffffu;
+                    int exp = int((u >> 23) & 0xffu) - 127 + 15;
+                    if (exp <= 0) {
+                        if (exp < -10) return sign;
+                        mant |= 0x800000u;
+                        uint32_t shift = uint32_t(14 - exp), h = mant >> shift, rem = mant & ((1u << shift) - 1), half = 1u << (shift - 1);
+                        if (rem > half || (rem == half && (h & 1))) h++;
+                        return sign | h;
+                    }
+                    if (exp >= 31) return sign | 0x7c00u;
+                    uint32_t h = sign | (uint32_t(exp) << 10) | (mant >> 13), rem = mant & 0x1fffu;
+                    if (rem > 0x1000u || (rem == 0x1000u && (h & 1))) h++;
+                    return h;
+                };
+                auto texFillH = [&](const Kernel& k, const std::string& label) {
+                    TextureDesc d;
+                    d.format = PixelFormat::kRGBA16Float;
+                    d.width = 64;
+                    d.height = 32;
+                    d.usage = kTextureUsageWrite;
+                    auto t = Texture::make(gpu, d, &why);
+                    if (t == nullptr) {
+                        report(false, label + ": a 64x32 RGBA16Float texture: " + why);
+                        return;
+                    }
+                    auto halves = [&](uint32_t x, uint32_t y, uint32_t lane) -> uint32_t {
+                        return lane == 0 ? (halfBits(float(x) / 64.0f) | halfBits(float(y) / 32.0f) << 16) : (0x3800u | 0x3c00u << 16);
+                    };
+                    auto asIntegers = [&](uint32_t x, uint32_t y, uint32_t lane) -> uint32_t {
+                        uint32_t w = halves(x, y, lane);
+                        return halfBits(float(w & 0xffffu)) | halfBits(float(w >> 16)) << 16;
+                    };
+                    const uint32_t canary = texCanary([&](uint32_t v) {
+                        for (uint32_t y = 0; y < 32; y++)
+                            for (uint32_t x = 0; x < 64; x++)
+                                for (uint32_t l = 0; l < 2; l++)
+                                    if (halves(x, y, l) == v || asIntegers(x, y, l) == v) return true;
+                        return false;
+                    });
+                    fillBo(*t, canary);
+                    Bindings b;
+                    b.textures = {t.get()};   // [[texture(0)]]: the image at IBO slot 0; the kernel binds no buffer
+                    const uint32_t groups[3] = {8, 4, 1};
+                    auto cb = runTex(k, groups, local88, b);
+                    auto all = [](uint32_t, uint32_t) { return true; };
+                    TexReadback r = compareTexture(*t, PixelRule{all, halves}, canary);
+                    TexReadback ri = compareTexture(*t, PixelRule{all, asIntegers}, canary);
+                    report(completed(*cb) && r.right == 2048,
+                           label + ": " + describeTexture(r, "the half bit patterns") + "; " + std::to_string(ri.right) +
+                               " of 2048 are the halves of the bits read as integers" + status(*cb, gpu));
+                };
+                texFillH(kernels::tex_fill_h_air, "tex_fill_h RGBA16Float 64x32, (8,4,1) groups of (8,8,1), the store typed f16");
+            }
 
             // 7b. tex_copy: in (texture index 1, read through the texture table by isaml t#1) filled through
             // Texture::replace with a pattern injective over the pixels and unlike tex_fill's words, out (texture
