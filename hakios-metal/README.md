@@ -26,6 +26,12 @@ make ios      # out/ios/hakios-metal-probe and libhakios-metal.a, for iOS 16.5 (
 
 ## On the phone
 
+What `hakios-metal-probe` said on the POCO X5 Pro's Adreno 642L (28 October 2026, `gpu=1`): every check passed. A copy of
+500 000 bytes came out byte for byte with nothing around it touched (4.2 ms); fills of 4, 256, 260, 65 540 and 999 996
+bytes; 40 command buffers in flight completed in order with their handlers; 16 MB copied in 182 ms (92 MB/s: the command
+processor moves words one packet at a time, which is correct but slow; fast copies want the GPU's blitter, next). The
+first try of the 16 MB copy as a single CP_MEMCPY hung the GPU: copies are cut into packets of 64 Ki words since.
+
 `hakios-metal-probe` does on the real GPU what the tests do on the fake one, one line per check. In hakios:
 
 ```sh
