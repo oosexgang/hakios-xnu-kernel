@@ -160,6 +160,116 @@ TEST(a6xx_buffer_ibo_descriptor) {
     CHECK_EQ(sizeof(TexConst), size_t(64));
 }
 
+TEST(a6xx_texture2d_descriptor) {
+    // RGBA8Unorm, 64 x 64, at 0x10000000, laid out as fdl6_layout would (pitch = align(64 * 4, 64 * 4) = 256,
+    // layer = align(align(64, 4) * 256, 4096) = 16384), as the TP samples it:
+    //   dword 0: TILE6_LINEAR 0 | FMT(FMT6_8_8_8_8_UNORM = 48) << 22 = 0x0c000000 | SAMPLES(MSAA_ONE) 0 | SWAP(WZYX) 0
+    //            | SWIZ X 0 << 4, Y 1 << 7 = 0x80, Z 2 << 10 = 0x800, W 3 << 13 = 0x6000 (= 0x6880) | MIPLVLS 0
+    //   dword 1: WIDTH 64 | HEIGHT 64 << 15 = 0x200000
+    //   dword 2: PITCHALIGN log2(4) = 2 | PITCH 256 << 7 = 0x8000 | TYPE(A6XX_TEX_2D = 1) << 29 = 0x20000000
+    //   dword 3: ARRAY_PITCH 16384 >> 12 = 4
+    //   dword 4: the base, raw;  dword 5: BASE_HI 0 | DEPTH(1) << 17 = 0x20000;  dword 6: MIN_LOD_CLAMP 0
+    TexConst d = texture2d(0x10000000ull, 64, 64, 256, 2, FMT6_8_8_8_8_UNORM, WZYX, true, false);
+    CHECK_EQ(d.dword[0], 0x0c006880u);
+    CHECK_EQ(d.dword[1], 0x00200040u);
+    CHECK_EQ(d.dword[2], 0x20008002u);
+    CHECK_EQ(d.dword[3], 0x4u);
+    CHECK_EQ(d.dword[4], 0x10000000u);
+    CHECK_EQ(d.dword[5], 0x00020000u);
+    for (int i = 6; i < 16; i++) {
+        CHECK_EQ(d.dword[i], 0u);
+    }
+    // the storage (IBO) view of the same texture: dword 2 without PITCHALIGN, everything else the same (SAMPLES and
+    // MIPLVLS are 0 in both for a one-level, one-sample texture)
+    TexConst s = image2d(0x10000000ull, 64, 64, 256, FMT6_8_8_8_8_UNORM, WZYX, true, false);
+    CHECK_EQ(s.dword[0], 0x0c006880u);
+    CHECK_EQ(s.dword[1], 0x00200040u);
+    CHECK_EQ(s.dword[2], 0x20008000u);
+    CHECK_EQ(s.dword[3], 0x4u);
+    CHECK_EQ(s.dword[4], 0x10000000u);
+    CHECK_EQ(s.dword[5], 0x00020000u);
+    // dword 0 of the other served formats, each from its FMT and swizzle: without alpha SWIZ_W reads ONE (5 << 13 =
+    // 0xa000, so the swizzle is 0xa880); BGRA8 is the RGBA8 format with SWAP(WXYZ = 1) << 30; sRGB adds bit 2
+    CHECK_EQ(texture2d(0, 1, 1, 64, 0, FMT6_8_UNORM, WZYX, false, false).dword[0], 0x00c0a880u);            // R8: 3 << 22
+    CHECK_EQ(texture2d(0, 1, 1, 128, 1, FMT6_8_8_UNORM, WZYX, false, false).dword[0], 0x03c0a880u);         // RG8: 15 << 22
+    CHECK_EQ(texture2d(0, 1, 1, 256, 2, FMT6_8_8_8_8_UNORM, WXYZ, true, false).dword[0], 0x4c006880u);     // BGRA8
+    CHECK_EQ(texture2d(0, 1, 1, 256, 2, FMT6_8_8_8_8_UNORM, WZYX, true, true).dword[0], 0x0c006884u);      // RGBA8 sRGB
+    CHECK_EQ(texture2d(0, 1, 1, 256, 2, FMT6_32_UINT, WZYX, false, false).dword[0], 0x12c0a880u);           // R32Uint: 75 << 22
+    CHECK_EQ(texture2d(0, 1, 1, 256, 2, FMT6_32_FLOAT, WZYX, false, false).dword[0], 0x1280a880u);          // R32Float: 74 << 22
+    CHECK_EQ(texture2d(0, 1, 1, 512, 3, FMT6_16_16_16_16_FLOAT, WZYX, true, false).dword[0], 0x18806880u);  // RGBA16F: 98 << 22
+    CHECK_EQ(texture2d(0, 1, 1, 1024, 4, FMT6_32_32_32_32_FLOAT, WZYX, true, false).dword[0], 0x20806880u); // RGBA32F: 130 << 22
+    CHECK_EQ(texture2d(0, 1, 1, 1024, 4, FMT6_32_32_32_32_UINT, WZYX, true, false).dword[0], 0x20c06880u);  // RGBA32Uint: 131 << 22
+    // the layer size: 7 rows are counted as 8 and the layer padded to 4 KiB; 64 rows of 256 are exactly 4 pages
+    CHECK_EQ(layerBytes2d(7, 512), 4096u);
+    CHECK_EQ(layerBytes2d(9, 512), 8192u);
+    CHECK_EQ(layerBytes2d(64, 256), 16384u);
+    CHECK_EQ(layerBytes2d(32, 256), 8192u);
+    // a 49-bit address: the high word's low 17 bits, and the whole low word (fd6_view.c writes it raw)
+    TexConst far = texture2d(0x1'2345'6780ull, 1, 1, 64, 0, FMT6_8_UNORM, WZYX, false, false);
+    CHECK_EQ(far.dword[4], 0x23456780u);
+    CHECK_EQ(far.dword[5], 0x00020001u);
+    // the field encoders by themselves
+    CHECK_EQ(A6XX_TEX_CONST_0_SWAP(WXYZ), 0x40000000u);
+    CHECK_EQ(A6XX_TEX_CONST_0_SAMPLES(MSAA_FOUR), 0x00200000u);
+    CHECK_EQ(A6XX_TEX_CONST_2_PITCHALIGN(4), 0x4u);
+    CHECK_EQ(A6XX_TEX_CONST_2_PITCHALIGN(16), 0u);   // 4 bits
+    CHECK_EQ(A6XX_TEX_CONST_6_MIN_LOD_CLAMP(0x1234), 0x234u);
+    CHECK_EQ(uint32_t(FMT6_NONE), 255u);
+    CHECK_EQ(uint32_t(FUNC_ALWAYS), 7u);
+}
+
+TEST(a6xx_sampler_words) {
+    // Metal's default sampler (nearest, clamp to edge on every axis, not mipmapped, normalized, lod 0..FLT_MAX), as
+    // Gallium encodes the same PIPE state (fd6_texture.cc:270-303):
+    //   dword 0: XY_MAG(NEAREST) 0 | XY_MIN 0 | WRAP_S(CLAMP_TO_EDGE = 1) << 5 = 0x20 | WRAP_T 1 << 8 = 0x100
+    //            | WRAP_R 1 << 11 = 0x800 | ANISO_1 0 | LOD_BIAS 0                                       = 0x920
+    //   dword 1: MIPFILTER_LINEAR_FAR 0x40 (mip filter NONE) | MIN_LOD 0 | MAX_LOD clamped to 4095 << 8 = 0xfff00
+    //                                                                                                        = 0x000fff40
+    //   dword 2: REDUCTION_MODE(AVERAGE) 0 | BCOLOR 0;  dword 3: 0
+    SamplerFields f;
+    f.wrapS = f.wrapT = f.wrapR = A6XX_TEX_CLAMP_TO_EDGE;
+    f.mipLinearFar = true;
+    TexSamp s = texSamp(f);
+    CHECK_EQ(s.dword[0], 0x920u);
+    CHECK_EQ(s.dword[1], 0x000fff40u);
+    CHECK_EQ(s.dword[2], 0u);
+    CHECK_EQ(s.dword[3], 0u);
+    // linear min and mag: XY_MAG(LINEAR = 1) << 1 = 2 | XY_MIN 1 << 3 = 8 -> 0x92a, and CHROMA_LINEAR (0x20) in dword 2
+    f.mag = f.min = A6XX_TEX_LINEAR;
+    f.chromaLinear = true;
+    s = texSamp(f);
+    CHECK_EQ(s.dword[0], 0x92au);
+    CHECK_EQ(s.dword[1], 0x000fff40u);
+    CHECK_EQ(s.dword[2], 0x20u);
+    // coord::pixel: UNNORM_COORDS is bit 5 of dword 1
+    f.unnormCoords = true;
+    CHECK_EQ(texSamp(f).dword[1], 0x000fff60u);
+    // the fields alone: repeat is 0 on every axis; a border clamp on S alone is 3 << 5; LOD clamps at 1.5 are 0x180
+    CHECK_EQ(texSamp(SamplerFields{}).dword[0], 0u);
+    CHECK_EQ(texSamp(SamplerFields{}).dword[1], 0x000fff00u);
+    CHECK_EQ(A6XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_BORDER), 0x60u);
+    CHECK_EQ(A6XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_MIRROR_REPEAT), 0x200u);
+    CHECK_EQ(A6XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_MIRROR_CLAMP), 0x2000u);
+    CHECK_EQ(A6XX_TEX_SAMP_0_ANISO(A6XX_TEX_ANISO_16), 0x10000u);
+    CHECK_EQ(A6XX_TEX_SAMP_0_LOD_BIAS(-256), 0xf8000000u);    // -1.0 in 5.8 is 0x1f00 in 13 bits: the five integer bits set, << 19
+    CHECK_EQ(A6XX_TEX_SAMP_0_LOD_BIAS(256), 0x08000000u);     // +1.0: 0x100 << 19
+    CHECK_EQ(A6XX_TEX_SAMP_1_MIN_LOD(0x180), 0x18000000u);
+    CHECK_EQ(A6XX_TEX_SAMP_1_MAX_LOD(0x180), 0x18000u);
+    CHECK_EQ(A6XX_TEX_SAMP_1_MAX_LOD(0x1000), 0u);            // 12 bits: 16.0 does not fit, the caller clamps first
+    CHECK_EQ(A6XX_TEX_SAMP_1_COMPARE_FUNC(FUNC_LESS), 0x2u);
+    CHECK_EQ(A6XX_TEX_SAMP_2_BCOLOR(1), 0x80u);
+    CHECK_EQ(A6XX_TEX_SAMP_2_REDUCTION_MODE(A6XX_REDUCTION_MODE_MAX), 0x2u);
+    f = SamplerFields{};
+    f.compare = true;
+    f.compareFunc = FUNC_LEQUAL;
+    CHECK_EQ(texSamp(f).dword[1], 0x000fff06u);
+    f.compare = false;   // the function is written only with compare on, as Gallium's compare_mode gates it
+    CHECK_EQ(texSamp(f).dword[1], 0x000fff00u);
+    CHECK_EQ(kLodMaxFixed, 4095u);
+    CHECK_EQ(kLodFractionBits, 8u);
+    CHECK_EQ(sizeof(TexSamp), size_t(16));
+}
+
 TEST(a6xx_private_memory_fields_are_scaled) {
     // MEMSIZEPERITEM in 512-byte units, TOTALPVTMEMSIZE in 4 KiB, the stack offset in 2 KiB
     CHECK_EQ(A6XX_SP_CS_PVT_MEM_PARAM_MEMSIZEPERITEM(512), 1u);

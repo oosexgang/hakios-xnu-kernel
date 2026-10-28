@@ -77,10 +77,47 @@ enum a6xx_tile_mode : uint32_t {
     TILE6_LINEAR = 0,              // a6xx.xml.h:57
 };
 
+// The texture formats served (texture.hpp's table), as fd6_format_table.c's .tex column names them for the Metal
+// pixel formats: the sRGB ones are the UNORM format plus TEX_CONST_0_SRGB, BGRA8 is 8_8_8_8_UNORM with SWAP WXYZ.
 enum a6xx_format : uint32_t {
-    FMT6_32_UINT = 75,             // a6xx.xml.h:106  a raw buffer: one dword per element
+    FMT6_8_UNORM = 3,              // a6xx.xml.h:64   R8Unorm
+    FMT6_8_8_UNORM = 15,           // a6xx.xml.h:72   RG8Unorm
+    FMT6_8_8_8_8_UNORM = 48,       // a6xx.xml.h:86   RGBA8Unorm, RGBA8Unorm_sRGB, and with SWAP = WXYZ the BGRA8 pair
+    FMT6_32_FLOAT = 74,            // a6xx.xml.h:105  R32Float
+    FMT6_32_UINT = 75,             // a6xx.xml.h:106  a raw buffer: one dword per element; R32Uint
+    FMT6_16_16_16_16_FLOAT = 98,   // a6xx.xml.h:116  RGBA16Float
     FMT6_32_32_UINT = 104,         // a6xx.xml.h:122
-    FMT6_32_32_32_32_UINT = 131,   // a6xx.xml.h:134
+    FMT6_32_32_32_32_FLOAT = 130,  // a6xx.xml.h:133  RGBA32Float
+    FMT6_32_32_32_32_UINT = 131,   // a6xx.xml.h:134  RGBA32Uint
+    FMT6_NONE = 255,               // a6xx.xml.h:189  what the fake GPU's bytes-per-pixel table answers for a format it does not know
+};
+
+// TEX_CONST_0.SWAP: the component order in memory, applied before the border colour (the XML); the swizzle after
+enum a3xx_color_swap : uint32_t {
+    WZYX = 0,                      // adreno_common.xml.h:189  RGBA order in memory: every served format but BGRA
+    WXYZ = 1,                      // adreno_common.xml.h:190  BGRA order (fd6_format_table.c:174)
+    ZYXW = 2,                      // adreno_common.xml.h:191
+    XYZW = 3,                      // adreno_common.xml.h:192
+};
+
+enum a3xx_msaa_samples : uint32_t {
+    MSAA_ONE = 0,                  // adreno_common.xml.h:167  TEX_CONST_0.SAMPLES of every texture served (no MSAA)
+    MSAA_TWO = 1,                  // adreno_common.xml.h:168
+    MSAA_FOUR = 2,                 // adreno_common.xml.h:169
+    MSAA_EIGHT = 3,                // adreno_common.xml.h:170
+};
+
+// TEX_SAMP_1.COMPARE_FUNC. MTLCompareFunction (MTLDepthStencil.h: Never 0, Less, Equal, LessEqual, Greater, NotEqual,
+// GreaterEqual, Always 7) has the same order, as PIPE_FUNC and VkCompareOp do (Gallium and turnip cast 1:1).
+enum adreno_compare_func : uint32_t {
+    FUNC_NEVER = 0,                // adreno_common.xml.h:70
+    FUNC_LESS = 1,                 // adreno_common.xml.h:71
+    FUNC_EQUAL = 2,                // adreno_common.xml.h:72
+    FUNC_LEQUAL = 3,               // adreno_common.xml.h:73
+    FUNC_GREATER = 4,              // adreno_common.xml.h:74
+    FUNC_NOTEQUAL = 5,             // adreno_common.xml.h:75
+    FUNC_GEQUAL = 6,               // adreno_common.xml.h:76
+    FUNC_ALWAYS = 7,               // adreno_common.xml.h:77
 };
 
 enum a6xx_tex_type : uint32_t {
@@ -98,7 +135,41 @@ enum a6xx_tex_swiz : uint32_t {
     A6XX_TEX_Z = 2,                // a6xx.xml.h:2364
     A6XX_TEX_W = 3,                // a6xx.xml.h:2365
     A6XX_TEX_ZERO = 4,             // a6xx.xml.h:2366
-    A6XX_TEX_ONE = 5,              // a6xx.xml.h:2367
+    A6XX_TEX_ONE = 5,              // a6xx.xml.h:2367  what SWIZ_W reads for a format without alpha (fdl6_format_swiz, fd6_view.c:117-120)
+};
+
+// TEX_SAMP_0.XY_MAG / XY_MIN. Gallium (fd6_texture.cc tex_filter): nearest -> NEAREST, linear -> LINEAR, or ANISO when
+// the anisotropy field is not ANISO_1.
+enum a6xx_tex_filter : uint32_t {
+    A6XX_TEX_NEAREST = 0,          // a6xx.xml.h:2333
+    A6XX_TEX_LINEAR = 1,           // a6xx.xml.h:2334
+    A6XX_TEX_ANISO = 2,            // a6xx.xml.h:2335
+    A6XX_TEX_CUBIC = 3,            // a6xx.xml.h:2336  "a650 only" (the XML)
+};
+
+// TEX_SAMP_0.WRAP_S/T/R. Not MTLSamplerAddressMode's order (ClampToEdge 0, MirrorClampToEdge 1, Repeat 2, MirrorRepeat 3,
+// ClampToZero 4, ClampToBorderColor 5): texture.cpp maps. MIRROR_CLAMP "only works for PoT" (fd6_texture.cc:47).
+enum a6xx_tex_clamp : uint32_t {
+    A6XX_TEX_REPEAT = 0,           // a6xx.xml.h:2340
+    A6XX_TEX_CLAMP_TO_EDGE = 1,    // a6xx.xml.h:2341
+    A6XX_TEX_MIRROR_REPEAT = 2,    // a6xx.xml.h:2342
+    A6XX_TEX_CLAMP_TO_BORDER = 3,  // a6xx.xml.h:2343  Metal's ClampToZero: border entry 0 of the zero table (TEX_SAMP_2.BCOLOR 0)
+    A6XX_TEX_MIRROR_CLAMP = 4,     // a6xx.xml.h:2344
+};
+
+// TEX_SAMP_0.ANISO: Gallium's util_last_bit(MIN2(max_anisotropy >> 1, 8)) maps 1, 2, 4, 8, 16 to these in order
+enum a6xx_tex_aniso : uint32_t {
+    A6XX_TEX_ANISO_1 = 0,          // a6xx.xml.h:2348
+    A6XX_TEX_ANISO_2 = 1,          // a6xx.xml.h:2349
+    A6XX_TEX_ANISO_4 = 2,          // a6xx.xml.h:2350
+    A6XX_TEX_ANISO_8 = 3,          // a6xx.xml.h:2351
+    A6XX_TEX_ANISO_16 = 4,         // a6xx.xml.h:2352
+};
+
+enum a6xx_reduction_mode : uint32_t {
+    A6XX_REDUCTION_MODE_AVERAGE = 0,   // a6xx.xml.h:2356  the filter's weighted mean: every Metal sampler
+    A6XX_REDUCTION_MODE_MIN = 1,       // a6xx.xml.h:2357
+    A6XX_REDUCTION_MODE_MAX = 2,       // a6xx.xml.h:2358
 };
 
 // CP_LOAD_STATE6: what is loaded, from where, and for which stage
@@ -599,8 +670,9 @@ inline constexpr uint32_t CP_REG_TO_MEM_2_DEST_HI__MASK = 0xffffffff;           
 constexpr uint32_t CP_REG_TO_MEM_0_REG(uint32_t reg) { return field(reg, CP_REG_TO_MEM_0_REG__SHIFT, CP_REG_TO_MEM_0_REG__MASK); }
 constexpr uint32_t CP_REG_TO_MEM_0_CNT(uint32_t n) { return field(n, CP_REG_TO_MEM_0_CNT__SHIFT, CP_REG_TO_MEM_0_CNT__MASK); }
 
-// --- the texture descriptor, as a buffer view (an IBO) uses it ------------------------------------------------------------
-// 16 dwords, REG_A6XX_TEX_CONST_0 to _15; a buffer sets 0, 1, 2, 4, 5 and leaves the rest 0.
+// --- the texture descriptor: a buffer view (an IBO), a 2D texture (the texture table), a 2D image (an IBO) -----------------
+// 16 dwords, REG_A6XX_TEX_CONST_0 to _15; a buffer sets 0, 1, 2, 4, 5 and leaves the rest 0; a 2D view sets 0 to 6
+// (fdl6_view_init, fd6_view.c:232-250; dwords 7 to 10 are UBWC, which a linear texture has none of).
 
 inline constexpr uint32_t REG_A6XX_TEX_CONST_0 = 0x0;                                   // a6xx.xml.h:11294
 inline constexpr uint32_t REG_A6XX_TEX_CONST_1 = 0x1;                                   // a6xx.xml.h:11354
@@ -608,6 +680,7 @@ inline constexpr uint32_t REG_A6XX_TEX_CONST_2 = 0x2;                           
 inline constexpr uint32_t REG_A6XX_TEX_CONST_3 = 0x3;                                   // a6xx.xml.h:11403
 inline constexpr uint32_t REG_A6XX_TEX_CONST_4 = 0x4;                                   // a6xx.xml.h:11422
 inline constexpr uint32_t REG_A6XX_TEX_CONST_5 = 0x5;                                   // a6xx.xml.h:11432
+inline constexpr uint32_t REG_A6XX_TEX_CONST_6 = 0x6;                                   // a6xx.xml.h:11447
 inline constexpr uint32_t REG_A6XX_TEX_CONST_15 = 0xf;                                  // a6xx.xml.h:11525
 inline constexpr uint32_t kTexConstDwords = 16;                                         // not-in-headers: REG_A6XX_TEX_CONST_15 + 1; Mesa's A6XX_TEX_CONST_DWORDS
 
@@ -622,9 +695,11 @@ inline constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_Z__MASK = 0x00001c00;           
 inline constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_Z__SHIFT = 10;                          // a6xx.xml.h:11315
 inline constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_W__MASK = 0x0000e000;                   // a6xx.xml.h:11320
 inline constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_W__SHIFT = 13;                          // a6xx.xml.h:11321
-inline constexpr uint32_t A6XX_TEX_CONST_0_MIPLVLS__MASK = 0x000f0000;                  // a6xx.xml.h:11326
+inline constexpr uint32_t A6XX_TEX_CONST_0_MIPLVLS__MASK = 0x000f0000;                  // a6xx.xml.h:11326  level count minus one
 inline constexpr uint32_t A6XX_TEX_CONST_0_MIPLVLS__SHIFT = 16;                         // a6xx.xml.h:11327
-inline constexpr uint32_t A6XX_TEX_CONST_0_SAMPLES__MASK = 0x00300000;                  // a6xx.xml.h:11334
+inline constexpr uint32_t A6XX_TEX_CONST_0_CHROMA_MIDPOINT_X = 0x00010000;              // a6xx.xml.h:11332  YUV only; overlaps MIPLVLS
+inline constexpr uint32_t A6XX_TEX_CONST_0_CHROMA_MIDPOINT_Y = 0x00040000;              // a6xx.xml.h:11333
+inline constexpr uint32_t A6XX_TEX_CONST_0_SAMPLES__MASK = 0x00300000;                  // a6xx.xml.h:11334  log2 of the sample count (a3xx_msaa_samples)
 inline constexpr uint32_t A6XX_TEX_CONST_0_SAMPLES__SHIFT = 20;                         // a6xx.xml.h:11335
 inline constexpr uint32_t A6XX_TEX_CONST_0_FMT__MASK = 0x3fc00000;                      // a6xx.xml.h:11340
 inline constexpr uint32_t A6XX_TEX_CONST_0_FMT__SHIFT = 22;                             // a6xx.xml.h:11341
@@ -636,7 +711,9 @@ constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_Y(a6xx_tex_swiz v) { return field(v, A6
 constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_Z(a6xx_tex_swiz v) { return field(v, A6XX_TEX_CONST_0_SWIZ_Z__SHIFT, A6XX_TEX_CONST_0_SWIZ_Z__MASK); }
 constexpr uint32_t A6XX_TEX_CONST_0_SWIZ_W(a6xx_tex_swiz v) { return field(v, A6XX_TEX_CONST_0_SWIZ_W__SHIFT, A6XX_TEX_CONST_0_SWIZ_W__MASK); }
 constexpr uint32_t A6XX_TEX_CONST_0_MIPLVLS(uint32_t v) { return field(v, A6XX_TEX_CONST_0_MIPLVLS__SHIFT, A6XX_TEX_CONST_0_MIPLVLS__MASK); }
+constexpr uint32_t A6XX_TEX_CONST_0_SAMPLES(a3xx_msaa_samples v) { return field(v, A6XX_TEX_CONST_0_SAMPLES__SHIFT, A6XX_TEX_CONST_0_SAMPLES__MASK); }
 constexpr uint32_t A6XX_TEX_CONST_0_FMT(a6xx_format v) { return field(v, A6XX_TEX_CONST_0_FMT__SHIFT, A6XX_TEX_CONST_0_FMT__MASK); }
+constexpr uint32_t A6XX_TEX_CONST_0_SWAP(a3xx_color_swap v) { return field(v, A6XX_TEX_CONST_0_SWAP__SHIFT, A6XX_TEX_CONST_0_SWAP__MASK); }
 
 // a buffer's element count: its low 15 bits in WIDTH and the rest in HEIGHT (so 2^30 elements at most)
 inline constexpr uint32_t A6XX_TEX_CONST_1_WIDTH__MASK = 0x00007fff;                    // a6xx.xml.h:11355
@@ -649,6 +726,9 @@ constexpr uint32_t A6XX_TEX_CONST_1_HEIGHT(uint32_t v) { return field(v, A6XX_TE
 // For TYPE = A6XX_TEX_BUFFER the struct fields take the place of PITCH/PITCHALIGN (they overlap): STRUCTSIZETEXELS
 // is "probably for D3D structured UAVs, normally 1" (the XML); STARTOFFSETTEXELS is how far into the first 64 bytes
 // the buffer starts, in elements, which is how an address that is not 64-byte aligned is expressed.
+// For a 2D texture PITCHALIGN is "minimum pitch (for mipmap levels): log2(pitchalign / 64)" (the XML): Mesa writes
+// layout->pitchalign - 6, which for a texture it laid out itself is log2(bytes per pixel) (fd6_layout.c:194-201,
+// fd6_view.c:244); the storage (IBO) view of the same image leaves it out (fd6_view.c:390-392).
 inline constexpr uint32_t A6XX_TEX_CONST_2_PITCHALIGN__MASK = 0x0000000f;               // a6xx.xml.h:11383
 inline constexpr uint32_t A6XX_TEX_CONST_2_PITCHALIGN__SHIFT = 0;                       // a6xx.xml.h:11384
 inline constexpr uint32_t A6XX_TEX_CONST_2_STRUCTSIZETEXELS__MASK = 0x0000fff0;         // a6xx.xml.h:11371
@@ -659,6 +739,9 @@ inline constexpr uint32_t A6XX_TEX_CONST_2_PITCH__MASK = 0x1fffff80;            
 inline constexpr uint32_t A6XX_TEX_CONST_2_PITCH__SHIFT = 7;                            // a6xx.xml.h:11390
 inline constexpr uint32_t A6XX_TEX_CONST_2_TYPE__MASK = 0xe0000000;                     // a6xx.xml.h:11395
 inline constexpr uint32_t A6XX_TEX_CONST_2_TYPE__SHIFT = 29;                            // a6xx.xml.h:11396
+constexpr uint32_t A6XX_TEX_CONST_2_PITCHALIGN(uint32_t log2Of64s) {
+    return field(log2Of64s, A6XX_TEX_CONST_2_PITCHALIGN__SHIFT, A6XX_TEX_CONST_2_PITCHALIGN__MASK);
+}
 constexpr uint32_t A6XX_TEX_CONST_2_STRUCTSIZETEXELS(uint32_t v) {
     return field(v, A6XX_TEX_CONST_2_STRUCTSIZETEXELS__SHIFT, A6XX_TEX_CONST_2_STRUCTSIZETEXELS__MASK);
 }
@@ -694,6 +777,14 @@ constexpr uint32_t A6XX_TEX_CONST_4_BASE_LO(uint32_t lo) {
 constexpr uint32_t A6XX_TEX_CONST_5_BASE_HI(uint32_t hi) { return field(hi, A6XX_TEX_CONST_5_BASE_HI__SHIFT, A6XX_TEX_CONST_5_BASE_HI__MASK); }
 constexpr uint32_t A6XX_TEX_CONST_5_DEPTH(uint32_t v) { return field(v, A6XX_TEX_CONST_5_DEPTH__SHIFT, A6XX_TEX_CONST_5_DEPTH__MASK); }
 
+// the lowest level of detail a sample may read, as unsigned 4.8 fixed point (Mesa's encoder is uint32_t(val * 256.0),
+// not a shift, so there is no __SCALE for it); Gallium passes 0 (fd6_view.c:250), and so does every texture here
+inline constexpr uint32_t A6XX_TEX_CONST_6_MIN_LOD_CLAMP__MASK = 0x00000fff;            // a6xx.xml.h:11448
+inline constexpr uint32_t A6XX_TEX_CONST_6_MIN_LOD_CLAMP__SHIFT = 0;                    // a6xx.xml.h:11449
+constexpr uint32_t A6XX_TEX_CONST_6_MIN_LOD_CLAMP(uint32_t fixed88) {
+    return field(fixed88, A6XX_TEX_CONST_6_MIN_LOD_CLAMP__SHIFT, A6XX_TEX_CONST_6_MIN_LOD_CLAMP__MASK);
+}
+
 struct TexConst {
     uint32_t dword[kTexConstDwords] = {};
 };
@@ -714,6 +805,157 @@ constexpr TexConst bufferIbo(uint64_t iova, uint32_t elements, a6xx_format forma
     d.dword[4] = A6XX_TEX_CONST_4_BASE_LO(uint32_t(base));
     d.dword[5] = A6XX_TEX_CONST_5_BASE_HI(uint32_t(base >> 32));
     return d;
+}
+
+// A linear 2D image's layer size as fdl6_layout computes it (fd6_layout.c:249-250, 284, 304-305): the rows of the last
+// (here the only) level are counted to a multiple of 4 ("over-fetch on the last level"), and the layer is padded to
+// 4 KiB, which is also ARRAY_PITCH's unit.
+constexpr uint64_t layerBytes2d(uint32_t height, uint64_t pitchBytes) {
+    uint64_t rows = (uint64_t(height) + 3) & ~uint64_t(3);
+    return (rows * pitchBytes + 4095) & ~uint64_t(4095);
+}
+
+// the format's swizzle for a linear colour format: identity, with W reading ONE when the format has no alpha
+// (fdl6_format_swiz, fd6_view.c:117-120: "for rgbx, force A to 1. Harmless for R/RG, where we already get 1")
+constexpr uint32_t texSwizzle(bool hasAlpha) {
+    return A6XX_TEX_CONST_0_SWIZ_X(A6XX_TEX_X) | A6XX_TEX_CONST_0_SWIZ_Y(A6XX_TEX_Y) | A6XX_TEX_CONST_0_SWIZ_Z(A6XX_TEX_Z) |
+           A6XX_TEX_CONST_0_SWIZ_W(hasAlpha ? A6XX_TEX_W : A6XX_TEX_ONE);
+}
+
+// A linear 2D texture of one level and one layer, as a sam/saml/isaml reads it: fdl6_view_init's `descriptor`
+// (fd6_view.c:232-250) for TILE6_LINEAR, no UBWC, level_count 1, identity view swizzle, min_lod_clamp 0. PITCHALIGN
+// is log2(pitch alignment / 64): for a pitch Mesa chose, log2(bytes per pixel) (fd6_layout.c:194-201). The base goes
+// in raw (fd6_view.c:248), so it must be 32-byte aligned for the field (fdl6_layout gives 64).
+constexpr TexConst texture2d(uint64_t iova, uint32_t width, uint32_t height, uint32_t pitchBytes, uint32_t pitchalignLog2Cpp,
+                             a6xx_format fmt, a3xx_color_swap swap, bool hasAlpha, bool srgb) {
+    TexConst d{};
+    d.dword[0] = A6XX_TEX_CONST_0_TILE_MODE(TILE6_LINEAR) | (srgb ? A6XX_TEX_CONST_0_SRGB : 0u) | A6XX_TEX_CONST_0_FMT(fmt) |
+                 A6XX_TEX_CONST_0_SAMPLES(MSAA_ONE) | A6XX_TEX_CONST_0_SWAP(swap) | texSwizzle(hasAlpha) | A6XX_TEX_CONST_0_MIPLVLS(0);
+    d.dword[1] = A6XX_TEX_CONST_1_WIDTH(width) | A6XX_TEX_CONST_1_HEIGHT(height);
+    d.dword[2] = A6XX_TEX_CONST_2_PITCHALIGN(pitchalignLog2Cpp) | A6XX_TEX_CONST_2_PITCH(pitchBytes) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D);
+    d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(layerBytes2d(height, pitchBytes)));
+    d.dword[4] = uint32_t(iova);
+    d.dword[5] = A6XX_TEX_CONST_5_BASE_HI(uint32_t(iova >> 32)) | A6XX_TEX_CONST_5_DEPTH(1);
+    d.dword[6] = A6XX_TEX_CONST_6_MIN_LOD_CLAMP(0);
+    return d;
+}
+
+// The same memory as a stib/ldib writes and reads it, at an IBO slot: fdl6_view_init's `storage_descriptor`
+// (fd6_view.c:383-397), which is the texture descriptor without SAMPLES and MIPLVLS in dword 0 and without PITCHALIGN
+// in dword 2 (DEPTH is the layer count there too; 1 here). For the served formats the storage format and swap are the
+// texture ones (fd6_format_table.c: one .tex/.rb pair, fd6_pipe2swap for both).
+constexpr TexConst image2d(uint64_t iova, uint32_t width, uint32_t height, uint32_t pitchBytes, a6xx_format fmt, a3xx_color_swap swap,
+                           bool hasAlpha, bool srgb) {
+    TexConst d{};
+    d.dword[0] = A6XX_TEX_CONST_0_FMT(fmt) | (srgb ? A6XX_TEX_CONST_0_SRGB : 0u) | texSwizzle(hasAlpha) |
+                 A6XX_TEX_CONST_0_TILE_MODE(TILE6_LINEAR) | A6XX_TEX_CONST_0_SWAP(swap);
+    d.dword[1] = A6XX_TEX_CONST_1_WIDTH(width) | A6XX_TEX_CONST_1_HEIGHT(height);
+    d.dword[2] = A6XX_TEX_CONST_2_PITCH(pitchBytes) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D);
+    d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(layerBytes2d(height, pitchBytes)));
+    d.dword[4] = uint32_t(iova);
+    d.dword[5] = A6XX_TEX_CONST_5_BASE_HI(uint32_t(iova >> 32)) | A6XX_TEX_CONST_5_DEPTH(1);
+    return d;
+}
+
+// --- the sampler descriptor: 4 dwords (REG_A6XX_TEX_SAMP_0 to _3), 16 bytes a unit in the SB6_CS_TEX ST6_SHADER load ------
+// Both Mesa drivers write it the same way (fd6_sampler_state_create, fd6_texture.cc:250-306; tu_CreateSampler,
+// tu_sampler.cc:69-98). The two LOD clamps are unsigned 4.8 fixed point in 12 bits and the bias signed 5.8 in 13: Mesa's
+// encoders multiply a float by 256 and cast, which is not a shift, so there is no __SCALE for them; kLodFractionBits
+// says how texture.cpp converts, and the fields below take the fixed-point value ready made.
+
+inline constexpr uint32_t REG_A6XX_TEX_SAMP_0 = 0x0;                                    // a6xx.xml.h:11204
+inline constexpr uint32_t A6XX_TEX_SAMP_0_MIPFILTER_LINEAR_NEAR = 0x00000001;           // a6xx.xml.h:11205  the mip filter is linear (Gallium: PIPE_TEX_MIPFILTER_LINEAR)
+inline constexpr uint32_t A6XX_TEX_SAMP_0_XY_MAG__MASK = 0x00000006;                    // a6xx.xml.h:11206
+inline constexpr uint32_t A6XX_TEX_SAMP_0_XY_MAG__SHIFT = 1;                            // a6xx.xml.h:11207
+inline constexpr uint32_t A6XX_TEX_SAMP_0_XY_MIN__MASK = 0x00000018;                    // a6xx.xml.h:11212
+inline constexpr uint32_t A6XX_TEX_SAMP_0_XY_MIN__SHIFT = 3;                            // a6xx.xml.h:11213
+inline constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_S__MASK = 0x000000e0;                    // a6xx.xml.h:11218
+inline constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_S__SHIFT = 5;                            // a6xx.xml.h:11219
+inline constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_T__MASK = 0x00000700;                    // a6xx.xml.h:11224
+inline constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_T__SHIFT = 8;                            // a6xx.xml.h:11225
+inline constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_R__MASK = 0x00003800;                    // a6xx.xml.h:11230
+inline constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_R__SHIFT = 11;                           // a6xx.xml.h:11231
+inline constexpr uint32_t A6XX_TEX_SAMP_0_ANISO__MASK = 0x0001c000;                     // a6xx.xml.h:11236
+inline constexpr uint32_t A6XX_TEX_SAMP_0_ANISO__SHIFT = 14;                            // a6xx.xml.h:11237
+inline constexpr uint32_t A6XX_TEX_SAMP_0_LOD_BIAS__MASK = 0xfff80000;                  // a6xx.xml.h:11242  signed 5.8 fixed point ("no idea how many bits for real", the XML)
+inline constexpr uint32_t A6XX_TEX_SAMP_0_LOD_BIAS__SHIFT = 19;                         // a6xx.xml.h:11243
+inline constexpr uint32_t REG_A6XX_TEX_SAMP_1 = 0x1;                                    // a6xx.xml.h:11250
+inline constexpr uint32_t A6XX_TEX_SAMP_1_CLAMPENABLE = 0x00000001;                     // a6xx.xml.h:11251  clamp unorm/snorm results after filtering (the XML); neither Mesa driver sets it
+inline constexpr uint32_t A6XX_TEX_SAMP_1_COMPARE_FUNC__MASK = 0x0000000e;              // a6xx.xml.h:11252
+inline constexpr uint32_t A6XX_TEX_SAMP_1_COMPARE_FUNC__SHIFT = 1;                      // a6xx.xml.h:11253
+inline constexpr uint32_t A6XX_TEX_SAMP_1_CUBEMAPSEAMLESSFILTOFF = 0x00000010;          // a6xx.xml.h:11258
+inline constexpr uint32_t A6XX_TEX_SAMP_1_UNNORM_COORDS = 0x00000020;                   // a6xx.xml.h:11259  Metal's coord::pixel (normalizedCoordinates NO)
+inline constexpr uint32_t A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR = 0x00000040;            // a6xx.xml.h:11260  Gallium sets it for PIPE_TEX_MIPFILTER_NONE (fd6_texture.cc:279); turnip: "disables mipmapping"
+inline constexpr uint32_t A6XX_TEX_SAMP_1_MAX_LOD__MASK = 0x000fff00;                   // a6xx.xml.h:11261  unsigned 4.8 fixed point: 0 to 4095/256
+inline constexpr uint32_t A6XX_TEX_SAMP_1_MAX_LOD__SHIFT = 8;                           // a6xx.xml.h:11262
+inline constexpr uint32_t A6XX_TEX_SAMP_1_MIN_LOD__MASK = 0xfff00000;                   // a6xx.xml.h:11267
+inline constexpr uint32_t A6XX_TEX_SAMP_1_MIN_LOD__SHIFT = 20;                          // a6xx.xml.h:11268
+inline constexpr uint32_t REG_A6XX_TEX_SAMP_2 = 0x2;                                    // a6xx.xml.h:11275
+inline constexpr uint32_t A6XX_TEX_SAMP_2_REDUCTION_MODE__MASK = 0x00000003;            // a6xx.xml.h:11276
+inline constexpr uint32_t A6XX_TEX_SAMP_2_REDUCTION_MODE__SHIFT = 0;                    // a6xx.xml.h:11277
+inline constexpr uint32_t A6XX_TEX_SAMP_2_CHROMA_LINEAR = 0x00000020;                   // a6xx.xml.h:11282  Gallium sets it whenever mag and min are both linear (fd6_texture.cc:295-300)
+inline constexpr uint32_t A6XX_TEX_SAMP_2_BCOLOR__MASK = 0xffffff80;                    // a6xx.xml.h:11283  the entry in the table at SP_TP_BORDER_COLOR_BASE_ADDR (128 bytes each)
+inline constexpr uint32_t A6XX_TEX_SAMP_2_BCOLOR__SHIFT = 7;                            // a6xx.xml.h:11284
+inline constexpr uint32_t REG_A6XX_TEX_SAMP_3 = 0x3;                                    // a6xx.xml.h:11291  no fields; both drivers write 0
+inline constexpr uint32_t kTexSampDwords = 4;                                           // not-in-headers: REG_A6XX_TEX_SAMP_3 + 1; Mesa's A6XX_TEX_SAMP_DWORDS
+inline constexpr uint32_t kLodFractionBits = 8;                                         // not-in-headers: a6xx.xml.h's A6XX_TEX_SAMP_1_MIN_LOD/MAX_LOD encoders, uint32_t(val * 256.0)
+inline constexpr uint32_t kLodMaxFixed = 0xfff;                                         // not-in-headers: the 12-bit field's ceiling, 4095/256 (tu_sampler.cc:66-67 clamps to it)
+constexpr uint32_t A6XX_TEX_SAMP_0_XY_MAG(a6xx_tex_filter v) { return field(v, A6XX_TEX_SAMP_0_XY_MAG__SHIFT, A6XX_TEX_SAMP_0_XY_MAG__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_0_XY_MIN(a6xx_tex_filter v) { return field(v, A6XX_TEX_SAMP_0_XY_MIN__SHIFT, A6XX_TEX_SAMP_0_XY_MIN__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_S(a6xx_tex_clamp v) { return field(v, A6XX_TEX_SAMP_0_WRAP_S__SHIFT, A6XX_TEX_SAMP_0_WRAP_S__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_T(a6xx_tex_clamp v) { return field(v, A6XX_TEX_SAMP_0_WRAP_T__SHIFT, A6XX_TEX_SAMP_0_WRAP_T__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_0_WRAP_R(a6xx_tex_clamp v) { return field(v, A6XX_TEX_SAMP_0_WRAP_R__SHIFT, A6XX_TEX_SAMP_0_WRAP_R__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_0_ANISO(a6xx_tex_aniso v) { return field(v, A6XX_TEX_SAMP_0_ANISO__SHIFT, A6XX_TEX_SAMP_0_ANISO__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_0_LOD_BIAS(int32_t fixed88) { return field(uint32_t(fixed88), A6XX_TEX_SAMP_0_LOD_BIAS__SHIFT, A6XX_TEX_SAMP_0_LOD_BIAS__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_1_COMPARE_FUNC(adreno_compare_func v) {
+    return field(v, A6XX_TEX_SAMP_1_COMPARE_FUNC__SHIFT, A6XX_TEX_SAMP_1_COMPARE_FUNC__MASK);
+}
+constexpr uint32_t A6XX_TEX_SAMP_1_MAX_LOD(uint32_t fixed88) { return field(fixed88, A6XX_TEX_SAMP_1_MAX_LOD__SHIFT, A6XX_TEX_SAMP_1_MAX_LOD__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_1_MIN_LOD(uint32_t fixed88) { return field(fixed88, A6XX_TEX_SAMP_1_MIN_LOD__SHIFT, A6XX_TEX_SAMP_1_MIN_LOD__MASK); }
+constexpr uint32_t A6XX_TEX_SAMP_2_REDUCTION_MODE(a6xx_reduction_mode v) {
+    return field(v, A6XX_TEX_SAMP_2_REDUCTION_MODE__SHIFT, A6XX_TEX_SAMP_2_REDUCTION_MODE__MASK);
+}
+constexpr uint32_t A6XX_TEX_SAMP_2_BCOLOR(uint32_t entry) { return field(entry, A6XX_TEX_SAMP_2_BCOLOR__SHIFT, A6XX_TEX_SAMP_2_BCOLOR__MASK); }
+
+struct TexSamp {
+    uint32_t dword[kTexSampDwords] = {};
+};
+
+// a sampler in the hardware's own terms; the defaults are the fields' zeros but for maxLod, which is the field's ceiling
+// (an unclamped level of detail), so that SamplerFields{} is "nearest, repeat, every level"
+struct SamplerFields {
+    a6xx_tex_filter mag = A6XX_TEX_NEAREST;
+    a6xx_tex_filter min = A6XX_TEX_NEAREST;
+    bool mipLinearNear = false;      // MIPFILTER_LINEAR_NEAR: the mip filter is linear
+    bool mipLinearFar = false;       // MIPFILTER_LINEAR_FAR: no mipmapping (Gallium's reading of PIPE_TEX_MIPFILTER_NONE)
+    a6xx_tex_clamp wrapS = A6XX_TEX_REPEAT;
+    a6xx_tex_clamp wrapT = A6XX_TEX_REPEAT;
+    a6xx_tex_clamp wrapR = A6XX_TEX_REPEAT;
+    a6xx_tex_aniso aniso = A6XX_TEX_ANISO_1;
+    int32_t lodBias88 = 0;
+    bool unnormCoords = false;
+    bool compare = false;            // COMPARE_FUNC is written only with this set (Gallium: compare_mode)
+    adreno_compare_func compareFunc = FUNC_NEVER;
+    uint32_t minLod88 = 0;
+    uint32_t maxLod88 = kLodMaxFixed;
+    bool chromaLinear = false;
+    a6xx_reduction_mode reduction = A6XX_REDUCTION_MODE_AVERAGE;
+    uint32_t bcolor = 0;
+};
+
+// the four words, composed as fd6_sampler_state_create composes them (fd6_texture.cc:270-303); dword 3 is 0
+constexpr TexSamp texSamp(const SamplerFields& f) {
+    TexSamp s{};
+    s.dword[0] = (f.mipLinearNear ? A6XX_TEX_SAMP_0_MIPFILTER_LINEAR_NEAR : 0u) | A6XX_TEX_SAMP_0_XY_MAG(f.mag) | A6XX_TEX_SAMP_0_XY_MIN(f.min) |
+                 A6XX_TEX_SAMP_0_ANISO(f.aniso) | A6XX_TEX_SAMP_0_WRAP_S(f.wrapS) | A6XX_TEX_SAMP_0_WRAP_T(f.wrapT) |
+                 A6XX_TEX_SAMP_0_WRAP_R(f.wrapR) | A6XX_TEX_SAMP_0_LOD_BIAS(f.lodBias88);
+    s.dword[1] = (f.mipLinearFar ? A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR : 0u) | (f.unnormCoords ? A6XX_TEX_SAMP_1_UNNORM_COORDS : 0u) |
+                 A6XX_TEX_SAMP_1_MIN_LOD(f.minLod88) | A6XX_TEX_SAMP_1_MAX_LOD(f.maxLod88) |
+                 (f.compare ? A6XX_TEX_SAMP_1_COMPARE_FUNC(f.compareFunc) : 0u);
+    s.dword[2] = A6XX_TEX_SAMP_2_BCOLOR(f.bcolor) | (f.chromaLinear ? A6XX_TEX_SAMP_2_CHROMA_LINEAR : 0u) |
+                 A6XX_TEX_SAMP_2_REDUCTION_MODE(f.reduction);
+    s.dword[3] = 0;
+    return s;
 }
 
 // --- whole register values, as the dispatch sequence computes them ----------------------------------------------------------
