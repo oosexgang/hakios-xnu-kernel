@@ -130,7 +130,9 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     if (nibo > kMaxIbos) {
         return refuse(why, n(nibo) + " buffer slots: the descriptor table holds " + n(kMaxIbos));
     }
-    auto bound = [&](uint32_t slot, uint64_t* address, uint64_t* bytes) -> bool {
+    // bytes: what the program bound (its length past the offset); mapped: what the GPU can read there without a
+    // fault (the object's pages past the offset; the object is whole pages, so it is never less)
+    auto bound = [&](uint32_t slot, uint64_t* address, uint64_t* bytes, uint64_t* mapped = nullptr) -> bool {
         if (slot >= buffers.size() || buffers[slot].buffer == nullptr) {
             return refuse(why, std::string(k.name) + ": no buffer bound at index " + n(slot));
         }
@@ -140,6 +142,7 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         }
         *address = b.buffer->gpuAddress() + b.offset;
         *bytes = b.buffer->length() - b.offset;
+        if (mapped != nullptr) *mapped = b.buffer->bo().size() - b.offset;
         return true;
     };
     for (uint32_t slot = 0; slot < nibo; slot++) {
@@ -202,16 +205,20 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     std::vector<Range> ranges;
     for (uint32_t i = 0; i < k.numUboRanges; i++) {
         const KernelUboRange& r = k.uboRanges[i];
-        uint64_t address = 0, bytes = 0;
-        if (!bound(r.block, &address, &bytes)) {
+        uint64_t address = 0, bytes = 0, mapped = 0;
+        if (!bound(r.block, &address, &bytes, &mapped)) {
             return false;
         }
         if (r.sizeDwords == 0 || r.sizeDwords % 4 != 0) {
             return refuse(why, std::string(k.name) + ": a constant range of " + n(r.sizeDwords) + " dwords, not a whole number of vec4");
         }
-        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > bytes) {
+        // The range is ir3's, in whole vec4 and padded: fill_id reads 4 bytes of its constant and the range is 64. The
+        // GPU reads the padding too, so the read must stay inside the object's pages, where nothing faults -- not
+        // inside the length the program bound. Metal binds 4 bytes by -setBytes:length:atIndex: to such a kernel as
+        // a matter of course (the plug-in's test on the phone, 28 October), and a refusal here failed that dispatch.
+        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
             return refuse(why, std::string(k.name) + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) +
-                                   "; " + n(bytes) + " are bound");
+                                   "; " + n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset");
         }
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
             return refuse(why, std::string(k.name) + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen");

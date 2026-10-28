@@ -169,6 +169,33 @@ TEST(a_dispatch_of_the_air_kernel_uploads_what_ir3_asks_for) {
     CHECK(allWords(*out, 0xcccccccc));
 }
 
+TEST(a_constant_shorter_than_its_pushed_range_is_read_from_the_objects_pages) {
+    // fill_id's constant is 4 bytes; ir3 pushes 64 (whole vec4, padded) and the GPU reads all of them. A 4-byte buffer
+    // is still a whole page of GPU memory, so the read faults nothing and the dispatch goes: this is what Metal's
+    // -setBytes:length:atIndex: binds, and the first refusal of it was measured on the phone, not on the GPU. The same
+    // range at the last 32 bytes of a page would run off the object: that is still refused, and the message says
+    // both numbers.
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    auto c = buffer(r, 4, 0x1234);
+    const uint32_t local[3] = {64, 1, 1};
+    {
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->dispatch(kernels::fill_id_air, kGroups16, local, {Binding{out.get(), 0}, Binding{c.get(), 0}}));
+        CHECK(cb->error().empty());
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(r.fake->stats().faults, 0u);
+    }
+    {
+        auto page = buffer(r, 16384, 0x1234);   // exactly one page of GPU memory
+        auto cb = r.queue->commandBuffer();
+        CHECK(!cb->dispatch(kernels::fill_id_air, kGroups16, local, {Binding{out.get(), 0}, Binding{page.get(), 16384 - 32}}));
+        CHECK(cb->error().find("reads 64 bytes at 0 of constant buffer 1; 32 are bound and 32 mapped") != std::string::npos);
+    }
+}
+
 TEST(a_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the_gpu) {
     Rig r;
     auto small = buffer(r, 2048, 0);
