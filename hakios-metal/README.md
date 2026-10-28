@@ -16,7 +16,7 @@ What there is today, and what each part is checked by:
 | `kernel.hpp`, `tools/kernels/` | a kernel as the dispatch registers want it: machine code and every layout field; our own kernels, as ir3 text and as AIR (LLVM IR) | `tools/ir3-kernel` assembles the text with Mesa's ir3 assembler and reads the words back; `tools/mesa/ir3-dump.patch` gives Mesa's `ir3_compiler` the same output for the AIR; both regenerate the fixtures byte for byte |
 | `compiler.hpp` | the compiler inside the driver: AIR to NIR by hakios's front end, NIR to ir3 by Mesa, for this chip, in this process; built in with `MESA=1`, a refusal by name without | `compiler_test`: fill_id.ll compiled here is `tests/fixtures/fill_id_air.hpp` field for field and word for word (a changed field fails it); on the phone, the same bitcode compiled on the device gave the same 64 words and ran (28 October) |
 | `metallib.hpp` | `.metallib` files: thin and universal (the AIR64 slice), every offset checked | built files, good and broken; every truncation of a good one is refused |
-| `hakios_metal.h` | the core as C, for the plug-in (`HakiosMetal.m`): device, buffers, libraries, kernels compiled in-process with what they bind, queue, command buffers with copy, fill and dispatch, one completion callback | `c_api_test` on the fake GPU, with the compiler (fill_id's resources by kind and index, a dispatch missing a buffer refused by name, one with both completing) and without (compiling refuses by name) |
+| `hakios_metal.h` | the core as C, for the plug-in (`HakiosMetal.m`): device, buffers, libraries, kernels compiled in-process with what they bind, queue, command buffers with copy, fill and dispatch, one completion callback | `c_api_test` on the fake GPU, with the compiler (fill_id's resources by kind and index, a dispatch missing a buffer refused by name, one with both completing) and without (compiling refuses by name); on the phone, through Metal's own objects, hakios's `metal_compute_test` (`logs/222820-run.log`) |
 | `fake_gpu.hpp` | a GPU for the tests: the requests answered in the process, the packets run by an interpreter as strict as the command processor (bad parity, a count past the end, an unknown opcode, an address outside every buffer: a fault), a dispatch checked against the registers it wrote | itself, by the tests above; and it fails as the kernel fails: a hang ends the submission's wait, and either the GPU is reset and FAULTS counts it (boot-arg `gpu_recover=1`) or nothing is waited for again |
 
 What the fake GPU does not do: run a shader instruction, or judge a register's value beyond the checks named in
@@ -38,8 +38,20 @@ by a reciprocal estimate and one Newton step, one ulp low, where the Adreno's re
 rounded; the reference divides exactly now. Kernels with textures, samplers, threadgroup memory, barriers or atomics are
 not run (refused by name on the phone, out of the reference's scope on the host; the two `InitMinMax`/`InitSpanTable`
 atomic stores are compared as plain stores, which says something about the values and nothing about ordering).
-Not yet: textures, samplers, private memory, threadgroup memory, anything that draws (refused by name, not served),
-and a Metal program's road to all this (the plug-in). CoreAnimation drawing through Metal is behind all of that.
+Metal's own objects, so far: hakios's plug-in (`userland/src/HakiosMetal.m`: an `MTLDevice` and the objects it hands out,
+each a subclass of Metal's private base class, over `hakios_metal.h`) is what a Metal program reaches, and hakios's
+`userland/src/metal_compute_test.m` drives it through Metal.framework alone, with nothing of this repository linked, as
+the GPU's only client. On 28 October (hakios `logs/222820-run.log`, 0 failures on both roads) Metal's own discovery,
+with boot-arg `metal=1` and the two properties on the service, returned our class from `MTLCreateSystemDefaultDevice()`;
+`MetalFaceMask_InitMinMax` from the image's library and `fill_id` from a `.metallib` built in memory ran through
+`MTLComputeCommandEncoder`, 1024 of 1024 words, the constant from a buffer and from `-setBytes:length:atIndex:`, a blit
+copy and a fill in the same command buffer, `-dispatchThreads:` over half a grid. The first run (`logs/222249-run.log`)
+failed twice without the GPU being wrong: the driver refused a 4-byte binding against ir3's padded 64-byte constant range
+(fixed: the range is measured against the object's pages), and the test's table had been written from a restatement of
+the probe's line and expected four words where six were measured. Render encoders, textures, samplers, heaps, fences
+and events refuse by name.
+Not yet: textures, samplers, private memory, threadgroup memory, anything that draws (refused by name, not served).
+CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test
 
@@ -86,7 +98,7 @@ in 287 us; the hang on purpose reset in 2.1 s and the fill after it landed.
 
 ```
  a Metal program
-   |  MTLDevice, MTLCommandQueue, MTLCommandBuffer, MTLBlitCommandEncoder     (hakios's plug-in, userland/src/HakiosMetal.m: not yet)
+   |  MTLDevice, MTLCommandQueue, MTLCommandBuffer, MTLBlitCommandEncoder, MTLComputeCommandEncoder   (hakios's plug-in, userland/src/HakiosMetal.m)
    v
  command.hpp   queue, command buffers, blits -> packets (pm4.hpp)
  compute.hpp   a Kernel (kernel.hpp) over a grid -> registers and packets (a6xx.hpp)
