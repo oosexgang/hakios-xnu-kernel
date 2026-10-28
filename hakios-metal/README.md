@@ -26,10 +26,16 @@ GPU write a timestamp where the end-of-dispatch wait expects a value, and every 
 cleared (`--bisect` found it, one boot). The fake writes a timestamp for that bit now, so that stream fails here too.
 
 Apple's shaders, so far: the probe reads a `.metallib` off the phone's own filesystem, compiles a function of it on the
-device and runs it over canary-filled buffers (`--metallib FILE FUNCTION`). On 28 October four buffer-only kernels of
-PortraitFilters compiled and completed, and wrote what their names say (`MetalFaceMask_InitMinMax`: INT_MAX, INT_MAX,
-INT_MAX, INT_MIN; `image_calcminmax0`: INT_MAX, INT_MIN; `fbs_bistochastize_init`: one word per invocation). What is NOT
-known is whether the values are right: there is no reference on the phone yet, and "plausible" is not a measurement.
+device and runs it over canary-filled buffers (`--metallib FILE FUNCTION`), printing per buffer the words written, a
+hash of the whole buffer and the first eight words. The reference is hakios's `tools/air/kernelref.py`: the same kernel
+run on a Linux host through LLVM over the same buffers, printing the same line, so the two logs diff. On 28 October
+(hakios `logs/215528-run.log`) eight buffer-only kernels of PortraitFilters compiled on the phone and completed; seven
+came out identical to LLVM's execution, hash included (`MetalFaceMask_InitMinMax`, `MetalFaceMask_InitSpanTable`,
+`image_calcminmax0`, `image_calcminmax2`, `fbs_bistochastize_init`, `fbs_pcg_iter3`, `MetalFaceMask_PropagateParents`),
+and one, `MetalFaceMask_CalcCubeInputScaling`, differs in three floats by one unit in the last place (0x437effff on the
+GPU, 0x437efffe from LLVM): the words its one `fdiv` writes, which ir3 lowers to a reciprocal and a multiply where LLVM
+divides exactly, and which Metal's default fast math permits. Kernels with textures, samplers, threadgroup memory,
+barriers or atomics are not run (refused by name on the phone, out of the reference's scope on the host).
 Not yet: textures, samplers, private memory, threadgroup memory, anything that draws (refused by name, not served),
 and a Metal program's road to all this (the plug-in). CoreAnimation drawing through Metal is behind all of that.
 
