@@ -50,11 +50,14 @@ hakios_metal_queue *hakios_metal_queue_new(hakios_metal_device *device);
 void hakios_metal_queue_free(hakios_metal_queue *queue);
 
 hakios_metal_cb *hakios_metal_cb_new(hakios_metal_queue *queue);
-/* the command buffer is released by its owner; one still in flight is finished first by the queue */
+/* the command buffer is released by its owner; one still in flight is waited for first. It may be freed inside its
+ * own callback (the callback is the last thing to use the pointer). */
 void hakios_metal_cb_free(hakios_metal_cb *cb);
 int hakios_metal_cb_copy(hakios_metal_cb *cb, hakios_metal_buffer *from, uint64_t from_offset, hakios_metal_buffer *to,
     uint64_t to_offset, uint64_t length);
 int hakios_metal_cb_fill(hakios_metal_cb *cb, hakios_metal_buffer *buffer, uint64_t offset, uint64_t length, uint8_t value);
+/* something the caller could not record: the command buffer will end in HAKIOS_METAL_ERROR, saying WHY */
+void hakios_metal_cb_fail(hakios_metal_cb *cb, const char *why);
 /* CALLBACK(CB, CONTEXT) runs once, after completion or error, on the queue's thread; may be NULL */
 void hakios_metal_cb_commit(hakios_metal_cb *cb, void (*callback)(hakios_metal_cb *cb, void *context), void *context);
 void hakios_metal_cb_wait(hakios_metal_cb *cb);

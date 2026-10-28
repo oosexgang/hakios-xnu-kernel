@@ -107,8 +107,11 @@ hakios_metal_cb* hakios_metal_cb_new(hakios_metal_queue* q) {
 }
 
 void hakios_metal_cb_free(hakios_metal_cb* cb) {
-    // one in flight is waited for first: its callback is handed this very pointer
-    if (cb->cb->status() >= CommandBuffer::kCommitted) {
+    // one in flight is waited for first: its callback is handed this very pointer. One already completed is not, and
+    // must not be: the last reference may go inside its own callback (an Objective-C object released there), and
+    // waiting there for the end of what is running would wait forever.
+    CommandBuffer::Status s = cb->cb->status();
+    if (s == CommandBuffer::kCommitted || s == CommandBuffer::kScheduled) {
         cb->cb->waitUntilCompleted();
     }
     delete cb;
@@ -134,6 +137,8 @@ int hakios_metal_cb_fill(hakios_metal_cb* cb, hakios_metal_buffer* b, uint64_t o
     cb->cb->keep(b->buffer);
     return 0;
 }
+
+void hakios_metal_cb_fail(hakios_metal_cb* cb, const char* why) { cb->cb->refuse(why != nullptr ? why : "refused"); }
 
 void hakios_metal_cb_commit(hakios_metal_cb* cb, void (*callback)(hakios_metal_cb*, void*), void* context) {
     if (callback != nullptr) {

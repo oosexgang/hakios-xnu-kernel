@@ -57,3 +57,44 @@ TEST(c_api_copy_and_callbacks) {
     CHECK(hakios_metal_open() == nullptr);      // no kernel GPU on this machine
     CHECK(strlen(hakios_metal_error()) > 0);
 }
+
+namespace {
+void freeItself(hakios_metal_cb* cb, void* context) {
+    hakios_metal_cb_free(cb);   // the last reference, let go inside its own callback
+    static_cast<std::atomic<int>*>(context)->fetch_add(1);
+}
+}  // namespace
+
+TEST(c_api_free_inside_its_callback) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 4096);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    std::atomic<int> done{0};
+    for (int i = 0; i < 50; i++) {
+        hakios_metal_cb* c = hakios_metal_cb_new(q);
+        hakios_metal_cb_fill(c, b, 0, 64, uint8_t(i));
+        hakios_metal_cb_commit(c, freeItself, &done);   // not freed here: the callback does it
+    }
+    hakios_metal_cb* last = hakios_metal_cb_new(q);
+    hakios_metal_cb_commit(last, nullptr, nullptr);
+    hakios_metal_cb_wait(last);   // in commit order: every one before it is done, with its callback
+    hakios_metal_cb_free(last);
+    CHECK_EQ(done.load(), 50);
+    hakios_metal_queue_free(q);
+    hakios_metal_buffer_free(b);
+    hakios_metal_close(d);
+}
+
+TEST(c_api_fail_ends_in_error) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    hakios_metal_cb* c = hakios_metal_cb_new(q);
+    hakios_metal_cb_fail(c, "a buffer not in the GPU's memory");
+    hakios_metal_cb_commit(c, nullptr, nullptr);
+    hakios_metal_cb_wait(c);
+    CHECK(hakios_metal_cb_status(c) == HAKIOS_METAL_ERROR);
+    CHECK(strstr(hakios_metal_cb_error(c), "not in the GPU") != nullptr);
+    hakios_metal_cb_free(c);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
