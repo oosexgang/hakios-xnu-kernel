@@ -175,9 +175,13 @@ enum Opcode : uint32_t {
     CP_LOAD_STATE6 = 0x36,         // adreno_pm4.xml.h:310
     CP_WAIT_REG_MEM = 0x3c,        // adreno_pm4.xml.h:220
     CP_REG_TO_MEM = 0x3e,          // adreno_pm4.xml.h:228
+    CP_INDIRECT_BUFFER = 0x3f,     // adreno_pm4.xml.h:216  (pm4.hpp's kIndirectBuffer; here for the batch-start sequence)
     CP_EXEC_CS_INDIRECT = 0x41,    // adreno_pm4.xml.h:286
+    CP_MEM_TO_REG = 0x42,          // adreno_pm4.xml.h:285
+    CP_SET_DRAW_STATE = 0x43,      // adreno_pm4.xml.h:271
     CP_EVENT_WRITE = 0x46,         // adreno_pm4.xml.h:234
-    CP_SET_MODE = 0x63,            // adreno_pm4.xml.h:307  Gallium writes 1 so that CP_SET_DRAW_STATE runs at once
+    CP_SET_AMBLE = 0x55,           // adreno_pm4.xml.h:332  the IBs the CP runs around a context switch
+    CP_SET_MODE = 0x63,            // adreno_pm4.xml.h:307  Gallium writes 1 so that CP_SET_DRAW_STATE runs at once, 0 at batch start
     CP_SET_MARKER = 0x65,          // adreno_pm4.xml.h:290
     CP_MEM_TO_MEM = 0x73,          // adreno_pm4.xml.h:304
 };
@@ -540,7 +544,11 @@ inline constexpr uint32_t CP_EXEC_CS_3_NGROUPS_Z__MASK = 0xffffffff;            
 // CP_EVENT_WRITE, 1 word (the event) or 4 (the event, then an address and the value written there when it completes)
 inline constexpr uint32_t CP_EVENT_WRITE_0_EVENT__MASK = 0x000000ff;                    // adreno_pm4.xml.h:2329
 inline constexpr uint32_t CP_EVENT_WRITE_0_EVENT__SHIFT = 0;                            // adreno_pm4.xml.h:2330
-// Gallium sets TIMESTAMP with every 4-word event; computerator does not and its timestamps land all the same
+// With TIMESTAMP set the GPU writes back its timestamp instead of the packet's value. Measured on the phone on
+// 28 October (hakios-metal-probe --bisect): with the bit set on the two end-of-dispatch events (RB_DONE_TS,
+// CACHE_FLUSH_TS) the CP_WAIT_REG_MEM and CP_WAIT_MEM_GTE that poll for the seqno never saw it and the CP spun for
+// ever, every dispatch; with it clear the whole tail completes in 41 us. Gallium sets the bit on every 4-word event,
+// computerator never does: computerator's form is the one that works here. eventWrite0 leaves it clear.
 inline constexpr uint32_t CP_EVENT_WRITE_0_TIMESTAMP = 0x40000000;                      // adreno_pm4.xml.h:2335
 inline constexpr uint32_t CP_EVENT_WRITE_0_IRQ = 0x80000000;                            // adreno_pm4.xml.h:2336
 inline constexpr uint32_t CP_EVENT_WRITE_1_ADDR_0_LO__MASK = 0xffffffff;                // adreno_pm4.xml.h:2340
@@ -766,7 +774,9 @@ constexpr uint32_t ndrange0(uint32_t dimensions, uint32_t localX, uint32_t local
            A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEY(localY - 1) | A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEZ(localZ - 1);
 }
 
-constexpr uint32_t eventWrite0(vgt_event_type event, bool timestamp) {
+// `timestamp` is the TIMESTAMP bit: it must stay clear (see it above); the 4-word form of the packet writes the
+// packet's value with the bit clear, which is what the waits of the dispatch tail poll for
+constexpr uint32_t eventWrite0(vgt_event_type event, bool timestamp = false) {
     return CP_EVENT_WRITE_0_EVENT(event) | (timestamp ? CP_EVENT_WRITE_0_TIMESTAMP : 0u);
 }
 
@@ -775,5 +785,397 @@ constexpr uint32_t setMarker0(a6xx_marker mode) { return A6XX_CP_SET_MARKER_0_MO
 constexpr uint32_t waitRegMem0(cp_cond_function function, poll_memory_type poll) {
     return CP_WAIT_REG_MEM_0_FUNCTION(function) | CP_WAIT_REG_MEM_0_POLL(poll);
 }
+
+// --- the state every batch starts with ---------------------------------------------------------------------------------------
+// Gallium never trusts the registers it finds: at the start of every batch (fd6_emit_restore in a6xx/fd6_emit.cc) it
+// runs, through CP_INDIRECT_BUFFER, a ring it built once with fd6_emit_static_regs, which writes every register below.
+// A dispatch touches almost none of them, but the hardware reads them all the same, and a GPU no window server has
+// set up has them at whatever power-up or the last user left. Everything here is the A6XX path for this chip
+// (has_early_preamble off, so SP_FS_CTRL_REG0 is not reset; magic_raw empty).
+//
+// The order, as compute.cpp should write it (a type4 of one register each, unless said):
+//   CP_SET_MODE 0 (1 word); the three cache invalidates (CP_EVENT_WRITE, 1 word each: PC_CCU_INVALIDATE_COLOR,
+//   PC_CCU_INVALIDATE_DEPTH, CACHE_INVALIDATE; no wait between them); HLSQ_INVALIDATE_CMD = hlsqInvalidateCmdAll();
+//   CP_WAIT_FOR_IDLE; then the static registers: every entry of kStaticState in order; CP_SET_DRAW_STATE (3 words:
+//   setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0, 0); every entry of kStaticStateAfterDrawState;
+//   REG_A6XX_VFD_FETCH_SIZE(i) = 0 for i in 0..31 (vfdFetchSize(i), 32 type4 of one); SP_TP_BORDER_COLOR_BASE_ADDR and
+//   SP_PS_TP_BORDER_COLOR_BASE_ADDR (type4 of two each) = a 128-byte aligned buffer of kBorderColorBytes;
+//   every entry of kStaticStateTail; then CP_WAIT_FOR_IDLE and REG_A6XX_RB_CCU_CNTL = rbCcuCntlSysmem() (fd6_emit_ccu_cntl's
+//   A6XX path: the wait first, "early a6xx needed this"). Gallium ends with three CP_SET_AMBLE (3 words each) telling
+//   the CP what to run around a preemption; they are optional for a batch that is not preempted (see below).
+// emit_marker6 (a CP_WAIT_FOR_IDLE and a write of a counter to CP_SCRATCH_REG(7), or (6) around the IB) is compiled
+// out of Gallium's release builds (freedreno_util.h __EMIT_MARKER is 0 without DEBUG), so there is nothing to copy.
+
+struct RegWrite {
+    uint32_t reg;
+    uint32_t value;
+};
+
+// Mesa's per-chip "magic" values, as its generated freedreno_devices.h has them for this chip (__info14, the entry every
+// A635 chip id maps to). Mesa does not know what most of them mean either; they are what the blob writes.
+inline constexpr uint32_t kMagicPcPowerCntl = 1;                  // not-in-headers: freedreno_devices.h __info14 .magic.PC_POWER_CNTL
+inline constexpr uint32_t kMagicTpl1DbgEcoCntl = 0x05008000;      // not-in-headers: freedreno_devices.h __info14 .magic.TPL1_DBG_ECO_CNTL (83918848)
+inline constexpr uint32_t kMagicGrasDbgEcoCntl = 0;               // not-in-headers: freedreno_devices.h __info14 .magic.GRAS_DBG_ECO_CNTL
+inline constexpr uint32_t kMagicSpChickenBits = 0x00001400;       // not-in-headers: freedreno_devices.h __info14 .magic.SP_CHICKEN_BITS (5120)
+inline constexpr uint32_t kMagicUcheClientPf = 0x00000084;        // not-in-headers: freedreno_devices.h __info14 .magic.UCHE_CLIENT_PF (132)
+inline constexpr uint32_t kMagicPcModeCntl = 0x1f;                // not-in-headers: freedreno_devices.h __info14 .magic.PC_MODE_CNTL (31)
+inline constexpr uint32_t kMagicSpDbgEcoCntl = 0x00000006;        // not-in-headers: freedreno_devices.h __info14 .magic.SP_DBG_ECO_CNTL
+inline constexpr uint32_t kMagicRbDbgEcoCntl = 0x04100000;        // not-in-headers: freedreno_devices.h __info14 .magic.RB_DBG_ECO_CNTL (68157440)
+inline constexpr uint32_t kMagicHlsqDbgEcoCntl = 0;               // not-in-headers: freedreno_devices.h __info14 .magic.HLSQ_DBG_ECO_CNTL
+inline constexpr uint32_t kMagicRbUnknown8E01 = 0;                // not-in-headers: freedreno_devices.h __info14 .magic.RB_UNKNOWN_8E01
+inline constexpr uint32_t kMagicVpcDbgEcoCntl = 0x02000000;       // not-in-headers: freedreno_devices.h __info14 .magic.VPC_DBG_ECO_CNTL (33554432)
+inline constexpr uint32_t kMagicUcheUnknown0E12 = 1;              // not-in-headers: freedreno_devices.h __info14 .magic.UCHE_UNKNOWN_0E12
+// and the chip facts fd6_emit_static_regs and fd6_emit_ccu_cntl branch on
+inline constexpr bool kHasGmemFastClear = true;                   // not-in-headers: freedreno_devices.h __info14 .has_gmem_fast_clear
+inline constexpr bool kConcurrentResolve = false;                 // not-in-headers: freedreno_devices.h __info14 has no .concurrent_resolve (false)
+inline constexpr bool kHasEarlyPreamble = false;                  // not-in-headers: freedreno_devices.h __info14 has no .has_early_preamble (a6xx_gen4 leaves it off)
+inline constexpr uint32_t kNumCcu = 2;                            // not-in-headers: freedreno_devices.h __info14 .num_ccu
+inline constexpr uint32_t kSysmemPerCcuDepthCacheSize = 0x10000;  // not-in-headers: freedreno_devices.h __info14 .sysmem_per_ccu_depth_cache_size (65536)
+inline constexpr uint32_t kSysmemPerCcuColorCacheSize = 0x10000;  // not-in-headers: freedreno_devices.h __info14 .sysmem_per_ccu_color_cache_size (65536)
+// the border color table both TP base registers point at: Gallium's is FD6_MAX_BORDER_COLORS (256) entries of
+// sizeof(struct fd6_bcolor_entry) (128 bytes: 32 fp32/fp16/int words); zeros are a valid table (black, transparent)
+inline constexpr uint32_t kBorderColorBytes = 256 * 128;          // not-in-headers: fd6_texture.h FD6_MAX_BORDER_COLORS * FD6_BORDER_COLOR_SIZE
+inline constexpr uint32_t kBorderColorAlign = 128;                // not-in-headers: a6xx.xml SP_TP_BORDER_COLOR_BASE_ADDR align="128"
+
+// the registers, in the order of their first write
+inline constexpr uint32_t REG_A6XX_RB_DBG_ECO_CNTL = 0x8e04;                           // a6xx.xml.h:6711
+inline constexpr uint32_t REG_A6XX_SP_DBG_ECO_CNTL = 0xae00;                           // a6xx.xml.h:9559
+inline constexpr uint32_t REG_A6XX_TPL1_UNKNOWN_B605 = 0xb605;                         // a6xx.xml.h:10161  "always 0x0 or 0x44?" (the XML); Gallium: 0x44
+inline constexpr uint32_t REG_A6XX_TPL1_DBG_ECO_CNTL = 0xb600;                         // a6xx.xml.h:10128
+inline constexpr uint32_t REG_A6XX_HLSQ_UNKNOWN_BE00 = 0xbe00;                         // a6xx.xml.h:11136  Gallium: 0x80
+inline constexpr uint32_t REG_A6XX_HLSQ_UNKNOWN_BE01 = 0xbe01;                         // a6xx.xml.h:11139
+inline constexpr uint32_t REG_A6XX_VPC_DBG_ECO_CNTL = 0x9600;                          // a6xx.xml.h:7417
+inline constexpr uint32_t REG_A6XX_GRAS_DBG_ECO_CNTL = 0x8600;                         // a6xx.xml.h:5242
+inline constexpr uint32_t REG_A6XX_HLSQ_DBG_ECO_CNTL = 0xbe04;                         // a6xx.xml.h:11142
+inline constexpr uint32_t REG_A6XX_SP_CHICKEN_BITS = 0xae03;                           // a6xx.xml.h:9568
+inline constexpr uint32_t REG_A6XX_SP_IBO_COUNT = 0xab20;                              // a6xx.xml.h:9515  the 3D pipeline's IBO count (SP_CS_IBO_COUNT is compute's)
+inline constexpr uint32_t REG_A6XX_SP_UNKNOWN_B182 = 0xb182;                           // a6xx.xml.h:9656
+inline constexpr uint32_t REG_A6XX_HLSQ_SHARED_CONSTS = 0xbb11;                        // a6xx.xml.h:11099  Vulkan push constants; off
+inline constexpr uint32_t A6XX_HLSQ_SHARED_CONSTS_ENABLE = 0x00000001;                 // a6xx.xml.h:11100
+inline constexpr uint32_t REG_A6XX_UCHE_UNKNOWN_0E12 = 0x0e12;                         // a6xx.xml.h:4253
+inline constexpr uint32_t REG_A6XX_UCHE_CLIENT_PF = 0x0e19;                            // a6xx.xml.h:3940
+inline constexpr uint32_t A6XX_UCHE_CLIENT_PF_PERFSEL__MASK = 0x000000ff;              // a6xx.xml.h:3941
+inline constexpr uint32_t A6XX_UCHE_CLIENT_PF_PERFSEL__SHIFT = 0;                      // a6xx.xml.h:3942
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8E01 = 0x8e01;                           // a6xx.xml.h:6708
+inline constexpr uint32_t REG_A6XX_SP_UNKNOWN_A9A8 = 0xa9a8;                           // a6xx.xml.h:9093  "always 0x0?" (the XML)
+inline constexpr uint32_t REG_A6XX_VFD_ADD_OFFSET = 0xa009;                            // a6xx.xml.h:7960
+inline constexpr uint32_t A6XX_VFD_ADD_OFFSET_VERTEX = 0x00000001;                     // a6xx.xml.h:7961  add VFD_INDEX_OFFSET to the vertex id register
+inline constexpr uint32_t A6XX_VFD_ADD_OFFSET_INSTANCE = 0x00000002;                   // a6xx.xml.h:7962
+inline constexpr uint32_t REG_A6XX_VPC_UNKNOWN_9107 = 0x9107;                          // a6xx.xml.h:7094
+inline constexpr uint32_t A6XX_VPC_UNKNOWN_9107_RASTER_DISCARD = 0x00000001;           // a6xx.xml.h:7095
+inline constexpr uint32_t A6XX_VPC_UNKNOWN_9107_UNK2 = 0x00000004;                     // a6xx.xml.h:7096
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8811 = 0x8811;                           // a6xx.xml.h:5679  bits 4..6; Gallium: 0x10
+inline constexpr uint32_t REG_A6XX_PC_MODE_CNTL = 0x9804;                              // a6xx.xml.h:7464
+inline constexpr uint32_t REG_A6XX_GRAS_LRZ_PS_INPUT_CNTL = 0x8101;                    // a6xx.xml.h:4987
+inline constexpr uint32_t A6XX_GRAS_LRZ_PS_INPUT_CNTL_SAMPLEID = 0x00000001;           // a6xx.xml.h:4988
+inline constexpr uint32_t REG_A6XX_GRAS_SAMPLE_CNTL = 0x8109;                          // a6xx.xml.h:5029
+inline constexpr uint32_t A6XX_GRAS_SAMPLE_CNTL_PER_SAMP_MODE = 0x00000001;            // a6xx.xml.h:5030
+inline constexpr uint32_t REG_A6XX_GRAS_UNKNOWN_8110 = 0x8110;                         // a6xx.xml.h:5059  bits 0..1; Gallium: 2
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8818 = 0x8818;                           // a6xx.xml.h:5685  "always 0x0?" (the XML)
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8819 = 0x8819;                           // a6xx.xml.h:5688
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_881A = 0x881a;                           // a6xx.xml.h:5691
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_881B = 0x881b;                           // a6xx.xml.h:5694
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_881C = 0x881c;                           // a6xx.xml.h:5697
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_881D = 0x881d;                           // a6xx.xml.h:5700
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_881E = 0x881e;                           // a6xx.xml.h:5703
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_88F0 = 0x88f0;                           // a6xx.xml.h:6459  "always 0x0?" (the XML)
+inline constexpr uint32_t REG_A6XX_VPC_POINT_COORD_INVERT = 0x9236;                    // a6xx.xml.h:7234
+inline constexpr uint32_t A6XX_VPC_POINT_COORD_INVERT_INVERT = 0x00000001;             // a6xx.xml.h:7235
+inline constexpr uint32_t REG_A6XX_VPC_UNKNOWN_9300 = 0x9300;                          // a6xx.xml.h:7238  "always 0x0?" (the XML)
+inline constexpr uint32_t REG_A6XX_VPC_SO_DISABLE = 0x9306;                            // a6xx.xml.h:7377
+inline constexpr uint32_t A6XX_VPC_SO_DISABLE_DISABLE = 0x00000001;                    // a6xx.xml.h:7378  no stream-out
+inline constexpr uint32_t REG_A6XX_PC_RASTER_CNTL = 0x9980;                            // a6xx.xml.h:7541
+inline constexpr uint32_t A6XX_PC_RASTER_CNTL_STREAM__MASK = 0x00000003;               // a6xx.xml.h:7542
+inline constexpr uint32_t A6XX_PC_RASTER_CNTL_STREAM__SHIFT = 0;                       // a6xx.xml.h:7543
+inline constexpr uint32_t A6XX_PC_RASTER_CNTL_DISCARD = 0x00000004;                    // a6xx.xml.h:7548
+inline constexpr uint32_t REG_A6XX_PC_MULTIVIEW_CNTL = 0x9b07;                         // a6xx.xml.h:7696
+inline constexpr uint32_t A6XX_PC_MULTIVIEW_CNTL_ENABLE = 0x00000001;                  // a6xx.xml.h:7697
+inline constexpr uint32_t A6XX_PC_MULTIVIEW_CNTL_DISABLEMULTIPOS = 0x00000002;         // a6xx.xml.h:7698
+inline constexpr uint32_t A6XX_PC_MULTIVIEW_CNTL_VIEWS__MASK = 0x0000007c;             // a6xx.xml.h:7699
+inline constexpr uint32_t A6XX_PC_MULTIVIEW_CNTL_VIEWS__SHIFT = 2;                     // a6xx.xml.h:7700
+inline constexpr uint32_t REG_A6XX_SP_UNKNOWN_B183 = 0xb183;                           // a6xx.xml.h:9659
+inline constexpr uint32_t REG_A6XX_GRAS_SU_CONSERVATIVE_RAS_CNTL = 0x8099;             // a6xx.xml.h:4546
+inline constexpr uint32_t A6XX_GRAS_SU_CONSERVATIVE_RAS_CNTL_CONSERVATIVERASEN = 0x00000001;  // a6xx.xml.h:4547
+inline constexpr uint32_t REG_A6XX_GRAS_VS_LAYER_CNTL = 0x809b;                        // a6xx.xml.h:4568
+inline constexpr uint32_t A6XX_GRAS_VS_LAYER_CNTL_WRITES_LAYER = 0x00000001;           // a6xx.xml.h:4569
+inline constexpr uint32_t A6XX_GRAS_VS_LAYER_CNTL_WRITES_VIEW = 0x00000002;            // a6xx.xml.h:4570
+inline constexpr uint32_t REG_A6XX_GRAS_SC_CNTL = 0x80a0;                              // a6xx.xml.h:4583
+// the XML notes CCUSINGLECACHELINESIZE is ignored unless UNK9 is set; Gallium writes 2 and leaves UNK9 clear all the same
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE__MASK = 0x00000007; // a6xx.xml.h:4584
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE__SHIFT = 0;         // a6xx.xml.h:4585
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_UNK9 = 0x00000200;                         // a6xx.xml.h:4614
+inline constexpr uint32_t REG_A6XX_GRAS_UNKNOWN_80AF = 0x80af;                         // a6xx.xml.h:4792
+inline constexpr uint32_t REG_A6XX_VPC_UNKNOWN_9210 = 0x9210;                          // a6xx.xml.h:7162  "always 0x0" (the XML)
+inline constexpr uint32_t REG_A6XX_VPC_UNKNOWN_9211 = 0x9211;                          // a6xx.xml.h:7165
+inline constexpr uint32_t REG_A6XX_VPC_UNKNOWN_9602 = 0x9602;                          // a6xx.xml.h:7423  "always 0x0?" (the XML)
+inline constexpr uint32_t REG_A6XX_PC_UNKNOWN_9E72 = 0x9e72;                           // a6xx.xml.h:7825  "always 0x0" (the XML)
+inline constexpr uint32_t REG_A6XX_SP_TP_MODE_CNTL = 0xb309;                           // a6xx.xml.h:9818
+inline constexpr uint32_t A6XX_SP_TP_MODE_CNTL_ISAMMODE__MASK = 0x00000003;            // a6xx.xml.h:9819
+inline constexpr uint32_t A6XX_SP_TP_MODE_CNTL_ISAMMODE__SHIFT = 0;                    // a6xx.xml.h:9820
+// Gallium: 0xa0 in these bits (the blob mostly writes 0xb2, which "seems to kill texture gather offsets", fd6_emit.cc)
+inline constexpr uint32_t A6XX_SP_TP_MODE_CNTL_UNK3__MASK = 0x000000fc;                // a6xx.xml.h:9825
+inline constexpr uint32_t A6XX_SP_TP_MODE_CNTL_UNK3__SHIFT = 2;                        // a6xx.xml.h:9826
+inline constexpr uint32_t REG_A6XX_HLSQ_CONTROL_5_REG = 0xb986;                        // a6xx.xml.h:10484  both register ids "none"
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_5_REG_LINELENGTHREGID__MASK = 0x000000ff;  // a6xx.xml.h:10485
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_5_REG_LINELENGTHREGID__SHIFT = 0;          // a6xx.xml.h:10486
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_5_REG_FOVEATIONQUALITYREGID__MASK = 0x0000ff00;  // a6xx.xml.h:10491
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_5_REG_FOVEATIONQUALITYREGID__SHIFT = 8;    // a6xx.xml.h:10492
+inline constexpr uint32_t REG_A6XX_VFD_MODE_CNTL = 0xa007;                             // a6xx.xml.h:7940
+inline constexpr uint32_t A6XX_VFD_MODE_CNTL_RENDER_MODE__MASK = 0x00000007;           // a6xx.xml.h:7941
+inline constexpr uint32_t A6XX_VFD_MODE_CNTL_RENDER_MODE__SHIFT = 0;                   // a6xx.xml.h:7942
+inline constexpr uint32_t REG_A6XX_VFD_MULTIVIEW_CNTL = 0xa008;                        // a6xx.xml.h:7949
+inline constexpr uint32_t A6XX_VFD_MULTIVIEW_CNTL_ENABLE = 0x00000001;                 // a6xx.xml.h:7950
+inline constexpr uint32_t REG_A6XX_VPC_SO_STREAM_CNTL = 0x9305;                        // a6xx.xml.h:7344
+inline constexpr uint32_t REG_A6XX_GRAS_LRZ_CNTL = 0x8100;                             // a6xx.xml.h:4964
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_ENABLE = 0x00000001;                      // a6xx.xml.h:4965
+inline constexpr uint32_t REG_A6XX_RB_LRZ_CNTL = 0x8898;                               // a6xx.xml.h:6181
+inline constexpr uint32_t A6XX_RB_LRZ_CNTL_ENABLE = 0x00000001;                        // a6xx.xml.h:6182
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_PLANE_CNTL = 0x8870;                       // a6xx.xml.h:5908
+inline constexpr uint32_t REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL = 0x8094;                  // a6xx.xml.h:4500
+// VFD_FETCH[i], 32 of them, 4 registers each: BASE (64-bit), SIZE, STRIDE. Gallium zeroes every SIZE so that a BASE
+// left by another process is never fetched from (an IOVA fault otherwise).
+inline constexpr uint32_t REG_A6XX_VFD_FETCH = 0xa010;                                 // a6xx.xml.h:7971  the array's first register
+inline constexpr uint32_t REG_A6XX_VFD_FETCH__STRIDE = 4;                              // a6xx.xml.h:7971  registers per entry
+inline constexpr uint32_t REG_A6XX_VFD_FETCH_SIZE = 0xa012;                            // a6xx.xml.h:7976  entry 0's SIZE
+inline constexpr uint32_t kVfdFetchCount = 32;                                         // not-in-headers: a6xx.xml VFD_FETCH length="32"; fd6_emit.cc's loop
+inline constexpr uint32_t REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR = 0xb302;              // a6xx.xml.h:9693  64-bit
+inline constexpr uint32_t REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR = 0xb180;           // a6xx.xml.h:9653  64-bit
+inline constexpr uint32_t REG_A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL = 0x980a;          // a6xx.xml.h:7483
+inline constexpr uint32_t A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL_CONSERVATIVERASEN = 0x00000001;  // a6xx.xml.h:7484
+inline constexpr uint32_t REG_A6XX_SP_FS_CTRL_REG0 = 0xa980;                           // a6xx.xml.h:8749  reset to 0 only on chips with early preamble
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_EARLYPREAMBLE = 0x10000000;             // a6xx.xml.h:8788
+// the preemption preamble (fd6_gmem.cc fd6_build_preemption_preamble) adds these two, both = kMagicPcPowerCntl
+inline constexpr uint32_t REG_A6XX_PC_POWER_CNTL = 0x9805;                             // a6xx.xml.h:7467
+inline constexpr uint32_t REG_A6XX_VFD_POWER_CNTL = 0xa0f8;                            // a6xx.xml.h:8034
+// CP_SCRATCH_REG[i], 8 of them: emit_marker6 writes (7) and, around an IB, (6)
+inline constexpr uint32_t REG_A6XX_CP_SCRATCH_REG = 0x0883;                            // a6xx.xml.h:2538  the array's first register
+inline constexpr uint32_t REG_A6XX_CP_SCRATCH_REG__STRIDE = 1;                         // a6xx.xml.h:2538
+
+enum a6xx_render_mode : uint32_t {
+    RENDERING_PASS = 0,            // a6xx.xml.h:2208
+    BINNING_PASS = 1,              // a6xx.xml.h:2209
+};
+
+// RB_CCU_CNTL: where in GMEM the color and depth CCU caches live and how big they are. For rendering straight to
+// memory ("sysmem", every compute batch) Gallium puts the depth cache at GMEM offset 0 and the color cache right after
+// it, each at full size (fd6_screen.cc fd6_screen_init: depth cache = num_ccu * sysmem_per_ccu_depth_cache_size). The
+// offsets are GMEM-relative, in 4 KiB units: no GMEM base address is involved, and the GMEM size matters only for the
+// tiled ("gmem") configuration, which puts the color cache at the end of GMEM.
+inline constexpr uint32_t REG_A6XX_RB_CCU_CNTL = 0x8e07;                               // a6xx.xml.h:6720
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_GMEM_FAST_CLEAR_DISABLE = 0x00000001;       // a6xx.xml.h:6721  set when the chip lacks it; this one has it
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE = 0x00000004;            // a6xx.xml.h:6722
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET_HI__MASK = 0x00000080;         // a6xx.xml.h:6723  bit 21 of the offset
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET_HI__SHIFT = 7;                 // a6xx.xml.h:6724
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__MASK = 0x00000200;         // a6xx.xml.h:6729
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__SHIFT = 9;                 // a6xx.xml.h:6730
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE__MASK = 0x00000c00;        // a6xx.xml.h:6735
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE__SHIFT = 10;               // a6xx.xml.h:6736
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET__MASK = 0x001ff000;            // a6xx.xml.h:6741
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET__SHIFT = 12;                   // a6xx.xml.h:6742
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET__SCALE = 12;                   // a6xx.xml.h:6743  the encoder's val >> 12
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE__MASK = 0x00600000;        // a6xx.xml.h:6748
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE__SHIFT = 21;               // a6xx.xml.h:6749
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK = 0xff800000;            // a6xx.xml.h:6754
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT = 23;                   // a6xx.xml.h:6755
+inline constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET__SCALE = 12;                   // a6xx.xml.h:6756  the encoder's val >> 12
+
+enum a6xx_ccu_cache_size : uint32_t {
+    CCU_CACHE_SIZE_FULL = 0,       // a6xx.xml.h:2266
+    CCU_CACHE_SIZE_HALF = 1,       // a6xx.xml.h:2267
+    CCU_CACHE_SIZE_QUARTER = 2,    // a6xx.xml.h:2268  this chip's gmem_ccu_color_cache_fraction (tiled rendering only)
+    CCU_CACHE_SIZE_EIGHTH = 3,     // a6xx.xml.h:2269
+};
+
+constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET(uint32_t bytes) {
+    return field(bytes >> A6XX_RB_CCU_CNTL_DEPTH_OFFSET__SCALE, A6XX_RB_CCU_CNTL_DEPTH_OFFSET__SHIFT, A6XX_RB_CCU_CNTL_DEPTH_OFFSET__MASK);
+}
+constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET(uint32_t bytes) {
+    return field(bytes >> A6XX_RB_CCU_CNTL_COLOR_OFFSET__SCALE, A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT, A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK);
+}
+constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_OFFSET_HI(uint32_t v) {
+    return field(v, A6XX_RB_CCU_CNTL_DEPTH_OFFSET_HI__SHIFT, A6XX_RB_CCU_CNTL_DEPTH_OFFSET_HI__MASK);
+}
+constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI(uint32_t v) {
+    return field(v, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__SHIFT, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__MASK);
+}
+constexpr uint32_t A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE(a6xx_ccu_cache_size v) {
+    return field(v, A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE__SHIFT, A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE__MASK);
+}
+constexpr uint32_t A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE(a6xx_ccu_cache_size v) {
+    return field(v, A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE__SHIFT, A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE__MASK);
+}
+constexpr uint32_t A6XX_SP_TP_MODE_CNTL_ISAMMODE(a6xx_isam_mode v) { return field(v, A6XX_SP_TP_MODE_CNTL_ISAMMODE__SHIFT, A6XX_SP_TP_MODE_CNTL_ISAMMODE__MASK); }
+constexpr uint32_t A6XX_SP_TP_MODE_CNTL_UNK3(uint32_t v) { return field(v, A6XX_SP_TP_MODE_CNTL_UNK3__SHIFT, A6XX_SP_TP_MODE_CNTL_UNK3__MASK); }
+constexpr uint32_t A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE__SHIFT, A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_5_REG_LINELENGTHREGID(uint32_t regid) {
+    return field(regid, A6XX_HLSQ_CONTROL_5_REG_LINELENGTHREGID__SHIFT, A6XX_HLSQ_CONTROL_5_REG_LINELENGTHREGID__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_5_REG_FOVEATIONQUALITYREGID(uint32_t regid) {
+    return field(regid, A6XX_HLSQ_CONTROL_5_REG_FOVEATIONQUALITYREGID__SHIFT, A6XX_HLSQ_CONTROL_5_REG_FOVEATIONQUALITYREGID__MASK);
+}
+constexpr uint32_t A6XX_VFD_MODE_CNTL_RENDER_MODE(a6xx_render_mode v) {
+    return field(v, A6XX_VFD_MODE_CNTL_RENDER_MODE__SHIFT, A6XX_VFD_MODE_CNTL_RENDER_MODE__MASK);
+}
+constexpr uint32_t A6XX_PC_RASTER_CNTL_STREAM(uint32_t v) { return field(v, A6XX_PC_RASTER_CNTL_STREAM__SHIFT, A6XX_PC_RASTER_CNTL_STREAM__MASK); }
+constexpr uint32_t A6XX_UCHE_CLIENT_PF_PERFSEL(uint32_t v) { return field(v, A6XX_UCHE_CLIENT_PF_PERFSEL__SHIFT, A6XX_UCHE_CLIENT_PF_PERFSEL__MASK); }
+
+// the registers of array entries
+constexpr uint32_t vfdFetchSize(uint32_t i) { return REG_A6XX_VFD_FETCH_SIZE + REG_A6XX_VFD_FETCH__STRIDE * i; }
+constexpr uint32_t cpScratchReg(uint32_t i) { return REG_A6XX_CP_SCRATCH_REG + REG_A6XX_CP_SCRATCH_REG__STRIDE * i; }
+
+// the whole values Gallium writes
+constexpr uint32_t spTpModeCntl() { return A6XX_SP_TP_MODE_CNTL_UNK3(0x28) | A6XX_SP_TP_MODE_CNTL_ISAMMODE(ISAMMODE_GL); }  // 0xa0 | GL
+constexpr uint32_t grasScCntl() { return A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2); }
+constexpr uint32_t hlsqControl5Reg() {
+    return A6XX_HLSQ_CONTROL_5_REG_LINELENGTHREGID(kRegidNone) | A6XX_HLSQ_CONTROL_5_REG_FOVEATIONQUALITYREGID(kRegidNone);
+}
+constexpr uint32_t spPerfctrEnableAll() {
+    return A6XX_SP_PERFCTR_ENABLE_VS | A6XX_SP_PERFCTR_ENABLE_HS | A6XX_SP_PERFCTR_ENABLE_DS | A6XX_SP_PERFCTR_ENABLE_GS |
+           A6XX_SP_PERFCTR_ENABLE_FS | A6XX_SP_PERFCTR_ENABLE_CS;
+}
+// HLSQ_INVALIDATE_CMD as the batch start writes it: every kind of pending load dropped, both shared-const kinds, all
+// five bindless bases of each pipeline (the A6XX masks are 5 bits wide)
+constexpr uint32_t hlsqInvalidateCmdAll() {
+    return A6XX_HLSQ_INVALIDATE_CMD_VS_STATE | A6XX_HLSQ_INVALIDATE_CMD_HS_STATE | A6XX_HLSQ_INVALIDATE_CMD_DS_STATE |
+           A6XX_HLSQ_INVALIDATE_CMD_GS_STATE | A6XX_HLSQ_INVALIDATE_CMD_FS_STATE | A6XX_HLSQ_INVALIDATE_CMD_CS_STATE |
+           A6XX_HLSQ_INVALIDATE_CMD_CS_IBO | A6XX_HLSQ_INVALIDATE_CMD_GFX_IBO | A6XX_HLSQ_INVALIDATE_CMD_CS_SHARED_CONST |
+           A6XX_HLSQ_INVALIDATE_CMD_GFX_SHARED_CONST |
+           field(0x1f, A6XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS__SHIFT, A6XX_HLSQ_INVALIDATE_CMD_CS_BINDLESS__MASK) |
+           field(0x1f, A6XX_HLSQ_INVALIDATE_CMD_GFX_BINDLESS__SHIFT, A6XX_HLSQ_INVALIDATE_CMD_GFX_BINDLESS__MASK);
+}
+// RB_CCU_CNTL for rendering to memory on this chip: depth cache at 0, color cache after it, both full size
+// (the color offset is the depth cache's size: num_ccu * sysmem_per_ccu_depth_cache_size; the offsets' bit 21 goes
+// in the _HI fields, which 0x20000 does not reach)
+constexpr uint32_t rbCcuCntlSysmem(uint32_t colorOffset = kNumCcu * kSysmemPerCcuDepthCacheSize) {
+    return (kHasGmemFastClear ? 0u : A6XX_RB_CCU_CNTL_GMEM_FAST_CLEAR_DISABLE) |
+           (kConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u) | A6XX_RB_CCU_CNTL_DEPTH_OFFSET_HI(0) |
+           A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI(colorOffset >> 21) | A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE(CCU_CACHE_SIZE_FULL) |
+           A6XX_RB_CCU_CNTL_DEPTH_OFFSET(0) | A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE(CCU_CACHE_SIZE_FULL) |
+           A6XX_RB_CCU_CNTL_COLOR_OFFSET(colorOffset & 0x1fffff);
+}
+
+// fd6_emit_static_regs, A6XX, this chip: up to CP_SET_DRAW_STATE
+inline constexpr RegWrite kStaticState[] = {
+    {REG_A6XX_RB_DBG_ECO_CNTL, kMagicRbDbgEcoCntl},
+    {REG_A6XX_SP_FLOAT_CNTL, A6XX_SP_FLOAT_CNTL_F16_NO_INF},   // computerator's dispatch prelude then writes 0 here
+    {REG_A6XX_SP_DBG_ECO_CNTL, kMagicSpDbgEcoCntl},
+    {REG_A6XX_SP_PERFCTR_ENABLE, spPerfctrEnableAll()},
+    {REG_A6XX_TPL1_UNKNOWN_B605, 0x44},
+    {REG_A6XX_TPL1_DBG_ECO_CNTL, kMagicTpl1DbgEcoCntl},
+    {REG_A6XX_HLSQ_UNKNOWN_BE00, 0x80},
+    {REG_A6XX_HLSQ_UNKNOWN_BE01, 0},
+    {REG_A6XX_VPC_DBG_ECO_CNTL, kMagicVpcDbgEcoCntl},
+    {REG_A6XX_GRAS_DBG_ECO_CNTL, kMagicGrasDbgEcoCntl},
+    {REG_A6XX_HLSQ_DBG_ECO_CNTL, kMagicHlsqDbgEcoCntl},
+    {REG_A6XX_SP_CHICKEN_BITS, kMagicSpChickenBits},
+    {REG_A6XX_SP_IBO_COUNT, 0},
+    {REG_A6XX_SP_UNKNOWN_B182, 0},
+    {REG_A6XX_HLSQ_SHARED_CONSTS, 0},
+    {REG_A6XX_UCHE_UNKNOWN_0E12, kMagicUcheUnknown0E12},
+    {REG_A6XX_UCHE_CLIENT_PF, kMagicUcheClientPf},
+    {REG_A6XX_RB_UNKNOWN_8E01, kMagicRbUnknown8E01},
+    {REG_A6XX_SP_UNKNOWN_A9A8, 0},
+    {REG_A6XX_SP_MODE_CONTROL, A6XX_SP_MODE_CONTROL_CONSTANT_DEMOTION_ENABLE | A6XX_SP_MODE_CONTROL_ISAMMODE(ISAMMODE_GL)},
+    {REG_A6XX_VFD_ADD_OFFSET, A6XX_VFD_ADD_OFFSET_VERTEX},
+    {REG_A6XX_VPC_UNKNOWN_9107, 0},
+    {REG_A6XX_RB_UNKNOWN_8811, 0x10},
+    {REG_A6XX_PC_MODE_CNTL, kMagicPcModeCntl},
+    {REG_A6XX_GRAS_LRZ_PS_INPUT_CNTL, 0},
+    {REG_A6XX_GRAS_SAMPLE_CNTL, 0},
+    {REG_A6XX_GRAS_UNKNOWN_8110, 0x2},
+    {REG_A6XX_RB_UNKNOWN_8818, 0},
+    {REG_A6XX_RB_UNKNOWN_8819, 0},
+    {REG_A6XX_RB_UNKNOWN_881A, 0},
+    {REG_A6XX_RB_UNKNOWN_881B, 0},
+    {REG_A6XX_RB_UNKNOWN_881C, 0},
+    {REG_A6XX_RB_UNKNOWN_881D, 0},
+    {REG_A6XX_RB_UNKNOWN_881E, 0},
+    {REG_A6XX_RB_UNKNOWN_88F0, 0},
+    {REG_A6XX_VPC_POINT_COORD_INVERT, 0},
+    {REG_A6XX_VPC_UNKNOWN_9300, 0},
+    {REG_A6XX_VPC_SO_DISABLE, A6XX_VPC_SO_DISABLE_DISABLE},
+    {REG_A6XX_PC_RASTER_CNTL, 0},
+    {REG_A6XX_PC_MULTIVIEW_CNTL, 0},
+    {REG_A6XX_SP_UNKNOWN_B183, 0},
+    {REG_A6XX_GRAS_SU_CONSERVATIVE_RAS_CNTL, 0},
+    {REG_A6XX_GRAS_VS_LAYER_CNTL, 0},
+    {REG_A6XX_GRAS_SC_CNTL, grasScCntl()},
+    {REG_A6XX_GRAS_UNKNOWN_80AF, 0},
+    {REG_A6XX_VPC_UNKNOWN_9210, 0},
+    {REG_A6XX_VPC_UNKNOWN_9211, 0},
+    {REG_A6XX_VPC_UNKNOWN_9602, 0},
+    {REG_A6XX_PC_UNKNOWN_9E72, 0},
+    {REG_A6XX_SP_TP_MODE_CNTL, spTpModeCntl()},
+    {REG_A6XX_HLSQ_CONTROL_5_REG, hlsqControl5Reg()},
+    {REG_A6XX_VFD_MODE_CNTL, A6XX_VFD_MODE_CNTL_RENDER_MODE(RENDERING_PASS)},
+    {REG_A6XX_VFD_MULTIVIEW_CNTL, 0},
+};
+// after CP_SET_DRAW_STATE (GRAS_LRZ_CNTL and RB_LRZ_CNTL are written twice, as Gallium does)
+inline constexpr RegWrite kStaticStateAfterDrawState[] = {
+    {REG_A6XX_VPC_SO_STREAM_CNTL, 0},
+    {REG_A6XX_GRAS_LRZ_CNTL, 0},
+    {REG_A6XX_RB_LRZ_CNTL, 0},
+    {REG_A6XX_RB_DEPTH_PLANE_CNTL, 0},
+    {REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, 0},
+    {REG_A6XX_GRAS_LRZ_CNTL, 0},
+    {REG_A6XX_RB_LRZ_CNTL, 0},
+};
+// after the 32 VFD_FETCH sizes and the two border color addresses
+inline constexpr RegWrite kStaticStateTail[] = {
+    {REG_A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL, 0},
+};
+
+// CP_SET_DRAW_STATE, 3 words per group: Gallium's batch start sends one group with DISABLE_ALL_GROUPS and no address,
+// to drop any state group a previous owner of the GPU left pending
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_COUNT__MASK = 0x0000ffff;               // adreno_pm4.xml.h:1362
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_COUNT__SHIFT = 0;                       // adreno_pm4.xml.h:1363
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_DIRTY = 0x00010000;                     // adreno_pm4.xml.h:1368
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_DISABLE = 0x00020000;                   // adreno_pm4.xml.h:1369
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS = 0x00040000;        // adreno_pm4.xml.h:1370
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_LOAD_IMMED = 0x00080000;                // adreno_pm4.xml.h:1371
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_BINNING = 0x00100000;                   // adreno_pm4.xml.h:1372
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_GMEM = 0x00200000;                      // adreno_pm4.xml.h:1373
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_SYSMEM = 0x00400000;                    // adreno_pm4.xml.h:1374
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_GROUP_ID__MASK = 0x1f000000;            // adreno_pm4.xml.h:1375
+inline constexpr uint32_t CP_SET_DRAW_STATE__0_GROUP_ID__SHIFT = 24;                   // adreno_pm4.xml.h:1376
+inline constexpr uint32_t CP_SET_DRAW_STATE__1_ADDR_LO__MASK = 0xffffffff;             // adreno_pm4.xml.h:1384
+inline constexpr uint32_t CP_SET_DRAW_STATE__2_ADDR_HI__MASK = 0xffffffff;             // adreno_pm4.xml.h:1393
+constexpr uint32_t CP_SET_DRAW_STATE__0_COUNT(uint32_t v) { return field(v, CP_SET_DRAW_STATE__0_COUNT__SHIFT, CP_SET_DRAW_STATE__0_COUNT__MASK); }
+constexpr uint32_t CP_SET_DRAW_STATE__0_GROUP_ID(uint32_t v) {
+    return field(v, CP_SET_DRAW_STATE__0_GROUP_ID__SHIFT, CP_SET_DRAW_STATE__0_GROUP_ID__MASK);
+}
+constexpr uint32_t setDrawState0(uint32_t count, uint32_t flags, uint32_t groupId) {
+    return CP_SET_DRAW_STATE__0_COUNT(count) | flags | CP_SET_DRAW_STATE__0_GROUP_ID(groupId);
+}
+
+// CP_SET_AMBLE, 3 words: an IB (address, then its length and kind) the CP runs by itself around a context switch.
+// Gallium sets the BIN_PREAMBLE to its preemption preamble (the static registers again, RB_CCU_CNTL, PC_POWER_CNTL
+// and VFD_POWER_CNTL = kMagicPcPowerCntl, and a CP_MEM_TO_REG restoring the VSC state) and clears PREAMBLE and
+// POSTAMBLE (address 0, 0 dwords). A batch that is never preempted does not need any of the three.
+inline constexpr uint32_t CP_SET_AMBLE_0_ADDR_LO__MASK = 0xffffffff;                   // adreno_pm4.xml.h:2843
+inline constexpr uint32_t CP_SET_AMBLE_1_ADDR_HI__MASK = 0xffffffff;                   // adreno_pm4.xml.h:2852
+inline constexpr uint32_t CP_SET_AMBLE_2_DWORDS__MASK = 0x000fffff;                    // adreno_pm4.xml.h:2861
+inline constexpr uint32_t CP_SET_AMBLE_2_DWORDS__SHIFT = 0;                            // adreno_pm4.xml.h:2862
+inline constexpr uint32_t CP_SET_AMBLE_2_TYPE__MASK = 0x00300000;                      // adreno_pm4.xml.h:2867
+inline constexpr uint32_t CP_SET_AMBLE_2_TYPE__SHIFT = 20;                             // adreno_pm4.xml.h:2868
+
+enum amble_type : uint32_t {
+    PREAMBLE_AMBLE_TYPE = 0,       // adreno_pm4.xml.h:566  run whenever the CP switches back to this context
+    BIN_PREAMBLE_AMBLE_TYPE = 1,   // adreno_pm4.xml.h:567  run when switching back during a tiled render with skipsaverestore
+    POSTAMBLE_AMBLE_TYPE = 2,      // adreno_pm4.xml.h:568
+    KMD_AMBLE_TYPE = 3,            // adreno_pm4.xml.h:569  the kernel's
+};
+
+constexpr uint32_t CP_SET_AMBLE_2_DWORDS(uint32_t v) { return field(v, CP_SET_AMBLE_2_DWORDS__SHIFT, CP_SET_AMBLE_2_DWORDS__MASK); }
+constexpr uint32_t CP_SET_AMBLE_2_TYPE(amble_type v) { return field(v, CP_SET_AMBLE_2_TYPE__SHIFT, CP_SET_AMBLE_2_TYPE__MASK); }
+
+// CP_MEM_TO_REG, 3 words (the preemption preamble's VSC restore): CNT registers from REG are loaded from the address
+inline constexpr uint32_t CP_MEM_TO_REG_0_REG__MASK = 0x0003ffff;                      // adreno_pm4.xml.h:1741
+inline constexpr uint32_t CP_MEM_TO_REG_0_REG__SHIFT = 0;                              // adreno_pm4.xml.h:1742
+inline constexpr uint32_t CP_MEM_TO_REG_0_CNT__MASK = 0x3ff80000;                      // adreno_pm4.xml.h:1747
+inline constexpr uint32_t CP_MEM_TO_REG_0_CNT__SHIFT = 19;                             // adreno_pm4.xml.h:1748
+inline constexpr uint32_t CP_MEM_TO_REG_0_SHIFT_BY_2 = 0x40000000;                     // adreno_pm4.xml.h:1753
 
 }  // namespace hakios::metal::a6xx

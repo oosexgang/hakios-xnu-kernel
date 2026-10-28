@@ -12,6 +12,8 @@ What is checked, by name:
     headers' #defines and enumerators, and the values must be equal;
   - a NAME__SCALE constant is compared with the right shift Mesa's encoder NAME(val) applies in its body
     (`val >> N`; 0 when there is none);
+  - a register array NAME (a `#define NAME(i0) (BASE + STRIDE*i0)` or an inline `NAME(uint32_t i0)` in the
+    headers) is checked as NAME = BASE and NAME__STRIDE = STRIDE;
   - a `// not-in-headers: why` comment marks a constant the headers cannot check; it is listed, not checked.
 Anything else is an error: a constant the headers do not have, a value that differs, a constant without a
 `file.xml.h:line` comment saying where it comes from. The exit status is 0 only when every constant was checked or
@@ -31,7 +33,9 @@ def read_headers(gen_dir):
     defines = {}  # name -> [(value, file, line)]
     enums = {}
     scales = {}  # encoder name -> (shift, file, line)
+    arrays = {}  # register array name -> (base, stride, file, line)
     text = {}  # file -> its lines
+    array_re = r"\(\s*(0x[0-9a-fA-F]+|\d+)\s*\+\s*(0x[0-9a-fA-F]+|\d+)\s*\*\s*i0\s*\)"
     for fname in HEADERS:
         path = os.path.join(gen_dir, fname)
         try:
@@ -47,6 +51,15 @@ def read_headers(gen_dir):
             m = re.match(r"#define\s+(\w+)\s+(0x[0-9a-fA-F]+|\d+)\s*$", line)
             if m:
                 defines.setdefault(m.group(1), []).append((int(m.group(2), 0), fname, i))
+                continue
+            m = re.match(r"#define\s+(\w+)\(i0\)\s+" + array_re + r"\s*$", line)
+            if m:
+                arrays[m.group(1)] = (int(m.group(2), 0), int(m.group(3), 0), fname, i)
+                continue
+            m = re.match(r"static inline uint32_t (\w+)\(uint32_t i0\)\s*\{\s*return\s+" +
+                         r"(0x[0-9a-fA-F]+|\d+)\s*\+\s*(0x[0-9a-fA-F]+|\d+)\s*\*\s*i0;\s*\}", line)
+            if m:
+                arrays[m.group(1)] = (int(m.group(2), 0), int(m.group(3), 0), fname, i)
                 continue
             if re.match(r"enum\s+\w+\s*\{", line):
                 in_enum = True
@@ -72,7 +85,7 @@ def read_headers(gen_dir):
                     fn = None
                 else:
                     body.append(line)
-    return defines, enums, scales, text
+    return defines, enums, scales, arrays, text
 
 
 def evaluate(expr, env):
@@ -159,13 +172,14 @@ def main(argv):
     here = os.path.dirname(os.path.abspath(__file__))
     hpp = argv[2] if len(argv) > 2 else os.path.join(here, "..", "include", "hakios-metal", "a6xx.hpp")
 
-    defines, enums, scales, text = read_headers(gen_dir)
+    defines, enums, scales, arrays, text = read_headers(gen_dir)
     items = read_hpp(hpp)
     if not items:
         sys.exit(f"{hpp}: no constants found; the parser or the file is wrong")
 
     checked_values = 0
     checked_scales = 0
+    checked_arrays = 0
     unchecked = []
     mismatches = []
     missing = []
@@ -190,10 +204,24 @@ def main(argv):
                 continue
             checked_scales += 1
             lookup = base
+        elif name.endswith("__STRIDE"):
+            base = name[: -len("__STRIDE")]
+            if base not in arrays:
+                missing.append((it, f"no register array {base}(i0) in the headers"))
+                continue
+            _, stride, f, l = arrays[base]
+            if stride != value:
+                mismatches.append((it, stride, f, l))
+                continue
+            checked_arrays += 1
+            lookup = base
         else:
             found = defines.get(name, []) + enums.get(name, [])
+            if name in arrays:
+                b, _, f, l = arrays[name]
+                found = found + [(b, f, l)]
             if not found:
-                missing.append((it, "not a #define or an enumerator in the headers"))
+                missing.append((it, "not a #define, an enumerator or a register array in the headers"))
                 continue
             if all(v != value for v, _, _ in found):
                 v, f, l = found[0]
@@ -207,8 +235,8 @@ def main(argv):
             if lines is None or not (1 <= l <= len(lines)) or not re.search(r"\b%s\b" % re.escape(lookup), lines[l - 1]):
                 drift.append((it, lookup))
 
-    print(f"checked {checked_values + checked_scales} constants of {os.path.relpath(hpp)} against {gen_dir}: "
-          f"{checked_values} values, {checked_scales} encoder shifts")
+    print(f"checked {checked_values + checked_scales + checked_arrays} constants of {os.path.relpath(hpp)} against "
+          f"{gen_dir}: {checked_values} values, {checked_scales} encoder shifts, {checked_arrays} array strides")
     if unchecked:
         print(f"not checkable, and why ({len(unchecked)}):")
         for it in unchecked:

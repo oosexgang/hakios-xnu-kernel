@@ -204,3 +204,74 @@ TEST(a6xx_dispatch_words) {
     CHECK_EQ(setMarker0(RM6_COMPUTE), 0x8u);
     CHECK_EQ(CP_REG_TO_MEM_0_64B | CP_REG_TO_MEM_0_REG(0xae0f), 0x4000ae0fu);
 }
+
+TEST(a6xx_batch_start_words) {
+    // HLSQ_INVALIDATE_CMD with everything: the six stage bits 0x3f, CS_IBO 0x40, GFX_IBO 0x80, GFX_SHARED_CONST 0x100,
+    // CS_BINDLESS 0x1f << 9 = 0x3e00, GFX_BINDLESS 0x1f << 14 = 0x7c000, CS_SHARED_CONST 0x80000: every bit up to 19
+    CHECK_EQ(hlsqInvalidateCmdAll(), 0xfffffu);
+    // SP_TP_MODE_CNTL: Gallium's 0xa0 is UNK3(0x28) = 0x28 << 2, plus ISAMMODE(ISAMMODE_GL = 2) in bits 0..1
+    CHECK_EQ(spTpModeCntl(), 0xa2u);
+    // GRAS_SC_CNTL: CCUSINGLECACHELINESIZE(2) in bits 0..2
+    CHECK_EQ(grasScCntl(), 0x2u);
+    // HLSQ_CONTROL_5_REG: both register ids "none" (0xfc), the second one << 8
+    CHECK_EQ(hlsqControl5Reg(), 0xfcfcu);
+    // SP_PERFCTR_ENABLE: the six stage bits
+    CHECK_EQ(spPerfctrEnableAll(), 0x3fu);
+    // RB_CCU_CNTL for rendering to memory on this chip: depth cache at 0, color cache after it at
+    // num_ccu (2) * 64 KiB = 0x20000 bytes, in 4 KiB units: 0x20 << 23 = 0x10000000; both cache sizes FULL (0);
+    // the chip has fast clear (bit 0 clear) and no concurrent resolve (bit 2 clear)
+    CHECK_EQ(rbCcuCntlSysmem(), 0x10000000u);
+    CHECK_EQ(A6XX_RB_CCU_CNTL_COLOR_OFFSET(0x20000), 0x10000000u);
+    CHECK_EQ(A6XX_RB_CCU_CNTL_DEPTH_OFFSET(0x1000), 0x1000u);
+    CHECK_EQ(A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI(1), 0x200u);
+    CHECK_EQ(A6XX_RB_CCU_CNTL_DEPTH_CACHE_SIZE(CCU_CACHE_SIZE_QUARTER), 0x800u);
+    // CP_SET_DRAW_STATE word 0 as the batch start sends it: only DISABLE_ALL_GROUPS (bit 18)
+    CHECK_EQ(setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0x00040000u);
+    CHECK_EQ(setDrawState0(5, 0, 3), 0x03000005u);
+    // CP_SET_AMBLE word 2: 0x123 dwords of a BIN_PREAMBLE (type 1 << 20)
+    CHECK_EQ(CP_SET_AMBLE_2_DWORDS(0x123) | CP_SET_AMBLE_2_TYPE(BIN_PREAMBLE_AMBLE_TYPE), 0x00100123u);
+    // the array registers: VFD_FETCH[31].SIZE = 0xa012 + 4 * 31 = 0xa08e; CP_SCRATCH_REG[7] = 0x883 + 7
+    CHECK_EQ(vfdFetchSize(0), 0xa012u);
+    CHECK_EQ(vfdFetchSize(31), 0xa08eu);
+    CHECK_EQ(cpScratchReg(7), 0x88au);
+    // the headers of the packets around the static state
+    // CP_SET_MODE 0x63 = 110 0011, four ones: bit 23 is 1. count 1: 0.
+    CHECK_EQ(pm4::type7(CP_SET_MODE, 1), 0x70e30001u);
+    // CP_SET_DRAW_STATE 0x43 = 100 0011, three ones: 0. count 3 = 11, two ones: bit 15 is 1.
+    CHECK_EQ(pm4::type7(CP_SET_DRAW_STATE, 3), 0x70438003u);
+    // CP_SET_AMBLE 0x55 = 101 0101, four ones: bit 23 is 1. count 3: bit 15 is 1.
+    CHECK_EQ(pm4::type7(CP_SET_AMBLE, 3), 0x70d58003u);
+    // CP_INDIRECT_BUFFER 0x3f = 011 1111, six ones: bit 23 is 1. count 3: bit 15 is 1.
+    CHECK_EQ(pm4::type7(CP_INDIRECT_BUFFER, 3), 0x70bf8003u);
+    CHECK_EQ(uint32_t(CP_INDIRECT_BUFFER), uint32_t(pm4::kIndirectBuffer));
+    // the tables: Gallium's order, first and last entries, and the values that are not plain zeros
+    constexpr size_t n = sizeof(kStaticState) / sizeof(kStaticState[0]);
+    CHECK_EQ(n, size_t(53));
+    CHECK_EQ(kStaticState[0].reg, 0x8e04u);
+    CHECK_EQ(kStaticState[0].value, 0x04100000u);
+    CHECK_EQ(kStaticState[1].reg, REG_A6XX_SP_FLOAT_CNTL);
+    CHECK_EQ(kStaticState[1].value, 0x8u);
+    CHECK_EQ(kStaticState[5].reg, REG_A6XX_TPL1_DBG_ECO_CNTL);
+    CHECK_EQ(kStaticState[5].value, 0x05008000u);
+    CHECK_EQ(kStaticState[19].reg, REG_A6XX_SP_MODE_CONTROL);
+    CHECK_EQ(kStaticState[19].value, 0x5u);
+    CHECK_EQ(kStaticState[23].reg, REG_A6XX_PC_MODE_CNTL);
+    CHECK_EQ(kStaticState[23].value, 0x1fu);
+    CHECK_EQ(kStaticState[49].reg, REG_A6XX_SP_TP_MODE_CNTL);
+    CHECK_EQ(kStaticState[49].value, 0xa2u);
+    CHECK_EQ(kStaticState[n - 1].reg, REG_A6XX_VFD_MULTIVIEW_CNTL);
+    CHECK_EQ(sizeof(kStaticStateAfterDrawState) / sizeof(kStaticStateAfterDrawState[0]), size_t(7));
+    CHECK_EQ(kStaticStateAfterDrawState[0].reg, REG_A6XX_VPC_SO_STREAM_CNTL);
+    CHECK_EQ(kStaticStateAfterDrawState[6].reg, REG_A6XX_RB_LRZ_CNTL);
+    CHECK_EQ(sizeof(kStaticStateTail) / sizeof(kStaticStateTail[0]), size_t(1));
+    // every register in the tables is in the A6xx register space, and the magic values are the dev-info decimals
+    for (const RegWrite& w : kStaticState) {
+        CHECK(w.reg >= 0x0e12 && w.reg <= 0xbe04);
+    }
+    CHECK_EQ(kMagicTpl1DbgEcoCntl, 83918848u);
+    CHECK_EQ(kMagicRbDbgEcoCntl, 68157440u);
+    CHECK_EQ(kMagicVpcDbgEcoCntl, 33554432u);
+    CHECK_EQ(kMagicSpChickenBits, 5120u);
+    CHECK_EQ(kMagicUcheClientPf, 132u);
+    CHECK_EQ(kBorderColorBytes, 32768u);
+}
