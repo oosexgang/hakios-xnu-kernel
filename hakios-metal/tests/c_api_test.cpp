@@ -1,6 +1,8 @@
 // The C interface the plug-in uses, on the fake GPU.
 #include <atomic>
+#include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "hakios-metal/hakios_metal.h"
 #include "test.hpp"
@@ -96,5 +98,83 @@ TEST(c_api_fail_ends_in_error) {
     CHECK(strstr(hakios_metal_cb_error(c), "not in the GPU") != nullptr);
     hakios_metal_cb_free(c);
     hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
+// --- libraries, compiled kernels and dispatch through the C interface -------------------------------------------
+
+namespace {
+std::vector<uint8_t> readFile(const char* path) {
+    std::vector<uint8_t> bytes;
+    FILE* f = fopen(path, "rb");
+    if (f == nullptr) return bytes;
+    uint8_t buffer[4096];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof buffer, f)) > 0) bytes.insert(bytes.end(), buffer, buffer + n);
+    fclose(f);
+    return bytes;
+}
+}  // namespace
+
+TEST(c_api_library_and_kernel) {
+    // a library that does not hold together is refused with the reason
+    uint8_t garbage[64] = {'M', 'T', 'L', 'B', 1, 0, 2, 0};
+    CHECK(hakios_metal_library_open(garbage, sizeof garbage) == nullptr);
+    CHECK(hakios_metal_error()[0] != '\0');
+    // a kernel from bitcode: a refusal by name without the compiler, fill_id with it
+    std::vector<uint8_t> bc = readFile("out/host/kernels/fill_id.bc");
+    if (!hakios_metal_has_compiler()) {
+        CHECK(hakios_metal_kernel_compile_bitcode(garbage, sizeof garbage) == nullptr);
+        CHECK(strstr(hakios_metal_error(), "MESA_BUILD") != nullptr);
+        std::printf("       (no compiler in this build: the C interface's compile and dispatch did not run)\n");
+        return;
+    }
+    CHECK(!bc.empty());
+    hakios_metal_kernel* k = hakios_metal_kernel_compile_bitcode(bc.data(), bc.size());
+    CHECK(k != nullptr);
+    if (k == nullptr) {
+        std::printf("       %s\n", hakios_metal_error());
+        return;
+    }
+    CHECK(strcmp(hakios_metal_kernel_name(k), "fill_id") == 0);
+    CHECK_EQ(hakios_metal_kernel_resource_count(k), 2u);
+    unsigned kind = 99, index = 99, size = 99;
+    CHECK_EQ(hakios_metal_kernel_resource(k, 0, &kind, &index, &size), 0);
+    CHECK_EQ(kind, unsigned(HAKIOS_METAL_RESOURCE_DEVICE_BUFFER));
+    CHECK_EQ(index, 0u);
+    CHECK_EQ(hakios_metal_kernel_resource(k, 1, &kind, &index, &size), 0);
+    CHECK_EQ(kind, unsigned(HAKIOS_METAL_RESOURCE_CONSTANT_BUFFER));
+    CHECK_EQ(index, 1u);
+    CHECK_EQ(size, 4u);
+    CHECK_EQ(hakios_metal_kernel_resource(k, 2, nullptr, nullptr, nullptr), -1);
+    unsigned tg[3] = {7, 7, 7};
+    hakios_metal_kernel_threadgroup_size(k, tg);
+    CHECK_EQ(tg[0], 0u);   // the dispatch's to choose
+    CHECK_EQ(hakios_metal_kernel_execution_width(k), 64u);
+    CHECK_EQ(hakios_metal_kernel_max_threads(k), 1024u);
+    // dispatched on the fake GPU: well formed, and the kernel outlives the handle while in flight
+    hakios_metal_device* d = hakios_metal_open_fake();
+    hakios_metal_buffer* out = hakios_metal_buffer_new(d, 4096);
+    hakios_metal_buffer* c = hakios_metal_buffer_new(d, 64);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    const unsigned groups[3] = {16, 1, 1}, threads[3] = {64, 1, 1};
+    hakios_metal_buffer* one[1] = {out};
+    CHECK_EQ(hakios_metal_cb_dispatch(cb, k, groups, threads, one, nullptr, 1), -1);   // the constant buffer at 1 is missing
+    CHECK(strstr(hakios_metal_error(), "no buffer bound at index 1") != nullptr);
+    hakios_metal_cb_free(cb);
+    cb = hakios_metal_cb_new(q);
+    hakios_metal_buffer* both[2] = {out, c};
+    uint64_t offsets[2] = {0, 0};
+    CHECK_EQ(hakios_metal_cb_dispatch(cb, k, groups, threads, both, offsets, 2), 0);
+    hakios_metal_kernel_free(k);   // the command buffer keeps what the dispatch needs
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    CHECK(hakios_metal_cb_error(cb)[0] == 0);
+    hakios_metal_cb_free(cb);
+    hakios_metal_queue_free(q);
+    hakios_metal_buffer_free(out);
+    hakios_metal_buffer_free(c);
     hakios_metal_close(d);
 }

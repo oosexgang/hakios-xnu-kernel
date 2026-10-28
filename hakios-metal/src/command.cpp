@@ -65,6 +65,7 @@ void CommandBuffer::finish(Status s) {
     }
     handlers_.clear();
     kept_.clear();
+    keptAny_.clear();
     {
         std::lock_guard<std::mutex> g(lock_);
         finished_ = true;

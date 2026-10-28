@@ -74,6 +74,8 @@ public:
     void refuse(const std::string& why) { fail(why); }
     // a buffer it uses, kept alive until it completes (the owner may let go of it before that)
     void keep(std::shared_ptr<const Buffer> b) { kept_.push_back(std::move(b)); }
+    // anything else it uses (a compiled kernel's words), the same way
+    void keepAlive(std::shared_ptr<const void> p) { keptAny_.push_back(std::move(p)); }
 
 private:
     friend class CommandQueue;
@@ -89,6 +91,7 @@ private:
     pm4::Stream stream_;
     std::vector<BoUse> uses_;
     std::vector<std::shared_ptr<const Buffer>> kept_;   // the buffers it uses stay alive until it completes
+    std::vector<std::shared_ptr<const void>> keptAny_;
     std::vector<std::function<void(CommandBuffer&)>> handlers_;
     std::mutex lock_;
     std::condition_variable done_;

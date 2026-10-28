@@ -5,9 +5,14 @@
 #include <TargetConditionals.h>
 #endif
 
+#include <cstring>
+#include <vector>
+
 #include "hakios-metal/command.hpp"
+#include "hakios-metal/compiler.hpp"
 #include "hakios-metal/fake_gpu.hpp"
 #include "hakios-metal/hakios_metal.h"
+#include "hakios-metal/metallib.hpp"
 
 using namespace hakios::metal;
 
@@ -25,6 +30,13 @@ struct hakios_metal_device {
 };
 struct hakios_metal_buffer {
     std::shared_ptr<Buffer> buffer;
+};
+struct hakios_metal_library {
+    std::vector<uint8_t> bytes;   // the library's own copy: MetalLibrary points into it
+    MetalLibrary lib;
+};
+struct hakios_metal_kernel {
+    std::shared_ptr<CompiledKernel> kernel;   // shared with every command buffer that dispatched it and has not completed
 };
 struct hakios_metal_queue {
     std::unique_ptr<CommandQueue> queue;
@@ -64,6 +76,78 @@ hakios_metal_device* hakios_metal_open_fake(void) { return deviceOn(std::make_un
 void hakios_metal_close(hakios_metal_device* d) { delete d; }
 
 uint64_t hakios_metal_gpu_id(hakios_metal_device* d) { return d->gpu->chipId(); }
+
+int hakios_metal_has_compiler(void) { return hasCompiler() ? 1 : 0; }
+
+hakios_metal_library* hakios_metal_library_open(const void* data, size_t size) {
+    auto* l = new hakios_metal_library;
+    l->bytes.assign(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + size);
+    if (!l->lib.parse(l->bytes.data(), l->bytes.size())) {
+        failed(l->lib.why());
+        delete l;
+        return nullptr;
+    }
+    return l;
+}
+
+void hakios_metal_library_free(hakios_metal_library* l) { delete l; }
+unsigned hakios_metal_library_count(hakios_metal_library* l) { return unsigned(l->lib.functions().size()); }
+
+const char* hakios_metal_library_name(hakios_metal_library* l, unsigned i) {
+    return i < l->lib.functions().size() ? l->lib.functions()[i].name.c_str() : nullptr;
+}
+
+int hakios_metal_library_type(hakios_metal_library* l, unsigned i) {
+    return i < l->lib.functions().size() ? int(l->lib.functions()[i].type) : -1;
+}
+
+hakios_metal_kernel* hakios_metal_kernel_compile_bitcode(const void* bitcode, size_t size) {
+    std::string why;
+    std::unique_ptr<CompiledKernel> k = compileAir(bitcode, size, &why);
+    if (k == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_kernel;
+    r->kernel = std::move(k);
+    return r;
+}
+
+hakios_metal_kernel* hakios_metal_kernel_compile(hakios_metal_library* l, const char* function) {
+    const MetalFunction* f = l->lib.find(function != nullptr ? function : "");
+    const uint8_t* bytes = nullptr;
+    uint64_t length = 0;
+    if (f == nullptr || !l->lib.bitcode(*f, &bytes, &length)) {
+        failed(std::string("no function ") + (function ? function : "(null)") + " in the library's " + std::to_string(l->lib.functions().size()));
+        return nullptr;
+    }
+    if (f->type != MetalFunction::kKernel) {
+        failed(std::string(function) + " is not a kernel (TYPE " + std::to_string(f->type) + "); only those run here yet");
+        return nullptr;
+    }
+    return hakios_metal_kernel_compile_bitcode(bytes, size_t(length));
+}
+
+void hakios_metal_kernel_free(hakios_metal_kernel* k) { delete k; }
+const char* hakios_metal_kernel_name(hakios_metal_kernel* k) { return k->kernel->name.c_str(); }
+unsigned hakios_metal_kernel_resource_count(hakios_metal_kernel* k) { return unsigned(k->kernel->resources.size()); }
+
+int hakios_metal_kernel_resource(hakios_metal_kernel* k, unsigned i, unsigned* kind, unsigned* index, unsigned* sizeBytes) {
+    if (i >= k->kernel->resources.size()) return -1;
+    const Resource& r = k->kernel->resources[i];
+    if (kind) *kind = unsigned(r.kind);   // Resource::Kind is numbered as hakios_metal_resource_kind is
+    if (index) *index = r.index;
+    if (sizeBytes) *sizeBytes = r.sizeBytes;
+    return 0;
+}
+
+void hakios_metal_kernel_threadgroup_size(hakios_metal_kernel* k, unsigned size[3]) {
+    for (int i = 0; i < 3; i++) size[i] = k->kernel->kernel.localSizeVariable ? 0 : k->kernel->kernel.localSize[i];
+}
+
+unsigned hakios_metal_kernel_max_threads(hakios_metal_kernel*) { return compute::kMaxLocalThreads; }
+unsigned hakios_metal_kernel_execution_width(hakios_metal_kernel* k) { return k->kernel->kernel.doubleThreadsize ? 128 : 64; }
+unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel* k) { return k->kernel->threadgroupBytes; }
 
 hakios_metal_buffer* hakios_metal_buffer_new(hakios_metal_device* d, uint64_t length) {
     std::string why;
@@ -134,6 +218,27 @@ int hakios_metal_cb_fill(hakios_metal_cb* cb, hakios_metal_buffer* b, uint64_t o
     return 0;
 }
 
+int hakios_metal_cb_dispatch(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
+                             hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
+    std::vector<Binding> bindings(count);
+    for (unsigned i = 0; i < count; i++) {
+        if (buffers[i] != nullptr) {
+            bindings[i] = Binding{buffers[i]->buffer.get(), offsets != nullptr ? offsets[i] : 0};
+        }
+    }
+    uint32_t g[3] = {groups[0], groups[1], groups[2]};
+    uint32_t t[3] = {threads[0], threads[1], threads[2]};
+    if (!cb->cb->dispatch(k->kernel->kernel, g, t, bindings)) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    for (unsigned i = 0; i < count; i++) {
+        if (buffers[i] != nullptr) cb->cb->keep(buffers[i]->buffer);
+    }
+    cb->cb->keepAlive(k->kernel);   // the words the dispatch names live until the GPU is done with them
+    return 0;
+}
+
 void hakios_metal_cb_fail(hakios_metal_cb* cb, const char* why) { cb->cb->refuse(why != nullptr ? why : "refused"); }
 
 void hakios_metal_cb_commit(hakios_metal_cb* cb, void (*callback)(hakios_metal_cb*, void*), void* context) {
@@ -150,5 +255,6 @@ enum hakios_metal_status hakios_metal_cb_status(hakios_metal_cb* cb) {
 }
 
 const char* hakios_metal_cb_error(hakios_metal_cb* cb) { return cb->cb->error().c_str(); }
+int64_t hakios_metal_cb_gpu_nanoseconds(hakios_metal_cb* cb) { return cb->cb->gpuNanoseconds(); }
 
 }  // extern "C"
