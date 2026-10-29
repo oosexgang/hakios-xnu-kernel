@@ -92,7 +92,8 @@ switch's default -- turnip's and fd6's values where they agree, the smaller set 
 bisect. Not yet, all of it refused by name (not served): vertex attributes beyond per-vertex Float..Float4, Half2, Half4 and UChar4Normalized (those are
 served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UChar4Normalized colour from one interleaved buffer, 4032 of 4032
 pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
-samplers in a vertex stage, images in a draw (the 3D IBO table), depth and stencil attachments, dual-source blending, GMEM (tiled)
+samplers in a vertex stage, images in a draw (the 3D IBO table), stencil, depth formats other than Depth32Float, a
+fragment depth output, dual-source blending, GMEM (tiled)
 rendering, MSAA, instancing, indexed draws, points and lines, several colour attachments, a program whose stages bind what
 the draw does not serve.
 
@@ -124,6 +125,16 @@ commands now (`ir3-dump.patch`), and the compiler in the driver fills them the s
 `logs/152752-run.log`, probe line 9k, 0 failures) `tri_tex_fs.ll` samples a 4x4 texture at `tri_color_vs`'s interpolated
 (red, green), and 3840 of 3840 judged pixels hold exactly the texel their coordinate names; 192 pixels within 1/64 of
 a texel edge are left unjudged, and none shows the row-flipped texel.
+
+A Depth32Float depth attachment is served with the depth test and write of `MTLDepthStencilDescriptor`. The hardware
+has no linear depth buffer ("Linear D/S is not supported by HW", `fd6_layout.c`), so the texture is laid out TILE6_3
+(the pitch a multiple of 64 pixels, the rows counted to 16, the base 4096-aligned) and served as a render target alone:
+the CPU cannot read its rows and nothing samples it yet. The registers are `tu6_emit_zs` and `tu6_emit_depth_stencil`
+with turnip's Z mode rule; a depth Clear is the 2D engine's R2D_FLOAT32 fill into the tiled image, and because every draw
+here is a pass of its own the tail flushes the depth CCU (`PC_CCU_FLUSH_DEPTH_TS`, waited for) so that the next draw's
+test finds it. On the phone (hakios `logs/154449-run.log`, probe line 9l, 0 failures) two triangles at z 0.25 and
+0.75, drawn in separate passes, keep exactly the pixels the test says in six setups: Less with write in either order,
+Greater over a clear to 0, Less without write, and Metal's default Always in both orders.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

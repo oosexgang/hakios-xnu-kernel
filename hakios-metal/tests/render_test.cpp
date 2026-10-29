@@ -481,9 +481,9 @@ TEST(render_encodes_the_first_triangles_registers) {
     using namespace a6xx;
     // the table: the timestamps zeroed, the border colour entry zeroed, the hole zeroed; the rest untouched
     const uint32_t* tw = e.tableWords();
-    for (uint32_t i = 0; i < 4; i++) CHECK_EQ(tw[render::kTableTimestampsAt / 4 + i], 0u);
+    for (uint32_t i = 0; i < 8; i++) CHECK_EQ(tw[render::kTableTimestampsAt / 4 + i], 0u);   // the tail's four and the depth ones
     for (uint32_t i = 0; i < 32; i++) CHECK_EQ(tw[render::kTableBorderColorAt / 4 + i], 0u);
-    CHECK_EQ(tw[4], 0xeeeeeeeeu);
+    CHECK_EQ(tw[8], 0xeeeeeeeeu);
     // the batch start: CP_SET_MODE first, the three invalidates, HLSQ_INVALIDATE_CMD all, a WFI, the static table...
     const auto& w = e.stream.words();
     CHECK_EQ(e.find(CP_SET_MODE), size_t(0));
@@ -1534,17 +1534,18 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
     {
         Twin w;
         w.at(REG_A6XX_RB_DEPTH_CNTL) = A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE;
-        CHECK(has(w.fault(), "depth or stencil state with no depth buffer: not what this GPU model runs"));
+        CHECK(has(w.fault(), "a depth test or write with no depth buffer (RB_DEPTH_BUFFER_INFO DEPTH6_NONE)"));
     }
     {
         Twin w;
         w.at(REG_A6XX_RB_STENCIL_CONTROL) = A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE;
-        CHECK(has(w.fault(), "depth or stencil state with no depth buffer"));
+        CHECK(has(w.fault(), "stencil state: no stencil buffer is what this GPU model runs"));
     }
     {
+        // a depth format with nothing behind it: GRAS_SU's copy still says none
         Twin w;
         w.at(REG_A6XX_RB_DEPTH_BUFFER_INFO) = A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32);
-        CHECK(has(w.fault(), "depth or stencil state with no depth buffer"));
+        CHECK(has(w.fault(), "depth format 4 in RB_DEPTH_BUFFER_INFO and 0 in GRAS_SU_DEPTH_BUFFER_INFO"));
     }
 }
 
@@ -2556,5 +2557,170 @@ TEST(the_fake_refuses_fs_textures_or_a_prefetch_that_do_not_hold_together) {
         TexTwin w;
         memset(static_cast<uint8_t*>(w.e->table->contents()) + render::kTableFsAt, 0, 64);
         CHECK(has(w.fault(), "SP_FS_PREFETCH_CMD[0] samples texture 0, whose descriptor is zero"));
+    }
+}
+
+// --- depth: a Depth32Float attachment, the depth test, its Clear and its flush ----------------------------------------------
+
+namespace {
+std::shared_ptr<Texture> depthTarget(Rig& r, uint32_t w = 64, uint32_t h = 64, uint32_t usage = kTextureUsageRenderTarget) {
+    return target(r, w, h, usage, PixelFormat::kDepth32Float);
+}
+}  // namespace
+
+TEST(a_depth32float_texture_is_tiled_and_an_attachment_only) {
+    Rig r;
+    auto d = depthTarget(r, 48, 20);
+    CHECK(d != nullptr);
+    CHECK_EQ(d->bytesPerRow(), 256u);               // 48 * 4 rounded to 64 pixels
+    CHECK_EQ(d->buffer()->length(), 8192u);         // 20 rows counted to 32 (the tiled height alignment of 16), 4096-aligned
+    uint32_t px = 0;
+    std::string why;
+    CHECK(!d->replace(0, 0, 1, 1, &px, 4, &why));
+    CHECK(has(why, "a Depth32Float texture is tiled (TILE6_3): its bytes are not rows the CPU can address"));
+    CHECK(!d->read(0, 0, 1, 1, &px, 4, &why));
+    TextureDesc td;
+    td.format = PixelFormat::kDepth32Float;
+    td.width = td.height = 16;
+    td.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    CHECK(Texture::make(*r.gpu, td, &why) == nullptr);
+    CHECK(has(why, "a Depth32Float texture with usage 5: a depth texture is tiled (TILE6_3) and is served as a render target alone (4)"));
+}
+
+TEST(a_draw_tests_and_writes_depth_through_its_attachment) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto d = depthTarget(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    pass.depth = d.get();
+    pass.depthLoad = LoadAction::kClear;
+    pass.clearDepth = 1.0;
+    Draw dr = wholeDraw();
+    dr.depth = DepthState{1, true};   // Less, write
+    Encoded e(r, flatProgram(), pass, dr);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    // the attachment, as literals: DEPTH6_32 (4), pitch 256 >> 6, layer 16384 >> 6, its base, BASE_GMEM 0
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_BUFFER_INFO), 4u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_BUFFER_PITCH), 4u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH), 256u);
+    CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_DEPTH_BUFFER_BASE)) | uint64_t(e.reg(REG_A6XX_RB_DEPTH_BUFFER_BASE + 1)) << 32, d->gpuAddress());
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO), 4u);
+    // the test: Z_TEST 1 | Z_WRITE 2 | ZFUNC(Less 1) << 2 | Z_READ 0x40; the GRAS copy; EARLY_Z (no kill)
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_CNTL), 0x47u);
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_SU_DEPTH_CNTL), 1u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_PLANE_CNTL), 0u);
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL), 0u);
+    // the depth Clear: one CP_BLIT into FMT6_32_FLOAT (74) TILE6_3, R2D_FLOAT32 (4), SOLID_C0 the bits of 1.0f
+    size_t blit = e.find(CP_BLIT);
+    CHECK(blit != size_t(-1) && e.find(CP_BLIT, blit + 1) == size_t(-1));
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_DST_INFO), 74u | 3u << 8);
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_BLIT_CNTL), 0x04f04a80u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0), 0x3f800000u);
+    CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_2D_DST)) | uint64_t(e.reg(REG_A6XX_RB_2D_DST + 1)) << 32, d->gpuAddress());
+    // through the command buffer: the fake judges the attachment and wants the depth flushed at the end
+    auto cb = drawOnce(r, flatProgram(), pass, dr);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().tiledFills, 1u);
+    CHECK_EQ(r.fake->stats().lastDraw.depthCntl, 0x47u);
+    CHECK_EQ(r.fake->stats().lastDraw.depthBase, d->gpuAddress());
+    // Metal's default depth state with the attachment bound: the test off -- ZFUNC Always (7) alone, LATE_Z
+    Encoded off(r, flatProgram(), pass, wholeDraw());
+    CHECK(off.ok);
+    CHECK_EQ(off.reg(REG_A6XX_RB_DEPTH_CNTL), 7u << 2);
+    CHECK_EQ(off.reg(REG_A6XX_GRAS_SU_DEPTH_CNTL), 0u);
+    CHECK_EQ(off.reg(REG_A6XX_RB_DEPTH_PLANE_CNTL), uint32_t(A6XX_LATE_Z));
+    // a pass that only clears the depth (the colour loads): a pass of its own
+    RenderPass depthOnly = pass;
+    depthOnly.load = LoadAction::kLoad;
+    auto c = r.queue->commandBuffer();
+    CHECK(c->clear(depthOnly));
+    c->commit();
+    c->waitUntilCompleted();
+    CHECK(c->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().tiledFills, 2u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+TEST(a_draw_refuses_a_depth_setup_it_cannot_serve) {
+    Rig r;
+    auto t = target(r);
+    auto d = depthTarget(r);
+    auto small = depthTarget(r, 32, 32);
+    auto colour = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Draw dr = wholeDraw();
+    dr.depth = DepthState{1, true};
+    refused(r, flatProgram(), pass, dr, "a depth test (compare 1, write) with no depth attachment");
+    pass.depth = colour.get();
+    refused(r, flatProgram(), pass, dr, "a RGBA8Unorm texture as the depth attachment: Depth32Float (252) is served");
+    pass.depth = small.get();
+    refused(r, flatProgram(), pass, dr, "a 32 x 32 depth attachment beside a 64 x 64 colour attachment: Metal asks for the same size");
+    pass.depth = d.get();
+    Draw bad = dr;
+    bad.depth.compare = 8;
+    refused(r, flatProgram(), pass, bad, "depth compare function 8: MTLCompareFunction runs Never 0 to Always 7");
+    RenderPass far = pass;
+    far.depthLoad = LoadAction::kClear;
+    far.clearDepth = 2.0;
+    refused(r, flatProgram(), far, dr, "a clear depth of 2.000000: Metal's clearDepth is 0 to 1");
+    RenderPass swapped;
+    swapped.color0 = d.get();
+    refused(r, flatProgram(), swapped, wholeDraw(), "a Depth32Float texture as colour attachment 0: a depth format is the depth attachment's");
+    // a pass without a draw that clears nothing
+    auto cb = r.queue->commandBuffer();
+    CHECK(!cb->clear(pass));
+    expectRefusal(cb->error(), "a pass without a draw and with load action 1: only a Clear writes anything then");
+}
+
+TEST(the_fake_refuses_a_depth_draw_that_does_not_hold_together) {
+    using namespace a6xx;
+    auto twin = [](const render::Options& o, auto mutate) {
+        Rig r;
+        auto t = target(r);
+        auto d = depthTarget(r);
+        RenderPass pass;
+        pass.color0 = t.get();
+        pass.depth = d.get();
+        Draw dr = wholeDraw();
+        dr.depth = DepthState{1, true};
+        Encoded e(r, flatProgram(), pass, dr, o);
+        CHECK(e.ok);
+        std::vector<uint32_t> w = e.stream.words();
+        mutate(e, w);
+        return faultOf(r, w);
+    };
+    auto none = [](Encoded&, std::vector<uint32_t>&) {};
+    {
+        render::Options o;
+        o.tailDepthFlush = false;
+        CHECK(has(twin(o, none), "the depth stays in the CCU: no PC_CCU_FLUSH_DEPTH_TS (4-word) after a draw that writes depth"));
+    }
+    CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_GRAS_SU_DEPTH_CNTL)] = 0; }),
+              "the test enable must agree, and a write needs the test"));
+    CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_RB_DEPTH_BUFFER_BASE)] += 64; }),
+              "not 4096-aligned, not a multiple of 256, narrower than the window, or outside every buffer"));
+    CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_RB_DEPTH_BUFFER_PITCH)] = 2; }),
+              "not 4096-aligned, not a multiple of 256, narrower than the window, or outside every buffer"));
+    CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO)] = 0; }),
+              "depth format 4 in RB_DEPTH_BUFFER_INFO and 0 in GRAS_SU_DEPTH_BUFFER_INFO"));
+    // unmutated, the same stream passes (each refusal above is its mutation's)
+    {
+        Rig r;
+        auto t = target(r);
+        auto d = depthTarget(r);
+        RenderPass pass;
+        pass.color0 = t.get();
+        pass.depth = d.get();
+        Draw dr = wholeDraw();
+        dr.depth = DepthState{1, true};
+        Encoded e(r, flatProgram(), pass, dr);
+        Raw raw(r);
+        CHECK_EQ(raw.submit(e.stream.words()), 0);
+        CHECK_EQ(e.tableWords()[render::kTableDepthFlushAt / 4], render::kDepthFlushValue);
     }
 }

@@ -113,6 +113,8 @@ public:
         uint32_t mrtControl = 0, mrtBlendControl = 0;   // RB_MRT_CONTROL[0] (blend bits, component enable), RB_MRT_BLEND_CONTROL[0]
         uint32_t fsTextureCount = 0, fsSamplerCount = 0;   // SP_FS_TEX_COUNT, the SB6_FS_TEX sampler load's NUM_UNIT
         uint32_t prefetchCount = 0, prefetchCmd[4] = {};  // SP_FS_PREFETCH_CNTL.COUNT, SP_FS_PREFETCH_CMD[i]
+        uint32_t depthCntl = 0;                           // RB_DEPTH_CNTL
+        uint64_t depthBase = 0;                           // RB_DEPTH_BUFFER_BASE when a depth buffer is bound
         uint32_t windowScissor[4] = {};             // GRAS_SC_WINDOW_SCISSOR TL x, y, BR x, y (BR inclusive)
         uint32_t screenScissor[4] = {}, viewportScissor[4] = {};   // GRAS_SC_SCREEN_SCISSOR[0], GRAS_SC_VIEWPORT_SCISSOR[0]
         float viewport[6] = {};                     // GRAS_CL_VPORT[0]: xoffset, xscale, yoffset, yscale, zoffset, zscale
@@ -136,6 +138,7 @@ public:
         uint32_t draws = 0;         // CP_DRAW_INDX_OFFSET packets whose state held together (none of them rasterized)
         Draw lastDraw;
         uint32_t fills = 0;         // CP_BLIT solid fills whose state held together: these ARE carried out, into the target's memory
+        uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
     };
 
     // ASYNC: submissions run on a thread of their own, after DELAY_US each, as the real GPU runs them after the call
@@ -239,7 +242,7 @@ private:
     // CP_WAIT_FOR_IDLE), and whether the last packet was that WFI; and what the submission's end needs of a draw: the
     // two 4-word flushes after the last one
     bool passBegun_ = false, ccuCntlWritten_ = false, ccuCntlAfterWfi_ = false, lastWasWfi_ = false;
-    uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0;
+    uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0, drawsWithoutDepthFlush_ = 0;
     uint32_t nextHandle_ = 1, nextQueue_ = 1;
     uint64_t nextIova_ = 0x100000000ull;
     Stats stats_;

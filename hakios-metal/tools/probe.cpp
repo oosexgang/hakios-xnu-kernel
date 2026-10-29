@@ -39,6 +39,7 @@
 #include "../tests/fixtures/tri_cflat_fs_air.hpp"
 #include "../tests/fixtures/tri_attr_vs_air.hpp"
 #include "../tests/fixtures/tri_tex_fs_air.hpp"
+#include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1077,6 +1078,7 @@ int main(int argc, char** argv) {
     //   9i. a Clear: the 2D fill without a draw over six formats and a 48x20 rectangle, then before tri_flat
     //   9j. blending: six equations of tri_cflat's half-transparent colour over a cleared target, each pixel against the formula
     //   9k. a texture in the FS: tri_tex_fs's prefetch of a 4x4 texture at tri_color's interpolated (red, green)
+    //   9l. depth: two triangles at chosen depths through a Depth32Float attachment, six test setups, each draw its own pass
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1689,6 +1691,125 @@ int main(int argc, char** argv) {
                 bool accepted = cb2->draw(texProg, rp, drawOf(0, 6), Bindings{}, Bindings{});
                 report(!accepted && cb2->error().find("no texture bound at index 0") != std::string::npos,
                        "control, tri_tex with nothing at [[texture(0)]]: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb2->error()));
+            }
+        }
+        // 9l. depth. tri_pos_vs takes the whole clip position from its vertex buffer (Float4 at 0, the colour Float4 at 16,
+        // stride 32) and tri_color_fs passes the colour on, so a pixel says which triangle's depth test it kept: NEAR is
+        // T1 at z 0.25 in red, FAR the pair at z 0.75 in green. Each draw is its own command buffer and so its own pass,
+        // the depth attachment (Depth32Float, TILE6_3) loaded by the second from the memory the first's tail flushed it
+        // to: a lost flush or invalidate shows as the second draw winning everywhere. Expectations, (i, j) the pixel:
+        //   Less + write, clear 1, NEAR then FAR:  j > i red, the rest green (T1's diagonal is not its, the top-left rule)
+        //   Less + write, clear 1, FAR then NEAR:  the same -- the test, not the order, decides
+        //   Greater + write, clear 0, NEAR then FAR: green everywhere (0.75 > 0.25 > 0)
+        //   Less without write, clear 1, NEAR then FAR: green everywhere (the depth stays 1)
+        //   Always without write (Metal's default state), NEAR then FAR: green everywhere; FAR then NEAR: j > i red
+        if (t) {
+            const Program depthProg = [] {
+                Program p{kernels::tri_pos_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_pos"};
+                p.vertexDescriptor.attributes[0] = VertexAttribute{VertexFormat::kFloat4, 0, 0};
+                p.vertexDescriptor.attributes[1] = VertexAttribute{VertexFormat::kFloat4, 16, 0};
+                p.vertexDescriptor.layouts[0] = VertexLayout{32, VertexStep::kPerVertex, 1};
+                return p;
+            }();
+            TextureDesc dd;
+            dd.format = PixelFormat::kDepth32Float;
+            dd.width = W;
+            dd.height = H;
+            dd.usage = kTextureUsageRenderTarget;
+            auto depth = Texture::make(gpu, dd, &why);
+            auto nearBuf = newBuffer(gpu, 3 * 32, &why);
+            auto farBuf = newBuffer(gpu, 6 * 32, &why);
+            if (depth == nullptr || nearBuf == nullptr || farBuf == nullptr) {
+                report(false, "depth: a 64x64 Depth32Float texture and two vertex buffers: " + why);
+            } else {
+                auto fill = [](Buffer& b, uint32_t count, float z, const float colour[4]) {
+                    static const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+                    auto* f = static_cast<float*>(b.contents());
+                    for (uint32_t v = 0; v < count; v++) {
+                        float vert[8] = {xy[v][0], xy[v][1], z, 1.0f, colour[0], colour[1], colour[2], colour[3]};
+                        memcpy(f + 8 * v, vert, 32);
+                    }
+                };
+                const float red[4] = {1, 0, 0, 1}, green[4] = {0, 1, 0, 1};
+                fill(*nearBuf, 3, 0.25f, red);
+                fill(*farBuf, 6, 0.75f, green);
+                const uint32_t redWord = 0xff0000ffu, greenWord = 0xff00ff00u;
+                struct Step {
+                    bool near;
+                    DepthState state;
+                };
+                struct DepthCase {
+                    const char* label;
+                    double clearDepth;
+                    Step steps[2];
+                    bool redLowerLeft;   // else green everywhere
+                };
+                const DepthCase cases[] = {
+                    {"Less + write, cleared to 1, NEAR then FAR", 1.0, {{true, {1, true}}, {false, {1, true}}}, true},
+                    {"Less + write, cleared to 1, FAR then NEAR", 1.0, {{false, {1, true}}, {true, {1, true}}}, true},
+                    {"Greater + write, cleared to 0, NEAR then FAR", 0.0, {{true, {4, true}}, {false, {4, true}}}, false},
+                    {"Less without write, cleared to 1, NEAR then FAR", 1.0, {{true, {1, false}}, {false, {1, false}}}, false},
+                    {"Always without write (Metal's default), NEAR then FAR", 1.0, {{true, {7, false}}, {false, {7, false}}}, false},
+                    {"Always without write (Metal's default), FAR then NEAR", 1.0, {{false, {7, false}}, {true, {7, false}}}, true},
+                };
+                const uint32_t dCanary = texCanary([&](uint32_t v) { return v == redWord || v == greenWord; });
+                for (const DepthCase& dc : cases) {
+                    fillBo(*t, dCanary);
+                    bool allDone = true;
+                    std::string st;
+                    for (int k = 0; k < 2; k++) {
+                        RenderPass rp;
+                        rp.color0 = t.get();
+                        rp.depth = depth.get();
+                        rp.depthLoad = k == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                        rp.depthStore = StoreAction::kStore;
+                        rp.clearDepth = dc.clearDepth;
+                        Draw d = drawOf(0, dc.steps[k].near ? 3 : 6);
+                        d.depth = dc.steps[k].state;
+                        Bindings vsb;
+                        vsb.buffers = {Binding{dc.steps[k].near ? nearBuf.get() : farBuf.get(), 0}};
+                        auto cb = queue->commandBuffer();
+                        if (cb->draw(depthProg, rp, d, vsb, Bindings{})) {
+                            cb->commit();
+                            cb->waitUntilCompleted();
+                        }
+                        allDone = allDone && completed(*cb);
+                        if (k == 1) st = status(*cb, gpu);
+                        if (!completed(*cb)) st += " [draw " + std::to_string(k) + ": " + cb->error() + "]";
+                    }
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t right = 0, reds = 0, greens = 0, canaries = 0;
+                    std::string first;
+                    for (uint32_t j = 0; j < H; j++) {
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                            const uint32_t want = dc.redLowerLeft && j > i ? redWord : greenWord;
+                            reds += px == redWord;
+                            greens += px == greenWord;
+                            canaries += px == dCanary;
+                            if (px == want) {
+                                right++;
+                            } else if (first.empty()) {
+                                first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", wanted " + hex8(want);
+                            }
+                        }
+                    }
+                    report(allDone && right == W * H, std::string("depth, ") + dc.label + ": " + std::to_string(right) + " of 4096 as wanted (" +
+                                                             std::to_string(reds) + " red, " + std::to_string(greens) + " green, " + std::to_string(canaries) +
+                                                             " canary)" + first + st);
+                }
+                // the refusal: a depth test with no depth attachment
+                RenderPass rp;
+                rp.color0 = t.get();
+                Draw d = drawOf(0, 3);
+                d.depth = DepthState{1, true};
+                Bindings vsb;
+                vsb.buffers = {Binding{nearBuf.get(), 0}};
+                auto cb = queue->commandBuffer();
+                bool accepted = cb->draw(depthProg, rp, d, vsb, Bindings{});
+                report(!accepted && cb->error().find("with no depth attachment") != std::string::npos,
+                       "control, a depth test with no depth attachment: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
             }
         }
         // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the

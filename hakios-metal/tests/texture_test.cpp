@@ -78,7 +78,7 @@ TEST(texture_pitch_is_mesas_layout_rule) {
     CHECK(formatInfo(PixelFormat::kR32Float)->fmt6 == a6xx::FMT6_32_FLOAT && formatInfo(PixelFormat::kRGBA32Float)->fmt6 == a6xx::FMT6_32_32_32_32_FLOAT);
     CHECK(formatInfo(PixelFormat::kRGBA8UnormSrgb)->srgb && !formatInfo(PixelFormat::kRGBA8Unorm)->srgb);
     CHECK(formatInfo(PixelFormat::kBGRA8Unorm)->swap == a6xx::WXYZ && formatInfo(PixelFormat::kRGBA8Unorm)->swap == a6xx::WZYX);
-    // a format outside the eleven is nobody's
+    // a format outside the twelve is nobody's
     CHECK(formatInfo(PixelFormat(13)) == nullptr);   // R8Uint
     CHECK(formatInfo(PixelFormat(0)) == nullptr);
 }
@@ -103,7 +103,7 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     CHECK(has(refusedMake(r, d), "texture type 7 (3D): only 2D"));
     d = TextureDesc{};
     d.format = PixelFormat(13);
-    CHECK(has(refusedMake(r, d), "pixel format 13: not one of the eleven served"));
+    CHECK(has(refusedMake(r, d), "pixel format 13: not one of the twelve served"));
     d = TextureDesc{};
     d.width = 0;
     CHECK(has(refusedMake(r, d), "a texture of 0 x 1: each side is 1 to 32767"));

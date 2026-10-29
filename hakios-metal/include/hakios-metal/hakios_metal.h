@@ -197,6 +197,17 @@ struct hakios_metal_render_pass {
 	unsigned store_action;            /* MTLStoreAction: DontCare 0, Store 1; others refused */
 	double clear_color[4];            /* MTLClearColor, read only for Clear: RGBA; whole numbers 0..2^32-1 for a Uint attachment */
 	float blend_color[4];             /* -setBlendColorRed:green:blue:alpha:, the encoder's state each draw reads (0 by default) */
+	/* the depth attachment (a Depth32Float texture, 252, made with render-target usage alone) or NULL, its MTLLoadAction
+	 * and MTLStoreAction, and the clear depth (0 to 1) read for a Clear */
+	hakios_metal_texture *depth;
+	unsigned depth_load_action, depth_store_action;
+	double clear_depth;
+	/* -setDepthStencilState:'s depth half, each draw reads it: when DEPTH_STATE_SET is 0 Metal's default (compare Always,
+	 * no write: no test), so that a zeroed struct is Metal's default; else DEPTH_COMPARE (MTLCompareFunction, Never 0 ..
+	 * Always 7) and DEPTH_WRITE */
+	int depth_state_set;
+	unsigned depth_compare;
+	int depth_write;
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

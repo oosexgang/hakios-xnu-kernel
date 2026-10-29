@@ -78,6 +78,7 @@ enum a6xx_isam_mode : uint32_t {
 
 enum a6xx_tile_mode : uint32_t {
     TILE6_LINEAR = 0,              // a6xx.xml.h:57
+    TILE6_3 = 3,                   // a6xx.xml.h:59  the depth buffer's layout: the hardware has no linear one (fd6_layout.c:157-164)
 };
 
 // The texture formats served (texture.hpp's table), as fd6_format_table.c's .tex column names them for the Metal
@@ -2369,6 +2370,8 @@ inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SCALE = 6;          
 constexpr uint32_t A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t v) {
     return field(v >> A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SCALE, A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SHIFT, A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__MASK);
 }
+// the depth flag buffer (UBWC metadata), three words at RB_DEPTH_FLAG_BUFFER_BASE: 0, no UBWC (tu6_emit_zs :450-451)
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_FLAG_BUFFER_BASE = 0x8900;                     // a6xx.xml.h:6492
 inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_BASE = 0x8875;                           // a6xx.xml.h:5992
 inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_BASE_GMEM = 0x8877;                      // a6xx.xml.h:5995
 

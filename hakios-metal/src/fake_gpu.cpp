@@ -49,7 +49,7 @@ std::string text(const char* format, uint64_t a = 0, uint64_t b = 0, uint64_t c 
 // a field read back the way the registers hold it, from a6xx.hpp's masks (the fake decodes; the encoder encodes)
 uint32_t fieldOf(uint32_t word, uint32_t mask, uint32_t shift) { return (word & mask) >> shift; }
 
-// the pixel size of the formats this model knows (texture.hpp's eleven, by their FMT: fd6_format_table.c); 0 for another
+// the pixel size of the formats this model knows (texture.hpp's twelve, by their FMT: fd6_format_table.c); 0 for another
 uint32_t bytesPerPixel(uint32_t fmt) {
     switch (fmt) {
     case a6xx::FMT6_8_UNORM: return 1;
@@ -659,9 +659,11 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
         return false;
     }
     const uint32_t bpp = bytesPerPixel(fmt);
-    if (bpp == 0 || fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR) {
-        fault(text("a fill into format %llu, tile mode %llu: a linear image of a known format is what this GPU model fills", fmt,
-                   fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT)));
+    // a linear image of a known format, or the one tiled image this driver makes: a depth texture (FMT6_32_FLOAT, TILE6_3)
+    const uint32_t tile = fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT);
+    const bool tiled = tile == TILE6_3 && fmt == FMT6_32_FLOAT;
+    if (bpp == 0 || (tile != TILE6_LINEAR && !tiled)) {
+        fault(text("a fill into format %llu, tile mode %llu: a linear image of a known format (or a TILE6_3 depth texture) is what this GPU model fills", fmt, tile));
         return false;
     }
     // the intermediate format turnip's format_to_ifmt picks for each (tu_clear_blit.cc:41-71): by the red channel's size
@@ -692,6 +694,21 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     if (x1 < x0 || y1 < y0 || pitch < uint64_t(x1 + 1) * bpp || base % 64 != 0) {
         fault(text("a fill of (%llu, %llu) to ", x0, y0) + text("(%llu, %llu) with a pitch of ", x1, y1) + text("%llu bytes at %#llx: an empty rectangle, rows wider than the pitch or a base not 64-aligned", pitch, base));
         return false;
+    }
+    if (tiled) {
+        // a TILE6_3 image: 4096-aligned, the pitch a multiple of 256 bytes, its rows counted to 16 (fdl6_tile_alignment
+        // for cpp 4). Its bytes are in an order this model does not reproduce, so the fill is judged and not written.
+        const uint64_t rows = (uint64_t(y1) + 1 + 15) / 16 * 16;
+        if (base % 4096 != 0 || pitch % 256 != 0 || at(base, rows * pitch) == nullptr) {
+            fault(text("a tiled fill at %#llx with a pitch of %llu bytes, %llu rows: not 4096-aligned, not a multiple of 256, or outside every buffer", base, pitch, rows));
+            return false;
+        }
+        stats_.fills++;
+        stats_.tiledFills++;
+        drawsInSubmission_++;
+        drawsWithoutCcuFlush_++;
+        drawsWithoutCacheFlush_++;
+        return true;
     }
     uint8_t* d = at(base + y0 * pitch, (y1 - y0) * pitch + uint64_t(x1 + 1) * bpp);
     if (d == nullptr) {
@@ -1000,11 +1017,55 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             }
         }
     }
-    // no depth, no stencil
-    if (fieldOf(reg(REG_A6XX_RB_DEPTH_BUFFER_INFO), A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK, A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT) != DEPTH6_NONE ||
-        (reg(REG_A6XX_RB_DEPTH_CNTL) & A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE) != 0 || reg(REG_A6XX_RB_STENCIL_CONTROL) != 0) {
-        fault("depth or stencil state with no depth buffer: not what this GPU model runs");
-        return false;
+    // the depth: none, or a DEPTH6_32 buffer laid out as texture.cpp lays a Depth32Float texture (TILE6_3: 4096-aligned,
+    // the pitch a multiple of 256 bytes holding the window's width, the window's rows counted to 16 inside a buffer),
+    // the format the same in GRAS_SU_DEPTH_BUFFER_INFO, the depth registers written in this submission (context state),
+    // the test enable the same in RB_DEPTH_CNTL and GRAS_SU_DEPTH_CNTL, a write only with the test. A draw that writes
+    // depth leaves it in the depth CCU until a 4-word PC_CCU_FLUSH_DEPTH_TS. No stencil in either case.
+    {
+        const uint32_t depthFormat = fieldOf(reg(REG_A6XX_RB_DEPTH_BUFFER_INFO), A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK, A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT);
+        const uint32_t depthCntl = reg(REG_A6XX_RB_DEPTH_CNTL);
+        const bool test = (depthCntl & A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE) != 0, write = (depthCntl & A6XX_RB_DEPTH_CNTL_Z_WRITE_ENABLE) != 0;
+        if (reg(REG_A6XX_RB_STENCIL_CONTROL) != 0) {
+            fault("stencil state: no stencil buffer is what this GPU model runs");
+            return false;
+        }
+        if (depthFormat == DEPTH6_NONE) {
+            if (test || write) {
+                fault("a depth test or write with no depth buffer (RB_DEPTH_BUFFER_INFO DEPTH6_NONE)");
+                return false;
+            }
+        } else {
+            if (depthFormat != DEPTH6_32 || fieldOf(reg(REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO), A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK, 0) != depthFormat) {
+                fault(text("depth format %llu in RB_DEPTH_BUFFER_INFO and %llu in GRAS_SU_DEPTH_BUFFER_INFO: DEPTH6_32 in both is what this GPU model runs", depthFormat,
+                           fieldOf(reg(REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO), A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK, 0)));
+                return false;
+            }
+            for (uint32_t r : {REG_A6XX_RB_DEPTH_BUFFER_INFO, REG_A6XX_RB_DEPTH_BUFFER_PITCH, REG_A6XX_RB_DEPTH_BUFFER_BASE, REG_A6XX_RB_DEPTH_CNTL, REG_A6XX_GRAS_SU_DEPTH_CNTL}) {
+                if (written_.count(r) == 0) {
+                    fault(text("depth register %#llx not written in this submission: the draw would test against the last owner's depth", r));
+                    return false;
+                }
+            }
+            const uint64_t pitch = uint64_t(fieldOf(reg(REG_A6XX_RB_DEPTH_BUFFER_PITCH), A6XX_RB_DEPTH_BUFFER_PITCH__MASK, A6XX_RB_DEPTH_BUFFER_PITCH__SHIFT))
+                                   << A6XX_RB_DEPTH_BUFFER_PITCH__SCALE;
+            const uint64_t base = reg64(REG_A6XX_RB_DEPTH_BUFFER_BASE);
+            const uint32_t br = reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR);
+            const uint64_t width = (br & 0x3fff) + 1, rows = ((br >> 16 & 0x3fff) + 1 + 15) / 16 * 16;
+            if (base % 4096 != 0 || pitch % 256 != 0 || pitch < width * 4 || at(base, rows * pitch) == nullptr) {
+                fault(text("the depth buffer at %#llx with a pitch of %llu bytes, ", base, pitch) +
+                      text("%llu rows: not 4096-aligned, not a multiple of 256, narrower than the window, or outside every buffer", rows));
+                return false;
+            }
+            if (test != ((reg(REG_A6XX_GRAS_SU_DEPTH_CNTL) & A6XX_GRAS_SU_DEPTH_CNTL_Z_TEST_ENABLE) != 0) || (write && !test)) {
+                fault(text("RB_DEPTH_CNTL %#llx and GRAS_SU_DEPTH_CNTL %#llx: the test enable must agree, and a write needs the test", depthCntl,
+                           reg(REG_A6XX_GRAS_SU_DEPTH_CNTL)));
+                return false;
+            }
+            if (write) drawsWithoutDepthFlush_++;
+            d.depthBase = base;
+        }
+        d.depthCntl = depthCntl;
     }
     // the scissors inside the window
     auto scissor = [&](uint32_t tlReg, uint32_t* out) {
@@ -1322,6 +1383,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     // 4-word form with an address, freedreno_gpu_event.h:60-85 needs_seqno) and then the cache flush
                     uint32_t ev = fieldOf(p[0], CP_EVENT_WRITE_0_EVENT__MASK, CP_EVENT_WRITE_0_EVENT__SHIFT);
                     if (ev == PC_CCU_FLUSH_COLOR_TS) drawsWithoutCcuFlush_ = 0;
+                    if (ev == PC_CCU_FLUSH_DEPTH_TS) drawsWithoutDepthFlush_ = 0;
                     if (ev == CACHE_FLUSH_TS) drawsWithoutCacheFlush_ = 0;
                 }
                 break;
@@ -1421,7 +1483,7 @@ void FakeGpu::run(const Job& job) {
     vs_ = StageLoads{};
     fs_ = StageLoads{};
     passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = false;
-    drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = 0;
+    drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = drawsWithoutDepthFlush_ = 0;
     written_.clear();
     bool ok = execute(job.address, job.words, 0);
     if (ok && drawsInSubmission_ != 0) {
@@ -1430,6 +1492,9 @@ void FakeGpu::run(const Job& job) {
         // CACHE_FLUSH_TS: a stream that draws and ends without both would complete with the target unchanged
         if (drawsWithoutCcuFlush_ != 0) {
             fault("the colour stays in the CCU: no PC_CCU_FLUSH_COLOR_TS (4-word) after the draw");
+            ok = false;
+        } else if (drawsWithoutDepthFlush_ != 0) {
+            fault("the depth stays in the CCU: no PC_CCU_FLUSH_DEPTH_TS (4-word) after a draw that writes depth");
             ok = false;
         } else if (drawsWithoutCacheFlush_ != 0) {
             fault("the colour may stay in the cache: no CACHE_FLUSH_TS (4-word) after the draw");

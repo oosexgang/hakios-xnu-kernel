@@ -517,6 +517,10 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
         rp.load = LoadAction(pass->load_action);
         rp.store = StoreAction(pass->store_action);
         for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
+        rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
+        rp.depthLoad = LoadAction(pass->depth_load_action);
+        rp.depthStore = StoreAction(pass->depth_store_action);
+        rp.clearDepth = pass->clear_depth;
     }
     Draw d;
     d.primitive = Primitive(primitive);
@@ -534,6 +538,7 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
     }
     if (pass != nullptr) {
         for (int i = 0; i < 4; i++) d.blendColor[i] = pass->blend_color[i];
+        if (pass->depth_state_set) d.depth = DepthState{pass->depth_compare, pass->depth_write != 0};
     }
     if (!cb->cb->draw(p->program->program, rp, d, vsb, fsb)) {
         failed(cb->cb->error());
@@ -545,6 +550,7 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
     // the target's memory and object, and the program's words, live until the GPU is done, whatever the caller frees meanwhile
     cb->cb->keep(target->buffer());
     cb->cb->keepAlive(pass->color0->texture);
+    if (pass->depth != nullptr) cb->cb->keepAlive(pass->depth->texture);
     cb->cb->keepAlive(p->program);
     for (unsigned i = 0; i < fsTextureCount; i++) {
         if (fsTextures != nullptr && fsTextures[i] != nullptr) cb->cb->keepAlive(fsTextures[i]->texture);   // the draw keeps the memory already
@@ -560,12 +566,17 @@ int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_
         rp.load = LoadAction(pass->load_action);
         rp.store = StoreAction(pass->store_action);
         for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
+        rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
+        rp.depthLoad = LoadAction(pass->depth_load_action);
+        rp.depthStore = StoreAction(pass->depth_store_action);
+        rp.clearDepth = pass->clear_depth;
     }
     if (!cb->cb->clear(rp)) {
         failed(cb->cb->error());
         return -1;
     }
     cb->cb->keepAlive(pass->color0->texture);
+    if (pass->depth != nullptr) cb->cb->keepAlive(pass->depth->texture);
     return 0;
 }
 

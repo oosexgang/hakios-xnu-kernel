@@ -16,7 +16,7 @@ bool refuse(std::string* why, const std::string& text) {
     return false;
 }
 
-// The eleven formats served, each with what fd6_format_table.c says of it: the .tex column (which is also the .rb one
+// The twelve formats served, each with what fd6_format_table.c says of it: the .tex column (which is also the .rb one
 // for every format here, so one FMT serves the sampled and the storage descriptor), the swap (fd6_pipe2swap: WXYZ for
 // the BGRA pair at :174, :176; WZYX for the rest), and whether it has alpha (fdl6_format_swiz reads W as ONE without
 // one, fd6_view.c:117-120). The sRGB pair is the UNORM format plus TEX_CONST_0_SRGB (:165, :176). The element class
@@ -33,6 +33,9 @@ constexpr FormatInfo kFormats[] = {
     {PixelFormat::kRGBA16Float, FMT6_16_16_16_16_FLOAT, 8, WZYX, true, false, kElemFloat, "RGBA16Float"},
     {PixelFormat::kRGBA32Uint, FMT6_32_32_32_32_UINT, 16, WZYX, true, false, kElemUint, "RGBA32Uint"},
     {PixelFormat::kRGBA32Float, FMT6_32_32_32_32_FLOAT, 16, WZYX, true, false, kElemFloat, "RGBA32Float"},
+    // Z32_FLOAT is FMT6_32_FLOAT to the TP and the 2D engine (fd6_format_table.c:330 VT(Z32_FLOAT, 32_FLOAT, WZYX)) and
+    // DEPTH6_32 to the RB (fd6_pipe2depth)
+    {PixelFormat::kDepth32Float, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float", true},
 };
 
 const char* typeName(TextureType t) {
@@ -82,6 +85,14 @@ uint64_t texturePitch(const FormatInfo& format, uint32_t width) {
 }
 
 uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height) {
+    if (format.depth) {
+        // "Linear D/S is not supported by HW" (fd6_layout.c:157-164): a depth format is laid out TILE6_3 on every level, its
+        // rows counted to the tiled height alignment of 16 for cpp 4 (fdl6_tile_alignment, :81-95; the pitch is
+        // texturePitch's, the same 64 * cpp), the layer 4096-aligned, and so is the base (base_align, :102-104: the
+        // buffer is whole pages)
+        uint64_t rows = (uint64_t(height) + 15) / 16 * 16;
+        return (rows * texturePitch(format, width) + 4095) / 4096 * 4096;
+    }
     return layerBytes2d(height, texturePitch(format, width));
 }
 
@@ -92,7 +103,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     }
     const FormatInfo* info = formatInfo(desc.format);
     if (info == nullptr) {
-        refuse(why, "pixel format " + n(uint32_t(desc.format)) + ": not one of the eleven served (texture.hpp: PixelFormat)");
+        refuse(why, "pixel format " + n(uint32_t(desc.format)) + ": not one of the twelve served (texture.hpp: PixelFormat)");
         return nullptr;
     }
     // TEX_CONST_1's WIDTH and HEIGHT are 15 bits each (a6xx.hpp: A6XX_TEX_CONST_1_WIDTH__MASK)
@@ -105,6 +116,12 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     // as fdl6_view_init does for both views, fd6_view.c:232-250 and 408-413); what differs is only who writes it
     if ((desc.usage & ~(kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget)) != 0) {
         refuse(why, "texture usage " + n(desc.usage) + " has bits other than shader read (1), shader write (2) and render target (4): not served");
+        return nullptr;
+    }
+    if (info->depth && desc.usage != kTextureUsageRenderTarget) {
+        // the tiled layout has no reader here yet: a depth texture is an attachment the RB writes and reads, nothing else
+        refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) +
+                        ": a depth texture is tiled (TILE6_3) and is served as a render target alone (4), not sampled or stored");
         return nullptr;
     }
     uint64_t pitch = texturePitch(*info, desc.width);
@@ -132,6 +149,9 @@ bool regionFits(const Texture& t, uint32_t x, uint32_t y, uint32_t w, uint32_t h
 }  // namespace
 
 bool Texture::replace(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
+    if (info_->depth) {
+        return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
+    }
     if (!regionFits(*this, x, y, w, h, bytesPerRow, why)) {
         return false;
     }
@@ -146,6 +166,9 @@ bool Texture::replace(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void
 }
 
 bool Texture::read(uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const {
+    if (info_->depth) {
+        return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
+    }
     if (!regionFits(*this, x, y, w, h, bytesPerRow, why)) {
         return false;
     }

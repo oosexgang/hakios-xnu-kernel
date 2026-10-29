@@ -219,6 +219,21 @@ struct RenderPass {
     LoadAction load = LoadAction::kLoad;         // kClear: the 2D engine fills the whole target with clearColor before the draw (turnip's sysmem clear)
     StoreAction store = StoreAction::kStore;
     double clearColor[4] = {0, 0, 0, 0};         // MTLClearColor, RGBA whatever the format's memory order; whole numbers for an integer target
+    // the depth attachment (MTLRenderPassDepthAttachmentDescriptor): a kDepth32Float texture or none; Metal's defaults
+    // are DontCare / DontCare / 1.0. In sysmem Load and DontCare are the same, and the depth is always flushed to memory
+    // at the pass's end (each draw is a pass of its own here, so the next one must find it there)
+    const Texture* depth = nullptr;
+    LoadAction depthLoad = LoadAction::kDontCare;
+    StoreAction depthStore = StoreAction::kDontCare;
+    double clearDepth = 1.0;
+};
+
+// MTLDepthStencilDescriptor's depth half, the encoder's state each draw reads: COMPARE an MTLCompareFunction (Never 0,
+// Less 1, Equal 2, LessEqual 3, Greater 4, NotEqual 5, GreaterEqual 6, Always 7 -- adreno_compare_func's numbering),
+// WRITE depthWriteEnabled. Metal's defaults (Always, NO) are a depth test that does nothing.
+struct DepthState {
+    uint32_t compare = 7;
+    bool write = false;
 };
 
 struct Draw {
@@ -229,6 +244,7 @@ struct Draw {
     Viewport viewport{};
     Scissor scissor{};                           // width 0: the whole target
     float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors
+    DepthState depth{};                          // -setDepthStencilState: (refused with a depth test and no depth attachment)
 };
 
 namespace render {
@@ -239,6 +255,12 @@ constexpr uint32_t kTableBytes = 8192;
 constexpr uint32_t kTableTimestampsAt = 0;        // the CCU flush's and the cache flush's values: 4 words
 constexpr uint32_t kTableClearFlushAt = 12;       // ...the fourth: the CCU flush after a Clear's fill, which writes kClearFlushValue
 constexpr uint32_t kClearFlushValue = 4;
+constexpr uint32_t kTableDepthFlushAt = 16;       // the depth CCU flush the tail writes when a depth attachment is bound, kDepthFlushValue
+constexpr uint32_t kDepthFlushValue = 5;
+constexpr uint32_t kTableDepthClearFlushAt = 20;  // the depth CCU flush after a depth Clear's fill, kDepthClearFlushValue
+constexpr uint32_t kDepthClearFlushValue = 6;
+constexpr uint32_t kTableDepthClearDepthFlushAt = 24;   // ...and the depth CCU's flush after it, kDepthClearDepthFlushValue
+constexpr uint32_t kDepthClearDepthFlushValue = 7;
 constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
 constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses
 constexpr uint32_t kTableVsAt = 1024;             // step two: the VS's descriptor tables (UBO, IBO, TEX, SAMP)
@@ -279,6 +301,7 @@ struct Options {
     bool blendZsa = true;        // SP/RB_BLEND_CNTL, RB_MRT_CONTROL[0] 0x780, RB_MRT_BLEND_CONTROL[0] 0, blend colour, depth/stencil/alpha zeros, RB_Z_BOUNDS
     bool visCullUse = false;     // CP_DRAW_INDX_OFFSET with USE_VISIBILITY (turnip's and fd6's pipelines) instead of r3d's IGNORE_VISIBILITY
     bool tailCcuFlush = true;    // CP_WAIT_FOR_IDLE, PC_CCU_FLUSH_COLOR_TS writing a value + CP_WAIT_REG_MEM for it
+    bool tailDepthFlush = true;  // with a depth attachment: PC_CCU_FLUSH_DEPTH_TS writing a value + the wait for it
     bool tailLrzFlush = true;    // LRZ_FLUSH, 1 word
     bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail
     bool tailRbDone = false;     // RB_DONE_TS + wait: in neither witness's render end; here for the bisect

@@ -42,6 +42,7 @@ enum class PixelFormat : uint32_t {
     kRGBA16Float = 115,
     kRGBA32Uint = 123,
     kRGBA32Float = 125,
+    kDepth32Float = 252,   // a depth attachment only: tiled (TILE6_3), since the hardware has no linear depth buffer
 };
 
 // MTLTextureType (MTLTexture.h). Only k2D is served; the others are named here so a refusal can name them back.
@@ -61,6 +62,7 @@ struct FormatInfo {
     bool srgb;                 // TEX_CONST_0.SRGB
     KernelElement element;     // the class a kernel may address it as: float for unorm/snorm/float/sRGB, uint for *Uint, int for *Sint
     const char* name;          // Metal's name, for messages
+    bool depth = false;        // a depth format: TILE6_3, render-target usage alone, no CPU access (texture.cpp says why)
 };
 // nullptr when the format is not served
 const FormatInfo* formatInfo(PixelFormat format);

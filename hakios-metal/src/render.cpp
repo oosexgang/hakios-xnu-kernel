@@ -562,7 +562,7 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
 // tu_clear_sysmem_attachment does after it (:4480-4489): the colour CCU cleaned (PC_CCU_FLUSH_COLOR_TS in the
 // 4-word form, waited for, as the tail does it) and invalidated, a WFI -- so that the draw's colour writes, which go
 // through the same CCU, start after the fill landed.
-void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts) {
+void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile) {
     const FormatInfo& f = target.info();
     const uint32_t W = target.width(), H = target.height();
     const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
@@ -572,13 +572,34 @@ void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c
     reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(f.fmt6, f.element == kElemInt, f.element == kElemUint, f.srgb));
     regs(stream, REG_A6XX_GRAS_2D_DST_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
     regs(stream, REG_A6XX_RB_2D_SRC_SOLID_C0, {c.value[0], c.value[1], c.value[2], c.value[3]});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(f.fmt6, TILE6_LINEAR, f.swap, f.srgb), uint32_t(target.gpuAddress()), uint32_t(target.gpuAddress() >> 32),
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(f.fmt6, tile, f.swap, f.srgb), uint32_t(target.gpuAddress()), uint32_t(target.gpuAddress() >> 32),
                                            A6XX_RB_2D_DST_PITCH(uint32_t(target.bytesPerRow()))});
     regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
+}
+
+void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts) {
+    fillStream(stream, target, c, TILE6_LINEAR);
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, kClearFlushValue, false);
     waitForWord(stream, ts, kClearFlushValue);
     event(stream, PC_CCU_INVALIDATE_COLOR);
+    stream.waitForIdle();
+}
+
+// A depth Clear: the same fill into the depth texture as Z32_FLOAT is cleared (r2d_clear_value's R2D_FLOAT32 branch:
+// the depth's float bits in SOLID_C0; the 2D engine sees FMT6_32_FLOAT, TILE6_3 as the image is laid out), then what
+// tu_clear_sysmem_attachment does after a depth clear (tu_clear_blit.cc:4480-4483): the colour CCU cleaned -- the 2D
+// engine writes through it -- and the depth CCU cleaned and invalidated, so the draw's depth test reads the fill
+void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDepth, uint64_t table) {
+    ClearWords c{};
+    c.ifmt = R2D_FLOAT32;
+    c.value[0] = fui(float(clearDepth));
+    fillStream(stream, depth, c, TILE6_3);
+    eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableDepthClearFlushAt, kDepthClearFlushValue, false);
+    waitForWord(stream, table + kTableDepthClearFlushAt, kDepthClearFlushValue);
+    eventTimestamp(stream, PC_CCU_FLUSH_DEPTH_TS, table + kTableDepthClearDepthFlushAt, kDepthClearDepthFlushValue, false);
+    waitForWord(stream, table + kTableDepthClearDepthFlushAt, kDepthClearDepthFlushValue);
+    event(stream, PC_CCU_INVALIDATE_DEPTH);
     stream.waitForIdle();
 }
 
@@ -611,12 +632,41 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
     if (pass.store != StoreAction::kStore) {
         return refuse(why, "store action " + n(uint32_t(pass.store)) + ": only Store (1) is served");
     }
+    if (format.depth) {
+        return refuse(why, std::string("a ") + format.name + " texture as colour attachment 0: a depth format is the depth attachment's");
+    }
+    if (pass.depth != nullptr) {
+        const Texture& d = *pass.depth;
+        if (!d.info().depth) {
+            return refuse(why, std::string("a ") + d.info().name + " texture as the depth attachment: Depth32Float (252) is served");
+        }
+        if ((d.usage() & kTextureUsageRenderTarget) == 0) {
+            return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
+        }
+        if (d.width() != target.width() || d.height() != target.height()) {
+            return refuse(why, "a " + n(d.width()) + " x " + n(d.height()) + " depth attachment beside a " + n(target.width()) + " x " + n(target.height()) +
+                                   " colour attachment: Metal asks for the same size");
+        }
+        if ((d.bytesPerRow() >> A6XX_RB_DEPTH_BUFFER_PITCH__SCALE) > A6XX_RB_DEPTH_BUFFER_PITCH__MASK || d.buffer()->length() >= (1ull << 32)) {
+            return refuse(why, "the depth texture's pitch of " + n(d.bytesPerRow()) + " bytes or its " + n(d.buffer()->length()) +
+                                   " bytes do not fit RB_DEPTH_BUFFER_PITCH / ARRAY_PITCH");
+        }
+        if (pass.depthLoad != LoadAction::kLoad && pass.depthLoad != LoadAction::kDontCare && pass.depthLoad != LoadAction::kClear) {
+            return refuse(why, "depth load action " + n(uint32_t(pass.depthLoad)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
+        }
+        if (pass.depthStore != StoreAction::kStore && pass.depthStore != StoreAction::kDontCare) {
+            return refuse(why, "depth store action " + n(uint32_t(pass.depthStore)) + ": DontCare (0) and Store (1) are served");
+        }
+        if (pass.depthLoad == LoadAction::kClear && !(pass.clearDepth >= 0.0 && pass.clearDepth <= 1.0)) {
+            return refuse(why, "a clear depth of " + std::to_string(pass.clearDepth) + ": Metal's clearDepth is 0 to 1");
+        }
+    }
     return true;
 }
 
 // the table's words the stream addresses, zeroed before the GPU sees them
 void tableStart(uint8_t* tableCpu) {
-    memset(tableCpu + kTableTimestampsAt, 0, 16);          // the tail's values: 0 until the events write them
+    memset(tableCpu + kTableTimestampsAt, 0, 32);          // the tail's and the clears' values: 0 until the events write them
     memset(tableCpu + kTableBorderColorAt, 0, 128);        // border colour entry 0, transparent black (the batch start points the TP here)
     memset(tableCpu + kTableHoleAt, 0, 64);
 }
@@ -691,7 +741,7 @@ void passStart(pm4::Stream& stream, uint32_t W, uint32_t H, uint64_t table, cons
     }
 }
 
-void passTail(pm4::Stream& stream, uint64_t table, const Options& o) {
+void passTail(pm4::Stream& stream, uint64_t table, const Options& o, bool depth = false) {
     // 19. the tail: a WFI (as compute's), then what puts the colour in memory -- PC_CCU_FLUSH_COLOR_TS as a 4-word event
     // writing 1 (turnip's form, tu_cmd_buffer.cc:48-70, with a value where turnip writes a dummy) and a wait for it
     // (neither witness waits: both let the kernel's fence follow; the kernel's own fence here has no CCU flush,
@@ -704,6 +754,12 @@ void passTail(pm4::Stream& stream, uint64_t table, const Options& o) {
         if (o.tailCcuFlush) {
             eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, 1, o.tailTimestampBit);
             waitForWord(stream, ts, 1);
+        }
+        // with a depth attachment its CCU too (tu6_emit_flushes' FD_CCU_CLEAN_DEPTH, the 4-word PC_CCU_FLUSH_DEPTH_TS on
+        // A6XX): every draw is a pass of its own here, so the next draw's depth test must find this one's depth in memory
+        if (depth && o.tailDepthFlush) {
+            eventTimestamp(stream, PC_CCU_FLUSH_DEPTH_TS, table + kTableDepthFlushAt, kDepthFlushValue, false);
+            waitForWord(stream, table + kTableDepthFlushAt, kDepthFlushValue);
         }
         if (o.tailLrzFlush) {
             event(stream, LRZ_FLUSH);
@@ -831,6 +887,14 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
             return refuse(why, "a blend colour with a non-finite channel (channel " + n(uint32_t(i)) + ")");
         }
     }
+    // the depth test is on when it can change anything: a compare other than Always, or a write (turnip's test_enable)
+    if (draw.depth.compare > 7) {
+        return refuse(why, "depth compare function " + n(draw.depth.compare) + ": MTLCompareFunction runs Never 0 to Always 7");
+    }
+    const bool depthTest = draw.depth.compare != 7 || draw.depth.write;
+    if (depthTest && pass.depth == nullptr) {
+        return refuse(why, "a depth test (compare " + n(draw.depth.compare) + (draw.depth.write ? ", write" : "") + ") with no depth attachment");
+    }
     // --- the draw ---
     pc_di_primtype prim = DI_PT_TRILIST;
     switch (draw.primitive) {
@@ -886,15 +950,32 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     const uint32_t* ij = fs.ijRegid;
 
     passStart(stream, W, H, table, o);
-    // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it
+    // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it; the
+    // depth attachment's Clear after it (tu_clear_sysmem_attachment, each attachment in turn)
     if (pass.load == LoadAction::kClear) {
         clearStream(stream, target, clear, table + kTableClearFlushAt);
     }
+    if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
+        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+    }
     // 4. no depth attachment (tu6_emit_zs :415-433; fd6 emit_zs(NULL), fd6_gmem.cc:231-247): RB_DEPTH_BUFFER_INFO
     // DEPTH6_NONE with its pitches and bases 0, GRAS_SU_DEPTH_BUFFER_INFO 0, RB_STENCIL_INFO 0
-    if (o.zsNone) {
+    // With one (tu6_emit_zs :437-475; fd6 emit_zs, fd6_gmem.cc:180-229): DEPTH6_32, the texture's pitch and layer size,
+    // its base, BASE_GMEM 0 in sysmem, the same format in GRAS_SU_DEPTH_BUFFER_INFO, the flag buffer 0 (no UBWC), no
+    // stencil. A6XX's RB_DEPTH_BUFFER_INFO has no tile field: the RB reads and writes depth TILE6_3, the only layout the
+    // hardware has for it (fd6_layout.c:157-164), which is how texture.cpp lays a Depth32Float texture out.
+    if (o.zsNone && pass.depth == nullptr) {
         regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO, {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_NONE), 0, 0, 0, 0, 0});
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_NONE));
+        reg(stream, REG_A6XX_RB_STENCIL_INFO, 0);
+    }
+    if (pass.depth != nullptr) {
+        const Texture& d = *pass.depth;
+        regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO,
+             {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.bytesPerRow())),
+              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.buffer()->length())), uint32_t(d.gpuAddress()), uint32_t(d.gpuAddress() >> 32), 0});
+        reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32));
+        regs(stream, REG_A6XX_RB_DEPTH_FLAG_BUFFER_BASE, {0, 0, 0});
         reg(stream, REG_A6XX_RB_STENCIL_INFO, 0);
     }
     // 5. the colour target (tu6_emit_mrt, tu_cmd_buffer.cc:482-576; r3d_dst, tu_clear_blit.cc:1380-1408; fd6 emit_mrt,
@@ -1174,9 +1255,17 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), {blend.mrtControl, blend.mrtBlendControl});
         // the blend constants as floats (tu6_emit_blend_constants), RB_ALPHA_CONTROL 0 after them
         regs(stream, REG_A6XX_RB_BLEND_RED_F32, {fui(draw.blendColor[0]), fui(draw.blendColor[1]), fui(draw.blendColor[2]), fui(draw.blendColor[3]), 0});
-        regs(stream, REG_A6XX_RB_DEPTH_PLANE_CNTL, {A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z), 0});   // ..., RB_DEPTH_CNTL
-        regs(stream, REG_A6XX_GRAS_SU_DEPTH_CNTL, {0, 0});   // ..., GRAS_SU_STENCIL_CNTL
-        reg(stream, REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z));
+        // the depth test (tu6_emit_depth_stencil, tu_pipeline.cc:3300-3332: Z_READ with the test, Z_WRITE only with it)
+        // and the Z mode (tu6_build_depth_plane_z_mode, tu_cmd_buffer.cc:5538-5583: LATE_Z with the test off or a kill
+        // that writes depth, EARLY_Z otherwise); with no depth attachment r3d's zeros and EARLY_Z, as measured
+        const a6xx_ztest_mode zmode = pass.depth == nullptr ? A6XX_EARLY_Z : !depthTest || (fs.hasKill && draw.depth.write) ? A6XX_LATE_Z : A6XX_EARLY_Z;
+        const uint32_t depthCntl = pass.depth == nullptr ? 0u
+                                   : (depthTest ? A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE | A6XX_RB_DEPTH_CNTL_Z_READ_ENABLE : 0u) |
+                                         (depthTest && draw.depth.write ? A6XX_RB_DEPTH_CNTL_Z_WRITE_ENABLE : 0u) |
+                                         A6XX_RB_DEPTH_CNTL_ZFUNC(adreno_compare_func(draw.depth.compare));
+        regs(stream, REG_A6XX_RB_DEPTH_PLANE_CNTL, {A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(zmode), depthCntl});   // ..., RB_DEPTH_CNTL
+        regs(stream, REG_A6XX_GRAS_SU_DEPTH_CNTL, {depthTest && pass.depth != nullptr ? A6XX_GRAS_SU_DEPTH_CNTL_Z_TEST_ENABLE : 0u, 0});   // ..., GRAS_SU_STENCIL_CNTL
+        reg(stream, REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(zmode));
         reg(stream, REG_A6XX_RB_STENCIL_CONTROL, 0);
         regs(stream, REG_A6XX_RB_STENCILREF, {0, 0, 0});   // ..., RB_STENCILMASK, RB_STENCILWRMASK
         regs(stream, REG_A6XX_RB_Z_BOUNDS_MIN, {fui(0.0f), fui(1.0f)});
@@ -1188,7 +1277,7 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), 1, draw.vertexCount};
         stream.packet(CP_DRAW_INDX_OFFSET, w, 3);
     }
-    passTail(stream, table, o);
+    passTail(stream, table, o, pass.depth != nullptr);
     return true;
 }
 
@@ -1196,18 +1285,24 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     if (!checkTarget(pass, why)) {
         return false;
     }
-    if (pass.load != LoadAction::kClear) {
+    const bool depthClear = pass.depth != nullptr && pass.depthLoad == LoadAction::kClear;
+    if (pass.load != LoadAction::kClear && !depthClear) {
         return refuse(why, "a pass without a draw and with load action " + n(uint32_t(pass.load)) + ": only a Clear writes anything then");
     }
     const Texture& target = *pass.color0;
     ClearWords clear{};
-    if (!clearWords(target.info(), pass.clearColor, &clear, why)) {
+    if (pass.load == LoadAction::kClear && !clearWords(target.info(), pass.clearColor, &clear, why)) {
         return false;
     }
     tableStart(tableCpu);
     passStart(stream, target.width(), target.height(), table, o);
-    clearStream(stream, target, clear, table + kTableClearFlushAt);
-    passTail(stream, table, o);
+    if (pass.load == LoadAction::kClear) {
+        clearStream(stream, target, clear, table + kTableClearFlushAt);
+    }
+    if (depthClear) {
+        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+    }
+    passTail(stream, table, o, pass.depth != nullptr);
     return true;
 }
 
@@ -1264,6 +1359,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     use(*table, true);
     use(*pass.color0->buffer(), true);
     keep(pass.color0->buffer());
+    if (pass.depth != nullptr) {
+        use(*pass.depth->buffer(), true);
+        keep(pass.depth->buffer());
+    }
     for (const Bindings* b : {&vsBindings, &fsBindings}) {
         for (const Binding& x : b->buffers) {
             if (x.buffer != nullptr) {
@@ -1301,6 +1400,10 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
     use(*table, true);
     use(*pass.color0->buffer(), true);
     keep(pass.color0->buffer());
+    if (pass.depth != nullptr) {
+        use(*pass.depth->buffer(), true);
+        keep(pass.depth->buffer());
+    }
     keep(table);
     return true;
 }
