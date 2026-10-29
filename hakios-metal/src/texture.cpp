@@ -26,6 +26,10 @@ constexpr FormatInfo kFormats[] = {
     // swizzle reads (0, 0, 0, a) as Metal's A8Unorm does (fd6_format_table.c:53 _TC(A8_UNORM, A8_UNORM, WZYX))
     {PixelFormat::kA8Unorm, FMT6_A8_UNORM, 1, WZYX, true, false, kElemFloat, "A8Unorm"},
     {PixelFormat::kR8Unorm, FMT6_8_UNORM, 1, WZYX, false, false, kElemFloat, "R8Unorm"},
+    // the two packed 16-bit formats: Metal names their channels from the low bits up, as Gallium does, so they are
+    // Gallium's B5G6R5_UNORM and B5G5R5A1_UNORM, both WXYZ to the TP and the RB (fd6_format_table.c:108, 111)
+    {PixelFormat::kB5G6R5Unorm, FMT6_5_6_5_UNORM, 2, WXYZ, false, false, kElemFloat, "B5G6R5Unorm"},
+    {PixelFormat::kBGR5A1Unorm, FMT6_5_5_5_1_UNORM, 2, WXYZ, true, false, kElemFloat, "BGR5A1Unorm"},
     {PixelFormat::kR16Float, FMT6_16_FLOAT, 2, WZYX, false, false, kElemFloat, "R16Float"},
     {PixelFormat::kRG8Unorm, FMT6_8_8_UNORM, 2, WZYX, false, false, kElemFloat, "RG8Unorm"},
     {PixelFormat::kRG16Float, FMT6_16_16_FLOAT, 4, WZYX, false, false, kElemFloat, "RG16Float"},

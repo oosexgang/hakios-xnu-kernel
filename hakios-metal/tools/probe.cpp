@@ -2337,6 +2337,12 @@ int main(int argc, char** argv) {
                 {PixelFormat::kR16Float, 2, {0x00, 0x34}, {0x00, 0x34}, 0xff000040u, "R16Float"},
                 {PixelFormat::kRG16Float, 4, {0x00, 0x34, 0x00, 0x38}, {0x00, 0x34, 0x00, 0x3a}, 0xff00bf40u, "RG16Float"},
                 {PixelFormat::kRG32Float, 8, {0, 0, 0x80, 0x3e, 0, 0, 0, 0x3f}, {0, 0, 0x80, 0x3f, 0, 0, 0x80, 0x3e}, 0xff0040ffu, "RG32Float"},
+                // 9v2, the packed 16-bit pair, channels from the low bits (B first): the Clear's 8-bit values 40 80 bf
+                // (0.25, 0.5, 0.75) cut to 5 bits are R 8, G 16, B 23, to 6 bits G 32 -- the same by rounding and by
+                // shifting, so the layout alone decides: BGR5A1 0xa217, B5G6R5 0x4417. The texels are one full channel
+                // each, red and alpha (0xfc00) and green (0x07e0), which read back as ff 00 00 ff and 00 ff 00 ff.
+                {PixelFormat::kBGR5A1Unorm, 2, {0x17, 0xa2}, {0x00, 0xfc}, 0xff0000ffu, "BGR5A1Unorm"},
+                {PixelFormat::kB5G6R5Unorm, 2, {0x17, 0x44}, {0xe0, 0x07}, 0xff00ff00u, "B5G6R5Unorm"},
             };
             const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
             const Program flatProg{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
@@ -2422,6 +2428,10 @@ int main(int argc, char** argv) {
                 const float r = 32.0f / 255.0f, g = 64.0f / 255.0f;
                 if (c.format == PixelFormat::kA8Unorm) {
                     drawn[0] = 0xff;
+                } else if (c.format == PixelFormat::kBGR5A1Unorm || c.format == PixelFormat::kB5G6R5Unorm) {
+                    // the RB rounds 0x20 0x40 0x80 / 255 to R 4, G 8 (6 bits: 16), B 16: 0x9110 and 0x2210
+                    const uint16_t v = c.format == PixelFormat::kBGR5A1Unorm ? 0x9110 : 0x2210;
+                    drawn[0] = uint8_t(v), drawn[1] = uint8_t(v >> 8);
                 } else if (c.format == PixelFormat::kRG32Float) {
                     memcpy(drawn, &r, 4);
                     memcpy(drawn + 4, &g, 4);
@@ -2429,7 +2439,9 @@ int main(int argc, char** argv) {
                     const uint32_t hr = render::halfBitsOf(r), hg = render::halfBitsOf(g);
                     drawn[0] = uint8_t(hr), drawn[1] = uint8_t(hr >> 8), drawn[2] = uint8_t(hg), drawn[3] = uint8_t(hg >> 8);
                 }
-                const uint32_t drew = countBytes(*ft, drawn, c.format == PixelFormat::kRG32Float || c.format == PixelFormat::kA8Unorm ? 0 : 1);
+                const bool exact = c.format == PixelFormat::kRG32Float || c.format == PixelFormat::kA8Unorm || c.format == PixelFormat::kBGR5A1Unorm ||
+                                   c.format == PixelFormat::kB5G6R5Unorm;
+                const uint32_t drew = countBytes(*ft, drawn, exact ? 0 : 1);
                 report(completed(*cb3) && drew == 4096, std::string("format ") + c.name + ", tri_flat drawn into it: " + std::to_string(drew) +
                                                             " of 4096 pixels the colour as the format keeps it" + status(*cb3, gpu));
             }

@@ -32,6 +32,8 @@ namespace hakios::metal {
 // The MTLPixelFormat values served (MTLPixelFormat.h); every other value is refused by name at creation.
 enum class PixelFormat : uint32_t {
     kA8Unorm = 1,
+    kB5G6R5Unorm = 40,     // packed in 16 bits, named from the low bits as Gallium names them: B in 0..4, R in 11..15
+    kBGR5A1Unorm = 43,     // B in 0..4, G 5..9, R 10..14, A 15 (CoreAnimation backs some layers with it)
     kR8Unorm = 10,
     kR16Float = 25,
     kRG8Unorm = 30,

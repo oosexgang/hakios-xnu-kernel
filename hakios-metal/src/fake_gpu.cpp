@@ -57,6 +57,8 @@ uint32_t bytesPerPixel(uint32_t fmt) {
     case a6xx::FMT6_8_UNORM: return 1;
     case a6xx::FMT6_16_FLOAT: return 2;
     case a6xx::FMT6_8_8_UNORM: return 2;
+    case a6xx::FMT6_5_6_5_UNORM: return 2;
+    case a6xx::FMT6_5_5_5_1_UNORM: return 2;
     case a6xx::FMT6_16_16_FLOAT: return 4;
     case a6xx::FMT6_32_32_FLOAT: return 8;
     case a6xx::FMT6_8_8_8_8_UNORM: return 4;
@@ -754,7 +756,9 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     const bool srgbIfmt = ifmt == R2D_UNORM8_SRGB;
     uint32_t want = 0;
     switch (fmt) {
-    case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: want = srgbIfmt ? uint32_t(R2D_UNORM8_SRGB) : uint32_t(R2D_UNORM8); break;
+    case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: case FMT6_5_6_5_UNORM: case FMT6_5_5_5_1_UNORM:
+        want = srgbIfmt ? uint32_t(R2D_UNORM8_SRGB) : uint32_t(R2D_UNORM8);
+        break;
     case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: want = R2D_FLOAT16; break;
     case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: want = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: want = R2D_INT32; break;
@@ -813,6 +817,22 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
         static const uint32_t rgba[4] = {0, 1, 2, 3}, bgra[4] = {2, 1, 0, 3};
         for (uint32_t i = 0; i < bpp; i++) pixel[i] = uint8_t(c[(swap == WXYZ ? bgra : rgba)[i]]);
         if (fmt == FMT6_A8_UNORM) pixel[0] = uint8_t(c[3]);   // the one channel is alpha: the fill's fourth word (as measured, probe 9v)
+        if (fmt == FMT6_5_6_5_UNORM || fmt == FMT6_5_5_5_1_UNORM) {
+            // packed from the low bits in the swap's order, each 8-bit value cut to the channel's width by rounding
+            // (probe 9v2 measures the layout: BGR5A1 cleared to red and alpha is 0xfc00)
+            static const uint32_t rgba[4] = {0, 1, 2, 3}, bgra[4] = {2, 1, 0, 3};
+            const uint32_t* order = swap == WXYZ ? bgra : rgba;
+            const uint32_t w565[3] = {5, 6, 5}, w5551[4] = {5, 5, 5, 1};
+            const uint32_t* widths = fmt == FMT6_5_6_5_UNORM ? w565 : w5551;
+            uint32_t v = 0, at = 0;
+            for (uint32_t i = 0; i < (fmt == FMT6_5_6_5_UNORM ? 3u : 4u); i++) {
+                const uint32_t max = (1u << widths[i]) - 1;
+                v |= ((c[order[i]] * max + 127) / 255) << at;
+                at += widths[i];
+            }
+            pixel[0] = uint8_t(v);
+            pixel[1] = uint8_t(v >> 8);
+        }
     } else if (ifmt == R2D_FLOAT16) {
         for (uint32_t i = 0; i < bpp / 2; i++) { uint16_t v = uint16_t(c[i]); memcpy(pixel + 2 * i, &v, 2); }
     } else {

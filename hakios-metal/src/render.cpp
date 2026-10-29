@@ -395,6 +395,7 @@ uint32_t channelsOf(const FormatInfo& f) {
     switch (f.fmt6) {
     case FMT6_8_UNORM: case FMT6_16_FLOAT: case FMT6_32_UINT: case FMT6_32_FLOAT: return 1;
     case FMT6_8_8_UNORM: case FMT6_16_16_FLOAT: case FMT6_32_32_FLOAT: return 2;
+    case FMT6_5_6_5_UNORM: return 3;
     default: return 4;
     }
 }
@@ -413,7 +414,9 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
         out->ifmt = R2D_UNORM8;
         out->value[3] = unorm8Of(float(colour[3]));
         return true;
-    case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM:
+    // (5- and 6-bit channels go through the 2D engine's 8-bit unorm too: turnip's format_to_ifmt picks by the red
+    // channel's size, 4, 5 and 8 alike, tu_clear_blit.cc:55-59)
+    case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: case FMT6_5_6_5_UNORM: case FMT6_5_5_5_1_UNORM:
         out->ifmt = f.srgb ? R2D_UNORM8_SRGB : R2D_UNORM8;
         for (uint32_t i = 0; i < channels; i++) {
             const float linear = float(colour[i]);
@@ -1776,7 +1779,9 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     }
     uint32_t ifmt;
     switch (df.fmt6) {
-    case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: ifmt = R2D_UNORM8; break;
+    case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: case FMT6_5_6_5_UNORM: case FMT6_5_5_5_1_UNORM:
+        ifmt = R2D_UNORM8;
+        break;
     case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: ifmt = R2D_FLOAT16; break;
     case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: ifmt = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: ifmt = R2D_INT32; break;

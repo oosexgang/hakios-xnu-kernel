@@ -86,6 +86,8 @@ enum a6xx_tile_mode : uint32_t {
 enum a6xx_format : uint32_t {
     FMT6_A8_UNORM = 2,             // a6xx.xml.h:63   A8Unorm: the TP returns (0, 0, 0, a) and the RB writes alpha (fd6_format_table.c:53 _TC)
     FMT6_8_UNORM = 3,              // a6xx.xml.h:64   R8Unorm
+    FMT6_5_5_5_1_UNORM = 10,       // a6xx.xml.h:69   BGR5A1Unorm with SWAP = WXYZ (fd6_format_table.c:111 _TC(B5G5R5A1_UNORM))
+    FMT6_5_6_5_UNORM = 14,         // a6xx.xml.h:71   B5G6R5Unorm with SWAP = WXYZ (fd6_format_table.c:108 _TC(B5G6R5_UNORM))
     FMT6_8_UINT = 5,               // a6xx.xml.h:66   a stencil plane (S8_UINT: fd6_format_table.c, the 2D engine's clear of it)
     FMT6_16_FLOAT = 23,            // a6xx.xml.h:79   R16Float (fd6_format_table.c:76 VTC)
     FMT6_8_8_UNORM = 15,           // a6xx.xml.h:72   RG8Unorm
