@@ -142,10 +142,25 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         // SP_CS_CONFIG.NSAMP is 5 bits (a6xx.hpp: A6XX_SP_CS_CONFIG_NSAMP__MASK) and field() masks silently: 32 would be written as 0
         return refuse(why, std::string(k.name) + ": numSamp " + n(k.numSamp) + " does not fit SP_CS_CONFIG.NSAMP's 5 bits (31 at most)");
     }
-    if (k.numUbos != 0) {
-        // an indexed `constant` load ir3 kept as an ldc from a UBO descriptor: nothing here binds a UBO table (no ST6_UBO
-        // load), so the ldc would read a descriptor nobody wrote and the kernel garbage it cannot tell from a sampler bug
-        return refuse(why, std::string(k.name) + " addresses " + n(k.numUbos) + " UBO descriptors that ir3 did not push to constants: not served yet");
+    // an indexed `constant` load ir3 kept as an ldc reads UBO descriptor n, Metal's [[buffer(n)]]: one per UBO ir3 counts,
+    // the bound buffer past its offset and its length in vec4 (fd6_emit_ubos, fd6_const.cc:266-296), each bound and
+    // starting on a vec4 -- the ldc would otherwise read a descriptor nobody wrote
+    std::vector<uint32_t> ubos;
+    if (k.numUbos > 31) {
+        return refuse(why, std::string(k.name) + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has 31");
+    }
+    for (uint32_t u = 0; u < k.numUbos; u++) {
+        if (u >= buffers.size() || buffers[u].buffer == nullptr) {
+            return refuse(why, std::string(k.name) + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+        }
+        const Binding& x = buffers[u];
+        if (x.offset % 16 != 0 || x.offset > x.buffer->length()) {
+            return refuse(why, std::string(k.name) + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 16 inside it (a UBO starts on a vec4)");
+        }
+        uint32_t d[2];
+        uboDescriptor(x.buffer->gpuAddress() + x.offset, uint32_t(std::min<uint64_t>((x.buffer->length() - x.offset + 15) / 16, kUboMaxVec4)), d);
+        ubos.push_back(d[0]);
+        ubos.push_back(d[1]);
     }
     if (k.numTextureSlots > kMaxTextureSlots || (k.samplerMask >> kMaxTextureSlots) != 0) {
         return refuse(why, std::string(k.name) + " names texture or sampler indices past " + n(kMaxTextureSlots - 1) + ": the tables hold " + n(kMaxTextureSlots));
@@ -393,6 +408,9 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     }
     for (const Range& r : ranges) {
         loadIndirect(stream, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
+    }
+    if (!ubos.empty()) {
+        loadDirect(stream, ST6_UBO, 0, uint32_t(ubos.size() / 2), ubos.data(), uint32_t(ubos.size()));
     }
     if (nibo != 0) {
         loadIndirect(stream, ST6_IBO, 0, nibo, table + kTableIbosAt);

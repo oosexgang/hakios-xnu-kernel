@@ -530,8 +530,8 @@ TEST(a_texture_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the
         k.numSamp = 32;
         CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill: numSamp 32 does not fit SP_CS_CONFIG.NSAMP's 5 bits (31 at most)"));
         k = texFillLike();
-        k.numUbos = 2;
-        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses 2 UBO descriptors that ir3 did not push to constants: not served yet"));
+        k.numUbos = 2;   // indexed constant buffers: UBO descriptors, refused here for want of the buffers
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill: no buffer bound at index 0 (a constant buffer it indexes)"));
         k = texCopyLike();
         k.numTextureSlots = 17;
         CHECK(has(refused(r, k, bind({}, {u32.get(), u32.get()})), "tex_copy names texture or sampler indices past 15: the tables hold 16"));
@@ -916,4 +916,51 @@ TEST(the_fake_refuses_a_zero_ibo_descriptor) {
     CHECK(cfg != size_t(-1));
     words[cfg] = (words[cfg] & ~(a6xx::A6XX_SP_CS_CONFIG_NTEX__MASK | a6xx::A6XX_SP_CS_CONFIG_NSAMP__MASK)) | a6xx::A6XX_SP_CS_CONFIG_NTEX(1) | a6xx::A6XX_SP_CS_CONFIG_NSAMP(1);
     CHECK(has(faultOf(r2, words), "SP_CS_CONFIG names 1 textures and 1 samplers; SP_CS_TEX_COUNT says 2 (NTEX must cover it and equal NSAMP)"));
+}
+
+// An indexed constant buffer in a dispatch: one UBO descriptor per UBO ir3 counts, from the packet into SB6_CS_SHADER,
+// the buffer past its offset and its length in vec4; the fake judges each descriptor and faults on one past every buffer
+TEST(a_dispatch_loads_the_ubo_descriptors_an_ldc_reads_through) {
+    using namespace a6xx;
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    auto u0 = buffer(r, 64, 0);
+    Kernel k = kernels::fill_id;
+    k.numUbos = 2;   // (fill_id reads none: the descriptors are what is checked, not what the kernel does with them)
+    Encoded e(r, k, kGroups16, nullptr, {Binding{out.get(), 0}, Binding{u0.get(), 16}});
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    bool found = false;
+    const auto& w = e.stream.words();
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kCommand && h.opcode == CP_LOAD_STATE6_FRAG &&
+            ((w[i + 1] & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) == ST6_UBO) {
+            found = true;
+            CHECK_EQ((w[i + 1] & CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> CP_LOAD_STATE6_0_NUM_UNIT__SHIFT, 2u);
+            CHECK_EQ(w[i + 4], uint32_t(out->gpuAddress()));
+            CHECK_EQ(w[i + 5], uint32_t(out->gpuAddress() >> 32) | 256u << 17);   // 4096 bytes: 256 vec4
+            CHECK_EQ(w[i + 6], uint32_t(u0->gpuAddress() + 16));
+            CHECK_EQ(w[i + 7], uint32_t((u0->gpuAddress() + 16) >> 32) | 3u << 17);   // 64 - 16 bytes: 3 vec4
+        }
+        i += 1 + h.count;
+    }
+    CHECK(found);
+    Raw raw(r);
+    CHECK_EQ(raw.submit(e.stream.words()), 0);
+    // misaligned, and the fake's twin
+    Encoded bad(r, k, kGroups16, nullptr, {Binding{out.get(), 0}, Binding{u0.get(), 8}});
+    CHECK(!bad.ok);
+    CHECK(has(bad.error, "fill_id: buffer 1: offset 8 is not a multiple of 16 inside it (a UBO starts on a vec4)"));
+    std::vector<uint32_t> words = e.stream.words();
+    for (size_t i = 0; i < words.size();) {
+        pm4::Header h = pm4::decode(words[i]);
+        if (h.kind == pm4::Header::kCommand && h.opcode == CP_LOAD_STATE6_FRAG &&
+            ((words[i + 1] & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) == ST6_UBO) {
+            words[i + 7] |= A6XX_UBO_1_SIZE__MASK;
+        }
+        i += 1 + h.count;
+    }
+    CHECK_EQ(raw.submit(words), ETIMEDOUT);
+    CHECK(has(r.fake->stats().lastFault, "UBO descriptor 1 of the compute stage: 32767 vec4 at"));
 }
