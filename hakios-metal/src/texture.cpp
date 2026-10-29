@@ -141,8 +141,14 @@ uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height,
 }
 
 std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::string* why) {
-    if (desc.type != TextureType::k2D) {
-        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): only 2D (2) is served yet");
+    // 1D is a 2D layout one row high under the TP's 1D type (fd6_view.c:247, fdl6_tex_type): CoreAnimation keeps its
+    // gamma tables in them
+    if (desc.type != TextureType::k2D && desc.type != TextureType::k1D) {
+        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): 1D (0) and 2D (2) are served");
+        return nullptr;
+    }
+    if (desc.type == TextureType::k1D && desc.height != 1) {
+        refuse(why, "a 1D texture " + n(desc.height) + " high: a 1D texture is one row");
         return nullptr;
     }
     const FormatInfo* info = formatInfo(desc.format);
@@ -273,6 +279,9 @@ a6xx::TexConst Texture::sampledDescriptor() const {
     // a surface's rows carry the alignment their pitch has, wrapSurface worked it out
     a6xx::TexConst d = texture2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel),
                                  info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb, desc_.mipLevels, desc_.mipLevels > 1 ? buffer_->length() : 0);
+    if (desc_.type == TextureType::k1D) {
+        d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_1D);
+    }
     if (info_->twoPlane) {
         // the second plane as fdl6_view_init gives it (fd6_view.c:255-289): its pitch over MIN_LOD_CLAMP's dword and its
         // address in dwords 7 and 8; MIPLVLS 0, its bits being the chroma siting there (cosited, Metal's default)

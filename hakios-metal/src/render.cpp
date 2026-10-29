@@ -517,8 +517,11 @@ bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTe
             out->used.push_back(tex);
             continue;
         }
-        if (kt.dim != kTexDim2D || kt.isArray != 0 || tex->type() != TextureType::k2D) {
-            return refuse(why, name + " samples texture " + n(t) + " as other than a 2D texture, or texture " + n(t) + " is not 2D: only 2D is served in a draw");
+        const bool asBound = (kt.dim == kTexDim2D && tex->type() == TextureType::k2D) || (kt.dim == kTexDim1D && tex->type() == TextureType::k1D);
+        if (!asBound || kt.isArray != 0) {
+            return refuse(why, name + " samples texture " + n(t) + " as " + (kt.dim == kTexDim1D ? "1D" : kt.dim == kTexDim2D ? "2D" : "another kind") +
+                                   (kt.isArray ? " array" : "") + " and texture " + n(t) + " is of type " + n(uint32_t(tex->type())) +
+                                   ": 1D and 2D, each as itself, are served in a draw");
         }
         if (kt.element != tex->info().element) {
             return refuse(why, "texture " + n(t) + " is " + tex->info().name + " (" + elementOf(tex->info().element) + "); " + name + " reads it as texture2d<" +

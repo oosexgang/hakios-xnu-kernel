@@ -98,9 +98,26 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     // the refusals, each on its sentence
     TextureDesc d;
     d.type = TextureType::k2DArray;
-    CHECK(has(refusedMake(r, d), "texture type 3 (2DArray): only 2D (2) is served yet"));
+    CHECK(has(refusedMake(r, d), "texture type 3 (2DArray): 1D (0) and 2D (2) are served"));
     d.type = TextureType::k3D;
-    CHECK(has(refusedMake(r, d), "texture type 7 (3D): only 2D"));
+    CHECK(has(refusedMake(r, d), "texture type 7 (3D): 1D (0) and 2D (2) are served"));
+    // a 1D texture is one row, under the TP's 1D type
+    d = TextureDesc{};
+    d.type = TextureType::k1D;
+    d.width = 256;
+    d.height = 4;
+    CHECK(has(refusedMake(r, d), "a 1D texture 4 high: a 1D texture is one row"));
+    d.height = 1;
+    {
+        std::string w;
+        auto one = Texture::make(r.gpu, d, &w);
+        CHECK(one != nullptr);
+        if (one != nullptr) {
+            const a6xx::TexConst c = one->sampledDescriptor();
+            CHECK_EQ((c.dword[2] & a6xx::A6XX_TEX_CONST_2_TYPE__MASK) >> a6xx::A6XX_TEX_CONST_2_TYPE__SHIFT, uint32_t(a6xx::A6XX_TEX_1D));
+            CHECK_EQ((c.dword[1] & a6xx::A6XX_TEX_CONST_1_WIDTH__MASK) >> a6xx::A6XX_TEX_CONST_1_WIDTH__SHIFT, 256u);
+        }
+    }
     d = TextureDesc{};
     d.format = PixelFormat(13);
     CHECK(has(refusedMake(r, d), "pixel format 13: not one of the formats served"));

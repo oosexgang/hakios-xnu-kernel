@@ -49,6 +49,7 @@
 #include "../tests/fixtures/tri_fb_fs_air.hpp"
 #include "../tests/fixtures/tri_base_vs_air.hpp"
 #include "../tests/fixtures/tri_pvt_fs_air.hpp"
+#include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -1108,7 +1109,8 @@ int main(int argc, char** argv) {
     //   9y. the VS's driver params: tri_base_vs's [[base_vertex]] and [[instance_id]] from a base instance, plain and indexed
     //   9z. private memory: tri_pvt_fs fills a 128-word array a fiber and reads it back at the pixel's index
     //   9m2. a '420f' IOSurface as one YCbCr8_420_2P texture, sampled: the order the TP gives Y, Cb and Cr in
-    //   9l2. lines: tri_flat's vertices 1 and 2 as a line list and as a line strip, the anti-diagonal one pixel wide
+    //   9l2. lines: tri_flat's vertices 1 and 2 as a line list and as a line strip, the diagonal one pixel wide
+    //   9k2. a 1D texture: tri_tex1d_fs samples four texels at tri_color's red, texel floor(4 r) exactly
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1721,6 +1723,61 @@ int main(int argc, char** argv) {
                 bool accepted = cb2->draw(texProg, rp, drawOf(0, 6), Bindings{}, Bindings{});
                 report(!accepted && cb2->error().find("no texture bound at index 0") != std::string::npos,
                        "control, tri_tex with nothing at [[texture(0)]]: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb2->error()));
+            }
+        }
+        // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D
+        // type, sampled by tri_tex1d_fs at tri_color_vs's red with a nearest sampler -- texel floor(4 r), red being u of
+        // 9j's rule (T1 (y - x) / 64, T2 y / 64). Pixels whose 4 r lies within 1/16 of a texel edge are not judged.
+        // What this does not decide: the descriptor's TYPE. With the 2D type over the same one row it read the same
+        // texels (run as a mutant), so the 1D type is fdl6_view_init's choice, kept for that reason alone.
+        if (t) {
+            const Program tex1d{kernels::tri_color_vs_air, kernels::tri_tex1d_fs_air, Linkage{}, "tri_tex1d"};
+            TextureDesc td;
+            td.type = TextureType::k1D;
+            td.format = PixelFormat::kRGBA8Unorm;
+            td.width = 4;
+            td.height = 1;
+            td.usage = kTextureUsageRead;
+            auto line = Texture::make(gpu, td, &why);
+            Sampler smp;
+            std::string swhy;
+            if (line == nullptr || !makeSampler(SamplerDesc{}, &smp, &swhy)) {
+                report(false, "tri_tex1d: a 4-texel 1D texture and a nearest sampler: " + why + swhy);
+            } else {
+                auto texel = [](uint32_t x) { return 0xff000000u | (0x10u + 0x40u * x) | (0xf0u - 0x30u * x) << 8 | (0x55u + 0x11u * x) << 16; };
+                for (uint32_t x = 0; x < 4; x++) {
+                    const uint32_t v = texel(x);
+                    memcpy(static_cast<uint8_t*>(const_cast<void*>(line->contents())) + x * 4, &v, 4);
+                }
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {line.get()};
+                fsb.samplers = {&smp};
+                auto cb = queue->commandBuffer();
+                bool ok = cb->draw(tex1d, rp, drawOf(0, 6), Bindings{}, fsb);
+                if (ok) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t judged = 0, exact = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++)
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const double x = i + 0.5, y = j + 0.5, u = j > i ? (y - x) / 64.0 : y / 64.0;
+                        if (std::fabs(4 * u - std::round(4 * u)) < 1.0 / 16) continue;
+                        const uint32_t tx = std::min(3u, uint32_t(4 * u));
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        judged++;
+                        if (px == texel(tx)) exact++;
+                        else if (first.empty()) first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", texel " + std::to_string(tx) + " is " + hex8(texel(tx));
+                    }
+                report(ok && completed(*cb) && exact == judged && judged > 3000, "tri_tex1d, a 4-texel 1D texture sampled at tri_color's red: " + std::to_string(exact) + " of " +
+                                                                                     std::to_string(judged) + " pixels their texel" + first + (ok ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
         // 9l. depth. tri_pos_vs takes the whole clip position from its vertex buffer (Float4 at 0, the colour Float4 at 16,
