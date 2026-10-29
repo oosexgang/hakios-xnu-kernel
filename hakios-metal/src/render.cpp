@@ -771,8 +771,10 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if (a.load != LoadAction::kLoad && a.load != LoadAction::kDontCare && a.load != LoadAction::kClear) {
             return refuse(why, at + "load action " + n(uint32_t(a.load)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
         }
-        if (a.store != StoreAction::kStore) {
-            return refuse(why, at + "store action " + n(uint32_t(a.store)) + ": only Store (1) is served");
+        // DontCare is served as a Store: in sysmem the RB writes the target's memory as it draws, and what DontCare
+        // allows -- the contents undefined after the pass -- includes keeping them
+        if (a.store != StoreAction::kStore && a.store != StoreAction::kDontCare) {
+            return refuse(why, at + "store action " + n(uint32_t(a.store)) + ": Store (1) and DontCare (0) are served");
         }
         if (f.depth) {
             return refuse(why, std::string("a ") + f.name + " texture as " + which + ": a depth format is the depth attachment's");
@@ -1002,17 +1004,18 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (vs.writesLayer || vs.writesViewport) {
         return refuse(why, std::string(stageName(vs)) + " writes a layer or viewport index: not served");
     }
-    // [[color(0)]] and as many after it as the FS writes, without a gap (a gap would be an RB_MRT entry nothing writes,
-    // which is legal and not written here); each into an attachment of its own, which the target's part checks
-    if (fs.numColorOutputs == 0 || fs.numColorOutputs > kMaxColorOutputs || fs.colorRegid[0] == kRegidNone) {
-        return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s)" +
-                               (fs.numColorOutputs != 0 && fs.colorRegid[0] == kRegidNone ? " and not [[color(0)]]" : "") +
-                               ": [[color(0)]] and up to seven after it are served");
+    // Up to eight colour outputs, with gaps: CoreAnimation's fixed_frag_lph_cph writes [[color(fc_dest_index)]] alone --
+    // [[color(1)]] beside an attachment 0 it reads through framebuffer fetch. A slot below the highest that the FS does
+    // not write is an RB_MRT entry with nothing to write (no register, no components, no write mask), as turnip leaves
+    // an attachment a subpass does not write; each slot it writes goes into an attachment of its own.
+    if (fs.numColorOutputs == 0 || fs.numColorOutputs > kMaxColorOutputs) {
+        return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s): 1 to 8 are served");
     }
-    for (uint32_t i = 1; i < fs.numColorOutputs; i++) {
-        if (fs.colorRegid[i] == kRegidNone) {
-            return refuse(why, std::string(stageName(fs)) + " writes [[color(" + n(fs.numColorOutputs - 1) + ")]] but not [[color(" + n(i) +
-                                   ")]]: colour outputs with a gap are not served");
+    {
+        bool any = false;
+        for (uint32_t i = 0; i < fs.numColorOutputs; i++) any = any || fs.colorRegid[i] != kRegidNone;
+        if (!any) {
+            return refuse(why, std::string(stageName(fs)) + " counts " + n(fs.numColorOutputs) + " colour output(s) and writes none of them");
         }
     }
     if (fs.depthRegid != kRegidNone || fs.writesPos) {
@@ -1049,6 +1052,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     const uint32_t numRt = fs.numColorOutputs;
     for (uint32_t i = 0; i < numRt; i++) {
         const Texture* t = attachmentOf(pass, i).texture;
+        if (fs.colorRegid[i] == kRegidNone) continue;   // (a slot nothing is written to: no attachment needed)
         if (t == nullptr) {
             return refuse(why, std::string(stageName(fs)) + " writes [[color(" + n(i) + ")]] and the pass has no colour attachment " + n(i));
         }
@@ -1075,6 +1079,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     BlendWords blends[kMaxColorOutputs] = {};
     uint32_t blendMask = 0;
     for (uint32_t i = 0; i < numRt; i++) {
+        if (fs.colorRegid[i] == kRegidNone) continue;   // RB_MRT_CONTROL 0: no components written, no blend
         if (!blendWords(i == 0 ? program.blend : program.moreBlend[i - 1], attachmentOf(pass, i).texture->info(), &blends[i], why)) {
             return i == 0 ? false : refuse(why, "colour attachment " + n(i) + ": " + *why);
         }
@@ -1184,8 +1189,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     MrtWords mrts[kMaxColorOutputs] = {};
     uint32_t srgbMask = 0;
     for (uint32_t i = 0; i < numRt; i++) {
-        mrts[i] = mrtWords(*attachmentOf(pass, i).texture, attachmentOf(pass, i).level);
-        if (mrts[i].srgb) srgbMask |= 1u << i;
+        // (an unwritten slot with no attachment of its own names attachment 0's memory: valid, and never written)
+        const Attachment a = attachmentOf(pass, i).texture != nullptr ? attachmentOf(pass, i) : attachmentOf(pass, 0);
+        mrts[i] = mrtWords(*a.texture, a.level);
+        if (mrts[i].srgb && fs.colorRegid[i] != kRegidNone) srgbMask |= 1u << i;
     }
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
     const uint32_t* ij = fs.ijRegid;

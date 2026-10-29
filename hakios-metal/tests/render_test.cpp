@@ -25,6 +25,7 @@
 #include "fixtures/tri_null_fs_air.hpp"
 #include "fixtures/tri_mrt_fs_air.hpp"
 #include "fixtures/tri_fb_fs_air.hpp"
+#include "fixtures/tri_mrt1_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -374,13 +375,13 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.numColorOutputs = 2;
         p.fs.colorRegid[1] = regid(1, 0);
         refused(r, p, pass, d, "hand_fs writes [[color(1)]] and the pass has no colour attachment 1");
-        p.fs.numColorOutputs = 3;   // [[color(2)]] with nothing at 1
+        p.fs.numColorOutputs = 3;   // [[color(2)]] with nothing at 1: the gap is served, the missing attachment is not
         p.fs.colorRegid[1] = a6xx::kRegidNone;
         p.fs.colorRegid[2] = regid(1, 0);
-        refused(r, p, pass, d, "hand_fs writes [[color(2)]] but not [[color(1)]]: colour outputs with a gap are not served");
+        refused(r, p, pass, d, "hand_fs writes [[color(2)]] and the pass has no colour attachment 2");
         p = handProgram();
         p.fs.colorRegid[0] = a6xx::kRegidNone;
-        refused(r, p, pass, d, "hand_fs writes 1 colour output(s) and not [[color(0)]]: [[color(0)]] and up to seven after it are served");
+        refused(r, p, pass, d, "hand_fs counts 1 colour output(s) and writes none of them");
         p = handProgram();
         p.fs.depthRegid = regid(1, 0);
         refused(r, p, pass, d, "hand_fs writes depth: no depth attachment is served");
@@ -441,9 +442,12 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         RenderPass odd = pass;
         odd.load = LoadAction(7);
         refused(r, p, odd, d, "load action 7: MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
-        RenderPass dontStore = pass;
+        RenderPass dontStore = pass;   // DontCare is served (stored anyway, in sysmem); another number is not
         dontStore.store = StoreAction::kDontCare;
-        refused(r, p, dontStore, d, "store action 0: only Store (1) is served");
+        Encoded dc(r, p, dontStore, d);
+        CHECK(dc.ok);
+        dontStore.store = StoreAction(5);
+        refused(r, p, dontStore, d, "store action 5: Store (1) and DontCare (0) are served");
     }
     // the draw
     {
@@ -1506,7 +1510,7 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
     {
         Twin w;
         w.at(regSpFsOutputReg(0)) = spFsOutputReg(kRegidNone, false);
-        CHECK(has(w.fault(), "SP_FS_OUTPUT_REG[0] names no register: the fragment stage writes no colour"));
+        CHECK(has(w.fault(), "every SP_FS_OUTPUT_REG names no register: the fragment stage writes no colour"));
     }
     {
         Twin w;
@@ -3483,4 +3487,32 @@ TEST(mip_levels_are_drawn_into_copied_and_generated) {
     CHECK(!cb5->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *t, 0, render::BlitRect{4, 4, 8, 8}, false));
     expectRefusal(cb5->error(), "a copy within one level whose two rectangles overlap: the engine reads and writes the same memory in no order");
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// [[color(1)]] written alone: slot 0 an RB_MRT entry nothing writes (no register, no components), slot 1 the attachment
+TEST(a_draw_that_writes_only_color_1_leaves_attachment_0_unwritten) {
+    using namespace a6xx;
+    Rig r;
+    auto t0 = target(r), t1 = target(r);
+    const Program p{kernels::tri_flat_vs_air, kernels::tri_mrt1_fs_air, Linkage{}, "tri_mrt1"};
+    RenderPass pass;
+    pass.color0 = t0.get();
+    pass.more[0].texture = t1.get();
+    Encoded e(r, p, pass, wholeDraw(6));
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    CHECK_EQ(e.reg(REG_A6XX_RB_FS_OUTPUT_CNTL1), A6XX_RB_FS_OUTPUT_CNTL1_MRT(2));
+    CHECK_EQ(e.reg(regSpFsOutputReg(0)) & A6XX_SP_FS_OUTPUT_REG_REGID__MASK, uint32_t(kRegidNone));
+    CHECK_EQ(e.reg(REG_A6XX_RB_RENDER_COMPONENTS), 0xf0u);
+    CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0u);
+    auto cb = drawOnce(r, p, pass, wholeDraw(6));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.mrtBases[1], t1->gpuAddress());
+    // no attachment 1: what the FS writes needs one
+    RenderPass one;
+    one.color0 = t0.get();
+    Encoded none(r, p, one, wholeDraw(6));
+    CHECK(!none.ok);
+    expectRefusal(none.error, "tri_mrt1_fs_air writes [[color(1)]] and the pass has no colour attachment 1");
 }

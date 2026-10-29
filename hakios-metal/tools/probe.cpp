@@ -47,6 +47,7 @@
 #include "../tests/fixtures/tri_null_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt_fs_air.hpp"
 #include "../tests/fixtures/tri_fb_fs_air.hpp"
+#include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
 #include "../tests/fixtures/tri_dpos_vs_air.hpp"
@@ -2202,6 +2203,27 @@ int main(int argc, char** argv) {
                                    ": target 0 " + describeTexture(a, "20 40 80 ff") + "; target 1 " +
                                    describeTexture(b, kind == 0 ? "ff 00 40 bf" : "ff 00 40 bf under T1, the clear colour 40 80 bf ff elsewhere") + status(*cb, gpu));
                     if (!completed(*cb)) break;
+                }
+                // [[color(1)]] alone (tri_mrt1_fs: CoreAnimation's fc_dest_index 1): slot 0 writes nothing, so target 0 keeps
+                // every canary while target 1 gets the colour everywhere
+                {
+                    const Program one{kernels::tri_flat_vs_air, kernels::tri_mrt1_fs_air, Linkage{}, "tri_mrt1"};
+                    fillBo(*t, canary);
+                    fillBo(*second, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    rp.more[0].texture = second.get();
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(one, rp, drawOf(0, 6), Bindings{}, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    PixelRule none{[](uint32_t, uint32_t) { return false; }, [=](uint32_t, uint32_t, uint32_t) { return 0u; }};
+                    PixelRule sec{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return secondColour; }};
+                    TexReadback a = compareTexture(*t, none, canary), b = compareTexture(*second, sec, canary);
+                    report(completed(*cb) && a.uncoveredCanary == 4096 && b.right == 4096,
+                           "mrt, [[color(1)]] written alone: target 0 " + std::to_string(a.uncoveredCanary) + " of 4096 pixels still canary; target 1 " +
+                               describeTexture(b, "ff 00 40 bf") + status(*cb, gpu));
                 }
             }
         }

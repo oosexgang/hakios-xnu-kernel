@@ -1005,6 +1005,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     d.windowScissor[2] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__SHIFT);
     d.windowScissor[3] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__SHIFT);
     const uint64_t width = uint64_t(d.windowScissor[2]) + 1, rows = uint64_t(d.windowScissor[3]) + 1;
+    uint32_t unwrittenMask = 0;
     for (uint32_t t = 0; t < d.mrtCount; t++) {
         const std::string which = std::to_string(t);
         uint32_t bufInfo = reg(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, t));
@@ -1042,10 +1043,10 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             fault("RB_MRT_BASE_GMEM[" + which + "] " + text("is %#llx: a sysmem draw has no GMEM base", reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t))));
             return false;
         }
-        if (fieldOf(reg(regSpFsOutputReg(t)), A6XX_SP_FS_OUTPUT_REG_REGID__MASK, A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT) == kRegidNone) {
-            fault("SP_FS_OUTPUT_REG[" + which + "] names no register: the fragment stage writes no colour there");
-            return false;
-        }
+        // a slot the stage writes nothing to names no register, and must then write no components (RENDER_COMPONENTS'
+        // nibble 0, below) -- else the RB writes what an unset register holds; at least one slot is written
+        const bool unwritten = fieldOf(reg(regSpFsOutputReg(t)), A6XX_SP_FS_OUTPUT_REG_REGID__MASK, A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT) == kRegidNone;
+        if (unwritten) unwrittenMask |= 1u << t;
         d.mrtBases[t] = base;
         d.mrtFormats[t] = format;
         if (t == 0) {
@@ -1067,10 +1068,15 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     // all four components of each target in both copies of RENDER_COMPONENTS
     d.renderComponents = reg(REG_A6XX_RB_RENDER_COMPONENTS);
     d.fsRenderComponents = reg(REG_A6XX_SP_FS_RENDER_COMPONENTS);
+    if (unwrittenMask == (1u << d.mrtCount) - 1) {
+        fault("every SP_FS_OUTPUT_REG names no register: the fragment stage writes no colour");
+        return false;
+    }
     for (uint32_t t = 0; t < d.mrtCount; t++) {
-        if (d.renderComponents != d.fsRenderComponents || ((d.renderComponents >> (4 * t)) & 0xf) != 0xf) {
+        const uint32_t want = (unwrittenMask >> t) & 1 ? 0u : 0xfu;
+        if (d.renderComponents != d.fsRenderComponents || ((d.renderComponents >> (4 * t)) & 0xf) != want) {
             fault(text("RENDER_COMPONENTS %#llx (SP) and %#llx (RB): ", d.fsRenderComponents, d.renderComponents) + "RT" + std::to_string(t) +
-                  " needs all four components in both");
+                  (want ? " needs all four components in both" : " is written by no register and must name no component"));
             return false;
         }
     }

@@ -748,6 +748,13 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     OutputClasses classes;
     if (!walkOutputClasses(t.nir, classes, why)) return nullptr;
     if (!nullTextures(t, out->stage.k, true, why)) return nullptr;
+    // ir3's non-bindless framebuffer fetch reads one slot past the textures, which the draw fills with colour attachment
+    // 0 (render.cpp: fsTextures); a fetch of another target would read attachment 0 by the same instruction
+    if ((t.info.fbfetch_targets & ~1u) != 0) {
+        refuse(why, name + " reads [[color(n)]] for n other than 0 through framebuffer fetch (targets " + std::to_string(t.info.fbfetch_targets) +
+                        "): only attachment 0 is served");
+        return nullptr;
+    }
     if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     if (!compileVariant(t, PassOrder::kGraphics, why)) return nullptr;
     KernelHome home{out->stage.k, out->words, out->immediates, out->resources, out->name, out->listing};
@@ -814,18 +821,9 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     }
     // [[color(0)]] and up to seven after it, without a gap: the draw's rule (render.cpp), said here at the pipeline's
     // creation; the class of each output past 0 is held to its attachment's format by the draw, which knows the format
-    if (F.numColorOutputs == 0 || F.numColorOutputs > kMaxColorOutputs || F.colorRegid[0] == a6xx::kRegidNone) {
-        refuse(why, stageName(*fs) + " writes " + std::to_string(F.numColorOutputs) + " colour output(s)" +
-                        (F.numColorOutputs != 0 && F.colorRegid[0] == a6xx::kRegidNone ? " and not [[color(0)]]" : "") +
-                        ": [[color(0)]] and up to seven after it are served");
+    if (F.numColorOutputs == 0 || F.numColorOutputs > kMaxColorOutputs) {
+        refuse(why, stageName(*fs) + " writes " + std::to_string(F.numColorOutputs) + " colour output(s): 1 to 8 are served (the draw's rule)");
         return nullptr;
-    }
-    for (uint32_t i = 1; i < F.numColorOutputs; i++) {
-        if (F.colorRegid[i] == a6xx::kRegidNone) {
-            refuse(why, stageName(*fs) + " writes [[color(" + std::to_string(F.numColorOutputs - 1) + ")]] but not [[color(" + std::to_string(i) +
-                            ")]]: colour outputs with a gap are not served");
-            return nullptr;
-        }
     }
     if (F.depthRegid != a6xx::kRegidNone || F.writesPos) {
         refuse(why, stageName(*fs) + " writes depth: no depth attachment is served");

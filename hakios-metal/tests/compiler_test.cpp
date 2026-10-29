@@ -761,17 +761,12 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(m, fs) == nullptr);
     expectRefusal(why, "the vertex stage tri_flat_vs samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
     m = copyOf(fs);
-    m->stage.numColorOutputs = 2;   // [[color(1)]] counted and not written: a gap
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes [[color(1)]] but not [[color(1)]]: colour outputs with a gap are not served");
+    m->stage.numColorOutputs = 2;   // [[color(1)]] counted and not written: a gap, which links (the draw serves gaps)
+    CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
     m->stage.numColorOutputs = 9;
     CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes 9 colour output(s): [[color(0)]] and up to seven after it are served");
-    m = copyOf(fs);
-    m->stage.colorRegid[0] = a6xx::kRegidNone;   // [[color(1)]] alone would look like this: one output, not at 0
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes 1 colour output(s) and not [[color(0)]]: [[color(0)]] and up to seven after it are served");
+    expectRefusal(why, "the fragment stage tri_flat_fs writes 9 colour output(s): 1 to 8 are served (the draw's rule)");
     m = copyOf(fs);
     m->stage.depthRegid = 0;
     CHECK(link(vs, m) == nullptr);
