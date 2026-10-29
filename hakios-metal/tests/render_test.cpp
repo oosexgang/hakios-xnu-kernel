@@ -997,3 +997,729 @@ TEST(render_options_switch_each_group_and_each_alternative) {
     }
 }
 
+// --- draws that complete on the fake, read back through lastDraw --------------------------------------------------------
+
+namespace {
+// one draw through CommandBuffer::draw, committed and waited for; the command buffer is returned for its status and error
+std::shared_ptr<CommandBuffer> drawOnce(Rig& r, const Program& p, const RenderPass& pass, const Draw& d, const render::Options& o = render::Options{}) {
+    auto cb = r.queue->commandBuffer();
+    if (cb->draw(p, pass, d, Bindings{}, Bindings{}, o)) {
+        cb->commit();
+        cb->waitUntilCompleted();
+    }
+    return cb;
+}
+
+bool allWords(const Texture& t, uint32_t value) {
+    auto* w = static_cast<const uint32_t*>(t.contents());
+    for (uint64_t i = 0; i < t.buffer()->length() / 4; i++) {
+        if (w[i] != value) return false;
+    }
+    return true;
+}
+
+void fillWords(const Texture& t, uint32_t value) {
+    auto* w = static_cast<uint32_t*>(t.contents());
+    for (uint64_t i = 0; i < t.buffer()->length() / 4; i++) w[i] = value;
+}
+}  // namespace
+
+TEST(a_draw_of_tri_flat_holds_together_and_the_fake_does_not_rasterize_it) {
+    Rig r;
+    auto t = target(r);
+    fillWords(*t, 0xa5a5a5a5u);
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw());
+    CHECK(cb->error().empty());
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK_EQ(s.submits, 1u);
+    CHECK_EQ(s.draws, 1u);
+    CHECK_EQ(s.dispatches, 0u);
+    const FakeGpu::Draw& d = s.lastDraw;
+    CHECK_EQ(d.primType, 4u);        // DI_PT_TRILIST
+    CHECK_EQ(d.sourceSelect, 2u);    // DI_SRC_SEL_AUTO_INDEX
+    CHECK_EQ(d.visCull, 0u);         // IGNORE_VISIBILITY
+    CHECK_EQ(d.numInstances, 1u);
+    CHECK_EQ(d.numIndices, 3u);
+    CHECK_EQ(d.vsProgram % 128, 0u);
+    CHECK_EQ(d.fsProgram % 128, 0u);
+    CHECK(d.vsProgram != d.fsProgram);
+    CHECK_EQ(d.vsInstrlen, 1u);
+    CHECK_EQ(d.fsInstrlen, 1u);
+    CHECK_EQ(d.vsConstlen, 8u);
+    CHECK_EQ(d.fsConstlen, 0u);
+    CHECK_EQ(d.vsConsts.size(), size_t(1));   // tri_flat_vs's immediates: one vec4 at 1, direct
+    CHECK_EQ(d.vsConsts[0].dstOffVec4, 1u);
+    CHECK_EQ(d.vsConsts[0].units, 1u);
+    CHECK(d.vsConsts[0].direct);
+    CHECK_EQ(d.fsConsts.size(), size_t(0));
+    // the target as the registers name it, against the Texture
+    CHECK_EQ(d.mrtFormat, 48u);
+    CHECK_EQ(d.mrtSwap, 0u);
+    CHECK_EQ(d.mrtTileMode, 0u);
+    CHECK_EQ(d.mrtPitch, uint32_t(t->bytesPerRow()));
+    CHECK_EQ(d.mrtPitch, 256u);
+    CHECK_EQ(d.mrtArrayPitch, uint32_t(t->buffer()->length()));
+    CHECK_EQ(d.mrtBase, t->gpuAddress());
+    CHECK_EQ(d.spFsMrtReg, 0x30u);
+    CHECK_EQ(d.renderComponents, 0xfu);
+    CHECK_EQ(d.fsRenderComponents, 0xfu);
+    CHECK_EQ(d.mrtCount, 1u);
+    for (int i = 0; i < 2; i++) {
+        CHECK_EQ(d.windowScissor[i], 0u);
+        CHECK_EQ(d.screenScissor[i], 0u);
+        CHECK_EQ(d.viewportScissor[i], 0u);
+        CHECK_EQ(d.windowScissor[2 + i], 63u);
+        CHECK_EQ(d.screenScissor[2 + i], 63u);
+        CHECK_EQ(d.viewportScissor[2 + i], 63u);
+    }
+    // the viewport's six floats, the y scale NEGATIVE
+    CHECK(d.viewport[0] == 32.0f && d.viewport[1] == 32.0f && d.viewport[2] == 32.0f);
+    CHECK(d.viewport[3] == -32.0f);
+    CHECK(d.viewport[4] == 0.0f && d.viewport[5] == 1.0f);
+    CHECK_EQ(d.vertexIdRegid, 0u);   // r0.x
+    CHECK_EQ(d.vfdFetchCount, 0u);
+    CHECK_EQ(d.vfdDecodeCount, 0u);
+    CHECK_EQ(d.vertexIndexOffset, 0u);
+    CHECK_EQ(d.positionLoc, 0u);
+    CHECK_EQ(d.strideInVpc, 4u);
+    CHECK_EQ(d.vsOutCount, 1u);
+    CHECK_EQ(d.numNonPosVar, 0u);
+    CHECK_EQ(d.spFsOutputReg0, 0u);   // r0.x
+    CHECK(d.ccuFlushed && d.cacheFlushed);
+    // the fake has no rasterizer: it says so here, so that nobody reads "completed" as "drawn"
+    CHECK(allWords(*t, 0xa5a5a5a5u));
+}
+
+TEST(a_draw_of_tri_color_and_of_the_hand_built_pair_hold_together) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto cb = drawOnce(r, colorProgram(), pass, wholeDraw(6));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK_EQ(s.draws, 1u);
+    CHECK_EQ(s.lastDraw.numIndices, 6u);
+    CHECK_EQ(s.lastDraw.vsInstrlen, 2u);
+    CHECK_EQ(s.lastDraw.positionLoc, 4u);
+    CHECK_EQ(s.lastDraw.strideInVpc, 8u);
+    CHECK_EQ(s.lastDraw.vsOutCount, 2u);
+    CHECK_EQ(s.lastDraw.numNonPosVar, 4u);
+    CHECK_EQ(s.lastDraw.spFsOutputReg0, 2u);   // r0.z
+    CHECK_EQ(s.lastDraw.vsConsts.size(), size_t(1));
+    // the hand-built pair, then a half viewport, a scissor, a vertex start and a strip, each its own command buffer
+    auto h = drawOnce(r, handProgram(), pass, wholeDraw());
+    CHECK(h->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().lastDraw.spFsOutputReg0, 0u);
+    CHECK_EQ(r.fake->stats().lastDraw.vsConsts.size(), size_t(0));
+    Draw half = wholeDraw();
+    half.viewport = Viewport{0, 0, 32, 64, 0, 1};
+    half.vertexStart = 3;
+    half.scissor = Scissor{8, 4, 16, 32};
+    half.primitive = Primitive::kTriangleStrip;
+    half.vertexCount = 4;
+    auto hv = drawOnce(r, flatProgram(), pass, half);
+    CHECK(hv->status() == CommandBuffer::kCompleted);
+    s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK_EQ(s.draws, 3u);
+    CHECK_EQ(s.lastDraw.primType, 6u);   // DI_PT_TRISTRIP
+    CHECK_EQ(s.lastDraw.numIndices, 4u);
+    CHECK_EQ(s.lastDraw.vertexIndexOffset, 3u);
+    CHECK(s.lastDraw.viewport[0] == 16.0f && s.lastDraw.viewport[1] == 16.0f && s.lastDraw.viewport[2] == 32.0f && s.lastDraw.viewport[3] == -32.0f);
+    CHECK_EQ(s.lastDraw.viewportScissor[2], 31u);
+    CHECK_EQ(s.lastDraw.viewportScissor[3], 63u);
+    CHECK_EQ(s.lastDraw.screenScissor[0], 8u);
+    CHECK_EQ(s.lastDraw.screenScissor[1], 4u);
+    CHECK_EQ(s.lastDraw.screenScissor[2], 23u);
+    CHECK_EQ(s.lastDraw.screenScissor[3], 35u);
+    // two passes in one command buffer: two draws, each flushed by its own tail
+    auto two = r.queue->commandBuffer();
+    CHECK(two->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+    CHECK(two->draw(flatProgram(), pass, wholeDraw(6), Bindings{}, Bindings{}));
+    two->commit();
+    two->waitUntilCompleted();
+    CHECK(two->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().draws, 5u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    // a 48x20 target: 192-byte rows at a pitch of 256, 20 rows counted to 24 inside the 8192-byte buffer
+    auto small = target(r, 48, 20);
+    RenderPass sp;
+    sp.color0 = small.get();
+    auto sm = drawOnce(r, flatProgram(), sp, wholeDraw(3, 48, 20));
+    CHECK(sm->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().lastDraw.windowScissor[2], 47u);
+    CHECK_EQ(r.fake->stats().lastDraw.windowScissor[3], 19u);
+    CHECK_EQ(r.fake->stats().lastDraw.mrtArrayPitch, 8192u);
+    // the alternatives the bisect runs all hold together on the fake (what the hardware wants of them is the phone's)
+    for (auto change : {+[](render::Options& o) { o.visCullUse = true; }, +[](render::Options& o) { o.binControlLrzFeedback = true; },
+                        +[](render::Options& o) { o.ccuConcurrentResolve = true; }, +[](render::Options& o) { o.renderCntlZero = true; },
+                        +[](render::Options& o) { o.tailRbDone = true; }, +[](render::Options& o) { o.batchStart = false; },
+                        +[](render::Options& o) { o.tailLrzFlush = false; }, +[](render::Options& o) { o.lrzOff = false; },
+                        +[](render::Options& o) { o.zsNone = false; }, +[](render::Options& o) { o.renderCntl = false; },
+                        +[](render::Options& o) { o.rast = false; }, +[](render::Options& o) { o.vfd = false; },
+                        +[](render::Options& o) { o.fsInputs = false; }}) {
+        render::Options o;
+        change(o);
+        auto c = drawOnce(r, flatProgram(), pass, wholeDraw(), o);
+        CHECK(c->status() == CommandBuffer::kCompleted);
+        if (c->status() != CommandBuffer::kCompleted) std::printf("       %s\n", r.fake->stats().lastFault.c_str());
+    }
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    CHECK_EQ(r.fake->stats().lastDraw.visCull, 0u);
+    auto v = drawOnce(r, flatProgram(), pass, wholeDraw(), [] { render::Options o; o.visCullUse = true; return o; }());
+    CHECK(v->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().lastDraw.visCull, 1u);
+}
+
+// --- the fake can fail: one class of fault at a time, a mutation twin per check -----------------------------------------------
+
+namespace {
+bool has(const std::string& text, const char* part) { return text.find(part) != std::string::npos; }
+
+// WORDS run raw: the fault the fake stopped on (and a check that it did stop)
+std::string faultOf(Rig& r, const std::vector<uint32_t>& words) {
+    uint32_t faultsBefore = r.fake->stats().faults;
+    Raw raw(r);
+    int e = raw.submit(words);
+    CHECK_EQ(e, ETIMEDOUT);
+    CHECK_EQ(r.fake->stats().faults, faultsBefore + 1);
+    return r.fake->stats().lastFault;
+}
+
+// the flat draw encoded over a fresh rig, with its words as a vector to mutate
+struct Twin {
+    explicit Twin(const render::Options& o = render::Options{}) : t(target(r)), pass(), e(r, flatProgram(), (pass.color0 = t.get(), pass), wholeDraw(), o) {
+        CHECK(e.ok);
+        words = e.stream.words();
+    }
+    // the value word of register REG in the stream, asserting it is there
+    uint32_t& at(uint32_t reg) {
+        size_t i = e.findReg(reg);
+        CHECK(i != size_t(-1));
+        return words[i == size_t(-1) ? 0 : i];
+    }
+    std::string fault() { return faultOf(r, words); }
+    Rig r;
+    std::shared_ptr<Texture> t;
+    RenderPass pass;
+    Encoded e;
+    std::vector<uint32_t> words;
+};
+}  // namespace
+
+TEST(the_fake_accepts_the_unmutated_flat_draw_raw) {
+    // the twins below start from this stream: it must pass as it is, or every refusal below would pass for the wrong reason
+    Twin w;
+    Raw raw(w.r);
+    CHECK_EQ(raw.submit(w.words), 0);
+    CHECK_EQ(w.r.fake->stats().faults, 0u);
+    CHECK_EQ(w.r.fake->stats().draws, 1u);
+    // the pass's table was written by the tail's two events (the values their waits read): 1 by the CCU flush, 2 by the cache flush
+    CHECK_EQ(w.e.tableWords()[0], 1u);
+    CHECK_EQ(w.e.tableWords()[1], 2u);
+    CHECK_EQ(w.e.tableWords()[2], 0u);   // RB_DONE_TS's word, off by default
+}
+
+TEST(the_fake_refuses_a_draw_packet_that_is_not_the_three_word_triangle_form) {
+    using namespace a6xx;
+    {
+        Twin w;
+        size_t dr = w.e.find(CP_DRAW_INDX_OFFSET);
+        std::vector<uint32_t> seven = {drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY), 1, 3, 0, 0, 0, 3};
+        w.words.erase(w.words.begin() + dr, w.words.begin() + dr + 4);
+        w.words.insert(w.words.begin() + dr, pm4::type7(CP_DRAW_INDX_OFFSET, 7));
+        w.words.insert(w.words.begin() + dr + 1, seven.begin(), seven.end());
+        CHECK(has(w.fault(), "CP_DRAW_INDX_OFFSET of 7 words: indexed draws (7 words, DI_SRC_SEL_DMA) are not what this GPU model runs yet"));
+    }
+    {
+        Twin w;
+        w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 1] = drawIndxOffset0(DI_PT_POINTLIST, DI_SRC_SEL_AUTO_INDEX, IGNORE_VISIBILITY);
+        CHECK(has(w.fault(), "a draw of primitive type 9: triangle lists (4) and strips (6) are what this GPU model runs"));
+    }
+    {
+        Twin w;
+        w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 1] = drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY);
+        CHECK(has(w.fault(), "a draw whose indices come from source 0, not DI_SRC_SEL_AUTO_INDEX (2)"));
+    }
+    {
+        Twin w;
+        w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 2] = 2;
+        CHECK(has(w.fault(), "a draw of 2 instances: one is what this GPU model runs"));
+    }
+    {
+        Twin w;
+        w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 3] = 0;
+        CHECK(has(w.fault(), "a draw of 0 vertices"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_outside_a_begun_sysmem_pass) {
+    using namespace a6xx;
+    {
+        render::Options o;
+        o.marker = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "a draw before CP_SET_MARKER RM6_DIRECT_RENDER: the sysmem pass was not begun in this submission"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_BIN_CONTROL) = binControl(RENDERING_PASS, BUFFERS_IN_GMEM, LRZ_FEEDBACK_NONE, 64, 64);
+        CHECK(has(w.fault(), "GRAS_BIN_CONTROL 0x402: a draw outside a sysmem pass (BUFFERS_IN_SYSMEM, no bins, RENDERING_PASS): GMEM rendering is not what this GPU model runs"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_BIN_CONTROL) = binControl(BINNING_PASS, BUFFERS_IN_SYSMEM, LRZ_FEEDBACK_NONE);
+        CHECK(has(w.fault(), "RB_BIN_CONTROL 0xc40000: a draw outside a sysmem pass"));
+    }
+    {
+        render::Options o;
+        o.passBegin = false;   // the marker alone, no BIN_CONTROL: the registers' power-up zeros say GMEM
+        Twin w(o);
+        CHECK(has(w.fault(), "GRAS_BIN_CONTROL 0: a draw outside a sysmem pass"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_whose_stages_do_not_hold_together) {
+    using namespace a6xx;
+    {
+        Twin w;
+        w.at(REG_A6XX_HLSQ_VS_CNTL) = 0;
+        CHECK(has(w.fault(), "a draw with the vertex stage not enabled in both HLSQ_xS_CNTL and SP_xS_CONFIG"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_FS_CONFIG) = 0;
+        CHECK(has(w.fault(), "a draw with the fragment stage not enabled in both HLSQ_xS_CNTL and SP_xS_CONFIG"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_HS_CONFIG) = 0x100;
+        CHECK(has(w.fault(), "a geometry or tessellation stage enabled (HLSQ_HS/DS/GS_CNTL or SP_HS/DS/GS_CONFIG not 0): not served"));
+    }
+    {
+        render::Options o;
+        o.programConfig = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "a draw with the vertex stage not enabled"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_VS_INSTRLEN) = 0;
+        CHECK(has(w.fault(), "a draw with the vertex stage's SP_xS_INSTRLEN 0"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_FS_OBJ_START) += 32;   // 32-aligned, as the XML allows, is not the 128 the preload unit wants
+        CHECK(has(w.fault(), "the fragment program at SP_xS_OBJ_START"));
+        CHECK(has(w.r.fake->stats().lastFault, "outside every buffer or not 128-byte aligned"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_VS_OBJ_START + 1) = 0x7;   // a high word that no buffer has
+        CHECK(has(w.fault(), "the vertex program at SP_xS_OBJ_START 0x7"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_SHADER, SB6_VS_SHADER);
+        w.words[load + 2] += 128;   // preloaded from 128 bytes further into the same page
+        CHECK(has(w.fault(), "a draw without the vertex program preloaded from where SP_xS_OBJ_START points (ST6_SHADER into its own block, by its own opcode)"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_FRAG, ST6_SHADER, SB6_FS_SHADER);
+        w.words[load + 1] = loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_FS_SHADER, 2);
+        CHECK(has(w.fault(), "a preload of 2 units for a fragment program of 1"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_SHADER, SB6_VS_SHADER);
+        w.words[load] = pm4::type7(CP_LOAD_STATE6_FRAG, 3);   // the VS's program by the FS's opcode
+        CHECK(has(w.fault(), "CP_LOAD_STATE6_FRAG for state block 8: the vertex stage's loads go by CP_LOAD_STATE6_GEOM (tu6_stage2opcode)"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_FRAG, ST6_SHADER, SB6_FS_SHADER);
+        w.words[load] = pm4::type7(CP_LOAD_STATE6_GEOM, 3);
+        CHECK(has(w.fault(), "CP_LOAD_STATE6_GEOM for state block 12: the fragment stage's loads go by CP_LOAD_STATE6_FRAG (tu6_stage2opcode)"));
+    }
+    {
+        Twin w;
+        size_t imm = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_CONSTANTS, SB6_VS_SHADER);
+        w.words[imm + 1] = loadState6_0(8, ST6_CONSTANTS, SS6_DIRECT, SB6_VS_SHADER, 1);   // at vec4 8 of a constlen of 8
+        CHECK(has(w.fault(), "vertex constants at vec4 8, 1 of them: past the stage's constlen of 8"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_HLSQ_FS_CNTL_0) = hlsqFsCntl0(THREAD128, false);
+        CHECK(has(w.fault(), "SP_FS_CTRL_REG0 and HLSQ_FS_CNTL_0 disagree about the fragment thread size"));
+    }
+    {
+        render::Options o;
+        o.programVs = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "a draw with the vertex stage's SP_xS_INSTRLEN 0"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_whose_target_does_not_hold_together) {
+    using namespace a6xx;
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0)) = 0x7f;
+        CHECK(has(w.fault(), "RB_MRT_BUF_INFO[0]: COLOR_FORMAT 127 is not one this GPU model knows"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0)) = rbMrtBufInfo(FMT6_8_8_8_8_UNORM, a6xx_tile_mode(3), WZYX);   // TILE6_3 (a6xx.xml.h:60), which the enum here does not name
+        CHECK(has(w.fault(), "RB_MRT_BUF_INFO[0]: tile mode 3: only linear targets are what this GPU model runs"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_PITCH, 0)) = 2;   // 128 bytes
+        CHECK(has(w.fault(), "RB_MRT_PITCH[0] 128 bytes for rows of 64 pixels of 4 bytes: shorter than a row"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BASE, 0)) += 32;
+        CHECK(has(w.fault(), "RB_MRT[0]: 64 rows (64 counted) of 256 bytes at"));
+        CHECK(has(w.r.fake->stats().lastFault, "outside every buffer or not 64-byte aligned"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BASE, 0)) += 64 * 4;   // 64 rows from 256 bytes in run past the 16384-byte buffer
+        CHECK(has(w.fault(), "outside every buffer or not 64-byte aligned"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BASE, 0) + 1) = 0x7;
+        CHECK(has(w.fault(), "RB_MRT[0]: 64 rows (64 counted) of 256 bytes at 0x7"));
+    }
+    {
+        Twin w;
+        w.at(regSpFsMrtReg(0)) = spFsMrtReg(FMT6_32_FLOAT, false, false);
+        CHECK(has(w.fault(), "SP_FS_MRT_REG[0] names format 74, RB_MRT_BUF_INFO[0] 48"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0) = 74;
+        CHECK(has(w.fault(), "GRAS_LRZ_MRT_BUF_INFO_0 names format 74, RB_MRT_BUF_INFO[0] 48"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, 0)) = 0x1000;
+        CHECK(has(w.fault(), "RB_MRT_BASE_GMEM[0] is 0x1000: a sysmem draw has no GMEM base"));
+    }
+    {
+        render::Options o;
+        o.mrt = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "RB_MRT_BUF_INFO[0]: COLOR_FORMAT 0 is not one this GPU model knows"));
+    }
+    // a draw into a 48x20 target whose window scissor says 128 rows: 32768 bytes of rows run past the texture's one
+    // 16 KiB page (8192 bytes of layout, rounded to the phone's page by Gpu::newBo)
+    {
+        Rig r;
+        auto small = target(r, 48, 20);
+        RenderPass sp;
+        sp.color0 = small.get();
+        Encoded e(r, flatProgram(), sp, wholeDraw(3, 48, 20));
+        CHECK(e.ok);
+        std::vector<uint32_t> words = e.stream.words();
+        words[e.findReg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR)] = regXY(47, 127);
+        CHECK(has(faultOf(r, words), "RB_MRT[0]: 128 rows (128 counted) of 256 bytes at"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
+    using namespace a6xx;
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_FS_OUTPUT_CNTL1) = 2;
+        CHECK(has(w.fault(), "SP_FS_OUTPUT_CNTL1.MRT 2 and RB_FS_OUTPUT_CNTL1.MRT 1: one target, in both"));
+    }
+    {
+        Twin w;
+        w.at(regSpFsOutputReg(0)) = spFsOutputReg(kRegidNone, false);
+        CHECK(has(w.fault(), "SP_FS_OUTPUT_REG[0] names no register: the fragment stage writes no colour"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_RENDER_COMPONENTS) = 0x7;
+        CHECK(has(w.fault(), "RENDER_COMPONENTS 0xf (SP) and 0x7 (RB): RT0 needs all four components in both"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)) = 0;
+        CHECK(has(w.fault(), "RB_MRT_CONTROL[0] enables no component: the draw would write nothing"));
+    }
+    {
+        render::Options o;
+        o.fsOutputs = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "SP_FS_OUTPUT_CNTL1.MRT 0 and RB_FS_OUTPUT_CNTL1.MRT 0: one target, in both"));
+    }
+    {
+        render::Options o;
+        o.blendZsa = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "RB_MRT_CONTROL[0] enables no component"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_DEPTH_CNTL) = A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE;
+        CHECK(has(w.fault(), "depth or stencil state with no depth buffer: not what this GPU model runs"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_STENCIL_CONTROL) = A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE;
+        CHECK(has(w.fault(), "depth or stencil state with no depth buffer"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_DEPTH_BUFFER_INFO) = A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32);
+        CHECK(has(w.fault(), "depth or stencil state with no depth buffer"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_whose_viewport_scissors_or_fetch_are_off) {
+    using namespace a6xx;
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_TL + 1) = scissorXY(64, 63);
+        CHECK(has(w.fault(), "GRAS_SC_SCREEN_SCISSOR[0] (0, 0)-(64, 63) is not inside the window scissor (63, 63)"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL) = scissorXY(5, 70);
+        CHECK(has(w.fault(), "GRAS_SC_VIEWPORT_SCISSOR[0] (5, 70)-(63, 63) is not inside the window scissor (63, 63)"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_CL_VPORT_XOFFSET + 3) = 0;   // y scale 0
+        CHECK(has(w.fault(), "GRAS_CL_VPORT[0]: a scale of 0 or a non-finite offset or scale"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_CL_VPORT_XOFFSET) = 0x7fc00000;   // a NaN x offset
+        CHECK(has(w.fault(), "GRAS_CL_VPORT[0]: a scale of 0 or a non-finite offset or scale"));
+    }
+    {
+        Twin w;
+        size_t gb = w.e.findReg(REG_A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ);
+        w.words[gb - 1] = pm4::type7(pm4::kNop, 1);   // the write becomes a NOP over its word
+        CHECK(has(w.fault(), "GRAS_CL_GUARDBAND_CLIP_ADJ was never written"));
+    }
+    {
+        render::Options o;
+        o.viewportScissor = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "GRAS_CL_VPORT[0]: a scale of 0"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_VFD_CONTROL_0) = A6XX_VFD_CONTROL_0_FETCH_CNT(1);
+        CHECK(has(w.fault(), "VFD_CONTROL_0 counts 1 fetches and 0 decodes"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_VFD_CONTROL_0) = A6XX_VFD_CONTROL_0_FETCH_CNT(1) | A6XX_VFD_CONTROL_0_DECODE_CNT(1);
+        CHECK(has(w.fault(), "vertex fetch 0: 0 bytes at 0 outside every buffer, or no VFD_DECODE_INSTR, or no destination register"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_whose_link_or_fs_inputs_disagree) {
+    using namespace a6xx;
+    {
+        Twin w;
+        w.at(REG_A6XX_VPC_VS_PACK) = vpcVsPack(4, kLocNone);
+        CHECK(has(w.fault(), "VPC_VS_PACK names no position location"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_PC_VS_OUT_CNTL) = pcVsOutCntl(8);
+        CHECK(has(w.fault(), "VPC_VS_PACK and PC_VS_OUT_CNTL disagree about the VPC stride"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_SP_VS_PRIMITIVE_CNTL) = spVsPrimitiveCntl(2);
+        CHECK(has(w.fault(), "SP_VS_PRIMITIVE_CNTL.OUT 2, but 1 outputs are named in SP_VS_OUT_REG"));
+    }
+    {
+        render::Options o;
+        o.vpc = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "SP_VS_PRIMITIVE_CNTL.OUT 0, but 0 outputs are named in SP_VS_OUT_REG"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_HLSQ_FS_CNTL_0) = hlsqFsCntl0(THREAD64, true);
+        CHECK(has(w.fault(), "the VARYING flags disagree across VPC_CNTL_0 (NUMNONPOSVAR, VARYING), SP_FS_CTRL_REG0, HLSQ_FS_CNTL_0 and RB_RENDER_CONTROL0"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_VPC_CNTL_0) = vpcCntl0(4, kLocNone, true, kLocNone);
+        CHECK(has(w.fault(), "the VARYING flags disagree"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_CNTL) = A6XX_GRAS_CNTL_IJ_PERSP_PIXEL;
+        CHECK(has(w.fault(), "the barycentric and coordinate registers disagree across HLSQ_CONTROL_3/4_REG, GRAS_CNTL and RB_RENDER_CONTROL0"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_HLSQ_CONTROL_3_REG) = hlsqControl3Reg(0, kRegidNone, kRegidNone, kRegidNone);   // an ij regid the bits do not announce
+        CHECK(has(w.fault(), "the barycentric and coordinate registers disagree"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_RENDER_CONTROL0) = A6XX_RB_RENDER_CONTROL0_COORD_MASK(0xf);
+        CHECK(has(w.fault(), "the barycentric and coordinate registers disagree"));
+    }
+    // tri_color, whose FS reads the barycentrics: its GRAS_CNTL bit removed is the same disagreement
+    {
+        Rig r;
+        auto t = target(r);
+        RenderPass pass;
+        pass.color0 = t.get();
+        Encoded e(r, colorProgram(), pass, wholeDraw(6));
+        CHECK(e.ok);
+        std::vector<uint32_t> words = e.stream.words();
+        words[e.findReg(REG_A6XX_GRAS_CNTL)] = 0;
+        CHECK(has(faultOf(r, words), "the barycentric and coordinate registers disagree"));
+    }
+}
+
+TEST(the_fake_refuses_a_draw_with_msaa_without_the_ccu_cntl_or_without_its_flushes) {
+    using namespace a6xx;
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_DEST_MSAA_CNTL) = 0;
+        CHECK(has(w.fault(), "multisampling in a DEST_MSAA_CNTL register (0): not what this GPU model runs"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_GRAS_DEST_MSAA_CNTL) = A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE | A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES(MSAA_FOUR);
+        CHECK(has(w.fault(), "multisampling in a DEST_MSAA_CNTL register (0x6)"));
+    }
+    {
+        render::Options o;
+        o.msaaOff = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "multisampling in a DEST_MSAA_CNTL register (0)"));
+    }
+    {
+        render::Options o;
+        o.ccuCntl = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "RB_CCU_CNTL (0) was not written in this submission right after a CP_WAIT_FOR_IDLE with the sysmem shape"));
+    }
+    {
+        Twin w;
+        size_t ccu = w.e.findReg(REG_A6XX_RB_CCU_CNTL);
+        w.words[ccu - 2] = pm4::type7(pm4::kNop, 0);   // the WFI before it, gone
+        CHECK(has(w.fault(), "RB_CCU_CNTL (0x10000000) was not written in this submission right after a CP_WAIT_FOR_IDLE"));
+    }
+    {
+        Twin w;
+        w.at(REG_A6XX_RB_CCU_CNTL) = A6XX_RB_CCU_CNTL_DEPTH_OFFSET(0x20000);   // the GMEM shape: depth cache not at 0, no colour offset
+        CHECK(has(w.fault(), "RB_CCU_CNTL (0x20000) was not written in this submission right after a CP_WAIT_FOR_IDLE with the sysmem shape"));
+    }
+    {
+        render::Options o;
+        o.tailCcuFlush = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "the colour stays in the CCU: no PC_CCU_FLUSH_COLOR_TS (4-word) after the draw"));
+        CHECK(!w.r.fake->stats().lastDraw.ccuFlushed);
+    }
+    {
+        render::Options o;
+        o.tailCacheFlush = false;
+        Twin w(o);
+        CHECK(has(w.fault(), "the colour may stay in the cache: no CACHE_FLUSH_TS (4-word) after the draw"));
+        CHECK(w.r.fake->stats().lastDraw.ccuFlushed && !w.r.fake->stats().lastDraw.cacheFlushed);
+    }
+    {
+        // a 1-word PC_CCU_FLUSH_COLOR_TS (no address) is not the flush a draw needs
+        Twin w;
+        size_t ccu = w.e.findEvent(PC_CCU_FLUSH_COLOR_TS);
+        w.words[ccu] = pm4::type7(CP_EVENT_WRITE, 1);
+        w.words.erase(w.words.begin() + ccu + 2, w.words.begin() + ccu + 5);
+        CHECK(has(w.fault(), "would wait forever"));   // the wait that followed reads a word nothing wrote
+    }
+    {
+        render::Options o;
+        o.tailTimestampBit = true;   // the 28 October form: a timestamp where the wait expects 1
+        Twin w(o);
+        CHECK(has(w.fault(), "CP_WAIT_REG_MEM would wait forever"));
+    }
+    // and through the command buffer: the error is the fake's
+    {
+        Rig r;
+        auto t = target(r);
+        RenderPass pass;
+        pass.color0 = t.get();
+        render::Options o;
+        o.tailCcuFlush = false;
+        auto cb = drawOnce(r, flatProgram(), pass, wholeDraw(), o);
+        CHECK(cb->status() == CommandBuffer::kError);
+        CHECK_EQ(r.fake->stats().faults, 1u);
+        CHECK_EQ(r.fake->stats().draws, 1u);   // the draw itself held together; the submission's end did not
+    }
+}
+
+TEST(the_fake_refuses_the_packets_a_draw_stream_may_not_carry) {
+    using namespace a6xx;
+    {
+        Twin w;
+        size_t ds = w.e.find(CP_SET_DRAW_STATE);
+        w.words[ds + 1] = setDrawState0(4, 0, 1);   // a group of 4 dwords at an address: applied at the draw over the direct writes
+        w.words[ds + 2] = uint32_t(w.e.table->gpuAddress());
+        CHECK(has(w.fault(), "draw-state groups are not what this GPU model runs: registers are written directly (only CP_SET_DRAW_STATE's 3-word disable-all form is taken)"));
+    }
+    {
+        Twin w;
+        size_t m = w.e.find(CP_SET_MODE);
+        w.words[m] = pm4::type7(CP_SET_MODE, 2);   // two words: the second eats the next packet's header
+        w.words.insert(w.words.begin() + m + 2, 0u);
+        CHECK(has(w.fault(), "opcode 0x63 of 2 words, not 1"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_SHADER, SB6_VS_SHADER);
+        w.words[load] = pm4::type7(CP_LOAD_STATE6, 3);
+        w.words[load + 1] = loadState6_0(0, ST6_IBO, SS6_INDIRECT, SB6_IBO, 1);
+        CHECK(has(w.fault(), "a load into the 3D IBO table (SB6_IBO): no Mesa driver drives it non-bindless, not what this GPU model runs"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_SHADER, SB6_VS_SHADER);
+        w.words[load + 1] = loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_CS_SHADER, 1);   // the compute block by the VS's opcode
+        CHECK(has(w.fault(), "CP_LOAD_STATE6_GEOM for state block 13: the compute stage's loads go by CP_LOAD_STATE6_FRAG"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_SHADER, SB6_VS_SHADER);
+        w.words[load + 1] = loadState6_0(0, ST6_IBO, SS6_INDIRECT, SB6_VS_SHADER, 1);
+        CHECK(has(w.fault(), "an IBO load into the vertex shader block: the 3D pipeline's IBOs go through SB6_IBO, which this GPU model does not run"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_FRAG, ST6_SHADER, SB6_FS_SHADER);
+        w.words[load + 1] = loadState6_0(0, ST6_SHADER, SS6_INDIRECT, a6xx_state_block(9), 1);   // SB6_HS_SHADER
+        CHECK(has(w.fault(), "CP_LOAD_STATE6_FRAG for state block 9: not one this GPU model runs"));
+    }
+    {
+        Twin w;
+        size_t load = w.e.findLoad(CP_LOAD_STATE6_FRAG, ST6_SHADER, SB6_FS_SHADER);
+        w.words[load + 1] = loadState6_0(0, ST6_IBO, SS6_INDIRECT, SB6_FS_TEX, 1);
+        CHECK(has(w.fault(), "a load of type 3 into the fragment texture block (SB6_FS_TEX): not samplers (ST6_SHADER) or textures (ST6_CONSTANTS)"));
+    }
+}

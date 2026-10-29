@@ -20,6 +20,25 @@
 // shader instruction (no ir3 interpreter: the memory a dispatch would write stays as it was), or judge the VALUE of a
 // register beyond those checks. That is the phone's to prove, with hakios-metal-probe.
 //
+// A draw (CP_DRAW_INDX_OFFSET) is checked the same way, against the registers written before it and the loads into the
+// two stages' blocks (SB6_VS_SHADER by CP_LOAD_STATE6_GEOM, SB6_FS_SHADER by _FRAG, as tu6_stage2opcode pairs them):
+// the sysmem pass begun (the RM6_DIRECT_RENDER marker, both BIN_CONTROLs BUFFERS_IN_SYSMEM with no bins); the vertex
+// and fragment stages enabled in both HLSQ_xS_CNTL and SP_xS_CONFIG and the geometry stages off; each program 128-byte
+// aligned, instrlen * 128 bytes inside a buffer, preloaded from exactly there by the stage's opcode with at most
+// instrlen (and 127) units, every constant load within the stage's decoded CONSTLEN; the FS thread size equal in
+// SP_FS_CTRL_REG0 and HLSQ_FS_CNTL_0; RB_MRT[0] a linear target of a known format whose pitch holds the window's rows and
+// whose rows (counted to 4) lie inside a buffer at a 64-aligned base, SP_FS_MRT_REG[0] and GRAS_LRZ_MRT_BUF_INFO_0 the
+// same format, BASE_GMEM 0; one MRT in both FS_OUTPUT_CNTL1 copies, a colour register in SP_FS_OUTPUT_REG[0], all four
+// components in both RENDER_COMPONENTS copies and in RB_MRT_CONTROL[0]; no depth or stencil state without a depth
+// buffer; the screen and viewport scissors inside the window scissor; viewport scales finite and non-zero and the
+// guardband written; the vertex fetch counts equal and every fetch inside a buffer; a position location, the VPC stride
+// equal in VPC_VS_PACK and PC_VS_OUT_CNTL, SP_VS_PRIMITIVE_CNTL.OUT the outputs named; the VARYING flags agreeing across
+// their four copies; the barycentric and coordinate regids agreeing across HLSQ_CONTROL_3/4, GRAS_CNTL and
+// RB_RENDER_CONTROL0; MSAA off in the three DEST registers; RB_CCU_CNTL written in this submission right after a
+// CP_WAIT_FOR_IDLE with the sysmem shape; and, at the submission's end, a 4-word PC_CCU_FLUSH_COLOR_TS and a 4-word
+// CACHE_FLUSH_TS after the last draw ("the colour stays in the CCU" otherwise). It rasterizes nothing: coverage, the
+// edge rule, interpolation, the y orientation and the bytes are the phone's.
+//
 // What it answers is what hakios's kernel driver answers (bsd/dev/hakios.adreno.c, hakios_gpu_parameter): GPU_ID 0,
 // the chip id 0x06030500 with a speed bin above it, 512 KiB of GMEM, 550 MHz. And it fails as that kernel fails. A
 // submission the GPU never finishes is a hang there, found by the wait's timeout alone (the GPU raises no fault for
@@ -65,6 +84,32 @@ public:
         std::vector<a6xx::TexConst> tex;
         std::vector<a6xx::TexSamp> samp;
     };
+    // one draw as CP_DRAW_INDX_OFFSET found the registers and the loads, for a test to hold against the Texture and the
+    // Draw it came from (nothing of it was rasterized)
+    struct Draw {
+        uint32_t primType = 0, sourceSelect = 0, visCull = 0;   // CP_DRAW_INDX_OFFSET_0's fields
+        uint32_t numInstances = 0, numIndices = 0;
+        uint64_t vsProgram = 0, fsProgram = 0;      // SP_VS_OBJ_START / SP_FS_OBJ_START
+        uint32_t vsInstrlen = 0, fsInstrlen = 0;    // SP_VS_INSTRLEN / SP_FS_INSTRLEN
+        uint32_t vsConstlen = 0, fsConstlen = 0;    // HLSQ_VS_CNTL / HLSQ_FS_CNTL's CONSTLEN, decoded (<< 2), in vec4
+        std::vector<ConstLoad> vsConsts, fsConsts;  // the ST6_CONSTANTS loads into each stage's block
+        // the target as RB_MRT[0] names it: the format, swap and tile mode fields, the pitches in BYTES (decoded), the base
+        uint32_t mrtFormat = 0, mrtSwap = 0, mrtTileMode = 0, mrtPitch = 0, mrtArrayPitch = 0;
+        uint64_t mrtBase = 0;
+        uint32_t spFsMrtReg = 0;
+        uint32_t renderComponents = 0, fsRenderComponents = 0;   // RB_RENDER_COMPONENTS, SP_FS_RENDER_COMPONENTS
+        uint32_t mrtCount = 0;                      // RB_FS_OUTPUT_CNTL1.MRT (== SP_FS_OUTPUT_CNTL1.MRT)
+        uint32_t windowScissor[4] = {};             // GRAS_SC_WINDOW_SCISSOR TL x, y, BR x, y (BR inclusive)
+        uint32_t screenScissor[4] = {}, viewportScissor[4] = {};   // GRAS_SC_SCREEN_SCISSOR[0], GRAS_SC_VIEWPORT_SCISSOR[0]
+        float viewport[6] = {};                     // GRAS_CL_VPORT[0]: xoffset, xscale, yoffset, yscale, zoffset, zscale
+        uint32_t vertexIdRegid = 0;                 // VFD_CONTROL_1.REGID4VTX
+        uint32_t vfdFetchCount = 0, vfdDecodeCount = 0;   // VFD_CONTROL_0
+        uint32_t vertexIndexOffset = 0;             // VFD_INDEX_OFFSET
+        uint32_t positionLoc = 0, strideInVpc = 0, vsOutCount = 0;   // VPC_VS_PACK.POSITIONLOC / .STRIDE_IN_VPC, SP_VS_PRIMITIVE_CNTL.OUT
+        uint32_t numNonPosVar = 0;                  // VPC_CNTL_0.NUMNONPOSVAR
+        uint32_t spFsOutputReg0 = 0;                // SP_FS_OUTPUT_REG[0]
+        bool ccuFlushed = false, cacheFlushed = false;   // a 4-word PC_CCU_FLUSH_COLOR_TS / CACHE_FLUSH_TS followed it (set at the submission's end)
+    };
     struct Stats {
         uint32_t submits = 0;
         uint32_t packets = 0;
@@ -74,6 +119,8 @@ public:
         uint64_t wordsCopied = 0;
         uint32_t dispatches = 0;    // CP_EXEC_CS packets whose state held together (none of them run: see above)
         Dispatch lastDispatch;
+        uint32_t draws = 0;         // CP_DRAW_INDX_OFFSET packets whose state held together (none of them rasterized)
+        Draw lastDraw;
     };
 
     // ASYNC: submissions run on a thread of their own, after DELAY_US each, as the real GPU runs them after the call
@@ -128,11 +175,27 @@ private:
         std::vector<ConstLoad> consts;
     };
 
+    // what a graphics stage has loaded so far (its SB6_xS_SHADER and SB6_xS_TEX blocks), for CP_DRAW_INDX_OFFSET
+    struct StageLoads {
+        bool programLoaded = false;
+        uint64_t programFrom = 0;
+        uint32_t programUnits = 0;
+        std::vector<ConstLoad> consts;
+        bool sampLoaded = false, texLoaded = false;
+        uint64_t sampFrom = 0, texFrom = 0;
+        uint32_t sampUnits = 0, texUnits = 0;
+    };
+
     uint8_t* at(uint64_t iova, uint64_t length);
     void run(const Job& job);
     bool execute(uint64_t address, uint32_t words, int depth);
-    bool loadState(const uint32_t* p, uint32_t count);
+    // CP_LOAD_STATE6_FRAG, _GEOM or the plain form (OPCODE), keyed on its state block
+    bool loadState(uint32_t opcode, const uint32_t* p, uint32_t count);
     bool execCs(const uint32_t* p, uint32_t count);
+    bool execDraw(const uint32_t* p, uint32_t count);
+    // one graphics stage's program and constants at the draw: the rules CP_EXEC_CS applies to the compute stage's
+    bool checkStageProgram(const char* what, const StageLoads& xs, uint32_t instrlenReg, uint32_t objStartReg, uint32_t hlsqCntl, uint32_t spConfig,
+                           uint32_t* instrlen, uint64_t* program, uint32_t* constlen);
     // a 2D descriptor's rule (a texture of the texture table when SAMPLED, an image at an IBO slot otherwise)
     bool check2d(const uint32_t* d, const char* what, uint32_t i, bool sampled);
     bool checkSampler(const uint32_t* d, uint32_t i);
@@ -153,6 +216,12 @@ private:
     std::deque<Job> jobs_;
     std::map<uint32_t, uint32_t> regs_;         // every register written, as written (type-4 packets)
     CsState cs_;
+    StageLoads vs_, fs_;
+    // what a draw needs of the submission so far: the marker that begins a sysmem pass, RB_CCU_CNTL written (right after a
+    // CP_WAIT_FOR_IDLE), and whether the last packet was that WFI; and what the submission's end needs of a draw: the
+    // two 4-word flushes after the last one
+    bool passBegun_ = false, ccuCntlWritten_ = false, ccuCntlAfterWfi_ = false, lastWasWfi_ = false;
+    uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0;
     uint32_t nextHandle_ = 1, nextQueue_ = 1;
     uint64_t nextIova_ = 0x100000000ull;
     Stats stats_;
