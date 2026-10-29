@@ -91,6 +91,16 @@ int hakios_metal_library_type(hakios_metal_library *library, unsigned i);   /* e
 hakios_metal_kernel *hakios_metal_kernel_compile(hakios_metal_library *library, const char *function);
 /* the same from a module's bitcode (a .bc, or a function's AIR as Metal hands it out: -[_MTLFunction bitcodeData]) */
 hakios_metal_kernel *hakios_metal_kernel_compile_bitcode(const void *bitcode, size_t size);
+/* A function constant the pipeline supplies (MTLFunctionConstantValues): INDEX the [[function_constant(n)]], BITS the
+ * value as the bits of its type -- a bool 0 or 1, an integer or float its own bits in the low end, a vector's
+ * component i at bit i * its width. A constant the module declares and the array does not name is not defined to it
+ * (is_function_constant_defined) and reads as zero; an index it does not declare is ignored. */
+typedef struct hakios_metal_constant {
+    unsigned index;
+    uint64_t bits;
+} hakios_metal_constant;
+hakios_metal_kernel *hakios_metal_kernel_compile_bitcode_constants(const void *bitcode, size_t size,
+    const hakios_metal_constant *constants, unsigned count);
 void hakios_metal_kernel_free(hakios_metal_kernel *kernel);
 const char *hakios_metal_kernel_name(hakios_metal_kernel *kernel);
 unsigned hakios_metal_kernel_resource_count(hakios_metal_kernel *kernel);
@@ -173,6 +183,10 @@ hakios_metal_program *hakios_metal_program_new(hakios_metal_library *vs_library,
 /* the same from two modules' bitcode (-[_MTLFunction bitcodeData] of each) */
 hakios_metal_program *hakios_metal_program_new_bitcode(const void *vs_bitcode, size_t vs_size,
     const void *fs_bitcode, size_t fs_size, unsigned color_pixel_format);
+/* ...each function specialised by its own constants, as each MTLFunction of a pipeline carries its own */
+hakios_metal_program *hakios_metal_program_new_bitcode_constants(const void *vs_bitcode, size_t vs_size,
+    const hakios_metal_constant *vs_constants, unsigned vs_count, const void *fs_bitcode, size_t fs_size,
+    const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned color_pixel_format);
 void hakios_metal_program_free(hakios_metal_program *program);
 const char *hakios_metal_program_name(hakios_metal_program *program);   /* "vs+fs" */
 /* STAGE 0 = vertex, 1 = fragment: the resources that stage binds, as hakios_metal_kernel_resource reports a kernel's */

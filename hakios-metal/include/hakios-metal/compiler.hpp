@@ -78,13 +78,24 @@ struct CompiledProgram {
 // whether a compiler is in this build
 bool hasCompiler();
 
+// A function constant's value as the pipeline supplies it (MTLFunctionConstantValues): INDEX is the module's
+// [[function_constant(n)]], BITS the value as the bits of its type -- a bool 0 or 1, an integer or a float its own bits
+// in the low end, a vector's component i at bit i * its width (nir_air.h: air_constant_value). A constant not supplied
+// is told to the module as not defined (air.is_function_constant_defined) and reads as zero. An index the module does
+// not declare is no error: Metal specialises a function with a pipeline's whole set, and the set may name others'.
+struct FunctionConstant {
+    uint32_t index;
+    uint64_t bits;
+};
+using FunctionConstants = std::vector<FunctionConstant>;
+
 // One AIR module holding a vertex or a fragment function, compiled for this chip: the lowering turnip runs
 // (nir_lower_system_values, ir3_nir_lower_io_to_temporaries on variables, ir3_finalize_nir, ir3_nir_post_finalize --
 // which does the nir_lower_io -- then ir3), the Stage filled from the variant (inputs, outputs, the sysval regids, the
 // FS's ij/face/coord regids, colour outputs, flags). nullptr with *why: not a vertex or fragment function (a kernel goes
 // through compileAir), the front end's or ir3's refusal by name, or no compiler in this build. The fixture writer
 // (tools/mesa/ir3-dump.patch) runs the same passes in the same order, so a Stage compiled here equals its fixture.
-std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why);
+std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {});
 
 // VS and FS linked (render::link, and with Mesa present cross-checked against ir3_link_shaders) for a colour target of
 // COLOR0's format. nullptr with *why: the refusals render.hpp names for a stage (attributes, several colour outputs,
@@ -96,6 +107,6 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
 // One AIR module (the bitcode of one function, as metallib.hpp hands it out, or a .bc) compiled for this chip.
 // nullptr with *why: the front end's refusal, named by stage ("intrinsic: air.simd_sum not handled"), or ir3's, or
 // "not a compute kernel", or that no compiler is in this build.
-std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std::string* why);
+std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {});
 
 }  // namespace hakios::metal

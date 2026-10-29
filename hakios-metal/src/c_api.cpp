@@ -111,9 +111,19 @@ int hakios_metal_library_type(hakios_metal_library* l, unsigned i) {
     return i < l->lib.functions().size() ? int(l->lib.functions()[i].type) : -1;
 }
 
+static FunctionConstants constantsOf(const hakios_metal_constant* c, unsigned count) {
+    FunctionConstants out;
+    for (unsigned i = 0; c != nullptr && i < count; i++) out.push_back(FunctionConstant{c[i].index, c[i].bits});
+    return out;
+}
+
 hakios_metal_kernel* hakios_metal_kernel_compile_bitcode(const void* bitcode, size_t size) {
+    return hakios_metal_kernel_compile_bitcode_constants(bitcode, size, nullptr, 0);
+}
+
+hakios_metal_kernel* hakios_metal_kernel_compile_bitcode_constants(const void* bitcode, size_t size, const hakios_metal_constant* constants, unsigned count) {
     std::string why;
-    std::unique_ptr<CompiledKernel> k = compileAir(bitcode, size, &why);
+    std::unique_ptr<CompiledKernel> k = compileAir(bitcode, size, &why, constantsOf(constants, count));
     if (k == nullptr) {
         failed(why);
         return nullptr;
@@ -419,13 +429,19 @@ static hakios_metal_program* programOf(std::shared_ptr<CompiledStage> vs, std::s
 }
 
 hakios_metal_program* hakios_metal_program_new_bitcode(const void* vsBitcode, size_t vsSize, const void* fsBitcode, size_t fsSize, unsigned colorPixelFormat) {
+    return hakios_metal_program_new_bitcode_constants(vsBitcode, vsSize, nullptr, 0, fsBitcode, fsSize, nullptr, 0, colorPixelFormat);
+}
+
+hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsBitcode, size_t vsSize, const hakios_metal_constant* vsConstants, unsigned vsCount,
+                                                                 const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants, unsigned fsCount,
+                                                                 unsigned colorPixelFormat) {
     std::string why;
-    std::unique_ptr<CompiledStage> vs = compileStage(vsBitcode, vsSize, &why);
+    std::unique_ptr<CompiledStage> vs = compileStage(vsBitcode, vsSize, &why, constantsOf(vsConstants, vsCount));
     if (vs == nullptr) {
         failed(why);
         return nullptr;
     }
-    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why);
+    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount));
     if (fs == nullptr) {
         failed(why);
         return nullptr;

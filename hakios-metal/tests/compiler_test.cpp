@@ -798,3 +798,51 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(m, fs) == nullptr);
     expectRefusal(why, "tri_flat_vs writes no position: nothing to rasterize");
 }
+
+// The pipeline's function constants reach the module: tri_fc_fs's colour is four literals once they are folded, and
+// each set of constants gives its own (the .ll's table). "Supplied as zero" and "not supplied" must differ -- the
+// guarded constant's is_function_constant_defined says which -- and a constant the module does not declare is ignored.
+TEST(compiler_specialises_a_stage_by_the_pipelines_function_constants) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("tri_fc_fs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    // the four mov immediates into r0.x..w, in the listing's own words
+    auto colour = [&](const FunctionConstants& c, std::string* error) -> std::vector<std::string> {
+        std::string why;
+        auto s = compileStage(bc.data(), bc.size(), &why, c);
+        if (s == nullptr) {
+            *error = why;
+            return {};
+        }
+        std::vector<std::string> out;
+        for (const char* r : {"r0.x, ", "r0.y, ", "r0.z, ", "r0.w, "}) {
+            size_t at = s->listing.find(std::string("mov.u32u32 ") + r);
+            out.push_back(at == std::string::npos ? "?" : s->listing.substr(at + 11 + strlen(r), s->listing.find('\n', at) - at - 11 - strlen(r)));
+        }
+        return out;
+    };
+    struct Case {
+        FunctionConstants constants;
+        std::vector<std::string> want;
+        const char* what;
+    };
+    const Case cases[] = {
+        {{}, {"0", "0", "0x3e800000", "0x3e800000"}, "nothing supplied"},
+        // (7 / 255 folded as 7 * (1 / 255), which is one ulp above the quotient, 0x3ce0e0e1: the store still makes it 7)
+        {{{0, 7}, {1, 1}}, {"0x3ce0e0e2", "0x3f800000", "0x3e800000", "0x3f800000"}, "0 = 7, 1 = true"},
+        {{{0, 0}}, {"0", "0x3f800000", "0x3e800000", "0x3e800000"}, "0 = 0"},
+        {{{1, 1}, {9, 123}}, {"0", "0", "0x3e800000", "0x3f800000"}, "1 = true, and 9, which the module does not declare"},
+    };
+    for (const Case& c : cases) {
+        std::string error;
+        std::vector<std::string> got = colour(c.constants, &error);
+        CHECK(error.empty());
+        CHECK(got == c.want);
+        if (got != c.want) {
+            std::printf("       %s: %s", c.what, error.c_str());
+            for (const auto& g : got) std::printf(" [%s]", g.c_str());
+            std::printf("\n");
+        }
+    }
+}

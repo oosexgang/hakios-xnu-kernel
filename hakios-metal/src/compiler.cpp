@@ -22,12 +22,12 @@ namespace hakios::metal {
 
 bool hasCompiler() { return false; }
 
-std::unique_ptr<CompiledKernel> compileAir(const void*, size_t, std::string* why) {
+std::unique_ptr<CompiledKernel> compileAir(const void*, size_t, std::string* why, const FunctionConstants&) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return nullptr;
 }
 
-std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why) {
+std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why, const FunctionConstants&) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return nullptr;
 }
@@ -225,11 +225,20 @@ struct Translation {
     const char* name() const { return nir != nullptr && nir->info.name ? nir->info.name : "the function"; }
 };
 
-// AIR to NIR: the front end, with the module's function constants at their defaults
-bool translate(const void* bitcode, size_t size, Translation& t, std::string* why) {
+// AIR to NIR: the front end, with the module's function constants as the pipeline supplied them (the rest not
+// supplied: the front end tells the module so, and reads them as zero)
+bool translate(const void* bitcode, size_t size, Translation& t, std::string* why, const FunctionConstants& supplied) {
     t.mem = ralloc_context(nullptr);
     air_constant_value* constants = nullptr;
     unsigned numConstants = air_module_function_constants(t.mem, bitcode, size, &constants);
+    for (const FunctionConstant& f : supplied) {
+        for (unsigned i = 0; i < numConstants; i++) {
+            if (constants[i].index == f.index) {
+                constants[i].bits = f.bits;
+                constants[i].supplied = true;
+            }
+        }
+    }
     air_to_nir_options options{};
     options.constants = constants;
     options.num_constants = numConstants;
@@ -640,14 +649,14 @@ const char* className(uint8_t element) { return element == kElemFloat ? "floats"
 
 bool hasCompiler() { return theCompiler() != nullptr; }
 
-std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std::string* why) {
+std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
     }
     Translation t;
-    if (!translate(bitcode, size, t, why)) return nullptr;
+    if (!translate(bitcode, size, t, why, constants)) return nullptr;
     if (t.nir->info.stage != MESA_SHADER_COMPUTE) {
         refuse(why, std::string(t.info.entry_point ? t.info.entry_point : "the function") +
                         " is not a compute kernel; a vertex or fragment function goes through compileStage");
@@ -666,14 +675,14 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     return out;
 }
 
-std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why) {
+std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
     }
     Translation t;
-    if (!translate(bitcode, size, t, why)) return nullptr;
+    if (!translate(bitcode, size, t, why, constants)) return nullptr;
     // the stage is the module's named metadata (air.vertex / air.fragment / air.kernel: air_to_nir.c module_stage)
     const std::string name = t.info.entry_point ? t.info.entry_point : "the function";
     switch (t.nir->info.stage) {

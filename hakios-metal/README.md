@@ -201,6 +201,13 @@ one slot as 2D and as 3D, and the table has no seventeenth slot for a second des
 writes the texel with a value that is not zero first, so that reading it and reading nothing differ, and every pixel
 carried it from both (hakios `logs/173744-run.log`, probe line 9s). That a null texture reads as zero is an
 assumption nothing reachable confirms (hakios's `nir_air.h` says why), and the queue's texture is the one place it lives.
+
+A pipeline's function constants reach the front end (`compileStage` / `compileAir` take them; the C interface's
+`hakios_metal_program_new_bitcode_constants`): each supplied value with its `supplied` flag, so that
+`is_function_constant_defined` tells "given as zero" from "not given" -- `tools/kernels/tri_fc_fs.ll` folds to a
+different colour for each of four sets, and with the flag dropped two of them collide. Before, every constant was
+taken unsupplied, which is wrong for most of CoreAnimation's: 123 of the corpus's constants are ones Metal obliges a
+pipeline to give.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test
