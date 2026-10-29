@@ -22,6 +22,7 @@
 #include "fixtures/tri_attr_vs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
+#include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
@@ -304,10 +305,10 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p = handProgram();
         p.vs.k.numSsbos = 1;
         p.vs.k.numIbos = 1;
-        refused(r, p, pass, d, "hand_vs binds 1 device buffer(s), 0 constant buffer(s) it indexes and 1 IBO(s): only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
+        refused(r, p, pass, d, "hand_vs binds 1 device buffer(s) and 1 IBO(s): device buffers in a draw are not served yet (constant ones are)");
         p = handProgram();
-        p.fs.k.numUbos = 1;
-        refused(r, p, pass, d, "hand_fs binds 0 device buffer(s), 1 constant buffer(s) it indexes and 0 IBO(s): only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
+        p.fs.k.numUbos = 1;   // an indexed constant buffer: served through a UBO descriptor, refused here for want of the buffer
+        refused(r, p, pass, d, "hand_fs: no buffer bound at index 0 (a constant buffer it indexes)");
         p = handProgram();
         p.fs.k.numUboRanges = 1;   // a pushed range, served -- but nothing is bound at its block
         refused(r, p, pass, d, "hand_fs: no buffer bound at index 0 (its constant buffer)");
@@ -2997,4 +2998,58 @@ TEST(an_indexed_or_instanced_draw_refuses_what_it_cannot_serve) {
     auto cb = drawOnce(r, inst, pass, many, render::Options{}, vsb);
     CHECK(cb->status() == CommandBuffer::kCompleted);
     CHECK_EQ(r.fake->stats().lastDraw.numInstances, 7u);
+}
+
+// --- an indexed constant buffer: an ldc through a UBO descriptor --------------------------------------------------------------
+
+TEST(a_draw_loads_the_ubo_descriptors_an_ldc_reads_through) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+    auto pos = bufferWith(r, xy, sizeof xy);
+    Program p{kernels::tri_upos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_upos"};
+    CHECK_EQ(p.vs.k.numUbos, 1u);
+    Bindings vsb;
+    vsb.buffers = {Binding{pos.get(), 0}};
+    Encoded e(r, p, pass, wholeDraw(6), render::Options{}, vsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    // the load: CP_LOAD_STATE6_GEOM, ST6_UBO, SS6_DIRECT, SB6_VS_SHADER, one unit, then the descriptor: the buffer's
+    // address and, above its high bits, its length in vec4 -- the buffer object's whole page (4096 / 16 = 256) is what
+    // bufferWith's length is not: the length asked for is 48 bytes, 3 vec4
+    bool found = false;
+    for (size_t i = e.find(CP_LOAD_STATE6_GEOM); i != size_t(-1); i = e.find(CP_LOAD_STATE6_GEOM, i + 1)) {
+        const auto& w = e.stream.words();
+        const uint32_t w0 = w[i + 1];
+        if (((w0 & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) != ST6_UBO) continue;
+        found = true;
+        CHECK_EQ((w0 & CP_LOAD_STATE6_0_STATE_BLOCK__MASK) >> CP_LOAD_STATE6_0_STATE_BLOCK__SHIFT, uint32_t(SB6_VS_SHADER));
+        CHECK_EQ((w0 & CP_LOAD_STATE6_0_STATE_SRC__MASK) >> CP_LOAD_STATE6_0_STATE_SRC__SHIFT, uint32_t(SS6_DIRECT));
+        CHECK_EQ((w0 & CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> CP_LOAD_STATE6_0_NUM_UNIT__SHIFT, 1u);
+        CHECK_EQ(w[i + 4], uint32_t(pos->gpuAddress()));
+        CHECK_EQ(w[i + 5], uint32_t(pos->gpuAddress() >> 32) | 3u << 17);
+    }
+    CHECK(found);
+    auto cb = drawOnce(r, p, pass, wholeDraw(6), render::Options{}, vsb);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.vsUbos, 1u);
+    // refused: nothing bound, an offset off a vec4
+    Encoded none(r, p, pass, wholeDraw(6));
+    CHECK(!none.ok);
+    expectRefusal(none.error, "tri_upos_vs_air: no buffer bound at index 0 (a constant buffer it indexes)");
+    Bindings off;
+    off.buffers = {Binding{pos.get(), 8}};
+    Encoded misaligned(r, p, pass, wholeDraw(6), render::Options{}, off);
+    CHECK(!misaligned.ok);
+    expectRefusal(misaligned.error, "tri_upos_vs_air: buffer 0: offset 8 is not a multiple of 16 inside it (a UBO starts on a vec4)");
+    // the fake's twin: a descriptor whose size runs past every buffer
+    std::vector<uint32_t> words = e.stream.words();
+    for (size_t i = e.find(CP_LOAD_STATE6_GEOM); i != size_t(-1); i = e.find(CP_LOAD_STATE6_GEOM, i + 1)) {
+        if (((words[i + 1] & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) == ST6_UBO) words[i + 5] |= A6XX_UBO_1_SIZE__MASK;
+    }
+    CHECK(has(faultOf(r, words), "UBO descriptor 0 of the vertex stage: 32767 vec4 at"));
 }

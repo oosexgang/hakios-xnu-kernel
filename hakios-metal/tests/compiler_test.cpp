@@ -18,6 +18,7 @@
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
+#include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "hakios-metal/a6xx.hpp"
 #include "test.hpp"
@@ -518,6 +519,12 @@ TEST(compiler_matches_the_stage_fixtures) {
     }
     // the sampling fragment stage: one texture, one sampler, and the sample made a prefetch (into r0.z, all four
     // components, TEX_PREFETCH_SAM) -- the shape tri_tex_fs.ll was written to produce
+    // vertex pulling from a constant buffer: an ldc through UBO 0, nothing pushed
+    auto uposVs = compareStageWithFixture("tri_upos_vs", kernels::tri_upos_vs_air, "tri_upos_vs", "ldc");
+    if (uposVs) {
+        CHECK_EQ(uposVs->stage.k.numUbos, 1u);
+        CHECK_EQ(uposVs->stage.k.numUboRanges, 0u);
+    }
     auto texFs = compareStageWithFixture("tri_tex_fs", kernels::tri_tex_fs_air, "tri_tex_fs", "bary.f");
     if (texFs) {
         CHECK_EQ(texFs->stage.k.numTextureSlots, 1u);
@@ -669,14 +676,13 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     m = copyOf(vs);
     m->stage.k.numSsbos = 1;
     CHECK(link(m, fs) == nullptr);
-    expectRefusal(why, "the vertex stage tri_flat_vs binds 1 device buffer(s) and 0 constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
+    expectRefusal(why, "the vertex stage tri_flat_vs binds 1 device buffer(s): device buffers in a draw are not served yet (constant ones are)");
     m = copyOf(fs);
     m->stage.k.numUboRanges = 1;   // a pushed range links: the draw serves it (and refuses it there if nothing is bound)
     CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
-    m->stage.k.numUbos = 1;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs binds 0 device buffer(s) and 1 constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
+    m->stage.k.numUbos = 1;   // an indexed constant buffer links: the draw loads its UBO descriptor (and refuses it unbound)
+    CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
     m->stage.k.textures[3].kind = kTexSampled;   // a sampled texture links in a fragment stage: the draw binds it
     m->stage.k.numTextureSlots = 4;

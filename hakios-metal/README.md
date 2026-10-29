@@ -154,6 +154,13 @@ step rate as its divisor. The fake reads the index buffer to find the highest ve
 `logs/161507-run.log`, probe line 9n, 0 failures) a triangle strip restarted at 0xffff covers all 4096 pixels in its
 colour, 32-bit indices with a base vertex of 3 draw exactly the second triangle, and three instances at a step rate of 2
 under One + One blending leave every pixel at 2 * C0 + C1.
+
+A `constant` buffer a draw indexes is read through a UBO descriptor: where ir3 cannot push a read into the constant file
+(an index it cannot bound, as `tri_upos_vs.ll`'s `pos[vid]`), it leaves an `ldc` through UBO n, Metal's
+`[[buffer(n)]]`, and the draw loads the descriptors (the address past the binding's offset, the length in vec4) into the
+stage's block from the packet, as Gallium's `fd6_emit_ubos` does. On the phone (hakios `logs/162726-run.log`, probe line
+9o, 0 failures) the pair's positions pulled by vertex id from a buffer bound at offset 32 cover all 4096 pixels, and the
+junk before the offset, drawn on its own, touches none.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

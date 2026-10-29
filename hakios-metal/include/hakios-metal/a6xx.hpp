@@ -4225,4 +4225,16 @@ constexpr uint32_t rb2dDstInfo(uint32_t fmt, uint32_t tileMode, uint32_t swap, b
 }
 constexpr uint32_t cpBlit0(uint32_t op) { return field(op, CP_BLIT_0_OP__SHIFT, CP_BLIT_0_OP__MASK); }
 
+// --- a UBO descriptor: what an ldc reads through (fd6_emit_ubos, fd6_const.cc:266-296) ------------------------------------
+// two dwords per UBO, loaded as ST6_UBO into the stage's shader block from the packet (8 bytes a unit): the address,
+// and in the high dword the size in vec4 (A6XX_UBO_1_SIZE, bits 17..31 above the address's 17 high bits)
+inline constexpr uint32_t A6XX_UBO_1_SIZE__MASK = 0xfffe0000;                                // a6xx.xml.h:11544
+inline constexpr uint32_t A6XX_UBO_1_SIZE__SHIFT = 17;                                       // a6xx.xml.h:11545
+constexpr uint32_t A6XX_UBO_1_SIZE(uint32_t v) { return field(v, A6XX_UBO_1_SIZE__SHIFT, A6XX_UBO_1_SIZE__MASK); }
+inline constexpr uint32_t kUboMaxVec4 = A6XX_UBO_1_SIZE__MASK >> A6XX_UBO_1_SIZE__SHIFT;   // not-in-headers: the 15-bit field's largest size
+constexpr void uboDescriptor(uint64_t address, uint32_t sizeVec4, uint32_t out[2]) {
+    out[0] = uint32_t(address);
+    out[1] = uint32_t(address >> 32) | A6XX_UBO_1_SIZE(sizeVec4);
+}
+
 }  // namespace hakios::metal::a6xx

@@ -308,8 +308,19 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
         cs_.ibosFrom = from;
         cs_.iboUnits = units;
         break;
+    case ST6_UBO:
+        // the descriptors themselves, two words each, as the draw (or the dispatch) will read them: from the packet
+        if (src == SS6_DIRECT) {
+            auto& u = xs ? xs->ubos : cs_.ubos;
+            u.resize(std::max<size_t>(u.size(), dstOff + units));
+            for (uint32_t i = 0; i < units; i++) {
+                const uint32_t lo = p[3 + 2 * i], hi = p[4 + 2 * i];
+                u[dstOff + i] = UboDescriptor{lo | uint64_t(hi & ~A6XX_UBO_1_SIZE__MASK) << 32, (hi & A6XX_UBO_1_SIZE__MASK) >> A6XX_UBO_1_SIZE__SHIFT};
+            }
+        }
+        break;
     default:
-        break;   // ST6_UBO: taken, not checked further
+        break;
     }
     return true;
 }
@@ -1074,6 +1085,21 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             }
         }
     }
+    // the UBO descriptors each stage loaded: every one names memory inside a buffer for the size it says (an ldc past
+    // a descriptor's size reads zeros; past the memory it would read whatever is there)
+    for (const StageLoads* xs : {&vs_, &fs_}) {
+        for (size_t u = 0; u < xs->ubos.size(); u++) {
+            const UboDescriptor& ub = xs->ubos[u];
+            if (ub.base == 0 && ub.vec4s == 0) continue;
+            if (ub.vec4s == 0 || at(ub.base, uint64_t(ub.vec4s) * 16) == nullptr || ub.base % 16 != 0) {
+                fault(text("UBO descriptor %llu of the ", u) + (xs == &vs_ ? "vertex" : "fragment") +
+                      text(" stage: %llu vec4 at %#llx, empty, misaligned or outside every buffer", ub.vec4s, ub.base));
+                return false;
+            }
+        }
+    }
+    d.vsUbos = uint32_t(vs_.ubos.size());
+    d.fsUbos = uint32_t(fs_.ubos.size());
     // the depth: none, or a DEPTH6_32 buffer laid out as texture.cpp lays a Depth32Float texture (TILE6_3: 4096-aligned,
     // the pitch a multiple of 256 bytes holding the window's width, the window's rows counted to 16 inside a buffer),
     // the format the same in GRAS_SU_DEPTH_BUFFER_INFO, the depth registers written in this submission (context state),

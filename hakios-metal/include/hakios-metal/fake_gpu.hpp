@@ -117,6 +117,7 @@ public:
         uint32_t fsTextureCount = 0, fsSamplerCount = 0;   // SP_FS_TEX_COUNT, the SB6_FS_TEX sampler load's NUM_UNIT
         uint32_t prefetchCount = 0, prefetchCmd[4] = {};  // SP_FS_PREFETCH_CNTL.COUNT, SP_FS_PREFETCH_CMD[i]
         uint32_t depthCntl = 0;                           // RB_DEPTH_CNTL
+        uint32_t vsUbos = 0, fsUbos = 0;                  // the UBO descriptors each stage loaded
         uint64_t depthBase = 0;                           // RB_DEPTH_BUFFER_BASE when a depth buffer is bound
         uint32_t windowScissor[4] = {};             // GRAS_SC_WINDOW_SCISSOR TL x, y, BR x, y (BR inclusive)
         uint32_t screenScissor[4] = {}, viewportScissor[4] = {};   // GRAS_SC_SCREEN_SCISSOR[0], GRAS_SC_VIEWPORT_SCISSOR[0]
@@ -176,6 +177,10 @@ public:
     static constexpr uint64_t kMaxFrequencyHz = 550000000;
 
 private:
+    struct UboDescriptor {
+        uint64_t base;
+        uint32_t vec4s;
+    };
     struct Buffer {
         uint64_t iova;
         std::vector<uint8_t> bytes;
@@ -193,6 +198,7 @@ private:
         bool ibosLoaded = false;
         uint64_t ibosFrom = 0;
         uint32_t iboUnits = 0;
+        std::vector<UboDescriptor> ubos;   // the ST6_UBO loads into SB6_CS_SHADER, by UBO index
         // the two loads into SB6_CS_TEX: ST6_SHADER is samplers (16 bytes a unit), ST6_CONSTANTS textures (64)
         bool sampLoaded = false;
         uint64_t sampFrom = 0;
@@ -212,6 +218,7 @@ private:
         bool sampLoaded = false, texLoaded = false;
         uint64_t sampFrom = 0, texFrom = 0;
         uint32_t sampUnits = 0, texUnits = 0;
+        std::vector<UboDescriptor> ubos;   // the ST6_UBO loads into the stage's block, by UBO index
     };
 
     uint8_t* at(uint64_t iova, uint64_t length);

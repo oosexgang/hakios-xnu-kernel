@@ -45,6 +45,7 @@
 #include "../tests/fixtures/tri_attr_vs_air.hpp"
 #include "../tests/fixtures/tri_tex_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
+#include "../tests/fixtures/tri_upos_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1086,6 +1087,7 @@ int main(int argc, char** argv) {
     //   9l. depth: two triangles at chosen depths through a Depth32Float attachment, six test setups, each draw its own pass
     //   9m. an IOSurface: a real one wrapped as a texture, cleared and drawn into, read back through the surface's own lock
     //   9n. indexed and instanced: a restarted index strip, a base vertex, three instances at a step rate of 2 under additive blending
+    //   9o. vertex pulling: positions read by vertex id from a constant buffer through a UBO descriptor, at a bound offset
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1935,6 +1937,42 @@ int main(int argc, char** argv) {
                     memcpy(&px0, bo.data(), 4);
                     report(completed(*cb) && got == W * H, "instanced, the pair x 3 instances, colour per instance at step rate 2, One + One: " + std::to_string(got) +
                                                                 " of 4096 pixels 2 * C0 + C1 = " + hex8(want) + " (pixel 0 is " + hex8(px0) + ")" + status(*cb, gpu));
+                }
+            }
+        }
+        // 9o. vertex pulling from a constant buffer: tri_upos_vs reads pos[vid] from `constant float2*` at [[buffer(0)]],
+        // an index ir3 cannot push, so an ldc through UBO descriptor 0. The buffer holds 32 bytes of junk (four vertices
+        // far outside the target) and then the pair's six positions, bound at offset 32: every pixel tri_flat's colour.
+        // A descriptor that ignored the offset would draw the junk and the first two positions, which cover no pixel
+        // exactly as the pair does; the junk alone, bound at 0 and drawn as 3 vertices, must leave the target canary.
+        if (t) {
+            const Program upos{kernels::tri_upos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_upos"};
+            auto pb = newBuffer(gpu, 32 + 6 * 8, &why);
+            if (pb == nullptr) {
+                report(false, "upos: a 64-byte constant buffer: " + why);
+            } else {
+                const float junk[4][2] = {{9, 9}, {9, 10}, {10, 9}, {10, 10}};
+                const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+                memcpy(pb->contents(), junk, 32);
+                memcpy(static_cast<uint8_t*>(pb->contents()) + 32, xy, sizeof xy);
+                for (int k = 0; k < 2; k++) {
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Bindings vsb;
+                    vsb.buffers = {Binding{pb.get(), k == 0 ? 32u : 0u}};
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(upos, rp, drawOf(0, k == 0 ? 6 : 3), vsb, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    PixelRule all{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return flatColour; }};
+                    PixelRule none{[](uint32_t, uint32_t) { return false; }, [=](uint32_t, uint32_t, uint32_t) { return 0u; }};
+                    TexReadback rb = compareTexture(*t, k == 0 ? all : none, canary);
+                    report(completed(*cb) && (k == 0 ? rb.right == 4096 : rb.uncoveredCanary == 4096),
+                           std::string(k == 0 ? "upos, the pair's positions pulled from a constant buffer at offset 32 through UBO descriptor 0: "
+                                              : "control, upos over the junk alone (bound at 0, 3 vertices off the target): ") +
+                               describeTexture(rb, k == 0 ? "the colour" : "canary") + status(*cb, gpu));
                 }
             }
         }

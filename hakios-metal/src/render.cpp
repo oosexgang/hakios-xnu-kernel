@@ -140,13 +140,16 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.numSamp > 31) {
         return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
     }
-    if (k.numSsbos != 0 || k.numUbos != 0 || k.numIbos != 0) {
-        // A `constant T&` read at a constant offset is a range ir3 pushes into the constant file and is served (below,
-        // as compute serves it). A `device` buffer is an SSBO through the 3D IBO table, which no Mesa 25.0.7 driver loads
-        // non-bindless (fd6_image.cc:308-335 is bindless), and an indexed `constant` load left as ldc wants a UBO
-        // descriptor: neither has a witness here yet
-        return refuse(why, name + " binds " + n(k.numSsbos) + " device buffer(s), " + n(k.numUbos) + " constant buffer(s) it indexes and " +
-                               n(k.numIbos) + " IBO(s): only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
+    if (k.numSsbos != 0 || k.numIbos != 0) {
+        // A `constant` buffer is served both ways: read at a constant offset it is a range ir3 pushes into the constant
+        // file, indexed it is an ldc through a UBO descriptor (uboDescriptors below, Gallium's fd6_emit_ubos). A `device`
+        // buffer is an SSBO through the 3D IBO table, which no Mesa 25.0.7 driver loads non-bindless (fd6_image.cc:308-335
+        // is bindless): no witness here yet
+        return refuse(why, name + " binds " + n(k.numSsbos) + " device buffer(s) and " + n(k.numIbos) +
+                               " IBO(s): device buffers in a draw are not served yet (constant ones are)");
+    }
+    if (k.numUbos > kMaxVertexBuffers) {
+        return refuse(why, name + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has " + n(kMaxVertexBuffers));
     }
     bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
@@ -512,6 +515,31 @@ bool fsTextures(const Stage& fs, const Bindings& b, FsTextures* out, std::string
             return refuse(why, name + "'s prefetch " + n(i) + " samples texture " + n(pf.texId) + " with sampler " + n(pf.sampId) +
                                    ": not a texture and a sampler the FS declares");
         }
+    }
+    return true;
+}
+
+// The UBO descriptors a stage's ldc reads through: one per UBO ir3 counts (num_ubos, the highest constant buffer index
+// it addresses plus one; the AIR front end numbers UBOs by Metal's [[buffer(n)]]), the bound buffer past its offset and
+// its length in vec4, as fd6_emit_ubos writes them (fd6_const.cc:284-295). Every one of them must be bound: Metal
+// requires a buffer for each buffer argument a function declares, and a read through a missing one would be of
+// whatever descriptor the block held.
+bool uboDescriptors(const Stage& s, const Bindings& b, std::vector<uint32_t>* out, std::string* why) {
+    const std::string name = stageName(s);
+    out->clear();
+    for (uint32_t u = 0; u < s.k.numUbos; u++) {
+        if (u >= b.buffers.size() || b.buffers[u].buffer == nullptr) {
+            return refuse(why, name + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+        }
+        const Binding& x = b.buffers[u];
+        if (x.offset % 16 != 0 || x.offset > x.buffer->length()) {
+            return refuse(why, name + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 16 inside it (a UBO starts on a vec4)");
+        }
+        const uint64_t vec4s = (x.buffer->length() - x.offset + 15) / 16;
+        uint32_t d[2];
+        uboDescriptor(x.buffer->gpuAddress() + x.offset, uint32_t(std::min<uint64_t>(vec4s, kUboMaxVec4)), d);
+        out->push_back(d[0]);
+        out->push_back(d[1]);
     }
     return true;
 }
@@ -897,6 +925,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     if (!fsTextures(fs, fsBindings, &fsTex, why)) {
         return false;
     }
+    std::vector<uint32_t> vsUbos, fsUbos;
+    if (!uboDescriptors(vs, vsBindings, &vsUbos, why) || !uboDescriptors(fs, fsBindings, &fsUbos, why)) {
+        return false;
+    }
     for (int i = 0; i < 4; i++) {
         if (!std::isfinite(draw.blendColor[i])) {
             return refuse(why, "a blend colour with a non-finite channel (channel " + n(uint32_t(i)) + ")");
@@ -1079,8 +1111,8 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     // (ST6_CONSTANTS, direct, at immediatesOffsetVec4)
     // ... then the pushed constant ranges, indirect, as compute uploads them (fd6_emit_user_consts / tu6_emit_xs's ranges,
     // tu_shader.cc:1397-1421) into the stage's own block
-    auto programOf = [&](const Stage& s, const std::vector<PushedRange>& ranges, uint64_t address, uint32_t ctrlReg0, uint32_t regCtrl0,
-                         uint32_t regInstrlen, uint32_t regObjFirstExec, uint32_t regHwStackOffset) {
+    auto programOf = [&](const Stage& s, const std::vector<PushedRange>& ranges, const std::vector<uint32_t>& ubos, uint64_t address, uint32_t ctrlReg0,
+                         uint32_t regCtrl0, uint32_t regInstrlen, uint32_t regObjFirstExec, uint32_t regHwStackOffset) {
         reg(stream, regCtrl0, ctrlReg0);
         reg(stream, regInstrlen, s.k.instrlen);
         regs(stream, regObjFirstExec, {0, uint32_t(address), uint32_t(address >> 32), 0, 0, 0, 0});
@@ -1094,13 +1126,18 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         for (const PushedRange& r : ranges) {
             loadIndirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
         }
+        // the UBO descriptors from the packet, before the constants in Gallium's order (fd6_emit_user_consts :332-337;
+        // the two loads do not overlap, so the order is the witness's and nothing more)
+        if (!ubos.empty()) {
+            loadDirect(stream, s, ST6_UBO, 0, uint32_t(ubos.size() / 2), ubos.data(), uint32_t(ubos.size()));
+        }
     };
     if (o.programVs) {
-        programOf(vs, vsRanges, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
+        programOf(vs, vsRanges, vsUbos, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
                   REG_A6XX_SP_VS_CTRL_REG0, REG_A6XX_SP_VS_INSTRLEN, REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET);
     }
     if (o.programFs) {
-        programOf(fs, fsRanges, fsProgram,
+        programOf(fs, fsRanges, fsUbos, fsProgram,
                   spFsCtrlReg0(uint32_t(fs.k.maxReg + 1), uint32_t(fs.k.maxHalfReg + 1), fs.k.branchstackHw, fsThreads, fs.totalIn != 0, fs.needFullQuad != 0,
                                fs.needPixlod != 0, fs.k.earlyPreamble, fs.k.mergedRegs),
                   REG_A6XX_SP_FS_CTRL_REG0, REG_A6XX_SP_FS_INSTRLEN, REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET);
