@@ -48,6 +48,7 @@
 #include "../tests/fixtures/tri_mrt_fs_air.hpp"
 #include "../tests/fixtures/tri_fb_fs_air.hpp"
 #include "../tests/fixtures/tri_base_vs_air.hpp"
+#include "../tests/fixtures/tri_pvt_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -1105,6 +1106,7 @@ int main(int argc, char** argv) {
     //   9w. mip levels: each of seven sampled by a sampler clamped to it, a draw into level 2, a copy, generateMipmaps
     //   9x. stencil: T1 writes 1 into the S8 plane of a Depth32Float_Stencil8 texture, the pair then drawn where it equals 1
     //   9y. the VS's driver params: tri_base_vs's [[base_vertex]] and [[instance_id]] from a base instance, plain and indexed
+    //   9z. private memory: tri_pvt_fs fills a 128-word array a fiber and reads it back at the pixel's index
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2670,6 +2672,36 @@ int main(int argc, char** argv) {
                                (ok ? status(*cb, gpu) : ": " + cb->error()));
                 }
             }
+        }
+        // 9z. private memory. tri_pvt_fs keeps a[128] in private memory (512 bytes a fiber, stp and ldp), fills it with
+        // 3i + y + 1 and reads a[x]: pixel (i, j) must be red 3i + j + 1, 00 00 ff. Every pixel a value of its own, which
+        // a read of zeros, of another fiber's array or of unmapped memory does not give.
+        {
+            const Program pvtP{kernels::tri_flat_vs_air, kernels::tri_pvt_fs_air, Linkage{}, "tri_pvt"};
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(pvtP, rp, drawOf(0, 6), Bindings{}, Bindings{});
+            if (ok) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            std::vector<uint8_t> bo = textureBo(*t);
+            uint32_t right = 0, firstAt = 0, first = 0;
+            bool seen = false;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    uint32_t px;
+                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                    if (px == (0xff000000u | (3 * i + j + 1))) right++;
+                    else if (!seen) { seen = true; first = px; firstAt = j * W + i; }
+                }
+            char firstHex[48];
+            snprintf(firstHex, sizeof(firstHex), ", the first other one (%u, %u) %08x", firstAt % W, firstAt / W, first);
+            report(ok && completed(*cb) && right == W * H, "private memory, a[128] a fiber read at the pixel's x: " + std::to_string(right) +
+                                                              " of 4096 pixels red 3i + j + 1" + (seen ? std::string(firstHex) : std::string()) +
+                                                              (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
 #if defined(__APPLE__)
         // 9m. the path to the screen's memory: a real IOSurface (IOSurfaceCreate, 64x64 'BGRA', 256-byte rows -- what

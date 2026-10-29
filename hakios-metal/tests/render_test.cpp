@@ -302,9 +302,6 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.k.instrlen = 128;
         refused(r, p, pass, d, "hand_fs is 128 units long: more than the 127 the instruction cache preloads, and the longer-program path is not written here");
         p = handProgram();
-        p.vs.k.pvtmemSize = 64;
-        refused(r, p, pass, d, "hand_vs wants 64 bytes of private memory a fiber: not served yet");
-        p = handProgram();
         p.fs.k.numSamp = 32;
         refused(r, p, pass, d, "hand_fs: numSamp 32 does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
         p = handProgram();
@@ -383,8 +380,8 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.colorRegid[2] = regid(1, 0);
         refused(r, p, pass, d, "hand_fs writes [[color(2)]] and the pass has no colour attachment 2");
         p = handProgram();
-        p.fs.colorRegid[0] = a6xx::kRegidNone;
-        refused(r, p, pass, d, "hand_fs counts 1 colour output(s) and writes none of them");
+        p.fs.numColorOutputs = 9;
+        refused(r, p, pass, d, "hand_fs writes 9 colour output(s): 8 at most are served");
         p = handProgram();
         p.fs.depthRegid = regid(1, 0);
         refused(r, p, pass, d, "hand_fs writes depth: no depth attachment is served");
@@ -1512,8 +1509,9 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
     }
     {
         Twin w;
+        // no register and still four components: the RB would write what an unset register holds
         w.at(regSpFsOutputReg(0)) = spFsOutputReg(kRegidNone, false);
-        CHECK(has(w.fault(), "every SP_FS_OUTPUT_REG names no register: the fragment stage writes no colour"));
+        CHECK(has(w.fault(), "RENDER_COMPONENTS 0xf (SP) and 0xf (RB): RT0 is written by no register and must name no component"));
     }
     {
         Twin w;
@@ -1923,6 +1921,78 @@ Program attrProgram() {
 // base_instance) gets turnip's one vec4 every draw: draw id 0, the vertex offset VFD_INDEX_OFFSET also adds, the first
 // instance VFD_INSTANCE_START_OFFSET also holds, 0. The values are made distinct so a swapped pair or a vertex offset
 // taken from the wrong kind of draw shows.
+// An FS that writes no colour (CoreAnimation's path_edges_fragment, drawn for its stencil) and one that counts a slot it
+// never writes are both drawn as one slot with nothing to write: RB_MRT_CONTROL[0] 0, so attachment 0 keeps its bytes.
+TEST(a_fragment_stage_that_writes_no_colour_is_drawn_with_nothing_written) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    for (uint32_t outputs : {0u, 1u}) {
+        Program p = handProgram();
+        p.fs.numColorOutputs = outputs;
+        p.fs.colorRegid[0] = a6xx::kRegidNone;
+        Encoded e(r, p, pass, wholeDraw(3));
+        CHECK(e.ok);
+        if (!e.ok) std::printf("       %s\n", e.error.c_str());
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0u);
+        CHECK_EQ(e.reg(REG_A6XX_RB_FS_OUTPUT_CNTL1), A6XX_RB_FS_OUTPUT_CNTL1_MRT(1));
+        auto cb = drawOnce(r, p, pass, wholeDraw(3));
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    }
+}
+
+// Private memory: encoded alone, a stage that wants some and is given none is refused by name, and one given too little
+// or the other layout too; through a command buffer the queue's buffer is bound, its address, MEMSIZEPERITEM (512 >> 9),
+// TOTALPVTMEMSIZE (512 x 4096 fibers = 2 MiB >> 12) and the HW stack past it in the stage's registers, the other stage
+// all zeros, and the same buffer again for the next program that fits in it.
+TEST(a_stage_that_wants_private_memory_gets_the_queues) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Program p = handProgram();
+    p.fs.k.pvtmemSize = 64;
+    {
+        Encoded e(r, p, pass, wholeDraw(3));
+        CHECK(!e.ok);
+        expectRefusal(e.error, "hand_fs wants 64 bytes of private memory a fiber and none is bound");
+        Bindings small;
+        small.privateMemory = PrivateMemory{0x100000, 32, 4096, false};
+        Encoded f(r, p, pass, wholeDraw(3), render::Options{}, Bindings{}, small);
+        CHECK(!f.ok);
+        expectRefusal(f.error, "hand_fs wants 64 bytes a fiber: the private memory bound has 32 at 1048576");
+    }
+    PrivateMemory pm;
+    std::string why;
+    auto scratch = r.queue->privateMemory(64, false, &pm, &why);
+    CHECK(scratch != nullptr);
+    CHECK_EQ(pm.perFiber, 512u);
+    CHECK_EQ(pm.perSp, 512u * 4096u);
+    CHECK_EQ(scratch->length(), 2ull * 512u * 4096u);
+    Bindings fsb;
+    fsb.privateMemory = pm;
+    Encoded e(r, p, pass, wholeDraw(3), render::Options{}, Bindings{}, fsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET + 3), A6XX_SP_CS_PVT_MEM_PARAM_MEMSIZEPERITEM(512));
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET + 4), uint32_t(scratch->gpuAddress()));
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET + 6), (512u * 4096u) >> 12);
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET), (512u * 4096u) >> 11);
+    CHECK_EQ(e.reg(REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET + 4), 0u);
+    CHECK_EQ(e.reg(REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET), 0u);
+    auto cb = drawOnce(r, p, pass, wholeDraw(3));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    PrivateMemory again;
+    CHECK(r.queue->privateMemory(300, false, &again, &why) == scratch);   // 300 fits in the 512 already there
+    CHECK(r.queue->privateMemory(600, false, &again, &why) != scratch);   // 600 grows it to 1024
+    CHECK_EQ(again.perFiber, 1024u);
+}
+
 TEST(a_vertex_stage_gets_its_driver_params_every_draw) {
     Rig r;
     auto t = target(r);
@@ -3108,6 +3178,33 @@ TEST(a_draw_loads_the_ubo_descriptors_an_ldc_reads_through) {
     Encoded misaligned(r, p, pass, wholeDraw(6), render::Options{}, off);
     CHECK(!misaligned.ok);
     expectRefusal(misaligned.error, "tri_upos_vs_air: buffer 0: offset 8 is not a multiple of 16 inside it (a UBO starts on a vec4)");
+    // a gap below the highest UBO, which no ldc reads (path_blit_vert_lph's 0 beside its 1 and 2): a descriptor of size 0
+    // there, the bound one after it; and the highest itself unbound is still refused by name
+    {
+        Program gap = p;
+        gap.vs.k.numUbos = 2;
+        Bindings g;
+        g.buffers = {Binding{nullptr, 0}, Binding{pos.get(), 0}};
+        Encoded eg(r, gap, pass, wholeDraw(6), render::Options{}, g);
+        CHECK(eg.ok);
+        if (!eg.ok) std::printf("       %s\n", eg.error.c_str());
+        bool seen = false;
+        for (size_t i = eg.find(CP_LOAD_STATE6_GEOM); i != size_t(-1); i = eg.find(CP_LOAD_STATE6_GEOM, i + 1)) {
+            const auto& w = eg.stream.words();
+            if (((w[i + 1] & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) != ST6_UBO) continue;
+            seen = true;
+            CHECK_EQ((w[i + 1] & CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> CP_LOAD_STATE6_0_NUM_UNIT__SHIFT, 2u);
+            CHECK_EQ(w[i + 4], 0u);
+            CHECK_EQ(w[i + 5], 0u);
+            CHECK_EQ(w[i + 6], uint32_t(pos->gpuAddress()));
+        }
+        CHECK(seen);
+        Bindings top;
+        top.buffers = {Binding{pos.get(), 0}};
+        Encoded et(r, gap, pass, wholeDraw(6), render::Options{}, top);
+        CHECK(!et.ok);
+        expectRefusal(et.error, "tri_upos_vs_air: no buffer bound at index 1 (a constant buffer it indexes)");
+    }
     // the fake's twin: a descriptor whose size runs past every buffer
     std::vector<uint32_t> words = e.stream.words();
     for (size_t i = e.find(CP_LOAD_STATE6_GEOM); i != size_t(-1); i = e.find(CP_LOAD_STATE6_GEOM, i + 1)) {
@@ -3156,6 +3253,27 @@ TEST(a_draw_loads_the_3d_ibo_table_an_ldib_reads_through) {
     Encoded none(r, p, pass, wholeDraw(6));
     CHECK(!none.ok);
     expectRefusal(none.error, "tri_dpos_vs_air: no buffer bound at index 0 (a device buffer it addresses)");
+    // a slot below the highest left unbound (mask_color_fragment's 1): turnip's null descriptor there, the bound one
+    // after it; the highest unbound is still refused
+    {
+        Program gap = p;
+        gap.vs.k.numSsbos = 2;
+        gap.vs.k.numIbos = 2;
+        Bindings g;
+        g.buffers = {Binding{nullptr, 0}, Binding{pos.get(), 0}};
+        Encoded eg(r, gap, pass, wholeDraw(6), render::Options{}, g);
+        CHECK(eg.ok);
+        if (!eg.ok) std::printf("       %s\n", eg.error.c_str());
+        CHECK_EQ(eg.reg(REG_A6XX_SP_IBO_COUNT), 2u);
+        const uint32_t zeros[16] = {};
+        CHECK(memcmp(eg.tableWords() + render::kTableVsAt / 4, zeros, sizeof zeros) == 0);
+        CHECK(memcmp(eg.tableWords() + render::kTableVsAt / 4 + 16, want.dword, sizeof want.dword) == 0);
+        Bindings first;
+        first.buffers = {Binding{pos.get(), 0}};
+        Encoded et(r, gap, pass, wholeDraw(6), render::Options{}, first);
+        CHECK(!et.ok);
+        expectRefusal(et.error, "tri_dpos_vs_air: no buffer bound at index 1 (a device buffer it addresses)");
+    }
     auto other = bufferWith(r, xy, sizeof xy);
     Program both = p;
     both.fs.k.numSsbos = 1;

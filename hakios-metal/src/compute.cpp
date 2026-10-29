@@ -151,7 +151,13 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     }
     for (uint32_t u = 0; u < k.numUbos; u++) {
         if (u >= buffers.size() || buffers[u].buffer == nullptr) {
-            return refuse(why, std::string(k.name) + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+            // the highest is what an ldc reads; one below it may be read by none (render.cpp: uboDescriptors)
+            if (u + 1 == k.numUbos) {
+                return refuse(why, std::string(k.name) + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+            }
+            ubos.push_back(0);
+            ubos.push_back(0);
+            continue;
         }
         const Binding& x = buffers[u];
         if (x.offset % 16 != 0 || x.offset > x.buffer->length()) {

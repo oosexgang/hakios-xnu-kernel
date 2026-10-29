@@ -290,10 +290,20 @@ int hakios_metal_cb_draw2(hakios_metal_cb *cb, hakios_metal_program *program,
     hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count,
     hakios_metal_texture *const *fs_textures, unsigned fs_texture_count,
     hakios_metal_sampler *const *fs_samplers, unsigned fs_sampler_count);
+/* -drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:: hakios_metal_cb_draw2 with BASE_INSTANCE, the first
+ * instance [[instance_id]] counts from and per-instance attributes are fetched from */
+int hakios_metal_cb_draw3(hakios_metal_cb *cb, hakios_metal_program *program,
+    const struct hakios_metal_render_pass *pass, const struct hakios_metal_viewport *viewport,
+    const struct hakios_metal_scissor *scissor, unsigned primitive, unsigned vertex_start, unsigned vertex_count,
+    unsigned instance_count, unsigned base_instance,
+    hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
+    hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count,
+    hakios_metal_texture *const *fs_textures, unsigned fs_texture_count,
+    hakios_metal_sampler *const *fs_samplers, unsigned fs_sampler_count);
 /* -drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:, the
  * tables as hakios_metal_cb_draw2's: INDEX_COUNT indices of INDEX_TYPE (MTLIndexType: UInt16 0, UInt32 1) from
  * INDEX_BUFFER at INDEX_OFFSET, BASE_VERTEX added to each (a negative one refused), primitive restart at the type's
- * all-ones as Metal has it; BASE_INSTANCE 0 only. The index buffer stays alive until the command buffer completes. */
+ * all-ones as Metal has it; BASE_INSTANCE the first instance [[instance_id]] counts from. The index buffer stays alive until the command buffer completes. */
 int hakios_metal_cb_draw_indexed(hakios_metal_cb *cb, hakios_metal_program *program,
     const struct hakios_metal_render_pass *pass, const struct hakios_metal_viewport *viewport,
     const struct hakios_metal_scissor *scissor, unsigned primitive, unsigned index_count, unsigned index_type,

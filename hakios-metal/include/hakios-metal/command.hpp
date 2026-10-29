@@ -171,6 +171,12 @@ public:
     // assumption, not a reading -- nothing reachable says what Apple's null texture samples as (nir_air.h) -- and this
     // is the one place it lives; a probe may write the texel to see which instructions read it. nullptr with *why.
     std::shared_ptr<Texture> nullTexture(std::string* why);
+    // Private memory for a stage that wants BYTES a fiber in the PERWAVE layout: one buffer for every program of the
+    // queue, as turnip keeps one a device (tu_setup_pvtmem, tu_shader.cc:2132-2190) -- a buffer a pipeline is 4 MiB for
+    // 512 bytes a fiber on this GPU -- grown to the next power of two when a program wants more. A grown-out buffer is
+    // kept as long as the queue: a draw recorded against it may still be in flight. The buffer and *OUT its layout;
+    // nullptr with *why.
+    std::shared_ptr<Buffer> privateMemory(uint32_t bytes, bool perWave, PrivateMemory* out, std::string* why);
 
 
 private:
@@ -182,6 +188,8 @@ private:
 
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
+    std::vector<std::shared_ptr<Buffer>> private_[2];   // (under lock_) privateMemory's, by layout, the last the current one
+    uint32_t privatePerFiber_[2] = {0, 0};
     uint32_t id_;
     std::mutex lock_;
     std::condition_variable changed_;

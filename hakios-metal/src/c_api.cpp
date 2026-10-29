@@ -711,6 +711,16 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
                       fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
 }
 
+int hakios_metal_cb_draw3(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
+                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
+                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, unsigned baseInstance, hakios_metal_buffer* const* vsBuffers,
+                          const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount,
+                          hakios_metal_texture* const* fsTextures, unsigned fsTextureCount, hakios_metal_sampler* const* fsSamplers,
+                          unsigned fsSamplerCount) {
+    return drawCommon(cb, p, pass, viewport, scissor, primitive, vertexStart, vertexCount, instanceCount, nullptr, 0, 0, 0, baseInstance, vsBuffers, vsOffsets,
+                      vsCount, fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
+}
+
 int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
                                  const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
                                  unsigned indexCount, unsigned indexType, hakios_metal_buffer* indexBuffer, uint64_t indexOffset, unsigned instanceCount,

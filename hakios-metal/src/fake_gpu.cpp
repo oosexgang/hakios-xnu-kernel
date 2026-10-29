@@ -1048,7 +1048,9 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             return false;
         }
         // a slot the stage writes nothing to names no register, and must then write no components (RENDER_COMPONENTS'
-        // nibble 0, below) -- else the RB writes what an unset register holds; at least one slot is written
+        // nibble 0, below) -- else the RB writes what an unset register holds. Every slot may be unwritten: turnip's
+        // tu6_emit_fs_outputs (tu_shader.cc:1853-1897) gives a stage without outputs no SP_FS_OUTPUT_REG and RENDER_COMPONENTS
+        // 0 beside a pass's colour attachments, which is a depth or stencil pass such as CoreAnimation's path_edges
         const bool unwritten = fieldOf(reg(regSpFsOutputReg(t)), A6XX_SP_FS_OUTPUT_REG_REGID__MASK, A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT) == kRegidNone;
         if (unwritten) unwrittenMask |= 1u << t;
         d.mrtBases[t] = base;
@@ -1072,10 +1074,6 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     // all four components of each target in both copies of RENDER_COMPONENTS
     d.renderComponents = reg(REG_A6XX_RB_RENDER_COMPONENTS);
     d.fsRenderComponents = reg(REG_A6XX_SP_FS_RENDER_COMPONENTS);
-    if (unwrittenMask == (1u << d.mrtCount) - 1) {
-        fault("every SP_FS_OUTPUT_REG names no register: the fragment stage writes no colour");
-        return false;
-    }
     for (uint32_t t = 0; t < d.mrtCount; t++) {
         const uint32_t want = (unwrittenMask >> t) & 1 ? 0u : 0xfu;
         if (d.renderComponents != d.fsRenderComponents || ((d.renderComponents >> (4 * t)) & 0xf) != want) {

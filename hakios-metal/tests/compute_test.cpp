@@ -68,7 +68,7 @@ struct Raw {
 // the dispatch's own words, as compute::encode writes them, for a test to mutate
 struct Encoded {
     Encoded(Rig& r, const Kernel& k, const uint32_t groups[3], const uint32_t* local, const std::vector<Binding>& buffers)
-        : Encoded(r, k, groups, local, Bindings{buffers, {}, {}}, compute::Options{}) {}
+        : Encoded(r, k, groups, local, Bindings{buffers, {}, {}, {}}, compute::Options{}) {}
     Encoded(Rig& r, const Kernel& k, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
             const compute::Options& options = compute::Options{}) {
         std::string why;
@@ -530,8 +530,8 @@ TEST(a_texture_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the
         k.numSamp = 32;
         CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill: numSamp 32 does not fit SP_CS_CONFIG.NSAMP's 5 bits (31 at most)"));
         k = texFillLike();
-        k.numUbos = 2;   // indexed constant buffers: UBO descriptors, refused here for want of the buffers
-        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill: no buffer bound at index 0 (a constant buffer it indexes)"));
+        k.numUbos = 2;   // indexed constant buffers: UBO descriptors, the highest (1) refused for want of its buffer
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill: no buffer bound at index 1 (a constant buffer it indexes)"));
         k = texCopyLike();
         k.numTextureSlots = 17;
         CHECK(has(refused(r, k, bind({}, {u32.get(), u32.get()})), "tex_copy names texture or sampler indices past 15: the tables hold 16"));

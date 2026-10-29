@@ -44,10 +44,20 @@ struct Binding {
 // (a sampled texture or an image, whichever the kernel declared at n: Kernel::textures[n].kind decides, so the plug-in's
 // -setTexture:atIndex: stores by index and never looks at the kernel), samplers[m] is [[sampler(m)]]. A nullptr entry
 // is nothing bound there; an entry past what the kernel declares is ignored, as Metal ignores it.
+// Private memory, the scratch a stage spills to and keeps its dynamically indexed arrays in (Kernel::pvtmemSize a
+// fiber): one buffer of the queue's (CommandQueue::privateMemory) and its layout, address 0 when none is bound.
+struct PrivateMemory {
+    uint64_t address = 0;
+    uint32_t perFiber = 0;   // bytes a fiber, a power of two of 512 or more (SP_xS_PVT_MEM_PARAM counts them >> 9)
+    uint32_t perSp = 0;      // bytes an SP core, perFiber times its fibers on a 4 KiB boundary: the stride between cores
+    bool perWave = false;    // ir3's pvtmem_per_wave: the layout PERWAVEMEMLAYOUT names
+};
+
 struct Bindings {
     std::vector<Binding> buffers;
     std::vector<const Texture*> textures;
     std::vector<const Sampler*> samplers;
+    PrivateMemory privateMemory;
 };
 
 namespace compute {

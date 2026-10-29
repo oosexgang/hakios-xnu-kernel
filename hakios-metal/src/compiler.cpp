@@ -874,8 +874,8 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     }
     // [[color(0)]] and up to seven after it, without a gap: the draw's rule (render.cpp), said here at the pipeline's
     // creation; the class of each output past 0 is held to its attachment's format by the draw, which knows the format
-    if (F.numColorOutputs == 0 || F.numColorOutputs > kMaxColorOutputs) {
-        refuse(why, stageName(*fs) + " writes " + std::to_string(F.numColorOutputs) + " colour output(s): 1 to 8 are served (the draw's rule)");
+    if (F.numColorOutputs > kMaxColorOutputs) {
+        refuse(why, stageName(*fs) + " writes " + std::to_string(F.numColorOutputs) + " colour output(s): 8 at most are served (the draw's rule)");
         return nullptr;
     }
     if (F.depthRegid != a6xx::kRegidNone || F.writesPos) {

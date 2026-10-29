@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <tuple>
 
 #include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/command.hpp"
@@ -135,9 +136,6 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.instrlen > kInstrCacheSize) {
         return refuse(why, name + " is " + n(k.instrlen) + " units long: more than the " + n(kInstrCacheSize) +
                                " the instruction cache preloads, and the longer-program path is not written here");
-    }
-    if (k.pvtmemSize != 0) {
-        return refuse(why, name + " wants " + n(k.pvtmemSize) + " bytes of private memory a fiber: not served yet");
     }
     if (k.numSamp > 31) {
         return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
@@ -562,15 +560,22 @@ bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTe
 
 // The UBO descriptors a stage's ldc reads through: one per UBO ir3 counts (num_ubos, the highest constant buffer index
 // it addresses plus one; the AIR front end numbers UBOs by Metal's [[buffer(n)]]), the bound buffer past its offset and
-// its length in vec4, as fd6_emit_ubos writes them (fd6_const.cc:284-295). Every one of them must be bound: Metal
-// requires a buffer for each buffer argument a function declares, and a read through a missing one would be of
-// whatever descriptor the block held.
+// its length in vec4, as fd6_emit_ubos writes them (fd6_const.cc:284-295). ir3 counts num_ubos as one past the highest
+// block an ldc still reads (track_ubo_use, ir3_nir_analyze_ubo_ranges.c:252-263), so that one must be bound; an index
+// below it may be one no ldc reads (QuartzCore's path_blit_vert_lph reads 1 and 2 and leaves 0 unbound), and an
+// unbound one there gets a descriptor of size 0, which the ldc's bound check turns into zeros, rather than whatever
+// the block held.
 bool uboDescriptors(const Stage& s, const Bindings& b, std::vector<uint32_t>* out, std::string* why) {
     const std::string name = stageName(s);
     out->clear();
     for (uint32_t u = 0; u < s.k.numUbos; u++) {
         if (u >= b.buffers.size() || b.buffers[u].buffer == nullptr) {
-            return refuse(why, name + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+            if (u + 1 == s.k.numUbos) {
+                return refuse(why, name + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+            }
+            out->push_back(0);
+            out->push_back(0);
+            continue;
         }
         const Binding& x = b.buffers[u];
         if (x.offset % 16 != 0 || x.offset > x.buffer->length()) {
@@ -604,7 +609,16 @@ bool gfxIbos(const Stage& vs, const Bindings& vsb, const Stage& fs, const Bindin
     for (const auto& [s, b] : {std::pair<const Stage*, const Bindings*>{&vs, &vsb}, {&fs, &fsb}}) {
         for (uint32_t slot = 0; slot < s->k.numSsbos; slot++) {
             if (slot >= b->buffers.size() || b->buffers[slot].buffer == nullptr) {
-                return refuse(why, std::string(stageName(*s)) + ": no buffer bound at index " + n(slot) + " (a device buffer it addresses)");
+                // ir3 counts SSBOs by the highest one the function declares, not by the ones it reaches
+                // (shader_info.num_ssbos), so an unbound slot may be one no instruction reads, as mask_color_fragment's
+                // 1 is. The one that cannot be told from a read is the highest, refused as before; one below it gets
+                // turnip's null descriptor (all zeros, tu_descriptor_set.cc's nullDescriptor), which a load reads as 0
+                // and a store leaves alone, never another binding's memory.
+                if (slot + 1 == s->k.numSsbos) {
+                    return refuse(why, std::string(stageName(*s)) + ": no buffer bound at index " + n(slot) + " (a device buffer it addresses)");
+                }
+                out->count = std::max(out->count, slot + 1);
+                continue;
             }
             const Binding& x = b->buffers[slot];
             if (x.offset % 4 != 0 || x.offset >= x.buffer->length()) {
@@ -1050,15 +1064,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // [[color(1)]] beside an attachment 0 it reads through framebuffer fetch. A slot below the highest that the FS does
     // not write is an RB_MRT entry with nothing to write (no register, no components, no write mask), as turnip leaves
     // an attachment a subpass does not write; each slot it writes goes into an attachment of its own.
-    if (fs.numColorOutputs == 0 || fs.numColorOutputs > kMaxColorOutputs) {
-        return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s): 1 to 8 are served");
-    }
-    {
-        bool any = false;
-        for (uint32_t i = 0; i < fs.numColorOutputs; i++) any = any || fs.colorRegid[i] != kRegidNone;
-        if (!any) {
-            return refuse(why, std::string(stageName(fs)) + " counts " + n(fs.numColorOutputs) + " colour output(s) and writes none of them");
-        }
+    // A stage that writes no colour at all is CoreAnimation's path_edges_fragment, run for the stencil it leaves: it is
+    // drawn as one slot nothing is written to, the same entry a gap gets, so attachment 0 keeps what it holds.
+    if (fs.numColorOutputs > kMaxColorOutputs) {
+        return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s): 8 at most are served");
     }
     if (fs.depthRegid != kRegidNone || fs.writesPos) {
         return refuse(why, std::string(stageName(fs)) + " writes depth: no depth attachment is served");
@@ -1085,13 +1094,25 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (fs.readsPrimid) {
         return refuse(why, std::string(stageName(fs)) + " reads the primitive id: not served");
     }
+    // private memory: a stage that wants it gets the queue's, laid out at least as large and in the same layout
+    for (const auto& [s, b] : {std::pair<const Stage*, const Bindings*>{&vs, &vsBindings}, {&fs, &fsBindings}}) {
+        if (s->k.pvtmemSize == 0) continue;
+        const PrivateMemory& pm = b->privateMemory;
+        if (pm.address == 0) {
+            return refuse(why, std::string(stageName(*s)) + " wants " + n(s->k.pvtmemSize) + " bytes of private memory a fiber and none is bound");
+        }
+        if (pm.perFiber < s->k.pvtmemSize || pm.perWave != s->k.pvtmemPerWave || pm.address % 32 != 0) {
+            return refuse(why, std::string(stageName(*s)) + " wants " + n(s->k.pvtmemSize) + " bytes a fiber" + (s->k.pvtmemPerWave ? " laid out a wave" : "") +
+                                   ": the private memory bound has " + n(pm.perFiber) + (pm.perWave ? " laid out a wave" : "") + " at " + n(pm.address));
+        }
+    }
     // --- the target ---
     if (!checkTarget(pass, why)) {
         return false;
     }
     const Texture& target = *pass.color0;
     const FormatInfo& format = target.info();
-    const uint32_t numRt = fs.numColorOutputs;
+    const uint32_t numRt = std::max<uint32_t>(fs.numColorOutputs, 1);
     for (uint32_t i = 0; i < numRt; i++) {
         const Texture* t = attachmentOf(pass, i).texture;
         if (fs.colorRegid[i] == kRegidNone) continue;   // (a slot nothing is written to: no attachment needed)
@@ -1366,17 +1387,23 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     }
     // 10. the two programs (tu6_emit_xs, tu_shader.cc:1238-1356; fd6_emit_shader, fd6_program.cc:100-245): CTRL_REG0 (the
     // VS's MERGEDREGS is bit 20 and it has no THREADSIZE; the FS's has THREADSIZE, VARYING, UNK24 always, MERGEDREGS bit
-    // 31), INSTRLEN, the 7-register OBJ_START block with the private memory zeros, HW_STACK_OFFSET 0, the ST6_SHADER
+    // 31), INSTRLEN, the 7-register OBJ_START block with the private memory's address and layout (zeros for a stage with
+    // none), HW_STACK_OFFSET the per-SP size as turnip writes it (tu_shader.cc:1328-1338), the ST6_SHADER
     // preload of min(instrlen, 127) units from the 128-byte aligned program, the immediates as compute uploads them
     // (ST6_CONSTANTS, direct, at immediatesOffsetVec4)
     // ... then the pushed constant ranges, indirect, as compute uploads them (fd6_emit_user_consts / tu6_emit_xs's ranges,
     // tu_shader.cc:1397-1421) into the stage's own block
-    auto programOf = [&](const Stage& s, const std::vector<PushedRange>& ranges, const std::vector<uint32_t>& ubos, uint64_t address, uint32_t ctrlReg0,
-                         uint32_t regCtrl0, uint32_t regInstrlen, uint32_t regObjFirstExec, uint32_t regHwStackOffset) {
+    auto programOf = [&](const Stage& s, const Bindings& b, const std::vector<PushedRange>& ranges, const std::vector<uint32_t>& ubos, uint64_t address,
+                         uint32_t ctrlReg0, uint32_t regCtrl0, uint32_t regInstrlen, uint32_t regObjFirstExec, uint32_t regHwStackOffset) {
         reg(stream, regCtrl0, ctrlReg0);
         reg(stream, regInstrlen, s.k.instrlen);
-        regs(stream, regObjFirstExec, {0, uint32_t(address), uint32_t(address >> 32), 0, 0, 0, 0});
-        reg(stream, regHwStackOffset, 0);
+        // (the CS's field helpers: the VS's and the FS's registers lay their fields out the same, and tu6_emit_xs writes
+        // every stage's through the VS's)
+        const PrivateMemory pm = s.k.pvtmemSize != 0 ? b.privateMemory : PrivateMemory{};
+        regs(stream, regObjFirstExec,
+             {0, uint32_t(address), uint32_t(address >> 32), A6XX_SP_CS_PVT_MEM_PARAM_MEMSIZEPERITEM(pm.perFiber), uint32_t(pm.address),
+              uint32_t(pm.address >> 32), A6XX_SP_CS_PVT_MEM_SIZE_TOTALPVTMEMSIZE(pm.perSp) | (pm.perWave ? A6XX_SP_CS_PVT_MEM_SIZE_PERWAVEMEMLAYOUT : 0u)});
+        reg(stream, regHwStackOffset, A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET_OFFSET(pm.perSp));
         loadIndirect(stream, s, ST6_SHADER, 0, std::min(s.k.instrlen, kInstrCacheSize), address);
         if (s.k.numImmediates != 0) {
             std::vector<uint32_t> imm(s.k.immediates, s.k.immediates + s.k.numImmediates);
@@ -1393,7 +1420,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         }
     };
     if (o.programVs) {
-        programOf(vs, vsRanges, vsUbos, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
+        programOf(vs, vsBindings, vsRanges, vsUbos, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
                   REG_A6XX_SP_VS_CTRL_REG0, REG_A6XX_SP_VS_INSTRLEN, REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET);
     }
     // 10a. the VS's driver params, every draw since they are the draw's own (tu6_emit_vs_params, tu_cmd_buffer.cc:
@@ -1406,7 +1433,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         loadDirect(stream, vs, ST6_CONSTANTS, uint32_t(vs.k.driverParamsOffsetVec4), 1, params, 4);
     }
     if (o.programFs) {
-        programOf(fs, fsRanges, fsUbos, fsProgram,
+        programOf(fs, fsBindings, fsRanges, fsUbos, fsProgram,
                   spFsCtrlReg0(uint32_t(fs.k.maxReg + 1), uint32_t(fs.k.maxHalfReg + 1), fs.k.branchstackHw, fsThreads, fs.totalIn != 0, fs.needFullQuad != 0,
                                fs.needPixlod != 0, fs.k.earlyPreamble, fs.k.mergedRegs),
                   REG_A6XX_SP_FS_CTRL_REG0, REG_A6XX_SP_FS_INSTRLEN, REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET);
@@ -1820,6 +1847,24 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         if (fsWithNull.textures.size() <= i) fsWithNull.textures.resize(i + 1, nullptr);
         fsWithNull.textures[i] = null.get();
     }
+    // private memory is the queue's too: a stage that wants some is given the queue's buffer, which the submission
+    // names for writing (the stage spills into it)
+    Bindings vsWithPrivate;
+    const Bindings* vsb = &vsBindings;
+    for (const auto& [k, from, to] : {std::tuple<const Kernel*, const Bindings**, Bindings*>{&program.vs.k, &vsb, &vsWithPrivate}, {&program.fs.k, &fsb, &fsWithNull}}) {
+        if (k->pvtmemSize == 0) continue;
+        PrivateMemory pm;
+        std::shared_ptr<Buffer> scratch = queue_.privateMemory(k->pvtmemSize, k->pvtmemPerWave, &pm, &why);
+        if (scratch == nullptr) {
+            return fail(std::string("no private memory: ") + why);
+        }
+        if (*from != to) {
+            *to = **from;
+            *from = to;
+        }
+        to->privateMemory = pm;
+        use(*scratch, true);
+    }
     // the two programs' words, once per command buffer, and the draw's table, in pieces (command.hpp: Piece): a piece is
     // 256-byte aligned, so SP_xS_OBJ_START is 128-byte aligned as the ST6_SHADER preload wants it (tu_shader.cc:1313-1316)
     const uint64_t vsProgram = programAddress(program.vs.k, &why);
@@ -1860,7 +1905,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             return fail(why);
         }
     }
-    if (!render::encodeInPass(body, program, pass, d, vsBindings, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
+    if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
         return fail(why);
     }
     if (!joins) {
@@ -1870,7 +1915,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     appendStream(stream_, body);
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
-    for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{&vsBindings, program.vs.k.numSsbos != 0}, {fsb, program.fs.k.numSsbos != 0}}) {
+    for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{vsb, program.vs.k.numSsbos != 0}, {fsb, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
             if (x.buffer != nullptr) {
                 use(*x.buffer, writes);

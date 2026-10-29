@@ -767,7 +767,7 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     m = copyOf(fs);
     m->stage.numColorOutputs = 9;
     CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes 9 colour output(s): 1 to 8 are served (the draw's rule)");
+    expectRefusal(why, "the fragment stage tri_flat_fs writes 9 colour output(s): 8 at most are served (the draw's rule)");
     m = copyOf(fs);
     m->stage.depthRegid = 0;
     CHECK(link(vs, m) == nullptr);
