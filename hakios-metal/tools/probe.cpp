@@ -46,6 +46,7 @@
 #include "../tests/fixtures/tri_tex_fs_air.hpp"
 #include "../tests/fixtures/tri_null_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt_fs_air.hpp"
+#include "../tests/fixtures/tri_fb_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
 #include "../tests/fixtures/tri_dpos_vs_air.hpp"
@@ -1097,6 +1098,7 @@ int main(int argc, char** argv) {
     //   9r. 200 draws joined into one pass (additive, each pixel exactly 200), timed against 200 command buffers
     //   9s. Metal's null texture sampled as 2D (a prefetch) and as 3D (sam.3d) through the one slot and its 2D 1x1 descriptor
     //   9t. two colour targets: tri_mrt_fs's [[color(0)]] and [[color(1)]] each into its own attachment, the second also cleared
+    //   9u. framebuffer fetch: tri_fb_fs reads its target and rotates the channels, once and twice in one pass, and without the barrier
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2199,6 +2201,61 @@ int main(int argc, char** argv) {
                                    describeTexture(b, kind == 0 ? "ff 00 40 bf" : "ff 00 40 bf under T1, the clear colour 40 80 bf ff elsewhere") + status(*cb, gpu));
                     if (!completed(*cb)) break;
                 }
+            }
+        }
+        // 9u. framebuffer fetch. tri_fb_fs returns its target's (g, b, r, 1) at each pixel, the target read through the
+        // texture unit at slot 0 (ir3's isamm). Over a Clear to 40 80 bf ff: one draw leaves 80 bf 40 ff in every pixel;
+        // two draws in ONE pass (the second must read what the first wrote, through the barrier before it) bf 40 80 ff;
+        // a fetch that read nothing would leave 00 00 00 ff, one that read the clear twice 80 bf 40 ff. Then the two
+        // draws without the barrier (Options::fbReadBarrier off): reported, not judged -- whatever it gives says what the
+        // barrier is for on this GPU, a measurement either way.
+        if (t) {
+            const Program fbProg{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+            const uint32_t once = 0xff40bf80u, twice = 0xff8040bfu;
+            for (int kind = 0; kind < 3; kind++) {
+                fillBo(*t, canary);
+                render::Options o;
+                o.fbReadBarrier = kind != 2;
+                auto cb = queue->commandBuffer();
+                RenderPass rp;
+                rp.color0 = t.get();
+                rp.load = LoadAction::kClear;
+                rp.clearColor[0] = 0.25;
+                rp.clearColor[1] = 0.5;
+                rp.clearColor[2] = 0.75;
+                rp.clearColor[3] = 1.0;
+                bool ok = cb->draw(fbProg, rp, drawOf(0, 6), Bindings{}, Bindings{}, o);
+                if (kind != 0) {
+                    rp.load = LoadAction::kLoad;
+                    ok = ok && cb->draw(fbProg, rp, drawOf(0, 6), Bindings{}, Bindings{}, o);
+                }
+                cb->commit();
+                cb->waitUntilCompleted();
+                const uint32_t want = kind == 0 ? once : twice;
+                PixelRule all{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return want; }};
+                TexReadback rb = compareTexture(*t, all, canary);
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t onceCount = 0, twiceCount = 0, zeroCount = 0;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        onceCount += px == once;
+                        twiceCount += px == twice;
+                        zeroCount += px == 0xff000000u;
+                    }
+                }
+                const std::string counts = "; " + std::to_string(onceCount) + " read the clear (80 bf 40 ff), " + std::to_string(twiceCount) +
+                                           " read the first draw (bf 40 80 ff), " + std::to_string(zeroCount) + " read nothing (00 00 00 ff)";
+                if (kind == 2) {
+                    report(ok && completed(*cb), "framebuffer fetch, two draws in one pass WITHOUT the barrier (a measurement, not judged): " +
+                                                     describeTexture(rb, "bf 40 80 ff") + counts + status(*cb, gpu));
+                } else {
+                    report(ok && completed(*cb) && rb.right == 4096,
+                           std::string(kind == 0 ? "framebuffer fetch, one draw over a Clear" : "framebuffer fetch, two draws in one pass") + ": " +
+                               describeTexture(rb, kind == 0 ? "80 bf 40 ff" : "bf 40 80 ff") + counts + status(*cb, gpu));
+                }
+                if (!completed(*cb)) break;
             }
         }
 #if defined(__APPLE__)

@@ -49,7 +49,11 @@ ir3_compiler* theCompiler() {
         fd_dev_id id{};
         id.gpu_id = 0;
         id.chip_id = a6xx::kChipId;
+        // A framebuffer fetch (nir_texop_txf_ms_fb) through the FS's own texture table, at the slot after its last
+        // texture, as turnip has it (tu_device.cc: -1): the zero default would make it a bindless read of descriptor
+        // set 0, which this driver never binds
         ir3_compiler_options options{};
+        options.bindless_fb_read_descriptor = -1;
         return ir3_compiler_create(nullptr, &id, fd_dev_info_raw(&id), &options);
     }();
     return compiler;
@@ -342,6 +346,42 @@ enum class PassOrder { kCompute, kGraphics };
 // command-line compiler builds them (ir3_cmdline.c:491-507) with what alloc_variant would have set (ir3_shader.c:
 // 279-355), ir3_compile_shader_nir, one ir3_shader_assemble (it frees the constant data it appends to the binary, so
 // there is no second call)
+// A framebuffer fetch lowered here, before ir3_nir_post_finalize would do it, so that the layer and the sample it reads
+// can be what they always are on this road: 0. nir_lower_fb_read builds txf_ms_fb's coordinate from load_layer_id
+// (which ir3 then makes a flat varying of VARYING_SLOT_LAYER, which no vertex stage here writes: layered targets are
+// refused) and its sample from load_sample_id (which makes ir3 load the sample id: MSAA is refused too). Only reads the
+// lowering itself added are zeroed: one the shader made of its own is left for the draw to refuse by name.
+// tools/mesa/ir3-dump.patch runs the same, so that a fixture and a compile here agree.
+namespace {
+struct FbReadCounts {
+    unsigned layer = 0, sample = 0;
+};
+bool countLayerSample(nir_builder*, nir_intrinsic_instr* in, void* data) {
+    auto* c = static_cast<FbReadCounts*>(data);
+    c->layer += in->intrinsic == nir_intrinsic_load_layer_id;
+    c->sample += in->intrinsic == nir_intrinsic_load_sample_id;
+    return false;
+}
+bool zeroLayerSample(nir_builder* b, nir_intrinsic_instr* in, void* data) {
+    const auto* own = static_cast<const FbReadCounts*>(data);
+    if (!((in->intrinsic == nir_intrinsic_load_layer_id && own->layer == 0) || (in->intrinsic == nir_intrinsic_load_sample_id && own->sample == 0))) {
+        return false;
+    }
+    b->cursor = nir_before_instr(&in->instr);
+    nir_def_rewrite_uses(&in->def, nir_imm_intN_t(b, 0, in->def.bit_size));
+    nir_instr_remove(&in->instr);
+    return true;
+}
+}  // namespace
+
+void lowerFbReadSingleLayer(nir_shader* nir) {
+    if (nir->info.stage != MESA_SHADER_FRAGMENT || !nir->info.fs.uses_fbfetch_output) return;
+    FbReadCounts own;
+    nir_shader_intrinsics_pass(nir, countLayerSample, nir_metadata_all, &own);
+    nir_lower_fb_read(nir);
+    nir_shader_intrinsics_pass(nir, zeroLayerSample, nir_metadata_control_flow, &own);
+}
+
 bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_compiler* compiler = theCompiler();
     nir_shader* nir = t.nir;
@@ -355,6 +395,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_shader_nir_options nirOptions{};
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &nirOptions, nir);
+    lowerFbReadSingleLayer(nir);
 
     t.shader = static_cast<ir3_shader*>(rzalloc_size(nullptr, sizeof(ir3_shader)));
     t.shader->compiler = compiler;
@@ -796,10 +837,6 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     }
     if (F.sampleMaskRegid != a6xx::kRegidNone || F.writesSmask) {
         refuse(why, stageName(*fs) + " writes a sample mask: no multisampling is served");
-        return nullptr;
-    }
-    if (F.fbRead) {
-        refuse(why, stageName(*fs) + " reads its render target ([[color(n)]] as an argument, framebuffer fetch): not served");
         return nullptr;
     }
     if (F.perSamp) {

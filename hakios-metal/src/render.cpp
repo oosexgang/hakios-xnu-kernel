@@ -455,11 +455,11 @@ struct FsTextures {
 
 const char* elementOf(uint8_t e) { return e == kElemFloat ? "float" : e == kElemUint ? "uint" : e == kElemInt ? "int" : "?"; }
 
-bool fsTextures(const Stage& fs, const Bindings& b, FsTextures* out, std::string* why) {
+bool fsTextures(const Stage& fs, const Bindings& b, const Texture& fbTarget, FsTextures* out, std::string* why) {
     const Kernel& k = fs.k;
     const std::string name = stageName(fs);
     out->numTex = k.numTextureSlots;
-    if (out->numTex == 0) {
+    if (out->numTex == 0 && !fs.fbRead) {
         if (fs.numSamplerPrefetch != 0) {
             return refuse(why, name + " prefetches a texture and loads none: ir3's tables disagree");
         }
@@ -499,6 +499,22 @@ bool fsTextures(const Stage& fs, const Bindings& b, FsTextures* out, std::string
     out->numSamp = 1;
     for (uint32_t m = 0; m < kMaxTextureSlots; m++) {
         if ((k.samplerMask >> m) & 1) out->numSamp = m + 1;
+    }
+    if (fs.fbRead) {
+        // ir3's framebuffer fetch (non-bindless: compiler.cpp sets bindless_fb_read_descriptor -1) is an isamm of the
+        // texture and sampler slot after the FS's last texture, the one num_samp counts last (ir3_compiler_nir.c's
+        // txf_ms_fb): colour attachment 0 viewed as a 2D texture there, a zero sampler beside it (isamm filters nothing)
+        if (k.numSamp == 0) {
+            return refuse(why, name + " reads its render target and counts no texture slot for it (numSamp 0): ir3's tables disagree");
+        }
+        const uint32_t slot = k.numSamp - 1;
+        if (slot >= kMaxTextureSlots || slot < out->numTex) {
+            return refuse(why, name + " reads its render target at texture slot " + n(slot) + ", which is past the tables or one of its own textures'");
+        }
+        const TexConst d = fbTarget.sampledDescriptor();
+        memcpy(out->texWords[slot], d.dword, sizeof d.dword);
+        out->numTex = slot + 1;
+        out->numSamp = std::max(out->numSamp, slot + 1);
     }
     for (uint32_t m = 0; m < out->numSamp; m++) {
         if (((k.samplerMask >> m) & 1) == 0) continue;
@@ -1005,9 +1021,6 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (fs.perSamp) {
         return refuse(why, std::string(stageName(fs)) + " runs per sample: no multisampling is served");
     }
-    if (fs.fbRead) {
-        return refuse(why, std::string(stageName(fs)) + " reads its render target ([[color(n)]] as an argument, framebuffer fetch): not served");
-    }
     if (fs.dualSrcBlend) {
         return refuse(why, std::string(stageName(fs)) + " writes a dual-source blend output: blending is off in the first draw");
     }
@@ -1055,7 +1068,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         if (blends[i].enabled) blendMask |= 1u << i;
     }
     FsTextures fsTex;
-    if (!fsTextures(fs, fsBindings, &fsTex, why)) {
+    if (!fsTextures(fs, fsBindings, target, &fsTex, why)) {
         return false;
     }
     std::vector<uint32_t> vsUbos, fsUbos;
@@ -1149,6 +1162,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (whole) {
         tableStart(tableCpu);
     }
+    memset(tableCpu + kTableFbReadFlushAt, 0, 4);   // (the draw's own table: zero before the flush below writes it)
     memcpy(tableCpu + kGfxIboAt, ibos.words, size_t(ibos.count) * 64);
     memset(tableCpu + kFsTexConstAt, 0, kMaxTextureSlots * 64);
     memset(tableCpu + kFsTexSampAt, 0, kMaxTextureSlots * 16);
@@ -1171,6 +1185,18 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
             depthClearStream(stream, *pass.depth, pass.clearDepth, table);
         }
+    }
+    // A framebuffer fetch reads the target through the texture unit while the RB writes it through the colour CCU: what
+    // the draws before this one (or the pass's Clear) wrote is put in memory and the texture caches dropped before it
+    // runs -- turnip's barrier for a sysmem feedback loop (FD_CCU_CLEAN_COLOR | FD_CACHE_INVALIDATE), the CCU flush
+    // waited for as the tail waits for its own. Within ONE draw nothing orders a pixel's read after an earlier
+    // primitive's write of it: Metal's raster order is not kept between overlapping primitives of one draw.
+    if (fs.fbRead && o.fbReadBarrier) {
+        stream.waitForIdle();
+        eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableFbReadFlushAt, kFbReadFlushValue, false);
+        waitForWord(stream, table + kTableFbReadFlushAt, kFbReadFlushValue);
+        event(stream, CACHE_INVALIDATE);
+        stream.waitForIdle();
     }
     // 4. no depth attachment (tu6_emit_zs :415-433; fd6 emit_zs(NULL), fd6_gmem.cc:231-247): RB_DEPTH_BUFFER_INFO
     // DEPTH6_NONE with its pitches and bases 0, GRAS_SU_DEPTH_BUFFER_INFO 0, RB_STENCIL_INFO 0

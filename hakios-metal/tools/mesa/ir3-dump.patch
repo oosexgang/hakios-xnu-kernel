@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,706 @@
+@@ -35,19 +37,749 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -347,6 +347,49 @@ SPDX-License-Identifier: MIT
 +}
 +
 +static int read_file(const char *filename, void **ptr, size_t *size);
++
++/* A framebuffer fetch lowered before ir3_nir_post_finalize would, with the
++ * layer and the sample it reads made 0 -- what hakios-metal's compiler does
++ * (src/compiler.cpp: lowerFbReadSingleLayer, which says why), so that its
++ * fixtures and its compiles agree. Only the reads the lowering added: the
++ * shader's own are counted first and left alone. */
++struct fixture_fb_counts {
++   unsigned layer, sample;
++};
++
++static bool
++fixture_count_layer_sample(nir_builder *b, nir_intrinsic_instr *in, void *data)
++{
++   struct fixture_fb_counts *c = data;
++   (void)b;
++   c->layer += in->intrinsic == nir_intrinsic_load_layer_id;
++   c->sample += in->intrinsic == nir_intrinsic_load_sample_id;
++   return false;
++}
++
++static bool
++fixture_zero_layer_sample(nir_builder *b, nir_intrinsic_instr *in, void *data)
++{
++   const struct fixture_fb_counts *own = data;
++   if (!((in->intrinsic == nir_intrinsic_load_layer_id && own->layer == 0) ||
++         (in->intrinsic == nir_intrinsic_load_sample_id && own->sample == 0)))
++      return false;
++   b->cursor = nir_before_instr(&in->instr);
++   nir_def_rewrite_uses(&in->def, nir_imm_intN_t(b, 0, in->def.bit_size));
++   nir_instr_remove(&in->instr);
++   return true;
++}
++
++static void
++fixture_lower_fb_read(nir_shader *nir)
++{
++   if (nir->info.stage != MESA_SHADER_FRAGMENT || !nir->info.fs.uses_fbfetch_output)
++      return;
++   struct fixture_fb_counts own = { 0 };
++   nir_shader_intrinsics_pass(nir, fixture_count_layer_sample, nir_metadata_all, &own);
++   nir_lower_fb_read(nir);
++   nir_shader_intrinsics_pass(nir, fixture_zero_layer_sample, nir_metadata_control_flow, &own);
++}
 +
 +/* -o for a vertex or fragment stage: the class of each output's declared type,
 + * read off the NIR's shader_out variables before nir_lower_io, because ir3's
@@ -779,7 +822,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +987,7 @@
+@@ -298,6 +1030,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -787,7 +830,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +996,16 @@
+@@ -306,13 +1039,16 @@
     return nir;
  }
  
@@ -805,7 +848,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +1017,9 @@
+@@ -324,6 +1060,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -815,7 +858,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1037,7 @@
+@@ -341,6 +1080,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -823,7 +866,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1052,15 @@
+@@ -355,6 +1095,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -839,7 +882,18 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -444,8 +1150,20 @@
+@@ -433,7 +1182,9 @@
+          .chip_id = chip_id,
+    };
+    compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
+-                                  &(struct ir3_compiler_options) {});
++                                  /* the framebuffer fetch through the FS's own texture table, as
++                                   * hakios-metal's compiler and turnip have it (not bindless set 0) */
++                                  &(struct ir3_compiler_options) {.bindless_fb_read_descriptor = -1});
+ 
+    if (air_file) {
+       nir = load_air(air_file, air_entry);
+@@ -444,8 +1195,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -862,7 +916,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,6 +1204,16 @@
+@@ -486,10 +1249,21 @@
        return -1;
     }
  
@@ -879,7 +933,12 @@ SPDX-License-Identifier: MIT
     const struct ir3_shader_nir_options options = {};
  
     ir3_nir_lower_io_to_temporaries(nir);
-@@ -503,6 +1231,15 @@
+    ir3_finalize_nir(compiler, &options, nir);
++   fixture_lower_fb_read(nir);
+ 
+    struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
+    shader->compiler = compiler;
+@@ -503,6 +1277,15 @@
     v->compiler = compiler;
     v->key = key;
     v->const_state = rzalloc_size(v, sizeof(*v->const_state));
@@ -895,7 +954,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1257,15 @@
+@@ -520,7 +1303,15 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }

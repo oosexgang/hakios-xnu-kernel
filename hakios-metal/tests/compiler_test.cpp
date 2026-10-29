@@ -20,6 +20,7 @@
 #include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_null_fs_air.hpp"
 #include "fixtures/tri_mrt_fs_air.hpp"
+#include "fixtures/tri_fb_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
@@ -589,6 +590,17 @@ TEST(compiler_matches_the_stage_fixtures) {
             if (linked) CHECK_EQ(linked->program.link.mrtComponents, 0xffu);
         }
     }
+    // a framebuffer fetch: isamm through slot 0 (non-bindless), the layer and the sample folded to 0, so no
+    // VARYING_SLOT_LAYER input and no sample id are left for the draw to refuse
+    auto fbFs = compareStageWithFixture("tri_fb_fs", kernels::tri_fb_fs_air, "tri_fb_fs", "isamm.a (f32)(xyz)r2.x, r1.x, s#0, t#0");
+    if (fbFs) {
+        CHECK_EQ(uint32_t(fbFs->stage.fbRead), 1u);
+        CHECK_EQ(fbFs->stage.k.numSamp, 1u);
+        CHECK_EQ(fbFs->stage.sampleIdRegid, uint32_t(a6xx::kRegidNone));
+        bool layer = false;
+        for (uint32_t i = 0; i < fbFs->stage.numInputs; i++) layer |= fbFs->stage.inputs[i].slot == 22;   // VARYING_SLOT_LAYER
+        CHECK(!layer);
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;
@@ -777,9 +789,8 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(vs, m) == nullptr);
     expectRefusal(why, "the fragment stage tri_flat_fs writes a sample mask: no multisampling is served");
     m = copyOf(fs);
-    m->stage.fbRead = 1;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs reads its render target ([[color(n)]] as an argument, framebuffer fetch): not served");
+    m->stage.fbRead = 1;   // a framebuffer fetch is the draw's to serve now (its slot is checked there): the pipeline links
+    CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
     m->stage.perSamp = 1;
     CHECK(link(vs, m) == nullptr);

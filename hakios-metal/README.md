@@ -211,6 +211,16 @@ targets, 4096 of 4096 pixels each, and with the second cleared first under one t
 draw share it exactly; through Metal, the plug-in's checks (p) and (q) pass on both roads (`logs/182352-run.log`).
 CoreAnimation's `attachment_clear_frag_lph`, which writes two colours, is the pipeline its window server exited on.
 
+A fragment function may read its own colour target (framebuffer fetch, `[[color(n)]]` as an argument). ir3 reads it
+with an isamm of the texture slot after the function's last (the compiler asks for the non-bindless form, as turnip
+does), and a draw puts colour attachment 0's view there. The compiler lowers the fetch itself, a step before ir3 would,
+so that the layer and the sample it reads are the 0 they always are here (no layered target, no MSAA): left to ir3
+they were a varying no vertex stage writes and a sample id. Before such a draw the colour CCU is flushed and waited
+for and the texture caches dropped, so that it reads what the draws before it wrote. On the phone (hakios
+`logs/202759-run.log`, probe line 9u) one draw over a Clear and two draws in one pass both come out exact in 4096 of
+4096 pixels, and the same two draws without that barrier read the Clear in all 4096: the barrier is what makes the
+second draw see the first. Within one draw, overlapping primitives are not ordered against each other's writes.
+
 A pipeline's function constants reach the front end (`compileStage` / `compileAir` take them; the C interface's
 `hakios_metal_program_new_bitcode_constants`): each supplied value with its `supplied` flag, so that
 `is_function_constant_defined` tells "given as zero" from "not given" -- `tools/kernels/tri_fc_fs.ll` folds to a

@@ -286,6 +286,11 @@ constexpr uint32_t kDepthClearDepthFlushValue = 7;
 // per attachment, because a second Clear waiting on the first one's word would find the value already there and run on
 // before its own fill had left the CCU.
 constexpr uint32_t kTableMoreClearFlushAt = 28;
+// A draw whose FS reads its target (framebuffer fetch): the CCU flush before it, which puts what the draws before it
+// wrote where the texture unit reads; a word of the DRAW's own table (its zeroed part), so that every such draw in a
+// pass waits for its own flush and not for an earlier one's word
+constexpr uint32_t kTableFbReadFlushAt = 56;
+constexpr uint32_t kFbReadFlushValue = 8;
 constexpr uint32_t kTableZeroedBytes = 64;        // what tableStart zeroes from kTableTimestampsAt: every word above
 static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroedBytes, "the Clears' words are zeroed");
 constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
@@ -328,6 +333,7 @@ struct Options {
     bool blendZsa = true;        // SP/RB_BLEND_CNTL, RB_MRT_CONTROL[0] 0x780, RB_MRT_BLEND_CONTROL[0] 0, blend colour, depth/stencil/alpha zeros, RB_Z_BOUNDS
     bool visCullUse = false;     // CP_DRAW_INDX_OFFSET with USE_VISIBILITY (turnip's and fd6's pipelines) instead of r3d's IGNORE_VISIBILITY
     bool tailCcuFlush = true;    // CP_WAIT_FOR_IDLE, PC_CCU_FLUSH_COLOR_TS writing a value + CP_WAIT_REG_MEM for it
+    bool fbReadBarrier = true;   // before a draw whose FS reads its target: the CCU flush waited for, CACHE_INVALIDATE (off: the probe's control)
     bool tailDepthFlush = true;  // with a depth attachment: PC_CCU_FLUSH_DEPTH_TS writing a value + the wait for it
     bool tailLrzFlush = true;    // LRZ_FLUSH, 1 word
     bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail

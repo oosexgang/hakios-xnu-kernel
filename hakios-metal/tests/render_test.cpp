@@ -24,6 +24,7 @@
 #include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_null_fs_air.hpp"
 #include "fixtures/tri_mrt_fs_air.hpp"
+#include "fixtures/tri_fb_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -400,7 +401,7 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         refused(r, p, pass, d, "hand_fs runs per sample: no multisampling is served");
         p = handProgram();
         p.fs.fbRead = 1;
-        refused(r, p, pass, d, "hand_fs reads its render target ([[color(n)]] as an argument, framebuffer fetch): not served");
+        refused(r, p, pass, d, "hand_fs reads its render target and counts no texture slot for it (numSamp 0): ir3's tables disagree");
         p = handProgram();
         p.fs.dualSrcBlend = 1;
         refused(r, p, pass, d, "hand_fs writes a dual-source blend output: blending is off in the first draw");
@@ -3340,5 +3341,66 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
     RenderPass elsewhere = pass;
     elsewhere.more[0].texture = other.get();
     CHECK_EQ(passesOf(elsewhere), 2u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// A framebuffer fetch: tri_fb_fs reads [[color(0)]] through ir3's isamm at the slot after its textures (it has none:
+// slot 0), so colour attachment 0's sampled descriptor goes there, and before the draw the colour CCU is flushed on the
+// draw table's own word and the texture caches invalidated, so that it reads what the draws before it wrote. Two such
+// draws in one pass: each its own flush, on its own table.
+TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_before_it) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    const Program fb{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+    CHECK_EQ(uint32_t(kernels::tri_fb_fs_air.fbRead), 1u);
+    CHECK_EQ(kernels::tri_fb_fs_air.k.numSamp, 1u);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Encoded e(r, fb, pass, wholeDraw(6));
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    const TexConst want = t->sampledDescriptor();
+    CHECK(memcmp(e.tableWords() + render::kTableFsAt / 4, want.dword, 64) == 0);
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_TEX_COUNT), 1u);
+    // the flush on the draw's word, waited for, and the invalidate, all before the draw packet
+    size_t flush = size_t(-1);
+    for (size_t i = e.find(CP_EVENT_WRITE); i != size_t(-1); i = e.find(CP_EVENT_WRITE, i + 1)) {
+        if ((e.stream.words()[i + 1] & CP_EVENT_WRITE_0_EVENT__MASK) == PC_CCU_FLUSH_COLOR_TS &&
+            e.stream.words()[i + 2] == uint32_t(e.table->gpuAddress() + render::kTableFbReadFlushAt)) {
+            flush = i;
+            break;
+        }
+    }
+    const size_t draw = e.find(CP_DRAW_INDX_OFFSET);
+    CHECK(flush != size_t(-1) && flush < draw);
+    size_t inval = size_t(-1);
+    for (size_t i = e.find(CP_EVENT_WRITE, flush == size_t(-1) ? 0 : flush); i != size_t(-1); i = e.find(CP_EVENT_WRITE, i + 1)) {
+        if ((e.stream.words()[i + 1] & CP_EVENT_WRITE_0_EVENT__MASK) == CACHE_INVALIDATE) {
+            inval = i;
+            break;
+        }
+    }
+    CHECK(inval != size_t(-1) && inval < draw);
+    // ...and a draw that does not read its target has neither: the barrier is the fetch's
+    Encoded plain(r, flatProgram(), pass, wholeDraw(6));
+    bool plainFlush = false;
+    for (size_t i = plain.find(CP_EVENT_WRITE); i != size_t(-1); i = plain.find(CP_EVENT_WRITE, i + 1)) {
+        plainFlush |= plain.stream.words()[i + 2] == uint32_t(plain.table->gpuAddress() + render::kTableFbReadFlushAt);
+    }
+    CHECK(!plainFlush);
+    // through the command buffer: two in one pass, the fake judging the descriptor at slot 0
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}));
+    CHECK(cb->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}));
+    const uint32_t before = r.fake->stats().passes;
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().passes - before, 1u);
+    CHECK_EQ(r.fake->stats().lastDraw.fsTextureCount, 1u);
+    const auto d = r.fake->memory(r.fake->stats().lastDraw.fsTexConst, 64);
+    CHECK(d.size() == 64 && memcmp(d.data(), want.dword, 64) == 0);
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
