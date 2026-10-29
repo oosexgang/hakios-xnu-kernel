@@ -69,17 +69,27 @@ samplers, constexpr samplers, the front end's null texture, textures over buffer
 choosing), UBO descriptors for an indexed `constant` load ir3 did not push, private memory, threadgroup memory (each
 refused by name, not served).
 
-The first draw (`render.hpp`, 29 October) is written and checked on the fake GPU, and **not yet measured on the phone**:
-one triangle, then the pair, then per-vertex colours, into a 64x64 RGBA8Unorm texture in sysmem (direct render) mode,
-read back by the CPU and compared pixel by pixel against the rule the probe computes (stage 9 below). The shaders are
+The first draw (`render.hpp`, 29 October) is written, checked on the fake GPU, and measured on the phone the same day
+(hakios `logs/051851-run.log`, first run, every line passing): one triangle, then the pair, then per-vertex colours,
+into a 64x64 RGBA8Unorm texture in sysmem (direct render) mode, read back by the CPU and compared pixel by pixel against
+the rule the probe computes (stage 9 below): 2016 of 2016 interior pixels the colour, 2016 of 2016 exterior pixels
+canary, 0 of the 64 diagonal centres painted by the lower-left triangle and 64 of 64 by its complement (the top-left
+rule, and the two together cover the target exactly once: 4096 of 4096), the half viewport right, `vertexStart` 3
+drawing the second triangle alone (so `vertex_id` includes `VFD_INDEX_OFFSET`), the per-vertex colours within 1/255 at
+every one of 4032 off-diagonal pixels (largest deviation 0), the four stages compiled on the phone word for word the
+host's fixtures, and 41 to 68 us a pass. Through Metal's own objects (hakios `logs/051907-run.log`, `metal_render_test`,
+0 failures on both roads) the same draws land with the same counts: `MTLRenderPipelineState` linked on the device,
+`MTLRenderCommandEncoder`, `drawPrimitives:` -- and a Clear load action or a texture without the render usage end the
+command buffer in error with the driver's sentence, the texture untouched. The shaders are
 ours (`tools/kernels/tri_flat_*.ll`, `tri_color_*.ll`: the positions chosen by `[[vertex_id]]` with no buffer in either
 stage, as turnip's own clear path draws), the register sequence is turnip's sysmem pass and r3d path with fd6 as the
 second witness, every register cited at its line, and each group sits under a `render::Options` switch so that one boot
 of `--bisect` can say which the hardware wants where the two witnesses or the kernel's own boot picture disagree
 (`RB_CCU_CNTL` bit 2, the LRZ feedback bits of `BIN_CONTROL`, `RB_RENDER_CNTL`, `SP_FLOAT_CNTL`, `GRAS_UNKNOWN_8110`,
 USE/IGNORE_VISIBILITY, `LRZ_FLUSH`, `RB_DONE_TS`). The sign of `GRAS_CL_VPORT_YSCALE` is negative by Metal's convention
-(NDC y up, row 0 at the top) and by reasoning alone: the probe's orientation line decides it. Not yet, all of it refused
-by name (not served) and all of it not yet measured on the phone: vertex descriptors (`[[stage_in]]` attributes, VFD_DECODE/
+(NDC y up, row 0 at the top): the probe's orientation line confirmed it (the lower-left half was drawn), and every
+switch's default -- turnip's and fd6's values where they agree, the smaller set where they do not -- drew without a
+bisect. Not yet, all of it refused by name (not served): vertex descriptors (`[[stage_in]]` attributes, VFD_DECODE/
 FETCH), buffers in a vertex or fragment stage (pushed constant ranges, UBO descriptors, the 3D IBO table), textures and
 samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, blending, clears (a
 load action of Clear: turnip clears with a draw or a 2D blit), GMEM (tiled) rendering, MSAA, instancing, indexed draws,
@@ -123,7 +133,7 @@ the kernel waits for nothing again in that run. With it the GPU is reset in abou
 draw stream switched off and each alternative value on; `--metallib FILE FUNCTION` compiles a kernel of the image on
 the phone and runs it (a probe built with `MESA=1`).
 
-Stage 9 of the probe is the first draw, **not yet run**: 9a one triangle of `tri_flat` into a canary-filled 64x64
+Stage 9 of the probe is the first draw (measured 29 October, `logs/051851-run.log`): 9a one triangle of `tri_flat` into a canary-filled 64x64
 RGBA8Unorm target (2016 interior pixels the colour, 2016 exterior canary, the 64 diagonal pixels 0 or 64 coloured --
 either fill rule, anything else a fault -- and the orientation line: the lower-left half is Metal's, the upper-left says
 the y scale sign is wrong), 9b the pair (4096 of 4096), 9c the controls (a half viewport: `j >= 2i + 1` in columns 0..31;
@@ -142,12 +152,12 @@ in 287 us; the hang on purpose reset in 2.1 s and the fill after it landed.
 ```
  a Metal program
    |  MTLDevice, MTLCommandQueue, MTLCommandBuffer, MTLBlitCommandEncoder, MTLComputeCommandEncoder   (hakios's plug-in, userland/src/HakiosMetal.m)
-   |  MTLRenderPipelineState, MTLRenderCommandEncoder -> hakios_metal_program, hakios_metal_cb_draw   (the plug-in's render half: not yet written)
+   |  MTLRenderPipelineState, MTLRenderCommandEncoder -> hakios_metal_program, hakios_metal_cb_draw   (hakios's plug-in, userland/src/HakiosMetal.m)
    v
  command.hpp   queue, command buffers, blits -> packets (pm4.hpp)
  compute.hpp   a Kernel (kernel.hpp) over a grid -> registers and packets (a6xx.hpp)
  render.hpp    a Program (two Stages, linked) over a Texture made as a render target -> one sysmem pass: registers, the
-               two program preloads, CP_DRAW_INDX_OFFSET, the CCU and cache flushes (a6xx.hpp)   [not yet measured on the phone]
+               two program preloads, CP_DRAW_INDX_OFFSET, the CCU and cache flushes (a6xx.hpp)
    v
  gpu.hpp       GEM buffers, submit, fences   (msm DRM requests)
    v
