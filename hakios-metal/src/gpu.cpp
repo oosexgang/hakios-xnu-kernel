@@ -6,7 +6,7 @@
 namespace hakios::metal {
 
 namespace {
-constexpr uint64_t kPage = 0x4000;  // iOS's page; the driver rounds to its own (4 KB) inside it
+constexpr uint64_t kPage = 0x4000;  // Darwin's page; the driver rounds to its own (4 KB) inside it
 
 MsmTimespec deadline(Transport& t, int64_t ns) {
     // the driver takes a deadline, not a length: a time of the clock that goes on while the machine sleeps

@@ -21,7 +21,7 @@ after that can CoreAnimation draw through Metal instead of through OpenGL ES.
 
 ```sh
 make test     # on a Mac or on Linux: the tests against the fake GPU
-make ios      # out/ios/hakios-metal-probe and libhakios-metal.a, for iOS 16.5 (the SDK as hakios lays it out)
+make darwin      # out/darwin/hakios-metal-probe and libhakios-metal.a, for Darwin userland 16.5 (the SDK as hakios lays it out)
 ```
 
 ## On the phone
@@ -35,7 +35,7 @@ first try of the 16 MB copy as a single CP_MEMCPY hung the GPU: copies are cut i
 `hakios-metal-probe` does on the real GPU what the tests do on the fake one, one line per check. In hakios:
 
 ```sh
-EXTRA="../hakios-metal/out/ios/hakios-metal-probe" RC_JOBS=rc.jobs.metalprobe userland/build.sh
+EXTRA="../hakios-metal/out/darwin/hakios-metal-probe" RC_JOBS=rc.jobs.metalprobe userland/build.sh
 XL_CMDLINE="... gpu=1" ./xl run
 ```
 

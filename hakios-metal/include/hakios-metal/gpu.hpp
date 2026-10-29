@@ -84,7 +84,7 @@ public:
     virtual int64_t nowNs() = 0;
 };
 
-// HakiosGPU's user client (iOS only: src/iokit_transport.cpp). nullptr when there is no such service: no gpu=1,
+// HakiosGPU's user client (Darwin only: src/iokit_transport.cpp). nullptr when there is no such service: no gpu=1,
 // no firmware, QEMU, or not the phone.
 std::unique_ptr<Transport> openKernelGpu(std::string* why);
 

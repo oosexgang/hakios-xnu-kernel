@@ -1,6 +1,6 @@
 // A .metallib taken apart: the MTLB container of Apple's shader compiler, its functions and where each one's module
 // (LLVM bitcode, "AIR") is. The same reading as hakios's userland/src/hakios_metallib.c, which was checked against
-// every .metallib of iOS 16.5 (456 modules); here as a class for the C++ driver.
+// every .metallib of Darwin userland 16.5 (456 modules); here as a class for the C++ driver.
 //
 //   0x00  "MTLB"          0x04  u16 u16 version          0x10  u64 file size
 //   0x18  u64 u64         the function list: start, length after its count
