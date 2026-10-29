@@ -53,6 +53,9 @@
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
 #include "../tests/fixtures/tri_fw_fs_air.hpp"
+#include "../tests/fixtures/tri_hc_fs_air.hpp"
+#include "../tests/fixtures/tri_hcolor_vs_air.hpp"
+#include "../tests/fixtures/tri_hcolor_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -2187,6 +2190,73 @@ int main(int argc, char** argv) {
                 }
             report(ok && completed(*cb) && right == judged && judged > 3000, "derivatives, fwidth of tri_color's red in float and half: " + std::to_string(right) + " of " +
                                                                                 std::to_string(judged) + " pixels" + first + (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9o5. a half constant read by half arithmetic (CoreAnimation's noise_scale): tri_hc_fs multiplies half(red) by a
+        // half 0.25 pushed into its consts and returns 4 times it, tri_color's red again -- within 2 units of 255 for
+        // half's precision -- where both triangles' pixels lie. A const read at half precision without demotion takes the
+        // low half of the f32 the preamble stored, 0 for 0.25, and the red is 0.
+        if (t) {
+            const Program hcP{kernels::tri_color_vs_air, kernels::tri_hc_fs_air, Linkage{}, "tri_hc"};
+            auto hb = newBuffer(gpu, 64, &why);
+            const uint16_t quarter = 0x3400;
+            memcpy(hb->contents(), &quarter, 2);
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            Bindings fsb;
+            fsb.buffers = {Binding{hb.get(), 0}};
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(hcP, rp, drawOf(0, 6), Bindings{}, fsb);
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t judged = 0, right = 0;
+            std::string first;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    if (i == j) continue;
+                    const double x = i + 0.5, y = j + 0.5, red = j > i ? (y - x) / 64.0 : y / 64.0;
+                    const int want = int(std::lround(red * 255.0));
+                    const uint8_t* px = mb.data() + j * t->bytesPerRow() + uint64_t(i) * 4;
+                    judged++;
+                    if (std::abs(int(px[0]) - want) <= 2) right++;
+                    else if (first.empty()) first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): red " + std::to_string(px[0]) + ", wanted " + std::to_string(want);
+                }
+            report(ok && completed(*cb) && right == judged, "a half constant in half arithmetic (0.25 x red x 4): " + std::to_string(right) + " of " + std::to_string(judged) +
+                                                                " pixels tri_color's red" + first + (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9d2. a half4 varying (CoreAnimation's fixed_vert writes its colour and texcoords as half): tri_hcolor_vs writes
+        // tri_color's colours as a half4, tri_hcolor_fs returns the half4 it is given -- tri_color's picture, every
+        // off-diagonal pixel within 2 units of the interpolated colour of 9d's rule.
+        if (t) {
+            const Program hP{kernels::tri_hcolor_vs_air, kernels::tri_hcolor_fs_air, Linkage{}, "tri_hcolor"};
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(hP, rp, drawOf(0, 6), Bindings{}, Bindings{});
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t judged = 0, right = 0;
+            std::string first;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    if (i == j) continue;
+                    const double x = i + 0.5, y = j + 0.5;
+                    // tri_color's rule (9d): the barycentric weights of the pixel in its triangle, the vertex colours red
+                    // at 0 and 3, green at 1 and 4, blue at 2 and 5
+                    double rr, gg, bb;
+                    if (j > i) { rr = (y - x) / 64.0; gg = x / 64.0; bb = 1.0 - y / 64.0; }
+                    else { rr = y / 64.0; gg = (x - y) / 64.0; bb = 1.0 - x / 64.0; }
+                    const uint8_t* px = mb.data() + j * t->bytesPerRow() + uint64_t(i) * 4;
+                    const int wr = int(std::lround(rr * 255)), wg = int(std::lround(gg * 255)), wb = int(std::lround(bb * 255));
+                    judged++;
+                    if (std::abs(px[0] - wr) <= 2 && std::abs(px[1] - wg) <= 2 && std::abs(px[2] - wb) <= 2) right++;
+                    else if (first.empty())
+                        first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + std::to_string(px[0]) + " " + std::to_string(px[1]) + " " +
+                                std::to_string(px[2]) + ", wanted " + std::to_string(wr) + " " + std::to_string(wg) + " " + std::to_string(wb);
+                }
+            report(ok && completed(*cb) && right == judged, "a half4 varying from VS to FS: " + std::to_string(right) + " of " + std::to_string(judged) + " pixels tri_color's" + first +
+                                                                (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
         // 9o3. halfs from a constant buffer at bytes 64, 66, 68 and 70 (CoreAnimation's noise_scale is the half at 70):
         // tri_half_fs returns (h64, h66, h70, h68) = (0.25, 0.5, 0.75, 1), 40 80 bf ff in every pixel; the other halfs

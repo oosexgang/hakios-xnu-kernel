@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,830 @@
+@@ -35,19 +37,864 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -386,6 +386,40 @@ SPDX-License-Identifier: MIT
 +/* whether the lowering below made a fetch slot: the stage reads its targets,
 + * which ir3's fb_read no longer says (it sees no txf_ms_fb) */
 +static bool fixture_fb_lowered;
++
++/* src/compiler.cpp: widenHalfVarying */
++static bool
++widen_half_varyings(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   const bool store = intr->intrinsic == nir_intrinsic_store_output && b->shader->info.stage == MESA_SHADER_VERTEX;
++   const bool load = (intr->intrinsic == nir_intrinsic_load_interpolated_input || intr->intrinsic == nir_intrinsic_load_input) &&
++                     b->shader->info.stage == MESA_SHADER_FRAGMENT;
++   if (store) {
++      if (nir_src_bit_size(intr->src[0]) != 16)
++         return false;
++      nir_alu_type base = nir_alu_type_get_base_type(nir_intrinsic_src_type(intr));
++      b->cursor = nir_before_instr(&intr->instr);
++      nir_def *w = base == nir_type_float ? nir_f2f32(b, intr->src[0].ssa) : base == nir_type_int ? nir_i2i32(b, intr->src[0].ssa) : nir_u2u32(b, intr->src[0].ssa);
++      nir_src_rewrite(&intr->src[0], w);
++      nir_intrinsic_set_src_type(intr, (nir_alu_type)(base | 32));
++      return true;
++   }
++   if (load) {
++      if (intr->def.bit_size != 16)
++         return false;
++      nir_alu_type base = nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr));
++      nir_intrinsic_instr *wide = nir_instr_as_intrinsic(nir_instr_clone(b->shader, &intr->instr));
++      wide->def.bit_size = 32;
++      nir_intrinsic_set_dest_type(wide, (nir_alu_type)(base | 32));
++      b->cursor = nir_before_instr(&intr->instr);
++      nir_builder_instr_insert(b, &wide->instr);
++      nir_def *n = base == nir_type_float ? nir_f2f16(b, &wide->def) : nir_u2u16(b, &wide->def);
++      nir_def_rewrite_uses(&intr->def, n);
++      nir_instr_remove(&intr->instr);
++      return true;
++   }
++   return false;
++}
 +
 +/* src/compiler.cpp: lowerHalfDerivative */
 +static bool
@@ -903,7 +937,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +1111,7 @@
+@@ -298,6 +1145,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -911,7 +945,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +1120,16 @@
+@@ -306,13 +1154,16 @@
     return nir;
  }
  
@@ -929,7 +963,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +1141,9 @@
+@@ -324,6 +1175,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -939,7 +973,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1161,7 @@
+@@ -341,6 +1195,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -947,7 +981,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1176,15 @@
+@@ -355,6 +1210,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -963,7 +997,7 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -433,7 +1263,9 @@
+@@ -433,7 +1297,9 @@
           .chip_id = chip_id,
     };
     compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
@@ -974,7 +1008,7 @@ SPDX-License-Identifier: MIT
  
     if (air_file) {
        nir = load_air(air_file, air_entry);
-@@ -444,8 +1276,20 @@
+@@ -444,8 +1310,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -997,7 +1031,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,10 +1330,24 @@
+@@ -486,10 +1364,24 @@
        return -1;
     }
  
@@ -1022,7 +1056,16 @@ SPDX-License-Identifier: MIT
  
     struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
     shader->compiler = compiler;
-@@ -503,6 +1361,15 @@
+@@ -497,12 +1389,24 @@
+    shader->nir = nir;
+ 
+    ir3_nir_post_finalize(shader);
++   /* the varyings at 32 bits across the VPC, as hakios-metal's compileStage has them */
++   if (nir_shader_intrinsics_pass(nir, widen_half_varyings, nir_metadata_control_flow, NULL))
++      ir3_optimize_loop(compiler, &shader->options.nir_options, nir);
+ 
+    struct ir3_shader_variant *v = rzalloc_size(shader, sizeof(*v));
+    v->type = shader->type;
     v->compiler = compiler;
     v->key = key;
     v->const_state = rzalloc_size(v, sizeof(*v->const_state));
@@ -1038,7 +1081,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1387,15 @@
+@@ -520,7 +1424,15 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }

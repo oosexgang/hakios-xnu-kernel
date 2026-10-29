@@ -375,6 +375,42 @@ bool zeroLayerSample(nir_builder* b, nir_intrinsic_instr* in, void* data) {
 }
 }  // namespace
 
+// Varyings cross the VPC at 32 bits. ir3 keeps a 16-bit vertex output in a half register, and SP_VS_OUT_REG's 8-bit
+// regid has no room for ir3's HALF_REG_ID, so the VPC read the full register of that number -- another register in the
+// merged file: probe 9d2's half4 colour came out 255 0 0 where tri_color's was due. turnip never meets this (its vertex
+// outputs are 32-bit); CoreAnimation's fixed_vert writes its colour and texcoords as half. So after nir_lower_io a
+// 16-bit store_output is widened, and a fragment stage's 16-bit input is read at 32 bits and narrowed, the VPC holding
+// 32 bits on both sides. The fixture writer (tools/mesa/ir3-dump.patch: widen_half_varyings) runs the same pass.
+bool widenHalfVarying(nir_builder* b, nir_intrinsic_instr* intr, void*) {
+    const bool store = intr->intrinsic == nir_intrinsic_store_output && b->shader->info.stage == MESA_SHADER_VERTEX;
+    const bool load = (intr->intrinsic == nir_intrinsic_load_interpolated_input || intr->intrinsic == nir_intrinsic_load_input) &&
+                      b->shader->info.stage == MESA_SHADER_FRAGMENT;
+    if (store) {
+        if (nir_src_bit_size(intr->src[0]) != 16) return false;
+        const nir_alu_type t = nir_intrinsic_src_type(intr);
+        const nir_alu_type base = nir_alu_type_get_base_type(t);
+        b->cursor = nir_before_instr(&intr->instr);
+        nir_def* w = base == nir_type_float ? nir_f2f32(b, intr->src[0].ssa) : base == nir_type_int ? nir_i2i32(b, intr->src[0].ssa) : nir_u2u32(b, intr->src[0].ssa);
+        nir_src_rewrite(&intr->src[0], w);
+        nir_intrinsic_set_src_type(intr, nir_alu_type(base | 32));
+        return true;
+    }
+    if (load) {
+        if (intr->def.bit_size != 16) return false;
+        const nir_alu_type base = nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr));
+        nir_intrinsic_instr* wide = nir_instr_as_intrinsic(nir_instr_clone(b->shader, &intr->instr));
+        wide->def.bit_size = 32;
+        nir_intrinsic_set_dest_type(wide, nir_alu_type(base | 32));
+        b->cursor = nir_before_instr(&intr->instr);
+        nir_builder_instr_insert(b, &wide->instr);
+        nir_def* n = base == nir_type_float ? nir_f2f16(b, &wide->def) : nir_u2u16(b, &wide->def);
+        nir_def_rewrite_uses(&intr->def, n);
+        nir_instr_remove(&intr->instr);
+        return true;
+    }
+    return false;
+}
+
 // A 16-bit screen-space derivative is taken at 32 bits. ir3 emits dsx and dsy at the source's own size, and on the
 // phone dsx.f16 returned the y derivative: probe 9u2's fwidth of y / 64, whose x derivative is 0, came out 1/32 in half
 // and 1/64 in float. CoreAnimation's rounded-rect coverage is fwidth of a half texcoord, and with the wrong one its
@@ -475,6 +511,11 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     t.shader->type = nir->info.stage;
     t.shader->nir = nir;
     ir3_nir_post_finalize(t.shader);
+    // (and what the widening left -- f2f16 of an f2f32 -- folded as ir3's own passes leave nothing to fold: its variant
+    // lowering asserts that the loop has no more to do)
+    if (nir_shader_intrinsics_pass(nir, widenHalfVarying, nir_metadata_control_flow, nullptr)) {
+        ir3_optimize_loop(compiler, &t.shader->options.nir_options, nir);
+    }
     ir3_shader_variant* v = static_cast<ir3_shader_variant*>(rzalloc_size(t.shader, sizeof(ir3_shader_variant)));
     t.v = v;
     v->type = t.shader->type;   // the key stays zero: no ucp, msaa, sample shading or rasterflat (ir3_cmdline.c:336, 504)
