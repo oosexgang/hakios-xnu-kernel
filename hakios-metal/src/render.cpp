@@ -1,22 +1,743 @@
-// The render path (render.hpp): the contract commit carries refusals only; the stream lands with the render step.
+// The render path (render.hpp): ONE draw of a Program into ONE colour target in SYSMEM mode, as compute.cpp encodes a
+// dispatch -- the refusals first, by name, then the table, then the stream group by group under render::Options'
+// switches. The register sequence is turnip's sysmem pass and r3d path with fd6 as the second witness (render.hpp's
+// file comment names the functions); every value here cites the line it was read at. Nothing of this has run on the
+// phone: the fake GPU (fake_gpu.cpp) holds the stream together, hakios-metal-probe stage 9 is what measures it.
+//
+// SPDX-License-Identifier: MIT
 #include "hakios-metal/render.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <initializer_list>
+
+#include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/command.hpp"
+#include "hakios-metal/texture.hpp"
 
 namespace hakios::metal {
 
 namespace render {
 
-bool encode(pm4::Stream&, const Program&, const RenderPass&, const Draw&, const Bindings&, const Bindings&, uint64_t, uint64_t, uint8_t*,
-            std::string* why, const Options&) {
-    if (why != nullptr) *why = "render::encode: not implemented yet";
+namespace {
+
+using namespace a6xx;
+
+std::string n(uint64_t v) { return std::to_string(v); }
+
+bool refuse(std::string* why, const std::string& text) {
+    if (why != nullptr) *why = text;
     return false;
+}
+
+const char* stageName(const Stage& s) { return s.k.name != nullptr ? s.k.name : s.kind == kStageVertex ? "the vertex stage" : "the fragment stage"; }
+
+void reg(pm4::Stream& st, uint32_t r, uint32_t v) { st.registers(r, &v, 1); }
+
+void reg64(pm4::Stream& st, uint32_t r, uint64_t a) {
+    uint32_t v[2] = {uint32_t(a), uint32_t(a >> 32)};
+    st.registers(r, v, 2);
+}
+
+// consecutive registers from R on, one type-4 (turnip's pkt4 of several)
+void regs(pm4::Stream& st, uint32_t r, std::initializer_list<uint32_t> values) {
+    uint32_t v[16];
+    uint32_t count = 0;
+    for (uint32_t x : values) v[count++] = x;
+    st.registers(r, v, count);
+}
+
+// a type-7 packet of one word
+void command1(pm4::Stream& st, uint32_t opcode, uint32_t word) { st.packet(opcode, &word, 1); }
+
+void event(pm4::Stream& st, vgt_event_type e) {
+    uint32_t w = eventWrite0(e, false);
+    st.packet(CP_EVENT_WRITE, &w, 1);
+}
+
+// the 4-word event: VALUE written to ADDRESS when it has completed. turnip's form (tu_emit_raw_event_write,
+// tu_cmd_buffer.cc:48-70) has no TIMESTAMP bit; with it the GPU writes a timestamp instead and the wait below never
+// ends (28 October, every compute dispatch). The bit is here for the fake GPU's test of that alone.
+void eventTimestamp(pm4::Stream& st, vgt_event_type e, uint64_t address, uint32_t value, bool timestampBit) {
+    uint32_t w[4] = {eventWrite0(e, timestampBit), uint32_t(address), uint32_t(address >> 32), value};
+    st.packet(CP_EVENT_WRITE, w, 4);
+}
+
+void waitForWord(pm4::Stream& st, uint64_t address, uint32_t value) {
+    uint32_t w[6] = {waitRegMem0(WRITE_EQ, POLL_MEMORY), uint32_t(address), uint32_t(address >> 32), value, ~0u, kDelayLoopCycles};
+    st.packet(CP_WAIT_REG_MEM, w, 6);
+}
+
+void waitForWordAtLeast(pm4::Stream& st, uint64_t address, uint32_t value) {
+    uint32_t w[4] = {0, uint32_t(address), uint32_t(address >> 32), value};
+    st.packet(CP_WAIT_MEM_GTE, w, 4);
+}
+
+// CP_LOAD_STATE6_GEOM for the vertex stage's loads, _FRAG for the fragment stage's (tu6_stage2opcode, tu_shader.cc:1349;
+// fd6_stage2opcode, fd6_emit.h:331-334): the program from GPU memory (ST6_SHADER, 128-byte units) or constants in
+// the packet (ST6_CONSTANTS, vec4 units, the two address words zero as Mesa writes them)
+uint32_t loadOpcode(const Stage& s) { return s.kind == kStageVertex ? uint32_t(CP_LOAD_STATE6_GEOM) : uint32_t(CP_LOAD_STATE6_FRAG); }
+a6xx_state_block shaderBlock(const Stage& s) { return s.kind == kStageVertex ? SB6_VS_SHADER : SB6_FS_SHADER; }
+
+void loadIndirect(pm4::Stream& st, const Stage& s, a6xx_state_type type, uint32_t dstOff, uint32_t units, uint64_t from) {
+    uint32_t w[3] = {loadState6_0(dstOff, type, SS6_INDIRECT, shaderBlock(s), units), CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(from)),
+                     CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t(from >> 32))};
+    st.packet(loadOpcode(s), w, 3);
+}
+
+void loadDirect(pm4::Stream& st, const Stage& s, a6xx_state_type type, uint32_t dstOff, uint32_t units, const uint32_t* data, uint32_t dwords) {
+    std::vector<uint32_t> w;
+    w.reserve(3 + dwords);
+    w.push_back(loadState6_0(dstOff, type, SS6_DIRECT, shaderBlock(s), units));
+    w.push_back(0);
+    w.push_back(0);
+    w.insert(w.end(), data, data + dwords);
+    st.packet(loadOpcode(s), w.data(), uint32_t(w.size()));
+}
+
+// The colour target as RB_MRT[0], SP_FS_MRT_REG[0] and the sRGB registers name it, off the Texture's own fields: the
+// format's .rb column is its .tex one for every served format (fd6_format_table.c's VTC rows: RGBA8 :163, BGRA8 :174,
+// R32Uint :132, R32Float :136, RGBA16F :249, RGBA32F :284, so FormatInfo::fmt6 and swap are the colour ones too), the
+// pitch is the layout's (texturePitch), the layer size the buffer's length (layerBytes2d, 4096-aligned, fdl6_view_init's
+// layer_size at fd6_view.c:192), the base the buffer's address (64-aligned by the layout), BASE_GMEM 0 in sysmem
+// (r3d_dst, tu_clear_blit.cc:1400). COLOR_UINT/SINT for the pure-integer formats (fd6_view.c:415-418). (texture.hpp
+// declares no method for this; texture_test holds the same fields through the same encoders to the 64x64 literals.)
+struct MrtWords {
+    uint32_t bufInfo, pitch, arrayPitch, baseLo, baseHi, baseGmem, spFsMrtReg;
+    bool srgb;
+};
+
+MrtWords mrtWords(const Texture& t) {
+    const FormatInfo& f = t.info();
+    MrtWords m{};
+    m.bufInfo = rbMrtBufInfo(f.fmt6, TILE6_LINEAR, f.swap);
+    m.pitch = rbMrtPitch(uint32_t(t.bytesPerRow()));
+    m.arrayPitch = rbMrtArrayPitch(uint32_t(t.buffer()->length()));
+    m.baseLo = uint32_t(t.gpuAddress());
+    m.baseHi = uint32_t(t.gpuAddress() >> 32);
+    m.baseGmem = 0;
+    m.spFsMrtReg = spFsMrtReg(f.fmt6, f.element == kElemInt, f.element == kElemUint);
+    m.srgb = f.srgb;
+    return m;
+}
+
+// what both stages share with a compute Kernel, refused as compute.cpp refuses it, plus what the first draw does not
+// serve in either stage (render.hpp's list)
+bool checkStage(const Stage& s, std::string* why) {
+    const Kernel& k = s.k;
+    const std::string name = stageName(s);
+    if (k.instrlen == 0 || uint64_t(k.numWords) * 4 < uint64_t(k.instrlen) * 128) {
+        return refuse(why, name + ": " + n(k.numWords) + " words do not hold its instrlen of " + n(k.instrlen) + " units");
+    }
+    if (k.instrlen > kInstrCacheSize) {
+        return refuse(why, name + " is " + n(k.instrlen) + " units long: more than the " + n(kInstrCacheSize) +
+                               " the instruction cache preloads, and the longer-program path is not written here");
+    }
+    if (k.pvtmemSize != 0) {
+        return refuse(why, name + " wants " + n(k.pvtmemSize) + " bytes of private memory a fiber: not served yet");
+    }
+    if (k.numSamp > 31) {
+        return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
+    }
+    if (k.numUboRanges != 0 || k.numSsbos != 0 || k.numUbos != 0 || k.numIbos != 0) {
+        // the contract's first decision (4c8c901): no buffer in either stage. A pushed range would be compute's path
+        // again (CP_LOAD_STATE6_GEOM/FRAG ST6_CONSTANTS SS6_INDIRECT); a UBO descriptor or the 3D IBO table have no
+        // witness in this tree yet (driver-render-shape.md, step two)
+        return refuse(why, name + " binds buffers (" + n(k.numUboRanges) + " pushed constant range(s), " + n(k.numSsbos) + " device buffer(s), " +
+                               n(k.numUbos) + " constant buffer(s), " + n(k.numIbos) + " IBO(s)): the first draw binds none in either stage");
+    }
+    bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
+    for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
+    if (textures) {
+        return refuse(why, name + " samples or stores through textures: textures and samplers in a draw are step two");
+    }
+    if (k.driverParamsOffsetVec4 >= 0) {
+        // a VS reading first_vertex/base_instance/draw_id, or an FS with driver params (tu6_emit_vs_params,
+        // tu_cmd_buffer.cc:6135-6205): the upload is compute's shape, but which words Metal's semantics want (vertex_id
+        // already includes the base vertex through VFD_ADD_OFFSET) is not decided, so it is refused rather than guessed
+        return refuse(why, name + " reads driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + ": not served in the first draw");
+    }
+    if (k.constantDataSize != 0) {
+        return refuse(why, name + " carries " + n(k.constantDataSize) + " bytes of constant data: not uploaded yet");
+    }
+    uint32_t immUnits = (k.numImmediates + 3) / 4;
+    if (immUnits != 0 && k.immediatesOffsetVec4 + immUnits > k.constlen) {
+        return refuse(why, name + ": " + n(immUnits) + " vec4 of constants at " + n(k.immediatesOffsetVec4) + " run past its constlen of " + n(k.constlen));
+    }
+    return true;
+}
+
+bool finite(double v) { return std::isfinite(v); }
+
+// gl_frag_result / gl_varying_slot numbers the Stage tables carry (Mesa shader_enums.h:987): FRAG_RESULT_DATA0 is 4
+constexpr uint8_t kFragResultData0 = 4;
+
+}  // namespace
+
+bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
+            const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
+            const Options& o) {
+    // the per-stage [[buffer(n)]] tables are step two's: no stage of the first draw binds one (checkStage refuses a stage
+    // that would), so what the caller passes here is not read
+    (void)vsBindings;
+    (void)fsBindings;
+    const Stage& vs = program.vs;
+    const Stage& fs = program.fs;
+    // --- the two stages ---
+    if (vs.kind != kStageVertex) {
+        return refuse(why, std::string(stageName(vs)) + " is not a vertex stage");
+    }
+    if (fs.kind != kStageFragment) {
+        return refuse(why, std::string(stageName(fs)) + " is not a fragment stage");
+    }
+    if (!checkStage(vs, why) || !checkStage(fs, why)) {
+        return false;
+    }
+    if (vs.k.constlen + fs.k.constlen > kMaxConstPipeline) {
+        // ir3_compiler.c:185-188 max_const_pipeline = 512 vec4 for gen 6; ir3_trim_constlen (tu_pipeline.cc:2207) trims
+        // a pipeline over it, here the sum is refused instead
+        return refuse(why, "the two stages need " + n(vs.k.constlen + fs.k.constlen) + " vec4 of constants together (" + n(vs.k.constlen) + " + " +
+                               n(fs.k.constlen) + "): the pipeline has " + n(kMaxConstPipeline) + " (ir3_compiler.c max_const_pipeline)");
+    }
+    if (vs.numAttributes != 0) {
+        return refuse(why, std::string(stageName(vs)) + " reads " + n(vs.numAttributes) + " [[stage_in]] attribute(s): vertex descriptors are not served yet");
+    }
+    if (vs.pointSizeRegid != kRegidNone) {
+        return refuse(why, std::string(stageName(vs)) + " writes a point size: points are not served");
+    }
+    if (vs.clipMask != 0 || vs.cullMask != 0) {
+        return refuse(why, std::string(stageName(vs)) + " writes clip or cull distances: not served");
+    }
+    if (vs.writesLayer || vs.writesViewport) {
+        return refuse(why, std::string(stageName(vs)) + " writes a layer or viewport index: not served");
+    }
+    if (fs.numColorOutputs != 1 || fs.colorRegid[0] == kRegidNone) {
+        return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s)" +
+                               (fs.numColorOutputs != 0 && fs.colorRegid[0] == kRegidNone ? " and not [[color(0)]]" : "") + ": one target, [[color(0)]], is served");
+    }
+    if (fs.depthRegid != kRegidNone || fs.writesPos) {
+        return refuse(why, std::string(stageName(fs)) + " writes depth: no depth attachment is served");
+    }
+    if (fs.stencilRefRegid != kRegidNone || fs.writesStencilref) {
+        return refuse(why, std::string(stageName(fs)) + " writes a stencil reference: no stencil attachment is served");
+    }
+    if (fs.sampleMaskRegid != kRegidNone || fs.writesSmask) {
+        return refuse(why, std::string(stageName(fs)) + " writes a sample mask: no multisampling is served");
+    }
+    if (fs.sampleIdRegid != kRegidNone || fs.sampleMaskInRegid != kRegidNone) {
+        return refuse(why, std::string(stageName(fs)) + " reads the sample id or the sample mask: no multisampling is served");
+    }
+    if (validReg(fs.ijRegid[IJ_PERSP_SAMPLE]) || validReg(fs.ijRegid[IJ_PERSP_CENTROID]) || validReg(fs.ijRegid[IJ_LINEAR_SAMPLE]) ||
+        validReg(fs.ijRegid[IJ_LINEAR_CENTROID])) {
+        return refuse(why, std::string(stageName(fs)) + " reads centroid or per-sample barycentrics: no multisampling is served");
+    }
+    if (fs.perSamp) {
+        return refuse(why, std::string(stageName(fs)) + " runs per sample: no multisampling is served");
+    }
+    if (fs.fbRead) {
+        return refuse(why, std::string(stageName(fs)) + " reads its render target ([[color(n)]] as an argument, framebuffer fetch): not served");
+    }
+    if (fs.dualSrcBlend) {
+        return refuse(why, std::string(stageName(fs)) + " writes a dual-source blend output: blending is off in the first draw");
+    }
+    if (fs.readsPrimid) {
+        return refuse(why, std::string(stageName(fs)) + " reads the primitive id: not served");
+    }
+    if (fs.numSamplerPrefetch != 0) {
+        return refuse(why, std::string(stageName(fs)) + " has " + n(fs.numSamplerPrefetch) + " texture prefetch(es): the draw does not emit SP_FS_PREFETCH_CMD yet");
+    }
+    // --- the target ---
+    if (pass.color0 == nullptr) {
+        return refuse(why, "a render pass with no colour attachment: one target is what the first draw serves");
+    }
+    const Texture& target = *pass.color0;
+    const FormatInfo& format = target.info();
+    if ((target.usage() & kTextureUsageRenderTarget) == 0) {
+        return refuse(why, "the " + n(target.width()) + " x " + n(target.height()) + " " + format.name +
+                               " texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
+    }
+    if (target.type() != TextureType::k2D) {
+        return refuse(why, "a colour attachment of texture type " + n(uint32_t(target.type())) + ": only 2D (2) is served");
+    }
+    if (!rbMrtPitchValid(uint32_t(target.bytesPerRow())) || target.buffer()->length() >= (1ull << 32)) {
+        return refuse(why, "the target's pitch of " + n(target.bytesPerRow()) + " bytes or its " + n(target.buffer()->length()) +
+                               " bytes do not fit RB_MRT_PITCH / RB_MRT_ARRAY_PITCH");
+    }
+    {
+        // the FS's colour class against the format's: floats into a unorm/float format, integers into a Uint one (the
+        // hardware converts the raw register as the format says, so a mismatch is garbage on the phone, not an error).
+        // The class rides in StageOutput::pad of the FRAG_RESULT_DATA0 entry, as compiler.cpp's fillStage and the fixture
+        // writer put it there (linkProgram reads it the same way)
+        uint8_t fsClass = kElemFloat;
+        for (uint32_t i = 0; i < fs.numOutputs && i < kMaxStageOutputs; i++) {
+            if (fs.outputs[i].slot == kFragResultData0) fsClass = fs.outputs[i].pad;
+        }
+        uint8_t formatClass = format.element == kElemFloat ? kElemFloat : kElemUint;
+        if ((fsClass == kElemFloat) != (formatClass == kElemFloat)) {
+            return refuse(why, std::string(stageName(fs)) + " returns " + (fsClass == kElemFloat ? "floats" : "integers") + " into " + format.name + ", which holds " +
+                                   (formatClass == kElemFloat ? "floats" : "integers"));
+        }
+    }
+    if (pass.load == LoadAction::kClear) {
+        return refuse(why, "load action Clear: a clear is a draw in turnip's r3d path or a 2D blit, and neither is written here; the first draw's target is filled by the CPU");
+    }
+    if (pass.load != LoadAction::kLoad && pass.load != LoadAction::kDontCare) {
+        return refuse(why, "load action " + n(uint32_t(pass.load)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
+    }
+    if (pass.store != StoreAction::kStore) {
+        return refuse(why, "store action " + n(uint32_t(pass.store)) + ": only Store (1) is served");
+    }
+    // --- the draw ---
+    pc_di_primtype prim = DI_PT_TRILIST;
+    switch (draw.primitive) {
+    case Primitive::kTriangle: prim = DI_PT_TRILIST; break;
+    case Primitive::kTriangleStrip: prim = DI_PT_TRISTRIP; break;
+    default:
+        return refuse(why, "primitive " + n(uint32_t(draw.primitive)) + ": triangles (3) and triangle strips (4) are what the first draw serves");
+    }
+    if (draw.vertexCount == 0) {
+        return refuse(why, "a draw of 0 vertices");
+    }
+    if (draw.instanceCount != 1) {
+        return refuse(why, n(draw.instanceCount) + " instances: the first draw runs exactly 1");
+    }
+    const uint32_t W = target.width(), H = target.height();
+    const Viewport& vp = draw.viewport;
+    if (!finite(vp.x) || !finite(vp.y) || !finite(vp.width) || !finite(vp.height) || !finite(vp.znear) || !finite(vp.zfar)) {
+        return refuse(why, "a viewport with a non-finite value");
+    }
+    if (!(vp.width > 0.0) || !(vp.height > 0.0)) {
+        return refuse(why, "a viewport of " + n(uint64_t(std::max(vp.width, 0.0))) + " x " + n(uint64_t(std::max(vp.height, 0.0))) + " pixels: both sides must be positive");
+    }
+    if (vp.x < 0.0 || vp.y < 0.0 || vp.x + vp.width > double(W) || vp.y + vp.height > double(H)) {
+        return refuse(why, "viewport (" + n(uint64_t(std::max(vp.x, 0.0))) + ", " + n(uint64_t(std::max(vp.y, 0.0))) + ", " + n(uint64_t(vp.width)) + ", " + n(uint64_t(vp.height)) +
+                               ") lies outside the " + n(W) + " x " + n(H) + " target");
+    }
+    Scissor sc = draw.scissor;
+    if (sc.width == 0) {
+        sc = Scissor{0, 0, W, H};   // render.hpp: width 0 is the whole target
+    } else if (sc.height == 0) {
+        return refuse(why, "a scissor of " + n(sc.width) + " x 0 pixels: an empty scissor draws nothing (width 0 means the whole target)");
+    } else if (uint64_t(sc.x) + sc.width > W || uint64_t(sc.y) + sc.height > H) {
+        return refuse(why, "scissor (" + n(sc.x) + ", " + n(sc.y) + ", " + n(sc.width) + ", " + n(sc.height) + ") lies outside the " + n(W) + " x " + n(H) + " target");
+    }
+    // --- the link: ir3_link_shaders over the two stages' tables (src/link.cpp), recomputed here so that a hand-built
+    // Program needs none and the one linkProgram stored cannot disagree with the registers
+    Linkage link{};
+    if (!render::link(vs, fs, &link, why)) {
+        return false;
+    }
+    if (link.cnt == 0 || link.cnt > kMaxStageOutputs || link.positionLoc == kLocNone || link.maxLoc == 0) {
+        return refuse(why, "the link of " + std::string(stageName(vs)) + " and " + stageName(fs) + " has no position entry");
+    }
+
+    // --- nothing is refused from here on: the table, then the stream ---
+    memset(tableCpu + kTableTimestampsAt, 0, 16);          // the tail's values: 0 until the events write them
+    memset(tableCpu + kTableBorderColorAt, 0, 128);        // border colour entry 0, transparent black (the batch start points the TP here)
+    memset(tableCpu + kTableHoleAt, 0, 64);
+    const MrtWords mrt = mrtWords(target);
+    const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
+    const uint32_t* ij = fs.ijRegid;
+
+    // 1. batch start: fd6_emit_restore (fd6_emit.cc:1090-1160) with turnip's tu6_init_hw as the second witness
+    // (tu_cmd_buffer.cc:1584-1660): CP_SET_MODE 0; the three invalidates (fd6_cache_inv, fd6_emit.h:271-276; turnip's A6XX
+    // path has CACHE_INVALIDATE alone, the kernel already emits both CCU invalidates per submit); HLSQ_INVALIDATE_CMD;
+    // a WFI; the static tables a6xx.hpp documents, in Gallium's order; CP_SET_DRAW_STATE disable-all (no state
+    // group is left pending by a previous owner of the GPU, and r3d needs none active: tu_clear_blit.cc:3960-3967); the
+    // 32 VFD_FETCH sizes zeroed so a stale BASE is never fetched; the two border colour bases at the table's zero entry.
+    // Where the two witnesses' tables differ the table keeps fd6's (SP_FLOAT_CNTL F16_NO_INF, GRAS_UNKNOWN_8110 2);
+    // both are --bisect items the lead must run.
+    if (o.batchStart) {
+        command1(stream, CP_SET_MODE, 0);
+        event(stream, PC_CCU_INVALIDATE_COLOR);
+        event(stream, PC_CCU_INVALIDATE_DEPTH);
+        event(stream, CACHE_INVALIDATE);
+        reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD, hlsqInvalidateCmdAll());
+        stream.waitForIdle();
+        for (const RegWrite& w : kStaticState) reg(stream, w.reg, w.value);
+        {
+            uint32_t w[3] = {setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0, 0};
+            stream.packet(CP_SET_DRAW_STATE, w, 3);
+        }
+        for (const RegWrite& w : kStaticStateAfterDrawState) reg(stream, w.reg, w.value);
+        for (uint32_t i = 0; i < kVfdFetchCount; i++) reg(stream, vfdFetchSize(i), 0);
+        reg64(stream, REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
+        reg64(stream, REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
+        for (const RegWrite& w : kStaticStateTail) reg(stream, w.reg, w.value);
+    }
+    // 2. RB_CCU_CNTL for sysmem after a WFI ("isn't pipelined", tu_cmd_buffer.cc:373-377; fd6_emit.cc:828 "early a6xx
+    // needed this"): 0x10000000 in both witnesses (rbCcuCntlSysmem); bit 2, CONCURRENT_RESOLVE, is what hakios's kernel
+    // wrote at boot (hakios.adreno.c:2904) and Mesa never sets for this chip -- the switch is the bisect's
+    if (o.ccuCntl) {
+        stream.waitForIdle();
+        reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+    }
+    // fd6's LRZ_FLUSH at the start of a sysmem pass (fd6_gmem.cc:2001); turnip has none here. Under lrzOff with the LRZ
+    // registers below, since it is the LRZ it flushes
+    if (o.lrzOff) {
+        event(stream, LRZ_FLUSH);
+    }
+    // 3. pass begin (tu6_sysmem_render_begin, tu_cmd_buffer.cc:2093-2142; fd6_emit_sysmem_prep, fd6_gmem.cc:2020-2056):
+    // the window scissor is the whole target (BR inclusive: tu6_emit_window_scissor :736-747), GRAS_2D_RESOLVE_CNTL_1/2
+    // beside it (:745-746), the four A6XX window offsets 0 (set_window_offset, fd6_gmem.cc:1223-1235; turnip's
+    // A7XX_SP_PS_2D_WINDOW_OFFSET is not copied), GRAS/RB_BIN_CONTROL with BUFFERS_IN_SYSMEM and no bins (0x00c00000 as
+    // fd6 and r3d; 0x03c00000 with turnip's LRZ feedback mask under binControlLrzFeedback), RB_BIN_CONTROL2 0, the
+    // RM6_DIRECT_RENDER marker, CP_SKIP_IB2_ENABLE_GLOBAL 0, CP_SET_VISIBILITY_OVERRIDE 1 (what makes a draw without a
+    // visibility stream legal), CP_SET_MODE 0. VPC_SO_DISABLE stays at the static table's 1 (turnip's; fd6 writes 0
+    // here, fd6_gmem.cc:2053): not switchable in render::Options, named for the lead.
+    if (o.passBegin) {
+        regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
+        regs(stream, REG_A6XX_GRAS_2D_RESOLVE_CNTL_1, {regXY(0, 0), regXY(W - 1, H - 1)});
+        reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(0, 0));
+        reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, REG_A6XX_GRAS_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
+        reg(stream, REG_A6XX_RB_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
+        reg(stream, REG_A6XX_RB_BIN_CONTROL2, 0);
+    }
+    if (o.marker) {
+        command1(stream, CP_SET_MARKER, setMarker0(RM6_DIRECT_RENDER));
+    }
+    if (o.passBegin) {
+        command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 0);
+        command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
+        command1(stream, CP_SET_MODE, 0);
+    }
+    // 4. no depth attachment (tu6_emit_zs :415-433; fd6 emit_zs(NULL), fd6_gmem.cc:231-247): RB_DEPTH_BUFFER_INFO
+    // DEPTH6_NONE with its pitches and bases 0, GRAS_SU_DEPTH_BUFFER_INFO 0, RB_STENCIL_INFO 0
+    if (o.zsNone) {
+        regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO, {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_NONE), 0, 0, 0, 0, 0});
+        reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_NONE));
+        reg(stream, REG_A6XX_RB_STENCIL_INFO, 0);
+    }
+    // 5. the colour target (tu6_emit_mrt, tu_cmd_buffer.cc:482-576; r3d_dst, tu_clear_blit.cc:1380-1408; fd6 emit_mrt,
+    // fd6_gmem.cc:60-147): RB_MRT[0]'s six registers as one pkt4 (BUF_INFO, PITCH, ARRAY_PITCH, BASE lo/hi, BASE_GMEM;
+    // a seventh would land in RB_MRT_CONTROL[1]), SP_FS_MRT_REG[0], the flag buffer's three words 0 (no UBWC; inert
+    // while RB_RENDER_CNTL.FLAG_MRTS is clear), GRAS_LRZ_MRT_BUF_INFO_0 the format, dither off, the sRGB bit in both
+    // copies, GRAS_MAX_LAYER_INDEX 0
+    if (o.mrt) {
+        regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0), {mrt.bufInfo, mrt.pitch, mrt.arrayPitch, mrt.baseLo, mrt.baseHi, mrt.baseGmem});
+        reg(stream, regSpFsMrtReg(0), mrt.spFsMrtReg);
+        regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, 0), {0, 0, 0});
+        reg(stream, REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(format.fmt6));
+        reg(stream, REG_A6XX_RB_DITHER_CNTL, 0);
+        reg(stream, REG_A6XX_RB_SRGB_CNTL, mrt.srgb ? A6XX_RB_SRGB_CNTL_SRGB_MRT0 : 0u);
+        reg(stream, REG_A6XX_SP_SRGB_CNTL, mrt.srgb ? A6XX_SP_SRGB_CNTL_SRGB_MRT0 : 0u);
+        reg(stream, REG_A6XX_GRAS_MAX_LAYER_INDEX, 0);
+    }
+    // 6. one sample (tu6_emit_msaa, tu_cmd_buffer.cc:892-910; fd6 emit_msaa, fd6_gmem.cc:1037-1061): RAS_MSAA_CNTL 0 and
+    // DEST_MSAA_CNTL MSAA_DISABLE in the three blocks, the sample-location configs 0 (fd6_context.cc:300-306),
+    // RB_BLIT_GMEM_MSAA_CNTL 0 (fd6's)
+    if (o.msaaOff) {
+        regs(stream, REG_A6XX_SP_TP_RAS_MSAA_CNTL, {0, A6XX_SP_TP_DEST_MSAA_CNTL_MSAA_DISABLE});
+        reg(stream, REG_A6XX_SP_TP_SAMPLE_CONFIG, 0);
+        regs(stream, REG_A6XX_GRAS_RAS_MSAA_CNTL, {0, A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE, 0});   // ..., GRAS_SAMPLE_CONFIG
+        regs(stream, REG_A6XX_RB_RAS_MSAA_CNTL, {0, A6XX_RB_DEST_MSAA_CNTL_MSAA_DISABLE, 0});       // ..., RB_SAMPLE_CONFIG
+        reg(stream, REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL, 0);
+    }
+    // 7. RB_RENDER_CNTL: CCUSINGLECACHELINESIZE 2 in both pipelines (tu_cmd_buffer.cc:633-693; fd6_gmem.cc:531-552), 0 in
+    // r3d_dst (tu_clear_blit.cc:1408) -- renderCntlZero for the bisect. A plain type-4: has_cp_reg_write is false here.
+    if (o.renderCntl) {
+        reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem());
+    }
+    // 8. LRZ off (tu_lrz.cc:936-944 via a zero state; r3d :1622-1623; fd6 build_lrz with no zsbuf, fd6_emit.cc:262-270)
+    // and fd6's zeroed LRZ buffer registers (emit_lrz, fd6_gmem.cc:250-260): BASE (2), PITCH, FAST_CLEAR_BUFFER_BASE (2)
+    if (o.lrzOff) {
+        reg(stream, REG_A6XX_GRAS_LRZ_CNTL, 0);
+        reg(stream, REG_A6XX_RB_LRZ_CNTL, 0);
+        regs(stream, REG_A6XX_GRAS_LRZ_BUFFER_BASE, {0, 0, 0, 0, 0});
+    }
+    // 9. program config (tu6_emit_program_config, tu_pipeline.cc:1272-1300; fd6 setup_config_stateobj, fd6_program.cc:
+    // 400-458): HLSQ_INVALIDATE_CMD for the five graphics stages and the 3D IBOs, then SP_xS_CONFIG / HLSQ_xS_CNTL per
+    // stage with HS, DS and GS off (NTEX = NSAMP = num_samp = 0; CONSTLEN in the field's units of 4 vec4, the FS's 0 is
+    // ENABLED alone), SP_IBO_COUNT 0 (fd6's nibo(fs))
+    if (o.programConfig) {
+        reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD,
+            A6XX_HLSQ_INVALIDATE_CMD_VS_STATE | A6XX_HLSQ_INVALIDATE_CMD_HS_STATE | A6XX_HLSQ_INVALIDATE_CMD_DS_STATE |
+                A6XX_HLSQ_INVALIDATE_CMD_GS_STATE | A6XX_HLSQ_INVALIDATE_CMD_FS_STATE | A6XX_HLSQ_INVALIDATE_CMD_GFX_IBO);
+        reg(stream, REG_A6XX_SP_VS_CONFIG, spXsConfig(vs.k.numSamp, vs.k.numSamp, 0));
+        reg(stream, REG_A6XX_HLSQ_VS_CNTL, hlsqVsCntl(vs.k.constlen));
+        reg(stream, REG_A6XX_SP_HS_CONFIG, 0);
+        reg(stream, REG_A6XX_HLSQ_HS_CNTL, 0);
+        reg(stream, REG_A6XX_SP_DS_CONFIG, 0);
+        reg(stream, REG_A6XX_HLSQ_DS_CNTL, 0);
+        reg(stream, REG_A6XX_SP_GS_CONFIG, 0);
+        reg(stream, REG_A6XX_HLSQ_GS_CNTL, 0);
+        reg(stream, REG_A6XX_SP_FS_CONFIG, spXsConfig(fs.k.numSamp, fs.k.numSamp, 0));
+        reg(stream, REG_A6XX_HLSQ_FS_CNTL, hlsqFsCntl(fs.k.constlen));
+        reg(stream, REG_A6XX_SP_IBO_COUNT, 0);
+    }
+    // 10. the two programs (tu6_emit_xs, tu_shader.cc:1238-1356; fd6_emit_shader, fd6_program.cc:100-245): CTRL_REG0 (the
+    // VS's MERGEDREGS is bit 20 and it has no THREADSIZE; the FS's has THREADSIZE, VARYING, UNK24 always, MERGEDREGS bit
+    // 31), INSTRLEN, the 7-register OBJ_START block with the private memory zeros, HW_STACK_OFFSET 0, the ST6_SHADER
+    // preload of min(instrlen, 127) units from the 128-byte aligned program, the immediates as compute uploads them
+    // (ST6_CONSTANTS, direct, at immediatesOffsetVec4)
+    auto programOf = [&](const Stage& s, uint64_t address, uint32_t ctrlReg0, uint32_t regCtrl0, uint32_t regInstrlen, uint32_t regObjFirstExec,
+                         uint32_t regHwStackOffset) {
+        reg(stream, regCtrl0, ctrlReg0);
+        reg(stream, regInstrlen, s.k.instrlen);
+        regs(stream, regObjFirstExec, {0, uint32_t(address), uint32_t(address >> 32), 0, 0, 0, 0});
+        reg(stream, regHwStackOffset, 0);
+        loadIndirect(stream, s, ST6_SHADER, 0, std::min(s.k.instrlen, kInstrCacheSize), address);
+        if (s.k.numImmediates != 0) {
+            std::vector<uint32_t> imm(s.k.immediates, s.k.immediates + s.k.numImmediates);
+            imm.resize((imm.size() + 3) & ~size_t(3), 0);
+            loadDirect(stream, s, ST6_CONSTANTS, s.k.immediatesOffsetVec4, uint32_t(imm.size() / 4), imm.data(), uint32_t(imm.size()));
+        }
+    };
+    if (o.programVs) {
+        programOf(vs, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
+                  REG_A6XX_SP_VS_CTRL_REG0, REG_A6XX_SP_VS_INSTRLEN, REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET);
+    }
+    if (o.programFs) {
+        programOf(fs, fsProgram,
+                  spFsCtrlReg0(uint32_t(fs.k.maxReg + 1), uint32_t(fs.k.maxHalfReg + 1), fs.k.branchstackHw, fsThreads, fs.totalIn != 0, fs.needFullQuad != 0,
+                               fs.needPixlod != 0, fs.k.earlyPreamble, fs.k.mergedRegs),
+                  REG_A6XX_SP_FS_CTRL_REG0, REG_A6XX_SP_FS_INSTRLEN, REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET);
+    }
+    // 11. the vertex fetch with no attributes (tu6_emit_vs, tu_shader.cc:1902-1967; fd6 emit_vs_system_values,
+    // fd6_program.cc:510-556): PC/VFD_MULTIVIEW_CNTL 0, VFD_CONTROL_0 0 (no fetches, no decodes), VFD_CONTROL_1 with the
+    // VS's vertex and instance id registers (kRegidNone for the rest), the HS/DS/GS id registers all kRegidNone
+    // (VFD_CONTROL_2..5 for NULL stages, :1972-2036), VFD_CONTROL_6 0 (no primitive id), VFD_INDEX_OFFSET = vertexStart
+    // (added to the vertex id through the static VFD_ADD_OFFSET.VERTEX: Metal's [[vertex_id]] includes it), the instance
+    // start 0, PC_RESTART_INDEX all ones (fd6_draw.cc:416-422)
+    if (o.vfd) {
+        reg(stream, REG_A6XX_PC_MULTIVIEW_CNTL, 0);
+        reg(stream, REG_A6XX_VFD_MULTIVIEW_CNTL, 0);
+        regs(stream, REG_A6XX_VFD_CONTROL_0,
+             {0, vfdControl1(vs.vertexIdRegid, vs.instanceIdRegid, kRegidNone, kRegidNone), vfdControl2None(), vfdControl3None(), vfdControl4None(),
+              vfdControl5None(), 0});
+        regs(stream, REG_A6XX_VFD_INDEX_OFFSET, {draw.vertexStart, 0});
+        reg(stream, REG_A6XX_PC_RESTART_INDEX, 0xffffffffu);
+    }
+    // 12. the VPC link (tu6_emit_vpc, tu_pipeline.cc:890-1070; fd6 emit_vpc, fd6_program.cc:558-908) from render::link's
+    // result: SP_VS_OUT_REG two entries a register, SP_VS_VPC_DST_REG four locations a register, VPC_VS_PACK (stride,
+    // position location, no point size), the clip and layer registers with every location 0xff and both _V2 copies,
+    // GRAS_VS_CL_CNTL and GRAS_VS_LAYER_CNTL 0, PC_VS_OUT_CNTL's stride, SP_VS_PRIMITIVE_CNTL.OUT, the eight interp and
+    // eight replace-mode registers all written (fd6's form, emit_interp_state :1365-1370; turnip writes none without
+    // varyings and a stale PS_REPL from the window server's RECTLIST blit would corrupt the first varying draw),
+    // PC_PS_CNTL 0, and stream-out off as tu6_setup_streamout writes it (tu_pipeline.cc:496-512; type-4 here, not
+    // CP_CONTEXT_REG_BUNCH)
+    if (o.vpc) {
+        for (uint32_t i = 0; i < (link.cnt + 1) / 2; i++) {
+            const Linkage::Var& a = link.var[2 * i];
+            const bool hasB = 2 * i + 1 < link.cnt;
+            const Linkage::Var& b = link.var[hasB ? 2 * i + 1 : 2 * i];
+            reg(stream, regSpVsOutReg(i), spVsOutReg(a.regid, a.compmask, hasB ? b.regid : 0u, hasB ? b.compmask : 0u));
+        }
+        for (uint32_t i = 0; i < (link.cnt + 3) / 4; i++) {
+            uint32_t loc[4] = {0, 0, 0, 0};
+            for (uint32_t j = 0; j < 4 && 4 * i + j < link.cnt; j++) loc[j] = link.var[4 * i + j].loc;
+            reg(stream, regSpVsVpcDstReg(i), spVsVpcDstReg(loc[0], loc[1], loc[2], loc[3]));
+        }
+        reg(stream, REG_A6XX_VPC_VS_PACK, vpcVsPack(link.maxLoc, link.positionLoc));
+        reg(stream, REG_A6XX_VPC_VS_CLIP_CNTL, vpcVsClipCntl(0));
+        reg(stream, REG_A6XX_VPC_VS_CLIP_CNTL_V2, vpcVsClipCntl(0));
+        reg(stream, REG_A6XX_GRAS_VS_CL_CNTL, grasVsClCntl(0, 0));
+        reg(stream, REG_A6XX_PC_VS_OUT_CNTL, pcVsOutCntl(link.maxLoc));
+        reg(stream, REG_A6XX_SP_VS_PRIMITIVE_CNTL, spVsPrimitiveCntl(link.cnt));
+        reg(stream, REG_A6XX_VPC_VS_LAYER_CNTL, vpcVsLayerCntl());
+        reg(stream, REG_A6XX_VPC_VS_LAYER_CNTL_V2, vpcVsLayerCntl());
+        reg(stream, REG_A6XX_GRAS_VS_LAYER_CNTL, 0);
+        stream.registers(regVpcVaryingInterpMode(0), link.interpMode, kVpcVaryingRegs);
+        stream.registers(regVpcVaryingPsReplMode(0), link.psReplMode, kVpcVaryingRegs);
+        reg(stream, REG_A6XX_PC_PS_CNTL, 0);
+        reg(stream, REG_A6XX_VPC_SO_CNTL, 0);
+        reg(stream, REG_A6XX_VPC_SO_STREAM_CNTL, 0);
+        reg(stream, REG_A6XX_PC_SO_STREAM_CNTL, 0);
+    }
+    // 13. the FS's inputs (tu6_emit_fs_inputs, tu_shader.cc:1627-1812; fd6 emit_fs_inputs, fd6_program.cc:921-1112):
+    // SP_FS_PREFETCH_CNTL with no prefetch commands and IJ_WRITE_DISABLE when no perspective pixel barycentric is read;
+    // the five HLSQ_CONTROL registers (PRIMALLOCTHRESHOLD 7 for this chip; the regids, kRegidNone where unread; the ij
+    // registers in ir3_bary order into the register fields' order); HLSQ_FS_CNTL_0; GRAS_CNTL and RB_RENDER_CONTROL0
+    // with the same IJ bits and COORD_MASK (IJ_LINEAR_PIXEL also when the FS reads its face or its coordinate: need_size,
+    // :1747-1756), RB_RENDER_CONTROL0's UNK10 with varyings, RB_RENDER_CONTROL1 from the face/sample regids; the
+    // sample registers 0; VPC_VAR_DISABLE[0..3] = ~varmask; VPC_CNTL_0 with NUMNONPOSVAR = total_in
+    const bool needSize = validReg(fs.faceRegid) || fs.fragcoordCompmask != 0;
+    const uint32_t ijbits = ijBits(ij, needSize, false);
+    if (o.fsInputs) {
+        reg(stream, REG_A6XX_SP_FS_PREFETCH_CNTL, spFsPrefetchCntl(0, !validReg(ij[IJ_PERSP_PIXEL])));
+        regs(stream, REG_A6XX_HLSQ_CONTROL_1_REG,
+             {hlsqControl1Reg(), hlsqControl2Reg(fs.faceRegid, fs.sampleIdRegid, fs.sampleMaskInRegid, ij[IJ_PERSP_CENTER_RHW]),
+              hlsqControl3Reg(ij[IJ_PERSP_PIXEL], ij[IJ_LINEAR_PIXEL], ij[IJ_PERSP_CENTROID], ij[IJ_LINEAR_CENTROID]),
+              hlsqControl4Reg(ij[IJ_PERSP_SAMPLE], ij[IJ_LINEAR_SAMPLE], fs.fragCoordRegid, validReg(fs.fragCoordRegid) ? fs.fragCoordRegid + 2 : kRegidNone),
+              hlsqControl5Reg()});
+        reg(stream, REG_A6XX_HLSQ_FS_CNTL_0, hlsqFsCntl0(fsThreads, fs.totalIn != 0));
+        reg(stream, REG_A6XX_GRAS_CNTL, grasCntl(ijbits, fs.fragcoordCompmask));
+        regs(stream, REG_A6XX_RB_RENDER_CONTROL0,
+             {rbRenderControl0(ijbits, fs.fragcoordCompmask, fs.totalIn != 0),
+              rbRenderControl1(validReg(fs.faceRegid), validReg(fs.sampleIdRegid), validReg(fs.sampleMaskInRegid), validReg(ij[IJ_PERSP_CENTER_RHW]))});
+        reg(stream, REG_A6XX_RB_SAMPLE_CNTL, 0);
+        reg(stream, REG_A6XX_GRAS_LRZ_PS_INPUT_CNTL, 0);
+        reg(stream, REG_A6XX_GRAS_SAMPLE_CNTL, 0);
+        uint32_t disable[kVpcVarDisableRegs];
+        for (uint32_t i = 0; i < kVpcVarDisableRegs; i++) disable[i] = vpcVarDisable(link.varmask[i]);
+        stream.registers(regVpcVarDisable(0), disable, kVpcVarDisableRegs);
+        reg(stream, REG_A6XX_VPC_CNTL_0, vpcCntl0(fs.totalIn, kLocNone, fs.totalIn != 0, kLocNone));
+    }
+    // 14. the FS's outputs (tu6_emit_fs_outputs, tu_shader.cc:1816-1898; fd6 emit_fs_outputs :1114-1184 and
+    // build_prog_fb_rast, fd6_emit.cc:302-350): SP_FS_OUTPUT_CNTL0 with no depth/sample-mask/stencil register, MRT 1 in
+    // both CNTL1 copies, SP_FS_OUTPUT_REG[0] the colour register, RENDER_COMPONENTS 0xf for the one target in both
+    // copies, RB_FS_OUTPUT_CNTL0 0 (nothing but colour is written)
+    if (o.fsOutputs) {
+        regs(stream, REG_A6XX_SP_FS_RENDER_COMPONENTS,
+             {link.mrtComponents, spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), A6XX_SP_FS_OUTPUT_CNTL1_MRT(1),
+              spFsOutputReg(fs.colorRegid[0], fs.colorHalf[0] != 0)});
+        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(1), link.mrtComponents});
+    }
+    // 15. the rasterizer (tu6_emit_rast, tu_pipeline.cc:3120-3218; fd6_rasterizer.cc:22-140): GRAS_CL_CNTL with Metal's
+    // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL cull none,
+    // FRONT_CW clear (the negative y scale reverses every triangle's winding, so Metal's clockwise default is not copied
+    // until the phone has measured one), half-pixel rectangular lines (0x2010); filled polygons in VPC and PC;
+    // PC_RASTER_CNTL and VPC_UNKNOWN_9107 0; point size 1 with turnip's limits; polygon offsets 0; the four shading-rate
+    // registers 0 (has_legacy_pipeline_shading_rate); GRAS_SC_CNTL for sysmem (:3351-3380); PC_PRIMITIVE_CNTL_0 0 (the
+    // first vertex provokes, no restart)
+    if (o.rast) {
+        reg(stream, REG_A6XX_GRAS_CL_CNTL, grasClCntl());
+        reg(stream, REG_A6XX_GRAS_SU_CNTL, grasSuCntl(false, false, false));
+        reg(stream, REG_A6XX_VPC_POLYGON_MODE, A6XX_VPC_POLYGON_MODE_MODE(POLYMODE6_TRIANGLES));
+        reg(stream, REG_A6XX_PC_POLYGON_MODE, A6XX_PC_POLYGON_MODE_MODE(POLYMODE6_TRIANGLES));
+        reg(stream, REG_A6XX_PC_RASTER_CNTL, 0);
+        reg(stream, REG_A6XX_VPC_UNKNOWN_9107, 0);
+        regs(stream, REG_A6XX_GRAS_SU_POINT_MINMAX, {grasSuPointMinmax(1, 0xffc0), grasSuPointSize(16)});
+        regs(stream, REG_A6XX_GRAS_SU_POLY_OFFSET_SCALE, {0, 0, 0});
+        reg(stream, REG_A6XX_RB_UNKNOWN_8A00, 0);
+        reg(stream, REG_A6XX_RB_UNKNOWN_8A10, 0);
+        reg(stream, REG_A6XX_RB_UNKNOWN_8A20, 0);
+        reg(stream, REG_A6XX_RB_UNKNOWN_8A30, 0);
+        reg(stream, REG_A6XX_GRAS_SC_CNTL, grasScCntlSysmem());
+        reg(stream, REG_A6XX_PC_PRIMITIVE_CNTL_0, 0);
+    }
+    // 16. the viewport and the scissors (tu6_emit_viewport, tu_pipeline.cc:2432-2540; tu6_emit_scissor :2657-2688):
+    // GRAS_CL_VPORT[0]'s six floats with Metal's NEGATIVE y scale (viewportWords: NDC y up, row 0 at the top -- reasoning
+    // from the convention, which the probe's orientation line measures), the viewport scissor as the viewport's integer
+    // rectangle with BR inclusive, the Z clamps znear..zfar in both GRAS and RB, the guardband from the offsets and scales
+    // (fd_calc_guardband; MAX_GB for a 64x64 viewport), the screen scissor as Metal's scissor rectangle (the whole target
+    // when none), BR inclusive (both witnesses: the fd6 'off by one' in a6xx-draw.md was spurious)
+    if (o.viewportScissor) {
+        const ViewportWords v = viewportWords(vp.x, vp.y, vp.width, vp.height, vp.znear, vp.zfar);
+        regs(stream, regGrasClVport(REG_A6XX_GRAS_CL_VPORT_XOFFSET, 0), {v.xoffset, v.xscale, v.yoffset, v.yscale, v.zoffset, v.zscale});
+        const uint32_t vx0 = uint32_t(std::floor(vp.x)), vy0 = uint32_t(std::floor(vp.y));
+        const uint32_t vx1 = std::min(W, uint32_t(std::ceil(vp.x + vp.width))) - 1, vy1 = std::min(H, uint32_t(std::ceil(vp.y + vp.height))) - 1;
+        regs(stream, regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0), {scissorXY(vx0, vy0), scissorXY(vx1, vy1)});
+        const float zmin = float(std::min(vp.znear, vp.zfar)), zmax = float(std::max(vp.znear, vp.zfar));
+        regs(stream, regGrasClZClamp(REG_A6XX_GRAS_CL_Z_CLAMP_MIN, 0), {fui(zmin), fui(zmax)});
+        reg(stream, REG_A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ, guardbandClipAdj(vp.x + vp.width / 2, vp.width / 2, vp.y + vp.height / 2, -vp.height / 2));
+        regs(stream, REG_A6XX_RB_Z_CLAMP_MIN, {fui(zmin), fui(zmax)});
+        regs(stream, regGrasScScreenScissor(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_TL, 0), {scissorXY(sc.x, sc.y), scissorXY(sc.x + sc.width - 1, sc.y + sc.height - 1)});
+    }
+    // 17. blending off, depth and stencil off (tu_pipeline.cc:2980-3062, 3240-3331; fd6_blend.cc:45-150; fd6_zsa.cc):
+    // SP_BLEND_CNTL UNK8 (both pipelines; r3d 0), RB_BLEND_CNTL with every sample and turnip's INDEPENDENT_BLEND,
+    // RB_MRT_CONTROL[0] the four-component write mask alone (0x780: turnip's ROP_CLEAR in the inert ROP_CODE field, not
+    // fd6's ROP_COPY), RB_MRT_BLEND_CONTROL[0] 0, the blend constant 0, the alpha test off, the depth and stencil
+    // registers 0 (EARLY_Z depth plane as r3d; pipelines with depth off write LATE_Z), Z bounds 0..1
+    if (o.blendZsa) {
+        reg(stream, REG_A6XX_SP_BLEND_CNTL, A6XX_SP_BLEND_CNTL_UNK8);
+        reg(stream, REG_A6XX_RB_BLEND_CNTL, rbBlendCntl(true));
+        regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), {rbMrtControl(0xf), 0});
+        regs(stream, REG_A6XX_RB_BLEND_RED_F32, {0, 0, 0, 0, 0});   // ..., RB_ALPHA_CONTROL
+        regs(stream, REG_A6XX_RB_DEPTH_PLANE_CNTL, {A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z), 0});   // ..., RB_DEPTH_CNTL
+        regs(stream, REG_A6XX_GRAS_SU_DEPTH_CNTL, {0, 0});   // ..., GRAS_SU_STENCIL_CNTL
+        reg(stream, REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z));
+        reg(stream, REG_A6XX_RB_STENCIL_CONTROL, 0);
+        regs(stream, REG_A6XX_RB_STENCILREF, {0, 0, 0});   // ..., RB_STENCILMASK, RB_STENCILWRMASK
+        regs(stream, REG_A6XX_RB_Z_BOUNDS_MIN, {fui(0.0f), fui(1.0f)});
+    }
+    // 18. the draw (r3d_run, tu_clear_blit.cc:1661-1670; tu_CmdDraw :6209-6227; fd6 draw_emit, fd6_draw.cc:170-180):
+    // CP_DRAW_INDX_OFFSET's 3-word form, the indices generated (AUTO_INDEX), IGNORE_VISIBILITY as r3d (the pipelines'
+    // USE_VISIBILITY under visCullUse: with CP_SET_VISIBILITY_OVERRIDE 1 either should draw; unmeasured), one instance
+    {
+        uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), 1, draw.vertexCount};
+        stream.packet(CP_DRAW_INDX_OFFSET, w, 3);
+    }
+    // 19. the tail: a WFI (as compute's), then what puts the colour in memory -- PC_CCU_FLUSH_COLOR_TS as a 4-word event
+    // writing 1 (turnip's form, tu_cmd_buffer.cc:48-70, with a value where turnip writes a dummy) and a wait for it
+    // (neither witness waits: both let the kernel's fence follow; the kernel's own fence here has no CCU flush,
+    // hakios.adreno.c:3496-3516, so the wait is cheap insurance); LRZ_FLUSH as both witnesses end a pass (tu_lrz.cc:465,
+    // fd6_gmem.cc:2114); RB_DONE_TS only under tailRbDone (in neither witness's render end); CACHE_FLUSH_TS writing 2 and
+    // CP_WAIT_MEM_GTE for it, compute's measured tail
+    stream.waitForIdle();
+    {
+        const uint64_t ts = table + kTableTimestampsAt;
+        if (o.tailCcuFlush) {
+            eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, 1, o.tailTimestampBit);
+            waitForWord(stream, ts, 1);
+        }
+        if (o.tailLrzFlush) {
+            event(stream, LRZ_FLUSH);
+        }
+        if (o.tailRbDone) {
+            eventTimestamp(stream, RB_DONE_TS, ts + 8, 3, o.tailTimestampBit);
+            waitForWord(stream, ts + 8, 3);
+        }
+        if (o.tailCacheFlush) {
+            eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2, o.tailTimestampBit);
+            waitForWordAtLeast(stream, ts + 4, 2);
+        }
+    }
+    return true;
 }
 
 }  // namespace render
 
-bool CommandBuffer::draw(const Program&, const RenderPass&, const Draw&, const Bindings&, const Bindings&, const render::Options&) {
-    return fail("draw: not implemented yet");
+bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const Draw& d, const Bindings& vsBindings, const Bindings& fsBindings,
+                         const render::Options& options) {
+    if (status_ > kEnqueued) {
+        return fail("draw after commit");
+    }
+    std::string why;
+    // the two programs' words and the pass's table, each in a buffer of its own: a buffer is whole pages, so SP_xS_OBJ_START
+    // is 128-byte aligned as the ST6_SHADER preload wants it (tu_shader.cc:1313-1316); the words were counted against
+    // instrlen by encode before anything of them is read
+    std::shared_ptr<Buffer> vsProgram = newBuffer(queue_.gpu(), 4ull * std::max<uint32_t>(program.vs.k.numWords, 1), &why);
+    if (vsProgram == nullptr) {
+        return fail(std::string("no memory for the vertex program: ") + why);
+    }
+    std::shared_ptr<Buffer> fsProgram = newBuffer(queue_.gpu(), 4ull * std::max<uint32_t>(program.fs.k.numWords, 1), &why);
+    if (fsProgram == nullptr) {
+        return fail(std::string("no memory for the fragment program: ") + why);
+    }
+    std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), render::kTableBytes, &why);
+    if (table == nullptr) {
+        return fail(std::string("no memory for the pass's table: ") + why);
+    }
+    pm4::Stream added;
+    if (!render::encode(added, program, pass, d, vsBindings, fsBindings, vsProgram->gpuAddress(), fsProgram->gpuAddress(), table->gpuAddress(),
+                        static_cast<uint8_t*>(table->contents()), &why, options)) {
+        return fail(why);
+    }
+    // (only now, after encode counted them: the words into the two buffers)
+    memcpy(vsProgram->contents(), program.vs.k.words, 4ull * program.vs.k.numWords);
+    memcpy(fsProgram->contents(), program.fs.k.words, 4ull * program.fs.k.numWords);
+    const std::vector<uint32_t>& w = added.words();
+    stream_.packet(pm4::kNop, nullptr, 0);   // (a marker between encoders in the stream, for whoever reads it back)
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kRegisters) {
+            stream_.registers(h.reg, &w[i + 1], h.count);
+        } else {
+            stream_.packet(h.opcode, h.count ? &w[i + 1] : nullptr, h.count);
+        }
+        i += 1 + h.count;
+    }
+    use(*vsProgram, false);
+    use(*fsProgram, false);
+    use(*table, true);
+    use(*pass.color0->buffer(), true);
+    keep(pass.color0->buffer());
+    for (const Bindings* b : {&vsBindings, &fsBindings}) {
+        for (const Binding& x : b->buffers) {
+            if (x.buffer != nullptr) {
+                use(*x.buffer, true);
+            }
+        }
+    }
+    keep(vsProgram);
+    keep(fsProgram);
+    keep(table);
+    return true;
 }
 
 }  // namespace hakios::metal
