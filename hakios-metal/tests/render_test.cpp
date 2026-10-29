@@ -3098,6 +3098,16 @@ TEST(a_texture_over_an_iosurface_refuses_what_the_gpu_cannot_take) {
     refusedWith(2, d, "IOSurface 2's pixel format 1380401729 is not BGRA8Unorm's");
     refusedWith(3, d, "IOSurface 3 has 2 planes: a single-plane surface is what is served");
     refusedWith(5, d, "a 64 x 64 texture over the 32 x 32 IOSurface 5");
+    // a luminance-and-alpha mask surface ('LA08') is RG8Unorm's, and no other format's
+    r.fake->addSurface(6, 64, 64, 128, 0x4c413038u);
+    TextureDesc la = d;
+    la.format = PixelFormat::kRG8Unorm;
+    {
+        std::string w;
+        CHECK(Texture::wrapSurface(*r.gpu, 6, la, &w) != nullptr);
+        if (!w.empty()) std::fprintf(stderr, "  %s\n", w.c_str());
+    }
+    refusedWith(6, d, "IOSurface 6's pixel format 1279340600 is not BGRA8Unorm's");
     TextureDesc z = d;
     z.format = PixelFormat::kDepth32Float;
     refusedWith(5, z, "a depth texture is tiled, a surface's rows are linear");
