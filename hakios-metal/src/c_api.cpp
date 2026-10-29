@@ -190,7 +190,15 @@ uint64_t hakios_metal_buffer_gpu_address(hakios_metal_buffer* b) { return b->buf
 
 hakios_metal_texture* hakios_metal_texture_new(hakios_metal_device* d, unsigned type, unsigned pixelFormat, unsigned width, unsigned height,
                                                unsigned usage) {
+    return hakios_metal_texture_new_levels(d, type, pixelFormat, width, height, 1, usage);
+}
+
+unsigned hakios_metal_texture_levels(hakios_metal_texture* t) { return t->texture->levels(); }
+
+hakios_metal_texture* hakios_metal_texture_new_levels(hakios_metal_device* d, unsigned type, unsigned pixelFormat, unsigned width, unsigned height,
+                                                      unsigned levels, unsigned usage) {
     TextureDesc desc;
+    desc.mipLevels = levels;
     desc.type = TextureType(type);           // Metal's own numbers, as the header says: an unknown one is refused by name
     desc.format = PixelFormat(pixelFormat);
     desc.width = width;
@@ -242,8 +250,13 @@ unsigned hakios_metal_texture_type(hakios_metal_texture* t) { return unsigned(t-
 unsigned hakios_metal_texture_usage(hakios_metal_texture* t) { return t->texture->usage(); }
 
 int hakios_metal_texture_replace(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, const void* bytes, uint64_t bytesPerRow) {
+    return hakios_metal_texture_replace_level(t, 0, x, y, w, h, bytes, bytesPerRow);
+}
+
+int hakios_metal_texture_replace_level(hakios_metal_texture* t, unsigned level, unsigned x, unsigned y, unsigned w, unsigned h, const void* bytes,
+                                       uint64_t bytesPerRow) {
     std::string why;
-    if (!t->texture->replace(x, y, w, h, bytes, bytesPerRow, &why)) {
+    if (!t->texture->replace(level, x, y, w, h, bytes, bytesPerRow, &why)) {
         failed(why);
         return -1;
     }
@@ -251,8 +264,13 @@ int hakios_metal_texture_replace(hakios_metal_texture* t, unsigned x, unsigned y
 }
 
 int hakios_metal_texture_read(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, void* bytes, uint64_t bytesPerRow) {
+    return hakios_metal_texture_read_level(t, 0, x, y, w, h, bytes, bytesPerRow);
+}
+
+int hakios_metal_texture_read_level(hakios_metal_texture* t, unsigned level, unsigned x, unsigned y, unsigned w, unsigned h, void* bytes,
+                                    uint64_t bytesPerRow) {
     std::string why;
-    if (!t->texture->read(x, y, w, h, bytes, bytesPerRow, &why)) {
+    if (!t->texture->read(level, x, y, w, h, bytes, bytesPerRow, &why)) {
         failed(why);
         return -1;
     }
@@ -361,6 +379,26 @@ int hakios_metal_cb_fill(hakios_metal_cb* cb, hakios_metal_buffer* b, uint64_t o
         return -1;
     }
     cb->cb->keep(b->buffer);
+    return 0;
+}
+
+int hakios_metal_cb_blit(hakios_metal_cb* cb, hakios_metal_texture* from, unsigned fromLevel, unsigned sx, unsigned sy, unsigned sw, unsigned sh,
+                         hakios_metal_texture* to, unsigned toLevel, unsigned dx, unsigned dy, unsigned dw, unsigned dh, int linear) {
+    if (!cb->cb->blit(*from->texture, fromLevel, render::BlitRect{sx, sy, sw, sh}, *to->texture, toLevel, render::BlitRect{dx, dy, dw, dh}, linear != 0)) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    cb->cb->keepAlive(from->texture);
+    cb->cb->keepAlive(to->texture);
+    return 0;
+}
+
+int hakios_metal_cb_generate_mipmaps(hakios_metal_cb* cb, hakios_metal_texture* t) {
+    if (!cb->cb->generateMipmaps(*t->texture)) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    cb->cb->keepAlive(t->texture);
     return 0;
 }
 
@@ -536,12 +574,14 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
     RenderPass rp;
     if (pass == nullptr) return rp;
     rp.color0 = pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
+    rp.level = pass->color0_level;
     rp.load = LoadAction(pass->load_action);
     rp.store = StoreAction(pass->store_action);
     for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
     for (unsigned i = 0; i < kMaxColorOutputs - 1; i++) {
         const auto& m = pass->more[i];
         rp.more[i].texture = m.texture != nullptr ? m.texture->texture.get() : nullptr;
+        rp.more[i].level = m.level;
         rp.more[i].load = LoadAction(m.load_action);
         rp.more[i].store = StoreAction(m.store_action);
         for (int c = 0; c < 4; c++) rp.more[i].clearColor[c] = m.clear_color[c];

@@ -117,6 +117,10 @@ unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel *kernel);   
  * buffer the command buffers keep alive while they use it) */
 hakios_metal_texture *hakios_metal_texture_new(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned usage);
+/* ...of LEVELS mip levels (MTLTextureDescriptor.mipmapLevelCount: 1 to floor(log2(max(width, height))) + 1) */
+hakios_metal_texture *hakios_metal_texture_new_levels(hakios_metal_device *device, unsigned type, unsigned pixel_format,
+    unsigned width, unsigned height, unsigned levels, unsigned usage);
+unsigned hakios_metal_texture_levels(hakios_metal_texture *texture);
 /* -newTextureWithDescriptor:iosurface:plane: -- the texture's rows are IOSurface SURFACE_ID's pixels (the kernel's
  * surface buffer: drawing into it draws into what the display or another program reads), PIXEL_FORMAT, WIDTH, HEIGHT
  * and USAGE as for hakios_metal_texture_new. NULL with the reason: no such surface, a plane other than 0, a size past
@@ -142,6 +146,11 @@ int hakios_metal_texture_replace(hakios_metal_texture *texture, unsigned x, unsi
 /* -getBytes:bytesPerRow:fromRegion:mipmapLevel:, the other way */
 int hakios_metal_texture_read(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned w, unsigned h,
     void *bytes, uint64_t bytes_per_row);
+/* the two of mip level LEVEL (the region inside that level's size) */
+int hakios_metal_texture_replace_level(hakios_metal_texture *texture, unsigned level, unsigned x, unsigned y, unsigned w,
+    unsigned h, const void *bytes, uint64_t bytes_per_row);
+int hakios_metal_texture_read_level(hakios_metal_texture *texture, unsigned level, unsigned x, unsigned y, unsigned w,
+    unsigned h, void *bytes, uint64_t bytes_per_row);
 
 /* MTLSamplerDescriptor's fields, Metal's numbering and defaults (zero everywhere but normalized_coordinates 1,
  * lod_max_clamp FLT_MAX, max_anisotropy 1) */
@@ -240,7 +249,9 @@ struct hakios_metal_render_pass {
 		hakios_metal_texture *texture;
 		unsigned load_action, store_action;
 		double clear_color[4];
+		unsigned level;                   /* the mip level drawn into */
 	} more[7];
+	unsigned color0_level;                    /* color0's mip level drawn into (MTLRenderPassAttachmentDescriptor.level) */
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,
@@ -293,6 +304,14 @@ void hakios_metal_cb_free(hakios_metal_cb *cb);
 int hakios_metal_cb_copy(hakios_metal_cb *cb, hakios_metal_buffer *from, uint64_t from_offset, hakios_metal_buffer *to,
     uint64_t to_offset, uint64_t length);
 int hakios_metal_cb_fill(hakios_metal_cb *cb, hakios_metal_buffer *buffer, uint64_t offset, uint64_t length, uint8_t value);
+/* -copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:...: SW x SH at (SX, SY) of FROM's level
+ * FROM_LEVEL into DW x DH at (DX, DY) of TO's level TO_LEVEL, one pixel format; another size is a scale, LINEAR filtered.
+ * -1 with the reason (the command buffer ends in error). */
+int hakios_metal_cb_blit(hakios_metal_cb *cb, hakios_metal_texture *from, unsigned from_level, unsigned sx, unsigned sy,
+    unsigned sw, unsigned sh, hakios_metal_texture *to, unsigned to_level, unsigned dx, unsigned dy, unsigned dw,
+    unsigned dh, int linear);
+/* -generateMipmapsForTexture: */
+int hakios_metal_cb_generate_mipmaps(hakios_metal_cb *cb, hakios_metal_texture *texture);
 /* KERNEL over GROUPS threadgroups of THREADS threads each (MTLComputeCommandEncoder's dispatchThreadgroups:
  * threadsPerThreadgroup:), with BUFFERS[i] at OFFSETS[i] bound at Metal index i for i < COUNT (NULL: nothing there).
  * -1 with the reason when the kernel and the bindings do not fit together; the kernel and the buffers stay alive
