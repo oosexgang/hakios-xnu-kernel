@@ -335,8 +335,11 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.k.samplerMask = 1u << 16;
         refused(r, p, pass, d, "hand_fs names texture or sampler indices past 15: the tables hold 16");
         p = handProgram();
-        p.vs.k.driverParamsOffsetVec4 = 1;
-        refused(r, p, pass, d, "hand_vs reads driver params at vec4 1: not served in the first draw");
+        p.fs.k.driverParamsOffsetVec4 = 0;
+        refused(r, p, pass, d, "hand_fs reads driver params at vec4 0: only a vertex stage's are served");
+        p = handProgram();
+        p.vs.k.driverParamsOffsetVec4 = 8;
+        refused(r, p, pass, d, "hand_vs: its driver params at vec4 8 run past its constlen of 8");
         p = handProgram();
         p.fs.k.constantDataSize = 16;
         refused(r, p, pass, d, "hand_fs carries 16 bytes of constant data: not uploaded yet");
@@ -464,9 +467,6 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         x = d;
         x.instanceCount = 0;
         refused(r, p, pass, x, "a draw of 0 instances");
-        x = d;
-        x.baseInstance = 1;
-        refused(r, p, pass, x, "a base instance of 1: only 0 is served (VFD_INSTANCE_START_OFFSET and the base in [[instance_id]] are not worked out)");
         x = d;
         x.viewport.width = NAN;
         refused(r, p, pass, x, "a viewport with a non-finite value");
@@ -1918,6 +1918,43 @@ Program attrProgram() {
     return p;
 }
 }  // namespace
+
+// A VS that reads driver params ([[base_vertex]], or [[instance_id]], which the front end makes the hardware's id plus
+// base_instance) gets turnip's one vec4 every draw: draw id 0, the vertex offset VFD_INDEX_OFFSET also adds, the first
+// instance VFD_INSTANCE_START_OFFSET also holds, 0. The values are made distinct so a swapped pair or a vertex offset
+// taken from the wrong kind of draw shows.
+TEST(a_vertex_stage_gets_its_driver_params_every_draw) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Program p = handProgram();
+    p.vs.k.driverParamsOffsetVec4 = 5;
+    Draw d = wholeDraw(3);
+    d.vertexStart = 3;
+    d.baseInstance = 7;
+    Encoded e(r, p, pass, d);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    using namespace a6xx;
+    const auto& w = e.stream.words();
+    size_t at = e.findLoad(CP_LOAD_STATE6_GEOM, ST6_CONSTANTS, SB6_VS_SHADER);
+    CHECK(at != size_t(-1));
+    if (at != size_t(-1)) {
+        CHECK_EQ(w[at + 1], loadState6_0(5, ST6_CONSTANTS, SS6_DIRECT, SB6_VS_SHADER, 1));
+        CHECK_EQ(w[at + 4], 0u);
+        CHECK_EQ(w[at + 5], 3u);
+        CHECK_EQ(w[at + 6], 7u);
+        CHECK_EQ(w[at + 7], 0u);
+    }
+    CHECK_EQ(e.reg(REG_A6XX_VFD_INDEX_OFFSET), 3u);
+    CHECK_EQ(e.reg(REG_A6XX_VFD_INSTANCE_START_OFFSET), 7u);
+    // a VS without driver params gets no constant load of its own
+    Program q = handProgram();
+    Encoded f(r, q, pass, d);
+    CHECK(f.ok);
+    CHECK_EQ(f.findLoad(CP_LOAD_STATE6_GEOM, ST6_CONSTANTS, SB6_VS_SHADER), size_t(-1));
+}
 
 TEST(a_draw_fetches_two_attributes_through_the_vertex_descriptor) {
     Rig r;

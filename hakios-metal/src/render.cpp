@@ -169,11 +169,12 @@ bool checkStage(const Stage& s, std::string* why) {
             return refuse(why, name + " samples texture " + n(i) + " past its numTextureSlots of " + n(k.numTextureSlots) + ": the stage's tables disagree");
         }
     }
-    if (k.driverParamsOffsetVec4 >= 0) {
-        // a VS reading first_vertex/base_instance/draw_id, or an FS with driver params (tu6_emit_vs_params,
-        // tu_cmd_buffer.cc:6135-6205): the upload is compute's shape, but which words Metal's semantics want (vertex_id
-        // already includes the base vertex through VFD_ADD_OFFSET) is not decided, so it is refused rather than guessed
-        return refuse(why, name + " reads driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + ": not served in the first draw");
+    if (k.driverParamsOffsetVec4 >= 0 && s.kind != kStageVertex) {
+        // an FS's driver params (subgroup size, the fragment density words) are not worked out here
+        return refuse(why, name + " reads driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + ": only a vertex stage's are served");
+    }
+    if (k.driverParamsOffsetVec4 >= 0 && uint32_t(k.driverParamsOffsetVec4) + 1 > k.constlen) {
+        return refuse(why, name + ": its driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + " run past its constlen of " + n(k.constlen));
     }
     if (k.constantDataSize != 0) {
         return refuse(why, name + " carries " + n(k.constantDataSize) + " bytes of constant data: not uploaded yet");
@@ -313,14 +314,15 @@ bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, 
             return refuse(why, name + ": buffer " + n(a.bufferIndex) + ": offset " + n(x.offset) + " lies past its end");
         }
         const uint64_t bytes = x.buffer->length() - x.offset;
-        // the last element the draw fetches: for a per-instance attribute (instanceCount - 1) / stepRate; for a per-vertex
+        // the last element the draw fetches: for a per-instance attribute baseInstance + (instanceCount - 1) / stepRate
+        // (VFD_INSTANCE_START_OFFSET is added after the divisor, as Vulkan's firstInstance is); for a per-vertex
         // one the last vertex, which an indexed draw names only in its index buffer -- there the check is the GPU's own
         // (VFD_FETCH_SIZE bounds the fetch: an index past it reads zeros, robust-buffer style, not what follows)
         if (!perInstance && draw.indexBuffer != nullptr) {
             f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, false, fi->fmt6, fi->swap, fi->isFloat);
             f->stepRate[loc] = 0;
         } else {
-            const uint64_t last = perInstance ? uint64_t(draw.instanceCount == 0 ? 0 : draw.instanceCount - 1) / l.stepRate
+            const uint64_t last = perInstance ? uint64_t(draw.baseInstance) + uint64_t(draw.instanceCount == 0 ? 0 : draw.instanceCount - 1) / l.stepRate
                                               : uint64_t(draw.vertexStart) + (draw.vertexCount == 0 ? 0 : draw.vertexCount - 1);
             const uint64_t need = last * l.stride + a.offset + fi->bytes;
             if (need > bytes) {
@@ -1174,9 +1176,6 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (draw.instanceCount == 0) {
         return refuse(why, "a draw of 0 instances");
     }
-    if (draw.baseInstance != 0) {
-        return refuse(why, "a base instance of " + n(draw.baseInstance) + ": only 0 is served (VFD_INSTANCE_START_OFFSET and the base in [[instance_id]] are not worked out)");
-    }
     uint32_t indexSize = 0;
     uint64_t maxIndices = 0;
     if (draw.indexBuffer != nullptr) {
@@ -1397,6 +1396,15 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         programOf(vs, vsRanges, vsUbos, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
                   REG_A6XX_SP_VS_CTRL_REG0, REG_A6XX_SP_VS_INSTRLEN, REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET);
     }
+    // 10a. the VS's driver params, every draw since they are the draw's own (tu6_emit_vs_params, tu_cmd_buffer.cc:
+    // 6135-6205: one vec4 of draw id, vertex offset, first instance, 0). The AIR front end reads Metal's [[base_vertex]]
+    // as first_vertex and makes [[instance_id]] the hardware's zero-based id plus base_instance, so a VS with either
+    // reads these; the vertex offset is the one VFD_INDEX_OFFSET adds, the base vertex of an indexed draw or the
+    // vertex start of the other kind, as Vulkan's firstVertex is.
+    if (vs.k.driverParamsOffsetVec4 >= 0) {
+        const uint32_t params[4] = {0, draw.indexBuffer != nullptr ? uint32_t(draw.baseVertex) : draw.vertexStart, draw.baseInstance, 0};
+        loadDirect(stream, vs, ST6_CONSTANTS, uint32_t(vs.k.driverParamsOffsetVec4), 1, params, 4);
+    }
     if (o.programFs) {
         programOf(fs, fsRanges, fsUbos, fsProgram,
                   spFsCtrlReg0(uint32_t(fs.k.maxReg + 1), uint32_t(fs.k.maxHalfReg + 1), fs.k.branchstackHw, fsThreads, fs.totalIn != 0, fs.needFullQuad != 0,
@@ -1450,9 +1458,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
                 regs(stream, regVfdFetchBase(bi), {uint32_t(fetch.base[bi]), uint32_t(fetch.base[bi] >> 32), fetch.size[bi], fetch.stride[bi]});
             }
         }
-        // the vertex id's offset (an indexed draw's base vertex) and VFD_INSTANCE_START_OFFSET 0; the restart index the
+        // the vertex id's offset (an indexed draw's base vertex) and the first instance, as tu6_emit_vs_params writes
+        // them (tu_cmd_buffer.cc:6178-6180): the fetch of per-instance attributes starts there, while the instance id
+        // the VS reads stays zero based and Metal's base is added from the driver params below; the restart index the
         // index type's all-ones (vk_index_to_restart: 0xffff for 16-bit indices, tu_cmd_buffer.cc:2840-2862)
-        regs(stream, REG_A6XX_VFD_INDEX_OFFSET, {draw.indexBuffer != nullptr ? uint32_t(draw.baseVertex) : draw.vertexStart, 0});
+        regs(stream, REG_A6XX_VFD_INDEX_OFFSET, {draw.indexBuffer != nullptr ? uint32_t(draw.baseVertex) : draw.vertexStart, draw.baseInstance});
         reg(stream, REG_A6XX_PC_RESTART_INDEX, draw.indexBuffer != nullptr && draw.indexType == 0 ? 0xffffu : 0xffffffffu);
     }
     // 12. the VPC link (tu6_emit_vpc, tu_pipeline.cc:890-1070; fd6 emit_vpc, fd6_program.cc:558-908) from render::link's

@@ -47,6 +47,7 @@
 #include "../tests/fixtures/tri_null_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt_fs_air.hpp"
 #include "../tests/fixtures/tri_fb_fs_air.hpp"
+#include "../tests/fixtures/tri_base_vs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -1103,6 +1104,7 @@ int main(int argc, char** argv) {
     //   9v. A8Unorm, R16Float, RG16Float, RG32Float: a Clear, a sample of one texel, and tri_flat drawn into each
     //   9w. mip levels: each of seven sampled by a sampler clamped to it, a draw into level 2, a copy, generateMipmaps
     //   9x. stencil: T1 writes 1 into the S8 plane of a Depth32Float_Stencil8 texture, the pair then drawn where it equals 1
+    //   9y. the VS's driver params: tri_base_vs's [[base_vertex]] and [[instance_id]] from a base instance, plain and indexed
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2616,6 +2618,56 @@ int main(int argc, char** argv) {
                                "stencil control, T1 with write mask 0: " + counts + " (none green, T1 flat is right)" + status(*cb, gpu));
                     }
                     if (!completed(*cb)) break;
+                }
+            }
+        }
+        // 9y. the VS's driver params. tri_base_vs places the pair by vid - base_vertex and colours it (base_vertex,
+        // instance_id) / 255, instance_id being the hardware's zero-based id plus base_instance. Two instances from base
+        // instance 7, the second drawn last: (a) vertices 3..8, every pixel 03 08 00 ff; (b) indices 0..5 with base
+        // vertex 5, every pixel 05 08 00 ff. Params never uploaded read 0 (the pair misplaced, 00 01 00 ff where drawn);
+        // the hardware's id not added gives 07 in green; the vertex offset from the wrong kind of draw, 03 in (b).
+        {
+            const Program baseP{kernels::tri_base_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_base"};
+            auto ib = newBuffer(gpu, 6 * 4, &why);
+            if (ib == nullptr) {
+                report(false, "driver params: an index buffer: " + why);
+            } else {
+                uint32_t* idx = static_cast<uint32_t*>(ib->contents());
+                for (uint32_t i = 0; i < 6; i++) idx[i] = i;
+                for (int kind = 0; kind < 2; kind++) {
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Draw d = drawOf(kind == 0 ? 3 : 0, 6);
+                    d.instanceCount = 2;
+                    d.baseInstance = 7;
+                    if (kind == 1) {
+                        d.indexBuffer = ib.get();
+                        d.indexType = 1;
+                        d.baseVertex = 5;
+                    }
+                    const uint32_t want = kind == 0 ? 0xff000803u : 0xff000805u;
+                    auto cb = queue->commandBuffer();
+                    bool ok = cb->draw(baseP, rp, d, Bindings{}, Bindings{});
+                    if (ok) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t right = 0, first = 0;
+                    bool seen = false;
+                    for (uint32_t k = 0; k < W * H; k++) {
+                        uint32_t px;
+                        memcpy(&px, bo.data() + (k / W) * t->bytesPerRow() + uint64_t(k % W) * 4, 4);
+                        if (px == want) right++;
+                        else if (!seen) { first = px; seen = true; }
+                    }
+                    char firstHex[16];
+                    snprintf(firstHex, sizeof(firstHex), "%08x", first);
+                    report(ok && completed(*cb) && right == W * H,
+                           std::string(kind == 0 ? "driver params, vertices 3..8, two instances from 7: " : "driver params, indices 0..5 from base vertex 5, two instances from 7: ") +
+                               std::to_string(right) + " of 4096 pixels " + (kind == 0 ? "03 08 00 ff" : "05 08 00 ff") + (seen ? std::string(", the first other one ") + firstHex : std::string()) +
+                               (ok ? status(*cb, gpu) : ": " + cb->error()));
                 }
             }
         }

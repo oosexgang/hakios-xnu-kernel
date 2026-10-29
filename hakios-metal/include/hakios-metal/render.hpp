@@ -283,7 +283,7 @@ struct Draw {
     uint64_t indexOffset = 0;
     uint32_t indexType = 0;
     int32_t baseVertex = 0;
-    uint32_t baseInstance = 0;                   // only 0 is served (VFD_INSTANCE_START_OFFSET and [[instance_id]]'s base are not worked out)
+    uint32_t baseInstance = 0;                   // VFD_INSTANCE_START_OFFSET, and the base [[instance_id]] counts from
     Viewport viewport{};
     Scissor scissor{};                           // width 0: the whole target
     float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors
