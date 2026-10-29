@@ -49,11 +49,15 @@ std::string text(const char* format, uint64_t a = 0, uint64_t b = 0, uint64_t c 
 // a field read back the way the registers hold it, from a6xx.hpp's masks (the fake decodes; the encoder encodes)
 uint32_t fieldOf(uint32_t word, uint32_t mask, uint32_t shift) { return (word & mask) >> shift; }
 
-// the pixel size of the formats this model knows (texture.hpp's twelve, by their FMT: fd6_format_table.c); 0 for another
+// the pixel size of the formats this model knows (texture.hpp's sixteen, by their FMT: fd6_format_table.c); 0 for another
 uint32_t bytesPerPixel(uint32_t fmt) {
     switch (fmt) {
+    case a6xx::FMT6_A8_UNORM: return 1;
     case a6xx::FMT6_8_UNORM: return 1;
+    case a6xx::FMT6_16_FLOAT: return 2;
     case a6xx::FMT6_8_8_UNORM: return 2;
+    case a6xx::FMT6_16_16_FLOAT: return 4;
+    case a6xx::FMT6_32_32_FLOAT: return 8;
     case a6xx::FMT6_8_8_8_8_UNORM: return 4;
     case a6xx::FMT6_32_FLOAT: return 4;
     case a6xx::FMT6_32_UINT: return 4;

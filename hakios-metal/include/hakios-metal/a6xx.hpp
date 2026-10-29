@@ -84,7 +84,9 @@ enum a6xx_tile_mode : uint32_t {
 // The texture formats served (texture.hpp's table), as fd6_format_table.c's .tex column names them for the Metal
 // pixel formats: the sRGB ones are the UNORM format plus TEX_CONST_0_SRGB, BGRA8 is 8_8_8_8_UNORM with SWAP WXYZ.
 enum a6xx_format : uint32_t {
+    FMT6_A8_UNORM = 2,             // a6xx.xml.h:63   A8Unorm: the TP returns (0, 0, 0, a) and the RB writes alpha (fd6_format_table.c:53 _TC)
     FMT6_8_UNORM = 3,              // a6xx.xml.h:64   R8Unorm
+    FMT6_16_FLOAT = 23,            // a6xx.xml.h:79   R16Float (fd6_format_table.c:76 VTC)
     FMT6_8_8_UNORM = 15,           // a6xx.xml.h:72   RG8Unorm
     FMT6_8_8_8_8_UNORM = 48,       // a6xx.xml.h:86   RGBA8Unorm, RGBA8Unorm_sRGB, and with SWAP = WXYZ the BGRA8 pair
     FMT6_32_FLOAT = 74,            // a6xx.xml.h:105  R32Float

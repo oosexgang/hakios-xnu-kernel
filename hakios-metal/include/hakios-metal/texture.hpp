@@ -31,14 +31,18 @@ namespace hakios::metal {
 
 // The MTLPixelFormat values served (MTLPixelFormat.h); every other value is refused by name at creation.
 enum class PixelFormat : uint32_t {
+    kA8Unorm = 1,
     kR8Unorm = 10,
+    kR16Float = 25,
     kRG8Unorm = 30,
+    kRG16Float = 65,
     kR32Uint = 53,
     kR32Float = 55,
     kRGBA8Unorm = 70,
     kRGBA8UnormSrgb = 71,
     kBGRA8Unorm = 80,
     kBGRA8UnormSrgb = 81,
+    kRG32Float = 105,
     kRGBA16Float = 115,
     kRGBA32Uint = 123,
     kRGBA32Float = 125,

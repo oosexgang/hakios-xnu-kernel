@@ -391,8 +391,8 @@ struct ClearWords {
 
 uint32_t channelsOf(const FormatInfo& f) {
     switch (f.fmt6) {
-    case FMT6_8_UNORM: case FMT6_32_UINT: case FMT6_32_FLOAT: return 1;
-    case FMT6_8_8_UNORM: return 2;
+    case FMT6_8_UNORM: case FMT6_16_FLOAT: case FMT6_32_UINT: case FMT6_32_FLOAT: return 1;
+    case FMT6_8_8_UNORM: case FMT6_16_16_FLOAT: case FMT6_32_32_FLOAT: return 2;
     default: return 4;
     }
 }
@@ -406,6 +406,11 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
     *out = ClearWords{};
     const uint32_t channels = channelsOf(f);
     switch (f.fmt6) {
+    case FMT6_A8_UNORM:
+        // the one channel is alpha (A8's swizzle is 0, 0, 0, X: r2d_clear_value fills only the channels a swizzle names)
+        out->ifmt = R2D_UNORM8;
+        out->value[3] = unorm8Of(float(colour[3]));
+        return true;
     case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM:
         out->ifmt = f.srgb ? R2D_UNORM8_SRGB : R2D_UNORM8;
         for (uint32_t i = 0; i < channels; i++) {
@@ -413,11 +418,11 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
             out->value[i] = unorm8Of(f.srgb && i < 3 ? linearToSrgb(linear) : linear);
         }
         return true;
-    case FMT6_16_16_16_16_FLOAT:
+    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT:
         out->ifmt = R2D_FLOAT16;
         for (uint32_t i = 0; i < channels; i++) out->value[i] = halfOf(float(colour[i]));
         return true;
-    case FMT6_32_FLOAT: case FMT6_32_32_32_32_FLOAT:
+    case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT:
         out->ifmt = R2D_FLOAT32;
         for (uint32_t i = 0; i < channels; i++) out->value[i] = fui(float(colour[i]));
         return true;
@@ -1614,6 +1619,8 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     passTail(stream, table, o, pass.depth != nullptr);
     return true;
 }
+
+uint32_t halfBitsOf(float f) { return halfOf(f); }
 
 }  // namespace render
 

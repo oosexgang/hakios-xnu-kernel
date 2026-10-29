@@ -1099,6 +1099,7 @@ int main(int argc, char** argv) {
     //   9s. Metal's null texture sampled as 2D (a prefetch) and as 3D (sam.3d) through the one slot and its 2D 1x1 descriptor
     //   9t. two colour targets: tri_mrt_fs's [[color(0)]] and [[color(1)]] each into its own attachment, the second also cleared
     //   9u. framebuffer fetch: tri_fb_fs reads its target and rotates the channels, once and twice in one pass, and without the barrier
+    //   9v. A8Unorm, R16Float, RG16Float, RG32Float: a Clear, a sample of one texel, and tri_flat drawn into each
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2256,6 +2257,127 @@ int main(int argc, char** argv) {
                                describeTexture(rb, kind == 0 ? "80 bf 40 ff" : "bf 40 80 ff") + counts + status(*cb, gpu));
                 }
                 if (!completed(*cb)) break;
+            }
+        }
+        // 9v. the formats CoreAnimation asks for next (A8Unorm for every glyph mask: some 350 refusals a boot) and three
+        // float ones games use. For each, three measurements, each exact in its own terms:
+        //   a Clear to (0.25, 0.5, 0.75, 1), the 2D engine's packing read back as bytes (A8: the alpha alone, 0xff;
+        //     R16F 0x3400; RG16F 3400 3800; RG32F 0.25f 0.5f);
+        //   a sample: a 1x1 texture of a known texel through tri_tex_fs into the RGBA8 target -- every covered pixel the
+        //     texel as Metal reads it (A8 0x40 reads (0, 0, 0, 0x40); R16F 0.25 reads (0x40, 0, 0, 0xff): one channel,
+        //     alpha 1; RG16F (0.25, 0.75) reads (0x40, 0xbf, 0, 0xff); RG32F (1, 0.25) reads (0xff, 0x40, 0, 0xff));
+        //   tri_flat drawn into a target of the format: A8 keeps the colour's alpha 0xff, the float ones its first one
+        //     or two channels (0x20/255, 0x40/255 as the FS computed them in f32, stored as the format's floats: the
+        //     half within one unit of the last place, the f32 exactly)
+        if (t) {
+            struct FormatCase {
+                PixelFormat format;
+                uint32_t bpp;
+                uint8_t clearBytes[8];
+                uint8_t texel[8];
+                uint32_t sampled;      // the RGBA8 word every pixel of the sample must be
+                const char* name;
+            };
+            const FormatCase cases[] = {
+                {PixelFormat::kA8Unorm, 1, {0xff}, {0x40}, 0x40000000u, "A8Unorm"},
+                {PixelFormat::kR16Float, 2, {0x00, 0x34}, {0x00, 0x34}, 0xff000040u, "R16Float"},
+                {PixelFormat::kRG16Float, 4, {0x00, 0x34, 0x00, 0x38}, {0x00, 0x34, 0x00, 0x3a}, 0xff00bf40u, "RG16Float"},
+                {PixelFormat::kRG32Float, 8, {0, 0, 0x80, 0x3e, 0, 0, 0, 0x3f}, {0, 0, 0x80, 0x3f, 0, 0, 0x80, 0x3e}, 0xff0040ffu, "RG32Float"},
+            };
+            const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+            const Program flatProg{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+            Sampler smp;
+            std::string swhy;
+            makeSampler(SamplerDesc{}, &smp, &swhy);
+            for (const FormatCase& c : cases) {
+                TextureDesc d;
+                d.format = c.format;
+                d.width = W;
+                d.height = H;
+                d.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+                auto ft = Texture::make(gpu, d, &why);
+                TextureDesc d1 = d;
+                d1.width = d1.height = 1;
+                d1.usage = kTextureUsageRead;
+                auto one = Texture::make(gpu, d1, &why);
+                if (ft == nullptr || one == nullptr) {
+                    report(false, std::string("format ") + c.name + ": the textures: " + why);
+                    continue;
+                }
+                auto countBytes = [&](const Texture& x, const uint8_t* want, uint32_t tolerance16) {
+                    std::vector<uint8_t> bo = textureBo(x);
+                    uint32_t right = 0;
+                    for (uint32_t j = 0; j < H; j++) {
+                        for (uint32_t i = 0; i < W; i++) {
+                            const uint8_t* p = bo.data() + j * x.bytesPerRow() + uint64_t(i) * c.bpp;
+                            bool ok = true;
+                            for (uint32_t k = 0; k + 1 < c.bpp + (c.bpp == 1); k += 2) {
+                                if (c.bpp == 1) { ok = p[0] == want[0]; break; }
+                                const int a = p[k] | p[k + 1] << 8, b = want[k] | want[k + 1] << 8;
+                                ok = ok && uint32_t(std::abs(a - b)) <= tolerance16;
+                            }
+                            right += ok;
+                        }
+                    }
+                    return right;
+                };
+                // 1. the Clear
+                fillBo(*ft, canary);
+                RenderPass rp;
+                rp.color0 = ft.get();
+                rp.load = LoadAction::kClear;
+                rp.clearColor[0] = 0.25;
+                rp.clearColor[1] = 0.5;
+                rp.clearColor[2] = 0.75;
+                rp.clearColor[3] = 1.0;
+                auto cb = queue->commandBuffer();
+                if (cb->clear(rp)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                const uint32_t cleared = countBytes(*ft, c.clearBytes, 0);
+                report(completed(*cb) && cleared == 4096, std::string("format ") + c.name + ", a Clear to (0.25, 0.5, 0.75, 1): " + std::to_string(cleared) +
+                                                              " of 4096 pixels the packed bytes" + status(*cb, gpu));
+                // 2. a sample of one texel into the RGBA8 target
+                memcpy(static_cast<uint8_t*>(const_cast<void*>(one->contents())), c.texel, c.bpp);
+                fillBo(*t, canary);
+                RenderPass tp;
+                tp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {one.get()};
+                fsb.samplers = {&smp};
+                auto cb2 = queue->commandBuffer();
+                if (cb2->draw(texProg, tp, drawOf(0, 6), Bindings{}, fsb)) {
+                    cb2->commit();
+                    cb2->waitUntilCompleted();
+                }
+                PixelRule rule{[](uint32_t i, uint32_t j) { return i != j; }, [=](uint32_t, uint32_t, uint32_t) { return c.sampled; }};
+                TexReadback rb = compareTexture(*t, rule, canary);
+                report(completed(*cb2) && rb.right == rb.covered && rb.covered == 4032, std::string("format ") + c.name + ", one texel sampled: " +
+                                                                                           describeTexture(rb, hex8(c.sampled).c_str()) + status(*cb2, gpu));
+                // 3. tri_flat drawn into it: what the format keeps of (0x20, 0x40, 0x80, 0xff) / 255
+                fillBo(*ft, canary);
+                RenderPass dp;
+                dp.color0 = ft.get();
+                auto cb3 = queue->commandBuffer();
+                if (cb3->draw(flatProg, dp, drawOf(0, 6), Bindings{}, Bindings{})) {
+                    cb3->commit();
+                    cb3->waitUntilCompleted();
+                }
+                uint8_t drawn[8] = {};
+                const float r = 32.0f / 255.0f, g = 64.0f / 255.0f;
+                if (c.format == PixelFormat::kA8Unorm) {
+                    drawn[0] = 0xff;
+                } else if (c.format == PixelFormat::kRG32Float) {
+                    memcpy(drawn, &r, 4);
+                    memcpy(drawn + 4, &g, 4);
+                } else {
+                    const uint32_t hr = render::halfBitsOf(r), hg = render::halfBitsOf(g);
+                    drawn[0] = uint8_t(hr), drawn[1] = uint8_t(hr >> 8), drawn[2] = uint8_t(hg), drawn[3] = uint8_t(hg >> 8);
+                }
+                const uint32_t drew = countBytes(*ft, drawn, c.format == PixelFormat::kRG32Float || c.format == PixelFormat::kA8Unorm ? 0 : 1);
+                report(completed(*cb3) && drew == 4096, std::string("format ") + c.name + ", tri_flat drawn into it: " + std::to_string(drew) +
+                                                            " of 4096 pixels the colour as the format keeps it" + status(*cb3, gpu));
             }
         }
 #if defined(__APPLE__)

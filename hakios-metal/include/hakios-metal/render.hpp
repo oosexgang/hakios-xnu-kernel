@@ -270,6 +270,9 @@ struct Draw {
 
 namespace render {
 
+// IEEE half bits of F, round to nearest even (the packing a Clear of a half format and the probe's expectations use)
+uint32_t halfBitsOf(float f);
+
 // What a pass owns in GPU memory (one 16 KiB page on the phone): the tail's timestamp words, a zero border colour
 // entry (the TP's base registers point here, as in compute), a hole, room for step two's per-stage descriptor tables.
 constexpr uint32_t kTableBytes = 8192;
