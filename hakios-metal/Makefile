@@ -86,7 +86,7 @@ out/ios/libhakios-metal.a: $(CORE) src/fake_gpu.cpp src/iokit_transport.cpp $(wi
 
 out/ios/hakios-metal-probe: tools/probe.cpp out/ios/libhakios-metal.a $(wildcard tests/fixtures/*.hpp)
 	$(IOS_CXX) $(IOS_CXXFLAGS) -Iinclude -o $@ tools/probe.cpp out/ios/libhakios-metal.a $(IOS_LIBS) \
-		-framework IOKit -framework CoreFoundation
+		-framework IOKit -framework CoreFoundation -framework IOSurface
 
 
 # a kernel's bitcode as a header, for a probe that compiles it on the phone (our own kernels only: tools/kernels/*.ll)

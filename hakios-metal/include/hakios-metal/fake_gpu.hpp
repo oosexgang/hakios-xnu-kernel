@@ -154,6 +154,13 @@ public:
 
     Stats stats();
     uint32_t liveBuffers();
+    // An IOSurface the kernel would know by ID: its pixels at OFFSET, ROW_BYTES apart, in a buffer of whole pages, which
+    // kHakiosSurface hands out (the same handle while it is open, as the kernel does) and which outlives the buffer
+    // (the surface owns the memory). CLIENT: a surface around a program's own memory, which the kernel refuses.
+    void addSurface(uint32_t id, uint32_t width, uint32_t height, uint32_t rowBytes, uint32_t pixelFormat, uint32_t offset = 0, uint32_t planes = 1,
+                    bool client = false);
+    std::vector<uint8_t> surfaceBytes(uint32_t id);   // the surface's whole memory as it is now
+    void writeSurface(uint32_t id, uint64_t at, const void* bytes, uint64_t length);   // what another program drew there
     // stop running submissions until resume(): to see what a program does while the GPU is behind
     void pause();
     void resume();
@@ -228,6 +235,14 @@ private:
     std::mutex lock_;
     std::condition_variable changed_;
     std::map<uint32_t, Buffer> buffers_;
+    struct Surface {
+        uint32_t width, height, rowBytes, pixelFormat, offset, planes;
+        bool client;
+        std::vector<uint8_t> bytes;   // while no buffer is open over it
+        uint32_t handle = 0;          // the open buffer's, 0 when none
+    };
+    std::map<uint32_t, Surface> surfaces_;
+    std::map<uint32_t, uint32_t> bufferSurface_;   // an open surface buffer's handle -> the surface's ID
     std::set<uint32_t> queues_;
     // one counter for every queue, as the kernel keeps it (it reads no queue id): the last fence handed out, the last done
     uint32_t submitted_ = 0, completed_ = 0;

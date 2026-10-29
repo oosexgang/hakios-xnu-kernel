@@ -2724,3 +2724,123 @@ TEST(the_fake_refuses_a_depth_draw_that_does_not_hold_together) {
         CHECK_EQ(e.tableWords()[render::kTableDepthFlushAt / 4], render::kDepthFlushValue);
     }
 }
+
+// --- a texture over an IOSurface: the path to the screen's memory -----------------------------------------------------------
+
+TEST(a_texture_over_an_iosurface_draws_into_the_surfaces_memory) {
+    Rig r;
+    const uint32_t kBGRA = 0x42475241u, kRGBA = 0x52474241u;
+    r.fake->addSurface(7, 64, 64, 256, kBGRA);
+    TextureDesc d;
+    d.format = PixelFormat::kBGRA8Unorm;
+    d.width = d.height = 64;
+    d.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    std::string why;
+    uint32_t before = r.fake->liveBuffers();
+    auto t = Texture::wrapSurface(*r.gpu, 7, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(t->surface(), 7u);
+    CHECK_EQ(t->bytesPerRow(), 256u);
+    CHECK_EQ(r.fake->liveBuffers(), before + 1);
+    // the same surface again: the same buffer, as the kernel hands out the same handle
+    auto t2 = Texture::wrapSurface(*r.gpu, 7, d, &why);
+    CHECK(t2 != nullptr && t2->buffer() == t->buffer());
+    CHECK_EQ(r.fake->liveBuffers(), before + 1);
+    // a Clear of it lands in the surface: BGRA in memory, B first
+    RenderPass pass;
+    pass.color0 = t.get();
+    pass.load = LoadAction::kClear;
+    pass.clearColor[0] = 0.25;
+    pass.clearColor[1] = 0.5;
+    pass.clearColor[2] = 0.75;
+    pass.clearColor[3] = 1.0;
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->clear(pass));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    std::vector<uint8_t> px = r.fake->surfaceBytes(7);
+    const uint8_t want[4] = {0xbf, 0x80, 0x40, 0xff};
+    bool all = px.size() >= 64 * 256;
+    for (uint32_t y = 0; all && y < 64; y++)
+        for (uint32_t x = 0; all && x < 64; x++) all = memcmp(px.data() + y * 256 + x * 4, want, 4) == 0;
+    CHECK(all);
+    // the surface outlives its buffer: both textures and the command buffer that kept it gone, the handle closed once,
+    // the pixels kept
+    cb.reset();
+    const uint32_t withSurface = r.fake->liveBuffers();   // (the queue keeps buffers of its own past a command buffer)
+    t.reset();
+    CHECK_EQ(r.fake->liveBuffers(), withSurface);         // the other texture holds the surface's buffer still
+    t2.reset();
+    CHECK_EQ(r.fake->liveBuffers(), withSurface - 1);
+    px = r.fake->surfaceBytes(7);
+    CHECK(px.size() >= 4 && memcmp(px.data(), want, 4) == 0);
+    // ...and a surface whose rows start at an offset and are 320 bytes apart (64-aligned, not 256-aligned): the Clear
+    // lands from the offset on, the bytes before it untouched, the descriptor's PITCHALIGN 0
+    r.fake->addSurface(8, 48, 20, 320, kRGBA, 128);
+    TextureDesc e;
+    e.format = PixelFormat::kRGBA8Unorm;
+    e.width = 48;
+    e.height = 20;
+    e.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    auto o = Texture::wrapSurface(*r.gpu, 8, e, &why);
+    CHECK(o != nullptr);
+    if (o != nullptr) {
+        CHECK_EQ(o->gpuAddress(), o->buffer()->gpuAddress() + 128);
+        CHECK_EQ((o->sampledDescriptor().dword[2] & a6xx::A6XX_TEX_CONST_2_PITCHALIGN__MASK) >> a6xx::A6XX_TEX_CONST_2_PITCHALIGN__SHIFT, 0u);
+        RenderPass p2;
+        p2.color0 = o.get();
+        p2.load = LoadAction::kClear;
+        p2.clearColor[1] = 1.0;
+        p2.clearColor[3] = 1.0;
+        auto c2 = r.queue->commandBuffer();
+        CHECK(c2->clear(p2));
+        c2->commit();
+        c2->waitUntilCompleted();
+        std::vector<uint8_t> q = r.fake->surfaceBytes(8);
+        const uint8_t green[4] = {0, 0xff, 0, 0xff};
+        bool rows = true;
+        for (uint32_t y = 0; rows && y < 20; y++)
+            for (uint32_t x = 0; rows && x < 48; x++) rows = memcmp(q.data() + 128 + y * 320 + x * 4, green, 4) == 0;
+        CHECK(rows);
+        bool head = true;
+        for (uint32_t i = 0; i < 128; i++) head = head && q[i] == 0;
+        CHECK(head);
+        CHECK_EQ(q[128 + 48 * 4], 0u);   // past the width in the first row: not the texture's
+    }
+}
+
+TEST(a_texture_over_an_iosurface_refuses_what_the_gpu_cannot_take) {
+    Rig r;
+    const uint32_t kBGRA = 0x42475241u, kRGBA = 0x52474241u;
+    r.fake->addSurface(1, 64, 64, 100 * 4 + 12, kBGRA);   // 412-byte rows: not a multiple of 64
+    r.fake->addSurface(2, 64, 64, 256, kRGBA);
+    r.fake->addSurface(3, 64, 64, 256, kBGRA, 0, 2);
+    r.fake->addSurface(4, 64, 64, 256, kBGRA, 0, 1, true);
+    r.fake->addSurface(5, 32, 32, 128, kBGRA);
+    TextureDesc d;
+    d.format = PixelFormat::kBGRA8Unorm;
+    d.width = d.height = 64;
+    d.usage = kTextureUsageRenderTarget;
+    auto refusedWith = [&](uint32_t id, const TextureDesc& desc, const char* want) {
+        std::string why;
+        CHECK(Texture::wrapSurface(*r.gpu, id, desc, &why) == nullptr);
+        CHECK(has(why, want));
+        if (!has(why, want)) std::fprintf(stderr, "  got \"%s\"\n", why.c_str());
+    };
+    refusedWith(99, d, "IOSurface 99: the driver gave no buffer for it: no such surface");
+    refusedWith(4, d, "a surface around a program's own memory is not one the GPU takes");
+    refusedWith(1, d, "IOSurface 1's rows of 412 bytes from offset 0");
+    refusedWith(2, d, "IOSurface 2's pixel format 1380401729 is not BGRA8Unorm's");
+    refusedWith(3, d, "IOSurface 3 has 2 planes: a single-plane surface is what is served");
+    refusedWith(5, d, "a 64 x 64 texture over the 32 x 32 IOSurface 5");
+    TextureDesc z = d;
+    z.format = PixelFormat::kDepth32Float;
+    refusedWith(5, z, "a depth texture is tiled, a surface's rows are linear");
+    // a refused wrap leaves no buffer open (the surface's own was closed again)
+    CHECK_EQ(r.fake->liveBuffers(), 0u);
+}

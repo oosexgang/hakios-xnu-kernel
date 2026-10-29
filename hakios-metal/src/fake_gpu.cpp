@@ -132,6 +132,30 @@ void FakeGpu::resume() {
     changed_.notify_all();
 }
 
+void FakeGpu::addSurface(uint32_t id, uint32_t width, uint32_t height, uint32_t rowBytes, uint32_t pixelFormat, uint32_t offset, uint32_t planes,
+                         bool client) {
+    std::lock_guard<std::mutex> g(lock_);
+    Surface s{width, height, rowBytes, pixelFormat, offset, planes, client, {}, 0};
+    s.bytes.resize((uint64_t(offset) + uint64_t(rowBytes) * height + 0xfff) & ~0xfffull);
+    surfaces_[id] = std::move(s);
+}
+
+std::vector<uint8_t> FakeGpu::surfaceBytes(uint32_t id) {
+    std::lock_guard<std::mutex> g(lock_);
+    auto it = surfaces_.find(id);
+    if (it == surfaces_.end()) return {};
+    if (it->second.handle != 0) return buffers_.at(it->second.handle).bytes;
+    return it->second.bytes;
+}
+
+void FakeGpu::writeSurface(uint32_t id, uint64_t at, const void* bytes, uint64_t length) {
+    std::lock_guard<std::mutex> g(lock_);
+    auto it = surfaces_.find(id);
+    if (it == surfaces_.end()) return;
+    std::vector<uint8_t>& v = it->second.handle != 0 ? buffers_.at(it->second.handle).bytes : it->second.bytes;
+    if (at + length <= v.size()) memcpy(v.data() + at, bytes, length);
+}
+
 void* FakeGpu::map(uint32_t handle, uint64_t size) {
     std::lock_guard<std::mutex> g(lock_);
     auto b = buffers_.find(handle);
@@ -1579,7 +1603,46 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
     }
     case kGemClose: {
         if (size != sizeof(DrmGemClose)) return EINVAL;
-        return buffers_.erase(static_cast<DrmGemClose*>(data)->handle) ? 0 : ENOENT;
+        const uint32_t handle = static_cast<DrmGemClose*>(data)->handle;
+        auto sb = bufferSurface_.find(handle);
+        if (sb != bufferSurface_.end()) {
+            // the surface keeps its pixels: the buffer was a view of them
+            Surface& s = surfaces_.at(sb->second);
+            s.bytes = std::move(buffers_.at(handle).bytes);
+            s.handle = 0;
+            bufferSurface_.erase(sb);
+        }
+        return buffers_.erase(handle) ? 0 : ENOENT;
+    }
+    case kHakiosSurface: {
+        if (size != sizeof(HakiosSurface)) return EINVAL;
+        auto* r = static_cast<HakiosSurface*>(data);
+        auto it = surfaces_.find(r->surface);
+        if (it == surfaces_.end()) return ENOENT;          // kIOReturnNotFound
+        Surface& s = it->second;
+        if (s.client) return ENOTSUP;                      // kIOReturnUnsupported: memory of a program's own
+        r->size = (uint64_t(s.offset) + uint64_t(s.rowBytes) * s.height + 0xfff) & ~0xfffull;
+        r->offset = s.offset;
+        r->rowBytes = s.rowBytes;
+        r->width = s.width;
+        r->height = s.height;
+        r->pixelFormat = s.pixelFormat;
+        r->planes = s.planes;
+        if (r->handle == kHakiosDescribe) {
+            r->handle = 0;
+            return 0;
+        }
+        if (s.handle != 0) {
+            r->handle = s.handle;                          // the same buffer again, as the kernel answers it
+            return 0;
+        }
+        s.bytes.resize(r->size);
+        Buffer b{nextIova_, std::move(s.bytes)};
+        nextIova_ += (r->size + 0xffff) & ~0xffffull;
+        r->handle = s.handle = nextHandle_++;
+        buffers_.emplace(r->handle, std::move(b));
+        bufferSurface_[r->handle] = r->surface;
+        return 0;
     }
     case kSubmitQueueNew: {
         if (size != sizeof(MsmSubmitQueue)) return EINVAL;

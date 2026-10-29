@@ -15,6 +15,11 @@
 #include <random>
 #include <vector>
 
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOSurface/IOSurfaceRef.h>
+#endif
+
 #include "hakios-metal/command.hpp"
 #include "hakios-metal/compiler.hpp"
 #include "hakios-metal/metallib.hpp"
@@ -1079,6 +1084,7 @@ int main(int argc, char** argv) {
     //   9j. blending: six equations of tri_cflat's half-transparent colour over a cleared target, each pixel against the formula
     //   9k. a texture in the FS: tri_tex_fs's prefetch of a 4x4 texture at tri_color's interpolated (red, green)
     //   9l. depth: two triangles at chosen depths through a Depth32Float attachment, six test setups, each draw its own pass
+    //   9m. an IOSurface: a real one wrapped as a texture, cleared and drawn into, read back through the surface's own lock
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1812,6 +1818,101 @@ int main(int argc, char** argv) {
                        "control, a depth test with no depth attachment: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
             }
         }
+#if defined(__APPLE__)
+        // 9m. the path to the screen's memory: a real IOSurface (IOSurfaceCreate, 64x64 'BGRA', 256-byte rows -- what
+        // CAMetalLayer's drawables are made of), its memory taken by the kernel's surface request as a buffer
+        // (Texture::wrapSurface), cleared and drawn into with tri_flat's T1 in one pass, and read back through the
+        // surface itself (IOSurfaceLock, its own base address), not through the driver: T1's interior the flat colour in
+        // BGRA order (80 40 20 ff), the rest the clear colour (bf 80 40 ff for 0.25, 0.5, 0.75, 1). A surface the CPU
+        // filled first must be seen by the GPU: the canary written through IOSurfaceGetBaseAddress before the pass is
+        // what a Load keeps outside T1 (the second case).
+        {
+            auto makeSurface = [](int w, int h) -> IOSurfaceRef {
+                CFMutableDictionaryRef props = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+                auto setInt = [&](CFStringRef key, int v) {
+                    CFNumberRef n = CFNumberCreate(nullptr, kCFNumberIntType, &v);
+                    CFDictionarySetValue(props, key, n);
+                    CFRelease(n);
+                };
+                setInt(kIOSurfaceWidth, w);
+                setInt(kIOSurfaceHeight, h);
+                setInt(kIOSurfaceBytesPerElement, 4);
+                setInt(kIOSurfaceBytesPerRow, w * 4);
+                setInt(kIOSurfacePixelFormat, int(0x42475241));   // 'BGRA'
+                IOSurfaceRef s = IOSurfaceCreate(props);
+                CFRelease(props);
+                return s;
+            };
+            IOSurfaceRef surf = makeSurface(int(W), int(H));
+            if (surf == nullptr) {
+                report(false, "iosurface: IOSurfaceCreate of a 64x64 BGRA surface returned NULL");
+            } else {
+                TextureDesc td;
+                td.format = PixelFormat::kBGRA8Unorm;
+                td.width = W;
+                td.height = H;
+                td.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+                auto st = Texture::wrapSurface(gpu, IOSurfaceGetID(surf), td, &why);
+                report(st != nullptr, "iosurface: a BGRA8Unorm texture over IOSurface " + std::to_string(IOSurfaceGetID(surf)) + " (" +
+                                          std::to_string(IOSurfaceGetBytesPerRow(surf)) + "-byte rows): " +
+                                          (st != nullptr ? "wrapped, GPU address " + hex8(uint32_t(st->gpuAddress())) : why));
+                for (int kind = 0; st != nullptr && kind < 2; kind++) {
+                    const uint32_t flatBgra = 0xff204080u;   // tri_flat's (0x20, 0x40, 0x80, 0xff) stored B G R A
+                    const uint32_t clearBgra = 0xff4080bfu;  // (0.25, 0.5, 0.75, 1) stored B G R A
+                    const uint32_t seed = 0xa5a5a5a5u;
+                    // the CPU's canary, written through the surface's own mapping under its lock
+                    IOSurfaceLock(surf, 0, nullptr);
+                    auto* base = static_cast<uint8_t*>(IOSurfaceGetBaseAddress(surf));
+                    for (uint32_t j = 0; j < H; j++)
+                        for (uint32_t i = 0; i < W; i++) memcpy(base + j * IOSurfaceGetBytesPerRow(surf) + i * 4, &seed, 4);
+                    IOSurfaceUnlock(surf, 0, nullptr);
+                    RenderPass rp;
+                    rp.color0 = st.get();
+                    rp.load = kind == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                    rp.clearColor[0] = 0.25;
+                    rp.clearColor[1] = 0.5;
+                    rp.clearColor[2] = 0.75;
+                    rp.clearColor[3] = 1.0;
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(flat, rp, drawOf(0, 3), Bindings{}, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    IOSurfaceLock(surf, kIOSurfaceLockReadOnly, nullptr);
+                    base = static_cast<uint8_t*>(IOSurfaceGetBaseAddress(surf));
+                    uint32_t right = 0;
+                    std::string first;
+                    const uint32_t outside = kind == 0 ? clearBgra : seed;
+                    for (uint32_t j = 0; j < H; j++) {
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, base + j * IOSurfaceGetBytesPerRow(surf) + i * 4, 4);
+                            const uint32_t want = j > i ? flatBgra : outside;
+                            if (px == want) {
+                                right++;
+                            } else if (first.empty()) {
+                                first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", wanted " + hex8(want);
+                            }
+                        }
+                    }
+                    IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, nullptr);
+                    report(completed(*cb) && right == W * H,
+                           std::string("iosurface, ") + (kind == 0 ? "a Clear then T1" : "the CPU's canary loaded, then T1") + ", read back through IOSurfaceLock: " +
+                               std::to_string(right) + " of 4096 as wanted" + first + status(*cb, gpu));
+                }
+                st.reset();
+                CFRelease(surf);
+            }
+            // the refusal: an ID no surface has
+            TextureDesc td;
+            td.format = PixelFormat::kBGRA8Unorm;
+            td.width = td.height = 16;
+            td.usage = kTextureUsageRenderTarget;
+            auto none = Texture::wrapSurface(gpu, 0x7ffffff0u, td, &why);
+            report(none == nullptr && why.find("no such surface") != std::string::npos,
+                   "control, a texture over an IOSurface ID nobody made: " + (none != nullptr ? std::string("WRAPPED") : "refused: " + why));
+        }
+#endif
         // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the
         // draw hangs or writes nothing, this says which group it needs, one boot for all of it, each hang costing a reset. A
         // variant that completes AND paints the 2016 pixels is the finding; one that completes and paints nothing says the

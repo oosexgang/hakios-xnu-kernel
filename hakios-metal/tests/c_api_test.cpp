@@ -612,3 +612,14 @@ TEST(c_api_draw_with_a_fragment_texture) {
     hakios_metal_queue_free(q);
     hakios_metal_close(d);
 }
+
+// A texture over an IOSurface through C: the refusals reach the caller by name (the drawing into a surface is
+// render_test's, over the fake's surfaces)
+TEST(c_api_texture_over_an_iosurface_refuses_by_name) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    CHECK(hakios_metal_texture_new_iosurface(d, 1234, 0, 80, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET) == nullptr);
+    CHECK(strstr(hakios_metal_error(), "IOSurface 1234: the driver gave no buffer for it: no such surface") != nullptr);
+    CHECK(hakios_metal_texture_new_iosurface(d, 1234, 1, 80, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET) == nullptr);
+    CHECK(strstr(hakios_metal_error(), "plane 1 of IOSurface 1234: a single-plane surface (plane 0) is what is served") != nullptr);
+    hakios_metal_close(d);
+}

@@ -84,6 +84,13 @@ public:
     // nullptr with *why: a type, format or usage not served, a width or height outside 1..32767 (TEX_CONST_1's fields
     // are 15 bits), or no memory. The memory is a Buffer of textureBytes() bytes, so CommandBuffer::use()/keep() apply.
     static std::shared_ptr<Texture> make(Gpu& gpu, const TextureDesc& desc, std::string* why);
+    // -newTextureWithDescriptor:iosurface:plane: for plane 0: a texture whose rows are IOSurface SURFACE_ID's pixels (the
+    // kernel's surface buffer, command.hpp: surfaceBuffer), DESC's format, size and usage. nullptr with *why: no such
+    // surface, more than one plane, a size past the surface's, rows the GPU cannot take (a pitch or a start that is not
+    // a multiple of 64 bytes, or rows shorter than the width), a FourCC that is not the format's ('BGRA' for the BGRA8
+    // pair, 'RGBA' for the RGBA8 pair; 0 is taken as any), a depth format.
+    static std::shared_ptr<Texture> wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why);
+    uint32_t surface() const { return surface_; }   // the IOSurface's ID, 0 for a texture of its own memory
 
     const TextureDesc& desc() const { return desc_; }
     uint32_t width() const { return desc_.width; }
@@ -94,8 +101,10 @@ public:
     const FormatInfo& info() const { return *info_; }
     uint64_t bytesPerRow() const { return pitch_; }                  // the GPU's pitch
     const std::shared_ptr<Buffer>& buffer() const { return buffer_; }
-    uint64_t gpuAddress() const { return buffer_->gpuAddress(); }
-    void* contents() const { return buffer_->contents(); }           // the rows, write-combined
+    uint64_t gpuAddress() const { return buffer_->gpuAddress() + offset_; }
+    void* contents() const {                                          // the rows, write-combined (nullptr for a surface the driver maps nowhere)
+        return buffer_->contents() != nullptr ? static_cast<uint8_t*>(buffer_->contents()) + offset_ : nullptr;
+    }
 
     // -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
     // BYTES_PER_ROW apart, into the texture's rows at (X, Y). False with *why when the region lies outside the texture
@@ -112,12 +121,16 @@ public:
     a6xx::TexConst storageDescriptor() const;
 
 private:
-    Texture(std::shared_ptr<Buffer> buffer, const TextureDesc& desc, const FormatInfo* info, uint64_t pitch)
-        : buffer_(std::move(buffer)), desc_(desc), info_(info), pitch_(pitch) {}
+    Texture(std::shared_ptr<Buffer> buffer, const TextureDesc& desc, const FormatInfo* info, uint64_t pitch, uint64_t offset = 0,
+            uint32_t pitchAlign = ~0u, uint32_t surface = 0)
+        : buffer_(std::move(buffer)), desc_(desc), info_(info), pitch_(pitch), offset_(offset), pitchAlign_(pitchAlign), surface_(surface) {}
     std::shared_ptr<Buffer> buffer_;
     TextureDesc desc_;
     const FormatInfo* info_;
     uint64_t pitch_;
+    uint64_t offset_;        // where the pixels start in the buffer (an IOSurface's offset; 0 for a texture of its own)
+    uint32_t pitchAlign_;    // TEX_CONST_2.PITCHALIGN; ~0u: log2(cpp), the layout's own (texturePitch)
+    uint32_t surface_;
 };
 
 // MTLSamplerDescriptor's fields in Metal's numbering (MTLSampler.h), with Metal's defaults

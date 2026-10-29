@@ -152,6 +152,9 @@ bool Texture::replace(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
+    if (contents() == nullptr) {
+        return refuse(why, "IOSurface " + n(surface_) + "'s memory is mapped nowhere in this process by the driver: write it through the surface");
+    }
     if (!regionFits(*this, x, y, w, h, bytesPerRow, why)) {
         return false;
     }
@@ -169,6 +172,9 @@ bool Texture::read(uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, 
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
+    if (contents() == nullptr) {
+        return refuse(why, "IOSurface " + n(surface_) + "'s memory is mapped nowhere in this process by the driver: read it through the surface");
+    }
     if (!regionFits(*this, x, y, w, h, bytesPerRow, why)) {
         return false;
     }
@@ -182,13 +188,65 @@ bool Texture::read(uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, 
 }
 
 a6xx::TexConst Texture::sampledDescriptor() const {
-    // PITCHALIGN = log2(pitch alignment / 64) = log2(cpp) for the pitch texturePitch chose (fd6_layout.c:194-201, fd6_view.c:244)
-    return texture2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), log2u(info_->bytesPerPixel), info_->fmt6, info_->swap,
-                     info_->hasAlpha, info_->srgb);
+    // PITCHALIGN = log2(pitch alignment / 64) = log2(cpp) for the pitch texturePitch chose (fd6_layout.c:194-201, fd6_view.c:244);
+    // a surface's rows carry the alignment their pitch has, wrapSurface worked it out
+    return texture2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel), info_->fmt6,
+                     info_->swap, info_->hasAlpha, info_->srgb);
 }
 
 a6xx::TexConst Texture::storageDescriptor() const {
     return image2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
+}
+
+std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why) {
+    const FormatInfo* info = formatInfo(desc.format);
+    if (info == nullptr || desc.type != TextureType::k2D) {
+        refuse(why, "a texture over IOSurface " + n(surfaceId) + " of type " + n(uint32_t(desc.type)) + " and pixel format " + n(uint32_t(desc.format)) +
+                        ": a 2D texture of one of the served colour formats is what a surface takes");
+        return nullptr;
+    }
+    if (info->depth) {
+        refuse(why, std::string("a ") + info->name + " texture over an IOSurface: a depth texture is tiled, a surface's rows are linear");
+        return nullptr;
+    }
+    if ((desc.usage & ~(kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget)) != 0) {
+        refuse(why, "texture usage " + n(desc.usage) + " has bits other than shader read (1), shader write (2) and render target (4): not served");
+        return nullptr;
+    }
+    SurfaceInfo s;
+    std::shared_ptr<Buffer> buffer = surfaceBuffer(gpu, surfaceId, &s, why);
+    if (buffer == nullptr) {
+        return nullptr;
+    }
+    const std::string name = "IOSurface " + n(surfaceId);
+    if (s.planes > 1) {
+        refuse(why, name + " has " + n(s.planes) + " planes: a single-plane surface is what is served");
+        return nullptr;
+    }
+    if (desc.width == 0 || desc.height == 0 || desc.width > s.width || desc.height > s.height) {
+        refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture over the " + n(s.width) + " x " + n(s.height) + " " + name);
+        return nullptr;
+    }
+    // the FourCC of the surface against the format: Metal asks for a compatible one, and a mismatch swaps channels
+    const uint32_t bgra = 0x42475241u, rgba = 0x52474241u;   // 'BGRA', 'RGBA'
+    const bool bgraFormat = desc.format == PixelFormat::kBGRA8Unorm || desc.format == PixelFormat::kBGRA8UnormSrgb;
+    const bool rgbaFormat = desc.format == PixelFormat::kRGBA8Unorm || desc.format == PixelFormat::kRGBA8UnormSrgb;
+    if (s.pixelFormat != 0 && !((s.pixelFormat == bgra && bgraFormat) || (s.pixelFormat == rgba && rgbaFormat))) {
+        refuse(why, name + "'s pixel format " + n(s.pixelFormat) + " is not " + info->name + "'s: 'BGRA' (0x42475241) takes BGRA8Unorm[_sRGB], 'RGBA' (0x52474241) RGBA8Unorm[_sRGB]");
+        return nullptr;
+    }
+    // the rows: RB_MRT_PITCH and TEX_CONST_2's pitch are in 64-byte units and the RB/TP want the start 64-aligned
+    // (fd6_layout.c's linear base_align); rows as long as the width
+    if (s.rowBytes % 64 != 0 || s.offset % 64 != 0 || uint64_t(s.rowBytes) < uint64_t(desc.width) * info->bytesPerPixel ||
+        uint64_t(s.offset) + uint64_t(s.rowBytes) * desc.height > s.size) {
+        refuse(why, name + "'s rows of " + n(s.rowBytes) + " bytes from offset " + n(s.offset) + " in its " + n(s.size) +
+                        " bytes: the GPU wants a pitch and a start that are multiples of 64 bytes, rows that hold the width, and the rows inside the surface");
+        return nullptr;
+    }
+    // TEX_CONST_2.PITCHALIGN: the largest k up to log2(cpp) with the pitch a multiple of 64 << k
+    uint32_t pitchAlign = 0;
+    while (pitchAlign < log2u(info->bytesPerPixel) && s.rowBytes % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
+    return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, pitchAlign, surfaceId));
 }
 
 bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {

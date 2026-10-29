@@ -70,9 +70,39 @@ std::unique_ptr<Bo> Gpu::newBo(uint64_t size, uint32_t flags, int* error) {
     return std::unique_ptr<Bo>(new Bo(*this, n.handle, n.size, info.value, cpu));
 }
 
+std::unique_ptr<Bo> Gpu::surfaceBo(uint32_t surfaceId, SurfaceInfo* out, int* error) {
+    HakiosSurface s{};
+    s.surface = surfaceId;
+    if ((*error = t_->call(kHakiosSurface, &s, sizeof(s))) != 0) {
+        return nullptr;
+    }
+    MsmGemInfo info{};
+    info.handle = s.handle;
+    info.info = kInfoGetIova;
+    if ((*error = t_->call(kGemInfo, &info, sizeof(info))) != 0) {
+        DrmGemClose c{s.handle, 0};
+        t_->call(kGemClose, &c, sizeof(c));
+        return nullptr;
+    }
+    *out = SurfaceInfo{s.size, s.offset, s.rowBytes, s.width, s.height, s.pixelFormat, s.planes};
+    return std::unique_ptr<Bo>(new Bo(*this, s.handle, s.size, info.value, t_->map(s.handle, s.size)));
+}
+
+void Gpu::disown(std::unique_ptr<Bo> bo) {
+    if (bo == nullptr) return;
+    if (bo->cpu_ != nullptr) {
+        t_->unmap(bo->handle_, bo->cpu_);
+        bo->cpu_ = nullptr;
+    }
+    bo->owned_ = false;
+}
+
 Bo::~Bo() { gpu_.release(*this); }
 
 void Gpu::release(Bo& bo) {
+    if (!bo.owned_) {
+        return;
+    }
     if (bo.cpu_ != nullptr) {
         t_->unmap(bo.handle_, bo.cpu_);
     }

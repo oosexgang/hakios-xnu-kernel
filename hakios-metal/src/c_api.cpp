@@ -197,6 +197,30 @@ hakios_metal_texture* hakios_metal_texture_new(hakios_metal_device* d, unsigned 
     return r;
 }
 
+hakios_metal_texture* hakios_metal_texture_new_iosurface(hakios_metal_device* d, unsigned surfaceId, unsigned plane, unsigned pixelFormat, unsigned width,
+                                                         unsigned height, unsigned usage) {
+    if (plane != 0) {
+        failed("plane " + std::to_string(plane) + " of IOSurface " + std::to_string(surfaceId) + ": a single-plane surface (plane 0) is what is served");
+        return nullptr;
+    }
+    TextureDesc desc;
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::wrapSurface(*d->gpu, surfaceId, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
+unsigned hakios_metal_texture_iosurface(hakios_metal_texture* t) { return t->texture->surface(); }
+
 void hakios_metal_texture_free(hakios_metal_texture* t) { delete t; }
 void* hakios_metal_texture_contents(hakios_metal_texture* t) { return t->texture->contents(); }
 uint64_t hakios_metal_texture_bytes_per_row(hakios_metal_texture* t) { return t->texture->bytesPerRow(); }

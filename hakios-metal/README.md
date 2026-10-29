@@ -135,6 +135,16 @@ here is a pass of its own the tail flushes the depth CCU (`PC_CCU_FLUSH_DEPTH_TS
 test finds it. On the phone (hakios `logs/154449-run.log`, probe line 9l, 0 failures) two triangles at z 0.25 and
 0.75, drawn in separate passes, keep exactly the pixels the test says in six setups: Less with write in either order,
 Greater over a clear to 0, Less without write, and Metal's default Always in both orders.
+
+A texture can be made over an IOSurface (`Texture::wrapSurface`, `hakios_metal_texture_new_iosurface`), the shape a
+CAMetalLayer drawable has: hakios's kernel hands a surface's memory to the GPU as a buffer by the surface's ID (its
+own request, `surfaceBuffer` in `hakios.gpu.cpp`), and pushes the surface out of the processor's cache when it is
+submitted. The kernel answers a surface it already gave this client with the same handle, so the driver keeps one
+Buffer per surface and closes the handle once. The rows must start and run in multiples of 64 bytes and hold the width,
+and the surface's FourCC must be the format's. On the phone (hakios `logs/155934-run.log`, probe line 9m, 0 failures) a
+64x64 'BGRA' surface made with `IOSurfaceCreate` is cleared and drawn into with `tri_flat`, and read back through
+`IOSurfaceLock` and the surface's own base address: 4096 of 4096 pixels right, and a canary the processor wrote into
+the surface before a Load pass is what the GPU kept outside the triangle.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

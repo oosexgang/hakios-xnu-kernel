@@ -1,6 +1,8 @@
 #include "hakios-metal/command.hpp"
 
 #include <cerrno>
+#include <map>
+#include <mutex>
 #include <cstring>
 
 namespace hakios::metal {
@@ -23,6 +25,42 @@ std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why) {
         return nullptr;
     }
     return std::make_shared<Buffer>(std::move(bo), length);
+}
+
+namespace {
+// the live surface buffers, by (GPU, kernel handle): the kernel gives this client one handle per surface, so two
+// Buffers over it would close it twice. The deleter takes the lock too, so that a handle the kernel hands out again
+// cannot be met by a Buffer still being destroyed.
+std::mutex gSurfaceLock;
+std::map<std::pair<const Gpu*, uint32_t>, std::weak_ptr<Buffer>> gSurfaceBuffers;
+}  // namespace
+
+std::shared_ptr<Buffer> surfaceBuffer(Gpu& gpu, uint32_t surfaceId, SurfaceInfo* info, std::string* why) {
+    std::lock_guard<std::mutex> g(gSurfaceLock);
+    int error = 0;
+    std::unique_ptr<Bo> bo = gpu.surfaceBo(surfaceId, info, &error);
+    if (bo == nullptr) {
+        *why = "IOSurface " + std::to_string(surfaceId) + ": the driver gave no buffer for it: " +
+               (error == ENOENT ? std::string("no such surface") : error == ENOTSUP ? std::string("a surface around a program's own memory is not one the GPU takes") : strerror(error));
+        return nullptr;
+    }
+    const auto key = std::make_pair(static_cast<const Gpu*>(&gpu), bo->handle());
+    auto live = gSurfaceBuffers.find(key);
+    if (live != gSurfaceBuffers.end()) {
+        if (std::shared_ptr<Buffer> b = live->second.lock()) {
+            gpu.disown(std::move(bo));   // the same handle as the live Buffer's Bo: closed once, by that Bo
+            return b;
+        }
+    }
+    const uint64_t length = bo->size();
+    std::shared_ptr<Buffer> b(new Buffer(std::move(bo), length), [key](Buffer* x) {
+        std::lock_guard<std::mutex> g(gSurfaceLock);
+        auto it = gSurfaceBuffers.find(key);
+        if (it != gSurfaceBuffers.end() && it->second.expired()) gSurfaceBuffers.erase(it);
+        delete x;
+    });
+    gSurfaceBuffers[key] = b;
+    return b;
 }
 
 // --- CommandBuffer ----------------------------------------------------------------------------------------------

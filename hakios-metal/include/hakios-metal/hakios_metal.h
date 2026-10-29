@@ -107,6 +107,14 @@ unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel *kernel);   
  * buffer the command buffers keep alive while they use it) */
 hakios_metal_texture *hakios_metal_texture_new(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned usage);
+/* -newTextureWithDescriptor:iosurface:plane: -- the texture's rows are IOSurface SURFACE_ID's pixels (the kernel's
+ * surface buffer: drawing into it draws into what the display or another program reads), PIXEL_FORMAT, WIDTH, HEIGHT
+ * and USAGE as for hakios_metal_texture_new. NULL with the reason: no such surface, a plane other than 0, a size past
+ * the surface's, rows the GPU cannot take (pitch or start not a multiple of 64 bytes), a FourCC that is not the format's,
+ * a depth format. */
+hakios_metal_texture *hakios_metal_texture_new_iosurface(hakios_metal_device *device, unsigned surface_id, unsigned plane,
+    unsigned pixel_format, unsigned width, unsigned height, unsigned usage);
+unsigned hakios_metal_texture_iosurface(hakios_metal_texture *texture);   /* its IOSurface's ID, 0 for a texture of its own */
 void hakios_metal_texture_free(hakios_metal_texture *texture);
 void *hakios_metal_texture_contents(hakios_metal_texture *texture);        /* the GPU's rows, write-combined */
 uint64_t hakios_metal_texture_bytes_per_row(hakios_metal_texture *texture); /* the GPU's pitch (MTLTexture.bufferBytesPerRow) */

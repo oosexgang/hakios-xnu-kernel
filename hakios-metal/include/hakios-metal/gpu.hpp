@@ -29,6 +29,7 @@ enum Request : uint32_t {
     kWaitFence = 0x47,
     kSubmitQueueNew = 0x4a,
     kSubmitQueueClose = 0x4b,
+    kHakiosSurface = 0x7e,   // hakios's own (hakios.gpu.cpp surfaceBuffer): an IOSurface's memory as a buffer, by the surface's ID
 };
 
 struct MsmTimespec { int64_t seconds, nanoseconds; };
@@ -50,10 +51,23 @@ struct MsmGemSubmit {
 struct MsmWaitFence { uint32_t fence, flags; MsmTimespec timeout; uint32_t queueid; };
 struct MsmSubmitQueue { uint32_t flags, prio, id; };
 struct DrmGemClose { uint32_t handle, pad; };
+// struct hakios_surface (hakios.gpu.cpp): SURFACE the IOSurface's ID in; HANDLE kHakiosDescribe for a description alone,
+// else back the buffer (the same handle again while this client holds the surface's buffer); SIZE the buffer's bytes
+// (whole pages), OFFSET where the pixels start in it, ROW_BYTES, and the surface's WIDTH, HEIGHT, PIXEL_FORMAT (a
+// FourCC, 'BGRA' and so on) and PLANES
+struct HakiosSurface { uint32_t surface, handle; uint64_t size; uint32_t offset, rowBytes, width, height, pixelFormat, planes; };
+constexpr uint32_t kHakiosDescribe = 0xffffffffu;
 
 static_assert(sizeof(MsmParam) == 24 && sizeof(MsmGemNew) == 16 && sizeof(MsmGemInfo) == 24, "msm_drm.h layout");
 static_assert(sizeof(MsmSubmitCmd) == 32 && sizeof(MsmSubmitBo) == 16 && sizeof(MsmGemSubmit) == 72, "msm_drm.h layout");
 static_assert(sizeof(MsmWaitFence) == 32, "msm_drm.h layout");
+static_assert(sizeof(HakiosSurface) == 40, "hakios.gpu.cpp layout");
+
+// what the kernel says of an IOSurface whose memory became a buffer
+struct SurfaceInfo {
+    uint64_t size = 0;
+    uint32_t offset = 0, rowBytes = 0, width = 0, height = 0, pixelFormat = 0, planes = 0;
+};
 
 // GET_PARAM's numbers (msm_drm.h's MSM_PARAM_*), the ones the kernel answers. GPU_ID is 0 there: the chip id says
 // what the GPU is, 0x06030500 (dt qcom,chipid, an A635-family part, "Adreno 7c+ Gen 3" to Mesa) with the phone's
@@ -127,6 +141,7 @@ private:
     uint64_t size_;
     uint64_t iova_;
     void* cpu_;
+    bool owned_ = true;   // false: another Bo owns the handle (Gpu::disown)
 };
 
 struct BoUse {
@@ -147,6 +162,15 @@ public:
 
     // a buffer of SIZE bytes (rounded up to a page), its GPU address and its mapping; nullptr with *error set
     std::unique_ptr<Bo> newBo(uint64_t size, uint32_t flags, int* error);
+    // the memory of IOSurface SURFACE_ID as a buffer (the kernel holds the surface while the buffer lives), *INFO what
+    // the kernel says of it; the mapping is the driver's view of the same pages, nullptr when it gives none. The kernel
+    // answers a surface this client holds already with the same handle: the caller must keep one Bo per handle
+    // (command.cpp: surfaceBuffer). nullptr with *error: ENOENT no such surface, ENOTSUP a surface around a program's
+    // own memory, ENOMEM.
+    std::unique_ptr<Bo> surfaceBo(uint32_t surfaceId, SurfaceInfo* info, int* error);
+    // a Bo whose handle another Bo already owns (surfaceBo's second answer for a surface): its mapping undone, the
+    // handle left open for the owner to close
+    void disown(std::unique_ptr<Bo> bo);
 
     // a submission queue of its own (the driver keeps an order per queue); 0 is the default one
     int newQueue(uint32_t priority, uint32_t* id);

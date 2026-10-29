@@ -47,6 +47,10 @@ private:
 };
 
 std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why);
+// IOSurface SURFACE_ID's memory as a Buffer, *INFO what the kernel says of the surface. One Buffer per surface while it
+// lives: a second ask for the same surface gets the same Buffer (the kernel's handle for it is one), so that the
+// handle is closed once, by the last owner. nullptr with *why.
+std::shared_ptr<Buffer> surfaceBuffer(Gpu& gpu, uint32_t surfaceId, SurfaceInfo* info, std::string* why);
 
 class CommandBuffer : public std::enable_shared_from_this<CommandBuffer> {
 public:
