@@ -1,5 +1,5 @@
-// The Adreno A6xx registers, packet words and descriptor fields a compute dispatch writes, for the Adreno 7c+ Gen 3
-// (the A635 family, chip id 0x06030500: Mesa's "a6xx gen4", the same generation as the A660).
+// The Adreno A6xx registers, packet words and descriptor fields a compute dispatch and one draw write, for the Adreno
+// 7c+ Gen 3 (the A635 family, chip id 0x06030500: Mesa's "a6xx gen4", the same generation as the A660).
 //
 // Every number here is Mesa 25.0.7's (MIT), from the register XML in src/freedreno/registers/adreno/ (a6xx.xml,
 // adreno_pm4.xml, adreno_common.xml) through the headers Mesa's build generates from it: a6xx.xml.h,
@@ -13,7 +13,10 @@
 //
 // The packets are built with pm4.hpp (type4 for register writes, type7 for the commands named here). The order in
 // which a dispatch writes all this is Mesa's computerator (src/freedreno/computerator/a6xx.cc, its A6XX path) and
-// Gallium's a6xx/fd6_compute.cc; that order lives with the code that emits it, not here.
+// Gallium's a6xx/fd6_compute.cc; the order of a draw is turnip's sysmem render pass (src/freedreno/vulkan) with
+// Gallium's a6xx/fd6_gmem.cc as the second witness; those orders live with the code that emits them (compute.cpp,
+// render.cpp), not here. The file runs: the chip facts, the enums, the compute registers, the texture and sampler
+// descriptors, the compute values, the batch-start table, then the render path's registers and values.
 #pragma once
 
 #include <cstdint>
@@ -86,7 +89,9 @@ enum a6xx_format : uint32_t {
     FMT6_32_FLOAT = 74,            // a6xx.xml.h:105  R32Float
     FMT6_32_UINT = 75,             // a6xx.xml.h:106  a raw buffer: one dword per element; R32Uint
     FMT6_16_16_16_16_FLOAT = 98,   // a6xx.xml.h:116  RGBA16Float
+    FMT6_32_32_FLOAT = 103,        // a6xx.xml.h:121  a float2 vertex attribute (fd6_format_table.c:258 VTC(R32G32_FLOAT, 32_32_FLOAT, WZYX))
     FMT6_32_32_UINT = 104,         // a6xx.xml.h:122
+    FMT6_32_32_32_FLOAT = 116,     // a6xx.xml.h:129  a float3 attribute
     FMT6_32_32_32_32_FLOAT = 130,  // a6xx.xml.h:133  RGBA32Float
     FMT6_32_32_32_32_UINT = 131,   // a6xx.xml.h:134  RGBA32Uint
     FMT6_NONE = 255,               // a6xx.xml.h:189  what the fake GPU's bytes-per-pixel table answers for a format it does not know
@@ -199,23 +204,34 @@ enum a6xx_state_src : uint32_t {
 };
 
 // CP_EVENT_WRITE's event. Several names share a value because the XML gives each generation its own name for the
-// same number; only the A6XX ones a compute dispatch and its barriers use are here.
+// same number; only the A6XX ones a compute dispatch, a draw and their barriers use are here. turnip gives the
+// 4-word form (an address and a value, no TIMESTAMP bit) to the events that complete asynchronously: RB_DONE_TS,
+// CACHE_FLUSH_TS, PC_CCU_RESOLVE_TS, PC_CCU_FLUSH_DEPTH_TS, PC_CCU_FLUSH_COLOR_TS (freedreno_gpu_event.h:60-85
+// needs_seqno); the invalidates, LRZ_FLUSH, LRZ_CLEAR, BLIT, LABEL and ZPASS_DONE are 1-word events.
 enum vgt_event_type : uint32_t {
     CACHE_FLUSH_TS = 4,            // adreno_pm4.xml.h:60   flush the caches, then write the timestamp (Gallium's FD_CACHE_CLEAN)
     CACHE_FLUSH = 6,               // adreno_pm4.xml.h:62
     START_COMPUTE_CTRS = 15,       // adreno_pm4.xml.h:85
     STOP_COMPUTE_CTRS = 16,        // adreno_pm4.xml.h:86
+    ZPASS_DONE = 21,               // adreno_pm4.xml.h:75
     CACHE_FLUSH_AND_INV_EVENT = 22, // adreno_pm4.xml.h:76  the A2xx name of the same value
     RB_DONE_TS = 22,               // adreno_pm4.xml.h:77   the GPU is done with everything before it; timestamp (FD_RB_DONE)
     PC_CCU_INVALIDATE_DEPTH = 24,  // adreno_pm4.xml.h:91
     PC_CCU_INVALIDATE_COLOR = 25,  // adreno_pm4.xml.h:92
+    PC_CCU_RESOLVE_TS = 26,        // adreno_pm4.xml.h:93
     PC_CCU_FLUSH_DEPTH_TS = 28,    // adreno_pm4.xml.h:94
-    PC_CCU_FLUSH_COLOR_TS = 29,    // adreno_pm4.xml.h:95
+    PC_CCU_FLUSH_COLOR_TS = 29,    // adreno_pm4.xml.h:95   the colour CCU cache to memory: what puts a draw's pixels where the CPU reads them
+    BLIT = 30,                     // adreno_pm4.xml.h:96
+    LRZ_CLEAR = 37,                // adreno_pm4.xml.h:98
+    LRZ_FLUSH = 38,                // adreno_pm4.xml.h:99   both witnesses end a sysmem pass with it (tu_lrz.cc:465; fd6_gmem.cc:2114)
     CACHE_INVALIDATE = 49,         // adreno_pm4.xml.h:108  invalidate UCHE: before reading what the CPU or a blit wrote
     LABEL = 63,                    // adreno_pm4.xml.h:109  a no-op event; Gallium's dummy to roll the register context
 };
 
+// CP_SET_MARKER's MODE: RM6_DIRECT_RENDER before a sysmem pass (tu_cmd_buffer.cc:2130-2131; fd6_gmem.cc:2041-2042);
+// there is no RM6_BYPASS in this Mesa, value 1 is this name (adreno_pm4.xml:1797-1798)
 enum a6xx_marker : uint32_t {
+    RM6_DIRECT_RENDER = 1,         // adreno_pm4.xml.h:519
     RM6_COMPUTE = 8,               // adreno_pm4.xml.h:526
 };
 
@@ -236,14 +252,19 @@ enum poll_memory_type : uint32_t {
     POLL_ON_CHIP = 3,              // adreno_pm4.xml.h:477
 };
 
-// The type-7 opcodes a dispatch uses (pm4.hpp has the ones every stream uses, under its own names).
+// The type-7 opcodes a dispatch and a draw use (pm4.hpp has the ones every stream uses, under its own names).
 enum Opcode : uint32_t {
+    CP_WAIT_MEM_WRITES = 0x12,     // adreno_pm4.xml.h:283  in turnip's flush order, after CACHE_INVALIDATE (tu_cmd_buffer.cc:194-250)
+    CP_WAIT_FOR_ME = 0x13,         // adreno_pm4.xml.h:270
     CP_WAIT_MEM_GTE = 0x14,        // adreno_pm4.xml.h:326  wait until a memory word >= REF (signed)
+    CP_SKIP_IB2_ENABLE_GLOBAL = 0x1d,  // adreno_pm4.xml.h:294  1 word, 0 at pass begin and end (tu_cmd_buffer.cc:2134-2135, 2161-2162); undocumented
+    CP_SKIP_IB2_ENABLE_LOCAL = 0x23,   // adreno_pm4.xml.h:295  1 word, 1: fd6 only ("I think that is not required", fd6_gmem.cc:2048)
     CP_WAIT_FOR_IDLE = 0x26,       // adreno_pm4.xml.h:219
-    CP_LOAD_STATE6_GEOM = 0x32,    // adreno_pm4.xml.h:308
+    CP_LOAD_STATE6_GEOM = 0x32,    // adreno_pm4.xml.h:308  the VS's loads (tu6_stage2opcode: VS -> GEOM, FS -> FRAG, tu_shader.cc:1349)
     CP_EXEC_CS = 0x33,             // adreno_pm4.xml.h:287
     CP_LOAD_STATE6_FRAG = 0x34,    // adreno_pm4.xml.h:309  what compute uses, for its shader, constants, IBOs and textures
     CP_LOAD_STATE6 = 0x36,         // adreno_pm4.xml.h:310
+    CP_DRAW_INDX_OFFSET = 0x38,    // adreno_pm4.xml.h:272  the draw: 3 words without an index buffer (adreno_pm4.xml:906-916)
     CP_WAIT_REG_MEM = 0x3c,        // adreno_pm4.xml.h:220
     CP_REG_TO_MEM = 0x3e,          // adreno_pm4.xml.h:228
     CP_INDIRECT_BUFFER = 0x3f,     // adreno_pm4.xml.h:216  (pm4.hpp's kIndirectBuffer; here for the batch-start sequence)
@@ -252,9 +273,197 @@ enum Opcode : uint32_t {
     CP_SET_DRAW_STATE = 0x43,      // adreno_pm4.xml.h:271
     CP_EVENT_WRITE = 0x46,         // adreno_pm4.xml.h:234
     CP_SET_AMBLE = 0x55,           // adreno_pm4.xml.h:332  the IBs the CP runs around a context switch
-    CP_SET_MODE = 0x63,            // adreno_pm4.xml.h:307  Gallium writes 1 so that CP_SET_DRAW_STATE runs at once, 0 at batch start
+    CP_CONTEXT_REG_BUNCH = 0x5c,   // adreno_pm4.xml.h:292  (register, value) pairs: turnip's stream-out disable and VFD_FETCH strides use it; not needed with type4
+    CP_SET_MODE = 0x63,            // adreno_pm4.xml.h:307  Gallium writes 1 so that CP_SET_DRAW_STATE runs at once, 0 at batch start and pass begin
+    CP_SET_VISIBILITY_OVERRIDE = 0x64,  // adreno_pm4.xml.h:298  1 word, 1 at a sysmem pass begin (tu_cmd_buffer.cc:2138-2139); undocumented
     CP_SET_MARKER = 0x65,          // adreno_pm4.xml.h:290
     CP_MEM_TO_MEM = 0x73,          // adreno_pm4.xml.h:304
+};
+
+// --- the draw's enums ----------------------------------------------------------------------------------------------------
+
+// CP_DRAW_INDX_OFFSET's PRIM_TYPE (MTLPrimitiveType maps through fd6_screen.cc:132's table: triangles -> TRILIST,
+// strips -> TRISTRIP, points -> POINTLIST, lines -> LINELIST/LINESTRIP; RECTLIST is r3d's)
+enum pc_di_primtype : uint32_t {
+    DI_PT_NONE = 0,            // adreno_pm4.xml.h:127
+    DI_PT_POINTLIST_PSIZE = 1, // adreno_pm4.xml.h:128
+    DI_PT_LINELIST = 2,        // adreno_pm4.xml.h:129
+    DI_PT_LINESTRIP = 3,       // adreno_pm4.xml.h:130
+    DI_PT_TRILIST = 4,         // adreno_pm4.xml.h:131
+    DI_PT_TRIFAN = 5,          // adreno_pm4.xml.h:132
+    DI_PT_TRISTRIP = 6,        // adreno_pm4.xml.h:133
+    DI_PT_RECTLIST = 8,        // adreno_pm4.xml.h:135
+    DI_PT_POINTLIST = 9,       // adreno_pm4.xml.h:136
+};
+
+// SOURCE_SELECT: AUTO_INDEX for a non-indexed draw (the VFD counts), DMA for an index buffer
+enum pc_di_src_sel : uint32_t {
+    DI_SRC_SEL_DMA = 0,        // adreno_pm4.xml.h:176
+    DI_SRC_SEL_IMMEDIATE = 1,  // adreno_pm4.xml.h:177
+    DI_SRC_SEL_AUTO_INDEX = 2, // adreno_pm4.xml.h:178
+    DI_SRC_SEL_AUTO_XFB = 3,   // adreno_pm4.xml.h:179
+};
+
+// VIS_CULL: whether the draw consults a visibility stream; none exists in a sysmem pass (CP_SET_VISIBILITY_OVERRIDE 1)
+enum pc_di_vis_cull_mode : uint32_t {
+    IGNORE_VISIBILITY = 0,     // adreno_pm4.xml.h:198
+    USE_VISIBILITY = 1,        // adreno_pm4.xml.h:199
+};
+
+enum a4xx_index_size : uint32_t {
+    INDEX4_SIZE_8_BIT = 0,     // adreno_pm4.xml.h:436
+    INDEX4_SIZE_16_BIT = 1,    // adreno_pm4.xml.h:437
+    INDEX4_SIZE_32_BIT = 2,    // adreno_pm4.xml.h:438
+};
+
+enum a6xx_patch_type : uint32_t {
+    TESS_QUADS = 0,            // adreno_pm4.xml.h:442
+    TESS_TRIANGLES = 1,        // adreno_pm4.xml.h:443
+    TESS_ISOLINES = 2,         // adreno_pm4.xml.h:444
+};
+
+// GRAS/RB_BIN_CONTROL.BUFFERS_LOCATION: the colour and depth buffers of a sysmem pass are in memory, not in GMEM
+enum a6xx_buffers_location : uint32_t {
+    BUFFERS_IN_GMEM = 0,       // a6xx.xml.h:2213
+    BUFFERS_IN_SYSMEM = 3,     // a6xx.xml.h:2214
+};
+
+// GRAS/RB_BIN_CONTROL.LRZ_FEEDBACK_ZMODE_MASK: turnip writes EARLY_Z_OR_EARLY_LRZ_LATE_Z on a chip with lrz feedback
+// (this one), fd6 and r3d NONE
+enum a6xx_lrz_feedback_mask : uint32_t {
+    LRZ_FEEDBACK_NONE = 0,     // a6xx.xml.h:2218
+    LRZ_FEEDBACK_EARLY_Z = 1,  // a6xx.xml.h:2219
+    LRZ_FEEDBACK_EARLY_LRZ_LATE_Z = 2, // a6xx.xml.h:2220
+    LRZ_FEEDBACK_EARLY_Z_OR_EARLY_LRZ_LATE_Z = 3, // a6xx.xml.h:2221
+    LRZ_FEEDBACK_LATE_Z = 4,   // a6xx.xml.h:2222
+};
+
+// RB_DEPTH_BUFFER_INFO / GRAS_SU_DEPTH_BUFFER_INFO.DEPTH_FORMAT: NONE for a pass without a depth attachment
+enum a6xx_depth_format : uint32_t {
+    DEPTH6_NONE = 0,           // a6xx.xml.h:199
+    DEPTH6_16 = 1,             // a6xx.xml.h:200
+    DEPTH6_24_8 = 2,           // a6xx.xml.h:201
+    DEPTH6_32 = 4,             // a6xx.xml.h:202
+};
+
+// VPC_POLYGON_MODE / PC_POLYGON_MODE: filled triangles
+enum a6xx_polygon_mode : uint32_t {
+    POLYMODE6_POINTS = 1,      // a6xx.xml.h:193
+    POLYMODE6_LINES = 2,       // a6xx.xml.h:194
+    POLYMODE6_TRIANGLES = 3,   // a6xx.xml.h:195
+};
+
+// VPC_VARYING_INTERP_MODE[i]: two bits per varying component
+enum a6xx_varying_interp_mode : uint32_t {
+    INTERP_SMOOTH = 0,         // a6xx.xml.h:2285
+    INTERP_FLAT = 1,           // a6xx.xml.h:2286
+    INTERP_ZERO = 2,           // a6xx.xml.h:2287
+    INTERP_ONE = 3,            // a6xx.xml.h:2288
+};
+
+// VPC_VARYING_PS_REPL_MODE[i]: point sprite coordinate replacement, none for a triangle
+enum a6xx_varying_ps_repl_mode : uint32_t {
+    PS_REPL_NONE = 0,          // a6xx.xml.h:2292
+    PS_REPL_S = 1,             // a6xx.xml.h:2293
+    PS_REPL_T = 2,             // a6xx.xml.h:2294
+    PS_REPL_ONE_MINUS_T = 3,   // a6xx.xml.h:2295
+};
+
+// RB/GRAS_SU_DEPTH_PLANE_CNTL.Z_MODE: when the depth test runs relative to the FS; pipelines with the test off write
+// LATE_Z (tu_cmd_buffer.cc:5569-5571), r3d EARLY_Z
+enum a6xx_ztest_mode : uint32_t {
+    A6XX_EARLY_Z = 0,          // a6xx.xml.h:1139
+    A6XX_LATE_Z = 1,           // a6xx.xml.h:1140
+    A6XX_EARLY_LRZ_LATE_Z = 2, // a6xx.xml.h:1141
+    A6XX_INVALID_ZTEST = 3,    // a6xx.xml.h:1142
+};
+
+// GRAS_SC_CNTL.SINGLE_PRIM_MODE: NO_FLUSH for a sysmem pass without feedback loops (tu_pipeline.cc:3351-3380)
+enum a6xx_single_prim_mode : uint32_t {
+    NO_FLUSH = 0,              // a6xx.xml.h:2190
+    FLUSH_PER_OVERLAP_AND_OVERWRITE = 1, // a6xx.xml.h:2191
+    FLUSH_PER_OVERLAP = 3,     // a6xx.xml.h:2192
+};
+
+// RB_RENDER_CONTROL1 / GRAS_LRZ_PS_INPUT_CNTL.FRAGCOORDSAMPLEMODE: CENTER without sample shading
+enum a6xx_fragcoord_sample_mode : uint32_t {
+    FRAGCOORD_CENTER = 0,      // a6xx.xml.h:2240
+    FRAGCOORD_SAMPLE = 3,      // a6xx.xml.h:2241
+};
+
+// RB_MRT_CONTROL.ROP_CODE: turnip leaves ROP_CLEAR (VK_LOGIC_OP_CLEAR's) when the ROP is off, fd6 ROP_COPY; inert either way
+enum a3xx_rop_code : uint32_t {
+    ROP_CLEAR = 0,             // adreno_common.xml.h:141
+    ROP_NOR = 1,               // adreno_common.xml.h:142
+    ROP_AND_INVERTED = 2,      // adreno_common.xml.h:143
+    ROP_COPY_INVERTED = 3,     // adreno_common.xml.h:144
+    ROP_AND_REVERSE = 4,       // adreno_common.xml.h:145
+    ROP_INVERT = 5,            // adreno_common.xml.h:146
+    ROP_XOR = 6,               // adreno_common.xml.h:147
+    ROP_NAND = 7,              // adreno_common.xml.h:148
+    ROP_AND = 8,               // adreno_common.xml.h:149
+    ROP_EQUIV = 9,             // adreno_common.xml.h:150
+    ROP_NOOP = 10,             // adreno_common.xml.h:151
+    ROP_OR_INVERTED = 11,      // adreno_common.xml.h:152
+    ROP_COPY = 12,             // adreno_common.xml.h:153
+    ROP_OR_REVERSE = 13,       // adreno_common.xml.h:154
+    ROP_OR = 14,               // adreno_common.xml.h:155
+    ROP_SET = 15,              // adreno_common.xml.h:156
+};
+
+// GRAS_SU_CNTL.LINE_MODE: turnip RECTANGULAR, fd6 BRESENHAM unless multisampled; lines only
+enum a5xx_line_mode : uint32_t {
+    BRESENHAM = 0,             // adreno_common.xml.h:215
+    RECTANGULAR = 1,           // adreno_common.xml.h:216
+};
+
+// RB_MRT_BLEND_CONTROL's opcodes and factors (MTLBlendOperation / MTLBlendFactor map onto them: a later step), the
+// dither modes and stencil ops
+enum a3xx_rb_blend_opcode : uint32_t {
+    BLEND_DST_PLUS_SRC = 0,    // adreno_common.xml.h:196
+    BLEND_SRC_MINUS_DST = 1,   // adreno_common.xml.h:197
+    BLEND_DST_MINUS_SRC = 2,   // adreno_common.xml.h:198
+    BLEND_MIN_DST_SRC = 3,     // adreno_common.xml.h:199
+    BLEND_MAX_DST_SRC = 4,     // adreno_common.xml.h:200
+};
+
+enum adreno_rb_blend_factor : uint32_t {
+    FACTOR_ZERO = 0,           // adreno_common.xml.h:92
+    FACTOR_ONE = 1,            // adreno_common.xml.h:93
+    FACTOR_SRC_COLOR = 4,      // adreno_common.xml.h:94
+    FACTOR_ONE_MINUS_SRC_COLOR = 5, // adreno_common.xml.h:95
+    FACTOR_SRC_ALPHA = 6,      // adreno_common.xml.h:96
+    FACTOR_ONE_MINUS_SRC_ALPHA = 7, // adreno_common.xml.h:97
+    FACTOR_DST_COLOR = 8,      // adreno_common.xml.h:98
+    FACTOR_ONE_MINUS_DST_COLOR = 9, // adreno_common.xml.h:99
+    FACTOR_DST_ALPHA = 10,     // adreno_common.xml.h:100
+    FACTOR_ONE_MINUS_DST_ALPHA = 11, // adreno_common.xml.h:101
+    FACTOR_CONSTANT_COLOR = 12, // adreno_common.xml.h:102
+    FACTOR_ONE_MINUS_CONSTANT_COLOR = 13, // adreno_common.xml.h:103
+    FACTOR_CONSTANT_ALPHA = 14, // adreno_common.xml.h:104
+    FACTOR_ONE_MINUS_CONSTANT_ALPHA = 15, // adreno_common.xml.h:105
+    FACTOR_SRC_ALPHA_SATURATE = 16, // adreno_common.xml.h:106
+    FACTOR_SRC1_COLOR = 20,    // adreno_common.xml.h:107
+    FACTOR_ONE_MINUS_SRC1_COLOR = 21, // adreno_common.xml.h:108
+    FACTOR_SRC1_ALPHA = 22,    // adreno_common.xml.h:109
+    FACTOR_ONE_MINUS_SRC1_ALPHA = 23, // adreno_common.xml.h:110
+};
+
+enum adreno_rb_dither_mode : uint32_t {
+    DITHER_DISABLE = 0,        // adreno_common.xml.h:123
+    DITHER_ALWAYS = 1,         // adreno_common.xml.h:124
+    DITHER_IF_ALPHA_OFF = 2,   // adreno_common.xml.h:125
+};
+
+enum adreno_stencil_op : uint32_t {
+    STENCIL_KEEP = 0,          // adreno_common.xml.h:81
+    STENCIL_ZERO = 1,          // adreno_common.xml.h:82
+    STENCIL_REPLACE = 2,       // adreno_common.xml.h:83
+    STENCIL_INCR_CLAMP = 3,    // adreno_common.xml.h:84
+    STENCIL_DECR_CLAMP = 4,    // adreno_common.xml.h:85
+    STENCIL_INVERT = 5,        // adreno_common.xml.h:86
+    STENCIL_INCR_WRAP = 6,     // adreno_common.xml.h:87
+    STENCIL_DECR_WRAP = 7,     // adreno_common.xml.h:88
 };
 
 // --- a field encoder, as Mesa's generated ones work ---------------------------------------------------------------------
