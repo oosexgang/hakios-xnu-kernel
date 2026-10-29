@@ -100,8 +100,11 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, "a texture of " + n(desc.width) + " x " + n(desc.height) + ": each side is 1 to 32767 (the descriptor's fields are 15 bits)");
         return nullptr;
     }
-    if ((desc.usage & ~(kTextureUsageRead | kTextureUsageWrite)) != 0) {
-        refuse(why, "texture usage " + n(desc.usage) + " has bits other than shader read (1) and shader write (2): not served");
+    // MTLTextureUsageRenderTarget (4) is taken alone or beside the shader bits: a draw's colour target has the same linear
+    // layout as a sampled or stored texture (render.cpp reads RB_MRT_BUF_INFO/PITCH/ARRAY_PITCH/BASE off the same fields,
+    // as fdl6_view_init does for both views, fd6_view.c:232-250 and 408-413); what differs is only who writes it
+    if ((desc.usage & ~(kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget)) != 0) {
+        refuse(why, "texture usage " + n(desc.usage) + " has bits other than shader read (1), shader write (2) and render target (4): not served");
         return nullptr;
     }
     uint64_t pitch = texturePitch(*info, desc.width);

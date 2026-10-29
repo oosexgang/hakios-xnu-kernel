@@ -113,10 +113,10 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     d.height = 0;
     CHECK(has(refusedMake(r, d), "32767 x 0: each side"));
     d = TextureDesc{};
-    d.usage = 4;   // MTLTextureUsageRenderTarget
-    CHECK(has(refusedMake(r, d), "texture usage 4 has bits other than shader read (1) and shader write (2)"));
-    d.usage = 0x13;
-    CHECK(has(refusedMake(r, d), "texture usage 19 has bits other than"));
+    d.usage = 0x13;   // MTLTextureUsagePixelFormatView (0x10) beside read and write
+    CHECK(has(refusedMake(r, d), "texture usage 19 has bits other than shader read (1), shader write (2) and render target (4): not served"));
+    d.usage = 8;
+    CHECK(has(refusedMake(r, d), "texture usage 8 has bits other than"));
     // and the largest side the fields hold is made
     d = TextureDesc{};
     d.format = PixelFormat::kR8Unorm;
@@ -251,6 +251,44 @@ TEST(texture_descriptors_are_the_worked_example_at_the_textures_address) {
     auto b = make(r, PixelFormat::kBGRA8UnormSrgb, 64, 64);
     CHECK_EQ(b->sampledDescriptor().dword[0], 0x4c006884u);
     CHECK_EQ(b->storageDescriptor().dword[0], 0x4c006884u);
+}
+
+TEST(texture_takes_the_render_target_usage_and_its_fields_give_the_mrt_words) {
+    // MTLTextureUsageRenderTarget (4): alone, with read, with read and write -- the layout is the one linear layout,
+    // so make() takes it as it takes the shader bits (texture.cpp says why)
+    Rig r;
+    auto rt = make(r, PixelFormat::kRGBA8Unorm, 64, 64, kTextureUsageRenderTarget);
+    CHECK_EQ(rt->usage(), 4u);
+    CHECK_EQ(make(r, PixelFormat::kRGBA8Unorm, 64, 64, kTextureUsageRenderTarget | kTextureUsageRead)->usage(), 5u);
+    CHECK_EQ(make(r, PixelFormat::kRGBA8Unorm, 64, 64, kTextureUsageRenderTarget | kTextureUsageRead | kTextureUsageWrite)->usage(), 7u);
+    // and the twin: a bit above it is still refused by name
+    TextureDesc d;
+    d.usage = kTextureUsageRenderTarget | 0x10;
+    CHECK(has(refusedMake(r, d), "texture usage 20 has bits other than shader read (1), shader write (2) and render target (4): not served"));
+    // The five RB_MRT[0] words of this 64 x 64 RGBA8Unorm target, off the texture's own fields through a6xx.hpp's encoders
+    // (render.cpp's mrtWords reads the same fields through the same encoders; render_test holds the stream to these):
+    // BUF_INFO 0x30 (FMT6_8_8_8_8_UNORM 48, TILE6_LINEAR, WZYX: fd6_view.c:408-413), PITCH 256 >> 6 = 4, ARRAY_PITCH
+    // 16384 >> 6 = 0x100 (the layer's bytes, a6xx.xml.h:5824-5828), BASE the buffer's address, BASE_GMEM 0 in sysmem;
+    // SP_FS_MRT_REG 0x30 with neither integer bit for a unorm format
+    const FormatInfo& f = rt->info();
+    CHECK_EQ(a6xx::rbMrtBufInfo(f.fmt6, a6xx::TILE6_LINEAR, f.swap), 0x30u);
+    CHECK(a6xx::rbMrtPitchValid(uint32_t(rt->bytesPerRow())));
+    CHECK_EQ(a6xx::rbMrtPitch(uint32_t(rt->bytesPerRow())), 4u);
+    CHECK_EQ(rt->buffer()->length(), 16384u);
+    CHECK_EQ(a6xx::rbMrtArrayPitch(uint32_t(rt->buffer()->length())), 0x100u);
+    CHECK_EQ(rt->gpuAddress() % a6xx::kMrtBaseAlign, 0u);
+    CHECK_EQ(a6xx::spFsMrtReg(f.fmt6, f.element == kElemInt, f.element == kElemUint), 0x30u);
+    CHECK(!f.srgb);
+    // a twin per word: the pitch left in bytes is not the encoded word; a uint format sets COLOR_UINT; the sRGB pair says so
+    CHECK(a6xx::rbMrtPitch(uint32_t(rt->bytesPerRow())) != 256u);
+    const FormatInfo& u = *formatInfo(PixelFormat::kR32Uint);
+    CHECK_EQ(a6xx::spFsMrtReg(u.fmt6, u.element == kElemInt, u.element == kElemUint), 0x24bu);   // FMT6_32_UINT 75 | COLOR_UINT 0x200
+    CHECK_EQ(a6xx::rbMrtBufInfo(formatInfo(PixelFormat::kBGRA8Unorm)->fmt6, a6xx::TILE6_LINEAR, formatInfo(PixelFormat::kBGRA8Unorm)->swap), 0x2030u);   // COLOR_SWAP WXYZ (1) at bit 13
+    CHECK(formatInfo(PixelFormat::kRGBA8UnormSrgb)->srgb);
+    // a 48 x 20 target: pitch 256 (48 * 4 rounded to 64 pixels), 8192 bytes (20 rows counted to 24, then a page)
+    auto odd = make(r, PixelFormat::kRGBA8Unorm, 48, 20, kTextureUsageRenderTarget);
+    CHECK_EQ(a6xx::rbMrtPitch(uint32_t(odd->bytesPerRow())), 4u);
+    CHECK_EQ(a6xx::rbMrtArrayPitch(uint32_t(odd->buffer()->length())), 0x80u);
 }
 
 TEST(sampler_words_follow_galliums_encoding_of_metals_descriptor) {
