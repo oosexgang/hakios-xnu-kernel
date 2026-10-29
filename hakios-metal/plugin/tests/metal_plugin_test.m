@@ -3,7 +3,7 @@
  * macOS, its device made by hand the way Metal makes it (-initWithAcceleratorPort:), and what a program does with buffers and
  * libraries checked. tools/metal-plugin-test.sh builds and runs it, under the address sanitizer.
  *
- * What this shows and what it does not. Metal's private classes on macOS are not Darwin userland 16.5's (the plug-in takes _MTLResource,
+ * What this shows and what it does not. Metal's private classes on macOS are not Darwin 16.5's (the plug-in takes _MTLResource,
  * _MTLLibrary and _MTLFunction where they exist, and both systems have them), so this checks the plug-in's own logic -- the
  * classes it makes at run time, their state, the buffers' memory, the reading of a .metallib, every object freed -- not that
  * Darwin's Metal is content with them. That is metal_test's to say, in QEMU (userland/rc.jobs.metal).
