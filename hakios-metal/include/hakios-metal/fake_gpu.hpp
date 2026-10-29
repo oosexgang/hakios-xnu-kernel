@@ -39,6 +39,14 @@
 // CACHE_FLUSH_TS after the last draw ("the colour stays in the CCU" otherwise). It rasterizes nothing: coverage, the
 // edge rule, interpolation, the y orientation and the bytes are the phone's.
 //
+// A CP_BLIT (a render pass's Clear) is the one thing it carries out: the 2D engine's solid fill, after checking that its
+// registers hold together -- RB_2D_BLIT_CNTL equal to GRAS_2D_BLIT_CNTL with SOLID_COLOR and all four mask bits,
+// the format the same there, in RB_2D_DST_INFO and in SP_2D_DST_FORMAT, the intermediate format the one turnip picks
+// for it (format_to_ifmt), the sRGB bits agreeing, a linear destination whose rectangle lies inside a buffer -- then
+// RB_2D_SRC_SOLID_C0..3 packed into every pixel of GRAS_2D_DST_TL..BR in the format's memory order. Counted as a write
+// the CCU holds, like a draw. The packing is this model's reading of the registers; whether the GPU packs the same
+// way is again the phone's to say.
+//
 // What it answers is what hakios's kernel driver answers (bsd/dev/hakios.adreno.c, hakios_gpu_parameter): GPU_ID 0,
 // the chip id 0x06030500 with a speed bin above it, 512 KiB of GMEM, 550 MHz. And it fails as that kernel fails. A
 // submission the GPU never finishes is a hang there, found by the wait's timeout alone (the GPU raises no fault for
@@ -121,6 +129,7 @@ public:
         Dispatch lastDispatch;
         uint32_t draws = 0;         // CP_DRAW_INDX_OFFSET packets whose state held together (none of them rasterized)
         Draw lastDraw;
+        uint32_t fills = 0;         // CP_BLIT solid fills whose state held together: these ARE carried out, into the target's memory
     };
 
     // ASYNC: submissions run on a thread of their own, after DELAY_US each, as the real GPU runs them after the call
@@ -193,6 +202,8 @@ private:
     bool loadState(uint32_t opcode, const uint32_t* p, uint32_t count);
     bool execCs(const uint32_t* p, uint32_t count);
     bool execDraw(const uint32_t* p, uint32_t count);
+    // CP_BLIT: a solid fill only, judged against the 2D registers and then written into memory as the 2D engine would
+    bool execBlit(const uint32_t* p, uint32_t count);
     // one graphics stage's program and constants at the draw: the rules CP_EXEC_CS applies to the compute stage's
     bool checkStageProgram(const char* what, const StageLoads& xs, uint32_t instrlenReg, uint32_t objStartReg, uint32_t hlsqCntl, uint32_t spConfig,
                            uint32_t* instrlen, uint64_t* program, uint32_t* constlen);

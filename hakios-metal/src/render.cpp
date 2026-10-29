@@ -317,8 +317,258 @@ bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, 
 
 bool finite(double v) { return std::isfinite(v); }
 
+// float to IEEE half, rounding to nearest even as _mesa_float_to_half does (r2d_clear_value's R2D_FLOAT16 branch)
+uint32_t halfOf(float f) {
+    uint32_t x;
+    memcpy(&x, &f, 4);
+    const uint32_t sign = (x >> 16) & 0x8000u;
+    const uint32_t absx = x & 0x7fffffffu;
+    if (absx > 0x7f800000u) return sign | 0x7e00u;            // NaN: a quiet one
+    if (absx >= 0x477ff000u) return sign | 0x7c00u;           // rounds to or past 65520: infinity
+    if (absx < 0x38800000u) {                                 // below the smallest normal half: a subnormal or 0
+        float a;
+        memcpy(&a, &absx, 4);
+        return sign | uint32_t(std::nearbyint(double(a) * 16777216.0));   // in units of 2^-24, round-half-even
+    }
+    const uint32_t mant = absx & 0x007fffffu;
+    uint32_t h = ((absx >> 23) - 112u) << 10 | (mant >> 13);
+    const uint32_t rest = mant & 0x1fffu;
+    if (rest > 0x1000u || (rest == 0x1000u && (h & 1u))) h++;
+    return sign | h;
+}
+
+// util_format_linear_to_srgb_float (u_format_srgb.h), in float as Mesa computes it
+float linearToSrgb(float c) {
+    if (!(c > 0.0f)) return 0.0f;
+    if (c < 0.0031308f) return 12.92f * c;
+    if (c < 1.0f) return 1.055f * std::pow(c, 0.41666f) - 0.055f;
+    return 1.0f;
+}
+
+// tu_pack_float32_for_unorm(v, 8): _mesa_lroundevenf(CLAMP(v, 0, 1) * 255)
+uint32_t unorm8Of(float v) {
+    float c = v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f;
+    return uint32_t(std::nearbyint(c * 255.0f));
+}
+
+// What a Clear writes: the 2D engine's intermediate format and RB_2D_SRC_SOLID_C0..3, the clear colour packed per
+// channel as r2d_clear_value packs it (tu_clear_blit.cc:166-231). The channels a format does not have stay 0 (the
+// swizzle > W skip), RGBA order whatever the memory order: RB_2D_DST_INFO's swap places them. Metal hands the colour
+// as doubles; an integer target takes it as integers, which must be whole and in range to mean anything.
+struct ClearWords {
+    uint32_t ifmt;
+    uint32_t value[4];
+};
+
+uint32_t channelsOf(const FormatInfo& f) {
+    switch (f.fmt6) {
+    case FMT6_8_UNORM: case FMT6_32_UINT: case FMT6_32_FLOAT: return 1;
+    case FMT6_8_8_UNORM: return 2;
+    default: return 4;
+    }
+}
+
+bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, std::string* why) {
+    for (int i = 0; i < 4; i++) {
+        if (!std::isfinite(colour[i])) {
+            return refuse(why, std::string("a clear colour with a non-finite channel (") + "channel " + n(uint32_t(i)) + ") into " + f.name);
+        }
+    }
+    *out = ClearWords{};
+    const uint32_t channels = channelsOf(f);
+    switch (f.fmt6) {
+    case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM:
+        out->ifmt = f.srgb ? R2D_UNORM8_SRGB : R2D_UNORM8;
+        for (uint32_t i = 0; i < channels; i++) {
+            const float linear = float(colour[i]);
+            out->value[i] = unorm8Of(f.srgb && i < 3 ? linearToSrgb(linear) : linear);
+        }
+        return true;
+    case FMT6_16_16_16_16_FLOAT:
+        out->ifmt = R2D_FLOAT16;
+        for (uint32_t i = 0; i < channels; i++) out->value[i] = halfOf(float(colour[i]));
+        return true;
+    case FMT6_32_FLOAT: case FMT6_32_32_32_32_FLOAT:
+        out->ifmt = R2D_FLOAT32;
+        for (uint32_t i = 0; i < channels; i++) out->value[i] = fui(float(colour[i]));
+        return true;
+    case FMT6_32_UINT: case FMT6_32_32_32_32_UINT:
+        out->ifmt = R2D_INT32;
+        for (uint32_t i = 0; i < channels; i++) {
+            const double c = colour[i];
+            if (c < 0.0 || c > 4294967295.0 || c != std::floor(c)) {
+                return refuse(why, "a clear colour of " + std::to_string(c) + " in channel " + n(i) + " of " + f.name + ": an integer target takes whole numbers 0 to 4294967295");
+            }
+            out->value[i] = uint32_t(c);
+        }
+        return true;
+    default:
+        return refuse(why, std::string("a Clear of ") + f.name + ": the 2D engine's intermediate format for it is not worked out here");
+    }
+}
+
+// The fill itself, between the pass begin and the draw state (clear_sysmem_attachment, tu_clear_blit.cc:4402-4444,
+// with r2d_setup_common :455-521, r2d_coords :145-163, r2d_clear_value, r2d_dst :396-413, r2d_run :551-570): the
+// render area is the whole target, as a Metal Clear covers the attachment whatever the scissor. Then what
+// tu_clear_sysmem_attachment does after it (:4480-4489): the colour CCU cleaned (PC_CCU_FLUSH_COLOR_TS in the
+// 4-word form, waited for, as the tail does it) and invalidated, a WFI -- so that the draw's colour writes, which go
+// through the same CCU, start after the fill landed.
+void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts) {
+    const FormatInfo& f = target.info();
+    const uint32_t W = target.width(), H = target.height();
+    const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
+    reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
+    reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(f.fmt6, f.element == kElemInt, f.element == kElemUint, f.srgb));
+    regs(stream, REG_A6XX_GRAS_2D_DST_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
+    regs(stream, REG_A6XX_RB_2D_SRC_SOLID_C0, {c.value[0], c.value[1], c.value[2], c.value[3]});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(f.fmt6, TILE6_LINEAR, f.swap, f.srgb), uint32_t(target.gpuAddress()), uint32_t(target.gpuAddress() >> 32),
+                                           A6XX_RB_2D_DST_PITCH(uint32_t(target.bytesPerRow()))});
+    regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
+    eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, kClearFlushValue, false);
+    waitForWord(stream, ts, kClearFlushValue);
+    event(stream, PC_CCU_INVALIDATE_COLOR);
+    stream.waitForIdle();
+}
+
 // gl_frag_result / gl_varying_slot numbers the Stage tables carry (Mesa shader_enums.h:987): FRAG_RESULT_DATA0 is 4
 constexpr uint8_t kFragResultData0 = 4;
+
+
+// The colour target and the pass's actions, for a draw and for a pass with no draw alike; the colour of a Clear is
+// packed apart (clearWords), since only a Clear has one
+bool checkTarget(const RenderPass& pass, std::string* why) {
+    if (pass.color0 == nullptr) {
+        return refuse(why, "a render pass with no colour attachment: one target is what the first draw serves");
+    }
+    const Texture& target = *pass.color0;
+    const FormatInfo& format = target.info();
+    if ((target.usage() & kTextureUsageRenderTarget) == 0) {
+        return refuse(why, "the " + n(target.width()) + " x " + n(target.height()) + " " + format.name +
+                               " texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
+    }
+    if (target.type() != TextureType::k2D) {
+        return refuse(why, "a colour attachment of texture type " + n(uint32_t(target.type())) + ": only 2D (2) is served");
+    }
+    if (!rbMrtPitchValid(uint32_t(target.bytesPerRow())) || target.buffer()->length() >= (1ull << 32)) {
+        return refuse(why, "the target's pitch of " + n(target.bytesPerRow()) + " bytes or its " + n(target.buffer()->length()) +
+                               " bytes do not fit RB_MRT_PITCH / RB_MRT_ARRAY_PITCH");
+    }
+    if (pass.load != LoadAction::kLoad && pass.load != LoadAction::kDontCare && pass.load != LoadAction::kClear) {
+        return refuse(why, "load action " + n(uint32_t(pass.load)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
+    }
+    if (pass.store != StoreAction::kStore) {
+        return refuse(why, "store action " + n(uint32_t(pass.store)) + ": only Store (1) is served");
+    }
+    return true;
+}
+
+// the table's words the stream addresses, zeroed before the GPU sees them
+void tableStart(uint8_t* tableCpu) {
+    memset(tableCpu + kTableTimestampsAt, 0, 16);          // the tail's values: 0 until the events write them
+    memset(tableCpu + kTableBorderColorAt, 0, 128);        // border colour entry 0, transparent black (the batch start points the TP here)
+    memset(tableCpu + kTableHoleAt, 0, 64);
+}
+
+// steps 1 to 3 of a pass: the batch start, the CCU set to sysmem, the pass begin -- what a draw and a Clear without a
+// draw both need before the 2D engine or the 3D pipe writes the target
+void passStart(pm4::Stream& stream, uint32_t W, uint32_t H, uint64_t table, const Options& o) {
+    // 1. batch start: fd6_emit_restore (fd6_emit.cc:1090-1160) with turnip's tu6_init_hw as the second witness
+    // (tu_cmd_buffer.cc:1584-1660): CP_SET_MODE 0; the three invalidates (fd6_cache_inv, fd6_emit.h:271-276; turnip's A6XX
+    // path has CACHE_INVALIDATE alone, the kernel already emits both CCU invalidates per submit); HLSQ_INVALIDATE_CMD;
+    // a WFI; the static tables a6xx.hpp documents, in Gallium's order; CP_SET_DRAW_STATE disable-all (no state
+    // group is left pending by a previous owner of the GPU, and r3d needs none active: tu_clear_blit.cc:3960-3967); the
+    // 32 VFD_FETCH sizes zeroed so a stale BASE is never fetched; the two border colour bases at the table's zero entry.
+    // Where the two witnesses' tables differ the table keeps fd6's (SP_FLOAT_CNTL F16_NO_INF, GRAS_UNKNOWN_8110 2);
+    // both are --bisect items the lead must run.
+    if (o.batchStart) {
+        command1(stream, CP_SET_MODE, 0);
+        event(stream, PC_CCU_INVALIDATE_COLOR);
+        event(stream, PC_CCU_INVALIDATE_DEPTH);
+        event(stream, CACHE_INVALIDATE);
+        reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD, hlsqInvalidateCmdAll());
+        stream.waitForIdle();
+        for (const RegWrite& w : kStaticState) reg(stream, w.reg, w.value);
+        {
+            uint32_t w[3] = {setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0, 0};
+            stream.packet(CP_SET_DRAW_STATE, w, 3);
+        }
+        for (const RegWrite& w : kStaticStateAfterDrawState) reg(stream, w.reg, w.value);
+        for (uint32_t i = 0; i < kVfdFetchCount; i++) reg(stream, vfdFetchSize(i), 0);
+        reg64(stream, REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
+        reg64(stream, REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
+        for (const RegWrite& w : kStaticStateTail) reg(stream, w.reg, w.value);
+    }
+    // 2. RB_CCU_CNTL for sysmem after a WFI ("isn't pipelined", tu_cmd_buffer.cc:373-377; fd6_emit.cc:828 "early a6xx
+    // needed this"): 0x10000000 in both witnesses (rbCcuCntlSysmem); bit 2, CONCURRENT_RESOLVE, is what hakios's kernel
+    // wrote at boot (hakios.adreno.c:2904) and Mesa never sets for this chip -- the switch is the bisect's
+    if (o.ccuCntl) {
+        stream.waitForIdle();
+        reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+    }
+    // fd6's LRZ_FLUSH at the start of a sysmem pass (fd6_gmem.cc:2001); turnip has none here. Under lrzOff with the LRZ
+    // registers below, since it is the LRZ it flushes
+    if (o.lrzOff) {
+        event(stream, LRZ_FLUSH);
+    }
+    // 3. pass begin (tu6_sysmem_render_begin, tu_cmd_buffer.cc:2093-2142; fd6_emit_sysmem_prep, fd6_gmem.cc:2020-2056):
+    // the window scissor is the whole target (BR inclusive: tu6_emit_window_scissor :736-747), GRAS_2D_RESOLVE_CNTL_1/2
+    // beside it (:745-746), the four A6XX window offsets 0 (set_window_offset, fd6_gmem.cc:1223-1235; turnip's
+    // A7XX_SP_PS_2D_WINDOW_OFFSET is not copied), GRAS/RB_BIN_CONTROL with BUFFERS_IN_SYSMEM and no bins (0x00c00000 as
+    // fd6 and r3d; 0x03c00000 with turnip's LRZ feedback mask under binControlLrzFeedback), RB_BIN_CONTROL2 0, the
+    // RM6_DIRECT_RENDER marker, CP_SKIP_IB2_ENABLE_GLOBAL 0, CP_SET_VISIBILITY_OVERRIDE 1 (what makes a draw without a
+    // visibility stream legal), CP_SET_MODE 0. VPC_SO_DISABLE stays at the static table's 1 (turnip's; fd6 writes 0
+    // here, fd6_gmem.cc:2053): not switchable in render::Options, named for the lead.
+    if (o.passBegin) {
+        regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
+        regs(stream, REG_A6XX_GRAS_2D_RESOLVE_CNTL_1, {regXY(0, 0), regXY(W - 1, H - 1)});
+        reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(0, 0));
+        reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, REG_A6XX_GRAS_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
+        reg(stream, REG_A6XX_RB_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
+        reg(stream, REG_A6XX_RB_BIN_CONTROL2, 0);
+    }
+    if (o.marker) {
+        command1(stream, CP_SET_MARKER, setMarker0(RM6_DIRECT_RENDER));
+    }
+    if (o.passBegin) {
+        command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 0);
+        command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
+        command1(stream, CP_SET_MODE, 0);
+    }
+}
+
+void passTail(pm4::Stream& stream, uint64_t table, const Options& o) {
+    // 19. the tail: a WFI (as compute's), then what puts the colour in memory -- PC_CCU_FLUSH_COLOR_TS as a 4-word event
+    // writing 1 (turnip's form, tu_cmd_buffer.cc:48-70, with a value where turnip writes a dummy) and a wait for it
+    // (neither witness waits: both let the kernel's fence follow; the kernel's own fence here has no CCU flush,
+    // hakios.adreno.c:3496-3516, so the wait is cheap insurance); LRZ_FLUSH as both witnesses end a pass (tu_lrz.cc:465,
+    // fd6_gmem.cc:2114); RB_DONE_TS only under tailRbDone (in neither witness's render end); CACHE_FLUSH_TS writing 2 and
+    // CP_WAIT_MEM_GTE for it, compute's measured tail
+    stream.waitForIdle();
+    {
+        const uint64_t ts = table + kTableTimestampsAt;
+        if (o.tailCcuFlush) {
+            eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, 1, o.tailTimestampBit);
+            waitForWord(stream, ts, 1);
+        }
+        if (o.tailLrzFlush) {
+            event(stream, LRZ_FLUSH);
+        }
+        if (o.tailRbDone) {
+            eventTimestamp(stream, RB_DONE_TS, ts + 8, 3, o.tailTimestampBit);
+            waitForWord(stream, ts + 8, 3);
+        }
+        if (o.tailCacheFlush) {
+            eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2, o.tailTimestampBit);
+            waitForWordAtLeast(stream, ts + 4, 2);
+        }
+    }
+}
 
 }  // namespace
 
@@ -398,22 +648,11 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         return refuse(why, std::string(stageName(fs)) + " has " + n(fs.numSamplerPrefetch) + " texture prefetch(es): the draw does not emit SP_FS_PREFETCH_CMD yet");
     }
     // --- the target ---
-    if (pass.color0 == nullptr) {
-        return refuse(why, "a render pass with no colour attachment: one target is what the first draw serves");
+    if (!checkTarget(pass, why)) {
+        return false;
     }
     const Texture& target = *pass.color0;
     const FormatInfo& format = target.info();
-    if ((target.usage() & kTextureUsageRenderTarget) == 0) {
-        return refuse(why, "the " + n(target.width()) + " x " + n(target.height()) + " " + format.name +
-                               " texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
-    }
-    if (target.type() != TextureType::k2D) {
-        return refuse(why, "a colour attachment of texture type " + n(uint32_t(target.type())) + ": only 2D (2) is served");
-    }
-    if (!rbMrtPitchValid(uint32_t(target.bytesPerRow())) || target.buffer()->length() >= (1ull << 32)) {
-        return refuse(why, "the target's pitch of " + n(target.bytesPerRow()) + " bytes or its " + n(target.buffer()->length()) +
-                               " bytes do not fit RB_MRT_PITCH / RB_MRT_ARRAY_PITCH");
-    }
     {
         // the FS's colour class against the format's: floats into a unorm/float format, integers into a Uint one (the
         // hardware converts the raw register as the format says, so a mismatch is garbage on the phone, not an error).
@@ -429,14 +668,9 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
                                    (formatClass == kElemFloat ? "floats" : "integers"));
         }
     }
-    if (pass.load == LoadAction::kClear) {
-        return refuse(why, "load action Clear: a clear is a draw in turnip's r3d path or a 2D blit, and neither is written here; the first draw's target is filled by the CPU");
-    }
-    if (pass.load != LoadAction::kLoad && pass.load != LoadAction::kDontCare) {
-        return refuse(why, "load action " + n(uint32_t(pass.load)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
-    }
-    if (pass.store != StoreAction::kStore) {
-        return refuse(why, "store action " + n(uint32_t(pass.store)) + ": only Store (1) is served");
+    ClearWords clear{};
+    if (pass.load == LoadAction::kClear && !clearWords(format, pass.clearColor, &clear, why)) {
+        return false;
     }
     // --- the draw ---
     pc_di_primtype prim = DI_PT_TRILIST;
@@ -483,77 +717,15 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     }
 
     // --- nothing is refused from here on: the table, then the stream ---
-    memset(tableCpu + kTableTimestampsAt, 0, 16);          // the tail's values: 0 until the events write them
-    memset(tableCpu + kTableBorderColorAt, 0, 128);        // border colour entry 0, transparent black (the batch start points the TP here)
-    memset(tableCpu + kTableHoleAt, 0, 64);
+    tableStart(tableCpu);
     const MrtWords mrt = mrtWords(target);
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
     const uint32_t* ij = fs.ijRegid;
 
-    // 1. batch start: fd6_emit_restore (fd6_emit.cc:1090-1160) with turnip's tu6_init_hw as the second witness
-    // (tu_cmd_buffer.cc:1584-1660): CP_SET_MODE 0; the three invalidates (fd6_cache_inv, fd6_emit.h:271-276; turnip's A6XX
-    // path has CACHE_INVALIDATE alone, the kernel already emits both CCU invalidates per submit); HLSQ_INVALIDATE_CMD;
-    // a WFI; the static tables a6xx.hpp documents, in Gallium's order; CP_SET_DRAW_STATE disable-all (no state
-    // group is left pending by a previous owner of the GPU, and r3d needs none active: tu_clear_blit.cc:3960-3967); the
-    // 32 VFD_FETCH sizes zeroed so a stale BASE is never fetched; the two border colour bases at the table's zero entry.
-    // Where the two witnesses' tables differ the table keeps fd6's (SP_FLOAT_CNTL F16_NO_INF, GRAS_UNKNOWN_8110 2);
-    // both are --bisect items the lead must run.
-    if (o.batchStart) {
-        command1(stream, CP_SET_MODE, 0);
-        event(stream, PC_CCU_INVALIDATE_COLOR);
-        event(stream, PC_CCU_INVALIDATE_DEPTH);
-        event(stream, CACHE_INVALIDATE);
-        reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD, hlsqInvalidateCmdAll());
-        stream.waitForIdle();
-        for (const RegWrite& w : kStaticState) reg(stream, w.reg, w.value);
-        {
-            uint32_t w[3] = {setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0, 0};
-            stream.packet(CP_SET_DRAW_STATE, w, 3);
-        }
-        for (const RegWrite& w : kStaticStateAfterDrawState) reg(stream, w.reg, w.value);
-        for (uint32_t i = 0; i < kVfdFetchCount; i++) reg(stream, vfdFetchSize(i), 0);
-        reg64(stream, REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
-        reg64(stream, REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR, table + kTableBorderColorAt);
-        for (const RegWrite& w : kStaticStateTail) reg(stream, w.reg, w.value);
-    }
-    // 2. RB_CCU_CNTL for sysmem after a WFI ("isn't pipelined", tu_cmd_buffer.cc:373-377; fd6_emit.cc:828 "early a6xx
-    // needed this"): 0x10000000 in both witnesses (rbCcuCntlSysmem); bit 2, CONCURRENT_RESOLVE, is what hakios's kernel
-    // wrote at boot (hakios.adreno.c:2904) and Mesa never sets for this chip -- the switch is the bisect's
-    if (o.ccuCntl) {
-        stream.waitForIdle();
-        reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
-    }
-    // fd6's LRZ_FLUSH at the start of a sysmem pass (fd6_gmem.cc:2001); turnip has none here. Under lrzOff with the LRZ
-    // registers below, since it is the LRZ it flushes
-    if (o.lrzOff) {
-        event(stream, LRZ_FLUSH);
-    }
-    // 3. pass begin (tu6_sysmem_render_begin, tu_cmd_buffer.cc:2093-2142; fd6_emit_sysmem_prep, fd6_gmem.cc:2020-2056):
-    // the window scissor is the whole target (BR inclusive: tu6_emit_window_scissor :736-747), GRAS_2D_RESOLVE_CNTL_1/2
-    // beside it (:745-746), the four A6XX window offsets 0 (set_window_offset, fd6_gmem.cc:1223-1235; turnip's
-    // A7XX_SP_PS_2D_WINDOW_OFFSET is not copied), GRAS/RB_BIN_CONTROL with BUFFERS_IN_SYSMEM and no bins (0x00c00000 as
-    // fd6 and r3d; 0x03c00000 with turnip's LRZ feedback mask under binControlLrzFeedback), RB_BIN_CONTROL2 0, the
-    // RM6_DIRECT_RENDER marker, CP_SKIP_IB2_ENABLE_GLOBAL 0, CP_SET_VISIBILITY_OVERRIDE 1 (what makes a draw without a
-    // visibility stream legal), CP_SET_MODE 0. VPC_SO_DISABLE stays at the static table's 1 (turnip's; fd6 writes 0
-    // here, fd6_gmem.cc:2053): not switchable in render::Options, named for the lead.
-    if (o.passBegin) {
-        regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
-        regs(stream, REG_A6XX_GRAS_2D_RESOLVE_CNTL_1, {regXY(0, 0), regXY(W - 1, H - 1)});
-        reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(0, 0));
-        reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(0, 0));
-        reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(0, 0));
-        reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(0, 0));
-        reg(stream, REG_A6XX_GRAS_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
-        reg(stream, REG_A6XX_RB_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
-        reg(stream, REG_A6XX_RB_BIN_CONTROL2, 0);
-    }
-    if (o.marker) {
-        command1(stream, CP_SET_MARKER, setMarker0(RM6_DIRECT_RENDER));
-    }
-    if (o.passBegin) {
-        command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 0);
-        command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
-        command1(stream, CP_SET_MODE, 0);
+    passStart(stream, W, H, table, o);
+    // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it
+    if (pass.load == LoadAction::kClear) {
+        clearStream(stream, target, clear, table + kTableClearFlushAt);
     }
     // 4. no depth attachment (tu6_emit_zs :415-433; fd6 emit_zs(NULL), fd6_gmem.cc:231-247): RB_DEPTH_BUFFER_INFO
     // DEPTH6_NONE with its pitches and bases 0, GRAS_SU_DEPTH_BUFFER_INFO 0, RB_STENCIL_INFO 0
@@ -825,35 +997,46 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), 1, draw.vertexCount};
         stream.packet(CP_DRAW_INDX_OFFSET, w, 3);
     }
-    // 19. the tail: a WFI (as compute's), then what puts the colour in memory -- PC_CCU_FLUSH_COLOR_TS as a 4-word event
-    // writing 1 (turnip's form, tu_cmd_buffer.cc:48-70, with a value where turnip writes a dummy) and a wait for it
-    // (neither witness waits: both let the kernel's fence follow; the kernel's own fence here has no CCU flush,
-    // hakios.adreno.c:3496-3516, so the wait is cheap insurance); LRZ_FLUSH as both witnesses end a pass (tu_lrz.cc:465,
-    // fd6_gmem.cc:2114); RB_DONE_TS only under tailRbDone (in neither witness's render end); CACHE_FLUSH_TS writing 2 and
-    // CP_WAIT_MEM_GTE for it, compute's measured tail
-    stream.waitForIdle();
-    {
-        const uint64_t ts = table + kTableTimestampsAt;
-        if (o.tailCcuFlush) {
-            eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, 1, o.tailTimestampBit);
-            waitForWord(stream, ts, 1);
-        }
-        if (o.tailLrzFlush) {
-            event(stream, LRZ_FLUSH);
-        }
-        if (o.tailRbDone) {
-            eventTimestamp(stream, RB_DONE_TS, ts + 8, 3, o.tailTimestampBit);
-            waitForWord(stream, ts + 8, 3);
-        }
-        if (o.tailCacheFlush) {
-            eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2, o.tailTimestampBit);
-            waitForWordAtLeast(stream, ts + 4, 2);
-        }
+    passTail(stream, table, o);
+    return true;
+}
+
+bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+    if (!checkTarget(pass, why)) {
+        return false;
     }
+    if (pass.load != LoadAction::kClear) {
+        return refuse(why, "a pass without a draw and with load action " + n(uint32_t(pass.load)) + ": only a Clear writes anything then");
+    }
+    const Texture& target = *pass.color0;
+    ClearWords clear{};
+    if (!clearWords(target.info(), pass.clearColor, &clear, why)) {
+        return false;
+    }
+    tableStart(tableCpu);
+    passStart(stream, target.width(), target.height(), table, o);
+    clearStream(stream, target, clear, table + kTableClearFlushAt);
+    passTail(stream, table, o);
     return true;
 }
 
 }  // namespace render
+
+// a pass's words onto the command buffer's stream, packet by packet, behind a NOP that marks where an encoder began
+// (for whoever reads the stream back)
+void appendStream(pm4::Stream& to, const pm4::Stream& from) {
+    const std::vector<uint32_t>& w = from.words();
+    to.packet(pm4::kNop, nullptr, 0);
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kRegisters) {
+            to.registers(h.reg, &w[i + 1], h.count);
+        } else {
+            to.packet(h.opcode, h.count ? &w[i + 1] : nullptr, h.count);
+        }
+        i += 1 + h.count;
+    }
+}
 
 bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const Draw& d, const Bindings& vsBindings, const Bindings& fsBindings,
                          const render::Options& options) {
@@ -884,17 +1067,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // (only now, after encode counted them: the words into the two buffers)
     memcpy(vsProgram->contents(), program.vs.k.words, 4ull * program.vs.k.numWords);
     memcpy(fsProgram->contents(), program.fs.k.words, 4ull * program.fs.k.numWords);
-    const std::vector<uint32_t>& w = added.words();
-    stream_.packet(pm4::kNop, nullptr, 0);   // (a marker between encoders in the stream, for whoever reads it back)
-    for (size_t i = 0; i < w.size();) {
-        pm4::Header h = pm4::decode(w[i]);
-        if (h.kind == pm4::Header::kRegisters) {
-            stream_.registers(h.reg, &w[i + 1], h.count);
-        } else {
-            stream_.packet(h.opcode, h.count ? &w[i + 1] : nullptr, h.count);
-        }
-        i += 1 + h.count;
-    }
+    appendStream(stream_, added);
     use(*vsProgram, false);
     use(*fsProgram, false);
     use(*table, true);
@@ -909,6 +1082,27 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     keep(vsProgram);
     keep(fsProgram);
+    keep(table);
+    return true;
+}
+
+bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options) {
+    if (status_ > kEnqueued) {
+        return fail("clear after commit");
+    }
+    std::string why;
+    std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), render::kTableBytes, &why);
+    if (table == nullptr) {
+        return fail(std::string("no memory for the pass's table: ") + why);
+    }
+    pm4::Stream added;
+    if (!render::encodeClear(added, pass, table->gpuAddress(), static_cast<uint8_t*>(table->contents()), &why, options)) {
+        return fail(why);
+    }
+    appendStream(stream_, added);
+    use(*table, true);
+    use(*pass.color0->buffer(), true);
+    keep(pass.color0->buffer());
     keep(table);
     return true;
 }

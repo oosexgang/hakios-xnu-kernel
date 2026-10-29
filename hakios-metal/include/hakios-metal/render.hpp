@@ -190,9 +190,9 @@ struct Scissor { uint32_t x, y, width, height; };               // MTLScissorRec
 
 struct RenderPass {
     const Texture* color0 = nullptr;             // made with kTextureUsageRenderTarget; step one: one target, no depth
-    LoadAction load = LoadAction::kLoad;         // kClear refused by name in step one (a clear is a draw in turnip's r3d path or a 2D blit; the probe fills the target by CPU)
+    LoadAction load = LoadAction::kLoad;         // kClear: the 2D engine fills the whole target with clearColor before the draw (turnip's sysmem clear)
     StoreAction store = StoreAction::kStore;
-    double clearColor[4] = {0, 0, 0, 0};
+    double clearColor[4] = {0, 0, 0, 0};         // MTLClearColor, RGBA whatever the format's memory order; whole numbers for an integer target
 };
 
 struct Draw {
@@ -210,6 +210,8 @@ namespace render {
 // entry (the TP's base registers point here, as in compute), a hole, room for step two's per-stage descriptor tables.
 constexpr uint32_t kTableBytes = 8192;
 constexpr uint32_t kTableTimestampsAt = 0;        // the CCU flush's and the cache flush's values: 4 words
+constexpr uint32_t kTableClearFlushAt = 12;       // ...the fourth: the CCU flush after a Clear's fill, which writes kClearFlushValue
+constexpr uint32_t kClearFlushValue = 4;
 constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
 constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses
 constexpr uint32_t kTableVsAt = 1024;             // step two: the VS's descriptor tables (UBO, IBO, TEX, SAMP)
@@ -263,11 +265,16 @@ struct Options {
 // FS colour output does not match, numColorOutputs != 1, depth/sample-mask/stencil outputs, writesPos, perSamp,
 // fbRead, dualSrcBlend, readsPrimid, numSamplerPrefetch != 0, a VS attribute the vertex descriptor does not describe or
 // describes in a format, step or layout not served or whose fetch runs past its bound buffer, instanceCount != 1, a primitive
-// other than triangles and strips, vertexCount 0, a viewport or scissor outside the target, load kClear, store other
-// than kStore, instrlen > 127, pvtmem, the two stages' constlen over 512 vec4 together, and whatever link() refuses.
+// other than triangles and strips, vertexCount 0, a viewport or scissor outside the target, a Clear colour with a
+// non-finite channel (or a fractional or out-of-range one into an integer target), store other than kStore, instrlen > 127, pvtmem, the two stages' constlen over 512 vec4 together, and whatever link() refuses.
 bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw,
             const Bindings& vsBindings, const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram,
             uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{});
+
+// A pass with no draw: the batch start, the pass begin, the Clear's fill, the tail. What -[MTLRenderCommandEncoder
+// endEncoding] needs for an encoder that recorded nothing; any load action but kClear is refused (nothing to write).
+bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
+                 const Options& options = Options{});
 
 }  // namespace render
 

@@ -410,9 +410,10 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         Program ip = handProgram();
         ip.fs.outputs[0].pad = kElemUint;
         refused(r, ip, pass, d, "hand_fs returns integers into RGBA8Unorm, which holds floats");
-        RenderPass clear = pass;
-        clear.load = LoadAction::kClear;
-        refused(r, p, clear, d, "load action Clear: a clear is a draw in turnip's r3d path or a 2D blit, and neither is written here; the first draw's target is filled by the CPU");
+        RenderPass nan = pass;
+        nan.load = LoadAction::kClear;
+        nan.clearColor[1] = std::nan("");
+        refused(r, p, nan, d, "a clear colour with a non-finite channel (channel 1) into RGBA8Unorm");
         RenderPass odd = pass;
         odd.load = LoadAction(7);
         refused(r, p, odd, d, "load action 7: MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
@@ -1925,3 +1926,301 @@ TEST(a_draw_refuses_a_vertex_fetch_it_cannot_serve_by_name) {
     CHECK_EQ(r.fake->stats().submits, 0u);
 }
 
+
+// --- a Clear: the 2D engine's solid fill, as turnip clears a single-sampled sysmem attachment ----------------------------
+
+namespace {
+// every pixel of T is the BPP bytes of WANT
+bool allPixels(const Texture& t, const uint8_t* want, uint32_t bpp) {
+    auto* b = static_cast<const uint8_t*>(t.contents());
+    for (uint32_t y = 0; y < t.height(); y++) {
+        for (uint32_t x = 0; x < t.width(); x++) {
+            if (memcmp(b + y * t.bytesPerRow() + x * bpp, want, bpp) != 0) return false;
+        }
+    }
+    return true;
+}
+
+void seed(const Texture& t) { memset(const_cast<void*>(static_cast<const void*>(t.contents())), 0xa5, t.buffer()->length()); }
+
+// a pass with no draw through CommandBuffer::clear, committed and waited for
+std::shared_ptr<CommandBuffer> clearOnce(Rig& r, const RenderPass& pass) {
+    auto cb = r.queue->commandBuffer();
+    if (cb->clear(pass)) {
+        cb->commit();
+        cb->waitUntilCompleted();
+    }
+    return cb;
+}
+
+RenderPass clearPass(const Texture* t, double r, double g, double b, double a) {
+    RenderPass p;
+    p.color0 = t;
+    p.load = LoadAction::kClear;
+    p.clearColor[0] = r;
+    p.clearColor[1] = g;
+    p.clearColor[2] = b;
+    p.clearColor[3] = a;
+    return p;
+}
+}  // namespace
+
+TEST(a_clear_fills_the_target_through_the_2d_engine_before_the_draw) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    seed(*t);
+    RenderPass pass = clearPass(t.get(), 0.25, 0.5, 0.75, 1.0);
+    Encoded e(r, flatProgram(), pass, wholeDraw());
+    CHECK(e.ok);
+    // in the pass, before the first draw state: after the RM6_DIRECT_RENDER marker, before the draw and before RB_MRT
+    size_t marker = e.find(CP_SET_MARKER), blit = e.find(CP_BLIT), draw = e.find(CP_DRAW_INDX_OFFSET);
+    CHECK(marker != size_t(-1) && blit != size_t(-1) && draw != size_t(-1));
+    CHECK(marker < blit && blit < draw);
+    CHECK(blit < e.findReg(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0)));
+    CHECK_EQ(e.find(CP_BLIT, blit + 1), size_t(-1));   // one fill
+    // the words, as literals: SOLID_COLOR 0x80, FMT6_8_8_8_8_UNORM (48) << 8, MASK 0xf << 20, R2D_UNORM8 (16) << 24
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_BLIT_CNTL), 0x10f03080u);
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_2D_BLIT_CNTL), 0x10f03080u);
+    CHECK_EQ(e.reg(REG_A6XX_SP_2D_DST_FORMAT), 0xf000u | (48u << 3));
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_DST_INFO), 48u);                    // linear, WZYX, no sRGB
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_DST_PITCH), 4u);                    // 256 bytes in units of 64
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_2D_DST_TL), 0u);
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_2D_DST_BR), (63u << 16) | 63u);
+    // 0.25 * 255 = 63.75 -> 64, 0.5 * 255 = 127.5 -> 128 (even), 0.75 * 255 = 191.25 -> 191, 1 -> 255
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0), 64u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0 + 1), 128u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0 + 2), 191u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0 + 3), 255u);
+    CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_2D_DST)) | uint64_t(e.reg(REG_A6XX_RB_2D_DST + 1)) << 32, t->gpuAddress());
+    // through the command buffer: the fake carries the fill out (and rasterizes nothing), so every pixel is the colour
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw());
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const uint8_t want[4] = {64, 128, 191, 255};
+    CHECK(allPixels(*t, want, 4));
+    CHECK_EQ(r.fake->stats().fills, 1u);
+    CHECK_EQ(r.fake->stats().draws, 1u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    // the twin: a Load pass draws without a fill, so the canary stays
+    seed(*t);
+    RenderPass load = pass;
+    load.load = LoadAction::kLoad;
+    Encoded l(r, flatProgram(), load, wholeDraw());
+    CHECK(l.ok);
+    CHECK_EQ(l.find(CP_BLIT), size_t(-1));
+    auto lc = drawOnce(r, flatProgram(), load, wholeDraw());
+    CHECK(lc->status() == CommandBuffer::kCompleted);
+    const uint8_t canary[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+    CHECK(allPixels(*t, canary, 4));
+    CHECK_EQ(r.fake->stats().fills, 1u);
+}
+
+TEST(a_clear_packs_the_colour_as_each_format_holds_it) {
+    struct Case {
+        PixelFormat format;
+        double c[4];
+        uint32_t bpp;
+        uint8_t want[16];
+    };
+    // the halves: 0.25 = 0x3400, -2 = 0xc000, 65504 = 0x7bff (the largest), 1e-7 = 2 units of 2^-24 (a subnormal, rounded)
+    // the words: 1.5f = 0x3fc00000, -0.0f = 0x80000000
+    const Case cases[] = {
+        {PixelFormat::kRGBA8Unorm, {0.25, 0.5, 0.75, 1.0}, 4, {64, 128, 191, 255}},
+        {PixelFormat::kBGRA8Unorm, {0.25, 0.5, 0.75, 1.0}, 4, {191, 128, 64, 255}},
+        {PixelFormat::kRGBA8Unorm, {-1.0, 2.0, 0.5 / 255.0, 1.5 / 255.0}, 4, {0, 255, 0, 2}},   // clamped; 0.5 and 1.5 to even
+        // linear 0.5 is sRGB 0.7354 -> 187.5 -> 188; alpha stays linear: 0.5 -> 128
+        {PixelFormat::kRGBA8UnormSrgb, {0.5, 0.5, 0.5, 0.5}, 4, {188, 188, 188, 128}},
+        {PixelFormat::kBGRA8UnormSrgb, {1.0, 0.0, 0.002, 1.0}, 4, {7, 0, 255, 255}},   // 0.002 * 12.92 * 255 = 6.6 -> 7, then swapped
+        {PixelFormat::kR8Unorm, {1.0, 0.5, 0.5, 0.5}, 1, {255}},
+        {PixelFormat::kRG8Unorm, {0.0, 1.0, 0.5, 0.5}, 2, {0, 255}},
+        {PixelFormat::kRGBA16Float, {0.25, -2.0, 65504.0, 1e-7}, 8, {0x00, 0x34, 0x00, 0xc0, 0xff, 0x7b, 0x02, 0x00}},
+        {PixelFormat::kR32Float, {1.5, 9.0, 9.0, 9.0}, 4, {0x00, 0x00, 0xc0, 0x3f}},
+        {PixelFormat::kRGBA32Float, {1.5, -0.0, 0.0, 1.0}, 16, {0, 0, 0xc0, 0x3f, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 0x80, 0x3f}},
+        {PixelFormat::kR32Uint, {7.0, 0.0, 0.0, 0.0}, 4, {7, 0, 0, 0}},
+        {PixelFormat::kRGBA32Uint, {1.0, 2.0, 4294967295.0, 0.0}, 16, {1, 0, 0, 0, 2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0}},
+    };
+    for (const Case& c : cases) {
+        Rig r;
+        auto t = target(r, 64, 64, kTextureUsageRenderTarget | kTextureUsageRead, c.format);
+        seed(*t);
+        auto cb = clearOnce(r, clearPass(t.get(), c.c[0], c.c[1], c.c[2], c.c[3]));
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        bool ok = allPixels(*t, c.want, c.bpp);
+        CHECK(ok);
+        if (!ok) {
+            const uint8_t* b = static_cast<const uint8_t*>(t->contents());
+            std::fprintf(stderr, "  %s: pixel 0 is", t->info().name);
+            for (uint32_t i = 0; i < c.bpp; i++) std::fprintf(stderr, " %02x", b[i]);
+            std::fprintf(stderr, "\n");
+        }
+        CHECK_EQ(r.fake->stats().fills, 1u);
+        CHECK_EQ(r.fake->stats().faults, 0u);
+    }
+}
+
+TEST(a_clear_without_a_draw_is_a_pass_of_its_own) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r, 48, 20);
+    seed(*t);
+    RenderPass pass = clearPass(t.get(), 0.0, 0.0, 1.0, 1.0);
+    pm4::Stream s;
+    std::string why;
+    auto table = newBuffer(*r.gpu, render::kTableBytes, &why);
+    CHECK(render::encodeClear(s, pass, table->gpuAddress(), static_cast<uint8_t*>(table->contents()), &why));
+    bool sawBlit = false, sawDraw = false, sawMarker = false;
+    for (size_t i = 0; i < s.words().size();) {
+        pm4::Header h = pm4::decode(s.words()[i]);
+        if (h.kind == pm4::Header::kCommand) {
+            sawBlit |= h.opcode == CP_BLIT;
+            sawDraw |= h.opcode == CP_DRAW_INDX_OFFSET;
+            sawMarker |= h.opcode == CP_SET_MARKER;
+        }
+        i += 1 + h.count;
+    }
+    CHECK(sawBlit && sawMarker && !sawDraw);
+    auto cb = clearOnce(r, pass);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const uint8_t blue[4] = {0, 0, 255, 255};
+    CHECK(allPixels(*t, blue, 4));   // 48 x 20: the rectangle is the target's, not a fixed 64 x 64
+    // the rows past the target's height (the layout pads to 4 rows) and the bytes past its width keep the canary
+    const uint8_t* b = static_cast<const uint8_t*>(t->contents());
+    CHECK_EQ(b[48 * 4], 0xa5u);
+    CHECK_EQ(b[20 * t->bytesPerRow()], 0xa5u);
+    CHECK_EQ(r.fake->stats().fills, 1u);
+    CHECK_EQ(r.fake->stats().draws, 0u);
+    // refused: nothing to write without a Clear, and the target rules a draw has
+    for (LoadAction a : {LoadAction::kLoad, LoadAction::kDontCare}) {
+        RenderPass p = pass;
+        p.load = a;
+        auto c = r.queue->commandBuffer();
+        CHECK(!c->clear(p));
+        expectRefusal(c->error(), a == LoadAction::kLoad ? "a pass without a draw and with load action 1: only a Clear writes anything then"
+                                                          : "a pass without a draw and with load action 0: only a Clear writes anything then");
+    }
+    auto plain = target(r, 64, 64, kTextureUsageRead);
+    auto c = r.queue->commandBuffer();
+    CHECK(!c->clear(clearPass(plain.get(), 0, 0, 0, 0)));
+    expectRefusal(c->error(), "the 64 x 64 RGBA8Unorm texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
+    CHECK_EQ(r.fake->stats().submits, 1u);
+}
+
+TEST(a_clear_refuses_a_colour_it_cannot_pack) {
+    Rig r;
+    auto t = target(r);
+    auto u = target(r, 64, 64, kTextureUsageRenderTarget, PixelFormat::kR32Uint);
+    struct Case {
+        const Texture* t;
+        double c[4];
+        const char* want;
+    };
+    const Case cases[] = {
+        {t.get(), {0, 0, 0, INFINITY}, "a clear colour with a non-finite channel (channel 3) into RGBA8Unorm"},
+        {u.get(), {2.5, 0, 0, 0}, "a clear colour of 2.500000 in channel 0 of R32Uint: an integer target takes whole numbers 0 to 4294967295"},
+        {u.get(), {-1, 0, 0, 0}, "a clear colour of -1.000000 in channel 0 of R32Uint: an integer target takes whole numbers 0 to 4294967295"},
+        {u.get(), {4294967296.0, 0, 0, 0}, "a clear colour of 4294967296.000000 in channel 0 of R32Uint: an integer target takes whole numbers 0 to 4294967295"},
+    };
+    for (const Case& c : cases) {
+        auto cb = r.queue->commandBuffer();
+        CHECK(!cb->clear(clearPass(c.t, c.c[0], c.c[1], c.c[2], c.c[3])));
+        expectRefusal(cb->error(), c.want);
+    }
+    CHECK_EQ(r.fake->stats().submits, 0u);
+}
+
+namespace {
+// a clear-only pass over a fresh rig, its words to mutate
+struct ClearTwin {
+    ClearTwin() : t(target(r)) {
+        seed(*t);
+        pass = clearPass(t.get(), 0.25, 0.5, 0.75, 1.0);
+        std::string why;
+        table = newBuffer(*r.gpu, render::kTableBytes, &why);
+        CHECK(render::encodeClear(s, pass, table->gpuAddress(), static_cast<uint8_t*>(table->contents()), &why));
+        words = s.words();
+    }
+    uint32_t& at(uint32_t reg) {
+        for (size_t i = 0; i < words.size();) {
+            pm4::Header h = pm4::decode(words[i]);
+            if (h.kind == pm4::Header::kRegisters && reg >= h.reg && reg < h.reg + h.count) return words[i + 1 + (reg - h.reg)];
+            i += 1 + h.count;
+        }
+        CHECK(false);
+        return words[0];
+    }
+    std::string fault() { return faultOf(r, words); }
+    Rig r;
+    std::shared_ptr<Texture> t;
+    RenderPass pass;
+    std::shared_ptr<Buffer> table;
+    pm4::Stream s;
+    std::vector<uint32_t> words;
+};
+}  // namespace
+
+TEST(the_fake_refuses_a_fill_whose_registers_do_not_hold_together) {
+    using namespace a6xx;
+    {
+        // unmutated it passes and fills: the twins below fail for their own reason
+        ClearTwin w;
+        Raw raw(w.r);
+        CHECK_EQ(raw.submit(w.words), 0);
+        const uint8_t want[4] = {64, 128, 191, 255};
+        CHECK(allPixels(*w.t, want, 4));
+        CHECK_EQ(w.r.fake->stats().fills, 1u);
+        const uint32_t* tw = static_cast<const uint32_t*>(w.table->contents());
+        CHECK_EQ(tw[render::kTableClearFlushAt / 4], render::kClearFlushValue);   // the clear's own CCU flush landed
+        CHECK_EQ(tw[0], 1u);
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_GRAS_2D_BLIT_CNTL) ^= 0x10u << 24 ^ 0x3u << 24;
+        CHECK(has(w.fault(), "RB_2D_BLIT_CNTL 0x10f03080 and GRAS_2D_BLIT_CNTL 0x3f03080 differ"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_GRAS_2D_BLIT_CNTL) &= ~A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR;
+        w.at(REG_A6XX_RB_2D_BLIT_CNTL) &= ~A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR;
+        CHECK(has(w.fault(), "a CP_BLIT without SOLID_COLOR"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_SP_2D_DST_FORMAT) &= ~A6XX_SP_2D_DST_FORMAT_MASK__MASK;
+        CHECK(has(w.fault(), "component mask is not 0xf"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_SP_2D_DST_FORMAT) = sp2dDstFormat(FMT6_32_FLOAT, false, false, false);
+        CHECK(has(w.fault(), "the fill's format differs between RB_2D_BLIT_CNTL (48), RB_2D_DST_INFO (48) and SP_2D_DST_FORMAT (74)"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_RB_2D_BLIT_CNTL) = w.at(REG_A6XX_GRAS_2D_BLIT_CNTL) = rb2dBlitCntlClear(FMT6_8_8_8_8_UNORM, R2D_FLOAT16);
+        CHECK(has(w.fault(), "a fill of format 48 through intermediate format 3: format_to_ifmt picks 16"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_RB_2D_DST_INFO) |= A6XX_RB_2D_DST_INFO_SRGB;
+        CHECK(has(w.fault(), "the sRGB bits"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_RB_2D_DST_PITCH) = A6XX_RB_2D_DST_PITCH(192);
+        CHECK(has(w.fault(), "rows wider than the pitch"));
+    }
+    {
+        ClearTwin w;
+        w.at(REG_A6XX_RB_2D_DST + 1) = 0x7;
+        CHECK(has(w.fault(), "outside every buffer"));
+    }
+    {
+        // the rectangle's last row exactly at the end of the GPU's buffer passes; one row more is outside it
+        ClearTwin w;
+        const uint32_t rows = uint32_t(w.t->buffer()->bo().size() / w.t->bytesPerRow());
+        w.at(REG_A6XX_GRAS_2D_DST_BR) = regXY(63, rows - 1);
+        Raw raw(w.r);
+        CHECK_EQ(raw.submit(w.words), 0);
+        w.at(REG_A6XX_GRAS_2D_DST_BR) = regXY(63, rows);
+        CHECK(has(w.fault(), "rows of 256 bytes: outside every buffer"));
+    }
+}

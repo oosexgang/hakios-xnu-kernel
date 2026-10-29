@@ -261,6 +261,7 @@ enum Opcode : uint32_t {
     CP_SKIP_IB2_ENABLE_GLOBAL = 0x1d,  // adreno_pm4.xml.h:294  1 word, 0 at pass begin and end (tu_cmd_buffer.cc:2134-2135, 2161-2162); undocumented
     CP_SKIP_IB2_ENABLE_LOCAL = 0x23,   // adreno_pm4.xml.h:295  1 word, 1: fd6 only ("I think that is not required", fd6_gmem.cc:2048)
     CP_WAIT_FOR_IDLE = 0x26,       // adreno_pm4.xml.h:219
+    CP_BLIT = 0x2c,                // adreno_pm4.xml.h:305  the 2D engine's run: a loadAction Clear's solid fill (r2d_run, tu_clear_blit.cc:551-570)
     CP_LOAD_STATE6_GEOM = 0x32,    // adreno_pm4.xml.h:308  the VS's loads (tu6_stage2opcode: VS -> GEOM, FS -> FRAG, tu_shader.cc:1349)
     CP_EXEC_CS = 0x33,             // adreno_pm4.xml.h:287
     CP_LOAD_STATE6_FRAG = 0x34,    // adreno_pm4.xml.h:309  what compute uses, for its shader, constants, IBOs and textures
@@ -4074,5 +4075,119 @@ constexpr uint32_t grasSuPointMinmax(uint32_t minSixteenths, uint32_t maxSixteen
     return A6XX_GRAS_SU_POINT_MINMAX_MIN(minSixteenths) | A6XX_GRAS_SU_POINT_MINMAX_MAX(maxSixteenths);
 }
 constexpr uint32_t grasSuPointSize(uint32_t sixteenths) { return A6XX_GRAS_SU_POINT_SIZE(sixteenths); }
+
+
+// --- the 2D engine: a solid-colour fill of the colour target, turnip's sysmem clear (r2d_*, tu_clear_blit.cc:145-570) ----
+//
+// A render pass with loadAction Clear begins with one CP_BLIT over the render area: turnip clears a single-sampled
+// sysmem attachment with the 2D engine, not with a draw (clear_sysmem_attachment, tu_clear_blit.cc:4402-4444, which
+// picks r3d only for MSAA). The 2D engine has its own copies of the format and the destination (RB_2D_DST_*), so the
+// clear does not read RB_MRT or any shader state.
+
+// the intermediate format the 2D engine converts the solid colour through (format_to_ifmt, tu_clear_blit.cc:41-71)
+enum a6xx_2d_ifmt : uint32_t {
+    R2D_UNORM8_SRGB = 1,           // a6xx.xml.h:1125  an sRGB target: the engine encodes, the clear value stays linear-packed (r2d_setup_common)
+    R2D_FLOAT16 = 3,               // a6xx.xml.h:1124  16-bit float channels: the value as halfs
+    R2D_FLOAT32 = 4,               // a6xx.xml.h:1123  32-bit float channels: the value's bits
+    R2D_INT8 = 5,                  // a6xx.xml.h:1122
+    R2D_INT16 = 6,                 // a6xx.xml.h:1121
+    R2D_INT32 = 7,                 // a6xx.xml.h:1120  32-bit integer channels: the value as integers
+    R2D_UNORM8 = 16,               // a6xx.xml.h:1119  8-bit unorm channels: each value rounded to 0..255 (tu_pack_float32_for_unorm)
+};
+
+// RB_2D_BLIT_CNTL and GRAS_2D_BLIT_CNTL take the same word (r2d_setup_common writes one value to both)
+inline constexpr uint32_t REG_A6XX_RB_2D_BLIT_CNTL = 0x8c00;                                // a6xx.xml.h:6555
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR = 128;                           // a6xx.xml.h:6569
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__MASK = 0x0000ff00;             // a6xx.xml.h:6570
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__SHIFT = 8;                     // a6xx.xml.h:6571
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_MASK__MASK = 0x00f00000;                     // a6xx.xml.h:6584
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_MASK__SHIFT = 20;                            // a6xx.xml.h:6585
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_IFMT__MASK = 0x1f000000;                     // a6xx.xml.h:6590
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_IFMT__SHIFT = 24;                            // a6xx.xml.h:6591
+inline constexpr uint32_t REG_A6XX_GRAS_2D_BLIT_CNTL = 0x8400;                              // a6xx.xml.h:5087
+inline constexpr uint32_t A6XX_GRAS_2D_BLIT_CNTL_SOLID_COLOR = 128;                         // a6xx.xml.h:5101
+inline constexpr uint32_t A6XX_GRAS_2D_BLIT_CNTL_COLOR_FORMAT__MASK = 0x0000ff00;           // a6xx.xml.h:5102
+inline constexpr uint32_t A6XX_GRAS_2D_BLIT_CNTL_MASK__MASK = 0x00f00000;                   // a6xx.xml.h:5116
+inline constexpr uint32_t A6XX_GRAS_2D_BLIT_CNTL_IFMT__MASK = 0x1f000000;                   // a6xx.xml.h:5122
+static_assert(A6XX_GRAS_2D_BLIT_CNTL_SOLID_COLOR == A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR &&
+                  A6XX_GRAS_2D_BLIT_CNTL_COLOR_FORMAT__MASK == A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__MASK &&
+                  A6XX_GRAS_2D_BLIT_CNTL_MASK__MASK == A6XX_RB_2D_BLIT_CNTL_MASK__MASK && A6XX_GRAS_2D_BLIT_CNTL_IFMT__MASK == A6XX_RB_2D_BLIT_CNTL_IFMT__MASK,
+              "one blit word serves both copies");
+constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT(uint32_t v) {
+    return field(v, A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__SHIFT, A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__MASK);
+}
+constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_MASK(uint32_t v) { return field(v, A6XX_RB_2D_BLIT_CNTL_MASK__SHIFT, A6XX_RB_2D_BLIT_CNTL_MASK__MASK); }
+constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_IFMT(uint32_t v) { return field(v, A6XX_RB_2D_BLIT_CNTL_IFMT__SHIFT, A6XX_RB_2D_BLIT_CNTL_IFMT__MASK); }
+
+// SP_2D_DST_FORMAT: the format again for the SP side of the engine, UINT/SINT for the pure-integer formats
+inline constexpr uint32_t REG_A6XX_SP_2D_DST_FORMAT = 0xacc0;                               // a6xx.xml.h:9521
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_SINT = 2;                                   // a6xx.xml.h:9523
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_UINT = 4;                                   // a6xx.xml.h:9524
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__MASK = 0x000007f8;            // a6xx.xml.h:9525
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__SHIFT = 3;                    // a6xx.xml.h:9526
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_SRGB = 0x00000800;                          // a6xx.xml.h:9531
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_MASK__MASK = 0x0000f000;                    // a6xx.xml.h:9532
+inline constexpr uint32_t A6XX_SP_2D_DST_FORMAT_MASK__SHIFT = 12;                           // a6xx.xml.h:9533
+inline constexpr uint32_t REG_A6XX_RB_2D_UNKNOWN_8C01 = 0x8c01;                             // a6xx.xml.h:6605
+inline constexpr uint32_t REG_A6XX_GRAS_2D_DST_TL = 0x8405;                                 // a6xx.xml.h:5173
+inline constexpr uint32_t REG_A6XX_GRAS_2D_DST_BR = 0x8406;                                 // a6xx.xml.h:5188
+inline constexpr uint32_t A6XX_GRAS_2D_DST_TL_X__MASK = 0x00003fff;                         // a6xx.xml.h:5174
+inline constexpr uint32_t A6XX_GRAS_2D_DST_TL_Y__MASK = 0x3fff0000;                         // a6xx.xml.h:5180
+inline constexpr uint32_t A6XX_GRAS_2D_DST_BR_X__MASK = 0x00003fff;                         // a6xx.xml.h:5189
+inline constexpr uint32_t A6XX_GRAS_2D_DST_BR_Y__MASK = 0x3fff0000;                         // a6xx.xml.h:5195
+inline constexpr uint32_t REG_A6XX_RB_2D_SRC_SOLID_C0 = 0x8c2c;                             // a6xx.xml.h:6693
+constexpr uint32_t A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT(uint32_t v) {
+    return field(v, A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__SHIFT, A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__MASK);
+}
+constexpr uint32_t A6XX_SP_2D_DST_FORMAT_MASK(uint32_t v) { return field(v, A6XX_SP_2D_DST_FORMAT_MASK__SHIFT, A6XX_SP_2D_DST_FORMAT_MASK__MASK); }
+
+// the destination: INFO, BASE lo/hi, PITCH as one pkt4 from RB_2D_DST_INFO (r2d_dst, tu_clear_blit.cc:396-413), then
+// the flag buffer's three words from RB_2D_DST_FLAGS (0: no UBWC)
+inline constexpr uint32_t REG_A6XX_RB_2D_DST_INFO = 0x8c17;                                 // a6xx.xml.h:6608
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_FORMAT__MASK = 255;                     // a6xx.xml.h:6609
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_FORMAT__SHIFT = 0;                      // a6xx.xml.h:6610
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_TILE_MODE__MASK = 0x00000300;                 // a6xx.xml.h:6615
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT = 8;                         // a6xx.xml.h:6616
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK = 0x00000c00;                // a6xx.xml.h:6621
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT = 10;                       // a6xx.xml.h:6622
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_SRGB = 0x00002000;                            // a6xx.xml.h:6628
+inline constexpr uint32_t REG_A6XX_RB_2D_DST = 0x8c18;                                      // a6xx.xml.h:6638
+inline constexpr uint32_t REG_A6XX_RB_2D_DST_PITCH = 0x8c1a;                                // a6xx.xml.h:6641
+inline constexpr uint32_t A6XX_RB_2D_DST_PITCH__MASK = 0x0000ffff;                          // a6xx.xml.h:6642
+inline constexpr uint32_t A6XX_RB_2D_DST_PITCH__SHIFT = 0;                                  // a6xx.xml.h:6643
+inline constexpr uint32_t REG_A6XX_RB_2D_DST_FLAGS = 0x8c20;                                // a6xx.xml.h:6667
+inline constexpr uint32_t A6XX_RB_2D_DST_PITCH__SCALE = 6;                                  // a6xx.xml.h:6644  the encoder's val >> 6
+constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_FORMAT(uint32_t v) {
+    return field(v, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__SHIFT, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__MASK);
+}
+constexpr uint32_t A6XX_RB_2D_DST_INFO_TILE_MODE(uint32_t v) { return field(v, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK); }
+constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_SWAP(uint32_t v) { return field(v, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT, A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK); }
+constexpr uint32_t A6XX_RB_2D_DST_PITCH(uint32_t v) { return field(v >> A6XX_RB_2D_DST_PITCH__SCALE, A6XX_RB_2D_DST_PITCH__SHIFT, A6XX_RB_2D_DST_PITCH__MASK); }
+static_assert(REG_A6XX_RB_2D_DST == REG_A6XX_RB_2D_DST_INFO + 1 && REG_A6XX_RB_2D_DST_PITCH == REG_A6XX_RB_2D_DST_INFO + 3,
+              "INFO, BASE lo, BASE hi, PITCH are four consecutive registers: one pkt4");
+static_assert(A6XX_GRAS_2D_DST_TL_X__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__MASK && A6XX_GRAS_2D_DST_TL_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK &&
+                  A6XX_GRAS_2D_DST_BR_X__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__MASK && A6XX_GRAS_2D_DST_BR_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK,
+              "GRAS_2D_DST_TL/BR are a6xx_reg_xy: regXY encodes them");
+
+// CP_BLIT, one word: the operation (r2d_run, tu_clear_blit.cc:551-570; RB_DBG_ECO_CNTL needs no switch around it on
+// this chip: its _blit value is the plain one, freedreno_devices.py's A635 entry)
+inline constexpr uint32_t BLIT_OP_SCALE = 3;                                                 // adreno_pm4.xml.h:505
+inline constexpr uint32_t CP_BLIT_0_OP__MASK = 0x0000000f;                                   // adreno_pm4.xml.h:2439
+inline constexpr uint32_t CP_BLIT_0_OP__SHIFT = 0;                                           // adreno_pm4.xml.h:2440
+
+// the blit word of a solid fill of FMT through IFMT, all four channels written (r2d_setup_common: rotate 0, no scissor,
+// no d24s8)
+constexpr uint32_t rb2dBlitCntlClear(uint32_t fmt, uint32_t ifmt) {
+    return A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR | A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT(fmt) | A6XX_RB_2D_BLIT_CNTL_MASK(0xf) | A6XX_RB_2D_BLIT_CNTL_IFMT(ifmt);
+}
+constexpr uint32_t sp2dDstFormat(uint32_t fmt, bool sint, bool uint, bool srgb) {
+    return (sint ? A6XX_SP_2D_DST_FORMAT_SINT : 0u) | (uint ? A6XX_SP_2D_DST_FORMAT_UINT : 0u) | A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT(fmt) |
+           (srgb ? A6XX_SP_2D_DST_FORMAT_SRGB : 0u) | A6XX_SP_2D_DST_FORMAT_MASK(0xf);
+}
+constexpr uint32_t rb2dDstInfo(uint32_t fmt, uint32_t tileMode, uint32_t swap, bool srgb) {
+    return A6XX_RB_2D_DST_INFO_COLOR_FORMAT(fmt) | A6XX_RB_2D_DST_INFO_TILE_MODE(tileMode) | A6XX_RB_2D_DST_INFO_COLOR_SWAP(swap) |
+           (srgb ? A6XX_RB_2D_DST_INFO_SRGB : 0u);
+}
+constexpr uint32_t cpBlit0(uint32_t op) { return field(op, CP_BLIT_0_OP__SHIFT, CP_BLIT_0_OP__MASK); }
 
 }  // namespace hakios::metal::a6xx

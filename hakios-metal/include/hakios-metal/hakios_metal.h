@@ -188,9 +188,9 @@ struct hakios_metal_scissor { unsigned x, y, width, height; };              /* M
 /* MTLRenderPassDescriptor's colour attachment 0, as the plug-in reads it */
 struct hakios_metal_render_pass {
 	hakios_metal_texture *color0;     /* made with usage bit 4 */
-	unsigned load_action;             /* MTLLoadAction: DontCare 0, Load 1, Clear 2 -- Clear refused by name in step one */
+	unsigned load_action;             /* MTLLoadAction: DontCare 0, Load 1, Clear 2 (the whole attachment filled before the draw) */
 	unsigned store_action;            /* MTLStoreAction: DontCare 0, Store 1; others refused */
-	double clear_color[4];            /* MTLClearColor, read only for Clear */
+	double clear_color[4];            /* MTLClearColor, read only for Clear: RGBA; whole numbers 0..2^32-1 for a Uint attachment */
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,
@@ -204,6 +204,10 @@ int hakios_metal_cb_draw(hakios_metal_cb *cb, hakios_metal_program *program,
     unsigned instance_count,
     hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
     hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count);
+/* A pass with no draw, as an encoder that recorded none ends: only a Clear writes anything then (PASS's load action
+ * must be 2), and the attachment is filled with its clear colour. -1 with the reason otherwise. With draws, each
+ * hakios_metal_cb_draw is a whole pass of its own: the caller passes the Clear to the first and Load to the rest. */
+int hakios_metal_cb_clear(hakios_metal_cb *cb, const struct hakios_metal_render_pass *pass);
 
 hakios_metal_queue *hakios_metal_queue_new(hakios_metal_device *device);
 void hakios_metal_queue_free(hakios_metal_queue *queue);

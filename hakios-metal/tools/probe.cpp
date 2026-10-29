@@ -123,6 +123,11 @@ static std::string hex8(uint32_t v) {
     snprintf(h, sizeof h, "0x%08x", v);
     return h;
 }
+static std::string hex2(uint8_t v) {
+    char h[4];
+    snprintf(h, sizeof h, "%02x", v);
+    return h;
+}
 
 // FNV-1a over bytes: the hash the --metallib lines print per buffer and per texture, so that a host reference running
 // the same kernel over the same canary-filled memory can print the same line and the two logs diff
@@ -1068,6 +1073,7 @@ int main(int argc, char** argv) {
     //   9d. tri_color, 0..6: the barycentric weights as bytes, within one unit, the diagonal excluded
     //   9e. (--bisect) tri_flat under each render::Options group off and each alternative on, one boot
     //   9f. the four stages compiled on the phone against the host's fixtures, and the phone-compiled program drawn
+    //   9i. a Clear: the 2D fill without a draw over six formats and a 48x20 rectangle, then before tri_flat
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1376,6 +1382,113 @@ int main(int argc, char** argv) {
                 report(!accepted && cb->error().find("ends at byte 80 of buffer 0; 72 are bound") != std::string::npos,
                        "control, tri_attr over 7 vertices of a 6-vertex buffer: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
             }
+        }
+        // 9i. a Clear: the 2D engine's solid fill (CP_BLIT, turnip's sysmem clear), first without a draw, then before one.
+        // Each target starts as a canary none of the expected bytes is; inside the target's rectangle every pixel must be
+        // the packed colour, everything outside it in the Bo (the row padding past width * cpp, the rows past the height)
+        // must still be the canary -- a fill that ignored GRAS_2D_DST_BR would paint them. The expected bytes are turnip's
+        // packing (r2d_clear_value), computed by hand: whether the GPU stores what the registers say is what this measures.
+        {
+            struct ClearCase {
+                PixelFormat format;
+                uint32_t w, h;
+                double c[4];
+                uint32_t bpp;
+                uint8_t want[16];
+                const char* label;
+            };
+            const ClearCase cases[] = {
+                {PixelFormat::kRGBA8Unorm, 64, 64, {0.25, 0.5, 0.75, 1.0}, 4, {0x40, 0x80, 0xbf, 0xff}, "RGBA8Unorm (0.25, 0.5, 0.75, 1)"},
+                {PixelFormat::kBGRA8Unorm, 64, 64, {0.25, 0.5, 0.75, 1.0}, 4, {0xbf, 0x80, 0x40, 0xff}, "BGRA8Unorm (0.25, 0.5, 0.75, 1): B first in memory"},
+                {PixelFormat::kRGBA8UnormSrgb, 64, 64, {0.5, 0.5, 0.5, 0.5}, 4, {0xbc, 0xbc, 0xbc, 0x80}, "RGBA8Unorm_sRGB (0.5 x 4): 188 encoded, alpha 128 linear"},
+                {PixelFormat::kRGBA16Float, 64, 64, {0.25, -2.0, 65504.0, 1e-7}, 8, {0x00, 0x34, 0x00, 0xc0, 0xff, 0x7b, 0x02, 0x00}, "RGBA16Float (0.25, -2, 65504, 1e-7)"},
+                {PixelFormat::kR32Uint, 64, 64, {7.0, 0, 0, 0}, 4, {7, 0, 0, 0}, "R32Uint (7)"},
+                {PixelFormat::kRGBA32Float, 64, 64, {1.5, -0.0, 0.0, 1.0}, 16, {0, 0, 0xc0, 0x3f, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 0x80, 0x3f}, "RGBA32Float (1.5, -0, 0, 1)"},
+                {PixelFormat::kRGBA8Unorm, 48, 20, {0.0, 1.0, 0.0, 1.0}, 4, {0x00, 0xff, 0x00, 0xff}, "RGBA8Unorm 48x20 (0, 1, 0, 1): row padding and the 4-row pad untouched"},
+            };
+            for (const ClearCase& c : cases) {
+                TextureDesc d;
+                d.format = c.format;
+                d.width = c.w;
+                d.height = c.h;
+                d.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+                auto ct = Texture::make(gpu, d, &why);
+                if (ct == nullptr) {
+                    report(false, std::string("clear: a ") + c.label + " target: " + why);
+                    continue;
+                }
+                const uint32_t cc = texCanary([&](uint32_t v) {
+                    for (uint32_t k = 0; k + 4 <= c.bpp; k += 4)
+                        if (memcmp(&v, c.want + k, 4) == 0) return true;
+                    return false;
+                });
+                fillBo(*ct, cc);
+                RenderPass pass;
+                pass.color0 = ct.get();
+                pass.load = LoadAction::kClear;
+                for (int k = 0; k < 4; k++) pass.clearColor[k] = c.c[k];
+                auto cb = queue->commandBuffer();
+                if (cb->clear(pass)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*ct);
+                uint32_t inside = 0, insideOk = 0, outsideBad = 0;
+                std::string firstBad;
+                for (uint64_t at = 0; at + 4 <= bo.size(); at += 4) {
+                    const uint64_t row = at / ct->bytesPerRow(), col = at % ct->bytesPerRow();
+                    const bool in = row < c.h && col < uint64_t(c.w) * c.bpp;
+                    if (in) {
+                        if (col % c.bpp == 0) {
+                            inside++;
+                            bool ok = memcmp(bo.data() + at, c.want, c.bpp) == 0;
+                            insideOk += ok;
+                            if (!ok && firstBad.empty()) {
+                                firstBad = " (pixel " + std::to_string(col / c.bpp) + "," + std::to_string(row) + " holds";
+                                for (uint32_t b = 0; b < c.bpp; b++) firstBad += " " + hex2(bo[at + b]);
+                                firstBad += ")";
+                            }
+                        }
+                    } else {
+                        uint32_t v;
+                        memcpy(&v, bo.data() + at, 4);
+                        outsideBad += v != cc;
+                    }
+                }
+                report(completed(*cb) && insideOk == inside && inside == c.w * c.h && outsideBad == 0,
+                       std::string("clear without a draw, ") + c.label + ": " + std::to_string(insideOk) + " of " + std::to_string(inside) +
+                           " pixels the packed colour" + firstBad + ", " + std::to_string(outsideBad) + " words outside the rectangle changed" + status(*cb, gpu));
+            }
+        }
+        // the Clear before a draw: tri_flat's T1 drawn over a clear to (0.25, 0.5, 0.75, 1) -- the lower-left interior the
+        // triangle's colour, the exterior and the diagonal (the top-left rule leaves it out) the clear colour, nothing the
+        // canary: the fill must land first and the draw over it, through the same CCU
+        if (t) {
+            const uint32_t clearWord = 0xffbf8040u;
+            const uint32_t cc = texCanary([&](uint32_t v) { return v == clearWord || v == flatColour; });
+            fillBo(*t, cc);
+            RenderPass pass;
+            pass.color0 = t.get();
+            pass.load = LoadAction::kClear;
+            pass.clearColor[0] = 0.25;
+            pass.clearColor[1] = 0.5;
+            pass.clearColor[2] = 0.75;
+            pass.clearColor[3] = 1.0;
+            auto cb = queue->commandBuffer();
+            if (cb->draw(flat, pass, drawOf(0, 3), Bindings{}, Bindings{})) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            TriReadback r = compareTriangle(*t, flatColour, clearWord, lowerLeft);
+            report(completed(*cb) && r.interiorColour == r.interior && r.exteriorCanary == r.exterior && r.edgeCanary == r.edge && r.other == 0,
+                   "clear then tri_flat T1: " + describeTriangle(r) + " (here \"canary\" is the clear colour " + hex8(clearWord) + ")" + status(*cb, gpu));
+            // and the refusal: a pass without a draw that does not clear has nothing to write
+            RenderPass load;
+            load.color0 = t.get();
+            auto cb2 = queue->commandBuffer();
+            bool accepted = cb2->clear(load);
+            report(!accepted && cb2->error().find("only a Clear writes anything then") != std::string::npos,
+                   std::string("control, a pass without a draw and with load action Load: ") + (accepted ? "ACCEPTED" : "refused: " + cb2->error()));
         }
         // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the
         // draw hangs or writes nothing, this says which group it needs, one boot for all of it, each hang costing a reset. A

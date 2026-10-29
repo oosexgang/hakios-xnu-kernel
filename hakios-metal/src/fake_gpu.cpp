@@ -627,6 +627,100 @@ bool FakeGpu::checkStageProgram(const char* what, const StageLoads& xs, uint32_t
     return true;
 }
 
+// CP_BLIT: the 2D engine. Only the solid fill a Clear is (r2d_setup_common with clear = true, tu_clear_blit.cc:455-521);
+// a copy has a source this model does not read.
+bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
+    using namespace a6xx;
+    if (count != 1 || fieldOf(p[0], CP_BLIT_0_OP__MASK, CP_BLIT_0_OP__SHIFT) != BLIT_OP_SCALE) {
+        fault(text("CP_BLIT of %llu words, op %llu: one word, BLIT_OP_SCALE (3), is what this GPU model runs", count, count ? fieldOf(p[0], CP_BLIT_0_OP__MASK, CP_BLIT_0_OP__SHIFT) : 0));
+        return false;
+    }
+    const uint32_t rb = reg(REG_A6XX_RB_2D_BLIT_CNTL), gras = reg(REG_A6XX_GRAS_2D_BLIT_CNTL);
+    if (rb != gras) {
+        fault(text("RB_2D_BLIT_CNTL %#llx and GRAS_2D_BLIT_CNTL %#llx differ: the two copies of the blit word must agree", rb, gras));
+        return false;
+    }
+    if ((rb & A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR) == 0) {
+        fault("a CP_BLIT without SOLID_COLOR: a copy, whose source this GPU model does not read");
+        return false;
+    }
+    if (fieldOf(rb, A6XX_RB_2D_BLIT_CNTL_MASK__MASK, A6XX_RB_2D_BLIT_CNTL_MASK__SHIFT) != 0xf ||
+        fieldOf(reg(REG_A6XX_SP_2D_DST_FORMAT), A6XX_SP_2D_DST_FORMAT_MASK__MASK, A6XX_SP_2D_DST_FORMAT_MASK__SHIFT) != 0xf) {
+        fault("a fill whose component mask is not 0xf in RB_2D_BLIT_CNTL and SP_2D_DST_FORMAT: some channels would keep what they held");
+        return false;
+    }
+    const uint32_t info = reg(REG_A6XX_RB_2D_DST_INFO), sp = reg(REG_A6XX_SP_2D_DST_FORMAT);
+    const uint32_t fmt = fieldOf(rb, A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__MASK, A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__SHIFT);
+    if (fieldOf(info, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__SHIFT) != fmt ||
+        fieldOf(sp, A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__MASK, A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__SHIFT) != fmt) {
+        fault(text("the fill's format differs between RB_2D_BLIT_CNTL (%llu), RB_2D_DST_INFO (%llu) and SP_2D_DST_FORMAT (%llu)", fmt,
+                   fieldOf(info, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__SHIFT),
+                   fieldOf(sp, A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__MASK, A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT__SHIFT)));
+        return false;
+    }
+    const uint32_t bpp = bytesPerPixel(fmt);
+    if (bpp == 0 || fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR) {
+        fault(text("a fill into format %llu, tile mode %llu: a linear image of a known format is what this GPU model fills", fmt,
+                   fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT)));
+        return false;
+    }
+    // the intermediate format turnip's format_to_ifmt picks for each (tu_clear_blit.cc:41-71): by the red channel's size
+    const uint32_t ifmt = fieldOf(rb, A6XX_RB_2D_BLIT_CNTL_IFMT__MASK, A6XX_RB_2D_BLIT_CNTL_IFMT__SHIFT);
+    const bool srgbIfmt = ifmt == R2D_UNORM8_SRGB;
+    uint32_t want = 0;
+    switch (fmt) {
+    case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: want = srgbIfmt ? uint32_t(R2D_UNORM8_SRGB) : uint32_t(R2D_UNORM8); break;
+    case FMT6_16_16_16_16_FLOAT: want = R2D_FLOAT16; break;
+    case FMT6_32_FLOAT: case FMT6_32_32_32_32_FLOAT: want = R2D_FLOAT32; break;
+    case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: want = R2D_INT32; break;
+    default: break;
+    }
+    if (ifmt != want) {
+        fault(text("a fill of format %llu through intermediate format %llu: format_to_ifmt picks %llu", fmt, ifmt, want));
+        return false;
+    }
+    const bool srgbInfo = (info & A6XX_RB_2D_DST_INFO_SRGB) != 0, srgbSp = (sp & A6XX_SP_2D_DST_FORMAT_SRGB) != 0;
+    if (srgbInfo != srgbIfmt || srgbSp != srgbIfmt) {
+        fault("the sRGB bits of RB_2D_DST_INFO and SP_2D_DST_FORMAT disagree with the intermediate format R2D_UNORM8_SRGB");
+        return false;
+    }
+    const uint32_t tl = reg(REG_A6XX_GRAS_2D_DST_TL), br = reg(REG_A6XX_GRAS_2D_DST_BR);
+    const uint32_t x0 = fieldOf(tl, A6XX_GRAS_2D_DST_TL_X__MASK, 0), y0 = tl >> 16 & 0x3fff;
+    const uint32_t x1 = fieldOf(br, A6XX_GRAS_2D_DST_BR_X__MASK, 0), y1 = br >> 16 & 0x3fff;
+    const uint64_t base = reg64(REG_A6XX_RB_2D_DST);
+    const uint64_t pitch = uint64_t(fieldOf(reg(REG_A6XX_RB_2D_DST_PITCH), A6XX_RB_2D_DST_PITCH__MASK, A6XX_RB_2D_DST_PITCH__SHIFT)) << A6XX_RB_2D_DST_PITCH__SCALE;
+    if (x1 < x0 || y1 < y0 || pitch < uint64_t(x1 + 1) * bpp || base % 64 != 0) {
+        fault(text("a fill of (%llu, %llu) to ", x0, y0) + text("(%llu, %llu) with a pitch of ", x1, y1) + text("%llu bytes at %#llx: an empty rectangle, rows wider than the pitch or a base not 64-aligned", pitch, base));
+        return false;
+    }
+    uint8_t* d = at(base + y0 * pitch, (y1 - y0) * pitch + uint64_t(x1 + 1) * bpp);
+    if (d == nullptr) {
+        fault(text("a fill at %#llx, %llu rows of %llu bytes: outside every buffer", base, y1 - y0 + 1, pitch));
+        return false;
+    }
+    // one pixel's bytes from the four solid words: 8-bit channels in the swap's order (WXYZ puts B first), halfs and words as they are
+    const uint32_t swap = fieldOf(info, A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT);
+    uint32_t c[4];
+    for (uint32_t i = 0; i < 4; i++) c[i] = reg(REG_A6XX_RB_2D_SRC_SOLID_C0 + i);
+    uint8_t pixel[16] = {};
+    if (ifmt == R2D_UNORM8 || ifmt == R2D_UNORM8_SRGB) {
+        static const uint32_t rgba[4] = {0, 1, 2, 3}, bgra[4] = {2, 1, 0, 3};
+        for (uint32_t i = 0; i < bpp; i++) pixel[i] = uint8_t(c[(swap == WXYZ ? bgra : rgba)[i]]);
+    } else if (ifmt == R2D_FLOAT16) {
+        for (uint32_t i = 0; i < bpp / 2; i++) { uint16_t v = uint16_t(c[i]); memcpy(pixel + 2 * i, &v, 2); }
+    } else {
+        for (uint32_t i = 0; i < bpp / 4; i++) memcpy(pixel + 4 * i, &c[i], 4);
+    }
+    for (uint32_t y = y0; y <= y1; y++) {
+        for (uint32_t x = x0; x <= x1; x++) memcpy(d + (y - y0) * pitch + uint64_t(x) * bpp, pixel, bpp);
+    }
+    stats_.fills++;
+    drawsInSubmission_++;   // the fill sits in the CCU as a draw's colour does: the same two flushes must follow it
+    drawsWithoutCcuFlush_++;
+    drawsWithoutCacheFlush_++;
+    return true;
+}
+
 // CP_DRAW_INDX_OFFSET: the draw itself. As with CP_EXEC_CS, everything the registers and the loads say about it must hold
 // together (fake_gpu.hpp's file comment lists what); what the GPU does with state that does not is hang or write
 // nothing, and a fault here stands for either. Nothing is rasterized.
@@ -1050,6 +1144,11 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
             }
             case CP_DRAW_INDX_OFFSET:
                 if (!execDraw(p, h.count)) {
+                    return false;
+                }
+                break;
+            case CP_BLIT:
+                if (!execBlit(p, h.count)) {
                     return false;
                 }
                 break;

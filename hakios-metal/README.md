@@ -79,8 +79,8 @@ drawing the second triangle alone (so `vertex_id` includes `VFD_INDEX_OFFSET`), 
 every one of 4032 off-diagonal pixels (largest deviation 0), the four stages compiled on the phone word for word the
 host's fixtures, and 41 to 68 us a pass. Through Metal's own objects (hakios `logs/051907-run.log`, `metal_render_test`,
 0 failures on both roads) the same draws land with the same counts: `MTLRenderPipelineState` linked on the device,
-`MTLRenderCommandEncoder`, `drawPrimitives:` -- and a Clear load action or a texture without the render usage end the
-command buffer in error with the driver's sentence, the texture untouched. The shaders are
+`MTLRenderCommandEncoder`, `drawPrimitives:` -- and a texture without the render usage ends the command buffer in
+error with the driver's sentence, the texture untouched. The shaders are
 ours (`tools/kernels/tri_flat_*.ll`, `tri_color_*.ll`: the positions chosen by `[[vertex_id]]` with no buffer in either
 stage, as turnip's own clear path draws), the register sequence is turnip's sysmem pass and r3d path with fd6 as the
 second witness, every register cited at its line, and each group sits under a `render::Options` switch so that one boot
@@ -92,9 +92,20 @@ switch's default -- turnip's and fd6's values where they agree, the smaller set 
 bisect. Not yet, all of it refused by name (not served): vertex attributes beyond per-vertex Float..Float4, Half2, Half4 and UChar4Normalized (those are
 served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UChar4Normalized colour from one interleaved buffer, 4032 of 4032
 pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
-samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, blending, clears (a
-load action of Clear: turnip clears with a draw or a 2D blit), GMEM (tiled) rendering, MSAA, instancing, indexed draws,
-points and lines, several colour attachments, a program whose stages bind what the draw does not serve.
+samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, blending, GMEM (tiled)
+rendering, MSAA, instancing, indexed draws, points and lines, several colour attachments, a program whose stages bind what
+the draw does not serve.
+
+A load action of Clear is served the way turnip clears a single-sampled sysmem attachment: one `CP_BLIT` solid fill of
+the 2D engine over the whole target before any draw state (`clear_sysmem_attachment`, `r2d_*` in `tu_clear_blit.cc`),
+the colour packed as `r2d_clear_value` packs it, then the colour CCU cleaned and invalidated. A pass with no draw is a
+pass of its own (`CommandBuffer::clear`, `hakios_metal_cb_clear`), what an encoder that recorded nothing needs. On the
+phone (hakios `logs/145325-run.log`, probe line 9i, 0 failures) every pixel holds the packed colour and no byte outside
+the rectangle changes, in RGBA8Unorm, BGRA8Unorm (B first in memory), RGBA8Unorm_sRGB (linear 0.5 stored as 188, alpha
+linear), RGBA16Float (down to a subnormal half), R32Uint, RGBA32Float (-0 kept) and a 48x20 target whose row padding and
+4-row pad stay canary; a Clear before `tri_flat` leaves the triangle's colour on its interior and the clear colour on the
+exterior and the diagonal. The fake GPU carries the fill out into memory (the one thing it does carry out) after checking
+that the 2D registers hold together, so the host tests compare bytes too, and refuse nine mutated fills.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

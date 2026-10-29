@@ -521,6 +521,23 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
     return 0;
 }
 
+int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
+    RenderPass rp;
+    const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
+    rp.color0 = target;
+    if (pass != nullptr) {
+        rp.load = LoadAction(pass->load_action);
+        rp.store = StoreAction(pass->store_action);
+        for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
+    }
+    if (!cb->cb->clear(rp)) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    cb->cb->keepAlive(pass->color0->texture);
+    return 0;
+}
+
 void hakios_metal_cb_fail(hakios_metal_cb* cb, const char* why) { cb->cb->refuse(why != nullptr ? why : "refused"); }
 
 void hakios_metal_cb_commit(hakios_metal_cb* cb, void (*callback)(hakios_metal_cb*, void*), void* context) {

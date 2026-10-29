@@ -79,6 +79,9 @@ public:
     // until this completes; the target's memory is used for write and kept. False with the reason recorded (render::encode's).
     bool draw(const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings, const Bindings& fsBindings,
               const render::Options& options = render::Options{});
+    // a pass with no draw whose load action is Clear (render::encodeClear): the target filled with the clear colour, a
+    // complete pass of its own. What an encoder that recorded no draw needs at its end; anything else is refused.
+    bool clear(const RenderPass& pass, const render::Options& options = render::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state
     void refuse(const std::string& why) { fail(why); }
     // a buffer it uses, kept alive until it completes (the owner may let go of it before that)

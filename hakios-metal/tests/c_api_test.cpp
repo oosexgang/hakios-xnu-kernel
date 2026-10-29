@@ -1,5 +1,6 @@
 // The C interface the plug-in uses, on the fake GPU.
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -405,6 +406,42 @@ TEST(c_api_program_and_draw) {
     hakios_metal_cb_wait(cb);
     CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
     hakios_metal_cb_free(cb);
+    // a Clear through C: with a draw (the pass's first) and without one; the fake carries the fill out, so the bytes are
+    // the colour where a canary was. And the refusal of a pass without a draw that does not clear
+    {
+        uint8_t* bytes = static_cast<uint8_t*>(hakios_metal_texture_contents(rt));
+        const uint64_t pitch = hakios_metal_texture_bytes_per_row(rt);
+        auto everywhere = [&](uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+            for (uint32_t y = 0; y < 64; y++)
+                for (uint32_t x = 0; x < 64; x++) {
+                    const uint8_t* px = bytes + y * pitch + x * 4;
+                    if (px[0] != r || px[1] != g || px[2] != b || px[3] != a) return false;
+                }
+            return true;
+        };
+        memset(bytes, 0xa5, pitch * 64);
+        struct hakios_metal_render_pass clear = {rt, 2, 1, {1.0, 0.0, 0.5, 1.0}};
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_draw(cb, p, &clear, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+        hakios_metal_cb_commit(cb, nullptr, nullptr);
+        hakios_metal_cb_wait(cb);
+        CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+        CHECK(everywhere(255, 0, 128, 255));
+        hakios_metal_cb_free(cb);
+        memset(bytes, 0xa5, pitch * 64);
+        struct hakios_metal_render_pass green = {rt, 2, 1, {0.0, 1.0, 0.0, 0.0}};
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_clear(cb, &green), 0);
+        hakios_metal_cb_commit(cb, nullptr, nullptr);
+        hakios_metal_cb_wait(cb);
+        CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+        CHECK(everywhere(0, 255, 0, 0));
+        hakios_metal_cb_free(cb);
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_clear(cb, &pass), -1);
+        CHECK(strcmp(hakios_metal_error(), "a pass without a draw and with load action 1: only a Clear writes anything then") == 0);
+        hakios_metal_cb_free(cb);
+    }
     // the refusals of a draw, each on its sentence, each on a fresh command buffer (a command buffer keeps its first error)
     cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 0, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
@@ -483,10 +520,10 @@ TEST(c_api_program_and_draw) {
     CHECK(strcmp(hakios_metal_error(), "the 64 x 64 RGBA8Unorm texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it") == 0);
     hakios_metal_cb_free(cb);
     hakios_metal_texture_free(plain);
-    struct hakios_metal_render_pass clear = {rt, 2, 1, {0, 0, 0, 1}};
+    struct hakios_metal_render_pass nanClear = {rt, 2, 1, {0, 0, NAN, 1}};
     cb = hakios_metal_cb_new(q);
-    CHECK_EQ(hakios_metal_cb_draw(cb, p, &clear, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-    CHECK(strstr(hakios_metal_error(), "load action Clear: a clear is a draw in turnip's r3d path or a 2D blit") != nullptr);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &nanClear, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "a clear colour with a non-finite channel (channel 2) into RGBA8Unorm") == 0);
     hakios_metal_cb_free(cb);
     struct hakios_metal_render_pass none = {nullptr, 1, 1, {0, 0, 0, 0}};
     cb = hakios_metal_cb_new(q);
