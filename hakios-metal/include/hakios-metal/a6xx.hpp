@@ -3395,6 +3395,38 @@ constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD(uint32_t v) {
     return field(v, A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD__SHIFT, A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD__MASK);
 }
 
+// SP_FS_PREFETCH_CMD[i], one word a prefetch after SP_FS_PREFETCH_CNTL in the same pkt4 (fd6 emit_fs_inputs,
+// fd6_program.cc:947-971): the coordinate's register (SRC), the sampler and texture slots (A6XX keeps them here; A7XX
+// moves them to SP_FS_BINDLESS_PREFETCH_CMD), the destination register, the components written, HALF, and the
+// operation -- TEX_PREFETCH_SAM, the only one ir3 makes (tex_opc_to_prefetch_cmd, fd6_program.cc:910-918)
+inline constexpr uint32_t REG_A6XX_SP_FS_PREFETCH_CMD = 0xa99f;                              // a6xx.xml.h:8988  entry 0
+inline constexpr uint32_t REG_A6XX_SP_FS_PREFETCH_CMD__STRIDE = 1;                           // a6xx.xml.h:8988
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_SRC__MASK = 127;                          // a6xx.xml.h:8989
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_SRC__SHIFT = 0;                           // a6xx.xml.h:8990
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_SAMP_ID__MASK = 0x00000780;               // a6xx.xml.h:8995
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_SAMP_ID__SHIFT = 7;                       // a6xx.xml.h:8996
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_TEX_ID__MASK = 0x0000f800;                // a6xx.xml.h:9001
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_TEX_ID__SHIFT = 11;                       // a6xx.xml.h:9002
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_DST__MASK = 0x003f0000;                   // a6xx.xml.h:9007
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_DST__SHIFT = 16;                          // a6xx.xml.h:9008
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_WRMASK__MASK = 0x03c00000;                // a6xx.xml.h:9013
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_WRMASK__SHIFT = 22;                       // a6xx.xml.h:9014
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_HALF = 0x04000000;                        // a6xx.xml.h:9019
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_BINDLESS = 0x10000000;                    // a6xx.xml.h:9021
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_CMD__MASK = 0xe0000000;                   // a6xx.xml.h:9022
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CMD_CMD__SHIFT = 29;                          // a6xx.xml.h:9023
+enum a6xx_tex_prefetch_cmd : uint32_t {
+    TEX_PREFETCH_SAM = 1,          // adreno_common.xml.h:221
+};
+constexpr uint32_t spFsPrefetchCmd(uint32_t src, uint32_t sampId, uint32_t texId, uint32_t dst, uint32_t wrmask, bool half, uint32_t cmd) {
+    return field(src, A6XX_SP_FS_PREFETCH_CMD_SRC__SHIFT, A6XX_SP_FS_PREFETCH_CMD_SRC__MASK) |
+           field(sampId, A6XX_SP_FS_PREFETCH_CMD_SAMP_ID__SHIFT, A6XX_SP_FS_PREFETCH_CMD_SAMP_ID__MASK) |
+           field(texId, A6XX_SP_FS_PREFETCH_CMD_TEX_ID__SHIFT, A6XX_SP_FS_PREFETCH_CMD_TEX_ID__MASK) |
+           field(dst, A6XX_SP_FS_PREFETCH_CMD_DST__SHIFT, A6XX_SP_FS_PREFETCH_CMD_DST__MASK) |
+           field(wrmask, A6XX_SP_FS_PREFETCH_CMD_WRMASK__SHIFT, A6XX_SP_FS_PREFETCH_CMD_WRMASK__MASK) | (half ? A6XX_SP_FS_PREFETCH_CMD_HALF : 0u) |
+           field(cmd, A6XX_SP_FS_PREFETCH_CMD_CMD__SHIFT, A6XX_SP_FS_PREFETCH_CMD_CMD__MASK);
+}
+
 inline constexpr uint32_t REG_A6XX_SP_FS_TEX_COUNT = 0xa9a7;                                // a6xx.xml.h:9090
 inline constexpr uint32_t REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET = 0xa9a9;                  // a6xx.xml.h:9096
 inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__MASK = 0x0007ffff;     // a6xx.xml.h:9097

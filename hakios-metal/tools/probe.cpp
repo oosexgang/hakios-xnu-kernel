@@ -38,6 +38,7 @@
 #include "../tests/fixtures/tri_flat_fs_air.hpp"
 #include "../tests/fixtures/tri_cflat_fs_air.hpp"
 #include "../tests/fixtures/tri_attr_vs_air.hpp"
+#include "../tests/fixtures/tri_tex_fs_air.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1075,6 +1076,7 @@ int main(int argc, char** argv) {
     //   9f. the four stages compiled on the phone against the host's fixtures, and the phone-compiled program drawn
     //   9i. a Clear: the 2D fill without a draw over six formats and a 48x20 rectangle, then before tri_flat
     //   9j. blending: six equations of tri_cflat's half-transparent colour over a cleared target, each pixel against the formula
+    //   9k. a texture in the FS: tri_tex_fs's prefetch of a 4x4 texture at tri_color's interpolated (red, green)
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1599,6 +1601,94 @@ int main(int argc, char** argv) {
                                hex2(want[0]) + " " + hex2(want[1]) + " " + hex2(want[2]) + " " + hex2(want[3]) + " (largest deviation " + std::to_string(worst) + ")" + first +
                                ", " + std::to_string(outsideOk) + " of " + std::to_string(outside) + " outside D exactly" + status(*cb, gpu));
                 }
+            }
+        }
+        // 9k. a texture in the fragment stage: tri_color_vs's colour varying as the coordinate of tri_tex_fs's sample, which
+        // ir3 makes a prefetch (SP_FS_PREFETCH_CMD, the FS_TEX tables). The coordinate at a pixel is (lambda_A, lambda_B) of
+        // the triangle that painted it (9d's weights); under nearest / clamp-to-edge a 4x4 RGBA8 texture of sixteen
+        // distinct texels gives texel (floor(4u), floor(4v)) clamped to 3 -- column from u, row from v, row 0 the
+        // texture's first row in memory (Metal's texture coordinates have no flip). Pixels whose 4u or 4v lies within
+        // 1/64 of a texel edge are not judged (the interpolator's last bit decides them); every other one must be its
+        // texel exactly. A coordinate taken from the wrong component, or rows flipped, moves the texels.
+        if (t) {
+            const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+            TextureDesc td;
+            td.format = PixelFormat::kRGBA8Unorm;
+            td.width = 4;
+            td.height = 4;
+            td.usage = kTextureUsageRead;
+            auto src = Texture::make(gpu, td, &why);
+            Sampler smp;
+            std::string swhy;
+            if (src == nullptr || !makeSampler(SamplerDesc{}, &smp, &swhy)) {
+                report(false, "tri_tex: a 4x4 RGBA8 texture and a nearest sampler: " + why + swhy);
+            } else {
+                auto texel = [](uint32_t x, uint32_t y) { return 0xff000000u | (0x10u + 0x30u * x) | (0x20u + 0x30u * y) << 8 | uint32_t(0x80 + 8 * (x + 4 * y)) << 16; };
+                for (uint32_t y = 0; y < 4; y++) {
+                    for (uint32_t x = 0; x < 4; x++) {
+                        uint32_t v = texel(x, y);
+                        memcpy(static_cast<uint8_t*>(const_cast<void*>(static_cast<const void*>(src->contents()))) + y * src->bytesPerRow() + x * 4, &v, 4);
+                    }
+                }
+                const uint32_t texCanaryWord = texCanary([&](uint32_t v) {
+                    for (uint32_t k = 0; k < 16; k++)
+                        if (v == texel(k % 4, k / 4)) return true;
+                    return false;
+                });
+                fillBo(*t, texCanaryWord);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {src.get()};
+                fsb.samplers = {&smp};
+                auto cb = queue->commandBuffer();
+                if (cb->draw(texProg, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t judged = 0, exact = 0, skipped = 0, canaryLeft = 0, flippedRows = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const double x = i + 0.5, y = j + 0.5;
+                        double u, v;
+                        if (j > i) {
+                            u = (y - x) / 64.0;
+                            v = x / 64.0;
+                        } else {
+                            u = y / 64.0;
+                            v = (x - y) / 64.0;
+                        }
+                        const double fu = 4 * u, fv = 4 * v;
+                        if (std::fabs(fu - std::round(fu)) < 1.0 / 64 || std::fabs(fv - std::round(fv)) < 1.0 / 64) {
+                            skipped++;
+                            continue;
+                        }
+                        const uint32_t tx = std::min(3u, uint32_t(std::max(0.0, std::floor(fu)))), ty = std::min(3u, uint32_t(std::max(0.0, std::floor(fv))));
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        judged++;
+                        canaryLeft += px == texCanaryWord;
+                        flippedRows += px == texel(tx, 3 - ty) && ty != 3 - ty;
+                        if (px == texel(tx, ty)) {
+                            exact++;
+                        } else if (first.empty()) {
+                            first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", texel (" + std::to_string(tx) + "," +
+                                    std::to_string(ty) + ") is " + hex8(texel(tx, ty));
+                        }
+                    }
+                }
+                report(completed(*cb) && exact == judged && judged > 3000,
+                       "tri_tex, a 4x4 texture sampled at tri_color's (red, green) through the FS prefetch: " + std::to_string(exact) + " of " + std::to_string(judged) +
+                           " pixels their texel exactly (" + std::to_string(skipped) + " near a texel edge not judged, " + std::to_string(canaryLeft) +
+                           " still canary, " + std::to_string(flippedRows) + " the row-flipped texel)" + first + status(*cb, gpu));
+                // the refusal: the same program with no texture bound
+                auto cb2 = queue->commandBuffer();
+                bool accepted = cb2->draw(texProg, rp, drawOf(0, 6), Bindings{}, Bindings{});
+                report(!accepted && cb2->error().find("no texture bound at index 0") != std::string::npos,
+                       "control, tri_tex with nothing at [[texture(0)]]: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb2->error()));
             }
         }
         // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the

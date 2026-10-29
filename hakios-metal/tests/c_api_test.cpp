@@ -563,3 +563,52 @@ TEST(c_api_program_and_draw) {
     hakios_metal_queue_free(q);
     hakios_metal_close(d);
 }
+
+// A sampling fragment function through C: tri_color_vs + tri_tex_fs linked, its texture and sampler reported as the
+// program's resources, drawn with both bound through hakios_metal_cb_draw2, refused by name with either missing
+TEST(c_api_draw_with_a_fragment_texture) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    std::vector<uint8_t> vsBc = readFile("out/host/kernels/tri_color_vs.bc"), fsBc = readFile("out/host/kernels/tri_tex_fs.bc");
+    if (!hakios_metal_has_compiler()) {
+        std::printf("       (no compiler in this build: the C interface's textured draw did not run)\n");
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK(!vsBc.empty() && !fsBc.empty());
+    hakios_metal_program* p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 70);
+    CHECK(p != nullptr);
+    if (p == nullptr) {
+        std::printf("       %s\n", hakios_metal_error());
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK_EQ(hakios_metal_program_resource_count(p, 1), 2u);   // the fragment stage's texture 0 and sampler 0
+    hakios_metal_texture* rt = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET | 1);
+    hakios_metal_texture* tex = hakios_metal_texture_new(d, 2, 70, 4, 4, 1);
+    struct hakios_metal_sampler_desc sd = {};
+    sd.normalized_coordinates = 1;
+    sd.lod_max_clamp = 1000.0f;
+    sd.max_anisotropy = 1;
+    hakios_metal_sampler* s = hakios_metal_sampler_new(d, &sd);
+    CHECK(rt != nullptr && tex != nullptr && s != nullptr);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}};
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw2(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0, &tex, 1, &s, 1), 0);
+    hakios_metal_texture_free(tex);   // the command buffer keeps what the draw samples
+    tex = nullptr;
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "tri_tex_fs: no texture bound at index 0") == 0);
+    if (strcmp(hakios_metal_error(), "tri_tex_fs: no texture bound at index 0") != 0) std::printf("       %s\n", hakios_metal_error());
+    hakios_metal_cb_free(cb);
+    hakios_metal_sampler_free(s);
+    hakios_metal_texture_free(rt);
+    hakios_metal_program_free(p);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}

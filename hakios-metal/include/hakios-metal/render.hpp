@@ -76,6 +76,15 @@ struct StageOutput {
     uint8_t pad;
 };
 
+// one of ir3_shader_variant::sampler_prefetch (ir3_shader.h:354-365): a texture sample the FS issues before its first
+// instruction, at the varying in register SRC (a coordinate ir3 found interpolated and otherwise unused), into DST
+constexpr uint32_t kMaxSamplerPrefetch = 4;   // IR3_MAX_SAMPLER_PREFETCH (ir3_shader.h:342); SP_FS_PREFETCH_CNTL.COUNT holds 3 bits
+struct SamplerPrefetch {
+    uint8_t src, sampId, texId, dst, wrmask, half;
+    uint8_t cmd;              // a6xx_tex_prefetch_cmd: TEX_PREFETCH_SAM (1) for ir3's OPC_SAM, 0 for an opcode the writer did not know
+    uint8_t bindless;         // refused when set (the descriptors here are SB6_FS_TEX tables, not bindless sets)
+};
+
 struct Stage {
     Kernel k;                 // the shared fields; SP_xS_CTRL_REG0, INSTRLEN, HLSQ_xS_CNTL.CONSTLEN... read them
     uint8_t kind;             // StageKind, from nir->info.stage
@@ -109,7 +118,10 @@ struct Stage {
     uint8_t writesPos, writesSmask, writesStencilref, dualSrcBlend, hasKill, perSamp, readsPrimid, fbRead;   // the last six refused when set (hasKill allowed: early-z is off)
     uint8_t needPixlod, needFullQuad;   // SP_FS_CTRL_REG0.PIXLODENABLE / LODPIXMASK (textures in the FS: step two)
     uint8_t pad2[2];
-    uint32_t numSamplerPrefetch;        // SP_FS_PREFETCH_CNTL.COUNT; refused when non-zero (step two emits the prefetch commands)
+    uint32_t numSamplerPrefetch;        // SP_FS_PREFETCH_CNTL.COUNT, one SP_FS_PREFETCH_CMD each
+    SamplerPrefetch prefetch[kMaxSamplerPrefetch];
+    uint8_t prefetchEndOfQuad;          // SP_FS_PREFETCH_CNTL.ENDOFQUAD: the prefetch is the last use of helper invocations
+    uint8_t pad3[3];
 };
 
 // --- the link of a VS with an FS, as ir3_link_shaders computes it (ir3_shader.h) -----------------------------------------
@@ -255,6 +267,7 @@ struct Options {
     bool programConfig = true;   // HLSQ_INVALIDATE_CMD (vs..fs, gfx_ibo), SP_xS_CONFIG and HLSQ_xS_CNTL for the five stages, SP_IBO_COUNT 0
     bool programVs = true;       // SP_VS_CTRL_REG0, INSTRLEN, the OBJ_START block, HW_STACK_OFFSET, the preload, the immediates
     bool programFs = true;       // the same for the FS
+    bool fsTextures = true;      // the FS's SB6_FS_TEX loads, SP_FS_TEX_SAMP/CONST, SP_FS_TEX_COUNT (0 without textures)
     bool vfd = true;             // PC/VFD_MULTIVIEW_CNTL 0, VFD_CONTROL_0..6, VFD_INDEX_OFFSET, VFD_INSTANCE_START_OFFSET, PC_RESTART_INDEX
     bool vpc = true;             // the Linkage registers, VPC_VS_CLIP_CNTL(_V2), GRAS_VS_CL_CNTL, VPC_VS_LAYER_CNTL(_V2), GRAS_VS_LAYER_CNTL, PC_PS_CNTL
     bool fsInputs = true;        // SP_FS_PREFETCH_CNTL, HLSQ_CONTROL_1..5_REG, HLSQ_FS_CNTL_0, GRAS_CNTL, RB_RENDER_CONTROL0/1, RB_SAMPLE_CNTL,

@@ -17,6 +17,7 @@
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
+#include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "hakios-metal/a6xx.hpp"
 #include "test.hpp"
@@ -434,10 +435,23 @@ std::shared_ptr<CompiledStage> compareStageWithFixture(const char* name, const S
     CHECK_EQ(a.needPixlod, b.needPixlod);
     CHECK_EQ(a.needFullQuad, b.needFullQuad);
     CHECK_EQ(a.numSamplerPrefetch, b.numSamplerPrefetch);
+    for (uint32_t i = 0; i < kMaxSamplerPrefetch; i++) {
+        const SamplerPrefetch& x = a.prefetch[i];
+        const SamplerPrefetch& y = b.prefetch[i];
+        bool same = x.src == y.src && x.sampId == y.sampId && x.texId == y.texId && x.dst == y.dst && x.wrmask == y.wrmask && x.half == y.half &&
+                    x.cmd == y.cmd && x.bindless == y.bindless;
+        CHECK(same);
+        if (!same) {
+            std::fprintf(stderr, "  %s: prefetch %u compiled {0x%02x, %u, %u, 0x%02x, 0x%x, %u, %u, %u}, fixture {0x%02x, %u, %u, 0x%02x, 0x%x, %u, %u, %u}\n", name, i,
+                         x.src, x.sampId, x.texId, x.dst, x.wrmask, x.half, x.cmd, x.bindless, y.src, y.sampId, y.texId, y.dst, y.wrmask, y.half, y.cmd, y.bindless);
+        }
+    }
+    CHECK_EQ(a.prefetchEndOfQuad, b.prefetchEndOfQuad);
     // the pads a fixture writes as zeros
     for (uint32_t i = 0; i < 3; i++) CHECK_EQ(a.pad0[i], 0u);
     for (uint32_t i = 0; i < 3; i++) CHECK_EQ(a.pad1[i], 0u);
     for (uint32_t i = 0; i < 2; i++) CHECK_EQ(a.pad2[i], 0u);
+    for (uint32_t i = 0; i < 3; i++) CHECK_EQ(a.pad3[i], 0u);
     CHECK(s->name == entry);
     CHECK(s->listing.find(needle) != std::string::npos);
     if (s->listing.find(needle) == std::string::npos) std::printf("       %s: no \"%s\" in the listing\n", name, needle);
@@ -501,6 +515,18 @@ TEST(compiler_matches_the_stage_fixtures) {
         CHECK_EQ(cflatFs->stage.k.uboRanges[0].block, 0u);
         CHECK_EQ(cflatFs->stage.k.uboRanges[0].sizeDwords, 16u);
         CHECK_EQ(cflatFs->stage.k.numUbos, 0u);
+    }
+    // the sampling fragment stage: one texture, one sampler, and the sample made a prefetch (into r0.z, all four
+    // components, TEX_PREFETCH_SAM) -- the shape tri_tex_fs.ll was written to produce
+    auto texFs = compareStageWithFixture("tri_tex_fs", kernels::tri_tex_fs_air, "tri_tex_fs", "bary.f");
+    if (texFs) {
+        CHECK_EQ(texFs->stage.k.numTextureSlots, 1u);
+        CHECK_EQ(texFs->stage.k.samplerMask, 1u);
+        CHECK_EQ(texFs->stage.numSamplerPrefetch, 1u);
+        CHECK_EQ(texFs->stage.prefetch[0].dst, 0x02u);
+        CHECK_EQ(texFs->stage.prefetch[0].wrmask, 0xfu);
+        CHECK_EQ(texFs->stage.prefetch[0].cmd, 1u);
+        CHECK_EQ(texFs->stage.colorRegid[0], 0x02u);   // the colour output IS the prefetch's destination
     }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
@@ -652,13 +678,17 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(vs, m) == nullptr);
     expectRefusal(why, "the fragment stage tri_flat_fs binds 0 device buffer(s) and 1 constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
     m = copyOf(fs);
-    m->stage.k.textures[3].kind = kTexSampled;
+    m->stage.k.textures[3].kind = kTexSampled;   // a sampled texture links in a fragment stage: the draw binds it
+    m->stage.k.numTextureSlots = 4;
+    CHECK(link(vs, m) != nullptr);
+    m = copyOf(fs);
+    m->stage.k.textures[1].kind = kTexImage;
     CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs samples or stores through textures: textures and samplers in a draw are step two");
+    expectRefusal(why, "the fragment stage tri_flat_fs stores through texture 1 as an image: images in a draw (the 3D IBO table) are not served");
     m = copyOf(vs);
     m->stage.k.samplerMask = 1;
     CHECK(link(m, fs) == nullptr);
-    expectRefusal(why, "the vertex stage tri_flat_vs samples or stores through textures: textures and samplers in a draw are step two");
+    expectRefusal(why, "the vertex stage tri_flat_vs samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
     m = copyOf(fs);
     m->stage.numColorOutputs = 2;
     CHECK(link(vs, m) == nullptr);
@@ -700,9 +730,8 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(vs, m) == nullptr);
     expectRefusal(why, "the fragment stage tri_flat_fs reads the primitive id: not served");
     m = copyOf(fs);
-    m->stage.numSamplerPrefetch = 1;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs has 1 texture prefetch(es): the draw does not emit SP_FS_PREFETCH_CMD yet");
+    m->stage.numSamplerPrefetch = 1;   // a prefetch links: the draw writes its command (and judges its slots there)
+    CHECK(link(vs, m) != nullptr);
     // the colour class the other way: an integer output (what a uint4 return reads as) into the float format, and into R32Uint
     m = copyOf(fs);
     m->stage.outputs[0].pad = kElemUint;

@@ -92,7 +92,7 @@ switch's default -- turnip's and fd6's values where they agree, the smaller set 
 bisect. Not yet, all of it refused by name (not served): vertex attributes beyond per-vertex Float..Float4, Half2, Half4 and UChar4Normalized (those are
 served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UChar4Normalized colour from one interleaved buffer, 4032 of 4032
 pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
-samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, dual-source blending, GMEM (tiled)
+samplers in a vertex stage, images in a draw (the 3D IBO table), depth and stencil attachments, dual-source blending, GMEM (tiled)
 rendering, MSAA, instancing, indexed draws, points and lines, several colour attachments, a program whose stages bind what
 the draw does not serve.
 
@@ -115,6 +115,15 @@ source) and blending into an integer format are refused by name. On the phone (h
 2016 pixels with a largest deviation of 0, for straight and premultiplied source-over, ReverseSubtract clamped at 0,
 Max with Min for alpha, the BlendColor and BlendAlpha factors, and a Red | Alpha write mask without blending; outside
 the triangle the cleared colour stays exact.
+
+Sampled textures are served in the fragment stage. The texture and sampler descriptors go into the pass's table as
+Gallium's FS_TEX group loads them (`SB6_FS_TEX`, `SP_FS_TEX_SAMP/CONST/COUNT`, `fd6_texture.cc`), and a sample whose
+coordinate is a varying, which ir3 turns into a prefetch the FS issues before its first instruction, goes out as
+`SP_FS_PREFETCH_CMD` with the slots in the command as fd6 writes it for A6XX. The stage fixtures carry the prefetch
+commands now (`ir3-dump.patch`), and the compiler in the driver fills them the same way. On the phone (hakios
+`logs/152752-run.log`, probe line 9k, 0 failures) `tri_tex_fs.ll` samples a 4x4 texture at `tri_color_vs`'s interpolated
+(red, green), and 3840 of 3840 judged pixels hold exactly the texel their coordinate names; 192 pixels within 1/64 of
+a texel edge are left unjudged, and none shows the row-flipped texel.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

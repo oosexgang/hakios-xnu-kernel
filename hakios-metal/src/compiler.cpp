@@ -559,6 +559,12 @@ bool fillStage(Translation& t, const OutputClasses& oc, Stage& s, std::string* w
     s.needPixlod = v->need_pixlod;
     s.needFullQuad = v->need_full_quad;
     s.numSamplerPrefetch = v->num_sampler_prefetch;
+    for (unsigned i = 0; i < v->num_sampler_prefetch && i < kMaxSamplerPrefetch; i++) {
+        const ir3_sampler_prefetch& p = v->sampler_prefetch[i];
+        s.prefetch[i] = SamplerPrefetch{p.src, p.samp_id, p.tex_id, p.dst, p.wrmask, p.half_precision, uint8_t(p.tex_opc == OPC_SAM ? 1 : 0),
+                                        uint8_t(p.bindless ? 1 : 0)};
+    }
+    s.prefetchEndOfQuad = v->prefetch_end_of_quad;
     return true;
 }
 
@@ -681,11 +687,19 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
                             " constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
             return nullptr;
         }
+        // sampled textures are served in a fragment stage (render.cpp: the FS_TEX group, the prefetch); a vertex stage's
+        // textures and an image in either stage are not yet -- render::encode says the same at the draw
         bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
         for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
-        if (textures) {
-            refuse(why, stageName(*s) + " samples or stores through textures: textures and samplers in a draw are step two");
+        if (textures && s->stage.kind == kStageVertex) {
+            refuse(why, stageName(*s) + " samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
             return nullptr;
+        }
+        for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
+            if (k.textures[i].kind == kTexImage) {
+                refuse(why, stageName(*s) + " stores through texture " + std::to_string(i) + " as an image: images in a draw (the 3D IBO table) are not served");
+                return nullptr;
+            }
         }
     }
     if (F.numColorOutputs != 1 || F.colorRegid[0] == a6xx::kRegidNone) {
@@ -719,10 +733,6 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     }
     if (F.readsPrimid) {
         refuse(why, stageName(*fs) + " reads the primitive id: not served");
-        return nullptr;
-    }
-    if (F.numSamplerPrefetch != 0) {
-        refuse(why, stageName(*fs) + " has " + std::to_string(F.numSamplerPrefetch) + " texture prefetch(es): the draw does not emit SP_FS_PREFETCH_CMD yet");
         return nullptr;
     }
     // --- the colour output's class against the target's format: a float4 into a Unorm/Float format, an integer vector

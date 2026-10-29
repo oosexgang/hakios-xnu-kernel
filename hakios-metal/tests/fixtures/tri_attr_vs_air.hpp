@@ -142,6 +142,14 @@ define <{ <4 x float>, <4 x float> }> @tri_attr_vs(<2 x float> %pos, <4 x float>
     /* .needPixlod = */ 0, /* .needFullQuad = */ 0,
     /* .pad2 = */ {0, 0},
     /* .numSamplerPrefetch = */ 0,
+    /* .prefetch = */ {
+        /* [0] */ {0x00, 0, 0, 0x00, 0x0, 0, 0, 0},
+        /* [1] */ {0x00, 0, 0, 0x00, 0x0, 0, 0, 0},
+        /* [2] */ {0x00, 0, 0, 0x00, 0x0, 0, 0, 0},
+        /* [3] */ {0x00, 0, 0, 0x00, 0x0, 0, 0, 0},
+    },
+    /* .prefetchEndOfQuad = */ 0,
+    /* .pad3 = */ {0, 0, 0},
 };
 
 // The listing (ir3_shader_disasm):

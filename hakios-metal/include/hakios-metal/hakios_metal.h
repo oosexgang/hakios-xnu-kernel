@@ -158,7 +158,7 @@ typedef struct hakios_metal_program hakios_metal_program;
 /* VS of VS_LIBRARY and FS of FS_LIBRARY (the same library is fine) compiled here and linked, for a colour attachment of
  * COLOR_PIXEL_FORMAT (MTLPixelFormat, one of the served formats). NULL with the reason: not a vertex / fragment
  * function, the front end's or ir3's refusal by name, a fragment stage with more than one colour output, a depth/stencil/sample-mask output, framebuffer fetch, a varying the
- * vertex stage does not write, a stage that binds buffers, textures or samplers (step two), a format whose element class
+ * vertex stage does not write, a vertex stage with textures, an image in either stage, a format whose element class
  * the fragment output does not match, no compiler in this build. */
 hakios_metal_program *hakios_metal_program_new(hakios_metal_library *vs_library, const char *vs,
     hakios_metal_library *fs_library, const char *fs, unsigned color_pixel_format);
@@ -210,6 +210,18 @@ int hakios_metal_cb_draw(hakios_metal_cb *cb, hakios_metal_program *program,
     unsigned instance_count,
     hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
     hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count);
+/* the same with the fragment stage's FS_TEXTURES[n] at [[texture(n)]] for n < FS_TEXTURE_COUNT and FS_SAMPLERS[m] at
+ * [[sampler(m)]] (NULL: nothing there). -1 with the reason: a texture or sampler the fragment function samples and
+ * nothing bound there, a texture whose element class is not the function's, one made without read usage.
+ * hakios_metal_cb_draw is this with neither. */
+int hakios_metal_cb_draw2(hakios_metal_cb *cb, hakios_metal_program *program,
+    const struct hakios_metal_render_pass *pass, const struct hakios_metal_viewport *viewport,
+    const struct hakios_metal_scissor *scissor, unsigned primitive, unsigned vertex_start, unsigned vertex_count,
+    unsigned instance_count,
+    hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
+    hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count,
+    hakios_metal_texture *const *fs_textures, unsigned fs_texture_count,
+    hakios_metal_sampler *const *fs_samplers, unsigned fs_sampler_count);
 /* A pass with no draw, as an encoder that recorded none ends: only a Clear writes anything then (PASS's load action
  * must be 2), and the attachment is filled with its clear colour. -1 with the reason otherwise. With draws, each
  * hakios_metal_cb_draw is a whole pass of its own: the caller passes the Clear to the first and Load to the rest. */

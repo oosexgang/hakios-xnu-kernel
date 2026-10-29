@@ -30,7 +30,9 @@
 // whose rows (counted to 4) lie inside a buffer at a 64-aligned base, SP_FS_MRT_REG[0] and GRAS_LRZ_MRT_BUF_INFO_0 the
 // same format, BASE_GMEM 0; one MRT in both FS_OUTPUT_CNTL1 copies, a colour register in SP_FS_OUTPUT_REG[0], all four
 // components in both RENDER_COMPONENTS copies; the blend on or off alike in RB_MRT_CONTROL[0] (both BLEND bits),
-// SP_BLEND_CNTL and RB_BLEND_CNTL, a blending target's factors and opcodes ones the enums have; no depth or stencil state without a depth
+// SP_BLEND_CNTL and RB_BLEND_CNTL, a blending target's factors and opcodes ones the enums have; the FS's textures and
+// samplers as a dispatch's are judged (SB6_FS_TEX, SP_FS_TEX_*), and each prefetch command a plain sample of a loaded,
+// non-zero texture with a loaded sampler; no depth or stencil state without a depth
 // buffer; the screen and viewport scissors inside the window scissor; viewport scales finite and non-zero and the
 // guardband written; the vertex fetch counts equal and every fetch inside a buffer; a position location, the VPC stride
 // equal in VPC_VS_PACK and PC_VS_OUT_CNTL, SP_VS_PRIMITIVE_CNTL.OUT the outputs named; the VARYING flags agreeing across
@@ -109,6 +111,8 @@ public:
         uint32_t renderComponents = 0, fsRenderComponents = 0;   // RB_RENDER_COMPONENTS, SP_FS_RENDER_COMPONENTS
         uint32_t mrtCount = 0;                      // RB_FS_OUTPUT_CNTL1.MRT (== SP_FS_OUTPUT_CNTL1.MRT)
         uint32_t mrtControl = 0, mrtBlendControl = 0;   // RB_MRT_CONTROL[0] (blend bits, component enable), RB_MRT_BLEND_CONTROL[0]
+        uint32_t fsTextureCount = 0, fsSamplerCount = 0;   // SP_FS_TEX_COUNT, the SB6_FS_TEX sampler load's NUM_UNIT
+        uint32_t prefetchCount = 0, prefetchCmd[4] = {};  // SP_FS_PREFETCH_CNTL.COUNT, SP_FS_PREFETCH_CMD[i]
         uint32_t windowScissor[4] = {};             // GRAS_SC_WINDOW_SCISSOR TL x, y, BR x, y (BR inclusive)
         uint32_t screenScissor[4] = {}, viewportScissor[4] = {};   // GRAS_SC_SCREEN_SCISSOR[0], GRAS_SC_VIEWPORT_SCISSOR[0]
         float viewport[6] = {};                     // GRAS_CL_VPORT[0]: xoffset, xscale, yoffset, yscale, zoffset, zscale

@@ -150,8 +150,22 @@ bool checkStage(const Stage& s, std::string* why) {
     }
     bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
-    if (textures) {
-        return refuse(why, name + " samples or stores through textures: textures and samplers in a draw are step two");
+    if (textures && s.kind == kStageVertex) {
+        return refuse(why, name + " samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
+    }
+    for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
+        if (k.textures[i].kind == kTexImage) {
+            // an image is an IBO of the 3D pipe, the same table a device buffer needs (above)
+            return refuse(why, name + " stores through texture " + n(i) + " as an image: images in a draw (the 3D IBO table) are not served");
+        }
+    }
+    if (k.numTextureSlots > kMaxTextureSlots || (k.samplerMask >> kMaxTextureSlots) != 0) {
+        return refuse(why, name + " names texture or sampler indices past " + n(kMaxTextureSlots - 1) + ": the tables hold " + n(kMaxTextureSlots));
+    }
+    for (uint32_t i = k.numTextureSlots; i < kMaxTextureSlots; i++) {
+        if (k.textures[i].kind == kTexSampled) {
+            return refuse(why, name + " samples texture " + n(i) + " past its numTextureSlots of " + n(k.numTextureSlots) + ": the stage's tables disagree");
+        }
     }
     if (k.driverParamsOffsetVec4 >= 0) {
         // a VS reading first_vertex/base_instance/draw_id, or an FS with driver params (tu6_emit_vs_params,
@@ -405,6 +419,86 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
     default:
         return refuse(why, std::string("a Clear of ") + f.name + ": the 2D engine's intermediate format for it is not worked out here");
     }
+}
+
+// The FS's texture and sampler tables, Gallium's FS_TEX group (fd6_texture.cc:575-687 with SB6_FS_TEX, SP_FS_TEX_*):
+// the descriptors of the sampled textures at their Metal indices (64 bytes each; a slot the FS does not sample a zero
+// descriptor, Gallium's dummy_view), and at least one sampler descriptor whenever a texture is loaded (16 bytes each, a
+// slot without a sampler zeros, dummy_sampler) -- compute's rule (compute.cpp), the table in the pass's kTableFsAt.
+// Every prefetch's slots must name a loaded texture and a bound sampler: the prefetch reads them before the FS's
+// first instruction, and a slot past the count would be a stale descriptor.
+constexpr uint32_t kFsTexConstAt = kTableFsAt;                       // kMaxTextureSlots * 64 = 1024 bytes, 64-aligned
+constexpr uint32_t kFsTexSampAt = kTableFsAt + kMaxTextureSlots * 64;  // kMaxTextureSlots * 16 = 256 bytes
+static_assert(kFsTexSampAt + kMaxTextureSlots * 16 <= kTableFsAt + 4096, "the FS's tables fit its part of the pass's table");
+
+struct FsTextures {
+    uint32_t numTex = 0, numSamp = 0;
+    uint32_t texWords[kMaxTextureSlots][16] = {};
+    uint32_t sampWords[kMaxTextureSlots][4] = {};
+    std::vector<const Texture*> used;
+};
+
+const char* elementOf(uint8_t e) { return e == kElemFloat ? "float" : e == kElemUint ? "uint" : e == kElemInt ? "int" : "?"; }
+
+bool fsTextures(const Stage& fs, const Bindings& b, FsTextures* out, std::string* why) {
+    const Kernel& k = fs.k;
+    const std::string name = stageName(fs);
+    out->numTex = k.numTextureSlots;
+    if (out->numTex == 0) {
+        if (fs.numSamplerPrefetch != 0) {
+            return refuse(why, name + " prefetches a texture and loads none: ir3's tables disagree");
+        }
+        return true;
+    }
+    for (uint32_t t = 0; t < out->numTex; t++) {
+        const KernelTexture& kt = k.textures[t];
+        if (kt.kind != kTexSampled) continue;
+        if (t >= b.textures.size() || b.textures[t] == nullptr) {
+            return refuse(why, name + ": no texture bound at index " + n(t));
+        }
+        const Texture* tex = b.textures[t];
+        if (kt.dim != kTexDim2D || kt.isArray != 0 || tex->type() != TextureType::k2D) {
+            return refuse(why, name + " samples texture " + n(t) + " as other than a 2D texture, or texture " + n(t) + " is not 2D: only 2D is served in a draw");
+        }
+        if (kt.element != tex->info().element) {
+            return refuse(why, "texture " + n(t) + " is " + tex->info().name + " (" + elementOf(tex->info().element) + "); " + name + " reads it as texture2d<" +
+                                   elementOf(kt.element) + ">");
+        }
+        if ((tex->usage() & kTextureUsageRead) == 0) {
+            return refuse(why, "texture " + n(t) + " was made without shader-read usage; " + name + " samples it");
+        }
+        TexConst d = tex->sampledDescriptor();
+        memcpy(out->texWords[t], d.dword, sizeof d.dword);
+        out->used.push_back(tex);
+    }
+    out->numSamp = 1;
+    for (uint32_t m = 0; m < kMaxTextureSlots; m++) {
+        if ((k.samplerMask >> m) & 1) out->numSamp = m + 1;
+    }
+    for (uint32_t m = 0; m < out->numSamp; m++) {
+        if (((k.samplerMask >> m) & 1) == 0) continue;
+        if (m >= b.samplers.size() || b.samplers[m] == nullptr) {
+            return refuse(why, name + ": no sampler bound at index " + n(m));
+        }
+        memcpy(out->sampWords[m], b.samplers[m]->words, 16);
+    }
+    if (fs.numSamplerPrefetch > kMaxSamplerPrefetch) {
+        return refuse(why, name + " has " + n(fs.numSamplerPrefetch) + " texture prefetches: ir3 makes at most " + n(kMaxSamplerPrefetch));
+    }
+    for (uint32_t i = 0; i < fs.numSamplerPrefetch; i++) {
+        const SamplerPrefetch& pf = fs.prefetch[i];
+        if (pf.bindless != 0) {
+            return refuse(why, name + "'s prefetch " + n(i) + " is bindless: the textures here are SB6_FS_TEX tables");
+        }
+        if (pf.cmd != TEX_PREFETCH_SAM) {
+            return refuse(why, name + "'s prefetch " + n(i) + " is not a plain sample (TEX_PREFETCH_SAM): no other prefetch is written here");
+        }
+        if (pf.texId >= out->numTex || k.textures[pf.texId].kind != kTexSampled || ((k.samplerMask >> pf.sampId) & 1) == 0) {
+            return refuse(why, name + "'s prefetch " + n(i) + " samples texture " + n(pf.texId) + " with sampler " + n(pf.sampId) +
+                                   ": not a texture and a sampler the FS declares");
+        }
+    }
+    return true;
 }
 
 // Colour attachment 0's blend as RB_MRT_CONTROL[0] and RB_MRT_BLEND_CONTROL[0] hold it (tu6_emit_blend,
@@ -699,9 +793,6 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     if (fs.readsPrimid) {
         return refuse(why, std::string(stageName(fs)) + " reads the primitive id: not served");
     }
-    if (fs.numSamplerPrefetch != 0) {
-        return refuse(why, std::string(stageName(fs)) + " has " + n(fs.numSamplerPrefetch) + " texture prefetch(es): the draw does not emit SP_FS_PREFETCH_CMD yet");
-    }
     // --- the target ---
     if (!checkTarget(pass, why)) {
         return false;
@@ -729,6 +820,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     }
     BlendWords blend{};
     if (!blendWords(program.blend, format, &blend, why)) {
+        return false;
+    }
+    FsTextures fsTex;
+    if (!fsTextures(fs, fsBindings, &fsTex, why)) {
         return false;
     }
     for (int i = 0; i < 4; i++) {
@@ -782,6 +877,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 
     // --- nothing is refused from here on: the table, then the stream ---
     tableStart(tableCpu);
+    memset(tableCpu + kFsTexConstAt, 0, kMaxTextureSlots * 64);
+    memset(tableCpu + kFsTexSampAt, 0, kMaxTextureSlots * 16);
+    memcpy(tableCpu + kFsTexConstAt, fsTex.texWords, sizeof fsTex.texWords);
+    memcpy(tableCpu + kFsTexSampAt, fsTex.sampWords, sizeof fsTex.sampWords);
     const MrtWords mrt = mrtWords(target);
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
     const uint32_t* ij = fs.ijRegid;
@@ -888,6 +987,23 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
                                fs.needPixlod != 0, fs.k.earlyPreamble, fs.k.mergedRegs),
                   REG_A6XX_SP_FS_CTRL_REG0, REG_A6XX_SP_FS_INSTRLEN, REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET);
     }
+    // 10b. the FS's textures and samplers, Gallium's FS_TEX group in its order (fd6_texture.cc:593-687): the samplers into
+    // SB6_FS_TEX as ST6_SHADER (16 bytes a unit), their pointer, the textures as ST6_CONSTANTS (64), their pointer, the
+    // count; SP_FS_TEX_COUNT 0 without textures, so that no earlier owner's count is left (the register is context state).
+    // SP_FS_CONFIG's NTEX and NSAMP (step 9) stay ir3's num_samp, as compute leaves SP_CS_CONFIG's.
+    if (o.fsTextures) {
+        if (fsTex.numTex != 0) {
+            uint32_t w[3] = {loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_FS_TEX, fsTex.numSamp), CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(table + kFsTexSampAt)),
+                             CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t((table + kFsTexSampAt) >> 32))};
+            stream.packet(CP_LOAD_STATE6_FRAG, w, 3);
+            reg64(stream, REG_A6XX_SP_FS_TEX_SAMP, table + kFsTexSampAt);
+            uint32_t t[3] = {loadState6_0(0, ST6_CONSTANTS, SS6_INDIRECT, SB6_FS_TEX, fsTex.numTex), CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(table + kFsTexConstAt)),
+                             CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t((table + kFsTexConstAt) >> 32))};
+            stream.packet(CP_LOAD_STATE6_FRAG, t, 3);
+            reg64(stream, REG_A6XX_SP_FS_TEX_CONST, table + kFsTexConstAt);
+        }
+        reg(stream, REG_A6XX_SP_FS_TEX_COUNT, fsTex.numTex);
+    }
     // 11. the vertex fetch with no attributes (tu6_emit_vs, tu_shader.cc:1902-1967; fd6 emit_vs_system_values,
     // fd6_program.cc:510-556): PC/VFD_MULTIVIEW_CNTL 0, VFD_CONTROL_0 0 (no fetches, no decodes), VFD_CONTROL_1 with the
     // VS's vertex and instance id registers (kRegidNone for the rest), the HS/DS/GS id registers all kRegidNone
@@ -967,7 +1083,17 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     const bool needSize = validReg(fs.faceRegid) || fs.fragcoordCompmask != 0;
     const uint32_t ijbits = ijBits(ij, needSize, false);
     if (o.fsInputs) {
-        reg(stream, REG_A6XX_SP_FS_PREFETCH_CNTL, spFsPrefetchCntl(0, !validReg(ij[IJ_PERSP_PIXEL])));
+        {
+            // with the prefetch commands after it in the same pkt4 (fd6 emit_fs_inputs, fd6_program.cc:947-971; A6XX keeps the
+            // slots in the command, no SP_FS_BINDLESS_PREFETCH_CMD)
+            uint32_t w[1 + kMaxSamplerPrefetch];
+            w[0] = spFsPrefetchCntl(fs.numSamplerPrefetch, !validReg(ij[IJ_PERSP_PIXEL]), fs.prefetchEndOfQuad != 0);
+            for (uint32_t i = 0; i < fs.numSamplerPrefetch; i++) {
+                const SamplerPrefetch& pf = fs.prefetch[i];
+                w[1 + i] = spFsPrefetchCmd(pf.src, pf.sampId, pf.texId, pf.dst, pf.wrmask, pf.half != 0, pf.cmd);
+            }
+            stream.registers(REG_A6XX_SP_FS_PREFETCH_CNTL, w, 1 + fs.numSamplerPrefetch);
+        }
         regs(stream, REG_A6XX_HLSQ_CONTROL_1_REG,
              {hlsqControl1Reg(), hlsqControl2Reg(fs.faceRegid, fs.sampleIdRegid, fs.sampleMaskInRegid, ij[IJ_PERSP_CENTER_RHW]),
               hlsqControl3Reg(ij[IJ_PERSP_PIXEL], ij[IJ_LINEAR_PIXEL], ij[IJ_PERSP_CENTROID], ij[IJ_LINEAR_CENTROID]),
@@ -1143,6 +1269,13 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             if (x.buffer != nullptr) {
                 use(*x.buffer, false);   // pushed ranges are read; nothing in a draw writes a buffer yet
             }
+        }
+    }
+    // the FS's sampled textures: read, and alive until the GPU is done (the descriptors in the table point at them)
+    for (const Texture* t : fsBindings.textures) {
+        if (t != nullptr) {
+            use(*t->buffer(), false);
+            keep(t->buffer());
         }
     }
     keep(vsProgram);

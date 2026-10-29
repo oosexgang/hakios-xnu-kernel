@@ -479,6 +479,16 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
                          const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount) {
+    return hakios_metal_cb_draw2(cb, p, pass, viewport, scissor, primitive, vertexStart, vertexCount, instanceCount, vsBuffers, vsOffsets, vsCount, fsBuffers,
+                                 fsOffsets, fsCount, nullptr, 0, nullptr, 0);
+}
+
+int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
+                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
+                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
+                          const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount,
+                          hakios_metal_texture* const* fsTextures, unsigned fsTextureCount, hakios_metal_sampler* const* fsSamplers,
+                          unsigned fsSamplerCount) {
     // the two [[buffer(n)]] tables by Metal's index (setVertexBuffer / setFragmentBuffer); render::encode reads what each
     // stage's pushed ranges name and refuses a range with nothing bound by name
     auto table = [](hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
@@ -489,7 +499,17 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
         }
         return b;
     };
-    const Bindings vsb = table(vsBuffers, vsOffsets, vsCount), fsb = table(fsBuffers, fsOffsets, fsCount);
+    const Bindings vsb = table(vsBuffers, vsOffsets, vsCount);
+    Bindings fsb = table(fsBuffers, fsOffsets, fsCount);
+    // the fragment stage's [[texture(n)]] and [[sampler(n)]] by Metal's index (setFragmentTexture / setFragmentSamplerState)
+    fsb.textures.resize(fsTextureCount, nullptr);
+    for (unsigned i = 0; i < fsTextureCount; i++) {
+        if (fsTextures != nullptr && fsTextures[i] != nullptr) fsb.textures[i] = fsTextures[i]->texture.get();
+    }
+    fsb.samplers.resize(fsSamplerCount, nullptr);
+    for (unsigned i = 0; i < fsSamplerCount; i++) {
+        if (fsSamplers != nullptr && fsSamplers[i] != nullptr) fsb.samplers[i] = &fsSamplers[i]->sampler;
+    }
     RenderPass rp;
     const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
     rp.color0 = target;
@@ -526,6 +546,9 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
     cb->cb->keep(target->buffer());
     cb->cb->keepAlive(pass->color0->texture);
     cb->cb->keepAlive(p->program);
+    for (unsigned i = 0; i < fsTextureCount; i++) {
+        if (fsTextures != nullptr && fsTextures[i] != nullptr) cb->cb->keepAlive(fsTextures[i]->texture);   // the draw keeps the memory already
+    }
     return 0;
 }
 

@@ -67,7 +67,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,684 @@
+@@ -35,19 +37,695 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -647,6 +647,17 @@ SPDX-License-Identifier: MIT
 +   fprintf(out, "    /* .needPixlod = */ %u, /* .needFullQuad = */ %u,\n", v->need_pixlod, v->need_full_quad);
 +   fputs("    /* .pad2 = */ {0, 0},\n", out);
 +   fprintf(out, "    /* .numSamplerPrefetch = */ %u,\n", v->num_sampler_prefetch);
++   fputs("    /* .prefetch = */ {\n", out);
++   for (unsigned i = 0; i < 4; i++) {
++      const struct ir3_sampler_prefetch *p = &v->sampler_prefetch[i];
++      bool used = i < v->num_sampler_prefetch;
++      fprintf(out, "        /* [%u] */ {0x%02x, %u, %u, 0x%02x, 0x%x, %u, %u, %u},%s\n", i, used ? p->src : 0, used ? p->samp_id : 0,
++              used ? p->tex_id : 0, used ? p->dst : 0, used ? p->wrmask : 0, used ? p->half_precision : 0,
++              used && p->tex_opc == OPC_SAM ? 1 : 0, used ? p->bindless : 0, used ? "   // src, samp, tex, dst, wrmask, half, cmd, bindless" : "");
++   }
++   fputs("    },\n", out);
++   fprintf(out, "    /* .prefetchEndOfQuad = */ %u,\n", v->prefetch_end_of_quad);
++   fputs("    /* .pad3 = */ {0, 0, 0},\n", out);
 +}
 +
 +static void

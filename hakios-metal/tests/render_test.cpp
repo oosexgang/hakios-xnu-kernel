@@ -21,6 +21,7 @@
 #include "fixtures/end_only.hpp"
 #include "fixtures/tri_attr_vs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
+#include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
@@ -311,8 +312,20 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.k.numUboRanges = 1;   // a pushed range, served -- but nothing is bound at its block
         refused(r, p, pass, d, "hand_fs: no buffer bound at index 0 (its constant buffer)");
         p = handProgram();
-        p.fs.k.textures[0].kind = kTexSampled;
-        refused(r, p, pass, d, "hand_fs samples or stores through textures: textures and samplers in a draw are step two");
+        p.fs.k.textures[0].kind = kTexSampled;   // ...and numTextureSlots left at 0
+        refused(r, p, pass, d, "hand_fs samples texture 0 past its numTextureSlots of 0: the stage's tables disagree");
+        p.fs.k.numTextureSlots = 1;
+        refused(r, p, pass, d, "hand_fs: no texture bound at index 0");
+        p = handProgram();
+        p.vs.k.textures[0].kind = kTexSampled;
+        p.vs.k.numTextureSlots = 1;
+        refused(r, p, pass, d, "hand_vs samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
+        p = handProgram();
+        p.fs.k.textures[2].kind = kTexImage;
+        refused(r, p, pass, d, "hand_fs stores through texture 2 as an image: images in a draw (the 3D IBO table) are not served");
+        p = handProgram();
+        p.fs.k.samplerMask = 1u << 16;
+        refused(r, p, pass, d, "hand_fs names texture or sampler indices past 15: the tables hold 16");
         p = handProgram();
         p.vs.k.driverParamsOffsetVec4 = 1;
         refused(r, p, pass, d, "hand_vs reads driver params at vec4 1: not served in the first draw");
@@ -386,7 +399,7 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         refused(r, p, pass, d, "hand_fs reads the primitive id: not served");
         p = handProgram();
         p.fs.numSamplerPrefetch = 1;
-        refused(r, p, pass, d, "hand_fs has 1 texture prefetch(es): the draw does not emit SP_FS_PREFETCH_CMD yet");
+        refused(r, p, pass, d, "hand_fs prefetches a texture and loads none: ir3's tables disagree");
         // a varying the vertex stage does not write: render::link's sentence
         p = handProgram();
         p.fs.inputs[1] = StageInput{kSlotVar0, uint8_t(regid(0, 2)), 0xf, 0, 0, 1, 0, 0};
@@ -2349,4 +2362,199 @@ TEST(a_draw_refuses_a_blend_it_cannot_serve) {
     ip.blend.enabled = false;
     Encoded e(r, ip, ints, wholeDraw());
     CHECK(e.ok);
+}
+
+// --- textures in the fragment stage: the FS_TEX tables and the prefetch ---------------------------------------------------
+
+namespace {
+Program texProgram() { return Program{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"}; }
+
+Sampler nearestClamp() {
+    Sampler s;
+    std::string why;
+    CHECK(makeSampler(SamplerDesc{}, &s, &why));
+    return s;
+}
+}  // namespace
+
+TEST(a_draw_samples_a_texture_through_the_fs_prefetch) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto tex = target(r, 4, 4, kTextureUsageRead);
+    Sampler smp = nearestClamp();
+    RenderPass pass;
+    pass.color0 = t.get();
+    Bindings fsb;
+    fsb.textures = {tex.get()};
+    fsb.samplers = {&smp};
+    Encoded e(r, texProgram(), pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    // the prefetch, as literals: COUNT 1 (the FS reads its perspective barycentric, so no IJ_WRITE_DISABLE), then the
+    // command: src 0, sampler 0, texture 0, dst r0.z (2) << 16, wrmask 0xf << 22, TEX_PREFETCH_SAM (1) << 29
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CNTL), 1u);
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CMD), 0x23c20000u);
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CNTL + 1), 0x23c20000u);   // ...in the same pkt4 as the CNTL
+    // the tables in the pass's FS part, the counts in the registers
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_TEX_COUNT), 1u);
+    const uint64_t texAt = uint64_t(e.reg(REG_A6XX_SP_FS_TEX_CONST)) | uint64_t(e.reg(REG_A6XX_SP_FS_TEX_CONST + 1)) << 32;
+    const uint64_t sampAt = uint64_t(e.reg(REG_A6XX_SP_FS_TEX_SAMP)) | uint64_t(e.reg(REG_A6XX_SP_FS_TEX_SAMP + 1)) << 32;
+    CHECK_EQ(texAt, e.table->gpuAddress() + render::kTableFsAt);
+    CHECK_EQ(sampAt, e.table->gpuAddress() + render::kTableFsAt + 16 * 64);
+    TexConst want = tex->sampledDescriptor();
+    CHECK(memcmp(e.tableWords() + render::kTableFsAt / 4, want.dword, sizeof want.dword) == 0);
+    CHECK(memcmp(e.tableWords() + (render::kTableFsAt + 16 * 64) / 4, smp.words, 16) == 0);
+    CHECK_EQ((e.reg(REG_A6XX_SP_FS_CONFIG) & A6XX_SP_FS_CONFIG_NTEX__MASK) >> A6XX_SP_FS_CONFIG_NTEX__SHIFT, 1u);
+    CHECK_EQ((e.reg(REG_A6XX_SP_FS_CONFIG) & A6XX_SP_FS_CONFIG_NSAMP__MASK) >> A6XX_SP_FS_CONFIG_NSAMP__SHIFT, 1u);
+    // the two SB6_FS_TEX loads by CP_LOAD_STATE6_FRAG: samplers (ST6_SHADER, 1 unit) and textures (ST6_CONSTANTS, 1 unit)
+    bool sampLoad = false, texLoad = false;
+    for (size_t i = e.find(CP_LOAD_STATE6_FRAG); i != size_t(-1); i = e.find(CP_LOAD_STATE6_FRAG, i + 1)) {
+        uint32_t w0 = e.stream.words()[i + 1];
+        if (((w0 & CP_LOAD_STATE6_0_STATE_BLOCK__MASK) >> CP_LOAD_STATE6_0_STATE_BLOCK__SHIFT) != SB6_FS_TEX) continue;
+        uint32_t type = (w0 & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT;
+        uint32_t units = (w0 & CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> CP_LOAD_STATE6_0_NUM_UNIT__SHIFT;
+        sampLoad |= type == ST6_SHADER && units == 1 && e.stream.words()[i + 2] == uint32_t(sampAt);
+        texLoad |= type == ST6_CONSTANTS && units == 1 && e.stream.words()[i + 2] == uint32_t(texAt);
+    }
+    CHECK(sampLoad && texLoad);
+    // through the command buffer, the fake judging the tables and the prefetch
+    auto cb = drawOnce(r, texProgram(), pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.fsTextureCount, 1u);
+    CHECK_EQ(r.fake->stats().lastDraw.fsSamplerCount, 1u);
+    CHECK_EQ(r.fake->stats().lastDraw.prefetchCount, 1u);
+    CHECK_EQ(r.fake->stats().lastDraw.prefetchCmd[0], 0x23c20000u);
+    // a draw without textures writes the count 0 (and no prefetch)
+    Encoded f(r, flatProgram(), pass, wholeDraw());
+    CHECK_EQ(f.reg(REG_A6XX_SP_FS_TEX_COUNT), 0u);
+    CHECK_EQ(f.reg(REG_A6XX_SP_FS_PREFETCH_CNTL) & A6XX_SP_FS_PREFETCH_CNTL_COUNT__MASK, 0u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+TEST(a_draw_refuses_a_texture_the_fs_cannot_sample) {
+    Rig r;
+    auto t = target(r);
+    auto tex = target(r, 4, 4, kTextureUsageRead);
+    auto ints = target(r, 4, 4, kTextureUsageRead, PixelFormat::kR32Uint);
+    auto writeOnly = target(r, 4, 4, kTextureUsageWrite);
+    Sampler smp = nearestClamp();
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto refusedWith = [&](const Program& p, const Bindings& fsb, const char* want) {
+        Encoded e(r, p, pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
+        CHECK(!e.ok);
+        expectRefusal(e.error, want);
+        auto cb = r.queue->commandBuffer();
+        CHECK(!cb->draw(p, pass, wholeDraw(6), Bindings{}, fsb));
+        expectRefusal(cb->error(), want);
+    };
+    Bindings none;
+    refusedWith(texProgram(), none, "tri_tex_fs_air: no texture bound at index 0");
+    Bindings noSampler;
+    noSampler.textures = {tex.get()};
+    refusedWith(texProgram(), noSampler, "tri_tex_fs_air: no sampler bound at index 0");
+    Bindings wrongClass;
+    wrongClass.textures = {ints.get()};
+    wrongClass.samplers = {&smp};
+    refusedWith(texProgram(), wrongClass, "texture 0 is R32Uint (uint); tri_tex_fs_air reads it as texture2d<float>");
+    Bindings unreadable;
+    unreadable.textures = {writeOnly.get()};
+    unreadable.samplers = {&smp};
+    refusedWith(texProgram(), unreadable, "texture 0 was made without shader-read usage; tri_tex_fs_air samples it");
+    // the prefetch's own slots: a texture index the FS does not declare, a bindless or unknown command
+    Bindings ok;
+    ok.textures = {tex.get()};
+    ok.samplers = {&smp};
+    Program p = texProgram();
+    p.fs.prefetch[0].texId = 3;
+    refusedWith(p, ok, "tri_tex_fs_air's prefetch 0 samples texture 3 with sampler 0: not a texture and a sampler the FS declares");
+    p = texProgram();
+    p.fs.prefetch[0].bindless = 1;
+    refusedWith(p, ok, "tri_tex_fs_air's prefetch 0 is bindless: the textures here are SB6_FS_TEX tables");
+    p = texProgram();
+    p.fs.prefetch[0].cmd = 0;
+    refusedWith(p, ok, "tri_tex_fs_air's prefetch 0 is not a plain sample (TEX_PREFETCH_SAM): no other prefetch is written here");
+    CHECK_EQ(r.fake->stats().submits, 0u);
+}
+
+namespace {
+// the textured draw encoded over a fresh rig, its words to mutate
+struct TexTwin {
+    explicit TexTwin(const render::Options& o = render::Options{}) : t(target(r)), tex(target(r, 4, 4, kTextureUsageRead)) {
+        smp = nearestClamp();
+        pass.color0 = t.get();
+        fsb.textures = {tex.get()};
+        fsb.samplers = {&smp};
+        e = std::make_unique<Encoded>(r, texProgram(), pass, wholeDraw(6), o, Bindings{}, fsb);
+        CHECK(e->ok);
+        words = e->stream.words();
+    }
+    uint32_t& at(uint32_t reg) {
+        size_t i = e->findReg(reg);
+        CHECK(i != size_t(-1));
+        return words[i == size_t(-1) ? 0 : i];
+    }
+    std::string fault() { return faultOf(r, words); }
+    Rig r;
+    std::shared_ptr<Texture> t, tex;
+    Sampler smp;
+    RenderPass pass;
+    Bindings fsb;
+    std::unique_ptr<Encoded> e;
+    std::vector<uint32_t> words;
+};
+}  // namespace
+
+TEST(the_fake_refuses_fs_textures_or_a_prefetch_that_do_not_hold_together) {
+    using namespace a6xx;
+    {
+        TexTwin w;
+        Raw raw(w.r);
+        CHECK_EQ(raw.submit(w.words), 0);
+        CHECK_EQ(w.r.fake->stats().lastDraw.prefetchCount, 1u);
+    }
+    {
+        render::Options o;
+        o.fsTextures = false;
+        TexTwin w(o);
+        CHECK(has(w.fault(), "SP_FS_TEX_COUNT not written in this submission"));
+    }
+    {
+        TexTwin w;
+        w.at(REG_A6XX_SP_FS_TEX_COUNT) = 2;
+        CHECK(has(w.fault(), "the FS's texture descriptors were not loaded from where SP_FS_TEX_CONST points, or not as many as SP_FS_TEX_COUNT says"));
+    }
+    {
+        TexTwin w;
+        w.at(REG_A6XX_SP_FS_TEX_SAMP) += 16;
+        CHECK(has(w.fault(), "the FS's sampler descriptors were not loaded from where SP_FS_TEX_SAMP points"));
+    }
+    {
+        TexTwin w;
+        w.at(REG_A6XX_SP_FS_CONFIG) &= ~A6XX_SP_FS_CONFIG_NSAMP__MASK;
+        CHECK(has(w.fault(), "SP_FS_CONFIG names 1 textures and 0 samplers; SP_FS_TEX_COUNT says 1"));
+    }
+    {
+        TexTwin w;
+        w.at(REG_A6XX_SP_FS_PREFETCH_CNTL + 1) = spFsPrefetchCmd(0, 0, 1, 2, 0xf, false, TEX_PREFETCH_SAM);
+        CHECK(has(w.fault(), "SP_FS_PREFETCH_CMD[0] samples texture 1 with sampler 0: past the loaded tables (1 textures, 1 samplers)"));
+    }
+    {
+        TexTwin w;
+        w.at(REG_A6XX_SP_FS_PREFETCH_CNTL + 1) |= A6XX_SP_FS_PREFETCH_CMD_BINDLESS;
+        CHECK(has(w.fault(), "is not a plain, non-bindless sample (TEX_PREFETCH_SAM)"));
+    }
+    {
+        TexTwin w;
+        w.at(REG_A6XX_SP_FS_PREFETCH_CNTL + 1) &= ~A6XX_SP_FS_PREFETCH_CMD_WRMASK__MASK;
+        CHECK(has(w.fault(), "SP_FS_PREFETCH_CMD[0] writes components 0 into register 0x2: nothing, or no register"));
+    }
+    {
+        // the texture's descriptor zeroed in the table after encoding: the prefetch samples a slot nothing is bound at
+        TexTwin w;
+        memset(static_cast<uint8_t*>(w.e->table->contents()) + render::kTableFsAt, 0, 64);
+        CHECK(has(w.fault(), "SP_FS_PREFETCH_CMD[0] samples texture 0, whose descriptor is zero"));
+    }
 }
