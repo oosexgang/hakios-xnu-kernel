@@ -19,6 +19,7 @@
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_null_fs_air.hpp"
+#include "fixtures/tri_mrt_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
@@ -575,6 +576,19 @@ TEST(compiler_matches_the_stage_fixtures) {
         CHECK_EQ(uint32_t(nullFs->stage.k.textures[0].isNull), 1u);
         CHECK_EQ(nullFs->stage.numSamplerPrefetch, 1u);
     }
+    // two colour targets: [[color(0)]] in r0, [[color(1)]] in r1, and the pipeline links (MRT is the draw's to serve now)
+    auto mrtFs = compareStageWithFixture("tri_mrt_fs", kernels::tri_mrt_fs_air, "tri_mrt_fs", "mov.u32u32 r1.w, 0x3f400000");
+    if (mrtFs) {
+        CHECK_EQ(mrtFs->stage.numColorOutputs, 2u);
+        CHECK_EQ(mrtFs->stage.colorRegid[1], 0x04u);
+        if (flatVs) {
+            std::string why;
+            auto linked = linkProgram(flatVs, mrtFs, PixelFormat::kRGBA8Unorm, &why);
+            CHECK(linked != nullptr);
+            if (linked == nullptr) std::printf("       %s\n", why.c_str());
+            if (linked) CHECK_EQ(linked->program.link.mrtComponents, 0xffu);
+        }
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;
@@ -735,13 +749,17 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(m, fs) == nullptr);
     expectRefusal(why, "the vertex stage tri_flat_vs samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
     m = copyOf(fs);
-    m->stage.numColorOutputs = 2;
+    m->stage.numColorOutputs = 2;   // [[color(1)]] counted and not written: a gap
     CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes 2 colour output(s): one target, [[color(0)]], is served");
+    expectRefusal(why, "the fragment stage tri_flat_fs writes [[color(1)]] but not [[color(1)]]: colour outputs with a gap are not served");
+    m = copyOf(fs);
+    m->stage.numColorOutputs = 9;
+    CHECK(link(vs, m) == nullptr);
+    expectRefusal(why, "the fragment stage tri_flat_fs writes 9 colour output(s): [[color(0)]] and up to seven after it are served");
     m = copyOf(fs);
     m->stage.colorRegid[0] = a6xx::kRegidNone;   // [[color(1)]] alone would look like this: one output, not at 0
     CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes 1 colour output(s) and not [[color(0)]]: one target, [[color(0)]], is served");
+    expectRefusal(why, "the fragment stage tri_flat_fs writes 1 colour output(s) and not [[color(0)]]: [[color(0)]] and up to seven after it are served");
     m = copyOf(fs);
     m->stage.depthRegid = 0;
     CHECK(link(vs, m) == nullptr);

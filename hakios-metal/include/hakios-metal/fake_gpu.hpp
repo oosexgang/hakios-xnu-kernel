@@ -110,6 +110,8 @@ public:
         // the target as RB_MRT[0] names it: the format, swap and tile mode fields, the pitches in BYTES (decoded), the base
         uint32_t mrtFormat = 0, mrtSwap = 0, mrtTileMode = 0, mrtPitch = 0, mrtArrayPitch = 0;
         uint64_t mrtBase = 0;
+        uint64_t mrtBases[8] = {};                  // every target's RB_MRT_BASE, 0 to mrtCount - 1 (mrtBase is [0])
+        uint32_t mrtFormats[8] = {};
         uint32_t spFsMrtReg = 0;
         uint32_t renderComponents = 0, fsRenderComponents = 0;   // RB_RENDER_COMPONENTS, SP_FS_RENDER_COMPONENTS
         uint32_t mrtCount = 0;                      // RB_FS_OUTPUT_CNTL1.MRT (== SP_FS_OUTPUT_CNTL1.MRT)

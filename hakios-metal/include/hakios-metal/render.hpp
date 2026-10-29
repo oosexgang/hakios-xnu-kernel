@@ -194,6 +194,7 @@ struct Program {
     const char* name;
     VertexDescriptor vertexDescriptor{};   // what the VS's [[stage_in]] attributes are in memory (none: a VS without attributes)
     ColorBlend blend{};                    // colour attachment 0's blending and write mask
+    ColorBlend moreBlend[kMaxColorOutputs - 1]{};   // ...and attachments 1 to 7's, for an FS that writes [[color(n)]] there
 };
 
 namespace render {
@@ -214,11 +215,23 @@ enum class Primitive : uint32_t { kPoint = 0, kLine = 1, kLineStrip = 2, kTriang
 struct Viewport { double x, y, width, height, znear, zfar; };   // MTLViewport, Metal's top-left origin
 struct Scissor { uint32_t x, y, width, height; };               // MTLScissorRect
 
+// a colour attachment past 0 (MTLRenderPassColorAttachmentDescriptor at index 1 to 7), with attachment 0's rules
+struct ColorAttachment {
+    const Texture* texture = nullptr;            // none: the attachment is not set
+    LoadAction load = LoadAction::kLoad;
+    StoreAction store = StoreAction::kStore;
+    double clearColor[4] = {0, 0, 0, 0};
+};
+
 struct RenderPass {
-    const Texture* color0 = nullptr;             // made with kTextureUsageRenderTarget; step one: one target, no depth
+    const Texture* color0 = nullptr;             // made with kTextureUsageRenderTarget
     LoadAction load = LoadAction::kLoad;         // kClear: the 2D engine fills the whole target with clearColor before the draw (turnip's sysmem clear)
     StoreAction store = StoreAction::kStore;
     double clearColor[4] = {0, 0, 0, 0};         // MTLClearColor, RGBA whatever the format's memory order; whole numbers for an integer target
+    // Colour attachments 1 to 7, each the size of attachment 0. One the FS writes ([[color(n)]]) is RB_MRT[n]; one it
+    // does not write is only cleared when it asks for a Clear, and otherwise left as it is -- what Metal leaves for an
+    // output the function does not write.
+    ColorAttachment more[kMaxColorOutputs - 1];
     // the depth attachment (MTLRenderPassDepthAttachmentDescriptor): a kDepth32Float texture or none; Metal's defaults
     // are DontCare / DontCare / 1.0. In sysmem Load and DontCare are the same, and the depth is always flushed to memory
     // at the pass's end (each draw is a pass of its own here, so the next one must find it there)
@@ -269,6 +282,12 @@ constexpr uint32_t kTableDepthClearFlushAt = 20;  // the depth CCU flush after a
 constexpr uint32_t kDepthClearFlushValue = 6;
 constexpr uint32_t kTableDepthClearDepthFlushAt = 24;   // ...and the depth CCU's flush after it, kDepthClearDepthFlushValue
 constexpr uint32_t kDepthClearDepthFlushValue = 7;
+// Colour attachments 1 to 7's Clears, a word each (28 to 52), each waited for at kClearFlushValue: a word of its own
+// per attachment, because a second Clear waiting on the first one's word would find the value already there and run on
+// before its own fill had left the CCU.
+constexpr uint32_t kTableMoreClearFlushAt = 28;
+constexpr uint32_t kTableZeroedBytes = 64;        // what tableStart zeroes from kTableTimestampsAt: every word above
+static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroedBytes, "the Clears' words are zeroed");
 constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
 constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses
 constexpr uint32_t kTableVsAt = 1024;             // step two: the VS's descriptor tables (UBO, IBO, TEX, SAMP)

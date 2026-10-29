@@ -911,93 +911,117 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         fault("SP_FS_CTRL_REG0 and HLSQ_FS_CNTL_0 disagree about the fragment thread size");
         return false;
     }
-    // the target: RB_MRT[0] a linear image of a known format, its pitch holding the window's rows, its rows inside a buffer
-    uint32_t bufInfo = reg(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0));
-    d.mrtFormat = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__SHIFT);
-    d.mrtTileMode = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__SHIFT);
-    d.mrtSwap = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__SHIFT);
-    uint32_t bpp = bytesPerPixel(d.mrtFormat);
-    if (bpp == 0) {
-        fault(text("RB_MRT_BUF_INFO[0]: COLOR_FORMAT %llu is not one this GPU model knows", d.mrtFormat));
+    // the targets: as many as both copies of OUTPUT_CNTL1.MRT say (1 to 8, the same in both), each RB_MRT[i] a linear
+    // image of a known format, its pitch holding the window's rows, its rows inside a buffer, SP_FS_MRT_REG[i] the same
+    // format, no GMEM base; target 0's format in GRAS_LRZ_MRT_BUF_INFO_0
+    d.mrtCount = fieldOf(reg(REG_A6XX_RB_FS_OUTPUT_CNTL1), A6XX_RB_FS_OUTPUT_CNTL1_MRT__MASK, A6XX_RB_FS_OUTPUT_CNTL1_MRT__SHIFT);
+    uint32_t spMrt = fieldOf(reg(REG_A6XX_SP_FS_OUTPUT_CNTL1), A6XX_SP_FS_OUTPUT_CNTL1_MRT__MASK, A6XX_SP_FS_OUTPUT_CNTL1_MRT__SHIFT);
+    if (d.mrtCount < 1 || d.mrtCount > 8 || spMrt != d.mrtCount) {
+        fault(text("SP_FS_OUTPUT_CNTL1.MRT %llu and RB_FS_OUTPUT_CNTL1.MRT %llu: 1 to 8 targets, the same in both", spMrt, d.mrtCount));
         return false;
     }
-    if (d.mrtTileMode != TILE6_LINEAR) {
-        fault(text("RB_MRT_BUF_INFO[0]: tile mode %llu: only linear targets are what this GPU model runs", d.mrtTileMode));
-        return false;
-    }
-    d.mrtPitch = fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_PITCH, 0)), A6XX_RB_MRT_PITCH__MASK, A6XX_RB_MRT_PITCH__SHIFT) << A6XX_RB_MRT_PITCH__SCALE;
-    d.mrtArrayPitch = fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_ARRAY_PITCH, 0)), A6XX_RB_MRT_ARRAY_PITCH__MASK, A6XX_RB_MRT_ARRAY_PITCH__SHIFT)
-                      << A6XX_RB_MRT_ARRAY_PITCH__SCALE;
-    d.mrtBase = reg64(regRbMrt(REG_A6XX_RB_MRT_BASE, 0));
     uint32_t winBr = reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR);
     d.windowScissor[0] = fieldOf(reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL), A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__SHIFT);
     d.windowScissor[1] = fieldOf(reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL), A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__SHIFT);
     d.windowScissor[2] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__SHIFT);
     d.windowScissor[3] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__SHIFT);
     const uint64_t width = uint64_t(d.windowScissor[2]) + 1, rows = uint64_t(d.windowScissor[3]) + 1;
-    if (d.mrtPitch < width * bpp) {
-        fault(text("RB_MRT_PITCH[0] %llu bytes for rows of %llu pixels of %llu bytes: shorter than a row", d.mrtPitch, width, bpp));
-        return false;
-    }
-    {
-        // the rows counted to a multiple of 4, as the layout counts its last level (fd6_layout.c:249-250) and check2d does
-        uint64_t counted = (rows + 3) & ~uint64_t(3);
-        if (d.mrtBase % kMrtBaseAlign != 0 || at(d.mrtBase, counted * d.mrtPitch) == nullptr) {
-            fault(text("RB_MRT[0]: %llu rows (%llu counted) of %llu bytes", rows, counted, d.mrtPitch) +
-                  text(" at %#llx: outside every buffer or not 64-byte aligned", d.mrtBase));
+    for (uint32_t t = 0; t < d.mrtCount; t++) {
+        const std::string which = std::to_string(t);
+        uint32_t bufInfo = reg(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, t));
+        const uint32_t format = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__SHIFT);
+        const uint32_t tile = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__SHIFT);
+        uint32_t bpp = bytesPerPixel(format);
+        if (bpp == 0) {
+            fault("RB_MRT_BUF_INFO[" + which + "]: " + text("COLOR_FORMAT %llu is not one this GPU model knows", format));
             return false;
         }
-    }
-    d.spFsMrtReg = reg(regSpFsMrtReg(0));
-    if (fieldOf(d.spFsMrtReg, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT) != d.mrtFormat) {
-        fault(text("SP_FS_MRT_REG[0] names format %llu, RB_MRT_BUF_INFO[0] %llu",
-                   fieldOf(d.spFsMrtReg, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT), d.mrtFormat));
-        return false;
+        if (tile != TILE6_LINEAR) {
+            fault("RB_MRT_BUF_INFO[" + which + "]: " + text("tile mode %llu: only linear targets are what this GPU model runs", tile));
+            return false;
+        }
+        const uint64_t pitch = uint64_t(fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_PITCH, t)), A6XX_RB_MRT_PITCH__MASK, A6XX_RB_MRT_PITCH__SHIFT)) << A6XX_RB_MRT_PITCH__SCALE;
+        const uint64_t base = reg64(regRbMrt(REG_A6XX_RB_MRT_BASE, t));
+        if (pitch < width * bpp) {
+            fault("RB_MRT_PITCH[" + which + "] " + text("%llu bytes for rows of %llu pixels", pitch, width) + text(" of %llu bytes: shorter than a row", bpp));
+            return false;
+        }
+        // the rows counted to a multiple of 4, as the layout counts its last level (fd6_layout.c:249-250) and check2d does
+        uint64_t counted = (rows + 3) & ~uint64_t(3);
+        if (base % kMrtBaseAlign != 0 || at(base, counted * pitch) == nullptr) {
+            fault("RB_MRT[" + which + "]: " + text("%llu rows (%llu counted)", rows, counted) + text(" of %llu bytes", pitch) +
+                  text(" at %#llx: outside every buffer or not 64-byte aligned", base));
+            return false;
+        }
+        const uint32_t spFsMrtReg = reg(regSpFsMrtReg(t));
+        if (fieldOf(spFsMrtReg, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT) != format) {
+            fault("SP_FS_MRT_REG[" + which + "] " + text("names format %llu, RB_MRT_BUF_INFO %llu",
+                                                       fieldOf(spFsMrtReg, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT), format));
+            return false;
+        }
+        if (reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t)) != 0) {
+            fault("RB_MRT_BASE_GMEM[" + which + "] " + text("is %#llx: a sysmem draw has no GMEM base", reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t))));
+            return false;
+        }
+        if (fieldOf(reg(regSpFsOutputReg(t)), A6XX_SP_FS_OUTPUT_REG_REGID__MASK, A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT) == kRegidNone) {
+            fault("SP_FS_OUTPUT_REG[" + which + "] names no register: the fragment stage writes no colour there");
+            return false;
+        }
+        d.mrtBases[t] = base;
+        d.mrtFormats[t] = format;
+        if (t == 0) {
+            d.mrtFormat = format;
+            d.mrtTileMode = tile;
+            d.mrtSwap = fieldOf(bufInfo, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__MASK, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__SHIFT);
+            d.mrtPitch = pitch;
+            d.mrtArrayPitch = fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_ARRAY_PITCH, 0)), A6XX_RB_MRT_ARRAY_PITCH__MASK, A6XX_RB_MRT_ARRAY_PITCH__SHIFT)
+                              << A6XX_RB_MRT_ARRAY_PITCH__SCALE;
+            d.mrtBase = base;
+            d.spFsMrtReg = spFsMrtReg;
+        }
     }
     if (fieldOf(reg(REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0), A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT__MASK, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT__SHIFT) != d.mrtFormat) {
         fault(text("GRAS_LRZ_MRT_BUF_INFO_0 names format %llu, RB_MRT_BUF_INFO[0] %llu", reg(REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0), d.mrtFormat));
         return false;
     }
-    if (reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, 0)) != 0) {
-        fault(text("RB_MRT_BASE_GMEM[0] is %#llx: a sysmem draw has no GMEM base", reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, 0))));
-        return false;
-    }
-    // the FS's output path to it: one MRT in both copies, a colour register, all four components in both copies and the write mask
-    d.mrtCount = fieldOf(reg(REG_A6XX_RB_FS_OUTPUT_CNTL1), A6XX_RB_FS_OUTPUT_CNTL1_MRT__MASK, A6XX_RB_FS_OUTPUT_CNTL1_MRT__SHIFT);
-    uint32_t spMrt = fieldOf(reg(REG_A6XX_SP_FS_OUTPUT_CNTL1), A6XX_SP_FS_OUTPUT_CNTL1_MRT__MASK, A6XX_SP_FS_OUTPUT_CNTL1_MRT__SHIFT);
-    if (d.mrtCount != 1 || spMrt != 1) {
-        fault(text("SP_FS_OUTPUT_CNTL1.MRT %llu and RB_FS_OUTPUT_CNTL1.MRT %llu: one target, in both", spMrt, d.mrtCount));
-        return false;
-    }
     d.spFsOutputReg0 = reg(regSpFsOutputReg(0));
-    if (fieldOf(d.spFsOutputReg0, A6XX_SP_FS_OUTPUT_REG_REGID__MASK, A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT) == kRegidNone) {
-        fault("SP_FS_OUTPUT_REG[0] names no register: the fragment stage writes no colour");
-        return false;
-    }
+    // all four components of each target in both copies of RENDER_COMPONENTS
     d.renderComponents = reg(REG_A6XX_RB_RENDER_COMPONENTS);
     d.fsRenderComponents = reg(REG_A6XX_SP_FS_RENDER_COMPONENTS);
-    if (d.renderComponents != d.fsRenderComponents || (d.renderComponents & A6XX_RB_RENDER_COMPONENTS_RT0__MASK) != 0xf) {
-        fault(text("RENDER_COMPONENTS %#llx (SP) and %#llx (RB): RT0 needs all four components in both", d.fsRenderComponents, d.renderComponents));
-        return false;
-    }
-    // the blend: RB_MRT_CONTROL[0]'s two BLEND bits together, and the same answer in SP_BLEND_CNTL and RB_BLEND_CNTL's
-    // ENABLE_BLEND bit 0 (tu6_emit_blend writes all three from one mask); a blending target's factors and opcodes ones the
-    // enums have. (The component enable may be anything, 0 included: Metal's MTLColorWriteMaskNone draws and writes nothing.)
-    // ...and all four written in this submission: they are context registers the kernel does not reset, so a stream that
-    // leaves them out draws with whatever write mask and blend the last owner of the GPU set
-    for (uint32_t r : {regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0), REG_A6XX_SP_BLEND_CNTL, REG_A6XX_RB_BLEND_CNTL}) {
-        if (written_.count(r) == 0) {
-            fault(text("blend register %#llx not written in this submission: ", r) + "the draw's write mask and blend would be the last owner's");
+    for (uint32_t t = 0; t < d.mrtCount; t++) {
+        if (d.renderComponents != d.fsRenderComponents || ((d.renderComponents >> (4 * t)) & 0xf) != 0xf) {
+            fault(text("RENDER_COMPONENTS %#llx (SP) and %#llx (RB): ", d.fsRenderComponents, d.renderComponents) + "RT" + std::to_string(t) +
+                  " needs all four components in both");
             return false;
         }
     }
-    {
-        const uint32_t mrtControl = reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), mrtBlend = reg(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0));
+    // the blend of each target: RB_MRT_CONTROL[i]'s two BLEND bits together, and the same answer in bit i of
+    // SP_BLEND_CNTL's and RB_BLEND_CNTL's ENABLE_BLEND (tu6_emit_blend writes all three from one mask); a blending
+    // target's factors and opcodes ones the enums have. (The component enable may be anything, 0 included: Metal's
+    // MTLColorWriteMaskNone draws and writes nothing.)
+    // ...and all of them written in this submission: they are context registers the kernel does not reset, so a stream
+    // that leaves them out draws with whatever write mask and blend the last owner of the GPU set
+    for (uint32_t t = 0; t < d.mrtCount; t++) {
+        const std::string which = std::to_string(t);
+        // (target 0's two, then the two the targets share, then each later target's)
+        std::vector<uint32_t> must = {regRbMrt(REG_A6XX_RB_MRT_CONTROL, t), regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, t)};
+        if (t == 0) {
+            must.push_back(REG_A6XX_SP_BLEND_CNTL);
+            must.push_back(REG_A6XX_RB_BLEND_CNTL);
+        }
+        for (uint32_t r : must) {
+            if (written_.count(r) == 0) {
+                fault(text("blend register %#llx not written in this submission: ", r) + "the draw's write mask and blend would be the last owner's");
+                return false;
+            }
+        }
+        const uint32_t mrtControl = reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, t)), mrtBlend = reg(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, t));
         const bool blend = (mrtControl & A6XX_RB_MRT_CONTROL_BLEND) != 0;
         if (blend != ((mrtControl & A6XX_RB_MRT_CONTROL_BLEND2) != 0) ||
-            blend != ((reg(REG_A6XX_SP_BLEND_CNTL) & 1u) != 0) || blend != ((reg(REG_A6XX_RB_BLEND_CNTL) & 1u) != 0)) {
-            fault(text("the blend of target 0 is on in some of RB_MRT_CONTROL[0] (%#llx: BLEND and BLEND2), SP_BLEND_CNTL (%#llx) and ", mrtControl,
-                       reg(REG_A6XX_SP_BLEND_CNTL)) + text("RB_BLEND_CNTL (%#llx) and off in others", reg(REG_A6XX_RB_BLEND_CNTL)));
+            blend != (((reg(REG_A6XX_SP_BLEND_CNTL) >> t) & 1u) != 0) || blend != (((reg(REG_A6XX_RB_BLEND_CNTL) >> t) & 1u) != 0)) {
+            fault("the blend of target " + which + text(" is on in some of RB_MRT_CONTROL (%#llx: BLEND and BLEND2), SP_BLEND_CNTL (%#llx) and ", mrtControl,
+                                                      reg(REG_A6XX_SP_BLEND_CNTL)) +
+                  text("RB_BLEND_CNTL (%#llx) and off in others", reg(REG_A6XX_RB_BLEND_CNTL)));
             return false;
         }
         if (blend) {
@@ -1009,18 +1033,20 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             for (uint32_t f : factors) {
                 // adreno_rb_blend_factor: 0, 1, 4..16, 20..23 (adreno_common.xml.h:92-110)
                 if (f == 2 || f == 3 || (f > 16 && f < 20) || f > 23) {
-                    fault(text("RB_MRT_BLEND_CONTROL[0] %#llx names blend factor %llu, which adreno_rb_blend_factor does not have", mrtBlend, f));
+                    fault("RB_MRT_BLEND_CONTROL[" + which + "] " + text("%#llx names blend factor %llu, which adreno_rb_blend_factor does not have", mrtBlend, f));
                     return false;
                 }
             }
             if (fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__MASK, A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__SHIFT) > BLEND_MAX_DST_SRC ||
                 fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__MASK, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__SHIFT) > BLEND_MAX_DST_SRC) {
-                fault(text("RB_MRT_BLEND_CONTROL[0] %#llx names a blend opcode past BLEND_MAX_DST_SRC (4)", mrtBlend));
+                fault("RB_MRT_BLEND_CONTROL[" + which + "] " + text("%#llx names a blend opcode past BLEND_MAX_DST_SRC (4)", mrtBlend));
                 return false;
             }
         }
-        d.mrtControl = mrtControl;
-        d.mrtBlendControl = mrtBlend;
+        if (t == 0) {
+            d.mrtControl = mrtControl;
+            d.mrtBlendControl = mrtBlend;
+        }
     }
     // the FS's textures (Gallium's FS_TEX group, fd6_texture.cc:575-687), as the compute dispatch's are judged:
     // SP_FS_TEX_COUNT written in this submission (context state: a stale count would sample a stale table), and when it

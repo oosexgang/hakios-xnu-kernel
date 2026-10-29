@@ -702,34 +702,62 @@ void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDep
 constexpr uint8_t kFragResultData0 = 4;
 
 
-// The colour target and the pass's actions, for a draw and for a pass with no draw alike; the colour of a Clear is
-// packed apart (clearWords), since only a Clear has one
+// colour attachment I of a pass in one shape (attachment 0 is the pass's own fields, 1 to 7 its `more`)
+struct Attachment {
+    const Texture* texture;
+    LoadAction load;
+    StoreAction store;
+    const double* clearColor;
+};
+Attachment attachmentOf(const RenderPass& p, uint32_t i) {
+    if (i == 0) return Attachment{p.color0, p.load, p.store, p.clearColor};
+    const ColorAttachment& c = p.more[i - 1];
+    return Attachment{c.texture, c.load, c.store, c.clearColor};
+}
+
+// the table word attachment I's Clear waits on (render.hpp: kTableMoreClearFlushAt says why each has its own)
+uint64_t clearFlushAt(uint64_t table, uint32_t i) { return table + (i == 0 ? kTableClearFlushAt : kTableMoreClearFlushAt + 4 * (i - 1)); }
+
+// The colour targets and the pass's actions, for a draw and for a pass with no draw alike; the colour of a Clear is
+// packed apart (clearWords), since only a Clear has one. Every attachment set is held to the same rules, and those past
+// 0 to attachment 0's size: the window is one rectangle for all of them.
 bool checkTarget(const RenderPass& pass, std::string* why) {
     if (pass.color0 == nullptr) {
         return refuse(why, "a render pass with no colour attachment: one target is what the first draw serves");
     }
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        if (a.texture == nullptr) continue;
+        const Texture& t = *a.texture;
+        const FormatInfo& f = t.info();
+        // (attachment 0's sentences are the ones a single target always had; a later one's name its index)
+        const std::string which = "colour attachment " + n(i), of = i == 0 ? std::string() : " of " + which, at = i == 0 ? std::string() : which + ": ";
+        if ((t.usage() & kTextureUsageRenderTarget) == 0) {
+            return refuse(why, "the " + n(t.width()) + " x " + n(t.height()) + " " + f.name + " texture" + of +
+                                   " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
+        }
+        if (t.type() != TextureType::k2D) {
+            return refuse(why, at + "a colour attachment of texture type " + n(uint32_t(t.type())) + ": only 2D (2) is served");
+        }
+        if (!rbMrtPitchValid(uint32_t(t.bytesPerRow())) || t.buffer()->length() >= (1ull << 32)) {
+            return refuse(why, at + "the target's pitch of " + n(t.bytesPerRow()) + " bytes or its " + n(t.buffer()->length()) +
+                                   " bytes do not fit RB_MRT_PITCH / RB_MRT_ARRAY_PITCH");
+        }
+        if (a.load != LoadAction::kLoad && a.load != LoadAction::kDontCare && a.load != LoadAction::kClear) {
+            return refuse(why, at + "load action " + n(uint32_t(a.load)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
+        }
+        if (a.store != StoreAction::kStore) {
+            return refuse(why, at + "store action " + n(uint32_t(a.store)) + ": only Store (1) is served");
+        }
+        if (f.depth) {
+            return refuse(why, std::string("a ") + f.name + " texture as " + which + ": a depth format is the depth attachment's");
+        }
+        if (i != 0 && (t.width() != pass.color0->width() || t.height() != pass.color0->height())) {
+            return refuse(why, "a " + n(t.width()) + " x " + n(t.height()) + " " + which + " beside a " + n(pass.color0->width()) + " x " +
+                                   n(pass.color0->height()) + " colour attachment 0: one window serves them all, so they must be the same size");
+        }
+    }
     const Texture& target = *pass.color0;
-    const FormatInfo& format = target.info();
-    if ((target.usage() & kTextureUsageRenderTarget) == 0) {
-        return refuse(why, "the " + n(target.width()) + " x " + n(target.height()) + " " + format.name +
-                               " texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
-    }
-    if (target.type() != TextureType::k2D) {
-        return refuse(why, "a colour attachment of texture type " + n(uint32_t(target.type())) + ": only 2D (2) is served");
-    }
-    if (!rbMrtPitchValid(uint32_t(target.bytesPerRow())) || target.buffer()->length() >= (1ull << 32)) {
-        return refuse(why, "the target's pitch of " + n(target.bytesPerRow()) + " bytes or its " + n(target.buffer()->length()) +
-                               " bytes do not fit RB_MRT_PITCH / RB_MRT_ARRAY_PITCH");
-    }
-    if (pass.load != LoadAction::kLoad && pass.load != LoadAction::kDontCare && pass.load != LoadAction::kClear) {
-        return refuse(why, "load action " + n(uint32_t(pass.load)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
-    }
-    if (pass.store != StoreAction::kStore) {
-        return refuse(why, "store action " + n(uint32_t(pass.store)) + ": only Store (1) is served");
-    }
-    if (format.depth) {
-        return refuse(why, std::string("a ") + format.name + " texture as colour attachment 0: a depth format is the depth attachment's");
-    }
     if (pass.depth != nullptr) {
         const Texture& d = *pass.depth;
         if (!d.info().depth) {
@@ -759,9 +787,38 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
     return true;
 }
 
+// the Clear words of every set attachment that asks for a Clear (the rest left zero)
+bool clearsOf(const RenderPass& pass, ClearWords out[kMaxColorOutputs], std::string* why) {
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        out[i] = ClearWords{};
+        if (a.texture != nullptr && a.load == LoadAction::kClear && !clearWords(a.texture->info(), a.clearColor, &out[i], why)) {
+            return i == 0 ? false : refuse(why, "colour attachment " + n(i) + ": " + *why);
+        }
+    }
+    return true;
+}
+
+bool anyColorClear(const RenderPass& pass) {
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        if (a.texture != nullptr && a.load == LoadAction::kClear) return true;
+    }
+    return false;
+}
+
+// the fills, attachment by attachment as turnip clears them (tu_clear_sysmem_attachment per attachment), each waited for
+// on its own word
+void clearAll(pm4::Stream& stream, const RenderPass& pass, const ClearWords c[kMaxColorOutputs], uint64_t table) {
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        if (a.texture != nullptr && a.load == LoadAction::kClear) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i));
+    }
+}
+
 // the table's words the stream addresses, zeroed before the GPU sees them
 void tableStart(uint8_t* tableCpu) {
-    memset(tableCpu + kTableTimestampsAt, 0, 32);          // the tail's and the clears' values: 0 until the events write them
+    memset(tableCpu + kTableTimestampsAt, 0, kTableZeroedBytes);   // the tail's and the clears' values: 0 until the events write them
     memset(tableCpu + kTableBorderColorAt, 0, 128);        // border colour entry 0, transparent black (the batch start points the TP here)
     memset(tableCpu + kTableHoleAt, 0, 64);
 }
@@ -916,9 +973,18 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (vs.writesLayer || vs.writesViewport) {
         return refuse(why, std::string(stageName(vs)) + " writes a layer or viewport index: not served");
     }
-    if (fs.numColorOutputs != 1 || fs.colorRegid[0] == kRegidNone) {
+    // [[color(0)]] and as many after it as the FS writes, without a gap (a gap would be an RB_MRT entry nothing writes,
+    // which is legal and not written here); each into an attachment of its own, which the target's part checks
+    if (fs.numColorOutputs == 0 || fs.numColorOutputs > kMaxColorOutputs || fs.colorRegid[0] == kRegidNone) {
         return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s)" +
-                               (fs.numColorOutputs != 0 && fs.colorRegid[0] == kRegidNone ? " and not [[color(0)]]" : "") + ": one target, [[color(0)]], is served");
+                               (fs.numColorOutputs != 0 && fs.colorRegid[0] == kRegidNone ? " and not [[color(0)]]" : "") +
+                               ": [[color(0)]] and up to seven after it are served");
+    }
+    for (uint32_t i = 1; i < fs.numColorOutputs; i++) {
+        if (fs.colorRegid[i] == kRegidNone) {
+            return refuse(why, std::string(stageName(fs)) + " writes [[color(" + n(fs.numColorOutputs - 1) + ")]] but not [[color(" + n(i) +
+                                   ")]]: colour outputs with a gap are not served");
+        }
     }
     if (fs.depthRegid != kRegidNone || fs.writesPos) {
         return refuse(why, std::string(stageName(fs)) + " writes depth: no depth attachment is served");
@@ -954,28 +1020,39 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     }
     const Texture& target = *pass.color0;
     const FormatInfo& format = target.info();
-    {
+    const uint32_t numRt = fs.numColorOutputs;
+    for (uint32_t i = 0; i < numRt; i++) {
+        const Texture* t = attachmentOf(pass, i).texture;
+        if (t == nullptr) {
+            return refuse(why, std::string(stageName(fs)) + " writes [[color(" + n(i) + ")]] and the pass has no colour attachment " + n(i));
+        }
         // the FS's colour class against the format's: floats into a unorm/float format, integers into a Uint one (the
         // hardware converts the raw register as the format says, so a mismatch is garbage on the phone, not an error).
-        // The class rides in StageOutput::pad of the FRAG_RESULT_DATA0 entry, as compiler.cpp's fillStage and the fixture
-        // writer put it there (linkProgram reads it the same way)
+        // The class rides in StageOutput::pad of each FRAG_RESULT_DATA0 + i entry, as compiler.cpp's fillStage and the
+        // fixture writer put it there (linkProgram reads attachment 0's the same way)
         uint8_t fsClass = kElemFloat;
-        for (uint32_t i = 0; i < fs.numOutputs && i < kMaxStageOutputs; i++) {
-            if (fs.outputs[i].slot == kFragResultData0) fsClass = fs.outputs[i].pad;
+        for (uint32_t k = 0; k < fs.numOutputs && k < kMaxStageOutputs; k++) {
+            if (fs.outputs[k].slot == kFragResultData0 + i) fsClass = fs.outputs[k].pad;
         }
-        uint8_t formatClass = format.element == kElemFloat ? kElemFloat : kElemUint;
+        const FormatInfo& f = t->info();
+        uint8_t formatClass = f.element == kElemFloat ? kElemFloat : kElemUint;
         if ((fsClass == kElemFloat) != (formatClass == kElemFloat)) {
-            return refuse(why, std::string(stageName(fs)) + " returns " + (fsClass == kElemFloat ? "floats" : "integers") + " into " + format.name + ", which holds " +
+            return refuse(why, std::string(stageName(fs)) + " returns " + (fsClass == kElemFloat ? "floats" : "integers") + " into " + f.name +
+                                   (i != 0 ? " (colour attachment " + n(i) + ")" : std::string()) + ", which holds " +
                                    (formatClass == kElemFloat ? "floats" : "integers"));
         }
     }
-    ClearWords clear{};
-    if (whole && pass.load == LoadAction::kClear && !clearWords(format, pass.clearColor, &clear, why)) {
+    ClearWords clears[kMaxColorOutputs];
+    if (whole && !clearsOf(pass, clears, why)) {
         return false;
     }
-    BlendWords blend{};
-    if (!blendWords(program.blend, format, &blend, why)) {
-        return false;
+    BlendWords blends[kMaxColorOutputs] = {};
+    uint32_t blendMask = 0;
+    for (uint32_t i = 0; i < numRt; i++) {
+        if (!blendWords(i == 0 ? program.blend : program.moreBlend[i - 1], attachmentOf(pass, i).texture->info(), &blends[i], why)) {
+            return i == 0 ? false : refuse(why, "colour attachment " + n(i) + ": " + *why);
+        }
+        if (blends[i].enabled) blendMask |= 1u << i;
     }
     FsTextures fsTex;
     if (!fsTextures(fs, fsBindings, &fsTex, why)) {
@@ -1077,7 +1154,12 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     memset(tableCpu + kFsTexSampAt, 0, kMaxTextureSlots * 16);
     memcpy(tableCpu + kFsTexConstAt, fsTex.texWords, sizeof fsTex.texWords);
     memcpy(tableCpu + kFsTexSampAt, fsTex.sampWords, sizeof fsTex.sampWords);
-    const MrtWords mrt = mrtWords(target);
+    MrtWords mrts[kMaxColorOutputs] = {};
+    uint32_t srgbMask = 0;
+    for (uint32_t i = 0; i < numRt; i++) {
+        mrts[i] = mrtWords(*attachmentOf(pass, i).texture);
+        if (mrts[i].srgb) srgbMask |= 1u << i;
+    }
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
     const uint32_t* ij = fs.ijRegid;
 
@@ -1085,9 +1167,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         passStart(stream, W, H, table, o);
         // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it;
         // the depth attachment's Clear after it (tu_clear_sysmem_attachment, each attachment in turn)
-        if (pass.load == LoadAction::kClear) {
-            clearStream(stream, target, clear, table + kTableClearFlushAt);
-        }
+        clearAll(stream, pass, clears, table);
         if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
             depthClearStream(stream, *pass.depth, pass.clearDepth, table);
         }
@@ -1117,14 +1197,19 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // a seventh would land in RB_MRT_CONTROL[1]), SP_FS_MRT_REG[0], the flag buffer's three words 0 (no UBWC; inert
     // while RB_RENDER_CNTL.FLAG_MRTS is clear), GRAS_LRZ_MRT_BUF_INFO_0 the format, dither off, the sRGB bit in both
     // copies, GRAS_MAX_LAYER_INDEX 0
+    // ...and RB_MRT[i] / SP_FS_MRT_REG[i] / the flag buffer for each further target the FS writes, the sRGB bit of each
+    // in both copies (SRGB_MRTn is bit n in both registers)
     if (o.mrt) {
-        regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 0), {mrt.bufInfo, mrt.pitch, mrt.arrayPitch, mrt.baseLo, mrt.baseHi, mrt.baseGmem});
-        reg(stream, regSpFsMrtReg(0), mrt.spFsMrtReg);
-        regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, 0), {0, 0, 0});
+        for (uint32_t i = 0; i < numRt; i++) {
+            const MrtWords& m = mrts[i];
+            regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, i), {m.bufInfo, m.pitch, m.arrayPitch, m.baseLo, m.baseHi, m.baseGmem});
+            reg(stream, regSpFsMrtReg(i), m.spFsMrtReg);
+            regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {0, 0, 0});
+        }
         reg(stream, REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(format.fmt6));
         reg(stream, REG_A6XX_RB_DITHER_CNTL, 0);
-        reg(stream, REG_A6XX_RB_SRGB_CNTL, mrt.srgb ? A6XX_RB_SRGB_CNTL_SRGB_MRT0 : 0u);
-        reg(stream, REG_A6XX_SP_SRGB_CNTL, mrt.srgb ? A6XX_SP_SRGB_CNTL_SRGB_MRT0 : 0u);
+        reg(stream, REG_A6XX_RB_SRGB_CNTL, srgbMask);
+        reg(stream, REG_A6XX_SP_SRGB_CNTL, srgbMask);
         reg(stream, REG_A6XX_GRAS_MAX_LAYER_INDEX, 0);
     }
     // 6. one sample (tu6_emit_msaa, tu_cmd_buffer.cc:892-910; fd6 emit_msaa, fd6_gmem.cc:1037-1061): RAS_MSAA_CNTL 0 and
@@ -1347,11 +1432,12 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // build_prog_fb_rast, fd6_emit.cc:302-350): SP_FS_OUTPUT_CNTL0 with no depth/sample-mask/stencil register, MRT 1 in
     // both CNTL1 copies, SP_FS_OUTPUT_REG[0] the colour register, RENDER_COMPONENTS 0xf for the one target in both
     // copies, RB_FS_OUTPUT_CNTL0 0 (nothing but colour is written)
+    // (with MRT n and SP_FS_OUTPUT_REG[0 .. n-1] for an FS that writes n targets: the registers run on from CNTL1)
     if (o.fsOutputs) {
-        regs(stream, REG_A6XX_SP_FS_RENDER_COMPONENTS,
-             {link.mrtComponents, spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), A6XX_SP_FS_OUTPUT_CNTL1_MRT(1),
-              spFsOutputReg(fs.colorRegid[0], fs.colorHalf[0] != 0)});
-        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(1), link.mrtComponents});
+        std::vector<uint32_t> out = {link.mrtComponents, spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), A6XX_SP_FS_OUTPUT_CNTL1_MRT(numRt)};
+        for (uint32_t i = 0; i < numRt; i++) out.push_back(spFsOutputReg(fs.colorRegid[i], fs.colorHalf[i] != 0));
+        stream.registers(REG_A6XX_SP_FS_RENDER_COMPONENTS, out.data(), uint32_t(out.size()));
+        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), link.mrtComponents});
     }
     // 15. the rasterizer (tu6_emit_rast, tu_pipeline.cc:3120-3218; fd6_rasterizer.cc:22-140): GRAS_CL_CNTL with Metal's
     // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL cull none,
@@ -1402,9 +1488,12 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // fd6's ROP_COPY), RB_MRT_BLEND_CONTROL[0] 0, the blend constant 0, the alpha test off, the depth and stencil
     // registers 0 (EARLY_Z depth plane as r3d; pipelines with depth off write LATE_Z), Z bounds 0..1
     if (o.blendZsa) {
-        reg(stream, REG_A6XX_SP_BLEND_CNTL, A6XX_SP_BLEND_CNTL_ENABLE_BLEND(blend.enabled ? 1u : 0u) | A6XX_SP_BLEND_CNTL_UNK8);
-        reg(stream, REG_A6XX_RB_BLEND_CNTL, rbBlendCntl(true) | A6XX_RB_BLEND_CNTL_ENABLE_BLEND(blend.enabled ? 1u : 0u));
-        regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), {blend.mrtControl, blend.mrtBlendControl});
+        // (ENABLE_BLEND is a mask of the targets that blend, one bit each; RB_MRT_CONTROL / BLEND_CONTROL per target)
+        reg(stream, REG_A6XX_SP_BLEND_CNTL, A6XX_SP_BLEND_CNTL_ENABLE_BLEND(blendMask) | A6XX_SP_BLEND_CNTL_UNK8);
+        reg(stream, REG_A6XX_RB_BLEND_CNTL, rbBlendCntl(true) | A6XX_RB_BLEND_CNTL_ENABLE_BLEND(blendMask));
+        for (uint32_t i = 0; i < numRt; i++) {
+            regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, i), {blends[i].mrtControl, blends[i].mrtBlendControl});
+        }
         // the blend constants as floats (tu6_emit_blend_constants), RB_ALPHA_CONTROL 0 after them
         regs(stream, REG_A6XX_RB_BLEND_RED_F32, {fui(draw.blendColor[0]), fui(draw.blendColor[1]), fui(draw.blendColor[2]), fui(draw.blendColor[3]), 0});
         // the depth test (tu6_emit_depth_stencil, tu_pipeline.cc:3300-3332: Z_READ with the test, Z_WRITE only with it)
@@ -1462,15 +1551,13 @@ bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
         return false;
     }
     const Texture& target = *pass.color0;
-    ClearWords clear{};
-    if (pass.load == LoadAction::kClear && !clearWords(target.info(), pass.clearColor, &clear, why)) {
+    ClearWords clears[kMaxColorOutputs];
+    if (!clearsOf(pass, clears, why)) {
         return false;
     }
     tableStart(tableCpu);
     passStart(stream, target.width(), target.height(), table, o);
-    if (pass.load == LoadAction::kClear) {
-        clearStream(stream, target, clear, table + kTableClearFlushAt);
-    }
+    clearAll(stream, pass, clears, table);
     if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
         depthClearStream(stream, *pass.depth, pass.clearDepth, table);
     }
@@ -1484,19 +1571,17 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
         return false;
     }
     const bool depthClear = pass.depth != nullptr && pass.depthLoad == LoadAction::kClear;
-    if (pass.load != LoadAction::kClear && !depthClear) {
+    if (!anyColorClear(pass) && !depthClear) {
         return refuse(why, "a pass without a draw and with load action " + n(uint32_t(pass.load)) + ": only a Clear writes anything then");
     }
     const Texture& target = *pass.color0;
-    ClearWords clear{};
-    if (pass.load == LoadAction::kClear && !clearWords(target.info(), pass.clearColor, &clear, why)) {
+    ClearWords clears[kMaxColorOutputs];
+    if (!clearsOf(pass, clears, why)) {
         return false;
     }
     tableStart(tableCpu);
     passStart(stream, target.width(), target.height(), table, o);
-    if (pass.load == LoadAction::kClear) {
-        clearStream(stream, target, clear, table + kTableClearFlushAt);
-    }
+    clearAll(stream, pass, clears, table);
     if (depthClear) {
         depthClearStream(stream, *pass.depth, pass.clearDepth, table);
     }
@@ -1562,9 +1647,14 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // A draw into the open pass's attachments joins it: no batch start, no pass begin and no tail of its own, which a
     // pass per draw spent on every draw (the CCU flush and the cache flush waited for, each time). It joins when the
     // attachments are the same textures, it asks for no Clear (a Clear begins a pass), and the options are the same.
-    const bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.depth == pass.depth && pass.load != LoadAction::kClear &&
-                       !(pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) && pass.store == open_->pass.store &&
-                       pass.depthStore == open_->pass.depthStore && std::memcmp(&open_->options, &options, sizeof options) == 0;
+    bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.depth == pass.depth && pass.load != LoadAction::kClear &&
+                 !(pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) && pass.store == open_->pass.store &&
+                 pass.depthStore == open_->pass.depthStore && std::memcmp(&open_->options, &options, sizeof options) == 0;
+    for (uint32_t i = 0; joins && i < kMaxColorOutputs - 1; i++) {
+        // (the attachments past 0 the same textures and stores, none asking for a Clear: the same pass)
+        const ColorAttachment &a = pass.more[i], &b = open_->pass.more[i];
+        joins = a.texture == b.texture && a.store == b.store && (a.texture == nullptr || a.load != LoadAction::kClear);
+    }
     if (!joins) {
         closePass();
     }
@@ -1584,12 +1674,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (!joins) {
         appendStream(stream_, head);
         open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress()});
-        use(*pass.color0->buffer(), true);
-        keep(pass.color0->buffer());
-        if (pass.depth != nullptr) {
-            use(*pass.depth->buffer(), true);
-            keep(pass.depth->buffer());
-        }
+        useAttachments(pass);
     }
     appendStream(stream_, body);
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
@@ -1611,6 +1696,20 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     return true;
+}
+
+// every attachment of a pass, used for writing and kept until completion
+void CommandBuffer::useAttachments(const RenderPass& pass) {
+    for (const Texture* t : {pass.color0, pass.depth}) {
+        if (t == nullptr) continue;
+        use(*t->buffer(), true);
+        keep(t->buffer());
+    }
+    for (const ColorAttachment& a : pass.more) {
+        if (a.texture == nullptr) continue;
+        use(*a.texture->buffer(), true);
+        keep(a.texture->buffer());
+    }
 }
 
 // the open pass's tail: what puts its colour and depth in memory, before anything else is recorded or the buffer runs
@@ -1639,12 +1738,7 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
         return fail(why);
     }
     appendStream(stream_, added);
-    use(*pass.color0->buffer(), true);
-    keep(pass.color0->buffer());
-    if (pass.depth != nullptr) {
-        use(*pass.depth->buffer(), true);
-        keep(pass.depth->buffer());
-    }
+    useAttachments(pass);
     return true;
 }
 

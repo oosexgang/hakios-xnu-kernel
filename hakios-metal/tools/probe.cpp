@@ -45,6 +45,7 @@
 #include "../tests/fixtures/tri_attr_vs_air.hpp"
 #include "../tests/fixtures/tri_tex_fs_air.hpp"
 #include "../tests/fixtures/tri_null_fs_air.hpp"
+#include "../tests/fixtures/tri_mrt_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
 #include "../tests/fixtures/tri_dpos_vs_air.hpp"
@@ -1095,6 +1096,7 @@ int main(int argc, char** argv) {
     //   9q. a constexpr sampler (repeat) compiled on the phone and bound at its index: every judged pixel the repeat's texel
     //   9r. 200 draws joined into one pass (additive, each pixel exactly 200), timed against 200 command buffers
     //   9s. Metal's null texture sampled as 2D (a prefetch) and as 3D (sam.3d) through the one slot and its 2D 1x1 descriptor
+    //   9t. two colour targets: tri_mrt_fs's [[color(0)]] and [[color(1)]] each into its own attachment, the second also cleared
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2145,6 +2147,58 @@ int main(int argc, char** argv) {
                 }
                 std::string rwhy;
                 null->replace(0, 0, 1, 1, &zero, 4, &rwhy);   // (the queue's texture is every later draw's)
+            }
+        }
+        // 9t. two colour targets (MRT): tri_mrt_fs writes tri_flat's colour to [[color(0)]] and ff 00 40 bf to
+        // [[color(1)]], each into an attachment of its own (RB_MRT[0] and [1]). First the pair over two canary-filled
+        // targets with no Clear: every pixel of each its own colour -- the other's colour, a canary or a mix in either
+        // says which register or base went where. Then T1 alone with the second target at Clear (0.25, 0.5, 0.75, 1):
+        // the second T1's interior its colour and the rest the clear colour (the fill and the draw in one pass, the
+        // fill waited for on a word of its own), the first T1 the flat colour and the rest still canary.
+        if (t) {
+            const Program mrtProg{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+            TextureDesc sd;
+            sd.format = PixelFormat::kRGBA8Unorm;
+            sd.width = W;
+            sd.height = H;
+            sd.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+            auto second = Texture::make(gpu, sd, &why);
+            if (second == nullptr) {
+                report(false, "mrt: a second 64x64 RGBA8Unorm target: " + why);
+            } else {
+                const uint32_t secondColour = 0xbf4000ffu, clearWord = 0xffbf8040u;
+                for (int kind = 0; kind < 2; kind++) {
+                    fillBo(*t, canary);
+                    fillBo(*second, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    rp.more[0].texture = second.get();
+                    if (kind == 1) {
+                        rp.more[0].load = LoadAction::kClear;
+                        rp.more[0].clearColor[0] = 0.25;
+                        rp.more[0].clearColor[1] = 0.5;
+                        rp.more[0].clearColor[2] = 0.75;
+                        rp.more[0].clearColor[3] = 1.0;
+                    }
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(mrtProg, rp, drawOf(0, kind == 0 ? 6 : 3), Bindings{}, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    // T1 is the lower-left half (j > i), its diagonal not its own (the top-left rule)
+                    PixelRule first = kind == 0 ? PixelRule{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return flatColour; }}
+                                                : PixelRule{[](uint32_t i, uint32_t j) { return j > i; }, [=](uint32_t, uint32_t, uint32_t) { return flatColour; }};
+                    PixelRule sec = kind == 0 ? PixelRule{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return secondColour; }}
+                                              : PixelRule{[](uint32_t, uint32_t) { return true; },
+                                                          [=](uint32_t i, uint32_t j, uint32_t) { return j > i ? secondColour : clearWord; }};
+                    TexReadback a = compareTexture(*t, first, canary), b = compareTexture(*second, sec, canary);
+                    const bool ok = completed(*cb) && a.right == a.covered && a.covered == (kind == 0 ? 4096u : 2016u) &&
+                                    (kind == 0 || a.uncoveredCanary == a.uncovered) && b.right == 4096;
+                    report(ok, std::string(kind == 0 ? "mrt, the pair into two targets" : "mrt, T1 into two targets, the second cleared first") +
+                                   ": target 0 " + describeTexture(a, "20 40 80 ff") + "; target 1 " +
+                                   describeTexture(b, kind == 0 ? "ff 00 40 bf" : "ff 00 40 bf under T1, the clear colour 40 80 bf ff elsewhere") + status(*cb, gpu));
+                    if (!completed(*cb)) break;
+                }
             }
         }
 #if defined(__APPLE__)

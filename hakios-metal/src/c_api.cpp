@@ -517,7 +517,49 @@ int hakios_metal_program_set_vertex_layout(hakios_metal_program* p, unsigned buf
 
 void hakios_metal_program_set_blend(hakios_metal_program* p, int enabled, unsigned rgbOp, unsigned alphaOp, unsigned srcRgb, unsigned dstRgb,
                                     unsigned srcAlpha, unsigned dstAlpha, unsigned writeMask) {
-    p->program->program.blend = ColorBlend{enabled != 0, rgbOp, alphaOp, srcRgb, dstRgb, srcAlpha, dstAlpha, writeMask};
+    hakios_metal_program_set_blend_at(p, 0, enabled, rgbOp, alphaOp, srcRgb, dstRgb, srcAlpha, dstAlpha, writeMask);
+}
+
+int hakios_metal_program_set_blend_at(hakios_metal_program* p, unsigned index, int enabled, unsigned rgbOp, unsigned alphaOp, unsigned srcRgb,
+                                      unsigned dstRgb, unsigned srcAlpha, unsigned dstAlpha, unsigned writeMask) {
+    if (index >= kMaxColorOutputs) {
+        failed("blend of colour attachment " + std::to_string(index) + ": there are 8, 0 to 7");
+        return -1;
+    }
+    const ColorBlend b{enabled != 0, rgbOp, alphaOp, srcRgb, dstRgb, srcAlpha, dstAlpha, writeMask};
+    (index == 0 ? p->program->program.blend : p->program->program.moreBlend[index - 1]) = b;
+    return 0;
+}
+
+// the C interface's pass as the core's: attachment 0, 1 to 7, the depth attachment and their actions
+static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
+    RenderPass rp;
+    if (pass == nullptr) return rp;
+    rp.color0 = pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
+    rp.load = LoadAction(pass->load_action);
+    rp.store = StoreAction(pass->store_action);
+    for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
+    for (unsigned i = 0; i < kMaxColorOutputs - 1; i++) {
+        const auto& m = pass->more[i];
+        rp.more[i].texture = m.texture != nullptr ? m.texture->texture.get() : nullptr;
+        rp.more[i].load = LoadAction(m.load_action);
+        rp.more[i].store = StoreAction(m.store_action);
+        for (int c = 0; c < 4; c++) rp.more[i].clearColor[c] = m.clear_color[c];
+    }
+    rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
+    rp.depthLoad = LoadAction(pass->depth_load_action);
+    rp.depthStore = StoreAction(pass->depth_store_action);
+    rp.clearDepth = pass->clear_depth;
+    return rp;
+}
+
+// the pass's texture objects, alive until the GPU is done with them, whatever the caller frees meanwhile
+static void keepPassAlive(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
+    cb->cb->keepAlive(pass->color0->texture);
+    for (const auto& m : pass->more) {
+        if (m.texture != nullptr) cb->cb->keepAlive(m.texture->texture);
+    }
+    if (pass->depth != nullptr) cb->cb->keepAlive(pass->depth->texture);
 }
 
 int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
@@ -562,18 +604,8 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
         if (fsb.samplers.size() <= index) fsb.samplers.resize(index + 1, nullptr);
         fsb.samplers[index] = &sampler;
     }
-    RenderPass rp;
-    const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
-    rp.color0 = target;
-    if (pass != nullptr) {
-        rp.load = LoadAction(pass->load_action);
-        rp.store = StoreAction(pass->store_action);
-        for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
-        rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
-        rp.depthLoad = LoadAction(pass->depth_load_action);
-        rp.depthStore = StoreAction(pass->depth_store_action);
-        rp.clearDepth = pass->clear_depth;
-    }
+    const RenderPass rp = passOf(pass);
+    const Texture* target = rp.color0;
     Draw d;
     d.primitive = Primitive(primitive);
     d.vertexStart = vertexStart;
@@ -606,8 +638,7 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     for (unsigned i = 0; i < fsCount; i++) if (fsBuffers != nullptr && fsBuffers[i] != nullptr) cb->cb->keep(fsBuffers[i]->buffer);
     // the target's memory and object, and the program's words, live until the GPU is done, whatever the caller frees meanwhile
     cb->cb->keep(target->buffer());
-    cb->cb->keepAlive(pass->color0->texture);
-    if (pass->depth != nullptr) cb->cb->keepAlive(pass->depth->texture);
+    keepPassAlive(cb, pass);
     cb->cb->keepAlive(p->program);
     for (unsigned i = 0; i < fsTextureCount; i++) {
         if (fsTextures != nullptr && fsTextures[i] != nullptr) cb->cb->keepAlive(fsTextures[i]->texture);   // the draw keeps the memory already
@@ -644,24 +675,11 @@ int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, c
 }
 
 int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
-    RenderPass rp;
-    const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
-    rp.color0 = target;
-    if (pass != nullptr) {
-        rp.load = LoadAction(pass->load_action);
-        rp.store = StoreAction(pass->store_action);
-        for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
-        rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
-        rp.depthLoad = LoadAction(pass->depth_load_action);
-        rp.depthStore = StoreAction(pass->depth_store_action);
-        rp.clearDepth = pass->clear_depth;
-    }
-    if (!cb->cb->clear(rp)) {
+    if (!cb->cb->clear(passOf(pass))) {
         failed(cb->cb->error());
         return -1;
     }
-    cb->cb->keepAlive(pass->color0->texture);
-    if (pass->depth != nullptr) cb->cb->keepAlive(pass->depth->texture);
+    keepPassAlive(cb, pass);
     return 0;
 }
 

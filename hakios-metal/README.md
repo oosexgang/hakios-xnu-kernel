@@ -202,6 +202,15 @@ writes the texel with a value that is not zero first, so that reading it and rea
 carried it from both (hakios `logs/173744-run.log`, probe line 9s). That a null texture reads as zero is an
 assumption nothing reachable confirms (hakios's `nir_air.h` says why), and the queue's texture is the one place it lives.
 
+A draw writes up to eight colour targets (MRT): each `[[color(n)]]` the fragment function writes goes to colour
+attachment n of the pass (RB_MRT[n], SP_FS_OUTPUT_REG[n], its own blend), every attachment the size of the first; an
+attachment the function does not write is cleared when it asks for a Clear and otherwise left as it is. Each Clear
+waits on a table word of its own -- one shared word would let the second Clear's wait be met by the first one's
+write. On the phone (hakios `logs/182202-run.log`, probe line 9t) `tri_mrt_fs` puts its two colours into two
+targets, 4096 of 4096 pixels each, and with the second cleared first under one triangle the clear colour and the
+draw share it exactly; through Metal, the plug-in's checks (p) and (q) pass on both roads (`logs/182352-run.log`).
+CoreAnimation's `attachment_clear_frag_lph`, which writes two colours, is the pipeline its window server exited on.
+
 A pipeline's function constants reach the front end (`compileStage` / `compileAir` take them; the C interface's
 `hakios_metal_program_new_bitcode_constants`): each supplied value with its `supplied` flag, so that
 `is_function_constant_defined` tells "given as zero" from "not given" -- `tools/kernels/tri_fc_fs.ll` folds to a

@@ -108,6 +108,7 @@ private:
         uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
     };
     void closePass();
+    void useAttachments(const RenderPass& pass);
     std::unique_ptr<OpenPass> open_;
     // A piece of a larger buffer, for a draw's or a dispatch's table and a program's words. A buffer of its own for each
     // was three requests to the kernel for every draw, which on the phone cost about 200 us a draw (probe 9r) while the

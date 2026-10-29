@@ -208,6 +208,9 @@ int hakios_metal_program_set_vertex_layout(hakios_metal_program *program, unsign
  * this is called. What a draw cannot serve (blending into an integer format, say) it refuses by name. */
 void hakios_metal_program_set_blend(hakios_metal_program *program, int enabled, unsigned rgb_op, unsigned alpha_op,
     unsigned src_rgb, unsigned dst_rgb, unsigned src_alpha, unsigned dst_alpha, unsigned write_mask);
+/* ...the same for colour attachment INDEX (0 to 7; 0 is the call above): -1 past 7 */
+int hakios_metal_program_set_blend_at(hakios_metal_program *program, unsigned index, int enabled, unsigned rgb_op, unsigned alpha_op,
+    unsigned src_rgb, unsigned dst_rgb, unsigned src_alpha, unsigned dst_alpha, unsigned write_mask);
 
 struct hakios_metal_viewport { double x, y, width, height, znear, zfar; };   /* MTLViewport: origin top left, NDC y up */
 struct hakios_metal_scissor { unsigned x, y, width, height; };              /* MTLScissorRect */
@@ -230,6 +233,14 @@ struct hakios_metal_render_pass {
 	int depth_state_set;
 	unsigned depth_compare;
 	int depth_write;
+	/* colour attachments 1 to 7 (colorAttachments[1..7]), each the size of color0, TEXTURE NULL when not set, with
+	 * color0's rules for the actions and the clear colour. One the fragment function writes ([[color(n)]]) is drawn
+	 * into; one it does not write is cleared by a Clear and otherwise left as it is. */
+	struct hakios_metal_color_attachment {
+		hakios_metal_texture *texture;
+		unsigned load_action, store_action;
+		double clear_color[4];
+	} more[7];
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

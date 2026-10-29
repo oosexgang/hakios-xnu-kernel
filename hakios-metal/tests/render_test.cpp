@@ -23,6 +23,7 @@
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_null_fs_air.hpp"
+#include "fixtures/tri_mrt_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -371,10 +372,14 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         Program p = handProgram();
         p.fs.numColorOutputs = 2;
         p.fs.colorRegid[1] = regid(1, 0);
-        refused(r, p, pass, d, "hand_fs writes 2 colour output(s): one target, [[color(0)]], is served");
+        refused(r, p, pass, d, "hand_fs writes [[color(1)]] and the pass has no colour attachment 1");
+        p.fs.numColorOutputs = 3;   // [[color(2)]] with nothing at 1
+        p.fs.colorRegid[1] = a6xx::kRegidNone;
+        p.fs.colorRegid[2] = regid(1, 0);
+        refused(r, p, pass, d, "hand_fs writes [[color(2)]] but not [[color(1)]]: colour outputs with a gap are not served");
         p = handProgram();
         p.fs.colorRegid[0] = a6xx::kRegidNone;
-        refused(r, p, pass, d, "hand_fs writes 1 colour output(s) and not [[color(0)]]: one target, [[color(0)]], is served");
+        refused(r, p, pass, d, "hand_fs writes 1 colour output(s) and not [[color(0)]]: [[color(0)]] and up to seven after it are served");
         p = handProgram();
         p.fs.depthRegid = regid(1, 0);
         refused(r, p, pass, d, "hand_fs writes depth: no depth attachment is served");
@@ -489,9 +494,9 @@ TEST(render_encodes_the_first_triangles_registers) {
     using namespace a6xx;
     // the table: the timestamps zeroed, the border colour entry zeroed, the hole zeroed; the rest untouched
     const uint32_t* tw = e.tableWords();
-    for (uint32_t i = 0; i < 8; i++) CHECK_EQ(tw[render::kTableTimestampsAt / 4 + i], 0u);   // the tail's four and the depth ones
+    for (uint32_t i = 0; i < render::kTableZeroedBytes / 4; i++) CHECK_EQ(tw[render::kTableTimestampsAt / 4 + i], 0u);   // the tail's, the depth ones, the Clears'
     for (uint32_t i = 0; i < 32; i++) CHECK_EQ(tw[render::kTableBorderColorAt / 4 + i], 0u);
-    CHECK_EQ(tw[8], 0xeeeeeeeeu);
+    CHECK_EQ(tw[render::kTableZeroedBytes / 4], 0xeeeeeeeeu);
     // the batch start: CP_SET_MODE first, the three invalidates, HLSQ_INVALIDATE_CMD all, a WFI, the static table...
     const auto& w = e.stream.words();
     CHECK_EQ(e.find(CP_SET_MODE), size_t(0));
@@ -1457,7 +1462,7 @@ TEST(the_fake_refuses_a_draw_whose_target_does_not_hold_together) {
     {
         Twin w;
         w.at(regSpFsMrtReg(0)) = spFsMrtReg(FMT6_32_FLOAT, false, false);
-        CHECK(has(w.fault(), "SP_FS_MRT_REG[0] names format 74, RB_MRT_BUF_INFO[0] 48"));
+        CHECK(has(w.fault(), "SP_FS_MRT_REG[0] names format 74, RB_MRT_BUF_INFO 48"));
     }
     {
         Twin w;
@@ -1495,7 +1500,7 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
     {
         Twin w;
         w.at(REG_A6XX_SP_FS_OUTPUT_CNTL1) = 2;
-        CHECK(has(w.fault(), "SP_FS_OUTPUT_CNTL1.MRT 2 and RB_FS_OUTPUT_CNTL1.MRT 1: one target, in both"));
+        CHECK(has(w.fault(), "SP_FS_OUTPUT_CNTL1.MRT 2 and RB_FS_OUTPUT_CNTL1.MRT 1: 1 to 8 targets, the same in both"));
     }
     {
         Twin w;
@@ -1518,7 +1523,7 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
     {
         Twin w;
         w.at(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)) |= A6XX_RB_MRT_CONTROL_BLEND;   // BLEND without BLEND2, and the two ENABLE_BLENDs off
-        CHECK(has(w.fault(), "the blend of target 0 is on in some of RB_MRT_CONTROL[0] (0x781: BLEND and BLEND2)"));
+        CHECK(has(w.fault(), "the blend of target 0 is on in some of RB_MRT_CONTROL (0x781: BLEND and BLEND2)"));
     }
     {
         Twin w;
@@ -1541,7 +1546,7 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
         render::Options o;
         o.fsOutputs = false;
         Twin w(o);
-        CHECK(has(w.fault(), "SP_FS_OUTPUT_CNTL1.MRT 0 and RB_FS_OUTPUT_CNTL1.MRT 0: one target, in both"));
+        CHECK(has(w.fault(), "SP_FS_OUTPUT_CNTL1.MRT 0 and RB_FS_OUTPUT_CNTL1.MRT 0: 1 to 8 targets, the same in both"));
     }
     {
         render::Options o;
@@ -3263,5 +3268,77 @@ TEST(a_draw_binds_the_queues_null_texture_at_the_reserved_slot_over_anything_bou
     Encoded e(r, nullProg, pass, wholeDraw(6), render::Options{}, Bindings{}, samplerOnly);
     CHECK(!e.ok);
     expectRefusal(e.error, "tri_null_fs_air: no texture bound at index 0");
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// Two colour targets: tri_mrt_fs writes [[color(0)]] and [[color(1)]], each into an attachment of its own -- RB_MRT[i]
+// at its texture, SP_FS_OUTPUT_REG[i] its register, MRT 2 and both components' nibbles, each target's blend registers --
+// and what the fake judges of each. The refusals by name: an output without an attachment, a second attachment of
+// another size; a Clear on each is two fills; and a pass with the second attachment joins only the same second one.
+TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
+    using namespace a6xx;
+    Rig r;
+    auto t0 = target(r), t1 = target(r), other = target(r), small = target(r, 32, 32);
+    const Program mrt{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+    RenderPass pass;
+    pass.color0 = t0.get();
+    pass.more[0].texture = t1.get();
+    Encoded e(r, mrt, pass, wholeDraw(6));
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    CHECK_EQ(e.reg(REG_A6XX_RB_FS_OUTPUT_CNTL1), A6XX_RB_FS_OUTPUT_CNTL1_MRT(2));
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_OUTPUT_CNTL1), A6XX_SP_FS_OUTPUT_CNTL1_MRT(2));
+    CHECK_EQ(e.reg(regSpFsOutputReg(0)) & A6XX_SP_FS_OUTPUT_REG_REGID__MASK, 0x00u);   // r0.x
+    CHECK_EQ(e.reg(regSpFsOutputReg(1)) & A6XX_SP_FS_OUTPUT_REG_REGID__MASK, 0x04u);   // r1.x
+    CHECK_EQ(e.reg(REG_A6XX_RB_RENDER_COMPONENTS), 0xffu);
+    CHECK_EQ(uint64_t(e.reg(regRbMrt(REG_A6XX_RB_MRT_BASE, 1))) | uint64_t(e.reg(regRbMrt(REG_A6XX_RB_MRT_BASE, 1) + 1)) << 32, t1->gpuAddress());
+    CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 1)), e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)));   // the full write mask in both
+    auto cb = drawOnce(r, mrt, pass, wholeDraw(6));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.mrtCount, 2u);
+    CHECK_EQ(r.fake->stats().lastDraw.mrtBases[0], t0->gpuAddress());
+    CHECK_EQ(r.fake->stats().lastDraw.mrtBases[1], t1->gpuAddress());
+    // one target named by the stream and none by the pass: what the FS writes needs a place
+    RenderPass one;
+    one.color0 = t0.get();
+    Encoded noSecond(r, mrt, one, wholeDraw(6));
+    CHECK(!noSecond.ok);
+    expectRefusal(noSecond.error, "tri_mrt_fs_air writes [[color(1)]] and the pass has no colour attachment 1");
+    RenderPass mixed = pass;
+    mixed.more[0].texture = small.get();
+    Encoded sizes(r, mrt, mixed, wholeDraw(6));
+    CHECK(!sizes.ok);
+    expectRefusal(sizes.error, "a 32 x 32 colour attachment 1 beside a 64 x 64 colour attachment 0: one window serves them all, so they must be the same size");
+    // a Clear on each: two fills, each waited for on a word of its own (attachment 1's at kTableMoreClearFlushAt)
+    RenderPass cleared = pass;
+    cleared.load = LoadAction::kClear;
+    cleared.more[0].load = LoadAction::kClear;
+    const uint32_t fillsBefore = r.fake->stats().fills;
+    Encoded c(r, mrt, cleared, wholeDraw(6));
+    CHECK(c.ok);
+    bool ownWord = false;
+    for (size_t i = c.find(CP_WAIT_REG_MEM); i != size_t(-1); i = c.find(CP_WAIT_REG_MEM, i + 1)) {
+        ownWord |= c.stream.words()[i + 2] == uint32_t(c.table->gpuAddress() + render::kTableMoreClearFlushAt);
+    }
+    CHECK(ownWord);
+    auto cb2 = drawOnce(r, mrt, cleared, wholeDraw(6));
+    CHECK(cb2->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().fills - fillsBefore, 2u);
+    // joined passes: the same second attachment joins, another one begins a pass
+    auto passesOf = [&](const RenderPass& second) {
+        const uint32_t before = r.fake->stats().passes;
+        auto b = r.queue->commandBuffer();
+        CHECK(b->draw(mrt, pass, wholeDraw(6), Bindings{}, Bindings{}));
+        CHECK(b->draw(mrt, second, wholeDraw(6), Bindings{}, Bindings{}));
+        b->commit();
+        b->waitUntilCompleted();
+        CHECK(b->status() == CommandBuffer::kCompleted);
+        return r.fake->stats().passes - before;
+    };
+    CHECK_EQ(passesOf(pass), 1u);
+    RenderPass elsewhere = pass;
+    elsewhere.more[0].texture = other.get();
+    CHECK_EQ(passesOf(elsewhere), 2u);
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
