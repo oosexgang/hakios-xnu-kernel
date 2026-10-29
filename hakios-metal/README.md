@@ -94,7 +94,7 @@ served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UCh
 pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
 samplers in a vertex stage, images in a draw (the 3D IBO table), stencil, depth formats other than Depth32Float, a
 fragment depth output, dual-source blending, GMEM (tiled)
-rendering, MSAA, instancing, indexed draws, points and lines, several colour attachments, a program whose stages bind what
+rendering, MSAA, a base instance, a negative base vertex, points and lines, several colour attachments, a program whose stages bind what
 the draw does not serve.
 
 A load action of Clear is served the way turnip clears a single-sampled sysmem attachment: one `CP_BLIT` solid fill of
@@ -145,6 +145,15 @@ and the surface's FourCC must be the format's. On the phone (hakios `logs/155934
 64x64 'BGRA' surface made with `IOSurfaceCreate` is cleared and drawn into with `tri_flat`, and read back through
 `IOSurfaceLock` and the surface's own base address: 4096 of 4096 pixels right, and a canary the processor wrote into
 the surface before a Load pass is what the GPU kept outside the triangle.
+
+Indexed draws are the 7-word `CP_DRAW_INDX_OFFSET` turnip writes (`tu_CmdDrawIndexed`): 16- or 32-bit indices from the
+index buffer's offset, `MAX_INDICES` what the buffer holds from there, the base vertex in `VFD_INDEX_OFFSET`, and Metal's
+primitive restart at the type's all-ones index (`PC_PRIMITIVE_CNTL_0`, `PC_RESTART_INDEX`), off for a draw without
+indices. Instances are `NUM_INSTANCES`, and an attribute that steps per instance is `VFD_DECODE_INSTR.INSTANCED` with the
+step rate as its divisor. The fake reads the index buffer to find the highest vertex a draw fetches. On the phone (hakios
+`logs/161507-run.log`, probe line 9n, 0 failures) a triangle strip restarted at 0xffff covers all 4096 pixels in its
+colour, 32-bit indices with a base vertex of 3 draw exactly the second triangle, and three instances at a step rate of 2
+under One + One blending leave every pixel at 2 * C0 + C1.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

@@ -100,6 +100,9 @@ public:
     struct Draw {
         uint32_t primType = 0, sourceSelect = 0, visCull = 0;   // CP_DRAW_INDX_OFFSET_0's fields
         uint32_t numInstances = 0, numIndices = 0;
+        bool indexed = false;                       // the 7-word DMA form
+        uint32_t indexSize = 0, maxIndices = 0;     // its INDEX_SIZE and MAX_INDICES
+        uint64_t indexBase = 0;                     // INDX_BASE
         uint64_t vsProgram = 0, fsProgram = 0;      // SP_VS_OBJ_START / SP_FS_OBJ_START
         uint32_t vsInstrlen = 0, fsInstrlen = 0;    // SP_VS_INSTRLEN / SP_FS_INSTRLEN
         uint32_t vsConstlen = 0, fsConstlen = 0;    // HLSQ_VS_CNTL / HLSQ_FS_CNTL's CONSTLEN, decoded (<< 2), in vec4

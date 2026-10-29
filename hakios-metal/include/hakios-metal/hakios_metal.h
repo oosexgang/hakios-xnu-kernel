@@ -219,7 +219,7 @@ struct hakios_metal_render_pass {
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,
- * LineStrip 2, Triangle 3, TriangleStrip 4; step one serves 3 and 4), INSTANCE_COUNT (step one: 1), into PASS's
+ * LineStrip 2, Triangle 3, TriangleStrip 4; 3 and 4 are served), INSTANCE_COUNT (1 or more), into PASS's
  * attachment through VIEWPORT and SCISSOR (NULL: the whole attachment), with the two stages' [[buffer(n)]] tables (step
  * one: counts of 0 only). -1 with the reason when the program, the pass and the draw do not fit together; everything
  * stays alive until the command buffer completes. Each call is one complete pass (begin, state, draw, end). */
@@ -237,6 +237,18 @@ int hakios_metal_cb_draw2(hakios_metal_cb *cb, hakios_metal_program *program,
     const struct hakios_metal_render_pass *pass, const struct hakios_metal_viewport *viewport,
     const struct hakios_metal_scissor *scissor, unsigned primitive, unsigned vertex_start, unsigned vertex_count,
     unsigned instance_count,
+    hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
+    hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count,
+    hakios_metal_texture *const *fs_textures, unsigned fs_texture_count,
+    hakios_metal_sampler *const *fs_samplers, unsigned fs_sampler_count);
+/* -drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:, the
+ * tables as hakios_metal_cb_draw2's: INDEX_COUNT indices of INDEX_TYPE (MTLIndexType: UInt16 0, UInt32 1) from
+ * INDEX_BUFFER at INDEX_OFFSET, BASE_VERTEX added to each (a negative one refused), primitive restart at the type's
+ * all-ones as Metal has it; BASE_INSTANCE 0 only. The index buffer stays alive until the command buffer completes. */
+int hakios_metal_cb_draw_indexed(hakios_metal_cb *cb, hakios_metal_program *program,
+    const struct hakios_metal_render_pass *pass, const struct hakios_metal_viewport *viewport,
+    const struct hakios_metal_scissor *scissor, unsigned primitive, unsigned index_count, unsigned index_type,
+    hakios_metal_buffer *index_buffer, uint64_t index_offset, unsigned instance_count, int base_vertex, unsigned base_instance,
     hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
     hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count,
     hakios_metal_texture *const *fs_textures, unsigned fs_texture_count,

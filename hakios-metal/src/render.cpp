@@ -292,9 +292,13 @@ bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, 
             return refuse(why, name + ": [[attribute(" + n(loc) + ")]] at offset " + n(a.offset) + ": VFD_DECODE_INSTR.OFFSET holds 12 bits");
         }
         const VertexLayout& l = vd.layouts[a.bufferIndex];
-        if (l.step != VertexStep::kPerVertex) {
-            return refuse(why, name + ": buffer " + n(a.bufferIndex) + " steps " + (l.step == VertexStep::kPerInstance ? "per instance" : "constantly") +
-                                   ": only per-vertex fetch is served yet");
+        const bool perInstance = l.step == VertexStep::kPerInstance;
+        if (l.step != VertexStep::kPerVertex && !perInstance) {
+            return refuse(why, name + ": buffer " + n(a.bufferIndex) + " steps " + (l.step == VertexStep::kConstant ? "constantly" : "in an unknown way") +
+                                   ": per-vertex and per-instance fetch are served");
+        }
+        if (perInstance && l.stepRate == 0) {
+            return refuse(why, name + ": buffer " + n(a.bufferIndex) + " steps per instance at a rate of 0: Metal's step rate is 1 or more");
         }
         if (l.stride == 0 || l.stride > 0xfff) {
             return refuse(why, name + ": buffer " + n(a.bufferIndex) + "'s stride of " + n(l.stride) + ": 1 to 4095 bytes (VFD_FETCH_STRIDE holds 12 bits)");
@@ -307,14 +311,25 @@ bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, 
             return refuse(why, name + ": buffer " + n(a.bufferIndex) + ": offset " + n(x.offset) + " lies past its end");
         }
         const uint64_t bytes = x.buffer->length() - x.offset;
-        const uint64_t last = uint64_t(draw.vertexStart) + (draw.vertexCount == 0 ? 0 : draw.vertexCount - 1);
-        const uint64_t need = last * l.stride + a.offset + fi->bytes;
-        if (need > bytes) {
-            return refuse(why, name + ": [[attribute(" + n(loc) + ")]] of vertex " + n(uint32_t(last)) + " ends at byte " + n(need) + " of buffer " +
-                                   n(a.bufferIndex) + "; " + n(bytes) + " are bound");
+        // the last element the draw fetches: for a per-instance attribute (instanceCount - 1) / stepRate; for a per-vertex
+        // one the last vertex, which an indexed draw names only in its index buffer -- there the check is the GPU's own
+        // (VFD_FETCH_SIZE bounds the fetch: an index past it reads zeros, robust-buffer style, not what follows)
+        if (!perInstance && draw.indexBuffer != nullptr) {
+            f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, false, fi->fmt6, fi->swap, fi->isFloat);
+            f->stepRate[loc] = 0;
+        } else {
+            const uint64_t last = perInstance ? uint64_t(draw.instanceCount == 0 ? 0 : draw.instanceCount - 1) / l.stepRate
+                                              : uint64_t(draw.vertexStart) + (draw.vertexCount == 0 ? 0 : draw.vertexCount - 1);
+            const uint64_t need = last * l.stride + a.offset + fi->bytes;
+            if (need > bytes) {
+                return refuse(why, name + ": [[attribute(" + n(loc) + ")]] of " + (perInstance ? "instance step " : "vertex ") + n(uint32_t(last)) + " ends at byte " +
+                                       n(need) + " of buffer " + n(a.bufferIndex) + "; " + n(bytes) + " are bound");
+            }
+            // per instance: INSTANCED and the divisor in VFD_DECODE_STEP_RATE (tu6_emit_vertex_input, tu_pipeline.cc:2345-2354);
+            // per vertex: turnip's divisor 0, unread when not INSTANCED (fd6 writes 1, fd6_context.cc:97-98)
+            f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, perInstance, fi->fmt6, fi->swap, fi->isFloat);
+            f->stepRate[loc] = perInstance ? l.stepRate : 0;
         }
-        f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, false, fi->fmt6, fi->swap, fi->isFloat);
-        f->stepRate[loc] = 0;   // turnip's per-vertex divisor (tu_pipeline.cc:2357); fd6 writes 1 (fd6_context.cc:97-98): unread when not INSTANCED
         f->dest[loc] = vfdDestCntlInstr(in.compmask, in.regid);
         f->count = std::max(f->count, loc + 1);
         f->used[a.bufferIndex] = true;
@@ -906,8 +921,30 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     if (draw.vertexCount == 0) {
         return refuse(why, "a draw of 0 vertices");
     }
-    if (draw.instanceCount != 1) {
-        return refuse(why, n(draw.instanceCount) + " instances: the first draw runs exactly 1");
+    if (draw.instanceCount == 0) {
+        return refuse(why, "a draw of 0 instances");
+    }
+    if (draw.baseInstance != 0) {
+        return refuse(why, "a base instance of " + n(draw.baseInstance) + ": only 0 is served (VFD_INSTANCE_START_OFFSET and the base in [[instance_id]] are not worked out)");
+    }
+    uint32_t indexSize = 0;
+    uint64_t maxIndices = 0;
+    if (draw.indexBuffer != nullptr) {
+        if (draw.indexType > 1) {
+            return refuse(why, "index type " + n(draw.indexType) + ": MTLIndexType is UInt16 (0) or UInt32 (1)");
+        }
+        indexSize = draw.indexType == 0 ? 2 : 4;
+        if (draw.indexOffset % indexSize != 0 || draw.indexOffset > draw.indexBuffer->length()) {
+            return refuse(why, "an index buffer offset of " + n(draw.indexOffset) + ": a multiple of the index size (" + n(indexSize) + ") inside the buffer");
+        }
+        maxIndices = (draw.indexBuffer->length() - draw.indexOffset) / indexSize;
+        if (draw.vertexCount > maxIndices) {
+            return refuse(why, "a draw of " + n(draw.vertexCount) + " indices from an index buffer holding " + n(maxIndices) + " past its offset");
+        }
+        if (draw.baseVertex < 0) {
+            return refuse(why, "a base vertex of " + std::to_string(draw.baseVertex) + ": a negative one is not served (VFD_INDEX_OFFSET is added unsigned)");
+        }
+        if (maxIndices > 0xffffffffull) maxIndices = 0xffffffffull;
     }
     const uint32_t W = target.width(), H = target.height();
     const Viewport& vp = draw.viewport;
@@ -1115,8 +1152,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
                 regs(stream, regVfdFetchBase(bi), {uint32_t(fetch.base[bi]), uint32_t(fetch.base[bi] >> 32), fetch.size[bi], fetch.stride[bi]});
             }
         }
-        regs(stream, REG_A6XX_VFD_INDEX_OFFSET, {draw.vertexStart, 0});
-        reg(stream, REG_A6XX_PC_RESTART_INDEX, 0xffffffffu);
+        // the vertex id's offset (an indexed draw's base vertex) and VFD_INSTANCE_START_OFFSET 0; the restart index the
+        // index type's all-ones (vk_index_to_restart: 0xffff for 16-bit indices, tu_cmd_buffer.cc:2840-2862)
+        regs(stream, REG_A6XX_VFD_INDEX_OFFSET, {draw.indexBuffer != nullptr ? uint32_t(draw.baseVertex) : draw.vertexStart, 0});
+        reg(stream, REG_A6XX_PC_RESTART_INDEX, draw.indexBuffer != nullptr && draw.indexType == 0 ? 0xffffu : 0xffffffffu);
     }
     // 12. the VPC link (tu6_emit_vpc, tu_pipeline.cc:890-1070; fd6 emit_vpc, fd6_program.cc:558-908) from render::link's
     // result: SP_VS_OUT_REG two entries a register, SP_VS_VPC_DST_REG four locations a register, VPC_VS_PACK (stride,
@@ -1224,7 +1263,9 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         reg(stream, REG_A6XX_RB_UNKNOWN_8A20, 0);
         reg(stream, REG_A6XX_RB_UNKNOWN_8A30, 0);
         reg(stream, REG_A6XX_GRAS_SC_CNTL, grasScCntlSysmem());
-        reg(stream, REG_A6XX_PC_PRIMITIVE_CNTL_0, 0);
+        // primitive restart on for an indexed draw (Metal restarts at the all-ones index; tu6_draw_common's primitive_restart,
+        // :5851-5862, which is off for a draw without indices, where the index register would be stale)
+        reg(stream, REG_A6XX_PC_PRIMITIVE_CNTL_0, draw.indexBuffer != nullptr ? A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART : 0u);
     }
     // 16. the viewport and the scissors (tu6_emit_viewport, tu_pipeline.cc:2432-2540; tu6_emit_scissor :2657-2688):
     // GRAS_CL_VPORT[0]'s six floats with Metal's NEGATIVE y scale (viewportWords: NDC y up, row 0 at the top -- reasoning
@@ -1273,8 +1314,17 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     // 18. the draw (r3d_run, tu_clear_blit.cc:1661-1670; tu_CmdDraw :6209-6227; fd6 draw_emit, fd6_draw.cc:170-180):
     // CP_DRAW_INDX_OFFSET's 3-word form, the indices generated (AUTO_INDEX), IGNORE_VISIBILITY as r3d (the pipelines'
     // USE_VISIBILITY under visCullUse: with CP_SET_VISIBILITY_OVERRIDE 1 either should draw; unmeasured), one instance
-    {
-        uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), 1, draw.vertexCount};
+    // An indexed draw is the 7-word form (tu_CmdDrawIndexed, :6291-6297): DI_SRC_SEL_DMA with the index size, the
+    // instances, the index count, FIRST_INDX 0 (the offset is in the base), the index buffer's address past the offset,
+    // and MAX_INDICES, how many indices it holds from there (the CP reads none past it)
+    if (draw.indexBuffer != nullptr) {
+        const uint64_t base = draw.indexBuffer->gpuAddress() + draw.indexOffset;
+        uint32_t w[7] = {drawIndxOffset0(prim, DI_SRC_SEL_DMA, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY) |
+                             CP_DRAW_INDX_OFFSET_0_INDEX_SIZE(draw.indexType == 0 ? INDEX4_SIZE_16_BIT : INDEX4_SIZE_32_BIT),
+                         draw.instanceCount, draw.vertexCount, 0, uint32_t(base), uint32_t(base >> 32), uint32_t(maxIndices)};
+        stream.packet(CP_DRAW_INDX_OFFSET, w, 7);
+    } else {
+        uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), draw.instanceCount, draw.vertexCount};
         stream.packet(CP_DRAW_INDX_OFFSET, w, 3);
     }
     passTail(stream, table, o, pass.depth != nullptr);
@@ -1369,6 +1419,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
                 use(*x.buffer, false);   // pushed ranges are read; nothing in a draw writes a buffer yet
             }
         }
+    }
+    if (d.indexBuffer != nullptr) {
+        use(*d.indexBuffer, false);
     }
     // the FS's sampled textures: read, and alive until the GPU is done (the descriptors in the table point at them)
     for (const Texture* t : fsBindings.textures) {

@@ -239,8 +239,16 @@ struct DepthState {
 struct Draw {
     Primitive primitive = Primitive::kTriangle;  // step one: kTriangle and kTriangleStrip (DI_PT_TRILIST / DI_PT_TRISTRIP)
     uint32_t vertexStart = 0;                    // VFD_INDEX_OFFSET: added to vertex_id by VFD_ADD_OFFSET.VERTEX (the static table)
-    uint32_t vertexCount = 0;                    // CP_DRAW_INDX_OFFSET's NUM_INDICES; 0 refused
-    uint32_t instanceCount = 1;                  // NUM_INSTANCES; step one: exactly 1
+    uint32_t vertexCount = 0;                    // CP_DRAW_INDX_OFFSET's NUM_INDICES (the index count of an indexed draw); 0 refused
+    uint32_t instanceCount = 1;                  // NUM_INSTANCES, 1 or more
+    // an indexed draw (-drawIndexedPrimitives:...): INDEX_BUFFER's indices from INDEX_OFFSET, INDEX_TYPE an MTLIndexType
+    // (UInt16 0, UInt32 1), BASE_VERTEX added to each (VFD_INDEX_OFFSET; a negative one is refused). Primitive restart is
+    // on, as Metal has it, at the type's all-ones index. VERTEX_START is not read then.
+    const Buffer* indexBuffer = nullptr;
+    uint64_t indexOffset = 0;
+    uint32_t indexType = 0;
+    int32_t baseVertex = 0;
+    uint32_t baseInstance = 0;                   // only 0 is served (VFD_INSTANCE_START_OFFSET and [[instance_id]]'s base are not worked out)
     Viewport viewport{};
     Scissor scissor{};                           // width 0: the whole target
     float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors

@@ -468,8 +468,8 @@ TEST(c_api_program_and_draw) {
     CHECK(strcmp(hakios_metal_error(), "primitive 1: triangles (3) and triangle strips (4) are what the first draw serves") == 0);
     hakios_metal_cb_free(cb);
     cb = hakios_metal_cb_new(q);
-    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 2, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-    CHECK(strcmp(hakios_metal_error(), "2 instances: the first draw runs exactly 1") == 0);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 0, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "a draw of 0 instances") == 0);
     hakios_metal_cb_free(cb);
     // a buffer bound at an index neither stage reads is ignored, as Metal ignores it: the draw completes
     hakios_metal_buffer* b = hakios_metal_buffer_new(d, 64);
@@ -621,5 +621,42 @@ TEST(c_api_texture_over_an_iosurface_refuses_by_name) {
     CHECK(strstr(hakios_metal_error(), "IOSurface 1234: the driver gave no buffer for it: no such surface") != nullptr);
     CHECK(hakios_metal_texture_new_iosurface(d, 1234, 1, 80, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET) == nullptr);
     CHECK(strstr(hakios_metal_error(), "plane 1 of IOSurface 1234: a single-plane surface (plane 0) is what is served") != nullptr);
+    hakios_metal_close(d);
+}
+
+// An indexed draw through C: tri_flat over three 16-bit indices with a base vertex of 3 (vertex_id = index + base, so
+// T2), completed on the fake; and the refusals of no index buffer and of a base instance
+TEST(c_api_indexed_draw) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    std::vector<uint8_t> vsBc = readFile("out/host/kernels/tri_flat_vs.bc"), fsBc = readFile("out/host/kernels/tri_flat_fs.bc");
+    if (!hakios_metal_has_compiler()) {
+        std::printf("       (no compiler in this build: the C interface's indexed draw did not run)\n");
+        hakios_metal_close(d);
+        return;
+    }
+    hakios_metal_program* p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 70);
+    hakios_metal_texture* rt = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET);
+    hakios_metal_buffer* ib = hakios_metal_buffer_new(d, 6);
+    CHECK(p != nullptr && rt != nullptr && ib != nullptr);
+    const uint16_t idx[3] = {0, 1, 2};
+    memcpy(hakios_metal_buffer_contents(ib), idx, sizeof idx);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0};
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw_indexed(cb, p, &pass, nullptr, nullptr, 3, 3, 0, ib, 0, 1, 3, 0, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0,
+                                          nullptr, 0), 0);
+    hakios_metal_buffer_free(ib);   // the command buffer keeps the indices
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw_indexed(cb, p, &pass, nullptr, nullptr, 3, 3, 0, nullptr, 0, 1, 0, 0, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0,
+                                          nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "an indexed draw with no index buffer") == 0);
+    hakios_metal_cb_free(cb);
+    hakios_metal_queue_free(q);
+    hakios_metal_texture_free(rt);
+    hakios_metal_program_free(p);
     hakios_metal_close(d);
 }

@@ -444,8 +444,11 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         x.vertexCount = 0;
         refused(r, p, pass, x, "a draw of 0 vertices");
         x = d;
-        x.instanceCount = 2;
-        refused(r, p, pass, x, "2 instances: the first draw runs exactly 1");
+        x.instanceCount = 0;
+        refused(r, p, pass, x, "a draw of 0 instances");
+        x = d;
+        x.baseInstance = 1;
+        refused(r, p, pass, x, "a base instance of 1: only 0 is served (VFD_INSTANCE_START_OFFSET and the base in [[instance_id]] are not worked out)");
         x = d;
         x.viewport.width = NAN;
         refused(r, p, pass, x, "a viewport with a non-finite value");
@@ -1265,13 +1268,23 @@ TEST(the_fake_accepts_the_unmutated_flat_draw_raw) {
 TEST(the_fake_refuses_a_draw_packet_that_is_not_the_three_word_triangle_form) {
     using namespace a6xx;
     {
+        // the 7-word form pointing at no index buffer: outside every buffer
         Twin w;
         size_t dr = w.e.find(CP_DRAW_INDX_OFFSET);
-        std::vector<uint32_t> seven = {drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY), 1, 3, 0, 0, 0, 3};
+        std::vector<uint32_t> seven = {drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY) | CP_DRAW_INDX_OFFSET_0_INDEX_SIZE(INDEX4_SIZE_16_BIT),
+                                       1, 3, 0, 0, 0, 3};
         w.words.erase(w.words.begin() + dr, w.words.begin() + dr + 4);
         w.words.insert(w.words.begin() + dr, pm4::type7(CP_DRAW_INDX_OFFSET, 7));
         w.words.insert(w.words.begin() + dr + 1, seven.begin(), seven.end());
-        CHECK(has(w.fault(), "CP_DRAW_INDX_OFFSET of 7 words: indexed draws (7 words, DI_SRC_SEL_DMA) are not what this GPU model runs yet"));
+        CHECK(has(w.fault(), "an indexed draw of 3 indices from 0, MAX_INDICES 3, FIRST_INDX 0: outside every buffer, misaligned, or more than the buffer holds"));
+    }
+    {
+        Twin w;
+        size_t dr = w.e.find(CP_DRAW_INDX_OFFSET);
+        w.words.erase(w.words.begin() + dr, w.words.begin() + dr + 4);
+        std::vector<uint32_t> five = {pm4::type7(CP_DRAW_INDX_OFFSET, 5), drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY), 1, 3, 0, 0};
+        w.words.insert(w.words.begin() + dr, five.begin(), five.end());
+        CHECK(has(w.fault(), "CP_DRAW_INDX_OFFSET of 5 words"));
     }
     {
         Twin w;
@@ -1281,12 +1294,12 @@ TEST(the_fake_refuses_a_draw_packet_that_is_not_the_three_word_triangle_form) {
     {
         Twin w;
         w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 1] = drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY);
-        CHECK(has(w.fault(), "a draw whose indices come from source 0, not DI_SRC_SEL_AUTO_INDEX (2)"));
+        CHECK(has(w.fault(), "a draw whose indices come from source 0 in a 3-word packet: AUTO_INDEX (2) takes 3 words, DMA (0) 7"));
     }
     {
         Twin w;
-        w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 2] = 2;
-        CHECK(has(w.fault(), "a draw of 2 instances: one is what this GPU model runs"));
+        w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 2] = 0;
+        CHECK(has(w.fault(), "a draw of 0 instances"));
     }
     {
         Twin w;
@@ -1951,8 +1964,12 @@ TEST(a_draw_refuses_a_vertex_fetch_it_cannot_serve_by_name) {
     p.vertexDescriptor.attributes[1].format = VertexFormat(41);   // UInt1010102Normalized
     refusedWith(p, vsb, 6, "tri_attr_vs_air: [[attribute(1)]] is MTLVertexFormat 41: Float..Float4, Half2, Half4 and UChar4Normalized are served");
     p = attrProgram();
+    p.vertexDescriptor.layouts[0].step = VertexStep::kConstant;
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0 steps constantly: per-vertex and per-instance fetch are served");
+    p = attrProgram();
     p.vertexDescriptor.layouts[0].step = VertexStep::kPerInstance;
-    refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0 steps per instance: only per-vertex fetch is served yet");
+    p.vertexDescriptor.layouts[0].stepRate = 0;
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0 steps per instance at a rate of 0: Metal's step rate is 1 or more");
     p = attrProgram();
     p.vertexDescriptor.layouts[0].stride = 0;
     refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0's stride of 0: 1 to 4095 bytes (VFD_FETCH_STRIDE holds 12 bits)");
@@ -2843,4 +2860,141 @@ TEST(a_texture_over_an_iosurface_refuses_what_the_gpu_cannot_take) {
     refusedWith(5, z, "a depth texture is tiled, a surface's rows are linear");
     // a refused wrap leaves no buffer open (the surface's own was closed again)
     CHECK_EQ(r.fake->liveBuffers(), 0u);
+}
+
+// --- indexed and instanced draws ---------------------------------------------------------------------------------------------
+
+namespace {
+std::shared_ptr<Buffer> bufferWith(Rig& r, const void* bytes, uint64_t length) {
+    std::string why;
+    auto b = newBuffer(*r.gpu, length, &why);
+    CHECK(b != nullptr);
+    if (b != nullptr) memcpy(b->contents(), bytes, length);
+    return b;
+}
+}  // namespace
+
+TEST(an_indexed_draw_is_the_seven_word_form_with_primitive_restart) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    // four 12-byte vertices (tri_attr's layout) and the quad as two triangles through six 16-bit indices
+    uint8_t verts[4 * 12] = {};
+    auto vb = bufferWith(r, verts, sizeof verts);
+    const uint16_t idx16[6] = {0, 1, 2, 2, 1, 3};
+    auto ib = bufferWith(r, idx16, sizeof idx16);
+    Bindings vsb;
+    vsb.buffers = {Binding{vb.get(), 0}};
+    Draw d = wholeDraw(6);
+    d.indexBuffer = ib.get();
+    d.indexType = 0;
+    Encoded e(r, attrProgram(), pass, d, render::Options{}, vsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    size_t at = e.find(CP_DRAW_INDX_OFFSET);
+    CHECK(at != size_t(-1));
+    if (at != size_t(-1)) {
+        const auto& w = e.stream.words();
+        CHECK_EQ(pm4::decode(w[at]).count, 7u);
+        CHECK_EQ(w[at + 1], 0x404u);   // TRILIST 4, DMA 0 << 6, IGNORE_VISIBILITY 0 << 8, INDEX4_SIZE_16_BIT 1 << 10
+        CHECK_EQ(w[at + 2], 1u);       // instances
+        CHECK_EQ(w[at + 3], 6u);       // indices
+        CHECK_EQ(w[at + 4], 0u);       // FIRST_INDX
+        CHECK_EQ(uint64_t(w[at + 5]) | uint64_t(w[at + 6]) << 32, ib->gpuAddress());
+        CHECK_EQ(w[at + 7], uint32_t(ib->length() / 2));   // MAX_INDICES: what the buffer holds
+    }
+    CHECK_EQ(e.reg(REG_A6XX_PC_PRIMITIVE_CNTL_0), A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART);
+    CHECK_EQ(e.reg(REG_A6XX_PC_RESTART_INDEX), 0xffffu);
+    CHECK_EQ(e.reg(REG_A6XX_VFD_INDEX_OFFSET), 0u);
+    auto cb = drawOnce(r, attrProgram(), pass, d, render::Options{}, vsb);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK(r.fake->stats().lastDraw.indexed);
+    // 32-bit indices from an offset, a base vertex: INDEX4_SIZE_32_BIT, the base past the offset, the restart all-ones
+    const uint32_t idx32[4] = {9, 0, 1, 2};
+    auto ib32 = bufferWith(r, idx32, sizeof idx32);
+    Draw d32 = wholeDraw(3);
+    d32.indexBuffer = ib32.get();
+    d32.indexType = 1;
+    d32.indexOffset = 4;
+    d32.baseVertex = 1;
+    uint8_t five[5 * 12] = {};
+    auto vb5 = bufferWith(r, five, sizeof five);
+    Bindings vsb5;
+    vsb5.buffers = {Binding{vb5.get(), 0}};
+    Encoded e32(r, attrProgram(), pass, d32, render::Options{}, vsb5);
+    CHECK(e32.ok);
+    size_t at32 = e32.find(CP_DRAW_INDX_OFFSET);
+    if (at32 != size_t(-1)) {
+        const auto& w = e32.stream.words();
+        CHECK_EQ(w[at32 + 1], 0x804u);
+        CHECK_EQ(uint64_t(w[at32 + 5]) | uint64_t(w[at32 + 6]) << 32, ib32->gpuAddress() + 4);
+        CHECK_EQ(w[at32 + 7], 3u);
+    }
+    CHECK_EQ(e32.reg(REG_A6XX_PC_RESTART_INDEX), 0xffffffffu);
+    CHECK_EQ(e32.reg(REG_A6XX_VFD_INDEX_OFFSET), 1u);
+    auto cb32 = drawOnce(r, attrProgram(), pass, d32, render::Options{}, vsb5);
+    CHECK(cb32->status() == CommandBuffer::kCompleted);
+    // an index past what the vertex buffer holds (index 9 + base 1 = vertex 10 of 5) is the fake's to catch: it reads
+    // the indices; drawn from offset 0 the 9 is in the draw
+    Draw bad = d32;
+    bad.indexOffset = 0;
+    auto cbBad = drawOnce(r, attrProgram(), pass, bad, render::Options{}, vsb5);
+    CHECK(cbBad->status() == CommandBuffer::kError);
+    CHECK(has(r.fake->stats().lastFault, "vertex attribute 0: vertex 10's element ends at byte"));
+    // a draw without indices leaves restart off
+    Encoded plain(r, attrProgram(), pass, wholeDraw(3), render::Options{}, vsb);
+    CHECK_EQ(plain.reg(REG_A6XX_PC_PRIMITIVE_CNTL_0), 0u);
+}
+
+TEST(an_indexed_or_instanced_draw_refuses_what_it_cannot_serve) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    uint8_t verts[6 * 12] = {};
+    auto vb = bufferWith(r, verts, sizeof verts);
+    const uint16_t idx[3] = {0, 1, 2};
+    auto ib = bufferWith(r, idx, sizeof idx);
+    Bindings vsb;
+    vsb.buffers = {Binding{vb.get(), 0}};
+    auto refusedWith = [&](const Program& p, const Draw& d, const char* want) {
+        Encoded e(r, p, pass, d, render::Options{}, vsb);
+        CHECK(!e.ok);
+        expectRefusal(e.error, want);
+    };
+    Draw d = wholeDraw(3);
+    d.indexBuffer = ib.get();
+    Draw x = d;
+    x.indexType = 2;
+    refusedWith(attrProgram(), x, "index type 2: MTLIndexType is UInt16 (0) or UInt32 (1)");
+    x = d;
+    x.indexOffset = 1;
+    refusedWith(attrProgram(), x, "an index buffer offset of 1: a multiple of the index size (2) inside the buffer");
+    x = d;
+    x.vertexCount = ib->length() / 2 + 1;
+    refusedWith(attrProgram(), x, ("a draw of " + std::to_string(ib->length() / 2 + 1) + " indices from an index buffer holding " + std::to_string(ib->length() / 2) +
+                                   " past its offset").c_str());
+    x = d;
+    x.baseVertex = -1;
+    refusedWith(attrProgram(), x, "a base vertex of -1: a negative one is not served (VFD_INDEX_OFFSET is added unsigned)");
+    // per instance: the last instance step past the buffer
+    Program inst = attrProgram();
+    inst.vertexDescriptor.layouts[0] = VertexLayout{12, VertexStep::kPerInstance, 1};
+    Draw many = wholeDraw(3);
+    many.instanceCount = 7;
+    refusedWith(inst, many, "tri_attr_vs_air: [[attribute(0)]] of instance step 6 ends at byte 80 of buffer 0; 72 are bound");
+    // ...while a step rate of 2 over the same 7 instances reads steps 0 to 3: inside
+    inst.vertexDescriptor.layouts[0].stepRate = 2;
+    Encoded ok(r, inst, pass, many, render::Options{}, vsb);
+    CHECK(ok.ok);
+    CHECK_EQ(ok.reg(a6xx::REG_A6XX_VFD_DECODE_INSTR) & a6xx::A6XX_VFD_DECODE_INSTR_INSTANCED, a6xx::A6XX_VFD_DECODE_INSTR_INSTANCED);
+    CHECK_EQ(ok.reg(a6xx::regVfdDecodeStepRate(0)), 2u);
+    size_t at = ok.find(a6xx::CP_DRAW_INDX_OFFSET);
+    CHECK(at != size_t(-1) && ok.stream.words()[at + 2] == 7u);
+    auto cb = drawOnce(r, inst, pass, many, render::Options{}, vsb);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().lastDraw.numInstances, 7u);
 }

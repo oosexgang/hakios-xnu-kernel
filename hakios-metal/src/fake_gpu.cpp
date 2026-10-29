@@ -767,8 +767,8 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
 // nothing, and a fault here stands for either. Nothing is rasterized.
 bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     using namespace a6xx;
-    if (count != 3) {
-        fault(text("CP_DRAW_INDX_OFFSET of %llu words: indexed draws (7 words, DI_SRC_SEL_DMA) are not what this GPU model runs yet", count));
+    if (count != 3 && count != 7) {
+        fault(text("CP_DRAW_INDX_OFFSET of %llu words: the 3-word auto-indexed form and the 7-word indexed one are what this GPU model runs", count));
         return false;
     }
     Draw d;
@@ -781,17 +781,50 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         fault(text("a draw of primitive type %llu: triangle lists (4) and strips (6) are what this GPU model runs", d.primType));
         return false;
     }
-    if (d.sourceSelect != DI_SRC_SEL_AUTO_INDEX) {
-        fault(text("a draw whose indices come from source %llu, not DI_SRC_SEL_AUTO_INDEX (2)", d.sourceSelect));
+    if ((count == 3) != (d.sourceSelect == DI_SRC_SEL_AUTO_INDEX) || (count == 7 && d.sourceSelect != DI_SRC_SEL_DMA)) {
+        fault(text("a draw whose indices come from source %llu in a %llu-word packet: AUTO_INDEX (2) takes 3 words, DMA (0) 7", d.sourceSelect, count));
         return false;
     }
-    if (d.numInstances != 1) {
-        fault(text("a draw of %llu instances: one is what this GPU model runs", d.numInstances));
+    if (d.numInstances == 0) {
+        fault("a draw of 0 instances");
         return false;
     }
     if (d.numIndices == 0) {
         fault("a draw of 0 vertices");
         return false;
+    }
+    // the indices of a DMA draw: 16 or 32 bits, MAX_INDICES of them from INDX_BASE inside a buffer, the count within it;
+    // read here (the model has the memory) for the highest index the fetch below must hold, the restart index skipped
+    // when PC_PRIMITIVE_CNTL_0 restarts, and then the restart index the type's all-ones
+    d.indexed = count == 7;
+    uint64_t highestIndex = 0;
+    if (d.indexed) {
+        d.indexSize = fieldOf(p[0], CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__MASK, CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__SHIFT);
+        d.indexBase = p[4] | uint64_t(p[5]) << 32;
+        d.maxIndices = p[6];
+        if (d.indexSize != INDEX4_SIZE_16_BIT && d.indexSize != INDEX4_SIZE_32_BIT) {
+            fault(text("an indexed draw of index size %llu: 16-bit (1) and 32-bit (2) are what this GPU model runs", d.indexSize));
+            return false;
+        }
+        const uint32_t bytes = d.indexSize == INDEX4_SIZE_16_BIT ? 2 : 4;
+        const uint8_t* idx = at(d.indexBase, uint64_t(d.maxIndices) * bytes);
+        if (idx == nullptr || d.indexBase % bytes != 0 || p[3] != 0 || uint64_t(d.numIndices) > d.maxIndices) {
+            fault(text("an indexed draw of %llu indices from %#llx, ", d.numIndices, d.indexBase) +
+                  text("MAX_INDICES %llu, FIRST_INDX %llu: outside every buffer, misaligned, or more than the buffer holds", d.maxIndices, p[3]));
+            return false;
+        }
+        const bool restart = (reg(REG_A6XX_PC_PRIMITIVE_CNTL_0) & A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART) != 0;
+        const uint32_t restartIndex = reg(REG_A6XX_PC_RESTART_INDEX);
+        if (restart && restartIndex != (bytes == 2 ? 0xffffu : 0xffffffffu)) {
+            fault(text("primitive restart at index %#llx for %llu-byte indices: the type's all-ones is what Metal restarts at", restartIndex, bytes));
+            return false;
+        }
+        for (uint32_t i = 0; i < d.numIndices; i++) {
+            uint32_t v = 0;
+            memcpy(&v, idx + uint64_t(i) * bytes, bytes);
+            if (restart && v == restartIndex) continue;
+            highestIndex = std::max<uint64_t>(highestIndex, v);
+        }
     }
     // the pass: begun by the marker, in sysmem with no bins (GRAS_BIN_CONTROL and RB_BIN_CONTROL alike)
     if (!passBegun_) {
@@ -1151,7 +1184,16 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         uint64_t base = reg64(regVfdFetchBase(b));
         uint32_t size = reg(vfdFetchSize(b));
         uint32_t stride = reg(regVfdFetchStride(b));
-        uint64_t last = uint64_t(reg(REG_A6XX_VFD_INDEX_OFFSET)) + (d.numIndices == 0 ? 0 : d.numIndices - 1);
+        // the last element fetched: per instance (INSTANCED) the last instance over the step rate; per vertex the last
+        // vertex, which in an indexed draw is the highest index read above
+        const bool instanced = (dec & A6XX_VFD_DECODE_INSTR_INSTANCED) != 0;
+        const uint32_t stepRate = reg(regVfdDecodeStepRate(i));
+        if (instanced && stepRate == 0) {
+            fault(text("vertex attribute %llu is fetched per instance with a step rate of 0", i));
+            return false;
+        }
+        uint64_t last = instanced ? uint64_t(d.numInstances - 1) / stepRate
+                                  : uint64_t(reg(REG_A6XX_VFD_INDEX_OFFSET)) + (d.indexed ? highestIndex : uint64_t(d.numIndices - 1));
         if (elem == 0) {
             fault(text("vertex attribute %llu: VFD_DECODE_INSTR.FORMAT is not a vertex format this model knows", i));
             return false;

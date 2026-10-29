@@ -1085,6 +1085,7 @@ int main(int argc, char** argv) {
     //   9k. a texture in the FS: tri_tex_fs's prefetch of a 4x4 texture at tri_color's interpolated (red, green)
     //   9l. depth: two triangles at chosen depths through a Depth32Float attachment, six test setups, each draw its own pass
     //   9m. an IOSurface: a real one wrapped as a texture, cleared and drawn into, read back through the surface's own lock
+    //   9n. indexed and instanced: a restarted index strip, a base vertex, three instances at a step rate of 2 under additive blending
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1816,6 +1817,125 @@ int main(int argc, char** argv) {
                 bool accepted = cb->draw(depthProg, rp, d, vsb, Bindings{});
                 report(!accepted && cb->error().find("with no depth attachment") != std::string::npos,
                        "control, a depth test with no depth attachment: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
+            }
+        }
+        // 9n. indexed and instanced draws. (a) tri_attr's four corners as a TRISTRIP of 16-bit indices 0, 1, 2, 0xffff, 1,
+        // 3, 2: with Metal's primitive restart the 0xffff ends the first strip, and the two triangles cover every pixel in
+        // the vertices' one colour; without it the strip would run through vertex 65535 (past the buffer: zeros). (b)
+        // tri_flat through 32-bit indices 0, 1, 2 with a base vertex of 3: vertex_id is index + base, so T2 alone, the
+        // upper-right half (9c's vertexStart 3 by another road). (c) the pair drawn 3 times, its colour per instance at a
+        // step rate of 2 from a buffer of two colours (C0 for instances 0 and 1, C1 for 2) under One + One blending over a
+        // clear to 0: every pixel 2 * C0 + C1 exactly, which no single instance, and no other step, adds up to.
+        if (t) {
+            const Program quadProg = [] {
+                Program p{kernels::tri_attr_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_attr"};
+                p.vertexDescriptor.attributes[0] = VertexAttribute{VertexFormat::kFloat2, 0, 0};
+                p.vertexDescriptor.attributes[1] = VertexAttribute{VertexFormat::kUChar4Normalized, 8, 0};
+                p.vertexDescriptor.layouts[0] = VertexLayout{12, VertexStep::kPerVertex, 1};
+                return p;
+            }();
+            auto vb = newBuffer(gpu, 4 * 12, &why);
+            auto ib16 = newBuffer(gpu, 7 * 2, &why);
+            auto ib32 = newBuffer(gpu, 3 * 4, &why);
+            if (vb == nullptr || ib16 == nullptr || ib32 == nullptr) {
+                report(false, "indexed: the buffers: " + why);
+            } else {
+                const float corners[4][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+                const uint8_t colour[4] = {0x20, 0x40, 0x80, 0xff};
+                for (int v = 0; v < 4; v++) {
+                    memcpy(static_cast<uint8_t*>(vb->contents()) + 12 * v, corners[v], 8);
+                    memcpy(static_cast<uint8_t*>(vb->contents()) + 12 * v + 8, colour, 4);
+                }
+                const uint16_t strip[7] = {0, 1, 2, 0xffff, 1, 3, 2};
+                memcpy(ib16->contents(), strip, sizeof strip);
+                const uint32_t tri[3] = {0, 1, 2};
+                memcpy(ib32->contents(), tri, sizeof tri);
+                auto countWord = [&](uint32_t word) {
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t c = 0;
+                    for (uint32_t j = 0; j < H; j++)
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                            c += px == word;
+                        }
+                    return c;
+                };
+                // (a)
+                {
+                    const uint32_t cc = texCanary([&](uint32_t v) { return v == flatColour; });
+                    fillBo(*t, cc);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Draw d = drawOf(0, 7);
+                    d.primitive = Primitive::kTriangleStrip;
+                    d.indexBuffer = ib16.get();
+                    d.indexType = 0;
+                    Bindings vsb;
+                    vsb.buffers = {Binding{vb.get(), 0}};
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(quadProg, rp, d, vsb, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    const uint32_t got = countWord(flatColour);
+                    report(completed(*cb) && got == W * H, "indexed, a TRISTRIP of 16-bit indices with a restart (0 1 2 0xffff 1 3 2): " + std::to_string(got) +
+                                                                " of 4096 pixels the vertices' colour" + status(*cb, gpu));
+                }
+                // (b)
+                {
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Draw d = drawOf(0, 3);
+                    d.indexBuffer = ib32.get();
+                    d.indexType = 1;
+                    d.baseVertex = 3;
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(flat, rp, d, Bindings{}, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    TriReadback rr = compareTriangle(*t, flatColour, canary, upperRight);
+                    report(completed(*cb) && rr.interiorColour == rr.interior && rr.exteriorCanary == rr.exterior && rr.other == 0,
+                           "indexed, tri_flat through 32-bit indices 0 1 2 with base vertex 3 (T2 alone): " + describeTriangle(rr) + status(*cb, gpu));
+                }
+                // (c)
+                auto colours = newBuffer(gpu, 8, &why);
+                auto posOnly = newBuffer(gpu, 6 * 8, &why);
+                if (colours != nullptr && posOnly != nullptr) {
+                    const uint8_t c[2][4] = {{0x20, 0x00, 0x08, 0x10}, {0x00, 0x40, 0x04, 0x20}};
+                    memcpy(colours->contents(), c, 8);
+                    const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+                    memcpy(posOnly->contents(), xy, sizeof xy);
+                    Program inst = quadProg;
+                    inst.vertexDescriptor.attributes[0] = VertexAttribute{VertexFormat::kFloat2, 0, 0};
+                    inst.vertexDescriptor.attributes[1] = VertexAttribute{VertexFormat::kUChar4Normalized, 0, 1};
+                    inst.vertexDescriptor.layouts[0] = VertexLayout{8, VertexStep::kPerVertex, 1};
+                    inst.vertexDescriptor.layouts[1] = VertexLayout{4, VertexStep::kPerInstance, 2};
+                    inst.blend = ColorBlend{true, 0, 0, 1, 1, 1, 1, 0xf};
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    rp.load = LoadAction::kClear;
+                    Draw d = drawOf(0, 6);
+                    d.instanceCount = 3;
+                    Bindings vsb;
+                    vsb.buffers = {Binding{posOnly.get(), 0}, Binding{colours.get(), 0}};
+                    fillBo(*t, canary);
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(inst, rp, d, vsb, Bindings{})) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    const uint32_t want = uint32_t(2 * c[0][0] + c[1][0]) | uint32_t(2 * c[0][1] + c[1][1]) << 8 | uint32_t(2 * c[0][2] + c[1][2]) << 16 |
+                                          uint32_t(2 * c[0][3] + c[1][3]) << 24;
+                    const uint32_t got = countWord(want);
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t px0;
+                    memcpy(&px0, bo.data(), 4);
+                    report(completed(*cb) && got == W * H, "instanced, the pair x 3 instances, colour per instance at step rate 2, One + One: " + std::to_string(got) +
+                                                                " of 4096 pixels 2 * C0 + C1 = " + hex8(want) + " (pixel 0 is " + hex8(px0) + ")" + status(*cb, gpu));
+                }
             }
         }
 #if defined(__APPLE__)

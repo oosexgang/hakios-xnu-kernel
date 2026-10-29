@@ -507,12 +507,14 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
                                  fsOffsets, fsCount, nullptr, 0, nullptr, 0);
 }
 
-int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
-                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
-                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
-                          const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount,
-                          hakios_metal_texture* const* fsTextures, unsigned fsTextureCount, hakios_metal_sampler* const* fsSamplers,
-                          unsigned fsSamplerCount) {
+namespace {
+// the draws of the C interface in one: INDEX_BUFFER non-NULL is an indexed draw
+int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass, const struct hakios_metal_viewport* viewport,
+               const struct hakios_metal_scissor* scissor, unsigned primitive, unsigned vertexStart, unsigned vertexCount, unsigned instanceCount,
+               hakios_metal_buffer* indexBuffer, unsigned indexType, uint64_t indexOffset, int baseVertex, unsigned baseInstance,
+               hakios_metal_buffer* const* vsBuffers, const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers,
+               const uint64_t* fsOffsets, unsigned fsCount, hakios_metal_texture* const* fsTextures, unsigned fsTextureCount,
+               hakios_metal_sampler* const* fsSamplers, unsigned fsSamplerCount) {
     // the two [[buffer(n)]] tables by Metal's index (setVertexBuffer / setFragmentBuffer); render::encode reads what each
     // stage's pushed ranges name and refuses a range with nothing bound by name
     auto table = [](hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
@@ -551,6 +553,11 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
     d.vertexStart = vertexStart;
     d.vertexCount = vertexCount;
     d.instanceCount = instanceCount;
+    d.indexBuffer = indexBuffer != nullptr ? indexBuffer->buffer.get() : nullptr;
+    d.indexType = indexType;
+    d.indexOffset = indexOffset;
+    d.baseVertex = baseVertex;
+    d.baseInstance = baseInstance;
     // MTLRenderCommandEncoder's defaults: a viewport over the whole attachment with depth 0..1, no scissor (the whole attachment)
     if (viewport != nullptr) {
         d.viewport = Viewport{viewport->x, viewport->y, viewport->width, viewport->height, viewport->znear, viewport->zfar};
@@ -580,6 +587,34 @@ int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const st
         if (fsTextures != nullptr && fsTextures[i] != nullptr) cb->cb->keepAlive(fsTextures[i]->texture);   // the draw keeps the memory already
     }
     return 0;
+}
+}  // namespace
+
+int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
+                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
+                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
+                          const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount,
+                          hakios_metal_texture* const* fsTextures, unsigned fsTextureCount, hakios_metal_sampler* const* fsSamplers,
+                          unsigned fsSamplerCount) {
+    return drawCommon(cb, p, pass, viewport, scissor, primitive, vertexStart, vertexCount, instanceCount, nullptr, 0, 0, 0, 0, vsBuffers, vsOffsets, vsCount,
+                      fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
+}
+
+int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
+                                 const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
+                                 unsigned indexCount, unsigned indexType, hakios_metal_buffer* indexBuffer, uint64_t indexOffset, unsigned instanceCount,
+                                 int baseVertex, unsigned baseInstance, hakios_metal_buffer* const* vsBuffers, const uint64_t* vsOffsets, unsigned vsCount,
+                                 hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount, hakios_metal_texture* const* fsTextures,
+                                 unsigned fsTextureCount, hakios_metal_sampler* const* fsSamplers, unsigned fsSamplerCount) {
+    if (indexBuffer == nullptr) {
+        failed("an indexed draw with no index buffer");
+        cb->cb->refuse("an indexed draw with no index buffer");
+        return -1;
+    }
+    int r = drawCommon(cb, p, pass, viewport, scissor, primitive, 0, indexCount, instanceCount, indexBuffer, indexType, indexOffset, baseVertex, baseInstance,
+                       vsBuffers, vsOffsets, vsCount, fsBuffers, fsOffsets, fsCount, fsTextures, fsTextureCount, fsSamplers, fsSamplerCount);
+    if (r == 0) cb->cb->keep(indexBuffer->buffer);   // the indices live until the GPU has read them, whatever the caller frees
+    return r;
 }
 
 int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
