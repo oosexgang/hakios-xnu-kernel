@@ -949,9 +949,9 @@ TEST(a_dispatch_loads_the_ubo_descriptors_an_ldc_reads_through) {
     Raw raw(r);
     CHECK_EQ(raw.submit(e.stream.words()), 0);
     // misaligned, and the fake's twin
-    Encoded bad(r, k, kGroups16, nullptr, {Binding{out.get(), 0}, Binding{u0.get(), 8}});
+    Encoded bad(r, k, kGroups16, nullptr, {Binding{out.get(), 0}, Binding{u0.get(), 6}});
     CHECK(!bad.ok);
-    CHECK(has(bad.error, "fill_id: buffer 1: offset 8 is not a multiple of 16 inside it (a UBO starts on a vec4)"));
+    CHECK(has(bad.error, "fill_id: buffer 1: offset 6 is not a multiple of 4 inside it"));
     std::vector<uint32_t> words = e.stream.words();
     for (size_t i = 0; i < words.size();) {
         pm4::Header h = pm4::decode(words[i]);

@@ -2002,6 +2002,30 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // 9o2. a constant buffer bound off a vec4: tri_upos_vs's ldc through UBO descriptor 0 at offsets 4, 8, 16, 64 and
+        // 120 (chronod's primitive_gradient binds at 120), the bytes before the positions 9.0 (off the target). A base the
+        // hardware rounded down to 16 or 64 would read 9.0 at 4 and 8 and draw no pixel; every pixel tri_flat's colour is
+        // the descriptor taking the address as given.
+        for (uint32_t off : {4u, 8u, 16u, 64u, 120u}) {
+            const Program upos{kernels::tri_upos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_upos"};
+            auto pb = newBuffer(gpu, 256, &why);
+            const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+            std::vector<float> junk(64, 9.0f);
+            memcpy(pb->contents(), junk.data(), 256);
+            memcpy(static_cast<uint8_t*>(pb->contents()) + off, xy, sizeof xy);
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            Bindings vsb;
+            vsb.buffers = {Binding{pb.get(), off}};
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(upos, rp, drawOf(0, 6), vsb, Bindings{});
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t got = 0;
+            for (uint32_t k = 0; k < W * H; k++) { uint32_t px; memcpy(&px, mb.data() + (k / W) * t->bytesPerRow() + (k % W) * 4, 4); got += px == flatColour; }
+            report(ok && completed(*cb) && got == W * H, "upos, a constant buffer bound at offset " + std::to_string(off) + ": " + std::to_string(got) + " of 4096 pixels the colour" + (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
         // 9q. a constexpr sampler: tri_ctex_fs samples the 4x4 texture of 9k with a sampler it declares itself (repeat on s
         // and t, nearest), bound by the driver at the index the front end gave it, at tri_color's (red, green) times 4 --
         // a computed coordinate, so an ordinary sam. Repeat reads texel floor(16 u) mod 4 where clamp to edge would read 3

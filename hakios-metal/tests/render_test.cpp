@@ -3247,10 +3247,16 @@ TEST(a_draw_loads_the_ubo_descriptors_an_ldc_reads_through) {
     CHECK(!none.ok);
     expectRefusal(none.error, "tri_upos_vs_air: no buffer bound at index 0 (a constant buffer it indexes)");
     Bindings off;
-    off.buffers = {Binding{pos.get(), 8}};
+    off.buffers = {Binding{pos.get(), 6}};
     Encoded misaligned(r, p, pass, wholeDraw(6), render::Options{}, off);
     CHECK(!misaligned.ok);
-    expectRefusal(misaligned.error, "tri_upos_vs_air: buffer 0: offset 8 is not a multiple of 16 inside it (a UBO starts on a vec4)");
+    expectRefusal(misaligned.error, "tri_upos_vs_air: buffer 0: offset 6 is not a multiple of 4 inside it");
+    // ...and 8, off a vec4 but a multiple of 4, is drawn (probe 9o2)
+    Bindings eight;
+    eight.buffers = {Binding{pos.get(), 8}};
+    Encoded at8(r, p, pass, wholeDraw(6), render::Options{}, eight);
+    CHECK(at8.ok);
+    CHECK(drawOnce(r, p, pass, wholeDraw(6), render::Options{}, eight)->status() == CommandBuffer::kCompleted);
     // a gap below the highest UBO, which no ldc reads (path_blit_vert_lph's 0 beside its 1 and 2): a descriptor of size 0
     // there, the bound one after it; and the highest itself unbound is still refused by name
     {

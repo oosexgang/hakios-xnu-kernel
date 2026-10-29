@@ -578,8 +578,10 @@ bool uboDescriptors(const Stage& s, const Bindings& b, std::vector<uint32_t>* ou
             continue;
         }
         const Binding& x = b.buffers[u];
-        if (x.offset % 16 != 0 || x.offset > x.buffer->length()) {
-            return refuse(why, name + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 16 inside it (a UBO starts on a vec4)");
+        // a multiple of 4, Metal's rule for a constant buffer's offset on iOS: probe 9o2 measured the ldc reading from
+        // the descriptor's address as given at offsets 4, 8 and 120, not rounded to a vec4
+        if (x.offset % 4 != 0 || x.offset > x.buffer->length()) {
+            return refuse(why, name + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
         }
         const uint64_t vec4s = (x.buffer->length() - x.offset + 15) / 16;
         uint32_t d[2];

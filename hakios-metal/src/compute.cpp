@@ -160,8 +160,9 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
             continue;
         }
         const Binding& x = buffers[u];
-        if (x.offset % 16 != 0 || x.offset > x.buffer->length()) {
-            return refuse(why, std::string(k.name) + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 16 inside it (a UBO starts on a vec4)");
+        // (a multiple of 4, as a draw's: render.cpp's uboDescriptors and probe 9o2)
+        if (x.offset % 4 != 0 || x.offset > x.buffer->length()) {
+            return refuse(why, std::string(k.name) + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
         }
         uint32_t d[2];
         uboDescriptor(x.buffer->gpuAddress() + x.offset, uint32_t(std::min<uint64_t>((x.buffer->length() - x.offset + 15) / 16, kUboMaxVec4)), d);

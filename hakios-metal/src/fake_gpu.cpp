@@ -630,10 +630,11 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
             }
         }
     }
+    // (a base is a multiple of 4: probe 9o2 measured the ldc taking one at 4, 8 and 120 as given, not rounded to a vec4)
     for (size_t u = 0; u < cs_.ubos.size(); u++) {
         const UboDescriptor& ub = cs_.ubos[u];
         if (ub.base == 0 && ub.vec4s == 0) continue;
-        if (ub.vec4s == 0 || at(ub.base, uint64_t(ub.vec4s) * 16) == nullptr || ub.base % 16 != 0) {
+        if (ub.vec4s == 0 || at(ub.base, uint64_t(ub.vec4s) * 16) == nullptr || ub.base % 4 != 0) {
             fault(text("UBO descriptor %llu of the compute stage: %llu vec4 at %#llx, empty, misaligned or outside every buffer", u, ub.vec4s, ub.base));
             return false;
         }
@@ -1248,7 +1249,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         for (size_t u = 0; u < xs->ubos.size(); u++) {
             const UboDescriptor& ub = xs->ubos[u];
             if (ub.base == 0 && ub.vec4s == 0) continue;
-            if (ub.vec4s == 0 || at(ub.base, uint64_t(ub.vec4s) * 16) == nullptr || ub.base % 16 != 0) {
+            if (ub.vec4s == 0 || at(ub.base, uint64_t(ub.vec4s) * 16) == nullptr || ub.base % 4 != 0) {
                 fault(text("UBO descriptor %llu of the ", u) + (xs == &vs_ ? "vertex" : "fragment") +
                       text(" stage: %llu vec4 at %#llx, empty, misaligned or outside every buffer", ub.vec4s, ub.base));
                 return false;
