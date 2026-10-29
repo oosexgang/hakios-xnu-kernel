@@ -147,6 +147,7 @@ public:
         Draw lastDraw;
         uint32_t passes = 0;        // sysmem passes begun (CP_SET_MARKER RM6_DIRECT_RENDER)
         uint32_t fills = 0;         // CP_BLIT solid fills whose state held together: these ARE carried out, into the target's memory
+        uint32_t copies = 0;        // CP_BLIT copies (render::encodeBlit), carried out texel for texel or bilinear
         uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
     };
 
@@ -236,6 +237,7 @@ private:
     bool execDraw(const uint32_t* p, uint32_t count);
     // CP_BLIT: a solid fill only, judged against the 2D registers and then written into memory as the 2D engine would
     bool execBlit(const uint32_t* p, uint32_t count);
+    bool execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint64_t base, uint64_t pitch, bool tiled);
     // one graphics stage's program and constants at the draw: the rules CP_EXEC_CS applies to the compute stage's
     bool checkStageProgram(const char* what, const StageLoads& xs, uint32_t instrlenReg, uint32_t objStartReg, uint32_t hlsqCntl, uint32_t spConfig,
                            uint32_t* instrlen, uint64_t* program, uint32_t* constlen);

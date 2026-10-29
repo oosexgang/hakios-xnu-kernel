@@ -90,7 +90,26 @@ uint64_t texturePitch(const FormatInfo& format, uint32_t width) {
     return (uint64_t(width) * format.bytesPerPixel + unit - 1) / unit * unit;
 }
 
-uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height) {
+TextureLevel textureLevel(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels, uint32_t level) {
+    const uint64_t align = 64ull * format.bytesPerPixel;   // 1 << pitchalign, pitchalign = cpp_shift + 6
+    const uint64_t pitch0 = texturePitch(format, width);
+    uint64_t offset = 0;
+    TextureLevel out{};
+    for (uint32_t l = 0; l <= level; l++) {
+        const uint64_t pitch = (std::max<uint64_t>(1, pitch0 >> l) + align - 1) / align * align;
+        const uint32_t h = std::max<uint32_t>(1, height >> l);
+        const uint64_t rows = l == levels - 1 ? (uint64_t(h) + 3) / 4 * 4 : h;
+        out = TextureLevel{offset, pitch, std::max<uint32_t>(1, width >> l), h};
+        offset += rows * pitch;
+    }
+    return out;
+}
+
+uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels) {
+    if (levels > 1 && !format.depth) {
+        const TextureLevel last = textureLevel(format, width, height, levels, levels - 1);
+        return (last.offset + (uint64_t(last.height) + 3) / 4 * 4 * last.pitch + 4095) / 4096 * 4096;
+    }
     if (format.depth) {
         // "Linear D/S is not supported by HW" (fd6_layout.c:157-164): a depth format is laid out TILE6_3 on every level, its
         // rows counted to the tiled height alignment of 16 for cpp 4 (fdl6_tile_alignment, :81-95; the pitch is
@@ -124,6 +143,17 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, "texture usage " + n(desc.usage) + " has bits other than shader read (1), shader write (2) and render target (4): not served");
         return nullptr;
     }
+    uint32_t most = 1;
+    while ((std::max(desc.width, desc.height) >> most) != 0) most++;   // floor(log2(max(w, h))) + 1
+    if (desc.mipLevels == 0 || desc.mipLevels > most || desc.mipLevels > 16) {
+        refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture of " + n(desc.mipLevels) + " mip levels: 1 to " + n(std::min<uint32_t>(most, 16)) +
+                        " (down to 1 x 1, and MIPLVLS holds 16)");
+        return nullptr;
+    }
+    if (info->depth && desc.mipLevels != 1) {
+        refuse(why, std::string("a ") + info->name + " texture of " + n(desc.mipLevels) + " mip levels: a depth texture is tiled, one level is served");
+        return nullptr;
+    }
     if (info->depth && desc.usage != kTextureUsageRenderTarget) {
         // the tiled layout has no reader here yet: a depth texture is an attachment the RB writes and reads, nothing else
         refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) +
@@ -131,7 +161,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         return nullptr;
     }
     uint64_t pitch = texturePitch(*info, desc.width);
-    std::shared_ptr<Buffer> buffer = newBuffer(gpu, textureBytes(*info, desc.width, desc.height), why);
+    std::shared_ptr<Buffer> buffer = newBuffer(gpu, textureBytes(*info, desc.width, desc.height, desc.mipLevels), why);
     if (buffer == nullptr) {
         return nullptr;
     }
@@ -141,10 +171,14 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
 namespace {
 // the region check both directions share: W x H pixels at (X, Y) inside the texture, and the caller's rows at least a
 // row of W pixels apart (Metal's -replaceRegion: asks the same of bytesPerRow)
-bool regionFits(const Texture& t, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint64_t bytesPerRow, std::string* why) {
-    if (uint64_t(x) + w > t.width() || uint64_t(y) + h > t.height()) {
-        return refuse(why, "region " + n(w) + " x " + n(h) + " at (" + n(x) + ", " + n(y) + ") lies outside the " + n(t.width()) + " x " +
-                               n(t.height()) + " texture");
+bool regionFits(const Texture& t, uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint64_t bytesPerRow, std::string* why) {
+    if (level >= t.levels()) {
+        return refuse(why, "mip level " + n(level) + " of a texture of " + n(t.levels()));
+    }
+    const TextureLevel L = t.level(level);
+    if (uint64_t(x) + w > L.width || uint64_t(y) + h > L.height) {
+        return refuse(why, "region " + n(w) + " x " + n(h) + " at (" + n(x) + ", " + n(y) + ") lies outside the " + n(L.width) + " x " +
+                               n(L.height) + (level != 0 ? " level " + n(level) + " of the" : std::string()) + " texture");
     }
     uint64_t row = uint64_t(w) * t.info().bytesPerPixel;
     if (h > 1 && bytesPerRow < row) {
@@ -154,41 +188,48 @@ bool regionFits(const Texture& t, uint32_t x, uint32_t y, uint32_t w, uint32_t h
 }
 }  // namespace
 
-bool Texture::replace(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
+TextureLevel Texture::level(uint32_t l) const {
+    if (surface_ != 0 || desc_.mipLevels <= 1) return TextureLevel{0, pitch_, desc_.width, desc_.height};
+    return textureLevel(*info_, desc_.width, desc_.height, desc_.mipLevels, l);
+}
+
+bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
     if (contents() == nullptr) {
         return refuse(why, "IOSurface " + n(surface_) + "'s memory is mapped nowhere in this process by the driver: write it through the surface");
     }
-    if (!regionFits(*this, x, y, w, h, bytesPerRow, why)) {
+    if (!regionFits(*this, level, x, y, w, h, bytesPerRow, why)) {
         return false;
     }
+    const TextureLevel L = this->level(level);
     uint64_t row = uint64_t(w) * info_->bytesPerPixel;
-    auto* dst = static_cast<uint8_t*>(contents()) + uint64_t(y) * pitch_ + uint64_t(x) * info_->bytesPerPixel;
+    auto* dst = static_cast<uint8_t*>(contents()) + L.offset + uint64_t(y) * L.pitch + uint64_t(x) * info_->bytesPerPixel;
     auto* src = static_cast<const uint8_t*>(bytes);
     // one row at a time, in order: the mapping is write-combined, and a row is the longest run that is contiguous in both
     for (uint32_t r = 0; r < h; r++) {
-        memcpy(dst + uint64_t(r) * pitch_, src + uint64_t(r) * bytesPerRow, row);
+        memcpy(dst + uint64_t(r) * L.pitch, src + uint64_t(r) * bytesPerRow, row);
     }
     return true;
 }
 
-bool Texture::read(uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const {
+bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const {
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
     if (contents() == nullptr) {
         return refuse(why, "IOSurface " + n(surface_) + "'s memory is mapped nowhere in this process by the driver: read it through the surface");
     }
-    if (!regionFits(*this, x, y, w, h, bytesPerRow, why)) {
+    if (!regionFits(*this, level, x, y, w, h, bytesPerRow, why)) {
         return false;
     }
+    const TextureLevel L = this->level(level);
     uint64_t row = uint64_t(w) * info_->bytesPerPixel;
-    auto* src = static_cast<const uint8_t*>(contents()) + uint64_t(y) * pitch_ + uint64_t(x) * info_->bytesPerPixel;
+    auto* src = static_cast<const uint8_t*>(contents()) + L.offset + uint64_t(y) * L.pitch + uint64_t(x) * info_->bytesPerPixel;
     auto* dst = static_cast<uint8_t*>(bytes);
     for (uint32_t r = 0; r < h; r++) {
-        memcpy(dst + uint64_t(r) * bytesPerRow, src + uint64_t(r) * pitch_, row);
+        memcpy(dst + uint64_t(r) * bytesPerRow, src + uint64_t(r) * L.pitch, row);
     }
     return true;
 }
@@ -197,7 +238,7 @@ a6xx::TexConst Texture::sampledDescriptor() const {
     // PITCHALIGN = log2(pitch alignment / 64) = log2(cpp) for the pitch texturePitch chose (fd6_layout.c:194-201, fd6_view.c:244);
     // a surface's rows carry the alignment their pitch has, wrapSurface worked it out
     return texture2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel), info_->fmt6,
-                     info_->swap, info_->hasAlpha, info_->srgb);
+                     info_->swap, info_->hasAlpha, info_->srgb, desc_.mipLevels, desc_.mipLevels > 1 ? buffer_->length() : 0);
 }
 
 a6xx::TexConst Texture::storageDescriptor() const {

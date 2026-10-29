@@ -87,6 +87,12 @@ public:
     // a pass with no draw whose load action is Clear (render::encodeClear): the target filled with the clear colour, a
     // complete pass of its own. What an encoder that recorded no draw needs at its end; anything else is refused.
     bool clear(const RenderPass& pass, const render::Options& options = render::Options{});
+    // -copyFromTexture:...toTexture:... and the scaled copies under it: rectangle S of SRC's mip level SL into rectangle D
+    // of DST's level DL by the 2D engine, a pass of its own (render::encodeBlit says what it takes)
+    bool blit(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
+              const render::Options& options = render::Options{});
+    // -generateMipmapsForTexture:: every level past 0 made from the one above it, halved with linear filtering, in order
+    bool generateMipmaps(const Texture& texture, const render::Options& options = render::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state
     void refuse(const std::string& why) { fail(why); }
     // a buffer it uses, kept alive until it completes (the owner may let go of it before that)

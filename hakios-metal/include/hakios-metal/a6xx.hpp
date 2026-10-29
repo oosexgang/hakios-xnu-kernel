@@ -1040,14 +1040,16 @@ constexpr uint32_t texSwizzle(bool hasAlpha) {
 // (fd6_view.c:232-250) for TILE6_LINEAR, no UBWC, level_count 1, identity view swizzle, min_lod_clamp 0. PITCHALIGN
 // is log2(pitch alignment / 64): for a pitch Mesa chose, log2(bytes per pixel) (fd6_layout.c:194-201). The base goes
 // in raw (fd6_view.c:248), so it must be 32-byte aligned for the field (fdl6_layout gives 64).
+// (LEVELS mip levels from the one at IOVA, whose size and pitch the others follow by the layout's rule -- the TP finds
+// them itself, fdl6_view_init gives it only the first; LAYER_BYTES the whole layer, 0: one level's, layerBytes2d)
 constexpr TexConst texture2d(uint64_t iova, uint32_t width, uint32_t height, uint32_t pitchBytes, uint32_t pitchalignLog2Cpp,
-                             a6xx_format fmt, a3xx_color_swap swap, bool hasAlpha, bool srgb) {
+                             a6xx_format fmt, a3xx_color_swap swap, bool hasAlpha, bool srgb, uint32_t levels = 1, uint64_t layerBytes = 0) {
     TexConst d{};
     d.dword[0] = A6XX_TEX_CONST_0_TILE_MODE(TILE6_LINEAR) | (srgb ? A6XX_TEX_CONST_0_SRGB : 0u) | A6XX_TEX_CONST_0_FMT(fmt) |
-                 A6XX_TEX_CONST_0_SAMPLES(MSAA_ONE) | A6XX_TEX_CONST_0_SWAP(swap) | texSwizzle(hasAlpha) | A6XX_TEX_CONST_0_MIPLVLS(0);
+                 A6XX_TEX_CONST_0_SAMPLES(MSAA_ONE) | A6XX_TEX_CONST_0_SWAP(swap) | texSwizzle(hasAlpha) | A6XX_TEX_CONST_0_MIPLVLS(levels - 1);
     d.dword[1] = A6XX_TEX_CONST_1_WIDTH(width) | A6XX_TEX_CONST_1_HEIGHT(height);
     d.dword[2] = A6XX_TEX_CONST_2_PITCHALIGN(pitchalignLog2Cpp) | A6XX_TEX_CONST_2_PITCH(pitchBytes) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D);
-    d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(layerBytes2d(height, pitchBytes)));
+    d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(layerBytes != 0 ? layerBytes : layerBytes2d(height, pitchBytes)));
     d.dword[4] = uint32_t(iova);
     d.dword[5] = A6XX_TEX_CONST_5_BASE_HI(uint32_t(iova >> 32)) | A6XX_TEX_CONST_5_DEPTH(1);
     d.dword[6] = A6XX_TEX_CONST_6_MIN_LOD_CLAMP(0);
@@ -4226,6 +4228,54 @@ constexpr uint32_t rb2dDstInfo(uint32_t fmt, uint32_t tileMode, uint32_t swap, b
            (srgb ? A6XX_RB_2D_DST_INFO_SRGB : 0u);
 }
 constexpr uint32_t cpBlit0(uint32_t op) { return field(op, CP_BLIT_0_OP__SHIFT, CP_BLIT_0_OP__MASK); }
+
+// The 2D engine's source, for a copy or a scaled copy (r2d_src, tu_clear_blit.cc:268-301; fdl6_view_init's
+// SP_PS_2D_SRC_INFO/SIZE, fd6_view.c:320-334): the image as INFO (format, tile, swap, sRGB, FILTER for a linear scale,
+// and the two UNK bits every view sets), SIZE, the base and the pitch as one pkt4 of five, the flag buffer's three
+// words 0; the rectangle read in GRAS_2D_SRC_TL/BR X and Y, integer pixels at bit 8, BR inclusive (r2d_coords,
+// tu6_blit_image)
+inline constexpr uint32_t REG_A6XX_GRAS_2D_SRC_TL_X = 0x8401;                               // a6xx.xml.h:5137
+inline constexpr uint32_t REG_A6XX_GRAS_2D_SRC_BR_X = 0x8402;                               // a6xx.xml.h:5146
+inline constexpr uint32_t REG_A6XX_GRAS_2D_SRC_TL_Y = 0x8403;                               // a6xx.xml.h:5155
+inline constexpr uint32_t REG_A6XX_GRAS_2D_SRC_BR_Y = 0x8404;                               // a6xx.xml.h:5164
+inline constexpr uint32_t A6XX_GRAS_2D_SRC_TL_X__MASK = 0x01ffff00;                         // a6xx.xml.h:5138
+inline constexpr uint32_t A6XX_GRAS_2D_SRC_TL_X__SHIFT = 8;                                 // a6xx.xml.h:5139
+inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_INFO = 0xb4c0;                              // a6xx.xml.h:9836
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_COLOR_FORMAT__MASK = 0x000000ff;           // a6xx.xml.h:9837
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK = 0x00000300;              // a6xx.xml.h:9843
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT = 8;                      // a6xx.xml.h:9844
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK = 0x00000c00;             // a6xx.xml.h:9849
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT = 10;                    // a6xx.xml.h:9850
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_SRGB = 0x00002000;                         // a6xx.xml.h:9856
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_FILTER = 0x00010000;                       // a6xx.xml.h:9863
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_UNK20 = 0x00100000;                        // a6xx.xml.h:9867
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_UNK22 = 0x00400000;                        // a6xx.xml.h:9869
+inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_SIZE = 0xb4c1;                              // a6xx.xml.h:9880
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_SIZE_WIDTH__MASK = 0x00007fff;                  // a6xx.xml.h:9881
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__MASK = 0x3fff8000;                 // a6xx.xml.h:9887
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__SHIFT = 15;                        // a6xx.xml.h:9888
+inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC = 0xb4c2;                                   // a6xx.xml.h:9895
+inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_PITCH = 0xb4c4;                             // a6xx.xml.h:9898
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_PITCH_PITCH__MASK = 0x00fffe00;                 // a6xx.xml.h:9905
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_PITCH_PITCH__SHIFT = 9;                         // a6xx.xml.h:9906
+inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_FLAGS = 0xb4ca;                             // a6xx.xml.h:10017
+static_assert(REG_A6XX_SP_PS_2D_SRC_SIZE == REG_A6XX_SP_PS_2D_SRC_INFO + 1 && REG_A6XX_SP_PS_2D_SRC == REG_A6XX_SP_PS_2D_SRC_INFO + 2 &&
+                  REG_A6XX_SP_PS_2D_SRC_PITCH == REG_A6XX_SP_PS_2D_SRC_INFO + 4 && REG_A6XX_GRAS_2D_DST_TL == REG_A6XX_GRAS_2D_SRC_BR_Y + 1,
+              "INFO, SIZE, BASE lo, hi, PITCH are one pkt4; the four source coordinates run on into GRAS_2D_DST_TL");
+constexpr uint32_t gras2dSrc(uint32_t v) { return field(v, A6XX_GRAS_2D_SRC_TL_X__SHIFT, A6XX_GRAS_2D_SRC_TL_X__MASK); }
+constexpr uint32_t sp2dSrcInfo(uint32_t fmt, uint32_t swap, bool srgb, bool filter) {
+    return field(fmt, 0, A6XX_SP_PS_2D_SRC_INFO_COLOR_FORMAT__MASK) | field(TILE6_LINEAR, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK) |
+           field(swap, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK) | (srgb ? A6XX_SP_PS_2D_SRC_INFO_SRGB : 0u) |
+           (filter ? A6XX_SP_PS_2D_SRC_INFO_FILTER : 0u) | A6XX_SP_PS_2D_SRC_INFO_UNK20 | A6XX_SP_PS_2D_SRC_INFO_UNK22;
+}
+constexpr uint32_t sp2dSrcSize(uint32_t w, uint32_t h) {
+    return field(w, 0, A6XX_SP_PS_2D_SRC_SIZE_WIDTH__MASK) | field(h, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__SHIFT, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__MASK);
+}
+constexpr uint32_t sp2dSrcPitch(uint32_t pitchBytes) { return field(pitchBytes >> 6, A6XX_SP_PS_2D_SRC_PITCH_PITCH__SHIFT, A6XX_SP_PS_2D_SRC_PITCH_PITCH__MASK); }
+// the blit word of a copy (r2d_setup_common with clear false)
+constexpr uint32_t rb2dBlitCntlCopy(uint32_t fmt, uint32_t ifmt) {
+    return A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT(fmt) | A6XX_RB_2D_BLIT_CNTL_MASK(0xf) | A6XX_RB_2D_BLIT_CNTL_IFMT(ifmt);
+}
 
 // --- a UBO descriptor: what an ldc reads through (fd6_emit_ubos, fd6_const.cc:266-296) ------------------------------------
 // two dwords per UBO, loaded as ST6_UBO into the stage's shader block from the packet (8 bytes a unit): the address,

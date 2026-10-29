@@ -1100,6 +1100,7 @@ int main(int argc, char** argv) {
     //   9t. two colour targets: tri_mrt_fs's [[color(0)]] and [[color(1)]] each into its own attachment, the second also cleared
     //   9u. framebuffer fetch: tri_fb_fs reads its target and rotates the channels, once and twice in one pass, and without the barrier
     //   9v. A8Unorm, R16Float, RG16Float, RG32Float: a Clear, a sample of one texel, and tri_flat drawn into each
+    //   9w. mip levels: each of seven sampled by a sampler clamped to it, a draw into level 2, a copy, generateMipmaps
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2378,6 +2379,143 @@ int main(int argc, char** argv) {
                 const uint32_t drew = countBytes(*ft, drawn, c.format == PixelFormat::kRG32Float || c.format == PixelFormat::kA8Unorm ? 0 : 1);
                 report(completed(*cb3) && drew == 4096, std::string("format ") + c.name + ", tri_flat drawn into it: " + std::to_string(drew) +
                                                             " of 4096 pixels the colour as the format keeps it" + status(*cb3, gpu));
+            }
+        }
+        // 9w. mip levels. A 64 x 64 RGBA8Unorm texture of seven levels, level L filled with its own colour C(L); the TP
+        // finds each level from the first one's pitch by fdl6_layout's rule, which texture.cpp follows, so a level at the
+        // wrong offset reads another level's colour or none. (1) tri_tex_fs with a sampler whose lod is clamped to L
+        // (lodMin = lodMax = L, mipFilter nearest): every covered pixel C(L), for each L. (2) tri_flat drawn into level 2:
+        // level 2 the flat colour, levels 1 and 3 still C(1) and C(3). (3) a copy of 16 x 8 at (8, 4) of a patterned
+        // level 0 into another texture: every texel. (4) generateMipmaps over a 0x20 / 0x60 checkerboard: every byte of
+        // every level below 0x40 (each 2 x 2 block averages to it exactly, whatever the rounding).
+        if (t) {
+            auto colourOf = [](uint32_t l) { return 0xff000000u | (0x11u * (l + 1)) | (0x80u - 0x10u * l) << 8 | (0x30u + 0x20u * l) << 16; };
+            TextureDesc md;
+            md.format = PixelFormat::kRGBA8Unorm;
+            md.width = md.height = 64;
+            md.mipLevels = 7;
+            md.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+            auto mt = Texture::make(gpu, md, &why);
+            TextureDesc od = md;
+            od.mipLevels = 1;
+            auto other = Texture::make(gpu, od, &why);
+            if (mt == nullptr || other == nullptr) {
+                report(false, "mip: a 64x64 RGBA8Unorm texture of seven levels: " + why);
+            } else {
+                auto fillLevels = [&]() {
+                    for (uint32_t l = 0; l < 7; l++) {
+                        const TextureLevel L = mt->level(l);
+                        std::vector<uint32_t> px(uint64_t(L.width) * L.height, colourOf(l));
+                        std::string rw;
+                        mt->replace(l, 0, 0, L.width, L.height, px.data(), L.width * 4, &rw);
+                    }
+                };
+                fillLevels();
+                const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                uint32_t levelsRight = 0;
+                std::string firstOff;
+                for (uint32_t l = 0; l < 7; l++) {
+                    SamplerDesc sd;
+                    sd.mipFilter = 1;
+                    sd.lodMinClamp = float(l);
+                    sd.lodMaxClamp = float(l);
+                    Sampler smp;
+                    std::string swhy;
+                    if (!makeSampler(sd, &smp, &swhy)) {
+                        firstOff = "sampler: " + swhy;
+                        break;
+                    }
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Bindings fsb;
+                    fsb.textures = {mt.get()};
+                    fsb.samplers = {&smp};
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(texProg, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    const uint32_t want = colourOf(l);
+                    PixelRule rule{[](uint32_t i, uint32_t j) { return i != j; }, [=](uint32_t, uint32_t, uint32_t) { return want; }};
+                    TexReadback rb = compareTexture(*t, rule, canary);
+                    if (completed(*cb) && rb.right == rb.covered && rb.covered == 4032) {
+                        levelsRight++;
+                    } else if (firstOff.empty()) {
+                        firstOff = "; level " + std::to_string(l) + ": " + describeTexture(rb, hex8(want).c_str()) + status(*cb, gpu);
+                    }
+                }
+                report(levelsRight == 7, "mip, each of seven levels sampled through a sampler clamped to it: " + std::to_string(levelsRight) + " of 7 levels their colour in every covered pixel" + firstOff);
+                // (2) a draw into level 2
+                RenderPass lp;
+                lp.color0 = mt.get();
+                lp.level = 2;
+                auto cb2 = queue->commandBuffer();
+                const Program flatMip{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+                if (cb2->draw(flatMip, lp, drawOf(0, 6, Viewport{0, 0, 16, 16, 0, 1}), Bindings{}, Bindings{})) {
+                    cb2->commit();
+                    cb2->waitUntilCompleted();
+                }
+                auto countLevel = [&](uint32_t l, uint32_t word) {
+                    const TextureLevel L = mt->level(l);
+                    std::vector<uint32_t> px(uint64_t(L.width) * L.height);
+                    std::string rw;
+                    mt->read(l, 0, 0, L.width, L.height, px.data(), L.width * 4, &rw);
+                    uint32_t c = 0;
+                    for (uint32_t v : px) c += v == word;
+                    return c;
+                };
+                const uint32_t l2 = countLevel(2, flatColour), l1 = countLevel(1, colourOf(1)), l3 = countLevel(3, colourOf(3));
+                report(completed(*cb2) && l2 == 256 && l1 == 1024 && l3 == 64, "mip, tri_flat drawn into level 2: " + std::to_string(l2) + " of 256 texels of level 2 the flat colour; levels 1 and 3 untouched in " +
+                                                                                   std::to_string(l1) + " of 1024 and " + std::to_string(l3) + " of 64" + status(*cb2, gpu));
+                // (3) a copy
+                std::vector<uint32_t> rows(64 * 64);
+                for (uint32_t i = 0; i < rows.size(); i++) rows[i] = 0xff000000u | (i * 2654435761u & 0x00ffffffu);
+                std::string rw;
+                mt->replace(0, 0, 0, 64, 64, rows.data(), 256, &rw);
+                fillBo(*other, canary);
+                auto cb3 = queue->commandBuffer();
+                if (cb3->blit(*mt, 0, render::BlitRect{8, 4, 16, 8}, *other, 0, render::BlitRect{0, 0, 16, 8}, false)) {
+                    cb3->commit();
+                    cb3->waitUntilCompleted();
+                }
+                std::vector<uint32_t> back(64 * 64);
+                other->read(0, 0, 64, 64, back.data(), 256, &rw);
+                uint32_t copied = 0, outside = 0;
+                for (uint32_t y = 0; y < 64; y++)
+                    for (uint32_t x = 0; x < 64; x++) {
+                        if (x < 16 && y < 8) copied += back[y * 64 + x] == rows[(y + 4) * 64 + x + 8];
+                        else outside += back[y * 64 + x] == canary;
+                    }
+                report(completed(*cb3) && copied == 128 && outside == 4096 - 128, "mip, a copy of 16 x 8 at (8, 4) into another texture at (0, 0): " + std::to_string(copied) +
+                                                                                     " of 128 texels the source's, " + std::to_string(outside) + " of 3968 outside still canary" + status(*cb3, gpu));
+                // (4) generateMipmaps over a checkerboard
+                for (uint32_t y = 0; y < 64; y++)
+                    for (uint32_t x = 0; x < 64; x++) rows[y * 64 + x] = (x + y) % 2 ? 0x60606060u : 0x20202020u;
+                mt->replace(0, 0, 0, 64, 64, rows.data(), 256, &rw);
+                for (uint32_t l = 1; l < 7; l++) {
+                    const TextureLevel L = mt->level(l);
+                    std::vector<uint32_t> px(uint64_t(L.width) * L.height, canary);
+                    mt->replace(l, 0, 0, L.width, L.height, px.data(), L.width * 4, &rw);
+                }
+                auto cb4 = queue->commandBuffer();
+                const int64_t began = gpu.transport().nowNs();
+                if (cb4->generateMipmaps(*mt)) {
+                    cb4->commit();
+                    cb4->waitUntilCompleted();
+                }
+                const int64_t took = gpu.transport().nowNs() - began;
+                uint32_t right = 0, total = 0;
+                std::string levels;
+                for (uint32_t l = 1; l < 7; l++) {
+                    const uint32_t n = countLevel(l, 0x40404040u);
+                    const TextureLevel L = mt->level(l);
+                    right += n;
+                    total += L.width * L.height;
+                    levels += " " + std::to_string(n) + "/" + std::to_string(L.width * L.height);
+                }
+                report(completed(*cb4) && right == total, "mip, generateMipmaps over a 0x20/0x60 checkerboard: levels 1 to 6 0x40 in" + levels + " texels; " +
+                                                              std::to_string(took / 1000) + " us wall" + status(*cb4, gpu));
             }
         }
 #if defined(__APPLE__)

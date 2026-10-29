@@ -2249,7 +2249,8 @@ TEST(the_fake_refuses_a_fill_whose_registers_do_not_hold_together) {
         ClearTwin w;
         w.at(REG_A6XX_GRAS_2D_BLIT_CNTL) &= ~A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR;
         w.at(REG_A6XX_RB_2D_BLIT_CNTL) &= ~A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR;
-        CHECK(has(w.fault(), "a CP_BLIT without SOLID_COLOR"));
+        // (a copy now, with no source set up: refused for that)
+        CHECK(has(w.fault(), "a copy from format 0 into 48"));
     }
     {
         ClearTwin w;
@@ -3402,5 +3403,84 @@ TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_bef
     CHECK_EQ(r.fake->stats().lastDraw.fsTextureCount, 1u);
     const auto d = r.fake->memory(r.fake->stats().lastDraw.fsTexConst, 64);
     CHECK(d.size() == 64 && memcmp(d.data(), want.dword, 64) == 0);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// Mip levels drawn into and made: tri_flat into level 2 of a 64 x 64 texture of seven (RB_MRT[0] at the level's address,
+// the window 16 x 16); a copy of a 16 x 8 rectangle into another texture (the fake carries copies out texel for
+// texel); generateMipmaps over a level 0 of 0x20 and 0x60 in a checkerboard: every 2 x 2 block averages to 0x40, so
+// every level below is 0x40 in every byte, through six filtered blits.
+TEST(mip_levels_are_drawn_into_copied_and_generated) {
+    using namespace a6xx;
+    Rig r;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = d.height = 64;
+    d.mipLevels = 7;
+    d.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    std::string why;
+    auto t = Texture::make(*r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    RenderPass pass;
+    pass.color0 = t.get();
+    pass.level = 2;
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw(6, 16, 16));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.mrtBases[0], t->levelAddress(2));
+    CHECK_EQ(r.fake->stats().lastDraw.windowScissor[2], 15u);
+    RenderPass past = pass;
+    past.level = 7;
+    Encoded e(r, flatProgram(), past, wholeDraw(6, 16, 16));
+    CHECK(!e.ok);
+    expectRefusal(e.error, "colour attachment 0 names mip level 7 of a texture of 7");
+    // a copy: 16 x 8 of level 0 at (8, 4) into another 64 x 64 texture at (0, 0)
+    std::vector<uint32_t> rows(64 * 64);
+    for (uint32_t i = 0; i < rows.size(); i++) rows[i] = 0x01000000u * (i & 0xff) + i;
+    CHECK(t->replace(0, 0, 0, 64, 64, rows.data(), 256, &why));
+    TextureDesc od = d;
+    od.mipLevels = 1;
+    auto other = Texture::make(*r.gpu, od, &why);
+    auto cb2 = r.queue->commandBuffer();
+    CHECK(cb2->blit(*t, 0, render::BlitRect{8, 4, 16, 8}, *other, 0, render::BlitRect{0, 0, 16, 8}, false));
+    cb2->commit();
+    cb2->waitUntilCompleted();
+    CHECK(cb2->status() == CommandBuffer::kCompleted);
+    std::vector<uint32_t> back(16 * 8);
+    CHECK(other->read(0, 0, 16, 8, back.data(), 64, &why));
+    bool same = true;
+    for (uint32_t y = 0; y < 8; y++)
+        for (uint32_t x = 0; x < 16; x++) same = same && back[y * 16 + x] == rows[(y + 4) * 64 + x + 8];
+    CHECK(same);
+    // generateMipmaps over a checkerboard
+    for (uint32_t y = 0; y < 64; y++)
+        for (uint32_t x = 0; x < 64; x++) rows[y * 64 + x] = (x + y) % 2 ? 0x60606060u : 0x20202020u;
+    CHECK(t->replace(0, 0, 0, 64, 64, rows.data(), 256, &why));
+    const uint32_t copiesBefore = r.fake->stats().copies;
+    auto cb3 = r.queue->commandBuffer();
+    CHECK(cb3->generateMipmaps(*t));
+    cb3->commit();
+    cb3->waitUntilCompleted();
+    CHECK(cb3->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().copies - copiesBefore, 6u);
+    bool all40 = true;
+    for (uint32_t l = 1; l < 7; l++) {
+        const TextureLevel L = t->level(l);
+        std::vector<uint32_t> lv(L.width * L.height);
+        CHECK(t->read(l, 0, 0, L.width, L.height, lv.data(), L.width * 4, &why));
+        for (uint32_t v : lv) all40 = all40 && v == 0x40404040u;
+    }
+    CHECK(all40);
+    // refusals: another format, an integer format filtered, overlapping rectangles in one level
+    TextureDesc fd = od;
+    fd.format = PixelFormat::kRGBA16Float;
+    auto f16 = Texture::make(*r.gpu, fd, &why);
+    auto cb4 = r.queue->commandBuffer();
+    CHECK(!cb4->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *f16, 0, render::BlitRect{0, 0, 8, 8}, false));
+    expectRefusal(cb4->error(), "a copy from RGBA8Unorm to RGBA16Float: the two must be one pixel format (an sRGB pair is one)");
+    auto cb5 = r.queue->commandBuffer();
+    CHECK(!cb5->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *t, 0, render::BlitRect{4, 4, 8, 8}, false));
+    expectRefusal(cb5->error(), "a copy within one level whose two rectangles overlap: the engine reads and writes the same memory in no order");
     CHECK_EQ(r.fake->stats().faults, 0u);
 }

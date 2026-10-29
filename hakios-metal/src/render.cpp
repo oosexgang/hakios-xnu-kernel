@@ -108,14 +108,16 @@ struct MrtWords {
     bool srgb;
 };
 
-MrtWords mrtWords(const Texture& t) {
+// (at mip level LEVEL: its address and its pitch -- fdl6_view_init's base_miplevel, the RB told the level alone)
+MrtWords mrtWords(const Texture& t, uint32_t level) {
     const FormatInfo& f = t.info();
+    const TextureLevel L = t.level(level);
     MrtWords m{};
     m.bufInfo = rbMrtBufInfo(f.fmt6, TILE6_LINEAR, f.swap);
-    m.pitch = rbMrtPitch(uint32_t(t.bytesPerRow()));
+    m.pitch = rbMrtPitch(uint32_t(L.pitch));
     m.arrayPitch = rbMrtArrayPitch(uint32_t(t.buffer()->length()));
-    m.baseLo = uint32_t(t.gpuAddress());
-    m.baseHi = uint32_t(t.gpuAddress() >> 32);
+    m.baseLo = uint32_t(t.levelAddress(level));
+    m.baseHi = uint32_t(t.levelAddress(level) >> 32);
     m.baseGmem = 0;
     m.spFsMrtReg = spFsMrtReg(f.fmt6, f.element == kElemInt, f.element == kElemUint);
     m.srgb = f.srgb;
@@ -678,9 +680,11 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
 // tu_clear_sysmem_attachment does after it (:4480-4489): the colour CCU cleaned (PC_CCU_FLUSH_COLOR_TS in the
 // 4-word form, waited for, as the tail does it) and invalidated, a WFI -- so that the draw's colour writes, which go
 // through the same CCU, start after the fill landed.
-void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile) {
+void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile, uint32_t level = 0) {
     const FormatInfo& f = target.info();
-    const uint32_t W = target.width(), H = target.height();
+    const TextureLevel L = target.level(level);
+    const uint32_t W = L.width, H = L.height;
+    const uint64_t at = target.levelAddress(level);
     const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
     reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
@@ -688,14 +692,13 @@ void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c,
     reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(f.fmt6, f.element == kElemInt, f.element == kElemUint, f.srgb));
     regs(stream, REG_A6XX_GRAS_2D_DST_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
     regs(stream, REG_A6XX_RB_2D_SRC_SOLID_C0, {c.value[0], c.value[1], c.value[2], c.value[3]});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(f.fmt6, tile, f.swap, f.srgb), uint32_t(target.gpuAddress()), uint32_t(target.gpuAddress() >> 32),
-                                           A6XX_RB_2D_DST_PITCH(uint32_t(target.bytesPerRow()))});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(f.fmt6, tile, f.swap, f.srgb), uint32_t(at), uint32_t(at >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(L.pitch))});
     regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
 }
 
-void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts) {
-    fillStream(stream, target, c, TILE6_LINEAR);
+void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts, uint32_t level = 0) {
+    fillStream(stream, target, c, TILE6_LINEAR, level);
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, kClearFlushValue, false);
     waitForWord(stream, ts, kClearFlushValue);
     event(stream, PC_CCU_INVALIDATE_COLOR);
@@ -726,14 +729,15 @@ constexpr uint8_t kFragResultData0 = 4;
 // colour attachment I of a pass in one shape (attachment 0 is the pass's own fields, 1 to 7 its `more`)
 struct Attachment {
     const Texture* texture;
+    uint32_t level;
     LoadAction load;
     StoreAction store;
     const double* clearColor;
 };
 Attachment attachmentOf(const RenderPass& p, uint32_t i) {
-    if (i == 0) return Attachment{p.color0, p.load, p.store, p.clearColor};
+    if (i == 0) return Attachment{p.color0, p.level, p.load, p.store, p.clearColor};
     const ColorAttachment& c = p.more[i - 1];
-    return Attachment{c.texture, c.load, c.store, c.clearColor};
+    return Attachment{c.texture, c.level, c.load, c.store, c.clearColor};
 }
 
 // the table word attachment I's Clear waits on (render.hpp: kTableMoreClearFlushAt says why each has its own)
@@ -773,9 +777,13 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if (f.depth) {
             return refuse(why, std::string("a ") + f.name + " texture as " + which + ": a depth format is the depth attachment's");
         }
-        if (i != 0 && (t.width() != pass.color0->width() || t.height() != pass.color0->height())) {
-            return refuse(why, "a " + n(t.width()) + " x " + n(t.height()) + " " + which + " beside a " + n(pass.color0->width()) + " x " +
-                                   n(pass.color0->height()) + " colour attachment 0: one window serves them all, so they must be the same size");
+        if (a.level >= t.levels()) {
+            return refuse(why, which + " names mip level " + n(a.level) + " of a texture of " + n(t.levels()));
+        }
+        const TextureLevel L = t.level(a.level), L0 = pass.color0->level(pass.level < pass.color0->levels() ? pass.level : 0);
+        if (i != 0 && (L.width != L0.width || L.height != L0.height)) {
+            return refuse(why, "a " + n(L.width) + " x " + n(L.height) + " " + which + " beside a " + n(L0.width) + " x " +
+                                   n(L0.height) + " colour attachment 0: one window serves them all, so they must be the same size");
         }
     }
     const Texture& target = *pass.color0;
@@ -787,7 +795,7 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if ((d.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
         }
-        if (d.width() != target.width() || d.height() != target.height()) {
+        if (d.width() != target.level(pass.level).width || d.height() != target.level(pass.level).height) {
             return refuse(why, "a " + n(d.width()) + " x " + n(d.height()) + " depth attachment beside a " + n(target.width()) + " x " + n(target.height()) +
                                    " colour attachment: Metal asks for the same size");
         }
@@ -833,7 +841,7 @@ bool anyColorClear(const RenderPass& pass) {
 void clearAll(pm4::Stream& stream, const RenderPass& pass, const ClearWords c[kMaxColorOutputs], uint64_t table) {
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
-        if (a.texture != nullptr && a.load == LoadAction::kClear) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i));
+        if (a.texture != nullptr && a.load == LoadAction::kClear) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i), a.level);
     }
 }
 
@@ -1133,7 +1141,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         }
         if (maxIndices > 0xffffffffull) maxIndices = 0xffffffffull;
     }
-    const uint32_t W = target.width(), H = target.height();
+    const uint32_t W = target.level(pass.level).width, H = target.level(pass.level).height;
     const Viewport& vp = draw.viewport;
     if (!finite(vp.x) || !finite(vp.y) || !finite(vp.width) || !finite(vp.height) || !finite(vp.znear) || !finite(vp.zfar)) {
         return refuse(why, "a viewport with a non-finite value");
@@ -1176,7 +1184,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     MrtWords mrts[kMaxColorOutputs] = {};
     uint32_t srgbMask = 0;
     for (uint32_t i = 0; i < numRt; i++) {
-        mrts[i] = mrtWords(*attachmentOf(pass, i).texture);
+        mrts[i] = mrtWords(*attachmentOf(pass, i).texture, attachmentOf(pass, i).level);
         if (mrts[i].srgb) srgbMask |= 1u << i;
     }
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
@@ -1587,7 +1595,7 @@ bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
         return false;
     }
     tableStart(tableCpu);
-    passStart(stream, target.width(), target.height(), table, o);
+    passStart(stream, target.level(pass.level).width, target.level(pass.level).height, table, o);
     clearAll(stream, pass, clears, table);
     if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
         depthClearStream(stream, *pass.depth, pass.clearDepth, table);
@@ -1611,7 +1619,7 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
         return false;
     }
     tableStart(tableCpu);
-    passStart(stream, target.width(), target.height(), table, o);
+    passStart(stream, target.level(pass.level).width, target.level(pass.level).height, table, o);
     clearAll(stream, pass, clears, table);
     if (depthClear) {
         depthClearStream(stream, *pass.depth, pass.clearDepth, table);
@@ -1621,6 +1629,69 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
 }
 
 uint32_t halfBitsOf(float f) { return halfOf(f); }
+
+bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, BlitRect s, const Texture& dst, uint32_t dstLevel, BlitRect d, bool linear,
+                uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+    const FormatInfo &sf = src.info(), &df = dst.info();
+    if (sf.depth || df.depth) {
+        return refuse(why, std::string("a copy of a ") + (sf.depth ? sf.name : df.name) + " texture: a depth texture is tiled, the 2D copy is written for linear ones");
+    }
+    if (sf.fmt6 != df.fmt6 || sf.swap != df.swap) {
+        return refuse(why, std::string("a copy from ") + sf.name + " to " + df.name + ": the two must be one pixel format (an sRGB pair is one)");
+    }
+    if (srcLevel >= src.levels() || dstLevel >= dst.levels()) {
+        return refuse(why, "a copy from mip level " + n(srcLevel) + " of " + n(src.levels()) + " into level " + n(dstLevel) + " of " + n(dst.levels()));
+    }
+    const TextureLevel SL = src.level(srcLevel), DL = dst.level(dstLevel);
+    auto inside = [](const BlitRect& r, const TextureLevel& l) { return r.w != 0 && r.h != 0 && uint64_t(r.x) + r.w <= l.width && uint64_t(r.y) + r.h <= l.height; };
+    if (!inside(s, SL) || !inside(d, DL)) {
+        return refuse(why, "a copy of " + n(s.w) + " x " + n(s.h) + " at (" + n(s.x) + ", " + n(s.y) + ") of a " + n(SL.width) + " x " + n(SL.height) + " level into " +
+                               n(d.w) + " x " + n(d.h) + " at (" + n(d.x) + ", " + n(d.y) + ") of a " + n(DL.width) + " x " + n(DL.height) + " one: a rectangle outside its level or empty");
+    }
+    const bool scaled = s.w != d.w || s.h != d.h;
+    if (linear && scaled && sf.element != kElemFloat) {
+        return refuse(why, std::string("a linear scale of ") + sf.name + ": an integer format is not filtered");
+    }
+    if (&src == &dst && srcLevel == dstLevel && s.x < d.x + d.w && d.x < s.x + s.w && s.y < d.y + d.h && d.y < s.y + s.h) {
+        return refuse(why, "a copy within one level whose two rectangles overlap: the engine reads and writes the same memory in no order");
+    }
+    uint32_t ifmt;
+    switch (df.fmt6) {
+    case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: ifmt = R2D_UNORM8; break;
+    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: ifmt = R2D_FLOAT16; break;
+    case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: ifmt = R2D_FLOAT32; break;
+    case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: ifmt = R2D_INT32; break;
+    default: return refuse(why, std::string("a copy of ") + df.name + ": the 2D engine's intermediate format for it is not worked out here");
+    }
+    // an sRGB format filtered in linear space reads and writes through the sRGB conversion (and the UNORM8_SRGB
+    // intermediate, r2d_setup_common); a copy, scaled or not, otherwise moves the stored bytes as they are
+    const bool srgb = linear && scaled && sf.srgb;
+    if (srgb) ifmt = R2D_UNORM8_SRGB;
+    tableStart(tableCpu);
+    passStart(stream, DL.width, DL.height, table, o);
+    const uint32_t blit = rb2dBlitCntlCopy(df.fmt6, ifmt);
+    reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
+    reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(df.fmt6, df.element == kElemInt, df.element == kElemUint, srgb));
+    // the source rectangle then the destination one: six consecutive registers (BR inclusive in both)
+    regs(stream, REG_A6XX_GRAS_2D_SRC_TL_X, {gras2dSrc(s.x), gras2dSrc(s.x + s.w - 1), gras2dSrc(s.y), gras2dSrc(s.y + s.h - 1), regXY(d.x, d.y),
+                                            regXY(d.x + d.w - 1, d.y + d.h - 1)});
+    const uint64_t from = src.levelAddress(srcLevel), to = dst.levelAddress(dstLevel);
+    regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {sp2dSrcInfo(sf.fmt6, sf.swap, srgb, linear && scaled), sp2dSrcSize(SL.width, SL.height), uint32_t(from),
+                                              uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
+    regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(df.fmt6, TILE6_LINEAR, df.swap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+    regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
+    // what a Clear's fill does after it, and then the pass's tail: the copy is in memory when the next thing reads it
+    eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableClearFlushAt, kClearFlushValue, false);
+    waitForWord(stream, table + kTableClearFlushAt, kClearFlushValue);
+    event(stream, PC_CCU_INVALIDATE_COLOR);
+    stream.waitForIdle();
+    passTail(stream, table, o, false);
+    return true;
+}
 
 }  // namespace render
 
@@ -1680,13 +1751,14 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // A draw into the open pass's attachments joins it: no batch start, no pass begin and no tail of its own, which a
     // pass per draw spent on every draw (the CCU flush and the cache flush waited for, each time). It joins when the
     // attachments are the same textures, it asks for no Clear (a Clear begins a pass), and the options are the same.
-    bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.depth == pass.depth && pass.load != LoadAction::kClear &&
+    bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.level == pass.level && open_->pass.depth == pass.depth &&
+                 pass.load != LoadAction::kClear &&
                  !(pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) && pass.store == open_->pass.store &&
                  pass.depthStore == open_->pass.depthStore && std::memcmp(&open_->options, &options, sizeof options) == 0;
     for (uint32_t i = 0; joins && i < kMaxColorOutputs - 1; i++) {
         // (the attachments past 0 the same textures and stores, none asking for a Clear: the same pass)
         const ColorAttachment &a = pass.more[i], &b = open_->pass.more[i];
-        joins = a.texture == b.texture && a.store == b.store && (a.texture == nullptr || a.load != LoadAction::kClear);
+        joins = a.texture == b.texture && a.level == b.level && a.store == b.store && (a.texture == nullptr || a.load != LoadAction::kClear);
     }
     if (!joins) {
         closePass();
@@ -1726,6 +1798,39 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         if (t != nullptr) {
             use(*t->buffer(), false);
             keep(t->buffer());
+        }
+    }
+    return true;
+}
+
+bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
+                         const render::Options& options) {
+    if (status_ > kEnqueued) {
+        return fail("blit after commit");
+    }
+    closePass();   // the copy reads what the draws before it wrote: their pass's tail first
+    std::string why;
+    Piece table;
+    if (!piece(render::kTableBytes, &table, &why)) {
+        return fail(std::string("no memory for the copy's table: ") + why);
+    }
+    pm4::Stream added;
+    if (!render::encodeBlit(added, src, srcLevel, s, dst, dstLevel, d, linear, table.gpuAddress(), table.contents(), &why, options)) {
+        return fail(why);
+    }
+    appendStream(stream_, added);
+    use(*src.buffer(), false);
+    use(*dst.buffer(), true);
+    keep(src.buffer());
+    keep(dst.buffer());
+    return true;
+}
+
+bool CommandBuffer::generateMipmaps(const Texture& t, const render::Options& options) {
+    for (uint32_t l = 1; l < t.levels(); l++) {
+        const TextureLevel a = t.level(l - 1), b = t.level(l);
+        if (!blit(t, l - 1, render::BlitRect{0, 0, a.width, a.height}, t, l, render::BlitRect{0, 0, b.width, b.height}, true, options)) {
+            return false;
         }
     }
     return true;

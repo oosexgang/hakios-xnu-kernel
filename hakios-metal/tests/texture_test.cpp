@@ -395,3 +395,49 @@ TEST(sampler_words_follow_galliums_encoding_of_metals_descriptor) {
     CHECK(!makeSampler(d, &untouched, &why));
     CHECK_EQ(untouched.words[0], 0x12345678u);
 }
+
+// A 64 x 64 RGBA8Unorm texture of seven levels, laid out by fdl6_layout's rule and worked out here by hand: every pitch
+// at least 64 * cpp = 256 bytes (so levels 0 to 6 all have rows of 256), the levels one after another (64, 32, 16, 8,
+// 4, 2 rows), the last one's single row counted as 4, the layer 4096-aligned: offsets 0, 16384, 24576, 28672, 30720,
+// 31744, 32256, 33280 bytes in all, 36864 with the alignment. A 100 x 30 R8Unorm one of three: pitch0 128 (100 to 64),
+// level 1's 50 to 64, level 2's 25 to 64; rows 30, 15 and 7 counted as 8.
+TEST(texture_levels_are_laid_out_as_fdl6_layout_does_it) {
+    const FormatInfo& rgba = *formatInfo(PixelFormat::kRGBA8Unorm);
+    const uint64_t offsets[7] = {0, 16384, 24576, 28672, 30720, 31744, 32256};
+    for (uint32_t l = 0; l < 7; l++) {
+        const TextureLevel L = textureLevel(rgba, 64, 64, 7, l);
+        CHECK_EQ(L.offset, offsets[l]);
+        CHECK_EQ(L.pitch, 256u);
+        CHECK_EQ(L.width, 64u >> l);
+        CHECK_EQ(L.height, 64u >> l);
+    }
+    CHECK_EQ(textureBytes(rgba, 64, 64, 7), 36864u);
+    const FormatInfo& r8 = *formatInfo(PixelFormat::kR8Unorm);
+    CHECK_EQ(textureLevel(r8, 100, 30, 3, 0).pitch, 128u);
+    CHECK_EQ(textureLevel(r8, 100, 30, 3, 1).pitch, 64u);
+    CHECK_EQ(textureLevel(r8, 100, 30, 3, 1).offset, 30u * 128);
+    CHECK_EQ(textureLevel(r8, 100, 30, 3, 2).offset, 30u * 128 + 15u * 64);
+    CHECK_EQ(textureLevel(r8, 100, 30, 3, 2).width, 25u);
+    CHECK_EQ(textureLevel(r8, 100, 30, 3, 2).height, 7u);
+    CHECK_EQ(textureBytes(r8, 100, 30, 3), 8192u);   // 3840 + 960 + 8 * 64 = 5312, to 8192
+    // the descriptor: MIPLVLS 6, the layer the whole of them
+    Rig r;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = d.height = 64;
+    d.mipLevels = 7;
+    std::string why;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    const a6xx::TexConst c = t->sampledDescriptor();
+    CHECK_EQ((c.dword[0] & a6xx::A6XX_TEX_CONST_0_MIPLVLS__MASK) >> a6xx::A6XX_TEX_CONST_0_MIPLVLS__SHIFT, 6u);
+    CHECK_EQ(c.dword[3], a6xx::A6XX_TEX_CONST_3_ARRAY_PITCH(36864));
+    // a level past the bottom, and a level's region, refused by name
+    d.mipLevels = 8;
+    CHECK(Texture::make(r.gpu, d, &why) == nullptr);
+    CHECK(has(why, "8 mip levels: 1 to 7"));
+    const uint32_t px = 0;
+    CHECK(!t->replace(3, 0, 0, 9, 1, &px, 36, &why));
+    CHECK(has(why, "lies outside the 8 x 8 level 3 of the texture"));
+}

@@ -218,6 +218,7 @@ struct Scissor { uint32_t x, y, width, height; };               // MTLScissorRec
 // a colour attachment past 0 (MTLRenderPassColorAttachmentDescriptor at index 1 to 7), with attachment 0's rules
 struct ColorAttachment {
     const Texture* texture = nullptr;            // none: the attachment is not set
+    uint32_t level = 0;                          // the mip level drawn into (MTLRenderPassAttachmentDescriptor.level)
     LoadAction load = LoadAction::kLoad;
     StoreAction store = StoreAction::kStore;
     double clearColor[4] = {0, 0, 0, 0};
@@ -225,6 +226,7 @@ struct ColorAttachment {
 
 struct RenderPass {
     const Texture* color0 = nullptr;             // made with kTextureUsageRenderTarget
+    uint32_t level = 0;                          // its mip level drawn into: the window is that level's size
     LoadAction load = LoadAction::kLoad;         // kClear: the 2D engine fills the whole target with clearColor before the draw (turnip's sysmem clear)
     StoreAction store = StoreAction::kStore;
     double clearColor[4] = {0, 0, 0, 0};         // MTLClearColor, RGBA whatever the format's memory order; whole numbers for an integer target
@@ -373,6 +375,20 @@ void encodeEnd(pm4::Stream& stream, const RenderPass& pass, uint64_t table, cons
 // endEncoding] needs for an encoder that recorded nothing; any load action but kClear is refused (nothing to write).
 bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
                  const Options& options = Options{});
+
+// A rectangle of a texture's level: X, Y its top left, W x H its size in pixels
+struct BlitRect {
+    uint32_t x = 0, y = 0, w = 0, h = 0;
+};
+
+// The 2D engine's copy, a pass of its own: rectangle S of SRC's mip level SL into rectangle D of DST's level DL, the two
+// of one pixel format (the sRGB pair counts as one), through turnip's r2d path (r2d_setup_common, r2d_src, r2d_dst,
+// r2d_coords, r2d_run). The same size is a copy texel for texel; another size a scale, LINEAR filtering it (FILTER in
+// SP_PS_2D_SRC_INFO, tu6_blit_image) or not; an sRGB format so filtered is filtered in linear space, as Metal's
+// generateMipmaps does it, and an unfiltered copy moves the stored bytes. False with *why: a level or a rectangle outside the texture, a depth
+// texture, another format, a linear scale of an integer format, a texture copied into the very rectangle it is read from.
+bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, BlitRect s, const Texture& dst, uint32_t dstLevel, BlitRect d, bool linear,
+                uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o = Options{});
 
 }  // namespace render
 

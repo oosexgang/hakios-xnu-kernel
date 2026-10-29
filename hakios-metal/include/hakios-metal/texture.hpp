@@ -73,13 +73,24 @@ const FormatInfo* formatInfo(PixelFormat format);
 
 // the layout rule in one place, for the tests and for the plug-in's bufferBytesPerRow
 uint64_t texturePitch(const FormatInfo& format, uint32_t width);                    // align(width * cpp, 64 * cpp)
-uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height);   // align(align(height, 4) * pitch, 4096)
+uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels = 1);   // align(align(height, 4) * pitch, 4096) for one level
+
+// Level L of a linear 2D texture as fdl6_layout lays it out (fd6_layout.c:181-201, 233-283; freedreno_layout.h:143
+// fdl_pitch): the pitch the first level's pitch minified and aligned again to 64 * cpp, the rows the level's height,
+// the last level's counted to a multiple of 4, the levels one after another, the whole layer 4096-aligned. The TP
+// finds every level from the first one's pitch by this rule, so it is the rule here too, not a choice.
+struct TextureLevel {
+    uint64_t offset, pitch;
+    uint32_t width, height;
+};
+TextureLevel textureLevel(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels, uint32_t level);
 
 struct TextureDesc {
     TextureType type = TextureType::k2D;
     PixelFormat format = PixelFormat::kRGBA8Unorm;
     uint32_t width = 1;
     uint32_t height = 1;
+    uint32_t mipLevels = 1;               // MTLTextureDescriptor.mipmapLevelCount: 1 to floor(log2(max(width, height))) + 1
     uint32_t usage = kTextureUsageRead;   // kTextureUsage* bits; a kernel that writes a texture made without kTextureUsageWrite is refused, a draw into one made without kTextureUsageRenderTarget too
 };
 
@@ -99,6 +110,10 @@ public:
     const TextureDesc& desc() const { return desc_; }
     uint32_t width() const { return desc_.width; }
     uint32_t height() const { return desc_.height; }
+    uint32_t levels() const { return desc_.mipLevels; }
+    // level L's place in the texture's memory (L < levels()); for an IOSurface's texture, its one level
+    TextureLevel level(uint32_t l) const;
+    uint64_t levelAddress(uint32_t l) const { return gpuAddress() + level(l).offset; }
     PixelFormat format() const { return desc_.format; }
     TextureType type() const { return desc_.type; }
     uint32_t usage() const { return desc_.usage; }
@@ -113,12 +128,20 @@ public:
     // -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
     // BYTES_PER_ROW apart, into the texture's rows at (X, Y). False with *why when the region lies outside the texture
     // or the stride is shorter than W pixels.
-    bool replace(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why);
+    bool replace(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
+        return replace(0, x, y, w, h, bytes, bytesPerRow, why);
+    }
+    // ...of mip level LEVEL, the region inside that level's size
+    bool replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why);
     // -getBytes:bytesPerRow:fromRegion:mipmapLevel:, the other way (the write-combined rows are read once each)
-    bool read(uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const;
+    bool read(uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const {
+        return read(0, x, y, w, h, bytes, bytesPerRow, why);
+    }
+    bool read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const;
 
     // the descriptor a sam/isaml reads this texture through: TYPE 2D, PITCHALIGN log2(cpp), MIPLVLS 0, SAMPLES one,
     // DEPTH 1, ARRAY_PITCH the layer's bytes, the format's swap and swizzle (fd6_view.c:232-250)
+    // (with mip levels: all of them, MIPLVLS levels - 1 and the layer the whole of them, fd6_view.c:232-250)
     a6xx::TexConst sampledDescriptor() const;
     // the descriptor a stib/ldib addresses it through, at IBO slot numSsbos + index: the same without PITCHALIGN,
     // MIPLVLS and SAMPLES (fd6_view.c:383-397)

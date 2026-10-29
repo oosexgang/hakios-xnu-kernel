@@ -706,8 +706,10 @@ bool FakeGpu::checkStageProgram(const char* what, const StageLoads& xs, uint32_t
     return true;
 }
 
-// CP_BLIT: the 2D engine. Only the solid fill a Clear is (r2d_setup_common with clear = true, tu_clear_blit.cc:455-521);
-// a copy has a source this model does not read.
+// CP_BLIT: the 2D engine. The solid fill a Clear is (r2d_setup_common with clear = true, tu_clear_blit.cc:455-521), and
+// the copy render::encodeBlit writes (clear false: SP_PS_2D_SRC_* the source, GRAS_2D_SRC_* its rectangle): texel for
+// texel at the same size, bilinear at another with FILTER (each destination pixel's centre mapped into the source),
+// nearest without. Only between linear images of one format: a conversion is not modelled.
 bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     using namespace a6xx;
     if (count != 1 || fieldOf(p[0], CP_BLIT_0_OP__MASK, CP_BLIT_0_OP__SHIFT) != BLIT_OP_SCALE) {
@@ -719,10 +721,7 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
         fault(text("RB_2D_BLIT_CNTL %#llx and GRAS_2D_BLIT_CNTL %#llx differ: the two copies of the blit word must agree", rb, gras));
         return false;
     }
-    if ((rb & A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR) == 0) {
-        fault("a CP_BLIT without SOLID_COLOR: a copy, whose source this GPU model does not read");
-        return false;
-    }
+    const bool copy = (rb & A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR) == 0;
     if (fieldOf(rb, A6XX_RB_2D_BLIT_CNTL_MASK__MASK, A6XX_RB_2D_BLIT_CNTL_MASK__SHIFT) != 0xf ||
         fieldOf(reg(REG_A6XX_SP_2D_DST_FORMAT), A6XX_SP_2D_DST_FORMAT_MASK__MASK, A6XX_SP_2D_DST_FORMAT_MASK__SHIFT) != 0xf) {
         fault("a fill whose component mask is not 0xf in RB_2D_BLIT_CNTL and SP_2D_DST_FORMAT: some channels would keep what they held");
@@ -750,9 +749,9 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     const bool srgbIfmt = ifmt == R2D_UNORM8_SRGB;
     uint32_t want = 0;
     switch (fmt) {
-    case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: want = srgbIfmt ? uint32_t(R2D_UNORM8_SRGB) : uint32_t(R2D_UNORM8); break;
-    case FMT6_16_16_16_16_FLOAT: want = R2D_FLOAT16; break;
-    case FMT6_32_FLOAT: case FMT6_32_32_32_32_FLOAT: want = R2D_FLOAT32; break;
+    case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: want = srgbIfmt ? uint32_t(R2D_UNORM8_SRGB) : uint32_t(R2D_UNORM8); break;
+    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: want = R2D_FLOAT16; break;
+    case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: want = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: want = R2D_INT32; break;
     default: break;
     }
@@ -773,6 +772,9 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     if (x1 < x0 || y1 < y0 || pitch < uint64_t(x1 + 1) * bpp || base % 64 != 0) {
         fault(text("a fill of (%llu, %llu) to ", x0, y0) + text("(%llu, %llu) with a pitch of ", x1, y1) + text("%llu bytes at %#llx: an empty rectangle, rows wider than the pitch or a base not 64-aligned", pitch, base));
         return false;
+    }
+    if (copy) {
+        return execCopy(fmt, bpp, ifmt, x0, y0, x1, y1, base, pitch, tiled);
     }
     if (tiled) {
         // a TILE6_3 image: 4096-aligned, the pitch a multiple of 256 bytes, its rows counted to 16 (fdl6_tile_alignment
@@ -802,6 +804,7 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     if (ifmt == R2D_UNORM8 || ifmt == R2D_UNORM8_SRGB) {
         static const uint32_t rgba[4] = {0, 1, 2, 3}, bgra[4] = {2, 1, 0, 3};
         for (uint32_t i = 0; i < bpp; i++) pixel[i] = uint8_t(c[(swap == WXYZ ? bgra : rgba)[i]]);
+        if (fmt == FMT6_A8_UNORM) pixel[0] = uint8_t(c[3]);   // the one channel is alpha: the fill's fourth word (as measured, probe 9v)
     } else if (ifmt == R2D_FLOAT16) {
         for (uint32_t i = 0; i < bpp / 2; i++) { uint16_t v = uint16_t(c[i]); memcpy(pixel + 2 * i, &v, 2); }
     } else {
@@ -812,6 +815,78 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     }
     stats_.fills++;
     drawsInSubmission_++;   // the fill sits in the CCU as a draw's colour does: the same two flushes must follow it
+    drawsWithoutCcuFlush_++;
+    drawsWithoutCacheFlush_++;
+    return true;
+}
+
+bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint64_t base, uint64_t pitch, bool tiled) {
+    using namespace a6xx;
+    if (tiled) {
+        fault("a copy into a tiled image: not modelled");
+        return false;
+    }
+    const uint32_t info = reg(REG_A6XX_SP_PS_2D_SRC_INFO), size = reg(REG_A6XX_SP_PS_2D_SRC_SIZE);
+    const uint32_t sfmt = info & A6XX_SP_PS_2D_SRC_INFO_COLOR_FORMAT__MASK;
+    if (sfmt != fmt || fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR ||
+        fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT) !=
+            fieldOf(reg(REG_A6XX_RB_2D_DST_INFO), A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT)) {
+        fault(text("a copy from format %llu into %llu, or from a tiled source, or across swaps: one linear format is what this model copies", sfmt, fmt));
+        return false;
+    }
+    const uint32_t sw = size & A6XX_SP_PS_2D_SRC_SIZE_WIDTH__MASK, sh = fieldOf(size, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__MASK, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__SHIFT);
+    const uint64_t sbase = reg64(REG_A6XX_SP_PS_2D_SRC);
+    const uint64_t spitch = uint64_t(fieldOf(reg(REG_A6XX_SP_PS_2D_SRC_PITCH), A6XX_SP_PS_2D_SRC_PITCH_PITCH__MASK, A6XX_SP_PS_2D_SRC_PITCH_PITCH__SHIFT)) << 6;
+    auto coord = [&](uint32_t r) { return fieldOf(reg(r), A6XX_GRAS_2D_SRC_TL_X__MASK, A6XX_GRAS_2D_SRC_TL_X__SHIFT); };
+    const uint32_t sx0 = coord(REG_A6XX_GRAS_2D_SRC_TL_X), sx1 = coord(REG_A6XX_GRAS_2D_SRC_BR_X), sy0 = coord(REG_A6XX_GRAS_2D_SRC_TL_Y),
+                   sy1 = coord(REG_A6XX_GRAS_2D_SRC_BR_Y);
+    if (sw == 0 || sh == 0 || sx1 < sx0 || sy1 < sy0 || sx1 >= sw || sy1 >= sh || spitch < uint64_t(sw) * bpp || sbase % 64 != 0 ||
+        at(sbase, uint64_t(sh - 1) * spitch + uint64_t(sw) * bpp) == nullptr) {
+        fault(text("a copy from (%llu, %llu) ", sx0, sy0) + text("to (%llu, %llu) of a ", sx1, sy1) + text("%llu x %llu source", sw, sh) +
+              text(" with a pitch of %llu at %#llx: outside the source, its buffer, or not 64-aligned", spitch, sbase));
+        return false;
+    }
+    if (at(base + uint64_t(y0) * pitch, uint64_t(y1 - y0) * pitch + uint64_t(x1 + 1) * bpp) == nullptr) {
+        fault(text("a copy into %#llx, %llu rows: outside every buffer", base, y1 - y0 + 1));
+        return false;
+    }
+    const uint32_t dw = x1 - x0 + 1, dh = y1 - y0 + 1, srw = sx1 - sx0 + 1, srh = sy1 - sy0 + 1;
+    const bool filter = (info & A6XX_SP_PS_2D_SRC_INFO_FILTER) != 0;
+    // the source read whole first: a copy within one buffer reads what was there before it
+    std::vector<uint8_t> source(uint64_t(sh) * spitch);
+    memcpy(source.data(), at(sbase, source.size() - spitch + uint64_t(sw) * bpp), source.size() - spitch + uint64_t(sw) * bpp);
+    auto texel = [&](int64_t x, int64_t y) {
+        x = std::min<int64_t>(std::max<int64_t>(x, 0), sw - 1);
+        y = std::min<int64_t>(std::max<int64_t>(y, 0), sh - 1);
+        return source.data() + uint64_t(y) * spitch + uint64_t(x) * bpp;
+    };
+    for (uint32_t y = 0; y < dh; y++) {
+        for (uint32_t x = 0; x < dw; x++) {
+            uint8_t* out = at(base + uint64_t(y0 + y) * pitch + uint64_t(x0 + x) * bpp, bpp);
+            if (srw == dw && srh == dh) {
+                memcpy(out, texel(sx0 + x, sy0 + y), bpp);
+                continue;
+            }
+            const double u = sx0 + (x + 0.5) * srw / dw - 0.5, v = sy0 + (y + 0.5) * srh / dh - 0.5;
+            if (!filter) {
+                memcpy(out, texel(int64_t(std::floor(u + 0.5)), int64_t(std::floor(v + 0.5))), bpp);
+                continue;
+            }
+            if (ifmt != R2D_UNORM8) {
+                fault("a filtered scale of a format other than 8-bit unorm: not modelled");
+                return false;
+            }
+            const int64_t ix = int64_t(std::floor(u)), iy = int64_t(std::floor(v));
+            const double fx = u - ix, fy = v - iy;
+            for (uint32_t c = 0; c < bpp; c++) {
+                const double t = texel(ix, iy)[c] * (1 - fx) * (1 - fy) + texel(ix + 1, iy)[c] * fx * (1 - fy) + texel(ix, iy + 1)[c] * (1 - fx) * fy +
+                                 texel(ix + 1, iy + 1)[c] * fx * fy;
+                out[c] = uint8_t(std::lround(t));
+            }
+        }
+    }
+    stats_.copies++;
+    drawsInSubmission_++;   // the copy sits in the CCU as a fill does: the same two flushes must follow it
     drawsWithoutCcuFlush_++;
     drawsWithoutCacheFlush_++;
     return true;
