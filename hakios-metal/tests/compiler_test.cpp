@@ -520,6 +520,31 @@ TEST(compiler_matches_the_stage_fixtures) {
     }
     // the sampling fragment stage: one texture, one sampler, and the sample made a prefetch (into r0.z, all four
     // components, TEX_PREFETCH_SAM) -- the shape tri_tex_fs.ll was written to produce
+    // a constexpr sampler: compiled into the stage's own sampler at the index the front end gave it (0, past the API's
+    // none), its words those makeSampler gives Metal's repeat/repeat/clamp-to-edge, nearest, lod [0, 65504]
+    {
+        std::vector<uint8_t> bc = bitcodeOf("tri_ctex_fs");
+        std::string why;
+        auto s = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why);
+        CHECK(s != nullptr);
+        if (s == nullptr) std::printf("       tri_ctex_fs: %s\n", why.c_str());
+        if (s != nullptr) {
+            CHECK_EQ(s->inlineSamplers.size(), size_t(1));
+            SamplerDesc d;
+            d.sAddress = 2;
+            d.tAddress = 2;
+            d.rAddress = 0;
+            d.lodMaxClamp = 65504.0f;
+            Sampler want;
+            CHECK(makeSampler(d, &want, &why));
+            if (!s->inlineSamplers.empty()) {
+                CHECK_EQ(s->inlineSamplers[0].first, 0u);
+                CHECK(memcmp(s->inlineSamplers[0].second.words, want.words, 16) == 0);
+            }
+            CHECK_EQ(s->stage.k.samplerMask, 1u);
+            CHECK_EQ(s->stage.numSamplerPrefetch, 0u);   // a computed coordinate: an ordinary sam
+        }
+    }
     // vertex pulling from a device buffer: an ldib through IBO 0 of the 3D table
     auto dposVs = compareStageWithFixture("tri_dpos_vs", kernels::tri_dpos_vs_air, "tri_dpos_vs", "ldib");
     if (dposVs) {

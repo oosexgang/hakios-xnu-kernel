@@ -165,6 +165,20 @@ one table for every graphics stage (`SP_IBO`, `SP_IBO_COUNT`, loaded by the plai
 SB6_IBO, the shape both witnesses load it in, from memory here where they are bindless), so the vertex and fragment
 stages must bind the same buffer wherever both address an index. The same probe line with `tri_dpos_vs.ll`'s
 `device const float2*` (9p) covers all 4096 pixels too: the non-bindless table is taken by this GPU.
+
+A sampler a function declares itself (`constexpr sampler`) is made at compile time from the state word the front end
+decodes (AIR's address modes onto Metal's numbering; MSL's `none` and `never` compare functions, CoreAnimation's every
+one, as no comparison) and bound by the C interface at the index the front end gave it, past the API's own. On the phone
+(hakios `logs/165801-run.log`, probe line 9q) a repeat sampler at a coordinate running to 4 reads the repeated texel at
+3072 of 3072 judged pixels.
+
+`tools/sweep.cpp` (`make sweep MESA=1`) runs every function of the metallibs named on its command line through the
+compiler a draw or a dispatch uses, each in a child process so that an assertion of this host's Mesa build is a counted
+cause and not the end, and prints the counts and the refusals grouped by their sentence. The libraries are read where
+they lie; nothing of them is kept. Over the 121 metallibs of the iOS 16.5 system image: CoreAnimation's own 39 of 39
+vertex functions and 93 of its 95 fragment functions compile (two ask for Metal's null texture), and of everything,
+247 of 272 vertex functions, 643 of 678 fragment functions and 3158 of 3397 kernels; the rest is, commonest first,
+bicubic samplers, the front end's pointer phis, tile shaders, and so on down.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

@@ -38,7 +38,7 @@ struct Resource {
     uint8_t textureArray;   // 1 for the array forms
     uint8_t element;        // KernelElement
     bool nullTexture;       // the front end's reserved slot for air.get_null_texture_*: not served by the dispatch yet
-    bool inlineSampler;     // a constexpr sampler (air_resource.inline_sampler): not served by the dispatch yet
+    bool inlineSampler;     // a constexpr sampler (air_resource.inline_sampler): its state below, bound by the runtime at INDEX
     std::string typeName;   // air.arg_type_name as declared
 };
 
@@ -48,6 +48,9 @@ struct CompiledKernel {
     std::vector<uint32_t> words;
     std::vector<uint32_t> immediates;
     std::vector<Resource> resources;
+    // the constexpr samplers the function declares itself, made from the front end's decoded state at compile time:
+    // the dispatch or draw puts each at its index (after the API's own samplers, where the front end placed it)
+    std::vector<std::pair<uint32_t, Sampler>> inlineSamplers;
     std::string name;       // the entry point's
     std::string listing;    // ir3's disassembly, for the record and for the eye
     uint32_t threadgroupBytes = 0;   // static threadgroup memory the kernel declares
@@ -60,6 +63,7 @@ struct CompiledStage {
     std::vector<uint32_t> immediates;
     std::vector<Resource> resources;
     std::vector<std::string> varyingNames;   // the front end's names of the varyings, VS outputs or FS inputs, in slot order (VAR0 first)
+    std::vector<std::pair<uint32_t, Sampler>> inlineSamplers;   // as CompiledKernel's
     std::string name;
     std::string listing;
 };

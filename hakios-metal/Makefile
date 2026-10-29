@@ -52,11 +52,19 @@ CORE      = src/pm4.cpp src/gpu.cpp src/command.cpp src/compute.cpp src/texture.
 HOST      = $(CORE) src/fake_gpu.cpp
 TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 
-.PHONY: test tsan asan ios clean
+.PHONY: test tsan asan ios clean sweep
 
 $(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wildcard tests/fixtures/*.hpp) tests/test.hpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
+
+# the metallib sweep (tools/sweep.cpp): every function of the libraries given through the compiler, the refusals counted;
+# `make sweep MESA=1` builds $(HOSTOUT)/sweep, then run it on the libraries where they lie
+$(HOSTOUT)/sweep: tools/sweep.cpp $(HOST) $(wildcard include/hakios-metal/*.hpp)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -pthread -o $@ tools/sweep.cpp $(HOST) $(HOSTLIBS)
+
+sweep: $(HOSTOUT)/sweep
 
 # (with the compiler in, compiler_test compiles every tools/kernels/*.ll against its fixture: their bitcode must be there)
 test: $(HOSTOUT)/tests $(if $(strip $(MESA)),$(KERNEL_BC))

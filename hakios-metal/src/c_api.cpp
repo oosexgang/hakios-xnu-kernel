@@ -373,6 +373,11 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const
     for (unsigned i = 0; i < samplerCount; i++) {
         if (samplers[i] != nullptr) b.samplers[i] = &samplers[i]->sampler;
     }
+    // the kernel's own constexpr samplers at the indices the front end gave them (past the API's)
+    for (const auto& [index, sampler] : k->kernel->inlineSamplers) {
+        if (b.samplers.size() <= index) b.samplers.resize(index + 1, nullptr);
+        b.samplers[index] = &sampler;
+    }
     uint32_t g[3] = {groups[0], groups[1], groups[2]};
     uint32_t t[3] = {threads[0], threads[1], threads[2]};
     if (!cb->cb->dispatch(k->kernel->kernel, g, t, b)) {
@@ -535,6 +540,11 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     fsb.samplers.resize(fsSamplerCount, nullptr);
     for (unsigned i = 0; i < fsSamplerCount; i++) {
         if (fsSamplers != nullptr && fsSamplers[i] != nullptr) fsb.samplers[i] = &fsSamplers[i]->sampler;
+    }
+    // the fragment function's own constexpr samplers at the indices the front end gave them (past the API's)
+    for (const auto& [index, sampler] : p->program->fs->inlineSamplers) {
+        if (fsb.samplers.size() <= index) fsb.samplers.resize(index + 1, nullptr);
+        fsb.samplers[index] = &sampler;
     }
     RenderPass rp;
     const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;

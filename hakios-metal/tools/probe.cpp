@@ -47,6 +47,8 @@
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
 #include "../tests/fixtures/tri_dpos_vs_air.hpp"
+#include "../tests/fixtures/tri_ctex_fs_air.hpp"
+#include "../tests/fixtures/tri_ctex_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1089,6 +1091,7 @@ int main(int argc, char** argv) {
     //   9m. an IOSurface: a real one wrapped as a texture, cleared and drawn into, read back through the surface's own lock
     //   9n. indexed and instanced: a restarted index strip, a base vertex, three instances at a step rate of 2 under additive blending
     //   9o. vertex pulling: positions read by vertex id from a constant buffer through a UBO descriptor, at a bound offset
+    //   9q. a constexpr sampler (repeat) compiled on the phone and bound at its index: every judged pixel the repeat's texel
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1980,6 +1983,68 @@ int main(int argc, char** argv) {
                                    : "control, " + label + " over the junk alone (bound at 0, 3 vertices off the target): ") +
                                describeTexture(rb, k == 0 ? "the colour" : "canary") + status(*cb, gpu));
                 }
+            }
+        }
+        // 9q. a constexpr sampler: tri_ctex_fs samples the 4x4 texture of 9k with a sampler it declares itself (repeat on s
+        // and t, nearest), bound by the driver at the index the front end gave it, at tri_color's (red, green) times 4 --
+        // a computed coordinate, so an ordinary sam. Repeat reads texel floor(16 u) mod 4 where clamp to edge would read 3
+        // past u = 0.25: every judged pixel must be the repeat's texel, and the draw binds no sampler of its own.
+        if (t) {
+            const Program ctex{kernels::tri_color_vs_air, kernels::tri_ctex_fs_air, Linkage{}, "tri_ctex"};
+            std::string cwhy;
+            auto compiled = compileStage(kernels::tri_ctex_fs_bc, sizeof kernels::tri_ctex_fs_bc, &cwhy);
+            TextureDesc td;
+            td.format = PixelFormat::kRGBA8Unorm;
+            td.width = td.height = 4;
+            td.usage = kTextureUsageRead;
+            auto src = Texture::make(gpu, td, &why);
+            if (compiled == nullptr || compiled->inlineSamplers.size() != 1 || src == nullptr) {
+                report(false, "ctex: the stage compiled on the phone with its one constexpr sampler, and a 4x4 texture: " + (compiled == nullptr ? cwhy : why));
+            } else {
+                auto texel = [](uint32_t x, uint32_t y) { return 0xff000000u | (0x10u + 0x30u * x) | (0x20u + 0x30u * y) << 8 | uint32_t(0x80 + 8 * (x + 4 * y)) << 16; };
+                for (uint32_t y = 0; y < 4; y++)
+                    for (uint32_t x = 0; x < 4; x++) {
+                        uint32_t v = texel(x, y);
+                        memcpy(static_cast<uint8_t*>(const_cast<void*>(static_cast<const void*>(src->contents()))) + y * src->bytesPerRow() + x * 4, &v, 4);
+                    }
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {src.get()};
+                fsb.samplers = {&compiled->inlineSamplers[0].second};   // what the C interface puts at the front end's index
+                auto cb = queue->commandBuffer();
+                if (cb->draw(ctex, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t judged = 0, exact = 0, clampLike = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const double x = i + 0.5, y = j + 0.5;
+                        const double u = j > i ? (y - x) / 64.0 : y / 64.0, v = j > i ? x / 64.0 : (x - y) / 64.0;
+                        const double fu = 16 * u, fv = 16 * v;
+                        if (std::fabs(fu - std::round(fu)) < 1.0 / 16 || std::fabs(fv - std::round(fv)) < 1.0 / 16) continue;
+                        const uint32_t tx = uint32_t(std::floor(fu)) % 4, ty = uint32_t(std::floor(fv)) % 4;
+                        const uint32_t cx = std::min(3u, uint32_t(std::floor(fu))), cy = std::min(3u, uint32_t(std::floor(fv)));
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        judged++;
+                        clampLike += px == texel(cx, cy) && (cx != tx || cy != ty);
+                        if (px == texel(tx, ty)) {
+                            exact++;
+                        } else if (first.empty()) {
+                            first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", texel (" + std::to_string(tx) + "," +
+                                    std::to_string(ty) + ") is " + hex8(texel(tx, ty));
+                        }
+                    }
+                }
+                report(completed(*cb) && exact == judged && judged > 2000,
+                       "ctex, a constexpr repeat sampler at 4 x tri_color's coordinate: " + std::to_string(exact) + " of " + std::to_string(judged) +
+                           " judged pixels the repeat's texel (" + std::to_string(clampLike) + " the clamp's instead)" + first + status(*cb, gpu));
             }
         }
 #if defined(__APPLE__)

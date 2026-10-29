@@ -239,18 +239,77 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
     return true;
 }
 
-// two things the dispatch cannot serve yet, refused here rather than at every dispatch: the slot the front end reserves
-// for air.get_null_texture_* (the runtime would owe it a 1x1 zero texture, nir_air.h) and a constexpr sampler (the
-// runtime would owe it a TEX_SAMP from air_sampler_state at the index the front end assigned)
+// what the dispatch cannot serve yet, refused here rather than at every dispatch: the slot the front end reserves for
+// air.get_null_texture_* (the runtime would owe it a 1x1 zero texture, nir_air.h). A constexpr sampler is served:
+// inlineSamplersOf makes it
+// IEEE half bits to float, for the lod clamps air_sampler_state keeps as halves
+float floatOfHalf(uint16_t h) {
+    const uint32_t sign = uint32_t(h & 0x8000u) << 16, exp = (h >> 10) & 0x1f, mant = h & 0x3ffu;
+    uint32_t bits;
+    if (exp == 0) {
+        float v = float(mant) / 16777216.0f;   // subnormal: mant * 2^-24
+        return (h & 0x8000u) ? -v : v;
+    }
+    bits = exp == 31 ? sign | 0x7f800000u | (mant << 13) : sign | ((exp + 112) << 23) | (mant << 13);
+    float f;
+    memcpy(&f, &bits, 4);
+    return f;
+}
+
+// Each constexpr sampler the function declares, as Metal's descriptor (air_sampler_state's fields onto MTLSampler.h's
+// numbering: AIR's clamp_to_zero 0 / clamp_to_edge 1 / repeat 2 / mirrored_repeat 3 / clamp_to_border 4 are Metal's
+// 4 / 0 / 2 / 3 / 5; the filters, the mip filter and the border colour share Metal's numbers; coord::pixel is the
+// descriptor's normalizedCoordinates false) and made into its TEX_SAMP words as the API's samplers are (makeSampler).
+// Refused by name: what makeSampler does not serve, and bicubic filtering.
+bool inlineSamplersOf(const Translation& t, std::vector<std::pair<uint32_t, Sampler>>* out, std::string* why) {
+    static const uint32_t kAddress[5] = {4, 0, 2, 3, 5};
+    for (unsigned i = 0; i < t.info.num_resources; i++) {
+        const air_resource& r = t.info.resources[i];
+        if (r.kind != AIR_RESOURCE_SAMPLER || !r.inline_sampler) continue;
+        const air_sampler_state& st = r.sampler;
+        const std::string what = std::string(t.name()) + "'s constexpr sampler at index " + std::to_string(r.index);
+        if (st.min_filter == AIR_SAMPLER_BICUBIC || st.mag_filter == AIR_SAMPLER_BICUBIC) {
+            return refuse(why, what + " filters bicubic: not served");
+        }
+        SamplerDesc d;
+        for (int a = 0; a < 3; a++) {
+            if (unsigned(st.address[a]) > 4) return refuse(why, what + " has address mode " + std::to_string(unsigned(st.address[a])) + ", which AIR does not have");
+        }
+        d.sAddress = kAddress[st.address[0]];
+        d.tAddress = kAddress[st.address[1]];
+        d.rAddress = kAddress[st.address[2]];
+        d.minFilter = st.min_filter == AIR_SAMPLER_LINEAR ? 1 : 0;
+        d.magFilter = st.mag_filter == AIR_SAMPLER_LINEAR ? 1 : 0;
+        d.mipFilter = unsigned(st.mip_filter);
+        d.normalizedCoordinates = !st.pixel_coord;
+        // AIR keeps MSL's compare_func numbering (none 0, less .. always 1 to 7, never 8 -- CoreAnimation's constexpr
+        // samplers all carry 8): none and never are a sampler that does not compare, which is what an ordinary sample()
+        // reads it as; a real comparison sampler is not served
+        if (st.compare_func != 0 && st.compare_func != 8) {
+            return refuse(why, what + " compares (compare_func " + std::to_string(st.compare_func) + " in MSL's numbering): comparison samplers are not served yet");
+        }
+        d.compareFunction = 0;
+        d.maxAnisotropy = st.max_anisotropy == 0 ? 1 : st.max_anisotropy;
+        d.lodMinClamp = floatOfHalf(st.lod_min);
+        d.lodMaxClamp = floatOfHalf(st.lod_max);
+        d.borderColor = st.border_color;
+        Sampler s;
+        std::string swhy;
+        if (!makeSampler(d, &s, &swhy)) {
+            return refuse(why, what + ": " + swhy);
+        }
+        out->push_back({r.index, s});
+    }
+    return true;
+}
+
 bool refuseUnservedResources(const Translation& t, std::string* why) {
     for (unsigned i = 0; i < t.info.num_resources; i++) {
         const air_resource& r = t.info.resources[i];
         if (r.kind == AIR_RESOURCE_TEXTURE && r.null_texture) {
             return refuse(why, std::string(t.name()) + " asks for Metal's null texture at index " + std::to_string(r.index) + ": not served yet");
         }
-        if (r.kind == AIR_RESOURCE_SAMPLER && r.inline_sampler) {
-            return refuse(why, std::string(t.name()) + " declares a constexpr sampler at index " + std::to_string(r.index) + ": not served yet");
-        }
+
     }
     return true;
 }
@@ -597,6 +656,7 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     uint32_t highestSampler = 0;
     if (!walkTextures(t.nir, out->kernel, &highestSampler, why)) return nullptr;
     if (!refuseUnservedResources(t, why)) return nullptr;
+    if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     if (!compileVariant(t, PassOrder::kCompute, why)) return nullptr;
     KernelHome home{out->kernel, out->words, out->immediates, out->resources, out->name, out->listing};
     if (!fillKernel(t, home, highestSampler, why)) return nullptr;
@@ -636,6 +696,7 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     OutputClasses classes;
     if (!walkOutputClasses(t.nir, classes, why)) return nullptr;
     if (!refuseUnservedResources(t, why)) return nullptr;
+    if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     if (!compileVariant(t, PassOrder::kGraphics, why)) return nullptr;
     KernelHome home{out->stage.k, out->words, out->immediates, out->resources, out->name, out->listing};
     if (!fillKernel(t, home, highestSampler, why)) return nullptr;
