@@ -24,8 +24,14 @@
 #include "fixtures/tex_fill_air.hpp"
 #include "fixtures/tex_fill_h_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
+// The render stages (tools/kernels/tri_*.ll): a Stage is a Kernel plus what the 3D registers read (render.hpp)
+#include "fixtures/tri_color_fs_air.hpp"
+#include "fixtures/tri_color_vs_air.hpp"
+#include "fixtures/tri_flat_fs_air.hpp"
+#include "fixtures/tri_flat_vs_air.hpp"
 
 using hakios::metal::Kernel;
+using hakios::metal::Stage;
 using hakios::metal::KernelTexture;
 namespace kernels = hakios::metal::kernels;
 using hakios::metal::kElemFloat;
@@ -430,4 +436,43 @@ TEST(texture_fields_refuse_mutations) {
     expectRefusal(textureFieldsConsistent(kernels::tex_copy_air), "");
     expectRefusal(textureFieldsConsistent(kernels::tex_fill_air), "");
     expectRefusal(textureFieldsConsistent(kernels::tex_sample_gid_air), "");
+}
+
+// The Kernel inside each render Stage fixture holds what every kernel must (checkInvariants), and its compute-only
+// fields are at rest as render.hpp says: no threadgroup size, no local/workgroup id registers, no @bufs, no @numwg
+TEST(stage_fixtures_hold_the_kernel_invariants) {
+    for (const Stage* s : {&kernels::tri_flat_vs_air, &kernels::tri_flat_fs_air, &kernels::tri_color_vs_air, &kernels::tri_color_fs_air}) {
+        const Kernel& k = s->k;
+        checkInvariants(k);
+        for (int i = 0; i < 3; i++) CHECK_EQ(k.localSize[i], 0u);
+        CHECK(!k.localSizeVariable);
+        CHECK_EQ(k.localIdRegid, kNoRegid);
+        CHECK_EQ(k.workGroupIdRegid, kNoRegid);
+        CHECK_EQ(k.numBufs, 0u);
+        CHECK_EQ(k.numwgConstRegid, kNoConstRegid);
+        CHECK_EQ(k.numUboRanges, 0u);
+        CHECK_EQ(k.numSsbos, 0u);
+        CHECK_EQ(k.numIbos, 0u);
+        CHECK_EQ(k.numSamp, 0u);
+        CHECK_EQ(k.constantDataSize, 0u);
+        checkOtherSlotsEmpty(k, 0);
+        CHECK_EQ(k.numTextureSlots, 0u);
+        CHECK_EQ(k.samplerMask, 0u);
+        // a VS/FS is not compiled for the per-wave private memory layout (ir3_shader_assemble: compute only)
+        CHECK(!k.pvtmemPerWave);
+    }
+    CHECK_EQ(sizeof(kernels::tri_flat_vs_air_words) / 4, kernels::tri_flat_vs_air.k.numWords);
+    CHECK_EQ(sizeof(kernels::tri_flat_fs_air_words) / 4, kernels::tri_flat_fs_air.k.numWords);
+    CHECK_EQ(sizeof(kernels::tri_color_vs_air_words) / 4, kernels::tri_color_vs_air.k.numWords);
+    CHECK_EQ(sizeof(kernels::tri_color_fs_air_words) / 4, kernels::tri_color_fs_air.k.numWords);
+    CHECK_EQ(std::strcmp(kernels::tri_flat_vs_air.k.name, "tri_flat_vs_air"), 0);
+    CHECK(std::strstr(kernels::tri_flat_vs_air.k.source, "air.vertex_id") != nullptr);
+    CHECK(std::strstr(kernels::tri_color_fs_air.k.source, "air.fragment_input") != nullptr);
+    // the two VS carry ir3's immediates (1.0 and -1.0 for the select chains) at c1, after the PRIMITIVE_PARAM vec4
+    CHECK_EQ(kernels::tri_flat_vs_air.k.immediatesOffsetVec4, 1u);
+    CHECK(kernels::tri_flat_vs_air.k.numImmediates >= 2);
+    CHECK_EQ(kernels::tri_flat_vs_air.k.immediates[0], 0x3f800000u);
+    CHECK_EQ(kernels::tri_flat_vs_air.k.immediates[1], 0xbf800000u);
+    CHECK_EQ(kernels::tri_flat_vs_air.k.driverParamsOffsetVec4, -1);   // no first_vertex/base_instance read: none
+    CHECK_EQ(kernels::tri_flat_fs_air.k.numImmediates, 0u);
 }
