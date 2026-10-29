@@ -29,6 +29,31 @@ front end's resource list, which says what was declared and not what the code
 does. The same walk lives in hakios-metal's src/compiler.cpp, and compiler_test
 holds the two to each other over tools/kernels/*.ll.
 
+-o is stage-aware (29 October): a VERTEX or FRAGMENT variant is written as a
+hakios::metal::Stage (include/hakios-metal/render.hpp) -- the Kernel as its
+first member, then inputs[] (slot, regid, compmask, inloc, sysval, bary, flat,
+half) and outputs[] (slot, regid, half, and the output's declared class in the
+pad: float or integer, read off the NIR's shader_out variables before lowering)
+straight from ir3_shader_variant, and the regids and flags turnip's
+tu6_emit_vpc / tu6_emit_fs_inputs / tu6_emit_fs_outputs read (vertex id,
+position, the ij barycentrics, frag coord, face, the colour outputs with
+ir3_get_output_regid's HALF_REG_ID split, depth/stencil/sample mask, total_in,
+has_kill, per_samp...). The vertex-only and fragment-only fields are read from
+their own stage only, because the slot namespaces collide (VARYING_SLOT_POS and
+FRAG_RESULT_DEPTH are both 0). A compute variant is written as the Kernel it
+was, byte for byte; any other stage is refused by name, where before 29 October
+a VS came out as a compute-shaped Kernel and the tool exited 0.
+
+For a vertex or fragment AIR input the NIR is lowered in turnip's order:
+ir3_nir_lower_io_to_temporaries on the IO VARIABLES, nir_lower_io inside
+ir3_nir_post_finalize (ir3_nir.c:755; tu_shader.cc:2527). The AIR path used to
+lower IO first, so io_to_temporaries found nothing to copy and left orphan
+temporaries whose undef stores nir_opt_undef happened to remove; a second
+store_output to one slot would have won in ir3's setup_output. Compute keeps
+the old order (it has no IO variables) and its fixtures do not change.
+hakios-metal's compileStage runs the same passes in the same order, and
+compiler_test holds each Stage compiled there to the fixture written here.
+
 SPDX-License-Identifier: MIT
 --- a/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
 +++ b/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
@@ -42,7 +67,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,439 @@
+@@ -35,19 +37,684 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -312,17 +337,348 @@ SPDX-License-Identifier: MIT
 +
 +static int read_file(const char *filename, void **ptr, size_t *size);
 +
++/* -o for a vertex or fragment stage: the class of each output's declared type,
++ * read off the NIR's shader_out variables before nir_lower_io, because ir3's
++ * outputs[] knows a register and a slot and not whether the shader meant the
++ * bits as a float or as an integer -- which is what a colour target's format
++ * must agree with (render.hpp: StageOutput). The front end types a float or
++ * half output as a float vector and EVERY integer output as GLSL_TYPE_INT
++ * (air_to_nir.c make_io_var: uint4 and int4 are both <4 x i32> in LLVM and it
++ * does not read air.arg_type_name for outputs), so the classes here are float
++ * (0, kElemFloat) and integer (1, kElemUint: the class of the Uint formats, the
++ * only integer formats served); a signed format would need the type name.
++ * Indexed by the output's location: gl_varying_slot for a VS, gl_frag_result
++ * for an FS, both below 64 + 32.
++ */
++#define FIXTURE_OUTPUT_LOCATIONS 96
++
++struct fixture_output_classes {
++   uint8_t class[FIXTURE_OUTPUT_LOCATIONS];
++   bool known[FIXTURE_OUTPUT_LOCATIONS];
++};
++
++static void
++walk_output_classes(nir_shader *nir, struct fixture_output_classes *oc)
++{
++   memset(oc, 0, sizeof(*oc));
++   if (nir->info.stage != MESA_SHADER_VERTEX && nir->info.stage != MESA_SHADER_FRAGMENT)
++      return;
++   nir_foreach_shader_out_variable(var, nir) {
++      unsigned loc = var->data.location;
++      if (loc >= FIXTURE_OUTPUT_LOCATIONS)
++         errx(1, "-o: an output at location %u, past the %u the fixture indexes", loc,
++              FIXTURE_OUTPUT_LOCATIONS);
++      const struct glsl_type *t = glsl_without_array(var->type);
++      oc->class[loc] = glsl_type_is_float_16_32_64(t) ? 0 : 1;
++      oc->known[loc] = true;
++   }
++}
++
++/* The Kernel's fields, as the initializer of a `constexpr Kernel` or of the
++ * `.k` of a `constexpr Stage` (render.hpp), one line each with the field's
++ * name beside its value, INDENT spaces in. The compute-only fields of a
++ * vertex or fragment stage (localSize, localIdRegid, workGroupIdRegid, bufs,
++ * numwgConstRegid) come out at their zeros / 0xfc / 0xff from the same code,
++ * which is what render.hpp says a Stage's Kernel holds there.
++ */
++static void
++emit_kernel_fields(FILE *out, const char *indent, struct ir3_shader_variant *v,
++                   const char *name, uint32_t num_words, const char *words_name,
++                   const char *imm_name, const void *source, size_t source_size,
++                   const struct fixture_textures *tex)
++{
++   const struct ir3_const_state *cs = ir3_const_state(v);
++   const unsigned max_ubo_ranges = 8;   /* kernel.hpp's kMaxUboRanges */
++   const unsigned max_bufs = 4;         /* kMaxBufs */
++   const unsigned no_const_regid = 0xff;
++   uint32_t local_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
++   uint32_t wg_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_WORKGROUP_ID);
++   int32_t driver_params =
++      ir3_const_can_upload(&cs->allocs, IR3_CONST_ALLOC_DRIVER_PARAMS, v->constlen)
++         ? (int32_t)cs->allocs.consts[IR3_CONST_ALLOC_DRIVER_PARAMS].offset_vec4
++         : -1;
++
++   fprintf(out, "%s/* .words = */ %s,\n", indent, words_name);
++   fprintf(out, "%s/* .numWords = */ %u,\n", indent, num_words);
++   fprintf(out, "%s/* .instrlen = */ %u,\n", indent, v->instrlen);
++   fprintf(out, "%s/* .constlen = */ %u,\n", indent, v->constlen);
++   fprintf(out, "%s/* .maxReg = */ %d,\n", indent, v->info.max_reg);
++   fprintf(out, "%s/* .maxHalfReg = */ %d,\n", indent, v->info.max_half_reg);
++   fprintf(out, "%s/* .doubleThreadsize = */ %s,\n", indent, v->info.double_threadsize ? "true" : "false");
++   fprintf(out, "%s/* .mergedRegs = */ %s,\n", indent, v->mergedregs ? "true" : "false");
++   fprintf(out, "%s/* .earlyPreamble = */ %s,\n", indent, v->early_preamble ? "true" : "false");
++   fprintf(out, "%s/* .branchstackHw = */ %u,\n", indent, ir3_shader_branchstack_hw(v));
++   fprintf(out, "%s/* .sharedSize = */ %u,\n", indent, v->shared_size);
++   fprintf(out, "%s/* .pvtmemSize = */ %u,\n", indent, v->pvtmem_size);
++   fprintf(out, "%s/* .pvtmemPerWave = */ %s,\n", indent, v->pvtmem_per_wave ? "true" : "false");
++   fprintf(out, "%s/* .localSize = */ {%u, %u, %u},\n", indent, v->local_size[0], v->local_size[1],
++           v->local_size[2]);
++   fprintf(out, "%s/* .localSizeVariable = */ %s,\n", indent, v->local_size_variable ? "true" : "false");
++   fprintf(out, "%s/* .localIdRegid = */ 0x%02x,\n", indent, local_id);
++   fprintf(out, "%s/* .workGroupIdRegid = */ 0x%02x,\n", indent, wg_id);
++   fprintf(out, "%s/* .immediates = */ %s,\n", indent, cs->immediates_count ? imm_name : "nullptr");
++   fprintf(out, "%s/* .numImmediates = */ %u,\n", indent, cs->immediates_count);
++   fprintf(out, "%s/* .immediatesOffsetVec4 = */ %u,\n", indent, cs->allocs.max_const_offset_vec4);
++   fprintf(out, "%s/* .driverParamsOffsetVec4 = */ %d,\n", indent, driver_params);
++   fprintf(out, "%s/* .numUbos = */ %u,\n", indent, cs->num_ubos);
++   fprintf(out, "%s/* .numSsbos = */ %u,\n", indent, v->num_ssbos);
++   fprintf(out, "%s/* .numIbos = */ %u,\n", indent, v->num_ibos);
++   fprintf(out, "%s/* .numSamp = */ %d,\n", indent, v->num_samp);
++   fprintf(out, "%s/* .uboRanges = */ {", indent);
++   for (unsigned i = 0; i < max_ubo_ranges; i++) {
++      if (i < cs->ubo_state.num_enabled) {
++         const struct ir3_ubo_range *r = &cs->ubo_state.range[i];
++         fprintf(out, "%s{%u, %u, %u, %u}", i ? ", " : "", r->ubo.block, r->offset / 16,
++                 r->start / 4, (r->end - r->start) / 4);
++      } else {
++         fprintf(out, "%s{0, 0, 0, 0}", i ? ", " : "");
++      }
++   }
++   fputs("},\n", out);
++   fprintf(out, "%s/* .numUboRanges = */ %u,\n", indent, cs->ubo_state.num_enabled);
++   /* @buf and @numwg are the text assembler's; a compiled kernel binds its
++    * buffers as SSBOs/UBOs and reads its grid from the driver params.
++    */
++   fprintf(out, "%s/* .numBufs = */ 0,\n", indent);
++   fprintf(out, "%s/* .bufs = */ {", indent);
++   for (unsigned i = 0; i < max_bufs; i++)
++      fprintf(out, "%s{0, 0x%02x}", i ? ", " : "", no_const_regid);
++   fputs("},\n", out);
++   fprintf(out, "%s/* .numwgConstRegid = */ 0x%02x,\n", indent, no_const_regid);
++   fprintf(out, "%s/* .constantDataOffset = */ %u,\n", indent, v->info.constant_data_offset);
++   fprintf(out, "%s/* .constantDataSize = */ %u,\n", indent, v->constant_data_size);
++   fprintf(out, "%s/* .name = */ \"%s\",\n", indent, name);
++   fprintf(out, "%s/* .source = */ R\"ir3(%.*s)ir3\",\n", indent, (int)source_size,
++           source ? (const char *)source : "");
++   /* The texture slots: `{}` when the kernel addresses none (the text kernels'
++    * form, tools/ir3-kernel.cc), else every slot up to the highest addressed,
++    * all eight members of each (the pad too) so that -Wextra sees them
++    * initialized, with what each is in words beside it.
++    */
++   unsigned last_slot = 0;
++   bool any_slot = false;
++   for (unsigned i = 0; i < FIXTURE_TEXTURE_SLOTS; i++) {
++      if (tex->slot[i].kind) {
++         any_slot = true;
++         last_slot = i;
++      }
++   }
++   if (!any_slot) {
++      fprintf(out, "%s/* .textures = */ {},\n", indent);
++   } else {
++      static const char *const dims[] = { "?", "1D", "2D", "3D", "cube" };
++      static const char *const elements[] = { "float", "uint", "int" };
++      fprintf(out, "%s/* .textures = */ {\n", indent);
++      for (unsigned i = 0; i <= last_slot; i++) {
++         const struct fixture_texture *s = &tex->slot[i];
++         fprintf(out, "%s    /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, 0},", indent, i, s->kind, s->dim,
++                 s->is_array, s->element, s->bits, s->read, s->write);
++         if (!s->kind)
++            fputs("   // not addressed\n", out);
++         else
++            fprintf(out, "   // %s %s%s of %s%s%s%s\n", s->kind == 1 ? "sampled" : "image",
++                    dims[s->dim], s->is_array ? " array" : "", elements[s->element],
++                    s->bits == 16 ? " as 16-bit" : s->bits ? " as 32-bit" : "",
++                    s->read ? ", read" : "", s->write ? ", written" : "");
++      }
++      fprintf(out, "%s},\n", indent);
++   }
++   fprintf(out, "%s/* .numTextureSlots = */ %u,\n", indent, tex->num_slots);
++   if (tex->sampler_mask)
++      fprintf(out, "%s/* .samplerMask = */ 0x%x,\n", indent, tex->sampler_mask);
++   else
++      fprintf(out, "%s/* .samplerMask = */ 0,\n", indent);
++}
++
++/* r<n>.<c> for a comment, or "none" for regid(63, 0) */
++static const char *
++regid_name(uint32_t r, char *buf, size_t size)
++{
++   if (r == regid(63, 0))
++      return "none";
++   snprintf(buf, size, "%sr%u.%c", (r & HALF_REG_ID) ? "h" : "", (r & 0xff) >> 2, "xyzw"[r & 3]);
++   return buf;
++}
++
++/* -o for a VERTEX or FRAGMENT variant: the fields of render.hpp's Stage after
++ * its Kernel, in the struct's order, each with a comment, from the variant the
++ * way turnip and fd6 read them (the field comments in render.hpp name the
++ * register each feeds). The same semantics live in hakios-metal's compileStage
++ * (src/compiler.cpp), and compiler_test holds the two to each other field for
++ * field, so a rule changed here is changed there. Slot namespaces differ by
++ * stage -- VARYING_SLOT_POS and FRAG_RESULT_DEPTH are both 0, PSIZ and
++ * STENCIL both 1 -- so the vertex-only fields are read from a VS only and the
++ * fragment-only ones from an FS only; a sysval lookup (ir3_find_sysval_regid
++ * filters on the sysval bit, gl_system_value numbering) is the same for both.
++ */
++static void
++emit_stage_fields(FILE *out, struct ir3_shader_variant *v,
++                  const struct fixture_output_classes *oc)
++{
++   const bool vs = v->type == MESA_SHADER_VERTEX;
++   const unsigned max_inputs = 34;     /* render.hpp's kMaxStageInputs = ir3's inputs[32 + 2] */
++   const unsigned max_outputs = 32;    /* kMaxStageOutputs */
++   const unsigned max_colors = 8;      /* kMaxColorOutputs */
++   const unsigned ij_count = 7;        /* kIjCount = ir3's IJ_COUNT */
++   const uint32_t none = regid(63, 0);
++   char rb[16];
++
++   if (v->inputs_count > max_inputs)
++      errx(1, "-o: %u inputs, the Stage holds %u", v->inputs_count, max_inputs);
++   if (v->outputs_count > max_outputs)
++      errx(1, "-o: %u outputs, the Stage holds %u", v->outputs_count, max_outputs);
++
++   fprintf(out, "    /* .kind = */ %u,   // %s\n", vs ? 0 : 1, vs ? "kStageVertex" : "kStageFragment");
++   fputs("    /* .pad0 = */ {0, 0, 0},\n", out);
++
++   /* inputs[]: {slot, regid, compmask, inloc, sysval, bary, flat, half} */
++   if (!v->inputs_count) {
++      fputs("    /* .inputs = */ {},\n", out);
++   } else {
++      fputs("    /* .inputs = */ {\n", out);
++      for (unsigned i = 0; i < v->inputs_count; i++) {
++         const __typeof__(v->inputs[0]) *in = &v->inputs[i];
++         const char *slot_name = in->sysval ? gl_system_value_name(in->slot)
++                                 : vs ? gl_vert_attrib_name(in->slot)
++                                      : gl_varying_slot_name_for_stage(in->slot, v->type);
++         fprintf(out, "        /* [%u] */ {%u, 0x%02x, 0x%x, %u, %u, %u, %u, %u},   // %s %s cm=%x il=%u%s%s%s%s\n",
++                 i, in->slot, in->regid, in->compmask, in->inloc, in->sysval, in->bary, in->flat,
++                 in->half, slot_name, regid_name(in->regid, rb, sizeof(rb)), in->compmask, in->inloc,
++                 in->sysval ? " sysval" : "", in->bary ? " bary" : "", in->flat ? " flat" : "",
++                 in->half ? " half" : "");
++      }
++      fputs("    },\n", out);
++   }
++   fprintf(out, "    /* .numInputs = */ %u,\n", v->inputs_count);
++
++   /* outputs[]: {slot, regid, half, pad}; pad carries the output's declared
++    * class (0 float, 1 integer: walk_output_classes) until render.hpp names
++    * the field -- it is what a colour target's format is judged against.
++    */
++   if (!v->outputs_count) {
++      fputs("    /* .outputs = */ {},\n", out);
++   } else {
++      fputs("    /* .outputs = */ {\n", out);
++      for (unsigned i = 0; i < v->outputs_count; i++) {
++         const struct ir3_shader_output *o = &v->outputs[i];
++         const char *slot_name = vs ? gl_varying_slot_name_for_stage(o->slot, v->type)
++                                    : gl_frag_result_name(o->slot);
++         unsigned class = o->slot < FIXTURE_OUTPUT_LOCATIONS && oc->known[o->slot] ? oc->class[o->slot] : 0;
++         fprintf(out, "        /* [%u] */ {%u, 0x%02x, %u, %u},   // %s %s%s, %s\n", i, o->slot,
++                 o->regid, o->half, class, slot_name, regid_name(o->regid, rb, sizeof(rb)),
++                 o->half ? " half" : "", class ? "integer" : "float");
++      }
++      fputs("    },\n", out);
++   }
++   fprintf(out, "    /* .numOutputs = */ %u,\n", v->outputs_count);
++
++   /* --- a vertex stage --- */
++   unsigned num_attributes = 0;
++   bool writes_layer = false, writes_viewport = false;
++   uint32_t position = none, point_size = none;
++   if (vs) {
++      for (unsigned i = 0; i < v->inputs_count; i++)
++         if (!v->inputs[i].sysval && v->inputs[i].regid != none)
++            num_attributes++;
++      position = ir3_find_output_regid(v, VARYING_SLOT_POS);
++      point_size = ir3_find_output_regid(v, VARYING_SLOT_PSIZ);
++      writes_layer = ir3_find_output(v, VARYING_SLOT_LAYER) >= 0;
++      writes_viewport = ir3_find_output(v, VARYING_SLOT_VIEWPORT) >= 0;
++   }
++   fprintf(out, "    /* .numAttributes = */ %u,\n", num_attributes);
++   fprintf(out, "    /* .vertexIdRegid = */ 0x%02x,\n", ir3_find_sysval_regid(v, SYSTEM_VALUE_VERTEX_ID));
++   fprintf(out, "    /* .instanceIdRegid = */ 0x%02x,\n", ir3_find_sysval_regid(v, SYSTEM_VALUE_INSTANCE_ID));
++   fprintf(out, "    /* .positionRegid = */ 0x%02x,   // %s\n", position, regid_name(position, rb, sizeof(rb)));
++   fprintf(out, "    /* .pointSizeRegid = */ 0x%02x,\n", point_size);
++   fprintf(out, "    /* .clipMask = */ 0x%x, /* .cullMask = */ 0x%x, /* .writesLayer = */ %u, /* .writesViewport = */ %u,\n",
++           v->clip_mask, v->cull_mask, writes_layer, writes_viewport);
++
++   /* --- a fragment stage --- */
++   fprintf(out, "    /* .totalIn = */ %u,\n", v->total_in);
++   uint32_t frag_coord = ir3_find_sysval_regid(v, SYSTEM_VALUE_FRAG_COORD);
++   fprintf(out, "    /* .fragCoordRegid = */ 0x%02x,\n", frag_coord);
++   fprintf(out, "    /* .fragcoordCompmask = */ 0x%x,\n", v->fragcoord_compmask);
++   fputs("    /* .pad1 = */ {0, 0, 0},\n", out);
++   fputs("    /* .ijRegid = */ {", out);
++   for (unsigned i = 0; i < ij_count; i++)
++      fprintf(out, "%s0x%02x", i ? ", " : "",
++              ir3_find_sysval_regid(v, SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL + i));
++   fputs("},   // ir3's IJ order: persp pixel, sample, centroid, centre rhw; linear pixel, centroid, sample\n", out);
++   fprintf(out, "    /* .faceRegid = */ 0x%02x,\n", ir3_find_sysval_regid(v, SYSTEM_VALUE_FRONT_FACE));
++   fprintf(out, "    /* .sampleIdRegid = */ 0x%02x, /* .sampleMaskInRegid = */ 0x%02x,\n",
++           ir3_find_sysval_regid(v, SYSTEM_VALUE_SAMPLE_ID),
++           ir3_find_sysval_regid(v, SYSTEM_VALUE_SAMPLE_MASK_IN));
++   uint32_t color[8], color_half[8];
++   unsigned num_colors = 0;
++   for (unsigned i = 0; i < max_colors; i++) {
++      color[i] = none;
++      color_half[i] = 0;
++      if (!vs) {
++         int k = ir3_find_output(v, FRAG_RESULT_DATA0 + i);
++         if (k >= 0) {
++            /* ir3_get_output_regid's HALF_REG_ID, split into the two fields */
++            color[i] = v->outputs[k].regid;
++            color_half[i] = v->outputs[k].half;
++            num_colors = i + 1;
++         }
++      }
++   }
++   fputs("    /* .colorRegid = */ {", out);
++   for (unsigned i = 0; i < max_colors; i++)
++      fprintf(out, "%s0x%02x", i ? ", " : "", color[i]);
++   fputs("},\n", out);
++   fputs("    /* .colorHalf = */ {", out);
++   for (unsigned i = 0; i < max_colors; i++)
++      fprintf(out, "%s%u", i ? ", " : "", color_half[i]);
++   fputs("},\n", out);
++   fprintf(out, "    /* .numColorOutputs = */ %u,\n", num_colors);
++   uint32_t depth = none, sample_mask = none, stencil_ref = none;
++   if (!vs) {
++      depth = ir3_find_output_regid(v, FRAG_RESULT_DEPTH);
++      sample_mask = ir3_find_output_regid(v, FRAG_RESULT_SAMPLE_MASK);
++      stencil_ref = ir3_find_output_regid(v, FRAG_RESULT_STENCIL);
++   }
++   fprintf(out, "    /* .depthRegid = */ 0x%02x, /* .sampleMaskRegid = */ 0x%02x, /* .stencilRefRegid = */ 0x%02x,\n",
++           depth, sample_mask, stencil_ref);
++   fprintf(out, "    /* .writesPos = */ %u, /* .writesSmask = */ %u, /* .writesStencilref = */ %u, /* .dualSrcBlend = */ %u,\n",
++           v->writes_pos, v->writes_smask, v->writes_stencilref, v->dual_src_blend);
++   fprintf(out, "    /* .hasKill = */ %u, /* .perSamp = */ %u, /* .readsPrimid = */ %u, /* .fbRead = */ %u,\n",
++           v->has_kill, v->per_samp, v->reads_primid, v->fb_read);
++   fprintf(out, "    /* .needPixlod = */ %u, /* .needFullQuad = */ %u,\n", v->need_pixlod, v->need_full_quad);
++   fputs("    /* .pad2 = */ {0, 0},\n", out);
++   fprintf(out, "    /* .numSamplerPrefetch = */ %u,\n", v->num_sampler_prefetch);
++}
++
 +static void
 +dump_fixture(struct ir3_shader_variant *v, uint32_t *bin, const char *path,
 +             const char *in_path, const char *source_path,
 +             const char *kernel_name, const struct fd_dev_id *dev_id,
-+             const struct fixture_textures *tex)
++             const struct fixture_textures *tex,
++             const struct fixture_output_classes *output_classes)
 +{
 +   const struct ir3_const_state *cs = ir3_const_state(v);
 +   const struct fd_dev_info *dev_info = fd_dev_info_raw(dev_id);
 +   const unsigned max_ubo_ranges = 8;   /* kernel.hpp's kMaxUboRanges */
-+   const unsigned max_bufs = 4;         /* kMaxBufs */
-+   const unsigned no_const_regid = 0xff;
++
++   /* What the fixture is: a Kernel for a compute variant, a Stage (render.hpp:
++    * a Kernel plus what the 3D registers read) for a vertex or fragment one.
++    * The other stages have no struct here: refused by name, not written as a
++    * compute-shaped Kernel, which is what this did for a VS until 29 October.
++    */
++   bool stage_fixture;
++   switch (v->type) {
++   case MESA_SHADER_COMPUTE:
++   case MESA_SHADER_KERNEL:
++      stage_fixture = false;
++      break;
++   case MESA_SHADER_VERTEX:
++   case MESA_SHADER_FRAGMENT:
++      stage_fixture = true;
++      break;
++   default:
++      errx(1, "-o: a %s shader: the fixtures hold a compute Kernel or a vertex/fragment Stage, nothing else",
++           gl_shader_stage_name(v->type));
++   }
 +
 +   /* The kernel's name: -n, else the entry point's (nir->info.name); made an identifier. */
 +   char name[128];
@@ -355,21 +711,16 @@ SPDX-License-Identifier: MIT
 +      errx(1, "%s: cannot write it", path);
 +
 +   uint32_t num_words = v->info.size / 4;
-+   uint32_t local_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
-+   uint32_t wg_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_WORKGROUP_ID);
-+   int32_t driver_params =
-+      ir3_const_can_upload(&cs->allocs, IR3_CONST_ALLOC_DRIVER_PARAMS, v->constlen)
-+         ? (int32_t)cs->allocs.consts[IR3_CONST_ALLOC_DRIVER_PARAMS].offset_vec4
-+         : -1;
 +
 +   fprintf(out,
-+           "// %s: hakios::metal::Kernel fixture, generated by ir3_compiler -o (tools/mesa/ir3-dump.patch)\n"
-+           "// from %s for %s (chip id 0x%" PRIx64 ", gen %u). Do not edit; recompile the kernel.\n"
++           "// %s: hakios::metal::%s fixture, generated by ir3_compiler -o (tools/mesa/ir3-dump.patch)\n"
++           "// from %s for %s (chip id 0x%" PRIx64 ", gen %u). Do not edit; recompile the %s.\n"
 +           "// SPDX-License-Identifier: MIT\n"
 +           "#pragma once\n\n"
-+           "#include \"hakios-metal/kernel.hpp\"\n\n"
++           "#include \"hakios-metal/%s.hpp\"\n\n"
 +           "namespace hakios::metal::kernels {\n\n",
-+           name, in_path, fd_dev_name(dev_id), dev_id->chip_id, dev_info->chip);
++           name, stage_fixture ? "Stage" : "Kernel", in_path, fd_dev_name(dev_id), dev_id->chip_id,
++           dev_info->chip, stage_fixture ? "shader" : "kernel", stage_fixture ? "render" : "kernel");
 +
 +   char words_name[160], imm_name[160];
 +   snprintf(words_name, sizeof(words_name), "%s_words", name);
@@ -381,97 +732,16 @@ SPDX-License-Identifier: MIT
 +      fputc('\n', out);
 +   }
 +
-+   fprintf(out, "constexpr Kernel %s = {\n", name);
-+   fprintf(out, "    /* .words = */ %s,\n", words_name);
-+   fprintf(out, "    /* .numWords = */ %u,\n", num_words);
-+   fprintf(out, "    /* .instrlen = */ %u,\n", v->instrlen);
-+   fprintf(out, "    /* .constlen = */ %u,\n", v->constlen);
-+   fprintf(out, "    /* .maxReg = */ %d,\n", v->info.max_reg);
-+   fprintf(out, "    /* .maxHalfReg = */ %d,\n", v->info.max_half_reg);
-+   fprintf(out, "    /* .doubleThreadsize = */ %s,\n", v->info.double_threadsize ? "true" : "false");
-+   fprintf(out, "    /* .mergedRegs = */ %s,\n", v->mergedregs ? "true" : "false");
-+   fprintf(out, "    /* .earlyPreamble = */ %s,\n", v->early_preamble ? "true" : "false");
-+   fprintf(out, "    /* .branchstackHw = */ %u,\n", ir3_shader_branchstack_hw(v));
-+   fprintf(out, "    /* .sharedSize = */ %u,\n", v->shared_size);
-+   fprintf(out, "    /* .pvtmemSize = */ %u,\n", v->pvtmem_size);
-+   fprintf(out, "    /* .pvtmemPerWave = */ %s,\n", v->pvtmem_per_wave ? "true" : "false");
-+   fprintf(out, "    /* .localSize = */ {%u, %u, %u},\n", v->local_size[0], v->local_size[1],
-+           v->local_size[2]);
-+   fprintf(out, "    /* .localSizeVariable = */ %s,\n", v->local_size_variable ? "true" : "false");
-+   fprintf(out, "    /* .localIdRegid = */ 0x%02x,\n", local_id);
-+   fprintf(out, "    /* .workGroupIdRegid = */ 0x%02x,\n", wg_id);
-+   fprintf(out, "    /* .immediates = */ %s,\n", cs->immediates_count ? imm_name : "nullptr");
-+   fprintf(out, "    /* .numImmediates = */ %u,\n", cs->immediates_count);
-+   fprintf(out, "    /* .immediatesOffsetVec4 = */ %u,\n", cs->allocs.max_const_offset_vec4);
-+   fprintf(out, "    /* .driverParamsOffsetVec4 = */ %d,\n", driver_params);
-+   fprintf(out, "    /* .numUbos = */ %u,\n", cs->num_ubos);
-+   fprintf(out, "    /* .numSsbos = */ %u,\n", v->num_ssbos);
-+   fprintf(out, "    /* .numIbos = */ %u,\n", v->num_ibos);
-+   fprintf(out, "    /* .numSamp = */ %d,\n", v->num_samp);
-+   fputs("    /* .uboRanges = */ {", out);
-+   for (unsigned i = 0; i < max_ubo_ranges; i++) {
-+      if (i < cs->ubo_state.num_enabled) {
-+         const struct ir3_ubo_range *r = &cs->ubo_state.range[i];
-+         fprintf(out, "%s{%u, %u, %u, %u}", i ? ", " : "", r->ubo.block, r->offset / 16,
-+                 r->start / 4, (r->end - r->start) / 4);
-+      } else {
-+         fprintf(out, "%s{0, 0, 0, 0}", i ? ", " : "");
-+      }
-+   }
-+   fputs("},\n", out);
-+   fprintf(out, "    /* .numUboRanges = */ %u,\n", cs->ubo_state.num_enabled);
-+   /* @buf and @numwg are the text assembler's; a compiled kernel binds its
-+    * buffers as SSBOs/UBOs and reads its grid from the driver params.
-+    */
-+   fputs("    /* .numBufs = */ 0,\n", out);
-+   fputs("    /* .bufs = */ {", out);
-+   for (unsigned i = 0; i < max_bufs; i++)
-+      fprintf(out, "%s{0, 0x%02x}", i ? ", " : "", no_const_regid);
-+   fputs("},\n", out);
-+   fprintf(out, "    /* .numwgConstRegid = */ 0x%02x,\n", no_const_regid);
-+   fprintf(out, "    /* .constantDataOffset = */ %u,\n", v->info.constant_data_offset);
-+   fprintf(out, "    /* .constantDataSize = */ %u,\n", v->constant_data_size);
-+   fprintf(out, "    /* .name = */ \"%s\",\n", name);
-+   fprintf(out, "    /* .source = */ R\"ir3(%.*s)ir3\",\n", (int)source_size,
-+           source ? (const char *)source : "");
-+   /* The texture slots: `{}` when the kernel addresses none (the text kernels'
-+    * form, tools/ir3-kernel.cc), else every slot up to the highest addressed,
-+    * all eight members of each (the pad too) so that -Wextra sees them
-+    * initialized, with what each is in words beside it.
-+    */
-+   unsigned last_slot = 0;
-+   bool any_slot = false;
-+   for (unsigned i = 0; i < FIXTURE_TEXTURE_SLOTS; i++) {
-+      if (tex->slot[i].kind) {
-+         any_slot = true;
-+         last_slot = i;
-+      }
-+   }
-+   if (!any_slot) {
-+      fputs("    /* .textures = */ {},\n", out);
++   if (!stage_fixture) {
++      fprintf(out, "constexpr Kernel %s = {\n", name);
++      emit_kernel_fields(out, "    ", v, name, num_words, words_name, imm_name, source, source_size, tex);
 +   } else {
-+      static const char *const dims[] = { "?", "1D", "2D", "3D", "cube" };
-+      static const char *const elements[] = { "float", "uint", "int" };
-+      fputs("    /* .textures = */ {\n", out);
-+      for (unsigned i = 0; i <= last_slot; i++) {
-+         const struct fixture_texture *s = &tex->slot[i];
-+         fprintf(out, "        /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, 0},", i, s->kind, s->dim,
-+                 s->is_array, s->element, s->bits, s->read, s->write);
-+         if (!s->kind)
-+            fputs("   // not addressed\n", out);
-+         else
-+            fprintf(out, "   // %s %s%s of %s%s%s%s\n", s->kind == 1 ? "sampled" : "image",
-+                    dims[s->dim], s->is_array ? " array" : "", elements[s->element],
-+                    s->bits == 16 ? " as 16-bit" : s->bits ? " as 32-bit" : "",
-+                    s->read ? ", read" : "", s->write ? ", written" : "");
-+      }
++      fprintf(out, "constexpr Stage %s = {\n", name);
++      fputs("    /* .k = */ {\n", out);
++      emit_kernel_fields(out, "        ", v, name, num_words, words_name, imm_name, source, source_size, tex);
 +      fputs("    },\n", out);
++      emit_stage_fields(out, v, output_classes);
 +   }
-+   fprintf(out, "    /* .numTextureSlots = */ %u,\n", tex->num_slots);
-+   if (tex->sampler_mask)
-+      fprintf(out, "    /* .samplerMask = */ 0x%x,\n", tex->sampler_mask);
-+   else
-+      fputs("    /* .samplerMask = */ 0,\n", out);
 +   fputs("};\n\n", out);
 +
 +   fputs("// The listing (ir3_shader_disasm):\n", out);
@@ -485,7 +755,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +720,7 @@
+@@ -298,6 +965,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -493,7 +763,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +729,16 @@
+@@ -306,13 +974,16 @@
     return nir;
  }
  
@@ -511,7 +781,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +750,9 @@
+@@ -324,6 +995,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -521,7 +791,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +770,7 @@
+@@ -341,6 +1015,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -529,7 +799,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +785,15 @@
+@@ -355,6 +1030,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -545,7 +815,30 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -486,6 +925,13 @@
+@@ -444,8 +1128,20 @@
+        */
+       NIR_PASS(_, nir, nir_lower_system_values);
+       NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
+-      NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
+-               ir3_glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
++      /* A vertex or fragment shader keeps its IO as VARIABLES here, in
++       * turnip's order (tu_shader.cc: ir3_nir_lower_io_to_temporaries on the
++       * variables, then ir3_nir_post_finalize's nir_lower_io, ir3_nir.c:755):
++       * io_to_temporaries after nir_lower_io finds no variables to copy and
++       * leaves orphan `out@position-temp` temporaries whose undef stores only
++       * nir_opt_undef removes later -- right output by luck, and a second
++       * store_output to one slot would win in ir3's setup_output. Compute has
++       * no IO variables, so its order stays as it was and its fixtures do not
++       * move; hakios-metal's compileAir keeps the compute order too, and its
++       * compileStage this one, so that a stage compiled there is this fixture.
++       */
++      if (stage == MESA_SHADER_COMPUTE || stage == MESA_SHADER_KERNEL)
++         NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
++                  ir3_glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
+    } else if (from_tgsi) {
+       struct tgsi_token toks[65536];
+       const nir_shader_compiler_options *nir_options =
+@@ -486,6 +1182,16 @@
        return -1;
     }
  
@@ -553,13 +846,16 @@ SPDX-License-Identifier: MIT
 +    * nir_lower_tex and the image lowering rewrite what the walk reads.
 +    */
 +   struct fixture_textures textures = { 0 };
-+   if (out_path)
++   struct fixture_output_classes output_classes = { 0 };
++   if (out_path) {
 +      walk_textures(nir, &textures);
++      walk_output_classes(nir, &output_classes);
++   }
 +
     const struct ir3_shader_nir_options options = {};
  
     ir3_nir_lower_io_to_temporaries(nir);
-@@ -503,6 +949,15 @@
+@@ -503,6 +1209,15 @@
     v->compiler = compiler;
     v->key = key;
     v->const_state = rzalloc_size(v, sizeof(*v->const_state));
@@ -575,7 +871,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +975,15 @@
+@@ -520,7 +1235,15 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }
@@ -588,7 +884,7 @@ SPDX-License-Identifier: MIT
 +   if (out_path)
 +      dump_fixture(v, bin, out_path, air_file ? air_file : filenames[0],
 +                   source_path, out_name ? out_name : nir->info.name, &dev_id,
-+                   &textures);
++                   &textures, &output_classes);
  
     return 0;
  }
