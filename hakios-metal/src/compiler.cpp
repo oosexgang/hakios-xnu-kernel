@@ -682,10 +682,8 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
         const Kernel& k = s->stage.k;
         // pushed constant ranges are served (render.cpp: pushedRanges, the compute rule); a device buffer (the 3D IBO table)
         // and an indexed constant buffer (a UBO descriptor) are not yet
-        if (k.numSsbos != 0) {
-            refuse(why, stageName(*s) + " binds " + std::to_string(k.numSsbos) + " device buffer(s): device buffers in a draw are not served yet (constant ones are)");
-            return nullptr;
-        }
+        // device buffers link: the draw loads the 3D IBO table and refuses there what it cannot (two stages disagreeing
+        // about an index, nothing bound); images in a draw are refused below with the textures' rule
         // sampled textures are served in a fragment stage (render.cpp: the FS_TEX group, the prefetch); a vertex stage's
         // textures and an image in either stage are not yet -- render::encode says the same at the draw
         bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;

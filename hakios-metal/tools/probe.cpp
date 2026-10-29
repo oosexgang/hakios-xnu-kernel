@@ -46,6 +46,7 @@
 #include "../tests/fixtures/tri_tex_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
+#include "../tests/fixtures/tri_dpos_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1945,11 +1946,16 @@ int main(int argc, char** argv) {
         // far outside the target) and then the pair's six positions, bound at offset 32: every pixel tri_flat's colour.
         // A descriptor that ignored the offset would draw the junk and the first two positions, which cover no pixel
         // exactly as the pair does; the junk alone, bound at 0 and drawn as 3 vertices, must leave the target canary.
-        if (t) {
-            const Program upos{kernels::tri_upos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_upos"};
+        // 9p is the same with tri_dpos_vs, whose buffer is `device const float2*`: an ldib through IBO 0 of the 3D
+        // pipeline's IBO table (SB6_IBO, SP_IBO), the one table every graphics stage reads
+        for (int which = 0; t && which < 2; which++) {
+            const Program upos = which == 0 ? Program{kernels::tri_upos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_upos"}
+                                            : Program{kernels::tri_dpos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_dpos"};
+            const std::string label = which == 0 ? "upos" : "dpos";
+            const std::string road = which == 0 ? "a constant buffer at offset 32 through UBO descriptor 0" : "a device buffer at offset 32 through 3D IBO 0";
             auto pb = newBuffer(gpu, 32 + 6 * 8, &why);
             if (pb == nullptr) {
-                report(false, "upos: a 64-byte constant buffer: " + why);
+                report(false, label + ": an 80-byte buffer: " + why);
             } else {
                 const float junk[4][2] = {{9, 9}, {9, 10}, {10, 9}, {10, 10}};
                 const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
@@ -1970,8 +1976,8 @@ int main(int argc, char** argv) {
                     PixelRule none{[](uint32_t, uint32_t) { return false; }, [=](uint32_t, uint32_t, uint32_t) { return 0u; }};
                     TexReadback rb = compareTexture(*t, k == 0 ? all : none, canary);
                     report(completed(*cb) && (k == 0 ? rb.right == 4096 : rb.uncoveredCanary == 4096),
-                           std::string(k == 0 ? "upos, the pair's positions pulled from a constant buffer at offset 32 through UBO descriptor 0: "
-                                              : "control, upos over the junk alone (bound at 0, 3 vertices off the target): ") +
+                           (k == 0 ? label + ", the pair's positions pulled from " + road + ": "
+                                   : "control, " + label + " over the junk alone (bound at 0, 3 vertices off the target): ") +
                                describeTexture(rb, k == 0 ? "the colour" : "canary") + status(*cb, gpu));
                 }
             }

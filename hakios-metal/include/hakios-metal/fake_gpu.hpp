@@ -118,6 +118,7 @@ public:
         uint32_t prefetchCount = 0, prefetchCmd[4] = {};  // SP_FS_PREFETCH_CNTL.COUNT, SP_FS_PREFETCH_CMD[i]
         uint32_t depthCntl = 0;                           // RB_DEPTH_CNTL
         uint32_t vsUbos = 0, fsUbos = 0;                  // the UBO descriptors each stage loaded
+        uint32_t gfxIbos = 0;                             // SP_IBO_COUNT: the 3D IBO table's size
         uint64_t depthBase = 0;                           // RB_DEPTH_BUFFER_BASE when a depth buffer is bound
         uint32_t windowScissor[4] = {};             // GRAS_SC_WINDOW_SCISSOR TL x, y, BR x, y (BR inclusive)
         uint32_t screenScissor[4] = {}, viewportScissor[4] = {};   // GRAS_SC_SCREEN_SCISSOR[0], GRAS_SC_VIEWPORT_SCISSOR[0]
@@ -235,6 +236,7 @@ private:
                            uint32_t* instrlen, uint64_t* program, uint32_t* constlen);
     // a 2D descriptor's rule (a texture of the texture table when SAMPLED, an image at an IBO slot otherwise)
     bool check2d(const uint32_t* d, const char* what, uint32_t i, bool sampled);
+    bool checkIboDescriptors(uint64_t table, uint32_t nibo);
     bool checkSampler(const uint32_t* d, uint32_t i);
     uint32_t reg(uint32_t r) const;
     uint64_t reg64(uint32_t r) const;
@@ -263,6 +265,9 @@ private:
     std::set<uint32_t> written_;                // ...of which those written in the submission running now
     CsState cs_;
     StageLoads vs_, fs_;
+    bool gfxIbosLoaded_ = false;   // the 3D IBO table's load into SB6_IBO in this submission
+    uint64_t gfxIbosFrom_ = 0;
+    uint32_t gfxIboUnits_ = 0;
     // what a draw needs of the submission so far: the marker that begins a sysmem pass, RB_CCU_CNTL written (right after a
     // CP_WAIT_FOR_IDLE), and whether the last packet was that WFI; and what the submission's end needs of a draw: the
     // two 4-word flushes after the last one

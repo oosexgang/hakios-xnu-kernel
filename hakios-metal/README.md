@@ -91,8 +91,8 @@ USE/IGNORE_VISIBILITY, `LRZ_FLUSH`, `RB_DONE_TS`). The sign of `GRAS_CL_VPORT_YS
 switch's default -- turnip's and fd6's values where they agree, the smaller set where they do not -- drew without a
 bisect. Not yet, all of it refused by name (not served): vertex attributes beyond per-vertex Float..Float4, Half2, Half4 and UChar4Normalized (those are
 served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UChar4Normalized colour from one interleaved buffer, 4032 of 4032
-pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; an indexed one is served through a UBO descriptor, below; the 3D IBO table for `device` buffers is not), textures and
-samplers in a vertex stage, images in a draw (the 3D IBO table), stencil, depth formats other than Depth32Float, a
+pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; an indexed one is served through a UBO descriptor, and a `device` one through the 3D IBO table, below), textures and
+samplers in a vertex stage, images in a draw, stencil, depth formats other than Depth32Float, a
 fragment depth output, dual-source blending, GMEM (tiled)
 rendering, MSAA, a base instance, a negative base vertex, points and lines, several colour attachments, a program whose stages bind what
 the draw does not serve.
@@ -160,7 +160,11 @@ A `constant` buffer a draw indexes is read through a UBO descriptor: where ir3 c
 `[[buffer(n)]]`, and the draw loads the descriptors (the address past the binding's offset, the length in vec4) into the
 stage's block from the packet, as Gallium's `fd6_emit_ubos` does. On the phone (hakios `logs/162726-run.log`, probe line
 9o, 0 failures) the pair's positions pulled by vertex id from a buffer bound at offset 32 cover all 4096 pixels, and the
-junk before the offset, drawn on its own, touches none.
+junk before the offset, drawn on its own, touches none. A `device` buffer is an SSBO read and written through the 3D pipeline's IBO table:
+one table for every graphics stage (`SP_IBO`, `SP_IBO_COUNT`, loaded by the plain `CP_LOAD_STATE6` as ST6_SHADER into
+SB6_IBO, the shape both witnesses load it in, from memory here where they are bindless), so the vertex and fragment
+stages must bind the same buffer wherever both address an index. The same probe line with `tri_dpos_vs.ll`'s
+`device const float2*` (9p) covers all 4096 pixels too: the non-bindless table is taken by this GPU.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

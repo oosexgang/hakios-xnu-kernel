@@ -140,13 +140,10 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.numSamp > 31) {
         return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
     }
-    if (k.numSsbos != 0 || k.numIbos != 0) {
-        // A `constant` buffer is served both ways: read at a constant offset it is a range ir3 pushes into the constant
-        // file, indexed it is an ldc through a UBO descriptor (uboDescriptors below, Gallium's fd6_emit_ubos). A `device`
-        // buffer is an SSBO through the 3D IBO table, which no Mesa 25.0.7 driver loads non-bindless (fd6_image.cc:308-335
-        // is bindless): no witness here yet
-        return refuse(why, name + " binds " + n(k.numSsbos) + " device buffer(s) and " + n(k.numIbos) +
-                               " IBO(s): device buffers in a draw are not served yet (constant ones are)");
+    // A `constant` buffer is a range ir3 pushes or an ldc through a UBO descriptor (uboDescriptors); a `device` one an
+    // SSBO through the 3D pipeline's IBO table (gfxIbos), its slots the Metal buffer indices; images there are not served
+    if (k.numIbos > k.numSsbos || k.numSsbos > kMaxVertexBuffers) {
+        return refuse(why, name + " has " + n(k.numIbos) + " IBO slots for " + n(k.numSsbos) + " device buffer(s): images in a draw are not served");
     }
     if (k.numUbos > kMaxVertexBuffers) {
         return refuse(why, name + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has " + n(kMaxVertexBuffers));
@@ -544,6 +541,51 @@ bool uboDescriptors(const Stage& s, const Bindings& b, std::vector<uint32_t>* ou
     return true;
 }
 
+// The 3D pipeline's IBO table: ONE for every graphics stage (SP_IBO, loaded into SB6_IBO; turnip loads "one packet for
+// all graphics stages", tu_pipeline.cc:180-185), so a device buffer the VS and the FS both address at a Metal index must
+// be the same binding in both. Each slot below the stages' SSBO counts is a buffer view over the bound buffer past its
+// offset (compute's bufferIbo, 32-bit elements), every one of them bound; the table sits in the pass's kTableVsAt part.
+constexpr uint32_t kGfxIboAt = kTableVsAt;
+constexpr uint32_t kMaxGfxIbos = (kTableFsAt - kTableVsAt) / 64;
+static_assert(kMaxGfxIbos >= kMaxVertexBuffers, "the table holds an IBO per Metal buffer index");
+
+struct GfxIbos {
+    uint32_t count = 0;
+    uint32_t words[kMaxVertexBuffers][16] = {};
+    std::vector<const Buffer*> used;
+};
+
+bool gfxIbos(const Stage& vs, const Bindings& vsb, const Stage& fs, const Bindings& fsb, GfxIbos* out, std::string* why) {
+    const Binding* chosen[kMaxVertexBuffers] = {};
+    for (const auto& [s, b] : {std::pair<const Stage*, const Bindings*>{&vs, &vsb}, {&fs, &fsb}}) {
+        for (uint32_t slot = 0; slot < s->k.numSsbos; slot++) {
+            if (slot >= b->buffers.size() || b->buffers[slot].buffer == nullptr) {
+                return refuse(why, std::string(stageName(*s)) + ": no buffer bound at index " + n(slot) + " (a device buffer it addresses)");
+            }
+            const Binding& x = b->buffers[slot];
+            if (x.offset % 4 != 0 || x.offset >= x.buffer->length()) {
+                return refuse(why, std::string(stageName(*s)) + ": buffer " + n(slot) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
+            }
+            if (chosen[slot] != nullptr && (chosen[slot]->buffer != x.buffer || chosen[slot]->offset != x.offset)) {
+                return refuse(why, "the vertex and fragment stages bind different device buffers at index " + n(slot) +
+                                       ": the 3D pipeline has one IBO table for both");
+            }
+            if (chosen[slot] == nullptr) {
+                chosen[slot] = &x;
+                const uint64_t elements = (x.buffer->length() - x.offset) / 4;
+                if (elements >= (1ull << 30)) {
+                    return refuse(why, "buffer " + n(slot) + " is longer than a descriptor counts");
+                }
+                TexConst d = bufferIbo(x.buffer->gpuAddress() + x.offset, uint32_t(elements));
+                memcpy(out->words[slot], d.dword, sizeof d.dword);
+                out->used.push_back(x.buffer);
+            }
+            out->count = std::max(out->count, slot + 1);
+        }
+    }
+    return true;
+}
+
 // Colour attachment 0's blend as RB_MRT_CONTROL[0] and RB_MRT_BLEND_CONTROL[0] hold it (tu6_emit_blend,
 // tu_pipeline.cc:2975-3063): MTLBlendOperation's numbers are VkBlendOp's, which turnip passes through as the opcode
 // (tu6_blend_op, tu_util.h:288-291); MTLBlendFactor goes through the table below onto adreno_rb_blend_factor, the
@@ -929,6 +971,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     if (!uboDescriptors(vs, vsBindings, &vsUbos, why) || !uboDescriptors(fs, fsBindings, &fsUbos, why)) {
         return false;
     }
+    GfxIbos ibos;
+    if (!gfxIbos(vs, vsBindings, fs, fsBindings, &ibos, why)) {
+        return false;
+    }
     for (int i = 0; i < 4; i++) {
         if (!std::isfinite(draw.blendColor[i])) {
             return refuse(why, "a blend colour with a non-finite channel (channel " + n(uint32_t(i)) + ")");
@@ -1010,6 +1056,7 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 
     // --- nothing is refused from here on: the table, then the stream ---
     tableStart(tableCpu);
+    memcpy(tableCpu + kGfxIboAt, ibos.words, size_t(ibos.count) * 64);
     memset(tableCpu + kFsTexConstAt, 0, kMaxTextureSlots * 64);
     memset(tableCpu + kFsTexSampAt, 0, kMaxTextureSlots * 16);
     memcpy(tableCpu + kFsTexConstAt, fsTex.texWords, sizeof fsTex.texWords);
@@ -1092,7 +1139,7 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD,
             A6XX_HLSQ_INVALIDATE_CMD_VS_STATE | A6XX_HLSQ_INVALIDATE_CMD_HS_STATE | A6XX_HLSQ_INVALIDATE_CMD_DS_STATE |
                 A6XX_HLSQ_INVALIDATE_CMD_GS_STATE | A6XX_HLSQ_INVALIDATE_CMD_FS_STATE | A6XX_HLSQ_INVALIDATE_CMD_GFX_IBO);
-        reg(stream, REG_A6XX_SP_VS_CONFIG, spXsConfig(vs.k.numSamp, vs.k.numSamp, 0));
+        reg(stream, REG_A6XX_SP_VS_CONFIG, spXsConfig(vs.k.numSamp, vs.k.numSamp, vs.k.numSsbos));
         reg(stream, REG_A6XX_HLSQ_VS_CNTL, hlsqVsCntl(vs.k.constlen));
         reg(stream, REG_A6XX_SP_HS_CONFIG, 0);
         reg(stream, REG_A6XX_HLSQ_HS_CNTL, 0);
@@ -1100,9 +1147,18 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         reg(stream, REG_A6XX_HLSQ_DS_CNTL, 0);
         reg(stream, REG_A6XX_SP_GS_CONFIG, 0);
         reg(stream, REG_A6XX_HLSQ_GS_CNTL, 0);
-        reg(stream, REG_A6XX_SP_FS_CONFIG, spXsConfig(fs.k.numSamp, fs.k.numSamp, 0));
+        reg(stream, REG_A6XX_SP_FS_CONFIG, spXsConfig(fs.k.numSamp, fs.k.numSamp, fs.k.numSsbos));
         reg(stream, REG_A6XX_HLSQ_FS_CNTL, hlsqFsCntl(fs.k.constlen));
-        reg(stream, REG_A6XX_SP_IBO_COUNT, 0);
+        // the 3D IBO table's count (fd6's nibo(fs); here the larger of the two stages', the table being one), and the table
+        // itself: CP_LOAD_STATE6 (the plain opcode) of ST6_SHADER into SB6_IBO, as both witnesses load it (tu_pipeline.cc:
+        // 183, fd6_image.cc:308-335 -- bindless there, from the table here, the SP_CS_IBO way), then SP_IBO at it
+        reg(stream, REG_A6XX_SP_IBO_COUNT, ibos.count);
+        if (ibos.count != 0) {
+            uint32_t w[3] = {loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_IBO, ibos.count), CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(table + kGfxIboAt)),
+                             CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t((table + kGfxIboAt) >> 32))};
+            stream.packet(CP_LOAD_STATE6, w, 3);
+            reg64(stream, REG_A6XX_SP_IBO, table + kGfxIboAt);
+        }
     }
     // 10. the two programs (tu6_emit_xs, tu_shader.cc:1238-1356; fd6_emit_shader, fd6_program.cc:100-245): CTRL_REG0 (the
     // VS's MERGEDREGS is bit 20 and it has no THREADSIZE; the FS's has THREADSIZE, VARYING, UNK24 always, MERGEDREGS bit
@@ -1450,10 +1506,11 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         use(*pass.depth->buffer(), true);
         keep(pass.depth->buffer());
     }
-    for (const Bindings* b : {&vsBindings, &fsBindings}) {
+    // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
+    for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{&vsBindings, program.vs.k.numSsbos != 0}, {&fsBindings, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
             if (x.buffer != nullptr) {
-                use(*x.buffer, false);   // pushed ranges are read; nothing in a draw writes a buffer yet
+                use(*x.buffer, writes);
             }
         }
     }

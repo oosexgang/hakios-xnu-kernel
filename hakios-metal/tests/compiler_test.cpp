@@ -19,6 +19,7 @@
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
+#include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "hakios-metal/a6xx.hpp"
 #include "test.hpp"
@@ -519,6 +520,12 @@ TEST(compiler_matches_the_stage_fixtures) {
     }
     // the sampling fragment stage: one texture, one sampler, and the sample made a prefetch (into r0.z, all four
     // components, TEX_PREFETCH_SAM) -- the shape tri_tex_fs.ll was written to produce
+    // vertex pulling from a device buffer: an ldib through IBO 0 of the 3D table
+    auto dposVs = compareStageWithFixture("tri_dpos_vs", kernels::tri_dpos_vs_air, "tri_dpos_vs", "ldib");
+    if (dposVs) {
+        CHECK_EQ(dposVs->stage.k.numSsbos, 1u);
+        CHECK_EQ(dposVs->stage.k.numIbos, 1u);
+    }
     // vertex pulling from a constant buffer: an ldc through UBO 0, nothing pushed
     auto uposVs = compareStageWithFixture("tri_upos_vs", kernels::tri_upos_vs_air, "tri_upos_vs", "ldc");
     if (uposVs) {
@@ -674,9 +681,8 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     m->stage.numAttributes = 1;   // attributes link: the vertex descriptor is the draw's to judge
     CHECK(link(m, fs) != nullptr);
     m = copyOf(vs);
-    m->stage.k.numSsbos = 1;
-    CHECK(link(m, fs) == nullptr);
-    expectRefusal(why, "the vertex stage tri_flat_vs binds 1 device buffer(s): device buffers in a draw are not served yet (constant ones are)");
+    m->stage.k.numSsbos = 1;   // a device buffer links: the draw loads the 3D IBO table (and refuses it unbound)
+    CHECK(link(m, fs) != nullptr);
     m = copyOf(fs);
     m->stage.k.numUboRanges = 1;   // a pushed range links: the draw serves it (and refuses it there if nothing is bound)
     CHECK(link(vs, m) != nullptr);

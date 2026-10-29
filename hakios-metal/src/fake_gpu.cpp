@@ -235,8 +235,23 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
         stage = "fragment";
         break;
     case SB6_IBO:
-        fault("a load into the 3D IBO table (SB6_IBO): no Mesa driver drives it non-bindless, not what this GPU model runs");
-        return false;
+        // the 3D pipeline's one IBO table, by the plain CP_LOAD_STATE6 (tu_pipeline.cc:183) and as ST6_SHADER: 64-byte
+        // descriptors from memory, judged at the draw against SP_IBO and SP_IBO_COUNT
+        if (opcode != CP_LOAD_STATE6 || type != ST6_SHADER || src != SS6_INDIRECT || count != 3) {
+            fault(std::string(op) + text(" into SB6_IBO of type %llu, source %llu: the plain CP_LOAD_STATE6 of ST6_SHADER from memory is what this GPU model runs", type, src));
+            return false;
+        }
+        {
+            const uint64_t from = (p[1] & CP_LOAD_STATE6_1_EXT_SRC_ADDR__MASK) | uint64_t(p[2]) << 32;
+            if (at(from, uint64_t(units) * 64) == nullptr) {
+                fault(text("a load of %llu IBO descriptors from %#llx: outside every buffer", units, from));
+                return false;
+            }
+            gfxIbosLoaded_ = true;
+            gfxIbosFrom_ = from;
+            gfxIboUnits_ = units;
+        }
+        return true;
     default:
         fault(std::string(op) + text(" for state block %llu: not one this GPU model runs", block));
         return false;
@@ -322,6 +337,49 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
     default:
         break;
     }
+    return true;
+}
+
+// The IBO descriptors at TABLE, NIBO of them, as a dispatch's and a draw's are judged: each a buffer view whose
+// elements lie inside a buffer or a 2D image check2d takes, never all zeros.
+bool FakeGpu::checkIboDescriptors(uint64_t table, uint32_t nibo) {
+    using namespace a6xx;
+    const uint8_t* bytes = at(table, uint64_t(nibo) * 64);
+    if (table % kSpCsTexConstAlign != 0 || bytes == nullptr) {
+        fault(text("the IBO descriptors at %#llx: outside every buffer or not 64-byte aligned", table));
+        return false;
+    }
+    for (uint32_t i = 0; i < nibo; i++) {
+        uint32_t d[kTexConstDwords];
+        memcpy(d, bytes + 64 * i, sizeof d);
+        if (allZero(d, kTexConstDwords)) {
+            // an unaddressed slot gets a hole descriptor over real memory (compute.hpp); a zero one is what no Mesa
+            // driver puts in a bound IBO table, and what a slot nobody wrote would look like
+            fault(text("IBO %llu is all zeros: an unaddressed slot gets a hole descriptor, not zeros", i));
+            return false;
+        }
+        uint32_t type = fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT);
+        if (type == A6XX_TEX_2D) {
+            if (!check2d(d, "IBO", i, false)) {
+                return false;
+            }
+            continue;
+        }
+        if (type != A6XX_TEX_BUFFER) {
+            fault(text("IBO %llu is of type %llu: not a buffer or a 2D image descriptor", i, type));
+            return false;
+        }
+        uint64_t elements = fieldOf(d[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT) |
+                            uint64_t(fieldOf(d[1], A6XX_TEX_CONST_1_HEIGHT__MASK, A6XX_TEX_CONST_1_HEIGHT__SHIFT)) << 15;
+        uint64_t base = (d[4] & A6XX_TEX_CONST_4_BASE_LO__MASK) |
+                        uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
+        uint64_t start = 4ull * fieldOf(d[2], A6XX_TEX_CONST_2_STARTOFFSETTEXELS__MASK, A6XX_TEX_CONST_2_STARTOFFSETTEXELS__SHIFT);
+        if (elements == 0 || at(base + start, 4 * elements) == nullptr) {
+            fault(text("IBO %llu: %llu elements at %#llx: outside every buffer", i, elements, base + start));
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -500,40 +558,8 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
             fault("the IBO descriptors were not loaded from where SP_CS_IBO points, or not as many as SP_CS_IBO_COUNT says");
             return false;
         }
-        const uint8_t* bytes = at(table, uint64_t(nibo) * 64);
-        if (table % kSpCsTexConstAlign != 0 || bytes == nullptr) {
-            fault(text("the IBO descriptors at %#llx: outside every buffer or not 64-byte aligned", table));
+        if (!checkIboDescriptors(table, nibo)) {
             return false;
-        }
-        for (uint32_t i = 0; i < nibo; i++) {
-            uint32_t d[kTexConstDwords];
-            memcpy(d, bytes + 64 * i, sizeof d);
-            if (allZero(d, kTexConstDwords)) {
-                // an unaddressed slot gets a hole descriptor over real memory (compute.hpp); a zero one is what no Mesa
-                // driver puts in a bound IBO table, and what a slot nobody wrote would look like
-                fault(text("IBO %llu is all zeros: an unaddressed slot gets a hole descriptor, not zeros", i));
-                return false;
-            }
-            uint32_t type = fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT);
-            if (type == A6XX_TEX_2D) {
-                if (!check2d(d, "IBO", i, false)) {
-                    return false;
-                }
-                continue;
-            }
-            if (type != A6XX_TEX_BUFFER) {
-                fault(text("IBO %llu is of type %llu: not a buffer or a 2D image descriptor", i, type));
-                return false;
-            }
-            uint64_t elements = fieldOf(d[1], A6XX_TEX_CONST_1_WIDTH__MASK, A6XX_TEX_CONST_1_WIDTH__SHIFT) |
-                                uint64_t(fieldOf(d[1], A6XX_TEX_CONST_1_HEIGHT__MASK, A6XX_TEX_CONST_1_HEIGHT__SHIFT)) << 15;
-            uint64_t base = (d[4] & A6XX_TEX_CONST_4_BASE_LO__MASK) |
-                            uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
-            uint64_t start = 4ull * fieldOf(d[2], A6XX_TEX_CONST_2_STARTOFFSETTEXELS__MASK, A6XX_TEX_CONST_2_STARTOFFSETTEXELS__SHIFT);
-            if (elements == 0 || at(base + start, 4 * elements) == nullptr) {
-                fault(text("IBO %llu: %llu elements at %#llx: outside every buffer", i, elements, base + start));
-                return false;
-            }
         }
     }
     // --- the texture state, when the dispatch has any: Gallium's CS_TEX group (fd6_texture.cc:582-687) ---
@@ -1106,6 +1132,25 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             }
         }
     }
+    // the 3D IBO table: SP_IBO_COUNT descriptors loaded from where SP_IBO points, each judged as a dispatch's are; neither
+    // stage naming more IBOs in SP_xS_CONFIG.NIBO than the table holds
+    d.gfxIbos = reg(REG_A6XX_SP_IBO_COUNT);
+    for (uint32_t r : {REG_A6XX_SP_VS_CONFIG, REG_A6XX_SP_FS_CONFIG}) {
+        if (fieldOf(reg(r), A6XX_SP_CS_CONFIG_NIBO__MASK, A6XX_SP_CS_CONFIG_NIBO__SHIFT) > d.gfxIbos) {
+            fault(std::string(r == REG_A6XX_SP_VS_CONFIG ? "SP_VS_CONFIG" : "SP_FS_CONFIG") + text(" names more IBOs than SP_IBO_COUNT's %llu", d.gfxIbos));
+            return false;
+        }
+    }
+    if (d.gfxIbos != 0) {
+        const uint64_t table = reg64(REG_A6XX_SP_IBO);
+        if (!gfxIbosLoaded_ || gfxIbosFrom_ != table || gfxIboUnits_ != d.gfxIbos) {
+            fault("the 3D IBO descriptors were not loaded into SB6_IBO from where SP_IBO points, or not as many as SP_IBO_COUNT says");
+            return false;
+        }
+        if (!checkIboDescriptors(table, d.gfxIbos)) {
+            return false;
+        }
+    }
     d.vsUbos = uint32_t(vs_.ubos.size());
     d.fsUbos = uint32_t(fs_.ubos.size());
     // the depth: none, or a DEPTH6_32 buffer laid out as texture.cpp lays a Depth32Float texture (TILE6_3: 4096-aligned,
@@ -1582,6 +1627,9 @@ void FakeGpu::run(const Job& job) {
     cs_ = CsState{};
     vs_ = StageLoads{};
     fs_ = StageLoads{};
+    gfxIbosLoaded_ = false;
+    gfxIbosFrom_ = 0;
+    gfxIboUnits_ = 0;
     passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = false;
     drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = drawsWithoutDepthFlush_ = 0;
     written_.clear();

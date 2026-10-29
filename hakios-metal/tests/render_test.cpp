@@ -23,6 +23,7 @@
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
+#include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
@@ -303,9 +304,11 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.k.numSamp = 32;
         refused(r, p, pass, d, "hand_fs: numSamp 32 does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
         p = handProgram();
-        p.vs.k.numSsbos = 1;
+        p.vs.k.numSsbos = 1;   // a device buffer: the 3D IBO table, refused here for want of the buffer
         p.vs.k.numIbos = 1;
-        refused(r, p, pass, d, "hand_vs binds 1 device buffer(s) and 1 IBO(s): device buffers in a draw are not served yet (constant ones are)");
+        refused(r, p, pass, d, "hand_vs: no buffer bound at index 0 (a device buffer it addresses)");
+        p.vs.k.numIbos = 2;    // an image beside it
+        refused(r, p, pass, d, "hand_vs has 2 IBO slots for 1 device buffer(s): images in a draw are not served");
         p = handProgram();
         p.fs.k.numUbos = 1;   // an indexed constant buffer: served through a UBO descriptor, refused here for want of the buffer
         refused(r, p, pass, d, "hand_fs: no buffer bound at index 0 (a constant buffer it indexes)");
@@ -1770,7 +1773,8 @@ TEST(the_fake_refuses_the_packets_a_draw_stream_may_not_carry) {
         size_t load = w.e.findLoad(CP_LOAD_STATE6_GEOM, ST6_SHADER, SB6_VS_SHADER);
         w.words[load] = pm4::type7(CP_LOAD_STATE6, 3);
         w.words[load + 1] = loadState6_0(0, ST6_IBO, SS6_INDIRECT, SB6_IBO, 1);
-        CHECK(has(w.fault(), "a load into the 3D IBO table (SB6_IBO): no Mesa driver drives it non-bindless, not what this GPU model runs"));
+        // ST6_IBO into SB6_IBO: the 3D table takes ST6_SHADER, as both witnesses load it
+        CHECK(has(w.fault(), "CP_LOAD_STATE6 into SB6_IBO of type 3, source 2: the plain CP_LOAD_STATE6 of ST6_SHADER from memory is what this GPU model runs"));
     }
     {
         Twin w;
@@ -3052,4 +3056,65 @@ TEST(a_draw_loads_the_ubo_descriptors_an_ldc_reads_through) {
         if (((words[i + 1] & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) == ST6_UBO) words[i + 5] |= A6XX_UBO_1_SIZE__MASK;
     }
     CHECK(has(faultOf(r, words), "UBO descriptor 0 of the vertex stage: 32767 vec4 at"));
+}
+
+// --- a device buffer in a draw: the 3D pipeline's IBO table ------------------------------------------------------------------
+
+TEST(a_draw_loads_the_3d_ibo_table_an_ldib_reads_through) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const float xy[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+    auto pos = bufferWith(r, xy, sizeof xy);
+    Program p{kernels::tri_dpos_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_dpos"};
+    CHECK_EQ(p.vs.k.numSsbos, 1u);
+    Bindings vsb;
+    vsb.buffers = {Binding{pos.get(), 0}};
+    Encoded e(r, p, pass, wholeDraw(6), render::Options{}, vsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    CHECK_EQ(e.reg(REG_A6XX_SP_IBO_COUNT), 1u);
+    CHECK_EQ((e.reg(REG_A6XX_SP_VS_CONFIG) & A6XX_SP_CS_CONFIG_NIBO__MASK) >> A6XX_SP_CS_CONFIG_NIBO__SHIFT, 1u);
+    CHECK_EQ((e.reg(REG_A6XX_SP_FS_CONFIG) & A6XX_SP_CS_CONFIG_NIBO__MASK) >> A6XX_SP_CS_CONFIG_NIBO__SHIFT, 0u);
+    const uint64_t iboAt = uint64_t(e.reg(REG_A6XX_SP_IBO)) | uint64_t(e.reg(REG_A6XX_SP_IBO + 1)) << 32;
+    CHECK_EQ(iboAt, e.table->gpuAddress() + render::kTableVsAt);
+    // the load: the plain CP_LOAD_STATE6, ST6_SHADER into SB6_IBO, from the table, one unit
+    size_t load = e.find(CP_LOAD_STATE6);
+    CHECK(load != size_t(-1));
+    if (load != size_t(-1)) CHECK_EQ(e.stream.words()[load + 1], loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_IBO, 1));
+    TexConst want = bufferIbo(pos->gpuAddress(), uint32_t(pos->length() / 4));
+    CHECK(memcmp(e.tableWords() + render::kTableVsAt / 4, want.dword, sizeof want.dword) == 0);
+    auto cb = drawOnce(r, p, pass, wholeDraw(6), render::Options{}, vsb);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.gfxIbos, 1u);
+    // a draw without device buffers: the count 0 and no load
+    Encoded flat(r, flatProgram(), pass, wholeDraw());
+    CHECK_EQ(flat.reg(REG_A6XX_SP_IBO_COUNT), 0u);
+    CHECK_EQ(flat.find(CP_LOAD_STATE6), size_t(-1));
+    // refused: nothing bound; the two stages at one index with different buffers (one table for both)
+    Encoded none(r, p, pass, wholeDraw(6));
+    CHECK(!none.ok);
+    expectRefusal(none.error, "tri_dpos_vs_air: no buffer bound at index 0 (a device buffer it addresses)");
+    auto other = bufferWith(r, xy, sizeof xy);
+    Program both = p;
+    both.fs.k.numSsbos = 1;
+    both.fs.k.numIbos = 1;
+    Bindings fsb;
+    fsb.buffers = {Binding{other.get(), 0}};
+    Encoded clash(r, both, pass, wholeDraw(6), render::Options{}, vsb, fsb);
+    CHECK(!clash.ok);
+    expectRefusal(clash.error, "the vertex and fragment stages bind different device buffers at index 0: the 3D pipeline has one IBO table for both");
+    fsb.buffers = {Binding{pos.get(), 0}};   // the same binding in both: one table entry serves them
+    Encoded shared(r, both, pass, wholeDraw(6), render::Options{}, vsb, fsb);
+    CHECK(shared.ok);
+    CHECK_EQ(shared.reg(REG_A6XX_SP_IBO_COUNT), 1u);
+    // the fake's twins: a count past the load, and the descriptor zeroed
+    std::vector<uint32_t> words = e.stream.words();
+    words[e.findLastReg(REG_A6XX_SP_IBO_COUNT)] = 2;   // (the batch start's static table writes it 0 first)
+    CHECK(has(faultOf(r, words), "the 3D IBO descriptors were not loaded into SB6_IBO from where SP_IBO points, or not as many as SP_IBO_COUNT says"));
+    memset(static_cast<uint8_t*>(e.table->contents()) + render::kTableVsAt, 0, 64);
+    CHECK(has(faultOf(r, e.stream.words()), "IBO 0 is all zeros"));
 }
