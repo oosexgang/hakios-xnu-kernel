@@ -51,6 +51,9 @@ struct hakios_metal_texture {
 struct hakios_metal_sampler {
     Sampler sampler;                    // four words, copied into each dispatch's table: nothing of it stays on the GPU
 };
+struct hakios_metal_program {
+    std::shared_ptr<CompiledProgram> program;   // shared with every command buffer that drew with it and has not completed
+};
 
 extern "C" {
 
@@ -370,6 +373,132 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const
 int hakios_metal_cb_dispatch(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
                              hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
     return hakios_metal_cb_dispatch2(cb, k, groups, threads, buffers, offsets, count, nullptr, 0, nullptr, 0);
+}
+
+// --- the render path: a program of two stages, and one draw of it -------------------------------------------------------
+
+static hakios_metal_program* programOf(std::shared_ptr<CompiledStage> vs, std::shared_ptr<CompiledStage> fs, unsigned colorPixelFormat) {
+    std::string why;
+    std::unique_ptr<CompiledProgram> p = linkProgram(std::move(vs), std::move(fs), PixelFormat(colorPixelFormat), &why);
+    if (p == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_program;
+    r->program = std::move(p);
+    return r;
+}
+
+hakios_metal_program* hakios_metal_program_new_bitcode(const void* vsBitcode, size_t vsSize, const void* fsBitcode, size_t fsSize, unsigned colorPixelFormat) {
+    std::string why;
+    std::unique_ptr<CompiledStage> vs = compileStage(vsBitcode, vsSize, &why);
+    if (vs == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why);
+    if (fs == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    return programOf(std::move(vs), std::move(fs), colorPixelFormat);
+}
+
+// FUNCTION of LIBRARY as WANT (a vertex or a fragment function): its bitcode, or nullptr with the reason left
+static bool functionBitcode(hakios_metal_library* l, const char* function, MetalFunction::Type want, const uint8_t** bytes, uint64_t* length) {
+    const MetalFunction* f = l->lib.find(function != nullptr ? function : "");
+    if (f == nullptr || !l->lib.bitcode(*f, bytes, length)) {
+        failed(std::string("no function ") + (function ? function : "(null)") + " in the library's " + std::to_string(l->lib.functions().size()));
+        return false;
+    }
+    if (f->type != want) {
+        failed(std::string(function) + " is not a " + (want == MetalFunction::kVertex ? "vertex" : "fragment") + " function (TYPE " + std::to_string(f->type) + ")");
+        return false;
+    }
+    return true;
+}
+
+hakios_metal_program* hakios_metal_program_new(hakios_metal_library* vsLibrary, const char* vs, hakios_metal_library* fsLibrary, const char* fs,
+                                               unsigned colorPixelFormat) {
+    const uint8_t* vsBytes = nullptr;
+    const uint8_t* fsBytes = nullptr;
+    uint64_t vsLength = 0, fsLength = 0;
+    if (!functionBitcode(vsLibrary, vs, MetalFunction::kVertex, &vsBytes, &vsLength) || !functionBitcode(fsLibrary, fs, MetalFunction::kFragment, &fsBytes, &fsLength)) {
+        return nullptr;
+    }
+    return hakios_metal_program_new_bitcode(vsBytes, size_t(vsLength), fsBytes, size_t(fsLength), colorPixelFormat);
+}
+
+void hakios_metal_program_free(hakios_metal_program* p) { delete p; }
+const char* hakios_metal_program_name(hakios_metal_program* p) { return p->program->name.c_str(); }
+
+// STAGE 0 is the vertex stage, 1 the fragment stage; another number has no resources
+static const CompiledStage* stageOf(hakios_metal_program* p, unsigned stage) {
+    return stage == 0 ? p->program->vs.get() : stage == 1 ? p->program->fs.get() : nullptr;
+}
+
+unsigned hakios_metal_program_resource_count(hakios_metal_program* p, unsigned stage) {
+    const CompiledStage* s = stageOf(p, stage);
+    return s != nullptr ? unsigned(s->resources.size()) : 0;
+}
+
+int hakios_metal_program_resource(hakios_metal_program* p, unsigned stage, unsigned i, unsigned* kind, unsigned* index, unsigned* sizeBytes) {
+    const CompiledStage* s = stageOf(p, stage);
+    if (s == nullptr || i >= s->resources.size()) return -1;
+    const Resource& r = s->resources[i];
+    if (kind) *kind = unsigned(r.kind);
+    if (index) *index = r.index;
+    if (sizeBytes) *sizeBytes = r.sizeBytes;
+    return 0;
+}
+
+int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
+                         const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
+                         unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
+                         const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount) {
+    // the two [[buffer(n)]] tables are step two's: no stage of the first draw binds one (linkProgram refused any that would),
+    // so a table with entries is a draw this driver cannot serve yet, said by name rather than ignored
+    (void)vsBuffers;
+    (void)vsOffsets;
+    (void)fsBuffers;
+    (void)fsOffsets;
+    if (vsCount != 0 || fsCount != 0) {
+        std::string why = std::to_string(vsCount) + " vertex-stage and " + std::to_string(fsCount) + " fragment-stage buffers bound: the first draw binds no buffer in either stage";
+        cb->cb->refuse(why);
+        failed(why);
+        return -1;
+    }
+    RenderPass rp;
+    const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
+    rp.color0 = target;
+    if (pass != nullptr) {
+        rp.load = LoadAction(pass->load_action);
+        rp.store = StoreAction(pass->store_action);
+        for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
+    }
+    Draw d;
+    d.primitive = Primitive(primitive);
+    d.vertexStart = vertexStart;
+    d.vertexCount = vertexCount;
+    d.instanceCount = instanceCount;
+    // MTLRenderCommandEncoder's defaults: a viewport over the whole attachment with depth 0..1, no scissor (the whole attachment)
+    if (viewport != nullptr) {
+        d.viewport = Viewport{viewport->x, viewport->y, viewport->width, viewport->height, viewport->znear, viewport->zfar};
+    } else {
+        d.viewport = Viewport{0, 0, target != nullptr ? double(target->width()) : 1.0, target != nullptr ? double(target->height()) : 1.0, 0, 1};
+    }
+    if (scissor != nullptr) {
+        d.scissor = Scissor{scissor->x, scissor->y, scissor->width, scissor->height};
+    }
+    if (!cb->cb->draw(p->program->program, rp, d, Bindings{}, Bindings{})) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    // the target's memory and object, and the program's words, live until the GPU is done, whatever the caller frees meanwhile
+    cb->cb->keep(target->buffer());
+    cb->cb->keepAlive(pass->color0->texture);
+    cb->cb->keepAlive(p->program);
+    return 0;
 }
 
 void hakios_metal_cb_fail(hakios_metal_cb* cb, const char* why) { cb->cb->refuse(why != nullptr ? why : "refused"); }

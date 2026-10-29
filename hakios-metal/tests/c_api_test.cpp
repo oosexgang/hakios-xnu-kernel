@@ -332,3 +332,131 @@ TEST(c_api_texture_dispatch) {
     hakios_metal_queue_free(q);
     hakios_metal_close(d);
 }
+
+// --- programs and draws through C ------------------------------------------------------------------------------------------
+
+TEST(c_api_program_and_draw) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    // a render target through C: usage bit 4 (HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET) alone and with read; a bit above it refused
+    hakios_metal_texture* rt = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET | 1);
+    CHECK(rt != nullptr);
+    CHECK_EQ(hakios_metal_texture_usage(rt), 5u);
+    hakios_metal_texture* rtOnly = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET);
+    CHECK(rtOnly != nullptr);
+    hakios_metal_texture_free(rtOnly);
+    CHECK(hakios_metal_texture_new(d, 2, 70, 64, 64, 8) == nullptr);
+    CHECK(strstr(hakios_metal_error(), "texture usage 8 has bits other than shader read (1), shader write (2) and render target (4)") != nullptr);
+    std::vector<uint8_t> vsBc = readFile("out/host/kernels/tri_flat_vs.bc"), fsBc = readFile("out/host/kernels/tri_flat_fs.bc");
+    uint8_t garbage[64] = {'B', 'C', 0xc0, 0xde};
+    if (!hakios_metal_has_compiler()) {
+        // without the compiler, a program is a refusal by name, whatever the bytes
+        CHECK(hakios_metal_program_new_bitcode(garbage, sizeof garbage, garbage, sizeof garbage, 70) == nullptr);
+        CHECK(strstr(hakios_metal_error(), "no compiler in this build") != nullptr);
+        std::printf("       (no compiler in this build: the C interface's program and draw did not run)\n");
+        hakios_metal_texture_free(rt);
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK(!vsBc.empty() && !fsBc.empty());
+    // the program: tri_flat's two stages linked for RGBA8Unorm (70); its name and its empty resource tables
+    hakios_metal_program* p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 70);
+    CHECK(p != nullptr);
+    if (p == nullptr) {
+        std::printf("       %s\n", hakios_metal_error());
+        hakios_metal_texture_free(rt);
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK(strcmp(hakios_metal_program_name(p), "tri_flat_vs+tri_flat_fs") == 0);
+    CHECK_EQ(hakios_metal_program_resource_count(p, 0), 0u);
+    CHECK_EQ(hakios_metal_program_resource_count(p, 1), 0u);
+    CHECK_EQ(hakios_metal_program_resource_count(p, 2), 0u);
+    CHECK_EQ(hakios_metal_program_resource(p, 0, 0, nullptr, nullptr, nullptr), -1);
+    CHECK_EQ(hakios_metal_program_resource(p, 7, 0, nullptr, nullptr, nullptr), -1);
+    // the refusals of a program: the wrong format class, a kernel where a stage is wanted, garbage
+    CHECK(hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 53) == nullptr);   // R32Uint
+    CHECK(strcmp(hakios_metal_error(), "the fragment stage tri_flat_fs returns floats into R32Uint, which holds integers") == 0);
+    std::vector<uint8_t> kernel = readFile("out/host/kernels/fill_id.bc");
+    CHECK(hakios_metal_program_new_bitcode(kernel.data(), kernel.size(), fsBc.data(), fsBc.size(), 70) == nullptr);
+    CHECK(strcmp(hakios_metal_error(), "fill_id is a kernel: use compileAir") == 0);
+    CHECK(hakios_metal_program_new_bitcode(fsBc.data(), fsBc.size(), vsBc.data(), vsBc.size(), 70) == nullptr);   // swapped
+    CHECK(strcmp(hakios_metal_error(), "tri_flat_fs is not a vertex stage") == 0);
+    CHECK(hakios_metal_program_new_bitcode(garbage, sizeof garbage, fsBc.data(), fsBc.size(), 70) == nullptr);
+    CHECK(hakios_metal_error()[0] != '\0');
+    // one draw: the whole target (NULL viewport and scissor), triangles (3), vertices 0..3, one instance, no buffers
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}};
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    hakios_metal_program_free(p);   // the command buffer keeps what the draw needs
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    CHECK(hakios_metal_cb_error(cb)[0] == 0);
+    hakios_metal_cb_free(cb);
+    // and with a viewport and a scissor given, the second triangle, a strip
+    p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 70);
+    CHECK(p != nullptr);
+    struct hakios_metal_viewport vp = {0, 0, 32, 64, 0, 1};
+    struct hakios_metal_scissor sc = {0, 0, 32, 64};
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, &vp, &sc, 4, 3, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    // the refusals of a draw, each on its sentence, each on a fresh command buffer (a command buffer keeps its first error)
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 0, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "a draw of 0 vertices") == 0);
+    hakios_metal_cb_free(cb);
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 1, 0, 2, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "primitive 1: triangles (3) and triangle strips (4) are what the first draw serves") == 0);
+    hakios_metal_cb_free(cb);
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 2, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "2 instances: the first draw runs exactly 1") == 0);
+    hakios_metal_cb_free(cb);
+    hakios_metal_buffer* b = hakios_metal_buffer_new(d, 64);
+    hakios_metal_buffer* one[1] = {b};
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, one, nullptr, 1, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "1 vertex-stage and 0 fragment-stage buffers bound: the first draw binds no buffer in either stage") == 0);
+    CHECK(strcmp(hakios_metal_cb_error(cb), hakios_metal_error()) == 0);
+    hakios_metal_cb_free(cb);
+    hakios_metal_buffer_free(b);
+    hakios_metal_texture* plain = hakios_metal_texture_new(d, 2, 70, 64, 64, 3);
+    struct hakios_metal_render_pass notRt = {plain, 1, 1, {0, 0, 0, 0}};
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &notRt, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "the 64 x 64 RGBA8Unorm texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it") == 0);
+    hakios_metal_cb_free(cb);
+    hakios_metal_texture_free(plain);
+    struct hakios_metal_render_pass clear = {rt, 2, 1, {0, 0, 0, 1}};
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &clear, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strstr(hakios_metal_error(), "load action Clear: a clear is a draw in turnip's r3d path or a 2D blit") != nullptr);
+    hakios_metal_cb_free(cb);
+    struct hakios_metal_render_pass none = {nullptr, 1, 1, {0, 0, 0, 0}};
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &none, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "a render pass with no colour attachment: one target is what the first draw serves") == 0);
+    hakios_metal_cb_free(cb);
+    struct hakios_metal_viewport outside = {1, 0, 64, 64, 0, 1};
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, &outside, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strcmp(hakios_metal_error(), "viewport (1, 0, 64, 64) lies outside the 64 x 64 target") == 0);
+    hakios_metal_cb_free(cb);
+    // the texture freed while a draw over it is in flight: the command buffer keeps its memory
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    hakios_metal_texture_free(rt);
+    hakios_metal_program_free(p);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
