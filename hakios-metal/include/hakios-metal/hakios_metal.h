@@ -128,6 +128,11 @@ unsigned hakios_metal_texture_levels(hakios_metal_texture *texture);
  * a depth format. */
 hakios_metal_texture *hakios_metal_texture_new_iosurface(hakios_metal_device *device, unsigned surface_id, unsigned plane,
     unsigned pixel_format, unsigned width, unsigned height, unsigned usage);
+/* the same for a two-plane format (YCbCr8_420_2P, 500) over a '420f' or '420v' surface: CHROMA_OFFSET where the surface's
+ * second plane starts in its memory (IOSurfaceGetBaseAddressOfPlane(s, 1) less IOSurfaceGetBaseAddress(s)) and
+ * CHROMA_ROW_BYTES its rows; both planes are sampled as one texture. */
+hakios_metal_texture *hakios_metal_texture_new_iosurface2(hakios_metal_device *device, unsigned surface_id, unsigned plane,
+    unsigned pixel_format, unsigned width, unsigned height, unsigned usage, uint64_t chroma_offset, unsigned chroma_row_bytes);
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture *texture);   /* its IOSurface's ID, 0 for a texture of its own */
 void hakios_metal_texture_free(hakios_metal_texture *texture);
 void *hakios_metal_texture_contents(hakios_metal_texture *texture);        /* the GPU's rows, write-combined */

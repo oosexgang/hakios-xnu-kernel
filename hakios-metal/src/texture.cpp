@@ -43,6 +43,8 @@ constexpr FormatInfo kFormats[] = {
     // DEPTH6_32 to the RB (fd6_pipe2depth)
     {PixelFormat::kDepth32Float, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float", true},
     {PixelFormat::kDepth32FloatStencil8, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float_Stencil8", true, true},
+    // NV12: R8_G8B8_420_UNORM, WZYX (fd6_format_table.c:357): Y in x, Cb in y, Cr in z, and no alpha, so w reads one
+    {PixelFormat::kYCbCr8_420_2P, FMT6_R8_G8B8_2PLANE_420_UNORM, 1, WZYX, false, false, kElemFloat, "YCbCr8_420_2P", false, false, true},
 };
 
 const char* typeName(TextureType t) {
@@ -144,6 +146,10 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, "pixel format " + n(uint32_t(desc.format)) + ": not one of the formats served (texture.hpp: PixelFormat)");
         return nullptr;
     }
+    if (info->twoPlane) {
+        refuse(why, std::string("a ") + info->name + " texture of its own memory: the format is served over a two-plane IOSurface alone");
+        return nullptr;
+    }
     // TEX_CONST_1's WIDTH and HEIGHT are 15 bits each (a6xx.hpp: A6XX_TEX_CONST_1_WIDTH__MASK)
     if (desc.width == 0 || desc.width > 32767 || desc.height == 0 || desc.height > 32767) {
         refuse(why, "a texture of " + n(desc.width) + " x " + n(desc.height) + ": each side is 1 to 32767 (the descriptor's fields are 15 bits)");
@@ -215,6 +221,9 @@ bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
+    if (info_->twoPlane) {
+        return refuse(why, std::string("a ") + info_->name + " texture is two planes of different sizes: write the surface's planes through the surface");
+    }
     if (contents() == nullptr) {
         return refuse(why, "IOSurface " + n(surface_) + "'s memory is mapped nowhere in this process by the driver: write it through the surface");
     }
@@ -236,6 +245,9 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
+    if (info_->twoPlane) {
+        return refuse(why, std::string("a ") + info_->name + " texture is two planes of different sizes: read the surface's planes through the surface");
+    }
     if (contents() == nullptr) {
         return refuse(why, "IOSurface " + n(surface_) + "'s memory is mapped nowhere in this process by the driver: read it through the surface");
     }
@@ -255,8 +267,17 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
 a6xx::TexConst Texture::sampledDescriptor() const {
     // PITCHALIGN = log2(pitch alignment / 64) = log2(cpp) for the pitch texturePitch chose (fd6_layout.c:194-201, fd6_view.c:244);
     // a surface's rows carry the alignment their pitch has, wrapSurface worked it out
-    return texture2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel), info_->fmt6,
-                     info_->swap, info_->hasAlpha, info_->srgb, desc_.mipLevels, desc_.mipLevels > 1 ? buffer_->length() : 0);
+    a6xx::TexConst d = texture2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel),
+                                 info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb, desc_.mipLevels, desc_.mipLevels > 1 ? buffer_->length() : 0);
+    if (info_->twoPlane) {
+        // the second plane as fdl6_view_init gives it (fd6_view.c:255-289): its pitch over MIN_LOD_CLAMP's dword and its
+        // address in dwords 7 and 8; MIPLVLS 0, its bits being the chroma siting there (cosited, Metal's default)
+        const uint64_t chroma = buffer_->gpuAddress() + chroma_.offset;
+        d.dword[6] = A6XX_TEX_CONST_6_PLANE_PITCH(chroma_.rowBytes);
+        d.dword[7] = uint32_t(chroma);
+        d.dword[8] = uint32_t(chroma >> 32);
+    }
+    return d;
 }
 
 a6xx::TexConst Texture::levelDescriptor(uint32_t level) const {
@@ -269,7 +290,7 @@ a6xx::TexConst Texture::storageDescriptor() const {
     return image2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
 }
 
-std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why) {
+std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why, const SurfacePlane* chroma) {
     const FormatInfo* info = formatInfo(desc.format);
     if (info == nullptr || desc.type != TextureType::k2D) {
         refuse(why, "a texture over IOSurface " + n(surfaceId) + " of type " + n(uint32_t(desc.type)) + " and pixel format " + n(uint32_t(desc.format)) +
@@ -290,6 +311,11 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
         return nullptr;
     }
     const std::string name = "IOSurface " + n(surfaceId);
+    if (info->twoPlane) {
+        std::shared_ptr<Texture> t = wrapTwoPlanes(std::move(buffer), s, name, desc, info, chroma, why);
+        if (t != nullptr) t->surface_ = surfaceId;
+        return t;
+    }
     if (s.planes > 1) {
         refuse(why, name + " has " + n(s.planes) + " planes: a single-plane surface is what is served");
         return nullptr;
@@ -318,6 +344,39 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
     uint32_t pitchAlign = 0;
     while (pitchAlign < log2u(info->bytesPerPixel) && s.rowBytes % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
     return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, pitchAlign, surfaceId));
+}
+
+// A '420f' or '420v' surface as one YCbCr8_420_2P texture: plane 0 the luma rows the kernel describes, plane 1 the
+// interleaved CbCr rows at half the size the caller read off the surface. Both must be rows the TP takes from their
+// own addresses (64-byte pitches and starts, as for any linear texture here) and lie inside the surface's memory.
+std::shared_ptr<Texture> Texture::wrapTwoPlanes(std::shared_ptr<Buffer> buffer, const SurfaceInfo& s, const std::string& name, const TextureDesc& desc,
+                                                const FormatInfo* info, const SurfacePlane* chroma, std::string* why) {
+    const uint32_t f420 = 0x34323066u, v420 = 0x34323076u;   // '420f', '420v'
+    if (s.planes != 2 || chroma == nullptr || (s.pixelFormat != f420 && s.pixelFormat != v420)) {
+        refuse(why, std::string("a ") + info->name + " texture over " + name + " of " + n(s.planes) + " plane(s) and pixel format " + n(s.pixelFormat) +
+                        (chroma == nullptr ? " with no second plane given" : "") + ": a two-plane '420f' or '420v' surface and its second plane are what it takes");
+        return nullptr;
+    }
+    if (desc.usage != kTextureUsageRead || desc.mipLevels != 1) {
+        refuse(why, std::string("a ") + info->name + " texture of usage " + n(desc.usage) + " and " + n(desc.mipLevels) +
+                        " level(s): one level, read by shaders, is what it serves (the TP reads NV12; nothing here writes it)");
+        return nullptr;
+    }
+    if (desc.width == 0 || desc.height == 0 || desc.width > s.width || desc.height > s.height) {
+        refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture over the " + n(s.width) + " x " + n(s.height) + " " + name);
+        return nullptr;
+    }
+    const uint64_t cw = (uint64_t(desc.width) + 1) / 2, ch = (uint64_t(desc.height) + 1) / 2;
+    if (s.rowBytes % 64 != 0 || s.offset % 64 != 0 || s.rowBytes < desc.width || uint64_t(s.offset) + uint64_t(s.rowBytes) * desc.height > s.size ||
+        chroma->rowBytes % 64 != 0 || chroma->offset % 64 != 0 || chroma->rowBytes < 2 * cw || chroma->offset + uint64_t(chroma->rowBytes) * ch > s.size) {
+        refuse(why, name + "'s planes, luma rows of " + n(s.rowBytes) + " bytes from " + n(s.offset) + ", chroma rows of " + n(chroma->rowBytes) + " from " +
+                        n(chroma->offset) + ", in its " + n(s.size) + " bytes: each plane wants a pitch and a start that are multiples of 64 bytes, rows that "
+                        "hold its width, and its rows inside the surface");
+        return nullptr;
+    }
+    std::shared_ptr<Texture> t(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, 0));
+    t->chroma_ = *chroma;
+    return t;
 }
 
 bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {

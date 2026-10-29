@@ -2964,6 +2964,56 @@ TEST(a_texture_over_an_iosurface_draws_into_the_surfaces_memory) {
     }
 }
 
+// CoreAnimation's YCbCr8_420_2P (500) over a '420f' surface: one texture of both planes, the luma at the surface's
+// offset and the chroma where the caller says, in the descriptor as fdl6_view_init writes NV12 -- FMT
+// R8_G8B8_2PLANE_420_UNORM, the chroma pitch in dword 6, its address in 7 and 8 -- and refused when it is not that.
+TEST(a_two_plane_surface_is_one_ycbcr_texture) {
+    using namespace a6xx;
+    Rig r;
+    const uint32_t k420f = 0x34323066u, kBGRA = 0x42475241u;
+    r.fake->addSurface(11, 64, 64, 128, k420f, 0, 2);
+    r.fake->addSurface(12, 64, 64, 128, kBGRA);
+    TextureDesc d;
+    d.format = PixelFormat::kYCbCr8_420_2P;
+    d.width = d.height = 64;
+    d.usage = kTextureUsageRead;
+    const Texture::SurfacePlane chroma{128 * 64, 128};
+    std::string why;
+    auto t = Texture::wrapSurface(*r.gpu, 11, d, &why, &chroma);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::fprintf(stderr, "  %s\n", why.c_str());
+        return;
+    }
+    const TexConst c = t->sampledDescriptor();
+    CHECK_EQ((c.dword[0] & A6XX_TEX_CONST_0_FMT__MASK) >> A6XX_TEX_CONST_0_FMT__SHIFT, uint32_t(FMT6_R8_G8B8_2PLANE_420_UNORM));
+    CHECK_EQ(c.dword[0] & A6XX_TEX_CONST_0_MIPLVLS__MASK, 0u);
+    CHECK_EQ(c.dword[4], uint32_t(t->gpuAddress()));
+    CHECK_EQ(c.dword[6], 128u << 8);
+    CHECK_EQ(c.dword[7], uint32_t(t->buffer()->gpuAddress() + 128 * 64));
+    CHECK_EQ(c.dword[8], uint32_t((t->buffer()->gpuAddress() + 128 * 64) >> 32));
+    // refused: no second plane, a one-plane surface, a usage it does not serve, a chroma plane off the end, a texture
+    // of its own memory, and a CPU write
+    auto refusedWith = [&](uint32_t id, const TextureDesc& desc, const Texture::SurfacePlane* p, const char* want) {
+        std::string w;
+        CHECK(Texture::wrapSurface(*r.gpu, id, desc, &w, p) == nullptr);
+        CHECK(has(w, want));
+        if (!has(w, want)) std::fprintf(stderr, "  got \"%s\"\n", w.c_str());
+    };
+    refusedWith(11, d, nullptr, "with no second plane given");
+    refusedWith(12, d, &chroma, "a two-plane '420f' or '420v' surface and its second plane are what it takes");
+    TextureDesc rt = d;
+    rt.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    refusedWith(11, rt, &chroma, "one level, read by shaders, is what it serves");
+    const Texture::SurfacePlane far{128 * 64 * 2, 128};
+    refusedWith(11, d, &far, "chroma rows of 128 from 16384");
+    CHECK(Texture::make(*r.gpu, d, &why) == nullptr);
+    CHECK(has(why, "served over a two-plane IOSurface alone"));
+    uint8_t px[4] = {};
+    CHECK(!t->replace(0, 0, 0, 1, 1, px, 4, &why));
+    CHECK(has(why, "two planes of different sizes"));
+}
+
 TEST(a_texture_over_an_iosurface_refuses_what_the_gpu_cannot_take) {
     Rig r;
     const uint32_t kBGRA = 0x42475241u, kRGBA = 0x52474241u;

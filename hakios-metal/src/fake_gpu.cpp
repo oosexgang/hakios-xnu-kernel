@@ -141,7 +141,10 @@ void FakeGpu::addSurface(uint32_t id, uint32_t width, uint32_t height, uint32_t 
                          bool client) {
     std::lock_guard<std::mutex> g(lock_);
     Surface s{width, height, rowBytes, pixelFormat, offset, planes, client, {}, 0};
-    s.bytes.resize((uint64_t(offset) + uint64_t(rowBytes) * height + 0xfff) & ~0xfffull);
+    // (a two-plane surface carries an NV12 chroma plane of the same row bytes after the luma, as IOSurface lays out a
+    // '420f' one: the kernel maps the whole allocation, so the fake's memory holds both)
+    const uint64_t chroma = planes == 2 ? uint64_t(rowBytes) * ((height + 1) / 2) : 0;
+    s.bytes.resize((uint64_t(offset) + uint64_t(rowBytes) * height + chroma + 0xfff) & ~0xfffull);
     surfaces_[id] = std::move(s);
 }
 
@@ -1887,7 +1890,8 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         if (it == surfaces_.end()) return ENOENT;          // kIOReturnNotFound
         Surface& s = it->second;
         if (s.client) return ENOTSUP;                      // kIOReturnUnsupported: memory of a program's own
-        r->size = (uint64_t(s.offset) + uint64_t(s.rowBytes) * s.height + 0xfff) & ~0xfffull;
+        r->size = (uint64_t(s.offset) + uint64_t(s.rowBytes) * s.height + (s.planes == 2 ? uint64_t(s.rowBytes) * ((s.height + 1) / 2) : 0) + 0xfff) &
+                  ~0xfffull;
         r->offset = s.offset;
         r->rowBytes = s.rowBytes;
         r->width = s.width;

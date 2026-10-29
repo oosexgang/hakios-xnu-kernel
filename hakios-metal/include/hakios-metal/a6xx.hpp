@@ -98,6 +98,7 @@ enum a6xx_format : uint32_t {
     FMT6_32_32_UINT = 104,         // a6xx.xml.h:122
     FMT6_32_32_32_FLOAT = 116,     // a6xx.xml.h:129  a float3 attribute
     FMT6_32_32_32_32_FLOAT = 130,  // a6xx.xml.h:133  RGBA32Float
+    FMT6_R8_G8B8_2PLANE_420_UNORM = 142,   // a6xx.xml.h:139  NV12: Y and an interleaved CbCr plane at half size (fd6_format_table.c:357-358)
     FMT6_32_32_32_32_UINT = 131,   // a6xx.xml.h:134  RGBA32Uint
     FMT6_NONE = 255,               // a6xx.xml.h:189  what the fake GPU's bytes-per-pixel table answers for a format it does not know
 };
@@ -998,6 +999,13 @@ inline constexpr uint32_t A6XX_TEX_CONST_6_MIN_LOD_CLAMP__MASK = 0x00000fff;    
 inline constexpr uint32_t A6XX_TEX_CONST_6_MIN_LOD_CLAMP__SHIFT = 0;                    // a6xx.xml.h:11449
 constexpr uint32_t A6XX_TEX_CONST_6_MIN_LOD_CLAMP(uint32_t fixed88) {
     return field(fixed88, A6XX_TEX_CONST_6_MIN_LOD_CLAMP__SHIFT, A6XX_TEX_CONST_6_MIN_LOD_CLAMP__MASK);
+}
+
+// A two-plane YUV texture's second plane: its pitch in bytes, the field the MIPLVLS-free layout reuses (fd6_view.c:280-281)
+inline constexpr uint32_t A6XX_TEX_CONST_6_PLANE_PITCH__MASK = 0xffffff00;              // a6xx.xml.h:11454
+inline constexpr uint32_t A6XX_TEX_CONST_6_PLANE_PITCH__SHIFT = 8;                      // a6xx.xml.h:11455
+constexpr uint32_t A6XX_TEX_CONST_6_PLANE_PITCH(uint32_t bytes) {
+    return field(bytes, A6XX_TEX_CONST_6_PLANE_PITCH__SHIFT, A6XX_TEX_CONST_6_PLANE_PITCH__MASK);
 }
 
 struct TexConst {

@@ -48,6 +48,11 @@ enum class PixelFormat : uint32_t {
     kRGBA32Float = 125,
     kDepth32Float = 252,   // a depth attachment only: tiled (TILE6_3), since the hardware has no linear depth buffer
     kDepth32FloatStencil8 = 260,   // the same depth plane and a separate S8 plane after it (turnip's D32_SFLOAT_S8_UINT)
+    // Metal's private 500, the format CoreAnimation asks for over a '420f' or '420v' IOSurface (a decoded photo): both
+    // planes as one texture, sampled as (Y, Cb, Cr) with no conversion -- the fragment function applies its own
+    // ycbcr_matrix (fixed_frag's fc_has_ycbcr_matrix). The TP's NV12 format reads exactly that. Over a surface alone,
+    // and for reading alone.
+    kYCbCr8_420_2P = 500,
 };
 
 // MTLTextureType (MTLTexture.h). Only k2D is served; the others are named here so a refusal can name them back.
@@ -69,6 +74,7 @@ struct FormatInfo {
     const char* name;          // Metal's name, for messages
     bool depth = false;        // a depth format: TILE6_3, render-target usage alone, no CPU access (texture.cpp says why)
     bool stencil = false;      // ...with a stencil plane of its own (Texture::stencilPlane)
+    bool twoPlane = false;     // luma and an interleaved half-size chroma plane, each with its own address (TEX_CONST_6..8)
 };
 // nullptr when the format is not served
 const FormatInfo* formatInfo(PixelFormat format);
@@ -106,7 +112,14 @@ public:
     // surface, more than one plane, a size past the surface's, rows the GPU cannot take (a pitch or a start that is not
     // a multiple of 64 bytes, or rows shorter than the width), a FourCC that is not the format's ('BGRA' for the BGRA8
     // pair, 'RGBA' for the RGBA8 pair; 0 is taken as any), a depth format.
-    static std::shared_ptr<Texture> wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why);
+    // A two-plane format (YCbCr8_420_2P) takes the surface's second plane too: CHROMA its offset in the surface's memory
+    // and its row bytes, which the caller reads off the surface (the kernel describes plane 0 alone).
+    struct SurfacePlane {
+        uint64_t offset;
+        uint32_t rowBytes;
+    };
+    static std::shared_ptr<Texture> wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why,
+                                                const SurfacePlane* chroma = nullptr);
     uint32_t surface() const { return surface_; }   // the IOSurface's ID, 0 for a texture of its own memory
 
     const TextureDesc& desc() const { return desc_; }
@@ -158,6 +171,8 @@ public:
     a6xx::TexConst storageDescriptor() const;
 
 private:
+    static std::shared_ptr<Texture> wrapTwoPlanes(std::shared_ptr<Buffer> buffer, const SurfaceInfo& s, const std::string& name, const TextureDesc& desc,
+                                                  const FormatInfo* info, const SurfacePlane* chroma, std::string* why);
     Texture(std::shared_ptr<Buffer> buffer, const TextureDesc& desc, const FormatInfo* info, uint64_t pitch, uint64_t offset = 0,
             uint32_t pitchAlign = ~0u, uint32_t surface = 0)
         : buffer_(std::move(buffer)), desc_(desc), info_(info), pitch_(pitch), offset_(offset), pitchAlign_(pitchAlign), surface_(surface) {}
@@ -168,6 +183,7 @@ private:
     uint64_t offset_;        // where the pixels start in the buffer (an IOSurface's offset; 0 for a texture of its own)
     uint32_t pitchAlign_;    // TEX_CONST_2.PITCHALIGN; ~0u: log2(cpp), the layout's own (texturePitch)
     uint32_t surface_;
+    SurfacePlane chroma_{0, 0};   // a two-plane format's second plane, in the buffer
 };
 
 // MTLSamplerDescriptor's fields in Metal's numbering (MTLSampler.h), with Metal's defaults
