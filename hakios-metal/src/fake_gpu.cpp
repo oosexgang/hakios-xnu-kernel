@@ -855,9 +855,47 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         fault(text("RENDER_COMPONENTS %#llx (SP) and %#llx (RB): RT0 needs all four components in both", d.fsRenderComponents, d.renderComponents));
         return false;
     }
-    if (fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE__MASK, A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE__SHIFT) == 0) {
-        fault("RB_MRT_CONTROL[0] enables no component: the draw would write nothing");
-        return false;
+    // the blend: RB_MRT_CONTROL[0]'s two BLEND bits together, and the same answer in SP_BLEND_CNTL and RB_BLEND_CNTL's
+    // ENABLE_BLEND bit 0 (tu6_emit_blend writes all three from one mask); a blending target's factors and opcodes ones the
+    // enums have. (The component enable may be anything, 0 included: Metal's MTLColorWriteMaskNone draws and writes nothing.)
+    // ...and all four written in this submission: they are context registers the kernel does not reset, so a stream that
+    // leaves them out draws with whatever write mask and blend the last owner of the GPU set
+    for (uint32_t r : {regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0), REG_A6XX_SP_BLEND_CNTL, REG_A6XX_RB_BLEND_CNTL}) {
+        if (written_.count(r) == 0) {
+            fault(text("blend register %#llx not written in this submission: ", r) + "the draw's write mask and blend would be the last owner's");
+            return false;
+        }
+    }
+    {
+        const uint32_t mrtControl = reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), mrtBlend = reg(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0));
+        const bool blend = (mrtControl & A6XX_RB_MRT_CONTROL_BLEND) != 0;
+        if (blend != ((mrtControl & A6XX_RB_MRT_CONTROL_BLEND2) != 0) ||
+            blend != ((reg(REG_A6XX_SP_BLEND_CNTL) & 1u) != 0) || blend != ((reg(REG_A6XX_RB_BLEND_CNTL) & 1u) != 0)) {
+            fault(text("the blend of target 0 is on in some of RB_MRT_CONTROL[0] (%#llx: BLEND and BLEND2), SP_BLEND_CNTL (%#llx) and ", mrtControl,
+                       reg(REG_A6XX_SP_BLEND_CNTL)) + text("RB_BLEND_CNTL (%#llx) and off in others", reg(REG_A6XX_RB_BLEND_CNTL)));
+            return false;
+        }
+        if (blend) {
+            const uint32_t factors[4] = {
+                fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR__MASK, A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR__SHIFT),
+                fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR__MASK, A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR__SHIFT),
+                fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR__MASK, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR__SHIFT),
+                fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR__MASK, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR__SHIFT)};
+            for (uint32_t f : factors) {
+                // adreno_rb_blend_factor: 0, 1, 4..16, 20..23 (adreno_common.xml.h:92-110)
+                if (f == 2 || f == 3 || (f > 16 && f < 20) || f > 23) {
+                    fault(text("RB_MRT_BLEND_CONTROL[0] %#llx names blend factor %llu, which adreno_rb_blend_factor does not have", mrtBlend, f));
+                    return false;
+                }
+            }
+            if (fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__MASK, A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__SHIFT) > BLEND_MAX_DST_SRC ||
+                fieldOf(mrtBlend, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__MASK, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__SHIFT) > BLEND_MAX_DST_SRC) {
+                fault(text("RB_MRT_BLEND_CONTROL[0] %#llx names a blend opcode past BLEND_MAX_DST_SRC (4)", mrtBlend));
+                return false;
+            }
+        }
+        d.mrtControl = mrtControl;
+        d.mrtBlendControl = mrtBlend;
     }
     // no depth, no stencil
     if (fieldOf(reg(REG_A6XX_RB_DEPTH_BUFFER_INFO), A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK, A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT) != DEPTH6_NONE ||
@@ -1045,6 +1083,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
         if (h.kind == pm4::Header::kRegisters) {
             for (uint32_t j = 0; j < h.count; j++) {
                 regs_[h.reg + j] = p[j];   // kept as written; a dispatch or a draw is checked against them
+                written_.insert(h.reg + j);
                 if (h.reg + j == REG_A6XX_RB_CCU_CNTL) {
                     // "isn't pipelined" (tu_cmd_buffer.cc:373-377): both witnesses write it right after a CP_WAIT_FOR_IDLE
                     ccuCntlWritten_ = true;
@@ -1280,6 +1319,7 @@ void FakeGpu::run(const Job& job) {
     fs_ = StageLoads{};
     passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = false;
     drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = 0;
+    written_.clear();
     bool ok = execute(job.address, job.words, 0);
     if (ok && drawsInSubmission_ != 0) {
         // the colour a draw wrote sits in the CCU until PC_CCU_FLUSH_COLOR_TS (the kernel's own end-of-submit fence

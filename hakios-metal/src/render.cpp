@@ -407,6 +407,61 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
     }
 }
 
+// Colour attachment 0's blend as RB_MRT_CONTROL[0] and RB_MRT_BLEND_CONTROL[0] hold it (tu6_emit_blend,
+// tu_pipeline.cc:2975-3063): MTLBlendOperation's numbers are VkBlendOp's, which turnip passes through as the opcode
+// (tu6_blend_op, tu_util.h:288-291); MTLBlendFactor goes through the table below onto adreno_rb_blend_factor, the
+// way tu6_blend_factor maps Vulkan's (tu_util.h:246-271); MTLColorWriteMask's bits run Red 8 .. Alpha 1, the
+// component enable's Red 1 .. Alpha 8.
+struct BlendWords {
+    bool enabled;
+    uint32_t mrtControl, mrtBlendControl;
+};
+
+bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::string* why) {
+    static const adreno_rb_blend_factor kFactor[] = {
+        FACTOR_ZERO, FACTOR_ONE, FACTOR_SRC_COLOR, FACTOR_ONE_MINUS_SRC_COLOR, FACTOR_SRC_ALPHA, FACTOR_ONE_MINUS_SRC_ALPHA,
+        FACTOR_DST_COLOR, FACTOR_ONE_MINUS_DST_COLOR, FACTOR_DST_ALPHA, FACTOR_ONE_MINUS_DST_ALPHA, FACTOR_SRC_ALPHA_SATURATE,
+        FACTOR_CONSTANT_COLOR, FACTOR_ONE_MINUS_CONSTANT_COLOR, FACTOR_CONSTANT_ALPHA, FACTOR_ONE_MINUS_CONSTANT_ALPHA,
+    };
+    if (b.writeMask > 0xf) {
+        return refuse(why, "a colour write mask of " + n(b.writeMask) + ": MTLColorWriteMask has the four bits Red 8, Green 4, Blue 2, Alpha 1");
+    }
+    uint32_t components = 0;
+    for (uint32_t c = 0; c < 4; c++) {
+        if (b.writeMask & (8u >> c)) components |= 1u << c;
+    }
+    *out = BlendWords{};
+    out->enabled = b.enabled;
+    out->mrtControl = rbMrtControl(components);
+    if (!b.enabled) {
+        return true;   // RB_MRT_BLEND_CONTROL 0 as turnip writes it for an attachment that does not blend
+    }
+    if (f.element != kElemFloat) {
+        return refuse(why, std::string("blending into ") + f.name + ": an integer format has no blend (Metal refuses the pipeline too)");
+    }
+    const uint32_t factors[4] = {b.srcRgb, b.dstRgb, b.srcAlpha, b.dstAlpha};
+    static const char* const kWhich[4] = {"source RGB", "destination RGB", "source alpha", "destination alpha"};
+    for (int i = 0; i < 4; i++) {
+        if (factors[i] >= 15 && factors[i] <= 18) {
+            return refuse(why, std::string("the ") + kWhich[i] + " blend factor " + n(factors[i]) + " reads a second source colour: dual-source blending is not served");
+        }
+        if (factors[i] > 18) {
+            return refuse(why, std::string("the ") + kWhich[i] + " blend factor " + n(factors[i]) + ": MTLBlendFactor runs 0 to 18");
+        }
+    }
+    if (b.rgbOp > 4 || b.alphaOp > 4) {
+        return refuse(why, "blend operation " + n(b.rgbOp > 4 ? b.rgbOp : b.alphaOp) + ": MTLBlendOperation runs Add 0 to Max 4");
+    }
+    out->mrtControl |= A6XX_RB_MRT_CONTROL_BLEND | A6XX_RB_MRT_CONTROL_BLEND2;
+    out->mrtBlendControl = A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR(kFactor[b.srcRgb]) |
+                           A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE(a3xx_rb_blend_opcode(b.rgbOp)) |
+                           A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR(kFactor[b.dstRgb]) |
+                           A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR(kFactor[b.srcAlpha]) |
+                           A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE(a3xx_rb_blend_opcode(b.alphaOp)) |
+                           A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR(kFactor[b.dstAlpha]);
+    return true;
+}
+
 // The fill itself, between the pass begin and the draw state (clear_sysmem_attachment, tu_clear_blit.cc:4402-4444,
 // with r2d_setup_common :455-521, r2d_coords :145-163, r2d_clear_value, r2d_dst :396-413, r2d_run :551-570): the
 // render area is the whole target, as a Metal Clear covers the attachment whatever the scissor. Then what
@@ -671,6 +726,15 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     ClearWords clear{};
     if (pass.load == LoadAction::kClear && !clearWords(format, pass.clearColor, &clear, why)) {
         return false;
+    }
+    BlendWords blend{};
+    if (!blendWords(program.blend, format, &blend, why)) {
+        return false;
+    }
+    for (int i = 0; i < 4; i++) {
+        if (!std::isfinite(draw.blendColor[i])) {
+            return refuse(why, "a blend colour with a non-finite channel (channel " + n(uint32_t(i)) + ")");
+        }
     }
     // --- the draw ---
     pc_di_primtype prim = DI_PT_TRILIST;
@@ -979,10 +1043,11 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     // fd6's ROP_COPY), RB_MRT_BLEND_CONTROL[0] 0, the blend constant 0, the alpha test off, the depth and stencil
     // registers 0 (EARLY_Z depth plane as r3d; pipelines with depth off write LATE_Z), Z bounds 0..1
     if (o.blendZsa) {
-        reg(stream, REG_A6XX_SP_BLEND_CNTL, A6XX_SP_BLEND_CNTL_UNK8);
-        reg(stream, REG_A6XX_RB_BLEND_CNTL, rbBlendCntl(true));
-        regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), {rbMrtControl(0xf), 0});
-        regs(stream, REG_A6XX_RB_BLEND_RED_F32, {0, 0, 0, 0, 0});   // ..., RB_ALPHA_CONTROL
+        reg(stream, REG_A6XX_SP_BLEND_CNTL, A6XX_SP_BLEND_CNTL_ENABLE_BLEND(blend.enabled ? 1u : 0u) | A6XX_SP_BLEND_CNTL_UNK8);
+        reg(stream, REG_A6XX_RB_BLEND_CNTL, rbBlendCntl(true) | A6XX_RB_BLEND_CNTL_ENABLE_BLEND(blend.enabled ? 1u : 0u));
+        regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0), {blend.mrtControl, blend.mrtBlendControl});
+        // the blend constants as floats (tu6_emit_blend_constants), RB_ALPHA_CONTROL 0 after them
+        regs(stream, REG_A6XX_RB_BLEND_RED_F32, {fui(draw.blendColor[0]), fui(draw.blendColor[1]), fui(draw.blendColor[2]), fui(draw.blendColor[3]), 0});
         regs(stream, REG_A6XX_RB_DEPTH_PLANE_CNTL, {A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z), 0});   // ..., RB_DEPTH_CNTL
         regs(stream, REG_A6XX_GRAS_SU_DEPTH_CNTL, {0, 0});   // ..., GRAS_SU_STENCIL_CNTL
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z));

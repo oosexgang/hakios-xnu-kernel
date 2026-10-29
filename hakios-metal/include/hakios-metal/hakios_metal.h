@@ -149,16 +149,15 @@ int hakios_metal_kernel_resource_texture(hakios_metal_kernel *kernel, unsigned i
     unsigned *access);
 
 /* Rendering (render.hpp): a vertex function and a fragment function compiled and linked for one colour attachment, and
- * one draw of them into it, in SYSMEM mode, with no depth, no blending, no vertex descriptor yet. Metal's numbers are
- * passed through as everywhere in this header. */
+ * draws of them into it, in SYSMEM mode, with no depth yet. Metal's numbers are passed through as everywhere in this
+ * header. */
 typedef struct hakios_metal_program hakios_metal_program;
 
 #define HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET 4   /* MTLTextureUsageRenderTarget: hakios_metal_texture_new accepts it; a draw needs it */
 
 /* VS of VS_LIBRARY and FS of FS_LIBRARY (the same library is fine) compiled here and linked, for a colour attachment of
  * COLOR_PIXEL_FORMAT (MTLPixelFormat, one of the served formats). NULL with the reason: not a vertex / fragment
- * function, the front end's or ir3's refusal by name, a vertex stage with [[stage_in]] attributes (not served yet), a
- * fragment stage with more than one colour output, a depth/stencil/sample-mask output, framebuffer fetch, a varying the
+ * function, the front end's or ir3's refusal by name, a fragment stage with more than one colour output, a depth/stencil/sample-mask output, framebuffer fetch, a varying the
  * vertex stage does not write, a stage that binds buffers, textures or samplers (step two), a format whose element class
  * the fragment output does not match, no compiler in this build. */
 hakios_metal_program *hakios_metal_program_new(hakios_metal_library *vs_library, const char *vs,
@@ -181,6 +180,12 @@ int hakios_metal_program_set_vertex_attribute(hakios_metal_program *program, uns
     unsigned buffer_index);
 int hakios_metal_program_set_vertex_layout(hakios_metal_program *program, unsigned buffer_index, unsigned stride,
     unsigned step_function, unsigned step_rate);
+/* colour attachment 0's blend (MTLRenderPipelineColorAttachmentDescriptor), Metal's numbers: ENABLED (blendingEnabled),
+ * RGB_OP / ALPHA_OP (MTLBlendOperation), the four factors (MTLBlendFactor; the Source1 ones refused at the draw: no
+ * dual-source blending), WRITE_MASK (MTLColorWriteMask: Red 8, Green 4, Blue 2, Alpha 1). Off with the mask 0xf until
+ * this is called. What a draw cannot serve (blending into an integer format, say) it refuses by name. */
+void hakios_metal_program_set_blend(hakios_metal_program *program, int enabled, unsigned rgb_op, unsigned alpha_op,
+    unsigned src_rgb, unsigned dst_rgb, unsigned src_alpha, unsigned dst_alpha, unsigned write_mask);
 
 struct hakios_metal_viewport { double x, y, width, height, znear, zfar; };   /* MTLViewport: origin top left, NDC y up */
 struct hakios_metal_scissor { unsigned x, y, width, height; };              /* MTLScissorRect */
@@ -191,6 +196,7 @@ struct hakios_metal_render_pass {
 	unsigned load_action;             /* MTLLoadAction: DontCare 0, Load 1, Clear 2 (the whole attachment filled before the draw) */
 	unsigned store_action;            /* MTLStoreAction: DontCare 0, Store 1; others refused */
 	double clear_color[4];            /* MTLClearColor, read only for Clear: RGBA; whole numbers 0..2^32-1 for a Uint attachment */
+	float blend_color[4];             /* -setBlendColorRed:green:blue:alpha:, the encoder's state each draw reads (0 by default) */
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

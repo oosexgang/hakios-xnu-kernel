@@ -470,6 +470,11 @@ int hakios_metal_program_set_vertex_layout(hakios_metal_program* p, unsigned buf
     return 0;
 }
 
+void hakios_metal_program_set_blend(hakios_metal_program* p, int enabled, unsigned rgbOp, unsigned alphaOp, unsigned srcRgb, unsigned dstRgb,
+                                    unsigned srcAlpha, unsigned dstAlpha, unsigned writeMask) {
+    p->program->program.blend = ColorBlend{enabled != 0, rgbOp, alphaOp, srcRgb, dstRgb, srcAlpha, dstAlpha, writeMask};
+}
+
 int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
@@ -506,6 +511,9 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
     }
     if (scissor != nullptr) {
         d.scissor = Scissor{scissor->x, scissor->y, scissor->width, scissor->height};
+    }
+    if (pass != nullptr) {
+        for (int i = 0; i < 4; i++) d.blendColor[i] = pass->blend_color[i];
     }
     if (!cb->cb->draw(p->program->program, rp, d, vsb, fsb)) {
         failed(cb->cb->error());

@@ -1477,9 +1477,34 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
         CHECK(has(w.fault(), "RENDER_COMPONENTS 0xf (SP) and 0x7 (RB): RT0 needs all four components in both"));
     }
     {
+        // a write mask of none is Metal's to ask for (MTLColorWriteMaskNone): the draw writes nothing, and is no fault
         Twin w;
         w.at(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)) = 0;
-        CHECK(has(w.fault(), "RB_MRT_CONTROL[0] enables no component: the draw would write nothing"));
+        Raw raw(w.r);
+        CHECK_EQ(raw.submit(w.words), 0);
+        CHECK_EQ(w.r.fake->stats().lastDraw.mrtControl, 0u);
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)) |= A6XX_RB_MRT_CONTROL_BLEND;   // BLEND without BLEND2, and the two ENABLE_BLENDs off
+        CHECK(has(w.fault(), "the blend of target 0 is on in some of RB_MRT_CONTROL[0] (0x781: BLEND and BLEND2)"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)) |= A6XX_RB_MRT_CONTROL_BLEND | A6XX_RB_MRT_CONTROL_BLEND2;
+        w.at(REG_A6XX_SP_BLEND_CNTL) |= 1;
+        w.at(REG_A6XX_RB_BLEND_CNTL) |= 1;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0)) = A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR(adreno_rb_blend_factor(2));
+        CHECK(has(w.fault(), "names blend factor 2, which adreno_rb_blend_factor does not have"));
+    }
+    {
+        Twin w;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)) |= A6XX_RB_MRT_CONTROL_BLEND | A6XX_RB_MRT_CONTROL_BLEND2;
+        w.at(REG_A6XX_SP_BLEND_CNTL) |= 1;
+        w.at(REG_A6XX_RB_BLEND_CNTL) |= 1;
+        w.at(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0)) = A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE(a3xx_rb_blend_opcode(5)) |
+                                                          A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR(FACTOR_ONE) | A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR(FACTOR_ONE);
+        CHECK(has(w.fault(), "names a blend opcode past BLEND_MAX_DST_SRC (4)"));
     }
     {
         render::Options o;
@@ -1491,7 +1516,7 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
         render::Options o;
         o.blendZsa = false;
         Twin w(o);
-        CHECK(has(w.fault(), "RB_MRT_CONTROL[0] enables no component"));
+        CHECK(has(w.fault(), "blend register 0x8820 not written in this submission: the draw's write mask and blend would be the last owner's"));
     }
     {
         Twin w;
@@ -2223,4 +2248,105 @@ TEST(the_fake_refuses_a_fill_whose_registers_do_not_hold_together) {
         w.at(REG_A6XX_GRAS_2D_DST_BR) = regXY(63, rows);
         CHECK(has(w.fault(), "rows of 256 bytes: outside every buffer"));
     }
+}
+
+// --- blending: colour attachment 0's blend state into RB_MRT_CONTROL / RB_MRT_BLEND_CONTROL, the constants as floats ---
+
+TEST(a_draw_blends_as_the_pipeline_says) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    // off (Metal's default): the write mask alone, all four components, no blend anywhere
+    {
+        Encoded e(r, flatProgram(), pass, wholeDraw());
+        CHECK(e.ok);
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0x780u);
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0)), 0u);
+        CHECK_EQ(e.reg(REG_A6XX_SP_BLEND_CNTL), 0x100u);
+        CHECK_EQ(e.reg(REG_A6XX_RB_BLEND_CNTL), 0xffff0100u);
+    }
+    // source-over, straight alpha: rgb SourceAlpha / OneMinusSourceAlpha, alpha One / OneMinusSourceAlpha, both Add.
+    // As literals: FACTOR_SRC_ALPHA 6, FACTOR_ONE_MINUS_SRC_ALPHA 7 << 8, FACTOR_ONE 1 << 16, 7 << 24
+    Program p = flatProgram();
+    p.blend = ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf};
+    Draw d = wholeDraw();
+    d.blendColor[0] = 0.5f;
+    d.blendColor[3] = -1.0f;
+    {
+        Encoded e(r, p, pass, d);
+        CHECK(e.ok);
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0x783u);   // BLEND, BLEND2, the four components
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0)), 0x07010706u);
+        CHECK_EQ(e.reg(REG_A6XX_SP_BLEND_CNTL), 0x101u);
+        CHECK_EQ(e.reg(REG_A6XX_RB_BLEND_CNTL), 0xffff0101u);
+        CHECK_EQ(e.reg(REG_A6XX_RB_BLEND_RED_F32), 0x3f000000u);
+        CHECK_EQ(e.reg(REG_A6XX_RB_BLEND_GREEN_F32), 0u);
+        CHECK_EQ(e.reg(REG_A6XX_RB_BLEND_ALPHA_F32), 0xbf800000u);
+        auto cb = drawOnce(r, p, pass, d);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(r.fake->stats().lastDraw.mrtBlendControl, 0x07010706u);
+    }
+    // every Metal factor onto its adreno number (MTLBlendFactor 0..14 -> adreno_rb_blend_factor), as source RGB, and the
+    // five operations as the RGB opcode
+    const uint32_t adreno[15] = {0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 16, 12, 13, 14, 15};
+    for (uint32_t f = 0; f < 15; f++) {
+        Program q = flatProgram();
+        q.blend = ColorBlend{true, f % 5, 0, f, 0, 1, 0, 0xf};
+        Encoded e(r, q, pass, wholeDraw());
+        CHECK(e.ok);
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_BLEND_CONTROL, 0)), adreno[f] | (f % 5) << 5 | 1u << 16);
+    }
+    // the write mask: MTLColorWriteMask Red 8 | Alpha 1 is the component enable's R 1 | A 8; Green 4 alone is G 2
+    {
+        Program q = flatProgram();
+        q.blend.writeMask = 8 | 1;
+        Encoded e(r, q, pass, wholeDraw());
+        CHECK_EQ(e.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0x9u << 7);
+        q.blend.writeMask = 4;
+        Encoded g(r, q, pass, wholeDraw());
+        CHECK_EQ(g.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0x2u << 7);
+        q.blend.writeMask = 0;   // None: legal, writes nothing
+        Encoded z(r, q, pass, wholeDraw());
+        CHECK(z.ok);
+        CHECK_EQ(z.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 0)), 0u);
+        auto cb = drawOnce(r, q, pass, wholeDraw());
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+    }
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+TEST(a_draw_refuses_a_blend_it_cannot_serve) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto blendOf = [](uint32_t rgbOp, uint32_t srcRgb, uint32_t dstRgb, uint32_t writeMask = 0xf) {
+        Program p = flatProgram();
+        p.blend = ColorBlend{true, rgbOp, 0, srcRgb, dstRgb, 1, 0, writeMask};
+        return p;
+    };
+    refused(r, blendOf(0, 15, 0), pass, wholeDraw(), "the source RGB blend factor 15 reads a second source colour: dual-source blending is not served");
+    refused(r, blendOf(0, 1, 18), pass, wholeDraw(), "the destination RGB blend factor 18 reads a second source colour: dual-source blending is not served");
+    refused(r, blendOf(0, 19, 0), pass, wholeDraw(), "the source RGB blend factor 19: MTLBlendFactor runs 0 to 18");
+    refused(r, blendOf(5, 1, 0), pass, wholeDraw(), "blend operation 5: MTLBlendOperation runs Add 0 to Max 4");
+    Program mask = flatProgram();
+    mask.blend.writeMask = 0x10;
+    refused(r, mask, pass, wholeDraw(), "a colour write mask of 16: MTLColorWriteMask has the four bits Red 8, Green 4, Blue 2, Alpha 1");
+    Draw d = wholeDraw();
+    d.blendColor[2] = std::nanf("");
+    refused(r, blendOf(0, 11, 0), pass, d, "a blend colour with a non-finite channel (channel 2)");
+    // an integer target does not blend (the FS writes integers: the hand program's integer twin)
+    auto u = target(r, 64, 64, kTextureUsageRenderTarget, PixelFormat::kR32Uint);
+    RenderPass ints;
+    ints.color0 = u.get();
+    Program ip = handProgram();
+    ip.fs.outputs[0].pad = kElemUint;
+    ip.blend = ColorBlend{true, 0, 0, 1, 1, 1, 1, 0xf};
+    refused(r, ip, ints, wholeDraw(), "blending into R32Uint: an integer format has no blend (Metal refuses the pipeline too)");
+    // ...while the same program with the blend off draws there
+    ip.blend.enabled = false;
+    Encoded e(r, ip, ints, wholeDraw());
+    CHECK(e.ok);
 }

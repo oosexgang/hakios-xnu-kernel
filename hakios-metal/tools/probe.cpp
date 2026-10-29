@@ -1074,6 +1074,7 @@ int main(int argc, char** argv) {
     //   9e. (--bisect) tri_flat under each render::Options group off and each alternative on, one boot
     //   9f. the four stages compiled on the phone against the host's fixtures, and the phone-compiled program drawn
     //   9i. a Clear: the 2D fill without a draw over six formats and a 48x20 rectangle, then before tri_flat
+    //   9j. blending: six equations of tri_cflat's half-transparent colour over a cleared target, each pixel against the formula
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -1489,6 +1490,116 @@ int main(int argc, char** argv) {
             bool accepted = cb2->clear(load);
             report(!accepted && cb2->error().find("only a Clear writes anything then") != std::string::npos,
                    std::string("control, a pass without a draw and with load action Load: ") + (accepted ? "ACCEPTED" : "refused: " + cb2->error()));
+        }
+        // 9j. blending. The target is cleared to D = (0x20, 0x40, 0x80, 0xff) / 255, then tri_cflat's T1 is drawn with the
+        // colour S = (0xcc, 0x66, 0x33, 0x80) / 255 from its constant buffer under each blend below. Inside T1 every pixel
+        // must be the blend equation's result over the RGBA8 bytes, rounded, within one unit (where the GPU rounds is not
+        // documented); outside T1 and on its diagonal D exactly. The equation is Metal's: per channel
+        // op(S * srcFactor, D * dstFactor), Min and Max ignoring the factors, the result clamped to [0, 1].
+        if (t) {
+            const Program cflat0{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+            const double S[4] = {0xcc / 255.0, 0x66 / 255.0, 0x33 / 255.0, 0x80 / 255.0};
+            const double D[4] = {0x20 / 255.0, 0x40 / 255.0, 0x80 / 255.0, 1.0};
+            const float K[4] = {0.5f, 0.25f, 1.0f, 0.75f};   // the blend colour, read by BlendColor / BlendAlpha
+            const uint32_t dWord = 0xff804020u;
+            struct BlendCase {
+                ColorBlend b;
+                const char* label;
+            };
+            const BlendCase cases[] = {
+                {ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf}, "source over, straight (SourceAlpha, OneMinusSourceAlpha; alpha One, OneMinusSourceAlpha)"},
+                {ColorBlend{true, 0, 0, 1, 5, 1, 5, 0xf}, "source over, premultiplied (One, OneMinusSourceAlpha)"},
+                {ColorBlend{true, 2, 0, 1, 1, 0, 1, 0xf}, "ReverseSubtract (D - S, clamped at 0; alpha Add of Zero and One)"},
+                {ColorBlend{true, 4, 3, 0, 0, 0, 0, 0xf}, "Max for RGB, Min for alpha (the factors ignored)"},
+                {ColorBlend{true, 0, 0, 11, 0, 13, 14, 0xf}, "BlendColor (0.5, 0.25, 1, 0.75): RGB S * K, alpha S * Ka + D * (1 - Ka)"},
+                {ColorBlend{false, 0, 0, 1, 0, 1, 0, 8 | 1}, "no blend, write mask Red | Alpha: G and B keep D"},
+            };
+            auto factor = [&](uint32_t f, int c, bool alphaChannel) -> double {
+                (void)alphaChannel;
+                switch (f) {
+                case 0: return 0.0;
+                case 1: return 1.0;
+                case 2: return S[c];
+                case 3: return 1.0 - S[c];
+                case 4: return S[3];
+                case 5: return 1.0 - S[3];
+                case 6: return D[c];
+                case 7: return 1.0 - D[c];
+                case 8: return D[3];
+                case 9: return 1.0 - D[3];
+                case 10: return c == 3 ? 1.0 : std::min(S[3], 1.0 - D[3]);
+                case 11: return K[c];
+                case 12: return 1.0 - K[c];
+                case 13: return K[3];
+                case 14: return 1.0 - K[3];
+                default: return 0.0;
+                }
+            };
+            auto expected = [&](const ColorBlend& b, int c) -> double {
+                const uint32_t mtl = 8u >> c;   // MTLColorWriteMask's bit of channel c
+                if ((b.writeMask & mtl) == 0) return D[c];
+                if (!b.enabled) return S[c];
+                const bool a = c == 3;
+                const uint32_t op = a ? b.alphaOp : b.rgbOp;
+                const double s = S[c] * factor(a ? b.srcAlpha : b.srcRgb, c, a), d = D[c] * factor(a ? b.dstAlpha : b.dstRgb, c, a);
+                double v = op == 0 ? s + d : op == 1 ? s - d : op == 2 ? d - s : op == 3 ? std::min(S[c], D[c]) : std::max(S[c], D[c]);
+                return std::min(1.0, std::max(0.0, v));
+            };
+            auto cbuf = newBuffer(gpu, 16, &why);
+            if (cbuf == nullptr) {
+                report(false, "blend: a 16-byte constant buffer: " + why);
+            } else {
+                float* f = static_cast<float*>(cbuf->contents());
+                for (int c = 0; c < 4; c++) f[c] = float(S[c]);
+                Bindings fsb;
+                fsb.buffers = {Binding{cbuf.get(), 0}};
+                for (const BlendCase& bc : cases) {
+                    Program prog = cflat0;
+                    prog.blend = bc.b;
+                    uint8_t want[4];
+                    for (int c = 0; c < 4; c++) want[c] = uint8_t(std::lround(expected(bc.b, c) * 255.0));
+                    const uint32_t cc = texCanary([&](uint32_t v) { return v == dWord; });
+                    fillBo(*t, cc);
+                    RenderPass pass;
+                    pass.color0 = t.get();
+                    pass.load = LoadAction::kClear;
+                    for (int c = 0; c < 4; c++) pass.clearColor[c] = D[c];
+                    Draw d = drawOf(0, 3);
+                    for (int c = 0; c < 4; c++) d.blendColor[c] = K[c];
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(prog, pass, d, Bindings{}, fsb)) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t inside = 0, insideOk = 0, outside = 0, outsideOk = 0, worst = 0;
+                    std::string first;
+                    for (uint32_t j = 0; j < H; j++) {
+                        for (uint32_t i = 0; i < W; i++) {
+                            const uint8_t* px = bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4;
+                            if (j > i) {
+                                inside++;
+                                uint32_t dev = 0;
+                                for (int c = 0; c < 4; c++) dev = std::max<uint32_t>(dev, uint32_t(std::abs(int(px[c]) - int(want[c]))));
+                                worst = std::max(worst, dev);
+                                insideOk += dev <= 1;
+                                if (dev > 1 && first.empty())
+                                    first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex2(px[0]) + " " + hex2(px[1]) + " " +
+                                            hex2(px[2]) + " " + hex2(px[3]);
+                            } else {
+                                outside++;
+                                uint32_t v;
+                                memcpy(&v, px, 4);
+                                outsideOk += v == dWord;
+                            }
+                        }
+                    }
+                    report(completed(*cb) && insideOk == inside && outsideOk == outside,
+                           std::string("blend, ") + bc.label + ": " + std::to_string(insideOk) + " of " + std::to_string(inside) + " inside within 1 of " +
+                               hex2(want[0]) + " " + hex2(want[1]) + " " + hex2(want[2]) + " " + hex2(want[3]) + " (largest deviation " + std::to_string(worst) + ")" + first +
+                               ", " + std::to_string(outsideOk) + " of " + std::to_string(outside) + " outside D exactly" + status(*cb, gpu));
+                }
+            }
         }
         // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the
         // draw hangs or writes nothing, this says which group it needs, one boot for all of it, each hang costing a reset. A

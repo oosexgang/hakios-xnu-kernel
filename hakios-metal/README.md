@@ -92,7 +92,7 @@ switch's default -- turnip's and fd6's values where they agree, the smaller set 
 bisect. Not yet, all of it refused by name (not served): vertex attributes beyond per-vertex Float..Float4, Half2, Half4 and UChar4Normalized (those are
 served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UChar4Normalized colour from one interleaved buffer, 4032 of 4032
 pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
-samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, blending, GMEM (tiled)
+samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, dual-source blending, GMEM (tiled)
 rendering, MSAA, instancing, indexed draws, points and lines, several colour attachments, a program whose stages bind what
 the draw does not serve.
 
@@ -106,6 +106,15 @@ linear), RGBA16Float (down to a subnormal half), R32Uint, RGBA32Float (-0 kept) 
 4-row pad stay canary; a Clear before `tri_flat` leaves the triangle's colour on its interior and the clear colour on the
 exterior and the diagonal. The fake GPU carries the fill out into memory (the one thing it does carry out) after checking
 that the 2D registers hold together, so the host tests compare bytes too, and refuse nine mutated fills.
+
+Blending is served for colour attachment 0 as `tu6_emit_blend` writes it: `MTLBlendOperation`'s numbers are the
+opcodes, `MTLBlendFactor` maps onto `adreno_rb_blend_factor` as `tu6_blend_factor` maps Vulkan's, `MTLColorWriteMask`'s
+bits are reversed into the component enable, the blend colour goes to `RB_BLEND_*_F32`; the Source1 factors (dual
+source) and blending into an integer format are refused by name. On the phone (hakios `logs/150855-run.log`, probe line
+9j, 0 failures) `tri_cflat`'s half-transparent colour over a cleared target matches Metal's equation at every one of
+2016 pixels with a largest deviation of 0, for straight and premultiplied source-over, ReverseSubtract clamped at 0,
+Max with Min for alpha, the BlendColor and BlendAlpha factors, and a Red | Alpha write mask without blending; outside
+the triangle the cleared colour stays exact.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test

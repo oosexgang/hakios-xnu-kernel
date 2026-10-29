@@ -162,12 +162,26 @@ struct VertexDescriptor {
     VertexLayout layouts[kMaxVertexBuffers];
 };
 
+// MTLRenderPipelineColorAttachmentDescriptor's blend state for attachment 0, Metal's numbers: MTLBlendOperation (Add 0,
+// Subtract 1, ReverseSubtract 2, Min 3, Max 4) and MTLBlendFactor (Zero 0, One 1, SourceColor 2, OneMinusSourceColor 3,
+// SourceAlpha 4, OneMinusSourceAlpha 5, DestinationColor 6, OneMinusDestinationColor 7, DestinationAlpha 8,
+// OneMinusDestinationAlpha 9, SourceAlphaSaturated 10, BlendColor 11, OneMinusBlendColor 12, BlendAlpha 13,
+// OneMinusBlendAlpha 14, Source1Color 15 .. OneMinusSource1Alpha 18), the write mask MTLColorWriteMask's bits (Red 8,
+// Green 4, Blue 2, Alpha 1; Metal's default All 0xf). Off by default, as Metal's is.
+struct ColorBlend {
+    bool enabled = false;
+    uint32_t rgbOp = 0, alphaOp = 0;
+    uint32_t srcRgb = 1, dstRgb = 0, srcAlpha = 1, dstAlpha = 0;   // One, Zero: Metal's defaults
+    uint32_t writeMask = 0xf;
+};
+
 struct Program {
     Stage vs;
     Stage fs;
     Linkage link;
     const char* name;
     VertexDescriptor vertexDescriptor{};   // what the VS's [[stage_in]] attributes are in memory (none: a VS without attributes)
+    ColorBlend blend{};                    // colour attachment 0's blending and write mask
 };
 
 namespace render {
@@ -202,6 +216,7 @@ struct Draw {
     uint32_t instanceCount = 1;                  // NUM_INSTANCES; step one: exactly 1
     Viewport viewport{};
     Scissor scissor{};                           // width 0: the whole target
+    float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors
 };
 
 namespace render {
