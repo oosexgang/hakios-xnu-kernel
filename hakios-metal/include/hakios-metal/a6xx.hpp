@@ -3652,4 +3652,426 @@ constexpr uint32_t CP_DRAW_INDX_OFFSET_3_FIRST_INDX(uint32_t v) {
     return field(v, CP_DRAW_INDX_OFFSET_3_FIRST_INDX__SHIFT, CP_DRAW_INDX_OFFSET_3_FIRST_INDX__MASK);
 }
 
+// --- what the draw adds to the chip facts and ir3 conventions ------------------------------------------------------------
+
+inline constexpr uint32_t kPrimAllocThreshold = 7;          // not-in-headers: freedreno_devices.py a6xx_base prim_alloc_threshold = 0x7 (HLSQ_CONTROL_1_REG)
+inline constexpr uint32_t kBranchstackSize = 64;            // not-in-headers: ir3_compiler.c:150 branchstack_size for gen >= 6, the MIN2 in ir3_shader_branchstack_hw
+inline constexpr uint32_t kMaxConstPipeline = 512;          // not-in-headers: ir3_compiler.c:185-188 max_const_pipeline for gen 6: the VS and FS constlens together, in vec4
+inline constexpr uint32_t kVsConstlenFloor = 8;             // not-in-headers: ir3_compiler_nir.c:6035-6037, every gen >= 6 vertex shader has constlen >= 8
+inline constexpr uint32_t kProgramAlign = 128;              // not-in-headers: tu_shader.cc:1313-1316 asserts binary_iova & 0x7f == 0 (one instruction group); the XML says 32 (a6xx.xml:4835, 4996)
+inline constexpr uint32_t kSpXsPvtMemAddrAlign = 32;        // not-in-headers: a6xx.xml SP_VS/SP_FS_PVT_MEM_ADDR align="32"; tu_shader.cc:1317 asserts it
+inline constexpr uint32_t kMrtBaseAlign = 64;               // not-in-headers: fd6_layout.c:181 base_align of a linear image; the XML gives RB_MRT_BASE align 1 (a6xx.xml:3714-3715)
+inline constexpr uint32_t kMrtPitchAlign = 64;              // not-in-headers: a6xx.xml.h:5816 A6XX_RB_MRT_PITCH asserts !(val & 0x3f) before its >> 6
+inline constexpr uint32_t kMrtPitchMax = 0xffff << 6;       // not-in-headers: a6xx.xml:3702 RB_MRT_PITCH shr=6 high=15: 65535 units of 64 bytes
+inline constexpr uint32_t kLocNone = 0xff;                  // not-in-headers: the "no location" every VPC/PC *LOC field takes (tu_pipeline.cc:994-1007, 1042-1049)
+inline constexpr uint32_t kMaxGuardband = 0x1ff;            // not-in-headers: freedreno_guardband.h:14 MAX_GB, all ones of the 9-bit HORZ/VERT fields
+inline constexpr uint32_t kVpcVaryingRegs = 8;              // not-in-headers: a6xx.xml VPC_VARYING_INTERP and VPC_VARYING_PS_REPL length="8" (fd6_program.cc:1365-1370 writes all)
+inline constexpr uint32_t kVpcVarDisableRegs = 4;           // not-in-headers: a6xx.xml VPC_VAR length="4": 128 components of varyings (tu_shader.cc:1791-1808)
+inline constexpr uint32_t kMrtCount = 8;                    // not-in-headers: a6xx.xml RB_MRT length="8"; SP_FS_OUTPUT_REG and SP_FS_MRT_REG have 8 too
+inline constexpr uint32_t kViewportWords = 6;               // not-in-headers: REG_A6XX_GRAS_CL_VPORT__STRIDE: XOFFSET, XSCALE, YOFFSET, YSCALE, ZOFFSET, ZSCALE
+
+// ir3's barycentric kinds: the index into an FS variant's ij_regid[] (render.hpp's Stage::ijRegid), ir3_shader.h:122-130
+// enum ir3_bary. The order is NOT the field order of HLSQ_CONTROL_3/4_REG or the bit order of GRAS_CNTL (ijBits below).
+enum ir3_bary : uint32_t {
+    IJ_PERSP_PIXEL = 0,            // not-in-headers: ir3_shader.h:123
+    IJ_PERSP_SAMPLE = 1,           // not-in-headers: ir3_shader.h:124
+    IJ_PERSP_CENTROID = 2,         // not-in-headers: ir3_shader.h:125
+    IJ_PERSP_CENTER_RHW = 3,       // not-in-headers: ir3_shader.h:126
+    IJ_LINEAR_PIXEL = 4,           // not-in-headers: ir3_shader.h:127
+    IJ_LINEAR_CENTROID = 5,        // not-in-headers: ir3_shader.h:128
+    IJ_LINEAR_SAMPLE = 6,          // not-in-headers: ir3_shader.h:129
+    IJ_COUNT = 7,                  // not-in-headers: ir3_shader.h:130
+};
+
+// ir3's VALIDREG: a regid the shader reads (CONDREG(r, bit) is validReg(r) ? bit : 0)
+constexpr bool validReg(uint32_t regid) { return regid != kRegidNone; }
+
+// --- the layouts two registers share, so that one encoder serves both -------------------------------------------------------
+
+static_assert(A6XX_RB_BIN_CONTROL_BINW__MASK == A6XX_GRAS_BIN_CONTROL_BINW__MASK && A6XX_RB_BIN_CONTROL_BINW__SCALE == A6XX_GRAS_BIN_CONTROL_BINW__SCALE &&
+                  A6XX_RB_BIN_CONTROL_BINH__MASK == A6XX_GRAS_BIN_CONTROL_BINH__MASK && A6XX_RB_BIN_CONTROL_BINH__SCALE == A6XX_GRAS_BIN_CONTROL_BINH__SCALE &&
+                  A6XX_RB_BIN_CONTROL_RENDER_MODE__MASK == A6XX_GRAS_BIN_CONTROL_RENDER_MODE__MASK &&
+                  A6XX_RB_BIN_CONTROL_FORCE_LRZ_WRITE_DIS == A6XX_GRAS_BIN_CONTROL_FORCE_LRZ_WRITE_DIS &&
+                  A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION__MASK == A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__MASK &&
+                  A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__MASK == A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__MASK,
+              "GRAS_BIN_CONTROL and RB_BIN_CONTROL have the same layout: binControl() writes both");
+static_assert(A6XX_SP_FS_CONFIG_ENABLED == A6XX_SP_VS_CONFIG_ENABLED && A6XX_SP_FS_CONFIG_NTEX__MASK == A6XX_SP_VS_CONFIG_NTEX__MASK &&
+                  A6XX_SP_FS_CONFIG_NSAMP__MASK == A6XX_SP_VS_CONFIG_NSAMP__MASK && A6XX_SP_FS_CONFIG_NIBO__MASK == A6XX_SP_VS_CONFIG_NIBO__MASK &&
+                  A6XX_SP_HS_CONFIG_NIBO__MASK == A6XX_SP_VS_CONFIG_NIBO__MASK && A6XX_SP_DS_CONFIG_NIBO__MASK == A6XX_SP_VS_CONFIG_NIBO__MASK &&
+                  A6XX_SP_GS_CONFIG_NIBO__MASK == A6XX_SP_VS_CONFIG_NIBO__MASK && A6XX_SP_CS_CONFIG_NIBO__MASK == A6XX_SP_VS_CONFIG_NIBO__MASK,
+              "the five SP_xS_CONFIG registers have the same layout: spXsConfig() writes any of them");
+static_assert(A6XX_HLSQ_FS_CNTL_CONSTLEN__MASK == A6XX_HLSQ_VS_CNTL_CONSTLEN__MASK && A6XX_HLSQ_FS_CNTL_CONSTLEN__SCALE == A6XX_HLSQ_VS_CNTL_CONSTLEN__SCALE &&
+                  A6XX_HLSQ_FS_CNTL_ENABLED == A6XX_HLSQ_VS_CNTL_ENABLED && A6XX_HLSQ_CS_CNTL_CONSTLEN__SCALE == A6XX_HLSQ_VS_CNTL_CONSTLEN__SCALE,
+              "HLSQ_VS_CNTL, HLSQ_FS_CNTL and HLSQ_CS_CNTL have the same layout");
+static_assert(A6XX_RB_RENDER_CONTROL0_IJ_PERSP_PIXEL == A6XX_GRAS_CNTL_IJ_PERSP_PIXEL && A6XX_RB_RENDER_CONTROL0_IJ_PERSP_CENTROID == A6XX_GRAS_CNTL_IJ_PERSP_CENTROID &&
+                  A6XX_RB_RENDER_CONTROL0_IJ_PERSP_SAMPLE == A6XX_GRAS_CNTL_IJ_PERSP_SAMPLE && A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_PIXEL == A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL &&
+                  A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_CENTROID == A6XX_GRAS_CNTL_IJ_LINEAR_CENTROID && A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_SAMPLE == A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE &&
+                  A6XX_RB_RENDER_CONTROL0_COORD_MASK__MASK == A6XX_GRAS_CNTL_COORD_MASK__MASK,
+              "GRAS_CNTL's IJ bits and COORD_MASK sit where RB_RENDER_CONTROL0's do: one ijBits() value serves both");
+static_assert(A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_MASK__MASK == A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK__MASK &&
+                  A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_03_LOC__MASK == A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC__MASK &&
+                  A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_47_LOC__MASK == A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC__MASK &&
+                  A6XX_VPC_VS_LAYER_CNTL_V2_LAYERLOC__MASK == A6XX_VPC_VS_LAYER_CNTL_LAYERLOC__MASK &&
+                  A6XX_VPC_VS_LAYER_CNTL_V2_VIEWLOC__MASK == A6XX_VPC_VS_LAYER_CNTL_VIEWLOC__MASK &&
+                  A6XX_VPC_VS_LAYER_CNTL_V2_SHADINGRATELOC__MASK == A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC__MASK,
+              "the _V2 copies of VPC_VS_CLIP_CNTL and VPC_VS_LAYER_CNTL take the same word");
+static_assert(A6XX_RB_FS_OUTPUT_CNTL1_MRT__MASK == A6XX_SP_FS_OUTPUT_CNTL1_MRT__MASK && A6XX_RB_RENDER_COMPONENTS_RT0__MASK == A6XX_SP_FS_RENDER_COMPONENTS_RT0__MASK &&
+                  A6XX_RB_RENDER_COMPONENTS_RT7__MASK == A6XX_SP_FS_RENDER_COMPONENTS_RT7__MASK,
+              "the SP and RB copies of FS_OUTPUT_CNTL1 and RENDER_COMPONENTS take the same word");
+static_assert(A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT__MASK == A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT__MASK &&
+                  A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT__MASK == A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT__MASK &&
+                  A6XX_SP_FS_CTRL_REG0_BRANCHSTACK__MASK == A6XX_SP_VS_CTRL_REG0_BRANCHSTACK__MASK &&
+                  A6XX_SP_FS_CTRL_REG0_MERGEDREGS != A6XX_SP_VS_CTRL_REG0_MERGEDREGS,
+              "the footprints and branch stack sit alike in SP_VS_CTRL_REG0 and SP_FS_CTRL_REG0; MERGEDREGS does not (bit 20 vs 31)");
+static_assert(A6XX_RB_WINDOW_OFFSET_X__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__MASK && A6XX_RB_WINDOW_OFFSET_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK &&
+                  A6XX_RB_WINDOW_OFFSET2_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK && A6XX_SP_WINDOW_OFFSET_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK &&
+                  A6XX_SP_TP_WINDOW_OFFSET_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK && A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK &&
+                  A6XX_GRAS_2D_RESOLVE_CNTL_1_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK && A6XX_GRAS_2D_RESOLVE_CNTL_2_Y__MASK == A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK,
+              "a6xx_reg_xy: the window scissor, the four window offsets and the 2D resolve registers share the 14-bit X/Y form (regXY)");
+static_assert(A6XX_GRAS_SC_SCREEN_SCISSOR_BR_Y__MASK == A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__MASK && A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_Y__MASK == A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__MASK &&
+                  A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_Y__MASK == A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__MASK && A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__MASK == 0xffff,
+              "a6xx_scissor_xy: the screen and viewport scissors share the 16-bit X/Y form (scissorXY)");
+static_assert(A6XX_RB_RAS_MSAA_CNTL_SAMPLES__MASK == A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES__MASK && A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES__MASK == A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES__MASK &&
+                  A6XX_RB_DEST_MSAA_CNTL_MSAA_DISABLE == A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE && A6XX_SP_TP_DEST_MSAA_CNTL_MSAA_DISABLE == A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE,
+              "the GRAS, RB and SP_TP MSAA registers take the same words");
+static_assert(A6XX_RB_MRT_PITCH__SCALE == A6XX_RB_MRT_ARRAY_PITCH__SCALE && A6XX_RB_DEPTH_BUFFER_PITCH__SCALE == A6XX_RB_MRT_PITCH__SCALE &&
+                  (1u << A6XX_RB_MRT_PITCH__SCALE) == kMrtPitchAlign,
+              "the colour and depth pitches are held in 64-byte units");
+
+// --- the registers of array entries, as vfdFetchSize(i) above --------------------------------------------------------------
+// Each takes the entry-0 register of the field wanted (REG_A6XX_RB_MRT_PITCH, say) and adds the array's stride i times.
+
+constexpr uint32_t regRbMrt(uint32_t reg0, uint32_t i) { return reg0 + REG_A6XX_RB_MRT__STRIDE * i; }
+constexpr uint32_t regRbMrtFlagBuffer(uint32_t reg0, uint32_t i) { return reg0 + REG_A6XX_RB_MRT_FLAG_BUFFER__STRIDE * i; }
+constexpr uint32_t regGrasClVport(uint32_t reg0, uint32_t i) { return reg0 + REG_A6XX_GRAS_CL_VPORT__STRIDE * i; }
+constexpr uint32_t regGrasClZClamp(uint32_t reg0, uint32_t i) { return reg0 + REG_A6XX_GRAS_CL_Z_CLAMP__STRIDE * i; }
+constexpr uint32_t regGrasScScreenScissor(uint32_t reg0, uint32_t i) { return reg0 + REG_A6XX_GRAS_SC_SCREEN_SCISSOR__STRIDE * i; }
+constexpr uint32_t regGrasScViewportScissor(uint32_t reg0, uint32_t i) { return reg0 + REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR__STRIDE * i; }
+constexpr uint32_t regSpVsOutReg(uint32_t i) { return REG_A6XX_SP_VS_OUT_REG + REG_A6XX_SP_VS_OUT__STRIDE * i; }
+constexpr uint32_t regSpVsVpcDstReg(uint32_t i) { return REG_A6XX_SP_VS_VPC_DST_REG + REG_A6XX_SP_VS_VPC_DST__STRIDE * i; }
+constexpr uint32_t regSpFsOutputReg(uint32_t i) { return REG_A6XX_SP_FS_OUTPUT_REG + REG_A6XX_SP_FS_OUTPUT__STRIDE * i; }
+constexpr uint32_t regSpFsMrtReg(uint32_t i) { return REG_A6XX_SP_FS_MRT_REG + REG_A6XX_SP_FS_MRT__STRIDE * i; }
+constexpr uint32_t regVpcVaryingInterpMode(uint32_t i) { return REG_A6XX_VPC_VARYING_INTERP_MODE + REG_A6XX_VPC_VARYING_INTERP__STRIDE * i; }
+constexpr uint32_t regVpcVaryingPsReplMode(uint32_t i) { return REG_A6XX_VPC_VARYING_PS_REPL_MODE + REG_A6XX_VPC_VARYING_PS_REPL__STRIDE * i; }
+constexpr uint32_t regVpcVarDisable(uint32_t i) { return REG_A6XX_VPC_VAR_DISABLE + REG_A6XX_VPC_VAR__STRIDE * i; }
+constexpr uint32_t regVfdFetchBase(uint32_t i) { return REG_A6XX_VFD_FETCH_BASE + REG_A6XX_VFD_FETCH__STRIDE * i; }
+constexpr uint32_t regVfdFetchStride(uint32_t i) { return REG_A6XX_VFD_FETCH_STRIDE + REG_A6XX_VFD_FETCH__STRIDE * i; }
+constexpr uint32_t regVfdDecodeInstr(uint32_t i) { return REG_A6XX_VFD_DECODE_INSTR + REG_A6XX_VFD_DECODE__STRIDE * i; }
+constexpr uint32_t regVfdDecodeStepRate(uint32_t i) { return REG_A6XX_VFD_DECODE_STEP_RATE + REG_A6XX_VFD_DECODE__STRIDE * i; }
+constexpr uint32_t regVfdDestCntlInstr(uint32_t i) { return REG_A6XX_VFD_DEST_CNTL_INSTR + REG_A6XX_VFD_DEST_CNTL__STRIDE * i; }
+
+// --- floats in registers -------------------------------------------------------------------------------------------------------
+
+// The bits of a float, as Mesa's fui() (util/u_math.h) gives them to the encoders of the GRAS_CL_VPORT_*, Z_CLAMP,
+// Z_BOUNDS, POLY_OFFSET and BLEND_*_F32 registers. Written out by hand because C++17 has no constexpr bit_cast: the
+// exponent is found by halving or doubling (both exact), the mantissa is what is left below the leading one, scaled
+// by 2^23 (exact: a float has 24 significant bits). A finite value round-trips exactly (tests/a6xx_test.cpp holds it
+// to memcpy); NaN gives the quiet NaN, an infinity 0x7f800000 with its sign.
+constexpr uint32_t fui(float f) {
+    uint32_t sign = __builtin_signbit(f) ? 0x80000000u : 0u;
+    if (f != f) {
+        return 0x7fc00000u;
+    }
+    float a = f < 0 ? -f : f;
+    if (a == 0.0f) {
+        return sign;
+    }
+    if (a > 3.4028234663852886e38f) {
+        return sign | 0x7f800000u;
+    }
+    int e = 127;
+    while (a >= 2.0f) {
+        a *= 0.5f;
+        e++;
+    }
+    while (a < 1.0f && e > 1) {
+        a *= 2.0f;
+        e--;
+    }
+    if (a < 1.0f) {
+        return sign | uint32_t(a * 8388608.0f);   // a denormal: exponent 0, the value is mantissa * 2^-149 = a * 2^-126
+    }
+    return sign | (uint32_t(e) << 23) | uint32_t((a - 1.0f) * 8388608.0f);
+}
+
+// GRAS_CL_VPORT[0]'s six words for a Metal viewport, as turnip's tu6_emit_viewport computes them (tu_pipeline.cc:
+// 2442-2461: scale = extent / 2, offset = origin + scale, in float) with ONE change: the y scale is negated. Metal's
+// MTLViewport has a top-left origin and its NDC y points up, so NDC y = +1 must land on row y (the top) and -1 on row
+// y + height: y_window = (y + h/2) - (h/2) * y_ndc, where Vulkan's +h/2 puts NDC -1 at the top. air_run.c sets
+// softpipe's viewport for Metal the same way (scale {w/2, -h/2, 1}, translate {w/2, h/2, 0}). This is reasoning from
+// the convention, not a measurement: the probe's orientation line (which half of the target the first triangle fills)
+// is what decides it. Depth is [0, 1] in Metal as in Vulkan: zscale = zfar - znear, zoffset = znear.
+struct ViewportWords {
+    uint32_t xoffset, xscale, yoffset, yscale, zoffset, zscale;
+};
+constexpr ViewportWords viewportWords(double x, double y, double width, double height, double znear, double zfar) {
+    float xs = float(width) / 2.0f;
+    float ys = float(height) / 2.0f;
+    return ViewportWords{fui(float(x) + xs), fui(xs), fui(float(y) + ys), fui(-ys), fui(float(znear)), fui(float(zfar) - float(znear))};
+}
+
+// fd_calc_guardband (freedreno_guardband.h:17-75) for a4xx and later (the viewport may reach +-32768): the largest NDC
+// extent [-gb, gb] whose window coordinates stay in range, as 3.6 floating point (the exponent minus one in the high
+// three bits, the mantissa below its leading one in the low six), rounded down; MAX_GB when the viewport is not inside
+// the guardband (gb_adj < 1), when the scale is 0, or when gb_adj needs more than 8 bits of exponent. For a 64x64
+// viewport (offset 32, scale 32) gb_adj = min(1025, 1022.97) and frexp gives exponent 10: MAX_GB.
+constexpr uint32_t calcGuardband(float offset, float scale) {
+    float as = scale < 0 ? -scale : scale;
+    if (as == 0.0f) {
+        return kMaxGuardband;   // Mesa: the division gives an infinity, isinf(gb_adj) returns MAX_GB
+    }
+    float gbMinNdc = (-32768.0f - offset) / as;
+    float gbMaxNdc = (32767.0f - offset) / as;
+    float gbAdj = -gbMinNdc < gbMaxNdc ? -gbMinNdc : gbMaxNdc;
+    if (!(gbAdj >= 1.0f)) {
+        return kMaxGuardband;   // the viewport is not inside the guardband (or gbAdj is NaN)
+    }
+    // frexpf: gbAdj = m * 2^e with m in [0.5, 1); the halvings are exact
+    int e = 0;
+    float m = gbAdj;
+    while (m >= 1.0f) {
+        m *= 0.5f;
+        e++;
+    }
+    if (e > 8) {
+        return kMaxGuardband;
+    }
+    return (uint32_t(e - 1) << 6) | (uint32_t(m * 128.0f) - 64u);
+}
+
+// GRAS_CL_GUARDBAND_CLIP_ADJ for one viewport: each axis's guardband, capped at 511 as turnip caps it (tu_pipeline.cc:
+// 2436, 2458-2461, 2515-2517)
+constexpr uint32_t guardbandClipAdj(double xoffset, double xscale, double yoffset, double yscale) {
+    uint32_t h = calcGuardband(float(xoffset), float(xscale));
+    uint32_t v = calcGuardband(float(yoffset), float(yscale));
+    return A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_HORZ(h < 511 ? h : 511) | A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_VERT(v < 511 ? v : 511);
+}
+
+// --- whole register values, as one draw computes them -------------------------------------------------------------------------
+// From the turnip emitters named at each register above, with ir3's variant info (render.hpp's Stage) as the input:
+// register counts, regids (kRegidNone when unread), vec4 constlens, VPC locations, pixel units. Nothing here has run
+// on the phone.
+
+// a6xx_reg_xy, 14-bit X and Y: the window scissor TL/BR, the four window offsets, GRAS_2D_RESOLVE_CNTL_1/2
+constexpr uint32_t regXY(uint32_t x, uint32_t y) { return A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X(x) | A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y(y); }
+// a6xx_scissor_xy, 16-bit X and Y: the screen and viewport scissors' TL/BR (BR inclusive: w - 1, h - 1)
+constexpr uint32_t scissorXY(uint32_t x, uint32_t y) { return A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X(x) | A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y(y); }
+
+// GRAS_BIN_CONTROL and RB_BIN_CONTROL (same layout): the bin size in pixels (the fields count 32 and 16 of them),
+// the pass kind, where the buffers are, the LRZ feedback mask
+constexpr uint32_t binControl(a6xx_render_mode mode, a6xx_buffers_location where, a6xx_lrz_feedback_mask lrz, uint32_t binw = 0,
+                              uint32_t binh = 0) {
+    return A6XX_GRAS_BIN_CONTROL_BINW(binw) | A6XX_GRAS_BIN_CONTROL_BINH(binh) | A6XX_GRAS_BIN_CONTROL_RENDER_MODE(mode) |
+           A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION(where) | A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK(lrz);
+}
+// ...for a sysmem pass: no bins, RENDERING_PASS, BUFFERS_IN_SYSMEM; fd6 and r3d stop there (0x00c00000), turnip adds
+// EARLY_Z_OR_EARLY_LRZ_LATE_Z on a chip with lrz feedback (0x03c00000): render::Options::binControlLrzFeedback
+constexpr uint32_t binControlSysmem(bool lrzFeedback) {
+    return binControl(RENDERING_PASS, BUFFERS_IN_SYSMEM, lrzFeedback ? LRZ_FEEDBACK_EARLY_Z_OR_EARLY_LRZ_LATE_Z : LRZ_FEEDBACK_NONE);
+}
+
+// RB_MRT_BUF_INFO[i]: fd6_view.c:408-413 (no UNK10; A6XX has no LOSSLESSCOMPEN)
+constexpr uint32_t rbMrtBufInfo(a6xx_format fmt, a6xx_tile_mode tile, a3xx_color_swap swap) {
+    return A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT(fmt) | A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE(tile) | A6XX_RB_MRT_BUF_INFO_COLOR_SWAP(swap);
+}
+// RB_MRT_PITCH[i] and RB_MRT_ARRAY_PITCH[i] in bytes, held in 64-byte units. Precondition: a multiple of 64 (Mesa's
+// encoders assert it, a6xx.xml.h:5816, 5826); rbMrtPitchValid says whether a pitch is one and fits the 16-bit field
+// (a6xx.xml:3702 high=15), for the refusal render.cpp makes before encoding. The low 6 bits are dropped, as the >> 6 drops them.
+constexpr bool rbMrtPitchValid(uint32_t bytes) { return bytes != 0 && bytes % kMrtPitchAlign == 0 && bytes <= kMrtPitchMax; }
+constexpr uint32_t rbMrtPitch(uint32_t bytes) { return A6XX_RB_MRT_PITCH(bytes); }
+constexpr uint32_t rbMrtArrayPitch(uint32_t bytes) { return A6XX_RB_MRT_ARRAY_PITCH(bytes); }
+// SP_FS_MRT_REG[i]: fd6_view.c:415-418; SINT/UINT for the pure integer formats (R32Uint, RGBA32Uint)
+constexpr uint32_t spFsMrtReg(a6xx_format fmt, bool sint, bool uint_) {
+    return A6XX_SP_FS_MRT_REG_COLOR_FORMAT(fmt) | (sint ? A6XX_SP_FS_MRT_REG_COLOR_SINT : 0u) | (uint_ ? A6XX_SP_FS_MRT_REG_COLOR_UINT : 0u);
+}
+// RB_MRT_CONTROL[i] with blending and the ROP off: the write mask alone, ROP_CODE left at ROP_CLEAR (0) as turnip's
+// default logic op leaves it (tu_pipeline.cc:2983, 3044-3049); 0x780 for all four components
+constexpr uint32_t rbMrtControl(uint32_t componentMask) { return A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE(componentMask); }
+// RB_BLEND_CNTL with no target blending: SAMPLE_MASK all ones; INDEPENDENT_BLEND as turnip (tu_pipeline.cc:3016-3022)
+constexpr uint32_t rbBlendCntl(bool independentBlend, uint32_t sampleMask = 0xffff) {
+    return (independentBlend ? A6XX_RB_BLEND_CNTL_INDEPENDENT_BLEND : 0u) | A6XX_RB_BLEND_CNTL_SAMPLE_MASK(sampleMask);
+}
+// SP_FS_RENDER_COMPONENTS and RB_RENDER_COMPONENTS: 0xf per colour output written (tu_shader.cc:1873-1874, 1892-1893)
+constexpr uint32_t renderComponents(uint32_t numColorOutputs) {
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < numColorOutputs && i < kMrtCount; i++) {
+        v |= A6XX_RB_RENDER_COMPONENTS_RT0(0xf) << (i * 4);
+    }
+    return v;
+}
+// GRAS_SC_CNTL for a sysmem pass (tu_pipeline.cc:3351-3380) and RB_RENDER_CNTL for one (tu_cmd_buffer.cc:633-693)
+constexpr uint32_t grasScCntlSysmem() { return A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(NO_FLUSH); }
+constexpr uint32_t rbRenderCntlSysmem() { return A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE(2); }
+
+// CP_DRAW_INDX_OFFSET word 0 for a non-indexed draw: no index size, no patches, no GS or tessellation
+constexpr uint32_t drawIndxOffset0(pc_di_primtype prim, pc_di_src_sel src, pc_di_vis_cull_mode vis) {
+    return CP_DRAW_INDX_OFFSET_0_PRIM_TYPE(prim) | CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT(src) | CP_DRAW_INDX_OFFSET_0_VIS_CULL(vis);
+}
+
+// ir3_shader_branchstack_hw (ir3_shader.h:1419-1428): DIV_ROUND_UP(MIN2(branchstack, 64), 2)
+constexpr uint32_t branchstackHw(uint32_t branchstack) { return ((branchstack < kBranchstackSize ? branchstack : kBranchstackSize) + 1) / 2; }
+// SP_VS_CTRL_REG0 (tu_shader.cc:1255-1261): the footprints are max_reg + 1 and max_half_reg + 1 (0 when the shader
+// uses no half register), BRANCHSTACK is branchstackHw's, MERGEDREGS is this register's bit 20, no THREADSIZE
+constexpr uint32_t spVsCtrlReg0(uint32_t fullRegs, uint32_t halfRegs, uint32_t branchstack, bool mergedregs = true, bool earlyPreamble = false) {
+    return A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT(halfRegs) | A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT(fullRegs) |
+           A6XX_SP_VS_CTRL_REG0_BRANCHSTACK(branchstack) | (mergedregs ? A6XX_SP_VS_CTRL_REG0_MERGEDREGS : 0u) |
+           (earlyPreamble ? A6XX_SP_VS_CTRL_REG0_EARLYPREAMBLE : 0u);
+}
+// SP_FS_CTRL_REG0 (tu_shader.cc:1284-1296): the footprints, THREADSIZE, VARYING when the FS has inputs, LODPIXMASK
+// when it needs full quads, PIXLODENABLE when it needs the pixel lod, UNK24 ALWAYS (both witnesses), MERGEDREGS bit 31
+constexpr uint32_t spFsCtrlReg0(uint32_t fullRegs, uint32_t halfRegs, uint32_t branchstack, a6xx_threadsize threadsize, bool varying,
+                                bool lodpixmask, bool pixlodenable, bool earlyPreamble = false, bool mergedregs = true) {
+    return A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT(halfRegs) | A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT(fullRegs) |
+           A6XX_SP_FS_CTRL_REG0_BRANCHSTACK(branchstack) | A6XX_SP_FS_CTRL_REG0_THREADSIZE(threadsize) |
+           (varying ? A6XX_SP_FS_CTRL_REG0_VARYING : 0u) | (lodpixmask ? A6XX_SP_FS_CTRL_REG0_LODPIXMASK : 0u) | A6XX_SP_FS_CTRL_REG0_UNK24 |
+           (pixlodenable ? A6XX_SP_FS_CTRL_REG0_PIXLODENABLE : 0u) | (earlyPreamble ? A6XX_SP_FS_CTRL_REG0_EARLYPREAMBLE : 0u) |
+           (mergedregs ? A6XX_SP_FS_CTRL_REG0_MERGEDREGS : 0u);
+}
+// HLSQ_VS_CNTL and HLSQ_FS_CNTL from the constant length in vec4, rounded up to the 4 the field counts in, enabled:
+// as hlsqCsCntl does (ir3 gives a VS at least 8, kVsConstlenFloor; an FS may have 0 -> 0x100)
+constexpr uint32_t hlsqVsCntl(uint32_t constlenVec4) { return A6XX_HLSQ_VS_CNTL_CONSTLEN((constlenVec4 + 3) & ~3u) | A6XX_HLSQ_VS_CNTL_ENABLED; }
+constexpr uint32_t hlsqFsCntl(uint32_t constlenVec4) { return A6XX_HLSQ_FS_CNTL_CONSTLEN((constlenVec4 + 3) & ~3u) | A6XX_HLSQ_FS_CNTL_ENABLED; }
+// SP_xS_CONFIG for any of the five stages: ENABLED | NTEX | NSAMP | NIBO (turnip writes NTEX = NSAMP = num_samp and
+// no NIBO, tu_pipeline.cc:384-398; fd6 writes num_ibos; 0 IBOs in step one makes them agree)
+constexpr uint32_t spXsConfig(uint32_t ntex, uint32_t nsamp, uint32_t nibo) {
+    return A6XX_SP_VS_CONFIG_ENABLED | A6XX_SP_VS_CONFIG_NTEX(ntex) | A6XX_SP_VS_CONFIG_NSAMP(nsamp) | A6XX_SP_VS_CONFIG_NIBO(nibo);
+}
+// HLSQ_FS_CNTL_0: THREADSIZE | VARYINGS when total_in != 0 (tu_shader.cc:1737)
+constexpr uint32_t hlsqFsCntl0(a6xx_threadsize threadsize, bool varyings) {
+    return A6XX_HLSQ_FS_CNTL_0_THREADSIZE(threadsize) | (varyings ? A6XX_HLSQ_FS_CNTL_0_VARYINGS : 0u);
+}
+
+// VFD_CONTROL_1: the VS's id registers (tu_shader.cc:1947-1966), kRegidNone for each it does not read
+constexpr uint32_t vfdControl1(uint32_t vtx, uint32_t inst, uint32_t primid, uint32_t viewid) {
+    return A6XX_VFD_CONTROL_1_REGID4VTX(vtx) | A6XX_VFD_CONTROL_1_REGID4INST(inst) | A6XX_VFD_CONTROL_1_REGID4PRIMID(primid) |
+           A6XX_VFD_CONTROL_1_REGID4VIEWID(viewid);
+}
+// VFD_CONTROL_2..5 with no HS, DS or GS: every id register kRegidNone (tu_shader.cc:1972-2036 with NULL shaders);
+// VFD_CONTROL_4 is the literal 0xfc turnip writes (:2009) and VFD_CONTROL_5's UNK8 is 0xfc too
+constexpr uint32_t vfdControl2None() { return A6XX_VFD_CONTROL_2_REGID_HSRELPATCHID(kRegidNone) | A6XX_VFD_CONTROL_2_REGID_INVOCATIONID(kRegidNone); }
+constexpr uint32_t vfdControl3None() {
+    return A6XX_VFD_CONTROL_3_REGID_DSPRIMID(kRegidNone) | A6XX_VFD_CONTROL_3_REGID_DSRELPATCHID(kRegidNone) |
+           A6XX_VFD_CONTROL_3_REGID_TESSX(kRegidNone) | A6XX_VFD_CONTROL_3_REGID_TESSY(kRegidNone);
+}
+constexpr uint32_t vfdControl4None() { return A6XX_VFD_CONTROL_4_UNK0(kRegidNone); }
+constexpr uint32_t vfdControl5None() { return A6XX_VFD_CONTROL_5_REGID_GSHEADER(kRegidNone) | A6XX_VFD_CONTROL_5_UNK8(kRegidNone); }
+// VFD_DECODE_INSTR[i] for attribute i (tu_pipeline.cc:2330-2360): the binding, its byte offset, the fetch format from
+// fd6_format_table's vertex column, UNK30 always, FLOAT unless the format is a pure integer one. Step two's.
+constexpr uint32_t vfdDecodeInstr(uint32_t binding, uint32_t offset, bool instanced, a6xx_format fmt, a3xx_color_swap swap, bool isFloat) {
+    return A6XX_VFD_DECODE_INSTR_IDX(binding) | A6XX_VFD_DECODE_INSTR_OFFSET(offset) | (instanced ? A6XX_VFD_DECODE_INSTR_INSTANCED : 0u) |
+           A6XX_VFD_DECODE_INSTR_FORMAT(fmt) | A6XX_VFD_DECODE_INSTR_SWAP(swap) | A6XX_VFD_DECODE_INSTR_UNK30 |
+           (isFloat ? A6XX_VFD_DECODE_INSTR_FLOAT : 0u);
+}
+constexpr uint32_t vfdDestCntlInstr(uint32_t writemask, uint32_t regid) {
+    return A6XX_VFD_DEST_CNTL_INSTR_WRITEMASK(writemask) | A6XX_VFD_DEST_CNTL_INSTR_REGID(regid);
+}
+
+// the VPC link registers, from render::Linkage (ir3_link_shaders' result): tu_pipeline.cc:977-1053
+constexpr uint32_t spVsOutReg(uint32_t aRegid, uint32_t aCompmask, uint32_t bRegid, uint32_t bCompmask) {
+    return A6XX_SP_VS_OUT_REG_A_REGID(aRegid) | A6XX_SP_VS_OUT_REG_A_COMPMASK(aCompmask) | A6XX_SP_VS_OUT_REG_B_REGID(bRegid) |
+           A6XX_SP_VS_OUT_REG_B_COMPMASK(bCompmask);
+}
+constexpr uint32_t spVsVpcDstReg(uint32_t loc0, uint32_t loc1, uint32_t loc2, uint32_t loc3) {
+    return A6XX_SP_VS_VPC_DST_REG_OUTLOC0(loc0) | A6XX_SP_VS_VPC_DST_REG_OUTLOC1(loc1) | A6XX_SP_VS_VPC_DST_REG_OUTLOC2(loc2) |
+           A6XX_SP_VS_VPC_DST_REG_OUTLOC3(loc3);
+}
+constexpr uint32_t spVsPrimitiveCntl(uint32_t out, uint32_t flagsRegid = 0) {
+    return A6XX_SP_VS_PRIMITIVE_CNTL_OUT(out) | A6XX_SP_VS_PRIMITIVE_CNTL_FLAGS_REGID(flagsRegid);
+}
+constexpr uint32_t vpcVsPack(uint32_t strideInVpc, uint32_t positionLoc, uint32_t psizeLoc = kLocNone, uint32_t extraPos = 0) {
+    return A6XX_VPC_VS_PACK_STRIDE_IN_VPC(strideInVpc) | A6XX_VPC_VS_PACK_POSITIONLOC(positionLoc) | A6XX_VPC_VS_PACK_PSIZELOC(psizeLoc) |
+           A6XX_VPC_VS_PACK_EXTRAPOS(extraPos);
+}
+constexpr uint32_t vpcVsClipCntl(uint32_t clipMask, uint32_t dist03Loc = kLocNone, uint32_t dist47Loc = kLocNone) {
+    return A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK(clipMask) | A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC(dist03Loc) | A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC(dist47Loc);
+}
+constexpr uint32_t vpcVsLayerCntl(uint32_t layerLoc = kLocNone, uint32_t viewLoc = kLocNone, uint32_t shadingRateLoc = kLocNone) {
+    return A6XX_VPC_VS_LAYER_CNTL_LAYERLOC(layerLoc) | A6XX_VPC_VS_LAYER_CNTL_VIEWLOC(viewLoc) | A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC(shadingRateLoc);
+}
+constexpr uint32_t grasVsClCntl(uint32_t clipMask, uint32_t cullMask) {
+    return A6XX_GRAS_VS_CL_CNTL_CLIP_MASK(clipMask) | A6XX_GRAS_VS_CL_CNTL_CULL_MASK(cullMask);
+}
+constexpr uint32_t pcVsOutCntl(uint32_t strideInVpc, bool psize = false, bool layer = false, bool view = false, bool primitiveId = false,
+                               uint32_t clipMask = 0) {
+    return A6XX_PC_VS_OUT_CNTL_STRIDE_IN_VPC(strideInVpc) | (psize ? A6XX_PC_VS_OUT_CNTL_PSIZE : 0u) | (layer ? A6XX_PC_VS_OUT_CNTL_LAYER : 0u) |
+           (view ? A6XX_PC_VS_OUT_CNTL_VIEW : 0u) | (primitiveId ? A6XX_PC_VS_OUT_CNTL_PRIMITIVE_ID : 0u) | A6XX_PC_VS_OUT_CNTL_CLIP_MASK(clipMask);
+}
+constexpr uint32_t vpcCntl0(uint32_t numNonPosVar, uint32_t primidLoc, bool varying, uint32_t viewidLoc) {
+    return A6XX_VPC_CNTL_0_NUMNONPOSVAR(numNonPosVar) | A6XX_VPC_CNTL_0_PRIMIDLOC(primidLoc) | (varying ? A6XX_VPC_CNTL_0_VARYING : 0u) |
+           A6XX_VPC_CNTL_0_VIEWIDLOC(viewidLoc);
+}
+// VPC_VAR_DISABLE[i] from word i of the link's varmask: a set bit disables the component
+constexpr uint32_t vpcVarDisable(uint32_t varmaskWord) { return ~varmaskWord; }
+// VPC_VARYING_INTERP_MODE[i]'s two bits for one component at VPC location `loc`: which register (loc / 16) and
+// where in it (loc % 16 * 2); render::link puts INTERP_FLAT there for a flat input (tu_pipeline.cc:752-796)
+constexpr uint32_t vpcVaryingInterpModeReg(uint32_t loc) { return loc / 16; }
+constexpr uint32_t vpcVaryingInterpModeBits(uint32_t loc, a6xx_varying_interp_mode mode) { return uint32_t(mode) << ((loc % 16) * 2); }
+
+// the FS input registers (tu_shader.cc:1627-1812), kRegidNone for every system value the FS does not read
+constexpr uint32_t hlsqControl1Reg() { return A6XX_HLSQ_CONTROL_1_REG_PRIMALLOCTHRESHOLD(kPrimAllocThreshold); }
+constexpr uint32_t hlsqControl2Reg(uint32_t faceRegid, uint32_t sampleIdRegid, uint32_t sampleMaskRegid, uint32_t centerRhwRegid) {
+    return A6XX_HLSQ_CONTROL_2_REG_FACEREGID(faceRegid) | A6XX_HLSQ_CONTROL_2_REG_SAMPLEID(sampleIdRegid) |
+           A6XX_HLSQ_CONTROL_2_REG_SAMPLEMASK(sampleMaskRegid) | A6XX_HLSQ_CONTROL_2_REG_CENTERRHW(centerRhwRegid);
+}
+constexpr uint32_t hlsqControl3Reg(uint32_t ijPerspPixel, uint32_t ijLinearPixel, uint32_t ijPerspCentroid, uint32_t ijLinearCentroid) {
+    return A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL(ijPerspPixel) | A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL(ijLinearPixel) |
+           A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID(ijPerspCentroid) | A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID(ijLinearCentroid);
+}
+constexpr uint32_t hlsqControl4Reg(uint32_t ijPerspSample, uint32_t ijLinearSample, uint32_t xyCoordRegid, uint32_t zwCoordRegid) {
+    return A6XX_HLSQ_CONTROL_4_REG_IJ_PERSP_SAMPLE(ijPerspSample) | A6XX_HLSQ_CONTROL_4_REG_IJ_LINEAR_SAMPLE(ijLinearSample) |
+           A6XX_HLSQ_CONTROL_4_REG_XYCOORDREGID(xyCoordRegid) | A6XX_HLSQ_CONTROL_4_REG_ZWCOORDREGID(zwCoordRegid);
+}
+// the IJ bits of GRAS_CNTL and RB_RENDER_CONTROL0 from the FS's seven ij regids in ir3_bary order (tu_shader.cc:
+// 1747-1756); `needSize` adds IJ_LINEAR_PIXEL (gl_FragCoord's size), `needSizePerSamp` IJ_LINEAR_SAMPLE
+constexpr uint32_t ijBits(const uint32_t* ijRegid, bool needSize = false, bool needSizePerSamp = false) {
+    return (validReg(ijRegid[IJ_PERSP_PIXEL]) ? A6XX_GRAS_CNTL_IJ_PERSP_PIXEL : 0u) |
+           (validReg(ijRegid[IJ_PERSP_CENTROID]) ? A6XX_GRAS_CNTL_IJ_PERSP_CENTROID : 0u) |
+           (validReg(ijRegid[IJ_PERSP_SAMPLE]) ? A6XX_GRAS_CNTL_IJ_PERSP_SAMPLE : 0u) |
+           (validReg(ijRegid[IJ_LINEAR_PIXEL]) || needSize ? A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL : 0u) |
+           (validReg(ijRegid[IJ_LINEAR_CENTROID]) ? A6XX_GRAS_CNTL_IJ_LINEAR_CENTROID : 0u) |
+           (validReg(ijRegid[IJ_LINEAR_SAMPLE]) || needSizePerSamp ? A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE : 0u);
+}
+constexpr uint32_t grasCntl(uint32_t ij, uint32_t fragcoordCompmask) { return ij | A6XX_GRAS_CNTL_COORD_MASK(fragcoordCompmask); }
+constexpr uint32_t rbRenderControl0(uint32_t ij, uint32_t fragcoordCompmask, bool varyings) {
+    return ij | A6XX_RB_RENDER_CONTROL0_COORD_MASK(fragcoordCompmask) | (varyings ? A6XX_RB_RENDER_CONTROL0_UNK10 : 0u);
+}
+constexpr uint32_t rbRenderControl1(bool faceness, bool sampleId, bool sampleMask, bool centerRhw, a6xx_fragcoord_sample_mode mode = FRAGCOORD_CENTER) {
+    return A6XX_RB_RENDER_CONTROL1_FRAGCOORDSAMPLEMODE(mode) | (sampleMask ? A6XX_RB_RENDER_CONTROL1_SAMPLEMASK : 0u) |
+           (sampleId ? A6XX_RB_RENDER_CONTROL1_SAMPLEID : 0u) | (centerRhw ? A6XX_RB_RENDER_CONTROL1_CENTERRHW : 0u) |
+           (faceness ? A6XX_RB_RENDER_CONTROL1_FACENESS : 0u);
+}
+// SP_FS_PREFETCH_CNTL (tu_shader.cc:1652-1660): no prefetch commands in step one; IJ_WRITE_DISABLE when the FS has
+// no perspective pixel barycentric
+constexpr uint32_t spFsPrefetchCntl(uint32_t count, bool ijWriteDisable, bool endOfQuad = false) {
+    return A6XX_SP_FS_PREFETCH_CNTL_COUNT(count) | (ijWriteDisable ? A6XX_SP_FS_PREFETCH_CNTL_IJ_WRITE_DISABLE : 0u) |
+           (endOfQuad ? A6XX_SP_FS_PREFETCH_CNTL_ENDOFQUAD : 0u);
+}
+
+// the FS output registers (tu_shader.cc:1816-1898)
+constexpr uint32_t spFsOutputCntl0(uint32_t depthRegid, uint32_t sampmaskRegid, uint32_t stencilrefRegid, bool dualColorIn = false) {
+    return (dualColorIn ? A6XX_SP_FS_OUTPUT_CNTL0_DUAL_COLOR_IN_ENABLE : 0u) | A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID(depthRegid) |
+           A6XX_SP_FS_OUTPUT_CNTL0_SAMPMASK_REGID(sampmaskRegid) | A6XX_SP_FS_OUTPUT_CNTL0_STENCILREF_REGID(stencilrefRegid);
+}
+constexpr uint32_t spFsOutputReg(uint32_t regid, bool half) { return A6XX_SP_FS_OUTPUT_REG_REGID(regid) | (half ? A6XX_SP_FS_OUTPUT_REG_HALF_PRECISION : 0u); }
+
+// the rasterizer (tu_pipeline.cc:3120-3218). GRAS_SU_CNTL: the line half width in quarter pixels (turnip's width 1.0 ->
+// 0.5 -> 2), RECTANGULAR lines; cull none and FRONT_CW clear are step one's. GRAS_CL_CNTL: Metal's [0, 1] depth
+// (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE, as turnip for Vulkan; the point size words in sixteenths.
+constexpr uint32_t grasSuCntl(bool cullFront, bool cullBack, bool frontCw, uint32_t lineHalfWidthQuarters = 2, a5xx_line_mode lineMode = RECTANGULAR,
+                              bool polyOffset = false) {
+    return (cullFront ? A6XX_GRAS_SU_CNTL_CULL_FRONT : 0u) | (cullBack ? A6XX_GRAS_SU_CNTL_CULL_BACK : 0u) | (frontCw ? A6XX_GRAS_SU_CNTL_FRONT_CW : 0u) |
+           A6XX_GRAS_SU_CNTL_LINEHALFWIDTH(lineHalfWidthQuarters) | (polyOffset ? A6XX_GRAS_SU_CNTL_POLY_OFFSET : 0u) |
+           A6XX_GRAS_SU_CNTL_LINE_MODE(lineMode);
+}
+constexpr uint32_t grasClCntl(bool zeroGbScaleZ = true, bool vpClipCodeIgnore = true, bool znearClipDisable = false, bool zfarClipDisable = false,
+                              bool zClampEnable = false) {
+    return (znearClipDisable ? A6XX_GRAS_CL_CNTL_ZNEAR_CLIP_DISABLE : 0u) | (zfarClipDisable ? A6XX_GRAS_CL_CNTL_ZFAR_CLIP_DISABLE : 0u) |
+           (zClampEnable ? A6XX_GRAS_CL_CNTL_Z_CLAMP_ENABLE : 0u) | (zeroGbScaleZ ? A6XX_GRAS_CL_CNTL_ZERO_GB_SCALE_Z : 0u) |
+           (vpClipCodeIgnore ? A6XX_GRAS_CL_CNTL_VP_CLIP_CODE_IGNORE : 0u);
+}
+constexpr uint32_t grasSuPointMinmax(uint32_t minSixteenths, uint32_t maxSixteenths) {
+    return A6XX_GRAS_SU_POINT_MINMAX_MIN(minSixteenths) | A6XX_GRAS_SU_POINT_MINMAX_MAX(maxSixteenths);
+}
+constexpr uint32_t grasSuPointSize(uint32_t sixteenths) { return A6XX_GRAS_SU_POINT_SIZE(sixteenths); }
+
 }  // namespace hakios::metal::a6xx

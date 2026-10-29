@@ -2,6 +2,9 @@
 // adreno_pm4.xml.h; the field positions are in a6xx.hpp next to each constant) and, for the packet headers, from the
 // command processor's parity rule as pm4.hpp states it: a field's bit is 1 when the field has an even number of ones.
 // tools/check-a6xx.py checks the constants themselves against the headers; this checks what is built from them.
+#include <cfloat>
+#include <cstring>
+
 #include "hakios-metal/a6xx.hpp"
 #include "hakios-metal/pm4.hpp"
 #include "test.hpp"
@@ -389,4 +392,514 @@ TEST(a6xx_batch_start_words) {
     CHECK_EQ(kMagicSpChickenBits, 5120u);
     CHECK_EQ(kMagicUcheClientPf, 132u);
     CHECK_EQ(kBorderColorBytes, 32768u);
+}
+
+// --- the render path ----------------------------------------------------------------------------------------------------
+// The words of the first draw (critic.md's recommended first step: one flat triangle into a 64x64 linear RGBA8Unorm
+// texture, pitch 256, in sysmem mode), each worked out by hand from the field positions above it in a6xx.hpp, and
+// beside each a value a wrong shift, scale or sign would give, so that the check can fail.
+
+TEST(a6xx_render_opcodes_events_and_enums) {
+    CHECK_EQ(uint32_t(CP_DRAW_INDX_OFFSET), 56u);
+    CHECK_EQ(uint32_t(CP_SKIP_IB2_ENABLE_GLOBAL), 29u);
+    CHECK_EQ(uint32_t(CP_SKIP_IB2_ENABLE_LOCAL), 35u);
+    CHECK_EQ(uint32_t(CP_SET_VISIBILITY_OVERRIDE), 100u);
+    CHECK_EQ(uint32_t(CP_CONTEXT_REG_BUNCH), 92u);
+    CHECK_EQ(uint32_t(CP_WAIT_MEM_WRITES), 18u);
+    CHECK_EQ(uint32_t(CP_WAIT_FOR_ME), 19u);
+    // the type-7 headers, by pm4.hpp's parity rule (a field's bit is 1 when the field has an even number of ones):
+    // CP_DRAW_INDX_OFFSET 0x38 = 011 1000, three ones: bit 23 is 0; count 3 = 11, two ones: bit 15 is 1
+    CHECK_EQ(pm4::type7(CP_DRAW_INDX_OFFSET, 3), 0x70388003u);
+    // CP_SKIP_IB2_ENABLE_GLOBAL 0x1d = 001 1101, four ones: bit 23 is 1; count 1: 0
+    CHECK_EQ(pm4::type7(CP_SKIP_IB2_ENABLE_GLOBAL, 1), 0x709d0001u);
+    // CP_SET_VISIBILITY_OVERRIDE 0x64 = 110 0100, three ones: 0
+    CHECK_EQ(pm4::type7(CP_SET_VISIBILITY_OVERRIDE, 1), 0x70640001u);
+    // CP_SKIP_IB2_ENABLE_LOCAL 0x23 = 010 0011, three ones: 0
+    CHECK_EQ(pm4::type7(CP_SKIP_IB2_ENABLE_LOCAL, 1), 0x70230001u);
+    // CP_CONTEXT_REG_BUNCH 0x5c = 101 1100, four ones: bit 23 is 1; count 2: one bit, 0
+    CHECK_EQ(pm4::type7(CP_CONTEXT_REG_BUNCH, 2), 0x70dc0002u);
+    // the events the pass begin and tail write (1-word: the invalidates and LRZ_FLUSH; 4-word: the two flushes)
+    CHECK_EQ(uint32_t(PC_CCU_FLUSH_COLOR_TS), 29u);
+    CHECK_EQ(uint32_t(PC_CCU_FLUSH_DEPTH_TS), 28u);
+    CHECK_EQ(uint32_t(PC_CCU_INVALIDATE_COLOR), 25u);
+    CHECK_EQ(uint32_t(PC_CCU_INVALIDATE_DEPTH), 24u);
+    CHECK_EQ(uint32_t(LRZ_FLUSH), 38u);
+    CHECK_EQ(uint32_t(LRZ_CLEAR), 37u);
+    CHECK_EQ(eventWrite0(PC_CCU_FLUSH_COLOR_TS), 0x1du);   // no TIMESTAMP bit: the 28 October lesson holds for the render tail too
+    CHECK_EQ(eventWrite0(LRZ_FLUSH), 0x26u);
+    // the marker and the state blocks of the two stages' loads
+    CHECK_EQ(uint32_t(RM6_DIRECT_RENDER), 1u);
+    CHECK_EQ(setMarker0(RM6_DIRECT_RENDER), 0x1u);
+    CHECK_EQ(uint32_t(SB6_VS_SHADER), 8u);
+    CHECK_EQ(uint32_t(SB6_FS_SHADER), 12u);
+    CHECK_EQ(uint32_t(SB6_VS_TEX), 0u);
+    CHECK_EQ(uint32_t(SB6_FS_TEX), 4u);
+    CHECK_EQ(uint32_t(SB6_IBO), 14u);
+    // the VS's program load: ST6_SHADER (0) | SS6_INDIRECT (2) << 16 | SB6_VS_SHADER (8) << 18 = 0x200000 | NUM_UNIT 1 << 22
+    CHECK_EQ(loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_VS_SHADER, 1), 0x00620000u);
+    // the FS's: SB6_FS_SHADER (12) << 18 = 0x300000
+    CHECK_EQ(loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_FS_SHADER, 1), 0x00720000u);
+    // the draw enums
+    CHECK_EQ(uint32_t(DI_PT_TRILIST), 4u);
+    CHECK_EQ(uint32_t(DI_PT_TRISTRIP), 6u);
+    CHECK_EQ(uint32_t(DI_PT_POINTLIST), 9u);
+    CHECK_EQ(uint32_t(DI_PT_LINELIST), 2u);
+    CHECK_EQ(uint32_t(DI_PT_LINESTRIP), 3u);
+    CHECK_EQ(uint32_t(DI_SRC_SEL_AUTO_INDEX), 2u);
+    CHECK_EQ(uint32_t(DI_SRC_SEL_DMA), 0u);
+    CHECK_EQ(uint32_t(IGNORE_VISIBILITY), 0u);
+    CHECK_EQ(uint32_t(USE_VISIBILITY), 1u);
+    // the register enums
+    CHECK_EQ(uint32_t(RENDERING_PASS), 0u);
+    CHECK_EQ(uint32_t(BUFFERS_IN_SYSMEM), 3u);
+    CHECK_EQ(uint32_t(BUFFERS_IN_GMEM), 0u);
+    CHECK_EQ(uint32_t(LRZ_FEEDBACK_EARLY_Z_OR_EARLY_LRZ_LATE_Z), 3u);
+    CHECK_EQ(uint32_t(DEPTH6_NONE), 0u);
+    CHECK_EQ(uint32_t(DEPTH6_32), 4u);
+    CHECK_EQ(uint32_t(POLYMODE6_TRIANGLES), 3u);
+    CHECK_EQ(uint32_t(INTERP_SMOOTH), 0u);
+    CHECK_EQ(uint32_t(INTERP_FLAT), 1u);
+    CHECK_EQ(uint32_t(INTERP_ONE), 3u);
+    CHECK_EQ(uint32_t(PS_REPL_NONE), 0u);
+    CHECK_EQ(uint32_t(A6XX_EARLY_Z), 0u);
+    CHECK_EQ(uint32_t(A6XX_LATE_Z), 1u);
+    CHECK_EQ(uint32_t(ROP_CLEAR), 0u);
+    CHECK_EQ(uint32_t(ROP_COPY), 12u);
+    CHECK_EQ(uint32_t(NO_FLUSH), 0u);
+    CHECK_EQ(uint32_t(FRAGCOORD_CENTER), 0u);
+    CHECK_EQ(uint32_t(RECTANGULAR), 1u);
+    CHECK_EQ(uint32_t(BRESENHAM), 0u);
+    CHECK_EQ(uint32_t(FMT6_32_32_FLOAT), 103u);
+    CHECK_EQ(uint32_t(FACTOR_ONE_MINUS_SRC_ALPHA), 7u);
+    CHECK_EQ(uint32_t(BLEND_MAX_DST_SRC), 4u);
+    CHECK_EQ(uint32_t(STENCIL_DECR_WRAP), 7u);
+    CHECK_EQ(uint32_t(IJ_LINEAR_CENTROID), 5u);   // ir3_bary: LINEAR_CENTROID comes before LINEAR_SAMPLE
+    CHECK_EQ(uint32_t(IJ_LINEAR_SAMPLE), 6u);
+    CHECK_EQ(uint32_t(IJ_COUNT), 7u);
+}
+
+TEST(a6xx_render_register_offsets_are_mesas) {
+    CHECK_EQ(REG_A6XX_GRAS_CL_CNTL, 0x8000u);
+    CHECK_EQ(REG_A6XX_GRAS_CL_VPORT_XOFFSET, 0x8010u);
+    CHECK_EQ(REG_A6XX_GRAS_CL_VPORT_YSCALE, 0x8013u);
+    CHECK_EQ(REG_A6XX_GRAS_SU_CNTL, 0x8090u);
+    CHECK_EQ(REG_A6XX_GRAS_BIN_CONTROL, 0x80a1u);
+    CHECK_EQ(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, 0x80f0u);
+    CHECK_EQ(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR, 0x80f1u);
+    CHECK_EQ(REG_A6XX_RB_BIN_CONTROL, 0x8800u);
+    CHECK_EQ(REG_A6XX_RB_RENDER_CNTL, 0x8801u);
+    CHECK_EQ(REG_A6XX_RB_MRT_CONTROL, 0x8820u);
+    CHECK_EQ(REG_A6XX_RB_MRT_BUF_INFO, 0x8822u);
+    CHECK_EQ(REG_A6XX_RB_MRT_BASE_GMEM, 0x8827u);
+    CHECK_EQ(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, 0x8903u);
+    CHECK_EQ(REG_A6XX_RB_DEPTH_BUFFER_INFO, 0x8872u);
+    CHECK_EQ(REG_A6XX_RB_BLEND_CNTL, 0x8865u);
+    CHECK_EQ(REG_A6XX_RB_WINDOW_OFFSET, 0x8890u);
+    CHECK_EQ(REG_A6XX_RB_WINDOW_OFFSET2, 0x88d4u);
+    CHECK_EQ(REG_A6XX_PC_PRIMITIVE_CNTL_0, 0x9b00u);
+    CHECK_EQ(REG_A6XX_PC_VS_OUT_CNTL, 0x9b01u);
+    CHECK_EQ(REG_A6XX_PC_RESTART_INDEX, 0x9803u);
+    CHECK_EQ(REG_A6XX_VFD_CONTROL_0, 0xa000u);
+    CHECK_EQ(REG_A6XX_VFD_CONTROL_6, 0xa006u);
+    CHECK_EQ(REG_A6XX_VFD_INDEX_OFFSET, 0xa00eu);
+    CHECK_EQ(REG_A6XX_VPC_VS_PACK, 0x9301u);
+    CHECK_EQ(REG_A6XX_VPC_CNTL_0, 0x9304u);
+    CHECK_EQ(REG_A6XX_VPC_VS_CLIP_CNTL_V2, 0x9311u);
+    CHECK_EQ(REG_A6XX_VPC_VS_LAYER_CNTL_V2, 0x9314u);
+    CHECK_EQ(REG_A6XX_SP_VS_CTRL_REG0, 0xa800u);
+    CHECK_EQ(REG_A6XX_SP_VS_OUT_REG, 0xa803u);
+    CHECK_EQ(REG_A6XX_SP_VS_VPC_DST_REG, 0xa813u);
+    CHECK_EQ(REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET, 0xa81bu);
+    CHECK_EQ(REG_A6XX_SP_VS_OBJ_START, 0xa81cu);
+    CHECK_EQ(REG_A6XX_SP_VS_CONFIG, 0xa823u);
+    CHECK_EQ(REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET, 0xa982u);
+    CHECK_EQ(REG_A6XX_SP_FS_OUTPUT_REG, 0xa98eu);
+    CHECK_EQ(REG_A6XX_SP_FS_MRT_REG, 0xa996u);
+    CHECK_EQ(REG_A6XX_SP_FS_PREFETCH_CNTL, 0xa99eu);
+    CHECK_EQ(REG_A6XX_SP_FS_CONFIG, 0xab04u);
+    CHECK_EQ(REG_A6XX_SP_IBO, 0xab1au);
+    CHECK_EQ(REG_A6XX_SP_WINDOW_OFFSET, 0xb4d1u);
+    CHECK_EQ(REG_A6XX_SP_TP_WINDOW_OFFSET, 0xb307u);
+    CHECK_EQ(REG_A6XX_HLSQ_VS_CNTL, 0xb800u);
+    CHECK_EQ(REG_A6XX_HLSQ_FS_CNTL, 0xbb10u);
+    CHECK_EQ(REG_A6XX_HLSQ_CONTROL_1_REG, 0xb982u);
+    CHECK_EQ(REG_A6XX_HLSQ_CONTROL_4_REG, 0xb985u);
+    // the array entries: RB_MRT[1].PITCH = 0x8823 + 8; GRAS_CL_VPORT[1].YSCALE = 0x8013 + 6; SP_VS_OUT_REG[3] = 0xa803 + 3;
+    // VPC_VARYING_PS_REPL_MODE[7] = 0x9208 + 7; VFD_DECODE[2].INSTR = 0xa090 + 4; VFD_FETCH[1].STRIDE = 0xa013 + 4
+    CHECK_EQ(REG_A6XX_RB_MRT__STRIDE, 8u);
+    CHECK_EQ(regRbMrt(REG_A6XX_RB_MRT_PITCH, 1), 0x882bu);
+    CHECK_EQ(regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, 7), 0x885au);
+    CHECK_EQ(regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_PITCH, 1), 0x8908u);
+    CHECK_EQ(regGrasClVport(REG_A6XX_GRAS_CL_VPORT_YSCALE, 1), 0x8019u);
+    CHECK_EQ(regGrasClZClamp(REG_A6XX_GRAS_CL_Z_CLAMP_MAX, 1), 0x8073u);
+    CHECK_EQ(regGrasScScreenScissor(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_BR, 1), 0x80b3u);
+    CHECK_EQ(regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 2), 0x80d4u);
+    CHECK_EQ(regSpVsOutReg(3), 0xa806u);
+    CHECK_EQ(regSpVsVpcDstReg(1), 0xa814u);
+    CHECK_EQ(regSpFsOutputReg(7), 0xa995u);
+    CHECK_EQ(regSpFsMrtReg(7), 0xa99du);
+    CHECK_EQ(regVpcVaryingInterpMode(7), 0x9207u);
+    CHECK_EQ(regVpcVaryingPsReplMode(7), 0x920fu);
+    CHECK_EQ(regVpcVarDisable(3), 0x9215u);
+    CHECK_EQ(regVfdDecodeInstr(2), 0xa094u);
+    CHECK_EQ(regVfdDecodeStepRate(2), 0xa095u);
+    CHECK_EQ(regVfdDestCntlInstr(5), 0xa0d5u);
+    CHECK_EQ(regVfdFetchBase(1), 0xa014u);
+    CHECK_EQ(regVfdFetchStride(1), 0xa017u);
+    CHECK_EQ(kMrtCount, 8u);
+    CHECK_EQ(kVpcVaryingRegs, 8u);
+    CHECK_EQ(kVpcVarDisableRegs, 4u);
+    CHECK_EQ(kViewportWords, REG_A6XX_GRAS_CL_VPORT__STRIDE);
+    // the facts the refusals read
+    CHECK_EQ(kPrimAllocThreshold, 7u);
+    CHECK_EQ(kMaxConstPipeline, 512u);
+    CHECK_EQ(kVsConstlenFloor, 8u);
+    CHECK_EQ(kProgramAlign, 128u);
+    CHECK_EQ(kMrtBaseAlign, 64u);
+    CHECK_EQ(kMrtPitchAlign, 64u);
+    CHECK_EQ(kLocNone, 0xffu);
+}
+
+TEST(a6xx_fui_is_the_floats_bits) {
+    // the constexpr float-to-bits against memcpy, for the values the viewport and clamps use and the awkward ones
+    const float values[] = {0.0f, 1.0f, -1.0f, 32.0f, -32.0f, 0.5f, 3.14159f, 1e-40f, FLT_MIN, FLT_MAX, 65535.0f, 1.0e-38f, 2.0f, 1.5f,
+                            -0.75f, 1023.99f, 16777217.0f, 1.17549435e-38f, 7.0e-45f};
+    for (float f : values) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &f, 4);
+        CHECK_EQ(fui(f), bits);
+    }
+    // the signed zero, NaN and the infinities
+    uint32_t bits = 0;
+    const float negZero = -0.0f;
+    std::memcpy(&bits, &negZero, 4);
+    CHECK_EQ(fui(negZero), bits);
+    CHECK_EQ(fui(negZero), 0x80000000u);
+    CHECK_EQ(fui(__builtin_nanf("")), 0x7fc00000u);
+    CHECK_EQ(fui(__builtin_inff()), 0x7f800000u);
+    CHECK_EQ(fui(-__builtin_inff()), 0xff800000u);
+    static_assert(fui(32.0f) == 0x42000000u, "32.0 is 0x42000000");
+    static_assert(fui(-32.0f) == 0xc2000000u, "-32.0 is 0xc2000000");
+    static_assert(fui(1.0f) == 0x3f800000u, "1.0 is 0x3f800000");
+    // the twin: the sign is a different word, so a viewport scale of the wrong sign cannot pass as the right one
+    CHECK(fui(32.0f) != fui(-32.0f));
+    CHECK_EQ(fui(32.0f) ^ fui(-32.0f), 0x80000000u);
+}
+
+TEST(a6xx_first_draw_target_words) {
+    // 64x64 RGBA8Unorm, linear, pitch 256 (align(64 * 4, 64 * 4)), layer align(64 * 256, 4096) = 16384, at 0x1'2000'0000:
+    //   RB_MRT_BUF_INFO    COLOR_FORMAT(FMT6_8_8_8_8_UNORM = 48) | COLOR_TILE_MODE(LINEAR = 0) << 8 | COLOR_SWAP(WZYX = 0) << 13 = 0x30
+    //   RB_MRT_PITCH       256 >> 6 = 4;  RB_MRT_ARRAY_PITCH 16384 >> 6 = 0x100
+    //   SP_FS_MRT_REG      COLOR_FORMAT 48 = 0x30;  GRAS_LRZ_MRT_BUF_INFO_0 the same
+    CHECK_EQ(rbMrtBufInfo(FMT6_8_8_8_8_UNORM, TILE6_LINEAR, WZYX), 0x30u);
+    CHECK_EQ(rbMrtPitch(256), 4u);
+    CHECK_EQ(rbMrtArrayPitch(16384), 0x100u);
+    CHECK_EQ(spFsMrtReg(FMT6_8_8_8_8_UNORM, false, false), 0x30u);
+    CHECK_EQ(A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(FMT6_8_8_8_8_UNORM), 0x30u);
+    // the twins: the pitch written in bytes would be 256, which the field does not hold; a BGRA target swaps
+    // (WXYZ = 1 << 13 = 0x2000); an integer target sets UINT (0x200) in the SP's copy only
+    CHECK(rbMrtPitch(256) != 256u);
+    CHECK_EQ(A6XX_RB_MRT_PITCH__SCALE, 6u);
+    CHECK_EQ(rbMrtBufInfo(FMT6_8_8_8_8_UNORM, TILE6_LINEAR, WXYZ), 0x2030u);
+    CHECK_EQ(spFsMrtReg(FMT6_32_UINT, false, true), 0x24bu);
+    CHECK_EQ(spFsMrtReg(FMT6_32_UINT, true, false), 0x14bu);
+    // the pitch precondition: a multiple of 64 bytes within 16 bits of units (a6xx.xml:3702 high=15)
+    CHECK(rbMrtPitchValid(256));
+    CHECK(rbMrtPitchValid(64));
+    CHECK(rbMrtPitchValid(0xffffu << 6));
+    CHECK(!rbMrtPitchValid(0));
+    CHECK(!rbMrtPitchValid(200));
+    CHECK(!rbMrtPitchValid(0x10000u << 6));
+    CHECK_EQ(kMrtPitchMax, 0x3fffc0u);
+    // the depth attachment that is not there, and the flag buffer pitch's two scales
+    CHECK_EQ(A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_NONE), 0u);
+    CHECK_EQ(A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), 4u);
+    CHECK_EQ(A6XX_RB_DEPTH_BUFFER_PITCH(256), 4u);
+    CHECK_EQ(A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH(64), 1u);
+    CHECK_EQ(A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH(128), 1u << 11);
+    // the components and the target count, SP and RB alike
+    CHECK_EQ(renderComponents(1), 0xfu);
+    CHECK_EQ(renderComponents(2), 0xffu);
+    CHECK_EQ(renderComponents(8), 0xffffffffu);
+    CHECK_EQ(renderComponents(0), 0u);
+    CHECK_EQ(A6XX_SP_FS_RENDER_COMPONENTS_RT0(0xf), 0xfu);
+    CHECK_EQ(A6XX_RB_RENDER_COMPONENTS_RT1(0xf), 0xf0u);
+    CHECK_EQ(A6XX_SP_FS_OUTPUT_CNTL1_MRT(1), 1u);
+    CHECK_EQ(A6XX_RB_FS_OUTPUT_CNTL1_MRT(1), 1u);
+    // RB_RENDER_CNTL 0x10 and GRAS_SC_CNTL 2 for a sysmem pass (r3d writes RB_RENDER_CNTL 0: render::Options::renderCntlZero)
+    CHECK_EQ(rbRenderCntlSysmem(), 0x10u);
+    CHECK_EQ(grasScCntlSysmem(), 0x2u);
+    CHECK_EQ(A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP), 0x18u);
+    // MSAA off: MSAA_DISABLE is bit 2 of the three DEST registers
+    CHECK_EQ(A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE, 0x4u);
+    CHECK_EQ(A6XX_RB_DEST_MSAA_CNTL_MSAA_DISABLE, 0x4u);
+    CHECK_EQ(A6XX_SP_TP_DEST_MSAA_CNTL_MSAA_DISABLE, 0x4u);
+    CHECK_EQ(A6XX_RB_RAS_MSAA_CNTL_SAMPLES(MSAA_FOUR), 0x2u);
+    CHECK_EQ(A6XX_RB_BLIT_GMEM_MSAA_CNTL_SAMPLES(MSAA_FOUR), 0x10u);
+}
+
+TEST(a6xx_first_draw_pass_and_viewport_words) {
+    // the scissors of a 64x64 target: BR is inclusive, X(63) | Y(63) << 16 = 0x003f003f in both the 14-bit (window)
+    // and the 16-bit (screen, viewport) forms; the window offsets are regXY(0, 0) = 0
+    CHECK_EQ(regXY(63, 63), 0x003f003fu);
+    CHECK_EQ(scissorXY(63, 63), 0x003f003fu);
+    CHECK_EQ(regXY(0, 0), 0u);
+    // the twins: the 14-bit form drops bit 14, the 16-bit form keeps it; y lands at 16, not 14
+    CHECK_EQ(regXY(0x4000, 0), 0u);
+    CHECK_EQ(scissorXY(0x4000, 0), 0x4000u);
+    CHECK_EQ(regXY(0, 1), 0x10000u);
+    CHECK_EQ(scissorXY(0xffff, 0xffff), 0xffffffffu);
+    CHECK_EQ(regXY(0x3fff, 0x3fff), 0x3fff3fffu);
+    // GRAS/RB_BIN_CONTROL for a sysmem pass: BUFFERS_LOCATION(3) << 22 = 0x00c00000; turnip's LRZ_FEEDBACK_ZMODE_MASK(3) << 24
+    // adds 0x03000000 (render::Options::binControlLrzFeedback)
+    CHECK_EQ(binControlSysmem(false), 0x00c00000u);
+    CHECK_EQ(binControlSysmem(true), 0x03c00000u);
+    CHECK_EQ(binControlSysmem(false), A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION(BUFFERS_IN_SYSMEM));
+    // a binning pass with 32x16 bins, for the twin: BINW(32) = 32 >> 5 = 1, BINH(16) = 16 >> 4 = 1 << 8, RENDER_MODE(1) << 18
+    CHECK_EQ(binControl(BINNING_PASS, BUFFERS_IN_GMEM, LRZ_FEEDBACK_NONE, 32, 16), 0x00040101u);
+    CHECK_EQ(A6XX_GRAS_BIN_CONTROL_BINW__SCALE, 5u);
+    CHECK_EQ(A6XX_GRAS_BIN_CONTROL_BINH__SCALE, 4u);
+    CHECK_EQ(A6XX_RB_BIN_CONTROL2_BINW(64), 2u);
+    // the viewport {0, 0, 64, 64, 0, 1}: XOFFSET 32.0 = 0x42000000, XSCALE 32.0, YOFFSET 32.0, YSCALE -32.0 = 0xc2000000
+    // (Metal: NDC y up, row 0 at the top), ZOFFSET 0.0, ZSCALE 1.0 = 0x3f800000
+    ViewportWords vp = viewportWords(0, 0, 64, 64, 0, 1);
+    CHECK_EQ(vp.xoffset, 0x42000000u);
+    CHECK_EQ(vp.xscale, 0x42000000u);
+    CHECK_EQ(vp.yoffset, 0x42000000u);
+    CHECK_EQ(vp.yscale, 0xc2000000u);
+    CHECK_EQ(vp.zoffset, 0u);
+    CHECK_EQ(vp.zscale, 0x3f800000u);
+    // the twin: Vulkan's +32.0 would be 0x42000000 in YSCALE, which is what a dropped sign gives
+    CHECK(vp.yscale != 0x42000000u);
+    CHECK_EQ(vp.yscale, fui(-32.0f));
+    // a half-width viewport at x = 32 (the probe's 9c control): XOFFSET 32 + 16 = 48.0 = 0x42400000, XSCALE 16.0 = 0x41800000;
+    // a depth range [0.25, 0.75]: ZOFFSET 0.25 = 0x3e800000, ZSCALE 0.5 = 0x3f000000
+    ViewportWords half = viewportWords(32, 0, 32, 64, 0.25, 0.75);
+    CHECK_EQ(half.xoffset, 0x42400000u);
+    CHECK_EQ(half.xscale, 0x41800000u);
+    CHECK_EQ(half.yscale, 0xc2000000u);
+    CHECK_EQ(half.zoffset, 0x3e800000u);
+    CHECK_EQ(half.zscale, 0x3f000000u);
+    // the guardband of the 64x64 viewport: gb_adj = min(1025, 1022.97) needs exponent 10 > 8, so MAX_GB in both axes:
+    // HORZ(0x1ff) | VERT(0x1ff) << 10 = 0x0007fdff
+    CHECK_EQ(calcGuardband(32, 32), 0x1ffu);
+    CHECK_EQ(guardbandClipAdj(32, 32, 32, 32), 0x0007fdffu);
+    CHECK_EQ(guardbandClipAdj(32, 32, 32, -32), 0x0007fdffu);   // the scale's sign does not matter (fabsf)
+    // the twins, by fd_calc_guardband's own arithmetic: offset = scale = 4096 gives gb_adj = min(9, 6.99976) = 6.99976 =
+    // 0.87497 * 2^3: (3 - 1) << 6 | (trunc(0.87497 * 128) = 111) - 64 = 0xaf; 256 -> 0x1be, 512 -> 0x17d, 1024 -> 0x13b;
+    // a viewport the guardband cannot hold (16384, 16384: gb_adj 0.9999 < 1) and a zero scale are MAX_GB
+    CHECK_EQ(calcGuardband(4096, 4096), 0xafu);
+    CHECK_EQ(calcGuardband(256, 256), 0x1beu);
+    CHECK_EQ(calcGuardband(512, 512), 0x17du);
+    CHECK_EQ(calcGuardband(1024, 1024), 0x13bu);
+    CHECK_EQ(calcGuardband(16384, 16384), 0x1ffu);
+    CHECK_EQ(calcGuardband(0, 0), 0x1ffu);
+    CHECK_EQ(guardbandClipAdj(4096, 4096, 256, 256), 0x0006f8afu);
+    CHECK_EQ(kMaxGuardband, 0x1ffu);
+    // the depth clamp and bounds words are plain floats: 0.0 and 1.0
+    CHECK_EQ(fui(0.0f), 0u);
+    CHECK_EQ(fui(1.0f), 0x3f800000u);
+}
+
+TEST(a6xx_first_draw_program_words) {
+    // HLSQ_xS_CNTL: CONSTLEN in units of 4 vec4 | ENABLED (0x100). The VS has ir3's floor of 8: 8 >> 2 = 2 -> 0x102; an FS
+    // with no constants: 0x100; with 4: 0x101; 6 is rounded up to 8 first
+    CHECK_EQ(hlsqVsCntl(8), 0x102u);
+    CHECK_EQ(hlsqFsCntl(0), 0x100u);
+    CHECK_EQ(hlsqFsCntl(4), 0x101u);
+    CHECK_EQ(hlsqVsCntl(6), 0x102u);
+    CHECK_EQ(hlsqFsCntl(5), 0x102u);
+    // the twin: the field holds the length >> 2, not the length (8 would be 0x108)
+    CHECK(hlsqVsCntl(8) != 0x108u);
+    CHECK_EQ(A6XX_HLSQ_VS_CNTL_CONSTLEN__SCALE, 2u);
+    CHECK_EQ(A6XX_HLSQ_FS_CNTL_CONSTLEN__SCALE, 2u);
+    // SP_xS_CONFIG with no textures, samplers or IBOs: ENABLED = 0x100; with one texture and sampler: | 1 << 9 | 1 << 17
+    CHECK_EQ(spXsConfig(0, 0, 0), 0x100u);
+    CHECK_EQ(spXsConfig(1, 1, 0), 0x00020300u);
+    CHECK_EQ(spXsConfig(0, 0, 2), 0x00800100u);
+    CHECK_EQ(spXsConfig(0, 0, 2), spCsConfig(2, 0, 0));
+    // SP_VS_CTRL_REG0 for max_reg 1 (2 full registers), max_half_reg -1 (0 half), no branches, merged registers:
+    // FULLREGFOOTPRINT(2) << 7 = 0x100 | MERGEDREGS bit 20 = 0x00100100
+    CHECK_EQ(spVsCtrlReg0(2, 0, 0), 0x00100100u);
+    CHECK_EQ(spVsCtrlReg0(2, 0, 0, false), 0x100u);
+    CHECK_EQ(spVsCtrlReg0(2, 1, 3), 0x0010c102u);
+    // the twin: the VS's MERGEDREGS is NOT the FS's bit 31
+    CHECK_EQ(A6XX_SP_VS_CTRL_REG0_MERGEDREGS, 0x00100000u);
+    CHECK_EQ(A6XX_SP_FS_CTRL_REG0_MERGEDREGS, 0x80000000u);
+    CHECK(spVsCtrlReg0(2, 0, 0) != (0x100u | 0x80000000u));
+    // SP_FS_CTRL_REG0 for max_reg 0 (1 full), no half, no branches, THREAD128, no varyings: FULLREGFOOTPRINT(1) << 7 = 0x80
+    // | THREADSIZE(1) << 20 = 0x100000 | UNK24 0x1000000 | MERGEDREGS 0x80000000 = 0x81100080; with a varying | 0x400000
+    CHECK_EQ(spFsCtrlReg0(1, 0, 0, THREAD128, false, false, false), 0x81100080u);
+    CHECK_EQ(spFsCtrlReg0(1, 0, 0, THREAD128, true, false, false), 0x81500080u);
+    CHECK_EQ(spFsCtrlReg0(1, 0, 0, THREAD64, false, true, true), 0x85800080u);
+    CHECK_EQ(A6XX_SP_FS_CTRL_REG0_UNK24, 0x01000000u);
+    // ir3_shader_branchstack_hw: ceil(min(n, 64) / 2)
+    CHECK_EQ(branchstackHw(0), 0u);
+    CHECK_EQ(branchstackHw(1), 1u);
+    CHECK_EQ(branchstackHw(3), 2u);
+    CHECK_EQ(branchstackHw(64), 32u);
+    CHECK_EQ(branchstackHw(100), 32u);
+    // HLSQ_FS_CNTL_0: THREADSIZE | VARYINGS (bit 1)
+    CHECK_EQ(hlsqFsCntl0(THREAD128, false), 0x1u);
+    CHECK_EQ(hlsqFsCntl0(THREAD128, true), 0x3u);
+    CHECK_EQ(hlsqFsCntl0(THREAD64, false), 0u);
+    // the stage loads: NUM_UNIT is capped at the instruction cache, as compute's is
+    CHECK_EQ(CP_LOAD_STATE6_0_NUM_UNIT(kInstrCacheSize), 127u << 22);
+    // the private memory words are the compute ones' twins (same scales)
+    CHECK_EQ(A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM(512), 1u);
+    CHECK_EQ(A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE(0x1000), 1u);
+    CHECK_EQ(A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET(0x800), 1u);
+}
+
+TEST(a6xx_first_draw_link_and_vfd_words) {
+    // VFD with no attributes: VFD_CONTROL_0 = 0; VFD_CONTROL_1 with the vertex id in r0.x (regid 0) and the other three
+    // registers "none": 0 | 0xfc << 8 | 0xfc << 16 | 0xfc << 24 = 0xfcfcfc00; the HS/DS/GS registers all "none"
+    CHECK_EQ(A6XX_VFD_CONTROL_0_FETCH_CNT(0) | A6XX_VFD_CONTROL_0_DECODE_CNT(0), 0u);
+    CHECK_EQ(A6XX_VFD_CONTROL_0_FETCH_CNT(1) | A6XX_VFD_CONTROL_0_DECODE_CNT(1), 0x101u);
+    CHECK_EQ(vfdControl1(0, kRegidNone, kRegidNone, kRegidNone), 0xfcfcfc00u);
+    CHECK_EQ(vfdControl1(4, 8, kRegidNone, kRegidNone), 0xfcfc0804u);
+    CHECK_EQ(vfdControl2None(), 0xfcfcu);
+    CHECK_EQ(vfdControl3None(), 0xfcfcfcfcu);
+    CHECK_EQ(vfdControl4None(), 0xfcu);
+    CHECK_EQ(vfdControl5None(), 0xfcfcu);
+    // the twin: a regid in the wrong byte
+    CHECK(vfdControl1(0, kRegidNone, kRegidNone, kRegidNone) != 0xfcfc00fcu);
+    // step two's float2 attribute at binding 0, offset 0: IDX 0 | OFFSET 0 | FORMAT(FMT6_32_32_FLOAT = 103) << 20 = 0x6700000
+    // | SWAP(WZYX) 0 | UNK30 0x40000000 | FLOAT 0x80000000 = 0xc6700000; its destination r1.xy: WRITEMASK 0x3 | REGID(4) << 4
+    CHECK_EQ(vfdDecodeInstr(0, 0, false, FMT6_32_32_FLOAT, WZYX, true), 0xc6700000u);
+    CHECK_EQ(vfdDecodeInstr(1, 8, true, FMT6_32_UINT, WZYX, false), 0x44b20101u);
+    CHECK_EQ(vfdDestCntlInstr(0x3, 4), 0x43u);
+    // the link of a position-only pair (cnt 1, max_loc 4, position at loc 0, pos regid 0):
+    //   SP_VS_OUT_REG(0)      A_REGID(0) | A_COMPMASK(0xf) << 8 = 0xf00
+    //   SP_VS_VPC_DST_REG(0)  OUTLOC0(0) = 0
+    //   VPC_VS_PACK           STRIDE_IN_VPC(4) | POSITIONLOC(0) << 8 | PSIZELOC(0xff) << 16 = 0x00ff0004
+    //   PC_VS_OUT_CNTL        STRIDE_IN_VPC(4) = 4;  SP_VS_PRIMITIVE_CNTL OUT(1) = 1
+    //   VPC_VS_CLIP_CNTL      CLIP_MASK 0 | 0xff << 8 | 0xff << 16 = 0x00ffff00;  VPC_VS_LAYER_CNTL 0xff | 0xff << 8 | 0xff << 16
+    //   VPC_CNTL_0            NUMNONPOSVAR 0 | PRIMIDLOC 0xff << 8 | VIEWIDLOC 0xff << 24 = 0xff00ff00
+    //   VPC_VAR_DISABLE[i]    ~0 = 0xffffffff
+    CHECK_EQ(spVsOutReg(0, 0xf, 0, 0), 0xf00u);
+    CHECK_EQ(spVsVpcDstReg(0, 0, 0, 0), 0u);
+    CHECK_EQ(vpcVsPack(4, 0), 0x00ff0004u);
+    CHECK_EQ(pcVsOutCntl(4), 0x4u);
+    CHECK_EQ(spVsPrimitiveCntl(1), 0x1u);
+    CHECK_EQ(vpcVsClipCntl(0), 0x00ffff00u);
+    CHECK_EQ(vpcVsLayerCntl(), 0x00ffffffu);
+    CHECK_EQ(grasVsClCntl(0, 0), 0u);
+    CHECK_EQ(vpcCntl0(0, kLocNone, false, kLocNone), 0xff00ff00u);
+    CHECK_EQ(vpcVarDisable(0), 0xffffffffu);
+    // with one float4 varying at inloc 0 and the position after it (var[0] = {colour regid 4, 0xf, loc 0}, var[1] =
+    // {pos regid 0, 0xf, loc 4}, cnt 2, max_loc 8): SP_VS_OUT_REG(0) = 4 | 0xf << 8 | 0 << 16 | 0xf << 24;
+    // SP_VS_VPC_DST_REG(0) = 0 | 4 << 8; VPC_VS_PACK 0x00ff0408; PC_VS_OUT_CNTL 8; OUT 2; VPC_CNTL_0 = 4 | VARYING 0x10000
+    // | 0xff00ff00 = 0xff01ff04; VPC_VAR_DISABLE[0] = ~0xf
+    CHECK_EQ(spVsOutReg(4, 0xf, 0, 0xf), 0x0f000f04u);
+    CHECK_EQ(spVsVpcDstReg(0, 4, 0, 0), 0x400u);
+    CHECK_EQ(vpcVsPack(8, 4), 0x00ff0408u);
+    CHECK_EQ(pcVsOutCntl(8), 0x8u);
+    CHECK_EQ(spVsPrimitiveCntl(2), 0x2u);
+    CHECK_EQ(vpcCntl0(4, kLocNone, true, kLocNone), 0xff01ff04u);
+    CHECK_EQ(vpcVarDisable(0xf), 0xfffffff0u);
+    // the twins: a position location in the wrong byte, a stride that is not the location count
+    CHECK(vpcVsPack(4, 0) != 0x00ff0400u);
+    CHECK(vpcCntl0(4, kLocNone, true, kLocNone) != 0xff00ff04u);
+    CHECK_EQ(pcVsOutCntl(4, true, true, true, true, 0xff), 0x00ff0f04u);
+    CHECK_EQ(vpcVsClipCntl(0x3, 0, 0xff), 0x00ff0003u);
+    // the interpolation mode of a flat input at VPC location 17: register 1, bits 2..3 of it
+    CHECK_EQ(vpcVaryingInterpModeReg(17), 1u);
+    CHECK_EQ(vpcVaryingInterpModeBits(17, INTERP_FLAT), 0x4u);
+    CHECK_EQ(vpcVaryingInterpModeBits(0, INTERP_FLAT), 0x1u);
+    CHECK_EQ(vpcVaryingInterpModeBits(15, INTERP_ONE), 0xc0000000u);
+    CHECK_EQ(vpcVaryingInterpModeBits(3, INTERP_SMOOTH), 0u);
+}
+
+TEST(a6xx_first_draw_fs_input_output_and_raster_words) {
+    // the FS input block for a constant-colour FS (no system values, no barycentrics): HLSQ_CONTROL_1_REG 7,
+    // HLSQ_CONTROL_2..4_REG 0xfcfcfcfc, HLSQ_CONTROL_5_REG 0xfcfc; with a smooth varying the perspective pixel
+    // barycentric is in r0.x: HLSQ_CONTROL_3_REG 0xfcfcfc00
+    CHECK_EQ(hlsqControl1Reg(), 0x7u);
+    CHECK_EQ(hlsqControl2Reg(kRegidNone, kRegidNone, kRegidNone, kRegidNone), 0xfcfcfcfcu);
+    CHECK_EQ(hlsqControl3Reg(kRegidNone, kRegidNone, kRegidNone, kRegidNone), 0xfcfcfcfcu);
+    CHECK_EQ(hlsqControl3Reg(0, kRegidNone, kRegidNone, kRegidNone), 0xfcfcfc00u);
+    CHECK_EQ(hlsqControl4Reg(kRegidNone, kRegidNone, kRegidNone, kRegidNone), 0xfcfcfcfcu);
+    CHECK_EQ(hlsqControl4Reg(kRegidNone, kRegidNone, 4, 6), 0x0604fcfcu);
+    CHECK_EQ(hlsqControl5Reg(), 0xfcfcu);
+    // GRAS_CNTL and RB_RENDER_CONTROL0 from the ij regids in ir3_bary order: none -> 0; the perspective pixel one ->
+    // IJ_PERSP_PIXEL (bit 0), and RB_RENDER_CONTROL0 adds UNK10 (0x400) for the varyings -> 0x401
+    uint32_t none[IJ_COUNT] = {kRegidNone, kRegidNone, kRegidNone, kRegidNone, kRegidNone, kRegidNone, kRegidNone};
+    uint32_t persp[IJ_COUNT] = {0, kRegidNone, kRegidNone, kRegidNone, kRegidNone, kRegidNone, kRegidNone};
+    CHECK_EQ(ijBits(none), 0u);
+    CHECK_EQ(ijBits(persp), 0x1u);
+    CHECK_EQ(grasCntl(ijBits(none), 0), 0u);
+    CHECK_EQ(grasCntl(ijBits(persp), 0), 0x1u);
+    CHECK_EQ(rbRenderControl0(ijBits(none), 0, false), 0u);
+    CHECK_EQ(rbRenderControl0(ijBits(persp), 0, true), 0x401u);
+    CHECK_EQ(rbRenderControl1(false, false, false, false), 0u);
+    CHECK_EQ(rbRenderControl1(true, false, false, false), 0x4u);
+    CHECK_EQ(rbRenderControl1(false, true, true, true, FRAGCOORD_SAMPLE), 0x79u);
+    // the twins: a linear centroid regid lands on bit 4 (ir3_bary index 5, not 6), gl_FragCoord's size adds LINEAR_PIXEL,
+    // the fragcoord mask sits at bit 6
+    uint32_t linc[IJ_COUNT] = {kRegidNone, kRegidNone, kRegidNone, kRegidNone, kRegidNone, 2, kRegidNone};
+    CHECK_EQ(ijBits(linc), 0x10u);
+    CHECK_EQ(ijBits(none, true), 0x8u);
+    CHECK_EQ(ijBits(none, false, true), 0x20u);
+    CHECK_EQ(grasCntl(0, 0xf), 0x3c0u);
+    CHECK_EQ(rbRenderControl0(0, 0x3, false), 0xc0u);
+    // SP_FS_PREFETCH_CNTL: no prefetch; IJ_WRITE_DISABLE (bit 3) without the perspective pixel barycentric
+    CHECK_EQ(spFsPrefetchCntl(0, true), 0x8u);
+    CHECK_EQ(spFsPrefetchCntl(0, false), 0u);
+    CHECK_EQ(spFsPrefetchCntl(2, false, true), 0x12u);
+    // the FS outputs: SP_FS_OUTPUT_CNTL0 with no depth/mask/stencil output = 0xfcfcfc00; SP_FS_OUTPUT_REG(0) = the colour's
+    // regid (r0.x = 0), HALF_PRECISION 0x100 for a half output; RB_FS_OUTPUT_CNTL0 = 0
+    CHECK_EQ(spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), 0xfcfcfc00u);
+    CHECK_EQ(spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone, true), 0xfcfcfc01u);
+    CHECK_EQ(spFsOutputReg(0, false), 0u);
+    CHECK_EQ(spFsOutputReg(4, true), 0x104u);
+    CHECK_EQ(spFsOutputReg(0x3c, false), 0x3cu);
+    CHECK_EQ(A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z, 0x2u);
+    // the rasterizer: GRAS_SU_CNTL = LINEHALFWIDTH(0.5 * 4 = 2) << 3 = 0x10 | LINE_MODE(RECTANGULAR) << 13 = 0x2000 -> 0x2010;
+    // GRAS_CL_CNTL = ZERO_GB_SCALE_Z 0x40 | VP_CLIP_CODE_IGNORE 0x80 = 0xc0; the point words 0xffc00001 and 0x10
+    CHECK_EQ(grasSuCntl(false, false, false), 0x2010u);
+    CHECK_EQ(grasSuCntl(false, true, true), 0x2016u);
+    CHECK_EQ(grasSuCntl(true, false, false, 2, BRESENHAM), 0x11u);
+    CHECK_EQ(A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__MUL, 4u);
+    CHECK_EQ(grasClCntl(), 0xc0u);
+    CHECK_EQ(grasClCntl(false, true, true, true, true), 0xa6u);
+    CHECK_EQ(A6XX_GRAS_CL_CNTL_VP_XFORM_DISABLE | A6XX_GRAS_CL_CNTL_PERSP_DIVISION_DISABLE | A6XX_GRAS_CL_CNTL_CLIP_DISABLE |
+                 A6XX_GRAS_CL_CNTL_VP_CLIP_CODE_IGNORE,
+             0x381u);   // r3d's window-space form (tu_clear_blit.cc:946-951), for the record
+    CHECK_EQ(grasSuPointMinmax(1, 0xffc0), 0xffc00001u);
+    CHECK_EQ(grasSuPointSize(16), 0x10u);
+    CHECK_EQ(A6XX_GRAS_SU_POINT_SIZE__MUL, 16u);
+    CHECK_EQ(A6XX_GRAS_SU_POINT_MINMAX_MAX__MUL, 16u);
+    // the twin: the line half width is in quarter pixels, so 0.5 pixels is 2, not 1 (0x8) and not 0.5 (0)
+    CHECK(grasSuCntl(false, false, false, 1) != 0x2010u);
+    CHECK_EQ(grasSuCntl(false, false, false, 1), 0x2008u);
+    // polygon modes, depth plane, primitive control
+    CHECK_EQ(A6XX_VPC_POLYGON_MODE_MODE(POLYMODE6_TRIANGLES), 0x3u);
+    CHECK_EQ(A6XX_PC_POLYGON_MODE_MODE(POLYMODE6_TRIANGLES), 0x3u);
+    CHECK_EQ(A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(A6XX_LATE_Z), 0x1u);
+    CHECK_EQ(A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(A6XX_EARLY_Z), 0u);
+    CHECK_EQ(A6XX_PC_PRIMITIVE_CNTL_0_PROVOKING_VTX_LAST, 0x2u);
+    // blending off: RB_MRT_CONTROL(0) = COMPONENT_ENABLE(0xf) << 7 = 0x780 (ROP_CODE 0, turnip's); RB_BLEND_CNTL =
+    // INDEPENDENT_BLEND 0x100 | SAMPLE_MASK(0xffff) << 16 = 0xffff0100 (r3d: 0xffff0000); SP_BLEND_CNTL UNK8 = 0x100
+    CHECK_EQ(rbMrtControl(0xf), 0x780u);
+    CHECK_EQ(rbMrtControl(0x1), 0x80u);
+    CHECK_EQ(rbBlendCntl(true), 0xffff0100u);
+    CHECK_EQ(rbBlendCntl(false), 0xffff0000u);
+    CHECK_EQ(A6XX_SP_BLEND_CNTL_UNK8, 0x100u);
+    // the twin: fd6's ROP_COPY in the inert field would be 0x7e0; the fake must not judge ROP_CODE
+    CHECK_EQ(rbMrtControl(0xf) | A6XX_RB_MRT_CONTROL_ROP_CODE(ROP_COPY), 0x7e0u);
+    CHECK_EQ(A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR(FACTOR_SRC_ALPHA) | A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR(FACTOR_ONE_MINUS_SRC_ALPHA) |
+                 A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE(BLEND_DST_PLUS_SRC),
+             0x00000706u);
+    CHECK_EQ(A6XX_RB_STENCIL_CONTROL_ZPASS_BF(STENCIL_DECR_WRAP), 0x1c000000u);
+    CHECK_EQ(A6XX_RB_ALPHA_CONTROL_ALPHA_TEST_FUNC(FUNC_ALWAYS), 0xe00u);
+    // the draw packet's word 0: PRIM_TYPE(TRILIST = 4) | SOURCE_SELECT(AUTO_INDEX = 2) << 6 = 0x80 | VIS_CULL(IGNORE = 0) = 0x84;
+    // with USE_VISIBILITY (1 << 8): 0x184 (render::Options::visCullUse); a strip: 6 | 0x80 = 0x86
+    CHECK_EQ(drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_AUTO_INDEX, IGNORE_VISIBILITY), 0x84u);
+    CHECK_EQ(drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_AUTO_INDEX, USE_VISIBILITY), 0x184u);
+    CHECK_EQ(drawIndxOffset0(DI_PT_TRISTRIP, DI_SRC_SEL_AUTO_INDEX, IGNORE_VISIBILITY), 0x86u);
+    CHECK_EQ(drawIndxOffset0(DI_PT_TRILIST, DI_SRC_SEL_DMA, IGNORE_VISIBILITY) | CP_DRAW_INDX_OFFSET_0_INDEX_SIZE(INDEX4_SIZE_16_BIT), 0x404u);
+    CHECK_EQ(CP_DRAW_INDX_OFFSET_1_NUM_INSTANCES(1), 1u);
+    CHECK_EQ(CP_DRAW_INDX_OFFSET_2_NUM_INDICES(3), 3u);
+    CHECK_EQ(CP_DRAW_INDX_OFFSET_0_GS_ENABLE, 0x10000u);
 }
