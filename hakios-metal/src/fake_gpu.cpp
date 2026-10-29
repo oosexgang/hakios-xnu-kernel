@@ -49,10 +49,11 @@ std::string text(const char* format, uint64_t a = 0, uint64_t b = 0, uint64_t c 
 // a field read back the way the registers hold it, from a6xx.hpp's masks (the fake decodes; the encoder encodes)
 uint32_t fieldOf(uint32_t word, uint32_t mask, uint32_t shift) { return (word & mask) >> shift; }
 
-// the pixel size of the formats this model knows (texture.hpp's sixteen, by their FMT: fd6_format_table.c); 0 for another
+// the pixel size of the formats this model knows (texture.hpp's, by their FMT: fd6_format_table.c); 0 for another
 uint32_t bytesPerPixel(uint32_t fmt) {
     switch (fmt) {
     case a6xx::FMT6_A8_UNORM: return 1;
+    case a6xx::FMT6_8_UINT: return 1;
     case a6xx::FMT6_8_UNORM: return 1;
     case a6xx::FMT6_16_FLOAT: return 2;
     case a6xx::FMT6_8_8_UNORM: return 2;
@@ -739,7 +740,7 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     const uint32_t bpp = bytesPerPixel(fmt);
     // a linear image of a known format, or the one tiled image this driver makes: a depth texture (FMT6_32_FLOAT, TILE6_3)
     const uint32_t tile = fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT);
-    const bool tiled = tile == TILE6_3 && fmt == FMT6_32_FLOAT;
+    const bool tiled = tile == TILE6_3 && (fmt == FMT6_32_FLOAT || fmt == FMT6_8_UINT);
     if (bpp == 0 || (tile != TILE6_LINEAR && !tiled)) {
         fault(text("a fill into format %llu, tile mode %llu: a linear image of a known format (or a TILE6_3 depth texture) is what this GPU model fills", fmt, tile));
         return false;
@@ -753,6 +754,7 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: want = R2D_FLOAT16; break;
     case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: want = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: want = R2D_INT32; break;
+    case FMT6_8_UINT: want = R2D_INT8; break;
     default: break;
     }
     if (ifmt != want) {
@@ -779,8 +781,10 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     if (tiled) {
         // a TILE6_3 image: 4096-aligned, the pitch a multiple of 256 bytes, its rows counted to 16 (fdl6_tile_alignment
         // for cpp 4). Its bytes are in an order this model does not reproduce, so the fill is judged and not written.
-        const uint64_t rows = (uint64_t(y1) + 1 + 15) / 16 * 16;
-        if (base % 4096 != 0 || pitch % 256 != 0 || at(base, rows * pitch) == nullptr) {
+        // (an S8 plane: cpp 1, so its pitch is a multiple of 128 bytes and its rows are counted to 32)
+        const bool s8 = fmt == FMT6_8_UINT;
+        const uint64_t rows = (uint64_t(y1) + 1 + (s8 ? 31 : 15)) / (s8 ? 32 : 16) * (s8 ? 32 : 16);
+        if (base % 4096 != 0 || pitch % (s8 ? 128 : 256) != 0 || at(base, rows * pitch) == nullptr) {
             fault(text("a tiled fill at %#llx with a pitch of %llu bytes, %llu rows: not 4096-aligned, not a multiple of 256, or outside every buffer", base, pitch, rows));
             return false;
         }
@@ -1280,9 +1284,30 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         const uint32_t depthFormat = fieldOf(reg(REG_A6XX_RB_DEPTH_BUFFER_INFO), A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK, A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT);
         const uint32_t depthCntl = reg(REG_A6XX_RB_DEPTH_CNTL);
         const bool test = (depthCntl & A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE) != 0, write = (depthCntl & A6XX_RB_DEPTH_CNTL_Z_WRITE_ENABLE) != 0;
-        if (reg(REG_A6XX_RB_STENCIL_CONTROL) != 0) {
-            fault("stencil state: no stencil buffer is what this GPU model runs");
+        // stencil: a test only with a separate S8 buffer (RB_STENCIL_INFO SEPARATE_STENCIL, beside a depth buffer), laid out
+        // as texture.cpp lays the plane out (4096-aligned, the pitch a multiple of 128 bytes holding the width, the
+        // window's rows counted to 32 inside a buffer), the enable the same in RB_STENCIL_CONTROL and GRAS_SU_STENCIL_CNTL;
+        // what is written goes into the depth CCU as depth does
+        const uint32_t stencilControl = reg(REG_A6XX_RB_STENCIL_CONTROL), stencilInfo = reg(REG_A6XX_RB_STENCIL_INFO);
+        const bool stencilTest = (stencilControl & A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE) != 0;
+        if (stencilTest != ((reg(REG_A6XX_GRAS_SU_STENCIL_CNTL) & A6XX_GRAS_SU_STENCIL_CNTL_STENCIL_ENABLE) != 0)) {
+            fault(text("RB_STENCIL_CONTROL %#llx and GRAS_SU_STENCIL_CNTL %#llx: the stencil enable must agree", stencilControl, reg(REG_A6XX_GRAS_SU_STENCIL_CNTL)));
             return false;
+        }
+        if (stencilControl != 0 && ((stencilInfo & A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL) == 0 || depthFormat == DEPTH6_NONE)) {
+            fault("stencil state with no separate stencil buffer beside a depth buffer: what this GPU model runs is the S8 plane of a Depth32Float_Stencil8 texture");
+            return false;
+        }
+        if ((stencilInfo & A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL) != 0) {
+            const uint64_t spitch = uint64_t(reg(REG_A6XX_RB_STENCIL_INFO + 1) & 0xfff) << 6, sbase = reg64(REG_A6XX_RB_STENCIL_INFO + 3);
+            const uint32_t br = reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR);
+            const uint64_t width = (br & 0x3fff) + 1, rows = ((br >> 16 & 0x3fff) + 1 + 31) / 32 * 32;
+            if (sbase % 4096 != 0 || spitch % 128 != 0 || spitch < width || at(sbase, rows * spitch) == nullptr) {
+                fault(text("the stencil buffer at %#llx with a pitch of %llu bytes, ", sbase, spitch) +
+                      text("%llu rows: not 4096-aligned, not a multiple of 128, narrower than the window, or outside every buffer", rows));
+                return false;
+            }
+            if (stencilTest) drawsWithoutDepthFlush_++;
         }
         if (depthFormat == DEPTH6_NONE) {
             if (test || write) {

@@ -1102,6 +1102,7 @@ int main(int argc, char** argv) {
     //   9u. framebuffer fetch: tri_fb_fs reads its target and rotates the channels, once and twice in one pass, and without the barrier
     //   9v. A8Unorm, R16Float, RG16Float, RG32Float: a Clear, a sample of one texel, and tri_flat drawn into each
     //   9w. mip levels: each of seven sampled by a sampler clamped to it, a draw into level 2, a copy, generateMipmaps
+    //   9x. stencil: T1 writes 1 into the S8 plane of a Depth32Float_Stencil8 texture, the pair then drawn where it equals 1
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2538,6 +2539,84 @@ int main(int argc, char** argv) {
                 }
                 report(completed(*cb4) && right == total, "mip, generateMipmaps over a 0x20/0x60 checkerboard: levels 1 to 6 0x40 in" + levels + " texels; " +
                                                               std::to_string(took / 1000) + " us wall" + status(*cb4, gpu));
+            }
+        }
+        // 9x. stencil. One pass over the RGBA8 target (Clear to 40 80 bf ff) and a Depth32Float_Stencil8 texture (depth
+        // Clear 1, stencil Clear 0): tri_flat's T1 with the stencil test Always / Replace, reference 1 -- the S8 plane 1
+        // under T1 -- then tri_cflat's pair in 00 ff 00 ff with the test Equal 1, Keep. Every pixel with j > i must be
+        // 00 ff 00 ff and every other the clear colour: the second draw passed where the first wrote 1 and nowhere else.
+        // Two controls that must come out otherwise: without the second test the whole target is 00 ff 00 ff; with the
+        // first draw's stencil write mask 0 no pixel is (T1 keeps the flat colour).
+        if (t) {
+            TextureDesc dd;
+            dd.format = PixelFormat::kDepth32FloatStencil8;
+            dd.width = W;
+            dd.height = H;
+            dd.usage = kTextureUsageRenderTarget;
+            auto ds = Texture::make(gpu, dd, &why);
+            auto cbuf = newBuffer(gpu, 16, &why);
+            if (ds == nullptr || cbuf == nullptr) {
+                report(false, "stencil: a 64x64 Depth32Float_Stencil8 texture: " + why);
+            } else {
+                float* f = static_cast<float*>(cbuf->contents());
+                f[0] = 0, f[1] = 1, f[2] = 0, f[3] = 1;
+                const Program flatS{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+                const Program cflatS{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+                Bindings fsb;
+                fsb.buffers = {Binding{cbuf.get(), 0}};
+                const uint32_t green = 0xff00ff00u, clearWord = 0xffbf8040u;
+                for (int kind = 0; kind < 3; kind++) {
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    rp.load = LoadAction::kClear;
+                    rp.clearColor[0] = 0.25, rp.clearColor[1] = 0.5, rp.clearColor[2] = 0.75, rp.clearColor[3] = 1.0;
+                    rp.depth = ds.get();
+                    rp.depthLoad = LoadAction::kClear;
+                    rp.clearDepth = 1.0;
+                    rp.stencil = ds.get();
+                    rp.stencilLoad = LoadAction::kClear;
+                    rp.clearStencil = 0;
+                    Draw d1 = drawOf(0, 3);
+                    d1.stencil.enabled = true;
+                    d1.stencil.front = StencilFace{7, 0, 0, 2, 0xff, kind == 2 ? 0u : 0xffu};
+                    d1.stencil.back = d1.stencil.front;
+                    d1.stencil.frontReference = d1.stencil.backReference = 1;
+                    Draw d2 = drawOf(0, 6);
+                    d2.stencil.enabled = kind != 1;
+                    d2.stencil.front = StencilFace{2, 0, 0, 0, 0xff, 0};
+                    d2.stencil.back = d2.stencil.front;
+                    d2.stencil.frontReference = d2.stencil.backReference = 1;
+                    auto cb = queue->commandBuffer();
+                    bool ok = cb->draw(flatS, rp, d1, Bindings{}, Bindings{});
+                    rp.load = LoadAction::kLoad;
+                    rp.depthLoad = LoadAction::kLoad;
+                    rp.stencilLoad = LoadAction::kLoad;
+                    ok = ok && cb->draw(cflatS, rp, d2, Bindings{}, fsb);
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t under = 0, outside = 0, greenAll = 0, flatUnder = 0;
+                    for (uint32_t j = 0; j < H; j++)
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                            greenAll += px == green;
+                            if (j > i) { under += px == green; flatUnder += px == flatColour; }
+                            else outside += px == clearWord;
+                        }
+                    const std::string counts = std::to_string(under) + " of 2016 under T1 00 ff 00 ff, " + std::to_string(outside) + " of 2080 elsewhere the clear colour, " +
+                                               std::to_string(greenAll) + " green in all, " + std::to_string(flatUnder) + " flat under T1";
+                    if (kind == 0) {
+                        report(ok && completed(*cb) && under == 2016 && outside == 2080, "stencil, T1 writes 1 and the pair is drawn where it is 1: " + counts + status(*cb, gpu));
+                    } else if (kind == 1) {
+                        report(ok && completed(*cb) && greenAll == 4096, "stencil control, the pair without the test: " + counts + " (all 4096 green is right)" + status(*cb, gpu));
+                    } else {
+                        report(ok && completed(*cb) && greenAll == 0 && flatUnder == 2016,
+                               "stencil control, T1 with write mask 0: " + counts + " (none green, T1 flat is right)" + status(*cb, gpu));
+                    }
+                    if (!completed(*cb)) break;
+                }
             }
         }
 #if defined(__APPLE__)

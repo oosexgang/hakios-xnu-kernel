@@ -731,6 +731,40 @@ void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDep
     stream.waitForIdle();
 }
 
+// A stencil Clear: the S8 plane filled as an 8-bit integer image (r2d_clear_value's S8_UINT branch: the value in
+// SOLID_C0, FMT6_8_UINT through R2D_INT8, TILE6_3 as the plane is laid out), then the colour CCU and the depth CCU
+// cleaned -- the depth CCU holds stencil -- and the depth one invalidated, as depthClearStream does
+void stencilClearStream(pm4::Stream& stream, const Texture& t, uint32_t value, uint64_t table) {
+    const uint32_t W = t.width(), H = t.height();
+    const uint32_t blit = rb2dBlitCntlClear(FMT6_8_UINT, R2D_INT8);
+    const uint64_t at = t.gpuAddress() + t.stencilOffset();
+    reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
+    reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(FMT6_8_UINT, false, true, false));
+    regs(stream, REG_A6XX_GRAS_2D_DST_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
+    regs(stream, REG_A6XX_RB_2D_SRC_SOLID_C0, {value & 0xffu, 0, 0, 0});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(FMT6_8_UINT, TILE6_3, WZYX, false), uint32_t(at), uint32_t(at >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(t.stencilPitch()))});
+    regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
+    eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableStencilClearFlushAt, kStencilClearFlushValue, false);
+    waitForWord(stream, table + kTableStencilClearFlushAt, kStencilClearFlushValue);
+    eventTimestamp(stream, PC_CCU_FLUSH_DEPTH_TS, table + kTableStencilClearDepthFlushAt, kStencilClearDepthFlushValue, false);
+    waitForWord(stream, table + kTableStencilClearDepthFlushAt, kStencilClearDepthFlushValue);
+    event(stream, PC_CCU_INVALIDATE_DEPTH);
+    stream.waitForIdle();
+}
+
+// the depth attachment's Clear and the stencil attachment's, each when asked for (tu_clear_sysmem_attachment, each aspect in turn)
+void zsClears(pm4::Stream& stream, const RenderPass& pass, uint64_t table) {
+    if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
+        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+    }
+    if (pass.stencil != nullptr && pass.stencilLoad == LoadAction::kClear) {
+        stencilClearStream(stream, *pass.stencil, pass.clearStencil, table);
+    }
+}
+
 // gl_frag_result / gl_varying_slot numbers the Stage tables carry (Mesa shader_enums.h:987): FRAG_RESULT_DATA0 is 4
 constexpr uint8_t kFragResultData0 = 4;
 
@@ -808,6 +842,17 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         }
         if (pass.depthLoad == LoadAction::kClear && !(pass.clearDepth >= 0.0 && pass.clearDepth <= 1.0)) {
             return refuse(why, "a clear depth of " + std::to_string(pass.clearDepth) + ": Metal's clearDepth is 0 to 1");
+        }
+    }
+    if (pass.stencil != nullptr) {
+        if (pass.stencil != pass.depth || !pass.stencil->info().stencil) {
+            return refuse(why, "a stencil attachment that is not the depth attachment's own Depth32Float_Stencil8 texture: the S8 plane of that one texture is what is served");
+        }
+        if (pass.stencilLoad != LoadAction::kLoad && pass.stencilLoad != LoadAction::kDontCare && pass.stencilLoad != LoadAction::kClear) {
+            return refuse(why, "stencil load action " + n(uint32_t(pass.stencilLoad)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
+        }
+        if (pass.stencilStore != StoreAction::kStore && pass.stencilStore != StoreAction::kDontCare) {
+            return refuse(why, "stencil store action " + n(uint32_t(pass.stencilStore)) + ": DontCare (0) and Store (1) are served");
         }
     }
     return true;
@@ -1102,6 +1147,16 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         return refuse(why, "depth compare function " + n(draw.depth.compare) + ": MTLCompareFunction runs Never 0 to Always 7");
     }
     const bool depthTest = draw.depth.compare != 7 || draw.depth.write;
+    const StencilState& st = draw.stencil;
+    if (st.enabled && pass.stencil == nullptr) {
+        return refuse(why, "a stencil test with no stencil attachment");
+    }
+    for (const StencilFace* f : {&st.front, &st.back}) {
+        if (st.enabled && (f->compare > 7 || f->stencilFail > 7 || f->depthFail > 7 || f->pass > 7)) {
+            return refuse(why, "a stencil face of compare " + n(f->compare) + " and operations " + n(f->stencilFail) + " / " + n(f->depthFail) + " / " + n(f->pass) +
+                                   ": MTLCompareFunction and MTLStencilOperation run 0 to 7");
+        }
+    }
     if (depthTest && pass.depth == nullptr) {
         return refuse(why, "a depth test (compare " + n(draw.depth.compare) + (draw.depth.write ? ", write" : "") + ") with no depth attachment");
     }
@@ -1197,9 +1252,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it;
         // the depth attachment's Clear after it (tu_clear_sysmem_attachment, each attachment in turn)
         clearAll(stream, pass, clears, table);
-        if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
-            depthClearStream(stream, *pass.depth, pass.clearDepth, table);
-        }
+        zsClears(stream, pass, table);
     }
     // A framebuffer fetch reads the target through the texture unit while the RB writes it through the colour CCU: what
     // the draws before this one (or the pass's Clear) wrote is put in memory and the texture caches dropped before it
@@ -1228,10 +1281,18 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         const Texture& d = *pass.depth;
         regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO,
              {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.bytesPerRow())),
-              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.buffer()->length())), uint32_t(d.gpuAddress()), uint32_t(d.gpuAddress() >> 32), 0});
+              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.depthPlaneBytes())), uint32_t(d.gpuAddress()), uint32_t(d.gpuAddress() >> 32), 0});
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32));
         regs(stream, REG_A6XX_RB_DEPTH_FLAG_BUFFER_BASE, {0, 0, 0});
-        reg(stream, REG_A6XX_RB_STENCIL_INFO, 0);
+        if (pass.stencil != nullptr) {
+            // the S8 plane as a separate stencil buffer (tu6_emit_zs's D32_SFLOAT_S8_UINT branch): SEPARATE_STENCIL, its
+            // pitch and layer, its base, BASE_GMEM 0; A6XX's RB_STENCIL_INFO has no tile field -- stencil is TILE6_3, as laid out
+            const uint64_t sb = d.gpuAddress() + d.stencilOffset();
+            regs(stream, REG_A6XX_RB_STENCIL_INFO, {A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL, uint32_t(d.stencilPitch() >> 6), uint32_t(d.stencilPlaneBytes() >> 6),
+                                                    uint32_t(sb), uint32_t(sb >> 32), 0});
+        } else {
+            reg(stream, REG_A6XX_RB_STENCIL_INFO, 0);
+        }
     }
     // 5. the colour target (tu6_emit_mrt, tu_cmd_buffer.cc:482-576; r3d_dst, tu_clear_blit.cc:1380-1408; fd6 emit_mrt,
     // fd6_gmem.cc:60-147): RB_MRT[0]'s six registers as one pkt4 (BUF_INFO, PITCH, ARRAY_PITCH, BASE lo/hi, BASE_GMEM;
@@ -1540,16 +1601,33 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // the depth test (tu6_emit_depth_stencil, tu_pipeline.cc:3300-3332: Z_READ with the test, Z_WRITE only with it)
         // and the Z mode (tu6_build_depth_plane_z_mode, tu_cmd_buffer.cc:5538-5583: LATE_Z with the test off or a kill
         // that writes depth, EARLY_Z otherwise); with no depth attachment r3d's zeros and EARLY_Z, as measured
-        const a6xx_ztest_mode zmode = pass.depth == nullptr ? A6XX_EARLY_Z : !depthTest || (fs.hasKill && draw.depth.write) ? A6XX_LATE_Z : A6XX_EARLY_Z;
+        const bool stencilWrites = st.enabled && (st.front.writeMask != 0 || st.back.writeMask != 0);
+        const a6xx_ztest_mode zmode = pass.depth == nullptr ? A6XX_EARLY_Z
+                                      : (!depthTest && !st.enabled) || (fs.hasKill && (draw.depth.write || stencilWrites)) ? A6XX_LATE_Z : A6XX_EARLY_Z;
         const uint32_t depthCntl = pass.depth == nullptr ? 0u
                                    : (depthTest ? A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE | A6XX_RB_DEPTH_CNTL_Z_READ_ENABLE : 0u) |
                                          (depthTest && draw.depth.write ? A6XX_RB_DEPTH_CNTL_Z_WRITE_ENABLE : 0u) |
                                          A6XX_RB_DEPTH_CNTL_ZFUNC(adreno_compare_func(draw.depth.compare));
         regs(stream, REG_A6XX_RB_DEPTH_PLANE_CNTL, {A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(zmode), depthCntl});   // ..., RB_DEPTH_CNTL
-        regs(stream, REG_A6XX_GRAS_SU_DEPTH_CNTL, {depthTest && pass.depth != nullptr ? A6XX_GRAS_SU_DEPTH_CNTL_Z_TEST_ENABLE : 0u, 0});   // ..., GRAS_SU_STENCIL_CNTL
+        regs(stream, REG_A6XX_GRAS_SU_DEPTH_CNTL, {depthTest && pass.depth != nullptr ? A6XX_GRAS_SU_DEPTH_CNTL_Z_TEST_ENABLE : 0u,
+                                                  st.enabled ? A6XX_GRAS_SU_STENCIL_CNTL_STENCIL_ENABLE : 0u});   // ..., GRAS_SU_STENCIL_CNTL
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(zmode));
-        reg(stream, REG_A6XX_RB_STENCIL_CONTROL, 0);
-        regs(stream, REG_A6XX_RB_STENCILREF, {0, 0, 0});   // ..., RB_STENCILMASK, RB_STENCILWRMASK
+        // the stencil test (tu6_emit_stencil_*, tu_pipeline.cc: both faces enabled and read, each face's function and
+        // three operations; the references, read masks and write masks front | back << 8)
+        if (st.enabled) {
+            const StencilFace &f = st.front, &bk = st.back;
+            reg(stream, REG_A6XX_RB_STENCIL_CONTROL,
+                A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE | A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE_BF | A6XX_RB_STENCIL_CONTROL_STENCIL_READ |
+                    A6XX_RB_STENCIL_CONTROL_FUNC(adreno_compare_func(f.compare)) | A6XX_RB_STENCIL_CONTROL_FAIL(adreno_stencil_op(f.stencilFail)) |
+                    A6XX_RB_STENCIL_CONTROL_ZPASS(adreno_stencil_op(f.pass)) | A6XX_RB_STENCIL_CONTROL_ZFAIL(adreno_stencil_op(f.depthFail)) |
+                    A6XX_RB_STENCIL_CONTROL_FUNC_BF(adreno_compare_func(bk.compare)) | A6XX_RB_STENCIL_CONTROL_FAIL_BF(adreno_stencil_op(bk.stencilFail)) |
+                    A6XX_RB_STENCIL_CONTROL_ZPASS_BF(adreno_stencil_op(bk.pass)) | A6XX_RB_STENCIL_CONTROL_ZFAIL_BF(adreno_stencil_op(bk.depthFail)));
+            regs(stream, REG_A6XX_RB_STENCILREF, {(st.frontReference & 0xffu) | (st.backReference & 0xffu) << 8, (f.readMask & 0xffu) | (bk.readMask & 0xffu) << 8,
+                                                  (f.writeMask & 0xffu) | (bk.writeMask & 0xffu) << 8});
+        } else {
+            reg(stream, REG_A6XX_RB_STENCIL_CONTROL, 0);
+            regs(stream, REG_A6XX_RB_STENCILREF, {0, 0, 0});   // ..., RB_STENCILMASK, RB_STENCILWRMASK
+        }
         regs(stream, REG_A6XX_RB_Z_BOUNDS_MIN, {fui(0.0f), fui(1.0f)});
     }
     // 18. the draw (r3d_run, tu_clear_blit.cc:1661-1670; tu_CmdDraw :6209-6227; fd6 draw_emit, fd6_draw.cc:170-180):
@@ -1599,9 +1677,7 @@ bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     tableStart(tableCpu);
     passStart(stream, target.level(pass.level).width, target.level(pass.level).height, table, o);
     clearAll(stream, pass, clears, table);
-    if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
-        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
-    }
+    zsClears(stream, pass, table);
     return true;
 }
 
@@ -1611,7 +1687,7 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     if (!checkTarget(pass, why)) {
         return false;
     }
-    const bool depthClear = pass.depth != nullptr && pass.depthLoad == LoadAction::kClear;
+    const bool depthClear = (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) || (pass.stencil != nullptr && pass.stencilLoad == LoadAction::kClear);
     if (!anyColorClear(pass) && !depthClear) {
         return refuse(why, "a pass without a draw and with load action " + n(uint32_t(pass.load)) + ": only a Clear writes anything then");
     }
@@ -1623,9 +1699,7 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     tableStart(tableCpu);
     passStart(stream, target.level(pass.level).width, target.level(pass.level).height, table, o);
     clearAll(stream, pass, clears, table);
-    if (depthClear) {
-        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
-    }
+    zsClears(stream, pass, table);
     passTail(stream, table, o, pass.depth != nullptr);
     return true;
 }
@@ -1754,6 +1828,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // pass per draw spent on every draw (the CCU flush and the cache flush waited for, each time). It joins when the
     // attachments are the same textures, it asks for no Clear (a Clear begins a pass), and the options are the same.
     bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.level == pass.level && open_->pass.depth == pass.depth &&
+                 open_->pass.stencil == pass.stencil && !(pass.stencil != nullptr && pass.stencilLoad == LoadAction::kClear) &&
                  pass.load != LoadAction::kClear &&
                  !(pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) && pass.store == open_->pass.store &&
                  pass.depthStore == open_->pass.depthStore && std::memcmp(&open_->options, &options, sizeof options) == 0;

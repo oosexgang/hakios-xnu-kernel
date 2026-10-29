@@ -241,6 +241,12 @@ struct RenderPass {
     LoadAction depthLoad = LoadAction::kDontCare;
     StoreAction depthStore = StoreAction::kDontCare;
     double clearDepth = 1.0;
+    // the stencil attachment (MTLRenderPassStencilAttachmentDescriptor): the depth texture itself when it is a
+    // Depth32Float_Stencil8 one (its S8 plane), or none; Metal's defaults DontCare / DontCare / 0
+    const Texture* stencil = nullptr;
+    LoadAction stencilLoad = LoadAction::kDontCare;
+    StoreAction stencilStore = StoreAction::kDontCare;
+    uint32_t clearStencil = 0;
 };
 
 // MTLDepthStencilDescriptor's depth half, the encoder's state each draw reads: COMPARE an MTLCompareFunction (Never 0,
@@ -249,6 +255,20 @@ struct RenderPass {
 struct DepthState {
     uint32_t compare = 7;
     bool write = false;
+};
+
+// MTLDepthStencilDescriptor's stencil half, the encoder's state each draw reads, and -setStencilReferenceValue:. A
+// face's COMPARE is an MTLCompareFunction and its three operations MTLStencilOperations (Keep 0 .. DecrementWrap 7),
+// which are adreno_compare_func's and adreno_stencil_op's numbers; ENABLED false is Metal's default (no
+// stencilDescriptor: no test, nothing written).
+struct StencilFace {
+    uint32_t compare = 7, stencilFail = 0, depthFail = 0, pass = 0;
+    uint32_t readMask = 0xff, writeMask = 0xff;
+};
+struct StencilState {
+    bool enabled = false;
+    StencilFace front, back;
+    uint32_t frontReference = 0, backReference = 0;
 };
 
 struct Draw {
@@ -268,6 +288,7 @@ struct Draw {
     Scissor scissor{};                           // width 0: the whole target
     float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors
     DepthState depth{};                          // -setDepthStencilState: (refused with a depth test and no depth attachment)
+    StencilState stencil{};                      // ...its stencil half (refused enabled with no stencil attachment)
 };
 
 namespace render {
@@ -296,7 +317,13 @@ constexpr uint32_t kTableMoreClearFlushAt = 28;
 // pass waits for its own flush and not for an earlier one's word
 constexpr uint32_t kTableFbReadFlushAt = 56;
 constexpr uint32_t kFbReadFlushValue = 8;
-constexpr uint32_t kTableZeroedBytes = 64;        // what tableStart zeroes from kTableTimestampsAt: every word above
+// A stencil Clear's two flushes (the colour CCU, through which the 2D engine wrote, then the depth CCU, which holds
+// stencil as it holds depth), each waited for on its own word
+constexpr uint32_t kTableStencilClearFlushAt = 64;
+constexpr uint32_t kStencilClearFlushValue = 9;
+constexpr uint32_t kTableStencilClearDepthFlushAt = 68;
+constexpr uint32_t kStencilClearDepthFlushValue = 10;
+constexpr uint32_t kTableZeroedBytes = 96;        // what tableStart zeroes from kTableTimestampsAt: every word above
 static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroedBytes, "the Clears' words are zeroed");
 constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
 constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses

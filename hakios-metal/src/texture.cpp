@@ -16,7 +16,7 @@ bool refuse(std::string* why, const std::string& text) {
     return false;
 }
 
-// The sixteen formats served, each with what fd6_format_table.c says of it: the .tex column (which is also the .rb one
+// The formats served, each with what fd6_format_table.c says of it: the .tex column (which is also the .rb one
 // for every format here, so one FMT serves the sampled and the storage descriptor), the swap (fd6_pipe2swap: WXYZ for
 // the BGRA pair at :174, :176; WZYX for the rest), and whether it has alpha (fdl6_format_swiz reads W as ONE without
 // one, fd6_view.c:117-120). The sRGB pair is the UNORM format plus TEX_CONST_0_SRGB (:165, :176). The element class
@@ -42,6 +42,7 @@ constexpr FormatInfo kFormats[] = {
     // Z32_FLOAT is FMT6_32_FLOAT to the TP and the 2D engine (fd6_format_table.c:330 VT(Z32_FLOAT, 32_FLOAT, WZYX)) and
     // DEPTH6_32 to the RB (fd6_pipe2depth)
     {PixelFormat::kDepth32Float, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float", true},
+    {PixelFormat::kDepth32FloatStencil8, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float_Stencil8", true, true},
 };
 
 const char* typeName(TextureType t) {
@@ -105,7 +106,19 @@ TextureLevel textureLevel(const FormatInfo& format, uint32_t width, uint32_t hei
     return out;
 }
 
+namespace {
+uint64_t depthBytes(const FormatInfo& format, uint32_t width, uint32_t height) {
+    uint64_t rows = (uint64_t(height) + 15) / 16 * 16;
+    return (rows * texturePitch(format, width) + 4095) / 4096 * 4096;
+}
+uint64_t s8Pitch(uint32_t width) { return (uint64_t(width) + 127) / 128 * 128; }
+uint64_t s8Bytes(uint32_t width, uint32_t height) { return ((uint64_t(height) + 31) / 32 * 32 * s8Pitch(width) + 4095) / 4096 * 4096; }
+}  // namespace
+
 uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels) {
+    if (format.stencil) {
+        return depthBytes(format, width, height) + s8Bytes(width, height);
+    }
     if (levels > 1 && !format.depth) {
         const TextureLevel last = textureLevel(format, width, height, levels, levels - 1);
         return (last.offset + (uint64_t(last.height) + 3) / 4 * 4 * last.pitch + 4095) / 4096 * 4096;
@@ -128,7 +141,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     }
     const FormatInfo* info = formatInfo(desc.format);
     if (info == nullptr) {
-        refuse(why, "pixel format " + n(uint32_t(desc.format)) + ": not one of the sixteen served (texture.hpp: PixelFormat)");
+        refuse(why, "pixel format " + n(uint32_t(desc.format)) + ": not one of the formats served (texture.hpp: PixelFormat)");
         return nullptr;
     }
     // TEX_CONST_1's WIDTH and HEIGHT are 15 bits each (a6xx.hpp: A6XX_TEX_CONST_1_WIDTH__MASK)
@@ -187,6 +200,11 @@ bool regionFits(const Texture& t, uint32_t level, uint32_t x, uint32_t y, uint32
     return true;
 }
 }  // namespace
+
+uint64_t Texture::depthPlaneBytes() const { return info_->depth ? depthBytes(*info_, desc_.width, desc_.height) : buffer_->length(); }
+uint64_t Texture::stencilOffset() const { return info_->stencil ? depthPlaneBytes() : 0; }
+uint64_t Texture::stencilPitch() const { return info_->stencil ? s8Pitch(desc_.width) : 0; }
+uint64_t Texture::stencilPlaneBytes() const { return info_->stencil ? s8Bytes(desc_.width, desc_.height) : 0; }
 
 TextureLevel Texture::level(uint32_t l) const {
     if (surface_ != 0 || desc_.mipLevels <= 1) return TextureLevel{0, pitch_, desc_.width, desc_.height};

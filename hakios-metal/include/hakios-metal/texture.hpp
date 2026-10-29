@@ -47,6 +47,7 @@ enum class PixelFormat : uint32_t {
     kRGBA32Uint = 123,
     kRGBA32Float = 125,
     kDepth32Float = 252,   // a depth attachment only: tiled (TILE6_3), since the hardware has no linear depth buffer
+    kDepth32FloatStencil8 = 260,   // the same depth plane and a separate S8 plane after it (turnip's D32_SFLOAT_S8_UINT)
 };
 
 // MTLTextureType (MTLTexture.h). Only k2D is served; the others are named here so a refusal can name them back.
@@ -67,6 +68,7 @@ struct FormatInfo {
     KernelElement element;     // the class a kernel may address it as: float for unorm/snorm/float/sRGB, uint for *Uint, int for *Sint
     const char* name;          // Metal's name, for messages
     bool depth = false;        // a depth format: TILE6_3, render-target usage alone, no CPU access (texture.cpp says why)
+    bool stencil = false;      // ...with a stencil plane of its own (Texture::stencilPlane)
 };
 // nullptr when the format is not served
 const FormatInfo* formatInfo(PixelFormat format);
@@ -114,6 +116,12 @@ public:
     // level L's place in the texture's memory (L < levels()); for an IOSurface's texture, its one level
     TextureLevel level(uint32_t l) const;
     uint64_t levelAddress(uint32_t l) const { return gpuAddress() + level(l).offset; }
+    // a depth format's planes: the depth plane's bytes (its layer), and for Depth32Float_Stencil8 the S8 plane after it,
+    // TILE6_3 as the depth one: fdl6_tile_alignment for cpp 1 (pitch to 128 bytes, rows to 32), 4096-aligned
+    uint64_t depthPlaneBytes() const;
+    uint64_t stencilOffset() const;
+    uint64_t stencilPitch() const;
+    uint64_t stencilPlaneBytes() const;
     PixelFormat format() const { return desc_.format; }
     TextureType type() const { return desc_.type; }
     uint32_t usage() const { return desc_.usage; }

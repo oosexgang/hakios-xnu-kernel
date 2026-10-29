@@ -219,7 +219,7 @@ TEST(c_api_texture_replace_and_read_convert_the_stride) {
     CHECK(hakios_metal_texture_new(d, 7, 70, 4, 4, 1) == nullptr);   // 3D
     CHECK(strstr(hakios_metal_error(), "texture type 7 (3D): only 2D (2) is served yet") != nullptr);
     CHECK(hakios_metal_texture_new(d, 2, 13, 4, 4, 1) == nullptr);   // R8Uint
-    CHECK(strstr(hakios_metal_error(), "pixel format 13: not one of the sixteen served") != nullptr);
+    CHECK(strstr(hakios_metal_error(), "pixel format 13: not one of the formats served") != nullptr);
     CHECK(hakios_metal_texture_new(d, 2, 70, 0, 4, 1) == nullptr);
     CHECK(strstr(hakios_metal_error(), "each side is 1 to 32767") != nullptr);
     // the sampler: Metal's defaults encode to Gallium's words; a mode not served is NULL with the reason

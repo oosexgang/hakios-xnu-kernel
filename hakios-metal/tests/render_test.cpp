@@ -1569,8 +1569,14 @@ TEST(the_fake_refuses_a_draw_whose_fragment_output_path_is_broken) {
     }
     {
         Twin w;
+        w.at(REG_A6XX_RB_STENCIL_CONTROL) = A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE;   // the enable in one copy only
+        CHECK(has(w.fault(), "the stencil enable must agree"));
+    }
+    {
+        Twin w;
         w.at(REG_A6XX_RB_STENCIL_CONTROL) = A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE;
-        CHECK(has(w.fault(), "stencil state: no stencil buffer is what this GPU model runs"));
+        w.at(REG_A6XX_GRAS_SU_STENCIL_CNTL) = A6XX_GRAS_SU_STENCIL_CNTL_STENCIL_ENABLE;   // both, and no stencil buffer
+        CHECK(has(w.fault(), "stencil state with no separate stencil buffer beside a depth buffer"));
     }
     {
         // a depth format with nothing behind it: GRAS_SU's copy still says none
@@ -3518,4 +3524,72 @@ TEST(a_draw_that_writes_only_color_1_leaves_attachment_0_unwritten) {
     Encoded none(r, p, one, wholeDraw(6));
     CHECK(!none.ok);
     expectRefusal(none.error, "tri_mrt1_fs_air writes [[color(1)]] and the pass has no colour attachment 1");
+}
+
+// A stencil attachment: the S8 plane of a Depth32Float_Stencil8 texture after its depth plane, in RB_STENCIL_INFO's
+// six registers (SEPARATE_STENCIL, the plane's pitch and layer, its base); a stencil Clear is a TILE6_3 fill of the
+// plane (FMT6_8_UINT through R2D_INT8); a draw's stencil state in RB_STENCIL_CONTROL and the three mask registers.
+TEST(a_stencil_attachment_is_the_s8_plane_and_its_test_the_draws_state) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    TextureDesc dd;
+    dd.format = PixelFormat::kDepth32FloatStencil8;
+    dd.width = dd.height = 64;
+    dd.usage = kTextureUsageRenderTarget;
+    std::string why;
+    auto ds = Texture::make(*r.gpu, dd, &why);
+    CHECK(ds != nullptr);
+    if (ds == nullptr) return;
+    CHECK_EQ(ds->depthPlaneBytes(), 16384u);   // 64 rows (to 16) of 256 bytes, to 4096
+    CHECK_EQ(ds->stencilOffset(), 16384u);
+    CHECK_EQ(ds->stencilPitch(), 128u);        // 64 bytes to 128
+    CHECK_EQ(ds->stencilPlaneBytes(), 8192u);  // 64 rows (to 32) of 128, to 4096
+    RenderPass pass;
+    pass.color0 = t.get();
+    pass.depth = ds.get();
+    pass.stencil = ds.get();
+    pass.stencilLoad = LoadAction::kClear;
+    pass.clearStencil = 0x5a;
+    Draw d = wholeDraw(6);
+    d.stencil.enabled = true;
+    d.stencil.front = StencilFace{3, 0, 0, 2, 0xff, 0x0f};   // LessEqual, Keep / Keep / Replace, write mask 0x0f
+    d.stencil.back = d.stencil.front;
+    d.stencil.frontReference = 7;
+    d.stencil.backReference = 7;
+    Encoded e(r, flatProgram(), pass, d);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    const uint64_t plane = ds->gpuAddress() + 16384;
+    CHECK_EQ(e.reg(REG_A6XX_RB_STENCIL_INFO), A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL);
+    CHECK_EQ(e.reg(REG_A6XX_RB_STENCIL_INFO + 1), 128u >> 6);
+    CHECK_EQ(e.reg(REG_A6XX_RB_STENCIL_INFO + 2), 8192u >> 6);
+    CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_STENCIL_INFO + 3)) | uint64_t(e.reg(REG_A6XX_RB_STENCIL_INFO + 4)) << 32, plane);
+    CHECK_EQ(e.reg(REG_A6XX_RB_STENCILREF), 0x0707u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_STENCILREF + 2), 0x0f0fu);   // RB_STENCILWRMASK
+    const uint32_t control = e.reg(REG_A6XX_RB_STENCIL_CONTROL);
+    CHECK((control & A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE) != 0);
+    CHECK_EQ((control & A6XX_RB_STENCIL_CONTROL_FUNC__MASK) >> A6XX_RB_STENCIL_CONTROL_FUNC__SHIFT, 3u);
+    CHECK_EQ((control & A6XX_RB_STENCIL_CONTROL_ZPASS__MASK) >> A6XX_RB_STENCIL_CONTROL_ZPASS__SHIFT, 2u);
+    // the Clear: a tiled fill into the plane (the fake judges it and counts it; the tiled order is not modelled)
+    const uint32_t tiledBefore = r.fake->stats().tiledFills;
+    auto cb = drawOnce(r, flatProgram(), pass, d);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().tiledFills - tiledBefore, 1u);
+    // refusals: a stencil test with no attachment, a stencil attachment of another texture
+    RenderPass noStencil = pass;
+    noStencil.stencil = nullptr;
+    Encoded e2(r, flatProgram(), noStencil, d);
+    CHECK(!e2.ok);
+    expectRefusal(e2.error, "a stencil test with no stencil attachment");
+    TextureDesc d32 = dd;
+    d32.format = PixelFormat::kDepth32Float;
+    auto plain = Texture::make(*r.gpu, d32, &why);
+    RenderPass other = pass;
+    other.depth = plain.get();
+    Encoded e3(r, flatProgram(), other, d);
+    CHECK(!e3.ok);
+    expectRefusal(e3.error, "a stencil attachment that is not the depth attachment's own Depth32Float_Stencil8 texture: the S8 plane of that one texture is what is served");
+    CHECK_EQ(r.fake->stats().faults, 0u);
 }
