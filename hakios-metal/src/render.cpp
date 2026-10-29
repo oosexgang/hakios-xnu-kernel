@@ -1188,8 +1188,12 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     switch (draw.primitive) {
     case Primitive::kTriangle: prim = DI_PT_TRILIST; break;
     case Primitive::kTriangleStrip: prim = DI_PT_TRISTRIP; break;
+    // lines are one pixel wide in Metal: GRAS_SU_CNTL's LINEHALFWIDTH is already 2 quarters (a6xx.hpp: grasSuCntl) and
+    // its LINE_MODE RECTANGULAR, turnip's for Vulkan's default lines (tu6_emit_rast)
+    case Primitive::kLine: prim = DI_PT_LINELIST; break;
+    case Primitive::kLineStrip: prim = DI_PT_LINESTRIP; break;
     default:
-        return refuse(why, "primitive " + n(uint32_t(draw.primitive)) + ": triangles (3) and triangle strips (4) are what the first draw serves");
+        return refuse(why, "primitive " + n(uint32_t(draw.primitive)) + ": points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)");
     }
     if (draw.vertexCount == 0) {
         return refuse(why, "a draw of 0 vertices");

@@ -1108,6 +1108,7 @@ int main(int argc, char** argv) {
     //   9y. the VS's driver params: tri_base_vs's [[base_vertex]] and [[instance_id]] from a base instance, plain and indexed
     //   9z. private memory: tri_pvt_fs fills a 128-word array a fiber and reads it back at the pixel's index
     //   9m2. a '420f' IOSurface as one YCbCr8_420_2P texture, sampled: the order the TP gives Y, Cb and Cr in
+    //   9l2. lines: tri_flat's vertices 1 and 2 as a line list and as a line strip, the anti-diagonal one pixel wide
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2672,6 +2673,40 @@ int main(int argc, char** argv) {
                                std::to_string(right) + " of 4096 pixels " + (kind == 0 ? "03 08 00 ff" : "05 08 00 ff") + (seen ? std::string(", the first other one ") + firstHex : std::string()) +
                                (ok ? status(*cb, gpu) : ": " + cb->error()));
                 }
+            }
+        }
+        // 9l2. lines. tri_flat_vs's vertex 1 is clip (1, -1) and vertex 2 (-1, 1): under Metal's orientation (NDC y up,
+        // row 0 at the top) window (64, 64) to (0, 0), the diagonal T1 is bounded by. One pixel wide at 45 degrees, a
+        // pixel centre is inside when it lies within half a pixel of the line, |i - j| / sqrt(2) < 0.5: exactly the 64
+        // pixels with i = j and no other.
+        // As a line list (Metal's Line) and as a strip of the same two vertices (LineStrip).
+        {
+            const Program flatL{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+            for (int strip = 0; strip < 2; strip++) {
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Draw d = drawOf(1, 2);
+                d.primitive = strip ? Primitive::kLineStrip : Primitive::kLine;
+                auto cb = queue->commandBuffer();
+                bool ok = cb->draw(flatL, rp, d, Bindings{}, Bindings{});
+                if (ok) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t on = 0, off = 0, canaryLeft = 0;
+                for (uint32_t j = 0; j < H; j++)
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        if (i == j) on += px == flatColour;
+                        else off += px == flatColour;
+                        canaryLeft += px == canary;
+                    }
+                report(ok && completed(*cb) && on == 64 && off == 0 && canaryLeft == W * H - 64,
+                       std::string(strip ? "a line strip" : "a line list") + " of vertices 1 and 2: " + std::to_string(on) + " of the 64 pixels with i = j drawn, " +
+                           std::to_string(off) + " elsewhere, " + std::to_string(canaryLeft) + " canary" + (ok ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
         // 9z. private memory. tri_pvt_fs keeps a[128] in private memory (512 bytes a fiber, stp and ldp), fills it with

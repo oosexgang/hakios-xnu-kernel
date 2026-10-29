@@ -456,8 +456,8 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
     {
         Program p = handProgram();
         Draw x = d;
-        x.primitive = Primitive::kLine;
-        refused(r, p, pass, x, "primitive 1: triangles (3) and triangle strips (4) are what the first draw serves");
+        x.primitive = Primitive::kPoint;
+        refused(r, p, pass, x, "primitive 0: points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)");
         x = d;
         x.vertexCount = 0;
         refused(r, p, pass, x, "a draw of 0 vertices");
@@ -1304,7 +1304,7 @@ TEST(the_fake_refuses_a_draw_packet_that_is_not_the_three_word_triangle_form) {
     {
         Twin w;
         w.words[w.e.find(CP_DRAW_INDX_OFFSET) + 1] = drawIndxOffset0(DI_PT_POINTLIST, DI_SRC_SEL_AUTO_INDEX, IGNORE_VISIBILITY);
-        CHECK(has(w.fault(), "a draw of primitive type 9: triangle lists (4) and strips (6) are what this GPU model runs"));
+        CHECK(has(w.fault(), "a draw of primitive type 9: triangle lists (4) and strips (6) and line lists (2) and strips (3) are what this GPU model runs"));
     }
     {
         Twin w;
@@ -1991,6 +1991,29 @@ TEST(a_stage_that_wants_private_memory_gets_the_queues) {
     CHECK(r.queue->privateMemory(300, false, &again, &why) == scratch);   // 300 fits in the 512 already there
     CHECK(r.queue->privateMemory(600, false, &again, &why) != scratch);   // 600 grows it to 1024
     CHECK_EQ(again.perFiber, 1024u);
+}
+
+// Lines: Metal's Line and LineStrip are the hardware's line list and strip, one pixel wide (LINEHALFWIDTH 2 quarters)
+TEST(lines_are_drawn_as_the_hardwares_line_list_and_strip) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    for (auto [prim, want] : {std::pair<Primitive, uint32_t>{Primitive::kLine, DI_PT_LINELIST}, {Primitive::kLineStrip, DI_PT_LINESTRIP}}) {
+        Draw d = wholeDraw(2);
+        d.primitive = prim;
+        Encoded e(r, flatProgram(), pass, d);
+        CHECK(e.ok);
+        size_t at = e.find(CP_DRAW_INDX_OFFSET);
+        CHECK(at != size_t(-1));
+        if (at != size_t(-1)) {
+            CHECK_EQ((e.stream.words()[at + 1] & CP_DRAW_INDX_OFFSET_0_PRIM_TYPE__MASK) >> CP_DRAW_INDX_OFFSET_0_PRIM_TYPE__SHIFT, want);
+        }
+        CHECK_EQ((e.reg(REG_A6XX_GRAS_SU_CNTL) & A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__MASK) >> A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__SHIFT, 2u);
+        auto cb = drawOnce(r, flatProgram(), pass, d);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+    }
 }
 
 TEST(a_vertex_stage_gets_its_driver_params_every_draw) {

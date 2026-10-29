@@ -914,8 +914,8 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     d.visCull = fieldOf(p[0], CP_DRAW_INDX_OFFSET_0_VIS_CULL__MASK, CP_DRAW_INDX_OFFSET_0_VIS_CULL__SHIFT);
     d.numInstances = p[1];
     d.numIndices = p[2];
-    if (d.primType != DI_PT_TRILIST && d.primType != DI_PT_TRISTRIP) {
-        fault(text("a draw of primitive type %llu: triangle lists (4) and strips (6) are what this GPU model runs", d.primType));
+    if (d.primType != DI_PT_TRILIST && d.primType != DI_PT_TRISTRIP && d.primType != DI_PT_LINELIST && d.primType != DI_PT_LINESTRIP) {
+        fault(text("a draw of primitive type %llu: triangle lists (4) and strips (6) and line lists (2) and strips (3) are what this GPU model runs", d.primType));
         return false;
     }
     if ((count == 3) != (d.sourceSelect == DI_SRC_SEL_AUTO_INDEX) || (count == 7 && d.sourceSelect != DI_SRC_SEL_DMA)) {
