@@ -241,6 +241,12 @@ a6xx::TexConst Texture::sampledDescriptor() const {
                      info_->swap, info_->hasAlpha, info_->srgb, desc_.mipLevels, desc_.mipLevels > 1 ? buffer_->length() : 0);
 }
 
+a6xx::TexConst Texture::levelDescriptor(uint32_t level) const {
+    const TextureLevel L = this->level(level);
+    return texture2d(levelAddress(level), L.width, L.height, uint32_t(L.pitch), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel), info_->fmt6,
+                     info_->swap, info_->hasAlpha, info_->srgb);
+}
+
 a6xx::TexConst Texture::storageDescriptor() const {
     return image2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
 }

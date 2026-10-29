@@ -219,6 +219,7 @@ struct Translation {
     ir3_shader* shader = nullptr;         // the hand-built shader; its variant hangs off it
     ir3_shader_variant* v = nullptr;
     uint32_t* bin = nullptr;              // the assembled binary (ralloc'd under the variant)
+    uint8_t fbTargets[kMaxTextureSlots] = {};   // lowerFbRead's slots: n + 1 where colour attachment n is read
     Translation() = default;
     Translation(const Translation&) = delete;
     Translation& operator=(const Translation&) = delete;
@@ -374,12 +375,57 @@ bool zeroLayerSample(nir_builder* b, nir_intrinsic_instr* in, void* data) {
 }
 }  // namespace
 
-void lowerFbReadSingleLayer(nir_shader* nir) {
-    if (nir->info.stage != MESA_SHADER_FRAGMENT || !nir->info.fs.uses_fbfetch_output) return;
+// Each fetch then becomes an ordinary texel fetch (txf, lod 0) of a texture slot of its target's own: one past the
+// highest slot the function samples, plus the target's index. ir3's own non-bindless fetch gives every fetch
+// INSTRUCTION a slot of its own (num_samp, then num_samp++), so two reads of one target took two slots and a read of
+// [[color(1)]] could not be told from one of [[color(0)]]; here two reads of a target share a slot and each target has
+// one, which the draw fills with that attachment's view (KernelTexture::fbTarget). FB_TARGETS: n + 1 at each such slot.
+// False with *WHY when the slots would run past the table.
+bool lowerFbRead(nir_shader* nir, uint8_t fbTargets[kMaxTextureSlots], std::string* why) {
+    if (nir->info.stage != MESA_SHADER_FRAGMENT || !nir->info.fs.uses_fbfetch_output) return true;
     FbReadCounts own;
     nir_shader_intrinsics_pass(nir, countLayerSample, nir_metadata_all, &own);
     nir_lower_fb_read(nir);
     nir_shader_intrinsics_pass(nir, zeroLayerSample, nir_metadata_control_flow, &own);
+    const unsigned base = BITSET_LAST_BIT(nir->info.textures_used);
+    bool ok = true;
+    nir_foreach_function_impl(impl, nir) {
+        nir_builder b = nir_builder_create(impl);
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr_safe(instr, block) {
+                if (instr->type != nir_instr_type_tex) continue;
+                nir_tex_instr* fb = nir_instr_as_tex(instr);
+                if (fb->op != nir_texop_txf_ms_fb) continue;
+                const int h = nir_tex_instr_src_index(fb, nir_tex_src_texture_handle), c = nir_tex_instr_src_index(fb, nir_tex_src_coord);
+                const unsigned target = h >= 0 && nir_src_is_const(fb->src[h].src) ? unsigned(nir_src_as_uint(fb->src[h].src)) : 0;
+                const unsigned slot = base + target;
+                if (slot >= kMaxTextureSlots || c < 0) {
+                    ok = false;
+                    continue;
+                }
+                b.cursor = nir_before_instr(instr);
+                nir_def* coord = fb->src[c].src.ssa;
+                nir_tex_instr* tx = nir_tex_instr_create(nir, 2);
+                tx->op = nir_texop_txf;
+                tx->sampler_dim = GLSL_SAMPLER_DIM_2D;
+                tx->coord_components = 2;
+                tx->dest_type = nir_type_float32;
+                tx->texture_index = slot;
+                tx->sampler_index = 0;
+                tx->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, nir_trim_vector(&b, coord, 2));
+                tx->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(&b, 0));
+                nir_def_init(&tx->instr, &tx->def, 4, 32);
+                nir_builder_instr_insert(&b, &tx->instr);
+                nir_def_rewrite_uses(&fb->def, &tx->def);
+                nir_instr_remove(instr);
+                BITSET_SET(nir->info.textures_used, slot);
+                fbTargets[slot] = uint8_t(target + 1);
+            }
+        }
+        nir_metadata_preserve(impl, nir_metadata_control_flow);
+    }
+    if (!ok) return refuse(why, std::string(nir->info.name ? nir->info.name : "the function") + " reads its render targets through slots past the 16 the table holds");
+    return true;
 }
 
 bool compileVariant(Translation& t, PassOrder order, std::string* why) {
@@ -395,7 +441,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_shader_nir_options nirOptions{};
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &nirOptions, nir);
-    lowerFbReadSingleLayer(nir);
+    if (!lowerFbRead(nir, t.fbTargets, why)) return false;
 
     t.shader = static_cast<ir3_shader*>(rzalloc_size(nullptr, sizeof(ir3_shader)));
     t.shader->compiler = compiler;
@@ -748,18 +794,25 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     OutputClasses classes;
     if (!walkOutputClasses(t.nir, classes, why)) return nullptr;
     if (!nullTextures(t, out->stage.k, true, why)) return nullptr;
-    // ir3's non-bindless framebuffer fetch reads one slot past the textures, which the draw fills with colour attachment
-    // 0 (render.cpp: fsTextures); a fetch of another target would read attachment 0 by the same instruction
-    if ((t.info.fbfetch_targets & ~1u) != 0) {
-        refuse(why, name + " reads [[color(n)]] for n other than 0 through framebuffer fetch (targets " + std::to_string(t.info.fbfetch_targets) +
-                        "): only attachment 0 is served");
-        return nullptr;
-    }
     if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     if (!compileVariant(t, PassOrder::kGraphics, why)) return nullptr;
     KernelHome home{out->stage.k, out->words, out->immediates, out->resources, out->name, out->listing};
     if (!fillKernel(t, home, highestSampler, why)) return nullptr;
     if (!fillStage(t, classes, out->stage, why)) return nullptr;
+    // the fetch slots lowerFbRead made: sampled 2D floats the draw fills with the targets, and a stage that reads its
+    // targets (the barrier before its draws keys on fbRead, which ir3 no longer sees: it has no txf_ms_fb left)
+    for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
+        if (t.fbTargets[i] == 0) continue;
+        KernelTexture& kt = out->stage.k.textures[i];
+        kt = KernelTexture{};
+        kt.kind = kTexSampled;
+        kt.dim = kTexDim2D;
+        kt.element = kElemFloat;
+        kt.read = 1;
+        kt.fbTarget = t.fbTargets[i];
+        out->stage.k.numTextureSlots = std::max(out->stage.k.numTextureSlots, i + 1);
+        out->stage.fbRead = 1;
+    }
     // The varyings' names, VAR0 first. The front end records the VERTEX side as the mangled string after the
     // air.vertex_output key ("generated(5colorDv4_f)", air_to_nir.c:2571-2573) and the FRAGMENT side as air.arg_name
     // ("color", :2499-2511) -- two different strings for one varying, and air_shader_info has no field for the FS's

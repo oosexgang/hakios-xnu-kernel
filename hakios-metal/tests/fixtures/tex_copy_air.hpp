@@ -137,8 +137,8 @@ define void @tex_copy(ptr addrspace(1) %in, ptr addrspace(1) %out, <2 x i32> %gi
 !7 = !{i32 2, !"air.thread_position_in_grid", !"air.arg_type_name", !"uint2", !"air.arg_name", !"gid"}
 )ir3",
     /* .textures = */ {
-        /* [0] */ {2, 2, 0, 1, 32, 0, 1, 0},   // image 2D of uint as 32-bit, written
-        /* [1] */ {1, 2, 0, 1, 0, 1, 0, 0},   // sampled 2D of uint, read
+        /* [0] */ {2, 2, 0, 1, 32, 0, 1, 0, 0},   // image 2D of uint as 32-bit, written
+        /* [1] */ {1, 2, 0, 1, 0, 1, 0, 0, 0},   // sampled 2D of uint, read
     },
     /* .numTextureSlots = */ 2,
     /* .samplerMask = */ 0,

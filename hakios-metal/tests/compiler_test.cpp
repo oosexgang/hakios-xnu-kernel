@@ -590,11 +590,12 @@ TEST(compiler_matches_the_stage_fixtures) {
             if (linked) CHECK_EQ(linked->program.link.mrtComponents, 0xffu);
         }
     }
-    // a framebuffer fetch: isamm through slot 0 (non-bindless), the layer and the sample folded to 0, so no
-    // VARYING_SLOT_LAYER input and no sample id are left for the draw to refuse
-    auto fbFs = compareStageWithFixture("tri_fb_fs", kernels::tri_fb_fs_air, "tri_fb_fs", "isamm.a (f32)(xyz)r2.x, r1.x, s#0, t#0");
+    // a framebuffer fetch: lowerFbRead's texel fetch (isaml) of slot 0, marked as colour attachment 0's, the layer and
+    // the sample folded to 0, so no VARYING_SLOT_LAYER input and no sample id are left for the draw to refuse
+    auto fbFs = compareStageWithFixture("tri_fb_fs", kernels::tri_fb_fs_air, "tri_fb_fs", "isaml (f32)(xyz)");
     if (fbFs) {
         CHECK_EQ(uint32_t(fbFs->stage.fbRead), 1u);
+        CHECK_EQ(uint32_t(fbFs->stage.k.textures[0].fbTarget), 1u);
         CHECK_EQ(fbFs->stage.k.numSamp, 1u);
         CHECK_EQ(fbFs->stage.sampleIdRegid, uint32_t(a6xx::kRegidNone));
         bool layer = false;

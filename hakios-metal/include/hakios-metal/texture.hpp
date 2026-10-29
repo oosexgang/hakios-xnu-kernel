@@ -143,6 +143,8 @@ public:
     // DEPTH 1, ARRAY_PITCH the layer's bytes, the format's swap and swizzle (fd6_view.c:232-250)
     // (with mip levels: all of them, MIPLVLS levels - 1 and the layer the whole of them, fd6_view.c:232-250)
     a6xx::TexConst sampledDescriptor() const;
+    // ...of mip level L alone: what a framebuffer fetch reads of an attachment drawn at that level
+    a6xx::TexConst levelDescriptor(uint32_t level) const;
     // the descriptor a stib/ldib addresses it through, at IBO slot numSsbos + index: the same without PITCHALIGN,
     // MIPLVLS and SAMPLES (fd6_view.c:383-397)
     a6xx::TexConst storageDescriptor() const;

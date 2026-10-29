@@ -113,7 +113,7 @@ define <4 x float> @tri_tex_fs(<4 x float> %color, ptr addrspace(1) %t, ptr addr
 !8 = !{i32 2, !"air.sampler", !"air.location_index", i32 0, i32 1, !"air.arg_type_name", !"sampler", !"air.arg_name", !"s"}
 )ir3",
         /* .textures = */ {
-            /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0},   // sampled 2D of float, read
+            /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0, 0},   // sampled 2D of float, read
         },
         /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0x1,

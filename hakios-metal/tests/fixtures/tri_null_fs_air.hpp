@@ -112,7 +112,7 @@ define <4 x float> @tri_null_fs(<4 x float> %color, ptr addrspace(2) %s) local_u
 !8 = !{i32 1, !"air.sampler", !"air.location_index", i32 0, i32 1, !"air.arg_type_name", !"sampler", !"air.arg_name", !"s"}
 )ir3",
         /* .textures = */ {
-            /* [0] */ {1, 3, 0, 0, 0, 1, 0, 1},   // sampled 3D of float, read
+            /* [0] */ {1, 3, 0, 0, 0, 1, 0, 1, 0},   // sampled 3D of float, read
                       // ...the null texture's slot
         },
         /* .numTextureSlots = */ 1,

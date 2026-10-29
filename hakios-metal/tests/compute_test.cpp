@@ -426,8 +426,8 @@ Kernel kernelLike(const char* name, uint32_t numSsbos, uint32_t numIbos, uint32_
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) k.textures[i] = KernelTexture{};
     return k;
 }
-KernelTexture image2dUint() { return KernelTexture{kTexImage, kTexDim2D, 0, kElemUint, 32, 0, 1, 0}; }
-KernelTexture sampled2d(uint8_t element) { return KernelTexture{kTexSampled, kTexDim2D, 0, element, 0, 1, 0, 0}; }
+KernelTexture image2dUint() { return KernelTexture{kTexImage, kTexDim2D, 0, kElemUint, 32, 0, 1, 0, 0}; }
+KernelTexture sampled2d(uint8_t element) { return KernelTexture{kTexSampled, kTexDim2D, 0, element, 0, 1, 0, 0, 0}; }
 // tex_fill: image 0, nothing else (numSamp 1 = 0 textures + 1 image)
 Kernel texFillLike() {
     Kernel k = kernelLike("tex_fill", 0, 1, 1, 0, 0);

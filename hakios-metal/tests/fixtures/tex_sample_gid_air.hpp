@@ -154,7 +154,7 @@ define void @tex_sample_gid(ptr addrspace(1) %in, ptr addrspace(2) %s, ptr addrs
 !9 = !{i32 4, !"air.threads_per_grid", !"air.arg_type_name", !"uint2", !"air.arg_name", !"grid"}
 )ir3",
     /* .textures = */ {
-        /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0},   // sampled 2D of float, read
+        /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0, 0},   // sampled 2D of float, read
     },
     /* .numTextureSlots = */ 1,
     /* .samplerMask = */ 0x1,

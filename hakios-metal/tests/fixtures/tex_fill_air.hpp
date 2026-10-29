@@ -150,7 +150,7 @@ define void @tex_fill(ptr addrspace(1) %out, ptr addrspace(2) %c, <2 x i32> %gid
 !8 = !{i32 3, !"air.threads_per_grid", !"air.arg_type_name", !"uint2", !"air.arg_name", !"grid"}
 )ir3",
     /* .textures = */ {
-        /* [0] */ {2, 2, 0, 1, 32, 0, 1, 0},   // image 2D of uint as 32-bit, written
+        /* [0] */ {2, 2, 0, 1, 32, 0, 1, 0, 0},   // image 2D of uint as 32-bit, written
     },
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,

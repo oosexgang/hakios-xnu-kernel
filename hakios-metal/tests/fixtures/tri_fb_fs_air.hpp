@@ -8,12 +8,12 @@
 namespace hakios::metal::kernels {
 
 constexpr uint32_t tri_fb_fs_air_words[] = {
-    0x00000000, 0x200c4900, 0x00000000, 0x204cc006,
-    0x00000000, 0x204cc007, 0x10000000, 0x40700900,
-    0x3f800000, 0x204cc00c, 0x00000000, 0x00000000,
-    0x00000000, 0x20054904, 0x00000000, 0x00000500,
-    0x00000009, 0xa0821708, 0x00000008, 0x300cc00b,
-    0x00000000, 0x03000000, 0x00000000, 0x00000000,
+    0x00000000, 0x200c4900, 0x00000000, 0x204cc004,
+    0x3f800000, 0x204cc00b, 0x10000000, 0x40700900,
+    0x00000000, 0x00000100, 0x00000000, 0x20054905,
+    0x00000000, 0x00000500, 0x0000080b, 0xa0401707,
+    0x00000007, 0x300cc00a, 0x00000000, 0x03000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
     0x00000000, 0x00000000, 0x00000000, 0x00000000,
     0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
@@ -28,7 +28,7 @@ constexpr Stage tri_fb_fs_air = {
         /* .numWords = */ 32,
         /* .instrlen = */ 1,
         /* .constlen = */ 4,
-        /* .maxReg = */ 3,
+        /* .maxReg = */ 2,
         /* .maxHalfReg = */ -1,
         /* .doubleThreadsize = */ false,
         /* .mergedRegs = */ true,
@@ -96,8 +96,11 @@ define <4 x float> @tri_fb_fs(<4 x float> %c) local_unnamed_addr {
 !5 = !{!6}
 !6 = !{i32 0, !"air.render_target", i32 0, !"air.arg_type_name", !"float4", !"air.arg_name", !"c"}
 )ir3",
-        /* .textures = */ {},
-        /* .numTextureSlots = */ 0,
+        /* .textures = */ {
+            /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0, 1},   // sampled 2D of float, read
+                      // ...framebuffer fetch of colour attachment 0
+        },
+        /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
@@ -109,7 +112,7 @@ define <4 x float> @tri_fb_fs(<4 x float> %c) local_unnamed_addr {
     },
     /* .numInputs = */ 3,
     /* .outputs = */ {
-        /* [0] */ {4, 0x09, 0, 0},   // FRAG_RESULT_DATA0 r2.y, float
+        /* [0] */ {4, 0x08, 0, 0},   // FRAG_RESULT_DATA0 r2.x, float
     },
     /* .numOutputs = */ 1,
     /* .numAttributes = */ 0,
@@ -125,7 +128,7 @@ define <4 x float> @tri_fb_fs(<4 x float> %c) local_unnamed_addr {
     /* .ijRegid = */ {0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc},   // ir3's IJ order: persp pixel, sample, centroid, centre rhw; linear pixel, centroid, sample
     /* .faceRegid = */ 0xfc,
     /* .sampleIdRegid = */ 0xfc, /* .sampleMaskInRegid = */ 0xfc,
-    /* .colorRegid = */ {0x09, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc},
+    /* .colorRegid = */ {0x08, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc},
     /* .colorHalf = */ {0, 0, 0, 0, 0, 0, 0, 0},
     /* .numColorOutputs = */ 1,
     /* .depthRegid = */ 0xfc, /* .sampleMaskRegid = */ 0xfc, /* .stencilRefRegid = */ 0xfc,
@@ -153,28 +156,28 @@ define <4 x float> @tri_fb_fs(<4 x float> %c) local_unnamed_addr {
 // @in(r0.x)	in1 (wrmask=0xf)
 // @const(c0.x)	0x3d800000, 0xd0d0d0d0, 0xd0d0d0d0, 0xd0d0d0d0
 // (rpt1)cov.u32f32 r0.x, (r)r0.x
-// mov.u32u32 r1.z, 0
-// mov.u32u32 r1.w, 0
+// mov.u32u32 r1.x, 0
+// mov.u32u32 r2.w, 0x3f800000
 // (rpt1)mul.f r0.x, (r)r0.x, c0.x
-// mov.u32u32 r3.x, 0x3f800000
-// nop
-// (rpt1)cov.f32s32 r1.x, (r)r0.x
+// (rpt1)nop
+// (rpt1)cov.f32s32 r1.y, (r)r0.x
 // (rpt5)nop
-// isamm.a (f32)(xyz)r2.x, r1.x, s#0, t#0
-// (sy)mov.u32u32 r2.w, r2.x
+// isaml (f32)(xyz)r1.w, r1.y, r1.x, s#0, t#0
+// (sy)mov.u32u32 r2.z, r1.w
 // end
 // nop
 // nop
 // nop
 // nop
 // nop
-// ; FRAG: outputs: r2.y (FRAG_RESULT_DATA0)
+// nop
+// ; FRAG: outputs: r2.x (FRAG_RESULT_DATA0)
 // ; FRAG: inputs: r63.x (VARYING_SLOT_POS slot=0 cm=0,il=0,b=0) r63.x (SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL slot=56 cm=3,il=0,b=0) r0.x (SYSTEM_VALUE_FRAG_COORD slot=19 cm=f,il=0,b=0)
-// ; FRAG prog 0/0: 19 instr, 7 nops, 12 non-nops, 4 mov, 4 cov, 32 dwords
-// ; FRAG prog 0/0: 0 last-baryf, 0 last-helper, 0 half, 4 full, 4 constlen
-// ; FRAG prog 0/0: 8 cat0, 8 cat1, 2 cat2, 0 cat3, 0 cat4, 1 cat5, 0 cat6, 0 cat7
+// ; FRAG prog 0/0: 19 instr, 8 nops, 11 non-nops, 3 mov, 4 cov, 32 dwords
+// ; FRAG prog 0/0: 0 last-baryf, 0 last-helper, 0 half, 3 full, 4 constlen
+// ; FRAG prog 0/0: 9 cat0, 7 cat1, 2 cat2, 0 cat3, 0 cat4, 1 cat5, 0 cat6, 0 cat7
 // ; FRAG prog 0/0: 0 sstall, 0 (ss), 38 systall, 1 (sy), 0 loops
-// ; data0: r2.y
+// ; data0: r2.x
 // ; fragcoord: r0.x
 // 
 

@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,749 @@
+@@ -35,19 +37,805 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -157,7 +157,7 @@ SPDX-License-Identifier: MIT
 +#define FIXTURE_TEXTURE_SLOTS 16   /* kernel.hpp's kMaxTextureSlots */
 +
 +struct fixture_texture {
-+   uint8_t kind, dim, is_array, element, bits, read, write, is_null;   /* KernelTexture */
++   uint8_t kind, dim, is_array, element, bits, read, write, is_null, fb_target;   /* KernelTexture */
 +};
 +
 +struct fixture_textures {
@@ -380,8 +380,15 @@ SPDX-License-Identifier: MIT
 +   return true;
 +}
 +
++/* ...and each fetch then an ordinary texel fetch of a slot of its target's own,
++ * one past the highest sampled slot plus the target's index, marked in the
++ * fixture's slot table (src/compiler.cpp: lowerFbRead, which says why). */
++/* whether the lowering below made a fetch slot: the stage reads its targets,
++ * which ir3's fb_read no longer says (it sees no txf_ms_fb) */
++static bool fixture_fb_lowered;
++
 +static void
-+fixture_lower_fb_read(nir_shader *nir)
++fixture_lower_fb_read(nir_shader *nir, struct fixture_textures *t)
 +{
 +   if (nir->info.stage != MESA_SHADER_FRAGMENT || !nir->info.fs.uses_fbfetch_output)
 +      return;
@@ -389,6 +396,53 @@ SPDX-License-Identifier: MIT
 +   nir_shader_intrinsics_pass(nir, fixture_count_layer_sample, nir_metadata_all, &own);
 +   nir_lower_fb_read(nir);
 +   nir_shader_intrinsics_pass(nir, fixture_zero_layer_sample, nir_metadata_control_flow, &own);
++   const unsigned base = BITSET_LAST_BIT(nir->info.textures_used);
++   nir_foreach_function_impl (impl, nir) {
++      nir_builder b = nir_builder_create(impl);
++      nir_foreach_block (block, impl) {
++         nir_foreach_instr_safe (instr, block) {
++            if (instr->type != nir_instr_type_tex)
++               continue;
++            nir_tex_instr *fb = nir_instr_as_tex(instr);
++            if (fb->op != nir_texop_txf_ms_fb)
++               continue;
++            int h = nir_tex_instr_src_index(fb, nir_tex_src_texture_handle);
++            int c = nir_tex_instr_src_index(fb, nir_tex_src_coord);
++            unsigned target = h >= 0 && nir_src_is_const(fb->src[h].src) ? nir_src_as_uint(fb->src[h].src) : 0;
++            unsigned slot = base + target;
++            if (slot >= FIXTURE_TEXTURE_SLOTS || c < 0)
++               errx(1, "-o: a framebuffer fetch's slot %u is past the Kernel's %u", slot, FIXTURE_TEXTURE_SLOTS);
++            b.cursor = nir_before_instr(instr);
++            nir_tex_instr *tx = nir_tex_instr_create(nir, 2);
++            tx->op = nir_texop_txf;
++            tx->sampler_dim = GLSL_SAMPLER_DIM_2D;
++            tx->coord_components = 2;
++            tx->dest_type = nir_type_float32;
++            tx->texture_index = slot;
++            tx->sampler_index = 0;
++            tx->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, nir_trim_vector(&b, fb->src[c].src.ssa, 2));
++            tx->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(&b, 0));
++            nir_def_init(&tx->instr, &tx->def, 4, 32);
++            nir_builder_instr_insert(&b, &tx->instr);
++            nir_def_rewrite_uses(&fb->def, &tx->def);
++            nir_instr_remove(instr);
++            BITSET_SET(nir->info.textures_used, slot);
++            fixture_fb_lowered = true;
++            if (t) {
++               struct fixture_texture *s = &t->slot[slot];
++               memset(s, 0, sizeof(*s));
++               s->kind = 1;      /* sampled */
++               s->dim = 2;       /* kTexDim2D */
++               s->element = 0;   /* float */
++               s->read = 1;
++               s->fb_target = target + 1;
++               if (slot + 1 > t->num_slots)
++                  t->num_slots = slot + 1;
++            }
++         }
++      }
++      nir_metadata_preserve(impl, nir_metadata_control_flow);
++   }
 +}
 +
 +/* -o for a vertex or fragment stage: the class of each output's declared type,
@@ -525,8 +579,8 @@ SPDX-License-Identifier: MIT
 +      fprintf(out, "%s/* .textures = */ {\n", indent);
 +      for (unsigned i = 0; i <= last_slot; i++) {
 +         const struct fixture_texture *s = &tex->slot[i];
-+         fprintf(out, "%s    /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, %u},", indent, i, s->kind, s->dim,
-+                 s->is_array, s->element, s->bits, s->read, s->write, s->is_null);
++         fprintf(out, "%s    /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, %u, %u},", indent, i, s->kind, s->dim,
++                 s->is_array, s->element, s->bits, s->read, s->write, s->is_null, s->fb_target);
 +         if (!s->kind)
 +            fputs("   // not addressed\n", out);
 +         else
@@ -536,6 +590,8 @@ SPDX-License-Identifier: MIT
 +                    s->read ? ", read" : "", s->write ? ", written" : "");
 +         if (s->is_null)
 +            fprintf(out, "%s              // ...the null texture's slot\n", indent);
++         if (s->fb_target)
++            fprintf(out, "%s              // ...framebuffer fetch of colour attachment %u\n", indent, s->fb_target - 1u);
 +      }
 +      fprintf(out, "%s},\n", indent);
 +   }
@@ -699,7 +755,7 @@ SPDX-License-Identifier: MIT
 +   fprintf(out, "    /* .writesPos = */ %u, /* .writesSmask = */ %u, /* .writesStencilref = */ %u, /* .dualSrcBlend = */ %u,\n",
 +           v->writes_pos, v->writes_smask, v->writes_stencilref, v->dual_src_blend);
 +   fprintf(out, "    /* .hasKill = */ %u, /* .perSamp = */ %u, /* .readsPrimid = */ %u, /* .fbRead = */ %u,\n",
-+           v->has_kill, v->per_samp, v->reads_primid, v->fb_read);
++           v->has_kill, v->per_samp, v->reads_primid, v->fb_read || fixture_fb_lowered);
 +   fprintf(out, "    /* .needPixlod = */ %u, /* .needFullQuad = */ %u,\n", v->need_pixlod, v->need_full_quad);
 +   fputs("    /* .pad2 = */ {0, 0},\n", out);
 +   fprintf(out, "    /* .numSamplerPrefetch = */ %u,\n", v->num_sampler_prefetch);
@@ -822,7 +878,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +1030,7 @@
+@@ -298,6 +1086,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -830,7 +886,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +1039,16 @@
+@@ -306,13 +1095,16 @@
     return nir;
  }
  
@@ -848,7 +904,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +1060,9 @@
+@@ -324,6 +1116,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -858,7 +914,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1080,7 @@
+@@ -341,6 +1136,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -866,7 +922,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1095,15 @@
+@@ -355,6 +1151,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -882,7 +938,7 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -433,7 +1182,9 @@
+@@ -433,7 +1238,9 @@
           .chip_id = chip_id,
     };
     compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
@@ -893,7 +949,7 @@ SPDX-License-Identifier: MIT
  
     if (air_file) {
        nir = load_air(air_file, air_entry);
-@@ -444,8 +1195,20 @@
+@@ -444,8 +1251,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -916,7 +972,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,10 +1249,21 @@
+@@ -486,10 +1305,21 @@
        return -1;
     }
  
@@ -934,11 +990,11 @@ SPDX-License-Identifier: MIT
  
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &options, nir);
-+   fixture_lower_fb_read(nir);
++   fixture_lower_fb_read(nir, out_path ? &textures : NULL);
  
     struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
     shader->compiler = compiler;
-@@ -503,6 +1277,15 @@
+@@ -503,6 +1333,15 @@
     v->compiler = compiler;
     v->key = key;
     v->const_state = rzalloc_size(v, sizeof(*v->const_state));
@@ -954,7 +1010,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1303,15 @@
+@@ -520,7 +1359,15 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }

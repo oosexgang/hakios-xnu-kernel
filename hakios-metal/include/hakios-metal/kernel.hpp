@@ -74,6 +74,8 @@ struct KernelTexture {
     uint8_t write;     // the instructions write it (stib)
     uint8_t isNull;    // the front end's reserved slot for Metal's null texture (air_resource.null_texture): the runtime binds
                        // its own 1x1 texture there, and the slot may be sampled in more than one dimension (nir_air.h)
+    uint8_t fbTarget;  // a slot a framebuffer fetch reads ([[color(n)]] as an argument): n + 1, and the draw binds colour
+                       // attachment n there at the level it draws; 0 for any other slot (compiler.cpp: lowerFbRead)
 };
 
 struct Kernel {

@@ -401,8 +401,11 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.perSamp = 1;
         refused(r, p, pass, d, "hand_fs runs per sample: no multisampling is served");
         p = handProgram();
-        p.fs.fbRead = 1;
-        refused(r, p, pass, d, "hand_fs reads its render target and counts no texture slot for it (numSamp 0): ir3's tables disagree");
+        p.fs.fbRead = 1;   // a stage that reads its target with no fetch slot of its own: it gets the barrier, nothing to refuse
+        {
+            Encoded fb(r, p, pass, d);
+            CHECK(fb.ok);
+        }
         p = handProgram();
         p.fs.dualSrcBlend = 1;
         refused(r, p, pass, d, "hand_fs writes a dual-source blend output: blending is off in the first draw");

@@ -462,11 +462,25 @@ struct FsTextures {
 
 const char* elementOf(uint8_t e) { return e == kElemFloat ? "float" : e == kElemUint ? "uint" : e == kElemInt ? "int" : "?"; }
 
-bool fsTextures(const Stage& fs, const Bindings& b, const Texture& fbTarget, FsTextures* out, std::string* why) {
+// colour attachment I of a pass in one shape (attachment 0 is the pass's own fields, 1 to 7 its `more`)
+struct Attachment {
+    const Texture* texture;
+    uint32_t level;
+    LoadAction load;
+    StoreAction store;
+    const double* clearColor;
+};
+Attachment attachmentOf(const RenderPass& p, uint32_t i) {
+    if (i == 0) return Attachment{p.color0, p.level, p.load, p.store, p.clearColor};
+    const ColorAttachment& c = p.more[i - 1];
+    return Attachment{c.texture, c.level, c.load, c.store, c.clearColor};
+}
+
+bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTextures* out, std::string* why) {
     const Kernel& k = fs.k;
     const std::string name = stageName(fs);
     out->numTex = k.numTextureSlots;
-    if (out->numTex == 0 && !fs.fbRead) {
+    if (out->numTex == 0) {
         if (fs.numSamplerPrefetch != 0) {
             return refuse(why, name + " prefetches a texture and loads none: ir3's tables disagree");
         }
@@ -475,6 +489,17 @@ bool fsTextures(const Stage& fs, const Bindings& b, const Texture& fbTarget, FsT
     for (uint32_t t = 0; t < out->numTex; t++) {
         const KernelTexture& kt = k.textures[t];
         if (kt.kind != kTexSampled) continue;
+        if (kt.fbTarget != 0) {
+            // a framebuffer fetch's slot (compiler.cpp: lowerFbRead): the attachment it reads, at the level the pass draws
+            const Attachment a = attachmentOf(pass, kt.fbTarget - 1u);
+            if (a.texture == nullptr) {
+                return refuse(why, name + " reads [[color(" + n(kt.fbTarget - 1u) + ")]] through framebuffer fetch and the pass has no colour attachment " +
+                                       n(kt.fbTarget - 1u));
+            }
+            const TexConst d = a.texture->levelDescriptor(a.level);
+            memcpy(out->texWords[t], d.dword, sizeof d.dword);
+            continue;
+        }
         if (t >= b.textures.size() || b.textures[t] == nullptr) {
             return refuse(why, name + ": no texture bound at index " + n(t));
         }
@@ -506,22 +531,6 @@ bool fsTextures(const Stage& fs, const Bindings& b, const Texture& fbTarget, FsT
     out->numSamp = 1;
     for (uint32_t m = 0; m < kMaxTextureSlots; m++) {
         if ((k.samplerMask >> m) & 1) out->numSamp = m + 1;
-    }
-    if (fs.fbRead) {
-        // ir3's framebuffer fetch (non-bindless: compiler.cpp sets bindless_fb_read_descriptor -1) is an isamm of the
-        // texture and sampler slot after the FS's last texture, the one num_samp counts last (ir3_compiler_nir.c's
-        // txf_ms_fb): colour attachment 0 viewed as a 2D texture there, a zero sampler beside it (isamm filters nothing)
-        if (k.numSamp == 0) {
-            return refuse(why, name + " reads its render target and counts no texture slot for it (numSamp 0): ir3's tables disagree");
-        }
-        const uint32_t slot = k.numSamp - 1;
-        if (slot >= kMaxTextureSlots || slot < out->numTex) {
-            return refuse(why, name + " reads its render target at texture slot " + n(slot) + ", which is past the tables or one of its own textures'");
-        }
-        const TexConst d = fbTarget.sampledDescriptor();
-        memcpy(out->texWords[slot], d.dword, sizeof d.dword);
-        out->numTex = slot + 1;
-        out->numSamp = std::max(out->numSamp, slot + 1);
     }
     for (uint32_t m = 0; m < out->numSamp; m++) {
         if (((k.samplerMask >> m) & 1) == 0) continue;
@@ -725,20 +734,6 @@ void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDep
 // gl_frag_result / gl_varying_slot numbers the Stage tables carry (Mesa shader_enums.h:987): FRAG_RESULT_DATA0 is 4
 constexpr uint8_t kFragResultData0 = 4;
 
-
-// colour attachment I of a pass in one shape (attachment 0 is the pass's own fields, 1 to 7 its `more`)
-struct Attachment {
-    const Texture* texture;
-    uint32_t level;
-    LoadAction load;
-    StoreAction store;
-    const double* clearColor;
-};
-Attachment attachmentOf(const RenderPass& p, uint32_t i) {
-    if (i == 0) return Attachment{p.color0, p.level, p.load, p.store, p.clearColor};
-    const ColorAttachment& c = p.more[i - 1];
-    return Attachment{c.texture, c.level, c.load, c.store, c.clearColor};
-}
 
 // the table word attachment I's Clear waits on (render.hpp: kTableMoreClearFlushAt says why each has its own)
 uint64_t clearFlushAt(uint64_t table, uint32_t i) { return table + (i == 0 ? kTableClearFlushAt : kTableMoreClearFlushAt + 4 * (i - 1)); }
@@ -1086,7 +1081,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         if (blends[i].enabled) blendMask |= 1u << i;
     }
     FsTextures fsTex;
-    if (!fsTextures(fs, fsBindings, target, &fsTex, why)) {
+    if (!fsTextures(fs, fsBindings, pass, &fsTex, why)) {
         return false;
     }
     std::vector<uint32_t> vsUbos, fsUbos;

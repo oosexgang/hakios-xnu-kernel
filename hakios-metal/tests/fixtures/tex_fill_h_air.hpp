@@ -128,7 +128,7 @@ define void @tex_fill_h(ptr addrspace(1) %out, <2 x i32> %gid) local_unnamed_add
 !6 = !{i32 1, !"air.thread_position_in_grid", !"air.arg_type_name", !"uint2", !"air.arg_name", !"gid"}
 )ir3",
     /* .textures = */ {
-        /* [0] */ {2, 2, 0, 0, 16, 0, 1, 0},   // image 2D of float as 16-bit, written
+        /* [0] */ {2, 2, 0, 0, 16, 0, 1, 0, 0},   // image 2D of float as 16-bit, written
     },
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,

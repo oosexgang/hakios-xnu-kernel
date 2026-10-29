@@ -112,7 +112,7 @@ define <4 x float> @tri_ctex_fs(<4 x float> %color, ptr addrspace(1) %t) local_u
 !10 = !{!"air.sampler_state", ptr addrspace(2) @__air_sampler_state}
 )ir3",
         /* .textures = */ {
-            /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0},   // sampled 2D of float, read
+            /* [0] */ {1, 2, 0, 0, 0, 1, 0, 0, 0},   // sampled 2D of float, read
         },
         /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0x1,
