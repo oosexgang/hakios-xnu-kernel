@@ -51,6 +51,8 @@
 #include "../tests/fixtures/tri_pvt_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
+#include "../tests/fixtures/tri_tex39_fs_air.hpp"
+#include "../tests/fixtures/tri_fw_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -2115,6 +2117,76 @@ int main(int argc, char** argv) {
                 report(ok && completed(*cb) && got == W * H, "cflat, a pushed constant range bound at offset " + std::to_string(off) + ": " + std::to_string(got) +
                                                                  " of 4096 pixels 40 80 bf ff; pixel 0 " + hex8(px0) + (ok ? status(*cb, gpu) : ": " + cb->error()));
             }
+        }
+        // 9k3. textures and samplers past slot 0 (fixed_frag's image at [[texture(3)]], its noise at [[texture(9)]]):
+        // tri_tex39_fs samples a 1x1 ff 00 00 ff at 3 with sampler 0 and a 1x1 00 80 00 ff at 9 with sampler 1, red of
+        // the first and green of the second: every pixel ff 80 00 ff. The two the other way round read 00 00 00 ff; one
+        // of them twice, ff 00 00 ff or 00 80 00 ff.
+        if (t) {
+            const Program p39{kernels::tri_flat_vs_air, kernels::tri_tex39_fs_air, Linkage{}, "tri_tex39"};
+            TextureDesc td;
+            td.format = PixelFormat::kRGBA8Unorm;
+            td.width = td.height = 1;
+            td.usage = kTextureUsageRead;
+            auto ta = Texture::make(gpu, td, &why), tb = Texture::make(gpu, td, &why);
+            Sampler s0, s1;
+            std::string swhy;
+            SamplerDesc sd;
+            makeSampler(sd, &s0, &swhy);
+            sd.minFilter = sd.magFilter = 1;
+            makeSampler(sd, &s1, &swhy);
+            const uint32_t red = 0xff0000ffu, green = 0xff008000u;
+            memcpy(const_cast<void*>(ta->contents()), &red, 4);
+            memcpy(const_cast<void*>(tb->contents()), &green, 4);
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            Bindings fsb;
+            fsb.textures = {nullptr, nullptr, nullptr, ta.get(), nullptr, nullptr, nullptr, nullptr, nullptr, tb.get()};
+            fsb.samplers = {&s0, &s1};
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(p39, rp, drawOf(0, 6), Bindings{}, fsb);
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t got = 0, px0 = 0;
+            for (uint32_t k = 0; k < W * H; k++) {
+                uint32_t px;
+                memcpy(&px, mb.data() + (k / W) * t->bytesPerRow() + (k % W) * 4, 4);
+                if (k == 0) px0 = px;
+                got += px == 0xff0080ffu;
+            }
+            report(ok && completed(*cb) && got == W * H, "textures 3 and 9 with samplers 0 and 1: " + std::to_string(got) + " of 4096 pixels ff 80 00 ff; pixel 0 " + hex8(px0) +
+                                                             (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9u2. screen-space derivatives (CoreAnimation's rounded-rect coverage is fwidth of a half texcoord): tri_fw_fs
+        // returns fwidth(red) * 32 in float and in half, red being tri_color_vs's (y - x) / 64 in T1 and y / 64 in T2, so
+        // T1 ff ff 00 ff and T2 80 80 00 ff wherever the 2x2 quad lies inside one triangle. Quads the diagonal crosses
+        // are not judged.
+        if (t) {
+            const Program fwP{kernels::tri_color_vs_air, kernels::tri_fw_fs_air, Linkage{}, "tri_fw"};
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(fwP, rp, drawOf(0, 6), Bindings{}, Bindings{});
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t judged = 0, right = 0;
+            std::string first;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    const uint32_t qi = i & ~1u, qj = j & ~1u;
+                    const bool t1 = qj > qi + 1, t2 = qj + 1 < qi;   // the whole quad in one triangle
+                    if (!t1 && !t2) continue;
+                    uint32_t px;
+                    memcpy(&px, mb.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                    const uint32_t want = t1 ? 0xff00ffffu : 0xff008080u;
+                    judged++;
+                    if (px == want) right++;
+                    else if (first.empty()) first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", wanted " + hex8(want);
+                }
+            report(ok && completed(*cb) && right == judged && judged > 3000, "derivatives, fwidth of tri_color's red in float and half: " + std::to_string(right) + " of " +
+                                                                                std::to_string(judged) + " pixels" + first + (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
         // 9o3. halfs from a constant buffer at bytes 64, 66, 68 and 70 (CoreAnimation's noise_scale is the half at 70):
         // tri_half_fs returns (h64, h66, h70, h68) = (0.25, 0.5, 0.75, 1), 40 80 bf ff in every pixel; the other halfs

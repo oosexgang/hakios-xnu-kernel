@@ -375,6 +375,32 @@ bool zeroLayerSample(nir_builder* b, nir_intrinsic_instr* in, void* data) {
 }
 }  // namespace
 
+// A 16-bit screen-space derivative is taken at 32 bits. ir3 emits dsx and dsy at the source's own size, and on the
+// phone dsx.f16 returned the y derivative: probe 9u2's fwidth of y / 64, whose x derivative is 0, came out 1/32 in half
+// and 1/64 in float. CoreAnimation's rounded-rect coverage is fwidth of a half texcoord, and with the wrong one its
+// edges were noise. The value is widened, its derivative taken, and narrowed again; the same pass is in the fixture
+// writer (tools/mesa/ir3-dump.patch: lower_half_derivatives), so the fixtures are what compileStage makes.
+bool lowerHalfDerivative(nir_builder* b, nir_intrinsic_instr* intr, void*) {
+    switch (intr->intrinsic) {
+    case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
+    case nir_intrinsic_ddy: case nir_intrinsic_ddy_fine: case nir_intrinsic_ddy_coarse:
+        break;
+    default:
+        return false;
+    }
+    if (intr->def.bit_size != 16) return false;
+    b->cursor = nir_before_instr(&intr->instr);
+    nir_def* wide = nir_f2f32(b, intr->src[0].ssa);
+    nir_intrinsic_instr* d = nir_intrinsic_instr_create(b->shader, intr->intrinsic);
+    d->num_components = intr->num_components;
+    d->src[0] = nir_src_for_ssa(wide);
+    nir_def_init(&d->instr, &d->def, intr->num_components, 32);
+    nir_builder_instr_insert(b, &d->instr);
+    nir_def_rewrite_uses(&intr->def, nir_f2f16(b, &d->def));
+    nir_instr_remove(&intr->instr);
+    return true;
+}
+
 // Each fetch then becomes an ordinary texel fetch (txf, lod 0) of a texture slot of its target's own: one past the
 // highest slot the function samples, plus the target's index. ir3's own non-bindless fetch gives every fetch
 // INSTRUCTION a slot of its own (num_samp, then num_samp++), so two reads of one target took two slots and a read of
@@ -439,6 +465,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
                      nir_lower_io_use_interpolated_input_intrinsics);
     }
     ir3_shader_nir_options nirOptions{};
+    nir_shader_intrinsics_pass(nir, lowerHalfDerivative, nir_metadata_control_flow, nullptr);
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &nirOptions, nir);
     if (!lowerFbRead(nir, t.fbTargets, why)) return false;
