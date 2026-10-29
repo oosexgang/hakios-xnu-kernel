@@ -3171,3 +3171,41 @@ TEST(draws_into_the_same_attachments_share_one_pass) {
              2u);
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
+
+TEST(draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_words_again) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    // forty draws recorded: a buffer from the kernel for each table and program was 120 of them
+    auto cb = r.queue->commandBuffer();
+    const uint32_t before = r.fake->liveBuffers();
+    for (int i = 0; i < 40; i++) CHECK(cb->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+    const uint32_t asked = r.fake->liveBuffers() - before;
+    CHECK(asked >= 1 && asked <= 2);
+    if (asked > 2) std::printf("       %u buffers for 40 draws\n", asked);
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    // the same pointer with other words in it: the second draw's VS must be the new words, not the first upload. Both
+    // word sets are the same length, so only the contents tell them apart.
+    const Program base = flatProgram();
+    std::vector<uint32_t> words(base.vs.k.words, base.vs.k.words + base.vs.k.numWords);
+    Program p = base;
+    p.vs.k.words = words.data();
+    auto cb2 = r.queue->commandBuffer();
+    CHECK(cb2->draw(p, pass, wholeDraw(), Bindings{}, Bindings{}));
+    words.back() ^= 0x5a5a5a5au;   // (past the instructions the fake checks: the constants or the padding)
+    CHECK(cb2->draw(p, pass, wholeDraw(), Bindings{}, Bindings{}));
+    cb2->commit();
+    cb2->waitUntilCompleted();
+    CHECK(cb2->status() == CommandBuffer::kCompleted);
+    const auto at = r.fake->memory(r.fake->stats().lastDraw.vsProgram, 4ull * words.size());
+    CHECK_EQ(at.size(), 4ull * words.size());
+    CHECK(at.size() == 4ull * words.size() && std::memcmp(at.data(), words.data(), at.size()) == 0);
+    // and the unchanged FS was uploaded once: the same address in both draws is all one submission shows, so this
+    // compares the last draw's FS words with the program's
+    const auto fs = r.fake->memory(r.fake->stats().lastDraw.fsProgram, 4ull * base.fs.k.numWords);
+    CHECK(fs.size() == 4ull * base.fs.k.numWords && std::memcmp(fs.data(), base.fs.k.words, fs.size()) == 0);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}

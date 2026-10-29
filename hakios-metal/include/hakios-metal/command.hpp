@@ -104,10 +104,32 @@ private:
     struct OpenPass {
         RenderPass pass;
         render::Options options;
-        std::shared_ptr<Buffer> table;
+        uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
     };
     void closePass();
     std::unique_ptr<OpenPass> open_;
+    // A piece of a larger buffer, for a draw's or a dispatch's table and a program's words. A buffer of its own for each
+    // was three requests to the kernel for every draw, which on the phone cost about 200 us a draw (probe 9r) while the
+    // GPU spent 3 us on it. A piece is the command buffer's: written once, used for writing, kept until completion.
+    struct Piece {
+        std::shared_ptr<Buffer> buffer;
+        uint64_t offset = 0;
+        uint64_t gpuAddress() const { return buffer->gpuAddress() + offset; }
+        uint8_t* contents() const { return static_cast<uint8_t*>(buffer->contents()) + offset; }
+    };
+    bool piece(uint64_t bytes, Piece* out, std::string* why);
+    std::shared_ptr<Buffer> slab_;
+    uint64_t slabUsed_ = 0;
+    // A program's words where they are already in this command buffer, so that every draw with the program does not
+    // upload them again. Found by the caller's pointer, but taken only when the words are still the same: the pointer is
+    // the caller's to free and reuse, and the copy compared is a CPU one (reading the piece back is uncached memory).
+    struct Uploaded {
+        std::vector<uint32_t> words;
+        uint64_t gpuAddress;
+    };
+    // the GPU address of K's words in this buffer, uploading them when they are not there; 0 with *WHY when out of memory
+    uint64_t programAddress(const Kernel& k, std::string* why);
+    std::vector<std::pair<const uint32_t*, Uploaded>> uploaded_;
 
     CommandQueue& queue_;
     std::atomic<Status> status_{kNotEnqueued};

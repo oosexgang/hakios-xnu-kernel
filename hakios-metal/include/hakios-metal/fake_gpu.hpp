@@ -166,6 +166,7 @@ public:
     void addSurface(uint32_t id, uint32_t width, uint32_t height, uint32_t rowBytes, uint32_t pixelFormat, uint32_t offset = 0, uint32_t planes = 1,
                     bool client = false);
     std::vector<uint8_t> surfaceBytes(uint32_t id);   // the surface's whole memory as it is now
+    std::vector<uint8_t> memory(uint64_t iova, uint64_t length);   // LENGTH bytes at a GPU address as they are now; empty outside every buffer
     void writeSurface(uint32_t id, uint64_t at, const void* bytes, uint64_t length);   // what another program drew there
     // stop running submissions until resume(): to see what a program does while the GPU is behind
     void pause();

@@ -476,13 +476,12 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         return fail("dispatch after commit");
     }
     std::string why;
-    std::shared_ptr<Buffer> program = newBuffer(queue_.gpu(), 4ull * k.numWords, &why);
-    if (program == nullptr) {
+    const uint64_t program = programAddress(k, &why);
+    if (program == 0) {
         return fail(std::string("no memory for the program: ") + why);
     }
-    memcpy(program->contents(), k.words, 4ull * k.numWords);
-    std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), compute::kTableBytes, &why);
-    if (table == nullptr) {
+    Piece table;
+    if (!piece(compute::kTableBytes, &table, &why)) {
         return fail(std::string("no memory for the descriptors: ") + why);
     }
     uint32_t loc[3] = {k.localSize[0], k.localSize[1], k.localSize[2]};
@@ -490,8 +489,7 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         for (int i = 0; i < 3; i++) loc[i] = local[i];
     }
     pm4::Stream added;
-    if (!compute::encode(added, k, groups, loc, bindings, immediates, program->gpuAddress(), table->gpuAddress(),
-                         static_cast<uint8_t*>(table->contents()), &why, options)) {
+    if (!compute::encode(added, k, groups, loc, bindings, immediates, program, table.gpuAddress(), table.contents(), &why, options)) {
         return fail(why);
     }
     const std::vector<uint32_t>& w = added.words();
@@ -507,8 +505,6 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         }
         i += 1 + h.count;
     }
-    use(*program, false);
-    use(*table, true);
     for (const Binding& b : bindings.buffers) {
         if (b.buffer != nullptr) {
             use(*b.buffer, true);
@@ -523,8 +519,6 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         use(*t->buffer(), writes);
         keep(t->buffer());
     }
-    keep(program);
-    keep(table);
     return true;
 }
 

@@ -177,8 +177,13 @@ it when the textures, the actions and the options are the same and no Clear is a
 begin and the tail (the CCU and cache flushes, each waited for) are paid once per pass and not once per draw; anything
 else recorded, and the submission itself, closes the pass with its tail first. On the phone (hakios
 `logs/170720-run.log`, probe line 9r) 200 additive draws in one command buffer leave every pixel at exactly 200, in
-591 us of GPU time against 8576 us for the same draws as 200 command buffers. The CPU side is now what costs: about
-200 us a draw, most of it three buffers asked of the kernel for every draw.
+591 us of GPU time against 8576 us for the same draws as 200 command buffers.
+
+The tables and the program words are pieces of a few larger buffers a command buffer holds, and a program's words are
+uploaded once per command buffer (found by the caller's pointer, taken only when the words are still the same: the
+copy compared is a CPU one). Three buffers asked of the kernel for every draw had made the CPU the cost, about 200 us a
+draw (42 ms for those 200); now the same 200 draws take 2.6 ms from the first call to the last pixel read, 419 us of it
+on the GPU (hakios `logs/171921-run.log`), and the plug-in's render test passes on both roads (`logs/171949-run.log`).
 
 `tools/sweep.cpp` (`make sweep MESA=1`) runs every function of the metallibs named on its command line through the
 compiler a draw or a dispatch uses, each in a child process so that an assertion of this host's Mesa build is a counted

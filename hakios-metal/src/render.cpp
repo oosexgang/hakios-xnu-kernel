@@ -1518,19 +1518,18 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         return fail("draw after commit");
     }
     std::string why;
-    // the two programs' words and the pass's table, each in a buffer of its own: a buffer is whole pages, so SP_xS_OBJ_START
-    // is 128-byte aligned as the ST6_SHADER preload wants it (tu_shader.cc:1313-1316); the words were counted against
-    // instrlen by encode before anything of them is read
-    std::shared_ptr<Buffer> vsProgram = newBuffer(queue_.gpu(), 4ull * std::max<uint32_t>(program.vs.k.numWords, 1), &why);
-    if (vsProgram == nullptr) {
+    // the two programs' words, once per command buffer, and the draw's table, in pieces (command.hpp: Piece): a piece is
+    // 256-byte aligned, so SP_xS_OBJ_START is 128-byte aligned as the ST6_SHADER preload wants it (tu_shader.cc:1313-1316)
+    const uint64_t vsProgram = programAddress(program.vs.k, &why);
+    if (vsProgram == 0) {
         return fail(std::string("no memory for the vertex program: ") + why);
     }
-    std::shared_ptr<Buffer> fsProgram = newBuffer(queue_.gpu(), 4ull * std::max<uint32_t>(program.fs.k.numWords, 1), &why);
-    if (fsProgram == nullptr) {
+    const uint64_t fsProgram = programAddress(program.fs.k, &why);
+    if (fsProgram == 0) {
         return fail(std::string("no memory for the fragment program: ") + why);
     }
-    std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), render::kTableBytes, &why);
-    if (table == nullptr) {
+    Piece table;
+    if (!piece(render::kTableBytes, &table, &why)) {
         return fail(std::string("no memory for the draw's table: ") + why);
     }
     // A draw into the open pass's attachments joins it: no batch start, no pass begin and no tail of its own, which a
@@ -1542,29 +1541,22 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (!joins) {
         closePass();
     }
-    std::shared_ptr<Buffer> passTable;
+    Piece passTable;
     pm4::Stream head, body;
     if (!joins) {
-        passTable = newBuffer(queue_.gpu(), render::kTableBytes, &why);
-        if (passTable == nullptr) {
+        if (!piece(render::kTableBytes, &passTable, &why)) {
             return fail(std::string("no memory for the pass's table: ") + why);
         }
-        if (!render::encodeBegin(head, pass, passTable->gpuAddress(), static_cast<uint8_t*>(passTable->contents()), &why, options)) {
+        if (!render::encodeBegin(head, pass, passTable.gpuAddress(), passTable.contents(), &why, options)) {
             return fail(why);
         }
     }
-    if (!render::encodeInPass(body, program, pass, d, vsBindings, fsBindings, vsProgram->gpuAddress(), fsProgram->gpuAddress(), table->gpuAddress(),
-                              static_cast<uint8_t*>(table->contents()), &why, options)) {
+    if (!render::encodeInPass(body, program, pass, d, vsBindings, fsBindings, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
         return fail(why);
     }
-    // (only now, after encode counted them: the words into the two buffers)
-    memcpy(vsProgram->contents(), program.vs.k.words, 4ull * program.vs.k.numWords);
-    memcpy(fsProgram->contents(), program.fs.k.words, 4ull * program.fs.k.numWords);
     if (!joins) {
         appendStream(stream_, head);
-        open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable});
-        use(*passTable, true);
-        keep(passTable);
+        open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress()});
         use(*pass.color0->buffer(), true);
         keep(pass.color0->buffer());
         if (pass.depth != nullptr) {
@@ -1573,9 +1565,6 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     appendStream(stream_, body);
-    use(*vsProgram, false);
-    use(*fsProgram, false);
-    use(*table, true);
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
     for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{&vsBindings, program.vs.k.numSsbos != 0}, {&fsBindings, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
@@ -1594,9 +1583,6 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             keep(t->buffer());
         }
     }
-    keep(vsProgram);
-    keep(fsProgram);
-    keep(table);
     return true;
 }
 
@@ -1606,7 +1592,7 @@ void CommandBuffer::closePass() {
         return;
     }
     pm4::Stream tail;
-    render::encodeEnd(tail, open_->pass, open_->table->gpuAddress(), open_->options);
+    render::encodeEnd(tail, open_->pass, open_->table, open_->options);
     appendStream(stream_, tail);
     open_.reset();
 }
@@ -1617,23 +1603,21 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
     }
     closePass();
     std::string why;
-    std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), render::kTableBytes, &why);
-    if (table == nullptr) {
+    Piece table;
+    if (!piece(render::kTableBytes, &table, &why)) {
         return fail(std::string("no memory for the pass's table: ") + why);
     }
     pm4::Stream added;
-    if (!render::encodeClear(added, pass, table->gpuAddress(), static_cast<uint8_t*>(table->contents()), &why, options)) {
+    if (!render::encodeClear(added, pass, table.gpuAddress(), table.contents(), &why, options)) {
         return fail(why);
     }
     appendStream(stream_, added);
-    use(*table, true);
     use(*pass.color0->buffer(), true);
     keep(pass.color0->buffer());
     if (pass.depth != nullptr) {
         use(*pass.depth->buffer(), true);
         keep(pass.depth->buffer());
     }
-    keep(table);
     return true;
 }
 

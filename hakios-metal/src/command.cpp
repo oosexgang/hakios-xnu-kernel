@@ -1,5 +1,6 @@
 #include "hakios-metal/command.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <map>
 #include <mutex>
@@ -25,6 +26,62 @@ std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why) {
         return nullptr;
     }
     return std::make_shared<Buffer>(std::move(bo), length);
+}
+
+namespace {
+// One slab is 32 draw tables. Pieces are cut at 256 bytes, which is more than anything in them wants (128 for a
+// program's preload and the border colour, 64 for a texture descriptor), and a piece of a page or more starts on a
+// page, so that a table lies in memory as it did in a buffer of its own.
+constexpr uint64_t kSlabBytes = 256 * 1024;
+constexpr uint64_t kPieceAlign = 256;
+constexpr uint64_t kPageAlign = 4096;
+}  // namespace
+
+bool CommandBuffer::piece(uint64_t bytes, Piece* out, std::string* why) {
+    bytes = (std::max<uint64_t>(bytes, 1) + kPieceAlign - 1) & ~(kPieceAlign - 1);
+    const uint64_t align = bytes >= kPageAlign ? kPageAlign : kPieceAlign;
+    if (slab_ != nullptr) {
+        slabUsed_ = std::min(kSlabBytes, (slabUsed_ + align - 1) & ~(align - 1));
+    }
+    if (bytes > kSlabBytes / 4) {
+        // (a piece this large in a slab would leave most of the slab unused when the next one did not fit)
+        out->buffer = newBuffer(queue_.gpu(), bytes, why);
+        out->offset = 0;
+    } else {
+        if (slab_ == nullptr || kSlabBytes - slabUsed_ < bytes) {
+            slab_ = newBuffer(queue_.gpu(), kSlabBytes, why);
+            slabUsed_ = 0;
+        }
+        out->buffer = slab_;
+        out->offset = slabUsed_;
+        if (slab_ != nullptr) {
+            slabUsed_ += bytes;
+        }
+    }
+    if (out->buffer == nullptr) {
+        return false;
+    }
+    if (out->offset == 0) {
+        use(*out->buffer, true);
+        keep(out->buffer);
+    }
+    return true;
+}
+
+uint64_t CommandBuffer::programAddress(const Kernel& k, std::string* why) {
+    const uint32_t n = std::max<uint32_t>(k.numWords, 1);
+    for (auto& [ptr, u] : uploaded_) {
+        if (ptr == k.words && u.words.size() == k.numWords && std::memcmp(u.words.data(), k.words, 4ull * k.numWords) == 0) {
+            return u.gpuAddress;
+        }
+    }
+    Piece p;
+    if (!piece(4ull * n, &p, why)) {
+        return 0;
+    }
+    memcpy(p.contents(), k.words, 4ull * k.numWords);
+    uploaded_.emplace_back(k.words, Uploaded{std::vector<uint32_t>(k.words, k.words + k.numWords), p.gpuAddress()});
+    return p.gpuAddress();
 }
 
 namespace {

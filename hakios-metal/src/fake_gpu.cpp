@@ -167,6 +167,12 @@ void* FakeGpu::map(uint32_t handle, uint64_t size) {
 
 void FakeGpu::unmap(uint32_t, void*) {}
 
+std::vector<uint8_t> FakeGpu::memory(uint64_t iova, uint64_t length) {
+    std::lock_guard<std::mutex> g(lock_);
+    const uint8_t* p = at(iova, length);
+    return p ? std::vector<uint8_t>(p, p + length) : std::vector<uint8_t>{};
+}
+
 uint8_t* FakeGpu::at(uint64_t iova, uint64_t length) {
     for (auto& [handle, b] : buffers_) {
         if (iova >= b.iova && length <= b.bytes.size() && iova - b.iova <= b.bytes.size() - length) {
