@@ -66,8 +66,8 @@ end: it typed every texture write by the call's void return type, so half and fl
 instructions' class is refused at compile time, by the compiler here and by the fixture writer. Not yet: textures other
 than 2D, one level, one slice (1D, 3D, cube, arrays, mipmaps, MSAA), border colours other than transparent black, compare
 samplers, constexpr samplers, the front end's null texture, textures over buffers (`bytesPerRow` of the caller's
-choosing), UBO descriptors for an indexed `constant` load ir3 did not push, private memory, threadgroup memory (each
-refused by name, not served).
+choosing), private memory, threadgroup memory (each refused by name, not served). An indexed `constant` load ir3 did
+not push is served, through a UBO descriptor, in a dispatch as in a draw.
 
 The first draw (`render.hpp`, 29 October) is written, checked on the fake GPU, and measured on the phone the same day
 (hakios `logs/051851-run.log`, first run, every line passing): one triangle, then the pair, then per-vertex colours,
@@ -91,7 +91,7 @@ USE/IGNORE_VISIBILITY, `LRZ_FLUSH`, `RB_DONE_TS`). The sign of `GRAS_CL_VPORT_YS
 switch's default -- turnip's and fd6's values where they agree, the smaller set where they do not -- drew without a
 bisect. Not yet, all of it refused by name (not served): vertex attributes beyond per-vertex Float..Float4, Half2, Half4 and UChar4Normalized (those are
 served through the vertex descriptor: `tri_attr_vs.ll`'s Float2 position and UChar4Normalized colour from one interleaved buffer, 4032 of 4032
-pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
+pixels exact on the phone, `logs/142841-run.log`), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; an indexed one is served through a UBO descriptor, below; the 3D IBO table for `device` buffers is not), textures and
 samplers in a vertex stage, images in a draw (the 3D IBO table), stencil, depth formats other than Depth32Float, a
 fragment depth output, dual-source blending, GMEM (tiled)
 rendering, MSAA, a base instance, a negative base vertex, points and lines, several colour attachments, a program whose stages bind what
