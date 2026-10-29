@@ -56,6 +56,9 @@ uint32_t bytesPerPixel(uint32_t fmt) {
     case a6xx::FMT6_8_UINT: return 1;
     case a6xx::FMT6_8_UNORM: return 1;
     case a6xx::FMT6_16_FLOAT: return 2;
+    case a6xx::FMT6_16_UNORM: return 2;
+    case a6xx::FMT6_16_UINT: return 2;
+    case a6xx::FMT6_16_SINT: return 2;
     case a6xx::FMT6_8_8_UNORM: return 2;
     case a6xx::FMT6_5_6_5_UNORM: return 2;
     case a6xx::FMT6_5_5_5_1_UNORM: return 2;

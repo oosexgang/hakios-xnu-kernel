@@ -393,7 +393,7 @@ struct ClearWords {
 
 uint32_t channelsOf(const FormatInfo& f) {
     switch (f.fmt6) {
-    case FMT6_8_UNORM: case FMT6_16_FLOAT: case FMT6_32_UINT: case FMT6_32_FLOAT: return 1;
+    case FMT6_8_UNORM: case FMT6_16_FLOAT: case FMT6_32_UINT: case FMT6_32_FLOAT: case FMT6_16_UNORM: case FMT6_16_UINT: case FMT6_16_SINT: return 1;
     case FMT6_8_8_UNORM: case FMT6_16_16_FLOAT: case FMT6_32_32_FLOAT: return 2;
     case FMT6_5_6_5_UNORM: return 3;
     default: return 4;

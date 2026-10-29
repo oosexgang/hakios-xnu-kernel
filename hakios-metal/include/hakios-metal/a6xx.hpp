@@ -89,6 +89,9 @@ enum a6xx_format : uint32_t {
     FMT6_5_5_5_1_UNORM = 10,       // a6xx.xml.h:69   BGR5A1Unorm with SWAP = WXYZ (fd6_format_table.c:111 _TC(B5G5R5A1_UNORM))
     FMT6_5_6_5_UNORM = 14,         // a6xx.xml.h:71   B5G6R5Unorm with SWAP = WXYZ (fd6_format_table.c:108 _TC(B5G6R5_UNORM))
     FMT6_8_UINT = 5,               // a6xx.xml.h:66   a stencil plane (S8_UINT: fd6_format_table.c, the 2D engine's clear of it)
+    FMT6_16_UNORM = 21,            // a6xx.xml.h:77   R16Unorm (fd6_format_table.c:70 VTC)
+    FMT6_16_UINT = 24,             // a6xx.xml.h:80   R16Uint (:72 VTC)
+    FMT6_16_SINT = 25,             // a6xx.xml.h:81   R16Sint (:73 VTC)
     FMT6_16_FLOAT = 23,            // a6xx.xml.h:79   R16Float (fd6_format_table.c:76 VTC)
     FMT6_8_8_UNORM = 15,           // a6xx.xml.h:72   RG8Unorm
     FMT6_8_8_8_8_UNORM = 48,       // a6xx.xml.h:86   RGBA8Unorm, RGBA8Unorm_sRGB, and with SWAP = WXYZ the BGRA8 pair

@@ -36,6 +36,9 @@ enum class PixelFormat : uint32_t {
     kBGR5A1Unorm = 43,     // B in 0..4, G 5..9, R 10..14, A 15 (CoreAnimation backs some layers with it)
     kR8Unorm = 10,
     kR16Float = 25,
+    kR16Unorm = 20,
+    kR16Uint = 23,         // CoreAnimation's 1D gamma tables (3072 x 1, read alone)
+    kR16Sint = 24,
     kRG8Unorm = 30,
     kRG16Float = 65,
     kR32Uint = 53,

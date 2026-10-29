@@ -2388,6 +2388,7 @@ int main(int argc, char** argv) {
                 uint8_t texel[8];
                 uint32_t sampled;      // the RGBA8 word every pixel of the sample must be
                 const char* name;
+                bool clears = true;    // false: the Clear is refused by name (its 2D-engine path is not worked out)
             };
             const FormatCase cases[] = {
                 {PixelFormat::kA8Unorm, 1, {0xff}, {0x40}, 0x40000000u, "A8Unorm"},
@@ -2400,6 +2401,8 @@ int main(int argc, char** argv) {
                 // each, red and alpha (0xfc00) and green (0x07e0), which read back as ff 00 00 ff and 00 ff 00 ff.
                 {PixelFormat::kBGR5A1Unorm, 2, {0x17, 0xa2}, {0x00, 0xfc}, 0xff0000ffu, "BGR5A1Unorm"},
                 {PixelFormat::kB5G6R5Unorm, 2, {0x17, 0x44}, {0xe0, 0x07}, 0xff00ff00u, "B5G6R5Unorm"},
+                // R16Unorm: 0x4000 samples as 0.25, red 0x40; tri_flat's 0x20 / 255 is kept as 32 * 257 = 0x2020 exactly
+                {PixelFormat::kR16Unorm, 2, {}, {0x00, 0x40}, 0xff000040u, "R16Unorm", false},
             };
             const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
             const Program flatProg{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
@@ -2448,13 +2451,19 @@ int main(int argc, char** argv) {
                 rp.clearColor[2] = 0.75;
                 rp.clearColor[3] = 1.0;
                 auto cb = queue->commandBuffer();
-                if (cb->clear(rp)) {
+                const bool clearTaken = cb->clear(rp);
+                if (clearTaken) {
                     cb->commit();
                     cb->waitUntilCompleted();
                 }
-                const uint32_t cleared = countBytes(*ft, c.clearBytes, 0);
-                report(completed(*cb) && cleared == 4096, std::string("format ") + c.name + ", a Clear to (0.25, 0.5, 0.75, 1): " + std::to_string(cleared) +
-                                                              " of 4096 pixels the packed bytes" + status(*cb, gpu));
+                if (!c.clears) {
+                    report(!clearTaken && cb->error().find(std::string("a Clear of ") + c.name) != std::string::npos,
+                           std::string("format ") + c.name + ", a Clear: refused by name (" + cb->error() + ")");
+                } else {
+                    const uint32_t cleared = countBytes(*ft, c.clearBytes, 0);
+                    report(completed(*cb) && cleared == 4096, std::string("format ") + c.name + ", a Clear to (0.25, 0.5, 0.75, 1): " + std::to_string(cleared) +
+                                                                  " of 4096 pixels the packed bytes" + status(*cb, gpu));
+                }
                 // 2. a sample of one texel into the RGBA8 target
                 memcpy(static_cast<uint8_t*>(const_cast<void*>(one->contents())), c.texel, c.bpp);
                 fillBo(*t, canary);
@@ -2485,6 +2494,8 @@ int main(int argc, char** argv) {
                 const float r = 32.0f / 255.0f, g = 64.0f / 255.0f;
                 if (c.format == PixelFormat::kA8Unorm) {
                     drawn[0] = 0xff;
+                } else if (c.format == PixelFormat::kR16Unorm) {
+                    drawn[0] = 0x20, drawn[1] = 0x20;
                 } else if (c.format == PixelFormat::kBGR5A1Unorm || c.format == PixelFormat::kB5G6R5Unorm) {
                     // the RB rounds 0x20 0x40 0x80 / 255 to R 4, G 8 (6 bits: 16), B 16: 0x9110 and 0x2210
                     const uint16_t v = c.format == PixelFormat::kBGR5A1Unorm ? 0x9110 : 0x2210;
@@ -2497,7 +2508,7 @@ int main(int argc, char** argv) {
                     drawn[0] = uint8_t(hr), drawn[1] = uint8_t(hr >> 8), drawn[2] = uint8_t(hg), drawn[3] = uint8_t(hg >> 8);
                 }
                 const bool exact = c.format == PixelFormat::kRG32Float || c.format == PixelFormat::kA8Unorm || c.format == PixelFormat::kBGR5A1Unorm ||
-                                   c.format == PixelFormat::kB5G6R5Unorm;
+                                   c.format == PixelFormat::kB5G6R5Unorm || c.format == PixelFormat::kR16Unorm;
                 const uint32_t drew = countBytes(*ft, drawn, exact ? 0 : 1);
                 report(completed(*cb3) && drew == 4096, std::string("format ") + c.name + ", tri_flat drawn into it: " + std::to_string(drew) +
                                                             " of 4096 pixels the colour as the format keeps it" + status(*cb3, gpu));
