@@ -148,6 +148,54 @@ const uint32_t *hakios_metal_sampler_words(hakios_metal_sampler *sampler);   /* 
 int hakios_metal_kernel_resource_texture(hakios_metal_kernel *kernel, unsigned i, unsigned *texture_type, unsigned *element,
     unsigned *access);
 
+/* Rendering (render.hpp): a vertex function and a fragment function compiled and linked for one colour attachment, and
+ * one draw of them into it, in SYSMEM mode, with no depth, no blending, no vertex descriptor yet. Metal's numbers are
+ * passed through as everywhere in this header. */
+typedef struct hakios_metal_program hakios_metal_program;
+
+#define HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET 4   /* MTLTextureUsageRenderTarget: hakios_metal_texture_new accepts it; a draw needs it */
+
+/* VS of VS_LIBRARY and FS of FS_LIBRARY (the same library is fine) compiled here and linked, for a colour attachment of
+ * COLOR_PIXEL_FORMAT (MTLPixelFormat, one of the served formats). NULL with the reason: not a vertex / fragment
+ * function, the front end's or ir3's refusal by name, a vertex stage with [[stage_in]] attributes (not served yet), a
+ * fragment stage with more than one colour output, a depth/stencil/sample-mask output, framebuffer fetch, a varying the
+ * vertex stage does not write, a stage that binds buffers, textures or samplers (step two), a format whose element class
+ * the fragment output does not match, no compiler in this build. */
+hakios_metal_program *hakios_metal_program_new(hakios_metal_library *vs_library, const char *vs,
+    hakios_metal_library *fs_library, const char *fs, unsigned color_pixel_format);
+/* the same from two modules' bitcode (-[_MTLFunction bitcodeData] of each) */
+hakios_metal_program *hakios_metal_program_new_bitcode(const void *vs_bitcode, size_t vs_size,
+    const void *fs_bitcode, size_t fs_size, unsigned color_pixel_format);
+void hakios_metal_program_free(hakios_metal_program *program);
+const char *hakios_metal_program_name(hakios_metal_program *program);   /* "vs+fs" */
+/* STAGE 0 = vertex, 1 = fragment: the resources that stage binds, as hakios_metal_kernel_resource reports a kernel's */
+unsigned hakios_metal_program_resource_count(hakios_metal_program *program, unsigned stage);
+int hakios_metal_program_resource(hakios_metal_program *program, unsigned stage, unsigned i,
+    unsigned *kind, unsigned *index, unsigned *size_bytes);
+
+struct hakios_metal_viewport { double x, y, width, height, znear, zfar; };   /* MTLViewport: origin top left, NDC y up */
+struct hakios_metal_scissor { unsigned x, y, width, height; };              /* MTLScissorRect */
+
+/* MTLRenderPassDescriptor's colour attachment 0, as the plug-in reads it */
+struct hakios_metal_render_pass {
+	hakios_metal_texture *color0;     /* made with usage bit 4 */
+	unsigned load_action;             /* MTLLoadAction: DontCare 0, Load 1, Clear 2 -- Clear refused by name in step one */
+	unsigned store_action;            /* MTLStoreAction: DontCare 0, Store 1; others refused */
+	double clear_color[4];            /* MTLClearColor, read only for Clear */
+};
+
+/* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,
+ * LineStrip 2, Triangle 3, TriangleStrip 4; step one serves 3 and 4), INSTANCE_COUNT (step one: 1), into PASS's
+ * attachment through VIEWPORT and SCISSOR (NULL: the whole attachment), with the two stages' [[buffer(n)]] tables (step
+ * one: counts of 0 only). -1 with the reason when the program, the pass and the draw do not fit together; everything
+ * stays alive until the command buffer completes. Each call is one complete pass (begin, state, draw, end). */
+int hakios_metal_cb_draw(hakios_metal_cb *cb, hakios_metal_program *program,
+    const struct hakios_metal_render_pass *pass, const struct hakios_metal_viewport *viewport,
+    const struct hakios_metal_scissor *scissor, unsigned primitive, unsigned vertex_start, unsigned vertex_count,
+    unsigned instance_count,
+    hakios_metal_buffer *const *vs_buffers, const uint64_t *vs_offsets, unsigned vs_count,
+    hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count);
+
 hakios_metal_queue *hakios_metal_queue_new(hakios_metal_device *device);
 void hakios_metal_queue_free(hakios_metal_queue *queue);
 

@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "hakios-metal/compute.hpp"
+#include "hakios-metal/render.hpp"
 #include "hakios-metal/gpu.hpp"
 #include "hakios-metal/pm4.hpp"
 
@@ -73,6 +74,11 @@ public:
     // the same with textures and samplers (compute.hpp: Bindings); the textures' memory is used and kept as buffers are
     bool dispatch(const Kernel& kernel, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
                   const uint32_t* immediates = nullptr, const compute::Options& options = compute::Options{});
+    // --- the render encoder's work (render.hpp): one draw of PROGRAM into PASS's colour target, one complete pass per
+    // call (begin, state, draw, end). The two programs' words and the pass's table go into buffers of their own that live
+    // until this completes; the target's memory is used for write and kept. False with the reason recorded (render::encode's).
+    bool draw(const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings, const Bindings& fsBindings,
+              const render::Options& options = render::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state
     void refuse(const std::string& why) { fail(why); }
     // a buffer it uses, kept alive until it completes (the owner may let go of it before that)

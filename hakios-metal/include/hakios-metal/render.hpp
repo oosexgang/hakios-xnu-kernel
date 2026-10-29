@@ -1,0 +1,236 @@
+// hakios-metal: the render path. ONE draw of a Program (a vertex and a fragment stage) into ONE colour target in
+// SYSMEM (direct render, no GMEM tiling, no binning) mode, encoded the way compute.cpp encodes a dispatch: one
+// stream, a table the pass owns, every refusal by name before a word is written.
+//
+// SPDX-License-Identifier: MIT
+//
+// The structural reference is turnip, Mesa's Vulkan driver for Adreno (src/freedreno/vulkan: tu6_sysmem_render_begin/
+// end in tu_cmd_buffer.cc, tu6_emit_program/vpc/fs_inputs/fs_outputs in tu_pipeline.cc and tu_shader.cc, and the r3d
+// clear/blit path in tu_clear_blit.cc, which draws a triangle into one colour attachment with the smallest state set
+// there is), with fd6 (src/gallium/drivers/freedreno/a6xx) as the second witness. Nothing of either is linked: they
+// are read and cited, register by register, and the fake GPU checks that the stream carries what they write.
+//
+// What one draw is made of, in the order the stream has it (render::Options names each group, so that
+// hakios-metal-probe --bisect can switch any one off when the phone hangs):
+//   batch start   fd6_emit_restore / tu6_init_hw: CP_SET_MODE 0, the three invalidates, HLSQ_INVALIDATE_CMD, WFI, the
+//                 static register table a6xx.hpp documents (kStaticState...), CP_SET_DRAW_STATE disable-all, the 32
+//                 VFD_FETCH sizes, the border colour bases, WFI, RB_CCU_CNTL for sysmem
+//   pass begin    window scissor and offsets, GRAS/RB_BIN_CONTROL with BUFFERS_IN_SYSMEM, CP_SET_MARKER
+//                 RM6_DIRECT_RENDER, CP_SKIP_IB2_ENABLE_GLOBAL 0, CP_SET_VISIBILITY_OVERRIDE 1, CP_SET_MODE 0
+//   the target    RB_DEPTH_BUFFER_INFO DEPTH6_NONE and the stencil zeros; RB_MRT[0] (BUF_INFO, PITCH, ARRAY_PITCH, BASE,
+//                 BASE_GMEM 0), SP_FS_MRT_REG[0], the flag buffer zeros, GRAS_LRZ_MRT_BUF_INFO_0, dither/sRGB off,
+//                 MSAA off, RB_RENDER_CNTL, LRZ off
+//   the program   SP_xS_CONFIG / HLSQ_xS_CNTL for the five stages (HS/DS/GS zero), each stage's CTRL_REG0, INSTRLEN,
+//                 OBJ_START block, the ST6_SHADER preload (CP_LOAD_STATE6_GEOM for the VS, _FRAG for the FS),
+//                 immediates; the VFD registers (no attributes: the VS reads vertex_id); the VPC link (SP_VS_OUT_REG,
+//                 SP_VS_VPC_DST_REG, VPC_VS_PACK, PC_VS_OUT_CNTL...); the FS inputs (HLSQ_CONTROL_1..5, GRAS_CNTL,
+//                 RB_RENDER_CONTROL0/1, VPC_VAR_DISABLE, VPC_CNTL_0) and outputs (SP_FS_OUTPUT_REG, RENDER_COMPONENTS)
+//   raster etc.   GRAS_CL_CNTL, GRAS_SU_CNTL (cull none), polygon modes, the viewport (Metal's rule: NDC y up and
+//                 row 0 at the top, so the y scale the GPU gets is NEGATIVE), scissors, guardband, blend off, depth
+//                 and stencil off
+//   the draw      CP_DRAW_INDX_OFFSET: a triangle list of N vertices, auto index, one instance
+//   the tail      CP_WAIT_FOR_IDLE; PC_CCU_FLUSH_COLOR_TS writing a value (no TIMESTAMP bit: the 28 October lesson)
+//                 and a wait for it, which is what puts the colour in memory; LRZ_FLUSH; CACHE_FLUSH_TS and its wait.
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "hakios-metal/compute.hpp"
+#include "hakios-metal/kernel.hpp"
+#include "hakios-metal/pm4.hpp"
+
+namespace hakios::metal {
+
+class Texture;
+
+// --- one shader stage as plain data ------------------------------------------------------------------------------------
+// Everything a VS or an FS shares with a compute Kernel is Kernel's own field set (words, instrlen, constlen, the
+// footprints, branchstack, immediates, uboRanges, numUbos/numSsbos/numIbos/numSamp, textures[]...). A Stage is a Kernel
+// plus what the 3D registers read of a vertex or fragment variant; the compute-only fields of its Kernel (localSize,
+// localIdRegid, workGroupIdRegid, numBufs, bufs, numwgConstRegid) stay at their zeros / kNoRegid / kNoConstRegid.
+enum StageKind : uint8_t { kStageVertex = 0, kStageFragment = 1 };
+
+constexpr uint32_t kMaxStageInputs = 34;      // ir3_shader_variant::inputs[32 + 2]
+constexpr uint32_t kMaxStageOutputs = 32;     // ir3's outputs[], and the linkage's var[]
+constexpr uint32_t kMaxColorOutputs = 8;      // SP_FS_OUTPUT_REG[8], RB_MRT[8]
+constexpr uint32_t kIjCount = 7;              // ir3's IJ_COUNT: persp/linear x pixel/sample/centroid, persp centre rhw
+
+// one entry of ir3_shader_variant::inputs: a VS attribute or system value, an FS varying or system value
+struct StageInput {
+    uint8_t slot;       // gl_varying_slot / VERT_ATTRIB_GENERIC0 + n / a gl_system_value when sysval
+    uint8_t regid;      // kRegidNone (0xfc) when unused
+    uint8_t compmask;
+    uint8_t inloc;      // FS: the VPC location bary.f reads; ir3_link_shaders keys on it
+    uint8_t sysval;     // a system value, not an attribute or varying (the VFD and the link skip these)
+    uint8_t bary;       // FS: a varying read by bary.f -- what ir3_next_varying walks (compmask && bary); a sysval has 0
+    uint8_t flat;       // FS: INTERP_FLAT in VPC_VARYING_INTERP_MODE
+    uint8_t half;
+};
+// one entry of ir3_shader_variant::outputs
+struct StageOutput {
+    uint8_t slot;       // VARYING_SLOT_POS / VARYING_SLOT_VAR0 + k for a VS; FRAG_RESULT_DATA0 + n for an FS
+    uint8_t regid;
+    uint8_t half;       // SP_FS_OUTPUT_REG.HALF_PRECISION for an FS colour
+    uint8_t pad;
+};
+
+struct Stage {
+    Kernel k;                 // the shared fields; SP_xS_CTRL_REG0, INSTRLEN, HLSQ_xS_CNTL.CONSTLEN... read them
+    uint8_t kind;             // StageKind, from nir->info.stage
+    uint8_t pad0[3];
+
+    StageInput inputs[kMaxStageInputs];
+    uint32_t numInputs;
+    StageOutput outputs[kMaxStageOutputs];
+    uint32_t numOutputs;
+
+    // --- a vertex stage ---
+    uint32_t numAttributes;   // inputs that are not sysvals: VFD_CONTROL_0.FETCH_CNT/DECODE_CNT, one VFD_DEST_CNTL_INSTR each; refused when != 0 (no vertex descriptor yet)
+    uint32_t vertexIdRegid;   // SYSTEM_VALUE_VERTEX_ID -> VFD_CONTROL_1.REGID4VTX; kRegidNone when unread
+    uint32_t instanceIdRegid; // SYSTEM_VALUE_INSTANCE_ID -> VFD_CONTROL_1.REGID4INST
+    uint32_t positionRegid;   // VARYING_SLOT_POS -> the linkage's position entry, VPC_VS_PACK.POSITIONLOC; refused when kRegidNone
+    uint32_t pointSizeRegid;  // VARYING_SLOT_PSIZ; refused when valid
+    uint8_t clipMask, cullMask, writesLayer, writesViewport;   // refused when non-zero
+
+    // --- a fragment stage ---
+    uint32_t totalIn;         // fs->total_in: VPC_CNTL_0.NUMNONPOSVAR and .VARYING, SP_FS_CTRL_REG0.VARYING, HLSQ_FS_CNTL_0.VARYINGS, RB_RENDER_CONTROL0.UNK10
+    uint32_t fragCoordRegid;  // SYSTEM_VALUE_FRAG_COORD -> HLSQ_CONTROL_4_REG.XYCOORDREGID (ZWCOORDREGID = +2); kRegidNone when unread
+    uint8_t fragcoordCompmask;   // GRAS_CNTL.COORD_MASK, RB_RENDER_CONTROL0.COORD_MASK
+    uint8_t pad1[3];
+    uint32_t ijRegid[kIjCount];  // SYSTEM_VALUE_BARYCENTRIC_* -> HLSQ_CONTROL_3/4_REG, GRAS_CNTL, RB_RENDER_CONTROL0; sample/centroid ones refused
+    uint32_t faceRegid;       // SYSTEM_VALUE_FRONT_FACE -> HLSQ_CONTROL_2_REG.FACEREGID, RB_RENDER_CONTROL1.FACENESS
+    uint32_t sampleIdRegid, sampleMaskInRegid;   // refused when valid (no MSAA)
+    uint32_t colorRegid[kMaxColorOutputs];       // FRAG_RESULT_DATA0 + i -> SP_FS_OUTPUT_REG[i].REGID (| HALF_PRECISION when colorHalf)
+    uint8_t colorHalf[kMaxColorOutputs];
+    uint32_t numColorOutputs; // highest written + 1; step one: exactly 1
+    uint32_t depthRegid, sampleMaskRegid, stencilRefRegid;   // SP_FS_OUTPUT_CNTL0; refused when valid
+    uint8_t writesPos, writesSmask, writesStencilref, dualSrcBlend, hasKill, perSamp, readsPrimid, fbRead;   // the last six refused when set (hasKill allowed: early-z is off)
+    uint8_t needPixlod, needFullQuad;   // SP_FS_CTRL_REG0.PIXLODENABLE / LODPIXMASK (textures in the FS: step two)
+    uint8_t pad2[2];
+    uint32_t numSamplerPrefetch;        // SP_FS_PREFETCH_CNTL.COUNT; refused when non-zero (step two emits the prefetch commands)
+};
+
+// --- the link of a VS with an FS, as ir3_link_shaders computes it (ir3_shader.h) -----------------------------------------
+// Plain data so a fixture can carry it and a build without Mesa can compute it: render::link is a port of
+// ir3_link_add / ir3_link_shaders over Stage::inputs/outputs; with MESA=1 compiler_test holds it to Mesa's own.
+struct Linkage {
+    struct Var { uint8_t slot, regid, compmask, loc; } var[kMaxStageOutputs];   // SP_VS_OUT_REG[i/2] halves, SP_VS_VPC_DST_REG[i/4] bytes
+    uint32_t cnt;             // SP_VS_PRIMITIVE_CNTL.OUT; at least 1 (position)
+    uint32_t maxLoc;          // VPC_VS_PACK.STRIDE_IN_VPC, PC_VS_OUT_CNTL.STRIDE_IN_VPC
+    uint32_t varmask[4];      // VPC_VAR_DISABLE[i] = ~varmask[i]
+    uint32_t positionLoc;     // VPC_VS_PACK.POSITIONLOC
+    uint32_t interpMode[8];   // VPC_VARYING_INTERP_MODE[i]: 2 bits a component at inloc*2, INTERP_FLAT where the FS input is flat; else 0 (smooth)
+    uint32_t psReplMode[8];   // VPC_VARYING_PS_REPL_MODE[i]: zeros (no point sprites); written as fd6 writes them, all eight
+    uint32_t mrtComponents;   // SP_FS_RENDER_COMPONENTS / RB_RENDER_COMPONENTS: 0xf per colour output written
+};
+
+struct Program {
+    Stage vs;
+    Stage fs;
+    Linkage link;
+    const char* name;
+};
+
+namespace render {
+
+// VS to FS as ir3_link_shaders does it: every FS input with compmask && bary and inloc < totalIn takes the VS output of
+// the same slot at loc = inloc (ir3_link_add), then the position is appended at maxLoc with compmask 0xf. False with
+// *why: an FS varying no VS output serves (ir3 would read zeros through regid 63.0; refused here by slot), a VS without
+// a position, more than kMaxStageOutputs entries. Implemented in src/link.cpp.
+bool link(const Stage& vs, const Stage& fs, Linkage* out, std::string* why);
+
+}  // namespace render
+
+// --- the pass and the draw --------------------------------------------------------------------------------------------
+enum class LoadAction : uint32_t { kDontCare = 0, kLoad = 1, kClear = 2 };     // MTLLoadAction's numbers
+enum class StoreAction : uint32_t { kDontCare = 0, kStore = 1 };               // MTLStoreAction's numbers
+enum class Primitive : uint32_t { kPoint = 0, kLine = 1, kLineStrip = 2, kTriangle = 3, kTriangleStrip = 4 };   // MTLPrimitiveType
+
+struct Viewport { double x, y, width, height, znear, zfar; };   // MTLViewport, Metal's top-left origin
+struct Scissor { uint32_t x, y, width, height; };               // MTLScissorRect
+
+struct RenderPass {
+    const Texture* color0 = nullptr;             // made with kTextureUsageRenderTarget; step one: one target, no depth
+    LoadAction load = LoadAction::kLoad;         // kClear refused by name in step one (a clear is a draw in turnip's r3d path or a 2D blit; the probe fills the target by CPU)
+    StoreAction store = StoreAction::kStore;
+    double clearColor[4] = {0, 0, 0, 0};
+};
+
+struct Draw {
+    Primitive primitive = Primitive::kTriangle;  // step one: kTriangle and kTriangleStrip (DI_PT_TRILIST / DI_PT_TRISTRIP)
+    uint32_t vertexStart = 0;                    // VFD_INDEX_OFFSET: added to vertex_id by VFD_ADD_OFFSET.VERTEX (the static table)
+    uint32_t vertexCount = 0;                    // CP_DRAW_INDX_OFFSET's NUM_INDICES; 0 refused
+    uint32_t instanceCount = 1;                  // NUM_INSTANCES; step one: exactly 1
+    Viewport viewport{};
+    Scissor scissor{};                           // width 0: the whole target
+};
+
+namespace render {
+
+// What a pass owns in GPU memory (one 16 KiB page on the phone): the tail's timestamp words, a zero border colour
+// entry (the TP's base registers point here, as in compute), a hole, room for step two's per-stage descriptor tables.
+constexpr uint32_t kTableBytes = 8192;
+constexpr uint32_t kTableTimestampsAt = 0;        // the CCU flush's and the cache flush's values: 4 words
+constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
+constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses
+constexpr uint32_t kTableVsAt = 1024;             // step two: the VS's descriptor tables (UBO, IBO, TEX, SAMP)
+constexpr uint32_t kTableFsAt = 4096;             // step two: the FS's
+static_assert(kTableBorderColorAt % 128 == 0 && kTableFsAt + 4096 <= kTableBytes, "the table's parts fit");
+
+// Each group switchable, as compute::Options are: the instrument that found the TIMESTAMP bit. The defaults are the
+// whole stream as turnip's sysmem pass and r3d path have it; the *Alt fields pick the other witness's value where the
+// two disagree, so one boot of --bisect can tell which the hardware wants.
+struct Options {
+    bool batchStart = true;      // CP_SET_MODE 0, PC_CCU_INVALIDATE_COLOR/DEPTH + CACHE_INVALIDATE (fd6's three), HLSQ_INVALIDATE_CMD all,
+                                 // WFI, kStaticState, CP_SET_DRAW_STATE disable-all, kStaticStateAfterDrawState, the 32 VFD_FETCH sizes,
+                                 // the border colour bases, kStaticStateTail, WFI (fd6_emit_restore / tu6_init_hw)
+    bool ccuCntl = true;         // WFI then RB_CCU_CNTL = sysmem (both witnesses: 0x10000000)
+    bool ccuConcurrentResolve = false;   // ...with bit 2 set (0x10000004): what hakios's kernel wrote at boot; unverified either way
+    bool passBegin = true;       // window scissor + GRAS_2D_RESOLVE_CNTL, the four window offsets, GRAS/RB_BIN_CONTROL sysmem, RB_BIN_CONTROL2,
+                                 // CP_SKIP_IB2_ENABLE_GLOBAL 0, CP_SET_VISIBILITY_OVERRIDE 1, CP_SET_MODE 0
+    bool binControlLrzFeedback = false;  // GRAS/RB_BIN_CONTROL with turnip's LRZ_FEEDBACK_ZMODE_MASK 3 (0x03c00000) instead of fd6's 0x00c00000
+    bool marker = true;          // CP_SET_MARKER RM6_DIRECT_RENDER, inside passBegin but its own switch
+    bool zsNone = true;          // RB_DEPTH_BUFFER_INFO DEPTH6_NONE..., GRAS_SU_DEPTH_BUFFER_INFO, RB_STENCIL_INFO
+    bool mrt = true;             // RB_MRT[0] six registers, SP_FS_MRT_REG[0], RB_MRT_FLAG_BUFFER[0] zeros, GRAS_LRZ_MRT_BUF_INFO_0, dither, sRGB, GRAS_MAX_LAYER_INDEX
+    bool msaaOff = true;         // SP_TP/GRAS/RB RAS_MSAA_CNTL 0 and DEST_MSAA_CNTL MSAA_DISABLE, RB_BLIT_GMEM_MSAA_CNTL 0
+    bool renderCntl = true;      // RB_RENDER_CNTL = CCUSINGLECACHELINESIZE(2) (r3d writes 0: renderCntlZero)
+    bool renderCntlZero = false;
+    bool lrzOff = true;          // GRAS_LRZ_CNTL 0, RB_LRZ_CNTL 0, GRAS_LRZ_BUFFER_BASE/PITCH/FAST_CLEAR_BUFFER_BASE 0
+    bool programConfig = true;   // HLSQ_INVALIDATE_CMD (vs..fs, gfx_ibo), SP_xS_CONFIG and HLSQ_xS_CNTL for the five stages, SP_IBO_COUNT 0
+    bool programVs = true;       // SP_VS_CTRL_REG0, INSTRLEN, the OBJ_START block, HW_STACK_OFFSET, the preload, the immediates
+    bool programFs = true;       // the same for the FS
+    bool vfd = true;             // PC/VFD_MULTIVIEW_CNTL 0, VFD_CONTROL_0..6, VFD_INDEX_OFFSET, VFD_INSTANCE_START_OFFSET, PC_RESTART_INDEX
+    bool vpc = true;             // the Linkage registers, VPC_VS_CLIP_CNTL(_V2), GRAS_VS_CL_CNTL, VPC_VS_LAYER_CNTL(_V2), GRAS_VS_LAYER_CNTL, PC_PS_CNTL
+    bool fsInputs = true;        // SP_FS_PREFETCH_CNTL, HLSQ_CONTROL_1..5_REG, HLSQ_FS_CNTL_0, GRAS_CNTL, RB_RENDER_CONTROL0/1, RB_SAMPLE_CNTL,
+                                 // GRAS_LRZ_PS_INPUT_CNTL, GRAS_SAMPLE_CNTL, VPC_VAR_DISABLE[0..3], VPC_CNTL_0
+    bool fsOutputs = true;       // SP_FS_OUTPUT_CNTL0/1, SP_FS_OUTPUT_REG[0], SP/RB_RENDER_COMPONENTS, RB_FS_OUTPUT_CNTL0/1
+    bool rast = true;            // GRAS_CL_CNTL, GRAS_SU_CNTL, GRAS_SU_POINT_MINMAX/SIZE, poly offsets, PC_PRIMITIVE_CNTL_0, polygon modes,
+                                 // PC_RASTER_CNTL, VPC_UNKNOWN_9107, RB_UNKNOWN_8A00.., GRAS_SC_CNTL
+    bool viewportScissor = true; // GRAS_CL_VPORT[0] (y scale negative), GRAS_SC_VIEWPORT_SCISSOR[0], GRAS_CL_Z_CLAMP[0], guardband, RB_Z_CLAMP, GRAS_SC_SCREEN_SCISSOR[0]
+    bool blendZsa = true;        // SP/RB_BLEND_CNTL, RB_MRT_CONTROL[0] 0x780, RB_MRT_BLEND_CONTROL[0] 0, blend colour, depth/stencil/alpha zeros, RB_Z_BOUNDS
+    bool visCullUse = false;     // CP_DRAW_INDX_OFFSET with USE_VISIBILITY (turnip's and fd6's pipelines) instead of r3d's IGNORE_VISIBILITY
+    bool tailCcuFlush = true;    // CP_WAIT_FOR_IDLE, PC_CCU_FLUSH_COLOR_TS writing a value + CP_WAIT_REG_MEM for it
+    bool tailLrzFlush = true;    // LRZ_FLUSH, 1 word
+    bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail
+    bool tailRbDone = false;     // RB_DONE_TS + wait: in neither witness's render end; here for the bisect
+    bool tailTimestampBit = false;   // must stay clear (28 October); here for the fake's test only
+};
+
+// Everything into STREAM, nothing on refusal. VS_PROGRAM / FS_PROGRAM are the GPU addresses of the two stages' words,
+// 128-byte aligned (turnip asserts it; the ST6_SHADER preload unit is 128 bytes); TABLE / TABLE_CPU the kTableBytes
+// the pass owns. VS_BINDINGS / FS_BINDINGS: Metal's per-stage [[buffer(n)]] (step one accepts none: a stage with
+// numUboRanges, numSsbos, numUbos or numTextureSlots > 0 is refused by name).
+// Refused by name, among others: a target without kTextureUsageRenderTarget, a target format whose element class the
+// FS colour output does not match, numColorOutputs != 1, depth/sample-mask/stencil outputs, writesPos, perSamp,
+// fbRead, dualSrcBlend, readsPrimid, numSamplerPrefetch != 0, a VS with attributes, instanceCount != 1, a primitive
+// other than triangles and strips, vertexCount 0, a viewport or scissor outside the target, load kClear, store other
+// than kStore, instrlen > 127, pvtmem, the two stages' constlen over 512 vec4 together, and whatever link() refuses.
+bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw,
+            const Bindings& vsBindings, const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram,
+            uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{});
+
+}  // namespace render
+
+}  // namespace hakios::metal

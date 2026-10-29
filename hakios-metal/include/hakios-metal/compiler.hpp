@@ -18,6 +18,8 @@
 #include <vector>
 
 #include "hakios-metal/kernel.hpp"
+#include "hakios-metal/render.hpp"
+#include "hakios-metal/texture.hpp"
 
 namespace hakios::metal {
 
@@ -51,8 +53,41 @@ struct CompiledKernel {
     uint32_t threadgroupBytes = 0;   // static threadgroup memory the kernel declares
 };
 
+// a vertex or fragment function compiled here (render.hpp's Stage), owning what its Stage points into
+struct CompiledStage {
+    Stage stage{};
+    std::vector<uint32_t> words;
+    std::vector<uint32_t> immediates;
+    std::vector<Resource> resources;
+    std::vector<std::string> varyingNames;   // the front end's names of the varyings, VS outputs or FS inputs, in slot order (VAR0 first)
+    std::string name;
+    std::string listing;
+};
+
+// a VS and an FS linked for one colour format (render.hpp's Program), owning both stages
+struct CompiledProgram {
+    Program program{};
+    std::shared_ptr<CompiledStage> vs, fs;
+    std::string name;   // "vs+fs"
+};
+
 // whether a compiler is in this build
 bool hasCompiler();
+
+// One AIR module holding a vertex or a fragment function, compiled for this chip: the lowering turnip runs
+// (nir_lower_system_values, ir3_nir_lower_io_to_temporaries on variables, ir3_finalize_nir, ir3_nir_post_finalize --
+// which does the nir_lower_io -- then ir3), the Stage filled from the variant (inputs, outputs, the sysval regids, the
+// FS's ij/face/coord regids, colour outputs, flags). nullptr with *why: not a vertex or fragment function (a kernel goes
+// through compileAir), the front end's or ir3's refusal by name, or no compiler in this build. The fixture writer
+// (tools/mesa/ir3-dump.patch) runs the same passes in the same order, so a Stage compiled here equals its fixture.
+std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why);
+
+// VS and FS linked (render::link, and with Mesa present cross-checked against ir3_link_shaders) for a colour target of
+// COLOR0's format. nullptr with *why: the refusals render.hpp names for a stage (attributes, several colour outputs,
+// depth/stencil/sample-mask writes, framebuffer fetch, buffers/textures/samplers in either stage, a varying the VS does
+// not write, a colour output class the format does not take, the pipeline constlen budget).
+std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, std::shared_ptr<CompiledStage> fs, PixelFormat color0,
+                                             std::string* why);
 
 // One AIR module (the bitcode of one function, as metallib.hpp hands it out, or a .bc) compiled for this chip.
 // nullptr with *why: the front end's refusal, named by stage ("intrinsic: air.simd_sum not handled"), or ir3's, or

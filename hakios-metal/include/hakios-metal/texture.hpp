@@ -50,6 +50,7 @@ enum class TextureType : uint32_t { k1D = 0, k1DArray = 1, k2D = 2, k2DArray = 3
 // MTLTextureUsage bits
 constexpr uint32_t kTextureUsageRead = 1;
 constexpr uint32_t kTextureUsageWrite = 2;
+constexpr uint32_t kTextureUsageRenderTarget = 4;   // MTLTextureUsageRenderTarget: a draw's colour target (render.hpp); the layout is the same linear one
 
 struct FormatInfo {
     PixelFormat format;
@@ -73,7 +74,7 @@ struct TextureDesc {
     PixelFormat format = PixelFormat::kRGBA8Unorm;
     uint32_t width = 1;
     uint32_t height = 1;
-    uint32_t usage = kTextureUsageRead;   // kTextureUsage* bits; a kernel that writes a texture made without kTextureUsageWrite is refused
+    uint32_t usage = kTextureUsageRead;   // kTextureUsage* bits; a kernel that writes a texture made without kTextureUsageWrite is refused, a draw into one made without kTextureUsageRenderTarget too
 };
 
 class Texture {
