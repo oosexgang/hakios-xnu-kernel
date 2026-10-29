@@ -1092,6 +1092,7 @@ int main(int argc, char** argv) {
     //   9n. indexed and instanced: a restarted index strip, a base vertex, three instances at a step rate of 2 under additive blending
     //   9o. vertex pulling: positions read by vertex id from a constant buffer through a UBO descriptor, at a bound offset
     //   9q. a constexpr sampler (repeat) compiled on the phone and bound at its index: every judged pixel the repeat's texel
+    //   9r. 200 draws joined into one pass (additive, each pixel exactly 200), timed against 200 command buffers
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2045,6 +2046,49 @@ int main(int argc, char** argv) {
                 report(completed(*cb) && exact == judged && judged > 2000,
                        "ctex, a constexpr repeat sampler at 4 x tri_color's coordinate: " + std::to_string(exact) + " of " + std::to_string(judged) +
                            " judged pixels the repeat's texel (" + std::to_string(clampLike) + " the clamp's instead)" + first + status(*cb, gpu));
+            }
+        }
+        // 9r. draws that share a pass: 200 draws of tri_cflat's pair into one target in ONE command buffer, the colour
+        // (1, 1, 1, 1) / 255 under One + One over a clear to 0: the command buffer joins them into one pass (one batch
+        // start, one tail), and every pixel must be exactly 200 in each channel -- a draw lost, or done twice, is off by
+        // one. The same 200 draws as 200 command buffers is the comparison the time is for.
+        if (t) {
+            Program add{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat_add"};
+            add.blend = ColorBlend{true, 0, 0, 1, 1, 1, 1, 0xf};
+            auto cbuf = newBuffer(gpu, 16, &why);
+            if (cbuf != nullptr) {
+                float* f = static_cast<float*>(cbuf->contents());
+                for (int c = 0; c < 4; c++) f[c] = 1.0f / 255.0f;
+                Bindings fsb;
+                fsb.buffers = {Binding{cbuf.get(), 0}};
+                const int N = 200;
+                for (int mode = 0; mode < 2; mode++) {
+                    fillBo(*t, canary);
+                    int64_t gpuNs = 0;
+                    bool ok = true;
+                    const int64_t began = gpu.transport().nowNs();
+                    std::shared_ptr<CommandBuffer> cb = queue->commandBuffer();
+                    for (int k = 0; k < N && ok; k++) {
+                        RenderPass rp;
+                        rp.color0 = t.get();
+                        rp.load = k == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                        ok = cb->draw(add, rp, drawOf(0, 6), Bindings{}, fsb);
+                        if (mode == 1 || k == N - 1) {
+                            cb->commit();
+                            cb->waitUntilCompleted();
+                            ok = ok && completed(*cb);
+                            gpuNs += cb->gpuNanoseconds();
+                            if (k != N - 1) cb = queue->commandBuffer();
+                        }
+                    }
+                    const int64_t wall = gpu.transport().nowNs() - began;
+                    const uint32_t want = 0xc8c8c8c8u;   // 200 in each byte
+                    PixelRule all{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return want; }};
+                    TexReadback rb = compareTexture(*t, all, canary);
+                    report(ok && rb.right == 4096, std::string(mode == 0 ? "200 draws in ONE command buffer (one pass)" : "control, the 200 draws as 200 command buffers") +
+                                                       ", One + One of 1/255: " + describeTexture(rb, "200 in every channel") + "; " + std::to_string(gpuNs / 1000) +
+                                                       " us on the GPU, " + std::to_string(wall / 1000) + " us wall" + status(*cb, gpu));
+                }
             }
         }
 #if defined(__APPLE__)

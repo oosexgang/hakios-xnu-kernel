@@ -1468,6 +1468,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 // RM6_DIRECT_RENDER begins a sysmem pass (tu_cmd_buffer.cc:2130-2131; fd6_gmem.cc:2041-2042): a draw before it has no pass
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_DIRECT_RENDER) {
                     passBegun_ = true;
+                    stats_.passes++;
                 }
                 break;
             case CP_SET_MODE:

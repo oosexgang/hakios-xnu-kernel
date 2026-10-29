@@ -495,6 +495,7 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         return fail(why);
     }
     const std::vector<uint32_t>& w = added.words();
+    closePass();   // a dispatch reads what the draws before it wrote: their pass's tail first
     stream_.packet(pm4::kNop, nullptr, 0);   // (a marker between encoders in the stream, for whoever reads it back)
     for (size_t i = 0; i < w.size();) {
         pm4::Header h = pm4::decode(w[i]);

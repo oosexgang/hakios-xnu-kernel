@@ -172,6 +172,14 @@ one, as no comparison) and bound by the C interface at the index the front end g
 (hakios `logs/165801-run.log`, probe line 9q) a repeat sampler at a coordinate running to 4 reads the repeated texel at
 3072 of 3072 judged pixels.
 
+Draws into the same attachments share a pass: the command buffer keeps the pass it opened and joins the next draw to
+it when the textures, the actions and the options are the same and no Clear is asked for, so the batch start, the pass
+begin and the tail (the CCU and cache flushes, each waited for) are paid once per pass and not once per draw; anything
+else recorded, and the submission itself, closes the pass with its tail first. On the phone (hakios
+`logs/170720-run.log`, probe line 9r) 200 additive draws in one command buffer leave every pixel at exactly 200, in
+591 us of GPU time against 8576 us for the same draws as 200 command buffers. The CPU side is now what costs: about
+200 us a draw, most of it three buffers asked of the kernel for every draw.
+
 `tools/sweep.cpp` (`make sweep MESA=1`) runs every function of the metallibs named on its command line through the
 compiler a draw or a dispatch uses, each in a child process so that an assertion of this host's Mesa build is a counted
 cause and not the end, and prints the counts and the refusals grouped by their sentence. The libraries are read where

@@ -862,9 +862,13 @@ void passTail(pm4::Stream& stream, uint64_t table, const Options& o, bool depth 
 
 }  // namespace
 
-bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
-            const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
-            const Options& o) {
+namespace {
+// A draw, either WHOLE (its own pass: the batch start, the pass begin, the clears, the draw, the tail) or inside a pass
+// encodeBegin opened (the draw's state and the draw alone: TABLE is then the draw's own, holding only its descriptors;
+// the pass's table, which the batch start pointed the border colours at and the tail writes, is the pass's)
+bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
+                const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
+                const Options& o, bool whole) {
     const Stage& vs = program.vs;
     const Stage& fs = program.fs;
     // --- the two stages ---
@@ -956,7 +960,7 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         }
     }
     ClearWords clear{};
-    if (pass.load == LoadAction::kClear && !clearWords(format, pass.clearColor, &clear, why)) {
+    if (whole && pass.load == LoadAction::kClear && !clearWords(format, pass.clearColor, &clear, why)) {
         return false;
     }
     BlendWords blend{};
@@ -1055,7 +1059,9 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     }
 
     // --- nothing is refused from here on: the table, then the stream ---
-    tableStart(tableCpu);
+    if (whole) {
+        tableStart(tableCpu);
+    }
     memcpy(tableCpu + kGfxIboAt, ibos.words, size_t(ibos.count) * 64);
     memset(tableCpu + kFsTexConstAt, 0, kMaxTextureSlots * 64);
     memset(tableCpu + kFsTexSampAt, 0, kMaxTextureSlots * 16);
@@ -1065,14 +1071,16 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
     const uint32_t* ij = fs.ijRegid;
 
-    passStart(stream, W, H, table, o);
-    // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it; the
-    // depth attachment's Clear after it (tu_clear_sysmem_attachment, each attachment in turn)
-    if (pass.load == LoadAction::kClear) {
-        clearStream(stream, target, clear, table + kTableClearFlushAt);
-    }
-    if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
-        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+    if (whole) {
+        passStart(stream, W, H, table, o);
+        // a Clear: the 2D engine fills the target before any draw state is written, as turnip's subpass begin does it;
+        // the depth attachment's Clear after it (tu_clear_sysmem_attachment, each attachment in turn)
+        if (pass.load == LoadAction::kClear) {
+            clearStream(stream, target, clear, table + kTableClearFlushAt);
+        }
+        if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
+            depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+        }
     }
     // 4. no depth attachment (tu6_emit_zs :415-433; fd6 emit_zs(NULL), fd6_gmem.cc:231-247): RB_DEPTH_BUFFER_INFO
     // DEPTH6_NONE with its pitches and bases 0, GRAS_SU_DEPTH_BUFFER_INFO 0, RB_STENCIL_INFO 0
@@ -1420,9 +1428,46 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), draw.instanceCount, draw.vertexCount};
         stream.packet(CP_DRAW_INDX_OFFSET, w, 3);
     }
-    passTail(stream, table, o, pass.depth != nullptr);
+    if (whole) {
+        passTail(stream, table, o, pass.depth != nullptr);
+    }
     return true;
 }
+}  // namespace
+
+bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
+            const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
+            const Options& o) {
+    return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, true);
+}
+
+bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
+                  const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
+                  const Options& o) {
+    return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, false);
+}
+
+bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+    if (!checkTarget(pass, why)) {
+        return false;
+    }
+    const Texture& target = *pass.color0;
+    ClearWords clear{};
+    if (pass.load == LoadAction::kClear && !clearWords(target.info(), pass.clearColor, &clear, why)) {
+        return false;
+    }
+    tableStart(tableCpu);
+    passStart(stream, target.width(), target.height(), table, o);
+    if (pass.load == LoadAction::kClear) {
+        clearStream(stream, target, clear, table + kTableClearFlushAt);
+    }
+    if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
+        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+    }
+    return true;
+}
+
+void encodeEnd(pm4::Stream& stream, const RenderPass& pass, uint64_t table, const Options& o) { passTail(stream, table, o, pass.depth != nullptr); }
 
 bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
     if (!checkTarget(pass, why)) {
@@ -1486,26 +1531,51 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), render::kTableBytes, &why);
     if (table == nullptr) {
-        return fail(std::string("no memory for the pass's table: ") + why);
+        return fail(std::string("no memory for the draw's table: ") + why);
     }
-    pm4::Stream added;
-    if (!render::encode(added, program, pass, d, vsBindings, fsBindings, vsProgram->gpuAddress(), fsProgram->gpuAddress(), table->gpuAddress(),
-                        static_cast<uint8_t*>(table->contents()), &why, options)) {
+    // A draw into the open pass's attachments joins it: no batch start, no pass begin and no tail of its own, which a
+    // pass per draw spent on every draw (the CCU flush and the cache flush waited for, each time). It joins when the
+    // attachments are the same textures, it asks for no Clear (a Clear begins a pass), and the options are the same.
+    const bool joins = open_ != nullptr && open_->pass.color0 == pass.color0 && open_->pass.depth == pass.depth && pass.load != LoadAction::kClear &&
+                       !(pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) && pass.store == open_->pass.store &&
+                       pass.depthStore == open_->pass.depthStore && std::memcmp(&open_->options, &options, sizeof options) == 0;
+    if (!joins) {
+        closePass();
+    }
+    std::shared_ptr<Buffer> passTable;
+    pm4::Stream head, body;
+    if (!joins) {
+        passTable = newBuffer(queue_.gpu(), render::kTableBytes, &why);
+        if (passTable == nullptr) {
+            return fail(std::string("no memory for the pass's table: ") + why);
+        }
+        if (!render::encodeBegin(head, pass, passTable->gpuAddress(), static_cast<uint8_t*>(passTable->contents()), &why, options)) {
+            return fail(why);
+        }
+    }
+    if (!render::encodeInPass(body, program, pass, d, vsBindings, fsBindings, vsProgram->gpuAddress(), fsProgram->gpuAddress(), table->gpuAddress(),
+                              static_cast<uint8_t*>(table->contents()), &why, options)) {
         return fail(why);
     }
     // (only now, after encode counted them: the words into the two buffers)
     memcpy(vsProgram->contents(), program.vs.k.words, 4ull * program.vs.k.numWords);
     memcpy(fsProgram->contents(), program.fs.k.words, 4ull * program.fs.k.numWords);
-    appendStream(stream_, added);
+    if (!joins) {
+        appendStream(stream_, head);
+        open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable});
+        use(*passTable, true);
+        keep(passTable);
+        use(*pass.color0->buffer(), true);
+        keep(pass.color0->buffer());
+        if (pass.depth != nullptr) {
+            use(*pass.depth->buffer(), true);
+            keep(pass.depth->buffer());
+        }
+    }
+    appendStream(stream_, body);
     use(*vsProgram, false);
     use(*fsProgram, false);
     use(*table, true);
-    use(*pass.color0->buffer(), true);
-    keep(pass.color0->buffer());
-    if (pass.depth != nullptr) {
-        use(*pass.depth->buffer(), true);
-        keep(pass.depth->buffer());
-    }
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
     for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{&vsBindings, program.vs.k.numSsbos != 0}, {&fsBindings, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
@@ -1530,10 +1600,22 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     return true;
 }
 
+// the open pass's tail: what puts its colour and depth in memory, before anything else is recorded or the buffer runs
+void CommandBuffer::closePass() {
+    if (open_ == nullptr) {
+        return;
+    }
+    pm4::Stream tail;
+    render::encodeEnd(tail, open_->pass, open_->table->gpuAddress(), open_->options);
+    appendStream(stream_, tail);
+    open_.reset();
+}
+
 bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options) {
     if (status_ > kEnqueued) {
         return fail("clear after commit");
     }
+    closePass();
     std::string why;
     std::shared_ptr<Buffer> table = newBuffer(queue_.gpu(), render::kTableBytes, &why);
     if (table == nullptr) {

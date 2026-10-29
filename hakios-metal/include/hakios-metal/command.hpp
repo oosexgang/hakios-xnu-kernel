@@ -100,6 +100,14 @@ private:
     // the end of it, however it ends: the status, the handlers (which see that status), and only then the waiters
     void finish(Status s);
     void use(const Buffer& b, bool write) { uses_.push_back(BoUse{&b.bo(), write}); }
+    // the pass draws are joining (render.cpp: draw), closed by its tail before anything else is recorded or it is submitted
+    struct OpenPass {
+        RenderPass pass;
+        render::Options options;
+        std::shared_ptr<Buffer> table;
+    };
+    void closePass();
+    std::unique_ptr<OpenPass> open_;
 
     CommandQueue& queue_;
     std::atomic<Status> status_{kNotEnqueued};

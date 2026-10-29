@@ -3118,3 +3118,56 @@ TEST(a_draw_loads_the_3d_ibo_table_an_ldib_reads_through) {
     memset(static_cast<uint8_t*>(e.table->contents()) + render::kTableVsAt, 0, 64);
     CHECK(has(faultOf(r, e.stream.words()), "IBO 0 is all zeros"));
 }
+
+// --- draws into one pass: the command buffer joins a draw to the open pass into the same attachments -------------------------
+
+TEST(draws_into_the_same_attachments_share_one_pass) {
+    Rig r;
+    auto t = target(r);
+    auto other = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto run = [&](const std::function<void(CommandBuffer&)>& record) {
+        const uint32_t before = r.fake->stats().passes;
+        auto cb = r.queue->commandBuffer();
+        record(*cb);
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+        return r.fake->stats().passes - before;
+    };
+    // three draws, one pass (and the tail at submit: the fake faults a submission whose colour stays in the CCU)
+    CHECK_EQ(run([&](CommandBuffer& cb) {
+                 for (int i = 0; i < 3; i++) CHECK(cb.draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+             }),
+             1u);
+    CHECK_EQ(r.fake->stats().draws, 3u);
+    // another target between them: a pass each time the attachments change
+    RenderPass pass2;
+    pass2.color0 = other.get();
+    CHECK_EQ(run([&](CommandBuffer& cb) {
+                 cb.draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{});
+                 cb.draw(flatProgram(), pass2, wholeDraw(), Bindings{}, Bindings{});
+                 cb.draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{});
+             }),
+             3u);
+    // a Clear asked for by a later draw begins a pass of its own (its fill must not land over the first draw unseen)
+    RenderPass cleared = pass;
+    cleared.load = LoadAction::kClear;
+    CHECK_EQ(run([&](CommandBuffer& cb) {
+                 cb.draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{});
+                 cb.draw(flatProgram(), cleared, wholeDraw(), Bindings{}, Bindings{});
+             }),
+             2u);
+    // a blit between two draws closes the pass: the blit sees the first draw's colour in memory
+    std::string why;
+    auto b = newBuffer(*r.gpu, 64, &why);
+    CHECK_EQ(run([&](CommandBuffer& cb) {
+                 cb.draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{});
+                 cb.fill(*b, 0, 64, 7);
+                 cb.draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{});
+             }),
+             2u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}

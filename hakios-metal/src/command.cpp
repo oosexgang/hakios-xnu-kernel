@@ -112,6 +112,7 @@ void CommandBuffer::finish(Status s) {
 }
 
 bool CommandBuffer::copy(const Buffer& from, uint64_t fromOffset, const Buffer& to, uint64_t toOffset, uint64_t length) {
+    closePass();
     if (status_ > kEnqueued) {
         return fail("copy after commit");
     }
@@ -141,6 +142,7 @@ bool CommandBuffer::copy(const Buffer& from, uint64_t fromOffset, const Buffer& 
 }
 
 bool CommandBuffer::fill(const Buffer& b, uint64_t offset, uint64_t length, uint8_t value) {
+    closePass();
     if (status_ > kEnqueued) {
         return fail("fill after commit");
     }
@@ -231,6 +233,7 @@ void CommandQueue::submit(std::shared_ptr<CommandBuffer> cb) {
         cb->finish(CommandBuffer::kError);   // a blit that was refused: nothing of it reaches the GPU
         return;
     }
+    cb->closePass();   // the last pass's tail
     // every command buffer ends with the GPU idle: what Metal's completion promises, that the work is done
     cb->stream_.waitMemWrites();
     cb->stream_.waitForIdle();

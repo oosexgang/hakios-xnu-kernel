@@ -142,6 +142,7 @@ public:
         Dispatch lastDispatch;
         uint32_t draws = 0;         // CP_DRAW_INDX_OFFSET packets whose state held together (none of them rasterized)
         Draw lastDraw;
+        uint32_t passes = 0;        // sysmem passes begun (CP_SET_MARKER RM6_DIRECT_RENDER)
         uint32_t fills = 0;         // CP_BLIT solid fills whose state held together: these ARE carried out, into the target's memory
         uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
     };

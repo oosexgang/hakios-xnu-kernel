@@ -330,6 +330,17 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
             const Bindings& vsBindings, const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram,
             uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{});
 
+// The same draw in three parts, for a pass of several (CommandBuffer::draw joins a draw to the open pass into the same
+// attachments): encodeBegin the batch start, the pass begin and the clears; encodeInPass one draw's state and the draw,
+// TABLE then the draw's own (its descriptors), the border colours and the timestamps being the pass's; encodeEnd the
+// tail into the pass's TABLE. encode is the three over one table.
+bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
+                 const Options& options = Options{});
+bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw,
+                  const Bindings& vsBindings, const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram,
+                  uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{});
+void encodeEnd(pm4::Stream& stream, const RenderPass& pass, uint64_t table, const Options& options = Options{});
+
 // A pass with no draw: the batch start, the pass begin, the Clear's fill, the tail. What -[MTLRenderCommandEncoder
 // endEncoding] needs for an encoder that recorded nothing; any load action but kClear is refused (nothing to write).
 bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
