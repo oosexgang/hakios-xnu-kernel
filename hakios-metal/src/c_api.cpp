@@ -590,6 +590,10 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
     rp.depthLoad = LoadAction(pass->depth_load_action);
     rp.depthStore = StoreAction(pass->depth_store_action);
     rp.clearDepth = pass->clear_depth;
+    rp.stencil = pass->stencil != nullptr ? pass->stencil->texture.get() : nullptr;
+    rp.stencilLoad = LoadAction(pass->stencil_load_action);
+    rp.stencilStore = StoreAction(pass->stencil_store_action);
+    rp.clearStencil = pass->clear_stencil;
     return rp;
 }
 
@@ -668,6 +672,16 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     if (pass != nullptr) {
         for (int i = 0; i < 4; i++) d.blendColor[i] = pass->blend_color[i];
         if (pass->depth_state_set) d.depth = DepthState{pass->depth_compare, pass->depth_write != 0};
+        if (pass->stencil_state_set) {
+            auto face = [](const hakios_metal_render_pass::hakios_metal_stencil_face& f) {
+                return StencilFace{f.compare, f.stencil_fail, f.depth_fail, f.pass, f.read_mask, f.write_mask};
+            };
+            d.stencil.enabled = true;
+            d.stencil.front = face(pass->stencil_front);
+            d.stencil.back = face(pass->stencil_back);
+            d.stencil.frontReference = pass->stencil_front_reference;
+            d.stencil.backReference = pass->stencil_back_reference;
+        }
     }
     if (!cb->cb->draw(p->program->program, rp, d, vsb, fsb)) {
         failed(cb->cb->error());

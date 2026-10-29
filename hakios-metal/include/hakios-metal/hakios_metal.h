@@ -252,6 +252,19 @@ struct hakios_metal_render_pass {
 		unsigned level;                   /* the mip level drawn into */
 	} more[7];
 	unsigned color0_level;                    /* color0's mip level drawn into (MTLRenderPassAttachmentDescriptor.level) */
+	/* the stencil attachment: the depth texture itself when it is Depth32Float_Stencil8 (260), or NULL; its MTLLoadAction,
+	 * MTLStoreAction and clear value (read for a Clear) */
+	hakios_metal_texture *stencil;
+	unsigned stencil_load_action, stencil_store_action;
+	unsigned clear_stencil;
+	/* -setDepthStencilState:'s stencil half and -setStencilReferenceValue:, each draw reads them: STENCIL_STATE_SET 0 is
+	 * no test (Metal's default, a descriptor with no stencil faces); each face an MTLCompareFunction, three
+	 * MTLStencilOperations (stencil fail, depth fail, both pass) and the read and write masks */
+	int stencil_state_set;
+	struct hakios_metal_stencil_face {
+		unsigned compare, stencil_fail, depth_fail, pass, read_mask, write_mask;
+	} stencil_front, stencil_back;
+	unsigned stencil_front_reference, stencil_back_reference;
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

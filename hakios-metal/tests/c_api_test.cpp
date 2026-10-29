@@ -386,7 +386,7 @@ TEST(c_api_program_and_draw) {
     CHECK(hakios_metal_error()[0] != '\0');
     // one draw: the whole target (NULL viewport and scissor), triangles (3), vertices 0..3, one instance, no buffers
     hakios_metal_queue* q = hakios_metal_queue_new(d);
-    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     hakios_metal_cb* cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
     hakios_metal_program_free(p);   // the command buffer keeps what the draw needs
@@ -420,7 +420,7 @@ TEST(c_api_program_and_draw) {
             return true;
         };
         memset(bytes, 0xa5, pitch * 64);
-        struct hakios_metal_render_pass clear = {rt, 2, 1, {1.0, 0.0, 0.5, 1.0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+        struct hakios_metal_render_pass clear = {rt, 2, 1, {1.0, 0.0, 0.5, 1.0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
         cb = hakios_metal_cb_new(q);
         CHECK_EQ(hakios_metal_cb_draw(cb, p, &clear, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
         hakios_metal_cb_commit(cb, nullptr, nullptr);
@@ -429,7 +429,7 @@ TEST(c_api_program_and_draw) {
         CHECK(everywhere(255, 0, 128, 255));
         hakios_metal_cb_free(cb);
         memset(bytes, 0xa5, pitch * 64);
-        struct hakios_metal_render_pass green = {rt, 2, 1, {0.0, 1.0, 0.0, 0.0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+        struct hakios_metal_render_pass green = {rt, 2, 1, {0.0, 1.0, 0.0, 0.0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
         cb = hakios_metal_cb_new(q);
         CHECK_EQ(hakios_metal_cb_clear(cb, &green), 0);
         hakios_metal_cb_commit(cb, nullptr, nullptr);
@@ -440,7 +440,7 @@ TEST(c_api_program_and_draw) {
         // blending through C: the program's setter and the pass's blend colour reach the registers; the fake runs the draw
         // (it cannot blend, so the bytes stay the clear's: the phone measures the blend)
         hakios_metal_program_set_blend(p, 1, 0, 0, 11, 0, 1, 0, 0xf);   // rgb BlendColor * src + 0, alpha One
-        struct hakios_metal_render_pass blended = {rt, 1, 1, {0, 0, 0, 0}, {0.25f, 0.5f, 0.75f, 1.0f}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+        struct hakios_metal_render_pass blended = {rt, 1, 1, {0, 0, 0, 0}, {0.25f, 0.5f, 0.75f, 1.0f}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
         cb = hakios_metal_cb_new(q);
         CHECK_EQ(hakios_metal_cb_draw(cb, p, &blended, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
         hakios_metal_cb_commit(cb, nullptr, nullptr);
@@ -530,18 +530,18 @@ TEST(c_api_program_and_draw) {
         hakios_metal_program_free(ap);
     }
     hakios_metal_texture* plain = hakios_metal_texture_new(d, 2, 70, 64, 64, 3);
-    struct hakios_metal_render_pass notRt = {plain, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass notRt = {plain, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &notRt, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
     CHECK(strcmp(hakios_metal_error(), "the 64 x 64 RGBA8Unorm texture was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it") == 0);
     hakios_metal_cb_free(cb);
     hakios_metal_texture_free(plain);
-    struct hakios_metal_render_pass nanClear = {rt, 2, 1, {0, 0, NAN, 1}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass nanClear = {rt, 2, 1, {0, 0, NAN, 1}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &nanClear, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
     CHECK(strcmp(hakios_metal_error(), "a clear colour with a non-finite channel (channel 2) into RGBA8Unorm") == 0);
     hakios_metal_cb_free(cb);
-    struct hakios_metal_render_pass none = {nullptr, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass none = {nullptr, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &none, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
     CHECK(strcmp(hakios_metal_error(), "a render pass with no colour attachment: one target is what the first draw serves") == 0);
@@ -592,7 +592,7 @@ TEST(c_api_draw_with_a_fragment_texture) {
     hakios_metal_sampler* s = hakios_metal_sampler_new(d, &sd);
     CHECK(rt != nullptr && tex != nullptr && s != nullptr);
     hakios_metal_queue* q = hakios_metal_queue_new(d);
-    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     hakios_metal_cb* cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw2(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0, &tex, 1, &s, 1), 0);
     hakios_metal_texture_free(tex);   // the command buffer keeps what the draw samples
@@ -641,7 +641,7 @@ TEST(c_api_indexed_draw) {
     const uint16_t idx[3] = {0, 1, 2};
     memcpy(hakios_metal_buffer_contents(ib), idx, sizeof idx);
     hakios_metal_queue* q = hakios_metal_queue_new(d);
-    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     hakios_metal_cb* cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw_indexed(cb, p, &pass, nullptr, nullptr, 3, 3, 0, ib, 0, 1, 3, 0, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0,
                                           nullptr, 0), 0);
@@ -681,7 +681,7 @@ TEST(c_api_draw_with_a_constexpr_sampler) {
     hakios_metal_texture* rt = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET);
     hakios_metal_texture* tex = hakios_metal_texture_new(d, 2, 70, 4, 4, 1);
     hakios_metal_queue* q = hakios_metal_queue_new(d);
-    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0};
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0};
     hakios_metal_cb* cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw2(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0, &tex, 1, nullptr, 0), 0);
     hakios_metal_cb_commit(cb, nullptr, nullptr);
