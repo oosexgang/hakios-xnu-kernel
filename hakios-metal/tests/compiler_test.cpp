@@ -16,6 +16,7 @@
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
+#include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "hakios-metal/a6xx.hpp"
 #include "test.hpp"
@@ -493,6 +494,14 @@ TEST(compiler_matches_the_stage_fixtures) {
     auto flatFs = compareStageWithFixture("tri_flat_fs", kernels::tri_flat_fs_air, "tri_flat_fs", "mov.u32u32 r0.x, 0x3e008081");
     auto colorVs = compareStageWithFixture("tri_color_vs", kernels::tri_color_vs_air, "tri_color_vs", "sel.b32");
     auto colorFs = compareStageWithFixture("tri_color_fs", kernels::tri_color_fs_air, "tri_color_fs", "bary.f");
+    // the constant-buffer fragment stage: its pushed range compiled here as the fixture writer wrote it (block 0, 16 dwords at c0)
+    auto cflatFs = compareStageWithFixture("tri_cflat_fs", kernels::tri_cflat_fs_air, "tri_cflat_fs", "mov.u32u32 r0.x, c0.x");
+    if (cflatFs) {
+        CHECK_EQ(cflatFs->stage.k.numUboRanges, 1u);
+        CHECK_EQ(cflatFs->stage.k.uboRanges[0].block, 0u);
+        CHECK_EQ(cflatFs->stage.k.uboRanges[0].sizeDwords, 16u);
+        CHECK_EQ(cflatFs->stage.k.numUbos, 0u);
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;
@@ -635,15 +644,14 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     m = copyOf(vs);
     m->stage.k.numSsbos = 1;
     CHECK(link(m, fs) == nullptr);
-    expectRefusal(why, "the vertex stage tri_flat_vs binds buffers (0 pushed constant range(s), 1 device buffer(s), 0 constant buffer(s)): the first draw binds none in either stage");
+    expectRefusal(why, "the vertex stage tri_flat_vs binds 1 device buffer(s) and 0 constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
     m = copyOf(fs);
-    m->stage.k.numUboRanges = 1;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs binds buffers (1 pushed constant range(s), 0 device buffer(s), 0 constant buffer(s)): the first draw binds none in either stage");
+    m->stage.k.numUboRanges = 1;   // a pushed range links: the draw serves it (and refuses it there if nothing is bound)
+    CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
     m->stage.k.numUbos = 1;
     CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs binds buffers (0 pushed constant range(s), 0 device buffer(s), 1 constant buffer(s)): the first draw binds none in either stage");
+    expectRefusal(why, "the fragment stage tri_flat_fs binds 0 device buffer(s) and 1 constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
     m = copyOf(fs);
     m->stage.k.textures[3].kind = kTexSampled;
     CHECK(link(vs, m) == nullptr);

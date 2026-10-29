@@ -676,9 +676,11 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     }
     for (const CompiledStage* s : {vs.get(), fs.get()}) {
         const Kernel& k = s->stage.k;
-        if (k.numUboRanges != 0 || k.numSsbos != 0 || k.numUbos != 0) {
-            refuse(why, stageName(*s) + " binds buffers (" + std::to_string(k.numUboRanges) + " pushed constant range(s), " + std::to_string(k.numSsbos) +
-                            " device buffer(s), " + std::to_string(k.numUbos) + " constant buffer(s)): the first draw binds none in either stage");
+        // pushed constant ranges are served (render.cpp: pushedRanges, the compute rule); a device buffer (the 3D IBO table)
+        // and an indexed constant buffer (a UBO descriptor) are not yet
+        if (k.numSsbos != 0 || k.numUbos != 0) {
+            refuse(why, stageName(*s) + " binds " + std::to_string(k.numSsbos) + " device buffer(s) and " + std::to_string(k.numUbos) +
+                            " constant buffer(s) it indexes: only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
             return nullptr;
         }
         bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;

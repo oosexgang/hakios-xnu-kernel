@@ -19,6 +19,7 @@
 #include "hakios-metal/render.hpp"
 #include "hakios-metal/texture.hpp"
 #include "fixtures/end_only.hpp"
+#include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
@@ -140,7 +141,8 @@ struct Raw {
 
 // the draw's own words, as render::encode writes them over buffers of this rig, for a test to read or mutate
 struct Encoded {
-    Encoded(Rig& r, const Program& p, const RenderPass& pass, const Draw& d, const render::Options& o = render::Options{}) {
+    Encoded(Rig& r, const Program& p, const RenderPass& pass, const Draw& d, const render::Options& o = render::Options{}, const Bindings& vsb = Bindings{},
+            const Bindings& fsb = Bindings{}) {
         std::string why;
         vsProgram = newBuffer(*r.gpu, 4ull * p.vs.k.numWords, &why);
         fsProgram = newBuffer(*r.gpu, 4ull * p.fs.k.numWords, &why);
@@ -149,7 +151,7 @@ struct Encoded {
         memcpy(vsProgram->contents(), p.vs.k.words, 4ull * p.vs.k.numWords);
         memcpy(fsProgram->contents(), p.fs.k.words, 4ull * p.fs.k.numWords);
         memset(table->contents(), 0xee, render::kTableBytes);   // the encoder must zero what the GPU reads of it
-        ok = render::encode(stream, p, pass, d, Bindings{}, Bindings{}, vsProgram->gpuAddress(), fsProgram->gpuAddress(), table->gpuAddress(),
+        ok = render::encode(stream, p, pass, d, vsb, fsb, vsProgram->gpuAddress(), fsProgram->gpuAddress(), table->gpuAddress(),
                             static_cast<uint8_t*>(table->contents()), &why, o);
         error = why;
     }
@@ -288,10 +290,13 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p = handProgram();
         p.vs.k.numSsbos = 1;
         p.vs.k.numIbos = 1;
-        refused(r, p, pass, d, "hand_vs binds buffers (0 pushed constant range(s), 1 device buffer(s), 0 constant buffer(s), 1 IBO(s)): the first draw binds none in either stage");
+        refused(r, p, pass, d, "hand_vs binds 1 device buffer(s), 0 constant buffer(s) it indexes and 1 IBO(s): only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
         p = handProgram();
-        p.fs.k.numUboRanges = 1;
-        refused(r, p, pass, d, "hand_fs binds buffers (1 pushed constant range(s), 0 device buffer(s), 0 constant buffer(s), 0 IBO(s)): the first draw binds none in either stage");
+        p.fs.k.numUbos = 1;
+        refused(r, p, pass, d, "hand_fs binds 0 device buffer(s), 1 constant buffer(s) it indexes and 0 IBO(s): only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
+        p = handProgram();
+        p.fs.k.numUboRanges = 1;   // a pushed range, served -- but nothing is bound at its block
+        refused(r, p, pass, d, "hand_fs: no buffer bound at index 0 (its constant buffer)");
         p = handProgram();
         p.fs.k.textures[0].kind = kTexSampled;
         refused(r, p, pass, d, "hand_fs samples or stores through textures: textures and samplers in a draw are step two");
@@ -1001,9 +1006,10 @@ TEST(render_options_switch_each_group_and_each_alternative) {
 
 namespace {
 // one draw through CommandBuffer::draw, committed and waited for; the command buffer is returned for its status and error
-std::shared_ptr<CommandBuffer> drawOnce(Rig& r, const Program& p, const RenderPass& pass, const Draw& d, const render::Options& o = render::Options{}) {
+std::shared_ptr<CommandBuffer> drawOnce(Rig& r, const Program& p, const RenderPass& pass, const Draw& d, const render::Options& o = render::Options{},
+                                        const Bindings& vsb = Bindings{}, const Bindings& fsb = Bindings{}) {
     auto cb = r.queue->commandBuffer();
-    if (cb->draw(p, pass, d, Bindings{}, Bindings{}, o)) {
+    if (cb->draw(p, pass, d, vsb, fsb, o)) {
         cb->commit();
         cb->waitUntilCompleted();
     }
@@ -1723,3 +1729,88 @@ TEST(the_fake_refuses_the_packets_a_draw_stream_may_not_carry) {
         CHECK(has(w.fault(), "a load of type 3 into the fragment texture block (SB6_FS_TEX): not samplers (ST6_SHADER) or textures (ST6_CONSTANTS)"));
     }
 }
+
+// --- the first buffer in a draw: a fragment stage's `constant float4&`, pushed into its constant file ----------------------
+
+TEST(a_draw_pushes_a_fragment_constant_range_out_of_the_bound_buffer) {
+    // tri_cflat_fs reads its colour from [[buffer(0)]]: ir3 pushes block 0, 16 dwords (a 16-byte float4 padded to 4 vec4)
+    // into c0, constlen 4 -- loaded with CP_LOAD_STATE6_FRAG ST6_CONSTANTS SS6_INDIRECT into SB6_FS_SHADER at DST_OFF 0
+    // straight out of the bound buffer, as compute pushes fill_id_air's c
+    Rig r;
+    auto t = target(r);
+    fillWords(*t, 0xa5a5a5a5u);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program p{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+    CHECK_EQ(p.fs.k.numUboRanges, 1u);
+    CHECK_EQ(p.fs.k.uboRanges[0].sizeDwords, 16u);
+    std::string why;
+    auto colour = newBuffer(*r.gpu, 16, &why);
+    CHECK(colour != nullptr);
+    Bindings fsb;
+    fsb.buffers = {Binding{colour.get(), 0}};
+    Encoded e(r, p, pass, wholeDraw(), render::Options{}, Bindings{}, fsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    size_t at = e.findLoad(a6xx::CP_LOAD_STATE6_FRAG, a6xx::ST6_CONSTANTS, a6xx::SB6_FS_SHADER);
+    CHECK(at != size_t(-1));
+    if (at != size_t(-1)) {
+        const auto& w = e.stream.words();
+        uint32_t w0 = w[at + 1];
+        CHECK_EQ((w0 & a6xx::CP_LOAD_STATE6_0_STATE_SRC__MASK) >> a6xx::CP_LOAD_STATE6_0_STATE_SRC__SHIFT, uint32_t(a6xx::SS6_INDIRECT));
+        CHECK_EQ((w0 & a6xx::CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> a6xx::CP_LOAD_STATE6_0_NUM_UNIT__SHIFT, 4u);
+        CHECK_EQ((w0 & a6xx::CP_LOAD_STATE6_0_DST_OFF__MASK) >> a6xx::CP_LOAD_STATE6_0_DST_OFF__SHIFT, 0u);
+        CHECK_EQ(uint64_t(w[at + 2]) | uint64_t(w[at + 3]) << 32, colour->gpuAddress());
+    }
+    // the vertex stage's table is empty and its stage pushes nothing indirect
+    CHECK(e.findLoad(a6xx::CP_LOAD_STATE6_GEOM, a6xx::ST6_CONSTANTS, a6xx::SB6_VS_SHADER) != size_t(-1));   // (its immediates, direct)
+    // the whole draw on the fake: the load is inside the bound buffer and within the decoded CONSTLEN
+    auto cb = drawOnce(r, p, pass, wholeDraw(), render::Options{}, Bindings{}, fsb);
+    CHECK(cb->error().empty());
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK_EQ(s.draws, 1u);
+    CHECK_EQ(s.lastDraw.fsConstlen, 4u);
+    CHECK_EQ(s.lastDraw.fsConsts.size(), size_t(1));
+    if (!s.lastDraw.fsConsts.empty()) {
+        CHECK_EQ(s.lastDraw.fsConsts[0].units, 4u);
+        CHECK(!s.lastDraw.fsConsts[0].direct);
+    }
+}
+
+TEST(a_draw_refuses_a_constant_range_it_cannot_serve_by_name) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program p{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+    std::string why;
+    auto colour = newBuffer(*r.gpu, 16, &why);
+    auto refusedWith = [&](const Program& q, const Bindings& fsb, const char* want) {
+        Encoded e(r, q, pass, wholeDraw(), render::Options{}, Bindings{}, fsb);
+        CHECK(!e.ok);
+        expectRefusal(e.error, want);
+        CHECK_EQ(e.stream.size(), size_t(0));
+    };
+    // nothing bound at the range's block
+    refusedWith(p, Bindings{}, "tri_cflat_fs_air: no buffer bound at index 0 (its constant buffer)");
+    // a binding at an offset that is not a word
+    Bindings odd;
+    odd.buffers = {Binding{colour.get(), 2}};
+    refusedWith(p, odd, "tri_cflat_fs_air: buffer 0: offset 2 is not a multiple of 4 inside it");
+    // the padded 64-byte range running off the object's pages: a buffer as long as its pages, bound 16 bytes before the end
+    auto page = newBuffer(*r.gpu, colour->bo().size(), &why);
+    Bindings tail;
+    tail.buffers = {Binding{page.get(), page->bo().size() - 16}};
+    refusedWith(p, tail, "tri_cflat_fs_air reads 64 bytes at 0 of constant buffer 0; 16 are bound and 16 mapped behind the offset");
+    // a range past the stage's constlen (the twin of the constlen the fixture carries)
+    Program short_ = p;
+    short_.fs.k.constlen = 0;
+    Bindings ok;
+    ok.buffers = {Binding{colour.get(), 0}};
+    refusedWith(short_, ok, "tri_cflat_fs_air: constant buffer 0's range at vec4 0 runs past its constlen of 0");
+    CHECK_EQ(r.fake->stats().submits, 0u);
+}
+

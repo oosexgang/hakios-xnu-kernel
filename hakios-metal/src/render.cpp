@@ -140,12 +140,13 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.numSamp > 31) {
         return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
     }
-    if (k.numUboRanges != 0 || k.numSsbos != 0 || k.numUbos != 0 || k.numIbos != 0) {
-        // the contract's first decision (4c8c901): no buffer in either stage. A pushed range would be compute's path
-        // again (CP_LOAD_STATE6_GEOM/FRAG ST6_CONSTANTS SS6_INDIRECT); a UBO descriptor or the 3D IBO table have no
-        // witness in this tree yet (driver-render-shape.md, step two)
-        return refuse(why, name + " binds buffers (" + n(k.numUboRanges) + " pushed constant range(s), " + n(k.numSsbos) + " device buffer(s), " +
-                               n(k.numUbos) + " constant buffer(s), " + n(k.numIbos) + " IBO(s)): the first draw binds none in either stage");
+    if (k.numSsbos != 0 || k.numUbos != 0 || k.numIbos != 0) {
+        // A `constant T&` read at a constant offset is a range ir3 pushes into the constant file and is served (below,
+        // as compute serves it). A `device` buffer is an SSBO through the 3D IBO table, which no Mesa 25.0.7 driver loads
+        // non-bindless (fd6_image.cc:308-335 is bindless), and an indexed `constant` load left as ldc wants a UBO
+        // descriptor: neither has a witness here yet
+        return refuse(why, name + " binds " + n(k.numSsbos) + " device buffer(s), " + n(k.numUbos) + " constant buffer(s) it indexes and " +
+                               n(k.numIbos) + " IBO(s): only constant buffers read at fixed offsets (pushed ranges) are served in a draw yet");
     }
     bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
@@ -168,6 +169,43 @@ bool checkStage(const Stage& s, std::string* why) {
     return true;
 }
 
+// A pushed constant range of a stage as the GPU reads it: DST_OFF, units and the address in the bound buffer.
+struct PushedRange {
+    uint32_t offsetVec4, units;
+    uint64_t from;
+};
+
+// The stage's pushed ranges against its own [[buffer(n)]] table, by compute's rules (compute.cpp: the range is ir3's,
+// in whole vec4 and padded -- a 16-byte float4 is pushed as 64 bytes -- so the read must stay inside the bound object's
+// pages, not inside the length bound; it must land inside the stage's constlen). False with *why naming the stage.
+bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* out, std::string* why) {
+    const Kernel& k = s.k;
+    const std::string name = stageName(s);
+    for (uint32_t i = 0; i < k.numUboRanges; i++) {
+        const KernelUboRange& r = k.uboRanges[i];
+        if (r.block >= b.buffers.size() || b.buffers[r.block].buffer == nullptr) {
+            return refuse(why, name + ": no buffer bound at index " + n(r.block) + " (its constant buffer)");
+        }
+        const Binding& x = b.buffers[r.block];
+        if (x.offset % 4 != 0 || x.offset > x.buffer->length()) {
+            return refuse(why, name + ": buffer " + n(r.block) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
+        }
+        uint64_t bytes = x.buffer->length() - x.offset, mapped = x.buffer->bo().size() - x.offset;
+        if (r.sizeDwords == 0 || r.sizeDwords % 4 != 0) {
+            return refuse(why, name + ": a constant range of " + n(r.sizeDwords) + " dwords, not a whole number of vec4");
+        }
+        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
+            return refuse(why, name + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) + "; " +
+                                   n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset");
+        }
+        if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
+            return refuse(why, name + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
+        }
+        out->push_back(PushedRange{r.offsetVec4, r.sizeDwords / 4, x.buffer->gpuAddress() + x.offset + 4ull * r.startDword});
+    }
+    return true;
+}
+
 bool finite(double v) { return std::isfinite(v); }
 
 // gl_frag_result / gl_varying_slot numbers the Stage tables carry (Mesa shader_enums.h:987): FRAG_RESULT_DATA0 is 4
@@ -178,10 +216,6 @@ constexpr uint8_t kFragResultData0 = 4;
 bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
             const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
             const Options& o) {
-    // the per-stage [[buffer(n)]] tables are step two's: no stage of the first draw binds one (checkStage refuses a stage
-    // that would), so what the caller passes here is not read
-    (void)vsBindings;
-    (void)fsBindings;
     const Stage& vs = program.vs;
     const Stage& fs = program.fs;
     // --- the two stages ---
@@ -192,6 +226,11 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         return refuse(why, std::string(stageName(fs)) + " is not a fragment stage");
     }
     if (!checkStage(vs, why) || !checkStage(fs, why)) {
+        return false;
+    }
+    // each stage's pushed constant ranges out of its own [[buffer(n)]] table (Metal's setVertexBuffer / setFragmentBuffer)
+    std::vector<PushedRange> vsRanges, fsRanges;
+    if (!pushedRanges(vs, vsBindings, &vsRanges, why) || !pushedRanges(fs, fsBindings, &fsRanges, why)) {
         return false;
     }
     if (vs.k.constlen + fs.k.constlen > kMaxConstPipeline) {
@@ -474,8 +513,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     // 31), INSTRLEN, the 7-register OBJ_START block with the private memory zeros, HW_STACK_OFFSET 0, the ST6_SHADER
     // preload of min(instrlen, 127) units from the 128-byte aligned program, the immediates as compute uploads them
     // (ST6_CONSTANTS, direct, at immediatesOffsetVec4)
-    auto programOf = [&](const Stage& s, uint64_t address, uint32_t ctrlReg0, uint32_t regCtrl0, uint32_t regInstrlen, uint32_t regObjFirstExec,
-                         uint32_t regHwStackOffset) {
+    // ... then the pushed constant ranges, indirect, as compute uploads them (fd6_emit_user_consts / tu6_emit_xs's ranges,
+    // tu_shader.cc:1397-1421) into the stage's own block
+    auto programOf = [&](const Stage& s, const std::vector<PushedRange>& ranges, uint64_t address, uint32_t ctrlReg0, uint32_t regCtrl0,
+                         uint32_t regInstrlen, uint32_t regObjFirstExec, uint32_t regHwStackOffset) {
         reg(stream, regCtrl0, ctrlReg0);
         reg(stream, regInstrlen, s.k.instrlen);
         regs(stream, regObjFirstExec, {0, uint32_t(address), uint32_t(address >> 32), 0, 0, 0, 0});
@@ -486,13 +527,16 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
             imm.resize((imm.size() + 3) & ~size_t(3), 0);
             loadDirect(stream, s, ST6_CONSTANTS, s.k.immediatesOffsetVec4, uint32_t(imm.size() / 4), imm.data(), uint32_t(imm.size()));
         }
+        for (const PushedRange& r : ranges) {
+            loadIndirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
+        }
     };
     if (o.programVs) {
-        programOf(vs, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
+        programOf(vs, vsRanges, vsProgram, spVsCtrlReg0(uint32_t(vs.k.maxReg + 1), uint32_t(vs.k.maxHalfReg + 1), vs.k.branchstackHw, vs.k.mergedRegs, vs.k.earlyPreamble),
                   REG_A6XX_SP_VS_CTRL_REG0, REG_A6XX_SP_VS_INSTRLEN, REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET);
     }
     if (o.programFs) {
-        programOf(fs, fsProgram,
+        programOf(fs, fsRanges, fsProgram,
                   spFsCtrlReg0(uint32_t(fs.k.maxReg + 1), uint32_t(fs.k.maxHalfReg + 1), fs.k.branchstackHw, fsThreads, fs.totalIn != 0, fs.needFullQuad != 0,
                                fs.needPixlod != 0, fs.k.earlyPreamble, fs.k.mergedRegs),
                   REG_A6XX_SP_FS_CTRL_REG0, REG_A6XX_SP_FS_INSTRLEN, REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET, REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET);
@@ -730,7 +774,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     for (const Bindings* b : {&vsBindings, &fsBindings}) {
         for (const Binding& x : b->buffers) {
             if (x.buffer != nullptr) {
-                use(*x.buffer, true);
+                use(*x.buffer, false);   // pushed ranges are read; nothing in a draw writes a buffer yet
             }
         }
     }

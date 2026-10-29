@@ -418,13 +418,39 @@ TEST(c_api_program_and_draw) {
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 2, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
     CHECK(strcmp(hakios_metal_error(), "2 instances: the first draw runs exactly 1") == 0);
     hakios_metal_cb_free(cb);
+    // a buffer bound at an index neither stage reads is ignored, as Metal ignores it: the draw completes
     hakios_metal_buffer* b = hakios_metal_buffer_new(d, 64);
     hakios_metal_buffer* one[1] = {b};
     cb = hakios_metal_cb_new(q);
-    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, one, nullptr, 1, nullptr, nullptr, 0), -1);
-    CHECK(strcmp(hakios_metal_error(), "1 vertex-stage and 0 fragment-stage buffers bound: the first draw binds no buffer in either stage") == 0);
-    CHECK(strcmp(hakios_metal_cb_error(cb), hakios_metal_error()) == 0);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, one, nullptr, 1, nullptr, nullptr, 0), 0);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
     hakios_metal_cb_free(cb);
+    // a fragment stage reading `constant float4& c [[buffer(0)]]` (tri_cflat_fs): refused by name with nothing bound there,
+    // drawn with the buffer bound, which the command buffer keeps alive although the caller frees it before the commit
+    std::vector<uint8_t> cfsBc = readFile("out/host/kernels/tri_cflat_fs.bc");
+    CHECK(!cfsBc.empty());
+    hakios_metal_program* cp = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), cfsBc.data(), cfsBc.size(), 70);
+    CHECK(cp != nullptr);
+    if (cp == nullptr) std::printf("       %s\n", hakios_metal_error());
+    if (cp != nullptr) {
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_draw(cb, cp, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+        CHECK(strstr(hakios_metal_error(), ": no buffer bound at index 0 (its constant buffer)") != nullptr);
+        hakios_metal_cb_free(cb);
+        hakios_metal_buffer* colour = hakios_metal_buffer_new(d, 16);
+        hakios_metal_buffer* fsTable[1] = {colour};
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_draw(cb, cp, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, fsTable, nullptr, 1), 0);
+        hakios_metal_buffer_free(colour);
+        hakios_metal_cb_commit(cb, nullptr, nullptr);
+        hakios_metal_cb_wait(cb);
+        CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+        CHECK(hakios_metal_cb_error(cb)[0] == 0);
+        hakios_metal_cb_free(cb);
+        hakios_metal_program_free(cp);
+    }
     hakios_metal_buffer_free(b);
     hakios_metal_texture* plain = hakios_metal_texture_new(d, 2, 70, 64, 64, 3);
     struct hakios_metal_render_pass notRt = {plain, 1, 1, {0, 0, 0, 0}};

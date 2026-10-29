@@ -456,18 +456,17 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,
                          const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers, const uint64_t* fsOffsets, unsigned fsCount) {
-    // the two [[buffer(n)]] tables are step two's: no stage of the first draw binds one (linkProgram refused any that would),
-    // so a table with entries is a draw this driver cannot serve yet, said by name rather than ignored
-    (void)vsBuffers;
-    (void)vsOffsets;
-    (void)fsBuffers;
-    (void)fsOffsets;
-    if (vsCount != 0 || fsCount != 0) {
-        std::string why = std::to_string(vsCount) + " vertex-stage and " + std::to_string(fsCount) + " fragment-stage buffers bound: the first draw binds no buffer in either stage";
-        cb->cb->refuse(why);
-        failed(why);
-        return -1;
-    }
+    // the two [[buffer(n)]] tables by Metal's index (setVertexBuffer / setFragmentBuffer); render::encode reads what each
+    // stage's pushed ranges name and refuses a range with nothing bound by name
+    auto table = [](hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
+        Bindings b;
+        b.buffers.resize(count);
+        for (unsigned i = 0; i < count; i++) {
+            if (buffers != nullptr && buffers[i] != nullptr) b.buffers[i] = Binding{buffers[i]->buffer.get(), offsets != nullptr ? offsets[i] : 0};
+        }
+        return b;
+    };
+    const Bindings vsb = table(vsBuffers, vsOffsets, vsCount), fsb = table(fsBuffers, fsOffsets, fsCount);
     RenderPass rp;
     const Texture* target = pass != nullptr && pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
     rp.color0 = target;
@@ -490,10 +489,13 @@ int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const str
     if (scissor != nullptr) {
         d.scissor = Scissor{scissor->x, scissor->y, scissor->width, scissor->height};
     }
-    if (!cb->cb->draw(p->program->program, rp, d, Bindings{}, Bindings{})) {
+    if (!cb->cb->draw(p->program->program, rp, d, vsb, fsb)) {
         failed(cb->cb->error());
         return -1;
     }
+    // the bound buffers live until the GPU has read them, whatever the caller frees meanwhile
+    for (unsigned i = 0; i < vsCount; i++) if (vsBuffers != nullptr && vsBuffers[i] != nullptr) cb->cb->keep(vsBuffers[i]->buffer);
+    for (unsigned i = 0; i < fsCount; i++) if (fsBuffers != nullptr && fsBuffers[i] != nullptr) cb->cb->keep(fsBuffers[i]->buffer);
     // the target's memory and object, and the program's words, live until the GPU is done, whatever the caller frees meanwhile
     cb->cb->keep(target->buffer());
     cb->cb->keepAlive(pass->color0->texture);

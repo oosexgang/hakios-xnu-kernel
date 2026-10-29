@@ -90,7 +90,7 @@ USE/IGNORE_VISIBILITY, `LRZ_FLUSH`, `RB_DONE_TS`). The sign of `GRAS_CL_VPORT_YS
 (NDC y up, row 0 at the top): the probe's orientation line confirmed it (the lower-left half was drawn), and every
 switch's default -- turnip's and fd6's values where they agree, the smaller set where they do not -- drew without a
 bisect. Not yet, all of it refused by name (not served): vertex descriptors (`[[stage_in]]` attributes, VFD_DECODE/
-FETCH), buffers in a vertex or fragment stage (pushed constant ranges, UBO descriptors, the 3D IBO table), textures and
+FETCH), buffers in a vertex or fragment stage beyond a `constant T&` read at fixed offsets (that one is a pushed range and is served: `tri_cflat_fs.ll`'s colour from `[[buffer(0)]]`, two colours in two draws exact on the phone, `logs/142053-run.log`; UBO descriptors for indexed loads and the 3D IBO table for `device` buffers are not), textures and
 samplers in a fragment stage (`SP_FS_PREFETCH_CMD`, `SB6_FS_TEX`), depth and stencil attachments, blending, clears (a
 load action of Clear: turnip clears with a draw or a 2D blit), GMEM (tiled) rendering, MSAA, instancing, indexed draws,
 points and lines, several colour attachments, a program whose stages bind what the draw does not serve.

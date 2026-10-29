@@ -36,6 +36,7 @@
 #include "../tests/fixtures/tri_color_vs_air.hpp"
 #include "../tests/fixtures/tri_color_vs_bc.hpp"
 #include "../tests/fixtures/tri_flat_fs_air.hpp"
+#include "../tests/fixtures/tri_cflat_fs_air.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1084,11 +1085,12 @@ int main(int argc, char** argv) {
             return t;
         };
         // one draw of P into T, committed and waited for; one the driver refuses is not committed and its line carries the reason
-        auto drawInto = [&](const Texture& t, const Program& p, const Draw& d, const render::Options& o = render::Options{}) {
+        auto drawInto = [&](const Texture& t, const Program& p, const Draw& d, const render::Options& o = render::Options{},
+                            const Bindings& fsb = Bindings{}) {
             RenderPass pass;
             pass.color0 = &t;
             auto cb = queue->commandBuffer();
-            if (cb->draw(p, pass, d, Bindings{}, Bindings{}, o)) {
+            if (cb->draw(p, pass, d, Bindings{}, fsb, o)) {
                 cb->commit();
                 cb->waitUntilCompleted();
             }
@@ -1232,6 +1234,42 @@ int main(int argc, char** argv) {
                 report(!accepted2 && cb2->error().find("was made without render-target usage") != std::string::npos,
                        std::string("control, a draw into a texture without MTLTextureUsageRenderTarget: ") + (accepted2 ? "ACCEPTED" : "refused: " + cb2->error()));
             }
+        }
+        // 9g. the first buffer in a draw: tri_cflat_fs returns `constant float4& c [[buffer(0)]]`, a range ir3 pushes into
+        // the fragment stage's constant file (64 bytes: the 16-byte float4 padded to 4 vec4) out of the bound buffer. Two
+        // draws of T1, each with its own colour in its own buffer -- (0x11, 0x22, 0x33, 0xff) and (0xee, 0xdd, 0xcc, 0x80) as
+        // b/255 floats, exact in RGBA8 after round-to-nearest -- must give the two colours: one value shared by both, or the
+        // literal of tri_flat_fs, would mean the range was not read from the buffer bound at the draw
+        if (t) {
+            const Program cflat{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+            const uint8_t colours[2][4] = {{0x11, 0x22, 0x33, 0xff}, {0xee, 0xdd, 0xcc, 0x80}};
+            uint32_t words[2];
+            for (int k = 0; k < 2; k++) words[k] = uint32_t(colours[k][0]) | uint32_t(colours[k][1]) << 8 | uint32_t(colours[k][2]) << 16 | uint32_t(colours[k][3]) << 24;
+            const uint32_t cCanary = texCanary([&](uint32_t v) { return v == words[0] || v == words[1] || v == flatColour; });
+            for (int k = 0; k < 2; k++) {
+                auto buf = newBuffer(gpu, 16, &why);
+                if (buf == nullptr) {
+                    report(false, "tri_cflat: a 16-byte constant buffer: " + why);
+                    break;
+                }
+                float* f = static_cast<float*>(buf->contents());
+                for (int c = 0; c < 4; c++) f[c] = float(colours[k][c]) / 255.0f;
+                fillBo(*t, cCanary);
+                Bindings fsb;
+                fsb.buffers = {Binding{buf.get(), 0}};
+                auto cb = drawInto(*t, cflat, drawOf(0, 3), render::Options{}, fsb);
+                TriReadback r = compareTriangle(*t, words[k], cCanary, lowerLeft);
+                bool ok = completed(*cb) && r.interiorColour == r.interior && r.exteriorCanary == r.exterior && r.edgeColour == 0 && r.other == 0;
+                report(ok, "tri_cflat, one triangle with its colour from a constant buffer at [[buffer(0)]] (" + hex8(words[k]) + "): " + describeTriangle(r) +
+                               status(*cb, gpu));
+            }
+            // the refusal: the same program with nothing bound at the fragment stage's buffer 0
+            auto cb = queue->commandBuffer();
+            RenderPass pass;
+            pass.color0 = t.get();
+            bool accepted = cb->draw(cflat, pass, drawOf(0, 3), Bindings{}, Bindings{});
+            report(!accepted && cb->error().find("no buffer bound at index 0") != std::string::npos,
+                   "control, tri_cflat with nothing bound at [[buffer(0)]]: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
         }
         // 9d. tri_color, the pair: red at vertices 0 and 3, green at 1 and 4, blue at 2 and 5 (tri_color_vs.ll), so a pixel's
         // bytes are its barycentric weights in the triangle that painted it. T1 (j > i) has A = (0,64) red, B = (64,64) green,
