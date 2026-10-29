@@ -206,6 +206,115 @@ bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* o
     return true;
 }
 
+// gl_vert_attrib's VERT_ATTRIB_GENERIC0 (Mesa shader_enums.h): a VS input at this slot + n is [[attribute(n)]]
+constexpr uint32_t kVertAttribGeneric0 = 15;
+
+// The served MTLVertexFormats as the fetch reads them: fd6_format_table.c's vertex column (VTC/VT_ rows), the bytes one
+// element takes, and whether the decoded value is a float (VFD_DECODE_INSTR.FLOAT: set unless the format is a pure
+// integer one, tu_pipeline.cc:2356)
+struct VertexFormatInfo {
+    VertexFormat format;
+    a6xx_format fmt6;
+    a3xx_color_swap swap;
+    uint32_t bytes;
+    bool isFloat;
+    const char* name;
+};
+const VertexFormatInfo kVertexFormats[] = {
+    {VertexFormat::kUChar4Normalized, FMT6_8_8_8_8_UNORM, WZYX, 4, true, "UChar4Normalized"},   // fd6_format_table.c:163
+    {VertexFormat::kHalf2, FMT6_16_16_FLOAT, WZYX, 4, true, "Half2"},                           // :155
+    {VertexFormat::kHalf4, FMT6_16_16_16_16_FLOAT, WZYX, 8, true, "Half4"},                     // :249
+    {VertexFormat::kFloat, FMT6_32_FLOAT, WZYX, 4, true, "Float"},                              // :136
+    {VertexFormat::kFloat2, FMT6_32_32_FLOAT, WZYX, 8, true, "Float2"},                         // :258
+    {VertexFormat::kFloat3, FMT6_32_32_32_FLOAT, WZYX, 12, true, "Float3"},                     // :272 (VT_: fetch only, as here)
+    {VertexFormat::kFloat4, FMT6_32_32_32_32_FLOAT, WZYX, 16, true, "Float4"},                  // :284
+};
+const VertexFormatInfo* vertexFormatInfo(VertexFormat f) {
+    for (const VertexFormatInfo& i : kVertexFormats) {
+        if (i.format == f) return &i;
+    }
+    return nullptr;
+}
+
+// What the vertex fetch registers get: decode entry n per [[attribute(n)]] up to the highest one the VS reads (holes
+// zero, as turnip writes them), fetch entry b per Metal buffer index used.
+struct VertexFetch {
+    uint32_t count = 0;            // VFD_CONTROL_0.FETCH_CNT = DECODE_CNT (turnip writes both as the attribute count)
+    uint32_t decode[kMaxVertexAttributes] = {};
+    uint32_t stepRate[kMaxVertexAttributes] = {};
+    uint32_t dest[kMaxVertexAttributes] = {};
+    bool used[kMaxVertexBuffers] = {};
+    uint64_t base[kMaxVertexBuffers] = {};
+    uint32_t size[kMaxVertexBuffers] = {};
+    uint32_t stride[kMaxVertexBuffers] = {};
+};
+
+// The VS's attributes against the descriptor and the VS's own [[buffer(n)]] table. Refused by name: an attribute the
+// descriptor does not describe, a format not served, an offset or stride past the 12-bit fields (a6xx.xml:4620-4634),
+// a step other than per vertex, a stride of 0, no buffer bound at the layout's index, and a fetch that reads past the
+// bound length for the draw's last vertex (Metal requires the bytes to be there; the GPU would read whatever follows).
+bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, const Bindings& b, VertexFetch* f, std::string* why) {
+    const std::string name = stageName(vs);
+    for (uint32_t i = 0; i < vs.numInputs; i++) {
+        const StageInput& in = vs.inputs[i];
+        if (in.sysval || in.regid == kRegidNone) continue;
+        if (in.slot < kVertAttribGeneric0 || in.slot - kVertAttribGeneric0 >= kMaxVertexAttributes) {
+            return refuse(why, name + ": an input at slot " + n(in.slot) + " that is not a [[stage_in]] attribute");
+        }
+        const uint32_t loc = in.slot - kVertAttribGeneric0;
+        const VertexAttribute& a = vd.attributes[loc];
+        if (a.format == VertexFormat::kInvalid) {
+            return refuse(why, name + " reads [[attribute(" + n(loc) + ")]], which the vertex descriptor does not describe");
+        }
+        const VertexFormatInfo* fi = vertexFormatInfo(a.format);
+        if (fi == nullptr) {
+            return refuse(why, name + ": [[attribute(" + n(loc) + ")]] is MTLVertexFormat " + n(uint32_t(a.format)) +
+                                   ": Float..Float4, Half2, Half4 and UChar4Normalized are served");
+        }
+        if (a.bufferIndex >= kMaxVertexBuffers) {
+            return refuse(why, name + ": [[attribute(" + n(loc) + ")]] is fetched from buffer " + n(a.bufferIndex) + ": the layouts are 0 to 30");
+        }
+        if (a.offset > 0xfff) {
+            return refuse(why, name + ": [[attribute(" + n(loc) + ")]] at offset " + n(a.offset) + ": VFD_DECODE_INSTR.OFFSET holds 12 bits");
+        }
+        const VertexLayout& l = vd.layouts[a.bufferIndex];
+        if (l.step != VertexStep::kPerVertex) {
+            return refuse(why, name + ": buffer " + n(a.bufferIndex) + " steps " + (l.step == VertexStep::kPerInstance ? "per instance" : "constantly") +
+                                   ": only per-vertex fetch is served yet");
+        }
+        if (l.stride == 0 || l.stride > 0xfff) {
+            return refuse(why, name + ": buffer " + n(a.bufferIndex) + "'s stride of " + n(l.stride) + ": 1 to 4095 bytes (VFD_FETCH_STRIDE holds 12 bits)");
+        }
+        if (a.bufferIndex >= b.buffers.size() || b.buffers[a.bufferIndex].buffer == nullptr) {
+            return refuse(why, name + ": no buffer bound at index " + n(a.bufferIndex) + " (the vertex buffer of [[attribute(" + n(loc) + ")]])");
+        }
+        const Binding& x = b.buffers[a.bufferIndex];
+        if (x.offset > x.buffer->length()) {
+            return refuse(why, name + ": buffer " + n(a.bufferIndex) + ": offset " + n(x.offset) + " lies past its end");
+        }
+        const uint64_t bytes = x.buffer->length() - x.offset;
+        const uint64_t last = uint64_t(draw.vertexStart) + (draw.vertexCount == 0 ? 0 : draw.vertexCount - 1);
+        const uint64_t need = last * l.stride + a.offset + fi->bytes;
+        if (need > bytes) {
+            return refuse(why, name + ": [[attribute(" + n(loc) + ")]] of vertex " + n(uint32_t(last)) + " ends at byte " + n(need) + " of buffer " +
+                                   n(a.bufferIndex) + "; " + n(bytes) + " are bound");
+        }
+        f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, false, fi->fmt6, fi->swap, fi->isFloat);
+        f->stepRate[loc] = 0;   // turnip's per-vertex divisor (tu_pipeline.cc:2357); fd6 writes 1 (fd6_context.cc:97-98): unread when not INSTANCED
+        f->dest[loc] = vfdDestCntlInstr(in.compmask, in.regid);
+        f->count = std::max(f->count, loc + 1);
+        f->used[a.bufferIndex] = true;
+        f->base[a.bufferIndex] = x.buffer->gpuAddress() + x.offset;
+        f->size[a.bufferIndex] = uint32_t(std::min<uint64_t>(bytes, 0xffffffffu));
+        f->stride[a.bufferIndex] = l.stride;
+    }
+    // the unused decode entries below the count: VFD_DEST_CNTL_INSTR writes no register (turnip :1606-1610)
+    for (uint32_t loc = 0; loc < f->count; loc++) {
+        if (f->decode[loc] == 0) f->dest[loc] = vfdDestCntlInstr(0, kRegidNone);
+    }
+    return true;
+}
+
 bool finite(double v) { return std::isfinite(v); }
 
 // gl_frag_result / gl_varying_slot numbers the Stage tables carry (Mesa shader_enums.h:987): FRAG_RESULT_DATA0 is 4
@@ -239,8 +348,10 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
         return refuse(why, "the two stages need " + n(vs.k.constlen + fs.k.constlen) + " vec4 of constants together (" + n(vs.k.constlen) + " + " +
                                n(fs.k.constlen) + "): the pipeline has " + n(kMaxConstPipeline) + " (ir3_compiler.c max_const_pipeline)");
     }
-    if (vs.numAttributes != 0) {
-        return refuse(why, std::string(stageName(vs)) + " reads " + n(vs.numAttributes) + " [[stage_in]] attribute(s): vertex descriptors are not served yet");
+    // the VS's [[stage_in]] attributes through the pipeline's vertex descriptor and the VS's own [[buffer(n)]] table
+    VertexFetch fetch;
+    if (!vertexFetch(vs, program.vertexDescriptor, draw, vsBindings, &fetch, why)) {
+        return false;
     }
     if (vs.pointSizeRegid != kRegidNone) {
         return refuse(why, std::string(stageName(vs)) + " writes a point size: points are not served");
@@ -547,12 +658,30 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
     // (VFD_CONTROL_2..5 for NULL stages, :1972-2036), VFD_CONTROL_6 0 (no primitive id), VFD_INDEX_OFFSET = vertexStart
     // (added to the vertex id through the static VFD_ADD_OFFSET.VERTEX: Metal's [[vertex_id]] includes it), the instance
     // start 0, PC_RESTART_INDEX all ones (fd6_draw.cc:416-422)
+    // With [[stage_in]] attributes: VFD_CONTROL_0 counts them, the decode and destination tables follow by attribute,
+    // each used fetch by Metal buffer index (BASE, SIZE to the bound end, STRIDE); the 32 fetch sizes were zeroed at the
+    // batch start, so an unused fetch reads nothing (fd6_emit.cc:1056-1059).
     if (o.vfd) {
         reg(stream, REG_A6XX_PC_MULTIVIEW_CNTL, 0);
         reg(stream, REG_A6XX_VFD_MULTIVIEW_CNTL, 0);
         regs(stream, REG_A6XX_VFD_CONTROL_0,
-             {0, vfdControl1(vs.vertexIdRegid, vs.instanceIdRegid, kRegidNone, kRegidNone), vfdControl2None(), vfdControl3None(), vfdControl4None(),
+             {A6XX_VFD_CONTROL_0_FETCH_CNT(fetch.count) | A6XX_VFD_CONTROL_0_DECODE_CNT(fetch.count),
+              vfdControl1(vs.vertexIdRegid, vs.instanceIdRegid, kRegidNone, kRegidNone), vfdControl2None(), vfdControl3None(), vfdControl4None(),
               vfdControl5None(), 0});
+        if (fetch.count != 0) {
+            std::vector<uint32_t> dec, dst;
+            for (uint32_t loc = 0; loc < fetch.count; loc++) {
+                dec.push_back(fetch.decode[loc]);
+                dec.push_back(fetch.stepRate[loc]);
+                dst.push_back(fetch.dest[loc]);
+            }
+            stream.registers(REG_A6XX_VFD_DECODE_INSTR, dec.data(), uint32_t(dec.size()));
+            stream.registers(REG_A6XX_VFD_DEST_CNTL_INSTR, dst.data(), uint32_t(dst.size()));
+            for (uint32_t bi = 0; bi < kMaxVertexBuffers; bi++) {
+                if (!fetch.used[bi]) continue;
+                regs(stream, regVfdFetchBase(bi), {uint32_t(fetch.base[bi]), uint32_t(fetch.base[bi] >> 32), fetch.size[bi], fetch.stride[bi]});
+            }
+        }
         regs(stream, REG_A6XX_VFD_INDEX_OFFSET, {draw.vertexStart, 0});
         reg(stream, REG_A6XX_PC_RESTART_INDEX, 0xffffffffu);
     }

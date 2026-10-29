@@ -173,6 +173,15 @@ unsigned hakios_metal_program_resource_count(hakios_metal_program *program, unsi
 int hakios_metal_program_resource(hakios_metal_program *program, unsigned stage, unsigned i,
     unsigned *kind, unsigned *index, unsigned *size_bytes);
 
+/* the program's vertex descriptor (MTLRenderPipelineDescriptor.vertexDescriptor), Metal's numbers: [[attribute(INDEX)]]
+ * is FORMAT (MTLVertexFormat; Float..Float4, Half2, Half4, UChar4Normalized served) at OFFSET bytes into each vertex of
+ * [[buffer(BUFFER_INDEX)]]; that buffer's layout is STRIDE bytes a vertex and STEP_FUNCTION (MTLVertexStepFunction;
+ * PerVertex 1 served). -1 with the reason for an index past 30. What is not served is refused by the draw, by name. */
+int hakios_metal_program_set_vertex_attribute(hakios_metal_program *program, unsigned index, unsigned format, unsigned offset,
+    unsigned buffer_index);
+int hakios_metal_program_set_vertex_layout(hakios_metal_program *program, unsigned buffer_index, unsigned stride,
+    unsigned step_function, unsigned step_rate);
+
 struct hakios_metal_viewport { double x, y, width, height, znear, zfar; };   /* MTLViewport: origin top left, NDC y up */
 struct hakios_metal_scissor { unsigned x, y, width, height; };              /* MTLScissorRect */
 

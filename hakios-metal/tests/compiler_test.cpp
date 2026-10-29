@@ -638,9 +638,8 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     // the unchanged pair links: every refusal below is the one change
     CHECK(link(vs, fs) != nullptr);
     auto m = copyOf(vs);
-    m->stage.numAttributes = 1;
-    CHECK(link(m, fs) == nullptr);
-    expectRefusal(why, "the vertex stage tri_flat_vs reads 1 [[stage_in]] attribute(s): vertex descriptors are not served yet");
+    m->stage.numAttributes = 1;   // attributes link: the vertex descriptor is the draw's to judge
+    CHECK(link(m, fs) != nullptr);
     m = copyOf(vs);
     m->stage.k.numSsbos = 1;
     CHECK(link(m, fs) == nullptr);

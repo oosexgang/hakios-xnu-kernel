@@ -452,6 +452,24 @@ int hakios_metal_program_resource(hakios_metal_program* p, unsigned stage, unsig
     return 0;
 }
 
+int hakios_metal_program_set_vertex_attribute(hakios_metal_program* p, unsigned index, unsigned format, unsigned offset, unsigned bufferIndex) {
+    if (index >= kMaxVertexAttributes) {
+        failed("vertex attribute " + std::to_string(index) + ": MTLVertexDescriptor's attributes are 0 to 30");
+        return -1;
+    }
+    p->program->program.vertexDescriptor.attributes[index] = VertexAttribute{VertexFormat(format), offset, bufferIndex};
+    return 0;
+}
+
+int hakios_metal_program_set_vertex_layout(hakios_metal_program* p, unsigned bufferIndex, unsigned stride, unsigned stepFunction, unsigned stepRate) {
+    if (bufferIndex >= kMaxVertexBuffers) {
+        failed("vertex layout " + std::to_string(bufferIndex) + ": MTLVertexDescriptor's layouts are 0 to 30");
+        return -1;
+    }
+    p->program->program.vertexDescriptor.layouts[bufferIndex] = VertexLayout{stride, VertexStep(stepFunction), stepRate};
+    return 0;
+}
+
 int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
                          const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,
                          unsigned vertexStart, unsigned vertexCount, unsigned instanceCount, hakios_metal_buffer* const* vsBuffers,

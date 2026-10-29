@@ -452,6 +452,30 @@ TEST(c_api_program_and_draw) {
         hakios_metal_program_free(cp);
     }
     hakios_metal_buffer_free(b);
+    // a [[stage_in]] program: tri_attr_vs refused while its attributes are undescribed, drawn once the descriptor is set
+    std::vector<uint8_t> avsBc = readFile("out/host/kernels/tri_attr_vs.bc"), cfs = readFile("out/host/kernels/tri_color_fs.bc");
+    hakios_metal_program* ap = hakios_metal_program_new_bitcode(avsBc.data(), avsBc.size(), cfs.data(), cfs.size(), 70);
+    CHECK(ap != nullptr);
+    if (ap != nullptr) {
+        hakios_metal_buffer* vb = hakios_metal_buffer_new(d, 72);
+        hakios_metal_buffer* vsTable[1] = {vb};
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_draw(cb, ap, &pass, nullptr, nullptr, 3, 0, 6, 1, vsTable, nullptr, 1, nullptr, nullptr, 0), -1);
+        CHECK(strstr(hakios_metal_error(), "reads [[attribute(0)]], which the vertex descriptor does not describe") != nullptr);
+        hakios_metal_cb_free(cb);
+        CHECK_EQ(hakios_metal_program_set_vertex_attribute(ap, 31, 29, 0, 0), -1);
+        CHECK_EQ(hakios_metal_program_set_vertex_attribute(ap, 0, 29, 0, 0), 0);    // Float2 at 0
+        CHECK_EQ(hakios_metal_program_set_vertex_attribute(ap, 1, 9, 8, 0), 0);     // UChar4Normalized at 8
+        CHECK_EQ(hakios_metal_program_set_vertex_layout(ap, 0, 12, 1, 1), 0);       // stride 12, per vertex
+        cb = hakios_metal_cb_new(q);
+        CHECK_EQ(hakios_metal_cb_draw(cb, ap, &pass, nullptr, nullptr, 3, 0, 6, 1, vsTable, nullptr, 1, nullptr, nullptr, 0), 0);
+        hakios_metal_buffer_free(vb);   // kept by the command buffer
+        hakios_metal_cb_commit(cb, nullptr, nullptr);
+        hakios_metal_cb_wait(cb);
+        CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+        hakios_metal_cb_free(cb);
+        hakios_metal_program_free(ap);
+    }
     hakios_metal_texture* plain = hakios_metal_texture_new(d, 2, 70, 64, 64, 3);
     struct hakios_metal_render_pass notRt = {plain, 1, 1, {0, 0, 0, 0}};
     cb = hakios_metal_cb_new(q);

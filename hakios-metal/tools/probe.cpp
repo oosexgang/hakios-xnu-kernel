@@ -37,6 +37,7 @@
 #include "../tests/fixtures/tri_color_vs_bc.hpp"
 #include "../tests/fixtures/tri_flat_fs_air.hpp"
 #include "../tests/fixtures/tri_cflat_fs_air.hpp"
+#include "../tests/fixtures/tri_attr_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_fs_bc.hpp"
 #include "../tests/fixtures/tri_flat_vs_air.hpp"
 #include "../tests/fixtures/tri_flat_vs_bc.hpp"
@@ -1277,13 +1278,19 @@ int main(int argc, char** argv) {
         // has A = (64,64) red, B = (64,0) green, C = (0,0) blue: lambda_A = y/64, lambda_B = (x - y)/64, lambda_C = 1 - x/64.
         // RGBA8Unorm holds round(255 * lambda); the interpolator's precision is not documented, so a byte within one unit
         // of it (1/255 + 1/512 in value) is right; A is 255 exactly; the 64 diagonal pixels are excluded (either triangle's).
-        if (t) {
+        auto colourPair = [&](const Program& prog, const Bindings& vsb, const std::string& label) {
             const uint32_t colourCanary = texCanary([](uint32_t v) {
                 // a word whose alpha byte is not 0xff can be no interpolated colour
                 return (v >> 24) == 0xffu;
             });
             fillBo(*t, colourCanary);
-            auto cb = drawInto(*t, color, drawOf(0, 6));
+            RenderPass rp;
+            rp.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            if (cb->draw(prog, rp, drawOf(0, 6), vsb, Bindings{})) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
             std::vector<uint8_t> bo = textureBo(*t);
             uint32_t within = 0, off = 0, counted = 0, maxDev = 0, firstX = 0, firstY = 0, firstChannel = 0, firstGot = 0, firstWant = 0;
             uint32_t canaryLeft = 0;
@@ -1335,7 +1342,40 @@ int main(int argc, char** argv) {
                 line += text;
             }
             if (canaryLeft != 0) line += ", " + std::to_string(canaryLeft) + " still canary";
-            report(completed(*cb) && within == counted, "tri_color, the pair (vertices 0..6), per-vertex colours interpolated: " + line + status(*cb, gpu));
+            report(completed(*cb) && within == counted, label + ": " + line + status(*cb, gpu));
+        };
+        if (t) colourPair(color, Bindings{}, "tri_color, the pair (vertices 0..6), per-vertex colours interpolated");
+        // 9h. the first vertex fetch: tri_attr_vs takes position and colour from [[stage_in]] attributes, one interleaved
+        // buffer of 12-byte vertices -- Float2 at 0, UChar4Normalized at 8 -- holding the same six positions and colours
+        // tri_color_vs computes from vertex_id, so the expectation is 9d's exactly: positions wrong would move the
+        // triangles, a wrong offset, stride or format would change the bytes
+        if (t) {
+            Program attr{kernels::tri_attr_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_attr"};
+            attr.vertexDescriptor.attributes[0] = VertexAttribute{VertexFormat::kFloat2, 0, 0};
+            attr.vertexDescriptor.attributes[1] = VertexAttribute{VertexFormat::kUChar4Normalized, 8, 0};
+            attr.vertexDescriptor.layouts[0] = VertexLayout{12, VertexStep::kPerVertex, 1};
+            auto vb = newBuffer(gpu, 6 * 12, &why);
+            if (vb == nullptr) {
+                report(false, "tri_attr: a 72-byte vertex buffer: " + why);
+            } else {
+                const float pos[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+                const uint32_t rgba[3] = {0xff0000ffu, 0xff00ff00u, 0xffff0000u};   // red, green, blue as bytes R G B A in memory
+                auto* bytes = static_cast<uint8_t*>(vb->contents());
+                for (int v = 0; v < 6; v++) {
+                    memcpy(bytes + 12 * v, pos[v], 8);
+                    memcpy(bytes + 12 * v + 8, &rgba[v % 3], 4);
+                }
+                Bindings vsb;
+                vsb.buffers = {Binding{vb.get(), 0}};
+                colourPair(attr, vsb, "tri_attr, the pair through a vertex descriptor (Float2 at 0, UChar4Normalized at 8, stride 12)");
+                // the refusal: one vertex more than the buffer holds
+                auto cb = queue->commandBuffer();
+                RenderPass rp;
+                rp.color0 = t.get();
+                bool accepted = cb->draw(attr, rp, drawOf(0, 7), vsb, Bindings{});
+                report(!accepted && cb->error().find("ends at byte 80 of buffer 0; 72 are bound") != std::string::npos,
+                       "control, tri_attr over 7 vertices of a 6-vertex buffer: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
+            }
         }
         // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the
         // draw hangs or writes nothing, this says which group it needs, one boot for all of it, each hang costing a reset. A

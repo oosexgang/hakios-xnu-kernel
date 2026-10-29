@@ -64,6 +64,20 @@ uint32_t bytesPerPixel(uint32_t fmt) {
     }
 }
 
+// one element of a vertex attribute in the formats render.cpp serves (fd6_format_table.c's vertex column); 0 for another
+uint32_t vertexElementBytes(uint32_t fmt) {
+    switch (fmt) {
+    case a6xx::FMT6_8_8_8_8_UNORM: return 4;
+    case a6xx::FMT6_16_16_FLOAT: return 4;
+    case a6xx::FMT6_16_16_16_16_FLOAT: return 8;
+    case a6xx::FMT6_32_FLOAT: return 4;
+    case a6xx::FMT6_32_32_FLOAT: return 8;
+    case a6xx::FMT6_32_32_32_FLOAT: return 12;
+    case a6xx::FMT6_32_32_32_32_FLOAT: return 16;
+    default: return 0;
+    }
+}
+
 bool allZero(const uint32_t* d, uint32_t n) {
     for (uint32_t i = 0; i < n; i++) {
         if (d[i] != 0) return false;
@@ -790,7 +804,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         fault("GRAS_CL_GUARDBAND_CLIP_ADJ was never written");
         return false;
     }
-    // the vertex fetch: equal counts, and every fetch below them inside a buffer with a decode and a destination register
+    // the vertex fetch: equal counts (turnip writes both as the attribute count, tu_shader.cc:1592-1595)
     uint32_t vfd0 = reg(REG_A6XX_VFD_CONTROL_0);
     d.vfdFetchCount = fieldOf(vfd0, A6XX_VFD_CONTROL_0_FETCH_CNT__MASK, A6XX_VFD_CONTROL_0_FETCH_CNT__SHIFT);
     d.vfdDecodeCount = fieldOf(vfd0, A6XX_VFD_CONTROL_0_DECODE_CNT__MASK, A6XX_VFD_CONTROL_0_DECODE_CNT__SHIFT);
@@ -798,12 +812,37 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         fault(text("VFD_CONTROL_0 counts %llu fetches and %llu decodes", d.vfdFetchCount, d.vfdDecodeCount));
         return false;
     }
-    for (uint32_t i = 0; i < d.vfdFetchCount; i++) {
-        uint64_t base = reg64(regVfdFetchBase(i));
-        uint32_t size = reg(vfdFetchSize(i));
-        if (size == 0 || at(base, size) == nullptr || regs_.find(regVfdDecodeInstr(i)) == regs_.end() ||
-            fieldOf(reg(regVfdDestCntlInstr(i)), A6XX_VFD_DEST_CNTL_INSTR_REGID__MASK, A6XX_VFD_DEST_CNTL_INSTR_REGID__SHIFT) == kRegidNone) {
-            fault(text("vertex fetch %llu: %llu bytes at %#llx outside every buffer, or no VFD_DECODE_INSTR, or no destination register", i, size, base));
+    // Decode entry n is [[attribute(n)]]; its IDX names the fetch entry (the buffer) it reads, as turnip programs them
+    // (tu6_emit_vertex_input, tu_pipeline.cc:2330-2360). A decode with a destination must have a known format, its fetch a
+    // size inside a buffer, and the draw's last vertex's element inside that size: past it the GPU reads what follows.
+    for (uint32_t i = 0; i < d.vfdDecodeCount; i++) {
+        uint32_t dest = reg(regVfdDestCntlInstr(i));
+        if (fieldOf(dest, A6XX_VFD_DEST_CNTL_INSTR_REGID__MASK, A6XX_VFD_DEST_CNTL_INSTR_REGID__SHIFT) == kRegidNone) {
+            continue;   // a hole: no register written
+        }
+        if (regs_.find(regVfdDecodeInstr(i)) == regs_.end()) {
+            fault(text("vertex attribute %llu has a destination register and no VFD_DECODE_INSTR", i));
+            return false;
+        }
+        uint32_t dec = reg(regVfdDecodeInstr(i));
+        uint32_t b = fieldOf(dec, A6XX_VFD_DECODE_INSTR_IDX__MASK, A6XX_VFD_DECODE_INSTR_IDX__SHIFT);
+        uint32_t offset = fieldOf(dec, A6XX_VFD_DECODE_INSTR_OFFSET__MASK, A6XX_VFD_DECODE_INSTR_OFFSET__SHIFT);
+        uint32_t elem = vertexElementBytes(fieldOf(dec, A6XX_VFD_DECODE_INSTR_FORMAT__MASK, A6XX_VFD_DECODE_INSTR_FORMAT__SHIFT));
+        uint64_t base = reg64(regVfdFetchBase(b));
+        uint32_t size = reg(vfdFetchSize(b));
+        uint32_t stride = reg(regVfdFetchStride(b));
+        uint64_t last = uint64_t(reg(REG_A6XX_VFD_INDEX_OFFSET)) + (d.numIndices == 0 ? 0 : d.numIndices - 1);
+        if (elem == 0) {
+            fault(text("vertex attribute %llu: VFD_DECODE_INSTR.FORMAT is not a vertex format this model knows", i));
+            return false;
+        }
+        if (size == 0 || at(base, size) == nullptr) {
+            fault(text("vertex attribute %llu: fetch %llu is %llu bytes", i, b, size) + text(" at %#llx, outside every buffer", base, 0, 0));
+            return false;
+        }
+        if (last * stride + offset + elem > size) {
+            fault(text("vertex attribute %llu: vertex %llu's element ends at byte %llu", i, last, last * stride + offset + elem) +
+                  text(" of fetch %llu, whose size is %llu", b, size, 0));
             return false;
         }
     }

@@ -670,10 +670,8 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
         return nullptr;
     }
     // --- what the first draw does not serve, refused by name before any link (render.hpp names the list) ---
-    if (V.numAttributes != 0) {
-        refuse(why, stageName(*vs) + " reads " + std::to_string(V.numAttributes) + " [[stage_in]] attribute(s): vertex descriptors are not served yet");
-        return nullptr;
-    }
+    // (a VS's [[stage_in]] attributes link: what they are in memory is the vertex descriptor's, judged by the draw)
+    (void)V;
     for (const CompiledStage* s : {vs.get(), fs.get()}) {
         const Kernel& k = s->stage.k;
         // pushed constant ranges are served (render.cpp: pushedRanges, the compute rule); a device buffer (the 3D IBO table)

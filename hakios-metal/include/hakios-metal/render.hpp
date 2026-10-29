@@ -126,11 +126,48 @@ struct Linkage {
     uint32_t mrtComponents;   // SP_FS_RENDER_COMPONENTS / RB_RENDER_COMPONENTS: 0xf per colour output written
 };
 
+// --- the vertex descriptor (MTLVertexDescriptor), in Metal's own numbers -------------------------------------------------
+// A VS [[stage_in]] attribute is a VS input at VERT_ATTRIB_GENERIC0 + n for [[attribute(n)]]; what it is in memory is not
+// the shader's but the pipeline's: format, byte offset and the [[buffer(b)]] it is fetched from, and that buffer's stride
+// and step. The hardware's two tables follow turnip's (tu6_emit_vertex_input, tu_pipeline.cc:2330-2360; tu6_emit_vfd_dest,
+// tu_shader.cc:1573-1612): decode entry n = attribute n (VFD_DECODE_INSTR / VFD_DEST_CNTL_INSTR, IDX naming the fetch),
+// fetch entry b = Metal buffer index b (VFD_FETCH BASE / SIZE / STRIDE), as turnip uses the Vulkan binding number.
+enum class VertexFormat : uint32_t {   // MTLVertexFormat (MTLVertexDescriptor.h); the served ones
+    kInvalid = 0,
+    kUChar4Normalized = 9,
+    kHalf2 = 25,
+    kHalf4 = 27,
+    kFloat = 28,
+    kFloat2 = 29,
+    kFloat3 = 30,
+    kFloat4 = 31,
+};
+enum class VertexStep : uint32_t { kConstant = 0, kPerVertex = 1, kPerInstance = 2 };   // MTLVertexStepFunction; per vertex is served
+
+constexpr uint32_t kMaxVertexAttributes = 31;   // MTLVertexDescriptor's attributes[0..30]
+constexpr uint32_t kMaxVertexBuffers = 31;      // its layouts[0..30], one per [[buffer(n)]] index
+
+struct VertexAttribute {
+    VertexFormat format = VertexFormat::kInvalid;   // kInvalid: not described
+    uint32_t offset = 0;                            // bytes into each vertex of the buffer: VFD_DECODE_INSTR.OFFSET (12 bits)
+    uint32_t bufferIndex = 0;                       // the [[buffer(n)]] it is fetched from: VFD_DECODE_INSTR.IDX
+};
+struct VertexLayout {
+    uint32_t stride = 0;                            // VFD_FETCH_STRIDE (12 bits); 0 refused (Metal's constant step only)
+    VertexStep step = VertexStep::kPerVertex;
+    uint32_t stepRate = 1;
+};
+struct VertexDescriptor {
+    VertexAttribute attributes[kMaxVertexAttributes];
+    VertexLayout layouts[kMaxVertexBuffers];
+};
+
 struct Program {
     Stage vs;
     Stage fs;
     Linkage link;
     const char* name;
+    VertexDescriptor vertexDescriptor{};   // what the VS's [[stage_in]] attributes are in memory (none: a VS without attributes)
 };
 
 namespace render {
@@ -224,7 +261,8 @@ struct Options {
 // numUboRanges, numSsbos, numUbos or numTextureSlots > 0 is refused by name).
 // Refused by name, among others: a target without kTextureUsageRenderTarget, a target format whose element class the
 // FS colour output does not match, numColorOutputs != 1, depth/sample-mask/stencil outputs, writesPos, perSamp,
-// fbRead, dualSrcBlend, readsPrimid, numSamplerPrefetch != 0, a VS with attributes, instanceCount != 1, a primitive
+// fbRead, dualSrcBlend, readsPrimid, numSamplerPrefetch != 0, a VS attribute the vertex descriptor does not describe or
+// describes in a format, step or layout not served or whose fetch runs past its bound buffer, instanceCount != 1, a primitive
 // other than triangles and strips, vertexCount 0, a viewport or scissor outside the target, load kClear, store other
 // than kStore, instrlen > 127, pvtmem, the two stages' constlen over 512 vec4 together, and whatever link() refuses.
 bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw,

@@ -88,6 +88,7 @@ enum a6xx_format : uint32_t {
     FMT6_8_8_8_8_UNORM = 48,       // a6xx.xml.h:86   RGBA8Unorm, RGBA8Unorm_sRGB, and with SWAP = WXYZ the BGRA8 pair
     FMT6_32_FLOAT = 74,            // a6xx.xml.h:105  R32Float
     FMT6_32_UINT = 75,             // a6xx.xml.h:106  a raw buffer: one dword per element; R32Uint
+    FMT6_16_16_FLOAT = 69,         // a6xx.xml.h:100  a half2 vertex attribute (fd6_format_table.c:155 VTC(R16G16_FLOAT, 16_16_FLOAT, WZYX))
     FMT6_16_16_16_16_FLOAT = 98,   // a6xx.xml.h:116  RGBA16Float
     FMT6_32_32_FLOAT = 103,        // a6xx.xml.h:121  a float2 vertex attribute (fd6_format_table.c:258 VTC(R32G32_FLOAT, 32_32_FLOAT, WZYX))
     FMT6_32_32_UINT = 104,         // a6xx.xml.h:122

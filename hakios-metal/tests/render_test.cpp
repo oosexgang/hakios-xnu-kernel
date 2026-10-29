@@ -19,6 +19,7 @@
 #include "hakios-metal/render.hpp"
 #include "hakios-metal/texture.hpp"
 #include "fixtures/end_only.hpp"
+#include "fixtures/tri_attr_vs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
@@ -164,6 +165,18 @@ struct Encoded {
             i += 1 + h.count;
         }
         return size_t(-1);
+    }
+    // the index of the VALUE word of the LAST type-4 write that covers register REG, or -1 (the one the GPU keeps: the
+    // batch start zeroes the 32 fetch sizes before the draw writes the ones it uses)
+    size_t findLastReg(uint32_t reg) const {
+        const auto& w = stream.words();
+        size_t found = size_t(-1);
+        for (size_t i = 0; i < w.size();) {
+            pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kRegisters && reg >= h.reg && reg < h.reg + h.count) found = i + 1 + (reg - h.reg);
+            i += 1 + h.count;
+        }
+        return found;
     }
     // the index of the VALUE word of the first type-4 write that covers register REG, or -1
     size_t findReg(uint32_t reg) const {
@@ -319,8 +332,9 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
     // the vertex stage's shape
     {
         Program p = handProgram();
+        p.vs.inputs[p.vs.numInputs++] = StageInput{15, regid(2, 0), 0x3, 0, 0, 0, 0, 0};   // VERT_ATTRIB_GENERIC0: [[attribute(0)]]
         p.vs.numAttributes = 1;
-        refused(r, p, pass, d, "hand_vs reads 1 [[stage_in]] attribute(s): vertex descriptors are not served yet");
+        refused(r, p, pass, d, "hand_vs reads [[attribute(0)]], which the vertex descriptor does not describe");
         p = handProgram();
         p.vs.pointSizeRegid = regid(1, 0);
         refused(r, p, pass, d, "hand_vs writes a point size: points are not served");
@@ -1537,7 +1551,7 @@ TEST(the_fake_refuses_a_draw_whose_viewport_scissors_or_fetch_are_off) {
     {
         Twin w;
         w.at(REG_A6XX_VFD_CONTROL_0) = A6XX_VFD_CONTROL_0_FETCH_CNT(1) | A6XX_VFD_CONTROL_0_DECODE_CNT(1);
-        CHECK(has(w.fault(), "vertex fetch 0: 0 bytes at 0 outside every buffer, or no VFD_DECODE_INSTR, or no destination register"));
+        CHECK(has(w.fault(), "vertex attribute 0 has a destination register and no VFD_DECODE_INSTR"));
     }
 }
 
@@ -1811,6 +1825,103 @@ TEST(a_draw_refuses_a_constant_range_it_cannot_serve_by_name) {
     Bindings ok;
     ok.buffers = {Binding{colour.get(), 0}};
     refusedWith(short_, ok, "tri_cflat_fs_air: constant buffer 0's range at vec4 0 runs past its constlen of 0");
+    CHECK_EQ(r.fake->stats().submits, 0u);
+}
+
+// --- the first vertex fetch: tri_attr_vs's two [[stage_in]] attributes through a vertex descriptor ------------------------
+
+namespace {
+// one interleaved buffer of 12-byte vertices: Float2 position at 0, UChar4Normalized colour at 8 ([[buffer(0)]])
+Program attrProgram() {
+    Program p{kernels::tri_attr_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_attr"};
+    p.vertexDescriptor.attributes[0] = VertexAttribute{VertexFormat::kFloat2, 0, 0};
+    p.vertexDescriptor.attributes[1] = VertexAttribute{VertexFormat::kUChar4Normalized, 8, 0};
+    p.vertexDescriptor.layouts[0] = VertexLayout{12, VertexStep::kPerVertex, 1};
+    return p;
+}
+}  // namespace
+
+TEST(a_draw_fetches_two_attributes_through_the_vertex_descriptor) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program p = attrProgram();
+    CHECK_EQ(p.vs.numAttributes, 2u);
+    std::string why;
+    auto vb = newBuffer(*r.gpu, 6 * 12, &why);
+    CHECK(vb != nullptr);
+    Bindings vsb;
+    vsb.buffers = {Binding{vb.get(), 0}};
+    Encoded e(r, p, pass, wholeDraw(6), render::Options{}, vsb, Bindings{});
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    using namespace a6xx;
+    const auto& w = e.stream.words();
+    auto value = [&](uint32_t reg) { size_t i = e.findLastReg(reg); CHECK(i != size_t(-1)); return i == size_t(-1) ? 0u : w[i]; };
+    // two attributes: both counts 2 (turnip's attr_count, tu_shader.cc:1592-1595)
+    CHECK_EQ(value(REG_A6XX_VFD_CONTROL_0), A6XX_VFD_CONTROL_0_FETCH_CNT(2) | A6XX_VFD_CONTROL_0_DECODE_CNT(2));
+    // decode 0: buffer 0, offset 0, FMT6_32_32_FLOAT 103, WZYX, UNK30, FLOAT = 0xc6700000 (a6xx_test's literal)
+    CHECK_EQ(value(regVfdDecodeInstr(0)), 0xc6700000u);
+    // decode 1: buffer 0, offset 8, FMT6_8_8_8_8_UNORM 48, FLOAT: 0xc3000100
+    CHECK_EQ(value(regVfdDecodeInstr(1)), 0xc3000100u);
+    // destinations: r0.x xy (0x3 | 0 << 4) and r1.x xyzw (0xf | 4 << 4), from the fixture's inputs
+    CHECK_EQ(value(regVfdDestCntlInstr(0)), vfdDestCntlInstr(0x3, regid(0, 0)));
+    CHECK_EQ(value(regVfdDestCntlInstr(1)), vfdDestCntlInstr(0xf, regid(1, 0)));
+    // fetch 0 = the buffer: base, its 72 bytes, stride 12
+    CHECK_EQ(uint64_t(value(regVfdFetchBase(0))) | uint64_t(w[e.findLastReg(regVfdFetchBase(0)) + 1]) << 32, vb->gpuAddress());
+    CHECK_EQ(value(vfdFetchSize(0)), 72u);
+    CHECK_EQ(value(regVfdFetchStride(0)), 12u);
+    // the whole draw on the fake
+    auto cb = drawOnce(r, p, pass, wholeDraw(6), render::Options{}, vsb, Bindings{});
+    CHECK(cb->error().empty());
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    CHECK_EQ(r.fake->stats().lastDraw.vfdDecodeCount, 2u);
+    // the twin: the fetch's size cut below the sixth vertex's colour (5 * 12 + 8 + 4 = 72 bytes): the fake refuses it
+    std::vector<uint32_t> cut = w;
+    cut[e.findLastReg(vfdFetchSize(0))] = 71;
+    CHECK(has(faultOf(r, cut), "vertex attribute 1: vertex 5's element ends at byte 72 of fetch 0, whose size is 71"));
+    // and a decode naming a format the model does not know
+    std::vector<uint32_t> fmt = w;
+    fmt[e.findLastReg(regVfdDecodeInstr(0))] = vfdDecodeInstr(0, 0, false, FMT6_32_UINT, WZYX, false);
+    CHECK(has(faultOf(r, fmt), "vertex attribute 0: VFD_DECODE_INSTR.FORMAT is not a vertex format this model knows"));
+}
+
+TEST(a_draw_refuses_a_vertex_fetch_it_cannot_serve_by_name) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    std::string why;
+    auto vb = newBuffer(*r.gpu, 6 * 12, &why);
+    Bindings vsb;
+    vsb.buffers = {Binding{vb.get(), 0}};
+    auto refusedWith = [&](const Program& q, const Bindings& b, uint32_t vertexCount, const char* want) {
+        Encoded e(r, q, pass, wholeDraw(vertexCount), render::Options{}, b, Bindings{});
+        CHECK(!e.ok);
+        expectRefusal(e.error, want);
+        CHECK_EQ(e.stream.size(), size_t(0));
+    };
+    Program p = attrProgram();
+    p.vertexDescriptor.attributes[1] = VertexAttribute{};
+    refusedWith(p, vsb, 6, "tri_attr_vs_air reads [[attribute(1)]], which the vertex descriptor does not describe");
+    p = attrProgram();
+    p.vertexDescriptor.attributes[1].format = VertexFormat(41);   // UInt1010102Normalized
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: [[attribute(1)]] is MTLVertexFormat 41: Float..Float4, Half2, Half4 and UChar4Normalized are served");
+    p = attrProgram();
+    p.vertexDescriptor.layouts[0].step = VertexStep::kPerInstance;
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0 steps per instance: only per-vertex fetch is served yet");
+    p = attrProgram();
+    p.vertexDescriptor.layouts[0].stride = 0;
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0's stride of 0: 1 to 4095 bytes (VFD_FETCH_STRIDE holds 12 bits)");
+    p = attrProgram();
+    p.vertexDescriptor.attributes[0].offset = 4096;
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: [[attribute(0)]] at offset 4096: VFD_DECODE_INSTR.OFFSET holds 12 bits");
+    refusedWith(attrProgram(), Bindings{}, 6, "tri_attr_vs_air: no buffer bound at index 0 (the vertex buffer of [[attribute(0)]])");
+    // seven vertices over six vertices' bytes: the seventh's position ends at byte 6 * 12 + 8 = 80 of 72
+    refusedWith(attrProgram(), vsb, 7, "tri_attr_vs_air: [[attribute(0)]] of vertex 6 ends at byte 80 of buffer 0; 72 are bound");
     CHECK_EQ(r.fake->stats().submits, 0u);
 }
 
