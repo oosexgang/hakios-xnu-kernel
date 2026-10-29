@@ -373,7 +373,12 @@ TEST(a6xx_batch_start_words) {
     CHECK_EQ(sizeof(kStaticStateAfterDrawState) / sizeof(kStaticStateAfterDrawState[0]), size_t(7));
     CHECK_EQ(kStaticStateAfterDrawState[0].reg, REG_A6XX_VPC_SO_STREAM_CNTL);
     CHECK_EQ(kStaticStateAfterDrawState[6].reg, REG_A6XX_RB_LRZ_CNTL);
-    CHECK_EQ(sizeof(kStaticStateTail) / sizeof(kStaticStateTail[0]), size_t(1));
+    // the tail: fd6's conservative-ras zero, then turnip's RB_ALPHA_CONTROL 0 (the render contract's batch start)
+    CHECK_EQ(sizeof(kStaticStateTail) / sizeof(kStaticStateTail[0]), size_t(2));
+    CHECK_EQ(kStaticStateTail[0].reg, REG_A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL);
+    CHECK_EQ(kStaticStateTail[1].reg, 0x8864u);
+    CHECK_EQ(kStaticStateTail[1].reg, REG_A6XX_RB_ALPHA_CONTROL);
+    CHECK_EQ(kStaticStateTail[1].value, 0u);
     // every register in the tables is in the A6xx register space, and the magic values are the dev-info decimals
     for (const RegWrite& w : kStaticState) {
         CHECK(w.reg >= 0x0e12 && w.reg <= 0xbe04);

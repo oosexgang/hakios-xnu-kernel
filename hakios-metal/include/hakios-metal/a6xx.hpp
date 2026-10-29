@@ -1251,9 +1251,13 @@ constexpr uint32_t waitRegMem0(cp_cond_function function, poll_memory_type poll)
 //   setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0, 0); every entry of kStaticStateAfterDrawState;
 //   REG_A6XX_VFD_FETCH_SIZE(i) = 0 for i in 0..31 (vfdFetchSize(i), 32 type4 of one); SP_TP_BORDER_COLOR_BASE_ADDR and
 //   SP_PS_TP_BORDER_COLOR_BASE_ADDR (type4 of two each) = a 128-byte aligned buffer of kBorderColorBytes;
-//   every entry of kStaticStateTail; then CP_WAIT_FOR_IDLE and REG_A6XX_RB_CCU_CNTL = rbCcuCntlSysmem() (fd6_emit_ccu_cntl's
-//   A6XX path: the wait first, "early a6xx needed this"). Gallium ends with three CP_SET_AMBLE (3 words each) telling
-//   the CP what to run around a preemption; they are optional for a batch that is not preempted (see below).
+//   every entry of kStaticStateTail (fd6's PC_DGEN_SU_CONSERVATIVE_RAS_CNTL, then RB_ALPHA_CONTROL 0, which only
+//   turnip's table writes and a draw depends on: the render contract's batch start); then CP_WAIT_FOR_IDLE and
+//   REG_A6XX_RB_CCU_CNTL = rbCcuCntlSysmem() (fd6_emit_ccu_cntl's A6XX path: the wait first, "early a6xx needed
+//   this"). Gallium ends with three CP_SET_AMBLE (3 words each) telling the CP what to run around a preemption; they
+//   are optional for a batch that is not preempted (see below). Where the two witnesses' tables differ the table
+//   keeps fd6's value (SP_FLOAT_CNTL F16_NO_INF where turnip writes 0; GRAS_UNKNOWN_8110 2 where turnip writes 0);
+//   neither is measured, both are --bisect items.
 // emit_marker6 (a CP_WAIT_FOR_IDLE and a write of a counter to CP_SCRATCH_REG(7), or (6) around the IB) is compiled
 // out of Gallium's release builds (freedreno_util.h __EMIT_MARKER is 0 without DEBUG), so there is nothing to copy.
 
@@ -1393,6 +1397,19 @@ inline constexpr uint32_t REG_A6XX_SP_TP_BORDER_COLOR_BASE_ADDR = 0xb302;       
 inline constexpr uint32_t REG_A6XX_SP_PS_TP_BORDER_COLOR_BASE_ADDR = 0xb180;           // a6xx.xml.h:9653  64-bit
 inline constexpr uint32_t REG_A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL = 0x980a;          // a6xx.xml.h:7483
 inline constexpr uint32_t A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL_CONSERVATIVERASEN = 0x00000001;  // a6xx.xml.h:7484
+// turnip's static table adds the alpha test, off (tu_cmd_buffer.cc:1457); fd6 writes it in its zsa state (fd6_zsa.cc:223-227)
+inline constexpr uint32_t REG_A6XX_RB_ALPHA_CONTROL = 0x8864;                               // a6xx.xml.h:5873
+inline constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_REF__MASK = 0x000000ff;               // a6xx.xml.h:5874
+inline constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_REF__SHIFT = 0;                       // a6xx.xml.h:5875
+inline constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_TEST = 0x00000100;                    // a6xx.xml.h:5880
+inline constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_TEST_FUNC__MASK = 0x00000e00;         // a6xx.xml.h:5881
+inline constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_TEST_FUNC__SHIFT = 9;                 // a6xx.xml.h:5882
+constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_REF(uint32_t v) {
+    return field(v, A6XX_RB_ALPHA_CONTROL_ALPHA_REF__SHIFT, A6XX_RB_ALPHA_CONTROL_ALPHA_REF__MASK);
+}
+constexpr uint32_t A6XX_RB_ALPHA_CONTROL_ALPHA_TEST_FUNC(adreno_compare_func v) {
+    return field(v, A6XX_RB_ALPHA_CONTROL_ALPHA_TEST_FUNC__SHIFT, A6XX_RB_ALPHA_CONTROL_ALPHA_TEST_FUNC__MASK);
+}
 inline constexpr uint32_t REG_A6XX_SP_FS_CTRL_REG0 = 0xa980;                           // a6xx.xml.h:8749  reset to 0 only on chips with early preamble
 inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_EARLYPREAMBLE = 0x10000000;             // a6xx.xml.h:8788
 // the preemption preamble (fd6_gmem.cc fd6_build_preemption_preamble) adds these two, both = kMagicPcPowerCntl
@@ -1573,9 +1590,10 @@ inline constexpr RegWrite kStaticStateAfterDrawState[] = {
     {REG_A6XX_GRAS_LRZ_CNTL, 0},
     {REG_A6XX_RB_LRZ_CNTL, 0},
 };
-// after the 32 VFD_FETCH sizes and the two border color addresses
+// after the 32 VFD_FETCH sizes and the two border color addresses; RB_ALPHA_CONTROL is turnip's (tu_cmd_buffer.cc:1457)
 inline constexpr RegWrite kStaticStateTail[] = {
     {REG_A6XX_PC_DGEN_SU_CONSERVATIVE_RAS_CNTL, 0},
+    {REG_A6XX_RB_ALPHA_CONTROL, 0},
 };
 
 // CP_SET_DRAW_STATE, 3 words per group: Gallium's batch start sends one group with DISABLE_ALL_GROUPS and no address,
@@ -1628,5 +1646,2010 @@ inline constexpr uint32_t CP_MEM_TO_REG_0_REG__SHIFT = 0;                       
 inline constexpr uint32_t CP_MEM_TO_REG_0_CNT__MASK = 0x3ff80000;                      // adreno_pm4.xml.h:1747
 inline constexpr uint32_t CP_MEM_TO_REG_0_CNT__SHIFT = 19;                             // adreno_pm4.xml.h:1748
 inline constexpr uint32_t CP_MEM_TO_REG_0_SHIFT_BY_2 = 0x40000000;                     // adreno_pm4.xml.h:1753
+
+// --- the render path: the registers of one draw into one colour target in SYSMEM (direct render) mode ---------------------
+// Everything below is what turnip's sysmem render pass and r3d clear path (src/freedreno/vulkan: tu_cmd_buffer.cc
+// tu6_sysmem_render_begin/end, tu_pipeline.cc tu6_emit_vpc/rast/viewport/blend, tu_shader.cc tu6_emit_xs/fs_inputs/
+// fs_outputs, tu_clear_blit.cc r3d_*) and fd6's (src/gallium/drivers/freedreno/a6xx: fd6_gmem.cc fd6_emit_sysmem_prep,
+// fd6_program.cc, fd6_rasterizer.cc, fd6_blend.cc, fd6_zsa.cc) write for ONE triangle with no depth, no blending, no
+// MSAA, no vertex attributes. The order the stream writes them in is render.cpp's; the value each takes for the 64x64
+// RGBA8 case is worked out in tests/a6xx_test.cpp. Registers an array holds (GRAS_CL_VPORT[i], RB_MRT[i]...) are
+// named by their entry-0 register and the array's __STRIDE; reg*(i) below adds the strides.
+
+// GRAS: the clipper (CL), the setup unit (SU) and the scan converter (SC). GRAS_CL_CNTL for Metal: ZERO_GB_SCALE_Z (depth
+// in [0, 1], what turnip sets for Vulkan: tu_pipeline.cc:3142-3150) and VP_CLIP_CODE_IGNORE; the viewport transform
+// on (r3d's window-space VS sets VP_XFORM_DISABLE | PERSP_DIVISION_DISABLE | CLIP_DISABLE instead, tu_clear_blit.cc:946-951).
+inline constexpr uint32_t REG_A6XX_GRAS_CL_CNTL = 0x8000;                                   // a6xx.xml.h:4256
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_CLIP_DISABLE = 0x00000001;                      // a6xx.xml.h:4257
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_ZNEAR_CLIP_DISABLE = 0x00000002;                // a6xx.xml.h:4258
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_ZFAR_CLIP_DISABLE = 0x00000004;                 // a6xx.xml.h:4259
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_Z_CLAMP_ENABLE = 0x00000020;                    // a6xx.xml.h:4260
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_ZERO_GB_SCALE_Z = 0x00000040;                   // a6xx.xml.h:4261
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_VP_CLIP_CODE_IGNORE = 0x00000080;               // a6xx.xml.h:4262
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_VP_XFORM_DISABLE = 0x00000100;                  // a6xx.xml.h:4263
+inline constexpr uint32_t A6XX_GRAS_CL_CNTL_PERSP_DIVISION_DISABLE = 0x00000200;            // a6xx.xml.h:4264
+
+// clip and cull distance masks of the VS: both 0 without clip distances (tu_pipeline.cc:1009-1011)
+inline constexpr uint32_t REG_A6XX_GRAS_VS_CL_CNTL = 0x8001;                                // a6xx.xml.h:4267
+inline constexpr uint32_t A6XX_GRAS_VS_CL_CNTL_CLIP_MASK__MASK = 0x000000ff;                // a6xx.xml.h:4268
+inline constexpr uint32_t A6XX_GRAS_VS_CL_CNTL_CLIP_MASK__SHIFT = 0;                        // a6xx.xml.h:4269
+inline constexpr uint32_t A6XX_GRAS_VS_CL_CNTL_CULL_MASK__MASK = 0x0000ff00;                // a6xx.xml.h:4274
+inline constexpr uint32_t A6XX_GRAS_VS_CL_CNTL_CULL_MASK__SHIFT = 8;                        // a6xx.xml.h:4275
+constexpr uint32_t A6XX_GRAS_VS_CL_CNTL_CLIP_MASK(uint32_t v) {
+    return field(v, A6XX_GRAS_VS_CL_CNTL_CLIP_MASK__SHIFT, A6XX_GRAS_VS_CL_CNTL_CLIP_MASK__MASK);
+}
+constexpr uint32_t A6XX_GRAS_VS_CL_CNTL_CULL_MASK(uint32_t v) {
+    return field(v, A6XX_GRAS_VS_CL_CNTL_CULL_MASK__SHIFT, A6XX_GRAS_VS_CL_CNTL_CULL_MASK__MASK);
+}
+
+// 0 for a target with one layer (tu_cmd_buffer.cc:574-576)
+inline constexpr uint32_t REG_A6XX_GRAS_MAX_LAYER_INDEX = 0x8004;                           // a6xx.xml.h:4312
+
+// which barycentrics the FS reads (one bit per valid ij regid) and the fragcoord components; 0 for a constant-colour FS
+// (tu_shader.cc:1747-1756). RB_RENDER_CONTROL0 repeats the IJ bits and COORD_MASK at the same positions.
+inline constexpr uint32_t REG_A6XX_GRAS_CNTL = 0x8005;                                      // a6xx.xml.h:4315
+inline constexpr uint32_t A6XX_GRAS_CNTL_IJ_PERSP_PIXEL = 0x00000001;                       // a6xx.xml.h:4316
+inline constexpr uint32_t A6XX_GRAS_CNTL_IJ_PERSP_CENTROID = 0x00000002;                    // a6xx.xml.h:4317
+inline constexpr uint32_t A6XX_GRAS_CNTL_IJ_PERSP_SAMPLE = 0x00000004;                      // a6xx.xml.h:4318
+inline constexpr uint32_t A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL = 0x00000008;                      // a6xx.xml.h:4319
+inline constexpr uint32_t A6XX_GRAS_CNTL_IJ_LINEAR_CENTROID = 0x00000010;                   // a6xx.xml.h:4320
+inline constexpr uint32_t A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE = 0x00000020;                     // a6xx.xml.h:4321
+inline constexpr uint32_t A6XX_GRAS_CNTL_COORD_MASK__MASK = 0x000003c0;                     // a6xx.xml.h:4322
+inline constexpr uint32_t A6XX_GRAS_CNTL_COORD_MASK__SHIFT = 6;                             // a6xx.xml.h:4323
+inline constexpr uint32_t A6XX_GRAS_CNTL_UNK10 = 0x00000400;                                // a6xx.xml.h:4328
+inline constexpr uint32_t A6XX_GRAS_CNTL_UNK11 = 0x00000800;                                // a6xx.xml.h:4329
+constexpr uint32_t A6XX_GRAS_CNTL_COORD_MASK(uint32_t v) {
+    return field(v, A6XX_GRAS_CNTL_COORD_MASK__SHIFT, A6XX_GRAS_CNTL_COORD_MASK__MASK);
+}
+
+// the guardband, 3.6 floating point in each of HORZ and VERT: fd_calc_guardband(offset, scale) over each axis
+// (freedreno_guardband.h:14-75, MAX_GB 0x1ff), capped at 511 (tu_pipeline.cc:2458-2461, 2515-2517)
+inline constexpr uint32_t REG_A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ = 0x8006;                     // a6xx.xml.h:4332
+inline constexpr uint32_t A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_HORZ__MASK = 0x000001ff;          // a6xx.xml.h:4333
+inline constexpr uint32_t A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_HORZ__SHIFT = 0;                  // a6xx.xml.h:4334
+inline constexpr uint32_t A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_VERT__MASK = 0x0007fc00;          // a6xx.xml.h:4339
+inline constexpr uint32_t A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_VERT__SHIFT = 10;                 // a6xx.xml.h:4340
+constexpr uint32_t A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_HORZ(uint32_t v) {
+    return field(v, A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_HORZ__SHIFT, A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_HORZ__MASK);
+}
+constexpr uint32_t A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_VERT(uint32_t v) {
+    return field(v, A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_VERT__SHIFT, A6XX_GRAS_CL_GUARDBAND_CLIP_ADJ_VERT__MASK);
+}
+
+// the viewport transform: six floats (fui) per viewport, one pkt4 of 6 at XOFFSET(0). turnip: offset = x + w/2,
+// scale = w/2 (tu_pipeline.cc:2442-2461). Metal's NDC y points up and its row 0 is the top, so YSCALE is written
+// NEGATIVE here (-h/2 with YOFFSET y + h/2), the way air_run.c sets softpipe's viewport for Metal (reasoning from the
+// convention; the probe's orientation line measures it).
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT = 0x8010;                                  // a6xx.xml.h:4365  the array's first register
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT__STRIDE = 6;                               // a6xx.xml.h:4365  registers per entry
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT_XOFFSET = 0x8010;                          // a6xx.xml.h:4367  entry 0
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT_XSCALE = 0x8011;                           // a6xx.xml.h:4376  entry 0
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT_YOFFSET = 0x8012;                          // a6xx.xml.h:4385  entry 0
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT_YSCALE = 0x8013;                           // a6xx.xml.h:4394  entry 0
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT_ZOFFSET = 0x8014;                          // a6xx.xml.h:4403  entry 0
+inline constexpr uint32_t REG_A6XX_GRAS_CL_VPORT_ZSCALE = 0x8015;                           // a6xx.xml.h:4412  entry 0
+
+// the depth clamp range, two floats per viewport: turnip always writes min/max depth (tu_pipeline.cc:2505-2514)
+inline constexpr uint32_t REG_A6XX_GRAS_CL_Z_CLAMP = 0x8070;                                // a6xx.xml.h:4421  the array's first register
+inline constexpr uint32_t REG_A6XX_GRAS_CL_Z_CLAMP__STRIDE = 2;                             // a6xx.xml.h:4421  registers per entry
+inline constexpr uint32_t REG_A6XX_GRAS_CL_Z_CLAMP_MIN = 0x8070;                            // a6xx.xml.h:4423  entry 0
+inline constexpr uint32_t REG_A6XX_GRAS_CL_Z_CLAMP_MAX = 0x8071;                            // a6xx.xml.h:4432  entry 0
+
+// culling, front face, line width and mode. LINEHALFWIDTH is quarter pixels (the encoder's val * 4.0): turnip writes
+// the Vulkan line width 1.0 as half width 0.5 = 2 and LINE_MODE RECTANGULAR, so a triangle draw's word is 0x2010
+// (tu_pipeline.cc:3128-3140). FRONT_CW is judged in window space after the viewport transform, which the negative
+// YSCALE flips, so it stays clear until measured; cull none is Metal's default.
+inline constexpr uint32_t REG_A6XX_GRAS_SU_CNTL = 0x8090;                                   // a6xx.xml.h:4441
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_CULL_FRONT = 0x00000001;                        // a6xx.xml.h:4442
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_CULL_BACK = 0x00000002;                         // a6xx.xml.h:4443
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_FRONT_CW = 0x00000004;                          // a6xx.xml.h:4444
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__MASK = 0x000007f8;               // a6xx.xml.h:4445
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__SHIFT = 3;                       // a6xx.xml.h:4446
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__MUL = 4;                         // a6xx.xml.h:4447  the encoder's val * 4.0: fixed point
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_POLY_OFFSET = 0x00000800;                       // a6xx.xml.h:4451
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK12 = 0x00001000;                             // a6xx.xml.h:4452
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_LINE_MODE__MASK = 0x00002000;                   // a6xx.xml.h:4453
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_LINE_MODE__SHIFT = 13;                          // a6xx.xml.h:4454
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK15__MASK = 0x00018000;                       // a6xx.xml.h:4459
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK15__SHIFT = 15;                              // a6xx.xml.h:4460
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_MULTIVIEW_ENABLE = 0x00020000;                  // a6xx.xml.h:4465
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_RENDERTARGETINDEXINCR = 0x00040000;             // a6xx.xml.h:4466
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_VIEWPORTINDEXINCR = 0x00080000;                 // a6xx.xml.h:4467
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK20__MASK = 0x00700000;                       // a6xx.xml.h:4468
+inline constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK20__SHIFT = 20;                              // a6xx.xml.h:4469
+constexpr uint32_t A6XX_GRAS_SU_CNTL_LINEHALFWIDTH(uint32_t v) {
+    return field(v, A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__SHIFT, A6XX_GRAS_SU_CNTL_LINEHALFWIDTH__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SU_CNTL_LINE_MODE(a5xx_line_mode v) {
+    return field(v, A6XX_GRAS_SU_CNTL_LINE_MODE__SHIFT, A6XX_GRAS_SU_CNTL_LINE_MODE__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK15(uint32_t v) {
+    return field(v, A6XX_GRAS_SU_CNTL_UNK15__SHIFT, A6XX_GRAS_SU_CNTL_UNK15__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SU_CNTL_UNK20(uint32_t v) {
+    return field(v, A6XX_GRAS_SU_CNTL_UNK20__SHIFT, A6XX_GRAS_SU_CNTL_UNK20__MASK);
+}
+
+// point size clamp and size, in sixteenths (the encoders' val * 16.0): turnip MIN 1/16, MAX 4092, SIZE 1.0
+// (tu_pipeline.cc:3207-3209) = 0xffc00001 and 0x10
+inline constexpr uint32_t REG_A6XX_GRAS_SU_POINT_MINMAX = 0x8091;                           // a6xx.xml.h:4476
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MIN__MASK = 0x0000ffff;                 // a6xx.xml.h:4477
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MIN__SHIFT = 0;                         // a6xx.xml.h:4478
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MIN__MUL = 16;                          // a6xx.xml.h:4479  the encoder's val * 16.0: fixed point
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MAX__MASK = 0xffff0000;                 // a6xx.xml.h:4483
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MAX__SHIFT = 16;                        // a6xx.xml.h:4484
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MAX__MUL = 16;                          // a6xx.xml.h:4485  the encoder's val * 16.0: fixed point
+constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MIN(uint32_t v) {
+    return field(v, A6XX_GRAS_SU_POINT_MINMAX_MIN__SHIFT, A6XX_GRAS_SU_POINT_MINMAX_MIN__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SU_POINT_MINMAX_MAX(uint32_t v) {
+    return field(v, A6XX_GRAS_SU_POINT_MINMAX_MAX__SHIFT, A6XX_GRAS_SU_POINT_MINMAX_MAX__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_GRAS_SU_POINT_SIZE = 0x8092;                             // a6xx.xml.h:4491
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_SIZE__MASK = 0x0000ffff;                       // a6xx.xml.h:4492
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_SIZE__SHIFT = 0;                               // a6xx.xml.h:4493
+inline constexpr uint32_t A6XX_GRAS_SU_POINT_SIZE__MUL = 16;                                // a6xx.xml.h:4494  the encoder's val * 16.0: fixed point
+constexpr uint32_t A6XX_GRAS_SU_POINT_SIZE(uint32_t v) {
+    return field(v, A6XX_GRAS_SU_POINT_SIZE__SHIFT, A6XX_GRAS_SU_POINT_SIZE__MASK);
+}
+
+// Z_MODE of the depth plane (GRAS_SU_DEPTH_PLANE_CNTL is in the static table above): pipelines with the depth test
+// off write A6XX_LATE_Z (tu_cmd_buffer.cc:5569-5571), r3d writes 0 = EARLY_Z (tu_clear_blit.cc:1612, 1615)
+inline constexpr uint32_t A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE__MASK = 0x00000003;          // a6xx.xml.h:4501
+inline constexpr uint32_t A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE__SHIFT = 0;                  // a6xx.xml.h:4502
+constexpr uint32_t A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(a6xx_ztest_mode v) {
+    return field(v, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE__SHIFT, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE__MASK);
+}
+
+// polygon offset, three floats (fui): 0 (fd6_rasterizer.cc:67-69)
+inline constexpr uint32_t REG_A6XX_GRAS_SU_POLY_OFFSET_SCALE = 0x8095;                      // a6xx.xml.h:4509
+inline constexpr uint32_t REG_A6XX_GRAS_SU_POLY_OFFSET_OFFSET = 0x8096;                     // a6xx.xml.h:4518
+inline constexpr uint32_t REG_A6XX_GRAS_SU_POLY_OFFSET_OFFSET_CLAMP = 0x8097;               // a6xx.xml.h:4527
+
+// the depth attachment's format, DEPTH6_NONE without one (tu_cmd_buffer.cc:415-433)
+inline constexpr uint32_t REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO = 0x8098;                      // a6xx.xml.h:4536
+inline constexpr uint32_t A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK = 0x00000007;   // a6xx.xml.h:4537
+inline constexpr uint32_t A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT = 0;           // a6xx.xml.h:4538
+inline constexpr uint32_t A6XX_GRAS_SU_DEPTH_BUFFER_INFO_UNK3 = 0x00000008;                 // a6xx.xml.h:4543
+constexpr uint32_t A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(a6xx_depth_format v) {
+    return field(v, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK);
+}
+
+// depth and stencil tests off (tu_pipeline.cc:3330, 3245-3270)
+inline constexpr uint32_t REG_A6XX_GRAS_SU_DEPTH_CNTL = 0x8114;                             // a6xx.xml.h:5931
+inline constexpr uint32_t A6XX_GRAS_SU_DEPTH_CNTL_Z_TEST_ENABLE = 0x00000001;               // a6xx.xml.h:5932
+
+inline constexpr uint32_t REG_A6XX_GRAS_SU_STENCIL_CNTL = 0x8115;                           // a6xx.xml.h:6070
+inline constexpr uint32_t A6XX_GRAS_SU_STENCIL_CNTL_STENCIL_ENABLE = 0x00000001;            // a6xx.xml.h:6071
+
+// GRAS_SC_CNTL is in the static table above with CCUSINGLECACHELINESIZE; the sysmem pass writes it again with
+// SINGLE_PRIM_MODE(NO_FLUSH) (tu_pipeline.cc:3351-3380 tu6_emit_prim_mode_sysmem; fd6_emit.cc:562-580)
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK = 0x00000018;            // a6xx.xml.h:4590
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__SHIFT = 3;                    // a6xx.xml.h:4591
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_RASTER_MODE__MASK = 0x00000020;                 // a6xx.xml.h:4596
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_RASTER_MODE__SHIFT = 5;                         // a6xx.xml.h:4597
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_RASTER_DIRECTION__MASK = 0x000000c0;            // a6xx.xml.h:4602
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_RASTER_DIRECTION__SHIFT = 6;                    // a6xx.xml.h:4603
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_SEQUENCED_THREAD_DISTRIBUTION__MASK = 0x00000100;  // a6xx.xml.h:4608
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_SEQUENCED_THREAD_DISTRIBUTION__SHIFT = 8;       // a6xx.xml.h:4609
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_ROTATION__MASK = 0x00000c00;                    // a6xx.xml.h:4615
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_ROTATION__SHIFT = 10;                           // a6xx.xml.h:4616
+inline constexpr uint32_t A6XX_GRAS_SC_CNTL_EARLYVIZOUTEN = 0x00001000;                     // a6xx.xml.h:4621
+constexpr uint32_t A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(a6xx_single_prim_mode v) {
+    return field(v, A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__SHIFT, A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_CNTL_RASTER_MODE(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_CNTL_RASTER_MODE__SHIFT, A6XX_GRAS_SC_CNTL_RASTER_MODE__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_CNTL_RASTER_DIRECTION(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_CNTL_RASTER_DIRECTION__SHIFT, A6XX_GRAS_SC_CNTL_RASTER_DIRECTION__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_CNTL_SEQUENCED_THREAD_DISTRIBUTION(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_CNTL_SEQUENCED_THREAD_DISTRIBUTION__SHIFT, A6XX_GRAS_SC_CNTL_SEQUENCED_THREAD_DISTRIBUTION__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_CNTL_ROTATION(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_CNTL_ROTATION__SHIFT, A6XX_GRAS_SC_CNTL_ROTATION__MASK);
+}
+
+// the bin size and where the buffers are: for a sysmem pass BINW = BINH = 0 (the encoders shift by 5 and 4: the fields
+// hold the size in 32- and 16-pixel units), RENDER_MODE RENDERING_PASS, BUFFERS_LOCATION BUFFERS_IN_SYSMEM. turnip
+// adds LRZ_FEEDBACK_ZMODE_MASK(EARLY_Z_OR_EARLY_LRZ_LATE_Z) because this chip has lrz feedback (tu_cmd_buffer.cc:
+// 2104-2113, 587-624) = 0x03c00000; fd6 and r3d write 0x00c00000 (fd6_gmem.cc:2027-2030; tu_clear_blit.cc:1573-1577).
+// RB_BIN_CONTROL has the same layout and takes the same value (static_assert below).
+inline constexpr uint32_t REG_A6XX_GRAS_BIN_CONTROL = 0x80a1;                               // a6xx.xml.h:4624
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINW__MASK = 0x0000003f;                    // a6xx.xml.h:4625
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINW__SHIFT = 0;                            // a6xx.xml.h:4626
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINW__SCALE = 5;                            // a6xx.xml.h:4627  the encoder's val >> 5
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINH__MASK = 0x00007f00;                    // a6xx.xml.h:4632
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINH__SHIFT = 8;                            // a6xx.xml.h:4633
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINH__SCALE = 4;                            // a6xx.xml.h:4634  the encoder's val >> 4
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_RENDER_MODE__MASK = 0x001c0000;             // a6xx.xml.h:4639
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_RENDER_MODE__SHIFT = 18;                    // a6xx.xml.h:4640
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_FORCE_LRZ_WRITE_DIS = 0x00200000;           // a6xx.xml.h:4645
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__MASK = 0x00c00000;        // a6xx.xml.h:4646
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__SHIFT = 22;               // a6xx.xml.h:4647
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__MASK = 0x07000000; // a6xx.xml.h:4652
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__SHIFT = 24;        // a6xx.xml.h:4653
+inline constexpr uint32_t A6XX_GRAS_BIN_CONTROL_UNK27 = 0x08000000;                         // a6xx.xml.h:4658
+constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINW(uint32_t v) {
+    return field(v >> A6XX_GRAS_BIN_CONTROL_BINW__SCALE, A6XX_GRAS_BIN_CONTROL_BINW__SHIFT, A6XX_GRAS_BIN_CONTROL_BINW__MASK);
+}
+constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BINH(uint32_t v) {
+    return field(v >> A6XX_GRAS_BIN_CONTROL_BINH__SCALE, A6XX_GRAS_BIN_CONTROL_BINH__SHIFT, A6XX_GRAS_BIN_CONTROL_BINH__MASK);
+}
+constexpr uint32_t A6XX_GRAS_BIN_CONTROL_RENDER_MODE(a6xx_render_mode v) {
+    return field(v, A6XX_GRAS_BIN_CONTROL_RENDER_MODE__SHIFT, A6XX_GRAS_BIN_CONTROL_RENDER_MODE__MASK);
+}
+constexpr uint32_t A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION(a6xx_buffers_location v) {
+    return field(v, A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__SHIFT, A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__MASK);
+}
+constexpr uint32_t A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK(a6xx_lrz_feedback_mask v) {
+    return field(v, A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__SHIFT, A6XX_GRAS_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__MASK);
+}
+
+// MSAA off: SAMPLES MSAA_ONE in the RAS registers and MSAA_DISABLE in the DEST ones, GRAS, RB and SP_TP alike
+// (tu_cmd_buffer.cc:892-910 tu6_emit_msaa; fd6_gmem.cc:1037-1060)
+inline constexpr uint32_t REG_A6XX_GRAS_RAS_MSAA_CNTL = 0x80a2;                             // a6xx.xml.h:4661
+inline constexpr uint32_t A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES__MASK = 0x00000003;               // a6xx.xml.h:4662
+inline constexpr uint32_t A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES__SHIFT = 0;                       // a6xx.xml.h:4663
+inline constexpr uint32_t A6XX_GRAS_RAS_MSAA_CNTL_UNK2 = 0x00000004;                        // a6xx.xml.h:4668
+inline constexpr uint32_t A6XX_GRAS_RAS_MSAA_CNTL_UNK3 = 0x00000008;                        // a6xx.xml.h:4669
+constexpr uint32_t A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES__SHIFT, A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_GRAS_DEST_MSAA_CNTL = 0x80a3;                            // a6xx.xml.h:4672
+inline constexpr uint32_t A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__MASK = 0x00000003;              // a6xx.xml.h:4673
+inline constexpr uint32_t A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__SHIFT = 0;                      // a6xx.xml.h:4674
+inline constexpr uint32_t A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE = 0x00000004;               // a6xx.xml.h:4679
+constexpr uint32_t A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__SHIFT, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__MASK);
+}
+
+// programmable sample locations off: 0 in GRAS, RB and SP_TP (fd6_context.cc:300-306)
+inline constexpr uint32_t REG_A6XX_GRAS_SAMPLE_CONFIG = 0x80a4;                             // a6xx.xml.h:4682
+inline constexpr uint32_t A6XX_GRAS_SAMPLE_CONFIG_UNK0 = 0x00000001;                        // a6xx.xml.h:4683
+inline constexpr uint32_t A6XX_GRAS_SAMPLE_CONFIG_LOCATION_ENABLE = 0x00000002;             // a6xx.xml.h:4684
+
+// the screen and viewport scissors, one TL/BR pair per viewport, 16-bit X and Y (a6xx_scissor_xy): BR is INCLUSIVE,
+// w-1 and h-1 (tu_pipeline.cc:2463-2496, 2657-2688; fd6 stores maxx - 1 too, freedreno_state.c:371-372)
+inline constexpr uint32_t REG_A6XX_GRAS_SC_SCREEN_SCISSOR = 0x80b0;                         // a6xx.xml.h:4795  the array's first register
+inline constexpr uint32_t REG_A6XX_GRAS_SC_SCREEN_SCISSOR__STRIDE = 2;                      // a6xx.xml.h:4795  registers per entry
+inline constexpr uint32_t REG_A6XX_GRAS_SC_SCREEN_SCISSOR_TL = 0x80b0;                      // a6xx.xml.h:4797  entry 0
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__MASK = 0x0000ffff;              // a6xx.xml.h:4798
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__SHIFT = 0;                      // a6xx.xml.h:4799
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__MASK = 0xffff0000;              // a6xx.xml.h:4804
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__SHIFT = 16;                     // a6xx.xml.h:4805
+constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__SHIFT, A6XX_GRAS_SC_SCREEN_SCISSOR_TL_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__SHIFT, A6XX_GRAS_SC_SCREEN_SCISSOR_TL_Y__MASK);
+}
+inline constexpr uint32_t REG_A6XX_GRAS_SC_SCREEN_SCISSOR_BR = 0x80b1;                      // a6xx.xml.h:4812  entry 0
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_BR_X__MASK = 0x0000ffff;              // a6xx.xml.h:4813
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_BR_X__SHIFT = 0;                      // a6xx.xml.h:4814
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_BR_Y__MASK = 0xffff0000;              // a6xx.xml.h:4819
+inline constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_BR_Y__SHIFT = 16;                     // a6xx.xml.h:4820
+constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_BR_X(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_SCREEN_SCISSOR_BR_X__SHIFT, A6XX_GRAS_SC_SCREEN_SCISSOR_BR_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_SCREEN_SCISSOR_BR_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_SCREEN_SCISSOR_BR_Y__SHIFT, A6XX_GRAS_SC_SCREEN_SCISSOR_BR_Y__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR = 0x80d0;                       // a6xx.xml.h:4827  the array's first register
+inline constexpr uint32_t REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR__STRIDE = 2;                    // a6xx.xml.h:4827  registers per entry
+inline constexpr uint32_t REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL = 0x80d0;                    // a6xx.xml.h:4829  entry 0
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_X__MASK = 0x0000ffff;            // a6xx.xml.h:4830
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_X__SHIFT = 0;                    // a6xx.xml.h:4831
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_Y__MASK = 0xffff0000;            // a6xx.xml.h:4836
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_Y__SHIFT = 16;                   // a6xx.xml.h:4837
+constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_X(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_X__SHIFT, A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_Y__SHIFT, A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL_Y__MASK);
+}
+inline constexpr uint32_t REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR = 0x80d1;                    // a6xx.xml.h:4844  entry 0
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_X__MASK = 0x0000ffff;            // a6xx.xml.h:4845
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_X__SHIFT = 0;                    // a6xx.xml.h:4846
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_Y__MASK = 0xffff0000;            // a6xx.xml.h:4851
+inline constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_Y__SHIFT = 16;                   // a6xx.xml.h:4852
+constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_X(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_X__SHIFT, A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_Y__SHIFT, A6XX_GRAS_SC_VIEWPORT_SCISSOR_BR_Y__MASK);
+}
+
+// the window scissor, 14-bit X and Y (a6xx_reg_xy): the pass begin writes TL 0 and BR (w-1, h-1)
+// (tu_cmd_buffer.cc:736-747 tu6_emit_window_scissor)
+inline constexpr uint32_t REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL = 0x80f0;                      // a6xx.xml.h:4859
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__MASK = 0x00003fff;              // a6xx.xml.h:4860
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__SHIFT = 0;                      // a6xx.xml.h:4861
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK = 0x3fff0000;              // a6xx.xml.h:4866
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__SHIFT = 16;                     // a6xx.xml.h:4867
+constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__SHIFT, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__SHIFT, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK);
+}
+inline constexpr uint32_t REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR = 0x80f1;                      // a6xx.xml.h:4874
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__MASK = 0x00003fff;              // a6xx.xml.h:4875
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__SHIFT = 0;                      // a6xx.xml.h:4876
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK = 0x3fff0000;              // a6xx.xml.h:4881
+inline constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__SHIFT = 16;                     // a6xx.xml.h:4882
+constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__SHIFT, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__SHIFT, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK);
+}
+
+// GRAS_LRZ_CNTL (static table above, ENABLE): the other bits, all clear for a pass without LRZ (tu_lrz.cc:936-944)
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_LRZ_WRITE = 0x00000002;                        // a6xx.xml.h:4966
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_GREATER = 0x00000004;                          // a6xx.xml.h:4967
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_FC_ENABLE = 0x00000008;                        // a6xx.xml.h:4968
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_Z_TEST_ENABLE = 0x00000010;                    // a6xx.xml.h:4969
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_Z_BOUNDS_ENABLE = 0x00000020;                  // a6xx.xml.h:4970
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_DIR__MASK = 0x000000c0;                        // a6xx.xml.h:4971
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_DIR__SHIFT = 6;                                // a6xx.xml.h:4972
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_DIR_WRITE = 0x00000100;                        // a6xx.xml.h:4977
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_DISABLE_ON_WRONG_DIR = 0x00000200;             // a6xx.xml.h:4978
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_Z_FUNC__MASK = 0x00003800;                     // a6xx.xml.h:4979
+inline constexpr uint32_t A6XX_GRAS_LRZ_CNTL_Z_FUNC__SHIFT = 11;                            // a6xx.xml.h:4980
+constexpr uint32_t A6XX_GRAS_LRZ_CNTL_DIR(uint32_t v) {
+    return field(v, A6XX_GRAS_LRZ_CNTL_DIR__SHIFT, A6XX_GRAS_LRZ_CNTL_DIR__MASK);
+}
+constexpr uint32_t A6XX_GRAS_LRZ_CNTL_Z_FUNC(adreno_compare_func v) {
+    return field(v, A6XX_GRAS_LRZ_CNTL_Z_FUNC__SHIFT, A6XX_GRAS_LRZ_CNTL_Z_FUNC__MASK);
+}
+
+// GRAS_LRZ_PS_INPUT_CNTL (static table above, SAMPLEID): FRAGCOORDSAMPLEMODE, CENTER without sample shading
+inline constexpr uint32_t A6XX_GRAS_LRZ_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE__MASK = 0x00000006;  // a6xx.xml.h:4989
+inline constexpr uint32_t A6XX_GRAS_LRZ_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE__SHIFT = 1;       // a6xx.xml.h:4990
+constexpr uint32_t A6XX_GRAS_LRZ_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE(a6xx_fragcoord_sample_mode v) {
+    return field(v, A6XX_GRAS_LRZ_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE__SHIFT, A6XX_GRAS_LRZ_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE__MASK);
+}
+
+// the colour format again, for LRZ's sake: written with the MRT (tu_cmd_buffer.cc:532; fd6_gmem.cc:140)
+inline constexpr uint32_t REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0 = 0x8102;                        // a6xx.xml.h:4997
+inline constexpr uint32_t A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT__MASK = 0x000000ff;     // a6xx.xml.h:4998
+inline constexpr uint32_t A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT__SHIFT = 0;             // a6xx.xml.h:4999
+constexpr uint32_t A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(a6xx_format v) {
+    return field(v, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT__SHIFT, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT__MASK);
+}
+
+// the LRZ buffer: 64-bit base, pitch, 64-bit fast-clear base, all 0 without one (fd6_gmem.cc:250-260 emit_lrz;
+// tu_lrz.cc:65-78)
+inline constexpr uint32_t REG_A6XX_GRAS_LRZ_BUFFER_BASE = 0x8103;                           // a6xx.xml.h:5006
+inline constexpr uint32_t REG_A6XX_GRAS_LRZ_BUFFER_PITCH = 0x8105;                          // a6xx.xml.h:5009
+inline constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH__MASK = 0x000000ff;              // a6xx.xml.h:5010
+inline constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH__SHIFT = 0;                      // a6xx.xml.h:5011
+inline constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH__SCALE = 5;                      // a6xx.xml.h:5012  the encoder's val >> 5
+inline constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH__MASK = 0x1ffffc00;        // a6xx.xml.h:5017
+inline constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH__SHIFT = 10;               // a6xx.xml.h:5018
+inline constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH__SCALE = 8;                // a6xx.xml.h:5019  the encoder's val >> 8
+constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH(uint32_t v) {
+    return field(v >> A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH__SCALE, A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH__SHIFT, A6XX_GRAS_LRZ_BUFFER_PITCH_PITCH__MASK);
+}
+constexpr uint32_t A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH(uint32_t v) {
+    return field(v >> A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH__SCALE, A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH__SHIFT, A6XX_GRAS_LRZ_BUFFER_PITCH_ARRAY_PITCH__MASK);
+}
+inline constexpr uint32_t REG_A6XX_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE = 0x8106;                // a6xx.xml.h:5026
+
+// written with the window scissor, the same TL and BR (tu_cmd_buffer.cc:745-746; fd6_gmem.cc:876-884)
+inline constexpr uint32_t REG_A6XX_GRAS_2D_RESOLVE_CNTL_1 = 0x840a;                         // a6xx.xml.h:5212
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_1_X__MASK = 0x00003fff;                 // a6xx.xml.h:5213
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_1_X__SHIFT = 0;                         // a6xx.xml.h:5214
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_1_Y__MASK = 0x3fff0000;                 // a6xx.xml.h:5219
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_1_Y__SHIFT = 16;                        // a6xx.xml.h:5220
+constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_1_X(uint32_t v) {
+    return field(v, A6XX_GRAS_2D_RESOLVE_CNTL_1_X__SHIFT, A6XX_GRAS_2D_RESOLVE_CNTL_1_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_1_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_2D_RESOLVE_CNTL_1_Y__SHIFT, A6XX_GRAS_2D_RESOLVE_CNTL_1_Y__MASK);
+}
+inline constexpr uint32_t REG_A6XX_GRAS_2D_RESOLVE_CNTL_2 = 0x840b;                         // a6xx.xml.h:5227
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_2_X__MASK = 0x00003fff;                 // a6xx.xml.h:5228
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_2_X__SHIFT = 0;                         // a6xx.xml.h:5229
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_2_Y__MASK = 0x3fff0000;                 // a6xx.xml.h:5234
+inline constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_2_Y__SHIFT = 16;                        // a6xx.xml.h:5235
+constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_2_X(uint32_t v) {
+    return field(v, A6XX_GRAS_2D_RESOLVE_CNTL_2_X__SHIFT, A6XX_GRAS_2D_RESOLVE_CNTL_2_X__MASK);
+}
+constexpr uint32_t A6XX_GRAS_2D_RESOLVE_CNTL_2_Y(uint32_t v) {
+    return field(v, A6XX_GRAS_2D_RESOLVE_CNTL_2_Y__SHIFT, A6XX_GRAS_2D_RESOLVE_CNTL_2_Y__MASK);
+}
+
+// RB: the render backend. RB_BIN_CONTROL: GRAS_BIN_CONTROL's twin (tu_cmd_buffer.cc:606-612); RB_BIN_CONTROL2 = 0
+inline constexpr uint32_t REG_A6XX_RB_BIN_CONTROL = 0x8800;                                 // a6xx.xml.h:5259
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BINW__MASK = 0x0000003f;                      // a6xx.xml.h:5260
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BINW__SHIFT = 0;                              // a6xx.xml.h:5261
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BINW__SCALE = 5;                              // a6xx.xml.h:5262  the encoder's val >> 5
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BINH__MASK = 0x00007f00;                      // a6xx.xml.h:5267
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BINH__SHIFT = 8;                              // a6xx.xml.h:5268
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BINH__SCALE = 4;                              // a6xx.xml.h:5269  the encoder's val >> 4
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_RENDER_MODE__MASK = 0x001c0000;               // a6xx.xml.h:5274
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_RENDER_MODE__SHIFT = 18;                      // a6xx.xml.h:5275
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_FORCE_LRZ_WRITE_DIS = 0x00200000;             // a6xx.xml.h:5280
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION__MASK = 0x00c00000;          // a6xx.xml.h:5281
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION__SHIFT = 22;                 // a6xx.xml.h:5282
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__MASK = 0x07000000;   // a6xx.xml.h:5287
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__SHIFT = 24;          // a6xx.xml.h:5288
+constexpr uint32_t A6XX_RB_BIN_CONTROL_BINW(uint32_t v) {
+    return field(v >> A6XX_RB_BIN_CONTROL_BINW__SCALE, A6XX_RB_BIN_CONTROL_BINW__SHIFT, A6XX_RB_BIN_CONTROL_BINW__MASK);
+}
+constexpr uint32_t A6XX_RB_BIN_CONTROL_BINH(uint32_t v) {
+    return field(v >> A6XX_RB_BIN_CONTROL_BINH__SCALE, A6XX_RB_BIN_CONTROL_BINH__SHIFT, A6XX_RB_BIN_CONTROL_BINH__MASK);
+}
+constexpr uint32_t A6XX_RB_BIN_CONTROL_RENDER_MODE(a6xx_render_mode v) {
+    return field(v, A6XX_RB_BIN_CONTROL_RENDER_MODE__SHIFT, A6XX_RB_BIN_CONTROL_RENDER_MODE__MASK);
+}
+constexpr uint32_t A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION(a6xx_buffers_location v) {
+    return field(v, A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION__SHIFT, A6XX_RB_BIN_CONTROL_BUFFERS_LOCATION__MASK);
+}
+constexpr uint32_t A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK(a6xx_lrz_feedback_mask v) {
+    return field(v, A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__SHIFT, A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_RB_BIN_CONTROL2 = 0x88d3;                                // a6xx.xml.h:6251
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINW__MASK = 0x0000003f;                     // a6xx.xml.h:6252
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINW__SHIFT = 0;                             // a6xx.xml.h:6253
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINW__SCALE = 5;                             // a6xx.xml.h:6254  the encoder's val >> 5
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINH__MASK = 0x00007f00;                     // a6xx.xml.h:6259
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINH__SHIFT = 8;                             // a6xx.xml.h:6260
+inline constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINH__SCALE = 4;                             // a6xx.xml.h:6261  the encoder's val >> 4
+constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINW(uint32_t v) {
+    return field(v >> A6XX_RB_BIN_CONTROL2_BINW__SCALE, A6XX_RB_BIN_CONTROL2_BINW__SHIFT, A6XX_RB_BIN_CONTROL2_BINW__MASK);
+}
+constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINH(uint32_t v) {
+    return field(v >> A6XX_RB_BIN_CONTROL2_BINH__SCALE, A6XX_RB_BIN_CONTROL2_BINH__SHIFT, A6XX_RB_BIN_CONTROL2_BINH__MASK);
+}
+
+// CCUSINGLECACHELINESIZE(2) = 0x10 for a sysmem pass (tu_cmd_buffer.cc:633-693 tu6_emit_render_cntl; fd6_gmem.cc:
+// 531-552); r3d_dst writes 0 (tu_clear_blit.cc:1408). FLAG_MRTS/FLAG_DEPTH name the UBWC flag buffers: clear, so
+// the RB_MRT_FLAG_BUFFER words are inert.
+inline constexpr uint32_t REG_A6XX_RB_RENDER_CNTL = 0x8801;                                 // a6xx.xml.h:5325
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE__MASK = 0x00000038;    // a6xx.xml.h:5326
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE__SHIFT = 3;            // a6xx.xml.h:5327
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_EARLYVIZOUTEN = 0x00000040;                   // a6xx.xml.h:5332
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_BINNING = 0x00000080;                         // a6xx.xml.h:5333
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_UNK8__MASK = 0x00000700;                      // a6xx.xml.h:5334
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_UNK8__SHIFT = 8;                              // a6xx.xml.h:5335
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_RASTER_MODE__MASK = 0x00000100;               // a6xx.xml.h:5340
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_RASTER_MODE__SHIFT = 8;                       // a6xx.xml.h:5341
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_RASTER_DIRECTION__MASK = 0x00000600;          // a6xx.xml.h:5346
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_RASTER_DIRECTION__SHIFT = 9;                  // a6xx.xml.h:5347
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_CONSERVATIVERASEN = 0x00000800;               // a6xx.xml.h:5352
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_INNERCONSERVATIVERASEN = 0x00001000;          // a6xx.xml.h:5353
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_FLAG_DEPTH = 0x00004000;                      // a6xx.xml.h:5354
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_FLAG_MRTS__MASK = 0x00ff0000;                 // a6xx.xml.h:5355
+inline constexpr uint32_t A6XX_RB_RENDER_CNTL_FLAG_MRTS__SHIFT = 16;                        // a6xx.xml.h:5356
+constexpr uint32_t A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE__SHIFT, A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_CNTL_UNK8(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_CNTL_UNK8__SHIFT, A6XX_RB_RENDER_CNTL_UNK8__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_CNTL_RASTER_MODE(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_CNTL_RASTER_MODE__SHIFT, A6XX_RB_RENDER_CNTL_RASTER_MODE__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_CNTL_RASTER_DIRECTION(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_CNTL_RASTER_DIRECTION__SHIFT, A6XX_RB_RENDER_CNTL_RASTER_DIRECTION__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_CNTL_FLAG_MRTS(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_CNTL_FLAG_MRTS__SHIFT, A6XX_RB_RENDER_CNTL_FLAG_MRTS__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_RB_RAS_MSAA_CNTL = 0x8802;                               // a6xx.xml.h:5386
+inline constexpr uint32_t A6XX_RB_RAS_MSAA_CNTL_SAMPLES__MASK = 0x00000003;                 // a6xx.xml.h:5387
+inline constexpr uint32_t A6XX_RB_RAS_MSAA_CNTL_SAMPLES__SHIFT = 0;                         // a6xx.xml.h:5388
+inline constexpr uint32_t A6XX_RB_RAS_MSAA_CNTL_UNK2 = 0x00000004;                          // a6xx.xml.h:5393
+inline constexpr uint32_t A6XX_RB_RAS_MSAA_CNTL_UNK3 = 0x00000008;                          // a6xx.xml.h:5394
+constexpr uint32_t A6XX_RB_RAS_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_RB_RAS_MSAA_CNTL_SAMPLES__SHIFT, A6XX_RB_RAS_MSAA_CNTL_SAMPLES__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_DEST_MSAA_CNTL = 0x8803;                              // a6xx.xml.h:5397
+inline constexpr uint32_t A6XX_RB_DEST_MSAA_CNTL_SAMPLES__MASK = 0x00000003;                // a6xx.xml.h:5398
+inline constexpr uint32_t A6XX_RB_DEST_MSAA_CNTL_SAMPLES__SHIFT = 0;                        // a6xx.xml.h:5399
+inline constexpr uint32_t A6XX_RB_DEST_MSAA_CNTL_MSAA_DISABLE = 0x00000004;                 // a6xx.xml.h:5404
+constexpr uint32_t A6XX_RB_DEST_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_RB_DEST_MSAA_CNTL_SAMPLES__SHIFT, A6XX_RB_DEST_MSAA_CNTL_SAMPLES__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_SAMPLE_CONFIG = 0x8804;                               // a6xx.xml.h:5407
+inline constexpr uint32_t A6XX_RB_SAMPLE_CONFIG_UNK0 = 0x00000001;                          // a6xx.xml.h:5408
+inline constexpr uint32_t A6XX_RB_SAMPLE_CONFIG_LOCATION_ENABLE = 0x00000002;               // a6xx.xml.h:5409
+inline constexpr uint32_t REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL = 0x88d5;                         // a6xx.xml.h:6283
+inline constexpr uint32_t A6XX_RB_BLIT_GMEM_MSAA_CNTL_SAMPLES__MASK = 0x00000018;           // a6xx.xml.h:6284
+inline constexpr uint32_t A6XX_RB_BLIT_GMEM_MSAA_CNTL_SAMPLES__SHIFT = 3;                   // a6xx.xml.h:6285
+constexpr uint32_t A6XX_RB_BLIT_GMEM_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_RB_BLIT_GMEM_MSAA_CNTL_SAMPLES__SHIFT, A6XX_RB_BLIT_GMEM_MSAA_CNTL_SAMPLES__MASK);
+}
+
+// what the FS reads: the IJ bits and COORD_MASK as GRAS_CNTL has them (same positions), UNK10 set when the FS has
+// varyings (tu_shader.cc:1758-1778); 0 for a constant colour, 0x401 with one smooth varying
+inline constexpr uint32_t REG_A6XX_RB_RENDER_CONTROL0 = 0x8809;                             // a6xx.xml.h:5514
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_IJ_PERSP_PIXEL = 0x00000001;              // a6xx.xml.h:5515
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_IJ_PERSP_CENTROID = 0x00000002;           // a6xx.xml.h:5516
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_IJ_PERSP_SAMPLE = 0x00000004;             // a6xx.xml.h:5517
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_PIXEL = 0x00000008;             // a6xx.xml.h:5518
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_CENTROID = 0x00000010;          // a6xx.xml.h:5519
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_SAMPLE = 0x00000020;            // a6xx.xml.h:5520
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_COORD_MASK__MASK = 0x000003c0;            // a6xx.xml.h:5521
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_COORD_MASK__SHIFT = 6;                    // a6xx.xml.h:5522
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL0_UNK10 = 0x00000400;                       // a6xx.xml.h:5527
+constexpr uint32_t A6XX_RB_RENDER_CONTROL0_COORD_MASK(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_CONTROL0_COORD_MASK__SHIFT, A6XX_RB_RENDER_CONTROL0_COORD_MASK__MASK);
+}
+
+// FRAGCOORDSAMPLEMODE CENTER, the face/sample/mask bits for the system values the FS reads: 0 here
+inline constexpr uint32_t REG_A6XX_RB_RENDER_CONTROL1 = 0x880a;                             // a6xx.xml.h:5530
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_SAMPLEMASK = 0x00000001;                  // a6xx.xml.h:5531
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_POSTDEPTHCOVERAGE = 0x00000002;           // a6xx.xml.h:5532
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_FACENESS = 0x00000004;                    // a6xx.xml.h:5533
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_SAMPLEID = 0x00000008;                    // a6xx.xml.h:5534
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_FRAGCOORDSAMPLEMODE__MASK = 0x00000030;   // a6xx.xml.h:5535
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_FRAGCOORDSAMPLEMODE__SHIFT = 4;           // a6xx.xml.h:5536
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_CENTERRHW = 0x00000040;                   // a6xx.xml.h:5541
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_LINELENGTHEN = 0x00000080;                // a6xx.xml.h:5542
+inline constexpr uint32_t A6XX_RB_RENDER_CONTROL1_FOVEATION = 0x00000100;                   // a6xx.xml.h:5543
+constexpr uint32_t A6XX_RB_RENDER_CONTROL1_FRAGCOORDSAMPLEMODE(a6xx_fragcoord_sample_mode v) {
+    return field(v, A6XX_RB_RENDER_CONTROL1_FRAGCOORDSAMPLEMODE__SHIFT, A6XX_RB_RENDER_CONTROL1_FRAGCOORDSAMPLEMODE__MASK);
+}
+
+// what the FS writes besides colour: nothing (tu_shader.cc:1886-1890)
+inline constexpr uint32_t REG_A6XX_RB_FS_OUTPUT_CNTL0 = 0x880b;                             // a6xx.xml.h:5546
+inline constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL0_DUAL_COLOR_IN_ENABLE = 0x00000001;        // a6xx.xml.h:5547
+inline constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z = 0x00000002;               // a6xx.xml.h:5548
+inline constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_SAMPMASK = 0x00000004;        // a6xx.xml.h:5549
+inline constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_STENCILREF = 0x00000008;      // a6xx.xml.h:5550
+
+// MRT = the number of colour targets, 1 (tu_pipeline.cc:3006-3008); SP_FS_OUTPUT_CNTL1 is its twin
+inline constexpr uint32_t REG_A6XX_RB_FS_OUTPUT_CNTL1 = 0x880c;                             // a6xx.xml.h:5553
+inline constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL1_MRT__MASK = 0x0000000f;                   // a6xx.xml.h:5554
+inline constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL1_MRT__SHIFT = 0;                           // a6xx.xml.h:5555
+constexpr uint32_t A6XX_RB_FS_OUTPUT_CNTL1_MRT(uint32_t v) {
+    return field(v, A6XX_RB_FS_OUTPUT_CNTL1_MRT__SHIFT, A6XX_RB_FS_OUTPUT_CNTL1_MRT__MASK);
+}
+
+// the components written per target, 0xf for RT0 (tu_shader.cc:1892-1893); SP_FS_RENDER_COMPONENTS its twin
+inline constexpr uint32_t REG_A6XX_RB_RENDER_COMPONENTS = 0x880d;                           // a6xx.xml.h:5562
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT0__MASK = 0x0000000f;                 // a6xx.xml.h:5563
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT0__SHIFT = 0;                         // a6xx.xml.h:5564
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT1__MASK = 0x000000f0;                 // a6xx.xml.h:5569
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT1__SHIFT = 4;                         // a6xx.xml.h:5570
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT2__MASK = 0x00000f00;                 // a6xx.xml.h:5575
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT2__SHIFT = 8;                         // a6xx.xml.h:5576
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT3__MASK = 0x0000f000;                 // a6xx.xml.h:5581
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT3__SHIFT = 12;                        // a6xx.xml.h:5582
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT4__MASK = 0x000f0000;                 // a6xx.xml.h:5587
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT4__SHIFT = 16;                        // a6xx.xml.h:5588
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT5__MASK = 0x00f00000;                 // a6xx.xml.h:5593
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT5__SHIFT = 20;                        // a6xx.xml.h:5594
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT6__MASK = 0x0f000000;                 // a6xx.xml.h:5599
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT6__SHIFT = 24;                        // a6xx.xml.h:5600
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT7__MASK = 0xf0000000;                 // a6xx.xml.h:5605
+inline constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT7__SHIFT = 28;                        // a6xx.xml.h:5606
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT0(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT0__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT0__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT1(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT1__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT1__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT2(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT2__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT2__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT3(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT3__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT3__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT4(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT4__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT4__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT5(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT5__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT5__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT6(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT6__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT6__MASK);
+}
+constexpr uint32_t A6XX_RB_RENDER_COMPONENTS_RT7(uint32_t v) {
+    return field(v, A6XX_RB_RENDER_COMPONENTS_RT7__SHIFT, A6XX_RB_RENDER_COMPONENTS_RT7__MASK);
+}
+
+// dithering off (tu_cmd_buffer.cc:552-564), sRGB conversion off for a UNORM target (:569-572), one sample
+inline constexpr uint32_t REG_A6XX_RB_DITHER_CNTL = 0x880e;                                 // a6xx.xml.h:5613
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT0__MASK = 0x00000003;          // a6xx.xml.h:5614
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT0__SHIFT = 0;                  // a6xx.xml.h:5615
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT1__MASK = 0x0000000c;          // a6xx.xml.h:5620
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT1__SHIFT = 2;                  // a6xx.xml.h:5621
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT2__MASK = 0x00000030;          // a6xx.xml.h:5626
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT2__SHIFT = 4;                  // a6xx.xml.h:5627
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT3__MASK = 0x000000c0;          // a6xx.xml.h:5632
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT3__SHIFT = 6;                  // a6xx.xml.h:5633
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT4__MASK = 0x00000300;          // a6xx.xml.h:5638
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT4__SHIFT = 8;                  // a6xx.xml.h:5639
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT5__MASK = 0x00000c00;          // a6xx.xml.h:5644
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT5__SHIFT = 10;                 // a6xx.xml.h:5645
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT6__MASK = 0x00003000;          // a6xx.xml.h:5650
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT6__SHIFT = 12;                 // a6xx.xml.h:5651
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT7__MASK = 0x0000c000;          // a6xx.xml.h:5656
+inline constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT7__SHIFT = 14;                 // a6xx.xml.h:5657
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT0(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT0__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT0__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT1(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT1__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT1__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT2(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT2__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT2__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT3(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT3__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT3__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT4(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT4__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT4__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT5(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT5__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT5__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT6(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT6__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT6__MASK);
+}
+constexpr uint32_t A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT7(adreno_rb_dither_mode v) {
+    return field(v, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT7__SHIFT, A6XX_RB_DITHER_CNTL_DITHER_MODE_MRT7__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_RB_SRGB_CNTL = 0x880f;                                   // a6xx.xml.h:5664
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT0 = 0x00000001;                         // a6xx.xml.h:5665
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT1 = 0x00000002;                         // a6xx.xml.h:5666
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT2 = 0x00000004;                         // a6xx.xml.h:5667
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT3 = 0x00000008;                         // a6xx.xml.h:5668
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT4 = 0x00000010;                         // a6xx.xml.h:5669
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT5 = 0x00000020;                         // a6xx.xml.h:5670
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT6 = 0x00000040;                         // a6xx.xml.h:5671
+inline constexpr uint32_t A6XX_RB_SRGB_CNTL_SRGB_MRT7 = 0x00000080;                         // a6xx.xml.h:5672
+
+inline constexpr uint32_t REG_A6XX_RB_SAMPLE_CNTL = 0x8810;                                 // a6xx.xml.h:5675
+inline constexpr uint32_t A6XX_RB_SAMPLE_CNTL_PER_SAMP_MODE = 0x00000001;                   // a6xx.xml.h:5676
+
+// the sample counter: r3d disables it around its draw (tu_clear_blit.cc:1649, 1690-1691); optional
+inline constexpr uint32_t REG_A6XX_RB_SAMPLE_COUNT_CONTROL = 0x8891;                        // a6xx.xml.h:6176
+inline constexpr uint32_t A6XX_RB_SAMPLE_COUNT_CONTROL_DISABLE = 0x00000001;                // a6xx.xml.h:6177
+inline constexpr uint32_t A6XX_RB_SAMPLE_COUNT_CONTROL_COPY = 0x00000002;                   // a6xx.xml.h:6178
+
+// RB_DEPTH_PLANE_CNTL (static table above): Z_MODE, see GRAS_SU_DEPTH_PLANE_CNTL
+inline constexpr uint32_t A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE__MASK = 0x00000003;               // a6xx.xml.h:5909
+inline constexpr uint32_t A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE__SHIFT = 0;                       // a6xx.xml.h:5910
+constexpr uint32_t A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE(a6xx_ztest_mode v) {
+    return field(v, A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE__SHIFT, A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE__MASK);
+}
+
+// the depth test: 0 (tu_pipeline.cc:3329); fd6 keeps ZFUNC when the test is off (fd6_zsa.cc:103), inert
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_CNTL = 0x8871;                                  // a6xx.xml.h:5917
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE = 0x00000001;                    // a6xx.xml.h:5918
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_Z_WRITE_ENABLE = 0x00000002;                   // a6xx.xml.h:5919
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_ZFUNC__MASK = 0x0000001c;                      // a6xx.xml.h:5920
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_ZFUNC__SHIFT = 2;                              // a6xx.xml.h:5921
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_Z_CLAMP_ENABLE = 0x00000020;                   // a6xx.xml.h:5926
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_Z_READ_ENABLE = 0x00000040;                    // a6xx.xml.h:5927
+inline constexpr uint32_t A6XX_RB_DEPTH_CNTL_Z_BOUNDS_ENABLE = 0x00000080;                  // a6xx.xml.h:5928
+constexpr uint32_t A6XX_RB_DEPTH_CNTL_ZFUNC(adreno_compare_func v) {
+    return field(v, A6XX_RB_DEPTH_CNTL_ZFUNC__SHIFT, A6XX_RB_DEPTH_CNTL_ZFUNC__MASK);
+}
+
+// the depth attachment, one pkt4 of 6 at RB_DEPTH_BUFFER_INFO: DEPTH6_NONE, pitch 0, array pitch 0, base 0 (64-bit),
+// base in GMEM 0 (tu_cmd_buffer.cc:415-433; fd6_gmem.cc:231-247). The pitches are stored >> 6 like the MRT ones.
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_INFO = 0x8872;                           // a6xx.xml.h:5935
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK = 0x00000007;        // a6xx.xml.h:5936
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT = 0;                // a6xx.xml.h:5937
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_INFO_UNK3__MASK = 0x00000018;                // a6xx.xml.h:5942
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_INFO_UNK3__SHIFT = 3;                        // a6xx.xml.h:5943
+constexpr uint32_t A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(a6xx_depth_format v) {
+    return field(v, A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__SHIFT, A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT__MASK);
+}
+constexpr uint32_t A6XX_RB_DEPTH_BUFFER_INFO_UNK3(uint32_t v) {
+    return field(v, A6XX_RB_DEPTH_BUFFER_INFO_UNK3__SHIFT, A6XX_RB_DEPTH_BUFFER_INFO_UNK3__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_PITCH = 0x8873;                          // a6xx.xml.h:5972
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_PITCH__MASK = 0x00003fff;                    // a6xx.xml.h:5973
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_PITCH__SHIFT = 0;                            // a6xx.xml.h:5974
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_PITCH__SCALE = 6;                            // a6xx.xml.h:5975  the encoder's val >> 6
+constexpr uint32_t A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t v) {
+    return field(v >> A6XX_RB_DEPTH_BUFFER_PITCH__SCALE, A6XX_RB_DEPTH_BUFFER_PITCH__SHIFT, A6XX_RB_DEPTH_BUFFER_PITCH__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH = 0x8874;                    // a6xx.xml.h:5982
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__MASK = 0x0fffffff;              // a6xx.xml.h:5983
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SHIFT = 0;                      // a6xx.xml.h:5984
+inline constexpr uint32_t A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SCALE = 6;                      // a6xx.xml.h:5985  the encoder's val >> 6
+constexpr uint32_t A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t v) {
+    return field(v >> A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SCALE, A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__SHIFT, A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_BASE = 0x8875;                           // a6xx.xml.h:5992
+inline constexpr uint32_t REG_A6XX_RB_DEPTH_BUFFER_BASE_GMEM = 0x8877;                      // a6xx.xml.h:5995
+
+// depth bounds, two floats (fui): 0.0 and 1.0 (tu_pipeline.cc:3271-3273); inert without Z_BOUNDS_ENABLE
+inline constexpr uint32_t REG_A6XX_RB_Z_BOUNDS_MIN = 0x8878;                                // a6xx.xml.h:5998
+inline constexpr uint32_t REG_A6XX_RB_Z_BOUNDS_MAX = 0x8879;                                // a6xx.xml.h:6007
+
+// the stencil test and its masks: all 0 (tu_pipeline.cc:3245-3270; r3d tu_clear_blit.cc:1616-1620)
+inline constexpr uint32_t REG_A6XX_RB_STENCIL_CONTROL = 0x8880;                             // a6xx.xml.h:6016
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE = 0x00000001;              // a6xx.xml.h:6017
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_STENCIL_ENABLE_BF = 0x00000002;           // a6xx.xml.h:6018
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_STENCIL_READ = 0x00000004;                // a6xx.xml.h:6019
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FUNC__MASK = 0x00000700;                  // a6xx.xml.h:6020
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FUNC__SHIFT = 8;                          // a6xx.xml.h:6021
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FAIL__MASK = 0x00003800;                  // a6xx.xml.h:6026
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FAIL__SHIFT = 11;                         // a6xx.xml.h:6027
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZPASS__MASK = 0x0001c000;                 // a6xx.xml.h:6032
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZPASS__SHIFT = 14;                        // a6xx.xml.h:6033
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZFAIL__MASK = 0x000e0000;                 // a6xx.xml.h:6038
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZFAIL__SHIFT = 17;                        // a6xx.xml.h:6039
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FUNC_BF__MASK = 0x00700000;               // a6xx.xml.h:6044
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FUNC_BF__SHIFT = 20;                      // a6xx.xml.h:6045
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FAIL_BF__MASK = 0x03800000;               // a6xx.xml.h:6050
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FAIL_BF__SHIFT = 23;                      // a6xx.xml.h:6051
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZPASS_BF__MASK = 0x1c000000;              // a6xx.xml.h:6056
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZPASS_BF__SHIFT = 26;                     // a6xx.xml.h:6057
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZFAIL_BF__MASK = 0xe0000000;              // a6xx.xml.h:6062
+inline constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZFAIL_BF__SHIFT = 29;                     // a6xx.xml.h:6063
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FUNC(adreno_compare_func v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_FUNC__SHIFT, A6XX_RB_STENCIL_CONTROL_FUNC__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FAIL(adreno_stencil_op v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_FAIL__SHIFT, A6XX_RB_STENCIL_CONTROL_FAIL__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZPASS(adreno_stencil_op v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_ZPASS__SHIFT, A6XX_RB_STENCIL_CONTROL_ZPASS__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZFAIL(adreno_stencil_op v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_ZFAIL__SHIFT, A6XX_RB_STENCIL_CONTROL_ZFAIL__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FUNC_BF(adreno_compare_func v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_FUNC_BF__SHIFT, A6XX_RB_STENCIL_CONTROL_FUNC_BF__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_FAIL_BF(adreno_stencil_op v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_FAIL_BF__SHIFT, A6XX_RB_STENCIL_CONTROL_FAIL_BF__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZPASS_BF(adreno_stencil_op v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_ZPASS_BF__SHIFT, A6XX_RB_STENCIL_CONTROL_ZPASS_BF__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCIL_CONTROL_ZFAIL_BF(adreno_stencil_op v) {
+    return field(v, A6XX_RB_STENCIL_CONTROL_ZFAIL_BF__SHIFT, A6XX_RB_STENCIL_CONTROL_ZFAIL_BF__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_RB_STENCIL_INFO = 0x8881;                                // a6xx.xml.h:6074
+inline constexpr uint32_t A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL = 0x00000001;               // a6xx.xml.h:6075
+inline constexpr uint32_t A6XX_RB_STENCIL_INFO_UNK1 = 0x00000002;                           // a6xx.xml.h:6076
+
+inline constexpr uint32_t REG_A6XX_RB_STENCILREF = 0x8887;                                  // a6xx.xml.h:6116
+inline constexpr uint32_t A6XX_RB_STENCILREF_REF__MASK = 0x000000ff;                        // a6xx.xml.h:6117
+inline constexpr uint32_t A6XX_RB_STENCILREF_REF__SHIFT = 0;                                // a6xx.xml.h:6118
+inline constexpr uint32_t A6XX_RB_STENCILREF_BFREF__MASK = 0x0000ff00;                      // a6xx.xml.h:6123
+inline constexpr uint32_t A6XX_RB_STENCILREF_BFREF__SHIFT = 8;                              // a6xx.xml.h:6124
+constexpr uint32_t A6XX_RB_STENCILREF_REF(uint32_t v) {
+    return field(v, A6XX_RB_STENCILREF_REF__SHIFT, A6XX_RB_STENCILREF_REF__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCILREF_BFREF(uint32_t v) {
+    return field(v, A6XX_RB_STENCILREF_BFREF__SHIFT, A6XX_RB_STENCILREF_BFREF__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_STENCILMASK = 0x8888;                                 // a6xx.xml.h:6131
+inline constexpr uint32_t A6XX_RB_STENCILMASK_MASK__MASK = 0x000000ff;                      // a6xx.xml.h:6132
+inline constexpr uint32_t A6XX_RB_STENCILMASK_MASK__SHIFT = 0;                              // a6xx.xml.h:6133
+inline constexpr uint32_t A6XX_RB_STENCILMASK_BFMASK__MASK = 0x0000ff00;                    // a6xx.xml.h:6138
+inline constexpr uint32_t A6XX_RB_STENCILMASK_BFMASK__SHIFT = 8;                            // a6xx.xml.h:6139
+constexpr uint32_t A6XX_RB_STENCILMASK_MASK(uint32_t v) {
+    return field(v, A6XX_RB_STENCILMASK_MASK__SHIFT, A6XX_RB_STENCILMASK_MASK__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCILMASK_BFMASK(uint32_t v) {
+    return field(v, A6XX_RB_STENCILMASK_BFMASK__SHIFT, A6XX_RB_STENCILMASK_BFMASK__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_STENCILWRMASK = 0x8889;                               // a6xx.xml.h:6146
+inline constexpr uint32_t A6XX_RB_STENCILWRMASK_WRMASK__MASK = 0x000000ff;                  // a6xx.xml.h:6147
+inline constexpr uint32_t A6XX_RB_STENCILWRMASK_WRMASK__SHIFT = 0;                          // a6xx.xml.h:6148
+inline constexpr uint32_t A6XX_RB_STENCILWRMASK_BFWRMASK__MASK = 0x0000ff00;                // a6xx.xml.h:6153
+inline constexpr uint32_t A6XX_RB_STENCILWRMASK_BFWRMASK__SHIFT = 8;                        // a6xx.xml.h:6154
+constexpr uint32_t A6XX_RB_STENCILWRMASK_WRMASK(uint32_t v) {
+    return field(v, A6XX_RB_STENCILWRMASK_WRMASK__SHIFT, A6XX_RB_STENCILWRMASK_WRMASK__MASK);
+}
+constexpr uint32_t A6XX_RB_STENCILWRMASK_BFWRMASK(uint32_t v) {
+    return field(v, A6XX_RB_STENCILWRMASK_BFWRMASK__SHIFT, A6XX_RB_STENCILWRMASK_BFWRMASK__MASK);
+}
+
+// the window offset (a6xx_reg_xy), 0 for a sysmem pass, written to RB, RB2, SP and SP_TP (tu_cmd_buffer.cc:750-768;
+// fd6_gmem.cc:1223-1235 writes these four and no A7XX one)
+inline constexpr uint32_t REG_A6XX_RB_WINDOW_OFFSET = 0x8890;                               // a6xx.xml.h:6161
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET_X__MASK = 0x00003fff;                       // a6xx.xml.h:6162
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET_X__SHIFT = 0;                               // a6xx.xml.h:6163
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET_Y__MASK = 0x3fff0000;                       // a6xx.xml.h:6168
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET_Y__SHIFT = 16;                              // a6xx.xml.h:6169
+constexpr uint32_t A6XX_RB_WINDOW_OFFSET_X(uint32_t v) {
+    return field(v, A6XX_RB_WINDOW_OFFSET_X__SHIFT, A6XX_RB_WINDOW_OFFSET_X__MASK);
+}
+constexpr uint32_t A6XX_RB_WINDOW_OFFSET_Y(uint32_t v) {
+    return field(v, A6XX_RB_WINDOW_OFFSET_Y__SHIFT, A6XX_RB_WINDOW_OFFSET_Y__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_WINDOW_OFFSET2 = 0x88d4;                              // a6xx.xml.h:6268
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET2_X__MASK = 0x00003fff;                      // a6xx.xml.h:6269
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET2_X__SHIFT = 0;                              // a6xx.xml.h:6270
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET2_Y__MASK = 0x3fff0000;                      // a6xx.xml.h:6275
+inline constexpr uint32_t A6XX_RB_WINDOW_OFFSET2_Y__SHIFT = 16;                             // a6xx.xml.h:6276
+constexpr uint32_t A6XX_RB_WINDOW_OFFSET2_X(uint32_t v) {
+    return field(v, A6XX_RB_WINDOW_OFFSET2_X__SHIFT, A6XX_RB_WINDOW_OFFSET2_X__MASK);
+}
+constexpr uint32_t A6XX_RB_WINDOW_OFFSET2_Y(uint32_t v) {
+    return field(v, A6XX_RB_WINDOW_OFFSET2_Y__SHIFT, A6XX_RB_WINDOW_OFFSET2_Y__MASK);
+}
+
+// the depth clamp again for the RB, two floats (fui): 0.0 and 1.0 (tu_pipeline.cc:2531-2533)
+inline constexpr uint32_t REG_A6XX_RB_Z_CLAMP_MIN = 0x88c0;                                 // a6xx.xml.h:6188
+inline constexpr uint32_t REG_A6XX_RB_Z_CLAMP_MAX = 0x88c1;                                 // a6xx.xml.h:6197
+
+// the blend constant, four floats (fui): 0 (tu_pipeline.cc:3081-3082)
+inline constexpr uint32_t REG_A6XX_RB_BLEND_RED_F32 = 0x8860;                               // a6xx.xml.h:5837
+inline constexpr uint32_t REG_A6XX_RB_BLEND_GREEN_F32 = 0x8861;                             // a6xx.xml.h:5846
+inline constexpr uint32_t REG_A6XX_RB_BLEND_BLUE_F32 = 0x8862;                              // a6xx.xml.h:5855
+inline constexpr uint32_t REG_A6XX_RB_BLEND_ALPHA_F32 = 0x8863;                             // a6xx.xml.h:5864
+
+// blending off: no ENABLE_BLEND bit, INDEPENDENT_BLEND (turnip sets it always, :3016-3022; fd6 and r3d not), the full
+// SAMPLE_MASK = 0xffff0100 (r3d 0xffff0000, tu_clear_blit.cc:1608)
+inline constexpr uint32_t REG_A6XX_RB_BLEND_CNTL = 0x8865;                                  // a6xx.xml.h:5889
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_ENABLE_BLEND__MASK = 0x000000ff;               // a6xx.xml.h:5890
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_ENABLE_BLEND__SHIFT = 0;                       // a6xx.xml.h:5891
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_INDEPENDENT_BLEND = 0x00000100;                // a6xx.xml.h:5896
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_DUAL_COLOR_IN_ENABLE = 0x00000200;             // a6xx.xml.h:5897
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_ALPHA_TO_COVERAGE = 0x00000400;                // a6xx.xml.h:5898
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_ALPHA_TO_ONE = 0x00000800;                     // a6xx.xml.h:5899
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_SAMPLE_MASK__MASK = 0xffff0000;                // a6xx.xml.h:5900
+inline constexpr uint32_t A6XX_RB_BLEND_CNTL_SAMPLE_MASK__SHIFT = 16;                       // a6xx.xml.h:5901
+constexpr uint32_t A6XX_RB_BLEND_CNTL_ENABLE_BLEND(uint32_t v) {
+    return field(v, A6XX_RB_BLEND_CNTL_ENABLE_BLEND__SHIFT, A6XX_RB_BLEND_CNTL_ENABLE_BLEND__MASK);
+}
+constexpr uint32_t A6XX_RB_BLEND_CNTL_SAMPLE_MASK(uint32_t v) {
+    return field(v, A6XX_RB_BLEND_CNTL_SAMPLE_MASK__SHIFT, A6XX_RB_BLEND_CNTL_SAMPLE_MASK__MASK);
+}
+
+// RB_MRT[i], 8 registers an entry: CONTROL, BLEND_CONTROL, then the six the target's pkt4 writes at BUF_INFO
+// (tu_cmd_buffer.cc:500-507; r3d_dst tu_clear_blit.cc:1392-1398): BUF_INFO, PITCH, ARRAY_PITCH, BASE lo, BASE hi,
+// BASE_GMEM. CONTROL = COMPONENT_ENABLE(0xf) = 0x780 with ROP off (turnip :3044-3049; ROP_CODE is inert while
+// ROP_ENABLE is clear: fd6 leaves ROP_COPY there, 0x7e0). BUF_INFO = COLOR_FORMAT | COLOR_TILE_MODE | COLOR_SWAP
+// (fd6_view.c:408-413): 0x30 for linear RGBA8. PITCH and ARRAY_PITCH are stored >> 6: Mesa's encoders assert the
+// value is a multiple of 64 (a6xx.xml.h:5816, 5826), which fdl6_layout's pitch (align(width * cpp, 64 * cpp),
+// fd6_layout.c:194-201) and the 4 KiB layer always are. BASE is 64-bit, align 1 in the XML (a6xx.xml:3714-3715);
+// the layout gives linear images 64 (fd6_layout.c:181). BASE_GMEM is 0 in sysmem (tu_clear_blit.cc:1400).
+inline constexpr uint32_t REG_A6XX_RB_MRT = 0x8820;                                         // a6xx.xml.h:5706  the array's first register
+inline constexpr uint32_t REG_A6XX_RB_MRT__STRIDE = 8;                                      // a6xx.xml.h:5706  registers per entry
+inline constexpr uint32_t REG_A6XX_RB_MRT_CONTROL = 0x8820;                                 // a6xx.xml.h:5708  entry 0
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_BLEND = 0x00000001;                           // a6xx.xml.h:5709
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_BLEND2 = 0x00000002;                          // a6xx.xml.h:5710
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_ROP_ENABLE = 0x00000004;                      // a6xx.xml.h:5711
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_ROP_CODE__MASK = 0x00000078;                  // a6xx.xml.h:5712
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_ROP_CODE__SHIFT = 3;                          // a6xx.xml.h:5713
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE__MASK = 0x00000780;          // a6xx.xml.h:5718
+inline constexpr uint32_t A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE__SHIFT = 7;                  // a6xx.xml.h:5719
+constexpr uint32_t A6XX_RB_MRT_CONTROL_ROP_CODE(a3xx_rop_code v) {
+    return field(v, A6XX_RB_MRT_CONTROL_ROP_CODE__SHIFT, A6XX_RB_MRT_CONTROL_ROP_CODE__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE(uint32_t v) {
+    return field(v, A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE__SHIFT, A6XX_RB_MRT_CONTROL_COMPONENT_ENABLE__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_MRT_BLEND_CONTROL = 0x8821;                           // a6xx.xml.h:5726  entry 0
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR__MASK = 0x0000001f;      // a6xx.xml.h:5727
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR__SHIFT = 0;              // a6xx.xml.h:5728
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__MASK = 0x000000e0;    // a6xx.xml.h:5733
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__SHIFT = 5;            // a6xx.xml.h:5734
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR__MASK = 0x00001f00;     // a6xx.xml.h:5739
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR__SHIFT = 8;             // a6xx.xml.h:5740
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR__MASK = 0x001f0000;    // a6xx.xml.h:5745
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR__SHIFT = 16;           // a6xx.xml.h:5746
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__MASK = 0x00e00000;  // a6xx.xml.h:5751
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__SHIFT = 21;         // a6xx.xml.h:5752
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR__MASK = 0x1f000000;   // a6xx.xml.h:5757
+inline constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR__SHIFT = 24;          // a6xx.xml.h:5758
+constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR(adreno_rb_blend_factor v) {
+    return field(v, A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR__SHIFT, A6XX_RB_MRT_BLEND_CONTROL_RGB_SRC_FACTOR__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE(a3xx_rb_blend_opcode v) {
+    return field(v, A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__SHIFT, A6XX_RB_MRT_BLEND_CONTROL_RGB_BLEND_OPCODE__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR(adreno_rb_blend_factor v) {
+    return field(v, A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR__SHIFT, A6XX_RB_MRT_BLEND_CONTROL_RGB_DEST_FACTOR__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR(adreno_rb_blend_factor v) {
+    return field(v, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR__SHIFT, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_SRC_FACTOR__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE(a3xx_rb_blend_opcode v) {
+    return field(v, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__SHIFT, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_BLEND_OPCODE__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR(adreno_rb_blend_factor v) {
+    return field(v, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR__SHIFT, A6XX_RB_MRT_BLEND_CONTROL_ALPHA_DEST_FACTOR__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_MRT_BUF_INFO = 0x8822;                                // a6xx.xml.h:5765  entry 0; the header marks the accessor deprecated
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__MASK = 0x000000ff;             // a6xx.xml.h:5766
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__SHIFT = 0;                     // a6xx.xml.h:5767
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__MASK = 0x00000300;          // a6xx.xml.h:5772
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__SHIFT = 8;                  // a6xx.xml.h:5773
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_UNK10 = 0x00000400;                          // a6xx.xml.h:5778
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__MASK = 0x00006000;               // a6xx.xml.h:5779
+inline constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__SHIFT = 13;                      // a6xx.xml.h:5780
+constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT(a6xx_format v) {
+    return field(v, A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__SHIFT, A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE(a6xx_tile_mode v) {
+    return field(v, A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__SHIFT, A6XX_RB_MRT_BUF_INFO_COLOR_TILE_MODE__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_BUF_INFO_COLOR_SWAP(a3xx_color_swap v) {
+    return field(v, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__SHIFT, A6XX_RB_MRT_BUF_INFO_COLOR_SWAP__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_MRT_PITCH = 0x8823;                                   // a6xx.xml.h:5811  entry 0
+inline constexpr uint32_t A6XX_RB_MRT_PITCH__MASK = 0xffffffff;                             // a6xx.xml.h:5812
+inline constexpr uint32_t A6XX_RB_MRT_PITCH__SHIFT = 0;                                     // a6xx.xml.h:5813
+inline constexpr uint32_t A6XX_RB_MRT_PITCH__SCALE = 6;                                     // a6xx.xml.h:5814  the encoder's val >> 6
+constexpr uint32_t A6XX_RB_MRT_PITCH(uint32_t v) {
+    return field(v >> A6XX_RB_MRT_PITCH__SCALE, A6XX_RB_MRT_PITCH__SHIFT, A6XX_RB_MRT_PITCH__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_MRT_ARRAY_PITCH = 0x8824;                             // a6xx.xml.h:5821  entry 0
+inline constexpr uint32_t A6XX_RB_MRT_ARRAY_PITCH__MASK = 0xffffffff;                       // a6xx.xml.h:5822
+inline constexpr uint32_t A6XX_RB_MRT_ARRAY_PITCH__SHIFT = 0;                               // a6xx.xml.h:5823
+inline constexpr uint32_t A6XX_RB_MRT_ARRAY_PITCH__SCALE = 6;                               // a6xx.xml.h:5824  the encoder's val >> 6
+constexpr uint32_t A6XX_RB_MRT_ARRAY_PITCH(uint32_t v) {
+    return field(v >> A6XX_RB_MRT_ARRAY_PITCH__SCALE, A6XX_RB_MRT_ARRAY_PITCH__SHIFT, A6XX_RB_MRT_ARRAY_PITCH__MASK);
+}
+inline constexpr uint32_t REG_A6XX_RB_MRT_BASE = 0x8825;                                    // a6xx.xml.h:5831  entry 0
+inline constexpr uint32_t REG_A6XX_RB_MRT_BASE_GMEM = 0x8827;                               // a6xx.xml.h:5834  entry 0
+
+// the UBWC flag buffer of each target, 3 registers an entry (ADDR 64-bit, PITCH): zeros without UBWC, and inert while
+// RB_RENDER_CNTL.FLAG_MRTS is clear; both witnesses write the block all the same (tu_cmd_buffer.cc:502-503, fd6_gmem.cc:117-119)
+inline constexpr uint32_t REG_A6XX_RB_MRT_FLAG_BUFFER = 0x8903;                             // a6xx.xml.h:6518  the array's first register
+inline constexpr uint32_t REG_A6XX_RB_MRT_FLAG_BUFFER__STRIDE = 3;                          // a6xx.xml.h:6518  registers per entry
+inline constexpr uint32_t REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR = 0x8903;                        // a6xx.xml.h:6520  entry 0
+inline constexpr uint32_t REG_A6XX_RB_MRT_FLAG_BUFFER_PITCH = 0x8905;                       // a6xx.xml.h:6523  entry 0
+inline constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH__MASK = 0x000007ff;           // a6xx.xml.h:6524
+inline constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH__SHIFT = 0;                   // a6xx.xml.h:6525
+inline constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH__SCALE = 6;                   // a6xx.xml.h:6526  the encoder's val >> 6
+inline constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH__MASK = 0x1ffff800;     // a6xx.xml.h:6531
+inline constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH__SHIFT = 11;            // a6xx.xml.h:6532
+inline constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH__SCALE = 7;             // a6xx.xml.h:6533  the encoder's val >> 7
+constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH(uint32_t v) {
+    return field(v >> A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH__SCALE, A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH__SHIFT, A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH__MASK);
+}
+constexpr uint32_t A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH(uint32_t v) {
+    return field(v >> A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH__SCALE, A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH__SHIFT, A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH__MASK);
+}
+
+// shading rate (has_legacy_pipeline_shading_rate): both write 0 (tu_pipeline.cc:3211-3216; fd6_rasterizer.cc:131-136)
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8A00 = 0x8a00;                                // a6xx.xml.h:6543
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8A10 = 0x8a10;                                // a6xx.xml.h:6546
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8A20 = 0x8a20;                                // a6xx.xml.h:6549
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_8A30 = 0x8a30;                                // a6xx.xml.h:6552
+
+// PC: the primitive controller. PC_PRIMITIVE_CNTL_0: no restart, first vertex provoking (turnip :5848-5862; fd6 sets
+// PROVOKING_VTX_LAST for GL, flat varyings only)
+inline constexpr uint32_t REG_A6XX_PC_PRIMITIVE_CNTL_0 = 0x9b00;                            // a6xx.xml.h:7577
+inline constexpr uint32_t A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART = 0x00000001;          // a6xx.xml.h:7578
+inline constexpr uint32_t A6XX_PC_PRIMITIVE_CNTL_0_PROVOKING_VTX_LAST = 0x00000002;         // a6xx.xml.h:7579
+inline constexpr uint32_t A6XX_PC_PRIMITIVE_CNTL_0_D3D_VERTEX_ORDERING = 0x00000004;        // a6xx.xml.h:7580
+inline constexpr uint32_t A6XX_PC_PRIMITIVE_CNTL_0_UNK3 = 0x00000008;                       // a6xx.xml.h:7581
+
+// how many VPC locations the VS writes (STRIDE_IN_VPC, the link's max_loc, the same as VPC_VS_PACK's) and which
+// built-ins (tu_pipeline.cc:1015-1032): 4 for a position-only link
+inline constexpr uint32_t REG_A6XX_PC_VS_OUT_CNTL = 0x9b01;                                 // a6xx.xml.h:7584
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_STRIDE_IN_VPC__MASK = 0x000000ff;             // a6xx.xml.h:7585
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_STRIDE_IN_VPC__SHIFT = 0;                     // a6xx.xml.h:7586
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_PSIZE = 0x00000100;                           // a6xx.xml.h:7591
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_LAYER = 0x00000200;                           // a6xx.xml.h:7592
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_VIEW = 0x00000400;                            // a6xx.xml.h:7593
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_PRIMITIVE_ID = 0x00000800;                    // a6xx.xml.h:7594
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_CLIP_MASK__MASK = 0x00ff0000;                 // a6xx.xml.h:7595
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_CLIP_MASK__SHIFT = 16;                        // a6xx.xml.h:7596
+inline constexpr uint32_t A6XX_PC_VS_OUT_CNTL_SHADINGRATE = 0x01000000;                     // a6xx.xml.h:7601
+constexpr uint32_t A6XX_PC_VS_OUT_CNTL_STRIDE_IN_VPC(uint32_t v) {
+    return field(v, A6XX_PC_VS_OUT_CNTL_STRIDE_IN_VPC__SHIFT, A6XX_PC_VS_OUT_CNTL_STRIDE_IN_VPC__MASK);
+}
+constexpr uint32_t A6XX_PC_VS_OUT_CNTL_CLIP_MASK(uint32_t v) {
+    return field(v, A6XX_PC_VS_OUT_CNTL_CLIP_MASK__SHIFT, A6XX_PC_VS_OUT_CNTL_CLIP_MASK__MASK);
+}
+
+// the FS reads the primitive id: no (tu_shader.cc:2075)
+inline constexpr uint32_t REG_A6XX_PC_PS_CNTL = 0x9806;                                     // a6xx.xml.h:7470
+inline constexpr uint32_t A6XX_PC_PS_CNTL_PRIMITIVEIDEN = 0x00000001;                       // a6xx.xml.h:7471
+
+// POLYMODE6_TRIANGLES, and VPC_POLYGON_MODE the same (tu_pipeline.cc:3152-3157)
+inline constexpr uint32_t REG_A6XX_PC_POLYGON_MODE = 0x9981;                                // a6xx.xml.h:7523
+inline constexpr uint32_t A6XX_PC_POLYGON_MODE_MODE__MASK = 0x00000003;                     // a6xx.xml.h:7524
+inline constexpr uint32_t A6XX_PC_POLYGON_MODE_MODE__SHIFT = 0;                             // a6xx.xml.h:7525
+constexpr uint32_t A6XX_PC_POLYGON_MODE_MODE(a6xx_polygon_mode v) {
+    return field(v, A6XX_PC_POLYGON_MODE_MODE__SHIFT, A6XX_PC_POLYGON_MODE_MODE__MASK);
+}
+
+// 0xffffffff, written before every draw by fd6 (fd6_draw.cc:416-422); inert without PRIMITIVE_RESTART
+inline constexpr uint32_t REG_A6XX_PC_RESTART_INDEX = 0x9803;                               // a6xx.xml.h:7461
+
+// stream-out off, the third register of turnip's CP_CONTEXT_REG_BUNCH (tess_use_shared: tu_pipeline.cc:496-512)
+inline constexpr uint32_t REG_A6XX_PC_SO_STREAM_CNTL = 0x9808;                              // a6xx.xml.h:7474
+inline constexpr uint32_t A6XX_PC_SO_STREAM_CNTL_STREAM_ENABLE__MASK = 0x00078000;          // a6xx.xml.h:7475
+inline constexpr uint32_t A6XX_PC_SO_STREAM_CNTL_STREAM_ENABLE__SHIFT = 15;                 // a6xx.xml.h:7476
+constexpr uint32_t A6XX_PC_SO_STREAM_CNTL_STREAM_ENABLE(uint32_t v) {
+    return field(v, A6XX_PC_SO_STREAM_CNTL_STREAM_ENABLE__SHIFT, A6XX_PC_SO_STREAM_CNTL_STREAM_ENABLE__MASK);
+}
+
+// VFD: the vertex fetcher. With no attributes FETCH_CNT = DECODE_CNT = 0 and no VFD_DECODE/DEST_CNTL entry is written
+// (tu_shader.cc:1573-1612 tu6_emit_vfd_dest; fd6_program.cc:486-508)
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_0 = 0xa000;                                  // a6xx.xml.h:7828
+inline constexpr uint32_t A6XX_VFD_CONTROL_0_FETCH_CNT__MASK = 0x0000003f;                  // a6xx.xml.h:7829
+inline constexpr uint32_t A6XX_VFD_CONTROL_0_FETCH_CNT__SHIFT = 0;                          // a6xx.xml.h:7830
+inline constexpr uint32_t A6XX_VFD_CONTROL_0_DECODE_CNT__MASK = 0x00003f00;                 // a6xx.xml.h:7835
+inline constexpr uint32_t A6XX_VFD_CONTROL_0_DECODE_CNT__SHIFT = 8;                         // a6xx.xml.h:7836
+constexpr uint32_t A6XX_VFD_CONTROL_0_FETCH_CNT(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_0_FETCH_CNT__SHIFT, A6XX_VFD_CONTROL_0_FETCH_CNT__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_0_DECODE_CNT(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_0_DECODE_CNT__SHIFT, A6XX_VFD_CONTROL_0_DECODE_CNT__MASK);
+}
+
+// where the VS gets its ids: the vertex id register from ir3's SYSTEM_VALUE_VERTEX_ID sysval (which includes
+// VFD_INDEX_OFFSET under the static VFD_ADD_OFFSET.VERTEX), kRegidNone for the rest (tu_shader.cc:1947-1966)
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_1 = 0xa001;                                  // a6xx.xml.h:7843
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4VTX__MASK = 0x000000ff;                  // a6xx.xml.h:7844
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4VTX__SHIFT = 0;                          // a6xx.xml.h:7845
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4INST__MASK = 0x0000ff00;                 // a6xx.xml.h:7850
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4INST__SHIFT = 8;                         // a6xx.xml.h:7851
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4PRIMID__MASK = 0x00ff0000;               // a6xx.xml.h:7856
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4PRIMID__SHIFT = 16;                      // a6xx.xml.h:7857
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4VIEWID__MASK = 0xff000000;               // a6xx.xml.h:7862
+inline constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4VIEWID__SHIFT = 24;                      // a6xx.xml.h:7863
+constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4VTX(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_1_REGID4VTX__SHIFT, A6XX_VFD_CONTROL_1_REGID4VTX__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4INST(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_1_REGID4INST__SHIFT, A6XX_VFD_CONTROL_1_REGID4INST__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4PRIMID(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_1_REGID4PRIMID__SHIFT, A6XX_VFD_CONTROL_1_REGID4PRIMID__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_1_REGID4VIEWID(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_1_REGID4VIEWID__SHIFT, A6XX_VFD_CONTROL_1_REGID4VIEWID__MASK);
+}
+
+// the HS, DS and GS id registers, every one kRegidNone without those stages: 0xfcfc, 0xfcfcfcfc, 0xfc (the literal
+// turnip writes, tu_shader.cc:2009), 0xfcfc (tu_shader.cc:1972-2036 tu6_emit_hs/ds/gs with a NULL shader)
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_2 = 0xa002;                                  // a6xx.xml.h:7870
+inline constexpr uint32_t A6XX_VFD_CONTROL_2_REGID_HSRELPATCHID__MASK = 0x000000ff;         // a6xx.xml.h:7871
+inline constexpr uint32_t A6XX_VFD_CONTROL_2_REGID_HSRELPATCHID__SHIFT = 0;                 // a6xx.xml.h:7872
+inline constexpr uint32_t A6XX_VFD_CONTROL_2_REGID_INVOCATIONID__MASK = 0x0000ff00;         // a6xx.xml.h:7877
+inline constexpr uint32_t A6XX_VFD_CONTROL_2_REGID_INVOCATIONID__SHIFT = 8;                 // a6xx.xml.h:7878
+constexpr uint32_t A6XX_VFD_CONTROL_2_REGID_HSRELPATCHID(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_2_REGID_HSRELPATCHID__SHIFT, A6XX_VFD_CONTROL_2_REGID_HSRELPATCHID__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_2_REGID_INVOCATIONID(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_2_REGID_INVOCATIONID__SHIFT, A6XX_VFD_CONTROL_2_REGID_INVOCATIONID__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_3 = 0xa003;                                  // a6xx.xml.h:7885
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_DSPRIMID__MASK = 0x000000ff;             // a6xx.xml.h:7886
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_DSPRIMID__SHIFT = 0;                     // a6xx.xml.h:7887
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_DSRELPATCHID__MASK = 0x0000ff00;         // a6xx.xml.h:7892
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_DSRELPATCHID__SHIFT = 8;                 // a6xx.xml.h:7893
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_TESSX__MASK = 0x00ff0000;                // a6xx.xml.h:7898
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_TESSX__SHIFT = 16;                       // a6xx.xml.h:7899
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_TESSY__MASK = 0xff000000;                // a6xx.xml.h:7904
+inline constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_TESSY__SHIFT = 24;                       // a6xx.xml.h:7905
+constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_DSPRIMID(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_3_REGID_DSPRIMID__SHIFT, A6XX_VFD_CONTROL_3_REGID_DSPRIMID__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_DSRELPATCHID(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_3_REGID_DSRELPATCHID__SHIFT, A6XX_VFD_CONTROL_3_REGID_DSRELPATCHID__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_TESSX(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_3_REGID_TESSX__SHIFT, A6XX_VFD_CONTROL_3_REGID_TESSX__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_3_REGID_TESSY(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_3_REGID_TESSY__SHIFT, A6XX_VFD_CONTROL_3_REGID_TESSY__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_4 = 0xa004;                                  // a6xx.xml.h:7912
+inline constexpr uint32_t A6XX_VFD_CONTROL_4_UNK0__MASK = 0x000000ff;                       // a6xx.xml.h:7913
+inline constexpr uint32_t A6XX_VFD_CONTROL_4_UNK0__SHIFT = 0;                               // a6xx.xml.h:7914
+constexpr uint32_t A6XX_VFD_CONTROL_4_UNK0(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_4_UNK0__SHIFT, A6XX_VFD_CONTROL_4_UNK0__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_5 = 0xa005;                                  // a6xx.xml.h:7921
+inline constexpr uint32_t A6XX_VFD_CONTROL_5_REGID_GSHEADER__MASK = 0x000000ff;             // a6xx.xml.h:7922
+inline constexpr uint32_t A6XX_VFD_CONTROL_5_REGID_GSHEADER__SHIFT = 0;                     // a6xx.xml.h:7923
+inline constexpr uint32_t A6XX_VFD_CONTROL_5_UNK8__MASK = 0x0000ff00;                       // a6xx.xml.h:7928
+inline constexpr uint32_t A6XX_VFD_CONTROL_5_UNK8__SHIFT = 8;                               // a6xx.xml.h:7929
+constexpr uint32_t A6XX_VFD_CONTROL_5_REGID_GSHEADER(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_5_REGID_GSHEADER__SHIFT, A6XX_VFD_CONTROL_5_REGID_GSHEADER__MASK);
+}
+constexpr uint32_t A6XX_VFD_CONTROL_5_UNK8(uint32_t v) {
+    return field(v, A6XX_VFD_CONTROL_5_UNK8__SHIFT, A6XX_VFD_CONTROL_5_UNK8__MASK);
+}
+
+// PRIMID4PSEN only when the FS reads the primitive id (tu_shader.cc:2072-2073)
+inline constexpr uint32_t REG_A6XX_VFD_CONTROL_6 = 0xa006;                                  // a6xx.xml.h:7936
+inline constexpr uint32_t A6XX_VFD_CONTROL_6_PRIMID4PSEN = 0x00000001;                      // a6xx.xml.h:7937
+
+// the draw's first vertex and first instance (tu_cmd_buffer.cc:6178-6180; fd6_draw.cc:404-414)
+inline constexpr uint32_t REG_A6XX_VFD_INDEX_OFFSET = 0xa00e;                               // a6xx.xml.h:7965
+inline constexpr uint32_t REG_A6XX_VFD_INSTANCE_START_OFFSET = 0xa00f;                      // a6xx.xml.h:7968
+
+// the other registers of VFD_FETCH[i] (BASE 64-bit, align 1; STRIDE 12 bits, a6xx.xml:4618-4620); SIZE is above
+inline constexpr uint32_t REG_A6XX_VFD_FETCH_BASE = 0xa010;                                 // a6xx.xml.h:7973  entry 0
+inline constexpr uint32_t REG_A6XX_VFD_FETCH_STRIDE = 0xa013;                               // a6xx.xml.h:7979  entry 0
+
+// VFD_DECODE[i], 2 registers an entry: how attribute i is decoded (tu_pipeline.cc:2330-2360; fd6_context.cc:81-99) and
+// its instance step rate (turnip writes the divisor, 0 per-vertex; fd6 MAX2(1, divisor)). Step two's registers.
+inline constexpr uint32_t REG_A6XX_VFD_DECODE = 0xa090;                                     // a6xx.xml.h:7982  the array's first register
+inline constexpr uint32_t REG_A6XX_VFD_DECODE__STRIDE = 2;                                  // a6xx.xml.h:7982  registers per entry
+inline constexpr uint32_t REG_A6XX_VFD_DECODE_INSTR = 0xa090;                               // a6xx.xml.h:7984  entry 0
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_IDX__MASK = 0x0000001f;                     // a6xx.xml.h:7985
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_IDX__SHIFT = 0;                             // a6xx.xml.h:7986
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_OFFSET__MASK = 0x0001ffe0;                  // a6xx.xml.h:7991
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_OFFSET__SHIFT = 5;                          // a6xx.xml.h:7992
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_INSTANCED = 0x00020000;                     // a6xx.xml.h:7997
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_FORMAT__MASK = 0x0ff00000;                  // a6xx.xml.h:7998
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_FORMAT__SHIFT = 20;                         // a6xx.xml.h:7999
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_SWAP__MASK = 0x30000000;                    // a6xx.xml.h:8004
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_SWAP__SHIFT = 28;                           // a6xx.xml.h:8005
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_UNK30 = 0x40000000;                         // a6xx.xml.h:8010
+inline constexpr uint32_t A6XX_VFD_DECODE_INSTR_FLOAT = 0x80000000;                         // a6xx.xml.h:8011
+constexpr uint32_t A6XX_VFD_DECODE_INSTR_IDX(uint32_t v) {
+    return field(v, A6XX_VFD_DECODE_INSTR_IDX__SHIFT, A6XX_VFD_DECODE_INSTR_IDX__MASK);
+}
+constexpr uint32_t A6XX_VFD_DECODE_INSTR_OFFSET(uint32_t v) {
+    return field(v, A6XX_VFD_DECODE_INSTR_OFFSET__SHIFT, A6XX_VFD_DECODE_INSTR_OFFSET__MASK);
+}
+constexpr uint32_t A6XX_VFD_DECODE_INSTR_FORMAT(a6xx_format v) {
+    return field(v, A6XX_VFD_DECODE_INSTR_FORMAT__SHIFT, A6XX_VFD_DECODE_INSTR_FORMAT__MASK);
+}
+constexpr uint32_t A6XX_VFD_DECODE_INSTR_SWAP(a3xx_color_swap v) {
+    return field(v, A6XX_VFD_DECODE_INSTR_SWAP__SHIFT, A6XX_VFD_DECODE_INSTR_SWAP__MASK);
+}
+inline constexpr uint32_t REG_A6XX_VFD_DECODE_STEP_RATE = 0xa091;                           // a6xx.xml.h:8014  entry 0
+
+// VFD_DEST_CNTL[i]: the register and write mask attribute i lands in (tu_shader.cc:1600-1611)
+inline constexpr uint32_t REG_A6XX_VFD_DEST_CNTL = 0xa0d0;                                  // a6xx.xml.h:8017  the array's first register
+inline constexpr uint32_t REG_A6XX_VFD_DEST_CNTL__STRIDE = 1;                               // a6xx.xml.h:8017  registers per entry
+inline constexpr uint32_t REG_A6XX_VFD_DEST_CNTL_INSTR = 0xa0d0;                            // a6xx.xml.h:8019  entry 0
+inline constexpr uint32_t A6XX_VFD_DEST_CNTL_INSTR_WRITEMASK__MASK = 0x0000000f;            // a6xx.xml.h:8020
+inline constexpr uint32_t A6XX_VFD_DEST_CNTL_INSTR_WRITEMASK__SHIFT = 0;                    // a6xx.xml.h:8021
+inline constexpr uint32_t A6XX_VFD_DEST_CNTL_INSTR_REGID__MASK = 0x00000ff0;                // a6xx.xml.h:8026
+inline constexpr uint32_t A6XX_VFD_DEST_CNTL_INSTR_REGID__SHIFT = 4;                        // a6xx.xml.h:8027
+constexpr uint32_t A6XX_VFD_DEST_CNTL_INSTR_WRITEMASK(uint32_t v) {
+    return field(v, A6XX_VFD_DEST_CNTL_INSTR_WRITEMASK__SHIFT, A6XX_VFD_DEST_CNTL_INSTR_WRITEMASK__MASK);
+}
+constexpr uint32_t A6XX_VFD_DEST_CNTL_INSTR_REGID(uint32_t v) {
+    return field(v, A6XX_VFD_DEST_CNTL_INSTR_REGID__SHIFT, A6XX_VFD_DEST_CNTL_INSTR_REGID__MASK);
+}
+
+// VPC: the varying packer. VPC_VARYING_INTERP_MODE[0..7] and PS_REPL_MODE[0..7]: 2 bits per component at inloc * 2,
+// INTERP_FLAT for flat inputs, PS_REPL for point sprites; fd6 writes all 8 + 8 (fd6_program.cc:1365-1370), turnip
+// only the ones it needs and r3d PS_REPL[0] = 2 << 2 | 1 for its RECTLIST (tu_clear_blit.cc:936-937): all 16 are
+// written as zeros here so that nothing of a blit's is left behind
+inline constexpr uint32_t REG_A6XX_VPC_VARYING_INTERP = 0x9200;                             // a6xx.xml.h:7152  the array's first register
+inline constexpr uint32_t REG_A6XX_VPC_VARYING_INTERP__STRIDE = 1;                          // a6xx.xml.h:7152  registers per entry
+inline constexpr uint32_t REG_A6XX_VPC_VARYING_INTERP_MODE = 0x9200;                        // a6xx.xml.h:7154  entry 0
+
+inline constexpr uint32_t REG_A6XX_VPC_VARYING_PS_REPL = 0x9208;                            // a6xx.xml.h:7157  the array's first register
+inline constexpr uint32_t REG_A6XX_VPC_VARYING_PS_REPL__STRIDE = 1;                         // a6xx.xml.h:7157  registers per entry
+inline constexpr uint32_t REG_A6XX_VPC_VARYING_PS_REPL_MODE = 0x9208;                       // a6xx.xml.h:7159  entry 0
+
+// VPC_VAR_DISABLE[0..3]: ~varmask, one bit per component of the 128 VPC locations the FS does NOT read
+// (tu_shader.cc:1791-1808; fd6_program.cc:659-663): 0xffffffff x 4 without varyings
+inline constexpr uint32_t REG_A6XX_VPC_VAR = 0x9212;                                        // a6xx.xml.h:7168  the array's first register
+inline constexpr uint32_t REG_A6XX_VPC_VAR__STRIDE = 1;                                     // a6xx.xml.h:7168  registers per entry
+inline constexpr uint32_t REG_A6XX_VPC_VAR_DISABLE = 0x9212;                                // a6xx.xml.h:7170  entry 0
+
+// stream-out off, the first register of turnip's bunch (tu_pipeline.cc:496-512)
+inline constexpr uint32_t REG_A6XX_VPC_SO_CNTL = 0x9216;                                    // a6xx.xml.h:7173
+inline constexpr uint32_t A6XX_VPC_SO_CNTL_ADDR__MASK = 0x000000ff;                         // a6xx.xml.h:7174
+inline constexpr uint32_t A6XX_VPC_SO_CNTL_ADDR__SHIFT = 0;                                 // a6xx.xml.h:7175
+inline constexpr uint32_t A6XX_VPC_SO_CNTL_RESET = 0x00010000;                              // a6xx.xml.h:7180
+constexpr uint32_t A6XX_VPC_SO_CNTL_ADDR(uint32_t v) {
+    return field(v, A6XX_VPC_SO_CNTL_ADDR__SHIFT, A6XX_VPC_SO_CNTL_ADDR__MASK);
+}
+
+// the VS's output layout: STRIDE_IN_VPC (max_loc), POSITIONLOC, PSIZELOC (0xff: none), EXTRAPOS 0 (tu_pipeline.cc:
+// 994-998; fd6_program.cc:750-753): 0x00ff0004 for a position-only link
+inline constexpr uint32_t REG_A6XX_VPC_VS_PACK = 0x9301;                                    // a6xx.xml.h:7241
+inline constexpr uint32_t A6XX_VPC_VS_PACK_STRIDE_IN_VPC__MASK = 0x000000ff;                // a6xx.xml.h:7242
+inline constexpr uint32_t A6XX_VPC_VS_PACK_STRIDE_IN_VPC__SHIFT = 0;                        // a6xx.xml.h:7243
+inline constexpr uint32_t A6XX_VPC_VS_PACK_POSITIONLOC__MASK = 0x0000ff00;                  // a6xx.xml.h:7248
+inline constexpr uint32_t A6XX_VPC_VS_PACK_POSITIONLOC__SHIFT = 8;                          // a6xx.xml.h:7249
+inline constexpr uint32_t A6XX_VPC_VS_PACK_PSIZELOC__MASK = 0x00ff0000;                     // a6xx.xml.h:7254
+inline constexpr uint32_t A6XX_VPC_VS_PACK_PSIZELOC__SHIFT = 16;                            // a6xx.xml.h:7255
+inline constexpr uint32_t A6XX_VPC_VS_PACK_EXTRAPOS__MASK = 0x0f000000;                     // a6xx.xml.h:7260
+inline constexpr uint32_t A6XX_VPC_VS_PACK_EXTRAPOS__SHIFT = 24;                            // a6xx.xml.h:7261
+constexpr uint32_t A6XX_VPC_VS_PACK_STRIDE_IN_VPC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_PACK_STRIDE_IN_VPC__SHIFT, A6XX_VPC_VS_PACK_STRIDE_IN_VPC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_PACK_POSITIONLOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_PACK_POSITIONLOC__SHIFT, A6XX_VPC_VS_PACK_POSITIONLOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_PACK_PSIZELOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_PACK_PSIZELOC__SHIFT, A6XX_VPC_VS_PACK_PSIZELOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_PACK_EXTRAPOS(uint32_t v) {
+    return field(v, A6XX_VPC_VS_PACK_EXTRAPOS__SHIFT, A6XX_VPC_VS_PACK_EXTRAPOS__MASK);
+}
+
+// clip distances: none, both locations 0xff, written twice (the _V2 copy too: tu_pipeline.cc:1000-1007) = 0x00ffff00
+inline constexpr uint32_t REG_A6XX_VPC_VS_CLIP_CNTL = 0x9101;                               // a6xx.xml.h:6842
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK__MASK = 0x000000ff;               // a6xx.xml.h:6843
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK__SHIFT = 0;                       // a6xx.xml.h:6844
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC__MASK = 0x0000ff00;        // a6xx.xml.h:6849
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC__SHIFT = 8;                // a6xx.xml.h:6850
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC__MASK = 0x00ff0000;        // a6xx.xml.h:6855
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC__SHIFT = 16;               // a6xx.xml.h:6856
+constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK(uint32_t v) {
+    return field(v, A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK__SHIFT, A6XX_VPC_VS_CLIP_CNTL_CLIP_MASK__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC__SHIFT, A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_03_LOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC__SHIFT, A6XX_VPC_VS_CLIP_CNTL_CLIP_DIST_47_LOC__MASK);
+}
+inline constexpr uint32_t REG_A6XX_VPC_VS_CLIP_CNTL_V2 = 0x9311;                            // a6xx.xml.h:6905
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_MASK__MASK = 0x000000ff;            // a6xx.xml.h:6906
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_MASK__SHIFT = 0;                    // a6xx.xml.h:6907
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_03_LOC__MASK = 0x0000ff00;     // a6xx.xml.h:6912
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_03_LOC__SHIFT = 8;             // a6xx.xml.h:6913
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_47_LOC__MASK = 0x00ff0000;     // a6xx.xml.h:6918
+inline constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_47_LOC__SHIFT = 16;            // a6xx.xml.h:6919
+constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_MASK(uint32_t v) {
+    return field(v, A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_MASK__SHIFT, A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_MASK__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_03_LOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_03_LOC__SHIFT, A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_03_LOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_47_LOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_47_LOC__SHIFT, A6XX_VPC_VS_CLIP_CNTL_V2_CLIP_DIST_47_LOC__MASK);
+}
+
+// layer, view and shading rate locations: all 0xff, written twice = 0x00ffffff (tu_pipeline.cc:1042-1049)
+inline constexpr uint32_t REG_A6XX_VPC_VS_LAYER_CNTL = 0x9104;                              // a6xx.xml.h:6968
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_LAYERLOC__MASK = 0x000000ff;               // a6xx.xml.h:6969
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_LAYERLOC__SHIFT = 0;                       // a6xx.xml.h:6970
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_VIEWLOC__MASK = 0x0000ff00;                // a6xx.xml.h:6975
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_VIEWLOC__SHIFT = 8;                        // a6xx.xml.h:6976
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC__MASK = 0x00ff0000;         // a6xx.xml.h:6981
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC__SHIFT = 16;                // a6xx.xml.h:6982
+constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_LAYERLOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_LAYER_CNTL_LAYERLOC__SHIFT, A6XX_VPC_VS_LAYER_CNTL_LAYERLOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_VIEWLOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_LAYER_CNTL_VIEWLOC__SHIFT, A6XX_VPC_VS_LAYER_CNTL_VIEWLOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC__SHIFT, A6XX_VPC_VS_LAYER_CNTL_SHADINGRATELOC__MASK);
+}
+inline constexpr uint32_t REG_A6XX_VPC_VS_LAYER_CNTL_V2 = 0x9314;                           // a6xx.xml.h:7031
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_LAYERLOC__MASK = 0x000000ff;            // a6xx.xml.h:7032
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_LAYERLOC__SHIFT = 0;                    // a6xx.xml.h:7033
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_VIEWLOC__MASK = 0x0000ff00;             // a6xx.xml.h:7038
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_VIEWLOC__SHIFT = 8;                     // a6xx.xml.h:7039
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_SHADINGRATELOC__MASK = 0x00ff0000;      // a6xx.xml.h:7044
+inline constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_SHADINGRATELOC__SHIFT = 16;             // a6xx.xml.h:7045
+constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_LAYERLOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_LAYER_CNTL_V2_LAYERLOC__SHIFT, A6XX_VPC_VS_LAYER_CNTL_V2_LAYERLOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_VIEWLOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_LAYER_CNTL_V2_VIEWLOC__SHIFT, A6XX_VPC_VS_LAYER_CNTL_V2_VIEWLOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_VS_LAYER_CNTL_V2_SHADINGRATELOC(uint32_t v) {
+    return field(v, A6XX_VPC_VS_LAYER_CNTL_V2_SHADINGRATELOC__SHIFT, A6XX_VPC_VS_LAYER_CNTL_V2_SHADINGRATELOC__MASK);
+}
+
+// what reaches the FS: NUMNONPOSVAR = fs->total_in, VARYING when it is not 0, PRIMIDLOC and VIEWIDLOC 0xff
+// (tu_shader.cc:1810-1817): 0xff00ff00 without varyings, 0xff01ff04 with one float4
+inline constexpr uint32_t REG_A6XX_VPC_CNTL_0 = 0x9304;                                     // a6xx.xml.h:7322
+inline constexpr uint32_t A6XX_VPC_CNTL_0_NUMNONPOSVAR__MASK = 0x000000ff;                  // a6xx.xml.h:7323
+inline constexpr uint32_t A6XX_VPC_CNTL_0_NUMNONPOSVAR__SHIFT = 0;                          // a6xx.xml.h:7324
+inline constexpr uint32_t A6XX_VPC_CNTL_0_PRIMIDLOC__MASK = 0x0000ff00;                     // a6xx.xml.h:7329
+inline constexpr uint32_t A6XX_VPC_CNTL_0_PRIMIDLOC__SHIFT = 8;                             // a6xx.xml.h:7330
+inline constexpr uint32_t A6XX_VPC_CNTL_0_VARYING = 0x00010000;                             // a6xx.xml.h:7335
+inline constexpr uint32_t A6XX_VPC_CNTL_0_VIEWIDLOC__MASK = 0xff000000;                     // a6xx.xml.h:7336
+inline constexpr uint32_t A6XX_VPC_CNTL_0_VIEWIDLOC__SHIFT = 24;                            // a6xx.xml.h:7337
+constexpr uint32_t A6XX_VPC_CNTL_0_NUMNONPOSVAR(uint32_t v) {
+    return field(v, A6XX_VPC_CNTL_0_NUMNONPOSVAR__SHIFT, A6XX_VPC_CNTL_0_NUMNONPOSVAR__MASK);
+}
+constexpr uint32_t A6XX_VPC_CNTL_0_PRIMIDLOC(uint32_t v) {
+    return field(v, A6XX_VPC_CNTL_0_PRIMIDLOC__SHIFT, A6XX_VPC_CNTL_0_PRIMIDLOC__MASK);
+}
+constexpr uint32_t A6XX_VPC_CNTL_0_VIEWIDLOC(uint32_t v) {
+    return field(v, A6XX_VPC_CNTL_0_VIEWIDLOC__SHIFT, A6XX_VPC_CNTL_0_VIEWIDLOC__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_VPC_POLYGON_MODE = 0x9108;                               // a6xx.xml.h:7099
+inline constexpr uint32_t A6XX_VPC_POLYGON_MODE_MODE__MASK = 0x00000003;                    // a6xx.xml.h:7100
+inline constexpr uint32_t A6XX_VPC_POLYGON_MODE_MODE__SHIFT = 0;                            // a6xx.xml.h:7101
+constexpr uint32_t A6XX_VPC_POLYGON_MODE_MODE(a6xx_polygon_mode v) {
+    return field(v, A6XX_VPC_POLYGON_MODE_MODE__SHIFT, A6XX_VPC_POLYGON_MODE_MODE__MASK);
+}
+
+// SP_VS: the vertex shader's program registers (tu_shader.cc:1238-1356 tu6_emit_xs; fd6_program.cc:100-245).
+// SP_VS_CTRL_REG0: the footprints are ir3's max_reg + 1 and max_half_reg + 1 (0 when no half register is used),
+// BRANCHSTACK is ir3_shader_branchstack_hw = ceil(min(branchstack, 64) / 2) (ir3_shader.h:1419-1428), MERGEDREGS is
+// bit 20 HERE (bit 31 in SP_FS_CTRL_REG0 and SP_CS_CTRL_REG0, a6xx.xml.h:8073) and there is no THREADSIZE field.
+inline constexpr uint32_t REG_A6XX_SP_VS_CTRL_REG0 = 0xa800;                                // a6xx.xml.h:8047
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_THREADMODE__MASK = 0x00000001;               // a6xx.xml.h:8048
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_THREADMODE__SHIFT = 0;                       // a6xx.xml.h:8049
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT__MASK = 0x0000007e;         // a6xx.xml.h:8054
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT__SHIFT = 1;                 // a6xx.xml.h:8055
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT__MASK = 0x00001f80;         // a6xx.xml.h:8060
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT__SHIFT = 7;                 // a6xx.xml.h:8061
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_UNK13 = 0x00002000;                          // a6xx.xml.h:8066
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_BRANCHSTACK__MASK = 0x000fc000;              // a6xx.xml.h:8067
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_BRANCHSTACK__SHIFT = 14;                     // a6xx.xml.h:8068
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_MERGEDREGS = 0x00100000;                     // a6xx.xml.h:8073
+inline constexpr uint32_t A6XX_SP_VS_CTRL_REG0_EARLYPREAMBLE = 0x00200000;                  // a6xx.xml.h:8074
+constexpr uint32_t A6XX_SP_VS_CTRL_REG0_THREADMODE(a3xx_threadmode v) {
+    return field(v, A6XX_SP_VS_CTRL_REG0_THREADMODE__SHIFT, A6XX_SP_VS_CTRL_REG0_THREADMODE__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT(uint32_t v) {
+    return field(v, A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT__SHIFT, A6XX_SP_VS_CTRL_REG0_HALFREGFOOTPRINT__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT(uint32_t v) {
+    return field(v, A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT__SHIFT, A6XX_SP_VS_CTRL_REG0_FULLREGFOOTPRINT__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_CTRL_REG0_BRANCHSTACK(uint32_t v) {
+    return field(v, A6XX_SP_VS_CTRL_REG0_BRANCHSTACK__SHIFT, A6XX_SP_VS_CTRL_REG0_BRANCHSTACK__MASK);
+}
+
+// OUT = the link's cnt (var entries), FLAGS_REGID 0 (tu_pipeline.cc:1038-1040)
+inline constexpr uint32_t REG_A6XX_SP_VS_PRIMITIVE_CNTL = 0xa802;                           // a6xx.xml.h:8080
+inline constexpr uint32_t A6XX_SP_VS_PRIMITIVE_CNTL_OUT__MASK = 0x0000003f;                 // a6xx.xml.h:8081
+inline constexpr uint32_t A6XX_SP_VS_PRIMITIVE_CNTL_OUT__SHIFT = 0;                         // a6xx.xml.h:8082
+inline constexpr uint32_t A6XX_SP_VS_PRIMITIVE_CNTL_FLAGS_REGID__MASK = 0x00003fc0;         // a6xx.xml.h:8087
+inline constexpr uint32_t A6XX_SP_VS_PRIMITIVE_CNTL_FLAGS_REGID__SHIFT = 6;                 // a6xx.xml.h:8088
+constexpr uint32_t A6XX_SP_VS_PRIMITIVE_CNTL_OUT(uint32_t v) {
+    return field(v, A6XX_SP_VS_PRIMITIVE_CNTL_OUT__SHIFT, A6XX_SP_VS_PRIMITIVE_CNTL_OUT__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_PRIMITIVE_CNTL_FLAGS_REGID(uint32_t v) {
+    return field(v, A6XX_SP_VS_PRIMITIVE_CNTL_FLAGS_REGID__SHIFT, A6XX_SP_VS_PRIMITIVE_CNTL_FLAGS_REGID__MASK);
+}
+
+// SP_VS_OUT_REG[i]: two linked outputs per register (var[2i] in A, var[2i + 1] in B), DIV_ROUND_UP(cnt, 2) of them
+// (tu_pipeline.cc:977-989); for a position-only link: pos_regid | 0xf << 8
+inline constexpr uint32_t REG_A6XX_SP_VS_OUT = 0xa803;                                      // a6xx.xml.h:8095  the array's first register
+inline constexpr uint32_t REG_A6XX_SP_VS_OUT__STRIDE = 1;                                   // a6xx.xml.h:8095  registers per entry
+inline constexpr uint32_t REG_A6XX_SP_VS_OUT_REG = 0xa803;                                  // a6xx.xml.h:8097  entry 0
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_A_REGID__MASK = 0x000000ff;                    // a6xx.xml.h:8098
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_A_REGID__SHIFT = 0;                            // a6xx.xml.h:8099
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_A_COMPMASK__MASK = 0x00000f00;                 // a6xx.xml.h:8104
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_A_COMPMASK__SHIFT = 8;                         // a6xx.xml.h:8105
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_B_REGID__MASK = 0x00ff0000;                    // a6xx.xml.h:8110
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_B_REGID__SHIFT = 16;                           // a6xx.xml.h:8111
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_B_COMPMASK__MASK = 0x0f000000;                 // a6xx.xml.h:8116
+inline constexpr uint32_t A6XX_SP_VS_OUT_REG_B_COMPMASK__SHIFT = 24;                        // a6xx.xml.h:8117
+constexpr uint32_t A6XX_SP_VS_OUT_REG_A_REGID(uint32_t v) {
+    return field(v, A6XX_SP_VS_OUT_REG_A_REGID__SHIFT, A6XX_SP_VS_OUT_REG_A_REGID__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_OUT_REG_A_COMPMASK(uint32_t v) {
+    return field(v, A6XX_SP_VS_OUT_REG_A_COMPMASK__SHIFT, A6XX_SP_VS_OUT_REG_A_COMPMASK__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_OUT_REG_B_REGID(uint32_t v) {
+    return field(v, A6XX_SP_VS_OUT_REG_B_REGID__SHIFT, A6XX_SP_VS_OUT_REG_B_REGID__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_OUT_REG_B_COMPMASK(uint32_t v) {
+    return field(v, A6XX_SP_VS_OUT_REG_B_COMPMASK__SHIFT, A6XX_SP_VS_OUT_REG_B_COMPMASK__MASK);
+}
+
+// SP_VS_VPC_DST_REG[i]: the VPC location of var[4i..4i + 3], DIV_ROUND_UP(cnt, 4) of them
+inline constexpr uint32_t REG_A6XX_SP_VS_VPC_DST = 0xa813;                                  // a6xx.xml.h:8124  the array's first register
+inline constexpr uint32_t REG_A6XX_SP_VS_VPC_DST__STRIDE = 1;                               // a6xx.xml.h:8124  registers per entry
+inline constexpr uint32_t REG_A6XX_SP_VS_VPC_DST_REG = 0xa813;                              // a6xx.xml.h:8126  entry 0
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC0__MASK = 0x000000ff;                // a6xx.xml.h:8127
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC0__SHIFT = 0;                        // a6xx.xml.h:8128
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC1__MASK = 0x0000ff00;                // a6xx.xml.h:8133
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC1__SHIFT = 8;                        // a6xx.xml.h:8134
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC2__MASK = 0x00ff0000;                // a6xx.xml.h:8139
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC2__SHIFT = 16;                       // a6xx.xml.h:8140
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC3__MASK = 0xff000000;                // a6xx.xml.h:8145
+inline constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC3__SHIFT = 24;                       // a6xx.xml.h:8146
+constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC0(uint32_t v) {
+    return field(v, A6XX_SP_VS_VPC_DST_REG_OUTLOC0__SHIFT, A6XX_SP_VS_VPC_DST_REG_OUTLOC0__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC1(uint32_t v) {
+    return field(v, A6XX_SP_VS_VPC_DST_REG_OUTLOC1__SHIFT, A6XX_SP_VS_VPC_DST_REG_OUTLOC1__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC2(uint32_t v) {
+    return field(v, A6XX_SP_VS_VPC_DST_REG_OUTLOC2__SHIFT, A6XX_SP_VS_VPC_DST_REG_OUTLOC2__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_VPC_DST_REG_OUTLOC3(uint32_t v) {
+    return field(v, A6XX_SP_VS_VPC_DST_REG_OUTLOC3__SHIFT, A6XX_SP_VS_VPC_DST_REG_OUTLOC3__MASK);
+}
+
+// the VS object, one pkt4 of 7 at OBJ_FIRST_EXEC_OFFSET: 0, OBJ_START lo and hi, PVT_MEM_PARAM 0, PVT_MEM_ADDR lo
+// and hi 0, PVT_MEM_SIZE 0 (tu_shader.cc:1319-1326). The XML gives OBJ_START align 32 (a6xx.xml:4835) but turnip
+// asserts 128: the ST6_SHADER preload unit is one instruction group of 128 bytes (tu_shader.cc:1313-1316).
+inline constexpr uint32_t REG_A6XX_SP_VS_OBJ_FIRST_EXEC_OFFSET = 0xa81b;                    // a6xx.xml.h:8153
+inline constexpr uint32_t REG_A6XX_SP_VS_OBJ_START = 0xa81c;                                // a6xx.xml.h:8156
+inline constexpr uint32_t REG_A6XX_SP_VS_PVT_MEM_PARAM = 0xa81e;                            // a6xx.xml.h:8159
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM__MASK = 0x000000ff;       // a6xx.xml.h:8160
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM__SHIFT = 0;               // a6xx.xml.h:8161
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM__SCALE = 9;               // a6xx.xml.h:8162  the encoder's val >> 9
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__MASK = 0xff000000; // a6xx.xml.h:8167
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__SHIFT = 24;        // a6xx.xml.h:8168
+constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM(uint32_t v) {
+    return field(v >> A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM__SCALE, A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM__SHIFT, A6XX_SP_VS_PVT_MEM_PARAM_MEMSIZEPERITEM__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD(uint32_t v) {
+    return field(v, A6XX_SP_VS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__SHIFT, A6XX_SP_VS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_VS_PVT_MEM_ADDR = 0xa81f;                             // a6xx.xml.h:8175
+inline constexpr uint32_t REG_A6XX_SP_VS_PVT_MEM_SIZE = 0xa821;                             // a6xx.xml.h:8178
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__MASK = 0x0003ffff;       // a6xx.xml.h:8179
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SHIFT = 0;               // a6xx.xml.h:8180
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SCALE = 12;              // a6xx.xml.h:8181  the encoder's val >> 12
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_SIZE_PERWAVEMEMLAYOUT = 0x80000000;            // a6xx.xml.h:8186
+constexpr uint32_t A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE(uint32_t v) {
+    return field(v >> A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SCALE, A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SHIFT, A6XX_SP_VS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_VS_TEX_COUNT = 0xa822;                                // a6xx.xml.h:8189
+// ENABLED | NTEX | NSAMP (turnip omits NIBO; fd6 writes num_ibos): 0x100 for a stage with no textures. SP_FS_CONFIG
+// and the HS/DS/GS ones have the same layout (static_assert below).
+inline constexpr uint32_t REG_A6XX_SP_VS_CONFIG = 0xa823;                                   // a6xx.xml.h:8192
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_BINDLESS_TEX = 0x00000001;                      // a6xx.xml.h:8193
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_BINDLESS_SAMP = 0x00000002;                     // a6xx.xml.h:8194
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_BINDLESS_IBO = 0x00000004;                      // a6xx.xml.h:8195
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_BINDLESS_UBO = 0x00000008;                      // a6xx.xml.h:8196
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_ENABLED = 0x00000100;                           // a6xx.xml.h:8197
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_NTEX__MASK = 0x0001fe00;                        // a6xx.xml.h:8198
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_NTEX__SHIFT = 9;                                // a6xx.xml.h:8199
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_NSAMP__MASK = 0x003e0000;                       // a6xx.xml.h:8204
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_NSAMP__SHIFT = 17;                              // a6xx.xml.h:8205
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_NIBO__MASK = 0x1fc00000;                        // a6xx.xml.h:8210
+inline constexpr uint32_t A6XX_SP_VS_CONFIG_NIBO__SHIFT = 22;                               // a6xx.xml.h:8211
+constexpr uint32_t A6XX_SP_VS_CONFIG_NTEX(uint32_t v) {
+    return field(v, A6XX_SP_VS_CONFIG_NTEX__SHIFT, A6XX_SP_VS_CONFIG_NTEX__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_CONFIG_NSAMP(uint32_t v) {
+    return field(v, A6XX_SP_VS_CONFIG_NSAMP__SHIFT, A6XX_SP_VS_CONFIG_NSAMP__MASK);
+}
+constexpr uint32_t A6XX_SP_VS_CONFIG_NIBO(uint32_t v) {
+    return field(v, A6XX_SP_VS_CONFIG_NIBO__SHIFT, A6XX_SP_VS_CONFIG_NIBO__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_VS_INSTRLEN = 0xa824;                                 // a6xx.xml.h:8218
+inline constexpr uint32_t REG_A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET = 0xa825;                  // a6xx.xml.h:8221
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET__MASK = 0x0007ffff;     // a6xx.xml.h:8222
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SHIFT = 0;             // a6xx.xml.h:8223
+inline constexpr uint32_t A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SCALE = 11;            // a6xx.xml.h:8224  the encoder's val >> 11
+constexpr uint32_t A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET(uint32_t v) {
+    return field(v >> A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SCALE, A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SHIFT, A6XX_SP_VS_PVT_MEM_HW_STACK_OFFSET_OFFSET__MASK);
+}
+
+// the three stages a Metal pipeline has no use for: SP_xS_CONFIG and HLSQ_xS_CNTL written 0 (tu_pipeline.cc:381-388)
+inline constexpr uint32_t REG_A6XX_SP_HS_CONFIG = 0xa83b;                                   // a6xx.xml.h:8308
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_BINDLESS_TEX = 0x00000001;                      // a6xx.xml.h:8309
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_BINDLESS_SAMP = 0x00000002;                     // a6xx.xml.h:8310
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_BINDLESS_IBO = 0x00000004;                      // a6xx.xml.h:8311
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_BINDLESS_UBO = 0x00000008;                      // a6xx.xml.h:8312
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_ENABLED = 0x00000100;                           // a6xx.xml.h:8313
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_NTEX__MASK = 0x0001fe00;                        // a6xx.xml.h:8314
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_NTEX__SHIFT = 9;                                // a6xx.xml.h:8315
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_NSAMP__MASK = 0x003e0000;                       // a6xx.xml.h:8320
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_NSAMP__SHIFT = 17;                              // a6xx.xml.h:8321
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_NIBO__MASK = 0x1fc00000;                        // a6xx.xml.h:8326
+inline constexpr uint32_t A6XX_SP_HS_CONFIG_NIBO__SHIFT = 22;                               // a6xx.xml.h:8327
+constexpr uint32_t A6XX_SP_HS_CONFIG_NTEX(uint32_t v) {
+    return field(v, A6XX_SP_HS_CONFIG_NTEX__SHIFT, A6XX_SP_HS_CONFIG_NTEX__MASK);
+}
+constexpr uint32_t A6XX_SP_HS_CONFIG_NSAMP(uint32_t v) {
+    return field(v, A6XX_SP_HS_CONFIG_NSAMP__SHIFT, A6XX_SP_HS_CONFIG_NSAMP__MASK);
+}
+constexpr uint32_t A6XX_SP_HS_CONFIG_NIBO(uint32_t v) {
+    return field(v, A6XX_SP_HS_CONFIG_NIBO__SHIFT, A6XX_SP_HS_CONFIG_NIBO__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_DS_CONFIG = 0xa863;                                   // a6xx.xml.h:8494
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_BINDLESS_TEX = 0x00000001;                      // a6xx.xml.h:8495
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_BINDLESS_SAMP = 0x00000002;                     // a6xx.xml.h:8496
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_BINDLESS_IBO = 0x00000004;                      // a6xx.xml.h:8497
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_BINDLESS_UBO = 0x00000008;                      // a6xx.xml.h:8498
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_ENABLED = 0x00000100;                           // a6xx.xml.h:8499
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_NTEX__MASK = 0x0001fe00;                        // a6xx.xml.h:8500
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_NTEX__SHIFT = 9;                                // a6xx.xml.h:8501
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_NSAMP__MASK = 0x003e0000;                       // a6xx.xml.h:8506
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_NSAMP__SHIFT = 17;                              // a6xx.xml.h:8507
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_NIBO__MASK = 0x1fc00000;                        // a6xx.xml.h:8512
+inline constexpr uint32_t A6XX_SP_DS_CONFIG_NIBO__SHIFT = 22;                               // a6xx.xml.h:8513
+constexpr uint32_t A6XX_SP_DS_CONFIG_NTEX(uint32_t v) {
+    return field(v, A6XX_SP_DS_CONFIG_NTEX__SHIFT, A6XX_SP_DS_CONFIG_NTEX__MASK);
+}
+constexpr uint32_t A6XX_SP_DS_CONFIG_NSAMP(uint32_t v) {
+    return field(v, A6XX_SP_DS_CONFIG_NSAMP__SHIFT, A6XX_SP_DS_CONFIG_NSAMP__MASK);
+}
+constexpr uint32_t A6XX_SP_DS_CONFIG_NIBO(uint32_t v) {
+    return field(v, A6XX_SP_DS_CONFIG_NIBO__SHIFT, A6XX_SP_DS_CONFIG_NIBO__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_GS_CONFIG = 0xa894;                                   // a6xx.xml.h:8683
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_BINDLESS_TEX = 0x00000001;                      // a6xx.xml.h:8684
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_BINDLESS_SAMP = 0x00000002;                     // a6xx.xml.h:8685
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_BINDLESS_IBO = 0x00000004;                      // a6xx.xml.h:8686
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_BINDLESS_UBO = 0x00000008;                      // a6xx.xml.h:8687
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_ENABLED = 0x00000100;                           // a6xx.xml.h:8688
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_NTEX__MASK = 0x0001fe00;                        // a6xx.xml.h:8689
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_NTEX__SHIFT = 9;                                // a6xx.xml.h:8690
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_NSAMP__MASK = 0x003e0000;                       // a6xx.xml.h:8695
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_NSAMP__SHIFT = 17;                              // a6xx.xml.h:8696
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_NIBO__MASK = 0x1fc00000;                        // a6xx.xml.h:8701
+inline constexpr uint32_t A6XX_SP_GS_CONFIG_NIBO__SHIFT = 22;                               // a6xx.xml.h:8702
+constexpr uint32_t A6XX_SP_GS_CONFIG_NTEX(uint32_t v) {
+    return field(v, A6XX_SP_GS_CONFIG_NTEX__SHIFT, A6XX_SP_GS_CONFIG_NTEX__MASK);
+}
+constexpr uint32_t A6XX_SP_GS_CONFIG_NSAMP(uint32_t v) {
+    return field(v, A6XX_SP_GS_CONFIG_NSAMP__SHIFT, A6XX_SP_GS_CONFIG_NSAMP__MASK);
+}
+constexpr uint32_t A6XX_SP_GS_CONFIG_NIBO(uint32_t v) {
+    return field(v, A6XX_SP_GS_CONFIG_NIBO__SHIFT, A6XX_SP_GS_CONFIG_NIBO__MASK);
+}
+
+// the VS's texture and sampler tables (64-bit each): step two
+inline constexpr uint32_t REG_A6XX_SP_VS_TEX_SAMP = 0xa8a0;                                 // a6xx.xml.h:8725
+inline constexpr uint32_t REG_A6XX_SP_VS_TEX_CONST = 0xa8a8;                                // a6xx.xml.h:8737
+
+// SP_FS: the fragment shader's (REG_A6XX_SP_FS_CTRL_REG0 and SP_FS_INSTRLEN are above). SP_FS_CTRL_REG0 adds to the
+// footprints THREADSIZE (THREAD128: this chip has double threadsize), VARYING when total_in != 0, LODPIXMASK when
+// the shader needs full quads, PIXLODENABLE when it needs the pixel's lod, and UNK24 always ("unknown bit, seems
+// unnecessary", tu_shader.cc:1284-1296; fd6_program.cc:159-171 sets it too); MERGEDREGS is bit 31 here.
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_THREADMODE__MASK = 0x00000001;               // a6xx.xml.h:8750
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_THREADMODE__SHIFT = 0;                       // a6xx.xml.h:8751
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT__MASK = 0x0000007e;         // a6xx.xml.h:8756
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT__SHIFT = 1;                 // a6xx.xml.h:8757
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT__MASK = 0x00001f80;         // a6xx.xml.h:8762
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT__SHIFT = 7;                 // a6xx.xml.h:8763
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_UNK13 = 0x00002000;                          // a6xx.xml.h:8768
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_BRANCHSTACK__MASK = 0x000fc000;              // a6xx.xml.h:8769
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_BRANCHSTACK__SHIFT = 14;                     // a6xx.xml.h:8770
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_THREADSIZE__MASK = 0x00100000;               // a6xx.xml.h:8775
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_THREADSIZE__SHIFT = 20;                      // a6xx.xml.h:8776
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_UNK21 = 0x00200000;                          // a6xx.xml.h:8781
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_VARYING = 0x00400000;                        // a6xx.xml.h:8782
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_LODPIXMASK = 0x00800000;                     // a6xx.xml.h:8783
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_UNK24 = 0x01000000;                          // a6xx.xml.h:8784
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_UNK25 = 0x02000000;                          // a6xx.xml.h:8785
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_PIXLODENABLE = 0x04000000;                   // a6xx.xml.h:8786
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_UNK27 = 0x08000000;                          // a6xx.xml.h:8787
+inline constexpr uint32_t A6XX_SP_FS_CTRL_REG0_MERGEDREGS = 0x80000000;                     // a6xx.xml.h:8789
+constexpr uint32_t A6XX_SP_FS_CTRL_REG0_THREADMODE(a3xx_threadmode v) {
+    return field(v, A6XX_SP_FS_CTRL_REG0_THREADMODE__SHIFT, A6XX_SP_FS_CTRL_REG0_THREADMODE__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT(uint32_t v) {
+    return field(v, A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT__SHIFT, A6XX_SP_FS_CTRL_REG0_HALFREGFOOTPRINT__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT(uint32_t v) {
+    return field(v, A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT__SHIFT, A6XX_SP_FS_CTRL_REG0_FULLREGFOOTPRINT__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_CTRL_REG0_BRANCHSTACK(uint32_t v) {
+    return field(v, A6XX_SP_FS_CTRL_REG0_BRANCHSTACK__SHIFT, A6XX_SP_FS_CTRL_REG0_BRANCHSTACK__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_CTRL_REG0_THREADSIZE(a6xx_threadsize v) {
+    return field(v, A6XX_SP_FS_CTRL_REG0_THREADSIZE__SHIFT, A6XX_SP_FS_CTRL_REG0_THREADSIZE__MASK);
+}
+
+// the FS object block, as the VS's: a pkt4 of 7 at OBJ_FIRST_EXEC_OFFSET
+inline constexpr uint32_t REG_A6XX_SP_FS_OBJ_FIRST_EXEC_OFFSET = 0xa982;                    // a6xx.xml.h:8795
+inline constexpr uint32_t REG_A6XX_SP_FS_OBJ_START = 0xa983;                                // a6xx.xml.h:8798
+inline constexpr uint32_t REG_A6XX_SP_FS_PVT_MEM_PARAM = 0xa985;                            // a6xx.xml.h:8801
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM__MASK = 0x000000ff;       // a6xx.xml.h:8802
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM__SHIFT = 0;               // a6xx.xml.h:8803
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM__SCALE = 9;               // a6xx.xml.h:8804  the encoder's val >> 9
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__MASK = 0xff000000; // a6xx.xml.h:8809
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__SHIFT = 24;        // a6xx.xml.h:8810
+constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM(uint32_t v) {
+    return field(v >> A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM__SCALE, A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM__SHIFT, A6XX_SP_FS_PVT_MEM_PARAM_MEMSIZEPERITEM__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD(uint32_t v) {
+    return field(v, A6XX_SP_FS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__SHIFT, A6XX_SP_FS_PVT_MEM_PARAM_HWSTACKSIZEPERTHREAD__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_FS_PVT_MEM_ADDR = 0xa986;                             // a6xx.xml.h:8817
+inline constexpr uint32_t REG_A6XX_SP_FS_PVT_MEM_SIZE = 0xa988;                             // a6xx.xml.h:8820
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__MASK = 0x0003ffff;       // a6xx.xml.h:8821
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SHIFT = 0;               // a6xx.xml.h:8822
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SCALE = 12;              // a6xx.xml.h:8823  the encoder's val >> 12
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_SIZE_PERWAVEMEMLAYOUT = 0x80000000;            // a6xx.xml.h:8828
+constexpr uint32_t A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE(uint32_t v) {
+    return field(v >> A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SCALE, A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__SHIFT, A6XX_SP_FS_PVT_MEM_SIZE_TOTALPVTMEMSIZE__MASK);
+}
+
+// blending off in the SP: UNK8 alone (turnip .unk8 = true, tu_pipeline.cc:3009-3014; fd6_blend.cc:120-126); r3d 0
+inline constexpr uint32_t REG_A6XX_SP_BLEND_CNTL = 0xa989;                                  // a6xx.xml.h:8831
+inline constexpr uint32_t A6XX_SP_BLEND_CNTL_ENABLE_BLEND__MASK = 0x000000ff;               // a6xx.xml.h:8832
+inline constexpr uint32_t A6XX_SP_BLEND_CNTL_ENABLE_BLEND__SHIFT = 0;                       // a6xx.xml.h:8833
+inline constexpr uint32_t A6XX_SP_BLEND_CNTL_UNK8 = 0x00000100;                             // a6xx.xml.h:8838
+inline constexpr uint32_t A6XX_SP_BLEND_CNTL_DUAL_COLOR_IN_ENABLE = 0x00000200;             // a6xx.xml.h:8839
+inline constexpr uint32_t A6XX_SP_BLEND_CNTL_ALPHA_TO_COVERAGE = 0x00000400;                // a6xx.xml.h:8840
+constexpr uint32_t A6XX_SP_BLEND_CNTL_ENABLE_BLEND(uint32_t v) {
+    return field(v, A6XX_SP_BLEND_CNTL_ENABLE_BLEND__SHIFT, A6XX_SP_BLEND_CNTL_ENABLE_BLEND__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_SP_SRGB_CNTL = 0xa98a;                                   // a6xx.xml.h:8843
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT0 = 0x00000001;                         // a6xx.xml.h:8844
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT1 = 0x00000002;                         // a6xx.xml.h:8845
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT2 = 0x00000004;                         // a6xx.xml.h:8846
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT3 = 0x00000008;                         // a6xx.xml.h:8847
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT4 = 0x00000010;                         // a6xx.xml.h:8848
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT5 = 0x00000020;                         // a6xx.xml.h:8849
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT6 = 0x00000040;                         // a6xx.xml.h:8850
+inline constexpr uint32_t A6XX_SP_SRGB_CNTL_SRGB_MRT7 = 0x00000080;                         // a6xx.xml.h:8851
+
+// 0xf per colour output written (tu_shader.cc:1873-1874): the RB twin must match
+inline constexpr uint32_t REG_A6XX_SP_FS_RENDER_COMPONENTS = 0xa98b;                        // a6xx.xml.h:8854
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT0__MASK = 0x0000000f;              // a6xx.xml.h:8855
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT0__SHIFT = 0;                      // a6xx.xml.h:8856
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT1__MASK = 0x000000f0;              // a6xx.xml.h:8861
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT1__SHIFT = 4;                      // a6xx.xml.h:8862
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT2__MASK = 0x00000f00;              // a6xx.xml.h:8867
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT2__SHIFT = 8;                      // a6xx.xml.h:8868
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT3__MASK = 0x0000f000;              // a6xx.xml.h:8873
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT3__SHIFT = 12;                     // a6xx.xml.h:8874
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT4__MASK = 0x000f0000;              // a6xx.xml.h:8879
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT4__SHIFT = 16;                     // a6xx.xml.h:8880
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT5__MASK = 0x00f00000;              // a6xx.xml.h:8885
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT5__SHIFT = 20;                     // a6xx.xml.h:8886
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT6__MASK = 0x0f000000;              // a6xx.xml.h:8891
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT6__SHIFT = 24;                     // a6xx.xml.h:8892
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT7__MASK = 0xf0000000;              // a6xx.xml.h:8897
+inline constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT7__SHIFT = 28;                     // a6xx.xml.h:8898
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT0(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT0__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT0__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT1(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT1__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT1__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT2(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT2__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT2__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT3(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT3__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT3__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT4(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT4__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT4__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT5(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT5__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT5__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT6(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT6__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT6__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_RENDER_COMPONENTS_RT7(uint32_t v) {
+    return field(v, A6XX_SP_FS_RENDER_COMPONENTS_RT7__SHIFT, A6XX_SP_FS_RENDER_COMPONENTS_RT7__MASK);
+}
+
+// the registers of the FS's depth, sample mask and stencil ref outputs, kRegidNone each = 0xfcfcfc00 (tu_shader.cc:1850-1854)
+inline constexpr uint32_t REG_A6XX_SP_FS_OUTPUT_CNTL0 = 0xa98c;                             // a6xx.xml.h:8905
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_DUAL_COLOR_IN_ENABLE = 0x00000001;        // a6xx.xml.h:8906
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__MASK = 0x0000ff00;           // a6xx.xml.h:8907
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__SHIFT = 8;                   // a6xx.xml.h:8908
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_SAMPMASK_REGID__MASK = 0x00ff0000;        // a6xx.xml.h:8913
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_SAMPMASK_REGID__SHIFT = 16;               // a6xx.xml.h:8914
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_STENCILREF_REGID__MASK = 0xff000000;      // a6xx.xml.h:8919
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_STENCILREF_REGID__SHIFT = 24;             // a6xx.xml.h:8920
+constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID(uint32_t v) {
+    return field(v, A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__SHIFT, A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_SAMPMASK_REGID(uint32_t v) {
+    return field(v, A6XX_SP_FS_OUTPUT_CNTL0_SAMPMASK_REGID__SHIFT, A6XX_SP_FS_OUTPUT_CNTL0_SAMPMASK_REGID__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL0_STENCILREF_REGID(uint32_t v) {
+    return field(v, A6XX_SP_FS_OUTPUT_CNTL0_STENCILREF_REGID__SHIFT, A6XX_SP_FS_OUTPUT_CNTL0_STENCILREF_REGID__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_SP_FS_OUTPUT_CNTL1 = 0xa98d;                             // a6xx.xml.h:8927
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL1_MRT__MASK = 0x0000000f;                   // a6xx.xml.h:8928
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL1_MRT__SHIFT = 0;                           // a6xx.xml.h:8929
+constexpr uint32_t A6XX_SP_FS_OUTPUT_CNTL1_MRT(uint32_t v) {
+    return field(v, A6XX_SP_FS_OUTPUT_CNTL1_MRT__SHIFT, A6XX_SP_FS_OUTPUT_CNTL1_MRT__MASK);
+}
+
+// SP_FS_OUTPUT_REG[i]: the ir3 output register of FRAG_RESULT_DATA0 + i, HALF_PRECISION when it is a half register
+// (tu_shader.cc:1862-1871)
+inline constexpr uint32_t REG_A6XX_SP_FS_OUTPUT = 0xa98e;                                   // a6xx.xml.h:8936  the array's first register
+inline constexpr uint32_t REG_A6XX_SP_FS_OUTPUT__STRIDE = 1;                                // a6xx.xml.h:8936  registers per entry
+inline constexpr uint32_t REG_A6XX_SP_FS_OUTPUT_REG = 0xa98e;                               // a6xx.xml.h:8938  entry 0
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_REG_REGID__MASK = 0x000000ff;                   // a6xx.xml.h:8939
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT = 0;                           // a6xx.xml.h:8940
+inline constexpr uint32_t A6XX_SP_FS_OUTPUT_REG_HALF_PRECISION = 0x00000100;                // a6xx.xml.h:8945
+constexpr uint32_t A6XX_SP_FS_OUTPUT_REG_REGID(uint32_t v) {
+    return field(v, A6XX_SP_FS_OUTPUT_REG_REGID__SHIFT, A6XX_SP_FS_OUTPUT_REG_REGID__MASK);
+}
+
+// SP_FS_MRT_REG[i]: the target's format for the SP (fd6_view.c:415-418): COLOR_FORMAT, SINT/UINT for integer formats
+inline constexpr uint32_t REG_A6XX_SP_FS_MRT = 0xa996;                                      // a6xx.xml.h:8948  the array's first register
+inline constexpr uint32_t REG_A6XX_SP_FS_MRT__STRIDE = 1;                                   // a6xx.xml.h:8948  registers per entry
+inline constexpr uint32_t REG_A6XX_SP_FS_MRT_REG = 0xa996;                                  // a6xx.xml.h:8950  entry 0
+inline constexpr uint32_t A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK = 0x000000ff;               // a6xx.xml.h:8951
+inline constexpr uint32_t A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT = 0;                       // a6xx.xml.h:8952
+inline constexpr uint32_t A6XX_SP_FS_MRT_REG_COLOR_SINT = 0x00000100;                       // a6xx.xml.h:8957
+inline constexpr uint32_t A6XX_SP_FS_MRT_REG_COLOR_UINT = 0x00000200;                       // a6xx.xml.h:8958
+inline constexpr uint32_t A6XX_SP_FS_MRT_REG_UNK10 = 0x00000400;                            // a6xx.xml.h:8959
+constexpr uint32_t A6XX_SP_FS_MRT_REG_COLOR_FORMAT(a6xx_format v) {
+    return field(v, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK);
+}
+
+// texture prefetch: none in step one (COUNT 0); IJ_WRITE_DISABLE when the FS has no perspective barycentric input
+// (tu_shader.cc:1652-1660): 0x8 for a constant colour, 0 with a smooth varying
+inline constexpr uint32_t REG_A6XX_SP_FS_PREFETCH_CNTL = 0xa99e;                            // a6xx.xml.h:8962
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_COUNT__MASK = 0x00000007;                // a6xx.xml.h:8963
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_COUNT__SHIFT = 0;                        // a6xx.xml.h:8964
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_IJ_WRITE_DISABLE = 0x00000008;           // a6xx.xml.h:8969
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_ENDOFQUAD = 0x00000010;                  // a6xx.xml.h:8970
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_WRITE_COLOR_TO_OUTPUT = 0x00000020;      // a6xx.xml.h:8971
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID__MASK = 0x00007fc0;          // a6xx.xml.h:8972
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID__SHIFT = 6;                  // a6xx.xml.h:8973
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD__MASK = 0x01ff0000;    // a6xx.xml.h:8978
+inline constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD__SHIFT = 16;           // a6xx.xml.h:8979
+constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_COUNT(uint32_t v) {
+    return field(v, A6XX_SP_FS_PREFETCH_CNTL_COUNT__SHIFT, A6XX_SP_FS_PREFETCH_CNTL_COUNT__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID(uint32_t v) {
+    return field(v, A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID__SHIFT, A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD(uint32_t v) {
+    return field(v, A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD__SHIFT, A6XX_SP_FS_PREFETCH_CNTL_CONSTSLOTID4COORD__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_SP_FS_TEX_COUNT = 0xa9a7;                                // a6xx.xml.h:9090
+inline constexpr uint32_t REG_A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET = 0xa9a9;                  // a6xx.xml.h:9096
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__MASK = 0x0007ffff;     // a6xx.xml.h:9097
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SHIFT = 0;             // a6xx.xml.h:9098
+inline constexpr uint32_t A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SCALE = 11;            // a6xx.xml.h:9099  the encoder's val >> 11
+constexpr uint32_t A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET(uint32_t v) {
+    return field(v >> A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SCALE, A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__SHIFT, A6XX_SP_FS_PVT_MEM_HW_STACK_OFFSET_OFFSET__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_FS_TEX_SAMP = 0xa9e0;                                 // a6xx.xml.h:9315
+inline constexpr uint32_t REG_A6XX_SP_FS_TEX_CONST = 0xa9e4;                                // a6xx.xml.h:9321
+inline constexpr uint32_t REG_A6XX_SP_FS_CONFIG = 0xab04;                                   // a6xx.xml.h:9447
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_BINDLESS_TEX = 0x00000001;                      // a6xx.xml.h:9448
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_BINDLESS_SAMP = 0x00000002;                     // a6xx.xml.h:9449
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_BINDLESS_IBO = 0x00000004;                      // a6xx.xml.h:9450
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_BINDLESS_UBO = 0x00000008;                      // a6xx.xml.h:9451
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_ENABLED = 0x00000100;                           // a6xx.xml.h:9452
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_NTEX__MASK = 0x0001fe00;                        // a6xx.xml.h:9453
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_NTEX__SHIFT = 9;                                // a6xx.xml.h:9454
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_NSAMP__MASK = 0x003e0000;                       // a6xx.xml.h:9459
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_NSAMP__SHIFT = 17;                              // a6xx.xml.h:9460
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_NIBO__MASK = 0x1fc00000;                        // a6xx.xml.h:9465
+inline constexpr uint32_t A6XX_SP_FS_CONFIG_NIBO__SHIFT = 22;                               // a6xx.xml.h:9466
+constexpr uint32_t A6XX_SP_FS_CONFIG_NTEX(uint32_t v) {
+    return field(v, A6XX_SP_FS_CONFIG_NTEX__SHIFT, A6XX_SP_FS_CONFIG_NTEX__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_CONFIG_NSAMP(uint32_t v) {
+    return field(v, A6XX_SP_FS_CONFIG_NSAMP__SHIFT, A6XX_SP_FS_CONFIG_NSAMP__MASK);
+}
+constexpr uint32_t A6XX_SP_FS_CONFIG_NIBO(uint32_t v) {
+    return field(v, A6XX_SP_FS_CONFIG_NIBO__SHIFT, A6XX_SP_FS_CONFIG_NIBO__MASK);
+}
+
+// the 3D pipeline's IBO descriptors (64-bit; SP_IBO_COUNT is above): step one binds none
+inline constexpr uint32_t REG_A6XX_SP_IBO = 0xab1a;                                         // a6xx.xml.h:9512
+
+// SP_TP: MSAA off, sample locations off, the window offset
+inline constexpr uint32_t REG_A6XX_SP_TP_RAS_MSAA_CNTL = 0xb300;                            // a6xx.xml.h:9668
+inline constexpr uint32_t A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES__MASK = 0x00000003;              // a6xx.xml.h:9669
+inline constexpr uint32_t A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES__SHIFT = 0;                      // a6xx.xml.h:9670
+inline constexpr uint32_t A6XX_SP_TP_RAS_MSAA_CNTL_UNK2__MASK = 0x0000000c;                 // a6xx.xml.h:9675
+inline constexpr uint32_t A6XX_SP_TP_RAS_MSAA_CNTL_UNK2__SHIFT = 2;                         // a6xx.xml.h:9676
+constexpr uint32_t A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES__SHIFT, A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES__MASK);
+}
+constexpr uint32_t A6XX_SP_TP_RAS_MSAA_CNTL_UNK2(uint32_t v) {
+    return field(v, A6XX_SP_TP_RAS_MSAA_CNTL_UNK2__SHIFT, A6XX_SP_TP_RAS_MSAA_CNTL_UNK2__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_TP_DEST_MSAA_CNTL = 0xb301;                           // a6xx.xml.h:9683
+inline constexpr uint32_t A6XX_SP_TP_DEST_MSAA_CNTL_SAMPLES__MASK = 0x00000003;             // a6xx.xml.h:9684
+inline constexpr uint32_t A6XX_SP_TP_DEST_MSAA_CNTL_SAMPLES__SHIFT = 0;                     // a6xx.xml.h:9685
+inline constexpr uint32_t A6XX_SP_TP_DEST_MSAA_CNTL_MSAA_DISABLE = 0x00000004;              // a6xx.xml.h:9690
+constexpr uint32_t A6XX_SP_TP_DEST_MSAA_CNTL_SAMPLES(a3xx_msaa_samples v) {
+    return field(v, A6XX_SP_TP_DEST_MSAA_CNTL_SAMPLES__SHIFT, A6XX_SP_TP_DEST_MSAA_CNTL_SAMPLES__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_TP_SAMPLE_CONFIG = 0xb304;                            // a6xx.xml.h:9696
+inline constexpr uint32_t A6XX_SP_TP_SAMPLE_CONFIG_UNK0 = 0x00000001;                       // a6xx.xml.h:9697
+inline constexpr uint32_t A6XX_SP_TP_SAMPLE_CONFIG_LOCATION_ENABLE = 0x00000002;            // a6xx.xml.h:9698
+inline constexpr uint32_t REG_A6XX_SP_TP_WINDOW_OFFSET = 0xb307;                            // a6xx.xml.h:9803
+inline constexpr uint32_t A6XX_SP_TP_WINDOW_OFFSET_X__MASK = 0x00003fff;                    // a6xx.xml.h:9804
+inline constexpr uint32_t A6XX_SP_TP_WINDOW_OFFSET_X__SHIFT = 0;                            // a6xx.xml.h:9805
+inline constexpr uint32_t A6XX_SP_TP_WINDOW_OFFSET_Y__MASK = 0x3fff0000;                    // a6xx.xml.h:9810
+inline constexpr uint32_t A6XX_SP_TP_WINDOW_OFFSET_Y__SHIFT = 16;                           // a6xx.xml.h:9811
+constexpr uint32_t A6XX_SP_TP_WINDOW_OFFSET_X(uint32_t v) {
+    return field(v, A6XX_SP_TP_WINDOW_OFFSET_X__SHIFT, A6XX_SP_TP_WINDOW_OFFSET_X__MASK);
+}
+constexpr uint32_t A6XX_SP_TP_WINDOW_OFFSET_Y(uint32_t v) {
+    return field(v, A6XX_SP_TP_WINDOW_OFFSET_Y__SHIFT, A6XX_SP_TP_WINDOW_OFFSET_Y__MASK);
+}
+inline constexpr uint32_t REG_A6XX_SP_WINDOW_OFFSET = 0xb4d1;                               // a6xx.xml.h:10055
+inline constexpr uint32_t A6XX_SP_WINDOW_OFFSET_X__MASK = 0x00003fff;                       // a6xx.xml.h:10056
+inline constexpr uint32_t A6XX_SP_WINDOW_OFFSET_X__SHIFT = 0;                               // a6xx.xml.h:10057
+inline constexpr uint32_t A6XX_SP_WINDOW_OFFSET_Y__MASK = 0x3fff0000;                       // a6xx.xml.h:10062
+inline constexpr uint32_t A6XX_SP_WINDOW_OFFSET_Y__SHIFT = 16;                              // a6xx.xml.h:10063
+constexpr uint32_t A6XX_SP_WINDOW_OFFSET_X(uint32_t v) {
+    return field(v, A6XX_SP_WINDOW_OFFSET_X__SHIFT, A6XX_SP_WINDOW_OFFSET_X__MASK);
+}
+constexpr uint32_t A6XX_SP_WINDOW_OFFSET_Y(uint32_t v) {
+    return field(v, A6XX_SP_WINDOW_OFFSET_Y__SHIFT, A6XX_SP_WINDOW_OFFSET_Y__MASK);
+}
+
+// HLSQ: per stage CONSTLEN | ENABLED, the length in vec4 held in units of 4 (the encoder's val >> 2, asserting a
+// multiple: a6xx.xml.h:10203); hlsqVsCntl/hlsqFsCntl below round up as hlsqCsCntl does. HS, DS and GS are written 0.
+inline constexpr uint32_t REG_A6XX_HLSQ_VS_CNTL = 0xb800;                                   // a6xx.xml.h:10198
+inline constexpr uint32_t A6XX_HLSQ_VS_CNTL_CONSTLEN__MASK = 0x000000ff;                    // a6xx.xml.h:10199
+inline constexpr uint32_t A6XX_HLSQ_VS_CNTL_CONSTLEN__SHIFT = 0;                            // a6xx.xml.h:10200
+inline constexpr uint32_t A6XX_HLSQ_VS_CNTL_CONSTLEN__SCALE = 2;                            // a6xx.xml.h:10201  the encoder's val >> 2
+inline constexpr uint32_t A6XX_HLSQ_VS_CNTL_ENABLED = 0x00000100;                           // a6xx.xml.h:10206
+inline constexpr uint32_t A6XX_HLSQ_VS_CNTL_READ_IMM_SHARED_CONSTS = 0x00000200;            // a6xx.xml.h:10207
+constexpr uint32_t A6XX_HLSQ_VS_CNTL_CONSTLEN(uint32_t v) {
+    return field(v >> A6XX_HLSQ_VS_CNTL_CONSTLEN__SCALE, A6XX_HLSQ_VS_CNTL_CONSTLEN__SHIFT, A6XX_HLSQ_VS_CNTL_CONSTLEN__MASK);
+}
+inline constexpr uint32_t REG_A6XX_HLSQ_HS_CNTL = 0xb801;                                   // a6xx.xml.h:10210
+inline constexpr uint32_t A6XX_HLSQ_HS_CNTL_CONSTLEN__MASK = 0x000000ff;                    // a6xx.xml.h:10211
+inline constexpr uint32_t A6XX_HLSQ_HS_CNTL_CONSTLEN__SHIFT = 0;                            // a6xx.xml.h:10212
+inline constexpr uint32_t A6XX_HLSQ_HS_CNTL_CONSTLEN__SCALE = 2;                            // a6xx.xml.h:10213  the encoder's val >> 2
+inline constexpr uint32_t A6XX_HLSQ_HS_CNTL_ENABLED = 0x00000100;                           // a6xx.xml.h:10218
+inline constexpr uint32_t A6XX_HLSQ_HS_CNTL_READ_IMM_SHARED_CONSTS = 0x00000200;            // a6xx.xml.h:10219
+constexpr uint32_t A6XX_HLSQ_HS_CNTL_CONSTLEN(uint32_t v) {
+    return field(v >> A6XX_HLSQ_HS_CNTL_CONSTLEN__SCALE, A6XX_HLSQ_HS_CNTL_CONSTLEN__SHIFT, A6XX_HLSQ_HS_CNTL_CONSTLEN__MASK);
+}
+inline constexpr uint32_t REG_A6XX_HLSQ_DS_CNTL = 0xb802;                                   // a6xx.xml.h:10222
+inline constexpr uint32_t A6XX_HLSQ_DS_CNTL_CONSTLEN__MASK = 0x000000ff;                    // a6xx.xml.h:10223
+inline constexpr uint32_t A6XX_HLSQ_DS_CNTL_CONSTLEN__SHIFT = 0;                            // a6xx.xml.h:10224
+inline constexpr uint32_t A6XX_HLSQ_DS_CNTL_CONSTLEN__SCALE = 2;                            // a6xx.xml.h:10225  the encoder's val >> 2
+inline constexpr uint32_t A6XX_HLSQ_DS_CNTL_ENABLED = 0x00000100;                           // a6xx.xml.h:10230
+inline constexpr uint32_t A6XX_HLSQ_DS_CNTL_READ_IMM_SHARED_CONSTS = 0x00000200;            // a6xx.xml.h:10231
+constexpr uint32_t A6XX_HLSQ_DS_CNTL_CONSTLEN(uint32_t v) {
+    return field(v >> A6XX_HLSQ_DS_CNTL_CONSTLEN__SCALE, A6XX_HLSQ_DS_CNTL_CONSTLEN__SHIFT, A6XX_HLSQ_DS_CNTL_CONSTLEN__MASK);
+}
+inline constexpr uint32_t REG_A6XX_HLSQ_GS_CNTL = 0xb803;                                   // a6xx.xml.h:10234
+inline constexpr uint32_t A6XX_HLSQ_GS_CNTL_CONSTLEN__MASK = 0x000000ff;                    // a6xx.xml.h:10235
+inline constexpr uint32_t A6XX_HLSQ_GS_CNTL_CONSTLEN__SHIFT = 0;                            // a6xx.xml.h:10236
+inline constexpr uint32_t A6XX_HLSQ_GS_CNTL_CONSTLEN__SCALE = 2;                            // a6xx.xml.h:10237  the encoder's val >> 2
+inline constexpr uint32_t A6XX_HLSQ_GS_CNTL_ENABLED = 0x00000100;                           // a6xx.xml.h:10242
+inline constexpr uint32_t A6XX_HLSQ_GS_CNTL_READ_IMM_SHARED_CONSTS = 0x00000200;            // a6xx.xml.h:10243
+constexpr uint32_t A6XX_HLSQ_GS_CNTL_CONSTLEN(uint32_t v) {
+    return field(v >> A6XX_HLSQ_GS_CNTL_CONSTLEN__SCALE, A6XX_HLSQ_GS_CNTL_CONSTLEN__SHIFT, A6XX_HLSQ_GS_CNTL_CONSTLEN__MASK);
+}
+
+// HLSQ_FS_CNTL_0 (THREADSIZE above): VARYINGS when total_in != 0 (tu_shader.cc:1737)
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_0_VARYINGS = 0x00000002;                        // a6xx.xml.h:10382
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_0_UNK2__MASK = 0x00000ffc;                      // a6xx.xml.h:10383
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_0_UNK2__SHIFT = 2;                              // a6xx.xml.h:10384
+constexpr uint32_t A6XX_HLSQ_FS_CNTL_0_UNK2(uint32_t v) {
+    return field(v, A6XX_HLSQ_FS_CNTL_0_UNK2__SHIFT, A6XX_HLSQ_FS_CNTL_0_UNK2__MASK);
+}
+
+// one pkt4 of 5 at HLSQ_CONTROL_1_REG (tu_shader.cc:1683-1700): PRIMALLOCTHRESHOLD = the chip's 7; then the FS's
+// system value registers, kRegidNone (0xfc) for each it does not read: face/sample id/sample mask/centre rhw; the
+// four pixel and centroid barycentrics; the two sample barycentrics and the fragcoord xy and zw registers;
+// HLSQ_CONTROL_5_REG (above) = 0xfcfc
+inline constexpr uint32_t REG_A6XX_HLSQ_CONTROL_1_REG = 0xb982;                             // a6xx.xml.h:10394
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_1_REG_PRIMALLOCTHRESHOLD__MASK = 0x00000007;    // a6xx.xml.h:10395
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_1_REG_PRIMALLOCTHRESHOLD__SHIFT = 0;            // a6xx.xml.h:10396
+constexpr uint32_t A6XX_HLSQ_CONTROL_1_REG_PRIMALLOCTHRESHOLD(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_1_REG_PRIMALLOCTHRESHOLD__SHIFT, A6XX_HLSQ_CONTROL_1_REG_PRIMALLOCTHRESHOLD__MASK);
+}
+inline constexpr uint32_t REG_A6XX_HLSQ_CONTROL_2_REG = 0xb983;                             // a6xx.xml.h:10403
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_FACEREGID__MASK = 0x000000ff;             // a6xx.xml.h:10404
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_FACEREGID__SHIFT = 0;                     // a6xx.xml.h:10405
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_SAMPLEID__MASK = 0x0000ff00;              // a6xx.xml.h:10410
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_SAMPLEID__SHIFT = 8;                      // a6xx.xml.h:10411
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_SAMPLEMASK__MASK = 0x00ff0000;            // a6xx.xml.h:10416
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_SAMPLEMASK__SHIFT = 16;                   // a6xx.xml.h:10417
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_CENTERRHW__MASK = 0xff000000;             // a6xx.xml.h:10422
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_CENTERRHW__SHIFT = 24;                    // a6xx.xml.h:10423
+constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_FACEREGID(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_2_REG_FACEREGID__SHIFT, A6XX_HLSQ_CONTROL_2_REG_FACEREGID__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_SAMPLEID(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_2_REG_SAMPLEID__SHIFT, A6XX_HLSQ_CONTROL_2_REG_SAMPLEID__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_SAMPLEMASK(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_2_REG_SAMPLEMASK__SHIFT, A6XX_HLSQ_CONTROL_2_REG_SAMPLEMASK__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_2_REG_CENTERRHW(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_2_REG_CENTERRHW__SHIFT, A6XX_HLSQ_CONTROL_2_REG_CENTERRHW__MASK);
+}
+inline constexpr uint32_t REG_A6XX_HLSQ_CONTROL_3_REG = 0xb984;                             // a6xx.xml.h:10430
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL__MASK = 0x000000ff;        // a6xx.xml.h:10431
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL__SHIFT = 0;                // a6xx.xml.h:10432
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL__MASK = 0x0000ff00;       // a6xx.xml.h:10437
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL__SHIFT = 8;               // a6xx.xml.h:10438
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID__MASK = 0x00ff0000;     // a6xx.xml.h:10443
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID__SHIFT = 16;            // a6xx.xml.h:10444
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID__MASK = 0xff000000;    // a6xx.xml.h:10449
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID__SHIFT = 24;           // a6xx.xml.h:10450
+constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL__SHIFT, A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL__SHIFT, A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID__SHIFT, A6XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID__SHIFT, A6XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID__MASK);
+}
+inline constexpr uint32_t REG_A6XX_HLSQ_CONTROL_4_REG = 0xb985;                             // a6xx.xml.h:10457
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_IJ_PERSP_SAMPLE__MASK = 0x000000ff;       // a6xx.xml.h:10458
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_IJ_PERSP_SAMPLE__SHIFT = 0;               // a6xx.xml.h:10459
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_IJ_LINEAR_SAMPLE__MASK = 0x0000ff00;      // a6xx.xml.h:10464
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_IJ_LINEAR_SAMPLE__SHIFT = 8;              // a6xx.xml.h:10465
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_XYCOORDREGID__MASK = 0x00ff0000;          // a6xx.xml.h:10470
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_XYCOORDREGID__SHIFT = 16;                 // a6xx.xml.h:10471
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_ZWCOORDREGID__MASK = 0xff000000;          // a6xx.xml.h:10476
+inline constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_ZWCOORDREGID__SHIFT = 24;                 // a6xx.xml.h:10477
+constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_IJ_PERSP_SAMPLE(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_4_REG_IJ_PERSP_SAMPLE__SHIFT, A6XX_HLSQ_CONTROL_4_REG_IJ_PERSP_SAMPLE__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_IJ_LINEAR_SAMPLE(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_4_REG_IJ_LINEAR_SAMPLE__SHIFT, A6XX_HLSQ_CONTROL_4_REG_IJ_LINEAR_SAMPLE__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_XYCOORDREGID(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_4_REG_XYCOORDREGID__SHIFT, A6XX_HLSQ_CONTROL_4_REG_XYCOORDREGID__MASK);
+}
+constexpr uint32_t A6XX_HLSQ_CONTROL_4_REG_ZWCOORDREGID(uint32_t v) {
+    return field(v, A6XX_HLSQ_CONTROL_4_REG_ZWCOORDREGID__SHIFT, A6XX_HLSQ_CONTROL_4_REG_ZWCOORDREGID__MASK);
+}
+
+inline constexpr uint32_t REG_A6XX_HLSQ_FS_CNTL = 0xbb10;                                   // a6xx.xml.h:11073
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_CONSTLEN__MASK = 0x000000ff;                    // a6xx.xml.h:11074
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_CONSTLEN__SHIFT = 0;                            // a6xx.xml.h:11075
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_CONSTLEN__SCALE = 2;                            // a6xx.xml.h:11076  the encoder's val >> 2
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_ENABLED = 0x00000100;                           // a6xx.xml.h:11081
+inline constexpr uint32_t A6XX_HLSQ_FS_CNTL_READ_IMM_SHARED_CONSTS = 0x00000200;            // a6xx.xml.h:11082
+constexpr uint32_t A6XX_HLSQ_FS_CNTL_CONSTLEN(uint32_t v) {
+    return field(v >> A6XX_HLSQ_FS_CNTL_CONSTLEN__SCALE, A6XX_HLSQ_FS_CNTL_CONSTLEN__SHIFT, A6XX_HLSQ_FS_CNTL_CONSTLEN__MASK);
+}
+
+// CP_DRAW_INDX_OFFSET, 3 words for an auto-indexed draw (adreno_pm4.xml:906-916; the 7-word form is for DMA
+// indices): word 0 = PRIM_TYPE | SOURCE_SELECT | VIS_CULL | INDEX_SIZE 0 | PATCH_TYPE 0, word 1 NUM_INSTANCES,
+// word 2 NUM_INDICES. turnip's and fd6's pipelines write USE_VISIBILITY even in sysmem under
+// CP_SET_VISIBILITY_OVERRIDE 1 (tu_cmd_buffer.cc:6061-6096; fd6_draw.cc:357-360); r3d writes IGNORE_VISIBILITY
+// (tu_clear_blit.cc:1661-1670). The XML documents neither packet.
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_PRIM_TYPE__MASK = 0x0000003f;               // adreno_pm4.xml.h:886
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_PRIM_TYPE__SHIFT = 0;                       // adreno_pm4.xml.h:887
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT__MASK = 0x000000c0;           // adreno_pm4.xml.h:892
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT__SHIFT = 6;                   // adreno_pm4.xml.h:893
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_VIS_CULL__MASK = 0x00000300;                // adreno_pm4.xml.h:898
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_VIS_CULL__SHIFT = 8;                        // adreno_pm4.xml.h:899
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__MASK = 0x00000c00;              // adreno_pm4.xml.h:904
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__SHIFT = 10;                     // adreno_pm4.xml.h:905
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_PATCH_TYPE__MASK = 0x00003000;              // adreno_pm4.xml.h:910
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_PATCH_TYPE__SHIFT = 12;                     // adreno_pm4.xml.h:911
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_GS_ENABLE = 0x00010000;                     // adreno_pm4.xml.h:916
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_0_TESS_ENABLE = 0x00020000;                   // adreno_pm4.xml.h:917
+constexpr uint32_t CP_DRAW_INDX_OFFSET_0_PRIM_TYPE(pc_di_primtype v) {
+    return field(v, CP_DRAW_INDX_OFFSET_0_PRIM_TYPE__SHIFT, CP_DRAW_INDX_OFFSET_0_PRIM_TYPE__MASK);
+}
+constexpr uint32_t CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT(pc_di_src_sel v) {
+    return field(v, CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT__SHIFT, CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT__MASK);
+}
+constexpr uint32_t CP_DRAW_INDX_OFFSET_0_VIS_CULL(pc_di_vis_cull_mode v) {
+    return field(v, CP_DRAW_INDX_OFFSET_0_VIS_CULL__SHIFT, CP_DRAW_INDX_OFFSET_0_VIS_CULL__MASK);
+}
+constexpr uint32_t CP_DRAW_INDX_OFFSET_0_INDEX_SIZE(a4xx_index_size v) {
+    return field(v, CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__SHIFT, CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__MASK);
+}
+constexpr uint32_t CP_DRAW_INDX_OFFSET_0_PATCH_TYPE(a6xx_patch_type v) {
+    return field(v, CP_DRAW_INDX_OFFSET_0_PATCH_TYPE__SHIFT, CP_DRAW_INDX_OFFSET_0_PATCH_TYPE__MASK);
+}
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_1_NUM_INSTANCES__MASK = 0xffffffff;           // adreno_pm4.xml.h:921
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_1_NUM_INSTANCES__SHIFT = 0;                   // adreno_pm4.xml.h:922
+constexpr uint32_t CP_DRAW_INDX_OFFSET_1_NUM_INSTANCES(uint32_t v) {
+    return field(v, CP_DRAW_INDX_OFFSET_1_NUM_INSTANCES__SHIFT, CP_DRAW_INDX_OFFSET_1_NUM_INSTANCES__MASK);
+}
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_2_NUM_INDICES__MASK = 0xffffffff;             // adreno_pm4.xml.h:930
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_2_NUM_INDICES__SHIFT = 0;                     // adreno_pm4.xml.h:931
+constexpr uint32_t CP_DRAW_INDX_OFFSET_2_NUM_INDICES(uint32_t v) {
+    return field(v, CP_DRAW_INDX_OFFSET_2_NUM_INDICES__SHIFT, CP_DRAW_INDX_OFFSET_2_NUM_INDICES__MASK);
+}
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_3_FIRST_INDX__MASK = 0xffffffff;              // adreno_pm4.xml.h:939
+inline constexpr uint32_t CP_DRAW_INDX_OFFSET_3_FIRST_INDX__SHIFT = 0;                      // adreno_pm4.xml.h:940
+constexpr uint32_t CP_DRAW_INDX_OFFSET_3_FIRST_INDX(uint32_t v) {
+    return field(v, CP_DRAW_INDX_OFFSET_3_FIRST_INDX__SHIFT, CP_DRAW_INDX_OFFSET_3_FIRST_INDX__MASK);
+}
 
 }  // namespace hakios::metal::a6xx
