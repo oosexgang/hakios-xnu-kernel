@@ -35,7 +35,7 @@ struct hakios_metallib_function {
 };
 
 struct hakios_metallib {
-	uint16_t version[2];                    /* the container's (32769.2 on iOS 16.5) */
+	uint16_t version[2];                    /* the container's (32769.2 on Darwin userland 16.5) */
 	uint64_t file_size;                     /* what the header says the file is */
 	uint32_t count;                         /* the functions in the file (more than were kept, if the caller's array was short) */
 };

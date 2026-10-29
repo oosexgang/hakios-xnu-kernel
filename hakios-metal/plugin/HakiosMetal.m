@@ -11,7 +11,7 @@
  * makes buffers that hold memory and libraries read from a .metallib, and stand-ins for the rest (a queue that queues nothing,
  * pipeline and state objects that hold nothing). It cannot run anything on the GPU yet, and says so: a message it does not know
  * is logged ("HakiosMetal: asked and not implemented: -...") and answers nil/0/NO instead of crashing, so that the question
- * "what does iOS ask a device first, and in what order?" can be read off the log rather than guessed. The compiler for the shaders is a separate piece and is largely done
+ * "what does Darwin ask a device first, and in what order?" can be read off the log rather than guessed. The compiler for the shaders is a separate piece and is largely done
  * (docs/air.md: Apple's shader bitcode into Mesa's NIR); the command queue and the kernel side are not started (docs/metal-plan.md).
  *
  * _MTLDevice is not in the SDK's Metal.tbd (it lives in the system's own copy of the framework), so the class is made at run
@@ -19,9 +19,9 @@
  * If there is none, nothing is registered, and Metal drops this plug-in as it does any that is not a _MTLDevice.
  *
  * Status. Step one ran in QEMU (docs/metal-plan.md: what it found). Step two -- buffers, libraries, functions -- was built for
- * iOS 16.5 and run on a Mac only, against the Mac's own Metal (tools/metal-plugin-test.sh, under the address sanitizer: every
+ * Darwin userland 16.5 and run on a Mac only, against the Mac's own Metal (tools/metal-plugin-test.sh, under the address sanitizer: every
  * buffer written and read back and freed, the system's five MTLB libraries read, all of their functions by name with their
- * bitcode); it has not run on iOS yet: metal_test's "what the device makes" is the check for that (QEMU, metal=1).
+ * bitcode); it has not run on Darwin yet: metal_test's "what the device makes" is the check for that (QEMU, metal=1).
  */
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>

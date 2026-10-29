@@ -4,7 +4,7 @@
 # usage: tools/metal-plugin-test.sh [DIR]
 set -e
 cd "$(dirname "$0")/.."
-[ "$(uname)" = Darwin ] || { echo "metal-plugin-test: needs macOS (its Metal stands in for iOS's)"; exit 0; }
+[ "$(uname)" = Darwin ] || { echo "metal-plugin-test: needs macOS (its Metal stands in for Darwin's)"; exit 0; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 clang -O1 -g -fsanitize=address -Wall -Wno-unused-parameter -Iuserland/src -framework Foundation -framework Metal -lobjc \
