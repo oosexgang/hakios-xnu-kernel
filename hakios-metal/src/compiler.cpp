@@ -411,6 +411,37 @@ bool widenHalfVarying(nir_builder* b, nir_intrinsic_instr* intr, void*) {
     return false;
 }
 
+// A sampler prefetch's sampler is the one the function samples its texture with. ir3 writes the texture's index there
+// instead (get_tex_samp_tex_src, non-bindless: info.samp_idx = tex->texture_index), which in GL, where the two are
+// always one index, is the same number; Metal binds textures and samplers apart, and QuartzCore's home_affordance_base
+// samples [[texture(3)]] through the constexpr sampler at 0 -- its prefetch named sampler 3, which nothing was bound
+// at. The pairs are read off the NIR before ir3's variant lowering (it works on a clone); a texture sampled through two
+// different samplers cannot be told apart here and is refused. The fixture writer runs the same correction.
+bool fixPrefetchSamplers(nir_shader* nir, ir3_shader_variant* v, std::string* name, std::string* why) {
+    uint8_t samplerOf[32];
+    memset(samplerOf, 0xfe, sizeof samplerOf);   // 0xfe: not sampled; 0xff: through more than one sampler
+    nir_foreach_function_impl(impl, nir) {
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+                if (instr->type != nir_instr_type_tex) continue;
+                nir_tex_instr* tex = nir_instr_as_tex(instr);
+                if (!nir_tex_instr_need_sampler(tex) || tex->texture_index >= 32) continue;
+                uint8_t& s = samplerOf[tex->texture_index];
+                s = s == 0xfe ? uint8_t(tex->sampler_index) : s == tex->sampler_index ? s : 0xff;
+            }
+        }
+    }
+    for (unsigned i = 0; i < v->num_sampler_prefetch; i++) {
+        ir3_sampler_prefetch& p = v->sampler_prefetch[i];
+        if (p.bindless || p.tex_id >= 32 || samplerOf[p.tex_id] == 0xfe) continue;
+        if (samplerOf[p.tex_id] == 0xff) {
+            return refuse(why, *name + " prefetches texture " + std::to_string(p.tex_id) + ", which it samples through more than one sampler");
+        }
+        p.samp_id = samplerOf[p.tex_id];
+    }
+    return true;
+}
+
 // A 16-bit screen-space derivative is taken at 32 bits. ir3 emits dsx and dsy at the source's own size, and on the
 // phone dsx.f16 returned the y derivative: probe 9u2's fwidth of y / 64, whose x derivative is 0, came out 1/32 in half
 // and 1/64 in float. CoreAnimation's rounded-rect coverage is fwidth of a half texcoord, and with the wrong one its
@@ -538,6 +569,10 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     t.shader->variants = v;
     t.shader->variant_count = 1;
     if (ir3_compile_shader_nir(compiler, t.shader, v) != 0) return refuse(why, std::string("ir3 refused ") + t.name());
+    {
+        std::string name = t.name();
+        if (!fixPrefetchSamplers(nir, v, &name, why)) return false;
+    }
     t.bin = static_cast<uint32_t*>(ir3_shader_assemble(v));
     if (t.bin == nullptr) return refuse(why, std::string("ir3 compiled ") + t.name() + " and could not assemble it");
     return true;

@@ -3593,9 +3593,14 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
     expectRefusal(noSecond.error, "tri_mrt_fs_air writes [[color(1)]] and the pass has no colour attachment 1");
     RenderPass mixed = pass;
     mixed.more[0].texture = small.get();
+    // attachments of different sizes: the window is the smaller (Metal's render target size), a viewport past it refused
     Encoded sizes(r, mrt, mixed, wholeDraw(6));
     CHECK(!sizes.ok);
-    expectRefusal(sizes.error, "a 32 x 32 colour attachment 1 beside a 64 x 64 colour attachment 0: one window serves them all, so they must be the same size");
+    expectRefusal(sizes.error, "viewport (0, 0, 64, 64) lies outside the 32 x 32 target");
+    Encoded fits(r, mrt, mixed, wholeDraw(6, 32, 32));
+    CHECK(fits.ok);
+    if (!fits.ok) std::printf("       %s\n", fits.error.c_str());
+    CHECK_EQ(fits.reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR), A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X(31) | A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y(31));
     // a Clear on each: two fills, each waited for on a word of its own (attachment 1's at kTableMoreClearFlushAt)
     RenderPass cleared = pass;
     cleared.load = LoadAction::kClear;

@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,864 @@
+@@ -35,19 +37,894 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -386,6 +386,36 @@ SPDX-License-Identifier: MIT
 +/* whether the lowering below made a fetch slot: the stage reads its targets,
 + * which ir3's fb_read no longer says (it sees no txf_ms_fb) */
 +static bool fixture_fb_lowered;
++
++/* src/compiler.cpp: fixPrefetchSamplers */
++static bool
++fix_prefetch_samplers(nir_shader *nir, struct ir3_shader_variant *v)
++{
++   uint8_t sampler_of[32];
++   memset(sampler_of, 0xfe, sizeof(sampler_of));
++   nir_foreach_function_impl (impl, nir) {
++      nir_foreach_block (block, impl) {
++         nir_foreach_instr (instr, block) {
++            if (instr->type != nir_instr_type_tex)
++               continue;
++            nir_tex_instr *tex = nir_instr_as_tex(instr);
++            if (!nir_tex_instr_need_sampler(tex) || tex->texture_index >= 32)
++               continue;
++            uint8_t *s = &sampler_of[tex->texture_index];
++            *s = *s == 0xfe ? (uint8_t)tex->sampler_index : *s == tex->sampler_index ? *s : 0xff;
++         }
++      }
++   }
++   for (unsigned i = 0; i < v->num_sampler_prefetch; i++) {
++      struct ir3_sampler_prefetch *p = &v->sampler_prefetch[i];
++      if (p->bindless || p->tex_id >= 32 || sampler_of[p->tex_id] == 0xfe)
++         continue;
++      if (sampler_of[p->tex_id] == 0xff)
++         return false;
++      p->samp_id = sampler_of[p->tex_id];
++   }
++   return true;
++}
 +
 +/* src/compiler.cpp: widenHalfVarying */
 +static bool
@@ -937,7 +967,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +1145,7 @@
+@@ -298,6 +1175,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -945,7 +975,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +1154,16 @@
+@@ -306,13 +1184,16 @@
     return nir;
  }
  
@@ -963,7 +993,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +1175,9 @@
+@@ -324,6 +1205,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -973,7 +1003,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1195,7 @@
+@@ -341,6 +1225,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -981,7 +1011,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1210,15 @@
+@@ -355,6 +1240,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -997,7 +1027,7 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -433,7 +1297,9 @@
+@@ -433,7 +1327,9 @@
           .chip_id = chip_id,
     };
     compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
@@ -1008,7 +1038,7 @@ SPDX-License-Identifier: MIT
  
     if (air_file) {
        nir = load_air(air_file, air_entry);
-@@ -444,8 +1310,20 @@
+@@ -444,8 +1340,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -1031,7 +1061,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,10 +1364,24 @@
+@@ -486,10 +1394,24 @@
        return -1;
     }
  
@@ -1056,7 +1086,7 @@ SPDX-License-Identifier: MIT
  
     struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
     shader->compiler = compiler;
-@@ -497,12 +1389,24 @@
+@@ -497,12 +1419,24 @@
     shader->nir = nir;
  
     ir3_nir_post_finalize(shader);
@@ -1081,11 +1111,16 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1424,15 @@
+@@ -520,7 +1454,20 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }
 -   dump_info(v, info);
++   /* the prefetch's sampler as hakios-metal's compileStage corrects it */
++   if (!fix_prefetch_samplers(nir, v)) {
++      fprintf(stderr, "a prefetched texture is sampled through more than one sampler\n");
++      return -1;
++   }
 +   /* Assembled once: ir3_shader_assemble frees the variant's constant data
 +    * as it appends it to the binary, so a second call would copy from NULL.
 +    */

@@ -56,6 +56,7 @@
 #include "../tests/fixtures/tri_hc_fs_air.hpp"
 #include "../tests/fixtures/tri_hcolor_vs_air.hpp"
 #include "../tests/fixtures/tri_hcolor_fs_air.hpp"
+#include "../tests/fixtures/tri_tex31_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -2257,6 +2258,53 @@ int main(int argc, char** argv) {
                 }
             report(ok && completed(*cb) && right == judged, "a half4 varying from VS to FS: " + std::to_string(right) + " of " + std::to_string(judged) + " pixels tri_color's" + first +
                                                                 (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9k4. a prefetched sample whose sampler is not its texture's index (QuartzCore's home_affordance_base: texture 3,
+        // sampler 0): tri_tex31_fs samples a 2x1 black-and-white texture at [[texture(3)]] through a linear sampler at
+        // [[sampler(1)]], nearest bound at 3, at tri_color's red. Linear with clamp to edge reads (u - 0.25) / 0.5 of white;
+        // where that lies between 40 and 215 out of 255 the red must be within 3 of it -- the nearest sampler would give
+        // 0 or 255 there.
+        if (t) {
+            const Program p31{kernels::tri_color_vs_air, kernels::tri_tex31_fs_air, Linkage{}, "tri_tex31"};
+            TextureDesc td;
+            td.format = PixelFormat::kRGBA8Unorm;
+            td.width = 2;
+            td.height = 1;
+            td.usage = kTextureUsageRead;
+            auto bw = Texture::make(gpu, td, &why);
+            const uint32_t texels[2] = {0xff000000u, 0xffffffffu};
+            memcpy(const_cast<void*>(bw->contents()), texels, 8);
+            Sampler nearest, linear;
+            std::string swhy;
+            SamplerDesc sd;
+            makeSampler(sd, &nearest, &swhy);
+            sd.minFilter = sd.magFilter = 1;
+            makeSampler(sd, &linear, &swhy);
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            Bindings fsb;
+            fsb.textures = {nullptr, nullptr, nullptr, bw.get()};
+            fsb.samplers = {nullptr, &linear, nullptr, &nearest};
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(p31, rp, drawOf(0, 6), Bindings{}, fsb);
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t judged = 0, right = 0;
+            std::string first;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    if (i == j) continue;
+                    const double x = i + 0.5, y = j + 0.5, u = j > i ? (y - x) / 64.0 : y / 64.0;
+                    const double want = std::min(1.0, std::max(0.0, (u - 0.25) / 0.5)) * 255.0;
+                    if (want < 40 || want > 215) continue;
+                    const uint8_t got = mb[j * t->bytesPerRow() + uint64_t(i) * 4];
+                    judged++;
+                    if (std::fabs(got - want) <= 3) right++;
+                    else if (first.empty()) first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + std::to_string(got) + ", wanted " + std::to_string(int(want));
+                }
+            report(ok && completed(*cb) && right == judged && judged > 500, "a prefetch of texture 3 through sampler 1 (linear): " + std::to_string(right) + " of " +
+                                                                               std::to_string(judged) + " blended pixels" + first + (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
         // 9o3. halfs from a constant buffer at bytes 64, 66, 68 and 70 (CoreAnimation's noise_scale is the half at 70):
         // tri_half_fs returns (h64, h66, h70, h68) = (0.25, 0.5, 0.75, 1), 40 80 bf ff in every pixel; the other halfs

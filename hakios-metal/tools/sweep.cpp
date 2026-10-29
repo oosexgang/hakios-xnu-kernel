@@ -162,8 +162,22 @@ int main(int argc, char** argv) {
                     std::printf("sweep: %s: %llu bytes of bitcode, fnv %08x\n", f.name.c_str(), (unsigned long long)len, h);
                 }
                 // (one function by name is compiled in this process, so that Mesa's own debug output reaches the terminal)
-                ok = !only.empty() ? (t == 2 ? compileAir(bc, len, &why, gConstants) != nullptr : compileStage(bc, len, &why, gConstants) != nullptr)
-                                   : compileApart(t == 2, bc, len, &why);
+                if (!only.empty() && t != 2) {
+                    // the stage's tables as a draw reads them: what samples what, and through which sampler
+                    auto st = compileStage(bc, len, &why, gConstants);
+                    ok = st != nullptr;
+                    if (ok) {
+                        const Kernel& k = st->stage.k;
+                        std::printf("sweep: %s: %u texture slots, sampler mask %#x, %u prefetch(es)", f.name.c_str(), k.numTextureSlots, k.samplerMask,
+                                    unsigned(st->stage.numSamplerPrefetch));
+                        for (unsigned i = 0; i < st->stage.numSamplerPrefetch; i++)
+                            std::printf(" [tex %u samp %u]", st->stage.prefetch[i].texId, st->stage.prefetch[i].sampId);
+                        for (const auto& [index, smp] : st->inlineSamplers) std::printf(" inline sampler at %u", index);
+                        std::printf("\n");
+                    }
+                } else {
+                    ok = !only.empty() ? compileAir(bc, len, &why, gConstants) != nullptr : compileApart(t == 2, bc, len, &why);
+                }
             }
             seen[t]++;
             here[t]++;

@@ -487,6 +487,24 @@ struct Attachment {
     StoreAction store;
     const double* clearColor;
 };
+Attachment attachmentOf(const RenderPass& p, uint32_t i);
+
+// The pass's window: the smallest of its colour attachments at their levels, as Metal's render target size is when they
+// differ -- QuartzCore's variable blur draws into a 576 x 80 target beside a 1152 x 160 one it does not write. Each
+// attachment keeps its own pitch and base; the window scissor keeps every write inside the smallest.
+std::pair<uint32_t, uint32_t> windowOf(const RenderPass& pass) {
+    const TextureLevel L0 = pass.color0->level(pass.level);
+    uint32_t w = L0.width, h = L0.height;
+    for (uint32_t i = 1; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        if (a.texture == nullptr || a.level >= a.texture->levels()) continue;
+        const TextureLevel L = a.texture->level(a.level);
+        w = std::min(w, L.width);
+        h = std::min(h, L.height);
+    }
+    return {w, h};
+}
+
 Attachment attachmentOf(const RenderPass& p, uint32_t i) {
     if (i == 0) return Attachment{p.color0, p.level, p.load, p.store, p.clearColor};
     const ColorAttachment& c = p.more[i - 1];
@@ -849,11 +867,7 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if (a.level >= t.levels()) {
             return refuse(why, which + " names mip level " + n(a.level) + " of a texture of " + n(t.levels()));
         }
-        const TextureLevel L = t.level(a.level), L0 = pass.color0->level(pass.level < pass.color0->levels() ? pass.level : 0);
-        if (i != 0 && (L.width != L0.width || L.height != L0.height)) {
-            return refuse(why, "a " + n(L.width) + " x " + n(L.height) + " " + which + " beside a " + n(L0.width) + " x " +
-                                   n(L0.height) + " colour attachment 0: one window serves them all, so they must be the same size");
-        }
+        // (attachments of different sizes are Metal's to allow: the window is the smallest of them, windowOf below)
     }
     const Texture& target = *pass.color0;
     if (pass.depth != nullptr) {
@@ -1242,7 +1256,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         }
         if (maxIndices > 0xffffffffull) maxIndices = 0xffffffffull;
     }
-    const uint32_t W = target.level(pass.level).width, H = target.level(pass.level).height;
+    const auto [W, H] = windowOf(pass);
     const Viewport& vp = draw.viewport;
     if (!finite(vp.x) || !finite(vp.y) || !finite(vp.width) || !finite(vp.height) || !finite(vp.znear) || !finite(vp.zfar)) {
         return refuse(why, "a viewport with a non-finite value");
@@ -1736,13 +1750,12 @@ bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     if (!checkTarget(pass, why)) {
         return false;
     }
-    const Texture& target = *pass.color0;
     ClearWords clears[kMaxColorOutputs];
     if (!clearsOf(pass, clears, why)) {
         return false;
     }
     tableStart(tableCpu);
-    passStart(stream, target.level(pass.level).width, target.level(pass.level).height, table, o);
+    passStart(stream, windowOf(pass).first, windowOf(pass).second, table, o);
     clearAll(stream, pass, clears, table);
     zsClears(stream, pass, table);
     return true;
@@ -1758,13 +1771,12 @@ bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     if (!anyColorClear(pass) && !depthClear) {
         return refuse(why, "a pass without a draw and with load action " + n(uint32_t(pass.load)) + ": only a Clear writes anything then");
     }
-    const Texture& target = *pass.color0;
     ClearWords clears[kMaxColorOutputs];
     if (!clearsOf(pass, clears, why)) {
         return false;
     }
     tableStart(tableCpu);
-    passStart(stream, target.level(pass.level).width, target.level(pass.level).height, table, o);
+    passStart(stream, windowOf(pass).first, windowOf(pass).second, table, o);
     clearAll(stream, pass, clears, table);
     zsClears(stream, pass, table);
     passTail(stream, table, o, pass.depth != nullptr);
