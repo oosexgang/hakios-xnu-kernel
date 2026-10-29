@@ -1,7 +1,9 @@
 // hakios-metal-probe: the driver's core on the phone's real GPU. What the tests check against the fake GPU, done by
 // the Adreno: a copy of a megabyte, fills of every awkward length, a chain of command buffers whose handlers must run
 // in order, how fast a copy goes, kernels of our own over buffers and then over textures (an image written through the
-// IBO table, a texture read through the texture table, a sampler), each result compared with the kernel's own rule.
+// IBO table, a texture read through the texture table, a sampler), each result compared with the kernel's own rule;
+// then the first draw (stage 9): one triangle, the pair, per-vertex colours, into a 64x64 target, each pixel against
+// the rule the probe computes from the shaders' text.
 // One line per check, "probe: ok ..." or "probe: FAIL ...", and a last line with the count; the exit status is the
 // number of failures. Run it from a job list (hakios: RC_JOBS, EXTRA=).
 #include <algorithm>
@@ -29,6 +31,14 @@
 #include "../tests/fixtures/tex_fill_h_bc.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
+#include "../tests/fixtures/tri_color_fs_air.hpp"
+#include "../tests/fixtures/tri_color_fs_bc.hpp"
+#include "../tests/fixtures/tri_color_vs_air.hpp"
+#include "../tests/fixtures/tri_color_vs_bc.hpp"
+#include "../tests/fixtures/tri_flat_fs_air.hpp"
+#include "../tests/fixtures/tri_flat_fs_bc.hpp"
+#include "../tests/fixtures/tri_flat_vs_air.hpp"
+#include "../tests/fixtures/tri_flat_vs_bc.hpp"
 
 using namespace hakios::metal;
 
@@ -254,6 +264,23 @@ static std::string compareCompiled(const Kernel& a, const Kernel& b, bool* same)
     return std::to_string(a.numWords) + " words, " + (sameWords ? "the same as the host's" : "DIFFERENT from the host's") + ", layout " +
            (sameLayout ? "the same" : "DIFFERENT") + ", texture fields " + (sameTextures ? "the same" : "DIFFERENT") + " (numTextureSlots " +
            std::to_string(a.numTextureSlots) + ", samplerMask " + hex8(a.samplerMask) + ")";
+}
+
+// a render stage compiled on the phone against the host's fixture, beyond the Kernel part compareCompiled covers: every
+// field render.hpp's Stage adds (the input and output tables byte for byte, the regids, the flags)
+static bool compareStage(const Stage& a, const Stage& b) {
+    return a.kind == b.kind && a.numInputs == b.numInputs && memcmp(a.inputs, b.inputs, sizeof a.inputs) == 0 && a.numOutputs == b.numOutputs &&
+           memcmp(a.outputs, b.outputs, sizeof a.outputs) == 0 && a.numAttributes == b.numAttributes && a.vertexIdRegid == b.vertexIdRegid &&
+           a.instanceIdRegid == b.instanceIdRegid && a.positionRegid == b.positionRegid && a.pointSizeRegid == b.pointSizeRegid &&
+           a.clipMask == b.clipMask && a.cullMask == b.cullMask && a.writesLayer == b.writesLayer && a.writesViewport == b.writesViewport &&
+           a.totalIn == b.totalIn && a.fragCoordRegid == b.fragCoordRegid && a.fragcoordCompmask == b.fragcoordCompmask &&
+           memcmp(a.ijRegid, b.ijRegid, sizeof a.ijRegid) == 0 && a.faceRegid == b.faceRegid && a.sampleIdRegid == b.sampleIdRegid &&
+           a.sampleMaskInRegid == b.sampleMaskInRegid && memcmp(a.colorRegid, b.colorRegid, sizeof a.colorRegid) == 0 &&
+           memcmp(a.colorHalf, b.colorHalf, sizeof a.colorHalf) == 0 && a.numColorOutputs == b.numColorOutputs && a.depthRegid == b.depthRegid &&
+           a.sampleMaskRegid == b.sampleMaskRegid && a.stencilRefRegid == b.stencilRefRegid && a.writesPos == b.writesPos &&
+           a.writesSmask == b.writesSmask && a.writesStencilref == b.writesStencilref && a.dualSrcBlend == b.dualSrcBlend && a.hasKill == b.hasKill &&
+           a.perSamp == b.perSamp && a.readsPrimid == b.readsPrimid && a.fbRead == b.fbRead && a.needPixlod == b.needPixlod &&
+           a.needFullQuad == b.needFullQuad && a.numSamplerPrefetch == b.numSamplerPrefetch;
 }
 
 static const char* dimName(uint8_t dim) {
@@ -1026,7 +1053,355 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 8. (--metallib FILE FUNCTION) a kernel of the image's own: read off the phone's filesystem, compiled here, and run
+    // 9. the first draw: one triangle, then the pair, then per-vertex colours, into a 64x64 RGBA8Unorm target in sysmem
+    // mode. The fake GPU held every one of these streams together; only this says whether the GPU draws them, where, and
+    // with which bytes. Each line is its own command buffer (gpu_recover=1: a hang in one hides nothing of an earlier
+    // result), each a comparison against the rule the probe computes from the shaders' own text (tools/kernels/tri_*.ll):
+    // there is no host reference for a vertex stage (air_run draws its own quad, air-vs-fs.md (e)).
+    //   9a. tri_flat, vertices 0..3: the lower-left half of the target, the colour's four bytes exactly; the orientation
+    //       line (which half was drawn) decides the sign of GRAS_CL_VPORT_YSCALE, which is reasoning until this runs
+    //   9b. the pair, 0..6: every pixel the colour, the shared diagonal painted by exactly one of the two
+    //   9c. the controls: a half viewport, the second triangle alone through vertexStart (VFD_INDEX_OFFSET added to the
+    //       vertex id), two refusals by name
+    //   9d. tri_color, 0..6: the barycentric weights as bytes, within one unit, the diagonal excluded
+    //   9e. (--bisect) tri_flat under each render::Options group off and each alternative on, one boot
+    //   9f. the four stages compiled on the phone against the host's fixtures, and the phone-compiled program drawn
+    {
+        const uint32_t W = 64, H = 64;
+        // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
+        // four are exact after the hardware's round-to-nearest)
+        const uint32_t flatColour = 0xff804020u;
+        const Program flat{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+        const Program color{kernels::tri_color_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_color"};
+        auto makeTarget = [&](uint32_t usage, const char* label) -> std::shared_ptr<Texture> {
+            TextureDesc d;
+            d.format = PixelFormat::kRGBA8Unorm;
+            d.width = W;
+            d.height = H;
+            d.usage = usage;
+            auto t = Texture::make(gpu, d, &why);
+            if (t == nullptr) report(false, std::string(label) + ": a 64x64 RGBA8Unorm render target: " + why);
+            return t;
+        };
+        // one draw of P into T, committed and waited for; one the driver refuses is not committed and its line carries the reason
+        auto drawInto = [&](const Texture& t, const Program& p, const Draw& d, const render::Options& o = render::Options{}) {
+            RenderPass pass;
+            pass.color0 = &t;
+            auto cb = queue->commandBuffer();
+            if (cb->draw(p, pass, d, Bindings{}, Bindings{}, o)) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            return cb;
+        };
+        auto completed = [](const CommandBuffer& cb) { return cb.status() == CommandBuffer::kCompleted; };
+        auto drawOf = [&](uint32_t vertexStart, uint32_t vertexCount, Viewport vp = Viewport{0, 0, 64, 64, 0, 1}) {
+            Draw d;
+            d.vertexStart = vertexStart;
+            d.vertexCount = vertexCount;
+            d.viewport = vp;
+            return d;
+        };
+        // The pixel rule. Metal's orientation (NDC y up, the target's row 0 at the top) puts T1 = clip (-1,-1), (1,-1), (-1,1)
+        // at window (0,64), (64,64), (0,0): the LOWER-LEFT half, bounded by the diagonal x = y. Pixel (i, j) has its centre at
+        // (i + .5, j + .5): strictly inside iff j > i (2016 pixels), strictly outside iff j < i (2016), and the 64 pixels with
+        // i == j have their centres exactly on the edge, where the fill rule decides -- the top-left rule leaves all 64 out,
+        // a bottom-right one takes all 64; either is a consistent rasterizer, any other count is not (critic.md). An
+        // un-flipped y (GL's orientation) would draw the UPPER-LEFT half, i + j < 63, instead: the orientation line below
+        // says which half holds the colour. SIDE(i, j) is +1 inside, -1 outside, 0 on the edge.
+        struct TriReadback {
+            uint32_t interior = 0, interiorColour = 0, exterior = 0, exteriorCanary = 0, exteriorColour = 0, edge = 0, edgeColour = 0, edgeCanary = 0;
+            uint32_t other = 0, firstOtherX = 0, firstOtherY = 0, firstOtherGot = 0;
+            uint32_t upperLeftColour = 0;   // pixels with i + j < 63 and j < i (in the upper-left half and not the lower-left one) holding the colour
+        };
+        auto compareTriangle = [&](const Texture& t, uint32_t colour, uint32_t canary, const std::function<int(uint32_t, uint32_t)>& side) {
+            std::vector<uint8_t> bo = textureBo(t);
+            TriReadback r;
+            for (uint32_t j = 0; j < H; j++) {
+                for (uint32_t i = 0; i < W; i++) {
+                    uint32_t px;
+                    memcpy(&px, bo.data() + j * t.bytesPerRow() + uint64_t(i) * 4, 4);
+                    int s = side(i, j);
+                    if (s > 0) {
+                        r.interior++;
+                        r.interiorColour += px == colour;
+                    } else if (s < 0) {
+                        r.exterior++;
+                        r.exteriorCanary += px == canary;
+                        r.exteriorColour += px == colour;
+                    } else {
+                        r.edge++;
+                        r.edgeColour += px == colour;
+                        r.edgeCanary += px == canary;
+                    }
+                    if (px != colour && px != canary) {
+                        if (r.other == 0) {
+                            r.firstOtherX = i;
+                            r.firstOtherY = j;
+                            r.firstOtherGot = px;
+                        }
+                        r.other++;
+                    }
+                    if (i + j < 63 && j < i && px == colour) r.upperLeftColour++;
+                }
+            }
+            return r;
+        };
+        auto describeTriangle = [&](const TriReadback& r) {
+            std::string s = std::to_string(r.interiorColour) + " of " + std::to_string(r.interior) + " interior pixels the colour, " +
+                            std::to_string(r.exteriorCanary) + " of " + std::to_string(r.exterior) + " exterior canary";
+            if (r.edge != 0) {
+                s += ", diagonal: " + std::to_string(r.edgeColour) + " of " + std::to_string(r.edge) + " the colour" +
+                     (r.edgeColour == 0 ? " (the top-left rule)" : r.edgeColour == r.edge ? " (a bottom-right rule)" : " (NEITHER rule: inconsistent)");
+            }
+            if (r.other != 0) {
+                s += ", " + std::to_string(r.other) + " pixels neither (first at " + std::to_string(r.firstOtherX) + "," + std::to_string(r.firstOtherY) + ": " +
+                     hex8(r.firstOtherGot) + ")";
+            }
+            return s;
+        };
+        const uint32_t canary = texCanary([&](uint32_t v) { return v == flatColour; });
+        auto lowerLeft = [](uint32_t i, uint32_t j) { return j > i ? 1 : j < i ? -1 : 0; };
+        auto upperRight = [](uint32_t i, uint32_t j) { return i > j ? 1 : i < j ? -1 : 0; };
+
+        // 9a. one triangle
+        auto t = makeTarget(kTextureUsageRenderTarget | kTextureUsageRead, "9a");
+        if (t) {
+            fillBo(*t, canary);
+            auto cb = drawInto(*t, flat, drawOf(0, 3));
+            TriReadback r = compareTriangle(*t, flatColour, canary, lowerLeft);
+            bool diagonalConsistent = r.edgeColour == 0 || r.edgeColour == r.edge;
+            bool ok = completed(*cb) && r.interiorColour == r.interior && r.exteriorCanary == r.exterior && diagonalConsistent && r.other == 0;
+            report(ok, "tri_flat, one triangle (vertices 0..3) into 64x64 RGBA8Unorm: " + describeTriangle(r) + status(*cb, gpu));
+            // the orientation, as its own line: which half the colour landed in. Lower-left is Metal's (the negative YSCALE
+            // right); upper-left is GL's (the sign wrong); nothing drawn says nothing about it
+            std::string orientation = r.interiorColour == r.interior && r.upperLeftColour == 0 ? "lower-left: Metal's orientation, the viewport y scale sign is right"
+                                      : r.upperLeftColour != 0 && r.interiorColour < r.interior
+                                          ? "UPPER-LEFT (" + std::to_string(r.upperLeftColour) + " pixels with i + j < 63): the viewport y scale sign (GRAS_CL_VPORT_YSCALE) is wrong for Metal"
+                                      : r.interiorColour + r.exteriorColour + r.edgeColour == 0 ? "nothing was drawn, so the orientation is not measured"
+                                                                                                : "neither half cleanly";
+            report(r.interiorColour == r.interior && r.upperLeftColour == 0, "orientation: " + orientation);
+            reportPadding("tri_flat 64x64", compareTexture(*t, PixelRule{[](uint32_t, uint32_t) { return false; }, [](uint32_t, uint32_t, uint32_t) { return 0u; }}, canary));
+        }
+        // 9b. the pair: every pixel the colour, the diagonal's centres each painted by exactly one triangle (a gap would be canary)
+        if (t) {
+            fillBo(*t, canary);
+            auto cb = drawInto(*t, flat, drawOf(0, 6));
+            PixelRule all{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return flatColour; }};
+            TexReadback r = compareTexture(*t, all, canary);
+            report(completed(*cb) && r.right == 4096, "tri_flat, the pair (vertices 0..6): " + describeTexture(r, "the colour") + status(*cb, gpu));
+        }
+        // 9c. controls. The half viewport (0, 0, 32, 64) puts T1 at window (0,64), (32,64), (0,0): the edge is x = y/2, so the
+        // centre (i + .5, j + .5) is inside iff j >= 2i + 1 (no centre lies on it), in columns 0..31 only; columns 32..63 are
+        // outside the viewport scissor and stay canary.
+        if (t) {
+            fillBo(*t, canary);
+            auto cb = drawInto(*t, flat, drawOf(0, 3, Viewport{0, 0, 32, 64, 0, 1}));
+            TriReadback r = compareTriangle(*t, flatColour, canary, [](uint32_t i, uint32_t j) { return i < 32 && j >= 2 * i + 1 ? 1 : -1; });
+            report(completed(*cb) && r.interiorColour == r.interior && r.exteriorCanary == r.exterior && r.other == 0,
+                   "control, tri_flat in a half viewport (0, 0, 32, 64): " + describeTriangle(r) + " (interior: j >= 2i + 1 in columns 0..31)" + status(*cb, gpu));
+        }
+        // the second triangle alone, by vertexStart 3: the vertex id is VFD_INDEX_OFFSET + the index (VFD_ADD_OFFSET.VERTEX,
+        // the static table), so vertices 3, 4, 5 are T2 = clip (1,-1), (1,1), (-1,1) -> window (64,64), (64,0), (0,0): the
+        // UPPER-RIGHT half, i > j. T1 coming out instead says the offset was not added to the id.
+        if (t) {
+            fillBo(*t, canary);
+            auto cb = drawInto(*t, flat, drawOf(3, 3));
+            TriReadback r = compareTriangle(*t, flatColour, canary, upperRight);
+            bool diagonalConsistent = r.edgeColour == 0 || r.edgeColour == r.edge;
+            TriReadback asT1 = compareTriangle(*t, flatColour, canary, lowerLeft);
+            report(completed(*cb) && r.interiorColour == r.interior && r.exteriorCanary == r.exterior && diagonalConsistent && r.other == 0,
+                   "control, tri_flat from vertex 3 (T2 alone, upper-right): " + describeTriangle(r) +
+                       (asT1.interiorColour == asT1.interior && r.interiorColour != r.interior ? "; T1 (lower-left) came out: VFD_INDEX_OFFSET was not added to the vertex id" : "") +
+                       status(*cb, gpu));
+        }
+        // two refusals by name, nothing committed
+        if (t) {
+            RenderPass pass;
+            pass.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            bool accepted = cb->draw(flat, pass, drawOf(0, 0), Bindings{}, Bindings{});
+            report(!accepted && cb->error() == "a draw of 0 vertices",
+                   std::string("control, a draw of 0 vertices: ") + (accepted ? "ACCEPTED" : "refused: " + cb->error()));
+            auto plain = makeTarget(kTextureUsageRead | kTextureUsageWrite, "9c");
+            if (plain) {
+                RenderPass notRt;
+                notRt.color0 = plain.get();
+                auto cb2 = queue->commandBuffer();
+                bool accepted2 = cb2->draw(flat, notRt, drawOf(0, 3), Bindings{}, Bindings{});
+                report(!accepted2 && cb2->error().find("was made without render-target usage") != std::string::npos,
+                       std::string("control, a draw into a texture without MTLTextureUsageRenderTarget: ") + (accepted2 ? "ACCEPTED" : "refused: " + cb2->error()));
+            }
+        }
+        // 9d. tri_color, the pair: red at vertices 0 and 3, green at 1 and 4, blue at 2 and 5 (tri_color_vs.ll), so a pixel's
+        // bytes are its barycentric weights in the triangle that painted it. T1 (j > i) has A = (0,64) red, B = (64,64) green,
+        // C = (0,0) blue: at (x, y) = (i + .5, j + .5), lambda_B = x/64, lambda_A = (y - x)/64, lambda_C = 1 - y/64. T2 (i > j)
+        // has A = (64,64) red, B = (64,0) green, C = (0,0) blue: lambda_A = y/64, lambda_B = (x - y)/64, lambda_C = 1 - x/64.
+        // RGBA8Unorm holds round(255 * lambda); the interpolator's precision is not documented, so a byte within one unit
+        // of it (1/255 + 1/512 in value) is right; A is 255 exactly; the 64 diagonal pixels are excluded (either triangle's).
+        if (t) {
+            const uint32_t colourCanary = texCanary([](uint32_t v) {
+                // a word whose alpha byte is not 0xff can be no interpolated colour
+                return (v >> 24) == 0xffu;
+            });
+            fillBo(*t, colourCanary);
+            auto cb = drawInto(*t, color, drawOf(0, 6));
+            std::vector<uint8_t> bo = textureBo(*t);
+            uint32_t within = 0, off = 0, counted = 0, maxDev = 0, firstX = 0, firstY = 0, firstChannel = 0, firstGot = 0, firstWant = 0;
+            uint32_t canaryLeft = 0;
+            for (uint32_t j = 0; j < H; j++) {
+                for (uint32_t i = 0; i < W; i++) {
+                    if (i == j) continue;
+                    counted++;
+                    const double x = i + 0.5, y = j + 0.5;
+                    double lambda[3];
+                    if (j > i) {
+                        lambda[1] = x / 64.0;
+                        lambda[0] = (y - x) / 64.0;
+                        lambda[2] = 1.0 - y / 64.0;
+                    } else {
+                        lambda[0] = y / 64.0;
+                        lambda[1] = (x - y) / 64.0;
+                        lambda[2] = 1.0 - x / 64.0;
+                    }
+                    uint32_t px;
+                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                    if (px == colourCanary) canaryLeft++;
+                    bool pixelOk = true;
+                    for (uint32_t c = 0; c < 4; c++) {
+                        uint32_t got = (px >> (8 * c)) & 0xff;
+                        uint32_t want = c == 3 ? 255 : uint32_t(std::lround(255.0 * lambda[c]));
+                        uint32_t dev = got > want ? got - want : want - got;
+                        if (dev > maxDev) maxDev = dev;
+                        bool chOk = c == 3 ? dev == 0 : dev <= 1;
+                        if (!chOk && pixelOk) {
+                            pixelOk = false;
+                            if (off == 0) {
+                                firstX = i;
+                                firstY = j;
+                                firstChannel = c;
+                                firstGot = got;
+                                firstWant = want;
+                            }
+                        }
+                    }
+                    within += pixelOk;
+                    off += !pixelOk;
+                }
+            }
+            char text[256];
+            snprintf(text, sizeof text, "%u of %u pixels within 1/255 + 1/512 of the barycentric expectation (A exactly 255), max deviation %u/255, %u off", within, counted, maxDev, off);
+            std::string line = text;
+            if (off != 0) {
+                snprintf(text, sizeof text, " (first at %u,%u channel %u: got %u expected %u)", firstX, firstY, firstChannel, firstGot, firstWant);
+                line += text;
+            }
+            if (canaryLeft != 0) line += ", " + std::to_string(canaryLeft) + " still canary";
+            report(completed(*cb) && within == counted, "tri_color, the pair (vertices 0..6), per-vertex colours interpolated: " + line + status(*cb, gpu));
+        }
+        // 9e. (--bisect) tri_flat under each group of the stream switched off in turn, and each alternative value on: when the
+        // draw hangs or writes nothing, this says which group it needs, one boot for all of it, each hang costing a reset. A
+        // variant that completes AND paints the 2016 pixels is the finding; one that completes and paints nothing says the
+        // group it lacks is what writes the colour. tailTimestampBit is not among them: that hang is measured (28 October).
+        if (bisect && t) {
+            struct Variant {
+                const char* name;
+                render::Options o;
+            };
+            std::vector<Variant> variants = {{"the whole stream", render::Options{}}};
+            auto without = [&](const char* name, void (*change)(render::Options&)) {
+                render::Options o;
+                change(o);
+                variants.push_back(Variant{name, o});
+            };
+            without("without the batch start (the static tables, the invalidates, the draw-state disable)", [](render::Options& o) { o.batchStart = false; });
+            without("without RB_CCU_CNTL", [](render::Options& o) { o.ccuCntl = false; });
+            without("with RB_CCU_CNTL 0x10000004 (the kernel's boot value, bit 2)", [](render::Options& o) { o.ccuConcurrentResolve = true; });
+            without("without the pass begin (window scissor, BIN_CONTROL, SKIP_IB2, VISIBILITY_OVERRIDE, SET_MODE)", [](render::Options& o) { o.passBegin = false; });
+            without("with turnip's LRZ feedback bits in BIN_CONTROL (0x03c00000)", [](render::Options& o) { o.binControlLrzFeedback = true; });
+            without("without the RM6_DIRECT_RENDER marker", [](render::Options& o) { o.marker = false; });
+            without("without the depth-less zs registers", [](render::Options& o) { o.zsNone = false; });
+            without("without the MRT registers", [](render::Options& o) { o.mrt = false; });
+            without("without the MSAA-off registers", [](render::Options& o) { o.msaaOff = false; });
+            without("without RB_RENDER_CNTL", [](render::Options& o) { o.renderCntl = false; });
+            without("with RB_RENDER_CNTL 0 (r3d's)", [](render::Options& o) { o.renderCntlZero = true; });
+            without("without the LRZ-off registers and the begin LRZ_FLUSH", [](render::Options& o) { o.lrzOff = false; });
+            without("without the program config (HLSQ_xS_CNTL, SP_xS_CONFIG)", [](render::Options& o) { o.programConfig = false; });
+            without("without the vertex program", [](render::Options& o) { o.programVs = false; });
+            without("without the fragment program", [](render::Options& o) { o.programFs = false; });
+            without("without the VFD registers", [](render::Options& o) { o.vfd = false; });
+            without("without the VPC link", [](render::Options& o) { o.vpc = false; });
+            without("without the FS input registers", [](render::Options& o) { o.fsInputs = false; });
+            without("without the FS output registers", [](render::Options& o) { o.fsOutputs = false; });
+            without("without the rasterizer registers", [](render::Options& o) { o.rast = false; });
+            without("without the viewport and scissors", [](render::Options& o) { o.viewportScissor = false; });
+            without("without the blend/depth/stencil zeros", [](render::Options& o) { o.blendZsa = false; });
+            without("with USE_VISIBILITY in the draw (the pipelines' 0x184)", [](render::Options& o) { o.visCullUse = true; });
+            without("without the CCU colour flush and its wait", [](render::Options& o) { o.tailCcuFlush = false; });
+            without("without the tail's LRZ_FLUSH", [](render::Options& o) { o.tailLrzFlush = false; });
+            without("without CACHE_FLUSH_TS and its wait", [](render::Options& o) { o.tailCacheFlush = false; });
+            without("with RB_DONE_TS and its wait (compute's tail)", [](render::Options& o) { o.tailRbDone = true; });
+            for (const Variant& v : variants) {
+                fillBo(*t, canary);
+                auto cb = drawInto(*t, flat, drawOf(0, 3), v.o);
+                TriReadback r = compareTriangle(*t, flatColour, canary, lowerLeft);
+                bool ok = completed(*cb) && r.interiorColour == r.interior;
+                report(ok, std::string("bisect: tri_flat ") + v.name + ": " + (completed(*cb) ? "COMPLETED" : "hung") + ", " + describeTriangle(r) + status(*cb, gpu));
+            }
+        }
+        // 9f. the four stages compiled on the phone against the host's fixtures (the Kernel part as compareCompiled, then every
+        // Stage field), the two programs linked here, and the phone-compiled tri_flat drawn as 9a
+        if (!hasCompiler()) {
+            std::printf("probe: (no compiler in this build: the render stages were not compiled on the phone)\n");
+        } else {
+            struct StagePair {
+                const uint8_t* bc;
+                size_t size;
+                const Stage* fixture;
+                const char* name;
+            };
+            const StagePair pairs[] = {{kernels::tri_flat_vs_bc, kernels::tri_flat_vs_bc_size, &kernels::tri_flat_vs_air, "tri_flat_vs.ll"},
+                                       {kernels::tri_flat_fs_bc, kernels::tri_flat_fs_bc_size, &kernels::tri_flat_fs_air, "tri_flat_fs.ll"},
+                                       {kernels::tri_color_vs_bc, kernels::tri_color_vs_bc_size, &kernels::tri_color_vs_air, "tri_color_vs.ll"},
+                                       {kernels::tri_color_fs_bc, kernels::tri_color_fs_bc_size, &kernels::tri_color_fs_air, "tri_color_fs.ll"}};
+            std::shared_ptr<CompiledStage> compiled[4];
+            for (int i = 0; i < 4; i++) {
+                std::string whyCompile;
+                compiled[i] = compileStage(pairs[i].bc, pairs[i].size, &whyCompile);
+                if (compiled[i] == nullptr) {
+                    report(false, std::string("compile ") + pairs[i].name + " on the phone: " + whyCompile);
+                    continue;
+                }
+                bool same = false;
+                std::string text = compareCompiled(compiled[i]->stage.k, pairs[i].fixture->k, &same);
+                bool sameStage = compareStage(compiled[i]->stage, *pairs[i].fixture);
+                report(same && sameStage, std::string("compile ") + pairs[i].name + " on the phone: " + text + ", stage fields " + (sameStage ? "the same" : "DIFFERENT"));
+            }
+            if (compiled[0] && compiled[1] && t) {
+                std::string whyLink;
+                auto program = linkProgram(compiled[0], compiled[1], PixelFormat::kRGBA8Unorm, &whyLink);
+                if (program == nullptr) {
+                    report(false, "link tri_flat on the phone: " + whyLink);
+                } else {
+                    fillBo(*t, canary);
+                    auto cb = drawInto(*t, program->program, drawOf(0, 3));
+                    TriReadback r = compareTriangle(*t, flatColour, canary, lowerLeft);
+                    report(completed(*cb) && r.interiorColour == r.interior && r.exteriorCanary == r.exterior && r.other == 0,
+                           "draw of tri_flat compiled and linked on the phone (vertices 0..3): " + describeTriangle(r) + status(*cb, gpu));
+                }
+            }
+            if (compiled[2] && compiled[3]) {
+                std::string whyLink;
+                auto program = linkProgram(compiled[2], compiled[3], PixelFormat::kRGBA8Unorm, &whyLink);
+                report(program != nullptr && program->program.link.cnt == 2 && program->program.link.maxLoc == 8 && program->program.link.positionLoc == 4,
+                       program != nullptr ? "link tri_color on the phone: cnt " + std::to_string(program->program.link.cnt) + ", stride " + std::to_string(program->program.link.maxLoc) +
+                                                ", position at " + std::to_string(program->program.link.positionLoc) + " (expected 2, 8, 4)"
+                                          : "link tri_color on the phone: " + whyLink);
+            }
+        }
+    }
+
+    // 10. (--metallib FILE FUNCTION) a kernel of the image's own: read off the phone's filesystem, compiled here, and run
     // over the buffers, textures and samplers its metadata names, each buffer and texture prefilled with a canary. What
     // is known afterwards: whether the front end and ir3 took it, whether the GPU finished it, and which buffers and
     // textures it wrote and how much. What is NOT known: whether the values are right -- there is no reference here
@@ -1230,7 +1605,7 @@ int main(int argc, char** argv) {
                    status(*cb, gpu));
     }
 
-    // 9. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
+    // 11. (--bisect) end_only under each part of the dispatch stream switched off in turn, and under none of them: when
     // every dispatch hangs (28 October: HLSQ busy, SP idle, the CP through its IB), this says which part the hang needs,
     // one boot for all of it, each hang costing the kernel one reset. A variant that completes is the finding.
     if (bisect) {
@@ -1271,7 +1646,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 10. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
+    // 12. (--recover) the GPU is hung on purpose, and the kernel must bring it back. The hang is the measured one:
     // 4 Mi words in one CP_MEMCPY stopped the command processor on 27 October (125 000 took 4.2 ms), and the run and
     // the system with it. With boot-arg gpu_recover=1 the kernel resets the core when a wait of a second or more
     // comes to nothing, FAULTS rises by one, and the next command buffer is the core's own again. This goes last,
