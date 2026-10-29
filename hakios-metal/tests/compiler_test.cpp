@@ -18,6 +18,7 @@
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
+#include "fixtures/tri_null_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
@@ -81,12 +82,12 @@ void compareKernelFields(const char* name, const Kernel& a, const Kernel& b) {
         const KernelTexture& x = a.textures[i];
         const KernelTexture& y = b.textures[i];
         bool same = x.kind == y.kind && x.dim == y.dim && x.isArray == y.isArray && x.element == y.element && x.bits == y.bits &&
-                    x.read == y.read && x.write == y.write && x.pad == y.pad;
+                    x.read == y.read && x.write == y.write && x.isNull == y.isNull;
         CHECK(same);
         if (!same) {
             std::fprintf(stderr, "  %s: texture slot %u compiled {%u, %u, %u, %u, %u, %u, %u, %u}, fixture {%u, %u, %u, %u, %u, %u, %u, %u}\n", name, i,
-                         x.kind, x.dim, x.isArray, x.element, x.bits, x.read, x.write, x.pad, y.kind, y.dim, y.isArray, y.element, y.bits, y.read,
-                         y.write, y.pad);
+                         x.kind, x.dim, x.isArray, x.element, x.bits, x.read, x.write, x.isNull, y.kind, y.dim, y.isArray, y.element, y.bits, y.read,
+                         y.write, y.isNull);
         }
     }
     CHECK_EQ(a.numTextureSlots, b.numTextureSlots);
@@ -566,6 +567,13 @@ TEST(compiler_matches_the_stage_fixtures) {
         CHECK_EQ(texFs->stage.prefetch[0].wrmask, 0xfu);
         CHECK_EQ(texFs->stage.prefetch[0].cmd, 1u);
         CHECK_EQ(texFs->stage.colorRegid[0], 0x02u);   // the colour output IS the prefetch's destination
+    }
+    // the null texture's slot: the 2D sample a prefetch, the 3D one a sam.3d, both through slot 0, which is marked
+    auto nullFs = compareStageWithFixture("tri_null_fs", kernels::tri_null_fs_air, "tri_null_fs", "sam.3d");
+    if (nullFs) {
+        CHECK_EQ(nullFs->stage.k.numTextureSlots, 1u);
+        CHECK_EQ(uint32_t(nullFs->stage.k.textures[0].isNull), 1u);
+        CHECK_EQ(nullFs->stage.numSamplerPrefetch, 1u);
     }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;

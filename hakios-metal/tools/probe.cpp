@@ -44,6 +44,7 @@
 #include "../tests/fixtures/tri_cflat_fs_air.hpp"
 #include "../tests/fixtures/tri_attr_vs_air.hpp"
 #include "../tests/fixtures/tri_tex_fs_air.hpp"
+#include "../tests/fixtures/tri_null_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
 #include "../tests/fixtures/tri_dpos_vs_air.hpp"
@@ -1093,6 +1094,7 @@ int main(int argc, char** argv) {
     //   9o. vertex pulling: positions read by vertex id from a constant buffer through a UBO descriptor, at a bound offset
     //   9q. a constexpr sampler (repeat) compiled on the phone and bound at its index: every judged pixel the repeat's texel
     //   9r. 200 draws joined into one pass (additive, each pixel exactly 200), timed against 200 command buffers
+    //   9s. Metal's null texture sampled as 2D (a prefetch) and as 3D (sam.3d) through the one slot and its 2D 1x1 descriptor
     {
         const uint32_t W = 64, H = 64;
         // tri_flat_fs's literal as RGBA8Unorm bytes in memory: R 0x20 at byte 0, G 0x40, B 0x80, A 0xff (the .ll says why these
@@ -2089,6 +2091,60 @@ int main(int argc, char** argv) {
                                                        ", One + One of 1/255: " + describeTexture(rb, "200 in every channel") + "; " + std::to_string(gpuNs / 1000) +
                                                        " us on the GPU, " + std::to_string(wall / 1000) + " us wall" + status(*cb, gpu));
                 }
+            }
+        }
+        // 9s. the null texture. tri_null_fs samples the slot the front end reserves for it as 2D (ir3 makes that the
+        // prefetch) and as 3D (sam.3d), and returns (2D.r, 2D.g, 3D.r, 3D.g); the draw binds the queue's 2D 1x1
+        // texture there. Its texel is written first with (0x40, 0xc0, 0x11, 0x22), not zero, so that a sample which
+        // reads the texel and one which reads nothing differ: every covered pixel must be 40 c0 40 c0 -- 40 c0 00 00
+        // would be a 3D sample that reads nothing through a 2D descriptor. Then the texel back to zero, as every draw
+        // has it, and every covered pixel must be 0 (over a canary). Then a texture of the application's own at that
+        // index, which the queue's must replace: the pixels are 0 again, not that texture's. (Both triangles of
+        // tri_color_vs: the diagonal is not judged, the top-left rule gives it to neither.)
+        if (t) {
+            const Program nullProg{kernels::tri_color_vs_air, kernels::tri_null_fs_air, Linkage{}, "tri_null"};
+            auto null = queue->nullTexture(&why);
+            Sampler smp;
+            std::string swhy;
+            TextureDesc od;
+            od.format = PixelFormat::kRGBA8Unorm;
+            auto theirs = Texture::make(gpu, od, &why);
+            if (null == nullptr || theirs == nullptr || !makeSampler(SamplerDesc{}, &smp, &swhy)) {
+                report(false, "null texture: the queue's texture, another 1x1 and a nearest sampler: " + why + swhy);
+            } else {
+                const uint32_t marked = 0x2211c040u, theirTexel = 0x99887766u, zero = 0;
+                for (int kind = 0; kind < 3; kind++) {
+                    std::string rwhy;
+                    null->replace(0, 0, 1, 1, kind == 0 ? &marked : &zero, 4, &rwhy);
+                    theirs->replace(0, 0, 1, 1, &theirTexel, 4, &rwhy);
+                    const uint32_t want = kind == 0 ? 0xc040c040u : 0u;
+                    const uint32_t canaryWord = texCanary([&](uint32_t v) { return v == want || v == 0x0000c040u || v == 0xc0400000u || v == theirTexel; });
+                    fillBo(*t, canaryWord);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Bindings fsb;
+                    fsb.samplers = {&smp};
+                    if (kind == 2) fsb.textures = {theirs.get()};
+                    auto cb = queue->commandBuffer();
+                    if (cb->draw(nullProg, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    PixelRule covered{[](uint32_t i, uint32_t j) { return i != j; }, [=](uint32_t, uint32_t, uint32_t) { return want; }};
+                    TexReadback rb = compareTexture(*t, covered, canaryWord);
+                    // which of the wrong answers it was, if any: read the first covered pixel
+                    uint32_t px = 0;
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    memcpy(&px, bo.data() + 1 * t->bytesPerRow(), 4);   // (0, 1): below the diagonal's first pixel
+                    const char* what = kind == 0 ? "the texel written (40 c0 11 22): both samples read it, 40 c0 40 c0"
+                                     : kind == 1 ? "the texel zero, as every draw has it: 0"
+                                                 : "the application's own texture bound at the slot: the queue's zero goes over it, 0";
+                    report(completed(*cb) && rb.right == 4096 - 64, std::string("null texture, ") + what + ": " + describeTexture(rb, "right") + "; pixel (0,1) is " +
+                                                                    hex8(px) + status(*cb, gpu));
+                    if (!completed(*cb)) break;
+                }
+                std::string rwhy;
+                null->replace(0, 0, 1, 1, &zero, 4, &rwhy);   // (the queue's texture is every later draw's)
             }
         }
 #if defined(__APPLE__)

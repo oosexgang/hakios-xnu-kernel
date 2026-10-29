@@ -22,6 +22,7 @@
 #include "fixtures/tri_attr_vs_air.hpp"
 #include "fixtures/tri_cflat_fs_air.hpp"
 #include "fixtures/tri_tex_fs_air.hpp"
+#include "fixtures/tri_null_fs_air.hpp"
 #include "fixtures/tri_upos_vs_air.hpp"
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -3207,5 +3208,60 @@ TEST(draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_
     // compares the last draw's FS words with the program's
     const auto fs = r.fake->memory(r.fake->stats().lastDraw.fsProgram, 4ull * base.fs.k.numWords);
     CHECK(fs.size() == 4ull * base.fs.k.numWords && std::memcmp(fs.data(), base.fs.k.words, fs.size()) == 0);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+TEST(a_draw_binds_the_queues_null_texture_at_the_reserved_slot_over_anything_bound_there) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto other = target(r, 4, 4, kTextureUsageRead);
+    Sampler smp = nearestClamp();
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program nullProg{kernels::tri_color_vs_air, kernels::tri_null_fs_air, Linkage{}, "tri_null"};
+    CHECK_EQ(uint32_t(kernels::tri_null_fs_air.k.textures[0].isNull), 1u);
+    std::string why;
+    auto null = r.queue->nullTexture(&why);
+    CHECK(null != nullptr);
+    if (null == nullptr) return;
+    CHECK(null == r.queue->nullTexture(&why));   // one per queue
+    CHECK(null->width() == 1 && null->height() == 1 && null->format() == PixelFormat::kRGBA8Unorm);
+    const auto texel = r.fake->memory(null->gpuAddress(), 4);
+    CHECK(texel.size() == 4 && texel[0] == 0 && texel[1] == 0 && texel[2] == 0 && texel[3] == 0);
+    const TexConst want = null->sampledDescriptor();
+    auto slot0 = [&](const Bindings& fsb, std::string* error) -> std::vector<uint8_t> {
+        auto cb = drawOnce(r, nullProg, pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
+        *error = cb->status() == CommandBuffer::kCompleted ? "" : cb->error() + " | " + r.fake->stats().lastFault;
+        if (!error->empty()) return {};
+        CHECK_EQ(r.fake->stats().lastDraw.fsTextureCount, 1u);
+        return r.fake->memory(r.fake->stats().lastDraw.fsTexConst, 64);
+    };
+    // nothing bound at 0: the queue's texture is
+    Bindings samplerOnly;
+    samplerOnly.samplers = {&smp};
+    std::string error;
+    auto d = slot0(samplerOnly, &error);
+    CHECK(error.empty());
+    if (!error.empty()) std::printf("       %s\n", error.c_str());
+    CHECK(d.size() == 64 && memcmp(d.data(), want.dword, 64) == 0);
+    // the application's texture at 0 is not the shader's null texture: the queue's goes over it
+    Bindings bound = samplerOnly;
+    bound.textures = {other.get()};
+    d = slot0(bound, &error);
+    CHECK(error.empty());
+    CHECK(d.size() == 64 && memcmp(d.data(), want.dword, 64) == 0);
+    const TexConst theirs = other->sampledDescriptor();
+    CHECK(memcmp(want.dword, theirs.dword, 64) != 0);   // (else the line above could not tell the two apart)
+    // the mark is what does it: the same stage without it is an ordinary slot with nothing bound, and refused
+    Program unmarked = nullProg;
+    unmarked.fs.k.textures[0].isNull = 0;
+    auto cb = r.queue->commandBuffer();
+    CHECK(!cb->draw(unmarked, pass, wholeDraw(6), Bindings{}, samplerOnly));
+    expectRefusal(cb->error(), "tri_null_fs_air: no texture bound at index 0");
+    // and the encoder alone binds nothing of its own: the substitution is the command buffer's
+    Encoded e(r, nullProg, pass, wholeDraw(6), render::Options{}, Bindings{}, samplerOnly);
+    CHECK(!e.ok);
+    expectRefusal(e.error, "tri_null_fs_air: no texture bound at index 0");
     CHECK_EQ(r.fake->stats().faults, 0u);
 }

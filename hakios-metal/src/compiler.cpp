@@ -239,9 +239,6 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
     return true;
 }
 
-// what the dispatch cannot serve yet, refused here rather than at every dispatch: the slot the front end reserves for
-// air.get_null_texture_* (the runtime would owe it a 1x1 zero texture, nir_air.h). A constexpr sampler is served:
-// inlineSamplersOf makes it
 // IEEE half bits to float, for the lod clamps air_sampler_state keeps as halves
 float floatOfHalf(uint16_t h) {
     const uint32_t sign = uint32_t(h & 0x8000u) << 16, exp = (h >> 10) & 0x1f, mant = h & 0x3ffu;
@@ -303,13 +300,18 @@ bool inlineSamplersOf(const Translation& t, std::vector<std::pair<uint32_t, Samp
     return true;
 }
 
-bool refuseUnservedResources(const Translation& t, std::string* why) {
+// The slot the front end reserves for air.get_null_texture_*, which the runtime owes a 1x1 texture of its own
+// (nir_air.h). A draw binds one (CommandQueue::nullTexture); a dispatch does not yet, so a kernel asking for it is
+// refused here rather than at every dispatch. A stage's slot is marked in the kernel's table for the draw to find.
+bool nullTextures(const Translation& t, Kernel& k, bool served, std::string* why) {
     for (unsigned i = 0; i < t.info.num_resources; i++) {
         const air_resource& r = t.info.resources[i];
-        if (r.kind == AIR_RESOURCE_TEXTURE && r.null_texture) {
-            return refuse(why, std::string(t.name()) + " asks for Metal's null texture at index " + std::to_string(r.index) + ": not served yet");
+        if (r.kind != AIR_RESOURCE_TEXTURE || !r.null_texture) continue;
+        if (!served) {
+            return refuse(why, std::string(t.name()) + " asks for Metal's null texture at index " + std::to_string(r.index) + ": not served in a dispatch yet");
         }
-
+        // (a slot no instruction samples stays kTexNone: nothing is bound there, as for any declared and unread texture)
+        if (r.index < kMaxTextureSlots && k.textures[r.index].kind == kTexSampled) k.textures[r.index].isNull = 1;
     }
     return true;
 }
@@ -655,7 +657,7 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     auto out = std::make_unique<CompiledKernel>();
     uint32_t highestSampler = 0;
     if (!walkTextures(t.nir, out->kernel, &highestSampler, why)) return nullptr;
-    if (!refuseUnservedResources(t, why)) return nullptr;
+    if (!nullTextures(t, out->kernel, false, why)) return nullptr;
     if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     if (!compileVariant(t, PassOrder::kCompute, why)) return nullptr;
     KernelHome home{out->kernel, out->words, out->immediates, out->resources, out->name, out->listing};
@@ -695,7 +697,7 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     if (!walkTextures(t.nir, out->stage.k, &highestSampler, why)) return nullptr;
     OutputClasses classes;
     if (!walkOutputClasses(t.nir, classes, why)) return nullptr;
-    if (!refuseUnservedResources(t, why)) return nullptr;
+    if (!nullTextures(t, out->stage.k, true, why)) return nullptr;
     if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     if (!compileVariant(t, PassOrder::kGraphics, why)) return nullptr;
     KernelHome home{out->stage.k, out->words, out->immediates, out->resources, out->name, out->listing};

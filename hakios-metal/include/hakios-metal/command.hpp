@@ -31,6 +31,7 @@
 namespace hakios::metal {
 
 class CommandQueue;
+class Texture;
 
 // a buffer a program sees: a GEM object with its length (MTLBuffer's -length may be less than the object's size)
 class Buffer {
@@ -158,6 +159,11 @@ public:
     Gpu& gpu() { return gpu_; }
     // the buffers kept for command streams, idle (to see that they are given back and used again)
     size_t idleCommandBuffers();
+    // What a draw binds at the slot the front end reserves for Metal's null texture (Kernel: KernelTexture::isNull): a
+    // 1x1 RGBA8Unorm texture of zeros, made at the first ask, the same for every draw of the queue. Zero is an
+    // assumption, not a reading -- nothing reachable says what Apple's null texture samples as (nir_air.h) -- and this
+    // is the one place it lives; a probe may write the texel to see which instructions read it. nullptr with *why.
+    std::shared_ptr<Texture> nullTexture(std::string* why);
 
 
 private:
@@ -168,6 +174,7 @@ private:
     std::unique_ptr<Bo> takeCommandBo(size_t bytes, int* error);
 
     Gpu& gpu_;
+    std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
     uint32_t id_;
     std::mutex lock_;
     std::condition_variable changed_;

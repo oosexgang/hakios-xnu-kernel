@@ -1038,6 +1038,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     const uint8_t* fsTexBytes = nullptr;
     if (d.fsTextureCount != 0) {
         const uint64_t texTable = reg64(REG_A6XX_SP_FS_TEX_CONST), sampTable = reg64(REG_A6XX_SP_FS_TEX_SAMP);
+        d.fsTexConst = texTable;
         if (!fs_.texLoaded || fs_.texFrom != texTable || fs_.texUnits != d.fsTextureCount) {
             fault("the FS's texture descriptors were not loaded from where SP_FS_TEX_CONST points, or not as many as SP_FS_TEX_COUNT says");
             return false;

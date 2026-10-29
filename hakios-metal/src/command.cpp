@@ -1,4 +1,5 @@
 #include "hakios-metal/command.hpp"
+#include "hakios-metal/texture.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -263,6 +264,20 @@ CommandQueue::~CommandQueue() {
 
 std::shared_ptr<CommandBuffer> CommandQueue::commandBuffer() {
     return std::shared_ptr<CommandBuffer>(new CommandBuffer(*this));
+}
+
+std::shared_ptr<Texture> CommandQueue::nullTexture(std::string* why) {
+    std::lock_guard<std::mutex> g(lock_);
+    if (null_ == nullptr) {
+        TextureDesc d;
+        d.format = PixelFormat::kRGBA8Unorm;
+        std::shared_ptr<Texture> t = Texture::make(gpu_, d, why);
+        // (written, not taken as the kernel's fresh zeros: the zero is the claim, so it is put there in so many words)
+        const uint32_t zero = 0;
+        if (t == nullptr || !t->replace(0, 0, 1, 1, &zero, 4, why)) return nullptr;
+        null_ = std::move(t);
+    }
+    return null_;
 }
 
 size_t CommandQueue::idleCommandBuffers() {

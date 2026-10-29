@@ -27,7 +27,9 @@ sizes its tables from these, not from ir3's num_samp, which counts textures and
 images together and ignores sampler indices (ir3_compiler_nir.c), nor from the
 front end's resource list, which says what was declared and not what the code
 does. The same walk lives in hakios-metal's src/compiler.cpp, and compiler_test
-holds the two to each other over tools/kernels/*.ll.
+holds the two to each other over tools/kernels/*.ll. A sampled slot the front
+end reserved for Metal's null texture (air_resource.null_texture) is marked as
+such: the draw binds its own texture there, whatever the application bound.
 
 -o is stage-aware (29 October): a VERTEX or FRAGMENT variant is written as a
 hakios::metal::Stage (include/hakios-metal/render.hpp) -- the Kernel as its
@@ -67,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,695 @@
+@@ -35,19 +37,706 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -155,7 +157,7 @@ SPDX-License-Identifier: MIT
 +#define FIXTURE_TEXTURE_SLOTS 16   /* kernel.hpp's kMaxTextureSlots */
 +
 +struct fixture_texture {
-+   uint8_t kind, dim, is_array, element, bits, read, write;   /* KernelTexture, less its pad */
++   uint8_t kind, dim, is_array, element, bits, read, write, is_null;   /* KernelTexture */
 +};
 +
 +struct fixture_textures {
@@ -333,6 +335,15 @@ SPDX-License-Identifier: MIT
 +                 "the front end's typing of the access is off",
 +              r->index, r->type_name, class_names[s->element]);
 +   }
++   /* The front end's reserved slot for Metal's null texture (air_resource.null_texture),
++    * when the code samples it: the draw binds its own texture there. A slot declared
++    * and not sampled is no slot, as for any texture. */
++   for (unsigned i = 0; i < fixture_air_info.num_resources; i++) {
++      const struct air_resource *r = &fixture_air_info.resources[i];
++      if (r->kind == AIR_RESOURCE_TEXTURE && r->null_texture && r->index < FIXTURE_TEXTURE_SLOTS &&
++          t->slot[r->index].kind == 1)
++         t->slot[r->index].is_null = 1;
++   }
 +}
 +
 +static int read_file(const char *filename, void **ptr, size_t *size);
@@ -471,8 +482,8 @@ SPDX-License-Identifier: MIT
 +      fprintf(out, "%s/* .textures = */ {\n", indent);
 +      for (unsigned i = 0; i <= last_slot; i++) {
 +         const struct fixture_texture *s = &tex->slot[i];
-+         fprintf(out, "%s    /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, 0},", indent, i, s->kind, s->dim,
-+                 s->is_array, s->element, s->bits, s->read, s->write);
++         fprintf(out, "%s    /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, %u},", indent, i, s->kind, s->dim,
++                 s->is_array, s->element, s->bits, s->read, s->write, s->is_null);
 +         if (!s->kind)
 +            fputs("   // not addressed\n", out);
 +         else
@@ -480,6 +491,8 @@ SPDX-License-Identifier: MIT
 +                    dims[s->dim], s->is_array ? " array" : "", elements[s->element],
 +                    s->bits == 16 ? " as 16-bit" : s->bits ? " as 32-bit" : "",
 +                    s->read ? ", read" : "", s->write ? ", written" : "");
++         if (s->is_null)
++            fprintf(out, "%s              // ...the null texture's slot\n", indent);
 +      }
 +      fprintf(out, "%s},\n", indent);
 +   }
@@ -766,7 +779,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +965,7 @@
+@@ -298,6 +987,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -774,7 +787,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +974,16 @@
+@@ -306,13 +996,16 @@
     return nir;
  }
  
@@ -792,7 +805,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +995,9 @@
+@@ -324,6 +1017,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -802,7 +815,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1015,7 @@
+@@ -341,6 +1037,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -810,7 +823,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1030,15 @@
+@@ -355,6 +1052,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -826,7 +839,7 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -444,8 +1128,20 @@
+@@ -444,8 +1150,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -849,7 +862,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,6 +1182,16 @@
+@@ -486,6 +1204,16 @@
        return -1;
     }
  
@@ -866,7 +879,7 @@ SPDX-License-Identifier: MIT
     const struct ir3_shader_nir_options options = {};
  
     ir3_nir_lower_io_to_temporaries(nir);
-@@ -503,6 +1209,15 @@
+@@ -503,6 +1231,15 @@
     v->compiler = compiler;
     v->key = key;
     v->const_state = rzalloc_size(v, sizeof(*v->const_state));
@@ -882,7 +895,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1235,15 @@
+@@ -520,7 +1257,15 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }

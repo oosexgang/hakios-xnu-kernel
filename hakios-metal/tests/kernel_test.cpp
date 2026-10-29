@@ -72,13 +72,13 @@ std::string textureFieldsConsistent(const Kernel& k) {
         const KernelTexture& t = k.textures[i];
         std::string slot = "texture slot " + std::to_string(i);
         if (t.kind == kTexNone) {
-            if (t.dim || t.isArray || t.element || t.bits || t.read || t.write || t.pad) return slot + " is not declared but not zero";
+            if (t.dim || t.isArray || t.element || t.bits || t.read || t.write || t.isNull) return slot + " is not declared but not zero";
             continue;
         }
         if (t.kind != kTexSampled && t.kind != kTexImage) return slot + " has kind " + std::to_string(t.kind) + ", which is neither sampled nor image";
         if (t.dim < kTexDim1D || t.dim > kTexDimCube) return slot + " has dimension " + std::to_string(t.dim) + ", which KernelTextureDim does not name";
         if (t.element > kElemInt) return slot + " has element class " + std::to_string(t.element) + ", which KernelElement does not name";
-        if (t.isArray > 1 || t.read > 1 || t.write > 1 || t.pad) return slot + " has a flag that is neither 0 nor 1";
+        if (t.isArray > 1 || t.read > 1 || t.write > 1 || t.isNull > 1) return slot + " has a flag that is neither 0 nor 1";
         if (!t.read && !t.write) return slot + " is declared but neither read nor written";
         if (t.kind == kTexSampled) {
             // a sampled texture is read through the TP, which converts from the descriptor's format: no width of its own
@@ -88,6 +88,7 @@ std::string textureFieldsConsistent(const Kernel& k) {
             anySampled = true;
             highestSampled = i;
         } else {
+            if (t.isNull) return slot + " is an image and the null texture's slot (which only a sample reads)";
             // stib/ldib carry the value's width in the instruction (ir3_image.c: ir3_get_type_for_image_intrinsic)
             if (t.bits != 16 && t.bits != 32) return slot + " is an image stored as " + std::to_string(t.bits) + "-bit values, which is neither 16 nor 32";
             // ir3 addresses image i at IBO slot numSsbos + i (ir3_image.c:50-52) and counts num_ibos = num_ssbos + num_images
@@ -108,15 +109,15 @@ std::string textureFieldsConsistent(const Kernel& k) {
     return "";
 }
 
-// one slot against the seven values the listing predicts for it (the pad is always 0)
+// one slot against the seven values the listing predicts for it (none of them is the null texture's slot)
 void checkSlot(const Kernel& k, uint32_t i, uint8_t kind, uint8_t dim, uint8_t isArray, uint8_t element, uint8_t bits, uint8_t read, uint8_t write) {
     const KernelTexture& t = k.textures[i];
     bool same = t.kind == kind && t.dim == dim && t.isArray == isArray && t.element == element && t.bits == bits && t.read == read &&
-                t.write == write && t.pad == 0;
+                t.write == write && t.isNull == 0;
     CHECK(same);
     if (!same) {
         std::fprintf(stderr, "  %s: texture slot %u is {%u, %u, %u, %u, %u, %u, %u, %u}, expected {%u, %u, %u, %u, %u, %u, %u, 0}\n", k.name, i, t.kind,
-                     t.dim, t.isArray, t.element, t.bits, t.read, t.write, t.pad, kind, dim, isArray, element, bits, read, write);
+                     t.dim, t.isArray, t.element, t.bits, t.read, t.write, t.isNull, kind, dim, isArray, element, bits, read, write);
     }
 }
 
@@ -125,7 +126,7 @@ void checkOtherSlotsEmpty(const Kernel& k, uint32_t declaredMask) {
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
         if ((declaredMask >> i) & 1) continue;
         const KernelTexture& t = k.textures[i];
-        CHECK(t.kind == kTexNone && t.dim == 0 && t.isArray == 0 && t.element == 0 && t.bits == 0 && t.read == 0 && t.write == 0 && t.pad == 0);
+        CHECK(t.kind == kTexNone && t.dim == 0 && t.isArray == 0 && t.element == 0 && t.bits == 0 && t.read == 0 && t.write == 0 && t.isNull == 0);
     }
 }
 
@@ -421,7 +422,7 @@ TEST(texture_fields_refuse_mutations) {
     k.textures[0].element = 3;
     expectRefusal(textureFieldsConsistent(k), "texture slot 0 has element class 3, which KernelElement does not name");
     k = kernels::tex_fill_air;
-    k.textures[0].pad = 1;
+    k.textures[0].isNull = 2;
     expectRefusal(textureFieldsConsistent(k), "texture slot 0 has a flag that is neither 0 nor 1");
     k = kernels::tex_sample_gid_air;
     k.textures[0].bits = 16;

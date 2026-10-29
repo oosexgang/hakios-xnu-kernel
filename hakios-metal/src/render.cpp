@@ -472,6 +472,16 @@ bool fsTextures(const Stage& fs, const Bindings& b, FsTextures* out, std::string
             return refuse(why, name + ": no texture bound at index " + n(t));
         }
         const Texture* tex = b.textures[t];
+        if (kt.isNull) {
+            // The null texture's slot, bound by the draw (CommandQueue::nullTexture), and sampled in whatever dimension
+            // and class the shader asked for it in -- fixed_frag_lph_cph asks as 2D and as 3D through the one slot, and
+            // the table has no 17th for a second descriptor. One 2D 1x1 descriptor serves both: on the phone a 3D sample
+            // through it reads its one texel as the 2D sample does (probe 9s), so whatever is in that texel is what both read.
+            TexConst d = tex->sampledDescriptor();
+            memcpy(out->texWords[t], d.dword, sizeof d.dword);
+            out->used.push_back(tex);
+            continue;
+        }
         if (kt.dim != kTexDim2D || kt.isArray != 0 || tex->type() != TextureType::k2D) {
             return refuse(why, name + " samples texture " + n(t) + " as other than a 2D texture, or texture " + n(t) + " is not 2D: only 2D is served in a draw");
         }
@@ -1518,6 +1528,23 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         return fail("draw after commit");
     }
     std::string why;
+    // the null texture's slot is the front end's, not the application's: the queue's texture goes there, over anything
+    // bound at that index (an application cannot know the index, so whatever it bound there was not meant for it)
+    Bindings fsWithNull;
+    const Bindings* fsb = &fsBindings;
+    std::shared_ptr<Texture> null;
+    for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
+        if (program.fs.k.textures[i].kind != kTexSampled || !program.fs.k.textures[i].isNull) continue;
+        if (null == nullptr) {
+            if ((null = queue_.nullTexture(&why)) == nullptr) {
+                return fail(std::string("no null texture: ") + why);
+            }
+            fsWithNull = fsBindings;
+            fsb = &fsWithNull;
+        }
+        if (fsWithNull.textures.size() <= i) fsWithNull.textures.resize(i + 1, nullptr);
+        fsWithNull.textures[i] = null.get();
+    }
     // the two programs' words, once per command buffer, and the draw's table, in pieces (command.hpp: Piece): a piece is
     // 256-byte aligned, so SP_xS_OBJ_START is 128-byte aligned as the ST6_SHADER preload wants it (tu_shader.cc:1313-1316)
     const uint64_t vsProgram = programAddress(program.vs.k, &why);
@@ -1551,7 +1578,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             return fail(why);
         }
     }
-    if (!render::encodeInPass(body, program, pass, d, vsBindings, fsBindings, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
+    if (!render::encodeInPass(body, program, pass, d, vsBindings, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
         return fail(why);
     }
     if (!joins) {
@@ -1566,7 +1593,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     appendStream(stream_, body);
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
-    for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{&vsBindings, program.vs.k.numSsbos != 0}, {&fsBindings, program.fs.k.numSsbos != 0}}) {
+    for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{&vsBindings, program.vs.k.numSsbos != 0}, {fsb, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
             if (x.buffer != nullptr) {
                 use(*x.buffer, writes);
@@ -1577,7 +1604,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         use(*d.indexBuffer, false);
     }
     // the FS's sampled textures: read, and alive until the GPU is done (the descriptors in the table point at them)
-    for (const Texture* t : fsBindings.textures) {
+    for (const Texture* t : fsb->textures) {
         if (t != nullptr) {
             use(*t->buffer(), false);
             keep(t->buffer());

@@ -65,7 +65,7 @@ end: it typed every texture write by the call's void return type, so half and fl
 `MetalFaceMask_Clear`; the front end types the store by its value now, and a declaration that disagrees with the
 instructions' class is refused at compile time, by the compiler here and by the fixture writer. Not yet: textures other
 than 2D, one level, one slice (1D, 3D, cube, arrays, mipmaps, MSAA), border colours other than transparent black, compare
-samplers, constexpr samplers, the front end's null texture, textures over buffers (`bytesPerRow` of the caller's
+samplers, the front end's null texture in a dispatch (a draw serves it, below), textures over buffers (`bytesPerRow` of the caller's
 choosing), private memory, threadgroup memory (each refused by name, not served). An indexed `constant` load ir3 did
 not push is served, through a UBO descriptor, in a dispatch as in a draw.
 
@@ -189,9 +189,18 @@ on the GPU (hakios `logs/171921-run.log`), and the plug-in's render test passes 
 compiler a draw or a dispatch uses, each in a child process so that an assertion of this host's Mesa build is a counted
 cause and not the end, and prints the counts and the refusals grouped by their sentence. The libraries are read where
 they lie; nothing of them is kept. Over the 121 metallibs of the iOS 16.5 system image: CoreAnimation's own 39 of 39
-vertex functions and 93 of its 95 fragment functions compile (two ask for Metal's null texture), and of everything,
+vertex functions and 95 of its 95 fragment functions compile, and of everything,
 247 of 272 vertex functions, 643 of 678 fragment functions and 3158 of 3397 kernels; the rest is, commonest first,
 bicubic samplers, the front end's pointer phis, tile shaders, and so on down.
+
+The two that came last are QuartzCore's YCbCr uber shaders, which ask for Metal's null texture: the front end gives it
+a reserved slot past the module's own, and a draw binds the queue's own 1x1 RGBA8Unorm texture of zeros there
+(`CommandQueue::nullTexture`), over anything the application bound at that index. `fixed_frag_lph_cph` samples the
+one slot as 2D and as 3D, and the table has no seventeenth slot for a second descriptor; on the phone a 3D sample
+(`sam.3d`) through the 2D 1x1 descriptor reads its texel exactly as the 2D sample (the prefetch) does -- the probe
+writes the texel with a value that is not zero first, so that reading it and reading nothing differ, and every pixel
+carried it from both (hakios `logs/173744-run.log`, probe line 9s). That a null texture reads as zero is an
+assumption nothing reachable confirms (hakios's `nir_air.h` says why), and the queue's texture is the one place it lives.
 CoreAnimation drawing through Metal is behind all of that.
 
 ## Build and test
