@@ -311,6 +311,12 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
             return false;
         }
         from = (p[1] & CP_LOAD_STATE6_1_EXT_SRC_ADDR__MASK) | uint64_t(p[2]) << 32;
+        if (type == ST6_CONSTANTS && from % 16 != 0) {
+            // the CP reads an indirect source from the address rounded down to 16 bytes (probe 9o4): constants from
+            // anywhere else load the bytes before the ones asked for
+            fault(text("constants loaded from %#llx, which is not a multiple of 16: the CP would read from %#llx", from, from & ~0xfull));
+            return false;
+        }
         if (at(from, uint64_t(units) * unitBytes) == nullptr) {
             fault(text("a load of %llu units from %#llx: outside every buffer", units, from));
             return false;

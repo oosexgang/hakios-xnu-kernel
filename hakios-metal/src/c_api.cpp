@@ -250,6 +250,25 @@ hakios_metal_texture* hakios_metal_texture_new_iosurface2(hakios_metal_device* d
     return textureOverSurface(d, surfaceId, plane, pixelFormat, width, height, usage, &chroma);
 }
 
+hakios_metal_texture* hakios_metal_texture_new_buffer(hakios_metal_buffer* b, unsigned type, unsigned pixelFormat, unsigned width, unsigned height, unsigned usage,
+                                                      uint64_t offset, uint64_t bytesPerRow) {
+    TextureDesc desc;
+    desc.type = TextureType(type);
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::overBuffer(b->buffer, offset, bytesPerRow, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture* t) { return t->texture->surface(); }
 
 void hakios_metal_texture_free(hakios_metal_texture* t) { delete t; }

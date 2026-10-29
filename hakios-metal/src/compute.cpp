@@ -330,7 +330,8 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     if (k.driverParamsOffsetVec4 >= 0 && uint32_t(k.driverParamsOffsetVec4) + 4 > k.constlen) {
         return refuse(why, std::string(k.name) + ": its driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + " run past its constlen of " + n(k.constlen));
     }
-    struct Range { uint32_t offsetVec4, units; uint64_t from; };
+    // (a source off 16 bytes is loaded direct from a snapshot of the words: render.cpp's PushedRange says why)
+    struct Range { uint32_t offsetVec4, units; uint64_t from; std::vector<uint32_t> words; };
     std::vector<Range> ranges;
     for (uint32_t i = 0; i < k.numUboRanges; i++) {
         const KernelUboRange& r = k.uboRanges[i];
@@ -352,7 +353,16 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
             return refuse(why, std::string(k.name) + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen");
         }
-        ranges.push_back(Range{r.offsetVec4, r.sizeDwords / 4, address + 4ull * r.startDword});
+        Range g{r.offsetVec4, r.sizeDwords / 4, address + 4ull * r.startDword, {}};
+        if (g.from % 16 != 0) {
+            const Binding& x = buffers[r.block];
+            if (x.buffer->contents() == nullptr) {
+                return refuse(why, std::string(k.name) + ": constant buffer " + n(r.block) + " is bound at an address the CP cannot load from (not a multiple of 16) and is mapped nowhere to copy from");
+            }
+            g.words.resize(r.sizeDwords);
+            memcpy(g.words.data(), static_cast<const uint8_t*>(x.buffer->contents()) + x.offset + 4ull * r.startDword, 4ull * r.sizeDwords);
+        }
+        ranges.push_back(std::move(g));
     }
 
     // --- nothing is refused from here on: the stream, in computerator's order ---
@@ -414,7 +424,11 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         loadDirect(stream, ST6_CONSTANTS, uint32_t(k.driverParamsOffsetVec4), 4, params, 16);
     }
     for (const Range& r : ranges) {
-        loadIndirect(stream, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
+        if (!r.words.empty()) {
+            loadDirect(stream, ST6_CONSTANTS, r.offsetVec4, r.units, r.words.data(), uint32_t(r.words.size()));
+        } else {
+            loadIndirect(stream, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
+        }
     }
     if (!ubos.empty()) {
         loadDirect(stream, ST6_UBO, 0, uint32_t(ubos.size() / 2), ubos.data(), uint32_t(ubos.size()));

@@ -125,6 +125,11 @@ public:
     };
     static std::shared_ptr<Texture> wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why,
                                                 const SurfacePlane* chroma = nullptr);
+    // -[MTLBuffer newTextureWithDescriptor:offset:bytesPerRow:]: a texture whose rows are BUFFER's bytes from OFFSET,
+    // BYTES_PER_ROW apart -- the same memory, so a write through either is seen through the other. One level of a
+    // colour format, 1D or 2D; the rows the TP takes (a pitch and a start that are multiples of 64 bytes, as for a
+    // surface), inside the buffer. nullptr with *why.
+    static std::shared_ptr<Texture> overBuffer(std::shared_ptr<Buffer> buffer, uint64_t offset, uint64_t bytesPerRow, const TextureDesc& desc, std::string* why);
     uint32_t surface() const { return surface_; }   // the IOSurface's ID, 0 for a texture of its own memory
 
     const TextureDesc& desc() const { return desc_; }

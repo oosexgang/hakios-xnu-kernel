@@ -1870,6 +1870,43 @@ TEST(a_draw_pushes_a_fragment_constant_range_out_of_the_bound_buffer) {
     }
 }
 
+// A pushed range whose source is not a multiple of 16 is loaded direct, the words as the buffer holds them at encoding:
+// the CP rounds an indirect source down to 16 (probe 9o4), and the fake faults on one, so the draw completing is the
+// direct load having been taken. The same range at 16 stays an indirect load.
+TEST(a_pushed_range_off_16_bytes_is_loaded_direct) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program p{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+    std::string why;
+    auto b = newBuffer(*r.gpu, 4096, &why);
+    float* f = static_cast<float*>(b->contents());
+    for (int i = 0; i < 64; i++) f[i] = float(i);
+    for (uint32_t off : {8u, 16u}) {
+        Bindings fsb;
+        fsb.buffers = {Binding{b.get(), off}};
+        Encoded e(r, p, pass, wholeDraw(3), render::Options{}, Bindings{}, fsb);
+        CHECK(e.ok);
+        size_t at = e.findLoad(CP_LOAD_STATE6_FRAG, ST6_CONSTANTS, SB6_FS_SHADER);
+        CHECK(at != size_t(-1));
+        if (at != size_t(-1)) {
+            const auto& w = e.stream.words();
+            const bool direct = ((w[at + 1] & CP_LOAD_STATE6_0_STATE_SRC__MASK) >> CP_LOAD_STATE6_0_STATE_SRC__SHIFT) == SS6_DIRECT;
+            CHECK_EQ(direct, off == 8);
+            if (direct) {
+                float first;
+                memcpy(&first, &w[at + 4], 4);
+                CHECK_EQ(first, 2.0f);   // the float at byte 8
+            }
+        }
+        auto cb = drawOnce(r, p, pass, wholeDraw(3), render::Options{}, Bindings{}, fsb);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    }
+}
+
 TEST(a_draw_refuses_a_constant_range_it_cannot_serve_by_name) {
     Rig r;
     auto t = target(r);

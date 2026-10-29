@@ -184,10 +184,16 @@ bool checkStage(const Stage& s, std::string* why) {
     return true;
 }
 
-// A pushed constant range of a stage as the GPU reads it: DST_OFF, units and the address in the bound buffer.
+// A pushed constant range of a stage as the GPU reads it: DST_OFF, units and the address in the bound buffer -- or, when
+// that address is not a multiple of 16, the words themselves. CP_LOAD_STATE6 reads an indirect source from the address
+// rounded down to 16 bytes (probe 9o4: bound at 4, 8 or 120 the consts held the 4, 8 or 8 bytes before the colour;
+// at 16 the colour), while Metal binds a constant buffer at any multiple of 4 and CoreAnimation binds its uniforms at
+// multiples of 8. Such a range is loaded direct from the bytes as they are when the draw is encoded: a snapshot, which
+// is what -setFragmentBytes: gives anyway, and what a caller that writes its uniforms before encoding cannot tell apart.
 struct PushedRange {
     uint32_t offsetVec4, units;
     uint64_t from;
+    std::vector<uint32_t> words;   // non-empty: load these direct instead of reading FROM
 };
 
 // The stage's pushed ranges against its own [[buffer(n)]] table, by compute's rules (compute.cpp: the range is ir3's,
@@ -216,7 +222,15 @@ bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* o
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
             return refuse(why, name + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
         }
-        out->push_back(PushedRange{r.offsetVec4, r.sizeDwords / 4, x.buffer->gpuAddress() + x.offset + 4ull * r.startDword});
+        PushedRange p{r.offsetVec4, r.sizeDwords / 4, x.buffer->gpuAddress() + x.offset + 4ull * r.startDword, {}};
+        if (p.from % 16 != 0) {
+            if (x.buffer->contents() == nullptr) {
+                return refuse(why, name + ": constant buffer " + n(r.block) + " is bound at an address the CP cannot load from (not a multiple of 16) and is mapped nowhere to copy from");
+            }
+            p.words.resize(r.sizeDwords);
+            memcpy(p.words.data(), static_cast<const uint8_t*>(x.buffer->contents()) + x.offset + 4ull * r.startDword, 4ull * r.sizeDwords);
+        }
+        out->push_back(std::move(p));
     }
     return true;
 }
@@ -1423,7 +1437,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             loadDirect(stream, s, ST6_CONSTANTS, s.k.immediatesOffsetVec4, uint32_t(imm.size() / 4), imm.data(), uint32_t(imm.size()));
         }
         for (const PushedRange& r : ranges) {
-            loadIndirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
+            if (!r.words.empty()) {
+                loadDirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.words.data(), uint32_t(r.words.size()));
+            } else {
+                loadIndirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
+            }
         }
         // the UBO descriptors from the packet, before the constants in Gallium's order (fd6_emit_user_consts :332-337;
         // the two loads do not overlap, so the order is the witness's and nothing more)

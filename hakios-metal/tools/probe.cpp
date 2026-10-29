@@ -50,6 +50,7 @@
 #include "../tests/fixtures/tri_base_vs_air.hpp"
 #include "../tests/fixtures/tri_pvt_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
+#include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_mrt1_fs_air.hpp"
 #include "../tests/fixtures/tri_pos_vs_air.hpp"
 #include "../tests/fixtures/tri_upos_vs_air.hpp"
@@ -2082,6 +2083,66 @@ int main(int argc, char** argv) {
             uint32_t got = 0;
             for (uint32_t k = 0; k < W * H; k++) { uint32_t px; memcpy(&px, mb.data() + (k / W) * t->bytesPerRow() + (k % W) * 4, 4); got += px == flatColour; }
             report(ok && completed(*cb) && got == W * H, "upos, a constant buffer bound at offset " + std::to_string(off) + ": " + std::to_string(got) + " of 4096 pixels the colour" + (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9o4. a pushed constant range from a buffer bound off a vec4: tri_cflat_fs's float4 is pushed into its consts by
+        // CP_LOAD_STATE6 from the bound address (an indirect load, not an ldc). At offsets 4, 8, 16 and 120 (the
+        // colour (0.25, 0.5, 0.75, 1) there, 9.0 before it) every pixel must be 40 80 bf ff; a source the CP rounded down
+        // to 16 reads 9.0 in some channels at 4 and 8, which saturates to ff.
+        if (t) {
+            const Program cflatP{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+            for (uint32_t off : {4u, 8u, 16u, 120u}) {
+                auto pb = newBuffer(gpu, 256, &why);
+                float* fv = static_cast<float*>(pb->contents());
+                for (int i = 0; i < 64; i++) fv[i] = 9.0f;
+                const float c[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+                memcpy(static_cast<uint8_t*>(pb->contents()) + off, c, sizeof c);
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.buffers = {Binding{pb.get(), off}};
+                auto cb = queue->commandBuffer();
+                bool ok = cb->draw(cflatP, rp, drawOf(0, 6), Bindings{}, fsb);
+                if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+                std::vector<uint8_t> mb = textureBo(*t);
+                uint32_t got = 0, px0 = 0;
+                for (uint32_t k = 0; k < W * H; k++) {
+                    uint32_t px;
+                    memcpy(&px, mb.data() + (k / W) * t->bytesPerRow() + (k % W) * 4, 4);
+                    if (k == 0) px0 = px;
+                    got += px == 0xffbf8040u;
+                }
+                report(ok && completed(*cb) && got == W * H, "cflat, a pushed constant range bound at offset " + std::to_string(off) + ": " + std::to_string(got) +
+                                                                 " of 4096 pixels 40 80 bf ff; pixel 0 " + hex8(px0) + (ok ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
+        // 9o3. halfs from a constant buffer at bytes 64, 66, 68 and 70 (CoreAnimation's noise_scale is the half at 70):
+        // tri_half_fs returns (h64, h66, h70, h68) = (0.25, 0.5, 0.75, 1), 40 80 bf ff in every pixel; the other halfs
+        // of the buffer are 0.125, 20 in a channel, so a load of the wrong half names itself.
+        if (t) {
+            const Program halfP{kernels::tri_flat_vs_air, kernels::tri_half_fs_air, Linkage{}, "tri_half"};
+            auto hb = newBuffer(gpu, 128, &why);
+            uint16_t* h = static_cast<uint16_t*>(hb->contents());
+            for (int i = 0; i < 64; i++) h[i] = 0x3000;
+            h[32] = 0x3400, h[33] = 0x3800, h[34] = 0x3c00, h[35] = 0x3a00;
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            Bindings fsb;
+            fsb.buffers = {Binding{hb.get(), 0}};
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(halfP, rp, drawOf(0, 6), Bindings{}, fsb);
+            if (ok) { cb->commit(); cb->waitUntilCompleted(); }
+            std::vector<uint8_t> mb = textureBo(*t);
+            uint32_t got = 0, px0 = 0;
+            for (uint32_t k = 0; k < W * H; k++) {
+                uint32_t px;
+                memcpy(&px, mb.data() + (k / W) * t->bytesPerRow() + (k % W) * 4, 4);
+                if (k == 0) px0 = px;
+                got += px == 0xffbf8040u;
+            }
+            report(ok && completed(*cb) && got == W * H, "halfs from a constant buffer at 64, 66, 70, 68: " + std::to_string(got) + " of 4096 pixels 40 80 bf ff; pixel 0 " +
+                                                             hex8(px0) + (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
         // 9q. a constexpr sampler: tri_ctex_fs samples the 4x4 texture of 9k with a sampler it declares itself (repeat on s
         // and t, nearest), bound by the driver at the index the front end gave it, at tri_color's (red, green) times 4 --

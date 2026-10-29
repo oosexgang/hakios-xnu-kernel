@@ -95,6 +95,27 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     CHECK(t->contents() == t->buffer()->contents());
     CHECK(t->type() == TextureType::k2D && t->format() == PixelFormat::kRGBA8Unorm && t->usage() == 3u);
     CHECK(strcmp(t->info().name, "RGBA8Unorm") == 0);
+    // a texture over a buffer: the buffer's own bytes from the offset, at the pitch given, and refused off 64 bytes
+    {
+        std::string w;
+        auto b = newBuffer(r.gpu, 64 * 1024, &w);
+        TextureDesc bd;
+        bd.format = PixelFormat::kRGBA8Unorm;
+        bd.width = 30;
+        bd.height = 10;
+        bd.usage = kTextureUsageRead;
+        auto v = Texture::overBuffer(b, 128, 192, bd, &w);
+        CHECK(v != nullptr);
+        if (v != nullptr) {
+            CHECK_EQ(v->gpuAddress(), b->gpuAddress() + 128);
+            CHECK_EQ(v->bytesPerRow(), 192u);
+            CHECK(v->buffer() == b);
+        }
+        CHECK(Texture::overBuffer(b, 128, 120, bd, &w) == nullptr);
+        CHECK(has(w, "multiples of 64 bytes"));
+        CHECK(Texture::overBuffer(b, 64 * 1024 - 192, 192, bd, &w) == nullptr);
+        CHECK(has(w, "the rows inside the buffer"));
+    }
     // the refusals, each on its sentence
     TextureDesc d;
     d.type = TextureType::k2DArray;

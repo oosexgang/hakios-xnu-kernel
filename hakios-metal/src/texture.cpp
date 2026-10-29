@@ -395,6 +395,33 @@ std::shared_ptr<Texture> Texture::wrapTwoPlanes(std::shared_ptr<Buffer> buffer, 
     return t;
 }
 
+std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uint64_t offset, uint64_t bytesPerRow, const TextureDesc& desc, std::string* why) {
+    const FormatInfo* info = formatInfo(desc.format);
+    if (info == nullptr || info->depth || info->twoPlane) {
+        refuse(why, "a texture over a buffer of pixel format " + n(uint32_t(desc.format)) + ": one of the colour formats served (texture.hpp: PixelFormat) is what a buffer takes");
+        return nullptr;
+    }
+    if ((desc.type != TextureType::k2D && desc.type != TextureType::k1D) || desc.mipLevels != 1 || (desc.type == TextureType::k1D && desc.height != 1)) {
+        refuse(why, "a texture over a buffer of type " + n(uint32_t(desc.type)) + " and " + n(desc.mipLevels) + " level(s): one level, 1D or 2D, is what a buffer takes");
+        return nullptr;
+    }
+    if (desc.width == 0 || desc.width > 32767 || desc.height == 0 || desc.height > 32767 ||
+        (desc.usage & ~(kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget)) != 0) {
+        refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture of usage " + n(desc.usage) + " over a buffer: each side 1 to 32767, usage read, write and render target");
+        return nullptr;
+    }
+    if (bytesPerRow % 64 != 0 || offset % 64 != 0 || bytesPerRow < uint64_t(desc.width) * info->bytesPerPixel ||
+        offset + bytesPerRow * (desc.height - 1) + uint64_t(desc.width) * info->bytesPerPixel > buffer->length()) {
+        refuse(why, "rows of " + n(bytesPerRow) + " bytes from offset " + n(offset) + " of a " + n(buffer->length()) + "-byte buffer for a " + n(desc.width) + " x " +
+                        n(desc.height) + " " + info->name + " texture: the GPU wants a pitch and a start that are multiples of 64 bytes, rows that hold the width, "
+                        "and the rows inside the buffer");
+        return nullptr;
+    }
+    uint32_t pitchAlign = 0;
+    while (pitchAlign < log2u(info->bytesPerPixel) && bytesPerRow % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
+    return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, bytesPerRow, offset, pitchAlign));
+}
+
 bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     SamplerFields f;
     // MTLSamplerMinMagFilter: Nearest 0, Linear 1 (MTLSampler.h)

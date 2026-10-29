@@ -10,7 +10,9 @@
 // The libraries are read where they lie (a phone's or an image's /System/Library/...): nothing of them is copied,
 // kept or printed but function names, counts and the compiler's own sentences.
 //
-//   sweep [-v] LIBRARY.metallib...      (-v: a line per function)
+//   sweep [-v] [-f FUNCTION] [-c INDEX=VALUE]... LIBRARY.metallib...
+//     -v: a line per function; -f: that function alone; -c: a function constant's value, as a pipeline supplies
+//     it (with IR3_SHADER_DEBUG=disasm the listing of one specialisation is what comes out)
 //
 // SPDX-License-Identifier: MIT
 
@@ -33,6 +35,8 @@ using namespace hakios::metal;
 namespace {
 // compile in a child: true when it compiled; else *why is the refusal, or "the compiler aborted: " and the last line
 // the child printed (Mesa's assertion)
+FunctionConstants gConstants;
+
 bool compileApart(bool kernel, const uint8_t* bc, uint64_t len, std::string* why) {
     int fds[2];
     if (pipe(fds) != 0) {
@@ -45,7 +49,7 @@ bool compileApart(bool kernel, const uint8_t* bc, uint64_t len, std::string* why
         close(fds[0]);
         dup2(fds[1], 2);   // the child's assertion text goes up the pipe too
         std::string w;
-        bool ok = kernel ? compileAir(bc, len, &w) != nullptr : compileStage(bc, len, &w) != nullptr;
+        bool ok = kernel ? compileAir(bc, len, &w, gConstants) != nullptr : compileStage(bc, len, &w, gConstants) != nullptr;
         std::string msg = std::string(ok ? "OK\n" : "NO\n") + w;
         (void)!write(fds[1], msg.data(), msg.size());
         _exit(0);
@@ -102,10 +106,21 @@ std::string causeOf(const std::string& why, const std::string& name) {
 
 int main(int argc, char** argv) {
     bool verbose = false;
+    std::string only;
     std::vector<std::string> files;
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-v") == 0) {
             verbose = true;
+        } else if (std::strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
+            only = argv[++i];
+        } else if (std::strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            unsigned index = 0;
+            unsigned long long value = 0;
+            if (std::sscanf(argv[++i], "%u=%llu", &index, &value) != 2) {
+                std::fprintf(stderr, "sweep: -c takes INDEX=VALUE, not %s\n", argv[i]);
+                return 2;
+            }
+            gConstants.push_back(FunctionConstant{index, value});
         } else {
             files.push_back(argv[i]);
         }
@@ -133,7 +148,7 @@ int main(int argc, char** argv) {
         uint32_t here[3] = {}, hereTaken[3] = {};
         for (const MetalFunction& f : lib.functions()) {
             int t = f.type == MetalFunction::kVertex ? 0 : f.type == MetalFunction::kFragment ? 1 : f.type == MetalFunction::kKernel ? 2 : -1;
-            if (t < 0) continue;
+            if (t < 0 || (!only.empty() && f.name != only)) continue;
             const uint8_t* bc = nullptr;
             uint64_t len = 0;
             std::string why;
@@ -141,7 +156,14 @@ int main(int argc, char** argv) {
             if (!lib.bitcode(f, &bc, &len)) {
                 why = "the module's bitcode could not be found";
             } else {
-                ok = compileApart(t == 2, bc, len, &why);
+                if (!only.empty()) {
+                    uint32_t h = 2166136261u;
+                    for (uint64_t i = 0; i < len; i++) h = (h ^ bc[i]) * 16777619u;
+                    std::printf("sweep: %s: %llu bytes of bitcode, fnv %08x\n", f.name.c_str(), (unsigned long long)len, h);
+                }
+                // (one function by name is compiled in this process, so that Mesa's own debug output reaches the terminal)
+                ok = !only.empty() ? (t == 2 ? compileAir(bc, len, &why, gConstants) != nullptr : compileStage(bc, len, &why, gConstants) != nullptr)
+                                   : compileApart(t == 2, bc, len, &why);
             }
             seen[t]++;
             here[t]++;
