@@ -14,6 +14,7 @@
 #include "hakios-metal/fake_gpu.hpp"
 #include "hakios-metal/hakios_metal.h"
 #include "hakios-metal/metallib.hpp"
+#include "../tests/fixtures/null_fs_bc.hpp"
 #include "hakios-metal/texture.hpp"
 
 using namespace hakios::metal;
@@ -607,6 +608,14 @@ hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsB
     if (vs == nullptr) {
         failed(why);
         return nullptr;
+    }
+    // no fragment bitcode: a pipeline with no fragment function (a depth-only one), which runs null_fs -- a fragment
+    // function of our own that writes nothing (tools/kernels/null_fs.ll), compiled as any other so that it links
+    if (fsBitcode == nullptr || fsSize == 0) {
+        fsBitcode = kernels::null_fs_bc;
+        fsSize = sizeof kernels::null_fs_bc;
+        fsConstants = nullptr;
+        fsCount = 0;
     }
     // the FS's device buffers past the VS's in the one IBO table the two share
     std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount), vs->stage.k.numSsbos);

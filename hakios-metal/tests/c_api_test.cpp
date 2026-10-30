@@ -683,6 +683,52 @@ TEST(c_api_draw_with_a_vertex_texture) {
     hakios_metal_close(d);
 }
 
+// A pipeline with no fragment function through C: NULL fragment bitcode is the built-in null_fs, which links with any
+// vertex stage and writes nothing, drawn into a pass of depth alone. The control first: tri_flat's own FS is a stage
+// that writes [[color(0)]], the built-in one writes none.
+TEST(c_api_pipeline_without_a_fragment_function) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    std::vector<uint8_t> vsBc = readFile("out/host/kernels/tri_flat_vs.bc"), fsBc = readFile("out/host/kernels/tri_flat_fs.bc");
+    if (!hakios_metal_has_compiler()) {
+        std::printf("       (no compiler in this build: the C interface's depth-only pipeline did not run)\n");
+        hakios_metal_close(d);
+        return;
+    }
+    hakios_metal_program* withFs = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 0);
+    hakios_metal_program* p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), nullptr, 0, 0);
+    CHECK(withFs != nullptr && p != nullptr);
+    if (p == nullptr || withFs == nullptr) {
+        std::printf("       %s\n", hakios_metal_error());
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK(strstr(hakios_metal_program_name(withFs), "tri_flat_fs") != nullptr);
+    CHECK(strstr(hakios_metal_program_name(p), "null_fs") != nullptr);
+    hakios_metal_texture* depth = hakios_metal_texture_new(d, 2, 252, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET);
+    CHECK(depth != nullptr);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    struct hakios_metal_render_pass pass = {};
+    pass.depth = depth;
+    pass.depth_load_action = 2;
+    pass.depth_store_action = 1;
+    pass.clear_depth = 1.0;
+    pass.depth_state_set = 1;
+    pass.depth_compare = 1;
+    pass.depth_write = 1;
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    if (hakios_metal_cb_status(cb) == HAKIOS_METAL_ERROR) std::printf("       %s\n", hakios_metal_error());
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    hakios_metal_texture_free(depth);
+    hakios_metal_program_free(p);
+    hakios_metal_program_free(withFs);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
 // A texture over an IOSurface through C: the refusals reach the caller by name (the drawing into a surface is
 // render_test's, over the fake's surfaces)
 TEST(c_api_texture_over_an_iosurface_refuses_by_name) {
