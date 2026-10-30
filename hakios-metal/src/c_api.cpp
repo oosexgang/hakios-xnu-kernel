@@ -259,6 +259,27 @@ hakios_metal_texture* hakios_metal_texture_new_cube(hakios_metal_device* d, unsi
     return r;
 }
 
+hakios_metal_texture* hakios_metal_texture_new_multisample(hakios_metal_device* d, unsigned pixelFormat, unsigned width, unsigned height, unsigned samples,
+                                                          unsigned usage) {
+    TextureDesc desc;
+    desc.type = TextureType::k2DMultisample;
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.samples = samples;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
+unsigned hakios_metal_texture_samples(hakios_metal_texture* t) { return t->texture->samples(); }
 unsigned hakios_metal_texture_depth(hakios_metal_texture* t) { return t->texture->depth(); }
 
 int hakios_metal_texture_replace_3d(hakios_metal_texture* t, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, const void* bytes,
@@ -695,6 +716,15 @@ int hakios_metal_program_set_vertex_layout(hakios_metal_program* p, unsigned buf
 void hakios_metal_program_set_blend(hakios_metal_program* p, int enabled, unsigned rgbOp, unsigned alphaOp, unsigned srcRgb, unsigned dstRgb,
                                     unsigned srcAlpha, unsigned dstAlpha, unsigned writeMask) {
     hakios_metal_program_set_blend_at(p, 0, enabled, rgbOp, alphaOp, srcRgb, dstRgb, srcAlpha, dstAlpha, writeMask);
+}
+
+int hakios_metal_program_set_samples(hakios_metal_program* p, unsigned samples) {
+    if (samples != 1 && samples != 2 && samples != 4) {
+        failed("rasterSampleCount " + std::to_string(samples) + ": 1, 2 or 4 are served");
+        return -1;
+    }
+    p->program->program.samples = samples;
+    return 0;
 }
 
 int hakios_metal_program_set_blend_at(hakios_metal_program* p, unsigned index, int enabled, unsigned rgbOp, unsigned alphaOp, unsigned srcRgb,

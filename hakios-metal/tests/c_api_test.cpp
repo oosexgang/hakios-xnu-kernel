@@ -729,6 +729,49 @@ TEST(c_api_pipeline_without_a_fragment_function) {
     hakios_metal_close(d);
 }
 
+// Multisampling through C: a 4x texture, a program set to 4 samples drawing into it (refused before the count is set,
+// the control), and the resolve by hakios_metal_cb_blit into a texture of one sample; a count of 3 refused by name.
+TEST(c_api_multisample_draw_and_resolve) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    std::vector<uint8_t> vsBc = readFile("out/host/kernels/tri_flat_vs.bc"), fsBc = readFile("out/host/kernels/tri_flat_fs.bc");
+    if (!hakios_metal_has_compiler()) {
+        std::printf("       (no compiler in this build: the C interface's multisampling did not run)\n");
+        hakios_metal_close(d);
+        return;
+    }
+    hakios_metal_program* p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 70);
+    hakios_metal_texture* ms = hakios_metal_texture_new_multisample(d, 70, 64, 64, 4, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET);
+    hakios_metal_texture* out = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET | 1);
+    CHECK(p != nullptr && ms != nullptr && out != nullptr);
+    CHECK_EQ(hakios_metal_texture_samples(ms), 4u);
+    CHECK_EQ(hakios_metal_texture_samples(out), 1u);
+    CHECK(hakios_metal_texture_new_multisample(d, 70, 64, 64, 3, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET) == nullptr);
+    CHECK(strstr(hakios_metal_error(), "with 3 samples") != nullptr);
+    CHECK_EQ(hakios_metal_program_set_samples(p, 3), -1);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    struct hakios_metal_render_pass pass = {};
+    pass.color0 = ms;
+    pass.load_action = 2;
+    pass.store_action = 1;
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strstr(hakios_metal_error(), "a pipeline of rasterSampleCount 1 into attachments of 4 sample(s)") != nullptr);
+    hakios_metal_cb_free(cb);
+    CHECK_EQ(hakios_metal_program_set_samples(p, 4), 0);
+    cb = hakios_metal_cb_new(q);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    CHECK_EQ(hakios_metal_cb_blit(cb, ms, 0, 0, 0, 64, 64, out, 0, 0, 0, 64, 64, 0), 0);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    hakios_metal_texture_free(out);
+    hakios_metal_texture_free(ms);
+    hakios_metal_program_free(p);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
 // A texture over an IOSurface through C: the refusals reach the caller by name (the drawing into a surface is
 // render_test's, over the fake's surfaces)
 TEST(c_api_texture_over_an_iosurface_refuses_by_name) {

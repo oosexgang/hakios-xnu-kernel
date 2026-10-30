@@ -121,6 +121,12 @@ hakios_metal_texture *hakios_metal_texture_new(hakios_metal_device *device, unsi
 hakios_metal_texture *hakios_metal_texture_new_levels(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned levels, unsigned usage);
 unsigned hakios_metal_texture_levels(hakios_metal_texture *texture);
+/* a 2D multisample texture (MTLTextureType2DMultisample) of SAMPLES (2 or 4) samples a pixel, a render target; it is
+ * drawn into by a program of the same count (hakios_metal_program_set_samples) and resolved by hakios_metal_cb_blit
+ * into a texture of one sample, pixel for pixel */
+hakios_metal_texture *hakios_metal_texture_new_multisample(hakios_metal_device *device, unsigned pixel_format, unsigned width,
+    unsigned height, unsigned samples, unsigned usage);
+unsigned hakios_metal_texture_samples(hakios_metal_texture *texture);   /* 1, or a multisample texture's count */
 /* -newTextureWithDescriptor:iosurface:plane: -- the texture's rows are IOSurface SURFACE_ID's pixels (the kernel's
  * surface buffer: drawing into it draws into what the display or another program reads), PIXEL_FORMAT, WIDTH, HEIGHT
  * and USAGE as for hakios_metal_texture_new. NULL with the reason: no such surface, a plane other than 0, a size past
@@ -249,6 +255,9 @@ int hakios_metal_program_set_vertex_layout(hakios_metal_program *program, unsign
  * this is called. What a draw cannot serve (blending into an integer format, say) it refuses by name. */
 void hakios_metal_program_set_blend(hakios_metal_program *program, int enabled, unsigned rgb_op, unsigned alpha_op,
     unsigned src_rgb, unsigned dst_rgb, unsigned src_alpha, unsigned dst_alpha, unsigned write_mask);
+/* MTLRenderPipelineDescriptor.rasterSampleCount: 1 (the default), 2 or 4; a draw refuses attachments of another count.
+ * -1 for any other count */
+int hakios_metal_program_set_samples(hakios_metal_program *program, unsigned samples);
 /* ...the same for colour attachment INDEX (0 to 7; 0 is the call above): -1 past 7 */
 int hakios_metal_program_set_blend_at(hakios_metal_program *program, unsigned index, int enabled, unsigned rgb_op, unsigned alpha_op,
     unsigned src_rgb, unsigned dst_rgb, unsigned src_alpha, unsigned dst_alpha, unsigned write_mask);
