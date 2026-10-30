@@ -70,6 +70,28 @@ uint32_t bytesPerPixel(uint32_t fmt) {
     case a6xx::FMT6_16_16_16_16_FLOAT: return 8;
     case a6xx::FMT6_32_32_32_32_FLOAT: return 16;
     case a6xx::FMT6_32_32_32_32_UINT: return 16;
+    // the integer and snorm colour formats, sized from their names
+    case a6xx::FMT6_8_SNORM: return 1;
+    case a6xx::FMT6_8_SINT: return 1;
+    case a6xx::FMT6_16_SNORM: return 2;
+    case a6xx::FMT6_8_8_SNORM: return 2;
+    case a6xx::FMT6_8_8_UINT: return 2;
+    case a6xx::FMT6_8_8_SINT: return 2;
+    case a6xx::FMT6_32_SINT: return 4;
+    case a6xx::FMT6_16_16_UNORM: return 4;
+    case a6xx::FMT6_16_16_SNORM: return 4;
+    case a6xx::FMT6_16_16_UINT: return 4;
+    case a6xx::FMT6_16_16_SINT: return 4;
+    case a6xx::FMT6_8_8_8_8_SNORM: return 4;
+    case a6xx::FMT6_8_8_8_8_UINT: return 4;
+    case a6xx::FMT6_8_8_8_8_SINT: return 4;
+    case a6xx::FMT6_32_32_UINT: return 8;
+    case a6xx::FMT6_32_32_SINT: return 8;
+    case a6xx::FMT6_16_16_16_16_UNORM: return 8;
+    case a6xx::FMT6_16_16_16_16_SNORM: return 8;
+    case a6xx::FMT6_16_16_16_16_UINT: return 8;
+    case a6xx::FMT6_16_16_16_16_SINT: return 8;
+    case a6xx::FMT6_32_32_32_32_SINT: return 16;
     default: return 0;
     }
 }

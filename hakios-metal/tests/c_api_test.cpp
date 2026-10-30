@@ -231,8 +231,8 @@ TEST(c_api_texture_replace_and_read_convert_the_stride) {
     hakios_metal_texture_free(t);
     CHECK(hakios_metal_texture_new(d, 6, 70, 4, 4, 1) == nullptr);   // a cube array
     CHECK(strstr(hakios_metal_error(), "texture type 6 (CubeArray): 1D (0), 2D (2), 2D array (3), 2D multisample (4), cube (5) and 3D (7) are served") != nullptr);
-    CHECK(hakios_metal_texture_new(d, 2, 13, 4, 4, 1) == nullptr);   // R8Uint
-    CHECK(strstr(hakios_metal_error(), "pixel format 13: not one of the formats served") != nullptr);
+    CHECK(hakios_metal_texture_new(d, 2, 93, 4, 4, 1) == nullptr);   // RGB9E5Float
+    CHECK(strstr(hakios_metal_error(), "pixel format 93: not one of the formats served") != nullptr);
     CHECK(hakios_metal_texture_new(d, 2, 70, 0, 4, 1) == nullptr);
     CHECK(strstr(hakios_metal_error(), "each side is 1 to 32767") != nullptr);
     // the sampler: Metal's defaults encode to Gallium's words; a mode not served is NULL with the reason

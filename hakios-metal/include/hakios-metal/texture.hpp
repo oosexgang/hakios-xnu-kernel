@@ -35,6 +35,30 @@ enum class PixelFormat : uint32_t {
     kB5G6R5Unorm = 40,     // packed in 16 bits, named from the low bits as Gallium names them: B in 0..4, R in 11..15
     kBGR5A1Unorm = 43,     // B in 0..4, G 5..9, R 10..14, A 15 (CoreAnimation backs some layers with it)
     kR8Unorm = 10,
+    // the integer and signed-normalised colour formats, one to four channels: each one FMT6 to the TP, the RB and the
+    // storage path alike (fd6_format_table.c's VTC rows), WZYX; an integer one is read as texture2d<uint> or <int>
+    kR8Snorm = 12,
+    kR8Uint = 13,
+    kR8Sint = 14,
+    kR16Snorm = 22,
+    kRG8Snorm = 32,
+    kRG8Uint = 33,
+    kRG8Sint = 34,
+    kR32Sint = 54,
+    kRG16Unorm = 60,
+    kRG16Snorm = 62,
+    kRG16Uint = 63,
+    kRG16Sint = 64,
+    kRGBA8Snorm = 72,
+    kRGBA8Uint = 73,
+    kRGBA8Sint = 74,
+    kRG32Uint = 103,
+    kRG32Sint = 104,
+    kRGBA16Unorm = 110,
+    kRGBA16Snorm = 112,
+    kRGBA16Uint = 113,
+    kRGBA16Sint = 114,
+    kRGBA32Sint = 124,
     kR16Float = 25,
     kR16Unorm = 20,
     kR16Uint = 23,         // CoreAnimation's 1D gamma tables (3072 x 1, read alone)

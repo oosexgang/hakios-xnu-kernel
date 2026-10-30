@@ -1347,6 +1347,67 @@ int main(int argc, char** argv) {
                            std::to_string(untouched) + " of " + std::to_string(others) + " of the other parts canary" + status(*cb, gpu));
             }
 
+            // 7g. the integer formats read as uint: each channel of IN (C of them, B bits each) its own value from the
+            // CPU, tex_copy (isaml t#1) to an RGBA32Uint image, every lane compared -- the channels IN has as written,
+            // the ones it has not 0 and alpha 1 (Metal's rule for a read of a format without them). A width or an order
+            // the descriptor gets wrong moves every value
+            {
+                struct F {
+                    PixelFormat f;
+                    const char* name;
+                    uint32_t channels, bits;
+                };
+                const F formats[] = {{PixelFormat::kR8Uint, "R8Uint", 1, 8},     {PixelFormat::kRG8Uint, "RG8Uint", 2, 8},
+                                     {PixelFormat::kRGBA8Uint, "RGBA8Uint", 4, 8}, {PixelFormat::kRG16Uint, "RG16Uint", 2, 16},
+                                     {PixelFormat::kRGBA16Uint, "RGBA16Uint", 4, 16}, {PixelFormat::kRG32Uint, "RG32Uint", 2, 32}};
+                for (const F& f : formats) {
+                    const uint32_t W = 16, H = 8;
+                    TextureDesc din;
+                    din.format = f.f;
+                    din.width = W;
+                    din.height = H;
+                    din.usage = kTextureUsageRead;
+                    TextureDesc dout = din;
+                    dout.format = PixelFormat::kRGBA32Uint;
+                    dout.usage = kTextureUsageWrite;
+                    auto in = Texture::make(gpu, din, &why);
+                    auto out = in ? Texture::make(gpu, dout, &why) : nullptr;
+                    const std::string label = std::string("tex_copy of ") + f.name + " 16x8 into RGBA32Uint, every lane";
+                    if (in == nullptr || out == nullptr) {
+                        report(false, label + ": " + why);
+                        continue;
+                    }
+                    const uint64_t mask = f.bits == 32 ? 0xffffffffull : (1ull << f.bits) - 1;
+                    auto chan = [&](uint32_t x, uint32_t y, uint32_t c) { return uint32_t((x * 7u + y * 13u + c * 61u + 5u + (f.bits == 32 ? 0x10000u * c : 0u)) & mask); };
+                    std::vector<uint8_t> host(size_t(W) * H * f.channels * f.bits / 8);
+                    for (uint32_t y = 0; y < H; y++)
+                        for (uint32_t x = 0; x < W; x++)
+                            for (uint32_t c = 0; c < f.channels; c++) {
+                                const uint32_t v = chan(x, y, c);
+                                memcpy(host.data() + ((size_t(y) * W + x) * f.channels + c) * (f.bits / 8), &v, f.bits / 8);
+                            }
+                    fillBo(*out, 0xa5a5a5a5u);
+                    if (!in->replace(0, 0, W, H, host.data(), uint64_t(W) * f.channels * f.bits / 8, &why)) {
+                        report(false, label + ": Texture::replace: " + why);
+                        continue;
+                    }
+                    Bindings b;
+                    b.textures = {out.get(), in.get()};
+                    const uint32_t groups[3] = {2, 1, 1};
+                    auto cb = runTex(kernels::tex_copy_air, groups, local88, b);
+                    uint32_t right = 0;
+                    for (uint32_t y = 0; y < H; y++)
+                        for (uint32_t x = 0; x < W; x++) {
+                            uint32_t v[4];
+                            memcpy(v, static_cast<const uint8_t*>(out->contents()) + y * out->bytesPerRow() + x * 16, 16);
+                            bool ok = true;
+                            for (uint32_t l = 0; l < 4; l++) ok = ok && v[l] == (l < f.channels ? chan(x, y, l) : l == 3 ? 1u : 0u);
+                            right += ok;
+                        }
+                    report(completed(*cb) && right == W * H, label + ": " + std::to_string(right) + " of 128 pixels each lane as written (absent ones 0, alpha 1)" + status(*cb, gpu));
+                }
+            }
+
             // 7d. the four kernels compiled on the phone: the same words, layout and texture fields as the host's
             // fixtures (the core's walk of the NIR against the fixture writer's), and tex_fill dispatched from the
             // phone's own compile

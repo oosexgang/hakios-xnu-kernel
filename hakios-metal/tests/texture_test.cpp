@@ -79,7 +79,12 @@ TEST(texture_pitch_is_mesas_layout_rule) {
     CHECK(formatInfo(PixelFormat::kRGBA8UnormSrgb)->srgb && !formatInfo(PixelFormat::kRGBA8Unorm)->srgb);
     CHECK(formatInfo(PixelFormat::kBGRA8Unorm)->swap == a6xx::WXYZ && formatInfo(PixelFormat::kRGBA8Unorm)->swap == a6xx::WZYX);
     // a format outside them is nobody's
-    CHECK(formatInfo(PixelFormat(13)) == nullptr);   // R8Uint
+    CHECK(formatInfo(PixelFormat(93)) == nullptr);   // RGB9E5Float
+    // the integer ones, each its FMT and class: what tex_copy's lanes measured on the phone (probe 7g) rests on these
+    CHECK(formatInfo(PixelFormat::kR8Uint)->fmt6 == a6xx::FMT6_8_UINT && formatInfo(PixelFormat::kR8Uint)->element == kElemUint);
+    CHECK(formatInfo(PixelFormat::kRG16Sint)->fmt6 == a6xx::FMT6_16_16_SINT && formatInfo(PixelFormat::kRG16Sint)->element == kElemInt);
+    CHECK(formatInfo(PixelFormat::kRGBA8Snorm)->fmt6 == a6xx::FMT6_8_8_8_8_SNORM && formatInfo(PixelFormat::kRGBA8Snorm)->element == kElemFloat);
+    CHECK_EQ(formatInfo(PixelFormat::kRGBA16Uint)->bytesPerPixel, 8u);
     CHECK(formatInfo(PixelFormat(0)) == nullptr);
 }
 
@@ -145,8 +150,8 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
         }
     }
     d = TextureDesc{};
-    d.format = PixelFormat(13);
-    CHECK(has(refusedMake(r, d), "pixel format 13: not one of the formats served"));
+    d.format = PixelFormat(93);
+    CHECK(has(refusedMake(r, d), "pixel format 93: not one of the formats served"));
     d = TextureDesc{};
     d.width = 0;
     CHECK(has(refusedMake(r, d), "a texture of 0 x 1: each side is 1 to 32767"));
