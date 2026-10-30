@@ -5,6 +5,7 @@ RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=/home/wannq/darwin_kernel/ios26/root26-tree
 rm -rf $T; cp -a $DR/userland/root $T
 cp $RN/userland/obj26/*.dylib $T/lib/
+cp $RN/userland/obj26/gl_test $T/bin/gl_test
 mkdir -p $RN/userland
 cat > $RN/userland/rc.jobs.ios26-probe <<'EOF'
 # iOS 26 on renoir, first boots: what runs (to the console, read back from the loader's log)
