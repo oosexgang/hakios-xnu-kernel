@@ -508,10 +508,10 @@ TEST(a_texture_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the
     {
         Kernel k = texFillLike();
         k.textures[0].dim = kTexDim3D;
-        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses texture 0 as 3D; texture 0 is 2D"));
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses texture 0 as 3D image; texture 0 is of type 2"));
         k.textures[0].dim = kTexDim2D;
         k.textures[0].isArray = 1;
-        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses texture 0 as 2D array; texture 0 is 2D"));
+        CHECK(has(refused(r, k, bind({}, {u32.get()})), "tex_fill addresses texture 0 as 2D array image; texture 0 is of type 2"));
         k = texFillLike();
         k.textures[0].read = 1;   // read_write: a load needs read usage too
         CHECK(has(refused(r, k, bind({}, {writeOnly.get()})), "texture 0 was made without shader-read usage; tex_fill loads from it"));
@@ -612,6 +612,55 @@ TEST(a_dispatch_of_an_image_only_kernel_puts_a_storage_descriptor_at_ibo_0_and_n
     s = dispatched(r, texFillLike(), bind({}, {wide.get()}));
     CHECK_EQ(s.dispatches, 2u);
     if (!s.lastDispatch.ibo.empty()) checkIs2d(s.lastDispatch.ibo[0], *wide, false);
+}
+
+TEST(an_image_kernel_stores_into_a_2d_array_or_a_3d_texture_through_a_layered_descriptor) {
+    // ir3 stores to both as stib.3d with the layer as z (tex_fill_arr, tex_fill_3d): what keeps layer z apart from layer
+    // 0 is the descriptor's ARRAY_PITCH and DEPTH alone, so those are what is checked -- against the texture's own slice
+    using namespace a6xx;
+    Rig r;
+    auto layered = [&](TextureType type, uint32_t depth) {
+        TextureDesc d;
+        d.type = type;
+        d.format = PixelFormat::kRGBA32Uint;
+        d.width = 16;
+        d.height = 8;
+        d.depth = depth;
+        d.usage = kTextureUsageRead | kTextureUsageWrite;
+        std::string why;
+        auto t = Texture::make(*r.gpu, d, &why);
+        CHECK(t != nullptr);
+        if (t == nullptr) std::fprintf(stderr, "       %s\n", why.c_str());
+        return t;
+    };
+    auto arr = layered(TextureType::k2DArray, 4);
+    auto vol = layered(TextureType::k3D, 3);
+    auto flat = texture(r, PixelFormat::kRGBA32Uint, 16, 8);
+    Kernel arrK = texFillLike(), volK = texFillLike();
+    arrK.textures[0].isArray = 1;
+    volK.textures[0].dim = kTexDim3D;
+    const struct {
+        const Kernel* k;
+        const Texture* t;
+        uint32_t type, depth;
+    } cases[] = {{&arrK, arr.get(), A6XX_TEX_2D, 4}, {&volK, vol.get(), A6XX_TEX_3D, 3}};
+    for (const auto& c : cases) {
+        FakeGpu::Stats s = dispatched(r, *c.k, bind({}, {c.t}));
+        CHECK_EQ(s.lastDispatch.ibo.size(), size_t(1));
+        if (s.lastDispatch.ibo.empty()) continue;
+        const TexConst& d = s.lastDispatch.ibo[0];
+        CHECK_EQ(fieldOf(d.dword[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT), c.type);
+        CHECK_EQ(fieldOf(d.dword[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT), c.depth);
+        CHECK_EQ(uint64_t(fieldOf(d.dword[3], A6XX_TEX_CONST_3_ARRAY_PITCH__MASK, A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT)) << A6XX_TEX_CONST_3_ARRAY_PITCH__SCALE,
+                 c.t->sliceBytes());
+        CHECK(c.t->sliceBytes() >= uint64_t(c.t->bytesPerRow()) * 8);
+    }
+    // the twins: each kernel over the other shapes, and a plain 2D texture under either, is refused -- a layered store
+    // through a one-layer descriptor would land every layer on the first
+    CHECK(has(refused(r, arrK, bind({}, {flat.get()})), "tex_fill addresses texture 0 as 2D array image; texture 0 is of type 2"));
+    CHECK(has(refused(r, arrK, bind({}, {vol.get()})), "tex_fill addresses texture 0 as 2D array image; texture 0 is of type 7"));
+    CHECK(has(refused(r, volK, bind({}, {arr.get()})), "tex_fill addresses texture 0 as 3D image; texture 0 is of type 3"));
+    CHECK(has(refused(r, texFillLike(), bind({}, {arr.get()})), "tex_fill addresses texture 0 as 2D image; texture 0 is of type 3"));
 }
 
 TEST(a_dispatch_of_tex_copy_loads_the_texture_table_with_a_zero_slot_0_and_one_zero_sampler) {

@@ -629,13 +629,7 @@ bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, S
             out->used.push_back(tex);
             continue;
         }
-        const bool asBound = (kt.dim == kTexDim2D && !kt.isArray && tex->type() == TextureType::k2D) ||
-                             (kt.dim == kTexDim2D && kt.isArray && tex->type() == TextureType::k2DArray) ||
-                             (kt.dim == kTexDim1D && !kt.isArray && tex->type() == TextureType::k1D) ||
-                             (kt.dim == kTexDim3D && tex->type() == TextureType::k3D) ||
-                             (kt.dim == kTexDimCube && !kt.isArray && tex->type() == TextureType::kCube) ||
-                             (kt.dim == kTexDimMS && !kt.isArray && tex->type() == TextureType::k2DMultisample);
-        if (!asBound) {
+        if (!tex->isShaped(kt)) {
             return refuse(why, name + " samples texture " + n(t) + " as " +
                                    (kt.dim == kTexDim1D ? "1D" : kt.dim == kTexDim2D ? "2D" : kt.dim == kTexDim3D ? "3D" : kt.dim == kTexDimCube ? "a cube" : kt.dim == kTexDimMS ? "2D multisample" : "another kind") +
                                    (kt.isArray ? " array" : "") + " and texture " + n(t) + " is of type " + n(uint32_t(tex->type())) +

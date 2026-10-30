@@ -227,6 +227,9 @@ public:
     // the descriptor a stib/ldib addresses it through, at IBO slot numSsbos + index: the same without PITCHALIGN,
     // MIPLVLS and SAMPLES (fd6_view.c:383-397)
     a6xx::TexConst storageDescriptor() const;
+    // whether a shader that addresses a texture as T (its dim and array form) addresses this one as what it is: the
+    // TP reads the descriptor's TYPE and DEPTH, not the instruction's dimension, so any other pairing reads wrong texels
+    bool isShaped(const KernelTexture& t) const;
 
 private:
     static std::shared_ptr<Texture> wrapTwoPlanes(std::shared_ptr<Buffer> buffer, const SurfaceInfo& s, const std::string& name, const TextureDesc& desc,

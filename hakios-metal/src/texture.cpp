@@ -278,18 +278,23 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         return nullptr;
     }
     // (shader read is taken beside render target -- sokol asks for both on every attachment; a shader sampling one as a
-    // 2D texture is refused at its draw by the type, and texture2d_ms reads are not served)
+    // 2D texture is refused at its draw by the type, a texture2d_ms read is served as such)
     if (multisample && (info->stencil || info->blockW > 1 || desc.mipLevels != 1 || (desc.usage & ~kTextureUsageRead) != kTextureUsageRenderTarget)) {
         refuse(why, std::string("a multisample ") + info->name + " texture of " + n(desc.mipLevels) + " levels with usage " + n(desc.usage) +
                         ": one level of an uncompressed colour format or Depth32Float, a render target (4) alone, is served (a stencil plane is "
                         "laid out apart and not for samples here)");
         return nullptr;
     }
-    // (a slice texture is sampled, and may be drawn into a slice at a time: the slices are 2D layouts like any target)
-    if (slices && (info->depth || info->twoPlane || info->blockW > 1 || (desc.usage & kTextureUsageRead) == 0 ||
-                   (desc.usage & ~(kTextureUsageRead | kTextureUsageRenderTarget)) != 0)) {
+    // (a slice texture is sampled or stored by a kernel, and may be drawn into a slice at a time: the slices are 2D layouts
+    // like any target, and a kernel's store reaches slice z through the storage view's ARRAY_PITCH. A cube is not stored:
+    // a kernel addressing one is refused at its dispatch, so its usage stays what is served)
+    const uint32_t sliceUsage = desc.type == TextureType::kCube ? kTextureUsageRead | kTextureUsageRenderTarget
+                                                               : kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget;
+    if (slices && (info->depth || info->twoPlane || info->blockW > 1 || (desc.usage & (kTextureUsageRead | kTextureUsageWrite)) == 0 ||
+                   (desc.usage & ~sliceUsage) != 0)) {
         refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : desc.type == TextureType::kCube ? "cube " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
-                        ": one of an uncompressed colour format, sampled (1), and drawn into a slice at a time too (5), is served");
+                        ": one of an uncompressed colour format, sampled (1)" + (desc.type == TextureType::kCube ? "" : " or stored by a kernel (2)") +
+                        ", and drawn into a slice at a time too (4), is served");
         return nullptr;
     }
     const uint32_t memoryWidth = desc.width * desc.samples;   // the width of its memory: a multisample texture's samples side by side
@@ -505,7 +510,32 @@ a6xx::TexConst Texture::levelDescriptor(uint32_t level) const {
 }
 
 a6xx::TexConst Texture::storageDescriptor() const {
-    return image2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
+    a6xx::TexConst d = image2d(gpuAddress(), desc_.width, desc_.height, uint32_t(pitch_), info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
+    if (desc_.type == TextureType::k2DArray || desc_.type == TextureType::k3D || desc_.type == TextureType::kCube) {
+        // fdl6_view_init's storage view (fd6_view.c:172-182, 390-395): ir3 addresses every layered image as 3D (stib.3d,
+        // the layer as z), so what tells the TP where layer z lies is ARRAY_PITCH, and DEPTH bounds it. A cube is stored
+        // as the 2D array of its six faces (fdl6_tex_type with storage); a 3D view keeps TYPE 3D and MIN_LAYERSZ as the
+        // sampled view does
+        const bool is3d = desc_.type == TextureType::k3D;
+        d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(is3d ? A6XX_TEX_3D : A6XX_TEX_2D);
+        d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes())) | (is3d ? A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t(sliceBytes())) : 0u);
+        d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
+    }
+    return d;
+}
+
+bool Texture::isShaped(const KernelTexture& t) const {
+    switch (desc_.type) {
+    case TextureType::k1D: return t.dim == kTexDim1D && !t.isArray;
+    case TextureType::k2D: return t.dim == kTexDim2D && !t.isArray;
+    case TextureType::k2DArray: return t.dim == kTexDim2D && t.isArray;
+    case TextureType::k3D: return t.dim == kTexDim3D;
+    case TextureType::kCube: return t.dim == kTexDimCube && !t.isArray;
+    case TextureType::k2DMultisample: return t.dim == kTexDimMS && !t.isArray;
+    case TextureType::k1DArray:
+    case TextureType::kCubeArray: return false;   // Texture::make makes neither
+    }
+    return false;
 }
 
 std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, const TextureDesc& desc, std::string* why, const SurfacePlane* chroma) {

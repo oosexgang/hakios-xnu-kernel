@@ -37,6 +37,8 @@
 #include "../tests/fixtures/tex_fill_bc.hpp"
 #include "../tests/fixtures/tex_fill_h_air.hpp"
 #include "../tests/fixtures/tex_fill_h_bc.hpp"
+#include "../tests/fixtures/tex_fill_arr_air.hpp"
+#include "../tests/fixtures/tex_fill_3d_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
@@ -1171,6 +1173,64 @@ int main(int argc, char** argv) {
                            "control, tex_sample_gid linear over 4x4 sampled by the 8x8 grid (quarter positions): " +
                                describeSamples(c, "1/255 + 1/512 of the bilinear expectation") + diff + status(*lin4.cb, gpu));
                 }
+            }
+
+            // 7e. stores into a 2D array and a 3D texture (stib.3d, the layer as z; the storage view's ARRAY_PITCH places
+            // it): every texel of the layers the grid covers holds its own (x, y, layer, 0xdead); the last layer, which the
+            // grid leaves out, and the bytes between one layer's rows and the next layer are still canary. A store that
+            // ignored z would leave layers 1.. canary and write layer 0 last-wins; a wrong pitch would put texels in the gap
+            for (const bool is3d : {false, true}) {
+                // 6 rows: at 16 bytes a pixel a row is 1024 bytes (64 << log2(cpp)), so 6 of them leave 2 KiB of the 8 KiB
+                // slice past the last row -- with 8 the slice is exactly full, and a wrong pitch would have nowhere to show
+                const uint32_t W = 16, H = 6, D = is3d ? 3 : 4;
+                TextureDesc d;
+                d.type = is3d ? TextureType::k3D : TextureType::k2DArray;
+                d.format = PixelFormat::kRGBA32Uint;
+                d.width = W;
+                d.height = H;
+                d.depth = D;
+                d.usage = kTextureUsageWrite;
+                const std::string label = std::string(is3d ? "tex_fill_3d RGBA32Uint 16x6x3" : "tex_fill_arr RGBA32Uint 16x6, 4 layers") + ", the grid over all but the last";
+                auto t = Texture::make(gpu, d, &why);
+                if (t == nullptr) {
+                    report(false, label + ": the texture: " + why);
+                    continue;
+                }
+                const uint32_t canary = 0x5a5a5a5au;   // above every x, y, layer and not 0xdead
+                uint32_t* w = static_cast<uint32_t*>(t->contents());
+                const uint64_t words = t->buffer()->length() / 4;
+                for (uint64_t i = 0; i < words; i++) w[i] = canary;
+                const uint32_t groups[3] = {W / 8, H / 2, D - 1}, local82[3] = {8, 2, 1};
+                auto cb = runTex(is3d ? kernels::tex_fill_3d_air : kernels::tex_fill_arr_air, groups, local82, Bindings{{}, {t.get()}});
+                uint32_t right = 0, covered = 0, leftCanary = 0, left = 0, gapCanary = 0, gap = 0;
+                const uint64_t slice = t->sliceBytes(), row = t->bytesPerRow();
+                for (uint32_t z = 0; z < D; z++) {
+                    const uint8_t* base = static_cast<const uint8_t*>(t->contents()) + z * slice;
+                    for (uint32_t y = 0; y < H; y++)
+                        for (uint32_t x = 0; x < W; x++) {
+                            uint32_t v[4];
+                            memcpy(v, base + y * row + x * 16, 16);
+                            if (z + 1 < D) {
+                                covered++;
+                                right += v[0] == x && v[1] == y && v[2] == z && v[3] == 0xdeadu;
+                            } else {
+                                left++;
+                                leftCanary += v[0] == canary && v[1] == canary && v[2] == canary && v[3] == canary;
+                            }
+                        }
+                    // every word of the slice no texel names: each row's padding past its 16 pixels, and the rows past H
+                    for (uint64_t b = 0; b + 4 <= slice; b += 4) {
+                        if (b / row < H && b % row < uint64_t(W) * 16) continue;
+                        gap++;
+                        uint32_t v;
+                        memcpy(&v, base + b, 4);
+                        gapCanary += v == canary;
+                    }
+                }
+                report(completed(*cb) && right == covered && leftCanary == left && gapCanary == gap && gap > 0,
+                       label + ": " + std::to_string(right) + " of " + std::to_string(covered) + " texels their own (x, y, layer), " +
+                           std::to_string(leftCanary) + " of " + std::to_string(left) + " of the last layer canary, " + std::to_string(gapCanary) + " of " +
+                           std::to_string(gap) + " words of padding and between layers canary" + status(*cb, gpu));
             }
 
             // 7d. the four kernels compiled on the phone: the same words, layout and texture fields as the host's

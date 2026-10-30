@@ -82,7 +82,7 @@ uint32_t log2u(uint32_t v) {
 const char* elementName(uint8_t e) { return e == kElemFloat ? "float" : e == kElemUint ? "uint" : e == kElemInt ? "int" : "?"; }
 
 std::string dimName(const KernelTexture& t) {
-    const char* d = t.dim == kTexDim1D ? "1D" : t.dim == kTexDim2D ? "2D" : t.dim == kTexDim3D ? "3D" : t.dim == kTexDimCube ? "a cube" : "an unknown dimension";
+    const char* d = t.dim == kTexDim1D ? "1D" : t.dim == kTexDim2D ? "2D" : t.dim == kTexDim3D ? "3D" : t.dim == kTexDimCube ? "a cube" : t.dim == kTexDimMS ? "2D multisample" : "an unknown dimension";
     return std::string(d) + (t.isArray ? " array" : "");
 }
 
@@ -205,8 +205,14 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
             return refuse(why, std::string(k.name) + ": no texture bound at index " + n(i));
         }
         const Texture* tex = bindings.textures[i];
-        if (t.dim != kTexDim2D || t.isArray != 0 || tex->type() != TextureType::k2D) {
-            return refuse(why, std::string(k.name) + " addresses texture " + n(i) + " as " + dimName(t) + "; texture " + n(i) + " is 2D");
+        // an image is stored through storageDescriptor, which knows the 2D, 2D-array and 3D layouts (and a cube's
+        // faces, but Metal has no writable cube in a kernel's signature that reaches here as one); a sampled texture is
+        // read through the same descriptor a draw uses, so every type a draw takes
+        const bool storable = tex->type() == TextureType::k2D || tex->type() == TextureType::k2DArray || tex->type() == TextureType::k3D;
+        if (!tex->isShaped(t) || (t.kind == kTexImage && !storable)) {
+            return refuse(why, std::string(k.name) + " addresses texture " + n(i) + " as " + dimName(t) + (t.kind == kTexImage ? " image" : "") +
+                                   "; texture " + n(i) + " is of type " + n(uint32_t(tex->type())) +
+                                   ": a kernel stores into 2D, 2D-array and 3D textures and samples every type, each as itself");
         }
         if (t.element != tex->info().element) {
             return refuse(why, "texture " + n(i) + " is " + tex->info().name + " (" + elementName(tex->info().element) + "); " + k.name +
