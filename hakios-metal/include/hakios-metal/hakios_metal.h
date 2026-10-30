@@ -439,6 +439,10 @@ int hakios_metal_cb_dispatch_indirect(hakios_metal_cb *cb, hakios_metal_kernel *
  * words at OFFSET of ARGS when the GPU runs it (MTLDrawPrimitivesIndirectArguments, or the indexed form for an indexed
  * draw), and the call's own counts are not read; the index buffer, type and offset still are. That draw alone. */
 void hakios_metal_cb_set_indirect(hakios_metal_cb *cb, hakios_metal_buffer *args, uint64_t offset);
+/* OTHER's recorded work after CB's, as if recorded on CB (a parallel render encoder's sub-encoders, appended in the
+ * order they were made): OTHER is left empty, to be freed uncommitted. -1 with the reason, the error OTHER ended in
+ * among them (CB ends in it too). */
+int hakios_metal_cb_append(hakios_metal_cb *cb, hakios_metal_cb *other);
 /* setThreadgroupMemoryLength:atIndex: 0 for the dispatches that follow on CB: LENGTH bytes for a kernel's
  * [[threadgroup(0)]] argument, given past its static threadgroup arrays (a kernel without the argument ignores it) */
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb *cb, unsigned length);

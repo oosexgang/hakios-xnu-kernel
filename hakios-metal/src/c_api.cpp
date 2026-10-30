@@ -694,6 +694,14 @@ int hakios_metal_cb_dispatch_indirect(hakios_metal_cb* cb, hakios_metal_kernel* 
 
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb* cb, unsigned length) { cb->threadgroupLength = length; }
 
+int hakios_metal_cb_append(hakios_metal_cb* cb, hakios_metal_cb* other) {
+    if (!cb->cb->append(*other->cb)) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    return 0;
+}
+
 void hakios_metal_cb_set_indirect(hakios_metal_cb* cb, hakios_metal_buffer* args, uint64_t offset) {
     cb->indirect = args != nullptr ? args->buffer : nullptr;
     cb->indirectOffset = offset;

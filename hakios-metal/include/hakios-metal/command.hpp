@@ -106,6 +106,11 @@ public:
     void keep(std::shared_ptr<const Buffer> b) { kept_.push_back(std::move(b)); }
     // anything else it uses (a compiled kernel's words), the same way
     void keepAlive(std::shared_ptr<const void> p) { keptAny_.push_back(std::move(p)); }
+    // OTHER's recorded work after this one's, as if it had been recorded here: its packets, what it names and what it
+    // keeps alive -- a parallel render encoder's sub-encoders each record into a command buffer of their own, from any
+    // thread in any order, and are appended in the order they were made. OTHER is left empty and is not committed; an
+    // error it ended in is this one's. False after commit (of either).
+    bool append(CommandBuffer& other);
 
 private:
     friend class CommandQueue;

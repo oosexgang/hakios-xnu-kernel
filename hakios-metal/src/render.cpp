@@ -2316,6 +2316,26 @@ void CommandBuffer::useAttachments(const RenderPass& pass) {
 }
 
 // the open pass's tail: what puts its colour and depth in memory, before anything else is recorded or the buffer runs
+bool CommandBuffer::append(CommandBuffer& other) {
+    if (status_ > kEnqueued || other.status_ > kEnqueued) {
+        return fail("append after commit");
+    }
+    if (!other.error_.empty()) {
+        return fail(other.error_);
+    }
+    closePass();         // each pass ends in its own stream: nothing of this one's continues into the other's
+    other.closePass();
+    appendStream(stream_, other.stream_);
+    other.stream_ = pm4::Stream{};
+    uses_.insert(uses_.end(), other.uses_.begin(), other.uses_.end());
+    kept_.insert(kept_.end(), other.kept_.begin(), other.kept_.end());
+    keptAny_.insert(keptAny_.end(), other.keptAny_.begin(), other.keptAny_.end());
+    other.uses_.clear();
+    other.kept_.clear();
+    other.keptAny_.clear();
+    return true;
+}
+
 void CommandBuffer::closePass() {
     if (open_ == nullptr) {
         return;

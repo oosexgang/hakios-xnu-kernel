@@ -4609,3 +4609,38 @@ TEST(an_indirect_draw_reads_its_arguments_when_it_runs) {
     CHECK(bad->status() != CommandBuffer::kCompleted);
     CHECK(bad->error().find("at a multiple of 4") != std::string::npos);
 }
+
+// A parallel render encoder's sub-encoders record into command buffers of their own and are appended in the order they
+// were made: append(other) takes OTHER's packets, uses and kept objects as if recorded here. The twin is the order: A
+// (3 vertices) then B (6) leaves B's draw last, B then A leaves A's. An error OTHER ended in is the parent's.
+TEST(append_runs_another_command_buffers_work_after_this_ones) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Program p = handProgram();
+    for (const bool aFirst : {true, false}) {
+        auto parent = r.queue->commandBuffer();
+        auto a = r.queue->commandBuffer();
+        auto b = r.queue->commandBuffer();
+        CHECK(a->draw(p, pass, wholeDraw(3), Bindings{}, Bindings{}));
+        CHECK(b->draw(p, pass, wholeDraw(6), Bindings{}, Bindings{}));
+        CHECK(parent->append(aFirst ? *a : *b));
+        CHECK(parent->append(aFirst ? *b : *a));
+        const uint64_t before = r.fake->stats().draws;
+        parent->commit();
+        parent->waitUntilCompleted();
+        CHECK(parent->status() == CommandBuffer::kCompleted);
+        FakeGpu::Stats s = r.fake->stats();
+        CHECK_EQ(s.faults, 0u);
+        CHECK_EQ(s.draws - before, 2u);
+        CHECK_EQ(s.lastDraw.numIndices, aFirst ? 6u : 3u);
+    }
+    auto parent = r.queue->commandBuffer();
+    auto bad = r.queue->commandBuffer();
+    Draw zero = wholeDraw(3);
+    zero.vertexCount = 0;
+    CHECK(!bad->draw(p, pass, zero, Bindings{}, Bindings{}));
+    CHECK(!parent->append(*bad));
+    CHECK(parent->error().find("a draw of 0 vertices") != std::string::npos);
+}
