@@ -161,6 +161,8 @@ hakios_metal_texture *hakios_metal_texture_new_3d(hakios_metal_device *device, u
  * Z the layer (-replaceRegion:...slice:'s slice) */
 hakios_metal_texture *hakios_metal_texture_new_array(hakios_metal_device *device, unsigned pixel_format, unsigned width, unsigned height,
     unsigned layers, unsigned usage);
+/* a cube (MTLTextureTypeCube) of SIZE x SIZE faces, one level, sampled alone; face f (Metal's slice) is the slice copies' Z */
+hakios_metal_texture *hakios_metal_texture_new_cube(hakios_metal_device *device, unsigned pixel_format, unsigned size, unsigned usage);
 unsigned hakios_metal_texture_depth(hakios_metal_texture *texture);   /* a 3D texture's slices, a 2D array's layers, else 1 */
 int hakios_metal_texture_replace_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,
     const void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);

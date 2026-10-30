@@ -180,9 +180,15 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     // 3D level 0): CoreAnimation's colour lookup tables, read by fixed_frag's 3D sample.
     // A 2D array is the same slices as layers (fd6_layout.c: a level's layers each layer_size apart, one level here)
     // under the TP's 2D type with DEPTH the layer count (fdl6_view_init's array view); DEPTH carries its layers.
-    const bool slices = desc.type == TextureType::k3D || desc.type == TextureType::k2DArray;
+    // A cube is a 2D array of its 6 faces in Metal's order (+X, -X, +Y, -Y, +Z, -Z), which is the TP's layer order too,
+    // under the cube type with DEPTH the layers over 6 (fd6_view.c:178-182)
+    const bool slices = desc.type == TextureType::k3D || desc.type == TextureType::k2DArray || desc.type == TextureType::kCube;
     if (desc.type != TextureType::k2D && desc.type != TextureType::k1D && !slices) {
-        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): 1D (0), 2D (2), 2D array (3) and 3D (7) are served");
+        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): 1D (0), 2D (2), 2D array (3), cube (5) and 3D (7) are served");
+        return nullptr;
+    }
+    if (desc.type == TextureType::kCube && (desc.depth != 6 || desc.width != desc.height)) {
+        refuse(why, "a cube of " + n(desc.width) + " x " + n(desc.height) + " with " + n(desc.depth) + " faces: square faces, 6 of them");
         return nullptr;
     }
     if (slices && (desc.depth == 0 || desc.depth > 2048 || desc.mipLevels != 1)) {
@@ -241,7 +247,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         return nullptr;
     }
     if (slices && (info->depth || info->twoPlane || info->blockW > 1 || desc.usage != kTextureUsageRead)) {
-        refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
+        refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : desc.type == TextureType::kCube ? "cube " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
                         ": one of an uncompressed colour format, sampled alone, is served");
         return nullptr;
     }
@@ -339,13 +345,15 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
 }
 
 uint64_t Texture::sliceBytes() const {
-    return desc_.type == TextureType::k3D || desc_.type == TextureType::k2DArray ? (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096 : 0;
+    return desc_.type == TextureType::k3D || desc_.type == TextureType::k2DArray || desc_.type == TextureType::kCube ? (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096 : 0;
 }
 
 namespace {
 bool slicesFit(const Texture& t, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, uint64_t bytesPerRow, uint64_t bytesPerImage,
                std::string* why) {
-    if (t.type() != TextureType::k3D && t.type() != TextureType::k2DArray) return refuse(why, "slices of a texture that is neither 3D nor a 2D array");
+    if (t.type() != TextureType::k3D && t.type() != TextureType::k2DArray && t.type() != TextureType::kCube) {
+        return refuse(why, "slices of a texture that is not 3D, a 2D array or a cube");
+    }
     if (t.contents() == nullptr) return refuse(why, "the texture's memory is mapped nowhere in this process");
     if (uint64_t(z) + d > t.depth() || d == 0) {
         return refuse(why, n(d) + " slices from " + n(z) + " of a " + (t.type() == TextureType::k3D ? "3D texture " : "2D array ") + n(t.depth()) +
@@ -397,6 +405,12 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_3D);
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes())) | A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t(sliceBytes()));
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
+    }
+    if (desc_.type == TextureType::kCube) {
+        // a cube view (fd6_view.c:178-182, 247-249): TYPE CUBE, DEPTH the layers over 6, ARRAY_PITCH one face
+        d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_CUBE);
+        d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes()));
+        d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth / 6);
     }
     if (desc_.type == TextureType::k2DArray) {
         // an array view (fd6_view.c:172-177, 247-249): TYPE 2D, DEPTH the layers, ARRAY_PITCH one layer

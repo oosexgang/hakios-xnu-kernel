@@ -595,12 +595,13 @@ bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTe
         const bool asBound = (kt.dim == kTexDim2D && !kt.isArray && tex->type() == TextureType::k2D) ||
                              (kt.dim == kTexDim2D && kt.isArray && tex->type() == TextureType::k2DArray) ||
                              (kt.dim == kTexDim1D && !kt.isArray && tex->type() == TextureType::k1D) ||
-                             (kt.dim == kTexDim3D && tex->type() == TextureType::k3D);
+                             (kt.dim == kTexDim3D && tex->type() == TextureType::k3D) ||
+                             (kt.dim == kTexDimCube && !kt.isArray && tex->type() == TextureType::kCube);
         if (!asBound) {
             return refuse(why, name + " samples texture " + n(t) + " as " +
-                                   (kt.dim == kTexDim1D ? "1D" : kt.dim == kTexDim2D ? "2D" : kt.dim == kTexDim3D ? "3D" : "another kind") +
+                                   (kt.dim == kTexDim1D ? "1D" : kt.dim == kTexDim2D ? "2D" : kt.dim == kTexDim3D ? "3D" : kt.dim == kTexDimCube ? "a cube" : "another kind") +
                                    (kt.isArray ? " array" : "") + " and texture " + n(t) + " is of type " + n(uint32_t(tex->type())) +
-                                   ": 1D, 2D, 2D array and 3D, each as itself, are served in a draw");
+                                   ": 1D, 2D, 2D array, cube and 3D, each as itself, are served in a draw");
         }
         if (kt.element != tex->info().element) {
             return refuse(why, "texture " + n(t) + " is " + tex->info().name + " (" + elementOf(tex->info().element) + "); " + name + " reads it as texture2d<" +

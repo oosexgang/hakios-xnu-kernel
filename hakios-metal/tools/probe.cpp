@@ -57,6 +57,7 @@
 #include "../tests/fixtures/tri_tex2da_fs_air.hpp"
 #include "../tests/fixtures/tri_pntc_fs_air.hpp"
 #include "../tests/fixtures/tri_pt_vs_air.hpp"
+#include "../tests/fixtures/tri_cube_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
@@ -2087,6 +2088,62 @@ int main(int argc, char** argv) {
                 report(drew && completed(*cb) && exact == judged && judged > 3000,
                        "tri_tex2da over a 4x4x2 2D array at layer 1: " + std::to_string(exact) + " of " + std::to_string(judged) +
                            " pixels their texel exactly (" + std::to_string(layer0) + " layer 0's)" + first + (drew ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
+        // 9j5. a cube, sampled: 4x4 faces, face f all one colour (f+1, 0x20*f, 0xff - 0x20*f, ff), read by tri_cube_fs along
+        // each axis in turn (+X, -X, +Y, -Y, +Z, -Z from a constant buffer). The whole target is the face the axis names:
+        // Metal's face order, which is the layer order the cube view reads.
+        {
+            TextureDesc cd;
+            cd.type = TextureType::kCube;
+            cd.width = cd.height = 4;
+            cd.depth = 6;
+            std::string cwhy;
+            auto cube = Texture::make(gpu, cd, &cwhy);
+            uint32_t faces[6][16];
+            for (uint32_t f = 0; f < 6; f++)
+                for (uint32_t k = 0; k < 16; k++) faces[f][k] = 0xff000000u | (0xffu - 0x20u * f) << 16 | (0x20u * f) << 8 | (f + 1);
+            Sampler csmp;
+            auto dir = newBuffer(gpu, 16, &cwhy);
+            if (cube == nullptr || dir == nullptr || !cube->replaceSlices(0, 0, 0, 4, 4, 6, faces, 16, 64, &cwhy) || !makeSampler(SamplerDesc{}, &csmp, &cwhy)) {
+                report(false, "cube: a 4x4 cube: " + cwhy);
+            } else {
+                const Program cubeProg{kernels::tri_flat_vs_air, kernels::tri_cube_fs_air, Linkage{}, "tri_cube"};
+                const float axes[6][4] = {{1, 0, 0, 0}, {-1, 0, 0, 0}, {0, 1, 0, 0}, {0, -1, 0, 0}, {0, 0, 1, 0}, {0, 0, -1, 0}};
+                uint32_t rightFaces = 0;
+                std::string detail;
+                bool drewAll = true;
+                for (uint32_t f = 0; f < 6; f++) {
+                    memcpy(dir->contents(), axes[f], 16);
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Bindings fsb;
+                    fsb.buffers = {Binding{dir.get(), 0}};
+                    fsb.textures = {cube.get()};
+                    fsb.samplers = {&csmp};
+                    auto cb = queue->commandBuffer();
+                    const bool drew = cb->draw(cubeProg, rp, drawOf(0, 6), Bindings{}, fsb);
+                    if (drew) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    } else {
+                        drewAll = false;
+                        detail = "; " + cb->error();
+                    }
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t right = 0, px0 = 0;
+                    for (uint32_t j = 0; j < H; j++)
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                            if (i == 0 && j == 0) px0 = px;
+                            right += px == faces[f][0];
+                        }
+                    if (right == W * H && completed(*cb)) rightFaces++;
+                    else if (detail.empty()) detail = "; axis " + std::to_string(f) + ": " + std::to_string(right) + " pixels its face, pixel (0, 0) " + hex8(px0);
+                }
+                report(drewAll && rightFaces == 6, "tri_cube along the six axes of a 4x4 cube: " + std::to_string(rightFaces) + " of 6 draws the whole target the face the axis names" + detail);
             }
         }
         // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D

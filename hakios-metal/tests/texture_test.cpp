@@ -118,8 +118,8 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     }
     // the refusals, each on its sentence
     TextureDesc d;
-    d.type = TextureType::kCube;
-    CHECK(has(refusedMake(r, d), "texture type 5 (Cube): 1D (0), 2D (2), 2D array (3) and 3D (7) are served"));
+    d.type = TextureType::kCubeArray;
+    CHECK(has(refusedMake(r, d), "texture type 6 (CubeArray): 1D (0), 2D (2), 2D array (3), cube (5) and 3D (7) are served"));
     d.type = TextureType::k3D;
     d.mipLevels = 2;
     d.width = d.height = 4;
@@ -600,4 +600,30 @@ TEST(a_2d_array_is_layers_of_a_2d_layout) {
     uint32_t word;
     memcpy(&word, static_cast<const uint8_t*>(t->contents()) + 4096 + 2 * 256 + 3 * 4, 4);
     CHECK_EQ(word, 0x34u);
+}
+
+// A cube: its 6 faces a 2D array's layers in Metal's order, the descriptor the TP's cube type with DEPTH 6 / 6 = 1 and
+// ARRAY_PITCH one face (fdl6_view_init's cube view); faces not square, or not 6, refused
+TEST(a_cube_is_six_faces_under_the_cube_type) {
+    using namespace a6xx;
+    Rig r;
+    TextureDesc d;
+    d.type = TextureType::kCube;
+    d.width = d.height = 4;
+    d.depth = 6;
+    std::string why;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    const TexConst c = t->sampledDescriptor();
+    CHECK_EQ((c.dword[2] & A6XX_TEX_CONST_2_TYPE__MASK) >> A6XX_TEX_CONST_2_TYPE__SHIFT, uint32_t(A6XX_TEX_CUBE));
+    CHECK_EQ((c.dword[5] & A6XX_TEX_CONST_5_DEPTH__MASK) >> A6XX_TEX_CONST_5_DEPTH__SHIFT, 1u);
+    CHECK_EQ((c.dword[3] & A6XX_TEX_CONST_3_ARRAY_PITCH__MASK) >> A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT, 1u);
+    CHECK(t->buffer()->length() >= 6u * 4096);
+    d.height = 8;
+    CHECK(Texture::make(r.gpu, d, &why) == nullptr);
+    CHECK(has(why, "square faces, 6 of them"));
 }
