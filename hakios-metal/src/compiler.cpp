@@ -153,7 +153,9 @@ bool walkTextures(nir_shader* nir, Kernel& k, uint32_t* highestSampler, std::str
                     t->kind = kTexSampled;
                     t->dim = dim;
                     t->isArray = tex->is_array ? 1 : 0;
-                    t->element = elementOf(tex->dest_type);
+                    // a query's result is an integer whatever the texture holds (txs, query_levels...): the class comes
+                    // from what reads its texels, as the fixture writer takes it
+                    if (!nir_tex_instr_is_query(tex)) t->element = elementOf(tex->dest_type);
                     t->bits = 0;
                     t->read = 1;
                     if (nir_tex_instr_need_sampler(tex)) {

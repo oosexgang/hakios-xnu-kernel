@@ -11,6 +11,7 @@
 #include "fixtures/fill_id_air.hpp"
 #include "fixtures/tex_copy_air.hpp"
 #include "fixtures/tex_fill_air.hpp"
+#include "fixtures/tex_size_h_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
 #include "fixtures/tex_fill_h_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -155,6 +156,21 @@ TEST(compiler_without_mesa_refuses_by_name_and_with_it_matches_the_fixture) {
     uint8_t garbage[16] = {'B', 'C', 0xc0, 0xde, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     CHECK(compileAir(garbage, sizeof garbage, &why) == nullptr);
     CHECK(why.find("refused") != std::string::npos);
+}
+
+// A size query is a tex too (txs), its result an integer whatever the texture holds: the texture's class comes from the
+// sample, not from the query that follows it in tex_size_h -- else a half texture is called int and the kernel refused
+// for a disagreement with its own declaration (mediaserverd's splitFg_rgba, which samples a texture and asks its size)
+TEST(a_size_query_after_a_sample_leaves_the_texture_its_class) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the query typing did not run)\n");
+        return;
+    }
+    auto k = compareWithFixture("tex_size_h", kernels::tex_size_h_air, "tex_size_h", "getsize");
+    if (k) {
+        CHECK_EQ(k->kernel.textures[0].element, uint8_t(kElemFloat));
+        CHECK_EQ(k->kernel.textures[0].kind, uint8_t(kTexSampled));
+    }
 }
 
 // The three texture kernels: the fixture writer's walk of the NIR (tools/mesa/ir3-dump.patch) and the core's
