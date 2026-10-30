@@ -157,7 +157,11 @@ int hakios_metal_format_block(unsigned pixel_format, unsigned *block_w, unsigned
  * -replaceRegion:...slice:withBytes:bytesPerRow:bytesPerImage: has them, Z to Z + D - 1 */
 hakios_metal_texture *hakios_metal_texture_new_3d(hakios_metal_device *device, unsigned pixel_format, unsigned width, unsigned height,
     unsigned depth, unsigned usage);
-unsigned hakios_metal_texture_depth(hakios_metal_texture *texture);
+/* a 2D array (MTLTextureType2DArray) of LAYERS, one level, sampled alone; its layers are the slices the _3d copies move,
+ * Z the layer (-replaceRegion:...slice:'s slice) */
+hakios_metal_texture *hakios_metal_texture_new_array(hakios_metal_device *device, unsigned pixel_format, unsigned width, unsigned height,
+    unsigned layers, unsigned usage);
+unsigned hakios_metal_texture_depth(hakios_metal_texture *texture);   /* a 3D texture's slices, a 2D array's layers, else 1 */
 int hakios_metal_texture_replace_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,
     const void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
 int hakios_metal_texture_read_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,

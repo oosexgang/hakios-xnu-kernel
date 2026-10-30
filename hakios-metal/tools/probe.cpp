@@ -54,6 +54,7 @@
 #include "../tests/fixtures/tri_pvt_fs_air.hpp"
 #include "../tests/fixtures/chain_fs_air.hpp"
 #include "../tests/fixtures/tri_tex3d_fs_air.hpp"
+#include "../tests/fixtures/tri_tex2da_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
@@ -2028,6 +2029,62 @@ int main(int argc, char** argv) {
                        "tri_tex3d over a 4x4x4 3D texture at slice 2: " + std::to_string(exact) + " of " + std::to_string(judged) +
                            " pixels their texel exactly (" + std::to_string(otherSlice) + " another slice's)" + first +
                            (drew ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
+        // 9j4. a 2D array, sampled: a 4x4x2 RGBA8 array, texel (x, y) of layer l the bytes x y l ff, read by tri_tex2da_fs at
+        // layer 1 under nearest. Every judged pixel is layer 1's texel (tx, ty); layer 0's says the layer went astray.
+        {
+            TextureDesc ad;
+            ad.type = TextureType::k2DArray;
+            ad.width = ad.height = 4;
+            ad.depth = 2;
+            std::string awhy;
+            auto arr = Texture::make(gpu, ad, &awhy);
+            uint32_t texels[2][4][4];
+            for (uint32_t l = 0; l < 2; l++)
+                for (uint32_t y = 0; y < 4; y++)
+                    for (uint32_t x = 0; x < 4; x++) texels[l][y][x] = 0xff000000u | l << 16 | y << 8 | x;
+            Sampler asmp;
+            if (arr == nullptr || !arr->replaceSlices(0, 0, 0, 4, 4, 2, texels, 16, 64, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
+                report(false, "2d array: a 4x4x2 RGBA8 array: " + awhy);
+            } else {
+                const Program arrProg{kernels::tri_color_vs_air, kernels::tri_tex2da_fs_air, Linkage{}, "tri_tex2da"};
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {arr.get()};
+                fsb.samplers = {&asmp};
+                auto cb = queue->commandBuffer();
+                bool drew = cb->draw(arrProg, rp, drawOf(0, 6), Bindings{}, fsb);
+                if (drew) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t judged = 0, exact = 0, layer0 = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const double x = i + 0.5, y = j + 0.5;
+                        const double u = j > i ? (y - x) / 64.0 : y / 64.0, v = j > i ? x / 64.0 : (x - y) / 64.0;
+                        const double fu = 4 * u, fv = 4 * v;
+                        if (std::fabs(fu - std::round(fu)) < 1.0 / 64 || std::fabs(fv - std::round(fv)) < 1.0 / 64) continue;
+                        const uint32_t tx = std::min(3u, uint32_t(std::max(0.0, std::floor(fu)))), ty = std::min(3u, uint32_t(std::max(0.0, std::floor(fv))));
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        judged++;
+                        if (px == texels[1][ty][tx]) exact++;
+                        else {
+                            layer0 += px == texels[0][ty][tx];
+                            if (first.empty()) first = "; the first off (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", want " + hex8(texels[1][ty][tx]);
+                        }
+                    }
+                }
+                report(drew && completed(*cb) && exact == judged && judged > 3000,
+                       "tri_tex2da over a 4x4x2 2D array at layer 1: " + std::to_string(exact) + " of " + std::to_string(judged) +
+                           " pixels their texel exactly (" + std::to_string(layer0) + " layer 0's)" + first + (drew ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
         // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D

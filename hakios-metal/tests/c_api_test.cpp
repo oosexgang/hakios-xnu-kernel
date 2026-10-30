@@ -230,7 +230,7 @@ TEST(c_api_texture_replace_and_read_convert_the_stride) {
     CHECK(strstr(hakios_metal_error(), "bytesPerRow 399 is shorter than a row of 100 pixels (400 bytes)") != nullptr);
     hakios_metal_texture_free(t);
     CHECK(hakios_metal_texture_new(d, 5, 70, 4, 4, 1) == nullptr);   // a cube
-    CHECK(strstr(hakios_metal_error(), "texture type 5 (Cube): 1D (0), 2D (2) and 3D (7) are served") != nullptr);
+    CHECK(strstr(hakios_metal_error(), "texture type 5 (Cube): 1D (0), 2D (2), 2D array (3) and 3D (7) are served") != nullptr);
     CHECK(hakios_metal_texture_new(d, 2, 13, 4, 4, 1) == nullptr);   // R8Uint
     CHECK(strstr(hakios_metal_error(), "pixel format 13: not one of the formats served") != nullptr);
     CHECK(hakios_metal_texture_new(d, 2, 70, 0, 4, 1) == nullptr);

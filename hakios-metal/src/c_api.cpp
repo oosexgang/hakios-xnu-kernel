@@ -215,6 +215,26 @@ hakios_metal_texture* hakios_metal_texture_new_3d(hakios_metal_device* d, unsign
     return r;
 }
 
+hakios_metal_texture* hakios_metal_texture_new_array(hakios_metal_device* d, unsigned pixelFormat, unsigned width, unsigned height, unsigned layers,
+                                                     unsigned usage) {
+    TextureDesc desc;
+    desc.type = TextureType::k2DArray;
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.depth = layers;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
 unsigned hakios_metal_texture_depth(hakios_metal_texture* t) { return t->texture->depth(); }
 
 int hakios_metal_texture_replace_3d(hakios_metal_texture* t, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, const void* bytes,

@@ -118,15 +118,15 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     }
     // the refusals, each on its sentence
     TextureDesc d;
-    d.type = TextureType::k2DArray;
-    CHECK(has(refusedMake(r, d), "texture type 3 (2DArray): 1D (0), 2D (2) and 3D (7) are served"));
+    d.type = TextureType::kCube;
+    CHECK(has(refusedMake(r, d), "texture type 5 (Cube): 1D (0), 2D (2), 2D array (3) and 3D (7) are served"));
     d.type = TextureType::k3D;
     d.mipLevels = 2;
     d.width = d.height = 4;
     CHECK(has(refusedMake(r, d), "a 3D texture 1 deep of 2 levels: 1 to 2048 slices of one level are served"));
     d = TextureDesc{};
     d.depth = 2;
-    CHECK(has(refusedMake(r, d), "a depth of 2 for a texture of type 2: only a 3D texture has slices"));
+    CHECK(has(refusedMake(r, d), "a depth of 2 for a texture of type 2: only a 3D texture or a 2D array has slices"));
     // a 1D texture is one row, under the TP's 1D type
     d = TextureDesc{};
     d.type = TextureType::k1D;
@@ -572,4 +572,32 @@ TEST(a_3d_texture_is_slices_of_a_2d_layout) {
     CHECK(memcmp(in, out, sizeof in) == 0);
     CHECK(!t->replaceSlices(0, 0, 2, 4, 4, 2, in, 16, 64, &why));
     CHECK(has(why, "2 slices from 2 of a 3D texture 3 deep"));
+}
+
+// A 2D array, one level: its layers laid out as a 3D texture's slices (4096-aligned each), its descriptor the TP's 2D
+// type with DEPTH the layers and ARRAY_PITCH one layer, and no MIN_LAYERSZ (an array view's, fdl6_view_init)
+TEST(a_2d_array_is_layers_of_a_2d_layout) {
+    using namespace a6xx;
+    Rig r;
+    TextureDesc d;
+    d.type = TextureType::k2DArray;
+    d.width = d.height = 4;
+    d.depth = 2;
+    std::string why;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    const TexConst c = t->sampledDescriptor();
+    CHECK_EQ((c.dword[2] & A6XX_TEX_CONST_2_TYPE__MASK) >> A6XX_TEX_CONST_2_TYPE__SHIFT, uint32_t(A6XX_TEX_2D));
+    CHECK_EQ((c.dword[3] & A6XX_TEX_CONST_3_ARRAY_PITCH__MASK) >> A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT, 1u);
+    CHECK_EQ(c.dword[3] & A6XX_TEX_CONST_3_MIN_LAYERSZ__MASK, 0u);
+    CHECK_EQ((c.dword[5] & A6XX_TEX_CONST_5_DEPTH__MASK) >> A6XX_TEX_CONST_5_DEPTH__SHIFT, 2u);
+    const uint32_t layer1[16] = {0x11, 0x12, 0x13, 0x14, 0x21, 0x22, 0x23, 0x24, 0x31, 0x32, 0x33, 0x34, 0x41, 0x42, 0x43, 0x44};
+    CHECK(t->replaceSlices(0, 0, 1, 4, 4, 1, layer1, 16, 64, &why));
+    uint32_t word;
+    memcpy(&word, static_cast<const uint8_t*>(t->contents()) + 4096 + 2 * 256 + 3 * 4, 4);
+    CHECK_EQ(word, 0x34u);
 }
