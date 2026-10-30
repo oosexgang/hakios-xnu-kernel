@@ -1056,6 +1056,19 @@ TEST(a_kernel_asking_whether_a_value_is_uniform_compiles) {
     if (k == nullptr) std::printf("       %s\n", why.c_str());
 }
 
+// pack_float_to_unorm4x8 over a half4 (air.pack.unorm4x8.v4f16, VideoToolbox's scaler that the live wallpaper runs):
+// refused by the front end until now, and ir3 lowers the pack itself; the probe runs it on the GPU.
+TEST(a_kernel_packing_halves_into_bytes_compiles) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("pack_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: bytes_id did not run)\n");

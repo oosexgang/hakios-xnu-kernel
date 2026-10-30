@@ -753,8 +753,12 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
     for (const FourCC& f : kFourCCs) {
         if (f.code == s.pixelFormat) surfaceBytes = f.bytes;
     }
+    // A texture of a wider format names the same bytes as fewer, wider pixels: the live wallpaper's kernels write a
+    // 'BGRA' surface through RGBA32Uint, four pixels a texel, a width of a quarter. That is the surface's rows as they
+    // are too, so what is asked is that the texture's row fits the surface's, not that the two sizes match.
     const bool plainColour = info->blockW == 1 && !info->depth && !info->twoPlane;
-    if (s.pixelFormat != 0 && !(surfaceBytes != 0 && plainColour && info->bytesPerPixel == surfaceBytes)) {
+    const bool rowFits = uint64_t(desc.width) * info->bytesPerPixel <= uint64_t(s.width) * surfaceBytes;
+    if (s.pixelFormat != 0 && !(surfaceBytes != 0 && plainColour && (info->bytesPerPixel == surfaceBytes || (info->bytesPerPixel > surfaceBytes && rowFits)))) {
         refuse(why, name + "'s pixel format " + n(s.pixelFormat) + " is not " + info->name + "'s: a surface is read in a colour format of the bytes a "
                         "pixel its FourCC names ('BGRA' and 'RGBA' 4, 'LA08' and 'L00h' 2, 'L008' 1, 'L00f' 4, 'RGhA' 8, 'RGfA' 16 ...)");
         return nullptr;

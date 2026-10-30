@@ -4858,3 +4858,27 @@ TEST(a_surface_reads_in_the_formats_of_its_fourccs_size) {
     CHECK(Texture::wrapSurface(*r.gpu, 9, four, &why) == nullptr);
     CHECK(has(why, "IOSurface 9's pixel format 1094861636 is not RGBA8Unorm's"));
 }
+
+// A wider format over a surface names its bytes as fewer pixels (the live wallpaper writes a 'BGRA' surface through
+// RGBA32Uint, a texel for four pixels): accepted while the texture's row fits the surface's -- 16 RGBA32Uint texels over
+// 64 BGRA pixels -- and refused when it does not (17). A narrower format than the surface's is still refused.
+TEST(a_wider_format_reads_a_surface_as_fewer_pixels) {
+    Rig r;
+    r.fake->addSurface(10, 64, 64, 256, 0x42475241u);
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA32Uint;
+    d.width = 16;
+    d.height = 64;
+    d.usage = kTextureUsageWrite;
+    std::string why;
+    auto t = Texture::wrapSurface(*r.gpu, 10, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) std::printf("       %s\n", why.c_str());
+    TextureDesc wide = d;
+    wide.width = 17;
+    CHECK(Texture::wrapSurface(*r.gpu, 10, wide, &why) == nullptr);
+    TextureDesc narrow = d;
+    narrow.format = PixelFormat::kRG8Unorm;
+    narrow.width = 64;
+    CHECK(Texture::wrapSurface(*r.gpu, 10, narrow, &why) == nullptr);
+}

@@ -34,6 +34,7 @@
 #include "../tests/fixtures/clz_id_bc.hpp"
 #include "../tests/fixtures/bytes_id_bc.hpp"
 #include "../tests/fixtures/uniform_id_bc.hpp"
+#include "../tests/fixtures/pack_id_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
@@ -787,6 +788,8 @@ int main(int argc, char** argv) {
                  return sum + (rev & 0xff00u);
              }},
             {"uniform_id", kernels::uniform_id_bc, kernels::uniform_id_bc_size, [](uint32_t) -> uint32_t { return 2u; }},
+            {"pack_id", kernels::pack_id_bc, kernels::pack_id_bc_size,
+             [](uint32_t g) -> uint32_t { return (g & 255) | ((g >> 2 & 255) << 8) | ((255 - (g & 255)) << 16) | (128u << 24); }},
         };
         for (const Case& k : cases) {
             std::string kwhy;
