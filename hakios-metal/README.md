@@ -1,6 +1,6 @@
 # hakios-metal
 
-The Metal driver of [hakios](https://github.com/oosexgang/hakios-xnu-kernel/tree/hakios), in C++: Metal's command model on the phone's
+The Metal driver of [hakios](https://github.com/oosexgang/hakios-xnu-kernel), in C++: Metal's command model on the phone's
 Adreno GPU, through the kernel's own GPU driver (HakiosGPU), without Mesa in between.
 
 What there is today, and what each part is checked by:
