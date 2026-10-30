@@ -1292,6 +1292,20 @@ constexpr uint32_t loadState6_0(uint32_t dstOff, a6xx_state_type type, a6xx_stat
            CP_LOAD_STATE6_0_STATE_BLOCK(block) | CP_LOAD_STATE6_0_NUM_UNIT(numUnit);
 }
 
+// CP_EXEC_CS_INDIRECT word 3 (A5XX_CP_EXEC_CS_INDIRECT_3, adreno_pm4.xml.h:2574-2584, the form turnip emits on a6xx,
+// tu_cmd_buffer.cc:7002-7008): the local size, each axis minus one, beside the group counts' address in words 1-2
+inline constexpr uint32_t A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEX__MASK = 0x00000ffc;
+inline constexpr uint32_t A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEX__SHIFT = 2;
+inline constexpr uint32_t A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEY__MASK = 0x003ff000;
+inline constexpr uint32_t A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEY__SHIFT = 12;
+inline constexpr uint32_t A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEZ__MASK = 0xffc00000;
+inline constexpr uint32_t A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEZ__SHIFT = 22;
+constexpr uint32_t execCsIndirect3(uint32_t localX, uint32_t localY, uint32_t localZ) {
+    return field(localX - 1, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEX__SHIFT, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEX__MASK) |
+           field(localY - 1, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEY__SHIFT, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEY__MASK) |
+           field(localZ - 1, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEZ__SHIFT, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEZ__MASK);
+}
+
 // HLSQ_CS_NDRANGE_0 from the local size itself (the fields hold it minus one)
 constexpr uint32_t ndrange0(uint32_t dimensions, uint32_t localX, uint32_t localY, uint32_t localZ) {
     return A6XX_HLSQ_CS_NDRANGE_0_KERNELDIM(dimensions) | A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX(localX - 1) |

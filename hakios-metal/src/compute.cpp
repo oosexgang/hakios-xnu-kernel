@@ -96,14 +96,16 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     return encode(stream, k, groups, local, b, immediates, program, table, tableCpu, why, o);
 }
 
-bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], const uint32_t local[3], const Bindings& bindings,
-            const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+namespace {
+// the dispatch, direct (GROUPS) or indirect (the counts at INDIRECT, GROUPS then zeros)
+bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], uint64_t indirect, const uint32_t local[3], const Bindings& bindings,
+               const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
     static const char* const axis = "xyz";
     const std::vector<Binding>& buffers = bindings.buffers;
     // --- the grid ---
     uint64_t threads = 1;
     for (int i = 0; i < 3; i++) {
-        if (groups[i] == 0) {
+        if (indirect == 0 && groups[i] == 0) {
             return refuse(why, std::string("a grid of 0 work groups along ") + axis[i]);
         }
         if (local[i] == 0 || local[i] > kMaxLocalThreads) {
@@ -335,6 +337,11 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
             return refuse(why, std::string(k.name) + ": the work group count's slot is outside its constants");
         }
         for (int i = 0; i < 3; i++) imm[size_t(at) + i] = groups[i];
+        if (indirect != 0 && k.numwgConstRegid % 4 != 0) {
+            // the counts reach the slot by a vec4 load of the copy (below), so the slot has to be a vec4's start
+            return refuse(why, std::string(k.name) + ": its work group count is at c" + n(k.numwgConstRegid / 4) + "." + "xyzw"[k.numwgConstRegid % 4] +
+                                   ", not a vec4's start: an indirect dispatch loads the counts a vec4 at a time");
+        }
     }
     uint32_t immUnits = uint32_t(imm.size() / 4);
     if (immUnits != 0 && k.immediatesOffsetVec4 + immUnits > k.constlen) {
@@ -482,6 +489,32 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         reg64(stream, REG_A6XX_SP_CS_TEX_CONST, table + kTableTexConstAt);
         reg(stream, REG_A6XX_SP_CS_TEX_COUNT, numTex);
     }
+    if (indirect != 0) {
+        // the counts into the table's two vec4s, as turnip does for an offset CP_LOAD_STATE6 cannot read from
+        // (tu_cmd_buffer.cc:6714-6738): wait for what may still write them, copy, have the copies land and the caches
+        // forget the old words, then load each vec4 over what the direct loads above put there. The fourth lanes are
+        // the words those loads had: the slot's own fourth immediate, and the params' work_dim
+        uint32_t* lanes = reinterpret_cast<uint32_t*>(tableCpu + kTableIndirectAt);
+        lanes[3] = 0;
+        if (k.numwgConstRegid != kNoConstRegid) {
+            const size_t at = size_t(k.numwgConstRegid - k.immediatesOffsetVec4 * 4) + 3;
+            lanes[3] = at < imm.size() ? imm[at] : 0;
+        }
+        lanes[7] = params[3];
+        stream.waitForIdle();
+        for (uint32_t v = 0; v < 2; v++) {
+            for (uint32_t i = 0; i < 3; i++) {
+                const uint64_t dst = table + kTableIndirectAt + 16 * v + 4 * i, src = indirect + 4 * i;
+                uint32_t w[5] = {0, uint32_t(dst), uint32_t(dst >> 32), uint32_t(src), uint32_t(src >> 32)};
+                stream.packet(CP_MEM_TO_MEM, w, 5);
+            }
+        }
+        stream.packet(pm4::kWaitMemWrites, nullptr, 0);
+        event(stream, CACHE_INVALIDATE);
+        stream.waitForIdle();
+        if (k.numwgConstRegid != kNoConstRegid) loadIndirect(stream, ST6_CONSTANTS, k.numwgConstRegid / 4, 1, table + kTableIndirectAt);
+        if (k.driverParamsOffsetVec4 >= 0) loadIndirect(stream, ST6_CONSTANTS, uint32_t(k.driverParamsOffsetVec4), 1, table + kTableIndirectAt + 16);
+    }
     if (o.invalidate) {
         // what the CPU or a blit wrote last is what the kernel reads
         event(stream, CACHE_INVALIDATE);
@@ -507,7 +540,10 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         reg(stream, REG_A6XX_SP_FS_INSTRLEN, k.instrlen);
         event(stream, LABEL);
     }
-    {
+    if (indirect != 0) {
+        uint32_t w[4] = {0, uint32_t(indirect), uint32_t(indirect >> 32), execCsIndirect3(local[0], local[1], local[2])};
+        stream.packet(CP_EXEC_CS_INDIRECT, w, 4);
+    } else {
         uint32_t w[4] = {0, groups[0], groups[1], groups[2]};
         stream.packet(CP_EXEC_CS, w, 4);
     }
@@ -529,6 +565,21 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     }
     return true;
 }
+}  // namespace
+
+bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], const uint32_t local[3], const Bindings& bindings,
+            const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+    return encodeAny(stream, k, groups, 0, local, bindings, immediates, program, table, tableCpu, why, o);
+}
+
+bool encodeIndirect(pm4::Stream& stream, const Kernel& k, uint64_t indirect, const uint32_t local[3], const Bindings& bindings,
+                    const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+    if (indirect == 0 || indirect % 4 != 0) {
+        return refuse(why, "an indirect dispatch's counts at " + n(indirect) + ": a buffer's address, a multiple of 4");
+    }
+    const uint32_t none[3] = {0, 0, 0};
+    return encodeAny(stream, k, none, indirect, local, bindings, immediates, program, table, tableCpu, why, o);
+}
 
 }  // namespace compute
 
@@ -541,6 +592,20 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
 
 bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
                              const uint32_t* immediates, const compute::Options& options) {
+    return dispatchAny(k, groups, nullptr, 0, local, bindings, immediates, options);
+}
+
+bool CommandBuffer::dispatchIndirect(const Kernel& k, const Buffer& args, uint64_t offset, const uint32_t* local, const Bindings& bindings,
+                                     const uint32_t* immediates, const compute::Options& options) {
+    if (offset % 4 != 0 || offset + 12 > args.length()) {
+        return fail("an indirect dispatch's counts at " + std::to_string(offset) + " of a " + std::to_string(args.length()) +
+                    "-byte buffer: three words inside it, at a multiple of 4");
+    }
+    return dispatchAny(k, nullptr, &args, offset, local, bindings, immediates, options);
+}
+
+bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const Buffer* args, uint64_t offset, const uint32_t* local,
+                                const Bindings& bindings, const uint32_t* immediates, const compute::Options& options) {
     if (status_ > kEnqueued) {
         return fail("dispatch after commit");
     }
@@ -570,7 +635,10 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         b = &withScratch;
     }
     pm4::Stream added;
-    if (!compute::encode(added, k, groups, loc, *b, immediates, program, table.gpuAddress(), table.contents(), &why, options)) {
+    const bool encoded = args != nullptr ? compute::encodeIndirect(added, k, args->gpuAddress() + offset, loc, *b, immediates, program, table.gpuAddress(),
+                                                                   table.contents(), &why, options)
+                                         : compute::encode(added, k, groups, loc, *b, immediates, program, table.gpuAddress(), table.contents(), &why, options);
+    if (!encoded) {
         return fail(why);
     }
     const std::vector<uint32_t>& w = added.words();
@@ -592,6 +660,7 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         }
     }
     if (scratch != nullptr) use(*scratch, true);
+    if (args != nullptr) use(*args, false);   // the CP reads the counts from it as it runs
     // every texture bound, the kernel's or not (an extra one is harmless to name): its memory is used for the flight and
     // kept alive until completion, written when the kernel stores through it
     for (size_t i = 0; i < bindings.textures.size(); i++) {

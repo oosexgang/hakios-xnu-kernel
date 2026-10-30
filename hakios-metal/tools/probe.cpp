@@ -619,6 +619,41 @@ int main(int argc, char** argv) {
                 report(cb2->status() == CommandBuffer::kCompleted && r2.right == 512 && r2.beyondCanary == 512,
                        "control, fill_id_air over 8 groups: " + describe(r2, 512, 512) + status(*cb2, gpu));
             }
+            // 5d3. the same kernel dispatched indirectly: its counts three words in a buffer at offset 4 (off 16, so the
+            // table's copy is what the driver params load from), written {8, 1, 1} when the dispatch is recorded and
+            // {16, 1, 1} after it and before the commit -- the GPU reads them as it runs, so every word comes out as in
+            // 5d; with the counts left at 8 (the control), half of them, the rest canary
+            {
+                const uint32_t local[3] = {64, 1, 1};
+                auto args = newBuffer(gpu, 64, &why);
+                for (const bool rewrite : {true, false}) {
+                    if (args == nullptr) {
+                        report(false, "indirect dispatch: the argument buffer: " + why);
+                        break;
+                    }
+                    uint32_t* a = static_cast<uint32_t*>(args->contents());
+                    a[1] = 8;
+                    a[2] = 1;
+                    a[3] = 1;
+                    static_cast<uint32_t*>(cbuf->contents())[0] = c;
+                    prefill();
+                    Bindings b;
+                    b.buffers = {Binding{out.get(), 0}, Binding{cbuf.get(), 0}};
+                    auto cb = queue->commandBuffer();
+                    const bool ok = cb->dispatchIndirect(kernels::fill_id_air, *args, 4, local, b);
+                    if (rewrite) a[1] = 16;
+                    if (ok) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    const uint32_t want = rewrite ? words : 512;
+                    Readback r = readBack(*out, want, c, canary);
+                    report(cb->status() == CommandBuffer::kCompleted && r.right == want && (rewrite || r.beyondCanary == words - 512),
+                           std::string(rewrite ? "indirect dispatch of fill_id_air, counts {16, 1, 1} written after recording: "
+                                               : "control, indirect dispatch with the counts left at {8, 1, 1}: ") +
+                               describe(r, want, rewrite ? 0 : words - 512) + status(*cb, gpu));
+                }
+            }
             // 5d2. kernels longer than the instruction cache, of which CP_LOAD_STATE6 preloads at most 127 units and the
             // GPU is to fetch the rest from SP_CS_OBJ_START as it runs. The same chain at three lengths: chain160 fits the
             // preload (the control, first), chain220 just passes it, long_chain is four times it. Every word must be the

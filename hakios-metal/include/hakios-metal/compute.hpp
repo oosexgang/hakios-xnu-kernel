@@ -84,10 +84,15 @@ constexpr uint32_t kTableTexSampAt = 5120;      // kMaxTextureSlots * 16 = 256 b
 constexpr uint32_t kTableBorderColorAt = 5376;  // 128 bytes of zeros
 constexpr uint32_t kTableHoleAt = 5504;         // 64 bytes nobody addresses: what the hole descriptors point at
 constexpr uint32_t kTableTimestampsAt = 5632;   // the two timestamp words the cache flush writes and waits for
+// an indirect dispatch's group counts, copied in by the CP from the caller's buffer (which Metal aligns to 4 bytes,
+// and CP_LOAD_STATE6 reads from 16): two vec4s, one under the kernel's own count slot, one under the driver params,
+// each with the word its fourth lane would otherwise overwrite
+constexpr uint32_t kTableIndirectAt = 5648;
 static_assert(kTableTexConstAt % 64 == 0 && kTableTexSampAt % 16 == 0 && kTableBorderColorAt % 128 == 0, "the tables' alignments");
 static_assert(kTableIbosAt + kMaxIbos * 64 <= kTableTexConstAt && kTableTexConstAt + kMaxTextureSlots * 64 <= kTableTexSampAt &&
               kTableTexSampAt + kMaxTextureSlots * 16 <= kTableBorderColorAt && kTableBorderColorAt + 128 <= kTableHoleAt &&
-              kTableHoleAt + 64 <= kTableTimestampsAt && kTableTimestampsAt + 16 <= kTableBytes, "the table's parts fit");
+              kTableHoleAt + 64 <= kTableTimestampsAt && kTableTimestampsAt + 16 <= kTableIndirectAt && kTableIndirectAt % 16 == 0 &&
+              kTableIndirectAt + 32 <= kTableBytes, "the table's parts fit");
 // An IBO slot ir3 counts but the kernel never addresses (a device buffer at [[buffer(5)]] alone leaves slots 0-4; a
 // sampled texture at [[texture(0)]] beside an image at [[texture(1)]] leaves IBO slot 0) gets a valid one-element buffer
 // descriptor over the table's own kTableHoleAt words rather than zeros: real memory the kernel never names, so a wrong
@@ -142,6 +147,12 @@ bool encode(pm4::Stream& stream, const Kernel& kernel, const uint32_t groups[3],
 bool encode(pm4::Stream& stream, const Kernel& kernel, const uint32_t groups[3], const uint32_t local[3],
             const Bindings& bindings, const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu,
             std::string* why, const Options& options = Options{});
+// dispatchThreadgroupsWithIndirectBuffer:: the group counts are three words at INDIRECT, read by the GPU when it runs
+// the dispatch (written by an earlier one, as like as not), so nothing here can judge them; GROUPS is ignored.
+// Refused besides what the direct form refuses: a kernel whose own count slot is not a vec4 of its own start.
+bool encodeIndirect(pm4::Stream& stream, const Kernel& kernel, uint64_t indirect, const uint32_t local[3], const Bindings& bindings,
+                    const uint32_t* immediates, uint64_t program, uint64_t table, uint8_t* tableCpu, std::string* why,
+                    const Options& options = Options{});
 
 }  // namespace compute
 

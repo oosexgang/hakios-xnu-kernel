@@ -187,6 +187,49 @@ TEST(a_dispatch_gets_private_memory_and_the_threadgroup_memory_its_encoder_sets)
     CHECK(over.error.find("32769 bytes of threadgroup memory: a group has 32768") != std::string::npos);
 }
 
+// dispatchThreadgroupsWithIndirectBuffer:: the counts are read from memory when the GPU runs the dispatch. The twin
+// that shows it: they are changed after the dispatch is recorded and before it is committed, and the dispatch runs the
+// new ones. The driver params' first vec4 is then loaded from the table's copy (the last load into vec4 0 is the
+// indirect one), so a kernel reading its grid sees the same counts; an offset Metal does not allow is refused.
+TEST(an_indirect_dispatch_reads_its_counts_when_it_runs) {
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    auto args = buffer(r, 64, 0);
+    uint32_t* a = static_cast<uint32_t*>(args->contents());
+    a[1] = 5;   // at offset 4: off 16 bytes, so the copy is what makes the load possible
+    a[2] = 2;
+    a[3] = 1;
+    const uint32_t local[3] = {8, 8, 1};
+    auto c = buffer(r, 64, 0x1234);
+    Bindings b{{Binding{out.get(), 0}, Binding{c.get(), 0}}, {}, {}, {}};
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->dispatchIndirect(kernels::fill_id_air, *args, 4, local, b));
+    CHECK(cb->error().empty());
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+    a[1] = 7;   // after recording: the GPU reads this one
+    a[2] = 3;
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    if (s.faults != 0) std::printf("       %s\n", s.lastFault.c_str());
+    CHECK_EQ(s.lastDispatch.groups[0], 7u);
+    CHECK_EQ(s.lastDispatch.groups[1], 3u);
+    CHECK_EQ(s.lastDispatch.groups[2], 1u);
+    bool lastIsIndirect = false;
+    for (const auto& l : s.lastDispatch.consts) {
+        if (l.dstOffVec4 == 0) lastIsIndirect = !l.direct && l.units == 1;
+    }
+    CHECK(lastIsIndirect);
+    // the refusals: an offset off 4, counts that run past the buffer
+    auto bad = r.queue->commandBuffer();
+    CHECK(!bad->dispatchIndirect(kernels::fill_id_air, *args, 2, local, b));
+    auto past = r.queue->commandBuffer();
+    CHECK(!past->dispatchIndirect(kernels::fill_id_air, *args, 56, local, b));
+    CHECK(past->error().find("three words inside it") != std::string::npos);
+}
+
 TEST(a_dispatch_of_fill_id_holds_together_and_the_fake_does_not_run_it) {
     Rig r;
     auto out = buffer(r, 4096, 0xcccccccc);

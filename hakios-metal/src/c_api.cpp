@@ -6,6 +6,7 @@
 #endif
 
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -590,10 +591,12 @@ int hakios_metal_cb_generate_mipmaps(hakios_metal_cb* cb, hakios_metal_texture* 
     return 0;
 }
 
-int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
-                              hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count,
-                              hakios_metal_texture* const* textures, unsigned textureCount,
-                              hakios_metal_sampler* const* samplers, unsigned samplerCount) {
+namespace {
+// the dispatches' shared half: the bindings from the C tables, the dispatch itself (DO), and what has to live until
+// the GPU is done with it
+int dispatchWith(hakios_metal_cb* cb, hakios_metal_kernel* k, hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count,
+                 hakios_metal_texture* const* textures, unsigned textureCount, hakios_metal_sampler* const* samplers, unsigned samplerCount,
+                 const std::function<bool(const Bindings&)>& dispatch) {
     Bindings b;
     b.buffers.resize(count);
     for (unsigned i = 0; i < count; i++) {
@@ -616,9 +619,7 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const
     }
     // the encoder's threadgroup memory goes past the kernel's static arrays, where the front end put the argument
     if (k->kernel->hasThreadgroupArg) b.sharedBytes = k->kernel->threadgroupArgBase + cb->threadgroupLength;
-    uint32_t g[3] = {groups[0], groups[1], groups[2]};
-    uint32_t t[3] = {threads[0], threads[1], threads[2]};
-    if (!cb->cb->dispatch(k->kernel->kernel, g, t, b)) {
+    if (!dispatch(b)) {
         failed(cb->cb->error());
         return -1;
     }
@@ -635,6 +636,27 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const
     }
     cb->cb->keepAlive(k->kernel);   // the words the dispatch names live until the GPU is done with them
     return 0;
+}
+}  // namespace
+
+int hakios_metal_cb_dispatch2(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
+                              hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count,
+                              hakios_metal_texture* const* textures, unsigned textureCount,
+                              hakios_metal_sampler* const* samplers, unsigned samplerCount) {
+    const uint32_t g[3] = {groups[0], groups[1], groups[2]}, t[3] = {threads[0], threads[1], threads[2]};
+    return dispatchWith(cb, k, buffers, offsets, count, textures, textureCount, samplers, samplerCount,
+                        [&](const Bindings& b) { return cb->cb->dispatch(k->kernel->kernel, g, t, b); });
+}
+
+int hakios_metal_cb_dispatch_indirect(hakios_metal_cb* cb, hakios_metal_kernel* k, hakios_metal_buffer* args, uint64_t argsOffset, const unsigned threads[3],
+                                      hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count,
+                                      hakios_metal_texture* const* textures, unsigned textureCount,
+                                      hakios_metal_sampler* const* samplers, unsigned samplerCount) {
+    const uint32_t t[3] = {threads[0], threads[1], threads[2]};
+    const int r = dispatchWith(cb, k, buffers, offsets, count, textures, textureCount, samplers, samplerCount,
+                               [&](const Bindings& b) { return cb->cb->dispatchIndirect(k->kernel->kernel, *args->buffer, argsOffset, t, b); });
+    if (r == 0) cb->cb->keep(args->buffer);   // the GPU reads the counts out of it as it runs
+    return r;
 }
 
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb* cb, unsigned length) { cb->threadgroupLength = length; }

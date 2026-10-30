@@ -79,6 +79,9 @@ public:
     // the same with textures and samplers (compute.hpp: Bindings); the textures' memory is used and kept as buffers are
     bool dispatch(const Kernel& kernel, const uint32_t groups[3], const uint32_t* local, const Bindings& bindings,
                   const uint32_t* immediates = nullptr, const compute::Options& options = compute::Options{});
+    // the group counts three 32-bit words in ARGS at OFFSET (a multiple of 4), read when the GPU runs it
+    bool dispatchIndirect(const Kernel& kernel, const Buffer& args, uint64_t offset, const uint32_t* local, const Bindings& bindings,
+                          const uint32_t* immediates = nullptr, const compute::Options& options = compute::Options{});
     // --- the render encoder's work (render.hpp): one draw of PROGRAM into PASS's colour target, one complete pass per
     // call (begin, state, draw, end). The two programs' words and the pass's table go into buffers of their own that live
     // until this completes; the target's memory is used for write and kept. False with the reason recorded (render::encode's).
@@ -104,6 +107,9 @@ private:
     friend class CommandQueue;
     explicit CommandBuffer(CommandQueue& queue) : queue_(queue) {}
     bool fail(const std::string& why);
+    // dispatch and dispatchIndirect: GROUPS, or (GROUPS null) the counts at OFFSET of ARGS
+    bool dispatchAny(const Kernel& kernel, const uint32_t* groups, const Buffer* args, uint64_t offset, const uint32_t* local, const Bindings& bindings,
+                     const uint32_t* immediates, const compute::Options& options);
     // the end of it, however it ends: the status, the handlers (which see that status), and only then the waiters
     void finish(Status s);
     void use(const Buffer& b, bool write) { uses_.push_back(BoUse{&b.bo(), write}); }

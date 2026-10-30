@@ -236,7 +236,7 @@ private:
     bool execute(uint64_t address, uint32_t words, int depth);
     // CP_LOAD_STATE6_FRAG, _GEOM or the plain form (OPCODE), keyed on its state block
     bool loadState(uint32_t opcode, const uint32_t* p, uint32_t count);
-    bool execCs(const uint32_t* p, uint32_t count);
+    bool execCs(const uint32_t* p, uint32_t count, bool indirect = false);
     bool execDraw(const uint32_t* p, uint32_t count);
     // CP_BLIT: a solid fill only, judged against the 2D registers and then written into memory as the 2D engine would
     bool execBlit(const uint32_t* p, uint32_t count);

@@ -421,6 +421,12 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb *cb, hakios_metal_kernel *kernel, 
     hakios_metal_buffer *const *buffers, const uint64_t *offsets, unsigned count,
     hakios_metal_texture *const *textures, unsigned texture_count,
     hakios_metal_sampler *const *samplers, unsigned sampler_count);
+/* dispatchThreadgroupsWithIndirectBuffer:indirectBufferOffset:threadsPerThreadgroup:: as hakios_metal_cb_dispatch2
+ * with the group counts three 32-bit words in ARGS at ARGS_OFFSET (a multiple of 4), read by the GPU when the dispatch
+ * runs -- an earlier dispatch on the queue may write them. -1 with the reason, as the direct form. */
+int hakios_metal_cb_dispatch_indirect(hakios_metal_cb *cb, hakios_metal_kernel *kernel, hakios_metal_buffer *args, uint64_t args_offset,
+    const unsigned threads[3], hakios_metal_buffer *const *buffers, const uint64_t *offsets, unsigned count,
+    hakios_metal_texture *const *textures, unsigned texture_count, hakios_metal_sampler *const *samplers, unsigned sampler_count);
 /* setThreadgroupMemoryLength:atIndex: 0 for the dispatches that follow on CB: LENGTH bytes for a kernel's
  * [[threadgroup(0)]] argument, given past its static threadgroup arrays (a kernel without the argument ignores it) */
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb *cb, unsigned length);

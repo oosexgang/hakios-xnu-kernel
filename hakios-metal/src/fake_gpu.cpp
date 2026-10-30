@@ -580,7 +580,7 @@ bool FakeGpu::checkSampler(const uint32_t* d, uint32_t i) {
 
 // CP_EXEC_CS: the dispatch itself. Everything the registers and the loads say about it has to hold together; what
 // the real GPU does with state that does not is hang, and that is what a fault stands for here.
-bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
+bool FakeGpu::execCs(const uint32_t* p, uint32_t count, bool indirect) {
     using namespace a6xx;
     if (count != 4) {
         fault(text("CP_EXEC_CS of %llu words, not 4", count));
@@ -651,7 +651,8 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count) {
             fault("CP_EXEC_CS with 0 work groups along an axis");
             return false;
         }
-        if (global[i] != local[i] * groups[i]) {
+        // (an indirect dispatch's NDRANGE global sizes are the CP's to fill from the counts, as it runs: turnip leaves them 0)
+        if (!indirect && global[i] != local[i] * groups[i]) {
             fault(text("HLSQ_CS_NDRANGE global size %llu is not the local size %llu times the %llu groups CP_EXEC_CS asks for", global[i],
                        local[i], groups[i]));
             return false;
@@ -1856,6 +1857,19 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 break;
             }
             case CP_MEM_TO_MEM: {
+                // the five-word form with no flags: one 32-bit word from SRC to DST (an indirect dispatch's counts
+                // into its table, as turnip copies them, tu_cmd_buffer.cc:6723-6728)
+                if (h.count == 5 && p[0] == 0) {
+                    const uint64_t dst = p[1] | uint64_t(p[2]) << 32, src = p[3] | uint64_t(p[4]) << 32;
+                    const uint8_t* from = at(src, 4);
+                    uint8_t* to = at(dst, 4);
+                    if (from == nullptr || to == nullptr || src % 4 != 0 || dst % 4 != 0) {
+                        fault(text("CP_MEM_TO_MEM of a word from %#llx to %#llx: outside every buffer or not 4-aligned", src, dst));
+                        return false;
+                    }
+                    memmove(to, from, 4);
+                    break;
+                }
                 // DST = A + B + C over 64-bit values, each of A, B, C negated by its NEG flag (an occlusion query's result
                 // += end - begin); 32-bit sums are not what this driver emits, and are refused
                 if (h.count != 9 || (p[0] & CP_MEM_TO_MEM_0_DOUBLE) == 0) {
@@ -1943,6 +1957,34 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     return false;
                 }
                 break;
+            case CP_EXEC_CS_INDIRECT: {
+                // the counts are read from memory as the packet runs, what is there then (written by the CPU or by an
+                // earlier dispatch); the local size in word 3 must be NDRANGE_0's, which the dispatch also ran with
+                if (h.count != 4) {
+                    fault(text("CP_EXEC_CS_INDIRECT of %llu words, not 4", h.count));
+                    return false;
+                }
+                const uint64_t a = p[1] | uint64_t(p[2]) << 32;
+                const uint8_t* m = at(a, 12);
+                if (m == nullptr || a % 4 != 0) {
+                    fault(text("CP_EXEC_CS_INDIRECT's counts at %#llx: outside every buffer or not 4-aligned", a));
+                    return false;
+                }
+                const uint32_t nd0 = reg(REG_A6XX_HLSQ_CS_NDRANGE_0);
+                const uint32_t want = execCsIndirect3(fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX__MASK, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX__SHIFT) + 1,
+                                                      fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEY__MASK, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEY__SHIFT) + 1,
+                                                      fieldOf(nd0, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEZ__MASK, A6XX_HLSQ_CS_NDRANGE_0_LOCALSIZEZ__SHIFT) + 1);
+                if (p[3] != want) {
+                    fault(text("CP_EXEC_CS_INDIRECT's local size word %#llx is not HLSQ_CS_NDRANGE_0's (%#llx)", p[3], want));
+                    return false;
+                }
+                uint32_t w[4] = {0, 0, 0, 0};
+                memcpy(w + 1, m, 12);
+                if (!execCs(w, 4, true)) {
+                    return false;
+                }
+                break;
+            }
             default: {
                 fault(text("opcode 0x%02llx is not one this GPU model runs", h.opcode));
                 return false;
