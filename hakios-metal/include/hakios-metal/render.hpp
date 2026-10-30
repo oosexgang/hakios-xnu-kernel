@@ -337,6 +337,12 @@ struct Draw {
     uint32_t indexType = 0;
     int32_t baseVertex = 0;
     uint32_t baseInstance = 0;                   // VFD_INSTANCE_START_OFFSET, and the base [[instance_id]] counts from
+    // an indirect draw (-drawPrimitives:indirectBuffer:..., -drawIndexedPrimitives:...indirectBuffer:...): the counts,
+    // starts and bases are INDIRECT's words at INDIRECT_OFFSET when the GPU runs the draw -- MTLDrawPrimitivesIndirect
+    // Arguments (4 words) or the indexed form (5 words), Vulkan's two draw commands word for word -- and the fields above
+    // that they replace are not read; the index buffer, its type and offset still are
+    const Buffer* indirect = nullptr;
+    uint64_t indirectOffset = 0;
     Viewport viewport{};
     Scissor scissor{};                           // width 0: the whole target
     float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors

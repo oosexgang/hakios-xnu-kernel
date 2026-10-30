@@ -4567,3 +4567,45 @@ TEST(a_vertex_stage_reads_its_constant_table) {
     CHECK(cb->status() == CommandBuffer::kCompleted);
     if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
 }
+
+// An indirect draw (-drawPrimitives:indirectBuffer:...) reads its counts and starts as the GPU runs it. The twin that
+// shows it: the words change after the draw is recorded and before the commit, and the draw runs the new ones -- the
+// count, the instances, and the first vertex the CP puts in VFD_INDEX_OFFSET. An offset off 4 is refused.
+TEST(an_indirect_draw_reads_its_arguments_when_it_runs) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Program p = handProgram();
+    std::string why;
+    auto args = newBuffer(*r.gpu, 64, &why);
+    CHECK(args != nullptr);
+    if (args == nullptr) return;
+    uint32_t* w = static_cast<uint32_t*>(args->contents());
+    w[1] = 3;   // vertexCount, instanceCount, vertexStart, baseInstance at offset 4
+    w[2] = 1;
+    w[3] = 0;
+    w[4] = 0;
+    Draw d = wholeDraw(3);
+    d.indirect = args.get();
+    d.indirectOffset = 4;
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->draw(p, pass, d, Bindings{}, Bindings{}));
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+    w[1] = 6;
+    w[2] = 2;
+    w[3] = 9;
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    if (s.faults != 0) std::printf("       %s\n", s.lastFault.c_str());
+    CHECK_EQ(s.lastDraw.numIndices, 6u);
+    CHECK_EQ(s.lastDraw.numInstances, 2u);
+    CHECK_EQ(s.lastDraw.vertexIndexOffset, 9u);
+    d.indirectOffset = 2;
+    auto bad = drawOnce(r, p, pass, d);
+    CHECK(bad->status() != CommandBuffer::kCompleted);
+    CHECK(bad->error().find("at a multiple of 4") != std::string::npos);
+}

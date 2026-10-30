@@ -1798,6 +1798,41 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 }
                 break;
             }
+            case CP_DRAW_INDIRECT_MULTI: {
+                // one draw (DRAW_COUNT 1), its words read from memory as the packet runs (tu_CmdDrawIndirect's layout:
+                // Vulkan's draw commands, Metal's indirect arguments): the CP sets VFD_INDEX_OFFSET and
+                // VFD_INSTANCE_START_OFFSET from them and the draw goes on as CP_DRAW_INDX_OFFSET's would, checked the same
+                const uint32_t op = p[1] & 0xfu;
+                const bool indexed = op == INDIRECT_OP_INDEXED;
+                if ((op != INDIRECT_OP_NORMAL && !indexed) || h.count != (indexed ? 9u : 6u) || p[2] != 1) {
+                    fault(text("CP_DRAW_INDIRECT_MULTI of %llu words, opcode %llu, draw count %llu: one draw, NORMAL in 6 words or INDEXED in 9", h.count, op, p[2]));
+                    return false;
+                }
+                const uint64_t a = indexed ? (p[6] | uint64_t(p[7]) << 32) : (p[3] | uint64_t(p[4]) << 32);
+                const uint8_t* m = at(a, indexed ? 20 : 16);
+                if (m == nullptr || a % 4 != 0) {
+                    fault(text("CP_DRAW_INDIRECT_MULTI's arguments at %#llx: outside every buffer or not 4-aligned", a));
+                    return false;
+                }
+                uint32_t w[5] = {};
+                memcpy(w, m, indexed ? 20 : 16);
+                if (indexed) {
+                    // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+                    const uint32_t size = fieldOf(p[0], CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__MASK, CP_DRAW_INDX_OFFSET_0_INDEX_SIZE__SHIFT) == INDEX4_SIZE_32_BIT ? 4 : 2;
+                    const uint64_t base = (p[3] | uint64_t(p[4]) << 32) + uint64_t(w[2]) * size;
+                    regs_[REG_A6XX_VFD_INDEX_OFFSET] = w[3];
+                    regs_[REG_A6XX_VFD_INSTANCE_START_OFFSET] = w[4];
+                    uint32_t d[7] = {p[0], w[1], w[0], 0, uint32_t(base), uint32_t(base >> 32), w[2] <= p[5] ? p[5] - w[2] : 0};
+                    if (!execDraw(d, 7)) return false;
+                } else {
+                    // vertexCount, instanceCount, firstVertex, firstInstance
+                    regs_[REG_A6XX_VFD_INDEX_OFFSET] = w[2];
+                    regs_[REG_A6XX_VFD_INSTANCE_START_OFFSET] = w[3];
+                    uint32_t d[3] = {p[0], w[1], w[0]};
+                    if (!execDraw(d, 3)) return false;
+                }
+                break;
+            }
             case CP_DRAW_INDX_OFFSET:
                 if (!execDraw(p, h.count)) {
                     return false;

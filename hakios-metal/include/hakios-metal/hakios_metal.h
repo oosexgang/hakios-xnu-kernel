@@ -427,6 +427,10 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb *cb, hakios_metal_kernel *kernel, 
 int hakios_metal_cb_dispatch_indirect(hakios_metal_cb *cb, hakios_metal_kernel *kernel, hakios_metal_buffer *args, uint64_t args_offset,
     const unsigned threads[3], hakios_metal_buffer *const *buffers, const uint64_t *offsets, unsigned count,
     hakios_metal_texture *const *textures, unsigned texture_count, hakios_metal_sampler *const *samplers, unsigned sampler_count);
+/* the next draw on CB (hakios_metal_cb_draw2/3 or _draw_indexed) is indirect: its counts, starts and bases are the
+ * words at OFFSET of ARGS when the GPU runs it (MTLDrawPrimitivesIndirectArguments, or the indexed form for an indexed
+ * draw), and the call's own counts are not read; the index buffer, type and offset still are. That draw alone. */
+void hakios_metal_cb_set_indirect(hakios_metal_cb *cb, hakios_metal_buffer *args, uint64_t offset);
 /* setThreadgroupMemoryLength:atIndex: 0 for the dispatches that follow on CB: LENGTH bytes for a kernel's
  * [[threadgroup(0)]] argument, given past its static threadgroup arrays (a kernel without the argument ignores it) */
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb *cb, unsigned length);

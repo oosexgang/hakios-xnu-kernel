@@ -4676,6 +4676,56 @@ int main(int argc, char** argv) {
                            (ok ? std::string() : ": " + (err.empty() ? cb->error() : err)));
             }
         }
+        // 9ind. indirect draws: the flat program's six vertices cover the target and its first three the lower half (T1).
+        // The arguments are written at recording as three vertices from 0; the first draw has them rewritten to six
+        // before the commit and must fill every pixel; the control keeps three and must fill T1 alone; the third starts
+        // at vertex 3 (the arguments' vertexStart, which the CP puts in VFD_INDEX_OFFSET) and must fill the upper half
+        {
+            auto args = newBuffer(gpu, 64, &why);
+            const uint32_t clearWord = 0xff102030u;
+            struct IndCase { uint32_t rewriteCount, start; const char* name; };
+            const IndCase cases[] = {{6, 0, "indirect draw, six vertices written after recording"},
+                                     {0, 0, "control, indirect draw left at three vertices"},
+                                     {0, 3, "indirect draw of vertices 3 to 5 (vertexStart from the arguments)"}};
+            for (const IndCase& c : cases) {
+                if (args == nullptr) {
+                    report(false, "indirect draw: the argument buffer: " + why);
+                    break;
+                }
+                uint32_t* aw = static_cast<uint32_t*>(args->contents());
+                aw[1] = 3;
+                aw[2] = 1;
+                aw[3] = c.start;
+                aw[4] = 0;
+                fillBo(*t, clearWord);
+                Draw d = drawOf(0, 3);
+                d.indirect = args.get();
+                d.indirectOffset = 4;
+                RenderPass pass;
+                pass.color0 = t.get();
+                auto cb = queue->commandBuffer();
+                const bool ok = cb->draw(flat, pass, d, Bindings{}, Bindings{});
+                if (c.rewriteCount != 0) aw[1] = c.rewriteCount;
+                if (ok) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t right = 0, judged = 0;
+                for (uint32_t j = 0; j < H; j++)
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;   // the diagonal is the fill rule's
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        const bool lower = j > i;
+                        const bool want = c.rewriteCount != 0 ? true : c.start == 0 ? lower : !lower;
+                        judged++;
+                        right += px == (want ? flatColour : clearWord);
+                    }
+                report(completed(*cb) && right == judged, std::string(c.name) + ": " + std::to_string(right) + " of " + std::to_string(judged) +
+                                                              " pixels off the diagonal as the arguments say" + (ok ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
         // 9arr. a module constant table: tri_arr_vs takes the pair's six corners from a constant array at the vertex id
         // (sokol's bufferless triangles), ir3 pushing it from the program's constant data. Every pixel the flat colour;
         // a table read as zeros (what an unwritten scratch copy gave) draws nothing at all.

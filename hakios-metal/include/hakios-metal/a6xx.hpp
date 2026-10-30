@@ -324,6 +324,7 @@ enum Opcode : uint32_t {
     CP_LOAD_STATE6_FRAG = 0x34,    // adreno_pm4.xml.h:309  what compute uses, for its shader, constants, IBOs and textures
     CP_LOAD_STATE6 = 0x36,         // adreno_pm4.xml.h:310
     CP_DRAW_INDX_OFFSET = 0x38,    // adreno_pm4.xml.h:272  the draw: 3 words without an index buffer (adreno_pm4.xml:906-916)
+    CP_DRAW_INDIRECT_MULTI = 0x2a, // adreno_pm4.xml.h:275  an indirect draw, its words read from memory as it runs
     CP_WAIT_REG_MEM = 0x3c,        // adreno_pm4.xml.h:220
     CP_REG_TO_MEM = 0x3e,          // adreno_pm4.xml.h:228
     CP_INDIRECT_BUFFER = 0x3f,     // adreno_pm4.xml.h:216  (pm4.hpp's kIndirectBuffer; here for the batch-start sequence)
@@ -1304,6 +1305,13 @@ constexpr uint32_t execCsIndirect3(uint32_t localX, uint32_t localY, uint32_t lo
     return field(localX - 1, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEX__SHIFT, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEX__MASK) |
            field(localY - 1, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEY__SHIFT, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEY__MASK) |
            field(localZ - 1, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEZ__SHIFT, A5XX_CP_EXEC_CS_INDIRECT_3_LOCALSIZEZ__MASK);
+}
+
+// CP_DRAW_INDIRECT_MULTI (adreno_pm4.xml.h:275, 448-449, 1209-1216): word 1's opcode and DST_OFF, the vec4 of the VS's
+// constants the CP writes the draw's params to (draw id, vertex offset, first instance; 0 writes none)
+enum a6xx_indirect_op : uint32_t { INDIRECT_OP_NORMAL = 2, INDIRECT_OP_INDEXED = 4 };
+constexpr uint32_t drawIndirectMulti1(a6xx_indirect_op op, uint32_t dstOffVec4) {
+    return field(op, 0, 0x0000000fu) | field(dstOffVec4, 8, 0x003fff00u);
 }
 
 // HLSQ_CS_NDRANGE_0 from the local size itself (the fields hold it minus one)

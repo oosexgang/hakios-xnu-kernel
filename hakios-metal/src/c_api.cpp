@@ -52,6 +52,8 @@ struct hakios_metal_cb {
     std::vector<std::shared_ptr<Texture>> vsTextures;
     std::vector<std::optional<Sampler>> vsSamplers;
     uint32_t threadgroupLength = 0;   // hakios_metal_cb_set_threadgroup_length's, for the dispatches that follow
+    std::shared_ptr<Buffer> indirect;  // hakios_metal_cb_set_indirect's, for the next draw alone
+    uint64_t indirectOffset = 0;
 };
 struct hakios_metal_texture {
     std::shared_ptr<Texture> texture;   // its Buffer is kept by every command buffer that dispatched over it
@@ -661,6 +663,11 @@ int hakios_metal_cb_dispatch_indirect(hakios_metal_cb* cb, hakios_metal_kernel* 
 
 void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb* cb, unsigned length) { cb->threadgroupLength = length; }
 
+void hakios_metal_cb_set_indirect(hakios_metal_cb* cb, hakios_metal_buffer* args, uint64_t offset) {
+    cb->indirect = args != nullptr ? args->buffer : nullptr;
+    cb->indirectOffset = offset;
+}
+
 int hakios_metal_cb_dispatch(hakios_metal_cb* cb, hakios_metal_kernel* k, const unsigned groups[3], const unsigned threads[3],
                              hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
     return hakios_metal_cb_dispatch2(cb, k, groups, threads, buffers, offsets, count, nullptr, 0, nullptr, 0);
@@ -858,6 +865,10 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
                hakios_metal_buffer* const* vsBuffers, const uint64_t* vsOffsets, unsigned vsCount, hakios_metal_buffer* const* fsBuffers,
                const uint64_t* fsOffsets, unsigned fsCount, hakios_metal_texture* const* fsTextures, unsigned fsTextureCount,
                hakios_metal_sampler* const* fsSamplers, unsigned fsSamplerCount) {
+    // an indirect draw's words in place of the counts (hakios_metal_cb_set_indirect): taken first, so that this draw
+    // alone has them whether it is drawn or refused
+    std::shared_ptr<Buffer> indirect = std::move(cb->indirect);
+    cb->indirect = nullptr;
     // the two [[buffer(n)]] tables by Metal's index (setVertexBuffer / setFragmentBuffer); render::encode reads what each
     // stage's pushed ranges name and refuses a range with nothing bound by name
     auto table = [](hakios_metal_buffer* const* buffers, const uint64_t* offsets, unsigned count) {
@@ -915,6 +926,8 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     d.indexOffset = indexOffset;
     d.baseVertex = baseVertex;
     d.baseInstance = baseInstance;
+    d.indirect = indirect.get();
+    d.indirectOffset = cb->indirectOffset;
     // MTLRenderCommandEncoder's defaults: a viewport over the whole attachment with depth 0..1, no scissor (the whole attachment)
     if (viewport != nullptr) {
         d.viewport = Viewport{viewport->x, viewport->y, viewport->width, viewport->height, viewport->znear, viewport->zfar};
@@ -965,6 +978,7 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     for (const auto& t : cb->vsTextures) {
         if (t != nullptr) cb->cb->keepAlive(t);
     }
+    if (indirect != nullptr) cb->cb->keep(indirect);   // the CP reads the draw's words out of it as it runs
     return 0;
 }
 }  // namespace

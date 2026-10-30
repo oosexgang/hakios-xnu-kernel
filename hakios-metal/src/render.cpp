@@ -389,9 +389,10 @@ bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, 
         // (VFD_INSTANCE_START_OFFSET is added after the divisor, as Vulkan's firstInstance is); for a per-vertex
         // one the last vertex, which an indexed draw names only in its index buffer -- there the check is the GPU's own
         // (VFD_FETCH_SIZE bounds the fetch: an index past it reads zeros, robust-buffer style, not what follows)
-        if (!perInstance && draw.indexBuffer != nullptr) {
-            f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, false, fi->fmt6, fi->swap, fi->isFloat);
-            f->stepRate[loc] = 0;
+        // (an indirect draw's counts are the GPU's to read: every attribute is bounded by the fetch size alone, as above)
+        if ((!perInstance && draw.indexBuffer != nullptr) || draw.indirect != nullptr) {
+            f->decode[loc] = vfdDecodeInstr(a.bufferIndex, a.offset, perInstance, fi->fmt6, fi->swap, fi->isFloat);
+            f->stepRate[loc] = perInstance ? l.stepRate : 0;
         } else {
             const uint64_t last = perInstance ? uint64_t(draw.baseInstance) + uint64_t(draw.instanceCount == 0 ? 0 : draw.instanceCount - 1) / l.stepRate
                                               : uint64_t(draw.vertexStart) + (draw.vertexCount == 0 ? 0 : draw.vertexCount - 1);
@@ -1365,10 +1366,21 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     default:
         return refuse(why, "primitive " + n(uint32_t(draw.primitive)) + ": MTLPrimitiveType is Point (0), Line (1), LineStrip (2), Triangle (3) or TriangleStrip (4)");
     }
-    if (draw.vertexCount == 0) {
+    const bool indirect = draw.indirect != nullptr;
+    if (indirect) {
+        const uint64_t words = draw.indexBuffer != nullptr ? 5 : 4;
+        if (draw.indirectOffset % 4 != 0 || draw.indirectOffset + 4 * words > draw.indirect->length()) {
+            return refuse(why, "an indirect draw's arguments at " + n(draw.indirectOffset) + " of a " + n(draw.indirect->length()) + "-byte buffer: " + n(words) +
+                                   " words inside it, at a multiple of 4");
+        }
+        // CP_DRAW_INDIRECT_MULTI writes the draw's own params (draw id, vertex offset, first instance) at DST_OFF, and a
+        // DST_OFF of 0 is its "none" (tu_cmd_buffer.cc:6119): a VS reading them from vec4 0 cannot be given them
+        if (vs.k.driverParamsOffsetVec4 == 0) {
+            return refuse(why, std::string(stageName(vs)) + " reads its base vertex and instance from c0, which an indirect draw cannot write (DST_OFF 0 is none)");
+        }
+    } else if (draw.vertexCount == 0) {
         return refuse(why, "a draw of 0 vertices");
-    }
-    if (draw.instanceCount == 0) {
+    } else if (draw.instanceCount == 0) {
         return refuse(why, "a draw of 0 instances");
     }
     if (draw.visibilityMode > 2) {
@@ -1394,7 +1406,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             return refuse(why, "an index buffer offset of " + n(draw.indexOffset) + ": a multiple of the index size (" + n(indexSize) + ") inside the buffer");
         }
         maxIndices = (draw.indexBuffer->length() - draw.indexOffset) / indexSize;
-        if (draw.vertexCount > maxIndices) {
+        if (!indirect && draw.vertexCount > maxIndices) {
             return refuse(why, "a draw of " + n(draw.vertexCount) + " indices from an index buffer holding " + n(maxIndices) + " past its offset");
         }
         if (draw.baseVertex < 0) {
@@ -1930,7 +1942,24 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         reg64(stream, REG_A6XX_RB_SAMPLE_COUNT_ADDR, snapshots);
         event(stream, ZPASS_DONE);
     }
-    if (draw.indexBuffer != nullptr) {
+    if (indirect) {
+        // tu_CmdDrawIndirect / tu_CmdDrawIndexedIndirect (tu_cmd_buffer.cc:6385-6423): one draw, the CP reading its
+        // words, setting VFD_INDEX_OFFSET and VFD_INSTANCE_START_OFFSET, and writing the VS's params at DST_OFF
+        const uint64_t args = draw.indirect->gpuAddress() + draw.indirectOffset;
+        const uint32_t dstOff = vs.k.driverParamsOffsetVec4 > 0 ? uint32_t(vs.k.driverParamsOffsetVec4) : 0;
+        if (draw.indexBuffer != nullptr) {
+            const uint64_t base = draw.indexBuffer->gpuAddress() + draw.indexOffset;
+            uint32_t w[9] = {drawIndxOffset0(prim, DI_SRC_SEL_DMA, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY) |
+                                 CP_DRAW_INDX_OFFSET_0_INDEX_SIZE(draw.indexType == 0 ? INDEX4_SIZE_16_BIT : INDEX4_SIZE_32_BIT),
+                             drawIndirectMulti1(INDIRECT_OP_INDEXED, dstOff), 1, uint32_t(base), uint32_t(base >> 32), uint32_t(maxIndices),
+                             uint32_t(args), uint32_t(args >> 32), 20};
+            stream.packet(CP_DRAW_INDIRECT_MULTI, w, 9);
+        } else {
+            uint32_t w[6] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY),
+                             drawIndirectMulti1(INDIRECT_OP_NORMAL, dstOff), 1, uint32_t(args), uint32_t(args >> 32), 16};
+            stream.packet(CP_DRAW_INDIRECT_MULTI, w, 6);
+        }
+    } else if (draw.indexBuffer != nullptr) {
         const uint64_t base = draw.indexBuffer->gpuAddress() + draw.indexOffset;
         uint32_t w[7] = {drawIndxOffset0(prim, DI_SRC_SEL_DMA, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY) |
                              CP_DRAW_INDX_OFFSET_0_INDEX_SIZE(draw.indexType == 0 ? INDEX4_SIZE_16_BIT : INDEX4_SIZE_32_BIT),
@@ -2219,6 +2248,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     if (d.indexBuffer != nullptr) {
         use(*d.indexBuffer, false);
+    }
+    if (d.indirect != nullptr) {
+        use(*d.indirect, false);
     }
     if (d.visibilityMode != 0 && d.visibility != nullptr) {
         use(*d.visibility, true);   // the result word is written; the command buffer keeps the buffer until it is
