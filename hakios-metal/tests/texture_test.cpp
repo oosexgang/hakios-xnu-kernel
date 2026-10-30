@@ -1096,6 +1096,40 @@ TEST(a_2d_chain_and_a_depth_buffer_view_as_one_slice_arrays) {
     }
 }
 
+// One layer of a depth array as 2D: the parent's tiled image a layer on, at its pitch, as a pass with depth_slice draws
+// it; a colour format over the depth bytes and a layer past the array are still refused.
+TEST(a_layer_of_a_depth_array_views_as_2d) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc z;
+    z.type = TextureType::k2DArray;
+    z.format = PixelFormat::kDepth32Float;
+    z.width = 96;
+    z.height = 40;
+    z.depth = 32;
+    z.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto arr = Texture::make(r.gpu, z, &why);
+    CHECK(arr != nullptr);
+    if (arr == nullptr) return;
+    for (uint32_t k : {0u, 3u, 31u}) {
+        auto v = Texture::view(arr, PixelFormat::kDepth32Float, TextureType::k2D, 0, 1, k, 1, &why);
+        CHECK(v != nullptr);
+        if (v == nullptr) {
+            std::printf("       %s\n", why.c_str());
+            continue;
+        }
+        CHECK_EQ(v->gpuAddress(), arr->gpuAddress() + uint64_t(k) * arr->sliceBytes());
+        CHECK_EQ(v->level(0).pitch, arr->level(0).pitch);
+        CHECK_EQ(v->depth(), 1u);
+        const TexConst s = v->sampledDescriptor(), ps = arr->sampledDescriptor();
+        CHECK_EQ((s.dword[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_3));
+        CHECK_EQ(s.dword[2], ps.dword[2]);   // the pitch word, the parent's
+    }
+    CHECK(Texture::view(arr, PixelFormat::kR32Float, TextureType::k2D, 0, 1, 3, 1, &why) == nullptr);
+    CHECK(Texture::view(arr, PixelFormat::kDepth32Float, TextureType::k2D, 0, 1, 32, 1, &why) == nullptr);
+}
+
 // A swizzled view reads its components through the parent's: RG11B10Float has no alpha (SWIZ_W is ONE), so a view of
 // (alpha, red, zero, one) reads X = ONE, Y = X, Z = ZERO, W = ONE; a view of that view naming its (green, green, red,
 // alpha) reads X, X, ONE, ONE. The parent's descriptor is untouched.

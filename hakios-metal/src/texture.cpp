@@ -913,6 +913,16 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
         while (pitchAlign < log2u(info->bytesPerPixel) && L.pitch % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
         return adopt(new Texture(p.buffer_, d, info, L.pitch, p.offset_ + L.offset + uint64_t(baseSlice) * p.sliceBytes(), pitchAlign));
     }
+    // one layer of a one-level depth array as 2D (Resident Evil 4's shadow cascades: 32 layers of Depth32Float, each
+    // drawn and then sampled on its own): a depth texture is tiled, so the linear rows the branch above gives a colour
+    // layer are not its layout -- but one layer of one level is the parent's own tiled image, same pitch and tiling, a
+    // layer further on, which is where a pass with depth_slice draws it
+    if (type == TextureType::k2D && slices == 1 && levels == 1 && p.levels() == 1 && p.info().depth && info->depth &&
+        (p.type() == TextureType::k2DArray || p.type() == TextureType::kCube || p.type() == TextureType::kCubeArray)) {
+        d.mipLevels = 1;
+        d.depth = 1;
+        return adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_ + uint64_t(baseSlice) * p.sliceBytes(), p.pitchAlign_));
+    }
     // a 2D texture as a 2D array of that one slice, or a 1D one as a 1D array (Resident Evil 4 makes such views of its
     // targets, depth buffers and 1D tables, to bind them where a shader takes an array): its levels from 0 are the one
     // layer's chain as they lie, depth's tiled layout included -- one layer has no pitch to keep apart
