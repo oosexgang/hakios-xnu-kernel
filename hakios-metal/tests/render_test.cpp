@@ -548,11 +548,22 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         x.viewport.width = 0;
         refused(r, p, pass, x, "a viewport of 0 x 64 pixels: both sides must be positive");
         x = d;
-        x.viewport.x = 1;
-        refused(r, p, pass, x, "viewport (1, 0, 64, 64) lies outside the 64 x 64 target");
+        x.viewport.x = 64;   // past the window altogether (one that only reaches past it is drawn, clipped: below)
+        refused(r, p, pass, x, "viewport (64.000000, 0.000000, 64.000000, 64.000000) covers no pixel of the 64 x 64 target");
         x = d;
-        x.viewport.y = -1;
-        refused(r, p, pass, x, "viewport (0, 0, 64, 64) lies outside the 64 x 64 target");
+        x.viewport.y = -64;
+        refused(r, p, pass, x, "viewport (0.000000, -64.000000, 64.000000, 64.000000) covers no pixel of the 64 x 64 target");
+        {
+            using namespace a6xx;
+            x = d;
+            x.viewport.x = -8;
+            x.viewport.y = 4;
+            x.viewport.width = 100;   // (the window 64 x 64: the viewport scissor clamped to (0, 4)-(63, 63))
+            Encoded e(r, p, pass, x);
+            CHECK(e.ok);
+            CHECK_EQ(e.reg(regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0)), scissorXY(0, 4));
+            CHECK_EQ(e.reg(regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0) + 1), scissorXY(63, 63));
+        }
         x = d;
         x.scissor = Scissor{32, 0, 33, 64};
         refused(r, p, pass, x, "scissor (32, 0, 33, 64) lies outside the 64 x 64 target");
@@ -3895,10 +3906,11 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
     }
     RenderPass mixed = pass;
     mixed.more[0].texture = small.get();
-    // attachments of different sizes: the window is the smaller (Metal's render target size), a viewport past it refused
+    // attachments of different sizes: the window is the smaller (Metal's render target size), a viewport past it clipped
+    // to it by the viewport scissor
     Encoded sizes(r, mrt, mixed, wholeDraw(6));
-    CHECK(!sizes.ok);
-    expectRefusal(sizes.error, "viewport (0, 0, 64, 64) lies outside the 32 x 32 target");
+    CHECK(sizes.ok);
+    CHECK_EQ(sizes.reg(a6xx::regGrasScViewportScissor(a6xx::REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0) + 1), a6xx::scissorXY(31, 31));
     Encoded fits(r, mrt, mixed, wholeDraw(6, 32, 32));
     CHECK(fits.ok);
     if (!fits.ok) std::printf("       %s\n", fits.error.c_str());

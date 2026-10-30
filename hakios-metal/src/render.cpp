@@ -1396,9 +1396,12 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (!(vp.width > 0.0) || !(vp.height > 0.0)) {
         return refuse(why, "a viewport of " + n(uint64_t(std::max(vp.width, 0.0))) + " x " + n(uint64_t(std::max(vp.height, 0.0))) + " pixels: both sides must be positive");
     }
-    if (vp.x < 0.0 || vp.y < 0.0 || vp.x + vp.width > double(W) || vp.y + vp.height > double(H)) {
-        return refuse(why, "viewport (" + n(uint64_t(std::max(vp.x, 0.0))) + ", " + n(uint64_t(std::max(vp.y, 0.0))) + ", " + n(uint64_t(vp.width)) + ", " + n(uint64_t(vp.height)) +
-                               ") lies outside the " + n(W) + " x " + n(H) + " target");
+    // A viewport may reach past the target, as Metal's may (sokol's sgl sample draws through a 406 x 406 one into a 375 x
+    // 812 drawable): what falls outside is clipped by the viewport scissor, which step 16 clamps to the window. One that
+    // covers no pixel of the window at all would need an empty scissor, which inclusive corners cannot say: refused.
+    if (vp.x >= double(W) || vp.y >= double(H) || vp.x + vp.width <= 0.0 || vp.y + vp.height <= 0.0) {
+        return refuse(why, "viewport (" + std::to_string(vp.x) + ", " + std::to_string(vp.y) + ", " + std::to_string(vp.width) + ", " + std::to_string(vp.height) +
+                               ") covers no pixel of the " + n(W) + " x " + n(H) + " target");
     }
     Scissor sc = draw.scissor;
     if (sc.width == 0) {
@@ -1833,7 +1836,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (o.viewportScissor) {
         const ViewportWords v = viewportWords(vp.x, vp.y, vp.width, vp.height, vp.znear, vp.zfar);
         regs(stream, regGrasClVport(REG_A6XX_GRAS_CL_VPORT_XOFFSET, 0), {v.xoffset, v.xscale, v.yoffset, v.yscale, v.zoffset, v.zscale});
-        const uint32_t vx0 = uint32_t(std::floor(vp.x)), vy0 = uint32_t(std::floor(vp.y));
+        const uint32_t vx0 = uint32_t(std::max(0.0, std::floor(vp.x))), vy0 = uint32_t(std::max(0.0, std::floor(vp.y)));   // (clamped to the window)
         const uint32_t vx1 = std::min(W, uint32_t(std::ceil(vp.x + vp.width))) - 1, vy1 = std::min(H, uint32_t(std::ceil(vp.y + vp.height))) - 1;
         regs(stream, regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0), {scissorXY(vx0, vy0), scissorXY(vx1, vy1)});
         const float zmin = float(std::min(vp.znear, vp.zfar)), zmax = float(std::max(vp.znear, vp.zfar));
