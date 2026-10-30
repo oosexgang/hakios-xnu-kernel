@@ -140,6 +140,7 @@ struct TextureDesc {
     uint32_t height = 1;
     uint32_t mipLevels = 1;               // MTLTextureDescriptor.mipmapLevelCount: 1 to floor(log2(max(width, height))) + 1
     uint32_t usage = kTextureUsageRead;   // kTextureUsage* bits; a kernel that writes a texture made without kTextureUsageWrite is refused, a draw into one made without kTextureUsageRenderTarget too
+    uint32_t depth = 1;                   // a 3D texture's slices (TextureType::k3D, one level); 1 for every other type
 };
 
 class Texture {
@@ -182,6 +183,7 @@ public:
     uint64_t stencilPlaneBytes() const;
     PixelFormat format() const { return desc_.format; }
     TextureType type() const { return desc_.type; }
+    uint32_t depth() const { return desc_.depth; }
     uint32_t usage() const { return desc_.usage; }
     const FormatInfo& info() const { return *info_; }
     uint64_t bytesPerRow() const { return pitch_; }                  // the GPU's pitch
@@ -204,6 +206,13 @@ public:
         return read(0, x, y, w, h, bytes, bytesPerRow, why);
     }
     bool read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const;
+    // a 3D texture's slices Z to Z + D - 1, each its rows (bytesPerRow apart) and the next BYTES_PER_IMAGE further on
+    bool replaceSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes, uint64_t bytesPerRow,
+                       uint64_t bytesPerImage, std::string* why);
+    bool readSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow, uint64_t bytesPerImage,
+                    std::string* why) const;
+    // one depth slice's bytes in a 3D texture (fd6_layout.c's size0 for level 0: the rows, 4096-aligned); 0 otherwise
+    uint64_t sliceBytes() const;
 
     // the descriptor a sam/isaml reads this texture through: TYPE 2D, PITCHALIGN log2(cpp), MIPLVLS 0, SAMPLES one,
     // DEPTH 1, ARRAY_PITCH the layer's bytes, the format's swap and swizzle (fd6_view.c:232-250)

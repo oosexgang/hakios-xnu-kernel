@@ -176,9 +176,18 @@ uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height,
 
 std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::string* why) {
     // 1D is a 2D layout one row high under the TP's 1D type (fd6_view.c:247, fdl6_tex_type): CoreAnimation keeps its
-    // gamma tables in them
-    if (desc.type != TextureType::k2D && desc.type != TextureType::k1D) {
-        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): 1D (0) and 2D (2) are served");
+    // gamma tables in them. 3D is that 2D layout once a depth slice, each slice 4096-aligned (fd6_layout.c's size0 for a
+    // 3D level 0): CoreAnimation's colour lookup tables, read by fixed_frag's 3D sample.
+    if (desc.type != TextureType::k2D && desc.type != TextureType::k1D && desc.type != TextureType::k3D) {
+        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): 1D (0), 2D (2) and 3D (7) are served");
+        return nullptr;
+    }
+    if (desc.type == TextureType::k3D && (desc.depth == 0 || desc.depth > 2048 || desc.mipLevels != 1)) {
+        refuse(why, "a 3D texture " + n(desc.depth) + " deep of " + n(desc.mipLevels) + " levels: 1 to 2048 slices of one level are served");
+        return nullptr;
+    }
+    if (desc.type != TextureType::k3D && desc.depth != 1) {
+        refuse(why, "a depth of " + n(desc.depth) + " for a texture of type " + n(uint32_t(desc.type)) + ": only a 3D texture has slices");
         return nullptr;
     }
     if (desc.type == TextureType::k1D && desc.height != 1) {
@@ -227,8 +236,14 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
                         ": a depth texture is tiled (TILE6_3) and is served as a render target alone (4), not sampled or stored");
         return nullptr;
     }
+    if (desc.type == TextureType::k3D && (info->depth || info->twoPlane || info->blockW > 1 || desc.usage != kTextureUsageRead)) {
+        refuse(why, std::string("a 3D ") + info->name + " texture with usage " + n(desc.usage) + ": a 3D texture of an uncompressed colour format, sampled alone, is served");
+        return nullptr;
+    }
     uint64_t pitch = texturePitch(*info, desc.width);
-    std::shared_ptr<Buffer> buffer = newBuffer(gpu, textureBytes(*info, desc.width, desc.height, desc.mipLevels), why);
+    const uint64_t bytes = desc.type == TextureType::k3D ? (uint64_t(blocksDown(*info, desc.height)) * pitch + 4095) / 4096 * 4096 * desc.depth
+                                                          : textureBytes(*info, desc.width, desc.height, desc.mipLevels);
+    std::shared_ptr<Buffer> buffer = newBuffer(gpu, bytes, why);
     if (buffer == nullptr) {
         return nullptr;
     }
@@ -318,6 +333,50 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
     return true;
 }
 
+uint64_t Texture::sliceBytes() const {
+    return desc_.type == TextureType::k3D ? (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096 : 0;
+}
+
+namespace {
+bool slicesFit(const Texture& t, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, uint64_t bytesPerRow, uint64_t bytesPerImage,
+               std::string* why) {
+    if (t.type() != TextureType::k3D) return refuse(why, "slices of a texture that is not 3D");
+    if (t.contents() == nullptr) return refuse(why, "the texture's memory is mapped nowhere in this process");
+    if (uint64_t(z) + d > t.depth() || d == 0) {
+        return refuse(why, n(d) + " slices from " + n(z) + " of a 3D texture " + n(t.depth()) + " deep");
+    }
+    if (d > 1 && bytesPerImage < bytesPerRow * h) {
+        return refuse(why, "bytesPerImage " + n(bytesPerImage) + " is shorter than an image of " + n(h) + " rows of " + n(bytesPerRow) + " bytes");
+    }
+    (void)x, (void)y, (void)w;
+    return true;
+}
+}  // namespace
+
+bool Texture::replaceSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes, uint64_t bytesPerRow,
+                            uint64_t bytesPerImage, std::string* why) {
+    if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, 0, x, y, w, h, bytesPerRow, why)) return false;
+    const uint64_t row = uint64_t(w) * info_->bytesPerPixel;
+    for (uint32_t s = 0; s < d; s++) {
+        auto* dst = static_cast<uint8_t*>(contents()) + (uint64_t(z) + s) * sliceBytes() + uint64_t(y) * pitch_ + uint64_t(x) * info_->bytesPerPixel;
+        auto* src = static_cast<const uint8_t*>(bytes) + uint64_t(s) * bytesPerImage;
+        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * pitch_, src + uint64_t(r) * bytesPerRow, row);
+    }
+    return true;
+}
+
+bool Texture::readSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow, uint64_t bytesPerImage,
+                         std::string* why) const {
+    if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, 0, x, y, w, h, bytesPerRow, why)) return false;
+    const uint64_t row = uint64_t(w) * info_->bytesPerPixel;
+    for (uint32_t s = 0; s < d; s++) {
+        const auto* src = static_cast<const uint8_t*>(contents()) + (uint64_t(z) + s) * sliceBytes() + uint64_t(y) * pitch_ + uint64_t(x) * info_->bytesPerPixel;
+        auto* dst = static_cast<uint8_t*>(bytes) + uint64_t(s) * bytesPerImage;
+        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * bytesPerRow, src + uint64_t(r) * pitch_, row);
+    }
+    return true;
+}
+
 a6xx::TexConst Texture::sampledDescriptor() const {
     // PITCHALIGN = log2(pitch alignment / 64) = log2(cpp) for the pitch texturePitch chose (fd6_layout.c:194-201, fd6_view.c:244);
     // a surface's rows carry the alignment their pitch has, wrapSurface worked it out
@@ -325,6 +384,13 @@ a6xx::TexConst Texture::sampledDescriptor() const {
                                  info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb, desc_.mipLevels, desc_.mipLevels > 1 ? buffer_->length() : 0);
     if (desc_.type == TextureType::k1D) {
         d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_1D);
+    }
+    if (desc_.type == TextureType::k3D) {
+        // fdl6_view_init's 3D view (fd6_view.c:172-177, 247-249, 308-310): DEPTH the slices, ARRAY_PITCH one slice, and
+        // MIN_LAYERSZ the last level's slice -- the one level's here
+        d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_3D);
+        d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes())) | A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t(sliceBytes()));
+        d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
     }
     if (info_->twoPlane) {
         // the second plane as fdl6_view_init gives it (fd6_view.c:255-289): its pitch over MIN_LOD_CLAMP's dword and its

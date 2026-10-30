@@ -119,9 +119,14 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     // the refusals, each on its sentence
     TextureDesc d;
     d.type = TextureType::k2DArray;
-    CHECK(has(refusedMake(r, d), "texture type 3 (2DArray): 1D (0) and 2D (2) are served"));
+    CHECK(has(refusedMake(r, d), "texture type 3 (2DArray): 1D (0), 2D (2) and 3D (7) are served"));
     d.type = TextureType::k3D;
-    CHECK(has(refusedMake(r, d), "texture type 7 (3D): 1D (0) and 2D (2) are served"));
+    d.mipLevels = 2;
+    d.width = d.height = 4;
+    CHECK(has(refusedMake(r, d), "a 3D texture 1 deep of 2 levels: 1 to 2048 slices of one level are served"));
+    d = TextureDesc{};
+    d.depth = 2;
+    CHECK(has(refusedMake(r, d), "a depth of 2 for a texture of type 2: only a 3D texture has slices"));
     // a 1D texture is one row, under the TP's 1D type
     d = TextureDesc{};
     d.type = TextureType::k1D;
@@ -526,4 +531,45 @@ TEST(an_astc_texture_is_laid_out_in_blocks) {
     d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
     CHECK(Texture::make(r.gpu, d, &why) == nullptr);
     CHECK(why.find("a compressed format is sampled alone") != std::string::npos);
+}
+
+// A 3D texture, one level: each depth slice is the 2D rows, 4096-aligned (fd6_layout.c's size0 for a 3D level 0), the
+// descriptor a 3D view of them (fdl6_view_init: TYPE 3D, DEPTH the slices, ARRAY_PITCH and MIN_LAYERSZ one slice). A
+// 4x4x3 RGBA8: rows of 256 bytes (64 pixels' alignment), 4 of them, 1024 to 4096 a slice. Slices written and read back.
+TEST(a_3d_texture_is_slices_of_a_2d_layout) {
+    using namespace a6xx;
+    Rig r;
+    TextureDesc d;
+    d.type = TextureType::k3D;
+    d.width = d.height = 4;
+    d.depth = 3;
+    std::string why;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(t->sliceBytes(), 4096u);
+    CHECK(t->buffer()->length() >= 3u * 4096);
+    const TexConst c = t->sampledDescriptor();
+    CHECK_EQ((c.dword[2] & A6XX_TEX_CONST_2_TYPE__MASK) >> A6XX_TEX_CONST_2_TYPE__SHIFT, uint32_t(A6XX_TEX_3D));
+    CHECK_EQ((c.dword[3] & A6XX_TEX_CONST_3_ARRAY_PITCH__MASK) >> A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT, 1u);   // 4096 >> 12
+    CHECK_EQ((c.dword[3] & A6XX_TEX_CONST_3_MIN_LAYERSZ__MASK) >> A6XX_TEX_CONST_3_MIN_LAYERSZ__SHIFT, 1u);
+    CHECK_EQ((c.dword[5] & A6XX_TEX_CONST_5_DEPTH__MASK) >> A6XX_TEX_CONST_5_DEPTH__SHIFT, 3u);
+    // every texel its own word: slice z, row y, column x
+    uint32_t in[3][4][4], out[3][4][4];
+    for (uint32_t z = 0; z < 3; z++)
+        for (uint32_t y = 0; y < 4; y++)
+            for (uint32_t x = 0; x < 4; x++) in[z][y][x] = 0xff000000u | z << 16 | y << 8 | x;
+    CHECK(t->replaceSlices(0, 0, 0, 4, 4, 3, in, 16, 64, &why));
+    const auto* mem = static_cast<const uint8_t*>(t->contents());
+    uint32_t word;
+    memcpy(&word, mem + 2 * 4096 + 3 * 256 + 1 * 4, 4);   // slice 2, row 3, column 1, where the layout puts it
+    CHECK_EQ(word, 0xff020301u);
+    memset(out, 0, sizeof out);
+    CHECK(t->readSlices(0, 0, 0, 4, 4, 3, out, 16, 64, &why));
+    CHECK(memcmp(in, out, sizeof in) == 0);
+    CHECK(!t->replaceSlices(0, 0, 2, 4, 4, 2, in, 16, 64, &why));
+    CHECK(has(why, "2 slices from 2 of a 3D texture 3 deep"));
 }

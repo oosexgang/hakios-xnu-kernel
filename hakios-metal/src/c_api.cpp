@@ -195,6 +195,48 @@ hakios_metal_texture* hakios_metal_texture_new(hakios_metal_device* d, unsigned 
 
 unsigned hakios_metal_texture_levels(hakios_metal_texture* t) { return t->texture->levels(); }
 
+hakios_metal_texture* hakios_metal_texture_new_3d(hakios_metal_device* d, unsigned pixelFormat, unsigned width, unsigned height, unsigned depth,
+                                                  unsigned usage) {
+    TextureDesc desc;
+    desc.type = TextureType::k3D;
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.depth = depth;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
+unsigned hakios_metal_texture_depth(hakios_metal_texture* t) { return t->texture->depth(); }
+
+int hakios_metal_texture_replace_3d(hakios_metal_texture* t, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, const void* bytes,
+                                    uint64_t bytesPerRow, uint64_t bytesPerImage) {
+    std::string why;
+    if (!t->texture->replaceSlices(x, y, z, w, h, d, bytes, bytesPerRow, bytesPerImage, &why)) {
+        failed(why);
+        return -1;
+    }
+    return 0;
+}
+
+int hakios_metal_texture_read_3d(hakios_metal_texture* t, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, void* bytes,
+                                 uint64_t bytesPerRow, uint64_t bytesPerImage) {
+    std::string why;
+    if (!t->texture->readSlices(x, y, z, w, h, d, bytes, bytesPerRow, bytesPerImage, &why)) {
+        failed(why);
+        return -1;
+    }
+    return 0;
+}
+
 hakios_metal_texture* hakios_metal_texture_new_levels(hakios_metal_device* d, unsigned type, unsigned pixelFormat, unsigned width, unsigned height,
                                                       unsigned levels, unsigned usage) {
     TextureDesc desc;
@@ -281,6 +323,17 @@ unsigned hakios_metal_texture_format(hakios_metal_texture* t) { return unsigned(
 unsigned hakios_metal_texture_type(hakios_metal_texture* t) { return unsigned(t->texture->type()); }
 unsigned hakios_metal_texture_usage(hakios_metal_texture* t) { return t->texture->usage(); }
 unsigned hakios_metal_texture_bytes_per_pixel(hakios_metal_texture* t) { return t->texture->info().bytesPerPixel; }
+int hakios_metal_format_block(unsigned pixelFormat, unsigned* blockW, unsigned* blockH, unsigned* bytes) {
+    const FormatInfo* f = formatInfo(PixelFormat(pixelFormat));
+    if (f == nullptr) {
+        failed("pixel format " + std::to_string(pixelFormat) + ": not one of the formats served");
+        return 0;
+    }
+    *blockW = f->blockW;
+    *blockH = f->blockH;
+    *bytes = f->bytesPerPixel;
+    return 1;
+}
 
 int hakios_metal_texture_replace(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, const void* bytes, uint64_t bytesPerRow) {
     return hakios_metal_texture_replace_level(t, 0, x, y, w, h, bytes, bytesPerRow);

@@ -53,6 +53,7 @@
 #include "../tests/fixtures/tri_base_vs_air.hpp"
 #include "../tests/fixtures/tri_pvt_fs_air.hpp"
 #include "../tests/fixtures/chain_fs_air.hpp"
+#include "../tests/fixtures/tri_tex3d_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
@@ -1969,6 +1970,64 @@ int main(int argc, char** argv) {
                 report(completed(*cb) && exact == judged && judged > 3000,
                        "tri_tex over an 8x8 ASTC 4x4 texture of four one-colour blocks: " + std::to_string(exact) + " of " + std::to_string(judged) +
                            " pixels their block's colour (" + std::to_string(skipped) + " near a block edge not judged)" + first + status(*cb, gpu));
+            }
+        }
+        // 9j3. a 3D texture, sampled: 4x4x4 RGBA8, each texel (x, y, z) the bytes x y z ff, read by tri_tex3d_fs at
+        // tri_color's (red, green) and depth 0.625, the centre of slice 2, under nearest. Every judged pixel is texel
+        // (tx, ty, 2) as 9j finds (tx, ty): a slice pitch or a depth the TP read otherwise gives another slice's z.
+        {
+            TextureDesc vd;
+            vd.type = TextureType::k3D;
+            vd.width = vd.height = vd.depth = 4;
+            std::string vwhy;
+            auto vol = Texture::make(gpu, vd, &vwhy);
+            uint32_t voxels[4][4][4];
+            for (uint32_t z = 0; z < 4; z++)
+                for (uint32_t y = 0; y < 4; y++)
+                    for (uint32_t x = 0; x < 4; x++) voxels[z][y][x] = 0xff000000u | z << 16 | y << 8 | x;
+            Sampler vsmp;
+            if (vol == nullptr || !vol->replaceSlices(0, 0, 0, 4, 4, 4, voxels, 16, 64, &vwhy) || !makeSampler(SamplerDesc{}, &vsmp, &vwhy)) {
+                report(false, "3d: a 4x4x4 RGBA8 texture: " + vwhy);
+            } else {
+                const Program volProg{kernels::tri_color_vs_air, kernels::tri_tex3d_fs_air, Linkage{}, "tri_tex3d"};
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {vol.get()};
+                fsb.samplers = {&vsmp};
+                auto cb = queue->commandBuffer();
+                bool drew = cb->draw(volProg, rp, drawOf(0, 6), Bindings{}, fsb);
+                if (drew) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t judged = 0, exact = 0, otherSlice = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const double x = i + 0.5, y = j + 0.5;
+                        const double u = j > i ? (y - x) / 64.0 : y / 64.0, v = j > i ? x / 64.0 : (x - y) / 64.0;
+                        const double fu = 4 * u, fv = 4 * v;
+                        if (std::fabs(fu - std::round(fu)) < 1.0 / 64 || std::fabs(fv - std::round(fv)) < 1.0 / 64) continue;
+                        const uint32_t tx = std::min(3u, uint32_t(std::max(0.0, std::floor(fu)))), ty = std::min(3u, uint32_t(std::max(0.0, std::floor(fv))));
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        judged++;
+                        if (px == voxels[2][ty][tx]) {
+                            exact++;
+                        } else {
+                            otherSlice += (px & 0xff00ffffu) == (voxels[2][ty][tx] & 0xff00ffffu);
+                            if (first.empty()) first = "; the first off (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", want " + hex8(voxels[2][ty][tx]);
+                        }
+                    }
+                }
+                report(drew && completed(*cb) && exact == judged && judged > 3000,
+                       "tri_tex3d over a 4x4x4 3D texture at slice 2: " + std::to_string(exact) + " of " + std::to_string(judged) +
+                           " pixels their texel exactly (" + std::to_string(otherSlice) + " another slice's)" + first +
+                           (drew ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
         // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D

@@ -1024,8 +1024,13 @@ inline constexpr uint32_t A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT = 0;              
 inline constexpr uint32_t A6XX_TEX_CONST_3_ARRAY_PITCH__SCALE = 12;                     // a6xx.xml.h:11406  the encoder's val >> 12
 inline constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ__MASK = 0x07800000;              // a6xx.xml.h:11411
 inline constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ__SHIFT = 23;                     // a6xx.xml.h:11412
+inline constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ__SCALE = 12;                     // a6xx.xml.h:11413  the encoder's val >> 12
 inline constexpr uint32_t A6XX_TEX_CONST_3_TILE_ALL = 0x08000000;                       // a6xx.xml.h:11418
 inline constexpr uint32_t A6XX_TEX_CONST_3_FLAG = 0x10000000;                           // a6xx.xml.h:11419
+// a 3D texture's last level's slice size, in 4 KiB (fd6_view.c:308-310)
+constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t bytes) {
+    return field(bytes >> A6XX_TEX_CONST_3_MIN_LAYERSZ__SCALE, A6XX_TEX_CONST_3_MIN_LAYERSZ__SHIFT, A6XX_TEX_CONST_3_MIN_LAYERSZ__MASK);
+}
 constexpr uint32_t A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t bytes) {
     return field(bytes >> A6XX_TEX_CONST_3_ARRAY_PITCH__SCALE, A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT, A6XX_TEX_CONST_3_ARRAY_PITCH__MASK);
 }

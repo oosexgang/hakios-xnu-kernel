@@ -150,6 +150,18 @@ unsigned hakios_metal_texture_type(hakios_metal_texture *texture);
 unsigned hakios_metal_texture_usage(hakios_metal_texture *texture);
 /* one pixel's bytes in its rows (the luma plane's for a two-plane format): the bytes a copy of W pixels of a row moves */
 unsigned hakios_metal_texture_bytes_per_pixel(hakios_metal_texture *texture);
+/* PIXEL_FORMAT's element as the core lays it out: BLOCK_W x BLOCK_H texels (1 x 1 but for a compressed format) in BYTES
+ * bytes. 0 with the reason when the format is not served. */
+int hakios_metal_format_block(unsigned pixel_format, unsigned *block_w, unsigned *block_h, unsigned *bytes);
+/* a 3D texture (MTLTextureType3D) of DEPTH slices, one level, sampled alone (usage 1); its slices written and read as
+ * -replaceRegion:...slice:withBytes:bytesPerRow:bytesPerImage: has them, Z to Z + D - 1 */
+hakios_metal_texture *hakios_metal_texture_new_3d(hakios_metal_device *device, unsigned pixel_format, unsigned width, unsigned height,
+    unsigned depth, unsigned usage);
+unsigned hakios_metal_texture_depth(hakios_metal_texture *texture);
+int hakios_metal_texture_replace_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,
+    const void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
+int hakios_metal_texture_read_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,
+    void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
 /* -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
  * BYTES_PER_ROW apart, into the texture at (X, Y); the pitch conversion happens here. -1 with the reason: a region outside
  * the texture, a stride shorter than W pixels. */
