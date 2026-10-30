@@ -148,6 +148,8 @@ unsigned hakios_metal_texture_height(hakios_metal_texture *texture);
 unsigned hakios_metal_texture_format(hakios_metal_texture *texture);
 unsigned hakios_metal_texture_type(hakios_metal_texture *texture);
 unsigned hakios_metal_texture_usage(hakios_metal_texture *texture);
+/* one pixel's bytes in its rows (the luma plane's for a two-plane format): the bytes a copy of W pixels of a row moves */
+unsigned hakios_metal_texture_bytes_per_pixel(hakios_metal_texture *texture);
 /* -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
  * BYTES_PER_ROW apart, into the texture at (X, Y); the pitch conversion happens here. -1 with the reason: a region outside
  * the texture, a stride shorter than W pixels. */

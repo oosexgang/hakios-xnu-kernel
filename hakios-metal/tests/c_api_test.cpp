@@ -198,6 +198,13 @@ TEST(c_api_texture_replace_and_read_convert_the_stride) {
     CHECK_EQ(hakios_metal_texture_type(t), 2u);
     CHECK_EQ(hakios_metal_texture_usage(t), 3u);
     CHECK_EQ(hakios_metal_texture_bytes_per_row(t), 512ull);
+    CHECK_EQ(hakios_metal_texture_bytes_per_pixel(t), 4u);   // not the pitch over the width: 512 / 100 is 5
+    hakios_metal_texture* r8 = hakios_metal_texture_new(d, 2, 10, 3, 2, 1);   // R8Unorm, 3 wide: a 64-byte row
+    CHECK(r8 != nullptr);
+    if (r8 != nullptr) {
+        CHECK_EQ(hakios_metal_texture_bytes_per_pixel(r8), 1u);
+        hakios_metal_texture_free(r8);
+    }
     CHECK(hakios_metal_texture_gpu_address(t) != 0);
     CHECK_EQ(hakios_metal_texture_gpu_address(t) % 64, 0ull);
     CHECK(hakios_metal_texture_contents(t) != nullptr);

@@ -280,6 +280,7 @@ unsigned hakios_metal_texture_height(hakios_metal_texture* t) { return t->textur
 unsigned hakios_metal_texture_format(hakios_metal_texture* t) { return unsigned(t->texture->format()); }
 unsigned hakios_metal_texture_type(hakios_metal_texture* t) { return unsigned(t->texture->type()); }
 unsigned hakios_metal_texture_usage(hakios_metal_texture* t) { return t->texture->usage(); }
+unsigned hakios_metal_texture_bytes_per_pixel(hakios_metal_texture* t) { return t->texture->info().bytesPerPixel; }
 
 int hakios_metal_texture_replace(hakios_metal_texture* t, unsigned x, unsigned y, unsigned w, unsigned h, const void* bytes, uint64_t bytesPerRow) {
     return hakios_metal_texture_replace_level(t, 0, x, y, w, h, bytes, bytesPerRow);
