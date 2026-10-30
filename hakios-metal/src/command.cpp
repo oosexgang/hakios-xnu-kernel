@@ -19,6 +19,8 @@ constexpr uint32_t kFillHead = 64;                 // words written by CP_MEM_WR
 constexpr uint32_t kMemcpyMax = 64 * 1024;
 }  // namespace
 
+void appendStream(pm4::Stream& to, const pm4::Stream& from);   // render.cpp's: a pass of its own onto the buffer's stream
+
 namespace {
 std::mutex gAddressLock;
 std::map<uint64_t, std::weak_ptr<Buffer>> gByAddress;   // by gpuAddress, every Buffer newBuffer made and still alive
@@ -205,15 +207,26 @@ bool CommandBuffer::copy(const Buffer& from, uint64_t fromOffset, const Buffer& 
     if (status_ > kEnqueued) {
         return fail("copy after commit");
     }
-    if (fromOffset % 4 || toOffset % 4 || length % 4) {
-        return fail("copy of " + std::to_string(length) + " bytes from " + std::to_string(fromOffset) + " to " +
-                    std::to_string(toOffset) + ": the command processor moves words, so all three must be multiples of 4");
-    }
     if (fromOffset > from.length() || length > from.length() - fromOffset || toOffset > to.length() ||
         length > to.length() - toOffset) {
         return fail("copy outside a buffer");
     }
     if (length == 0) {
+        return true;
+    }
+    if (fromOffset % 4 || toOffset % 4 || length % 4) {
+        // the command processor moves words; a copy of bytes goes through the 2D engine instead (a pass of its own).
+        // MapKit's snapshot service copies rows of 2 bytes into its textures.
+        std::string why;
+        Piece table;
+        if (!piece(render::kTableBytes, &table, &why)) {
+            return fail(std::string("no memory for the copy's table: ") + why);
+        }
+        pm4::Stream added;
+        render::encodeBytes(added, from.gpuAddress() + fromOffset, to.gpuAddress() + toOffset, length, table.gpuAddress(), table.contents());
+        appendStream(stream_, added);
+        use(from, false);
+        use(to, true);
         return true;
     }
     uint64_t words = length / 4, done = 0;

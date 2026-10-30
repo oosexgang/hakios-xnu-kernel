@@ -2123,6 +2123,40 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     return true;
 }
 
+void encodeBytes(pm4::Stream& stream, uint64_t from, uint64_t to, uint64_t length, uint64_t table, uint8_t* tableCpu, const Options& o) {
+    constexpr uint32_t kRow = 0x4000;   // the widest row: GRAS_2D_*'s 14-bit x, and the size turnip keeps x + width under
+    tableStart(tableCpu);
+    passStart(stream, kRow, 1, table, o);
+    const uint32_t blit = rb2dBlitCntlCopy(FMT6_8_UNORM, R2D_UNORM8);
+    reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
+    reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(FMT6_8_UNORM, false, false, false));
+    while (length != 0) {
+        const uint32_t sx = uint32_t(from & 63), dx = uint32_t(to & 63);
+        const uint32_t w = uint32_t(std::min<uint64_t>(length, kRow - std::max(sx, dx)));
+        const uint64_t sbase = from & ~uint64_t(63), dbase = to & ~uint64_t(63);
+        // one row each, its pitch the row rounded up to 64 bytes (a row of one is never stepped past, but the pitch
+        // still says how wide a row is)
+        const uint32_t spitch = (sx + w + 63) & ~63u, dpitch = (dx + w + 63) & ~63u;
+        regs(stream, REG_A6XX_GRAS_2D_SRC_TL_X, {gras2dSrc(sx), gras2dSrc(sx + w - 1), gras2dSrc(0), gras2dSrc(0), regXY(dx, 0), regXY(dx + w - 1, 0)});
+        regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {sp2dSrcInfo(FMT6_8_UNORM, WZYX, false, false), sp2dSrcSize(sx + w, 1), uint32_t(sbase),
+                                                  uint32_t(sbase >> 32), sp2dSrcPitch(spitch)});
+        regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(FMT6_8_UNORM, TILE6_LINEAR, WZYX, false), uint32_t(dbase), uint32_t(dbase >> 32), A6XX_RB_2D_DST_PITCH(dpitch)});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+        command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
+        from += w;
+        to += w;
+        length -= w;
+    }
+    eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableClearFlushAt, kClearFlushValue, false);
+    waitForWord(stream, table + kTableClearFlushAt, kClearFlushValue);
+    event(stream, PC_CCU_INVALIDATE_COLOR);
+    stream.waitForIdle();
+    passTail(stream, table, o, false);
+}
+
 }  // namespace render
 
 // a pass's words onto the command buffer's stream, packet by packet, behind a NOP that marks where an encoder began

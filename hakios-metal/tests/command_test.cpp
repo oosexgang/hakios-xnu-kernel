@@ -125,11 +125,35 @@ TEST(copy_then_fill_in_one_buffer_keeps_order) {
     CHECK_EQ(p[2048], 0x00);
 }
 
-TEST(unaligned_blits_are_refused_and_the_buffer_errs) {
+TEST(unaligned_copies_go_through_the_2d_engine_byte_for_byte) {
+    Rig r;
+    auto a = buffer(r, 65536), b = buffer(r, 65536);
+    auto* pa = static_cast<uint8_t*>(a->contents());
+    auto* pb = static_cast<uint8_t*>(b->contents());
+    // every byte of the source its own (a period of 251, prime, so no shift of a few bytes lands on the same values)
+    for (uint32_t i = 0; i < 65536; i++) pa[i] = uint8_t(i % 251 + 1);
+    memset(pb, 0xee, 65536);
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->copy(*a, 1, *b, 70, 37));          // across a 64-byte line, source and destination at different offsets in it
+    CHECK(cb->copy(*a, 3, *b, 1029, 20000));     // longer than one row of the engine (0x4000 texels)
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    CHECK(memcmp(pb + 70, pa + 1, 37) == 0);
+    CHECK(memcmp(pb + 1029, pa + 3, 20000) == 0);
+    // the bytes on either side of each range are what they were
+    CHECK_EQ(pb[69], 0xee);
+    CHECK_EQ(pb[107], 0xee);
+    CHECK_EQ(pb[1028], 0xee);
+    CHECK_EQ(pb[21029], 0xee);
+}
+
+TEST(copies_outside_a_buffer_and_unaligned_fills_are_refused) {
     Rig r;
     auto a = buffer(r, 4096), b = buffer(r, 4096);
     auto cb = r.queue->commandBuffer();
-    CHECK(!cb->copy(*a, 1, *b, 0, 16));
+    CHECK(!cb->copy(*a, 0, *b, 4000, 200));  // past the end
     std::atomic<int> handled{0};
     cb->addCompletedHandler([&](CommandBuffer& c) { handled += c.status() == CommandBuffer::kError ? 1 : 100; });
     cb->commit();
@@ -139,7 +163,6 @@ TEST(unaligned_blits_are_refused_and_the_buffer_errs) {
     CHECK_EQ(handled.load(), 1);
     CHECK_EQ(r.fake->stats().submits, 0u);    // nothing of it reached the GPU
     auto cb2 = r.queue->commandBuffer();
-    CHECK(!cb2->copy(*a, 0, *b, 4000, 200));  // past the end
     CHECK(!cb2->fill(*b, 2, 4, 0));
 }
 

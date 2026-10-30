@@ -491,6 +491,13 @@ struct BlitRect {
 bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, BlitRect s, const Texture& dst, uint32_t dstLevel, BlitRect d, bool linear,
                 uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o = Options{});
 
+// LENGTH bytes from GPU address FROM to TO, at any alignment, by the 2D engine: what the command processor, which moves
+// words, cannot do (turnip's copy_buffer with a block of one byte). Each piece is one row of R8_UNORM texels -- the
+// unorm round trip gives every byte back as it was -- whose source and destination are addressed from 64 bytes below
+// (what SP_PS_2D_SRC and RB_2D_DST take), the rest of the way being the rectangle's x, at most 0x4000 texels from there.
+// The two ranges must not overlap, as Metal asks of a copy. A pass of its own, with what it wrote in memory at its end.
+void encodeBytes(pm4::Stream& stream, uint64_t from, uint64_t to, uint64_t length, uint64_t table, uint8_t* tableCpu, const Options& o = Options{});
+
 }  // namespace render
 
 }  // namespace hakios::metal
