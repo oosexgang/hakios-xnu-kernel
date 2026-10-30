@@ -76,13 +76,56 @@ uint32_t bytesPerPixel(uint32_t fmt) {
 
 // one element of a vertex attribute in the formats render.cpp serves (fd6_format_table.c's vertex column); 0 for another
 uint32_t vertexElementBytes(uint32_t fmt) {
+    // the element's size read off the format's name, channel widths summed: kept apart from render.cpp's table, so a
+    // size the driver gets wrong there faults here
     switch (fmt) {
+    case a6xx::FMT6_8_UNORM: return 1;
+    case a6xx::FMT6_8_SNORM: return 1;
+    case a6xx::FMT6_8_UINT: return 1;
+    case a6xx::FMT6_8_SINT: return 1;
+    case a6xx::FMT6_8_8_UNORM: return 2;
+    case a6xx::FMT6_8_8_SNORM: return 2;
+    case a6xx::FMT6_8_8_UINT: return 2;
+    case a6xx::FMT6_8_8_SINT: return 2;
+    case a6xx::FMT6_8_8_8_UNORM: return 3;
+    case a6xx::FMT6_8_8_8_SNORM: return 3;
+    case a6xx::FMT6_8_8_8_UINT: return 3;
+    case a6xx::FMT6_8_8_8_SINT: return 3;
     case a6xx::FMT6_8_8_8_8_UNORM: return 4;
+    case a6xx::FMT6_8_8_8_8_SNORM: return 4;
+    case a6xx::FMT6_8_8_8_8_UINT: return 4;
+    case a6xx::FMT6_8_8_8_8_SINT: return 4;
+    case a6xx::FMT6_16_UNORM: return 2;
+    case a6xx::FMT6_16_SNORM: return 2;
+    case a6xx::FMT6_16_UINT: return 2;
+    case a6xx::FMT6_16_SINT: return 2;
+    case a6xx::FMT6_16_FLOAT: return 2;
+    case a6xx::FMT6_16_16_UNORM: return 4;
+    case a6xx::FMT6_16_16_SNORM: return 4;
+    case a6xx::FMT6_16_16_UINT: return 4;
+    case a6xx::FMT6_16_16_SINT: return 4;
     case a6xx::FMT6_16_16_FLOAT: return 4;
+    case a6xx::FMT6_16_16_16_UNORM: return 6;
+    case a6xx::FMT6_16_16_16_SNORM: return 6;
+    case a6xx::FMT6_16_16_16_UINT: return 6;
+    case a6xx::FMT6_16_16_16_SINT: return 6;
+    case a6xx::FMT6_16_16_16_FLOAT: return 6;
+    case a6xx::FMT6_16_16_16_16_UNORM: return 8;
+    case a6xx::FMT6_16_16_16_16_SNORM: return 8;
+    case a6xx::FMT6_16_16_16_16_UINT: return 8;
+    case a6xx::FMT6_16_16_16_16_SINT: return 8;
     case a6xx::FMT6_16_16_16_16_FLOAT: return 8;
+    case a6xx::FMT6_32_UINT: return 4;
+    case a6xx::FMT6_32_SINT: return 4;
     case a6xx::FMT6_32_FLOAT: return 4;
+    case a6xx::FMT6_32_32_UINT: return 8;
+    case a6xx::FMT6_32_32_SINT: return 8;
     case a6xx::FMT6_32_32_FLOAT: return 8;
+    case a6xx::FMT6_32_32_32_UINT: return 12;
+    case a6xx::FMT6_32_32_32_SINT: return 12;
     case a6xx::FMT6_32_32_32_FLOAT: return 12;
+    case a6xx::FMT6_32_32_32_32_UINT: return 16;
+    case a6xx::FMT6_32_32_32_32_SINT: return 16;
     case a6xx::FMT6_32_32_32_32_FLOAT: return 16;
     default: return 0;
     }

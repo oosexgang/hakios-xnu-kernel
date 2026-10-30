@@ -250,13 +250,55 @@ struct VertexFormatInfo {
     const char* name;
 };
 const VertexFormatInfo kVertexFormats[] = {
+    {VertexFormat::kUChar2, FMT6_8_8_UINT, WZYX, 2, false, "UChar2"},   // fd6_format_table.c:97
+    {VertexFormat::kUChar3, FMT6_8_8_8_UINT, WZYX, 3, false, "UChar3"},   // fd6_format_table.c:124
+    {VertexFormat::kUChar4, FMT6_8_8_8_8_UINT, WZYX, 4, false, "UChar4"},   // fd6_format_table.c:169
+    {VertexFormat::kChar2, FMT6_8_8_SINT, WZYX, 2, false, "Char2"},   // fd6_format_table.c:98
+    {VertexFormat::kChar3, FMT6_8_8_8_SINT, WZYX, 3, false, "Char3"},   // fd6_format_table.c:125
+    {VertexFormat::kChar4, FMT6_8_8_8_8_SINT, WZYX, 4, false, "Char4"},   // fd6_format_table.c:170
+    {VertexFormat::kUChar2Normalized, FMT6_8_8_UNORM, WZYX, 2, true, "UChar2Normalized"},   // fd6_format_table.c:95
+    {VertexFormat::kUChar3Normalized, FMT6_8_8_8_UNORM, WZYX, 3, true, "UChar3Normalized"},   // fd6_format_table.c:122
     {VertexFormat::kUChar4Normalized, FMT6_8_8_8_8_UNORM, WZYX, 4, true, "UChar4Normalized"},   // fd6_format_table.c:163
-    {VertexFormat::kHalf2, FMT6_16_16_FLOAT, WZYX, 4, true, "Half2"},                           // :155
-    {VertexFormat::kHalf4, FMT6_16_16_16_16_FLOAT, WZYX, 8, true, "Half4"},                     // :249
-    {VertexFormat::kFloat, FMT6_32_FLOAT, WZYX, 4, true, "Float"},                              // :136
-    {VertexFormat::kFloat2, FMT6_32_32_FLOAT, WZYX, 8, true, "Float2"},                         // :258
-    {VertexFormat::kFloat3, FMT6_32_32_32_FLOAT, WZYX, 12, true, "Float3"},                     // :272 (VT_: fetch only, as here)
-    {VertexFormat::kFloat4, FMT6_32_32_32_32_FLOAT, WZYX, 16, true, "Float4"},                  // :284
+    {VertexFormat::kChar2Normalized, FMT6_8_8_SNORM, WZYX, 2, true, "Char2Normalized"},   // fd6_format_table.c:96
+    {VertexFormat::kChar3Normalized, FMT6_8_8_8_SNORM, WZYX, 3, true, "Char3Normalized"},   // fd6_format_table.c:123
+    {VertexFormat::kChar4Normalized, FMT6_8_8_8_8_SNORM, WZYX, 4, true, "Char4Normalized"},   // fd6_format_table.c:167
+    {VertexFormat::kUShort2, FMT6_16_16_UINT, WZYX, 4, false, "UShort2"},   // fd6_format_table.c:151
+    {VertexFormat::kUShort3, FMT6_16_16_16_UINT, WZYX, 6, false, "UShort3"},   // fd6_format_table.c:232
+    {VertexFormat::kUShort4, FMT6_16_16_16_16_UINT, WZYX, 8, false, "UShort4"},   // fd6_format_table.c:243
+    {VertexFormat::kShort2, FMT6_16_16_SINT, WZYX, 4, false, "Short2"},   // fd6_format_table.c:152
+    {VertexFormat::kShort3, FMT6_16_16_16_SINT, WZYX, 6, false, "Short3"},   // fd6_format_table.c:233
+    {VertexFormat::kShort4, FMT6_16_16_16_16_SINT, WZYX, 8, false, "Short4"},   // fd6_format_table.c:245
+    {VertexFormat::kUShort2Normalized, FMT6_16_16_UNORM, WZYX, 4, true, "UShort2Normalized"},   // fd6_format_table.c:149
+    {VertexFormat::kUShort3Normalized, FMT6_16_16_16_UNORM, WZYX, 6, true, "UShort3Normalized"},   // fd6_format_table.c:230
+    {VertexFormat::kUShort4Normalized, FMT6_16_16_16_16_UNORM, WZYX, 8, true, "UShort4Normalized"},   // fd6_format_table.c:239
+    {VertexFormat::kShort2Normalized, FMT6_16_16_SNORM, WZYX, 4, true, "Short2Normalized"},   // fd6_format_table.c:150
+    {VertexFormat::kShort3Normalized, FMT6_16_16_16_SNORM, WZYX, 6, true, "Short3Normalized"},   // fd6_format_table.c:231
+    {VertexFormat::kShort4Normalized, FMT6_16_16_16_16_SNORM, WZYX, 8, true, "Short4Normalized"},   // fd6_format_table.c:241
+    {VertexFormat::kHalf2, FMT6_16_16_FLOAT, WZYX, 4, true, "Half2"},   // fd6_format_table.c:155
+    {VertexFormat::kHalf3, FMT6_16_16_16_FLOAT, WZYX, 6, true, "Half3"},   // fd6_format_table.c:236
+    {VertexFormat::kHalf4, FMT6_16_16_16_16_FLOAT, WZYX, 8, true, "Half4"},   // fd6_format_table.c:249
+    {VertexFormat::kFloat, FMT6_32_FLOAT, WZYX, 4, true, "Float"},   // fd6_format_table.c:136
+    {VertexFormat::kFloat2, FMT6_32_32_FLOAT, WZYX, 8, true, "Float2"},   // fd6_format_table.c:258
+    {VertexFormat::kFloat3, FMT6_32_32_32_FLOAT, WZYX, 12, true, "Float3"},   // fd6_format_table.c:272
+    {VertexFormat::kFloat4, FMT6_32_32_32_32_FLOAT, WZYX, 16, true, "Float4"},   // fd6_format_table.c:284
+    {VertexFormat::kInt, FMT6_32_SINT, WZYX, 4, false, "Int"},   // fd6_format_table.c:133
+    {VertexFormat::kInt2, FMT6_32_32_SINT, WZYX, 8, false, "Int2"},   // fd6_format_table.c:255
+    {VertexFormat::kInt3, FMT6_32_32_32_SINT, WZYX, 12, false, "Int3"},   // fd6_format_table.c:269
+    {VertexFormat::kInt4, FMT6_32_32_32_32_SINT, WZYX, 16, false, "Int4"},   // fd6_format_table.c:280
+    {VertexFormat::kUInt, FMT6_32_UINT, WZYX, 4, false, "UInt"},   // fd6_format_table.c:132
+    {VertexFormat::kUInt2, FMT6_32_32_UINT, WZYX, 8, false, "UInt2"},   // fd6_format_table.c:254
+    {VertexFormat::kUInt3, FMT6_32_32_32_UINT, WZYX, 12, false, "UInt3"},   // fd6_format_table.c:268
+    {VertexFormat::kUInt4, FMT6_32_32_32_32_UINT, WZYX, 16, false, "UInt4"},   // fd6_format_table.c:278
+    {VertexFormat::kUChar4Normalized_BGRA, FMT6_8_8_8_8_UNORM, WXYZ, 4, true, "UChar4Normalized_BGRA"},   // fd6_format_table.c:174
+    {VertexFormat::kUChar, FMT6_8_UINT, WZYX, 1, false, "UChar"},   // fd6_format_table.c:46
+    {VertexFormat::kChar, FMT6_8_SINT, WZYX, 1, false, "Char"},   // fd6_format_table.c:47
+    {VertexFormat::kUCharNormalized, FMT6_8_UNORM, WZYX, 1, true, "UCharNormalized"},   // fd6_format_table.c:44
+    {VertexFormat::kCharNormalized, FMT6_8_SNORM, WZYX, 1, true, "CharNormalized"},   // fd6_format_table.c:45
+    {VertexFormat::kUShort, FMT6_16_UINT, WZYX, 2, false, "UShort"},   // fd6_format_table.c:72
+    {VertexFormat::kShort, FMT6_16_SINT, WZYX, 2, false, "Short"},   // fd6_format_table.c:73
+    {VertexFormat::kUShortNormalized, FMT6_16_UNORM, WZYX, 2, true, "UShortNormalized"},   // fd6_format_table.c:70
+    {VertexFormat::kShortNormalized, FMT6_16_SNORM, WZYX, 2, true, "ShortNormalized"},   // fd6_format_table.c:71
+    {VertexFormat::kHalf, FMT6_16_FLOAT, WZYX, 2, true, "Half"},   // fd6_format_table.c:76
 };
 const VertexFormatInfo* vertexFormatInfo(VertexFormat f) {
     for (const VertexFormatInfo& i : kVertexFormats) {
@@ -298,7 +340,7 @@ bool vertexFetch(const Stage& vs, const VertexDescriptor& vd, const Draw& draw, 
         const VertexFormatInfo* fi = vertexFormatInfo(a.format);
         if (fi == nullptr) {
             return refuse(why, name + ": [[attribute(" + n(loc) + ")]] is MTLVertexFormat " + n(uint32_t(a.format)) +
-                                   ": Float..Float4, Half2, Half4 and UChar4Normalized are served");
+                                   ": the 1010102, RG11B10 and RGB9E5 formats are not served");
         }
         if (a.bufferIndex >= kMaxVertexBuffers) {
             return refuse(why, name + ": [[attribute(" + n(loc) + ")]] is fetched from buffer " + n(a.bufferIndex) + ": the layouts are 0 to 30");

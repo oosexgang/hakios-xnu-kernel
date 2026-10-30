@@ -105,6 +105,38 @@ enum a6xx_format : uint32_t {
     FMT6_32_32_32_32_FLOAT = 130,  // a6xx.xml.h:133  RGBA32Float
     FMT6_R8_G8B8_2PLANE_420_UNORM = 142,   // a6xx.xml.h:139  NV12: Y and an interleaved CbCr plane at half size (fd6_format_table.c:357-358)
     FMT6_32_32_32_32_UINT = 131,   // a6xx.xml.h:134  RGBA32Uint
+    // vertex attribute formats (render.cpp's kVertexFormats; fd6_format_table.c's V column)
+    FMT6_8_SNORM = 4,              // a6xx.xml.h:65
+    FMT6_8_SINT = 6,               // a6xx.xml.h:67
+    FMT6_8_8_SNORM = 16,           // a6xx.xml.h:73
+    FMT6_8_8_UINT = 17,            // a6xx.xml.h:74
+    FMT6_8_8_SINT = 18,            // a6xx.xml.h:75
+    FMT6_8_8_8_UNORM = 33,         // a6xx.xml.h:82
+    FMT6_8_8_8_SNORM = 34,         // a6xx.xml.h:83
+    FMT6_8_8_8_UINT = 35,          // a6xx.xml.h:84
+    FMT6_8_8_8_SINT = 36,          // a6xx.xml.h:85
+    FMT6_8_8_8_8_SNORM = 50,       // a6xx.xml.h:88
+    FMT6_8_8_8_8_UINT = 51,        // a6xx.xml.h:89
+    FMT6_8_8_8_8_SINT = 52,        // a6xx.xml.h:90
+    FMT6_16_SNORM = 22,            // a6xx.xml.h:78
+    FMT6_16_16_UNORM = 67,         // a6xx.xml.h:98
+    FMT6_16_16_SNORM = 68,         // a6xx.xml.h:99
+    FMT6_16_16_UINT = 70,          // a6xx.xml.h:101
+    FMT6_16_16_SINT = 71,          // a6xx.xml.h:102
+    FMT6_16_16_16_UNORM = 88,      // a6xx.xml.h:109
+    FMT6_16_16_16_SNORM = 89,      // a6xx.xml.h:110
+    FMT6_16_16_16_FLOAT = 90,      // a6xx.xml.h:111
+    FMT6_16_16_16_UINT = 91,       // a6xx.xml.h:112
+    FMT6_16_16_16_SINT = 92,       // a6xx.xml.h:113
+    FMT6_16_16_16_16_UNORM = 96,   // a6xx.xml.h:114
+    FMT6_16_16_16_16_SNORM = 97,   // a6xx.xml.h:115
+    FMT6_16_16_16_16_UINT = 99,    // a6xx.xml.h:117
+    FMT6_16_16_16_16_SINT = 100,   // a6xx.xml.h:118
+    FMT6_32_SINT = 76,             // a6xx.xml.h:107
+    FMT6_32_32_SINT = 105,         // a6xx.xml.h:123
+    FMT6_32_32_32_UINT = 114,      // a6xx.xml.h:127
+    FMT6_32_32_32_SINT = 115,      // a6xx.xml.h:128
+    FMT6_32_32_32_32_SINT = 132,   // a6xx.xml.h:135
     FMT6_NONE = 255,               // a6xx.xml.h:189  what the fake GPU's bytes-per-pixel table answers for a format it does not know
 };
 

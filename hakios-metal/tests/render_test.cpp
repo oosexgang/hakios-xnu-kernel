@@ -2130,8 +2130,60 @@ TEST(a_draw_fetches_two_attributes_through_the_vertex_descriptor) {
     CHECK(has(faultOf(r, cut), "vertex attribute 1: vertex 5's element ends at byte 72 of fetch 0, whose size is 71"));
     // and a decode naming a format the model does not know
     std::vector<uint32_t> fmt = w;
-    fmt[e.findLastReg(regVfdDecodeInstr(0))] = vfdDecodeInstr(0, 0, false, FMT6_32_UINT, WZYX, false);
+    fmt[e.findLastReg(regVfdDecodeInstr(0))] = vfdDecodeInstr(0, 0, false, FMT6_5_6_5_UNORM, WZYX, true);   // a texture format only
     CHECK(has(faultOf(r, fmt), "vertex attribute 0: VFD_DECODE_INSTR.FORMAT is not a vertex format this model knows"));
+}
+
+// The colour attribute in each family of formats: the decode word's FORMAT, SWAP and FLOAT bit as MTLVertexDescriptor.h
+// and fd6_format_table.c name them, written out here rather than read from render.cpp's table. A format whose element
+// does not fit is refused by the driver's own size: an 8-byte element at offset 8 of a 12-byte vertex runs the sixth
+// vertex past the 72 bytes bound, a 4-byte one does not.
+TEST(each_vertex_format_family_decodes_as_metal_names_it) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    std::string why;
+    auto vb = newBuffer(*r.gpu, 6 * 12, &why);
+    Bindings vsb;
+    vsb.buffers = {Binding{vb.get(), 0}};
+    struct Case {
+        uint32_t mtl;
+        a6xx_format fmt;
+        a3xx_color_swap swap;
+        bool isFloat;
+        bool fits;
+    };
+    const Case cases[] = {
+        {7, FMT6_8_8_UNORM, WZYX, true, true},             // UChar2Normalized
+        {12, FMT6_8_8_8_8_SNORM, WZYX, true, true},        // Char4Normalized
+        {3, FMT6_8_8_8_8_UINT, WZYX, false, true},         // UChar4
+        {42, FMT6_8_8_8_8_UNORM, WXYZ, true, true},        // UChar4Normalized_BGRA: R and B swapped on the way in
+        {19, FMT6_16_16_UNORM, WZYX, true, true},          // UShort2Normalized (sokol-debugtext's texture coordinate)
+        {22, FMT6_16_16_SNORM, WZYX, true, true},          // Short2Normalized
+        {16, FMT6_16_16_SINT, WZYX, false, true},          // Short2
+        {53, FMT6_16_FLOAT, WZYX, true, true},             // Half
+        {36, FMT6_32_UINT, WZYX, false, true},             // UInt
+        {32, FMT6_32_SINT, WZYX, false, true},             // Int
+        {21, FMT6_16_16_16_16_UNORM, WZYX, true, false},   // UShort4Normalized: 8 bytes
+        {33, FMT6_32_32_SINT, WZYX, false, false},         // Int2: 8 bytes
+    };
+    for (const Case& c : cases) {
+        Program p = attrProgram();
+        p.vertexDescriptor.attributes[1].format = VertexFormat(c.mtl);
+        Encoded e(r, p, pass, wholeDraw(6), render::Options{}, vsb, Bindings{});
+        CHECK_EQ(e.ok, c.fits);
+        if (e.ok != c.fits) std::printf("       MTLVertexFormat %u: %s\n", c.mtl, e.ok ? "accepted" : e.error.c_str());
+        if (!c.fits) {
+            CHECK(has(e.error, "[[attribute(1)]]"));
+            continue;
+        }
+        CHECK_EQ(e.reg(regVfdDecodeInstr(1)), vfdDecodeInstr(0, 8, false, c.fmt, c.swap, c.isFloat));
+        auto cb = drawOnce(r, p, pass, wholeDraw(6), render::Options{}, vsb, Bindings{});
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       MTLVertexFormat %u: %s\n", c.mtl, r.fake->stats().lastFault.c_str());
+    }
 }
 
 TEST(a_draw_refuses_a_vertex_fetch_it_cannot_serve_by_name) {
@@ -2154,7 +2206,7 @@ TEST(a_draw_refuses_a_vertex_fetch_it_cannot_serve_by_name) {
     refusedWith(p, vsb, 6, "tri_attr_vs_air reads [[attribute(1)]], which the vertex descriptor does not describe");
     p = attrProgram();
     p.vertexDescriptor.attributes[1].format = VertexFormat(41);   // UInt1010102Normalized
-    refusedWith(p, vsb, 6, "tri_attr_vs_air: [[attribute(1)]] is MTLVertexFormat 41: Float..Float4, Half2, Half4 and UChar4Normalized are served");
+    refusedWith(p, vsb, 6, "tri_attr_vs_air: [[attribute(1)]] is MTLVertexFormat 41: the 1010102, RG11B10 and RGB9E5 formats are not served");
     p = attrProgram();
     p.vertexDescriptor.layouts[0].step = VertexStep::kConstant;
     refusedWith(p, vsb, 6, "tri_attr_vs_air: buffer 0 steps constantly: per-vertex and per-instance fetch are served");

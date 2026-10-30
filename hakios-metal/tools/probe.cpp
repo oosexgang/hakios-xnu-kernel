@@ -1427,6 +1427,51 @@ int main(int argc, char** argv) {
                        "control, tri_attr over 7 vertices of a 6-vertex buffer: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb->error()));
             }
         }
+        // 9h2. the same pair through formats the earlier probes did not fetch: the position as Short2Normalized (+-32767 is
+        // +-1.0, so the corners land where 9h's floats put them) and the colour as UChar4Normalized_BGRA with its bytes
+        // stored B G R A, then as UShort4Normalized (each channel 0 or 0xffff) at a 16-byte stride. The expectation is 9d's:
+        // a decode that ignored the swap would draw red as blue, a wrong width would scramble positions or colours.
+        if (t) {
+            struct FmtCase {
+                VertexFormat pos, col;
+                uint32_t stride, colOffset;
+                const char* label;
+            };
+            const FmtCase fcases[] = {
+                {VertexFormat::kShort2Normalized, VertexFormat::kUChar4Normalized_BGRA, 12, 8, "Short2Normalized at 0, UChar4Normalized_BGRA at 8, stride 12"},
+                {VertexFormat::kShort2Normalized, VertexFormat::kUShort4Normalized, 16, 8, "Short2Normalized at 0, UShort4Normalized at 8, stride 16"},
+            };
+            for (const FmtCase& c : fcases) {
+                Program fp{kernels::tri_attr_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_attr"};
+                fp.vertexDescriptor.attributes[0] = VertexAttribute{c.pos, 0, 0};
+                fp.vertexDescriptor.attributes[1] = VertexAttribute{c.col, c.colOffset, 0};
+                fp.vertexDescriptor.layouts[0] = VertexLayout{c.stride, VertexStep::kPerVertex, 1};
+                auto vb = newBuffer(gpu, 6 * c.stride, &why);
+                if (vb == nullptr) {
+                    report(false, std::string("tri_attr: a vertex buffer for ") + c.label + ": " + why);
+                    continue;
+                }
+                const int16_t pos[6][2] = {{-32767, -32767}, {32767, -32767}, {-32767, 32767}, {32767, -32767}, {32767, 32767}, {-32767, 32767}};
+                const uint8_t rgb[3][3] = {{0xff, 0, 0}, {0, 0xff, 0}, {0, 0, 0xff}};   // red, green, blue
+                auto* bytes = static_cast<uint8_t*>(vb->contents());
+                memset(bytes, 0, 6 * c.stride);
+                for (int v = 0; v < 6; v++) {
+                    uint8_t* x = bytes + c.stride * v;
+                    memcpy(x, pos[v], 4);
+                    const uint8_t* k = rgb[v % 3];
+                    if (c.col == VertexFormat::kUChar4Normalized_BGRA) {
+                        const uint8_t bgra[4] = {k[2], k[1], k[0], 0xff};
+                        memcpy(x + c.colOffset, bgra, 4);
+                    } else {
+                        const uint16_t rgba[4] = {uint16_t(k[0] * 0x101), uint16_t(k[1] * 0x101), uint16_t(k[2] * 0x101), 0xffff};
+                        memcpy(x + c.colOffset, rgba, 8);
+                    }
+                }
+                Bindings vsb;
+                vsb.buffers = {Binding{vb.get(), 0}};
+                colourPair(fp, vsb, std::string("tri_attr, the pair through ") + c.label);
+            }
+        }
         // 9i. a Clear: the 2D engine's solid fill (CP_BLIT, turnip's sysmem clear), first without a draw, then before one.
         // Each target starts as a canary none of the expected bytes is; inside the target's rectangle every pixel must be
         // the packed colour, everything outside it in the Bo (the row padding past width * cpp, the rows past the height)
