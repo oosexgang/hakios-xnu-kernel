@@ -31,6 +31,8 @@
 #include "../tests/fixtures/chain220_air.hpp"
 #include "../tests/fixtures/long_chain_air.hpp"
 #include "../tests/fixtures/fill_id_bc.hpp"
+#include "../tests/fixtures/clz_id_bc.hpp"
+#include "../tests/fixtures/bytes_id_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
@@ -765,6 +767,53 @@ int main(int argc, char** argv) {
                 report(cb->status() == CommandBuffer::kCompleted && r.right == words,
                        "dispatch of the kernel compiled on the phone, 16 groups of 64, c = 0x4321: " + describe(r, words, 0) + status(*cb, gpu));
             }
+        }
+    }
+
+    // 6y. two operations the compiler lowers itself, run on the GPU against the processor: clz (ir3 has no uclz; the
+    // compiler makes it 31 - ufind_msb) and a word taken into its bytes and back (bitcast 1 x 32 <-> 4 x 8, which
+    // mediaserverd's image kernels do). 1024 threads each, every word compared; the canary past the grid.
+    if (hasCompiler()) {
+        struct Case { const char* name; const uint8_t* bc; size_t size; uint32_t (*cpu)(uint32_t); };
+        const Case cases[] = {
+            {"clz_id", kernels::clz_id_bc, kernels::clz_id_bc_size,
+             [](uint32_t g) -> uint32_t { return g == 0 ? 32u : uint32_t(__builtin_clz(g)); }},
+            {"bytes_id", kernels::bytes_id_bc, kernels::bytes_id_bc_size,
+             [](uint32_t g) -> uint32_t {
+                 const uint32_t m = g * 0x9E3779B1u;
+                 const uint32_t sum = (m & 0xff) + (m >> 8 & 0xff) + (m >> 16 & 0xff) + (m >> 24);
+                 const uint32_t rev = (m >> 24) | (m >> 8 & 0xff00) | (m << 8 & 0xff0000) | (m << 24);
+                 return sum + (rev & 0xff00u);
+             }},
+        };
+        for (const Case& k : cases) {
+            std::string kwhy;
+            auto compiled = compileAir(k.bc, k.size, &kwhy);
+            auto out = compiled ? newBuffer(gpu, 4 * 1024 + 256, &kwhy) : nullptr;
+            if (compiled == nullptr || out == nullptr) {
+                report(false, std::string(k.name) + " on the GPU: " + kwhy);
+                continue;
+            }
+            uint32_t* w = static_cast<uint32_t*>(out->contents());
+            for (uint32_t i = 0; i < 1024 + 64; i++) w[i] = 0xa5a5a5a5u;
+            const uint32_t groups[3] = {16, 1, 1}, local[3] = {64, 1, 1};
+            auto cb = queue->commandBuffer();
+            if (cb->dispatch(compiled->kernel, groups, local, {Binding{out.get(), 0}}, nullptr, chosen)) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            uint32_t right = 0, tail = 0, firstWrong = ~0u;
+            for (uint32_t g = 0; g < 1024; g++) {
+                if (w[g] == k.cpu(g)) right++;
+                else if (firstWrong == ~0u) firstWrong = g;
+            }
+            for (uint32_t g = 1024; g < 1024 + 64; g++) tail += w[g] == 0xa5a5a5a5u;
+            report(cb->status() == CommandBuffer::kCompleted && right == 1024 && tail == 64,
+                   std::string(k.name) + " on the GPU: " + std::to_string(right) + " of 1024 words as the processor computes them" +
+                       (firstWrong != ~0u ? ", the first wrong at " + std::to_string(firstWrong) + ": " + std::to_string(w[firstWrong]) +
+                                                " for " + std::to_string(k.cpu(firstWrong))
+                                          : std::string()) +
+                       ", " + std::to_string(tail) + " of 64 canary words untouched" + status(*cb, gpu));
         }
     }
 

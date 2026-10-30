@@ -1041,6 +1041,22 @@ TEST(a_kernel_counting_leading_zeros_compiles) {
     if (k == nullptr) std::printf("       %s\n", why.c_str());
 }
 
+// A word taken apart into its bytes and put back (bitcast 1 x 32 bits <-> 4 x 8), as mediaserverd's image kernels do:
+// the front end refused it and MPS aborted mediaserverd on the refusal, in a loop. It compiles now, through ir3 too.
+TEST(a_kernel_taking_a_word_into_bytes_compiles) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: bytes_id did not run)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("bytes_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
 // What MTLFunction's -newArgumentEncoderWithBufferIndex: is answered with: argbuf_res's set at [[buffer(0)]] has
 // four members, ids 0 to 3, eight bytes apart from 0 (the module's air.struct_type_info). There is no set at
 // [[buffer(1)]] -- the function's other buffers are the set's own members, not sets -- and that is refused by name,
