@@ -169,6 +169,13 @@ public:
     // colour format, 1D or 2D; the rows the TP takes (a pitch and a start that are multiples of 64 bytes, as for a
     // surface), inside the buffer. nullptr with *why.
     static std::shared_ptr<Texture> overBuffer(std::shared_ptr<Buffer> buffer, uint64_t offset, uint64_t bytesPerRow, const TextureDesc& desc, std::string* why);
+    // -newTextureViewWithPixelFormat:textureType:levels:slices:: a texture over PARENT's memory (a write through either
+    // is seen through the other), in FORMAT -- PARENT's, or another colour format of the same bytes a pixel -- of TYPE,
+    // levels BASE_LEVEL .. + LEVELS - 1 and slices BASE_SLICE .. + SLICES - 1 of PARENT. Served: every level from 0 in
+    // PARENT's type (a prefix of its layout); one level L as a 2D texture (its rows are a 2D layout of their own); of
+    // a one-level 2D array or cube, a slice as 2D, or a run of slices as a 2D array, or six as a cube. nullptr with *why.
+    static std::shared_ptr<Texture> view(const std::shared_ptr<Texture>& parent, PixelFormat format, TextureType type, uint32_t baseLevel, uint32_t levels,
+                                         uint32_t baseSlice, uint32_t slices, std::string* why);
     uint32_t surface() const { return surface_; }   // the IOSurface's ID, 0 for a texture of its own memory
 
     const TextureDesc& desc() const { return desc_; }

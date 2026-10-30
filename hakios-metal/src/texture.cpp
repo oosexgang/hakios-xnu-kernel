@@ -661,6 +661,67 @@ std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uin
     return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, bytesPerRow, offset, pitchAlign));
 }
 
+std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, PixelFormat format, TextureType type, uint32_t baseLevel, uint32_t levels,
+                                       uint32_t baseSlice, uint32_t slices, std::string* why) {
+    const Texture& p = *parent;
+    const FormatInfo* info = formatInfo(format);
+    const bool layered = p.type() == TextureType::k2DArray || p.type() == TextureType::kCube;
+    const uint32_t parentSlices = layered ? p.depth() : 1;
+    const std::string asked = "a view in pixel format " + n(uint32_t(format)) + ", type " + n(uint32_t(type)) + ", levels " + n(baseLevel) + "+" + n(levels) +
+                              ", slices " + n(baseSlice) + "+" + n(slices) + " of a " + p.info().name + " texture of type " + n(uint32_t(p.type())) + " with " +
+                              n(p.levels()) + " level(s) and " + n(parentSlices) + " slice(s)";
+    if (levels == 0 || slices == 0 || baseLevel + uint64_t(levels) > p.levels() || baseSlice + uint64_t(slices) > parentSlices) {
+        refuse(why, asked + ": the range lies outside the texture");
+        return nullptr;
+    }
+    // another format reads the same bytes otherwise: the same size a pixel and a plain colour layout on both sides, as
+    // Metal's own rule for views has it (a depth or two-plane layout is not rows of pixels a second format could name)
+    if (info == nullptr || (format != p.format() && (info->depth || info->twoPlane || info->blockW > 1 || p.info().depth || p.info().twoPlane ||
+                                                      p.info().blockW > 1 || info->bytesPerPixel != p.info().bytesPerPixel))) {
+        refuse(why, asked + ": a view reads the texture's own format, or another uncompressed colour format of as many bytes a pixel");
+        return nullptr;
+    }
+    if (p.surface() != 0 || p.info().twoPlane || p.samples() != 1) {
+        if (format == p.format() && type == p.type() && levels == p.levels() && slices == parentSlices) {
+            std::shared_ptr<Texture> t(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
+            t->chroma_ = p.chroma_;
+            return t;
+        }
+        refuse(why, asked + ": a view of an IOSurface's, a two-plane or a multisample texture is served only as the whole of it");
+        return nullptr;
+    }
+    TextureDesc d = p.desc_;
+    d.format = format;
+    d.type = type;
+    // every level from 0, the slices all there, the type the parent's: the same layout, its first LEVELS levels
+    if (type == p.type() && baseLevel == 0 && baseSlice == 0 && slices == parentSlices) {
+        d.mipLevels = levels;
+        return std::shared_ptr<Texture>(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_));
+    }
+    // one level as a 2D texture: level L's rows, at its pitch, are a one-level 2D layout of their own (the TP reads a
+    // single level by PITCH alone); of a layered parent that has the one level, slice BASE_SLICE's rows
+    if (type == TextureType::k2D && levels == 1 && slices == 1 && (!layered || p.levels() == 1) && !p.info().depth &&
+        (p.type() == TextureType::k2D || layered)) {
+        const TextureLevel L = p.level(baseLevel);
+        d.width = L.width;
+        d.height = L.height;
+        d.mipLevels = 1;
+        d.depth = 1;
+        uint32_t pitchAlign = 0;
+        while (pitchAlign < log2u(info->bytesPerPixel) && L.pitch % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
+        return std::shared_ptr<Texture>(new Texture(p.buffer_, d, info, L.pitch, p.offset_ + L.offset + uint64_t(baseSlice) * p.sliceBytes(), pitchAlign));
+    }
+    // a run of a one-level layered texture's slices as a 2D array, or six as a cube: the slices sit sliceBytes apart
+    // whichever of the two names them, so the run starts BASE_SLICE slices in
+    if (layered && p.levels() == 1 && levels == 1 && (type == TextureType::k2DArray || (type == TextureType::kCube && slices == 6 && p.width() == p.height()))) {
+        d.depth = slices;
+        return std::shared_ptr<Texture>(new Texture(p.buffer_, d, info, p.pitch_, p.offset_ + uint64_t(baseSlice) * p.sliceBytes(), p.pitchAlign_));
+    }
+    refuse(why, asked + ": served are every level from 0 in the texture's own type, one level (or one slice of a one-level array or cube) as 2D, "
+                        "and a run of a one-level array's or cube's slices as a 2D array, or six as a cube");
+    return nullptr;
+}
+
 bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     SamplerFields f;
     // MTLSamplerMinMagFilter: Nearest 0, Linear 1 (MTLSampler.h)

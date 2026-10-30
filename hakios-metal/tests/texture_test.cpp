@@ -749,3 +749,78 @@ TEST(a_multisample_depth_is_tiled_at_its_samples_cpp) {
     readToo.usage = kTextureUsageRenderTarget | kTextureUsageRead;
     CHECK(Texture::make(r.gpu, readToo, &why) != nullptr);
 }
+
+// A view is the parent's memory under other names: its rows start where the parent's level or slice does, at that
+// level's pitch, and a write through one is in the other's bytes. The twins are what is not a view of those bytes --
+// another size a pixel, a level run that does not start at 0 (its layout is not the parent's), a range outside.
+TEST(a_texture_view_names_a_level_or_a_slice_of_its_parents_memory) {
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = 64;
+    d.height = 48;
+    d.mipLevels = 4;
+    auto mip = Texture::make(r.gpu, d, &why);
+    CHECK(mip != nullptr);
+    if (mip == nullptr) return;
+    for (uint32_t l = 0; l < 4; l++) {
+        auto v = Texture::view(mip, PixelFormat::kRGBA8UnormSrgb, TextureType::k2D, l, 1, 0, 1, &why);
+        CHECK(v != nullptr);
+        if (v == nullptr) {
+            std::printf("       level %u: %s\n", l, why.c_str());
+            continue;
+        }
+        const TextureLevel L = mip->level(l);
+        CHECK_EQ(v->width(), L.width);
+        CHECK_EQ(v->height(), L.height);
+        CHECK_EQ(v->levels(), 1u);
+        CHECK_EQ(v->bytesPerRow(), L.pitch);
+        CHECK_EQ(v->gpuAddress(), mip->levelAddress(l));
+        CHECK(v->buffer() == mip->buffer());
+        CHECK(v->info().srgb);
+        // a write through the view is in the parent's level l
+        const uint32_t word = 0x11223344u + l;
+        CHECK(v->replace(1, 1, 1, 1, &word, 4, &why));
+        uint32_t back = 0;
+        CHECK(mip->read(l, 1, 1, 1, 1, &back, 4, &why));
+        CHECK_EQ(back, word);
+    }
+    auto prefix = Texture::view(mip, PixelFormat::kRGBA8Unorm, TextureType::k2D, 0, 2, 0, 1, &why);
+    CHECK(prefix != nullptr);
+    if (prefix != nullptr) CHECK_EQ(prefix->levelAddress(1), mip->levelAddress(1));
+    CHECK(Texture::view(mip, PixelFormat::kRG8Unorm, TextureType::k2D, 0, 1, 0, 1, &why) == nullptr);
+    CHECK(has(why, "as many bytes a pixel"));
+    CHECK(Texture::view(mip, PixelFormat::kRGBA8Unorm, TextureType::k2D, 1, 2, 0, 1, &why) == nullptr);
+    CHECK(has(why, "served are"));
+    CHECK(Texture::view(mip, PixelFormat::kRGBA8Unorm, TextureType::k2D, 3, 2, 0, 1, &why) == nullptr);
+    CHECK(has(why, "outside the texture"));
+
+    TextureDesc a;
+    a.type = TextureType::k2DArray;
+    a.format = PixelFormat::kRGBA16Float;
+    a.width = a.height = 16;
+    a.depth = 6;
+    auto arr = Texture::make(r.gpu, a, &why);
+    CHECK(arr != nullptr);
+    if (arr == nullptr) return;
+    auto s2 = Texture::view(arr, PixelFormat::kRGBA16Float, TextureType::k2D, 0, 1, 2, 1, &why);
+    CHECK(s2 != nullptr);
+    if (s2 != nullptr) {
+        CHECK_EQ(s2->gpuAddress(), arr->gpuAddress() + 2 * arr->sliceBytes());
+        CHECK_EQ(s2->bytesPerRow(), arr->bytesPerRow());
+        CHECK(s2->type() == TextureType::k2D);
+    }
+    auto run = Texture::view(arr, PixelFormat::kRGBA16Float, TextureType::k2DArray, 0, 1, 3, 2, &why);
+    CHECK(run != nullptr);
+    if (run != nullptr) {
+        CHECK_EQ(run->depth(), 2u);
+        CHECK_EQ(run->gpuAddress(), arr->gpuAddress() + 3 * arr->sliceBytes());
+        CHECK_EQ(run->sliceBytes(), arr->sliceBytes());
+    }
+    auto cube = Texture::view(arr, PixelFormat::kRGBA16Float, TextureType::kCube, 0, 1, 0, 6, &why);
+    CHECK(cube != nullptr);
+    CHECK(Texture::view(arr, PixelFormat::kRGBA16Float, TextureType::kCube, 0, 1, 1, 5, &why) == nullptr);
+    CHECK(Texture::view(arr, PixelFormat::kRGBA16Float, TextureType::k2D, 0, 1, 6, 1, &why) == nullptr);
+    CHECK(has(why, "outside the texture"));
+}

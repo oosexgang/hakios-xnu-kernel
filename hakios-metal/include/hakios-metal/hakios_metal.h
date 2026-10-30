@@ -144,6 +144,11 @@ hakios_metal_texture *hakios_metal_texture_new_iosurface2(hakios_metal_device *d
  * format, type or level count a buffer does not take. */
 hakios_metal_texture *hakios_metal_texture_new_buffer(hakios_metal_buffer *buffer, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned usage, uint64_t offset, uint64_t bytes_per_row);
+/* -newTextureViewWithPixelFormat:textureType:levels:slices:: a texture over TEXTURE's memory, of PIXEL_FORMAT and TYPE,
+ * TEXTURE's levels BASE_LEVEL .. + LEVELS - 1 and slices BASE_SLICE .. + SLICES - 1 (texture.hpp: Texture::view says
+ * which are served). Freed on its own; the memory lives while either does. NULL with the reason. */
+hakios_metal_texture *hakios_metal_texture_new_view(hakios_metal_texture *texture, unsigned pixel_format, unsigned type, unsigned base_level,
+    unsigned levels, unsigned base_slice, unsigned slices);
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture *texture);   /* its IOSurface's ID, 0 for a texture of its own */
 void hakios_metal_texture_free(hakios_metal_texture *texture);
 void *hakios_metal_texture_contents(hakios_metal_texture *texture);        /* the GPU's rows, write-combined */

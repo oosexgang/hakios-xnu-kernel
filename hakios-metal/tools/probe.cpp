@@ -1233,6 +1233,62 @@ int main(int argc, char** argv) {
                            std::to_string(gap) + " words of padding and between layers canary" + status(*cb, gpu));
             }
 
+            // 7f. a kernel's store through a view (Texture::view): tex_fill over level 1 of a two-level texture, then over
+            // slice 2 of a four-layer array, each viewed as 2D. The parent read back: the viewed level or layer holds
+            // tex_fill's words, every other one is still canary -- a view at the parent's base would fill level 0 or
+            // layer 0 instead, and a view at the wrong pitch would leave the rule broken across rows
+            for (const bool bySlice : {false, true}) {
+                TextureDesc pd;
+                pd.format = PixelFormat::kR32Uint;
+                pd.width = bySlice ? 32 : 64;
+                pd.height = bySlice ? 16 : 32;
+                pd.usage = kTextureUsageRead | kTextureUsageWrite;
+                if (bySlice) {
+                    pd.type = TextureType::k2DArray;
+                    pd.depth = 4;
+                } else {
+                    pd.mipLevels = 2;
+                }
+                const std::string label = bySlice ? "tex_fill through a view of slice 2 of a 4-layer R32Uint 32x16 array" : "tex_fill through a view of level 1 of a 2-level R32Uint 64x32 texture";
+                auto parent = Texture::make(gpu, pd, &why);
+                auto v = parent == nullptr ? nullptr : Texture::view(parent, PixelFormat::kR32Uint, TextureType::k2D, bySlice ? 0 : 1, 1, bySlice ? 2 : 0, 1, &why);
+                if (v == nullptr) {
+                    report(false, label + ": " + why);
+                    continue;
+                }
+                const uint32_t canary = 0xc0ffee00u;
+                uint32_t* w = static_cast<uint32_t*>(parent->contents());
+                for (uint64_t i = 0; i < parent->buffer()->length() / 4; i++) w[i] = canary;
+                static_cast<uint32_t*>(cbuf->contents())[0] = c2;
+                const uint32_t groups[3] = {4, 2, 1};   // the view's 32 x 16, (8,8,1) a group
+                Bindings b;
+                b.buffers = {Binding{cbuf.get(), 0}};
+                b.textures = {v.get()};
+                auto cb = runTex(kernels::tex_fill_air, groups, local88, b);
+                // the parent's views of its parts, as the probe reads them: a level, or a layer at sliceBytes
+                const uint32_t parts = bySlice ? 4 : 2, target = bySlice ? 2 : 1;
+                uint32_t right = 0, covered = 0, untouched = 0, others = 0;
+                for (uint32_t part = 0; part < parts; part++) {
+                    const TextureLevel L = bySlice ? TextureLevel{part * parent->sliceBytes(), parent->bytesPerRow(), 32, 16} : parent->level(part);
+                    const uint8_t* base = static_cast<const uint8_t*>(parent->contents()) + L.offset;
+                    for (uint32_t y = 0; y < L.height; y++)
+                        for (uint32_t x = 0; x < L.width; x++) {
+                            uint32_t word;
+                            memcpy(&word, base + y * L.pitch + x * 4, 4);
+                            if (part == target) {
+                                covered++;
+                                right += word == expectedWord(y * 32 + x, c2);
+                            } else {
+                                others++;
+                                untouched += word == canary;
+                            }
+                        }
+                }
+                report(completed(*cb) && right == covered && untouched == others && covered == 512,
+                       label + ": " + std::to_string(right) + " of " + std::to_string(covered) + " texels of the viewed part as computed, " +
+                           std::to_string(untouched) + " of " + std::to_string(others) + " of the other parts canary" + status(*cb, gpu));
+            }
+
             // 7d. the four kernels compiled on the phone: the same words, layout and texture fields as the host's
             // fixtures (the core's walk of the NIR against the fixture writer's), and tex_fill dispatched from the
             // phone's own compile

@@ -376,6 +376,19 @@ hakios_metal_texture* hakios_metal_texture_new_buffer(hakios_metal_buffer* b, un
     return r;
 }
 
+hakios_metal_texture* hakios_metal_texture_new_view(hakios_metal_texture* t, unsigned pixelFormat, unsigned type, unsigned baseLevel, unsigned levels,
+                                                    unsigned baseSlice, unsigned slices) {
+    std::string why;
+    std::shared_ptr<Texture> v = Texture::view(t->texture, PixelFormat(pixelFormat), TextureType(type), baseLevel, levels, baseSlice, slices, &why);
+    if (v == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(v);
+    return r;
+}
+
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture* t) { return t->texture->surface(); }
 
 void hakios_metal_texture_free(hakios_metal_texture* t) { delete t; }
