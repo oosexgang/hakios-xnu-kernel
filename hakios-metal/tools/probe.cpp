@@ -57,6 +57,7 @@
 #include "../tests/fixtures/tri_tex2da_fs_air.hpp"
 #include "../tests/fixtures/tri_pntc_fs_air.hpp"
 #include "../tests/fixtures/tri_pt_vs_air.hpp"
+#include "../tests/fixtures/tri_vtex_vs_air.hpp"
 #include "../tests/fixtures/tri_cube_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
@@ -3755,6 +3756,72 @@ int main(int argc, char** argv) {
                            std::to_string(inside) + " pixels in the four squares right" + (which == 1 ? " (" + std::to_string(upward) + " with t running upward)" : std::string()) +
                            ", " + std::to_string(outsideCanary) + " of " + std::to_string(outside) + " outside still canary" + first +
                            (drew ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
+        // 9vt. a texture sampled in the vertex stage (SB6_VS_TEX): tri_vtex_vs's four points of 9pt, each the colour of texel
+        // VID of a 4x1 RGBA8 texture under a nearest sampler, tri_color_fs passing it on. Twice, the second texture holding
+        // the four texels in the opposite order: a VS that read one stale table, or the FS's, or nothing, cannot get both.
+        {
+            const uint32_t centres[4][2] = {{16, 16}, {48, 16}, {16, 48}, {48, 48}};
+            const uint32_t texels[4] = {0xff2010e0u, 0xff30d020u, 0xffc04080u, 0xff60a0f0u};
+            Sampler nearest{};
+            const bool haveSampler = makeSampler(SamplerDesc{}, &nearest, &why);
+            for (int order = 0; order < 2; order++) {
+                uint32_t row[4];
+                for (int v = 0; v < 4; v++) row[v] = texels[order == 0 ? v : 3 - v];
+                TextureDesc td;
+                td.format = PixelFormat::kRGBA8Unorm;
+                td.width = 4;
+                td.height = 1;
+                td.usage = kTextureUsageRead;
+                auto tex = Texture::make(gpu, td, &why);
+                std::string whyReplace;
+                const bool filled = tex != nullptr && tex->replace(0, 0, 4, 1, row, 16, &whyReplace);
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Draw d = drawOf(0, 4);
+                d.primitive = Primitive::kPoint;
+                Bindings vsb;
+                vsb.textures = {tex.get()};
+                vsb.samplers = {&nearest};
+                auto cb = queue->commandBuffer();
+                const Program pts{kernels::tri_vtex_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_vtex"};
+                const bool drew = haveSampler && filled && cb->draw(pts, rp, d, vsb, Bindings{});
+                if (drew) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t right[4] = {}, outsideCanary = 0, outside = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        int square = -1;
+                        for (int c = 0; c < 4; c++) {
+                            if (i + 4 >= centres[c][0] && i < centres[c][0] + 4 && j + 4 >= centres[c][1] && j < centres[c][1] + 4) square = c;
+                        }
+                        if (square < 0) {
+                            outside++;
+                            outsideCanary += px == canary;
+                            continue;
+                        }
+                        if (px == row[square]) right[square]++;
+                        else if (first.empty()) {
+                            char text[96];
+                            snprintf(text, sizeof text, "; the first off (%u, %u): %08x for %08x", i, j, px, row[square]);
+                            first = text;
+                        }
+                    }
+                }
+                const uint32_t all = right[0] + right[1] + right[2] + right[3];
+                report(drew && completed(*cb) && all == 256 && outsideCanary == outside,
+                       std::string("a texture in the vertex stage, texels ") + (order == 0 ? "in order" : "reversed") + ": " + std::to_string(right[0]) + "/" +
+                           std::to_string(right[1]) + "/" + std::to_string(right[2]) + "/" + std::to_string(right[3]) + " of 64 per square right, " +
+                           std::to_string(outsideCanary) + " of " + std::to_string(outside) + " outside still canary" + first +
+                           (!haveSampler || !filled ? ": " + why + whyReplace : drew ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
 #if defined(__APPLE__)

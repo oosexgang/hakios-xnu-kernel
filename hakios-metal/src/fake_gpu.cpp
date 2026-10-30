@@ -1218,62 +1218,72 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     // descriptor a 2D linear view inside a buffer, every sampler with its last word 0. Then the prefetch commands
     // (fd6 emit_fs_inputs): at most four, each a plain sample (TEX_PREFETCH_SAM) of a loaded, non-zero texture with a
     // loaded sampler, writing at least one component into a valid register.
-    if (written_.count(REG_A6XX_SP_FS_TEX_COUNT) == 0) {
-        fault("SP_FS_TEX_COUNT not written in this submission: the draw would sample the last owner's texture table");
-        return false;
-    }
-    d.fsTextureCount = reg(REG_A6XX_SP_FS_TEX_COUNT);
-    d.fsSamplerCount = 0;
-    const uint8_t* fsTexBytes = nullptr;
-    if (d.fsTextureCount != 0) {
-        const uint64_t texTable = reg64(REG_A6XX_SP_FS_TEX_CONST), sampTable = reg64(REG_A6XX_SP_FS_TEX_SAMP);
-        d.fsTexConst = texTable;
-        if (!fs_.texLoaded || fs_.texFrom != texTable || fs_.texUnits != d.fsTextureCount) {
-            fault("the FS's texture descriptors were not loaded from where SP_FS_TEX_CONST points, or not as many as SP_FS_TEX_COUNT says");
+    // The VS's the same (fd6_texture.cc's VS_TEX: SB6_VS_TEX, SP_VS_TEX_*, SP_VS_CONFIG), judged by the one rule.
+    auto stageTextures = [&](const char* label, const StageLoads& xs, uint32_t countReg, uint32_t constReg, uint32_t sampReg, uint32_t configReg,
+                             uint32_t* count, uint32_t* sampCount, uint64_t* constAt) {
+        const std::string L = label, U = L == "FS" ? "FS" : "VS";
+        if (written_.count(countReg) == 0) {
+            fault("SP_" + U + "_TEX_COUNT not written in this submission: the draw would sample the last owner's texture table");
             return false;
         }
-        fsTexBytes = at(texTable, uint64_t(d.fsTextureCount) * 64);
-        if (texTable % kSpCsTexConstAlign != 0 || fsTexBytes == nullptr) {
-            fault(text("the FS's texture descriptors at %#llx: outside every buffer or not 64-byte aligned", texTable));
+        *count = reg(countReg);
+        *sampCount = 0;
+        if (*count == 0) return true;
+        const uint64_t texTable = reg64(constReg), sampTable = reg64(sampReg);
+        *constAt = texTable;
+        if (!xs.texLoaded || xs.texFrom != texTable || xs.texUnits != *count) {
+            fault("the " + L + "'s texture descriptors were not loaded from where SP_" + U + "_TEX_CONST points, or not as many as SP_" + U + "_TEX_COUNT says");
             return false;
         }
-        if (!fs_.sampLoaded || fs_.sampFrom != sampTable || fs_.sampUnits == 0) {
-            fault("the FS's sampler descriptors were not loaded from where SP_FS_TEX_SAMP points (a texture load needs at least one)");
+        const uint8_t* texBytes = at(texTable, uint64_t(*count) * 64);
+        if (texTable % kSpCsTexConstAlign != 0 || texBytes == nullptr) {
+            fault("the " + L + text("'s texture descriptors at %#llx: outside every buffer or not 64-byte aligned", texTable));
             return false;
         }
-        const uint8_t* sampBytes = at(sampTable, uint64_t(fs_.sampUnits) * 16);
+        if (!xs.sampLoaded || xs.sampFrom != sampTable || xs.sampUnits == 0) {
+            fault("the " + L + "'s sampler descriptors were not loaded from where SP_" + U + "_TEX_SAMP points (a texture load needs at least one)");
+            return false;
+        }
+        const uint8_t* sampBytes = at(sampTable, uint64_t(xs.sampUnits) * 16);
         if (sampTable % kSpCsTexSampAlign != 0 || sampBytes == nullptr) {
-            fault(text("the FS's sampler descriptors at %#llx: outside every buffer or not 16-byte aligned", sampTable));
+            fault("the " + L + text("'s sampler descriptors at %#llx: outside every buffer or not 16-byte aligned", sampTable));
             return false;
         }
-        const uint32_t config = reg(REG_A6XX_SP_FS_CONFIG);
+        const uint32_t config = reg(configReg);
         const uint32_t ntex = fieldOf(config, A6XX_SP_FS_CONFIG_NTEX__MASK, A6XX_SP_FS_CONFIG_NTEX__SHIFT);
         const uint32_t nsamp = fieldOf(config, A6XX_SP_FS_CONFIG_NSAMP__MASK, A6XX_SP_FS_CONFIG_NSAMP__SHIFT);
-        if (ntex < d.fsTextureCount || ntex != nsamp) {
-            fault(text("SP_FS_CONFIG names %llu textures and %llu samplers; SP_FS_TEX_COUNT says %llu (NTEX must cover it and equal NSAMP)", ntex, nsamp,
-                       d.fsTextureCount));
+        if (ntex < *count || ntex != nsamp) {
+            fault("SP_" + U + text("_CONFIG names %llu textures and %llu samplers; ", ntex, nsamp) + "SP_" + U +
+                  text("_TEX_COUNT says %llu (NTEX must cover it and equal NSAMP)", *count));
             return false;
         }
-        for (uint32_t i = 0; i < d.fsTextureCount; i++) {
+        for (uint32_t i = 0; i < *count; i++) {
             uint32_t t[kTexConstDwords];
-            memcpy(t, fsTexBytes + 64 * i, sizeof t);
+            memcpy(t, texBytes + 64 * i, sizeof t);
             if (allZero(t, kTexConstDwords)) continue;
             if (fieldOf(t[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_2D) {
-                fault(text("FS texture %llu is of type %llu: not the 2D descriptor this GPU model runs", i, fieldOf(t[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
+                fault(L + text(" texture %llu is of type %llu: not the 2D descriptor this GPU model runs", i, fieldOf(t[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
                 return false;
             }
-            if (!check2d(t, "FS texture", i, true)) {
+            if (!check2d(t, (L + " texture").c_str(), i, true)) {
                 return false;
             }
         }
-        for (uint32_t i = 0; i < fs_.sampUnits; i++) {
+        for (uint32_t i = 0; i < xs.sampUnits; i++) {
             uint32_t m[kTexSampDwords];
             memcpy(m, sampBytes + 16 * i, sizeof m);
             if (!checkSampler(m, i)) {
                 return false;
             }
         }
-        d.fsSamplerCount = fs_.sampUnits;
+        *sampCount = xs.sampUnits;
+        return true;
+    };
+    if (!stageTextures("FS", fs_, REG_A6XX_SP_FS_TEX_COUNT, REG_A6XX_SP_FS_TEX_CONST, REG_A6XX_SP_FS_TEX_SAMP, REG_A6XX_SP_FS_CONFIG, &d.fsTextureCount,
+                       &d.fsSamplerCount, &d.fsTexConst) ||
+        !stageTextures("VS", vs_, REG_A6XX_SP_VS_TEX_COUNT, REG_A6XX_SP_VS_TEX_CONST, REG_A6XX_SP_VS_TEX_SAMP, REG_A6XX_SP_VS_CONFIG, &d.vsTextureCount,
+                       &d.vsSamplerCount, &d.vsTexConst)) {
+        return false;
     }
     {
         const uint32_t cntl = reg(REG_A6XX_SP_FS_PREFETCH_CNTL);
@@ -1304,7 +1314,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
                 return false;
             }
             uint32_t t[kTexConstDwords];
-            memcpy(t, fsTexBytes + 64 * texId, sizeof t);
+            memcpy(t, at(d.fsTexConst + 64 * uint64_t(texId), 64), sizeof t);   // inside: the table was checked whole above
             if (allZero(t, kTexConstDwords)) {
                 fault(text("SP_FS_PREFETCH_CMD[%llu] samples texture %llu, whose descriptor is zero (no texture is bound there)", i, texId));
                 return false;

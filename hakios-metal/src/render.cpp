@@ -149,11 +149,6 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.numUbos > kMaxVertexBuffers) {
         return refuse(why, name + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has " + n(kMaxVertexBuffers));
     }
-    bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
-    for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
-    if (textures && s.kind == kStageVertex) {
-        return refuse(why, name + " samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
-    }
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
         if (k.textures[i].kind == kTexImage) {
             // an image is an IBO of the 3D pipe, the same table a device buffer needs (above)
@@ -511,9 +506,13 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
 // first instruction, and a slot past the count would be a stale descriptor.
 constexpr uint32_t kFsTexConstAt = kTableFsAt;                       // kMaxTextureSlots * 64 = 1024 bytes, 64-aligned
 constexpr uint32_t kFsTexSampAt = kTableFsAt + kMaxTextureSlots * 64;  // kMaxTextureSlots * 16 = 256 bytes
-static_assert(kFsTexSampAt + kMaxTextureSlots * 16 <= kTableFsAt + 4096, "the FS's tables fit its part of the pass's table");
+// The VS's, the same group into SB6_VS_TEX by CP_LOAD_STATE6_GEOM with SP_VS_TEX_* (fd6_texture.cc's VS_TEX): past the
+// FS's, as the VS's own part of the table is the 3D IBO table's (kGfxIboAt) and full with it.
+constexpr uint32_t kVsTexConstAt = kFsTexSampAt + kMaxTextureSlots * 16;
+constexpr uint32_t kVsTexSampAt = kVsTexConstAt + kMaxTextureSlots * 64;
+static_assert(kVsTexConstAt % 64 == 0 && kVsTexSampAt + kMaxTextureSlots * 16 <= kTableFsAt + 4096, "the two stages' tables fit the FS's part of the pass's table");
 
-struct FsTextures {
+struct StageTextures {
     uint32_t numTex = 0, numSamp = 0;
     uint32_t texWords[kMaxTextureSlots][16] = {};
     uint32_t sampWords[kMaxTextureSlots][4] = {};
@@ -554,7 +553,7 @@ Attachment attachmentOf(const RenderPass& p, uint32_t i) {
     return Attachment{c.texture, c.level, c.load, c.store, c.clearColor};
 }
 
-bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTextures* out, std::string* why) {
+bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, StageTextures* out, std::string* why) {
     const Kernel& k = fs.k;
     const std::string name = stageName(fs);
     out->numTex = k.numTextureSlots;
@@ -1244,8 +1243,8 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         }
         if (blends[i].enabled) blendMask |= 1u << i;
     }
-    FsTextures fsTex;
-    if (!fsTextures(fs, fsBindings, pass, &fsTex, why)) {
+    StageTextures vsTex, fsTex;
+    if (!stageTextures(vs, vsBindings, pass, &vsTex, why) || !stageTextures(fs, fsBindings, pass, &fsTex, why)) {
         return false;
     }
     std::vector<uint32_t> vsUbos, fsUbos;
@@ -1371,6 +1370,8 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     memset(tableCpu + kFsTexSampAt, 0, kMaxTextureSlots * 16);
     memcpy(tableCpu + kFsTexConstAt, fsTex.texWords, sizeof fsTex.texWords);
     memcpy(tableCpu + kFsTexSampAt, fsTex.sampWords, sizeof fsTex.sampWords);
+    memcpy(tableCpu + kVsTexConstAt, vsTex.texWords, sizeof vsTex.texWords);
+    memcpy(tableCpu + kVsTexSampAt, vsTex.sampWords, sizeof vsTex.sampWords);
     MrtWords mrts[kMaxColorOutputs] = {};
     uint32_t srgbMask = 0;
     for (uint32_t i = 0; i < numRt; i++) {
@@ -1573,6 +1574,21 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             reg64(stream, REG_A6XX_SP_FS_TEX_CONST, table + kFsTexConstAt);
         }
         reg(stream, REG_A6XX_SP_FS_TEX_COUNT, fsTex.numTex);
+    }
+    // 10c. the VS's, the same group by CP_LOAD_STATE6_GEOM into SB6_VS_TEX (fd6_texture.cc's VS_TEX); its count as well
+    // written 0 without textures, so that no earlier owner's stays
+    if (o.vsTextures) {
+        if (vsTex.numTex != 0) {
+            uint32_t w[3] = {loadState6_0(0, ST6_SHADER, SS6_INDIRECT, SB6_VS_TEX, vsTex.numSamp), CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(table + kVsTexSampAt)),
+                             CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t((table + kVsTexSampAt) >> 32))};
+            stream.packet(CP_LOAD_STATE6_GEOM, w, 3);
+            reg64(stream, REG_A6XX_SP_VS_TEX_SAMP, table + kVsTexSampAt);
+            uint32_t t[3] = {loadState6_0(0, ST6_CONSTANTS, SS6_INDIRECT, SB6_VS_TEX, vsTex.numTex), CP_LOAD_STATE6_1_EXT_SRC_ADDR(uint32_t(table + kVsTexConstAt)),
+                             CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(uint32_t((table + kVsTexConstAt) >> 32))};
+            stream.packet(CP_LOAD_STATE6_GEOM, t, 3);
+            reg64(stream, REG_A6XX_SP_VS_TEX_CONST, table + kVsTexConstAt);
+        }
+        reg(stream, REG_A6XX_SP_VS_TEX_COUNT, vsTex.numTex);
     }
     // 11. the vertex fetch with no attributes (tu6_emit_vs, tu_shader.cc:1902-1967; fd6 emit_vs_system_values,
     // fd6_program.cc:510-556): PC/VFD_MULTIVIEW_CNTL 0, VFD_CONTROL_0 0 (no fetches, no decodes), VFD_CONTROL_1 with the
@@ -1989,33 +2005,35 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     std::string why;
     // the null texture's slot is the front end's, not the application's: the queue's texture goes there, over anything
     // bound at that index (an application cannot know the index, so whatever it bound there was not meant for it)
-    Bindings fsWithNull;
+    Bindings vsWithNull, fsWithNull;
+    const Bindings* vsb = &vsBindings;
     const Bindings* fsb = &fsBindings;
     std::shared_ptr<Texture> null;
     // And so does a sampled slot the application left empty: an uber shader (chronod's widget renderer) declares
     // textures that the branches a given draw takes never read, and Metal lets such a slot go unbound. What a read of
-    // it gives is undefined in Metal; here it is the null texture's zero, as Apple's GPUs answer.
-    for (uint32_t i = 0; i < kMaxTextureSlots && i < program.fs.k.numTextureSlots; i++) {
-        const KernelTexture& kt = program.fs.k.textures[i];
-        if (kt.kind != kTexSampled || kt.fbTarget != 0) continue;
-        const bool unbound = i >= fsBindings.textures.size() || fsBindings.textures[i] == nullptr;
-        if (!kt.isNull && !unbound) continue;
-        if (null == nullptr) {
-            if ((null = queue_.nullTexture(&why)) == nullptr) {
+    // it gives is undefined in Metal; here it is the null texture's zero, as Apple's GPUs answer. Both stages alike.
+    for (const auto& [k, given, with, at] : {std::tuple<const Kernel*, const Bindings*, Bindings*, const Bindings**>{&program.vs.k, &vsBindings, &vsWithNull, &vsb},
+                                             {&program.fs.k, &fsBindings, &fsWithNull, &fsb}}) {
+        for (uint32_t i = 0; i < kMaxTextureSlots && i < k->numTextureSlots; i++) {
+            const KernelTexture& kt = k->textures[i];
+            if (kt.kind != kTexSampled || kt.fbTarget != 0) continue;
+            const bool unbound = i >= given->textures.size() || given->textures[i] == nullptr;
+            if (!kt.isNull && !unbound) continue;
+            if (null == nullptr && (null = queue_.nullTexture(&why)) == nullptr) {
                 return fail(std::string("no null texture: ") + why);
             }
-            fsWithNull = fsBindings;
-            fsb = &fsWithNull;
+            if (*at != with) {
+                *with = *given;
+                *at = with;
+            }
+            if (with->textures.size() <= i) with->textures.resize(i + 1, nullptr);
+            with->textures[i] = null.get();
+            if (!kt.isNull) with->nullMask |= 1u << i;
         }
-        if (fsWithNull.textures.size() <= i) fsWithNull.textures.resize(i + 1, nullptr);
-        fsWithNull.textures[i] = null.get();
-        if (!kt.isNull) fsWithNull.nullMask |= 1u << i;
     }
     // private memory is the queue's too: a stage that wants some is given the queue's buffer, which the submission
     // names for writing (the stage spills into it)
-    Bindings vsWithPrivate;
-    const Bindings* vsb = &vsBindings;
-    for (const auto& [k, from, to] : {std::tuple<const Kernel*, const Bindings**, Bindings*>{&program.vs.k, &vsb, &vsWithPrivate}, {&program.fs.k, &fsb, &fsWithNull}}) {
+    for (const auto& [k, from, to] : {std::tuple<const Kernel*, const Bindings**, Bindings*>{&program.vs.k, &vsb, &vsWithNull}, {&program.fs.k, &fsb, &fsWithNull}}) {
         if (k->pvtmemSize == 0) continue;
         PrivateMemory pm;
         std::shared_ptr<Buffer> scratch = queue_.privateMemory(k->pvtmemSize, k->pvtmemPerWave, &pm, &why);
@@ -2092,11 +2110,13 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (d.visibilityMode != 0 && d.visibility != nullptr) {
         use(*d.visibility, true);   // the result word is written; the command buffer keeps the buffer until it is
     }
-    // the FS's sampled textures: read, and alive until the GPU is done (the descriptors in the table point at them)
-    for (const Texture* t : fsb->textures) {
-        if (t != nullptr) {
-            use(*t->buffer(), false);
-            keep(t->buffer());
+    // both stages' sampled textures: read, and alive until the GPU is done (the descriptors in the table point at them)
+    for (const Bindings* b : {vsb, fsb}) {
+        for (const Texture* t : b->textures) {
+            if (t != nullptr) {
+                use(*t->buffer(), false);
+                keep(t->buffer());
+            }
         }
     }
     return true;

@@ -6,6 +6,7 @@
 #endif
 
 #include <cstring>
+#include <optional>
 #include <vector>
 
 #include "hakios-metal/command.hpp"
@@ -44,6 +45,10 @@ struct hakios_metal_queue {
 };
 struct hakios_metal_cb {
     std::shared_ptr<CommandBuffer> cb;
+    // hakios_metal_cb_set_vertex_textures's tables, sticky as an encoder's state is: the texture objects held so that
+    // what a later draw names is alive, the samplers copied (their four words are all a draw takes)
+    std::vector<std::shared_ptr<Texture>> vsTextures;
+    std::vector<std::optional<Sampler>> vsSamplers;
 };
 struct hakios_metal_texture {
     std::shared_ptr<Texture> texture;   // its Buffer is kept by every command buffer that dispatched over it
@@ -758,7 +763,15 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
         }
         return b;
     };
-    const Bindings vsb = table(vsBuffers, vsOffsets, vsCount);
+    Bindings vsb = table(vsBuffers, vsOffsets, vsCount);
+    // the vertex stage's textures and samplers, as hakios_metal_cb_set_vertex_textures left them, and its own constexpr
+    // samplers past them, as the fragment stage's below
+    for (const auto& t : cb->vsTextures) vsb.textures.push_back(t.get());
+    for (const auto& m : cb->vsSamplers) vsb.samplers.push_back(m ? &*m : nullptr);
+    for (const auto& [index, sampler] : p->program->vs->inlineSamplers) {
+        if (vsb.samplers.size() <= index) vsb.samplers.resize(index + 1, nullptr);
+        vsb.samplers[index] = &sampler;
+    }
     Bindings fsb = table(fsBuffers, fsOffsets, fsCount);
     // the fragment stage's [[texture(n)]] and [[sampler(n)]] by Metal's index (setFragmentTexture / setFragmentSamplerState)
     fsb.textures.resize(fsTextureCount, nullptr);
@@ -829,9 +842,24 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     for (unsigned i = 0; i < fsTextureCount; i++) {
         if (fsTextures != nullptr && fsTextures[i] != nullptr) cb->cb->keepAlive(fsTextures[i]->texture);   // the draw keeps the memory already
     }
+    for (const auto& t : cb->vsTextures) {
+        if (t != nullptr) cb->cb->keepAlive(t);
+    }
     return 0;
 }
 }  // namespace
+
+void hakios_metal_cb_set_vertex_textures(hakios_metal_cb* cb, hakios_metal_texture* const* textures, unsigned textureCount,
+                                         hakios_metal_sampler* const* samplers, unsigned samplerCount) {
+    cb->vsTextures.assign(textureCount, nullptr);
+    for (unsigned i = 0; i < textureCount; i++) {
+        if (textures != nullptr && textures[i] != nullptr) cb->vsTextures[i] = textures[i]->texture;
+    }
+    cb->vsSamplers.assign(samplerCount, std::nullopt);
+    for (unsigned i = 0; i < samplerCount; i++) {
+        if (samplers != nullptr && samplers[i] != nullptr) cb->vsSamplers[i] = samplers[i]->sampler;
+    }
+}
 
 int hakios_metal_cb_draw2(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
                           const struct hakios_metal_viewport* viewport, const struct hakios_metal_scissor* scissor, unsigned primitive,

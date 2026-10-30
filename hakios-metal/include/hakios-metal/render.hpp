@@ -413,6 +413,7 @@ struct Options {
     bool programVs = true;       // SP_VS_CTRL_REG0, INSTRLEN, the OBJ_START block, HW_STACK_OFFSET, the preload, the immediates
     bool programFs = true;       // the same for the FS
     bool fsTextures = true;      // the FS's SB6_FS_TEX loads, SP_FS_TEX_SAMP/CONST, SP_FS_TEX_COUNT (0 without textures)
+    bool vsTextures = true;      // the VS's SB6_VS_TEX loads, SP_VS_TEX_SAMP/CONST, SP_VS_TEX_COUNT (0 without textures)
     bool vfd = true;             // PC/VFD_MULTIVIEW_CNTL 0, VFD_CONTROL_0..6, VFD_INDEX_OFFSET, VFD_INSTANCE_START_OFFSET, PC_RESTART_INDEX
     bool vpc = true;             // the Linkage registers, VPC_VS_CLIP_CNTL(_V2), GRAS_VS_CL_CNTL, VPC_VS_LAYER_CNTL(_V2), GRAS_VS_LAYER_CNTL, PC_PS_CNTL
     bool fsInputs = true;        // SP_FS_PREFETCH_CNTL, HLSQ_CONTROL_1..5_REG, HLSQ_FS_CNTL_0, GRAS_CNTL, RB_RENDER_CONTROL0/1, RB_SAMPLE_CNTL,

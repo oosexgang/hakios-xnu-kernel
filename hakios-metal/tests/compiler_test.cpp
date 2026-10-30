@@ -834,9 +834,13 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(vs, m) == nullptr);
     expectRefusal(why, "the fragment stage tri_flat_fs stores through texture 1 as an image: images in a draw (the 3D IBO table) are not served");
     m = copyOf(vs);
+    m->stage.k.textures[0].kind = kTexSampled;   // and in a vertex stage (SB6_VS_TEX); an image there is refused as in the FS
+    m->stage.k.numTextureSlots = 1;
     m->stage.k.samplerMask = 1;
+    CHECK(link(m, fs) != nullptr);
+    m->stage.k.textures[0].kind = kTexImage;
     CHECK(link(m, fs) == nullptr);
-    expectRefusal(why, "the vertex stage tri_flat_vs samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
+    expectRefusal(why, "the vertex stage tri_flat_vs stores through texture 0 as an image: images in a draw (the 3D IBO table) are not served");
     m = copyOf(fs);
     m->stage.numColorOutputs = 2;   // [[color(1)]] counted and not written: a gap, which links (the draw serves gaps)
     CHECK(link(vs, m) != nullptr);

@@ -118,6 +118,8 @@ public:
         uint32_t mrtControl = 0, mrtBlendControl = 0;   // RB_MRT_CONTROL[0] (blend bits, component enable), RB_MRT_BLEND_CONTROL[0]
         uint32_t fsTextureCount = 0, fsSamplerCount = 0;   // SP_FS_TEX_COUNT, the SB6_FS_TEX sampler load's NUM_UNIT
         uint64_t fsTexConst = 0;                          // SP_FS_TEX_CONST: where the texture descriptors were loaded from
+        uint32_t vsTextureCount = 0, vsSamplerCount = 0;   // SP_VS_TEX_COUNT, the SB6_VS_TEX sampler load's NUM_UNIT
+        uint64_t vsTexConst = 0;                          // SP_VS_TEX_CONST
         uint32_t prefetchCount = 0, prefetchCmd[4] = {};  // SP_FS_PREFETCH_CNTL.COUNT, SP_FS_PREFETCH_CMD[i]
         uint32_t depthCntl = 0;                           // RB_DEPTH_CNTL
         uint32_t vsUbos = 0, fsUbos = 0;                  // the UBO descriptors each stage loaded

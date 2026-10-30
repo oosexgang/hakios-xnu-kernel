@@ -1015,14 +1015,8 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
         // and an indexed constant buffer (a UBO descriptor) are not yet
         // device buffers link: the draw loads the 3D IBO table and refuses there what it cannot (two stages disagreeing
         // about an index, nothing bound); images in a draw are refused below with the textures' rule
-        // sampled textures are served in a fragment stage (render.cpp: the FS_TEX group, the prefetch); a vertex stage's
-        // textures and an image in either stage are not yet -- render::encode says the same at the draw
-        bool textures = k.numTextureSlots != 0 || k.samplerMask != 0;
-        for (uint32_t i = 0; i < kMaxTextureSlots; i++) textures = textures || k.textures[i].kind != kTexNone;
-        if (textures && s->stage.kind == kStageVertex) {
-            refuse(why, stageName(*s) + " samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
-            return nullptr;
-        }
+        // sampled textures are served in both stages (render.cpp: the VS_TEX and FS_TEX groups, the FS's prefetch); an
+        // image in either is not yet -- render::encode says the same at the draw
         for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
             if (k.textures[i].kind == kTexImage) {
                 refuse(why, stageName(*s) + " stores through texture " + std::to_string(i) + " as an image: images in a draw (the 3D IBO table) are not served");

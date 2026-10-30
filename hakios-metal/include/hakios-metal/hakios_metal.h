@@ -349,6 +349,12 @@ int hakios_metal_cb_draw_indexed(hakios_metal_cb *cb, hakios_metal_program *prog
     hakios_metal_buffer *const *fs_buffers, const uint64_t *fs_offsets, unsigned fs_count,
     hakios_metal_texture *const *fs_textures, unsigned fs_texture_count,
     hakios_metal_sampler *const *fs_samplers, unsigned fs_sampler_count);
+/* The vertex stage's [[texture(n)]] and [[sampler(m)]] for the draws that follow on CB (setVertexTexture /
+ * setVertexSamplerState): TEXTURES[n] for n < TEXTURE_COUNT and SAMPLERS[m] for m < SAMPLER_COUNT, NULL nothing
+ * there; the tables are copied, and stay until the next call (counts of 0 clear them). The draws judge them as they
+ * judge the fragment stage's. Every draw call above takes them. */
+void hakios_metal_cb_set_vertex_textures(hakios_metal_cb *cb, hakios_metal_texture *const *textures, unsigned texture_count,
+    hakios_metal_sampler *const *samplers, unsigned sampler_count);
 /* A pass with no draw, as an encoder that recorded none ends: only a Clear writes anything then (PASS's load action
  * must be 2), and the attachment is filled with its clear colour. -1 with the reason otherwise. With draws, each
  * hakios_metal_cb_draw is a whole pass of its own: the caller passes the Clear to the first and Load to the rest. */

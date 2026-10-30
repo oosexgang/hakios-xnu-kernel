@@ -628,6 +628,61 @@ TEST(c_api_draw_with_a_fragment_texture) {
     hakios_metal_close(d);
 }
 
+// A sampling vertex function through C: tri_vtex_vs + tri_color_fs, its texture and sampler set by
+// hakios_metal_cb_set_vertex_textures for the draws after it. That they reach the draw is shown by the refusal of an
+// integer texture there (the twin: the same call with a float one draws), and that they stay by a second draw.
+TEST(c_api_draw_with_a_vertex_texture) {
+    hakios_metal_device* d = hakios_metal_open_fake();
+    std::vector<uint8_t> vsBc = readFile("out/host/kernels/tri_vtex_vs.bc"), fsBc = readFile("out/host/kernels/tri_color_fs.bc");
+    if (!hakios_metal_has_compiler()) {
+        std::printf("       (no compiler in this build: the C interface's vertex texture did not run)\n");
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK(!vsBc.empty() && !fsBc.empty());
+    hakios_metal_program* p = hakios_metal_program_new_bitcode(vsBc.data(), vsBc.size(), fsBc.data(), fsBc.size(), 70);
+    CHECK(p != nullptr);
+    if (p == nullptr) {
+        std::printf("       %s\n", hakios_metal_error());
+        hakios_metal_close(d);
+        return;
+    }
+    CHECK_EQ(hakios_metal_program_resource_count(p, 0), 2u);   // the vertex stage's texture 0 and sampler 0
+    hakios_metal_texture* rt = hakios_metal_texture_new(d, 2, 70, 64, 64, HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET | 1);
+    hakios_metal_texture* tex = hakios_metal_texture_new(d, 2, 70, 4, 1, 1);
+    hakios_metal_texture* ints = hakios_metal_texture_new(d, 2, 53, 4, 1, 1);   // R32Uint
+    struct hakios_metal_sampler_desc sd = {};
+    sd.normalized_coordinates = 1;
+    sd.lod_max_clamp = 1000.0f;
+    sd.max_anisotropy = 1;
+    hakios_metal_sampler* s = hakios_metal_sampler_new(d, &sd);
+    CHECK(rt != nullptr && tex != nullptr && ints != nullptr && s != nullptr);
+    hakios_metal_queue* q = hakios_metal_queue_new(d);
+    struct hakios_metal_render_pass pass = {rt, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0, nullptr, 0, 0, 0};
+    hakios_metal_cb* cb = hakios_metal_cb_new(q);
+    hakios_metal_cb_set_vertex_textures(cb, &ints, 1, &s, 1);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
+    CHECK(strstr(hakios_metal_error(), "texture 0 is R32Uint (uint); tri_vtex_vs reads it as texture2d<float>") != nullptr);
+    if (strstr(hakios_metal_error(), "R32Uint") == nullptr) std::printf("       %s\n", hakios_metal_error());
+    hakios_metal_cb_free(cb);
+    cb = hakios_metal_cb_new(q);
+    hakios_metal_cb_set_vertex_textures(cb, &tex, 1, &s, 1);
+    hakios_metal_texture_free(tex);   // the command buffer keeps what it was given
+    tex = nullptr;
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
+    hakios_metal_cb_free(cb);
+    hakios_metal_sampler_free(s);
+    hakios_metal_texture_free(ints);
+    hakios_metal_texture_free(rt);
+    hakios_metal_program_free(p);
+    hakios_metal_queue_free(q);
+    hakios_metal_close(d);
+}
+
 // A texture over an IOSurface through C: the refusals reach the caller by name (the drawing into a surface is
 // render_test's, over the fake's surfaces)
 TEST(c_api_texture_over_an_iosurface_refuses_by_name) {

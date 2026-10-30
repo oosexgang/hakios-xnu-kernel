@@ -30,6 +30,7 @@
 #include "fixtures/tri_dpos_vs_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
+#include "fixtures/tri_vtex_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "test.hpp"
@@ -341,7 +342,38 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p = handProgram();
         p.vs.k.textures[0].kind = kTexSampled;
         p.vs.k.numTextureSlots = 1;
-        refused(r, p, pass, d, "hand_vs samples or reads textures: textures in a vertex stage (SB6_VS_TEX) are not served yet");
+        // the VS's textures are served as the FS's (SB6_VS_TEX): the same refusal of an empty slot by the encoder, and the
+        // same null texture from a command buffer, which then loads one descriptor into the vertex block
+        {
+            Encoded e(r, p, pass, d);
+            CHECK(!e.ok);
+            expectRefusal(e.error, "hand_vs: no texture bound at index 0");
+            Rig r2;   // a rig of its own: this one submits, and the refusals around it count on none
+            auto t2 = target(r2);
+            RenderPass pass2 = pass;
+            pass2.color0 = t2.get();
+            auto drawOnce = [&](const Program& q) {
+                auto cb = r2.queue->commandBuffer();
+                CHECK(cb->draw(q, pass2, d, Bindings{}, Bindings{}));
+                cb->commit();
+                cb->waitUntilCompleted();
+            };
+            // the twin first: the hand stage's SP_VS_CONFIG says no texture (numSamp 0) while one is loaded, which the
+            // fake must call out -- else its VS rule judges nothing
+            drawOnce(p);
+            CHECK_EQ(r2.fake->stats().faults, 1u);
+            expectRefusal(r2.fake->stats().lastFault, "SP_VS_CONFIG names 0 textures and 0 samplers; SP_VS_TEX_COUNT says 1 (NTEX must cover it and equal NSAMP)");
+            p.vs.k.numSamp = 1;
+            p.vs.k.samplerMask = 1;
+            drawOnce(p);
+            const auto& st = r2.fake->stats();
+            if (st.faults != 1) std::printf("       fake: %s\n", st.lastFault.c_str());
+            CHECK_EQ(st.faults, 1u);
+            CHECK_EQ(st.submits, 2u);
+            CHECK_EQ(st.lastDraw.vsTextureCount, 1u);
+            CHECK_EQ(st.lastDraw.vsSamplerCount, 1u);
+            CHECK_EQ(st.lastDraw.fsTextureCount, 0u);
+        }
         p = handProgram();
         p.fs.k.textures[2].kind = kTexImage;
         refused(r, p, pass, d, "hand_fs stores through texture 2 as an image: images in a draw (the 3D IBO table) are not served");
@@ -2738,6 +2770,73 @@ TEST(a_draw_samples_a_texture_through_the_fs_prefetch) {
     CHECK_EQ(f.reg(REG_A6XX_SP_FS_TEX_COUNT), 0u);
     CHECK_EQ(f.reg(REG_A6XX_SP_FS_PREFETCH_CNTL) & A6XX_SP_FS_PREFETCH_CNTL_COUNT__MASK, 0u);
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// --- textures in the vertex stage: the VS_TEX tables ----------------------------------------------------------------------
+
+TEST(a_draw_samples_a_texture_in_the_vertex_stage) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto tex = target(r, 4, 1, kTextureUsageRead);
+    auto other = target(r, 4, 1, kTextureUsageRead);
+    Sampler smp = nearestClamp();
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program p{kernels::tri_vtex_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_vtex"};
+    const Draw d = wholeDraw(6);   // as triangles: the fake runs no points (the phone's probe 9vt draws them)
+    Bindings vsb;
+    vsb.textures = {tex.get()};
+    vsb.samplers = {&smp};
+    Encoded e(r, p, pass, d, render::Options{}, vsb, Bindings{});
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    // the VS's tables past the FS's in the pass's FS part, the count in its register, the FS's count 0
+    CHECK_EQ(e.reg(REG_A6XX_SP_VS_TEX_COUNT), 1u);
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_TEX_COUNT), 0u);
+    const uint64_t texAt = uint64_t(e.reg(REG_A6XX_SP_VS_TEX_CONST)) | uint64_t(e.reg(REG_A6XX_SP_VS_TEX_CONST + 1)) << 32;
+    const uint64_t sampAt = uint64_t(e.reg(REG_A6XX_SP_VS_TEX_SAMP)) | uint64_t(e.reg(REG_A6XX_SP_VS_TEX_SAMP + 1)) << 32;
+    CHECK_EQ(texAt, e.table->gpuAddress() + render::kTableFsAt + 16 * 64 + 16 * 16);
+    CHECK_EQ(sampAt, texAt + 16 * 64);
+    // the descriptor is the bound texture's and not its twin's (same size and format, another address)
+    TexConst want = tex->sampledDescriptor(), twin = other->sampledDescriptor();
+    CHECK(memcmp(want.dword, twin.dword, sizeof want.dword) != 0);
+    CHECK(memcmp(e.tableWords() + (texAt - e.table->gpuAddress()) / 4, want.dword, sizeof want.dword) == 0);
+    CHECK(memcmp(e.tableWords() + (sampAt - e.table->gpuAddress()) / 4, smp.words, 16) == 0);
+    CHECK_EQ((e.reg(REG_A6XX_SP_VS_CONFIG) & A6XX_SP_VS_CONFIG_NTEX__MASK) >> A6XX_SP_VS_CONFIG_NTEX__SHIFT, 1u);
+    // the two SB6_VS_TEX loads go by CP_LOAD_STATE6_GEOM, none by _FRAG
+    bool sampLoad = false, texLoad = false;
+    for (size_t i = e.find(CP_LOAD_STATE6_GEOM); i != size_t(-1); i = e.find(CP_LOAD_STATE6_GEOM, i + 1)) {
+        uint32_t w0 = e.stream.words()[i + 1];
+        if (((w0 & CP_LOAD_STATE6_0_STATE_BLOCK__MASK) >> CP_LOAD_STATE6_0_STATE_BLOCK__SHIFT) != SB6_VS_TEX) continue;
+        uint32_t type = (w0 & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT;
+        uint32_t units = (w0 & CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> CP_LOAD_STATE6_0_NUM_UNIT__SHIFT;
+        sampLoad |= type == ST6_SHADER && units == 1 && e.stream.words()[i + 2] == uint32_t(sampAt);
+        texLoad |= type == ST6_CONSTANTS && units == 1 && e.stream.words()[i + 2] == uint32_t(texAt);
+    }
+    CHECK(sampLoad && texLoad);
+    // with the VS group switched off the fake must refuse the draw (no SP_VS_TEX_COUNT): its rule is not vacuous
+    render::Options off;
+    off.vsTextures = false;
+    auto bad = drawOnce(r, p, pass, d, off, vsb, Bindings{});
+    CHECK(bad->status() != CommandBuffer::kCompleted || r.fake->stats().faults != 0);
+    expectRefusal(r.fake->stats().lastFault, "SP_VS_TEX_COUNT not written in this submission: the draw would sample the last owner's texture table");
+    // through a command buffer on a rig of its own, the fake judging the VS tables
+    Rig r2;
+    auto t2 = target(r2);
+    auto tex2 = target(r2, 4, 1, kTextureUsageRead);
+    RenderPass pass2;
+    pass2.color0 = t2.get();
+    Bindings vsb2;
+    vsb2.textures = {tex2.get()};
+    vsb2.samplers = {&smp};
+    auto cb = drawOnce(r2, p, pass2, d, render::Options{}, vsb2, Bindings{});
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r2.fake->stats().lastFault.c_str());
+    CHECK_EQ(r2.fake->stats().faults, 0u);
+    CHECK_EQ(r2.fake->stats().lastDraw.vsTextureCount, 1u);
+    CHECK_EQ(r2.fake->stats().lastDraw.vsSamplerCount, 1u);
+    CHECK_EQ(r2.fake->stats().lastDraw.fsTextureCount, 0u);
 }
 
 TEST(a_draw_refuses_a_texture_the_fs_cannot_sample) {
