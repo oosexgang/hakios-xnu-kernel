@@ -419,11 +419,47 @@ TEST(sampler_words_follow_galliums_encoding_of_metals_descriptor) {
     d.rAddress = 6;
     CHECK(has(refusedSampler(d), "sampler r address mode 6: MTLSamplerAddressMode is 0 to 5"));
     d = SamplerDesc{};
-    d.maxAnisotropy = 2;
-    CHECK(has(refusedSampler(d), "sampler anisotropy 2: only 1 is served yet"));
+    d.maxAnisotropy = 17;
+    CHECK(has(refusedSampler(d), "sampler anisotropy 17: MTLSamplerDescriptor.maxAnisotropy is 1 to 16"));
     d = SamplerDesc{};
-    d.compareFunction = 1;
-    CHECK(has(refusedSampler(d), "sampler compare function 1: only Never (0) is served yet"));
+    d.compareFunction = 8;
+    CHECK(has(refusedSampler(d), "sampler compare function 8: MTLCompareFunction is 0 to 7"));
+    // anisotropy as fd6_sampler_state_create: ANISO = last_bit(min(n >> 1, 8)), a linear filter made the anisotropic
+    // one; a nearest one stays nearest. 1 is none (the control)
+    {
+        using namespace a6xx;
+        auto words = [](uint32_t n, uint32_t filter) {
+            SamplerDesc a;
+            a.maxAnisotropy = n;
+            a.minFilter = a.magFilter = filter;
+            Sampler out;
+            std::string w;
+            CHECK(makeSampler(a, &out, &w));
+            return out;
+        };
+        auto aniso = [](const Sampler& x) { return (x.words[0] & A6XX_TEX_SAMP_0_ANISO__MASK) >> A6XX_TEX_SAMP_0_ANISO__SHIFT; };
+        auto minF = [](const Sampler& x) { return (x.words[0] & A6XX_TEX_SAMP_0_XY_MIN__MASK) >> A6XX_TEX_SAMP_0_XY_MIN__SHIFT; };
+        CHECK_EQ(aniso(words(1, 1)), 0u);
+        CHECK_EQ(minF(words(1, 1)), uint32_t(A6XX_TEX_LINEAR));
+        CHECK_EQ(aniso(words(2, 1)), 1u);
+        CHECK_EQ(aniso(words(4, 1)), 2u);
+        CHECK_EQ(aniso(words(8, 1)), 3u);
+        CHECK_EQ(aniso(words(16, 1)), 4u);
+        CHECK_EQ(minF(words(16, 1)), uint32_t(A6XX_TEX_ANISO));
+        CHECK_EQ(minF(words(16, 0)), uint32_t(A6XX_TEX_NEAREST));
+        // a compare function: COMPARE_FUNC its number in dword 1 (Less 1, GreaterEqual 6); Never leaves it 0
+        auto cmp = [](uint32_t f) {
+            SamplerDesc a;
+            a.compareFunction = f;
+            Sampler out;
+            std::string w;
+            CHECK(makeSampler(a, &out, &w));
+            return (out.words[1] & A6XX_TEX_SAMP_1_COMPARE_FUNC__MASK) >> A6XX_TEX_SAMP_1_COMPARE_FUNC__SHIFT;
+        };
+        CHECK_EQ(cmp(0), 0u);
+        CHECK_EQ(cmp(1), 1u);
+        CHECK_EQ(cmp(6), 6u);
+    }
     d = SamplerDesc{};
     d.minFilter = 3;
     CHECK(has(refusedSampler(d), "sampler filters min 3 mag 0: Nearest (0), Linear (1) or bicubic (2)"));
@@ -445,7 +481,7 @@ TEST(sampler_words_follow_galliums_encoding_of_metals_descriptor) {
     Sampler untouched;
     untouched.words[0] = 0x12345678;
     d = SamplerDesc{};
-    d.maxAnisotropy = 16;
+    d.maxAnisotropy = 17;
     CHECK(!makeSampler(d, &untouched, &why));
     CHECK_EQ(untouched.words[0], 0x12345678u);
 }

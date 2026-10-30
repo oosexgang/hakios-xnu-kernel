@@ -260,13 +260,13 @@ TEST(c_api_texture_replace_and_read_convert_the_stride) {
         CHECK_EQ(hakios_metal_sampler_words(s)[2], 0x20u);
         hakios_metal_sampler_free(s);
     }
-    sd.max_anisotropy = 2;
+    sd.max_anisotropy = 17;
     CHECK(hakios_metal_sampler_new(d, &sd) == nullptr);
-    CHECK(strstr(hakios_metal_error(), "sampler anisotropy 2: only 1 is served yet") != nullptr);
+    CHECK(strstr(hakios_metal_error(), "sampler anisotropy 17: MTLSamplerDescriptor.maxAnisotropy is 1 to 16") != nullptr);
     sd.max_anisotropy = 1;
-    sd.compare_function = 3;
+    sd.compare_function = 9;
     CHECK(hakios_metal_sampler_new(d, &sd) == nullptr);
-    CHECK(strstr(hakios_metal_error(), "sampler compare function 3: only Never (0) is served yet") != nullptr);
+    CHECK(strstr(hakios_metal_error(), "sampler compare function 9: MTLCompareFunction is 0 to 7") != nullptr);
     hakios_metal_close(d);
 }
 

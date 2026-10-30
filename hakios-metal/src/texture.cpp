@@ -250,10 +250,11 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, std::string("a ") + info->name + " texture of " + n(desc.mipLevels) + " mip levels: a depth texture is tiled, one level is served");
         return nullptr;
     }
-    if (info->depth && desc.usage != kTextureUsageRenderTarget) {
-        // the tiled layout has no reader here yet: a depth texture is an attachment the RB writes and reads, nothing else
+    if (info->depth && (desc.usage & ~kTextureUsageRead) != kTextureUsageRenderTarget) {
+        // a depth texture is an attachment the RB writes, and may be sampled (a shadow map): the TP reads the tiled layout
+        // as fdl6_view_init describes it (sampledDescriptor); a store into it would need the tiled IBO, which is not here
         refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) +
-                        ": a depth texture is tiled (TILE6_3) and is served as a render target alone (4), not sampled or stored");
+                        ": a depth texture is tiled (TILE6_3) and is served as a render target (4), sampled too (5), not stored");
         return nullptr;
     }
     if (multisample && (info->depth || info->blockW > 1 || desc.mipLevels != 1 || (desc.usage & kTextureUsageRenderTarget) == 0 || (desc.usage & kTextureUsageWrite) != 0)) {
@@ -438,6 +439,14 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         // an array view (fd6_view.c:172-177, 247-249): TYPE 2D, DEPTH the layers, ARRAY_PITCH one layer
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes()));
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
+    }
+    if (info_->depth) {
+        // the depth plane as the TP reads it (fdl6_view_init over a depth layout): TILE6_3, and TILE_ALL since every level
+        // of a depth layout is tiled (fd6_layout.c:157-164 "Linear D/S is not supported by HW"); FMT6_32_FLOAT, the depth
+        // in the first component, as fd6_format_texture gives Z32_FLOAT. Its pitch is the layout's (PITCHALIGN log2(cpp)
+        // for cpp 4, fdl6_tile_alignment)
+        d.dword[0] = (d.dword[0] & ~A6XX_TEX_CONST_0_TILE_MODE__MASK) | A6XX_TEX_CONST_0_TILE_MODE(TILE6_3);
+        d.dword[3] |= A6XX_TEX_CONST_3_TILE_ALL;
     }
     if (info_->twoPlane) {
         // the second plane as fdl6_view_init gives it (fd6_view.c:255-289): its pitch over MIN_LOD_CLAMP's dword and its
@@ -628,16 +637,30 @@ bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     if (!clamp(d.sAddress, "s", &f.wrapS) || !clamp(d.tAddress, "t", &f.wrapT) || !clamp(d.rAddress, "r", &f.wrapR)) {
         return false;
     }
-    if (d.maxAnisotropy != 1) {
-        return refuse(why, "sampler anisotropy " + n(d.maxAnisotropy) + ": only 1 is served yet (MTLSamplerDescriptor.maxAnisotropy is 1 to 16)");
+    // Anisotropy as fd6_sampler_state_create takes it (fd6_texture.cc:256-273): ANISO the log2 of half the count, 8 at
+    // most, and a linear filter becomes the anisotropic one under it (tex_filter)
+    if (d.maxAnisotropy == 0 || d.maxAnisotropy > 16) {
+        return refuse(why, "sampler anisotropy " + n(d.maxAnisotropy) + ": MTLSamplerDescriptor.maxAnisotropy is 1 to 16");
     }
-    if (d.compareFunction != 0) {
-        return refuse(why, "sampler compare function " + n(d.compareFunction) + ": only Never (0) is served yet (Metal has no compare mode to gate it; the GPU compares in its depth path)");
+    uint32_t aniso = 0;
+    for (uint32_t half = std::min<uint32_t>(d.maxAnisotropy >> 1, 8); half != 0; half >>= 1) aniso++;   // util_last_bit
+    f.aniso = a6xx_tex_aniso(aniso);
+    if (aniso != 0) {
+        if (f.min == A6XX_TEX_LINEAR) f.min = A6XX_TEX_ANISO;
+        if (f.mag == A6XX_TEX_LINEAR) f.mag = A6XX_TEX_ANISO;
     }
+    // MTLCompareFunction is adreno_compare_func number for number (Never 0 ... Always 7; Gallium's "maps 1:1"); the TP
+    // compares only for an instruction that asks (sample_compare's shadow sam), so a plain sample through it is plain.
+    // Never (0) is no comparison, as Gallium leaves COMPARE_FUNC unwritten without a compare mode.
+    if (d.compareFunction > 7) {
+        return refuse(why, "sampler compare function " + n(d.compareFunction) + ": MTLCompareFunction is 0 to 7");
+    }
+    f.compare = d.compareFunction != 0;
+    f.compareFunc = adreno_compare_func(d.compareFunction);
     f.unnormCoords = !d.normalizedCoordinates;
     f.minLod88 = lodFixed(d.lodMinClamp);
     f.maxLod88 = lodFixed(d.lodMaxClamp);
-    f.chromaLinear = f.min == A6XX_TEX_LINEAR && f.mag == A6XX_TEX_LINEAR;   // Gallium sets it whenever both are linear
+    f.chromaLinear = (f.min == A6XX_TEX_LINEAR || f.min == A6XX_TEX_ANISO) && (f.mag == A6XX_TEX_LINEAR || f.mag == A6XX_TEX_ANISO);   // Gallium: both linear
     f.bcolor = 0;
     TexSamp s = texSamp(f);
     for (uint32_t i = 0; i < kTexSampDwords; i++) out->words[i] = s.dword[i];

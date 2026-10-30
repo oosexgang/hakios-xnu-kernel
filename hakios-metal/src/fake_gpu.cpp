@@ -481,7 +481,15 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
         return false;
     }
     uint64_t base = d[4] | uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
-    uint64_t rows = (uint64_t(height) + 3) & ~uint64_t(3);
+    // linear, or a depth layout's tiles (TILE6_3 on every level, so TILE_ALL; 32 bits a texel, its rows counted to 16 as
+    // fdl6_tile_alignment counts them) -- sampled only, nothing stores into tiles here
+    const uint32_t tile = fieldOf(d[0], A6XX_TEX_CONST_0_TILE_MODE__MASK, A6XX_TEX_CONST_0_TILE_MODE__SHIFT);
+    if (tile != TILE6_LINEAR && (tile != TILE6_3 || !sampled || bpp != 4 || (d[3] & A6XX_TEX_CONST_3_TILE_ALL) == 0)) {
+        fault(who + text(": tile mode %llu", tile) + ((d[3] & A6XX_TEX_CONST_3_TILE_ALL) ? " with TILE_ALL" : " without TILE_ALL") +
+              ": linear, or a sampled 32-bit depth layout (TILE6_3, TILE_ALL), is what this GPU model reads");
+        return false;
+    }
+    uint64_t rows = tile == TILE6_3 ? (uint64_t(height) + 15) & ~uint64_t(15) : (uint64_t(height) + 3) & ~uint64_t(3);
     uint64_t reach = (rows - 1) * pitch + uint64_t(width) * bpp;
     if (base % 64 != 0 || at(base, reach) == nullptr) {
         fault(who + text(": %llu rows (%llu counted) of %llu bytes", height, rows, pitch) +

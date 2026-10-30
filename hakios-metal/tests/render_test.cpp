@@ -31,6 +31,7 @@
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_vtex_vs_air.hpp"
+#include "fixtures/tri_shadow_fs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "test.hpp"
@@ -2999,9 +3000,23 @@ TEST(a_depth32float_texture_is_tiled_and_an_attachment_only) {
     TextureDesc td;
     td.format = PixelFormat::kDepth32Float;
     td.width = td.height = 16;
-    td.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    td.usage = kTextureUsageRenderTarget | kTextureUsageWrite;
     CHECK(Texture::make(*r.gpu, td, &why) == nullptr);
-    CHECK(has(why, "a Depth32Float texture with usage 5: a depth texture is tiled (TILE6_3) and is served as a render target alone (4)"));
+    CHECK(has(why, "a Depth32Float texture with usage 6: a depth texture is tiled (TILE6_3) and is served as a render target (4), sampled too (5), not stored"));
+    // sampled too: its view is the tiled layout, TILE6_3 with TILE_ALL, FMT6_32_FLOAT, at the texture's own address
+    {
+        using namespace a6xx;
+        td.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+        auto sd = Texture::make(*r.gpu, td, &why);
+        CHECK(sd != nullptr);
+        if (sd != nullptr) {
+            const TexConst c = sd->sampledDescriptor();
+            CHECK_EQ((c.dword[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_3));
+            CHECK((c.dword[3] & A6XX_TEX_CONST_3_TILE_ALL) != 0);
+            CHECK_EQ((c.dword[0] & A6XX_TEX_CONST_0_FMT__MASK) >> A6XX_TEX_CONST_0_FMT__SHIFT, uint32_t(FMT6_32_FLOAT));
+            CHECK_EQ(uint64_t(c.dword[4]), uint64_t(uint32_t(sd->gpuAddress())));
+        }
+    }
 }
 
 TEST(a_draw_tests_and_writes_depth_through_its_attachment) {
@@ -4349,4 +4364,50 @@ TEST(a_multisample_texture_is_cleared_whole_and_resolved_to_the_mean) {
     cb = r.queue->commandBuffer();
     CHECK(!cb->blit(*ms, 0, render::BlitRect{0, 0, 64, 64}, *out, 0, render::BlitRect{0, 0, 32, 32}, true));
     expectRefusal(cb->error(), "a resolve that scales or filters: a multisample source is resolved pixel for pixel");
+}
+
+// A depth texture sampled (a shadow map's lookup): tri_shadow_fs compares each pixel's texel of a Depth32Float texture
+// with REF through a Less sampler. The FS's table holds the tiled view (TILE6_3, TILE_ALL), which the fake reads as the
+// depth layout; the same draw with TILE_ALL taken off that descriptor is refused by the fake (the twin: its rule bites).
+TEST(a_draw_samples_a_depth_texture_through_a_compare_sampler) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto depth = depthTarget(r, 64, 64, kTextureUsageRenderTarget | kTextureUsageRead);
+    std::string why;
+    auto refBuf = newBuffer(*r.gpu, 16, &why);
+    CHECK(depth != nullptr && refBuf != nullptr);
+    if (depth == nullptr || refBuf == nullptr) return;
+    *static_cast<float*>(refBuf->contents()) = 0.5f;
+    SamplerDesc sdesc;
+    sdesc.compareFunction = 1;   // Less
+    Sampler smp;
+    CHECK(makeSampler(sdesc, &smp, &why));
+    const Program p{kernels::tri_flat_vs_air, kernels::tri_shadow_fs_air, Linkage{}, "tri_shadow"};
+    RenderPass pass;
+    pass.color0 = t.get();
+    Bindings fsb;
+    fsb.buffers = {Binding{refBuf.get(), 0}};
+    fsb.textures = {depth.get()};
+    fsb.samplers = {&smp};
+    Encoded e(r, p, pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    const uint32_t* texWords = e.tableWords() + render::kTableFsAt / 4;
+    CHECK_EQ((texWords[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_3));
+    CHECK((texWords[3] & A6XX_TEX_CONST_3_TILE_ALL) != 0);
+    CHECK_EQ((e.tableWords()[(render::kTableFsAt + 16 * 64) / 4 + 1] & A6XX_TEX_SAMP_1_COMPARE_FUNC__MASK) >> A6XX_TEX_SAMP_1_COMPARE_FUNC__SHIFT, 1u);
+    auto cb = drawOnce(r, p, pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    // the twin: the encoded words run raw, as they are (the control) and then with TILE_ALL taken off the descriptor in
+    // their table
+    Raw raw(r);
+    const uint32_t faultsBefore = r.fake->stats().faults;
+    CHECK_EQ(raw.submit(e.stream.words()), 0);
+    CHECK_EQ(r.fake->stats().faults, faultsBefore);
+    e.tableWords()[render::kTableFsAt / 4 + 3] &= ~A6XX_TEX_CONST_3_TILE_ALL;
+    CHECK_EQ(raw.submit(e.stream.words()), ETIMEDOUT);
+    CHECK(has(r.fake->stats().lastFault, "tile mode 3 without TILE_ALL"));
 }

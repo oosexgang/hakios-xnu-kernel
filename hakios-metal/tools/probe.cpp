@@ -58,6 +58,7 @@
 #include "../tests/fixtures/tri_pntc_fs_air.hpp"
 #include "../tests/fixtures/tri_pt_vs_air.hpp"
 #include "../tests/fixtures/tri_vtex_vs_air.hpp"
+#include "../tests/fixtures/tri_shadow_fs_air.hpp"
 #include "../tests/fixtures/tri_cube_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
@@ -1019,9 +1020,9 @@ int main(int argc, char** argv) {
                 SamplerDesc bad;
                 Sampler s{};
                 std::string whyBad;
-                bad.maxAnisotropy = 4;
+                bad.maxAnisotropy = 17;   // past Metal's 16 (1 to 16 are served)
                 bool accepted = makeSampler(bad, &s, &whyBad);
-                report(!accepted && !whyBad.empty(), std::string("control, makeSampler with anisotropy 4: ") + (accepted ? "ACCEPTED" : "refused: " + whyBad));
+                report(!accepted && !whyBad.empty(), std::string("control, makeSampler with anisotropy 17: ") + (accepted ? "ACCEPTED" : "refused: " + whyBad));
                 bad = SamplerDesc{};
                 bad.sAddress = 5;
                 bad.borderColor = 2;   // ClampToBorderColor with OpaqueWhite: no table entry for it yet
@@ -2374,6 +2375,66 @@ int main(int argc, char** argv) {
                     report(allDone && right == W * H, std::string("depth, ") + dc.label + ": " + std::to_string(right) + " of 4096 as wanted (" +
                                                              std::to_string(reds) + " red, " + std::to_string(greens) + " green, " + std::to_string(canaries) +
                                                              " canary)" + first + st);
+                }
+                // 9sh. a shadow map: a pass of depth alone writes T1 at z 0.25 over a clear to 1 into a Depth32Float texture
+                // made to be sampled too; a colour pass then has tri_shadow_fs compare each pixel's texel with 0.5. Less
+                // (0.5 < d) fails under T1 (j > i: red 0) and passes elsewhere (red 1); GreaterEqual is the other way round.
+                // The flip is what says the texel was read and compared, not a constant answer.
+                {
+                    TextureDesc sd = dd;
+                    sd.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+                    auto shadow = Texture::make(gpu, sd, &why);
+                    auto refBuf = newBuffer(gpu, 16, &why);
+                    if (shadow == nullptr || refBuf == nullptr) {
+                        report(false, "shadow map: a sampled Depth32Float texture and a buffer: " + why);
+                    } else {
+                        *static_cast<float*>(refBuf->contents()) = 0.5f;
+                        const Program shadowProg{kernels::tri_flat_vs_air, kernels::tri_shadow_fs_air, Linkage{}, "tri_shadow"};
+                        for (const auto& [func, label, lowerLeftPasses] : {std::tuple<uint32_t, const char*, bool>{1, "Less", false}, {6, "GreaterEqual", true}}) {
+                            SamplerDesc cmp;
+                            cmp.compareFunction = func;
+                            Sampler smp;
+                            const bool made = makeSampler(cmp, &smp, &why);
+                            RenderPass dp;
+                            dp.depth = shadow.get();
+                            dp.depthLoad = LoadAction::kClear;
+                            dp.depthStore = StoreAction::kStore;
+                            dp.clearDepth = 1.0;
+                            Draw d = drawOf(0, 3);
+                            d.depth = DepthState{1, true};
+                            Bindings vsb;
+                            vsb.buffers = {Binding{nearBuf.get(), 0}};
+                            fillBo(*t, 0x5a5a5a5au);
+                            RenderPass cp;
+                            cp.color0 = t.get();
+                            Bindings fsb;
+                            fsb.buffers = {Binding{refBuf.get(), 0}};
+                            fsb.textures = {shadow.get()};
+                            fsb.samplers = {&smp};
+                            auto cb = queue->commandBuffer();
+                            const bool drew = made && cb->draw(depthProg, dp, d, vsb, Bindings{}) && cb->draw(shadowProg, cp, drawOf(0, 6), Bindings{}, fsb);
+                            if (drew) {
+                                cb->commit();
+                                cb->waitUntilCompleted();
+                            }
+                            std::vector<uint8_t> bo = textureBo(*t);
+                            uint32_t right = 0;
+                            std::string first;
+                            for (uint32_t j = 0; j < H; j++) {
+                                for (uint32_t i = 0; i < W; i++) {
+                                    uint32_t px;
+                                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                                    const bool passes = (j > i) == lowerLeftPasses;
+                                    const uint32_t want = passes ? 0xff0000ffu : 0xff000000u;
+                                    if (px == want) right++;
+                                    else if (first.empty()) first = "; the first off is (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px) + ", wanted " + hex8(want);
+                                }
+                            }
+                            report(drew && completed(*cb) && right == W * H, std::string("shadow map, ") + label + " against 0.5: " + std::to_string(right) +
+                                                                          " of 4096 pixels the comparison's answer" + first +
+                                                                          (drew ? status(*cb, gpu) : ": " + (made ? cb->error() : why)));
+                        }
+                    }
                 }
                 // the refusal: a depth test with no depth attachment
                 RenderPass rp;
