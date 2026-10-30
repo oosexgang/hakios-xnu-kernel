@@ -1121,6 +1121,19 @@ TEST(a_kernel_pushing_ten_constant_ranges_compiles) {
     CHECK_EQ(seen, 0x7feu);   // buffers 1 to 10
 }
 
+// a SIMD-group ballot (Resident Evil 4's culling passes elect a lane with one): refused by the front end until the
+// group's width was the driver's to promise; the probe checks the mask on the GPU
+TEST(a_kernel_taking_a_ballot_compiles) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("ballot_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: bytes_id did not run)\n");
