@@ -66,6 +66,12 @@ void hakios_metal_close(hakios_metal_device* d) { delete d; }
 uint64_t hakios_metal_gpu_id(hakios_metal_device* d) {
     uint64_t id = 0;
     d->gpu->param(kParamGpuId, &id);
+    if (id == 0) {
+        // the kernel says 0 for the GPU's number, as newer msm does: the chip ID is the name (0x06030500 on the phone),
+        // its low half; the speed bin is above it
+        d->gpu->param(kParamChipId, &id);
+        id &= 0xffffffffu;
+    }
     return id;
 }
 

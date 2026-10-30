@@ -77,6 +77,13 @@ deviceMaxBufferLength(__unused id self, __unused SEL _cmd)
 	return 256ull << 20;
 }
 
+/* the largest threadgroup: the Adreno 6xx's (a workgroup of 1024 invocations), as Apple's GPUs answer too */
+static MTLSize
+deviceMaxThreadsPerThreadgroup(__unused id self, __unused SEL _cmd)
+{
+	return MTLSizeMake(1024, 1024, 1024);
+}
+
 /*
  * The command queue: the first thing the window server wants after the device (the second run's log: "[Metal] Failed to create
  * MTLCommandQueue", then the process ends). Made as a subclass of Metal's private _MTLCommandQueue, at the same time as the device's
@@ -120,7 +127,7 @@ gpu(void)
 
 	dispatch_once(&once, ^{
 		gGPU = hakios_metal_open();
-		say(gGPU != NULL ? [NSString stringWithFormat:@"the GPU: Adreno %llu, through hakios-metal", hakios_metal_gpu_id(gGPU)]
+		say(gGPU != NULL ? [NSString stringWithFormat:@"the GPU: Adreno %#llx, through hakios-metal", hakios_metal_gpu_id(gGPU)]
 		                 : [NSString stringWithFormat:@"no GPU (%s): buffers in plain memory, no command buffers", hakios_metal_error()]);
 	});
 	return gGPU;
@@ -1590,6 +1597,7 @@ registerDevice(void)
 	class_addMethod(device, @selector(name), (IMP)deviceName, "@@:");
 	class_addMethod(device, @selector(registryID), (IMP)deviceRegistryID, "Q@:");
 	class_addMethod(device, sel_registerName("maxBufferLength"), (IMP)deviceMaxBufferLength, "Q@:");
+	class_addMethod(device, sel_registerName("maxThreadsPerThreadgroup"), (IMP)deviceMaxThreadsPerThreadgroup, "{?=QQQ}@:");
 	class_addMethod(device, sel_registerName("newCommandQueue"), (IMP)deviceNewQueue, "@@:");
 	class_addMethod(device, sel_registerName("newCommandQueueWithMaxCommandBufferCount:"), (IMP)deviceNewQueueMax, "@@:Q");
 	class_addMethod(device, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");

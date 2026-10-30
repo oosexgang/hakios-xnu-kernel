@@ -50,6 +50,9 @@ main(int argc, char **argv)
 		    ((uint64_t (*)(id, SEL))objc_msgSend)((id)device, sel_registerName("dedicatedMemorySize")) == 0 && ![device isLowPower] &&
 		    ![device isRemovable] && ![device isHeadless]);
 
+		MTLSize most = [device maxThreadsPerThreadgroup];
+		check("maxThreadsPerThreadgroup: the Adreno's 1024 (it was zero: a stub)", most.width == 1024 && most.height == 1024 && most.depth == 1024);
+
 		/* buffers */
 		id<MTLBuffer> b = [device newBufferWithLength:10000 options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
 		check("newBufferWithLength: a buffer of that length, zeroed, conforming to MTLBuffer", b != nil && [b length] == 10000 &&
