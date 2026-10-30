@@ -602,6 +602,26 @@ TEST(compiler_matches_the_stage_fixtures) {
         for (uint32_t i = 0; i < fbFs->stage.numInputs; i++) layer |= fbFs->stage.inputs[i].slot == 22;   // VARYING_SLOT_LAYER
         CHECK(!layer);
     }
+    // a framebuffer fetch beside the front end's null texture (CoreAnimation's fixed_frag_lph_cpf): the null slot sits
+    // high in the table, and the fetch takes the lowest free slot, not one past the highest -- which ran past 16
+    {
+        std::vector<uint8_t> bc = bitcodeOf("tri_nullfb_fs");
+        std::string why;
+        std::shared_ptr<CompiledStage> s = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why);
+        CHECK(s != nullptr);
+        if (s == nullptr) std::printf("       tri_nullfb_fs: %s\n", why.c_str());
+        if (s) {
+            int nullSlot = -1, fbSlot = -1;
+            for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
+                if (s->stage.k.textures[i].kind != kTexSampled) continue;
+                if (s->stage.k.textures[i].isNull) nullSlot = int(i);
+                if (s->stage.k.textures[i].fbTarget == 1) fbSlot = int(i);
+            }
+            CHECK(nullSlot >= 0 && fbSlot >= 0 && nullSlot != fbSlot);
+            if (!(nullSlot >= 0 && fbSlot >= 0 && nullSlot != fbSlot)) std::printf("       null slot %d, framebuffer slot %d\n", nullSlot, fbSlot);
+            CHECK(s->stage.k.numTextureSlots <= kMaxTextureSlots);
+        }
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;

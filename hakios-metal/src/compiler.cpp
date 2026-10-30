@@ -468,8 +468,10 @@ bool lowerHalfDerivative(nir_builder* b, nir_intrinsic_instr* intr, void*) {
     return true;
 }
 
-// Each fetch then becomes an ordinary texel fetch (txf, lod 0) of a texture slot of its target's own: one past the
-// highest slot the function samples, plus the target's index. ir3's own non-bindless fetch gives every fetch
+// Each fetch then becomes an ordinary texel fetch (txf, lod 0) of a texture slot of its target's own: the lowest slot
+// the function does not sample, taken in the order the targets are first read. (Not one past the highest sampled slot:
+// the front end's null texture sits high in the table, and CoreAnimation's fixed_frag_lph_cpf, which samples it and
+// reads its target, would then need a 17th.) ir3's own non-bindless fetch gives every fetch
 // INSTRUCTION a slot of its own (num_samp, then num_samp++), so two reads of one target took two slots and a read of
 // [[color(1)]] could not be told from one of [[color(0)]]; here two reads of a target share a slot and each target has
 // one, which the draw fills with that attachment's view (KernelTexture::fbTarget). FB_TARGETS: n + 1 at each such slot.
@@ -480,7 +482,9 @@ bool lowerFbRead(nir_shader* nir, uint8_t fbTargets[kMaxTextureSlots], std::stri
     nir_shader_intrinsics_pass(nir, countLayerSample, nir_metadata_all, &own);
     nir_lower_fb_read(nir);
     nir_shader_intrinsics_pass(nir, zeroLayerSample, nir_metadata_control_flow, &own);
-    const unsigned base = BITSET_LAST_BIT(nir->info.textures_used);
+    int slotOf[kMaxTextureSlots];   // a target's slot, -1 before its first read
+    for (int& x : slotOf) x = -1;
+    unsigned nextFree = 0;
     bool ok = true;
     nir_foreach_function_impl(impl, nir) {
         nir_builder b = nir_builder_create(impl);
@@ -491,11 +495,19 @@ bool lowerFbRead(nir_shader* nir, uint8_t fbTargets[kMaxTextureSlots], std::stri
                 if (fb->op != nir_texop_txf_ms_fb) continue;
                 const int h = nir_tex_instr_src_index(fb, nir_tex_src_texture_handle), c = nir_tex_instr_src_index(fb, nir_tex_src_coord);
                 const unsigned target = h >= 0 && nir_src_is_const(fb->src[h].src) ? unsigned(nir_src_as_uint(fb->src[h].src)) : 0;
-                const unsigned slot = base + target;
-                if (slot >= kMaxTextureSlots || c < 0) {
+                if (target >= kMaxTextureSlots || c < 0) {
                     ok = false;
                     continue;
                 }
+                if (slotOf[target] < 0) {
+                    while (nextFree < kMaxTextureSlots && BITSET_TEST(nir->info.textures_used, nextFree)) nextFree++;
+                    if (nextFree >= kMaxTextureSlots) {
+                        ok = false;
+                        continue;
+                    }
+                    slotOf[target] = int(nextFree++);
+                }
+                const unsigned slot = unsigned(slotOf[target]);
                 b.cursor = nir_before_instr(instr);
                 nir_def* coord = fb->src[c].src.ssa;
                 nir_tex_instr* tx = nir_tex_instr_create(nir, 2);
