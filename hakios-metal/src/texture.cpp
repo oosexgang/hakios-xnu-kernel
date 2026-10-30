@@ -182,9 +182,19 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     // under the TP's 2D type with DEPTH the layer count (fdl6_view_init's array view); DEPTH carries its layers.
     // A cube is a 2D array of its 6 faces in Metal's order (+X, -X, +Y, -Y, +Z, -Z), which is the TP's layer order too,
     // under the cube type with DEPTH the layers over 6 (fd6_view.c:178-182)
+    // A multisample texture is a render target whose pixels each hold SAMPLES samples side by side: fdl6_layout
+    // multiplies cpp by the count (fd6_layout.c:134), so in the linear layout it is the memory of a single-sample
+    // texture SAMPLES times as wide -- the RB writes it under DEST_MSAA_CNTL's count, the 2D engine resolves it reading
+    // SAMPLES of them a pixel, and a Clear fills it as the wider texture it is in memory.
     const bool slices = desc.type == TextureType::k3D || desc.type == TextureType::k2DArray || desc.type == TextureType::kCube;
-    if (desc.type != TextureType::k2D && desc.type != TextureType::k1D && !slices) {
-        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) + "): 1D (0), 2D (2), 2D array (3), cube (5) and 3D (7) are served");
+    const bool multisample = desc.type == TextureType::k2DMultisample;
+    if (desc.type != TextureType::k2D && desc.type != TextureType::k1D && !slices && !multisample) {
+        refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) +
+                        "): 1D (0), 2D (2), 2D array (3), 2D multisample (4), cube (5) and 3D (7) are served");
+        return nullptr;
+    }
+    if (multisample != (desc.samples != 1) || (multisample && desc.samples != 2 && desc.samples != 4)) {
+        refuse(why, "a texture of type " + n(uint32_t(desc.type)) + " with " + n(desc.samples) + " samples: a 2D multisample texture (4) of 2 or 4, every other type of 1");
         return nullptr;
     }
     if (desc.type == TextureType::kCube && (desc.depth != 6 || desc.width != desc.height)) {
@@ -246,14 +256,20 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
                         ": a depth texture is tiled (TILE6_3) and is served as a render target alone (4), not sampled or stored");
         return nullptr;
     }
+    if (multisample && (info->depth || info->blockW > 1 || desc.mipLevels != 1 || (desc.usage & kTextureUsageRenderTarget) == 0 || (desc.usage & kTextureUsageWrite) != 0)) {
+        refuse(why, std::string("a multisample ") + info->name + " texture of " + n(desc.mipLevels) + " levels with usage " + n(desc.usage) +
+                        ": one level of an uncompressed colour format, a render target (4), is served (a depth one is tiled differently per sample count)");
+        return nullptr;
+    }
     if (slices && (info->depth || info->twoPlane || info->blockW > 1 || desc.usage != kTextureUsageRead)) {
         refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : desc.type == TextureType::kCube ? "cube " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
                         ": one of an uncompressed colour format, sampled alone, is served");
         return nullptr;
     }
-    uint64_t pitch = texturePitch(*info, desc.width);
+    const uint32_t memoryWidth = desc.width * desc.samples;   // the width of its memory: a multisample texture's samples side by side
+    uint64_t pitch = texturePitch(*info, memoryWidth);
     const uint64_t bytes = slices ? (uint64_t(blocksDown(*info, desc.height)) * pitch + 4095) / 4096 * 4096 * desc.depth
-                                                          : textureBytes(*info, desc.width, desc.height, desc.mipLevels);
+                                                          : textureBytes(*info, memoryWidth, desc.height, desc.mipLevels);
     std::shared_ptr<Buffer> buffer = newBuffer(gpu, bytes, why);
     if (buffer == nullptr) {
         return nullptr;
@@ -297,6 +313,9 @@ TextureLevel Texture::level(uint32_t l) const {
 }
 
 bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
+    if (desc_.samples != 1) {
+        return refuse(why, "a multisample texture's samples are the GPU's alone: resolve it into a texture of one sample first (Metal refuses this too)");
+    }
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }
@@ -322,6 +341,9 @@ bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32
 }
 
 bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const {
+    if (desc_.samples != 1) {
+        return refuse(why, "a multisample texture's samples are the GPU's alone: resolve it into a texture of one sample first (Metal refuses this too)");
+    }
     if (info_->depth) {
         return refuse(why, std::string("a ") + info_->name + " texture is tiled (TILE6_3): its bytes are not rows the CPU can address");
     }

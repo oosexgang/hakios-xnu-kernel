@@ -119,7 +119,7 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     // the refusals, each on its sentence
     TextureDesc d;
     d.type = TextureType::kCubeArray;
-    CHECK(has(refusedMake(r, d), "texture type 6 (CubeArray): 1D (0), 2D (2), 2D array (3), cube (5) and 3D (7) are served"));
+    CHECK(has(refusedMake(r, d), "texture type 6 (CubeArray): 1D (0), 2D (2), 2D array (3), 2D multisample (4), cube (5) and 3D (7) are served"));
     d.type = TextureType::k3D;
     d.mipLevels = 2;
     d.width = d.height = 4;
@@ -637,4 +637,44 @@ TEST(a_cube_is_six_faces_under_the_cube_type) {
     d.height = 8;
     CHECK(Texture::make(r.gpu, d, &why) == nullptr);
     CHECK(has(why, "square faces, 6 of them"));
+}
+
+// A multisample texture is the memory of a texture SAMPLES times as wide (fdl6_layout's cpp times the count), its
+// logical size the pixels: the single-sample texture of the same size is the control, a quarter of the pitch.
+TEST(a_multisample_texture_is_its_samples_side_by_side) {
+    Rig r;
+    TextureDesc one;
+    one.width = 100;
+    one.height = 10;
+    one.usage = kTextureUsageRenderTarget;
+    TextureDesc four = one;
+    four.type = TextureType::k2DMultisample;
+    four.samples = 4;
+    std::string why;
+    auto a = Texture::make(r.gpu, one, &why);
+    auto m = Texture::make(r.gpu, four, &why);
+    CHECK(a != nullptr && m != nullptr);
+    if (a == nullptr || m == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(m->width(), 100u);
+    CHECK_EQ(m->samples(), 4u);
+    CHECK_EQ(a->bytesPerRow(), uint64_t(texturePitch(*formatInfo(PixelFormat::kRGBA8Unorm), 100)));
+    CHECK_EQ(m->bytesPerRow(), uint64_t(texturePitch(*formatInfo(PixelFormat::kRGBA8Unorm), 400)));
+    CHECK(m->buffer()->length() >= 10u * m->bytesPerRow());
+    // the CPU cannot address samples, as Metal says
+    uint8_t px[4] = {};
+    CHECK(!m->replace(0, 0, 0, 1, 1, px, 4, &why));
+    CHECK(has(why, "a multisample texture's samples are the GPU's alone"));
+    // the refusals: a sample count of 3, a count on a 2D texture, a multisample texture that is not a render target
+    TextureDesc bad = four;
+    bad.samples = 3;
+    CHECK(has(refusedMake(r, bad), "with 3 samples: a 2D multisample texture (4) of 2 or 4, every other type of 1"));
+    bad = one;
+    bad.samples = 4;
+    CHECK(has(refusedMake(r, bad), "a texture of type 2 with 4 samples"));
+    bad = four;
+    bad.usage = kTextureUsageRead;
+    CHECK(has(refusedMake(r, bad), "a render target (4), is served"));
 }

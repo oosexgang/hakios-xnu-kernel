@@ -4319,7 +4319,11 @@ inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT = 8;          
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK = 0x00000c00;             // a6xx.xml.h:9849
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT = 10;                    // a6xx.xml.h:9850
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_SRGB = 0x00002000;                         // a6xx.xml.h:9856
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_SAMPLES__MASK = 0x0000c000;                // a6xx.xml.h:9857
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_SAMPLES__SHIFT = 14;                       // a6xx.xml.h:9858
+constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_SAMPLES(a3xx_msaa_samples v) { return field(v, A6XX_SP_PS_2D_SRC_INFO_SAMPLES__SHIFT, A6XX_SP_PS_2D_SRC_INFO_SAMPLES__MASK); }
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_FILTER = 0x00010000;                       // a6xx.xml.h:9863
+inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_SAMPLES_AVERAGE = 0x00040000;              // a6xx.xml.h:9865
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_UNK20 = 0x00100000;                        // a6xx.xml.h:9867
 inline constexpr uint32_t A6XX_SP_PS_2D_SRC_INFO_UNK22 = 0x00400000;                        // a6xx.xml.h:9869
 inline constexpr uint32_t REG_A6XX_SP_PS_2D_SRC_SIZE = 0xb4c1;                              // a6xx.xml.h:9880

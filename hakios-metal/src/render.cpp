@@ -819,7 +819,8 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
 void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile, uint32_t level = 0) {
     const FormatInfo& f = target.info();
     const TextureLevel L = target.level(level);
-    const uint32_t W = L.width, H = L.height;
+    // (a multisample target is filled as the wider texture its memory is: every sample of every pixel the colour)
+    const uint32_t W = L.width * target.samples(), H = L.height;
     const uint64_t at = target.levelAddress(level);
     const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
@@ -917,8 +918,8 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
             return refuse(why, "the " + n(t.width()) + " x " + n(t.height()) + " " + f.name + " texture" + of +
                                    " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
         }
-        if (t.type() != TextureType::k2D) {
-            return refuse(why, at + "a colour attachment of texture type " + n(uint32_t(t.type())) + ": only 2D (2) is served");
+        if (t.type() != TextureType::k2D && t.type() != TextureType::k2DMultisample) {
+            return refuse(why, at + "a colour attachment of texture type " + n(uint32_t(t.type())) + ": 2D (2) and 2D multisample (4) are served");
         }
         if (!rbMrtPitchValid(uint32_t(t.bytesPerRow())) || t.buffer()->length() >= (1ull << 32)) {
             return refuse(why, at + "the target's pitch of " + n(t.bytesPerRow()) + " bytes or its " + n(t.buffer()->length()) +
@@ -938,12 +939,20 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if (a.level >= t.levels()) {
             return refuse(why, which + " names mip level " + n(a.level) + " of a texture of " + n(t.levels()));
         }
+        if (t.samples() != firstAttachment(pass)->samples()) {
+            return refuse(why, which + " has " + n(t.samples()) + " sample(s) beside another attachment's " + n(firstAttachment(pass)->samples()) +
+                                   ": a pass's attachments share one sample count");
+        }
         // (attachments of different sizes are Metal's to allow: the window is the smallest of them, windowOf below)
     }
     if (pass.depth != nullptr) {
         const Texture& d = *pass.depth;
         if (!d.info().depth) {
             return refuse(why, std::string("a ") + d.info().name + " texture as the depth attachment: Depth32Float (252) is served");
+        }
+        if (d.samples() != firstAttachment(pass)->samples()) {
+            return refuse(why, "a depth attachment of " + n(d.samples()) + " sample(s) beside colour of " + n(firstAttachment(pass)->samples()) +
+                                   ": a multisample depth texture is not served (its tiles differ per sample count)");
         }
         if ((d.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
@@ -1222,6 +1231,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (!checkTarget(pass, why)) {
         return false;
     }
+    const uint32_t samples = firstAttachment(pass)->samples();
+    if (program.samples != samples) {
+        return refuse(why, "a pipeline of rasterSampleCount " + n(program.samples) + " into attachments of " + n(samples) + " sample(s): Metal asks for the same count");
+    }
     const uint32_t numRt = std::max<uint32_t>(fs.numColorOutputs, 1);
     for (uint32_t i = 0; i < numRt; i++) {
         const Texture* t = attachmentOf(pass, i).texture;
@@ -1479,11 +1492,18 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // 6. one sample (tu6_emit_msaa, tu_cmd_buffer.cc:892-910; fd6 emit_msaa, fd6_gmem.cc:1037-1061): RAS_MSAA_CNTL 0 and
     // DEST_MSAA_CNTL MSAA_DISABLE in the three blocks, the sample-location configs 0 (fd6_context.cc:300-306),
     // RB_BLIT_GMEM_MSAA_CNTL 0 (fd6's)
+    // ...or a multisample pass's count in all three blocks without MSAA_DISABLE, as tu6_emit_msaa writes it: the GRAS
+    // covers samples, the RB writes each covered one, the FS still runs once a pixel (no sample shading). The sample
+    // configs stay 0, the standard locations (tu6_emit_sample_locations without custom ones).
     if (o.msaaOff) {
-        regs(stream, REG_A6XX_SP_TP_RAS_MSAA_CNTL, {0, A6XX_SP_TP_DEST_MSAA_CNTL_MSAA_DISABLE});
+        const a3xx_msaa_samples m = samples == 4 ? MSAA_FOUR : samples == 2 ? MSAA_TWO : MSAA_ONE;
+        regs(stream, REG_A6XX_SP_TP_RAS_MSAA_CNTL, {A6XX_SP_TP_RAS_MSAA_CNTL_SAMPLES(m),
+                                                    m == MSAA_ONE ? A6XX_SP_TP_DEST_MSAA_CNTL_MSAA_DISABLE : A6XX_SP_TP_DEST_MSAA_CNTL_SAMPLES(m)});
         reg(stream, REG_A6XX_SP_TP_SAMPLE_CONFIG, 0);
-        regs(stream, REG_A6XX_GRAS_RAS_MSAA_CNTL, {0, A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE, 0});   // ..., GRAS_SAMPLE_CONFIG
-        regs(stream, REG_A6XX_RB_RAS_MSAA_CNTL, {0, A6XX_RB_DEST_MSAA_CNTL_MSAA_DISABLE, 0});       // ..., RB_SAMPLE_CONFIG
+        regs(stream, REG_A6XX_GRAS_RAS_MSAA_CNTL, {A6XX_GRAS_RAS_MSAA_CNTL_SAMPLES(m),
+                                                   m == MSAA_ONE ? A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE : A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES(m), 0});   // ..., GRAS_SAMPLE_CONFIG
+        regs(stream, REG_A6XX_RB_RAS_MSAA_CNTL, {A6XX_RB_RAS_MSAA_CNTL_SAMPLES(m),
+                                                 m == MSAA_ONE ? A6XX_RB_DEST_MSAA_CNTL_MSAA_DISABLE : A6XX_RB_DEST_MSAA_CNTL_SAMPLES(m), 0});       // ..., RB_SAMPLE_CONFIG
         reg(stream, REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL, 0);
     }
     // 7. RB_RENDER_CNTL: CCUSINGLECACHELINESIZE 2 in both pipelines (tu_cmd_buffer.cc:633-693; fd6_gmem.cc:531-552), 0 in
@@ -1959,6 +1979,15 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
                                n(d.w) + " x " + n(d.h) + " at (" + n(d.x) + ", " + n(d.y) + ") of a " + n(DL.width) + " x " + n(DL.height) + " one: a rectangle outside its level or empty");
     }
     const bool scaled = s.w != d.w || s.h != d.h;
+    // A multisample source is a resolve (turnip's resolve_sysmem through r2d): the engine reads its SAMPLES samples a
+    // pixel and, for a float or unorm format, averages them (fdl6_view_init's samples_average); an integer one takes
+    // sample 0, as Metal's resolve of an integer attachment does. Nothing is written into a multisample texture here.
+    if (dst.samples() != 1) {
+        return refuse(why, "a copy into a multisample texture: its samples are drawn, cleared or resolved from, not copied into");
+    }
+    if (src.samples() != 1 && (scaled || linear)) {
+        return refuse(why, "a resolve that scales or filters: a multisample source is resolved pixel for pixel");
+    }
     if (linear && scaled && sf.element != kElemFloat) {
         return refuse(why, std::string("a linear scale of ") + sf.name + ": an integer format is not filtered");
     }
@@ -1990,7 +2019,10 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     regs(stream, REG_A6XX_GRAS_2D_SRC_TL_X, {gras2dSrc(s.x), gras2dSrc(s.x + s.w - 1), gras2dSrc(s.y), gras2dSrc(s.y + s.h - 1), regXY(d.x, d.y),
                                             regXY(d.x + d.w - 1, d.y + d.h - 1)});
     const uint64_t from = src.levelAddress(srcLevel), to = dst.levelAddress(dstLevel);
-    regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {sp2dSrcInfo(sf.fmt6, sf.swap, srgb, linear && scaled), sp2dSrcSize(SL.width, SL.height), uint32_t(from),
+    const a3xx_msaa_samples srcSamples = src.samples() == 4 ? MSAA_FOUR : src.samples() == 2 ? MSAA_TWO : MSAA_ONE;
+    const uint32_t srcInfo = sp2dSrcInfo(sf.fmt6, sf.swap, srgb, linear && scaled) | A6XX_SP_PS_2D_SRC_INFO_SAMPLES(srcSamples) |
+                             (srcSamples != MSAA_ONE && sf.element == kElemFloat ? A6XX_SP_PS_2D_SRC_INFO_SAMPLES_AVERAGE : 0u);
+    regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
                                               uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
     regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
     regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(df.fmt6, TILE6_LINEAR, df.swap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});

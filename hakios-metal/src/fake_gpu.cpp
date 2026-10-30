@@ -917,11 +917,18 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
     const uint32_t sw = size & A6XX_SP_PS_2D_SRC_SIZE_WIDTH__MASK, sh = fieldOf(size, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__MASK, A6XX_SP_PS_2D_SRC_SIZE_HEIGHT__SHIFT);
     const uint64_t sbase = reg64(REG_A6XX_SP_PS_2D_SRC);
     const uint64_t spitch = uint64_t(fieldOf(reg(REG_A6XX_SP_PS_2D_SRC_PITCH), A6XX_SP_PS_2D_SRC_PITCH_PITCH__MASK, A6XX_SP_PS_2D_SRC_PITCH_PITCH__SHIFT)) << 6;
+    // a multisample source (a resolve): NS samples side by side in each pixel of its rows
+    const uint32_t ns = 1u << fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_SAMPLES__MASK, A6XX_SP_PS_2D_SRC_INFO_SAMPLES__SHIFT);
+    const bool average = (info & A6XX_SP_PS_2D_SRC_INFO_SAMPLES_AVERAGE) != 0;
+    if (ns > 4 || (average && ns == 1)) {
+        fault(text("a copy from a source of %llu samples", ns) + (average ? ", averaged" : "") + ": 1, 2 or 4, averaged only when more than one");
+        return false;
+    }
     auto coord = [&](uint32_t r) { return fieldOf(reg(r), A6XX_GRAS_2D_SRC_TL_X__MASK, A6XX_GRAS_2D_SRC_TL_X__SHIFT); };
     const uint32_t sx0 = coord(REG_A6XX_GRAS_2D_SRC_TL_X), sx1 = coord(REG_A6XX_GRAS_2D_SRC_BR_X), sy0 = coord(REG_A6XX_GRAS_2D_SRC_TL_Y),
                    sy1 = coord(REG_A6XX_GRAS_2D_SRC_BR_Y);
-    if (sw == 0 || sh == 0 || sx1 < sx0 || sy1 < sy0 || sx1 >= sw || sy1 >= sh || spitch < uint64_t(sw) * bpp || sbase % 64 != 0 ||
-        at(sbase, uint64_t(sh - 1) * spitch + uint64_t(sw) * bpp) == nullptr) {
+    if (sw == 0 || sh == 0 || sx1 < sx0 || sy1 < sy0 || sx1 >= sw || sy1 >= sh || spitch < uint64_t(sw) * bpp * ns || sbase % 64 != 0 ||
+        at(sbase, uint64_t(sh - 1) * spitch + uint64_t(sw) * bpp * ns) == nullptr) {
         fault(text("a copy from (%llu, %llu) ", sx0, sy0) + text("to (%llu, %llu) of a ", sx1, sy1) + text("%llu x %llu source", sw, sh) +
               text(" with a pitch of %llu at %#llx: outside the source, its buffer, or not 64-aligned", spitch, sbase));
         return false;
@@ -932,19 +939,34 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
     }
     const uint32_t dw = x1 - x0 + 1, dh = y1 - y0 + 1, srw = sx1 - sx0 + 1, srh = sy1 - sy0 + 1;
     const bool filter = (info & A6XX_SP_PS_2D_SRC_INFO_FILTER) != 0;
+    if (ns > 1 && (srw != dw || srh != dh || filter || (average && ifmt != R2D_UNORM8))) {
+        fault("a resolve that scales, filters, or averages a format other than 8-bit unorm: not modelled");
+        return false;
+    }
     // the source read whole first: a copy within one buffer reads what was there before it
+    const uint64_t srcRow = uint64_t(sw) * bpp * ns;
     std::vector<uint8_t> source(uint64_t(sh) * spitch);
-    memcpy(source.data(), at(sbase, source.size() - spitch + uint64_t(sw) * bpp), source.size() - spitch + uint64_t(sw) * bpp);
+    memcpy(source.data(), at(sbase, source.size() - spitch + srcRow), source.size() - spitch + srcRow);
     auto texel = [&](int64_t x, int64_t y) {
         x = std::min<int64_t>(std::max<int64_t>(x, 0), sw - 1);
         y = std::min<int64_t>(std::max<int64_t>(y, 0), sh - 1);
-        return source.data() + uint64_t(y) * spitch + uint64_t(x) * bpp;
+        return source.data() + uint64_t(y) * spitch + uint64_t(x) * bpp * ns;
     };
     for (uint32_t y = 0; y < dh; y++) {
         for (uint32_t x = 0; x < dw; x++) {
             uint8_t* out = at(base + uint64_t(y0 + y) * pitch + uint64_t(x0 + x) * bpp, bpp);
+            if (ns > 1 && average) {
+                // the mean of the pixel's samples, byte by byte (each a unorm channel), rounded to nearest
+                const uint8_t* px = texel(sx0 + x, sy0 + y);
+                for (uint32_t c = 0; c < bpp; c++) {
+                    uint32_t sum = 0;
+                    for (uint32_t k = 0; k < ns; k++) sum += px[k * bpp + c];
+                    out[c] = uint8_t((sum + ns / 2) / ns);
+                }
+                continue;
+            }
             if (srw == dw && srh == dh) {
-                memcpy(out, texel(sx0 + x, sy0 + y), bpp);
+                memcpy(out, texel(sx0 + x, sy0 + y), bpp);   // (a multisample source unaveraged: its sample 0)
                 continue;
             }
             const double u = sx0 + (x + 0.5) * srw / dw - 0.5, v = sy0 + (y + 0.5) * srh / dh - 0.5;
@@ -1085,6 +1107,23 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     d.windowScissor[2] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__SHIFT);
     d.windowScissor[3] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__SHIFT);
     const uint64_t width = uint64_t(d.windowScissor[2]) + 1, rows = uint64_t(d.windowScissor[3]) + 1;
+    // The sample count, one in all three blocks (tu6_emit_msaa): RAS and DEST alike, MSAA_DISABLE exactly when it is one,
+    // at most four (the RB's own maximum here). A target's rows then hold that many samples a pixel.
+    {
+        const uint32_t s = fieldOf(reg(REG_A6XX_GRAS_DEST_MSAA_CNTL), A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__MASK, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__SHIFT);
+        for (uint32_t r : {REG_A6XX_SP_TP_RAS_MSAA_CNTL, REG_A6XX_SP_TP_DEST_MSAA_CNTL, REG_A6XX_GRAS_RAS_MSAA_CNTL, REG_A6XX_GRAS_DEST_MSAA_CNTL,
+                           REG_A6XX_RB_RAS_MSAA_CNTL, REG_A6XX_RB_DEST_MSAA_CNTL}) {
+            const uint32_t v = reg(r);
+            const bool dest = r == REG_A6XX_SP_TP_DEST_MSAA_CNTL || r == REG_A6XX_GRAS_DEST_MSAA_CNTL || r == REG_A6XX_RB_DEST_MSAA_CNTL;
+            if (fieldOf(v, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__MASK, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__SHIFT) != s ||
+                (dest && ((v & A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE) != 0) != (s == 0)) || s > MSAA_FOUR) {
+                fault(text("the MSAA registers disagree (%#llx", v) + text(" against GRAS_DEST_MSAA_CNTL's count %llu): one sample count in all three blocks, "
+                                                                            "MSAA_DISABLE with one sample alone", s));
+                return false;
+            }
+        }
+        d.samples = 1u << s;
+    }
     uint32_t unwrittenMask = 0;
     for (uint32_t t = 0; t < d.mrtCount; t++) {
         const std::string which = std::to_string(t);
@@ -1102,8 +1141,9 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         }
         const uint64_t pitch = uint64_t(fieldOf(reg(regRbMrt(REG_A6XX_RB_MRT_PITCH, t)), A6XX_RB_MRT_PITCH__MASK, A6XX_RB_MRT_PITCH__SHIFT)) << A6XX_RB_MRT_PITCH__SCALE;
         const uint64_t base = reg64(regRbMrt(REG_A6XX_RB_MRT_BASE, t));
-        if (pitch < width * bpp) {
-            fault("RB_MRT_PITCH[" + which + "] " + text("%llu bytes for rows of %llu pixels", pitch, width) + text(" of %llu bytes: shorter than a row", bpp));
+        if (pitch < width * bpp * d.samples) {
+            fault("RB_MRT_PITCH[" + which + "] " + text("%llu bytes for rows of %llu pixels", pitch, width) + text(" of %llu bytes", bpp) +
+                  text(" and %llu sample(s): shorter than a row", d.samples));
             return false;
         }
         // the rows counted to a multiple of 4, as the layout counts its last level (fd6_layout.c:249-250) and check2d does
@@ -1565,14 +1605,6 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         // bits but not the other way round
         if (ijPersp != grasPersp || ijPersp != rbPersp || grasLinear != rbLinear || (ijLinear && !grasLinear) || grasCoord != rbCoord || (coord != (grasCoord != 0))) {
             fault("the barycentric and coordinate registers disagree across HLSQ_CONTROL_3/4_REG, GRAS_CNTL and RB_RENDER_CONTROL0");
-            return false;
-        }
-    }
-    // one sample everywhere
-    for (uint32_t r : {REG_A6XX_SP_TP_DEST_MSAA_CNTL, REG_A6XX_GRAS_DEST_MSAA_CNTL, REG_A6XX_RB_DEST_MSAA_CNTL}) {
-        uint32_t v = reg(r);
-        if ((v & A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE) == 0 || fieldOf(v, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__MASK, A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES__SHIFT) != 0) {
-            fault(text("multisampling in a DEST_MSAA_CNTL register (%#llx): not what this GPU model runs", v));
             return false;
         }
     }

@@ -141,6 +141,7 @@ struct TextureDesc {
     uint32_t mipLevels = 1;               // MTLTextureDescriptor.mipmapLevelCount: 1 to floor(log2(max(width, height))) + 1
     uint32_t usage = kTextureUsageRead;   // kTextureUsage* bits; a kernel that writes a texture made without kTextureUsageWrite is refused, a draw into one made without kTextureUsageRenderTarget too
     uint32_t depth = 1;                   // a 3D texture's slices (TextureType::k3D, one level); 1 for every other type
+    uint32_t samples = 1;                 // MTLTextureDescriptor.sampleCount: 2 or 4 for TextureType::k2DMultisample, 1 for every other type
 };
 
 class Texture {
@@ -183,6 +184,7 @@ public:
     uint64_t stencilPlaneBytes() const;
     PixelFormat format() const { return desc_.format; }
     TextureType type() const { return desc_.type; }
+    uint32_t samples() const { return desc_.samples; }   // 1, or a multisample texture's 2 or 4 (each pixel's samples side by side)
     uint32_t depth() const { return desc_.depth; }
     uint32_t usage() const { return desc_.usage; }
     const FormatInfo& info() const { return *info_; }

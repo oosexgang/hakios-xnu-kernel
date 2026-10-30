@@ -241,6 +241,8 @@ struct Program {
     // The 3D pipeline has one IBO table for both stages, so the FS's device buffers sit past the VS's: its [[buffer(n)]]
     // is table slot FS_IBO_BASE + n, which is how it was compiled (compileStage's iboBase: the VS's count)
     uint32_t fsIboBase = 0;
+    // MTLRenderPipelineDescriptor.rasterSampleCount: 1, or the 2 or 4 samples of the multisample attachments it draws into
+    uint32_t samples = 1;
 };
 
 namespace render {

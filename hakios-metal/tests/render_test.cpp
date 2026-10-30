@@ -1522,7 +1522,7 @@ TEST(the_fake_refuses_a_draw_whose_target_does_not_hold_together) {
     {
         Twin w;
         w.at(regRbMrt(REG_A6XX_RB_MRT_PITCH, 0)) = 2;   // 128 bytes
-        CHECK(has(w.fault(), "RB_MRT_PITCH[0] 128 bytes for rows of 64 pixels of 4 bytes: shorter than a row"));
+        CHECK(has(w.fault(), "RB_MRT_PITCH[0] 128 bytes for rows of 64 pixels of 4 bytes and 1 sample(s): shorter than a row"));
     }
     {
         Twin w;
@@ -1771,20 +1771,20 @@ TEST(the_fake_refuses_a_draw_whose_link_or_fs_inputs_disagree) {
 TEST(the_fake_refuses_a_draw_with_msaa_without_the_ccu_cntl_or_without_its_flushes) {
     using namespace a6xx;
     {
-        Twin w;
+        Twin w;   // one block's DEST without MSAA_DISABLE at one sample: the blocks disagree
         w.at(REG_A6XX_RB_DEST_MSAA_CNTL) = 0;
-        CHECK(has(w.fault(), "multisampling in a DEST_MSAA_CNTL register (0): not what this GPU model runs"));
+        CHECK(has(w.fault(), "the MSAA registers disagree (0 against GRAS_DEST_MSAA_CNTL's count 0)"));
     }
     {
-        Twin w;
+        Twin w;   // GRAS alone at four samples: the others still say one
         w.at(REG_A6XX_GRAS_DEST_MSAA_CNTL) = A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE | A6XX_GRAS_DEST_MSAA_CNTL_SAMPLES(MSAA_FOUR);
-        CHECK(has(w.fault(), "multisampling in a DEST_MSAA_CNTL register (0x6)"));
+        CHECK(has(w.fault(), "the MSAA registers disagree"));
     }
     {
         render::Options o;
-        o.msaaOff = false;
+        o.msaaOff = false;   // none of them written: zeros, MSAA_DISABLE missing at one sample
         Twin w(o);
-        CHECK(has(w.fault(), "multisampling in a DEST_MSAA_CNTL register (0)"));
+        CHECK(has(w.fault(), "the MSAA registers disagree (0 against GRAS_DEST_MSAA_CNTL's count 0)"));
     }
     {
         render::Options o;
@@ -4247,4 +4247,106 @@ TEST(an_occlusion_query_adds_the_draws_samples_to_its_word) {
     refusedWith(d, "a visibility result at offset 4: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
     d.visibilityOffset = 64;
     refusedWith(d, "a visibility result at offset 64: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
+}
+
+// --- multisampling: a 4x target drawn into under the pass's count, cleared as its memory, resolved by the 2D engine -------
+
+namespace {
+std::shared_ptr<Texture> msTarget(Rig& r, uint32_t samples = 4) {
+    TextureDesc d;
+    d.type = TextureType::k2DMultisample;
+    d.samples = samples;
+    d.width = d.height = 64;
+    d.usage = kTextureUsageRenderTarget;
+    std::string why;
+    auto t = Texture::make(*r.gpu, d, &why);
+    CHECK(t != nullptr);
+    return t;
+}
+}  // namespace
+
+TEST(a_multisample_pass_draws_under_its_count) {
+    using namespace a6xx;
+    Rig r;
+    auto ms = msTarget(r);
+    RenderPass pass;
+    pass.color0 = ms.get();
+    // the control: a pipeline of one sample into it is refused, as Metal refuses it
+    Encoded bad(r, flatProgram(), pass, wholeDraw());
+    CHECK(!bad.ok);
+    expectRefusal(bad.error, "a pipeline of rasterSampleCount 1 into attachments of 4 sample(s): Metal asks for the same count");
+    Program p = flatProgram();
+    p.samples = 4;
+    Encoded e(r, p, pass, wholeDraw());
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    // MSAA_FOUR (2) in all three blocks, MSAA_DISABLE nowhere; the target's rows hold four samples a pixel
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_RAS_MSAA_CNTL), 2u);
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_DEST_MSAA_CNTL), 2u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEST_MSAA_CNTL), 2u);
+    CHECK_EQ(e.reg(REG_A6XX_SP_TP_DEST_MSAA_CNTL), 2u);
+    CHECK_EQ(e.reg(REG_A6XX_RB_MRT_PITCH) << 6, uint32_t(ms->bytesPerRow()));
+    CHECK_EQ(ms->bytesPerRow(), 64u * 4 * 4);
+    auto cb = drawOnce(r, p, pass, wholeDraw());
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.samples, 4u);
+    // a single-sample pass beside it is still one sample
+    auto one = target(r);
+    RenderPass flat;
+    flat.color0 = one.get();
+    Encoded f(r, flatProgram(), flat, wholeDraw());
+    CHECK_EQ(f.reg(REG_A6XX_GRAS_DEST_MSAA_CNTL), uint32_t(A6XX_GRAS_DEST_MSAA_CNTL_MSAA_DISABLE));
+    // attachments of two counts in one pass are refused
+    RenderPass mixed;
+    mixed.color0 = ms.get();
+    mixed.more[0].texture = one.get();
+    Encoded m(r, p, mixed, wholeDraw());
+    CHECK(!m.ok);
+    expectRefusal(m.error, "colour attachment 1 has 1 sample(s) beside another attachment's 4: a pass's attachments share one sample count");
+}
+
+TEST(a_multisample_texture_is_cleared_whole_and_resolved_to_the_mean) {
+    Rig r;
+    auto ms = msTarget(r);
+    auto out = target(r);
+    // a Clear fills every sample: resolved, every pixel is the clear colour (0.25, 0.5, 0.75, 1 -> 40 80 bf ff)
+    RenderPass pass;
+    pass.color0 = ms.get();
+    pass.load = LoadAction::kClear;
+    const double c[4] = {0.25, 0.5, 0.75, 1.0};
+    for (int i = 0; i < 4; i++) pass.clearColor[i] = c[i];
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->clear(pass));
+    CHECK(cb->blit(*ms, 0, render::BlitRect{0, 0, 64, 64}, *out, 0, render::BlitRect{0, 0, 64, 64}, false));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    auto* px = static_cast<const uint8_t*>(out->buffer()->contents());
+    uint32_t cleared = 0;
+    for (uint32_t j = 0; j < 64; j++)
+        for (uint32_t i = 0; i < 64; i++) cleared += memcmp(px + j * out->bytesPerRow() + i * 4, "\x40\x80\xbf\xff", 4) == 0;
+    CHECK_EQ(cleared, 4096u);
+    // four different samples in pixel (3, 5): its resolve is their mean, the pixels beside it the clear colour
+    auto* raw = static_cast<uint8_t*>(ms->buffer()->contents()) + 5 * ms->bytesPerRow() + 3 * 16;
+    const uint8_t samples[4][4] = {{0, 0, 0, 0}, {100, 0, 0, 255}, {200, 4, 0, 255}, {101, 0, 3, 255}};
+    memcpy(raw, samples, 16);
+    cb = r.queue->commandBuffer();
+    CHECK(cb->blit(*ms, 0, render::BlitRect{0, 0, 64, 64}, *out, 0, render::BlitRect{0, 0, 64, 64}, false));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const uint8_t* got = px + 5 * out->bytesPerRow() + 3 * 4;
+    const uint8_t want[4] = {100, 1, 1, 191};   // (0+100+200+101)/4 = 100.25, (0+0+4+0)/4 = 1, (0+0+0+3)/4 = 0.75, (0+255*3)/4 = 191.25
+    CHECK(memcmp(got, want, 4) == 0);
+    if (memcmp(got, want, 4) != 0) std::printf("       resolved to %02x %02x %02x %02x\n", got[0], got[1], got[2], got[3]);
+    CHECK(memcmp(got - 4, "\x40\x80\xbf\xff", 4) == 0);
+    // a copy into a multisample texture, and a scaled resolve, are refused
+    cb = r.queue->commandBuffer();
+    CHECK(!cb->blit(*out, 0, render::BlitRect{0, 0, 64, 64}, *ms, 0, render::BlitRect{0, 0, 64, 64}, false));
+    expectRefusal(cb->error(), "a copy into a multisample texture: its samples are drawn, cleared or resolved from, not copied into");
+    cb = r.queue->commandBuffer();
+    CHECK(!cb->blit(*ms, 0, render::BlitRect{0, 0, 64, 64}, *out, 0, render::BlitRect{0, 0, 32, 32}, true));
+    expectRefusal(cb->error(), "a resolve that scales or filters: a multisample source is resolved pixel for pixel");
 }

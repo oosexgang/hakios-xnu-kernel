@@ -3829,6 +3829,87 @@ int main(int argc, char** argv) {
                            (!haveSampler || !filled ? ": " + why + whyReplace : drew ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
+        // 9ms. multisampling: T1 drawn into a cleared 64x64 target of SAMPLES samples, then resolved by the 2D engine into a
+        // single-sample one (a copy when SAMPLES is 1). Inside T1 (j > i + 1) every pixel is the flat colour, past it (j + 1
+        // < i) the clear colour 40 80 bf ff; along the diagonal a pixel whose samples T1 covers in part resolves to a mix,
+        // each channel between the two. One sample first, the control: no pixel is a mix. Then 2 and 4: the diagonal is.
+        // Two samples sit at (0.25, 0.25) and (0.75, 0.75) of a pixel, both on a line of slope 1, so the diagonal covers
+        // both or neither; a slope of 1/2 or 3/4 splits them in no pixel either (j - m i never falls between the two
+        // samples' thresholds). Their case draws through a viewport 64 x 40, T1's edge then j = 0.625 i, whose values of
+        // j - 0.625 i (multiples of 1/8) do; the rows from 40 down are past T1. With its own one-sample control.
+        {
+            const uint32_t clearWord = 0xffbf8040u;
+            for (const auto& [samples, wide] : {std::pair<uint32_t, bool>{1, false}, {1, true}, {2, true}, {4, false}}) {
+                TextureDesc md;
+                md.type = samples == 1 ? TextureType::k2D : TextureType::k2DMultisample;
+                md.samples = samples;
+                md.width = W;
+                md.height = H;
+                md.usage = kTextureUsageRenderTarget;
+                auto ms = Texture::make(gpu, md, &why);
+                TextureDesc od;
+                od.width = W;
+                od.height = H;
+                od.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+                auto out = Texture::make(gpu, od, &why);
+                if (ms == nullptr || out == nullptr) {
+                    report(false, "msaa " + std::to_string(samples) + ": the two textures: " + why);
+                    continue;
+                }
+                fillBo(*out, 0x11223344u);
+                Program p = flat;
+                p.samples = samples;
+                RenderPass rp;
+                rp.color0 = ms.get();
+                rp.load = LoadAction::kClear;
+                rp.clearColor[0] = 0.25;
+                rp.clearColor[1] = 0.5;
+                rp.clearColor[2] = 0.75;
+                rp.clearColor[3] = 1.0;
+                auto cb = queue->commandBuffer();
+                const bool drew = cb->draw(p, rp, drawOf(0, 3, Viewport{0, 0, 64, wide ? 40.0 : 64.0, 0, 1}), Bindings{}, Bindings{}) &&
+                                  cb->blit(*ms, 0, render::BlitRect{0, 0, W, H}, *out, 0, render::BlitRect{0, 0, W, H}, false);
+                if (drew) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*out);
+                uint32_t inside = 0, insideRight = 0, outside = 0, outsideRight = 0, mixes = 0, garbage = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * out->bytesPerRow() + uint64_t(i) * 4, 4);
+                        const uint32_t edge = wide ? i * 40 / 64 : i;   // T1's edge in this column
+                        if (j > edge + 1 && !(wide && j >= 40)) {
+                            inside++;
+                            insideRight += px == flatColour;
+                        } else if (j + 1 < edge || (wide && j >= 40)) {
+                            outside++;
+                            outsideRight += px == clearWord;
+                        } else if (px != flatColour && px != clearWord) {
+                            bool between = true;
+                            for (int c = 0; c < 4; c++) {
+                                const uint32_t v = (px >> (8 * c)) & 0xff, a = (flatColour >> (8 * c)) & 0xff, b = (clearWord >> (8 * c)) & 0xff;
+                                between = between && v >= std::min(a, b) && v <= std::max(a, b);
+                            }
+                            if (between) {
+                                mixes++;
+                            } else {
+                                garbage++;
+                                if (first.empty()) first = "; the first neither (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px);
+                            }
+                        }
+                    }
+                }
+                const bool mixOk = samples == 1 ? mixes == 0 : mixes >= (wide ? 8u : 32u);
+                report(drew && completed(*cb) && insideRight == inside && outsideRight == outside && garbage == 0 && mixOk,
+                       "msaa " + std::to_string(samples) + " sample(s)" + (wide ? ", edge of slope 0.625" : "") + ", T1 resolved: " + std::to_string(insideRight) + " of " + std::to_string(inside) + " inside flat, " +
+                           std::to_string(outsideRight) + " of " + std::to_string(outside) + " outside the clear colour, " + std::to_string(mixes) +
+                            " mixes on the edge (" + (samples == 1 ? "none wanted" : wide ? "8 or more wanted" : "32 or more wanted") + "), " + std::to_string(garbage) + " neither" + first +
+                           (drew ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
 #if defined(__APPLE__)
         // 9m. the path to the screen's memory: a real IOSurface (IOSurfaceCreate, 64x64 'BGRA', 256-byte rows -- what
         // CAMetalLayer's drawables are made of), its memory taken by the kernel's surface request as a buffer
