@@ -1,0 +1,2906 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index dee63c8..5ed8636 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -111,6 +111,7 @@ bsd/dev/monotonic.c         optional config_cpu_counters
+ bsd/dev/redwood_input.c	standard
+ bsd/dev/redwood_virtio_input.c	standard
+ bsd/dev/redwood_goodix.c	standard
++bsd/dev/renoir_fts.c	standard
+ bsd/dev/hakios_cputop.c	standard
+ bsd/dev/redwood_buttons.c	standard
+ bsd/dev/redwood_battery.c	standard
+diff --git a/bsd/dev/redwood_adreno.c b/bsd/dev/redwood_adreno.c
+index 078bcae..94a5115 100644
+--- a/bsd/dev/redwood_adreno.c
++++ b/bsd/dev/redwood_adreno.c
+@@ -106,6 +106,9 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
+ extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
+ 
++#include "redwood_adreno_profile.h"
++static const struct adreno_board_profile *gpu_profile;
++
+ static uint32_t last_step, skip_steps, pause_ms = 2200, fine, watch_seconds = 20;
+ static uint32_t step;                   /* the one being performed */
+ static uint32_t speed_bin;              /* which of the GPUs of this kind the fuses say this is (step 2) */
+@@ -413,8 +416,8 @@ step_outside(void)
+  */
+ static struct block qfprom = { "qfprom", 0x00780000, 0x7000 };
+ #define QFPROM_CORRECTED        0x4000
+-#define QFPROM_GPU_SPEED_BIN    0x1e9
+-#define QFPROM_GPU_GAMING_BIN   0x1f5
++#define QFPROM_GPU_SPEED_BIN    (gpu_profile ? gpu_profile->speed_fuse : 0x1e9)
++#define QFPROM_GPU_GAMING_BIN   (gpu_profile ? gpu_profile->gaming_fuse : 0x1f5)
+ 
+ static uint32_t
+ get8(struct block *b, const char *name, uint32_t offset)
+@@ -443,7 +446,7 @@ step_fuses(void)
+ 	speed_bin = bin;
+ 	gaming = get8(&qfprom, "gaming bin", QFPROM_CORRECTED + QFPROM_GPU_GAMING_BIN) >> 5 & 1;
+ 	/* dt: qcom,gpu-models: 0xac and 0xbe are sold as Adreno 643, anything else is the 642L */
+-	printf("adreno: %u: speed bin %u: an Adreno %s; gaming bin %u\n", step, bin, bin == 0xac || bin == 0xbe ? "643" : "642L",
++	printf("adreno: %u: speed bin %u: an Adreno %s; gaming bin %u\n", step, bin, gpu_profile == &adreno_redwood && (bin == 0xac || bin == 0xbe) ? "643" : gpu_profile ? gpu_profile->model : "unknown",
+ 	    gaming);
+ 
+ 	announce("read the same fuses where the phone's device tree has them (0x780000)");
+@@ -697,7 +700,7 @@ step_clocks(void)
+  * clk-debug.c (mainline Linux has no counterpart).
+  */
+ #define GCC_DEBUG_MUX           0x62000         /* [9:0] which clock goes to the counter */
+-#define GCC_DEBUG_MUX_GPUCC     0x146           /* ... the debug output of the GPU's clock controller */
++#define GCC_DEBUG_MUX_GPUCC     (gpu_profile ? gpu_profile->gcc_debug_gpucc : 0x146)
+ #define GCC_DEBUG_DIV           0x62004         /* [3:0] divider - 1; both controllers divide by 2 */
+ #define GCC_DEBUG_CBCR          0x62008
+ #define GCC_XO_DIV4_CBCR        0x6200c         /* the counter's time base: the crystal / 4, 4.8 MHz */
+@@ -1649,7 +1652,7 @@ zap_header(uint64_t *phys)
+ 	uint64_t size = 0;
+ 	uint32_t segments, hashes;
+ 
+-	header = image_file("fw", "a660_zap.mdt", &size);
++	header = image_file(gpu_profile ? gpu_profile->firmware_directory : "fw", "a660_zap.mdt", &size);
+ 	if (header == NULL) {
+ 		return false;
+ 	}
+@@ -1745,7 +1748,7 @@ step_gmu_space(void)
+ 		return false;
+ 	}
+ 	announce("find the GMU's firmware, fw/a660_gmu.bin, in the small image, and make the memory it asks for");
+-	gmu_firmware = image_file("fw", "a660_gmu.bin", &gmu_firmware_size);
++	gmu_firmware = image_file(gpu_profile ? gpu_profile->firmware_directory : "fw", "a660_gmu.bin", &gmu_firmware_size);
+ 	if (gmu_firmware == NULL) {
+ 		return false;
+ 	}
+@@ -1876,7 +1879,7 @@ step_gmu_firmware(void)
+ #define GMU_RSCC_CONTROL_REQ    GMU_WORD(0x9307)
+ #define GMU_AO_AHB_FENCE_CTRL   GMU_WORD(0x9310)
+ #define GMU_AHB_FENCE_RANGE_0   GMU_WORD(0x9311)
+-#define GMU_CHIP                0x06035000      /* dt qcom,chipid 0x06030500 the way the firmware wants it */
++#define GMU_CHIP                (gpu_profile ? adreno642_gmu_chip_id(gpu_profile->chip_id) : 0x06035000)
+ #define GMU_STARTED_MASK        0x1ff           /* of fw_init_result, for firmware newer than core 0x20010004 */
+ #define GMU_STARTED             0x100
+ #define GMU_FAILED              0xe00
+@@ -2283,9 +2286,7 @@ static uint32_t core_khz;               /* the 3D core's speed, as asked of the
+ static bool
+ step_core_power(void)
+ {
+-	static const struct {
+-		uint32_t khz, level;
+-	} speeds[] = { { 0, 0 }, { 315000, 64 }, { 450000, 128 }, { 550000, 192 } };
++	const struct adreno_speed *speeds = gpu_profile ? gpu_profile->speeds : NULL;
+ 	static struct hfi_perf_table perf;
+ 	static struct hfi_bw_table bw;
+ 	uint32_t core_start[2] = { 0, 0 }, start[1] = { 0 }, vote[4] = { 0, 1, 3, HFI_NO_INDEX }, granted = 0, speed = 0;
+@@ -2300,7 +2301,8 @@ step_core_power(void)
+ 		printf("adreno: %u: RPMh's list lacks one of the rails\n", step);
+ 		return false;
+ 	}
+-	perf.gpu_levels = sizeof(speeds) / sizeof(speeds[0]);
++	perf.gpu_levels = gpu_profile->speed_count;
++	vote[2] = gpu_profile->default_speed;
+ 	for (unsigned i = 0; i < perf.gpu_levels; i++) {
+ 		perf.gpu[i].khz = speeds[i].khz;
+ 		perf.gpu[i].acd = 0xffffffff;           /* no adaptive clocking */
+@@ -2565,7 +2567,7 @@ step_core_space(void)
+ 	}
+ 	PE_parse_boot_argn("adreno_stream1", &stream1, sizeof(stream1));
+ 	announce("make the 3D core's memory: its ring, its microcode (fw/a660_sqe.fw), a page to try writing to");
+-	microcode = image_file("fw", "a660_sqe.fw", &size);
++	microcode = image_file(gpu_profile ? gpu_profile->firmware_directory : "fw", "a660_sqe.fw", &size);
+ 	if (microcode == NULL || size < 8 || size > 0x40000 ||
+ 	    !block_new(&core_space, &core_ring, CORE_RING_ADDRESS, CORE_RING_SIZE, PTE_CORE) ||
+ 	    !block_new(&core_space, &core_sqe, CORE_SQE_ADDRESS, (uint32_t)size - 4, PTE_CORE | PTE_READ_ONLY) ||
+@@ -2649,7 +2651,7 @@ step_zap_load(void)
+ 	announce("ask TrustZone to give up a zap shader that a kernel before this one may have left");
+ 	printf("adreno: %u: %s\n", step, zap_unload() ? "TrustZone has given up what it had (it says so with none, too)" :
+ 	    "TRUSTZONE DOES NOT GIVE IT UP: the next answers tell whether it keeps one");
+-	segment = image_file("fw", "a660_zap.b02", &size);
++	segment = image_file(gpu_profile ? gpu_profile->firmware_directory : "fw", "a660_zap.b02", &size);
+ 	if (segment == NULL || size == 0 || size > 0x1000) {
+ 		return false;
+ 	}
+@@ -2660,15 +2662,23 @@ step_zap_load(void)
+ 	}
+ 	if (scm("to take the zap shader's signature", SCM_64 | SCM_SIP | SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_GPU,
+ 	    header, 0, &answer) != 0 || answer != 0) {
+-		printf("adreno: %u: TrustZone does not take the signature (%#llx): TAKEN TO MEAN THAT IT KEEPS A ZAP SHADER FROM "
+-		    "BEFORE, which is used as it is\n", step, answer);
++		printf("adreno: %u: TrustZone does not take the signature (%#llx)\n", step, answer);
++		if (gpu_profile == &adreno_renoir) {
++			printf("adreno: renoir: authentication not confirmed; GPU startup stops\n");
++			return false;
++		}
++		printf("adreno: using the zap shader presumed to remain from before (redwood)\n");
+ 		zap_is_loaded = true;
+ 		return true;
+ 	}
+ 	if (scm("where the image will be", SCM_64 | SCM_SIP | SCM_PAS_MEM_SETUP, SCM_THREE_VALUES, PAS_GPU, ZAP_MEMORY, 0x1000,
+ 	    &answer) != 0 || answer != 0) {
+-		printf("adreno: %u: TrustZone does not take the place (%#llx): TAKEN TO MEAN THAT IT KEEPS A ZAP SHADER FROM "
+-		    "BEFORE, which is used as it is\n", step, answer);
++		printf("adreno: %u: TrustZone does not take the place (%#llx)\n", step, answer);
++		if (gpu_profile == &adreno_renoir) {
++			printf("adreno: renoir: zap memory setup not confirmed; GPU startup stops\n");
++			return false;
++		}
++		printf("adreno: using the zap shader presumed to remain from before (redwood)\n");
+ 		zap_is_loaded = true;
+ 		return true;
+ 	}
+@@ -2729,7 +2739,7 @@ step_core_start(void)
+ 	put(&gpu, "cp_roq_thresholds_1", CP_ROQ_THRESHOLDS_1, 0x8040362c);
+ 	put(&gpu, "cp_lpac_prog_fifo_size", CP_LPAC_PROG_FIFO_SIZE, 0x20);
+ 	put(&gpu, "cp_mem_pool_size", CP_MEM_POOL_SIZE, 128);
+-	put(&gpu, "pc_dbg_eco_cntl", PC_DBG_ECO_CNTL, 0x00200200);
++	put(&gpu, "pc_dbg_eco_cntl", PC_DBG_ECO_CNTL, (gpu_profile ? gpu_profile->primitive_fifo : 0x00200000) | 0x200);
+ 	put(&gpu, "cp_ahb_cntl", CP_AHB_CNTL, 1);
+ 	/*
+ 	 * How textures in the GPU's own tiled and compressed layouts are laid out in memory (Linux's
+@@ -2742,8 +2752,12 @@ step_core_start(void)
+ 	put(&gpu, "uche_mode_cntl", GPU_WORD(0x0e01), 1u << 21);
+ 	put(&gpu, "rbbm_nc_mode_cntl", GPU_WORD(0x0534), 1);
+ 	put(&gpu, "rbbm_perfctr_cntl", RBBM_PERFCTR_CNTL, 1);
+-	put(&gpu, "rbbm_interface_hang_int_cntl", RBBM_INTERFACE_HANG_INT_CNTL, 1u << 30 | 0x1fffff);
++	put(&gpu, "rbbm_interface_hang_int_cntl", RBBM_INTERFACE_HANG_INT_CNTL, 1u << 30 | (gpu_profile ? gpu_profile->hang_cycles : 0x1fffff));
+ 	put(&gpu, "uche_client_pf", UCHE_CLIENT_PF, 1u << 7 | 1);
++	/* a6xx_start: A642 uses the A660 dual queue / almost-full configuration. */
++	if (gpu_profile == &adreno_renoir) {
++		put(&gpu, "uche_cmdq_config", GPU_WORD(0x0e3c), 0x66906);
++	}
+ 	put(&gpu, "cp_chicken_dbg", CP_CHICKEN_DBG, 1);
+ 	put(&gpu, "rbbm_gbif_client_qos_cntl", RBBM_GBIF_CLIENT_QOS_CNTL, 0);
+ 	put(&gpu, "cp_apriv_cntl", CP_APRIV_CNTL, 1u << 6 | 1u << 5 | 1u << 3 | 1u << 2 | 1u << 1);
+@@ -3173,7 +3187,7 @@ redwood_adreno_quiesce(void)
+  * (redwood_gpu_recover() below, which says what is done and which source says so). Without it
+  * such a submission is only reported, and the GPU stays stopped.
+  */
+-#define GPU_CHIP_ID             0x06030500ull   /* dt: qcom,chipid */
++#define GPU_CHIP_ID             (gpu_profile ? (uint64_t)gpu_profile->chip_id : 0x06030500ull)
+ #define GPU_ADDRESSES_START     0x20000000ull   /* above everything the steps use; below 4 GB, as Linux keeps them */
+ #define GPU_ADDRESSES_SIZE      0xe0000000ull
+ #define GPU_FENCE_AT            0x40            /* in the scratch page */
+@@ -3339,6 +3353,7 @@ redwood_gpu_ready(void)
+ bool
+ redwood_gpu_parameter(uint32_t which, uint64_t *value)
+ {
++	if (gpu_profile == NULL) { return false; }
+ 	switch (which) {
+ 	case 0x01:                              /* GPU_ID: none, the chip ID says it */
+ 	case 0x06:                              /* GMEM_BASE */
+@@ -3349,7 +3364,7 @@ redwood_gpu_parameter(uint32_t which, uint64_t *value)
+ 		*value = 0;
+ 		return true;
+ 	case 0x02:                              /* GMEM_SIZE */
+-		*value = 512 * 1024;
++		*value = gpu_profile->gmem_bytes;
+ 		return true;
+ 	case 0x03:                              /* CHIP_ID, with the speed bin above it */
+ 		*value = GPU_CHIP_ID | (uint64_t)speed_bin << 32;
+@@ -3364,7 +3379,7 @@ redwood_gpu_parameter(uint32_t which, uint64_t *value)
+ 		*value = 1;
+ 		return true;
+ 	case 0x10:                              /* HIGHEST_BANK_BIT */
+-		*value = 14;
++		*value = gpu_profile->highest_bank_bit;
+ 		return true;
+ 	case 0x12:                              /* UBWC_SWIZZLE */
+ 		*value = 6;
+@@ -3862,22 +3877,34 @@ redwood_adreno_minute(void)
+  * count although the register that enables them reads 0; the line counter goes from 0 to 2431,
+  * 429 lines in 1.47 ms. (The first clock is found off again by the next kernel.)
+  */
+-static struct block dispcc = { "dispcc", 0x0af00000, 0x2000 };          /* dt: clock-controller@af00000 */
+-static struct block disp_intf = { "intf1", 0x0ae36000, 0x300 };         /* dt: mdss_dsi0's mdp_intf_base */
+-#define GCC_DISP_AHB_CBCR       0x27004
+-#define DISPCC_MDSS_CORE_GDSCR  0x1004          /* dt: disp_cc_mdss_core_gdsc */
+-#define DISPCC_MDSS_PCLK0_CBCR  0x1010
+-#define DISPCC_MDSS_MDP_CBCR    0x1014
+-#define DISPCC_MDSS_AHB_CBCR    0x1050
+-#define INTF_TIMING_ENGINE_EN   0x000
+-#define INTF_HSYNC_CTL          0x008           /* clocks a line << 16 | of which the pulse */
+-#define INTF_VSYNC_PERIOD       0x00c           /* clocks a frame */
+-#define INTF_DISPLAY_V_START    0x01c           /* clocks before the first line shown, and */
+-#define INTF_DISPLAY_V_END      0x024           /* ... up to the last */
+-#define INTF_DISPLAY_HCTL       0x03c
+-#define INTF_FRAME_LINE_COUNT_EN 0x0a8
+-#define INTF_FRAME_COUNT        0x0ac
+-#define INTF_LINE_COUNT         0x0b0
++static struct block dispcc = { "dispcc", 0x0af00000, 0x4000 };          /* dt: clock-controller@af00000 */
++static struct block disp_intf;                                          /* the interface the panel hangs on */
++#define GCC_DISP_AHB_CBCR       0x27004         /* (both boards: gcc_disp_ahb_clk) */
++/*
++ * Where the clocks and the panel's interface are: Redwood's by its device tree (yupik), Renoir's by
++ * its own (shima: dispcc-shima.c, shima-gdsc.dtsi, shima-sde-common.dtsi: the DSI interfaces are
++ * intf1 and intf2 at 0x6b800 and 0x6c000 in the display block, not where Redwood has them).
++ */
++struct display_layout {
++	uint32_t core_gdscr, pclk0_cbcr, mdp_cbcr, ahb_cbcr;
++	uint32_t intf_page, intf_at;                    /* the interface's page, and its registers within it */
++};
++static const struct display_layout display_redwood = { 0x1004, 0x1010, 0x1014, 0x1050, 0x0ae36000, 0 };
++static const struct display_layout display_renoir = { 0x3000, 0x2004, 0x200c, 0x2080, 0x0ae6b000, 0x800 };
++static const struct display_layout *display = &display_redwood;
++#define DISPCC_MDSS_CORE_GDSCR  (display->core_gdscr)
++#define DISPCC_MDSS_PCLK0_CBCR  (display->pclk0_cbcr)
++#define DISPCC_MDSS_MDP_CBCR    (display->mdp_cbcr)
++#define DISPCC_MDSS_AHB_CBCR    (display->ahb_cbcr)
++#define INTF_TIMING_ENGINE_EN   (display->intf_at + 0x000)
++#define INTF_HSYNC_CTL          (display->intf_at + 0x008)      /* clocks a line << 16 | of which the pulse */
++#define INTF_VSYNC_PERIOD       (display->intf_at + 0x00c)      /* clocks a frame */
++#define INTF_DISPLAY_V_START    (display->intf_at + 0x01c)      /* clocks before the first line shown, and */
++#define INTF_DISPLAY_V_END      (display->intf_at + 0x024)      /* ... up to the last */
++#define INTF_DISPLAY_HCTL       (display->intf_at + 0x03c)
++#define INTF_FRAME_LINE_COUNT_EN (display->intf_at + 0x0a8)
++#define INTF_FRAME_COUNT        (display->intf_at + 0x0ac)
++#define INTF_LINE_COUNT         (display->intf_at + 0x0b0)
+ 
+ static void
+ display_probe(void)
+@@ -3887,6 +3914,7 @@ display_probe(void)
+ 
+ 	step = newest_step = 0;
+ 	fine = 1;
++	disp_intf = (struct block){ "intf1", display->intf_page, 0x1000 };
+ 	announce("the display: has its clock controller its bus clock (gcc 0x127004; GCC answers always)");
+ 	if (get(&gcc, "disp_ahb_cbcr", GCC_DISP_AHB_CBCR) & CBCR_OFF) {
+ 		announce("turn the bus clock of the display's clock controller on (gcc 0x127004 bit 0: THE ONE WRITE)");
+@@ -3977,6 +4005,76 @@ out:
+ 	newest_step = 0;
+ }
+ 
++/*
++ * Where the panel's own refresh is, for the display driver (iokit/Kernel/MiniIOMobileFramebuffer.cpp,
++ * boot-arg fb_scan). Renoir's panel is a command-mode one (display_probe() there, 30 October: intf1's
++ * timing engine off, its frame counter counting 60.0 a second): at every tearing-effect edge of the
++ * panel the display controller reads the framebuffer out to it, about 8.6 ms, its line counter going
++ * 1 to 2400, and stands still at line 1 in between. The same chain of checks as display_probe() comes
++ * first, quietly: the clock controller's bus clock (GCC), the display block's power switch, the bus
++ * clock of its registers -- turned on where off, exactly the two writes display_probe() makes, nothing
++ * else written -- and every read after that looks again that the last of them still runs.
++ */
++static bool scan_ready;
++
++bool
++redwood_display_scan_start(void)
++{
++	uint32_t clock;
++
++	if (scan_ready) {
++		return true;
++	}
++	if (!redwood_board_is("renoir")) {
++		return false;                   /* (Redwood's is a video panel: not this) */
++	}
++	display = &display_renoir;
++	need(&gcc);
++	need(&dispcc);
++	if (gcc.base == 0 || dispcc.base == 0) {
++		return false;
++	}
++	clock = rd(gcc.base + GCC_DISP_AHB_CBCR);
++	if (!(clock & CBCR_ENABLE)) {
++		wr(gcc.base + GCC_DISP_AHB_CBCR, clock | CBCR_ENABLE);
++		sleep_ms(10);
++		if (!(rd(gcc.base + GCC_DISP_AHB_CBCR) & CBCR_ENABLE)) {
++			return false;
++		}
++	}
++	if (!(rd(dispcc.base + DISPCC_MDSS_CORE_GDSCR) & GDSC_POWER_ON)) {
++		return false;
++	}
++	clock = rd(dispcc.base + DISPCC_MDSS_AHB_CBCR);
++	if (clock & CBCR_OFF) {
++		wr(dispcc.base + DISPCC_MDSS_AHB_CBCR, clock | CBCR_ENABLE);
++		sleep_ms(10);
++		if (rd(dispcc.base + DISPCC_MDSS_AHB_CBCR) & CBCR_OFF) {
++			return false;
++		}
++	}
++	disp_intf = (struct block){ "intf1", display->intf_page, 0x1000 };
++	need(&disp_intf);
++	scan_ready = disp_intf.base != 0 && rd(disp_intf.base + INTF_TIMING_ENGINE_EN) == 0;
++	return scan_ready;
++}
++
++/* The panel interface's frame counter and the line it is reading out now (1 between frames). */
++bool
++redwood_display_scan(uint32_t *frame, uint32_t *line)
++{
++	if (!scan_ready) {
++		return false;
++	}
++	if (dispcc.base == 0 || (rd(dispcc.base + DISPCC_MDSS_AHB_CBCR) & CBCR_OFF)) {
++		scan_ready = false;             /* somebody took the registers' clock: never read them again */
++		return false;
++	}
++	*line = rd(disp_intf.base + INTF_LINE_COUNT);
++	*frame = rd(disp_intf.base + INTF_FRAME_COUNT);
++	return true;
++}
++
+ /*
+  * Boot-arg gpu=1: is this the phone, and is its GPU's firmware in the small image? Then the
+  * GPU is started and kept for the system to draw with, which is what
+@@ -4031,7 +4129,35 @@ redwood_adreno_init(void)
+ 	uint32_t only = 0, done = 0, failed = 0, keep = 0;
+ 	bool by_itself = false;
+ 
+-	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only) {
++	gpu_profile = adreno_profile_for_board(redwood_board_is("renoir") ? "renoir" :
++	    redwood_board_is("redwood") ? "redwood" : NULL);
++	if (gpu_profile == NULL) {
++		printf("adreno: disabled: unsupported physical board\n");
++		return;
++	}
++	if (gpu_profile == &adreno_renoir) {
++		printf("adreno: renoir A642 profile (285, 365, 443, 490 MHz)\n");
++	}
++
++	/* Opt-in, read-only clock-state probe. MDP itself is deliberately not touched. */
++	uint32_t display_clock_probe = 0;
++	if (gpu_profile == &adreno_renoir && PE_parse_boot_argn("renoir_display_clocks", &display_clock_probe, sizeof(display_clock_probe)) && display_clock_probe) {
++		need(&gcc);
++		if (gcc.base) {
++			uint32_t cfg = rd(gcc.base + 0x27004);
++			printf("renoir-display-clocks: gcc display ahb %#x\n", cfg);
++			if (cfg & 1) {
++				vm_offset_t cc = ml_io_map(0x0af00000, 0x5000);
++				if (cc) {
++					uint32_t gdsc = rd(cc + 0x3000), ahb = rd(cc + 0x2080);
++					printf("renoir-display-clocks: gdsc %#x mdss ahb %#x\n", gdsc, ahb);
++				}
++			} else printf("renoir-display-clocks: upstream clock disabled; not reading DISPCC\n");
++		}
++	}
++	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only &&
++	    (gpu_profile == &adreno_redwood || gpu_profile == &adreno_renoir)) {
++		display = gpu_profile == &adreno_renoir ? &display_renoir : &display_redwood;
+ 		display_probe();
+ 	}
+ 	if (!PE_parse_boot_argn("adreno", &last_step, sizeof(last_step))) {
+diff --git a/bsd/dev/redwood_adreno_profile.h b/bsd/dev/redwood_adreno_profile.h
+new file mode 100644
+index 0000000..b4d5c30
+--- /dev/null
++++ b/bsd/dev/redwood_adreno_profile.h
+@@ -0,0 +1,51 @@
++/* Board data from OKX 08bbb0c150ea: shima-gpu.dtsi, shima.dtsi,
++ * adreno-gpulist.h and adreno_a6xx_gmu.c. Existing redwood settings preserved.
++ * Both phones use LPDDR4X: a6xx_init overrides highest_bank_bit to 14.
++ */
++#ifndef REDWOOD_ADRENO_PROFILE_H
++#define REDWOOD_ADRENO_PROFILE_H
++struct adreno_speed { uint32_t khz, level; };
++struct adreno_board_profile {
++	const char *board, *model, *firmware_directory;
++	uint32_t chip_id, gmem_bytes, primitive_fifo, hang_cycles;
++	uint32_t speed_fuse, gaming_fuse, highest_bank_bit;
++	uint32_t gcc_debug_gpucc;
++	uint32_t speed_count, default_speed;
++	struct adreno_speed speeds[6];
++};
++static const struct adreno_board_profile adreno_redwood = {
++	.board = "redwood", .model = "Adreno 642L", .firmware_directory = "fw",
++	.chip_id = 0x06030500, .gmem_bytes = 512 * 1024,
++	.primitive_fifo = 0x00200000, .hang_cycles = 0x1fffff,
++	.speed_fuse = 0x1e9, .gaming_fuse = 0x1f5, .highest_bank_bit = 14,
++	.gcc_debug_gpucc = 0x146,
++	.speed_count = 4, .default_speed = 3,
++	.speeds = { {0, 0}, {315000, 64}, {450000, 128}, {550000, 192} },
++};
++static const struct adreno_board_profile adreno_renoir = {
++	.board = "renoir", .model = "Adreno 642", .firmware_directory = "fw-renoir",
++	.chip_id = 0x06060010, .gmem_bytes = 1536 * 1024,
++	.primitive_fifo = 0x00300000, .hang_cycles = 0x3ffff,
++	.speed_fuse = 0x1e1, .gaming_fuse = 0x1ed, .highest_bank_bit = 14,
++	.gcc_debug_gpucc = 0x13c, /* debugcc-shima.c: gpu_cc_debug_mux */
++	/* Shima speed bin 105 OPPs: 285MHz (LOW_SVS), 365MHz (LOW_SVS_L1), 443MHz (SVS), 490MHz (SVS_L0). Default: 490MHz */
++	.speed_count = 5, .default_speed = 4,
++	.speeds = { {0, 0}, {285000, 64}, {365000, 80}, {443000, 128}, {490000, 144} },
++};
++
++/* A642's patch high nibble encodes target, not patch: GMU expects it in [31:28]. */
++static uint32_t
++adreno642_gmu_chip_id(uint32_t chip)
++{
++	return (chip & 0xffff0000) | ((chip >> 8 & 0xff) << 12) |
++	       ((chip & 0xf) << 8) | ((chip >> 4 & 0xf) << 28);
++}
++
++static const struct adreno_board_profile *
++adreno_profile_for_board(const char *board)
++{
++	if (board && strcmp(board, "redwood") == 0) { return &adreno_redwood; }
++	if (board && strcmp(board, "renoir") == 0) { return &adreno_renoir; }
++	return NULL;
++}
++#endif
+diff --git a/bsd/dev/redwood_adsp.c b/bsd/dev/redwood_adsp.c
+index ca49427..2e29029 100644
+--- a/bsd/dev/redwood_adsp.c
++++ b/bsd/dev/redwood_adsp.c
+@@ -90,6 +90,7 @@
+ #include <sys/kauth.h>
+ #include <sys/stat.h>
+ #include <sys/systm.h>
++#include <sys/redwood_input.h>
+ #include <sys/vnode.h>
+ #include <sys/vnode_internal.h>
+ #include <vm/vm_kern.h>
+@@ -104,8 +105,6 @@ extern uint64_t kvtophys(vm_offset_t va);
+ extern void loader_return(void);
+ extern kern_return_t thread_terminate(thread_t thread);
+ extern vm_offset_t pe_arm_get_soc_base_phys(void);
+-extern dev_t mdevlookup(int devid);
+-extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
+ 
+ /* What the Wi-Fi's DSP and this one both use (redwood_wifi.c). */
+ extern lck_mtx_t redwood_aop_mailbox_lock;
+@@ -207,7 +206,7 @@ now_us(void)
+ static void
+ settle(void)
+ {
+-	__asm__ volatile ("dsb sy");
++	__asm__ volatile ("dsb sy" ::: "memory");
+ }
+ 
+ static bool
+@@ -877,8 +876,20 @@ rail_position(const char *name, uint32_t level, uint32_t *address)
+ }
+ 
+ /* The two rails at that level (Linux's proxy request), or given back (level 0). True: RPMh has said done. */
++static bool rails_locked(uint32_t level);
++
+ static bool
+ rails(uint32_t level)
++{
++	bool done;
++	if (!leaving) redwood_rpmh_lock();
++	done = rails_locked(level);
++	if (!leaving) redwood_rpmh_unlock();
++	return done;
++}
++
++static bool
++rails_locked(uint32_t level)
+ {
+ 	static const char *const names[2] = { "lcx.lvl", "lmx.lvl" };
+ 	uint32_t addresses[2] = { 0, 0 }, values[2] = { 0, 0 }, done = 0;
+@@ -963,7 +974,8 @@ step_survey(void)
+ /* ---- step 2: the firmware -------------------------------------------------------------------------- */
+ 
+ #define ADSP_MEMORY             0x86700000u     /* dt: reserved-memory adsp@86700000, memory-region of qcom,lpass@3700000 */
+-#define ADSP_MEMORY_SIZE        0x04000000u
++#define ADSP_MEMORY_SIZE        adsp_memory_size
++static uint32_t adsp_memory_size = 0x04000000u; /* Redwood 64 MiB; Renoir 48 MiB (shima.dtsi). */
+ #define PAS_ADSP                1               /* dt: qcom,pas-id */
+ 
+ 
+@@ -986,7 +998,7 @@ root_file(const char *name, uint64_t *size)
+ 	if (rootvnode == NULLVP) {
+ 		return NULL;
+ 	}
+-	snprintf(path, sizeof(path), "/fw/%s", name);
++	snprintf(path, sizeof(path), redwood_board_is("renoir") ? "/fw-audio-renoir/%s" : "/fw/%s", name);
+ 	if (vnode_lookup(path, 0, &vnode, context) != 0) {
+ 		return NULL;
+ 	}
+@@ -1117,9 +1129,8 @@ step_firmware(void)
+ 	image.header = header;
+ 	image.header_size = size;
+ 	count = size >= 52 + 2 * 32 ? header[44] | header[45] << 8 : 0;
+-	if (memcmp(header, "\177ELF\1", 5) != 0 || count < 3 || count > MAX_SEGMENTS || 52 + 32 * count > size || size > PAGE_SIZE) {
+-		printf("adsp: %u: fw/adsp.mdt is not such a header (%02x %02x %02x %02x, %u segments, %llu bytes)\n", step, header[0],
+-		    header[1], header[2], header[3], count, size);
++	if (size < 52 + 3 * 32 || memcmp(header, "\177ELF\1", 5) != 0 || count < 3 || count > MAX_SEGMENTS || 52 + 32 * count > size || size > PAGE_SIZE) {
++		printf("adsp: %u: adsp.mdt is not such a header (%u segments, %llu bytes)\n", step, count, size);
+ 		goto fail;
+ 	}
+ 	for (uint32_t i = 0; i < count; i++) {
+@@ -2716,6 +2727,16 @@ battmgr_get(uint32_t opcode, uint32_t property, uint32_t *value)
+ 	return false;
+ }
+ 
++/* Renoir's non-BQ gauge reports charge counter in 1/100 uAh, unlike
++ * its full/design capacity fields. OKX qti_battery_charger.c divides this
++ * property by 100 for POWER_SUPPLY_PROP_CHARGE_COUNTER. Keep Redwood ABI.
++ */
++static uint32_t
++battmgr_charge_uah(uint32_t raw)
++{
++    return redwood_board_is("renoir") ? (raw + 50ull) / 100 : raw;
++}
++
+ static void
+ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
+ {
+@@ -2762,6 +2783,7 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
+ 		if (good) {
+ 			/* (what may be missing without harm, and the capacities and the cycles only now and then: they hardly change) */
+ 			(void)battmgr_get(BATTMGR_BATTERY_GET, BATT_CHG_COUNTER, &charge);
++			charge = battmgr_charge_uah(charge);
+ 			if (usb) {
+ 				(void)battmgr_get(BATTMGR_USB_GET, USB_TYPE, &usb_type);
+ 				(void)battmgr_get(BATTMGR_USB_GET, USB_VOLT_NOW, &usb_volt);
+@@ -3114,7 +3136,6 @@ redwood_adsp_stop(void)
+ {
+ 	battmgr_stop();
+ 	redwood_sound_dsp_down();               /* the amplifiers, the stream and the port first, while the DSP still listens */
+-	redwood_mic_dsp_down();                 /* and what the microphones' path has asked for */
+ 	lck_mtx_lock(&dsp_lock);
+ 	if (dsp_started) {
+ 		unsigned services = 0;
+@@ -3183,7 +3204,6 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
+ 		tell("adsp: THE AUDIO DSP IS UP AND LINKED, its audio services up (APR), %llu ms after the kernel began on it (the "
+ 		    "root's waited for included): node %u, %u services; it stays on\n", (now_us() - began) / 1000, qrtr_peer, services);
+ 		redwood_sound_dsp_up();         /* (boot-arg sound=N: the speakers' path, redwood_sound.c) */
+-		redwood_mic_dsp_up();           /* (boot-arg mic=N: the microphones' path, redwood_mic.c) */
+ 		battmgr_start();                /* (how the battery is, from the DSP; battmgr=0: not asked) */
+ 	} else {
+ 		tell("adsp: THE AUDIO DSP DID NOT COME UP: step %u failed (%s); see the kernel's own log for the steps\n", step + 1,
+@@ -3199,11 +3219,12 @@ redwood_adsp_init(void)
+ 	uint32_t on = 0;
+ 	thread_t thread;
+ 
++	adsp_memory_size = redwood_board_is("renoir") ? 0x03000000u : 0x04000000u;
+ 	PE_parse_boot_argn("adsp_step", &last_step, sizeof(last_step));
+ 	if (last_step == 0 && (!PE_parse_boot_argn("adsp", &on, sizeof(on)) || on != 1)) {
+ 		return;
+ 	}
+-	if (pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
++	if ((!redwood_board_is("redwood") && !redwood_board_is("renoir")) || pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
+ 		printf("adsp: adsp=1 and adsp_step=N are for the phone's audio DSP, and this is not the phone\n");
+ 		return;
+ 	}
+diff --git a/bsd/dev/redwood_battery.c b/bsd/dev/redwood_battery.c
+index 6e80b4d..15039bc 100644
+--- a/bsd/dev/redwood_battery.c
++++ b/bsd/dev/redwood_battery.c
+@@ -1,5 +1,5 @@
+ /*
+- * Battery monitor for Xiaomi redwood (POCO X5 Pro).
++ * Battery monitor for Xiaomi redwood and renoir, through their own resident UEFI.
+  *
+  * Redwood selects PM7325B and qcom,battery-charger over PMIC GLINK/ADSP, not
+  * the local PM7250B/QG layout.  The resident UEFI contains the matching
+@@ -180,6 +180,7 @@ redwood_battery_init(void)
+ 	vm_offset_t page;
+ 	thread_t thread;
+ 
++	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) return;
+ 	if (!PE_parse_boot_argn("battery", &enabled, sizeof(enabled)) || !enabled) return;
+ 	if (!PE_parse_boot_argn("battery_shared_pa", &shared_pa, sizeof(shared_pa)) || shared_pa == 0) {
+ 		printf("battery: xnuloader did not provide battery_shared_pa\n");
+diff --git a/bsd/dev/redwood_buttons.c b/bsd/dev/redwood_buttons.c
+index 0bb4555..b50934d 100644
+--- a/bsd/dev/redwood_buttons.c
++++ b/bsd/dev/redwood_buttons.c
+@@ -549,6 +549,16 @@ redwood_buttons_init(void)
+ 	if (!enabled) {
+ 		return;
+ 	}
++	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) {
++		printf("buttons: disabled: unsupported physical board\n");
++		return;
++	}
++	/* xiaomi-sm7350-common.dtsi: PMK8350 SID0 PON, PM8350 SID1 GPIO6.
++	 * The peripheral addresses, input layout and arbiter EE0 match redwood.
++	 * buttons_thread still checks the arbiter version and peripheral types. */
++	if (redwood_board_is("renoir")) {
++		pin.name = "GPIO6 of the PM8350";
++	}
+ 	PE_parse_boot_argn("buttons_steps", &steps, sizeof(steps));
+ 	if (steps == 0) {
+ 		return;
+diff --git a/bsd/dev/redwood_cpufreq.c b/bsd/dev/redwood_cpufreq.c
+index 0f9a0e0..68c9e1b 100644
+--- a/bsd/dev/redwood_cpufreq.c
++++ b/bsd/dev/redwood_cpufreq.c
+@@ -436,6 +436,10 @@ static vm_offset_t ddr_rsc;
+ static uint32_t ddr_mc0, ddr_sh0, ddr_acv;
+ static bool ddr_voted;
+ 
++/* (bsd/dev/redwood_input.c: command slot set 0 is the touch driver's and Wi-Fi's too, on renoir) */
++extern void redwood_rpmh_lock(void);
++extern void redwood_rpmh_unlock(void);
++
+ static uint32_t
+ cmd_db_address(const char *name)
+ {
+@@ -530,7 +534,9 @@ ddr_raise(void)
+ 		return;
+ 	}
+ 	ddr_rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
++	redwood_rpmh_lock();
+ 	ddr_voted = ddr_vote(vote);
++	redwood_rpmh_unlock();
+ 	tell("ddr: memory bandwidth vote %u on MC0 (%#x) and SH0 (%#x)%s\n", vote, ddr_mc0, ddr_sh0, ddr_voted ? "" : ": FAILED");
+ }
+ 
+@@ -564,7 +570,14 @@ redwood_cpufreq_init(void)
+ 	load_start();
+ 	enabled = 2;
+ 	PE_parse_boot_argn("ddr", &enabled, sizeof(enabled));
+-	if (enabled == 1) {
++	/*
++	 * renoir (SM7350) has the command database, the application processor's RPMh sequencer ("DRV 2",
++	 * its first slot set an active one) and the BCMs MC0, SH0 and ACV where redwood has them
++	 * (renoir.dts: cmd-db at 0x80860000, apps_rsc drv-2 at 0x18220000, tcs-offset 0xd00).
++	 */
++	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) {
++		if (enabled != 0) tell("ddr: no RPMh vote on this board\n");
++	} else if (enabled == 1) {
+ 		ddr_look();
+ 		ddr_slots();
+ 	} else if (enabled == 2 && cpufreq_wanted()) {
+@@ -574,6 +587,11 @@ redwood_cpufreq_init(void)
+ 	if (!PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled)) || !enabled) {
+ 		return;
+ 	}
++	/* SM7350 uses the same three EPSS domains (renoir.dts). */
++	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) {
++		printf("cpufreq: disabled: unsupported physical board\n");
++		return;
++	}
+ 	for (unsigned int i = 0; i < topology->num_cpus; i++) {
+ 		cores[domain_of(topology->cpus[i].phys_id)]++;
+ 	}
+diff --git a/bsd/dev/redwood_input.c b/bsd/dev/redwood_input.c
+index 0d39f67..5676eb7 100644
+--- a/bsd/dev/redwood_input.c
++++ b/bsd/dev/redwood_input.c
+@@ -6,6 +6,7 @@
+ #include <kern/thread_call.h>
+ #include <libkern/libkern.h>
+ #include <miscfs/devfs/devfs.h>
++#include <pexpert/device_tree.h>
+ #include <sys/conf.h>
+ #include <sys/errno.h>
+ #include <sys/proc.h>
+@@ -16,6 +17,21 @@
+ 
+ #define TOUCH_QUEUE     512             /* records; a power of two */
+ 
++/* Never infer a physical board from hw.machine: it is an iPhone for iOS.
++ * Missing/unknown identity is deliberately not permission to access MMIO. */
++bool
++redwood_board_is(const char *name)
++{
++	DTEntry chosen;
++	const void *value;
++	unsigned int size;
++	size_t length = strlen(name) + 1;
++
++	return SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
++	       SecureDTGetProperty(chosen, "darwin-board", &value, &size) == kSuccess &&
++	       size == length && memcmp(value, name, length) == 0;
++}
++
+ /*
+  * Boot-arg touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every
+  * sample posted ("tl: p TYPE FINGER X Y at US", the time in microseconds of mach_absolute_time),
+@@ -58,6 +74,11 @@ latency_lines(void)
+ 
+ static LCK_GRP_DECLARE(touch_lck_grp, "redwood-touch");
+ static LCK_MTX_DECLARE(touch_lock, &touch_lck_grp);
++
++/* APPS DRV2/TCS0 is shared by Renoir touch and Wi-Fi regulator requests. */
++static LCK_MTX_DECLARE(rpmh_slot_lock, &touch_lck_grp);
++void redwood_rpmh_lock(void) { lck_mtx_lock(&rpmh_slot_lock); }
++void redwood_rpmh_unlock(void) { lck_mtx_unlock(&rpmh_slot_lock); }
+ static struct redwood_touch touch_queue[TOUCH_QUEUE];
+ static uint32_t touch_head, touch_tail;        /* read from head, add at tail */
+ 
+@@ -220,7 +241,11 @@ redwood_input_init(void)
+ 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
+ 	redwood_cpufreq_init();
+ 	redwood_virtio_input_init();
+-	redwood_goodix_init();
++	if (redwood_board_is("renoir")) {
++		renoir_fts_init();
++	} else {
++		redwood_goodix_init();
++	}
+ 	{
+ 		extern void hakios_prof_start(void);
+ 
+diff --git a/bsd/dev/redwood_lx.c b/bsd/dev/redwood_lx.c
+index 2237c74..a4bd0de 100644
+--- a/bsd/dev/redwood_lx.c
++++ b/bsd/dev/redwood_lx.c
+@@ -56,6 +56,27 @@ lx_os_free(void *memory, unsigned long size)
+ 	kfree_data(memory, size);
+ }
+ 
++/* Renoir's ath11k pool is 80 MiB (wifi/lx/src/lx_base.c). Reserve it
++ * before userland fragments RAM; only lx_os_radio_memory may map it to
++ * the radio, after PCIe and the SMMU have been initialized. Boot lifetime,
++ * like the driver's pool itself. A failed reservation leaves the normal
++ * allocation path available; no device or page table is touched here. */
++#define RENOIR_LX_POOL_BYTES (80ul << 20)
++static vm_offset_t lx_early_pool;
++
++static void
++lx_reserve_radio_pool(void)
++{
++    if (!redwood_board_is("renoir") || lx_early_pool != 0) return;
++    if (kmem_alloc_contig(kernel_map, &lx_early_pool, RENOIR_LX_POOL_BYTES,
++        0, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++        lx_early_pool = 0;
++        say("lx: early Renoir 80 MiB radio pool reservation failed\n");
++        return;
++    }
++    say("lx: reserved Renoir 80 MiB radio pool before userland; not mapped to the radio yet\n");
++}
++
+ /*
+  * In one physical piece, so that it can be mapped a second time without this processor's cache
+  * in between (as redwood_adreno.c does with what it shares with the GPU); the first, cached
+@@ -68,7 +89,11 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
+ 	uint64_t physical;
+ 
+ 	size = round_page(size);
+-	if (kmem_alloc_contig(kernel_map, &cached, size, 0, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) !=
++    if (size == RENOIR_LX_POOL_BYTES && lx_early_pool != 0) {
++        cached = lx_early_pool;
++        lx_early_pool = 0; /* exactly one consumer; the pool retains ownership */
++        say("lx: using the early Renoir radio pool\n");
++    } else if (kmem_alloc_contig(kernel_map, &cached, size, 0, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) !=
+ 	    KERN_SUCCESS) {
+ 		say("lx: no %lu bytes of memory in one piece\n", size);
+ 		return NULL;
+@@ -212,6 +237,12 @@ lx_os_option(const char *name)
+ 	return redwood_wifi_option(name);
+ }
+ 
++unsigned
++lx_os_radio_model(void)
++{
++	return redwood_board_is("renoir") ? 1 : 0;
++}
++
+ int
+ lx_os_firmware(const char *name, const void **data, unsigned long *size)
+ {
+@@ -344,6 +375,7 @@ redwood_lx_net_early(void)
+ 	uint8_t address[6];
+ 
+ 	if (redwood_wifi_radio_address(address)) {
++        lx_reserve_radio_pool();
+ 		lx_os_net_attach(address);
+ 	}
+ }
+diff --git a/bsd/dev/redwood_virtio_input.c b/bsd/dev/redwood_virtio_input.c
+index ebe20d4..c7fed92 100644
+--- a/bsd/dev/redwood_virtio_input.c
++++ b/bsd/dev/redwood_virtio_input.c
+@@ -340,6 +340,10 @@ redwood_virtio_input_init(void)
+ 	if (!PE_parse_boot_argn("virtio_input", &enabled, sizeof(enabled)) || !enabled) {
+ 		return;
+ 	}
++	if (!redwood_board_is("qemu-virt")) {
++		printf("virtio-input: MMIO transport is only available on qemu-virt\n");
++		return;
++	}
+ 	bus = ml_io_map(VIRTIO_BUS, VIRTIO_SLOTS * VIRTIO_SLOT_SIZE);
+ 	for (int slot = 0; slot < VIRTIO_SLOTS && device_count < MAX_DEVICES; slot++) {
+ 		struct input_device *d = &devices[device_count];
+diff --git a/bsd/dev/redwood_virtio_net.c b/bsd/dev/redwood_virtio_net.c
+index 8f501a8..20080d0 100644
+--- a/bsd/dev/redwood_virtio_net.c
++++ b/bsd/dev/redwood_virtio_net.c
+@@ -17,6 +17,7 @@
+ #include <net/ethernet.h>
+ #include <pexpert/pexpert.h>
+ #include <sys/kpi_mbuf.h>
++#include <sys/redwood_input.h>
+ #include <sys/redwood_net.h>
+ #include <sys/systm.h>
+ #include <vm/vm_kern.h>
+@@ -288,6 +289,10 @@ redwood_virtio_net_init(void)
+ 	if (!PE_parse_boot_argn("virtio_net", &enabled, sizeof(enabled)) || !enabled) {
+ 		return;
+ 	}
++	if (!redwood_board_is("qemu-virt")) {
++		printf("net: virtio MMIO transport is only available on qemu-virt\n");
++		return;
++	}
+ 	if (!virtio_net_start(virtio_link.address) || !redwood_net_attach(&virtio_link)) {
+ 		printf("net: no network interface\n");
+ 	}
+diff --git a/bsd/dev/renoir_fts.c b/bsd/dev/renoir_fts.c
+new file mode 100644
+index 0000000..8163021
+--- /dev/null
++++ b/bsd/dev/renoir_fts.c
+@@ -0,0 +1,839 @@
++/*
++ * Renoir FT3658U (Android fts_ts, running chip ID 0x5652).
++ * Hardware: OKX sm8350-kernel-OKX 08bbb0c150ea, renoir-sm7350.dtsi,
++ * shima-qupv3.dtsi, pinctrl-shima.c and gcc-shima.c. Protocol facts:
++ * focaltech_3658u/focaltech_spi.c and focaltech_core.{c,h}.
++ * GENI/RPMh FIFO transport is adapted from this project's redwood_goodix.c.
++ * Only touchscreen=1 on physical board renoir. No firmware flashing or bootloader
++ * commands; the chip must boot its installed application firmware (0x5652).
++ * Polling replaces Linux IRQ delivery; Linux IRQ283 is not a GIC interrupt ID.
++ */
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <libkern/libkern.h>
++#include <mach/mach_types.h>
++#include <pexpert/pexpert.h>
++#include <sys/redwood_input.h>
++#include <sys/systm.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
++extern kern_return_t thread_terminate(thread_t thread);
++
++static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
++
++static inline uint32_t
++rd(vm_offset_t address)
++{
++	return *(volatile uint32_t *)address;
++}
++
++static inline void
++wr(vm_offset_t address, uint32_t value)
++{
++	*(volatile uint32_t *)address = value;
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static void
++sleep_us(uint32_t us)
++{
++	delay_for_interval(us, NSEC_PER_USEC);
++}
++
++static char sleep_event;
++static void
++sleep_ms(uint32_t ms)
++{
++    /* Yield the CPU while polling/resetting; do not busy-spin for whole milliseconds. */
++    assert_wait_timeout((event_t)&sleep_event, THREAD_UNINT, ms, NSEC_PER_MSEC);
++    thread_block(THREAD_CONTINUE_NULL);
++}
++
++/* ---- pins (TLMM) ------------------------------------------------------------------------------- */
++
++#define TLMM_PHYS               0x0f100000UL
++#define TLMM_SIZE               0x100000UL
++#define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
++#define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
++#define PULL_NONE               0
++#define PULL_UP                 3
++
++#define PIN_DATA0                20
++#define PIN_DATA1                21
++#define PIN_CLK                 22
++#define PIN_CS                  23
++#define PIN_INT                 31      /* low = the chip has a report */
++#define PIN_RESET               30     /* low = in reset */
++#define PIN_FUNCTION_SPI        1       /* "qup10" on gpio20..23; all use function 1 */
++
++static void
++gpio_configure(unsigned pin, unsigned function, unsigned pull, unsigned ma, bool output)
++{
++	wr(GPIO_CFG(pin), pull | function << 2 | (ma / 2 - 1) << 6 | (output ? 1u << 9 : 0));
++}
++
++static void
++gpio_set(unsigned pin, bool high)
++{
++	wr(GPIO_IO(pin), high ? 2 : 0);
++}
++
++static bool
++gpio_get(unsigned pin)
++{
++	return rd(GPIO_IO(pin)) & 1;
++}
++
++static void
++gpio_output(unsigned pin, bool high, unsigned pull, unsigned ma)
++{
++	gpio_set(pin, high);            /* the level first, so that the pin never drives the wrong one */
++	gpio_configure(pin, 0, pull, ma, true);
++}
++
++/* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
++
++#define CMD_DB_PHYS             0x80860000UL
++#define CMD_DB_SIZE             0x20000UL
++#define RSC_PHYS                0x18220000UL    /* the application processor's "DRV 2" */
++#define RSC_SIZE                0x10000UL
++#define TCS(reg)                (rsc + 0xd00 + (reg))           /* command slot set 0, an "active" one */
++#define TCS_IRQ_ENABLE          0x00
++#define TCS_IRQ_STATUS          0x04
++#define TCS_IRQ_CLEAR           0x08
++#define TCS_WAIT_FOR_COMPLETION 0x10
++#define TCS_CONTROL             0x14
++#define TCS_CONTROL_ENABLE      (1u << 16)
++#define TCS_CONTROL_TRIGGER     (1u << 24)
++#define TCS_STATUS              0x18            /* 0 while busy */
++#define TCS_CMD_ENABLE          0x1c
++#define TCS_CMD_MSGID(n)        (0x30 + 20 * (n))
++#define TCS_CMD_ADDR(n)         (0x34 + 20 * (n))
++#define TCS_CMD_DATA(n)         (0x38 + 20 * (n))
++#define MSGID_WRITE_4_BYTES     0x10008
++#define MSGID_RESPONSE          0x100
++
++#define VRM_VOLTAGE             0               /* a regulator's registers, from its address: millivolts */
++#define VRM_ENABLE              4
++#define VRM_MODE                8
++#define VRM_MODE_LDO_HPM        7
++
++struct cmd_db_slave {
++	uint16_t id, header_offset, data_offset, count, version, reserved[3];
++};
++struct cmd_db_header {
++	uint32_t version;
++	uint8_t magic[4];
++	struct cmd_db_slave slave[8];
++	uint32_t checksum, reserved;
++	uint8_t data[];
++};
++struct cmd_db_entry {
++	char id[8];
++	uint32_t priority[2];
++	uint32_t address;
++	uint16_t length, offset;
++};
++
++/* The RPMh address of a resource by its name in the command database the boot loader left; 0 = none. */
++static uint32_t
++rpmh_address(const char *name)
++{
++	const struct cmd_db_header *db = (const struct cmd_db_header *)cmd_db;
++	char id[8] = { 0 };
++
++	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
++		printf("fts: no command database (magic %02x %02x %02x %02x)\n", db->magic[0], db->magic[1], db->magic[2],
++		    db->magic[3]);
++		return 0;
++	}
++	strlcpy(id, name, sizeof(id));
++	for (unsigned s = 0; s < 8; s++) {
++		const struct cmd_db_slave *slave = &db->slave[s];
++		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(db->data + slave->header_offset);
++
++		if (slave->id == 0 || slave->header_offset >= CMD_DB_SIZE - 0x1000 || slave->count > 512 ||
++		    slave->header_offset + (uint32_t)slave->count * sizeof(*entry) > CMD_DB_SIZE - sizeof(*db)) {
++			continue;
++		}
++		for (unsigned i = 0; i < slave->count; i++) {
++			if (memcmp(entry[i].id, id, sizeof(id)) == 0) {
++				return entry[i].address;
++			}
++		}
++	}
++	return 0;
++}
++
++static bool
++rpmh_wait(uint32_t reg, uint32_t mask, uint32_t value, const char *what)
++{
++	for (int i = 0; i < 2000; i++) {
++		if ((rd(TCS(reg)) & mask) == value) {
++			return true;
++		}
++		sleep_us(100);
++	}
++	printf("fts: RPMh: timeout waiting for %s (register %#x = %#x)\n", what, reg, rd(TCS(reg)));
++	return false;
++}
++
++/* Send up to three register writes to RPMh and wait until they are done. */
++static bool
++rpmh_write_locked(const uint32_t *address, const uint32_t *data, unsigned count)
++{
++	uint32_t irq_enable = rd(TCS(TCS_IRQ_ENABLE));
++	bool done;
++
++	/* the slot set must be idle, and switched off the way the hardware wants it: trigger, then enable */
++	for (int i = 0; rd(TCS(TCS_STATUS)) == 0; i++) {
++		if (i > 2000) {
++			printf("fts: RPMh: the command slots stay busy\n");
++			return false;
++		}
++		sleep_us(100);
++	}
++	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
++	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
++	wr(TCS(TCS_IRQ_CLEAR), 1);
++	for (unsigned i = 0; i < count; i++) {
++		wr(TCS(TCS_CMD_MSGID(i)), MSGID_WRITE_4_BYTES | MSGID_RESPONSE);
++		wr(TCS(TCS_CMD_ADDR(i)), address[i]);
++		wr(TCS(TCS_CMD_DATA(i)), data[i]);
++	}
++	wr(TCS(TCS_WAIT_FOR_COMPLETION), (1u << count) - 1);
++	wr(TCS(TCS_CMD_ENABLE), (1u << count) - 1);
++	wr(TCS(TCS_IRQ_ENABLE), irq_enable | 1);        /* the status bit follows the enable; the interrupt itself stays masked */
++	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE);
++	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE | TCS_CONTROL_TRIGGER);
++
++	done = rpmh_wait(TCS_IRQ_STATUS, 1, 1, "the request");
++	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
++	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
++	wr(TCS(TCS_CMD_ENABLE), 0);
++	wr(TCS(TCS_WAIT_FOR_COMPLETION), 0);
++	wr(TCS(TCS_IRQ_CLEAR), 1);
++	wr(TCS(TCS_IRQ_ENABLE), irq_enable);
++	return done;
++}
++
++static bool
++rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
++{
++	redwood_rpmh_lock();
++	bool ok=rpmh_write_locked(address,data,count);
++	redwood_rpmh_unlock();return ok;
++}
++
++/* renoir DTS: L2C = I/O at 1.8 V, L7C = analog at 3.3 V. */
++static bool
++supply_on(const char *name, uint32_t millivolts)
++{
++    uint32_t base = rpmh_address(name);
++    uint32_t address[3] = { base + VRM_VOLTAGE, base + VRM_ENABLE, base + VRM_MODE };
++    uint32_t data[3] = { millivolts, 1, VRM_MODE_LDO_HPM };
++
++    if (base == 0 || (base >> 16 & 0xf) != 4) {
++        printf("fts: no RPMh regulator %s (address %#x)\n", name, base);
++        return false;
++    }
++    printf("fts: regulator %s at %#x: %u mV\n", name, base, millivolts);
++    return rpmh_write(address, data, 3);
++}
++
++/* ---- clocks (GCC) -------------------------------------------------------------------------------- */
++
++#define GCC_PHYS                0x00100000UL
++#define GCC_SIZE                0x60000UL
++#define GCC_VOTE                (gcc + 0x52008)         /* the application processor's votes */
++#define VOTE_QUP0_CORE_2X       (1u << 9)
++#define VOTE_QUP0_CORE          (1u << 8)
++#define VOTE_QUP0_M_AHB         (1u << 6)
++#define VOTE_QUP0_S_AHB         (1u << 7)
++#define VOTE_QUP0_SE2           (1u << 12)             /* SE10 is wrap0 S2, not wrap1 */
++#define GCC_QUP0_M_AHB_CBCR     (gcc + 0x17004)         /* bit 31: the clock is off */
++#define GCC_QUP0_S_AHB_CBCR     (gcc + 0x17008)
++#define GCC_QUP0_SE2_CBCR       (gcc + 0x1726c)
++#define GCC_QUP0_SE2_CMD        (gcc + 0x17270)         /* bit 0: take the new configuration */
++#define GCC_QUP0_SE2_CFG        (gcc + 0x17274)         /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
++#define GCC_QUP0_SE2_DFSR       (gcc + 0x17284)         /* bit 0: the engine chooses among preset rates itself */
++#define GCC_QUP0_SE2_PERF_CFG(l) (gcc + 0x1728c + 4 * (l))
++#define GCC_QUP0_SE2_PERF_M(l)  (gcc + 0x172cc + 4 * (l))
++#define GCC_QUP0_SE2_PERF_N(l)  (gcc + 0x1730c + 4 * (l))
++#define CLOCK_OFF               (1u << 31)
++#define XO_HZ                   19200000
++
++static uint32_t se_source_hz, se_clock_select;
++
++/* clk-branch.c skips the halt bit for an AHB branch in hardware gated mode:
++ * it may report OFF while idle, even after our GCC vote was accepted.
++ */
++static bool
++fts_ahb_clock_ready(uint32_t status)
++{
++	return !(status & CLOCK_OFF) || (status & (1u << 1));
++}
++
++static uint32_t
++rcg_rate(uint32_t cfg, uint32_t m, uint32_t not_n_minus_m)
++{
++	static const uint32_t parent[8] = { XO_HZ, 600000000, 0, 0, 0, 0, 300000000, 0 };
++	uint64_t hz = parent[cfg >> 8 & 7];
++	uint32_t divider = cfg & 0x1f, mode = cfg >> 12 & 3;
++
++	if (divider) {
++		hz = hz * 2 / (divider + 1);
++	}
++	if (mode) {
++		uint32_t n = (~not_n_minus_m & 0xffff) + (m & 0xffff);
++
++		if (n) {
++			hz = hz * (m & 0xffff) / n;
++		}
++	}
++	return (uint32_t)hz;
++}
++
++static bool
++clocks_on(uint32_t target_hz)
++{
++	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP0_CORE_2X | VOTE_QUP0_CORE | VOTE_QUP0_M_AHB | VOTE_QUP0_S_AHB);
++	if (rd(GCC_QUP0_SE2_DFSR) & 1) {
++		/* Pick a source no lower than the requested SPI frequency. */
++		for (uint32_t level = 0; level < 8; level++) {
++			uint32_t hz = rcg_rate(rd(GCC_QUP0_SE2_PERF_CFG(level)), rd(GCC_QUP0_SE2_PERF_M(level)),
++			    rd(GCC_QUP0_SE2_PERF_N(level)));
++
++			if (hz >= target_hz && (se_source_hz == 0 || hz < se_source_hz)) {
++				se_source_hz = hz;
++				se_clock_select = level;
++			}
++		}
++		if (se_source_hz == 0) {
++			printf("fts: no usable preset clock rate\n");
++			return false;
++		}
++	} else {
++		/* the crystal, undivided: nothing else has to be running */
++		wr(GCC_QUP0_SE2_CFG, (rd(GCC_QUP0_SE2_CFG) & ~0x371fu) | 1);
++		wr(GCC_QUP0_SE2_CMD, rd(GCC_QUP0_SE2_CMD) | 1);
++		for (int i = 0; i < 500 && (rd(GCC_QUP0_SE2_CMD) & 1); i++) {
++			sleep_us(10);
++		}
++		if (rd(GCC_QUP0_SE2_CMD) & 1) {
++			printf("fts: the serial engine's clock does not take its configuration (%#x)\n", rd(GCC_QUP0_SE2_CMD));
++			return false;
++		}
++		se_source_hz = XO_HZ;
++		se_clock_select = 0;
++	}
++	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP0_SE2);
++	const uint32_t votes = VOTE_QUP0_CORE_2X | VOTE_QUP0_CORE | VOTE_QUP0_M_AHB | VOTE_QUP0_S_AHB | VOTE_QUP0_SE2;
++	if ((rd(GCC_VOTE) & votes) != votes) {
++		printf("fts: GCC clock votes not accepted (%#x)\n", rd(GCC_VOTE));
++		return false;
++	}
++	for (int i = 0; i < 1000; i++) {
++		if (fts_ahb_clock_ready(rd(GCC_QUP0_M_AHB_CBCR)) &&
++		    fts_ahb_clock_ready(rd(GCC_QUP0_S_AHB_CBCR)) && !(rd(GCC_QUP0_SE2_CBCR) & CLOCK_OFF)) {
++			return true;
++		}
++		sleep_us(10);
++	}
++	printf("fts: clocks stay off: %#x %#x %#x\n", rd(GCC_QUP0_M_AHB_CBCR), rd(GCC_QUP0_S_AHB_CBCR),
++	    rd(GCC_QUP0_SE2_CBCR));
++	return false;
++}
++
++/* ---- SPI through the serial engine (GENI) ---------------------------------------------------------- */
++
++#define SE_PHYS                 0x00988000UL
++#define SE_SIZE                 0x4000UL
++#define GENI_FORCE_DEFAULT      (se + 0x020)
++#define GENI_OUTPUT_CTRL        (se + 0x024)
++#define GENI_CGC_CTRL           (se + 0x028)
++#define GENI_STATUS             (se + 0x040)    /* bit 0: a command is running */
++#define GENI_SER_M_CLK_CFG      (se + 0x048)    /* bit 0 enable, [15:4] divider */
++#define GENI_IF_DISABLE_RO      (se + 0x064)    /* bit 0: no FIFO interface */
++#define GENI_FW_REVISION_RO     (se + 0x068)    /* [15:8] protocol: 1 = SPI */
++#define GENI_CLK_SEL            (se + 0x07c)
++#define SPI_CPHA                (se + 0x224)
++#define SPI_LOOPBACK            (se + 0x22c)
++#define SPI_CPOL                (se + 0x230)
++#define SPI_DEMUX_OUTPUT_INV    (se + 0x24c)
++#define SPI_DEMUX_SEL           (se + 0x250)
++#define GENI_BYTE_GRAN          (se + 0x254)
++#define GENI_DMA_MODE_EN        (se + 0x258)
++#define SPI_TRANS_CFG           (se + 0x25c)
++#define GENI_TX_PACKING_CFG0    (se + 0x260)
++#define GENI_TX_PACKING_CFG1    (se + 0x264)
++#define SPI_WORD_LEN            (se + 0x268)
++#define SPI_TX_TRANS_LEN        (se + 0x26c)
++#define SPI_RX_TRANS_LEN        (se + 0x270)
++#define SPI_DELAY_COUNTERS      (se + 0x278)
++#define GENI_RX_PACKING_CFG0    (se + 0x284)
++#define GENI_RX_PACKING_CFG1    (se + 0x288)
++#define GENI_M_CMD0             (se + 0x600)    /* [31:27] operation */
++#define GENI_M_CMD_CTRL         (se + 0x604)    /* bit 2 cancel, bit 1 abort */
++#define GENI_M_IRQ_STATUS       (se + 0x610)
++#define GENI_M_IRQ_EN           (se + 0x614)
++#define GENI_M_IRQ_CLEAR        (se + 0x618)
++#define GENI_S_IRQ_CLEAR        (se + 0x648)
++#define GENI_TX_FIFO            (se + 0x700)
++#define GENI_RX_FIFO            (se + 0x780)
++#define GENI_TX_FIFO_STATUS     (se + 0x800)    /* [27:0] words */
++#define GENI_RX_FIFO_STATUS     (se + 0x804)    /* bit 31 last, [30:28] bytes of the last word, [24:0] words */
++#define GENI_TX_WATERMARK       (se + 0x80c)
++#define GENI_RX_WATERMARK       (se + 0x810)
++#define GENI_RX_RFR_WATERMARK   (se + 0x814)
++#define SE_DMA_TX_IRQ_CLR       (se + 0xc44)
++#define SE_DMA_RX_IRQ_CLR       (se + 0xd44)
++#define SE_GSI_EVENT_EN         (se + 0xe18)
++#define SE_IRQ_EN               (se + 0xe1c)
++#define SE_HW_PARAM_0           (se + 0xe24)    /* [21:16] FIFO depth in words */
++#define SE_DMA_GENERAL_CFG      (se + 0xe30)
++
++#define M_CMD_DONE              (1u << 0)
++#define M_CMD_CANCEL            (1u << 4)
++#define M_CMD_ABORT             (1u << 5)
++#define M_ERRORS                ((1u << 1) | (1u << 2) | (1u << 3) | (1u << 24) | (1u << 25) | (1u << 28) | (1u << 29))
++#define SPI_FULL_DUPLEX         (3u << 27)
++
++static uint32_t fifo_depth;
++
++/* 0 = ready; otherwise why the engine cannot be used */
++static const char *
++geni_spi_init(uint32_t hz)
++{
++	uint32_t divider;
++
++	if ((rd(GENI_FW_REVISION_RO) >> 8 & 0xff) != 1) {
++		return "the serial engine has no SPI firmware";
++	}
++	if (rd(GENI_IF_DISABLE_RO) & 1) {
++		return "the serial engine's FIFO interface is disabled";
++	}
++	fifo_depth = rd(SE_HW_PARAM_0) >> 16 & 0x3f;
++	if (fifo_depth < 4) {
++		return "the serial engine reports no FIFO";
++	}
++	wr(SE_GSI_EVENT_EN, 0);
++	wr(GENI_M_IRQ_CLEAR, 0xffffffff);
++	wr(GENI_S_IRQ_CLEAR, 0xffffffff);
++	wr(SE_DMA_TX_IRQ_CLR, 0xffffffff);
++	wr(SE_DMA_RX_IRQ_CLR, 0xffffffff);
++	wr(GENI_CGC_CTRL, rd(GENI_CGC_CTRL) | 0x7f);
++	wr(SE_DMA_GENERAL_CFG, rd(SE_DMA_GENERAL_CFG) | 0xf);
++	wr(GENI_OUTPUT_CTRL, 0x7f);
++	wr(GENI_FORCE_DEFAULT, 1);
++	wr(GENI_DMA_MODE_EN, rd(GENI_DMA_MODE_EN) & ~1u);
++	wr(GENI_RX_WATERMARK, fifo_depth - 3);
++	wr(GENI_RX_RFR_WATERMARK, fifo_depth - 2);
++	wr(GENI_TX_WATERMARK, 0);
++	/* the status bits we poll follow these enables; the interrupt itself stays masked at the GIC */
++	wr(SE_IRQ_EN, rd(SE_IRQ_EN) | 0xf);
++	wr(GENI_M_IRQ_EN, rd(GENI_M_IRQ_EN) | 0x7fc0007f);
++
++	/* mode 0, chip select 0, 8 bits, most significant first, four bytes in a FIFO word */
++	wr(SPI_LOOPBACK, 0);
++	wr(SPI_DEMUX_SEL, 0);
++	wr(SPI_CPHA, 0);
++	wr(SPI_CPOL, 0);
++	wr(SPI_DEMUX_OUTPUT_INV, 0);
++	wr(SPI_TRANS_CFG, rd(SPI_TRANS_CFG) & ~2u);
++	wr(SPI_DELAY_COUNTERS, 0);
++	wr(GENI_TX_PACKING_CFG0, 0x0007f8fe);
++	wr(GENI_TX_PACKING_CFG1, 0x000ffefe);
++	wr(GENI_RX_PACKING_CFG0, 0x0007f8fe);
++	wr(GENI_RX_PACKING_CFG1, 0x000ffefe);
++	wr(GENI_BYTE_GRAN, 0);
++	wr(SPI_WORD_LEN, 8 - 4);
++
++	divider = (se_source_hz + hz - 1) / hz;
++	wr(GENI_CLK_SEL, se_clock_select & 7);
++	wr(GENI_SER_M_CLK_CFG, (divider ? divider : 1) << 4 | 1);
++	return NULL;
++}
++
++static void
++geni_drain(uint8_t *rx, uint32_t length, uint32_t *received)
++{
++	uint32_t status = rd(GENI_RX_FIFO_STATUS), words = status & 0x01ffffff, bytes = words * 4;
++
++	if (status & 0x80000000u) {
++		uint32_t valid = status >> 28 & 7;
++
++		if (valid && valid < 4) {
++			bytes -= 4 - valid;
++		}
++	}
++	for (uint32_t i = 0; i < words; i++) {
++		uint32_t word = rd(GENI_RX_FIFO);
++
++		for (int j = 0; j < 4 && bytes; j++, bytes--) {
++			if (*received < length) {
++				if (rx) {
++					rx[*received] = (uint8_t)(word >> (8 * j));
++				}
++				(*received)++;
++			}
++		}
++	}
++}
++
++static void
++geni_recover(void)
++{
++	wr(GENI_M_CMD_CTRL, 1u << 2);
++	for (int i = 0; i < 2000 && !(rd(GENI_M_IRQ_STATUS) & M_CMD_CANCEL); i++) {
++		sleep_us(100);
++	}
++	if (!(rd(GENI_M_IRQ_STATUS) & M_CMD_CANCEL)) {
++		wr(GENI_M_CMD_CTRL, 1u << 1);
++		for (int i = 0; i < 2000 && !(rd(GENI_M_IRQ_STATUS) & M_CMD_ABORT); i++) {
++			sleep_us(100);
++		}
++	}
++	for (int i = 0; i < 64 && (rd(GENI_RX_FIFO_STATUS) & 0x01ffffff); i++) {
++		(void)rd(GENI_RX_FIFO);
++	}
++	wr(GENI_M_IRQ_CLEAR, 0xffffffff);
++}
++
++/* One transfer with the chip selected throughout: `length` bytes out (zeros without tx) and as many in. */
++static bool
++geni_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
++{
++	static unsigned complaints;
++	uint32_t sent = 0, received = 0, status = 0;
++	uint64_t deadline;
++
++	for (int i = 0; rd(GENI_STATUS) & 1; i++) {
++		if (i > 2000) {
++			geni_recover();
++			break;
++		}
++		sleep_us(100);
++	}
++	wr(GENI_M_IRQ_CLEAR, 0xffffffff);
++	wr(SPI_TX_TRANS_LEN, length);
++	wr(SPI_RX_TRANS_LEN, length);
++	wr(GENI_M_CMD0, SPI_FULL_DUPLEX);
++	clock_interval_to_deadline(200, NSEC_PER_MSEC, &deadline);
++	while (mach_absolute_time() < deadline) {
++		while (sent < length && (rd(GENI_TX_FIFO_STATUS) & 0x0fffffff) + 1 < fifo_depth) {
++			uint32_t word = 0;
++
++			for (int j = 0; j < 4 && sent < length; j++, sent++) {
++				word |= (uint32_t)(tx ? tx[sent] : 0) << (8 * j);
++			}
++			wr(GENI_TX_FIFO, word);
++		}
++		status = rd(GENI_M_IRQ_STATUS);
++		geni_drain(rx, length, &received);
++		if (status & M_ERRORS) {
++			break;
++		}
++		if (status & M_CMD_DONE) {
++			geni_drain(rx, length, &received);
++			wr(GENI_M_IRQ_CLEAR, status);
++			if (received == length) {
++				return true;
++			}
++			break;
++		}
++	}
++	if (complaints++ < 8) {
++		printf("fts: SPI transfer of %u bytes failed: status %#x, sent %u, received %u\n", length, status, sent,
++		    received);
++	}
++	geni_recover();
++	return false;
++}
++
++/* GPIO mode-0 fallback when boot firmware leaves GENI restricted to GPI DMA. */
++static unsigned bitbang_in, bitbang_out;
++static void
++fts_bitbang_init(void)
++{
++    gpio_output(PIN_CS, true, PULL_NONE, 2);
++    gpio_output(PIN_CLK, false, PULL_NONE, 2);
++    gpio_output(bitbang_out, false, PULL_NONE, 2);
++    gpio_configure(bitbang_in, 0, PULL_NONE, 2, false);
++}
++
++static bool
++fts_bitbang_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
++{
++    gpio_set(PIN_CS, false);
++    for (uint32_t i = 0; i < length; i++) {
++        uint8_t out = tx ? tx[i] : 0, in = 0;
++        for (int bit = 7; bit >= 0; bit--) {
++            gpio_set(bitbang_out, (out >> bit) & 1);
++            sleep_us(1);
++            gpio_set(PIN_CLK, true);
++            sleep_us(1);
++            in = (uint8_t)((in << 1) | gpio_get(bitbang_in));
++            gpio_set(PIN_CLK, false);
++        }
++        if (rx) { rx[i] = in; }
++    }
++    gpio_set(PIN_CS, true);
++    return true;
++}
++
++/* ---- FT3658U application protocol --------------------------------------------------------------- */
++#include "renoir_fts_protocol.h"
++
++static bool (*spi_transfer)(const uint8_t *, uint8_t *, uint32_t) = geni_transfer;
++static uint8_t fts_tx[FTS_SPI_BYTES], fts_rx[FTS_SPI_BYTES];
++static uint32_t flip, spi_hz = 12000000, trace;
++static struct { bool down; uint32_t x, y; } contact[FTS_CONTACTS];
++static struct { uint32_t polls, reports, bad, transfers_failed, positions; } seen;
++
++/* Four header bytes, three dummy bytes, data and a two-byte LE CRC.
++ * CS must remain asserted for the whole packet and high for >=150 us between attempts.
++ */
++static bool
++fts_read(uint8_t address, uint8_t *data, uint32_t length)
++{
++    if (length == 0 || length > FTS_MAX_DATA) {
++        return false;
++    }
++    memset(fts_tx, 0, sizeof(fts_tx));
++    fts_tx[0] = address;
++    fts_tx[1] = 0xa0;
++    fts_tx[2] = (uint8_t)(length >> 8);
++    fts_tx[3] = (uint8_t)length;
++    for (unsigned attempt = 0; attempt < 3; attempt++) {
++        memset(fts_rx, 0, sizeof(fts_rx));
++        bool transferred = spi_transfer(fts_tx, fts_rx, FTS_READ_PREFIX + length + 2);
++        sleep_us(150);
++        if (!transferred || (fts_rx[3] & 0xa0)) {
++            continue;
++        }
++        const uint8_t *payload = fts_rx + FTS_READ_PREFIX;
++        uint16_t crc = payload[length] | (uint16_t)payload[length + 1] << 8;
++        if (fts_crc(payload, length) != crc) {
++            continue;
++        }
++        memcpy(data, payload, length);
++        return true;
++    }
++    seen.transfers_failed++;
++    return false;
++}
++
++static void
++fts_report(const struct fts_frame *frame)
++{
++    for (uint32_t id = 0; id < FTS_CONTACTS; id++) {
++        if (!(frame->active & (1u << id))) {
++            if (contact[id].down) {
++                redwood_touch_post(REDWOOD_TOUCH_UP, id, contact[id].x, contact[id].y);
++                contact[id].down = false;
++            }
++            continue;
++        }
++        uint32_t x = (uint32_t)frame->x[id] * 65535 / FTS_MAX_X;
++        uint32_t y = (uint32_t)frame->y[id] * 65535 / FTS_MAX_Y;
++        if (flip & 1) { x = 65535 - x; }
++        if (flip & 2) { y = 65535 - y; }
++        if (!contact[id].down) {
++            if (trace && seen.positions < 40) {
++                printf("fts: finger %u DOWN at %u,%u\n", id, frame->x[id], frame->y[id]);
++            }
++            redwood_touch_post(REDWOOD_TOUCH_DOWN, id, x, y);
++        } else if (contact[id].x != x || contact[id].y != y) {
++            redwood_touch_post(REDWOOD_TOUCH_MOVE, id, x, y);
++        }
++        contact[id].down = true;
++        contact[id].x = x;
++        contact[id].y = y;
++        seen.positions++;
++    }
++}
++
++static void
++fts_release(void)
++{
++    const struct fts_frame empty = { 0 };
++    fts_report(&empty);
++}
++
++static void
++fts_reset(void)
++{
++    gpio_set(PIN_RESET, false);
++    sleep_ms(1);
++    gpio_set(PIN_RESET, true);
++    sleep_ms(200);
++}
++
++static bool
++fts_probe(void)
++{
++    uint8_t high = 0, low = 0, version = 0, mode = 0xff;
++    for (unsigned attempt = 0; attempt < 10; attempt++) {
++        if (fts_read(0xa3, &high, 1) && fts_read(0x9f, &low, 1) && high == 0x56 && low == 0x52) {
++            if (!fts_read(0x00, &mode, 1) || (mode & 0x70) != 0) {
++                printf("fts: chip %#x%02x is not in application work mode (%#x)\n", high, low, mode);
++                return false;
++            }
++            if (fts_read(0xa6, &version, 1)) {
++                printf("fts: FT3658U ID 0x%02x%02x, firmware %#x, SPI mode 0, %u Hz requested\n",
++                    high, low, version, spi_hz);
++            }
++            return true;
++        }
++        sleep_ms(100);
++    }
++    printf("fts: no application ID 0x5652 (last 0x%02x%02x); no firmware is flashed\n", high, low);
++    return false;
++}
++
++static bool
++fts_bring_up(void)
++{
++    /* DTS: SPI SE10 is wrap0 S2; gpio20..23 are qup10, GPIO30 reset, GPIO31 IRQ. */
++    printf("fts: renoir SE10 0x988000; reset gpio30, IRQ gpio31; L2C/L7C\n");
++    gpio_output(PIN_RESET, false, PULL_UP, 8);
++    gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
++    sleep_ms(1);
++    if (!supply_on("ldoc2", 1800)) { return false; }
++    sleep_ms(1);
++    if (!supply_on("ldoc7", 3300)) { return false; }
++    sleep_ms(15);
++    const char *problem = "SPI clocks unavailable";
++    if (clocks_on(spi_hz)) {
++        printf("fts: GENI firmware %#x, interface %#x, parameters %#x\n",
++            rd(GENI_FW_REVISION_RO), rd(GENI_IF_DISABLE_RO), rd(SE_HW_PARAM_0));
++        problem = geni_spi_init(spi_hz);
++    }
++    if (problem == NULL) {
++        gpio_configure(PIN_DATA0, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
++        gpio_configure(PIN_DATA1, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
++        gpio_configure(PIN_CLK, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
++        gpio_configure(PIN_CS, PIN_FUNCTION_SPI, PULL_NONE, 6, false);
++        spi_transfer = geni_transfer;
++        uint32_t divider = (rd(GENI_SER_M_CLK_CFG) >> 4) & 0xfff;
++        printf("fts: source %u Hz, select %u, divider %u, actual SPI %u Hz\n",
++            se_source_hz, se_clock_select, divider, divider ? se_source_hz / divider : 0);
++        fts_reset();
++        if (fts_probe()) { return true; }
++    } else {
++        printf("fts: %s; trying GPIO SPI mode 0\n", problem);
++    }
++    spi_transfer = fts_bitbang_transfer;
++    /* As in redwood's fallback, accept a data-pin orientation only after ID+CRC.
++     * CS stays high while directions change; use the minimum 2 mA drive. */
++    for (unsigned attempt = 0; attempt < 2; attempt++) {
++        bitbang_in = attempt == 0 ? PIN_DATA0 : PIN_DATA1;
++        bitbang_out = attempt == 0 ? PIN_DATA1 : PIN_DATA0;
++        fts_bitbang_init();
++        fts_reset();
++        if (fts_probe()) {
++            printf("fts: GPIO SPI ready: MISO gpio%u, MOSI gpio%u, CLK gpio22, CS gpio23\n",
++                bitbang_in, bitbang_out);
++            return true;
++        }
++    }
++    gpio_set(PIN_CS, true);
++    return false;
++}
++
++static void
++fts_thread(__unused void *parameter, __unused wait_result_t result)
++{
++    uint8_t report[FTS_REPORT_BYTES];
++    unsigned failures = 0, resets = 0;
++    tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
++    gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
++    se = ml_io_map(SE_PHYS, SE_SIZE);
++    rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
++    cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);
++    if (!tlmm || !gcc || !se || !rsc || !cmd_db || !fts_bring_up()) {
++        printf("fts: touchscreen unavailable\n");
++        thread_terminate(current_thread());
++        return;
++    }
++    printf("fts: touchscreen ready, 1080x2400, ten contacts; polling at 125 Hz\n");
++    for (unsigned tick = 1;; tick++) {
++        /* Falling-edge IRQ can be a brief pulse: read periodically even if GPIO is high. */
++        bool pending = !gpio_get(PIN_INT), active = false;
++        for (unsigned id = 0; id < FTS_CONTACTS; id++) { active |= contact[id].down; }
++        if (!pending && !active && tick % 10 != 0) {
++            sleep_ms(8);
++            continue;
++        }
++        seen.polls++;
++        struct fts_frame frame;
++        bool read_ok = fts_read(0x01, report, sizeof(report));
++        /* This chip returns a CRC-valid all-ff frame while idle. Android reads
++         * only on IRQ; our periodic fallback must not reset an idle controller. */
++        if (read_ok && !pending && !active && fts_report_empty(report, sizeof(report))) {
++            failures = 0;
++            sleep_ms(8);
++            continue;
++        }
++        if (read_ok && fts_decode(report, sizeof(report), &frame)) {
++            failures = 0;
++            seen.reports++;
++            fts_report(&frame);
++        } else {
++            seen.bad++;
++            if (seen.bad <= 4) {
++                if (read_ok) {
++                    printf("fts: rejected report: %02x %02x %02x %02x %02x %02x %02x %02x\n",
++                        report[0], report[1], report[2], report[3], report[4], report[5], report[6], report[7]);
++                } else {
++                    printf("fts: report SPI/status/CRC failure\n");
++                }
++            }
++            if (++failures >= 125) {
++                fts_release();
++                printf("fts: %u consecutive invalid reports (%u SPI failures); previous recoveries %u/3\n",
++                    failures, seen.transfers_failed, resets);
++                if (resets++ >= 3) { break; }
++                fts_reset();
++                if (!fts_probe()) { break; }
++                failures = 0;
++            }
++        }
++        if (tick % (60 * 125) == 0) {
++            printf("fts: polls %u, reports %u, invalid %u, failed SPI reads %u, positions %u, IRQ %s\n",
++                seen.polls, seen.reports, seen.bad, seen.transfers_failed, seen.positions,
++                gpio_get(PIN_INT) ? "high" : "low");
++        }
++        sleep_ms(8);
++    }
++    fts_release();
++    printf("fts: stopped after repeated controller errors\n");
++    thread_terminate(current_thread());
++}
++
++void
++renoir_fts_init(void)
++{
++    uint32_t enabled = 0;
++    thread_t thread;
++    if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) { return; }
++    if (!redwood_board_is("renoir")) {
++        printf("fts: disabled: FT3658U wiring is for renoir only\n");
++        return;
++    }
++    PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
++    PE_parse_boot_argn("fts_trace", &trace, sizeof(trace));
++    PE_parse_boot_argn("fts_spi_hz", &spi_hz, sizeof(spi_hz));
++    if (spi_hz < 1000000 || spi_hz > 12000000) {
++        printf("fts: invalid fts_spi_hz=%u (allowed 1..12 MHz)\n", spi_hz);
++        return;
++    }
++    if (kernel_thread_start(fts_thread, NULL, &thread) == KERN_SUCCESS) {
++        thread_deallocate(thread);
++    } else {
++        printf("fts: cannot start touchscreen thread\n");
++    }
++}
+diff --git a/bsd/dev/renoir_fts_protocol.h b/bsd/dev/renoir_fts_protocol.h
+new file mode 100644
+index 0000000..f13ee3a
+--- /dev/null
++++ b/bsd/dev/renoir_fts_protocol.h
+@@ -0,0 +1,82 @@
++/* FT3658U application protocol, independent of the Qualcomm transport.
++ * Layout/CRC verified against OKX focaltech_3658u at 08bbb0c150ea.
++ * The read begins at register 0x01; the vendor buffer's command byte is absent.
++ */
++#ifndef RENOIR_FTS_PROTOCOL_H
++#define RENOIR_FTS_PROTOCOL_H
++
++#define FTS_CONTACTS 10
++#define FTS_REPORT_BYTES (2 + 6 * FTS_CONTACTS)
++#define FTS_READ_PREFIX 7
++#define FTS_MAX_DATA FTS_REPORT_BYTES
++#define FTS_SPI_BYTES (FTS_READ_PREFIX + FTS_MAX_DATA + 2)
++#define FTS_MAX_X 1080
++#define FTS_MAX_Y 2400
++
++struct fts_frame {
++	uint16_t active;
++	uint16_t x[FTS_CONTACTS], y[FTS_CONTACTS];
++};
++
++static bool
++fts_report_empty(const uint8_t *data, uint32_t length)
++{
++	if (length != FTS_REPORT_BYTES) { return false; }
++	for (uint32_t i = 0; i < length; i++) {
++		if (data[i] != 0xff) { return false; }
++	}
++	return true;
++}
++
++/* Reflected 0x1021 polynomial, seed 0xffff, no final xor; wire CRC is LE. */
++static uint16_t
++fts_crc(const uint8_t *data, uint32_t length)
++{
++	uint16_t crc = 0xffff;
++	for (uint32_t i = 0; i < length; i++) {
++		crc ^= data[i];
++		for (unsigned bit = 0; bit < 8; bit++) {
++			crc = (crc >> 1) ^ ((crc & 1) ? 0x8408 : 0);
++		}
++	}
++	return crc;
++}
++
++/* Decode completely before publishing any events. Malformed frames change no contacts. */
++static bool
++fts_decode(const uint8_t *data, uint32_t length, struct fts_frame *frame)
++{
++	struct fts_frame result = { 0 };
++	uint16_t ids = 0;
++	unsigned active = 0, count;
++	if (length != FTS_REPORT_BYTES || (count = data[1] & 0xf) > FTS_CONTACTS) {
++		return false;
++	}
++	for (unsigned i = 0; i < FTS_CONTACTS; i++) {
++		const uint8_t *point = data + 2 + 6 * i;
++		unsigned id = point[2] >> 4, event = point[0] >> 6;
++		if (id >= FTS_CONTACTS) {
++			break; /* vendor sentinel (unused slots are 0xff) */
++		}
++		if ((ids & (1u << id)) || event == 3) {
++			return false;
++		}
++		ids |= 1u << id;
++		if (event == 1) { /* explicit UP; it need not carry a valid coordinate */
++			continue;
++		}
++		result.x[id] = (point[0] & 0xf) << 8 | point[1];
++		result.y[id] = (point[2] & 0xf) << 8 | point[3];
++		if (result.x[id] > FTS_MAX_X || result.y[id] > FTS_MAX_Y) {
++			return false;
++		}
++		result.active |= 1u << id;
++		active++;
++	}
++	if (active != count) {
++		return false;
++	}
++	*frame = result;
++	return true;
++}
++#endif
+diff --git a/bsd/miscfs/apfs/apfs_vfsops.c b/bsd/miscfs/apfs/apfs_vfsops.c
+index 8f0ed38..be57f66 100644
+--- a/bsd/miscfs/apfs/apfs_vfsops.c
++++ b/bsd/miscfs/apfs/apfs_vfsops.c
+@@ -19,8 +19,6 @@
+ #include <sys/sysctl.h>
+ #include <sys/vnode_internal.h>
+ #include <sys/fcntl.h>
+-#include <sys/redwood_input.h>
+-#include <sys/redwood_virtio_blk.h>
+ #include <sys/proc.h>
+ #include <kern/thread.h>
+ #include <libkern/OSAtomic.h>
+@@ -458,22 +456,6 @@ apfs_stats_print(void)
+ 	}
+ }
+ 
+-/* kern.redwood_memory: the kernel's line about memory (osfmk/arm64/loader_return.c), for a job list to keep */
+-extern void redwood_memory_line(char *buf, size_t len);
+-
+-static int
+-sysctl_redwood_memory SYSCTL_HANDLER_ARGS
+-{
+-#pragma unused(oidp, arg1, arg2)
+-	char line[256];
+-
+-	redwood_memory_line(line, sizeof(line));
+-	return SYSCTL_OUT(req, line, strlen(line) + 1);
+-}
+-
+-SYSCTL_PROC(_kern, OID_AUTO, redwood_memory, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
+-    0, 0, sysctl_redwood_memory, "A", "where the memory is, in MB");
+-
+ SYSCTL_PROC(_kern, OID_AUTO, apfs_stats, CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED,
+     0, 0, sysctl_apfs_stats, "A", "APFS: where the time goes; write to zero it");
+ 
+@@ -1112,15 +1094,14 @@ apfs_mount_common(mount_t mp, vnode_t devvp, vfs_context_t ctx, uint32_t contain
+ 	(void)PE_parse_boot_argn("apfs_meta_cluster", &am->am_nx.meta_cluster,
+ 	    sizeof(am->am_nx.meta_cluster));
+ 	/*
+-	 * The phone's flash and QEMU's virtio disk cost tens of microseconds a request; this
+-	 * port's other disks (md, the resident image; rsp, part of an image) answer with a
+-	 * memory copy.  Boot-arg apfs_cheap=0/1 says otherwise.
++	 * This RAM-only boot pipeline uses memory disks, which answer with a memory copy.
++	 * Boot-arg apfs_cheap=0/1 can override request coalescing for diagnostics.
+ 	 */
+ 	{
+ 		dev_t rdev = vnode_specrdev(devvp);
+ 		uint32_t cheap;
+ 
+-		am->am_nx.cheap_requests = !redwood_ufs_dev(rdev) && !redwood_virtio_blk_dev(rdev);
++		am->am_nx.cheap_requests = true;
+ 		if (PE_parse_boot_argn("apfs_cheap", &cheap, sizeof(cheap))) {
+ 			am->am_nx.cheap_requests = (cheap != 0);
+ 		}
+diff --git a/bsd/miscfs/ramfs/ramfs.c b/bsd/miscfs/ramfs/ramfs.c
+index ed657fd..7f2315c 100644
+--- a/bsd/miscfs/ramfs/ramfs.c
++++ b/bsd/miscfs/ramfs/ramfs.c
+@@ -468,10 +468,14 @@ ramfs_vget_locked(struct ramfs_mount *rm, struct ramfs_node *node, vnode_t dvp,
+ /* ------------------------------------------------------------------------ */
+ /* File contents                                                            */
+ 
+-/* Make sure the page array has a slot for page `index`. The mount lock is held. */
++/* Make sure the page array has a slot for page `index`. The mount lock is held
++ * on entry and return. A normal write/truncate may wait outside it: XNU's
++ * kalloc_large always rejects Z_NOWAIT, even when plenty of RAM is free.
++ * The pager cannot wait; truncate/write reserve its slots ahead of time. */
+ static int
+-ramfs_grow_slots(struct ramfs_node *node, uint64_t index)
++ramfs_grow_slots(struct ramfs_node *node, uint64_t index, bool can_wait)
+ {
++	struct ramfs_mount *rm = node->rn_mount;
+ 	uint64_t want = node->rn_nslots ? node->rn_nslots : 4;
+ 	void **slots;
+ 
+@@ -479,11 +483,31 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index)
+ 		return 0;
+ 	}
+ 	while (want <= index) {
++		if (want > UINT64_MAX / 2) {
++			return EFBIG;
++		}
+ 		want *= 2;
+ 	}
+-	slots = kalloc_type(void *, want, Z_NOWAIT | Z_ZERO);
++	if (want > SIZE_MAX / sizeof(void *)) {
++		return EFBIG;
++	}
++	if (can_wait) {
++		lck_mtx_unlock(&rm->rm_lock);
++	}
++	slots = kalloc_type(void *, want, (can_wait ? Z_WAITOK : Z_NOWAIT) | Z_ZERO);
++	if (can_wait) {
++		lck_mtx_lock(&rm->rm_lock);
++	}
+ 	if (slots == NULL) {
+-		return ENOSPC;
++		printf("ramfs: slot allocation failed: inode %llu, index %llu, slots %llu, bytes %llu\n",
++		    node->rn_ino, index, want, want * sizeof(void *));
++		return can_wait ? ENOMEM : ENOSPC;
++	}
++	/* Another writer may have grown the table while the lock was dropped.
++	 * The vnode keeps the node alive; copy the current table, never a snapshot. */
++	if (index < node->rn_nslots) {
++		kfree_type(void *, want, slots);
++		return 0;
+ 	}
+ 	if (node->rn_pages != NULL) {
+ 		memcpy(slots, node->rn_pages, node->rn_nslots * sizeof(void *));
+@@ -500,17 +524,19 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index)
+  * the lock; it is consumed if the slot was empty. The mount lock is held.
+  */
+ static int
+-ramfs_store(struct ramfs_node *node, uint64_t off, const void *src, size_t len, void **spare)
++ramfs_store(struct ramfs_node *node, uint64_t off, const void *src, size_t len, void **spare, bool can_wait)
+ {
+ 	struct ramfs_mount *rm = node->rn_mount;
+ 	uint64_t index = off / PAGE_SIZE;
+-	int error = ramfs_grow_slots(node, index);
++	int error = ramfs_grow_slots(node, index, can_wait);
+ 
+ 	if (error) {
+ 		return error;
+ 	}
+ 	if (node->rn_pages[index] == NULL) {
+ 		if (*spare == NULL || rm->rm_pages >= rm->rm_max_pages) {
++			printf("ramfs: page allocation failed: inode %llu, offset %llu, spare %p, pages %llu/%llu\n",
++			    node->rn_ino, off, *spare, rm->rm_pages, rm->rm_max_pages);
+ 			return ENOSPC;
+ 		}
+ 		node->rn_pages[index] = *spare;
+@@ -1116,6 +1142,15 @@ ramfs_setattr(struct vnop_setattr_args *ap)
+ 	lck_mtx_lock(&rm->rm_lock);
+ 	if (VATTR_IS_ACTIVE(vap, va_data_size)) {
+ 		size = vap->va_data_size;
++		/* A shared mapping cannot extend EOF. Reserve its pointer table here,
++		 * while sleeping is possible, so pageout needs no large allocation. */
++		if (size > node->rn_size) {
++			int error = ramfs_grow_slots(node, (size - 1) / PAGE_SIZE, true);
++			if (error) {
++				lck_mtx_unlock(&rm->rm_lock);
++				return error;
++			}
++		}
+ 		ramfs_resize(node, size);
+ 		resized = true;
+ 		VATTR_SET_SUPPORTED(vap, va_data_size);
+@@ -1245,7 +1280,7 @@ ramfs_write(struct vnop_write_args *ap)
+ 		}
+ 		ramfs_reserve_slots(rm, node, off / PAGE_SIZE);
+ 		lck_mtx_lock(&rm->rm_lock);
+-		error = ramfs_store(node, off, bounce, len, &spare);
++		error = ramfs_store(node, off, bounce, len, &spare, true);
+ 		lck_mtx_unlock(&rm->rm_lock);
+ 		if (error) {
+ 			/* nothing of this piece was stored: hand it back to the caller's count */
+@@ -1275,7 +1310,7 @@ ramfs_write(struct vnop_write_args *ap)
+ 			ramfs_refresh_cache(vp, node, start, (uint64_t)uio_offset(uio));
+ 		}
+ 		/* a partial write is a success */
+-		if (error == ENOSPC) {
++		if (error == ENOSPC || error == ENOMEM) {
+ 			error = 0;
+ 		}
+ 	}
+@@ -1539,7 +1574,7 @@ ramfs_pageout(struct vnop_pageout_args *ap)
+ 		/* this may be the pageout daemon looking for memory: never wait for more of it here */
+ 		void *spare = index < node->rn_nslots && node->rn_pages[index] != NULL ? NULL : ramfs_page_alloc(false);
+ 
+-		error = ramfs_store(node, off + done, (const void *)(addr + done), len, &spare);
++		error = ramfs_store(node, off + done, (const void *)(addr + done), len, &spare, false);
+ 		if (spare != NULL) {
+ 			ramfs_page_free(spare);
+ 		}
+diff --git a/bsd/sys/redwood_input.h b/bsd/sys/redwood_input.h
+index bb8ad1b..1c67d22 100644
+--- a/bsd/sys/redwood_input.h
++++ b/bsd/sys/redwood_input.h
+@@ -40,6 +40,10 @@ struct redwood_touch {
+ void redwood_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
+ void redwood_input_init(void);
+ void redwood_virtio_input_init(void);   /* boot-arg virtio_input=1: QEMU's virtio pointer and keyboard */
++bool redwood_board_is(const char *name); /* /chosen/darwin-board, set by the matching loader */
++void redwood_rpmh_lock(void);          /* APPS DRV2/TCS0 transaction; thread context only */
++void redwood_rpmh_unlock(void);
++void renoir_fts_init(void);             /* touchscreen=1 on renoir: FocalTech FT3658U */
+ void redwood_goodix_init(void);         /* boot-arg touchscreen=1: the phone's Goodix or FocalTech touch screen */
+ void redwood_buttons_init(void);        /* boot-arg buttons=1: the phone's power and volume keys */
+ void redwood_ufs_init(void);           /* ufs=2 to xnuloader: the phone's storage, read only, through the loader (ufs_shared_pa=) */
+diff --git a/bsd/sys/redwood_lx.h b/bsd/sys/redwood_lx.h
+index ef79d87..8f3c745 100644
+--- a/bsd/sys/redwood_lx.h
++++ b/bsd/sys/redwood_lx.h
+@@ -52,6 +52,8 @@ void	 lx_os_wakeup(const void *address);			/* everyone asleep on it */
+ void	 lx_os_random(void *buffer, unsigned long size);	/* bytes nobody can guess */
+ /* a number given to the kernel when it was started ("wifi_lx=2"); 0 if it was not */
+ unsigned lx_os_option(const char *name);
++/* Physical radio model: 0 WCN6750/AHB, 1 WCN6855 HW2.0/PCIe. */
++unsigned lx_os_radio_model(void);
+ /* a file the driver asks for by the name Linux has for it, in place: 0, or an errno (ENOENT) */
+ int	 lx_os_firmware(const char *name, const void **data, unsigned long *size);
+ /* the processor that runs the radio's firmware: started, and up when this returns; 0 or an errno */
+diff --git a/iokit/Kernel/MiniIOMobileFramebuffer.cpp b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+index ef91493..1fbd768 100644
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -21,9 +21,6 @@
+ #include <libkern/c++/OSDictionary.h>
+ #include <libkern/c++/OSArray.h>
+ #include <libkern/c++/OSBoolean.h>
+-#include <libkern/c++/OSString.h>
+-#include <libkern/c++/OSSymbol.h>
+-#include <libkern/c++/OSCollectionIterator.h>
+ #include <kern/thread_call.h>
+ #include <kern/thread.h>
+ #include <kern/clock.h>
+@@ -84,7 +81,7 @@ enum {
+ 
+ #define kFBNotifyVSync          5
+ #define kFBNotifyTypes          8
+-#define kFBRefreshHz            60                      /* unless boot-arg fb_hz says otherwise */
++#define kFBRefreshHz            60                      /* matches the 60 Hz hardware scanout left by DisplayDxe; overridable via fb_hz */
+ 
+ #define FRAME_TIMES             64                      /* milliseconds told apart between two frames */
+ #define FRAME_PAUSE             90                      /* from so many on, nothing was moving: not a slow frame */
+@@ -162,13 +159,49 @@ static TUNABLE(uint32_t, gDiff, "fb_diff", 0);
+  */
+ static TUNABLE(uint32_t, gFilter, "fb_filter", 1);
+ static TUNABLE(uint32_t, gRefreshHz, "fb_hz", kFBRefreshHz);
+-static TUNABLE(uint32_t, gOnTheBeat, "fb_beat", 1);
++static TUNABLE(uint32_t, gOnTheBeat, "fb_beat", 0);
++/*
++ * Boot-arg fb_double=1: the frame is scaled into a copy in ordinary memory first and copied to the
++ * panel's memory afterwards. Without a tearing-effect signal or a page flip that hides no tear, and on
++ * the phone (30 October, rc.jobs.latency-bench, tools/smoothness.py) it cost the window server: the
++ * presenter took 5.4 ms a frame instead of 3.1 (median) and twice as many of the window server's own
++ * frames took over 16.7 ms, the copy's memory traffic beside the GPU's. Off by default.
++ */
++static TUNABLE(uint32_t, gDoubleBuffer, "fb_double", 0);
+ /*
+  * Boot-arg fb_threads=N (1 to 8): so many processors scale a frame onto the panel together (see
+  * drawRows()). Three by default: a frame is in the panel's memory 3 ms after its turn instead of 9
+  * to 10 (the phone, 15 October; fb_threads=1 is how it was).
+  */
+-static TUNABLE(uint32_t, gThreads, "fb_threads", 3);
++static TUNABLE(uint32_t, gThreads, "fb_threads", 4);
++/*
++ * Boot-arg fb_small=0: the drawers anywhere, as before. By default, on a phone with slower cores
++ * (renoir: three Cortex-A55 beside four A78), the presenter and its helpers are bound to those, one
++ * each, and there are no more of them than there are such cores. Kernel threads run above every
++ * thread of the user interface: drawing a frame on four of the fast cores at once took them from
++ * SpringBoard, the window server and the application for 5 to 9 ms of every frame, and during a
++ * launch interrupted by the home gesture all seven cores were busy (the phone, 30 October). The
++ * scaling streams through memory and keeps up on the small cores.
++ */
++static TUNABLE(uint32_t, gSmallCores, "fb_small", 1);
++extern "C" unsigned redwood_slow_cores(void);           /* osfmk/arm64/psci_smp.c */
++extern "C" int redwood_bind_slow_core(unsigned n);
++
++static void
++bindDrawer(unsigned index, const char * who)
++{
++	int cpu;
++
++	if (!gSmallCores || redwood_slow_cores() < 2) {
++		return;
++	}
++	cpu = redwood_bind_slow_core(index);
++	if (cpu >= 0) {
++		IOLog("MiniIOMobileFramebuffer: %s on cpu %d, a slower core\n", who, cpu);
++	} else {
++		IOLog("MiniIOMobileFramebuffer: %s anywhere: no slower core up for it\n", who);
++	}
++}
+ #define SWAP_QUEUE              2                       /* frames that may wait for the panel at most (fb_queue) */
+ static TUNABLE(uint32_t, gQueue, "fb_queue", 2);
+ static inline unsigned
+@@ -205,6 +238,109 @@ recStep(void)
+ }
+ #define REC_STEP        recStep()
+ 
++/*
++ * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/redwood_adreno.c says where it is
++ * read from). Renoir's panel is a command-mode one: at each of its refreshes the display controller
++ * reads this framebuffer out to it, top to bottom, in about half a refresh, and leaves it alone the
++ * rest. Two things follow from knowing when:
++ *   - the refresh told to the window server (the "vsync" of the user client below) is the panel's,
++ *     not a timer of ours that drifts against it: a frame now and then shown twice and the next not
++ *     at all is what such a drift looks like;
++ *   - every band of rows of a frame is written only between the readout of it before (already
++ *     read, the band may change) and the next (it must be done by then), all bands for the same
++ *     next readout, the frame's target: that readout shows all of the new frame, none of it torn.
++ * The model: a readout began at `start` (the counter said `frame`), they come every `period`, and a
++ * line takes `line_ticks` to read out. It is kept up to date from the counters (scanObserve()).
++ */
++extern "C" bool redwood_display_scan_start(void);
++extern "C" bool redwood_display_scan(uint32_t * frame, uint32_t * line);
++static TUNABLE(uint32_t, gScan, "fb_scan", 1);
++static TUNABLE(uint32_t, gScanLeadUs, "fb_scan_lead", 2000);   /* the first lead from a frame's start to its target */
++
++struct panel_scan {
++	bool            ok;
++	uint32_t        lines;          /* lines a readout */
++	uint64_t        line_ticks;     /* absolute time a line */
++	uint64_t        period;         /* absolute time from one readout to the next */
++	uint64_t        start;          /* when the latest readout seen began */
++	uint32_t        frame;          /* ... and the frame counter during it */
++	uint64_t        ref_start;      /* the first readout seen, for the period */
++	uint32_t        ref_frame;
++};
++static struct panel_scan gPanel;
++#define SCAN_MARGIN_US  250             /* kept between a band's writing and the readout of it */
++
++static inline uint64_t
++usToAbs(uint64_t us)
++{
++	uint64_t t;
++
++	nanoseconds_to_absolutetime(us * NSEC_PER_USEC, &t);
++	return t;
++}
++
++/* Read the counters once; while a readout is going on, it says exactly when it began. */
++static void
++scanObserve(void)
++{
++	uint32_t frame, line;
++	uint64_t now;
++
++	if (!gPanel.ok || !redwood_display_scan(&frame, &line)) {
++		gPanel.ok = false;
++		return;
++	}
++	now = mach_absolute_time();
++	if (line < 8 || line > gPanel.lines) {
++		return;                         /* between two readouts (the counter stands at 1) */
++	}
++	gPanel.start = now - (uint64_t) line * gPanel.line_ticks;
++	gPanel.frame = frame;
++	if (frame - gPanel.ref_frame >= 240) {   /* four seconds and more: the period, to a part in 10^5 */
++		gPanel.period = (gPanel.start - gPanel.ref_start) / (frame - gPanel.ref_frame);
++	}
++}
++
++/* The first readout to begin at `after` or later. */
++static uint64_t
++scanNextStart(uint64_t after)
++{
++	uint64_t start = gPanel.start, period = gPanel.period;
++
++	if (after <= start) {
++		return start;
++	}
++	return start + (after - start + period - 1) / period * period;
++}
++
++/*
++ * Before rows [y0, y1) are written for the readout that begins at `target`: wait until the readout
++ * before it has read them. Says false if it is too late for them to be in time (the readout of
++ * them in `target` begun or about to): written then, the frame is torn there.
++ */
++static bool
++scanWaitRows(int32_t y0, int32_t y1, uint64_t target)
++{
++	uint64_t open, now = mach_absolute_time(), margin = usToAbs(SCAN_MARGIN_US);
++
++	if (target == 0 || y1 <= y0) {
++		return true;
++	}
++	open = target - gPanel.period + (uint64_t) y1 * gPanel.line_ticks + margin;
++	if (now < open && open - now < gPanel.period) {
++		clock_delay_until(open);
++		now = mach_absolute_time();
++	}
++	return now + margin < target + (uint64_t) y0 * gPanel.line_ticks;
++}
++
++/* ... and after: were they written in time? */
++static inline bool
++scanInTime(int32_t y0, uint64_t target)
++{
++	return target == 0 || mach_absolute_time() <= target + (uint64_t) y0 * gPanel.line_ticks;
++}
++
+ struct rec_header {
+ 	char     magic[8];              /* "RWREC003" */
+ 	uint32_t width, height;
+@@ -238,6 +374,8 @@ class IOMobileFramebuffer : public IOService
+ public:
+ 	IOLock *        fLock;
+ 	uint8_t *       fBase;                  /* the boot framebuffer: the panel */
++	uint8_t *       fBackBuffer;            /* RAM backbuffer for tear-free double buffering */
++	IOBufferMemoryDescriptor * fBackBufferDescriptor;
+ 	uint32_t        fPanelWidth, fPanelHeight, fRowBytes;
+ 	uint32_t        fWidth, fHeight;        /* the display as user space sees it */
+ 	MiniIOSurface * fDefaultSurface;
+@@ -317,7 +455,9 @@ public:
+ 	void reportFrameTimes(void);
+ 	void drawLayer(MiniIOSurface * s, const int32_t * src, const int32_t * dst);
+ 	void drawRows(const struct RowJob * job, int32_t y0, int32_t y1, uint32_t * blendRow);
++	void drawShare(const struct RowJob * job, unsigned share, uint32_t * blendRow);
+ 	static void helperMain(void * self, wait_result_t result);
++	void copyBackBuffer(void);
+ 	/* the scaling shared out (fb_threads): fThreads drawers, the presenter and fThreads - 1 helpers */
+ 	unsigned        fThreads;
+ 	IOLock *        fHelperLock;
+@@ -325,7 +465,14 @@ public:
+ 	uint64_t        fHelperGeneration;
+ 	unsigned        fHelpersBusy, fHelpersStarted;
+ 	uint32_t *      fHelperBlend[7];
++	/* the panel's readout this frame is written for (0: no model, write at once), and how far ahead */
++	uint64_t        fScanTarget, fScanLastTarget;
++	uint64_t        fScanLead;
++	volatile uint32_t fScanLate;            /* bands of the frame written too late for their readout */
++	uint32_t        fScanCleanFrames, fStatScanLate, fStatScanFrames;
++	void scanCalibrate(void);
+ 	void record(MiniIOSurface * s);
++};
+ 
+ OSDefineMetaClassAndStructors(IOMobileFramebuffer, IOService);
+ 
+@@ -503,6 +650,9 @@ IOMobileFramebuffer::start(IOService * provider)
+ 	thread_set_thread_name(thread, "frames to the panel");
+ 	thread_deallocate(thread);
+ 	fThreads = gThreads >= 1 && gThreads <= 8 ? gThreads : 1;
++	if (gSmallCores && redwood_slow_cores() >= 2 && fThreads > redwood_slow_cores()) {
++		fThreads = redwood_slow_cores();
++	}
+ 	fHelperLock = IOLockAlloc();
+ 	for (unsigned i = 0; i + 1 < fThreads; i++) {
+ 		if (kernel_thread_start(&IOMobileFramebuffer::helperMain, this, &thread) != KERN_SUCCESS) {
+@@ -541,6 +691,29 @@ IOMobileFramebuffer::start(IOService * provider)
+ 	IOLog("MiniIOMobileFramebuffer: display %ux%u on a panel of %ux%u (%u bytes per row)\n", fWidth, fHeight,
+ 	    fPanelWidth, fPanelHeight, fRowBytes);
+ 	/* (the frame: rows of 4 bytes a pixel, padded to 64 bytes as IOSurface pads them, and a little to spare) */
++	fScanLead = usToAbs(gScanLeadUs >= 1000 && gScanLeadUs <= 8000 ? gScanLeadUs : 2000);
++	if (gScan) {
++		scanCalibrate();
++	}
++	if (gDoubleBuffer) {
++		vm_size_t backBufferSize = (vm_size_t) fPanelHeight * fRowBytes;
++		IOBufferMemoryDescriptor * memory = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
++		    kIODirectionInOut, backBufferSize, 64);
++		if (memory != NULL) {
++			fBackBufferDescriptor = memory;
++			fBackBuffer = (uint8_t *) memory->getBytesNoCopy();
++			bzero(fBackBuffer, backBufferSize);
++			IOLog("MiniIOMobileFramebuffer: backbuffer allocated (%u KB) for double buffering\n",
++			    (unsigned) (backBufferSize >> 10));
++		} else {
++			IOLog("MiniIOMobileFramebuffer: backbuffer allocation failed, using direct framebuffer\n");
++			fBackBuffer = NULL;
++			fBackBufferDescriptor = NULL;
++		}
++	} else {
++		fBackBuffer = NULL;
++		fBackBufferDescriptor = NULL;
++	}
+ 
+ 	if (gRecSeconds != 0) {
+ 		/* one piece of physical memory: the loader will send it over USB as it lies */
+@@ -694,6 +867,7 @@ struct RowJob {
+ 	uint32_t        stride;
+ 	int32_t         sx, sy, sw, sh, px0, py0, px1, py1, cx0, cx1;
+ 	bool            filter, unscaled;
++	uint64_t        target;                 /* the panel's readout it is for (scanWaitRows()) */
+ };
+ 
+ void
+@@ -704,6 +878,7 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
+ 	int32_t sx = job->sx, sy = job->sy, sw = job->sw, sh = job->sh;
+ 	int32_t px0 = job->px0, py0 = job->py0, px1 = job->px1, py1 = job->py1, cx0 = job->cx0, cx1 = job->cx1;
+ 	bool filter = job->filter;
++	bool timely = scanWaitRows(y0 > 0 ? y0 : 0, y1, job->target);
+ 
+ 	for (int32_t y = y0; y < y1; y++) {
+ 		const uint32_t * from;
+@@ -712,7 +887,7 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
+ 		if (y < 0 || (uint32_t) y >= fPanelHeight) {
+ 			continue;
+ 		}
+-		to = (uint32_t *) (fBase + (size_t) y * fRowBytes);
++		to = (uint32_t *) ((fBackBuffer ? fBackBuffer : fBase) + (size_t) y * fRowBytes);
+ 		if (job->unscaled) {
+ 			/* not scaled at all */
+ 			memcpy(to + px0, pixels + (size_t) (sy + y - py0) * stride + (size_t) sx * 4, (size_t) sw * 4);
+@@ -771,6 +946,32 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
+ 			}
+ 		}
+ 	}
++	if (!timely || !scanInTime(y0 > 0 ? y0 : 0, job->target)) {
++		__atomic_fetch_add(&fScanLate, 1, __ATOMIC_RELAXED);
++	}
++}
++
++/*
++ * Share `share` of fThreads of a layer's rows. Written for a readout of the panel (job->target), the
++ * shares are stripes taken in turn, so that all the drawers go down the frame together, top first,
++ * ahead of the readout that comes down after them: the top of the frame is done almost at once and
++ * the frame needs to be begun only a little before its readout. Without, each share is one block.
++ */
++#define SCAN_STRIPE     16
++
++void
++IOMobileFramebuffer::drawShare(const RowJob * job, unsigned share, uint32_t * blendRow)
++{
++	int32_t rows = job->py1 - job->py0;
++
++	if (job->target == 0) {
++		drawRows(job, job->py0 + (int32_t) ((int64_t) rows * share / fThreads),
++		    job->py0 + (int32_t) ((int64_t) rows * (share + 1) / fThreads), blendRow);
++		return;
++	}
++	for (int32_t y = job->py0 + (int32_t) share * SCAN_STRIPE; y < job->py1; y += (int32_t) fThreads * SCAN_STRIPE) {
++		drawRows(job, y, y + SCAN_STRIPE < job->py1 ? y + SCAN_STRIPE : job->py1, blendRow);
++	}
+ }
+ 
+ /* A helper of the scaling (fb_threads): waits for rows to do, does them, says so. */
+@@ -780,13 +981,13 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
+ 	IOMobileFramebuffer * fb = (IOMobileFramebuffer *) self;
+ 	unsigned index;
+ 	uint64_t done = 0;
++	bool bound = false;
+ 
+ 	IOLockLock(fb->fHelperLock);
+ 	index = fb->fHelpersStarted++;
+ 	IOLockUnlock(fb->fHelperLock);
+ 	for (;;) {
+ 		const RowJob * job;
+-		int32_t rows, y0, y1;
+ 		uint32_t * blend;
+ 
+ 		IOLockLock(fb->fHelperLock);
+@@ -796,12 +997,25 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
+ 		done = fb->fHelperGeneration;
+ 		job = fb->fHelperJob;
+ 		IOLockUnlock(fb->fHelperLock);
+-		/* share index + 1 of fThreads (the presenter takes share 0) */
+-		rows = job->py1 - job->py0;
+-		y0 = job->py0 + (int32_t) ((int64_t) rows * (index + 1) / fb->fThreads);
+-		y1 = job->py0 + (int32_t) ((int64_t) rows * (index + 2) / fb->fThreads);
+-		blend = fb->fHelperBlend[index];
+-		fb->drawRows(job, y0, y1, blend);
++		if (!bound) {
++			bound = true;           /* (at the first frame: every core is up by then) */
++			bindDrawer(index + 1, "a helper");
++		}
++		if (job->pixels == NULL) {
++			int32_t y0 = (int32_t) ((int64_t) fb->fPanelHeight * (index + 1) / fb->fThreads);
++			int32_t y1 = (int32_t) ((int64_t) fb->fPanelHeight * (index + 2) / fb->fThreads);
++			if (y1 > y0 && fb->fBackBuffer != NULL && fb->fBase != NULL) {
++				bool timely = scanWaitRows(y0, y1, job->target);
++
++				memcpy(fb->fBase + (size_t) y0 * fb->fRowBytes, fb->fBackBuffer + (size_t) y0 * fb->fRowBytes, (size_t) (y1 - y0) * fb->fRowBytes);
++				if (!timely || !scanInTime(y0, job->target)) {
++					__atomic_fetch_add(&fb->fScanLate, 1, __ATOMIC_RELAXED);
++				}
++			}
++		} else {
++			blend = fb->fHelperBlend[index];
++			fb->drawShare(job, index + 1, blend);
++		}
+ 		IOLockLock(fb->fHelperLock);
+ 		fb->fHelpersBusy--;
+ 		if (fb->fHelpersBusy == 0) {
+@@ -811,6 +1025,120 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
+ 	}
+ }
+ 
++/*
++ * The model of the panel's readouts (gPanel), from its counters, watched for up to a tenth of a second:
++ * two lines of one readout give the time a line takes, the beginnings of two readouts the period.
++ * Anything that does not look like a command-mode panel's readout leaves the model off, and this
++ * driver as it was without one.
++ */
++void
++IOMobileFramebuffer::scanCalibrate(void)
++{
++	uint64_t deadline = mach_absolute_time() + usToAbs(100000), at[2] = { 0, 0 }, start = 0, now;
++	uint32_t frame, line, frames[2] = { 0, 0 }, lines[2] = { 0, 0 }, firstFrame = 0;
++	bool counting = false;
++
++	if (!redwood_display_scan_start()) {
++		printf("MiniIOMobileFramebuffer: panel scan: no readout counters on this board: frames written at once\n");
++		return;
++	}
++	gPanel.lines = fPanelHeight;
++	while ((now = mach_absolute_time()) < deadline) {
++		if (!redwood_display_scan(&frame, &line)) {
++			return;
++		}
++		now = mach_absolute_time();
++		if (line >= 100 && line + 100 < fPanelHeight) {
++			if (!counting || frame != frames[0] || line < lines[0]) {
++				at[0] = now, lines[0] = line, frames[0] = frame, counting = true;    /* (a readout of its own) */
++			} else if (line >= lines[0] + 400) {
++				at[1] = now, lines[1] = line, frames[1] = frame;
++				gPanel.line_ticks = (at[1] - at[0]) / (lines[1] - lines[0]);
++				start = at[1] - (uint64_t) lines[1] * gPanel.line_ticks;
++				firstFrame = frame;
++				break;
++			}
++		}
++		IODelay(40);
++	}
++	if (start == 0) {
++		printf("MiniIOMobileFramebuffer: panel scan: no readout seen in 100 ms: frames written at once\n");
++		return;
++	}
++	/* the beginning of a later readout, for the period */
++	while ((now = mach_absolute_time()) < deadline) {
++		if (!redwood_display_scan(&frame, &line)) {
++			return;
++		}
++		now = mach_absolute_time();
++		if (frame != firstFrame && line >= 100 && line + 100 < fPanelHeight) {
++			uint64_t later = now - (uint64_t) line * gPanel.line_ticks, period = (later - start) / (frame - firstFrame);
++			uint64_t ns;
++
++			absolutetime_to_nanoseconds(period, &ns);
++			if (ns < NSEC_PER_SEC / 130 || ns > NSEC_PER_SEC / 45 || gPanel.line_ticks * fPanelHeight >= period * 9 / 10) {
++				printf("MiniIOMobileFramebuffer: panel scan: implausible (%llu us a refresh, %llu us a readout): "
++				    "frames written at once\n", ns / 1000, micros(gPanel.line_ticks * fPanelHeight));
++				return;
++			}
++			gPanel.period = period;
++			gPanel.start = gPanel.ref_start = later;
++			gPanel.frame = gPanel.ref_frame = frame;
++			gPanel.ok = true;
++			printf("MiniIOMobileFramebuffer: panel scan: a refresh every %llu us, read out in %llu us (%llu ns a line): "
++			    "frames go to the panel between its readouts, the window server's refresh is the panel's\n", ns / 1000,
++			    micros(gPanel.line_ticks * fPanelHeight), micros(gPanel.line_ticks * 1000));
++			return;
++		}
++		IODelay(40);
++	}
++	printf("MiniIOMobileFramebuffer: panel scan: no second readout in 100 ms: frames written at once\n");
++}
++void
++IOMobileFramebuffer::copyBackBuffer(void)
++{
++	if (fBackBuffer == NULL || !fGraphics) {
++		return;
++	}
++	if (fThreads <= 1 || fHelpersStarted + 1 < fThreads) {
++		bool timely = scanWaitRows(0, (int32_t) fPanelHeight, fScanTarget);
++
++		memcpy(fBase, fBackBuffer, (size_t) fPanelHeight * fRowBytes);
++		if (!timely || !scanInTime(0, fScanTarget)) {
++			__atomic_fetch_add(&fScanLate, 1, __ATOMIC_RELAXED);
++		}
++		return;
++	}
++	RowJob copyJob;
++	bzero(&copyJob, sizeof(copyJob));
++	copyJob.pixels = NULL;
++	copyJob.target = fScanTarget;
++
++	IOLockLock(fHelperLock);
++	fHelperJob = &copyJob;
++	fHelpersBusy = fThreads - 1;
++	fHelperGeneration++;
++	IOLockWakeup(fHelperLock, &fHelperGeneration, false);
++	IOLockUnlock(fHelperLock);
++
++	/* Thread 0 takes partition 0 */
++	int32_t y0 = 0;
++	int32_t y1 = (int32_t) ((int64_t) fPanelHeight / fThreads);
++	bool timely = scanWaitRows(y0, y1, fScanTarget);
++
++	memcpy(fBase, fBackBuffer, (size_t) (y1 - y0) * fRowBytes);
++	if (!timely || !scanInTime(y0, fScanTarget)) {
++		__atomic_fetch_add(&fScanLate, 1, __ATOMIC_RELAXED);
++	}
++
++	IOLockLock(fHelperLock);
++	while (fHelpersBusy != 0) {
++		IOLockSleep(fHelperLock, &fHelpersBusy, THREAD_UNINT);
++	}
++	IOLockUnlock(fHelperLock);
++}
++
++
+ /*
+  * Put a rectangle of a 32-bit surface on the screen. `dst` is in display coordinates; the
+  * panel may be of another size, and the layer itself may be scaled: both are done in one
+@@ -897,6 +1225,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
+ 	job.cx1 = cx1;
+ 	job.filter = filter;
+ 	job.unscaled = px1 - px0 == sw && py1 - py0 == sh && px0 >= 0 && (uint32_t) px1 <= fPanelWidth;
++	job.target = fScanTarget;
+ 	if (fThreads <= 1 || fDiff || fHelpersStarted + 1 < fThreads) {
+ 		drawRows(&job, py0, py1, fBlendRow);
+ 		return;
+@@ -908,7 +1237,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
+ 	fHelperGeneration++;
+ 	IOLockWakeup(fHelperLock, &fHelperGeneration, false);
+ 	IOLockUnlock(fHelperLock);
+-	drawRows(&job, py0, py0 + (int32_t) ((int64_t) (py1 - py0) / fThreads), fBlendRow);
++	drawShare(&job, 0, fBlendRow);
+ 	IOLockLock(fHelperLock);
+ 	while (fHelpersBusy != 0) {
+ 		IOLockSleep(fHelperLock, &fHelpersBusy, THREAD_UNINT);
+@@ -1005,6 +1334,7 @@ IOMobileFramebuffer::presenter(void)
+ {
+ 	static uint8_t swap[SWAP_SIZE];         /* (one thread) */
+ 	MiniIOSurface * surfaces[SWAP_LAYERS];
++	bool bound = false;
+ 
+ 	for (;;) {
+ 		IOLockLock(fSwapLock);
+@@ -1014,6 +1344,10 @@ IOMobileFramebuffer::presenter(void)
+ 		memcpy(swap, fSwap[fSwapFirst], SWAP_SIZE);
+ 		memcpy(surfaces, fSwapSurfaces[fSwapFirst], sizeof(surfaces));
+ 		IOLockUnlock(fSwapLock);
++		if (!bound) {
++			bound = true;           /* (at the first frame: every core is up by then) */
++			bindDrawer(0, "the presenter");
++		}
+ 		show(swap, surfaces);
+ 		for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+ 			if (surfaces[layer] != NULL) {
+@@ -1029,7 +1363,7 @@ void
+ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+ {
+ 	uint32_t set = swapWord(swap, SWAP_LAYERS_SET);
+-	uint64_t began = mach_absolute_time(), nanos, ready, shown, drawn;
++	uint64_t began = mach_absolute_time(), nanos, ready, shown, composed, drawn;
+ 	uint32_t layers = 0;
+ 	MiniIOSurface * recorded = NULL;
+ 	bool report;
+@@ -1070,8 +1404,22 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+ 	}
+ 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+ 		if (surfaces[layer] != NULL && !MiniIOSurfaceDrawn(surfaces[layer], SWAP_GPU_MS)) {
+-			IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; shown as it is\n",
+-			    swapWord(swap, SWAP_ID), swapWord(swap, SWAP_SURFACE(layer)), SWAP_GPU_MS);
++			static unsigned unfinishedReports;
++
++			if (unfinishedReports < 4) {
++				unfinishedReports++;
++				IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; dropped, the "
++				    "frame on the panel stays\n", swapWord(swap, SWAP_ID), swapWord(swap, SWAP_SURFACE(layer)), SWAP_GPU_MS);
++			}
++			fStatWaiting += mach_absolute_time() - began;
++			/* nothing of it is read: only its queue slot is given back (the presenter drops its surfaces) */
++			IOLockLock(fSwapLock);
++			fSwapFirst = (fSwapFirst + 1) % SWAP_QUEUE;
++			fSwapsWaiting--;
++			fStatLost++;
++			IOLockWakeup(fSwapLock, &fSwapsWaiting, true);
++			IOLockUnlock(fSwapLock);
++			return;
+ 		}
+ 	}
+ 	fStatWaiting += mach_absolute_time() - began;
+@@ -1101,12 +1449,29 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+ 		}
+ 	}
+ 	shown = began;
+-	/* its turn has come: the swap after it may be handed over */
+-	IOLockLock(fSwapLock);
+-	fSwapFirst = (fSwapFirst + 1) % SWAP_QUEUE;
+-	fSwapsWaiting--;
+-	IOLockWakeup(fSwapLock, &fSwapsWaiting, true);
+-	IOLockUnlock(fSwapLock);
++	/*
++	 * The panel's readout this frame is for: the first that begins a lead after now. The lead grows
++	 * by half a millisecond after a frame with a stripe written too late for it, and shrinks by a
++	 * tenth of one after 60 frames in a row in time: as little delay as there is room for.
++	 */
++	fScanTarget = 0;
++	fScanLate = 0;
++	if (gPanel.ok && fGraphics) {
++		scanObserve();
++		if (gPanel.ok) {
++			uint64_t target = scanNextStart(began + fScanLead);
++
++			/*
++			 * Never the readout the frame before is for: that one would never be seen, written over
++			 * before its readout. The one after it, then -- its stripes wait for that readout to
++			 * pass, and the window server, its swap held meanwhile, keeps to the panel's pace.
++			 */
++			if (fScanLastTarget != 0 && target < fScanLastTarget + gPanel.period / 2) {
++				target = fScanLastTarget + gPanel.period;
++			}
++			fScanTarget = fScanLastTarget = target;
++		}
++	}
+ 	IOLockLock(fLock);
+ 	if (fLastFrame != 0) {
+ 		absolutetime_to_nanoseconds(began - fLastFrame, &nanos);
+@@ -1147,10 +1512,13 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+ 				 * abort" in IOMobileFramebuffer::show, the first time SpringBoard dropped the bottom layer).
+ 				 */
+ 				for (uint32_t y = 0; y < fPanelHeight; y++) {
+-					volatile uint64_t *row = (volatile uint64_t *) (fBase + (size_t) y * fRowBytes);
+-
+-					for (uint32_t x = 0; x < fPanelWidth / 2; x++) {
+-						row[x] = 0;
++					if (fBackBuffer != NULL) {
++						bzero(fBackBuffer + (size_t) y * fRowBytes, (size_t) fPanelWidth * 4);
++					} else {
++						volatile uint64_t *row = (volatile uint64_t *) (fBase + (size_t) y * fRowBytes);
++						for (uint32_t x = 0; x < fPanelWidth / 2; x++) {
++							row[x] = 0;
++						}
+ 					}
+ 				}
+ 			}
+@@ -1175,6 +1543,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+ 				/* the first picture: the kernel's text console must stop drawing over it */
+ 				fGraphics = true;
+ 				PE_initialize_console(NULL, kPEGraphicsMode);
++				PE_initialize_console(NULL, kPEReleaseScreen);
+ 			}
+ 			drawLayer(s, src, dst);
+ 			if (layer == 0) {
+@@ -1182,14 +1551,40 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+ 			}
+ 		}
+ 	}
++	composed = mach_absolute_time();
++	copyBackBuffer();
++	if (fScanTarget != 0) {
++		uint64_t up = usToAbs(500), down = usToAbs(100), floor = usToAbs(1000), ceiling = usToAbs(8000);
++
++		fStatScanFrames++;
++		if (fScanLate != 0) {
++			fStatScanLate++;
++			fScanCleanFrames = 0;
++			fScanLead = fScanLead + up < ceiling ? fScanLead + up : ceiling;
++		} else if (++fScanCleanFrames >= 60) {
++			fScanCleanFrames = 0;
++			fScanLead = fScanLead > floor + down ? fScanLead - down : floor;
++		}
++		scanObserve();
++	}
++	/*
++	 * Only now is the frame in the panel's memory: the swap after it may be handed over. Given back any
++	 * earlier, the window server would draw a frame more ahead of the panel than fb_queue says.
++	 */
++	IOLockLock(fSwapLock);
++	fSwapFirst = (fSwapFirst + 1) % SWAP_QUEUE;
++	fSwapsWaiting--;
++	IOLockWakeup(fSwapLock, &fSwapsWaiting, true);
++	IOLockUnlock(fSwapLock);
+ 	drawn = mach_absolute_time();
+ 	if (recorded != NULL) {
+ 		record(recorded);
+ 	}
+ 	fSwapsShown++;
+ 	if (gTouchLat) {
+-		redwood_tl("tl: v %u ready %llu shown %llu done %llu\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
+-		    micros(drawn));
++		redwood_tl("tl: v %u ready %llu shown %llu done %llu composed %llu target %llu late %u lead %llu\n",
++		    swapWord(swap, SWAP_ID), micros(ready), micros(shown), micros(drawn), micros(composed),
++		    fScanTarget != 0 ? micros(fScanTarget) : 0, fScanLate, micros(fScanLead));
+ 	}
+ 	if (layers != fLayersShown) {
+ 		IOLog("MiniIOMobileFramebuffer: swap #%u: surfaces in layers 0x%x now (0x%x before): %u %u %u %u\n", fSwapsShown, layers,
+@@ -1411,6 +1806,24 @@ IOMobileFramebufferUserClient::armVSync(void)
+ 	uint64_t period, now = mach_absolute_time();
+ 
+ 	/* one refresh after the last, not after whenever we got round to this: the rate does not drift */
++	if (gPanel.ok) {
++		/*
++		 * The panel's own refresh: the next of its readouts to begin, at least half a refresh after
++		 * the one told last (none twice, and none left out for a timer that ran late)
++		 */
++		scanObserve();
++		period = gPanel.period;
++		if (gPanel.ok) {
++			uint64_t next = scanNextStart(now + usToAbs(500));
++
++			if (fVSyncTime != 0 && next < fVSyncTime + period / 2) {
++				next += period;
++			}
++			fVSyncTime = next;
++			thread_call_enter_delayed(fVSyncCall, fVSyncTime);
++			return;
++		}
++	}
+ 	nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
+ 	fVSyncTime += period;
+ 	if (fVSyncTime <= now || fVSyncTime > now + 2 * period) {
+@@ -1450,6 +1863,15 @@ IOMobileFramebufferUserClient::vsync(void)
+ 	IOLockUnlock(fLock);
+ 	if (send) {
+ 		sendAsyncResult64WithOptions(ref, kIOReturnSuccess, args, 6, kIOUserNotifyOptionCanDrop);
++		uint64_t late;
++
++		absolutetime_to_nanoseconds(mach_absolute_time() - now, &late);
++		if (gTouchLat && late > NSEC_PER_MSEC) {
++			/* tl: y COUNT due DUE late US: a refresh told to the window server over a millisecond late */
++			redwood_tl("tl: y %llu due %llu late %llu\n", fVSyncCount, micros(now), late / NSEC_PER_USEC);
++		}
++	} else if (gTouchLat) {
++		redwood_tl("tl: Y off at %llu\n", micros(mach_absolute_time()));
+ 	}
+ }
+ 
+@@ -1560,6 +1982,10 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 		IOLockLock(fLock);
+ 		fCallbacks[in[2]] = in[0];
+ 		fRefcons[in[2]] = in[1];
++		if (in[2] == kFBNotifyVSync && gTouchLat) {
++			redwood_tl("tl: Y %s at %llu\n", in[0] != 0 ? (fVSyncRunning ? "on-running" : "on") : "asked-off",
++			    micros(mach_absolute_time()));
++		}
+ 		if (in[2] == kFBNotifyVSync && in[0] != 0 && !fVSyncRunning && !fClosed) {
+ 			fVSyncRunning = true;
+ 			armVSync();
+@@ -1664,136 +2090,22 @@ publishDisplayNode(void)
+  * service of this class to appear before it looks for a GPU at all (once per process). An
+  * accelerator without the properties that name its Metal and OpenGL ES drivers is passed
+  * over by both, which leaves CoreAnimation with its software renderer, as before.
+- *
+- * With boot-arg metal=1 a user process may put those two properties here, which is the whole
+- * of what keeps Metal from finding our driver; see setProperties below, and docs/metal.md 10.31
+- * (10.14 for the measurement that made it a boot-arg).
+  */
+-
+-/* Metal's step 2 reads exactly these two, in this order, off this service (docs/metal.md 1). */
+-#define kAcceleratorPluginNameKey      "MetalPluginName"
+-#define kAcceleratorPluginClassNameKey "MetalPluginClassName"
+-
+-static bool gAcceleratorTakesProperties;        /* boot-arg metal=1 */
+-
+ class IOAcceleratorES : public IOService
+ {
+ 	OSDeclareDefaultStructors(IOAcceleratorES);
+-
+-public:
+-	virtual IOReturn setProperties(OSObject * properties) APPLE_KEXT_OVERRIDE;
+ };
+ 
+ OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
+ 
+-/*
+- * Switch Metal's own device discovery on, from user space: IORegistryEntrySetCFProperties() with
+- * MetalPluginName and MetalPluginClassName. Metal reads the first (getMetalPluginClassForService,
+- * 0x181a39ba4), builds "/System/Library/Extensions/" + it + ".bundle", opens that with NSBundle
+- * and takes the class the second names; with the first missing it returns nil before it even
+- * reads the second, and that single `cbz` is where the chain breaks on this port today.
+- *
+- * This method is the only thing that was in the way. IORegistryEntry::setProperties is
+- * "return kIOReturnUnsupported" (IORegistryEntry.cpp) and IOService does not override it; the
+- * MAC check in front of the call has no policy to ask, because this kernel registers no iokit
+- * hook (bsd/kern/kern_minimac.c); and this service carries no property whitelist.
+- *
+- * Why it is gated on a boot-arg, which is a measured risk and not caution in general
+- * (docs/metal.md 10.14): the conditions Metal puts on a device object are asserts, not soft
+- * refusals (10.2-10.3). A process that asks Metal and is handed a half-made device does not
+- * degrade to another renderer -- it aborts ("Assertion failed: ([self
+- * conformsToProtocol:@protocol(MTLDeviceSPI)])", "failed assertion _limits.maxColorAttachments
+- * > 0"), and an aborting daemon is restarted by launchd, which is a loop. Published instead at
+- * registerService() time, the properties would exist before launchd, backboardd and SpringBoard
+- * are born, so each of the three would take the Metal road on its first call, with nobody left
+- * to read the log. Behind a boot-arg, a machine that has them is a machine booted on purpose to
+- * have them, and the first such boot is meant to be RC=rc.ios, where launchd is never born.
+- *
+- * An empty string removes a property rather than setting it. That is the way out of the loop
+- * above without a reboot: the properties live only in the registry, so processes started after
+- * they are gone go back to the software road.
+- *
+- * Everything else is refused, and refused whole, before anything is set: every process on the
+- * machine can reach this method and the only thing it exists for is this one switch.
+- */
+-IOReturn
+-IOAcceleratorES::setProperties(OSObject * properties)
+-{
+-	OSDictionary * dict = OSDynamicCast(OSDictionary, properties);
+-	OSCollectionIterator * keys;
+-	OSObject * next;
+-	char who[32] = "?";
+-
+-	if (!gAcceleratorTakesProperties) {
+-		static unsigned said;
+-
+-		if (said++ < 4) {
+-			proc_selfname(who, sizeof(who));
+-			IOLog("IOAcceleratorES: %s asks to set properties on it; boot-arg metal=1 was not given\n", who);
+-		}
+-		return kIOReturnUnsupported;
+-	}
+-	if (dict == NULL || dict->getCount() == 0) {
+-		return kIOReturnBadArgument;
+-	}
+-	keys = OSCollectionIterator::withCollection(dict);
+-	if (keys == NULL) {
+-		return kIOReturnNoMemory;
+-	}
+-	proc_selfname(who, sizeof(who));
+-	while ((next = keys->getNextObject()) != NULL) {
+-		const OSSymbol * key = OSDynamicCast(OSSymbol, next);
+-
+-		if (key == NULL || (!key->isEqualTo(kAcceleratorPluginNameKey) &&
+-		    !key->isEqualTo(kAcceleratorPluginClassNameKey))) {
+-			IOLog("IOAcceleratorES: refusing what %s sent: only " kAcceleratorPluginNameKey " and "
+-			    kAcceleratorPluginClassNameKey " are taken here\n", who);
+-			keys->release();
+-			return kIOReturnUnsupported;
+-		}
+-		if (OSDynamicCast(OSString, dict->getObject(key)) == NULL) {
+-			IOLog("IOAcceleratorES: refusing \"%s\" from %s: Metal reads it as a CFString\n",
+-			    key->getCStringNoCopy(), who);
+-			keys->release();
+-			return kIOReturnBadArgument;
+-		}
+-	}
+-	keys->reset();
+-	while ((next = keys->getNextObject()) != NULL) {
+-		const OSSymbol * key = OSDynamicCast(OSSymbol, next);
+-		OSString * value = OSDynamicCast(OSString, dict->getObject(key));
+-
+-		if (value->getLength() == 0) {
+-			removeProperty(key);
+-			IOLog("IOAcceleratorES: %s removed by %s\n", key->getCStringNoCopy(), who);
+-		} else if (setProperty(key, value)) {
+-			IOLog("IOAcceleratorES: %s = %s, set by %s\n", key->getCStringNoCopy(),
+-			    value->getCStringNoCopy(), who);
+-		} else {
+-			IOLog("IOAcceleratorES: %s could not be set\n", key->getCStringNoCopy());
+-			keys->release();
+-			return kIOReturnNoMemory;
+-		}
+-	}
+-	keys->release();
+-	return kIOReturnSuccess;
+-}
+-
+ static void
+ publishAccelerator(IOService * provider)
+ {
+ 	IOAcceleratorES * accelerator = OSTypeAlloc(IOAcceleratorES);
+-	uint32_t metal = 0;
+ 
+-	gAcceleratorTakesProperties = PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0;
+ 	if (accelerator != NULL && accelerator->init() && accelerator->attach(provider)) {
+ 		accelerator->setName("sgx");
+ 		accelerator->registerService();
+-		/* the first line to look for in the log of such a boot: the gate is open, nothing is set yet */
+-		if (gAcceleratorTakesProperties) {
+-			IOLog("IOAcceleratorES: metal=%u: this service takes " kAcceleratorPluginNameKey
+-			    " and " kAcceleratorPluginClassNameKey " from user space\n", metal);
+-		}
+ 	}
+ 	OSSafeReleaseNULL(accelerator);
+ }
+@@ -1805,12 +2117,19 @@ publishAccelerator(IOService * provider)
+ extern "C" void
+ MiniIOMobileFramebufferShow(const uint8_t * pixels, uint32_t width, uint32_t height, uint32_t rowBytes)
+ {
++	static bool graphics = false;
+ 	uint32_t columns = width < vinfo.v_width ? width : (uint32_t) vinfo.v_width;
+ 	uint32_t rows = height < vinfo.v_height ? height : (uint32_t) vinfo.v_height;
+ 
+ 	if (vinfo.v_baseaddr == 0 || vinfo.v_depth != 32) {
+ 		return;
+ 	}
++	if (!graphics) {
++		/* Direct GPU presentation bypasses drawLayer's console handover. */
++		graphics = true;
++		PE_initialize_console(NULL, kPEGraphicsMode);
++		PE_initialize_console(NULL, kPEReleaseScreen);
++	}
+ 	for (uint32_t y = 0; y < rows; y++) {
+ 		memcpy((void *) (vinfo.v_baseaddr + (size_t) y * vinfo.v_rowbytes), pixels + (size_t) y * rowBytes,
+ 		    (size_t) columns * 4);
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index 12e55aa..13ead4d 100644
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -1280,6 +1280,11 @@ ml_parse_cpu_topology(void)
+ 
+ 		cpu->phys_id = (uint32_t)ml_readprop(child, "reg", ML_READPROP_MANDATORY);
+ 
++		cpu->l2_access_penalty = (uint32_t)ml_readprop(child, "l2-access-penalty", 0);
++		if (cpu->l2_access_penalty == 0 && ml_readprop(child, "small-core", 0) != 0 && small_cores_apart) {
++			cpu->l2_access_penalty = 1;
++		}
++
+ 		cpu->l2_cache_size = (uint32_t)ml_readprop(child, "l2-cache-size", 0);
+ 		cpu->l2_cache_id = (uint32_t)ml_readprop(child, "l2-cache-id", 0);
+ 		cpu->l3_cache_size = (uint32_t)ml_readprop(child, "l3-cache-size", 0);
+diff --git a/osfmk/arm64/psci_smp.c b/osfmk/arm64/psci_smp.c
+index 4ddd78e..7b74a64 100644
+--- a/osfmk/arm64/psci_smp.c
++++ b/osfmk/arm64/psci_smp.c
+@@ -436,3 +436,50 @@ psci_smp_stop_here(void)
+ }
+ 
+ #endif /* defined(GENERIC_PSCI_SMP) */
++
++
++/*
++ * The slower cores (ml_parse_cpu_topology(): an L2 access penalty, the loader's "small-core"; none with
++ * boot-arg small_cores=0), for kernel work that streams through memory and should leave the faster
++ * ones to the user interface (iokit/Kernel/MiniIOMobileFramebuffer.cpp): how many the topology has,
++ * and the calling thread bound to the n-th of them that is up, which it then runs on. -1 when there
++ * is no such core, and the thread is left as it was.
++ */
++#include <kern/processor.h>
++#include <kern/sched_prim.h>
++
++unsigned
++redwood_slow_cores(void)
++{
++	const ml_topology_info_t *topology = ml_get_topology_info();
++	unsigned count = 0;
++
++	for (unsigned i = 0; i < topology->num_cpus; i++) {
++		count += topology->cpus[i].l2_access_penalty != 0;
++	}
++	return count;
++}
++
++int
++redwood_bind_slow_core(unsigned n)
++{
++	const ml_topology_info_t *topology = ml_get_topology_info();
++	unsigned seen = 0;
++
++	for (unsigned i = 0; i < topology->num_cpus; i++) {
++		int cpu = (int)topology->cpus[i].cpu_id;
++		processor_t processor;
++
++		if (topology->cpus[i].l2_access_penalty == 0 || seen++ != n) {
++			continue;
++		}
++		processor = cpu >= 0 && cpu < MAX_CPUS ? processor_array[cpu] : PROCESSOR_NULL;
++		if (processor == PROCESSOR_NULL || processor->state < PROCESSOR_IDLE) {
++			return -1;
++		}
++		thread_bind(processor);
++		thread_block(THREAD_CONTINUE_NULL);     /* (onto it) */
++		return cpu;
++	}
++	return -1;
++}

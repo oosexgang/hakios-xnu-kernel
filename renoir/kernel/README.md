@@ -57,6 +57,84 @@ The renoir port adds minimal patches in `renoir/kernel/patches/`:
    - Modifies `iokit/conf/files` to make `./Tests/TestServices/TestDextRematch.iig.cpp` and `iokit/Tests/TestServices/TestDextRematchKernel.cpp` optional under `iig_test_dext_rematch`.
    - Leaves out internal DriverKit tests whose pre-generated headers are not published in Apple SDKs.
 
+3. **`0003-arm64e-without-pac.patch`**:
+   - Enables plain arm64 ABI compatibility without PAC instruction crashes on ARMv8.2.
+
+4. **`0004-renoir-drivers.patch`**:
+   - Ports core renoir hardware drivers and platform support from darwin-renoir (xnu-8796) into xnu-12377.
+
+## renoir drivers
+
+Hardware support brought into XNU 12377 from `darwin-renoir`:
+
+### What Was Ported
+
+1. **Display & Framebuffer (`MiniIOMobileFramebuffer.cpp` & `bsd/dev/redwood_adreno.c`)**:
+   - Command-mode panel scan synchronization (`redwood_display_scan_start`, `redwood_display_scan` reading INTF1 `INTF_LINE_COUNT` and `INTF_FRAME_COUNT` on Renoir DSI interface `0x0ae6b800`).
+   - Frame timing model calibrated to the panel's TE refresh rate (~60 Hz) without timer drift.
+   - Striped row drawing (`drawShare`) ahead of the panel readout beam for tear-free output.
+   - Dual-buffer RAM backbuffer (`fb_double=1`) option for tear elimination.
+   - Screen console release (`kPEReleaseScreen`) on handover to graphics mode.
+   - Small-core thread binding (`redwood_slow_cores`, `redwood_bind_slow_core` in `osfmk/arm64/psci_smp.c`): binds presenter and scaling helper threads to Cortex-A55 cores (`fb_small=1`) to keep Cortex-A78 cores clear for UI and compositor threads.
+
+2. **Touchscreen (`bsd/dev/renoir_fts.c`, `bsd/dev/renoir_fts_protocol.h`, `bsd/dev/redwood_input.c`)**:
+   - FocalTech FT3658U SPI driver ported from `darwin-renoir`.
+   - Runtime board identification via `redwood_board_is("renoir")` using DT `/chosen/darwin-board`.
+   - APPS DRV2 TCS0 serialization lock (`redwood_rpmh_lock` / `redwood_rpmh_unlock`) in `redwood_input.c`.
+   - Conditional driver dispatch in `redwood_input_init()`: initializes `renoir_fts` on Renoir and `redwood_goodix` on Redwood.
+
+3. **CPU Frequency & DDR Voting (`bsd/dev/redwood_cpufreq.c`)**:
+   - Enabled EPSS 3-domain CPU frequency scaling for Renoir SM7350 (`redwood_board_is("renoir")`).
+   - Enabled RPMh memory bandwidth votes (MC0, SH0, ACV) for Renoir LPDDR4X.
+   - Synchronized RPMh TCS0 slot transactions with `redwood_rpmh_lock()` / `unlock()`.
+
+4. **GPU Adreno 642 (`bsd/dev/redwood_adreno.c`, `bsd/dev/redwood_adreno_profile.h`)**:
+   - Adreno board profile definition for Renoir (chip ID `0x06060010`, GMEM 1536 KB, speed fuse `0x1e1`, gaming fuse `0x1ed`).
+   - Shima speed bin OPP table (285 MHz, 365 MHz, 443 MHz, 490 MHz; default 490 MHz).
+   - A642-specific GMU chip ID mapping (`adreno642_gmu_chip_id`).
+   - Dual-queue almost-full configuration (`uche_cmdq_config` = `0x66906`).
+   - TrustZone zap shader security checks ensuring authentication on Renoir.
+   - Firmware directory redirected to `fw-renoir/`.
+
+5. **CPU Topology & Small-Core Detection (`osfmk/arm64/machine_routines.c`)**:
+   - Device tree parsing of `l2-access-penalty` and `small-core` in `ml_parse_cpu_topology()`.
+   - Flags Cortex-A55 cores with `cpu->l2_access_penalty = 1`, making them visible to `redwood_slow_cores()`.
+   - Note on scheduler pairing: XNU 12377's scheduler refactor removed `processor_primary` / `processor_set_primary`, so secondary pairing remains a no-op; kernel worker binding (`fb_small=1`) directs heavy streaming work onto small cores.
+
+6. **Base Peripherals & Storage Fixes**:
+   - `bsd/dev/redwood_battery.c`: enabled for Renoir resident UEFI state.
+   - `bsd/dev/redwood_buttons.c`: enabled for Renoir PM8350 keys (SID1 GPIO6).
+   - `bsd/dev/redwood_virtio_input.c` / `virtio_net.c`: gated on `redwood_board_is("qemu-virt")`.
+   - `bsd/dev/redwood_lx.c` & `bsd/sys/redwood_lx.h`: early Renoir 80 MiB contiguous radio pool reservation (`lx_reserve_radio_pool`).
+   - `bsd/miscfs/ramfs/ramfs.c`: non-atomic large memory allocation fix (`can_wait` parameter in `ramfs_grow_slots`).
+   - `bsd/miscfs/apfs/apfs_vfsops.c`: RAM-only memory disk fast requests (`am_nx.cheap_requests = true`).
+
+### What Was Not Ported
+
+- **Speaker Amp (`renoir_tfa.c`) & Sound**: NXP TFA9873 amplifier and sound driver rewiring deferred to separate audio work.
+- **Haptics (`renoir_haptic.c`)**: PM8350B linear resonant actuator driver deferred.
+- **Wi-Fi Transport (`renoir_mhi_*`, `renoir_pcie_phy.h`)**: WCN6855 PCIe/MHI link initialization deferred.
+- **Camera Core (`renoir_camera_core.h`, `redwood_camera.c` Renoir paths)**: ISP/CSIPHY pipeline deferred.
+
+### Safe Boot Arguments for Renoir
+
+The following boot-args are verified safe on Renoir:
+
+| Boot Arg | Default | Description |
+|---|---|---|
+| `touchscreen=1` | 0 | Starts FocalTech FT3658U touch controller polling thread |
+| `touch_flip=1` | 0 | Inverts touchscreen axes if required by panel orientation |
+| `fb_scan=1` | 1 | Enables command-mode panel TE readout scan synchronization |
+| `fb_small=1` | 1 | Binds framebuffer drawers and presenter to Cortex-A55 small cores |
+| `fb_threads=4` | 4 | Number of scaling helper threads (1-8, clamped to small core count) |
+| `fb_double=0` | 0 | Set to 1 to enable RAM backbuffering for tear elimination |
+| `cpufreq=1` | 0 | Enables EPSS hardware CPU frequency scaling |
+| `ddr=1` / `ddr=2` | 2 | Enables RPMh memory bus bandwidth voting |
+| `gpu=1` | 0 | Boots Adreno 642 if `fw-renoir` firmware binaries are present |
+| `buttons=1` | 0 | Starts PM8350 side power and volume button monitoring thread |
+| `battery=1` | 0 | Enables resident UEFI battery charge monitoring |
+| `small_cores=2`| 2 | Slower core topology configuration (0: uniform, 1/2: small cores) |
+
 ## Disabled / Stubbed Drivers
 
 To comply with licensing and redistribution requirements:
