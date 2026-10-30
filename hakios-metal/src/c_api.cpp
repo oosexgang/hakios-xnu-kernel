@@ -854,6 +854,8 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     if (pass != nullptr) {
         for (int i = 0; i < 4; i++) d.blendColor[i] = pass->blend_color[i];
         if (pass->depth_state_set) d.depth = DepthState{pass->depth_compare, pass->depth_write != 0};
+        d.cullMode = pass->cull_mode;
+        d.winding = pass->winding;
         if (pass->stencil_state_set) {
             auto face = [](const hakios_metal_render_pass::hakios_metal_stencil_face& f) {
                 return StencilFace{f.compare, f.stencil_fail, f.depth_fail, f.pass, f.read_mask, f.write_mask};

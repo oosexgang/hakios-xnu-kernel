@@ -2520,6 +2520,82 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+                // 9msb. the same at sokol_app's size: 375 x 812, 4x colour and 4x depth. (a) cleared to 40 80 bf ff and
+                // to depth 1, resolved: every pixel the clear colour; (b) then FAR (the pair at 0.75, green) under Less:
+                // every pixel green. A row band the clear or the draw did not reach shows as its first row by number.
+                {
+                    const uint32_t BW = 375, BH = 812;
+                    TextureDesc mc;
+                    mc.type = TextureType::k2DMultisample;
+                    mc.samples = 4;
+                    mc.width = BW;
+                    mc.height = BH;
+                    mc.usage = kTextureUsageRenderTarget;
+                    TextureDesc md = mc;
+                    md.format = PixelFormat::kDepth32Float;
+                    TextureDesc od;
+                    od.width = BW;
+                    od.height = BH;
+                    od.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+                    auto msc = Texture::make(gpu, mc, &why);
+                    auto msd = msc ? Texture::make(gpu, md, &why) : nullptr;
+                    auto out = msd ? Texture::make(gpu, od, &why) : nullptr;
+                    if (out == nullptr) {
+                        report(false, "msaa 375x812: the textures: " + why);
+                    } else {
+                        Program p4 = depthProg;
+                        p4.samples = 4;
+                        for (int draws = 0; draws < 2; draws++) {
+                            fillBo(*out, 0x5a5a5a5au);
+                            RenderPass rp;
+                            rp.color0 = msc.get();
+                            rp.load = LoadAction::kClear;
+                            rp.clearColor[0] = 0.25;
+                            rp.clearColor[1] = 0.5;
+                            rp.clearColor[2] = 0.75;
+                            rp.clearColor[3] = 1.0;
+                            rp.depth = msd.get();
+                            rp.depthLoad = LoadAction::kClear;
+                            rp.depthStore = StoreAction::kStore;
+                            rp.clearDepth = 1.0;
+                            auto cb = queue->commandBuffer();
+                            bool ok;
+                            if (draws == 0) {
+                                ok = cb->clear(rp);
+                            } else {
+                                Draw d = drawOf(0, 6, Viewport{0, 0, double(BW), double(BH), 0, 1});
+                                d.depth = DepthState{1, true};
+                                Bindings vsb;
+                                vsb.buffers = {Binding{farBuf.get(), 0}};
+                                ok = cb->draw(p4, rp, d, vsb, Bindings{});
+                            }
+                            ok = ok && cb->blit(*msc, 0, render::BlitRect{0, 0, BW, BH}, *out, 0, render::BlitRect{0, 0, BW, BH}, false);
+                            if (ok) {
+                                cb->commit();
+                                cb->waitUntilCompleted();
+                            }
+                            const uint32_t want = draws == 0 ? 0xffbf8040u : greenWord;
+                            std::vector<uint8_t> bo = textureBo(*out);
+                            uint32_t right = 0, badRows = 0;
+                            std::string first;
+                            for (uint32_t j = 0; j < BH; j++) {
+                                uint32_t rowRight = 0;
+                                for (uint32_t i = 0; i < BW; i++) {
+                                    uint32_t px;
+                                    memcpy(&px, bo.data() + j * out->bytesPerRow() + uint64_t(i) * 4, 4);
+                                    rowRight += px == want;
+                                    if (px != want && first.empty()) first = "; the first off (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px);
+                                }
+                                right += rowRight;
+                                badRows += rowRight != BW;
+                            }
+                            report(ok && completed(*cb) && right == BW * BH, std::string("msaa 375x812, ") + (draws == 0 ? "cleared" : "the pair drawn under Less") +
+                                                                                 ", resolved: " + std::to_string(right) + " of " + std::to_string(BW * BH) +
+                                                                                 " pixels right, " + std::to_string(badRows) + " rows not" + first +
+                                                                                 (ok ? status(*cb, gpu) : ": " + cb->error()));
+                        }
+                    }
+                }
                 // the refusal: a depth test with no depth attachment
                 RenderPass rp;
                 rp.color0 = t.get();
@@ -4053,6 +4129,39 @@ int main(int argc, char** argv) {
                            std::to_string(outsideRight) + " of " + std::to_string(outside) + " outside the clear colour, " + std::to_string(mixes) +
                             " mixes on the edge (" + (samples == 1 ? "none wanted" : wide ? "8 or more wanted" : "32 or more wanted") + "), " + std::to_string(garbage) + " neither" + first +
                            (drew ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
+        // 9cu. culling: T1's vertices (-1,-1), (1,-1), (-1,1) turn counter-clockwise in Metal's y-up NDC. With Metal's
+        // default winding (Clockwise front) T1 is a back face: a back cull removes it, a front cull keeps it; with
+        // CounterClockwise front it is the front face, the other way round. No cull draws it (the control). Drawn or not
+        // is counted over T1's interior (j > i + 1).
+        {
+            struct CullCase {
+                uint32_t cull, winding;
+                bool drawn;
+                const char* label;
+            };
+            const CullCase cases[] = {{0, 0, true, "no cull"}, {2, 0, false, "back cull, Clockwise front"}, {1, 0, true, "front cull, Clockwise front"},
+                                      {2, 1, true, "back cull, CounterClockwise front"}, {1, 1, false, "front cull, CounterClockwise front"}};
+            for (const CullCase& c : cases) {
+                fillBo(*t, canary);
+                Draw d = drawOf(0, 3);
+                d.cullMode = c.cull;
+                d.winding = c.winding;
+                auto cb = drawInto(*t, flat, d);
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t inside = 0, flatPx = 0, canaryPx = 0;
+                for (uint32_t j = 0; j < H; j++)
+                    for (uint32_t i = 0; i + 1 < j; i++) {
+                        uint32_t px;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        inside++;
+                        flatPx += px == flatColour;
+                        canaryPx += px == canary;
+                    }
+                report(completed(*cb) && (c.drawn ? flatPx == inside : canaryPx == inside),
+                       std::string("cull, ") + c.label + ": " + std::to_string(flatPx) + " of " + std::to_string(inside) + " of T1 drawn, " + std::to_string(canaryPx) +
+                           " canary (" + (c.drawn ? "drawn" : "culled") + " wanted)" + status(*cb, gpu));
             }
         }
 #if defined(__APPLE__)

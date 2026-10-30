@@ -313,6 +313,9 @@ struct hakios_metal_render_pass {
 	unsigned visibility_mode;
 	uint64_t visibility_offset;
 	int visibility_reset;
+	/* -setCullMode: and -setFrontFacingWinding:, each draw reads them: CULL_MODE an MTLCullMode (None 0, Front 1, Back 2),
+	 * WINDING the front face's MTLWinding (Clockwise 0, Metal's default; CounterClockwise 1). Zero is Metal's default for both */
+	unsigned cull_mode, winding;
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

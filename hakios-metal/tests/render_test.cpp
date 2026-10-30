@@ -756,7 +756,7 @@ TEST(render_encodes_the_first_triangles_registers) {
     CHECK_EQ(e.reg(REG_A6XX_RB_RENDER_COMPONENTS), 0xfu);
     // the rasterizer
     CHECK_EQ(e.reg(REG_A6XX_GRAS_CL_CNTL), 0xc0u);
-    CHECK_EQ(e.reg(REG_A6XX_GRAS_SU_CNTL), 0x2010u);
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_SU_CNTL), 0x2014u);   // half-pixel lines, and FRONT_CW: Metal's default Clockwise front (probe 9cu)
     CHECK_EQ(e.reg(REG_A6XX_VPC_POLYGON_MODE), 3u);
     CHECK_EQ(e.reg(REG_A6XX_PC_POLYGON_MODE), 3u);
     CHECK_EQ(e.reg(REG_A6XX_PC_RASTER_CNTL), 0u);
@@ -4410,4 +4410,32 @@ TEST(a_draw_samples_a_depth_texture_through_a_compare_sampler) {
     e.tableWords()[render::kTableFsAt / 4 + 3] &= ~A6XX_TEX_CONST_3_TILE_ALL;
     CHECK_EQ(raw.submit(e.stream.words()), ETIMEDOUT);
     CHECK(has(r.fake->stats().lastFault, "tile mode 3 without TILE_ALL"));
+}
+
+// Culling: MTLCullMode as CULL_FRONT / CULL_BACK, and FRONT_CW for Metal's Clockwise front -- the phone's answer (probe
+// 9cu), the opposite of what the negative y scale suggested; no cull with CounterClockwise is all three bits clear
+TEST(a_draw_culls_as_its_cull_mode_and_winding_say) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto su = [&](uint32_t cull, uint32_t winding) {
+        Draw d = wholeDraw();
+        d.cullMode = cull;
+        d.winding = winding;
+        Encoded e(r, flatProgram(), pass, d);
+        CHECK(e.ok);
+        return e.reg(REG_A6XX_GRAS_SU_CNTL) & (A6XX_GRAS_SU_CNTL_CULL_FRONT | A6XX_GRAS_SU_CNTL_CULL_BACK | A6XX_GRAS_SU_CNTL_FRONT_CW);
+    };
+    CHECK_EQ(su(0, 1), 0u);
+    CHECK_EQ(su(0, 0), A6XX_GRAS_SU_CNTL_FRONT_CW);
+    CHECK_EQ(su(2, 0), A6XX_GRAS_SU_CNTL_CULL_BACK | A6XX_GRAS_SU_CNTL_FRONT_CW);
+    CHECK_EQ(su(1, 1), A6XX_GRAS_SU_CNTL_CULL_FRONT);
+    CHECK_EQ(su(2, 1), A6XX_GRAS_SU_CNTL_CULL_BACK);
+    Draw bad = wholeDraw();
+    bad.cullMode = 3;
+    Encoded e(r, flatProgram(), pass, bad);
+    CHECK(!e.ok);
+    expectRefusal(e.error, "cull mode 3, winding 0: MTLCullMode is 0 to 2, MTLWinding 0 or 1");
 }

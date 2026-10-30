@@ -321,6 +321,8 @@ struct StencilState {
 
 struct Draw {
     Primitive primitive = Primitive::kTriangle;  // step one: kTriangle and kTriangleStrip (DI_PT_TRILIST / DI_PT_TRISTRIP)
+    uint32_t cullMode = 0;                       // MTLCullMode: None 0, Front 1, Back 2
+    uint32_t winding = 0;                        // MTLWinding, the front face's: Clockwise 0, CounterClockwise 1 (in Metal's y-up NDC)
     uint32_t vertexStart = 0;                    // VFD_INDEX_OFFSET: added to vertex_id by VFD_ADD_OFFSET.VERTEX (the static table)
     uint32_t vertexCount = 0;                    // CP_DRAW_INDX_OFFSET's NUM_INDICES (the index count of an indexed draw); 0 refused
     uint32_t instanceCount = 1;                  // NUM_INSTANCES, 1 or more

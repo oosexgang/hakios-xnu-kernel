@@ -1362,6 +1362,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         }
         if (maxIndices > 0xffffffffull) maxIndices = 0xffffffffull;
     }
+    if (draw.cullMode > 2 || draw.winding > 1) {
+        return refuse(why, "cull mode " + n(draw.cullMode) + ", winding " + n(draw.winding) + ": MTLCullMode is 0 to 2, MTLWinding 0 or 1");
+    }
     const auto [W, H] = windowOf(pass);
     const Viewport& vp = draw.viewport;
     if (!finite(vp.x) || !finite(vp.y) || !finite(vp.width) || !finite(vp.height) || !finite(vp.znear) || !finite(vp.zfar)) {
@@ -1769,15 +1772,17 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), components});
     }
     // 15. the rasterizer (tu6_emit_rast, tu_pipeline.cc:3120-3218; fd6_rasterizer.cc:22-140): GRAS_CL_CNTL with Metal's
-    // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL cull none,
-    // FRONT_CW clear (the negative y scale reverses every triangle's winding, so Metal's clockwise default is not copied
-    // until the phone has measured one), half-pixel rectangular lines (0x2010); filled polygons in VPC and PC;
+    // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL the draw's cull
+    // (MTLCullMode Front/Back as CULL_FRONT/CULL_BACK) and its front face: FRONT_CW for Metal's Clockwise. Measured, not
+    // reasoned: the negative y scale did suggest the opposite, and probe 9cu found every case inverted that way -- T1,
+    // counter-clockwise in Metal's NDC, is removed by a back cull only with FRONT_CW set. The facing is judged before the
+    // y flip; half-pixel rectangular lines (0x2010); filled polygons in VPC and PC;
     // PC_RASTER_CNTL and VPC_UNKNOWN_9107 0; point size 1 with turnip's limits; polygon offsets 0; the four shading-rate
     // registers 0 (has_legacy_pipeline_shading_rate); GRAS_SC_CNTL for sysmem (:3351-3380); PC_PRIMITIVE_CNTL_0 0 (the
     // first vertex provokes, no restart)
     if (o.rast) {
         reg(stream, REG_A6XX_GRAS_CL_CNTL, grasClCntl());
-        reg(stream, REG_A6XX_GRAS_SU_CNTL, grasSuCntl(false, false, false));
+        reg(stream, REG_A6XX_GRAS_SU_CNTL, grasSuCntl(draw.cullMode == 1, draw.cullMode == 2, draw.winding == 0));
         reg(stream, REG_A6XX_VPC_POLYGON_MODE, A6XX_VPC_POLYGON_MODE_MODE(POLYMODE6_TRIANGLES));
         reg(stream, REG_A6XX_PC_POLYGON_MODE, A6XX_PC_POLYGON_MODE_MODE(POLYMODE6_TRIANGLES));
         reg(stream, REG_A6XX_PC_RASTER_CNTL, 0);
