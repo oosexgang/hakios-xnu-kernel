@@ -4439,3 +4439,38 @@ TEST(a_draw_culls_as_its_cull_mode_and_winding_say) {
     CHECK(!e.ok);
     expectRefusal(e.error, "cull mode 3, winding 0: MTLCullMode is 0 to 2, MTLWinding 0 or 1");
 }
+
+// A slice as a render target (sokol's cubemaprt draws each face of a cube): RB_MRT_BASE the face's memory, slices
+// sliceBytes apart; face 0 is the control (the texture's own address), and a face past the six is refused.
+TEST(a_draw_into_a_cube_face_aims_at_that_face) {
+    using namespace a6xx;
+    Rig r;
+    TextureDesc d;
+    d.type = TextureType::kCube;
+    d.width = d.height = 64;
+    d.depth = 6;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    std::string why;
+    auto cube = Texture::make(*r.gpu, d, &why);
+    CHECK(cube != nullptr);
+    if (cube == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    auto base = [](const Encoded& e) { return uint64_t(e.reg(REG_A6XX_RB_MRT_BASE)) | uint64_t(e.reg(REG_A6XX_RB_MRT_BASE + 1)) << 32; };
+    RenderPass pass;
+    pass.color0 = cube.get();
+    Encoded e0(r, flatProgram(), pass, wholeDraw());
+    CHECK(e0.ok);
+    CHECK_EQ(base(e0), cube->gpuAddress());
+    pass.slice = 3;
+    Encoded e3(r, flatProgram(), pass, wholeDraw());
+    CHECK(e3.ok);
+    CHECK_EQ(base(e3), cube->gpuAddress() + 3 * cube->sliceBytes());
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw());
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    pass.slice = 6;
+    Encoded e6(r, flatProgram(), pass, wholeDraw());
+    CHECK(!e6.ok);
+    expectRefusal(e6.error, "slice 6 of a texture of 6");
+}

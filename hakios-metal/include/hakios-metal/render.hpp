@@ -270,11 +270,13 @@ struct ColorAttachment {
     LoadAction load = LoadAction::kLoad;
     StoreAction store = StoreAction::kStore;
     double clearColor[4] = {0, 0, 0, 0};
+    uint32_t slice = 0;                          // a 2D array's layer, a cube's face or a 3D texture's depth plane drawn into
 };
 
 struct RenderPass {
     const Texture* color0 = nullptr;             // made with kTextureUsageRenderTarget
     uint32_t level = 0;                          // its mip level drawn into: the window is that level's size
+    uint32_t slice = 0;                          // its layer, face or depth plane drawn into (as ColorAttachment::slice)
     LoadAction load = LoadAction::kLoad;         // kClear: the 2D engine fills the whole target with clearColor before the draw (turnip's sysmem clear)
     StoreAction store = StoreAction::kStore;
     double clearColor[4] = {0, 0, 0, 0};         // MTLClearColor, RGBA whatever the format's memory order; whole numbers for an integer target

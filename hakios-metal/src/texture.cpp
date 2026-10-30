@@ -263,9 +263,11 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
                         "laid out apart and not for samples here)");
         return nullptr;
     }
-    if (slices && (info->depth || info->twoPlane || info->blockW > 1 || desc.usage != kTextureUsageRead)) {
+    // (a slice texture is sampled, and may be drawn into a slice at a time: the slices are 2D layouts like any target)
+    if (slices && (info->depth || info->twoPlane || info->blockW > 1 || (desc.usage & kTextureUsageRead) == 0 ||
+                   (desc.usage & ~(kTextureUsageRead | kTextureUsageRenderTarget)) != 0)) {
         refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : desc.type == TextureType::kCube ? "cube " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
-                        ": one of an uncompressed colour format, sampled alone, is served");
+                        ": one of an uncompressed colour format, sampled (1), and drawn into a slice at a time too (5), is served");
         return nullptr;
     }
     const uint32_t memoryWidth = desc.width * desc.samples;   // the width of its memory: a multisample texture's samples side by side

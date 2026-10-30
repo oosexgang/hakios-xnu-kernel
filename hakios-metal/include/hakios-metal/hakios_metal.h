@@ -291,6 +291,7 @@ struct hakios_metal_render_pass {
 		unsigned load_action, store_action;
 		double clear_color[4];
 		unsigned level;                   /* the mip level drawn into */
+		unsigned slice;                   /* the 2D array's layer, cube's face or 3D texture's plane drawn into */
 	} more[7];
 	unsigned color0_level;                    /* color0's mip level drawn into (MTLRenderPassAttachmentDescriptor.level) */
 	/* the stencil attachment: the depth texture itself when it is Depth32Float_Stencil8 (260), or NULL; its MTLLoadAction,
@@ -316,6 +317,7 @@ struct hakios_metal_render_pass {
 	/* -setCullMode: and -setFrontFacingWinding:, each draw reads them: CULL_MODE an MTLCullMode (None 0, Front 1, Back 2),
 	 * WINDING the front face's MTLWinding (Clockwise 0, Metal's default; CounterClockwise 1). Zero is Metal's default for both */
 	unsigned cull_mode, winding;
+	unsigned color0_slice;                    /* color0's layer, face or plane drawn into (MTLRenderPassAttachmentDescriptor.slice) */
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

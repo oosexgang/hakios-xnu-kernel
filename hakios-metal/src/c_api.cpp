@@ -744,6 +744,7 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
     if (pass == nullptr) return rp;
     rp.color0 = pass->color0 != nullptr ? pass->color0->texture.get() : nullptr;
     rp.level = pass->color0_level;
+    rp.slice = pass->color0_slice;
     rp.load = LoadAction(pass->load_action);
     rp.store = StoreAction(pass->store_action);
     for (int i = 0; i < 4; i++) rp.clearColor[i] = pass->clear_color[i];
@@ -751,6 +752,7 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
         const auto& m = pass->more[i];
         rp.more[i].texture = m.texture != nullptr ? m.texture->texture.get() : nullptr;
         rp.more[i].level = m.level;
+        rp.more[i].slice = m.slice;
         rp.more[i].load = LoadAction(m.load_action);
         rp.more[i].store = StoreAction(m.store_action);
         for (int c = 0; c < 4; c++) rp.more[i].clearColor[c] = m.clear_color[c];

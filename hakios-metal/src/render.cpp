@@ -120,15 +120,17 @@ a6xx_format mrtFormatOf(uint32_t bufInfo) {
 }
 
 // (at mip level LEVEL: its address and its pitch -- fdl6_view_init's base_miplevel, the RB told the level alone)
-MrtWords mrtWords(const Texture& t, uint32_t level) {
+MrtWords mrtWords(const Texture& t, uint32_t level, uint32_t slice = 0) {
     const FormatInfo& f = t.info();
     const TextureLevel L = t.level(level);
     MrtWords m{};
+    // (a layer, a face or a depth plane: the slices are one 2D layout each, sliceBytes apart -- fd6_layout.c's layer_size)
+    const uint64_t base = t.levelAddress(level) + (slice != 0 ? uint64_t(slice) * t.sliceBytes() : 0);
     m.bufInfo = rbMrtBufInfo(f.fmt6, TILE6_LINEAR, f.swap);
     m.pitch = rbMrtPitch(uint32_t(L.pitch));
     m.arrayPitch = rbMrtArrayPitch(uint32_t(t.buffer()->length()));
-    m.baseLo = uint32_t(t.levelAddress(level));
-    m.baseHi = uint32_t(t.levelAddress(level) >> 32);
+    m.baseLo = uint32_t(base);
+    m.baseHi = uint32_t(base >> 32);
     m.baseGmem = 0;
     m.spFsMrtReg = spFsMrtReg(f.fmt6, f.element == kElemInt, f.element == kElemUint);
     m.srgb = f.srgb;
@@ -533,6 +535,7 @@ struct Attachment {
     LoadAction load;
     StoreAction store;
     const double* clearColor;
+    uint32_t slice = 0;   // the layer, face or depth plane: its memory is that many slices on (Texture::sliceBytes)
 };
 Attachment attachmentOf(const RenderPass& p, uint32_t i);
 
@@ -565,9 +568,9 @@ const Texture* firstAttachment(const RenderPass& pass) {
 }
 
 Attachment attachmentOf(const RenderPass& p, uint32_t i) {
-    if (i == 0) return Attachment{p.color0, p.level, p.load, p.store, p.clearColor};
+    if (i == 0) return Attachment{p.color0, p.level, p.load, p.store, p.clearColor, p.slice};
     const ColorAttachment& c = p.more[i - 1];
-    return Attachment{c.texture, c.level, c.load, c.store, c.clearColor};
+    return Attachment{c.texture, c.level, c.load, c.store, c.clearColor, c.slice};
 }
 
 bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, StageTextures* out, std::string* why) {
@@ -589,6 +592,10 @@ bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, S
             if (a.texture == nullptr) {
                 return refuse(why, name + " reads [[color(" + n(kt.fbTarget - 1u) + ")]] through framebuffer fetch and the pass has no colour attachment " +
                                        n(kt.fbTarget - 1u));
+            }
+            if (a.slice != 0) {
+                return refuse(why, name + " reads [[color(" + n(kt.fbTarget - 1u) + ")]] through framebuffer fetch from slice " + n(a.slice) +
+                                       ": a fetch from a layer, face or plane past the first is not served");
             }
             const TexConst d = a.texture->levelDescriptor(a.level);
             memcpy(out->texWords[t], d.dword, sizeof d.dword);
@@ -816,7 +823,7 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
 // tu_clear_sysmem_attachment does after it (:4480-4489): the colour CCU cleaned (PC_CCU_FLUSH_COLOR_TS in the
 // 4-word form, waited for, as the tail does it) and invalidated, a WFI -- so that the draw's colour writes, which go
 // through the same CCU, start after the fill landed.
-void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile, uint32_t level = 0) {
+void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile, uint32_t level = 0, uint32_t slice = 0) {
     const FormatInfo& f = target.info();
     const TextureLevel L = target.level(level);
     // (a multisample target is filled as the wider texture its memory is: every sample of every pixel the colour. A tiled
@@ -825,7 +832,7 @@ void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c,
     const bool wholeLayout = tile != TILE6_LINEAR && target.samples() > 1;
     const uint32_t W = wholeLayout ? uint32_t(L.pitch / f.bytesPerPixel) : L.width * target.samples();
     const uint32_t H = wholeLayout ? (L.height + 15) / 16 * 16 : L.height;
-    const uint64_t at = target.levelAddress(level);
+    const uint64_t at = target.levelAddress(level) + (slice != 0 ? uint64_t(slice) * target.sliceBytes() : 0);
     const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
     reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
@@ -838,8 +845,8 @@ void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c,
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
 }
 
-void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts, uint32_t level = 0) {
-    fillStream(stream, target, c, TILE6_LINEAR, level);
+void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, uint64_t ts, uint32_t level = 0, uint32_t slice = 0) {
+    fillStream(stream, target, c, TILE6_LINEAR, level, slice);
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, ts, kClearFlushValue, false);
     waitForWord(stream, ts, kClearFlushValue);
     event(stream, PC_CCU_INVALIDATE_COLOR);
@@ -922,8 +929,15 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
             return refuse(why, "the " + n(t.width()) + " x " + n(t.height()) + " " + f.name + " texture" + of +
                                    " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
         }
-        if (t.type() != TextureType::k2D && t.type() != TextureType::k2DMultisample) {
-            return refuse(why, at + "a colour attachment of texture type " + n(uint32_t(t.type())) + ": 2D (2) and 2D multisample (4) are served");
+        if (t.type() != TextureType::k2D && t.type() != TextureType::k2DMultisample && t.type() != TextureType::k2DArray && t.type() != TextureType::kCube &&
+            t.type() != TextureType::k3D) {
+            return refuse(why, at + "a colour attachment of texture type " + n(uint32_t(t.type())) +
+                                   ": 2D (2), 2D multisample (4), a 2D array's layer (3), a cube's face (5) and a 3D texture's plane (7) are served");
+        }
+        // a slice of a 2D array, a cube or a 3D texture (Texture::depth() counts all three: layers, 6 faces, planes)
+        const uint32_t slices = (t.type() == TextureType::k2DArray || t.type() == TextureType::kCube || t.type() == TextureType::k3D) ? t.depth() : 1;
+        if (a.slice >= slices) {
+            return refuse(why, at + "slice " + n(a.slice) + " of a texture of " + n(slices));
         }
         if (!rbMrtPitchValid(uint32_t(t.bytesPerRow())) || t.buffer()->length() >= (1ull << 32)) {
             return refuse(why, at + "the target's pitch of " + n(t.bytesPerRow()) + " bytes or its " + n(t.buffer()->length()) +
@@ -961,7 +975,7 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if ((d.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
         }
-        const Attachment c = attachmentOf(pass, 0).texture != nullptr ? attachmentOf(pass, 0) : Attachment{nullptr, 0, LoadAction::kLoad, StoreAction::kStore, nullptr};
+        const Attachment c = attachmentOf(pass, 0).texture != nullptr ? attachmentOf(pass, 0) : Attachment{nullptr, 0, LoadAction::kLoad, StoreAction::kStore, nullptr, 0};
         if (c.texture != nullptr && (d.width() != c.texture->level(c.level).width || d.height() != c.texture->level(c.level).height)) {
             return refuse(why, "a " + n(d.width()) + " x " + n(d.height()) + " depth attachment beside a " + n(c.texture->width()) + " x " + n(c.texture->height()) +
                                    " colour attachment: Metal asks for the same size");
@@ -1019,7 +1033,7 @@ bool anyColorClear(const RenderPass& pass) {
 void clearAll(pm4::Stream& stream, const RenderPass& pass, const ClearWords c[kMaxColorOutputs], uint64_t table) {
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
-        if (a.texture != nullptr && a.load == LoadAction::kClear) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i), a.level);
+        if (a.texture != nullptr && a.load == LoadAction::kClear) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i), a.level, a.slice);
     }
 }
 
@@ -1423,7 +1437,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
                                uint32_t(d.gpuAddress()), uint32_t(d.gpuAddress() >> 32), 0, spFsMrtReg(rgba.fmt6, false, false), false};
             continue;
         }
-        mrts[i] = mrtWords(*named, a.texture != nullptr ? a.level : named == attachmentOf(pass, 0).texture ? attachmentOf(pass, 0).level : 0);
+        mrts[i] = a.texture != nullptr ? mrtWords(*named, a.level, a.slice)
+                                       : mrtWords(*named, named == attachmentOf(pass, 0).texture ? attachmentOf(pass, 0).level : 0,
+                                                  named == attachmentOf(pass, 0).texture ? attachmentOf(pass, 0).slice : 0);
         if (mrts[i].srgb && fs.colorRegid[i] != kRegidNone) srgbMask |= 1u << i;
     }
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
