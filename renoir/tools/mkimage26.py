@@ -3,11 +3,14 @@
 on its ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (ios26/dyld-strip).
 
-usage: mkimage26.py [--min] OUT.apfs
+usage: mkimage26.py [--min | --prune] OUT.apfs
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
   (default) the files darwin-renoir/ios165/select-system.py chooses, applied to iOS 26
+  --prune the same, smaller for 6 GB of RAM (renoir/docs/ram-budget.md, scenario B): .loctable string
+          tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
+          left out, and Fonts/AppFonts
 
 /sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /redwood and runs its init), the
 real one /sbin/launchd.ios; /System/Library/LaunchDaemons leads to /redwood/LaunchDaemons, as on 16.5.
@@ -32,6 +35,38 @@ CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
 
 MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname', 'usr/bin/sw_vers',
              'usr/bin/id', 'usr/bin/true', 'usr/sbin/sysctl', 'System/Library/CoreServices/SystemVersion.plist']
+
+
+PRUNED_APPS = ('Podcasts', 'Maps', 'Freeform', 'Music', 'Books', 'Setup', 'Journal', 'Bridge', 'Fitness',
+               'SOSBuddy', 'Diagnostics', 'DiagnosticsService', 'SequoiaTranslator', 'Games', 'AppleTV', 'News')
+LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
+
+
+def pruned(rel):
+    if rel.startswith('Applications/'):
+        app = rel.split('/')[1]
+        return app.endswith('PosterApp.app') or app[:-len('.app')] in PRUNED_APPS
+    return rel.startswith('System/Library/Fonts/AppFonts/')
+
+
+def trim_loctable(src, dst):
+    """a .loctable with only the English and Base localizations (and its Loc* keys); False if it is not one"""
+    import plistlib
+    try:
+        with open(src, 'rb') as f:
+            table = plistlib.load(f)
+    except Exception:
+        return False
+    if not isinstance(table, dict):
+        return False
+    kept = {k: v for k, v in table.items() if k in LOCTABLE_KEEP or k.startswith('Loc')}
+    with open(dst, 'wb') as f:
+        plistlib.dump(kept, f, fmt=plistlib.FMT_BINARY)
+    shutil.copystat(src, dst)
+    return True
+
+
+PRUNE = False
 
 
 def is_arm64e_macho(path):
@@ -110,6 +145,8 @@ def place(item):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.lexists(dst):
         os.remove(dst)
+    if PRUNE and rel.endswith('.loctable') and trim_loctable(src, dst):
+        return 0
     if is_arm64e_macho(src):
         r = subprocess.run([PACSTRIP, 'macho', src, dst], capture_output=True, text=True)
         if r.returncode != 0:
@@ -121,7 +158,9 @@ def place(item):
 
 
 def main():
+    global PRUNE
     minimal = '--min' in sys.argv
+    PRUNE = '--prune' in sys.argv
     out = [a for a in sys.argv[1:] if not a.startswith('--')]
     if len(out) != 1:
         sys.exit(__doc__)
@@ -132,6 +171,8 @@ def main():
               'sbin', 'usr/lib', CACHE_DIR):
         os.makedirs(os.path.join(WORK, d), exist_ok=True)
     chosen = list(dict(selection(minimal)).items())      # (one source for each path: the last)
+    if PRUNE:
+        chosen = [(rel, src) for rel, src in chosen if not pruned(rel)]
     with ThreadPoolExecutor(os.cpu_count()) as pool:
         stripped = sum(pool.map(place, chosen))
     # launchd: ours first (stage0), Apple's as launchd.ios
