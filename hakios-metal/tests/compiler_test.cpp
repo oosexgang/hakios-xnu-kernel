@@ -622,6 +622,30 @@ TEST(compiler_matches_the_stage_fixtures) {
             CHECK(s->stage.k.numTextureSlots <= kMaxTextureSlots);
         }
     }
+    // [[point_coord]]: lowered to a VARYING_SLOT_PNTC input (ir3 has no case for the system value and stops the process),
+    // which the link feeds from the point sprite -- PS_REPL S at its first location, T at its second -- with no VS register
+    {
+        std::vector<uint8_t> bc = bitcodeOf("tri_pntc_fs");
+        std::string why;
+        std::shared_ptr<CompiledStage> s = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why);
+        CHECK(s != nullptr);
+        if (s == nullptr) std::printf("       tri_pntc_fs: %s\n", why.c_str());
+        if (s && flatVs) {
+            int pntc = -1;
+            for (uint32_t i = 0; i < s->stage.numInputs; i++) {
+                if (s->stage.inputs[i].slot == 25 && s->stage.inputs[i].bary) pntc = int(i);
+            }
+            CHECK(pntc >= 0);
+            auto linked = linkProgram(flatVs, s, PixelFormat::kRGBA8Unorm, &why);
+            CHECK(linked != nullptr);
+            if (linked == nullptr) std::printf("       %s\n", why.c_str());
+            if (linked && pntc >= 0) {
+                const uint32_t loc = s->stage.inputs[pntc].inloc;
+                const uint32_t mode = linked->program.link.psReplMode[loc / 16] >> ((loc % 16) * 2);
+                CHECK_EQ(mode & 0xfu, uint32_t(a6xx::PS_REPL_S | a6xx::PS_REPL_T << 2));
+            }
+        }
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;

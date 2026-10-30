@@ -447,6 +447,19 @@ bool fixPrefetchSamplers(nir_shader* nir, ir3_shader_variant* v, std::string* na
 // and 1/64 in float. CoreAnimation's rounded-rect coverage is fwidth of a half texcoord, and with the wrong one its
 // edges were noise. The value is widened, its derivative taken, and narrowed again; the same pass is in the fixture
 // writer (tools/mesa/ir3-dump.patch: lower_half_derivatives), so the fixtures are what compileStage makes.
+// load_point_coord as a load of a vec2 shader input at VARYING_SLOT_PNTC, one variable for every read of it
+bool lowerPointCoord(nir_builder* b, nir_intrinsic_instr* intr, void*) {
+    if (intr->intrinsic != nir_intrinsic_load_point_coord) return false;
+    nir_variable* pc = nir_find_variable_with_location(b->shader, nir_var_shader_in, VARYING_SLOT_PNTC);
+    if (pc == nullptr) {
+        pc = nir_create_variable_with_location(b->shader, nir_var_shader_in, VARYING_SLOT_PNTC, glsl_vec_type(2));
+    }
+    b->cursor = nir_before_instr(&intr->instr);
+    nir_def_rewrite_uses(&intr->def, nir_load_var(b, pc));
+    nir_instr_remove(&intr->instr);
+    return true;
+}
+
 bool lowerHalfDerivative(nir_builder* b, nir_intrinsic_instr* intr, void*) {
     switch (intr->intrinsic) {
     case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
@@ -539,6 +552,14 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     // what the consumer owes before ir3: the front end emits NIR's own system values, as the SPIR-V one does
     nir_lower_system_values(nir);
     nir_lower_compute_system_values(nir, nullptr);   // a no-op outside compute, run for every stage as ir3_cmdline.c runs it
+    // [[point_coord]] is a varying the hardware fills for a point sprite (VPC_VARYING_PS_REPL_MODE), not a system value
+    // ir3 knows: left as load_point_coord, ir3 reports "Unhandled intrinsic" and then reaches unreachable(), which a
+    // release build turns into a trap in the application -- backboardd, for CoreAnimation's fixed_frag_lph_cpf. turnip
+    // has it as a VARYING_SLOT_PNTC input (nir_lower_sysvals_to_varyings, which takes the system-value variable; the
+    // front end emits the intrinsic itself, hence lowerPointCoord); the link gives that input its replacement.
+    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
+        nir_shader_intrinsics_pass(nir, lowerPointCoord, nir_metadata_control_flow, nullptr);
+    }
     if (order == PassOrder::kCompute) {
         nir_lower_io(nir, nir_variable_mode(nir_var_shader_in | nir_var_shader_out), ir3_glsl_type_size,
                      nir_lower_io_use_interpolated_input_intrinsics);

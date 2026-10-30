@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,906 @@
+@@ -35,19 +37,921 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -472,6 +472,21 @@ SPDX-License-Identifier: MIT
 +   nir_def_init(&d->instr, &d->def, intr->num_components, 32);
 +   nir_builder_instr_insert(b, &d->instr);
 +   nir_def_rewrite_uses(&intr->def, nir_f2f16(b, &d->def));
++   nir_instr_remove(&intr->instr);
++   return true;
++}
++
++static bool
++lower_point_coord(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   (void)data;
++   if (intr->intrinsic != nir_intrinsic_load_point_coord)
++      return false;
++   nir_variable *pc = nir_find_variable_with_location(b->shader, nir_var_shader_in, VARYING_SLOT_PNTC);
++   if (!pc)
++      pc = nir_create_variable_with_location(b->shader, nir_var_shader_in, VARYING_SLOT_PNTC, glsl_vec_type(2));
++   b->cursor = nir_before_instr(&intr->instr);
++   nir_def_rewrite_uses(&intr->def, nir_load_var(b, pc));
 +   nir_instr_remove(&intr->instr);
 +   return true;
 +}
@@ -979,7 +994,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +1187,7 @@
+@@ -298,6 +1202,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -987,7 +1002,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +1196,16 @@
+@@ -306,13 +1211,16 @@
     return nir;
  }
  
@@ -1005,7 +1020,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +1217,9 @@
+@@ -324,6 +1232,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -1015,7 +1030,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1237,7 @@
+@@ -341,6 +1252,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -1023,7 +1038,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1252,15 @@
+@@ -355,6 +1267,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -1039,7 +1054,7 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -433,7 +1339,9 @@
+@@ -433,7 +1354,9 @@
           .chip_id = chip_id,
     };
     compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
@@ -1050,7 +1065,7 @@ SPDX-License-Identifier: MIT
  
     if (air_file) {
        nir = load_air(air_file, air_entry);
-@@ -444,8 +1352,20 @@
+@@ -444,8 +1367,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -1073,7 +1088,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,10 +1406,24 @@
+@@ -486,10 +1421,27 @@
        return -1;
     }
  
@@ -1091,6 +1106,9 @@ SPDX-License-Identifier: MIT
  
 +   /* hakios-metal's compileStage takes a 16-bit derivative at 32 bits (src/compiler.cpp:
 +    * lowerHalfDerivative says why); so does the fixture */
++   /* and its [[point_coord]] as a VARYING_SLOT_PNTC input (src/compiler.cpp: lowerPointCoord) */
++   if (nir->info.stage == MESA_SHADER_FRAGMENT)
++      nir_shader_intrinsics_pass(nir, lower_point_coord, nir_metadata_control_flow, NULL);
 +   nir_shader_intrinsics_pass(nir, lower_half_derivatives, nir_metadata_control_flow, NULL);
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &options, nir);
@@ -1098,7 +1116,7 @@ SPDX-License-Identifier: MIT
  
     struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
     shader->compiler = compiler;
-@@ -497,12 +1431,24 @@
+@@ -497,12 +1449,24 @@
     shader->nir = nir;
  
     ir3_nir_post_finalize(shader);
@@ -1123,7 +1141,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1466,20 @@
+@@ -520,7 +1484,20 @@
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }

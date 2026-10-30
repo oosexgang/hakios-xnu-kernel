@@ -31,10 +31,16 @@ namespace {
 // varyings start at 32, VARn = 32 + n; the slots between are GL's fixed-function ones, which the front end never emits
 constexpr uint8_t kVaryingSlotPos = 0;
 constexpr uint8_t kVaryingSlotVar0 = 32;
+constexpr uint8_t kVaryingSlotPntc = 25;   // [[point_coord]] (compiler.cpp lowers it to this input), filled by the VPC
 
 // VPC_VARYING_INTERP_MODE's two-bit field per component: INTERP_SMOOTH 0, INTERP_FLAT 1, INTERP_ZERO 2, INTERP_ONE 3
 // (a6xx.xml.h enum a6xx_varying_interp_mode); 16 components per register (tu_pipeline.cc tu6_emit_vpc_varying_modes)
 constexpr uint32_t kInterpFlat = 1;
+constexpr uint32_t kInterpZero = 2;
+constexpr uint32_t kInterpOne = 3;
+// VPC_VARYING_PS_REPL_MODE's: the point sprite's S and T (a6xx.xml.h enum a6xx_varying_ps_repl_mode)
+constexpr uint32_t kPsReplS = 1;
+constexpr uint32_t kPsReplT = 2;
 
 std::string slotName(uint8_t slot) {
     if (slot == kVaryingSlotPos) return "POS";
@@ -95,6 +101,24 @@ bool link(const Stage& vs, const Stage& fs, Linkage* out, std::string* why) {
         const StageInput& in = fs.inputs[j];
         if (in.compmask == 0 || !in.bary) continue;
         if (in.inloc >= fs.totalIn) continue;
+        if (in.slot == kVaryingSlotPntc) {
+            // no VS register: the VPC writes S and T for a point sprite, and the z and w a vec4 read would see as 0 and
+            // 1, at the input's packed components (tu6_vpc_varying_mode). Metal's point_coord has its origin at the
+            // top left, as Vulkan's has, so T and not ONE_MINUS_T. On a primitive that is not a point Metal leaves
+            // the value undefined.
+            if (!linkAdd(l, in.slot, a6xx::kRegidNone, in.compmask, in.inloc)) {
+                return refuse(why, "the link holds " + std::to_string(kMaxStageOutputs) + " entries and the fragment stage reads more varyings than that");
+            }
+            uint32_t loc = in.inloc;
+            const uint32_t repl[2] = {kPsReplS, kPsReplT}, interp[2] = {kInterpZero, kInterpOne};
+            for (uint32_t c = 0; c < 4; c++) {
+                if (((in.compmask >> c) & 1) == 0) continue;
+                if (c < 2) l.psReplMode[loc / 16] |= repl[c] << ((loc % 16) * 2);
+                else l.interpMode[loc / 16] |= interp[c - 2] << ((loc % 16) * 2);
+                loc++;
+            }
+            continue;
+        }
         int k = findOutput(vs, in.slot);
         if (k < 0) {
             return refuse(why, "the fragment stage reads varying slot " + std::to_string(in.slot) + " (" + slotName(in.slot) +
@@ -135,7 +159,7 @@ bool link(const Stage& vs, const Stage& fs, Linkage* out, std::string* why) {
     for (uint32_t i = 0; i < fs.numColorOutputs && i < kMaxColorOutputs; i++) {
         if (fs.colorRegid[i] != a6xx::kRegidNone) l.mrtComponents |= 0xfu << (i * 4);
     }
-    // psReplMode stays all zeros: no point sprites (fd6 writes the eight registers so; render.hpp)
+    // psReplMode is zero but for a [[point_coord]] input's (above); fd6 writes all eight registers so (render.hpp)
     *out = l;
     return true;
 }
