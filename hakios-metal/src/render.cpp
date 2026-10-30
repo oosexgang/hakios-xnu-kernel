@@ -948,12 +948,13 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
                                    " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
         }
         if (t.type() != TextureType::k2D && t.type() != TextureType::k2DMultisample && t.type() != TextureType::k2DArray && t.type() != TextureType::kCube &&
-            t.type() != TextureType::k3D) {
+            t.type() != TextureType::k3D && t.type() != TextureType::kCubeArray) {
             return refuse(why, at + "a colour attachment of texture type " + n(uint32_t(t.type())) +
-                                   ": 2D (2), 2D multisample (4), a 2D array's layer (3), a cube's face (5) and a 3D texture's plane (7) are served");
+                                   ": 2D (2), 2D multisample (4), a 2D array's layer (3), a cube's or cube array's face (5, 6) and a 3D texture's plane (7) are served");
         }
-        // a slice of a 2D array, a cube or a 3D texture (Texture::depth() counts all three: layers, 6 faces, planes)
-        const uint32_t slices = (t.type() == TextureType::k2DArray || t.type() == TextureType::kCube || t.type() == TextureType::k3D) ? t.depth() : 1;
+        // a slice of a 2D array, a cube (array) or a 3D texture (Texture::depth() counts them all: layers, faces, planes)
+        const uint32_t slices = (t.type() == TextureType::k2DArray || t.type() == TextureType::kCube || t.type() == TextureType::kCubeArray ||
+                                 t.type() == TextureType::k3D) ? t.depth() : 1;
         if (a.slice >= slices) {
             return refuse(why, at + "slice " + n(a.slice) + " of a texture of " + n(slices));
         }

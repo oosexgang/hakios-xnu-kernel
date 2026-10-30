@@ -123,8 +123,10 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     }
     // the refusals, each on its sentence
     TextureDesc d;
-    d.type = TextureType::kCubeArray;
-    CHECK(has(refusedMake(r, d), "texture type 6 (CubeArray): 1D (0), 2D (2), 2D array (3), 2D multisample (4), cube (5) and 3D (7) are served"));
+    d.type = TextureType::kCubeArray;   // one face: a cube array is six a cube
+    CHECK(has(refusedMake(r, d), "square faces, 6 a cube"));
+    d.type = TextureType(8);
+    CHECK(has(refusedMake(r, d), "MTLTextureType is 0 to 7"));
     d.type = TextureType::k3D;
     d.mipLevels = 2;
     d.width = d.height = 4;

@@ -528,6 +528,8 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
     // more than one layer (a 2D array, or a 3D view's slices): each its rows ARRAY_PITCH after the last, as fdl6_layout
     // lays them out 4 KiB aligned (fd6_layout.c:245-262), and the last layer inside the same buffer as the first
     uint32_t depth = fieldOf(d[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT);
+    // (a cube view counts cubes: its layers are six times DEPTH)
+    if (fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) == A6XX_TEX_CUBE) depth *= 6;
     if (depth == 0) {
         fault(who + ": DEPTH 0");
         return false;
@@ -712,8 +714,8 @@ bool FakeGpu::execCs(const uint32_t* p, uint32_t count, bool indirect) {
             memcpy(d, texBytes + 64 * i, sizeof d);
             if (allZero(d, kTexConstDwords)) continue;   // Gallium's dummy_view for a slot the kernel does not read
             const uint32_t ty = fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT);
-            if (ty != A6XX_TEX_2D && ty != A6XX_TEX_3D) {
-                fault(text("texture %llu is of type %llu: not the 2D or 3D descriptor this GPU model runs", i, fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
+            if (ty != A6XX_TEX_2D && ty != A6XX_TEX_3D && ty != A6XX_TEX_1D && ty != A6XX_TEX_CUBE) {
+                fault(text("texture %llu is of type %llu: not a 1D, 2D, cube or 3D descriptor this GPU model runs", i, fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
                 return false;
             }
             if (!check2d(d, "texture", i, true)) {
@@ -1346,8 +1348,8 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             memcpy(t, texBytes + 64 * i, sizeof t);
             if (allZero(t, kTexConstDwords)) continue;
             const uint32_t ty = fieldOf(t[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT);
-            if (ty != A6XX_TEX_2D && ty != A6XX_TEX_3D) {
-                fault(L + text(" texture %llu is of type %llu: not the 2D or 3D descriptor this GPU model runs", i, fieldOf(t[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
+            if (ty != A6XX_TEX_2D && ty != A6XX_TEX_3D && ty != A6XX_TEX_1D && ty != A6XX_TEX_CUBE) {
+                fault(L + text(" texture %llu is of type %llu: not a 1D, 2D, cube or 3D descriptor this GPU model runs", i, fieldOf(t[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT)));
                 return false;
             }
             if (!check2d(t, (L + " texture").c_str(), i, true)) {

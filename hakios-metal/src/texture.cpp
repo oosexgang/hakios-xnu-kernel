@@ -227,11 +227,14 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
     // multiplies cpp by the count (fd6_layout.c:134), so in the linear layout it is the memory of a single-sample
     // texture SAMPLES times as wide -- the RB writes it under DEST_MSAA_CNTL's count, the 2D engine resolves it reading
     // SAMPLES of them a pixel, and a Clear fills it as the wider texture it is in memory.
-    const bool slices = desc.type == TextureType::k3D || desc.type == TextureType::k2DArray || desc.type == TextureType::kCube;
+    // (a 1D array is the 2D array's layout one row high under TYPE 1D; a cube array the cube's, six faces a cube, under
+    // TYPE CUBE with DEPTH the cubes: fdl6_view_init's views of both, fd6_view.c:172-182)
+    const bool slices = desc.type == TextureType::k3D || desc.type == TextureType::k2DArray || desc.type == TextureType::kCube ||
+                        desc.type == TextureType::k1DArray || desc.type == TextureType::kCubeArray;
     const bool multisample = desc.type == TextureType::k2DMultisample;
     if (desc.type != TextureType::k2D && desc.type != TextureType::k1D && !slices && !multisample) {
         refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) +
-                        "): 1D (0), 2D (2), 2D array (3), 2D multisample (4), cube (5) and 3D (7) are served");
+                        "): MTLTextureType is 0 to 7");
         return false;
     }
     if (multisample != (desc.samples != 1) || (multisample && desc.samples != 2 && desc.samples != 4)) {
@@ -240,6 +243,10 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
     }
     if (desc.type == TextureType::kCube && (desc.depth != 6 || desc.width != desc.height)) {
         refuse(why, "a cube of " + n(desc.width) + " x " + n(desc.height) + " with " + n(desc.depth) + " faces: square faces, 6 of them");
+        return false;
+    }
+    if (desc.type == TextureType::kCubeArray && (desc.depth == 0 || desc.depth % 6 != 0 || desc.width != desc.height)) {
+        refuse(why, "a cube array of " + n(desc.width) + " x " + n(desc.height) + " with " + n(desc.depth) + " faces: square faces, 6 a cube");
         return false;
     }
     if (slices && (desc.depth == 0 || desc.depth > 2048 || desc.mipLevels != 1)) {
@@ -251,7 +258,7 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
         refuse(why, "a depth of " + n(desc.depth) + " for a texture of type " + n(uint32_t(desc.type)) + ": only a 3D texture or a 2D array has slices");
         return false;
     }
-    if (desc.type == TextureType::k1D && desc.height != 1) {
+    if ((desc.type == TextureType::k1D || desc.type == TextureType::k1DArray) && desc.height != 1) {
         refuse(why, "a 1D texture " + n(desc.height) + " high: a 1D texture is one row");
         return false;
     }
@@ -310,7 +317,8 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
     // (a slice texture is sampled or stored by a kernel, and may be drawn into a slice at a time: the slices are 2D layouts
     // like any target, and a kernel's store reaches slice z through the storage view's ARRAY_PITCH. A cube is not stored:
     // a kernel addressing one is refused at its dispatch, so its usage stays what is served)
-    const uint32_t sliceUsage = desc.type == TextureType::kCube ? kTextureUsageRead | kTextureUsageRenderTarget
+    const uint32_t sliceUsage = desc.type == TextureType::kCube || desc.type == TextureType::kCubeArray || desc.type == TextureType::k1DArray
+                                    ? kTextureUsageRead | kTextureUsageRenderTarget
                                                                : kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget;
     if (slices && (info->depth || info->twoPlane || info->blockW > 1 || (desc.usage & (kTextureUsageRead | kTextureUsageWrite)) == 0 ||
                    (desc.usage & ~sliceUsage) != 0)) {
@@ -440,13 +448,16 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
 }
 
 uint64_t Texture::sliceBytes() const {
-    return desc_.type == TextureType::k3D || desc_.type == TextureType::k2DArray || desc_.type == TextureType::kCube ? (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096 : 0;
+    return desc_.type == TextureType::k3D || desc_.type == TextureType::k2DArray || desc_.type == TextureType::kCube ||
+                   desc_.type == TextureType::k1DArray || desc_.type == TextureType::kCubeArray
+               ? (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096 : 0;
 }
 
 namespace {
 bool slicesFit(const Texture& t, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, uint64_t bytesPerRow, uint64_t bytesPerImage,
                std::string* why) {
-    if (t.type() != TextureType::k3D && t.type() != TextureType::k2DArray && t.type() != TextureType::kCube) {
+    if (t.type() != TextureType::k3D && t.type() != TextureType::k2DArray && t.type() != TextureType::kCube && t.type() != TextureType::k1DArray &&
+        t.type() != TextureType::kCubeArray) {
         return refuse(why, "slices of a texture that is not 3D, a 2D array or a cube");
     }
     if (t.contents() == nullptr) return refuse(why, "the texture's memory is mapped nowhere in this process");
@@ -501,14 +512,15 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes())) | A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t(sliceBytes()));
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
     }
-    if (desc_.type == TextureType::kCube) {
-        // a cube view (fd6_view.c:178-182, 247-249): TYPE CUBE, DEPTH the layers over 6, ARRAY_PITCH one face
+    if (desc_.type == TextureType::kCube || desc_.type == TextureType::kCubeArray) {
+        // a cube view (fd6_view.c:178-182, 247-249): TYPE CUBE, DEPTH the layers over 6 (the cubes), ARRAY_PITCH one face
         d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_CUBE);
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes()));
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth / 6);
     }
-    if (desc_.type == TextureType::k2DArray) {
-        // an array view (fd6_view.c:172-177, 247-249): TYPE 2D, DEPTH the layers, ARRAY_PITCH one layer
+    if (desc_.type == TextureType::k2DArray || desc_.type == TextureType::k1DArray) {
+        // an array view (fd6_view.c:172-177, 247-249): TYPE 2D (1D for a 1D array), DEPTH the layers, ARRAY_PITCH one layer
+        if (desc_.type == TextureType::k1DArray) d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(A6XX_TEX_1D);
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes()));
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
     }
@@ -566,8 +578,8 @@ bool Texture::isShaped(const KernelTexture& t) const {
     case TextureType::k3D: return t.dim == kTexDim3D;
     case TextureType::kCube: return t.dim == kTexDimCube && !t.isArray;
     case TextureType::k2DMultisample: return t.dim == kTexDimMS && !t.isArray;
-    case TextureType::k1DArray:
-    case TextureType::kCubeArray: return false;   // Texture::make makes neither
+    case TextureType::k1DArray: return t.dim == kTexDim1D && t.isArray;
+    case TextureType::kCubeArray: return t.dim == kTexDimCube && t.isArray;
     }
     return false;
 }
@@ -699,7 +711,7 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
                                        uint32_t baseSlice, uint32_t slices, std::string* why) {
     const Texture& p = *parent;
     const FormatInfo* info = formatInfo(format);
-    const bool layered = p.type() == TextureType::k2DArray || p.type() == TextureType::kCube;
+    const bool layered = p.type() == TextureType::k2DArray || p.type() == TextureType::kCube || p.type() == TextureType::kCubeArray;
     const uint32_t parentSlices = layered ? p.depth() : 1;
     const std::string asked = "a view in pixel format " + n(uint32_t(format)) + ", type " + n(uint32_t(type)) + ", levels " + n(baseLevel) + "+" + n(levels) +
                               ", slices " + n(baseSlice) + "+" + n(slices) + " of a " + p.info().name + " texture of type " + n(uint32_t(p.type())) + " with " +

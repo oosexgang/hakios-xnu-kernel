@@ -68,6 +68,8 @@
 #include "../tests/fixtures/tri_arr_vs_air.hpp"
 #include "../tests/fixtures/tri_ms_fs_air.hpp"
 #include "../tests/fixtures/tri_cube_fs_air.hpp"
+#include "../tests/fixtures/tri_cuba_fs_air.hpp"
+#include "../tests/fixtures/tri_tex1da_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
@@ -2546,6 +2548,82 @@ int main(int argc, char** argv) {
                     else if (detail.empty()) detail = "; axis " + std::to_string(f) + ": " + std::to_string(right) + " pixels its face, pixel (0, 0) " + hex8(px0);
                 }
                 report(drewAll && rightFaces == 6, "tri_cube along the six axes of a 4x4 cube: " + std::to_string(rightFaces) + " of 6 draws the whole target the face the axis names" + detail);
+            }
+        }
+        // 9j7. a cube array and a 1D array, sampled. The cube array: three 4x4 cubes, face k of the 18 all one colour of its own,
+        // read by tri_cuba_fs along each axis of each cube: the whole target that face's colour (a wrong cube or face is
+        // another colour). The 1D array: 8 texels x 4 layers, each its own colour, read by tri_tex1da_fs at texel x of
+        // layer l for several pairs: the whole target that texel's colour
+        {
+            auto colourOf = [](uint32_t k) { return 0xff000000u | (0xf0u - 0x0du * k) << 16 | (0x0bu * k + 7) << 8 | (k + 1); };
+            std::string awhy;
+            TextureDesc cd;
+            cd.type = TextureType::kCubeArray;
+            cd.width = cd.height = 4;
+            cd.depth = 18;
+            auto cuba = Texture::make(gpu, cd, &awhy);
+            std::vector<uint32_t> faces(18 * 16);
+            for (uint32_t k = 0; k < 18; k++)
+                for (uint32_t q = 0; q < 16; q++) faces[k * 16 + q] = colourOf(k);
+            TextureDesc ld;
+            ld.type = TextureType::k1DArray;
+            ld.width = 8;
+            ld.height = 1;
+            ld.depth = 4;
+            auto arr1 = Texture::make(gpu, ld, &awhy);
+            std::vector<uint32_t> texels(8 * 4);
+            for (uint32_t k = 0; k < 32; k++) texels[k] = colourOf(k + 20);
+            Sampler asmp;
+            auto cbuf2 = newBuffer(gpu, 32, &awhy);
+            if (cuba == nullptr || arr1 == nullptr || cbuf2 == nullptr || !cuba->replaceSlices(0, 0, 0, 4, 4, 18, faces.data(), 16, 64, &awhy) ||
+                !arr1->replaceSlices(0, 0, 0, 8, 1, 4, texels.data(), 32, 32, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
+                report(false, "cube array and 1D array: " + awhy);
+            } else {
+                auto whole = [&](const Program& prog, const Texture& tex, const float c[8], uint32_t want, std::string* detail) {
+                    memcpy(cbuf2->contents(), c, 32);
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Bindings fsb;
+                    fsb.buffers = {Binding{cbuf2.get(), 0}};
+                    fsb.textures = {&tex};
+                    fsb.samplers = {&asmp};
+                    auto cb = queue->commandBuffer();
+                    if (!cb->draw(prog, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                        *detail = "; " + cb->error();
+                        return false;
+                    }
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t right = 0, px0 = 0;
+                    for (uint32_t j = 0; j < H; j++)
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                            if (i == 0 && j == 0) px0 = px;
+                            right += px == want;
+                        }
+                    if (right != W * H && detail->empty()) *detail = "; pixel (0, 0) " + hex8(px0) + " for " + hex8(want);
+                    return right == W * H && completed(*cb);
+                };
+                const Program cubaProg{kernels::tri_flat_vs_air, kernels::tri_cuba_fs_air, Linkage{}, "tri_cuba"};
+                const Program arr1Prog{kernels::tri_flat_vs_air, kernels::tri_tex1da_fs_air, Linkage{}, "tri_tex1da"};
+                const float axes[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+                uint32_t rightCube = 0, right1d = 0;
+                std::string d1, d2;
+                for (uint32_t cube = 0; cube < 3; cube++)
+                    for (uint32_t f = 0; f < 6; f++) {
+                        const float c[8] = {axes[f][0], axes[f][1], axes[f][2], 0, float(cube), 0, 0, 0};
+                        rightCube += whole(cubaProg, *cuba, c, colourOf(cube * 6 + f), &d1);
+                    }
+                const uint32_t pairs[6][2] = {{0, 0}, {7, 0}, {3, 1}, {5, 2}, {0, 3}, {6, 3}};
+                for (const auto& pr : pairs) {
+                    const float c[8] = {(pr[0] + 0.5f) / 8, float(pr[1]), 0, 0, 0, 0, 0, 0};
+                    right1d += whole(arr1Prog, *arr1, c, texels[pr[1] * 8 + pr[0]], &d2);
+                }
+                report(rightCube == 18, "tri_cuba along the six axes of each of three 4x4 cubes: " + std::to_string(rightCube) + " of 18 draws the whole target that face" + d1);
+                report(right1d == 6, "tri_tex1da at six (texel, layer) pairs of an 8-texel, 4-layer 1D array: " + std::to_string(right1d) + " of 6 draws the whole target that texel" + d2);
             }
         }
         // 9j6. bicubic (the TP's cubic filter, MSL's filter::bicubic): a 4x4 texture of one colour sampled by tri_tex with the
