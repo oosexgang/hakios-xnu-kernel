@@ -60,6 +60,7 @@
 #include "../tests/fixtures/tri_vtex_vs_air.hpp"
 #include "../tests/fixtures/tri_shadow_fs_air.hpp"
 #include "../tests/fixtures/tri_arr_vs_air.hpp"
+#include "../tests/fixtures/tri_ms_fs_air.hpp"
 #include "../tests/fixtures/tri_cube_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
@@ -4209,6 +4210,72 @@ int main(int argc, char** argv) {
                            std::to_string(outsideRight) + " of " + std::to_string(outside) + " outside the clear colour, " + std::to_string(mixes) +
                             " mixes on the edge (" + (samples == 1 ? "none wanted" : wide ? "8 or more wanted" : "32 or more wanted") + "), " + std::to_string(garbage) + " neither" + first +
                            (drew ? status(*cb, gpu) : ": " + cb->error()));
+            }
+        }
+        // 9msr. a multisample texture read by sample (texture2d_ms, isamm): T1 drawn at 4 samples into a cleared 4x
+        // texture, then each sample 0..3 copied out by tri_ms_fs over the whole target. Inside T1 every sample is the
+        // flat colour, outside the clear colour; on the diagonal each sample is one or the other and the four disagree
+        // on many pixels -- which one value for the pixel (a read ignoring the sample) cannot give.
+        {
+            TextureDesc md;
+            md.type = TextureType::k2DMultisample;
+            md.samples = 4;
+            md.width = W;
+            md.height = H;
+            md.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+            auto ms = Texture::make(gpu, md, &why);
+            auto which = newBuffer(gpu, 16, &why);
+            const uint32_t clearWord = 0xffbf8040u;
+            if (ms == nullptr || which == nullptr) {
+                report(false, "msaa read: the texture: " + why);
+            } else {
+                Program p4 = flat;
+                p4.samples = 4;
+                RenderPass rp;
+                rp.color0 = ms.get();
+                rp.load = LoadAction::kClear;
+                rp.clearColor[0] = 0.25;
+                rp.clearColor[1] = 0.5;
+                rp.clearColor[2] = 0.75;
+                rp.clearColor[3] = 1.0;
+                auto cb = queue->commandBuffer();
+                bool ok = cb->draw(p4, rp, drawOf(0, 3), Bindings{}, Bindings{});
+                if (ok) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                ok = ok && completed(*cb);
+                std::vector<std::vector<uint8_t>> per(4);
+                const Program reader{kernels::tri_flat_vs_air, kernels::tri_ms_fs_air, Linkage{}, "tri_ms"};
+                std::string err;
+                for (uint32_t k = 0; k < 4 && ok; k++) {
+                    *static_cast<uint32_t*>(which->contents()) = k;
+                    Bindings fsb;
+                    fsb.buffers = {Binding{which.get(), 0}};
+                    fsb.textures = {ms.get()};
+                    auto rcb = drawInto(*t, reader, drawOf(0, 6), render::Options{}, fsb);
+                    ok = completed(*rcb);
+                    if (!ok) err = rcb->error();
+                    per[k] = textureBo(*t);
+                }
+                uint32_t exact = 0, judged = 0, differ = 0, neither = 0;
+                for (uint32_t j = 0; ok && j < H; j++)
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t v[4];
+                        for (uint32_t k = 0; k < 4; k++) memcpy(&v[k], per[k].data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        if (j > i + 1 || j + 1 < i) {
+                            judged++;
+                            const uint32_t want = j > i + 1 ? flatColour : clearWord;
+                            exact += v[0] == want && v[1] == want && v[2] == want && v[3] == want;
+                        } else {
+                            for (uint32_t k = 0; k < 4; k++) neither += v[k] != flatColour && v[k] != clearWord;
+                            differ += !(v[0] == v[1] && v[1] == v[2] && v[2] == v[3]);
+                        }
+                    }
+                report(ok && exact == judged && neither == 0 && differ >= 32,
+                       "msaa read by sample: " + std::to_string(exact) + " of " + std::to_string(judged) + " pixels off the diagonal every sample right, " +
+                           std::to_string(differ) + " diagonal pixels whose samples disagree (32 or more), " + std::to_string(neither) + " samples neither colour" +
+                           (ok ? std::string() : ": " + (err.empty() ? cb->error() : err)));
             }
         }
         // 9arr. a module constant table: tri_arr_vs takes the pair's six corners from a constant array at the vertex id

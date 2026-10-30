@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
  #include <fcntl.h>
  #include <getopt.h>
  #include <stdint.h>
-@@ -35,19 +37,925 @@
+@@ -35,19 +37,926 @@
  #include "compiler/spirv/nir_spirv.h"
  #include "compiler/spirv/spirv_info.h"
  #include "compiler/air/nir_air.h"
@@ -175,6 +175,7 @@ SPDX-License-Identifier: MIT
 +   case GLSL_SAMPLER_DIM_RECT: return 2;   /* kTexDim2D */
 +   case GLSL_SAMPLER_DIM_3D:   return 3;   /* kTexDim3D */
 +   case GLSL_SAMPLER_DIM_CUBE: return 4;   /* kTexDimCube */
++   case GLSL_SAMPLER_DIM_MS:   return 5;   /* kTexDimMS */
 +   default:
 +      errx(1, "-o: %s %u has a dimension (glsl_sampler_dim %d) KernelTextureDim has no name for",
 +           what, index, (int)dim);
@@ -998,7 +999,7 @@ SPDX-License-Identifier: MIT
  static void
  insert_sorted(struct exec_list *var_list, nir_variable *new_var)
  {
-@@ -298,6 +1206,7 @@
+@@ -298,6 +1207,7 @@
                                  ir3_get_compiler_options(compiler), &info, &err);
     if (!nir)
        errx(1, "%s: %s", entry ? entry : filename, err);
@@ -1006,7 +1007,7 @@ SPDX-License-Identifier: MIT
  
     printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
            info.entry_point, info.num_resources, info.num_varyings,
-@@ -306,13 +1215,16 @@
+@@ -306,13 +1216,16 @@
     return nir;
  }
  
@@ -1024,7 +1025,7 @@ SPDX-License-Identifier: MIT
  };
  
  static void
-@@ -324,6 +1236,9 @@
+@@ -324,6 +1237,9 @@
     printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
     printf("    -h, --help       - show this message\n");
     printf("    -v, --verbose    - verbose compiler/debug messages\n");
@@ -1034,7 +1035,7 @@ SPDX-License-Identifier: MIT
  }
  
  int
-@@ -341,6 +1256,7 @@
+@@ -341,6 +1257,7 @@
     void *ptr;
     bool from_tgsi = false;
     const char *air_file = NULL, *air_entry = NULL;
@@ -1042,7 +1043,7 @@ SPDX-License-Identifier: MIT
     size_t size;
  
     while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
-@@ -355,6 +1271,15 @@
+@@ -355,6 +1272,15 @@
        case 'v':
           ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
           break;
@@ -1058,7 +1059,7 @@ SPDX-License-Identifier: MIT
        default:
           printf("unrecognized arg: %c\n", opt);
           FALLTHROUGH;
-@@ -432,8 +1357,12 @@
+@@ -432,8 +1358,12 @@
           .gpu_id = chip_id ? 0 : gpu_id,
           .chip_id = chip_id,
     };
@@ -1072,7 +1073,7 @@ SPDX-License-Identifier: MIT
  
     if (air_file) {
        nir = load_air(air_file, air_entry);
-@@ -444,8 +1373,20 @@
+@@ -444,8 +1374,20 @@
         */
        NIR_PASS(_, nir, nir_lower_system_values);
        NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
@@ -1095,7 +1096,7 @@ SPDX-License-Identifier: MIT
     } else if (from_tgsi) {
        struct tgsi_token toks[65536];
        const nir_shader_compiler_options *nir_options =
-@@ -486,10 +1427,27 @@
+@@ -486,10 +1428,27 @@
        return -1;
     }
  
@@ -1123,7 +1124,7 @@ SPDX-License-Identifier: MIT
  
     struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
     shader->compiler = compiler;
-@@ -497,12 +1455,29 @@
+@@ -497,12 +1456,29 @@
     shader->nir = nir;
  
     ir3_nir_post_finalize(shader);
@@ -1153,7 +1154,7 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -514,13 +1489,49 @@
+@@ -514,13 +1490,49 @@
      * anything -- any vertex shader (PRIMITIVE_PARAM), or anything with image
      * dimensions -- which is why it went unnoticed.
      */

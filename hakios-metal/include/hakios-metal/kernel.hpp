@@ -61,7 +61,7 @@ enum KernelTextureKind : uint8_t {
     kTexSampled = 1,   // declared read or sample: a TEX_CONST in the texture table, read by sam/saml (with a sampler) or isaml (texture.read)
     kTexImage = 2,     // declared write or read_write: a storage descriptor at IBO slot numSsbos + index, written by stib, read by ldib
 };
-enum KernelTextureDim : uint8_t { kTexDimNone = 0, kTexDim1D = 1, kTexDim2D = 2, kTexDim3D = 3, kTexDimCube = 4 };
+enum KernelTextureDim : uint8_t { kTexDimNone = 0, kTexDim1D = 1, kTexDim2D = 2, kTexDim3D = 3, kTexDimCube = 4, kTexDimMS = 5 };   // MS: texture2d_ms, read by sample
 // the class of the values the instructions move, which the bound format must agree with (texture.hpp: FormatInfo::element)
 enum KernelElement : uint8_t { kElemFloat = 0, kElemUint = 1, kElemInt = 2 };
 struct KernelTexture {

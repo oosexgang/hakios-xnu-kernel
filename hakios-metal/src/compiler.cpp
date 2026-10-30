@@ -78,7 +78,7 @@ bool textureDim(glsl_sampler_dim dim, uint8_t* out, const char** name) {
     case GLSL_SAMPLER_DIM_CUBE: *out = kTexDimCube; return true;
     case GLSL_SAMPLER_DIM_RECT: *name = "a rectangle"; return false;
     case GLSL_SAMPLER_DIM_BUF: *name = "a texture buffer"; return false;
-    case GLSL_SAMPLER_DIM_MS: *name = "multisampled"; return false;
+    case GLSL_SAMPLER_DIM_MS: *out = kTexDimMS; return true;   // texture2d_ms.read(coord, sample): a txf_ms, the sample in its own source
     default: *name = "of a dimension no texture here has"; return false;
     }
 }

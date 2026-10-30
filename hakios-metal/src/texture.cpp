@@ -473,6 +473,12 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes()));
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
     }
+    if (desc_.samples > 1) {
+        // a multisample texture read by sample (texture2d_ms, ir3's isam for txf_ms): the pixels' size, the layout's pitch
+        // (the samples side by side) and SAMPLES the log2 of the count (fdl6_view_init: A6XX_TEX_CONST_0_SAMPLES)
+        d.dword[0] = (d.dword[0] & ~A6XX_TEX_CONST_0_SAMPLES__MASK) |
+                     A6XX_TEX_CONST_0_SAMPLES(desc_.samples == 4 ? MSAA_FOUR : MSAA_TWO);
+    }
     if (info_->depth) {
         // the depth plane as the TP reads it (fdl6_view_init over a depth layout): TILE6_3, and TILE_ALL since every level
         // of a depth layout is tiled (fd6_layout.c:157-164 "Linear D/S is not supported by HW"); FMT6_32_FLOAT, the depth

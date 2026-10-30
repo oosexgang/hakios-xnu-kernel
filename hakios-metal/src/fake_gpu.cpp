@@ -475,6 +475,9 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
     uint64_t pitch = fieldOf(d[2], A6XX_TEX_CONST_2_PITCH__MASK, A6XX_TEX_CONST_2_PITCH__SHIFT);
     uint32_t pitchalign = sampled ? fieldOf(d[2], A6XX_TEX_CONST_2_PITCHALIGN__MASK, A6XX_TEX_CONST_2_PITCHALIGN__SHIFT) : 0;
     uint64_t unit = 64ull << pitchalign;
+    // (a multisample view's rows hold its SAMPLES samples a pixel side by side)
+    const uint32_t ns = sampled ? 1u << fieldOf(d[0], A6XX_TEX_CONST_0_SAMPLES__MASK, A6XX_TEX_CONST_0_SAMPLES__SHIFT) : 1u;
+    bpp *= ns;
     if (pitch < uint64_t(width) * bpp || pitch % unit != 0) {
         fault(who + text(": pitch %llu for rows of %llu pixels of %llu bytes: shorter than a row or not a multiple of ", pitch, width, bpp) +
               text("%llu bytes (64 << PITCHALIGN %llu)", unit, pitchalign));
@@ -496,9 +499,8 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
               text(" at %#llx: outside every buffer or not 64-byte aligned", base));
         return false;
     }
-    if (sampled && (fieldOf(d[0], A6XX_TEX_CONST_0_MIPLVLS__MASK, A6XX_TEX_CONST_0_MIPLVLS__SHIFT) != 0 ||
-                    fieldOf(d[0], A6XX_TEX_CONST_0_SAMPLES__MASK, A6XX_TEX_CONST_0_SAMPLES__SHIFT) != 0)) {
-        fault(who + ": more than one level or sample: not what this GPU model runs");
+    if (sampled && fieldOf(d[0], A6XX_TEX_CONST_0_MIPLVLS__MASK, A6XX_TEX_CONST_0_MIPLVLS__SHIFT) != 0) {
+        fault(who + ": more than one level: not what this GPU model runs");
         return false;
     }
     uint32_t depth = fieldOf(d[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT);
