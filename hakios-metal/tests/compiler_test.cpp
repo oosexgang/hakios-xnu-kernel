@@ -678,6 +678,25 @@ TEST(compiler_matches_the_stage_fixtures) {
             if (linked) CHECK(linked->program.link.psizeLoc != 0xffu);
         }
     }
+    // AIR 2.3 writes no air.address_space on a buffer (MapKit's Clear::clear_vertex was refused at "a buffer in address
+    // space 0"): the pointer's own address space says which kind it is. The constant one first, then its device twin,
+    // which differs from it in the pointer alone -- a front end defaulting to either kind gets one of them wrong.
+    for (const auto& [name, kind] : {std::pair<const char*, Resource::Kind>{"tri_oldcb_vs", Resource::kConstantBuffer}, {"tri_olddb_vs", Resource::kDeviceBuffer}}) {
+        std::vector<uint8_t> bc = bitcodeOf(name);
+        std::string why;
+        std::shared_ptr<CompiledStage> old = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why);
+        CHECK(old != nullptr);
+        if (old == nullptr) {
+            std::printf("       %s: %s\n", name, why.c_str());
+            continue;
+        }
+        CHECK_EQ(old->resources.size(), size_t(1));
+        if (!old->resources.empty()) {
+            CHECK_EQ(uint32_t(old->resources[0].kind), uint32_t(kind));
+            CHECK_EQ(old->resources[0].index, 1u);
+        }
+        CHECK_EQ(old->stage.k.numSsbos != 0, kind == Resource::kDeviceBuffer);
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;
