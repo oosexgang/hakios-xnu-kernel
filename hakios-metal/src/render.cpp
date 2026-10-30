@@ -1135,9 +1135,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (!vertexFetch(vs, program.vertexDescriptor, draw, vsBindings, &fetch, why)) {
         return false;
     }
-    if (vs.pointSizeRegid != kRegidNone) {
-        return refuse(why, std::string(stageName(vs)) + " writes a point size: points are not served");
-    }
+    // A [[point_size]] means something to a point alone, and points are refused below with the primitive; for a line or a
+    // triangle the register it is in is left unlinked (no VPC location, no PC_VS_OUT_CNTL.PSIZE), as turnip leaves a size
+    // nothing rasterizes as points -- CoreAnimation's fixed_vert_lph_gen writes one into every triangle it draws.
+
     if (vs.clipMask != 0 || vs.cullMask != 0) {
         return refuse(why, std::string(stageName(vs)) + " writes clip or cull distances: not served");
     }

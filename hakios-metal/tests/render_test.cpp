@@ -375,7 +375,16 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         refused(r, p, pass, d, "hand_vs reads [[attribute(0)]], which the vertex descriptor does not describe");
         p = handProgram();
         p.vs.pointSizeRegid = regid(1, 0);
-        refused(r, p, pass, d, "hand_vs writes a point size: points are not served");
+        // a point size into a triangle draw: left unlinked and drawn (CoreAnimation's fixed_vert_lph_gen writes one); a
+        // point draw is refused by its primitive, size or none
+        {
+            Encoded e(r, p, pass, d);
+            CHECK(e.ok);
+            if (!e.ok) std::printf("       %s\n", e.error.c_str());
+            Draw points = d;
+            points.primitive = Primitive::kPoint;
+            refused(r, p, pass, points, "primitive 0: points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)");
+        }
         p = handProgram();
         p.vs.clipMask = 1;
         refused(r, p, pass, d, "hand_vs writes clip or cull distances: not served");
