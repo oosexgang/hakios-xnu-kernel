@@ -130,6 +130,63 @@ struct Encoded {
 const uint32_t kGroups16[3] = {16, 1, 1};
 }  // namespace
 
+// A kernel that spills (pvtmemSize) gets the queue's private memory in its CS registers as a draw's stage does, and
+// threadgroup memory the encoder sets (Bindings::sharedBytes) raises SHARED_SIZE past the kernel's own. The twins: no
+// private memory bound, or too little, and more threadgroup memory than a group has, are refused before any word.
+TEST(a_dispatch_gets_private_memory_and_the_threadgroup_memory_its_encoder_sets) {
+    using namespace a6xx;
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    Kernel k = kernels::fill_id;
+    k.pvtmemSize = 64;
+    k.pvtmemPerWave = false;   // (the layout the queue's memory is asked for below; a wave layout is the twin of that)
+    Bindings b{{Binding{out.get(), 0}}, {}, {}, {}};
+    {
+        Encoded e(r, k, kGroups16, nullptr, b);
+        CHECK(!e.ok);
+        CHECK(e.error.find("fill_id wants 64 bytes of private memory a fiber: the private memory bound has 0 at 0") != std::string::npos);
+        Bindings small = b;
+        small.privateMemory = PrivateMemory{0x100000, 32, 4096, false};
+        Encoded f(r, k, kGroups16, nullptr, small);
+        CHECK(!f.ok);
+    }
+    PrivateMemory pm;
+    std::string why;
+    auto scratch = r.queue->privateMemory(64, false, &pm, &why);
+    CHECK(scratch != nullptr);
+    Bindings withPm = b;
+    withPm.privateMemory = pm;
+    Encoded e(r, k, kGroups16, nullptr, withPm);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    auto at = [&](uint32_t reg) { size_t i = e.findReg(reg); return i == size_t(-1) ? 0xdeadbeefu : e.stream.words()[i]; };
+    CHECK_EQ(at(REG_A6XX_SP_CS_PVT_MEM_PARAM), A6XX_SP_CS_PVT_MEM_PARAM_MEMSIZEPERITEM(512));
+    CHECK_EQ(at(REG_A6XX_SP_CS_PVT_MEM_PARAM + 1), uint32_t(scratch->gpuAddress()));
+    CHECK_EQ(at(REG_A6XX_SP_CS_PVT_MEM_PARAM + 3), (512u * 4096u) >> 12);
+    CHECK_EQ(at(REG_A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET), (512u * 4096u) >> 11);
+    // through a command buffer the queue's own is bound, and the fake takes the dispatch
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->dispatch(k, kGroups16, nullptr, {Binding{out.get(), 0}}));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    // threadgroup memory: the kernel's own (none here: the 2 KiB floor, field 1), then 8 KiB set by the encoder (field
+    // 7, (8192 - 1) / 1024) in both copies, then more than 32 KiB refused
+    const auto sharedField = [](uint32_t v) { return (v & A6XX_SP_CS_CTRL_REG1_SHARED_SIZE__MASK) >> A6XX_SP_CS_CTRL_REG1_SHARED_SIZE__SHIFT; };
+    Encoded own(r, kernels::fill_id, kGroups16, nullptr, b);
+    CHECK_EQ(sharedField(own.stream.words()[own.findReg(REG_A6XX_SP_CS_CTRL_REG1)]), 1u);
+    Bindings tg = b;
+    tg.sharedBytes = 8192;
+    Encoded big(r, kernels::fill_id, kGroups16, nullptr, tg);
+    CHECK(big.ok);
+    CHECK_EQ(sharedField(big.stream.words()[big.findReg(REG_A6XX_SP_CS_CTRL_REG1)]), 7u);
+    CHECK_EQ(sharedField(big.stream.words()[big.findReg(REG_A6XX_HLSQ_CS_CTRL_REG1)]), 7u);
+    tg.sharedBytes = 32 * 1024 + 1;
+    Encoded over(r, kernels::fill_id, kGroups16, nullptr, tg);
+    CHECK(!over.ok);
+    CHECK(over.error.find("32769 bytes of threadgroup memory: a group has 32768") != std::string::npos);
+}
+
 TEST(a_dispatch_of_fill_id_holds_together_and_the_fake_does_not_run_it) {
     Rig r;
     auto out = buffer(r, 4096, 0xcccccccc);

@@ -58,6 +58,9 @@ struct Bindings {
     std::vector<const Texture*> textures;
     std::vector<const Sampler*> samplers;
     PrivateMemory privateMemory;
+    // a dispatch's threadgroup memory in bytes when more than the kernel's own (Kernel::sharedSize): the encoder's
+    // setThreadgroupMemoryLength: past the static arrays (CompiledKernel::threadgroupArgBase); 0 is the kernel's own
+    uint32_t sharedBytes = 0;
     // texture slots holding the queue's null texture because the application bound nothing there (a draw's own doing,
     // CommandBuffer::draw): sampled as the null slot is, in whatever dimension and class the shader declares
     uint32_t nullMask = 0;
@@ -66,6 +69,7 @@ struct Bindings {
 namespace compute {
 
 constexpr uint32_t kMaxLocalThreads = 1024;     // the hardware's threadgroup limit, and the NDRANGE fields' (10 bits)
+constexpr uint32_t kMaxSharedBytes = 32 * 1024; // threadgroup memory a group can have (freedreno_devices.py: the A635's cs_shared_mem_size)
 // What a dispatch owns in GPU memory besides the program, one 16 KiB page on the phone whatever the size (gpu.cpp rounds
 // to it): the IBO descriptors (64 bytes each; NIBO is 7 bits and SSBO slots go up to Metal's 31 buffers plus 16 images),
 // the texture table (TEX_CONST, 64 bytes each, 64-aligned: SP_CS_TEX_CONST's alignment), the sampler table (TEX_SAMP,

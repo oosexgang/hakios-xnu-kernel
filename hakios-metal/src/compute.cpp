@@ -129,8 +129,16 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     if (k.constlen > 256) {
         return refuse(why, std::string(k.name) + " wants " + n(k.constlen) + " vec4 of constants: compute has 256 on this GPU");
     }
-    if (k.pvtmemSize != 0) {
-        return refuse(why, std::string(k.name) + " wants " + n(k.pvtmemSize) + " bytes of private memory a fiber: not served yet");
+    // private memory: the queue's (CommandBuffer::dispatch binds it), as large as the kernel's fibers want and in the
+    // layout it was compiled for -- a smaller one would have one fiber's spills land in the next one's
+    const PrivateMemory& pm = bindings.privateMemory;
+    if (k.pvtmemSize != 0 && (pm.address == 0 || pm.perFiber < k.pvtmemSize || pm.perWave != k.pvtmemPerWave || pm.address % 32 != 0)) {
+        return refuse(why, std::string(k.name) + " wants " + n(k.pvtmemSize) + " bytes of private memory a fiber" + (k.pvtmemPerWave ? " laid out a wave" : "") +
+                               ": the private memory bound has " + n(pm.perFiber) + (pm.perWave ? " laid out a wave" : "") + " at " + n(pm.address));
+    }
+    const uint32_t shared = std::max(k.sharedSize, bindings.sharedBytes);
+    if (shared > kMaxSharedBytes) {
+        return refuse(why, std::string(k.name) + " with " + n(shared) + " bytes of threadgroup memory: a group has " + n(kMaxSharedBytes) + " on this GPU");
     }
     if (k.numSamp > 31) {
         // SP_CS_CONFIG.NSAMP is 5 bits (a6xx.hpp: A6XX_SP_CS_CONFIG_NSAMP__MASK) and field() masks silently: 32 would be written as 0
@@ -415,7 +423,7 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         spCsCtrlReg0(uint32_t(k.maxReg + 1), uint32_t(k.maxHalfReg + 1), k.branchstackHw, threadsize, k.mergedRegs, k.earlyPreamble));
     // the shared memory and constant split, in both the SP's and (gen4's) the HLSQ's copy, the same value: Gallium gives
     // the HLSQ the real size where computerator writes 1, and the one that is right when they disagree is not measured
-    uint32_t ctrl1 = spCsCtrlReg1(k.sharedSize, k.constlen);
+    uint32_t ctrl1 = spCsCtrlReg1(shared, k.constlen);
     reg(stream, REG_A6XX_SP_CS_CTRL_REG1, ctrl1);
     if (o.hlsqCopies) {
         reg(stream, REG_A6XX_HLSQ_CS_CTRL_REG1, ctrl1);
@@ -431,7 +439,13 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         uint32_t v[3] = {0, uint32_t(program), uint32_t(program >> 32)};   // SP_CS_OBJ_FIRST_EXEC_OFFSET, SP_CS_OBJ_START lo, hi
         stream.registers(REG_A6XX_SP_CS_OBJ_FIRST_EXEC_OFFSET, v, 3);
     }
-    if (o.pvtmemZero) {
+    if (k.pvtmemSize != 0) {
+        // SP_CS_PVT_MEM_PARAM, _ADDR lo, hi, _SIZE and the stack offset as tu6_emit_xs writes a stage's (the draw's the same)
+        uint32_t v[4] = {A6XX_SP_CS_PVT_MEM_PARAM_MEMSIZEPERITEM(pm.perFiber), uint32_t(pm.address), uint32_t(pm.address >> 32),
+                         A6XX_SP_CS_PVT_MEM_SIZE_TOTALPVTMEMSIZE(pm.perSp) | (pm.perWave ? A6XX_SP_CS_PVT_MEM_SIZE_PERWAVEMEMLAYOUT : 0u)};
+        stream.registers(REG_A6XX_SP_CS_PVT_MEM_PARAM, v, 4);
+        reg(stream, REG_A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET, A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET_OFFSET(pm.perSp));
+    } else if (o.pvtmemZero) {
         uint32_t v[4] = {0, 0, 0, 0};   // SP_CS_PVT_MEM_PARAM, _ADDR lo, hi, _SIZE: no private memory
         stream.registers(REG_A6XX_SP_CS_PVT_MEM_PARAM, v, 4);
         reg(stream, REG_A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET, 0);
@@ -543,8 +557,20 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
     if (local != nullptr) {
         for (int i = 0; i < 3; i++) loc[i] = local[i];
     }
+    // private memory is the queue's, as for a draw: the kernel spills into it, so the submission names it for writing
+    Bindings withScratch;
+    const Bindings* b = &bindings;
+    std::shared_ptr<Buffer> scratch;
+    if (k.pvtmemSize != 0) {
+        withScratch = bindings;
+        scratch = queue_.privateMemory(k.pvtmemSize, k.pvtmemPerWave, &withScratch.privateMemory, &why);
+        if (scratch == nullptr) {
+            return fail(std::string("no private memory: ") + why);
+        }
+        b = &withScratch;
+    }
     pm4::Stream added;
-    if (!compute::encode(added, k, groups, loc, bindings, immediates, program, table.gpuAddress(), table.contents(), &why, options)) {
+    if (!compute::encode(added, k, groups, loc, *b, immediates, program, table.gpuAddress(), table.contents(), &why, options)) {
         return fail(why);
     }
     const std::vector<uint32_t>& w = added.words();
@@ -560,11 +586,12 @@ bool CommandBuffer::dispatch(const Kernel& k, const uint32_t groups[3], const ui
         }
         i += 1 + h.count;
     }
-    for (const Binding& b : bindings.buffers) {
-        if (b.buffer != nullptr) {
-            use(*b.buffer, true);
+    for (const Binding& bb : bindings.buffers) {
+        if (bb.buffer != nullptr) {
+            use(*bb.buffer, true);
         }
     }
+    if (scratch != nullptr) use(*scratch, true);
     // every texture bound, the kernel's or not (an extra one is harmless to name): its memory is used for the flight and
     // kept alive until completion, written when the kernel stores through it
     for (size_t i = 0; i < bindings.textures.size(); i++) {

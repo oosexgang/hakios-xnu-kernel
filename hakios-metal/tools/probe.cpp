@@ -39,6 +39,7 @@
 #include "../tests/fixtures/tex_fill_h_bc.hpp"
 #include "../tests/fixtures/tex_fill_arr_air.hpp"
 #include "../tests/fixtures/tex_fill_3d_air.hpp"
+#include "../tests/fixtures/pvt_fill_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
@@ -723,6 +724,30 @@ int main(int argc, char** argv) {
                 report(cb->status() == CommandBuffer::kCompleted && r.right == words,
                        "dispatch of the kernel compiled on the phone, 16 groups of 64, c = 0x4321: " + describe(r, words, 0) + status(*cb, gpu));
             }
+        }
+    }
+
+    // 6z. private memory in a dispatch: pvt_fill keeps a[128] a fiber (512 bytes, stp/ldp), each thread's own values,
+    // and writes a[gid & 127]; 4096 threads, every word 3 (gid & 127) + (gid >> 7) + 1, and the canary past the grid
+    {
+        auto out = newBuffer(gpu, 4 * 4096 + 256, &why);
+        if (out == nullptr) {
+            report(false, "private memory in a dispatch: the buffer: " + why);
+        } else {
+            uint32_t* w = static_cast<uint32_t*>(out->contents());
+            for (uint32_t i = 0; i < 4096 + 64; i++) w[i] = 0xa5a5a5a5u;
+            const uint32_t groups[3] = {64, 1, 1}, local[3] = {64, 1, 1};
+            auto cb = queue->commandBuffer();
+            if (cb->dispatch(kernels::pvt_fill_air, groups, local, {Binding{out.get(), 0}})) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            uint32_t right = 0, tail = 0;
+            for (uint32_t g = 0; g < 4096; g++) right += w[g] == 3 * (g & 127) + (g >> 7) + 1;
+            for (uint32_t g = 4096; g < 4096 + 64; g++) tail += w[g] == 0xa5a5a5a5u;
+            report(cb->status() == CommandBuffer::kCompleted && right == 4096 && tail == 64,
+                   "private memory in a dispatch, a[128] a fiber read at gid & 127: " + std::to_string(right) + " of 4096 words 3 (gid & 127) + (gid >> 7) + 1, " +
+                       std::to_string(tail) + " of 64 past the grid canary" + status(*cb, gpu));
         }
     }
 
