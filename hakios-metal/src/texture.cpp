@@ -731,12 +731,14 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
         refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture over the " + n(s.width) + " x " + n(s.height) + " " + name);
         return nullptr;
     }
-    // the FourCC of the surface against the format: Metal asks for a compatible one, and a mismatch swaps channels.
-    // CoreAnimation's masks are 'LA08' (luminance and alpha, a byte each) read as RG8Unorm and 'L008' read as R8Unorm.
+    // the FourCC of the surface against the format. A four-byte surface is read in whatever four-byte colour format the
+    // texture names: its bytes as they are, as an Apple GPU reads them -- so a 'BGRA' surface as RGBA8Unorm has its red
+    // and blue the other way round, which is what the caller asked for (MPS reads CoreVideo's 'BGRA' buffers so, in
+    // mediaserverd). CoreAnimation's masks are 'LA08' (luminance and alpha, a byte each) read as RG8Unorm and 'L008'
+    // read as R8Unorm.
     const uint32_t bgra = 0x42475241u, rgba = 0x52474241u, la08 = 0x4c413038u, l008 = 0x4c303038u;   // 'BGRA', 'RGBA', 'LA08', 'L008'
-    const bool bgraFormat = desc.format == PixelFormat::kBGRA8Unorm || desc.format == PixelFormat::kBGRA8UnormSrgb;
-    const bool rgbaFormat = desc.format == PixelFormat::kRGBA8Unorm || desc.format == PixelFormat::kRGBA8UnormSrgb;
-    if (s.pixelFormat != 0 && !((s.pixelFormat == bgra && bgraFormat) || (s.pixelFormat == rgba && rgbaFormat) ||
+    const bool fourBytes = info->bytesPerPixel == 4 && info->blockW == 1 && !info->depth && !info->twoPlane;
+    if (s.pixelFormat != 0 && !(((s.pixelFormat == bgra || s.pixelFormat == rgba) && fourBytes) ||
                                 (s.pixelFormat == la08 && desc.format == PixelFormat::kRG8Unorm) || (s.pixelFormat == l008 && desc.format == PixelFormat::kR8Unorm))) {
         refuse(why, name + "'s pixel format " + n(s.pixelFormat) + " is not " + info->name + "'s: 'BGRA' (0x42475241) takes BGRA8Unorm[_sRGB], 'RGBA' (0x52474241) "
                         "RGBA8Unorm[_sRGB], 'LA08' RG8Unorm and 'L008' R8Unorm");

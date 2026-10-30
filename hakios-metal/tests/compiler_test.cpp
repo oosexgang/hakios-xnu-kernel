@@ -1043,6 +1043,19 @@ TEST(a_kernel_counting_leading_zeros_compiles) {
 
 // A word taken apart into its bytes and put back (bitcast 1 x 32 bits <-> 4 x 8), as mediaserverd's image kernels do:
 // the front end refused it and MPS aborted mediaserverd on the refusal, in a loop. It compiles now, through ir3 too.
+// simd_is_uniform (air.is_uniform, mediaserverd's CNN kernels): the front end refused it and MPS aborted the
+// process. It compiles through ir3 as a vote now; the probe runs it on the GPU.
+TEST(a_kernel_asking_whether_a_value_is_uniform_compiles) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("uniform_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: bytes_id did not run)\n");

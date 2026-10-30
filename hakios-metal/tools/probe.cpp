@@ -33,6 +33,7 @@
 #include "../tests/fixtures/fill_id_bc.hpp"
 #include "../tests/fixtures/clz_id_bc.hpp"
 #include "../tests/fixtures/bytes_id_bc.hpp"
+#include "../tests/fixtures/uniform_id_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
@@ -785,6 +786,7 @@ int main(int argc, char** argv) {
                  const uint32_t rev = (m >> 24) | (m >> 8 & 0xff00) | (m << 8 & 0xff0000) | (m << 24);
                  return sum + (rev & 0xff00u);
              }},
+            {"uniform_id", kernels::uniform_id_bc, kernels::uniform_id_bc_size, [](uint32_t) -> uint32_t { return 2u; }},
         };
         for (const Case& k : cases) {
             std::string kwhy;

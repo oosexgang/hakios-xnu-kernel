@@ -3372,7 +3372,15 @@ TEST(a_texture_over_an_iosurface_refuses_what_the_gpu_cannot_take) {
     refusedWith(99, d, "IOSurface 99: the driver gave no buffer for it: no such surface");
     refusedWith(4, d, "a surface around a program's own memory is not one the GPU takes");
     refusedWith(1, d, "IOSurface 1's rows of 412 bytes from offset 0");
-    refusedWith(2, d, "IOSurface 2's pixel format 1380401729 is not BGRA8Unorm's");
+    // a four-byte surface reads in any four-byte colour format, its bytes as they are (an 'RGBA' one as BGRA8Unorm has
+    // red and blue the other way round, as on an Apple GPU); a format of another size is refused
+    {
+        std::string w;
+        CHECK(Texture::wrapSurface(*r.gpu, 2, d, &w) != nullptr);
+        TextureDesc two = d;
+        two.format = PixelFormat::kRG8Unorm;
+        refusedWith(2, two, "IOSurface 2's pixel format 1380401729 is not RG8Unorm's");
+    }
     refusedWith(3, d, "IOSurface 3 has 2 planes: a single-plane surface is what is served");
     refusedWith(5, d, "a 64 x 64 texture over the 32 x 32 IOSurface 5");
     // a luminance-and-alpha mask surface ('LA08') is RG8Unorm's, and no other format's
