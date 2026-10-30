@@ -35,6 +35,7 @@
 #include "../tests/fixtures/bytes_id_bc.hpp"
 #include "../tests/fixtures/uniform_id_bc.hpp"
 #include "../tests/fixtures/pack_id_bc.hpp"
+#include "../tests/fixtures/undef_phi_id_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
@@ -790,6 +791,8 @@ int main(int argc, char** argv) {
             {"uniform_id", kernels::uniform_id_bc, kernels::uniform_id_bc_size, [](uint32_t) -> uint32_t { return 2u; }},
             {"pack_id", kernels::pack_id_bc, kernels::pack_id_bc_size,
              [](uint32_t g) -> uint32_t { return (g & 255) | ((g >> 2 & 255) << 8) | ((255 - (g & 255)) << 16) | (128u << 24); }},
+            {"undef_phi_id", kernels::undef_phi_id_bc, kernels::undef_phi_id_bc_size,
+             [](uint32_t g) -> uint32_t { return (g & 1) ? g * 3 : g ^ 0x5a5au; }},
         };
         for (const Case& k : cases) {
             std::string kwhy;

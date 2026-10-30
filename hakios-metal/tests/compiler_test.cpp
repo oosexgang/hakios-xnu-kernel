@@ -1069,6 +1069,19 @@ TEST(a_kernel_packing_halves_into_bytes_compiles) {
     if (k == nullptr) std::printf("       %s\n", why.c_str());
 }
 
+// a pointer split into a phi per path, each undef over the other's edge (MPS's cnnConvArray_*, which took mediaserverd
+// down): the undef is no resource of its own, so the phi is its one defined operand; the probe runs it on the GPU.
+TEST(a_kernel_whose_pointer_phis_are_undef_over_an_edge_compiles) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("undef_phi_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: bytes_id did not run)\n");
