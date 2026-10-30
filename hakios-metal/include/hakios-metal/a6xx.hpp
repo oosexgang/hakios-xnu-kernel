@@ -137,6 +137,21 @@ enum a6xx_format : uint32_t {
     FMT6_32_32_32_UINT = 114,      // a6xx.xml.h:127
     FMT6_32_32_32_SINT = 115,      // a6xx.xml.h:128
     FMT6_32_32_32_32_SINT = 132,   // a6xx.xml.h:135
+    // ASTC (LDR and sRGB alike: TEX_CONST_0.SRGB tells them apart), sampled only (fd6_format_table.c's _T_ rows)
+    FMT6_ASTC_4x4 = 193,           // a6xx.xml.h:174
+    FMT6_ASTC_5x4 = 194,           // a6xx.xml.h:175
+    FMT6_ASTC_5x5 = 195,           // a6xx.xml.h:176
+    FMT6_ASTC_6x5 = 196,           // a6xx.xml.h:177
+    FMT6_ASTC_6x6 = 197,           // a6xx.xml.h:178
+    FMT6_ASTC_8x5 = 198,           // a6xx.xml.h:179
+    FMT6_ASTC_8x6 = 199,           // a6xx.xml.h:180
+    FMT6_ASTC_8x8 = 200,           // a6xx.xml.h:181
+    FMT6_ASTC_10x5 = 201,          // a6xx.xml.h:182
+    FMT6_ASTC_10x6 = 202,          // a6xx.xml.h:183
+    FMT6_ASTC_10x8 = 203,          // a6xx.xml.h:184
+    FMT6_ASTC_10x10 = 204,         // a6xx.xml.h:185
+    FMT6_ASTC_12x10 = 205,         // a6xx.xml.h:186
+    FMT6_ASTC_12x12 = 206,         // a6xx.xml.h:187
     FMT6_NONE = 255,               // a6xx.xml.h:189  what the fake GPU's bytes-per-pixel table answers for a format it does not know
 };
 

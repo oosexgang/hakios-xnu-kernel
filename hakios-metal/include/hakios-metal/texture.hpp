@@ -58,6 +58,36 @@ enum class PixelFormat : uint32_t {
     // ycbcr_matrix (fixed_frag's fc_has_ycbcr_matrix). The TP's NV12 format reads exactly that. Over a surface alone,
     // and for reading alone.
     kYCbCr8_420_2P = 500,
+    // ASTC, 128 bits a block of W x H texels: what an asset catalogue's images are on Apple's GPUs (ImageIO stages them
+    // through -newTextureLayoutWithDescriptor:). Sampled alone; written by -replaceRegion: in whole blocks.
+    kASTC_4x4_sRGB = 186,
+    kASTC_5x4_sRGB = 187,
+    kASTC_5x5_sRGB = 188,
+    kASTC_6x5_sRGB = 189,
+    kASTC_6x6_sRGB = 190,
+    kASTC_8x5_sRGB = 192,
+    kASTC_8x6_sRGB = 193,
+    kASTC_8x8_sRGB = 194,
+    kASTC_10x5_sRGB = 195,
+    kASTC_10x6_sRGB = 196,
+    kASTC_10x8_sRGB = 197,
+    kASTC_10x10_sRGB = 198,
+    kASTC_12x10_sRGB = 199,
+    kASTC_12x12_sRGB = 200,
+    kASTC_4x4_LDR = 204,
+    kASTC_5x4_LDR = 205,
+    kASTC_5x5_LDR = 206,
+    kASTC_6x5_LDR = 207,
+    kASTC_6x6_LDR = 208,
+    kASTC_8x5_LDR = 210,
+    kASTC_8x6_LDR = 211,
+    kASTC_8x8_LDR = 212,
+    kASTC_10x5_LDR = 213,
+    kASTC_10x6_LDR = 214,
+    kASTC_10x8_LDR = 215,
+    kASTC_10x10_LDR = 216,
+    kASTC_12x10_LDR = 217,
+    kASTC_12x12_LDR = 218,
 };
 
 // MTLTextureType (MTLTexture.h). Only k2D is served; the others are named here so a refusal can name them back.
@@ -80,7 +110,12 @@ struct FormatInfo {
     bool depth = false;        // a depth format: TILE6_3, render-target usage alone, no CPU access (texture.cpp says why)
     bool stencil = false;      // ...with a stencil plane of its own (Texture::stencilPlane)
     bool twoPlane = false;     // luma and an interleaved half-size chroma plane, each with its own address (TEX_CONST_6..8)
+    // a block-compressed format: BLOCK_W x BLOCK_H texels in BYTES_PER_PIXEL bytes (a block's, 16 for ASTC), laid out as
+    // fdl6 lays a block format: rows of blocks, the pitch the blocks across times cpp (fdl_set_pitchalign)
+    uint32_t blockW = 1, blockH = 1;
 };
+inline uint32_t blocksAcross(const FormatInfo& f, uint32_t width) { return (width + f.blockW - 1) / f.blockW; }
+inline uint32_t blocksDown(const FormatInfo& f, uint32_t height) { return (height + f.blockH - 1) / f.blockH; }
 // nullptr when the format is not served
 const FormatInfo* formatInfo(PixelFormat format);
 

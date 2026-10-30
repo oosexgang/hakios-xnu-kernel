@@ -479,3 +479,51 @@ TEST(texture_levels_are_laid_out_as_fdl6_layout_does_it) {
     CHECK(!t->replace(3, 0, 0, 9, 1, &px, 36, &why));
     CHECK(has(why, "lies outside the 8 x 8 level 3 of the texture"));
 }
+
+// ASTC, a block format: fdl6 counts blocks (nblocksx * cpp, cpp 16 for a 128-bit block) and aligns the pitch to 64
+// blocks' worth, 1024 bytes, each level's pitch the first one's halved and aligned again, its rows the blocks down (the
+// last level's to 4). Worked out by hand for a 100 x 30 ASTC 4x4 of 3 levels: 25 blocks across is 400 bytes, 1024 aligned;
+// 8, 4 and 2 (to 4) block rows. -replaceRegion: and -getBytes: move whole blocks, a row of the caller's being a row of
+// blocks; a region off the block grid, and a usage other than read, are refused.
+TEST(an_astc_texture_is_laid_out_in_blocks) {
+    const FormatInfo& astc = *formatInfo(PixelFormat::kASTC_4x4_LDR);
+    CHECK_EQ(astc.blockW, 4u);
+    CHECK_EQ(astc.bytesPerPixel, 16u);
+    CHECK_EQ(texturePitch(astc, 100), 1024u);
+    CHECK_EQ(textureLevel(astc, 100, 30, 3, 1).pitch, 1024u);
+    CHECK_EQ(textureLevel(astc, 100, 30, 3, 1).offset, 8u * 1024);
+    CHECK_EQ(textureLevel(astc, 100, 30, 3, 2).offset, 8u * 1024 + 4u * 1024);
+    CHECK_EQ(textureLevel(astc, 100, 30, 3, 2).width, 25u);
+    CHECK_EQ(textureBytes(astc, 100, 30, 3), 16384u);
+    CHECK(formatInfo(PixelFormat::kASTC_4x4_sRGB)->srgb);
+    CHECK_EQ(formatInfo(PixelFormat::kASTC_12x10_LDR)->blockH, 10u);
+
+    Rig r;
+    TextureDesc d;
+    d.format = PixelFormat::kASTC_4x4_LDR;
+    d.width = d.height = 8;
+    d.usage = kTextureUsageRead;
+    std::string why;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(t->bytesPerRow(), 1024u);
+    // four blocks, each its own bytes, in rows of two blocks (32 bytes)
+    uint8_t blocks[64], back[64];
+    for (int i = 0; i < 64; i++) blocks[i] = uint8_t(i * 7 + 3);
+    CHECK(t->replace(0, 0, 0, 8, 8, blocks, 32, &why));
+    const auto* mem = static_cast<const uint8_t*>(t->contents());
+    CHECK(memcmp(mem, blocks, 32) == 0);
+    CHECK(memcmp(mem + 1024, blocks + 32, 32) == 0);   // the second row of blocks a pitch down
+    memset(back, 0, sizeof back);
+    CHECK(t->read(0, 4, 4, 4, 4, back, 16, &why));    // the bottom-right block alone
+    CHECK(memcmp(back, blocks + 48, 16) == 0);
+    CHECK(!t->replace(0, 2, 0, 4, 4, blocks, 16, &why));
+    CHECK(why.find("whole 4 x 4 blocks") != std::string::npos);
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    CHECK(Texture::make(r.gpu, d, &why) == nullptr);
+    CHECK(why.find("a compressed format is sampled alone") != std::string::npos);
+}

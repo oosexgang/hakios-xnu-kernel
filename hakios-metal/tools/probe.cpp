@@ -1903,6 +1903,74 @@ int main(int argc, char** argv) {
                        "control, tri_tex over an R32Uint texture: " + (uints == nullptr ? "no texture: " + uwhy : accepted ? std::string("ACCEPTED") : "refused: " + cb2->error()));
             }
         }
+        // 9j2. ASTC, sampled: an 8x8 ASTC 4x4 texture of four void-extent blocks (the block mode that holds one colour, its
+        // RGBA as 16-bit values: byte * 257 decodes to that byte exactly), each block its own colour, sampled by tri_tex at
+        // tri_color's (red, green) as 9j does. Every judged pixel is its block's colour; a pitch counted in texels, or the
+        // blocks laid out of order, would put a colour in another quadrant.
+        {
+            const uint8_t colour[4][4] = {{0x20, 0x40, 0x80, 0xff}, {0xc0, 0x10, 0x30, 0xff}, {0x10, 0xa0, 0x50, 0xff}, {0xf0, 0xe0, 0x00, 0xff}};
+            uint8_t blocks[64];
+            for (int b = 0; b < 4; b++) {
+                const uint64_t mode = 0xfffffffffffffdfcull;   // void extent (0x1fc), LDR, the reserved bits and the extents all ones
+                memcpy(blocks + 16 * b, &mode, 8);
+                for (int c = 0; c < 4; c++) {
+                    const uint16_t v = uint16_t(colour[b][c] * 257);
+                    memcpy(blocks + 16 * b + 8 + 2 * c, &v, 2);
+                }
+            }
+            TextureDesc ad;
+            ad.format = PixelFormat::kASTC_4x4_LDR;
+            ad.width = 8;
+            ad.height = 8;
+            ad.usage = kTextureUsageRead;
+            std::string awhy;
+            auto astc = Texture::make(gpu, ad, &awhy);
+            Sampler asmp;
+            if (astc == nullptr || !astc->replace(0, 0, 0, 8, 8, blocks, 32, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
+                report(false, "astc: an 8x8 ASTC 4x4 texture of four blocks: " + awhy);
+            } else {
+                const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {astc.get()};
+                fsb.samplers = {&asmp};
+                auto cb = queue->commandBuffer();
+                if (cb->draw(texProg, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t judged = 0, exact = 0, skipped = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const double x = i + 0.5, y = j + 0.5;
+                        const double u = j > i ? (y - x) / 64.0 : y / 64.0, v = j > i ? x / 64.0 : (x - y) / 64.0;
+                        if (std::fabs(2 * u - std::round(2 * u)) < 1.0 / 32 || std::fabs(2 * v - std::round(2 * v)) < 1.0 / 32) {
+                            skipped++;
+                            continue;
+                        }
+                        const uint32_t bx = std::min(1u, uint32_t(std::max(0.0, std::floor(2 * u)))), by = std::min(1u, uint32_t(std::max(0.0, std::floor(2 * v))));
+                        const uint8_t* want = colour[by * 2 + bx];
+                        const uint8_t* got = bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4;
+                        judged++;
+                        if (memcmp(got, want, 4) == 0) {
+                            exact++;
+                        } else if (first.empty()) {
+                            char text[96];
+                            snprintf(text, sizeof text, "; the first off (%u, %u): %02x %02x %02x %02x, block (%u, %u)", i, j, got[0], got[1], got[2], got[3], bx, by);
+                            first = text;
+                        }
+                    }
+                }
+                report(completed(*cb) && exact == judged && judged > 3000,
+                       "tri_tex over an 8x8 ASTC 4x4 texture of four one-colour blocks: " + std::to_string(exact) + " of " + std::to_string(judged) +
+                           " pixels their block's colour (" + std::to_string(skipped) + " near a block edge not judged)" + first + status(*cb, gpu));
+            }
+        }
         // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D
         // type, sampled by tri_tex1d_fs at tri_color_vs's red with a nearest sampler -- texel floor(4 r), red being u of
         // 9j's rule (T1 (y - x) / 64, T2 y / 64). Pixels whose 4 r lies within 1/16 of a texel edge are not judged.

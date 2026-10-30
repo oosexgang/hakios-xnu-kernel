@@ -52,6 +52,35 @@ constexpr FormatInfo kFormats[] = {
     {PixelFormat::kDepth32FloatStencil8, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float_Stencil8", true, true},
     // NV12: R8_G8B8_420_UNORM, WZYX (fd6_format_table.c:357): Y in x, Cb in y, Cr in z, and no alpha, so w reads one
     {PixelFormat::kYCbCr8_420_2P, FMT6_R8_G8B8_2PLANE_420_UNORM, 1, WZYX, false, false, kElemFloat, "YCbCr8_420_2P", false, false, true},
+    // ASTC: 16 bytes a block, sampled alone, LDR and sRGB the same storage (fd6_format_table.c:324-337 _T_)
+    {PixelFormat::kASTC_4x4_LDR, FMT6_ASTC_4x4, 16, WZYX, true, false, kElemFloat, "ASTC_4x4_LDR", false, false, false, 4, 4},
+    {PixelFormat::kASTC_4x4_sRGB, FMT6_ASTC_4x4, 16, WZYX, true, true, kElemFloat, "ASTC_4x4_sRGB", false, false, false, 4, 4},
+    {PixelFormat::kASTC_5x4_LDR, FMT6_ASTC_5x4, 16, WZYX, true, false, kElemFloat, "ASTC_5x4_LDR", false, false, false, 5, 4},
+    {PixelFormat::kASTC_5x4_sRGB, FMT6_ASTC_5x4, 16, WZYX, true, true, kElemFloat, "ASTC_5x4_sRGB", false, false, false, 5, 4},
+    {PixelFormat::kASTC_5x5_LDR, FMT6_ASTC_5x5, 16, WZYX, true, false, kElemFloat, "ASTC_5x5_LDR", false, false, false, 5, 5},
+    {PixelFormat::kASTC_5x5_sRGB, FMT6_ASTC_5x5, 16, WZYX, true, true, kElemFloat, "ASTC_5x5_sRGB", false, false, false, 5, 5},
+    {PixelFormat::kASTC_6x5_LDR, FMT6_ASTC_6x5, 16, WZYX, true, false, kElemFloat, "ASTC_6x5_LDR", false, false, false, 6, 5},
+    {PixelFormat::kASTC_6x5_sRGB, FMT6_ASTC_6x5, 16, WZYX, true, true, kElemFloat, "ASTC_6x5_sRGB", false, false, false, 6, 5},
+    {PixelFormat::kASTC_6x6_LDR, FMT6_ASTC_6x6, 16, WZYX, true, false, kElemFloat, "ASTC_6x6_LDR", false, false, false, 6, 6},
+    {PixelFormat::kASTC_6x6_sRGB, FMT6_ASTC_6x6, 16, WZYX, true, true, kElemFloat, "ASTC_6x6_sRGB", false, false, false, 6, 6},
+    {PixelFormat::kASTC_8x5_LDR, FMT6_ASTC_8x5, 16, WZYX, true, false, kElemFloat, "ASTC_8x5_LDR", false, false, false, 8, 5},
+    {PixelFormat::kASTC_8x5_sRGB, FMT6_ASTC_8x5, 16, WZYX, true, true, kElemFloat, "ASTC_8x5_sRGB", false, false, false, 8, 5},
+    {PixelFormat::kASTC_8x6_LDR, FMT6_ASTC_8x6, 16, WZYX, true, false, kElemFloat, "ASTC_8x6_LDR", false, false, false, 8, 6},
+    {PixelFormat::kASTC_8x6_sRGB, FMT6_ASTC_8x6, 16, WZYX, true, true, kElemFloat, "ASTC_8x6_sRGB", false, false, false, 8, 6},
+    {PixelFormat::kASTC_8x8_LDR, FMT6_ASTC_8x8, 16, WZYX, true, false, kElemFloat, "ASTC_8x8_LDR", false, false, false, 8, 8},
+    {PixelFormat::kASTC_8x8_sRGB, FMT6_ASTC_8x8, 16, WZYX, true, true, kElemFloat, "ASTC_8x8_sRGB", false, false, false, 8, 8},
+    {PixelFormat::kASTC_10x5_LDR, FMT6_ASTC_10x5, 16, WZYX, true, false, kElemFloat, "ASTC_10x5_LDR", false, false, false, 10, 5},
+    {PixelFormat::kASTC_10x5_sRGB, FMT6_ASTC_10x5, 16, WZYX, true, true, kElemFloat, "ASTC_10x5_sRGB", false, false, false, 10, 5},
+    {PixelFormat::kASTC_10x6_LDR, FMT6_ASTC_10x6, 16, WZYX, true, false, kElemFloat, "ASTC_10x6_LDR", false, false, false, 10, 6},
+    {PixelFormat::kASTC_10x6_sRGB, FMT6_ASTC_10x6, 16, WZYX, true, true, kElemFloat, "ASTC_10x6_sRGB", false, false, false, 10, 6},
+    {PixelFormat::kASTC_10x8_LDR, FMT6_ASTC_10x8, 16, WZYX, true, false, kElemFloat, "ASTC_10x8_LDR", false, false, false, 10, 8},
+    {PixelFormat::kASTC_10x8_sRGB, FMT6_ASTC_10x8, 16, WZYX, true, true, kElemFloat, "ASTC_10x8_sRGB", false, false, false, 10, 8},
+    {PixelFormat::kASTC_10x10_LDR, FMT6_ASTC_10x10, 16, WZYX, true, false, kElemFloat, "ASTC_10x10_LDR", false, false, false, 10, 10},
+    {PixelFormat::kASTC_10x10_sRGB, FMT6_ASTC_10x10, 16, WZYX, true, true, kElemFloat, "ASTC_10x10_sRGB", false, false, false, 10, 10},
+    {PixelFormat::kASTC_12x10_LDR, FMT6_ASTC_12x10, 16, WZYX, true, false, kElemFloat, "ASTC_12x10_LDR", false, false, false, 12, 10},
+    {PixelFormat::kASTC_12x10_sRGB, FMT6_ASTC_12x10, 16, WZYX, true, true, kElemFloat, "ASTC_12x10_sRGB", false, false, false, 12, 10},
+    {PixelFormat::kASTC_12x12_LDR, FMT6_ASTC_12x12, 16, WZYX, true, false, kElemFloat, "ASTC_12x12_LDR", false, false, false, 12, 12},
+    {PixelFormat::kASTC_12x12_sRGB, FMT6_ASTC_12x12, 16, WZYX, true, true, kElemFloat, "ASTC_12x12_sRGB", false, false, false, 12, 12},
 };
 
 const char* typeName(TextureType t) {
@@ -96,8 +125,9 @@ const FormatInfo* formatInfo(PixelFormat format) {
 uint64_t texturePitch(const FormatInfo& format, uint32_t width) {
     // fd6_layout.c:181-201 for a layout the driver chooses: pitchalign = cpp_shift, then pitch0 = align(width * cpp,
     // 1 << (pitchalign + 6)) = align(width * cpp, 64 * cpp); so a row is a multiple of 64 pixels
+    // (a block format counts blocks across, as fdl_set_pitchalign does: nblocksx * cpp, cpp the block's bytes)
     uint64_t unit = 64ull * format.bytesPerPixel;
-    return (uint64_t(width) * format.bytesPerPixel + unit - 1) / unit * unit;
+    return (uint64_t(blocksAcross(format, width)) * format.bytesPerPixel + unit - 1) / unit * unit;
 }
 
 TextureLevel textureLevel(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels, uint32_t level) {
@@ -108,7 +138,8 @@ TextureLevel textureLevel(const FormatInfo& format, uint32_t width, uint32_t hei
     for (uint32_t l = 0; l <= level; l++) {
         const uint64_t pitch = (std::max<uint64_t>(1, pitch0 >> l) + align - 1) / align * align;
         const uint32_t h = std::max<uint32_t>(1, height >> l);
-        const uint64_t rows = l == levels - 1 ? (uint64_t(h) + 3) / 4 * 4 : h;
+        const uint64_t down = blocksDown(format, h);   // rows of blocks for a block format (fd6_layout.c's nblocksy)
+        const uint64_t rows = l == levels - 1 ? (down + 3) / 4 * 4 : down;
         out = TextureLevel{offset, pitch, std::max<uint32_t>(1, width >> l), h};
         offset += rows * pitch;
     }
@@ -130,7 +161,7 @@ uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height,
     }
     if (levels > 1 && !format.depth) {
         const TextureLevel last = textureLevel(format, width, height, levels, levels - 1);
-        return (last.offset + (uint64_t(last.height) + 3) / 4 * 4 * last.pitch + 4095) / 4096 * 4096;
+        return (last.offset + (uint64_t(blocksDown(format, last.height)) + 3) / 4 * 4 * last.pitch + 4095) / 4096 * 4096;
     }
     if (format.depth) {
         // "Linear D/S is not supported by HW" (fd6_layout.c:157-164): a depth format is laid out TILE6_3 on every level, its
@@ -140,7 +171,7 @@ uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height,
         uint64_t rows = (uint64_t(height) + 15) / 16 * 16;
         return (rows * texturePitch(format, width) + 4095) / 4096 * 4096;
     }
-    return layerBytes2d(height, texturePitch(format, width));
+    return layerBytes2d(blocksDown(format, height), texturePitch(format, width));
 }
 
 std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::string* why) {
@@ -182,6 +213,10 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
                         " (down to 1 x 1, and MIPLVLS holds 16)");
         return nullptr;
     }
+    if (info->blockW > 1 && desc.usage != kTextureUsageRead) {
+        refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) + ": a compressed format is sampled alone (1), not stored or drawn into");
+        return nullptr;
+    }
     if (info->depth && desc.mipLevels != 1) {
         refuse(why, std::string("a ") + info->name + " texture of " + n(desc.mipLevels) + " mip levels: a depth texture is tiled, one level is served");
         return nullptr;
@@ -212,8 +247,13 @@ bool regionFits(const Texture& t, uint32_t level, uint32_t x, uint32_t y, uint32
         return refuse(why, "region " + n(w) + " x " + n(h) + " at (" + n(x) + ", " + n(y) + ") lies outside the " + n(L.width) + " x " +
                                n(L.height) + (level != 0 ? " level " + n(level) + " of the" : std::string()) + " texture");
     }
-    uint64_t row = uint64_t(w) * t.info().bytesPerPixel;
-    if (h > 1 && bytesPerRow < row) {
+    const FormatInfo& f = t.info();
+    if (f.blockW > 1 && (x % f.blockW != 0 || y % f.blockH != 0 || (w % f.blockW != 0 && x + w != L.width) || (h % f.blockH != 0 && y + h != L.height))) {
+        return refuse(why, "region " + n(w) + " x " + n(h) + " at (" + n(x) + ", " + n(y) + ") of a " + f.name + " texture: whole " + n(f.blockW) + " x " +
+                               n(f.blockH) + " blocks (or up to the edge)");
+    }
+    uint64_t row = uint64_t(blocksAcross(f, w)) * f.bytesPerPixel;
+    if (blocksDown(f, h) > 1 && bytesPerRow < row) {
         return refuse(why, "bytesPerRow " + n(bytesPerRow) + " is shorter than a row of " + n(w) + " pixels (" + n(row) + " bytes)");
     }
     return true;
@@ -244,11 +284,12 @@ bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32
         return false;
     }
     const TextureLevel L = this->level(level);
-    uint64_t row = uint64_t(w) * info_->bytesPerPixel;
-    auto* dst = static_cast<uint8_t*>(contents()) + L.offset + uint64_t(y) * L.pitch + uint64_t(x) * info_->bytesPerPixel;
+    // (in blocks for a block format: a row is a row of blocks, the caller's bytesPerRow too, as Metal has it)
+    uint64_t row = uint64_t(blocksAcross(*info_, w)) * info_->bytesPerPixel;
+    auto* dst = static_cast<uint8_t*>(contents()) + L.offset + uint64_t(y / info_->blockH) * L.pitch + uint64_t(x / info_->blockW) * info_->bytesPerPixel;
     auto* src = static_cast<const uint8_t*>(bytes);
     // one row at a time, in order: the mapping is write-combined, and a row is the longest run that is contiguous in both
-    for (uint32_t r = 0; r < h; r++) {
+    for (uint32_t r = 0; r < blocksDown(*info_, h); r++) {
         memcpy(dst + uint64_t(r) * L.pitch, src + uint64_t(r) * bytesPerRow, row);
     }
     return true;
@@ -268,10 +309,10 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
         return false;
     }
     const TextureLevel L = this->level(level);
-    uint64_t row = uint64_t(w) * info_->bytesPerPixel;
-    auto* src = static_cast<const uint8_t*>(contents()) + L.offset + uint64_t(y) * L.pitch + uint64_t(x) * info_->bytesPerPixel;
+    uint64_t row = uint64_t(blocksAcross(*info_, w)) * info_->bytesPerPixel;
+    auto* src = static_cast<const uint8_t*>(contents()) + L.offset + uint64_t(y / info_->blockH) * L.pitch + uint64_t(x / info_->blockW) * info_->bytesPerPixel;
     auto* dst = static_cast<uint8_t*>(bytes);
-    for (uint32_t r = 0; r < h; r++) {
+    for (uint32_t r = 0; r < blocksDown(*info_, h); r++) {
         memcpy(dst + uint64_t(r) * bytesPerRow, src + uint64_t(r) * L.pitch, row);
     }
     return true;
@@ -315,6 +356,10 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
     }
     if (info->depth) {
         refuse(why, std::string("a ") + info->name + " texture over an IOSurface: a depth texture is tiled, a surface's rows are linear");
+        return nullptr;
+    }
+    if (info->blockW > 1) {
+        refuse(why, std::string("a ") + info->name + " texture over an IOSurface: a compressed format is a texture of its own (-replaceRegion: fills it)");
         return nullptr;
     }
     if ((desc.usage & ~(kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget)) != 0) {
@@ -400,7 +445,7 @@ std::shared_ptr<Texture> Texture::wrapTwoPlanes(std::shared_ptr<Buffer> buffer, 
 
 std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uint64_t offset, uint64_t bytesPerRow, const TextureDesc& desc, std::string* why) {
     const FormatInfo* info = formatInfo(desc.format);
-    if (info == nullptr || info->depth || info->twoPlane) {
+    if (info == nullptr || info->depth || info->twoPlane || info->blockW > 1) {
         refuse(why, "a texture over a buffer of pixel format " + n(uint32_t(desc.format)) + ": one of the colour formats served (texture.hpp: PixelFormat) is what a buffer takes");
         return nullptr;
     }
