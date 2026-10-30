@@ -130,7 +130,7 @@ TEST(texture_make_lays_the_memory_out_and_refuses_by_name) {
     d.type = TextureType::k3D;
     d.mipLevels = 2;
     d.width = d.height = 4;
-    CHECK(has(refusedMake(r, d), "a 3D texture 1 deep of 2 levels: 1 to 2048 slices of one level are served"));
+    CHECK(has(refusedMake(r, d), "a 3D texture 1 deep of 2 levels: 1 to 2048 slices are served, of one level for a 3D texture"));
     d = TextureDesc{};
     d.depth = 2;
     CHECK(has(refusedMake(r, d), "a depth of 2 for a texture of type 2: only a 3D texture or a 2D array has slices"));
@@ -644,15 +644,15 @@ TEST(a_3d_texture_is_slices_of_a_2d_layout) {
     for (uint32_t z = 0; z < 3; z++)
         for (uint32_t y = 0; y < 4; y++)
             for (uint32_t x = 0; x < 4; x++) in[z][y][x] = 0xff000000u | z << 16 | y << 8 | x;
-    CHECK(t->replaceSlices(0, 0, 0, 4, 4, 3, in, 16, 64, &why));
+    CHECK(t->replaceSlices(0, 0, 0, 0, 4, 4, 3, in, 16, 64, &why));
     const auto* mem = static_cast<const uint8_t*>(t->contents());
     uint32_t word;
     memcpy(&word, mem + 2 * 4096 + 3 * 256 + 1 * 4, 4);   // slice 2, row 3, column 1, where the layout puts it
     CHECK_EQ(word, 0xff020301u);
     memset(out, 0, sizeof out);
-    CHECK(t->readSlices(0, 0, 0, 4, 4, 3, out, 16, 64, &why));
+    CHECK(t->readSlices(0, 0, 0, 0, 4, 4, 3, out, 16, 64, &why));
     CHECK(memcmp(in, out, sizeof in) == 0);
-    CHECK(!t->replaceSlices(0, 0, 2, 4, 4, 2, in, 16, 64, &why));
+    CHECK(!t->replaceSlices(0, 0, 0, 2, 4, 4, 2, in, 16, 64, &why));
     CHECK(has(why, "2 slices from 2 of a 3D texture 3 deep"));
 }
 
@@ -678,7 +678,7 @@ TEST(a_2d_array_is_layers_of_a_2d_layout) {
     CHECK_EQ(c.dword[3] & A6XX_TEX_CONST_3_MIN_LAYERSZ__MASK, 0u);
     CHECK_EQ((c.dword[5] & A6XX_TEX_CONST_5_DEPTH__MASK) >> A6XX_TEX_CONST_5_DEPTH__SHIFT, 2u);
     const uint32_t layer1[16] = {0x11, 0x12, 0x13, 0x14, 0x21, 0x22, 0x23, 0x24, 0x31, 0x32, 0x33, 0x34, 0x41, 0x42, 0x43, 0x44};
-    CHECK(t->replaceSlices(0, 0, 1, 4, 4, 1, layer1, 16, 64, &why));
+    CHECK(t->replaceSlices(0, 0, 0, 1, 4, 4, 1, layer1, 16, 64, &why));
     uint32_t word;
     memcpy(&word, static_cast<const uint8_t*>(t->contents()) + 4096 + 2 * 256 + 3 * 4, 4);
     CHECK_EQ(word, 0x34u);
@@ -902,4 +902,283 @@ TEST(a_textures_plan_is_the_memory_make_gives_it) {
     std::string why;
     CHECK(!Texture::plan(bad, &info, &pitch, &bytes, &why));
     CHECK(has(why, "pixel format 93: not one of the formats served"));
+}
+
+// A 1D array a kernel writes (Resident Evil 4 asks for a 512 x 1 R16Float one with usage 3): made, and stored through
+// a 2D view whose rows are its layers -- ir3 addresses it by (x, layer), two coordinates -- a slice apart. The twin: a
+// 2D array keeps its layered view (TYPE 2D, ARRAY_PITCH), so the rows-for-layers form is the 1D array's alone.
+TEST(a_1d_array_is_stored_through_the_2d_image_of_its_layers) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.type = TextureType::k1DArray;
+    d.format = PixelFormat::kR16Float;
+    d.width = 512;
+    d.height = 1;
+    d.depth = 4;
+    d.usage = kTextureUsageRead | kTextureUsageWrite;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    const TexConst s = t->storageDescriptor();
+    CHECK_EQ(s.dword[1] & A6XX_TEX_CONST_1_WIDTH__MASK, 512u);
+    CHECK_EQ((s.dword[1] & A6XX_TEX_CONST_1_HEIGHT__MASK) >> A6XX_TEX_CONST_1_HEIGHT__SHIFT, 4u);
+    CHECK_EQ(s.dword[2] & A6XX_TEX_CONST_2_PITCH__MASK, A6XX_TEX_CONST_2_PITCH(uint32_t(t->sliceBytes())));
+    TextureDesc a = d;
+    a.type = TextureType::k2DArray;
+    auto t2 = Texture::make(r.gpu, a, &why);
+    CHECK(t2 != nullptr);
+    if (t2 == nullptr) return;
+    const TexConst s2 = t2->storageDescriptor();
+    CHECK_EQ((s2.dword[1] & A6XX_TEX_CONST_1_HEIGHT__MASK) >> A6XX_TEX_CONST_1_HEIGHT__SHIFT, 1u);
+    CHECK(s2.dword[3] != 0);   // ARRAY_PITCH: the layered view
+}
+
+// The views Resident Evil 4 makes: a one-level 2D target as a one-slice 2D array, and a cube as a cube array of one
+// cube. Each reads the parent's own memory -- the same address, the same pitch -- and a cube array takes whole sixes.
+TEST(a_2d_texture_views_as_an_array_and_a_cube_as_a_cube_array) {
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = 64;
+    d.height = 48;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto flat = Texture::make(r.gpu, d, &why);
+    CHECK(flat != nullptr);
+    if (flat == nullptr) return;
+    auto arr = Texture::view(flat, PixelFormat::kRGBA8Unorm, TextureType::k2DArray, 0, 1, 0, 1, &why);
+    CHECK(arr != nullptr);
+    if (arr != nullptr) {
+        CHECK(arr->type() == TextureType::k2DArray);
+        CHECK_EQ(arr->depth(), 1u);
+        CHECK_EQ(arr->gpuAddress(), flat->gpuAddress());
+        CHECK_EQ(arr->level(0).pitch, flat->level(0).pitch);
+    }
+    TextureDesc c = d;
+    c.type = TextureType::kCube;
+    c.width = c.height = 32;
+    c.depth = 6;
+    c.usage = kTextureUsageRead;
+    auto cube = Texture::make(r.gpu, c, &why);
+    CHECK(cube != nullptr);
+    if (cube == nullptr) return;
+    auto cubes = Texture::view(cube, PixelFormat::kRGBA8Unorm, TextureType::kCubeArray, 0, 1, 0, 6, &why);
+    CHECK(cubes != nullptr);
+    if (cubes != nullptr) {
+        CHECK(cubes->type() == TextureType::kCubeArray);
+        CHECK_EQ(cubes->depth(), 6u);
+        CHECK_EQ(cubes->gpuAddress(), cube->gpuAddress());
+    }
+    CHECK(Texture::view(cube, PixelFormat::kRGBA8Unorm, TextureType::kCubeArray, 0, 1, 1, 5, &why) == nullptr);
+}
+
+// ETC2 and EAC, the other block formats the TP samples: 4 x 4 blocks of 8 bytes (RGB8, RGB8A1, R11) or 16 (RGBA8, RG11),
+// laid out as ASTC is -- 100 texels across are 25 blocks, 200 bytes for an 8-byte block, aligned to 64 blocks' worth
+// (512); 400 for a 16-byte one (1024). Resident Evil 4 probes ETC2_RGB8A1 with a 4 x 4 texture; sampled alone.
+TEST(an_etc2_texture_is_laid_out_in_blocks_of_its_size) {
+    const FormatInfo& rgb8a1 = *formatInfo(PixelFormat::kETC2_RGB8A1);
+    CHECK_EQ(rgb8a1.blockW, 4u);
+    CHECK_EQ(rgb8a1.bytesPerPixel, 8u);
+    CHECK_EQ(texturePitch(rgb8a1, 100), 512u);
+    CHECK_EQ(texturePitch(*formatInfo(PixelFormat::kEAC_RGBA8), 100), 1024u);
+    CHECK(formatInfo(PixelFormat::kETC2_RGB8_sRGB)->srgb);
+    CHECK(!formatInfo(PixelFormat::kETC2_RGB8)->hasAlpha);
+    Rig r;
+    TextureDesc d;
+    d.format = PixelFormat::kETC2_RGB8A1;
+    d.width = d.height = 4;
+    d.usage = kTextureUsageRead;
+    std::string why;
+    CHECK(Texture::make(r.gpu, d, &why) != nullptr);
+    d.usage = kTextureUsageRead | kTextureUsageWrite;
+    CHECK(Texture::make(r.gpu, d, &why) == nullptr);
+}
+
+// Arrays and cubes with mip levels, as fdl6 lays them (layer_first): each layer the 2D chain of its levels, the layers
+// that chain's size apart, 4096-aligned -- so level L of layer z is z layers and L's own offset in. Resident Evil 4
+// makes a 5-level cube (its reflection probe, RG11B10Float) and views of each level as a cube, and 2-level arrays of 64
+// layers. The checks: the layer size, a level view's address and its layer pitch kept from the parent (not one level's
+// own size), and bytes written at level 2 of face 3 found there and nowhere else.
+TEST(an_array_or_a_cube_with_mip_levels_is_layer_after_layer) {
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.type = TextureType::kCube;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = d.height = 32;
+    d.depth = 6;
+    d.mipLevels = 5;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto cube = Texture::make(r.gpu, d, &why);
+    CHECK(cube != nullptr);
+    if (cube == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    const FormatInfo& f = *formatInfo(PixelFormat::kRGBA8Unorm);
+    const uint64_t layer = textureBytes(f, 32, 32, 5);
+    CHECK_EQ(cube->sliceBytes(), layer);
+    CHECK(cube->buffer()->length() >= layer * 6);
+    auto level4 = Texture::view(cube, PixelFormat::kRGBA8Unorm, TextureType::kCube, 4, 1, 0, 6, &why);
+    CHECK(level4 != nullptr);
+    if (level4 != nullptr) {
+        CHECK_EQ(level4->gpuAddress(), cube->gpuAddress() + cube->level(4).offset);
+        CHECK_EQ(level4->sliceBytes(), layer);
+        CHECK_EQ(level4->width(), 2u);
+    }
+    auto all = Texture::view(cube, PixelFormat::kRGBA8Unorm, TextureType::kCubeArray, 0, 5, 0, 6, &why);
+    CHECK(all != nullptr && all->sliceBytes() == layer);
+    // 8 x 8 at level 2 of face 3, read back from the same place, and the bytes there in the layout
+    std::vector<uint32_t> in(64), out(64, 0);
+    for (uint32_t i = 0; i < 64; i++) in[i] = 0x01020304u * (i + 1);
+    CHECK(cube->replaceSlices(2, 0, 0, 3, 8, 8, 1, in.data(), 32, 256, &why));
+    CHECK(cube->readSlices(2, 0, 0, 3, 8, 8, 1, out.data(), 32, 256, &why));
+    CHECK(in == out);
+    const TextureLevel L2 = cube->level(2);
+    const auto* at = static_cast<const uint8_t*>(cube->contents()) + 3 * layer + L2.offset + L2.pitch;   // row 1 of it
+    CHECK(memcmp(at, &in[8], 32) == 0);
+    // the game's arrays: 64 layers of 2 levels
+    TextureDesc a;
+    a.type = TextureType::k2DArray;
+    a.format = PixelFormat::kR8Unorm;
+    a.width = a.height = 32;
+    a.depth = 64;
+    a.mipLevels = 2;
+    a.usage = kTextureUsageRead;
+    CHECK(Texture::make(r.gpu, a, &why) != nullptr);
+}
+
+// A whole 2D chain (and a depth buffer) as a one-slice 2D array, which Resident Evil 4 asks of its targets with 4, 5 and
+// 8 levels: the same address, every level, one layer; the depth view keeps its tiling (TILE6_3) through the array's
+// descriptor. A view starting past level 0 of more than one level is still refused -- its chain would not be the
+// parent's.
+TEST(a_2d_chain_and_a_depth_buffer_view_as_one_slice_arrays) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA16Float;
+    d.width = 64;
+    d.height = 32;
+    d.mipLevels = 5;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    auto a = Texture::view(t, PixelFormat::kRGBA16Float, TextureType::k2DArray, 0, 5, 0, 1, &why);
+    CHECK(a != nullptr);
+    if (a != nullptr) {
+        CHECK_EQ(a->gpuAddress(), t->gpuAddress());
+        CHECK_EQ(a->levels(), 5u);
+        CHECK_EQ(a->depth(), 1u);
+        CHECK_EQ(a->level(3).offset, t->level(3).offset);
+    }
+    CHECK(Texture::view(t, PixelFormat::kRGBA16Float, TextureType::k2DArray, 1, 2, 0, 1, &why) == nullptr);
+    TextureDesc z;
+    z.format = PixelFormat::kDepth32Float;
+    z.width = 64;
+    z.height = 32;
+    z.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto depth = Texture::make(r.gpu, z, &why);
+    CHECK(depth != nullptr);
+    if (depth == nullptr) return;
+    auto za = Texture::view(depth, PixelFormat::kDepth32Float, TextureType::k2DArray, 0, 1, 0, 1, &why);
+    CHECK(za != nullptr);
+    if (za != nullptr) {
+        const TexConst s = za->sampledDescriptor();
+        CHECK_EQ((s.dword[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_3));
+        CHECK_EQ(za->gpuAddress(), depth->gpuAddress());
+    }
+}
+
+// A swizzled view reads its components through the parent's: RG11B10Float has no alpha (SWIZ_W is ONE), so a view of
+// (alpha, red, zero, one) reads X = ONE, Y = X, Z = ZERO, W = ONE; a view of that view naming its (green, green, red,
+// alpha) reads X, X, ONE, ONE. The parent's descriptor is untouched.
+TEST(a_swizzled_view_composes_with_what_its_parent_reads) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kRG11B10Float;
+    d.width = d.height = 8;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    auto fields = [](const TexConst& c) {
+        std::vector<uint32_t> v;
+        for (int i = 0; i < 4; i++) v.push_back((c.dword[0] >> (A6XX_TEX_CONST_0_SWIZ_X__SHIFT + 3 * i)) & 7);
+        return v;
+    };
+    const uint8_t s1[4] = {5, 2, 0, 1};
+    auto v1 = Texture::swizzled(t, s1, &why);
+    CHECK(v1 != nullptr);
+    if (v1 == nullptr) return;
+    CHECK(fields(v1->sampledDescriptor()) == (std::vector<uint32_t>{A6XX_TEX_ONE, A6XX_TEX_X, A6XX_TEX_ZERO, A6XX_TEX_ONE}));
+    const uint8_t s2[4] = {3, 3, 2, 5};
+    auto v2 = Texture::swizzled(v1, s2, &why);
+    CHECK(v2 != nullptr);
+    if (v2 != nullptr) CHECK(fields(v2->sampledDescriptor()) == (std::vector<uint32_t>{A6XX_TEX_X, A6XX_TEX_X, A6XX_TEX_ONE, A6XX_TEX_ONE}));
+    CHECK(fields(t->sampledDescriptor()) == (std::vector<uint32_t>{A6XX_TEX_X, A6XX_TEX_Y, A6XX_TEX_Z, A6XX_TEX_ONE}));
+    const uint8_t bad[4] = {6, 2, 3, 4};
+    CHECK(Texture::swizzled(t, bad, &why) == nullptr);
+}
+
+// A 1D texture as a one-slice 1D array (Resident Evil 4 makes one of an RGBA32Float table): the same memory, TYPE 1D
+// with DEPTH 1 in the array's descriptor.
+TEST(a_1d_texture_views_as_a_one_slice_1d_array) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.type = TextureType::k1D;
+    d.format = PixelFormat::kRGBA32Float;
+    d.width = 256;
+    d.height = 1;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    auto a = Texture::view(t, PixelFormat::kRGBA32Float, TextureType::k1DArray, 0, 1, 0, 1, &why);
+    CHECK(a != nullptr);
+    if (a == nullptr) return;
+    CHECK_EQ(a->gpuAddress(), t->gpuAddress());
+    const TexConst s = a->sampledDescriptor();
+    CHECK_EQ((s.dword[2] & A6XX_TEX_CONST_2_TYPE__MASK) >> A6XX_TEX_CONST_2_TYPE__SHIFT, uint32_t(A6XX_TEX_1D));
+    CHECK_EQ((s.dword[5] & A6XX_TEX_CONST_5_DEPTH__MASK) >> A6XX_TEX_CONST_5_DEPTH__SHIFT, 1u);
+}
+
+// The stencil plane of a Depth32Float_Stencil8 texture as an X32_Stencil8 view: FMT6_8_UINT at the S8 plane's address
+// (past the depth plane), its 128-aligned pitch, tiled, PITCHALIGN 1. Of a Depth32Float texture without one, refused.
+TEST(a_stencil_view_reads_the_s8_plane) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kDepth32FloatStencil8;
+    d.width = 100;
+    d.height = 40;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto ds = Texture::make(r.gpu, d, &why);
+    CHECK(ds != nullptr);
+    if (ds == nullptr) return;
+    auto s = Texture::view(ds, PixelFormat::kX32Stencil8, TextureType::k2D, 0, 1, 0, 1, &why);
+    CHECK(s != nullptr);
+    if (s == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(s->gpuAddress(), ds->gpuAddress() + ds->stencilOffset());
+    const TexConst c = s->sampledDescriptor();
+    CHECK_EQ((c.dword[0] & A6XX_TEX_CONST_0_FMT__MASK) >> A6XX_TEX_CONST_0_FMT__SHIFT, uint32_t(FMT6_8_UINT));
+    CHECK_EQ((c.dword[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_3));
+    CHECK_EQ(c.dword[2] & A6XX_TEX_CONST_2_PITCH__MASK, A6XX_TEX_CONST_2_PITCH(128));
+    CHECK_EQ((c.dword[2] & A6XX_TEX_CONST_2_PITCHALIGN__MASK) >> A6XX_TEX_CONST_2_PITCHALIGN__SHIFT, 1u);
+    TextureDesc z = d;
+    z.format = PixelFormat::kDepth32Float;
+    auto depthOnly = Texture::make(r.gpu, z, &why);
+    CHECK(depthOnly != nullptr && Texture::view(depthOnly, PixelFormat::kX32Stencil8, TextureType::k2D, 0, 1, 0, 1, &why) == nullptr);
 }

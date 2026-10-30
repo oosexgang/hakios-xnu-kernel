@@ -2451,7 +2451,7 @@ int main(int argc, char** argv) {
                 for (uint32_t y = 0; y < 4; y++)
                     for (uint32_t x = 0; x < 4; x++) voxels[z][y][x] = 0xff000000u | z << 16 | y << 8 | x;
             Sampler vsmp;
-            if (vol == nullptr || !vol->replaceSlices(0, 0, 0, 4, 4, 4, voxels, 16, 64, &vwhy) || !makeSampler(SamplerDesc{}, &vsmp, &vwhy)) {
+            if (vol == nullptr || !vol->replaceSlices(0, 0, 0, 0, 4, 4, 4, voxels, 16, 64, &vwhy) || !makeSampler(SamplerDesc{}, &vsmp, &vwhy)) {
                 report(false, "3d: a 4x4x4 RGBA8 texture: " + vwhy);
             } else {
                 const Program volProg{kernels::tri_color_vs_air, kernels::tri_tex3d_fs_air, Linkage{}, "tri_tex3d"};
@@ -2509,7 +2509,7 @@ int main(int argc, char** argv) {
                 for (uint32_t y = 0; y < 4; y++)
                     for (uint32_t x = 0; x < 4; x++) texels[l][y][x] = 0xff000000u | l << 16 | y << 8 | x;
             Sampler asmp;
-            if (arr == nullptr || !arr->replaceSlices(0, 0, 0, 4, 4, 2, texels, 16, 64, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
+            if (arr == nullptr || !arr->replaceSlices(0, 0, 0, 0, 4, 4, 2, texels, 16, 64, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
                 report(false, "2d array: a 4x4x2 RGBA8 array: " + awhy);
             } else {
                 const Program arrProg{kernels::tri_color_vs_air, kernels::tri_tex2da_fs_air, Linkage{}, "tri_tex2da"};
@@ -2566,7 +2566,7 @@ int main(int argc, char** argv) {
                 for (uint32_t k = 0; k < 16; k++) faces[f][k] = 0xff000000u | (0xffu - 0x20u * f) << 16 | (0x20u * f) << 8 | (f + 1);
             Sampler csmp;
             auto dir = newBuffer(gpu, 16, &cwhy);
-            if (cube == nullptr || dir == nullptr || !cube->replaceSlices(0, 0, 0, 4, 4, 6, faces, 16, 64, &cwhy) || !makeSampler(SamplerDesc{}, &csmp, &cwhy)) {
+            if (cube == nullptr || dir == nullptr || !cube->replaceSlices(0, 0, 0, 0, 4, 4, 6, faces, 16, 64, &cwhy) || !makeSampler(SamplerDesc{}, &csmp, &cwhy)) {
                 report(false, "cube: a 4x4 cube: " + cwhy);
             } else {
                 const Program cubeProg{kernels::tri_flat_vs_air, kernels::tri_cube_fs_air, Linkage{}, "tri_cube"};
@@ -2632,8 +2632,8 @@ int main(int argc, char** argv) {
             for (uint32_t k = 0; k < 32; k++) texels[k] = colourOf(k + 20);
             Sampler asmp;
             auto cbuf2 = newBuffer(gpu, 32, &awhy);
-            if (cuba == nullptr || arr1 == nullptr || cbuf2 == nullptr || !cuba->replaceSlices(0, 0, 0, 4, 4, 18, faces.data(), 16, 64, &awhy) ||
-                !arr1->replaceSlices(0, 0, 0, 8, 1, 4, texels.data(), 32, 32, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
+            if (cuba == nullptr || arr1 == nullptr || cbuf2 == nullptr || !cuba->replaceSlices(0, 0, 0, 0, 4, 4, 18, faces.data(), 16, 64, &awhy) ||
+                !arr1->replaceSlices(0, 0, 0, 0, 8, 1, 4, texels.data(), 32, 32, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
                 report(false, "cube array and 1D array: " + awhy);
             } else {
                 auto whole = [&](const Program& prog, const Texture& tex, const float c[8], uint32_t want, std::string* detail) {

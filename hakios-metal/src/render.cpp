@@ -27,6 +27,10 @@ using namespace a6xx;
 
 std::string n(uint64_t v) { return std::to_string(v); }
 
+// what the RB, SP_FS_MRT and the 2D engine's destination are given: the colour column of fd6_format_table.c, which
+// differs from the TP's FMT for RGB10A2 (10_10_10_2_UNORM_DEST)
+a6xx_format colorFmt(const FormatInfo& f) { return f.rbFmt != FMT6_NONE ? f.rbFmt : f.fmt6; }
+
 bool refuse(std::string* why, const std::string& text) {
     if (why != nullptr) *why = text;
     return false;
@@ -126,13 +130,13 @@ MrtWords mrtWords(const Texture& t, uint32_t level, uint32_t slice = 0) {
     MrtWords m{};
     // (a layer, a face or a depth plane: the slices are one 2D layout each, sliceBytes apart -- fd6_layout.c's layer_size)
     const uint64_t base = t.levelAddress(level) + (slice != 0 ? uint64_t(slice) * t.sliceBytes() : 0);
-    m.bufInfo = rbMrtBufInfo(f.fmt6, TILE6_LINEAR, f.swap);
+    m.bufInfo = rbMrtBufInfo(colorFmt(f), TILE6_LINEAR, f.swap);
     m.pitch = rbMrtPitch(uint32_t(L.pitch));
     m.arrayPitch = rbMrtArrayPitch(uint32_t(t.buffer()->length()));
     m.baseLo = uint32_t(base);
     m.baseHi = uint32_t(base >> 32);
     m.baseGmem = 0;
-    m.spFsMrtReg = spFsMrtReg(f.fmt6, f.element == kElemInt, f.element == kElemUint);
+    m.spFsMrtReg = spFsMrtReg(colorFmt(f), f.element == kElemInt, f.element == kElemUint);
     m.srgb = f.srgb;
     return m;
 }
@@ -469,7 +473,7 @@ uint32_t channelsOf(const FormatInfo& f) {
     switch (f.fmt6) {
     case FMT6_8_UNORM: case FMT6_16_FLOAT: case FMT6_32_UINT: case FMT6_32_FLOAT: case FMT6_16_UNORM: case FMT6_16_UINT: case FMT6_16_SINT: return 1;
     case FMT6_8_8_UNORM: case FMT6_16_16_FLOAT: case FMT6_32_32_FLOAT: return 2;
-    case FMT6_5_6_5_UNORM: return 3;
+    case FMT6_5_6_5_UNORM: case FMT6_11_11_10_FLOAT: return 3;
     default: return 4;
     }
 }
@@ -497,7 +501,8 @@ bool clearWords(const FormatInfo& f, const double colour[4], ClearWords* out, st
             out->value[i] = unorm8Of(f.srgb && i < 3 ? linearToSrgb(linear) : linear);
         }
         return true;
-    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT:
+    // (11- and 10-bit float channels through 16-bit float too: turnip's format_to_ifmt picks by the red channel's size)
+    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: case FMT6_11_11_10_FLOAT: case FMT6_10_10_10_2_UNORM:
         out->ifmt = R2D_FLOAT16;
         for (uint32_t i = 0; i < channels; i++) out->value[i] = halfOf(float(colour[i]));
         return true;
@@ -851,14 +856,14 @@ void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c,
     const uint32_t W = wholeLayout ? uint32_t(L.pitch / f.bytesPerPixel) : L.width * target.samples();
     const uint32_t H = wholeLayout ? (L.height + 15) / 16 * 16 : L.height;
     const uint64_t at = target.levelAddress(level) + (slice != 0 ? uint64_t(slice) * target.sliceBytes() : 0);
-    const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
+    const uint32_t blit = rb2dBlitCntlClear(colorFmt(f), c.ifmt);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
     reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
     reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
-    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(f.fmt6, f.element == kElemInt, f.element == kElemUint, f.srgb));
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(colorFmt(f), f.element == kElemInt, f.element == kElemUint, f.srgb));
     regs(stream, REG_A6XX_GRAS_2D_DST_TL, {regXY(0, 0), regXY(W - 1, H - 1)});
     regs(stream, REG_A6XX_RB_2D_SRC_SOLID_C0, {c.value[0], c.value[1], c.value[2], c.value[3]});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(f.fmt6, tile, f.swap, f.srgb), uint32_t(at), uint32_t(at >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(L.pitch))});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(colorFmt(f), tile, f.swap, f.srgb), uint32_t(at), uint32_t(at >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(L.pitch))});
     regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
 }
@@ -875,11 +880,11 @@ void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c
 // the depth's float bits in SOLID_C0; the 2D engine sees FMT6_32_FLOAT, TILE6_3 as the image is laid out), then what
 // tu_clear_sysmem_attachment does after a depth clear (tu_clear_blit.cc:4480-4483): the colour CCU cleaned -- the 2D
 // engine writes through it -- and the depth CCU cleaned and invalidated, so the draw's depth test reads the fill
-void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDepth, uint64_t table, uint32_t level = 0) {
+void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDepth, uint64_t table, uint32_t level = 0, uint32_t slice = 0) {
     ClearWords c{};
     c.ifmt = R2D_FLOAT32;
     c.value[0] = fui(float(clearDepth));
-    fillStream(stream, depth, c, TILE6_3, level);
+    fillStream(stream, depth, c, TILE6_3, level, slice);
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableDepthClearFlushAt, kDepthClearFlushValue, false);
     waitForWord(stream, table + kTableDepthClearFlushAt, kDepthClearFlushValue);
     eventTimestamp(stream, PC_CCU_FLUSH_DEPTH_TS, table + kTableDepthClearDepthFlushAt, kDepthClearDepthFlushValue, false);
@@ -915,7 +920,7 @@ void stencilClearStream(pm4::Stream& stream, const Texture& t, uint32_t value, u
 // the depth attachment's Clear and the stencil attachment's, each when asked for (tu_clear_sysmem_attachment, each aspect in turn)
 void zsClears(pm4::Stream& stream, const RenderPass& pass, uint64_t table) {
     if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
-        depthClearStream(stream, *pass.depth, pass.clearDepth, table, pass.depthLevel);
+        depthClearStream(stream, *pass.depth, pass.clearDepth, table, pass.depthLevel, pass.depthSlice);
     }
     if (pass.stencil != nullptr && pass.stencilLoad == LoadAction::kClear) {
         stencilClearStream(stream, *pass.stencil, pass.clearStencil, table);
@@ -1011,6 +1016,11 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if ((d.bytesPerRow() >> A6XX_RB_DEPTH_BUFFER_PITCH__SCALE) > A6XX_RB_DEPTH_BUFFER_PITCH__MASK || d.buffer()->length() >= (1ull << 32)) {
             return refuse(why, "the depth texture's pitch of " + n(d.bytesPerRow()) + " bytes or its " + n(d.buffer()->length()) +
                                    " bytes do not fit RB_DEPTH_BUFFER_PITCH / ARRAY_PITCH");
+        }
+        // (a depth array's layer, one of its own; anything else has the one)
+        const uint32_t depthLayers = d.type() == TextureType::k2DArray ? d.depth() : 1;
+        if (pass.depthSlice >= depthLayers) {
+            return refuse(why, "depth slice " + n(pass.depthSlice) + " of a depth texture of " + n(depthLayers) + " layer(s)");
         }
         if (pass.depthLoad != LoadAction::kLoad && pass.depthLoad != LoadAction::kDontCare && pass.depthLoad != LoadAction::kClear) {
             return refuse(why, "depth load action " + n(uint32_t(pass.depthLoad)) + ": MTLLoadAction is DontCare (0), Load (1) or Clear (2)");
@@ -1520,10 +1530,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     }
     if (pass.depth != nullptr) {
         const Texture& d = *pass.depth;
+        // (a depth array's layer: that many tiled planes on, sliceBytes apart)
+        const uint64_t depthAt = d.levelAddress(pass.depthLevel) + uint64_t(pass.depthSlice) * d.sliceBytes();
         regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO,
              {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.level(pass.depthLevel).pitch)),
-              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.depthPlaneBytes())), uint32_t(d.levelAddress(pass.depthLevel)),
-              uint32_t(d.levelAddress(pass.depthLevel) >> 32), 0});
+              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.depthPlaneBytes())), uint32_t(depthAt), uint32_t(depthAt >> 32), 0});
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32));
         regs(stream, REG_A6XX_RB_DEPTH_FLAG_BUFFER_BASE, {0, 0, 0});
         if (pass.stencil != nullptr) {
@@ -2085,7 +2096,7 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: case FMT6_5_6_5_UNORM: case FMT6_5_5_5_1_UNORM:
         ifmt = R2D_UNORM8;
         break;
-    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: ifmt = R2D_FLOAT16; break;
+    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: case FMT6_11_11_10_FLOAT: case FMT6_10_10_10_2_UNORM: ifmt = R2D_FLOAT16; break;
     case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: ifmt = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: ifmt = R2D_INT32; break;
     default: return refuse(why, std::string("a copy of ") + df.name + ": the 2D engine's intermediate format for it is not worked out here");
@@ -2096,11 +2107,11 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (srgb) ifmt = R2D_UNORM8_SRGB;
     tableStart(tableCpu);
     passStart(stream, DL.width, DL.height, table, o);
-    const uint32_t blit = rb2dBlitCntlCopy(df.fmt6, ifmt);
+    const uint32_t blit = rb2dBlitCntlCopy(colorFmt(df), ifmt);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
     reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
     reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
-    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(df.fmt6, df.element == kElemInt, df.element == kElemUint, srgb));
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(colorFmt(df), df.element == kElemInt, df.element == kElemUint, srgb));
     // the source rectangle then the destination one: six consecutive registers (BR inclusive in both)
     regs(stream, REG_A6XX_GRAS_2D_SRC_TL_X, {gras2dSrc(s.x), gras2dSrc(s.x + s.w - 1), gras2dSrc(s.y), gras2dSrc(s.y + s.h - 1), regXY(d.x, d.y),
                                             regXY(d.x + d.w - 1, d.y + d.h - 1)});
@@ -2111,7 +2122,7 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
                                               uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
     regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(df.fmt6, TILE6_LINEAR, df.swap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(colorFmt(df), TILE6_LINEAR, df.swap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
     regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
     // what a Clear's fill does after it, and then the pass's tail: the copy is in memory when the next thing reads it
@@ -2350,6 +2361,27 @@ bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect
 }
 
 bool CommandBuffer::generateMipmaps(const Texture& t, const render::Options& options) {
+    // an array's or a cube's levels are every layer's: level by level, slice by slice, each (level, slice) the one-level
+    // 2D view of it -- the blit addresses a level of slice 0 only
+    const bool layered = t.type() == TextureType::k2DArray || t.type() == TextureType::kCube || t.type() == TextureType::kCubeArray;
+    if (layered && t.depth() > 1 && t.levels() > 1) {
+        std::shared_ptr<Texture> self = Texture::byResourceId(t.resourceId());
+        if (self == nullptr) return fail("generateMipmaps of a texture the registry does not know");
+        for (uint32_t z = 0; z < t.depth(); z++) {
+            for (uint32_t l = 1; l < t.levels(); l++) {
+                std::string why;
+                std::shared_ptr<Texture> a = Texture::view(self, t.format(), TextureType::k2D, l - 1, 1, z, 1, &why);
+                std::shared_ptr<Texture> b = a != nullptr ? Texture::view(self, t.format(), TextureType::k2D, l, 1, z, 1, &why) : nullptr;
+                if (b == nullptr) return fail("generateMipmaps of slice " + std::to_string(z) + ": " + why);
+                keepAlive(a);
+                keepAlive(b);
+                if (!blit(*a, 0, render::BlitRect{0, 0, a->width(), a->height()}, *b, 0, render::BlitRect{0, 0, b->width(), b->height()}, true, options)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
     for (uint32_t l = 1; l < t.levels(); l++) {
         const TextureLevel a = t.level(l - 1), b = t.level(l);
         if (!blit(t, l - 1, render::BlitRect{0, 0, a.width, a.height}, t, l, render::BlitRect{0, 0, b.width, b.height}, true, options)) {

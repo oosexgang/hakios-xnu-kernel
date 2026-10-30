@@ -8,6 +8,7 @@
 // rest is tested on any machine against a fake GPU (fake_gpu.hpp).
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -142,6 +143,7 @@ private:
     uint64_t iova_;
     void* cpu_;
     bool owned_ = true;   // false: another Bo owns the handle (Gpu::disown)
+    bool counted_ = false;   // in Gpu::allocatedBytes: memory this driver asked for (not an IOSurface's)
 };
 
 struct BoUse {
@@ -162,6 +164,9 @@ public:
 
     // a buffer of SIZE bytes (rounded up to a page), its GPU address and its mapping; nullptr with *error set
     std::unique_ptr<Bo> newBo(uint64_t size, uint32_t flags, int* error);
+    // the bytes of every Bo newBo made and that is still the GPU's: MTLDevice's currentAllocatedSize, which a game
+    // sizes what it keeps resident by (Resident Evil 4 asks)
+    uint64_t allocatedBytes() const { return allocated_.load(std::memory_order_relaxed); }
     // the memory of IOSurface SURFACE_ID as a buffer (the kernel holds the surface while the buffer lives), *INFO what
     // the kernel says of it; the mapping is the driver's view of the same pages, nullptr when it gives none. The kernel
     // answers a surface this client holds already with the same handle: the caller must keep one Bo per handle
@@ -192,6 +197,7 @@ public:
 
 private:
     friend class Bo;
+    std::atomic<uint64_t> allocated_{0};
     void release(Bo& bo);
     std::unique_ptr<Transport> t_;
 };

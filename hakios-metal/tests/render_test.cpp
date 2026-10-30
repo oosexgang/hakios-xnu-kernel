@@ -4667,3 +4667,144 @@ TEST(append_runs_another_command_buffers_work_after_this_ones) {
     CHECK(!parent->append(*bad));
     CHECK(parent->error().find("a draw of 0 vertices") != std::string::npos);
 }
+
+// generateMipmaps of a cube: every face's levels from its own level 0 (a blit addresses slice 0 alone, so each
+// (level, slice) goes through its one-level 2D view). Face 3 holds a checkerboard of 0x60 and 0x20, which averages to
+// 0x40 at level 1; face 0 holds zeros and keeps them -- the twin that says the faces were not mixed.
+TEST(generate_mipmaps_of_a_cube_makes_each_faces_own_levels) {
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.type = TextureType::kCube;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = d.height = 16;
+    d.depth = 6;
+    d.mipLevels = 3;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto cube = Texture::make(*r.gpu, d, &why);
+    CHECK(cube != nullptr);
+    if (cube == nullptr) return;
+    std::vector<uint32_t> face(16 * 16);
+    for (uint32_t y = 0; y < 16; y++)
+        for (uint32_t x = 0; x < 16; x++) face[y * 16 + x] = (x + y) % 2 ? 0x60606060u : 0x20202020u;
+    CHECK(cube->replaceSlices(0, 0, 0, 3, 16, 16, 1, face.data(), 64, 1024, &why));
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->generateMipmaps(*cube));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    std::vector<uint32_t> l1(8 * 8, 0), z1(8 * 8, 1);
+    CHECK(cube->readSlices(1, 0, 0, 3, 8, 8, 1, l1.data(), 32, 256, &why));
+    CHECK(cube->readSlices(1, 0, 0, 0, 8, 8, 1, z1.data(), 32, 256, &why));
+    bool all40 = true, zeros = true;
+    for (uint32_t v : l1) all40 = all40 && v == 0x40404040u;
+    for (uint32_t v : z1) zeros = zeros && v == 0;
+    CHECK(all40);
+    CHECK(zeros);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// RGB10A2Unorm, Resident Evil 4's main colour target: FMT 10_10_10_2_UNORM to the TP and 10_10_10_2_UNORM_DEST to the
+// RB (fd6_format_table.c's colour column) -- a draw into it names the second in RB_MRT_BUF_INFO, and a 2D copy reads
+// the first and writes the second, giving the words back as they were. The twin: RGBA8, whose two columns are one.
+TEST(rgb10a2_is_drawn_through_its_own_colour_format) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kRGB10A2Unorm;
+    d.width = d.height = 16;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto t = Texture::make(*r.gpu, d, &why);
+    auto u = Texture::make(*r.gpu, d, &why);
+    CHECK(t != nullptr && u != nullptr);
+    if (t == nullptr || u == nullptr) return;
+    RenderPass pass;
+    pass.color0 = t.get();
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw(6, 16, 16));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.mrtFormats[0], uint32_t(FMT6_10_10_10_2_UNORM_DEST));
+    std::vector<uint32_t> words(16 * 16), back(16 * 16, 0);
+    for (uint32_t i = 0; i < words.size(); i++) words[i] = 0x9e3779b1u * (i + 1);
+    CHECK(t->replace(0, 0, 0, 16, 16, words.data(), 64, &why));
+    auto cb2 = r.queue->commandBuffer();
+    CHECK(cb2->blit(*t, 0, render::BlitRect{0, 0, 16, 16}, *u, 0, render::BlitRect{0, 0, 16, 16}, false));
+    cb2->commit();
+    cb2->waitUntilCompleted();
+    CHECK(cb2->status() == CommandBuffer::kCompleted);
+    if (cb2->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb2->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK(u->read(0, 0, 0, 16, 16, back.data(), 64, &why));
+    CHECK(back == words);
+    TextureDesc rgba = d;
+    rgba.format = PixelFormat::kRGBA8Unorm;
+    auto v = Texture::make(*r.gpu, rgba, &why);
+    RenderPass p2;
+    p2.color0 = v.get();
+    auto cb3 = drawOnce(r, flatProgram(), p2, wholeDraw(6, 16, 16));
+    CHECK_EQ(r.fake->stats().lastDraw.mrtFormats[0], uint32_t(FMT6_8_8_8_8_UNORM));
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// A depth 2D array, a shadow map's cascades as Resident Evil 4 makes them (Depth32Float, drawn into and sampled): each
+// layer a tiled plane (the rows to 16, the plane 4096-aligned), a pass drawing into layer 2 points RB_DEPTH_BUFFER_BASE
+// two planes on, and the array's descriptor reads every layer TILE6_3, ARRAY_PITCH one plane, DEPTH the layers. The
+// twin: layer 0 is the base itself. A stencil format in an array is still refused.
+TEST(a_depth_array_is_drawn_layer_by_layer_and_sampled_whole) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    auto t = target(r);
+    TextureDesc d;
+    d.type = TextureType::k2DArray;
+    d.format = PixelFormat::kDepth32Float;
+    d.width = d.height = 64;
+    d.depth = 4;
+    d.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    auto z = Texture::make(*r.gpu, d, &why);
+    CHECK(z != nullptr);
+    if (z == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    const uint64_t plane = z->depthPlaneBytes();
+    CHECK_EQ(z->sliceBytes(), plane);
+    CHECK(z->buffer()->length() >= plane * 4);
+    for (uint32_t layer : {0u, 2u}) {
+        RenderPass pass;
+        pass.color0 = t.get();
+        pass.depth = z.get();
+        pass.depthSlice = layer;
+        pass.depthLoad = LoadAction::kClear;
+        Draw dr = wholeDraw();
+        dr.depth = DepthState{1, true};
+        auto cb = drawOnce(r, flatProgram(), pass, dr);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+        CHECK_EQ(r.fake->stats().lastDraw.depthBase, z->gpuAddress() + layer * plane);
+    }
+    const TexConst s = z->sampledDescriptor();
+    CHECK_EQ((s.dword[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_3));
+    CHECK_EQ((s.dword[3] & A6XX_TEX_CONST_3_ARRAY_PITCH__MASK) >> A6XX_TEX_CONST_3_ARRAY_PITCH__SHIFT << 12, plane);
+    CHECK_EQ((s.dword[5] & A6XX_TEX_CONST_5_DEPTH__MASK) >> A6XX_TEX_CONST_5_DEPTH__SHIFT, 4u);
+    TextureDesc ds = d;
+    ds.format = PixelFormat::kDepth32FloatStencil8;
+    CHECK(Texture::make(*r.gpu, ds, &why) == nullptr);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// ...and a layer past the array's, or a layer of a depth texture that is not an array, is refused by name.
+TEST(a_depth_slice_past_the_layers_is_refused) {
+    Rig r;
+    std::string why;
+    auto t = target(r);
+    auto flat = depthTarget(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    pass.depth = flat.get();
+    pass.depthSlice = 1;
+    Encoded e(r, flatProgram(), pass, wholeDraw());
+    CHECK(!e.ok);
+    expectRefusal(e.error, "depth slice 1 of a depth texture of 1 layer(s)");
+}

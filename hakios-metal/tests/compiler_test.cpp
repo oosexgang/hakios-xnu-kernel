@@ -12,6 +12,7 @@
 #include "hakios-metal/fake_gpu.hpp"
 #include "hakios-metal/gpu.hpp"
 #include "fixtures/argbuf_res_air.hpp"
+#include "hakios-metal/hakios_metal.h"
 #include "fixtures/fill_id_air.hpp"
 #include "fixtures/tex_copy_air.hpp"
 #include "fixtures/tex_fill_air.hpp"
@@ -1022,6 +1023,48 @@ TEST(compiler_specialises_a_stage_by_the_pipelines_function_constants) {
             std::printf("\n");
         }
     }
+}
+
+// clz: the front end's uclz, which ir3 cannot translate -- it reported "Unhandled ALU op: uclz" and ended the process,
+// this test binary with it. Compiled now through 31 - ufind_msb, and the words carry no uclz left for ir3 to meet.
+TEST(a_kernel_counting_leading_zeros_compiles) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: clz did not run)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("clz_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
+// What MTLFunction's -newArgumentEncoderWithBufferIndex: is answered with: argbuf_res's set at [[buffer(0)]] has
+// four members, ids 0 to 3, eight bytes apart from 0 (the module's air.struct_type_info). There is no set at
+// [[buffer(1)]] -- the function's other buffers are the set's own members, not sets -- and that is refused by name,
+// as an index Metal would answer with its assertion. Before this, every such call aborted Resident Evil 4.
+TEST(the_layout_of_an_argument_buffer_comes_from_the_metadata) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: argument buffer layouts did not run)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("argbuf_res");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::vector<std::pair<uint32_t, uint32_t>> members;
+    std::string why;
+    CHECK(argumentBufferLayout(bc.data(), bc.size(), 0, &members, &why));
+    const std::vector<std::pair<uint32_t, uint32_t>> want = {{0, 0}, {1, 8}, {2, 16}, {3, 24}};
+    CHECK(members == want);
+    CHECK(!argumentBufferLayout(bc.data(), bc.size(), 1, &members, &why));
+    expectRefusal(why, "argbuf_res has no argument buffer at buffer index 1 (its sets: [0]; 4 resources read)");
+    // the C API, with arrays shorter than the set: the count says so
+    unsigned ids[2] = {9, 9}, offsets[2] = {9, 9};
+    CHECK_EQ(hakios_metal_argument_buffer_layout(bc.data(), bc.size(), 0, ids, offsets, 2), 4);
+    CHECK(ids[0] == 0 && ids[1] == 1 && offsets[0] == 0 && offsets[1] == 8);
+    CHECK_EQ(hakios_metal_argument_buffer_layout(bc.data(), bc.size(), 1, ids, offsets, 2), -1);
 }
 
 // Argument buffers: argbuf_res takes its output buffer, a sampler and two textures as the members of one set at

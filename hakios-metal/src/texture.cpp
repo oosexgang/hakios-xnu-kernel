@@ -68,16 +68,32 @@ constexpr FormatInfo kFormats[] = {
     {PixelFormat::kBGRA8Unorm, FMT6_8_8_8_8_UNORM, 4, WXYZ, true, false, kElemFloat, "BGRA8Unorm"},
     {PixelFormat::kBGRA8UnormSrgb, FMT6_8_8_8_8_UNORM, 4, WXYZ, true, true, kElemFloat, "BGRA8Unorm_sRGB"},
     {PixelFormat::kRGBA16Float, FMT6_16_16_16_16_FLOAT, 8, WZYX, true, false, kElemFloat, "RGBA16Float"},
+    {PixelFormat::kRG11B10Float, FMT6_11_11_10_FLOAT, 4, WZYX, false, false, kElemFloat, "RG11B10Float"},
+    {PixelFormat::kRGB10A2Unorm, FMT6_10_10_10_2_UNORM, 4, WZYX, true, false, kElemFloat, "RGB10A2Unorm", false, false, false, 1, 1, FMT6_10_10_10_2_UNORM_DEST},
+    {PixelFormat::kBGR10A2Unorm, FMT6_10_10_10_2_UNORM, 4, WXYZ, true, false, kElemFloat, "BGR10A2Unorm", false, false, false, 1, 1, FMT6_10_10_10_2_UNORM_DEST},
     {PixelFormat::kRGBA32Uint, FMT6_32_32_32_32_UINT, 16, WZYX, true, false, kElemUint, "RGBA32Uint"},
     {PixelFormat::kRGBA32Float, FMT6_32_32_32_32_FLOAT, 16, WZYX, true, false, kElemFloat, "RGBA32Float"},
     // Z32_FLOAT is FMT6_32_FLOAT to the TP and the 2D engine (fd6_format_table.c:330 VT(Z32_FLOAT, 32_FLOAT, WZYX)) and
     // DEPTH6_32 to the RB (fd6_pipe2depth)
     {PixelFormat::kDepth32Float, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float", true},
+    // the S8 plane read as its own image (fdl6_view_init over a stencil layout): FMT6_8_UINT, tiled as the plane is laid
+    // out (TILE6_3, its rows to 32, its pitch to 128) -- "depth" here for the tiling, which a stencil view shares
+    {PixelFormat::kX32Stencil8, FMT6_8_UINT, 1, WZYX, false, false, kElemUint, "X32_Stencil8", true},
     {PixelFormat::kDepth32FloatStencil8, FMT6_32_FLOAT, 4, WZYX, false, false, kElemFloat, "Depth32Float_Stencil8", true, true},
     // NV12: R8_G8B8_420_UNORM, WZYX (fd6_format_table.c:357): Y in x, Cb in y, Cr in z, and no alpha, so w reads one
     {PixelFormat::kYCbCr8_420_2P, FMT6_R8_G8B8_2PLANE_420_UNORM, 1, WZYX, false, false, kElemFloat, "YCbCr8_420_2P", false, false, true},
     // ASTC: 16 bytes a block, sampled alone, LDR and sRGB the same storage (fd6_format_table.c:324-337 _T_)
     {PixelFormat::kASTC_4x4_LDR, FMT6_ASTC_4x4, 16, WZYX, true, false, kElemFloat, "ASTC_4x4_LDR", false, false, false, 4, 4},
+    {PixelFormat::kEAC_R11Unorm, FMT6_ETC2_R11_UNORM, 8, WZYX, false, false, kElemFloat, "EAC_R11Unorm", false, false, false, 4, 4},
+    {PixelFormat::kEAC_R11Snorm, FMT6_ETC2_R11_SNORM, 8, WZYX, false, false, kElemFloat, "EAC_R11Snorm", false, false, false, 4, 4},
+    {PixelFormat::kEAC_RG11Unorm, FMT6_ETC2_RG11_UNORM, 16, WZYX, false, false, kElemFloat, "EAC_RG11Unorm", false, false, false, 4, 4},
+    {PixelFormat::kEAC_RG11Snorm, FMT6_ETC2_RG11_SNORM, 16, WZYX, false, false, kElemFloat, "EAC_RG11Snorm", false, false, false, 4, 4},
+    {PixelFormat::kEAC_RGBA8, FMT6_ETC2_RGBA8, 16, WZYX, true, false, kElemFloat, "EAC_RGBA8", false, false, false, 4, 4},
+    {PixelFormat::kEAC_RGBA8_sRGB, FMT6_ETC2_RGBA8, 16, WZYX, true, true, kElemFloat, "EAC_RGBA8_sRGB", false, false, false, 4, 4},
+    {PixelFormat::kETC2_RGB8, FMT6_ETC2_RGB8, 8, WZYX, false, false, kElemFloat, "ETC2_RGB8", false, false, false, 4, 4},
+    {PixelFormat::kETC2_RGB8_sRGB, FMT6_ETC2_RGB8, 8, WZYX, false, true, kElemFloat, "ETC2_RGB8_sRGB", false, false, false, 4, 4},
+    {PixelFormat::kETC2_RGB8A1, FMT6_ETC2_RGB8A1, 8, WZYX, true, false, kElemFloat, "ETC2_RGB8A1", false, false, false, 4, 4},
+    {PixelFormat::kETC2_RGB8A1_sRGB, FMT6_ETC2_RGB8A1, 8, WZYX, true, true, kElemFloat, "ETC2_RGB8A1_sRGB", false, false, false, 4, 4},
     {PixelFormat::kASTC_4x4_sRGB, FMT6_ASTC_4x4, 16, WZYX, true, true, kElemFloat, "ASTC_4x4_sRGB", false, false, false, 4, 4},
     {PixelFormat::kASTC_5x4_LDR, FMT6_ASTC_5x4, 16, WZYX, true, false, kElemFloat, "ASTC_5x4_LDR", false, false, false, 5, 4},
     {PixelFormat::kASTC_5x4_sRGB, FMT6_ASTC_5x4, 16, WZYX, true, true, kElemFloat, "ASTC_5x4_sRGB", false, false, false, 5, 4},
@@ -251,9 +267,12 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
         refuse(why, "a cube array of " + n(desc.width) + " x " + n(desc.height) + " with " + n(desc.depth) + " faces: square faces, 6 a cube");
         return false;
     }
-    if (slices && (desc.depth == 0 || desc.depth > 2048 || desc.mipLevels != 1)) {
+    // (a 3D texture's levels shrink in depth too -- fdl6 lays them level-major -- and are not served; an array's or a
+    // cube's are each layer's own chain, layer after layer: sliceBytes)
+    if (slices && (desc.depth == 0 || desc.depth > 2048 || (desc.type == TextureType::k3D && desc.mipLevels != 1))) {
         refuse(why, std::string(desc.type == TextureType::k3D ? "a 3D texture " : "a 2D array of ") + n(desc.depth) +
-                        (desc.type == TextureType::k3D ? " deep" : " layers") + " of " + n(desc.mipLevels) + " levels: 1 to 2048 slices of one level are served");
+                        (desc.type == TextureType::k3D ? " deep" : " layers") + " of " + n(desc.mipLevels) +
+                        " levels: 1 to 2048 slices are served, of one level for a 3D texture");
         return false;
     }
     if (!slices && desc.depth != 1) {
@@ -317,12 +336,16 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
         return false;
     }
     // (a slice texture is sampled or stored by a kernel, and may be drawn into a slice at a time: the slices are 2D layouts
-    // like any target, and a kernel's store reaches slice z through the storage view's ARRAY_PITCH. A cube is not stored:
-    // a kernel addressing one is refused at its dispatch, so its usage stays what is served)
-    const uint32_t sliceUsage = desc.type == TextureType::kCube || desc.type == TextureType::kCubeArray || desc.type == TextureType::k1DArray
+    // like any target, and a kernel's store reaches slice z through the storage view's ARRAY_PITCH -- a 1D array's
+    // through its rows, storageDescriptor says why. A cube is not stored: a kernel addressing one is refused at its
+    // dispatch, so its usage stays what is served)
+    const uint32_t sliceUsage = desc.type == TextureType::kCube || desc.type == TextureType::kCubeArray
                                     ? kTextureUsageRead | kTextureUsageRenderTarget
                                                                : kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget;
-    if (slices && (info->depth || info->twoPlane || info->blockW > 1 || (desc.usage & (kTextureUsageRead | kTextureUsageWrite)) == 0 ||
+    // (a depth 2D array -- a shadow map's cascades -- is each layer a tiled depth plane, drawn into and sampled: one level,
+    // no stencil plane; what the depth check above already asked of its usage)
+    const bool depthArray = info->depth && !info->stencil && desc.type == TextureType::k2DArray && desc.mipLevels == 1 && desc.samples == 1;
+    if (slices && !depthArray && (info->depth || info->twoPlane || info->blockW > 1 || (desc.usage & (kTextureUsageRead | kTextureUsageWrite)) == 0 ||
                    (desc.usage & ~sliceUsage) != 0)) {
         refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : desc.type == TextureType::kCube ? "cube " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
                         ": one of an uncompressed colour format, sampled (1)" + (desc.type == TextureType::kCube ? "" : " or stored by a kernel (2)") +
@@ -331,8 +354,10 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
     }
     const uint32_t memoryWidth = desc.width * desc.samples;   // the width of its memory: a multisample texture's samples side by side
     uint64_t pitch = texturePitch(*info, memoryWidth);
-    uint64_t bytes = slices ? (uint64_t(blocksDown(*info, desc.height)) * pitch + 4095) / 4096 * 4096 * desc.depth
-                                                    : textureBytes(*info, memoryWidth, desc.height, desc.mipLevels);
+    const uint64_t layer = depthArray            ? depthBytes(*info, desc.width, desc.height)
+                           : desc.mipLevels > 1 ? textureBytes(*info, desc.width, desc.height, desc.mipLevels)
+                                                : (uint64_t(blocksDown(*info, desc.height)) * pitch + 4095) / 4096 * 4096;
+    uint64_t bytes = slices ? layer * desc.depth : textureBytes(*info, memoryWidth, desc.height, desc.mipLevels);
     if (info->depth && desc.samples > 1) {
         // a multisample depth layout is fdl6's tiled one at cpp 4 * samples: the pitch aligned to 64 such texels
         // (fdl6_tile_alignment's pitchalign = log2(cpp)), its rows counted to 16, the layer 4096-aligned
@@ -484,9 +509,14 @@ bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t 
 }
 
 uint64_t Texture::sliceBytes() const {
-    return desc_.type == TextureType::k3D || desc_.type == TextureType::k2DArray || desc_.type == TextureType::kCube ||
-                   desc_.type == TextureType::k1DArray || desc_.type == TextureType::kCubeArray
-               ? (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096 : 0;
+    if (desc_.type != TextureType::k3D && desc_.type != TextureType::k2DArray && desc_.type != TextureType::kCube &&
+        desc_.type != TextureType::k1DArray && desc_.type != TextureType::kCubeArray) {
+        return 0;
+    }
+    if (layerPitch_ != 0) return layerPitch_;
+    if (info_->depth) return depthBytes(*info_, desc_.width, desc_.height);   // a depth array's layer: a tiled plane
+    if (desc_.mipLevels > 1 && desc_.type != TextureType::k3D) return textureBytes(*info_, desc_.width, desc_.height, desc_.mipLevels);
+    return (uint64_t(blocksDown(*info_, desc_.height)) * pitch_ + 4095) / 4096 * 4096;
 }
 
 namespace {
@@ -509,26 +539,29 @@ bool slicesFit(const Texture& t, uint32_t x, uint32_t y, uint32_t z, uint32_t w,
 }
 }  // namespace
 
-bool Texture::replaceSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes, uint64_t bytesPerRow,
-                            uint64_t bytesPerImage, std::string* why) {
-    if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, 0, x, y, w, h, bytesPerRow, why)) return false;
+bool Texture::replaceSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes,
+                            uint64_t bytesPerRow, uint64_t bytesPerImage, std::string* why) {
+    if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, level, x, y, w, h, bytesPerRow, why)) return false;
+    const TextureLevel L = this->level(level);
     const uint64_t row = uint64_t(w) * info_->bytesPerPixel;
     for (uint32_t s = 0; s < d; s++) {
-        auto* dst = static_cast<uint8_t*>(contents()) + (uint64_t(z) + s) * sliceBytes() + uint64_t(y) * pitch_ + uint64_t(x) * info_->bytesPerPixel;
+        auto* dst = static_cast<uint8_t*>(contents()) + L.offset + (uint64_t(z) + s) * sliceBytes() + uint64_t(y) * L.pitch + uint64_t(x) * info_->bytesPerPixel;
         auto* src = static_cast<const uint8_t*>(bytes) + uint64_t(s) * bytesPerImage;
-        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * pitch_, src + uint64_t(r) * bytesPerRow, row);
+        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * L.pitch, src + uint64_t(r) * bytesPerRow, row);
     }
     return true;
 }
 
-bool Texture::readSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow, uint64_t bytesPerImage,
-                         std::string* why) const {
-    if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, 0, x, y, w, h, bytesPerRow, why)) return false;
+bool Texture::readSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow,
+                         uint64_t bytesPerImage, std::string* why) const {
+    if (!slicesFit(*this, x, y, z, w, h, d, bytesPerRow, bytesPerImage, why) || !regionFits(*this, level, x, y, w, h, bytesPerRow, why)) return false;
+    const TextureLevel L = this->level(level);
     const uint64_t row = uint64_t(w) * info_->bytesPerPixel;
     for (uint32_t s = 0; s < d; s++) {
-        const auto* src = static_cast<const uint8_t*>(contents()) + (uint64_t(z) + s) * sliceBytes() + uint64_t(y) * pitch_ + uint64_t(x) * info_->bytesPerPixel;
+        const auto* src = static_cast<const uint8_t*>(contents()) + L.offset + (uint64_t(z) + s) * sliceBytes() + uint64_t(y) * L.pitch +
+                          uint64_t(x) * info_->bytesPerPixel;
         auto* dst = static_cast<uint8_t*>(bytes) + uint64_t(s) * bytesPerImage;
-        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * bytesPerRow, src + uint64_t(r) * pitch_, row);
+        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * bytesPerRow, src + uint64_t(r) * L.pitch, row);
     }
     return true;
 }
@@ -582,13 +615,48 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         d.dword[7] = uint32_t(chroma);
         d.dword[8] = uint32_t(chroma >> 32);
     }
+    d.dword[0] = swizzleWord(d.dword[0]);
     return d;
 }
 
 a6xx::TexConst Texture::levelDescriptor(uint32_t level) const {
     const TextureLevel L = this->level(level);
-    return texture2d(levelAddress(level), L.width, L.height, uint32_t(L.pitch), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel), info_->fmt6,
-                     info_->swap, info_->hasAlpha, info_->srgb);
+    a6xx::TexConst d = texture2d(levelAddress(level), L.width, L.height, uint32_t(L.pitch), pitchAlign_ != ~0u ? pitchAlign_ : log2u(info_->bytesPerPixel),
+                                 info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
+    d.dword[0] = swizzleWord(d.dword[0]);
+    return d;
+}
+
+uint32_t Texture::swizzleWord(uint32_t dword0) const {
+    using namespace a6xx;
+    if (swizzle_[0] == 2 && swizzle_[1] == 3 && swizzle_[2] == 4 && swizzle_[3] == 5) return dword0;
+    // what each of SWIZ_X..W reads now (the format's: X, Y, Z, and W or ONE), then each channel of the view its
+    // Metal component's: zero, one, or the field that component already reads
+    uint32_t now[4], out = 0;
+    for (int c = 0; c < 4; c++) now[c] = (dword0 >> (A6XX_TEX_CONST_0_SWIZ_X__SHIFT + 3 * c)) & 7;
+    for (int c = 0; c < 4; c++) {
+        const uint8_t s = swizzle_[c];
+        const uint32_t v = s == 0 ? uint32_t(A6XX_TEX_ZERO) : s == 1 ? uint32_t(A6XX_TEX_ONE) : now[s - 2];
+        out |= v << (A6XX_TEX_CONST_0_SWIZ_X__SHIFT + 3 * c);
+    }
+    const uint32_t fields = A6XX_TEX_CONST_0_SWIZ_X__MASK | A6XX_TEX_CONST_0_SWIZ_Y__MASK | A6XX_TEX_CONST_0_SWIZ_Z__MASK | A6XX_TEX_CONST_0_SWIZ_W__MASK;
+    return (dword0 & ~fields) | out;
+}
+
+std::shared_ptr<Texture> Texture::swizzled(const std::shared_ptr<Texture>& texture, const uint8_t swizzle[4], std::string* why) {
+    const Texture& p = *texture;
+    for (int c = 0; c < 4; c++) {
+        if (swizzle[c] > 5) {
+            refuse(why, "a swizzle component of " + n(swizzle[c]) + ": MTLTextureSwizzle runs from zero (0) to alpha (5)");
+            return nullptr;
+        }
+    }
+    std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
+    t->chroma_ = p.chroma_;
+    t->layerPitch_ = p.layerPitch_;
+    // over the parent's: a component naming red reads what the parent's red reads
+    for (int c = 0; c < 4; c++) t->swizzle_[c] = swizzle[c] < 2 ? swizzle[c] : p.swizzle_[swizzle[c] - 2];
+    return t;
 }
 
 a6xx::TexConst Texture::storageDescriptor() const {
@@ -602,6 +670,11 @@ a6xx::TexConst Texture::storageDescriptor() const {
         d.dword[2] = (d.dword[2] & ~A6XX_TEX_CONST_2_TYPE__MASK) | A6XX_TEX_CONST_2_TYPE(is3d ? A6XX_TEX_3D : A6XX_TEX_2D);
         d.dword[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(uint32_t(sliceBytes())) | (is3d ? A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t(sliceBytes())) : 0u);
         d.dword[5] = (d.dword[5] & ~A6XX_TEX_CONST_5_DEPTH__MASK) | A6XX_TEX_CONST_5_DEPTH(desc_.depth);
+    }
+    if (desc_.type == TextureType::k1DArray) {
+        // ir3 addresses an image by as many coordinates as it has (ir3_get_image_coords): a 1D array's are (x, layer),
+        // a 2D store, so the view is the 2D image whose rows are the layers -- each one row, a slice apart
+        d = image2d(gpuAddress(), desc_.width, desc_.depth, uint32_t(sliceBytes()), info_->fmt6, info_->swap, info_->hasAlpha, info_->srgb);
     }
     return d;
 }
@@ -756,6 +829,23 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
         refuse(why, asked + ": the range lies outside the texture");
         return nullptr;
     }
+    // the stencil plane of a Depth32Float_Stencil8 texture as X32_Stencil8 (Resident Evil 4 samples it so): the S8 plane's
+    // own image, past the depth plane, at its pitch -- 128-byte aligned, PITCHALIGN 1 (fdl6's tiled alignment for cpp 1)
+    if (format == PixelFormat::kX32Stencil8) {
+        if (p.format() != PixelFormat::kDepth32FloatStencil8 || levels != 1 || slices != 1 ||
+            (type != TextureType::k2D && type != TextureType::k2DArray)) {
+            refuse(why, asked + ": X32_Stencil8 is a Depth32Float_Stencil8 texture's stencil plane, one level, as 2D or a one-slice 2D array");
+            return nullptr;
+        }
+        TextureDesc d = p.desc_;
+        d.format = format;
+        d.type = type;
+        d.depth = 1;
+        d.mipLevels = 1;
+        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, d, info, p.stencilPitch(), p.offset_ + p.stencilOffset(), 1));
+        t->layerPitch_ = p.stencilPlaneBytes();
+        return t;
+    }
     // another format reads the same bytes otherwise: the same size a pixel and a plain colour layout on both sides, as
     // Metal's own rule for views has it (a depth or two-plane layout is not rows of pixels a second format could name)
     if (info == nullptr || (format != p.format() && (info->depth || info->twoPlane || info->blockW > 1 || p.info().depth || p.info().twoPlane ||
@@ -778,12 +868,13 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
     // every level from 0, the slices all there, the type the parent's: the same layout, its first LEVELS levels
     if (type == p.type() && baseLevel == 0 && baseSlice == 0 && slices == parentSlices) {
         d.mipLevels = levels;
-        return adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_));
+        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_));
+        t->layerPitch_ = p.layerPitch_ != 0 ? p.layerPitch_ : (layered ? p.sliceBytes() : 0);
+        return t;
     }
     // one level as a 2D texture: level L's rows, at its pitch, are a one-level 2D layout of their own (the TP reads a
     // single level by PITCH alone); of a layered parent that has the one level, slice BASE_SLICE's rows
-    if (type == TextureType::k2D && levels == 1 && slices == 1 && (!layered || p.levels() == 1) && !p.info().depth &&
-        (p.type() == TextureType::k2D || layered)) {
+    if (type == TextureType::k2D && levels == 1 && slices == 1 && !p.info().depth && (p.type() == TextureType::k2D || layered)) {
         const TextureLevel L = p.level(baseLevel);
         d.width = L.width;
         d.height = L.height;
@@ -793,14 +884,55 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
         while (pitchAlign < log2u(info->bytesPerPixel) && L.pitch % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
         return adopt(new Texture(p.buffer_, d, info, L.pitch, p.offset_ + L.offset + uint64_t(baseSlice) * p.sliceBytes(), pitchAlign));
     }
-    // a run of a one-level layered texture's slices as a 2D array, or six as a cube: the slices sit sliceBytes apart
-    // whichever of the two names them, so the run starts BASE_SLICE slices in
-    if (layered && p.levels() == 1 && levels == 1 && (type == TextureType::k2DArray || (type == TextureType::kCube && slices == 6 && p.width() == p.height()))) {
+    // a 2D texture as a 2D array of that one slice, or a 1D one as a 1D array (Resident Evil 4 makes such views of its
+    // targets, depth buffers and 1D tables, to bind them where a shader takes an array): its levels from 0 are the one
+    // layer's chain as they lie, depth's tiled layout included -- one layer has no pitch to keep apart
+    if (((type == TextureType::k2DArray && p.type() == TextureType::k2D) || (type == TextureType::k1DArray && p.type() == TextureType::k1D)) &&
+        baseLevel == 0 && slices == 1) {
+        d.depth = 1;
+        d.mipLevels = levels;
+        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_));
+        t->layerPitch_ = textureBytes(p.info(), p.width(), p.height(), p.levels());
+        return t;
+    }
+    // ...and one level of it, the level's rows as the 2D view above
+    if (type == TextureType::k2DArray && p.type() == TextureType::k2D && levels == 1 && slices == 1 && !p.info().depth) {
+        const TextureLevel L = p.level(baseLevel);
+        d.width = L.width;
+        d.height = L.height;
+        d.mipLevels = 1;
+        d.depth = 1;
+        uint32_t pitchAlign = 0;
+        while (pitchAlign < log2u(info->bytesPerPixel) && L.pitch % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
+        return adopt(new Texture(p.buffer_, d, info, L.pitch, p.offset_ + L.offset, pitchAlign));
+    }
+    // a run of a one-level layered texture's slices as a 2D array, six as a cube, or sixes as a cube array: the slices
+    // sit sliceBytes apart whichever of them names them, so the run starts BASE_SLICE slices in
+    // -- every level of the run, or one level of it, whose rows and pitch are that level's; either way a layer apart as
+    // the parent's are (sliceBytes holds every level of a layer)
+    const bool square = p.width() == p.height();
+    if (layered && ((baseLevel == 0 && levels == p.levels()) || levels == 1) &&
+        (type == TextureType::k2DArray || (type == TextureType::kCube && slices == 6 && square) ||
+         (type == TextureType::kCubeArray && slices % 6 == 0 && square))) {
+        const TextureLevel L = p.level(baseLevel);
         d.depth = slices;
-        return adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_ + uint64_t(baseSlice) * p.sliceBytes(), p.pitchAlign_));
+        d.mipLevels = levels;
+        uint64_t pitch = p.pitch_;
+        uint32_t pitchAlign = p.pitchAlign_;
+        if (baseLevel != 0) {
+            d.width = L.width;
+            d.height = L.height;
+            pitch = L.pitch;
+            pitchAlign = 0;
+            while (pitchAlign < log2u(info->bytesPerPixel) && L.pitch % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
+        }
+        std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, d, info, pitch, p.offset_ + L.offset + uint64_t(baseSlice) * p.sliceBytes(), pitchAlign));
+        t->layerPitch_ = p.sliceBytes();
+        return t;
     }
     refuse(why, asked + ": served are every level from 0 in the texture's own type, one level (or one slice of a one-level array or cube) as 2D, "
-                        "and a run of a one-level array's or cube's slices as a 2D array, or six as a cube");
+                        "one level of a 2D texture as a one-slice 2D array, and a run of a one-level array's or cube's slices as a 2D array, six "
+                        "as a cube or sixes as a cube array");
     return nullptr;
 }
 

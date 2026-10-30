@@ -1,5 +1,6 @@
 #include "hakios-metal/compiler.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 
@@ -35,6 +36,11 @@ std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* wh
 std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage>, std::shared_ptr<CompiledStage>, PixelFormat, std::string* why) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return nullptr;
+}
+
+bool argumentBufferLayout(const void*, size_t, uint32_t, std::vector<std::pair<uint32_t, uint32_t>>*, std::string* why) {
+    *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
+    return false;
 }
 
 #else
@@ -480,6 +486,31 @@ bool lowerPointCoord(nir_builder* b, nir_intrinsic_instr* intr, void*) {
     return true;
 }
 
+// uclz (count leading zeros) has no ir3 translation: ir3 reports "Unhandled ALU op: uclz" and ends the process --
+// Resident Evil 4's CubemapFilterCS, from AIR's air.clz. As 31 - ufind_msb(x), which ir3 has: ufind_msb of 0 is -1, so
+// zero gives 32 with no select. A narrower operand is counted in 32 bits and the difference taken off; a 64-bit one
+// is its high half's count, or 32 and the low half's when the high half is 0.
+bool lowerUclz(nir_builder* b, nir_instr* instr, void*) {
+    if (instr->type != nir_instr_type_alu) return false;
+    nir_alu_instr* alu = nir_instr_as_alu(instr);
+    if (alu->op != nir_op_uclz) return false;
+    b->cursor = nir_before_instr(instr);
+    nir_def* x = nir_ssa_for_alu_src(b, alu, 0);
+    auto clz32 = [&](nir_def* v) { return nir_isub(b, nir_imm_int(b, 31), nir_ufind_msb(b, v)); };
+    nir_def* r;
+    if (x->bit_size == 64) {
+        nir_def* hi = nir_unpack_64_2x32_split_y(b, x);
+        nir_def* lo = nir_unpack_64_2x32_split_x(b, x);
+        r = nir_bcsel(b, nir_ieq_imm(b, hi, 0), nir_iadd_imm(b, clz32(lo), 32), clz32(hi));
+    } else if (x->bit_size < 32) {
+        r = nir_iadd_imm(b, clz32(nir_u2u32(b, x)), -int64_t(32 - x->bit_size));
+    } else {
+        r = clz32(x);
+    }
+    nir_def_replace(&alu->def, r);
+    return true;
+}
+
 bool lowerHalfDerivative(nir_builder* b, nir_intrinsic_instr* intr, void*) {
     switch (intr->intrinsic) {
     case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
@@ -611,6 +642,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     }
     ir3_shader_nir_options nirOptions{};
     nir_shader_intrinsics_pass(nir, lowerHalfDerivative, nir_metadata_control_flow, nullptr);
+    nir_shader_instructions_pass(nir, lowerUclz, nir_metadata_control_flow, nullptr);
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &nirOptions, nir);
     if (!lowerFbRead(nir, t.fbTargets, why)) return false;
@@ -1198,6 +1230,34 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     out->program.fsIboBase = fs->iboBase;
     out->program.name = out->name.c_str();
     return out;
+}
+
+bool argumentBufferLayout(const void* bitcode, size_t size, uint32_t set, std::vector<std::pair<uint32_t, uint32_t>>* members, std::string* why) {
+    // the interface alone: a body the front end cannot translate yet does not keep a set's layout from being known
+    Translation t;
+    t.mem = ralloc_context(nullptr);
+    air_to_nir_options options{};
+    options.interface_only = true;
+    const char* error = nullptr;
+    t.nir = air_to_nir(t.mem, bitcode, size, nullptr, &options, ir3_get_compiler_options(theCompiler()), &t.info, &error);
+    if (t.nir == nullptr) return refuse(why, std::string("the front end refused its interface: ") + (error ? error : "no reason given"));
+    members->clear();
+    for (unsigned i = 0; i < t.info.num_resources; i++) {
+        const air_resource& r = t.info.resources[i];
+        if (r.argbuf_set == set) members->emplace_back(r.argbuf_id, r.argbuf_offset);
+    }
+    if (members->empty()) {
+        // which sets it has, to tell an index asked wrong from a set the metadata does not describe
+        std::string sets;
+        for (unsigned i = 0; i < t.info.num_resources; i++) {
+            const unsigned at = t.info.resources[i].argbuf_set;
+            if (at != ~0u && sets.find("[" + std::to_string(at) + "]") == std::string::npos) sets += "[" + std::to_string(at) + "]";
+        }
+        return refuse(why, std::string(t.name()) + " has no argument buffer at buffer index " + std::to_string(set) + " (its sets: " +
+                               (sets.empty() ? "none" : sets) + "; " + std::to_string(t.info.num_resources) + " resources read)");
+    }
+    std::sort(members->begin(), members->end());
+    return true;
 }
 
 #endif

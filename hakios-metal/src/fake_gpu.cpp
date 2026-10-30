@@ -63,6 +63,9 @@ uint32_t bytesPerPixel(uint32_t fmt) {
     case a6xx::FMT6_5_6_5_UNORM: return 2;
     case a6xx::FMT6_5_5_5_1_UNORM: return 2;
     case a6xx::FMT6_16_16_FLOAT: return 4;
+    case a6xx::FMT6_11_11_10_FLOAT: return 4;
+    case a6xx::FMT6_10_10_10_2_UNORM: return 4;
+    case a6xx::FMT6_10_10_10_2_UNORM_DEST: return 4;
     case a6xx::FMT6_32_32_FLOAT: return 8;
     case a6xx::FMT6_8_8_8_8_UNORM: return 4;
     case a6xx::FMT6_32_FLOAT: return 4;
@@ -127,6 +130,9 @@ uint32_t vertexElementBytes(uint32_t fmt) {
     case a6xx::FMT6_16_16_UINT: return 4;
     case a6xx::FMT6_16_16_SINT: return 4;
     case a6xx::FMT6_16_16_FLOAT: return 4;
+    case a6xx::FMT6_11_11_10_FLOAT: return 4;
+    case a6xx::FMT6_10_10_10_2_UNORM: return 4;
+    case a6xx::FMT6_10_10_10_2_UNORM_DEST: return 4;
     case a6xx::FMT6_16_16_16_UNORM: return 6;
     case a6xx::FMT6_16_16_16_SNORM: return 6;
     case a6xx::FMT6_16_16_16_UINT: return 6;
@@ -857,7 +863,9 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: case FMT6_5_6_5_UNORM: case FMT6_5_5_5_1_UNORM:
         want = srgbIfmt ? uint32_t(R2D_UNORM8_SRGB) : uint32_t(R2D_UNORM8);
         break;
-    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: want = R2D_FLOAT16; break;
+    case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: case FMT6_11_11_10_FLOAT: case FMT6_10_10_10_2_UNORM_DEST:
+        want = R2D_FLOAT16;
+        break;
     case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: want = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: want = R2D_INT32; break;
     case FMT6_8_UINT: want = R2D_INT8; break;
@@ -954,7 +962,9 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
     }
     const uint32_t info = reg(REG_A6XX_SP_PS_2D_SRC_INFO), size = reg(REG_A6XX_SP_PS_2D_SRC_SIZE);
     const uint32_t sfmt = info & A6XX_SP_PS_2D_SRC_INFO_COLOR_FORMAT__MASK;
-    if (sfmt != fmt || fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR ||
+    // (the TP's format at the source, the colour column's at the destination: they differ for RGB10A2 alone)
+    const bool sameFormat = sfmt == fmt || (sfmt == FMT6_10_10_10_2_UNORM && fmt == FMT6_10_10_10_2_UNORM_DEST);
+    if (!sameFormat || fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR ||
         fieldOf(info, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__MASK, A6XX_SP_PS_2D_SRC_INFO_COLOR_SWAP__SHIFT) !=
             fieldOf(reg(REG_A6XX_RB_2D_DST_INFO), A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT)) {
         fault(text("a copy from format %llu into %llu, or from a tiled source, or across swaps: one linear format is what this model copies", sfmt, fmt));

@@ -73,10 +73,14 @@ enum class PixelFormat : uint32_t {
     kBGRA8UnormSrgb = 81,
     kRG32Float = 105,
     kRGBA16Float = 115,
+    kRG11B10Float = 92,
+    kRGB10A2Unorm = 90,    // red in the low 10 bits, alpha in the top 2 (Gallium's R10G10B10A2_UNORM)
+    kBGR10A2Unorm = 94,    // blue in the low 10 bits (B10G10R10A2_UNORM): the same layout, the swap WXYZ    // three unsigned floats packed in 32 bits, red in the low 11 (Gallium's R11G11B10_FLOAT): an HDR target
     kRGBA32Uint = 123,
     kRGBA32Float = 125,
     kDepth32Float = 252,   // a depth attachment only: tiled (TILE6_3), since the hardware has no linear depth buffer
-    kDepth32FloatStencil8 = 260,   // the same depth plane and a separate S8 plane after it (turnip's D32_SFLOAT_S8_UINT)
+    kDepth32FloatStencil8 = 260,
+    kX32Stencil8 = 261,    // a view of a Depth32Float_Stencil8 texture's S8 plane, sampled as a uint: Texture::view alone   // the same depth plane and a separate S8 plane after it (turnip's D32_SFLOAT_S8_UINT)
     // Metal's private 500, the format CoreAnimation asks for over a '420f' or '420v' IOSurface (a decoded photo): both
     // planes as one texture, sampled as (Y, Cb, Cr) with no conversion -- the fragment function applies its own
     // ycbcr_matrix (fixed_frag's fc_has_ycbcr_matrix). The TP's NV12 format reads exactly that. Over a surface alone,
@@ -84,6 +88,18 @@ enum class PixelFormat : uint32_t {
     kYCbCr8_420_2P = 500,
     // ASTC, 128 bits a block of W x H texels: what an asset catalogue's images are on Apple's GPUs (ImageIO stages them
     // through -newTextureLayoutWithDescriptor:). Sampled alone; written by -replaceRegion: in whole blocks.
+    // ETC2 and EAC, 4 x 4 blocks of 8 bytes (one or three channels, a 1-bit alpha) or 16 (two channels, or RGBA): sampled
+    // alone, as ASTC is
+    kEAC_R11Unorm = 170,
+    kEAC_R11Snorm = 172,
+    kEAC_RG11Unorm = 174,
+    kEAC_RG11Snorm = 176,
+    kEAC_RGBA8 = 178,
+    kEAC_RGBA8_sRGB = 179,
+    kETC2_RGB8 = 180,
+    kETC2_RGB8_sRGB = 181,
+    kETC2_RGB8A1 = 182,
+    kETC2_RGB8A1_sRGB = 183,
     kASTC_4x4_sRGB = 186,
     kASTC_5x4_sRGB = 187,
     kASTC_5x5_sRGB = 188,
@@ -134,9 +150,13 @@ struct FormatInfo {
     bool depth = false;        // a depth format: TILE6_3, render-target usage alone, no CPU access (texture.cpp says why)
     bool stencil = false;      // ...with a stencil plane of its own (Texture::stencilPlane)
     bool twoPlane = false;     // luma and an interleaved half-size chroma plane, each with its own address (TEX_CONST_6..8)
+    // (blockW and blockH below)
     // a block-compressed format: BLOCK_W x BLOCK_H texels in BYTES_PER_PIXEL bytes (a block's, 16 for ASTC), laid out as
     // fdl6 lays a block format: rows of blocks, the pitch the blocks across times cpp (fdl_set_pitchalign)
     uint32_t blockW = 1, blockH = 1;
+    // what the RB and the 2D engine's destination are given where it is not FMT: fd6_format_table.c's colour column
+    // (10_10_10_2_UNORM_DEST for RGB10A2); FMT6_NONE when it is the same
+    a6xx::a6xx_format rbFmt = a6xx::FMT6_NONE;
 };
 inline uint32_t blocksAcross(const FormatInfo& f, uint32_t width) { return (width + f.blockW - 1) / f.blockW; }
 inline uint32_t blocksDown(const FormatInfo& f, uint32_t height) { return (height + f.blockH - 1) / f.blockH; }
@@ -209,6 +229,11 @@ public:
     // lives (nullptr after, or for an id no texture had)
     uint64_t resourceId() const { return id_; }
     static std::shared_ptr<Texture> byResourceId(uint64_t id);
+    // -newTextureViewWithPixelFormat:...swizzle:: TEXTURE read through SWIZZLE (Metal's MTLTextureSwizzle numbers, red
+    // to alpha: 0 zero, 1 one, 2 red, 3 green, 4 blue, 5 alpha), over what it already reads -- the format's own swizzle
+    // and any of a view it is. Sampling alone: a store is not swizzled, in Metal either. nullptr with *why for a number
+    // past 5.
+    static std::shared_ptr<Texture> swizzled(const std::shared_ptr<Texture>& texture, const uint8_t swizzle[4], std::string* why);
 
     const TextureDesc& desc() const { return desc_; }
     uint32_t width() const { return desc_.width; }
@@ -249,12 +274,14 @@ public:
         return read(0, x, y, w, h, bytes, bytesPerRow, why);
     }
     bool read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const;
-    // a 3D texture's slices Z to Z + D - 1, each its rows (bytesPerRow apart) and the next BYTES_PER_IMAGE further on
-    bool replaceSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes, uint64_t bytesPerRow,
+    // slices Z to Z + D - 1 of mip level LEVEL, each its rows (bytesPerRow apart) and the next BYTES_PER_IMAGE further on
+    bool replaceSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, const void* bytes, uint64_t bytesPerRow,
                        uint64_t bytesPerImage, std::string* why);
-    bool readSlices(uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow, uint64_t bytesPerImage,
-                    std::string* why) const;
-    // one depth slice's bytes in a 3D texture (fd6_layout.c's size0 for level 0: the rows, 4096-aligned); 0 otherwise
+    bool readSlices(uint32_t level, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d, void* bytes, uint64_t bytesPerRow,
+                    uint64_t bytesPerImage, std::string* why) const;
+    // how far apart its slices are (ARRAY_PITCH): a 3D texture's depth slice (fd6_layout.c's size0 for level 0: the rows,
+    // 4096-aligned); an array's or cube's layer, which holds every level of it (fdl6's layer_first: the 2D chain of its
+    // levels, 4096-aligned) -- a view keeps its parent's; 0 for any other type
     uint64_t sliceBytes() const;
 
     // the descriptor a sam/isaml reads this texture through: TYPE 2D, PITCHALIGN log2(cpp), MIPLVLS 0, SAMPLES one,
@@ -283,6 +310,9 @@ private:
     uint64_t offset_;        // where the pixels start in the buffer (an IOSurface's offset; 0 for a texture of its own)
     uint32_t pitchAlign_;    // TEX_CONST_2.PITCHALIGN; ~0u: log2(cpp), the layout's own (texturePitch)
     uint32_t surface_;
+    uint64_t layerPitch_ = 0;   // a view's: its parent's sliceBytes, which a level or a run of levels does not recompute
+    uint8_t swizzle_[4] = {2, 3, 4, 5};   // Metal's numbers (swizzled): the identity unless a swizzled view
+    uint32_t swizzleWord(uint32_t dword0) const;   // TEX_CONST_0 with this texture's swizzle over the format's
     uint64_t id_ = 0;
     static std::shared_ptr<Texture> adopt(Texture* t);   // every Texture is made through this: its id, and the registry
     SurfacePlane chroma_{0, 0};   // a two-plane format's second plane, in the buffer

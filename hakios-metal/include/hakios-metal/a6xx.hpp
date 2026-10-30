@@ -97,6 +97,9 @@ enum a6xx_format : uint32_t {
     FMT6_8_8_8_8_UNORM = 48,       // a6xx.xml.h:86   RGBA8Unorm, RGBA8Unorm_sRGB, and with SWAP = WXYZ the BGRA8 pair
     FMT6_32_FLOAT = 74,            // a6xx.xml.h:105  R32Float
     FMT6_32_UINT = 75,             // a6xx.xml.h:106  a raw buffer: one dword per element; R32Uint
+    FMT6_10_10_10_2_UNORM = 54,    // a6xx.xml.h:92  RGB10A2 to the TP (fd6_format_table.c:202 FMT(R10G10B10A2_UNORM, ..., 10_10_10_2_UNORM_DEST))
+    FMT6_10_10_10_2_UNORM_DEST = 55,   // a6xx.xml.h:93  ...and to the RB and the 2D engine's destination: the colour column
+    FMT6_11_11_10_FLOAT = 66,      // a6xx.xml.h:97  R11G11B10 float, red in the low bits (fd6_format_table.c:216 VTC(R11G11B10_FLOAT, 11_11_10_FLOAT, WZYX))
     FMT6_16_16_FLOAT = 69,         // a6xx.xml.h:100  a half2 vertex attribute (fd6_format_table.c:155 VTC(R16G16_FLOAT, 16_16_FLOAT, WZYX))
     FMT6_16_16_16_16_FLOAT = 98,   // a6xx.xml.h:116  RGBA16Float
     FMT6_32_32_FLOAT = 103,        // a6xx.xml.h:121  a float2 vertex attribute (fd6_format_table.c:258 VTC(R32G32_FLOAT, 32_32_FLOAT, WZYX))
@@ -138,6 +141,14 @@ enum a6xx_format : uint32_t {
     FMT6_32_32_32_SINT = 115,      // a6xx.xml.h:128
     FMT6_32_32_32_32_SINT = 132,   // a6xx.xml.h:135
     // ASTC (LDR and sRGB alike: TEX_CONST_0.SRGB tells them apart), sampled only (fd6_format_table.c's _T_ rows)
+    // ETC2 and EAC, 4 x 4 blocks of 8 or 16 bytes: sampled alone (fd6_format_table.c:290-299, _T_ rows)
+    FMT6_ETC2_RG11_UNORM = 171,    // a6xx.xml.h:156
+    FMT6_ETC2_RG11_SNORM = 172,
+    FMT6_ETC2_R11_UNORM = 173,
+    FMT6_ETC2_R11_SNORM = 174,
+    FMT6_ETC2_RGB8 = 176,          // a6xx.xml.h:161
+    FMT6_ETC2_RGBA8 = 177,
+    FMT6_ETC2_RGB8A1 = 178,
     FMT6_ASTC_4x4 = 193,           // a6xx.xml.h:174
     FMT6_ASTC_5x4 = 194,           // a6xx.xml.h:175
     FMT6_ASTC_5x5 = 195,           // a6xx.xml.h:176

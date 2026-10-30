@@ -54,6 +54,13 @@ struct Resource {
 // draw or dispatch then refuses it if the shader reads it. False with *why: a set not bound, or shorter than a member.
 bool bindArgumentBuffers(const std::vector<Resource>& resources, Bindings* b, std::vector<std::shared_ptr<const void>>* kept, std::string* why);
 
+// What MTLFunction's -newArgumentEncoderWithBufferIndex: lays out for the argument buffer at Metal [[buffer(SET)]] of
+// the function in BITCODE: every member the set declares, used by the function or not, as (its [[id(n)]], its byte
+// offset in the set), in id order. Metal's own answer comes from the reflection Apple's compiler writes, which no
+// function here has; the front end reads the same members off the metadata (one air_resource each, whatever reads
+// them), and only the front end runs. False with *why: the front end refused the function, or it has no set there.
+bool argumentBufferLayout(const void* bitcode, size_t size, uint32_t set, std::vector<std::pair<uint32_t, uint32_t>>* members, std::string* why);
+
 // a kernel compiled here, owning what its Kernel points into
 struct CompiledKernel {
     Kernel kernel{};

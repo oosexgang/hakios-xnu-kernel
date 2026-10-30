@@ -162,6 +162,22 @@ void hakios_metal_kernel_free(hakios_metal_kernel* k) { delete k; }
 const char* hakios_metal_kernel_name(hakios_metal_kernel* k) { return k->kernel->name.c_str(); }
 unsigned hakios_metal_kernel_resource_count(hakios_metal_kernel* k) { return unsigned(k->kernel->resources.size()); }
 
+uint64_t hakios_metal_device_allocated_bytes(hakios_metal_device* d) { return d != nullptr && d->gpu ? d->gpu->allocatedBytes() : 0; }
+
+int hakios_metal_argument_buffer_layout(const void* bitcode, size_t size, unsigned set, unsigned* ids, unsigned* offsets, unsigned max) {
+    std::vector<std::pair<uint32_t, uint32_t>> members;
+    std::string why;
+    if (!argumentBufferLayout(bitcode, size, set, &members, &why)) {
+        failed(why);
+        return -1;
+    }
+    for (unsigned i = 0; i < members.size() && i < max; i++) {
+        if (ids) ids[i] = members[i].first;
+        if (offsets) offsets[i] = members[i].second;
+    }
+    return int(members.size());
+}
+
 int hakios_metal_kernel_resource(hakios_metal_kernel* k, unsigned i, unsigned* kind, unsigned* index, unsigned* sizeBytes) {
     if (i >= k->kernel->resources.size()) return -1;
     const Resource& r = k->kernel->resources[i];
@@ -265,6 +281,27 @@ hakios_metal_texture* hakios_metal_texture_new_layers(hakios_metal_device* d, un
     return r;
 }
 
+hakios_metal_texture* hakios_metal_texture_new_layered(hakios_metal_device* d, unsigned type, unsigned pixelFormat, unsigned width, unsigned height,
+                                                       unsigned layers, unsigned levels, unsigned usage) {
+    TextureDesc desc;
+    desc.type = TextureType(type);
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.depth = layers;
+    desc.mipLevels = levels;
+    desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
 hakios_metal_texture* hakios_metal_texture_new_cube(hakios_metal_device* d, unsigned pixelFormat, unsigned size, unsigned usage) {
     TextureDesc desc;
     desc.type = TextureType::kCube;
@@ -306,20 +343,20 @@ hakios_metal_texture* hakios_metal_texture_new_multisample(hakios_metal_device* 
 unsigned hakios_metal_texture_samples(hakios_metal_texture* t) { return t->texture->samples(); }
 unsigned hakios_metal_texture_depth(hakios_metal_texture* t) { return t->texture->depth(); }
 
-int hakios_metal_texture_replace_3d(hakios_metal_texture* t, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, const void* bytes,
+int hakios_metal_texture_replace_3d(hakios_metal_texture* t, unsigned level, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, const void* bytes,
                                     uint64_t bytesPerRow, uint64_t bytesPerImage) {
     std::string why;
-    if (!t->texture->replaceSlices(x, y, z, w, h, d, bytes, bytesPerRow, bytesPerImage, &why)) {
+    if (!t->texture->replaceSlices(level, x, y, z, w, h, d, bytes, bytesPerRow, bytesPerImage, &why)) {
         failed(why);
         return -1;
     }
     return 0;
 }
 
-int hakios_metal_texture_read_3d(hakios_metal_texture* t, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, void* bytes,
+int hakios_metal_texture_read_3d(hakios_metal_texture* t, unsigned level, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d, void* bytes,
                                  uint64_t bytesPerRow, uint64_t bytesPerImage) {
     std::string why;
-    if (!t->texture->readSlices(x, y, z, w, h, d, bytes, bytesPerRow, bytesPerImage, &why)) {
+    if (!t->texture->readSlices(level, x, y, z, w, h, d, bytes, bytesPerRow, bytesPerImage, &why)) {
         failed(why);
         return -1;
     }
@@ -404,6 +441,20 @@ hakios_metal_texture* hakios_metal_texture_new_view(hakios_metal_texture* t, uns
                                                     unsigned baseSlice, unsigned slices) {
     std::string why;
     std::shared_ptr<Texture> v = Texture::view(t->texture, PixelFormat(pixelFormat), TextureType(type), baseLevel, levels, baseSlice, slices, &why);
+    if (v == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(v);
+    return r;
+}
+
+hakios_metal_texture* hakios_metal_texture_new_swizzled(hakios_metal_texture* t, unsigned red, unsigned green, unsigned blue, unsigned alpha) {
+    std::string why;
+    const uint8_t s[4] = {uint8_t(red > 255 ? 255 : red), uint8_t(green > 255 ? 255 : green), uint8_t(blue > 255 ? 255 : blue),
+                          uint8_t(alpha > 255 ? 255 : alpha)};
+    std::shared_ptr<Texture> v = Texture::swizzled(t->texture, s, &why);
     if (v == nullptr) {
         failed(why);
         return nullptr;
@@ -868,6 +919,7 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
     }
     rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
     rp.depthLevel = pass->depth_level;
+    rp.depthSlice = pass->depth_slice;
     rp.depthLoad = LoadAction(pass->depth_load_action);
     rp.depthStore = StoreAction(pass->depth_store_action);
     rp.clearDepth = pass->clear_depth;

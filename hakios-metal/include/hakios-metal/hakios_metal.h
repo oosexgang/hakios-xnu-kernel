@@ -103,6 +103,14 @@ hakios_metal_kernel *hakios_metal_kernel_compile_bitcode_constants(const void *b
     const hakios_metal_constant *constants, unsigned count);
 void hakios_metal_kernel_free(hakios_metal_kernel *kernel);
 const char *hakios_metal_kernel_name(hakios_metal_kernel *kernel);
+/* the argument buffer at [[buffer(SET)]] of the function in BITCODE, as MTLFunction's -newArgumentEncoderWithBufferIndex:
+ * lays it out: every member the set declares, in id order, its [[id(n)]] into IDS and its byte offset into OFFSETS (at
+ * most MAX of them). Returns how many members the set has -- more than MAX means the arrays were too short -- or -1 with
+ * hakios_metal_error(): the front end refused the function, or there is no set at that index. Only the front end runs. */
+int hakios_metal_argument_buffer_layout(const void *bitcode, size_t size, unsigned set, unsigned *ids, unsigned *offsets, unsigned max);
+/* the bytes of GPU memory DEVICE has allocated and not given back: buffers, textures and the driver's own (command
+ * streams, tables); not an IOSurface's, which is its owner's. MTLDevice's currentAllocatedSize. */
+uint64_t hakios_metal_device_allocated_bytes(hakios_metal_device *device);
 unsigned hakios_metal_kernel_resource_count(hakios_metal_kernel *kernel);
 /* resource I: its kind, Metal index and declared size in bytes (0 when the metadata gives none); -1 past the count */
 int hakios_metal_kernel_resource(hakios_metal_kernel *kernel, unsigned i, unsigned *kind, unsigned *index, unsigned *size_bytes);
@@ -147,6 +155,9 @@ hakios_metal_texture *hakios_metal_texture_new_buffer(hakios_metal_buffer *buffe
 /* -newTextureViewWithPixelFormat:textureType:levels:slices:: a texture over TEXTURE's memory, of PIXEL_FORMAT and TYPE,
  * TEXTURE's levels BASE_LEVEL .. + LEVELS - 1 and slices BASE_SLICE .. + SLICES - 1 (texture.hpp: Texture::view says
  * which are served). Freed on its own; the memory lives while either does. NULL with the reason. */
+/* TEXTURE sampled through a swizzle: RED..ALPHA are MTLTextureSwizzle numbers (0 zero, 1 one, 2 red, 3 green, 4 blue,
+ * 5 alpha), over what TEXTURE already reads. NULL with the reason for a number past 5 */
+hakios_metal_texture *hakios_metal_texture_new_swizzled(hakios_metal_texture *texture, unsigned red, unsigned green, unsigned blue, unsigned alpha);
 hakios_metal_texture *hakios_metal_texture_new_view(hakios_metal_texture *texture, unsigned pixel_format, unsigned type, unsigned base_level,
     unsigned levels, unsigned base_slice, unsigned slices);
 /* -heapTextureSizeAndAlignWithDescriptor:: the bytes a texture of these fields would take (TYPE and PIXEL_FORMAT
@@ -189,11 +200,17 @@ hakios_metal_texture *hakios_metal_texture_new_layers(hakios_metal_device *devic
     unsigned height, unsigned layers, unsigned usage);
 /* a cube (MTLTextureTypeCube) of SIZE x SIZE faces, one level, sampled alone; face f (Metal's slice) is the slice copies' Z */
 hakios_metal_texture *hakios_metal_texture_new_cube(hakios_metal_device *device, unsigned pixel_format, unsigned size, unsigned usage);
+/* a layered texture of TYPE (MTLTextureType: 1DArray 1, 2DArray 3, Cube 5, CubeArray 6) with LEVELS mip levels: each
+ * layer the chain of them, as fdl6 lays it (hakios_metal_texture_new_layers is LEVELS 1); LAYERS counts faces for a
+ * cube or cube array, six a cube */
+hakios_metal_texture *hakios_metal_texture_new_layered(hakios_metal_device *device, unsigned type, unsigned pixel_format, unsigned width,
+    unsigned height, unsigned layers, unsigned levels, unsigned usage);
 unsigned hakios_metal_texture_depth(hakios_metal_texture *texture);   /* a 3D texture's slices, a 2D array's layers, else 1 */
-int hakios_metal_texture_replace_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,
-    const void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
-int hakios_metal_texture_read_3d(hakios_metal_texture *texture, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h, unsigned d,
-    void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
+/* slices Z to Z + D - 1 of mip level LEVEL (a layered texture's levels are each layer's own; a 3D texture has one) */
+int hakios_metal_texture_replace_3d(hakios_metal_texture *texture, unsigned level, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h,
+    unsigned d, const void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
+int hakios_metal_texture_read_3d(hakios_metal_texture *texture, unsigned level, unsigned x, unsigned y, unsigned z, unsigned w, unsigned h,
+    unsigned d, void *bytes, uint64_t bytes_per_row, uint64_t bytes_per_image);
 /* -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
  * BYTES_PER_ROW apart, into the texture at (X, Y); the pitch conversion happens here. -1 with the reason: a region outside
  * the texture, a stride shorter than W pixels. */
@@ -339,6 +356,7 @@ struct hakios_metal_render_pass {
 	unsigned cull_mode, winding;
 	unsigned color0_slice;                    /* color0's layer, face or plane drawn into (MTLRenderPassAttachmentDescriptor.slice) */
 	unsigned depth_level;                     /* the depth attachment's mip level drawn into */
+	unsigned depth_slice;                     /* a depth 2D array's layer drawn into (MTLRenderPassDepthAttachmentDescriptor.slice) */
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,
