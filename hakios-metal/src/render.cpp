@@ -114,6 +114,11 @@ struct MrtWords {
     bool srgb;
 };
 
+// the format RB_MRT_BUF_INFO names (GRAS_LRZ_MRT_BUF_INFO_0 repeats attachment 0's)
+a6xx_format mrtFormatOf(uint32_t bufInfo) {
+    return a6xx_format((bufInfo & A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__MASK) >> A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT__SHIFT);
+}
+
 // (at mip level LEVEL: its address and its pitch -- fdl6_view_init's base_miplevel, the RB told the level alone)
 MrtWords mrtWords(const Texture& t, uint32_t level) {
     const FormatInfo& f = t.info();
@@ -535,16 +540,28 @@ Attachment attachmentOf(const RenderPass& p, uint32_t i);
 // differ -- QuartzCore's variable blur draws into a 576 x 80 target beside a 1152 x 160 one it does not write. Each
 // attachment keeps its own pitch and base; the window scissor keeps every write inside the smallest.
 std::pair<uint32_t, uint32_t> windowOf(const RenderPass& pass) {
-    const TextureLevel L0 = pass.color0->level(pass.level);
-    uint32_t w = L0.width, h = L0.height;
-    for (uint32_t i = 1; i < kMaxColorOutputs; i++) {
+    uint32_t w = ~0u, h = ~0u;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
         if (a.texture == nullptr || a.level >= a.texture->levels()) continue;
         const TextureLevel L = a.texture->level(a.level);
         w = std::min(w, L.width);
         h = std::min(h, L.height);
     }
+    // a pass of depth alone (a shadow map's) is the depth attachment's size; beside colour it is the same size (checkTarget)
+    if (pass.depth != nullptr) {
+        w = std::min(w, pass.depth->width());
+        h = std::min(h, pass.depth->height());
+    }
     return {w, h};
+}
+
+// the first attachment the pass has, colour before depth: what a draw's defaults (viewport, the LRZ's format) take
+const Texture* firstAttachment(const RenderPass& pass) {
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if (attachmentOf(pass, i).texture != nullptr) return attachmentOf(pass, i).texture;
+    }
+    return pass.depth;
 }
 
 Attachment attachmentOf(const RenderPass& p, uint32_t i) {
@@ -886,8 +903,8 @@ uint64_t clearFlushAt(uint64_t table, uint32_t i) { return table + (i == 0 ? kTa
 // packed apart (clearWords), since only a Clear has one. Every attachment set is held to the same rules, and those past
 // 0 to attachment 0's size: the window is one rectangle for all of them.
 bool checkTarget(const RenderPass& pass, std::string* why) {
-    if (pass.color0 == nullptr) {
-        return refuse(why, "a render pass with no colour attachment: one target is what the first draw serves");
+    if (firstAttachment(pass) == nullptr) {
+        return refuse(why, "a render pass with no attachment at all: nothing to draw into");
     }
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
@@ -923,7 +940,6 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         }
         // (attachments of different sizes are Metal's to allow: the window is the smallest of them, windowOf below)
     }
-    const Texture& target = *pass.color0;
     if (pass.depth != nullptr) {
         const Texture& d = *pass.depth;
         if (!d.info().depth) {
@@ -932,8 +948,9 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         if ((d.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
         }
-        if (d.width() != target.level(pass.level).width || d.height() != target.level(pass.level).height) {
-            return refuse(why, "a " + n(d.width()) + " x " + n(d.height()) + " depth attachment beside a " + n(target.width()) + " x " + n(target.height()) +
+        const Attachment c = attachmentOf(pass, 0).texture != nullptr ? attachmentOf(pass, 0) : Attachment{nullptr, 0, LoadAction::kLoad, StoreAction::kStore, nullptr};
+        if (c.texture != nullptr && (d.width() != c.texture->level(c.level).width || d.height() != c.texture->level(c.level).height)) {
+            return refuse(why, "a " + n(d.width()) + " x " + n(d.height()) + " depth attachment beside a " + n(c.texture->width()) + " x " + n(c.texture->height()) +
                                    " colour attachment: Metal asks for the same size");
         }
         if ((d.bytesPerRow() >> A6XX_RB_DEPTH_BUFFER_PITCH__SCALE) > A6XX_RB_DEPTH_BUFFER_PITCH__MASK || d.buffer()->length() >= (1ull << 32)) {
@@ -1119,7 +1136,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // as if it did not write it -- no register for the slot, RB_MRT_CONTROL 0 -- which is the slot nothing writes.
     Stage fsDrawn = program.fs;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
-        if (fsDrawn.colorRegid[i] != kRegidNone && attachmentOf(pass, i).texture == nullptr && i != 0) fsDrawn.colorRegid[i] = kRegidNone;
+        if (fsDrawn.colorRegid[i] != kRegidNone && attachmentOf(pass, i).texture == nullptr) fsDrawn.colorRegid[i] = kRegidNone;
     }
     const Stage& fs = fsDrawn;
     // --- the two stages ---
@@ -1205,8 +1222,6 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (!checkTarget(pass, why)) {
         return false;
     }
-    const Texture& target = *pass.color0;
-    const FormatInfo& format = target.info();
     const uint32_t numRt = std::max<uint32_t>(fs.numColorOutputs, 1);
     for (uint32_t i = 0; i < numRt; i++) {
         const Texture* t = attachmentOf(pass, i).texture;
@@ -1375,9 +1390,20 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     MrtWords mrts[kMaxColorOutputs] = {};
     uint32_t srgbMask = 0;
     for (uint32_t i = 0; i < numRt; i++) {
-        // (an unwritten slot with no attachment of its own names attachment 0's memory: valid, and never written)
-        const Attachment a = attachmentOf(pass, i).texture != nullptr ? attachmentOf(pass, i) : attachmentOf(pass, 0);
-        mrts[i] = mrtWords(*a.texture, a.level);
+        // (an unwritten slot with no attachment of its own names another attachment's memory: valid, and never written.
+        // In a pass of depth alone it names the depth texture's, as RGBA8 -- 4 bytes a pixel as Depth32Float's plane is,
+        // so its rows are the depth's rows -- which RB_MRT_CONTROL 0 never lets it write; memory the pass owns rather
+        // than address 0, which nothing maps)
+        const Attachment a = attachmentOf(pass, i);
+        const Texture* named = a.texture != nullptr ? a.texture : firstAttachment(pass) != pass.depth ? firstAttachment(pass) : nullptr;
+        if (named == nullptr) {
+            const FormatInfo& rgba = *formatInfo(PixelFormat::kRGBA8Unorm);
+            const Texture& d = *pass.depth;
+            mrts[i] = MrtWords{rbMrtBufInfo(rgba.fmt6, TILE6_LINEAR, rgba.swap), rbMrtPitch(uint32_t(d.bytesPerRow())), rbMrtArrayPitch(uint32_t(d.buffer()->length())),
+                               uint32_t(d.gpuAddress()), uint32_t(d.gpuAddress() >> 32), 0, spFsMrtReg(rgba.fmt6, false, false), false};
+            continue;
+        }
+        mrts[i] = mrtWords(*named, a.texture != nullptr ? a.level : named == attachmentOf(pass, 0).texture ? attachmentOf(pass, 0).level : 0);
         if (mrts[i].srgb && fs.colorRegid[i] != kRegidNone) srgbMask |= 1u << i;
     }
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
@@ -1444,7 +1470,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             reg(stream, regSpFsMrtReg(i), m.spFsMrtReg);
             regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {0, 0, 0});
         }
-        reg(stream, REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(format.fmt6));
+        reg(stream, REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(mrtFormatOf(mrts[0].bufInfo)));
         reg(stream, REG_A6XX_RB_DITHER_CNTL, 0);
         reg(stream, REG_A6XX_RB_SRGB_CNTL, srgbMask);
         reg(stream, REG_A6XX_SP_SRGB_CNTL, srgbMask);

@@ -2314,6 +2314,7 @@ int main(int argc, char** argv) {
                     double clearDepth;
                     Step steps[2];
                     bool redLowerLeft;   // else green everywhere
+                    bool firstDepthOnly = false;   // the first draw in a pass of depth alone: its triangle leaves the canary
                 };
                 const DepthCase cases[] = {
                     {"Less + write, cleared to 1, NEAR then FAR", 1.0, {{true, {1, true}}, {false, {1, true}}}, true},
@@ -2322,6 +2323,10 @@ int main(int argc, char** argv) {
                     {"Less without write, cleared to 1, NEAR then FAR", 1.0, {{true, {1, false}}, {false, {1, false}}}, false},
                     {"Always without write (Metal's default), NEAR then FAR", 1.0, {{true, {7, false}}, {false, {7, false}}}, false},
                     {"Always without write (Metal's default), FAR then NEAR", 1.0, {{false, {7, false}}, {true, {7, false}}}, true},
+                    // a pass of depth alone (no colour attachment, a shadow map's shape): NEAR writes its depth and no
+                    // colour, so FAR's test keeps the canary under T1 -- all green if the depth was not written, red if
+                    // colour was, garbage depth (and so no clean split) if the unwritten MRT slot wrote the depth's memory
+                    {"Less + write, NEAR in a pass of depth alone, then FAR", 1.0, {{true, {1, true}}, {false, {1, true}}}, true, true},
                 };
                 const uint32_t dCanary = texCanary([&](uint32_t v) { return v == redWord || v == greenWord; });
                 for (const DepthCase& dc : cases) {
@@ -2330,7 +2335,7 @@ int main(int argc, char** argv) {
                     std::string st;
                     for (int k = 0; k < 2; k++) {
                         RenderPass rp;
-                        rp.color0 = t.get();
+                        rp.color0 = dc.firstDepthOnly && k == 0 ? nullptr : t.get();
                         rp.depth = depth.get();
                         rp.depthLoad = k == 0 ? LoadAction::kClear : LoadAction::kLoad;
                         rp.depthStore = StoreAction::kStore;
@@ -2355,7 +2360,7 @@ int main(int argc, char** argv) {
                         for (uint32_t i = 0; i < W; i++) {
                             uint32_t px;
                             memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
-                            const uint32_t want = dc.redLowerLeft && j > i ? redWord : greenWord;
+                            const uint32_t want = dc.redLowerLeft && j > i ? (dc.firstDepthOnly ? dCanary : redWord) : greenWord;
                             reds += px == redWord;
                             greens += px == greenWord;
                             canaries += px == dCanary;

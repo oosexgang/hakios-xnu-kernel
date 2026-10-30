@@ -502,7 +502,7 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
     {
         Program p = handProgram();
         RenderPass none;
-        refused(r, p, none, d, "a render pass with no colour attachment: one target is what the first draw serves");
+        refused(r, p, none, d, "a render pass with no attachment at all: nothing to draw into");
         auto plain = target(r, 64, 64, kTextureUsageRead | kTextureUsageWrite);
         RenderPass notRt;
         notRt.color0 = plain.get();
@@ -3060,6 +3060,48 @@ TEST(a_draw_tests_and_writes_depth_through_its_attachment) {
     CHECK(c->status() == CommandBuffer::kCompleted);
     CHECK_EQ(r.fake->stats().tiledFills, 2u);
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// A pass of depth alone (a shadow map's; SpringBoard's Siri orb has one): no colour attachment, so the window is the
+// depth texture's, the FS's [[color(0)]] is written nowhere (RB_MRT_CONTROL 0, no output register), and the MRT
+// registers name the depth texture's memory, which nothing lets them write. The control first: the same draw with a colour attachment writes colour.
+TEST(a_pass_of_depth_alone_draws_depth) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto d = depthTarget(r);
+    RenderPass withColour;
+    withColour.color0 = t.get();
+    withColour.depth = d.get();
+    withColour.depthLoad = LoadAction::kClear;
+    withColour.clearDepth = 1.0;
+    Draw dr = wholeDraw();
+    dr.depth = DepthState{1, true};
+    Encoded c(r, flatProgram(), withColour, dr);
+    CHECK(c.ok);
+    CHECK(c.reg(REG_A6XX_RB_MRT_CONTROL) != 0u);
+    CHECK_EQ(uint64_t(c.reg(REG_A6XX_RB_MRT_BASE)) | uint64_t(c.reg(REG_A6XX_RB_MRT_BASE + 1)) << 32, t->gpuAddress());
+    RenderPass pass = withColour;
+    pass.color0 = nullptr;
+    Encoded e(r, flatProgram(), pass, dr);
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    CHECK_EQ(e.reg(REG_A6XX_RB_MRT_CONTROL), 0u);
+    CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_MRT_BASE)) | uint64_t(e.reg(REG_A6XX_RB_MRT_BASE + 1)) << 32, d->gpuAddress());   // never written
+    CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_CNTL), 0x47u);
+    CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_DEPTH_BUFFER_BASE)) | uint64_t(e.reg(REG_A6XX_RB_DEPTH_BUFFER_BASE + 1)) << 32, d->gpuAddress());
+    // the window is the depth texture's 64 x 64: the scissor's bottom right (63, 63)
+    CHECK_EQ(e.reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR), A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X(63) | A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y(63));
+    auto cb = drawOnce(r, flatProgram(), pass, dr);
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(r.fake->stats().lastDraw.depthBase, d->gpuAddress());
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    // with no attachment at all there is nothing to draw into
+    RenderPass none;
+    Encoded n(r, flatProgram(), none, wholeDraw());
+    CHECK(!n.ok);
+    expectRefusal(n.error, "a render pass with no attachment at all: nothing to draw into");
 }
 
 TEST(a_draw_refuses_a_depth_setup_it_cannot_serve) {

@@ -557,7 +557,7 @@ TEST(c_api_program_and_draw) {
     struct hakios_metal_render_pass none = {nullptr, 1, 1, {0, 0, 0, 0}, {0, 0, 0, 0}, nullptr, 0, 0, 1.0, 0, 7, 0, {}, 0, nullptr, 0, 0, 0, 0, {}, {}, 0, 0, nullptr, 0, 0, 0};
     cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &none, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-    CHECK(strcmp(hakios_metal_error(), "a render pass with no colour attachment: one target is what the first draw serves") == 0);
+    CHECK(strcmp(hakios_metal_error(), "a render pass with no attachment at all: nothing to draw into") == 0);
     hakios_metal_cb_free(cb);
     struct hakios_metal_viewport outside = {1, 0, 64, 64, 0, 1};
     cb = hakios_metal_cb_new(q);

@@ -729,7 +729,7 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
 
 // the pass's texture objects, alive until the GPU is done with them, whatever the caller frees meanwhile
 static void keepPassAlive(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
-    cb->cb->keepAlive(pass->color0->texture);
+    if (pass->color0 != nullptr) cb->cb->keepAlive(pass->color0->texture);
     for (const auto& m : pass->more) {
         if (m.texture != nullptr) cb->cb->keepAlive(m.texture->texture);
     }
@@ -788,7 +788,11 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
         fsb.samplers[index] = &sampler;
     }
     const RenderPass rp = passOf(pass);
+    // what MTLRenderCommandEncoder's default viewport covers: the first attachment the pass has, colour before depth
+    // (a depth-only pass's is the depth texture)
     const Texture* target = rp.color0;
+    for (unsigned i = 0; target == nullptr && i < kMaxColorOutputs - 1; i++) target = rp.more[i].texture;
+    if (target == nullptr) target = rp.depth;
     Draw d;
     d.primitive = Primitive(primitive);
     d.vertexStart = vertexStart;
@@ -836,7 +840,7 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     for (unsigned i = 0; i < vsCount; i++) if (vsBuffers != nullptr && vsBuffers[i] != nullptr) cb->cb->keep(vsBuffers[i]->buffer);
     for (unsigned i = 0; i < fsCount; i++) if (fsBuffers != nullptr && fsBuffers[i] != nullptr) cb->cb->keep(fsBuffers[i]->buffer);
     // the target's memory and object, and the program's words, live until the GPU is done, whatever the caller frees meanwhile
-    cb->cb->keep(target->buffer());
+    if (target != nullptr) cb->cb->keep(target->buffer());
     keepPassAlive(cb, pass);
     cb->cb->keepAlive(p->program);
     for (unsigned i = 0; i < fsTextureCount; i++) {

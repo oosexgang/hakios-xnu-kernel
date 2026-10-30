@@ -1057,8 +1057,10 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     // --- the colour output's class against the target's format: a float4 into a Unorm/Float format, an integer vector
     // into a Uint one; the hardware converts the FS's raw register as the format says, so a mismatch is garbage, not an
     // error, on the phone
+    // Pixel format 0 (Invalid) is a pipeline with no colour attachment 0 -- a depth-only one, or one whose first
+    // target is a later index: [[color(0)]], if written, goes nowhere (render.cpp's fsDrawn), so there is no class to match.
     const FormatInfo* format = formatInfo(color0);
-    if (format == nullptr) {
+    if (format == nullptr && uint32_t(color0) != 0) {
         refuse(why, "pixel format " + std::to_string(uint32_t(color0)) + " is not served");
         return nullptr;
     }
@@ -1066,8 +1068,8 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     for (uint32_t i = 0; i < F.numOutputs; i++) {
         if (F.outputs[i].slot == FRAG_RESULT_DATA0) fsClass = F.outputs[i].pad;
     }
-    const uint8_t formatClass = format->element == kElemFloat ? kElemFloat : kElemUint;
-    if (fsClass != formatClass) {
+    const uint8_t formatClass = format == nullptr || format->element == kElemFloat ? kElemFloat : kElemUint;
+    if (format != nullptr && fsClass != formatClass) {
         refuse(why, stageName(*fs) + " returns " + (fsClass == kElemFloat ? "floats" : "integers") + " into " + format->name + ", which holds " +
                         className(formatClass));
         return nullptr;
