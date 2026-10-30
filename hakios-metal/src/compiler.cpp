@@ -1127,6 +1127,10 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
         uint32_t varmask[4] = {ml.varmask[0], ml.varmask[1], ml.varmask[2], ml.varmask[3]};
         uint32_t positionLoc = ml.max_loc;
         ir3_link_add(&ml, VARYING_SLOT_POS, uint8_t(V.positionRegid), 0xf, uint8_t(ml.max_loc));
+        // and the point size after it, which turnip adds itself (tu6_emit_vpc, tu_pipeline.cc:944-947), not ir3_link_shaders
+        if (V.pointSizeRegid != a6xx::kRegidNone) {
+            ir3_link_add(&ml, VARYING_SLOT_PSIZ, uint8_t(V.pointSizeRegid), 0x1, uint8_t(ml.max_loc));
+        }
         const Linkage& l = out->program.link;
         std::string differs;
         if (ml.cnt != l.cnt) differs = "cnt " + std::to_string(l.cnt) + " vs Mesa's " + std::to_string(ml.cnt);

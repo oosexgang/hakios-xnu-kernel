@@ -663,6 +663,21 @@ TEST(compiler_matches_the_stage_fixtures) {
             CHECK(plain->listing != based->listing);   // the IBO index in the load is not the same
         }
     }
+    // a vertex stage that writes [[point_size]] links with it after the position, and linkProgram's check against
+    // ir3_link_shaders (plus turnip's point size) agrees: CoreAnimation's fixed_vert_lph_gen + fixed_frag_lph_cpf was refused
+    // by that check once the size was linked
+    {
+        std::vector<uint8_t> bc = bitcodeOf("tri_pt_vs");
+        std::string why;
+        std::shared_ptr<CompiledStage> pt = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why);
+        CHECK(pt != nullptr);
+        if (pt != nullptr && flatFs != nullptr) {
+            auto linked = linkProgram(pt, flatFs, PixelFormat::kRGBA8Unorm, &why);
+            CHECK(linked != nullptr);
+            if (linked == nullptr) std::printf("       %s\n", why.c_str());
+            if (linked) CHECK(linked->program.link.psizeLoc != 0xffu);
+        }
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;
