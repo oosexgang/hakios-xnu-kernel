@@ -758,6 +758,7 @@ static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
         for (int c = 0; c < 4; c++) rp.more[i].clearColor[c] = m.clear_color[c];
     }
     rp.depth = pass->depth != nullptr ? pass->depth->texture.get() : nullptr;
+    rp.depthLevel = pass->depth_level;
     rp.depthLoad = LoadAction(pass->depth_load_action);
     rp.depthStore = StoreAction(pass->depth_store_action);
     rp.clearDepth = pass->clear_depth;
@@ -832,8 +833,15 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     // what MTLRenderCommandEncoder's default viewport covers: the first attachment the pass has, colour before depth
     // (a depth-only pass's is the depth texture)
     const Texture* target = rp.color0;
-    for (unsigned i = 0; target == nullptr && i < kMaxColorOutputs - 1; i++) target = rp.more[i].texture;
-    if (target == nullptr) target = rp.depth;
+    uint32_t targetLevel = rp.level;
+    for (unsigned i = 0; target == nullptr && i < kMaxColorOutputs - 1; i++) {
+        target = rp.more[i].texture;
+        targetLevel = rp.more[i].level;
+    }
+    if (target == nullptr) {
+        target = rp.depth;
+        targetLevel = rp.depthLevel;
+    }
     Draw d;
     d.primitive = Primitive(primitive);
     d.vertexStart = vertexStart;
@@ -848,7 +856,9 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
     if (viewport != nullptr) {
         d.viewport = Viewport{viewport->x, viewport->y, viewport->width, viewport->height, viewport->znear, viewport->zfar};
     } else {
-        d.viewport = Viewport{0, 0, target != nullptr ? double(target->width()) : 1.0, target != nullptr ? double(target->height()) : 1.0, 0, 1};
+        // (the level drawn into: a pass into mip level 1 of a 512 x 512 texture covers 256 x 256)
+        d.viewport = Viewport{0, 0, target != nullptr ? double(target->level(targetLevel).width) : 1.0,
+                              target != nullptr ? double(target->level(targetLevel).height) : 1.0, 0, 1};
     }
     if (scissor != nullptr) {
         d.scissor = Scissor{scissor->x, scissor->y, scissor->width, scissor->height};

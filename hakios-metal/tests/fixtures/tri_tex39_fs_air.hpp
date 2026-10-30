@@ -157,7 +157,7 @@ define <4 x float> @tri_tex39_fs(ptr addrspace(1) %a, ptr addrspace(1) %b, ptr a
     /* .depthRegid = */ 0xfc, /* .sampleMaskRegid = */ 0xfc, /* .stencilRefRegid = */ 0xfc,
     /* .writesPos = */ 0, /* .writesSmask = */ 0, /* .writesStencilref = */ 0, /* .dualSrcBlend = */ 0,
     /* .hasKill = */ 0, /* .perSamp = */ 0, /* .readsPrimid = */ 0, /* .fbRead = */ 0,
-    /* .needPixlod = */ 0, /* .needFullQuad = */ 0,
+    /* .needPixlod = */ 1, /* .needFullQuad = */ 1,
     /* .pad2 = */ {0, 0},
     /* .numSamplerPrefetch = */ 0,
     /* .prefetch = */ {
@@ -166,7 +166,7 @@ define <4 x float> @tri_tex39_fs(ptr addrspace(1) %a, ptr addrspace(1) %b, ptr a
         /* [2] */ {0x00, 0, 0, 0x00, 0x0, 0, 0, 0},
         /* [3] */ {0x00, 0, 0, 0x00, 0x0, 0, 0, 0},
     },
-    /* .prefetchEndOfQuad = */ 0,
+    /* .prefetchEndOfQuad = */ 1,
     /* .pad3 = */ {0, 0, 0},
 };
 

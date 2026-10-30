@@ -152,10 +152,29 @@ uint64_t depthBytes(const FormatInfo& format, uint32_t width, uint32_t height) {
     return (rows * texturePitch(format, width) + 4095) / 4096 * 4096;
 }
 uint64_t s8Pitch(uint32_t width) { return (uint64_t(width) + 127) / 128 * 128; }
+}  // namespace
+
+// A depth texture's mip level: each level its own tiled layout -- the pitch for its width, its rows to 16, its start
+// 4096-aligned -- one after another. The RB draws into a level at that base and pitch and the Clear fills it there; the
+// TP is not given these offsets (it would work fdl6's out), so a sampled view of such a texture is of level 0 alone.
+TextureLevel depthLevel(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t level) {
+    uint64_t offset = 0;
+    for (uint32_t l = 0; l < level; l++) {
+        offset += depthBytes(format, std::max<uint32_t>(1, width >> l), std::max<uint32_t>(1, height >> l));
+    }
+    const uint32_t w = std::max<uint32_t>(1, width >> level), h = std::max<uint32_t>(1, height >> level);
+    return TextureLevel{offset, texturePitch(format, w), w, h};
+}
+
+namespace {
 uint64_t s8Bytes(uint32_t width, uint32_t height) { return ((uint64_t(height) + 31) / 32 * 32 * s8Pitch(width) + 4095) / 4096 * 4096; }
 }  // namespace
 
 uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels) {
+    if (format.depth && levels > 1) {
+        const TextureLevel last = depthLevel(format, width, height, levels - 1);
+        return last.offset + depthBytes(format, last.width, last.height);
+    }
     if (format.stencil) {
         return depthBytes(format, width, height) + s8Bytes(width, height);
     }
@@ -246,8 +265,9 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) + ": a compressed format is sampled alone (1), not stored or drawn into");
         return nullptr;
     }
-    if (info->depth && desc.mipLevels != 1) {
-        refuse(why, std::string("a ") + info->name + " texture of " + n(desc.mipLevels) + " mip levels: a depth texture is tiled, one level is served");
+    if (info->depth && desc.mipLevels != 1 && (info->stencil || desc.samples != 1)) {
+        refuse(why, std::string("a ") + info->name + " texture of " + n(desc.mipLevels) + " mip levels: mip levels of a depth texture with a stencil plane or "
+                        "samples are not served");
         return nullptr;
     }
     if (info->depth && (desc.usage & ~kTextureUsageRead) != kTextureUsageRenderTarget) {
@@ -320,6 +340,7 @@ uint64_t Texture::stencilPlaneBytes() const { return info_->stencil ? s8Bytes(de
 
 TextureLevel Texture::level(uint32_t l) const {
     if (surface_ != 0 || desc_.mipLevels <= 1) return TextureLevel{0, pitch_, desc_.width, desc_.height};
+    if (info_->depth) return depthLevel(*info_, desc_.width, desc_.height, l);
     return textureLevel(*info_, desc_.width, desc_.height, desc_.mipLevels, l);
 }
 
@@ -455,7 +476,7 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         // of a depth layout is tiled (fd6_layout.c:157-164 "Linear D/S is not supported by HW"); FMT6_32_FLOAT, the depth
         // in the first component, as fd6_format_texture gives Z32_FLOAT. Its pitch is the layout's (PITCHALIGN log2(cpp)
         // for cpp 4, fdl6_tile_alignment)
-        d.dword[0] = (d.dword[0] & ~A6XX_TEX_CONST_0_TILE_MODE__MASK) | A6XX_TEX_CONST_0_TILE_MODE(TILE6_3);
+        d.dword[0] = (d.dword[0] & ~(A6XX_TEX_CONST_0_TILE_MODE__MASK | A6XX_TEX_CONST_0_MIPLVLS__MASK)) | A6XX_TEX_CONST_0_TILE_MODE(TILE6_3);   // level 0 alone (depthLevel)
         d.dword[3] |= A6XX_TEX_CONST_3_TILE_ALL;
     }
     if (info_->twoPlane) {

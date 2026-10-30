@@ -132,6 +132,8 @@ struct TextureLevel {
     uint32_t width, height;
 };
 TextureLevel textureLevel(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t levels, uint32_t level);
+// a depth texture's mip level: each level its own tiled layout, one after another (texture.cpp says why)
+TextureLevel depthLevel(const FormatInfo& format, uint32_t width, uint32_t height, uint32_t level);
 
 struct TextureDesc {
     TextureType type = TextureType::k2D;

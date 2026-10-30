@@ -130,7 +130,7 @@ define <4 x float> @tri_tex3d_fs(<4 x float> %color, ptr addrspace(1) %t, ptr ad
     /* .depthRegid = */ 0xfc, /* .sampleMaskRegid = */ 0xfc, /* .stencilRefRegid = */ 0xfc,
     /* .writesPos = */ 0, /* .writesSmask = */ 0, /* .writesStencilref = */ 0, /* .dualSrcBlend = */ 0,
     /* .hasKill = */ 0, /* .perSamp = */ 0, /* .readsPrimid = */ 0, /* .fbRead = */ 0,
-    /* .needPixlod = */ 0, /* .needFullQuad = */ 0,
+    /* .needPixlod = */ 1, /* .needFullQuad = */ 1,
     /* .pad2 = */ {0, 0},
     /* .numSamplerPrefetch = */ 0,
     /* .prefetch = */ {
@@ -169,7 +169,7 @@ define <4 x float> @tri_tex3d_fs(<4 x float> %color, ptr addrspace(1) %t, ptr ad
 // ; FRAG: outputs: r1.y (FRAG_RESULT_DATA0)
 // ; FRAG: inputs: r0.z (VARYING_SLOT_VAR0 slot=32 cm=f,il=0,b=1) r0.x (SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL slot=56 cm=3,il=0,b=0)
 // ; FRAG prog 0/0: 11 instr, 6 nops, 5 non-nops, 1 mov, 0 cov, 32 dwords
-// ; FRAG prog 0/0: 0 last-baryf, 0 last-helper, 0 half, 3 full, 0 constlen
+// ; FRAG prog 0/0: 0 last-baryf, 10 last-helper, 0 half, 3 full, 0 constlen
 // ; FRAG prog 0/0: 7 cat0, 1 cat1, 2 cat2, 0 cat3, 0 cat4, 1 cat5, 0 cat6, 0 cat7
 // ; FRAG prog 0/0: 0 sstall, 0 (ss), 0 systall, 1 (sy), 0 loops
 // ; pos (ij_pixel): r0.x

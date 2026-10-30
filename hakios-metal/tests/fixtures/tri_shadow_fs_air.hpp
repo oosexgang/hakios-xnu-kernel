@@ -141,7 +141,7 @@ define <4 x float> @tri_shadow_fs(<4 x float> %pos, ptr addrspace(2) %ref, ptr a
     /* .depthRegid = */ 0xfc, /* .sampleMaskRegid = */ 0xfc, /* .stencilRefRegid = */ 0xfc,
     /* .writesPos = */ 0, /* .writesSmask = */ 0, /* .writesStencilref = */ 0, /* .dualSrcBlend = */ 0,
     /* .hasKill = */ 0, /* .perSamp = */ 0, /* .readsPrimid = */ 0, /* .fbRead = */ 0,
-    /* .needPixlod = */ 0, /* .needFullQuad = */ 0,
+    /* .needPixlod = */ 1, /* .needFullQuad = */ 1,
     /* .pad2 = */ {0, 0},
     /* .numSamplerPrefetch = */ 0,
     /* .prefetch = */ {
@@ -186,7 +186,7 @@ define <4 x float> @tri_shadow_fs(<4 x float> %pos, ptr addrspace(2) %ref, ptr a
 // ; FRAG: outputs: r1.w (FRAG_RESULT_DATA0)
 // ; FRAG: inputs: r63.x (SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL slot=56 cm=3,il=0,b=0) r0.x (SYSTEM_VALUE_FRAG_COORD slot=19 cm=f,il=0,b=0)
 // ; FRAG prog 0/0: 18 instr, 6 nops, 12 non-nops, 4 mov, 2 cov, 32 dwords
-// ; FRAG prog 0/0: 0 last-baryf, 0 last-helper, 0 half, 3 full, 8 constlen
+// ; FRAG prog 0/0: 0 last-baryf, 17 last-helper, 0 half, 3 full, 8 constlen
 // ; FRAG prog 0/0: 7 cat0, 6 cat1, 4 cat2, 0 cat3, 0 cat4, 1 cat5, 0 cat6, 0 cat7
 // ; FRAG prog 0/0: 0 sstall, 0 (ss), 0 systall, 1 (sy), 0 loops
 // ; data0: r1.w

@@ -1141,7 +1141,36 @@ SPDX-License-Identifier: MIT
  
     shader->variants = v;
     shader->variant_count = 1;
-@@ -520,7 +1484,20 @@
+@@ -514,13 +1478,49 @@
+     * anything -- any vertex shader (PRIMITIVE_PARAM), or anything with image
+     * dimensions -- which is why it went unnoticed.
+     */
++   /* the quads a fragment stage needs whole, as nir_shader_gather_info would say (the front end does not run it): a
++    * sample with an implicit level or a derivative -- src/compiler.cpp: needsQuadHelpers, the same walk
++    */
++   if (nir->info.stage == MESA_SHADER_FRAGMENT) {
++      nir_foreach_function_impl(impl, nir) {
++         nir_foreach_block(block, impl) {
++            nir_foreach_instr(instr, block) {
++               if (instr->type == nir_instr_type_tex && nir_tex_instr_has_implicit_derivative(nir_instr_as_tex(instr)))
++                  nir->info.fs.needs_quad_helper_invocations = true;
++               if (instr->type == nir_instr_type_intrinsic) {
++                  switch (nir_instr_as_intrinsic(instr)->intrinsic) {
++                  case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
++                  case nir_intrinsic_ddy: case nir_intrinsic_ddy_fine: case nir_intrinsic_ddy_coarse:
++                     nir->info.fs.needs_quad_helper_invocations = true;
++                     break;
++                  default:
++                     break;
++                  }
++               }
++            }
++         }
++      }
++   }
+    info = "NIR compiler";
+    ret = ir3_compile_shader_nir(compiler, shader, v);
+    if (ret) {
        fprintf(stderr, "compiler failed!\n");
        return ret;
     }

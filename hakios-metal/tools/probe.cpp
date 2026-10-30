@@ -2672,6 +2672,85 @@ int main(int argc, char** argv) {
                     report(completed(*cb) && got == W * H, "indexed, a TRISTRIP of 16-bit indices with a restart (0 1 2 0xffff 1 3 2): " + std::to_string(got) +
                                                                 " of 4096 pixels the vertices' colour" + status(*cb, gpu));
                 }
+                // 9lod. the mip level a pixel samples, across a quad's two triangles: tri_attr's corners carry (u, v) as their
+                // colour's red and green, 0 to 1 across the 64x64 target, and tri_tex_fs samples a 64x64 texture of 7
+                // levels, each one solid colour, nearest in every filter. One texel a pixel is level 0 for every pixel -- the
+                // pixels along the diagonal too, whose 2x2 quads straddle the two triangles (sokol's mipmap sample showed a
+                // line of high levels there). Counted apart: the pixels on the diagonal and the rest.
+                {
+                    const Program lodProg = [] {
+                        Program p{kernels::tri_attr_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_attr_tex"};
+                        p.vertexDescriptor.attributes[0] = VertexAttribute{VertexFormat::kFloat2, 0, 0};
+                        p.vertexDescriptor.attributes[1] = VertexAttribute{VertexFormat::kUChar4Normalized, 8, 0};
+                        p.vertexDescriptor.layouts[0] = VertexLayout{12, VertexStep::kPerVertex, 1};
+                        return p;
+                    }();
+                    TextureDesc md;
+                    md.width = md.height = 64;
+                    md.mipLevels = 7;
+                    md.usage = kTextureUsageRead;
+                    auto mip = Texture::make(gpu, md, &why);
+                    auto uvb = newBuffer(gpu, 4 * 12, &why);
+                    const uint32_t levelColour[7] = {0xff0000ffu, 0xff00ff00u, 0xffff0000u, 0xffff00ffu, 0xffffff00u, 0xff00ffffu, 0xff808080u};
+                    bool filled = mip != nullptr && uvb != nullptr;
+                    for (uint32_t l = 0; filled && l < 7; l++) {
+                        const uint32_t side = 64u >> l;
+                        std::vector<uint32_t> px(size_t(side) * side, levelColour[l]);
+                        filled = mip->replace(l, 0, 0, side, side, px.data(), uint64_t(side) * 4, &why);
+                    }
+                    if (filled) {
+                        const float corners[4][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+                        for (int v = 0; v < 4; v++) {
+                            const uint8_t uv[4] = {uint8_t(corners[v][0] > 0 ? 255 : 0), uint8_t(corners[v][1] > 0 ? 255 : 0), 0, 255};
+                            memcpy(static_cast<uint8_t*>(uvb->contents()) + 12 * v, corners[v], 8);
+                            memcpy(static_cast<uint8_t*>(uvb->contents()) + 12 * v + 8, uv, 4);
+                        }
+                    }
+                    SamplerDesc nd;
+                    nd.mipFilter = 1;   // nearest mip
+                    Sampler ns;
+                    const bool made = filled && makeSampler(nd, &ns, &why);
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Draw d = drawOf(0, 7);
+                    d.primitive = Primitive::kTriangleStrip;
+                    d.indexBuffer = ib16.get();
+                    d.indexType = 0;
+                    Bindings vsb;
+                    vsb.buffers = {Binding{uvb.get(), 0}};
+                    Bindings fsb;
+                    fsb.textures = {mip.get()};
+                    fsb.samplers = {&ns};
+                    auto cb = queue->commandBuffer();
+                    const bool drew = made && cb->draw(lodProg, rp, d, vsb, fsb);
+                    if (drew) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    std::vector<uint8_t> bo = textureBo(*t);
+                    uint32_t diag = 0, diagRight = 0, rest = 0, restRight = 0, levelsSeen[8] = {};
+                    std::string wrongAt;
+                    for (uint32_t j = 0; j < H; j++)
+                        for (uint32_t i = 0; i < W; i++) {
+                            uint32_t px;
+                            memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                            uint32_t l = 7;
+                            for (uint32_t k = 0; k < 7; k++) if (px == levelColour[k]) l = k;
+                            levelsSeen[l]++;
+                            const bool onDiag = i + 2 >= j && j + 2 >= i;   // the strip's shared edge, (1,-1)-(-1,1) in NDC, is i == j on screen
+                            (onDiag ? diag : rest)++;
+                            (onDiag ? diagRight : restRight) += l == 0;
+                            if (l != 0 && wrongAt.size() < 120) wrongAt += "(" + std::to_string(i) + "," + std::to_string(j) + ":" + std::to_string(l) + ")";
+                        }
+                    std::string seen;
+                    for (uint32_t k = 0; k < 8; k++) seen += (k ? "/" : "") + std::to_string(levelsSeen[k]);
+                    report(drew && completed(*cb) && diagRight == diag && restRight == rest,
+                           "mip level across the diagonal: " + std::to_string(diagRight) + " of " + std::to_string(diag) + " pixels by the diagonal at level 0, " +
+                               std::to_string(restRight) + " of " + std::to_string(rest) + " elsewhere (pixels of levels 0..6/other: " + seen + ")" +
+                               (wrongAt.empty() ? std::string() : "; the first off (i,j:level): " + wrongAt) +
+                               (drew ? status(*cb, gpu) : ": " + (made ? cb->error() : why)));
+                }
                 // (b)
                 {
                     fillBo(*t, canary);

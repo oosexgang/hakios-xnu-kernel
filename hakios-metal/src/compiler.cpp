@@ -561,6 +561,31 @@ bool lowerFbRead(nir_shader* nir, uint8_t fbTargets[kMaxTextureSlots], std::stri
     return true;
 }
 
+// Whether a fragment stage needs its 2x2 quads whole -- helper lanes for the pixels its primitive does not cover --
+// as nir_shader_gather_info would say (gather_tex_info, gather_intrinsic_info): a sample with an implicit level, or a
+// derivative. ir3 sets need_pixlod and need_full_quad from it (SP_FS_CTRL_REG0's PIXLODENABLE, LODPIXMASK); the AIR front
+// end does not run gather_info, and without the flag a quad straddling two triangles of one mesh worked its level from
+// lanes that were never shaded: sokol's mipmap sample drew a line of the smallest levels along every quad's diagonal,
+// probe 9lod 128 pixels of levels 2 to 6 on its quad's diagonal where all are level 0.
+bool needsQuadHelpers(nir_shader* nir) {
+    nir_foreach_function_impl(impl, nir) {
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+                if (instr->type == nir_instr_type_tex && nir_tex_instr_has_implicit_derivative(nir_instr_as_tex(instr))) return true;
+                if (instr->type != nir_instr_type_intrinsic) continue;
+                switch (nir_instr_as_intrinsic(instr)->intrinsic) {
+                case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
+                case nir_intrinsic_ddy: case nir_intrinsic_ddy_fine: case nir_intrinsic_ddy_coarse:
+                    return true;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_compiler* compiler = theCompiler();
     nir_shader* nir = t.nir;
@@ -616,6 +641,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     }
     t.shader->variants = v;
     t.shader->variant_count = 1;
+    if (nir->info.stage == MESA_SHADER_FRAGMENT && needsQuadHelpers(nir)) nir->info.fs.needs_quad_helper_invocations = true;
     if (ir3_compile_shader_nir(compiler, t.shader, v) != 0) return refuse(why, std::string("ir3 refused ") + t.name());
     {
         std::string name = t.name();

@@ -12,7 +12,7 @@ constexpr uint32_t tri_fw_fs_air_words[] = {
     0x3f800000, 0x204cc009, 0x00000000, 0x00000300,
     0x00000001, 0xa3c01102, 0x00000001, 0xa3801103,
     0x00000002, 0x30840008, 0x80028003, 0x40100002,
-    0x00000003, 0x20840006, 0x00000000, 0x00000100,
+    0x00000003, 0x20840006, 0x00000000, 0x00010100,
     0x10000002, 0x40700006, 0x80088006, 0x40080806,
     0x00000006, 0x20804005, 0x00000000, 0x00000200,
     0x10000005, 0x40700007, 0x00000000, 0x03000000,
@@ -151,7 +151,7 @@ define <4 x float> @tri_fw_fs(<4 x float> %color) local_unnamed_addr {
     /* .depthRegid = */ 0xfc, /* .sampleMaskRegid = */ 0xfc, /* .stencilRefRegid = */ 0xfc,
     /* .writesPos = */ 0, /* .writesSmask = */ 0, /* .writesStencilref = */ 0, /* .dualSrcBlend = */ 0,
     /* .hasKill = */ 0, /* .perSamp = */ 0, /* .readsPrimid = */ 0, /* .fbRead = */ 0,
-    /* .needPixlod = */ 0, /* .needFullQuad = */ 0,
+    /* .needPixlod = */ 1, /* .needFullQuad = */ 1,
     /* .pad2 = */ {0, 0},
     /* .numSamplerPrefetch = */ 0,
     /* .prefetch = */ {
@@ -181,7 +181,7 @@ define <4 x float> @tri_fw_fs(<4 x float> %color) local_unnamed_addr {
 // (sy)cov.f32f16 (even)hr2.x, r0.z
 // add.f r0.z, (abs)r0.w, (abs)r0.z
 // cov.f32f16 (even)hr1.z, r0.w
-// (rpt1)nop
+// (eq)(rpt1)nop
 // mul.f r1.z, r0.z, c0.x
 // (nop3) add.f hr1.z, (abs)hr1.z, (abs)hr2.x
 // cov.f16f32 (even)r1.y, hr1.z
@@ -195,7 +195,7 @@ define <4 x float> @tri_fw_fs(<4 x float> %color) local_unnamed_addr {
 // ; FRAG: outputs: r1.z (FRAG_RESULT_DATA0)
 // ; FRAG: inputs: r0.x (VARYING_SLOT_VAR0 slot=32 cm=f,il=0,b=1) r0.x (SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL slot=56 cm=3,il=0,b=0)
 // ; FRAG prog 0/0: 25 instr, 12 nops, 13 non-nops, 2 mov, 3 cov, 40 dwords
-// ; FRAG prog 0/0: 0 last-baryf, 0 last-helper, 0 half, 3 full, 4 constlen
+// ; FRAG prog 0/0: 0 last-baryf, 12 last-helper, 0 half, 3 full, 4 constlen
 // ; FRAG prog 0/0: 13 cat0, 5 cat1, 5 cat2, 0 cat3, 0 cat4, 2 cat5, 0 cat6, 0 cat7
 // ; FRAG prog 0/0: 0 sstall, 0 (ss), 29 systall, 1 (sy), 0 loops
 // ; pos (ij_pixel): r0.x

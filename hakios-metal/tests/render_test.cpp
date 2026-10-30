@@ -2731,9 +2731,10 @@ TEST(a_draw_samples_a_texture_through_the_fs_prefetch) {
     Encoded e(r, texProgram(), pass, wholeDraw(6), render::Options{}, Bindings{}, fsb);
     CHECK(e.ok);
     if (!e.ok) std::printf("       %s\n", e.error.c_str());
-    // the prefetch, as literals: COUNT 1 (the FS reads its perspective barycentric, so no IJ_WRITE_DISABLE), then the
-    // command: src 0, sampler 0, texture 0, dst r0.z (2) << 16, wrmask 0xf << 22, TEX_PREFETCH_SAM (1) << 29
-    CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CNTL), 1u);
+    // the prefetch, as literals: COUNT 1 (the FS reads its perspective barycentric, so no IJ_WRITE_DISABLE) and ENDOFQUAD
+    // (0x10: an implicit-level sample needs its quads whole, compiler.cpp: needsQuadHelpers), then the command: src 0,
+    // sampler 0, texture 0, dst r0.z (2) << 16, wrmask 0xf << 22, TEX_PREFETCH_SAM (1) << 29
+    CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CNTL), 0x11u);
     CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CMD), 0x23c20000u);
     CHECK_EQ(e.reg(REG_A6XX_SP_FS_PREFETCH_CNTL + 1), 0x23c20000u);   // ...in the same pkt4 as the CNTL
     // the tables in the pass's FS part, the counts in the registers
@@ -3133,7 +3134,7 @@ TEST(a_draw_refuses_a_depth_setup_it_cannot_serve) {
     pass.depth = colour.get();
     refused(r, flatProgram(), pass, dr, "a RGBA8Unorm texture as the depth attachment: Depth32Float (252) is served");
     pass.depth = small.get();
-    refused(r, flatProgram(), pass, dr, "a 32 x 32 depth attachment beside a 64 x 64 colour attachment: Metal asks for the same size");
+    refused(r, flatProgram(), pass, dr, "a 32 x 32 depth attachment (level 0) beside a 64 x 64 colour attachment (level 0): a depth attachment smaller than the colour leaves pixels without one");
     pass.depth = d.get();
     Draw bad = dr;
     bad.depth.compare = 8;
@@ -4473,4 +4474,53 @@ TEST(a_draw_into_a_cube_face_aims_at_that_face) {
     Encoded e6(r, flatProgram(), pass, wholeDraw());
     CHECK(!e6.ok);
     expectRefusal(e6.error, "slice 6 of a texture of 6");
+}
+
+// A depth texture of mip levels (sokol's miprender draws every level with depth): each level its own tiled layout, the
+// RB told the level's base and pitch. Level 0 is the control: the texture's own address and pitch.
+TEST(a_draw_into_a_depth_mip_level_aims_at_that_level) {
+    using namespace a6xx;
+    Rig r;
+    TextureDesc dd;
+    dd.format = PixelFormat::kDepth32Float;
+    dd.width = dd.height = 256;
+    dd.mipLevels = 9;
+    dd.usage = kTextureUsageRenderTarget;
+    TextureDesc cd;
+    cd.width = cd.height = 256;
+    cd.mipLevels = 9;
+    cd.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    std::string why;
+    auto depth = Texture::make(*r.gpu, dd, &why);
+    auto colour = depth ? Texture::make(*r.gpu, cd, &why) : nullptr;
+    CHECK(colour != nullptr);
+    if (colour == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    const TextureLevel L2 = depth->level(2);
+    CHECK_EQ(L2.width, 64u);
+    CHECK_EQ(L2.pitch, 256u);
+    CHECK_EQ(L2.offset % 4096, 0u);
+    CHECK_EQ(depth->level(1).offset, 256u * 1024);   // level 0: 256 rows of 1024 bytes
+    auto base = [](const Encoded& e) { return uint64_t(e.reg(REG_A6XX_RB_DEPTH_BUFFER_BASE)) | uint64_t(e.reg(REG_A6XX_RB_DEPTH_BUFFER_BASE + 1)) << 32; };
+    for (uint32_t level : {0u, 2u}) {
+        RenderPass pass;
+        pass.color0 = colour.get();
+        pass.level = level;
+        pass.depth = depth.get();
+        pass.depthLevel = level;
+        pass.depthLoad = LoadAction::kClear;
+        pass.clearDepth = 1.0;
+        Draw d = wholeDraw(3, 256 >> level, 256 >> level);
+        d.depth = DepthState{1, true};
+        Encoded e(r, flatProgram(), pass, d);
+        CHECK(e.ok);
+        if (!e.ok) std::printf("       %s\n", e.error.c_str());
+        CHECK_EQ(base(e), depth->levelAddress(level));
+        CHECK_EQ(e.reg(REG_A6XX_RB_DEPTH_BUFFER_PITCH) << 6, uint32_t(depth->level(level).pitch));
+        auto cb = drawOnce(r, flatProgram(), pass, d);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    }
 }

@@ -288,6 +288,7 @@ struct RenderPass {
     // are DontCare / DontCare / 1.0. In sysmem Load and DontCare are the same, and the depth is always flushed to memory
     // at the pass's end (each draw is a pass of its own here, so the next one must find it there)
     const Texture* depth = nullptr;
+    uint32_t depthLevel = 0;                     // its mip level drawn into (each level its own tiled layout, texture.cpp: depthLevel)
     LoadAction depthLoad = LoadAction::kDontCare;
     StoreAction depthStore = StoreAction::kDontCare;
     double clearDepth = 1.0;

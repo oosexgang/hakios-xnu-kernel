@@ -553,8 +553,8 @@ std::pair<uint32_t, uint32_t> windowOf(const RenderPass& pass) {
     }
     // a pass of depth alone (a shadow map's) is the depth attachment's size; beside colour it is the same size (checkTarget)
     if (pass.depth != nullptr) {
-        w = std::min(w, pass.depth->width());
-        h = std::min(h, pass.depth->height());
+        w = std::min(w, pass.depth->level(pass.depthLevel).width);
+        h = std::min(h, pass.depth->level(pass.depthLevel).height);
     }
     return {w, h};
 }
@@ -857,11 +857,11 @@ void clearStream(pm4::Stream& stream, const Texture& target, const ClearWords& c
 // the depth's float bits in SOLID_C0; the 2D engine sees FMT6_32_FLOAT, TILE6_3 as the image is laid out), then what
 // tu_clear_sysmem_attachment does after a depth clear (tu_clear_blit.cc:4480-4483): the colour CCU cleaned -- the 2D
 // engine writes through it -- and the depth CCU cleaned and invalidated, so the draw's depth test reads the fill
-void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDepth, uint64_t table) {
+void depthClearStream(pm4::Stream& stream, const Texture& depth, double clearDepth, uint64_t table, uint32_t level = 0) {
     ClearWords c{};
     c.ifmt = R2D_FLOAT32;
     c.value[0] = fui(float(clearDepth));
-    fillStream(stream, depth, c, TILE6_3);
+    fillStream(stream, depth, c, TILE6_3, level);
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableDepthClearFlushAt, kDepthClearFlushValue, false);
     waitForWord(stream, table + kTableDepthClearFlushAt, kDepthClearFlushValue);
     eventTimestamp(stream, PC_CCU_FLUSH_DEPTH_TS, table + kTableDepthClearDepthFlushAt, kDepthClearDepthFlushValue, false);
@@ -897,7 +897,7 @@ void stencilClearStream(pm4::Stream& stream, const Texture& t, uint32_t value, u
 // the depth attachment's Clear and the stencil attachment's, each when asked for (tu_clear_sysmem_attachment, each aspect in turn)
 void zsClears(pm4::Stream& stream, const RenderPass& pass, uint64_t table) {
     if (pass.depth != nullptr && pass.depthLoad == LoadAction::kClear) {
-        depthClearStream(stream, *pass.depth, pass.clearDepth, table);
+        depthClearStream(stream, *pass.depth, pass.clearDepth, table, pass.depthLevel);
     }
     if (pass.stencil != nullptr && pass.stencilLoad == LoadAction::kClear) {
         stencilClearStream(stream, *pass.stencil, pass.clearStencil, table);
@@ -976,9 +976,18 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
             return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
         }
         const Attachment c = attachmentOf(pass, 0).texture != nullptr ? attachmentOf(pass, 0) : Attachment{nullptr, 0, LoadAction::kLoad, StoreAction::kStore, nullptr, 0};
-        if (c.texture != nullptr && (d.width() != c.texture->level(c.level).width || d.height() != c.texture->level(c.level).height)) {
-            return refuse(why, "a " + n(d.width()) + " x " + n(d.height()) + " depth attachment beside a " + n(c.texture->width()) + " x " + n(c.texture->height()) +
-                                   " colour attachment: Metal asks for the same size");
+        if (pass.depthLevel >= d.levels()) {
+            return refuse(why, "the depth attachment names mip level " + n(pass.depthLevel) + " of a texture of " + n(d.levels()));
+        }
+        const TextureLevel DL = d.level(pass.depthLevel);
+        // a depth larger than the colour is drawn in the colour's window (windowOf: the smallest attachment): Metal's
+        // validation asks for one size, and sokol hands Apple's Metal a level-0 depth beside a smaller colour level
+        // (its depth attachment never names a level), which Apple's GPUs draw. A smaller depth would leave pixels of
+        // the window without one.
+        if (c.texture != nullptr && (DL.width < c.texture->level(c.level).width || DL.height < c.texture->level(c.level).height)) {
+            return refuse(why, "a " + n(DL.width) + " x " + n(DL.height) + " depth attachment (level " + n(pass.depthLevel) + ") beside a " +
+                                   n(c.texture->level(c.level).width) + " x " + n(c.texture->level(c.level).height) + " colour attachment (level " + n(c.level) +
+                                   "): a depth attachment smaller than the colour leaves pixels without one");
         }
         if ((d.bytesPerRow() >> A6XX_RB_DEPTH_BUFFER_PITCH__SCALE) > A6XX_RB_DEPTH_BUFFER_PITCH__MASK || d.buffer()->length() >= (1ull << 32)) {
             return refuse(why, "the depth texture's pitch of " + n(d.bytesPerRow()) + " bytes or its " + n(d.buffer()->length()) +
@@ -1478,8 +1487,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (pass.depth != nullptr) {
         const Texture& d = *pass.depth;
         regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO,
-             {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.bytesPerRow())),
-              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.depthPlaneBytes())), uint32_t(d.gpuAddress()), uint32_t(d.gpuAddress() >> 32), 0});
+             {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.level(pass.depthLevel).pitch)),
+              A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.depthPlaneBytes())), uint32_t(d.levelAddress(pass.depthLevel)),
+              uint32_t(d.levelAddress(pass.depthLevel) >> 32), 0});
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32));
         regs(stream, REG_A6XX_RB_DEPTH_FLAG_BUFFER_BASE, {0, 0, 0});
         if (pass.stencil != nullptr) {

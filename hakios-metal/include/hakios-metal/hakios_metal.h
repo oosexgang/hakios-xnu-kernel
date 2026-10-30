@@ -318,6 +318,7 @@ struct hakios_metal_render_pass {
 	 * WINDING the front face's MTLWinding (Clockwise 0, Metal's default; CounterClockwise 1). Zero is Metal's default for both */
 	unsigned cull_mode, winding;
 	unsigned color0_slice;                    /* color0's layer, face or plane drawn into (MTLRenderPassAttachmentDescriptor.slice) */
+	unsigned depth_level;                     /* the depth attachment's mip level drawn into */
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,
