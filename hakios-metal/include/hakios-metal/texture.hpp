@@ -242,7 +242,7 @@ private:
 
 // MTLSamplerDescriptor's fields in Metal's numbering (MTLSampler.h), with Metal's defaults
 struct SamplerDesc {
-    uint32_t minFilter = 0;              // MTLSamplerMinMagFilter: Nearest 0, Linear 1
+    uint32_t minFilter = 0;              // MTLSamplerMinMagFilter: Nearest 0, Linear 1; 2 is bicubic, which Metal offers a constexpr sampler alone
     uint32_t magFilter = 0;
     uint32_t mipFilter = 0;              // MTLSamplerMipFilter: NotMipmapped 0, Nearest 1, Linear 2
     uint32_t sAddress = 0;               // MTLSamplerAddressMode: ClampToEdge 0, MirrorClampToEdge 1, Repeat 2, MirrorRepeat 3,

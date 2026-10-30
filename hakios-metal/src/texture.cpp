@@ -564,11 +564,14 @@ std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uin
 bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     SamplerFields f;
     // MTLSamplerMinMagFilter: Nearest 0, Linear 1 (MTLSampler.h)
-    if (d.minFilter > 1 || d.magFilter > 1) {
-        return refuse(why, "sampler filters min " + n(d.minFilter) + " mag " + n(d.magFilter) + ": MTLSamplerMinMagFilter is Nearest (0) or Linear (1)");
+    if (d.minFilter > 2 || d.magFilter > 2) {
+        return refuse(why, "sampler filters min " + n(d.minFilter) + " mag " + n(d.magFilter) + ": Nearest (0), Linear (1) or bicubic (2)");
     }
-    f.min = d.minFilter == 1 ? A6XX_TEX_LINEAR : A6XX_TEX_NEAREST;
-    f.mag = d.magFilter == 1 ? A6XX_TEX_LINEAR : A6XX_TEX_NEAREST;
+    // bicubic is the TP's own cubic filter, which this chip has (freedreno_devices.py a6xx_gen4 has_tex_filter_cubic;
+    // turnip's VK_FILTER_CUBIC_EXT, tu6_tex_filter)
+    auto filter = [](uint32_t m) { return m == 2 ? A6XX_TEX_CUBIC : m == 1 ? A6XX_TEX_LINEAR : A6XX_TEX_NEAREST; };
+    f.min = filter(d.minFilter);
+    f.mag = filter(d.magFilter);
     // MTLSamplerMipFilter: NotMipmapped 0 ("sampled as if it only had a single mipmap level", MTLSampler.h) is Gallium's
     // PIPE_TEX_MIPFILTER_NONE, which sets MIPFILTER_LINEAR_FAR (fd6_texture.cc:279-280; turnip: "disables mipmapping");
     // Nearest 1 sets neither bit; Linear 2 sets MIPFILTER_LINEAR_NEAR (fd6_texture.cc:265-270)

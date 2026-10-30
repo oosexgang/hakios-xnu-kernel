@@ -271,7 +271,7 @@ float floatOfHalf(uint16_t h) {
 // numbering: AIR's clamp_to_zero 0 / clamp_to_edge 1 / repeat 2 / mirrored_repeat 3 / clamp_to_border 4 are Metal's
 // 4 / 0 / 2 / 3 / 5; the filters, the mip filter and the border colour share Metal's numbers; coord::pixel is the
 // descriptor's normalizedCoordinates false) and made into its TEX_SAMP words as the API's samplers are (makeSampler).
-// Refused by name: what makeSampler does not serve, and bicubic filtering.
+// Refused by name: what makeSampler does not serve.
 bool inlineSamplersOf(const Translation& t, std::vector<std::pair<uint32_t, Sampler>>* out, std::string* why) {
     static const uint32_t kAddress[5] = {4, 0, 2, 3, 5};
     for (unsigned i = 0; i < t.info.num_resources; i++) {
@@ -279,9 +279,6 @@ bool inlineSamplersOf(const Translation& t, std::vector<std::pair<uint32_t, Samp
         if (r.kind != AIR_RESOURCE_SAMPLER || !r.inline_sampler) continue;
         const air_sampler_state& st = r.sampler;
         const std::string what = std::string(t.name()) + "'s constexpr sampler at index " + std::to_string(r.index);
-        if (st.min_filter == AIR_SAMPLER_BICUBIC || st.mag_filter == AIR_SAMPLER_BICUBIC) {
-            return refuse(why, what + " filters bicubic: not served");
-        }
         SamplerDesc d;
         for (int a = 0; a < 3; a++) {
             if (unsigned(st.address[a]) > 4) return refuse(why, what + " has address mode " + std::to_string(unsigned(st.address[a])) + ", which AIR does not have");
@@ -289,8 +286,9 @@ bool inlineSamplersOf(const Translation& t, std::vector<std::pair<uint32_t, Samp
         d.sAddress = kAddress[st.address[0]];
         d.tAddress = kAddress[st.address[1]];
         d.rAddress = kAddress[st.address[2]];
-        d.minFilter = st.min_filter == AIR_SAMPLER_LINEAR ? 1 : 0;
-        d.magFilter = st.mag_filter == AIR_SAMPLER_LINEAR ? 1 : 0;
+        // (bicubic: the TP's cubic filter, makeSampler's 2)
+        d.minFilter = st.min_filter == AIR_SAMPLER_BICUBIC ? 2 : st.min_filter == AIR_SAMPLER_LINEAR ? 1 : 0;
+        d.magFilter = st.mag_filter == AIR_SAMPLER_BICUBIC ? 2 : st.mag_filter == AIR_SAMPLER_LINEAR ? 1 : 0;
         d.mipFilter = unsigned(st.mip_filter);
         d.normalizedCoordinates = !st.pixel_coord;
         // AIR keeps MSL's compare_func numbering (none 0, less .. always 1 to 7, never 8 -- CoreAnimation's constexpr

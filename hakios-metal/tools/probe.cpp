@@ -2146,6 +2146,68 @@ int main(int argc, char** argv) {
                 report(drewAll && rightFaces == 6, "tri_cube along the six axes of a 4x4 cube: " + std::to_string(rightFaces) + " of 6 draws the whole target the face the axis names" + detail);
             }
         }
+        // 9j6. bicubic (the TP's cubic filter, MSL's filter::bicubic): a 4x4 texture of one colour sampled by tri_tex with the
+        // cubic filter stays that colour on every pixel (its weights sum to 1); a texture whose left half is 0 and right
+        // half 255 in red comes out unlike the linear filter's between the halves -- by more than rounding on many
+        // pixels -- and inside 0..255, so the filter in effect is neither linear nor nearest.
+        {
+            TextureDesc bd;
+            bd.width = bd.height = 4;
+            std::string bwhy;
+            auto flat = Texture::make(gpu, bd, &bwhy), step = Texture::make(gpu, bd, &bwhy);
+            uint32_t one[16], halves[16];
+            for (uint32_t k = 0; k < 16; k++) {
+                one[k] = 0xff3c7896u;
+                halves[k] = 0xff000000u | ((k % 4) >= 2 ? 0xffu : 0u);
+            }
+            SamplerDesc cubicDesc, linearDesc;
+            cubicDesc.minFilter = cubicDesc.magFilter = 2;
+            linearDesc.minFilter = linearDesc.magFilter = 1;
+            Sampler cubic, linear;
+            if (flat == nullptr || step == nullptr || !flat->replace(0, 0, 4, 4, one, 16, &bwhy) || !step->replace(0, 0, 4, 4, halves, 16, &bwhy) ||
+                !makeSampler(cubicDesc, &cubic, &bwhy) || !makeSampler(linearDesc, &linear, &bwhy)) {
+                report(false, "bicubic: textures and samplers: " + bwhy);
+            } else {
+                const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                auto drawWith = [&](const Texture& tex, const Sampler& smp, bool* ok) {
+                    fillBo(*t, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Bindings fsb;
+                    fsb.textures = {&tex};
+                    fsb.samplers = {&smp};
+                    auto cb = queue->commandBuffer();
+                    *ok = cb->draw(texProg, rp, drawOf(0, 6), Bindings{}, fsb);
+                    if (*ok) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                        *ok = completed(*cb);
+                    }
+                    return textureBo(*t);
+                };
+                bool ok1, ok2, ok3;
+                std::vector<uint8_t> a = drawWith(*flat, cubic, &ok1);
+                uint32_t same = 0;
+                for (uint32_t j = 0; j < H; j++)
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t px;
+                        memcpy(&px, a.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        same += px == 0xff3c7896u;
+                    }
+                report(ok1 && same == W * H, "bicubic over a one-colour texture: " + std::to_string(same) + " of 4096 pixels that colour");
+                std::vector<uint8_t> c = drawWith(*step, cubic, &ok2), l = drawWith(*step, linear, &ok3);
+                uint32_t unlike = 0, outside = 0;
+                for (uint32_t j = 0; j < H; j++)
+                    for (uint32_t i = 0; i < W; i++) {
+                        const uint8_t rc = c[j * t->bytesPerRow() + uint64_t(i) * 4], rl = l[j * t->bytesPerRow() + uint64_t(i) * 4];
+                        unlike += std::abs(int(rc) - int(rl)) > 2;
+                        outside += c[j * t->bytesPerRow() + uint64_t(i) * 4 + 3] != 0xff;
+                    }
+                report(ok2 && ok3 && unlike > 200 && outside == 0,
+                       "bicubic over a step: " + std::to_string(unlike) + " pixels unlike the linear filter's by more than rounding, " +
+                           std::to_string(outside) + " with an alpha not ff");
+            }
+        }
         // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D
         // type, sampled by tri_tex1d_fs at tri_color_vs's red with a nearest sampler -- texel floor(4 r), red being u of
         // 9j's rule (T1 (y - x) / 64, T2 y / 64). Pixels whose 4 r lies within 1/16 of a texel edge are not judged.

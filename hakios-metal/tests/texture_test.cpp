@@ -425,8 +425,19 @@ TEST(sampler_words_follow_galliums_encoding_of_metals_descriptor) {
     d.compareFunction = 1;
     CHECK(has(refusedSampler(d), "sampler compare function 1: only Never (0) is served yet"));
     d = SamplerDesc{};
-    d.minFilter = 2;
-    CHECK(has(refusedSampler(d), "sampler filters min 2 mag 0: MTLSamplerMinMagFilter is Nearest (0) or Linear (1)"));
+    d.minFilter = 3;
+    CHECK(has(refusedSampler(d), "sampler filters min 3 mag 0: Nearest (0), Linear (1) or bicubic (2)"));
+    // bicubic: the TP's cubic filter in both fields, and no CHROMA_LINEAR (that is for linear alone)
+    {
+        using namespace a6xx;
+        SamplerDesc c;
+        c.minFilter = c.magFilter = 2;
+        Sampler cs;
+        std::string cwhy;
+        CHECK(makeSampler(c, &cs, &cwhy));
+        CHECK_EQ((cs.words[0] & A6XX_TEX_SAMP_0_XY_MIN__MASK) >> A6XX_TEX_SAMP_0_XY_MIN__SHIFT, uint32_t(A6XX_TEX_CUBIC));
+        CHECK_EQ((cs.words[0] & A6XX_TEX_SAMP_0_XY_MAG__MASK) >> A6XX_TEX_SAMP_0_XY_MAG__SHIFT, uint32_t(A6XX_TEX_CUBIC));
+    }
     d = SamplerDesc{};
     d.mipFilter = 3;
     CHECK(has(refusedSampler(d), "sampler mip filter 3: MTLSamplerMipFilter is 0, 1 or 2"));
