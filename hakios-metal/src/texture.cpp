@@ -277,7 +277,9 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
                         ": a depth texture is tiled (TILE6_3) and is served as a render target (4), sampled too (5), not stored");
         return nullptr;
     }
-    if (multisample && (info->stencil || info->blockW > 1 || desc.mipLevels != 1 || desc.usage != kTextureUsageRenderTarget)) {
+    // (shader read is taken beside render target -- sokol asks for both on every attachment; a shader sampling one as a
+    // 2D texture is refused at its draw by the type, and texture2d_ms reads are not served)
+    if (multisample && (info->stencil || info->blockW > 1 || desc.mipLevels != 1 || (desc.usage & ~kTextureUsageRead) != kTextureUsageRenderTarget)) {
         refuse(why, std::string("a multisample ") + info->name + " texture of " + n(desc.mipLevels) + " levels with usage " + n(desc.usage) +
                         ": one level of an uncompressed colour format or Depth32Float, a render target (4) alone, is served (a stencil plane is "
                         "laid out apart and not for samples here)");

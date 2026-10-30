@@ -738,11 +738,14 @@ TEST(a_multisample_depth_is_tiled_at_its_samples_cpp) {
     CHECK_EQ(a->bytesPerRow(), 512u);    // 100 * 4 to 256
     CHECK_EQ(m->bytesPerRow(), 2048u);   // 100 * 16 to 1024
     CHECK_EQ(m->buffer()->length(), 32u * 2048);   // 20 rows to 32, 64 KiB
-    // a stencil plane is not served multisampled, nor a multisample depth that is sampled
+    // a stencil plane is not served multisampled, nor a multisample depth that is stored into
     TextureDesc bad = four;
     bad.format = PixelFormat::kDepth32FloatStencil8;
     CHECK(has(refusedMake(r, bad), "a multisample Depth32Float_Stencil8 texture"));
     bad = four;
-    bad.usage = kTextureUsageRenderTarget | kTextureUsageRead;
-    CHECK(has(refusedMake(r, bad), "a render target (4) alone, is served"));
+    bad.usage = kTextureUsageRenderTarget | kTextureUsageWrite;   // (read beside render target is taken, as sokol asks)
+    CHECK(has(refusedMake(r, bad), "sampled too (5), not stored"));
+    TextureDesc readToo = four;
+    readToo.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    CHECK(Texture::make(r.gpu, readToo, &why) != nullptr);
 }
