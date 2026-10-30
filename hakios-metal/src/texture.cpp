@@ -756,6 +756,38 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
     return nullptr;
 }
 
+void writeBorderColors(uint8_t* table) {
+    for (uint32_t e = 0; e < 3; e++) {
+        // every channel 0 or 1: (0,0,0,0), (0,0,0,1), (1,1,1,1)
+        const bool c[4] = {e == 2, e == 2, e == 2, e != 0};
+        uint8_t* at = table + 128 * e;
+        memset(at, 0, 128);
+        auto put16 = [&](uint32_t off, uint16_t v) { memcpy(at + off, &v, 2); };
+        auto put32 = [&](uint32_t off, uint32_t v) { memcpy(at + off, &v, 4); };
+        uint16_t rgb565 = 0, rgb5a1 = 0, rgba4 = 0;
+        uint32_t rgb10a2 = 0;
+        for (uint32_t i = 0; i < 4; i++) {
+            put32(4 * i, c[i] ? 0x3f800000u : 0);         // fp32
+            put16(16 + 2 * i, c[i] ? 0xffff : 0);          // ui16, unorm
+            put16(24 + 2 * i, c[i] ? 0x7fff : 0);          // si16, snorm
+            put16(32 + 2 * i, c[i] ? 0x3c00 : 0);          // fp16
+            at[48 + i] = c[i] ? 0xff : 0;                  // ui8, unorm
+            at[52 + i] = c[i] ? 0x7f : 0;                  // si8, snorm
+            put16(64 + 2 * i, c[i] ? 0x3c00 : 0);          // srgb, fp16 as turnip packs it
+            static const uint32_t w565[3] = {5, 6, 5}, at565[3] = {0, 5, 11};
+            if (i < 3 && c[i]) rgb565 |= uint16_t(((1u << w565[i]) - 1) << at565[i]);
+            if (c[i]) rgb5a1 |= uint16_t((i < 3 ? 0x1fu : 1u) << (5 * i));
+            if (c[i]) rgba4 |= uint16_t(0xfu << (4 * i));
+            if (c[i]) rgb10a2 |= (i < 3 ? 0x3ffu : 3u) << (10 * i);
+        }
+        put16(40, rgb565);
+        put16(42, rgb5a1);
+        put16(44, rgba4);
+        put32(56, rgb10a2);
+        put32(60, c[0] ? 0xffffffu : 0);                   // z24, the depth from red
+    }
+}
+
 bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     SamplerFields f;
     // MTLSamplerMinMagFilter: Nearest 0, Linear 1 (MTLSampler.h)
@@ -780,26 +812,31 @@ bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     // CLAMP_TO_BORDER with BCOLOR 0: entry 0 of the zero table every dispatch points the TP at, which with the alpha-less
     // formats' SWIZ_W = ONE (applied after the border, the XML) is Metal's "transparent zero with alpha, opaque zero
     // without" (MTLSampler.h:49-50). MirrorClampToEdge (1) is A6XX_TEX_MIRROR_CLAMP, which "only works for PoT" textures
-    // (fd6_texture.cc:47) and the sampler does not know the texture: refused.
+    // (fd6_texture.cc:47) by Gallium's account; turnip maps Vulkan's mirror-clamp to it outright and offers the
+    // extension unconditionally (tu_util.h:320, tu_device.cc:219), so it is taken, and measured on the phone over a
+    // texture of no power-of-two size (probe 9mc). ClampToBorderColor names its colour's entry of the table
+    // (writeBorderColors); ClampToZero is entry 0 whatever the colour, so the two with another colour on one sampler,
+    // which has one BCOLOR, are refused.
+    if (d.borderColor > 2) {
+        return refuse(why, "sampler border colour " + n(d.borderColor) + ": MTLSamplerBorderColor is 0, 1 or 2");
+    }
+    bool toZero = false, toColour = false;
     auto clamp = [&](uint32_t mode, const char* axis, a6xx_tex_clamp* out_) -> bool {
         switch (mode) {
         case 0: *out_ = A6XX_TEX_CLAMP_TO_EDGE; return true;
+        case 1: *out_ = A6XX_TEX_MIRROR_CLAMP; return true;
         case 2: *out_ = A6XX_TEX_REPEAT; return true;
         case 3: *out_ = A6XX_TEX_MIRROR_REPEAT; return true;
-        case 4: *out_ = A6XX_TEX_CLAMP_TO_BORDER; return true;
-        case 5:
-            if (d.borderColor != 0) {
-                return refuse(why, "sampler border colour " + n(d.borderColor) + " (" + (d.borderColor == 1 ? "OpaqueBlack" : d.borderColor == 2 ? "OpaqueWhite" : "?") +
-                                       "): only TransparentBlack (0) has an entry in the border table yet");
-            }
-            *out_ = A6XX_TEX_CLAMP_TO_BORDER;
-            return true;
-        case 1: return refuse(why, std::string("sampler ") + axis + " address mode 1 (MirrorClampToEdge): power-of-two textures only on a6xx, not served yet");
+        case 4: *out_ = A6XX_TEX_CLAMP_TO_BORDER; toZero = true; return true;
+        case 5: *out_ = A6XX_TEX_CLAMP_TO_BORDER; toColour = true; return true;
         default: return refuse(why, std::string("sampler ") + axis + " address mode " + n(mode) + ": MTLSamplerAddressMode is 0 to 5");
         }
     };
     if (!clamp(d.sAddress, "s", &f.wrapS) || !clamp(d.tAddress, "t", &f.wrapT) || !clamp(d.rAddress, "r", &f.wrapR)) {
         return false;
+    }
+    if (toZero && toColour && d.borderColor != 0) {
+        return refuse(why, "a sampler clamping one axis to zero (4) and another to border colour " + n(d.borderColor) + ": its one BCOLOR entry cannot be both");
     }
     // Anisotropy as fd6_sampler_state_create takes it (fd6_texture.cc:256-273): ANISO the log2 of half the count, 8 at
     // most, and a linear filter becomes the anisotropic one under it (tex_filter)
@@ -825,7 +862,7 @@ bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     f.minLod88 = lodFixed(d.lodMinClamp);
     f.maxLod88 = lodFixed(d.lodMaxClamp);
     f.chromaLinear = (f.min == A6XX_TEX_LINEAR || f.min == A6XX_TEX_ANISO) && (f.mag == A6XX_TEX_LINEAR || f.mag == A6XX_TEX_ANISO);   // Gallium: both linear
-    f.bcolor = 0;
+    f.bcolor = toColour ? d.borderColor : 0;
     TexSamp s = texSamp(f);
     for (uint32_t i = 0; i < kTexSampDwords; i++) out->words[i] = s.dword[i];
     return true;

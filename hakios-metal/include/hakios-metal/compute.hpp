@@ -81,7 +81,7 @@ constexpr uint32_t kTableIbosAt = 0;
 constexpr uint32_t kMaxIbos = 64;
 constexpr uint32_t kTableTexConstAt = 4096;     // kMaxTextureSlots * 64 = 1024 bytes
 constexpr uint32_t kTableTexSampAt = 5120;      // kMaxTextureSlots * 16 = 256 bytes
-constexpr uint32_t kTableBorderColorAt = 5376;  // 128 bytes of zeros
+constexpr uint32_t kTableBorderColorAt = 6144;  // Metal's three border colours (texture.hpp: writeBorderColors)
 constexpr uint32_t kTableHoleAt = 5504;         // 64 bytes nobody addresses: what the hole descriptors point at
 constexpr uint32_t kTableTimestampsAt = 5632;   // the two timestamp words the cache flush writes and waits for
 // an indirect dispatch's group counts, copied in by the CP from the caller's buffer (which Metal aligns to 4 bytes,
@@ -90,7 +90,8 @@ constexpr uint32_t kTableTimestampsAt = 5632;   // the two timestamp words the c
 constexpr uint32_t kTableIndirectAt = 5648;
 static_assert(kTableTexConstAt % 64 == 0 && kTableTexSampAt % 16 == 0 && kTableBorderColorAt % 128 == 0, "the tables' alignments");
 static_assert(kTableIbosAt + kMaxIbos * 64 <= kTableTexConstAt && kTableTexConstAt + kMaxTextureSlots * 64 <= kTableTexSampAt &&
-              kTableTexSampAt + kMaxTextureSlots * 16 <= kTableBorderColorAt && kTableBorderColorAt + 128 <= kTableHoleAt &&
+              kTableTexSampAt + kMaxTextureSlots * 16 <= kTableHoleAt && kTableIndirectAt + 32 <= kTableBorderColorAt &&
+              kTableBorderColorAt + 3 * 128 <= kTableBytes &&
               kTableHoleAt + 64 <= kTableTimestampsAt && kTableTimestampsAt + 16 <= kTableIndirectAt && kTableIndirectAt % 16 == 0 &&
               kTableIndirectAt + 32 <= kTableBytes, "the table's parts fit");
 // An IBO slot ir3 counts but the kernel never addresses (a device buffer at [[buffer(5)]] alone leaves slots 0-4; a

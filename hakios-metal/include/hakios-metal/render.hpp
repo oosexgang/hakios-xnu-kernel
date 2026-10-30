@@ -391,11 +391,12 @@ static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroe
 constexpr uint32_t kTableVisibilityAt = 96;
 constexpr uint32_t kVisibilityEndAt = 16;
 static_assert(kTableVisibilityAt >= kTableZeroedBytes && kTableVisibilityAt + 32 <= 128, "the snapshots lie between the zeroed words and the border colour");
-constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
-constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses
+constexpr uint32_t kTableBorderColorAt = 128;     // Metal's three border colours (texture.hpp: writeBorderColors), 128-aligned
+constexpr uint32_t kTableHoleAt = 512;            // 64 bytes nobody addresses
 constexpr uint32_t kTableVsAt = 1024;             // step two: the VS's descriptor tables (UBO, IBO, TEX, SAMP)
 constexpr uint32_t kTableFsAt = 4096;             // step two: the FS's
-static_assert(kTableBorderColorAt % 128 == 0 && kTableFsAt + 4096 <= kTableBytes, "the table's parts fit");
+static_assert(kTableBorderColorAt % 128 == 0 && kTableBorderColorAt + 3 * 128 <= kTableHoleAt && kTableHoleAt + 64 <= kTableVsAt &&
+              kTableFsAt + 4096 <= kTableBytes, "the table's parts fit");
 
 // Each group switchable, as compute::Options are: the instrument that found the TIMESTAMP bit. The defaults are the
 // whole stream as turnip's sysmem pass and r3d path have it; the *Alt fields pick the other witness's value where the

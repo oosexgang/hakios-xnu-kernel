@@ -42,6 +42,7 @@
 #include "../tests/fixtures/pvt_fill_air.hpp"
 #include "../tests/fixtures/tg_arg_air.hpp"
 #include "../tests/fixtures/ptr_phi_air.hpp"
+#include "../tests/fixtures/tex_sample_wide_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
@@ -1154,9 +1155,9 @@ int main(int argc, char** argv) {
                 report(!accepted && !whyBad.empty(), std::string("control, makeSampler with anisotropy 17: ") + (accepted ? "ACCEPTED" : "refused: " + whyBad));
                 bad = SamplerDesc{};
                 bad.sAddress = 5;
-                bad.borderColor = 2;   // ClampToBorderColor with OpaqueWhite: no table entry for it yet
+                bad.borderColor = 3;   // past MTLSamplerBorderColor's three (the three have their entries: probe 9mc)
                 accepted = makeSampler(bad, &s, &whyBad);
-                report(!accepted && !whyBad.empty(), std::string("control, makeSampler with an opaque white border: ") + (accepted ? "ACCEPTED" : "refused: " + whyBad));
+                report(!accepted && !whyBad.empty(), std::string("control, makeSampler with border colour 3: ") + (accepted ? "ACCEPTED" : "refused: " + whyBad));
             }
             struct Sampled {
                 std::vector<uint32_t> bits;   // 64 x 4 lanes as written, the canary where nothing was
@@ -1472,6 +1473,101 @@ int main(int argc, char** argv) {
                             right += ok;
                         }
                     report(completed(*cb) && right == W * H, label + ": " + std::to_string(right) + " of 128 pixels each lane as written (absent ones 0, alpha 1)" + status(*cb, gpu));
+                }
+            }
+
+            // 9mc. address modes and border colours: tex_sample_wide samples a 5x3 RGBA8 texture (no power of two in either
+            // size) nearest at coordinates spread over [-1, 2], a 30x18 grid, so each sample is a quarter or three quarters
+            // into a texel and two thirds of them outside it. Every sample has to be the texel (or the border colour) the
+            // mode's own rule names; and each mode is told apart from the rule nearest it -- mirror-clamp from clamp-to-edge
+            // and from mirrored repeat, each border colour from the others -- by the samples where those rules disagree
+            {
+                const uint32_t TW = 5, TH = 3, GW = 30, GH = 18;
+                TextureDesc td;
+                td.format = PixelFormat::kRGBA8Unorm;
+                td.width = TW;
+                td.height = TH;
+                td.usage = kTextureUsageRead;
+                auto tex = Texture::make(gpu, td, &why);
+                auto out = tex ? newBuffer(gpu, uint64_t(GW) * GH * 16, &why) : nullptr;
+                if (out == nullptr) {
+                    report(false, "address modes: the texture or buffer: " + why);
+                } else {
+                    uint8_t texels[TW * TH * 4];
+                    for (uint32_t j = 0; j < TH; j++)
+                        for (uint32_t i = 0; i < TW; i++) {
+                            uint8_t* t = texels + (j * TW + i) * 4;
+                            t[0] = uint8_t(40 * i + 20);
+                            t[1] = uint8_t(70 * j + 30);
+                            t[2] = uint8_t(10 * (i + j) + 100);
+                            t[3] = uint8_t(200 + i);
+                        }
+                    tex->replace(0, 0, TW, TH, texels, TW * 4, &why);
+                    // the rules, on the texel index i = floor(u * size); -1 for the border
+                    auto rule = [](int mode, int i, int size) -> int {
+                        switch (mode) {
+                        case 0: return i < 0 ? 0 : i >= size ? size - 1 : i;
+                        case 1: { int m = i < 0 ? -i - 1 : i; return m >= size ? size - 1 : m; }
+                        case 2: return ((i % size) + size) % size;
+                        case 3: { int m = ((i % (2 * size)) + 2 * size) % (2 * size); return m < size ? m : 2 * size - 1 - m; }
+                        default: return i < 0 || i >= size ? -1 : i;
+                        }
+                    };
+                    struct Case { uint32_t mode, colour; int ruleMode; int against; const char* name; };
+                    const Case cases[] = {{0, 0, 0, 1, "ClampToEdge"}, {1, 0, 1, 0, "MirrorClampToEdge"}, {2, 0, 2, 3, "Repeat"},
+                                          {3, 0, 3, 1, "MirrorRepeat"}, {4, 0, 4, 0, "ClampToZero"}, {5, 1, 4, 0, "ClampToBorderColor OpaqueBlack"},
+                                          {5, 2, 4, 0, "ClampToBorderColor OpaqueWhite"}};
+                    const float borders[3][4] = {{0, 0, 0, 0}, {0, 0, 0, 1}, {1, 1, 1, 1}};
+                    for (const Case& c : cases) {
+                        SamplerDesc sd;
+                        sd.sAddress = sd.tAddress = c.mode;
+                        sd.borderColor = c.colour;
+                        Sampler smp;
+                        if (!makeSampler(sd, &smp, &why)) {
+                            report(false, std::string("address mode ") + c.name + ": " + why);
+                            continue;
+                        }
+                        for (uint32_t w = 0; w < GW * GH * 4; w++) static_cast<uint32_t*>(out->contents())[w] = 0x7fc00001u;   // a NaN no sample gives
+                        Bindings b;
+                        b.textures = {tex.get()};
+                        b.samplers = {&smp};
+                        b.buffers = {Binding{out.get(), 0}};
+                        const uint32_t groups[3] = {GW / 6, GH / 6, 1}, local[3] = {6, 6, 1};
+                        auto cb = runTex(kernels::tex_sample_wide_air, groups, local, b);
+                        const float* got = static_cast<const float*>(out->contents());
+                        uint32_t right = 0, apart = 0;
+                        for (uint32_t gy = 0; gy < GH; gy++)
+                            for (uint32_t gx = 0; gx < GW; gx++) {
+                                const int ix = int(std::floor(((gx + 0.5) / GW * 3 - 1) * TW)), iy = int(std::floor(((gy + 0.5) / GH * 3 - 1) * TH));
+                                auto expect = [&](int mode, float v[4]) {
+                                    const int x = rule(mode, ix, TW), y = rule(mode, iy, TH);
+                                    if (x < 0 || y < 0) {
+                                        for (int k = 0; k < 4; k++) v[k] = borders[c.colour][k];
+                                    } else {
+                                        for (int k = 0; k < 4; k++) v[k] = texels[(y * TW + x) * 4 + k] / 255.0f;
+                                    }
+                                };
+                                float want[4], other[4];
+                                expect(c.ruleMode, want);
+                                expect(c.against, other);
+                                if (c.mode == 5 || c.mode == 4) {
+                                    // the other border colours are the twin: the same rule with another colour
+                                    for (int k = 0; k < 4; k++) other[k] = (rule(4, ix, TW) < 0 || rule(4, iy, TH) < 0) ? borders[(c.colour + 1) % 3][k] : want[k];
+                                }
+                                const float* g = got + (gy * GW + gx) * 4;
+                                bool ok = true, differs = false;
+                                for (int k = 0; k < 4; k++) {
+                                    ok = ok && std::fabs(g[k] - want[k]) < 0.5f / 255;
+                                    differs = differs || std::fabs(other[k] - want[k]) >= 0.5f / 255;
+                                }
+                                right += ok;
+                                apart += ok && differs;
+                            }
+                        report(completed(*cb) && right == GW * GH && apart >= 40,
+                               std::string("address mode ") + c.name + " over a 5x3 texture sampled on [-1, 2]: " + std::to_string(right) + " of " +
+                                   std::to_string(GW * GH) + " samples its own rule, " + std::to_string(apart) + " of them where the nearest other rule differs" +
+                                   status(*cb, gpu));
+                    }
                 }
             }
 

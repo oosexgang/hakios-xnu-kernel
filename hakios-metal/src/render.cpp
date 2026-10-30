@@ -1066,7 +1066,7 @@ void clearAll(pm4::Stream& stream, const RenderPass& pass, const ClearWords c[kM
 // the table's words the stream addresses, zeroed before the GPU sees them
 void tableStart(uint8_t* tableCpu) {
     memset(tableCpu + kTableTimestampsAt, 0, kTableZeroedBytes);   // the tail's and the clears' values: 0 until the events write them
-    memset(tableCpu + kTableBorderColorAt, 0, 128);        // border colour entry 0, transparent black (the batch start points the TP here)
+    writeBorderColors(tableCpu + kTableBorderColorAt);     // the entries a sampler's BCOLOR names (the batch start points the TP here)
     memset(tableCpu + kTableHoleAt, 0, 64);
 }
 

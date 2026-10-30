@@ -282,6 +282,12 @@ private:
     SurfacePlane chroma_{0, 0};   // a two-plane format's second plane, in the buffer
 };
 
+// The border colour table a sampler's BCOLOR indexes, 128 bytes an entry: Metal's MTLSamplerBorderColor in its own
+// numbering, TransparentBlack 0, OpaqueBlack 1, OpaqueWhite 2, each packed once per format family the TP may read the
+// border as (fd6_bcolor_entry: fp32, unorm16, snorm16, fp16, 565, 5551, 4444, unorm8, snorm8, 10:10:10:2, z24, srgb),
+// as turnip packs its built-in colours (tu_util.h: tu6_pack_border_color); the TP picks the field of the texture's format
+void writeBorderColors(uint8_t* table);
+
 // MTLSamplerDescriptor's fields in Metal's numbering (MTLSampler.h), with Metal's defaults
 struct SamplerDesc {
     uint32_t minFilter = 0;              // MTLSamplerMinMagFilter: Nearest 0, Linear 1; 2 is bicubic, which Metal offers a constexpr sampler alone

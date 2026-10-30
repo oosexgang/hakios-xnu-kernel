@@ -279,7 +279,7 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
         memcpy(tableCpu + kTableIbosAt + 64 * slot, d.dword, sizeof d.dword);
     }
     memset(tableCpu + kTableHoleAt, 0, 64);
-    memset(tableCpu + kTableBorderColorAt, 0, 128);   // border colour entry 0: transparent black, what BCOLOR 0 reads
+    writeBorderColors(tableCpu + kTableBorderColorAt);   // the entries a sampler's BCOLOR names
     memset(tableCpu + kTableTimestampsAt, 0, 64);
 
     // --- the textures and samplers: the two tables, only for a kernel with sampled textures (Gallium builds the CS_TEX

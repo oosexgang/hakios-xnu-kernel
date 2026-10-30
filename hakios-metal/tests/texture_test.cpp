@@ -410,16 +410,44 @@ TEST(sampler_words_follow_galliums_encoding_of_metals_descriptor) {
     d.lodMaxClamp = 15.99f;
     CHECK(makeSampler(d, &s, &why));
     CHECK_EQ(s.words[1], 0x000ffd40u);   // 15.99 * 256 = 4093.44 -> 0xffd, truncated as Mesa casts
+    // MirrorClampToEdge is the TP's MIRROR_CLAMP (4); a border colour is its entry in the table (BCOLOR 1, 2), and
+    // ClampToZero stays entry 0 whatever the colour
+    {
+        using namespace a6xx;
+        d = SamplerDesc{};
+        d.sAddress = 1;
+        CHECK(makeSampler(d, &s, &why));
+        CHECK_EQ((s.words[0] & A6XX_TEX_SAMP_0_WRAP_S__MASK) >> A6XX_TEX_SAMP_0_WRAP_S__SHIFT, uint32_t(A6XX_TEX_MIRROR_CLAMP));
+        for (uint32_t colour = 0; colour < 3; colour++) {
+            d = SamplerDesc{};
+            d.tAddress = 5;
+            d.borderColor = colour;
+            CHECK(makeSampler(d, &s, &why));
+            CHECK_EQ((s.words[2] & A6XX_TEX_SAMP_2_BCOLOR__MASK) >> A6XX_TEX_SAMP_2_BCOLOR__SHIFT, colour);
+            d.tAddress = 4;
+            CHECK(makeSampler(d, &s, &why));
+            CHECK_EQ((s.words[2] & A6XX_TEX_SAMP_2_BCOLOR__MASK) >> A6XX_TEX_SAMP_2_BCOLOR__SHIFT, 0u);
+        }
+        // the twin: one axis to zero, another to white -- one BCOLOR cannot be both
+        d = SamplerDesc{};
+        d.sAddress = 4;
+        d.tAddress = 5;
+        d.borderColor = 2;
+        CHECK(has(refusedSampler(d), "its one BCOLOR entry cannot be both"));
+        d.borderColor = 3;
+        CHECK(has(refusedSampler(d), "sampler border colour 3: MTLSamplerBorderColor is 0, 1 or 2"));
+        // the table those entries index: transparent black, opaque black, opaque white, in each format family's field
+        uint8_t table[384];
+        writeBorderColors(table);
+        uint32_t fp[3][4];
+        for (uint32_t e = 0; e < 3; e++) memcpy(fp[e], table + 128 * e, 16);
+        CHECK(fp[0][0] == 0 && fp[0][3] == 0 && fp[1][0] == 0 && fp[1][3] == 0x3f800000u && fp[2][0] == 0x3f800000u && fp[2][3] == 0x3f800000u);
+        CHECK(table[128 + 48] == 0 && table[128 + 51] == 0xff && table[256 + 48] == 0xff);   // unorm8: black's alpha, white's red
+        uint16_t w565 = 0;
+        memcpy(&w565, table + 256 + 40, 2);
+        CHECK_EQ(w565, 0xffffu);
+    }
     // the refusals, each on its sentence
-    d = SamplerDesc{};
-    d.sAddress = 1;
-    CHECK(has(refusedSampler(d), "sampler s address mode 1 (MirrorClampToEdge): power-of-two textures only on a6xx, not served yet"));
-    d = SamplerDesc{};
-    d.tAddress = 5;
-    d.borderColor = 1;
-    CHECK(has(refusedSampler(d), "sampler border colour 1 (OpaqueBlack): only TransparentBlack (0) has an entry in the border table yet"));
-    d.borderColor = 2;
-    CHECK(has(refusedSampler(d), "sampler border colour 2 (OpaqueWhite)"));
     d = SamplerDesc{};
     d.rAddress = 6;
     CHECK(has(refusedSampler(d), "sampler r address mode 6: MTLSamplerAddressMode is 0 to 5"));
