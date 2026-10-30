@@ -392,7 +392,7 @@ copy_file(const char *in, const char *out)
 		errno = EINVAL;
 		die("output is the input file", out);
 	}
-	fo = open(out, O_WRONLY | O_CREAT | O_TRUNC, si.st_mode & 0777);
+	fo = open(out, O_WRONLY | O_CREAT | O_TRUNC, (si.st_mode & 0777) | 0200);     /* (rewritten in place below) */
 	if (fo < 0)
 		die("create", out);
 	left_bytes = si.st_size;
