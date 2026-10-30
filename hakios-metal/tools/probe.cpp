@@ -3327,6 +3327,46 @@ int main(int argc, char** argv) {
                    "tri_tex with no texture and no sampler bound: " + std::to_string(zero) + " of 4096 pixels the null texel 00 00 00 00" +
                        (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
+        // 9q. occlusion queries: the samples a draw lets through, counted by ZPASS_DONE snapshots around it into a word of
+        // a buffer (the result += end - begin). tri_flat over the whole target is 4096 samples (one each, no MSAA); T1
+        // alone (vertices 0..3) is its interior 2016 and the diagonal's 64 or none; T1 then T2 into the same word without
+        // the reset is 4096 again. The word starts as a seed none of these is.
+        {
+            std::string qwhy;
+            auto vis = newBuffer(gpu, 64, &qwhy);
+            if (vis == nullptr) {
+                report(false, "occlusion: a 64-byte result buffer: " + qwhy);
+            } else {
+                const Program flatP{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+                auto* word = static_cast<uint64_t*>(vis->contents()) + 1;
+                auto query = [&](uint32_t first, uint32_t count, bool reset) {
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    Draw d = drawOf(first, count);
+                    d.visibility = vis.get();
+                    d.visibilityMode = 2;
+                    d.visibilityOffset = 8;
+                    d.visibilityReset = reset;
+                    auto cb = queue->commandBuffer();
+                    bool ok = cb->draw(flatP, rp, d, Bindings{}, Bindings{});
+                    if (ok) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    return ok && completed(*cb);
+                };
+                *word = 0x5a5a5a5a5a5a5a5aull;
+                bool ok = query(0, 6, true);
+                const uint64_t whole = *word;
+                report(ok && whole == 4096, "occlusion, tri_flat over the whole 64x64 target, counted: " + std::to_string(whole) + " samples (4096)");
+                *word = 0x5a5a5a5a5a5a5a5aull;
+                ok = query(0, 3, true);
+                const uint64_t t1 = *word;
+                report(ok && (t1 == 2016 || t1 == 2080), "occlusion, T1 alone: " + std::to_string(t1) + " samples (2016, and the diagonal's 64 if it is T1's)");
+                ok = query(3, 3, false);
+                report(ok && *word == 4096, "occlusion, T2 added to T1's word without the reset: " + std::to_string(*word) + " samples (4096)");
+            }
+        }
 #if defined(__APPLE__)
         // 9m. the path to the screen's memory: a real IOSurface (IOSurfaceCreate, 64x64 'BGRA', 256-byte rows -- what
         // CAMetalLayer's drawables are made of), its memory taken by the kernel's surface request as a buffer

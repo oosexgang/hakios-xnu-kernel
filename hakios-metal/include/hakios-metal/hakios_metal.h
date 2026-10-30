@@ -277,6 +277,13 @@ struct hakios_metal_render_pass {
 		unsigned compare, stencil_fail, depth_fail, pass, read_mask, write_mask;
 	} stencil_front, stencil_back;
 	unsigned stencil_front_reference, stencil_back_reference;
+	/* the pass's visibilityResultBuffer and -setVisibilityResultMode:offset:, each draw reads them: VISIBILITY_MODE an
+	 * MTLVisibilityResultMode (Disabled 0, Boolean 1, Counting 2); a kept mode adds the samples the draw lets through to
+	 * the 64-bit word at VISIBILITY_OFFSET, zeroed first when VISIBILITY_RESET (the encoder's first draw into it) */
+	hakios_metal_buffer *visibility;
+	unsigned visibility_mode;
+	uint64_t visibility_offset;
+	int visibility_reset;
 };
 
 /* One draw: PROGRAM over VERTEX_COUNT vertices from VERTEX_START, PRIMITIVE an MTLPrimitiveType (Point 0, Line 1,

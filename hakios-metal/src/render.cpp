@@ -70,6 +70,11 @@ void waitForWord(pm4::Stream& st, uint64_t address, uint32_t value) {
     st.packet(CP_WAIT_REG_MEM, w, 6);
 }
 
+void waitForWordNot(pm4::Stream& st, uint64_t address, uint32_t value) {
+    uint32_t w[6] = {waitRegMem0(WRITE_NE, POLL_MEMORY), uint32_t(address), uint32_t(address >> 32), value, ~0u, kDelayLoopCycles};
+    st.packet(CP_WAIT_REG_MEM, w, 6);
+}
+
 void waitForWordAtLeast(pm4::Stream& st, uint64_t address, uint32_t value) {
     uint32_t w[4] = {0, uint32_t(address), uint32_t(address >> 32), value};
     st.packet(CP_WAIT_MEM_GTE, w, 4);
@@ -1278,6 +1283,18 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (draw.instanceCount == 0) {
         return refuse(why, "a draw of 0 instances");
     }
+    if (draw.visibilityMode > 2) {
+        return refuse(why, "visibility result mode " + n(draw.visibilityMode) + ": MTLVisibilityResultMode is Disabled (0), Boolean (1) or Counting (2)");
+    }
+    if (draw.visibilityMode != 0) {
+        if (draw.visibility == nullptr) {
+            return refuse(why, "a visibility result mode and no visibility result buffer in the pass");
+        }
+        if (draw.visibilityOffset % 8 != 0 || draw.visibilityOffset + 8 > draw.visibility->length()) {
+            return refuse(why, "a visibility result at offset " + n(draw.visibilityOffset) + ": a multiple of 8 with its 8 bytes inside the " +
+                                   n(draw.visibility->length()) + "-byte buffer");
+        }
+    }
     uint32_t indexSize = 0;
     uint64_t maxIndices = 0;
     if (draw.indexBuffer != nullptr) {
@@ -1758,6 +1775,22 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // An indexed draw is the 7-word form (tu_CmdDrawIndexed, :6291-6297): DI_SRC_SEL_DMA with the index size, the
     // instances, the index count, FIRST_INDX 0 (the offset is in the base), the index buffer's address past the offset,
     // and MAX_INDICES, how many indices it holds from there (the CP reads none past it)
+    // an occlusion query (turnip's emit_begin_occlusion_query, A6XX path): the word zeroed when the encoder first counts
+    // into it, then the running sample count's snapshot before the draw; after it the second snapshot, a wait for both
+    // to land, and the word += end - begin
+    const bool counting = draw.visibilityMode != 0;
+    const uint64_t snapshots = table + kTableVisibilityAt;
+    uint64_t result = 0;
+    if (counting) {
+        result = draw.visibility->gpuAddress() + draw.visibilityOffset;
+        if (draw.visibilityReset) {
+            uint32_t w[4] = {uint32_t(result), uint32_t(result >> 32), 0, 0};
+            stream.packet(pm4::kMemWrite, w, 4);
+        }
+        reg(stream, REG_A6XX_RB_SAMPLE_COUNT_CONTROL, A6XX_RB_SAMPLE_COUNT_CONTROL_COPY);
+        reg64(stream, REG_A6XX_RB_SAMPLE_COUNT_ADDR, snapshots);
+        event(stream, ZPASS_DONE);
+    }
     if (draw.indexBuffer != nullptr) {
         const uint64_t base = draw.indexBuffer->gpuAddress() + draw.indexOffset;
         uint32_t w[7] = {drawIndxOffset0(prim, DI_SRC_SEL_DMA, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY) |
@@ -1767,6 +1800,23 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     } else {
         uint32_t w[3] = {drawIndxOffset0(prim, DI_SRC_SEL_AUTO_INDEX, o.visCullUse ? USE_VISIBILITY : IGNORE_VISIBILITY), draw.instanceCount, draw.vertexCount};
         stream.packet(CP_DRAW_INDX_OFFSET, w, 3);
+    }
+    if (counting) {
+        // ZPASS_DONE's copy lands when the RB has it, not when the CP moves on: the end word is set to all ones first and
+        // waited on until it is something else, as turnip does, before the CP reads it (on the phone, without that wait
+        // every result came out as the count plus one and the same 0x204cc00e78bf7385)
+        const uint64_t end = snapshots + kVisibilityEndAt;
+        uint32_t ones[4] = {uint32_t(end), uint32_t(end >> 32), ~0u, ~0u};
+        stream.packet(pm4::kMemWrite, ones, 4);
+        stream.packet(pm4::kWaitMemWrites, nullptr, 0);
+        reg(stream, REG_A6XX_RB_SAMPLE_COUNT_CONTROL, A6XX_RB_SAMPLE_COUNT_CONTROL_COPY);
+        reg64(stream, REG_A6XX_RB_SAMPLE_COUNT_ADDR, end);
+        event(stream, ZPASS_DONE);
+        waitForWordNot(stream, end, ~0u);
+        uint32_t w[9] = {CP_MEM_TO_MEM_0_DOUBLE | CP_MEM_TO_MEM_0_NEG_C, uint32_t(result), uint32_t(result >> 32), uint32_t(result), uint32_t(result >> 32),
+                         uint32_t(end), uint32_t(end >> 32), uint32_t(snapshots), uint32_t(snapshots >> 32)};
+        stream.packet(CP_MEM_TO_MEM, w, 9);
+        stream.packet(pm4::kWaitMemWrites, nullptr, 0);
     }
     if (whole) {
         passTail(stream, table, o, pass.depth != nullptr);
@@ -2016,6 +2066,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     if (d.indexBuffer != nullptr) {
         use(*d.indexBuffer, false);
+    }
+    if (d.visibilityMode != 0 && d.visibility != nullptr) {
+        use(*d.visibility, true);   // the result word is written; the command buffer keeps the buffer until it is
     }
     // the FS's sampled textures: read, and alive until the GPU is done (the descriptors in the table point at them)
     for (const Texture* t : fsb->textures) {

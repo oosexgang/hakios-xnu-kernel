@@ -280,6 +280,10 @@ private:
     // two 4-word flushes after the last one
     bool passBegun_ = false, ccuCntlWritten_ = false, ccuCntlAfterWfi_ = false, lastWasWfi_ = false;
     uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0, drawsWithoutDepthFlush_ = 0;
+    // the running sample count ZPASS_DONE copies out (an occlusion query's snapshots). The model has no rasterizer, so
+    // a draw counts one sample per index it submits, times its instances: enough to tell begin from end and the
+    // query's arithmetic from a wrong one; how many samples a real draw passes is the phone's (probe 9q)
+    uint64_t samples_ = 0;
     uint32_t nextHandle_ = 1, nextQueue_ = 1;
     uint64_t nextIova_ = 0x100000000ull;
     Stats stats_;

@@ -1580,6 +1580,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     drawsInSubmission_++;
     drawsWithoutCcuFlush_++;
     drawsWithoutCacheFlush_++;
+    samples_ += uint64_t(d.numIndices) * d.numInstances;
     d.vsConsts = vs_.consts;
     d.fsConsts = fs_.consts;
     stats_.lastDraw = d;
@@ -1725,6 +1726,21 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     fault(text("CP_EVENT_WRITE of %llu words, not 1 or 4", h.count));
                     return false;
                 }
+                // ZPASS_DONE: the running sample count, 64 bits, where RB_SAMPLE_COUNT_ADDR points, when
+                // RB_SAMPLE_COUNT_CONTROL.COPY asks for it (turnip's occlusion query, A6XX path)
+                if (h.count == 1 && fieldOf(p[0], CP_EVENT_WRITE_0_EVENT__MASK, CP_EVENT_WRITE_0_EVENT__SHIFT) == ZPASS_DONE) {
+                    if ((reg(REG_A6XX_RB_SAMPLE_COUNT_CONTROL) & A6XX_RB_SAMPLE_COUNT_CONTROL_COPY) == 0) {
+                        fault("ZPASS_DONE without RB_SAMPLE_COUNT_CONTROL.COPY: no count is written");
+                        return false;
+                    }
+                    const uint64_t to = reg64(REG_A6XX_RB_SAMPLE_COUNT_ADDR);
+                    uint8_t* d = at(to, 8);
+                    if (d == nullptr || to % 8 != 0) {
+                        fault(text("ZPASS_DONE's sample count at %#llx: outside every buffer or not 8-aligned", to));
+                        return false;
+                    }
+                    memcpy(d, &samples_, 8);
+                }
                 if (h.count == 4) {
                     uint64_t to = p[1] | uint64_t(p[2]) << 32;
                     // With the TIMESTAMP bit the GPU writes a timestamp of its own, not the packet's value (the XML says so,
@@ -1749,6 +1765,33 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     if (ev == PC_CCU_FLUSH_DEPTH_TS) drawsWithoutDepthFlush_ = 0;
                     if (ev == CACHE_FLUSH_TS) drawsWithoutCacheFlush_ = 0;
                 }
+                break;
+            }
+            case CP_MEM_TO_MEM: {
+                // DST = A + B + C over 64-bit values, each of A, B, C negated by its NEG flag (an occlusion query's result
+                // += end - begin); 32-bit sums are not what this driver emits, and are refused
+                if (h.count != 9 || (p[0] & CP_MEM_TO_MEM_0_DOUBLE) == 0) {
+                    fault(text("CP_MEM_TO_MEM of %llu words or without DOUBLE: the 64-bit three-source form is what this model runs", h.count));
+                    return false;
+                }
+                uint64_t addr[4], v[3];
+                for (int i = 0; i < 4; i++) addr[i] = p[1 + 2 * i] | uint64_t(p[2 + 2 * i]) << 32;
+                for (int i = 0; i < 3; i++) {
+                    const uint8_t* m = at(addr[1 + i], 8);
+                    if (m == nullptr || addr[1 + i] % 8 != 0) {
+                        fault(text("CP_MEM_TO_MEM's source at %#llx: outside every buffer or not 8-aligned", addr[1 + i]));
+                        return false;
+                    }
+                    memcpy(&v[i], m, 8);
+                    if ((p[0] >> i) & 1) v[i] = uint64_t(0) - v[i];   // NEG_A, NEG_B, NEG_C
+                }
+                uint8_t* out = at(addr[0], 8);
+                if (out == nullptr || addr[0] % 8 != 0) {
+                    fault(text("CP_MEM_TO_MEM's destination at %#llx: outside every buffer or not 8-aligned", addr[0]));
+                    return false;
+                }
+                const uint64_t sum = v[0] + v[1] + v[2];
+                memcpy(out, &sum, 8);
                 break;
             }
             case CP_WAIT_REG_MEM: {

@@ -331,6 +331,14 @@ struct Draw {
     float blendColor[4] = {0, 0, 0, 0};          // -setBlendColorRed:green:blue:alpha: (RB_BLEND_*_F32), read by the BlendColor/BlendAlpha factors
     DepthState depth{};                          // -setDepthStencilState: (refused with a depth test and no depth attachment)
     StencilState stencil{};                      // ...its stencil half (refused enabled with no stencil attachment)
+    // -setVisibilityResultMode:offset: over the pass's visibilityResultBuffer: VISIBILITY_MODE an MTLVisibilityResultMode
+    // (Disabled 0, Boolean 1, Counting 2). Either kept mode adds the samples the draw lets through (depth and stencil
+    // tests passed) to the 64-bit word at VISIBILITY_OFFSET, which a Boolean reader takes as "any"; VISIBILITY_RESET
+    // zeroes the word first (the encoder's first draw into it, so that a pass counts from 0 as Metal's does).
+    const Buffer* visibility = nullptr;
+    uint32_t visibilityMode = 0;
+    uint64_t visibilityOffset = 0;
+    bool visibilityReset = false;
 };
 
 namespace render {
@@ -367,6 +375,11 @@ constexpr uint32_t kTableStencilClearDepthFlushAt = 68;
 constexpr uint32_t kStencilClearDepthFlushValue = 10;
 constexpr uint32_t kTableZeroedBytes = 96;        // what tableStart zeroes from kTableTimestampsAt: every word above
 static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroedBytes, "the Clears' words are zeroed");
+// an occlusion query's two snapshots of the running sample count (RB_SAMPLE_COUNT_ADDR), begin and end, 64 bits each
+// and 16 bytes apart as turnip's occlusion_query_slot has them (a padding word after each)
+constexpr uint32_t kTableVisibilityAt = 96;
+constexpr uint32_t kVisibilityEndAt = 16;
+static_assert(kTableVisibilityAt >= kTableZeroedBytes && kTableVisibilityAt + 32 <= 128, "the snapshots lie between the zeroed words and the border colour");
 constexpr uint32_t kTableBorderColorAt = 128;     // 128 bytes of zeros, 128-aligned
 constexpr uint32_t kTableHoleAt = 256;            // 64 bytes nobody addresses
 constexpr uint32_t kTableVsAt = 1024;             // step two: the VS's descriptor tables (UBO, IBO, TEX, SAMP)

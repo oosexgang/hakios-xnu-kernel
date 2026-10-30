@@ -3996,3 +3996,62 @@ TEST(a_program_longer_than_the_instruction_cache_is_preloaded_in_part) {
     CHECK(found);
     CHECK(has(faultOf(r, w), "a program preload of 128 units: 128 hangs this GPU"));
 }
+
+// Occlusion queries (-setVisibilityResultMode:offset:): around the draw the running sample count is copied out twice
+// (RB_SAMPLE_COUNT_ADDR, ZPASS_DONE) and the result word gets end - begin added (CP_MEM_TO_MEM, DOUBLE | NEG_C), after
+// a zeroing CP_MEM_WRITE on the encoder's first draw into it. The fake counts one sample per index: 6 from a seeded word
+// reset first is 6, 3 more without the reset 9, a reset again 3. A mode past Counting, a mode with no buffer and an
+// offset off 8 or past the end are refused by name.
+TEST(an_occlusion_query_adds_the_draws_samples_to_its_word) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    std::string why;
+    auto vis = newBuffer(*r.gpu, 64, &why);
+    CHECK(vis != nullptr);
+    if (vis == nullptr) return;
+    auto* words = static_cast<uint64_t*>(vis->contents());
+    for (int i = 0; i < 8; i++) words[i] = 0xdeadbeefcafef00dull;
+    auto counted = [&](uint32_t vertices, bool reset) {
+        Draw d = wholeDraw(vertices);
+        d.visibility = vis.get();
+        d.visibilityMode = 2;
+        d.visibilityOffset = 16;
+        d.visibilityReset = reset;
+        auto cb = drawOnce(r, flatProgram(), pass, d);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+        return words[2];
+    };
+    CHECK_EQ(counted(6, true), uint64_t(6));
+    CHECK_EQ(counted(3, false), uint64_t(9));
+    CHECK_EQ(counted(3, true), uint64_t(3));
+    CHECK_EQ(words[1], 0xdeadbeefcafef00dull);   // the words beside it are not written
+    CHECK_EQ(words[3], 0xdeadbeefcafef00dull);
+    // a draw with the mode off writes nothing
+    {
+        Draw d = wholeDraw(3);
+        d.visibility = vis.get();
+        auto cb = drawOnce(r, flatProgram(), pass, d);
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(words[2], uint64_t(3));
+    }
+    auto refusedWith = [&](Draw d, const char* want) {
+        auto cb = r.queue->commandBuffer();
+        CHECK(!cb->draw(flatProgram(), pass, d, Bindings{}, Bindings{}));
+        expectRefusal(cb->error(), want);
+    };
+    Draw d = wholeDraw(3);
+    d.visibilityMode = 3;
+    d.visibility = vis.get();
+    refusedWith(d, "visibility result mode 3: MTLVisibilityResultMode is Disabled (0), Boolean (1) or Counting (2)");
+    d.visibilityMode = 1;
+    d.visibility = nullptr;
+    refusedWith(d, "a visibility result mode and no visibility result buffer in the pass");
+    d.visibility = vis.get();
+    d.visibilityOffset = 4;
+    refusedWith(d, "a visibility result at offset 4: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
+    d.visibilityOffset = 64;
+    refusedWith(d, "a visibility result at offset 64: a multiple of 8 with its 8 bytes inside the 64-byte buffer");
+}

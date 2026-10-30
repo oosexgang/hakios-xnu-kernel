@@ -2372,6 +2372,12 @@ inline constexpr uint32_t A6XX_RB_SAMPLE_CNTL_PER_SAMP_MODE = 0x00000001;       
 inline constexpr uint32_t REG_A6XX_RB_SAMPLE_COUNT_CONTROL = 0x8891;                        // a6xx.xml.h:6176
 inline constexpr uint32_t A6XX_RB_SAMPLE_COUNT_CONTROL_DISABLE = 0x00000001;                // a6xx.xml.h:6177
 inline constexpr uint32_t A6XX_RB_SAMPLE_COUNT_CONTROL_COPY = 0x00000002;                   // a6xx.xml.h:6178
+// where ZPASS_DONE copies the running sample count (64 bits) when RB_SAMPLE_COUNT_CONTROL.COPY is set: an occlusion
+// query's begin and end snapshots (turnip's emit_begin_occlusion_query / emit_end_occlusion_query, A6XX path)
+inline constexpr uint32_t REG_A6XX_RB_SAMPLE_COUNT_ADDR = 0x8927;                           // a6xx.xml.h:6540
+// CP_MEM_TO_MEM word 0: DST = A + B - C on 64-bit values, the query's result += end - begin
+inline constexpr uint32_t CP_MEM_TO_MEM_0_NEG_C = 0x00000004;                               // adreno_pm4.xml.h:1778
+inline constexpr uint32_t CP_MEM_TO_MEM_0_DOUBLE = 0x20000000;                              // adreno_pm4.xml.h:1779
 
 // RB_DEPTH_PLANE_CNTL (static table above): Z_MODE, see GRAS_SU_DEPTH_PLANE_CNTL
 inline constexpr uint32_t A6XX_RB_DEPTH_PLANE_CNTL_Z_MODE__MASK = 0x00000003;               // a6xx.xml.h:5909

@@ -637,6 +637,7 @@ static void keepPassAlive(hakios_metal_cb* cb, const struct hakios_metal_render_
         if (m.texture != nullptr) cb->cb->keepAlive(m.texture->texture);
     }
     if (pass->depth != nullptr) cb->cb->keepAlive(pass->depth->texture);
+    if (pass->visibility != nullptr) cb->cb->keep(pass->visibility->buffer);   // the result words the draws write
 }
 
 int hakios_metal_cb_draw(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios_metal_render_pass* pass,
@@ -714,6 +715,12 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
             d.stencil.back = face(pass->stencil_back);
             d.stencil.frontReference = pass->stencil_front_reference;
             d.stencil.backReference = pass->stencil_back_reference;
+        }
+        if (pass->visibility_mode != 0) {
+            d.visibility = pass->visibility != nullptr ? pass->visibility->buffer.get() : nullptr;
+            d.visibilityMode = pass->visibility_mode;
+            d.visibilityOffset = pass->visibility_offset;
+            d.visibilityReset = pass->visibility_reset != 0;
         }
     }
     if (!cb->cb->draw(p->program->program, rp, d, vsb, fsb)) {
