@@ -646,6 +646,23 @@ TEST(compiler_matches_the_stage_fixtures) {
             }
         }
     }
+    // a fragment stage's device buffers moved past the vertex stage's (compileStage's iboBase): compiled with base 1,
+    // tri_dbuf_fs counts 2 SSBO slots and addresses the second; with base 0 one, and the first
+    {
+        std::vector<uint8_t> bc = bitcodeOf("tri_dbuf_fs");
+        std::string why;
+        auto plain = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why);
+        auto based = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why, {}, 1);
+        CHECK(plain != nullptr && based != nullptr);
+        if (plain == nullptr || based == nullptr) std::printf("       tri_dbuf_fs: %s\n", why.c_str());
+        if (plain && based) {
+            CHECK_EQ(plain->stage.k.numSsbos, 1u);
+            CHECK_EQ(plain->iboBase, 0u);
+            CHECK_EQ(based->stage.k.numSsbos, 2u);
+            CHECK_EQ(based->iboBase, 1u);
+            CHECK(plain->listing != based->listing);   // the IBO index in the load is not the same
+        }
+    }
     stage("tri_flat_vs") = flatVs;
     stage("tri_flat_fs") = flatFs;
     stage("tri_color_vs") = colorVs;

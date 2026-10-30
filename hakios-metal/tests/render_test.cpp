@@ -3507,7 +3507,23 @@ TEST(a_draw_loads_the_3d_ibo_table_an_ldib_reads_through) {
     fsb.buffers = {Binding{other.get(), 0}};
     Encoded clash(r, both, pass, wholeDraw(6), render::Options{}, vsb, fsb);
     CHECK(!clash.ok);
-    expectRefusal(clash.error, "the vertex and fragment stages bind different device buffers at index 0: the 3D pipeline has one IBO table for both");
+    expectRefusal(clash.error, "the vertex and fragment stages bind different device buffers at table slot 0: the 3D pipeline has one IBO table for both");
+    // compiled as compileStage does for a program (Program::fsIboBase: the FS's buffers past the VS's), the same two
+    // bindings share the table: slot 0 the VS's buffer, slot 1 the FS's [[buffer(0)]]
+    {
+        Program based = p;
+        based.fs.k.numSsbos = 2;
+        based.fs.k.numIbos = 2;
+        based.fsIboBase = 1;
+        Encoded e(r, based, pass, wholeDraw(6), render::Options{}, vsb, fsb);
+        CHECK(e.ok);
+        if (!e.ok) std::printf("       %s\n", e.error.c_str());
+        CHECK_EQ(e.reg(REG_A6XX_SP_IBO_COUNT), 2u);
+        const TexConst vsWant = bufferIbo(pos->gpuAddress(), uint32_t(pos->length() / 4));
+        const TexConst fsWant = bufferIbo(other->gpuAddress(), uint32_t(other->length() / 4));
+        CHECK(memcmp(e.tableWords() + render::kTableVsAt / 4, vsWant.dword, sizeof vsWant.dword) == 0);
+        CHECK(memcmp(e.tableWords() + render::kTableVsAt / 4 + 16, fsWant.dword, sizeof fsWant.dword) == 0);
+    }
     fsb.buffers = {Binding{pos.get(), 0}};   // the same binding in both: one table entry serves them
     Encoded shared(r, both, pass, wholeDraw(6), render::Options{}, vsb, fsb);
     CHECK(shared.ok);

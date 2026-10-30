@@ -237,6 +237,9 @@ struct Program {
     VertexDescriptor vertexDescriptor{};   // what the VS's [[stage_in]] attributes are in memory (none: a VS without attributes)
     ColorBlend blend{};                    // colour attachment 0's blending and write mask
     ColorBlend moreBlend[kMaxColorOutputs - 1]{};   // ...and attachments 1 to 7's, for an FS that writes [[color(n)]] there
+    // The 3D pipeline has one IBO table for both stages, so the FS's device buffers sit past the VS's: its [[buffer(n)]]
+    // is table slot FS_IBO_BASE + n, which is how it was compiled (compileStage's iboBase: the VS's count)
+    uint32_t fsIboBase = 0;
 };
 
 namespace render {

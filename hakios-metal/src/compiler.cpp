@@ -27,7 +27,7 @@ std::unique_ptr<CompiledKernel> compileAir(const void*, size_t, std::string* why
     return nullptr;
 }
 
-std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why, const FunctionConstants&) {
+std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why, const FunctionConstants&, uint32_t) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return nullptr;
 }
@@ -447,6 +447,23 @@ bool fixPrefetchSamplers(nir_shader* nir, ir3_shader_variant* v, std::string* na
 // and 1/64 in float. CoreAnimation's rounded-rect coverage is fwidth of a half texcoord, and with the wrong one its
 // edges were noise. The value is widened, its derivative taken, and narrowed again; the same pass is in the fixture
 // writer (tools/mesa/ir3-dump.patch: lower_half_derivatives), so the fixtures are what compileStage makes.
+// an SSBO access's buffer index plus *DATA (compileStage's iboBase): the index source of load_ssbo, store_ssbo and the
+// two atomics, the forms the AIR front end emits (air_to_nir.c)
+bool shiftSsbo(nir_builder* b, nir_intrinsic_instr* intr, void* data) {
+    int src;
+    switch (intr->intrinsic) {
+    case nir_intrinsic_load_ssbo:
+    case nir_intrinsic_ssbo_atomic:
+    case nir_intrinsic_ssbo_atomic_swap:
+    case nir_intrinsic_get_ssbo_size: src = 0; break;
+    case nir_intrinsic_store_ssbo: src = 1; break;
+    default: return false;
+    }
+    b->cursor = nir_before_instr(&intr->instr);
+    nir_src_rewrite(&intr->src[src], nir_iadd_imm(b, intr->src[src].ssa, *static_cast<const uint32_t*>(data)));
+    return true;
+}
+
 // load_point_coord as a load of a vec2 shader input at VARYING_SLOT_PNTC, one variable for every read of it
 bool lowerPointCoord(nir_builder* b, nir_intrinsic_instr* intr, void*) {
     if (intr->intrinsic != nir_intrinsic_load_point_coord) return false;
@@ -898,7 +915,7 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     return out;
 }
 
-std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants) {
+std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
@@ -931,6 +948,13 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     if (!walkOutputClasses(t.nir, classes, why)) return nullptr;
     if (!nullTextures(t, out->stage.k, true, why)) return nullptr;
     if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
+    // a fragment stage's device buffers past the vertex stage's in the one IBO table: every SSBO index the front end
+    // emitted plus IBO_BASE, and ir3's count of them (num_ssbos, the table's extent) as far again
+    if (iboBase != 0 && t.nir->info.stage == MESA_SHADER_FRAGMENT && t.nir->info.num_ssbos != 0) {
+        nir_shader_intrinsics_pass(t.nir, shiftSsbo, nir_metadata_control_flow, &iboBase);
+        t.nir->info.num_ssbos += iboBase;
+        out->iboBase = iboBase;
+    }
     if (!compileVariant(t, PassOrder::kGraphics, why)) return nullptr;
     KernelHome home{out->stage.k, out->words, out->immediates, out->resources, out->name, out->listing};
     if (!fillKernel(t, home, highestSampler, why)) return nullptr;
@@ -1129,6 +1153,7 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     out->name = vs->name + "+" + fs->name;
     out->program.vs = V;
     out->program.fs = F;
+    out->program.fsIboBase = fs->iboBase;
     out->program.name = out->name.c_str();
     return out;
 }

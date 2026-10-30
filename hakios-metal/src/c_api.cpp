@@ -565,7 +565,8 @@ hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsB
         failed(why);
         return nullptr;
     }
-    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount));
+    // the FS's device buffers past the VS's in the one IBO table the two share
+    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount), vs->stage.k.numSsbos);
     if (fs == nullptr) {
         failed(why);
         return nullptr;

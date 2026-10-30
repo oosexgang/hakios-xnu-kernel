@@ -64,6 +64,7 @@ struct CompiledStage {
     std::vector<Resource> resources;
     std::vector<std::string> varyingNames;   // the front end's names of the varyings, VS outputs or FS inputs, in slot order (VAR0 first)
     std::vector<std::pair<uint32_t, Sampler>> inlineSamplers;   // as CompiledKernel's
+    uint32_t iboBase = 0;                    // compileStage's IBO_BASE, as it took effect (0 for a stage with no device buffers)
     std::string name;
     std::string listing;
 };
@@ -95,7 +96,10 @@ using FunctionConstants = std::vector<FunctionConstant>;
 // FS's ij/face/coord regids, colour outputs, flags). nullptr with *why: not a vertex or fragment function (a kernel goes
 // through compileAir), the front end's or ir3's refusal by name, or no compiler in this build. The fixture writer
 // (tools/mesa/ir3-dump.patch) runs the same passes in the same order, so a Stage compiled here equals its fixture.
-std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {});
+// IBO_BASE moves a fragment stage's device buffers that far up the 3D pipeline's one IBO table, past the vertex stage's
+// (its [[buffer(n)]] addressed as slot IBO_BASE + n), so that the two stages' buffers at one index do not collide
+std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {},
+                                           uint32_t iboBase = 0);
 
 // VS and FS linked (render::link, and with Mesa present cross-checked against ir3_link_shaders) for a colour target of
 // COLOR0's format. nullptr with *why: the refusals render.hpp names for a stage (attributes, several colour outputs,

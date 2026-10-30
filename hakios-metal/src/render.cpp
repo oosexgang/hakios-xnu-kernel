@@ -692,41 +692,45 @@ struct GfxIbos {
     std::vector<const Buffer*> used;
 };
 
-bool gfxIbos(const Stage& vs, const Bindings& vsb, const Stage& fs, const Bindings& fsb, GfxIbos* out, std::string* why) {
+bool gfxIbos(const Stage& vs, const Bindings& vsb, const Stage& fs, const Bindings& fsb, uint32_t fsBase, GfxIbos* out, std::string* why) {
     const Binding* chosen[kMaxVertexBuffers] = {};
     for (const auto& [s, b] : {std::pair<const Stage*, const Bindings*>{&vs, &vsb}, {&fs, &fsb}}) {
-        for (uint32_t slot = 0; slot < s->k.numSsbos; slot++) {
+        // the FS was compiled with its [[buffer(n)]] at slot FS_BASE + n (Program::fsIboBase): the slots under it are
+        // the VS's, and its own index is the slot less the base
+        const uint32_t base = s == &fs ? fsBase : 0;
+        for (uint32_t tableSlot = base; tableSlot < s->k.numSsbos; tableSlot++) {
+            const uint32_t slot = tableSlot - base;
             if (slot >= b->buffers.size() || b->buffers[slot].buffer == nullptr) {
                 // ir3 counts SSBOs by the highest one the function declares, not by the ones it reaches
                 // (shader_info.num_ssbos), so an unbound slot may be one no instruction reads, as mask_color_fragment's
                 // 1 is. The one that cannot be told from a read is the highest, refused as before; one below it gets
                 // turnip's null descriptor (all zeros, tu_descriptor_set.cc's nullDescriptor), which a load reads as 0
                 // and a store leaves alone, never another binding's memory.
-                if (slot + 1 == s->k.numSsbos) {
+                if (tableSlot + 1 == s->k.numSsbos) {
                     return refuse(why, std::string(stageName(*s)) + ": no buffer bound at index " + n(slot) + " (a device buffer it addresses)");
                 }
-                out->count = std::max(out->count, slot + 1);
+                out->count = std::max(out->count, tableSlot + 1);
                 continue;
             }
             const Binding& x = b->buffers[slot];
             if (x.offset % 4 != 0 || x.offset >= x.buffer->length()) {
                 return refuse(why, std::string(stageName(*s)) + ": buffer " + n(slot) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
             }
-            if (chosen[slot] != nullptr && (chosen[slot]->buffer != x.buffer || chosen[slot]->offset != x.offset)) {
-                return refuse(why, "the vertex and fragment stages bind different device buffers at index " + n(slot) +
+            if (chosen[tableSlot] != nullptr && (chosen[tableSlot]->buffer != x.buffer || chosen[tableSlot]->offset != x.offset)) {
+                return refuse(why, "the vertex and fragment stages bind different device buffers at table slot " + n(tableSlot) +
                                        ": the 3D pipeline has one IBO table for both");
             }
-            if (chosen[slot] == nullptr) {
-                chosen[slot] = &x;
+            if (chosen[tableSlot] == nullptr) {
+                chosen[tableSlot] = &x;
                 const uint64_t elements = (x.buffer->length() - x.offset) / 4;
                 if (elements >= (1ull << 30)) {
                     return refuse(why, "buffer " + n(slot) + " is longer than a descriptor counts");
                 }
                 TexConst d = bufferIbo(x.buffer->gpuAddress() + x.offset, uint32_t(elements));
-                memcpy(out->words[slot], d.dword, sizeof d.dword);
+                memcpy(out->words[tableSlot], d.dword, sizeof d.dword);
                 out->used.push_back(x.buffer);
             }
-            out->count = std::max(out->count, slot + 1);
+            out->count = std::max(out->count, tableSlot + 1);
         }
     }
     return true;
@@ -1249,7 +1253,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         return false;
     }
     GfxIbos ibos;
-    if (!gfxIbos(vs, vsBindings, fs, fsBindings, &ibos, why)) {
+    if (!gfxIbos(vs, vsBindings, fs, fsBindings, program.fsIboBase, &ibos, why)) {
         return false;
     }
     for (int i = 0; i < 4; i++) {
