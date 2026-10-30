@@ -863,6 +863,23 @@ bool walkOutputClasses(nir_shader* nir, OutputClasses& oc, std::string* why) {
 // differ by stage -- VARYING_SLOT_POS and FRAG_RESULT_DEPTH are both 0, PSIZ and STENCIL both 1 -- so the vertex-only
 // fields are read from a VS only and the fragment-only ones from an FS only, the others staying at a6xx::kRegidNone / 0; a
 // sysval lookup (ir3_find_sysval_regid filters on the sysval bit, gl_system_value numbering) is the same for both.
+// ir3 places an output at its driver_location (setup_output: outputs[base]), and the front end gives every declared
+// output one before NIR has seen which are written, so an output the function never writes (Resident Evil 4's VSGUI
+// leaves its TexCoord1 undef) is a hole in the table: zeroed, slot 0, no register. Slot 0 is VARYING_SLOT_POS for a
+// vertex stage and FRAG_RESULT_DEPTH for a fragment one, and ir3_find_output_regid takes the first match -- the hole --
+// so VSGUI was refused as writing no position. A hole is not an output; these lookups pass over it.
+int writtenOutput(const ir3_shader_variant* v, unsigned slot) {
+    for (unsigned i = 0; i < v->outputs_count; i++) {
+        if (v->outputs[i].slot == slot && v->outputs[i].regid != a6xx::kRegidNone) return int(i);
+    }
+    return -1;
+}
+
+uint32_t writtenOutputRegid(const ir3_shader_variant* v, unsigned slot) {
+    const int k = writtenOutput(v, slot);
+    return k < 0 ? a6xx::kRegidNone : ir3_get_output_regid(&v->outputs[k]);
+}
+
 bool fillStage(Translation& t, const OutputClasses& oc, Stage& s, std::string* why) {
     const ir3_shader_variant* v = t.v;
     const bool vs = v->type == MESA_SHADER_VERTEX;
@@ -878,12 +895,13 @@ bool fillStage(Translation& t, const OutputClasses& oc, Stage& s, std::string* w
         s.inputs[i] = StageInput{in.slot, in.regid, in.compmask, in.inloc, uint8_t(in.sysval), uint8_t(in.bary), uint8_t(in.flat), uint8_t(in.half)};
     }
     s.numInputs = v->inputs_count;
+    s.numOutputs = 0;
     for (unsigned i = 0; i < v->outputs_count; i++) {
         const ir3_shader_output& o = v->outputs[i];
+        if (o.regid == a6xx::kRegidNone) continue;   // a hole (writtenOutput), not an output to link
         uint8_t cls = o.slot < kOutputLocations && oc.known[o.slot] ? oc.cls[o.slot] : 0;
-        s.outputs[i] = StageOutput{o.slot, o.regid, uint8_t(o.half), cls};
+        s.outputs[s.numOutputs++] = StageOutput{o.slot, o.regid, uint8_t(o.half), cls};
     }
-    s.numOutputs = v->outputs_count;
     // --- a vertex stage ---
     s.numAttributes = 0;
     s.positionRegid = a6xx::kRegidNone;
@@ -893,10 +911,10 @@ bool fillStage(Translation& t, const OutputClasses& oc, Stage& s, std::string* w
         for (unsigned i = 0; i < v->inputs_count; i++) {
             if (!v->inputs[i].sysval && v->inputs[i].regid != a6xx::kRegidNone) s.numAttributes++;
         }
-        s.positionRegid = ir3_find_output_regid(v, VARYING_SLOT_POS);
-        s.pointSizeRegid = ir3_find_output_regid(v, VARYING_SLOT_PSIZ);
-        s.writesLayer = ir3_find_output(v, VARYING_SLOT_LAYER) >= 0;
-        s.writesViewport = ir3_find_output(v, VARYING_SLOT_VIEWPORT) >= 0;
+        s.positionRegid = writtenOutputRegid(v, VARYING_SLOT_POS);
+        s.pointSizeRegid = writtenOutputRegid(v, VARYING_SLOT_PSIZ);
+        s.writesLayer = writtenOutput(v, VARYING_SLOT_LAYER) >= 0;
+        s.writesViewport = writtenOutput(v, VARYING_SLOT_VIEWPORT) >= 0;
     }
     s.vertexIdRegid = ir3_find_sysval_regid(v, SYSTEM_VALUE_VERTEX_ID);
     s.instanceIdRegid = ir3_find_sysval_regid(v, SYSTEM_VALUE_INSTANCE_ID);
@@ -915,7 +933,7 @@ bool fillStage(Translation& t, const OutputClasses& oc, Stage& s, std::string* w
         s.colorRegid[i] = a6xx::kRegidNone;
         s.colorHalf[i] = 0;
         if (!vs) {
-            int k = ir3_find_output(v, gl_varying_slot(FRAG_RESULT_DATA0 + i));
+            int k = writtenOutput(v, gl_varying_slot(FRAG_RESULT_DATA0 + i));
             if (k >= 0) {
                 // ir3_get_output_regid's HALF_REG_ID, split into the two fields
                 s.colorRegid[i] = v->outputs[k].regid;
@@ -926,9 +944,9 @@ bool fillStage(Translation& t, const OutputClasses& oc, Stage& s, std::string* w
     }
     s.depthRegid = s.sampleMaskRegid = s.stencilRefRegid = a6xx::kRegidNone;
     if (!vs) {
-        s.depthRegid = ir3_find_output_regid(v, FRAG_RESULT_DEPTH);
-        s.sampleMaskRegid = ir3_find_output_regid(v, FRAG_RESULT_SAMPLE_MASK);
-        s.stencilRefRegid = ir3_find_output_regid(v, FRAG_RESULT_STENCIL);
+        s.depthRegid = writtenOutputRegid(v, FRAG_RESULT_DEPTH);
+        s.sampleMaskRegid = writtenOutputRegid(v, FRAG_RESULT_SAMPLE_MASK);
+        s.stencilRefRegid = writtenOutputRegid(v, FRAG_RESULT_STENCIL);
     }
     s.writesPos = v->writes_pos;
     s.writesSmask = v->writes_smask;

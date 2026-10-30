@@ -50,8 +50,10 @@ constexpr uint32_t kNoRegid = 0xfc;
 constexpr uint32_t kNoConstRegid = 0xff;
 // Sizes of the fixed arrays below. kMaxBufs is the assembler's MAX_BUFS. kMaxTextureSlots is the front end's
 // AIR_MAX_TEXTURES, and 16 is also where ir3 stops folding t#/s# into the instruction (ir3_cp.c: the fold is < 16);
-// a kernel declaring a texture or sampler index at or above it is refused by name when compiled.
-constexpr uint32_t kMaxUboRanges = 8;
+// a kernel declaring a texture or sampler index at or above it is refused by name when compiled. kMaxUboRanges is ir3's
+// own IR3_MAX_UBO_PUSH_RANGES: ir3 decides how many ranges to push within the constant budget, and a Kernel holding
+// fewer refused what ir3 had compiled (Resident Evil 4's tonemap and deferred lighting push 9 and 11).
+constexpr uint32_t kMaxUboRanges = 32;
 constexpr uint32_t kMaxBufs = 4;
 constexpr uint32_t kMaxTextureSlots = 16;
 

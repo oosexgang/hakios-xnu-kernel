@@ -613,7 +613,7 @@ SPDX-License-Identifier: MIT
 +                   const struct fixture_textures *tex)
 +{
 +   const struct ir3_const_state *cs = ir3_const_state(v);
-+   const unsigned max_ubo_ranges = 8;   /* kernel.hpp's kMaxUboRanges */
++   const unsigned max_ubo_ranges = 32;  /* kernel.hpp's kMaxUboRanges */
 +   const unsigned max_bufs = 4;         /* kMaxBufs */
 +   const unsigned no_const_regid = 0xff;
 +   uint32_t local_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
@@ -902,7 +902,7 @@ SPDX-License-Identifier: MIT
 +{
 +   const struct ir3_const_state *cs = ir3_const_state(v);
 +   const struct fd_dev_info *dev_info = fd_dev_info_raw(dev_id);
-+   const unsigned max_ubo_ranges = 8;   /* kernel.hpp's kMaxUboRanges */
++   const unsigned max_ubo_ranges = 32;  /* kernel.hpp's kMaxUboRanges */
 +
 +   /* What the fixture is: a Kernel for a compute variant, a Stage (render.hpp:
 +    * a Kernel plus what the 3D registers read) for a vertex or fragment one.

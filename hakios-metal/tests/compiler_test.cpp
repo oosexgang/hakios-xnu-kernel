@@ -1082,6 +1082,45 @@ TEST(a_kernel_whose_pointer_phis_are_undef_over_an_edge_compiles) {
     if (k == nullptr) std::printf("       %s\n", why.c_str());
 }
 
+// an output declared and never written, ahead of the position (hole_vs, as Resident Evil 4's VSGUI): a hole in ir3's
+// output table, slot 0 and no register, which is not the position and not an output to link
+TEST(an_unwritten_output_is_not_the_position) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("hole_vs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto s = compileStage(bc.data(), bc.size(), &why);
+    CHECK(s != nullptr);
+    if (s == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK(s->stage.positionRegid != a6xx::kRegidNone);
+    CHECK_EQ(s->stage.numOutputs, 2u);
+    for (uint32_t i = 0; i < s->stage.numOutputs; i++) CHECK(s->stage.outputs[i].regid != a6xx::kRegidNone);
+}
+
+// ten constant buffers read at known offsets: ten pushed ranges, past the eight a Kernel held (Resident Evil 4's
+// tonemap pushes 11); every one of them kept, with the buffer it comes from
+TEST(a_kernel_pushing_ten_constant_ranges_compiles) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("many_ubo_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(k->kernel.numUboRanges, 10u);
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < k->kernel.numUboRanges; i++) seen |= 1u << k->kernel.uboRanges[i].block;
+    CHECK_EQ(seen, 0x7feu);   // buffers 1 to 10
+}
+
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: bytes_id did not run)\n");
