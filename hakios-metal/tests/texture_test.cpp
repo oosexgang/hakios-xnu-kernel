@@ -829,3 +829,47 @@ TEST(a_texture_view_names_a_level_or_a_slice_of_its_parents_memory) {
     CHECK(Texture::view(arr, PixelFormat::kRGBA16Float, TextureType::k2D, 0, 1, 6, 1, &why) == nullptr);
     CHECK(has(why, "outside the texture"));
 }
+
+// plan is make without the memory: for every shape make serves, the bytes it plans are the bytes the texture's Buffer
+// has -- the promise a heap sized by -heapTextureSizeAndAlignWithDescriptor: rests on -- and it refuses what make does
+TEST(a_textures_plan_is_the_memory_make_gives_it) {
+    Rig r;
+    auto shaped = [](TextureType type, PixelFormat f, uint32_t w, uint32_t h, uint32_t depth, uint32_t levels, uint32_t samples, uint32_t usage) {
+        TextureDesc d;
+        d.type = type;
+        d.format = f;
+        d.width = w;
+        d.height = h;
+        d.depth = depth;
+        d.mipLevels = levels;
+        d.samples = samples;
+        d.usage = usage;
+        return d;
+    };
+    const TextureDesc descs[] = {
+        shaped(TextureType::k2D, PixelFormat::kRGBA8Unorm, 100, 37, 1, 1, 1, kTextureUsageRead),
+        shaped(TextureType::k2D, PixelFormat::kRGBA16Float, 64, 64, 1, 7, 1, kTextureUsageRead),
+        shaped(TextureType::k2DArray, PixelFormat::kR8Uint, 33, 17, 5, 1, 1, kTextureUsageRead | kTextureUsageWrite),
+        shaped(TextureType::k3D, PixelFormat::kRG16Float, 16, 16, 9, 1, 1, kTextureUsageRead),
+        shaped(TextureType::k2DMultisample, PixelFormat::kBGRA8Unorm, 50, 40, 1, 1, 4, kTextureUsageRenderTarget),
+        shaped(TextureType::k2D, PixelFormat::kDepth32Float, 70, 30, 1, 1, 1, kTextureUsageRenderTarget | kTextureUsageRead),
+    };
+    for (const TextureDesc& d : descs) {
+        const FormatInfo* info = nullptr;
+        uint64_t pitch = 0, bytes = 0;
+        std::string why;
+        CHECK(Texture::plan(d, &info, &pitch, &bytes, &why));
+        auto t = Texture::make(r.gpu, d, &why);
+        CHECK(t != nullptr);
+        if (t == nullptr) continue;
+        CHECK_EQ(bytes, t->buffer()->length());
+        CHECK_EQ(pitch, t->bytesPerRow());
+    }
+    // what make refuses, plan refuses in the same words
+    TextureDesc bad = shaped(TextureType::k2D, PixelFormat(93), 4, 4, 1, 1, 1, kTextureUsageRead);
+    const FormatInfo* info = nullptr;
+    uint64_t pitch = 0, bytes = 0;
+    std::string why;
+    CHECK(!Texture::plan(bad, &info, &pitch, &bytes, &why));
+    CHECK(has(why, "pixel format 93: not one of the formats served"));
+}

@@ -215,7 +215,7 @@ uint64_t textureBytes(const FormatInfo& format, uint32_t width, uint32_t height,
     return layerBytes2d(blocksDown(format, height), texturePitch(format, width));
 }
 
-std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::string* why) {
+bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t* pitchOut, uint64_t* bytesOut, std::string* why) {
     // 1D is a 2D layout one row high under the TP's 1D type (fd6_view.c:247, fdl6_tex_type): CoreAnimation keeps its
     // gamma tables in them. 3D is that 2D layout once a depth slice, each slice 4096-aligned (fd6_layout.c's size0 for a
     // 3D level 0): CoreAnimation's colour lookup tables, read by fixed_frag's 3D sample.
@@ -232,72 +232,72 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     if (desc.type != TextureType::k2D && desc.type != TextureType::k1D && !slices && !multisample) {
         refuse(why, std::string("texture type ") + n(uint32_t(desc.type)) + " (" + typeName(desc.type) +
                         "): 1D (0), 2D (2), 2D array (3), 2D multisample (4), cube (5) and 3D (7) are served");
-        return nullptr;
+        return false;
     }
     if (multisample != (desc.samples != 1) || (multisample && desc.samples != 2 && desc.samples != 4)) {
         refuse(why, "a texture of type " + n(uint32_t(desc.type)) + " with " + n(desc.samples) + " samples: a 2D multisample texture (4) of 2 or 4, every other type of 1");
-        return nullptr;
+        return false;
     }
     if (desc.type == TextureType::kCube && (desc.depth != 6 || desc.width != desc.height)) {
         refuse(why, "a cube of " + n(desc.width) + " x " + n(desc.height) + " with " + n(desc.depth) + " faces: square faces, 6 of them");
-        return nullptr;
+        return false;
     }
     if (slices && (desc.depth == 0 || desc.depth > 2048 || desc.mipLevels != 1)) {
         refuse(why, std::string(desc.type == TextureType::k3D ? "a 3D texture " : "a 2D array of ") + n(desc.depth) +
                         (desc.type == TextureType::k3D ? " deep" : " layers") + " of " + n(desc.mipLevels) + " levels: 1 to 2048 slices of one level are served");
-        return nullptr;
+        return false;
     }
     if (!slices && desc.depth != 1) {
         refuse(why, "a depth of " + n(desc.depth) + " for a texture of type " + n(uint32_t(desc.type)) + ": only a 3D texture or a 2D array has slices");
-        return nullptr;
+        return false;
     }
     if (desc.type == TextureType::k1D && desc.height != 1) {
         refuse(why, "a 1D texture " + n(desc.height) + " high: a 1D texture is one row");
-        return nullptr;
+        return false;
     }
     const FormatInfo* info = formatInfo(desc.format);
     if (info == nullptr) {
         refuse(why, "pixel format " + n(uint32_t(desc.format)) + ": not one of the formats served (texture.hpp: PixelFormat)");
-        return nullptr;
+        return false;
     }
     if (info->twoPlane) {
         refuse(why, std::string("a ") + info->name + " texture of its own memory: the format is served over a two-plane IOSurface alone");
-        return nullptr;
+        return false;
     }
     // TEX_CONST_1's WIDTH and HEIGHT are 15 bits each (a6xx.hpp: A6XX_TEX_CONST_1_WIDTH__MASK)
     if (desc.width == 0 || desc.width > 32767 || desc.height == 0 || desc.height > 32767) {
         refuse(why, "a texture of " + n(desc.width) + " x " + n(desc.height) + ": each side is 1 to 32767 (the descriptor's fields are 15 bits)");
-        return nullptr;
+        return false;
     }
     // MTLTextureUsageRenderTarget (4) is taken alone or beside the shader bits: a draw's colour target has the same linear
     // layout as a sampled or stored texture (render.cpp reads RB_MRT_BUF_INFO/PITCH/ARRAY_PITCH/BASE off the same fields,
     // as fdl6_view_init does for both views, fd6_view.c:232-250 and 408-413); what differs is only who writes it
     if ((desc.usage & ~(kTextureUsageRead | kTextureUsageWrite | kTextureUsageRenderTarget)) != 0) {
         refuse(why, "texture usage " + n(desc.usage) + " has bits other than shader read (1), shader write (2) and render target (4): not served");
-        return nullptr;
+        return false;
     }
     uint32_t most = 1;
     while ((std::max(desc.width, desc.height) >> most) != 0) most++;   // floor(log2(max(w, h))) + 1
     if (desc.mipLevels == 0 || desc.mipLevels > most || desc.mipLevels > 16) {
         refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture of " + n(desc.mipLevels) + " mip levels: 1 to " + n(std::min<uint32_t>(most, 16)) +
                         " (down to 1 x 1, and MIPLVLS holds 16)");
-        return nullptr;
+        return false;
     }
     if (info->blockW > 1 && desc.usage != kTextureUsageRead) {
         refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) + ": a compressed format is sampled alone (1), not stored or drawn into");
-        return nullptr;
+        return false;
     }
     if (info->depth && desc.mipLevels != 1 && (info->stencil || desc.samples != 1)) {
         refuse(why, std::string("a ") + info->name + " texture of " + n(desc.mipLevels) + " mip levels: mip levels of a depth texture with a stencil plane or "
                         "samples are not served");
-        return nullptr;
+        return false;
     }
     if (info->depth && (desc.usage & ~kTextureUsageRead) != kTextureUsageRenderTarget) {
         // a depth texture is an attachment the RB writes, and may be sampled (a shadow map): the TP reads the tiled layout
         // as fdl6_view_init describes it (sampledDescriptor); a store into it would need the tiled IBO, which is not here
         refuse(why, std::string("a ") + info->name + " texture with usage " + n(desc.usage) +
                         ": a depth texture is tiled (TILE6_3) and is served as a render target (4), sampled too (5), not stored");
-        return nullptr;
+        return false;
     }
     // (shader read is taken beside render target -- sokol asks for both on every attachment; a shader sampling one as a
     // 2D texture is refused at its draw by the type, a texture2d_ms read is served as such)
@@ -305,7 +305,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, std::string("a multisample ") + info->name + " texture of " + n(desc.mipLevels) + " levels with usage " + n(desc.usage) +
                         ": one level of an uncompressed colour format or Depth32Float, a render target (4) alone, is served (a stencil plane is "
                         "laid out apart and not for samples here)");
-        return nullptr;
+        return false;
     }
     // (a slice texture is sampled or stored by a kernel, and may be drawn into a slice at a time: the slices are 2D layouts
     // like any target, and a kernel's store reaches slice z through the storage view's ARRAY_PITCH. A cube is not stored:
@@ -317,7 +317,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         refuse(why, std::string("a ") + (desc.type == TextureType::k3D ? "3D " : desc.type == TextureType::kCube ? "cube " : "2D array ") + info->name + " texture with usage " + n(desc.usage) +
                         ": one of an uncompressed colour format, sampled (1)" + (desc.type == TextureType::kCube ? "" : " or stored by a kernel (2)") +
                         ", and drawn into a slice at a time too (4), is served");
-        return nullptr;
+        return false;
     }
     const uint32_t memoryWidth = desc.width * desc.samples;   // the width of its memory: a multisample texture's samples side by side
     uint64_t pitch = texturePitch(*info, memoryWidth);
@@ -329,6 +329,18 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
         const uint64_t cpp = uint64_t(info->bytesPerPixel) * desc.samples;
         pitch = (uint64_t(desc.width) * cpp + 64 * cpp - 1) / (64 * cpp) * (64 * cpp);
         bytes = ((uint64_t(desc.height) + 15) / 16 * 16 * pitch + 4095) / 4096 * 4096;
+    }
+    *infoOut = info;
+    *pitchOut = pitch;
+    *bytesOut = bytes;
+    return true;
+}
+
+std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::string* why) {
+    const FormatInfo* info = nullptr;
+    uint64_t pitch = 0, bytes = 0;
+    if (!plan(desc, &info, &pitch, &bytes, why)) {
+        return nullptr;
     }
     std::shared_ptr<Buffer> buffer = newBuffer(gpu, bytes, why);
     if (buffer == nullptr) {

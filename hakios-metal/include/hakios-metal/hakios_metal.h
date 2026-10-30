@@ -149,6 +149,13 @@ hakios_metal_texture *hakios_metal_texture_new_buffer(hakios_metal_buffer *buffe
  * which are served). Freed on its own; the memory lives while either does. NULL with the reason. */
 hakios_metal_texture *hakios_metal_texture_new_view(hakios_metal_texture *texture, unsigned pixel_format, unsigned type, unsigned base_level,
     unsigned levels, unsigned base_slice, unsigned slices);
+/* -heapTextureSizeAndAlignWithDescriptor:: the bytes a texture of these fields would take (TYPE and PIXEL_FORMAT
+ * Metal's numbers, DEPTH a 3D texture's slices or an array's layers, 1 otherwise), allocating nothing -- the same
+ * plan the texture's creation follows, so a heap sized by it holds the texture. -1 with the reason creation gives. */
+int hakios_metal_texture_plan_bytes(unsigned type, unsigned pixel_format, unsigned width, unsigned height, unsigned depth, unsigned levels,
+    unsigned samples, unsigned usage, uint64_t *bytes);
+/* the bytes of memory TEXTURE's layout takes (MTLResource.allocatedSize); a view answers with its parent's memory */
+uint64_t hakios_metal_texture_allocated_bytes(hakios_metal_texture *texture);
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture *texture);   /* its IOSurface's ID, 0 for a texture of its own */
 void hakios_metal_texture_free(hakios_metal_texture *texture);
 void *hakios_metal_texture_contents(hakios_metal_texture *texture);        /* the GPU's rows, write-combined */

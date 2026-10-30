@@ -390,6 +390,29 @@ hakios_metal_texture* hakios_metal_texture_new_view(hakios_metal_texture* t, uns
     return r;
 }
 
+int hakios_metal_texture_plan_bytes(unsigned type, unsigned pixelFormat, unsigned width, unsigned height, unsigned depth, unsigned levels, unsigned samples,
+                                    unsigned usage, uint64_t* bytes) {
+    TextureDesc d;
+    d.type = TextureType(type);
+    d.format = PixelFormat(pixelFormat);
+    d.width = width;
+    d.height = height;
+    d.depth = depth;
+    d.mipLevels = levels;
+    d.samples = samples;
+    d.usage = usage;
+    const FormatInfo* info = nullptr;
+    uint64_t pitch = 0;
+    std::string why;
+    if (!Texture::plan(d, &info, &pitch, bytes, &why)) {
+        failed(why);
+        return -1;
+    }
+    return 0;
+}
+
+uint64_t hakios_metal_texture_allocated_bytes(hakios_metal_texture* t) { return t->texture->buffer()->length(); }
+
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture* t) { return t->texture->surface(); }
 
 void hakios_metal_texture_free(hakios_metal_texture* t) { delete t; }

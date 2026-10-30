@@ -175,6 +175,10 @@ public:
     // nullptr with *why: a type, format or usage not served, a width or height outside 1..32767 (TEX_CONST_1's fields
     // are 15 bits), or no memory. The memory is a Buffer of textureBytes() bytes, so CommandBuffer::use()/keep() apply.
     static std::shared_ptr<Texture> make(Gpu& gpu, const TextureDesc& desc, std::string* why);
+    // what make would lay DESC out as, allocating nothing: its format, pitch and bytes (the memory make asks for), or
+    // false with make's own refusal. -heapTextureSizeAndAlignWithDescriptor: answers with these bytes so that a heap
+    // sized from it holds the texture make then gives
+    static bool plan(const TextureDesc& desc, const FormatInfo** info, uint64_t* pitch, uint64_t* bytes, std::string* why);
     // -newTextureWithDescriptor:iosurface:plane: for plane 0: a texture whose rows are IOSurface SURFACE_ID's pixels (the
     // kernel's surface buffer, command.hpp: surfaceBuffer), DESC's format, size and usage. nullptr with *why: no such
     // surface, more than one plane, a size past the surface's, rows the GPU cannot take (a pitch or a start that is not
