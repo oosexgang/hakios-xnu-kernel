@@ -54,6 +54,9 @@ struct CompiledKernel {
     std::string name;       // the entry point's
     std::string listing;    // ir3's disassembly, for the record and for the eye
     uint32_t threadgroupBytes = 0;   // static threadgroup memory the kernel declares
+    // a [[threadgroup(0)]] argument the encoder sizes: it starts threadgroupArgBase bytes in, past the static arrays
+    bool hasThreadgroupArg = false;
+    uint32_t threadgroupArgBase = 0;
 };
 
 // a vertex or fragment function compiled here (render.hpp's Stage), owning what its Stage points into

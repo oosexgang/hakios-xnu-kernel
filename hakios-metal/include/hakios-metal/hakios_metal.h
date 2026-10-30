@@ -414,6 +414,9 @@ int hakios_metal_cb_dispatch2(hakios_metal_cb *cb, hakios_metal_kernel *kernel, 
     hakios_metal_buffer *const *buffers, const uint64_t *offsets, unsigned count,
     hakios_metal_texture *const *textures, unsigned texture_count,
     hakios_metal_sampler *const *samplers, unsigned sampler_count);
+/* setThreadgroupMemoryLength:atIndex: 0 for the dispatches that follow on CB: LENGTH bytes for a kernel's
+ * [[threadgroup(0)]] argument, given past its static threadgroup arrays (a kernel without the argument ignores it) */
+void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb *cb, unsigned length);
 /* something the caller could not record: the command buffer will end in HAKIOS_METAL_ERROR, saying WHY */
 void hakios_metal_cb_fail(hakios_metal_cb *cb, const char *why);
 /* CALLBACK(CB, CONTEXT) runs once, after completion or error, on the queue's thread; may be NULL */

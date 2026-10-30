@@ -40,6 +40,7 @@
 #include "../tests/fixtures/tex_fill_arr_air.hpp"
 #include "../tests/fixtures/tex_fill_3d_air.hpp"
 #include "../tests/fixtures/pvt_fill_air.hpp"
+#include "../tests/fixtures/tg_arg_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
@@ -747,6 +748,38 @@ int main(int argc, char** argv) {
             for (uint32_t g = 4096; g < 4096 + 64; g++) tail += w[g] == 0xa5a5a5a5u;
             report(cb->status() == CommandBuffer::kCompleted && right == 4096 && tail == 64,
                    "private memory in a dispatch, a[128] a fiber read at gid & 127: " + std::to_string(right) + " of 4096 words 3 (gid & 127) + (gid >> 7) + 1, " +
+                       std::to_string(tail) + " of 64 past the grid canary" + status(*cb, gpu));
+        }
+    }
+
+    // 6y. threadgroup memory the encoder sizes: tg_arg's argument t starts past its static s[64] (256 bytes in) and its
+    // 64 words lie 128 bytes apart, 8 KiB of it, so the dispatch is given 256 + 8192 (Bindings::sharedBytes). Each
+    // thread reads its neighbour's s and t: every pair (n + 1000, n + 2000) for n = (lid + 1) & 63, which an argument
+    // aliasing s (n + 2000 twice) or a group given only the 2 KiB floor (the far t words lost) does not give
+    {
+        auto out = newBuffer(gpu, 8 * 1024 + 256, &why);
+        if (out == nullptr) {
+            report(false, "threadgroup argument: the buffer: " + why);
+        } else {
+            uint32_t* w = static_cast<uint32_t*>(out->contents());
+            for (uint32_t i = 0; i < 2048 + 64; i++) w[i] = 0x5a5a5a5au;
+            const uint32_t groups[3] = {16, 1, 1}, local[3] = {64, 1, 1};
+            Bindings b;
+            b.buffers = {Binding{out.get(), 0}};
+            b.sharedBytes = kernels::tg_arg_air.sharedSize + 8192;
+            auto cb = queue->commandBuffer();
+            if (cb->dispatch(kernels::tg_arg_air, groups, local, b)) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            uint32_t right = 0, tail = 0;
+            for (uint32_t g = 0; g < 1024; g++) {
+                const uint32_t n = ((g % 64) + 1) & 63;
+                right += w[2 * g] == n + 1000 && w[2 * g + 1] == n + 2000;
+            }
+            for (uint32_t i = 2048; i < 2048 + 64; i++) tail += w[i] == 0x5a5a5a5au;
+            report(cb->status() == CommandBuffer::kCompleted && right == 1024 && tail == 64,
+                   "threadgroup argument past s[64], 8 KiB of it: " + std::to_string(right) + " of 1024 threads read (n + 1000, n + 2000), " +
                        std::to_string(tail) + " of 64 past the grid canary" + status(*cb, gpu));
         }
     }

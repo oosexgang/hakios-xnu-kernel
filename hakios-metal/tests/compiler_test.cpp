@@ -12,6 +12,7 @@
 #include "fixtures/tex_copy_air.hpp"
 #include "fixtures/tex_fill_air.hpp"
 #include "fixtures/tex_size_h_air.hpp"
+#include "fixtures/tg_arg_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
 #include "fixtures/tex_fill_h_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -171,6 +172,24 @@ TEST(a_size_query_after_a_sample_leaves_the_texture_its_class) {
         CHECK_EQ(k->kernel.textures[0].element, uint8_t(kElemFloat));
         CHECK_EQ(k->kernel.textures[0].kind, uint8_t(kTexSampled));
     }
+}
+
+// A [[threadgroup(0)]] argument starts past the kernel's static threadgroup arrays: tg_arg's s[64] is 256 bytes from 0,
+// so the argument is at 256 and the dispatch is given 256 + the encoder's length. At 0 (as it was) the two alias.
+TEST(a_threadgroup_argument_starts_past_the_static_arrays) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the threadgroup layout did not run)\n");
+        return;
+    }
+    auto k = compareWithFixture("tg_arg", kernels::tg_arg_air, "tg_arg", "l[r1.z+256]");
+    if (k) {
+        CHECK(k->hasThreadgroupArg);
+        CHECK_EQ(k->threadgroupArgBase, 256u);
+        CHECK_EQ(k->kernel.sharedSize, 256u);
+    }
+    // the twin: a kernel with no threadgroup argument says so, and keeps its base at 0
+    auto fill = compareWithFixture("tex_fill", kernels::tex_fill_air, "tex_fill", "stib");
+    if (fill) CHECK(!fill->hasThreadgroupArg);
 }
 
 // The three texture kernels: the fixture writer's walk of the NIR (tools/mesa/ir3-dump.patch) and the core's

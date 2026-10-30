@@ -948,6 +948,8 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     KernelHome home{out->kernel, out->words, out->immediates, out->resources, out->name, out->listing};
     if (!fillKernel(t, home, highestSampler, why)) return nullptr;
     out->threadgroupBytes = t.info.threadgroup_bytes;
+    out->hasThreadgroupArg = t.info.has_threadgroup_arg;
+    out->threadgroupArgBase = t.info.threadgroup_arg_base;
     return out;
 }
 
