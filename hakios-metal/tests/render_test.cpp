@@ -328,7 +328,16 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.k.textures[0].kind = kTexSampled;   // ...and numTextureSlots left at 0
         refused(r, p, pass, d, "hand_fs samples texture 0 past its numTextureSlots of 0: the stage's tables disagree");
         p.fs.k.numTextureSlots = 1;
-        refused(r, p, pass, d, "hand_fs: no texture bound at index 0");
+        // nothing bound at a declared slot: the encoder alone refuses it, and a command buffer binds the queue's null
+        // texture there (an uber shader declares slots a draw never reaches) and draws
+        {
+            Encoded e(r, p, pass, d);
+            CHECK(!e.ok);
+            expectRefusal(e.error, "hand_fs: no texture bound at index 0");
+            auto cb = r.queue->commandBuffer();
+            CHECK(cb->draw(p, pass, d, Bindings{}, Bindings{}));
+            if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
+        }
         p = handProgram();
         p.vs.k.textures[0].kind = kTexSampled;
         p.vs.k.numTextureSlots = 1;
@@ -2721,11 +2730,23 @@ TEST(a_draw_refuses_a_texture_the_fs_cannot_sample) {
         CHECK(!cb->draw(p, pass, wholeDraw(6), Bindings{}, fsb));
         expectRefusal(cb->error(), want);
     };
+    // nothing bound at all: the encoder alone refuses the texture slot; a command buffer puts the queue's null texture
+    // there (uncommitted, so nothing is submitted); an unbound sampler is the all-zero sampler, in the encoder too
     Bindings none;
-    refusedWith(texProgram(), none, "tri_tex_fs_air: no texture bound at index 0");
+    {
+        Encoded e(r, texProgram(), pass, wholeDraw(6), render::Options{}, Bindings{}, none);
+        CHECK(!e.ok);
+        expectRefusal(e.error, "tri_tex_fs_air: no texture bound at index 0");
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->draw(texProgram(), pass, wholeDraw(6), Bindings{}, none));
+    }
     Bindings noSampler;
     noSampler.textures = {tex.get()};
-    refusedWith(texProgram(), noSampler, "tri_tex_fs_air: no sampler bound at index 0");
+    {
+        Encoded e(r, texProgram(), pass, wholeDraw(6), render::Options{}, Bindings{}, noSampler);
+        CHECK(e.ok);
+        if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    }
     Bindings wrongClass;
     wrongClass.textures = {ints.get()};
     wrongClass.samplers = {&smp};
@@ -3614,12 +3635,14 @@ TEST(a_draw_binds_the_queues_null_texture_at_the_reserved_slot_over_anything_bou
     CHECK(d.size() == 64 && memcmp(d.data(), want.dword, 64) == 0);
     const TexConst theirs = other->sampledDescriptor();
     CHECK(memcmp(want.dword, theirs.dword, 64) != 0);   // (else the line above could not tell the two apart)
-    // the mark is what does it: the same stage without it is an ordinary slot with nothing bound, and refused
+    // without the mark the slot is an ordinary one with nothing bound, which gets the queue's texture too (an unbound
+    // slot is read as the null texture); with something bound there it keeps the application's (bound, above, is the
+    // marked slot's case)
     Program unmarked = nullProg;
     unmarked.fs.k.textures[0].isNull = 0;
     auto cb = r.queue->commandBuffer();
-    CHECK(!cb->draw(unmarked, pass, wholeDraw(6), Bindings{}, samplerOnly));
-    expectRefusal(cb->error(), "tri_null_fs_air: no texture bound at index 0");
+    CHECK(cb->draw(unmarked, pass, wholeDraw(6), Bindings{}, samplerOnly));
+    if (!cb->error().empty()) std::printf("       %s\n", cb->error().c_str());
     // and the encoder alone binds nothing of its own: the substitution is the command buffer's
     Encoded e(r, nullProg, pass, wholeDraw(6), render::Options{}, Bindings{}, samplerOnly);
     CHECK(!e.ok);

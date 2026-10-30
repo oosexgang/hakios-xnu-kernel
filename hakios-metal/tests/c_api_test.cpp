@@ -609,9 +609,11 @@ TEST(c_api_draw_with_a_fragment_texture) {
     CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
     hakios_metal_cb_free(cb);
     cb = hakios_metal_cb_new(q);
-    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-    CHECK(strcmp(hakios_metal_error(), "tri_tex_fs: no texture bound at index 0") == 0);
-    if (strcmp(hakios_metal_error(), "tri_tex_fs: no texture bound at index 0") != 0) std::printf("       %s\n", hakios_metal_error());
+    // nothing bound: drawn with the queue's null texture and the all-zero sampler in their place, and completed
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 6, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
+    hakios_metal_cb_commit(cb, nullptr, nullptr);
+    hakios_metal_cb_wait(cb);
+    CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
     hakios_metal_cb_free(cb);
     hakios_metal_sampler_free(s);
     hakios_metal_texture_free(rt);

@@ -1886,11 +1886,21 @@ int main(int argc, char** argv) {
                        "tri_tex, a 4x4 texture sampled at tri_color's (red, green) through the FS prefetch: " + std::to_string(exact) + " of " + std::to_string(judged) +
                            " pixels their texel exactly (" + std::to_string(skipped) + " near a texel edge not judged, " + std::to_string(canaryLeft) +
                            " still canary, " + std::to_string(flippedRows) + " the row-flipped texel)" + first + status(*cb, gpu));
-                // the refusal: the same program with no texture bound
+                // the refusal: the same program over a texture of another element class (an unbound slot is no longer
+                // one: it reads the null texture, 9z3)
+                TextureDesc ud;
+                ud.format = PixelFormat::kR32Uint;
+                ud.width = 4;
+                ud.height = 4;
+                ud.usage = kTextureUsageRead;
+                std::string uwhy;
+                auto uints = Texture::make(gpu, ud, &uwhy);
+                Bindings wrong;
+                wrong.textures = {uints.get()};
                 auto cb2 = queue->commandBuffer();
-                bool accepted = cb2->draw(texProg, rp, drawOf(0, 6), Bindings{}, Bindings{});
-                report(!accepted && cb2->error().find("no texture bound at index 0") != std::string::npos,
-                       "control, tri_tex with nothing at [[texture(0)]]: " + (accepted ? std::string("ACCEPTED") : "refused: " + cb2->error()));
+                bool accepted = uints != nullptr && cb2->draw(texProg, rp, drawOf(0, 6), Bindings{}, wrong);
+                report(uints != nullptr && !accepted && cb2->error().find("reads it as texture2d<float>") != std::string::npos,
+                       "control, tri_tex over an R32Uint texture: " + (uints == nullptr ? "no texture: " + uwhy : accepted ? std::string("ACCEPTED") : "refused: " + cb2->error()));
             }
         }
         // 9k2. a 1D texture (CoreAnimation's gamma tables): four texels of distinct colours, one row under the TP's 1D
@@ -3289,6 +3299,33 @@ int main(int argc, char** argv) {
                    "a fragment program of " + std::to_string(kernels::chain_fs_air.k.instrlen) + " units (127 preloaded): " +
                        std::to_string(right) + " of 4096 pixels the 700-step chain, " + std::to_string(twin) + " the one a step short" +
                        (seen ? std::string(firstHex) : std::string()) + (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9z3. a texture and a sampler left unbound: tri_tex draws with nothing bound at either slot, which the command
+        // buffer fills with the queue's null texture (its one texel 00 00 00 00) and the all-zero sampler. Every pixel
+        // must be 00 00 00 00 over a canary that is not; the textured draws above are the control that the same
+        // program reads a texture that IS bound.
+        {
+            const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(texProg, rp, drawOf(0, 6), Bindings{}, Bindings{});
+            if (ok) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            std::vector<uint8_t> bo = textureBo(*t);
+            uint32_t zero = 0;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    uint32_t px;
+                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                    zero += px == 0;
+                }
+            report(ok && completed(*cb) && zero == W * H && canary != 0,
+                   "tri_tex with no texture and no sampler bound: " + std::to_string(zero) + " of 4096 pixels the null texel 00 00 00 00" +
+                       (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
 #if defined(__APPLE__)
         // 9m. the path to the screen's memory: a real IOSurface (IOSurfaceCreate, 64x64 'BGRA', 256-byte rows -- what

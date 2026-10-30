@@ -577,7 +577,7 @@ bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTe
             return refuse(why, name + ": no texture bound at index " + n(t));
         }
         const Texture* tex = b.textures[t];
-        if (kt.isNull) {
+        if (kt.isNull || ((b.nullMask >> t) & 1) != 0) {
             // The null texture's slot, bound by the draw (CommandQueue::nullTexture), and sampled in whatever dimension
             // and class the shader asked for it in -- fixed_frag_lph_cph asks as 2D and as 3D through the one slot, and
             // the table has no 17th for a second descriptor. One 2D 1x1 descriptor serves both: on the phone a 3D sample
@@ -611,7 +611,10 @@ bool fsTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, FsTe
     for (uint32_t m = 0; m < out->numSamp; m++) {
         if (((k.samplerMask >> m) & 1) == 0) continue;
         if (m >= b.samplers.size() || b.samplers[m] == nullptr) {
-            return refuse(why, name + ": no sampler bound at index " + n(m));
+            // nothing bound: Metal leaves a sample through it undefined, and an uber shader declares samplers a draw does
+            // not reach. All-zero words are a valid sampler (nearest, repeat), so what such a slot reads is defined here.
+            memset(out->sampWords[m], 0, 16);
+            continue;
         }
         memcpy(out->sampWords[m], b.samplers[m]->words, 16);
     }
@@ -1917,8 +1920,14 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     Bindings fsWithNull;
     const Bindings* fsb = &fsBindings;
     std::shared_ptr<Texture> null;
-    for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
-        if (program.fs.k.textures[i].kind != kTexSampled || !program.fs.k.textures[i].isNull) continue;
+    // And so does a sampled slot the application left empty: an uber shader (chronod's widget renderer) declares
+    // textures that the branches a given draw takes never read, and Metal lets such a slot go unbound. What a read of
+    // it gives is undefined in Metal; here it is the null texture's zero, as Apple's GPUs answer.
+    for (uint32_t i = 0; i < kMaxTextureSlots && i < program.fs.k.numTextureSlots; i++) {
+        const KernelTexture& kt = program.fs.k.textures[i];
+        if (kt.kind != kTexSampled || kt.fbTarget != 0) continue;
+        const bool unbound = i >= fsBindings.textures.size() || fsBindings.textures[i] == nullptr;
+        if (!kt.isNull && !unbound) continue;
         if (null == nullptr) {
             if ((null = queue_.nullTexture(&why)) == nullptr) {
                 return fail(std::string("no null texture: ") + why);
@@ -1928,6 +1937,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
         if (fsWithNull.textures.size() <= i) fsWithNull.textures.resize(i + 1, nullptr);
         fsWithNull.textures[i] = null.get();
+        if (!kt.isNull) fsWithNull.nullMask |= 1u << i;
     }
     // private memory is the queue's too: a stage that wants some is given the queue's buffer, which the submission
     // names for writing (the stage spills into it)

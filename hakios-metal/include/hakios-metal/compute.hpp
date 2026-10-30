@@ -58,6 +58,9 @@ struct Bindings {
     std::vector<const Texture*> textures;
     std::vector<const Sampler*> samplers;
     PrivateMemory privateMemory;
+    // texture slots holding the queue's null texture because the application bound nothing there (a draw's own doing,
+    // CommandBuffer::draw): sampled as the null slot is, in whatever dimension and class the shader declares
+    uint32_t nullMask = 0;
 };
 
 namespace compute {
