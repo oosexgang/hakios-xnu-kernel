@@ -375,15 +375,24 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         refused(r, p, pass, d, "hand_vs reads [[attribute(0)]], which the vertex descriptor does not describe");
         p = handProgram();
         p.vs.pointSizeRegid = regid(1, 0);
-        // a point size into a triangle draw: left unlinked and drawn (CoreAnimation's fixed_vert_lph_gen writes one); a
-        // point draw is refused by its primitive, size or none
+        // a point size: linked after the position (VPC_VS_PACK.PSIZELOC, PC_VS_OUT_CNTL.PSIZE) whatever is drawn, and a
+        // point draw is a point list of that size (CoreAnimation's fixed_vert_lph_gen writes one into its triangles too)
         {
-            Encoded e(r, p, pass, d);
-            CHECK(e.ok);
-            if (!e.ok) std::printf("       %s\n", e.error.c_str());
+            using namespace a6xx;
+            p.link = Linkage{};
+            std::string lwhy;
+            CHECK(render::link(p.vs, p.fs, &p.link, &lwhy));
+            CHECK(p.link.psizeLoc != 0xffu);
             Draw points = d;
             points.primitive = Primitive::kPoint;
-            refused(r, p, pass, points, "primitive 0: points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)");
+            Encoded e(r, p, pass, points);
+            CHECK(e.ok);
+            if (!e.ok) std::printf("       %s\n", e.error.c_str());
+            CHECK_EQ((e.reg(REG_A6XX_VPC_VS_PACK) & A6XX_VPC_VS_PACK_PSIZELOC__MASK) >> A6XX_VPC_VS_PACK_PSIZELOC__SHIFT, p.link.psizeLoc);
+            CHECK(e.reg(REG_A6XX_PC_VS_OUT_CNTL) & A6XX_PC_VS_OUT_CNTL_PSIZE);
+            const size_t at = e.find(CP_DRAW_INDX_OFFSET);
+            CHECK(at != size_t(-1));
+            if (at != size_t(-1)) CHECK_EQ(e.stream.words()[at + 1] & 0x3fu, uint32_t(DI_PT_POINTLIST));
         }
         p = handProgram();
         p.vs.clipMask = 1;
@@ -491,8 +500,8 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
     {
         Program p = handProgram();
         Draw x = d;
-        x.primitive = Primitive::kPoint;
-        refused(r, p, pass, x, "primitive 0: points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)");
+        x.primitive = Primitive(7);
+        refused(r, p, pass, x, "primitive 7: MTLPrimitiveType is Point (0), Line (1), LineStrip (2), Triangle (3) or TriangleStrip (4)");
         x = d;
         x.vertexCount = 0;
         refused(r, p, pass, x, "a draw of 0 vertices");

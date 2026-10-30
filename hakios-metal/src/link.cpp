@@ -31,6 +31,7 @@ namespace {
 // varyings start at 32, VARn = 32 + n; the slots between are GL's fixed-function ones, which the front end never emits
 constexpr uint8_t kVaryingSlotPos = 0;
 constexpr uint8_t kVaryingSlotVar0 = 32;
+constexpr uint8_t kVaryingSlotPsiz = 12;   // gl_varying_slot's VARYING_SLOT_PSIZ: a VS's [[point_size]]
 constexpr uint8_t kVaryingSlotPntc = 25;   // [[point_coord]] (compiler.cpp lowers it to this input), filled by the VPC
 
 // VPC_VARYING_INTERP_MODE's two-bit field per component: INTERP_SMOOTH 0, INTERP_FLAT 1, INTERP_ZERO 2, INTERP_ONE 3
@@ -155,6 +156,15 @@ bool link(const Stage& vs, const Stage& fs, Linkage* out, std::string* why) {
         return refuse(why, "the link holds " + std::to_string(kMaxStageOutputs) + " entries and has no room left for the position");
     }
     for (uint32_t i = 0; i < 4; i++) l.varmask[i] = varyingsOnly[i];
+    // --- the point size after it, one component, when the VS writes one (tu6_emit_vpc, tu_pipeline.cc:944-947): what a
+    // point is rasterized at; a line or a triangle ignores it
+    if (vs.pointSizeRegid != a6xx::kRegidNone) {
+        l.psizeLoc = l.maxLoc;
+        if (!linkAdd(l, kVaryingSlotPsiz, uint8_t(vs.pointSizeRegid), 0x1, uint8_t(l.maxLoc))) {
+            return refuse(why, "the link holds " + std::to_string(kMaxStageOutputs) + " entries and has no room left for the point size");
+        }
+        for (uint32_t i = 0; i < 4; i++) l.varmask[i] = varyingsOnly[i];
+    }
     // --- the colour outputs: 0xf per target written (SP_FS_RENDER_COMPONENTS / RB_RENDER_COMPONENTS, tu_shader.cc:1877-1891)
     for (uint32_t i = 0; i < fs.numColorOutputs && i < kMaxColorOutputs; i++) {
         if (fs.colorRegid[i] != a6xx::kRegidNone) l.mrtComponents |= 0xfu << (i * 4);

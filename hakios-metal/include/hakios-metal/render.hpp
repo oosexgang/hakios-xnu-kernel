@@ -136,6 +136,7 @@ struct Linkage {
     uint32_t interpMode[8];   // VPC_VARYING_INTERP_MODE[i]: 2 bits a component at inloc*2, INTERP_FLAT where the FS input is flat; else 0 (smooth)
     uint32_t psReplMode[8];   // VPC_VARYING_PS_REPL_MODE[i]: zeros (no point sprites); written as fd6 writes them, all eight
     uint32_t mrtComponents;   // SP_FS_RENDER_COMPONENTS / RB_RENDER_COMPONENTS: 0xf per colour output written
+    uint32_t psizeLoc = 0xff; // VPC_VS_PACK.PSIZELOC: the VS's [[point_size]], linked after the position (0xff: none written)
 };
 
 // --- the vertex descriptor (MTLVertexDescriptor), in Metal's own numbers -------------------------------------------------

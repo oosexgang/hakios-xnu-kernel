@@ -477,8 +477,8 @@ TEST(c_api_program_and_draw) {
     CHECK(strcmp(hakios_metal_error(), "a draw of 0 vertices") == 0);
     hakios_metal_cb_free(cb);
     cb = hakios_metal_cb_new(q);
-    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 0, 0, 2, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-    CHECK(strcmp(hakios_metal_error(), "primitive 0: points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)") == 0);
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 7, 0, 2, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);   // no such primitive
+    CHECK(strcmp(hakios_metal_error(), "primitive 7: MTLPrimitiveType is Point (0), Line (1), LineStrip (2), Triangle (3) or TriangleStrip (4)") == 0);
     hakios_metal_cb_free(cb);
     cb = hakios_metal_cb_new(q);
     CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 0, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);

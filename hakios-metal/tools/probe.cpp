@@ -55,6 +55,8 @@
 #include "../tests/fixtures/chain_fs_air.hpp"
 #include "../tests/fixtures/tri_tex3d_fs_air.hpp"
 #include "../tests/fixtures/tri_tex2da_fs_air.hpp"
+#include "../tests/fixtures/tri_pntc_fs_air.hpp"
+#include "../tests/fixtures/tri_pt_vs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
@@ -3569,6 +3571,71 @@ int main(int argc, char** argv) {
                 report(ok && (t1 == 2016 || t1 == 2080), "occlusion, T1 alone: " + std::to_string(t1) + " samples (2016, and the diagonal's 64 if it is T1's)");
                 ok = query(3, 3, false);
                 report(ok && *word == 4096, "occlusion, T2 added to T1's word without the reset: " + std::to_string(*word) + " samples (4096)");
+            }
+        }
+        // 9pt. points: tri_pt_vs puts four points of [[point_size]] 8 at the quarters' centres. With tri_flat_fs every pixel
+        // of the four 8x8 squares is the flat colour and every other one keeps the canary; with tri_pntc_fs each square's
+        // pixel (i, j) from its corner is ((i + 0.5) / 8, (j + 0.5) / 8, 0, 1) -- [[point_coord]]'s origin at the top
+        // left, as Metal's is. A T that ran upward instead (PS_REPL ONE_MINUS_T) is counted apart, by name.
+        {
+            const uint32_t centres[4][2] = {{16, 16}, {48, 16}, {16, 48}, {48, 48}};
+            auto inSquare = [&](uint32_t i, uint32_t j, uint32_t* ci, uint32_t* cj) {
+                for (const auto& c : centres) {
+                    if (i + 4 >= c[0] && i < c[0] + 4 && j + 4 >= c[1] && j < c[1] + 4) {
+                        *ci = i + 4 - c[0];
+                        *cj = j + 4 - c[1];
+                        return true;
+                    }
+                }
+                return false;
+            };
+            for (int which = 0; which < 2; which++) {
+                const Program pts{kernels::tri_pt_vs_air, which == 0 ? kernels::tri_flat_fs_air : kernels::tri_pntc_fs_air, Linkage{}, which == 0 ? "tri_pt" : "tri_pt_pntc"};
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Draw d = drawOf(0, 4);
+                d.primitive = Primitive::kPoint;
+                auto cb = queue->commandBuffer();
+                const bool drew = cb->draw(pts, rp, d, Bindings{}, Bindings{});
+                if (drew) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t inside = 0, right = 0, upward = 0, outsideCanary = 0, outside = 0;
+                std::string first;
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        uint32_t px, ci = 0, cj = 0;
+                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                        if (!inSquare(i, j, &ci, &cj)) {
+                            outside++;
+                            outsideCanary += px == canary;
+                            continue;
+                        }
+                        inside++;
+                        if (which == 0) {
+                            right += px == flatColour;
+                            continue;
+                        }
+                        const uint8_t* b = reinterpret_cast<const uint8_t*>(&px);
+                        auto near = [](uint8_t got, double want) { return std::fabs(got - want * 255.0) <= 1.5; };
+                        const double s = (ci + 0.5) / 8, tt = (cj + 0.5) / 8;
+                        if (near(b[0], s) && near(b[1], tt) && b[2] == 0 && b[3] == 255) right++;
+                        else if (near(b[0], s) && near(b[1], 1 - tt)) upward++;
+                        else if (first.empty()) {
+                            char text[96];
+                            snprintf(text, sizeof text, "; the first off (%u, %u): %02x %02x %02x %02x", i, j, b[0], b[1], b[2], b[3]);
+                            first = text;
+                        }
+                    }
+                }
+                report(drew && completed(*cb) && inside == 256 && right == inside && outsideCanary == outside,
+                       std::string(which == 0 ? "points of size 8, flat: " : "points of size 8, their [[point_coord]]: ") + std::to_string(right) + " of " +
+                           std::to_string(inside) + " pixels in the four squares right" + (which == 1 ? " (" + std::to_string(upward) + " with t running upward)" : std::string()) +
+                           ", " + std::to_string(outsideCanary) + " of " + std::to_string(outside) + " outside still canary" + first +
+                           (drew ? status(*cb, gpu) : ": " + cb->error()));
             }
         }
 #if defined(__APPLE__)

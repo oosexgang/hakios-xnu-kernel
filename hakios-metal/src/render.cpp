@@ -1148,9 +1148,6 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (!vertexFetch(vs, program.vertexDescriptor, draw, vsBindings, &fetch, why)) {
         return false;
     }
-    // A [[point_size]] means something to a point alone, and points are refused below with the primitive; for a line or a
-    // triangle the register it is in is left unlinked (no VPC location, no PC_VS_OUT_CNTL.PSIZE), as turnip leaves a size
-    // nothing rasterizes as points -- CoreAnimation's fixed_vert_lph_gen writes one into every triangle it draws.
 
     if (vs.clipMask != 0 || vs.cullMask != 0) {
         return refuse(why, std::string(stageName(vs)) + " writes clip or cull distances: not served");
@@ -1290,8 +1287,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // its LINE_MODE RECTANGULAR, turnip's for Vulkan's default lines (tu6_emit_rast)
     case Primitive::kLine: prim = DI_PT_LINELIST; break;
     case Primitive::kLineStrip: prim = DI_PT_LINESTRIP; break;
+    // a point is as large as the VS's [[point_size]] (linked after the position, PC_VS_OUT_CNTL.PSIZE), else the
+    // GRAS_SU_POINT_SIZE of 1 the rasterizer state writes; Metal leaves a point with no size undefined
+    case Primitive::kPoint: prim = DI_PT_POINTLIST; break;
     default:
-        return refuse(why, "primitive " + n(uint32_t(draw.primitive)) + ": points are not served (a point is as large as a [[point_size]] the VS writes, and none is served)");
+        return refuse(why, "primitive " + n(uint32_t(draw.primitive)) + ": MTLPrimitiveType is Point (0), Line (1), LineStrip (2), Triangle (3) or TriangleStrip (4)");
     }
     if (draw.vertexCount == 0) {
         return refuse(why, "a draw of 0 vertices");
@@ -1630,11 +1630,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             for (uint32_t j = 0; j < 4 && 4 * i + j < link.cnt; j++) loc[j] = link.var[4 * i + j].loc;
             reg(stream, regSpVsVpcDstReg(i), spVsVpcDstReg(loc[0], loc[1], loc[2], loc[3]));
         }
-        reg(stream, REG_A6XX_VPC_VS_PACK, vpcVsPack(link.maxLoc, link.positionLoc));
+        reg(stream, REG_A6XX_VPC_VS_PACK, vpcVsPack(link.maxLoc, link.positionLoc, link.psizeLoc));
         reg(stream, REG_A6XX_VPC_VS_CLIP_CNTL, vpcVsClipCntl(0));
         reg(stream, REG_A6XX_VPC_VS_CLIP_CNTL_V2, vpcVsClipCntl(0));
         reg(stream, REG_A6XX_GRAS_VS_CL_CNTL, grasVsClCntl(0, 0));
-        reg(stream, REG_A6XX_PC_VS_OUT_CNTL, pcVsOutCntl(link.maxLoc));
+        reg(stream, REG_A6XX_PC_VS_OUT_CNTL, pcVsOutCntl(link.maxLoc, link.psizeLoc != kLocNone));
         reg(stream, REG_A6XX_SP_VS_PRIMITIVE_CNTL, spVsPrimitiveCntl(link.cnt));
         reg(stream, REG_A6XX_VPC_VS_LAYER_CNTL, vpcVsLayerCntl());
         reg(stream, REG_A6XX_VPC_VS_LAYER_CNTL_V2, vpcVsLayerCntl());
