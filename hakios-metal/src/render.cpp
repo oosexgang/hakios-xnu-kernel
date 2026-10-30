@@ -2310,6 +2310,29 @@ bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect
     }
     closePass();   // the copy reads what the draws before it wrote: their pass's tail first
     std::string why;
+    // A copy of a level onto itself. Metal leaves it to the GPU, and an Apple GPU does it -- VectorKit (MapKit's snapshot
+    // service) copies its glyph textures onto themselves, in place and shifted by part of their width. The rectangle onto
+    // itself is nothing to do; overlapping ones go through a texture of their own, so the result is that of a memmove.
+    if (&src == &dst && srcLevel == dstLevel && s.x < d.x + d.w && d.x < s.x + s.w && s.y < d.y + d.h && d.y < s.y + s.h) {
+        const TextureLevel L = src.level(srcLevel);
+        if (uint64_t(s.x) + s.w > L.width || uint64_t(s.y) + s.h > L.height || uint64_t(d.x) + d.w > L.width || uint64_t(d.y) + d.h > L.height) {
+            return fail("a copy within one level whose rectangles fall outside it");
+        }
+        if (s.x == d.x && s.y == d.y && s.w == d.w && s.h == d.h) {
+            return true;
+        }
+        TextureDesc between;
+        between.format = src.format();
+        between.width = s.w;
+        between.height = s.h;
+        std::shared_ptr<Texture> t = Texture::make(queue_.gpu(), between, &why);
+        if (t == nullptr) {
+            return fail("no texture to copy an overlapping rectangle through: " + why);
+        }
+        keep(t->buffer());
+        return blit(src, srcLevel, s, *t, 0, render::BlitRect{0, 0, s.w, s.h}, false, options) &&
+               blit(*t, 0, render::BlitRect{0, 0, s.w, s.h}, dst, dstLevel, d, linear, options);
+    }
     Piece table;
     if (!piece(render::kTableBytes, &table, &why)) {
         return fail(std::string("no memory for the copy's table: ") + why);

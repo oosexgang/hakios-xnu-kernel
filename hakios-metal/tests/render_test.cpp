@@ -4076,16 +4076,36 @@ TEST(mip_levels_are_drawn_into_copied_and_generated) {
         for (uint32_t v : lv) all40 = all40 && v == 0x40404040u;
     }
     CHECK(all40);
-    // refusals: another format, an integer format filtered, overlapping rectangles in one level
+    // refusals: another format, an integer format filtered
     TextureDesc fd = od;
     fd.format = PixelFormat::kRGBA16Float;
     auto f16 = Texture::make(*r.gpu, fd, &why);
     auto cb4 = r.queue->commandBuffer();
     CHECK(!cb4->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *f16, 0, render::BlitRect{0, 0, 8, 8}, false));
     expectRefusal(cb4->error(), "a copy from RGBA8Unorm to RGBA16Float: the two must be one pixel format (an sRGB pair is one)");
+    // a level onto itself (VectorKit does both): in place it is nothing, so no copy reaches the engine; shifted by
+    // less than its size it reads as a memmove -- through a texture of its own, two copies
+    for (uint32_t i = 0; i < rows.size(); i++) rows[i] = 0x01000000u * (i & 0xff) + i;
+    CHECK(t->replace(0, 0, 0, 64, 64, rows.data(), 256, &why));
+    const uint32_t copiesBeforeSelf = r.fake->stats().copies;
     auto cb5 = r.queue->commandBuffer();
-    CHECK(!cb5->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *t, 0, render::BlitRect{4, 4, 8, 8}, false));
-    expectRefusal(cb5->error(), "a copy within one level whose two rectangles overlap: the engine reads and writes the same memory in no order");
+    CHECK(cb5->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *t, 0, render::BlitRect{0, 0, 8, 8}, false));
+    CHECK(cb5->blit(*t, 0, render::BlitRect{0, 0, 8, 8}, *t, 0, render::BlitRect{4, 4, 8, 8}, false));
+    cb5->commit();
+    cb5->waitUntilCompleted();
+    CHECK(cb5->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().copies - copiesBeforeSelf, 2u);
+    std::vector<uint32_t> moved(12 * 12);
+    CHECK(t->read(0, 0, 0, 12, 12, moved.data(), 48, &why));
+    bool memmove = true;
+    for (uint32_t y = 0; y < 12; y++)
+        for (uint32_t x = 0; x < 12; x++) {
+            // inside the destination: the source as it was before the copy; elsewhere: untouched
+            const bool inside = x >= 4 && y >= 4;
+            const uint32_t want = inside ? rows[(y - 4) * 64 + x - 4] : rows[y * 64 + x];
+            memmove = memmove && moved[y * 12 + x] == want;
+        }
+    CHECK(memmove);
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
