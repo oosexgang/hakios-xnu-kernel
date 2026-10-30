@@ -731,17 +731,32 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
         refuse(why, "a " + n(desc.width) + " x " + n(desc.height) + " texture over the " + n(s.width) + " x " + n(s.height) + " " + name);
         return nullptr;
     }
-    // the FourCC of the surface against the format. A four-byte surface is read in whatever four-byte colour format the
-    // texture names: its bytes as they are, as an Apple GPU reads them -- so a 'BGRA' surface as RGBA8Unorm has its red
-    // and blue the other way round, which is what the caller asked for (MPS reads CoreVideo's 'BGRA' buffers so, in
-    // mediaserverd). CoreAnimation's masks are 'LA08' (luminance and alpha, a byte each) read as RG8Unorm and 'L008'
-    // read as R8Unorm.
-    const uint32_t bgra = 0x42475241u, rgba = 0x52474241u, la08 = 0x4c413038u, l008 = 0x4c303038u;   // 'BGRA', 'RGBA', 'LA08', 'L008'
-    const bool fourBytes = info->bytesPerPixel == 4 && info->blockW == 1 && !info->depth && !info->twoPlane;
-    if (s.pixelFormat != 0 && !(((s.pixelFormat == bgra || s.pixelFormat == rgba) && fourBytes) ||
-                                (s.pixelFormat == la08 && desc.format == PixelFormat::kRG8Unorm) || (s.pixelFormat == l008 && desc.format == PixelFormat::kR8Unorm))) {
-        refuse(why, name + "'s pixel format " + n(s.pixelFormat) + " is not " + info->name + "'s: 'BGRA' (0x42475241) takes BGRA8Unorm[_sRGB], 'RGBA' (0x52474241) "
-                        "RGBA8Unorm[_sRGB], 'LA08' RG8Unorm and 'L008' R8Unorm");
+    // the FourCC of the surface against the format, by the bytes a pixel each names: a texture of any colour format of
+    // that size reads over it, its bytes as they are, as an Apple GPU reads them -- a 'BGRA' surface as RGBA8Unorm has
+    // red and blue the other way round, which is what the caller asked for (MPS in mediaserverd reads CoreVideo's
+    // buffers so, 'L00h' as R16Float among them). CoreAnimation's masks are 'LA08' (luminance and alpha, a byte each)
+    // and 'L008'. A FourCC not in this list is refused by name.
+    struct FourCC { uint32_t code; uint32_t bytes; };
+    static const FourCC kFourCCs[] = {
+        {0x42475241u, 4},   // 'BGRA'
+        {0x52474241u, 4},   // 'RGBA'
+        {0x4c413038u, 2},   // 'LA08'
+        {0x4c303038u, 1},   // 'L008'
+        {0x4c303068u, 2},   // 'L00h': one half
+        {0x4c303066u, 4},   // 'L00f': one float
+        {0x32433068u, 4},   // '2C0h': two halves
+        {0x32433066u, 8},   // '2C0f': two floats
+        {0x52476841u, 8},   // 'RGhA': four halves
+        {0x52476641u, 16},  // 'RGfA': four floats
+    };
+    uint32_t surfaceBytes = 0;
+    for (const FourCC& f : kFourCCs) {
+        if (f.code == s.pixelFormat) surfaceBytes = f.bytes;
+    }
+    const bool plainColour = info->blockW == 1 && !info->depth && !info->twoPlane;
+    if (s.pixelFormat != 0 && !(surfaceBytes != 0 && plainColour && info->bytesPerPixel == surfaceBytes)) {
+        refuse(why, name + "'s pixel format " + n(s.pixelFormat) + " is not " + info->name + "'s: a surface is read in a colour format of the bytes a "
+                        "pixel its FourCC names ('BGRA' and 'RGBA' 4, 'LA08' and 'L00h' 2, 'L008' 1, 'L00f' 4, 'RGhA' 8, 'RGfA' 16 ...)");
         return nullptr;
     }
     // the rows: RB_MRT_PITCH and TEX_CONST_2's pitch are in 64-byte units and the RB/TP want the start 64-aligned
@@ -860,6 +875,14 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
             std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
             t->chroma_ = p.chroma_;
             return t;
+        }
+        // ...or the whole of a single-plane surface's texture in another colour format of as many bytes a pixel, its
+        // rows as they are (mediaserverd's MPS reads an RGBA8 surface's texture as R32Uint so)
+        if (p.surface() != 0 && !p.info().twoPlane && p.samples() == 1 && type == p.type() && levels == p.levels() && slices == parentSlices &&
+            info->bytesPerPixel == p.info().bytesPerPixel && !info->depth && !info->twoPlane && info->blockW == 1) {
+            TextureDesc d = p.desc_;
+            d.format = format;
+            return adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
         }
         refuse(why, asked + ": a view of an IOSurface's, a two-plane or a multisample texture is served only as the whole of it");
         return nullptr;

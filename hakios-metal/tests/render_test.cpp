@@ -4816,3 +4816,45 @@ TEST(a_depth_slice_past_the_layers_is_refused) {
     CHECK(!e.ok);
     expectRefusal(e.error, "depth slice 1 of a depth texture of 1 layer(s)");
 }
+
+// A surface's texture viewed whole in another colour format of as many bytes a pixel (mediaserverd's MPS reads an
+// RGBA8 one as R32Uint): the same rows, address and pitch; a format of another size, or a single level of it, refused.
+TEST(a_surface_texture_views_in_a_format_of_the_same_size) {
+    Rig r;
+    r.fake->addSurface(7, 64, 64, 256, 0x52474241u);
+    TextureDesc d;
+    d.format = PixelFormat::kRGBA8Unorm;
+    d.width = d.height = 64;
+    d.usage = kTextureUsageRead;
+    std::string why;
+    auto t = Texture::wrapSurface(*r.gpu, 7, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    auto v = Texture::view(t, PixelFormat::kR32Uint, TextureType::k2D, 0, 1, 0, 1, &why);
+    CHECK(v != nullptr);
+    if (v != nullptr) {
+        CHECK_EQ(v->gpuAddress(), t->gpuAddress());
+        CHECK_EQ(v->bytesPerRow(), t->bytesPerRow());
+        CHECK(v->format() == PixelFormat::kR32Uint);
+    }
+    CHECK(Texture::view(t, PixelFormat::kRG8Unorm, TextureType::k2D, 0, 1, 0, 1, &why) == nullptr);
+}
+
+// A surface reads in the colour formats of the size its FourCC names: 'L00h' (one half) as R16Float, not as RGBA8Unorm;
+// a FourCC this list does not know is refused whatever the format.
+TEST(a_surface_reads_in_the_formats_of_its_fourccs_size) {
+    Rig r;
+    r.fake->addSurface(8, 64, 64, 128, 0x4c303068u);   // 'L00h'
+    r.fake->addSurface(9, 64, 64, 256, 0x41424344u);   // 'ABCD', not a format
+    TextureDesc d;
+    d.format = PixelFormat::kR16Float;
+    d.width = d.height = 64;
+    d.usage = kTextureUsageRead;
+    std::string why;
+    CHECK(Texture::wrapSurface(*r.gpu, 8, d, &why) != nullptr);
+    TextureDesc four = d;
+    four.format = PixelFormat::kRGBA8Unorm;
+    CHECK(Texture::wrapSurface(*r.gpu, 8, four, &why) == nullptr);
+    CHECK(Texture::wrapSurface(*r.gpu, 9, four, &why) == nullptr);
+    CHECK(has(why, "IOSurface 9's pixel format 1094861636 is not RGBA8Unorm's"));
+}
