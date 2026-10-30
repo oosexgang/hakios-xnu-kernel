@@ -40,7 +40,19 @@ struct Resource {
     bool nullTexture;       // the front end's reserved slot for air.get_null_texture_*: not served by the dispatch yet
     bool inlineSampler;     // a constexpr sampler (air_resource.inline_sampler): its state below, bound by the runtime at INDEX
     std::string typeName;   // air.arg_type_name as declared
+    // a member of an argument buffer (air_resource.argbuf_*): the set's own Metal [[buffer(n)]] and the member's byte
+    // offset in it; INDEX is then the binding the front end allocated it, not a Metal index. ~0u: not a member
+    uint32_t argbufSet = ~0u;
+    uint32_t argbufOffset = 0;
 };
+
+// Argument buffers: every member among RESOURCES bound into B from what its set holds -- the eight bytes at the
+// member's offset in the buffer bound at the set's Metal index, which MTLArgumentEncoder (or the application itself)
+// wrote: a buffer's GPU address (bufferAt), a texture's or a sampler's resource id. Each lands at the member's own
+// index; KEPT gets what must live until the GPU is done. The words are read now, on the processor: a set the GPU
+// writes before this work runs is not seen. A zero word, or one naming nothing alive, leaves the slot empty -- the
+// draw or dispatch then refuses it if the shader reads it. False with *why: a set not bound, or shorter than a member.
+bool bindArgumentBuffers(const std::vector<Resource>& resources, Bindings* b, std::vector<std::shared_ptr<const void>>* kept, std::string* why);
 
 // a kernel compiled here, owning what its Kernel points into
 struct CompiledKernel {

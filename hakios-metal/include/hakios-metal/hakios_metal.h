@@ -157,6 +157,10 @@ int hakios_metal_texture_plan_bytes(unsigned type, unsigned pixel_format, unsign
 /* the bytes of memory TEXTURE's layout takes (MTLResource.allocatedSize); a view answers with its parent's memory */
 uint64_t hakios_metal_texture_allocated_bytes(hakios_metal_texture *texture);
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture *texture);   /* its IOSurface's ID, 0 for a texture of its own */
+/* what an argument buffer holds for TEXTURE or SAMPLER (MTLTexture/MTLSamplerState.gpuResourceID): never 0, and found
+ * again by a draw or dispatch reading the argument buffer while the object lives. A buffer's is its GPU address. */
+uint64_t hakios_metal_texture_resource_id(hakios_metal_texture *texture);
+uint64_t hakios_metal_sampler_resource_id(hakios_metal_sampler *sampler);
 void hakios_metal_texture_free(hakios_metal_texture *texture);
 void *hakios_metal_texture_contents(hakios_metal_texture *texture);        /* the GPU's rows, write-combined */
 uint64_t hakios_metal_texture_bytes_per_row(hakios_metal_texture *texture); /* the GPU's pitch (MTLTexture.bufferBytesPerRow) */

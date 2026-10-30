@@ -8,6 +8,10 @@
 #include <vector>
 
 #include "hakios-metal/compiler.hpp"
+#include "hakios-metal/command.hpp"
+#include "hakios-metal/fake_gpu.hpp"
+#include "hakios-metal/gpu.hpp"
+#include "fixtures/argbuf_res_air.hpp"
 #include "fixtures/fill_id_air.hpp"
 #include "fixtures/tex_copy_air.hpp"
 #include "fixtures/tex_fill_air.hpp"
@@ -1018,4 +1022,55 @@ TEST(compiler_specialises_a_stage_by_the_pipelines_function_constants) {
             std::printf("\n");
         }
     }
+}
+
+// Argument buffers: argbuf_res takes its output buffer, a sampler and two textures as the members of one set at
+// [[buffer(0)]]. The set holds the output's GPU address and the sampler's and textures' resource ids, eight bytes a
+// member; bindArgumentBuffers puts each at the index the front end allocated -- the output at buffer 0, which is also
+// the set's own Metal index, so the set has to be read from the bindings as given. Twins: the two texture words
+// swapped bind the textures swapped; a zero word leaves its slot empty (not the set); a set not bound is refused.
+TEST(argument_buffer_members_are_bound_from_the_words_in_their_set) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: argument buffers did not run)\n");
+        return;
+    }
+    auto k = compareWithFixture("argbuf_res", kernels::argbuf_res_air, "argbuf_res", "isam");
+    if (!k) return;
+    Gpu gpu(std::make_unique<FakeGpu>());
+    std::string why;
+    auto set = newBuffer(gpu, 64, &why);
+    auto out = newBuffer(gpu, 4096, &why);
+    TextureDesc td;
+    td.format = PixelFormat::kR32Float;
+    td.width = td.height = 4;
+    auto t0 = Texture::make(gpu, td, &why), t1 = Texture::make(gpu, td, &why);
+    Sampler s;
+    CHECK(makeSampler(SamplerDesc{}, &s, &why));
+    CHECK(set != nullptr && out != nullptr && t0 != nullptr && t1 != nullptr);
+    if (set == nullptr || out == nullptr || t0 == nullptr || t1 == nullptr) return;
+    uint64_t* w = static_cast<uint64_t*>(set->contents());
+    auto encode = [&](uint64_t a, uint64_t b, uint64_t c, uint64_t d) { w[0] = a; w[1] = b; w[2] = c; w[3] = d; };
+    auto resolve = [&](Bindings* b, std::string* err) {
+        b->buffers = {Binding{set.get(), 0}};
+        std::vector<std::shared_ptr<const void>> kept;
+        return bindArgumentBuffers(k->resources, b, &kept, err);
+    };
+    encode(out->gpuAddress() + 64, s.id, t0->resourceId(), t1->resourceId());
+    Bindings b;
+    CHECK(resolve(&b, &why));
+    CHECK(b.buffers.size() >= 1 && b.buffers[0].buffer == out.get() && b.buffers[0].offset == 64);
+    CHECK(b.textures.size() >= 2 && b.textures[0] == t0.get() && b.textures[1] == t1.get());
+    CHECK(b.samplers.size() >= 1 && b.samplers[0] != nullptr && memcmp(b.samplers[0]->words, s.words, 16) == 0);
+    encode(out->gpuAddress(), s.id, t1->resourceId(), t0->resourceId());
+    Bindings swapped;
+    CHECK(resolve(&swapped, &why));
+    CHECK(swapped.textures.size() >= 2 && swapped.textures[0] == t1.get() && swapped.textures[1] == t0.get());
+    encode(0, s.id, t0->resourceId(), t1->resourceId());
+    Bindings none;
+    CHECK(resolve(&none, &why));
+    CHECK(none.buffers[0].buffer == nullptr);   // emptied: not the set bound at the same index
+    Bindings unbound;
+    std::vector<std::shared_ptr<const void>> kept;
+    CHECK(!bindArgumentBuffers(k->resources, &unbound, &kept, &why));
+    CHECK(why.find("argument buffer 0") != std::string::npos);
 }

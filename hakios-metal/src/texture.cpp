@@ -1,6 +1,8 @@
 #include "hakios-metal/texture.hpp"
 
 #include <algorithm>
+#include <mutex>
+#include <unordered_map>
 #include <cstring>
 
 namespace hakios::metal {
@@ -344,6 +346,40 @@ bool Texture::plan(const TextureDesc& desc, const FormatInfo** infoOut, uint64_t
     return true;
 }
 
+namespace {
+std::mutex gIdLock;
+uint64_t gNextId = 1;
+std::unordered_map<uint64_t, std::weak_ptr<Texture>> gTextures;
+std::unordered_map<uint64_t, Sampler> gSamplers;
+}  // namespace
+
+std::shared_ptr<Texture> Texture::adopt(Texture* t) {
+    std::lock_guard<std::mutex> g(gIdLock);
+    t->id_ = gNextId++;
+    const uint64_t id = t->id_;
+    std::shared_ptr<Texture> s(t, [id](Texture* x) {
+        {
+            std::lock_guard<std::mutex> g2(gIdLock);
+            gTextures.erase(id);
+        }
+        delete x;
+    });
+    gTextures[id] = s;
+    return s;
+}
+
+std::shared_ptr<Texture> Texture::byResourceId(uint64_t id) {
+    std::lock_guard<std::mutex> g(gIdLock);
+    auto it = gTextures.find(id);
+    return it != gTextures.end() ? it->second.lock() : nullptr;
+}
+
+const Sampler* samplerById(uint64_t id) {
+    std::lock_guard<std::mutex> g(gIdLock);
+    auto it = gSamplers.find(id);
+    return it != gSamplers.end() ? &it->second : nullptr;   // (an unordered_map's elements stay where they are)
+}
+
 std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::string* why) {
     const FormatInfo* info = nullptr;
     uint64_t pitch = 0, bytes = 0;
@@ -354,7 +390,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     if (buffer == nullptr) {
         return nullptr;
     }
-    return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, pitch));
+    return adopt(new Texture(std::move(buffer), desc, info, pitch));
 }
 
 namespace {
@@ -644,7 +680,7 @@ std::shared_ptr<Texture> Texture::wrapSurface(Gpu& gpu, uint32_t surfaceId, cons
     // TEX_CONST_2.PITCHALIGN: the largest k up to log2(cpp) with the pitch a multiple of 64 << k
     uint32_t pitchAlign = 0;
     while (pitchAlign < log2u(info->bytesPerPixel) && s.rowBytes % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
-    return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, pitchAlign, surfaceId));
+    return adopt(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, pitchAlign, surfaceId));
 }
 
 // A '420f' or '420v' surface as one YCbCr8_420_2P texture: plane 0 the luma rows the kernel describes, plane 1 the
@@ -675,7 +711,7 @@ std::shared_ptr<Texture> Texture::wrapTwoPlanes(std::shared_ptr<Buffer> buffer, 
                         "hold its width, and its rows inside the surface");
         return nullptr;
     }
-    std::shared_ptr<Texture> t(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, 0));
+    std::shared_ptr<Texture> t = adopt(new Texture(std::move(buffer), desc, info, s.rowBytes, s.offset, 0));
     t->chroma_ = *chroma;
     return t;
 }
@@ -704,7 +740,7 @@ std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uin
     }
     uint32_t pitchAlign = 0;
     while (pitchAlign < log2u(info->bytesPerPixel) && bytesPerRow % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
-    return std::shared_ptr<Texture>(new Texture(std::move(buffer), desc, info, bytesPerRow, offset, pitchAlign));
+    return adopt(new Texture(std::move(buffer), desc, info, bytesPerRow, offset, pitchAlign));
 }
 
 std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, PixelFormat format, TextureType type, uint32_t baseLevel, uint32_t levels,
@@ -729,7 +765,7 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
     }
     if (p.surface() != 0 || p.info().twoPlane || p.samples() != 1) {
         if (format == p.format() && type == p.type() && levels == p.levels() && slices == parentSlices) {
-            std::shared_ptr<Texture> t(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
+            std::shared_ptr<Texture> t = adopt(new Texture(p.buffer_, p.desc_, p.info_, p.pitch_, p.offset_, p.pitchAlign_, p.surface_));
             t->chroma_ = p.chroma_;
             return t;
         }
@@ -742,7 +778,7 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
     // every level from 0, the slices all there, the type the parent's: the same layout, its first LEVELS levels
     if (type == p.type() && baseLevel == 0 && baseSlice == 0 && slices == parentSlices) {
         d.mipLevels = levels;
-        return std::shared_ptr<Texture>(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_));
+        return adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_, p.pitchAlign_));
     }
     // one level as a 2D texture: level L's rows, at its pitch, are a one-level 2D layout of their own (the TP reads a
     // single level by PITCH alone); of a layered parent that has the one level, slice BASE_SLICE's rows
@@ -755,13 +791,13 @@ std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, P
         d.depth = 1;
         uint32_t pitchAlign = 0;
         while (pitchAlign < log2u(info->bytesPerPixel) && L.pitch % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
-        return std::shared_ptr<Texture>(new Texture(p.buffer_, d, info, L.pitch, p.offset_ + L.offset + uint64_t(baseSlice) * p.sliceBytes(), pitchAlign));
+        return adopt(new Texture(p.buffer_, d, info, L.pitch, p.offset_ + L.offset + uint64_t(baseSlice) * p.sliceBytes(), pitchAlign));
     }
     // a run of a one-level layered texture's slices as a 2D array, or six as a cube: the slices sit sliceBytes apart
     // whichever of the two names them, so the run starts BASE_SLICE slices in
     if (layered && p.levels() == 1 && levels == 1 && (type == TextureType::k2DArray || (type == TextureType::kCube && slices == 6 && p.width() == p.height()))) {
         d.depth = slices;
-        return std::shared_ptr<Texture>(new Texture(p.buffer_, d, info, p.pitch_, p.offset_ + uint64_t(baseSlice) * p.sliceBytes(), p.pitchAlign_));
+        return adopt(new Texture(p.buffer_, d, info, p.pitch_, p.offset_ + uint64_t(baseSlice) * p.sliceBytes(), p.pitchAlign_));
     }
     refuse(why, asked + ": served are every level from 0 in the texture's own type, one level (or one slice of a one-level array or cube) as 2D, "
                         "and a run of a one-level array's or cube's slices as a 2D array, or six as a cube");
@@ -877,6 +913,11 @@ bool makeSampler(const SamplerDesc& d, Sampler* out, std::string* why) {
     f.bcolor = toColour ? d.borderColor : 0;
     TexSamp s = texSamp(f);
     for (uint32_t i = 0; i < kTexSampDwords; i++) out->words[i] = s.dword[i];
+    {
+        std::lock_guard<std::mutex> g(gIdLock);
+        out->id = gNextId++;
+        gSamplers[out->id] = *out;
+    }
     return true;
 }
 

@@ -205,6 +205,10 @@ public:
     static std::shared_ptr<Texture> view(const std::shared_ptr<Texture>& parent, PixelFormat format, TextureType type, uint32_t baseLevel, uint32_t levels,
                                          uint32_t baseSlice, uint32_t slices, std::string* why);
     uint32_t surface() const { return surface_; }   // the IOSurface's ID, 0 for a texture of its own memory
+    // what an argument buffer encodes for this texture (gpuResourceID), never 0, and the texture back from it while it
+    // lives (nullptr after, or for an id no texture had)
+    uint64_t resourceId() const { return id_; }
+    static std::shared_ptr<Texture> byResourceId(uint64_t id);
 
     const TextureDesc& desc() const { return desc_; }
     uint32_t width() const { return desc_.width; }
@@ -279,6 +283,8 @@ private:
     uint64_t offset_;        // where the pixels start in the buffer (an IOSurface's offset; 0 for a texture of its own)
     uint32_t pitchAlign_;    // TEX_CONST_2.PITCHALIGN; ~0u: log2(cpp), the layout's own (texturePitch)
     uint32_t surface_;
+    uint64_t id_ = 0;
+    static std::shared_ptr<Texture> adopt(Texture* t);   // every Texture is made through this: its id, and the registry
     SurfacePlane chroma_{0, 0};   // a two-plane format's second plane, in the buffer
 };
 
@@ -308,7 +314,11 @@ struct SamplerDesc {
 // life of its own on the GPU and freeing one needs no in-flight case.
 struct Sampler {
     uint32_t words[4] = {};
+    uint64_t id = 0;   // makeSampler's: what an argument buffer encodes for it (gpuResourceID), never 0
 };
+// the sampler makeSampler made with ID, as it was made (a copy kept for the process: samplers are 24 bytes and few);
+// nullptr for an id makeSampler never gave
+const Sampler* samplerById(uint64_t id);
 
 // Metal's descriptor as the a6xx sampler words, as Gallium's fd6_sampler_state_create encodes PIPE's (fd6_texture.cc:250-306):
 // NotMipmapped sets MIPFILTER_LINEAR_FAR as Gallium does for PIPE_TEX_MIPFILTER_NONE; ClampToZero and ClampToBorderColor

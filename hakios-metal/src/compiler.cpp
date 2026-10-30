@@ -709,6 +709,10 @@ bool fillKernel(Translation& t, const KernelHome& out, uint32_t highestSampler, 
         res.typeName = r.type_name ? r.type_name : "";
         res.nullTexture = r.null_texture;
         res.inlineSampler = r.inline_sampler;
+        if (r.argbuf_set != ~0u) {
+            res.argbufSet = r.argbuf_set;
+            res.argbufOffset = r.argbuf_offset;
+        }
         // the shape the instructions address the index with, from the walk; a declared texture no instruction touches
         // keeps its zeros (kTexDimNone), which the dispatch then does not check a binding against
         if ((kind == Resource::kTexture || kind == Resource::kImage) && r.index < kMaxTextureSlots) {
@@ -1197,5 +1201,76 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
 }
 
 #endif
+
+bool bindArgumentBuffers(const std::vector<Resource>& resources, Bindings* b, std::vector<std::shared_ptr<const void>>* kept, std::string* why) {
+    // the sets as the caller bound them: a member's allocated index may be a set's own Metal index (the front end
+    // allocates above the direct arguments, and a set is not one), so a member bound there must not change where the
+    // next member's set is read from
+    const std::vector<Binding> sets = b->buffers;
+    for (const Resource& r : resources) {
+        if (r.argbufSet == ~0u) continue;
+        // a member names nothing until its word does: the slot is emptied first, so that a set bound at the same index
+        // is not what a member left unset reads
+        switch (r.kind) {
+        case Resource::kConstantBuffer:
+        case Resource::kDeviceBuffer:
+            if (r.index < b->buffers.size()) b->buffers[r.index] = Binding{};
+            break;
+        case Resource::kTexture:
+        case Resource::kImage:
+            if (r.index < b->textures.size()) b->textures[r.index] = nullptr;
+            break;
+        case Resource::kSampler:
+            if (r.index < b->samplers.size()) b->samplers[r.index] = nullptr;
+            break;
+        default:
+            break;
+        }
+        if (r.argbufSet >= sets.size() || sets[r.argbufSet].buffer == nullptr) {
+            *why = "argument buffer " + std::to_string(r.argbufSet) + " (" + r.typeName + "'s set) is not bound";
+            return false;
+        }
+        const Binding& set = sets[r.argbufSet];
+        if (set.offset + r.argbufOffset + 8 > set.buffer->length() || set.buffer->contents() == nullptr) {
+            *why = "argument buffer " + std::to_string(r.argbufSet) + ": its member at byte " + std::to_string(r.argbufOffset) + " lies past the " +
+                   std::to_string(set.buffer->length() - set.offset) + " bytes bound";
+            return false;
+        }
+        uint64_t word = 0;
+        memcpy(&word, static_cast<const uint8_t*>(set.buffer->contents()) + set.offset + r.argbufOffset, 8);
+        if (word == 0) continue;
+        switch (r.kind) {
+        case Resource::kConstantBuffer:
+        case Resource::kDeviceBuffer: {
+            uint64_t offset = 0;
+            std::shared_ptr<Buffer> buffer = bufferAt(word, &offset);
+            if (buffer == nullptr) continue;
+            if (b->buffers.size() <= r.index) b->buffers.resize(r.index + 1);
+            b->buffers[r.index] = Binding{buffer.get(), offset};
+            kept->push_back(buffer);
+            break;
+        }
+        case Resource::kTexture:
+        case Resource::kImage: {
+            std::shared_ptr<Texture> t = Texture::byResourceId(word);
+            if (t == nullptr) continue;
+            if (b->textures.size() <= r.index) b->textures.resize(r.index + 1, nullptr);
+            b->textures[r.index] = t.get();
+            kept->push_back(t);
+            break;
+        }
+        case Resource::kSampler: {
+            const Sampler* s = samplerById(word);
+            if (s == nullptr) continue;
+            if (b->samplers.size() <= r.index) b->samplers.resize(r.index + 1, nullptr);
+            b->samplers[r.index] = s;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return true;
+}
 
 }  // namespace hakios::metal

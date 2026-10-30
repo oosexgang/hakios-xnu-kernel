@@ -437,6 +437,8 @@ int hakios_metal_texture_plan_bytes(unsigned type, unsigned pixelFormat, unsigne
 uint64_t hakios_metal_texture_allocated_bytes(hakios_metal_texture* t) { return t->texture->buffer()->length(); }
 
 unsigned hakios_metal_texture_iosurface(hakios_metal_texture* t) { return t->texture->surface(); }
+uint64_t hakios_metal_texture_resource_id(hakios_metal_texture* t) { return t->texture->resourceId(); }
+uint64_t hakios_metal_sampler_resource_id(hakios_metal_sampler* s) { return s->sampler.id; }
 
 void hakios_metal_texture_free(hakios_metal_texture* t) { delete t; }
 void* hakios_metal_texture_contents(hakios_metal_texture* t) { return t->texture->contents(); }
@@ -641,6 +643,15 @@ int dispatchWith(hakios_metal_cb* cb, hakios_metal_kernel* k, hakios_metal_buffe
     }
     // the encoder's threadgroup memory goes past the kernel's static arrays, where the front end put the argument
     if (k->kernel->hasThreadgroupArg) b.sharedBytes = k->kernel->threadgroupArgBase + cb->threadgroupLength;
+    // the members of its argument buffers, from what the sets hold, at the indices the front end gave them
+    std::vector<std::shared_ptr<const void>> members;
+    std::string whyMembers;
+    if (!bindArgumentBuffers(k->kernel->resources, &b, &members, &whyMembers)) {
+        failed(whyMembers);
+        cb->cb->refuse(whyMembers);
+        return -1;
+    }
+    for (auto& m : members) cb->cb->keepAlive(std::move(m));
     if (!dispatch(b)) {
         failed(cb->cb->error());
         return -1;
@@ -923,6 +934,16 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
         if (fsb.samplers.size() <= index) fsb.samplers.resize(index + 1, nullptr);
         fsb.samplers[index] = &sampler;
     }
+    // both stages' argument-buffer members, from what the sets hold, at the indices the front end gave them
+    std::vector<std::shared_ptr<const void>> members;
+    std::string whyMembers;
+    if (!bindArgumentBuffers(p->program->vs->resources, &vsb, &members, &whyMembers) ||
+        !bindArgumentBuffers(p->program->fs->resources, &fsb, &members, &whyMembers)) {
+        failed(whyMembers);
+        cb->cb->refuse(whyMembers);
+        return -1;
+    }
+    for (auto& m : members) cb->cb->keepAlive(std::move(m));
     const RenderPass rp = passOf(pass);
     // what MTLRenderCommandEncoder's default viewport covers: the first attachment the pass has, colour before depth
     // (a depth-only pass's is the depth texture)

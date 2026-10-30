@@ -43,6 +43,7 @@
 #include "../tests/fixtures/tg_arg_air.hpp"
 #include "../tests/fixtures/ptr_phi_air.hpp"
 #include "../tests/fixtures/tex_sample_wide_air.hpp"
+#include "../tests/fixtures/argbuf_res_bc.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
@@ -851,6 +852,62 @@ int main(int argc, char** argv) {
             report(cb->status() == CommandBuffer::kCompleted && chosen == 256 && summed == 256 && tail == 64,
                    "pointer phis into one buffer: " + std::to_string(chosen) + " of 256 branch-chosen words, " + std::to_string(summed) +
                        " of 256 loop sums 12g + 46, " + std::to_string(tail) + " of 64 past the grid canary" + status(*cb, gpu));
+        }
+    }
+
+    // 6w. argument buffers: argbuf_res, compiled here, takes its output, a sampler and two textures as the members of one
+    // set at [[buffer(0)]]; the set holds the output's address and the others' resource ids, and bindArgumentBuffers
+    // binds them at the indices the front end allocated. t0 is all 7.0, t1 all 1000.0: every thread writes 7 << 16 | 1000;
+    // with the two texture words swapped, 1000 << 16 | 7 -- which a member bound at the wrong index, or not at all, is not
+    if (hasCompiler()) {
+        std::string awhy;
+        auto ck = compileAir(kernels::argbuf_res_bc, kernels::argbuf_res_bc_size, &awhy);
+        auto set = newBuffer(gpu, 64, &awhy);
+        auto out = newBuffer(gpu, 4096, &awhy);
+        TextureDesc td;
+        td.format = PixelFormat::kR32Float;
+        td.width = td.height = 4;
+        td.usage = kTextureUsageRead;
+        auto t0 = Texture::make(gpu, td, &awhy), t1 = Texture::make(gpu, td, &awhy);
+        Sampler smp;
+        if (ck == nullptr || set == nullptr || out == nullptr || t0 == nullptr || t1 == nullptr || !makeSampler(SamplerDesc{}, &smp, &awhy)) {
+            report(false, "argument buffers: " + awhy);
+        } else {
+            float sevens[16], thousands[16];
+            for (int i = 0; i < 16; i++) { sevens[i] = 7.0f; thousands[i] = 1000.0f; }
+            t0->replace(0, 0, 4, 4, sevens, 16, &awhy);
+            t1->replace(0, 0, 4, 4, thousands, 16, &awhy);
+            for (const bool swap : {false, true}) {
+                uint64_t* w = static_cast<uint64_t*>(set->contents());
+                w[0] = out->gpuAddress();
+                w[1] = smp.id;
+                w[2] = (swap ? t1 : t0)->resourceId();
+                w[3] = (swap ? t0 : t1)->resourceId();
+                uint32_t* o = static_cast<uint32_t*>(out->contents());
+                for (int i = 0; i < 128; i++) o[i] = 0xa5a5a5a5u;
+                Bindings b;
+                b.buffers = {Binding{set.get(), 0}};
+                std::vector<std::shared_ptr<const void>> kept;
+                const bool bound = bindArgumentBuffers(ck->resources, &b, &kept, &awhy);
+                for (const auto& [index, sampler] : ck->inlineSamplers) {
+                    if (b.samplers.size() <= index) b.samplers.resize(index + 1, nullptr);
+                    b.samplers[index] = &sampler;
+                }
+                const uint32_t groups[3] = {1, 1, 1}, local[3] = {64, 1, 1};
+                auto cb = queue->commandBuffer();
+                if (bound && cb->dispatch(ck->kernel, groups, local, b)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                const uint32_t want = swap ? (1000u << 16 | 7u) : (7u << 16 | 1000u);
+                uint32_t right = 0, tail = 0;
+                for (int i = 0; i < 64; i++) right += o[i] == want;
+                for (int i = 64; i < 128; i++) tail += o[i] == 0xa5a5a5a5u;
+                report(bound && cb->status() == CommandBuffer::kCompleted && right == 64 && tail == 64,
+                       std::string(swap ? "argument buffer with its two texture words swapped: " : "argument buffer of an output, a sampler and two textures: ") +
+                           std::to_string(right) + " of 64 words " + hex8(want) + ", " + std::to_string(tail) + " of 64 past them canary" +
+                           (bound ? status(*cb, gpu) : ": " + awhy) + (cb->error().empty() ? "" : ": " + cb->error()));
+            }
         }
     }
 

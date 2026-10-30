@@ -19,6 +19,37 @@ constexpr uint32_t kFillHead = 64;                 // words written by CP_MEM_WR
 constexpr uint32_t kMemcpyMax = 64 * 1024;
 }  // namespace
 
+namespace {
+std::mutex gAddressLock;
+std::map<uint64_t, std::weak_ptr<Buffer>> gByAddress;   // by gpuAddress, every Buffer newBuffer made and still alive
+
+std::shared_ptr<Buffer> addressed(Buffer* raw) {
+    const uint64_t at = raw->gpuAddress();
+    std::shared_ptr<Buffer> b(raw, [at](Buffer* x) {
+        {
+            std::lock_guard<std::mutex> g(gAddressLock);
+            auto it = gByAddress.find(at);
+            if (it != gByAddress.end() && it->second.expired()) gByAddress.erase(it);
+        }
+        delete x;
+    });
+    std::lock_guard<std::mutex> g(gAddressLock);
+    gByAddress[at] = b;
+    return b;
+}
+}  // namespace
+
+std::shared_ptr<Buffer> bufferAt(uint64_t address, uint64_t* offset) {
+    std::lock_guard<std::mutex> g(gAddressLock);
+    auto it = gByAddress.upper_bound(address);
+    if (it == gByAddress.begin()) return nullptr;
+    --it;
+    std::shared_ptr<Buffer> b = it->second.lock();
+    if (b == nullptr || address - it->first >= b->length()) return nullptr;
+    *offset = address - it->first;
+    return b;
+}
+
 std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why) {
     int error = 0;
     std::unique_ptr<Bo> bo = gpu.newBo(length, kBoWriteCombined, &error);
@@ -26,7 +57,7 @@ std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why) {
         *why = "the driver gave no buffer of " + std::to_string(length) + " bytes: " + strerror(error);
         return nullptr;
     }
-    return std::make_shared<Buffer>(std::move(bo), length);
+    return addressed(new Buffer(std::move(bo), length));
 }
 
 namespace {
