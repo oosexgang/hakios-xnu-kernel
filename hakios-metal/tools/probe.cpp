@@ -2841,6 +2841,26 @@ int main(int argc, char** argv) {
                                    describeTexture(b, kind == 0 ? "ff 00 40 bf" : "ff 00 40 bf under T1, the clear colour 40 80 bf ff elsewhere") + status(*cb, gpu));
                     if (!completed(*cb)) break;
                 }
+                // tri_mrt into a pass of one attachment: [[color(1)]] has nowhere to go and is written nowhere (Metal's
+                // Invalid slot), while target 0 is drawn as in the pair's draw; target 1, not in this pass, keeps its canary
+                {
+                    fillBo(*t, canary);
+                    fillBo(*second, canary);
+                    RenderPass rp;
+                    rp.color0 = t.get();
+                    auto cb = queue->commandBuffer();
+                    const bool drew = cb->draw(mrtProg, rp, drawOf(0, 6), Bindings{}, Bindings{});
+                    if (drew) {
+                        cb->commit();
+                        cb->waitUntilCompleted();
+                    }
+                    PixelRule all{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return flatColour; }};
+                    PixelRule untouched{[](uint32_t, uint32_t) { return false; }, [=](uint32_t, uint32_t, uint32_t) { return 0u; }};
+                    TexReadback a = compareTexture(*t, all, canary), b = compareTexture(*second, untouched, canary);
+                    report(drew && completed(*cb) && a.right == 4096 && b.uncoveredCanary == 4096,
+                           "mrt, the pair into a pass of one attachment ([[color(1)]] written nowhere): target 0 " + describeTexture(a, "20 40 80 ff") +
+                               "; the other texture " + std::to_string(b.uncoveredCanary) + " of 4096 canary" + (drew ? status(*cb, gpu) : ": " + cb->error()));
+                }
                 // [[color(1)]] alone (tri_mrt1_fs: CoreAnimation's fc_dest_index 1): slot 0 writes nothing, so target 0 keeps
                 // every canary while target 1 gets the colour everywhere
                 {

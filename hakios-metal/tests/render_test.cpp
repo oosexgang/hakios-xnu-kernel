@@ -400,11 +400,20 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         Program p = handProgram();
         p.fs.numColorOutputs = 2;
         p.fs.colorRegid[1] = regid(1, 0);
-        refused(r, p, pass, d, "hand_fs writes [[color(1)]] and the pass has no colour attachment 1");
-        p.fs.numColorOutputs = 3;   // [[color(2)]] with nothing at 1: the gap is served, the missing attachment is not
+        // [[color(1)]] with no attachment 1, and [[color(2)]] with nothing at 1 or 2: drawn, the output written nowhere
+        // (Metal discards an output whose pipeline slot has no format); a_colour_output_with_no_attachment_is_written_nowhere
+        // has the registers
+        {
+            Encoded e(r, p, pass, d);
+            CHECK(e.ok);
+        }
+        p.fs.numColorOutputs = 3;
         p.fs.colorRegid[1] = a6xx::kRegidNone;
         p.fs.colorRegid[2] = regid(1, 0);
-        refused(r, p, pass, d, "hand_fs writes [[color(2)]] and the pass has no colour attachment 2");
+        {
+            Encoded e(r, p, pass, d);
+            CHECK(e.ok);
+        }
         p = handProgram();
         p.fs.numColorOutputs = 9;
         refused(r, p, pass, d, "hand_fs writes 9 colour output(s): 8 at most are served");
@@ -3687,12 +3696,21 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
     CHECK_EQ(r.fake->stats().lastDraw.mrtCount, 2u);
     CHECK_EQ(r.fake->stats().lastDraw.mrtBases[0], t0->gpuAddress());
     CHECK_EQ(r.fake->stats().lastDraw.mrtBases[1], t1->gpuAddress());
-    // one target named by the stream and none by the pass: what the FS writes needs a place
+    // one attachment and a [[color(1)]] written: the output with no attachment is written nowhere -- no register for
+    // slot 1, RB_MRT_CONTROL[1] 0, its components out of SP_FS_RENDER_COMPONENTS -- and attachment 0 is drawn as before
     RenderPass one;
     one.color0 = t0.get();
     Encoded noSecond(r, mrt, one, wholeDraw(6));
-    CHECK(!noSecond.ok);
-    expectRefusal(noSecond.error, "tri_mrt_fs_air writes [[color(1)]] and the pass has no colour attachment 1");
+    CHECK(noSecond.ok);
+    if (!noSecond.ok) std::printf("       %s\n", noSecond.error.c_str());
+    CHECK_EQ(noSecond.reg(regRbMrt(REG_A6XX_RB_MRT_CONTROL, 1)), 0u);
+    CHECK_EQ(noSecond.reg(REG_A6XX_SP_FS_RENDER_COMPONENTS) & 0xf0u, 0u);
+    CHECK_EQ(noSecond.reg(REG_A6XX_SP_FS_RENDER_COMPONENTS) & 0xfu, 0xfu);
+    {
+        auto cb1 = drawOnce(r, mrt, one, wholeDraw(6));
+        CHECK(cb1->status() == CommandBuffer::kCompleted);
+        if (cb1->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb1->error().c_str(), r.fake->stats().lastFault.c_str());
+    }
     RenderPass mixed = pass;
     mixed.more[0].texture = small.get();
     // attachments of different sizes: the window is the smaller (Metal's render target size), a viewport past it refused
@@ -3896,12 +3914,12 @@ TEST(a_draw_that_writes_only_color_1_leaves_attachment_0_unwritten) {
     CHECK(cb->status() == CommandBuffer::kCompleted);
     if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
     CHECK_EQ(r.fake->stats().lastDraw.mrtBases[1], t1->gpuAddress());
-    // no attachment 1: what the FS writes needs one
+    // no attachment 1: the one output it writes is written nowhere, and the pass draws nothing into attachment 0
     RenderPass one;
     one.color0 = t0.get();
     Encoded none(r, p, one, wholeDraw(6));
-    CHECK(!none.ok);
-    expectRefusal(none.error, "tri_mrt1_fs_air writes [[color(1)]] and the pass has no colour attachment 1");
+    CHECK(none.ok);
+    CHECK_EQ(none.reg(REG_A6XX_SP_FS_RENDER_COMPONENTS), 0u);
 }
 
 // A stencil attachment: the S8 plane of a Depth32Float_Stencil8 texture after its depth plane, in RB_STENCIL_INFO's

@@ -1108,7 +1108,14 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
                 const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
                 const Options& o, bool whole) {
     const Stage& vs = program.vs;
-    const Stage& fs = program.fs;
+    // A [[color(n)]] the pass has no attachment n for is written nowhere: Metal leaves that pipeline slot's format Invalid
+    // and discards the output (CoreAnimation's fixed_frag_lph_cpf writes three into passes of one). The stage is drawn
+    // as if it did not write it -- no register for the slot, RB_MRT_CONTROL 0 -- which is the slot nothing writes.
+    Stage fsDrawn = program.fs;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if (fsDrawn.colorRegid[i] != kRegidNone && attachmentOf(pass, i).texture == nullptr && i != 0) fsDrawn.colorRegid[i] = kRegidNone;
+    }
+    const Stage& fs = fsDrawn;
     // --- the two stages ---
     if (vs.kind != kStageVertex) {
         return refuse(why, std::string(stageName(vs)) + " is not a vertex stage");
@@ -1678,10 +1685,15 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // copies, RB_FS_OUTPUT_CNTL0 0 (nothing but colour is written)
     // (with MRT n and SP_FS_OUTPUT_REG[0 .. n-1] for an FS that writes n targets: the registers run on from CNTL1)
     if (o.fsOutputs) {
-        std::vector<uint32_t> out = {link.mrtComponents, spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), A6XX_SP_FS_OUTPUT_CNTL1_MRT(numRt)};
+        // (the components of a slot drawn as unwritten -- no attachment for it in this pass -- taken out of the link's)
+        uint32_t components = link.mrtComponents;
+        for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+            if (fs.colorRegid[i] == kRegidNone) components &= ~(0xfu << (4 * i));
+        }
+        std::vector<uint32_t> out = {components, spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), A6XX_SP_FS_OUTPUT_CNTL1_MRT(numRt)};
         for (uint32_t i = 0; i < numRt; i++) out.push_back(spFsOutputReg(fs.colorRegid[i], fs.colorHalf[i] != 0));
         stream.registers(REG_A6XX_SP_FS_RENDER_COMPONENTS, out.data(), uint32_t(out.size()));
-        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), link.mrtComponents});
+        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), components});
     }
     // 15. the rasterizer (tu6_emit_rast, tu_pipeline.cc:3120-3218; fd6_rasterizer.cc:22-140): GRAS_CL_CNTL with Metal's
     // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL cull none,
