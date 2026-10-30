@@ -12,6 +12,8 @@
 #include "fixtures/end_only.hpp"
 #include "fixtures/fill_id.hpp"
 #include "fixtures/fill_id_air.hpp"
+#include "fixtures/chain160_air.hpp"
+#include "fixtures/long_chain_air.hpp"
 #include "test.hpp"
 
 using namespace hakios::metal;
@@ -963,4 +965,60 @@ TEST(a_dispatch_loads_the_ubo_descriptors_an_ldc_reads_through) {
     }
     CHECK_EQ(raw.submit(words), ETIMEDOUT);
     CHECK(has(r.fake->stats().lastFault, "UBO descriptor 1 of the compute stage: 32767 vec4 at"));
+}
+
+// A kernel longer than the instruction cache gets Mesa's workaround for the A6xx fetch that bounds-checks against the
+// other context's SP_FS_INSTRLEN (fd6_compute.cc, tu_dispatch): SP_FS_INSTRLEN = its own length and a LABEL event before
+// CP_EXEC_CS, another LABEL after it. One that fits gets none of it, nor does one preloaded whole. On the phone, without
+// it, a 134-unit kernel wrote every word wrong and a 492-unit one hung (probe 5d2); with it both are exact.
+TEST(a_kernel_longer_than_the_instruction_cache_gets_the_instrlen_workaround) {
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    auto c = buffer(r, 64, 0);
+    const uint32_t local[3] = {64, 1, 1};
+    const Bindings b{{Binding{out.get(), 0}, Binding{c.get(), 0}}, {}, {}, {}};
+    auto labels = [](const Encoded& e, size_t* before, size_t* after) {
+        const auto& w = e.stream.words();
+        const size_t exec = e.find(a6xx::CP_EXEC_CS);
+        *before = *after = 0;
+        for (size_t i = 0; i < w.size();) {
+            pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kCommand && h.opcode == a6xx::CP_EVENT_WRITE && h.count >= 1 && (w[i + 1] & 0x7f) == a6xx::LABEL) {
+                (i < exec ? *before : *after) += 1;
+            }
+            i += 1 + h.count;
+        }
+    };
+    {
+        Encoded e(r, kernels::long_chain_air, kGroups16, local, b);
+        CHECK(e.ok);
+        size_t fs = e.findReg(a6xx::REG_A6XX_SP_FS_INSTRLEN);
+        CHECK(fs != size_t(-1));
+        if (fs != size_t(-1)) CHECK_EQ(e.stream.words()[fs], kernels::long_chain_air.instrlen);
+        CHECK(fs < e.find(a6xx::CP_EXEC_CS));
+        size_t before = 0, after = 0;
+        labels(e, &before, &after);
+        CHECK_EQ(before, size_t(1));
+        CHECK_EQ(after, size_t(1));
+        // and it still runs on the fake, its preload capped at 127
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->dispatch(kernels::long_chain_air, kGroups16, local, {Binding{out.get(), 0}, Binding{c.get(), 0}}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+    }
+    {
+        Encoded e(r, kernels::chain160_air, kGroups16, local, b);
+        CHECK(e.ok);
+        CHECK(e.findReg(a6xx::REG_A6XX_SP_FS_INSTRLEN) == size_t(-1));
+        size_t before = 0, after = 0;
+        labels(e, &before, &after);
+        CHECK_EQ(before + after, size_t(0));
+        // the same kernel with its preload cut below its length is fetched past the preload, and gets it
+        compute::Options cut;
+        cut.preloadCap = 64;
+        Encoded f(r, kernels::chain160_air, kGroups16, local, b, cut);
+        CHECK(f.ok);
+        CHECK(f.findReg(a6xx::REG_A6XX_SP_FS_INSTRLEN) != size_t(-1));
+    }
 }

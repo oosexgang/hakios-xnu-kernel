@@ -133,10 +133,6 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.instrlen == 0 || uint64_t(k.numWords) * 4 < uint64_t(k.instrlen) * 128) {
         return refuse(why, name + ": " + n(k.numWords) + " words do not hold its instrlen of " + n(k.instrlen) + " units");
     }
-    if (k.instrlen > kInstrCacheSize) {
-        return refuse(why, name + " is " + n(k.instrlen) + " units long: more than the " + n(kInstrCacheSize) +
-                               " the instruction cache preloads, and the longer-program path is not written here");
-    }
     if (k.numSamp > 31) {
         return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
     }

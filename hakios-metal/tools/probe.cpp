@@ -27,6 +27,9 @@
 #include "../tests/fixtures/end_only.hpp"
 #include "../tests/fixtures/fill_id.hpp"
 #include "../tests/fixtures/fill_id_air.hpp"
+#include "../tests/fixtures/chain160_air.hpp"
+#include "../tests/fixtures/chain220_air.hpp"
+#include "../tests/fixtures/long_chain_air.hpp"
 #include "../tests/fixtures/fill_id_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
@@ -49,6 +52,7 @@
 #include "../tests/fixtures/tri_fb_fs_air.hpp"
 #include "../tests/fixtures/tri_base_vs_air.hpp"
 #include "../tests/fixtures/tri_pvt_fs_air.hpp"
+#include "../tests/fixtures/chain_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
 #include "../tests/fixtures/tri_tex39_fs_air.hpp"
@@ -94,6 +98,18 @@ static uint32_t canaryFor(uint32_t words, uint32_t c) {
 }
 
 // What a buffer holds after a dispatch, against the kernel's answer for WRITTEN words and the canary beyond them
+// tools/kernels/gen-long-chain.py's chain on the processor: STEPS steps of v = rotl((v ^ X) * M, R) from gid ^ c
+uint32_t long_chain_reference(uint32_t gid, uint32_t c, unsigned steps) {
+    uint32_t v = gid ^ c;
+    for (unsigned i = 0; i < steps; i++) {
+        const uint32_t x = 0x9E3779B1u * (i + 1);
+        const uint32_t m = x | 1, r = 5 + i % 23;
+        const uint32_t b = (v ^ (x ^ 0x5BD1E995u)) * m;
+        v = (b << r) | (b >> (32 - r));
+    }
+    return v;
+}
+
 struct Readback {
     uint32_t right = 0, canary = 0, wrong = 0;   // of the WRITTEN words
     uint32_t beyondCanary = 0, beyondOther = 0;  // of the words after them
@@ -473,6 +489,61 @@ int main(int argc, char** argv) {
                 cb->waitUntilCompleted();
                 return cb;
             };
+            // 5a00. chain160_air (96 units) with its preload cut to 64 units: the control is the same kernel fully
+            // preloaded (5d2). Right here means the GPU fetches past a preload as it should and only the 127-unit edge
+            // is wrong; wrong here means no fetch past a preload works as this driver sets it up.
+            {
+                const uint32_t local[3] = {64, 1, 1};
+                const uint32_t g3[3] = {16, 1, 1};
+                static_cast<uint32_t*>(cbuf->contents())[0] = c;
+                prefill();
+                struct Cut {
+                    const Kernel* k;
+                    unsigned steps;
+                    uint32_t preload;
+                    const char* name;
+                };
+                // and the longer two with the same 64: right there too says the trouble is the 127-unit preload itself
+                const Cut cuts[] = {{&kernels::chain160_air, 160, 64, "chain160_air"},
+                                    {&kernels::chain220_air, 220, 64, "chain220_air"},
+                                    {&kernels::chain220_air, 220, 120, "chain220_air"},
+                                    {&kernels::long_chain_air, 700, 64, "long_chain_air"}};
+                for (const Cut& x : cuts) {
+                    compute::Options cut = chosen;
+                    cut.preloadCap = x.preload;
+                    prefill();
+                    auto cb = queue->commandBuffer();
+                    cb->dispatch(*x.k, g3, local, {Binding{out.get(), 0}, Binding{cbuf.get(), 0}}, nullptr, cut);
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                    const uint32_t* got = static_cast<const uint32_t*>(out->contents());
+                    uint32_t right = 0;
+                    for (uint32_t g = 0; g < words; g++) right += got[g] == long_chain_reference(g, c, x.steps);
+                    char text[96];
+                    snprintf(text, sizeof text, " (word 0: got %08x, want %08x)", got[0], long_chain_reference(0, c, x.steps));
+                    report(cb->status() == CommandBuffer::kCompleted && right == words,
+                           std::string("dispatch of ") + x.name + " (" + std::to_string(x.k->instrlen) + " units) with " +
+                               std::to_string(x.preload) + " preloaded: " + std::to_string(right) + " of " + std::to_string(words) +
+                               " words the chain" + text + status(*cb, gpu));
+                }
+            }
+            // 5a0. chain220_air (134 units, 127 preloaded) before any other shader has run in this boot: no earlier program
+            // can have left lines in the SP's instruction cache. Compared with its run in 5d2, after a dozen other
+            // kernels, it tells a fetch past the preload that reads stale cache from one that reads the wrong memory.
+            {
+                const uint32_t local[3] = {64, 1, 1};
+                static_cast<uint32_t*>(cbuf->contents())[0] = c;
+                prefill();
+                auto cb = run(kernels::chain220_air, 16, local, {Binding{out.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                const uint32_t* got = static_cast<const uint32_t*>(out->contents());
+                uint32_t right = 0;
+                for (uint32_t g = 0; g < words; g++) right += got[g] == long_chain_reference(g, c, 220);
+                char text[96];
+                snprintf(text, sizeof text, " (word 0: got %08x, want %08x)", got[0], long_chain_reference(0, c, 220));
+                report(cb->status() == CommandBuffer::kCompleted && right == words,
+                       "dispatch of chain220_air as the boot's first shader: " + std::to_string(right) + " of " + std::to_string(words) +
+                           " words the 220-step chain" + text + status(*cb, gpu));
+            }
             // 5a. a kernel of one `end`: the smallest CP_EXEC_CS there is. The fence must pass and nothing may be written.
             prefill();
             {
@@ -534,6 +605,51 @@ int main(int argc, char** argv) {
                 Readback r2 = readBack(*out, 512, c, canary);
                 report(cb2->status() == CommandBuffer::kCompleted && r2.right == 512 && r2.beyondCanary == 512,
                        "control, fill_id_air over 8 groups: " + describe(r2, 512, 512) + status(*cb2, gpu));
+            }
+            // 5d2. kernels longer than the instruction cache, of which CP_LOAD_STATE6 preloads at most 127 units and the
+            // GPU is to fetch the rest from SP_CS_OBJ_START as it runs. The same chain at three lengths: chain160 fits the
+            // preload (the control, first), chain220 just passes it, long_chain is four times it. Every word must be the
+            // processor's chain of its own gid; the twin, the chain one step short, must disagree almost everywhere,
+            // which says the last steps ran. A length that hangs is reported, and the kernel's reset lets the rest run.
+            {
+                struct ChainCase {
+                    const Kernel* k;
+                    unsigned steps;
+                    const char* name;
+                };
+                const ChainCase chains[] = {
+                    {&kernels::chain160_air, 160, "chain160_air"},
+                    {&kernels::chain220_air, 220, "chain220_air"},
+                    {&kernels::long_chain_air, 700, "long_chain_air"},
+                };
+                const uint32_t local[3] = {64, 1, 1};
+                for (const ChainCase& ch : chains) {
+                    static_cast<uint32_t*>(cbuf->contents())[0] = c;
+                    prefill();
+                    auto cb = run(*ch.k, 16, local, {Binding{out.get(), 0}, Binding{cbuf.get(), 0}}, nullptr);
+                    const uint32_t* got = static_cast<const uint32_t*>(out->contents());
+                    uint32_t right = 0, shortTwin = 0, firstWrong = words;
+                    for (uint32_t g = 0; g < words; g++) {
+                        if (got[g] == long_chain_reference(g, c, ch.steps)) {
+                            right++;
+                        } else if (firstWrong == words) {
+                            firstWrong = g;
+                        }
+                        shortTwin += got[g] == long_chain_reference(g, c, ch.steps - 1);
+                    }
+                    std::string where;
+                    if (firstWrong != words) {
+                        char text[96];
+                        snprintf(text, sizeof text, " (first wrong at %u: got %08x, want %08x)", firstWrong, got[firstWrong],
+                                 long_chain_reference(firstWrong, c, ch.steps));
+                        where = text;
+                    }
+                    report(cb->status() == CommandBuffer::kCompleted && right == words && shortTwin < words / 16,
+                           std::string("dispatch of ") + ch.name + " (" + std::to_string(ch.k->instrlen) + " units, " +
+                               std::to_string(std::min(ch.k->instrlen, a6xx::kInstrCacheSize)) + " preloaded), 16 groups of 64: " +
+                               std::to_string(right) + " of " + std::to_string(words) + " words the " + std::to_string(ch.steps) +
+                               "-step chain, " + std::to_string(shortTwin) + " the one a step short" + where + status(*cb, gpu));
+                }
             }
             // 5e. how long a dispatch takes as the grid grows (fill_id_air: its descriptor is the buffer's size). Sizes that
             // complete, never a search by hanging: the number for a size that did not complete is the error, not a time.
@@ -3138,6 +3254,41 @@ int main(int argc, char** argv) {
             report(ok && completed(*cb) && right == W * H, "private memory, a[128] a fiber read at the pixel's x: " + std::to_string(right) +
                                                               " of 4096 pixels red 3i + j + 1" + (seen ? std::string(firstHex) : std::string()) +
                                                               (ok ? status(*cb, gpu) : ": " + cb->error()));
+        }
+        // 9z2. a fragment program longer than the instruction cache: chain_fs is 447 units, of which 127 are preloaded and
+        // the rest fetched as it runs, drawn after the dozens of short fragment programs above, so the other register
+        // context holds a short SP_FS_INSTRLEN (the context the A6xx fetch bug reads; compute needs Mesa's workaround for
+        // it). Pixel (i, j) must be the 700-step chain of j * 64 + i from 0x1234, its low three bytes as R G B; the twin,
+        // the chain a step short, must match almost nowhere.
+        {
+            const Program chainP{kernels::tri_flat_vs_air, kernels::chain_fs_air, Linkage{}, "chain_fs"};
+            fillBo(*t, canary);
+            RenderPass rp;
+            rp.color0 = t.get();
+            auto cb = queue->commandBuffer();
+            bool ok = cb->draw(chainP, rp, drawOf(0, 6), Bindings{}, Bindings{});
+            if (ok) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            std::vector<uint8_t> bo = textureBo(*t);
+            uint32_t right = 0, twin = 0, firstAt = 0, first = 0, firstWant = 0;
+            bool seen = false;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    uint32_t px;
+                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                    const uint32_t want = 0xff000000u | (long_chain_reference(j * 64 + i, 0x1234, 700) & 0xffffffu);
+                    twin += px == (0xff000000u | (long_chain_reference(j * 64 + i, 0x1234, 699) & 0xffffffu));
+                    if (px == want) right++;
+                    else if (!seen) { seen = true; first = px; firstWant = want; firstAt = j * W + i; }
+                }
+            char firstHex[64];
+            snprintf(firstHex, sizeof(firstHex), ", the first other one (%u, %u) %08x for %08x", firstAt % W, firstAt / W, first, firstWant);
+            report(ok && completed(*cb) && right == W * H && twin < W * H / 16,
+                   "a fragment program of " + std::to_string(kernels::chain_fs_air.k.instrlen) + " units (127 preloaded): " +
+                       std::to_string(right) + " of 4096 pixels the 700-step chain, " + std::to_string(twin) + " the one a step short" +
+                       (seen ? std::string(firstHex) : std::string()) + (ok ? status(*cb, gpu) : ": " + cb->error()));
         }
 #if defined(__APPLE__)
         // 9m. the path to the screen's memory: a real IOSurface (IOSurfaceCreate, 64x64 'BGRA', 256-byte rows -- what

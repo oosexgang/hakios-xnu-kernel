@@ -126,12 +126,6 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     if (k.instrlen == 0 || uint64_t(k.numWords) * 4 < uint64_t(k.instrlen) * 128) {
         return refuse(why, std::string(k.name) + ": " + n(k.numWords) + " words do not hold its instrlen of " + n(k.instrlen) + " units");
     }
-    if (k.instrlen > kInstrCacheSize) {
-        // Gallium follows a longer program with SP_FS_INSTRLEN and a LABEL event (Mesa MR 19023), a hardware bug's workaround
-        // that nothing here has run; until it is measured, the limit is the cache
-        return refuse(why, std::string(k.name) + " is " + n(k.instrlen) + " units long: more than the " + n(kInstrCacheSize) +
-                               " the instruction cache preloads, and the longer-program path is not written here");
-    }
     if (k.constlen > 256) {
         return refuse(why, std::string(k.name) + " wants " + n(k.constlen) + " vec4 of constants: compute has 256 on this GPU");
     }
@@ -416,7 +410,7 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         stream.registers(REG_A6XX_SP_CS_PVT_MEM_PARAM, v, 4);
         reg(stream, REG_A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET, 0);
     }
-    loadIndirect(stream, ST6_SHADER, 0, std::min(k.instrlen, kInstrCacheSize), program);
+    loadIndirect(stream, ST6_SHADER, 0, std::min({k.instrlen, kInstrCacheSize, o.preloadCap != 0 ? o.preloadCap : kInstrCacheSize}), program);
     if (immUnits != 0) {
         loadDirect(stream, ST6_CONSTANTS, k.immediatesOffsetVec4, immUnits, imm.data(), uint32_t(imm.size()));
     }
@@ -462,9 +456,23 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         uint32_t ones[3] = {1, 1, 1};
         stream.registers(REG_A6XX_HLSQ_CS_KERNEL_GROUP_X, ones, 3);
     }
+    // A program longer than the instruction cache is fetched from memory as it runs, and that fetch is bounds-checked
+    // against SP_FS_INSTRLEN of the other register context instead of SP_CS_INSTRLEN (Mesa issue 5892, MR 19023: "affects
+    // all known gens"; Gallium's fd6_compute.cc and turnip's tu_dispatch work around it the same way). Measured here:
+    // with SP_FS_INSTRLEN left as it was, a 134-unit chain finished with every word wrong and a 492-unit one hung. So the
+    // FS length is set to the kernel's and a LABEL event rolls the context before the dispatch, and another after it, so
+    // that the write and CP_EXEC_CS cannot race.
+    const bool instrlenWorkaround = k.instrlen > kInstrCacheSize || (o.preloadCap != 0 && k.instrlen > o.preloadCap);
+    if (instrlenWorkaround) {
+        reg(stream, REG_A6XX_SP_FS_INSTRLEN, k.instrlen);
+        event(stream, LABEL);
+    }
     {
         uint32_t w[4] = {0, groups[0], groups[1], groups[2]};
         stream.packet(CP_EXEC_CS, w, 4);
+    }
+    if (instrlenWorkaround) {
+        event(stream, LABEL);
     }
     stream.waitForIdle();
     if (o.tail) {

@@ -113,6 +113,9 @@ struct Options {
     // colour base registers pointing at the table's zero entry, in the prelude. Gallium writes all three at every batch
     // start (fd6_emit.cc:977-981, 1035-1038); nothing wrote a TP register here before textures.
     bool tpState = true;
+    // A cap below a6xx::kInstrCacheSize (Mesa's instr_cache_size for this chip) on the program units CP_LOAD_STATE6
+    // preloads; 0 is none. For a probe that has the GPU fetch the rest past the preload of a program that would fit.
+    uint32_t preloadCap = 0;
 };
 
 // The whole dispatch into STREAM: KERNEL over GROUPS work groups of LOCAL threads each, BUFFERS bound by index,

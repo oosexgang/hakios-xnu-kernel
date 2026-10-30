@@ -300,7 +300,15 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.fs.k.words = longWords.data();
         p.fs.k.numWords = uint32_t(longWords.size());
         p.fs.k.instrlen = 128;
-        refused(r, p, pass, d, "hand_fs is 128 units long: more than the 127 the instruction cache preloads, and the longer-program path is not written here");
+        // longer than the instruction cache: drawn, SP_FS_INSTRLEN the whole program, the preload capped at 127 units
+        // (the fake faults on a preload of 128, which hangs this GPU, and on one longer than INSTRLEN); the rest is
+        // fetched from SP_FS_OBJ_START as the shader runs, which is what turnip and Gallium leave to the hardware too
+        {
+            Encoded e(r, p, pass, d);
+            CHECK(e.ok);
+            if (!e.ok) std::printf("       %s\n", e.error.c_str());
+            CHECK_EQ(e.reg(a6xx::REG_A6XX_SP_FS_INSTRLEN), 128u);
+        }
         p = handProgram();
         p.fs.k.numSamp = 32;
         refused(r, p, pass, d, "hand_fs: numSamp 32 does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
@@ -3930,4 +3938,38 @@ TEST(a_stencil_attachment_is_the_s8_plane_and_its_test_the_draws_state) {
     CHECK(!e3.ok);
     expectRefusal(e3.error, "a stencil attachment that is not the depth attachment's own Depth32Float_Stencil8 texture: the S8 plane of that one texture is what is served");
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// A program longer than the instruction cache, through the fake: the preload it checks (at most 127 units, never more
+// than INSTRLEN) is what a 128-unit FS gets, and the draw completes. The twin preloads all 128 and must fault.
+TEST(a_program_longer_than_the_instruction_cache_is_preloaded_in_part) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    Program p = handProgram();
+    static const std::vector<uint32_t> longWords(128 * 32, 0);
+    p.fs.k.words = longWords.data();
+    p.fs.k.numWords = uint32_t(longWords.size());
+    p.fs.k.instrlen = 128;
+    auto cb = drawOnce(r, p, pass, wholeDraw(3));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+    // the twin: the FS program's preload raised to the whole 128 units, which the fake refuses as this GPU hangs on it
+    Encoded e(r, p, pass, wholeDraw(3));
+    CHECK(e.ok);
+    std::vector<uint32_t> w = e.stream.words();
+    bool found = false;
+    for (size_t i = e.find(a6xx::CP_LOAD_STATE6_FRAG); i != size_t(-1); i = e.find(a6xx::CP_LOAD_STATE6_FRAG, i + 1)) {
+        const uint32_t d0 = w[i + 1];
+        const uint32_t type = (d0 & a6xx::CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> a6xx::CP_LOAD_STATE6_0_STATE_TYPE__SHIFT;
+        const uint32_t block = (d0 & a6xx::CP_LOAD_STATE6_0_STATE_BLOCK__MASK) >> a6xx::CP_LOAD_STATE6_0_STATE_BLOCK__SHIFT;
+        if (type == a6xx::ST6_SHADER && block == a6xx::SB6_FS_SHADER) {
+            CHECK_EQ((d0 & a6xx::CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> a6xx::CP_LOAD_STATE6_0_NUM_UNIT__SHIFT, 127u);
+            w[i + 1] = (d0 & ~a6xx::CP_LOAD_STATE6_0_NUM_UNIT__MASK) | a6xx::CP_LOAD_STATE6_0_NUM_UNIT(128);
+            found = true;
+        }
+    }
+    CHECK(found);
+    CHECK(has(faultOf(r, w), "a program preload of 128 units: 128 hangs this GPU"));
 }
