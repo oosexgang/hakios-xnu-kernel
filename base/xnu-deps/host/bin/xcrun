@@ -1,0 +1,34 @@
+#!/bin/bash
+# Minimal xcrun replacement for building XNU on Linux
+HB="$(cd "$(dirname "$0")" && pwd)"
+sdk=""; find=""; show=""
+while [ $# -gt 0 ]; do case "$1" in
+  -sdk) sdk="$2"; shift 2;; -verbose) shift;;
+  -find|--find|-f) find="$2"; shift 2;;
+  -show-sdk-path|--show-sdk-path) show=path; shift;;
+  -show-sdk-version|--show-sdk-version) show=version; shift;;
+  -show-sdk-platform-path|--show-sdk-platform-path) show=platform; shift;;
+  -show-sdk-platform-version) show=version; shift;;
+  *) break;; esac; done
+SDKP="${XNU_SDK_PATH:?XNU_SDK_PATH not set}"
+# on macOS the host tools of SETUP/ are built against Xcode's own macOS SDK
+if [ -x /usr/bin/xcrun ] && [ "$sdk" = macosx ]; then
+  case "$show" in
+    path) exec /usr/bin/xcrun -sdk macosx --show-sdk-path;;
+    version) exec /usr/bin/xcrun -sdk macosx --show-sdk-version;;
+    platform) exec /usr/bin/xcrun -sdk macosx --show-sdk-platform-path;;
+  esac
+  [ -n "$find" ] && exec /usr/bin/xcrun -sdk macosx -f "$find"
+fi
+case "$show" in
+  path) case "$sdk" in /*) echo "$sdk";; *) echo "$SDKP";; esac; exit 0;;
+  version) echo "${XNU_SDK_VERSION:-16.5}"; exit 0;;
+  platform) echo "${XNU_PLATFORM_PATH:-/Platforms/iPhoneOS.platform}"; exit 0;;
+esac
+if [ -n "$find" ]; then
+  for d in "$HB" /usr/bin; do [ -x "$d/$find" ] && { echo "$d/$find"; exit 0; }; done
+  # on macOS, what is not here is Xcode's
+  [ -x /usr/bin/xcrun ] && exec /usr/bin/xcrun --sdk iphoneos -f "$find"
+  exit 1
+fi
+[ $# -gt 0 ] && exec "$@"

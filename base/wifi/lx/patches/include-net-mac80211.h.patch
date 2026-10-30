@@ -1,0 +1,11 @@
+--- a/sys/compat/linuxkpi/common/include/net/mac80211.h
++++ b/sys/compat/linuxkpi/common/include/net/mac80211.h
+@@ -282,6 +282,8 @@
+ struct ieee80211_bss_conf {
+ 	/* TODO FIXME */
+ 	struct ieee80211_vif			*vif;
++	struct ieee80211_bss_conf		*tx_bss_conf;	/* of a multiple-BSSID set: the one that transmits */
++	uint8_t					pwr_reduction;	/* the access point's power constraint, dB */
+ 	struct cfg80211_bss			*bss;
+ 	const uint8_t				*bssid;
+ 	uint8_t					addr[ETH_ALEN];

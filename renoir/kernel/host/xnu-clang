@@ -1,0 +1,21 @@
+#!/bin/bash
+# clang wrapper for cross-building xnu-12377 on Linux (base/xnu-deps/host/bin/xnu-clang plus the
+# flags of Apple's newer clang that xnu-12377's makefiles pass and upstream clang does not know):
+#  - forces an Apple Mach-O target (stock Linux clang defaults to ELF)
+#  - drops flags only Apple's clang understands
+#  - links with the cctools ld64
+HB="$(cd "$(dirname "$0")" && pwd)"
+case "$(basename "$0")" in *++) drv=clang++; extra=(-fno-use-cxa-atexit);; *) drv=clang; extra=();; esac
+args=()
+for a in "$@"; do
+  case "$a" in
+    -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang) ;;
+    -fapple-kext-vtable-verify|-Wno-vla-cxx-extension) ;;
+    # xnu-12377 MakeInc.def: Apple clang's switch against implicit SME streaming code (no SME here)
+    -mno-implicit-sme) ;;
+    -Werror|-Werror=*|-Weverything|-pedantic-errors) ;;
+    *) args+=("$a");;
+  esac
+done
+exec "${XNU_CLANG_DIR:-/usr/bin}/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
+  -w "${extra[@]}" "${args[@]}"

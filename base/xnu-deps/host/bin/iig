@@ -1,0 +1,43 @@
+#!/bin/bash
+# Stand-in for Apple's closed-source iig (DriverKit interface generator).
+#
+# It now PREFERS the real iig from the active Xcode, passing through the exact arguments the build
+# gives (including the clang args after `--`).  That matters for xnu-12377/iOS 26, whose IOService
+# and IOUserServer .iig files added kernel methods (Panic, SetPowerOverride, CreatePMAssertion, ...)
+# that no pre-generated SDK header carries, so the real iig is the only way to get a matching
+# kernel-side dispatch header and implementation.
+#
+# When the real iig cannot run (missing, or it fails on this build's clang setup) it falls back to a
+# pre-generated header: from the macOS 13.3 SDK (xnu-8796 family), then the current Xcode SDK, then
+# a stub for xnu-internal test classes (e.g. TestDextRematch).  The implementation falls back to
+# $XNUDEPS/iig-impl/<name>.iig.cpp if present, else an empty TU.
+XNUDEPS=${XNUDEPS:-$(cd "$(dirname "$0")/../.." && pwd)}
+SDKH="$XNUDEPS/MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework/Headers"
+ARGS=("$@")
+def=""; hdr=""; impl=""
+while [ $# -gt 0 ]; do case "$1" in
+  --def) def="$2"; shift 2;; --header) hdr="$2"; shift 2;; --impl) impl="$2"; shift 2;;
+  --) break;; *) shift;; esac; done
+name="$(basename "$def" .iig)"
+
+# 1. The real iig, with the build's own arguments.  It writes both --header and --impl.
+REAL_IIG="$(xcode-select -p 2>/dev/null)/Toolchains/XcodeDefault.xctoolchain/usr/bin/iig"
+if [ -x "$REAL_IIG" ] && "$REAL_IIG" "${ARGS[@]}" >/dev/null 2>&1 && [ -s "$hdr" ]; then
+  exit 0
+fi
+
+# 2. Fallback: a pre-generated header.
+src="$(find "$SDKH" -name "$name.h" -path '*DriverKit*' | head -1)"
+[ -z "$src" ] && src="$(find "$SDKH" -name "$name.h" | xargs grep -l 'iig(DriverKit' 2>/dev/null | head -1)"
+if [ -z "$src" ]; then
+  XC="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)"
+  [ -n "$XC" ] && src="$(find "$XC/System/Library/Frameworks/Kernel.framework/Versions/A/Headers/DriverKit" "$XC/System/Library/Frameworks/DriverKit.framework/Versions/A/Headers" -name "$name.h" 2>/dev/null | head -1)"
+fi
+if [ -z "$src" ]; then
+  echo "iig shim: no pre-generated header for $name; emitting a stub (xnu-internal iig such as TestDextRematch)" >&2
+  echo "/* $name: iig stub (no pre-generated header available) */" > "$hdr"
+else
+  cp "$src" "$hdr"
+fi
+if [ -f "$XNUDEPS/iig-impl/$name.iig.cpp" ]; then cp "$XNUDEPS/iig-impl/$name.iig.cpp" "$impl"
+else echo "/* $name: no DriverKit implementation generated (iig shim) */" > "$impl"; fi

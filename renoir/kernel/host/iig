@@ -1,0 +1,27 @@
+#!/bin/bash
+# Stand-in for Apple's closed-source iig (DriverKit interface generator) on Linux, for xnu-12377.
+# base/xnu-deps/host/bin/iig takes its headers from the macOS 13.3 SDK (xnu-8796): xnu-12377's .iig
+# files added kernel methods (IOUserServer::Panic, IOService::SetPowerOverride/CreatePMAssertion, ...)
+# that only the iig output of the same release carries. The macOS 26.5 SDK (xnu-12377.121) ships that
+# output in Kernel.framework/Headers/DriverKit; build.sh unpacks it into $XNUDEPS.
+# Implementation: $XNUDEPS/iig-impl/<name>.iig.cpp if present, else an empty TU (as base/'s shim).
+XNUDEPS=${XNUDEPS:-$(cd "$(dirname "$0")/../.." && pwd)}
+def=""; hdr=""; impl=""
+while [ $# -gt 0 ]; do case "$1" in
+  --def) def="$2"; shift 2;; --header) hdr="$2"; shift 2;; --impl) impl="$2"; shift 2;;
+  --) break;; *) shift;; esac; done
+name="$(basename "$def" .iig)"
+src=
+for sdk in MacOSX26.5.sdk MacOSX13.3.sdk; do
+  f="$XNUDEPS/$sdk/System/Library/Frameworks/Kernel.framework/Headers/DriverKit/$name.h"
+  [ -f "$f" ] && { src=$f; break; }
+done
+if [ -z "$src" ]; then
+  # xnu-internal test interfaces (iokit/Tests: TestDextRematch) have no published header
+  echo "iig shim: no pre-generated header for $name; emitting a stub" >&2
+  echo "/* $name: iig stub (no pre-generated header available) */" > "$hdr"
+else
+  cp "$src" "$hdr"
+fi
+if [ -f "$XNUDEPS/iig-impl/$name.iig.cpp" ]; then cp "$XNUDEPS/iig-impl/$name.iig.cpp" "$impl"
+else echo "/* $name: no DriverKit implementation generated (iig shim) */" > "$impl"; fi

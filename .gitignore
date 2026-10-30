@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.o
+*.dylib
+*.efi
+*.bin
+*.mbn
+*.dtb
+*.ipsw
+*.apfs
+*.metallib
+tools/export.local
+renoir/tools/a64census
+renoir/tools/pacstrip

@@ -1,0 +1,19 @@
+--- a/sys/compat/linuxkpi/common/include/linux/etherdevice.h
++++ b/sys/compat/linuxkpi/common/include/linux/etherdevice.h
+@@ -131,12 +131,14 @@
+ 	random_ether_addr(dst);
+ }
+ 
++/* (the address the machine has for the device, if it has one: not from a device tree here) */
++int linuxkpi_device_get_mac_address(struct device *dev, char *dst);
++
+ static inline int
+ device_get_mac_address(struct device *dev, char *dst)
+ {
+ 
+-	/* XXX get mac address from FDT? */
+-	return (-ENOENT);
++	return (linuxkpi_device_get_mac_address(dev, dst));
+ }
+ 
+ /* Returns network byte order. */

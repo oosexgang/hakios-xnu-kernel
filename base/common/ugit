@@ -1,0 +1,6 @@
+#!/bin/bash
+# git for the hakios-xnu-userland repository that shares this working tree (see common/setup.sh):
+#   common/ugit status | common/ugit add userland/src/init.c | common/ugit commit | common/ugit push
+ROOT=$(dirname "$(readlink -f "$0")")/..
+[ -d "$ROOT/.userland.git" ] || { echo "ugit: no userland checkout here; run common/setup.sh first" >&2; exit 1; }
+exec git --git-dir="$ROOT/.userland.git" --work-tree="$ROOT" "$@"

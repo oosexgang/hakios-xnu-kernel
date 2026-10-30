@@ -1,0 +1,43 @@
+# A whitelist. In a workspace made by hakios-xnu-kernel's common/setup.sh this repository shares its
+# working tree with the kernel repository; this file then lives in .userland.git/info/exclude
+# (common/userland.exclude) instead, and only the files named here belong to it.
+/*
+!/userland/
+!/ios165/
+!/prebuilt/
+!/tools/
+!/docs/
+
+__pycache__/
+*~
+*.orig
+*.rej
+
+/prebuilt/*
+!/prebuilt/userland/
+/docs/*
+!/docs/air.md
+!/docs/air-report.md
+/tools/*
+!/tools/apfs/
+!/tools/air/
+!/tools/mesa/
+!/tools/metal/
+!/tools/mk-mesa.sh
+!/tools/mk-jb.sh
+!/tools/jb-preinstall.py
+!/tools/font_trim.py
+!/tools/metallib.py
+
+/userland/*
+!/userland/build.sh
+!/userland/*.py
+!/userland/rc.*
+!/userland/com.redwood.*.plist
+!/userland/src/
+!/userland/libmini/
+!/userland/var/
+
+/ios165/*
+!/ios165/fetch.sh
+!/ios165/*.py

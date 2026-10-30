@@ -1,0 +1,295 @@
+#!/bin/bash
+# xl — drive the XNU loader on the phone over USB (fastboot protocol).
+#
+#   xl enter            get the phone into the resident loader (from Android or stock fastboot)
+#   xl run [N]          upload the current kernel, run it (optionally stop at checkpoint N), fetch the log
+#   xl ramdisk [FILE]   upload the big system image (default userland/system.apfs) once; it stays in
+#                       the phone's RAM across kernel runs and is the root filesystem (/dev/md0)
+#                       ("xl ramdisk none" forgets it; the image sent with the kernel is then the root)
+#   xl screenshot [F]   save what is in the phone's framebuffer as a PNG (default logs/screen.png);
+#                       works during a run too (from another terminal)
+#   xl recording [F]    fetch the screen recording the last run made (rec_secs=N among XL_CMDLINE) and
+#                       make a video of it (default logs/recording.mp4)
+#   xl sound [F]        fetch the sound the last run recorded (rec_sound=N among XL_CMDLINE: the first N
+#                       seconds of what iOS played) and make a WAV file of it (default logs/sound.wav)
+#   xl camera [P]       fetch the frames the last run's camera left (cam=3 and up among XL_CMDLINE) and make
+#                       pictures of them (P-0.png, ...; default prefix logs/camera)
+#   xl selftest         exercise only the kernel->loader return path
+#   xl log              fetch the loader's current log; during a run, the kernel's log so far as well
+#   xl stop             end the run in progress now (the kernel returns as when its time is up)
+#   xl hang             watchdog test: make the loader hang on purpose
+#   xl reboot           cold-reset the phone (back to Android)
+#   xl reload           restart the phone into a freshly built loader (after changing xnuloader/)
+#   xl memmap           the phone's memory map as its firmware reports it
+#   xl state            where is the phone right now
+#
+# Logs land in logs/. Environment for `run`:
+#   XL_CMDLINE  extra kernel boot-args; default "-v": the boot is shown as text on the phone's screen
+#               (XL_CMDLINE="" for a blank screen, XL_CMDLINE="-v systrace=1" to trace failing syscalls)
+#   XL_SECS     seconds after which the kernel returns to the loader on its own (default 8)
+#   XL_SB_DELAY seconds SpringBoard waits before it starts (default 8; see userland/src/inject_sb.c)
+#               Among XL_CMDLINE, for the phone: bootcpu=7 runs the kernel on the biggest core instead of
+#               the small one the firmware starts on (the loader then watches from the first core, and a
+#               kernel that hangs still gets its log out); cpufreq=1 sets that core to its top speed;
+#               touchscreen=1 turns the touch screen on.
+#   XL_RAMDISK  the image sent with the kernel: the small one that is mounted on /redwood
+#               (default userland/root.apfs; "none" sends none). Without a system image in the
+#               phone's RAM it is the root itself (e.g. XL_RAMDISK=userland/hello).
+# One phone, several working copies: a run holds a lock, and `stop` and `reboot` from another working
+# copy than the one it was started from are refused (XL_FORCE=1 to end it all the same). While a run
+# is in progress every other command is refused too, `ramdisk` among them.
+# The lock says whether a run is live; it says nothing about the image resident in the phone's memory,
+# which outlives both the lock and any note beside it and belongs to whoever uploaded it last. So
+# `ramdisk` records who uploaded what, and how big it was, in $PHONE.ramdisk, and `run` prints that
+# when the last upload was not from this copy. The record starts empty -- an upload by a copy without
+# this change leaves none -- and `run` says so rather than assuming.
+cd "$(dirname "$(readlink -f "$0")")" || exit 1
+# the kernel and the loader built here, or else the ones that come with the repository
+K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+[ -f $K ] || K=prebuilt/mach.development.bcm2837
+L=xnuloader/loader.efi
+[ -f $L ] || L=prebuilt/loader.efi
+mkdir -p logs
+# There is one phone, whichever working copy (tools/new-workspace.sh) talks to it: the locks are
+# outside all of them.
+PHONE=${XDG_RUNTIME_DIR:-/tmp}/hakios-phone
+
+# one fastboot at a time (a run in one terminal, "xl screenshot" in another): each takes the lock for itself
+fb() { flock -w 90 $PHONE.lock timeout "${FB_TIMEOUT:-10}" fastboot "$@" 2>&1; }
+# does the loader answer while its kernel runs (0.5 and later)? an older one answers only when the run is over
+live_loader() { fb getvar version | grep -Eq 'version: 0\.([5-9]|[1-9][0-9])'; }
+in_fastboot() { fastboot devices 2>/dev/null | grep -q fastboot; }
+is_loader() { in_fastboot && fb getvar product | grep -q 'product: xnuloader'; }
+state() {
+	if is_loader; then echo loader
+	elif in_fastboot; then echo fastboot
+	elif [ "$(adb get-state 2>/dev/null)" = device ]; then echo android
+	else echo absent; fi
+}
+wait_for() { # wait_for <state> <seconds>
+	local i
+	for ((i = 0; i < $2; i += 2)); do [ "$(state)" = "$1" ] && return 0; sleep 2; done
+	return 1
+}
+
+enter() {
+	case "$(state)" in
+	loader) return 0 ;;
+	android) adb reboot bootloader; wait_for fastboot 60 || { echo "xl: phone did not reach fastboot"; return 1; } ;;
+	fastboot) ;;
+	absent) echo "xl: waiting for the phone (Android or fastboot)..."
+		local i; for ((i = 0; i < 180; i += 3)); do [ "$(state)" != absent ] && break; sleep 3; done
+		[ "$(state)" = absent ] && { echo "xl: phone not reachable"; return 1; }
+		enter; return ;;
+	esac
+	xnuloader/mkpayload.py -o usb-payload.bin loader.efi=$L --usb >/dev/null &&
+		./mkxnuimg.py -p usb-payload.bin -o xnu-usb.img >/dev/null || { echo "xl: image build failed"; return 1; }
+	# Right after the phone enters fastboot the first "boot" is sometimes not taken: try twice.
+	local try
+	for try in 1 2; do
+		FB_TIMEOUT=40 fb boot xnu-usb.img | grep -q OKAY || { sleep 3; continue; }
+		sleep 6
+		wait_for loader 30 && return 0
+		[ "$(state)" = fastboot ] || break
+	done
+	echo "xl: loader did not come up on USB (state: $(state))"; return 1
+}
+
+fetch_log() { # fetch_log <file>
+	rm -f "$1"
+	FB_TIMEOUT=20 fb get_staged "$1" >/dev/null
+	[ -s "$1" ] && tr -d '\0' < "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
+run() { # run <oem command> <label>
+	enter || return 1
+	exec 8> $PHONE.run
+	flock -n 8 || { echo "xl: a run is in progress, started from $(cat $PHONE.who 2>/dev/null) (xl stop ends it)"; return 1; }
+	pwd > $PHONE.who
+	local stamp log result
+	stamp=$(date +%H%M%S); log="logs/$stamp-$2.log"
+	if [ "$1" != "oem selftest" ]; then
+		# The kernel hands control back after XL_SECS seconds even if it is just waiting.
+		local rd=${XL_RAMDISK:-userland/root.apfs}
+		case "$rd" in
+		none|resident) rd= ;;
+		*) [ -f "$rd" ] || { echo "xl: ramdisk $rd not found"; return 1; } ;;
+		esac
+		case $K in prebuilt/*) echo "xl: no kernel built here, running $K" >&2 ;; esac
+		# The resident image: whose it is and how big, when the last upload was not from here.
+		# Both values and not just "not from here", because a foreign image of the same kind
+		# changes nothing, while a foreign one of another kind makes the boot fail in a way that
+		# names neither it nor its owner -- /sbin/launchd.ios: No such file or directory, with a
+		# perfectly good image on this side. The warning is not a refusal: relying on another
+		# copy's upload is legitimate when you know what it is, and this says what it is.
+		if [ -s $PHONE.ramdisk ]; then
+			local rwho rwhat rsize
+			IFS=$'\t' read -r rwho rwhat rsize < $PHONE.ramdisk
+			if [ "$rwho" != "$(pwd)" ]; then
+				echo "xl: the resident image was uploaded from $rwho:" \
+				     "$rwhat, $(( rsize / 1048576 )) MB. Upload your own" \
+				     "(./xl ramdisk FILE) unless that is the one you want" >&2
+			fi
+		else
+			echo "xl: nothing here recorded who uploaded the resident image;" \
+			     "if this run needs a particular one, upload it" >&2
+		fi
+		# A run about Wi-Fi is given the radio's own address, which is this phone's and so is kept in a
+		# file that is not in the repository: fw-wifi/mac, one line, six bytes in hexadecimal with colons.
+		local args=${XL_CMDLINE--v}
+		case " $args " in
+		*" wifi="*|*" wifi_step="*) [ -s fw-wifi/mac ] && args="$args wifi_mac=$(tr -d ' \n\r' < fw-wifi/mac)" ;;
+		esac
+		xnuloader/mkpayload.py -o run-payload.bin kernel=$K ${rd:+ramdisk=$rd} --cmdline "loader_return_after=${XL_SECS:-8} epoch=$(date +%s) sb_delay=${XL_SB_DELAY:-8} $args" >/dev/null || return 1
+		FB_TIMEOUT=30 fb stage run-payload.bin | grep -q OKAY || { echo "xl: upload failed"; return 1; }
+	fi
+	local live=; live_loader && live=1
+	fb $1 >/dev/null
+	if [ -n "$live" ] && [ "$1" != "oem selftest" ]; then
+		# the loader goes on answering: ask every two seconds until the result is no longer "running".
+		# XL_FOLLOW=N: fetch the log as it stands every N seconds as well, so that a phone that
+		# resets without a word leaves all it said up to then ($log.live)
+		local deadline=$(( $(date +%s) + ${XL_SECS:-8} + 100 )) followed=$(date +%s)
+		while :; do
+			result=$(FB_TIMEOUT=15 fb getvar result | grep '^result:')
+			case "$result" in ""|*running*) ;; *) break ;; esac
+			[ "$(date +%s)" -ge "$deadline" ] && { result=; break; }
+			if [ -n "$XL_FOLLOW" ] && [ $(( $(date +%s) - followed )) -ge "$XL_FOLLOW" ]; then
+				followed=$(date +%s)
+				# (XL_FOLLOW_KEEP=1: every one kept, $log.live.1, .2, ...: a long run's middle, which the log
+				# itself loses once more than a megabyte follows it, is then all there)
+				followed_n=$(( ${followed_n:-0} + 1 ))
+				fb oem log | grep -q OKAY && fetch_log "$log.live" && { [ -z "$XL_FOLLOW_KEEP" ] || cp "$log.live" "$log.live.$followed_n"; }
+			fi
+			sleep 2
+		done
+	else
+		result=$(FB_TIMEOUT=$(( ${XL_SECS:-8} + 100 )) fb getvar result | grep '^result:')
+	fi
+	if [ -z "$result" ]; then
+		echo "xl: no answer — the kernel hung; waiting for the watchdog to reset the phone"
+		wait_for android 120 && echo "xl: phone is back in Android" || echo "xl: phone did not come back (state: $(state))"
+		return 2
+	fi
+	fetch_log "$log"
+	ln -sf "$(basename "$log")" logs/last.log
+	echo "$result  [$log]"
+	case "$result" in
+	*hung*|*no-such-core*)
+		# (bootcpu=N) the kernel is stuck on the core it was given and nothing can take the core back
+		echo "xl: the kernel did not come back from its core; restarting the phone"
+		fb reboot >/dev/null
+		return 2 ;;
+	esac
+}
+
+recording() { # recording [file.mp4]
+	enter || return 1
+	local out=${1:-logs/recording.mp4}
+	fb oem recording | grep -q OKAY || { echo "xl: the last run left no recording (boot-arg rec_secs=N)"; return 1; }
+	FB_TIMEOUT=120 fb get_staged logs/recording.raw >/dev/null
+	# (XL_REC_KEEP=1: the recording itself stays in logs/recording.raw, for tools/recording.py --frames)
+	tools/recording.py logs/recording.raw "$out" && { [ -n "$XL_REC_KEEP" ] || rm -f logs/recording.raw; }
+}
+
+sound() { # sound [file.wav]
+	enter || return 1
+	local out=${1:-logs/sound.wav}
+	fb oem sound | grep -q OKAY || { echo "xl: the last run left no sound recording (boot-arg rec_sound=N)"; return 1; }
+	FB_TIMEOUT=120 fb get_staged logs/sound.raw >/dev/null
+	tools/sound.py logs/sound.raw "$out" && rm -f logs/sound.raw
+}
+
+camera() { # camera [prefix]: the frames the last run's camera left (boot-arg cam=3 and up), as pictures
+	enter || return 1
+	local out=${1:-logs/camera}
+	fb oem recording | grep -q OKAY || { echo "xl: the last run left no frames (boot-arg cam=3)"; return 1; }
+	FB_TIMEOUT=120 fb get_staged logs/camera.raw >/dev/null
+	tools/camraw.py logs/camera.raw "$out"
+}
+
+ramdisk() { # ramdisk [<file>|none]
+	enter || return 1
+	if [ "$1" = none ]; then
+		fb oem ramdisk none >/dev/null; rm -f $PHONE.ramdisk
+		echo "xl: resident ramdisk dropped"; return
+	fi
+	set -- "${1:-userland/system.apfs}"
+	[ -f "$1" ] || { echo "xl: $1 not found"; return 1; }
+	local t0=$(date +%s) size=$(stat -c %s "$1")
+	fb oem ramdisk | grep -q OKAY || { echo "xl: the loader refused (no memory window?)"; return 1; }
+	FB_TIMEOUT=1800 fb stage "$1" | grep -q OKAY || { echo "xl: upload failed"; return 1; }
+	local dt=$(( $(date +%s) - t0 )); [ $dt -lt 1 ] && dt=1
+	echo "xl: $(( size / 1048576 )) MB uploaded in $dt s ($(( size / 1048576 / dt )) MB/s)"
+	# Who put what there, for `run` to warn about below. The resident image is a third state of
+	# the phone that neither the lock nor the note describes: it stays in memory across runs and
+	# across working copies, so a run that uploads nothing boots against whatever the last upload
+	# left -- which may be another copy's, of another kind. That cost two runs on 20 October, and
+	# the only thing that distinguished them on sight was the loader's own "resident image at pa
+	# ... size 400000" against "size 97308000". The size is recorded for exactly that reason: a
+	# foreign image of the same kind is harmless, a foreign one of another kind kills the run and
+	# says nothing.
+	printf '%s\t%s\t%s\n' "$(pwd)" "$1" "$size" > $PHONE.ramdisk 2>/dev/null
+}
+
+screenshot() { # screenshot [file.png]
+	enter || return 1
+	local out=${1:-logs/screen.png} geom
+	geom=$(fb getvar screen | sed -n 's/^screen: //p')
+	[ -n "$geom" ] && fb oem screenshot | grep -q OKAY || { echo "xl: the loader has no display"; return 1; }
+	FB_TIMEOUT=60 fb get_staged logs/screen.raw >/dev/null
+	python3 - logs/screen.raw "$out" $geom <<'PY' && rm -f logs/screen.raw && echo "xl: $out ($geom)"
+import struct, sys, zlib
+raw, out, width, height, stride = sys.argv[1], sys.argv[2], *map(int, sys.argv[3:6])
+data = open(raw, 'rb').read()
+rows = bytearray()
+for y in range(height):
+    line = data[y * stride:y * stride + width * 4]
+    rows.append(0)                                    # PNG filter type: none
+    rgb = bytearray(width * 3)
+    rgb[0::3], rgb[1::3], rgb[2::3] = line[2::4], line[1::4], line[0::4]   # the panel is BGRX
+    rows += rgb
+def chunk(kind, body):
+    return struct.pack('>I', len(body)) + kind + body + struct.pack('>I', zlib.crc32(kind + body))
+with open(out, 'wb') as f:
+    f.write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) +
+            chunk(b'IDAT', zlib.compress(bytes(rows), 6)) + chunk(b'IEND', b''))
+PY
+}
+
+# stop and reboot end a run. One that was started from another working copy is somebody else's work
+# (an agent's measurement, a long session): not ended from here unless XL_FORCE=1 says so.
+not_anothers_run() { # not_anothers_run <command>
+	flock -n $PHONE.run true 2>/dev/null && return 0
+	[ "$(cat $PHONE.who 2>/dev/null)" = "$(pwd)" ] || [ -n "$XL_FORCE" ] && return 0
+	echo "xl: a run started from $(cat $PHONE.who 2>/dev/null) is in progress; XL_FORCE=1 ./xl $1 ends it all the same" >&2
+	return 1
+}
+
+# While a run is in progress the loader takes only what does not disturb the kernel: state, screenshot,
+# log, stop, reboot. Anything else would wait for nothing.
+case "$1" in
+""|run|selftest|state|screenshot|log|stop|reboot) ;;
+*)	if ! flock -n $PHONE.run true 2>/dev/null; then
+		echo "xl: a run is in progress: only state, screenshot, log, stop and reboot now" >&2; exit 1
+	fi ;;
+esac
+
+case "$1" in
+enter) enter && echo "xl: loader is up" ;;
+screenshot) screenshot "$2" ;;
+recording) recording "$2" ;;
+camera) camera "$2" ;;
+sound) sound "$2" ;;
+ramdisk) ramdisk "$2" ;;
+run) run "oem run $2" "run${2:+-cp$2}" ;;
+selftest) run "oem selftest" selftest ;;
+log) enter && fb oem log >/dev/null && fetch_log logs/loader.log && cat logs/loader.log ;;
+stop) not_anothers_run stop && fb oem stop | grep -q OKAY && echo "xl: asked the kernel to come back" ;;
+memmap) enter && fb oem memmap >/dev/null && fb oem log >/dev/null && fetch_log logs/loader.log && sed -n '/^memory map/,$p' logs/loader.log ;;
+hang) enter && fb oem hang; echo "xl: waiting for the watchdog..."; t0=$(date +%s); wait_for android 150 && echo "xl: back in Android after $(( $(date +%s) - t0 )) s" || echo "xl: not back (state: $(state))" ;;
+reboot) not_anothers_run reboot && fb reboot ;;
+reload) [ "$(state)" = loader ] && { fb reboot >/dev/null; wait_for android 120; }; enter && echo "xl: loader is up" ;;
+state) state ;;
+*) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0" ;;
+esac

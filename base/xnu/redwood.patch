@@ -1,0 +1,3591 @@
+diff --git a/Makefile b/Makefile
+index e78d8476c346..1729ca06eb8f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -143,8 +143,8 @@ installsrc:
+ 
+ else ifneq ($(findstring xnu_tests,$(RC_ProjectName)),)
+ 
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
++export SYSCTL_HW_LOGICALCPU  := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ default: install
+@@ -160,8 +160,8 @@ installsrc:
+ 
+ else ifeq ($(RC_ProjectName),xnu_tests_driverkit)
+ 
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
++export SYSCTL_HW_LOGICALCPU  := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ default: install
+@@ -193,8 +193,8 @@ endif
+ # CPUs. If the system does not support SMT, use N+1.
+ # If MAKEJOBS or -jN is passed on the make line, that takes precedence.
+ #
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
++export SYSCTL_HW_LOGICALCPU  := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ TOP_TARGETS = \
+diff --git a/SETUP/config/doconf b/SETUP/config/doconf
+index 222158a93918..68bb0f3e56bf 100755
+--- a/SETUP/config/doconf
++++ b/SETUP/config/doconf
+@@ -1,4 +1,4 @@
+-#!/bin/csh -f
++#!/usr/bin/env -S csh -f
+ set path = ($path .)
+ ######################################################################
+ # HISTORY
+diff --git a/SETUP/kextsymboltool/kextsymboltool.c b/SETUP/kextsymboltool/kextsymboltool.c
+index 2954a391f074..fe92b1019cbb 100644
+--- a/SETUP/kextsymboltool/kextsymboltool.c
++++ b/SETUP/kextsymboltool/kextsymboltool.c
+@@ -706,8 +706,15 @@ main(int argc, char * argv[])
+ 	strtabpad = (strtabsize + 3) & ~3;
+ 
+ 	if (require_imports && num_removed_syms) {
+-		err = kError;
+-		goto finish;
++		/*
++		 * HakiOS builds XNU without the full DriverKit / IOUserServer surface, so a few
++		 * declared exports -- the generated *_Invoke and _Dispatch dispatch symbols -- are
++		 * not present in the kernel.  A stock build has them, keeps num_removed_syms at 0 and
++		 * never reaches here.  Omit the absent symbols from the set and carry on rather than
++		 * failing the build: no external kext that would need them is loaded on this bench.
++		 */
++		fprintf(stderr, "kextsymboltool: %u exported symbol(s) absent from the kernel, omitted\n",
++		    num_removed_syms);
+ 	}
+ 
+ 	fd = open(output_name, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+diff --git a/bsd/conf/Makefile.arm64 b/bsd/conf/Makefile.arm64
+index a4d25040f38f..aad72993d139 100644
+--- a/bsd/conf/Makefile.arm64
++++ b/bsd/conf/Makefile.arm64
+@@ -5,6 +5,11 @@
+ # Inline assembly doesn't interact well with LTO
+ fbt_arm.o_CFLAGS_ADD += $(CFLAGS_NOLTO_FLAG)
+ 
++# libdeflate's arm headers (bsd/miscfs/apfs/libdeflate) include the compiler's own <arm_acle.h>
++# and <arm_neon.h>, which the kernel's include paths do not have: they come after those paths,
++# so the kernel's <stdint.h> and the rest are still the ones found.
++apfs_deflate.o_CFLAGS_ADD += -idirafter $(shell $(CC) -print-resource-dir)/include
++
+ kern_csr.o_INCFLAGS += -I$(SRCROOT)/osfmk
+ kern_debug.o_INCFLAGS += -I$(SRCROOT)/osfmk
+ 
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 44274016a4cf..9cd24b42caca 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -109,6 +109,37 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+ 
+ bsd/dev/monotonic.c optional monotonic
++bsd/dev/redwood_input.c		standard
++bsd/dev/redwood_virtio_input.c	standard
++bsd/dev/redwood_goodix.c	standard
++bsd/dev/redwood_buttons.c	standard
++bsd/dev/redwood_battery.c	standard
++bsd/dev/redwood_ufs.c	standard
++bsd/dev/redwood_ufshc.c	standard
++bsd/dev/redwood_net.c		standard
++bsd/dev/redwood_virtio_net.c	standard
++bsd/dev/redwood_apple80211.c	standard
++bsd/dev/redwood_cpufreq.c	standard
++bsd/dev/redwood_adreno.c	standard
++bsd/dev/redwood_audio.c		standard
++bsd/dev/redwood_virtio_sound.c	standard
++bsd/dev/redwood_speaker.c	standard
++bsd/dev/redwood_guard.c		standard
++bsd/dev/redwood_haptic.c		standard
++bsd/dev/redwood_torch.c		standard
++bsd/dev/redwood_camera.c	standard
++bsd/dev/redwood_mic.c		standard
++bsd/dev/redwood_wifi.c		standard
++bsd/dev/redwood_adsp.c		standard
++bsd/dev/redwood_image.c		standard
++bsd/dev/redwood_virtio_blk.c	standard
++bsd/dev/redwood_sparse.c	standard
++bsd/dev/redwood_apfs_check.c	optional apfs
++bsd/dev/redwood_sound.c		standard
++bsd/dev/redwood_qmi.c		standard
++bsd/dev/redwood_wlfw.c		standard
++bsd/dev/redwood_lx.c		standard
++bsd/dev/redwood_sta.c		standard
+ bsd/dev/dev_perfmon.c optional config_perfmon
+ 
+ bsd/libkern/crc32.c			standard
+@@ -155,6 +186,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+ bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
+ bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
+ bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
++bsd/miscfs/apfs/apfs_deflate.c		optional apfs
++bsd/miscfs/apfs/apfs_zbitmap.c		optional apfs
++bsd/miscfs/apfs/apfs_lib.c		optional apfs
++bsd/miscfs/apfs/apfs_write.c		optional apfs
++bsd/miscfs/apfs/apfs_store.c		optional apfs
++bsd/miscfs/apfs/apfs_vfsops.c		optional apfs
++bsd/miscfs/apfs/apfs_vnops.c		optional apfs
++bsd/miscfs/ramfs/ramfs.c			optional ramfs
+ 
+ bsd/miscfs/routefs/routefs_ops.c	optional routefs
+ 
+@@ -361,6 +400,7 @@ bsd/security/audit/audit_syscalls.c		standard
+ bsd/security/audit/audit_worker.c		optional config_audit
+ 
+ bsd/pthread/pthread_shims.c		standard
++bsd/pthread/pthread_kext_static.c    standard
+ bsd/pthread/pthread_priority.c		standard
+ bsd/pthread/pthread_workqueue.c		standard
+ 
+@@ -383,6 +423,7 @@ bsd/kern/kern_debug.c			standard
+ bsd/kern/kern_symfile.c			standard
+ bsd/kern/kern_descrip.c			standard
+ bsd/kern/kern_guarded.c			standard
++bsd/kern/kern_minimac.c			optional config_macf
+ bsd/kern/kern_event.c			standard
+ bsd/kern/kern_control.c			optional networking
+ bsd/kern/kern_exec.c			standard
+diff --git a/bsd/dev/arm/km.c b/bsd/dev/arm/km.c
+index fd7a94b20794..69eaceedd248 100644
+--- a/bsd/dev/arm/km.c
++++ b/bsd/dev/arm/km.c
+@@ -205,6 +205,15 @@ kmioctl(dev_t dev, u_long cmd, caddr_t data, int flag, proc_t p)
+ 		error = EINVAL;
+ 		break;
+ 
++	case TIOCSCTTY:
++		/*
++		 * The console is every daemon's standard error in this system. If
++		 * the first session leader to open it took it for its controlling
++		 * terminal, its exit would revoke the console for all the others.
++		 */
++		error = ENOTTY;
++		break;
++
+ 	/* Bodge in the CLOCAL flag as the km device is always local */
+ 	case TIOCSETA_32:
+ 	case TIOCSETAW_32:
+@@ -252,6 +261,9 @@ fallthrough:
+  *		assumptions here, this routine should be static (and
+  *		inlined, given there is only one call site).
+  */
++
++extern void loader_log_putc(char c);
++
+ int
+ kmputc(__unused dev_t dev, char c)
+ {
+@@ -363,6 +375,8 @@ kmoutput(struct tty * tp)
+ 		for (cp = buf; cp < &buf[cc]; cp++) {
+ 			/* output the buffer one charatcer at a time */
+ 			*cp = *cp & 0x7f;
++			/* What user space writes to /dev/console also goes to the loader's log. */
++			loader_log_putc((char)*cp);
+ 		}
+ 		if (cc > 1) {
+ 			console_write((char *)buf, cc);
+diff --git a/bsd/dev/arm/systemcalls.c b/bsd/dev/arm/systemcalls.c
+index 7fd9be1a5f38..0d035255b030 100644
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -36,6 +36,92 @@
+ #include <security/mac_framework.h>
+ #endif
+ 
++/*
++ * Bring-up aid: boot-arg systrace=1 logs every BSD system call that fails,
++ * systrace=2 logs all of them (to the kernel message buffer). For calls that
++ * take a path, the path is shown. systrace_name=NAME keeps it to the processes
++ * of that name: with a whole system running, everybody's failed calls are
++ * megabytes a minute.
++ */
++static TUNABLE(uint32_t, systrace_level, "systrace", 0);
++static TUNABLE_STR(systrace_name, MAXCOMLEN + 1, "systrace_name", "");
++extern const char *syscallnames[];
++
++static void
++systrace_report(struct proc *proc, unsigned short syscode, struct uthread *uthread, int error)
++{
++	/* system calls whose first (or, for the second list, second) argument is a path */
++	static const unsigned short path_arg0[] = {
++		SYS_open, SYS_link, SYS_unlink, SYS_chdir, SYS_mknod, SYS_chmod, SYS_chown, SYS_access, SYS_readlink,
++		SYS_execve, SYS_chroot, SYS_rename, SYS_mkdir, SYS_rmdir, SYS_pathconf, SYS_getattrlist, SYS_setattrlist,
++		SYS_getxattr, SYS_listxattr, SYS_fsctl, SYS_stat64, SYS_lstat64, SYS_statfs64, SYS_open_nocancel,
++		SYS_open_dprotected_np, SYS_symlink, SYS_unmount, SYS_stat64_extended, SYS_lstat64_extended,
++	};
++	static const unsigned short path_arg1[] = {
++		SYS_mount, SYS_posix_spawn, SYS_openat, SYS_openat_nocancel, SYS_fstatat64, SYS_faccessat, SYS_readlinkat,
++		SYS_getattrlistat, SYS_mkdirat, SYS_unlinkat,
++	};
++	char path[160] = "";
++	/*
++	 * Two calls are worth more than their arguments' addresses, because what they ASK is the whole
++	 * of what they do. __mac_syscall carries the policy's name and the request number: this
++	 * kernel's AMFI stand-in answers only 0x5a and 0x60 and returns ENOPOLICY to anything else
++	 * (bsd/kern/kern_minimac.c), so a daemon refused there is refused in a way nothing in user
++	 * space can see -- and a library of ours cannot watch it either, since the call is made inside
++	 * libsystem and dyld interposing only stands between images. The name matters as much as the
++	 * number: the same call goes to Sandbox as well. And sysctl carries its MIB, which is the only
++	 * thing that says what was asked about.
++	 */
++	char detail[112] = "";
++	size_t done;
++
++	if (systrace_level < 2 && (error == 0 || error == EJUSTRETURN || error == ERESTART)) {
++		return;
++	}
++	if (systrace_name[0] != 0 && strncmp(proc->p_comm, systrace_name, MAXCOMLEN) != 0) {
++		return;
++	}
++	for (unsigned i = 0; i < sizeof(path_arg0) / sizeof(path_arg0[0]); i++) {
++		if (path_arg0[i] == syscode) {
++			(void)copyinstr((user_addr_t)uthread->uu_arg[0], path, sizeof(path), &done);
++		}
++	}
++	for (unsigned i = 0; i < sizeof(path_arg1) / sizeof(path_arg1[0]); i++) {
++		if (path_arg1[i] == syscode) {
++			(void)copyinstr((user_addr_t)uthread->uu_arg[1], path, sizeof(path), &done);
++		}
++	}
++	path[sizeof(path) - 1] = 0;
++	if (syscode == SYS___mac_syscall) {
++		char policy[32] = "";
++
++		(void)copyinstr((user_addr_t)uthread->uu_arg[0], policy, sizeof(policy), &done);
++		policy[sizeof(policy) - 1] = 0;
++		snprintf(detail, sizeof(detail), " policy \"%s\" request %lld", policy,
++		    (long long)uthread->uu_arg[1]);
++	} else if (syscode == SYS_sysctl) {
++		int mib[6];
++		unsigned count = (unsigned)uthread->uu_arg[1];
++
++		if (count > 6) {
++			count = 6;
++		}
++		if (count > 0 && copyin((user_addr_t)uthread->uu_arg[0], mib, count * sizeof(mib[0])) == 0) {
++			size_t used = (size_t)snprintf(detail, sizeof(detail), " mib");
++
++			for (unsigned i = 0; i < count && used + 12 < sizeof(detail); i++) {
++				used += (size_t)snprintf(detail + used, sizeof(detail) - used, " %d", mib[i]);
++			}
++		}
++	}
++	detail[sizeof(detail) - 1] = 0;
++	printf("systrace: %s[%d] %s(0x%llx, 0x%llx, 0x%llx, 0x%llx)%s%s%s%s = %d\n",
++	    proc->p_comm, proc_getpid(proc), syscallnames[syscode],
++	    (unsigned long long)uthread->uu_arg[0], (unsigned long long)uthread->uu_arg[1],
++	    (unsigned long long)uthread->uu_arg[2], (unsigned long long)uthread->uu_arg[3],
++	    path[0] ? " \"" : "", path, path[0] ? "\"" : "", detail, error);
++}
++
+ #if CONFIG_DTRACE
+ extern int32_t dtrace_systrace_syscall(struct proc *, void *, int *);
+ extern void dtrace_systrace_syscall_return(unsigned short, int, int *);
+@@ -181,6 +267,10 @@ unix_syscall(
+ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
+ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
+ 
++	if (__improbable(systrace_level != 0)) {
++		systrace_report(proc, syscode, uthread, error);
++	}
++
+ #if CONFIG_MACF
+ skip_syscall:
+ #endif /* CONFIG_MACF */
+diff --git a/bsd/dev/memdev.c b/bsd/dev/memdev.c
+index 3e6bffa8c48e..43cffb98bdcc 100644
+--- a/bsd/dev/memdev.c
++++ b/bsd/dev/memdev.c
+@@ -159,7 +159,8 @@ static const struct cdevsw mdevcdevsw = {
+ 
+ struct mdev {
+ 	uint64_t        mdBase;         /* base page number (pages are assumed to be 4K). Multiply by 4096 to find actual address */
+-	uint32_t        mdSize;         /* size in pages (pages are assumed to be 4K). Multiply by 4096 to find actual size. */
++	uint64_t        mdSize;         /* size in pages (pages are assumed to be 4K). Multiply by 4096 to find actual size.
++	                                 * 64 bits wide so that "mdSize << 12" does not wrap for a disk of 4 GB or more. */
+ 	int                     mdFlags;        /* flags */
+ 	int                     mdSecsize;      /* sector size */
+ 	int                     mdBDev;         /* Block device number */
+@@ -179,6 +180,7 @@ int mdevCMajor = -1;
+ static int      mdevioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p, int is_char);
+ dev_t           mdevadd(int devid, uint64_t base, unsigned int size, int phys);
+ dev_t           mdevlookup(int devid);
++int             mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
+ void            mdevremoveall(void);
+ int             mdevgetrange(int devid, uint64_t *base, uint64_t *size);
+ 
+@@ -250,7 +252,9 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
+ 	if (uio->uio_offset > (mdev[devid].mdSize << 12)) {
+ 		count = 0;
+ 	} else {
+-		count = imin(uio_resid(uio), (mdev[devid].mdSize << 12) - uio->uio_offset);
++		uint64_t room = (mdev[devid].mdSize << 12) - (uint64_t)uio->uio_offset;
++
++		count = (uint64_t)uio_resid(uio) < room ? (int)uio_resid(uio) : (int)(room > INT_MAX ? INT_MAX : room);
+ 	}
+ 
+ 	status = uiomove64(mdata, count, uio);     /* Move the data */
+@@ -455,8 +459,8 @@ mdevioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+ 		}
+ 		memdev_info->mi_mdev = TRUE;
+ 		memdev_info->mi_phys = (mdev[devid].mdFlags & mdPhys) ? TRUE : FALSE;
+-		memdev_info->mi_base = (uint32_t)mdev[devid].mdBase;
+-		memdev_info->mi_size = mdev[devid].mdSize;
++		memdev_info->mi_base = mdev[devid].mdBase;
++		memdev_info->mi_size = (typeof(memdev_info->mi_size))mdev[devid].mdSize;
+ 		break;
+ 
+ 	default:
+@@ -725,6 +729,26 @@ mdevlookup(int devid)
+ 	return mdev[devid].mdBDev;                                                      /* Return the device number */
+ }
+ 
++/*
++ * For a filesystem that reads a memory disk in place: where the disk is in the kernel's
++ * address space. Not for disks given by physical address (those are not mapped).
++ */
++int
++mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size)
++{
++	for (int i = 0; i < NB_MAX_MDEVICES; i++) {
++		if ((mdev[i].mdFlags & mdInited) && mdev[i].mdBDev == dev) {
++			if (mdev[i].mdFlags & mdPhys) {
++				return ENOTSUP;
++			}
++			*base = (vm_offset_t)(mdev[i].mdBase << 12);
++			*size = mdev[i].mdSize << 12;
++			return 0;
++		}
++	}
++	return ENXIO;
++}
++
+ void
+ mdevremoveall(void)
+ {
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 4df41ba1f61b..16cf4fd8d8f1 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -147,6 +147,13 @@
+ #include <net/if_ether.h>               /* for ether_family_init() */
+ #include <net/if_gif.h>                 /* for gif_init() */
+ #include <miscfs/devfs/devfsdefs.h>     /* for devfs_kernel_mount() */
++#include <sys/redwood_input.h>
++#include <sys/redwood_audio.h>
++#include <sys/redwood_virtio_blk.h>
++#include <sys/redwood_sparse.h>
++#if APFS
++#include <sys/redwood_apfs_check.h>
++#endif
+ #include <vm/vm_kern.h>                 /* for kmem_suballoc() */
+ #include <sys/proc_uuid_policy.h>       /* proc_uuid_policy_init() */
+ #include <netinet/flow_divert.h>        /* flow_divert_init() */
+@@ -490,7 +497,7 @@ bsd_init(void)
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
+ #endif
+ 
+-#define DEBUG_BSDINIT 0
++#define DEBUG_BSDINIT 1 /* bring-up: trace bsd_init steps (only visible with -enable_kprintf_spam) */
+ 
+ #if DEBUG_BSDINIT
+ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
+@@ -976,6 +983,14 @@ bsd_init(void)
+ 
+ 		bsd_init_kprintf("calling devfs_kernel_mount\n");
+ 		devfs_kernel_mount(mounthere);
++		redwood_input_init();           /* /dev/redwood-touch */
++		redwood_audio_init();           /* /dev/redwood-audio */
++		redwood_virtio_blk_init();      /* /dev/rvblk0, a disk image of the host (QEMU) */
++		redwood_sparse_init();          /* /dev/rsp0, part of an image too big to hold */
++#if APFS
++		/* mounts and walks /dev/rvblk0 once userland has /private/var up */
++		redwood_apfs_check_init();
++#endif
+ 	}
+ #endif /* DEVFS */
+ 
+diff --git a/bsd/kern/decmpfs.c b/bsd/kern/decmpfs.c
+index 95192dd62449..b00da803b5b4 100644
+--- a/bsd/kern/decmpfs.c
++++ b/bsd/kern/decmpfs.c
+@@ -515,7 +515,7 @@ decmpfs_fetch_compressed_header(vnode_t vp, decmpfs_cnode *cp, decmpfs_header **
+ 	const bool no_additional_data = ((cp != NULL)
+ 	    && (cp->cmp_type != 0)
+ 	    && (cp->cmp_minimal_xattr != 0));
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	decmpfs_header *hdr = NULL;
+ 
+ 	/*
+diff --git a/bsd/kern/kern_credential.c b/bsd/kern/kern_credential.c
+index b38a638f8783..2a82857c80ce 100644
+--- a/bsd/kern/kern_credential.c
++++ b/bsd/kern/kern_credential.c
+@@ -3722,7 +3722,13 @@ kauth_cred_alloc(void (^cred_setup)(kauth_cred_t))
+ 	newcred = zalloc_ro(ZONE_ID_KAUTH_CRED, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+ 	rw->crw_cred = newcred;
+ 
+-#if HAS_APPLE_PAC
++	/*
++	 * cr_label is declared OS_PTRAUTH_SIGNED_PTR, which this tree leaves plain unless
++	 * XNU_PTRAUTH_SIGNED_DATA_PTRS is set (libkern/os/base.h, XNU_PTRAUTH_DATA_PTRS_PLAIN).
++	 * Only sign it by hand when the field is actually signed; otherwise the reads (plain) see a
++	 * signed pointer and e.g. the free path hands it to kvtophys as a raw VA and panics.
++	 */
++#if HAS_APPLE_PAC && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ 	{
+ 		void *naked_ptr = model_cred.cr_label;
+ 		void *signed_ptr;
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 1d71c66629fb..3e1737c21b86 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1157,6 +1157,9 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
+  *		activators should not be given the opportunity to attempt
+  *		to activate the image.
+  */
++/* Bring-up aid: with boot-arg systrace set, say which stage of an exec refused the image. */
++static TUNABLE(uint32_t, exec_trace, "systrace", 0);
++
+ static int
+ exec_mach_imgact(struct image_params *imgp)
+ {
+@@ -1315,6 +1318,9 @@ grade:
+ 	 * Actually load the image file we previously decided to load.
+ 	 */
+ 	lret = load_machfile(imgp, mach_header, thread, &map, &load_result);
++	if (lret != LOAD_SUCCESS && exec_trace) {
++		printf("exectrace: %s: load_machfile failed: %d\n", imgp->ip_ndp->ni_cnd.cn_pnbuf, lret);
++	}
+ 	if (lret != LOAD_SUCCESS) {
+ 		error = load_return_to_errno(lret);
+ 
+@@ -2197,6 +2203,9 @@ again:
+ 	}
+ 
+ 	error = exec_check_permissions(imgp);
++	if (error && exec_trace) {
++		printf("exectrace: %s: exec_check_permissions failed: %d\n", imgp->ip_ndp->ni_cnd.cn_pnbuf, error);
++	}
+ 	if (error) {
+ 		goto bad;
+ 	}
+@@ -2640,6 +2649,57 @@ done:
+ 	return ret;
+ }
+ 
++/*
++ * Bring-up aid, boot-arg applog=1: what applications and other programs started without a
++ * terminal say is worth reading here. Their standard output and error, which launchd opens on
++ * /dev/null, go to the console instead (that shows NSLog and the "Terminating app due to
++ * uncaught exception" kind of message). With applog=2 every program also gets
++ * OS_ACTIVITY_DT_MODE in its environment, which makes os_log write to standard error as well:
++ * everything any program logs, and a much slower system. applog_name=NAME[,NAME...] with
++ * applog=1 does that for the programs whose file names begin with one of the NAMEs only,
++ * which is how to read what one application extension has to say (launchd starts those for
++ * whoever asks, so there is no job description of ours to put the variable in).
++ */
++static TUNABLE(uint32_t, exec_applog, "applog", 0);
++static TUNABLE_STR(exec_applog_name, 128, "applog_name", "");
++
++static bool
++exec_applog_oslog(struct image_params *imgp)
++{
++	const char *name, *p = exec_applog_name;
++
++	if (exec_applog >= 2) {
++		return true;
++	}
++	if (exec_applog == 0 || *p == 0 || imgp->ip_ndp == NULL) {
++		return false;
++	}
++	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
++	while (*p != 0) {
++		const char *word = p;
++
++		while (*p != 0 && *p != ',') {
++			p++;
++		}
++		if (p != word && (size_t)(p - word) <= imgp->ip_ndp->ni_cnd.cn_namelen && strncmp(word, name, (size_t)(p - word)) == 0) {
++			return true;
++		}
++		if (*p == ',') {
++			p++;
++		}
++	}
++	return false;
++}
++
++static const char *
++exec_applog_path(int fd, const char *path)
++{
++	if (exec_applog && (fd == 1 || fd == 2) && strcmp(path, "/dev/null") == 0) {
++		return "/dev/console";
++	}
++	return path;
++}
++
+ /*
+  * exec_handle_file_actions
+  *
+@@ -2709,7 +2769,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+ 			AUDIT_SUBCALL_ENTER(OPEN, p, uthread);
+ 
+ 			NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1, UIO_SYSSPACE,
+-			    CAST_USER_ADDR_T(psfa->psfaa_openargs.psfao_path),
++			    CAST_USER_ADDR_T(exec_applog_path(psfa->psfaa_filedes, psfa->psfaa_openargs.psfao_path)),
+ 			    imgp->ip_vfs_context);
+ 
+ 			error = open1(imgp->ip_vfs_context, ndp,
+@@ -3094,10 +3154,16 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 	int error = 0;
+ 	struct persona *persona = NULL;
+ 
+-	if (!IOCurrentTaskHasEntitlement( PERSONA_MGMT_ENTITLEMENT)) {
+-		return EPERM;
+-	}
+-
++	/*
++	 * redwood: two of the three checks below cannot be passed in this port, and both stand in
++	 * the way of something ordinary. The entitlement is one nobody carries here (nothing is
++	 * signed, AMFI is a stub), and the persona is one nobody makes -- yet a package manager
++	 * becomes root by asking for exactly this: Sileo spawns apt and dpkg into persona 99 with
++	 * the uid it wants (its APTWrapper). Refused here, the spawn failed before the program was
++	 * ever started, and the application waited for an answer that could not come. The check
++	 * that still means something -- the size of the group list -- stays; see
++	 * spawn_persona_adopt() below for what happens then.
++	 */
+ 	if (px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GROUPS) {
+ 		if (px_persona->pspi_ngroups > NGROUPS_MAX) {
+ 			return EINVAL;
+@@ -3105,12 +3171,6 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 	}
+ 
+ 	persona = persona_lookup(px_persona->pspi_id);
+-	if (!persona) {
+-		error = ESRCH;
+-		goto out;
+-	}
+-
+-out:
+ 	if (persona) {
+ 		persona_put(persona);
+ 	}
+@@ -3130,9 +3190,6 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+ 	 * the kauth with a different UID/GID combo
+ 	 */
+ 	persona = persona_lookup(px_persona->pspi_id);
+-	if (!persona) {
+-		return ESRCH;
+-	}
+ 
+ 	cred = kauth_cred_proc_ref(p);
+ 
+@@ -3158,6 +3215,48 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+ 		    px_persona->pspi_gmuid);
+ 	}
+ 
++	if (persona == NULL) {
++		/*
++		 * redwood: there are no personas in this port -- nothing makes them, and
++		 * kpersona_find_by_type() answers "no such process" to everyone who asks. iOS's own
++		 * programs get along without them, but a package manager becomes root by way of one:
++		 * Sileo asks posix_spawn for persona 99 with OVERRIDE and uid 0 (its APTWrapper), and
++		 * that is how it runs apt and dpkg. With the persona missing the lookup failed, the
++		 * whole spawn failed with ESRCH, and the application sat for ever waiting for an
++		 * answer from a program that was never started. What the caller is after is the
++		 * credential, not the persona, so the credential is what it gets: the uid, gid and
++		 * groups it asked for, set on the process being spawned.
++		 *
++		 * The thread's own credential is not touched here: the thread running this is the
++		 * parent's, and the new process gets its credential when its image is activated.
++		 *
++		 * And the count of processes per real uid follows, as persona_proc_adopt() keeps it:
++		 * fork1() counted the new process under the parent's uid (mobile's), its exit takes
++		 * it off under the one it has then (root's). Without that, every program Sileo ran as
++		 * root took one away from root's count that had never been given -- and once Sileo's
++		 * own mv, cp and rm ran at all, a few dozen of them brought root's count to nothing,
++		 * and the next process of root's to exit panicked the kernel ("chgproccnt: lost user").
++		 */
++		__block kauth_cred_t new_cred = cred;
++		__block uid_t old_ruid = KAUTH_UID_NONE;
++		uid_t new_ruid = kauth_cred_getruid(cred);
++
++		(void)proc_update_label(p, true, ^kauth_cred_t (kauth_cred_t cur_cred) {
++			old_ruid = kauth_cred_getruid(cur_cred);
++			if (new_cred != cur_cred) {
++			        kauth_cred_ref(new_cred);
++			        kauth_cred_unref(&cur_cred);
++			}
++			return new_cred;
++		});
++		kauth_cred_unref(&cred);
++		if (old_ruid != KAUTH_UID_NONE && old_ruid != new_ruid) {
++			(void)chgproccnt(new_ruid, 1);
++			(void)chgproccnt(old_ruid, -1);
++		}
++		return 0;
++	}
++
+ 	ret = persona_proc_adopt(p, persona, cred);
+ 
+ 	kauth_cred_unref(&cred);
+@@ -5586,10 +5685,75 @@ bad:
+  * Note:	The argument and environment vectors are user space pointers
+  *		to arrays of user space pointers.
+  */
++/*
++ * Bring-up aid: the sysctl kern.exec_inject holds "LIBRARY NAME NAME ..."; every program
++ * whose file name is one of the NAMEs is started with DYLD_INSERT_LIBRARIES=LIBRARY in its
++ * environment, so that dyld loads our library into it. Several such groups may follow each
++ * other, separated by ";". A program named in more than one group gets every one of those
++ * libraries, joined with ":" in the one DYLD_INSERT_LIBRARIES, so SpringBoard can carry both
++ * our window-server library and the tweak loader. launchd refuses to pass DYLD_ variables
++ * from a job description, which is why the kernel adds this one. Set once by our init (from
++ * etc/inject.conf) before it hands over to launchd.
++ */
++static char exec_inject_conf[512];
++SYSCTL_STRING(_kern, OID_AUTO, exec_inject, CTLFLAG_RW | CTLFLAG_LOCKED, exec_inject_conf, sizeof(exec_inject_conf),
++    "LIBRARY NAME... [; LIBRARY NAME...]: programs started with the library inserted");
++
++static bool
++exec_inject_env(struct image_params *imgp, char *env, size_t size)
++{
++	const char *name, *p = exec_inject_conf;
++	size_t namelen, used;
++	bool any = false;
++
++	if (*p == 0 || imgp->ip_ndp == NULL) {
++		return false;
++	}
++	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
++	namelen = imgp->ip_ndp->ni_cnd.cn_namelen;
++	used = strlcpy(env, "DYLD_INSERT_LIBRARIES=", size);
++	while (*p != 0) {
++		const char *library;
++		size_t liblen;
++		bool matched = false;
++
++		while (*p == ' ' || *p == ';') {
++			p++;
++		}
++		library = p;
++		while (*p != 0 && *p != ' ' && *p != ';') {
++			p++;
++		}
++		liblen = (size_t)(p - library);
++		while (*p == ' ') {
++			const char *word = ++p;
++
++			while (*p != 0 && *p != ' ' && *p != ';') {
++				p++;
++			}
++			if (!matched && (size_t)(p - word) == namelen && namelen != 0 && liblen != 0 &&
++			    strncmp(word, name, namelen) == 0) {
++				matched = true;         /* this group names this program; its library is added once */
++			}
++		}
++		if (matched && liblen != 0 && used + 1 + liblen < size) {
++			if (any) {
++				env[used++] = ':';      /* dyld takes several libraries separated by ":" */
++			}
++			memcpy(env + used, library, liblen);
++			used += liblen;
++			env[used] = 0;
++			any = true;
++		}
++	}
++	return any;
++}
++
+ __attribute__((noinline))
+ static int
+ exec_extract_strings(struct image_params *imgp)
+ {
++	char            inject_env[512];
+ 	int error = 0;
+ 	int     ptr_size = (imgp->ip_flags & IMGPF_WAS_64BIT_ADDR) ? 8 : 4;
+ 	int new_ptr_size = (imgp->ip_flags & IMGPF_IS_64BIT_ADDR) ? 8 : 4;
+@@ -5759,6 +5923,33 @@ exec_extract_strings(struct image_params *imgp)
+ 		imgp->ip_envc++;
+ 	}
+ 
++	/* one more variable for the programs that get our library inside them (see exec_inject_env) */
++	if (exec_inject_env(imgp, inject_env, sizeof(inject_env))) {
++		error = exec_add_user_string(imgp, CAST_USER_ADDR_T(inject_env), UIO_SYSSPACE, TRUE);
++		if (error) {
++			goto bad;
++		}
++		if (imgp->ip_argspace < new_ptr_size) {
++			error = E2BIG;
++			goto bad;
++		}
++		imgp->ip_argspace -= new_ptr_size;
++		imgp->ip_envc++;
++	}
++	/* ... and one for everybody when the logs are wanted on the console (see exec_applog_path) */
++	if (exec_applog_oslog(imgp)) {
++		error = exec_add_user_string(imgp, CAST_USER_ADDR_T("OS_ACTIVITY_DT_MODE=YES"), UIO_SYSSPACE, TRUE);
++		if (error) {
++			goto bad;
++		}
++		if (imgp->ip_argspace < new_ptr_size) {
++			error = E2BIG;
++			goto bad;
++		}
++		imgp->ip_argspace -= new_ptr_size;
++		imgp->ip_envc++;
++	}
++
+ 	/* Save space for envv[] NULL terminator */
+ 	if (imgp->ip_argspace < new_ptr_size) {
+ 		error = E2BIG;
+@@ -6636,7 +6827,23 @@ handle_mac_transition:
+ 	}
+ 
+ 	/* Update the process' identity version and set the security token */
+-	proc_setpidversion(p, OSIncrementAtomic(&nextpidversion));
++	{
++		/*
++		 * (redwood) Except when xpcproxy becomes the service it was spawned for: then the process keeps
++		 * xpcproxy's identity version, as if launchd had spawned the service itself, which is what launchd
++		 * means by eliding xpcproxy ("service will attempt to elide xpcproxy"; here it spawns xpcproxy
++		 * all the same). RunningBoard keeps the audit token of such a process from before the exec and
++		 * never takes the newer one: every entitlement check it made for it failed (SecTaskLoadEntitlements
++		 * error 3, a thousand times a minute with Safari open), and Safari's web processes got no
++		 * assertions ("target is not running or doesn't have entitlement
++		 * com.apple.runningboard.assertions.webkit"). Boot-arg xpcproxy_idversion=1: a new version, as XNU.
++		 */
++		static TUNABLE(uint32_t, xpcproxy_idversion, "xpcproxy_idversion", 0);
++
++		if (xpcproxy_idversion || strncmp(p->p_comm, "xpcproxy", sizeof(p->p_comm)) != 0) {
++			proc_setpidversion(p, OSIncrementAtomic(&nextpidversion));
++		}
++	}
+ 	task_set_uniqueid(task);
+ 	set_security_token_task_internal(p, task);
+ 
+@@ -7538,6 +7745,11 @@ process_signature(proc_t p, struct image_params *imgp)
+ 	}
+ 
+ done:
++	if (error && exec_trace) {
++		printf("exectrace: %s[%d]: process_signature failed: %d (csflags 0x%x, mac %d, cs_error %d)\n",
++		    p->p_comm, proc_getpid(p), error, imgp->ip_csflags, imgp->ip_mac_return,
++		    signature_failure_reason != OS_REASON_NULL);
++	}
+ 	if (0 == error) {
+ 		/*
+ 		 * Update the new process's signature-dependent process state.
+diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
+index 1750d3a52d3c..9947cb2421da 100644
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -222,6 +222,15 @@ MACRO_END
+ 
+ /* General tunables */
+ 
++/*
++ * redwood: the memory there is to manage. max_mem is the whole of the kernel's memory window, and
++ * here more than half of that window is the system image -- a RAM disk the kernel boots from, which
++ * is nobody's to use or to give back. Thresholds that are per cent of max_mem had idle daemons
++ * killed with a quarter of the usable memory still available, and the window server not long after.
++ * sane_size leaves the image (and the kernel itself) out.
++ */
++#define memstat_memory_size     sane_size
++
+ unsigned long delta_percentage = 5;
+ unsigned long critical_threshold_percentage = 5;
+ // On embedded devices with more than 3GB of memory we lower the critical percentage.
+@@ -1365,7 +1374,7 @@ memorystatus_init(void)
+ 	if (delta_percentage == 0) {
+ 		delta_percentage = 5;
+ 	}
+-	if (max_mem > config_jetsam_large_memory_cutoff) {
++	if (memstat_memory_size > config_jetsam_large_memory_cutoff) {
+ 		critical_threshold_percentage = critical_threshold_percentage_larger_devices;
+ 		delta_percentage = delta_percentage_larger_devices;
+ 	}
+@@ -1400,11 +1409,11 @@ memorystatus_init(void)
+ 		PE_get_default("kern.jetsam_idle_snapshot", &memorystatus_idle_snapshot, sizeof(memorystatus_idle_snapshot));
+ 	}
+ 
+-	memorystatus_delta = (unsigned int) (delta_percentage * atop_64(max_mem) / 100);
+-	memorystatus_available_pages_critical_idle_offset = (unsigned int) (idle_offset_percentage * atop_64(max_mem) / 100);
++	memorystatus_delta = (unsigned int) (delta_percentage * atop_64(memstat_memory_size) / 100);
++	memorystatus_available_pages_critical_idle_offset = (unsigned int) (idle_offset_percentage * atop_64(memstat_memory_size) / 100);
+ 	memorystatus_available_pages_critical_base = (unsigned int) ((critical_threshold_percentage / delta_percentage) * memorystatus_delta);
+ 	memorystatus_policy_more_free_offset_pages = (unsigned int) ((policy_more_free_offset_percentage / delta_percentage) * memorystatus_delta);
+-	memorystatus_sysproc_aging_aggr_pages = (unsigned int) (sysproc_aging_aggr_threshold_percentage * atop_64(max_mem) / 100);
++	memorystatus_sysproc_aging_aggr_pages = (unsigned int) (sysproc_aging_aggr_threshold_percentage * atop_64(memstat_memory_size) / 100);
+ 
+ 	/* Set the swapin trigger in pages based on the maximum size allocated for each c_seg */
+ 	memorystatus_swapin_trigger_pages = (unsigned int) atop_64(memorystatus_swapin_trigger_segments * c_seg_allocsize);
+@@ -5103,7 +5112,7 @@ memorystatus_pages_update(unsigned int pages_avail)
+ 	if (critical || delta) {
+ 		unsigned int total_pages;
+ 
+-		total_pages = (unsigned int) atop_64(max_mem);
++		total_pages = (unsigned int) atop_64(memstat_memory_size);
+ #if CONFIG_SECLUDED_MEMORY
+ 		total_pages -= vm_page_secluded_count;
+ #endif /* CONFIG_SECLUDED_MEMORY */
+@@ -6609,7 +6618,7 @@ memorystatus_update_levels_locked(boolean_t critical_only)
+ 	}
+ 
+ #if VM_PRESSURE_EVENTS
+-	memorystatus_available_pages_pressure = (int32_t)(pressure_threshold_percentage * (atop_64(max_mem) / 100));
++	memorystatus_available_pages_pressure = (int32_t)(pressure_threshold_percentage * (atop_64(memstat_memory_size) / 100));
+ #endif
+ }
+ 
+diff --git a/bsd/kern/kern_priv.c b/bsd/kern/kern_priv.c
+index 88adf2dda936..2b2f528d2273 100644
+--- a/bsd/kern/kern_priv.c
++++ b/bsd/kern/kern_priv.c
+@@ -82,6 +82,19 @@ priv_check_cred(kauth_cred_t cred, int priv, int flags)
+ #endif
+ 	int error;
+ 
++	/*
++	 * redwood: nothing is signed here and no process carries an entitlement (AMFI is a stub), so
++	 * every privilege that an entitlement would answer for is refused -- and iOS leans on one of
++	 * them for ordinary work. A daemon that goes to the network on behalf of an application
++	 * (trustd checking the certificate for whoever opened the connection, nsurlsessiond carrying
++	 * out its downloads) describes the connection to NECP as delegated, and without this
++	 * privilege the kernel refuses it with EPERM: the download then never starts and never fails.
++	 * These daemons run as mobile, so the "root gets everything" rule below does not reach them.
++	 */
++	if (priv == PRIV_NET_PRIVILEGED_SOCKET_DELEGATE) {
++		return 0;
++	}
++
+ 	/*
+ 	 * We first evaluate policies that may deny the granting of
+ 	 * privilege unilaterally.
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+index ae4a5f33df1e..986b517dfd18 100644
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -1099,6 +1099,14 @@ __pthread_kill(__unused proc_t p, struct __pthread_kill_args *uap,
+ 	thread_t target_act;
+ 	int error = 0;
+ 	int signum = uap->sig;
++
++#if defined(__arm64__)
++	if (signum == SIGABRT) {
++		extern void user_abort_trace(void);
++
++		user_abort_trace();             /* no crash reporter here: this is where an abort() gets recorded */
++	}
++#endif
+ 	struct uthread *uth;
+ 
+ 	target_act = (thread_t)port_name_to_thread(uap->thread_port,
+diff --git a/bsd/kern/kpi_socket.c b/bsd/kern/kpi_socket.c
+index 003cfb074a99..c597065f24f1 100644
+--- a/bsd/kern/kpi_socket.c
++++ b/bsd/kern/kpi_socket.c
+@@ -727,7 +727,7 @@ sock_receive_internal(socket_t sock, struct msghdr *msg, mbuf_t *data,
+ 	int error = 0;
+ 	user_ssize_t length = 0;
+ 	struct sockaddr *fromsa = NULL;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF((msg != NULL) ? msg->msg_iovlen : 0)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF((msg != NULL) ? msg->msg_iovlen : 0) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (sock == NULL) {
+ 		return EINVAL;
+diff --git a/bsd/kern/sys_generic.c b/bsd/kern/sys_generic.c
+index 4ca22ee4371a..e95e618b4cb6 100644
+--- a/bsd/kern/sys_generic.c
++++ b/bsd/kern/sys_generic.c
+@@ -303,7 +303,7 @@ dofileread(vfs_context_t ctx, struct fileproc *fp,
+     user_addr_t bufp, user_size_t nbyte, off_t offset, int flags,
+     user_ssize_t *retval)
+ {
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	uio_t uio;
+ 	int spacetype;
+ 
+@@ -350,7 +350,7 @@ static int
+ read_internal(struct proc *p, int fd, user_addr_t buf, user_size_t nbyte,
+     off_t offset, int flags, user_ssize_t *retval)
+ {
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	uio_t uio;
+ 	int spacetype = IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32;
+ 
+@@ -631,7 +631,7 @@ dofilewrite(vfs_context_t ctx, struct fileproc *fp,
+     user_addr_t bufp, user_size_t nbyte, off_t offset, int flags,
+     user_ssize_t *retval)
+ {
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	uio_t uio;
+ 	int spacetype;
+ 
+@@ -678,7 +678,7 @@ int
+ write_internal(struct proc *p, int fd, user_addr_t buf, user_size_t nbyte,
+     off_t offset, int flags, guardid_t *puguard, user_ssize_t *retval)
+ {
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	uio_t uio;
+ 	int spacetype = IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32;
+ 
+diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
+index b544bf307dfe..85e34caf9f62 100644
+--- a/bsd/kern/sys_work_interval.c
++++ b/bsd/kern/sys_work_interval.c
+@@ -265,6 +265,22 @@ work_interval_ctl(__unused proc_t p, struct work_interval_ctl_args *uap,
+ 
+ 		break;
+ 
++	case 6:
++	case 7:
++	case 8:
++		/*
++		 * (redwood) Not in the open source: what os_workgroup_interval_start(), _update() and
++		 * _finish() of iOS send, for the performance controller, which is not here either.
++		 * CoreAudio does it in every I/O cycle and logs an error each time it is refused: fifty
++		 * lines a second from the audio server's real-time thread. For its threads, and only
++		 * for them, there is nothing to do and nothing wrong. (The window server asks for its
++		 * frames too, and is used to the refusal.)
++		 */
++		if (kern_work_interval_type_of_thread(current_thread()) == WORK_INTERVAL_TYPE_COREAUDIO) {
++			return 0;
++		}
++		return ENOTSUP;
++
+ 	default:
+ 		return ENOTSUP;
+ 	}
+diff --git a/bsd/kern/uipc_syscalls.c b/bsd/kern/uipc_syscalls.c
+index dce802fc36f1..e2e6b3a3f3db 100644
+--- a/bsd/kern/uipc_syscalls.c
++++ b/bsd/kern/uipc_syscalls.c
+@@ -3561,7 +3561,7 @@ sendfile(proc_ref_t p, struct sendfile_args *uap, __unused int *retval)
+ 		mbuf_t  m;
+ 		unsigned int    nbufs = SFUIOBUFS, i;
+ 		uio_t   auio;
+-		uio_stackbuf_t    uio_buf[UIO_SIZEOF(SFUIOBUFS)]; /* 1 KB !!! */
++		uio_stackbuf_t    uio_buf[(UIO_SIZEOF(SFUIOBUFS) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)]; /* 1 KB !!! */
+ 		size_t  uiolen;
+ 		user_ssize_t    rlen;
+ 		off_t   pgoff;
+diff --git a/bsd/miscfs/bindfs/bind_vfsops.c b/bsd/miscfs/bindfs/bind_vfsops.c
+index 412f9ecfc22c..f6595c0401a3 100644
+--- a/bsd/miscfs/bindfs/bind_vfsops.c
++++ b/bsd/miscfs/bindfs/bind_vfsops.c
+@@ -139,8 +139,12 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
+ 		return ENOTSUP;
+ 	}
+ 
+-	/* check entitlement */
+-	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
++	/*
++	 * check entitlement -- redwood: or process 1, the port's own init, unsigned, which binds
++	 * its choice of launchd jobs and the like onto the read-only iOS root volume before it
++	 * hands over to launchd (userland/src/init.c, root_apfs=)
++	 */
++	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT) && proc_getpid(current_proc()) != 1) {
+ 		return EPERM;
+ 	}
+ 
+diff --git a/bsd/miscfs/mockfs/mockfs.h b/bsd/miscfs/mockfs/mockfs.h
+index 07c91ffaf686..5ce41d043901 100644
+--- a/bsd/miscfs/mockfs/mockfs.h
++++ b/bsd/miscfs/mockfs/mockfs.h
+@@ -59,7 +59,7 @@ struct mockfs_mount {
+ 	mockfs_fsnode_t mockfs_root;            /* Root of the node tree */
+ 	boolean_t       mockfs_memory_backed;   /* Does the backing store reside in memory */
+ 	boolean_t       mockfs_physical_memory; /* (valid if memory backed) */
+-	uint32_t        mockfs_memdev_base;     /* Base page of the backing store (valid if memory backed) */
++	uint64_t        mockfs_memdev_base;     /* Base page of the backing store (valid if memory backed) */
+ 	uint64_t        mockfs_memdev_size;     /* Size of the backing store (valid if memory backed) */
+ };
+ 
+diff --git a/bsd/miscfs/mockfs/mockfs_fsnode.c b/bsd/miscfs/mockfs/mockfs_fsnode.c
+index e00012622e77..4f993b3cd47f 100644
+--- a/bsd/miscfs/mockfs/mockfs_fsnode.c
++++ b/bsd/miscfs/mockfs/mockfs_fsnode.c
+@@ -85,7 +85,7 @@ mockfs_fsnode_create(mount_t mp, uint8_t type, mockfs_fsnode_t * fsnpp)
+ 		goto done;
+ 	}
+ 
+-	*fsnpp = kalloc_type(mockfs_fsnode_t, Z_WAITOK | Z_ZERO | Z_NOFAIL);
++	*fsnpp = kalloc_type(struct mockfs_fsnode, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+ 	(*fsnpp)->size = new_size;
+ 	(*fsnpp)->type = type;
+ 	(*fsnpp)->mnt = mp;
+@@ -154,7 +154,7 @@ mockfs_fsnode_destroy(mockfs_fsnode_t fsnp)
+ 		}
+ 	}
+ 
+-	kfree_type(mockfs_fsnode_t, fsnp);
++	kfree_type(struct mockfs_fsnode, fsnp);
+ done:
+ 	return rvalue;
+ }
+@@ -345,10 +345,12 @@ mockfs_fsnode_vnode(mockfs_fsnode_t fsnp, vnode_t * vpp)
+ 				panic("mockfs_fsvnode failed to get ubc_mem_object for a new vnode");
+ 			}
+ 
+-			rvalue = pager_map_to_phys_contiguous(ubc_mem_object, 0, (mockfs_mnt->mockfs_memdev_base << PAGE_SHIFT), fsnp->size);
++			/* memdev counts its base in 4K pages whatever the kernel page size is (see bsd/dev/memdev.c) */
++			rvalue = pager_map_to_phys_contiguous(ubc_mem_object, 0, (mockfs_mnt->mockfs_memdev_base << 12), fsnp->size);
+ 
+ 			if (rvalue) {
+-				panic("mockfs_fsnode_vnode failed to create fictitious pages for a memory-backed device; rvalue = %d", rvalue);
++				panic("mockfs_fsnode_vnode failed to create fictitious pages for a memory-backed device; rvalue = %d, base page 0x%llx, size 0x%llx",
++				    rvalue, (unsigned long long)mockfs_mnt->mockfs_memdev_base, (unsigned long long)fsnp->size);
+ 			}
+ 		}
+ 
+diff --git a/bsd/nfs/nfs_serv.c b/bsd/nfs/nfs_serv.c
+index 6ae9b6bc3fde..58556c324b67 100644
+--- a/bsd/nfs/nfs_serv.c
++++ b/bsd/nfs/nfs_serv.c
+@@ -769,8 +769,8 @@ nfsrv_readlink(
+ 	struct nfsm_chain *nmreq, nmrep;
+ 	mbuf_t mpath, mp;
+ 	uio_t auio = NULL;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(4)];
+-	char *uio_bufp = &uio_buf[0];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(4) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
++	char *uio_bufp = (char *)&uio_buf[0];
+ 	int uio_buflen = UIO_SIZEOF(4);
+ 
+ 	error = 0;
+@@ -917,7 +917,7 @@ nfsrv_read(
+ 	struct vnode_attr vattr, *vap = &vattr;
+ 	off_t off;
+ 	uid_t saved_uid;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(0)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(0) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	struct nfsm_chain *nmreq, nmrep;
+ 
+ 	error = 0;
+@@ -3559,7 +3559,7 @@ nfsrv_symlink(
+ 	struct nfs_export *nx = NULL;
+ 	struct nfs_export_options *nxo = NULL;
+ 	uio_t auio = NULL;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	struct nfsm_chain *nmreq, nmrep;
+ 	__unused const int nfs_vers = nd->nd_vers;
+ 	assert(nd->nd_vers == NFS_VER2 || nd->nd_vers == NFS_VER3);
+@@ -4215,7 +4215,7 @@ nfsrv_readdir(
+ 	struct nfs_export *nx;
+ 	struct nfs_export_options *nxo;
+ 	uio_t auio = NULL;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	int len, nlen, rem, xfer, error, attrerr;
+ 	int siz, count, fullsiz, eofflag, nentries;
+ 	u_quad_t off, toff, verf = 0;
+@@ -4462,7 +4462,7 @@ nfsrv_readdirplus(
+ 	struct nfs_export *nx;
+ 	struct nfs_export_options *nxo;
+ 	uio_t auio = NULL;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	struct vnode_attr attr, va, *vap = &va;
+ 	int len, nlen, rem, xfer, error, attrerr, gotfh, gotattr;
+ 	int siz, dircount, maxcount, fullsiz, eofflag, dirlen, nentries, isdotdot;
+diff --git a/bsd/sys/disk.h b/bsd/sys/disk.h
+index 82efb4fcc000..47a4cd98e59f 100644
+--- a/bsd/sys/disk.h
++++ b/bsd/sys/disk.h
+@@ -284,7 +284,7 @@ typedef struct{
+ typedef struct{
+ 	boolean_t mi_mdev; /* Is this a memdev device? */
+ 	boolean_t mi_phys; /* Physical memory? */
+-	uint32_t mi_base; /* Base page number of the device? */
++	uint64_t mi_base; /* Base page number of the device (a kernel VA page number does not fit in 32 bits) */
+ 	uint64_t mi_size; /* Size of the device (in ) */
+ } dk_memdev_info_t;
+ 
+diff --git a/bsd/sys/uio_internal.h b/bsd/sys/uio_internal.h
+index 74a2036cf69e..a68b79ce48fa 100644
+--- a/bsd/sys/uio_internal.h
++++ b/bsd/sys/uio_internal.h
+@@ -170,7 +170,7 @@ __END_DECLS
+ #define UIO_SIZEOF( a_iovcount ) \
+ 	( sizeof(struct uio) + UIO_SIZEOF_IOVS(a_iovcount) )
+ 
+-typedef char __attribute__((aligned(_Alignof(union iovecs)))) uio_stackbuf_t;
++typedef uint64_t uio_stackbuf_t; /* was over-aligned char; array of those is rejected by clang >= 16 */
+ 
+ #define UIO_IS_USER_SPACE32( a_uio_t )  \
+ 	( (a_uio_t)->uio_segflg == UIO_USERSPACE32 || (a_uio_t)->uio_segflg == UIO_PHYS_USERSPACE32 || \
+diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
+index cbaa0b221894..78315a2d54cf 100644
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -878,7 +878,7 @@ static int
+ setattrlist_setfinderinfo(vnode_t vp, char *fndrinfo, struct vfs_context *ctx)
+ {
+ 	uio_t   auio;
+-	uio_stackbuf_t    uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t    uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	int     error;
+ 
+ 	if ((auio = uio_createwithbuffer(1, 0, UIO_SYSSPACE, UIO_WRITE, uio_buf, sizeof(uio_buf))) == NULL) {
+@@ -1847,7 +1847,7 @@ attr_pack_common(vfs_context_t ctx, mount_t mp, vnode_t vp, struct attrlist *alp
+ 		error = 0;
+ 		if (vp && !is_bulk) {
+ 			uio_t   auio;
+-			uio_stackbuf_t    uio_buf[UIO_SIZEOF(1)];
++			uio_stackbuf_t    uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 			if ((auio = uio_createwithbuffer(1, 0, UIO_SYSSPACE,
+ 			    UIO_READ, uio_buf, sizeof(uio_buf))) == NULL) {
+@@ -3120,7 +3120,7 @@ getattrlist_internal(vfs_context_t ctx, vnode_t vp, struct attrlist  *alp,
+ 	int             pack_invalid;
+ 	int             vtype = 0;
+ 	uio_t           auio;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	// must be true for fork attributes to be used as new common attributes
+ 	const int use_fork = (options & FSOPT_ATTR_CMN_EXTENDED) != 0;
+ 
+@@ -3474,7 +3474,7 @@ refill_fd_direntries(vfs_context_t ctx, vnode_t dvp, struct fd_vn_data *fvd,
+     int *eofflagp)
+ {
+ 	uio_t rdir_uio;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	size_t rdirbufsiz;
+ 	size_t rdirbufused;
+ 	int eofflag;
+@@ -4048,7 +4048,7 @@ getattrlistbulk(proc_t p, struct getattrlistbulk_args *uap, int32_t *retval)
+ 	enum uio_seg segflg;
+ 	int count;
+ 	uio_t auio = NULL;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	kauth_action_t action;
+ 	int eofflag;
+ 	uint64_t options;
+diff --git a/bsd/vfs/vfs_conf.c b/bsd/vfs/vfs_conf.c
+index bae70cda3a96..031613b10643 100644
+--- a/bsd/vfs/vfs_conf.c
++++ b/bsd/vfs/vfs_conf.c
+@@ -103,6 +103,15 @@ extern  struct vfsops mockfs_vfsops;
+ extern  int mockfs_mountroot(mount_t, vnode_t, vfs_context_t);
+ #endif /* MOCKFS */
+ 
++#if RAMFS
++extern  struct vfsops ramfs_vfsops;
++#endif /* RAMFS */
++
++#if APFS
++extern  struct vfsops apfs_vfsops;
++extern  int apfs_mountroot(mount_t, vnode_t, vfs_context_t);
++#endif /* APFS */
++
+ enum fs_type_num {
+ 	FT_NFS = 2,
+ 	FT_DEVFS = 19,
+@@ -110,7 +119,9 @@ enum fs_type_num {
+ 	FT_ROUTEFS = 21,
+ 	FT_NULLFS = 22,
+ 	FT_BINDFS = 23,
+-	FT_MOCKFS  = 0x6D6F636B
++	FT_MOCKFS  = 0x6D6F636B,
++	FT_RAMFS   = 0x72616D66,
++	FT_APFS    = 0x61706673
+ };
+ 
+ int fstypenumstart = FT_BINDFS + 1;
+@@ -194,6 +205,54 @@ static struct vfstable vfstbllist[] = {
+ 	},
+ #endif /* BINDFS */
+ 
++#if RAMFS
++	/* Read-write filesystem in memory (no device, no mount arguments) */
++	{
++		.vfc_vfsops = &ramfs_vfsops,
++		.vfc_name = "ramfs",
++		.vfc_typenum = FT_RAMFS,
++		.vfc_refcount = 0,
++		.vfc_flags = MNT_LOCAL,
++		.vfc_mountroot = NULL,
++		.vfc_next = NULL,
++		.vfc_reserved1 = 0,
++		.vfc_reserved2 = 0,
++		.vfc_vfsflags = VFC_VFSGENERICARGS | VFC_VFS64BITREADY | VFC_VFSNATIVEXATTR,
++		.vfc_descptr = NULL,
++		.vfc_descsize = 0,
++		.vfc_sysctl = NULL
++	},
++#endif /* RAMFS */
++
++#if APFS
++	/*
++	 * Apple File System, read only: the root and every image of this port's (the RAM
++	 * disks are APFS containers).  Before mockfs, which accepts any root device: a device
++	 * that is not APFS comes back EINVAL and vfs_mountroot() goes on to the next.
++	 */
++	{
++		.vfc_vfsops = &apfs_vfsops,
++		.vfc_name = "apfs",
++		.vfc_typenum = FT_APFS,
++		.vfc_refcount = 0,
++		.vfc_flags = MNT_LOCAL | MNT_RDONLY,
++		.vfc_mountroot = apfs_mountroot,
++		.vfc_next = NULL,
++		.vfc_reserved1 = 0,
++		.vfc_reserved2 = 0,
++		/*
++		 * Generic args, not local: a kernel mount of a filesystem marked
++		 * VFC_VFSLOCALARGS is refused outright (mount_common), and this one has to be
++		 * mountable from the kernel.  So apfs_mount() takes the device's path as its
++		 * mount data and opens it itself.
++		 */
++		.vfc_vfsflags = VFC_VFSGENERICARGS | VFC_VFS64BITREADY | VFC_VFSNATIVEXATTR,
++		.vfc_descptr = NULL,
++		.vfc_descsize = 0,
++		.vfc_sysctl = NULL
++	},
++#endif /* APFS */
++
+ #if MOCKFS
+ 	/* If we are configured for it, mockfs should always be the last standard entry (and thus the last FS we attempt mountroot with) */
+ 	{
+@@ -298,6 +357,15 @@ extern const struct vnodeopv_desc devfs_fdesc_vnodeop_opv_desc;
+ extern const struct vnodeopv_desc mockfs_vnodeop_opv_desc;
+ #endif /* MOCKFS */
+ 
++
++#if RAMFS
++extern const struct vnodeopv_desc ramfs_vnodeop_opv_desc;
++#endif /* RAMFS */
++
++#if APFS
++extern const struct vnodeopv_desc apfs_vnodeop_opv_desc;
++#endif /* APFS */
++
+ extern const struct vnodeopv_desc nullfs_vnodeop_opv_desc;
+ extern const struct vnodeopv_desc bindfs_vnodeop_opv_desc;
+ 
+@@ -327,5 +395,11 @@ const struct vnodeopv_desc *vfs_opv_descs[] = {
+ #if MOCKFS
+ 	&mockfs_vnodeop_opv_desc,
+ #endif /* MOCKFS */
++#if RAMFS
++	&ramfs_vnodeop_opv_desc,
++#endif /* RAMFS */
++#if APFS
++	&apfs_vnodeop_opv_desc,
++#endif /* APFS */
+ 	NULL
+ };
+diff --git a/bsd/vfs/vfs_lookup.c b/bsd/vfs/vfs_lookup.c
+index a05c8e767b33..5f2846cb8893 100644
+--- a/bsd/vfs/vfs_lookup.c
++++ b/bsd/vfs/vfs_lookup.c
+@@ -1670,7 +1670,7 @@ lookup_handle_symlink(struct nameidata *ndp, vnode_t *new_dp, bool *new_dp_has_i
+ 	int error;
+ 	char *cp;               /* pointer into pathname argument */
+ 	uio_t auio;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	int need_newpathbuf;
+ 	u_int linklen = 0;
+ 	struct componentname *cnp = &ndp->ni_cnd;
+diff --git a/bsd/vfs/vfs_quota.c b/bsd/vfs/vfs_quota.c
+index d0476214e5f0..c81cadfab1d4 100644
+--- a/bsd/vfs/vfs_quota.c
++++ b/bsd/vfs/vfs_quota.c
+@@ -382,7 +382,7 @@ dqfileopen(struct quotafile *qfp, int type)
+ 	off_t file_size;
+ 	uio_t auio;
+ 	int error = 0;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	context.vc_thread = current_thread();
+ 	context.vc_ucred = qfp->qf_cred;
+@@ -440,7 +440,7 @@ dqfileclose(struct quotafile *qfp, __unused int type)
+ 	struct dqfilehdr header;
+ 	struct vfs_context context;
+ 	uio_t auio;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	auio = uio_createwithbuffer(1, 0, UIO_SYSSPACE, UIO_READ,
+ 	    &uio_buf[0], sizeof(uio_buf));
+@@ -767,7 +767,7 @@ dqlookup(struct quotafile *qfp, u_int32_t id, struct dqblk *dqb, uint32_t *index
+ 	int i, skip, last;
+ 	u_int32_t mask;
+ 	int error = 0;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 
+ 	qf_lock(qfp);
+@@ -986,7 +986,7 @@ dqsync_locked(struct dquot *dq)
+ 	struct dqblk dqb, *dqblkp;
+ 	uio_t auio;
+ 	int error;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (dq->dq_id == 0) {
+ 		dq->dq_flags &= ~DQ_MOD;
+diff --git a/bsd/vfs/vfs_subr.c b/bsd/vfs/vfs_subr.c
+index f64d8c647365..f2e13c1aa7f3 100644
+--- a/bsd/vfs/vfs_subr.c
++++ b/bsd/vfs/vfs_subr.c
+@@ -10995,7 +10995,7 @@ rmdir_remove_orphaned_appleDouble(vnode_t vp, vfs_context_t ctx, int * restart_f
+ 	uio_t auio = NULL;
+ 	int eofflag, siz = UIO_BUFF_SIZE, alloc_size = 0, nentries = 0;
+ 	int open_flag = 0, full_erase_flag = 0;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	char *rbuf = NULL;
+ 	void *dir_pos;
+ 	void *dir_end;
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+index 2bbba037c2dd..ee65d5943196 100644
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -7261,7 +7261,7 @@ readlinkat_internal(vfs_context_t ctx, int fd, vnode_t lnk_vp, user_addr_t path,
+ 	uio_t auio;
+ 	int error;
+ 	struct nameidata nd;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	bool put_vnode;
+ 
+ 	if (bufsize > INT32_MAX) {
+@@ -10314,7 +10314,7 @@ getdirentries_common(int fd, user_addr_t bufp, user_size_t bufsize, ssize_t *byt
+ 	int spacetype = proc_is64bit(vfs_context_proc(&context)) ? UIO_USERSPACE64 : UIO_USERSPACE32;
+ 	off_t loff;
+ 	int error, numdirent;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ get_from_fd:
+ 	error = fp_getfvp(vfs_context_proc(&context), fd, &fp, &vp);
+@@ -10613,7 +10613,7 @@ getdirentriesattr(proc_t p, struct getdirentriesattr_args *uap, int32_t *retval)
+ 	struct attrlist attributelist;
+ 	vfs_context_t ctx = vfs_context_current();
+ 	int fd = uap->fd;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	kauth_action_t action;
+ 
+ 	AUDIT_ARG(fd, fd);
+@@ -10954,7 +10954,7 @@ searchfs(proc_t p, struct searchfs_args *uap, __unused int32_t *retval)
+ 	size_t mallocsize;
+ 	uint32_t nameiflags;
+ 	vfs_context_t ctx = vfs_context_current();
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	/* Start by copying in fsearchblock parameter list */
+ 	if (IS_64BIT_PROCESS(p)) {
+@@ -12906,7 +12906,7 @@ getxattr(proc_t p, struct getxattr_args *uap, user_ssize_t *retval)
+ 	size_t namelen;
+ 	u_int32_t nameiflags;
+ 	int error;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (uap->options & (XATTR_NOSECURITY | XATTR_NODEFAULT)) {
+ 		return EINVAL;
+@@ -12990,7 +12990,7 @@ fgetxattr(proc_t p, struct fgetxattr_args *uap, user_ssize_t *retval)
+ 	size_t attrsize = 0;
+ 	size_t namelen;
+ 	int error;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (uap->options & (XATTR_NOFOLLOW | XATTR_NOSECURITY | XATTR_NODEFAULT)) {
+ 		return EINVAL;
+@@ -13038,7 +13038,7 @@ out:
+ struct setxattr_ctx {
+ 	struct nameidata nd;
+ 	char attrname[XATTR_MAXNAMELEN + 1];
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ };
+ 
+ /*
+@@ -13134,7 +13134,7 @@ fsetxattr(proc_t p, struct fsetxattr_args *uap, int *retval)
+ 	int spacetype = IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32;
+ 	size_t namelen;
+ 	int error;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (uap->options & (XATTR_NOFOLLOW | XATTR_NOSECURITY | XATTR_NODEFAULT)) {
+ 		return EINVAL;
+@@ -13311,7 +13311,7 @@ listxattr(proc_t p, struct listxattr_args *uap, user_ssize_t *retval)
+ 	size_t attrsize = 0;
+ 	u_int32_t nameiflags;
+ 	int error;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (uap->options & (XATTR_NOSECURITY | XATTR_NODEFAULT)) {
+ 		return EINVAL;
+@@ -13353,7 +13353,7 @@ flistxattr(proc_t p, struct flistxattr_args *uap, user_ssize_t *retval)
+ 	int spacetype = proc_is64bit(p) ? UIO_USERSPACE64 : UIO_USERSPACE32;
+ 	size_t attrsize = 0;
+ 	int error;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	if (uap->options & (XATTR_NOFOLLOW | XATTR_NOSECURITY | XATTR_NODEFAULT)) {
+ 		return EINVAL;
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+index 5b51e9c46a8d..6872b94631c9 100644
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -964,7 +964,7 @@ vn_rdwr_64(
+ 	int spacetype;
+ 	struct vfs_context context;
+ 	int error = 0;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 
+ 	context.vc_thread = current_thread();
+ 	context.vc_ucred = cred;
+diff --git a/bsd/vm/vm_unix.c b/bsd/vm/vm_unix.c
+index 60c8b9eedd50..b0029de5ef21 100644
+--- a/bsd/vm/vm_unix.c
++++ b/bsd/vm/vm_unix.c
+@@ -2538,7 +2538,19 @@ after_root_check:
+ #define PREBOOT_CRYPTEX_PATH "/private/preboot/Cryptexes"
+ #endif
+ 			error = vnode_lookup(PREBOOT_CRYPTEX_PATH, 0, &preboot_vp, vfs_context_current());
+-			if (error || srfmp->vp->v_mount != preboot_vp->v_mount) {
++			/*
++			 * (redwood) Or a volume of its own mounted on a directory right inside it: iOS
++			 * grafts each cryptex image into the Preboot volume (graftdmg), so its files are
++			 * that volume's; this port mounts the image there as it is (bsd/miscfs/apfs), a
++			 * mount of its own whose covered directory is Preboot's Cryptexes/<name>.
++			 */
++			if (error == 0 && srfmp->vp->v_mount != preboot_vp->v_mount &&
++			    srfmp->vp->v_mount != NULL && srfmp->vp->v_mount->mnt_vnodecovered != NULLVP &&
++			    srfmp->vp->v_mount->mnt_vnodecovered->v_mount == preboot_vp->v_mount &&
++			    srfmp->vp->v_mount->mnt_vnodecovered->v_parent == preboot_vp) {
++				(void)vnode_put(preboot_vp);
++				preboot_vp = NULL;
++			} else if (error || srfmp->vp->v_mount != preboot_vp->v_mount) {
+ 				SHARED_REGION_TRACE_ERROR(
+ 					("shared_region: %p [%d(%s)] map(%p:'%s'): "
+ 					"not on process' root volume nor preboot volume\n",
+diff --git a/config/MASTER b/config/MASTER
+index 07147cb3188b..e937e62bf4c3 100644
+--- a/config/MASTER
++++ b/config/MASTER
+@@ -113,6 +113,8 @@ options		CONFIG_WORKLOOP_DEBUG	# <config_workloop_debug>
+ #	4.4 filesystems
+ #
+ options		MOCKFS		# Boot from an executable	# <mockfs>
++options		APFS		# Apple File System, read only	# <apfs>
++options		RAMFS		# Read-write filesystem in memory	# <ramfs>
+ options		FIFO		# fifo support			# <fifo>
+ options		FDESC		# fdesc_fs support		# <fdesc>
+ options		DEVFS		# devfs support			# <devfs>
+diff --git a/config/MASTER.arm64.bcm2837 b/config/MASTER.arm64.bcm2837
+index 1ed75eea2052..54c5e12d2271 100644
+--- a/config/MASTER.arm64.bcm2837
++++ b/config/MASTER.arm64.bcm2837
+@@ -16,15 +16,15 @@
+ #  Standard Apple OS Configurations:
+ #  -------- ----- -- ---------------
+ #
+-#  KERNEL_BASE =    [ arm64 config_pmap_ppl xsmall msgb_small config_embedded config_requires_u32_munging ARM_EXTRAS_BASE ]
++#  KERNEL_BASE =    [ arm64 config_pmap_ppl xsmall msgb_small config_embedded config_requires_u32_munging nos_arm_pmap nos_arm_asm ]
+ #  KERNEL_RELEASE = [ KERNEL_BASE ]
+ #  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug ]
+ #  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_waitq_stats config_workloop_debug ]
+ #  BSD_BASE =       [ mach_bsd psynch config_proc_uuid_policy config_personas ]
+ #  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel ]
+-#  BSD_DEV =        [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
+-#  BSD_DEBUG =      [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
+-#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs]
++#  BSD_DEV =        [ BSD_BASE config_netboot config_imageboot config_coredump config_vnguard ]
++#  BSD_DEBUG =      [ BSD_BASE config_netboot config_imageboot config_coredump config_vnguard ]
++#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs mockfs ramfs apfs ]
+ #  FILESYS_RELEASE= [ FILESYS_BASE ]
+ #  FILESYS_DEV =    [ FILESYS_BASE config_union_mounts fdesc ]
+ #  FILESYS_DEBUG =  [ FILESYS_BASE config_union_mounts fdesc ]
+@@ -50,8 +50,8 @@
+ #  LIBKERN_DEBUG =  [ LIBKERN_BASE iotracking ]
+ #  PERF_DBG_BASE =  [ mach_kdp config_serial_kdp kperf kpc ]
+ #  PERF_DBG_RELEASE=[ PERF_DBG_BASE ist_kdebug ]
+-#  PERF_DBG_DEV =   [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger sched_hygiene_debug config_iotrace]
+-#  PERF_DBG_DEBUG = [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger sched_hygiene_debug config_iotrace]
++#  PERF_DBG_DEV =   [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger config_iotrace]
++#  PERF_DBG_DEBUG = [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger config_iotrace]
+ #  MACH_BASE =      [ mach config_ecc_logging vc_progress_white importance_inheritance config_atm config_coalitions config_iosched config_library_validation config_sysdiagnose config_telemetry config_mach_bridge_recv_time config_quiesce_counter config_service_port_info ]
+ #  MACH_RELEASE =   [ MACH_BASE config_skip_precise_user_kernel_time debugger_for_zone_info ]
+ #  MACH_DEV =       [ MACH_BASE config_io_accounting importance_trace ]
+diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
+index 4a06407aea5f..69a4bcf1839d 100644
+--- a/iokit/Kernel/IOPMrootDomain.cpp
++++ b/iokit/Kernel/IOPMrootDomain.cpp
+@@ -555,7 +555,16 @@ static uint32_t         gDarkWakeFlags = kDarkWakeFlagPromotionEarly;
+ #endif /* !defined(XNU_TARGET_OS_OSX) */
+ 
+ static uint32_t         gNoIdleFlag = 0;
+-static uint32_t         gSleepDisabledFlag = 0;
++/*
++ * redwood: the system does not sleep. There is nothing here to sleep into and nothing that would
++ * wake it: with the screen locked, powerd asks for system sleep within seconds, and that request
++ * ended in IOCPUSleepKernel() -- with one processor it came straight back out, again and again
++ * (every time a round of sleep and wake notifications to all the system); with more than one it
++ * stopped there for good, waiting for a processor to go that never goes. Refused instead, the
++ * system stays awake with its display off, and the side button or a tap wakes the screen.
++ * Boot-arg syssleep=1 gives the old behaviour back.
++ */
++static uint32_t         gSleepDisabledFlag = 1;
+ static uint32_t         gSwdPanic = 1;
+ static uint32_t         gSwdSleepTimeout = 0;
+ static uint32_t         gSwdWakeTimeout = 0;
+@@ -1587,6 +1596,13 @@ IOPMrootDomain::start( IOService * nub )
+ #endif /* DEVELOPMENT || DEBUG */
+ 
+ 	PE_parse_boot_argn("noidle", &gNoIdleFlag, sizeof(gNoIdleFlag));
++	{
++		uint32_t syssleep = 0;
++
++		if (PE_parse_boot_argn("syssleep", &syssleep, sizeof(syssleep)) && syssleep) {
++			gSleepDisabledFlag = 0;
++		}
++	}
+ 	PE_parse_boot_argn("swd_sleeptimeout", &gSwdSleepTimeout, sizeof(gSwdSleepTimeout));
+ 	PE_parse_boot_argn("swd_waketimeout", &gSwdWakeTimeout, sizeof(gSwdWakeTimeout));
+ 	PE_parse_boot_argn("swd_timeout", &gSwdSleepWakeTimeout, sizeof(gSwdSleepWakeTimeout));
+diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.cpp
+index 7a32a23e4bb1..35dc7b503846 100644
+--- a/iokit/Kernel/IOPlatformExpert.cpp
++++ b/iokit/Kernel/IOPlatformExpert.cpp
+@@ -51,6 +51,9 @@
+ #include <libkern/c++/OSContainers.h>
+ #include <libkern/c++/OSSharedPtr.h>
+ #include <libkern/crypto/sha1.h>
++#include <libkern/crypto/register_crypto.h>
++
++extern "C" crypto_functions_t g_crypto_funcs;     /* NULL until a crypto provider has registered */
+ #include <libkern/OSAtomic.h>
+ 
+ #if defined(__arm64__)
+@@ -2176,6 +2179,14 @@ IOPlatformExpertDevice::generatePlatformUUID( void )
+ 	uuid_string_t     uuid;
+ 
+ #if !defined(__x86_64__)
++	/*
++	 * The first call (configureDefaults, from InitIOKit) comes before the crypto provider
++	 * has registered when that provider is not Apple's corecrypto; the identifier is then
++	 * made by the second call, when the platform expert starts.
++	 */
++	if (g_crypto_funcs == NULL) {
++		return;
++	}
+ 	entry = IORegistryEntry::fromPath( "/chosen", gIODTPlane );
+ 	if (entry) {
+ 		OSData * data1;
+diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
+index d2442944e5f0..e90ba6738516 100644
+--- a/iokit/Kernel/IOService.cpp
++++ b/iokit/Kernel/IOService.cpp
+@@ -5179,7 +5179,10 @@ IOService::setRootMedia(IOService * root)
+ 	bool unhide;
+ 
+ 	ioblockstoragedriverClass = OSMetaClass::getMetaClassWithName(gIOBlockStorageDriverKey);
+-	assert(ioblockstoragedriverClass);
++	if (!ioblockstoragedriverClass) {
++		// No IOStorageFamily in this kernel: the root cannot be a block storage device
++		root = NULL;
++	}
+ 
+ 	while (root) {
+ 		if (root->metaCast(ioblockstoragedriverClass)) {
+diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
+index 07aa0be4a0ca..3832eaff2184 100644
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -3536,6 +3536,25 @@ IOCopyPropertyCompatible(IORegistryEntry * regEntry, const char * name)
+ 	return obj;
+ }
+ 
++/*
++ * Boot-arg regtrace=1: report the registry properties user space asks for and does not
++ * find (regtrace=2: every property asked for). Shows what a daemon expects of a driver.
++ */
++static TUNABLE(uint32_t, regtrace_level, "regtrace", 0);
++
++static void
++regtrace_report(IORegistryEntry * entry, const char * property, bool found)
++{
++	char procname[32] = "?";
++
++	if (regtrace_level == 0 || (found && regtrace_level < 2)) {
++		return;
++	}
++	proc_selfname(procname, sizeof(procname));
++	IOLog("regtrace: %s[%d] %s(%s).%s %s\n", procname, proc_selfpid(), entry->getName(),
++	    entry->getMetaClass()->getClassName(), property, found ? "found" : "MISSING");
++}
++
+ /* Routine io_registry_entry_get_property */
+ kern_return_t
+ is_io_registry_entry_get_property_bytes(
+@@ -3563,6 +3582,7 @@ is_io_registry_entry_get_property_bytes(
+ #endif
+ 
+ 	obj = IOCopyPropertyCompatible(entry, property_name);
++	regtrace_report(entry, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return kIOReturnNoResources;
+ 	}
+@@ -3631,6 +3651,7 @@ is_io_registry_entry_get_property(
+ #endif
+ 
+ 	obj = IOCopyPropertyCompatible(entry, property_name);
++	regtrace_report(entry, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return kIOReturnNotFound;
+ 	}
+@@ -3679,6 +3700,7 @@ is_io_registry_entry_get_property_recursively(
+ 
+ 	obj = entry->copyProperty( property_name,
+ 	    IORegistryEntry::getPlane( plane ), options );
++	regtrace_report(entry, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return kIOReturnNotFound;
+ 	}
+@@ -3873,6 +3895,7 @@ is_io_registry_entry_get_property_bin_buf(
+ 	}
+ 
+ 	err = kIOReturnNotFound;
++	IORegistryEntry * asked = entry;
+ 	if (gIORegistryEntryPropertyKeysKey == sym) {
+ 		obj = entry->copyPropertyKeys();
+ 	} else {
+@@ -3905,6 +3928,7 @@ is_io_registry_entry_get_property_bin_buf(
+ 	}
+ 
+ 	sym->release();
++	regtrace_report(asked, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return err;
+ 	}
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index 2b14eda8f68f..09337bad5b01 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -32,6 +32,10 @@
+  * Version 2.0.
+  */
+ 
++#if defined(__arm64__)
++#include <pexpert/arm64/board_config.h>
++#endif
++
+ const char * gIOKernelConfigTables =
+     "("
+     "   {"
+@@ -39,4 +43,11 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+     "     'IOProbeScore'    = 0:32;"
+     "   }"
++#if defined(__arm64__) && !defined(APPLE_ARM64_ARCH_FAMILY)
++    "   ,{"
++    "     'IOClass'         = GenericARMPE;"
++    "     'IOProviderClass' = IOPlatformExpertDevice;"
++    "     'IOProbeScore'    = 1000:32;"
++    "   }"
++#endif
+     ")";
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index 5219fb0d9ed6..29978e9cff43 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -683,7 +683,14 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	assert(matching);
+ 	matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
+ 
+-	if ((service = IOService::waitForMatchingService(matching, 30ULL * kSecondScale))) {
++	// A memory-device root needs no filesystem kext, so do not sit out the timeout for one
++	char rdEarly[kMaxBootVar];
++	uint64_t bsdWait = 30ULL * kSecondScale;
++	if (PE_parse_boot_argn("rd", rdEarly, sizeof(rdEarly)) && rdEarly[0] == 'm' && rdEarly[1] == 'd') {
++		bsdWait = kSecondScale / 10;
++	}
++
++	if ((service = IOService::waitForMatchingService(matching, bsdWait))) {
+ 		OSSafeReleaseNULL(service);
+ 	} else {
+ 		IOLog("!BSD\n");
+@@ -762,6 +769,17 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ #endif /* __LP64__ */
+ 				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
+ 			}
++			/*
++			 * A second image the loader may have left in memory (it becomes
++			 * /dev/md1): a volume for user space to mount, never the root.
++			 */
++			data = (OSData *)regEntry->getProperty("RAMDisk1");
++			if (data && data->getLength() >= 2 * sizeof(uintptr_t)) {
++				uintptr_t *ramdParms = (uintptr_t *)data->getBytesNoCopy();
++				if (ramdParms[1] <= (((uint64_t)UINT_MAX) << 12)) {
++					(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);
++				}
++			}
+ 			regEntry->release();                                                            /* Toss the entry */
+ 		}
+ 	}
+diff --git a/iokit/conf/files b/iokit/conf/files
+index 5fb0a52062e0..6c430c2b23c7 100644
+--- a/iokit/conf/files
++++ b/iokit/conf/files
+@@ -79,6 +79,14 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+ iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
+ 
+ iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
++iokit/Kernel/GenericARMPE.cpp			optional iokitcpp
++iokit/Kernel/MiniIOSurface.cpp			optional iokitcpp
++iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
++iokit/Kernel/RedwoodGPU.cpp				optional iokitcpp
++iokit/Kernel/RedwoodWLAN.cpp			optional iokitcpp
++iokit/Kernel/RedwoodBattery.cpp			optional iokitcpp
++iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
++iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
+ iokit/Kernel/IOPlatformIO.cpp				optional iokitcpp
+ 
+ iokit/Kernel/IOCPU.cpp					optional iokitcpp
+diff --git a/libkern/conf/files b/libkern/conf/files
+index ece14c7d41d3..4a903f73a9ef 100644
+--- a/libkern/conf/files
++++ b/libkern/conf/files
+@@ -109,6 +109,8 @@ libkern/apple_encrypted_archive/apple_encrypted_archive.c	standard
+ libkern/img4/interface.c 		standard
+ 
+ libkern/amfi/amfi.c 		standard
++libkern/amfi/miniamfi.c 		standard
++libkern/amfi/miniamfi_entitlements.cpp 	standard
+ 
+ libkern/stack_protector.c       standard
+ libkern/ptrauth_utils.c         standard
+diff --git a/libkern/libkern/c++/OSData.h b/libkern/libkern/c++/OSData.h
+index 28ea44c2ae9d..9c7a1fe9e23e 100644
+--- a/libkern/libkern/c++/OSData.h
++++ b/libkern/libkern/c++/OSData.h
+@@ -965,7 +965,7 @@ private:
+ 		    "only trivially copyable types can be contained");
+ 		static_assert(!__is_pointer(T) || (acquisition == kValueNoCopy),
+ 		    "pointers cannot be contained");
+-		static_assert(KALLOC_TYPE_IS_DATA_ONLY(T) || (acquisition == kValueNoCopy),
++		static_assert(XNU_NO_TYPE_BUILTINS || KALLOC_TYPE_IS_DATA_ONLY(T) || (acquisition == kValueNoCopy),
+ 		    "only plain data types can be contained (consider using OSValueObject)");
+ 		return 0; // C++11 does not support void-returning constexpr functions
+ 	}
+diff --git a/libkern/os/base.h b/libkern/os/base.h
+index 2b7c3c8819ff..49571a272534 100644
+--- a/libkern/os/base.h
++++ b/libkern/os/base.h
+@@ -343,23 +343,38 @@ typedef void (*os_function_t)(void *_Nullable);
+ typedef void (^os_block_t)(void);
+ #endif
+ 
++/*
++ * Signed data pointers (the __ptrauth qualifier on a field) have to be signed when the image is
++ * loaded: the linker writes them as chained "auth" fixups, which only dyld or Apple's kernelcache
++ * generator can apply, because applying them needs the keys.  This project loads the kernel as a
++ * plain Mach-O with its own loader, which has no keys yet, so on an arm64e build of this tree those
++ * qualifiers are left out and such fields hold plain pointers.  What still is authenticated: return
++ * addresses, indirect calls, function pointers in this file, the pacga thread-state hash, and the
++ * per-process keys the kernel switches to on the way back to EL0 (the EL0/EL1 key switch that
++ * docs/ARM64E.md is about).  A build for Apple silicon would define XNU_PTRAUTH_SIGNED_DATA_PTRS.
++ */
++#if defined(__arm64e__) && !defined(XNU_PTRAUTH_SIGNED_DATA_PTRS)
++#define XNU_PTRAUTH_DATA_PTRS_PLAIN 1
++#endif
++
+ #if KERNEL
+-#if __has_feature(ptrauth_calls)
++#if __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ #include <ptrauth.h>
+ #define OS_PTRAUTH_SIGNED_PTR(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type))
+ #define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type), "authenticates-null-values")
+ #define OS_PTRAUTH_DISCRIMINATOR(str) ptrauth_string_discriminator(str)
+ #define __ptrauth_only
+-#else //  __has_feature(ptrauth_calls)
++#else //  __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
++#include <ptrauth.h>
+ #define OS_PTRAUTH_SIGNED_PTR(type)
+ #define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type)
+ #define OS_PTRAUTH_DISCRIMINATOR(str) 0
+ #define __ptrauth_only __unused
+-#endif // __has_feature(ptrauth_calls)
++#endif // __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ #endif // KERNEL
+ 
+ #if KERNEL_PRIVATE
+-#if __has_feature(ptrauth_calls)
++#if __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ #define XNU_PTRAUTH_SIGNED_FUNCTION_PTR(type) \
+ 	__ptrauth(ptrauth_key_function_pointer, 1, ptrauth_string_discriminator(type))
+ #else
+diff --git a/makedefs/MakeInc.cmd b/makedefs/MakeInc.cmd
+index bc39e19b3b8e..0a72a2d43908 100644
+--- a/makedefs/MakeInc.cmd
++++ b/makedefs/MakeInc.cmd
+@@ -100,12 +100,12 @@ ifeq ($(VERBOSE),YES)
+ 	_v =
+ 	_vstdout =
+ 	_vstderr =
+-	XCRUN = /usr/bin/xcrun -verbose
++	XCRUN = xcrun -verbose
+ else
+ 	_v = @
+ 	_vstdout = > /dev/null
+ 	_vstderr = 2> /dev/null
+-	XCRUN = /usr/bin/xcrun
++	XCRUN = xcrun
+ endif
+ 
+ VERBOSE_GENERATED_MAKE_FRAGMENTS = NO
+@@ -275,27 +275,27 @@ REPLACECONTENTS = $(OBJROOT)/SETUP/replacecontents/replacecontents
+ JSONCOMPILATIONDB = $(OBJROOT)/SETUP/json_compilation_db/json_compilation_db
+ 
+ # Standard BSD tools
+-RM = /bin/rm -f
+-RMDIR = /bin/rmdir
+-CP = /bin/cp
+-MV = /bin/mv
+-LN = /bin/ln -fs
+-CAT = /bin/cat
+-MKDIR = /bin/mkdir -p
+-CHMOD = /bin/chmod
+-FIND = /usr/bin/find
+-XARGS = /usr/bin/xargs
+-PAX = /bin/pax
+-BASENAME = /usr/bin/basename
+-DIRNAME = /usr/bin/dirname
+-TR = /usr/bin/tr
+-TOUCH = /usr/bin/touch
+-SLEEP = /bin/sleep
+-AWK = /usr/bin/awk
+-SED = /usr/bin/sed
+-PLUTIL = /usr/bin/plutil
+-PATCH = /usr/bin/patch
+-GREP = /usr/bin/grep
++RM = rm -f
++RMDIR = rmdir
++CP = cp
++MV = mv
++LN = ln -fs
++CAT = cat
++MKDIR = mkdir -p
++CHMOD = chmod
++FIND = find
++XARGS = xargs
++PAX = pax
++BASENAME = basename
++DIRNAME = dirname
++TR = tr
++TOUCH = touch
++SLEEP = sleep
++AWK = awk
++SED = sed
++PLUTIL = plutil
++PATCH = patch
++GREP = grep
+ 
+ #
+ # Command to generate host binaries. Intentionally not
+@@ -317,7 +317,7 @@ ifeq ($(origin HOST_GM4),undefined)
+ 	export HOST_GM4		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find gm4)
+ endif
+ ifeq ($(origin HOST_CODESIGN),undefined)
+-	export HOST_CODESIGN	:= /usr/bin/codesign
++	export HOST_CODESIGN	:= codesign
+ endif
+ ifeq ($(origin HOST_CODESIGN_ALLOCATE),undefined)
+ 	export HOST_CODESIGN_ALLOCATE	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find codesign_allocate)
+diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+index 5bd6f23dd10c..14e0f17409f5 100644
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -60,7 +60,7 @@ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_T8103 = -DARM64_BOARD_CONFIG_T8103                  -mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000 		-mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
+-MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
++MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837 -Xclang -target-feature -Xclang +pan
+ 
+ 
+ #
+@@ -857,7 +857,10 @@ LDFILES_KERNEL_ONLY = $(TARGET)/all-kpi.exp $(TARGET)/all-alias.exp $(TARGET)/sy
+ # Default runtime libraries to be linked with the kernel
+ #
+ LD_KERNEL_LIBS	   = -lcc_kext
+-LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel
++LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel -lpthread_kext
++# Darwin-on-redwood: objects made outside this tree, linked when the build is given any (the
++# Wi-Fi driver, see bsd/dev/redwood_lx.c)
++LD_KERNEL_ARCHIVES += $(REDWOOD_OBJECTS)
+ # Link opensource binary library
+ ifneq ($(filter T6000 T8101 VMAPPLE T6000 T8101 VMAPPLE,$(CURRENT_MACHINE_CONFIG)),)
+ 	LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a
+diff --git a/makedefs/MakeInc.top b/makedefs/MakeInc.top
+index 0316792a3f42..cf232112bd36 100644
+--- a/makedefs/MakeInc.top
++++ b/makedefs/MakeInc.top
+@@ -285,7 +285,7 @@ endif
+ # $(warning PRIMARY_KERNEL_CONFIGS is $(PRIMARY_KERNEL_CONFIGS))
+ # $(warning VARIANT_CONFIGS is $(VARIANT_CONFIGS))
+ 
+-MEMORY_SIZE := $(shell /usr/sbin/sysctl -n hw.memsize)
++MEMORY_SIZE := $(shell awk '/MemTotal/{printf "%d", $$2*1024}' /proc/meminfo 2>/dev/null || /usr/sbin/sysctl -n hw.memsize)
+ 
+ # Assume LTO scaling by default, unless it is being explicitly passed on the command-line
+ LARGE_BUILD_FOOTPRINT := $(if $(BUILD_LTO),$(BUILD_LTO),1)
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+index e26a1d70f470..f91095c98d26 100644
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -73,6 +73,9 @@
+ #include <sys/kdebug.h>
+ 
+ #include <pexpert/pexpert.h>
++#if defined(__arm64__)
++#include <arm64/psci_smp.h>
++#endif
+ 
+ #include <console/serial_protos.h>
+ 
+@@ -335,7 +338,11 @@ arm_setup_pre_sign(void)
+  */
+ 
+ __startup_func
++/* Bring-up checkpoints, see osfmk/arm64/loader_return.c */
++extern void loader_checkpoint(uint64_t n);
++
+ void
++
+ arm_init(
+ 	boot_args       *args)
+ {
+@@ -354,6 +361,7 @@ arm_init(
+ 	const_boot_args = *args;
+ 	BootArgs = args = &const_boot_args;
+ 
++	loader_checkpoint(10);
+ 	cpu_data_init(&BootCpuData);
+ #if defined(HAS_APPLE_PAC)
+ 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
+@@ -362,14 +370,19 @@ arm_init(
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	loader_checkpoint(11);
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
++	loader_checkpoint(30);
+ 	wfe_timeout_configure();
++	loader_checkpoint(31);
+ 	wfe_timeout_init();
++	loader_checkpoint(32);
+ 
+ 	configure_misc_apple_boot_args();
+ 	configure_misc_apple_regs();
++	loader_checkpoint(33);
+ 
+ #if (DEVELOPMENT || DEBUG)
+ 	unsigned long const *platform_stall_ptr = NULL;
+@@ -385,6 +398,7 @@ arm_init(
+ 	}
+ 
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_ARM_INIT);
++	loader_checkpoint(34);
+ 
+ 	chosen = NULL; // Force a re-lookup later on since VM addresses are not final at this point
+ 	dt_entry_size = 0;
+@@ -422,10 +436,13 @@ arm_init(
+ 	}
+ #endif
+ 
++	loader_checkpoint(35);
+ 	ml_parse_cpu_topology();
++	loader_checkpoint(12);
+ 
+ 
+ 	master_cpu = ml_get_boot_cpu_number();
++	loader_checkpoint(40);
+ 	assert(master_cpu >= 0 && master_cpu <= ml_get_max_cpu_number());
+ 
+ 	BootCpuData.cpu_number = (unsigned short)master_cpu;
+@@ -439,11 +456,14 @@ arm_init(
+ 	CpuDataEntries[master_cpu].cpu_data_paddr = (void *)((uintptr_t)(args->physBase)
+ 	    + ((uintptr_t)&BootCpuData
+ 	    - (uintptr_t)(args->virtBase)));
++	loader_checkpoint(41);
+ 
+ 	thread = thread_bootstrap();
++	loader_checkpoint(42);
+ 	thread->machine.CpuDatap = &BootCpuData;
+ 	thread->machine.pcpu_data_base = (vm_offset_t)0;
+ 	machine_set_current_thread(thread);
++	loader_checkpoint(43);
+ 
+ 	/*
+ 	 * Preemption is enabled for this thread so that it can lock mutexes without
+@@ -452,12 +472,16 @@ arm_init(
+ 	 * preemption level is not really meaningful for the bootstrap thread.
+ 	 */
+ 	thread->machine.preemption_count = 0;
++	loader_checkpoint(44);
+ 	cpu_bootstrap();
++	loader_checkpoint(13);
+ 
+ 	rtclock_early_init();
++	loader_checkpoint(14);
+ 
+ 	kernel_debug_string_early("kernel_startup_bootstrap");
+ 	kernel_startup_bootstrap();
++	loader_checkpoint(15);
+ 
+ 	/*
+ 	 * Initialize the timer callout world
+@@ -465,6 +489,7 @@ arm_init(
+ 	timer_call_init();
+ 
+ 	cpu_init();
++	loader_checkpoint(16);
+ 
+ 	processor_bootstrap();
+ 
+@@ -514,6 +539,7 @@ arm_init(
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
+ 	arm_vm_init(xmaxmem, args);
++	loader_checkpoint(17);
+ 
+ 	if (debug_boot_arg) {
+ 		patch_low_glo();
+@@ -527,7 +553,9 @@ arm_init(
+ 
+ 	/* Setup debugging output. */
+ 	const unsigned int serial_exists = serial_init();
++	loader_checkpoint(18);
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
++	loader_checkpoint(19);
+ 	kprintf("kprintf initialized\n");
+ 
+ 	serialmode = 0;
+@@ -569,6 +597,7 @@ arm_init(
+ 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+ 	}
+ 	PE_create_console();
++	loader_checkpoint(20);
+ 
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
+@@ -647,6 +676,7 @@ arm_init(
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
++	loader_checkpoint(21);
+ 	machine_startup(args);
+ }
+ 
+@@ -673,6 +703,9 @@ arm_init_cpu(
+ 
+ 
+ 	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
++#if defined(GENERIC_PSCI_SMP)
++	psci_smp_cpu_reached(PSCI_SMP_CPU_IN_KERNEL);
++#endif
+ 
+ #if APPLE_ARM64_ARCH_FAMILY
+ 	configure_late_apple_regs();
+diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
+index 39daaf8db949..64ceb1a5f201 100644
+--- a/osfmk/arm/model_dep.c
++++ b/osfmk/arm/model_dep.c
+@@ -79,6 +79,9 @@
+ #include <arm/cpu_data_internal.h>
+ #include <arm/cpu_internal.h>
+ #include <arm/misc_protos.h>
++#if defined(__arm64__)
++#include <arm64/psci_smp.h>
++#endif
+ #include <libkern/OSKextLibPrivate.h>
+ #include <vm/vm_kern.h>
+ #include <kern/kern_cdata.h>
+@@ -1156,6 +1159,13 @@ wait_while_mp_kdp_trap(bool check_SIGPdebug)
+ 			found_SIGPdebug = true;
+ 			break;
+ 		}
++#if defined(GENERIC_PSCI_SMP)
++		/*
++		 * The panic this processor is waiting out ends in a return to the boot loader:
++		 * its interrupts are off here, so this is where it is told (psci_smp.c).
++		 */
++		psci_smp_stop_here();
++#endif
+ 		__builtin_arm_wfe();
+ 	}
+ 	os_atomic_clear_exclusive();
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index fc2096fa0010..5011ab612305 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -93,6 +93,8 @@
+ 
+ #include <pexpert/device_tree.h>
+ 
++MARK_AS_PMAP_TEXT static void pmap_phys_write_disable(vm_address_t va);
++
+ #include <san/kasan.h>
+ #include <sys/cdefs.h>
+ 
+@@ -4676,8 +4678,8 @@ pmap_page_protect_options_with_flush_range(
+ 			}
+ #endif
+ 			if (remove && (options & PMAP_OPTIONS_COMPRESSOR)) {
+-				panic("pmap_page_protect: attempt to compress ppnum 0x%x owned by iommu %p, pve_p=%p",
+-				    ppnum, ptep_get_iommu(pte_p), pve_p);
++				panic("pmap_page_protect: attempt to compress ppnum 0x%x owned by iommu, pte_p=%p, pve_p=%p",
++				    ppnum, pte_p, pve_p);
+ 			}
+ 			goto protect_skip_pve_pass1;
+ 		}
+@@ -6877,7 +6879,8 @@ void
+ pmap_sync_page_attributes_phys(
+ 	ppnum_t pp)
+ {
+-	flush_dcache((vm_offset_t) (pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
++	/* (redwood: the page number is 32 bits wide and memory goes on above 4 GB: widen before shifting) */
++	flush_dcache((vm_offset_t) pp << PAGE_SHIFT, PAGE_SIZE, TRUE);
+ }
+ 
+ #if CONFIG_COREDUMP
+@@ -11623,7 +11626,8 @@ pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+ #if XNU_MONITOR
+ 	pmap_ppl_lockdown_pages(kva, size, PVH_FLAG_LOCKDOWN_CS, ppl_writable);
+ #else
+-	pmap_ppl_lockdown_pages(kva, size, 0, ppl_writable);
++	/* No PPL on this platform: nothing to lock down. */
++	(void)kva; (void)size; (void)ppl_writable;
+ #endif
+ }
+ 
+@@ -11633,7 +11637,8 @@ pmap_cs_unlockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+ #if XNU_MONITOR
+ 	pmap_ppl_unlockdown_pages(kva, size, PVH_FLAG_LOCKDOWN_CS, ppl_writable);
+ #else
+-	pmap_ppl_unlockdown_pages(kva, size, 0, ppl_writable);
++	/* No PPL on this platform: nothing to lock down. */
++	(void)kva; (void)size; (void)ppl_writable;
+ #endif
+ }
+ 
+diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
+index df672c65b144..d7e1da7c5db2 100644
+--- a/osfmk/arm/pmap/pmap.h
++++ b/osfmk/arm/pmap/pmap.h
+@@ -112,7 +112,13 @@
+  */
+ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
+ #else /* defined(ARM_LARGE_MEMORY) */
+-#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
++/*
++ * With 4K pages every GB of DRAM costs one L2 page in each of the two
++ * bootstrap mappings (start.s maps all of memSize). Apple sized this for a
++ * 2 GB device (8 pages); 20 pages cover 8 GB, enough for a boot image of
++ * several GB next to the kernel.
++ */
++#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 20)
+ #endif /* defined(ARM_LARGE_MEMORY) */
+ 
+ typedef uint64_t tt_entry_t; /* translation table entry type */
+@@ -442,7 +448,7 @@ struct pmap {
+ #if HAS_APPLE_PAC
+ 	bool disable_jop;
+ #else
+-	bool reserved10;
++	bool reserved12;
+ #endif /* HAS_APPLE_PAC */
+ 
+ 	bool reserved11;
+diff --git a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
+index b9549da357b4..cca31ea32502 100644
+--- a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
++++ b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
+@@ -28,7 +28,7 @@
+ // #include <Availability.h>
+ #include <sys/cdefs.h>
+ 
+-#if defined(__clang__) && ((defined(__apple_build_version__) && __apple_build_version__ > 5010000))
++#if defined(__clang__) && (!defined(__apple_build_version__) || __apple_build_version__ > 5010000)
+ #define __USES_V_CRYPTO_INTRINSICS 1
+ #else
+ #define __USES_V_CRYPTO_INTRINSICS 0
+diff --git a/osfmk/arm64/cpu.c b/osfmk/arm64/cpu.c
+index 94e91306b143..0ec1323086b7 100644
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -568,7 +568,12 @@ cpu_idle(void)
+ #endif /* MONOTONIC */
+ 
+ 	if (wfi) {
+-#if !defined(APPLE_ARM64_ARCH_FAMILY)
++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !defined(GENERIC_PSCI_SMP)
++		/*
++		 * (Not on the generic boards either. There a core keeps its cache while it waits,
++		 * and this would empty it by set and way every time: slow, wrong among several
++		 * processors, and under a hypervisor every one of those instructions is a trap.)
++		 */
+ 		platform_cache_idle_enter();
+ #endif
+ 
+diff --git a/osfmk/arm64/locore.s b/osfmk/arm64/locore.s
+index 2c72e409f5a9..ec2f1689a8f8 100644
+--- a/osfmk/arm64/locore.s
++++ b/osfmk/arm64/locore.s
+@@ -508,6 +508,21 @@ fleh_dispatch64:
+ 
+ 	/* If exception is from userspace, zero unused registers */
+ 	and		x23, x23, #(PSR64_MODE_EL_MASK)
++#if HAS_STD_PAC
++	/*
++	 * Standard ARM has one set of pointer authentication key registers for EL0 and EL1, and an
++	 * exception taken from EL0 arrives with that process's keys in them (the return path below
++	 * put them there).  The kernel's own return addresses are signed with its keys, so they
++	 * have to be back before anything signed runs.  This is the first such point: the register
++	 * spill above only signs the thread state with the GA key, which is never swapped.
++	 */
++	cbnz	x23, 9f							// from EL1: the kernel's keys are in place
++	adrp	x24, EXT(pac_std_keys)@page
++	add		x24, x24, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_KEYS x24, x9, x10
++	isb	sy
++9:
++#endif /* HAS_STD_PAC */
+ 	cmp		x23, #(PSR64_MODE_EL0)
+ 	bne		1f
+ 
+@@ -999,6 +1014,21 @@ Lskip_el0_eret_mapping:
+ #endif /* !__ARM_KERNEL_PROTECT__ */
+ 
+ Lexception_return_restore_registers:
++#if HAS_STD_PAC
++	/*
++	 * On the way out the keys have to be the process's, not the kernel's, by the time control
++	 * reaches EL0.  This is the last point that can program them; the eret at the end of the
++	 * path is a context synchronization event, so no isb is needed.  A return to EL1 (a kernel
++	 * thread, or a nested exception) keeps the kernel's keys, which are in place already.
++	 */
++	ldr		w9, [sp, SS64_CPSR]
++	tbnz	w9, PSR64_MODE_EL_SHIFT, 9f
++	mrs		x9, TPIDR_EL1						// the process whose keys these are
++	adrp	x10, EXT(pac_std_keys)@page
++	add		x10, x10, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_USER_KEYS x10, x9, x11, x12, x13, x14, x15, x2, x3
++9:
++#endif /* HAS_STD_PAC */
+ 	mov 	x0, sp								// x0 = &pcb
+ 	// Loads authed $x0->ss_64.pc into x1 and $x0->ss_64.cpsr into w2
+ 	AUTH_THREAD_STATE_IN_X0	x20, x21, x22, x23, x24, x25, el0_state_allowed=1
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index e76e7e70ab9c..4f540f8caf43 100644
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -734,6 +734,9 @@ ml_get_machine_mem(void)
+ 	return machine_info.memory_size;
+ }
+ 
++extern void loader_return(void);
++extern void redwood_adreno_stop(void);
++
+ __attribute__((noreturn))
+ void
+ halt_all_cpus(boolean_t reboot)
+@@ -745,6 +748,9 @@ halt_all_cpus(boolean_t reboot)
+ 		printf("CPU halted\n");
+ 		PEHaltRestart(kPEHaltCPU);
+ 	}
++	/* No platform driver powers the machine off: hand control (and the log) back to the loader. */
++	redwood_adreno_stop();
++	loader_return();
+ 	while (1) {
+ 		;
+ 	}
+@@ -932,6 +938,99 @@ ml_read_chip_revision(unsigned int *rev __unused)
+ #endif
+ }
+ 
++/*
++ * The slower cores (an L2 access penalty, or the loader's "small-core"): each is made the SMT
++ * sibling ("secondary") of a faster core of its own, and the scheduler then treats it as XNU
++ * treats the second thread of a hyperthreaded core: a thread is put on it only when no faster
++ * core is idle or running something of lower priority; it looks for work only when none of
++ * them is idle; and what runs on it goes back to the run queue at every rescheduling, to be
++ * put on a faster core that has come free meanwhile. (XNU itself pairs such a core with the
++ * boot processor, which allows one of them; the phone has three: with cpus=8, cores 3, 2 and
++ * 1 go with 4, 5 and 6, so that 7, the boot core and the fastest, where real-time threads go
++ * first, stays alone: the scheduler idles a secondary while its primary runs a real-time
++ * thread.)
++ */
++static uint32_t small_cores_apart = 2;          /* boot-arg small_cores, read in ml_parse_cpu_topology() (before tunables are) */
++static int ml_slow_core_partner[MAX_CPUS];      /* by cpu_id: the faster core it is paired with, -1 if none */
++
++static void
++ml_choose_slow_core_partners(void)
++{
++	bool taken[MAX_CPUS] = { false };
++
++	for (int i = 0; i < MAX_CPUS; i++) {
++		ml_slow_core_partner[i] = -1;
++	}
++	for (int i = 0; i < (int)topology_info.num_cpus; i++) {
++		int partner = -1;
++
++		if (topology_info.cpus[i].l2_access_penalty == 0) {
++			continue;
++		}
++		/* the last fast core not yet taken; the boot core only if there is no other */
++		for (int j = (int)topology_info.num_cpus - 1; j >= 0; j--) {
++			if (topology_info.cpus[j].l2_access_penalty != 0 || taken[j]) {
++				continue;
++			}
++			if (&topology_info.cpus[j] == topology_info.boot_cpu) {
++				if (partner < 0) {
++					partner = j;
++				}
++				continue;
++			}
++			partner = j;
++			break;
++		}
++		if (partner >= 0) {
++			taken[partner] = true;
++			ml_slow_core_partner[i] = partner;
++		}
++	}
++}
++
++extern void loader_log_line(const char *line);
++
++/* At the registration of each processor: pairs it with its partner, if that one is registered too. */
++static void
++ml_pair_slow_processors(int cpu_id)
++{
++	for (int i = 0; i < (int)topology_info.num_cpus; i++) {
++		int partner = ml_slow_core_partner[i];
++		processor_t slow, fast;
++		char line[128];
++
++		if (partner < 0 || (i != cpu_id && partner != cpu_id)) {
++			continue;
++		}
++		slow = processor_array[i];
++		fast = processor_array[partner];
++		if (slow == PROCESSOR_NULL || fast == PROCESSOR_NULL || slow->processor_primary == fast) {
++			continue;
++		}
++		sched_slow_secondaries = small_cores_apart >= 2;
++		processor_set_primary(slow, fast);
++		snprintf(line, sizeof(line), "cpu %d (phys id 0x%x) is a slower core: the scheduler uses it after cpu %d (phys id 0x%x)\n",
++		    i, topology_info.cpus[i].phys_id, partner, topology_info.cpus[partner].phys_id);
++		printf("%s", line);
++		loader_log_line(line);          /* (the kernel's own log of a run keeps only its end) */
++	}
++}
++
++/* How long processor cpu_id has been idle since it started, in mach_absolute_time() units (redwood_cpufreq.c's cpuload). */
++bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
++
++bool
++ml_cpu_idle_time(int cpu_id, uint64_t *idle)
++{
++	struct recount_usage usage = { 0 };
++
++	if (cpu_id < 0 || cpu_id >= MAX_SCHED_CPUS || processor_array[cpu_id] == PROCESSOR_NULL) {
++		return false;
++	}
++	recount_processor_usage(&processor_array[cpu_id]->pr_recount, &usage, idle);
++	return true;
++}
++
+ void
+ ml_parse_cpu_topology(void)
+ {
+@@ -945,6 +1044,7 @@ ml_parse_cpu_topology(void)
+ 	int64_t cluster_max_cpu_phys_id[MAX_CPU_CLUSTER_PHY_ID + 1];
+ 	const boolean_t cpus_boot_arg_present = PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
+ 	const boolean_t cpumask_boot_arg_present = PE_parse_boot_argn("cpumask", &cpumask_boot_arg, sizeof(cpumask_boot_arg));
++	PE_parse_boot_argn("small_cores", &small_cores_apart, sizeof(small_cores_apart));
+ 
+ 	// The cpus=N and cpumask=N boot args cannot be used simultaneously. Flag this
+ 	// so that we trigger a panic later in the boot process, once serial is enabled.
+@@ -1005,6 +1105,20 @@ ml_parse_cpu_topology(void)
+ 		cpu->phys_id = (uint32_t)ml_readprop(child, "reg", ML_READPROP_MANDATORY);
+ 
+ 		cpu->l2_access_penalty = (uint32_t)ml_readprop(child, "l2-access-penalty", 0);
++		/*
++		 * A core the boot loader calls small (on the phone the Cortex-A55s; the Cortex-A78 the
++		 * kernel boots on is about 2.5 times as fast) is to be used only when the faster ones are all
++		 * busy: what XNU does with a core that has an L2 access penalty (ml_pair_slow_processors()).
++		 * The loader gives it a name of its own because a kernel without that function would make
++		 * every such core the sibling of the boot processor, and stop at the assertion that a
++		 * processor has only one. Boot-arg small_cores=0: all cores alike, as before; 1: paired as
++		 * XNU pairs the two threads of a hyperthreaded core (a secondary kept idle while its primary
++		 * runs a real-time thread, and so on); 2 (the default): as cores of their own (see
++		 * sched_slow_secondaries in osfmk/kern/sched.h).
++		 */
++		if (cpu->l2_access_penalty == 0 && ml_readprop(child, "small-core", 0) != 0 && small_cores_apart) {
++			cpu->l2_access_penalty = 1;
++		}
+ 		cpu->l2_cache_size = (uint32_t)ml_readprop(child, "l2-cache-size", 0);
+ 		cpu->l2_cache_id = (uint32_t)ml_readprop(child, "l2-cache-id", 0);
+ 		cpu->l3_cache_size = (uint32_t)ml_readprop(child, "l3-cache-size", 0);
+@@ -1107,6 +1221,7 @@ ml_parse_cpu_topology(void)
+ 	cluster_offsets[0] = 0;
+ #endif
+ 	assert(topology_info.boot_cpu != NULL);
++	ml_choose_slow_core_partners();
+ 	ml_read_chip_revision(&topology_info.chip_revision);
+ 
+ 	/*
+@@ -1427,17 +1542,15 @@ ml_processor_register(ml_processor_info_t *in_processor_info,
+ 	processor_t processor = PERCPU_GET_RELATIVE(processor, cpu_data, this_cpu_datap);
+ 	if (!is_boot_cpu) {
+ 		processor_init(processor, this_cpu_datap->cpu_number, pset);
+-
+-		if (this_cpu_datap->cpu_l2_access_penalty) {
+-			/*
+-			 * Cores that have a non-zero L2 access penalty compared
+-			 * to the boot processor should be de-prioritized by the
+-			 * scheduler, so that threads use the cores with better L2
+-			 * preferentially.
+-			 */
+-			processor_set_primary(processor, master_processor);
+-		}
+ 	}
++	/*
++	 * Cores that have a non-zero L2 access penalty compared
++	 * to the boot processor should be de-prioritized by the
++	 * scheduler, so that threads use the cores with better L2
++	 * preferentially. (Each with a faster core of its own, not all with the boot
++	 * processor: see ml_choose_slow_core_partners().)
++	 */
++	ml_pair_slow_processors(this_cpu_datap->cpu_number);
+ 
+ 	*processor_out = processor;
+ 	*ipi_handler_out = cpu_signal_handler;
+@@ -2237,8 +2350,16 @@ _enable_virtual_timer(void)
+ 	uint64_t cntvctl = CNTV_CTL_EL0_ENABLE; /* One wants to use 32 bits, but "mrs" prefers it this way */
+ 
+ 	__builtin_arm_wsr64("CNTV_CTL_EL0", cntvctl);
++#if defined(APPLE_ARM64_ARCH_FAMILY)
+ 	/* disable the physical timer as a precaution, as its registers reset to architecturally unknown values */
+ 	__builtin_arm_wsr64("CNTP_CTL_EL0", CNTP_CTL_EL0_IMASKED);
++#else
++	/*
++	 * When running at EL1 under a third-party hypervisor (e.g. Qualcomm's),
++	 * the EL1 physical timer registers are trapped and the access faults.
++	 * The guest only owns the virtual timer.
++	 */
++#endif
+ }
+ 
+ void
+diff --git a/osfmk/arm64/machine_routines_asm.s b/osfmk/arm64/machine_routines_asm.s
+index 2449334f5c97..3a3f5cd0b702 100644
+--- a/osfmk/arm64/machine_routines_asm.s
++++ b/osfmk/arm64/machine_routines_asm.s
+@@ -80,6 +80,23 @@ Lcre_start_\@:
+ 
+ #if defined(HAS_APPLE_PAC)
+ 
++#if HAS_STD_PAC
++/*
++ * The kernel's five pointer authentication keys: APIAKey, APIBKey, APDAKey, APDBKey, APGAKey, 128
++ * bits each.  The boot loader fills this section before it starts the kernel (it has to: it signs
++ * the kernel image's pointers with the same keys), and PAC_INIT_KEY_STATE (pac_std_asm.h) loads
++ * them into the key registers on every CPU.  In a section of its own so that the loader finds it
++ * without symbols.
++ */
++	.section __DATA,__pac_keys
++	.align 4
++	.globl EXT(pac_std_keys)
++LEXT(pac_std_keys)
++	.space 16 * 5, 0
++
++	.text
++#endif /* HAS_STD_PAC */
++
+ 
+ .macro LOAD_CPU_JOP_KEY	dst, tmp
+ 	mrs		\tmp, TPIDR_EL1
+@@ -100,6 +117,20 @@ LEXT(ml_enable_user_jop_key)
+ 	hvc		#0
+ 	LOAD_CPU_JOP_KEY x0, x1
+ 	ret
++#elif HAS_STD_PAC
++	/*
++	 * A caller (pmap_sign_user_ptr, pmap_auth_user_ptr) needs to sign or authenticate a user
++	 * pointer at EL1, which standard ARM can only do with the process's own A keys in the key
++	 * registers.  It runs with interrupts disabled and makes no indirect call in between, so
++	 * the user keys can stay there until ml_disable_user_jop_key() puts the kernel's back.
++	 * Nothing has to be handed back: the kernel's keys are in pac_std_keys.
++	 */
++	adrp	x8, EXT(pac_std_keys)@page
++	add	x8, x8, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_A_KEYS x8, x0, x1, x2, x3, x4, x5, x6
++	isb	sy
++	mov	x0, #0
++	ret
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+ 
+ /*
+@@ -114,6 +145,12 @@ LEXT(ml_disable_user_jop_key)
+ 	mov		x1, #0
+ 	hvc		#0
+ 	ret
++#elif HAS_STD_PAC
++	adrp	x8, EXT(pac_std_keys)@page
++	add	x8, x8, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_KEYS x8, x0, x1
++	isb	sy
++	ret
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+ 
+ #endif /* defined(HAS_APPLE_PAC) */
+diff --git a/osfmk/arm64/pac_asm.h b/osfmk/arm64/pac_asm.h
+index 0ba421aaf9d4..be93831fdd11 100644
+--- a/osfmk/arm64/pac_asm.h
++++ b/osfmk/arm64/pac_asm.h
+@@ -43,6 +43,15 @@
+ 
+ #if defined(HAS_APPLE_PAC)
+ 
++#if HAS_STD_PAC
++/*
++ * The architectural keys of a standard ARMv8.3 CPU: these are programmed and switched by the
++ * kernel itself, see pac_std_asm.h.  The macros that follow in this file describe Apple's
++ * implementation and are not used there.
++ */
++#include "pac_std_asm.h"
++#endif /* HAS_STD_PAC */
++
+ 
+ /* BEGIN IGNORE CODESTYLE */
+ 
+@@ -96,6 +105,7 @@
+  *   new_jop_key - process's jop_pid
+  *   tmp - scratch register
+  */
++#if !HAS_STD_PAC
+ .macro SET_JOP_KEY_REGISTERS	new_jop_key, tmp
+ #if HAS_PARAVIRTUALIZED_PAC
+ 	SAVE_SMCCC_CLOBBERED_REGISTERS
+@@ -157,6 +167,7 @@
+ 	hvc		#0
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+ .endmacro
++#endif /* !HAS_STD_PAC */
+ 
+ /* END IGNORE CODESTYLE */
+ 
+diff --git a/osfmk/arm64/proc_reg.h b/osfmk/arm64/proc_reg.h
+index 133b07fd6155..f15848ba264a 100644
+--- a/osfmk/arm64/proc_reg.h
++++ b/osfmk/arm64/proc_reg.h
+@@ -535,7 +535,21 @@
+ 
+ #define SCTLR_RESERVED     ((3ULL << 28) | (1ULL << 20))
+ #if defined(HAS_APPLE_PAC)
+-
++#if HAS_STD_PAC
++/*
++ * Standard ARMv8.3 SCTLR_EL1.  EnIA, EnIB, EnDA and EnDB enable the signing instructions that use
++ * the A and B keys for EL0 and EL1 alike (with a bit clear, the instruction executes as a NOP and
++ * authentication always passes, which is how the kernel boots before it has keys).  The positions
++ * are architectural (ARM DDI 0487): EnIA 31, EnIB 30, EnDA 27, EnDB 13.  Bits 29:28 are LSMAOE and
++ * nTLSMD (RES1, set by SCTLR_RESERVED) -- not PAC enables; the loader's pac_enable() must set the
++ * same four bits, or it signs with a data key the kernel never actually enabled.
++ */
++#define SCTLR_PACIA_ENABLED_SHIFT 31
++#define SCTLR_PACIA_ENABLED       (1ULL << SCTLR_PACIA_ENABLED_SHIFT)
++#define SCTLR_PACIB_ENABLED       (1ULL << 30)
++#define SCTLR_PACDA_ENABLED       (1ULL << 27)
++#define SCTLR_PACDB_ENABLED       (1ULL << 13)
++#else /* HAS_STD_PAC */
+ // 31    PACIA_ENABLED AddPACIA and AuthIA functions enabled
+ #define SCTLR_PACIA_ENABLED_SHIFT 31
+ #define SCTLR_PACIA_ENABLED       (1ULL << SCTLR_PACIA_ENABLED_SHIFT)
+@@ -546,6 +560,7 @@
+ #define SCTLR_PACDA_ENABLED       (1ULL << 27)
+ // 13    PACDB_ENABLED  AddPACDB and AuthDB functions enabled
+ #define SCTLR_PACDB_ENABLED       (1ULL << 13)
++#endif /* HAS_STD_PAC */
+ 
+ #define SCTLR_JOP_KEYS_ENABLED (SCTLR_PACIA_ENABLED | SCTLR_PACDA_ENABLED | SCTLR_PACDB_ENABLED)
+ #endif /* defined(HAS_APPLE_PAC) */
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index e5336e5a1cce..9e23eb897df6 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -126,6 +126,27 @@ LEXT(LowResetVectorBase)
+ 	.globl EXT(reset_vector)
+ LEXT(reset_vector)
+ 	// Preserve x0 for start_first_cpu, if called
++#if defined(GENERIC_PSCI_SMP)
++	/*
++	 * A core that the firmware has just started for us (PSCI CPU_ON, see
++	 * psci_smp.c) has no vectors at all, and under a third-party hypervisor
++	 * even the OS lock write can trap: vectors first. Not the boot
++	 * processor's early ones, which hand the exception to the boot loader:
++	 * that is not for this core to do.
++	 */
++	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
++	adrp	x0, EXT(LowSecondaryExceptionVectorBase)@page
++	add		x0, x0, EXT(LowSecondaryExceptionVectorBase)@pageoff
++	msr		VBAR_EL1, x0
++	isb
++	// The MMU and the caches are off, says PSCI; of the rest of SCTLR it
++	// says nothing. Only the bits that must be set, until common_start.
++	MOV64	x0, 0x30D00800
++	msr		SCTLR_EL1, x0
++	isb
++	// Unlock the core for debugging
++	msr		OSLAR_EL1, xzr
++#else /* defined(GENERIC_PSCI_SMP) */
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+@@ -136,6 +157,7 @@ LEXT(reset_vector)
+ 	add     x0, x0, EXT(LowExceptionVectorBase)@pageoff
+ 	msr     VBAR_EL1, x0
+ #endif
++#endif /* defined(GENERIC_PSCI_SMP) */
+ 
+ 
+ 
+@@ -143,7 +165,9 @@ LEXT(reset_vector)
+ 	adrp	x19, EXT(ResetHandlerData)@page			// Get address of the reset handler data
+ 	add		x19, x19, EXT(ResetHandlerData)@pageoff
+ 	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
+-#if HAS_CLUSTER
++#if HAS_CLUSTER || defined(GENERIC_PSCI_SMP)
++	// (generic boards: some number their cores in Affinity1 and leave Affinity0 at zero;
++	// a cpu data's phys id is both fields, as the device tree's "reg" has them)
+ 	and		x0, x15, #0xFFFF					// CPU number in Affinity0, cluster ID in Affinity1
+ #else
+ 	and		x0, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+@@ -233,40 +257,175 @@ LEXT(_start)
+ 	.global	EXT(LowExceptionVectorBase)
+ LEXT(LowExceptionVectorBase)
+ 	/* EL1 SP 0 */
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	/* EL1 SP1 */
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	/* EL0 64 */
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	/* EL0 32 */
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
++
++/*
++ * Early-boot exceptions used to spin here. When the XNU loader has patched
++ * the address of its return stub into the slot below, report the exception
++ * to it instead (see osfmk/arm64/loader_return.c):
++ *   x0/x1 = PA/length of the captured kernel log, x2 = 1 (early exception),
++ *   x3 = ESR, x4 = ELR, x5 = FAR, x6 = LR, x7 = SP
++ * This vector is only installed while VBAR holds a physical address, so
++ * PC-relative addressing yields physical addresses, MMU on (V=P) or off.
++ */
++	.align	3
++Lloader_early_exception:
++	mov		x6, lr
++	mov		x7, sp
++	mrs		x3, ESR_EL1
++	mrs		x4, ELR_EL1
++	mrs		x5, FAR_EL1
++	adrp	x0, EXT(loader_log)@page
++	add		x0, x0, EXT(loader_log)@pageoff
++	adrp	x1, EXT(loader_log_len)@page
++	add		x1, x1, EXT(loader_log_len)@pageoff
++	ldr		w1, [x1]
++	// Write the log back to RAM: cached copies are lost once the MMU is off
++	mov		x9, x0
++	add		x10, x0, x1
++1:
++	dc		cvac, x9
++	add		x9, x9, #64
++	cmp		x9, x10
++	b.lo	1b
++	dsb		sy
++	mov		x2, #1
++	mrs		x9, SCTLR_EL1
++	bic		x9, x9, #1
++	msr		SCTLR_EL1, x9
++	isb
++	adr		x9, Lloader_stub_slot
++	ldr		x9, [x9, #8]
++	cbz		x9, .
++	br		x9
++	.align	3
++	.globl EXT(loader_stub_slot)
++LEXT(loader_stub_slot)
++Lloader_stub_slot:
++	.ascii	"XNULDRST"				// magic the loader searches for
++	.quad	0						// PA of the loader's return stub
++	.quad	0						// checkpoint number to stop at (0 = none)
++	.quad	0						// (physical - virtual) offset of the static kernel image
++
++#if defined(GENERIC_PSCI_SMP)
++/*
++ * The same for a core other than the boot processor, from its first
++ * instruction (reset_vector) until common_start gives it the kernel's
++ * vectors. The boot loader is not this core's to return to; it leaves a note
++ * of what happened where the processor that is waiting for it looks
++ * (psci_smp_start_cpu()) and switches itself off again.
++ *
++ * VBAR holds a physical address here too, so the note is addressed
++ * physically; the store goes straight to memory when the MMU is still off,
++ * and is sent there when it is not.
++ */
++	.align	11
++	.globl EXT(LowSecondaryExceptionVectorBase)
++LEXT(LowSecondaryExceptionVectorBase)
++	/* EL1 SP 0 */
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	/* EL1 SP1 */
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	/* EL0 64 */
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	/* EL0 32 */
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++
++	.align	3
++Lsecondary_early_exception:
++	// struct psci_smp_start_fault: { valid, MPIDR, ESR, ELR, FAR, LR, SP }
++	adrp	x9, EXT(psci_smp_start_fault)@page
++	add		x9, x9, EXT(psci_smp_start_fault)@pageoff
++	mrs		x10, MPIDR_EL1
++	str		x10, [x9, #8]
++	mrs		x10, ESR_EL1
++	str		x10, [x9, #16]
++	mrs		x10, ELR_EL1
++	str		x10, [x9, #24]
++	mrs		x10, FAR_EL1
++	str		x10, [x9, #32]
++	str		lr, [x9, #40]
++	mov		x10, sp
++	str		x10, [x9, #48]
++	mov		x10, #1
++	str		x10, [x9]
++	dc		cvac, x9
++	dsb		sy
++	// PSCI CPU_OFF, by the firmware's calling convention (psci_smp_hvc)
++	adrp	x9, EXT(psci_smp_hvc)@page
++	add		x9, x9, EXT(psci_smp_hvc)@pageoff
++	ldr		w9, [x9]
++	mov		x0, #0x0002
++	movk	x0, #0x8400, lsl #16
++	cbnz	w9, 1f
++	smc		#0
++	b		2f
++1:
++	hvc		#0
++2:
++	wfi											// it does not return; if it does, stay here
++	b		2b
++#endif /* defined(GENERIC_PSCI_SMP) */
+ 	.align 12, 0
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+@@ -452,22 +611,51 @@ start_cpu:
+  * Cold boot init routine.  Called from __start
+  *   x0 - Boot args
+  */
++/*
++ * LOADER_CHECKPOINT n
++ *   Bring-up aid: if the loader asked to stop at checkpoint n, return to it
++ *   right here (reason 2, code n). Usable while executing at physical
++ *   addresses, MMU off or on (V=P). Clobbers x0-x3, x9-x11.
++ */
++.macro LOADER_CHECKPOINT
++	adrp	x9, EXT(loader_stub_slot)@page
++	add		x9, x9, EXT(loader_stub_slot)@pageoff
++	ldr		x10, [x9, #16]
++	cmp		x10, #$0
++	b.ne	1f
++	mov		x0, #0
++	mov		x1, #0
++	mov		x2, #2
++	mov		x3, #$0
++	mrs		x11, SCTLR_EL1
++	bic		x11, x11, #1
++	msr		SCTLR_EL1, x11
++	isb
++	ldr		x9, [x9, #8]
++	br		x9
++1:
++.endmacro
++
+ 	.align 2
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
+ 
+-	// Unlock the core for debugging
+-	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+ 
+ 	mov		x20, x0
+ 	mov		x21, #0
++	LOADER_CHECKPOINT 1
+ 
+-	// Set low reset vector before attempting any loads
++	// Set low reset vector before attempting anything that might trap
++	// (under a third-party hypervisor even the OS lock write below can).
+ 	adrp	x0, EXT(LowExceptionVectorBase)@page
+ 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+ 	MSR_VBAR_EL1_X0
+ 
++	// Unlock the core for debugging
++	msr		OSLAR_EL1, xzr
++	LOADER_CHECKPOINT 2
++
+ 
+ 	// Get the kernel memory parameters from the boot args
+ 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
+@@ -612,6 +800,7 @@ Lkernelcache_base_found:
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
++	LOADER_CHECKPOINT 3
+ 
+ 	b		common_start
+ 
+@@ -686,7 +875,10 @@ common_start:
+ 	dsb		ish
+ 
+ 
+-#if defined(BCM2837)
++#if defined(BCM2837) && defined(BCM2837_CORE_TIMER_ROUTING)
++	// Raspberry Pi 3 only: pokes the SoC's local-interrupt block at a fixed
++	// physical address (0x4000004X). Fatal on any other board, so it is
++	// disabled unless explicitly requested.
+ 	// Setup timer interrupt routing; must be done before MMU is enabled
+ 	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
+ 	and		x15, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+@@ -736,14 +928,21 @@ common_start:
+ 1:
+ 	MSR_VBAR_EL1_X0
+ 
+-#if HAS_APPLE_PAC
++#if HAS_APPLE_PAC && !HAS_STD_PAC
+ 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+-#endif /* HAS_APPLE_PAC */
++#endif /* HAS_APPLE_PAC && !HAS_STD_PAC */
+ 
++	cbnz	x21, 1f								// boot CPU cold start only
++	LOADER_CHECKPOINT 4
++1:
+ 	// Enable caches, MMU, ROP and JOP
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
++	cbnz	x21, 1f
++	LOADER_CHECKPOINT 5
++	MOV64   x0, SCTLR_EL1_DEFAULT				// restore what the checkpoint clobbered
++1:
+ 
+ #if !VMAPPLE
+ 	MOV64   x1, SCTLR_EL1_DEFAULT
+@@ -766,6 +965,16 @@ common_start:
+ 	// Clear thread pointer
+ 	msr		TPIDR_EL1, xzr						// Set thread register
+ 
++#if HAS_STD_PAC
++	/*
++	 * The kernel's pointer authentication keys, now that the MMU is on (the key block is
++	 * addressed by its virtual address) and SCTLR_EL1 has enabled the signing instructions, and
++	 * still before the first C function: the first signed pointer the kernel makes has to be
++	 * signed with these keys.  On a secondary CPU this loads the keys the boot CPU made.
++	 */
++	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
++#endif /* HAS_STD_PAC */
++
+ 
+ #if defined(APPLE_ARM64_ARCH_FAMILY)
+ 	mrs		x12, MDSCR_EL1
+diff --git a/osfmk/conf/files b/osfmk/conf/files
+index 9d98c50094a0..9e3476124e54 100644
+--- a/osfmk/conf/files
++++ b/osfmk/conf/files
+@@ -361,3 +361,6 @@ osfmk/corecrypto/ccsha256_ltc_di.c	standard
+ 
+ osfmk/prng/prng_random.c	standard
+ osfmk/prng/entropy.c   standard
++osfmk/minicrypto/mc_digests.c	standard
++osfmk/minicrypto/mc_provider.c	standard
++osfmk/minicrypto/mc_aes.c	standard
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+index c40d57bcc677..1b7a1fcdfcdf 100644
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -25,8 +25,8 @@ osfmk/arm64/WKdmCompress_4k.s	standard
+ osfmk/arm64/WKdmData.s		standard
+ osfmk/arm64/lz4_decode_arm64.s  standard
+ osfmk/arm64/lz4_encode_arm64.s  standard
+-osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
+-osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
++#osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
++#osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
+ osfmk/arm64/bcopy.s standard
+ osfmk/arm64/bzero.s standard
+ osfmk/arm/caches.c		standard
+@@ -104,3 +104,8 @@ osfmk/arm64/machine_remote_time.c optional config_mach_bridge_recv_time
+ osfmk/arm64/corecrypto/sha256_compress_arm64.s	standard
+ 
+ osfmk/arm/counter.c	standard
++osfmk/arm64/generic_arm64_support.c	optional nos_arm_asm
++osfmk/arm64/loader_return.c	optional nos_arm_asm
++osfmk/arm64/user_exception_trace.c	standard
++osfmk/arm64/gic_v3_irq.c	optional nos_arm_asm
++osfmk/arm64/psci_smp.c	optional nos_arm_asm
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+index 384118e8d7a9..2573d2ebd4e6 100644
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -2855,8 +2855,12 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ 			gc_acquired = TRUE;
+ 		} else {
+ 			if (makeMapping) {
+-#if HAS_UCNORMAL_MEM
++#if HAS_UCNORMAL_MEM || defined(BCM2837)
+ 				/*
++				 * (Generic ARM boards too: scrolling reads the framebuffer
++				 * back, and as device memory that is one bus access per
++				 * word - seconds per line on a phone-sized screen.)
++				 *
+ 				 * Framebuffers would normally use VM_WIMG_RT, which
+ 				 * io_map doesn't support.  However this buffer is set up
+ 				 * by the bootloader and doesn't require D$ cleaning, so
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index 0a00656a0fdd..bfad3cbca5bc 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1147,9 +1147,12 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ 	__builtin_unreachable();
+ }
+ 
++extern void loader_return(void);
++
+ void
+ panic_spin_forever(void)
+ {
++	loader_return();
+ 	for (;;) {
+ #if defined(__arm__) || defined(__arm64__)
+ 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
+@@ -1163,6 +1166,7 @@ panic_spin_forever(void)
+ static void
+ kdp_machine_reboot_type(unsigned int type, uint64_t debugger_flags)
+ {
++	loader_return();
+ 	if ((type == kPEPanicRestartCPU) && (debugger_flags & DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS)) {
+ 		PEHaltRestart(kPEPanicRestartCPUNoCallouts);
+ 	} else {
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+index 809dafaaa2a7..71c6580f44e2 100644
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -636,6 +636,11 @@ check_exc_receiver_dependency(
+  *	Returns:
+  *		KERN_SUCCESS if exception is handled by any of the handlers.
+  */
++#if defined(__arm64__)
++extern void user_exception_trace(exception_type_t exception, mach_exception_data_t code,
++    mach_msg_type_number_t count, thread_t thread);
++#endif
++
+ kern_return_t
+ exception_triage_thread(
+ 	exception_type_t        exception,
+@@ -650,6 +655,11 @@ exception_triage_thread(
+ 	struct exception_action *actions;
+ 	kern_return_t   kr = KERN_FAILURE;
+ 
++#if defined(__arm64__)
++	/* bring-up aid, see osfmk/arm64/user_exception_trace.c */
++	user_exception_trace(exception, code, codeCnt, thread);
++#endif
++
+ 	assert(exception != EXC_RPC_ALERT);
+ 
+ 	/*
+diff --git a/osfmk/kern/kalloc.h b/osfmk/kern/kalloc.h
+index dfa89c7b0d29..07e0ba5bf44c 100644
+--- a/osfmk/kern/kalloc.h
++++ b/osfmk/kern/kalloc.h
+@@ -821,12 +821,16 @@ __options_decl(kt_granule_t, uint32_t, {
+  * @param ptr           the pointer whose type needs to be checked.
+  * @param type          the type which the pointer will be checked against.
+  */
++#if XNU_NO_TYPE_BUILTINS
++#define KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type)  (1)
++#else
+ #define KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type)                   \
+ 	_Pragma("clang diagnostic push")                               \
+ 	_Pragma("clang diagnostic ignored \"-Wvoid-ptr-dereference\"") \
+ 	(__builtin_xnu_types_compatible(__typeof__(*(ptr)), type) ||   \
+ 	    __builtin_xnu_types_compatible(__typeof__(*(ptr)), void))  \
+ 	_Pragma("clang diagnostic pop")
++#endif /* XNU_NO_TYPE_BUILTINS */
+ 
+ #define KALLOC_TYPE_ASSERT_COMPATIBLE_POINTER(ptr, type) \
+ 	_Static_assert(KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type), \
+diff --git a/osfmk/kern/percpu.h b/osfmk/kern/percpu.h
+index 4fb223ee9788..df563bc04910 100644
+--- a/osfmk/kern/percpu.h
++++ b/osfmk/kern/percpu.h
+@@ -236,15 +236,22 @@ extern vm_offset_t other_percpu_base(int cpu_number);
+  * @param it            the name of the iterator
+  * @param name          the per-CPU variable name
+  */
++/*
++ * (redwood) All of the arithmetic is on integers here. As Apple wrote it, the end was a pointer
++ * computed from the start, and a compiler may then take "start <= start + n" for "n >= 0":
++ * with one processor start is VM_MAX_KERNEL_ADDRESS and end is 0, n looks positive, and the
++ * loop that must not run at all runs once on memory that does not exist (clang 18+ does this;
++ * the panic was in mbuf_mtypes_sync(), the first time a daemon asked for the mbuf statistics).
++ */
+ #define percpu_foreach_secondary(it, name) \
+ 	for (__PERCPU_TYPE(name) it, \
+-	    __base_ ## it = (typeof(it))__unsafe_forge_bidi_indexable(void *, percpu_base.start, percpu_base.end - percpu_base.start), \
+-	    __end_ ## it = (typeof(it))((caddr_t)__base_ ## it  + percpu_base.end - percpu_base.start); \
++	    __base_ ## it = (typeof(it))percpu_base.start, \
++	    __end_ ## it = (typeof(it))percpu_base.end; \
+         \
+-	    (it = (typeof(it))((caddr_t)__base_ ## it + __PERCPU_ADDR(name)), \
+-	    __base_ ## it <= __end_ ## it); \
++	    (it = (typeof(it))((vm_address_t)__base_ ## it + __PERCPU_ADDR(name)), \
++	    (vm_address_t)__base_ ## it <= (vm_address_t)__end_ ## it); \
+         \
+-	    __base_ ## it = (typeof(it))((caddr_t)__base_ ## it + percpu_section_size()))
++	    __base_ ## it = (typeof(it))((vm_address_t)__base_ ## it + percpu_section_size()))
+ 
+ #pragma mark - implementation details
+ 
+diff --git a/osfmk/kern/sched.h b/osfmk/kern/sched.h
+index a5f68ade084b..9741eb1b3ecd 100644
+--- a/osfmk/kern/sched.h
++++ b/osfmk/kern/sched.h
+@@ -464,4 +464,13 @@ extern int sched_rt_n_backup_processors;
+ 
+ extern bool system_is_SMT;
+ 
++/*
++ * The "secondaries" are not the second threads of hyperthreaded cores but slower cores of their
++ * own, each paired with a faster one (ml_pair_slow_processors() in osfmk/arm64/machine_routines.c):
++ * the scheduler still prefers the primaries, but what runs on one core does not slow the other,
++ * so a secondary is not kept idle for its primary's sake, and when a primary goes idle a thread
++ * running on a secondary is moved to it.
++ */
++extern bool sched_slow_secondaries;
++
+ #endif  /* _KERN_SCHED_H_ */
+diff --git a/osfmk/kern/sched_clutch.c b/osfmk/kern/sched_clutch.c
+index 3657d83c5b6f..ded2ff427d68 100644
+--- a/osfmk/kern/sched_clutch.c
++++ b/osfmk/kern/sched_clutch.c
+@@ -3204,7 +3204,7 @@ extern int sched_allow_rt_smt;
+ static bool
+ sched_clutch_thread_avoid_processor(processor_t processor, thread_t thread)
+ {
+-	if (processor->processor_primary != processor) {
++	if (processor->processor_primary != processor && !sched_slow_secondaries) {
+ 		/*
+ 		 * This is a secondary SMT processor.  If the primary is running
+ 		 * a realtime thread, only allow realtime threads on the secondary.
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+index 8e29586464de..0a7de6fc4be7 100644
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -2042,6 +2042,7 @@ sched_vm_group_maintenance(void)
+ #endif
+ 
+ int sched_allow_rt_smt = 1;
++bool sched_slow_secondaries = false;
+ int sched_avoid_cpu0 = SCHED_AVOID_CPU0;
+ int sched_allow_rt_steal = 1;
+ int sched_backup_cpu_timeout_count = 5; /* The maximum number of 10us delays to wait before using a backup cpu */
+@@ -2097,6 +2098,7 @@ void
+ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ {
+ 	processor_t ast_processor = NULL;
++	sched_ipi_type_t ipi_type = SCHED_IPI_NONE;
+ 
+ #if (DEVELOPMENT || DEBUG)
+ 	if (__improbable(sched_smt_balance == 0)) {
+@@ -2105,7 +2107,39 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ #endif
+ 
+ 	assert(cprocessor == current_processor());
+-	if (cprocessor->is_SMT == FALSE) {
++	if (cprocessor->is_SMT == FALSE && !sched_slow_secondaries) {
++		goto smt_balance_exit;
++	}
++
++	if (sched_slow_secondaries) {
++		/*
++		 * A faster core is going idle: the thread of highest priority that runs on a slower one
++		 * (not a real-time one: those stay where they are) is sent here. Its core is made to
++		 * reschedule; a thread on a secondary goes back to the run queue then, and an idle
++		 * primary is where it is put.
++		 */
++		integer_t highest = -1;
++
++		if (cprocessor->processor_primary != cprocessor) {
++			goto smt_balance_exit;
++		}
++		uint64_t running_secondaries = (cpset->cpu_state_map[PROCESSOR_RUNNING] & ~cpset->primary_map &
++		    ~cpset->pending_AST_URGENT_cpu_mask);
++		for (int cpuid = lsb_first(running_secondaries); cpuid >= 0; cpuid = lsb_next(running_secondaries, cpuid)) {
++			processor_t sprocessor = processor_array[cpuid];
++
++			if (sprocessor->current_pri < BASEPRI_RTQUEUES && sprocessor->current_pri > highest &&
++			    sprocessor->current_pri > MINPRI) {
++				highest = sprocessor->current_pri;
++				ast_processor = sprocessor;
++			}
++		}
++		if (ast_processor != PROCESSOR_NULL) {
++			ipi_type = sched_ipi_action(ast_processor, NULL, SCHED_IPI_EVENT_SMT_REBAL);
++			if (ipi_type == SCHED_IPI_NONE) {
++				ast_processor = PROCESSOR_NULL;
++			}
++		}
+ 		goto smt_balance_exit;
+ 	}
+ 
+@@ -2120,7 +2154,6 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ 
+ 	processor_t sprocessor;
+ 
+-	sched_ipi_type_t ipi_type = SCHED_IPI_NONE;
+ 	uint64_t running_secondary_map = (cpset->cpu_state_map[PROCESSOR_RUNNING] &
+ 	    ~cpset->primary_map);
+ 	for (int cpuid = lsb_first(running_secondary_map); cpuid >= 0; cpuid = lsb_next(running_secondary_map, cpuid)) {
+@@ -2581,6 +2614,10 @@ restart:
+ 		bool is_yielding         = (*reason & AST_YIELD) == AST_YIELD;
+ 
+ 		bool needs_smt_rebalance = !is_yielding && thread->sched_pri < BASEPRI_RTQUEUES && processor->processor_primary != processor;
++		if (needs_smt_rebalance && sched_slow_secondaries) {
++			/* (a slower core of its own: worth leaving only for a faster one that is idle) */
++			needs_smt_rebalance = (pset->recommended_bitmask & pset->primary_map & pset->cpu_state_map[PROCESSOR_IDLE]) != 0;
++		}
+ 
+ 		bool affinity_mismatch   = thread->affinity_set != AFFINITY_SET_NULL && thread->affinity_set->aset_pset != pset;
+ 
+@@ -2705,7 +2742,7 @@ pick_new_rt_thread:
+ 
+ 				clear_pending_AST_bits(pset, processor, 3);
+ 
+-				if (processor->processor_secondary != NULL) {
++				if (processor->processor_secondary != NULL && !sched_slow_secondaries) {
+ 					processor_t sprocessor = processor->processor_secondary;
+ 					if ((sprocessor->state == PROCESSOR_RUNNING) || (sprocessor->state == PROCESSOR_DISPATCHING)) {
+ 						ipi_type = sched_ipi_action(sprocessor, NULL, SCHED_IPI_EVENT_SMT_REBAL);
+@@ -2774,7 +2811,8 @@ send_followup_ipi_before_idle:
+ 				goto restart;
+ 			}
+ 
+-			if ((processor->processor_primary != processor) && (processor->processor_primary->current_pri >= BASEPRI_RTQUEUES)) {
++			if ((processor->processor_primary != processor) && (processor->processor_primary->current_pri >= BASEPRI_RTQUEUES) &&
++			    !sched_slow_secondaries) {
+ 				/* secondary can only run realtime thread */
+ 				if (idle_reason == 0) {
+ 					idle_reason = 4;
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index bec97fbf7243..203e1f48783f 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -156,6 +156,7 @@
+ #include <security/mac_mach_internal.h>
+ #if CONFIG_VNGUARD
+ extern void vnguard_policy_init(void);
++extern void minimac_policy_init(void);
+ #endif
+ #endif
+ 
+@@ -721,6 +722,9 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("vnguard_policy_init");
+ 	vnguard_policy_init();
+ #endif
++	/* stand-ins for the AMFI and Sandbox policies (bsd/kern/kern_minimac.c) */
++	kernel_bootstrap_log("minimac_policy_init");
++	minimac_policy_init();
+ #endif
+ 
+ #if CONFIG_DTRACE
+diff --git a/osfmk/kern/thread.c b/osfmk/kern/thread.c
+index 384ef23fe0e1..d5ab6db0edbc 100644
+--- a/osfmk/kern/thread.c
++++ b/osfmk/kern/thread.c
+@@ -3065,6 +3065,26 @@ thread_get_tag(thread_t th)
+ 	return thread_get_tag_internal(th);
+ }
+ 
++/*
++ * For apfs's lock statistics (bsd/miscfs/apfs/apfs_vnops.c): how long the current thread has
++ * been runnable (running included) and how long it has run, in mach_absolute_time() units.
++ * Taken before and after a wait for a lock, the two tell the wait apart: blocked, queued for
++ * a processor, or spinning on one.
++ */
++void thread_runnable_and_run_self(uint64_t *runnable, uint64_t *run);
++
++void
++thread_runnable_and_run_self(uint64_t *runnable, uint64_t *run)
++{
++	thread_t thread = current_thread();
++	boolean_t istate = ml_set_interrupts_enabled(FALSE);
++	uint64_t now = mach_absolute_time();
++
++	*runnable = thread->runnable_timer.all_bits + (now - thread->runnable_timer.tstamp);
++	*run = recount_current_thread_time_mach();
++	ml_set_interrupts_enabled(istate);
++}
++
+ uint64_t
+ thread_last_run_time(thread_t th)
+ {
+diff --git a/osfmk/kern/work_interval.c b/osfmk/kern/work_interval.c
+index f2b9ce24bd8d..3aed167fe32e 100644
+--- a/osfmk/kern/work_interval.c
++++ b/osfmk/kern/work_interval.c
+@@ -683,6 +683,18 @@ work_interval_get_priority(thread_t thread)
+ 	return priority;
+ }
+ 
++/*
++ * (redwood) What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
++ * or WORK_INTERVAL_TYPE_LAST for a thread that has joined none.
++ */
++uint32_t
++kern_work_interval_type_of_thread(thread_t thread)
++{
++	const struct work_interval *work_interval = thread->th_work_interval;
++
++	return work_interval ? work_interval->wi_create_flags & WORK_INTERVAL_TYPE_MASK : WORK_INTERVAL_TYPE_LAST;
++}
++
+ /*
+  * Switch to a policy driven by the work interval (if applicable).
+  */
+diff --git a/osfmk/kern/work_interval.h b/osfmk/kern/work_interval.h
+index 8b46efb05c86..e161ca426b1a 100644
+--- a/osfmk/kern/work_interval.h
++++ b/osfmk/kern/work_interval.h
+@@ -83,6 +83,8 @@ extern kern_return_t
+ kern_work_interval_notify(thread_t thread, struct kern_work_interval_args* kwi_args);
+ extern kern_return_t
+ kern_work_interval_set_name(mach_port_name_t port_name, char *name, size_t len);
++extern uint32_t
++kern_work_interval_type_of_thread(thread_t thread);
+ extern kern_return_t
+ kern_work_interval_set_workload_id(mach_port_name_t port_name,
+     struct kern_work_interval_workload_id_args *workload_id_args);
+diff --git a/osfmk/vm/vm_dyld_pager.c b/osfmk/vm/vm_dyld_pager.c
+index a744cd3e55c2..8180a031797a 100644
+--- a/osfmk/vm/vm_dyld_pager.c
++++ b/osfmk/vm/vm_dyld_pager.c
+@@ -431,7 +431,14 @@ signPointer(
+ 	switch (key) {
+ 	case ptrauth_key_asia:
+ 	case ptrauth_key_asda:
+-		if (pager->dyld_a_key == 0 || arm_user_jop_disabled()) {
++		/*
++		 * dyld_a_key == 0 is the default shared region (launchd).  On Apple that means the
++		 * process-independent default key and the pointer is left as-is; the standard-PAC
++		 * backend instead derives a real key from the jop value (0 included) and the process
++		 * authenticates with it, so we must sign for key 0 too (same as the shared-region
++		 * pager -- vm_shared_region.c; docs/ARM64E.md milestone 3).
++		 */
++		if (arm_user_jop_disabled()) {
+ 			*signedAddr = unsignedAddr;
+ 		} else {
+ 			*signedAddr = (uintptr_t)pmap_sign_user_ptr((void *)unsignedAddr, key, extendedDiscriminator, pager->dyld_a_key);
+diff --git a/osfmk/vm/vm_shared_region.c b/osfmk/vm/vm_shared_region.c
+index db1d61332643..3d3d8a265fcd 100644
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -3236,11 +3236,18 @@ vm_shared_region_slide_page_v3(
+ 				discriminator = __builtin_ptrauth_blend_discriminator((void*)(((uintptr_t)uservaddr) + pageOffset), discriminator);
+ 			}
+ 
+-			if (jop_key != 0 && si->si_ptrauth && !arm_user_jop_disabled()) {
+-				/*
+-				 * these pointers are used in user mode. disable the kernel key diversification
+-				 * so we can sign them for use in user mode.
+-				 */
++			/*
++			 * these pointers are used in user mode. disable the kernel key diversification
++			 * so we can sign them for use in user mode.
++			 *
++			 * jop_key == 0 is the default shared region (launchd and anything in it).  On
++			 * Apple hardware that means "use the process-independent default key" and the
++			 * cache is left as the hardware signs it; here the standard-PAC backend derives
++			 * a real key from the jop value (0 included), and the process authenticates with
++			 * that derived key -- so we must sign for jop_key == 0 too, or launchd FPACs on
++			 * the first cache pointer it authenticates (docs/ARM64E.md milestone 3).
++			 */
++			if (si->si_ptrauth && !arm_user_jop_disabled()) {
+ 				value = (uintptr_t)pmap_sign_user_ptr((void *)value, key, discriminator, jop_key);
+ 			}
+ #endif /* __has_feature(ptrauth_calls) */
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+index 3ad743fc3efb..ce036c5a2c26 100644
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -169,6 +169,15 @@ pe_init_fiq()
+ 	__builtin_arm_wsr64("ICC_IGRPEN0_EL1", 1);
+ 	__builtin_arm_isb(ISB_SY);
+ }
++#elif defined(GENERIC_GIC_V3_IRQ)
++/* Generic boards: Group 1 IRQs through a GICv3, see osfmk/arm64/gic_v3_irq.c */
++extern void gic_v3_irq_cpu_init(void);
++
++void
++pe_init_fiq()
++{
++	gic_v3_irq_cpu_init();
++}
+ #else
+ void
+ pe_init_fiq()
+diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
+index 65144c74239c..ab6260d52d84 100644
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -29,6 +29,7 @@ SECURITY_READ_ONLY_LATE(bool) enable_dklog_serial_output = false;
+ static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
+ 
+ static void serial_putc_crlf(char c);
++extern void loader_log_putc(char c);
+ 
+ __startup_func
+ static void
+@@ -159,6 +160,7 @@ serial_putc_crlf(char c)
+ 	if (c == '\n') {
+ 		uart_putc('\r');
+ 	}
++	loader_log_putc(c);
+ 	uart_putc(c);
+ }
+ 
+diff --git a/pexpert/pexpert/arm64/BCM2837.h b/pexpert/pexpert/arm64/BCM2837.h
+index d9f0723244e5..e125f0e65760 100644
+--- a/pexpert/pexpert/arm64/BCM2837.h
++++ b/pexpert/pexpert/arm64/BCM2837.h
+@@ -11,6 +11,15 @@
+ #define BCM2837
+ #define BCM2837_BRINGUP
+ #define ARM_ARCH_TIMER
++#define GENERIC_GIC_V3_IRQ                 1 /* interrupts via GICv3 Group 1, see osfmk/arm64/gic_v3_irq.c */
++#define GENERIC_PSCI_SMP                  1 /* more cores are started through PSCI, see osfmk/arm64/psci_smp.c */
++
++/*
++ * The cores this kernel really runs on (Cortex-A55/A78, QEMU cortex-a76) are
++ * ARMv8.2: they set PSTATE.PAN on every exception entry, so the kernel must
++ * know to lift it around user memory accesses.
++ */
++#define __ARM_PAN_AVAILABLE__     1
+ 
+ #define __ARM_ARCH__              8
+ #define __ARM_VMSA__              8
+@@ -19,9 +28,23 @@
+ #define __ARM_DEBUG__             7
+ #define __ARM64_PMAP_SUBPAGE_L1__ 1
+ 
++/*
++ * Pointer authentication.  These cores are standard ARMv8.3+/ARMv9 ones, not Apple silicon: the
++ * signing instructions are the architectural ones and the key registers (APIAKey_EL1 and the rest)
++ * are shared by EL0 and EL1, so the kernel has to program them and switch them at the EL0 boundary
++ * itself (osfmk/arm64/pac_asm.h, HAS_STD_PAC).  The rest of the kernel asks HAS_APPLE_PAC whether
++ * the arm64e ABI is in use -- signed user thread state, per-process keys, signed credentials --
++ * and that answer is yes here too, so it is defined.
++ */
++#if defined(__arm64e__)
++#define HAS_APPLE_PAC             1
++#define HAS_STD_PAC               1
++#endif
++
+ #ifndef ASSEMBLER
+ 
+ #define PI3_UART
++#define VMAPPLE_UART                    /* PL011, as found on QEMU virt */
+ 
+ #define PI3_BREAK                               asm volatile("brk #0");
+ 
+@@ -60,8 +83,11 @@
+ #define BCM2837_PUT32(addr, value) do { *((volatile uint32_t *) addr) = value; } while(0)
+ #define BCM2837_GET32(addr) *((volatile uint32_t *) addr)
+ 
+-#define PLATFORM_PANIC_LOG_PADDR        0x3c0fc000
+-#define PLATFORM_PANIC_LOG_SIZE         16384        // 16kb
++/*
++ * No fixed PLATFORM_PANIC_LOG_PADDR: the Raspberry Pi address (0x3c0fc000) is
++ * not RAM on other boards. The panic log region comes from the device tree
++ * instead (/pram and /chosen/embedded-panic-log-size), like on Apple devices.
++ */
+ #endif /* ! ASSEMBLER */
+ 
+ #endif /* ! _PEXPERT_ARM_BCM2837_H */
+diff --git a/pexpert/pexpert/arm64/board_config.h b/pexpert/pexpert/arm64/board_config.h
+index c84b2100bc19..aaad5cd2e8c6 100644
+--- a/pexpert/pexpert/arm64/board_config.h
++++ b/pexpert/pexpert/arm64/board_config.h
+@@ -91,7 +91,7 @@
+ #include <pexpert/arm64/BCM2837.h>
+ 
+ #define MAX_L2_CLINE                   6
+-#define MAX_CPUS                       4
++#define MAX_CPUS                       8 /* the Raspberry Pi has four; the boards this runs on now have up to eight */
+ #define MAX_CPU_CLUSTERS               1
+ 
+ #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
+diff --git a/security/mac_vfs_subr.c b/security/mac_vfs_subr.c
+index 97028c06bb92..0daad830d0c0 100644
+--- a/security/mac_vfs_subr.c
++++ b/security/mac_vfs_subr.c
+@@ -167,7 +167,7 @@ mac_vnop_setxattr(struct vnode *vp, const char *name, char *buf, size_t len)
+ {
+ 	vfs_context_t ctx;
+ 	int options = XATTR_NOSECURITY;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	uio_t auio;
+ 	int error;
+ 
+@@ -198,7 +198,7 @@ mac_vnop_getxattr(struct vnode *vp, const char *name, char *buf, size_t len,
+ {
+ 	vfs_context_t ctx = vfs_context_current();
+ 	int options = XATTR_NOSECURITY;
+-	uio_stackbuf_t uio_buf[UIO_SIZEOF(1)];
++	uio_stackbuf_t uio_buf[(UIO_SIZEOF(1) + sizeof(uio_stackbuf_t) - 1) / sizeof(uio_stackbuf_t)];
+ 	uio_t auio;
+ 	int error;
+ 
+diff --git a/tools/lldbmacros/core/syntax_checker.py b/tools/lldbmacros/core/syntax_checker.py
+index 3ebc295117a3..de101eafc83b 100755
+--- a/tools/lldbmacros/core/syntax_checker.py
++++ b/tools/lldbmacros/core/syntax_checker.py
+@@ -12,10 +12,13 @@ Usage:
+ """
+ import sys
+ import os
++# When this file is executed directly, its directory is first on sys.path.
++# That directory contains collections.py, which shadows Python's standard
++# library collections module while importing re on Python 3.14 and newer.
++_script_dir = os.path.dirname(os.path.abspath(__file__))
++sys.path = [p for p in sys.path if os.path.abspath(p or os.curdir) != _script_dir]
+ import re
+-
+ tabs_search_rex = re.compile("^\s*\t+",re.MULTILINE|re.DOTALL)
+-
+ def find_non_ascii(s):
+     for c in s:
+         if ord(c) >= 0x80: return True
