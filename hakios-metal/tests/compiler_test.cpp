@@ -13,6 +13,7 @@
 #include "fixtures/tex_fill_air.hpp"
 #include "fixtures/tex_size_h_air.hpp"
 #include "fixtures/tg_arg_air.hpp"
+#include "fixtures/ptr_phi_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
 #include "fixtures/tex_fill_h_air.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
@@ -190,6 +191,18 @@ TEST(a_threadgroup_argument_starts_past_the_static_arrays) {
     // the twin: a kernel with no threadgroup argument says so, and keeps its base at 0
     auto fill = compareWithFixture("tex_fill", kernels::tex_fill_air, "tex_fill", "stib");
     if (fill) CHECK(!fill->hasThreadgroupArg);
+}
+
+// Pointer phis into one buffer at run-time offsets (a branch's two GEPs, a pointer stepped round a loop) translate:
+// the front end carries the offset in a register; it refused both before (tools/air/chosencheck.sh holds the twins
+// that are still refused: two buffers, and a loop whose back edge swaps the buffer)
+TEST(a_pointer_phi_into_one_buffer_compiles) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the pointer phis did not run)\n");
+        return;
+    }
+    auto k = compareWithFixture("ptr_phi", kernels::ptr_phi_air, "ptr_phi", "ldib");
+    if (k) CHECK_EQ(k->kernel.numSsbos, 2u);
 }
 
 // The three texture kernels: the fixture writer's walk of the NIR (tools/mesa/ir3-dump.patch) and the core's

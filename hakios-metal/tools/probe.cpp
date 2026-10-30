@@ -41,6 +41,7 @@
 #include "../tests/fixtures/tex_fill_3d_air.hpp"
 #include "../tests/fixtures/pvt_fill_air.hpp"
 #include "../tests/fixtures/tg_arg_air.hpp"
+#include "../tests/fixtures/ptr_phi_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
@@ -816,6 +817,37 @@ int main(int argc, char** argv) {
             report(cb->status() == CommandBuffer::kCompleted && right == 1024 && tail == 64,
                    "threadgroup argument past s[64], 8 KiB of it: " + std::to_string(right) + " of 1024 threads read (n + 1000, n + 2000), " +
                        std::to_string(tail) + " of 64 past the grid canary" + status(*cb, gpu));
+        }
+    }
+
+    // 6x. pointer phis into one buffer: ptr_phi reads in + gid or in + gid + 64 by gid's parity (a phi of two GEPs) and
+    // sums in[gid .. gid + 3] through a pointer stepped round a loop. With in[w] = 3w + 7: out[2g] = in[g] for odd g and
+    // in[g + 64] for even g, out[2g + 1] = 12g + 46 -- an offset register stuck at one edge's value moves either
+    {
+        auto in = newBuffer(gpu, 4 * 1024, &why);
+        auto out = in ? newBuffer(gpu, 8 * 256 + 256, &why) : nullptr;
+        if (out == nullptr) {
+            report(false, "pointer phis: the buffers: " + why);
+        } else {
+            uint32_t* iw = static_cast<uint32_t*>(in->contents());
+            for (uint32_t w = 0; w < 1024; w++) iw[w] = 3 * w + 7;
+            uint32_t* ow = static_cast<uint32_t*>(out->contents());
+            for (uint32_t i = 0; i < 512 + 64; i++) ow[i] = 0x5a5a5a5au;
+            const uint32_t groups[3] = {4, 1, 1}, local[3] = {64, 1, 1};
+            auto cb = queue->commandBuffer();
+            if (cb->dispatch(kernels::ptr_phi_air, groups, local, {Binding{in.get(), 0}, Binding{out.get(), 0}})) {
+                cb->commit();
+                cb->waitUntilCompleted();
+            }
+            uint32_t chosen = 0, summed = 0, tail = 0;
+            for (uint32_t g = 0; g < 256; g++) {
+                chosen += ow[2 * g] == iw[(g & 1) ? g : g + 64];
+                summed += ow[2 * g + 1] == 12 * g + 46;
+            }
+            for (uint32_t i = 512; i < 512 + 64; i++) tail += ow[i] == 0x5a5a5a5au;
+            report(cb->status() == CommandBuffer::kCompleted && chosen == 256 && summed == 256 && tail == 64,
+                   "pointer phis into one buffer: " + std::to_string(chosen) + " of 256 branch-chosen words, " + std::to_string(summed) +
+                       " of 256 loop sums 12g + 46, " + std::to_string(tail) + " of 64 past the grid canary" + status(*cb, gpu));
         }
     }
 
