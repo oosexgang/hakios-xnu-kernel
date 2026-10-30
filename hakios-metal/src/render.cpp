@@ -1277,10 +1277,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (!checkTarget(pass, why)) {
         return false;
     }
+    // a pipeline's rasterSampleCount other than the attachments' is drawn at the attachments' count: Metal's API
+    // validation names the mismatch, but validation is off in a shipping app, and an Apple GPU then draws -- SiriUICore
+    // builds its orb's pipelines at 1 sample and draws them into a 4-sample target. Nothing a stage was compiled into
+    // depends on the count (the MSAA state is the attachments', below), so the attachments' is the one taken.
     const uint32_t samples = firstAttachment(pass)->samples();
-    if (program.samples != samples) {
-        return refuse(why, "a pipeline of rasterSampleCount " + n(program.samples) + " into attachments of " + n(samples) + " sample(s): Metal asks for the same count");
-    }
     const uint32_t numRt = std::max<uint32_t>(fs.numColorOutputs, 1);
     for (uint32_t i = 0; i < numRt; i++) {
         const Texture* t = attachmentOf(pass, i).texture;

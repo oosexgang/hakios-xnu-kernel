@@ -4300,10 +4300,10 @@ TEST(a_multisample_pass_draws_under_its_count) {
     auto ms = msTarget(r);
     RenderPass pass;
     pass.color0 = ms.get();
-    // the control: a pipeline of one sample into it is refused, as Metal refuses it
-    Encoded bad(r, flatProgram(), pass, wholeDraw());
-    CHECK(!bad.ok);
-    expectRefusal(bad.error, "a pipeline of rasterSampleCount 1 into attachments of 4 sample(s): Metal asks for the same count");
+    // a pipeline of one sample into it draws at the attachments' count, as an Apple GPU does without API validation
+    // (SiriUICore's orb): the same MSAA state as a pipeline of four
+    Encoded oneSample(r, flatProgram(), pass, wholeDraw());
+    CHECK(oneSample.ok);
     Program p = flatProgram();
     p.samples = 4;
     Encoded e(r, p, pass, wholeDraw());
@@ -4314,6 +4314,9 @@ TEST(a_multisample_pass_draws_under_its_count) {
     CHECK_EQ(e.reg(REG_A6XX_GRAS_DEST_MSAA_CNTL), 2u);
     CHECK_EQ(e.reg(REG_A6XX_RB_DEST_MSAA_CNTL), 2u);
     CHECK_EQ(e.reg(REG_A6XX_SP_TP_DEST_MSAA_CNTL), 2u);
+    for (uint32_t reg : {REG_A6XX_GRAS_RAS_MSAA_CNTL, REG_A6XX_GRAS_DEST_MSAA_CNTL, REG_A6XX_RB_DEST_MSAA_CNTL, REG_A6XX_SP_TP_DEST_MSAA_CNTL}) {
+        CHECK_EQ(oneSample.reg(reg), e.reg(reg));   // the one-sample pipeline under the attachments' four
+    }
     CHECK_EQ(e.reg(REG_A6XX_RB_MRT_PITCH) << 6, uint32_t(ms->bytesPerRow()));
     CHECK_EQ(ms->bytesPerRow(), 64u * 4 * 4);
     auto cb = drawOnce(r, p, pass, wholeDraw());

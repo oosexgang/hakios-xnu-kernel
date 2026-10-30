@@ -756,8 +756,8 @@ TEST(c_api_multisample_draw_and_resolve) {
     pass.load_action = 2;
     pass.store_action = 1;
     hakios_metal_cb* cb = hakios_metal_cb_new(q);
-    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-    CHECK(strstr(hakios_metal_error(), "a pipeline of rasterSampleCount 1 into attachments of 4 sample(s)") != nullptr);
+    // a pipeline of one sample draws at the attachments' four (render_test says why)
+    CHECK_EQ(hakios_metal_cb_draw(cb, p, &pass, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), 0);
     hakios_metal_cb_free(cb);
     CHECK_EQ(hakios_metal_program_set_samples(p, 4), 0);
     cb = hakios_metal_cb_new(q);
