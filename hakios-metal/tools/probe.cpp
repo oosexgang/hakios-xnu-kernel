@@ -2436,6 +2436,90 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+                // 9msd. multisampled depth: a 4x RGBA8 target and a 4x Depth32Float one in one pass, NEAR (T1 at 0.25,
+                // red) and FAR (the pair at 0.75, green) under Less + write in either order, resolved into T. Inside T1
+                // (j > i + 1) red, past it (j + 1 < i) green, whatever the order -- the test per sample -- and the diagonal
+                // mixes of the two (each channel between red's and green's), which only samples tested apart give.
+                {
+                    TextureDesc mc;
+                    mc.type = TextureType::k2DMultisample;
+                    mc.samples = 4;
+                    mc.width = W;
+                    mc.height = H;
+                    mc.usage = kTextureUsageRenderTarget;
+                    TextureDesc md = mc;
+                    md.format = PixelFormat::kDepth32Float;
+                    auto msc = Texture::make(gpu, mc, &why);
+                    auto msd = msc ? Texture::make(gpu, md, &why) : nullptr;
+                    if (msc == nullptr || msd == nullptr) {
+                        report(false, "msaa depth: the 4x colour and depth textures: " + why);
+                    } else {
+                        Program p4 = depthProg;
+                        p4.samples = 4;
+                        for (int order = 0; order < 2; order++) {
+                            fillBo(*t, 0x5a5a5a5au);
+                            auto cb = queue->commandBuffer();
+                            bool drew = true;
+                            for (int k = 0; k < 2 && drew; k++) {
+                                const bool nearNow = (k == 0) == (order == 0);
+                                RenderPass rp;
+                                rp.color0 = msc.get();
+                                rp.load = k == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                                rp.depth = msd.get();
+                                rp.depthLoad = k == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                                rp.depthStore = StoreAction::kStore;
+                                rp.clearDepth = 1.0;
+                                Draw d = drawOf(0, nearNow ? 3 : 6);
+                                d.depth = DepthState{1, true};
+                                Bindings vsb;
+                                vsb.buffers = {Binding{nearNow ? nearBuf.get() : farBuf.get(), 0}};
+                                drew = cb->draw(p4, rp, d, vsb, Bindings{});
+                            }
+                            drew = drew && cb->blit(*msc, 0, render::BlitRect{0, 0, W, H}, *t, 0, render::BlitRect{0, 0, W, H}, false);
+                            if (drew) {
+                                cb->commit();
+                                cb->waitUntilCompleted();
+                            }
+                            std::vector<uint8_t> bo = textureBo(*t);
+                            uint32_t inside = 0, insideRed = 0, outside = 0, outsideGreen = 0, mixes = 0, neither = 0;
+                            std::string first;
+                            for (uint32_t j = 0; j < H; j++) {
+                                for (uint32_t i = 0; i < W; i++) {
+                                    uint32_t px;
+                                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                                    if (j > i + 1) {
+                                        inside++;
+                                        insideRed += px == redWord;
+                                    } else if (j + 1 < i) {
+                                        outside++;
+                                        outsideGreen += px == greenWord;
+                                    } else if (px != redWord && px != greenWord) {
+                                        const uint32_t r = px & 0xff, g = px >> 8 & 0xff, b = px >> 16 & 0xff, a = px >> 24;
+                                        if (b == 0 && a == 0xff && r + g >= 0xfd && r + g <= 0x101) mixes++;
+                                        else {
+                                            neither++;
+                                            if (first.empty()) first = "; the first neither (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px);
+                                        }
+                                    }
+                                }
+                            }
+                            if (!first.empty() || insideRed != inside || outsideGreen != outside) {
+                                for (uint32_t j = 0; j < H && first.empty(); j++)
+                                    for (uint32_t i = 0; i < W && first.empty(); i++) {
+                                        uint32_t px;
+                                        memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                                        const uint32_t want = j > i + 1 ? redWord : j + 1 < i ? greenWord : px;
+                                        if (px != want) first = "; the first off (" + std::to_string(i) + "," + std::to_string(j) + "): " + hex8(px);
+                                    }
+                            }
+                            report(drew && completed(*cb) && insideRed == inside && outsideGreen == outside && mixes >= 32 && neither == 0,
+                                   std::string("msaa depth, ") + (order == 0 ? "NEAR then FAR" : "FAR then NEAR") + " at 4 samples, resolved: " +
+                                       std::to_string(insideRed) + " of " + std::to_string(inside) + " inside red, " + std::to_string(outsideGreen) + " of " +
+                                       std::to_string(outside) + " outside green, " + std::to_string(mixes) + " red-green mixes on the diagonal (32 or more), " +
+                                       std::to_string(neither) + " neither" + first + (drew ? status(*cb, gpu) : ": " + cb->error()));
+                        }
+                    }
+                }
                 // the refusal: a depth test with no depth attachment
                 RenderPass rp;
                 rp.color0 = t.get();

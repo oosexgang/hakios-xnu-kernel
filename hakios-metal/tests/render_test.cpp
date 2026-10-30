@@ -3177,9 +3177,9 @@ TEST(the_fake_refuses_a_depth_draw_that_does_not_hold_together) {
     CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_GRAS_SU_DEPTH_CNTL)] = 0; }),
               "the test enable must agree, and a write needs the test"));
     CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_RB_DEPTH_BUFFER_BASE)] += 64; }),
-              "not 4096-aligned, not a multiple of 256, narrower than the window, or outside every buffer"));
+              "not 4096-aligned, not a multiple of 256 a sample, narrower than the window, or outside every buffer"));
     CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_RB_DEPTH_BUFFER_PITCH)] = 2; }),
-              "not 4096-aligned, not a multiple of 256, narrower than the window, or outside every buffer"));
+              "not 4096-aligned, not a multiple of 256 a sample, narrower than the window, or outside every buffer"));
     CHECK(has(twin(render::Options{}, [](Encoded& e, std::vector<uint32_t>& w) { w[e.findReg(REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO)] = 0; }),
               "depth format 4 in RB_DEPTH_BUFFER_INFO and 0 in GRAS_SU_DEPTH_BUFFER_INFO"));
     // unmutated, the same stream passes (each refusal above is its mutation's)

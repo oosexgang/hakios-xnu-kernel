@@ -1463,9 +1463,11 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             const uint64_t base = reg64(REG_A6XX_RB_DEPTH_BUFFER_BASE);
             const uint32_t br = reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR);
             const uint64_t width = (br & 0x3fff) + 1, rows = ((br >> 16 & 0x3fff) + 1 + 15) / 16 * 16;
-            if (base % 4096 != 0 || pitch % 256 != 0 || pitch < width * 4 || at(base, rows * pitch) == nullptr) {
-                fault(text("the depth buffer at %#llx with a pitch of %llu bytes, ", base, pitch) +
-                      text("%llu rows: not 4096-aligned, not a multiple of 256, narrower than the window, or outside every buffer", rows));
+            // (a multisample one holds the draw's sample count of 4-byte depths a texel: fdl6's cpp 4 * samples, its pitch a
+            // multiple of 64 such texels)
+            if (base % 4096 != 0 || pitch % (256 * d.samples) != 0 || pitch < width * 4 * d.samples || at(base, rows * pitch) == nullptr) {
+                fault(text("the depth buffer at %#llx with a pitch of %llu bytes, ", base, pitch) + text("%llu rows, ", rows) +
+                      text("%llu sample(s): not 4096-aligned, not a multiple of 256 a sample, narrower than the window, or outside every buffer", d.samples));
                 return false;
             }
             if (test != ((reg(REG_A6XX_GRAS_SU_DEPTH_CNTL) & A6XX_GRAS_SU_DEPTH_CNTL_Z_TEST_ENABLE) != 0) || (write && !test)) {

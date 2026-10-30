@@ -257,9 +257,10 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
                         ": a depth texture is tiled (TILE6_3) and is served as a render target (4), sampled too (5), not stored");
         return nullptr;
     }
-    if (multisample && (info->depth || info->blockW > 1 || desc.mipLevels != 1 || (desc.usage & kTextureUsageRenderTarget) == 0 || (desc.usage & kTextureUsageWrite) != 0)) {
+    if (multisample && (info->stencil || info->blockW > 1 || desc.mipLevels != 1 || desc.usage != kTextureUsageRenderTarget)) {
         refuse(why, std::string("a multisample ") + info->name + " texture of " + n(desc.mipLevels) + " levels with usage " + n(desc.usage) +
-                        ": one level of an uncompressed colour format, a render target (4), is served (a depth one is tiled differently per sample count)");
+                        ": one level of an uncompressed colour format or Depth32Float, a render target (4) alone, is served (a stencil plane is "
+                        "laid out apart and not for samples here)");
         return nullptr;
     }
     if (slices && (info->depth || info->twoPlane || info->blockW > 1 || desc.usage != kTextureUsageRead)) {
@@ -269,8 +270,15 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     }
     const uint32_t memoryWidth = desc.width * desc.samples;   // the width of its memory: a multisample texture's samples side by side
     uint64_t pitch = texturePitch(*info, memoryWidth);
-    const uint64_t bytes = slices ? (uint64_t(blocksDown(*info, desc.height)) * pitch + 4095) / 4096 * 4096 * desc.depth
-                                                          : textureBytes(*info, memoryWidth, desc.height, desc.mipLevels);
+    uint64_t bytes = slices ? (uint64_t(blocksDown(*info, desc.height)) * pitch + 4095) / 4096 * 4096 * desc.depth
+                                                    : textureBytes(*info, memoryWidth, desc.height, desc.mipLevels);
+    if (info->depth && desc.samples > 1) {
+        // a multisample depth layout is fdl6's tiled one at cpp 4 * samples: the pitch aligned to 64 such texels
+        // (fdl6_tile_alignment's pitchalign = log2(cpp)), its rows counted to 16, the layer 4096-aligned
+        const uint64_t cpp = uint64_t(info->bytesPerPixel) * desc.samples;
+        pitch = (uint64_t(desc.width) * cpp + 64 * cpp - 1) / (64 * cpp) * (64 * cpp);
+        bytes = ((uint64_t(desc.height) + 15) / 16 * 16 * pitch + 4095) / 4096 * 4096;
+    }
     std::shared_ptr<Buffer> buffer = newBuffer(gpu, bytes, why);
     if (buffer == nullptr) {
         return nullptr;

@@ -712,5 +712,37 @@ TEST(a_multisample_texture_is_its_samples_side_by_side) {
     CHECK(has(refusedMake(r, bad), "a texture of type 2 with 4 samples"));
     bad = four;
     bad.usage = kTextureUsageRead;
-    CHECK(has(refusedMake(r, bad), "a render target (4), is served"));
+    CHECK(has(refusedMake(r, bad), "a render target (4) alone, is served"));
+}
+
+// A multisample Depth32Float is fdl6's tiled layout at cpp 4 * samples: its pitch aligned to 64 such texels and its rows
+// counted to 16. The single-sample depth of the same size is the control (cpp 4, 64 texels of 4 bytes).
+TEST(a_multisample_depth_is_tiled_at_its_samples_cpp) {
+    Rig r;
+    TextureDesc one;
+    one.format = PixelFormat::kDepth32Float;
+    one.width = 100;
+    one.height = 20;
+    one.usage = kTextureUsageRenderTarget;
+    TextureDesc four = one;
+    four.type = TextureType::k2DMultisample;
+    four.samples = 4;
+    std::string why;
+    auto a = Texture::make(r.gpu, one, &why);
+    auto m = Texture::make(r.gpu, four, &why);
+    CHECK(a != nullptr && m != nullptr);
+    if (a == nullptr || m == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK_EQ(a->bytesPerRow(), 512u);    // 100 * 4 to 256
+    CHECK_EQ(m->bytesPerRow(), 2048u);   // 100 * 16 to 1024
+    CHECK_EQ(m->buffer()->length(), 32u * 2048);   // 20 rows to 32, 64 KiB
+    // a stencil plane is not served multisampled, nor a multisample depth that is sampled
+    TextureDesc bad = four;
+    bad.format = PixelFormat::kDepth32FloatStencil8;
+    CHECK(has(refusedMake(r, bad), "a multisample Depth32Float_Stencil8 texture"));
+    bad = four;
+    bad.usage = kTextureUsageRenderTarget | kTextureUsageRead;
+    CHECK(has(refusedMake(r, bad), "a render target (4) alone, is served"));
 }

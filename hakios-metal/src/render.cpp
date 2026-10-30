@@ -819,8 +819,12 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
 void fillStream(pm4::Stream& stream, const Texture& target, const ClearWords& c, a6xx_tile_mode tile, uint32_t level = 0) {
     const FormatInfo& f = target.info();
     const TextureLevel L = target.level(level);
-    // (a multisample target is filled as the wider texture its memory is: every sample of every pixel the colour)
-    const uint32_t W = L.width * target.samples(), H = L.height;
+    // (a multisample target is filled as the wider texture its memory is: every sample of every pixel the colour. A tiled
+    // one -- a multisample depth -- whole rows of its pitch and its rows to 16: the fill is one value, so covering every
+    // byte of the layout is right however its tiles order the samples)
+    const bool wholeLayout = tile != TILE6_LINEAR && target.samples() > 1;
+    const uint32_t W = wholeLayout ? uint32_t(L.pitch / f.bytesPerPixel) : L.width * target.samples();
+    const uint32_t H = wholeLayout ? (L.height + 15) / 16 * 16 : L.height;
     const uint64_t at = target.levelAddress(level);
     const uint32_t blit = rb2dBlitCntlClear(f.fmt6, c.ifmt);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
@@ -952,7 +956,7 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         }
         if (d.samples() != firstAttachment(pass)->samples()) {
             return refuse(why, "a depth attachment of " + n(d.samples()) + " sample(s) beside colour of " + n(firstAttachment(pass)->samples()) +
-                                   ": a multisample depth texture is not served (its tiles differ per sample count)");
+                                   ": a pass's attachments share one sample count");
         }
         if ((d.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the depth texture was made without render-target usage (MTLTextureUsageRenderTarget, 4)");
