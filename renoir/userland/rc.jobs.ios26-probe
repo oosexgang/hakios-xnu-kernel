@@ -1,0 +1,5 @@
+# iOS 26 on renoir, first boots: what runs (to the console, read back from the loader's log)
+/usr/bin/uname -a
+/usr/bin/sw_vers
+/bin/ps -A
+/usr/bin/id
