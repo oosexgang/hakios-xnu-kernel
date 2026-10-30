@@ -143,6 +143,7 @@ define <4 x float> @tri_nullfb_fs(<4 x float> %c, ptr addrspace(1) %t, ptr addrs
         },
         /* .numTextureSlots = */ 16,
         /* .samplerMask = */ 0x1,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

@@ -144,6 +144,14 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
         return refuse(why, std::string(k.name) + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has 31");
     }
     for (uint32_t u = 0; u < k.numUbos; u++) {
+        if (k.constantDataUbo != 0 && u == k.constantDataUbo - 1) {
+            // the constant data (a module's constant table) where the program's words were uploaded (render.cpp's way)
+            uint32_t d[2];
+            uboDescriptor(program + k.constantDataOffset, (k.constantDataSize + 15) / 16, d);
+            ubos.push_back(d[0]);
+            ubos.push_back(d[1]);
+            continue;
+        }
         if (u >= buffers.size() || buffers[u].buffer == nullptr) {
             // the highest is what an ldc reads; one below it may be read by none (render.cpp: uboDescriptors)
             if (u + 1 == k.numUbos) {
@@ -329,6 +337,18 @@ bool encode(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], cons
     std::vector<Range> ranges;
     for (uint32_t i = 0; i < k.numUboRanges; i++) {
         const KernelUboRange& r = k.uboRanges[i];
+        if (k.constantDataUbo != 0 && r.block == k.constantDataUbo - 1) {
+            // the constant data's range: its words direct, zeros past their end (render.cpp: pushedRanges)
+            if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
+                return refuse(why, std::string(k.name) + ": its constant data's range runs past its constlen");
+            }
+            Range g{r.offsetVec4, r.sizeDwords / 4, 0, std::vector<uint32_t>(r.sizeDwords, 0u)};
+            for (uint32_t d = 0; d < r.sizeDwords; d++) {
+                if (uint64_t(r.startDword + d) * 4 + 4 <= k.constantDataSize) g.words[d] = k.words[k.constantDataOffset / 4 + r.startDword + d];
+            }
+            ranges.push_back(std::move(g));
+            continue;
+        }
         uint64_t address = 0, bytes = 0, mapped = 0;
         if (!bound(r.block, &address, &bytes, &mapped)) {
             return false;

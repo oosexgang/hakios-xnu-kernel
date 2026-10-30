@@ -54,6 +54,9 @@ ir3_compiler* theCompiler() {
         // set 0, which this driver never binds
         ir3_compiler_options options{};
         options.bindless_fb_read_descriptor = -1;
+        // the GLSL type cache, which ir3 uses for the driver UBOs' types (get_driver_ubo_type: a module's constant table
+        // is read through one); held for the life of the process, as the compiler is
+        glsl_type_singleton_init_or_ref();
         return ir3_compiler_create(nullptr, &id, fd_dev_info_raw(&id), &options);
     }();
     return compiler;
@@ -625,6 +628,12 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     v->type = t.shader->type;   // the key stays zero: no ucp, msaa, sample shading or rasterflat (ir3_cmdline.c:336, 504)
     v->compiler = compiler;
     v->const_state = static_cast<struct ir3_const_state*>(rzalloc_size(v, sizeof(struct ir3_const_state)));
+    // the driver UBOs unassigned, as alloc_variant leaves them (ir3_shader.c:347-350): ir3_get_driver_ubo takes the next
+    // free UBO index for one only when it reads -1 -- zeroed, the constant data's (a module constant table) asserted
+    v->const_state->consts_ubo.idx = -1;
+    v->const_state->driver_params_ubo.idx = -1;
+    v->const_state->primitive_map_ubo.idx = -1;
+    v->const_state->primitive_param_ubo.idx = -1;
     // what ir3_shader.c's alloc_variant sets and a hand-built variant must too: the merged register file every gen-6
     // driver compiles for (SP_xS_CTRL_REG0.MERGEDREGS says what the code was allocated for), the IBO counts the
     // dispatch programs into SP_xS_CONFIG, the name, and for a fragment stage the four fs fields it copies from
@@ -776,6 +785,7 @@ bool fillKernel(Translation& t, const KernelHome& out, uint32_t highestSampler, 
     k.numwgConstRegid = kNoConstRegid;
     k.constantDataOffset = v->info.constant_data_offset;
     k.constantDataSize = v->constant_data_size;
+    k.constantDataUbo = cs->consts_ubo.idx >= 0 ? uint32_t(cs->consts_ubo.idx) + 1 : 0;
     k.name = out.name.c_str();
     k.source = "";
     return true;

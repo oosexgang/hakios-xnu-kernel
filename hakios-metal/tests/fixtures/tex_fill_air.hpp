@@ -154,6 +154,7 @@ define void @tex_fill(ptr addrspace(1) %out, ptr addrspace(2) %c, <2 x i32> %gid
     },
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,
+    /* .constantDataUbo = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

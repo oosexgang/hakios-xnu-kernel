@@ -32,6 +32,7 @@
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_vtex_vs_air.hpp"
 #include "fixtures/tri_shadow_fs_air.hpp"
+#include "fixtures/tri_arr_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
 #include "test.hpp"
@@ -388,8 +389,8 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p.vs.k.driverParamsOffsetVec4 = 8;
         refused(r, p, pass, d, "hand_vs: its driver params at vec4 8 run past its constlen of 8");
         p = handProgram();
-        p.fs.k.constantDataSize = 16;
-        refused(r, p, pass, d, "hand_fs carries 16 bytes of constant data: not uploaded yet");
+        p.fs.k.constantDataSize = 16;   // with no UBO of ir3's to read it through (constantDataUbo 0): nothing could read it
+        refused(r, p, pass, d, "hand_fs carries 16 bytes of constant data that no UBO of ir3's reads, or outside its words");
         p = handProgram();
         static const uint32_t imm[4] = {1, 2, 3, 4};
         p.fs.k.immediates = imm;
@@ -4535,4 +4536,34 @@ TEST(a_draw_into_a_depth_mip_level_aims_at_that_level) {
         CHECK(cb->status() == CommandBuffer::kCompleted);
         if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
     }
+}
+
+// A vertex stage whose corners are a module constant table (tri_arr_vs, sokol's bufferless triangle): ir3 pushes the
+// table from its constant-data UBO, and the draw loads those words direct from the program's own. The pushed words
+// must be the table: (-1, -1, 0, 1) first, (1, -1, 0, 1) after it, which an unwritten range (zeros) is not.
+TEST(a_vertex_stage_reads_its_constant_table) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    const Program p{kernels::tri_arr_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_arr"};
+    CHECK(p.vs.k.constantDataUbo != 0);
+    CHECK(p.vs.k.constantDataSize >= 96u);   // the table, padded by ir3 to its vec4 rows
+    Encoded e(r, p, pass, wholeDraw(6));
+    CHECK(e.ok);
+    if (!e.ok) std::printf("       %s\n", e.error.c_str());
+    // the direct CP_LOAD_STATE6_GEOM of the vertex constants carries the table's words
+    bool found = false;
+    const float first[8] = {-1, -1, 0, 1, 1, -1, 0, 1};
+    for (size_t i = e.find(CP_LOAD_STATE6_GEOM); i != size_t(-1) && !found; i = e.find(CP_LOAD_STATE6_GEOM, i + 1)) {
+        const uint32_t w0 = e.stream.words()[i + 1];
+        if (((w0 & CP_LOAD_STATE6_0_STATE_TYPE__MASK) >> CP_LOAD_STATE6_0_STATE_TYPE__SHIFT) != ST6_CONSTANTS ||
+            ((w0 & CP_LOAD_STATE6_0_STATE_SRC__MASK) >> CP_LOAD_STATE6_0_STATE_SRC__SHIFT) != SS6_DIRECT) continue;
+        found = memcmp(&e.stream.words()[i + 4], first, sizeof first) == 0;
+    }
+    CHECK(found);
+    auto cb = drawOnce(r, p, pass, wholeDraw(6));
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
 }

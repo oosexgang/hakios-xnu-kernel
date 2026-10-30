@@ -79,6 +79,7 @@ void compareKernelFields(const char* name, const Kernel& a, const Kernel& b) {
     }
     CHECK_EQ(a.constantDataOffset, b.constantDataOffset);
     CHECK_EQ(a.constantDataSize, b.constantDataSize);
+    CHECK_EQ(a.constantDataUbo, b.constantDataUbo);
     // the texture fields: the compiler's walk of the NIR against the fixture writer's, slot by slot
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
         const KernelTexture& x = a.textures[i];

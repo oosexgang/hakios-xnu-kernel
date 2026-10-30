@@ -142,6 +142,7 @@ define void @tex_copy(ptr addrspace(1) %in, ptr addrspace(1) %out, <2 x i32> %gi
     },
     /* .numTextureSlots = */ 2,
     /* .samplerMask = */ 0,
+    /* .constantDataUbo = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

@@ -156,6 +156,11 @@ struct Kernel {
     KernelTexture textures[kMaxTextureSlots];   // by Metal texture index
     uint32_t numTextureSlots;   // highest SAMPLED index + 1: SP_CS_TEX_COUNT and the texture table's size; 0 = no texture state (an image-only kernel, as Gallium emits it: no CS_TEX group at all)
     uint32_t samplerMask;       // bit m set: some sam names s#m. The sampler table has (highest bit + 1) entries, and at least 1 whenever numTextureSlots > 0, since isaml names s#0
+    // The UBO index ir3 reads the constant data through (its consts_ubo: a module's constant table), plus one; 0 when the
+    // kernel has none. A pushed range of that block is the constant data's words, an ldc of it reads them where the
+    // program was uploaded (render.cpp: pushedRanges, uboDescriptors). Plus one so that a fixture written before the
+    // field, which leaves it zero, says none.
+    uint32_t constantDataUbo;
 };
 
 } // namespace hakios::metal

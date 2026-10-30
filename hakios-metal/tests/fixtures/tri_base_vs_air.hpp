@@ -144,6 +144,7 @@ define <{ <4 x float>, <4 x float> }> @tri_base_vs(i32 %vid, i32 %bv, i32 %iid) 
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 0,   // kStageVertex
     /* .pad0 = */ {0, 0, 0},

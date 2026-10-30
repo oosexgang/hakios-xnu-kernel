@@ -59,6 +59,7 @@
 #include "../tests/fixtures/tri_pt_vs_air.hpp"
 #include "../tests/fixtures/tri_vtex_vs_air.hpp"
 #include "../tests/fixtures/tri_shadow_fs_air.hpp"
+#include "../tests/fixtures/tri_arr_vs_air.hpp"
 #include "../tests/fixtures/tri_cube_fs_air.hpp"
 #include "../tests/fixtures/tri_tex1d_fs_air.hpp"
 #include "../tests/fixtures/tri_half_fs_air.hpp"
@@ -4209,6 +4210,24 @@ int main(int argc, char** argv) {
                             " mixes on the edge (" + (samples == 1 ? "none wanted" : wide ? "8 or more wanted" : "32 or more wanted") + "), " + std::to_string(garbage) + " neither" + first +
                            (drew ? status(*cb, gpu) : ": " + cb->error()));
             }
+        }
+        // 9arr. a module constant table: tri_arr_vs takes the pair's six corners from a constant array at the vertex id
+        // (sokol's bufferless triangles), ir3 pushing it from the program's constant data. Every pixel the flat colour;
+        // a table read as zeros (what an unwritten scratch copy gave) draws nothing at all.
+        {
+            fillBo(*t, canary);
+            const Program arr{kernels::tri_arr_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_arr"};
+            auto cb = drawInto(*t, arr, drawOf(0, 6));
+            std::vector<uint8_t> bo = textureBo(*t);
+            uint32_t flatPx = 0;
+            for (uint32_t j = 0; j < H; j++)
+                for (uint32_t i = 0; i < W; i++) {
+                    uint32_t px;
+                    memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                    flatPx += px == flatColour;
+                }
+            report(completed(*cb) && flatPx == W * H, "a constant table in the vertex stage: " + std::to_string(flatPx) + " of 4096 pixels the flat colour" +
+                                                        (completed(*cb) ? status(*cb, gpu) : ": " + cb->error()));
         }
         // 9cu. culling: T1's vertices (-1,-1), (1,-1), (-1,1) turn counter-clockwise in Metal's y-up NDC. With Metal's
         // default winding (Clockwise front) T1 is a back face: a back cull removes it, a front cull keeps it; with

@@ -2395,6 +2395,7 @@ define void @chain220(ptr addrspace(1) %out, ptr addrspace(2) %c, i32 %gid) loca
     /* .textures = */ {},
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,
+    /* .constantDataUbo = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

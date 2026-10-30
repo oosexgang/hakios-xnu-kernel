@@ -123,6 +123,7 @@ define <{ <4 x float>, <4 x half> }> @tri_hcolor_vs(i32 %vid) local_unnamed_addr
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 0,   // kStageVertex
     /* .pad0 = */ {0, 0, 0},

@@ -177,8 +177,8 @@ bool checkStage(const Stage& s, std::string* why) {
     if (k.driverParamsOffsetVec4 >= 0 && uint32_t(k.driverParamsOffsetVec4) + 1 > k.constlen) {
         return refuse(why, name + ": its driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + " run past its constlen of " + n(k.constlen));
     }
-    if (k.constantDataSize != 0) {
-        return refuse(why, name + " carries " + n(k.constantDataSize) + " bytes of constant data: not uploaded yet");
+    if (k.constantDataSize != 0 && (k.constantDataUbo == 0 || uint64_t(k.constantDataOffset) + k.constantDataSize > 4ull * k.numWords)) {
+        return refuse(why, name + " carries " + n(k.constantDataSize) + " bytes of constant data that no UBO of ir3's reads, or outside its words");
     }
     uint32_t immUnits = (k.numImmediates + 3) / 4;
     if (immUnits != 0 && k.immediatesOffsetVec4 + immUnits > k.constlen) {
@@ -207,6 +207,20 @@ bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* o
     const std::string name = stageName(s);
     for (uint32_t i = 0; i < k.numUboRanges; i++) {
         const KernelUboRange& r = k.uboRanges[i];
+        // the constant data's range (a module's constant table, kernel.hpp: constantDataUbo): its words direct, from
+        // the program's own, past their end zeros (ir3 pushes whole vec4, the table need not fill the last)
+        if (k.constantDataUbo != 0 && r.block == k.constantDataUbo - 1) {
+            if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
+                return refuse(why, name + ": its constant data's range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
+            }
+            PushedRange p{r.offsetVec4, r.sizeDwords / 4, 0, std::vector<uint32_t>(r.sizeDwords, 0u)};
+            for (uint32_t d = 0; d < r.sizeDwords; d++) {
+                const uint64_t at = uint64_t(r.startDword + d) * 4;
+                if (at + 4 <= k.constantDataSize) p.words[d] = k.words[k.constantDataOffset / 4 + r.startDword + d];
+            }
+            out->push_back(std::move(p));
+            continue;
+        }
         if (r.block >= b.buffers.size() || b.buffers[r.block].buffer == nullptr) {
             return refuse(why, name + ": no buffer bound at index " + n(r.block) + " (its constant buffer)");
         }
@@ -677,10 +691,18 @@ bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, S
 // below it may be one no ldc reads (QuartzCore's path_blit_vert_lph reads 1 and 2 and leaves 0 unbound), and an
 // unbound one there gets a descriptor of size 0, which the ldc's bound check turns into zeros, rather than whatever
 // the block held.
-bool uboDescriptors(const Stage& s, const Bindings& b, std::vector<uint32_t>* out, std::string* why) {
+bool uboDescriptors(const Stage& s, const Bindings& b, uint64_t program, std::vector<uint32_t>* out, std::string* why) {
     const std::string name = stageName(s);
     out->clear();
     for (uint32_t u = 0; u < s.k.numUbos; u++) {
+        if (s.k.constantDataUbo != 0 && u == s.k.constantDataUbo - 1) {
+            // the constant data, where the program's words were uploaded (they carry it at constantDataOffset)
+            uint32_t d[2];
+            uboDescriptor(program + s.k.constantDataOffset, (s.k.constantDataSize + 15) / 16, d);
+            out->push_back(d[0]);
+            out->push_back(d[1]);
+            continue;
+        }
         if (u >= b.buffers.size() || b.buffers[u].buffer == nullptr) {
             if (u + 1 == s.k.numUbos) {
                 return refuse(why, name + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
@@ -1303,7 +1325,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         return false;
     }
     std::vector<uint32_t> vsUbos, fsUbos;
-    if (!uboDescriptors(vs, vsBindings, &vsUbos, why) || !uboDescriptors(fs, fsBindings, &fsUbos, why)) {
+    if (!uboDescriptors(vs, vsBindings, vsProgram, &vsUbos, why) || !uboDescriptors(fs, fsBindings, fsProgram, &fsUbos, why)) {
         return false;
     }
     GfxIbos ibos;

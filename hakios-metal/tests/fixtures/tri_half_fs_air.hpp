@@ -119,6 +119,7 @@ define <4 x float> @tri_half_fs(ptr addrspace(2) %u) local_unnamed_addr {
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

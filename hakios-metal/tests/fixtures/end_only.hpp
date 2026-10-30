@@ -65,6 +65,7 @@ end
     /* .textures = */ {},
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,
+    /* .constantDataUbo = */ 0,
 };
 
 // The disassembly (ir3_shader_disasm), and whether it read back as the source:

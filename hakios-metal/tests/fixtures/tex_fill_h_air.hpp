@@ -132,6 +132,7 @@ define void @tex_fill_h(ptr addrspace(1) %out, <2 x i32> %gid) local_unnamed_add
     },
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,
+    /* .constantDataUbo = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

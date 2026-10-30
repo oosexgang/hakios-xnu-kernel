@@ -101,6 +101,7 @@ define <{ <4 x float>, <4 x float> }> @tri_pos_vs(<4 x float> %pos, <4 x float> 
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 0,   // kStageVertex
     /* .pad0 = */ {0, 0, 0},

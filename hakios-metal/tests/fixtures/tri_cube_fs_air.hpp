@@ -108,6 +108,7 @@ define <4 x float> @tri_cube_fs(ptr addrspace(2) %c, ptr addrspace(1) %t, ptr ad
         },
         /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0x1,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

@@ -126,6 +126,7 @@ define <{ <4 x float>, float, <4 x float> }> @tri_vtex_vs(i32 %vid, ptr addrspac
         },
         /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0x1,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 0,   // kStageVertex
     /* .pad0 = */ {0, 0, 0},

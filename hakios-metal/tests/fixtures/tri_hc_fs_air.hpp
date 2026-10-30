@@ -110,6 +110,7 @@ define <4 x float> @tri_hc_fs(<4 x float> %color, ptr addrspace(2) %s) local_unn
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

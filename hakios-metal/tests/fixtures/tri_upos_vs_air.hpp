@@ -107,6 +107,7 @@ define <4 x float> @tri_upos_vs(ptr addrspace(2) %pos, i32 %vid) local_unnamed_a
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 0,   // kStageVertex
     /* .pad0 = */ {0, 0, 0},

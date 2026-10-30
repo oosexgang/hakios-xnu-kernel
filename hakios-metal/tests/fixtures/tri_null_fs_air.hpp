@@ -117,6 +117,7 @@ define <4 x float> @tri_null_fs(<4 x float> %color, ptr addrspace(2) %s) local_u
         },
         /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0x1,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

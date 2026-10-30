@@ -127,6 +127,7 @@ define <4 x float> @tri_tex39_fs(ptr addrspace(1) %a, ptr addrspace(1) %b, ptr a
         },
         /* .numTextureSlots = */ 10,
         /* .samplerMask = */ 0x3,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

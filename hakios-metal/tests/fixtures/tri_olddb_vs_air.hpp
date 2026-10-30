@@ -91,6 +91,7 @@ define <{ <4 x float> }> @tri_olddb_vs(i32 %vid, ptr addrspace(1) %at) local_unn
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 0,   // kStageVertex
     /* .pad0 = */ {0, 0, 0},

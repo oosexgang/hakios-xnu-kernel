@@ -124,6 +124,7 @@ define void @fill_id(ptr addrspace(1) %out, ptr addrspace(2) %c, i32 %gid) local
     /* .textures = */ {},
     /* .numTextureSlots = */ 0,
     /* .samplerMask = */ 0,
+    /* .constantDataUbo = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

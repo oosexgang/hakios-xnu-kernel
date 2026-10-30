@@ -106,6 +106,7 @@ define <4 x float> @tri_color_fs(<4 x float> %color) local_unnamed_addr {
         /* .textures = */ {},
         /* .numTextureSlots = */ 0,
         /* .samplerMask = */ 0,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

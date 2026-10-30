@@ -158,6 +158,7 @@ define void @tex_sample_gid(ptr addrspace(1) %in, ptr addrspace(2) %s, ptr addrs
     },
     /* .numTextureSlots = */ 1,
     /* .samplerMask = */ 0x1,
+    /* .constantDataUbo = */ 0,
 };
 
 // The listing (ir3_shader_disasm):

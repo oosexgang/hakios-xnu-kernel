@@ -110,6 +110,7 @@ define <4 x float> @tri_shadow_fs(<4 x float> %pos, ptr addrspace(2) %ref, ptr a
         },
         /* .numTextureSlots = */ 1,
         /* .samplerMask = */ 0x1,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},

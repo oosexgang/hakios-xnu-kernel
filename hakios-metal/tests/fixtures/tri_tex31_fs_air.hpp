@@ -107,6 +107,7 @@ define <4 x float> @tri_tex31_fs(<4 x float> %color, ptr addrspace(1) %t, ptr ad
         },
         /* .numTextureSlots = */ 4,
         /* .samplerMask = */ 0x2,
+        /* .constantDataUbo = */ 0,
     },
     /* .kind = */ 1,   // kStageFragment
     /* .pad0 = */ {0, 0, 0},
