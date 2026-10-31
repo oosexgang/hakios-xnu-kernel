@@ -139,7 +139,7 @@ public:
     // ...and each draw of a sysmem pass on its own, the first kMaxProfiledDraws: a wait for idle before it and after it,
     // the counter at both (so the draws no longer overlap: what each costs alone), with its program's name. Which
     // draws of a heavy frame are heavy is read off these (metal_fps=draws).
-    struct DrawTime { std::string name; double us; };
+    struct DrawTime { std::string name; double us; uint32_t pass = 0, area[4] = {}; };   // PASS: its pass among passTimes'; AREA render::drawArea's
     static constexpr uint32_t kMaxProfiledDraws = 512;
     void setProfileDraws(bool on) { profileDraws_ = on; }
     std::vector<DrawTime> drawTimes() const;
@@ -173,6 +173,7 @@ private:
     bool gmem_ = true;
     uint32_t gmemOff_ = 0;
     std::string gmemWhy_;
+    std::unordered_map<uint64_t, uint32_t> ordinals_;   // passes opened so far into each kind of target
     std::vector<PassTime> profiled_;   // as recorded; us filled in by passTimes from the stamps
     std::shared_ptr<Buffer> profileStamps_;
     // the counter into stamp slot SLOT (two a pass: start, end), when profiling and there is room
@@ -204,6 +205,8 @@ private:
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
         uint32_t written = 0, read = 0;
+        uint64_t kind = 0;          // render::tuneKeyOf the pass and its ordinal in the buffer among passes of that kind
+        uint32_t ordinal = 0, draws = 0;
         bool lastFetched = false;   // the last draw read its attachments (render::encodeInPass's AFTER_FETCH for the next)
     };
     void closePass();
@@ -272,12 +275,17 @@ public:
     std::shared_ptr<Buffer> privateMemory(uint32_t bytes, bool perWave, PrivateMemory* out, std::string* why);
     // GMEM or sysmem for a pass into the target at KEY (its memory's address), by what the GPU spent on such passes:
     // each mode's time kept as a running average from the passes' own counter stamps (tuned), the cheaper one taken,
-    // the other tried again now and then, an untried one tried first -- turnip's autotune, by time instead of samples.
+    // the other tried again now and then, sysmem tried first and GMEM next -- turnip's autotune, by time instead of samples.
     // GMEM is no gain for a pass that touches a corner of the screen (its tiles load and store the whole target: 23
     // draws of CoreAnimation took 5 ms so, 0.1 ms in sysmem), nor for one of framebuffer fetches (the texture unit
     // reads GMEM at a quarter of the rate it reads memory: probe "full-screen cost").
     bool preferGmem(uint64_t key);
     void tuned(uint64_t key, bool gmem, double us);
+    // What tells passes into one kind of target apart: the draws the pass at that place in a command buffer (the Nth into
+    // this kind of target) had the last time, which preferGmem's key takes in as a class (a frame of CoreAnimation is
+    // the same passes in the same order as the one before it, light or heavy). 0 when not seen yet.
+    uint32_t lastDraws(uint64_t kind, uint32_t ordinal);
+    void noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws);
 
 
 private:
@@ -295,6 +303,7 @@ private:
     std::mutex lock_;
     struct Tune { double us[2] = {0, 0}; uint32_t runs[2] = {0, 0}; uint32_t passes = 0; };
     std::unordered_map<uint64_t, Tune> tune_;   // (under lock_) preferGmem's, by target
+    std::unordered_map<uint64_t, uint32_t> lastDraws_;   // (under lock_) noteDraws', by kind and ordinal
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
     std::vector<std::unique_ptr<Bo>> idle_;

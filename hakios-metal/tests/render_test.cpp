@@ -5395,34 +5395,41 @@ TEST(a_fetch_in_a_corner_reads_bins_of_the_width_its_descriptor_has) {
     CHECK_EQ((gw[2] & a6xx::A6XX_TEX_CONST_2_PITCH__MASK) >> a6xx::A6XX_TEX_CONST_2_PITCH__SHIFT, whole.binW * 4);
 }
 
-// GMEM or sysmem by what such passes cost: untried GMEM first, then sysmem, then the cheaper, the other again every
-// sixteenth pass. And a command buffer's completion feeds its passes' times in: after one GMEM pass into a target the
-// next is tried in sysmem.
+// GMEM or sysmem by what such passes cost: untried sysmem first, then GMEM, then the cheaper, the other again every
+// sixteenth pass -- every sixty-fourth when it is dearer by half. And a command buffer's completion feeds its passes'
+// times in: after one sysmem pass into a target, the same pass of the next buffer is tried in GMEM.
 TEST(the_queue_picks_gmem_or_sysmem_by_what_each_cost_a_target) {
     Rig r;
-    CHECK(r.queue->preferGmem(1));    // nothing known: GMEM tried
-    r.queue->tuned(1, true, 900);
-    CHECK(!r.queue->preferGmem(1));   // GMEM known, sysmem not: sysmem tried
+    CHECK(!r.queue->preferGmem(1));   // nothing known: sysmem tried
     r.queue->tuned(1, false, 100);
+    CHECK(r.queue->preferGmem(1));    // sysmem known, GMEM not: GMEM tried
+    r.queue->tuned(1, true, 110);
     uint32_t gmem = 0;
-    for (int i = 0; i < 32; i++) gmem += r.queue->preferGmem(1);
-    CHECK_EQ(gmem, 2u);               // sysmem the cheaper: GMEM only on the sixteenth passes
+    for (int i = 0; i < 64; i++) gmem += r.queue->preferGmem(1);
+    CHECK_EQ(gmem, 4u);               // sysmem the cheaper, by a little: GMEM on the sixteenth passes
+    r.queue->tuned(2, true, 900);
+    r.queue->tuned(2, false, 100);
+    gmem = 0;
+    for (int i = 0; i < 128; i++) gmem += r.queue->preferGmem(2);
+    CHECK_EQ(gmem, 2u);               // by far: on the sixty-fourth
     r.queue->tuned(1, false, 5000);   // (sysmem grew dear: its average follows, GMEM taken)
     r.queue->tuned(1, false, 5000);
     gmem = 0;
-    for (int i = 0; i < 32; i++) gmem += r.queue->preferGmem(1);
-    CHECK_EQ(gmem, 30u);
+    for (int i = 0; i < 64; i++) gmem += r.queue->preferGmem(1);
+    CHECK_EQ(gmem, 63u);
     auto t = target(r);
     RenderPass a;
     a.color0 = t.get();
-    auto cb = r.queue->commandBuffer();
-    cb->setGmemTuned(true);
-    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
-    cb->commit();
-    cb->waitUntilCompleted();
-    CHECK(cb->status() == CommandBuffer::kCompleted);
-    CHECK_EQ(cb->counts().gmemPasses, 1u);
-    CHECK(!r.queue->preferGmem(render::tuneKeyOf(a)));
+    for (int round = 0; round < 2; round++) {
+        auto cb = r.queue->commandBuffer();
+        cb->setGmemTuned(true);
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(cb->counts().gmemPasses, round == 0 ? 0u : 1u);
+    }
+    CHECK_EQ(r.queue->lastDraws(render::tuneKeyOf(a), 0), 1u);
     // (untuned, the default: GMEM whatever the queue knows -- what a test asking for GMEM gets)
     auto u = r.queue->commandBuffer();
     CHECK(u->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));

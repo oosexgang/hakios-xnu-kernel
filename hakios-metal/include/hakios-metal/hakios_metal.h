@@ -458,6 +458,8 @@ void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb *cb, int on);
  * has completed, draw I's program name (valid while CB lives) and microseconds; the count is returned, -1 past them */
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb *cb, int on);
 int hakios_metal_cb_draw_time(hakios_metal_cb *cb, unsigned i, const char **name, double *us);
+/* draw I's pass (an index of hakios_metal_cb_pass_time's) and the pixels it can touch, X0 Y0 X1 Y1; -1 past them */
+int hakios_metal_cb_draw_place(hakios_metal_cb *cb, unsigned i, unsigned *pass, unsigned area[4]);
 void hakios_metal_cb_gmem_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *tiles);
 int hakios_metal_cb_pass_tiles(hakios_metal_cb *cb, unsigned i);
 /* why CB's last pass refused for GMEM was refused ("" when none was); valid while CB lives */

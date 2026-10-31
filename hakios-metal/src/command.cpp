@@ -185,10 +185,30 @@ bool CommandQueue::preferGmem(uint64_t key) {
     std::lock_guard<std::mutex> g(lock_);
     Tune& t = tune_[key];
     t.passes++;
-    if (t.runs[1] == 0) return true;
+    // (sysmem first: a kind of pass seen once may not come again, and an untried GMEM pass is the dearer gamble -- 5 ms
+    // against 0.13 for a light one)
     if (t.runs[0] == 0) return false;
+    if (t.runs[1] == 0) return true;
     const bool better = t.us[1] < t.us[0];
-    return t.passes % 16 == 0 ? !better : better;   // (the other mode again now and then: what a pass costs drifts)
+    // (the other mode again now and then, what a pass costs drifting: every 16th pass, or every 64th when the one is
+    // dearer by half -- a light pass of CoreAnimation took 5 ms in GMEM against 0.13 in sysmem)
+    const double ratio = better ? t.us[0] / t.us[1] : t.us[1] / t.us[0];
+    return t.passes % (ratio > 1.5 ? 64 : 16) == 0 ? !better : better;
+}
+
+namespace {
+uint64_t kindKey(uint64_t kind, uint32_t ordinal) { return kind * 0x100000001b3ull ^ ordinal; }
+}  // namespace
+
+uint32_t CommandQueue::lastDraws(uint64_t kind, uint32_t ordinal) {
+    std::lock_guard<std::mutex> g(lock_);
+    auto it = lastDraws_.find(kindKey(kind, ordinal));
+    return it == lastDraws_.end() ? 0 : it->second;
+}
+
+void CommandQueue::noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws) {
+    std::lock_guard<std::mutex> g(lock_);
+    lastDraws_[kindKey(kind, ordinal)] = draws;
 }
 
 void CommandQueue::tuned(uint64_t key, bool gmem, double us) {

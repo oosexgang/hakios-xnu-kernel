@@ -703,6 +703,14 @@ void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb* cb, int on) { cb->cb->setGm
 
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb* cb, int on) { cb->cb->setProfileDraws(on != 0); }
 
+int hakios_metal_cb_draw_place(hakios_metal_cb* cb, unsigned i, unsigned* pass, unsigned area[4]) {
+    if (cb->drawTimes.empty()) cb->drawTimes = cb->cb->drawTimes();
+    if (i >= cb->drawTimes.size()) return -1;
+    if (pass) *pass = cb->drawTimes[i].pass;
+    for (int k = 0; area != nullptr && k < 4; k++) area[k] = cb->drawTimes[i].area[k];
+    return int(cb->drawTimes.size());
+}
+
 int hakios_metal_cb_draw_time(hakios_metal_cb* cb, unsigned i, const char** name, double* us) {
     if (cb->drawTimes.empty() || i == 0) cb->drawTimes = cb->cb->drawTimes();
     if (i >= cb->drawTimes.size()) return i == 0 ? 0 : -1;

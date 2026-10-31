@@ -2639,7 +2639,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     render::GmemPlan plan;
     bool gmem = false;
-    uint64_t tuneKey = 0;
+    uint64_t tuneKey = 0, kind = 0;
+    uint32_t ordinal = 0;
     if (joins) {
         gmem = open_->gmem;
         plan = open_->plan;
@@ -2647,8 +2648,15 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         gmem = render::gmemPlan(pass, &plan, &gmemWhy_) && tileable;
         if (!tileable) gmemWhy_ = gmemWhy;
         if (gmem && tuning_) {
-            // (by what the pass draws into, not where: the plug-in draws into a fresh copy of a surface each frame)
-            tuneKey = render::tuneKeyOf(pass);
+            // (by what the pass draws into, not where: the plug-in draws into a fresh copy of a surface each frame; and by
+            // its place in the buffer and how many draws it had last time, as a class of 1, 2-15, 16-63, 64-127, more:
+            // SpringBoard's passes of 80 draws took 13.8 to 16 ms in GMEM against 18.6 to 30.7 in sysmem, its passes of
+            // 46 draws 8 to 10 against 7.7 to 8, its light passes 5 against 0.13)
+            kind = render::tuneKeyOf(pass);
+            ordinal = ordinals_[kind]++;
+            const uint32_t last = queue_.lastDraws(kind, ordinal);
+            const uint32_t cls = last <= 1 ? 0 : last < 16 ? 1 : last < 64 ? 2 : last < 128 ? 3 : 4;
+            tuneKey = (kind * 0x100000001b3ull ^ (uint64_t(ordinal) << 8 | cls)) | 1;
             gmem = queue_.preferGmem(tuneKey);
         }
     }
@@ -2686,6 +2694,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
         open_->gmem = gmem;
         open_->plan = plan;
+        open_->kind = kind;
+        open_->ordinal = ordinal;
         useAttachments(pass);
         counts_.passes++;
     }
@@ -2703,10 +2713,14 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     open_->lastFetched = program.fs.fbRead != 0;
+    open_->draws++;
     pm4::Stream& into = open_->gmem ? open_->bodies : stream_;
     const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
     if (timed) {
-        drawsProfiled_.push_back(DrawTime{program.name != nullptr ? program.name : "?", 0});
+        DrawTime dt{program.name != nullptr ? program.name : "?", 0};
+        dt.pass = profiled_.empty() ? 0 : uint32_t(profiled_.size() - 1);
+        render::drawArea(pass, d, dt.area);
+        drawsProfiled_.push_back(dt);
         drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1)));
     }
     if (options.dedupRegs && open_->options.dedupRegs) {
@@ -2873,6 +2887,7 @@ void CommandBuffer::closePass() {
     if (open_ == nullptr) {
         return;
     }
+    if (open_->kind != 0) queue_.noteDraws(open_->kind, open_->ordinal, open_->draws);
     if (open_->gmem && open_->bodies.size() != 0) {
         Piece ib;
         std::string why;
