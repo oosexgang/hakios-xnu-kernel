@@ -1,6 +1,7 @@
 // Textures and samplers as objects: the layout rule (fdl6_layout's pitch and size for a linear 2D image), the row
 // conversion between the caller's stride and the GPU's, the two descriptors against literals, the sampler words
 // against literals, and every refusal by its sentence. Nothing here reaches a dispatch; compute_test does that.
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -1098,6 +1099,71 @@ TEST(a_2d_chain_and_a_depth_buffer_view_as_one_slice_arrays) {
 
 // One layer of a depth array as 2D: the parent's tiled image a layer on, at its pitch, as a pass with depth_slice draws
 // it; a colour format over the depth bytes and a layer past the array are still refused.
+// PVRTC, which no A6xx unit reads, decoded by the processor into RGBA8. Blocks whose colour A is opaque red and B
+// opaque blue: modulation 0 everywhere is red, 3 blue, 1 three eighths of the way (5-bit 19.375 red, 11.625 blue: bytes
+// 159 and 96); the punch-through mode's 2 is half way with alpha 0. Then the order of the blocks: a 16 x 16 texture
+// whose blocks each have a colour of their own, read at their centres, where a texel is its own block's colour alone;
+// the place of block (bx, by) written out bit by bit -- y's low bit, x's, y's next, x's -- not by the decoder's function.
+TEST(pvrtc_decodes_its_two_colours_its_modulation_and_its_block_order) {
+    auto blocks = [](uint32_t count, uint32_t mod, uint32_t colour) {
+        std::vector<uint8_t> d(8 * count);
+        for (uint32_t i = 0; i < count; i++) {
+            memcpy(d.data() + 8 * i, &mod, 4);
+            memcpy(d.data() + 8 * i + 4, &colour, 4);
+        }
+        return d;
+    };
+    const uint32_t redBlue = 0x80000000u | (31u << 16) | 0x8000u | (31u << 10);
+    struct Case { uint32_t mod, colour; uint8_t want[4]; };
+    const Case cases[] = {{0x00000000u, redBlue, {255, 0, 0, 255}},
+                          {0xffffffffu, redBlue, {0, 0, 255, 255}},
+                          {0x55555555u, redBlue, {159, 0, 96, 255}},
+                          {0xaaaaaaaau, redBlue | 1u, {128, 0, 128, 0}}};
+    for (const Case& c : cases) {
+        std::vector<uint8_t> data = blocks(4, c.mod, c.colour), rgba(8 * 8 * 4);
+        decodePvrtc(data.data(), 8, 8, 4, rgba.data());
+        uint32_t right = 0;
+        for (uint32_t i = 0; i < 64; i++) right += memcmp(rgba.data() + 4 * i, c.want, 4) == 0;
+        CHECK_EQ(right, 64u);
+        if (right != 64) std::printf("       mod %#x: first texel %u %u %u %u\n", c.mod, rgba[0], rgba[1], rgba[2], rgba[3]);
+    }
+    std::vector<uint8_t> data(16 * 8), rgba(16 * 16 * 4);
+    for (uint32_t by = 0; by < 4; by++) {
+        for (uint32_t bx = 0; bx < 4; bx++) {
+            const uint32_t at = (by & 1) | (bx & 1) << 1 | (by >> 1 & 1) << 2 | (bx >> 1 & 1) << 3;
+            const uint32_t r = bx * 7 + 3, g = by * 7 + 3;
+            const uint32_t colour = 0x80000000u | r << 26 | g << 21 | 0x8000u | r << 10 | g << 5, mod = 0;
+            memcpy(data.data() + 8 * at, &mod, 4);
+            memcpy(data.data() + 8 * at + 4, &colour, 4);
+        }
+    }
+    decodePvrtc(data.data(), 16, 16, 4, rgba.data());
+    uint32_t centres = 0;
+    for (uint32_t by = 0; by < 4; by++) {
+        for (uint32_t bx = 0; bx < 4; bx++) {
+            const uint8_t* t = rgba.data() + ((by * 4 + 2) * 16 + bx * 4 + 2) * 4;
+            centres += t[0] == uint8_t(std::lround((bx * 7 + 3) * 255.0 / 31)) && t[1] == uint8_t(std::lround((by * 7 + 3) * 255.0 / 31));
+        }
+    }
+    CHECK_EQ(centres, 16u);
+    // through a texture: an RGBA4BPP_sRGB one holds the RGBA8 it decodes to, sRGB in its descriptor, and refuses a part
+    Rig r;
+    std::string why;
+    TextureDesc d;
+    d.format = PixelFormat::kPVRTC_RGBA_4BPP_sRGB;
+    d.width = 16;
+    d.height = 16;
+    d.usage = kTextureUsageRead;
+    auto t = Texture::make(r.gpu, d, &why);
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    CHECK(t->info().srgb);
+    CHECK(t->replace(0, 0, 0, 16, 16, data.data(), 0, &why));
+    const uint8_t* stored = static_cast<const uint8_t*>(t->contents()) + t->level(0).offset + 2 * t->level(0).pitch + 2 * 4;
+    CHECK(memcmp(stored, rgba.data() + (2 * 16 + 2) * 4, 4) == 0);
+    CHECK(!t->replace(0, 0, 0, 8, 8, data.data(), 0, &why));
+}
+
 TEST(a_layer_of_a_depth_array_views_as_2d) {
     using namespace a6xx;
     Rig r;

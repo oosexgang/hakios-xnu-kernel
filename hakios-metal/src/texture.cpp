@@ -1,6 +1,8 @@
 #include "hakios-metal/texture.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 #include <mutex>
 #include <unordered_map>
 #include <cstring>
@@ -121,6 +123,31 @@ constexpr FormatInfo kFormats[] = {
     {PixelFormat::kASTC_12x10_sRGB, FMT6_ASTC_12x10, 16, WZYX, true, true, kElemFloat, "ASTC_12x10_sRGB", false, false, false, 12, 10},
     {PixelFormat::kASTC_12x12_LDR, FMT6_ASTC_12x12, 16, WZYX, true, false, kElemFloat, "ASTC_12x12_LDR", false, false, false, 12, 12},
     {PixelFormat::kASTC_12x12_sRGB, FMT6_ASTC_12x12, 16, WZYX, true, true, kElemFloat, "ASTC_12x12_sRGB", false, false, false, 12, 12},
+    // PVRTC: RGBA8 storage, decoded by the processor when written (FormatInfo::pvrtcBpp)
+    {PixelFormat::kPVRTC_RGB_2BPP, FMT6_8_8_8_8_UNORM, 4, WZYX, true, false, kElemFloat, "PVRTC_RGB_2BPP", false, false, false, 1, 1, FMT6_NONE, 2},
+    {PixelFormat::kPVRTC_RGB_2BPP_sRGB, FMT6_8_8_8_8_UNORM, 4, WZYX, true, true, kElemFloat, "PVRTC_RGB_2BPP_sRGB", false, false, false, 1, 1, FMT6_NONE, 2},
+    {PixelFormat::kPVRTC_RGB_4BPP, FMT6_8_8_8_8_UNORM, 4, WZYX, true, false, kElemFloat, "PVRTC_RGB_4BPP", false, false, false, 1, 1, FMT6_NONE, 4},
+    {PixelFormat::kPVRTC_RGB_4BPP_sRGB, FMT6_8_8_8_8_UNORM, 4, WZYX, true, true, kElemFloat, "PVRTC_RGB_4BPP_sRGB", false, false, false, 1, 1, FMT6_NONE, 4},
+    {PixelFormat::kPVRTC_RGBA_2BPP, FMT6_8_8_8_8_UNORM, 4, WZYX, true, false, kElemFloat, "PVRTC_RGBA_2BPP", false, false, false, 1, 1, FMT6_NONE, 2},
+    {PixelFormat::kPVRTC_RGBA_2BPP_sRGB, FMT6_8_8_8_8_UNORM, 4, WZYX, true, true, kElemFloat, "PVRTC_RGBA_2BPP_sRGB", false, false, false, 1, 1, FMT6_NONE, 2},
+    {PixelFormat::kPVRTC_RGBA_4BPP, FMT6_8_8_8_8_UNORM, 4, WZYX, true, false, kElemFloat, "PVRTC_RGBA_4BPP", false, false, false, 1, 1, FMT6_NONE, 4},
+    {PixelFormat::kPVRTC_RGBA_4BPP_sRGB, FMT6_8_8_8_8_UNORM, 4, WZYX, true, true, kElemFloat, "PVRTC_RGBA_4BPP_sRGB", false, false, false, 1, 1, FMT6_NONE, 4},
+    // HDR: the same storage and the same FMT6 as LDR -- A6xx has one ASTC decoder, and probe 9j2h measures what it makes
+    // of an HDR block
+    {PixelFormat::kASTC_4x4_HDR, FMT6_ASTC_4x4, 16, WZYX, true, false, kElemFloat, "ASTC_4x4_HDR", false, false, false, 4, 4},
+    {PixelFormat::kASTC_5x4_HDR, FMT6_ASTC_5x4, 16, WZYX, true, false, kElemFloat, "ASTC_5x4_HDR", false, false, false, 5, 4},
+    {PixelFormat::kASTC_5x5_HDR, FMT6_ASTC_5x5, 16, WZYX, true, false, kElemFloat, "ASTC_5x5_HDR", false, false, false, 5, 5},
+    {PixelFormat::kASTC_6x5_HDR, FMT6_ASTC_6x5, 16, WZYX, true, false, kElemFloat, "ASTC_6x5_HDR", false, false, false, 6, 5},
+    {PixelFormat::kASTC_6x6_HDR, FMT6_ASTC_6x6, 16, WZYX, true, false, kElemFloat, "ASTC_6x6_HDR", false, false, false, 6, 6},
+    {PixelFormat::kASTC_8x5_HDR, FMT6_ASTC_8x5, 16, WZYX, true, false, kElemFloat, "ASTC_8x5_HDR", false, false, false, 8, 5},
+    {PixelFormat::kASTC_8x6_HDR, FMT6_ASTC_8x6, 16, WZYX, true, false, kElemFloat, "ASTC_8x6_HDR", false, false, false, 8, 6},
+    {PixelFormat::kASTC_8x8_HDR, FMT6_ASTC_8x8, 16, WZYX, true, false, kElemFloat, "ASTC_8x8_HDR", false, false, false, 8, 8},
+    {PixelFormat::kASTC_10x5_HDR, FMT6_ASTC_10x5, 16, WZYX, true, false, kElemFloat, "ASTC_10x5_HDR", false, false, false, 10, 5},
+    {PixelFormat::kASTC_10x6_HDR, FMT6_ASTC_10x6, 16, WZYX, true, false, kElemFloat, "ASTC_10x6_HDR", false, false, false, 10, 6},
+    {PixelFormat::kASTC_10x8_HDR, FMT6_ASTC_10x8, 16, WZYX, true, false, kElemFloat, "ASTC_10x8_HDR", false, false, false, 10, 8},
+    {PixelFormat::kASTC_10x10_HDR, FMT6_ASTC_10x10, 16, WZYX, true, false, kElemFloat, "ASTC_10x10_HDR", false, false, false, 10, 10},
+    {PixelFormat::kASTC_12x10_HDR, FMT6_ASTC_12x10, 16, WZYX, true, false, kElemFloat, "ASTC_12x10_HDR", false, false, false, 12, 10},
+    {PixelFormat::kASTC_12x12_HDR, FMT6_ASTC_12x12, 16, WZYX, true, false, kElemFloat, "ASTC_12x12_HDR", false, false, false, 12, 12},
 };
 
 const char* typeName(TextureType t) {
@@ -454,7 +481,127 @@ TextureLevel Texture::level(uint32_t l) const {
     return textureLevel(*info_, desc_.width, desc_.height, desc_.mipLevels, l);
 }
 
+uint64_t pvrtcBytes(uint32_t w, uint32_t h, uint32_t bpp) {
+    const uint32_t bw = bpp == 2 ? 8 : 4;
+    return uint64_t(std::max<uint32_t>((w + bw - 1) / bw, 2)) * std::max<uint32_t>((h + 3) / 4, 2) * 8;
+}
+
+namespace {
+// a block's place in PVRTC1's order: the bits of its x and y interleaved, y's lower, for as many bits as the smaller of
+// the two counts has; the larger coordinate's remaining bits above them
+uint32_t pvrtcTwiddle(uint32_t x, uint32_t y, uint32_t wb, uint32_t hb) {
+    const uint32_t minDim = std::min(wb, hb);
+    uint32_t idx = 0, shift = 0;
+    for (uint32_t bit = 1; bit < minDim; bit <<= 1) {
+        if (y & bit) idx |= 1u << shift;
+        shift++;
+        if (x & bit) idx |= 1u << shift;
+        shift++;
+    }
+    const uint32_t rest = (wb > hb ? x : y) >> (shift / 2);
+    return idx | (rest << shift);
+}
+
+// colour A (the word's low half) and B (its high half), as 5-bit red, green, blue and 4-bit alpha: an opaque colour
+// (the top bit set) is RGB 554 for A, 555 for B; a translucent one ARGB 3443 for A, 3444 for B, widened the same way
+void pvrtcColours(uint32_t c, int a[4], int b[4]) {
+    if (c & 0x8000) {
+        a[0] = (c >> 10) & 0x1f;
+        a[1] = (c >> 5) & 0x1f;
+        a[2] = (c & 0x1e) | ((c & 0x1e) >> 4);
+        a[3] = 0xf;
+    } else {
+        a[0] = ((c >> 7) & 0x1e) | ((c >> 11) & 0x1);
+        a[1] = ((c >> 3) & 0x1e) | ((c >> 7) & 0x1);
+        a[2] = ((c << 1) & 0x1c) | ((c >> 2) & 0x3);
+        a[3] = (c >> 11) & 0xe;
+    }
+    if (c & 0x80000000u) {
+        b[0] = (c >> 26) & 0x1f;
+        b[1] = (c >> 21) & 0x1f;
+        b[2] = (c >> 16) & 0x1f;
+        b[3] = 0xf;
+    } else {
+        b[0] = ((c >> 23) & 0x1e) | ((c >> 27) & 0x1);
+        b[1] = ((c >> 19) & 0x1e) | ((c >> 23) & 0x1);
+        b[2] = ((c >> 15) & 0x1e) | ((c >> 19) & 0x1);
+        b[3] = (c >> 27) & 0xe;
+    }
+}
+}  // namespace
+
+// Each texel's two colours are its four nearest blocks' A and B weighted by where it lies between their centres (the
+// texture wraps), and its own block's two bits a texel blend them: 0, 3/8, 5/8, 1 -- or, in a block whose colour word
+// has bit 0 set (punch-through), 0, 1/2, 1/2 with alpha 0, and 1. At 2 bpp a block is 8 x 4 and one bit a texel picks
+// A or B (its block's mode bit set: the texels between are read from their neighbours, approximated here by the
+// texel's own bit). Written from the format's description; the probe's tests hold it to known blocks.
+void decodePvrtc(const uint8_t* data, uint32_t w, uint32_t h, uint32_t bpp, uint8_t* rgba) {
+    const uint32_t bw = bpp == 2 ? 8 : 4, bh = 4;
+    const uint32_t wb = std::max<uint32_t>((w + bw - 1) / bw, 2), hb = std::max<uint32_t>((h + bh - 1) / bh, 2);
+    auto word = [&](uint32_t bx, uint32_t by, int half) {
+        const uint8_t* p = data + 8ull * pvrtcTwiddle(bx % wb, by % hb, wb, hb) + 4 * half;
+        return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+    };
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            // the four blocks around the texel, by their centres, and its weights between them
+            const int px = int(x) - int(bw / 2), py = int(y) - int(bh / 2);
+            const int bx0 = px >= 0 ? px / int(bw) : (px - int(bw) + 1) / int(bw), by0 = py >= 0 ? py / int(bh) : (py - int(bh) + 1) / int(bh);
+            const float fx = float(px - bx0 * int(bw)) / bw, fy = float(py - by0 * int(bh)) / bh;
+            float A[4] = {0, 0, 0, 0}, B[4] = {0, 0, 0, 0};
+            for (int k = 0; k < 4; k++) {
+                const uint32_t qx = uint32_t(bx0 + (k & 1) + int(wb)) % wb, qy = uint32_t(by0 + (k >> 1) + int(hb)) % hb;
+                const float wgt = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
+                int a[4], b[4];
+                pvrtcColours(word(qx, qy, 1), a, b);
+                for (int c = 0; c < 4; c++) {
+                    A[c] += wgt * a[c];
+                    B[c] += wgt * b[c];
+                }
+            }
+            const uint32_t ox = x / bw, oy = y / bh;
+            const uint32_t mod = word(ox, oy, 0), colour = word(ox, oy, 1);
+            float m;
+            bool clear = false;
+            if (bpp == 2) {
+                const uint32_t i = (y % bh) * bw + (x % bw);
+                m = ((mod >> i) & 1) ? 1.0f : 0.0f;
+            } else {
+                const uint32_t i = (y % bh) * bw + (x % bw), v = (mod >> (2 * i)) & 3;
+                if (colour & 1) {
+                    m = v == 0 ? 0.0f : v == 3 ? 1.0f : 0.5f;
+                    clear = v == 2;
+                } else {
+                    m = v == 0 ? 0.0f : v == 1 ? 3.0f / 8 : v == 2 ? 5.0f / 8 : 1.0f;
+                }
+            }
+            uint8_t* out = rgba + (uint64_t(y) * w + x) * 4;
+            for (int c = 0; c < 3; c++) {
+                const float v = A[c] + (B[c] - A[c]) * m;   // 5 bits
+                out[c] = uint8_t(std::lround(std::min(31.0f, std::max(0.0f, v)) * 255.0f / 31.0f));
+            }
+            const float al = A[3] + (B[3] - A[3]) * m;      // 4 bits
+            out[3] = clear ? 0 : uint8_t(std::lround(std::min(15.0f, std::max(0.0f, al)) * 255.0f / 15.0f));
+        }
+    }
+}
+
 bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
+    if (info_->pvrtcBpp != 0) {
+        // PVRTC: the whole level, as Metal requires of it (its blocks are read by their neighbours' texels), decoded
+        // into the RGBA8 this texture holds
+        const TextureLevel L = this->level(level);
+        if (level >= levels() || x != 0 || y != 0 || w != L.width || h != L.height) {
+            return refuse(why, std::string("a ") + info_->name + " write of " + n(w) + " x " + n(h) + " at (" + n(x) + ", " + n(y) +
+                                   "): PVRTC is written a whole level at a time");
+        }
+        std::vector<uint8_t> rgba(uint64_t(w) * h * 4);
+        decodePvrtc(static_cast<const uint8_t*>(bytes), w, h, info_->pvrtcBpp, rgba.data());
+        auto* dst = static_cast<uint8_t*>(contents()) + L.offset;
+        for (uint32_t r = 0; r < h; r++) memcpy(dst + uint64_t(r) * L.pitch, rgba.data() + uint64_t(r) * w * 4, uint64_t(w) * 4);
+        (void)bytesPerRow;
+        return true;
+    }
     if (desc_.samples != 1) {
         return refuse(why, "a multisample texture's samples are the GPU's alone: resolve it into a texture of one sample first (Metal refuses this too)");
     }

@@ -128,6 +128,30 @@ enum class PixelFormat : uint32_t {
     kASTC_10x10_LDR = 216,
     kASTC_12x10_LDR = 217,
     kASTC_12x12_LDR = 218,
+    // the HDR forms: the same blocks and the same FMT6_ASTC_* (the probe measures whether the texture unit decodes HDR)
+    // PVRTC, which the A6xx texture unit has no decoder for: stored as RGBA8 (Texture::replace decodes a whole level)
+    kPVRTC_RGB_2BPP = 160,
+    kPVRTC_RGB_2BPP_sRGB = 161,
+    kPVRTC_RGB_4BPP = 162,
+    kPVRTC_RGB_4BPP_sRGB = 163,
+    kPVRTC_RGBA_2BPP = 164,
+    kPVRTC_RGBA_2BPP_sRGB = 165,
+    kPVRTC_RGBA_4BPP = 166,
+    kPVRTC_RGBA_4BPP_sRGB = 167,
+    kASTC_4x4_HDR = 222,
+    kASTC_5x4_HDR = 223,
+    kASTC_5x5_HDR = 224,
+    kASTC_6x5_HDR = 225,
+    kASTC_6x6_HDR = 226,
+    kASTC_8x5_HDR = 228,
+    kASTC_8x6_HDR = 229,
+    kASTC_8x8_HDR = 230,
+    kASTC_10x5_HDR = 231,
+    kASTC_10x6_HDR = 232,
+    kASTC_10x8_HDR = 233,
+    kASTC_10x10_HDR = 234,
+    kASTC_12x10_HDR = 235,
+    kASTC_12x12_HDR = 236,
 };
 
 // MTLTextureType (MTLTexture.h). Only k2D is served; the others are named here so a refusal can name them back.
@@ -157,7 +181,14 @@ struct FormatInfo {
     // what the RB and the 2D engine's destination are given where it is not FMT: fd6_format_table.c's colour column
     // (10_10_10_2_UNORM_DEST for RGB10A2); FMT6_NONE when it is the same
     a6xx::a6xx_format rbFmt = a6xx::FMT6_NONE;
+    // PVRTC1 at 2 or 4 bits a texel: stored as the RGBA8 it decodes to, the processor decoding a whole level when it is
+    // written (decodePvrtc), since no A6xx unit reads it; 0 for every other format
+    uint32_t pvrtcBpp = 0;
 };
+// PVRTC1 data of a W x H level (BPP 2 or 4) into W x H RGBA8 texels, row after row
+void decodePvrtc(const uint8_t* data, uint32_t w, uint32_t h, uint32_t bpp, uint8_t* rgba);
+// how many bytes of PVRTC1 a W x H level is: blocks of 4 x 4 (8 x 4 at 2 bpp), at least two each way, eight bytes each
+uint64_t pvrtcBytes(uint32_t w, uint32_t h, uint32_t bpp);
 inline uint32_t blocksAcross(const FormatInfo& f, uint32_t width) { return (width + f.blockW - 1) / f.blockW; }
 inline uint32_t blocksDown(const FormatInfo& f, uint32_t height) { return (height + f.blockH - 1) / f.blockH; }
 // nullptr when the format is not served

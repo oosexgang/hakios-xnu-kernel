@@ -2501,6 +2501,59 @@ int main(int argc, char** argv) {
                            " pixels their block's colour (" + std::to_string(skipped) + " near a block edge not judged)" + first + status(*cb, gpu));
             }
         }
+        // 9j2h. ASTC HDR, sampled: the same four void-extent blocks with the HDR bit (bit 9) set, their colours FP16 --
+        // 0.25, 0.5, 0.75 and 1.0 -- read as ASTC_4x4_HDR into an RGBA8 target. A texture unit that decodes HDR gives
+        // 40 80 bf ff; one that decodes only LDR gives the error colour the specification prescribes for an HDR block in
+        // an LDR context, magenta ff 00 ff ff. Which of the two the A635 does decides whether HDR textures are served
+        // by the hardware or have to be decoded by the processor.
+        {
+            uint8_t blocks[64];
+            const uint16_t half[4] = {0x3400, 0x3800, 0x3a00, 0x3c00};
+            for (int b = 0; b < 4; b++) {
+                const uint64_t mode = 0xfffffffffffffffcull;   // void extent (0x1fc) with bit 9, HDR, set
+                memcpy(blocks + 16 * b, &mode, 8);
+                memcpy(blocks + 16 * b + 8, half, 8);
+            }
+            TextureDesc ad;
+            ad.format = PixelFormat::kASTC_4x4_HDR;
+            ad.width = 8;
+            ad.height = 8;
+            ad.usage = kTextureUsageRead;
+            std::string awhy;
+            auto astc = Texture::make(gpu, ad, &awhy);
+            Sampler asmp;
+            if (astc == nullptr || !astc->replace(0, 0, 0, 8, 8, blocks, 32, &awhy) || !makeSampler(SamplerDesc{}, &asmp, &awhy)) {
+                report(false, "astc hdr: an 8x8 ASTC 4x4 HDR texture: " + awhy);
+            } else {
+                const Program texProg{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                fillBo(*t, canary);
+                RenderPass rp;
+                rp.color0 = t.get();
+                Bindings fsb;
+                fsb.textures = {astc.get()};
+                fsb.samplers = {&asmp};
+                auto cb = queue->commandBuffer();
+                if (cb->draw(texProg, rp, drawOf(0, 6), Bindings{}, fsb)) {
+                    cb->commit();
+                    cb->waitUntilCompleted();
+                }
+                std::vector<uint8_t> bo = textureBo(*t);
+                uint32_t hdr = 0, magenta = 0, other = 0;
+                char firstOther[64] = "";
+                for (uint32_t j = 0; j < H; j++) {
+                    for (uint32_t i = 0; i < W; i++) {
+                        if (i == j) continue;
+                        const uint8_t* got = bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4;
+                        if (std::abs(got[0] - 0x40) <= 1 && std::abs(got[1] - 0x80) <= 1 && std::abs(got[2] - 0xbf) <= 1 && got[3] == 0xff) hdr++;
+                        else if (got[0] == 0xff && got[1] == 0 && got[2] == 0xff && got[3] == 0xff) magenta++;
+                        else if (other++ == 0) snprintf(firstOther, sizeof firstOther, " (the first: %02x %02x %02x %02x)", got[0], got[1], got[2], got[3]);
+                    }
+                }
+                report(completed(*cb) && (hdr > 3000 || magenta > 3000),
+                       "astc hdr: tri_tex over HDR void-extent blocks of 0.25 0.5 0.75 1: " + std::to_string(hdr) + " pixels decoded as HDR (40 80 bf ff), " +
+                           std::to_string(magenta) + " the LDR error colour (magenta), " + std::to_string(other) + " other" + firstOther + status(*cb, gpu));
+            }
+        }
         // 9j3. a 3D texture, sampled: 4x4x4 RGBA8, each texel (x, y, z) the bytes x y z ff, read by tri_tex3d_fs at
         // tri_color's (red, green) and depth 0.625, the centre of slice 2, under nearest. Every judged pixel is texel
         // (tx, ty, 2) as 9j finds (tx, ty): a slice pitch or a depth the TP read otherwise gives another slice's z.
