@@ -5437,3 +5437,22 @@ TEST(the_queue_picks_gmem_or_sysmem_by_what_each_cost_a_target) {
     u->waitUntilCompleted();
     CHECK_EQ(u->counts().gmemPasses, 1u);
 }
+
+// GMEM only for a pass whose like had enough draws the last time: the first buffer's pass of one draw and the next
+// one's in sysmem (one draw is under two); then a buffer of three draws in sysmem, after which the pass at that place
+// goes to GMEM
+TEST(gmem_by_the_draws_the_same_pass_had_the_last_time) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    for (const auto& [draws, want] : {std::pair<int, uint32_t>{1, 0}, {1, 0}, {3, 0}, {1, 1}, {1, 0}}) {
+        auto cb = r.queue->commandBuffer();
+        cb->setGmemMinDraws(2);
+        for (int i = 0; i < draws; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(cb->counts().gmemPasses, want);
+    }
+}

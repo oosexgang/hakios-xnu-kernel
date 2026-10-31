@@ -152,6 +152,11 @@ public:
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for
     void setGmemTuned(bool on) { tuning_ = on; }
+    // GMEM for a pass only when the same pass (its kind of target, its place among them in the buffer) had at least
+    // DRAWS draws the last time, sysmem otherwise; 0: not by the draws. SpringBoard's passes of 63 to 161 draws took
+    // 13 to 22 ms in GMEM against 17 to 31 in sysmem, its passes of 45 to 49 draws 8 to 10 against 6 to 8, its light
+    // ones 5 against 0.13 -- a pass's draws, which a frame of CoreAnimation repeats, say which side of that it falls.
+    void setGmemMinDraws(uint32_t draws) { gmemMinDraws_ = draws; }
     // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
     const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
@@ -172,6 +177,7 @@ private:
     void drawStamp(uint32_t slot);
     bool gmem_ = true;
     uint32_t gmemOff_ = 0;
+    uint32_t gmemMinDraws_ = 0;
     std::string gmemWhy_;
     std::unordered_map<uint64_t, uint32_t> ordinals_;   // passes opened so far into each kind of target
     std::vector<PassTime> profiled_;   // as recorded; us filled in by passTimes from the stamps

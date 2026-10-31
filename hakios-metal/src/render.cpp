@@ -2647,7 +2647,11 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     } else if (options.gmem && gmem_) {
         gmem = render::gmemPlan(pass, &plan, &gmemWhy_) && tileable;
         if (!tileable) gmemWhy_ = gmemWhy;
-        if (gmem && tuning_) {
+        if (gmem && gmemMinDraws_ != 0) {
+            kind = render::tuneKeyOf(pass);
+            ordinal = ordinals_[kind]++;
+            gmem = queue_.lastDraws(kind, ordinal) >= gmemMinDraws_;
+        } else if (gmem && tuning_) {
             // (by what the pass draws into, not where: the plug-in draws into a fresh copy of a surface each frame; and by
             // its place in the buffer and how many draws it had last time, as a class of 1, 2-15, 16-63, 64-127, more:
             // SpringBoard's passes of 80 draws took 13.8 to 16 ms in GMEM against 18.6 to 30.7 in sysmem, its passes of
