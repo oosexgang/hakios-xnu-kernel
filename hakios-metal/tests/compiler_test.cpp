@@ -1299,3 +1299,18 @@ TEST(argument_buffer_members_are_bound_from_the_words_in_their_set) {
     CHECK(!bindArgumentBuffers(k->resources, &unbound, &kept, &why));
     CHECK(why.find("argument buffer 0") != std::string::npos);
 }
+
+// compileStage's second compilation without ir3's preamble is taken only when it spills less, or as little with fewer
+// registers: CoreAnimation's uber shader's numbers, and the ties and losses that keep the first
+TEST(a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less) {
+    Kernel with{}, without{};
+    with.pvtmemSize = 512, with.maxReg = 47;
+    without.pvtmemSize = 0, without.maxReg = 20;
+    CHECK(preferWithoutPreamble(with, without));
+    without.pvtmemSize = 512, without.maxReg = 47;
+    CHECK(!preferWithoutPreamble(with, without));   // the same: the first
+    without.maxReg = 40;
+    CHECK(preferWithoutPreamble(with, without));    // as much spilled, fewer registers
+    without.pvtmemSize = 1024, without.maxReg = 10;
+    CHECK(!preferWithoutPreamble(with, without));   // more spilled, whatever its registers
+}

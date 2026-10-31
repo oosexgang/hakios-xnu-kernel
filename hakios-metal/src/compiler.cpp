@@ -1007,12 +1007,35 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
     return out;
 }
 
+namespace {
+std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase);
+}  // namespace
+
+// A stage compiled as turnip compiles it, unless that spills: ir3's preamble pass hoists what is uniform into a
+// prologue run once a draw, and the registers the prologue holds count against every fiber of the stage.
+// CoreAnimation's uber shader (fixed_frag_lph_cpf: uniform branches over 102 samples) came out so at the 48 full
+// registers the ISA addresses and still spilled to private memory -- 512 bytes a fiber, 144 reloads; without the
+// preamble the same function needs 21 registers and spills nothing. A stage that spills is compiled again without
+// it, and that one is taken when it spills less.
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
     }
+    std::unique_ptr<CompiledStage> with = compileStageOnce(bitcode, size, why, constants, iboBase);
+    if (with == nullptr || with->stage.k.pvtmemSize == 0 || !theCompiler()->has_preamble) return with;
+    theCompiler()->has_preamble = false;
+    std::string whyNot;
+    std::unique_ptr<CompiledStage> without = compileStageOnce(bitcode, size, &whyNot, constants, iboBase);
+    theCompiler()->has_preamble = true;
+    return without != nullptr && preferWithoutPreamble(with->stage.k, without->stage.k) ? std::move(without) : std::move(with);
+}
+
+
+
+namespace {
+std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase) {
     Translation t;
     if (!translate(bitcode, size, t, why, constants)) return nullptr;
     // the stage is the module's named metadata (air.vertex / air.fragment / air.kernel: air_to_nir.c module_stage)
@@ -1083,6 +1106,7 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     }
     return out;
 }
+}  // namespace
 
 std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, std::shared_ptr<CompiledStage> fs, PixelFormat color0,
                                              std::string* why) {
@@ -1347,6 +1371,10 @@ bool bindArgumentBuffers(const std::vector<Resource>& resources, Bindings* b, st
         }
     }
     return true;
+}
+
+bool preferWithoutPreamble(const Kernel& with, const Kernel& without) {
+    return without.pvtmemSize < with.pvtmemSize || (without.pvtmemSize == with.pvtmemSize && without.maxReg < with.maxReg);
 }
 
 }  // namespace hakios::metal

@@ -122,6 +122,10 @@ using FunctionConstants = std::vector<FunctionConstant>;
 // (its [[buffer(n)]] addressed as slot IBO_BASE + n), so that the two stages' buffers at one index do not collide
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {},
                                            uint32_t iboBase = 0);
+// compileStage's choice for a stage that spilled with ir3's preamble (WITH) and was compiled again without it (WITHOUT):
+// the one that spills less, then the one with fewer registers; WITH on a tie. (CoreAnimation's fixed_frag_lph_cpf: 48
+// registers and 512 bytes of spills with the preamble, 21 and none without; its draws 6.6 ms each so, 2.6 without.)
+bool preferWithoutPreamble(const Kernel& with, const Kernel& without);
 
 // VS and FS linked (render::link, and with Mesa present cross-checked against ir3_link_shaders) for a colour target of
 // COLOR0's format. nullptr with *why: the refusals render.hpp names for a stage (attributes, several colour outputs,
