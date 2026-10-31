@@ -2246,7 +2246,9 @@ uint32_t drawnAttachments(const Program& program, const RenderPass& pass) {
 }
 
 bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings, const Bindings& fsBindings, std::string* why) {
-    if (program.vs.k.numSsbos != 0 || program.fs.k.numSsbos != 0) return refuse(why, "a stage with device buffers: replayed per tile it would write them per tile");
+    if ((program.vs.k.numSsbos != 0 && (program.ssboWrites & 1)) || (program.fs.k.numSsbos != 0 && (program.ssboWrites & 2))) {
+        return refuse(why, "a stage that writes its device buffers: replayed per tile it would write them per tile");
+    }
     for (const Stage* s : {&program.vs, &program.fs}) {
         for (uint32_t i = 0; i < kMaxTextureSlots && i < s->k.numTextureSlots; i++) {
             if (s->k.textures[i].kind == kTexImage) return refuse(why, "a stage that writes a texture");
@@ -2660,6 +2662,14 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // encodeInPass). A draw a tile cannot replay ends a GMEM pass and opens a sysmem one of its own.
     std::string gmemWhy;
     const bool tileable = options.gmem && gmem_ && render::gmemDrawOk(program, pass, d, *vsb, *fsb, &gmemWhy);
+    if (joins && open_->dual && !tileable) {
+        // (recorded both ways: the pass goes on in sysmem, what it has so far onto the stream)
+        gmemWhy_ = gmemWhy;
+        appendStream(stream_, open_->sysStream);
+        open_->sysStream.clear();
+        open_->bodies.clear();
+        open_->dual = open_->gmem = false;
+    }
     if (joins && open_->gmem && !tileable) {
         gmemWhy_ = gmemWhy;
         joins = false;
@@ -2668,19 +2678,18 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         closePass();
     }
     render::GmemPlan plan;
-    bool gmem = false;
+    bool gmem = false, dual = false;
     uint64_t tuneKey = 0, kind = 0;
     uint32_t ordinal = 0;
     if (joins) {
         gmem = open_->gmem;
+        dual = open_->dual;
         plan = open_->plan;
     } else if (options.gmem && gmem_) {
         gmem = render::gmemPlan(pass, &plan, &gmemWhy_) && tileable;
         if (!tileable) gmemWhy_ = gmemWhy;
         if (gmem && gmemMinDraws_ != 0) {
-            kind = render::tuneKeyOf(pass);
-            ordinal = ordinals_[kind]++;
-            gmem = queue_.lastDraws(kind, ordinal) >= gmemMinDraws_;
+            dual = true;
         } else if (gmem && tuning_) {
             // (by what the pass draws into, not where: the plug-in draws into a fresh copy of a surface each frame; and by
             // its place in the buffer and how many draws it had last time, as a class of 1, 2-15, 16-63, 64-127, more:
@@ -2695,7 +2704,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     Piece passTable;
-    pm4::Stream head, body;
+    pm4::Stream head, body, headSys, bodySys;
     if (!joins) {
         if (!piece(render::kTableBytes, &passTable, &why)) {
             return fail(std::string("no memory for the pass's table: ") + why);
@@ -2708,7 +2717,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
                 if (t != nullptr && la == LoadAction::kClear && render::gmemClearWords(t->info(), cc, gmemClearWords_[i])) gmemClears_ |= 1u << i;
             }
         }
-        if (!render::encodeBegin(head, pass, passTable.gpuAddress(), passTable.contents(), &why, options, gmemClears_)) {
+        if (!render::encodeBegin(head, pass, passTable.gpuAddress(), passTable.contents(), &why, options, gmemClears_) ||
+            (dual && !render::encodeBegin(headSys, pass, passTable.gpuAddress(), passTable.contents(), &why, options))) {
+            gmemClears_ = 0;
             return refuseWork(why);
         }
     }
@@ -2716,7 +2727,21 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
                               gmem ? &plan : nullptr, joins && open_->lastFetched)) {
+        gmemClears_ = 0;
         return refuseWork(why);
+    }
+    if (dual) {
+        // the same draw for sysmem: its table the same words but for a fetch's descriptor, which reads memory there
+        Piece sysTable = table;
+        if (program.fs.fbRead && !piece(render::kTableBytes, &sysTable, &why)) {
+            gmemClears_ = 0;
+            return fail(std::string("no memory for the draw's table: ") + why);
+        }
+        if (!render::encodeInPass(bodySys, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, sysTable.gpuAddress(), sysTable.contents(), &why,
+                                  encodeOptions, nullptr, joins && open_->lastFetched)) {
+            gmemClears_ = 0;
+            return refuseWork(why);
+        }
     }
     if (!joins) {
         {
@@ -2729,11 +2754,15 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         open_->pass = pass;
         open_->options = options;
         open_->table = passTable.gpuAddress();
-        if (options.dedupRegs) {
+        if (dual) {
+            appendDeduped(open_->sysStream, headSys, open_->regs);
+            open_->headGmem = std::move(head);
+        } else if (options.dedupRegs) {
             appendDeduped(stream_, head, open_->regs);
         } else {
             appendStream(stream_, head);
         }
+        open_->dual = dual;
         open_->gmem = gmem;
         open_->plan = plan;
         open_->clears = gmemClears_;
@@ -2770,8 +2799,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     if (options.dedupRegs && open_->options.dedupRegs) {
         appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
+        if (open_->dual) appendDeduped(open_->sysStream, bodySys, open_->regs);
     } else {
         appendStream(into, body);
+        if (open_->dual) appendStream(open_->sysStream, bodySys);
     }
     if (timed) drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1) + 1));
     counts_.draws++;
@@ -2933,6 +2964,16 @@ void CommandBuffer::closePass() {
         return;
     }
     if (open_->kind != 0) queue_.noteDraws(open_->kind, open_->ordinal, open_->draws);
+    if (open_->dual) {
+        // recorded both ways: tiles for a pass of enough draws, else the sysmem words, head and all
+        if (open_->draws >= gmemMinDraws_) {
+            appendStream(stream_, open_->headGmem);
+        } else {
+            appendStream(stream_, open_->sysStream);
+            open_->gmem = false;
+        }
+        open_->dual = false;
+    }
     if (open_->gmem && open_->bodies.size() != 0) {
         Piece ib;
         std::string why;

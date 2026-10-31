@@ -244,6 +244,10 @@ struct Program {
     uint32_t fsIboBase = 0;
     // MTLRenderPipelineDescriptor.rasterSampleCount: 1, or the 2 or 4 samples of the multisample attachments it draws into
     uint32_t samples = 1;
+    // whether each stage stores to or does atomics on its device buffers (bit 0 the VS, bit 1 the FS), as the compiler
+    // found in the NIR: a stage that only reads them may be replayed tile by tile (gmemDrawOk). A program not made by
+    // linkProgram says all: unknown is taken as writing.
+    uint8_t ssboWrites = 3;
 };
 
 namespace render {
@@ -503,7 +507,7 @@ uint64_t tuneKeyOf(const RenderPass& pass);
 // write mask that lets something through
 uint32_t drawnAttachments(const Program& program, const RenderPass& pass);
 // whether a draw may be replayed per tile: the replay runs its vertex stage once a tile and reads the targets' memory
-// as it was before the pass, so no stage that writes buffers, no visibility result, no texture over an attachment's
+// as it was before the pass, so no stage that writes buffers (Program::ssboWrites), no visibility result, no texture over an attachment's
 // memory (a framebuffer fetch reads the attachment's bin in GMEM instead: encodeInPass)
 bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings, const Bindings& fsBindings, std::string* why);
 // after encodeBegin's words, in place of the draws: the CCU moved for tiles, then per tile the bin selected, the

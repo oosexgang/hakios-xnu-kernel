@@ -23,6 +23,8 @@
 #include "fixtures/ptr_phi_air.hpp"
 #include "fixtures/tex_sample_gid_air.hpp"
 #include "fixtures/tex_fill_h_air.hpp"
+#include "fixtures/tri_dbuf_fs_bc.hpp"
+#include "fixtures/tri_dwrite_fs_bc.hpp"
 #include "fixtures/tri_color_fs_air.hpp"
 #include "fixtures/tri_color_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
@@ -1313,4 +1315,17 @@ TEST(a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less) {
     CHECK(preferWithoutPreamble(with, without));    // as much spilled, fewer registers
     without.pvtmemSize = 1024, without.maxReg = 10;
     CHECK(!preferWithoutPreamble(with, without));   // more spilled, whatever its registers
+}
+
+// whether a stage writes its device buffers, which decides whether its draws may be replayed tile by tile in GMEM:
+// tri_dbuf_fs only reads one, tri_dwrite_fs (its twin) stores into it too
+TEST(a_stage_that_writes_its_device_buffers_is_told_from_one_that_reads_them) {
+    std::string why;
+    auto reads = compileStage(kernels::tri_dbuf_fs_bc, kernels::tri_dbuf_fs_bc_size, &why);
+    CHECK(reads != nullptr);
+    auto writes = compileStage(kernels::tri_dwrite_fs_bc, kernels::tri_dwrite_fs_bc_size, &why);
+    CHECK(writes != nullptr);
+    if (writes == nullptr) std::printf("       %s\n", why.c_str());
+    CHECK(reads != nullptr && !reads->writesMemory);
+    CHECK(writes != nullptr && writes->writesMemory);
 }

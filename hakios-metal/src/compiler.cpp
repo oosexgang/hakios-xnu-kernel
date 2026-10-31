@@ -844,6 +844,35 @@ struct OutputClasses {
     bool known[kOutputLocations] = {};
 };
 
+// whether a stage writes memory a draw replayed tile by tile would write again: a store or an atomic on a device buffer
+// or on global memory, as the front end emits them (images are refused at the link)
+bool writesMemoryOf(nir_shader* nir) {
+    nir_foreach_function_impl(impl, nir) {
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+                if (instr->type != nir_instr_type_intrinsic) continue;
+                switch (nir_instr_as_intrinsic(instr)->intrinsic) {
+                case nir_intrinsic_store_ssbo: case nir_intrinsic_ssbo_atomic: case nir_intrinsic_ssbo_atomic_swap: case nir_intrinsic_store_global:
+                case nir_intrinsic_global_atomic: case nir_intrinsic_global_atomic_swap: case nir_intrinsic_store_deref: {
+                    if (nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_store_deref) {
+                        nir_deref_instr* d = nir_src_as_deref(nir_instr_as_intrinsic(instr)->src[0]);
+                        if (!nir_deref_mode_may_be(d, nir_var_mem_ssbo | nir_var_mem_global)) break;
+                    }
+                    return true;
+                }
+                case nir_intrinsic_deref_atomic: case nir_intrinsic_deref_atomic_swap: {
+                    nir_deref_instr* d = nir_src_as_deref(nir_instr_as_intrinsic(instr)->src[0]);
+                    if (nir_deref_mode_may_be(d, nir_var_mem_ssbo | nir_var_mem_global)) return true;
+                    break;
+                }
+                default: break;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool walkOutputClasses(nir_shader* nir, OutputClasses& oc, std::string* why) {
     nir_foreach_shader_out_variable(var, nir) {
         unsigned loc = var->data.location;
@@ -1061,6 +1090,7 @@ std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size
     if (!walkTextures(t.nir, out->stage.k, &highestSampler, why)) return nullptr;
     OutputClasses classes;
     if (!walkOutputClasses(t.nir, classes, why)) return nullptr;
+    out->writesMemory = writesMemoryOf(t.nir);
     if (!nullTextures(t, out->stage.k, true, why)) return nullptr;
     if (!inlineSamplersOf(t, &out->inlineSamplers, why)) return nullptr;
     // a fragment stage's device buffers past the vertex stage's in the one IBO table: every SSBO index the front end
@@ -1264,6 +1294,7 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
     out->program.vs = V;
     out->program.fs = F;
     out->program.fsIboBase = fs->iboBase;
+    out->program.ssboWrites = uint8_t((vs->writesMemory ? 1 : 0) | (fs->writesMemory ? 2 : 0));
     out->program.name = out->name.c_str();
     return out;
 }

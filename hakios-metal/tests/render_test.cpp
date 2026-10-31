@@ -5443,23 +5443,42 @@ TEST(the_queue_picks_gmem_or_sysmem_by_what_each_cost_a_target) {
     CHECK_EQ(u->counts().gmemPasses, 1u);
 }
 
-// GMEM only for a pass whose like had enough draws the last time: the first buffer's pass of one draw and the next
-// one's in sysmem (one draw is under two); then a buffer of three draws in sysmem, after which the pass at that place
-// goes to GMEM
-TEST(gmem_by_the_draws_the_same_pass_had_the_last_time) {
+// GMEM for a pass of enough draws, decided at its end: the pass is recorded both ways and the words of one go to the
+// stream -- 1 draw and 3 draws under a minimum of 2, and 2 fetching draws (whose sysmem side has a table of its own: the
+// fetch reads memory there); and a pass in which a draw a tile cannot replay comes (a visibility count) goes on in
+// sysmem whole, its draws not split off into a pass of their own
+TEST(gmem_for_a_pass_of_enough_draws_decided_at_its_end) {
     Rig r;
     auto t = target(r);
     RenderPass a;
     a.color0 = t.get();
-    for (const auto& [draws, want] : {std::pair<int, uint32_t>{1, 0}, {1, 0}, {3, 0}, {1, 1}, {1, 0}}) {
+    const Program fb{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+    for (const auto& [draws, fetch, want] : {std::tuple<int, bool, uint32_t>{1, false, 0}, {3, false, 1}, {1, false, 0}, {2, true, 1}, {1, true, 0}}) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(2);
-        for (int i = 0; i < draws; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+        for (int i = 0; i < draws; i++) CHECK(cb->draw(fetch ? fb : flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
         cb->commit();
         cb->waitUntilCompleted();
         CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(r.fake->stats().faults, 0u);
         CHECK_EQ(cb->counts().gmemPasses, want);
+        CHECK_EQ(cb->counts().passes, 1u);
     }
+    std::string why;
+    auto vis = newBuffer(*r.gpu, 64, &why);
+    auto cb = r.queue->commandBuffer();
+    cb->setGmemMinDraws(2);
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    Draw d = wholeDraw();
+    d.visibilityMode = 1;
+    d.visibility = vis.get();
+    CHECK(cb->draw(flatProgram(), a, d, Bindings{}, Bindings{}));
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    CHECK(cb->counts().gmemPasses == 0 && cb->counts().passes == 1);
 }
 
 // A DontCare attachment is not loaded when the granules past its edge stay in its rows: 100 x 36 (the right edge in the

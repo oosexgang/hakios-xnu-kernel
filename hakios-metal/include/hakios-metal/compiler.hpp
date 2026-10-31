@@ -87,6 +87,7 @@ struct CompiledStage {
     std::vector<std::string> varyingNames;   // the front end's names of the varyings, VS outputs or FS inputs, in slot order (VAR0 first)
     std::vector<std::pair<uint32_t, Sampler>> inlineSamplers;   // as CompiledKernel's
     uint32_t iboBase = 0;                    // compileStage's IBO_BASE, as it took effect (0 for a stage with no device buffers)
+    bool writesMemory = true;                // the NIR stores to or does atomics on a device buffer (or global memory); false only when it was looked at and does not
     std::string name;
     std::string listing;
 };

@@ -1529,6 +1529,19 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
                        &d.vsSamplerCount, &d.vsTexConst)) {
         return false;
     }
+    // in a tile, no texture over a target's memory: what the draws before it wrote is in GMEM, and memory holds the
+    // target as it was before the pass (a framebuffer fetch reads GMEM there, TILE6_2)
+    for (uint32_t i = 0; inTile_ && i < d.fsTextureCount; i++) {
+        const uint32_t* td = reinterpret_cast<const uint32_t*>(at(d.fsTexConst + 64ull * i, 64));
+        if (td == nullptr || fieldOf(td[0], A6XX_TEX_CONST_0_TILE_MODE__MASK, A6XX_TEX_CONST_0_TILE_MODE__SHIFT) == TILE6_2) continue;
+        const uint64_t base = td[4] | uint64_t(fieldOf(td[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
+        for (uint32_t t = 0; t < d.mrtCount; t++) {
+            if (base == d.mrtBases[t]) {
+                fault(text("FS texture %llu in a tile reads target %llu's memory, which holds the target as it was before the pass", i, t));
+                return false;
+            }
+        }
+    }
     {
         const uint32_t cntl = reg(REG_A6XX_SP_FS_PREFETCH_CNTL);
         d.prefetchCount = fieldOf(cntl, A6XX_SP_FS_PREFETCH_CNTL_COUNT__MASK, A6XX_SP_FS_PREFETCH_CNTL_COUNT__SHIFT);

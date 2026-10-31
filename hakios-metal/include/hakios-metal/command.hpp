@@ -152,10 +152,10 @@ public:
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for
     void setGmemTuned(bool on) { tuning_ = on; }
-    // GMEM for a pass only when the same pass (its kind of target, its place among them in the buffer) had at least
-    // DRAWS draws the last time, sysmem otherwise; 0: not by the draws. SpringBoard's passes of 63 to 161 draws took
-    // 13 to 22 ms in GMEM against 17 to 31 in sysmem, its passes of 45 to 49 draws 8 to 10 against 6 to 8, its light
-    // ones 5 against 0.13 -- a pass's draws, which a frame of CoreAnimation repeats, say which side of that it falls.
+    // GMEM for a pass of at least DRAWS draws, sysmem for one of fewer; 0: not by the draws. The draws are counted as
+    // they come, so the pass is recorded both ways until it closes. SpringBoard's passes of 63 to 161 draws took 13 to
+    // 22 ms in GMEM against 17 to 31 in sysmem, its passes of 45 to 49 draws 8 to 10 against 6 to 8, its light ones 5
+    // against 0.13.
     void setGmemMinDraws(uint32_t draws) { gmemMinDraws_ = draws; }
     // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
     const std::string& gmemRefusal() const { return gmemWhy_; }
@@ -212,6 +212,11 @@ private:
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
         uint32_t written = 0, read = 0;
+        // Both ways at once (setGmemMinDraws): the draws gathered for tiles in BODIES and, beside them, as a sysmem pass in
+        // SYS_STREAM (its head included, deduplicated through REGS), the GMEM head held in HEAD_GMEM; closePass takes the
+        // one the pass's draws call for, now that they are known
+        bool dual = false;
+        pm4::Stream sysStream, headGmem;
         uint32_t clears = 0;        // the attachments a GMEM pass clears in its tiles (render::gmemClearWords), and their words
         uint32_t clearWords[kMaxColorOutputs][4] = {};
         uint64_t kind = 0;          // render::tuneKeyOf the pass and its ordinal in the buffer among passes of that kind

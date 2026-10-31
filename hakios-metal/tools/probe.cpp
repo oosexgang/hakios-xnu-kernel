@@ -4832,6 +4832,52 @@ int main(int argc, char** argv) {
                             report(off == 0 && gmemPasses == 1, std::string("GMEM: a Clear in the tiles of a 1125x2436 ") + ct->info().name + " and a triangle: " +
                                                                     std::to_string(off) + " pixels differ from the 2D engine's fill in sysmem");
                         }
+                        // what a GMEM pass of SpringBoard's shape costs before its pixels: two 1125 x 2436 BGRA8 attachments
+                        // (52 tiles), a Clear, and 1 or 140 draws each scissored to 8 x 8 -- every draw replayed in every tile
+                        {
+                            TextureDesc sd;
+                            sd.format = PixelFormat::kBGRA8Unorm;
+                            sd.width = 1125;
+                            sd.height = 2436;
+                            sd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                            std::string swhy;
+                            auto s0 = Texture::make(gpu, sd, &swhy), s1 = Texture::make(gpu, sd, &swhy);
+                            const Program mrtp{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+                            auto costOf = [&](int draws, bool gm) {
+                                double best = 1e30;
+                                for (int rep = 0; rep < 3; rep++) {
+                                    auto c = queue->commandBuffer();
+                                    c->setProfile(true);
+                                    render::Options so;
+                                    so.gmem = gm;
+                                    bool ok = true;
+                                    for (int i = 0; i < draws && ok; i++) {
+                                        RenderPass rp;
+                                        rp.color0 = s0.get();
+                                        rp.more[0].texture = s1.get();
+                                        rp.load = i == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                                        Draw d = drawOf(0, 3, vps[0]);
+                                        d.scissor = Scissor{uint32_t(17 + (i * 97) % 1100), uint32_t(19 + (i * 211) % 2400), 8, 8};
+                                        ok = c->draw(mrtp, rp, d, Bindings{}, Bindings{}, so);
+                                    }
+                                    if (!ok) return -1.0;
+                                    c->commit();
+                                    c->waitUntilCompleted();
+                                    if (!completed(*c)) return -1.0;
+                                    best = std::min(best, gpuUs(*c));
+                                }
+                                return best;
+                            };
+                            if (s0 && s1) {
+                                const double g1 = costOf(1, true), g140 = costOf(140, true), s1c = costOf(1, false), s140 = costOf(140, false);
+                                char text[260];
+                                snprintf(text, sizeof text, "GMEM pass shape: 2 screens, Clear, 1 or 140 tiny draws: GMEM %.0f / %.0f us (%.2f us a draw a tile), sysmem %.0f / %.0f us",
+                                         g1, g140, (g140 - g1) / (139.0 * 52), s1c, s140);
+                                report(g1 > 0 && g140 > 0 && s1c > 0 && s140 > 0, text);
+                            } else {
+                                report(false, "GMEM pass shape: the targets: " + swhy);
+                            }
+                        }
                         // what a texture's layout costs a blur: tex_col16 (sixteen reads down a column, 8 rows apart) over
                         // a 1125 x 2436 grid, from a linear R32Float texture and from a tiled (TILE6_3) Depth32Float one
                         {
