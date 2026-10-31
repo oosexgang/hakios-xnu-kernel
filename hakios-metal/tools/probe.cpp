@@ -38,6 +38,9 @@
 #include "../tests/fixtures/undef_phi_id_bc.hpp"
 #include "../tests/fixtures/ballot_id_bc.hpp"
 #include "../tests/fixtures/width_id_bc.hpp"
+#include "../tests/fixtures/depth_fs_bc.hpp"
+#include "../tests/fixtures/dual_fs_bc.hpp"
+#include "../tests/fixtures/tri_pos_vs_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
@@ -3029,6 +3032,100 @@ int main(int argc, char** argv) {
                     report(allDone && right == W * H, std::string("depth, ") + dc.label + ": " + std::to_string(right) + " of 4096 as wanted (" +
                                                              std::to_string(reds) + " red, " + std::to_string(greens) + " green, " + std::to_string(canaries) +
                                                              " canary)" + first + st);
+                }
+                // 9l2. a fragment stage's own depth, and a second source colour, compiled here from their bitcode (depth_fs,
+                // dual_fs) with tri_pos_vs. Depth: FAR at 0.75 in green over a clear to 1; then T1 at z 0.9 through depth_fs,
+                // which writes 0.25 -- under Less it passes only if the stage's depth, not the rasterizer's, is tested --
+                // in red; then the pair at 0.5 in blue, which must fail exactly where 0.25 was written. Wanted: j > i red,
+                // the rest blue; the stage's depth ignored gives green under T1 and blue elsewhere, never red.
+                // Dual source: T1 in white through dual_fs with Source1Color * source + Zero (alpha Source1Alpha): each
+                // channel of white times (0.5, 0.25, 1, 0.75), bytes 80 40 ff bf; unblended it would be white.
+                if (hasCompiler()) {
+                    std::string cwhy;
+                    std::shared_ptr<CompiledStage> pvs = compileStage(kernels::tri_pos_vs_bc, kernels::tri_pos_vs_bc_size, &cwhy);
+                    std::shared_ptr<CompiledStage> dfs = compileStage(kernels::depth_fs_bc, kernels::depth_fs_bc_size, &cwhy);
+                    std::shared_ptr<CompiledStage> xfs = compileStage(kernels::dual_fs_bc, kernels::dual_fs_bc_size, &cwhy);
+                    auto dprog = pvs && dfs ? linkProgram(pvs, dfs, PixelFormat::kRGBA8Unorm, &cwhy) : nullptr;
+                    auto xprog = pvs && xfs ? linkProgram(pvs, xfs, PixelFormat::kRGBA8Unorm, &cwhy) : nullptr;
+                    auto deepBuf = newBuffer(gpu, 3 * 32, &cwhy), midBuf = newBuffer(gpu, 6 * 32, &cwhy), whiteBuf = newBuffer(gpu, 3 * 32, &cwhy);
+                    if (!dprog || !xprog || !deepBuf || !midBuf || !whiteBuf) {
+                        report(false, "fragment depth and dual source: the programs and buffers: " + cwhy);
+                    } else {
+                        auto withVd = [&](Program p) {
+                            p.vertexDescriptor = depthProg.vertexDescriptor;
+                            return p;
+                        };
+                        const Program viaDepth = withVd(dprog->program);
+                        Program viaDual = withVd(xprog->program);
+                        const float blue[4] = {0, 0, 1, 1}, white[4] = {1, 1, 1, 1};
+                        fill(*deepBuf, 3, 0.9f, red);
+                        fill(*midBuf, 6, 0.5f, blue);
+                        fill(*whiteBuf, 3, 0.5f, white);
+                        const uint32_t blueWord = 0xffff0000u;
+                        fillBo(*t, dCanary);
+                        struct Pass3 { const Program* p; Buffer* b; uint32_t n; };
+                        const Pass3 steps[3] = {{&depthProg, farBuf.get(), 6}, {&viaDepth, deepBuf.get(), 3}, {&depthProg, midBuf.get(), 6}};
+                        bool allDone = true;
+                        std::string st;
+                        for (int k = 0; k < 3; k++) {
+                            RenderPass rp;
+                            rp.color0 = t.get();
+                            rp.depth = depth.get();
+                            rp.depthLoad = k == 0 ? LoadAction::kClear : LoadAction::kLoad;
+                            rp.depthStore = StoreAction::kStore;
+                            rp.clearDepth = 1.0;
+                            Draw d = drawOf(0, steps[k].n);
+                            d.depth = DepthState{1, true};
+                            Bindings vsb;
+                            vsb.buffers = {Binding{steps[k].b, 0}};
+                            auto cb = queue->commandBuffer();
+                            if (cb->draw(*steps[k].p, rp, d, vsb, Bindings{})) {
+                                cb->commit();
+                                cb->waitUntilCompleted();
+                            }
+                            allDone = allDone && completed(*cb);
+                            if (!completed(*cb)) st += " [draw " + std::to_string(k) + ": " + cb->error() + "]";
+                            if (k == 2) st += status(*cb, gpu);
+                        }
+                        std::vector<uint8_t> bo = textureBo(*t);
+                        uint32_t right = 0, reds = 0;
+                        for (uint32_t j = 0; j < H; j++)
+                            for (uint32_t i = 0; i < W; i++) {
+                                uint32_t px;
+                                memcpy(&px, bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4, 4);
+                                reds += px == redWord;
+                                right += px == (j > i ? redWord : blueWord);
+                            }
+                        report(allDone && right == W * H, "fragment depth: depth_fs's 0.25 kept under T1 drawn at 0.9 -- " + std::to_string(right) +
+                                                              " of 4096 as wanted (" + std::to_string(reds) + " red)" + st);
+                        // dual source
+                        viaDual.blend = ColorBlend{true, 0, 0, 15, 0, 17, 0, 0xf};
+                        fillBo(*t, dCanary);
+                        RenderPass rp;
+                        rp.color0 = t.get();
+                        rp.load = LoadAction::kClear;
+                        Bindings vsb;
+                        vsb.buffers = {Binding{whiteBuf.get(), 0}};
+                        auto cb = queue->commandBuffer();
+                        if (cb->draw(viaDual, rp, drawOf(0, 3), vsb, Bindings{})) {
+                            cb->commit();
+                            cb->waitUntilCompleted();
+                        }
+                        bo = textureBo(*t);
+                        const uint8_t want[4] = {0x80, 0x40, 0xff, 0xbf};
+                        uint32_t blended = 0, whites = 0, judged = 0;
+                        for (uint32_t j = 0; j < H; j++)
+                            for (uint32_t i = 0; i < W; i++) {
+                                if (j <= i) continue;
+                                const uint8_t* q = bo.data() + j * t->bytesPerRow() + uint64_t(i) * 4;
+                                judged++;
+                                blended += std::abs(q[0] - want[0]) <= 1 && std::abs(q[1] - want[1]) <= 1 && q[2] == want[2] && std::abs(q[3] - want[3]) <= 1;
+                                whites += q[0] == 0xff && q[1] == 0xff && q[2] == 0xff;
+                            }
+                        report(completed(*cb) && blended == judged, "dual source: white times dual_fs's second colour under T1 -- " + std::to_string(blended) + " of " +
+                                                                        std::to_string(judged) + " pixels 80 40 ff bf, " + std::to_string(whites) + " white" +
+                                                                        (completed(*cb) ? status(*cb, gpu) : ": " + cb->error()));
+                    }
                 }
                 // 9sh. a shadow map: a pass of depth alone writes T1 at z 0.25 over a clear to 1 into a Depth32Float texture
                 // made to be sampled too; a colour pass then has tri_shadow_fs compare each pixel's texel with 0.5. Less
