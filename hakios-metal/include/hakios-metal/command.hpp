@@ -122,12 +122,18 @@ public:
     const std::string& lastSkipped() const { return lastSkipped_; }
     // the encoder's refusal of one piece of work, by the rule above: false either way
     bool refuseWork(const std::string& why);
+    // What the buffer holds, counted as it is recorded: passes opened (each a pass start, its flushes and the wait for
+    // idle at its tail, which is a fixed cost whatever is drawn), the draws in them, and dispatches, copies and clears
+    // (each a pass of its own). What a frame's GPU time goes to is read off these beside the time (metal_fps).
+    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0; };
+    const Counts& counts() const { return counts_; }
 
 private:
     friend class CommandQueue;
     explicit CommandBuffer(CommandQueue& queue) : queue_(queue) {}
     bool fail(const std::string& why);
     bool skipRefused_ = false;
+    Counts counts_;
     uint32_t skipped_ = 0;
     std::string lastSkipped_;
     // dispatch and dispatchIndirect: GROUPS, or (GROUPS null) the counts at OFFSET of ARGS

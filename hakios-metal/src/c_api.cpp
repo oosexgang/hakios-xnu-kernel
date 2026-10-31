@@ -672,6 +672,15 @@ int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from
 
 void hakios_metal_cb_skip_refused(hakios_metal_cb* cb, int on) { cb->cb->setSkipRefused(on != 0); }
 
+void hakios_metal_cb_counts(hakios_metal_cb* cb, unsigned* passes, unsigned* draws, unsigned* dispatches, unsigned* copies, unsigned* clears) {
+    const CommandBuffer::Counts& c = cb->cb->counts();
+    if (passes) *passes = c.passes;
+    if (draws) *draws = c.draws;
+    if (dispatches) *dispatches = c.dispatches;
+    if (copies) *copies = c.copies;
+    if (clears) *clears = c.clears;
+}
+
 int hakios_metal_cb_refuse(hakios_metal_cb* cb, const char* why) {
     cb->cb->refuseWork(why != nullptr ? why : "refused");
     return -1;

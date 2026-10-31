@@ -4524,6 +4524,70 @@ int main(int argc, char** argv) {
                                    std::to_string(src.size()) + " bytes as they were" + (encoded ? status(*ccb, gpu) : ": " + ccb->error()));
                     }
                 }
+                // (3p) what a pass costs, for the frame rate: one command buffer of 20 passes with one small draw each
+                // (alternating two 64 x 64 targets, so that no draw joins the last one's pass) against one of a single pass
+                // with 20 draws, and one of a single draw; the time each takes from commit to completion. The difference
+                // over 19 extra passes is a pass's fixed cost -- its start, its flushes, its wait for idle -- whatever it draws.
+                {
+                    TextureDesc pd;
+                    pd.format = PixelFormat::kRGBA8Unorm;
+                    pd.width = pd.height = 64;
+                    pd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                    std::string pwhy;
+                    auto pa = Texture::make(gpu, pd, &pwhy), pb = Texture::make(gpu, pd, &pwhy);
+                    const Program flat{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+                    auto timeOf = [&](int draws, bool alternate) -> double {
+                        double best = 1e30;
+                        for (int rep = 0; rep < 5; rep++) {
+                            auto pcb = queue->commandBuffer();
+                            bool ok = true;
+                            for (int i = 0; i < draws && ok; i++) {
+                                RenderPass rp;
+                                rp.color0 = alternate && (i & 1) ? pb.get() : pa.get();
+                                ok = pcb->draw(flat, rp, drawOf(0, 3), Bindings{}, Bindings{});
+                            }
+                            if (!ok) return -1;
+                            pcb->commit();
+                            pcb->waitUntilCompleted();
+                            if (!completed(*pcb)) return -1;
+                            best = std::min(best, pcb->gpuNanoseconds() / 1e3);
+                        }
+                        return best;
+                    };
+                    if (pa && pb) {
+                        const double one = timeOf(1, false), twentyDraws = timeOf(20, false), twentyPasses = timeOf(20, true);
+                        char text[320];
+                        snprintf(text, sizeof text,
+                                 "pass cost: 1 draw %.0f us; 20 draws in one pass %.0f us (%.1f us a draw); 20 passes of one draw %.0f us (%.1f us a pass "
+                                 "over a draw)", one, twentyDraws, (twentyDraws - one) / 19, twentyPasses, (twentyPasses - twentyDraws) / 19);
+                        report(one > 0 && twentyDraws > 0 && twentyPasses > 0, text);
+                    }
+                }
+                // (3b) the GPU's memory bandwidth, for the frame rate: a 2048 x 2048 RGBA8 texture (16 MiB) copied by the 2D
+                // engine, 16 MiB read and 16 written, the best of five. Measured at 12.8 GB/s with the kernel's DDR vote at
+                // its most: the memory is not what keeps CoreAnimation's blurs slow. (A fill by a draw was measured beside
+                // it and left out: tri_flat's pair does not cover a target of another size, so its rate meant nothing.)
+                {
+                    TextureDesc bd;
+                    bd.format = PixelFormat::kRGBA8Unorm;
+                    bd.width = bd.height = 2048;
+                    bd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                    std::string bwhy;
+                    auto ba = Texture::make(gpu, bd, &bwhy), bb = Texture::make(gpu, bd, &bwhy);
+                    double copyUs = 1e30;
+                    bool ok = ba && bb;
+                    for (int rep = 0; rep < 5 && ok; rep++) {
+                        auto c1 = queue->commandBuffer();
+                        ok = c1->blit(*ba, 0, render::BlitRect{0, 0, 2048, 2048}, *bb, 0, render::BlitRect{0, 0, 2048, 2048}, false);
+                        if (!ok) break;
+                        c1->commit();
+                        c1->waitUntilCompleted();
+                        copyUs = std::min(copyUs, c1->gpuNanoseconds() / 1e3);
+                    }
+                    char text[160];
+                    snprintf(text, sizeof text, "memory bandwidth: a 16 MiB copy %.0f us (%.2f GB/s moved)", copyUs, ok ? 33.554432e6 / (copyUs * 1e3) : 0.0);
+                    report(ok, text);
+                }
                 // (4) generateMipmaps over a checkerboard
                 for (uint32_t y = 0; y < 64; y++)
                     for (uint32_t x = 0; x < 64; x++) rows[y * 64 + x] = (x + y) % 2 ? 0x60606060u : 0x20202020u;

@@ -2769,6 +2769,26 @@ TEST(a_draw_blends_as_the_pipeline_says) {
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
+// What a buffer holds, counted as it is recorded (metal_fps reads these beside the GPU time): two draws into one pass
+// share it, a draw into another target opens a second, a copy is a pass of its own and is counted as a copy
+TEST(a_command_buffer_counts_its_passes_and_draws) {
+    Rig r;
+    auto t = target(r), u = target(r);
+    RenderPass a, b;
+    a.color0 = t.get();
+    b.color0 = u.get();
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    CHECK(cb->draw(flatProgram(), b, wholeDraw(), Bindings{}, Bindings{}));
+    CHECK(cb->blit(*t, 0, render::BlitRect{0, 0, 16, 16}, *u, 0, render::BlitRect{0, 0, 16, 16}, false));
+    const CommandBuffer::Counts& c = cb->counts();
+    CHECK_EQ(c.passes, 2u);
+    CHECK_EQ(c.draws, 3u);
+    CHECK_EQ(c.copies, 1u);
+    CHECK_EQ(c.dispatches, 0u);
+}
+
 TEST(a_draw_refuses_a_blend_it_cannot_serve) {
     Rig r;
     auto t = target(r);

@@ -2338,8 +2338,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         appendStream(stream_, head);
         open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress()});
         useAttachments(pass);
+        counts_.passes++;
     }
     appendStream(stream_, body);
+    counts_.draws++;
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
     for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{vsb, program.vs.k.numSsbos != 0}, {fsb, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
@@ -2407,6 +2409,7 @@ bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect
     if (!render::encodeBlit(added, src, srcLevel, s, dst, dstLevel, d, linear, table.gpuAddress(), table.contents(), &why, options)) {
         return refuseWork(why);
     }
+    counts_.copies++;
     appendStream(stream_, added);
     use(*src.buffer(), false);
     use(*dst.buffer(), true);
@@ -2478,6 +2481,12 @@ bool CommandBuffer::append(CommandBuffer& other) {
     other.uses_.clear();
     other.kept_.clear();
     other.keptAny_.clear();
+    counts_.passes += other.counts_.passes;
+    counts_.draws += other.counts_.draws;
+    counts_.dispatches += other.counts_.dispatches;
+    counts_.copies += other.counts_.copies;
+    counts_.clears += other.counts_.clears;
+    other.counts_ = Counts{};
     return true;
 }
 
@@ -2505,6 +2514,7 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
     if (!render::encodeClear(added, pass, table.gpuAddress(), table.contents(), &why, options)) {
         return refuseWork(why);
     }
+    counts_.clears++;
     appendStream(stream_, added);
     useAttachments(pass);
     return true;
