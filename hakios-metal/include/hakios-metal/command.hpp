@@ -159,6 +159,9 @@ public:
     void setGmemMinDraws(uint32_t draws) { gmemMinDraws_ = draws; }
     // render::Options::gmemBinning for this buffer's draws besides each draw's own (either asks for it)
     void setGmemBinning(bool on) { gmemBinning_ = on; }
+    // every fragment texture the null texture (1x1, always in the texture cache): wrong pictures, but a draw's time then
+    // says what its shader costs without its texture reads -- a measurement switch, as setGmemOff is a bisect's
+    void setNullFsTextures(bool on) { nullFsTextures_ = on; }
     // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
     const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
@@ -181,6 +184,7 @@ private:
     uint32_t gmemOff_ = 0;
     uint32_t gmemMinDraws_ = 0;
     bool gmemBinning_ = false;
+    bool nullFsTextures_ = false;
     uint32_t gmemClears_ = 0, gmemClearWords_[kMaxColorOutputs][4] = {};   // (draw's, for the pass it opens)
     std::string gmemWhy_;
     std::unordered_map<uint64_t, uint32_t> ordinals_;   // passes opened so far into each kind of target

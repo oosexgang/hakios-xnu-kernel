@@ -271,6 +271,14 @@ hakios_metal_program *hakios_metal_program_new_bitcode(const void *vs_bitcode, s
 hakios_metal_program *hakios_metal_program_new_bitcode_constants(const void *vs_bitcode, size_t vs_size,
     const hakios_metal_constant *vs_constants, unsigned vs_count, const void *fs_bitcode, size_t fs_size,
     const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned color_pixel_format);
+/* BASE again with its fragment stage (FS_BITCODE and FS_CONSTANTS, as BASE was made) compiled for the LENGTH BYTES its
+ * constant buffer at [[buffer(BINDING)]] holds (compileStage's KnownBuffer): the branches those bytes decide are decided
+ * at compile time. Draws whose buffer holds exactly these bytes may use it in BASE's place; BASE's blending, vertex
+ * descriptor and sample count come with it. NULL with the reason. */
+hakios_metal_program *hakios_metal_program_specialize(hakios_metal_program *base, const void *fs_bitcode, size_t fs_size,
+    const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned binding, const void *bytes, size_t length);
+/* STAGE 0 = vertex, 1 = fragment: how many instruction words that stage compiled to */
+unsigned hakios_metal_program_stage_words(hakios_metal_program *program, unsigned stage);
 void hakios_metal_program_free(hakios_metal_program *program);
 const char *hakios_metal_program_name(hakios_metal_program *program);   /* "vs+fs" */
 /* STAGE 0 = vertex, 1 = fragment: the resources that stage binds, as hakios_metal_kernel_resource reports a kernel's */
@@ -458,6 +466,8 @@ void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb *cb, int on);
 void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb *cb, unsigned draws);
 /* CB's GMEM passes binned by the hardware first, each tile drawing only the draws that reach it (CommandBuffer::setGmemBinning) */
 void hakios_metal_cb_set_gmem_binning(hakios_metal_cb *cb, int on);
+/* every fragment texture of CB's draws the null texture (CommandBuffer::setNullFsTextures): for measuring only */
+void hakios_metal_cb_set_null_fs_textures(hakios_metal_cb *cb, int on);
 /* each draw of CB's sysmem passes timed alone (CommandBuffer::setProfileDraws, before anything is recorded) and, once it
  * has completed, draw I's program name (valid while CB lives) and microseconds; the count is returned, -1 past them */
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb *cb, int on);

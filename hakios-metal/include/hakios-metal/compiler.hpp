@@ -121,8 +121,16 @@ using FunctionConstants = std::vector<FunctionConstant>;
 // (tools/mesa/ir3-dump.patch) runs the same passes in the same order, so a Stage compiled here equals its fixture.
 // IBO_BASE moves a fragment stage's device buffers that far up the 3D pipeline's one IBO table, past the vertex stage's
 // (its [[buffer(n)]] addressed as slot IBO_BASE + n), so that the two stages' buffers at one index do not collide
+// What a stage's constant buffer at [[buffer(BINDING)]] holds for the draws a stage is compiled for: its reads of that
+// buffer at constant offsets inside BYTES compiled as those values, so that the branches they decide are decided once,
+// here, rather than in every fragment. CoreAnimation's uber shader (fixed_frag_lph_cpf) picks its path through 15 000
+// instructions by the 52 bytes of its FragmentShaderConfig: compiled for one configuration it is 16 to 48 instructions.
+struct KnownBuffer {
+    uint32_t binding = 0;
+    std::vector<uint8_t> bytes;
+};
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {},
-                                           uint32_t iboBase = 0);
+                                           uint32_t iboBase = 0, const KnownBuffer* known = nullptr);
 // compileStage's choice for a stage that spilled with ir3's preamble (WITH) and was compiled again without it (WITHOUT):
 // the one that spills less, then the one with fewer registers; WITH on a tie. (CoreAnimation's fixed_frag_lph_cpf: 48
 // registers and 512 bytes of spills with the preamble, 21 and none without; its draws 6.6 ms each so, 2.6 without.)

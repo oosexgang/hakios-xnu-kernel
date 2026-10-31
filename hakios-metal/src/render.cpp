@@ -2711,7 +2711,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const KernelTexture& kt = k->textures[i];
             if (kt.kind != kTexSampled || kt.fbTarget != 0) continue;
             const bool unbound = i >= given->textures.size() || given->textures[i] == nullptr;
-            if (!kt.isNull && !unbound) continue;
+            const bool measured = nullFsTextures_ && k == &program.fs.k;   // (setNullFsTextures: what a draw costs without its reads)
+            if (!kt.isNull && !unbound && !measured) continue;
             if (null == nullptr && (null = queue_.nullTexture(&why)) == nullptr) {
                 return fail(std::string("no null texture: ") + why);
             }
@@ -2905,6 +2906,12 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
     if (timed) {
         DrawTime dt{program.name != nullptr ? program.name : "?", 0};
+        // (and what its fragment stage samples: a draw's cost is mostly its texture reads, which the name does not tell)
+        for (size_t i = 0; i < fsBindings.textures.size(); i++) {
+            const Texture* t = fsBindings.textures[i];
+            if (t == nullptr || ((fsBindings.nullMask >> i) & 1)) continue;
+            dt.name += " " + std::to_string(i) + ":" + std::to_string(t->width()) + "x" + std::to_string(t->height()) + "/" + t->info().name;
+        }
         dt.pass = profiled_.empty() ? 0 : uint32_t(profiled_.size() - 1);
         render::drawArea(pass, d, dt.area);
         drawsProfiled_.push_back(dt);

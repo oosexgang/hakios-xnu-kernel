@@ -64,6 +64,7 @@ struct hakios_metal_sampler {
 };
 struct hakios_metal_program {
     std::shared_ptr<CompiledProgram> program;   // shared with every command buffer that drew with it and has not completed
+    unsigned color = 0;                         // the colour format it was linked for (hakios_metal_program_specialize links again)
 };
 
 extern "C" {
@@ -705,6 +706,8 @@ void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb* cb, unsigned draws) { c
 
 void hakios_metal_cb_set_gmem_binning(hakios_metal_cb* cb, int on) { cb->cb->setGmemBinning(on != 0); }
 
+void hakios_metal_cb_set_null_fs_textures(hakios_metal_cb* cb, int on) { cb->cb->setNullFsTextures(on != 0); }
+
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb* cb, int on) { cb->cb->setProfileDraws(on != 0); }
 
 int hakios_metal_cb_draw_place(hakios_metal_cb* cb, unsigned i, unsigned* pass, unsigned area[4]) {
@@ -862,6 +865,7 @@ static hakios_metal_program* programOf(std::shared_ptr<CompiledStage> vs, std::s
     }
     auto* r = new hakios_metal_program;
     r->program = std::move(p);
+    r->color = colorPixelFormat;
     return r;
 }
 
@@ -893,6 +897,43 @@ hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsB
         return nullptr;
     }
     return programOf(std::move(vs), std::move(fs), colorPixelFormat);
+}
+
+hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base, const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants,
+                                                     unsigned fsCount, unsigned binding, const void* bytes, size_t length) {
+    if (base == nullptr || fsBitcode == nullptr || fsSize == 0 || bytes == nullptr) {
+        failed("a specialisation needs the program, its fragment function's bitcode and the buffer's bytes");
+        return nullptr;
+    }
+    std::string why;
+    KnownBuffer known;
+    known.binding = binding;
+    known.bytes.assign(static_cast<const uint8_t*>(bytes), static_cast<const uint8_t*>(bytes) + length);
+    const Program& was = base->program->program;
+    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount), was.fsIboBase, &known);
+    if (fs == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    std::unique_ptr<CompiledProgram> p = linkProgram(base->program->vs, std::move(fs), PixelFormat(base->color), &why);
+    if (p == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    // the pipeline's own state, which the base was given after it was linked
+    p->program.vertexDescriptor = was.vertexDescriptor;
+    p->program.blend = was.blend;
+    for (uint32_t i = 0; i + 1 < kMaxColorOutputs; i++) p->program.moreBlend[i] = was.moreBlend[i];
+    p->program.samples = was.samples;
+    auto* r = new hakios_metal_program;
+    r->program = std::move(p);
+    r->color = base->color;
+    return r;
+}
+
+unsigned hakios_metal_program_stage_words(hakios_metal_program* p, unsigned stage) {
+    if (p == nullptr || stage > 1) return 0;
+    return (stage == 0 ? p->program->program.vs : p->program->program.fs).k.numWords;
 }
 
 // FUNCTION of LIBRARY as WANT (a vertex or a fragment function): its bitcode, or nullptr with the reason left
