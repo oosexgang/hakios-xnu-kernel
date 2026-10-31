@@ -44,6 +44,7 @@
 namespace hakios::metal {
 
 class Texture;
+struct FormatInfo;
 
 // --- one shader stage as plain data ------------------------------------------------------------------------------------
 // Everything a VS or an FS shares with a compute Kernel is Kernel's own field set (words, instrlen, constlen, the
@@ -510,8 +511,14 @@ bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw
 // from an empty register state: CommandBuffer::draw), those in STORE stored; then the blit cache cleaned and the CCU
 // back to sysmem. encodeEnd's tail follows as for any pass. What to load and store is CommandBuffer::closePass's;
 // FETCH: a draw of the pass reads an attachment (framebuffer fetch), so the texture caches are dropped at each tile.
+// CLEAR: the attachments cleared in GMEM instead of loaded (gmemClearWords' packing in CLEAR_WORDS), which
+// encodeBegin was told to leave unfilled
 void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
-                uint32_t load, uint32_t store, bool fetch);
+                uint32_t load, uint32_t store, bool fetch, uint32_t clear = 0, const uint32_t (*clearWords)[4] = nullptr);
+// A Clear done in a tile by the event blit rather than by the 2D engine into memory and loaded back: the colour packed
+// as turnip packs it for RB_BLIT_CLEAR_COLOR (pack_blit_event_clear_value: the format's base, RGBA order, sRGB encoded)
+// -- 8-bit four-channel unorm and sRGB, and RGBA16Float; false for a format left to the fill
+bool gmemClearWords(const FormatInfo& f, const double rgba[4], uint32_t out[4]);
 
 // Everything into STREAM, nothing on refusal. VS_PROGRAM / FS_PROGRAM are the GPU addresses of the two stages' words,
 // 128-byte aligned (turnip asserts it; the ST6_SHADER preload unit is 128 bytes); TABLE / TABLE_CPU the kTableBytes
@@ -531,8 +538,9 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 // attachments): encodeBegin the batch start, the pass begin and the clears; encodeInPass one draw's state and the draw,
 // TABLE then the draw's own (its descriptors), the border colours and the timestamps being the pass's; encodeEnd the
 // tail into the pass's TABLE. encode is the three over one table.
+// (SKIP_CLEARS: colour attachments whose Clear a GMEM pass does in its tiles instead)
 bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
-                 const Options& options = Options{});
+                 const Options& options = Options{}, uint32_t skipClears = 0);
 // (GMEM: the pass's plan when it is drawn in tiles -- the attachments' bins in RB_MRT's BASE_GMEM, a framebuffer fetch
 // reading its bin in GMEM; nullptr in sysmem. AFTER_FETCH: the draw before it in the pass read its attachments too, so
 // in raster order a fetch needs no barrier)

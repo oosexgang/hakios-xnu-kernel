@@ -2257,8 +2257,12 @@ constexpr uint32_t rbBlitDstInfo(a6xx_format fmt, a6xx_tile_mode tile, a3xx_colo
            field(swap, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__SHIFT, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__MASK) |
            field(fmt, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK);
 }
-constexpr uint32_t rbBlitInfo(a6xx_blit_event_type type, bool sample0) {
-    return field(type, A6XX_RB_BLIT_INFO_TYPE__SHIFT, A6XX_RB_BLIT_INFO_TYPE__MASK) | (sample0 ? A6XX_RB_BLIT_INFO_SAMPLE_0 : 0u);
+inline constexpr uint32_t A6XX_RB_BLIT_INFO_CLEAR_MASK__MASK = 0x000000f0;                   // a6xx.xml.h:6389  the components a CLEAR writes
+inline constexpr uint32_t A6XX_RB_BLIT_INFO_CLEAR_MASK__SHIFT = 4;                           // a6xx.xml.h:6390
+inline constexpr uint32_t REG_A6XX_RB_BLIT_CLEAR_COLOR_DW0 = 0x88df;                         // a6xx.xml.h:6368  four words: the colour packed as the format's base
+constexpr uint32_t rbBlitInfo(a6xx_blit_event_type type, bool sample0, uint32_t clearMask = 0) {
+    return field(type, A6XX_RB_BLIT_INFO_TYPE__SHIFT, A6XX_RB_BLIT_INFO_TYPE__MASK) | (sample0 ? A6XX_RB_BLIT_INFO_SAMPLE_0 : 0u) |
+           field(clearMask, A6XX_RB_BLIT_INFO_CLEAR_MASK__SHIFT, A6XX_RB_BLIT_INFO_CLEAR_MASK__MASK);
 }
 
 // CCUSINGLECACHELINESIZE(2) = 0x10 for a sysmem pass (tu_cmd_buffer.cc:633-693 tu6_emit_render_cntl; fd6_gmem.cc:

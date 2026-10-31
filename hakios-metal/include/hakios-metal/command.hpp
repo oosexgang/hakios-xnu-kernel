@@ -178,6 +178,7 @@ private:
     bool gmem_ = true;
     uint32_t gmemOff_ = 0;
     uint32_t gmemMinDraws_ = 0;
+    uint32_t gmemClears_ = 0, gmemClearWords_[kMaxColorOutputs][4] = {};   // (draw's, for the pass it opens)
     std::string gmemWhy_;
     std::unordered_map<uint64_t, uint32_t> ordinals_;   // passes opened so far into each kind of target
     std::vector<PassTime> profiled_;   // as recorded; us filled in by passTimes from the stamps
@@ -211,6 +212,8 @@ private:
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
         uint32_t written = 0, read = 0;
+        uint32_t clears = 0;        // the attachments a GMEM pass clears in its tiles (render::gmemClearWords), and their words
+        uint32_t clearWords[kMaxColorOutputs][4] = {};
         uint64_t kind = 0;          // render::tuneKeyOf the pass and its ordinal in the buffer among passes of that kind
         uint32_t ordinal = 0, draws = 0;
         bool lastFetched = false;   // the last draw read its attachments (render::encodeInPass's AFTER_FETCH for the next)

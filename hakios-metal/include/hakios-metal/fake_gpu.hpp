@@ -154,6 +154,7 @@ public:
         uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
         uint32_t tiles = 0;         // GMEM tiles begun (CP_SET_MARKER RM6_BIN_RENDER_START | USES_GMEM)
         uint32_t tileLoads = 0, tileStores = 0;   // event blits, carried out between memory and the model's GMEM
+        uint32_t tileClears = 0;    // ...and clears in GMEM
         uint64_t storedPixels = 0;  // pixels the stores wrote: the whole target once, granule padding included, when the tiles tile it
     };
 

@@ -1081,10 +1081,10 @@ bool anyColorClear(const RenderPass& pass) {
 
 // the fills, attachment by attachment as turnip clears them (tu_clear_sysmem_attachment per attachment), each waited for
 // on its own word
-void clearAll(pm4::Stream& stream, const RenderPass& pass, const ClearWords c[kMaxColorOutputs], uint64_t table) {
+void clearAll(pm4::Stream& stream, const RenderPass& pass, const ClearWords c[kMaxColorOutputs], uint64_t table, uint32_t skip = 0) {
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
-        if (a.texture != nullptr && a.load == LoadAction::kClear) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i), a.level, a.slice);
+        if (a.texture != nullptr && a.load == LoadAction::kClear && !((skip >> i) & 1)) clearStream(stream, *a.texture, c[i], clearFlushAt(table, i), a.level, a.slice);
     }
 }
 
@@ -2080,7 +2080,7 @@ bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass&
     return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, false, gmem, afterFetch);
 }
 
-bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
+bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o, uint32_t skipClears) {
     if (!checkTarget(pass, why)) {
         return false;
     }
@@ -2090,7 +2090,7 @@ bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
     }
     tableStart(tableCpu);
     passStart(stream, windowOf(pass).first, windowOf(pass).second, table, o);
-    clearAll(stream, pass, clears, table);
+    clearAll(stream, pass, clears, table, skipClears);
     zsClears(stream, pass, table);
     return true;
 }
@@ -2193,6 +2193,26 @@ uint64_t tuneKeyOf(const RenderPass& pass) {
     return k | 1;   // (never 0, which says "not tuned")
 }
 
+bool gmemClearWords(const FormatInfo& f, const double rgba[4], uint32_t out[4]) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    for (int c = 0; c < 4; c++) {
+        if (!finite(rgba[c])) return false;
+    }
+    if (f.fmt6 == FMT6_8_8_8_8_UNORM && f.bytesPerPixel == 4 && f.element == kElemFloat) {
+        for (int c = 0; c < 4; c++) {
+            const double v = f.srgb && c < 3 ? linearToSrgb(float(rgba[c])) : rgba[c];
+            out[0] |= unorm8Of(float(v)) << (8 * c);
+        }
+        return true;
+    }
+    if (f.fmt6 == FMT6_16_16_16_16_FLOAT && f.bytesPerPixel == 8) {
+        out[0] = halfOf(float(rgba[0])) | halfOf(float(rgba[1])) << 16;
+        out[1] = halfOf(float(rgba[2])) | halfOf(float(rgba[3])) << 16;
+        return true;
+    }
+    return false;
+}
+
 bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]) {
     const auto [W, H] = windowOf(pass);
     const Viewport& vp = draw.viewport;
@@ -2247,7 +2267,7 @@ bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw
 }
 
 void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
-                uint32_t load, uint32_t store, bool fetch) {
+                uint32_t load, uint32_t store, bool fetch, uint32_t clear, const uint32_t (*clearWords)[4]) {
     const auto [W, H] = windowOf(pass);
     // the colour cache out of the tiles' way (it is not pipelined: after a WFI, as the sysmem value is written)
     stream.waitForIdle();
@@ -2297,6 +2317,16 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
             command1(stream, CP_SET_MODE, 0);
             for (uint32_t i = 0; o.gmemLoad && i < kMaxColorOutputs; i++) {
                 if ((load >> i) & 1) blit(i, BLIT_EVENT_LOAD);
+            }
+            // a Clear in the tile (clear_gmem_attachment): the base format, the colour, all four components
+            for (uint32_t i = 0; clearWords != nullptr && i < kMaxColorOutputs; i++) {
+                if (!((clear >> i) & 1)) continue;
+                reg(stream, REG_A6XX_RB_BLIT_DST_INFO, rbBlitDstInfo(colorFmt(attachmentOf(pass, i).texture->info()), TILE6_LINEAR, WZYX));
+                reg(stream, REG_A6XX_RB_BLIT_INFO, rbBlitInfo(BLIT_EVENT_CLEAR, false, 0xf));
+                reg(stream, REG_A6XX_RB_BLIT_BASE_GMEM, plan.base[i]);
+                reg(stream, REG_A6XX_RB_UNKNOWN_88D0, 0);
+                regs(stream, REG_A6XX_RB_BLIT_CLEAR_COLOR_DW0, {clearWords[i][0], clearWords[i][1], clearWords[i][2], clearWords[i][3]});
+                event(stream, BLIT);
             }
             // A framebuffer fetch reads GMEM through the texture caches, which still hold what the last tile's fetches
             // read at the same GMEM addresses (probe "GMEM: framebuffer fetch": 9221 pixels of 24 tiles from the tile
@@ -2670,7 +2700,15 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         if (!piece(render::kTableBytes, &passTable, &why)) {
             return fail(std::string("no memory for the pass's table: ") + why);
         }
-        if (!render::encodeBegin(head, pass, passTable.gpuAddress(), passTable.contents(), &why, options)) {
+        if (gmem) {
+            for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+                const Texture* t = i == 0 ? pass.color0 : pass.more[i - 1].texture;
+                const LoadAction la = i == 0 ? pass.load : pass.more[i - 1].load;
+                const double* cc = i == 0 ? pass.clearColor : pass.more[i - 1].clearColor;
+                if (t != nullptr && la == LoadAction::kClear && render::gmemClearWords(t->info(), cc, gmemClearWords_[i])) gmemClears_ |= 1u << i;
+            }
+        }
+        if (!render::encodeBegin(head, pass, passTable.gpuAddress(), passTable.contents(), &why, options, gmemClears_)) {
             return refuseWork(why);
         }
     }
@@ -2698,6 +2736,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
         open_->gmem = gmem;
         open_->plan = plan;
+        open_->clears = gmemClears_;
+        memcpy(open_->clearWords, gmemClearWords_, sizeof open_->clearWords);
+        gmemClears_ = 0;
         open_->kind = kind;
         open_->ordinal = ordinal;
         useAttachments(pass);
@@ -2905,24 +2946,34 @@ void CommandBuffer::closePass() {
         std::memcpy(ib.contents(), w.data(), 4 * w.size());
         // The tiles over the render area alone, and of the attachments only those the draws touch: one they neither
         // write nor read keeps its memory as it is. A touched one is loaded unless its load action is DontCare and the
-        // area's granules stay inside its pixels (past them the store would put back what it never loaded: the row
-        // padding, or the rows of the next layer or level).
+        // area's granules stay above its last row (below it the store would put back what it never loaded into the
+        // rows of the next layer or level; CoreAnimation's second screen, DontCare, is 2436 rows, a multiple of 4).
         render::GmemPlan plan = open_->plan;
         const auto [W, H] = render::windowOf(open_->pass);
-        if (open_->area[0] <= open_->area[2] && open_->area[1] <= open_->area[3] && !(gmemOff_ & kGmemWholeArea)) render::gmemTiles(&plan, open_->area);
-        const bool inside = render::alignUp(plan.area[2] + 1, a6xx::kGmemAlignW) <= W && render::alignUp(plan.area[3] + 1, a6xx::kGmemAlignH) <= H;
+        // (a Clear in the tiles clears what they cover: a pass that clears so is tiled over the whole window, as the
+        // fill it stands in for covers it -- over the draws' area alone the rest kept its old pixels, probe "a Clear in
+        // the tiles": 1224468 of them)
+        if (open_->area[0] <= open_->area[2] && open_->area[1] <= open_->area[3] && !(gmemOff_ & kGmemWholeArea) && open_->clears == 0) {
+            render::gmemTiles(&plan, open_->area);
+        }
+        // (past the right edge the granules land in the row's own padding, which gmemPlan saw the pitch hold; only the
+        // rows past the bottom may be another layer's or level's)
+        (void)W;
+        const bool inside = render::alignUp(plan.area[3] + 1, a6xx::kGmemAlignH) <= H;
         uint32_t load = 0, store = 0;
         for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
             const Texture* t = i == 0 ? open_->pass.color0 : open_->pass.more[i - 1].texture;
             const bool every = (gmemOff_ & kGmemEveryAttachment) != 0;
-            if (t == nullptr || (!every && (((open_->written | open_->read) >> i) & 1) == 0)) continue;
+            const bool cleared = (open_->clears >> i) & 1;   // (cleared in the tiles: stored though no draw wrote it)
+            if (t == nullptr || (!every && !cleared && (((open_->written | open_->read) >> i) & 1) == 0)) continue;
             const LoadAction la = i == 0 ? open_->pass.load : open_->pass.more[i - 1].load;
             const StoreAction sa = i == 0 ? open_->pass.store : open_->pass.more[i - 1].store;
-            if (every || !(la == LoadAction::kDontCare && inside)) load |= 1u << i;
-            if ((every || ((open_->written >> i) & 1)) && sa != StoreAction::kDontCare) store |= 1u << i;
+            if (!cleared && (every || !(la == LoadAction::kDontCare && inside))) load |= 1u << i;
+            if ((every || cleared || ((open_->written >> i) & 1)) && sa != StoreAction::kDontCare) store |= 1u << i;
         }
         pm4::Stream tiles;
-        render::encodeGmem(tiles, open_->pass, plan, ib.gpuAddress(), uint32_t(w.size()), open_->table, open_->options, load, store, open_->read != 0);
+        render::encodeGmem(tiles, open_->pass, plan, ib.gpuAddress(), uint32_t(w.size()), open_->table, open_->options, load, store, open_->read != 0,
+                           open_->clears, open_->clearWords);
         appendStream(stream_, tiles);
         counts_.gmemPasses++;
         counts_.tiles += plan.tiles();

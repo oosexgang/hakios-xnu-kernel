@@ -1114,9 +1114,29 @@ bool FakeGpu::eventBlit() {
     uint32_t binW = 0, binH = 0, win[4] = {};
     if (!tileState(&binW, &binH, win)) return false;
     const uint32_t info = reg(REG_A6XX_RB_BLIT_INFO), type = info & A6XX_RB_BLIT_INFO_TYPE__MASK;
-    if (type != BLIT_EVENT_LOAD && type != BLIT_EVENT_STORE) {
-        fault(text("RB_BLIT_INFO %#llx: a load or a store is what this GPU model runs", info));
+    if (type != BLIT_EVENT_LOAD && type != BLIT_EVENT_STORE && type != BLIT_EVENT_CLEAR) {
+        fault(text("RB_BLIT_INFO %#llx: a load, a store or a clear is what this GPU model runs", info));
         return false;
+    }
+    if (type == BLIT_EVENT_CLEAR) {
+        // the tile's part of the blit scissor in GMEM filled with RB_BLIT_CLEAR_COLOR as the base format packs it (all
+        // four components: a partial mask is not what this driver writes)
+        const uint32_t cbpp = bytesPerPixel(fieldOf(reg(REG_A6XX_RB_BLIT_DST_INFO), A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT));
+        const uint32_t cbase = reg(REG_A6XX_RB_BLIT_BASE_GMEM), stl = reg(REG_A6XX_RB_BLIT_SCISSOR_TL), sbr = reg(REG_A6XX_RB_BLIT_SCISSOR_BR);
+        if (cbpp == 0 || cbpp > 16 || fieldOf(info, A6XX_RB_BLIT_INFO_CLEAR_MASK__MASK, A6XX_RB_BLIT_INFO_CLEAR_MASK__SHIFT) != 0xf ||
+            uint64_t(cbase) + uint64_t(binW) * binH * cbpp > gmem_.size()) {
+            fault(text("a GMEM clear of %llu-byte pixels at %#llx: a known format, mask 0xf, inside GMEM", cbpp, cbase));
+            return false;
+        }
+        uint32_t words[4];
+        for (int k = 0; k < 4; k++) words[k] = reg(REG_A6XX_RB_BLIT_CLEAR_COLOR_DW0 + k);
+        const uint32_t x1 = std::max(win[0], stl & 0x3fff), y1 = std::max(win[1], stl >> 16 & 0x3fff);
+        const uint32_t x2 = std::min(win[2], sbr & 0x3fff), y2 = std::min(win[3], sbr >> 16 & 0x3fff);
+        for (uint32_t y = y1; x1 <= x2 && y <= y2; y++) {
+            for (uint32_t x = x1; x <= x2; x++) memcpy(gmem_.data() + cbase + (uint64_t(y - win[1]) * binW + (x - win[0])) * cbpp, words, cbpp);
+        }
+        stats_.tileClears++;
+        return true;
     }
     const uint32_t dstInfo = reg(REG_A6XX_RB_BLIT_DST_INFO);
     const uint32_t bpp = bytesPerPixel(fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT));
@@ -1131,6 +1151,8 @@ bool FakeGpu::eventBlit() {
     const uint32_t x2 = std::min(win[2], sbr & 0x3fff), y2 = std::min(win[3], sbr >> 16 & 0x3fff);
     if (x1 > x2 || y1 > y2) return true;
     const uint64_t rowBytes = uint64_t(x2 - x1 + 1) * bpp;
+    const bool swapBR = bpp == 4 && fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__SHIFT) == WXYZ &&
+                        fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT) == FMT6_8_8_8_8_UNORM;
     if (uint64_t(gbase) + uint64_t(binW) * binH * bpp > gmem_.size() || pitch < rowBytes) {
         fault("an event blit past GMEM's end, or a destination pitch shorter than its rows");
         return false;
@@ -1142,8 +1164,11 @@ bool FakeGpu::eventBlit() {
             return false;
         }
         uint8_t* g = gmem_.data() + gbase + (uint64_t(y - win[1]) * binW + (x1 - win[0])) * bpp;
-        if (type == BLIT_EVENT_LOAD) memcpy(g, m, rowBytes);
-        else memcpy(m, g, rowBytes);
+        // (GMEM holds the components in the RB's order, RGBA: a BGRA target's swap is undone by the load and redone by
+        // the store -- what a Clear in the tile, packed RGBA, needs to come out as the 2D engine's fill does)
+        uint8_t* to = type == BLIT_EVENT_LOAD ? g : m;
+        memcpy(to, type == BLIT_EVENT_LOAD ? m : g, rowBytes);
+        for (uint64_t o = 0; swapBR && o < rowBytes; o += 4) std::swap(to[o], to[o + 2]);
     }
     if (type == BLIT_EVENT_LOAD) stats_.tileLoads++;
     else {

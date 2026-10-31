@@ -4789,6 +4789,49 @@ int main(int argc, char** argv) {
                             }
                             report(all, line);
                         }
+                        // a Clear in the tiles (RB_BLIT_CLEAR_COLOR) against the 2D engine's fill in sysmem: a Clear and one
+                        // tri_flat triangle over a 1125 x 2436 target, byte for byte, BGRA8 and RGBA16Float
+                        for (const PixelFormat cf : {PixelFormat::kBGRA8Unorm, PixelFormat::kRGBA16Float}) {
+                            TextureDesc cd;
+                            cd.format = cf;
+                            cd.width = 1125;
+                            cd.height = 2436;
+                            cd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                            std::string cwhy;
+                            auto ct = Texture::make(gpu, cd, &cwhy);
+                            if (!ct) {
+                                report(false, "GMEM clear: the target: " + cwhy);
+                                continue;
+                            }
+                            const Program flatc{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+                            std::vector<uint8_t> got[2];
+                            uint32_t gmemPasses = 0;
+                            for (int gm = 0; gm < 2; gm++) {
+                                fillBo(*ct, 0xa5a5a5a5u);
+                                RenderPass rp;
+                                rp.color0 = ct.get();
+                                rp.load = LoadAction::kClear;
+                                rp.clearColor[0] = 0.25, rp.clearColor[1] = 0.5, rp.clearColor[2] = 0.75, rp.clearColor[3] = 0.6;
+                                render::Options co;
+                                co.gmem = gm != 0;
+                                auto c = queue->commandBuffer();
+                                if (c->draw(flatc, rp, drawOf(0, 3, vps[1]), Bindings{}, Bindings{}, co)) {
+                                    c->commit();
+                                    c->waitUntilCompleted();
+                                }
+                                if (completed(*c)) got[gm] = textureBo(*ct);
+                                if (gm) gmemPasses = c->counts().gmemPasses;
+                            }
+                            uint64_t off = ~0ull;
+                            if (!got[0].empty() && got[0].size() == got[1].size()) {
+                                off = 0;
+                                const uint32_t bpp = ct->info().bytesPerPixel;
+                                for (uint32_t y = 0; y < 2436; y++)
+                                    for (uint32_t x = 0; x < 1125; x++) off += memcmp(got[0].data() + y * ct->bytesPerRow() + x * bpp, got[1].data() + y * ct->bytesPerRow() + x * bpp, bpp) != 0;
+                            }
+                            report(off == 0 && gmemPasses == 1, std::string("GMEM: a Clear in the tiles of a 1125x2436 ") + ct->info().name + " and a triangle: " +
+                                                                    std::to_string(off) + " pixels differ from the 2D engine's fill in sysmem");
+                        }
                         // what a texture's layout costs a blur: tex_col16 (sixteen reads down a column, 8 rows apart) over
                         // a 1125 x 2436 grid, from a linear R32Float texture and from a tiled (TILE6_3) Depth32Float one
                         {

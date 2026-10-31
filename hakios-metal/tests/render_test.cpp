@@ -2472,8 +2472,11 @@ TEST(a_clear_fills_the_target_through_the_2d_engine_before_the_draw) {
     CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0 + 2), 191u);
     CHECK_EQ(e.reg(REG_A6XX_RB_2D_SRC_SOLID_C0 + 3), 255u);
     CHECK_EQ(uint64_t(e.reg(REG_A6XX_RB_2D_DST)) | uint64_t(e.reg(REG_A6XX_RB_2D_DST + 1)) << 32, t->gpuAddress());
-    // through the command buffer: the fake carries the fill out (and rasterizes nothing), so every pixel is the colour
-    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw());
+    // through the command buffer in sysmem: the fake carries the fill out (and rasterizes nothing), so every pixel is
+    // the colour (a GMEM pass clears in its tiles instead: a_clear_in_gmem_comes_out_as_the_fill_does)
+    render::Options sysmem;
+    sysmem.gmem = false;
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw(), sysmem);
     CHECK(cb->status() == CommandBuffer::kCompleted);
     const uint8_t want[4] = {64, 128, 191, 255};
     CHECK(allPixels(*t, want, 4));
@@ -2487,7 +2490,7 @@ TEST(a_clear_fills_the_target_through_the_2d_engine_before_the_draw) {
     Encoded l(r, flatProgram(), load, wholeDraw());
     CHECK(l.ok);
     CHECK_EQ(l.find(CP_BLIT), size_t(-1));
-    auto lc = drawOnce(r, flatProgram(), load, wholeDraw());
+    auto lc = drawOnce(r, flatProgram(), load, wholeDraw(), sysmem);
     CHECK(lc->status() == CommandBuffer::kCompleted);
     const uint8_t canary[4] = {0xa5, 0xa5, 0xa5, 0xa5};
     CHECK(allPixels(*t, canary, 4));
@@ -4129,7 +4132,9 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
         ownWord |= c.stream.words()[i + 2] == uint32_t(c.table->gpuAddress() + render::kTableMoreClearFlushAt);
     }
     CHECK(ownWord);
-    auto cb2 = drawOnce(r, mrt, cleared, wholeDraw(6));
+    render::Options sysmem;
+    sysmem.gmem = false;
+    auto cb2 = drawOnce(r, mrt, cleared, wholeDraw(6), sysmem);
     CHECK(cb2->status() == CommandBuffer::kCompleted);
     CHECK_EQ(r.fake->stats().fills - fillsBefore, 2u);
     // joined passes: the same second attachment joins, another one begins a pass
@@ -5454,5 +5459,60 @@ TEST(gmem_by_the_draws_the_same_pass_had_the_last_time) {
         cb->waitUntilCompleted();
         CHECK(cb->status() == CommandBuffer::kCompleted);
         CHECK_EQ(cb->counts().gmemPasses, want);
+    }
+}
+
+// A DontCare attachment is not loaded when the granules past its edge stay in its rows: 100 x 36 (the right edge in the
+// rows' padding, 36 rows a multiple of 4) -- stored, not loaded; 100 x 37 (a granule row past the last) -- loaded too
+TEST(a_dontcare_attachment_is_loaded_only_when_the_granules_pass_its_last_row) {
+    for (const auto& [h, loads] : {std::pair<uint32_t, uint32_t>{36, 0}, {37, 1}}) {
+        Rig r;
+        auto t = target(r, 100, h, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        RenderPass a;
+        a.color0 = t.get();
+        a.load = LoadAction::kDontCare;
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(3, 100, h), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        const auto s = r.fake->stats();
+        CHECK(s.tiles == 1 && s.tileLoads == loads && s.tileStores == 1);
+    }
+}
+
+// A Clear in a GMEM pass is done in each tile by the event blit (RB_BLIT_CLEAR_COLOR, packed RGBA as the base format)
+// rather than by the 2D engine into memory and loaded back. What the tiles store must be what the fill writes: the
+// same bytes for BGRA8 (whose swap the store puts back), sRGB RGBA8 and RGBA16Float. A format gmemClearWords does not
+// pack (R32Float) is filled as before and loaded.
+TEST(a_clear_in_gmem_comes_out_as_the_fill_does) {
+    for (const PixelFormat f : {PixelFormat::kBGRA8Unorm, PixelFormat::kRGBA8UnormSrgb, PixelFormat::kRGBA16Float, PixelFormat::kR32Float}) {
+        std::vector<uint8_t> got[2];
+        uint32_t clears = 0, fills = 0;
+        for (int gm = 0; gm < 2; gm++) {
+            Rig r;
+            auto t = target(r, 100, 37, kTextureUsageRenderTarget | kTextureUsageRead, f);
+            fillCoords(*t);
+            RenderPass a;
+            a.color0 = t.get();
+            a.load = LoadAction::kClear;
+            const double c[4] = {0.25, 0.5, 0.75, 0.6};
+            for (int k = 0; k < 4; k++) a.clearColor[k] = c[k];
+            render::Options o;
+            o.gmem = gm != 0;
+            // (a draw over a corner: the Clear covers the whole target all the same)
+            Draw d = wholeDraw(3, 100, 37);
+            d.viewport = Viewport{40, 10, 30, 12, 0, 1};
+            auto cb = drawOnce(r, flatProgram(), a, d, o);
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+            CHECK_EQ(r.fake->stats().faults, 0u);
+            const uint8_t* p = static_cast<const uint8_t*>(t->contents());
+            for (uint32_t y = 0; y < 37; y++) got[gm].insert(got[gm].end(), p + y * t->bytesPerRow(), p + y * t->bytesPerRow() + 100 * t->info().bytesPerPixel);
+            if (gm) clears = r.fake->stats().tileClears, fills = r.fake->stats().fills;
+        }
+        CHECK(got[0] == got[1]);
+        const bool packed = f != PixelFormat::kR32Float;
+        CHECK_EQ(clears, packed ? 1u : 0u);
+        CHECK_EQ(fills, packed ? 0u : 1u);
     }
 }
