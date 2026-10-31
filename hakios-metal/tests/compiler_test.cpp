@@ -924,13 +924,8 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(vs, m) == nullptr);
     expectRefusal(why, "the fragment stage tri_flat_fs writes 9 colour output(s): 8 at most are served (the draw's rule)");
     m = copyOf(fs);
-    m->stage.depthRegid = 0;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes depth: no depth attachment is served");
-    m = copyOf(fs);
-    m->stage.writesPos = 1;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes depth: no depth attachment is served");
+    m->stage.depthRegid = 0;   // a stage writing depth links: the draw gives its register to the depth test
+    CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
     m->stage.stencilRefRegid = 4;
     CHECK(link(vs, m) == nullptr);
@@ -1146,6 +1141,24 @@ TEST(a_kernel_taking_its_execution_width_compiles) {
     auto k = compileAir(bc.data(), bc.size(), &why, {});
     CHECK(k != nullptr);
     if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
+// a fragment stage writing [[depth(any)]] (Resident Evil 4's CopyDepthPS): its depth has a register of its own, and the
+// stage links with a vertex stage, where it was refused as a depth this did not serve
+TEST(a_fragment_stage_writing_depth_compiles_and_links) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> f = bitcodeOf("depth_fs"), v = bitcodeOf("tri_pos_vs");
+    CHECK(!f.empty() && !v.empty());
+    if (f.empty() || v.empty()) return;
+    std::string why;
+    std::shared_ptr<CompiledStage> fs = compileStage(f.data(), f.size(), &why), vs = compileStage(v.data(), v.size(), &why);
+    CHECK(fs != nullptr && vs != nullptr);
+    if (fs == nullptr || vs == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK(fs->stage.depthRegid != a6xx::kRegidNone);
+    CHECK(linkProgram(vs, fs, PixelFormat::kRGBA8Unorm, &why) != nullptr);
 }
 
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {

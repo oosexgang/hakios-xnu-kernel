@@ -1124,10 +1124,7 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
         refuse(why, stageName(*fs) + " writes " + std::to_string(F.numColorOutputs) + " colour output(s): 8 at most are served (the draw's rule)");
         return nullptr;
     }
-    if (F.depthRegid != a6xx::kRegidNone || F.writesPos) {
-        refuse(why, stageName(*fs) + " writes depth: no depth attachment is served");
-        return nullptr;
-    }
+    // (a stage writing depth is served: the draw gives its register to the depth test, render.cpp)
     if (F.stencilRefRegid != a6xx::kRegidNone || F.writesStencilref) {
         refuse(why, stageName(*fs) + " writes a stencil reference: no stencil attachment is served");
         return nullptr;

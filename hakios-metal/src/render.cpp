@@ -1246,9 +1246,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (fs.numColorOutputs > kMaxColorOutputs) {
         return refuse(why, std::string(stageName(fs)) + " writes " + n(fs.numColorOutputs) + " colour output(s): 8 at most are served");
     }
-    if (fs.depthRegid != kRegidNone || fs.writesPos) {
-        return refuse(why, std::string(stageName(fs)) + " writes depth: no depth attachment is served");
-    }
+    // (a stage that writes depth, [[depth(any)]]: its register is the depth the test and the attachment take -- LATE_Z,
+    // as the depth is known only after the stage has run -- and with no depth attachment it is written nowhere, as
+    // Metal drops it; Resident Evil 4's CopyDepthPS and its shadow passes write it)
     if (fs.stencilRefRegid != kRegidNone || fs.writesStencilref) {
         return refuse(why, std::string(stageName(fs)) + " writes a stencil reference: no stencil attachment is served");
     }
@@ -1837,10 +1837,14 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
             if (fs.colorRegid[i] == kRegidNone) components &= ~(0xfu << (4 * i));
         }
-        std::vector<uint32_t> out = {components, spFsOutputCntl0(kRegidNone, kRegidNone, kRegidNone), A6XX_SP_FS_OUTPUT_CNTL1_MRT(numRt)};
+        // (a depth written by the stage, into a pass with a depth attachment: its register, and FRAG_WRITES_Z, as
+        // tu6_emit_fs_outputs sets them for a stage writing FRAG_RESULT_DEPTH)
+        const bool fragDepth = fs.depthRegid != kRegidNone && pass.depth != nullptr;
+        std::vector<uint32_t> out = {components, spFsOutputCntl0(fragDepth ? fs.depthRegid : kRegidNone, kRegidNone, kRegidNone),
+                                     A6XX_SP_FS_OUTPUT_CNTL1_MRT(numRt)};
         for (uint32_t i = 0; i < numRt; i++) out.push_back(spFsOutputReg(fs.colorRegid[i], fs.colorHalf[i] != 0));
         stream.registers(REG_A6XX_SP_FS_RENDER_COMPONENTS, out.data(), uint32_t(out.size()));
-        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {0, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), components});
+        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {fragDepth ? A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z : 0u, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), components});
     }
     // 15. the rasterizer (tu6_emit_rast, tu_pipeline.cc:3120-3218; fd6_rasterizer.cc:22-140): GRAS_CL_CNTL with Metal's
     // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL the draw's cull
@@ -1906,7 +1910,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // that writes depth, EARLY_Z otherwise); with no depth attachment r3d's zeros and EARLY_Z, as measured
         const bool stencilWrites = st.enabled && (st.front.writeMask != 0 || st.back.writeMask != 0);
         const a6xx_ztest_mode zmode = pass.depth == nullptr ? A6XX_EARLY_Z
-                                      : (!depthTest && !st.enabled) || (fs.hasKill && (draw.depth.write || stencilWrites)) ? A6XX_LATE_Z : A6XX_EARLY_Z;
+                                      : (!depthTest && !st.enabled) || (fs.hasKill && (draw.depth.write || stencilWrites)) || fs.depthRegid != kRegidNone
+                                          ? A6XX_LATE_Z
+                                          : A6XX_EARLY_Z;
         const uint32_t depthCntl = pass.depth == nullptr ? 0u
                                    : (depthTest ? A6XX_RB_DEPTH_CNTL_Z_TEST_ENABLE | A6XX_RB_DEPTH_CNTL_Z_READ_ENABLE : 0u) |
                                          (depthTest && draw.depth.write ? A6XX_RB_DEPTH_CNTL_Z_WRITE_ENABLE : 0u) |

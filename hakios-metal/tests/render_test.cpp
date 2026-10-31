@@ -460,9 +460,36 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
         p = handProgram();
         p.fs.numColorOutputs = 9;
         refused(r, p, pass, d, "hand_fs writes 9 colour output(s): 8 at most are served");
+        // a stage writing depth is drawn: into a pass with no depth attachment its depth goes nowhere (no DEPTH_REGID,
+        // no FRAG_WRITES_Z), and with one it is the depth the attachment takes, after the stage (LATE_Z)
         p = handProgram();
         p.fs.depthRegid = regid(1, 0);
-        refused(r, p, pass, d, "hand_fs writes depth: no depth attachment is served");
+        {
+            using namespace a6xx;
+            Encoded e(r, p, pass, d);
+            CHECK(e.ok);
+            CHECK_EQ((e.reg(REG_A6XX_SP_FS_OUTPUT_CNTL0) & A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__MASK) >> A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__SHIFT,
+                     uint32_t(kRegidNone));
+            CHECK_EQ(e.reg(REG_A6XX_RB_FS_OUTPUT_CNTL0) & A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z, 0u);
+            TextureDesc zd;
+            zd.format = PixelFormat::kDepth32Float;
+            zd.width = 64;
+            zd.height = 64;
+            zd.usage = kTextureUsageRenderTarget;
+            std::string zwhy;
+            auto z = Texture::make(*r.gpu, zd, &zwhy);
+            CHECK(z != nullptr);
+            if (z != nullptr) {
+                RenderPass zp = pass;
+                zp.depth = z.get();
+                Encoded ez(r, p, zp, d);
+                CHECK(ez.ok);
+                CHECK_EQ((ez.reg(REG_A6XX_SP_FS_OUTPUT_CNTL0) & A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__MASK) >> A6XX_SP_FS_OUTPUT_CNTL0_DEPTH_REGID__SHIFT,
+                         uint32_t(regid(1, 0)));
+                CHECK(ez.reg(REG_A6XX_RB_FS_OUTPUT_CNTL0) & A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z);
+                CHECK_EQ(ez.reg(REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL), A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(A6XX_LATE_Z));
+            }
+        }
         p = handProgram();
         p.fs.writesStencilref = 1;
         refused(r, p, pass, d, "hand_fs writes a stencil reference: no stencil attachment is served");
