@@ -2102,6 +2102,13 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (&src == &dst && srcLevel == dstLevel && s.x < d.x + d.w && d.x < s.x + s.w && s.y < d.y + d.h && d.y < s.y + s.h) {
         return refuse(why, "a copy within one level whose two rectangles overlap: the engine reads and writes the same memory in no order");
     }
+    // The formats the engine is given: the texture's own, or -- for a copy of a format whose intermediate is not worked
+    // out below, pixel for pixel and unscaled -- a format of the same size that moves the bits as they are: 8-bit unorm
+    // for 1, 2 and 4 bytes (a unorm8 copy is exact), 32-bit uint pairs and quads for 8 and 16. RGBA8Snorm and
+    // RGBA16Unorm, which Resident Evil 4 uploads, go that way; nothing about them is converted, so nothing can be wrong.
+    a6xx_format srcFmt = sf.fmt6, dstFmt = colorFmt(df);
+    a3xx_color_swap srcSwap = sf.swap, dstSwap = df.swap;
+    bool dstInt = df.element == kElemInt, dstUint = df.element == kElemUint;
     uint32_t ifmt;
     switch (df.fmt6) {
     case FMT6_A8_UNORM: case FMT6_8_UNORM: case FMT6_8_8_UNORM: case FMT6_8_8_8_8_UNORM: case FMT6_5_6_5_UNORM: case FMT6_5_5_5_1_UNORM:
@@ -2110,7 +2117,20 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     case FMT6_16_FLOAT: case FMT6_16_16_FLOAT: case FMT6_16_16_16_16_FLOAT: case FMT6_11_11_10_FLOAT: case FMT6_10_10_10_2_UNORM: ifmt = R2D_FLOAT16; break;
     case FMT6_32_FLOAT: case FMT6_32_32_FLOAT: case FMT6_32_32_32_32_FLOAT: ifmt = R2D_FLOAT32; break;
     case FMT6_32_UINT: case FMT6_32_32_32_32_UINT: ifmt = R2D_INT32; break;
-    default: return refuse(why, std::string("a copy of ") + df.name + ": the 2D engine's intermediate format for it is not worked out here");
+    default: {
+        const uint32_t bpp = df.bytesPerPixel;
+        if (scaled || linear || src.samples() != 1 || sf.bytesPerPixel != bpp || df.blockW != 1 || sf.blockW != 1 ||
+            (bpp != 1 && bpp != 2 && bpp != 4 && bpp != 8 && bpp != 16)) {
+            return refuse(why, std::string("a copy of ") + df.name + ": the 2D engine's intermediate format for it is not worked out here, and the copy " +
+                                   "is not one of the same size pixel for pixel that could move the bits as they are");
+        }
+        srcFmt = dstFmt = bpp == 1 ? FMT6_8_UNORM : bpp == 2 ? FMT6_8_8_UNORM : bpp == 4 ? FMT6_8_8_8_8_UNORM : bpp == 8 ? FMT6_32_32_UINT : FMT6_32_32_32_32_UINT;
+        srcSwap = dstSwap = WZYX;
+        dstInt = false;
+        dstUint = bpp >= 8;
+        ifmt = bpp >= 8 ? R2D_INT32 : R2D_UNORM8;
+        break;
+    }
     }
     // an sRGB format filtered in linear space reads and writes through the sRGB conversion (and the UNORM8_SRGB
     // intermediate, r2d_setup_common); a copy, scaled or not, otherwise moves the stored bytes as they are
@@ -2118,22 +2138,22 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (srgb) ifmt = R2D_UNORM8_SRGB;
     tableStart(tableCpu);
     passStart(stream, DL.width, DL.height, table, o);
-    const uint32_t blit = rb2dBlitCntlCopy(colorFmt(df), ifmt) | (o.rotate2d & A6XX_RB_2D_BLIT_CNTL_ROTATE__MASK);
+    const uint32_t blit = rb2dBlitCntlCopy(dstFmt, ifmt) | (o.rotate2d & A6XX_RB_2D_BLIT_CNTL_ROTATE__MASK);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
     reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
     reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
-    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(colorFmt(df), df.element == kElemInt, df.element == kElemUint, srgb));
+    reg(stream, REG_A6XX_SP_2D_DST_FORMAT, sp2dDstFormat(dstFmt, dstInt, dstUint, srgb));
     // the source rectangle then the destination one: six consecutive registers (BR inclusive in both)
     regs(stream, REG_A6XX_GRAS_2D_SRC_TL_X, {gras2dSrc(s.x), gras2dSrc(s.x + s.w - 1), gras2dSrc(s.y), gras2dSrc(s.y + s.h - 1), regXY(d.x, d.y),
                                             regXY(d.x + d.w - 1, d.y + d.h - 1)});
     const uint64_t from = src.levelAddress(srcLevel), to = dst.levelAddress(dstLevel);
     const a3xx_msaa_samples srcSamples = src.samples() == 4 ? MSAA_FOUR : src.samples() == 2 ? MSAA_TWO : MSAA_ONE;
-    const uint32_t srcInfo = sp2dSrcInfo(sf.fmt6, sf.swap, srgb, linear && scaled) | A6XX_SP_PS_2D_SRC_INFO_SAMPLES(srcSamples) |
+    const uint32_t srcInfo = sp2dSrcInfo(srcFmt, srcSwap, srgb, linear && scaled) | A6XX_SP_PS_2D_SRC_INFO_SAMPLES(srcSamples) |
                              (srcSamples != MSAA_ONE && sf.element == kElemFloat ? A6XX_SP_PS_2D_SRC_INFO_SAMPLES_AVERAGE : 0u);
     regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
                                               uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
     regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(colorFmt(df), TILE6_LINEAR, df.swap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_LINEAR, dstSwap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
     regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
     // what a Clear's fill does after it, and then the pass's tail: the copy is in memory when the next thing reads it

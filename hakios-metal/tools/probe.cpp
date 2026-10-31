@@ -4390,6 +4390,41 @@ int main(int argc, char** argv) {
                                    " of " + std::to_string(dw * dh) + ")" + status(*rcb, gpu));
                     }
                 }
+                // (3s) copies that move bits as they are: RGBA8Snorm and RGBA16Unorm have no 2D intermediate worked out, and
+                // a pixel-for-pixel copy of either goes through a format of its size (unorm8 for 4 bytes, uint32 pairs for 8):
+                // every byte of a 32 x 16 texture of bytes unique to their place, the negative snorm ones included, copied over
+                {
+                    for (PixelFormat pf : {PixelFormat::kRGBA8Snorm, PixelFormat::kRGBA16Unorm}) {
+                        const uint32_t W = 32, H = 16, bpp = pf == PixelFormat::kRGBA8Snorm ? 4 : 8;
+                        TextureDesc cd;
+                        cd.format = pf;
+                        cd.width = W;
+                        cd.height = H;
+                        cd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                        std::string cwhy;
+                        auto a = Texture::make(gpu, cd, &cwhy), b = Texture::make(gpu, cd, &cwhy);
+                        if (!a || !b) {
+                            report(false, std::string("raw copy: two 32 x 16 textures: ") + cwhy);
+                            continue;
+                        }
+                        std::vector<uint8_t> src(W * H * bpp), got(W * H * bpp, 0);
+                        for (size_t i = 0; i < src.size(); i++) src[i] = uint8_t(i * 151 + 29);
+                        a->replace(0, 0, 0, W, H, src.data(), W * bpp, &cwhy);
+                        fillBo(*b, canary);
+                        auto ccb = queue->commandBuffer();
+                        const bool encoded = ccb->blit(*a, 0, render::BlitRect{0, 0, W, H}, *b, 0, render::BlitRect{0, 0, W, H}, false);
+                        if (encoded) {
+                            ccb->commit();
+                            ccb->waitUntilCompleted();
+                        }
+                        b->read(0, 0, 0, W, H, got.data(), W * bpp, &cwhy);
+                        uint32_t same = 0;
+                        for (size_t i = 0; i < src.size(); i++) same += got[i] == src[i];
+                        report(encoded && completed(*ccb) && same == src.size(),
+                               std::string("raw copy of ") + (bpp == 4 ? "RGBA8Snorm" : "RGBA16Unorm") + ": " + std::to_string(same) + " of " +
+                                   std::to_string(src.size()) + " bytes as they were" + (encoded ? status(*ccb, gpu) : ": " + ccb->error()));
+                    }
+                }
                 // (4) generateMipmaps over a checkerboard
                 for (uint32_t y = 0; y < 64; y++)
                     for (uint32_t x = 0; x < 64; x++) rows[y * 64 + x] = (x + y) % 2 ? 0x60606060u : 0x20202020u;
