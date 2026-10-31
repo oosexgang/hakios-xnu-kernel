@@ -22,8 +22,16 @@ LAUNCHDAEMONS=ios26/jobs26 WORK=ios26/image-tree-prune \
     python3 renoir/tools/mkimage26.py --prune ios26/system26-prune.apfs
 ```
 
-Boot from the resident loader: stage `system26-prune.apfs` (`oem ramdisk`, `stage`), then a payload with
-the kernel, `root26-ios.apfs` and these boot-args:
+Boot, with the phone in its stock fastboot (nothing is flashed or erased; a reboot brings Android back):
+
+```
+python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
+```
+
+It boots darwin-renoir's resident loader, stages `system26-prune.apfs` (136 s over USB), then a payload with
+the kernel and `root26-ios.apfs`; the home screen follows about a minute later. Its boot-args (touch,
+buttons and all eight cores; `--boot-arg` adds or replaces one, `--return-after N` hands the phone back to
+the loader with the log after N seconds). The first runs used these, one core and no touch:
 
 ```
 haptic=0 cpufreq=0 buttons=0 gpu=0 wifi=0 adsp=0 battmgr=0 speaker_probe=0 renoir_afe_probe=0 sound=0
