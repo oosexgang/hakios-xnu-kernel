@@ -34,7 +34,8 @@ WORK = os.environ.get("WORK", DK + "/ios26/image-tree")
 CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
 
 MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname', 'usr/bin/sw_vers',
-             'usr/bin/id', 'usr/bin/true', 'usr/sbin/sysctl', 'System/Library/CoreServices/SystemVersion.plist']
+             'usr/bin/id', 'usr/bin/true', 'usr/sbin/sysctl', 'usr/libexec/xpcproxy',
+             'System/Library/CoreServices/SystemVersion.plist']
 
 
 PRUNED_APPS = ('Podcasts', 'Maps', 'Freeform', 'Music', 'Books', 'Setup', 'Journal', 'Bridge', 'Fitness',
@@ -94,7 +95,13 @@ def is_arm64e_macho(path):
 
 def selection(minimal):
     if minimal:
-        return [(rel, ROOT + '/' + rel) for rel in MIN_FILES if os.path.isfile(ROOT + '/' + rel)]
+        chosen = [(rel, ROOT + '/' + rel) for rel in MIN_FILES if os.path.isfile(ROOT + '/' + rel)]
+        for dp, dn, fns in os.walk(ROOT + '/private/etc'):     # the user database, and the rest of /etc
+            for fn in fns:
+                full = os.path.join(dp, fn)
+                if os.path.isfile(full) and not os.path.islink(full):
+                    chosen.append((full[len(ROOT) + 1:], full))
+        return chosen
     spec = importlib.util.spec_from_file_location('sel', DR + '/ios165/select-system.py')
     sel = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sel)

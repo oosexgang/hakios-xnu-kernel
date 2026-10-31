@@ -1,0 +1,23 @@
+diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
+index 504b3fa..831cdcb 100644
+--- a/osfmk/prng/prng_random.c
++++ b/osfmk/prng/prng_random.c
+@@ -67,6 +67,18 @@ bootseed_init_bootloader(uint32_t request_size, uint8_t *dst)
+ 	uint32_t n;
+ 
+ 	n = PE_get_random_seed(dst, request_size);
++	/*
++	 * renoir: our loader hands over SHA512_DIGEST_LENGTH (64) bytes of the firmware's randomness, not
++	 * the 4 x 64 this kernel asks for on arm64. The rest repeats them, each copy marked with its offset:
++	 * the kernel's DRBG mixes all of it, and there is no more entropy than the 64 bytes either way --
++	 * what the kernel of iOS 16.5 started from.
++	 */
++	if (n >= SEED_SIZE && n < request_size) {
++		for (uint32_t at = n; at < request_size; at++) {
++			dst[at] = dst[at % n] ^ (uint8_t)(at / n) ^ (uint8_t)(at >> 8);
++		}
++		n = request_size;
++	}
+ 	if (n < request_size) {
+ 		/*
+ 		 * Insufficient entropy is fatal.  We must fill the

@@ -576,6 +576,70 @@ has_suffix(const char *s, const char *suf)
 	return a >= b && strcmp(s + a - b, suf) == 0;
 }
 
+/*
+ * The ad hoc code signature made right again for the rewritten code: every CodeDirectory of the
+ * SuperBlob at sigoff gets the hashes of the pages as they are now (with the hash type it names).
+ * The special slots (entitlements, requirements, Info.plist) are left alone: those blobs did not
+ * change. An ad hoc signature has no certificate, so the CodeDirectory is all there is to it; the
+ * kernel checks a Mach-O's first page against it at exec (a mismatch clears CS_VALID, and with it the
+ * platform-binary status) and every page it brings in later.
+ */
+#include <openssl/sha.h>
+static uint64_t resigned_pages, resigned_dirs;
+
+static void
+resign(uint8_t *base, uint64_t size, uint64_t sigoff, uint64_t sigsize)
+{
+	uint8_t *sb = base + sigoff;
+
+	if (sigsize < 12 || sigoff + sigsize > size || be32(sb) != 0xfade0cc0)
+		return;
+	uint32_t count = be32(sb + 8);
+	for (uint32_t k = 0; k < count && 12 + 8 * (uint64_t)(k + 1) <= sigsize; k++) {
+		uint32_t off = be32(sb + 16 + 8 * k);
+		uint8_t *cd = sb + off;
+
+		if (off + 44 > sigsize || be32(cd) != 0xfade0c02)
+			continue;
+		uint32_t version = be32(cd + 8), hashoff = be32(cd + 16), nslots = be32(cd + 28);
+		uint64_t limit = be32(cd + 32);
+		uint8_t hsize = cd[36], htype = cd[37], pshift = cd[39];
+		if (version >= 0x20300 && off + 64 <= sigsize) {
+			uint64_t l64 = (uint64_t)be32(cd + 56) << 32 | be32(cd + 60);
+			if (l64)
+				limit = l64;
+		}
+		uint64_t ps = pshift ? 1ULL << pshift : limit;
+		if (limit > sigoff || off + hashoff + (uint64_t)nslots * hsize > sigsize)
+			continue;
+		for (uint32_t i = 0; i < nslots; i++) {
+			uint64_t start = (uint64_t)i * ps, end = start + ps > limit ? limit : start + ps;
+			uint8_t digest[SHA384_DIGEST_LENGTH];
+
+			if (start >= limit)
+				break;
+			switch (htype) {
+			case 1:
+				SHA1(base + start, end - start, digest);
+				break;
+			case 2:
+			case 3:
+				SHA256(base + start, end - start, digest);
+				break;
+			case 4:
+				SHA384(base + start, end - start, digest);
+				break;
+			default:
+				fprintf(stderr, "resign: hash type %u unknown, signature left as it was\n", htype);
+				return;
+			}
+			memcpy(cd + hashoff + (uint64_t)i * hsize, digest, hsize);
+			resigned_pages++;
+		}
+		resigned_dirs++;
+	}
+}
+
 static int
 do_cache(int census, const char *outdir, int nfiles, char **files)
 {
@@ -898,8 +962,14 @@ do_cache(int census, const char *outdir, int nfiles, char **files)
 	}
 
 	report(census, 1);
-	for (int i = 0; i < nfiles; i++)
+	for (int i = 0; i < nfiles; i++) {
+		if (!census && cf[i].size > 0x38 && memcmp(cf[i].map, "dyld_v1", 7) == 0)
+			resign(cf[i].map, cf[i].size, rd64(cf[i].map + 0x28), rd64(cf[i].map + 0x30));
 		unmap_file(cf[i].map, cf[i].size);
+	}
+	if (!census)
+		printf("code signature: %llu CodeDirectories, %llu page hashes made again\n",
+		    (unsigned long long)resigned_dirs, (unsigned long long)resigned_pages);
 	return 0;
 }
 
@@ -960,11 +1030,16 @@ do_macho(int census, const char *in, const char *out)
 	if (32 + (uint64_t)sizeofcmds > ssize)
 		return 1;
 	lc = f + soff + 32;
+	uint64_t sigoff = 0, sigsize = 0;
 	for (uint32_t c = 0; c < ncmds; c++) {
 		uint32_t cmd = rd32(lc), cmdsize = rd32(lc + 4);
 
 		if (cmdsize < 8 || lc + cmdsize > f + soff + 32 + sizeofcmds)
 			break;
+		if (cmd == 0x1d /* LC_CODE_SIGNATURE */ && cmdsize >= 16) {
+			sigoff = rd32(lc + 8);
+			sigsize = rd32(lc + 12);
+		}
 		if (cmd == LC_SEGMENT_64 && cmdsize >= 72) {
 			uint32_t nsects = rd32(lc + 64);
 
@@ -988,9 +1063,14 @@ do_macho(int census, const char *in, const char *out)
 		}
 		lc += cmdsize;
 	}
+	if (!census && sigsize)
+		resign(f + soff, ssize, sigoff, sigsize);
 	images = &im;
 	nimages = 1;
 	report(census, 0);
+	if (!census)
+		printf("code signature: %llu CodeDirectories, %llu page hashes made again\n",
+		    (unsigned long long)resigned_dirs, (unsigned long long)resigned_pages);
 	unmap_file(f, fsize);
 	nimages = 0;
 	images = NULL;
