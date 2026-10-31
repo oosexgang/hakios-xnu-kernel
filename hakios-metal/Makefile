@@ -2,6 +2,8 @@
 #
 #   make test            build and run the tests on this machine (macOS or Linux, any C++17 compiler), against the
 #                        fake GPU (include/hakios-metal/fake_gpu.hpp), which runs the command streams it is given
+#   make check           the tests, then the Metal plug-in (plugin/) on this Mac twice: as hakios-xnu-kernel builds it without
+#                        hakios-metal, and with it (plugin/tests/metal-plugin-test.sh; macOS only)
 #   make darwin             the library and the probe for Darwin userland 16.5 on the phone (needs the iPhoneOS 16.5 SDK; THEOS
 #                        or SDK= says where), into out/darwin/
 #   make clean
@@ -18,7 +20,7 @@ CORE      = src/pm4.cpp src/gpu.cpp src/command.cpp src/metallib.cpp src/c_api.c
 HOST      = $(CORE) src/fake_gpu.cpp
 TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 
-.PHONY: test darwin clean
+.PHONY: test check darwin clean
 
 out/host/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) tests/test.hpp
 	@mkdir -p $(dir $@)
@@ -26,6 +28,10 @@ out/host/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) tests/te
 
 test: out/host/tests
 	out/host/tests
+
+check: test
+	plugin/tests/metal-plugin-test.sh
+	GPU=1 plugin/tests/metal-plugin-test.sh
 
 darwin: out/darwin/hakios-metal-probe out/darwin/libhakios-metal.a
 
