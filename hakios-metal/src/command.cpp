@@ -187,6 +187,13 @@ std::shared_ptr<Buffer> CommandQueue::vscBuffer(std::string* why) {
     return vsc_;
 }
 
+void CommandQueue::checkVsc() {
+    std::lock_guard<std::mutex> g(lock_);
+    if (vsc_ == nullptr || vsc_->contents() == nullptr) return;
+    const uint32_t word = *reinterpret_cast<const volatile uint32_t*>(static_cast<const uint8_t*>(vsc_->contents()) + 32ull * render::kVscDrawPitch + render::kVscOverflowAt);
+    if (word != 0) vscOverflowed_ = true;
+}
+
 bool CommandQueue::preferGmem(uint64_t key) {
     std::lock_guard<std::mutex> g(lock_);
     Tune& t = tune_[key];
@@ -310,6 +317,7 @@ void CommandBuffer::waitUntilCompleted() {
 
 void CommandBuffer::finish(Status s) {
     status_ = s;
+    if (s == kCompleted && counts_.binnedPasses != 0) queue_.checkVsc();
     if (s == kCompleted && tuning_) {
         for (const PassTime& t : passTimes()) {
             if (t.tuneKey != 0) queue_.tuned(t.tuneKey, t.tiles != 0, t.us);

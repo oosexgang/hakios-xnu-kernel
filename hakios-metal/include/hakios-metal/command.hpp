@@ -126,7 +126,7 @@ public:
     // What the buffer holds, counted as it is recorded: passes opened (each a pass start, its flushes and the wait for
     // idle at its tail, which is a fixed cost whatever is drawn), the draws in them, and dispatches, copies and clears
     // (each a pass of its own). What a frame's GPU time goes to is read off these beside the time (metal_fps).
-    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0, gmemPasses = 0, tiles = 0; };   // (gmemPasses of the passes drawn in tiles)
+    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0, gmemPasses = 0, tiles = 0, binnedPasses = 0; };   // (gmemPasses of the passes drawn in tiles, binnedPasses of those binned)
     const Counts& counts() const { return counts_; }
     // With profiling on, the command processor writes its always-on counter (CP_ALWAYS_ON_COUNTER, 19.2 MHz) at the start
     // of each pass and after its tail -- whose wait for idle makes the end the end -- for the first kMaxProfiled passes:
@@ -299,6 +299,10 @@ public:
     // the visibility streams' memory binned GMEM passes share (render::vscBytes): one is enough, the GPU running one
     // submission at a time and each pass's binning before its tiles; nullptr with *why
     std::shared_ptr<Buffer> vscBuffer(std::string* why);
+    // whether GMEM passes may still be binned: no pass's visibility streams have overrun their pitch (render::kVscOverflowAt,
+    // read by checkVsc once a buffer with a binned pass has completed)
+    bool binningOk() const { return !vscOverflowed_.load(); }
+    void checkVsc();
     bool preferGmem(uint64_t key);
     void tuned(uint64_t key, bool gmem, double us);
     // What tells passes into one kind of target apart: the draws the pass at that place in a command buffer (the Nth into
@@ -318,6 +322,7 @@ private:
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
     std::shared_ptr<Buffer> vsc_;     // (under lock_) vscBuffer's
+    std::atomic<bool> vscOverflowed_{false};
     std::vector<std::shared_ptr<Buffer>> private_[2];   // (under lock_) privateMemory's, by layout, the last the current one
     uint32_t privatePerFiber_[2] = {0, 0};
     uint32_t id_;

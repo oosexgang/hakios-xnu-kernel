@@ -703,6 +703,8 @@ void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb* cb, int on) { cb->cb->setGm
 
 void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb* cb, unsigned draws) { cb->cb->setGmemMinDraws(draws); }
 
+void hakios_metal_cb_set_gmem_binning(hakios_metal_cb* cb, int on) { cb->cb->setGmemBinning(on != 0); }
+
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb* cb, int on) { cb->cb->setProfileDraws(on != 0); }
 
 int hakios_metal_cb_draw_place(hakios_metal_cb* cb, unsigned i, unsigned* pass, unsigned area[4]) {

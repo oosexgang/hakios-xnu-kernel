@@ -306,6 +306,7 @@ enum a6xx_marker : uint32_t {
     RM6_DIRECT_RENDER = 1,         // adreno_pm4.xml.h:519
     RM6_BIN_VISIBILITY = 2,        // adreno_pm4.xml.h:520  the binning pass (emit_binning_pass)
     RM6_BIN_RENDER_START = 4,      // adreno_pm4.xml.h:522  a GMEM tile's draws begin (tu6_emit_tile_select)
+    RM6_BIN_END_OF_DRAWS = 5,      // adreno_pm4.xml:1802  a binned tile's draws done (tu6_render_tile, under hw binning)
     RM6_BIN_RESOLVE = 6,           // adreno_pm4.xml.h:524  the tile's store to memory (tu6_emit_tile_store)
     RM6_BIN_RENDER_END = 7,        // adreno_pm4.xml.h:525
     RM6_COMPUTE = 8,               // adreno_pm4.xml.h:526
@@ -332,8 +333,9 @@ enum poll_memory_type : uint32_t {
 enum Opcode : uint32_t {
     CP_WAIT_MEM_WRITES = 0x12,     // adreno_pm4.xml.h:283  in turnip's flush order, after CACHE_INVALIDATE (tu_cmd_buffer.cc:194-250)
     CP_WAIT_FOR_ME = 0x13,         // adreno_pm4.xml.h:270
-    CP_SET_BIN_DATA5 = 0x2f,       // adreno_pm4.xml.h:227  a tile's visibility streams by address, 7 words (fd6_emit_tile_prep): hangs this CP
+    CP_SET_BIN_DATA5 = 0x2f,       // adreno_pm4.xml.h:227  a tile's visibility streams by address, 7 words (fd6_emit_tile_prep)
     CP_SET_BIN_DATA5_OFFSET = 0x2e,   // adreno_pm4.xml.h:329  ...by offsets from the VSC_*_ADDRESS registers, 4 words (tu6_emit_tile_select)
+    CP_COND_WRITE5 = 0x45,         // adreno_pm4.xml:308  a word written where a register or word compares true (emit_vsc_overflow_test)
     CP_WAIT_MEM_GTE = 0x14,        // adreno_pm4.xml.h:326  wait until a memory word >= REF (signed)
     CP_SKIP_IB2_ENABLE_GLOBAL = 0x1d,  // adreno_pm4.xml.h:294  1 word, 0 at pass begin and end (tu_cmd_buffer.cc:2134-2135, 2161-2162); undocumented
     CP_SKIP_IB2_ENABLE_LOCAL = 0x23,   // adreno_pm4.xml.h:295  1 word, 1: fd6 only ("I think that is not required", fd6_gmem.cc:2048)

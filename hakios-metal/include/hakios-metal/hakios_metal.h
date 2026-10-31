@@ -456,6 +456,8 @@ void hakios_metal_cb_set_gmem_off(hakios_metal_cb *cb, unsigned bits);
 void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb *cb, int on);
 /* GMEM only for a pass whose like had at least DRAWS draws the last time (CommandBuffer::setGmemMinDraws); 0: off */
 void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb *cb, unsigned draws);
+/* CB's GMEM passes binned by the hardware first, each tile drawing only the draws that reach it (CommandBuffer::setGmemBinning) */
+void hakios_metal_cb_set_gmem_binning(hakios_metal_cb *cb, int on);
 /* each draw of CB's sysmem passes timed alone (CommandBuffer::setProfileDraws, before anything is recorded) and, once it
  * has completed, draw I's program name (valid while CB lives) and microseconds; the count is returned, -1 past them */
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb *cb, int on);

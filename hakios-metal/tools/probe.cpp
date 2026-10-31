@@ -373,12 +373,13 @@ static const char* dimName(uint8_t dim) {
 }
 
 int main(int argc, char** argv) {
-    bool recover = false, bisect = false;
+    bool recover = false, bisect = false, binTrace = false;
     compute::Options chosen;   // what the dispatches of stage 5 are encoded with
     std::vector<std::pair<std::string, std::string>> metallibs;   // --metallib FILE FUNCTION: a kernel of the phone's own image
     for (int i = 1; i < argc; i++) {
         recover = recover || strcmp(argv[i], "--recover") == 0;
         bisect = bisect || strcmp(argv[i], "--bisect") == 0;
+        binTrace = binTrace || strcmp(argv[i], "--bin-trace") == 0;
         // --notail: no end-of-dispatch events and waits of our own; the kernel's own CACHE_FLUSH_TS fence closes the
         // submission (28 October: with them every dispatch hung, without them end_only completed in 48 us)
         if (strcmp(argv[i], "--notail") == 0) chosen.tail = false;
@@ -4682,18 +4683,20 @@ int main(int argc, char** argv) {
                         };
                         const Viewport vps[] = {{0, 0, 1125, 2436, 0, 1}, {37, 513, 1000, 1500, 0, 1}, {500, 1000, 625, 1436, 0, 1}, {0, 200, 600, 300, 0, 1}, {560, 0, 40, 2436, 0, 1}};
                         uint8_t gbStage = 0;
+                        bool gbTrace = false, gbCover = false;
                         auto run = [&](bool gm, bool load, unsigned* tiles, bool binned = false) -> std::vector<uint8_t> {
                             pattern();
                             render::Options o;
                             o.gmemLoad = load;
                             o.gmemBinning = binned;
                             o.gmemBinningStage = gbStage;
+                            o.gmemBinningTrace = gbTrace;
                             auto c = queue->commandBuffer();
                             c->setGmem(gm);
                             bool ok = true;
                             RenderPass rp;
                             rp.color0 = gt.get();
-                            for (const Viewport& vp : vps) ok = ok && c->draw(over, rp, drawOf(0, 3, vp), Bindings{}, gfsb, o);
+                            for (const Viewport& vp : vps) ok = ok && c->draw(over, rp, drawOf(0, gbCover ? 6 : 3, vp), Bindings{}, gfsb, o);
                             if (!ok) return {};
                             c->commit();
                             c->waitUntilCompleted();
@@ -4712,10 +4715,9 @@ int main(int argc, char** argv) {
                         const bool have = !sys.empty() && !gm.empty() && !twin.empty();
                         const uint64_t off = have ? pixelsDiffer(sys, gm) : ~0ull, twinOff = have ? pixelsDiffer(sys, twin) : 0;
                         {
-                            // The binning pass alone (stage 2: every draw binned, the tiles drawing all of them as before): it
-                            // runs, and the VSC writes its streams. Handing a tile its streams (CP_SET_BIN_DATA5, by address or
-                            // by offset) hangs this command processor -- stages 0, 3 and 5 timed out -- so binning stays off.
-                            gbStage = 2;
+                            // Binned: the binning pass, then each tile drawing only the draws its streams say reach it; must
+                            // agree with sysmem exactly, and the VSC must have written streams for the first two pipes (an
+                            // agreement with no streams written would be the tiles drawing everything)
                             unsigned st2 = 0;
                             const std::vector<uint8_t> partial = run(true, true, &st2, true);
                             const uint64_t poff = !partial.empty() && have ? pixelsDiffer(sys, partial) : ~0ull;
@@ -4726,8 +4728,59 @@ int main(int argc, char** argv) {
                                 if (v != nullptr && v->contents() != nullptr) memcpy(sizes, static_cast<const uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch, 8);
                             }
                             gbStage = 0;
+                            // --bin-trace: the stages that hang, each with the command processor writing where it has got to
+                            // (Options::gmemBinningTrace); the word after the hang names the last packet passed: 0xa started,
+                            // 1 binned, 0x1tt before tile tt's streams, 0x2tt after them, 0x3tt after its draws, 0x4tt its
+                            // end, 0x999 the pass done. Stage 2 traced as well: the run that completes must end at 0x999
+                            for (uint8_t sg : {uint8_t(2), uint8_t(3), uint8_t(8), uint8_t(0), uint8_t(0x80), uint8_t(9)}) {
+                                if (!binTrace) break;
+                                std::string vw;
+                                auto v = queue->vscBuffer(&vw);
+                                uint32_t* word = v != nullptr && v->contents() != nullptr
+                                                     ? reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch + render::kVscTraceAt)
+                                                     : nullptr;
+                                if (word != nullptr) std::memset(v->contents(), 0, render::vscBytes()), *word = 0xdead;
+                                gbStage = sg & 0x7f;
+                                gbTrace = true;
+                                gbCover = (sg & 0x80) != 0;   // (0x80: every tile drawn into, no pipe left empty)
+                                unsigned tl = 0;
+                                const std::vector<uint8_t> r = run(true, true, &tl, true);
+                                gbCover = false;
+                                gbTrace = false;
+                                gbStage = 0;
+                                const uint64_t roff = !r.empty() && have ? pixelsDiffer(sys, r) : ~0ull;
+                                std::printf("probe: (binning trace, stage %#x: %s, %llu pixels differ; the command processor last passed %#x)\n", unsigned(sg),
+                                            r.empty() ? "HUNG" : "completed", (unsigned long long)roff, word != nullptr ? *word : 0u);
+                                for (uint32_t k = 0; word != nullptr && k < 3; k++) {
+                                    std::string line;
+                                    for (uint32_t p = 0; p < 24; p++) {
+                                        char b[16];
+                                        std::snprintf(b, sizeof b, " %x", word[0x20 * (k + 1) + p]);
+                                        line += b;
+                                    }
+                                    std::printf("probe: (  %s, pipes 0-23:%s)\n", k == 0 ? "VSC_STATE" : k == 1 ? "VSC_PRIM_STRM_SIZE" : "VSC_DRAW_STRM_SIZE", line.c_str());
+                                }
+                                if (sg == 2 && v != nullptr && v->contents() != nullptr) {
+                                    // where the streams landed: every 64-byte granule of the buffer holding a nonzero word
+                                    const uint32_t* all = static_cast<const uint32_t*>(v->contents());
+                                    const uint64_t words = render::vscBytes() / 4;
+                                    std::string line;
+                                    for (uint64_t g = 0; g < words; g += 16) {
+                                        if (g * 4 >= 32ull * render::kVscDrawPitch && g * 4 < 32ull * render::kVscDrawPitch + render::kVscSizesBytes) continue;
+                                        bool any = false;
+                                        for (uint64_t i = g; i < g + 16 && i < words; i++) any = any || all[i] != 0;
+                                        if (!any) continue;
+                                        char b[96];
+                                        std::snprintf(b, sizeof b, " %#llx:%08x,%08x,%08x,%08x", (unsigned long long)(g * 4), all[g], all[g + 1], all[g + 2], all[g + 3]);
+                                        line += b;
+                                        if (line.size() > 3000) break;
+                                    }
+                                    std::printf("probe: (  the streams' granules:%s)\n", line.c_str());
+                                }
+                                if (word != nullptr) std::memset(word, 0, 0x200);
+                            }
                             report(!partial.empty() && poff == 0 && sizes[0] != 0 && sizes[1] != 0,
-                                   "GMEM with a binning pass, the tiles drawing every draw: " + std::to_string(poff) + " pixels differ from sysmem; the VSC wrote " +
+                                   "GMEM binned by the hardware: " + std::to_string(poff) + " pixels differ from sysmem; the VSC wrote " +
                                        std::to_string(sizes[0]) + " and " + std::to_string(sizes[1]) + " bytes of draw stream for pipes 0 and 1");
                         }
                         report(have && st == 0 && gtl == 24 && off == 0 && twinOff > 100000,

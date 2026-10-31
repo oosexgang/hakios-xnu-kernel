@@ -290,6 +290,7 @@ private:
     // inside a GMEM tile (between RM6_BIN_RENDER_START | USES_GMEM and RM6_BIN_RENDER_END), and GMEM itself: what the
     // event blits load and store (the draws rasterize nothing, so a tile holds what its load put there)
     bool inTile_ = false;
+    uint32_t binQueued_ = 0;   // tiles' streams handed over (CP_SET_BIN_DATA5*) and not yet let go by RM6_BIN_END_OF_DRAWS
     bool binning_ = false;   // between RM6_BIN_VISIBILITY and the first tile: the draws only bin
     std::vector<uint8_t> gmem_ = std::vector<uint8_t>(a6xx::kGmemBytes);
     bool tileState(uint32_t* binW, uint32_t* binH, uint32_t win[4]);

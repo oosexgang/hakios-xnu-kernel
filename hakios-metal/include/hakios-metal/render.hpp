@@ -466,12 +466,16 @@ struct Options {
     bool gmem = true;            // a pass that qualifies (gmemPlan) is drawn tile by tile in GMEM: each tile loaded, every draw of the
                                  // pass replayed into it, stored once; off: every pass in sysmem, each draw's blending through memory
     bool gmemBinning = false;    // a GMEM pass's draws binned first by the hardware (the VSC), each tile drawing only those that reach
-                                 // it, rather than every draw in every tile. NOT WORKING: the binning pass runs and the VSC
-                                 // writes its streams, but handing a tile its streams (CP_SET_BIN_DATA5 by address or by
-                                 // offset) hangs the command processor; worth at most the 0.31 us a draw a tile replays cost
+                                 // it, rather than every draw in every tile (SpringBoard's 141-161-draw passes: 17-20 ms to 14-17).
+                                 // Each tile's streams are let go by RM6_BIN_END_OF_DRAWS after its draws: the command processor
+                                 // holds two, and the third tile without it hung (probe --bin-trace)
     uint8_t gmemBinningStage = 0;   // (the bisect of that on the phone: 1 the binning pass without its draws, 2 with them but the tiles
-                                    // ignoring the streams -- both run; 3 the streams given but the draws ignoring them, 4 all
-                                    // but CP_SKIP_IB2_ENABLE_GLOBAL, 5 the streams given under override 1, 0 all of it -- these hang)
+                                    // ignoring the streams, 3 the streams given but the draws ignoring them, 4 all but
+                                    // CP_SKIP_IB2_ENABLE_GLOBAL, 5 the streams given under override 1, 6 all but the streams
+                                    // themselves, 7 fd6's CP_SET_BIN_DATA5 by address, 8 the tiles last to first, 9 all but
+                                    // RM6_BIN_END_OF_DRAWS (which hangs at the third tile), 0 all of it)
+    bool gmemBinningTrace = false;  // (the same bisect inside one run: the command processor writes where it has got to into the VSC
+                                    // buffer's sizes page at kVscTraceAt, so that a hang still says which packet it stopped at)
     bool gmemLoad = true;        // each tile's load from memory (off: the fake's twin, whose stores then show GMEM's own contents)
     uint8_t rotate2d = 0;        // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
                                  // a quarter turn takes a destination rectangle of the source's sides swapped
@@ -536,6 +540,8 @@ constexpr uint32_t kVscDrawPitch = 0x4000, kVscPrimPitch = 0x20000;
 // (32: a6xx::kNumVscPipes; the size words in a page of their own, so that the primitive streams start page-aligned as
 // fd6's, which are a buffer of their own)
 constexpr uint64_t kVscSizesBytes = 0x1000;
+constexpr uint64_t kVscOverflowAt = 0x7f0;   // (in the sizes page: nonzero once a pass's streams overran a pipe's pitch, render::encodeGmem)
+constexpr uint64_t kVscTraceAt = 0x800;   // (in the sizes page, past the 32 pipes' words: gmemBinningTrace's word)
 constexpr uint64_t vscBytes() { return 32ull * (kVscDrawPitch + kVscPrimPitch) + kVscSizesBytes; }
 // A Clear done in a tile by the event blit rather than by the 2D engine into memory and loaded back: the colour packed
 // as turnip packs it for RB_BLIT_CLEAR_COLOR (pack_blit_event_clear_value: the format's base, RGBA order, sRGB encoded)

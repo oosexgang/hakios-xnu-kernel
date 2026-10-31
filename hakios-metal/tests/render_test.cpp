@@ -5559,4 +5559,49 @@ TEST(a_binned_gmem_pass_bins_its_draws_then_tells_each_tile_its_streams) {
     CHECK(s.binningPasses == 1 && s.binnedDraws == 3 && s.binData == p.tiles() && s.tiles == p.tiles());
     CHECK_EQ(s.lastDraw.visCull, 1u);   // USE_VISIBILITY
     CHECK_EQ(coordsWrong(*t), 0u);
+    CHECK_EQ(cb->counts().binnedPasses, 1u);
+    // the twin: the tiles without RM6_BIN_END_OF_DRAWS, which on the phone hang at the third (the fake faults there)
+    CHECK(p.tiles() >= 3);
+    {
+        render::Options twin = o;
+        twin.gmemBinningStage = 9;
+        auto c2 = r.queue->commandBuffer();
+        for (int i = 0; i < 3; i++) CHECK(c2->draw(flatProgram(), a, wholeDraw(3, 1125, 300), Bindings{}, Bindings{}, twin));
+        c2->commit();
+        c2->waitUntilCompleted();
+        CHECK(r.fake->stats().faults > s.faults);
+    }
+}
+
+// A pass whose streams overran their pitch turns the binning off for the queue: the command processor's compare marks
+// the word (render::kVscOverflowAt), the queue reads it when the buffer completes, and the next pass draws every draw
+TEST(a_visibility_stream_overflow_turns_the_binning_off) {
+    Rig r;
+    auto t = target(r, 1125, 300, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    fillCoords(*t);
+    RenderPass a;
+    a.color0 = t.get();
+    render::Options o;
+    o.gmemBinning = true;
+    auto pass = [&]() {
+        auto cb = r.queue->commandBuffer();
+        for (int i = 0; i < 3; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(3, 1125, 300), Bindings{}, Bindings{}, o));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        return cb->counts().binnedPasses;
+    };
+    CHECK_EQ(pass(), 1u);
+    CHECK(r.queue->binningOk());   // (no stream near its limit: the compare wrote nothing)
+    std::string why;
+    auto v = r.queue->vscBuffer(&why);
+    CHECK(v != nullptr);
+    if (v == nullptr) return;
+    // the word as the compare writes it: the fake's VSC leaves its size registers at 0, so the overrun is put there by hand
+    *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch + render::kVscOverflowAt) = 2;
+    CHECK_EQ(pass(), 1u);   // (binned still: the word is read once this one completes)
+    CHECK(!r.queue->binningOk());
+    CHECK_EQ(pass(), 0u);
+    CHECK_EQ(coordsWrong(*t), 0u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
 }

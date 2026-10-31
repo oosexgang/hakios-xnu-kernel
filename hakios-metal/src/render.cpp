@@ -2303,6 +2303,10 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     while (divUp(plan.rows, tppY) * divUp(plan.cols, tppX) > kNumVscPipes) tppX++;
     const uint32_t pipesX = divUp(plan.cols, tppX);
     const uint64_t drawStrm = vsc, drawSizes = vsc + uint64_t(kNumVscPipes) * kVscDrawPitch, primStrm = drawSizes + kVscSizesBytes;
+    auto crumb = [&](uint32_t v) {
+        if (o.gmemBinningTrace && vsc != 0) stream.memWrite(drawSizes + kVscTraceAt, &v, 1);
+    };
+    crumb(0xa);
     if (vsc != 0) {
         // the binning pass (emit_binning_pass): the whole window, RM6_BIN_VISIBILITY, the bins' layout, every draw once
         regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(plan.x0, plan.y0), regXY(plan.x0 + plan.cols * plan.binW - 1, plan.y0 + plan.rows * plan.binH - 1)});
@@ -2343,9 +2347,34 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         eventTimestamp(stream, CACHE_FLUSH_TS, table + kTableBinFlushAt, kBinFlushValue, false);
         waitForWord(stream, table + kTableBinFlushAt, kBinFlushValue);
         stream.waitForMe();
+        crumb(1);
+        // A stream past its pipe's limit is cut short and its tiles would miss draws: the command processor compares each
+        // used pipe's sizes with the limits (turnip's emit_vsc_overflow_test) and marks the queue's word, which turns the
+        // binning off from then on (CommandBuffer::finish) -- this frame is what it is, the next ones draw every draw
+        {
+            uint32_t used = 0;
+            for (uint32_t y = 0; y < plan.rows; y += tppY) used += divUp(plan.cols, tppX);
+            const uint64_t flag = drawSizes + kVscOverflowAt;
+            for (uint32_t p = 0; p < used; p++) {
+                for (uint32_t k = 0; k < 2; k++) {
+                    const uint32_t limit = k == 0 ? kVscDrawPitch - 64 : kVscPrimPitch - 64;
+                    const uint32_t w[8] = {uint32_t(WRITE_GE) | 1u << 8, (k == 0 ? 0x0c78u : 0x0c58u) + p, 0, limit, ~0u, uint32_t(flag), uint32_t(flag >> 32), 1u + k};
+                    stream.packet(CP_COND_WRITE5, w, 8);
+                }
+            }
+            stream.packet(CP_WAIT_MEM_WRITES, nullptr, 0);
+        }
+        // (and what the VSC says it wrote: VSC_STATE, VSC_PRIM_STRM_SIZE and VSC_DRAW_STRM_SIZE, 32 pipes each, after the word)
+        for (uint32_t k = 0; o.gmemBinningTrace && k < 3; k++) {
+            const uint64_t at = drawSizes + kVscTraceAt + 0x80 * (k + 1);
+            const uint32_t w[3] = {(0x0c38u + 0x20u * k) | 32u << CP_REG_TO_MEM_0_CNT__SHIFT, uint32_t(at), uint32_t(at >> 32)};
+            stream.packet(CP_REG_TO_MEM, w, 3);
+        }
     }
-    for (uint32_t ty = 0; ty < plan.rows; ty++) {
-        for (uint32_t tx = 0; tx < plan.cols; tx++) {
+    for (uint32_t ry = 0; ry < plan.rows; ry++) {
+        for (uint32_t rx = 0; rx < plan.cols; rx++) {
+            const bool reverse = o.gmemBinningStage == 8;   // (the bisect's: the tiles last to first)
+            const uint32_t ty = reverse ? plan.rows - 1 - ry : ry, tx = reverse ? plan.cols - 1 - rx : rx;
             const uint32_t x1 = plan.x0 + tx * plan.binW, y1 = plan.y0 + ty * plan.binH;
             const uint32_t x2 = x1 + plan.binW - 1, y2 = y1 + plan.binH - 1;
             // tu6_emit_tile_select without a binning pass: every draw visits every tile, the window scissor keeping
@@ -2363,20 +2392,29 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
             reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(x1, y1));
             reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(x1, y1));
             reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(x1, y1));
-            if (vsc != 0 && (o.gmemBinningStage == 0 || o.gmemBinningStage >= 3)) {
+            const bool streams = vsc != 0 && (o.gmemBinningStage == 0 || o.gmemBinningStage >= 3);
+            if (streams) {
                 // this tile's streams: its pipe's, and its place in the pipe (fd6_emit_tile_prep)
                 const uint32_t pipe = (ty / tppY) * pipesX + tx / tppX;
                 const uint32_t px = (tx / tppX) * tppX, py = (ty / tppY) * tppY;
                 const uint32_t pw = std::min(tppX, plan.cols - px), ph = std::min(tppY, plan.rows - py);
                 const uint32_t n = (ty - py) * pw + (tx - px);
+                crumb(0x100 + ty * plan.cols + tx);
                 stream.waitForMe();
                 command1(stream, CP_SET_MODE, 0);
-                // (by offsets from the VSC registers the binning pass set, as turnip on A6XX: CP_SET_BIN_DATA5 with the addresses,
-                // fd6's form, hung the command processor here -- probe "GMEM binned, stage 5")
+                // (by offsets from the VSC registers the binning pass set, as turnip on A6XX; fd6's CP_SET_BIN_DATA5 with the
+                // addresses works as well, stage 7, once RM6_BIN_END_OF_DRAWS lets each tile's streams go)
                 const uint32_t w[4] = {cpSetBinData5_0(pw * ph, n), pipe * kVscDrawPitch, pipe * 4, pipe * kVscPrimPitch};
-                if (o.gmemBinningStage != 6) stream.packet(CP_SET_BIN_DATA5_OFFSET, w, 4);
+                if (o.gmemBinningStage == 7) {
+                    const uint64_t d = drawStrm + uint64_t(pipe) * kVscDrawPitch, z = drawSizes + pipe * 4ull, q = primStrm + uint64_t(pipe) * kVscPrimPitch;
+                    const uint32_t a[7] = {w[0], uint32_t(d), uint32_t(d >> 32), uint32_t(z), uint32_t(z >> 32), uint32_t(q), uint32_t(q >> 32)};
+                    stream.packet(CP_SET_BIN_DATA5, a, 7);
+                } else if (o.gmemBinningStage != 6) {
+                    stream.packet(CP_SET_BIN_DATA5_OFFSET, w, 4);
+                }
                 command1(stream, CP_SET_VISIBILITY_OVERRIDE, o.gmemBinningStage == 5 ? 1 : 0);
                 if (o.gmemBinningStage != 4) command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 1);   // (fd6_emit_tile_prep's, with a binning pass)
+                crumb(0x200 + ty * plan.cols + tx);
             } else {
                 command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
                 command1(stream, CP_SET_MODE, 0);
@@ -2402,6 +2440,11 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
                 event(stream, CACHE_INVALIDATE);
             }
             stream.indirect(bodies, bodyWords);   // (an IB2: the draws' words once in memory, not once a tile in the stream)
+            crumb(0x300 + ty * plan.cols + tx);
+            // The command processor queues each tile's streams and lets one go only at this marker (tu6_render_tile's,
+            // under hw binning): without it the third tile's CP_SET_BIN_DATA5 found the queue full and its draws hung
+            // in PC, in whichever order the tiles ran (probe --bin-trace)
+            if (streams && o.gmemBinningStage != 9) command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_END_OF_DRAWS) | A6XX_CP_SET_MARKER_0_USES_GMEM);
             command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 0);
             command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RESOLVE) | A6XX_CP_SET_MARKER_0_USES_GMEM);
             for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
@@ -2409,6 +2452,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
             }
             stream.waitForIdle();
             command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RENDER_END));
+            crumb(0x400 + ty * plan.cols + tx);
         }
     }
     // the stores out of the blit cache (tu6_tile_render_end's FD_CCU_CLEAN_BLIT_CACHE: PC_CCU_RESOLVE_TS on A6XX), waited
@@ -2417,6 +2461,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     waitForWord(stream, table + kTableBlitFlushAt, kBlitFlushValue);
     stream.waitForIdle();
     reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+    crumb(0x999);
 }
 
 bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
@@ -2790,7 +2835,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     render::Options encodeOptions = options;
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
     // (a binned pass's draws are skipped by the tiles they miss: USE_VISIBILITY, which an override of 1 ignores)
-    if (gmem && (options.gmemBinning || gmemBinning_) && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
+    if (gmem && (options.gmemBinning || gmemBinning_) && queue_.binningOk() && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
                               gmem ? &plan : nullptr, joins && open_->lastFetched)) {
         gmemClears_ = 0;
@@ -3022,6 +3067,7 @@ bool CommandBuffer::append(CommandBuffer& other) {
     counts_.copies += other.counts_.copies;
     counts_.clears += other.counts_.clears;
     counts_.gmemPasses += other.counts_.gmemPasses;
+    counts_.binnedPasses += other.counts_.binnedPasses;
     counts_.tiles += other.counts_.tiles;
     other.counts_ = Counts{};
     return true;
@@ -3081,7 +3127,7 @@ void CommandBuffer::closePass() {
             if ((every || cleared || ((open_->written >> i) & 1)) && sa != StoreAction::kDontCare) store |= 1u << i;
         }
         uint64_t vsc = 0;
-        if (open_->options.gmemBinning || gmemBinning_) {
+        if ((open_->options.gmemBinning || gmemBinning_) && queue_.binningOk()) {
             std::shared_ptr<Buffer> v = queue_.vscBuffer(&why);
             if (v == nullptr) {
                 open_.reset();
@@ -3097,6 +3143,7 @@ void CommandBuffer::closePass() {
                            open_->clears, open_->clearWords, vsc);
         appendStream(stream_, tiles);
         counts_.gmemPasses++;
+        if (vsc != 0) counts_.binnedPasses++;
         counts_.tiles += plan.tiles();
         if ((profile_ || tuning_) && !profiled_.empty()) profiled_.back().tiles = plan.tiles();
     }

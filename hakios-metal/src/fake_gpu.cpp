@@ -2003,6 +2003,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     // (GMEM holds whatever the last tile left; a pattern no target here holds, so a store without its load shows)
                     std::fill(gmem_.begin(), gmem_.end(), uint8_t(0xcd));
                 }
+                if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_END_OF_DRAWS && binQueued_ != 0) binQueued_--;
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_RENDER_END) {
                     if (!inTile_) {
                         fault("RM6_BIN_RENDER_END outside a tile");
@@ -2018,7 +2019,32 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     fault("CP_SET_BIN_DATA5_OFFSET not of 4 words, outside a tile, or its streams outside every buffer");
                     return false;
                 }
+                // The phone's command processor holds two tiles' streams: a third handed over before RM6_BIN_END_OF_DRAWS
+                // let one go hangs it, its draws stuck in PC (probe --bin-trace: tiles 0 and 1 drew, 2 hung, the same
+                // counted from the last tile)
+                if (binQueued_ >= 2) {
+                    fault("a third tile's streams with two not let go by RM6_BIN_END_OF_DRAWS: the phone hangs here");
+                    return false;
+                }
+                binQueued_++;
                 stats_.binData++;
+                break;
+            }
+            case CP_COND_WRITE5: {
+                // a register (POLL 0) or word compared with REF under MASK; the word at the write address set when true
+                if (h.count != 8 || (p[0] & 7u) != WRITE_GE || ((p[0] >> 4) & 3u) != POLL_REGISTER || (p[0] & (1u << 8)) == 0) {
+                    fault("CP_COND_WRITE5 not of 8 words or not a register's WRITE_GE into memory (the one form modelled)");
+                    return false;
+                }
+                const uint32_t v = regs_[p[1] & 0xffffu] & p[4];
+                if (v >= p[3]) {
+                    uint8_t* to = at(p[5] | uint64_t(p[6]) << 32, 4);
+                    if (to == nullptr) {
+                        fault("CP_COND_WRITE5 into no buffer");
+                        return false;
+                    }
+                    memcpy(to, &p[7], 4);
+                }
                 break;
             }
             case CP_SET_MODE:
