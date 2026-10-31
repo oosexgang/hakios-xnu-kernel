@@ -13,7 +13,10 @@ usage: mkimage26.py [--min | --prune] OUT.apfs
           left out, and Fonts/AppFonts
 
 /sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /redwood and runs its init), the
-real one /sbin/launchd.ios; /System/Library/LaunchDaemons leads to /redwood/LaunchDaemons, as on 16.5.
+real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (renoir/userland/root26-ios.sh writes ios26/jobs26)
+the jobs are in /System/Library/LaunchDaemons itself and in the launchd job cache
+System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /redwood/LaunchDaemons,
+as on 16.5 (enough for the restore-mode boot of the first probes, not for a normal one).
 """
 import importlib.util
 import os
@@ -164,6 +167,30 @@ def place(item):
     return 0
 
 
+def write_job_cache(jobs):
+    """
+    System/Library/xpc/launchd.plist with our jobs. On a normal (not restore) boot launchd takes its jobs
+    from this cache, which the boot task launchd_cache_loader hands it (RequireSuccess: without the file
+    the boot ends). The cache is Apple's, with its LaunchDaemons replaced by ours; the boot-arg
+    launchd_unsecure_cache=/System/Library/xpc/launchd.plist has it taken without the .sig and AMFI's
+    trust cache, which this kernel has not got.
+    """
+    import plistlib
+
+    with open(ROOT + '/System/Library/xpc/launchd.plist', 'rb') as f:
+        cache = plistlib.load(f)
+    daemons = {}
+    for name in sorted(os.listdir(jobs)):
+        if name.endswith('.plist'):
+            with open(os.path.join(jobs, name), 'rb') as f:
+                daemons['/System/Library/LaunchDaemons/' + name] = plistlib.load(f)
+    cache['LaunchDaemons'] = daemons
+    os.makedirs(os.path.join(WORK, 'System/Library/xpc'), exist_ok=True)
+    with open(os.path.join(WORK, 'System/Library/xpc/launchd.plist'), 'wb') as f:
+        plistlib.dump(cache, f, fmt=plistlib.FMT_BINARY)
+    print(f'mkimage26: launchd job cache with {len(daemons)} jobs')
+
+
 def main():
     global PRUNE
     minimal = '--min' in sys.argv
@@ -191,10 +218,24 @@ def main():
             continue
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.symlink(target, dst)
+    # the jobs are ours (/redwood/LaunchDaemons, from mkjobs.py), as on 16.5: Apple's own lists go
+    for rel in ('System/Library/NanoLaunchDaemons', 'System/Library/LaunchAngels', 'System/Library/xpc/launchd.plist'):
+        path = os.path.join(WORK, rel)
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        elif os.path.lexists(path):
+            os.remove(path)
+    # LAUNCHDAEMONS=DIR: the jobs go into the system volume itself. iOS 26's launchd counts a job as a
+    # system service (one that may claim an event stream: notifyd's com.apple.notifyd.matching) only when
+    # its plist was loaded from there; through the link to /redwood (another volume) none of them is.
     ld = os.path.join(WORK, 'System/Library/LaunchDaemons')
     if os.path.isdir(ld) and not os.path.islink(ld):
         shutil.rmtree(ld)
-    if not os.path.lexists(ld):
+    jobs = os.environ.get('LAUNCHDAEMONS')
+    if jobs:
+        shutil.copytree(jobs, ld)
+        write_job_cache(jobs)
+    elif not os.path.lexists(ld):
         os.symlink('/redwood/LaunchDaemons', ld)
     for name in sorted(os.listdir(CACHE)):
         if name.endswith(('.symbols', '.atlas')):

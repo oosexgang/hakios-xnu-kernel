@@ -1084,6 +1084,7 @@ usage(void)
 	    "usage: pacstrip cache OUTDIR FILE...   rewrite a copy of a dyld shared cache\n"
 	    "       pacstrip macho IN OUT           rewrite a copy of an arm64e Mach-O\n"
 	    "       pacstrip census FILE...         count only (cache files or one Mach-O)\n"
+	    "       pacstrip resign FILE...         page hashes made again, in place (cache files)\n"
 	    "       pacstrip word HEX...            classify/rewrite instruction words\n");
 	return 2;
 }
@@ -1106,6 +1107,23 @@ main(int argc, char **argv)
 		if (memcmp(hdr, "dyld_v1", 7) == 0)
 			return do_cache(1, NULL, argc - 2, argv + 2);
 		return do_macho(1, argv[2], NULL);
+	}
+	/* after a later edit of a rewritten cache file (renoir/tools/fips26.py): its signature again */
+	if (argc >= 3 && strcmp(argv[1], "resign") == 0) {
+		for (int a = 2; a < argc; a++) {
+			uint64_t size;
+			uint8_t *m = map_file(argv[a], 1, &size);
+
+			if (!m || size <= 0x38 || memcmp(m, "dyld_v1", 7) != 0) {
+				fprintf(stderr, "%s: not a dyld shared cache file\n", argv[a]);
+				return 1;
+			}
+			resign(m, size, rd64(m + 0x28), rd64(m + 0x30));
+			unmap_file(m, size);
+		}
+		printf("code signature: %llu CodeDirectories, %llu page hashes made again\n",
+		    (unsigned long long)resigned_dirs, (unsigned long long)resigned_pages);
+		return 0;
 	}
 	if (argc >= 3 && strcmp(argv[1], "word") == 0) {
 		for (int a = 2; a < argc; a++) {
