@@ -435,6 +435,13 @@ int hakios_metal_cb_blit(hakios_metal_cb *cb, hakios_metal_texture *from, unsign
  * a TO of FROM's sides swapped, 2 a half turn, 4 and 5 the flips): one pixel format, copied pixel for pixel. A
  * framebuffer CoreAnimation renders landscape over the portrait display surface goes into it so. -1 with the reason. */
 int hakios_metal_cb_blit_rotated(hakios_metal_cb *cb, hakios_metal_texture *from, hakios_metal_texture *to, unsigned rotation);
+/* What a refused draw, dispatch, copy or clear does to CB (CommandBuffer::setSkipRefused): 0, the default, ends CB in
+ * error with the reason; 1 leaves that piece of work out and runs the rest, as Apple's driver runs a frame whatever is
+ * wrong in it. hakios_metal_cb_refuse is the caller's own refusal of a piece of work, by the same rule; it returns -1,
+ * and hakios_metal_cb_skipped how many were left out and the last reason. */
+void hakios_metal_cb_skip_refused(hakios_metal_cb *cb, int on);
+int hakios_metal_cb_refuse(hakios_metal_cb *cb, const char *why);
+unsigned hakios_metal_cb_skipped(hakios_metal_cb *cb, const char **last);
 /* -generateMipmapsForTexture: */
 int hakios_metal_cb_generate_mipmaps(hakios_metal_cb *cb, hakios_metal_texture *texture);
 /* KERNEL over GROUPS threadgroups of THREADS threads each (MTLComputeCommandEncoder's dispatchThreadgroups:

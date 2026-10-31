@@ -639,7 +639,7 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
                                                                    table.contents(), &why, options)
                                          : compute::encode(added, k, groups, loc, *b, immediates, program, table.gpuAddress(), table.contents(), &why, options);
     if (!encoded) {
-        return fail(why);
+        return refuseWork(why);
     }
     const std::vector<uint32_t>& w = added.words();
     closePass();   // a dispatch reads what the draws before it wrote: their pass's tail first

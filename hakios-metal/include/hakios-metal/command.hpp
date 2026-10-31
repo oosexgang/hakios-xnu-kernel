@@ -111,11 +111,25 @@ public:
     // thread in any order, and are appended in the order they were made. OTHER is left empty and is not committed; an
     // error it ended in is this one's. False after commit (of either).
     bool append(CommandBuffer& other);
+    // What becomes of a draw, dispatch, copy or clear the encoder refuses (a binding it cannot serve, a shape it does not
+    // take): by default the command buffer ends in error with the reason, as every test here expects; with skipRefused
+    // that one piece of work is left out, counted and its reason kept, and the rest of the buffer still runs. Apple's
+    // driver validates nothing and runs a frame whatever is wrong in it; a game whose every frame has one dispatch this
+    // does not serve otherwise shows nothing at all (Resident Evil 4). Running out of memory, or work after commit,
+    // still fails the buffer either way.
+    void setSkipRefused(bool on) { skipRefused_ = on; }
+    uint32_t skipped() const { return skipped_; }
+    const std::string& lastSkipped() const { return lastSkipped_; }
+    // the encoder's refusal of one piece of work, by the rule above: false either way
+    bool refuseWork(const std::string& why);
 
 private:
     friend class CommandQueue;
     explicit CommandBuffer(CommandQueue& queue) : queue_(queue) {}
     bool fail(const std::string& why);
+    bool skipRefused_ = false;
+    uint32_t skipped_ = 0;
+    std::string lastSkipped_;
     // dispatch and dispatchIndirect: GROUPS, or (GROUPS null) the counts at OFFSET of ARGS
     bool dispatchAny(const Kernel& kernel, const uint32_t* groups, const Buffer* args, uint64_t offset, const uint32_t* local, const Bindings& bindings,
                      const uint32_t* immediates, const compute::Options& options);

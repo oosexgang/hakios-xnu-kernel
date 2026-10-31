@@ -2284,11 +2284,11 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             return fail(std::string("no memory for the pass's table: ") + why);
         }
         if (!render::encodeBegin(head, pass, passTable.gpuAddress(), passTable.contents(), &why, options)) {
-            return fail(why);
+            return refuseWork(why);
         }
     }
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
-        return fail(why);
+        return refuseWork(why);
     }
     if (!joins) {
         appendStream(stream_, head);
@@ -2361,7 +2361,7 @@ bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect
     }
     pm4::Stream added;
     if (!render::encodeBlit(added, src, srcLevel, s, dst, dstLevel, d, linear, table.gpuAddress(), table.contents(), &why, options)) {
-        return fail(why);
+        return refuseWork(why);
     }
     appendStream(stream_, added);
     use(*src.buffer(), false);
@@ -2459,7 +2459,7 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
     }
     pm4::Stream added;
     if (!render::encodeClear(added, pass, table.gpuAddress(), table.contents(), &why, options)) {
-        return fail(why);
+        return refuseWork(why);
     }
     appendStream(stream_, added);
     useAttachments(pass);

@@ -163,6 +163,15 @@ bool CommandBuffer::fail(const std::string& why) {
     return false;
 }
 
+bool CommandBuffer::refuseWork(const std::string& why) {
+    if (!skipRefused_) {
+        return fail(why);
+    }
+    skipped_++;
+    lastSkipped_ = why;
+    return false;
+}
+
 void CommandBuffer::addCompletedHandler(std::function<void(CommandBuffer&)> handler) {
     if (status_ <= kEnqueued) {
         handlers_.push_back(std::move(handler));

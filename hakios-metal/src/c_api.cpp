@@ -628,7 +628,7 @@ void hakios_metal_cb_free(hakios_metal_cb* cb) {
 int hakios_metal_cb_copy(hakios_metal_cb* cb, hakios_metal_buffer* from, uint64_t fromOffset, hakios_metal_buffer* to,
                          uint64_t toOffset, uint64_t length) {
     if (!cb->cb->copy(*from->buffer, fromOffset, *to->buffer, toOffset, length)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     // the buffers live until the GPU is done with them, whatever the caller frees meanwhile
@@ -639,7 +639,7 @@ int hakios_metal_cb_copy(hakios_metal_cb* cb, hakios_metal_buffer* from, uint64_
 
 int hakios_metal_cb_fill(hakios_metal_cb* cb, hakios_metal_buffer* b, uint64_t offset, uint64_t length, uint8_t value) {
     if (!cb->cb->fill(*b->buffer, offset, length, value)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     cb->cb->keep(b->buffer);
@@ -649,7 +649,7 @@ int hakios_metal_cb_fill(hakios_metal_cb* cb, hakios_metal_buffer* b, uint64_t o
 int hakios_metal_cb_blit(hakios_metal_cb* cb, hakios_metal_texture* from, unsigned fromLevel, unsigned sx, unsigned sy, unsigned sw, unsigned sh,
                          hakios_metal_texture* to, unsigned toLevel, unsigned dx, unsigned dy, unsigned dw, unsigned dh, int linear) {
     if (!cb->cb->blit(*from->texture, fromLevel, render::BlitRect{sx, sy, sw, sh}, *to->texture, toLevel, render::BlitRect{dx, dy, dw, dh}, linear != 0)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     cb->cb->keepAlive(from->texture);
@@ -662,7 +662,7 @@ int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from
     o.rotate2d = rotation;
     const Texture &f = *from->texture, &t = *to->texture;
     if (!cb->cb->blit(f, 0, render::BlitRect{0, 0, f.width(), f.height()}, t, 0, render::BlitRect{0, 0, t.width(), t.height()}, false, o)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     cb->cb->keepAlive(from->texture);
@@ -670,9 +670,21 @@ int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from
     return 0;
 }
 
+void hakios_metal_cb_skip_refused(hakios_metal_cb* cb, int on) { cb->cb->setSkipRefused(on != 0); }
+
+int hakios_metal_cb_refuse(hakios_metal_cb* cb, const char* why) {
+    cb->cb->refuseWork(why != nullptr ? why : "refused");
+    return -1;
+}
+
+unsigned hakios_metal_cb_skipped(hakios_metal_cb* cb, const char** last) {
+    if (last != nullptr) *last = cb->cb->lastSkipped().c_str();
+    return cb->cb->skipped();
+}
+
 int hakios_metal_cb_generate_mipmaps(hakios_metal_cb* cb, hakios_metal_texture* t) {
     if (!cb->cb->generateMipmaps(*t->texture)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     cb->cb->keepAlive(t->texture);
@@ -717,7 +729,7 @@ int dispatchWith(hakios_metal_cb* cb, hakios_metal_kernel* k, hakios_metal_buffe
     }
     for (auto& m : members) cb->cb->keepAlive(std::move(m));
     if (!dispatch(b)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     for (unsigned i = 0; i < count; i++) {
@@ -760,7 +772,7 @@ void hakios_metal_cb_set_threadgroup_length(hakios_metal_cb* cb, unsigned length
 
 int hakios_metal_cb_append(hakios_metal_cb* cb, hakios_metal_cb* other) {
     if (!cb->cb->append(*other->cb)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     return 0;
@@ -1076,7 +1088,7 @@ int drawCommon(hakios_metal_cb* cb, hakios_metal_program* p, const struct hakios
         }
     }
     if (!cb->cb->draw(p->program->program, rp, d, vsb, fsb)) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     // the bound buffers live until the GPU has read them, whatever the caller frees meanwhile
@@ -1148,7 +1160,7 @@ int hakios_metal_cb_draw_indexed(hakios_metal_cb* cb, hakios_metal_program* p, c
 
 int hakios_metal_cb_clear(hakios_metal_cb* cb, const struct hakios_metal_render_pass* pass) {
     if (!cb->cb->clear(passOf(pass))) {
-        failed(cb->cb->error());
+        failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
         return -1;
     }
     keepPassAlive(cb, pass);

@@ -329,6 +329,34 @@ TEST(a_constant_shorter_than_its_pushed_range_is_read_from_the_objects_pages) {
     }
 }
 
+// With skipRefused a dispatch the encoder refuses is left out and the rest of the buffer runs: the refused one counted
+// with its reason, the next one reaching the GPU, the buffer completed. The twin, the same two dispatches by default,
+// ends in error and nothing of it is submitted.
+TEST(a_refused_dispatch_is_left_out_when_the_buffer_skips_refusals) {
+    Rig r;
+    auto out = buffer(r, 4096, 0);
+    for (bool skip : {true, false}) {
+        auto cb = r.queue->commandBuffer();
+        cb->setSkipRefused(skip);
+        const uint32_t before = r.fake->stats().dispatches;
+        CHECK(!cb->dispatch(kernels::fill_id, kGroups16, nullptr, std::vector<Binding>{}));
+        const bool second = cb->dispatch(kernels::fill_id, kGroups16, nullptr, {Binding{out.get(), 0}});
+        cb->commit();
+        cb->waitUntilCompleted();
+        if (skip) {
+            CHECK(second);
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+            CHECK_EQ(cb->skipped(), 1u);
+            CHECK(cb->lastSkipped().find("no buffer bound at index 0") != std::string::npos);
+            CHECK_EQ(r.fake->stats().dispatches - before, 1u);
+        } else {
+            CHECK(cb->status() == CommandBuffer::kError);
+            CHECK_EQ(cb->skipped(), 0u);
+            CHECK_EQ(r.fake->stats().dispatches - before, 0u);
+        }
+    }
+}
+
 TEST(a_dispatch_that_does_not_fit_is_refused_before_anything_reaches_the_gpu) {
     Rig r;
     auto small = buffer(r, 2048, 0);
