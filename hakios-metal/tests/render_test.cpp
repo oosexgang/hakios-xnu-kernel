@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <vector>
 
 #include "hakios-metal/a6xx.hpp"
@@ -2813,6 +2814,61 @@ TEST(a_profiled_command_buffer_lists_its_passes) {
         CHECK(p[0].us > 0 && p[1].us > 0);
     }
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// (a measurement, not a rule: how many words a draw adds to its pass, and of which packets -- the per-draw cost on the
+// phone is the command processor reading these)
+// A second draw of the same state into the same pass writes only what changed: far fewer words than the first, which
+// carries the pass's whole state; with dedupRegs off it writes as many. Both buffers complete on the fake, whose checks
+// hold each draw's state together, so the registers left out were the ones already holding their values.
+TEST(a_draw_in_an_open_pass_leaves_out_registers_already_holding_their_values) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    size_t grew[2][2] = {};
+    for (int dedup = 0; dedup < 2; dedup++) {
+        render::Options o;
+        o.dedupRegs = dedup != 0;
+        auto cb = r.queue->commandBuffer();
+        const size_t at0 = cb->streamWords();
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}, o));
+        const size_t at1 = cb->streamWords();
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}, o));
+        const size_t at2 = cb->streamWords();
+        grew[dedup][0] = at1 - at0;
+        grew[dedup][1] = at2 - at1;
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+    }
+    std::printf("       a draw then the same draw: %zu and %zu words written in full, %zu and %zu deduplicated\n", grew[0][0], grew[0][1],
+                grew[1][0], grew[1][1]);
+    CHECK(grew[1][1] * 3 < grew[0][1]);   // the second draw, deduplicated: under a third of its full size
+    CHECK(grew[0][1] + 64 > grew[0][0] - 64 || grew[0][1] > 300);   // (in full, the second draw is a draw's full size)
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+TEST(the_words_of_a_draw_counted) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    Encoded e(r, flatProgram(), a, wholeDraw());
+    CHECK(e.ok);
+    std::map<std::string, uint32_t> words;
+    const auto& w = e.stream.words();
+    uint32_t regs = 0, total = 0;
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kRegisters) regs += 1 + h.count;
+        else words["opcode " + std::to_string(h.opcode)] += 1 + h.count;
+        total += 1 + h.count;
+        i += 1 + h.count;
+    }
+    std::printf("       a draw with its pass start and end: %u words, %u of them register writes", total, regs);
+    for (const auto& [k, v] : words) std::printf("; %s %u", k.c_str(), v);
+    std::printf("\n");
 }
 
 TEST(a_draw_refuses_a_blend_it_cannot_serve) {

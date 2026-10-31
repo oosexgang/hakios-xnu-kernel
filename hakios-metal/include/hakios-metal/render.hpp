@@ -446,6 +446,8 @@ struct Options {
     bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail
     bool tailRbDone = false;     // RB_DONE_TS + wait: in neither witness's render end; here for the bisect
     bool tailTimestampBit = false;   // must stay clear (28 October); here for the fake's test only
+    bool dedupRegs = true;       // in an open pass, a register write that would put the value the register already holds is
+                                 // left out (CommandBuffer::draw); off: every draw writes all of its state, as before
     uint32_t rotate2d = 0;       // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
                                  // a quarter turn takes a destination rectangle of the source's sides swapped
 };

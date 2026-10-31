@@ -2241,6 +2241,50 @@ void appendStream(pm4::Stream& to, const pm4::Stream& from) {
     }
 }
 
+// appendStream for the draws of one pass, leaving out every register write that puts the value the register already
+// holds from earlier in the pass (REGS, as written so far). A draw re-emits all of its state -- 519 of a lone draw's 588
+// words are register writes -- and CoreAnimation's draws in one pass differ in a handful, while the command processor's
+// time for a draw (12.4 us measured, probe "pass cost") goes on reading them. Written whatever it holds: a register
+// that is a command (HLSQ_INVALIDATE_CMD). Forgotten: everything, at a packet that may change registers behind the
+// stream's back -- anything but the waits, loads, draws, events and markers a draw is made of.
+void appendDeduped(pm4::Stream& to, const pm4::Stream& from, std::unordered_map<uint32_t, uint32_t>& regs) {
+    using namespace a6xx;
+    const std::vector<uint32_t>& w = from.words();
+    to.packet(pm4::kNop, nullptr, 0);
+    for (size_t i = 0; i < w.size();) {
+        pm4::Header h = pm4::decode(w[i]);
+        if (h.kind == pm4::Header::kRegisters) {
+            uint32_t runStart = 0, runLen = 0;
+            for (uint32_t k = 0; k < h.count; k++) {
+                const uint32_t reg = h.reg + k, value = w[i + 1 + k];
+                auto it = regs.find(reg);
+                const bool same = reg != REG_A6XX_HLSQ_INVALIDATE_CMD && it != regs.end() && it->second == value;
+                regs[reg] = value;
+                if (!same) {
+                    if (runLen == 0) runStart = k;
+                    runLen++;
+                } else if (runLen != 0) {
+                    to.registers(h.reg + runStart, &w[i + 1 + runStart], runLen);
+                    runLen = 0;
+                }
+            }
+            if (runLen != 0) to.registers(h.reg + runStart, &w[i + 1 + runStart], runLen);
+        } else {
+            switch (h.opcode) {
+            case pm4::kNop: case CP_WAIT_MEM_GTE: case CP_SKIP_IB2_ENABLE_GLOBAL: case CP_WAIT_FOR_IDLE: case CP_LOAD_STATE6_GEOM:
+            case CP_LOAD_STATE6_FRAG: case CP_LOAD_STATE6: case CP_DRAW_INDX_OFFSET: case CP_DRAW_INDIRECT_MULTI: case CP_WAIT_REG_MEM:
+            case CP_EVENT_WRITE: case CP_SET_MODE: case CP_SET_VISIBILITY_OVERRIDE: case CP_SET_MARKER: case CP_REG_TO_MEM:
+                break;
+            default:
+                regs.clear();   // (CP_SET_DRAW_STATE and the like: what the registers hold is no longer known here)
+                break;
+            }
+            to.packet(h.opcode, h.count ? &w[i + 1] : nullptr, h.count);
+        }
+        i += 1 + h.count;
+    }
+}
+
 bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const Draw& d, const Bindings& vsBindings, const Bindings& fsBindings,
                          const render::Options& options) {
     if (status_ > kEnqueued) {
@@ -2339,12 +2383,20 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const Texture* first = pass.color0 != nullptr ? pass.color0 : pass.depth;
             stampStart(kPassDraw, first ? first->width() : 0, first ? first->height() : 0);
         }
-        appendStream(stream_, head);
-        open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress()});
+        open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress(), {}});
+        if (options.dedupRegs) {
+            appendDeduped(stream_, head, open_->regs);
+        } else {
+            appendStream(stream_, head);
+        }
         useAttachments(pass);
         counts_.passes++;
     }
-    appendStream(stream_, body);
+    if (options.dedupRegs && open_->options.dedupRegs) {
+        appendDeduped(stream_, body, open_->regs);
+    } else {
+        appendStream(stream_, body);
+    }
     counts_.draws++;
     if (profile_ && !profiled_.empty()) profiled_.back().draws++;
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing

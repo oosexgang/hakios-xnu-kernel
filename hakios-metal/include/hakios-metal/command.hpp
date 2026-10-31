@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "hakios-metal/compute.hpp"
@@ -135,6 +136,8 @@ public:
     struct PassTime { PassKind kind; uint32_t width, height, draws; double us; };
     static constexpr uint32_t kMaxProfiled = 64;
     void setProfile(bool on) { profile_ = on; }
+    // the words recorded so far (what the command processor will read)
+    size_t streamWords() const { return stream_.words().size(); }
     std::vector<PassTime> passTimes() const;
 
 private:
@@ -163,6 +166,7 @@ private:
         RenderPass pass;
         render::Options options;
         uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
+        std::unordered_map<uint32_t, uint32_t> regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
     };
     void closePass();
     void useAttachments(const RenderPass& pass);
