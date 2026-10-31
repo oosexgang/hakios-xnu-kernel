@@ -1137,10 +1137,7 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
         refuse(why, stageName(*fs) + " runs per sample: no multisampling is served");
         return nullptr;
     }
-    if (F.dualSrcBlend) {
-        refuse(why, stageName(*fs) + " writes a dual-source blend output: blending is off in the first draw");
-        return nullptr;
-    }
+    // (a dual-source stage is served: the draw takes its second colour as the blend's second source, render.cpp)
     if (F.readsPrimid) {
         refuse(why, stageName(*fs) + " reads the primitive id: not served");
         return nullptr;

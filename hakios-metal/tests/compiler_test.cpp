@@ -942,9 +942,8 @@ TEST(compiler_link_refuses_what_the_first_draw_does_not_serve) {
     CHECK(link(vs, m) == nullptr);
     expectRefusal(why, "the fragment stage tri_flat_fs runs per sample: no multisampling is served");
     m = copyOf(fs);
-    m->stage.dualSrcBlend = 1;
-    CHECK(link(vs, m) == nullptr);
-    expectRefusal(why, "the fragment stage tri_flat_fs writes a dual-source blend output: blending is off in the first draw");
+    m->stage.dualSrcBlend = 1;   // links: the draw takes the second colour as the blend's second source
+    CHECK(link(vs, m) != nullptr);
     m = copyOf(fs);
     m->stage.readsPrimid = 1;
     CHECK(link(vs, m) == nullptr);
@@ -1158,6 +1157,25 @@ TEST(a_fragment_stage_writing_depth_compiles_and_links) {
         return;
     }
     CHECK(fs->stage.depthRegid != a6xx::kRegidNone);
+    CHECK(linkProgram(vs, fs, PixelFormat::kRGBA8Unorm, &why) != nullptr);
+}
+
+// a second source colour, [[color(0), index(1)]] (Resident Evil 4's dual-source blends): ir3 takes it as DATA1 and
+// marks the stage dual-source, the second colour has a register, and the stage links
+TEST(a_dual_source_fragment_stage_compiles_and_links) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> f = bitcodeOf("dual_fs"), v = bitcodeOf("tri_color_vs");
+    CHECK(!f.empty() && !v.empty());
+    if (f.empty() || v.empty()) return;
+    std::string why;
+    std::shared_ptr<CompiledStage> fs = compileStage(f.data(), f.size(), &why), vs = compileStage(v.data(), v.size(), &why);
+    CHECK(fs != nullptr && vs != nullptr);
+    if (fs == nullptr || vs == nullptr) {
+        std::printf("       %s\n", why.c_str());
+        return;
+    }
+    CHECK(fs->stage.dualSrcBlend != 0);
+    CHECK(fs->stage.colorRegid[0] != a6xx::kRegidNone && fs->stage.colorRegid[1] != a6xx::kRegidNone);
     CHECK(linkProgram(vs, fs, PixelFormat::kRGBA8Unorm, &why) != nullptr);
 }
 

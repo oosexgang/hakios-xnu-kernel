@@ -462,10 +462,10 @@ TEST(c_api_program_and_draw) {
         hakios_metal_cb_wait(cb);
         CHECK(hakios_metal_cb_status(cb) == HAKIOS_METAL_COMPLETED);
         hakios_metal_cb_free(cb);
-        hakios_metal_program_set_blend(p, 1, 0, 0, 15, 0, 1, 0, 0xf);   // Source1Color: refused at the draw
+        hakios_metal_program_set_blend(p, 1, 0, 0, 15, 0, 1, 0, 0xf);   // Source1Color of a stage with no second colour: refused at the draw
         cb = hakios_metal_cb_new(q);
         CHECK_EQ(hakios_metal_cb_draw(cb, p, &blended, nullptr, nullptr, 3, 0, 3, 1, nullptr, nullptr, 0, nullptr, nullptr, 0), -1);
-        CHECK(strcmp(hakios_metal_error(), "the source RGB blend factor 15 reads a second source colour: dual-source blending is not served") == 0);
+        CHECK(strstr(hakios_metal_error(), "blend factor 15 reads a second source colour, and") != nullptr);
         hakios_metal_cb_free(cb);
         hakios_metal_program_set_blend(p, 0, 0, 0, 1, 0, 1, 0, 0xf);    // back to Metal's default for what follows
         cb = hakios_metal_cb_new(q);

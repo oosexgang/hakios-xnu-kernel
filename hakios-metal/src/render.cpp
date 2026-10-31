@@ -800,6 +800,8 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
         FACTOR_ZERO, FACTOR_ONE, FACTOR_SRC_COLOR, FACTOR_ONE_MINUS_SRC_COLOR, FACTOR_SRC_ALPHA, FACTOR_ONE_MINUS_SRC_ALPHA,
         FACTOR_DST_COLOR, FACTOR_ONE_MINUS_DST_COLOR, FACTOR_DST_ALPHA, FACTOR_ONE_MINUS_DST_ALPHA, FACTOR_SRC_ALPHA_SATURATE,
         FACTOR_CONSTANT_COLOR, FACTOR_ONE_MINUS_CONSTANT_COLOR, FACTOR_CONSTANT_ALPHA, FACTOR_ONE_MINUS_CONSTANT_ALPHA,
+        // 15 to 18, the second source colour of dual-source blending ([[color(0), index(1)]]), as tu6_blend_factor maps them
+        FACTOR_SRC1_COLOR, FACTOR_ONE_MINUS_SRC1_COLOR, FACTOR_SRC1_ALPHA, FACTOR_ONE_MINUS_SRC1_ALPHA,
     };
     if (b.writeMask > 0xf) {
         return refuse(why, "a colour write mask of " + n(b.writeMask) + ": MTLColorWriteMask has the four bits Red 8, Green 4, Blue 2, Alpha 1");
@@ -820,9 +822,6 @@ bool blendWords(const ColorBlend& b, const FormatInfo& f, BlendWords* out, std::
     const uint32_t factors[4] = {b.srcRgb, b.dstRgb, b.srcAlpha, b.dstAlpha};
     static const char* const kWhich[4] = {"source RGB", "destination RGB", "source alpha", "destination alpha"};
     for (int i = 0; i < 4; i++) {
-        if (factors[i] >= 15 && factors[i] <= 18) {
-            return refuse(why, std::string("the ") + kWhich[i] + " blend factor " + n(factors[i]) + " reads a second source colour: dual-source blending is not served");
-        }
         if (factors[i] > 18) {
             return refuse(why, std::string("the ") + kWhich[i] + " blend factor " + n(factors[i]) + ": MTLBlendFactor runs 0 to 18");
         }
@@ -1200,7 +1199,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // and discards the output (CoreAnimation's fixed_frag_lph_cpf writes three into passes of one). The stage is drawn
     // as if it did not write it -- no register for the slot, RB_MRT_CONTROL 0 -- which is the slot nothing writes.
     Stage fsDrawn = program.fs;
+    // (a dual-source stage's second colour is the blend's second source, not attachment 1's: it is kept)
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if (i == 1 && program.fs.dualSrcBlend) continue;
         if (fsDrawn.colorRegid[i] != kRegidNone && attachmentOf(pass, i).texture == nullptr) fsDrawn.colorRegid[i] = kRegidNone;
     }
     const Stage& fs = fsDrawn;
@@ -1265,9 +1266,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (fs.perSamp) {
         return refuse(why, std::string(stageName(fs)) + " runs per sample: no multisampling is served");
     }
-    if (fs.dualSrcBlend) {
-        return refuse(why, std::string(stageName(fs)) + " writes a dual-source blend output: blending is off in the first draw");
-    }
+    // (a dual-source stage, [[color(0), index(1)]]: ir3 gives its second colour FRAG_RESULT_DATA1, which is not an
+    // attachment but the blend's second source -- one target, two output registers, DUAL_COLOR_IN_ENABLE in the four
+    // places tu6_emit_fs_outputs and tu6_emit_blend set it)
     if (fs.readsPrimid) {
         return refuse(why, std::string(stageName(fs)) + " reads the primitive id: not served");
     }
@@ -1292,7 +1293,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // builds its orb's pipelines at 1 sample and draws them into a 4-sample target. Nothing a stage was compiled into
     // depends on the count (the MSAA state is the attachments', below), so the attachments' is the one taken.
     const uint32_t samples = firstAttachment(pass)->samples();
-    const uint32_t numRt = std::max<uint32_t>(fs.numColorOutputs, 1);
+    const bool dual = fs.dualSrcBlend != 0;
+    const uint32_t numRt = dual ? 1u : std::max<uint32_t>(fs.numColorOutputs, 1);   // the attachments drawn into
+    const uint32_t numOut = dual ? 2u : numRt;                                      // the registers the stage hands the RB
     for (uint32_t i = 0; i < numRt; i++) {
         const Texture* t = attachmentOf(pass, i).texture;
         if (fs.colorRegid[i] == kRegidNone) continue;   // (a slot nothing is written to: no attachment needed)
@@ -1323,7 +1326,19 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     uint32_t blendMask = 0;
     for (uint32_t i = 0; i < numRt; i++) {
         if (fs.colorRegid[i] == kRegidNone) continue;   // RB_MRT_CONTROL 0: no components written, no blend
-        if (!blendWords(i == 0 ? program.blend : program.moreBlend[i - 1], attachmentOf(pass, i).texture->info(), &blends[i], why)) {
+        const ColorBlend& cb = i == 0 ? program.blend : program.moreBlend[i - 1];
+        if (cb.enabled && !dual) {
+            // a second source colour asked of a stage that writes none: nothing for the factor to read
+            const uint32_t factors[4] = {cb.srcRgb, cb.dstRgb, cb.srcAlpha, cb.dstAlpha};
+            static const char* const kWhich[4] = {"source RGB", "destination RGB", "source alpha", "destination alpha"};
+            for (int f = 0; f < 4; f++) {
+                if (factors[f] >= 15 && factors[f] <= 18) {
+                    return refuse(why, std::string("the ") + kWhich[f] + " blend factor " + n(factors[f]) + " reads a second source colour, and " +
+                                           stageName(fs) + " writes none ([[color(0), index(1)]])");
+                }
+            }
+        }
+        if (!blendWords(cb, attachmentOf(pass, i).texture->info(), &blends[i], why)) {
             return i == 0 ? false : refuse(why, "colour attachment " + n(i) + ": " + *why);
         }
         if (blends[i].enabled) blendMask |= 1u << i;
@@ -1840,11 +1855,12 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // (a depth written by the stage, into a pass with a depth attachment: its register, and FRAG_WRITES_Z, as
         // tu6_emit_fs_outputs sets them for a stage writing FRAG_RESULT_DEPTH)
         const bool fragDepth = fs.depthRegid != kRegidNone && pass.depth != nullptr;
-        std::vector<uint32_t> out = {components, spFsOutputCntl0(fragDepth ? fs.depthRegid : kRegidNone, kRegidNone, kRegidNone),
+        std::vector<uint32_t> out = {components, spFsOutputCntl0(fragDepth ? fs.depthRegid : kRegidNone, kRegidNone, kRegidNone, dual),
                                      A6XX_SP_FS_OUTPUT_CNTL1_MRT(numRt)};
-        for (uint32_t i = 0; i < numRt; i++) out.push_back(spFsOutputReg(fs.colorRegid[i], fs.colorHalf[i] != 0));
+        for (uint32_t i = 0; i < numOut; i++) out.push_back(spFsOutputReg(fs.colorRegid[i], fs.colorHalf[i] != 0));
         stream.registers(REG_A6XX_SP_FS_RENDER_COMPONENTS, out.data(), uint32_t(out.size()));
-        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {fragDepth ? A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z : 0u, A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), components});
+        regs(stream, REG_A6XX_RB_FS_OUTPUT_CNTL0, {(fragDepth ? A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z : 0u) | (dual ? A6XX_RB_FS_OUTPUT_CNTL0_DUAL_COLOR_IN_ENABLE : 0u),
+                                                   A6XX_RB_FS_OUTPUT_CNTL1_MRT(numRt), components});
     }
     // 15. the rasterizer (tu6_emit_rast, tu_pipeline.cc:3120-3218; fd6_rasterizer.cc:22-140): GRAS_CL_CNTL with Metal's
     // [0, 1] depth (ZERO_GB_SCALE_Z) and VP_CLIP_CODE_IGNORE (0xc0, turnip's for Vulkan); GRAS_SU_CNTL the draw's cull
@@ -1898,8 +1914,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // registers 0 (EARLY_Z depth plane as r3d; pipelines with depth off write LATE_Z), Z bounds 0..1
     if (o.blendZsa) {
         // (ENABLE_BLEND is a mask of the targets that blend, one bit each; RB_MRT_CONTROL / BLEND_CONTROL per target)
-        reg(stream, REG_A6XX_SP_BLEND_CNTL, A6XX_SP_BLEND_CNTL_ENABLE_BLEND(blendMask) | A6XX_SP_BLEND_CNTL_UNK8);
-        reg(stream, REG_A6XX_RB_BLEND_CNTL, rbBlendCntl(true) | A6XX_RB_BLEND_CNTL_ENABLE_BLEND(blendMask));
+        reg(stream, REG_A6XX_SP_BLEND_CNTL,
+            A6XX_SP_BLEND_CNTL_ENABLE_BLEND(blendMask) | A6XX_SP_BLEND_CNTL_UNK8 | (dual ? A6XX_SP_BLEND_CNTL_DUAL_COLOR_IN_ENABLE : 0u));
+        reg(stream, REG_A6XX_RB_BLEND_CNTL,
+            rbBlendCntl(true) | A6XX_RB_BLEND_CNTL_ENABLE_BLEND(blendMask) | (dual ? A6XX_RB_BLEND_CNTL_DUAL_COLOR_IN_ENABLE : 0u));
         for (uint32_t i = 0; i < numRt; i++) {
             regs(stream, regRbMrt(REG_A6XX_RB_MRT_CONTROL, i), {blends[i].mrtControl, blends[i].mrtBlendControl});
         }

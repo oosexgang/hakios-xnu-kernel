@@ -512,8 +512,20 @@ TEST(render_refuses_what_the_first_draw_does_not_serve_by_name) {
             CHECK(fb.ok);
         }
         p = handProgram();
-        p.fs.dualSrcBlend = 1;
-        refused(r, p, pass, d, "hand_fs writes a dual-source blend output: blending is off in the first draw");
+        p.fs.dualSrcBlend = 1;   // served: its second colour (DATA1, register r1.x here) is the blend's second source
+        p.fs.numColorOutputs = 2;
+        p.fs.colorRegid[1] = regid(1, 0);
+        {
+            using namespace a6xx;
+            Encoded e(r, p, pass, d);
+            CHECK(e.ok);
+            CHECK(e.reg(REG_A6XX_SP_FS_OUTPUT_CNTL0) & A6XX_SP_FS_OUTPUT_CNTL0_DUAL_COLOR_IN_ENABLE);
+            CHECK(e.reg(REG_A6XX_RB_FS_OUTPUT_CNTL0) & A6XX_RB_FS_OUTPUT_CNTL0_DUAL_COLOR_IN_ENABLE);
+            CHECK(e.reg(REG_A6XX_SP_BLEND_CNTL) & A6XX_SP_BLEND_CNTL_DUAL_COLOR_IN_ENABLE);
+            CHECK(e.reg(REG_A6XX_RB_BLEND_CNTL) & A6XX_RB_BLEND_CNTL_DUAL_COLOR_IN_ENABLE);
+            CHECK_EQ(e.reg(REG_A6XX_SP_FS_OUTPUT_CNTL1), A6XX_SP_FS_OUTPUT_CNTL1_MRT(1));      // one attachment
+            CHECK_EQ(e.reg(regSpFsOutputReg(1)) & 0xff, uint32_t(regid(1, 0)));      // and the second source's register
+        }
         p = handProgram();
         p.fs.readsPrimid = 1;
         refused(r, p, pass, d, "hand_fs reads the primitive id: not served");
@@ -2767,8 +2779,8 @@ TEST(a_draw_refuses_a_blend_it_cannot_serve) {
         p.blend = ColorBlend{true, rgbOp, 0, srcRgb, dstRgb, 1, 0, writeMask};
         return p;
     };
-    refused(r, blendOf(0, 15, 0), pass, wholeDraw(), "the source RGB blend factor 15 reads a second source colour: dual-source blending is not served");
-    refused(r, blendOf(0, 1, 18), pass, wholeDraw(), "the destination RGB blend factor 18 reads a second source colour: dual-source blending is not served");
+    refused(r, blendOf(0, 15, 0), pass, wholeDraw(), "the source RGB blend factor 15 reads a second source colour, and tri_flat_fs_air writes none ([[color(0), index(1)]])");
+    refused(r, blendOf(0, 1, 18), pass, wholeDraw(), "the destination RGB blend factor 18 reads a second source colour, and tri_flat_fs_air writes none ([[color(0), index(1)]])");
     refused(r, blendOf(0, 19, 0), pass, wholeDraw(), "the source RGB blend factor 19: MTLBlendFactor runs 0 to 18");
     refused(r, blendOf(5, 1, 0), pass, wholeDraw(), "blend operation 5: MTLBlendOperation runs Add 0 to Max 4");
     Program mask = flatProgram();
