@@ -8,23 +8,41 @@
 #      QEMU_ESP=1           no loader device: the payload is the file \EFI\hakios\payload.bin on the ESP, which the loader
 #                           reads itself (UEFI-native boot; what a boot menu or a USB stick does)
 #      QEMU_EFI, QEMU_VARS  the UEFI firmware for aarch64 guests (found by itself where Arch's edk2-aarch64
-#                           puts it, or Debian/Ubuntu's /usr/share/AAVMF/AAVMF_CODE.fd and AAVMF_VARS.fd)
+#                           puts it, Debian/Ubuntu's /usr/share/AAVMF/AAVMF_CODE.fd and AAVMF_VARS.fd, or
+#                           Homebrew's share/qemu/edk2-aarch64-code.fd on a Mac)
+#      QEMU_VARS_RESET=1    start from an empty variable store: vars.fd is this machine's NVRAM and it
+#                           persists, so one boot that reaches the EFI shell sends every later boot there
 cd "$(dirname "$0")"
 T=${1:-20}; shift
-# the UEFI firmware: where Arch's edk2-aarch64 puts it, or where Debian and Ubuntu's AAVMF does
+# the UEFI firmware: where Arch's edk2-aarch64 puts it, where Debian and Ubuntu's AAVMF does, or
+# where Homebrew's qemu puts it on a Mac (only the code half -- see vars.fd below)
 EFI=${QEMU_EFI-}; VARS_SRC=${QEMU_VARS-}
 if [ -z "$EFI" ]; then
-	for f in /usr/share/edk2/aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd; do [ -f "$f" ] && { EFI=$f; break; }; done
+	for f in /usr/share/edk2/aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd \
+	         /opt/homebrew/share/qemu/edk2-aarch64-code.fd /usr/local/share/qemu/edk2-aarch64-code.fd; do
+		[ -f "$f" ] && { EFI=$f; break; }
+	done
 fi
 if [ -z "$VARS_SRC" ]; then
 	for f in /usr/share/edk2/aarch64/QEMU_VARS.fd /usr/share/AAVMF/AAVMF_VARS.fd; do [ -f "$f" ] && { VARS_SRC=$f; break; }; done
 fi
-[ -f "$EFI" ] || { echo "run.sh: no UEFI firmware found (looked for edk2-aarch64's and AAVMF's); set QEMU_EFI and QEMU_VARS"; exit 1; }
-cp "$VARS_SRC" vars.fd 2>/dev/null
+[ -f "$EFI" ] || { echo "run.sh: no UEFI firmware found (looked for edk2-aarch64's, AAVMF's and Homebrew's); set QEMU_EFI and QEMU_VARS"; exit 1; }
+# vars.fd is this machine's NVRAM: QEMU writes the UEFI boot order back into it and it survives the
+# run. Homebrew ships only the code half of the firmware, so on a Mac there is nothing to copy -- and
+# a silent "cp" of nothing leaves whatever the last boot wrote. That matters, because one boot that
+# ends in the EFI shell writes Boot0002 "EFI Internal Shell" to the front of the boot order and every
+# later boot goes straight back there, loader untouched, with nothing to say why. An empty store (all
+# ones, as flash erases to) is what the firmware initialises on a first boot, so make one when there
+# is no source for it, or when asked.
+if [ -f "$VARS_SRC" ] && [ -z "${QEMU_VARS_RESET-}" ]; then
+	cp "$VARS_SRC" vars.fd
+elif [ ! -f vars.fd ] || [ -n "${QEMU_VARS_RESET-}" ]; then
+	python3 -c 'open("vars.fd","wb").write(b"\xff" * (64 << 20))'
+fi
 # the loader is the boot application of the little FAT volume QEMU makes of esp/:
 # the one built here, or else the one that comes with the repository
 L=../xnuloader/loader.efi; [ -f $L ] || L=../prebuilt/loader.efi
-mkdir -p esp/EFI/BOOT && cp -u $L esp/EFI/BOOT/BOOTAA64.EFI
+mkdir -p esp/EFI/BOOT && cp $L esp/EFI/BOOT/BOOTAA64.EFI
 # The payload (kernel, root image, command line) reaches the loader in one of two ways. By default QEMU's loader
 # device puts it in memory at 0xF0000000, as the boot shim does behind Project Silicium's image on the phone.
 # With QEMU_ESP=1 it is not put anywhere: it is the file \EFI\hakios\payload.bin of the ESP, and the loader reads it
