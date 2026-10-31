@@ -53,6 +53,7 @@ struct hakios_metal_cb {
     std::vector<std::optional<Sampler>> vsSamplers;
     uint32_t threadgroupLength = 0;   // hakios_metal_cb_set_threadgroup_length's, for the dispatches that follow
     std::shared_ptr<Buffer> indirect;  // hakios_metal_cb_set_indirect's, for the next draw alone
+    std::vector<CommandBuffer::DrawTime> drawTimes;   // hakios_metal_cb_draw_time's, read at its first call (I 0)
     uint64_t indirectOffset = 0;
 };
 struct hakios_metal_texture {
@@ -659,7 +660,7 @@ int hakios_metal_cb_blit(hakios_metal_cb* cb, hakios_metal_texture* from, unsign
 
 int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from, hakios_metal_texture* to, unsigned rotation) {
     render::Options o;
-    o.rotate2d = rotation;
+    o.rotate2d = uint8_t(rotation > 5 ? 6 : rotation);   // (a value past 5 still refused by encodeBlit, not wrapped into range)
     const Texture &f = *from->texture, &t = *to->texture;
     if (!cb->cb->blit(f, 0, render::BlitRect{0, 0, f.width(), f.height()}, t, 0, render::BlitRect{0, 0, t.width(), t.height()}, false, o)) {
         failed(cb->cb->error().empty() ? cb->cb->lastSkipped() : cb->cb->error());
@@ -692,6 +693,32 @@ void hakios_metal_cb_counts(hakios_metal_cb* cb, unsigned* passes, unsigned* dra
     if (dispatches) *dispatches = c.dispatches;
     if (copies) *copies = c.copies;
     if (clears) *clears = c.clears;
+}
+
+void hakios_metal_cb_set_gmem(hakios_metal_cb* cb, int on) { cb->cb->setGmem(on != 0); }
+
+void hakios_metal_cb_set_gmem_off(hakios_metal_cb* cb, unsigned bits) { cb->cb->setGmemOff(bits); }
+
+void hakios_metal_cb_set_profile_draws(hakios_metal_cb* cb, int on) { cb->cb->setProfileDraws(on != 0); }
+
+int hakios_metal_cb_draw_time(hakios_metal_cb* cb, unsigned i, const char** name, double* us) {
+    if (cb->drawTimes.empty() || i == 0) cb->drawTimes = cb->cb->drawTimes();
+    if (i >= cb->drawTimes.size()) return i == 0 ? 0 : -1;
+    if (name) *name = cb->drawTimes[i].name.c_str();
+    if (us) *us = cb->drawTimes[i].us;
+    return int(cb->drawTimes.size());
+}
+
+void hakios_metal_cb_gmem_counts(hakios_metal_cb* cb, unsigned* passes, unsigned* tiles) {
+    if (passes) *passes = cb->cb->counts().gmemPasses;
+    if (tiles) *tiles = cb->cb->counts().tiles;
+}
+
+const char* hakios_metal_cb_gmem_refusal(hakios_metal_cb* cb) { return cb->cb->gmemRefusal().c_str(); }
+
+int hakios_metal_cb_pass_tiles(hakios_metal_cb* cb, unsigned i) {
+    const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
+    return i < t.size() ? int(t[i].tiles) : -1;
 }
 
 int hakios_metal_cb_refuse(hakios_metal_cb* cb, const char* why) {

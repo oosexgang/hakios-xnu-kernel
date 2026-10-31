@@ -593,7 +593,7 @@ Attachment attachmentOf(const RenderPass& p, uint32_t i) {
     return Attachment{c.texture, c.level, c.load, c.store, c.clearColor, c.slice};
 }
 
-bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, StageTextures* out, std::string* why) {
+bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, StageTextures* out, std::string* why, const GmemPlan* gmem = nullptr) {
     const Kernel& k = fs.k;
     const std::string name = stageName(fs);
     out->numTex = k.numTextureSlots;
@@ -617,7 +617,21 @@ bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, S
                 return refuse(why, name + " reads [[color(" + n(kt.fbTarget - 1u) + ")]] through framebuffer fetch from slice " + n(a.slice) +
                                        ": a fetch from a layer, face or plane past the first is not served");
             }
-            const TexConst d = a.texture->levelDescriptor(a.level);
+            TexConst d = a.texture->levelDescriptor(a.level);
+            if (gmem != nullptr) {
+                // In a tile the attachment is its bin in GMEM, which the fetch reads where the draws before it in the
+                // tile left it (tu_emit_input_attachments' patch for GMEM): GMEM's layout, the bin's width a row, the bin
+                // at GMEM's base (0 on this chip: the kernel's GMEM_BASE, as Linux answers for the A650 family) plus the
+                // attachment's place; the TP takes the tile's corner off the coordinates (SP_TP_WINDOW_OFFSET). No
+                // swap: GMEM holds the components in the RB's order, and the store puts the swap back.
+                d.dword[0] &= ~(A6XX_TEX_CONST_0_TILE_MODE__MASK | A6XX_TEX_CONST_0_SWAP__MASK);
+                d.dword[0] |= A6XX_TEX_CONST_0_TILE_MODE(TILE6_2);
+                d.dword[2] = A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D) | A6XX_TEX_CONST_2_PITCH(gmem->binW * a.texture->info().bytesPerPixel);
+                d.dword[3] = 0;
+                d.dword[4] = gmem->base[kt.fbTarget - 1u];
+                d.dword[5] &= A6XX_TEX_CONST_5_DEPTH__MASK;
+                for (uint32_t w = 6; w < 16; w++) d.dword[w] = 0;
+            }
             memcpy(out->texWords[t], d.dword, sizeof d.dword);
             continue;
         }
@@ -1193,7 +1207,7 @@ namespace {
 // the pass's table, which the batch start pointed the border colours at and the tail writes, is the pass's)
 bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
                 const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
-                const Options& o, bool whole) {
+                const Options& o, bool whole, const GmemPlan* gmem = nullptr) {
     const Stage& vs = program.vs;
     // A [[color(n)]] the pass has no attachment n for is written nowhere: Metal leaves that pipeline slot's format Invalid
     // and discards the output (CoreAnimation's fixed_frag_lph_cpf writes three into passes of one). The stage is drawn
@@ -1344,7 +1358,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         if (blends[i].enabled) blendMask |= 1u << i;
     }
     StageTextures vsTex, fsTex;
-    if (!stageTextures(vs, vsBindings, pass, &vsTex, why) || !stageTextures(fs, fsBindings, pass, &fsTex, why)) {
+    if (!stageTextures(vs, vsBindings, pass, &vsTex, why, gmem) || !stageTextures(fs, fsBindings, pass, &fsTex, why, gmem)) {
         return false;
     }
     std::vector<uint32_t> vsUbos, fsUbos;
@@ -1510,6 +1524,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
                                                   named == attachmentOf(pass, 0).texture ? attachmentOf(pass, 0).slice : 0);
         if (mrts[i].srgb && fs.colorRegid[i] != kRegidNone) srgbMask |= 1u << i;
     }
+    // each attachment's bin in a pass drawn in tiles
+    for (uint32_t i = 0; gmem != nullptr && i < numRt; i++) {
+        if (attachmentOf(pass, i).texture != nullptr) mrts[i].baseGmem = gmem->base[i];
+    }
     const a6xx_threadsize fsThreads = fs.k.doubleThreadsize ? THREAD128 : THREAD64;
     const uint32_t* ij = fs.ijRegid;
 
@@ -1525,7 +1543,15 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // runs -- turnip's barrier for a sysmem feedback loop (FD_CCU_CLEAN_COLOR | FD_CACHE_INVALIDATE), the CCU flush
     // waited for as the tail waits for its own. Within ONE draw nothing orders a pixel's read after an earlier
     // primitive's write of it: Metal's raster order is not kept between overlapping primitives of one draw.
-    if (fs.fbRead && o.fbReadBarrier) {
+    // In a tile the draws before it wrote GMEM, not memory, so there is nothing to flush; but the texture unit keeps
+    // what it read of the bin before (a second fetch in a pass read the tile as it was loaded, probe 9u: 4096 of 4096),
+    // so they are waited for and its caches dropped.
+    if (fs.fbRead && o.fbReadBarrier && !o.fbReadOrdered && gmem != nullptr) {
+        stream.waitForIdle();
+        event(stream, CACHE_INVALIDATE);
+        stream.waitForIdle();
+    }
+    if (fs.fbRead && o.fbReadBarrier && !o.fbReadOrdered && gmem == nullptr) {
         stream.waitForIdle();
         eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableFbReadFlushAt, kFbReadFlushValue, false);
         waitForWord(stream, table + kTableFbReadFlushAt, kFbReadFlushValue);
@@ -1884,7 +1910,13 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         reg(stream, REG_A6XX_RB_UNKNOWN_8A10, 0);
         reg(stream, REG_A6XX_RB_UNKNOWN_8A20, 0);
         reg(stream, REG_A6XX_RB_UNKNOWN_8A30, 0);
-        reg(stream, REG_A6XX_GRAS_SC_CNTL, grasScCntlSysmem());
+        // a framebuffer fetch in raster order, as Metal's programmable blending reads: the rasterizer holds back a
+        // fragment over one not yet written and flushes between them (turnip's rasterization_order_attachment_access,
+        // tu_pipeline.cc:3351-3380 and 3955-3983: FLUSH_PER_OVERLAP_AND_OVERWRITE in sysmem, FLUSH_PER_OVERLAP in GMEM)
+        const bool ordered = fs.fbRead && o.fbReadOrdered;
+        reg(stream, REG_A6XX_GRAS_SC_CNTL,
+            ordered ? A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(gmem != nullptr ? FLUSH_PER_OVERLAP : FLUSH_PER_OVERLAP_AND_OVERWRITE)
+                    : grasScCntlSysmem());
         // primitive restart on for an indexed draw (Metal restarts at the all-ones index; tu6_draw_common's primitive_restart,
         // :5851-5862, which is off for a draw without indices, where the index register would be stale)
         reg(stream, REG_A6XX_PC_PRIMITIVE_CNTL_0, draw.indexBuffer != nullptr ? A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART : 0u);
@@ -2038,8 +2070,8 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 
 bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
                   const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
-                  const Options& o) {
-    return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, false);
+                  const Options& o, const GmemPlan* gmem) {
+    return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, false, gmem);
 }
 
 bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
@@ -2058,6 +2090,218 @@ bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, ui
 }
 
 void encodeEnd(pm4::Stream& stream, const RenderPass& pass, uint64_t table, const Options& o) { passTail(stream, table, o, pass.depth != nullptr); }
+
+namespace {
+uint32_t alignUp(uint32_t v, uint32_t a) { return (v + a - 1) / a * a; }
+uint32_t divUp(uint32_t v, uint32_t d) { return (v + d - 1) / d; }
+}  // namespace
+
+bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
+    if (pass.color0 == nullptr || pass.depth != nullptr || pass.stencil != nullptr) {
+        return refuse(why, "a pass without colour attachment 0, or with depth or stencil: sysmem");
+    }
+    const auto [W, H] = windowOf(pass);
+    if (W == 0 || H == 0 || W > 0x3fff || H > 0x3fff) return refuse(why, "an empty or oversized window");
+    uint32_t bytes = 0;   // a pixel's, every attachment's together
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        if (a.texture == nullptr) continue;
+        const Texture& t = *a.texture;
+        const FormatInfo& f = t.info();
+        const std::string which = "colour attachment " + n(i) + " (" + f.name + " " + n(t.width()) + "x" + n(t.height()) + ")";
+        // (the formats the phone's GMEM test draws; another size or class is left in sysmem until one does)
+        if (t.samples() != 1 || f.depth || f.twoPlane || f.blockW != 1 || f.blockH != 1 || f.pvrtcBpp != 0 ||
+            (f.bytesPerPixel != 4 && f.bytesPerPixel != 8) || f.element != kElemFloat) {
+            return refuse(why, which + ": GMEM takes single-sampled 4- and 8-byte float formats");
+        }
+        if (a.level >= t.levels()) return refuse(why, which + ": no such level");
+        const TextureLevel L = t.level(a.level);
+        if (L.width != W || L.height != H) return refuse(why, which + ": not the window's size, " + n(W) + "x" + n(H));
+        // The event blit moves whole 16 x 4 granules: past the right edge it reads and writes the row's padding, past
+        // the bottom the rows after the last (turnip: tu_attachment_store_unaligned, "x2/y2 can be unaligned if equal
+        // to the size of the image, since it will write into padding space"). What it stores there is what it
+        // loaded, but both must lie inside the texture's buffer.
+        const uint64_t base = t.levelAddress(a.level) + (a.slice != 0 ? uint64_t(a.slice) * t.sliceBytes() : 0);
+        const uint64_t start = base - t.buffer()->gpuAddress();
+        if (L.pitch < uint64_t(alignUp(W, kGmemAlignW)) * f.bytesPerPixel || L.pitch % 64 != 0 ||
+            start + uint64_t(alignUp(H, kGmemAlignH)) * L.pitch > t.buffer()->length()) {
+            return refuse(why, which + ": rows without room for the event blit's granules past the edge");
+        }
+        bytes += f.bytesPerPixel;
+    }
+    // GMEM below the colour cache in shares by bytes a pixel, each 16 KiB aligned (bins of whole 32 x 16 granules fit
+    // their share whatever the bins' shape)
+    GmemPlan p;
+    uint32_t before = 0;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        if (a.texture == nullptr) continue;
+        p.bpp[i] = a.texture->info().bytesPerPixel;
+        p.base[i] = uint32_t(uint64_t(kGmemCcuColorOffset) * before / bytes) & ~0x3fffu;
+        before += p.bpp[i];
+        p.room[i] = (uint32_t(uint64_t(kGmemCcuColorOffset) * before / bytes) & ~0x3fffu) - p.base[i];
+    }
+    const uint32_t whole[4] = {0, 0, W - 1, H - 1};
+    if (!gmemTiles(&p, whole)) return refuse(why, "a bin too wide for GMEM");
+    *plan = p;
+    return true;
+}
+
+bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
+    GmemPlan p = *plan;
+    p.x0 = area[0] & ~(kTileAlignW - 1);
+    p.y0 = area[1] & ~(kTileAlignH - 1);
+    const uint32_t w = area[2] + 1 - p.x0, h = area[3] + 1 - p.y0;
+    // The bin width is fixed once a plan has one: a framebuffer fetch's descriptor holds it as its pitch (encodeInPass,
+    // written before the area was known), and a tile laid out narrower read through it as sheared rows (the screen in
+    // stripes over two tile columns). Only the grid's corner, the columns, the rows and the bin height follow the area.
+    if (p.binW == 0) {
+        p.cols = divUp(alignUp(w, kTileAlignW), kTileMaxW);
+        p.binW = alignUp(divUp(w, p.cols), kTileAlignW);
+    } else {
+        p.cols = divUp(w, p.binW);
+    }
+    uint32_t fit = kTileMaxH;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if (p.bpp[i] != 0) fit = std::min(fit, p.room[i] / (p.binW * p.bpp[i]) / kTileAlignH * kTileAlignH);
+    }
+    if (fit < kTileAlignH) return false;
+    p.rows = divUp(h, fit);
+    p.binH = alignUp(divUp(h, p.rows), kTileAlignH);
+    for (uint32_t k = 0; k < 4; k++) p.area[k] = area[k];
+    *plan = p;
+    return true;
+}
+
+bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]) {
+    const auto [W, H] = windowOf(pass);
+    const Viewport& vp = draw.viewport;
+    if (!finite(vp.x) || !finite(vp.y) || !finite(vp.width) || !finite(vp.height) || !(vp.width > 0.0) || !(vp.height > 0.0) || vp.x >= double(W) ||
+        vp.y >= double(H) || vp.x + vp.width <= 0.0 || vp.y + vp.height <= 0.0) {
+        return false;
+    }
+    uint32_t x0 = uint32_t(std::max(0.0, std::floor(vp.x))), y0 = uint32_t(std::max(0.0, std::floor(vp.y)));
+    uint32_t x1 = std::min(W, uint32_t(std::ceil(vp.x + vp.width))) - 1, y1 = std::min(H, uint32_t(std::ceil(vp.y + vp.height))) - 1;
+    const Scissor& sc = draw.scissor;
+    if (sc.width != 0) {
+        if (sc.height == 0 || uint64_t(sc.x) + sc.width > W || uint64_t(sc.y) + sc.height > H) return false;
+        x0 = std::max(x0, sc.x);
+        y0 = std::max(y0, sc.y);
+        x1 = std::min(x1, sc.x + sc.width - 1);
+        y1 = std::min(y1, sc.y + sc.height - 1);
+    }
+    if (x0 > x1 || y0 > y1) return false;
+    area[0] = x0, area[1] = y0, area[2] = x1, area[3] = y1;
+    return true;
+}
+
+uint32_t drawnAttachments(const Program& program, const RenderPass& pass) {
+    uint32_t mask = 0;
+    for (uint32_t i = 0; i < kMaxColorOutputs && i < program.fs.numColorOutputs; i++) {
+        if (i == 1 && program.fs.dualSrcBlend) continue;   // (the blend's second source, not attachment 1)
+        const ColorBlend& cb = i == 0 ? program.blend : program.moreBlend[i - 1];
+        if (program.fs.colorRegid[i] != kRegidNone && attachmentOf(pass, i).texture != nullptr && (cb.writeMask & 0xf) != 0) mask |= 1u << i;
+    }
+    return mask;
+}
+
+bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings, const Bindings& fsBindings, std::string* why) {
+    if (program.vs.k.numSsbos != 0 || program.fs.k.numSsbos != 0) return refuse(why, "a stage with device buffers: replayed per tile it would write them per tile");
+    for (const Stage* s : {&program.vs, &program.fs}) {
+        for (uint32_t i = 0; i < kMaxTextureSlots && i < s->k.numTextureSlots; i++) {
+            if (s->k.textures[i].kind == kTexImage) return refuse(why, "a stage that writes a texture");
+        }
+    }
+    if (draw.visibilityMode != 0) return refuse(why, "a visibility result: the tiles would count each sample once a tile");
+    for (const Bindings* b : {&vsBindings, &fsBindings}) {
+        for (const Texture* t : b->textures) {
+            // (a draw sampling what the pass draws into reads memory, which in GMEM holds the target as it was before the pass)
+            for (uint32_t i = 0; t != nullptr && i < kMaxColorOutputs; i++) {
+                if (attachmentOf(pass, i).texture != nullptr && t->buffer() == attachmentOf(pass, i).texture->buffer()) {
+                    return refuse(why, "a texture over colour attachment " + n(i) + "'s memory");
+                }
+            }
+        }
+    }
+    return true;
+}
+
+void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
+                uint32_t load, uint32_t store, bool fetch) {
+    const auto [W, H] = windowOf(pass);
+    // the colour cache out of the tiles' way (it is not pipelined: after a WFI, as the sysmem value is written)
+    stream.waitForIdle();
+    reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlGmem());
+    // the event blit's state common to every load and store (event_blit_setup): over the render area in granules
+    // (tu6_emit_blit_scissor with align), single-sampled
+    const uint32_t bx1 = std::min(alignUp(plan.area[2] + 1, kGmemAlignW), alignUp(W, kGmemAlignW)) - 1;
+    const uint32_t by1 = std::min(alignUp(plan.area[3] + 1, kGmemAlignH), alignUp(H, kGmemAlignH)) - 1;
+    regs(stream, REG_A6XX_RB_BLIT_SCISSOR_TL, {regXY(plan.area[0] & ~(kGmemAlignW - 1), plan.area[1] & ~(kGmemAlignH - 1)), regXY(bx1, by1)});
+    reg(stream, REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL, 0);
+    reg(stream, REG_A6XX_RB_UNKNOWN_88D0, 0);
+    // one attachment's load or store (event_blit_run): its memory as the destination, its bin where RB_MRT's BASE_GMEM
+    // puts it (plan.base, which the draws were given)
+    auto blit = [&](uint32_t i, a6xx_blit_event_type type) {
+        const Attachment a = attachmentOf(pass, i);
+        const Texture& t = *a.texture;
+        const FormatInfo& f = t.info();
+        const uint64_t base = t.levelAddress(a.level) + (a.slice != 0 ? uint64_t(a.slice) * t.sliceBytes() : 0);
+        regs(stream, REG_A6XX_RB_BLIT_DST_INFO,
+             {rbBlitDstInfo(colorFmt(f), TILE6_LINEAR, f.swap), uint32_t(base), uint32_t(base >> 32), uint32_t(t.level(a.level).pitch) >> 6});
+        regs(stream, REG_A6XX_RB_BLIT_FLAG_DST, {0, 0, 0});
+        reg(stream, REG_A6XX_RB_BLIT_BASE_GMEM, plan.base[i]);
+        reg(stream, REG_A6XX_RB_BLIT_INFO, rbBlitInfo(type, false));
+        event(stream, BLIT);
+    };
+    const uint32_t bin = binControlGmem(o.binControlLrzFeedback, plan.binW, plan.binH);
+    for (uint32_t ty = 0; ty < plan.rows; ty++) {
+        for (uint32_t tx = 0; tx < plan.cols; tx++) {
+            const uint32_t x1 = plan.x0 + tx * plan.binW, y1 = plan.y0 + ty * plan.binH;
+            const uint32_t x2 = x1 + plan.binW - 1, y2 = y1 + plan.binH - 1;
+            // tu6_emit_tile_select without a binning pass: every draw visits every tile, the window scissor keeping
+            // what it writes inside this one; the window offset makes the tile's corner GMEM's origin. The window is
+            // the whole bin even past the target's edge, as turnip's is: the draws' own scissors stop at the edge, and
+            // the event blit's granules there are in the bin
+            command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RENDER_START) | A6XX_CP_SET_MARKER_0_USES_GMEM);
+            reg(stream, REG_A6XX_GRAS_BIN_CONTROL, bin);
+            reg(stream, REG_A6XX_RB_BIN_CONTROL, bin);
+            reg(stream, REG_A6XX_RB_BIN_CONTROL2, A6XX_RB_BIN_CONTROL2_BINW(plan.binW) | A6XX_RB_BIN_CONTROL2_BINH(plan.binH));
+            reg(stream, REG_A6XX_VFD_MODE_CNTL, A6XX_VFD_MODE_CNTL_RENDER_MODE(RENDERING_PASS));
+            regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(x1, y1), regXY(x2, y2)});
+            regs(stream, REG_A6XX_GRAS_2D_RESOLVE_CNTL_1, {regXY(x1, y1), regXY(x2, y2)});
+            reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(x1, y1));
+            reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(x1, y1));
+            reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(x1, y1));
+            reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(x1, y1));
+            command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
+            command1(stream, CP_SET_MODE, 0);
+            for (uint32_t i = 0; o.gmemLoad && i < kMaxColorOutputs; i++) {
+                if ((load >> i) & 1) blit(i, BLIT_EVENT_LOAD);
+            }
+            // A framebuffer fetch reads GMEM through the texture caches, which still hold what the last tile's fetches
+            // read at the same GMEM addresses (probe "GMEM: framebuffer fetch": 9221 pixels of 24 tiles from the tile
+            // before): dropped once a tile, the loads waited for first
+            if (fetch) {
+                stream.waitForIdle();
+                event(stream, CACHE_INVALIDATE);
+            }
+            stream.indirect(bodies, bodyWords);   // (an IB2: the draws' words once in memory, not once a tile in the stream)
+            command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 0);
+            command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RESOLVE) | A6XX_CP_SET_MARKER_0_USES_GMEM);
+            for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+                if ((store >> i) & 1) blit(i, BLIT_EVENT_STORE);
+            }
+            stream.waitForIdle();
+            command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RENDER_END));
+        }
+    }
+    // the stores out of the blit cache (tu6_tile_render_end's FD_CCU_CLEAN_BLIT_CACHE: PC_CCU_RESOLVE_TS on A6XX), waited
+    // for as the tail waits for its flushes; then the CCU back where every other pass here expects it
+    eventTimestamp(stream, PC_CCU_RESOLVE_TS, table + kTableBlitFlushAt, kBlitFlushValue, false);
+    waitForWord(stream, table + kTableBlitFlushAt, kBlitFlushValue);
+    stream.waitForIdle();
+    reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+}
 
 bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
     if (!checkTarget(pass, why)) {
@@ -2362,8 +2606,25 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         const ColorAttachment &a = pass.more[i], &b = open_->pass.more[i];
         joins = a.texture == b.texture && a.level == b.level && a.store == b.store && (a.texture == nullptr || a.load != LoadAction::kClear);
     }
+    // GMEM is decided as a pass opens, before its first draw is encoded (a draw in a tile is encoded for the tile:
+    // encodeInPass). A draw a tile cannot replay ends a GMEM pass and opens a sysmem one of its own.
+    std::string gmemWhy;
+    const bool tileable = options.gmem && gmem_ && render::gmemDrawOk(program, pass, d, *vsb, *fsb, &gmemWhy);
+    if (joins && open_->gmem && !tileable) {
+        gmemWhy_ = gmemWhy;
+        joins = false;
+    }
     if (!joins) {
         closePass();
+    }
+    render::GmemPlan plan;
+    bool gmem = false;
+    if (joins) {
+        gmem = open_->gmem;
+        plan = open_->plan;
+    } else if (options.gmem && gmem_) {
+        gmem = render::gmemPlan(pass, &plan, &gmemWhy_) && tileable;
+        if (!tileable) gmemWhy_ = gmemWhy;
     }
     Piece passTable;
     pm4::Stream head, body;
@@ -2375,7 +2636,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             return refuseWork(why);
         }
     }
-    if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, options)) {
+    render::Options encodeOptions = options;
+    if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
+    if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
+                              gmem ? &plan : nullptr)) {
         return refuseWork(why);
     }
     if (!joins) {
@@ -2383,20 +2647,45 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const Texture* first = pass.color0 != nullptr ? pass.color0 : pass.depth;
             stampStart(kPassDraw, first ? first->width() : 0, first ? first->height() : 0);
         }
-        open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress(), {}});
+        open_ = std::make_unique<OpenPass>();
+        open_->pass = pass;
+        open_->options = options;
+        open_->table = passTable.gpuAddress();
         if (options.dedupRegs) {
             appendDeduped(stream_, head, open_->regs);
         } else {
             appendStream(stream_, head);
         }
+        open_->gmem = gmem;
+        open_->plan = plan;
         useAttachments(pass);
         counts_.passes++;
     }
-    if (options.dedupRegs && open_->options.dedupRegs) {
-        appendDeduped(stream_, body, open_->regs);
-    } else {
-        appendStream(stream_, body);
+    if (open_->gmem) {
+        uint32_t a[4];
+        if (render::drawArea(pass, d, a)) {
+            open_->area[0] = std::min(open_->area[0], a[0]);
+            open_->area[1] = std::min(open_->area[1], a[1]);
+            open_->area[2] = std::max(open_->area[2], a[2]);
+            open_->area[3] = std::max(open_->area[3], a[3]);
+        }
+        open_->written |= render::drawnAttachments(program, pass);
+        for (uint32_t i = 0; i < kMaxTextureSlots && i < program.fs.k.numTextureSlots; i++) {
+            if (program.fs.k.textures[i].fbTarget != 0) open_->read |= 1u << (program.fs.k.textures[i].fbTarget - 1u);
+        }
     }
+    pm4::Stream& into = open_->gmem ? open_->bodies : stream_;
+    const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
+    if (timed) {
+        drawsProfiled_.push_back(DrawTime{program.name != nullptr ? program.name : "?", 0});
+        drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1)));
+    }
+    if (options.dedupRegs && open_->options.dedupRegs) {
+        appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
+    } else {
+        appendStream(into, body);
+    }
+    if (timed) drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1) + 1));
     counts_.draws++;
     if (profile_ && !profiled_.empty()) profiled_.back().draws++;
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
@@ -2545,6 +2834,8 @@ bool CommandBuffer::append(CommandBuffer& other) {
     counts_.dispatches += other.counts_.dispatches;
     counts_.copies += other.counts_.copies;
     counts_.clears += other.counts_.clears;
+    counts_.gmemPasses += other.counts_.gmemPasses;
+    counts_.tiles += other.counts_.tiles;
     other.counts_ = Counts{};
     return true;
 }
@@ -2552,6 +2843,42 @@ bool CommandBuffer::append(CommandBuffer& other) {
 void CommandBuffer::closePass() {
     if (open_ == nullptr) {
         return;
+    }
+    if (open_->gmem && open_->bodies.size() != 0) {
+        Piece ib;
+        std::string why;
+        const std::vector<uint32_t>& w = open_->bodies.words();
+        if (!piece(4 * w.size(), &ib, &why)) {
+            // (the draws were encoded for tiles: they cannot run in sysmem instead)
+            open_.reset();
+            fail(std::string("no memory for a GMEM pass's draws: ") + why);
+            return;
+        }
+        std::memcpy(ib.contents(), w.data(), 4 * w.size());
+        // The tiles over the render area alone, and of the attachments only those the draws touch: one they neither
+        // write nor read keeps its memory as it is. A touched one is loaded unless its load action is DontCare and the
+        // area's granules stay inside its pixels (past them the store would put back what it never loaded: the row
+        // padding, or the rows of the next layer or level).
+        render::GmemPlan plan = open_->plan;
+        const auto [W, H] = render::windowOf(open_->pass);
+        if (open_->area[0] <= open_->area[2] && open_->area[1] <= open_->area[3] && !(gmemOff_ & kGmemWholeArea)) render::gmemTiles(&plan, open_->area);
+        const bool inside = render::alignUp(plan.area[2] + 1, a6xx::kGmemAlignW) <= W && render::alignUp(plan.area[3] + 1, a6xx::kGmemAlignH) <= H;
+        uint32_t load = 0, store = 0;
+        for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+            const Texture* t = i == 0 ? open_->pass.color0 : open_->pass.more[i - 1].texture;
+            const bool every = (gmemOff_ & kGmemEveryAttachment) != 0;
+            if (t == nullptr || (!every && (((open_->written | open_->read) >> i) & 1) == 0)) continue;
+            const LoadAction la = i == 0 ? open_->pass.load : open_->pass.more[i - 1].load;
+            const StoreAction sa = i == 0 ? open_->pass.store : open_->pass.more[i - 1].store;
+            if (every || !(la == LoadAction::kDontCare && inside)) load |= 1u << i;
+            if ((every || ((open_->written >> i) & 1)) && sa != StoreAction::kDontCare) store |= 1u << i;
+        }
+        pm4::Stream tiles;
+        render::encodeGmem(tiles, open_->pass, plan, ib.gpuAddress(), uint32_t(w.size()), open_->table, open_->options, load, store, open_->read != 0);
+        appendStream(stream_, tiles);
+        counts_.gmemPasses++;
+        counts_.tiles += plan.tiles();
+        if (profile_ && !profiled_.empty()) profiled_.back().tiles = plan.tiles();
     }
     pm4::Stream tail;
     render::encodeEnd(tail, open_->pass, open_->table, open_->options);

@@ -152,6 +152,9 @@ public:
         uint32_t fills = 0;         // CP_BLIT solid fills whose state held together: these ARE carried out, into the target's memory
         uint32_t copies = 0;        // CP_BLIT copies (render::encodeBlit), carried out texel for texel or bilinear
         uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
+        uint32_t tiles = 0;         // GMEM tiles begun (CP_SET_MARKER RM6_BIN_RENDER_START | USES_GMEM)
+        uint32_t tileLoads = 0, tileStores = 0;   // event blits, carried out between memory and the model's GMEM
+        uint64_t storedPixels = 0;  // pixels the stores wrote: the whole target once, granule padding included, when the tiles tile it
     };
 
     // ASYNC: submissions run on a thread of their own, after DELAY_US each, as the real GPU runs them after the call
@@ -282,6 +285,12 @@ private:
     // CP_WAIT_FOR_IDLE), and whether the last packet was that WFI; and what the submission's end needs of a draw: the
     // two 4-word flushes after the last one
     bool passBegun_ = false, ccuCntlWritten_ = false, ccuCntlAfterWfi_ = false, lastWasWfi_ = false;
+    // inside a GMEM tile (between RM6_BIN_RENDER_START | USES_GMEM and RM6_BIN_RENDER_END), and GMEM itself: what the
+    // event blits load and store (the draws rasterize nothing, so a tile holds what its load put there)
+    bool inTile_ = false;
+    std::vector<uint8_t> gmem_ = std::vector<uint8_t>(a6xx::kGmemBytes);
+    bool tileState(uint32_t* binW, uint32_t* binH, uint32_t win[4]);
+    bool eventBlit();
     uint64_t alwaysOn_ = 0;     // CP_ALWAYS_ON_COUNTER as the fake keeps it: one more at each CP_REG_TO_MEM of it
     uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0, drawsWithoutDepthFlush_ = 0;
     // the running sample count ZPASS_DONE copies out (an occlusion query's snapshots). The model has no rasterizer, so

@@ -220,6 +220,14 @@ static uint32_t texCanary(const std::function<bool(uint32_t)>& produced) {
 }
 
 // the whole Bo behind a texture, read once in order (write-combined memory), and the same written
+// what the GPU spent on a buffer's passes, by its own counter (CommandBuffer::setProfile before recording): commit to
+// completion (gpuNanoseconds) holds the kernel's noticing too, and came out 69 or 297 us for the same 20 draws
+static double gpuUs(const CommandBuffer& c) {
+    double us = 0;
+    for (const CommandBuffer::PassTime& pt : c.passTimes()) us += pt.us;
+    return us;
+}
+
 static std::vector<uint8_t> textureBo(const Texture& t) {
     std::vector<uint8_t> back(t.buffer()->length());
     memcpy(back.data(), t.contents(), back.size());
@@ -4128,10 +4136,20 @@ int main(int argc, char** argv) {
         if (t) {
             const Program fbProg{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
             const uint32_t once = 0xff40bf80u, twice = 0xff8040bfu;
-            for (int kind = 0; kind < 3; kind++) {
+            // Each kind: GMEM or sysmem; one draw or two; ordered by the rasterizer (fbReadOrdered, the default), by the
+            // barrier, or by neither (a measurement, not judged: what the ordering is for on this GPU)
+            struct FbKind {
+                bool gmem, two;
+                int order;   // 0 ordered, 1 barrier, 2 neither
+            };
+            const FbKind kinds[] = {{true, false, 0}, {true, true, 0}, {true, true, 1}, {true, true, 2},
+                                    {false, false, 0}, {false, true, 0}, {false, true, 1}, {false, true, 2}};
+            for (const FbKind& k : kinds) {
                 fillBo(*t, canary);
                 render::Options o;
-                o.fbReadBarrier = kind != 2;
+                o.fbReadOrdered = k.order == 0;
+                o.fbReadBarrier = k.order == 1;
+                o.gmem = k.gmem;
                 auto cb = queue->commandBuffer();
                 RenderPass rp;
                 rp.color0 = t.get();
@@ -4141,13 +4159,13 @@ int main(int argc, char** argv) {
                 rp.clearColor[2] = 0.75;
                 rp.clearColor[3] = 1.0;
                 bool ok = cb->draw(fbProg, rp, drawOf(0, 6), Bindings{}, Bindings{}, o);
-                if (kind != 0) {
+                if (k.two) {
                     rp.load = LoadAction::kLoad;
                     ok = ok && cb->draw(fbProg, rp, drawOf(0, 6), Bindings{}, Bindings{}, o);
                 }
                 cb->commit();
                 cb->waitUntilCompleted();
-                const uint32_t want = kind == 0 ? once : twice;
+                const uint32_t want = k.two ? twice : once;
                 PixelRule all{[](uint32_t, uint32_t) { return true; }, [=](uint32_t, uint32_t, uint32_t) { return want; }};
                 TexReadback rb = compareTexture(*t, all, canary);
                 std::vector<uint8_t> bo = textureBo(*t);
@@ -4163,13 +4181,13 @@ int main(int argc, char** argv) {
                 }
                 const std::string counts = "; " + std::to_string(onceCount) + " read the clear (80 bf 40 ff), " + std::to_string(twiceCount) +
                                            " read the first draw (bf 40 80 ff), " + std::to_string(zeroCount) + " read nothing (00 00 00 ff)";
-                if (kind == 2) {
-                    report(ok && completed(*cb), "framebuffer fetch, two draws in one pass WITHOUT the barrier (a measurement, not judged): " +
-                                                     describeTexture(rb, "bf 40 80 ff") + counts + status(*cb, gpu));
+                const std::string label = std::string("framebuffer fetch, ") + (k.two ? "two draws in one pass" : "one draw over a Clear") +
+                                          (k.gmem ? " (GMEM" : " (sysmem") + (k.order == 0 ? ", raster order)" : k.order == 1 ? ", barrier)" : ", NEITHER: a measurement, not judged)");
+                if (k.order == 2) {
+                    report(ok && completed(*cb), label + ": " + describeTexture(rb, "bf 40 80 ff") + counts + status(*cb, gpu));
                 } else {
-                    report(ok && completed(*cb) && rb.right == 4096,
-                           std::string(kind == 0 ? "framebuffer fetch, one draw over a Clear" : "framebuffer fetch, two draws in one pass") + ": " +
-                               describeTexture(rb, kind == 0 ? "80 bf 40 ff" : "bf 40 80 ff") + counts + status(*cb, gpu));
+                    report(ok && completed(*cb) && rb.right == 4096 && (cb->counts().gmemPasses != 0) == k.gmem,
+                           label + ": " + describeTexture(rb, k.two ? "bf 40 80 ff" : "80 bf 40 ff") + counts + status(*cb, gpu));
                 }
                 if (!completed(*cb)) break;
             }
@@ -4536,21 +4554,22 @@ int main(int argc, char** argv) {
                     std::string pwhy;
                     auto pa = Texture::make(gpu, pd, &pwhy), pb = Texture::make(gpu, pd, &pwhy);
                     const Program flat{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
-                    auto timeOf = [&](int draws, bool alternate) -> double {
+                    auto timeOf = [&](int draws, bool alternate, const render::Options& po = render::Options{}) -> double {
                         double best = 1e30;
                         for (int rep = 0; rep < 5; rep++) {
                             auto pcb = queue->commandBuffer();
+                            pcb->setProfile(true);
                             bool ok = true;
                             for (int i = 0; i < draws && ok; i++) {
                                 RenderPass rp;
                                 rp.color0 = alternate && (i & 1) ? pb.get() : pa.get();
-                                ok = pcb->draw(flat, rp, drawOf(0, 3), Bindings{}, Bindings{});
+                                ok = pcb->draw(flat, rp, drawOf(0, 3), Bindings{}, Bindings{}, po);
                             }
                             if (!ok) return -1;
                             pcb->commit();
                             pcb->waitUntilCompleted();
                             if (!completed(*pcb)) return -1;
-                            best = std::min(best, pcb->gpuNanoseconds() / 1e3);
+                            best = std::min(best, gpuUs(*pcb));
                         }
                         return best;
                     };
@@ -4561,6 +4580,45 @@ int main(int argc, char** argv) {
                                  "pass cost: 1 draw %.0f us; 20 draws in one pass %.0f us (%.1f us a draw); 20 passes of one draw %.0f us (%.1f us a pass "
                                  "over a draw)", one, twentyDraws, (twentyDraws - one) / 19, twentyPasses, (twentyPasses - twentyDraws) / 19);
                         report(one > 0 && twentyDraws > 0 && twentyPasses > 0, text);
+                        // the same draws in sysmem, and in GMEM with the draws in the stream rather than an IB2
+                        // 20 framebuffer-fetch draws in one pass by mode and ordering: what a fetch costs CoreAnimation, whose
+                        // heavy frames are full of them
+                        {
+                            const Program fbt{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+                            std::string line = "fetch cost, 20 draws (us):";
+                            bool all = true;
+                            for (int m = 0; m < 4; m++) {
+                                render::Options mo{};
+                                mo.gmem = (m & 1) != 0;
+                                mo.fbReadOrdered = (m & 2) != 0;
+                                double best = 1e30;
+                                for (int rep = 0; rep < 5; rep++) {
+                                    auto pcb = queue->commandBuffer();
+                                    pcb->setProfile(true);
+                                    bool ok = true;
+                                    RenderPass rp;
+                                    rp.color0 = pa.get();
+                                    for (int i = 0; i < 20 && ok; i++) ok = pcb->draw(fbt, rp, drawOf(0, 6), Bindings{}, Bindings{}, mo);
+                                    if (!ok) break;
+                                    pcb->commit();
+                                    pcb->waitUntilCompleted();
+                                    if (!completed(*pcb)) break;
+                                    best = std::min(best, gpuUs(*pcb));
+                                }
+                                all = all && best < 1e29;
+                                line += std::string(" ") + (mo.gmem ? "gmem" : "sys") + (mo.fbReadOrdered ? "/ordered " : "/barrier ") + std::to_string(int(best));
+                            }
+                            report(all, line);
+                        }
+                        // the same 20 draws in sysmem: a GMEM pass costs its tile's load and store more, its draws no more
+                        {
+                            render::Options sys;
+                            sys.gmem = false;
+                            const double sOne = timeOf(1, false, sys), sTwenty = timeOf(20, false, sys), sPasses = timeOf(20, true, sys);
+                            snprintf(text, sizeof text, "pass cost in sysmem: 1 draw %.0f us; 20 draws in one pass %.0f us; 20 passes of one draw %.0f us", sOne, sTwenty,
+                                     sPasses);
+                            report(sOne > 0 && sTwenty > 0 && sPasses > 0, text);
+                        }
                     }
                 }
                 // (3b) the GPU's memory bandwidth, for the frame rate: a 2048 x 2048 RGBA8 texture (16 MiB) copied by the 2D
@@ -4587,6 +4645,172 @@ int main(int argc, char** argv) {
                     char text[160];
                     snprintf(text, sizeof text, "memory bandwidth: a 16 MiB copy %.0f us (%.2f GB/s moved)", copyUs, ok ? 33.554432e6 / (copyUs * 1e3) : 0.0);
                     report(ok, text);
+                }
+                // (3g) GMEM against sysmem. A screen-sized BGRA8 target (1125 x 2436: 2 x 12 tiles) holding every pixel's own
+                // coordinates gets five blended triangles at viewports that cross the tiles' edges, once in sysmem and once
+                // in GMEM; the two must agree byte for byte. The twin: GMEM without its loads (gmemLoad off) must differ --
+                // what the triangles do not cover is then GMEM's leftovers -- or agreeing would say nothing about GMEM
+                // having run. Then the frame-rate figure: eight full-screen source-over draws each way.
+                {
+                    TextureDesc gd;
+                    gd.format = PixelFormat::kBGRA8Unorm;
+                    gd.width = 1125;
+                    gd.height = 2436;
+                    gd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                    std::string gwhy;
+                    auto gt = Texture::make(gpu, gd, &gwhy);
+                    auto gbuf = newBuffer(gpu, 16, &gwhy);
+                    if (gt == nullptr || gbuf == nullptr) {
+                        report(false, "GMEM: a 1125x2436 BGRA8 target: " + gwhy);
+                    } else {
+                        float* f = static_cast<float*>(gbuf->contents());
+                        f[0] = 0xcc / 255.0f, f[1] = 0x66 / 255.0f, f[2] = 0x33 / 255.0f, f[3] = 0x80 / 255.0f;
+                        Bindings gfsb;
+                        gfsb.buffers = {Binding{gbuf.get(), 0}};
+                        Program over{kernels::tri_flat_vs_air, kernels::tri_cflat_fs_air, Linkage{}, "tri_cflat"};
+                        over.blend = ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf};
+                        const uint64_t pitch = gt->bytesPerRow();
+                        auto pattern = [&]() {
+                            std::vector<uint8_t> rowsG(pitch * 2436, 0);
+                            for (uint32_t y = 0; y < 2436; y++)
+                                for (uint32_t x = 0; x < 1125; x++) {
+                                    const uint32_t v = (y * 1125 + x) * 2654435761u | 0xff000000u;
+                                    memcpy(rowsG.data() + y * pitch + x * 4ull, &v, 4);
+                                }
+                            memcpy(gt->contents(), rowsG.data(), rowsG.size());
+                        };
+                        const Viewport vps[] = {{0, 0, 1125, 2436, 0, 1}, {37, 513, 1000, 1500, 0, 1}, {500, 1000, 625, 1436, 0, 1}, {0, 200, 600, 300, 0, 1}, {560, 0, 40, 2436, 0, 1}};
+                        auto run = [&](bool gm, bool load, unsigned* tiles) -> std::vector<uint8_t> {
+                            pattern();
+                            render::Options o;
+                            o.gmemLoad = load;
+                            auto c = queue->commandBuffer();
+                            c->setGmem(gm);
+                            bool ok = true;
+                            RenderPass rp;
+                            rp.color0 = gt.get();
+                            for (const Viewport& vp : vps) ok = ok && c->draw(over, rp, drawOf(0, 3, vp), Bindings{}, gfsb, o);
+                            if (!ok) return {};
+                            c->commit();
+                            c->waitUntilCompleted();
+                            if (!completed(*c)) return {};
+                            *tiles = c->counts().tiles;
+                            return textureBo(*gt);
+                        };
+                        unsigned st = 0, gtl = 0, tt = 0;
+                        const std::vector<uint8_t> sys = run(false, true, &st), gm = run(true, true, &gtl), twin = run(true, false, &tt);
+                        auto pixelsDiffer = [&](const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+                            uint64_t n = 0;
+                            for (uint32_t y = 0; y < 2436; y++)
+                                for (uint32_t x = 0; x < 1125; x++) n += memcmp(a.data() + y * pitch + x * 4ull, b.data() + y * pitch + x * 4ull, 4) != 0;
+                            return n;
+                        };
+                        const bool have = !sys.empty() && !gm.empty() && !twin.empty();
+                        const uint64_t off = have ? pixelsDiffer(sys, gm) : ~0ull, twinOff = have ? pixelsDiffer(sys, twin) : 0;
+                        report(have && st == 0 && gtl == 24 && off == 0 && twinOff > 100000,
+                               "GMEM: 5 blended triangles over a 1125x2436 BGRA8 pattern in " + std::to_string(gtl) + " tiles: " + std::to_string(off) +
+                                   " pixels differ from sysmem; twin without the loads: " + std::to_string(twinOff) + " differ (must be many)");
+                        // framebuffer fetch across the tiles: tri_fb (the target's (g, b, r, 1) at each pixel) three times
+                        // over the whole screen and once at a viewport that crosses tiles; each fetch must read its own
+                        // pixel of its own tile (the window offset taken off), so GMEM must agree with sysmem exactly
+                        {
+                            const Program fbp{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+                            auto runFb = [&](bool gm, unsigned* tiles, std::initializer_list<Viewport> at = {}) -> std::vector<uint8_t> {
+                                pattern();
+                                auto c = queue->commandBuffer();
+                                c->setGmem(gm);
+                                RenderPass rp;
+                                rp.color0 = gt.get();
+                                bool ok = true;
+                                const std::vector<Viewport> list = at.size() ? std::vector<Viewport>(at) : std::vector<Viewport>{vps[0], vps[0], vps[1], vps[0]};
+                                for (const Viewport& vp : list) ok = ok && c->draw(fbp, rp, drawOf(0, 6, vp), Bindings{}, Bindings{});
+                                if (!ok) return {};
+                                c->commit();
+                                c->waitUntilCompleted();
+                                if (!completed(*c)) return {};
+                                *tiles = c->counts().tiles;
+                                return textureBo(*gt);
+                            };
+                            unsigned fs = 0, fg = 0;
+                            const std::vector<uint8_t> fsys = runFb(false, &fs), fgm = runFb(true, &fg);
+                            const bool fhave = !fsys.empty() && !fgm.empty();
+                            const uint64_t foff = fhave ? pixelsDiffer(fsys, fgm) : ~0ull;
+                            // (and the fetch did something: three turns of (r, g, b) are no turn at all, so what differs from the
+                            // pattern is the fourth draw's 1000 x 1500, less the pixels whose three channels are equal)
+                            pattern();
+                            const std::vector<uint8_t> start = textureBo(*gt);
+                            const uint64_t changed = fhave ? pixelsDiffer(start, fgm) : 0;
+                            // ...and with the draws over a corner alone (two at (0, 200) 600 x 300 and (500, 1000) 625 x 300):
+                            // the tiles over that area keep the bin width the fetch's descriptor was written with
+                            {
+                                unsigned cs = 0, cg = 0;
+                                const std::vector<uint8_t> csys = runFb(false, &cs, {vps[3], Viewport{500, 1000, 625, 300, 0, 1}}),
+                                                           cgm = runFb(true, &cg, {vps[3], Viewport{500, 1000, 625, 300, 0, 1}});
+                                const bool chave = !csys.empty() && !cgm.empty();
+                                const uint64_t coff = chave ? pixelsDiffer(csys, cgm) : ~0ull, cchanged = chave ? pixelsDiffer(start, cgm) : 0;
+                                report(chave && cs == 0 && cg > 0 && cg < 24 && coff == 0 && cchanged > 300000,
+                                       "GMEM: framebuffer fetch over part of the screen in " + std::to_string(cg) + " tiles: " + std::to_string(coff) +
+                                           " pixels differ from sysmem; " + std::to_string(cchanged) + " changed");
+                            }
+                            report(fhave && fs == 0 && fg == 24 && foff == 0 && changed > 1400000 && changed <= 1500000,
+                                   "GMEM: framebuffer fetch 4 times over a 1125x2436 BGRA8 pattern in " + std::to_string(fg) + " tiles: " + std::to_string(foff) +
+                                       " pixels differ from sysmem; " + std::to_string(changed) + " changed from the pattern");
+                        }
+                        // what a full-screen fetch costs: four tri_fb quads over the whole screen, sysmem with the barrier,
+                        // sysmem in raster order, GMEM in raster order
+                        {
+                            const Program fbq{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+                            std::string line = "full-screen fetch cost, 4 draws (us):";
+                            bool all = true;
+                            for (int m = 0; m < 3; m++) {
+                                render::Options mo{};
+                                mo.gmem = m == 2;
+                                mo.fbReadOrdered = m != 0;
+                                double best = 1e30;
+                                for (int rep = 0; rep < 3; rep++) {
+                                    auto c = queue->commandBuffer();
+                                    c->setProfile(true);
+                                    RenderPass rp;
+                                    rp.color0 = gt.get();
+                                    bool ok = true;
+                                    for (int i = 0; i < 4 && ok; i++) ok = c->draw(fbq, rp, drawOf(0, 6, vps[0]), Bindings{}, Bindings{}, mo);
+                                    if (!ok) break;
+                                    c->commit();
+                                    c->waitUntilCompleted();
+                                    if (!completed(*c)) break;
+                                    best = std::min(best, gpuUs(*c));
+                                }
+                                all = all && best < 1e29;
+                                line += std::string(m == 0 ? " sysmem/barrier " : m == 1 ? " sysmem/ordered " : " gmem/ordered ") + std::to_string(int(best));
+                            }
+                            report(all, line);
+                        }
+                        // the cost: eight full-screen source-over draws, best of three
+                        auto timed = [&](bool gm) {
+                            render::Options to;
+                            double best = 1e30;
+                            for (int rep = 0; rep < 3; rep++) {
+                                auto c = queue->commandBuffer();
+                                c->setGmem(gm);
+                                c->setProfile(true);
+                                RenderPass rp;
+                                rp.color0 = gt.get();
+                                bool ok = true;
+                                for (int i = 0; i < 8 && ok; i++) ok = c->draw(over, rp, drawOf(0, 3, vps[0]), Bindings{}, gfsb, to);
+                                if (!ok) return -1.0;
+                                c->commit();
+                                c->waitUntilCompleted();
+                                if (!completed(*c)) return -1.0;
+                                best = std::min(best, gpuUs(*c));
+                            }
+                            return best;
+                        };
+                        const double sysUs = timed(false), gmUs = timed(true);
+                        char text[240];
+                        snprintf(text, sizeof text, "GMEM cost: 8 full-screen blended draws %.0f us in sysmem, %.0f us in GMEM (%.2fx)", sysUs, gmUs,
+                                 gmUs > 0 ? sysUs / gmUs : 0.0);
+                        report(sysUs > 0 && gmUs > 0, text);
+                    }
                 }
                 // (4) generateMipmaps over a checkerboard
                 for (uint32_t y = 0; y < 64; y++)

@@ -1334,7 +1334,9 @@ TEST(a_draw_of_tri_color_and_of_the_hand_built_pair_hold_together) {
     auto small = target(r, 48, 20);
     RenderPass sp;
     sp.color0 = small.get();
-    auto sm = drawOnce(r, flatProgram(), sp, wholeDraw(3, 48, 20));
+    render::Options sysmem;
+    sysmem.gmem = false;   // (the window checked is a sysmem pass's: a tile's is its bin)
+    auto sm = drawOnce(r, flatProgram(), sp, wholeDraw(3, 48, 20), sysmem);
     CHECK(sm->status() == CommandBuffer::kCompleted);
     CHECK_EQ(r.fake->stats().lastDraw.windowScissor[2], 47u);
     CHECK_EQ(r.fake->stats().lastDraw.windowScissor[3], 19u);
@@ -2830,6 +2832,7 @@ TEST(a_draw_in_an_open_pass_leaves_out_registers_already_holding_their_values) {
     for (int dedup = 0; dedup < 2; dedup++) {
         render::Options o;
         o.dedupRegs = dedup != 0;
+        o.gmem = false;   // (a GMEM pass's draws are gathered off the stream until its end)
         auto cb = r.queue->commandBuffer();
         const size_t at0 = cb->streamWords();
         CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}, o));
@@ -4147,9 +4150,11 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
 }
 
 // A framebuffer fetch: tri_fb_fs reads [[color(0)]] through ir3's isamm at the slot after its textures (it has none:
-// slot 0), so colour attachment 0's sampled descriptor goes there, and before the draw the colour CCU is flushed on the
-// draw table's own word and the texture caches invalidated, so that it reads what the draws before it wrote. Two such
-// draws in one pass: each its own flush, on its own table.
+// slot 0), so colour attachment 0's sampled descriptor goes there. With fbReadOrdered the rasterizer keeps the fetches in
+// raster order (GRAS_SC_CNTL.SINGLE_PRIM_MODE FLUSH_PER_OVERLAP_AND_OVERWRITE in sysmem) and there is no barrier; by
+// default, before the draw the colour CCU is flushed on the draw table's own word and the texture caches invalidated,
+// so that it reads what the draws before it wrote. Two such draws in one pass: each its own flush, on its
+// own table.
 TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_before_it) {
     using namespace a6xx;
     Rig r;
@@ -4159,7 +4164,24 @@ TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_bef
     CHECK_EQ(kernels::tri_fb_fs_air.k.numSamp, 1u);
     RenderPass pass;
     pass.color0 = t.get();
-    Encoded e(r, fb, pass, wholeDraw(6));
+    {
+        render::Options ord;
+        ord.fbReadOrdered = true;
+        Encoded o(r, fb, pass, wholeDraw(6), ord);
+        CHECK(o.ok);
+        CHECK_EQ((o.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK) >> A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__SHIFT,
+                 uint32_t(FLUSH_PER_OVERLAP_AND_OVERWRITE));
+        bool flushed = false;
+        for (size_t i = o.find(CP_EVENT_WRITE); i != size_t(-1); i = o.find(CP_EVENT_WRITE, i + 1)) {
+            flushed |= o.stream.words()[i + 2] == uint32_t(o.table->gpuAddress() + render::kTableFbReadFlushAt);
+        }
+        CHECK(!flushed);
+        Encoded plain(r, flatProgram(), pass, wholeDraw(6));
+        CHECK_EQ(plain.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK, 0u);
+    }
+    render::Options barrier;
+    barrier.fbReadOrdered = false;
+    Encoded e(r, fb, pass, wholeDraw(6), barrier);
     CHECK(e.ok);
     if (!e.ok) std::printf("       %s\n", e.error.c_str());
     const TexConst want = t->sampledDescriptor();
@@ -4191,10 +4213,13 @@ TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_bef
         plainFlush |= plain.stream.words()[i + 2] == uint32_t(plain.table->gpuAddress() + render::kTableFbReadFlushAt);
     }
     CHECK(!plainFlush);
-    // through the command buffer: two in one pass, the fake judging the descriptor at slot 0
+    // through the command buffer: two in one sysmem pass, the fake judging the descriptor at slot 0
+    render::Options sysmem;
+    sysmem.gmem = false;
+    sysmem.fbReadOrdered = false;
     auto cb = r.queue->commandBuffer();
-    CHECK(cb->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}));
-    CHECK(cb->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}));
+    CHECK(cb->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}, sysmem));
+    CHECK(cb->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}, sysmem));
     const uint32_t before = r.fake->stats().passes;
     cb->commit();
     cb->waitUntilCompleted();
@@ -4204,6 +4229,35 @@ TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_bef
     CHECK_EQ(r.fake->stats().lastDraw.fsTextureCount, 1u);
     const auto d = r.fake->memory(r.fake->stats().lastDraw.fsTexConst, 64);
     CHECK(d.size() == 64 && memcmp(d.data(), want.dword, 64) == 0);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    // In GMEM the fetch reads the attachment's bin where the draws before it in the tile left it: GMEM's layout
+    // (TILE6_2), the bin's rows (64 pixels of 4 bytes), at the bin's place (0), no swap; and with no barrier, which would
+    // flush a tile's colour to memory the fetch no longer reads
+    auto g = r.queue->commandBuffer();
+    CHECK(g->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}));
+    CHECK(g->draw(fb, pass, wholeDraw(6), Bindings{}, Bindings{}));
+    g->commit();
+    g->waitUntilCompleted();
+    CHECK(g->status() == CommandBuffer::kCompleted);
+    if (g->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", g->error().c_str(), r.fake->stats().lastFault.c_str());
+    CHECK_EQ(g->counts().gmemPasses, 1u);
+    const auto gd = r.fake->memory(r.fake->stats().lastDraw.fsTexConst, 64);
+    uint32_t gw[16] = {};
+    if (gd.size() == 64) memcpy(gw, gd.data(), 64);
+    CHECK_EQ((gw[0] & A6XX_TEX_CONST_0_TILE_MODE__MASK) >> A6XX_TEX_CONST_0_TILE_MODE__SHIFT, uint32_t(TILE6_2));
+    CHECK_EQ(gw[0] & A6XX_TEX_CONST_0_SWAP__MASK, 0u);
+    CHECK_EQ((gw[2] & A6XX_TEX_CONST_2_PITCH__MASK) >> A6XX_TEX_CONST_2_PITCH__SHIFT, 64u * 4);
+    CHECK(gw[4] == 0 && (gw[5] & A6XX_TEX_CONST_5_BASE_HI__MASK) == 0);
+    pm4::Stream gb;
+    std::string gwhy;
+    auto gt = newBuffer(*r.gpu, render::kTableBytes, &gwhy);
+    render::GmemPlan plan;
+    CHECK(render::gmemPlan(pass, &plan, nullptr));
+    CHECK(gt != nullptr && render::encodeInPass(gb, fb, pass, wholeDraw(6), Bindings{}, Bindings{}, e.vsProgram->gpuAddress(), e.fsProgram->gpuAddress(),
+                                                gt->gpuAddress(), static_cast<uint8_t*>(gt->contents()), &gwhy, render::Options{}, &plan));
+    bool gmemFlush = false;
+    for (size_t i = 0; gt != nullptr && i + 2 < gb.words().size(); i++) gmemFlush |= gb.words()[i + 2] == uint32_t(gt->gpuAddress() + render::kTableFbReadFlushAt);
+    CHECK(!gmemFlush);
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
@@ -4226,7 +4280,9 @@ TEST(mip_levels_are_drawn_into_copied_and_generated) {
     RenderPass pass;
     pass.color0 = t.get();
     pass.level = 2;
-    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw(6, 16, 16));
+    render::Options sysmem;
+    sysmem.gmem = false;   // (the window checked is a sysmem pass's: a tile's is its bin)
+    auto cb = drawOnce(r, flatProgram(), pass, wholeDraw(6, 16, 16), sysmem);
     CHECK(cb->status() == CommandBuffer::kCompleted);
     if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
     CHECK_EQ(r.fake->stats().lastDraw.mrtBases[0], t->levelAddress(2));
@@ -5070,4 +5126,246 @@ TEST(a_wider_format_reads_a_surface_as_fewer_pixels) {
     narrow.format = PixelFormat::kRG8Unorm;
     narrow.width = 64;
     CHECK(Texture::wrapSurface(*r.gpu, 10, narrow, &why) == nullptr);
+}
+
+// GMEM. The fake rasterizes nothing, so a tile holds what its load put there and GMEM starts each tile as 0xcd: a
+// target whose every pixel is its own coordinates comes back unchanged only if every tile was loaded from and stored to
+// the right rows, at the right place in GMEM, and the tiles cover it -- a store without its load, a tile in the wrong
+// place or a gap all show as pixels that differ.
+namespace {
+void fillCoords(Texture& t, uint32_t salt = 0) {
+    auto* p = static_cast<uint8_t*>(t.contents());
+    const uint32_t bpp = t.info().bytesPerPixel;
+    for (uint32_t y = 0; y < t.height(); y++) {
+        for (uint32_t x = 0; x < t.width(); x++) {
+            const uint32_t v = (y << 16 | x) ^ salt;
+            for (uint32_t b = 0; b < bpp; b += 4) std::memcpy(p + y * t.bytesPerRow() + x * bpp + b, &v, 4);
+        }
+    }
+}
+uint32_t coordsWrong(const Texture& t, uint32_t salt = 0) {
+    const auto* p = static_cast<const uint8_t*>(t.contents());
+    const uint32_t bpp = t.info().bytesPerPixel;
+    uint32_t wrong = 0;
+    for (uint32_t y = 0; y < t.height(); y++) {
+        for (uint32_t x = 0; x < t.width(); x++) {
+            const uint32_t v = (y << 16 | x) ^ salt;
+            for (uint32_t b = 0; b < bpp; b += 4) wrong += std::memcmp(p + y * t.bytesPerRow() + x * bpp + b, &v, 4) != 0;
+        }
+    }
+    return wrong;
+}
+}  // namespace
+
+TEST(the_gmem_plan_fits_the_bins_in_gmem_and_covers_the_target) {
+    Rig r;
+    for (const auto& [w, h, f] : {std::tuple<uint32_t, uint32_t, PixelFormat>{1125, 2436, PixelFormat::kBGRA8Unorm}, {1125, 2436, PixelFormat::kRGBA16Float},
+                                  {64, 64, PixelFormat::kRGBA8Unorm}, {2048, 100, PixelFormat::kRGBA8Unorm}, {17, 3, PixelFormat::kRGBA8Unorm}}) {
+        auto t = target(r, w, h, kTextureUsageRenderTarget | kTextureUsageRead, f);
+        RenderPass a;
+        a.color0 = t.get();
+        render::GmemPlan p;
+        std::string why;
+        CHECK(render::gmemPlan(a, &p, &why));
+        const uint32_t bpp = t->info().bytesPerPixel;
+        CHECK(p.binW % 32 == 0 && p.binH % 16 == 0 && p.binW <= 1024 && p.binH <= 1008);
+        CHECK(uint64_t(p.binW) * p.binH * bpp <= a6xx::kGmemCcuColorOffset);
+        CHECK(p.cols * p.binW >= w && (p.cols - 1) * p.binW < w && p.rows * p.binH >= h && (p.rows - 1) * p.binH < h);
+        std::printf("       %ux%u %s: %u x %u tiles of %u x %u\n", w, h, t->info().name, p.cols, p.rows, p.binW, p.binH);
+    }
+    // the screen at 4 bytes a pixel: two columns of 576 and twelve rows of 208, 24 tiles
+    {
+        auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        RenderPass a;
+        a.color0 = t.get();
+        render::GmemPlan p;
+        CHECK(render::gmemPlan(a, &p, nullptr));
+        CHECK(p.cols == 2 && p.rows == 12 && p.binW == 576 && p.binH == 208);
+    }
+    // what stays in sysmem: a second colour attachment of another size, an integer target
+    {
+        auto t = target(r), u = target(r, 32, 32);
+        RenderPass a;
+        a.color0 = t.get();
+        a.more[0].texture = u.get();
+        render::GmemPlan p;
+        std::string why;
+        CHECK(!render::gmemPlan(a, &p, &why) && !why.empty());
+        auto i = target(r, 64, 64, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kR32Uint);
+        RenderPass b;
+        b.color0 = i.get();
+        CHECK(!render::gmemPlan(b, &p, &why));
+    }
+}
+
+TEST(a_pass_in_gmem_loads_and_stores_every_tile_in_place) {
+    for (const auto& [w, h] : {std::pair<uint32_t, uint32_t>{64, 64}, {1125, 2436}, {100, 37}}) {
+        for (int gmem = 0; gmem < 2; gmem++) {
+            Rig r;
+            auto t = target(r, w, h, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+            fillCoords(*t);
+            RenderPass a;
+            a.color0 = t.get();
+            render::Options o;
+            o.gmem = gmem != 0;
+            render::GmemPlan p;
+            CHECK(render::gmemPlan(a, &p, nullptr));
+            auto cb = r.queue->commandBuffer();
+            CHECK(cb->draw(flatProgram(), a, wholeDraw(3, w, h), Bindings{}, Bindings{}, o));
+            CHECK(cb->draw(flatProgram(), a, wholeDraw(3, w, h), Bindings{}, Bindings{}, o));
+            cb->commit();
+            cb->waitUntilCompleted();
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+            const auto s = r.fake->stats();
+            CHECK_EQ(s.faults, 0u);
+            CHECK_EQ(coordsWrong(*t), 0u);
+            if (gmem) {
+                CHECK_EQ(cb->counts().gmemPasses, 1u);
+                CHECK_EQ(cb->counts().tiles, p.tiles());
+                CHECK_EQ(s.tiles, p.tiles());
+                CHECK(s.tileLoads == p.tiles() && s.tileStores == p.tiles());
+                CHECK_EQ(s.draws, 2 * p.tiles());   // every draw in every tile
+                // the stores cover the target once in 16 x 4 granules
+                CHECK_EQ(s.storedPixels, uint64_t((w + 15) / 16 * 16) * ((h + 3) / 4 * 4));
+            } else {
+                CHECK(cb->counts().gmemPasses == 0 && s.tiles == 0 && s.tileStores == 0 && s.draws == 2);
+            }
+        }
+    }
+}
+
+// the twin of the test above: the same pass without its loads (gmemLoad off) stores the 0xcd GMEM held, every pixel
+// wrong -- so the coordinates surviving above is the loads' doing, not the model leaving memory alone
+TEST(a_gmem_store_without_its_load_shows) {
+    Rig r;
+    auto t = target(r, 100, 37, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    fillCoords(*t);
+    RenderPass a;
+    a.color0 = t.get();
+    render::Options o;
+    o.gmemLoad = false;
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(3, 100, 37), Bindings{}, Bindings{}, o));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(r.fake->stats().tileLoads, 0u);
+    CHECK_EQ(coordsWrong(*t), 100u * 37u);
+}
+
+// a draw a tile cannot replay ends the GMEM pass: it and the draws after it are a sysmem pass of their own
+TEST(a_draw_gmem_cannot_replay_sends_the_pass_to_sysmem) {
+    Rig r;
+    auto t = target(r);
+    fillCoords(*t);
+    std::string why;
+    auto vis = newBuffer(*r.gpu, 64, &why);
+    RenderPass a;
+    a.color0 = t.get();
+    auto cb = r.queue->commandBuffer();
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    Draw d = wholeDraw();
+    d.visibilityMode = 1;
+    d.visibility = vis.get();
+    CHECK(cb->draw(flatProgram(), a, d, Bindings{}, Bindings{}));
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const auto s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    // (the first draw in a tile, then the other two in a sysmem pass that loads what the tile stored)
+    CHECK(cb->counts().gmemPasses == 1 && cb->counts().passes == 2 && s.tiles == 1 && s.draws == 3);
+    CHECK_EQ(coordsWrong(*t), 0u);
+}
+
+// CoreAnimation's main pass: two screen-sized attachments, the second with DontCare as its load. GMEM below the colour
+// cache is shared out between them by bytes a pixel, so the tiles are half as tall as one attachment's. tri_mrt writes
+// both: each tile loads and stores both, and both come back as they were (the fake draws nothing; a bin overlapping
+// the other's would scramble one of them). tri_flat writes the first alone: the second is neither loaded nor stored.
+TEST(a_pass_of_two_attachments_in_gmem_loads_and_stores_those_drawn) {
+    const Program mrt{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+    for (int both = 0; both < 2; both++) {
+        Rig r;
+        auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        auto u = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+        fillCoords(*t);
+        fillCoords(*u, 0x80000000u);
+        RenderPass a;
+        a.color0 = t.get();
+        a.more[0].texture = u.get();
+        a.more[0].load = LoadAction::kLoad;
+        render::GmemPlan p;
+        CHECK(render::gmemPlan(a, &p, nullptr));
+        CHECK(p.binW == 576 && p.binH == 96 && p.base[0] == 0 && p.base[1] == 0x3c000 && p.room[0] == 0x3c000 && p.room[1] == 0x3c000);
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->draw(both ? mrt : flatProgram(), a, wholeDraw(3, 1125, 2436), Bindings{}, Bindings{}));
+        CHECK(cb->draw(both ? mrt : flatProgram(), a, wholeDraw(3, 1125, 2436), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        const auto s = r.fake->stats();
+        CHECK_EQ(s.faults, 0u);
+        if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
+        CHECK_EQ(cb->counts().gmemPasses, 1u);
+        const uint32_t per = both ? 2 : 1;
+        CHECK(s.tiles == p.tiles() && s.tileLoads == per * p.tiles() && s.tileStores == per * p.tiles());
+        CHECK_EQ(coordsWrong(*t), 0u);
+        CHECK_EQ(coordsWrong(*u, 0x80000000u), 0u);
+    }
+}
+
+// A pass whose draws touch a corner is tiled over that corner alone: tri_flat at a 100 x 50 viewport at (300, 1000)
+// and another at (350, 1010) -- one tile, its loads and stores over the area's granules, the rest of the target left as
+// it was (here the coordinates throughout: the fake draws nothing, so a store anywhere puts back what was loaded).
+TEST(a_gmem_pass_is_tiled_over_its_render_area) {
+    Rig r;
+    auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    fillCoords(*t);
+    RenderPass a;
+    a.color0 = t.get();
+    auto cb = r.queue->commandBuffer();
+    Draw d1 = wholeDraw(3), d2 = wholeDraw(3);
+    d1.viewport = Viewport{300, 1000, 100, 50, 0, 1};
+    d2.viewport = Viewport{350, 1010, 100, 50, 0, 1};
+    CHECK(cb->draw(flatProgram(), a, d1, Bindings{}, Bindings{}));
+    CHECK(cb->draw(flatProgram(), a, d2, Bindings{}, Bindings{}));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const auto s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK(s.tiles == 1 && s.tileLoads == 1 && s.tileStores == 1);
+    // the area (300, 1000)-(449, 1059) in 16 x 4 granules: x 288 to 463, y 1000 to 1059
+    CHECK_EQ(s.storedPixels, uint64_t(464 - 288) * (1060 - 1000));
+    CHECK_EQ(coordsWrong(*t), 0u);
+}
+
+// A framebuffer fetch in a pass whose draws touch a corner: the fetch's descriptor was written with the plan's bin
+// width before the area was known, so the tiles over the area keep that width (the fake judges the descriptor's pitch
+// against the bin the tile uses). With the bins narrowed to the area the fetch read sheared rows: SpringBoard in
+// stripes over two tile columns.
+TEST(a_fetch_in_a_corner_reads_bins_of_the_width_its_descriptor_has) {
+    Rig r;
+    auto t = target(r, 1125, 2436, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    const Program fb{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+    RenderPass a;
+    a.color0 = t.get();
+    render::GmemPlan whole;
+    CHECK(render::gmemPlan(a, &whole, nullptr));
+    auto cb = r.queue->commandBuffer();
+    Draw d = wholeDraw(6);
+    d.viewport = Viewport{300, 1000, 100, 50, 0, 1};
+    CHECK(cb->draw(fb, a, d, Bindings{}, Bindings{}));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const auto s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
+    CHECK(cb->counts().gmemPasses == 1 && s.tiles == 1);
+    const auto gd = r.fake->memory(s.lastDraw.fsTexConst, 64);
+    uint32_t gw[16] = {};
+    if (gd.size() == 64) memcpy(gw, gd.data(), 64);
+    CHECK_EQ((gw[2] & a6xx::A6XX_TEX_CONST_2_PITCH__MASK) >> a6xx::A6XX_TEX_CONST_2_PITCH__SHIFT, whole.binW * 4);
 }

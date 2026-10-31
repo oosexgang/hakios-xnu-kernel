@@ -126,16 +126,31 @@ public:
     // What the buffer holds, counted as it is recorded: passes opened (each a pass start, its flushes and the wait for
     // idle at its tail, which is a fixed cost whatever is drawn), the draws in them, and dispatches, copies and clears
     // (each a pass of its own). What a frame's GPU time goes to is read off these beside the time (metal_fps).
-    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0; };
+    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0, gmemPasses = 0, tiles = 0; };   // (gmemPasses of the passes drawn in tiles)
     const Counts& counts() const { return counts_; }
     // With profiling on, the command processor writes its always-on counter (CP_ALWAYS_ON_COUNTER, 19.2 MHz) at the start
     // of each pass and after its tail -- whose wait for idle makes the end the end -- for the first kMaxProfiled passes:
     // what each costs, beside what it was (a draw pass with its target's size and its draws, a copy, a clear, a
     // dispatch). Read once the buffer has completed. metal_fps names a frame's slowest passes with it.
     enum PassKind : uint32_t { kPassDraw = 0, kPassCopy = 1, kPassClear = 2, kPassDispatch = 3 };
-    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; };
+    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; };   // tiles 0: in sysmem
     static constexpr uint32_t kMaxProfiled = 64;
     void setProfile(bool on) { profile_ = on; }
+    // ...and each draw of a sysmem pass on its own, the first kMaxProfiledDraws: a wait for idle before it and after it,
+    // the counter at both (so the draws no longer overlap: what each costs alone), with its program's name. Which
+    // draws of a heavy frame are heavy is read off these (metal_fps=draws).
+    struct DrawTime { std::string name; double us; };
+    static constexpr uint32_t kMaxProfiledDraws = 512;
+    void setProfileDraws(bool on) { profileDraws_ = on; }
+    std::vector<DrawTime> drawTimes() const;
+    // render::Options::gmem for this buffer's draws besides each draw's own (both must allow it): the C API's switch
+    void setGmem(bool on) { gmem_ = on; }
+    // GMEM's refinements off, for a bisect on the phone: kGmemWholeArea tiles the whole window whatever the draws touch,
+    // kGmemEveryAttachment loads and stores every attachment, kGmemFetchBarrier orders a fetch by the barrier
+    enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4 };
+    void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
+    // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
+    const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
     size_t streamWords() const { return stream_.words().size(); }
     std::vector<PassTime> passTimes() const;
@@ -147,6 +162,13 @@ private:
     bool skipRefused_ = false;
     Counts counts_;
     bool profile_ = false;
+    bool profileDraws_ = false;
+    std::vector<DrawTime> drawsProfiled_;
+    std::shared_ptr<Buffer> drawStamps_;
+    void drawStamp(uint32_t slot);
+    bool gmem_ = true;
+    uint32_t gmemOff_ = 0;
+    std::string gmemWhy_;
     std::vector<PassTime> profiled_;   // as recorded; us filled in by passTimes from the stamps
     std::shared_ptr<Buffer> profileStamps_;
     // the counter into stamp slot SLOT (two a pass: start, end), when profiling and there is room
@@ -167,6 +189,17 @@ private:
         render::Options options;
         uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
         std::unordered_map<uint32_t, uint32_t> regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
+        // A pass drawn in GMEM (gmemPlan and every draw gmemDrawOk) is recorded rather than streamed: its draws gather
+        // in BODIES, deduplicated among themselves from nothing (BODY_REGS) since each tile replays them after the
+        // tile's own register writes, and closePass puts them in the tiles.
+        bool gmem = false;
+        render::GmemPlan plan;
+        pm4::Stream bodies;
+        std::unordered_map<uint32_t, uint32_t> bodyRegs;
+        // what the draws touch: the render area (X0 Y0 X1 Y1, the union of render::drawArea's) and the attachments they
+        // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
+        uint32_t area[4] = {~0u, ~0u, 0, 0};
+        uint32_t written = 0, read = 0;
     };
     void closePass();
     void useAttachments(const RenderPass& pass);

@@ -391,6 +391,10 @@ constexpr uint32_t kTableStencilClearFlushAt = 64;
 constexpr uint32_t kStencilClearFlushValue = 9;
 constexpr uint32_t kTableStencilClearDepthFlushAt = 68;
 constexpr uint32_t kStencilClearDepthFlushValue = 10;
+// a GMEM pass's stores: the blit cache cleaned (PC_CCU_RESOLVE_TS, turnip's FD_CCU_CLEAN_BLIT_CACHE after the last
+// tile) and waited for before the tail, so what the tiles stored is in memory before anything reads it
+constexpr uint32_t kTableBlitFlushAt = 72;
+constexpr uint32_t kBlitFlushValue = 11;
 constexpr uint32_t kTableZeroedBytes = 96;        // what tableStart zeroes from kTableTimestampsAt: every word above
 static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroedBytes, "the Clears' words are zeroed");
 // an occlusion query's two snapshots of the running sample count (RB_SAMPLE_COUNT_ADDR), begin and end, 64 bits each
@@ -441,6 +445,10 @@ struct Options {
     bool visCullUse = false;     // CP_DRAW_INDX_OFFSET with USE_VISIBILITY (turnip's and fd6's pipelines) instead of r3d's IGNORE_VISIBILITY
     bool tailCcuFlush = true;    // CP_WAIT_FOR_IDLE, PC_CCU_FLUSH_COLOR_TS writing a value + CP_WAIT_REG_MEM for it
     bool fbReadBarrier = true;   // before a draw whose FS reads its target: the CCU flush waited for, CACHE_INVALIDATE (off: the probe's control)
+    bool fbReadOrdered = false;  // ...or instead the rasterizer's own ordering (GRAS_SC_CNTL.SINGLE_PRIM_MODE) and no barrier, as
+                                 // turnip's rasterization_order_attachment_access: the probe's fetches come out right so, but
+                                 // SpringBoard's did not (a widget's text cut by a band, the App Library's blur in blocks;
+                                 // clean again with the barrier, which cost 20 fetching draws 131 us against 113)
     bool tailDepthFlush = true;  // with a depth attachment: PC_CCU_FLUSH_DEPTH_TS writing a value + the wait for it
     bool tailLrzFlush = true;    // LRZ_FLUSH, 1 word
     bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail
@@ -448,9 +456,61 @@ struct Options {
     bool tailTimestampBit = false;   // must stay clear (28 October); here for the fake's test only
     bool dedupRegs = true;       // in an open pass, a register write that would put the value the register already holds is
                                  // left out (CommandBuffer::draw); off: every draw writes all of its state, as before
-    uint32_t rotate2d = 0;       // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
+    bool gmem = true;            // a pass that qualifies (gmemPlan) is drawn tile by tile in GMEM: each tile loaded, every draw of the
+                                 // pass replayed into it, stored once; off: every pass in sysmem, each draw's blending through memory
+    bool gmemLoad = true;        // each tile's load from memory (off: the fake's twin, whose stores then show GMEM's own contents)
+    uint8_t rotate2d = 0;        // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
                                  // a quarter turn takes a destination rectangle of the source's sides swapped
 };
+// A draw joins the open pass only with options equal to the pass's, compared as bytes (CommandBuffer::draw): with a
+// member wider than a byte the struct had padding, which a stack-made Options leaves as garbage, and draws that should
+// have joined each opened a pass of their own -- some runs, not others. Bytes only, so there is no padding.
+static_assert(alignof(Options) == 1, "render::Options holds bools and bytes only: no padding for the join's memcmp to read");
+
+// Tiled rendering (GMEM). Sysmem rendering sends every blended pixel of every draw through the colour CCU to memory and
+// back: CoreAnimation's full-screen layers then cost a read and a write of the whole target each (8 blended layers at
+// 1125 x 2436 took the GPU 7.6 ms so, 3.1 ms in GMEM: probe "GMEM cost"). In GMEM the target is loaded tile by tile into the on-chip memory, all of the pass's draws run
+// against the tile there, and the tile is stored once. The tiles: as few columns as the bin width allows
+// (kTileMaxW), as tall as the GMEM below the CCU's colour cache holds (kGmemCcuColorOffset), balanced so the last
+// row and column are not slivers.
+struct GmemPlan {
+    // Where in GMEM each colour attachment's bin lies (RB_MRT's BASE_GMEM) and how much room it has there: GMEM below
+    // the CCU's colour cache shared out by bytes a pixel. Fixed when the pass opens -- the draws are encoded with it --
+    // while the bins' size waits for the render area at its end (gmemTiles).
+    uint32_t base[kMaxColorOutputs] = {}, room[kMaxColorOutputs] = {}, bpp[kMaxColorOutputs] = {};
+    // the render area, X0 Y0 X1 Y1 inclusive (what the draws can touch), the grid's corner (aligned to the tile
+    // alignment) and the bins over it
+    uint32_t area[4] = {}, x0 = 0, y0 = 0;
+    uint32_t binW = 0, binH = 0, cols = 0, rows = 0;
+    uint32_t tiles() const { return cols * rows; }
+};
+// whether PASS can be drawn in GMEM and how: its colour attachments the window's size, linear, single-sampled, 4 or 8
+// bytes a pixel, their rows with room for the event blit's 16 x 4 granules past the edges; no depth or stencil. A bin
+// holds every attachment's pixels (CoreAnimation's main pass draws into two screens at once). False with *why
+// otherwise (the pass then runs in sysmem, as before).
+bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why);
+// PLAN's bins over the render area AREA (X0 Y0 X1 Y1 inclusive, inside the window): turnip's tiling of a render area
+// (tu_tiling_config_update_tile_layout) -- the grid's corner at the area's aligned down, the bins as wide as the plan's
+// (gmemPlan picks the width; a fetch's descriptor holds it), as tall as every attachment's room holds. A pass whose draws touch a corner of the screen is drawn in the
+// tiles over that corner, and loads and stores no more. False when no bin fits (the plan unchanged).
+bool gmemTiles(GmemPlan* plan, const uint32_t area[4]);
+// the pixels a draw can touch, X0 Y0 X1 Y1 inclusive: its viewport clamped to the window, within its scissor (both as
+// encodeInPass writes them); false for a draw it would refuse for them
+bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]);
+// the colour attachments a draw of PROGRAM writes into, as a mask: a slot the stage writes, with an attachment, and a
+// write mask that lets something through
+uint32_t drawnAttachments(const Program& program, const RenderPass& pass);
+// whether a draw may be replayed per tile: the replay runs its vertex stage once a tile and reads the targets' memory
+// as it was before the pass, so no stage that writes buffers, no visibility result, no texture over an attachment's
+// memory (a framebuffer fetch reads the attachment's bin in GMEM instead: encodeInPass)
+bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings, const Bindings& fsBindings, std::string* why);
+// after encodeBegin's words, in place of the draws: the CCU moved for tiles, then per tile the bin selected, the
+// attachments in LOAD (a mask) loaded, the BODY_WORDS at GPU address BODIES called (the pass's draws, the first complete
+// from an empty register state: CommandBuffer::draw), those in STORE stored; then the blit cache cleaned and the CCU
+// back to sysmem. encodeEnd's tail follows as for any pass. What to load and store is CommandBuffer::closePass's;
+// FETCH: a draw of the pass reads an attachment (framebuffer fetch), so the texture caches are dropped at each tile.
+void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
+                uint32_t load, uint32_t store, bool fetch);
 
 // Everything into STREAM, nothing on refusal. VS_PROGRAM / FS_PROGRAM are the GPU addresses of the two stages' words,
 // 128-byte aligned (turnip asserts it; the ST6_SHADER preload unit is 128 bytes); TABLE / TABLE_CPU the kTableBytes
@@ -472,9 +532,11 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 // tail into the pass's TABLE. encode is the three over one table.
 bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
                  const Options& options = Options{});
+// (GMEM: the pass's plan when it is drawn in tiles -- the attachments' bins in RB_MRT's BASE_GMEM, a framebuffer fetch
+// reading its bin in GMEM with no barrier before it; nullptr in sysmem)
 bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw,
                   const Bindings& vsBindings, const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram,
-                  uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{});
+                  uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{}, const GmemPlan* gmem = nullptr);
 void encodeEnd(pm4::Stream& stream, const RenderPass& pass, uint64_t table, const Options& options = Options{});
 
 // A pass with no draw: the batch start, the pass begin, the Clear's fill, the tail. What -[MTLRenderCommandEncoder

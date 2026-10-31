@@ -506,15 +506,37 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
     // (a multisample view's rows hold its SAMPLES samples a pixel side by side)
     const uint32_t ns = sampled ? 1u << fieldOf(d[0], A6XX_TEX_CONST_0_SAMPLES__MASK, A6XX_TEX_CONST_0_SAMPLES__SHIFT) : 1u;
     bpp *= ns;
+    uint64_t base = d[4] | uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
+    const uint32_t tile = fieldOf(d[0], A6XX_TEX_CONST_0_TILE_MODE__MASK, A6XX_TEX_CONST_0_TILE_MODE__SHIFT);
+    // (GMEM's layout first: its rows are the bin's, not the image's)
+    if (tile == TILE6_2) {
+        // a bin in GMEM (a framebuffer fetch in a tile, tu_emit_input_attachments): sampled, in a tile, a 2D of one
+        // layer whose rows are the bin's, below the CCU's colour cache -- nothing of memory is read
+        uint32_t binW = 0, binH = 0, win[4] = {};
+        if (!sampled || !inTile_ || !tileState(&binW, &binH, win)) {
+            if (inTile_) return false;
+            fault(who + ": GMEM's layout (TILE6_2) outside a tile");
+            return false;
+        }
+        const uint32_t ccu = reg(REG_A6XX_RB_CCU_CNTL);
+        const uint64_t cache = uint64_t(fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT)) << A6XX_RB_CCU_CNTL_COLOR_OFFSET__SCALE |
+                               uint64_t(fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__SHIFT)) << 21;
+        if (pitch != uint64_t(binW) * bpp || base + uint64_t(binW) * binH * bpp > cache ||
+            fieldOf(d[2], A6XX_TEX_CONST_2_TYPE__MASK, A6XX_TEX_CONST_2_TYPE__SHIFT) != A6XX_TEX_2D ||
+            fieldOf(d[5], A6XX_TEX_CONST_5_DEPTH__MASK, A6XX_TEX_CONST_5_DEPTH__SHIFT) != 1) {
+            fault(who + text(": a GMEM read of pitch %llu at %#llx: ", pitch, base) + text("not the %llu-pixel bin's rows, ", binW) +
+                  "past the colour cache, or not a 2D of one layer");
+            return false;
+        }
+        return true;
+    }
     if (pitch < uint64_t(width) * bpp || pitch % unit != 0) {
         fault(who + text(": pitch %llu for rows of %llu pixels of %llu bytes: shorter than a row or not a multiple of ", pitch, width, bpp) +
               text("%llu bytes (64 << PITCHALIGN %llu)", unit, pitchalign));
         return false;
     }
-    uint64_t base = d[4] | uint64_t(fieldOf(d[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
     // linear, or a depth layout's tiles (TILE6_3 on every level, so TILE_ALL; 32 bits a texel, its rows counted to 16 as
     // fdl6_tile_alignment counts them) -- sampled only, nothing stores into tiles here
-    const uint32_t tile = fieldOf(d[0], A6XX_TEX_CONST_0_TILE_MODE__MASK, A6XX_TEX_CONST_0_TILE_MODE__SHIFT);
     if (tile != TILE6_LINEAR && (tile != TILE6_3 || !sampled || bpp != 4 || (d[3] & A6XX_TEX_CONST_3_TILE_ALL) == 0)) {
         fault(who + text(": tile mode %llu", tile) + ((d[3] & A6XX_TEX_CONST_3_TILE_ALL) ? " with TILE_ALL" : " without TILE_ALL") +
               ": linear, or a sampled 32-bit depth layout (TILE6_3, TILE_ALL), is what this GPU model reads");
@@ -1050,6 +1072,87 @@ bool FakeGpu::execCopy(uint32_t fmt, uint32_t bpp, uint32_t ifmt, uint32_t x0, u
     return true;
 }
 
+// A GMEM tile's state, as a draw or an event blit in it needs it: GRAS and RB_BIN_CONTROL alike with BUFFERS_IN_GMEM
+// and a bin, RB_BIN_CONTROL2 the same bin, the window scissor no larger than the bin with its corner where all four
+// window offsets put GMEM's origin (tu6_emit_tile_select); the bin's size and the window, X1 Y1 X2 Y2 inclusive, out
+bool FakeGpu::tileState(uint32_t* binW, uint32_t* binH, uint32_t win[4]) {
+    using namespace a6xx;
+    const uint32_t g = reg(REG_A6XX_GRAS_BIN_CONTROL), r = reg(REG_A6XX_RB_BIN_CONTROL), r2 = reg(REG_A6XX_RB_BIN_CONTROL2);
+    *binW = fieldOf(g, A6XX_GRAS_BIN_CONTROL_BINW__MASK, A6XX_GRAS_BIN_CONTROL_BINW__SHIFT) << A6XX_GRAS_BIN_CONTROL_BINW__SCALE;
+    *binH = fieldOf(g, A6XX_GRAS_BIN_CONTROL_BINH__MASK, A6XX_GRAS_BIN_CONTROL_BINH__SHIFT) << A6XX_GRAS_BIN_CONTROL_BINH__SCALE;
+    if (g != r || fieldOf(g, A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__MASK, A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__SHIFT) != BUFFERS_IN_GMEM || *binW == 0 ||
+        *binH == 0 || r2 != (A6XX_RB_BIN_CONTROL2_BINW(*binW) | A6XX_RB_BIN_CONTROL2_BINH(*binH))) {
+        fault(text("GRAS_BIN_CONTROL %#llx, RB_BIN_CONTROL %#llx, RB_BIN_CONTROL2 %#llx in a tile: the same bin in all three, in GMEM", g, r, r2));
+        return false;
+    }
+    const uint32_t tl = reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL), br = reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_BR);
+    win[0] = tl & 0x3fff;
+    win[1] = tl >> 16 & 0x3fff;
+    win[2] = br & 0x3fff;
+    win[3] = br >> 16 & 0x3fff;
+    bool offsets = true;
+    for (uint32_t o : {REG_A6XX_RB_WINDOW_OFFSET, REG_A6XX_RB_WINDOW_OFFSET2, REG_A6XX_SP_WINDOW_OFFSET, REG_A6XX_SP_TP_WINDOW_OFFSET}) {
+        offsets = offsets && reg(o) == tl;
+    }
+    if (win[2] < win[0] || win[3] < win[1] || win[2] - win[0] + 1 > *binW || win[3] - win[1] + 1 > *binH || !offsets ||
+        reg(REG_A6XX_GRAS_2D_RESOLVE_CNTL_1) != tl || reg(REG_A6XX_GRAS_2D_RESOLVE_CNTL_2) != br) {
+        fault(text("a tile's window (%#llx)-(%#llx) larger than its bin, or not where the window offsets and the resolve window are", tl, br));
+        return false;
+    }
+    return true;
+}
+
+// CP_EVENT_WRITE BLIT in a tile: RB_BLIT_INFO's LOAD or STORE carried out over the tile's part of RB_BLIT_SCISSOR,
+// between the destination's rows and GMEM at RB_BLIT_BASE_GMEM, the bin's width a GMEM row (what the draws see there,
+// RB_MRT's BASE_GMEM 0 with the window offset at the bin's corner)
+bool FakeGpu::eventBlit() {
+    using namespace a6xx;
+    if (!inTile_) {
+        fault("an event blit outside a GMEM tile");
+        return false;
+    }
+    uint32_t binW = 0, binH = 0, win[4] = {};
+    if (!tileState(&binW, &binH, win)) return false;
+    const uint32_t info = reg(REG_A6XX_RB_BLIT_INFO), type = info & A6XX_RB_BLIT_INFO_TYPE__MASK;
+    if (type != BLIT_EVENT_LOAD && type != BLIT_EVENT_STORE) {
+        fault(text("RB_BLIT_INFO %#llx: a load or a store is what this GPU model runs", info));
+        return false;
+    }
+    const uint32_t dstInfo = reg(REG_A6XX_RB_BLIT_DST_INFO);
+    const uint32_t bpp = bytesPerPixel(fieldOf(dstInfo, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT));
+    const uint64_t dst = reg64(REG_A6XX_RB_BLIT_DST), pitch = uint64_t(reg(REG_A6XX_RB_BLIT_DST_PITCH) & 0xffff) << 6;
+    const uint32_t gbase = reg(REG_A6XX_RB_BLIT_BASE_GMEM);
+    const uint32_t stl = reg(REG_A6XX_RB_BLIT_SCISSOR_TL), sbr = reg(REG_A6XX_RB_BLIT_SCISSOR_BR);
+    if (bpp == 0 || (dstInfo & A6XX_RB_BLIT_DST_INFO_TILE_MODE__MASK) != TILE6_LINEAR || reg(REG_A6XX_RB_BLIT_GMEM_MSAA_CNTL) != 0) {
+        fault(text("RB_BLIT_DST_INFO %#llx: a linear, single-sampled destination of a known format", dstInfo));
+        return false;
+    }
+    const uint32_t x1 = std::max(win[0], stl & 0x3fff), y1 = std::max(win[1], stl >> 16 & 0x3fff);
+    const uint32_t x2 = std::min(win[2], sbr & 0x3fff), y2 = std::min(win[3], sbr >> 16 & 0x3fff);
+    if (x1 > x2 || y1 > y2) return true;
+    const uint64_t rowBytes = uint64_t(x2 - x1 + 1) * bpp;
+    if (uint64_t(gbase) + uint64_t(binW) * binH * bpp > gmem_.size() || pitch < rowBytes) {
+        fault("an event blit past GMEM's end, or a destination pitch shorter than its rows");
+        return false;
+    }
+    for (uint32_t y = y1; y <= y2; y++) {
+        uint8_t* m = at(dst + uint64_t(y) * pitch + uint64_t(x1) * bpp, rowBytes);
+        if (m == nullptr) {
+            fault(text("an event blit's row %llu at %#llx: outside every buffer", y, dst + uint64_t(y) * pitch));
+            return false;
+        }
+        uint8_t* g = gmem_.data() + gbase + (uint64_t(y - win[1]) * binW + (x1 - win[0])) * bpp;
+        if (type == BLIT_EVENT_LOAD) memcpy(g, m, rowBytes);
+        else memcpy(m, g, rowBytes);
+    }
+    if (type == BLIT_EVENT_LOAD) stats_.tileLoads++;
+    else {
+        stats_.tileStores++;
+        stats_.storedPixels += uint64_t(x2 - x1 + 1) * (y2 - y1 + 1);
+    }
+    return true;
+}
+
 // CP_DRAW_INDX_OFFSET: the draw itself. As with CP_EXEC_CS, everything the registers and the loads say about it must hold
 // together (fake_gpu.hpp's file comment lists what); what the GPU does with state that does not is hang or write
 // nothing, and a fault here stands for either. Nothing is rasterized.
@@ -1114,12 +1217,18 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
             highestIndex = std::max<uint64_t>(highestIndex, v);
         }
     }
-    // the pass: begun by the marker, in sysmem with no bins (GRAS_BIN_CONTROL and RB_BIN_CONTROL alike)
+    // the pass: begun by the marker, in sysmem with no bins (GRAS_BIN_CONTROL and RB_BIN_CONTROL alike), or in a GMEM
+    // tile whose bin, window and CCU hold together (tileState)
     if (!passBegun_) {
         fault("a draw before CP_SET_MARKER RM6_DIRECT_RENDER: the sysmem pass was not begun in this submission");
         return false;
     }
+    uint32_t binW = 0, binH = 0, tileWin[4] = {};
+    if (inTile_ && !tileState(&binW, &binH, tileWin)) {
+        return false;
+    }
     for (uint32_t r : {REG_A6XX_GRAS_BIN_CONTROL, REG_A6XX_RB_BIN_CONTROL}) {
+        if (inTile_) break;
         uint32_t v = reg(r);
         if (fieldOf(v, A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__MASK, A6XX_GRAS_BIN_CONTROL_BUFFERS_LOCATION__SHIFT) != BUFFERS_IN_SYSMEM ||
             fieldOf(v, A6XX_GRAS_BIN_CONTROL_RENDER_MODE__MASK, A6XX_GRAS_BIN_CONTROL_RENDER_MODE__SHIFT) != RENDERING_PASS ||
@@ -1152,6 +1261,7 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     // image of a known format, its pitch holding the window's rows, its rows inside a buffer, SP_FS_MRT_REG[i] the same
     // format, no GMEM base; target 0's format in GRAS_LRZ_MRT_BUF_INFO_0
     d.mrtCount = fieldOf(reg(REG_A6XX_RB_FS_OUTPUT_CNTL1), A6XX_RB_FS_OUTPUT_CNTL1_MRT__MASK, A6XX_RB_FS_OUTPUT_CNTL1_MRT__SHIFT);
+    uint64_t gmemSpans[8][2] = {};
     uint32_t spMrt = fieldOf(reg(REG_A6XX_SP_FS_OUTPUT_CNTL1), A6XX_SP_FS_OUTPUT_CNTL1_MRT__MASK, A6XX_SP_FS_OUTPUT_CNTL1_MRT__SHIFT);
     if (d.mrtCount < 1 || d.mrtCount > 8 || spMrt != d.mrtCount) {
         fault(text("SP_FS_OUTPUT_CNTL1.MRT %llu and RB_FS_OUTPUT_CNTL1.MRT %llu: 1 to 8 targets, the same in both", spMrt, d.mrtCount));
@@ -1162,7 +1272,14 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     d.windowScissor[1] = fieldOf(reg(REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL), A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_TL_Y__SHIFT);
     d.windowScissor[2] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_X__SHIFT);
     d.windowScissor[3] = fieldOf(winBr, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__MASK, A6XX_GRAS_SC_WINDOW_SCISSOR_BR_Y__SHIFT);
-    const uint64_t width = uint64_t(d.windowScissor[2]) + 1, rows = uint64_t(d.windowScissor[3]) + 1;
+    uint64_t width = uint64_t(d.windowScissor[2]) + 1, rows = uint64_t(d.windowScissor[3]) + 1;
+    if (inTile_) {
+        // (a tile's window may reach past the target's edge, as turnip's whole bins do; what the draw writes stops at
+        // its screen scissor, which must then be inside the target's rows instead)
+        const uint32_t sbr = reg(REG_A6XX_GRAS_SC_SCREEN_SCISSOR_BR);
+        width = std::min<uint64_t>(width, (sbr & 0xffff) + 1);
+        rows = std::min<uint64_t>(rows, (sbr >> 16) + 1);
+    }
     // The sample count, one in all three blocks (tu6_emit_msaa): RAS and DEST alike, MSAA_DISABLE exactly when it is one,
     // at most four (the RB's own maximum here). A target's rows then hold that many samples a pixel.
     {
@@ -1215,7 +1332,12 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
                                                        fieldOf(spFsMrtReg, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__MASK, A6XX_SP_FS_MRT_REG_COLOR_FORMAT__SHIFT), format));
             return false;
         }
-        if (reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t)) != 0) {
+        // (BASE_GMEM: where the target's bin lies in a tile, each inside the GMEM below the CCU's colour cache and the
+        // bins of the targets written apart -- gmemSpans, checked below; a sysmem draw has none)
+        if (inTile_) {
+            gmemSpans[t][0] = reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t));
+            gmemSpans[t][1] = gmemSpans[t][0] + uint64_t(binW) * binH * bpp;
+        } else if (reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t)) != 0) {
             fault("RB_MRT_BASE_GMEM[" + which + "] " + text("is %#llx: a sysmem draw has no GMEM base", reg(regRbMrt(REG_A6XX_RB_MRT_BASE_GMEM, t))));
             return false;
         }
@@ -1540,7 +1662,9 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     scissor(regGrasScViewportScissor(REG_A6XX_GRAS_SC_VIEWPORT_SCISSOR_TL, 0), d.viewportScissor);
     for (int which = 0; which < 2; which++) {
         const uint32_t* sc = which == 0 ? d.screenScissor : d.viewportScissor;
-        if (sc[0] > sc[2] || sc[1] > sc[3] || sc[2] > d.windowScissor[2] || sc[3] > d.windowScissor[3]) {
+        // (in a tile the window scissor is the tile's and the draw's scissors are the target's, as on any pass: the
+        // window clips them, which is how a draw visits every tile)
+        if (sc[0] > sc[2] || sc[1] > sc[3] || (!inTile_ && (sc[2] > d.windowScissor[2] || sc[3] > d.windowScissor[3]))) {
             fault(std::string(which == 0 ? "GRAS_SC_SCREEN_SCISSOR[0]" : "GRAS_SC_VIEWPORT_SCISSOR[0]") +
                   text(" (%llu, %llu)-", sc[0], sc[1]) + text("(%llu, %llu) is not inside the window scissor", sc[2], sc[3]) +
                   text(" (%llu, %llu)", d.windowScissor[2], d.windowScissor[3]));
@@ -1672,7 +1796,27 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         uint32_t ccu = reg(REG_A6XX_RB_CCU_CNTL);
         bool sysmem = fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT) != 0 &&
                       fieldOf(ccu, A6XX_RB_CCU_CNTL_DEPTH_OFFSET__MASK, A6XX_RB_CCU_CNTL_DEPTH_OFFSET__SHIFT) == 0;
-        if (!ccuCntlWritten_ || !ccuCntlAfterWfi_ || !sysmem) {
+        if (inTile_) {
+            // the colour cache above every target's bin, and the bins of the targets the stage writes apart
+            const uint32_t at = fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET__SHIFT) << A6XX_RB_CCU_CNTL_COLOR_OFFSET__SCALE |
+                                fieldOf(ccu, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__MASK, A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI__SHIFT) << 21;
+            if (!ccuCntlWritten_ || !ccuCntlAfterWfi_) {
+                fault(text("RB_CCU_CNTL (%#llx) in a tile: not written after a WFI", ccu));
+                return false;
+            }
+            for (uint32_t t = 0; t < d.mrtCount; t++) {
+                if (gmemSpans[t][1] > at) {
+                    fault(text("RB_MRT_BASE_GMEM[%llu]: a bin to %#llx, ", t, gmemSpans[t][1]) + text("into the CCU's colour cache at %#llx", at));
+                    return false;
+                }
+                for (uint32_t u = 0; u < t; u++) {
+                    if (((unwrittenMask >> t) & 1) == 0 && ((unwrittenMask >> u) & 1) == 0 && gmemSpans[t][0] < gmemSpans[u][1] && gmemSpans[u][0] < gmemSpans[t][1]) {
+                        fault(text("RB_MRT_BASE_GMEM[%llu] and [%llu]: the two written targets' bins overlap", t, u));
+                        return false;
+                    }
+                }
+            }
+        } else if (!ccuCntlWritten_ || !ccuCntlAfterWfi_ || !sysmem) {
             fault(text("RB_CCU_CNTL (%#llx) was not written in this submission right after a CP_WAIT_FOR_IDLE with the sysmem shape", ccu));
             return false;
         }
@@ -1787,7 +1931,26 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 // RM6_DIRECT_RENDER begins a sysmem pass (tu_cmd_buffer.cc:2130-2131; fd6_gmem.cc:2041-2042): a draw before it has no pass
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_DIRECT_RENDER) {
                     passBegun_ = true;
+                    inTile_ = false;
                     stats_.passes++;
+                }
+                // a GMEM tile: within a pass begun (the head's marker), ended by RM6_BIN_RENDER_END before the next
+                if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_RENDER_START) {
+                    if (!passBegun_ || inTile_ || (p[0] & A6XX_CP_SET_MARKER_0_USES_GMEM) == 0) {
+                        fault("RM6_BIN_RENDER_START outside a pass, inside a tile, or without USES_GMEM");
+                        return false;
+                    }
+                    inTile_ = true;
+                    stats_.tiles++;
+                    // (GMEM holds whatever the last tile left; a pattern no target here holds, so a store without its load shows)
+                    std::fill(gmem_.begin(), gmem_.end(), uint8_t(0xcd));
+                }
+                if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_RENDER_END) {
+                    if (!inTile_) {
+                        fault("RM6_BIN_RENDER_END outside a tile");
+                        return false;
+                    }
+                    inTile_ = false;
                 }
                 break;
             case CP_SET_MODE:
@@ -1864,6 +2027,9 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 }
                 // ZPASS_DONE: the running sample count, 64 bits, where RB_SAMPLE_COUNT_ADDR points, when
                 // RB_SAMPLE_COUNT_CONTROL.COPY asks for it (turnip's occlusion query, A6XX path)
+                if (h.count == 1 && fieldOf(p[0], CP_EVENT_WRITE_0_EVENT__MASK, CP_EVENT_WRITE_0_EVENT__SHIFT) == BLIT && !eventBlit()) {
+                    return false;
+                }
                 if (h.count == 1 && fieldOf(p[0], CP_EVENT_WRITE_0_EVENT__MASK, CP_EVENT_WRITE_0_EVENT__SHIFT) == ZPASS_DONE) {
                     if ((reg(REG_A6XX_RB_SAMPLE_COUNT_CONTROL) & A6XX_RB_SAMPLE_COUNT_CONTROL_COPY) == 0) {
                         fault("ZPASS_DONE without RB_SAMPLE_COUNT_CONTROL.COPY: no count is written");
@@ -2086,7 +2252,7 @@ void FakeGpu::run(const Job& job) {
     gfxIbosLoaded_ = false;
     gfxIbosFrom_ = 0;
     gfxIboUnits_ = 0;
-    passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = false;
+    passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = inTile_ = false;
     drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = drawsWithoutDepthFlush_ = 0;
     written_.clear();
     bool ok = execute(job.address, job.words, 0);

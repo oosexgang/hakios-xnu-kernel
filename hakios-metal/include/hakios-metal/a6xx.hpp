@@ -78,6 +78,7 @@ enum a6xx_isam_mode : uint32_t {
 
 enum a6xx_tile_mode : uint32_t {
     TILE6_LINEAR = 0,              // a6xx.xml.h:57
+    TILE6_2 = 2,                   // a6xx.xml.h:58  GMEM's own layout: a fetch from a GMEM attachment reads through it (tu_emit_input_attachments)
     TILE6_3 = 3,                   // a6xx.xml.h:59  the depth buffer's layout: the hardware has no linear one (fd6_layout.c:157-164)
 };
 
@@ -301,6 +302,9 @@ enum vgt_event_type : uint32_t {
 // there is no RM6_BYPASS in this Mesa, value 1 is this name (adreno_pm4.xml:1797-1798)
 enum a6xx_marker : uint32_t {
     RM6_DIRECT_RENDER = 1,         // adreno_pm4.xml.h:519
+    RM6_BIN_RENDER_START = 4,      // adreno_pm4.xml.h:522  a GMEM tile's draws begin (tu6_emit_tile_select)
+    RM6_BIN_RESOLVE = 6,           // adreno_pm4.xml.h:524  the tile's store to memory (tu6_emit_tile_store)
+    RM6_BIN_RENDER_END = 7,        // adreno_pm4.xml.h:525
     RM6_COMPUTE = 8,               // adreno_pm4.xml.h:526
 };
 
@@ -1393,6 +1397,12 @@ inline constexpr bool kHasEarlyPreamble = false;                  // not-in-head
 inline constexpr uint32_t kNumCcu = 2;                            // not-in-headers: freedreno_devices.h __info14 .num_ccu
 inline constexpr uint32_t kSysmemPerCcuDepthCacheSize = 0x10000;  // not-in-headers: freedreno_devices.h __info14 .sysmem_per_ccu_depth_cache_size (65536)
 inline constexpr uint32_t kSysmemPerCcuColorCacheSize = 0x10000;  // not-in-headers: freedreno_devices.h __info14 .sysmem_per_ccu_color_cache_size (65536)
+// tiled rendering: the on-chip memory and the tile grid (a6xx_gen4 / adreno_7c3 in freedreno_devices.py)
+inline constexpr uint32_t kGmemBytes = 512 * 1024;                // not-in-headers: freedreno_devices.py adreno_7c3 gmem_size (Linux a6xx_gpu adreno_7c3 SZ_512K)
+inline constexpr uint32_t kGmemCcuColorCacheFraction = 4;          // not-in-headers: freedreno_devices.py a6xx_gen4 gmem_ccu_color_cache_fraction QUARTER
+inline constexpr uint32_t kTileAlignW = 32, kTileAlignH = 16;      // not-in-headers: freedreno_devices.py a6xx_gen4 tile_align_w/h
+inline constexpr uint32_t kGmemAlignW = 16, kGmemAlignH = 4;       // not-in-headers: freedreno_devices.py a6xx_gen4 gmem_align_w/h (the event blit's granule)
+inline constexpr uint32_t kTileMaxW = 1024, kTileMaxH = 1008;      // not-in-headers: freedreno_devices.py a6xx_gen4 tile_max_w/h
 // the border color table both TP base registers point at: Gallium's is FD6_MAX_BORDER_COLORS (256) entries of
 // sizeof(struct fd6_bcolor_entry) (128 bytes: 32 fp32/fp16/int words); zeros are a valid table (black, transparent)
 inline constexpr uint32_t kBorderColorBytes = 256 * 128;          // not-in-headers: fd6_texture.h FD6_MAX_BORDER_COLORS * FD6_BORDER_COLOR_SIZE
@@ -2214,6 +2224,41 @@ constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINW(uint32_t v) {
 }
 constexpr uint32_t A6XX_RB_BIN_CONTROL2_BINH(uint32_t v) {
     return field(v >> A6XX_RB_BIN_CONTROL2_BINH__SCALE, A6XX_RB_BIN_CONTROL2_BINH__SHIFT, A6XX_RB_BIN_CONTROL2_BINH__MASK);
+}
+
+// the event blit: CP_EVENT_WRITE BLIT moves the current bin between GMEM and memory (LOAD, STORE) or clears it in GMEM,
+// as RB_BLIT_INFO says, over the bin's part of the blit scissor (tu_clear_blit.cc:1909-2009 event_blit_setup/_run)
+enum a6xx_blit_event_type : uint32_t {
+    BLIT_EVENT_STORE = 0,              // a6xx.xml.h:2254
+    BLIT_EVENT_STORE_AND_CLEAR = 1,    // a6xx.xml.h:2255
+    BLIT_EVENT_CLEAR = 2,              // a6xx.xml.h:2256
+    BLIT_EVENT_LOAD = 3,               // a6xx.xml.h:2257
+};
+inline constexpr uint32_t REG_A6XX_RB_UNKNOWN_88D0 = 0x88d0;                                 // a6xx.xml.h:6206  turnip writes 0 before each event blit
+inline constexpr uint32_t REG_A6XX_RB_BLIT_SCISSOR_TL = 0x88d1;                              // a6xx.xml.h:6221  a6xx_reg_xy, BR inclusive
+inline constexpr uint32_t REG_A6XX_RB_BLIT_SCISSOR_BR = 0x88d2;                              // a6xx.xml.h:6236
+inline constexpr uint32_t REG_A6XX_RB_BLIT_BASE_GMEM = 0x88d6;                               // a6xx.xml.h:6292  bytes into GMEM
+inline constexpr uint32_t REG_A6XX_RB_BLIT_DST_INFO = 0x88d7;                                // a6xx.xml.h:6295
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_TILE_MODE__MASK = 0x00000003;                // a6xx.xml.h:6296
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_TILE_MODE__SHIFT = 0;                        // a6xx.xml.h:6297
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__MASK = 0x00000060;               // a6xx.xml.h:6309
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__SHIFT = 5;                       // a6xx.xml.h:6310
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK = 0x00007f80;             // a6xx.xml.h:6315
+inline constexpr uint32_t A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT = 7;                     // a6xx.xml.h:6316
+inline constexpr uint32_t REG_A6XX_RB_BLIT_DST = 0x88d8;                                     // a6xx.xml.h:6325  64-bit
+inline constexpr uint32_t REG_A6XX_RB_BLIT_DST_PITCH = 0x88da;                               // a6xx.xml.h:6328  bytes >> 6
+inline constexpr uint32_t REG_A6XX_RB_BLIT_FLAG_DST = 0x88dc;                                // a6xx.xml.h:6348  64-bit, then FLAG_DST_PITCH: 0 without UBWC
+inline constexpr uint32_t REG_A6XX_RB_BLIT_INFO = 0x88e3;                                    // a6xx.xml.h:6380
+inline constexpr uint32_t A6XX_RB_BLIT_INFO_TYPE__MASK = 0x00000003;                         // a6xx.xml.h:6381
+inline constexpr uint32_t A6XX_RB_BLIT_INFO_TYPE__SHIFT = 0;                                 // a6xx.xml.h:6382
+inline constexpr uint32_t A6XX_RB_BLIT_INFO_SAMPLE_0 = 0x00000004;                           // a6xx.xml.h:6387  integer formats: turnip sets it (no averaging)
+constexpr uint32_t rbBlitDstInfo(a6xx_format fmt, a6xx_tile_mode tile, a3xx_color_swap swap) {
+    return field(tile, A6XX_RB_BLIT_DST_INFO_TILE_MODE__SHIFT, A6XX_RB_BLIT_DST_INFO_TILE_MODE__MASK) |
+           field(swap, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__SHIFT, A6XX_RB_BLIT_DST_INFO_COLOR_SWAP__MASK) |
+           field(fmt, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__SHIFT, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT__MASK);
+}
+constexpr uint32_t rbBlitInfo(a6xx_blit_event_type type, bool sample0) {
+    return field(type, A6XX_RB_BLIT_INFO_TYPE__SHIFT, A6XX_RB_BLIT_INFO_TYPE__MASK) | (sample0 ? A6XX_RB_BLIT_INFO_SAMPLE_0 : 0u);
 }
 
 // CCUSINGLECACHELINESIZE(2) = 0x10 for a sysmem pass (tu_cmd_buffer.cc:633-693 tu6_emit_render_cntl; fd6_gmem.cc:
@@ -4015,6 +4060,22 @@ constexpr uint32_t binControl(a6xx_render_mode mode, a6xx_buffers_location where
 constexpr uint32_t binControlSysmem(bool lrzFeedback) {
     return binControl(RENDERING_PASS, BUFFERS_IN_SYSMEM, lrzFeedback ? LRZ_FEEDBACK_EARLY_Z_OR_EARLY_LRZ_LATE_Z : LRZ_FEEDBACK_NONE);
 }
+
+// ...for a GMEM tile: the bin's size, BUFFERS_IN_GMEM; with lrz feedback turnip's EARLY_LRZ_LATE_Z (no binning pass
+// here), without it FORCE_LRZ_WRITE_DIS (tu_cmd_buffer.cc:1066-1077)
+constexpr uint32_t binControlGmem(bool lrzFeedback, uint32_t binw, uint32_t binh) {
+    return binControl(RENDERING_PASS, BUFFERS_IN_GMEM, lrzFeedback ? LRZ_FEEDBACK_EARLY_LRZ_LATE_Z : LRZ_FEEDBACK_NONE, binw, binh) |
+           (lrzFeedback ? 0u : A6XX_GRAS_BIN_CONTROL_FORCE_LRZ_WRITE_DIS);
+}
+// RB_CCU_CNTL for tiled rendering: the colour cache shrunk to its GMEM fraction and moved to GMEM's end, so the tiles
+// own everything below it (tu_cmd_buffer.cc tu6_emit_ccu_cntl, gmem: ccu_offset_gmem = gmem - num_ccu * color cache /
+// fraction); depth cache unused (no depth attachment in a GMEM pass here). 0x3c400000 on this chip
+constexpr uint32_t kGmemCcuColorOffset = kGmemBytes - kNumCcu * kSysmemPerCcuColorCacheSize / kGmemCcuColorCacheFraction;
+constexpr uint32_t rbCcuCntlGmem() {
+    return (kHasGmemFastClear ? 0u : A6XX_RB_CCU_CNTL_GMEM_FAST_CLEAR_DISABLE) | A6XX_RB_CCU_CNTL_COLOR_OFFSET_HI(kGmemCcuColorOffset >> 21) |
+           A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE(CCU_CACHE_SIZE_QUARTER) | A6XX_RB_CCU_CNTL_COLOR_OFFSET(kGmemCcuColorOffset & 0x1fffff);
+}
+static_assert(rbCcuCntlGmem() == 0x3c400000, "the GMEM CCU layout turnip computes for this chip");
 
 // RB_MRT_BUF_INFO[i]: fd6_view.c:408-413 (no UNK10; A6XX has no LOSSLESSCOMPEN)
 constexpr uint32_t rbMrtBufInfo(a6xx_format fmt, a6xx_tile_mode tile, a3xx_color_swap swap) {

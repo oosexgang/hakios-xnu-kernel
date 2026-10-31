@@ -183,13 +183,42 @@ void CommandBuffer::stamp(uint32_t slot) {
 
 void CommandBuffer::stampStart(PassKind kind, uint32_t width, uint32_t height) {
     if (!profile_ || profiled_.size() >= kMaxProfiled) return;
-    profiled_.push_back(PassTime{kind, width, height, 0, 0});
+    profiled_.push_back(PassTime{kind, width, height, 0, 0, 0});
     stamp(uint32_t(2 * (profiled_.size() - 1)));
 }
 
 void CommandBuffer::stampEnd() {
     if (!profile_ || profiled_.empty()) return;
     stamp(uint32_t(2 * (profiled_.size() - 1) + 1));
+}
+
+void CommandBuffer::drawStamp(uint32_t slot) {
+    if (drawStamps_ == nullptr) {
+        std::string why;
+        drawStamps_ = newBuffer(queue_.gpu(), 16 * kMaxProfiledDraws, &why);
+        if (drawStamps_ == nullptr) {
+            profileDraws_ = false;
+            return;
+        }
+        memset(drawStamps_->contents(), 0, 16 * kMaxProfiledDraws);
+        keep(drawStamps_);
+    }
+    const uint64_t at = drawStamps_->gpuAddress() + 8ull * slot;
+    stream_.waitForIdle();
+    const uint32_t w[3] = {a6xx::CP_REG_TO_MEM_0_REG(0x0980) | a6xx::CP_REG_TO_MEM_0_CNT(2) | a6xx::CP_REG_TO_MEM_0_64B, uint32_t(at),
+                           uint32_t(at >> 32)};
+    stream_.packet(a6xx::CP_REG_TO_MEM, w, 3);
+    use(*drawStamps_, true);
+}
+
+std::vector<CommandBuffer::DrawTime> CommandBuffer::drawTimes() const {
+    std::vector<DrawTime> out = drawsProfiled_;
+    if (drawStamps_ == nullptr) return {};
+    const auto* t = static_cast<const uint64_t*>(drawStamps_->contents());
+    for (size_t i = 0; i < out.size(); i++) {
+        out[i].us = t[2 * i + 1] > t[2 * i] ? double(t[2 * i + 1] - t[2 * i]) / 19.2 : 0.0;
+    }
+    return out;
 }
 
 std::vector<CommandBuffer::PassTime> CommandBuffer::passTimes() const {

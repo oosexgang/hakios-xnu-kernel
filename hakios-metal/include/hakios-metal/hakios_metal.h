@@ -447,6 +447,19 @@ void hakios_metal_cb_set_profile(hakios_metal_cb *cb, int on);
 int hakios_metal_cb_pass_time(hakios_metal_cb *cb, unsigned i, unsigned *kind, unsigned *width, unsigned *height, unsigned *draws, double *us);
 /* what CB holds so far (CommandBuffer::counts): passes opened, draws, dispatches, copies and clears; any pointer NULL */
 void hakios_metal_cb_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *draws, unsigned *dispatches, unsigned *copies, unsigned *clears);
+/* tiled rendering (render::Options::gmem) for CB's passes from now on, on by default; and of what CB holds, the passes
+ * drawn in GMEM and their tiles, and pass I's tiles as profiled (0: in sysmem, -1 past them) */
+void hakios_metal_cb_set_gmem(hakios_metal_cb *cb, int on);
+/* GMEM's refinements turned off (CommandBuffer::setGmemOff's bits: 1 whole area, 2 every attachment, 4 fetch barrier) */
+void hakios_metal_cb_set_gmem_off(hakios_metal_cb *cb, unsigned bits);
+/* each draw of CB's sysmem passes timed alone (CommandBuffer::setProfileDraws, before anything is recorded) and, once it
+ * has completed, draw I's program name (valid while CB lives) and microseconds; the count is returned, -1 past them */
+void hakios_metal_cb_set_profile_draws(hakios_metal_cb *cb, int on);
+int hakios_metal_cb_draw_time(hakios_metal_cb *cb, unsigned i, const char **name, double *us);
+void hakios_metal_cb_gmem_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *tiles);
+int hakios_metal_cb_pass_tiles(hakios_metal_cb *cb, unsigned i);
+/* why CB's last pass refused for GMEM was refused ("" when none was); valid while CB lives */
+const char *hakios_metal_cb_gmem_refusal(hakios_metal_cb *cb);
 int hakios_metal_cb_refuse(hakios_metal_cb *cb, const char *why);
 unsigned hakios_metal_cb_skipped(hakios_metal_cb *cb, const char **last);
 /* -generateMipmapsForTexture: */
