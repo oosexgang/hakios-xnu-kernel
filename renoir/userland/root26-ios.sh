@@ -61,6 +61,26 @@ PY
 done
 rm -f "$ENT"
 (cd $DR/userland && ./mkjobs.py --rest $S/rootfs $J $JOBS)
+# No EDR here: backboardd's job names com.apple.libEDR.Notification, whose server (EDRServerStartService)
+# CoreBrightness starts, and CoreBrightness has no display to run here. launchd kept the port and queued
+# every request: CoreAnimation in backboardd asks EDR at each display state change while holding the lock
+# its display thread needs, and waited out libEDR's timeout, about 40 s: one frame in 40 s on iOS 27.
+# Without the name a lookup fails at once and libEDR answers that there is no EDR.
+python3 - "$J/com.apple.backboardd.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as f:
+    job = plistlib.load(f)
+if job.get('MachServices', {}).pop('com.apple.libEDR.Notification', None) is not None:
+    with open(sys.argv[1], 'wb') as f:
+        plistlib.dump(job, f)
+    print('  backboardd: no com.apple.libEDR.Notification')
+PY
+# Jobs that cost the phone more than they give it: ScreenTimeAgent (Screen Time) keeps a core busy all the
+# time on iOS 27 here (ustacks=top: ~90 % of a core, touched or not) while the window server draws in
+# software. Without the job its Mach services are unknown and their clients fail at once.
+for job in com.apple.ScreenTimeAgent; do
+	rm -f "$J/$job.plist" && echo "  no job $job"
+done
 # The last migration: darwin-renoir's skeleton says 20F66 (16.5), so iOS 26 took itself for just updated
 # and ran DataMigrator, a progress bar on the screen in place of the lock screen. It is this build's own.
 python3 - "$T/var/mobile/Library/Preferences/com.apple.migration.plist" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
@@ -106,7 +126,11 @@ PY
 	printf 'f\t644\t0\t0\t/private/var/preferences/Logging/Subsystems/%s.plist\t/var/preferences/Logging/Subsystems/%s.plist\n' \
 		"$subsystem" "$subsystem" >> $T/etc/var.skel
 done
-# what is running, at the start and twice later (net_test waits out its 60 s with no Wi-Fi)
+# what is running, at the start and twice later (net_test waits out its 60 s with no Wi-Fi);
+# RC_JOBS=FILE: that file instead (darwin-renoir's convention, e.g. gestures by rwtouch)
+if [ -n "${RC_JOBS:-}" ]; then
+	cp "$RC_JOBS" $T/etc/rc.jobs
+else
 cat > $T/etc/rc.jobs <<'EOF'
 # iOS 26 on renoir: towards SpringBoard
 /bin/ps -A
@@ -115,6 +139,7 @@ cat > $T/etc/rc.jobs <<'EOF'
 /redwood/bin/net_test waitaddr en0 60
 /bin/ps -A
 EOF
+fi
 cd $DR/userland
 python3 ../tools/apfs/mkapfs.py -z --plain fw --plain fw-renoir --plain fw-wifi-renoir --plain fw-audio-renoir \
 	-o $IOS/root26-ios.apfs redwood=$T | tail -1

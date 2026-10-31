@@ -77,7 +77,7 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
 
 State on 2026-10-31: iOS 27.2 (24B119, iPhone12,1 files) runs on the same kernel (there is no XNU source
 for iOS 27; patches 0013-0019 cover what its userland asks of a newer kernel). It shows the lock screen and
-the home screen with icons, the Stripe wallpaper, the dock and Search, all in software at full CPU speed.
+the home screen with icons, the Stripe wallpaper, the dock and Search, drawn in software at 10-40 frames a second.
 Not there yet: the lock screen's large clock, widget contents, Wi-Fi, sound.
 
 ```
@@ -119,6 +119,17 @@ What stood between iOS 27 and its home screen, in order:
 8. **The wallpaper** (libredwood-poster, in PosterBoard). The first poster of a new device is Mercury,
    drawn with Metal (black) on all but two product types; during the initial setup the library makes it
    the WallpaperKit collections poster with the default wallpaper (Stripe), as on those two.
-9. **Speed.** `cpufreq=1`: without it all cores run at 300 MHz and the interface draws at under a frame a
-   second. The first boot's daemons (lsd, linkd, ScreenTimeAgent, assetsd: every boot is a first boot, /var
-   is in RAM) take a few minutes of CPU.
+9. **Speed.** Measured with `touch_lat=1 cpuload=1000`, `ustacks=top` and gestures by `rwtouch`
+   (`RC_JOBS=FILE` for root26-ios.sh):
+   - `cpufreq=1`: without it all cores run at 300 MHz.
+   - **EDR.** backboardd's job names `com.apple.libEDR.Notification`, served by CoreBrightness, which does
+     not run here; CoreAnimation asked it at each display state change while holding the lock of its display
+     thread and waited out libEDR's timeout: 2 frames reached the panel in 290 s. root26-ios.sh drops the
+     name (lookups fail at once): 3100 frames in the same run.
+   - **ScreenTimeAgent** kept a core busy all the time; its job is left out.
+   - Then: page swipes 14-29 frames a second, Search and opening Settings 10-17, a list flung up to 43;
+     backboardd (CoreAnimation in software) takes most of the processor, the panel copy (kernel_task) the
+     rest. `fbscale=2` does not work with iOS 27 (it stays at the boot spinner); Reduce Transparency and
+     Reduce Motion made no measurable difference.
+   The first boot's daemons (lsd, linkd, assetsd: every boot is a first boot, /var is in RAM) take a few
+   minutes of CPU.
