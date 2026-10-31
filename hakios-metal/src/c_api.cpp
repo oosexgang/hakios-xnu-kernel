@@ -672,6 +672,19 @@ int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from
 
 void hakios_metal_cb_skip_refused(hakios_metal_cb* cb, int on) { cb->cb->setSkipRefused(on != 0); }
 
+void hakios_metal_cb_set_profile(hakios_metal_cb* cb, int on) { cb->cb->setProfile(on != 0); }
+
+int hakios_metal_cb_pass_time(hakios_metal_cb* cb, unsigned i, unsigned* kind, unsigned* width, unsigned* height, unsigned* draws, double* us) {
+    const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
+    if (i >= t.size()) return i == 0 ? 0 : -1;
+    if (kind) *kind = t[i].kind;
+    if (width) *width = t[i].width;
+    if (height) *height = t[i].height;
+    if (draws) *draws = t[i].draws;
+    if (us) *us = t[i].us;
+    return int(t.size());
+}
+
 void hakios_metal_cb_counts(hakios_metal_cb* cb, unsigned* passes, unsigned* draws, unsigned* dispatches, unsigned* copies, unsigned* clears) {
     const CommandBuffer::Counts& c = cb->cb->counts();
     if (passes) *passes = c.passes;

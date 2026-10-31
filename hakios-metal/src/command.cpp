@@ -163,6 +163,45 @@ bool CommandBuffer::fail(const std::string& why) {
     return false;
 }
 
+void CommandBuffer::stamp(uint32_t slot) {
+    if (profileStamps_ == nullptr) {
+        std::string why;
+        profileStamps_ = newBuffer(queue_.gpu(), 16 * kMaxProfiled, &why);
+        if (profileStamps_ == nullptr) {
+            profile_ = false;
+            return;
+        }
+        memset(profileStamps_->contents(), 0, 16 * kMaxProfiled);
+        keep(profileStamps_);
+    }
+    const uint64_t at = profileStamps_->gpuAddress() + 8ull * slot;
+    const uint32_t w[3] = {a6xx::CP_REG_TO_MEM_0_REG(0x0980) | a6xx::CP_REG_TO_MEM_0_CNT(2) | a6xx::CP_REG_TO_MEM_0_64B, uint32_t(at),
+                           uint32_t(at >> 32)};
+    stream_.packet(a6xx::CP_REG_TO_MEM, w, 3);
+    use(*profileStamps_, true);
+}
+
+void CommandBuffer::stampStart(PassKind kind, uint32_t width, uint32_t height) {
+    if (!profile_ || profiled_.size() >= kMaxProfiled) return;
+    profiled_.push_back(PassTime{kind, width, height, 0, 0});
+    stamp(uint32_t(2 * (profiled_.size() - 1)));
+}
+
+void CommandBuffer::stampEnd() {
+    if (!profile_ || profiled_.empty()) return;
+    stamp(uint32_t(2 * (profiled_.size() - 1) + 1));
+}
+
+std::vector<CommandBuffer::PassTime> CommandBuffer::passTimes() const {
+    std::vector<PassTime> out = profiled_;
+    if (profileStamps_ == nullptr) return {};
+    const auto* t = static_cast<const uint64_t*>(profileStamps_->contents());
+    for (size_t i = 0; i < out.size(); i++) {
+        out[i].us = t[2 * i + 1] > t[2 * i] ? double(t[2 * i + 1] - t[2 * i]) / 19.2 : 0.0;
+    }
+    return out;
+}
+
 bool CommandBuffer::refuseWork(const std::string& why) {
     if (!skipRefused_) {
         return fail(why);

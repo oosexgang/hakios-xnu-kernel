@@ -282,6 +282,7 @@ private:
     // CP_WAIT_FOR_IDLE), and whether the last packet was that WFI; and what the submission's end needs of a draw: the
     // two 4-word flushes after the last one
     bool passBegun_ = false, ccuCntlWritten_ = false, ccuCntlAfterWfi_ = false, lastWasWfi_ = false;
+    uint64_t alwaysOn_ = 0;     // CP_ALWAYS_ON_COUNTER as the fake keeps it: one more at each CP_REG_TO_MEM of it
     uint32_t drawsInSubmission_ = 0, drawsWithoutCcuFlush_ = 0, drawsWithoutCacheFlush_ = 0, drawsWithoutDepthFlush_ = 0;
     // the running sample count ZPASS_DONE copies out (an occlusion query's snapshots). The model has no rasterizer, so
     // a draw counts one sample per index it submits, times its instances: enough to tell begin from end and the

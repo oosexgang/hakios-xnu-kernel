@@ -2789,6 +2789,32 @@ TEST(a_command_buffer_counts_its_passes_and_draws) {
     CHECK_EQ(c.dispatches, 0u);
 }
 
+// Profiling: a stamp at each pass's start and after its tail. The buffer still completes on the fake, and the passes
+// are described as they were recorded -- a draw pass of 64 x 64 with two draws, then a 16 x 16 copy
+TEST(a_profiled_command_buffer_lists_its_passes) {
+    Rig r;
+    auto t = target(r), u = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    auto cb = r.queue->commandBuffer();
+    cb->setProfile(true);
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    CHECK(cb->blit(*t, 0, render::BlitRect{0, 0, 16, 16}, *u, 0, render::BlitRect{0, 0, 16, 16}, false));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const auto p = cb->passTimes();
+    CHECK_EQ(p.size(), size_t(2));
+    if (p.size() == 2) {
+        CHECK(p[0].kind == CommandBuffer::kPassDraw && p[0].width == 64 && p[0].height == 64 && p[0].draws == 2);
+        CHECK(p[1].kind == CommandBuffer::kPassCopy && p[1].width == 16 && p[1].draws == 0);
+        // (the fake's counter steps once a stamp: each pass's end one after its start, the copy's after the draw's)
+        CHECK(p[0].us > 0 && p[1].us > 0);
+    }
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 TEST(a_draw_refuses_a_blend_it_cannot_serve) {
     Rig r;
     auto t = target(r);

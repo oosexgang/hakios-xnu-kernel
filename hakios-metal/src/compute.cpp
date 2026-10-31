@@ -644,6 +644,7 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
     counts_.dispatches++;
     const std::vector<uint32_t>& w = added.words();
     closePass();   // a dispatch reads what the draws before it wrote: their pass's tail first
+    stampStart(kPassDispatch, groups ? groups[0] : 0, groups ? groups[1] : 0);
     stream_.packet(pm4::kNop, nullptr, 0);   // (a marker between encoders in the stream, for whoever reads it back)
     for (size_t i = 0; i < w.size();) {
         pm4::Header h = pm4::decode(w[i]);
@@ -655,6 +656,7 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
         }
         i += 1 + h.count;
     }
+    stampEnd();
     for (const Binding& bb : bindings.buffers) {
         if (bb.buffer != nullptr) {
             use(*bb.buffer, true);

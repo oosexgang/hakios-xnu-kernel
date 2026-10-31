@@ -1980,6 +1980,24 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                 }
                 break;
             }
+            case CP_REG_TO_MEM: {
+                // what a profiled command buffer stamps: CP_ALWAYS_ON_COUNTER as one 64-bit value (CNT 2, 64B); the fake
+                // writes a count of the stamps it has carried out, so that the order of two is the order they ran in
+                if (h.count != 3) {
+                    fault(text("CP_REG_TO_MEM of %llu words, not 3", h.count));
+                    return false;
+                }
+                const uint32_t reg = p[0] & CP_REG_TO_MEM_0_REG__MASK;
+                const uint64_t to = p[1] | uint64_t(p[2]) << 32;
+                uint8_t* d = at(to, 8);
+                if (reg != 0x0980 || !(p[0] & CP_REG_TO_MEM_0_64B) || d == nullptr || to % 8 != 0) {
+                    fault(text("CP_REG_TO_MEM of register %#x to %#llx: the fake serves CP_ALWAYS_ON_COUNTER, 64-bit, into a buffer", reg, to));
+                    return false;
+                }
+                const uint64_t now = ++alwaysOn_;
+                memcpy(d, &now, 8);
+                break;
+            }
             case CP_WAIT_MEM_GTE: {
                 if (h.count != 4) {
                     fault(text("CP_WAIT_MEM_GTE of %llu words, not 4", h.count));

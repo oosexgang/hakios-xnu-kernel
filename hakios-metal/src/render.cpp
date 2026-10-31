@@ -2335,6 +2335,10 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         return refuseWork(why);
     }
     if (!joins) {
+        {
+            const Texture* first = pass.color0 != nullptr ? pass.color0 : pass.depth;
+            stampStart(kPassDraw, first ? first->width() : 0, first ? first->height() : 0);
+        }
         appendStream(stream_, head);
         open_ = std::make_unique<OpenPass>(OpenPass{pass, options, passTable.gpuAddress()});
         useAttachments(pass);
@@ -2342,6 +2346,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     appendStream(stream_, body);
     counts_.draws++;
+    if (profile_ && !profiled_.empty()) profiled_.back().draws++;
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
     for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{vsb, program.vs.k.numSsbos != 0}, {fsb, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
@@ -2410,7 +2415,9 @@ bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect
         return refuseWork(why);
     }
     counts_.copies++;
+    stampStart(kPassCopy, d.w, d.h);
     appendStream(stream_, added);
+    stampEnd();
     use(*src.buffer(), false);
     use(*dst.buffer(), true);
     keep(src.buffer());
@@ -2497,6 +2504,7 @@ void CommandBuffer::closePass() {
     pm4::Stream tail;
     render::encodeEnd(tail, open_->pass, open_->table, open_->options);
     appendStream(stream_, tail);
+    stampEnd();
     open_.reset();
 }
 
@@ -2515,7 +2523,12 @@ bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options
         return refuseWork(why);
     }
     counts_.clears++;
+    {
+        const Texture* first = pass.color0 != nullptr ? pass.color0 : pass.depth;
+        stampStart(kPassClear, first ? first->width() : 0, first ? first->height() : 0);
+    }
     appendStream(stream_, added);
+    stampEnd();
     useAttachments(pass);
     return true;
 }

@@ -440,6 +440,11 @@ int hakios_metal_cb_blit_rotated(hakios_metal_cb *cb, hakios_metal_texture *from
  * wrong in it. hakios_metal_cb_refuse is the caller's own refusal of a piece of work, by the same rule; it returns -1,
  * and hakios_metal_cb_skipped how many were left out and the last reason. */
 void hakios_metal_cb_skip_refused(hakios_metal_cb *cb, int on);
+/* CB's passes timed by the GPU's own counter (CommandBuffer::setProfile, before anything is recorded) and, once it has
+ * completed, pass I's kind (0 draw, 1 copy, 2 clear, 3 dispatch), target size, draws and microseconds; the count of
+ * passes timed is returned, -1 for an I past them (any pointer may be NULL) */
+void hakios_metal_cb_set_profile(hakios_metal_cb *cb, int on);
+int hakios_metal_cb_pass_time(hakios_metal_cb *cb, unsigned i, unsigned *kind, unsigned *width, unsigned *height, unsigned *draws, double *us);
 /* what CB holds so far (CommandBuffer::counts): passes opened, draws, dispatches, copies and clears; any pointer NULL */
 void hakios_metal_cb_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *draws, unsigned *dispatches, unsigned *copies, unsigned *clears);
 int hakios_metal_cb_refuse(hakios_metal_cb *cb, const char *why);

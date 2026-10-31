@@ -127,6 +127,15 @@ public:
     // (each a pass of its own). What a frame's GPU time goes to is read off these beside the time (metal_fps).
     struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0; };
     const Counts& counts() const { return counts_; }
+    // With profiling on, the command processor writes its always-on counter (CP_ALWAYS_ON_COUNTER, 19.2 MHz) at the start
+    // of each pass and after its tail -- whose wait for idle makes the end the end -- for the first kMaxProfiled passes:
+    // what each costs, beside what it was (a draw pass with its target's size and its draws, a copy, a clear, a
+    // dispatch). Read once the buffer has completed. metal_fps names a frame's slowest passes with it.
+    enum PassKind : uint32_t { kPassDraw = 0, kPassCopy = 1, kPassClear = 2, kPassDispatch = 3 };
+    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; };
+    static constexpr uint32_t kMaxProfiled = 64;
+    void setProfile(bool on) { profile_ = on; }
+    std::vector<PassTime> passTimes() const;
 
 private:
     friend class CommandQueue;
@@ -134,6 +143,13 @@ private:
     bool fail(const std::string& why);
     bool skipRefused_ = false;
     Counts counts_;
+    bool profile_ = false;
+    std::vector<PassTime> profiled_;   // as recorded; us filled in by passTimes from the stamps
+    std::shared_ptr<Buffer> profileStamps_;
+    // the counter into stamp slot SLOT (two a pass: start, end), when profiling and there is room
+    void stamp(uint32_t slot);
+    void stampStart(PassKind kind, uint32_t width, uint32_t height);
+    void stampEnd();
     uint32_t skipped_ = 0;
     std::string lastSkipped_;
     // dispatch and dispatchIndirect: GROUPS, or (GROUPS null) the counts at OFFSET of ARGS
