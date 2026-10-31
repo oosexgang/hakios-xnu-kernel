@@ -37,6 +37,7 @@
 #include "../tests/fixtures/pack_id_bc.hpp"
 #include "../tests/fixtures/undef_phi_id_bc.hpp"
 #include "../tests/fixtures/ballot_id_bc.hpp"
+#include "../tests/fixtures/width_id_bc.hpp"
 #include "../tests/fixtures/tex_copy_air.hpp"
 #include "../tests/fixtures/tex_copy_bc.hpp"
 #include "../tests/fixtures/tex_fill_air.hpp"
@@ -794,6 +795,7 @@ int main(int argc, char** argv) {
              [](uint32_t g) -> uint32_t { return (g & 255) | ((g >> 2 & 255) << 8) | ((255 - (g & 255)) << 16) | (128u << 24); }},
             {"undef_phi_id", kernels::undef_phi_id_bc, kernels::undef_phi_id_bc_size,
              [](uint32_t g) -> uint32_t { return (g & 1) ? g * 3 : g ^ 0x5a5au; }},
+            {"width_id", kernels::width_id_bc, kernels::width_id_bc_size, [](uint32_t g) -> uint32_t { return 64000u + (g & 63); }},
             {"ballot_id", kernels::ballot_id_bc, kernels::ballot_id_bc_size,
              [](uint32_t g) -> uint32_t {
                  uint64_t m = 0;

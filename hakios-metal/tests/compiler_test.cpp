@@ -1136,6 +1136,18 @@ TEST(a_kernel_taking_a_ballot_compiles) {
     if (k == nullptr) std::printf("       %s\n", why.c_str());
 }
 
+// [[thread_execution_width]] as a kernel input (Resident Evil 4's mainCS): the SIMD-group's width; the probe checks 64
+TEST(a_kernel_taking_its_execution_width_compiles) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("width_id");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    auto k = compileAir(bc.data(), bc.size(), &why, {});
+    CHECK(k != nullptr);
+    if (k == nullptr) std::printf("       %s\n", why.c_str());
+}
+
 TEST(a_kernel_taking_a_word_into_bytes_compiles) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: bytes_id did not run)\n");
