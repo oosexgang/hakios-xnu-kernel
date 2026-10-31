@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# A photograph (RC_JOBS=rc.jobs.photo, with cam=5): Camera.app is opened as a finger opens it, Live
+# Photo is switched off (its capture wants a video and sound around the shutter), the preview is left
+# to settle, and the shutter is pressed twice. The kernel's "camera:" lines say what the sensor did;
+# mediaserverd's "redwood: camera:" lines what the capture stack asked of the device.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 10 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 22 tap 0.352 0.067 wait 4 tap 0.5 0.86 wait 12 tap 0.5 0.86 wait 25

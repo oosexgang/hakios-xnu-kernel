@@ -1,0 +1,17 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Does iOS ever bake the wallpaper here (RC_JOBS=rc.jobs.bake, gpu=1)? The bottom layer of every
+# frosted material is a blurred copy of the wallpaper, which PaperBoardUI takes from a snapshot
+# source; on a phone that copy is made once, when a wallpaper is set, and kept on the data volume.
+# Here no such file exists even after the switcher has been open, and the materials fall back to a
+# flat colour -- the magenta that makes the switcher's cards purple. This leaves the phone standing
+# idle for three and a half minutes after the unlock and then looks again, in case the baking is
+# merely deferred to a quiet moment.
+# find comes from the package manager's prefix, which init grafts onto /var/jb and which a boot can
+# come up without; our own vol_ls needs nothing and lists the places by hand, so both are asked.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 210
+/redwood/bin/vol_ls ls /var/mobile/Library /var/mobile/Library/Caches /var/mobile/Library/Preferences
+/redwood/bin/vol_ls ls /var/containers/Data /var/mobile/Containers/Data /var/root/Library
+/var/jb/usr/bin/find /var -iname "*allpaper*" -ls
+/var/jb/usr/bin/find /var -iname "*oster*" -ls
+/var/jb/usr/bin/find /var/mobile -type f -size +40k -ls

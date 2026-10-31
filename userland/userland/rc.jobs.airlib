@@ -1,0 +1,143 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.airlib).
+#
+# The 124 library functions of PortraitFilters that the generated wrapper can run, on the Adreno.
+#
+# These are air.visible functions: not entry points, and not dispatchable as themselves. Metal
+# stitches one into a caller at pipeline time through the ABI in its own metadata, which this
+# project does not implement. air_run --library runs the wrapper air_to_nir generates instead:
+# argument i from device buffer 0 at byte 16*i, the result into buffer 1 (docs/air.md section 5,
+# tools/air/libcheck.py). The argument buffer holds floats, not the usual byte pattern, because
+# these modules promise no infinities and no NaNs -- with arbitrary bytes both sides of a
+# comparison are outside the contract and a disagreement means nothing.
+#
+# What this run can establish: that the wrapper's shader dispatches on the hardware and that the
+# words it writes are the words our own folder computes on the host. For 21 of these functions
+# LLVM on the host agrees with that folding too, so those three readings form a chain. For the
+# rest the folder and the Adreno are both ours, and the comparison catches the backend and the
+# hardware disagreeing with the folder -- which is how the ir3 u32-to-f32 rounding bug surfaced --
+# and nothing more. It is not evidence about Metal's stitching ABI, which is not implemented.
+
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_kickLightKernel_pos
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_kickLightKernel_neg
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_dualLightKernel
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_strobeKernel
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_contourExtractRed
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_contourLightKernel
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_portraitSpotKernel
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_neckContour
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_contourExtractRedStudio
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_studioLightKernel
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_cheapEdgePreserveStudio
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_strobeKernelV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_contourExtractRedV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_contourLightKernelV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_cheapEdgePreserveContourV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceContourMask
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_darkenContour
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_portraitConvertToGrayscale
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_portraitLocalContrast
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_drawTriangle
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_protectEyes
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_highKey
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_imToIPT
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_iptToHueChroma
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_softExposure
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_foodVignette
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyFoodVignette
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_disparityError
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_whitenteeth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_enrich
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_eyeBrightenSoftlight
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_mixKernel1
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_textureDiff
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_textureAdd
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_mixKernel2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareDepth2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_mixKernel3
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_blendSingleChannelMask
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceVignetteContour
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyVignetteContour
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareBlackDisparity
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareBlackDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyBlackDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_refineBlackDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceVignette1
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceProtect
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceAndBodyFill_1
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceAndBodyFill_6
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyVignette
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_adaptiveNormalization2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_adaptiveNormalizationGPU
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_adaptiveNormalizationAbsolute
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_invertRed
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_blendDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_thresholdMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_thresholdAndApplyMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_invertImages
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_transitionDepths
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_renormalize01
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_featherBand
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_protectInterior
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_invertImage
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_normalizeToPhysicalDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_foreground
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_filterCut
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_denormalize
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_confidenceConvertToHalfFloat
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_renormalizeThreshold
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_confidenceExtractRed
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_brightenSat
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_brightenFood
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_accumulateTileKernel
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_whitenteethV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_enrichV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_eyeBrightenV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_eyeBrightenSoftlightV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_textureDiffV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_textureAddV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_cheapEdgePreserveV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_protectEyesNose
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_eyeBlurV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_featherEdgeLight
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareDepthV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceVignetteStudioV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyFaceProtectStudio
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareDepthContourV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_blendSingleChannelMaskV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceVignetteContourV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyVignetteContourV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyFaceProtect
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_transparentBorder
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyTransparentBorder
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_redContour
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareBlackDisparityV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareBlackDepthV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyBlackDepthV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyStageNoFeather
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyStageNoFeatherSpill
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_getRefinedMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyRefinedMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_refineBlackDepthV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceVignetteStageV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_faceProtectV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_applyVignetteStageV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_invertRedV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_blendDepthV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_thresholdMatteV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_thresholdAndApplyMatteV2
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_red
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_thresholdAndApplyWhiteBG
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_thresholdWhiteMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_prepareWhiteDepth
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _applyWhiteNoFeather
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _getRefinedWhiteMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _applyRefinedWhiteMatte
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_srgbToIPT
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_rectToHueChroma
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_iptToSRGB
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_hueChromaToRect
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_scaleHue
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_scaleHuePi
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_shadowKernelDynamic
+/redwood/bin/air_run --library /System/Library/CoreImage/PortraitFilters.cifilter/portrait_filters.metallib _pf_polyKernelDynamic

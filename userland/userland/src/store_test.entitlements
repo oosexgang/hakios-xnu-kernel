@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- what appstored's own signature carries for the account database (ldid -e on its binary) -->
+	<key>com.apple.accounts.appleaccount.fullaccess</key>
+	<true/>
+	<key>com.apple.private.accounts.allaccounts</key>
+	<true/>
+	<key>application-identifier</key>
+	<string>hakios.store-test</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>hakios.store-test</string>
+		<string>com.apple.itunes</string>
+	</array>
+</dict>
+</plist>

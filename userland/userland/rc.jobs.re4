@@ -1,0 +1,39 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Does a third-party game -- a 282 MB Mach-O built against the iOS 18.1 SDK, running on 16.5 --
+# get from exec to its first Metal call? (RC_JOBS=rc.jobs.re4, with ../apps/RE4.app in the image;
+# see the stage 2 notes. XL_SECS=600 and up: the waits below add to about four minutes, and the
+# paging alone may want more than the default 8 seconds.)
+#
+# The bundle is in /Applications of the SYSTEM image as a plain directory of real files, which is
+# all this port needs to make an application launchable: LaunchServices rebuilds its database at
+# every boot by walking that directory (userland/build.sh). So there is no installd here, no
+# container, no uicache and -- this kernel checking no signatures at all -- no signature needed to
+# RUN. The Mach-O is signed all the same, because entitlements are read out of a signature and
+# nowhere else, and a decrypted App Store dump's own signature no longer matches its bytes.
+#
+# Why a URL and not a tap: the icon of a 143rd application is on a later page of the home screen
+# and its place is not known in advance, so rwtouch cannot be told where to press. The bundle was
+# given a scheme of its own (CFBundleURLTypes -> re4) and battery_test, which holds the entitlement
+# SpringBoard wants of whoever asks it to open a URL, asks for it by name. That is the same way
+# rc.jobs.triangle starts this port's own application.
+#
+# What to read afterwards is in the stage 2 notes; the short of it is that the first ps must show
+# the process at all, and the second must show it still there.
+/redwood/bin/vol_ls ls /Applications/RE4.app
+/redwood/bin/metal_props on
+# the lock screen out of the way, as every job list that wants the home screen does
+/redwood/bin/rwtouch wait 20 swipe 0.5 0.985 0.5 0.3 250 wait 4
+# did LaunchServices take the bundle? If it did not, the open below fails and says so, and the
+# cause is in the bundle rather than in the game
+/redwood/bin/battery_test open re4://
+# 12 864 static initialisers run before main, and 192 MiB of __TEXT is faulted in a page at a time
+# out of a zlib-compressed RAM disk: this is the one step of the boot where minutes are plausible
+# and a short wait would prove nothing
+/redwood/bin/rwtouch wait 25
+/bin/ps -A
+/redwood/bin/rwtouch wait 45
+/bin/ps -A
+# whatever it wrote: a game that cannot find its data says so in a file more often than on a console
+/redwood/bin/vol_ls ls /private/var/mobile/Library/Caches
+/redwood/bin/rwtouch wait 30
+/bin/ps -A

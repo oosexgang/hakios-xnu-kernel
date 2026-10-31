@@ -1,0 +1,524 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.triangle).
+#
+# WHAT THIS BOOT IS FOR. RedwoodTriangle.app -- an application of this port's own, a plain
+# bundle in /Applications that SpringBoard launches -- opens a window, makes a CAMetalLayer,
+# takes a drawable from it, draws one triangle and presents it. Three things that no measurement
+# so far could even ask are asked here, and they fail SEPARATELY, which is why the list below
+# runs two different processes:
+#
+#   1  DOES THE DRIVER WORK OUTSIDE APPLE'S DAEMONS. Every Metal result this port has was
+#      measured inside backboardd, SpringBoard, mediaserverd or a /redwood/bin diagnostic.
+#      An application is a different process with a different launch path, a different user
+#      (mobile) and UIKit above it, and nobody has ever tried one.
+#   2  DOES THE DRAWABLE WORK. -[CAMetalLayer nextDrawable] asks a device exactly one thing,
+#      -newTextureWithDescriptor:iosurface:plane: (docs/metal.md 10.46). That method landed in
+#      src/redwoodmetal.m today and HAS NEVER EXECUTED. This boot is its first caller.
+#   3  DOES PRESENTATION REACH THE SCREEN. Presentation goes through no device at all: the
+#      drawable's IOSurface is registered in the layer's CAImageQueue by surface id and the
+#      window server takes it from there. A triangle on the panel is that whole chain at once,
+#      and it is the one thing a screenshot can prove and a log cannot.
+#
+# WHICH ROAD THE DEVICE COMES BY, AND WHY THIS LIST NOW WORKS IN BOTH BOOTS. There are two,
+# and src/triangle_app.m asks Metal FIRST and only builds its own when Metal has none:
+#
+#   discovery ON    MetalPluginName on the IOAcceleratorES service (boot-arg metal=1 and
+#                   /redwood/bin/metal_props on). MTLCreateSystemDefaultDevice() answers our
+#                   plug-in device and the application adds NOTHING. THIS IS THE ROAD A GAME
+#                   TAKES, so it is the more interesting of the two and the one to prefer.
+#   discovery OFF   MTLCreateSystemDefaultDevice() answers nil and the application walks
+#                   discovery's steps 3, 4 and 5 itself. Worth keeping: the only Metal device
+#                   in the system is then the one it made, so every frame is attributable
+#                   without an argument.
+#
+# THE ORDER IS NOT A PREFERENCE, IT IS THE DIFFERENCE BETWEEN RUNNING AND ABORTING, and the
+# first edition of this file got it wrong and died for it in logs/055044-run.log -- the first
+# boot that had a window server AND the registry switch, where the application was the only
+# process in the whole system that aborted. MTLCreateSystemDefaultDevice (0x181a34b3c) is a
+# dispatch_sync of one block (0x181a3442c), and the block is three lines:
+#
+#     [devices count] == 0  ->  leave the answer nil and return
+#     [devices count] != 1  ->  MTLReportFailure(..., 648, @"MTLCreateSystemDefaultDevice
+#                               doesn't know what to do with more than one device")  = abort()
+#     otherwise             ->  [[devices objectAtIndex:0] retain]
+#
+# `devices` is the global at 0x1e1efe9a0 and MTLAddDevice (0x181a1875c) appends to that SAME
+# array under the same queue (0x1e1efe9b0). So letting discovery register one and then
+# registering one of our own makes two, and the next MTLCreateSystemDefaultDevice() in that
+# process dies on an assertion Apple wrote about a list it will not choose from.
+#
+# SO THE CORRECTION THAT MATTERS, because the opposite would have been a finding about this
+# port: DISCOVERY DOES NOT FAIL IN A THIRD-PARTY APPLICATION. It succeeded. Apple's daemons did
+# not abort in that boot for one reason only -- none of them calls MTLAddDevice; they let
+# discovery register one device and ask for it, which is exactly what this application now
+# does. A game is NOT in the position the first edition was in: a game never calls MTLAddDevice.
+#
+# AND THE WARNING THAT COMES WITH IT, for every list, not this one. The same sequence --
+# probe, class, -initWithAcceleratorPort:, MTLAddDevice, probe -- is in
+# userland/src/metal_drv_test.m (around :7340 and on), src/metal_dev.m and src/metal_stubdev.m.
+# In a boot with the registry switch ON, every metal_drv_test mode that reaches it (--draw,
+# --picture, --time, --draw-attrib, --draw-depth, --draw-index ...) will abort at the same
+# instruction. Only --sweep is safe, because it returns at :7325 before that path, and
+# metal_caps is safe because it takes the device from MTLCreateSystemDefaultDevice(). DO NOT
+# put metal_drv_test in a discovery-on boot's job list until it asks Metal first the way this
+# application now does.
+#
+# WHAT IT NEEDS
+#
+#   the image          CRYPTEXES=flash SYSTEM=1 GL=1 QUIET=1 RC_JOBS=rc.jobs.triangle ./build.sh
+#                      SYSTEM=1 IS REQUIRED and is the expensive part: the bundle goes into
+#                      /Applications of the system image, and that image is rebuilt only when
+#                      its own inputs are newer or when SYSTEM=1 says so. Without it the boot
+#                      runs the old image, the application is not there, and only step 5 (the --layer line) says
+#                      anything.
+#                      GL=1 for /redwood/lib/libredwoodair.dylib -- no compiler library, no
+#                      pipeline, and the driver says so by name. build.sh now hashes
+#                      tools/mesa/air/ against $M/built-from-air and rebuilds it when they
+#                      differ, so the stale-library trap of logs/235006-run.log (docs/metal.md
+#                      10.47: driver rebuilt, library byte for byte the same) is closed; this
+#                      is a double-check and not the only guard:
+#                        nm -gU xnu-deps/build/mesa/out/libredwoodair.dylib | grep from_surface
+#
+#                      QUIET=1 IS NOT OPTIONAL HERE, AND logs/055044-run.log IS WHY: that boot
+#                      had no QUIET, and the whole of this application's output is MISSING from
+#                      it -- not because it failed to write, but because the console buffer is a
+#                      RING and it wrapped. Two references that it wrapped rather than that we
+#                      were silent: the stream is not in chronological order (lines stamped
+#                      05:51 stand at line 64, 1321 lines from the single second 05:50:45 stand
+#                      at line 1300, and 3199 more are from the last two minutes), and the JOB
+#                      ECHOES stop after the third line too -- init writes those to the same
+#                      /dev/console, so the loss is the buffer's and not this program's.
+#                      build.sh says the cost in its own words: launchd "says a few thousand
+#                      lines about its own business in the first minutes and pushes everything
+#                      else out". It silences only launchd's accounting; every daemon keeps its
+#                      standard error, and so does this application.
+#                      JOBS is left at its default: those are the jobs SpringBoard needs to
+#                      launch an application (lsd, runningboardd, containermanagerd, pkd are
+#                      all in it). If the launch is refused, REST=1 is the thing to try next.
+#   XL_CMDLINE         "bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 metal=1 camtl=1
+#                       metal_profile=1 mediamtl=1"
+#                      -- the line of logs/055044-run.log, which is the first one that has the
+#                      window server compositing AND Metal's discovery switched on.
+#                      metal_profile=1 is what makes that possible: it claims Apple2, so
+#                      MPSDevice::GetMPSDevice's ladder finds a yes and SpringBoard no longer
+#                      aborts in the Siri orb (docs/metal.md 10.47). gpu=1 so the kernel has an
+#                      Adreno and kRedwoodSurface can hand a surface's memory over as a GPU
+#                      buffer; touchscreen=1 because the lock screen is swiped away below.
+#                      NO -v, so the kernel's own console does not write on the panel over the
+#                      picture.
+#                      WITH metal=1 IN THE LINE, KEEP /redwood/bin/metal_props on IN STEP 1a
+#                      BELOW: that is the discovery-on road, and it is the one worth measuring.
+#                      Without metal=1 the metal_props line answers 0xe00002c7, the properties
+#                      stay unset, and the application takes the other road and says so.
+#   XL_SECS=420        the boot, a forty-second wait for SpringBoard, the launch, and then four
+#                      minutes of the application repainting so that a screenshot can be taken
+#                      at leisure.
+#
+#   AND NOT gpu_recover=1, which is the one boot-arg it would be tempting to add here. It is the
+#   way out of the gpuWait latch that the --layer step below is ordered around (docs/air.md: a hang would
+#   then cost one dispatch instead of the rest of the boot), and it HAS NEVER BEEN RUN -- its own
+#   measurement, userland/rc.jobs.metalrecover, is still waiting for a boot. Putting an untried
+#   kernel path into the boot that is meant to try the drawable would mean two new things at once
+#   and no way to say which answer belonged to which.
+#
+#   AND TAKE THE SCREENSHOT while it is up, from another terminal:
+#     ./xl screenshot logs/triangle.png
+#   It may be taken more than once; the picture is identical every frame on purpose.
+#
+# THE PICTURE, WRITTEN DOWN BEFORE THE RUN. Three colours, and each means a different thing:
+#
+#   black        the layer's own backgroundColor. NOTHING WAS EVER PRESENTED.
+#   pure blue    the render pass's clear colour, r g b = 0 0 255. A frame reached the screen
+#                and the triangle did not cover that pixel.
+#   orange       the triangle, r g b = 255 128 0.
+#
+# The panel must be: an ORANGE TRIANGLE filling the LOWER LEFT HALF of the screen, over PURE
+# BLUE, with the straight edge running from the TOP LEFT corner to the BOTTOM RIGHT corner. No
+# status bar (UIStatusBarHidden), no home indicator, nothing of iOS's own.
+#
+# Why that half and not another, so that the prediction is derived and not hoped for. The
+# pipeline is asked for with NO vertex function, which makes the compiler library supply its own
+# full-screen quad; that quad's four corners are in a fixed order, (-1,-1), (1,-1), (-1,1),
+# (1,1) (rwa_quad_verts, tools/mesa/air/air_metal.c), so a draw of THREE vertices is the
+# triangle through the first three. The viewport puts clip y = +1 in memory row 0
+# (docs/metal.md 10.28), so clip (-1,+1) is the top left, (-1,-1) the bottom left and (1,-1)
+# the bottom right -- and the interior is every pixel whose centre satisfies
+#
+#     (x + 0.5) / width  <  (y + 0.5) / height
+#
+# AND THE NUMBERS, which are exact rather than approximate. For the drawable this application
+# gets (375 x 812 points at contentsScale 3 = 1125 x 2436):
+#
+#     2 740 500 pixels, of which 1 370 250 orange and 1 370 250 blue, 0 neither
+#
+# -- exactly half each, and that is a proof and not a coincidence: (x,y) -> (W-1-x, H-1-y) maps
+# covered to uncovered one for one, and NO pixel centre lies on the edge, because
+# (2x+1)*2436 is always even and (2y+1)*1125 is always odd and the two can never be equal.
+# That is why a pixel which is NEITHER colour is a failure here and not a rounding; there is no
+# multisampling and no filtering on this path, so every pixel is wholly in or wholly out.
+#
+# AND IF THE DRAWABLE COMES OUT ANOTHER SIZE, nothing above is invalidated and no number has to
+# be recomputed by hand: the program counts the rule's own answer for whatever size it was given
+# and prints it beside the measured one on the same line ("the rule says N orange and N blue").
+# 1125 x 2436 is what 375 x 812 points at contentsScale 3 gives and what the log should say; a
+# different number there is a finding about contentsScale, and the comparison still holds.
+#
+# WHAT EACH WAY OF BEING WRONG PUTS THERE INSTEAD. This table is what makes the photograph
+# evidence; without it a picture that looks plausible would be read as a picture that is right.
+#
+#   the panel shows              what it means                                        where else it shows
+#   ---------------------------  --------------------------------------------------   -------------------
+#   orange triangle lower left   everything in questions 1, 2 and 3 works             "0 of 2740500" twice
+#   over pure blue
+#
+#   BLACK, whole screen          nothing was ever presented. Either the application    "triangle: NOT
+#                                never drew (no device, no pipeline, nextDrawable      MEASURED" or
+#                                nil) or the present never reached the window          "frame N: nextDrawable
+#                                server. The log tells the two apart by frame          gave NIL"
+#                                number -- see the next row
+#
+#   the home screen, or the      the application did not come to the front: either     no "triangle: app:"
+#   launch screen                SpringBoard refused the URL, or it launched and       lines at all, or
+#                                UIKit never showed the window                         none after
+#                                                                                      "didFinishLaunching"
+#
+#   pure blue, whole screen,     a frame DID reach the panel and the draw covered      "surface count: ...
+#   no triangle                  nothing. The clear is the driver's and the draw is    2740500 are blue",
+#                                not: a cull mode set where Metal's default is none,   wrong = 1370250
+#                                or a draw of zero area
+#
+#   the triangle is the UPPER     the viewport's y sign has been lost. The covered      exactly 1370260 wrong,
+#   LEFT half (edge from          half becomes (x+0.5)/W < 1 - (y+0.5)/H. This is a    first at (0,0), and
+#   bottom left to top right)     finding about the viewport and NOT about the         (225,1948), (506,1339)
+#                                 drawable -- and note that the sign is the one thing  and (112,2314) all turn
+#                                 here measured only on this machine's softpipe and    BLUE while (618,1096)
+#                                 never on the phone (rc.jobs.metalpicture: the bands  turns ORANGE
+#                                 that would have shown it have never drawn)
+#
+#   the triangle is the UPPER     the picture is turned through 180 degrees: row 0 is  EVERY pixel wrong --
+#   RIGHT half (edge still        scanned out last and column 0 last as well           2740500 of 2740500 --
+#   corner to corner)                                                                   and all six named
+#                                                                                       pixels inverted
+#
+#   AND THE TRAP IN BOTH OF THOSE ROWS, which is why the named pixels are not a luxury next to the
+#   count: "of 2740500 pixels, N are orange, N are blue and 0 are NEITHER" reads EXACTLY THE SAME
+#   -- 1370250 and 1370250 -- for the right picture, for the vertical flip and for the 180-degree
+#   turn. The three orientations have the same areas. Only the line that counts pixels against the
+#   RULE, the six named pixels and the photograph can tell them apart, and that is the whole reason
+#   this file asks for three kinds of evidence instead of one.
+#
+#   BACKGROUND RED and the        red and blue are swapped: the attachment written as   if the swap is in the
+#   triangle azure                RGBA8 where it is BGRA8. The two colours were         MEMORY, all 2740500
+#                                 chosen to be each other's opposite in exactly those   pixels count as
+#                                 two channels so that this is seen before it is        NEITHER in both views
+#                                 counted -- a swapped orange is b g r 255 128 0 and    and (225,1948) reads
+#                                 a swapped blue is 0 0 255, and NEITHER of those is    b g r 255 128 0. If
+#                                 either of the two colours this program can produce    both views read 0
+#                                                                                       wrong and only the
+#                                                                                       PANEL is red, the
+#                                                                                       swap is the window
+#                                                                                       server's reading of
+#                                                                                       the surface and not
+#                                                                                       the draw
+#
+#   DIAGONAL STRIPES, or the      the row stride disagrees: the texture's pitch is not  "surface check" WRONG
+#   edge sawtoothed, or the       the surface's own. The kernel gives 4544 bytes a row  and "getBytes check"
+#   picture sheared               for 1125 BGRA pixels (1125 x 4 = 4500, aligned up to  AGREES -- precisely
+#   progressively                 64 by MINISURF_ROW_ALIGN), and a texture laid out at  because -getBytes:
+#                                 4500 shears by 11 pixels a row and wraps after a      goes through the
+#                                 hundred. It should be impossible by construction --   TEXTURE'S layout and
+#                                 fd_resource_from_handle sets layout.pitch0 to the     the other reads raw
+#                                 stride it is handed, which is the kernel's number --  memory at the
+#                                 so this row is about freedreno overriding it          KERNEL'S stride
+#
+#   the top of the screen is      an offset confusion: the pixels start `offset` bytes  the first wrong pixel
+#   right and the bottom is       into the buffer and one side of the import did not    the log names is in
+#   black or garbage, or the      account for it                                         row 0 or in the last
+#   whole picture is shifted                                                             row, and the log says
+#   down by a few rows                                                                   which
+#
+#   BLACK, or whatever was        THE TEXTURE WAS A COPY, not the surface -- the failure  "getBytes count" reads
+#   on the layer before           rc.jobs.drawable's two-direction reading existed to     0 wrong and
+#                                 catch. The GPU wrote somewhere else and the surface     "surface count" reads
+#                                 the window server shows was never touched               2740500 NEITHER,
+#                                                                                         because untouched
+#                                                                                         surface memory is
+#                                                                                         zeros and b g r
+#                                                                                         0 0 0 is neither of
+#                                                                                         this program's two
+#                                                                                         colours
+#
+#   the triangle, correctly,       the processor's view of the surface is not coherent     "surface count"
+#   WHILE "surface check"          with the GPU's write. NOT a failure of the drawable:    WRONG while
+#   reads garbage                  the pixels did reach the surface -- that is what the    "getBytes count"
+#                                  panel is showing -- and only this process's cached      reads 0 wrong
+#                                  view of them is stale. IOSurfaceLock's return code is
+#                                  printed on the line above it for exactly this case
+#
+#   HOW THOSE TWO ARE TOLD APART, since they give the SAME pair of log lines: by the panel, and
+#   only by the panel. A copy leaves the screen without the triangle; a stale cached view leaves
+#   it with one. This is the single place in this boot where the photograph and the log have to
+#   be read AGAINST each other rather than each on its own -- which is why neither of them alone
+#   was going to be enough, and why both are asked for.
+#
+# AND THE ONE OUTCOME THAT IS NOT A PICTURE: the log stopping. Every risky call says its own
+# name first ("triangle: step: ..."), flushed, so a stall names the call it entered -- the
+# picture mode of src/metal_drv_test.m cost one boot to learn that. The last "step:" line in the
+# log is the suspect.
+#
+# ------------------------------------------------------------------------------------------
+#
+# 1. IS THE BUNDLE EVEN IN THE IMAGE. Cheapest possible line and it comes first, because a
+#    forgotten SYSTEM=1 makes everything below meaningless in a way that is otherwise hard to
+#    tell apart from a refused launch. It must list FIVE entries -- RedwoodTriangle, Info.plist,
+#    PkgInfo and the two icons -- all REAL FILES owned by root:wheel (vol_ls leaves out "." and
+#    ".."). A symbolic link here is a bundle LaunchServices will refuse ("Unable to register");
+#    nothing here at all means the system image is the old one, and then only the --layer step says anything.
+/redwood/bin/vol_ls ls /Applications/RedwoodTriangle.app
+#
+# 1a. METAL'S OWN DISCOVERY, SWITCHED ON. Without this the registry has no MetalPluginName and
+#     CoreAnimation keeps OpenGL ES: the boot of 22 October 01:39 had camtl=1 and still logged
+#     "CoreAnimation's OpenGL ES renderer has no function 40", with not one line about a Metal
+#     pipeline library, because a switch is not a request. The application does not need this --
+#     it walks steps 3 to 5 itself -- so what this adds is the WINDOW SERVER on Metal beside it.
+#
+#     It was left out before for a reason that metal_profile=1 removes: with discovery on,
+#     SpringBoard used to abort for ever in Siri's orb, because MPSDevice::GetMPSDevice asks
+#     -supportsFamily: from Apple8 down to Apple2 and this device claimed Apple1 alone (10.47).
+#     metal_profile=1 claims Apple2, and the boot of 01:18 had SpringBoard alive with it. So
+#     THIS boot is the first that can have both a window server on Metal and an application on
+#     it, and if SpringBoard aborts again that pairing is what the log is about.
+/redwood/bin/metal_props on
+#
+# 2. The lock screen out of the way, the way rc.jobs.unlock does it, and time for SpringBoard
+#    to have finished coming up. Forty seconds is what rc.jobs.launch waits for the same thing.
+/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 250 wait 6
+#
+# 3. THE APPLICATION, launched the way a link launches one: SpringBoard is asked to open the
+#    bundle's own URL scheme (src/triangle_app.plist, CFBundleURLTypes -> redwoodtriangle).
+#    This needs no icon to be tapped and no icon position to be guessed, and SpringBoard knows
+#    the scheme because LaunchServices rebuilt its database by walking /Applications at boot.
+#
+#    IF THIS LINE SAYS "it REFUSES", the launch can still be done by hand and the run is not
+#    wasted: the icon is a blue square with an orange triangle in its lower left corner -- the
+#    same picture the application draws -- and tapping it gives exactly the same log lines.
+/redwood/bin/battery_test open redwoodtriangle://
+#
+# 4. Who is running, from a program of Apple's that knows nothing about any of this. The list
+#    must have a RedwoodTriangle in it; if it does not, SpringBoard took the URL and the
+#    process died before exec, and the kernel's own lines above are where to look.
+#
+#    TAKE THE SCREENSHOT ANY TIME AFTER THIS LINE: ./xl screenshot logs/triangle.png
+/redwood/bin/rwtouch wait 20
+/bin/ps -A
+#
+# 5. THE DRAWABLE AGAIN, IN A PROCESS WITH NO WINDOW, and the ORDER HERE IS THE ONE DECISION IN
+#    this list that is not obvious, so it is written down. The same binary in its --layer mode:
+#    a bare CAMetalLayer of the panel's size, a device built by hand, Apple's clearFragment01,
+#    one triangle, and the frame read back both ways. It answers questions 1 and 2 and nothing
+#    about 3.
+#
+#    It would be natural to run it FIRST -- it costs four seconds and its output is CERTAIN to
+#    be in the log, which an application's cannot be promised to be (it is started for
+#    SpringBoard and nothing guarantees it the descriptors init gave launchd, which is why
+#    src/triangle_app.m opens /dev/console by name, as src/inject_app.c does). It runs here
+#    instead, and the reason is a measured one: ONE HUNG DISPATCH LATCHES THIS GPU and makes
+#    every dispatch after it empty (docs/air.md, the AIR suite's canary). The one thing this
+#    boot can produce that no log can is the PHOTOGRAPH, so the photograph gets the undisturbed
+#    GPU and this process goes after it. If the application has already drawn, nothing is lost;
+#    if it never launched, this still runs and still answers two of the three questions.
+#
+#    Two processes, two users -- uid 501 above and uid 0 here -- and the kernel makes one GPU
+#    buffer per user client, so a result that held for only one of them would be about the
+#    client and not about the surface. That is the same argument rc.jobs.drawable makes for its
+#    second, smaller run.
+#
+#    It draws TWO frames. The first does everything except present; the second presents, last
+#    of all and after every number is printed, because a present with no window server behind
+#    it is the one call in this mode most likely to end the process, and it must not cost what
+#    came before it.
+#
+#    AND ONE THING ABOUT THIS MODE THAT IS NOT ESTABLISHED, said here rather than discovered:
+#    whether -nextDrawable works at all on a layer with no superlayer and no window. It is
+#    ordinary practice elsewhere and -[CAMetalLayer nextDrawable] (0x18829de60) does guard its
+#    nil cases -- a nil device at 0x18829e07c branches away rather than faulting -- but it has
+#    never been done here, and the CAImageQueue a drawable is registered in is the layer's. If
+#    this line dies, the last "triangle: step:" line names the call, and nothing the
+#    application already measured is lost, which is the other half of why it runs last.
+/redwood/bin/triangle_app --layer
+#
+# 6. And then nothing but time, so that the application keeps repainting and the screenshot can
+#    be taken again -- once while the application is alone on the GPU and once after step 5 has
+#    also used it, which is worth having as two photographs rather than one.
+/redwood/bin/rwtouch wait 180
+/bin/ps -A
+#
+# ------------------------------------------------------------------------------------------
+#
+# HOW TO READ THE LOG (it has NUL bytes in it, so every grep needs -a)
+#
+# AND FIRST, THE ONE THING THAT MAKES A LOG UNREADABLE RATHER THAN NEGATIVE. The user-space part
+# of the log is a RING, and it is not in chronological order once it has wrapped. If this
+# application's lines are missing ALTOGETHER -- not even "triangle: start:" -- check for a wrap
+# before concluding anything: if lines stamped later in the boot stand ABOVE lines stamped
+# earlier, or if the job echoes ("$ /redwood/bin/...") stop partway down, then the buffer
+# wrapped and the absence means nothing. That is exactly what logs/055044-run.log is: built
+# without QUIET=1, 1321 of its console lines are launchd's accounting from the single second
+# 05:50:45, the echoes stop after the third job line, and not one line of this application
+# survived -- though it demonstrably ran, because the kernel's own ring recorded its abort.
+# Build with QUIET=1 and this does not arise.
+#
+#   grep -a 'triangle:' logs/NNNNNN-run.log
+#       everything both processes said, in order. The whole measurement.
+#
+#   grep -a 'triangle: start:' logs/NNNNNN-run.log
+#       TWO lines, and the difference between them is the point: "mode --layer" as uid 0, and
+#       "mode application" as uid 501. One line only, naming --layer, means the application
+#       never ran -- go to the battery_test line's own output. Neither line means /dev/console could not be
+#       opened by either, which has never happened and would be about init, not about Metal.
+#
+#   grep -a 'triangle: FAILED' logs/NNNNNN-run.log
+#       the only lines that must not be there.
+#
+#   grep -a 'triangle: NOT MEASURED' logs/NNNNNN-run.log
+#       the honest non-answers, each naming which: no plug-in bundle, no IOAcceleratorES
+#       service, no shader library on the disk, no memory for a readback, or a drawable whose
+#       IOSurface could not be reached. None of them is a failure of the path and none of them
+#       may be read as one.
+#
+#   grep -a 'triangle: .* of 2740500 pixels are not the colour' logs/NNNNNN-run.log
+#       THE HEADLINE. Two lines a counted frame -- one "surface count", one "getBytes count" --
+#       and "0 of 2740500" on both is the boot this file was written for. A number here is the
+#       count of pixels that disagree with the rasterisation rule, and the line after it names
+#       the first one and what it reads.
+#
+#   grep -a 'triangle: surface count\|triangle: getBytes count' logs/NNNNNN-run.log
+#       the tallies: orange, blue, NEITHER, and what the rule says. "1370250 orange and
+#       1370250 blue" is the answer -- BUT SEE THE TRAP IN THE TABLE ABOVE: those two numbers
+#       are the same for the right picture and for a picture flipped or turned, because the
+#       areas are equal. What distinguishes them is the "not the colour the rule says" line
+#       above and the named pixels below, not this one. Any pixel counted NEITHER is a colour
+#       nothing in this program can produce, and then the first-wrong line says what it was.
+#       AND THE ONE COMPARISON THAT MATTERS MOST: these two lines come from two different
+#       views of the same memory at two different strides. If "surface" is right and
+#       "getBytes" is wrong, or the other way round, the import has the pitch wrong; if both
+#       are right and the panel is black, the texture was a copy.
+#
+#   grep -a 'triangle: .* check: pixel' logs/NNNNNN-run.log
+#       six named pixels a view, with what each must be and what it is. This is what says WHICH
+#       WAY a wrong picture is wrong: (225,1948) and (900,487) are the two far from the edge,
+#       and (506,1339) / (618,1096) straddle the edge eight hundredths of the panel apart.
+#
+#   grep -a 'triangle: frame' logs/NNNNNN-run.log
+#       one line every twentieth frame, plus every frame that went wrong. What this is for is
+#       the frame NUMBER: if it stops at 2 or 3 and "nextDrawable gave NIL" follows, the pool
+#       of drawables is full, which means THE PRESENTS ARE NOT COMPLETING -- the signature of
+#       question 3 failing while 1 and 2 pass, and it cannot be mistaken for anything else.
+#
+#   grep -a 'triangle: drawable:\|triangle: frame 1: drawable' logs/NNNNNN-run.log
+#       what came back: the drawable's class, its texture's class, its size, its pixel format
+#       and its usage. The usage must be 4 -- MTLTextureUsageRenderTarget alone, which is what
+#       framebufferOnly = YES hard-codes (docs/metal.md 10.46) and what the compiler library
+#       requires of a colour attachment.
+#
+#   grep -a 'triangle: frame 1: its IOSurface' logs/NNNNNN-run.log
+#       the surface the drawable is over: its id, its size and its stride. For 1125 x 2436
+#       BGRA the stride must be 4544 (1125 x 4 = 4500, and MINISURF_ROW_ALIGN is 64). 4500
+#       here would mean the kernel stopped aligning and the import should then be REFUSED by
+#       name rather than succeed.
+#
+#   grep -a 'redwoodmetal: no drawable:' logs/NNNNNN-run.log
+#       the driver's own refusals, which are the second reference for every nil above: the
+#       plane, the surface id, the pixel format, the geometry disagreement, the Adreno pitch
+#       rule, or a compiler library without rwa_texture_from_surface. Each names its number.
+#       EMPTY is the answer.
+#
+#   grep -a 'redwooddrawable:' logs/NNNNNN-run.log
+#       the bridge's own one-off lines, once a process: whether libredwoodair.dylib is loaded
+#       here and whether it has rwa_texture_from_surface, and whether this process had
+#       IOSurfaceGetID.
+#
+#   grep -a "this pipeline's vertex stage was generated" logs/NNNNNN-run.log
+#       must be there: it is the driver saying it supplied the quad stage, which is what makes
+#       a draw of three vertices a triangle. Absent means a vertex function got in somehow and
+#       the geometry above is not what was drawn.
+#
+#   grep -a 'triangle: device:' logs/NNNNNN-run.log
+#       WHICH ROAD THE DEVICE CAME BY, which is the first thing to read in this log now that
+#       there are two. In order it must say:
+#
+#         "the registry switch is MetalPluginName RedwoodMetal, MetalPluginClassName
+#          RedwoodMetalDevice, so Metal's own discovery WILL run" -- read out of the registry
+#          before Metal is asked anything, and it must agree with what metal_props printed.
+#          "(none)" here with metal=1 in the command line means metal_props failed.
+#
+#       and then exactly ONE of these two, never both:
+#
+#         "Metal's own discovery gave RedwoodMetalDevice, so this process adds NOTHING"
+#              the discovery-on road, and the road a game takes. Nothing else of the device
+#              section follows it: no bundle, no step 4, no step 5, no MTLAddDevice.
+#         "MTLCreateSystemDefaultDevice() = nil, so Metal has no device of its own here and
+#          this process builds one"
+#              the discovery-off road, and then the bundle/step 4/step 5/MTLAddDevice lines
+#              follow and the last of them says "built in this process".
+#
+#       BOTH ROADS IN ONE PROCESS WOULD BE THE BUG OF logs/055044-run.log COMING BACK, and it
+#       cannot be read off the log afterwards because the process would be dead -- see the next
+#       grep, which is the one that catches it.
+#
+#   grep -a 'userabort: triangle_app\|userabort: RedwoodTriangle' logs/NNNNNN-run.log
+#       must be EMPTY. If a frame of it unslides to MTLCreateSystemDefaultDevice + 140
+#       (0x181a34bc8), the process registered a second Metal device and Apple's own assertion
+#       killed it -- "MTLCreateSystemDefaultDevice doesn't know what to do with more than one
+#       device" -- and that is this application's own mistake and not a finding about the port.
+#       tools/metal/unslide.py reads such a stack.
+#
+#   grep -a 'triangle: step:' logs/NNNNNN-run.log | tail -3
+#       where it stopped, if it stopped.
+#
+#   grep -a 'RedwoodGPU: request' logs/NNNNNN-run.log
+#       empty. A line here is the kernel being asked something it does not know, and 0x7e
+#       (kRedwoodSurface) is the request the whole drawable depends on.
+#
+#   grep -a 'MiniIOSurface' logs/NNNNNN-run.log
+#       NOT expected to be empty, and that is the point of grepping it. "selector 40 not
+#       implemented" and "selector 41" are already known to appear on the CAMetalLayer path
+#       (docs/metal.md 10.47 put them next to -setDrawableSize:); the kernel's own table stops
+#       at 35 (MiniIOSurface.cpp), each unknown selector is refused with kIOReturnUnsupported,
+#       and 10.47 established that those two are not fatal -- SpringBoard went past them to the
+#       MPS assertion. So the two are the BASELINE here; a THIRD number, or a complaint about a
+#       format or a plane count, is new and is about this drawable. Note that the printer
+#       de-duplicates per boot and does not name the process, so neither the count of lines nor
+#       the caller can be read off it.
+#
+#   grep -a 'MPSDevice\|failed assertion' logs/NNNNNN-run.log
+#       must be EMPTY. "Failed to get MPSDevice" means something put the registry properties
+#       on after all and this boot has no window server (SpringBoard aborts and launchd
+#       restarts it for ever); the application's own numbers might still stand but the
+#       screenshot would be worthless. The assertion is the aborting process's own standard
+#       error, so it is in the log even under QUIET=1, which launchd's accounting is not.
+#
+#   grep -a 'triangle: done:' logs/NNNNNN-run.log
+#       the totals, one a mode.
+#
+# WHAT THIS BOOT DOES NOT ANSWER, said here so that nothing in it is read as more than it is
+#
+#   - NOTHING IS TIMED. The 15.46 ms a frame costs today without a drawable (docs/metal.md
+#     10.43) is not re-measured and the cost of a frame WITH one is not measured either. This
+#     list says whether the path works, not what it costs; the arithmetic in 10.46 says which
+#     part of the saving is subtraction and which part is a guess, and this boot moves neither.
+#   - THE FRAME RATE IS NOT MEASURED AND IS NOT THE FRAME RATE. The application draws twice a
+#     second deliberately, so that the picture is still and a screenshot can be taken whenever;
+#     the half second is a timer, not a limit.
+#   - NO SHADER OF OURS RUNS. The fragment stage is Apple's clearFragment01 and the vertex
+#     stage is the compiler library's generated quad. Nothing here compiles a shader written for
+#     this port, because there is no Metal compiler on the build machine -- and that is a
+#     limitation of the toolchain, not of the driver.
+#   - IT SAYS NOTHING ABOUT A SECOND LAYER, A SECOND WINDOW OR A RESIZE. One layer, one size,
+#     set once. A drawable whose size changes under it is a different measurement.
+#   - IT SAYS NOTHING ABOUT ANY APPLE APPLICATION. With the registry properties off, Settings
+#     and Safari and SpringBoard itself use the same CoreAnimation path they used yesterday, and
+#     nothing in this boot changes what they do. "Metal in a system application" needs the
+#     properties on, and that needs the MPS assertion above dealt with first.
+#   - IT DOES NOT SAY THE WINDOW SERVER COMPOSITED **OUR** SURFACE RATHER THAN A COPY OF IT.
+#     The screenshot proves the pixels arrived; which copy of them arrived is not separated
+#     here, and would need the window server's own side instrumented.

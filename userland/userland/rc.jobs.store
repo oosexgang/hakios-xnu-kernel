@@ -1,0 +1,64 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The App Store and the thing it is actually waiting for (RC_JOBS=rc.jobs.store, built with
+# FLASHBOOT=1 so that the root is the iOS volume on the flash, QUIET=1, and wifi=1 among XL_CMDLINE).
+#
+# A SIM-less, never-signed-in iPhone gets its storefront from the bag server: AppleMediaServices asks
+# for https://bag.itunes.apple.com/bag.xml with no storefront, the server picks one from the request's
+# address and returns it in an X-Set-Apple-Store-Front header, and AMS loads the bag again and writes
+# the value onto the local account (AMSBagDataSource _setStorefrontFromURLResponse:bagData:). So the
+# question is not where a storefront comes from but whether that fetch completes. Ask by hand first,
+# before anything touches the screen, so the answer does not depend on the store: a control fetch that
+# is known to work anywhere, then DNS for the bag's host, a plain reach, then the real HTTPS GET
+# through CFNetwork. (appstored hands its own transfers to nsurlsessiond, which is why no socket of
+# its own is ever seen; that is not a sign of anything.)
+#
+# Two things the first runs of this file got wrong, both worth more than the steps below.
+# QUIET=1: without it launchd's own stderr -- thousands of failed lookups and "Last log repeated 2312
+# times" -- pushes everything else off /dev/console, and the scenario's output disappears while the
+# scenario itself goes on running. A fetch that printed nothing could not be told from one that never
+# happened, and a whole conclusion was built on exactly that.
+# And no second DHCP: configd configures en0 by itself here (the job com.redwood.wifi, with wifi=1),
+# so "dhcp en0" asks IPConfiguration for a service that is already being made. Wait for the address.
+#
+# Two things are asked at once here, because one window answers both. The storefront is put on the
+# local account with store_test, which is not an invention: it is the value bag.itunes.apple.com
+# returned for this device when asked with none (x-set-apple-store-front: 143469-2,8), a region and
+# not an account. If the store lists applications with it in place, then "AMS will not bootstrap its
+# own storefront" is the whole of what is left, and the store already does what was asked of it --
+# browse without an Apple ID, and no way to install, there being nothing to buy with.
+# The other half is the kernel's command line: atm_diagnostic_config=0x20000000
+# (ATM_ENABLE_LEGACY_LOGGING, osfmk/atm/atm_types.h) is what libtrace reads out of the boot
+# arguments to turn on full logging, and it is the only way in to AMS's own account-side lines --
+# "Attempted a bag load but an account wasn't provided", "Failed to fetch local account. This will
+# prevent initial bag requests from specifying storefront" -- which sit below the level
+# OS_ACTIVITY_DT_MODE prints. Only the jobs named in OSLOG print to the console, so the extra volume
+# is the one daemon's and not the whole system's.
+#
+# QUIET=1 is not enough by itself, measured: launchd's lines keep coming (7755 in a 320 s run against
+# 8013 in a 263 s one without it), and of five net_test steps run early only the last printed. So the
+# steps wait out the start first -- the flood is heaviest while launchd spawns its two hundred
+# processes -- and each fetch is a command of its own, so that a dropped burst costs one line, not all
+# of them. The home screen is not drawn before about a minute either, and a tap before that is lost:
+# that is what emptied the first run of this file.
+/redwood/bin/rwtouch wait 55 swipe 0.5 0.985 0.5 0.3 250 wait 20
+/redwood/bin/net_test waitaddr en0 60
+/redwood/bin/net_test fetch https://bag.itunes.apple.com/bag.xml
+# the account as it stands (setting it from here was tried and cannot work: the value does not keep,
+# AMS's local account being made fresh every boot and accountsd holding no iTunes account at all --
+# see src/store_test.m). The storefront is answered inside appstored instead, by the library
+# src/inject_store.c, which a build with STOREFRONT=1 puts there.
+/redwood/bin/store_test user 501 show
+# and only then the store, open long enough to time out (30 s) and try again
+# twice, because one tap at a fixed moment lands on an undrawn home screen often enough to void a
+# run: open, go home, open again. The second is a warm launch and a cleaner measurement anyway.
+/redwood/bin/rwtouch tap 0.615 0.59 wait 30 button home wait 5 tap 0.615 0.59 wait 40
+# the store draws its welcome card first and waits there -- that is why nothing asks for content.
+# "Continue" is at the bottom; after it the Today page is what should load.
+# ... and the welcome card is only the first of the onboarding: after "Continue" comes the choice
+# about personalised ads, and "Turn Off" is the honest answer for a phone with no account at all.
+/redwood/bin/rwtouch tap 0.5 0.895 wait 25
+# ... and then simply wait, with the report ticking every fifteen seconds: whatever the Today tab
+# asks for after onboarding shows up in the task table with its status, length and type.
+/redwood/bin/rwtouch tap 0.5 0.962 wait 200
+/bin/ps -A
+/redwood/bin/rwtouch button home wait 6

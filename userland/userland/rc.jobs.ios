@@ -1,0 +1,16 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The iOS root container on the phone's flash, which the kernel mounts read only on
+# /System/Volumes/iOS at boot (ufs=2 apfs_volume=ufs_darwin, with bootcpu=7): what user space
+# sees of it, in an ordinary session.  iOS's own mount and df first, then ours (vol_ls: ls, cat,
+# hashes through read(2) and through a mapping), then every file of /usr/sbin both ways.
+# The host's hashes: SystemVersion.plist 47687daabd864929, usr/lib/dyld 602fba9751ad6aa7,
+# usr/sbin/mediaserverd 895037cd97f96801 (tools/apfs/apfs-tool census, apfs.py).
+/sbin/mount
+/bin/df
+/redwood/bin/vol_ls fs /System/Volumes/iOS
+/redwood/bin/vol_ls ls /System/Volumes/iOS
+/redwood/bin/vol_ls ls /System/Volumes/iOS/System/Library/CoreServices
+/redwood/bin/vol_ls cat /System/Volumes/iOS/System/Library/CoreServices/SystemVersion.plist
+/redwood/bin/vol_ls hash /System/Volumes/iOS/System/Library/CoreServices/SystemVersion.plist /System/Volumes/iOS/usr/lib/dyld /System/Volumes/iOS/usr/sbin/mediaserverd
+/redwood/bin/apfs_mmap_test mmap /System/Volumes/iOS/usr/sbin
+/redwood/bin/apfs_mmap_test read /System/Volumes/iOS/usr/sbin 65536

@@ -1,0 +1,17 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Installing a tweak the way Sileo does it (RC_JOBS=rc.jobs.tweakinstall): a package whose trigger
+# runs uicache, which rebuilds the database of applications -- the moment a running Sileo used to be
+# killed ("uninstalling app") instead of offering a respring. Afterwards: is Sileo still registered,
+# and is the tweak where the loader will find it.
+/redwood/bin/sound_test springboard
+/var/jb/bin/sh /var/jb/prep.sh
+/redwood/bin/net_test waitaddr en0 60 resolve apt.procurs.us
+/var/jb/usr/bin/apt-get update
+/redwood/bin/rwtouch wait 25
+/var/jb/usr/bin/uiopen sileo://
+/redwood/bin/rwtouch wait 20
+/var/jb/usr/bin/apt-get install -y preferenceloader
+/redwood/bin/rwtouch wait 15
+/var/jb/usr/bin/uicache -a
+/redwood/bin/rwtouch wait 15
+/bin/ps -A

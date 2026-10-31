@@ -1,0 +1,175 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalvertexdesc).
+#
+# WHAT THIS BOOT IS FOR. On 21 October the phone's own window server reached our Metal driver
+# and asked it for render pipelines. One specification was refused 80 times -- by us, in our
+# own words (the 120 lines of that log are 80 of QuartzCore's and 40 of launchd's; 10.45):
+#
+#   [Metal] Metal failed to build render pipeline: spec=PBGRABsovXm_Tds4A2Xhf_Isrc
+#   downsample_blur_vert_lph reads vertex attributes ([[stage_in]]), and this contract
+#   carries no vertex attribute layout (rwa_render_shape has no formats, strides or offsets)
+#
+# That sentence no longer exists in the library. rwa_render_shape now carries
+# MTLVertexDescriptor -- a format, an offset and a buffer index per attribute, a stride, a step
+# function and a step rate per buffer index -- the driver reads both of Metal's arrays off the
+# pipeline descriptor, and rwa_draw carries the streams with their offsets (docs/metal.md 10.44).
+# So this boot asks one question: WHAT DOES THE WINDOW SERVER DO NOW. Either those pipelines
+# build, or another refusal of ours becomes the one that names itself -- and the list below says
+# which sentences are the candidates, in the order the library would reach them, so the log can
+# be read against a prediction instead of being read for the first time.
+#
+# MEASURED ON THIS MACHINE FIRST, and the numbers are in docs/metal.md 10.44:
+# air_metal_test --draw-attrib draws QuartzCore's std_vert0_lpf over
+# AppleMetalGLRenderer's texturedFragment2DUInt with a real layout -- two attributes out of one
+# interleaved stream at buffer index 5, the position NOT at offset 0 -- and every pixel of the
+# 4x4 attachment holds the texel its own interpolated coordinate lands in; the same four
+# vertices re-encoded as UChar4Normalized and Short4Normalized at another stride and other
+# offsets give THE SAME 64 words; and with the elements built in Metal's attribute order instead
+# of the shader's driver_location order, all sixteen pixels come back (100, 200, 300, 400)
+# instead -- the texel the module's UNUSED attribute 1 points at. 13 bad layouts and 3 bad draws
+# are refused by name. air_metal_test --attrib-sweep then builds a pipeline for every function
+# of QuartzCore's library: 10 of its 14 [[stage_in]] vertex modules get one, including
+# downsample_blur_vert_lph itself, and the other 4 are not refused -- softpipe asserts on the
+# 16-bit opcode a `half` attribute narrows with, which is softpipe's limit and the reason this
+# half has to be run on the phone at all.
+#
+# WHAT IT NEEDS
+#
+#   the image          CRYPTEXES=flash SYSTEM=1 GL=1 REST=1 QUIET=1 \
+#                        RC_JOBS=rc.jobs.metalvertexdesc ./build.sh
+#                      GL=1 for /redwood/lib/libredwoodair.dylib (the compiler library, which
+#                      must be rebuilt from this tree: air_metal.h grew two arrays in the middle
+#                      of rwa_render_shape and the driver's own copy grew with them -- a driver
+#                      built against one shape and a library built against the other read a
+#                      stride where a pixel format is). REST=1 because the window server is the
+#                      thing being measured here and it is one of the jobs REST brings.
+#   XL_CMDLINE         "bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 metal=1"
+#                      gpu=1 or there is no Adreno and every pipeline is refused with a readable
+#                      reason instead of being built; metal=1 for the registry properties
+#                      metal_props sets below.
+#   XL_SECS=420        the window server takes its time, and the pipelines it builds come after
+#                      it has composed its first frame.
+#
+# WHAT THE LOG MUST HOLD, AND BOTH OUTCOMES WRITTEN DOWN BEFORE THE RUN
+#
+#   grep -a -c "carries no vertex attribute layout"
+#     must be 0        That string is gone from the library. Anything but 0 means the image
+#                      carries an older libredwoodair.dylib than this driver, and NOTHING else in
+#                      this log is about the new code.
+#
+#   grep -a "vertex descriptor configures"
+#     expected         one line per pipeline whose descriptor configures anything:
+#                      "redwoodmetal: this pipeline's vertex descriptor configures 3 attributes,
+#                      the highest from buffer index 0". QuartzCore's stage-in modules declare
+#                      attributes 0, 1 and 3 (position float4, texcoord0 float2, color half4),
+#                      so 2 or 3 attributes a pipeline is the shape to expect.
+#     if absent        the window server built no pipeline with a vertexDescriptor at all, and
+#                      then that specification was refused for something this change does
+#                      not touch -- read the refusals below instead.
+#
+#   grep -a "Metal failed to build render pipeline"
+#     the good outcome none, or far fewer than 120.
+#     the candidates, in the order rwa_render_create reaches them, each a sentence of ours:
+#       "reads vertex attribute N (NAME, TYPE) and the vertex descriptor configures no format
+#        there"            -- the descriptor leaves an attribute the module reads unconfigured,
+#                             and the module does not gate that attribute with a function
+#                             constant. If this is what comes back, the next thing to measure is
+#                             WHICH attribute: QuartzCore's fixed_vert_* gate three of their five
+#                             with vtx_attr_has_texcoords and vtx_attr_has_point_size, and those
+#                             three are allowed to be unconfigured (they get a placeholder
+#                             element out of the library's own quad buffer).
+#       "is half4, which wants floating-point components, and MTLVertexFormat... delivers
+#        signed integer ones"
+#                          -- the descriptor's format and the shader's member disagree in base
+#                             type. Nothing in QuartzCore should produce this: all 46 of its
+#                             attributes are float, float2, float4 or half4.
+#       "format 41 is MTLVertexFormatUInt1010102Normalized" (or 40, 54, 55)
+#                          -- a packed format, which this library declines because Metal's
+#                             channel order against Gallium's is unmeasured here. If the window
+#                             server really uses one, that measurement is the next piece of work
+#                             and it is not large.
+#       "is at offset 4096, and a6xx's VFD_DECODE_INSTR.offset is twelve bits"
+#       "has a stride of 4096 bytes"
+#                          -- a vertex element bigger than the hardware's twelve-bit fields.
+#                             Unlikely for a compositor; it would mean a real limit and not a
+#                             mistake.
+#       "buffer index K is a vertex stream in this descriptor and FN reads it as [[buffer(K)]]"
+#                          -- the one refusal here that is about METAL and not about the
+#                             hardware: one table serves both, so an index cannot be both. If
+#                             this comes back, the application is asking for something Metal
+#                             itself would refuse, and the interesting part is which index.
+#       "would not compile the vertex stage"
+#                          -- NEW GROUND. That pipeline was refused before ir3 ever saw
+#                             their vertex module, so this boot is the first time ir3 compiles
+#                             one of them in this driver. docs/air.md says all 135 translatable
+#                             QuartzCore modules do compile through ir3 on their own, so this
+#                             should not appear; if it does, it is a compiler report and not a
+#                             contract one.
+#
+#   grep -a "the draw failed"
+#     past the pipeline is where the new risks are, and they are the draw's:
+#       "the vertex descriptor fetches from buffer index K and nothing is bound there"
+#                          -- the pipeline fetches a stream the encoder never got. Says the slot.
+#       "vertex N of stream K ends X bytes into a buffer that holds Y"
+#                          -- the bounds check. Worth reading twice if it appears: the arithmetic
+#                             is offset + stride x (highest vertex index) + the attribute's own
+#                             size, and a draw refused here that an application believes legal
+#                             would mean this check is too strict rather than the draw wrong.
+#       "the buffer bound as vertex stream K did not come from the compiler library"
+#                          -- a stream from somewhere other than -newBufferWithLength:, which on
+#                             this device should be impossible.
+#       "vertex buffer K is an argument of the vertex stage and is bound at offset Z"
+#                          -- a non-zero offset on a [[buffer(n)]] argument, which rwa_bindings
+#                             still has no room for. The STREAM side honours offsets now; this is
+#                             the half that does not, and it says so instead of reading the wrong
+#                             bytes.
+#
+#   and the one outcome that is not a sentence: THE LOG STOPPING. A draw that fetches attributes
+#   is the first thing this port has ever asked the Adreno's vertex fetch unit to do with a
+#   layout of somebody else's making. If the log ends in the middle of a draw, read it as a hung
+#   3D core (docs/metal.md 10.36 has the half-GX reset behind a boot-arg) and not as a quiet
+#   success.
+#
+# 1. THE CANARY FIRST, and it is not decoration: clearFragment20 into a 4x4 RGBA32Uint
+#    attachment must print the same four words it has printed since 10.22 --
+#    2458616957 2930221209 3401825461 3873429713 -- and "THE SAME". This draw uses the
+#    GENERATED vertex stage and therefore the library's own quad and its own single vertex
+#    element, which is the path 255 pixel-compared draws went through. If it has changed, the
+#    layout work broke the road it was supposed to leave alone, and nothing below is worth
+#    reading.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. THE NEW REFUSAL, BY NAME, from a program of ours rather than from the window server:
+#    metal_drv_test builds a pipeline with a supplied vertex function and NO vertexDescriptor
+#    (it has no way to set one), so a module that reads attributes must now be refused for the
+#    descriptor and not for the contract. The module is the very one the window server named.
+#
+#    expected: "reads vertex attribute 0 (position, float4) and the vertex descriptor configures
+#    no format there, so the fetch would read a slot nothing was set up for" -- which is the
+#    whole of what changed, in one line: the refusal moved from "this contract cannot express a
+#    layout" to "this descriptor has not got one", and the attribute's NAME and Apple's own type
+#    string come out of the module's metadata on the device.
+#
+#    if it still says "carries no vertex attribute layout": the image's libredwoodair.dylib is
+#    older than this driver and the two must be rebuilt together.
+/redwood/bin/metal_drv_test --draw --vertex downsample_blur_vert_lph --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
+#
+# 3. And the same for a module whose attributes are GATED by function constants
+#    (fixed_vert_lph_spc: five attributes, three of them behind vtx_attr_has_texcoords and
+#    vtx_attr_has_point_size). Two of its five are not gated, so this must still be refused --
+#    and the sentence must name one of THOSE two (position, float4, or color, half4) and never a
+#    gated one, because a pipeline whose constants make the predicate false may legally configure
+#    nothing at that index. A refusal naming texcoord0, texcoord1 or point_size would mean the
+#    runtime is demanding a binding the API does not owe it.
+/redwood/bin/metal_drv_test --draw --vertex fixed_vert_lph_spc --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
+#
+# 4. The switch, so that iOS's own daemons take the Metal road and the window server reaches
+#    this driver (10.14, rc.jobs.metalprops): metal_props puts MetalPluginName and
+#    MetalPluginClassName on the IOAcceleratorES service, and from that moment every process
+#    that asks Metal composes RedwoodMetal.bundle. Nothing persists -- the properties live in the
+#    registry, and a boot without metal=1 is a clean machine.
+/redwood/bin/metal_props on
+#
+# 5. and the class sweep from a process that asks Metal the way the daemons do, which is here
+#    for one reason: it proves the chain is alive in THIS boot before the window server's own
+#    lines are read as evidence about it (10.17, 10.37).
+/redwood/bin/metal_drv_test --sweep

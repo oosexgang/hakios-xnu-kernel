@@ -1,0 +1,127 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalrecover).
+#
+# One question, and the whole list exists to answer it: does a 3D core that has stopped
+# answering come back? Boot the kernel with gpu_recover=1 among the boot-args and nothing else
+# changed from the run this list is written against (logs/094810-run.log):
+#
+#   XL_CMDLINE="bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 gpu_recover=1" ./xl run
+#
+# The control is the same list booted WITHOUT gpu_recover=1, which is the behaviour of every
+# boot so far: after the first hang gpuWait latches (gGPUReported in
+# iokit/Kernel/RedwoodGPU.cpp) and every later wait returns false at once, so everything below
+# the first hang writes nothing and says so.
+#
+# Both outcomes are written down here before the run, line by line, because the point of the
+# list is that the two are told apart without judgement.
+#
+# WHAT IS A HANG HERE, AND WHY THESE THREE
+#
+# air_run fills a buffer nobody named with (i * 7 + 13) & 0xff. A kernel whose buffers carry
+# counts, indices or sentinels, given that, loops on a condition that never comes
+# (docs/air.md section 5). That is a property of the input, not of the translated shader, so
+# these two lines go on hanging whatever the compiler does -- unlike MetalFaceMask_PropagateParents
+# (logs/062627) and ConnectSpans-with---zero (section 5), whose hangs were ir3 bugs and are fixed:
+#
+#   fbs_bistochastize_iter          hung at the fourth dispatch of a fresh boot on this fill
+#                                   (docs/air.md section 5); its loop counts from one buffer
+#                                   value to another, and the pattern makes that count enormous.
+#                                   With --zero it finishes every time, three boots out of three.
+#   MetalFaceMask_ConnectSpans      leaves its loop on -1 in a ushort; the pattern never puts
+#                                   0xffff in the table, so it never leaves. With --ones it
+#                                   finishes at once.
+#
+# The third is a hang of a different shape -- a draw, not a dispatch, and Apple's own shader
+# rather than this harness's fill. It is the one that cost nine job lines this morning
+# (logs/094810-run.log, "the draw, with the test off and depth writes on: status 5"):
+#
+#   texturedFragment2DDepth         a fragment shader that STORES to [[depth]], drawn with depth
+#                                   writes on (docs/metal.md section 10.30). It wedged the GPU
+#                                   with RB, CCU and LRZ busy -- the depth and colour pipeline --
+#                                   where the two above wedge it with SP and HLSQ busy.
+#
+# If one of the three stops hanging the list still answers the question: one hang is enough, and
+# the kernel's log names a hang outright ("adreno: gpu: no answer"). If NONE of them hangs, the
+# run says nothing about recovery, and that too is visible: no "no answer" line in the log.
+#
+# THE CANARY
+#
+# MetalFaceMask_InitMinMax changes exactly six words of its one buffer, unconditionally, every
+# time: words 0..2 to 0x7fffffff and words 3..5 to 0x80000000, over the fill's 0x221b140d,
+# 0x3e373029, 0x5a534c45, 0x766f6861, 0x928b847d, 0xaea7a099. It runs before the first hang and
+# after every one, and it is the verdict. Its two possible outputs, verbatim from this morning's
+# log (lines 1721-1746 recovered, 2292-2315 wedged):
+#
+#   RECOVERED -- six "changed" lines and
+#       air_run: device buffer 0: 6 of its 1024 words differ from what this harness wrote
+#     exit status 0.
+#   NOT RECOVERED --
+#       air_run: THE GPU DID NOT FINISH the dispatch within two seconds. ...
+#       air_run: device buffer 0 came back bit-identical to the fill, so this dispatch wrote nothing visible. ...
+#       air_run: MetalFaceMask_InitMinMax: the dispatch did not finish, so no number here is evidence
+#     exit status 1, and the sixteen words printed are the fill itself.
+#
+# WHAT THE KERNEL'S LOG MUST SAY
+#
+# Recovered, after each of the three hangs:
+#   adreno: gpu: no answer: submission N is the last, the core has done N-1; ...        (as today)
+#   adreno: gpu:   in the first command buffer at 0x..., 0 words to go; ...             (as today)
+#   adreno: gpu: the 3D core's half has been reset: status 0x1, interrupts 0x0, ring at 0; the GMU
+#     sees it busy: 0x...; and powered: 0x... (bits 6 and 7 clear); it had dropped writes of ours: 0x...
+#     -- status with nothing but bit 0 set is an idle core (bit 0 is CP_AHB_BUSY_CX_MASTER, which
+#     stands while the register is being read); the last word should be 0, and if it is not, the
+#     GMU had been swallowing register writes and that is worth knowing on its own.
+#   adreno: step 0: write the 3D core's registers as Linux does before it starts ...    (step 20 again;
+#     it says every register it writes, because cx_ready() measures a clock and clears `quiet`)
+#   adreno: 0: THE 3D CORE TAKES COMMANDS
+#   adreno: 0: the page reads 0x600dc0de: THE 3D CORE WRITES OUR MEMORY ON COMMAND      (step 21 again)
+#   adreno: gpu: THE 3D CORE IS RECOVERED (1 time in this run); submissions up to N are given up as done
+# -- and the count in that last line reaches 3 by the end of the list.
+#
+# And one more line, at the very end of the run, which is a prediction of its own: a recovered
+# core is idle, so the run ends in order --
+#   adreno: the run is about to end: the GPU is given back (it had finished what it was given after 0 us)
+# where today a wedged run ends
+#   adreno: the run is about to end: the GPU is given back (STILL AT WORK after 500000 us)
+#   adreno: 0: the GPU block's bus has been halted, the 3D core's side too, and stays so
+# and that second form is what makes the NEXT boot panic in GPU bring-up unless the phone is
+# cold-rebooted. If the first form appears, the boot after this one needs no cold reboot.
+#
+# Asked for and refused: the reset line and step 20's lines, then
+#   adreno: gpu: THE 3D CORE DOES NOT TAKE COMMANDS AGAIN after the reset: it is given up for this run, ...
+# and from there the list reads exactly like the control. That is a clear negative: the reset
+# happened and the core did not come back from it, which is the one thing the sources could not
+# settle in advance (see redwood_gpu_recover() in bsd/dev/redwood_adreno.c).
+#
+# The control (no gpu_recover=1): the two "no answer" lines ONCE, for the first hang only, and
+# nothing of the rest -- the later hangs are not even reported, because the latch is already set.
+#
+# ---- the list ------------------------------------------------------------------------------
+#
+# A draw with a known answer, before anything can have gone wrong: this one prints 101 201 302 400.
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DUInt
+# the canary's first dump: the six words, and what the five later dumps are compared against
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# hang 1 of 3: a compute kernel whose loop bound comes out of the fill (SP and HLSQ busy)
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_iter
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# hang 2 of 3: a compute kernel that walks a table for a sentinel the fill never contains
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# hang 3 of 3: a draw, and Apple's own shader storing to [[depth]] (RB, CCU and LRZ busy)
+/redwood/bin/metal_drv_test --draw-depth depth32float --fragment texturedFragment2DDepth /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# ---- and whether a recovered core does more than the canary ---------------------------------
+#
+# The canary is one dispatch of one workgroup into one buffer. These two are the rest of the
+# claim: the same draw as the first line, which must print 101 201 302 400 again and not
+# something else, and a compute kernel with real inputs that finished on the device this
+# morning (rc.jobs.kinput, AddSeedPoint: 0x5a at byte 28, word 168 left alone). If the canary
+# comes back and these do not, recovery brings back less than a working GPU, and saying so is
+# the result.
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DUInt
+/redwood/bin/air_run --zero --buffer 0@0=00000000000000003f0000003f000000 --buffer 2@0=01000000000000005a --buffer 3@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 3@30=ffff010001000a000d000100ff --buffer 3@44=ffff02000200140017000100ff --buffer 3@58=ffff030003001e0021000100ff --buffer 4@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_AddSeedPoint
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax

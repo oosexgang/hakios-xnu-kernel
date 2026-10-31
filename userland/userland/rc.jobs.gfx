@@ -1,0 +1,10 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The moments with a blur or a fresh window, for the screen recording (rec_secs=N rec_start=S): once SpringBoard is
+# up, Control Center pulled down from the top right corner and closed, Notification Center pulled down from the
+# top left and closed, Search pulled down on the home screen and closed, Settings opened and closed with the home
+# gesture; twice over, two seconds apart.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 20 swipe 0.92 0.003 0.92 0.5 300 wait 2.5 button home wait 2 swipe 0.2 0.003 0.2 0.6 300 wait 2.5 button home wait 2
+/redwood/bin/rwtouch swipe 0.5 0.4 0.5 0.7 300 wait 2.5 button home wait 2 tap 0.615 0.71 wait 2.5 swipe 0.5 0.995 0.5 0.55 150 wait 2
+/redwood/bin/rwtouch swipe 0.92 0.003 0.92 0.5 300 wait 2.5 button home wait 2 swipe 0.2 0.003 0.2 0.6 300 wait 2.5 button home wait 2
+/redwood/bin/rwtouch swipe 0.5 0.4 0.5 0.7 300 wait 2.5 button home wait 2 tap 0.615 0.71 wait 2.5 swipe 0.5 0.995 0.5 0.55 150 wait 2

@@ -1,0 +1,10 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldraw4).
+#
+# Slice 4 of the fragment-shader sweep: shaders 240..299 of
+# AppleMetalGLRenderer's library, drawn through the Metal driver, one line each.
+#
+# Why slices: the loader keeps the first 256 KB of a boot's log and the last 1 MB and drops
+# the middle, and the boot's own noise fills most of that first 256 KB -- so about seventy
+# lines of sweep survive per boot. Two single-boot runs stopped at exactly 64 shaders and the
+# limit looked like the driver's until the line number gave it away (2572 of 11480).
+/redwood/bin/metal_drv_test --draw-all 240 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

@@ -1,0 +1,12 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The speakers at their loudest (RC_JOBS=rc.jobs.loud, with adsp=1 sound=4 and the sound_below being tried). First a
+# tone at full scale (1 kHz left, 440 Hz right) for 60 seconds written straight to /dev/redwood-audio, past iOS's
+# own processing, which never lets a tone come near full scale: the hardest thing the speakers can be given, for
+# the guard to hold back (the kernel's "sound: the guard" lines; its "speaker:" lines are the amplifiers' status,
+# temperature and battery voltage). Then the same tone through iOS for 30 seconds, with its volume pressed up to the
+# top, the lock sound and a fanfare.
+/redwood/bin/sound_test springboard route
+/redwood/bin/sound_test level 1 raw 60 wait 6
+/redwood/bin/sound_test level 1 tone 30 &
+/redwood/bin/rwtouch wait 2 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup
+/redwood/bin/sound_test route wait 32 system 1100 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf wait 5

@@ -1,0 +1,11 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldraw).
+#
+# One triangle, with one of Apple's own fragment shaders, and nothing else in the boot -- so
+# that the question "did it draw" cannot be answered by a log whose middle was dropped.
+#
+# clearFragment20 writes render target 2 and is one of the 255 fragment shaders air_run has
+# drawn and compared pixel by pixel, so there is a reference: with its 48-byte constant buffer
+# filled (i * 7 + 13) & 0xff, softpipe gives 2458616957 2930221209 3401825461 3873429713. The
+# pipeline is asked for with no vertex function, which is the compiler library's cue to supply
+# the pass-through stage air_run itself draws over.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

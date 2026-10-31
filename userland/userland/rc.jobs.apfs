@@ -1,0 +1,10 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Reading the APFS volume the kernel mounted on /private/var/apfs-check (boot-arg
+# apfs_check=3), from user space.  The three roads, over one fixed set of files
+# (/usr/sbin: 32 files, 47.8 MB) so that two kernels can be compared on equal terms:
+#   mapping          the only road that makes the driver's vnop_pagein run
+#   small read(2)s   what the compressed path is worst at
+#   large read(2)s   the control: a piece per decompression even before any caching
+/redwood/bin/apfs_mmap_test mmap /private/var/apfs-check/usr/sbin
+/redwood/bin/apfs_mmap_test read /private/var/apfs-check/usr/sbin 4096
+/redwood/bin/apfs_mmap_test read /private/var/apfs-check/usr/sbin 65536

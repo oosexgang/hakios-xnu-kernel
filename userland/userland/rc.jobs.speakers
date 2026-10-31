@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The phone's speakers (boot-arg sound=4 with adsp=1, bsd/dev/redwood_sound.c): once SpringBoard is up, what iOS
+# plays in the ways that matter to the amplifiers, which are on only while there is sound -- a tone of three
+# seconds (1000 Hz left, 440 Hz right), the lock sound, keyboard clicks four seconds apart (each one starts the
+# amplifiers anew: after three seconds of silence they are stopped), three clicks half a second apart (they
+# stay on), a fanfare. The kernel's "sound:" and "speaker:" lines say when the amplifiers started and stopped.
+/redwood/bin/sound_test springboard route wait 3 tone 3 wait 4 system 1100 wait 4 system 1104 wait 4 system 1104 wait 4 system 1104 wait 0.5 system 1104 wait 0.5 system 1104 wait 4 file /System/Library/Audio/UISounds/New/Fanfare.caf wait 5
+/bin/ps -A

@@ -1,0 +1,65 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldev).
+#
+# The first question of subsystem (2), the Metal object graph: can this port make a
+# subclass of Metal's private _MTLDevice, and what does its -initWithAcceleratorPort:
+# do when handed this port's own IOAcceleratorES service?
+#
+# docs/metal.md section 1 read the five steps Metal takes to find a GPU out of
+# Metal.framework. Steps 4 and 5 are the ones that decide whether a driver of ours is
+# possible at all: the class must be a subclass of _MTLDevice, and the object comes from
+# -initWithAcceleratorPort:. src/metal_dev.m walks those two by hand, in its own process,
+# so that a crash costs a line in this log instead of the window server.
+#
+# It deliberately does NOT give the service the two properties (MetalPluginName,
+# MetalPluginClassName) that would make CoreAnimation and OpenGL ES take the Metal road on
+# the next boot: section 7 measured that road as fatal while there is nothing behind it.
+#
+# No GPU is needed for this: the service exists whether or not the Adreno came up, and
+# nothing here draws.
+/redwood/bin/metal_dev
+#
+# Then the experiment metal_dev's answer made possible. Apple's IOGPUMetalDevice init
+# refused with an assertion -- it requires the subclass to conform to MTLDeviceSPI -- and
+# that gate is in userland, where class_addProtocol passes it. metal_stubdev builds such a
+# subclass, stubs every method those protocols require with one that prints its own name,
+# and lets Apple's initialisation interrogate it. The log is then the order of the
+# questions a driver of ours has to answer, measured rather than guessed.
+/redwood/bin/metal_stubdev IOGPUMetalDevice
+#
+# the same count for a direct subclass of _MTLDevice, which is the size of route A: how
+# many of the methods MTLDeviceSPI and MTLDevice require are answered by nothing in the
+# chain. (Its step 5 is expected to throw: _MTLDevice's init is the abstract stub.)
+/redwood/bin/metal_stubdev _MTLDevice
+#
+# the same against the legacy path, which refused by returning nil rather than by asserting
+/redwood/bin/metal_stubdev MTLIOAccelDevice
+#
+# And the experiment that decides the first milestone. Reversing MTLAddDevice gave a
+# contract of three methods and two protocol declarations for an object Metal will accept;
+# this replays that sequence on a subclass of _MTLDevice that has exactly those, once per
+# candidate featureProfile value, and then hands the survivor to Metal's own MTLAddDevice
+# and asks MTLCreateSystemDefaultDevice() for a device. Discovery is bypassed and said to
+# be bypassed; registration is not.
+/redwood/bin/metal_stubdev _MTLDevice --minimal
+#
+# And the same question asked of the real driver library rather than of classes assembled at
+# runtime: does a source-declared subclass of the private _MTLDevice link and load here, and
+# does Metal take it? (src/redwoodmetal.m, src/metal_drv_test.m)
+/redwood/bin/metal_drv_test
+#
+# And the first dispatch worth trying: MetalFaceMask_InitMinMax takes exactly one device
+# buffer (24 bytes, read_write, `atomicMinMax`) and no textures or samplers, which is what
+# this driver can bind today; it also writes its buffer unconditionally, so an all-zero
+# result afterwards means the dispatch did not happen rather than that the kernel had
+# nothing to say. tools/air/kstruct.py sorted the corpus's 47 kernels for exactly this.
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# And the same driver reached the way Metal's own discovery reaches a plug-in: through
+# NSBundle, out of a flat unsigned bundle of ours. This is the one part of discovery that
+# cannot be settled by reading the loader -- whether -[NSBundle classNamed:] gives up our
+# class, since it tests that the class came out of that very bundle. Nothing is published to
+# the service, so Metal is not asked to find anything (docs/metal.md 10.14).
+/redwood/bin/metal_drv_test --bundle
+#
+# and what the system believed about Metal before this, for the contrast
+/redwood/bin/metal_test

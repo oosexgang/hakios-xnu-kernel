@@ -1,0 +1,20 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metal2).
+#
+# Batch 2 of 3. Each kernel is told, PER SLOT, which kind and element type of texture to
+# bind -- read out of its own air.texture entries on the machine. One format for every slot
+# was not enough: one of these reads texture 0 as texture2d<uint> and texture 3 as
+# texture2d<int>, and binding one format everywhere is refused by name for the others.
+#
+# Batches because the loader keeps the first 256 KB and the last 1 MB of a boot's log and
+# drops the middle; a count read off a cut log is a lower bound pretending to be a number.
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba32uint,1=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float,1=2d:rgba32float,2=2d:rgba32float,3=2d:rgba32float,4=2d:rgba32float,5=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPreProcess
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float,1=2d:rgba32float,2=2d:rgba32float,3=2d:rgba32float,4=2d:rgba32float,5=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPostProcess
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax1
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2

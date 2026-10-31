@@ -1,0 +1,31 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaltex).
+#
+# The fifteen fragment shaders of Apple's GL renderer that declare a texture, one process
+# each, each bound the kind and format its own module declares (tools/air/texdecl.sh prints
+# the table; docs/metal.md 10.29).
+#
+# One process each, and not the sweep, because the first sweep that bound per-shader
+# textures stopped dead at its third shader: two multisample refusals, one line from the
+# driver about a generated vertex stage, and then nothing for the rest of the boot
+# (logs/070755-run.log). A draw that hangs this GPU takes the whole boot with it, so a
+# sweep is the wrong instrument for the suspects and the right one for the 256 shaders that
+# declare nothing. Here each line is its own process and its own job, so every line above a
+# hang is a measurement and the hang names itself.
+#
+# The order is by how new the binding is, least new first: 2d/uint already drew in the
+# sweep, then 2d of another element class, then 3d, which nothing in this path has ever
+# sampled.
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DUInt --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DStencil --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DFloat --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DInt --texslots 0=2d:rgba32sint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DDepth --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment3DFloat --texslots 0=3d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment3DUInt --texslots 0=3d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment3DInt --texslots 0=3d:rgba32sint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment3DDepth --texslots 0=3d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# And the sweep's first slice with --no-texdecl, to show that the 256 shaders which declare
+# no texture still draw: if this line gives its old numbers, the stall above is in the
+# per-shader machinery or in one of the fifteen, and not in the sweep.
+/redwood/bin/metal_drv_test --draw-all 0 60 --no-texdecl /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

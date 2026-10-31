@@ -1,0 +1,14 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The battery (RC_JOBS=rc.jobs.battery, with adsp=1): what the kernel's power source says and what
+# powerd and IOPS have made of it (src/battery_test.c); then the places that show it, for screenshots:
+# the home screen's status bar, the Today view with its widgets (Batteries among them), Settings >
+# Battery (its Battery Percentage switched off and on again: the number beside the status bar's
+# battery goes and comes back) and Battery Health & Charging, and the lock screen ("56% Charged"
+# under the date).
+/redwood/bin/battery_test 1
+/redwood/bin/rwtouch wait 40 swipe 0.1 0.5 0.9 0.5 300 wait 6 swipe 0.5 0.8 0.5 0.35 300 wait 6 button home wait 5
+/redwood/bin/battery_test open prefs:root=BATTERY_USAGE
+/redwood/bin/rwtouch wait 7 tap 0.843 0.179 wait 5 tap 0.843 0.179 wait 5 drag 0.5 0.85 0.5 0.45 2000 400 wait 5
+/redwood/bin/battery_test open prefs:root=BATTERY_USAGE&path=BATTERY_HEALTH
+/redwood/bin/rwtouch wait 8 button home wait 4 button lock wait 3 button lock wait 6
+/redwood/bin/battery_test 8 15

@@ -1,0 +1,92 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.kinput).
+#
+# Two questions in one boot, because a boot costs a cold reboot: where clip y = -1 lands on
+# the Adreno, and which of the kernels docs/air.md section 5 calls undispatchable will end
+# when given the values their exit tests actually compare against (tools/air/kinput.py --
+# read its table before this file).
+#
+# The orientation question is first and cannot hang, so a wedge in the ladder below does not
+# cost it. docs/metal.md section 10.28 writes both outcomes down in advance: softpipe prints
+# 0.5 0.5 0 1 for the position of memory row 0, and if the Adreno prints that too then the
+# two back ends do not differ and the flip measured in 10.26 is the test's row-by-row texture
+# seeding; 0.5 3.5 0 1 would mean window y is not the memory row on a6xx, against both turnip
+# and Mesa's own a420 trace.
+#
+# Every ladder line carries --zero. kinput's bytes say what the control fields hold and
+# nothing about the rest, because they were written for a harness that zeroes; air_run fills
+# with the byte pattern, and in logs/060945-run.log that noise cost nine of eleven lines.
+#
+# This is now a VERIFICATION run for three compiler fixes, and the order is what each line
+# is evidence for, cheapest first:
+#
+#   AddSeedPoint          tools/mesa/ir3-ssbo-subdword.patch. Its one uchar store went to
+#                         byte 672 instead of byte 28 (spans[46] instead of spans[0]),
+#                         because ldib/stib count in the IBO descriptor's texels while the
+#                         lowering divided by the instruction's size. Must now put 0x5a at
+#                         byte 28 and leave word 168 alone.
+#   fbs_bistochastize_iter  tools/mesa/ir3-shift-split.patch. Its four outputs were
+#                         1/sqrt(3), 1/sqrt(4), 1/sqrt(5), 1/sqrt(6) because `(C + x) >> s`
+#                         was rewritten as `(x >> s) + (C >> s)`, which for a negative C
+#                         lands 2^30 past the buffer, where a6xx reads zero and says
+#                         nothing. Must now be 0x3f13cd3a four times.
+#   PropagateParents      the same descriptor bug as AddSeedPoint, in a read: nextSpanID
+#                         was read four bytes apart instead of two, which turned this
+#                         input's lists into a cycle with no 0xffff in it. Must now finish.
+#   DrawSpans, DrawEye    a 16-bit typed image store against a 32-bit image descriptor.
+#                         air_run now picks the format by width as well as base type.
+#                         DrawSpans is the kernel that took a whole boot with it.
+#
+# Everything that has already run on the device goes before PropagateParents, because a
+# wedge costs everything below it: after one hung dispatch gpuWait latches and every later
+# wait returns false at once.
+#
+# MetalFaceMask_InitMinMax runs between them as the canary: it changes exactly six words of
+# its buffer, unconditionally, every time, so the first of its dumps that changes fewer marks
+# the line past which nothing is evidence. `kinput.py --check LOG` reads all of this and
+# needs air_run's "changed [w] 0x.. -> 0x.." lines, which this list's boot is the first to
+# have.
+# the GPU and ir3 are there, and this is the shader M1 is stated against
+/redwood/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01
+# the control for the line below it: this one is known to print 101 201 302 400
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DUInt
+# the orientation question itself (tools/air/fragpos.ll, hand-written: not one of
+# Apple's 271 fragment shaders reads its own position)
+/redwood/bin/air_run /redwood/share/probes/fragpos.bc
+# the canary before the ladder, so there is a first dump to compare the rest against
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_AddSeedPoint -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@0=00000000000000003f0000003f000000 --buffer 2@0=01000000000000005a --buffer 3@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 3@30=ffff010001000a000d000100ff --buffer 3@44=ffff02000200140017000100ff --buffer 3@58=ffff030003001e0021000100ff --buffer 4@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_AddSeedPoint
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# fbs_bistochastize_iter -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@8=01000000 --buffer 0@20=01000000 --buffer 0@32=01000000 --buffer 0@44=02000000 --buffer 0@56=01000000 --buffer 0@68=03000000 --buffer 0@80=01000000 --buffer 0@92=04000000 --buffer 1@0=00000000010000000200000003000000 --buffer 2@0=0000803f0000803f0000803f0000803f --buffer 4@0=0000803f040000000100 --buffer 4@12=0000803f0000803f /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_iter
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# fbs_pcg_init -- kinput.py confidence: MEDIUM
+/redwood/bin/air_run --zero --buffer 0@8=01000000 --buffer 0@20=01000000 --buffer 0@32=01000000 --buffer 0@44=02000000 --buffer 0@56=01000000 --buffer 0@68=03000000 --buffer 0@80=01000000 --buffer 0@92=04000000 --buffer 1@0=00000000010000000200000003000000 --buffer 2@0=0000803f0000803f0000803f0000803f --buffer 3@0=00008040000080400000804000008040 --buffer 4@0=0000803f0000803f0000803f0000803f --buffer 5@0=0000803f0000803f0000803f0000803f --buffer 10@0=0000803f040000000100 --buffer 10@12=0000803f0000803f /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_init
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# fbs_pcg_iter1 -- kinput.py confidence: MEDIUM
+/redwood/bin/air_run --zero --buffer 0@8=01000000 --buffer 0@20=01000000 --buffer 0@32=01000000 --buffer 0@44=02000000 --buffer 0@56=01000000 --buffer 0@68=03000000 --buffer 0@80=01000000 --buffer 0@92=04000000 --buffer 1@0=00000000010000000200000003000000 --buffer 2@0=0000803f0000803f0000803f0000803f --buffer 3@0=00008040000080400000804000008040 --buffer 4@0=0000803f0000803f0000803f0000803f --buffer 8@0=0000803f040000000100 --buffer 8@12=0000803f0000803f /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter1
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_GenerateMask -- kinput.py confidence: MEDIUM
+/redwood/bin/air_run --zero --buffer 0@0=00000000000000000300000003000000 --buffer 1@0=00000000000000004000000040000000 --buffer 3@0=04000000000000000000000000000000 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_GenerateMask
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_GenerateToothMask -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@0=00000000000000000300000003000000 --buffer 1@0=00000000000000004000000040000000 --buffer 3@0=04000000000000000000000000000000 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_GenerateToothMask
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_ResolveAssociations -- kinput.py confidence: RUNS, EMPTY: safe, but the loop is never entered
+/redwood/bin/air_run --zero --buffer 0@0=04000000000000000000000000000000 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ResolveAssociations
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_PropagateParents -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@0=000000000400000004000000 --buffer 1@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 1@30=ffff010001000a000d000100ff --buffer 1@44=ffff02000200140017000100ff --buffer 1@58=ffff030003001e0021000100ff --buffer 2@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropagateParents
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_DrawSpans -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@0=00000000000000004000000040000000 --buffer 1@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 1@30=ffff010001000a000d000100ff --buffer 1@44=ffff02000200140017000100ff --buffer 1@58=ffff030003001e0021000100ff --buffer 2@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DrawSpans
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_DrawEye -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@0=00000000000000003f0000003f000000 --buffer 1@0=00000000000000004000000040000000 --buffer 2@0=000000000100000080 --buffer 3@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 3@30=ffff010001000a000d000100ff --buffer 3@44=ffff02000200140017000100ff --buffer 3@58=ffff030003001e0021000100ff --buffer 4@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DrawEye
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# MetalFaceMask_ConnectSpans -- kinput.py confidence: HIGH
+/redwood/bin/air_run --zero --buffer 0@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 0@30=ffff010001000a000d000100ff --buffer 0@44=ffff02000200140017000100ff --buffer 0@58=ffff030003001e0021000100ff --buffer 1@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+# and the question section 5 answers one way and the module the other
+/redwood/bin/air_run --zero /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax

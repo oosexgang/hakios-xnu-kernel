@@ -1,0 +1,5 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# A triangle by the OpenGL ES library of the image (build.sh GL=test or GL=1), once the lock screen
+# is up and has stopped drawing over the panel; see src/gl_test.c.
+/redwood/bin/rwtouch wait 14
+/redwood/bin/gl_test 8

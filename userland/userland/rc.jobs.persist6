@@ -1,0 +1,13 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# What a save every so often would cost, and how much of one is new (var_store=1 ufs_write=1).
+# Three saves a minute apart, each saying how long it took, how big it is and how much of it was
+# written since the save before -- which is what decides whether saving only the difference is
+# worth building. The job com.redwood.varstore saves once more at the end of the run.
+/redwood/bin/var_store show
+sleep 60
+/redwood/bin/var_store save
+sleep 60
+/redwood/bin/var_store save
+sleep 60
+/redwood/bin/var_store save
+/redwood/bin/vol_ls fs /private/var

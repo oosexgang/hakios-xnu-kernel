@@ -1,0 +1,20 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The boot before the series of rc.jobs.persist5: the store is forgotten first, so that what
+# follows starts from a volume as empty as every boot of this port used to be. Run this one
+# WITHOUT var_store=1 -- nothing is restored and nothing saved, and it doubles as the measure of
+# a return to the loader with no saver registered: not one var_store line should be in its log.
+/redwood/bin/var_store erase
+/redwood/bin/var_store show
+/redwood/bin/vol_ls fs /private/var
+/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
+/redwood/bin/keychain_test keep
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls hash /private/var/mobile/Library/SpringBoard/IconState.plist
+/redwood/bin/vol_ls ls /private/var/mobile/Containers/Data/Application
+/redwood/bin/vol_ls ls /private/var/mobile/Containers/Shared/AppGroup
+/redwood/bin/var_store stamp /private/var/redwood-stamp
+sleep 120
+/bin/ps -A
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls hash /private/var/mobile/Library/SpringBoard/IconState.plist
+/redwood/bin/keychain_test read

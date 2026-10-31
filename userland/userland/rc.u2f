@@ -1,0 +1,5 @@
+# Commands init runs after its own checks: one per line, words separated by blanks.
+# The GPU's answer and nothing else (src/u2f_test.c, with gpu=1 adreno_keep=1): this runs
+# before launchd, so no daemon of iOS can push the answer out of the loader's log -- which is
+# what happened three runs in a row with the question asked from rc.jobs.
+/redwood/bin/u2f_test

@@ -1,0 +1,34 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalflip).
+#
+# Two questions the last two boots left open, in one boot because the log holds both.
+#
+# First: whose orientation. 10.26 measured the Adreno reading, at render-target pixel (0,0),
+# the texel softpipe reads at (0,3), and 10.28 settled by a hand-written probe that the two
+# back ends do NOT differ -- both put clip y = -1 in memory row 0 -- which leaves one
+# explanation standing: this test used to seed its 4x4 texture one row at a time at a
+# non-zero region origin. It now seeds it in one call and reads it back first, and
+# --seed-rows asks for the old shape. The two lines differ in nothing else, so whichever way
+# they disagree names the cause -- and the readback says it outright, without the draw.
+/redwood/bin/metal_drv_test --draw --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --seed-rows --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# Second: Apple's own two depth shaders. logs/080758-run.log proved depth testing discards on
+# the Adreno for three formats, but the loader cut the log where these two seed their
+# texture, so the numbers softpipe gives for them -- 0.0859375 for texel (1,1) and 0.3359375
+# for texel (1,1,1) -- are still only this machine's. They go second because they are the
+# cheaper question and a cut costs the lines at the end.
+/redwood/bin/metal_drv_test --draw-depth depth32float --fragment texturedFragment2DDepth /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw-depth depth32float --fragment texturedFragment3DDepth /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# And third: the one word of the two fbs_pcg_* kernels that kinput cannot require of them,
+# dispatched in the threadgroup they are written for. Both end with `if (tid == 0)` summing
+# all 128 entries of a threadgroup array and one atomic add, which is a 128x1x1 reduction;
+# under air_run's 4x4x1 four threads have tid == 0 (Metal's scalar
+# thread_position_in_threadgroup is the x component, not the flattened index), so four of
+# them add a sum over the four entries that shape writes. air_run grew --block X,Y,Z for
+# this. The CPU reference at 128x1x1 says the reduction word must be 0x00100000 for
+# fbs_pcg_init (buffer 8 word 0) and 0x00600000 for fbs_pcg_iter1 (buffer 6 word 0) -- the
+# two numbers the 4x4x1 runs kept missing by a factor of four. Everything ELSE these two
+# lines print is a different shape from kinput's table and must not be read against it.
+/redwood/bin/air_run --zero --block 128,1,1 --buffer 0@8=01000000 --buffer 0@20=01000000 --buffer 0@32=01000000 --buffer 0@44=02000000 --buffer 0@56=01000000 --buffer 0@68=03000000 --buffer 0@80=01000000 --buffer 0@92=04000000 --buffer 1@0=00000000010000000200000003000000 --buffer 2@0=0000803f0000803f0000803f0000803f --buffer 3@0=00008040000080400000804000008040 --buffer 4@0=0000803f0000803f0000803f0000803f --buffer 5@0=0000803f0000803f0000803f0000803f --buffer 10@0=0000803f040000000100 --buffer 10@12=0000803f0000803f /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_init
+/redwood/bin/air_run --zero --block 128,1,1 --buffer 0@8=01000000 --buffer 0@20=01000000 --buffer 0@32=01000000 --buffer 0@44=02000000 --buffer 0@56=01000000 --buffer 0@68=03000000 --buffer 0@80=01000000 --buffer 0@92=04000000 --buffer 1@0=00000000010000000200000003000000 --buffer 2@0=0000803f0000803f0000803f0000803f --buffer 3@0=00008040000080400000804000008040 --buffer 4@0=0000803f0000803f0000803f0000803f --buffer 8@0=0000803f040000000100 --buffer 8@12=0000803f0000803f /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter1

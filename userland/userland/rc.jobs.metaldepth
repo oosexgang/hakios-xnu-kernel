@@ -1,0 +1,81 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldepth).
+#
+# The first depth test this port has ever run. Every draw the Metal driver has made so far
+# ran with no depth attachment, so with depth testing off -- which nobody chose, it was an
+# absence -- and these lines are what turns that into a number (docs/metal.md 10.30).
+#
+# What each --draw-depth line does: one quad of Apple's clearFragment20, drawn four times.
+# Three with MTLCompareFunctionLess and depth writes on, at depths 0.5, 0.75 and 0.25, then
+# once more at 0.75 with MTLCompareFunctionAlways. The quad never moves on screen; what
+# changes is MTLViewport's znear (the only thing in Metal that moves this driver's quad in z)
+# and the bytes of its constant buffer, so a draw that is NOT discarded leaves a colour the
+# previous one did not. The far draw is the measurement -- its pixel must be the near draw's
+# -- and the Always control at that same depth says the compare function discarded it rather
+# than something about the draw. The depth buffer itself is read back after every step
+# through the driver's own aspect reader and must read 0.5, 0.5, 0.25, 0.75.
+#
+# On this machine, through the same library on softpipe, all four steps and all four depths
+# agree (tools/mesa/air/air_metal_test.c --draw-depth), so every line below has a reference
+# and not just an expectation.
+#
+# One process per line, and not one process for all of it, for rc.jobs.metaltex's reason: a
+# draw that hangs this GPU takes the whole boot with it, so each line above a hang stays a
+# measurement and the hang names itself. All of this needs gpu=1 and
+# /redwood/lib/libredwoodair.dylib; without either, line 1 says so and the rest will repeat
+# it.
+#
+# 1. The proven colour draw, unchanged, FIRST and on purpose. The depth work changed one
+#    rasterizer bit (clip_halfz) for pipelines that have a depth attachment, and left it
+#    alone for those that do not; this line is the one that says the second half of that is
+#    true. It must print the four words it has always printed:
+#    2458616957 2930221209 3401825461 3873429713.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. The depth experiment with MTLPixelFormatDepth32Float, which is one plane on both back
+#    ends and holds 0.25, 0.5 and 0.75 exactly, so the depths are compared with == and not
+#    with a tolerance that could hide a real difference. This is the line that answers the
+#    question. Expect, in order: a RedwoodMetalTexture of pixel format 252; -getBytes: on it
+#    REFUSED with the library's own sentence about two aspects; a RedwoodMetalRenderPipeline;
+#    "stores nothing to [[depth]]"; a RedwoodMetalDepthStencilState answering readsDepth=YES
+#    writesDepth=YES readsStencil=NO writesStencil=NO with 0 of MTLDepthStencilState's
+#    methods unanswered; then four draws of status 6, the far one DISCARDED, the nearer one
+#    PASSED, the control DREW, and "DEPTH TESTING DISCARDS ON THE ADRENO".
+/redwood/bin/metal_drv_test --draw-depth depth32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 3. The same with MTLPixelFormatDepth16Unorm, a different depth format in the hardware's
+#    own terms (DEPTH6_16 rather than DEPTH6_32 in freedreno's fd6_pipe2depth). It must reach
+#    the same verdict; the depths come back a quantum off (0.499992371 and so on) because
+#    that format holds none of 0.25, 0.5 and 0.75 exactly, and the test says so before it
+#    compares.
+/redwood/bin/metal_drv_test --draw-depth depth16unorm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 4. And with MTLPixelFormatDepth32Float_Stencil8, which is the interesting one for a reason
+#    that is not depth: freedreno keeps that format as TWO resources and interleaves them for
+#    a map (U_TRANSFER_HELPER_SEPARATE_Z32S8), so this is the line that says the readback
+#    goes through Mesa's own unpacker and not through an assumption about the layout. Same
+#    verdict expected, depths exact again.
+/redwood/bin/metal_drv_test --draw-depth depth32float_stencil8 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 5. MTLPixelFormatStencil8, which MUST BE REFUSED here and is in the list for that: a6xx has
+#    no stencil-only depth format (fd6_pipe2depth answers for Z16, Z24_S8 and Z32 and nothing
+#    else), so the texture itself cannot be made and the line should print the compiler
+#    library's sentence naming the GPU and the format -- "Adreno 7c+ Gen 3 cannot give
+#    MTLPixelFormatStencil8 as a MTLTextureType2D ... and tests depth in" -- and stop there.
+#    softpipe DOES make it, so this is a real difference between the two back ends and the
+#    refusal is the measurement. A line that drew instead would mean the format check is not
+#    being asked.
+/redwood/bin/metal_drv_test --draw-depth stencil8 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 6-7. Apple's own two depth shaders, which are the point of the exercise. Each samples a
+#    texture and stores channel x to [[depth]], so each writes depth and nothing to colour --
+#    which is why air_run refuses to print a pixel for them ("stores nothing to a colour
+#    attachment") and why they are the two shaders that have drawn on this GPU and left
+#    nothing anyone could read. With a depth attachment under them the depth buffer IS the
+#    result: the texture is seeded (x + 4y + 16z + 0.5) / 64, every value in (0, 1) and exact
+#    as a float, and the generated vertex stage hands every fragment the one coordinate
+#    0.375 -- so the 2D shader must store texel (1, 1) = 0.0859375 and the 3D one texel
+#    (1, 1, 1) = 0.3359375, in all sixteen pixels. Both of those are what softpipe computed
+#    through the same library. The quad's own depth is 0.5 and the clear is 1.0, so neither
+#    could be mistaken for either answer.
+/redwood/bin/metal_drv_test --draw-depth depth32float --fragment texturedFragment2DDepth /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw-depth depth32float --fragment texturedFragment3DDepth /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

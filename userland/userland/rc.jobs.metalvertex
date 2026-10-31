@@ -1,0 +1,24 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalvertex).
+#
+# Why these four, in this order: the generated vertex stage draws on the Adreno and its pixel
+# matches, while Apple's own clearVertex dies in fd6_emit_3d_state with signal 11 (a null
+# dereference at offset 0x208; the stack is in docs/metal.md 10.24). The one thing that
+# distinguishes the two is that clearVertex writes NO varying at all -- it writes air.position
+# and nothing else -- so the next question is whether a program with a varying survives.
+#
+# texturedVertex2D writes air.vertex_output `texcoord`, and texturedFragment2DUInt reads it;
+# on softpipe that pair draws the interpolated picture (texel (0,0) at the near corner, texel
+# (3,3) at the far one). If it draws here and clearVertex does not, the fault is about a
+# program with no varyings, which is a narrow thing to go and look at.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --vertex clearVertex /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# And the same draw with the texture seeded one row at a time, which is how this test did it
+# until now: four replaceRegion calls at a non-zero region origin. That is the second
+# explanation of the flip in docs/metal.md 10.26 -- if those rows land in one place, every
+# texel carries the last row's y = 203 and pixel (0, 0) reads 100 203 303 400 with no flip
+# anywhere. The two lines differ in nothing else, so whichever way they disagree names the
+# cause. The driver now also prints what it reads back out of the seeded texture, so the
+# answer does not have to be inferred from the drawn pixel at all.
+/redwood/bin/metal_drv_test --draw --seed-rows --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- the first time a keyboard comes up iOS shows how to type by sliding a finger over it, with a
+	     film (UIKeyboardContinuousPathIntroduction*.mov, not in the image, and nothing here could play
+	     it): without the film UIKit puts nil into an array, and the application that wanted a keyboard
+	     dies. This says the introduction has been shown. -->
+	<key>DidShowContinuousPathIntroduction</key>
+	<true/>
+</dict>
+</plist>

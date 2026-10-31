@@ -1,0 +1,207 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.blend).
+#
+# WHAT THIS BOOT IS FOR. The contract carried no blend state at all, so every pipeline
+# this library made was opaque -- create_blend_state with nothing but colormask RGBA --
+# and CoreAnimation composites its layers with PREMULTIPLIED ALPHA. A label layer whose
+# background is transparent black was therefore drawn as OPAQUE BLACK. That is what the
+# last photographs of the home screen show: every icon name in a black box, the Search
+# pill a black rectangle, the dock edged in dark red, the widgets flat white or black
+# slabs. Nothing refused and nothing crashed; the arithmetic was simply missing.
+#
+# rwa_render_shape now carries MTLRenderPipelineColorAttachmentDescriptor's eight blend
+# properties per attachment, mapped by table (air_metal.c) and refused by name where they
+# cannot be served. THIS BOOT IS THE MEASUREMENT OF THAT, and most of it is not a command:
+# it is the window server compositing its own home screen through the driver, which it
+# does about ten times a second as soon as backboardd is up.
+#
+# THE TRIPWIRE, FIRST, because it is the one thing that would make everything below
+# meaningless. struct rwa_render_shape grew by 260 bytes AT THE END (792 -> 1052) and
+# struct rwa_render_info by 8 (108 -> 116), and userland/src/redwoodmetal.m holds a copy
+# of both typed out by hand. THE DRIVER AND libredwoodair.dylib MUST COME FROM ONE
+# SNAPSHOT. Both files now _Static_assert those sizes and offsets, so a one-sided EDIT
+# fails to build -- but a one-sided INSTALL still cannot be caught at compile time, and it
+# has happened before (logs/235006-run.log carried a fresh driver and an hour-old
+# library). What it looks like here: the library reads color_blend_count from past the end
+# of the driver's shorter struct and gets a garbage number, which the refusals turn into a
+# sentence rather than a picture. So before reading anything else:
+#
+#   grep -a 'and Metal.s descriptor has eight' LOG     # must print NOTHING.
+#                                                      # A line here with a huge count is
+#                                                      # the two struct copies disagreeing
+#   grep -a 'blend state for only' LOG                 # must print NOTHING, same reason
+#
+# (-a on every grep in this file: a boot log has NUL bytes in it.)
+#
+# WHAT THE WINDOW SERVER ACTUALLY ASKS FOR -- MEASURED, and not from this file's
+# predictions. logs/080121-run.log is a boot with these fields in the driver, and every
+# number below is counted out of it:
+#
+#   grep -a 'blend: attachment' LOG
+#
+# READ THE COUNTS DIFFERENTLY IN A NEW LOG. That boot printed one line per attachment per
+# pipeline -- 240 of them, with THIRTEEN DISTINCT among them -- and this snapshot prints
+# each distinct line once and then on powers of two of its own count, carrying the count
+# in a following "... and that is the N'th pipeline asking for exactly that". The reason
+# is the one 854389a paid for: the loader keeps the first 256 KB of a log and the last
+# megabyte and drops the middle, and one boot of Resident Evil 4 would be thousands of
+# pipelines. So in a new log the numbers come from the "N'th" lines, and
+# `grep -ac 'blend: attachment'` counts CONFIGURATIONS, not pipelines.
+#
+#   backboardd (the window server, over its two lives in that boot) -- 226 lines:
+#     50   attachment 0 format 80 blend 1 rgb 1/5 op 0 alpha 1/5 op 0 writeMask 0xf
+#     48   attachment 0 format 80 blend 0 rgb 1/0 op 0 alpha 1/0 op 0 writeMask 0xf
+#    106   attachment 1 format 80 blend 0 rgb 1/0 op 0 alpha 1/0 op 0 writeMask 0x0
+#      6   attachment 0 format 80 blend 1 rgb 1/1 op 0 alpha 1/1 op 0 writeMask 0xf
+#      5   attachment 0 format 80 blend 0 rgb 1/0 op 0 alpha 1/0 op 0 writeMask 0x0
+#      3   attachment 1 format 80 blend 0 rgb 1/0 op 0 alpha 1/0 op 0 writeMask 0xf
+#      2   attachment 1 format 80 blend 1 rgb 1/5 op 0 alpha 1/5 op 0 writeMask 0xf
+#      2   attachment 0 format 43 (declined by the format table, not by blending)
+#      4   format 115, blending off
+#   SpringBoard -- 12 lines:
+#      4   attachment 0 format 80 blend 1 rgb 4/1 op 0 alpha 4/1 op 0 writeMask 0xf
+#      4   the same with blend 0, and 2 of One/One, and 2 of format 10
+#
+#   and 2 more from this port's own triangle application, which is 240 attachment lines
+#   over 127 pipelines in the whole log, 64 of those attachments blending.
+#
+# The FIRST of those lines is the one that fixes the black boxes, and it is exactly what
+# CoreAnimation's own code predicted (CA::OGL::MetalContext::create_pipeline_state at
+# 0x188378090, blend mode 3 "sov" of the table at 0x18855c092):
+#
+#            format 80 = MTLPixelFormatBGRA8Unorm, the display's own
+#            blend 1    = blendingEnabled YES
+#            rgb 1/5    = source One, destination OneMinusSourceAlpha   <- premultiplied
+#            op 0       = Add,  writeMask 0xf = All
+#
+# `rgb 4/5` instead of `rgb 1/5` would be STRAIGHT alpha, which is the one wrong answer
+# that still looks blended: the labels would come out washed out and half transparent
+# rather than boxed. It has never appeared in a log.
+#
+# THE SECOND LINE IS THE TRAP, and it is as common as the first: 48 pipelines against 50.
+# Those layers blend INSIDE THEIR FRAGMENT SHADER and leave the descriptor untouched, so
+# it arrives at Apple's own defaults -- which
+# -[MTLRenderPipelineColorAttachmentDescriptorInternal init] (0x181a2e9a8) writes as the
+# word 0x78001080. In Apple's own precompiled archive the proportion is the same: 504 of
+# 1079 pipelines carry no blend state, 472 are source-over.
+#
+# NOTE THAT EVERY FIELD OF THAT LINE IS NON-ZERO EXCEPT `blend 0`: source factor One,
+# writeMask 0xf, operation Add. If this driver had decided "some field is set, so this
+# descriptor means to blend", it would have blended those 48 pipelines TWICE -- about half
+# the home screen. `blendingEnabled` is the only field that says so, and the library reads
+# nothing else of an entry whose blending is off.
+#
+# And the 106 lines for ATTACHMENT 1 are the other thing no reading of the enumerations
+# would have predicted: the window server really does build multiple-attachment pipelines
+# whose attachments ask for DIFFERENT things -- attachment 0 blending with every channel
+# written, attachment 1 with writeMask 0x0 and blending off. That is what
+# Gallium's independent_blend_enable is for, and with it clear rt[0] would govern them
+# all and attachment 1 would be written. 5 pipelines in that boot came back
+# `writes 0x000000f0`, which is attachment 0 writing nothing and attachment 1 writing
+# RGBA, so the bit went on and nothing was refused.
+#
+#   grep -a "the first such pipeline's label" LOG
+#
+# NEW IN THIS SNAPSHOT -- logs/080121-run.log predates it and has none of these lines, so
+# an empty grep means an old driver and not a quiet compositor. One label is printed per
+# distinct blend configuration, which is the whole of what a label has to say: the
+# compositor has over a hundred labels a boot and thirteen configurations.
+#
+# This is the shortcut that answers which of the two a pipeline is, without decoding
+# anything: CoreAnimation builds the label out of the specification it compiled, and
+# emits a `B<mnemonic>` segment if and only if the fixed-function blend mode is not its
+# "none" value. So
+#
+#   com.apple.coreanimation.draw.PBGRABsovXm_...   <- blend state is in THIS descriptor
+#   com.apple.coreanimation.draw.PBGRAXm_...       <- blends in its fragment shader
+#
+# and the mnemonic names the mode: sov, dot, add, mul, din, sap, sbs, scn, ldg.
+#
+#   grep -a 'blend: the library blends' LOG
+#
+# What the library made of it, and the second number is the one to read:
+#
+#   blend: the library blends attachments 0x1 and writes 0x0000000f
+#
+# The write masks are four GALLIUM bits per attachment -- R 0x1, G 0x2, B 0x4, A 0x8 --
+# and MTLColorWriteMask's run the OTHER WAY, Red at 1 << 3 down to Alpha at 1 << 0. All
+# (0xf) and None (0) are the same number either way, and so are green|blue and red|alpha,
+# so for those four masks these two lines agreeing proves nothing. For any other mask
+# they MUST DISAGREE: a writeMask of 0x8 (Red only) must come back as 0x1, and 0xe
+# (Red|Green|Blue) as 0x7. A log where 0xe went in and 0xe came back is a log saying
+# nothing ever reversed the nibble.
+#
+# AND THAT IS THE ONE THING THIS BOOT CANNOT MEASURE. Every writeMask in all 240 lines of
+# logs/080121-run.log was 0x0 or 0xf, and both of those are palindromes under the
+# reversal -- so the home screen says NOTHING about the bit order, and a driver with the
+# nibble backwards would composite it correctly. The evidence for the reversal is
+# elsewhere and is not a boot: Metal.framework's own MTLColorWriteMaskString
+# (0x181b08754) tests bit 3 for "R" and bit 0 for "A", and air_metal_test --draw-blend
+# asks for 0x8, 0x1, 0xe and 0x7 on the host, where four of its cases distinguish the
+# cast from the mapping. CoreAnimation can send a single-bit mask -- `setWriteMask: 1`
+# for blend modes 24 and 25, `setWriteMask: 8` in its multiple-output clusters -- so if
+# `writeMask 0x8` or `writeMask 0x1` ever appears in a log, THAT line is the device's
+# measurement of it and is worth keeping.
+#
+#   grep -a 'this render pipeline is refused' LOG
+#
+# Every refusal, by name -- and the printing of it is new in this snapshot too, because
+# -fail: only ever put the sentence in an NSError that CoreAnimation discards. NONE of the
+# nine blend refusals fired in logs/080121-run.log, and none should on the home screen:
+# not one of the 1079 pipelines in Apple's own archive uses a factor this library
+# declines. If one does fire, the sentence says which field and why -- the blend colour is encoder state and
+# this contract has nowhere for it, Source1 needs a second fragment output the frontend
+# has not got, SourceAlphaSaturated means two different things in the alpha channel, Min
+# and Max with a factor other than One are two different equations, and a blend over an
+# integer attachment is none.
+#
+#   grep -ac 'blend: attachment .* blend 1 ' LOG      # distinct blending configurations
+#   grep -ac 'blend: attachment' LOG                  # distinct configurations in all;
+#                                                     # thirteen in logs/080121-run.log,
+#                                                     # where 240 lines were printed
+#   grep -a "that is the .*'th pipeline" LOG          # and how many pipelines each
+#                                                     # configuration stood for
+#
+# ---------------------------------------------------------------------------------------
+#
+# AND THE ONE COMMAND, which is not about blending: it is the proven path re-measured
+# through the grown struct.
+#
+# metal_drv_test --draw-all builds a pipeline per fragment function of Apple's GL renderer
+# through Metal's own API and draws each one, and a freshly made
+# MTLRenderPipelineDescriptor carries exactly the untouched blend state described above --
+# blending off, factors One and Zero, writeMask All. So every one of these draws now goes
+# through the new fields with Apple's defaults in them, and the pixels must be the pixels
+# of the last boot and not one bit different. That is the device's answer to the struct
+# growth: if the two copies of rwa_render_shape disagreed, the colour formats would be
+# read from the wrong offsets and these draws would fail before any blending mattered.
+#
+#   grep -a 'drew .* pixel' LOG
+#   grep -a 'step:' LOG | tail -3
+#
+# ---------------------------------------------------------------------------------------
+#
+# WHAT THE HOME SCREEN SHOULD LOOK LIKE AFTERWARDS, because that photograph is the test:
+#
+#   - icon labels as WHITE TEXT ON THE WALLPAPER, with no box of any colour behind them
+#   - the Search pill a translucent rounded capsule with the wallpaper showing through it,
+#     not a black rectangle
+#   - the dock a translucent panel with NO dark red border -- that border was the edge of
+#     an opaque draw, not a colour anyone chose
+#   - the widgets translucent over the wallpaper instead of flat white or black slabs
+#   - the wallpaper itself and the icon artwork UNCHANGED: they were already opaque, so
+#     nothing in this work should move them. If the icons change too, something other
+#     than blending changed with them.
+#
+# Two ways it could come back still wrong, and they look different:
+#
+#   - everything a little too dark, deepening wherever two layers overlap: the destination
+#     factor read as DestinationColor instead of OneMinusSourceAlpha, which is what a cast
+#     between the two enumerations produces (air_metal.c has the arithmetic)
+#   - labels and panels washed out and semi-transparent rather than boxed: premultiplied
+#     read as straight alpha, source factor SourceAlpha instead of One
+#
+# Both of those are refused by the host check (air_metal_test --draw-blend, 25 cases, each
+# priced against six ways of being wrong), so neither should reach a photograph. If one
+# does, the host check is measuring something the device does not do.
+
+/redwood/bin/metal_drv_test --draw-all /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

@@ -1,0 +1,225 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalpicture).
+#
+# A picture of the whole panel, every pixel of which this port's Metal driver computed on
+# the Adreno (docs/metal.md 10.33). Everything the driver has drawn until now went into a
+# 4x4 off-screen attachment and came back as four numbers; this is the same shaders at
+# 1080x2400, put on the screen so that `./xl screenshot` can take it.
+#
+# WHERE THIS STANDS AFTER THREE BOOTS, because it changes what to read here.
+#
+# The MOSAIC -- the top half of the picture -- is measured on the Adreno and photographed:
+# 64 of 64 of Apple's shaders drew, 0 of 1 192 320 pixels differ from the colour their
+# square's buffer named, and all 256 (shader, render target) pairs behaved as the shader's
+# own name says.
+#
+# The TWO BANDS have never been drawn, and the reason turned out not to be about the
+# picture at all. THE PICTURE FOUND A DRIVER BUG, and it is the most consequential thing
+# this mode has produced:
+#
+#     -[_MTLCommandBuffer initWithQueue:retainedReferences:synchronousDebugMode:] -- the
+#     designated initialiser our command buffer calls -- waits on the QUEUE's semaphore
+#     with DISPATCH_TIME_FOREVER (0x181a1ea14 and on), and sets
+#     _MTLCommandBuffer._needsCommandBufferSemaphoreSignal to 1. The semaphore is made in
+#     -[_MTLCommandQueue initWithDevice:descriptor:] from maxCommandBufferCount, whose
+#     default is 64. So every command buffer takes one of 64 slots and OWES a signal --
+#     and this driver, which overrides -commit and -waitUntilCompleted and never enters
+#     Metal's completion path, never paid. The 65th -commandBuffer waited for ever.
+#
+# That is not a limit of the picture. An application makes a command buffer per FRAME, so
+# this driver would have hung anything that drew for two seconds. The mosaic makes exactly
+# 64 and the ladder's first rung asks for the 65th, which is why this file is now the test
+# that catches it: logs/114823-run.log, where rung one blocked in
+# -[RedwoodMetalCommandQueue commandBuffer] and a heartbeat thread proved the process alive
+# and blocked for four minutes rather than killed.
+#
+# The fix is in userland/src/redwoodmetal.m: the slot goes back at -commit (where this
+# driver's work is actually finished) and at -dealloc for a buffer that was never
+# committed, and Apple's own flag is cleared with it. The queue now also reports its
+# maxCommandBufferCount and how many buffers still hold a slot, so this boot prints the
+# NUMBER instead of the inference -- and says out loud, before it happens, when the next
+# -commandBuffer would block.
+#
+# One thing in the test must not be "tidied up": the mosaic's loop has NO autorelease pool
+# and must not get one. With a pool each command buffer would be deallocated at the end of
+# its iteration and the slot would come back from -dealloc, so the ladder would pass
+# whether or not -commit returns it -- which is exactly the bug. Sixty-four live command
+# buffers holding no slot is the measurement.
+#
+# The ladder of four shapes stays: it cost one boot, it ruled size out, and if the slot is
+# now returned all four rungs should clear and the bands should follow.
+#
+# What is on the screen, three bands that together are exactly the panel:
+#
+#   rows 0..1103      an 8x8 mosaic of 135x138 tiles, each drawn by a different one of
+#                     Apple's clearFragment shaders -- the 64 whose number is 4k+1, which
+#                     by the mask in the name are exactly those that write a float4 to
+#                     render target 0. Each is given a colour of its own in the constant
+#                     buffer at index 14. Blue at the top left, red at the top right, cyan
+#                     at the bottom left, yellow at the bottom right.
+#   rows 1104..1751   Apple's texturedVertex2D + texturedFragment2DFloat, the pipeline
+#                     AppleMetalGLRenderer blits a texture with, sampling an 8x8 texture
+#                     over the whole 1080x648 attachment through a LINEAR sampler: a smooth
+#                     field, BLUE at the top left, magenta top right, green bottom left,
+#                     yellow bottom right. That is the way up Metal asks for: the viewport
+#                     puts clip y = +1 in memory row 0 (docs/metal.md 10.28), so the band
+#                     is the 8x8 texture mirrored vertically. Before that sign went in it
+#                     was green at the top, and a band that comes out green at the top
+#                     again means the sign has been lost.
+#   rows 1752..2399   the same draw with a NEAREST sampler: the same four corners, in 64
+#                     flat squares instead of a gradient.
+#
+# The one thing to look at first: the middle band must be SMOOTH and the bottom one
+# BLOCKY. They are the same shader, the same texture and the same geometry, and the only
+# difference between them is the MTLSamplerDescriptor -- so if they look alike, the sampler
+# state is not reaching the hardware and nothing else in the lower two thirds means much.
+#
+# And what the presentation is, said plainly: the pixels go to the panel through
+# kRedwoodShow (iokit/Kernel/RedwoodGPU.cpp), which is a row-by-row copy in the kernel and
+# is the same selector src/gl_test.c puts its triangle on the screen with. That copy is NOT
+# Metal's, and this file does not claim it is. What is claimed is that all 2 592 000 pixels
+# handed to it were computed by Metal pipelines of this driver on the Adreno: no border, no
+# label, no background is drawn by the processor, which is why the three bands add up to
+# the panel exactly (1104 + 648 + 648 = 2400).
+#
+# Needs gpu=1 and an image built with GL=1, for /redwood/lib/libredwoodair.dylib. Without
+# either, the first line below says so and the second repeats it, and nothing is drawn.
+#
+# BUILD IT WITH JOBS="" as well, which is how logs/101536-run.log was taken: launchd then
+# starts no daemon of Apple's at all, so nothing else draws on the panel and nothing else
+# asks the GPU for anything. With the window server running, an earlier boot showed the
+# home screen over the picture. And pass XL_CMDLINE without -v, so the kernel's own
+# console does not write on the panel either.
+#
+# 1. The canary, and the proven draw: clearFragment20 into a 4x4 RGBA32Uint attachment, the
+#    same four words it has printed since docs/metal.md 10.22 --
+#    2458616957 2930221209 3401825461 3873429713 -- plus the whole 4x4 grid, which is the
+#    boot 10.32 asked for: with the varying interpolating, pixel (x, y) of attachment 2
+#    must read 100+x, 200+y, 300+x+y, 400 and not sixteen copies of 100 203 303 400. It is
+#    first because it is cheap and because a picture that comes out wrong under a driver
+#    that cannot draw 4x4 would be two findings tangled into one.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. A pause, which is a sleep and nothing else (src/rwtouch.c: "wait SECONDS"). Under
+#    JOBS="" there is no lock screen to wait for and these twenty seconds buy nothing but
+#    a quiet console; they are kept because the same file has to work on an image built
+#    with the window server, where src/gl_test.c's job waits exactly this way
+#    (rc.jobs.gltest) for the lock screen to stop drawing over the panel.
+/redwood/bin/rwtouch wait 20
+#
+# 3. The picture itself. TAKE THE SCREENSHOT AS SOON AS ANYTHING APPEARS ON THE PHONE:
+#    from another terminal, `./xl screenshot logs/metal-picture.png`. The mosaic alone is
+#    worth a screenshot and it is on the panel long before the bands are tried; the copy
+#    stays there by itself (MiniIOMobileFramebufferShow writes the boot framebuffer, and
+#    with JOBS="" nothing else touches it), so it survives even if the process stalls
+#    afterwards. It may be taken more than once, and it is worth taking once when the top
+#    half appears and again when the bottom two thirds do. The run must be long enough:
+#    XL_SECS=360, which is the boot, the twenty-second wait, 64 pipeline compiles and then
+#    180 seconds of repainting, with room for a slow boot.
+#
+#    What the log must print. The mosaic's four lines are now DEVICE numbers -- they were
+#    measured on the Adreno in logs/101536-run.log -- and everything below them is still
+#    only this machine's, through the same library on softpipe (tools/air/picture_host.c):
+#
+#      picture: the panel is open; every stage goes on the screen as it is finished
+#      picture: mosaic: 64 of 64 shaders drew (0 got no pipeline, 0 did not finish)
+#      picture: mosaic: 0 pixels of 1192320 are not the colour their square's buffer named
+#      picture: mosaic: of 256 (shader, render target) pairs, 112 held the colour, 48
+#               stayed at the clear, 96 are integer targets and not checked, 0 are WRONG
+#      picture: ON THE PANEL (0x0): the mosaic ...          <- THE SCREENSHOT WORKS FROM HERE
+#      picture: the mosaic is done; now the ladder, then the two bands
+#      picture: a second thread will say every so often that this process is alive ...
+#      picture: after the mosaic's 64 command buffers: the queue takes 64 command buffers
+#               at a time, 64 made so far, 0 still holding a slot
+#      picture: the mosaic made 64 command buffers and 0 of them still hold a queue slot:
+#               the slot IS given back at -commit, so the next command buffer will not
+#               block
+#
+#    and then the ladder, which is the part this boot is really for. Each rung prints
+#    its shape, its attachments, its pipeline, its constant buffer, then
+#
+#      picture: band step: probe <name>: asking the queue for a command buffer
+#      picture: band step: probe <name>: got the command buffer; asking IT for a render
+#               encoder
+#      picture: band step: probe <name>: got the encoder
+#      picture: band step: probe <name>: bound; encoding the quad
+#      picture: band step: probe <name>: encoded; committing (this driver does the work
+#               here, not at the wait)
+#      picture: band step: probe <name>: committed; waiting
+#      picture: band step: probe <name>: drew; reading ONE pixel back
+#      picture: probe <name>: pixel (0,0) is r g b 73 182 109 and must be 73 182 109
+#      ... and for one-big and four-big, the whole thing in one getBytes: ...
+#      picture: probe <name>: 0 pixels of 699840 are not that colour ... WHOLE
+#      picture: band step: probe <name>: finished, and its resources are freed
+#
+#    in the order again-small, one-big, four-medium, four-big. Every step line also says
+#    how long the step before it took, and if any step takes more than two seconds the
+#    second thread starts saying so:
+#
+#      picture: STILL IN "<step>" after 2000 ms -- this process is alive and that step
+#               has not returned
+#
+#    then the two bands, with the same six draw lines each, and finally the counts the
+#    picture is judged by:
+#
+#      picture: nearest band: 0 pixels of 699840 are not the texel the sampler must have
+#               returned
+#      picture: linear band: 0 of 64 texel centres are not their texel
+#      picture: at column 134, row 40 of each band: linear red 18, nearest red 0
+#      picture: the sampler FILTERS: ...
+#      picture: the band's top left is r g b 0 0 255 (texel (0,7), must be 0 0 255) and
+#               its bottom left is 0 255 0 (texel (0,0), must be 0 255 0): clip y = +1 is
+#               memory row 0
+#      picture: clearFragment01 at panel (67,69) is r g b 0 0 255 and must be 0 0 255
+#      picture: clearFragment1D at panel (1012,69) is r g b 255 0 0
+#      picture: clearFragmentE1 at panel (67,1035) is r g b 0 255 255
+#      picture: clearFragmentFD at panel (1012,1035) is r g b 255 255 0
+#      picture: repainting for 180 seconds
+#
+#    HOW TO READ THE LADDER NOW. Last time it answered on its first rung: again-small --
+#    four 135x138 attachments, the mosaic's own shape -- blocked in -commandBuffer, which
+#    ruled size out and pointed at the 65th command buffer. With the slot returned, all
+#    four rungs should clear, each ending "0 pixels of ... WHOLE", and the two bands
+#    should follow. The line before each rung's command buffer says what the queue thinks
+#    before it is asked, so a block is announced rather than discovered:
+#
+#      picture: probe <name>, before it asks for a command buffer: the queue takes 64
+#               command buffers at a time, N made so far, 0 still holding a slot
+#
+#    If a rung still stalls, "0 still holding a slot" above it says the slot is not the
+#    cause any more and the rung's own name says what is: one-big is area with one
+#    attachment, four-medium is the count at a quarter of the area, four-big is both. And
+#    if that line says "1 still holding a slot" instead, the slot is being taken and not
+#    returned on some path -- a failed draw, or a buffer that was made and never
+#    committed.
+#
+#    Whichever it is, the second thread's "STILL IN" lines say whether it is blocked or
+#    merely slow, and their absence says the process is gone instead.
+#
+#    Those last two pixels are there because a count cannot say which way up a picture
+#    is: "0 of 699840" means the band matched its expectation, whatever that expectation
+#    was. The expectation itself was flipped when the viewport's y sign went in (the texel
+#    row for band row r is PIC_TEX-1 - r/81 where it was r/81), and the quad and its
+#    texture coordinates were deliberately NOT flipped to cancel it -- those four corners
+#    are air_metal_test's own, so the two sides draw one quad, and compensating in them
+#    would hide exactly what the new sign made visible. The pair at column 134 is unmoved
+#    by all of this because it reads the red channel, which is a function of x alone: if
+#    that pair ever moves with a y sign, the cause is not the y sign.
+#
+#    Of the counts, three are worth reading before the rest. "48 stayed at the clear" is the
+#    half a chart of colours cannot say: those are the render targets each shader's own
+#    name declares it does NOT write, and they had to come back black -- and that one is
+#    already a device number. The 18 and the 0 at column 134 are the two sampler states
+#    telling each other apart -- 134 is halfway between the centres of texel 0 and texel 1,
+#    where nearest can only answer one of the two and linear must answer between them. And
+#    "0 of 64 texel centres" is where the picture is exact rather than plausible: the band
+#    is 8 texels over 1080 columns and 8 over 648 rows, so the scales are 135 and 81, both
+#    ODD, and that is the whole reason a pixel centre can sit on a texel centre at all and
+#    the filter has no weight to round.
+#
+#    If the two bands come out black and the mosaic does not, the band stage did not finish
+#    and the last "band step" line in the log says how far it got.
+#
+#    (Nothing here stores to [[depth]]. Apple's texturedFragment2DDepth and
+#    texturedFragment3DDepth hang this GPU outright -- logs/094810-run.log, status 5 and
+#    then a canary that does not finish either -- so they are off the table for a picture.)
+/redwood/bin/metal_drv_test --picture 180 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

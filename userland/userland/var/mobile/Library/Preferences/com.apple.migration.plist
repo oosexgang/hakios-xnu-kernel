@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- /private/var starts empty on every boot; without this record of the build that last ran the
+	     data migration, backboardd runs all the migrators (the progress bar under the logo) each time -->
+	<key>LastSystemVersion</key>
+	<string>20F66</string>
+	<key>DMLastMigrationResults</key>
+	<dict>
+		<key>success</key>
+		<true/>
+		<key>buildVersion</key>
+		<string>20F66</string>
+	</dict>
+</dict>
+</plist>

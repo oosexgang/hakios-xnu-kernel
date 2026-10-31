@@ -1,0 +1,11 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The vibration motor for iOS (RC_JOBS=rc.jobs.haptic, with haptic=5): the system's haptic feedbacks -- peek (1519),
+# pop (1520), "nope" (1521: three short ones) -- and the vibration of the ringer (4095), each played the way a program
+# plays a system sound; then haptics the way an application plays them (CoreHaptics: a tap, a vibration, three taps),
+# once with a vibration longer than the kernel's limit of 1 s, which the kernel cuts; then the feedback of the home
+# screen, as a finger gets it: a long press on an icon of the dock and on one of the page (each opens its menu, with
+# a tap), the menu dismissed. The kernel's "haptic:" lines and the plug-in's "the actuator plays" say what came.
+/redwood/bin/sound_test springboard route
+/redwood/bin/sound_test system 1519 wait 2 system 1520 wait 2 system 1521 wait 2 system 4095 wait 3 system 4095 wait 3
+/redwood/bin/sound_test haptic wait 3 haptic 1.5
+/redwood/bin/rwtouch hold 0.15 0.925 1200 wait 6 tap 0.5 0.2 wait 3 hold 0.385 0.475 1200 wait 6 tap 0.5 0.2 wait 3

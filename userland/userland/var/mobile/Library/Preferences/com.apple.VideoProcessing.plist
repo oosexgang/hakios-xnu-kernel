@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- VCPHEVC.videocodec, the software HEVC codec (the photographs' HEIC, src/inject_media.c), takes every key
+	     of this domain for one of its options, by name, a string each; on its own it runs on one thread -->
+	<key>threading</key>
+	<string>auto</string>
+	<key>max-threads</key>
+	<string>7</string>
+</dict>
+</plist>

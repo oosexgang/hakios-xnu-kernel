@@ -1,0 +1,20 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metal3).
+#
+# Batch 3 of 3. Each kernel is told, PER SLOT, which kind and element type of texture to
+# bind -- read out of its own air.texture entries on the machine. One format for every slot
+# was not enough: one of these reads texture 0 as texture2d<uint> and texture 3 as
+# texture2d<int>, and binding one format everywhere is refused by name for the others.
+#
+# Batches because the loader keeps the first 256 KB and the last 1 MB of a boot's log and
+# drops the middle; a count read off a cut log is a lower bound pretending to be a number.
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Uint
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Uint
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_UintPacked
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_UintPacked
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Unorm
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Unorm
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16float /System/Library/VideoDecoders/AV1SW.metallib BlitKernel_Unorm
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Uint
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint,4=2d:rgba16uint,5=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Uint
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Unorm
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint,4=2d:rgba16uint,5=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Unorm

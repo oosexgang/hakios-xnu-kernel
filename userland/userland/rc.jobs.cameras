@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The four cameras, one after the other (RC_JOBS=rc.jobs.cameras, with cam=5): camera_test cycle asks the kernel's
+# /dev/redwood-camera for the macro, the wide, the front and the ultra-wide camera in turn (REDWOOD_CAMERA_SENSOR),
+# 30 frames of each, and says what came of each and how long each change took; twice over. The kernel's "camera:"
+# lines say each sensor's packets and errors at the end of its frames.
+/redwood/bin/sound_test springboard
+/redwood/bin/camera_test cycle 30
+/redwood/bin/camera_test cycle 30

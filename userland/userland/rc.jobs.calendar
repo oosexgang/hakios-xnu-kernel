@@ -1,0 +1,12 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The Calendar icon (RC_JOBS=rc.jobs.calendar, gpu=1, a run of about two and a half minutes): the home
+# screen, and SignificantTimeChangeNotification posted every three seconds, 26 times. Each makes
+# SpringBoard draw the Calendar's icon anew, for a date that may have changed (with wifi=1 the network
+# setting the clock does the same, now and then, which is how it was first seen), and write it into
+# IconServices' cache, a file in /private/var that SpringBoard and the window server have mapped.
+# The icon used to come out with square corners in its top 16 rows and a line under it in about half
+# of the screenshots taken meanwhile (with gpu=1 only): the ramfs left the cache's pages that the
+# window server held wired, for its surfaces around the icons next to it, as they were before the
+# write. Now none (bsd/miscfs/ramfs/ramfs.c, ramfs_refresh_cache()).
+/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 200 wait 10 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3
+/redwood/bin/rwtouch notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3 notify SignificantTimeChangeNotification wait 3

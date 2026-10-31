@@ -1,0 +1,23 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalrest).
+#
+# ConnectSpans alone, because it is the one kernel of the eleven never measured with the
+# input built for it and every attempt so far has been spoiled by something above it: cut
+# out of one boot by the log, and voided in the next by a wedge the canary caught (Apple's
+# own depth shaders hang this GPU, logs/094810-run.log). Nothing above it here but the
+# canary, and the image is built without REST and with no Apple jobs at all, so the whole
+# list sits inside the first 256 KB the loader keeps.
+#
+# With tools/mesa/ir3-ssbo-subdword.patch in, its failure mode is fixed: its 16-bit
+# nextSpanID reads used to land four bytes apart instead of two, which turned this input's
+# four lists into a cycle with no sentinel in it. PropagateParents, the same shape, now
+# finishes and changes nothing. If this does the same, the eleven are complete.
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/redwood/bin/air_run --zero --buffer 0@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 0@30=ffff010001000a000d000100ff --buffer 0@44=ffff02000200140017000100ff --buffer 0@58=ffff030003001e0021000100ff --buffer 1@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# And the question docs/air.md section 5 answers one way and the module the other: with
+# zeros rowCount is 0, the guard `icmp ugt rowCount, tid` is false, the walk is never
+# entered and the kernel returns at once -- yet section 5 records three boots out of three
+# not finishing. It goes last because it is the one that can still hang.
+/redwood/bin/air_run --zero /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax

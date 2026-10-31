@@ -1,0 +1,29 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalcompute).
+#
+# How many Metal compute kernels of the system's own libraries this driver can actually run.
+#
+# The list is every kernel of the corpus that binds nothing but buffers -- the driver has no
+# textures yet, and the compiler library refuses a shader that wants one by name rather than
+# binding nothing -- MINUS the ones tools/air/kstruct.py measured as unable to terminate on a
+# harness's input: a loop that leaves only on a value the buffers do not contain does not
+# leave, and docs/air.md section 5 is about what one hung dispatch does to everything after it
+# (gpuWait latches, every later wait returns false at once, and the next boot panics).
+#
+# So: 16 kernels bind only buffers, 7 of those cannot end, 9 are here. Each runs in its own
+# process, so that one crash costs one kernel rather than the rest of the list.
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
+#
+# And one triangle, with one of Apple's own fragment shaders: clearFragment20 writes render
+# target 2 and is one of the 255 air_run has drawn and compared pixel by pixel, so there is
+# something to compare the Adreno's answer against. The pipeline is asked for with no vertex
+# function, which is the compiler library's cue to generate a pass-through stage over the
+# whole attachment -- the same road air_run itself draws by.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

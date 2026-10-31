@@ -1,0 +1,20 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metal1).
+#
+# Batch 1 of 3. Each kernel is told, PER SLOT, which kind and element type of texture to
+# bind -- read out of its own air.texture entries on the machine. One format for every slot
+# was not enough: one of these reads texture 0 as texture2d<uint> and texture 3 as
+# texture2d<int>, and binding one format everywhere is refused by name for the others.
+#
+# Batches because the loader keeps the first 256 KB and the last 1 MB of a boot's log and
+# drops the middle; a count read off a cut log is a lower bound pretending to be a number.
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_Clear
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_MinMax
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
+/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PopulateCube
+/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeLuma
+/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma1
+/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma2
+/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeLuma
+/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma1
+/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma2

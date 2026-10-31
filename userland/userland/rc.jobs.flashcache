@@ -1,0 +1,32 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The iOS root volume on the phone's flash as the root (flashboot.apfs resident, root_apfs=ufs_darwin
+# ufs=2 ufs_native=1), read(2) through the page cache. The driver's numbers and the kernel's line about
+# memory for the boot (until 25 s after this list began: nothing of ours meanwhile) and the next 30 s;
+# then /usr/sbin and /usr/libexec, each: out of the page cache (drop), read(2) cold and warm, a mapping
+# over what read(2) put there, out again, a mapping cold and warm, read(2) over what the mapping put
+# there -- every pass with its sum (3095b9e298a4df17, 978ed0d4dda1a256), only the totals printed.
+# The results go to a file and are shown at the end, where the kernel's log keeps them.
+sleep 25
+/redwood/bin/vol_ls sysctl kern.apfs_stats kern.redwood_memory >> /private/var/results
+/redwood/bin/vol_ls zero kern.apfs_stats
+sleep 30
+/redwood/bin/vol_ls sysctl kern.apfs_stats kern.redwood_memory >> /private/var/results
+/redwood/bin/apfs_mmap_test -q drop /usr/sbin >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/redwood/bin/apfs_mmap_test -q drop /usr/sbin >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q drop /usr/libexec >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/redwood/bin/apfs_mmap_test -q drop /usr/libexec >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/redwood/bin/vol_ls sysctl kern.redwood_memory >> /private/var/results
+/bin/ps -A >> /private/var/results
+/redwood/bin/vol_ls cat /private/var/results 262144

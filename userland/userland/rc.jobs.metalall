@@ -1,0 +1,45 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalall).
+#
+# Every compute kernel of the corpus that tools/air/kstruct.py did not measure as unable to
+# terminate -- including the ones that declare textures and samplers, which the compiler
+# library refused by name until it grew them. The point of running all of them is that ir3
+# does not share softpipe's limits: on this machine 40 of them stop inside nir_to_tgsi, so
+# the Adreno is the only place the question "does this compile and run" can be asked.
+#
+# Each in its own process, so one crash costs one kernel. The test binds eight buffers, eight
+# 64x64 RGBA8Unorm textures and eight default samplers; a kernel that wants another format or
+# another shape is refused by the library with a sentence naming what it wanted, which is the
+# measurement this list is for.
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_Clear
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_MinMax
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PopulateCube
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeLuma
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma1
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma2
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeLuma
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma1
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma2
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPreProcess
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPostProcess
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax1
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Uint
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Uint
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_UintPacked
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_UintPacked
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Unorm
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Unorm
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib BlitKernel_Unorm
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Uint
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Uint
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Unorm
+/redwood/bin/metal_drv_test /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Unorm

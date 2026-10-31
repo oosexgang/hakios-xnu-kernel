@@ -1,0 +1,296 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalperf).
+#
+# WHAT THIS BOOT IS FOR. Every other metal job list in this directory asks whether the driver
+# is RIGHT. Not one of them has ever asked what it COSTS: 263 of Apple's 271 fragment shaders
+# draw on the Adreno, 258 of them pixel for pixel, a 1080x2400 test card is on the panel -- and
+# no number of time has ever been measured, not a dispatch, not a draw, not a frame. The
+# acceptance test for this driver is a game, and a game is bought with time, so this boot
+# measures the four things a frame is made of: a compile, a draw at the panel's real size, a
+# copy, and showing it. The whole of it, with the brackets below and the arithmetic from
+#
+# MEASURED ON 2026-10-21: logs/225409-run.log, 32 repeats, gpu_log=1, JOBS="". The brackets below
+# are no longer guesses -- they are what the phone did, so this list has turned from a plan into a
+# REGRESSION CHECK: a number outside its bracket means something changed since that boot, and the
+# bracket says what. The whole reading, with the arithmetic from these numbers to a frame rate, is
+# docs/metal.md 10.43. Three numbers to carry while reading the rest: a shader compiles in 0.42 ms,
+# a draw costs 41 us before any pixel, and SHOWING a finished frame costs 15.46 ms.
+# them to a frame rate, is docs/metal.md 10.43.
+#
+# WHERE THE TIME GOES HERE, BECAUSE IT IS NOT WHERE AN APPLICATION EXPECTS IT.
+# -[RedwoodMetalCommandBuffer commit] does the work (docs/metal.md 10.13): the encoder only
+# records, and -commit walks the recorded list calling rwa_render_draw, each of which flushes
+# the Gallium context and WAITS ON ITS OWN FENCE before returning (air_metal.c,
+# finish_or_say_why with required = true). So -commit is the whole frame and
+# -waitUntilCompleted has nothing left to wait for. Three things follow, and they are what the
+# numbers below have to be read against:
+#
+#   - a frame is the SUM of its draws, not the maximum of processor and GPU: the two take
+#     turns, because every draw is waited for before the next is even encoded;
+#   - ONE METAL DRAW IS ONE RENDER PASS IS ONE KERNEL SUBMISSION. rwa_render_draw makes the
+#     surfaces, sets the framebuffer, clears, draws, flushes, fences and tears the framebuffer
+#     down again, every time. Eight draws into one encoder are eight submissions and eight
+#     passes over the attachment;
+#   - -waitUntilCompleted must measure ~0. It is printed; if it is not ~0, the split in every
+#     other line is wrong and this comment is out of date.
+#
+# WHAT IT NEEDS
+#
+#   gpu=1              in XL_CMDLINE, or there is no Adreno and the driver refuses every
+#                      pipeline with a readable reason instead of timing one.
+#   an image with GL=1 for /redwood/lib/libredwoodair.dylib, which is the compiler.
+#   JOBS=""            so that no daemon of Apple's shares the GPU, the panel or the one core
+#                      this runs on. With the window server alive these numbers are of a
+#                      machine doing something else as well, and nothing says how much.
+#   XL_CMDLINE without -v, so the kernel's console does not write on the panel (the present
+#                      measurement copies a frame to it).
+#   the .gputime kernel armed, for THE SPLIT: it is the one that answers request 0x7d, so with
+#                      it each draw case prints the core's own time itself. Arm it with
+#                        cp BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.gputime \
+#                           BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+#                      (under xnu-src/xnu-8796.121.2/). Without it nothing breaks: the mode
+#                      says "this kernel does not report GPU time" and the two older methods
+#                      still stand.
+#   gpu_log=1          optional now, and still worth having: it is the only per-submission
+#                      record, and it is what caught the three populations of the first boot
+#                      when nothing else could. It costs a per-submission write into the
+#                      loader's log buffer with interrupts masked -- a few microseconds against
+#                      a quarter of a millisecond, measured not to move the numbers -- and
+#                      about 80 KB of log for this list's ~1300 submissions. Note that reading
+#                      0x7d takes the counters away from the kernel's own five-second report,
+#                      so with both on, those lines will have gaps: expected, not a fault.
+#   XL_SECS=240        the boot, two processes of measurement and room for a slow boot. The
+#                      measuring process took 0.9 s of wall clock and the compute one 0.3 s in
+#                      logs/225409-run.log, so almost all of XL_SECS is the boot itself.
+#
+# HOW OUR COST IS SEPARATED FROM THE GPU's, AND WHERE IT IS NOT
+#
+# THE FIRST BOOT DID THIS BY READING THE LOG, AND THAT WAS THE WEAKEST PART OF IT: the kernel
+# numbers every submission on the machine, this test is not the only thing submitting, and the
+# 1694 "tl: q" lines of logs/225409-run.log could be sorted into three populations by eye (7 us
+# while the 4x4 case ran, 246 while 1080x648 ran, 305 while the panel ran) and no finer. So the
+# kernel now hands the numbers over on request: kRedwoodGPUWorked (0x7d) on RedwoodGPU answers
+# redwood_gpu_worked()'s microseconds, submissions and histogram, reading RESETS them, and --time
+# brackets each case's batched loop with two reads. That needs the kernel parked as
+# mach.development.bcm2837.gputime to be armed (docs/metal.md 10.43 has the cp); an older kernel
+# answers kIOReturnUnsupported and the mode prints "this kernel does not report GPU time" instead
+# of a zero. With that in hand the first method below is what the test prints itself, and the
+# other two stay because they need nothing of the kernel:
+#
+#   (a) BY SUBTRACTION, inside the test. The 4x4 case and the 1080x2400 case emit the same
+#       commands, bind the same state and make the same number of submissions; only the pixel
+#       count differs. So the 4x4 per-draw median is the fixed cost -- ours plus the round trip
+#       -- and the increase at the big sizes is the GPU's fill and the bandwidth of one pass
+#       over the attachment. The test prints this subtraction itself.
+#   (b) BY THE KERNEL'S OWN COUNTER, from this same log. With gpu_log=1, bsd/dev/
+#       redwood_adreno.c times every submission off the GPU's always-on counter (19.2 ticks a
+#       microsecond) and writes
+#
+#         tl: q <fence> took <microseconds>
+#
+#       and RedwoodGPU.cpp prints, every five seconds in which something was submitted,
+#       "the GPU worked N us on each of M (K under 0.1 ms, ...)". Those are the GPU's side.
+#       Subtract from the test's own median for the same case and the remainder is ours.
+#       Two cautions, both of them real: the per-submission lines are written one submission
+#       LATE (gpu_times() adds up what finished since it was last asked, which happens at the
+#       next submit), and the five-second summary only prints in a window in which something
+#       was submitted, so a burst shorter than five seconds leaves no summary line at all.
+#       The test prints how many submissions each case made so that M can be matched to a
+#       case instead of guessed at.
+#
+# And one number that CANNOT be split, printed as one number and said so: the cold compile. It
+# holds the compiler's one-time setup and one translation and nothing inside the process can
+# tell them apart. What can be said is the difference between it and a warm one, and the test
+# prints that difference rather than attributing either half.
+#
+# THE PREDICTION THAT MATTERED MOST, AND IT WAS WRONG -- WHICH IS A RESULT
+#
+# Written down before the run: the kernel waits for a fence by POLLING every 200 microseconds
+# (GPU_ASK_AGAIN_US, iokit/Kernel/RedwoodGPU.cpp), so the per-draw medians would land near
+# multiples of 200 us and the cheapest big win would be in the kernel's poll.
+#
+# REFUTED BY MEASUREMENT. A 4x4 draw costs 41 us -- a fifth of the quantum -- so gpuWait sees the
+# fence on its FIRST look and never sleeps, over all 1285 submissions of that boot. The kernel's
+# own counter says the same from the other side: 7 us of core time per submission at 4x4, which
+# finishes while the ioctl is still on its way to the check. The poll is off the list, and the
+# cost is in the three places the brackets below price: the present, the per-draw fence, the fill.
+#
+# Keep this paragraph. A prediction written down and then disproved is worth what one that holds
+# is worth, and this one moved the work away from the kernel -- where the next agent would
+# otherwise have started, because the 200 us figure is right there in the source.
+#
+# WHAT EACH LINE MUST PRINT, AND THE BRACKETS -- NOW MEASURED
+#
+# Each row is what logs/225409-run.log printed, what counts as the same answer again, and what a
+# number outside that means. "the same again" is deliberately wide where the quantity is noisy and
+# tight where the boot before was tight: a draw's median moved by less than 2% across 32 repeats.
+#
+#   the clock's step
+#     measured            1000 ns, with 44 of 1000 read-pairs falling either side of a tick, so a
+#                         reading costs about 22 ns and every single sample carries +/-1 us
+#     the same again      a 1000 ns step
+#     wrong               0 ("the clock never moved"): nothing below means anything. A step over
+#                         20 us: then only the millisecond-sized numbers are measurements.
+#     read with it        -[queue commandBuffer] 2 us, the encoding 3-4 us and an empty command
+#                         buffer 0-1 us are AT this floor, not below it. The mode now says so
+#                         instead of turning 0 us into "1 000 000 a second".
+#
+#   a pipeline: cold 561 us, warm the same function 353 us, warm a different one 418 us,
+#   with Apple's own vertex stage 664 us, a refusal 369-454 us
+#     the same again      cold under 1 ms; warm 300-600 us; the two-module one 1.4-2x the
+#                         one-module one
+#     wrong               warm under 50 us -> something caches compiled code, which air_metal.c
+#                         says nothing does. Cold over 5 ms -> the compiler grew a per-process
+#                         cost. The two-module line at or below the one-module line -> one of the
+#                         two modules is not being compiled.
+#     what it settles     0.42 ms a shader means 2000 pipelines cost 0.84 s and Resident Evil 4's
+#                         7 879 modules 3.3 s if all of them were compiled at launch. Against
+#                         15.46 ms per shown frame, THE COMPILER IS NOT THE PROBLEM and a disk
+#                         cache for pipelines buys almost nothing.
+#
+#   the first draw with a fresh pipeline: 443 us at 4x4, 1311 at 1080x648, 1247 and 1521 at the
+#   panel, against 40 / 299 / 526 / 525 for the ones after it
+#     the same again      0.4-1.6 ms, and always above the warm draw of the same case
+#     wrong               equal to the warm draw -> ir3 linked the program at pipeline creation
+#                         after all, and a game's per-material cost moved somewhere else
+#
+#   -commit, 1 draw, 4x4, no clear: 40 us; each further draw in the same buffer 41.1 us
+#     the same again      35-50 us
+#     wrong               under 20 us -> an ioctl, a flush and a fence do not fit in that, so the
+#                         draw did not happen (and the case's pixel check will say so). Near 200
+#                         us or a multiple of it -> the fence poll IS being paid now, which would
+#                         be new and is the one case in which the refuted prediction comes back.
+#
+#   -commit, 1 draw, 1080x648 x4, no clear: 299 us; each further draw 399.9 us
+#     the same again      280-430 us
+#     wrong               equal to the 4x4 number -> the quad is not covering the attachment
+#     note                the further draw costs MORE than the lone one here, so the subtraction
+#                         gives a negative command-buffer cost (-100.9 us). Consecutive draws are
+#                         dearer than isolated ones at this shape; a frame is consecutive draws,
+#                         so the batched figure is the one the arithmetic uses.
+#
+#   -commit, 1 draw, 1080x2400 x1, no clear: 526 us; each further draw 522.9 us; 211.5 us per
+#   megapixel; 19.8 GB/s of attachment written
+#     the same again      500-560 us
+#     wrong               over 1 ms -> something in the per-pass path got slower; under 400 us ->
+#                         faster than this attachment was written once in that boot, so check the
+#                         pixel line before believing it
+#
+#   Apple's blit at 1080x2400: 524.4 us against 522.9 for the shader that only writes a colour
+#     the same again      within 2% of the plain draw
+#     what it settles     one texture fetch per pixel over 2 592 000 pixels is FREE, so this draw
+#                         is bound by memory and not by shading. If the blit ever costs 1.5x the
+#                         plain draw, the sampler path changed and that is worth a look.
+#
+#   the clear (Clear minus Load): 18 us at 4x4, 242 us at 1080x648 x4, 240 us at the panel
+#     the same again      200-280 us at either big size
+#     odd, and unexplained  it is NOT proportional to area: 0.7 and 2.47 megapixels for the same
+#                         time. No explanation is offered here. What is certain is that this
+#                         driver pays it per draw and an application asks for it once a frame.
+#
+#   -waitUntilCompleted after -commit: 25-32 us
+#     the same again      under 60 us
+#     the expectation that was too strong   it was written as "must be ~0". It is not: an empty
+#                         rwa_finish still flushes the context and asks the kernel. The SPLIT is
+#                         unaffected (30 us against a 523 us commit), but 200 draws waited for
+#                         one by one would be 6 ms of it.
+#     wrong               anywhere near -commit -> the fence moved out of -commit and every split
+#                         in the mode is wrong
+#
+#   -replaceRegion: 10.4 MB in 4.13 ms (2512 MB/s); -getBytes: the same bytes out in 12.0-13.1 ms
+#   (794-867 MB/s)
+#     the same again      2-3 GB/s in, 0.7-1 GB/s out
+#     wrong               equal in both directions -> the mapping became cached and something
+#                         changed under the driver. Over 50 ms for the upload -> texture
+#                         streaming would be impossible.
+#
+#   the panel copy in the kernel (kRedwoodShow): 3.50 ms, 2962 MB/s; the whole present 15.46 ms
+#     the same again      3-4 ms for the copy, 14-17 ms for the present
+#     what it settles     THE PRESENT IS THE BIGGEST SINGLE COST IN THE WHOLE BOOT. 15.46 ms caps
+#                         this port at 64.7 frames a second with nothing drawn at all, and 12 of
+#                         those 15.46 ms are -getBytes:, which exists only because this port has
+#                         no drawable. First place to work, and it is not Metal's code.
+#
+#   the 65th -commandBuffer with 64 alive: 2 us, "0 of the 64 alive still hold a slot"
+#     the same again      a few microseconds
+#     wrong               it does not return -> -commit stopped returning the queue's semaphore
+#                         slot (10.33) and this is the last line in the log, which is why it is
+#                         the last thing the mode does
+#
+#   the compute dispatch
+#     NOT MEASURED in that boot, and the reason was this harness's: all four kernels it tried were
+#                         refused with "writes texture 0 and 0 textures were bound", because it
+#                         bound buffers only. Sixteen textures and a sampler are bound now and it
+#                         tries twelve kernels instead of four, so line 3 should produce a number
+#                         this time. Expect it within a factor of two of the 4x4 DRAW's 41 us; far
+#                         below would mean the render path does per-draw work the compute path
+#                         does not, and that difference is the thing to go after.
+#
+# WHAT THE WHOLE THING IS FOR, and what it answered. The mode ends by turning its own medians
+# into frame rates for 1, 10, 50, 200 and 1000 draws, between two brackets (every draw 4x4, and
+# every draw the whole panel), with every assumption named on the line that uses it. That boot
+# printed:
+#
+#      1 draws: 15.51 ms (64.5 fps) at 4x4;   15.99 ms (62.5 fps) full panel
+#     10 draws: 15.88 ms (63.0 fps);          20.69 ms (48.3 fps)
+#     50 draws: 17.52 ms (57.1 fps);          41.61 ms (24.0 fps)
+#    200 draws: 23.69 ms (42.2 fps);         120.04 ms ( 8.3 fps)
+#   1000 draws: 56.61 ms (17.7 fps);         538.32 ms ( 1.9 fps)
+#
+# or, the same numbers the other way up: a 60 Hz frame holds 406 draws of 4x4, 42 of 1080x648 or
+# 32 of the whole panel -- before the present, which leaves 1.24 ms, so 30 small draws or two
+# full-screen ones. A scene of 300 draws averaging a tenth of the panel works out at
+# 300 x (41 + 0.247 x 212) us = 27.9 ms, plus 15.5 ms of present = 43.4 ms, i.e. 23 fps -- and
+# only 15.7 of those 43.4 ms (36%) is the GPU. docs/metal.md 10.43 has that arithmetic in full
+# and the order of work that follows from it: the present, then one fence per command buffer
+# instead of one per draw, then the fill, and the compiler never.
+#
+# 1. THE CANARY FIRST, unchanged and not timed: clearFragment20 into a 4x4 RGBA32Uint
+#    attachment, the four words it has printed since 10.22 --
+#    2458616957 2930221209 3401825461 3873429713 -- and "THE SAME". A boot in which this does
+#    not print them is a boot whose timings are of something else, and that must be found out
+#    before 1300 draws are timed rather than after. It printed them in logs/225409-run.log, and
+#    every pixel check inside line 2 passed there as well.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. THE MEASUREMENT: everything above, over Apple's own AppleMetalGLRenderer library, which is
+#    where clearFragment01 and the textured blit live -- so the shaders being timed are the
+#    ones 10.27, 10.29 and 10.33 already checked pixel for pixel. 32 repeats: enough that one
+#    outlier cannot be the measurement, small enough that four sizes of draw fit in a boot.
+#
+#    In order, the log must hold: the clock's floor; the cold pipeline and the distance from
+#    main() to the first pixel broken into four pieces; the warm compiles; four draw cases
+#    (4x4 x4, 1080x648 x4, 1080x2400 x1, and 1080x2400 x1 with Apple's blit), each ending in a
+#    pixel compared with what its buffer named and a count of the submissions it made; the
+#    compute dispatch (skipped here, with its reason: this library has no kernel); the upload
+#    and the readback; the empty command buffers; the present; the frame-rate table; and the
+#    slot test. With the .gputime kernel armed, each of the four draw cases also prints THE
+#    SPLIT: what the 3D core itself worked per submission, straight out of the kernel's own
+#    counter, and the remainder on this side.
+#
+#    Two things in it are verification and not timing, and they matter more than any number: a
+#    draw case whose pixel does not match prints "NOT THE SAME: the timings above are of a draw
+#    that did something else", and a case that could not make its attachments prints "NOT
+#    MEASURED" with the megabytes it asked for. A fast number from a draw that did nothing is
+#    the one reading this boot must never produce.
+/redwood/bin/metal_drv_test --time 32 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 3. THE COMPUTE SIDE, which needs a different library: AV1SW.metallib is eleven kernels and no
+#    fragment function at all, and it is the library 10.12 and 10.15 used. Here the mode prints
+#    what it CANNOT measure as plainly as what it can -- no cold path and no draw cases, because
+#    none of those shaders is in this library -- and then the two numbers only this library can
+#    give: a kernel's compile and a 4x4x1 dispatch's round trip. 16 repeats, because it is two
+#    measurements and not a dozen.
+#
+#    The upload, the readback, the empty command buffers and the present are measured here
+#    AGAIN: they need no shader of any library. That is not waste, it is a second sample of the
+#    same four numbers from a second process, and if the two processes disagree by more than
+#    their own max-to-median spread, something outside this test is moving.
+#
+#    The kernel it picks is the first that both compiles and finishes, and it says which. In the
+#    first boot NONE of the four it tried did, all of them refused with "writes texture 0 and 0
+#    textures were bound" -- which was this harness binding buffers only, not a fault of any
+#    kernel. It now binds sixteen textures and a sampler and tries twelve, so this line should
+#    produce a dispatch number. If it still says none finished, THAT is a regression against
+#    10.16 (nine compiled, eight finished) and a reason to read this log before reading any
+#    number in line 2.
+/redwood/bin/metal_drv_test --time 16 /System/Library/VideoDecoders/AV1SW.metallib

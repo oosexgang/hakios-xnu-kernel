@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+/redwood/bin/hello_dyn started by launchd
+/redwood/bin/svc_test
+/redwood/bin/surf_test
+/bin/ps -A
+# "swipe up to open": until somebody can do it with a finger
+/redwood/bin/rwtouch wait 32 swipe 0.5 0.985 0.5 0.3 250 &

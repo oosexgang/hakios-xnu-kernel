@@ -1,0 +1,143 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.argbuf).
+#
+# WHAT THIS BOOT IS FOR: MTLArgumentEncoder, and the buffer OFFSET that goes with it.
+#
+# The frontend's half of argument buffers landed first and took Resident Evil 4 from 258
+# translated shader libraries to 2 990 (docs/air.md 8.2.1). Those shaders still could not
+# be USED, because an application binds their resources through an MTLArgumentEncoder and
+# this driver answered none of its sixteen selectors. It answers them now, as a RECORDER
+# rather than a writer -- the frontend resolved every member of every set to a binding
+# while translating, and Metal's 8-byte handles are an Apple GPU's descriptors, which a
+# Gallium driver cannot read -- and docs/air.md 8.2.2 is the whole of why.
+#
+# Everything here has run on this machine already, on softpipe, through the same contract
+# (tools/air/argbufruncheck.sh: 20 checks, every one passing). What the phone adds is what
+# softpipe cannot say: whether Metal's own classes hand the driver what it needs, and
+# whether the Adreno fetches a uniform block from an offset.
+#
+# WHAT IT NEEDS
+#
+#   gpu=1              in XL_CMDLINE, or there is no Adreno and no compiler library
+#                      answer; the driver then says so by name and every line below is
+#                      NOT MEASURED rather than a failure.
+#   GL=1 REST=1        in the image, so that /redwood/lib/libredwoodair.dylib is in it,
+#                      and it must be a library built from THIS commit: the encoder's
+#                      records live in that library, and an older one has no
+#                      rwa_argbuf_encoded_members (metal_drv_test says so by name and
+#                      stops, which is the honest reading and not a failure of the GPU).
+#
+# THE THREE MEASUREMENTS, each worth a different thing, and each printed apart.
+#
+# (a) THE FUNCTION PATH. -[MTLFunction newArgumentEncoderWithBufferIndex:] is a method of
+#     METAL'S OWN class, and Metal's own implementation cannot work on this port: it asks
+#     the function for its reflection, which asks the device for -compiler, which is a
+#     two-instruction stub answering nil (-[_MTLDevice compiler], 0x181aac128), and then
+#     reports "bufferIndex %lu does not identify an argument buffer" and returns nil
+#     (0x181aef8a4, its failure path at 0x181aef924). So the driver answers it instead, by
+#     REPLACING that method at run time (class_replaceMethod on
+#     objc_lookUpClass("_MTLFunction"), from ensure_spi) and reading the function's own
+#     bitcode -- which is the one thing this port has and Metal's reflection has not. Not
+#     a category: a category would make the dylib import _OBJC_CLASS_$__MTLFunction, and a
+#     private class symbol that does not bind is a dylib that does not LOAD, which would
+#     take the whole driver down for every Metal client rather than just this selector.
+#
+#     Apple's shaders declare NO argument buffer (0 of the 456 modules of iOS 16.5's
+#     corpus), so nil is still the right answer here. What the boot measures is WHOSE nil
+#     it is: the driver's sentence says how many sets the function has, and Metal's does
+#     not. If the line with "this function declares 0" is missing, the replacement did not
+#     take effect and nothing else about the function path is believable.
+#
+# (b) THE DESCRIPTOR PATH, which needs no shader at all:
+#     -[MTLDevice newArgumentEncoderWithArguments:] with a pointer, a texture and a
+#     sampler member. encodedLength must be 24 and alignment 8 -- eight bytes per member,
+#     which is what Apple's own metadata says a set is: over Resident Evil 4's 7 858 sets,
+#     7 856 declare `air.arg_type_size` equal to 8 x members and all 7 858 declare
+#     `air.arg_type_align_size` 8 (tools/air/argbuflen.py). The two that do not are both
+#     in the one kernel that builds indirect command buffers, which this frontend refuses
+#     before an encoder could be made for it.
+#
+#     Then the three members are encoded and the compiler library is asked how many
+#     records it holds for that (buffer, offset): three. That count is the only thing an
+#     encoder leaves behind here, because there is nothing written into the buffer to read
+#     back.
+#
+# (c) THE BUFFER OFFSET, which is not about argument buffers and is why this boot is worth
+#     spending: Apple's own clearFragment20, drawn twice, with its 48-byte constant block
+#     at offset 0 of one buffer and at OFFSET 1164 of another whose other bytes are 0xa5.
+#     1164 is the offset the window server binds its own fragment buffer 2 at -- 55 times
+#     in one boot of 21 October -- and until this commit every one of those bindings was
+#     refused ("a non-zero offset is not implemented"). The two draws must print the same
+#     four words, and they must be the host's own reference:
+#
+#         2458616957 2930221209 3401825461 3873429713
+#
+#     1164 is a multiple of 4 (Metal's own rule) and of neither 16 nor 64, so this is the
+#     path where the compiler library hands the block to the driver as a `user_buffer` and
+#     freedreno uploads it itself (u_upload_data at an alignment of 64). An aligned offset
+#     is passed straight through as the binding's own offset and nothing is copied; the
+#     host run measures both (offset 64 and offset 4) and the phone measures the one that
+#     matters to the window server.
+#
+# (the full path on every line: nothing here promises these go through a shell)
+/redwood/bin/metal_drv_test --argbuf /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+# The same three again, in a SECOND process of the same boot. Not a repeat for its own
+# sake: the refusals this work replaces were the window server's, every line of this
+# driver now carries the process that wrote it, and two pids in one log is the cheapest
+# way to see that the prefix is per process and not per library. The library is the same
+# one -- clearFragment20 is in it, and AV1SW.metallib has no fragment shader at all, so
+# asking that one would measure nothing and say so.
+/redwood/bin/metal_drv_test --argbuf /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# HOW TO READ THE LOG (logs have NUL bytes, so grep -a always):
+#
+#   grep -a 'drvtest: argbuf:' logs/*-run.log
+#       every line of the three measurements. The four that must say ok, as whole
+#       substrings to grep for:
+#         'ok: encodedLength 24'
+#         'ok: 3 of 3 members recorded against that buffer at offset 0'
+#         'ok: the uniform block at offset 0 draws'
+#         'ok: the uniform block at offset 1164, the window server's own draws'
+#       and each draw line ends in the four words it got, so a WRONG one names the block it
+#       read instead of merely counting a failure.
+#
+#   grep -a 'this function declares' logs/*-run.log
+#       (a): the driver's own answer to newArgumentEncoderWithBufferIndex:. Absent means
+#       Metal's own implementation answered instead, so the replacement did not take
+#       effect -- and then the dylib in that image is older than this list.
+#
+#   grep -a 'redwoodmetal\[' logs/*-run.log
+#       every sentence of the driver, each now carrying the process that provoked it.
+#       This is the boot to check that on: four or five Metal clients are alive.
+#
+#   grep -a 'a non-zero offset is not implemented' logs/*-run.log
+#       MUST BE EMPTY. That sentence is deleted by this commit; a hit means the image
+#       carries an older libredwoodmetal.dylib than this list.
+#
+#   grep -a 'was never filled through an MTLArgumentEncoder' logs/*-run.log
+#       the refusal this feature is mostly made of. Expected empty in this boot -- nothing
+#       here draws with a set -- and if the window server ever binds an argument buffer it
+#       will appear here, which is exactly what it is for.
+#
+#   grep -a 'does not identify an argument buffer' logs/*-run.log
+#       both (a)'s answer and Metal's own wording. Read the whole line: ours continues
+#       "this function declares 0".
+#
+#   grep -a 'uploaded\|user_buffer\|multiples of' logs/*-run.log
+#       any refusal about an offset. "in multiples of" would be a `device` buffer at an
+#       offset the GPU cannot fetch from, which nothing here binds; a hit names the shader.
+#
+# WHAT THIS BOOT DOES NOT ANSWER, said here so nobody reads it as more:
+#
+#   - NO DRAW GOES THROUGH AN ARGUMENT BUFFER ON THE DEVICE. That needs a .metallib holding
+#     a shader that declares one, and this port has no container writer: Apple's libraries
+#     have none (0 of 456) and the game's are not something a job list can reach. The
+#     draw-through-the-encoder differential is the host's, on softpipe
+#     (tools/air/argbufruncheck.sh), where the same picture comes out of an encoder as out
+#     of direct arguments and every deliberately wrong record prints its own named
+#     picture. What the device adds is (a), (b) and (c).
+#   - NOTHING IS TIMED. What a recorded binding costs against a direct one is unmeasured;
+#     the records are a linked list walked once per set per draw, and an application with
+#     thousands of encodings in one buffer is the thing to measure before it is a table.
+#   - THE SAMPLER AND TEXTURE MEMBER INDICES are checked on the host, by drawing one
+#     texture through two samplers and two textures through one shader; the device cannot
+#     check them until (b) above has a shader behind it.

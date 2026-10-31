@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# What this GPU makes of an unsigned 32-bit integer turned into a float (src/u2f_test.c), through
+# OpenGL ES and none of our AIR work: with gpu=1 adreno_keep=1 it is the phone's Adreno that
+# answers, through the same Mesa and the same ir3 that the window server draws with. The lock
+# screen is left to settle first, as rc.jobs.gltest does.
+/redwood/bin/rwtouch wait 4
+/redwood/bin/u2f_test

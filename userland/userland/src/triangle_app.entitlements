@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	What RedwoodTriangle.app is signed with, and why there is anything here at all.
+
+	NOTHING IN THIS PORT NEEDS A SIGNATURE TO RUN. AMFI here is a stand-in that accepts every
+	signature and holds no trust cache (libkern/amfi/miniamfi.c), and the kernel is built
+	without config_enforce_signed_code, so an unsigned binary executes -- every program in
+	/redwood/bin is one. What a signature still buys is ENTITLEMENTS: they are read out of it
+	(libkern/amfi/miniamfi_entitlements.cpp) and nowhere else, so a process that wants one has
+	to be signed to hold it.
+
+	These three are insurance against the one thing an application has that a /redwood/bin
+	program does not: it is started FOR SpringBoard, by RunningBoard, and the daemons on that
+	path ask about a bundle's identity and its container. The port has already shown that an
+	application with no data container works -- Sileo and TrollStore Helper both launch from
+	/Applications here (README) -- and both of those carry a signature of exactly this shape,
+	so this is the known-good pairing rather than a guess. If the application turns out to
+	launch without them, they cost nothing and can go.
+
+	  application-identifier               what LaunchServices and FrontBoard take a bundle's
+	                                       identity from. The same string as CFBundleIdentifier.
+	  com.apple.private.security.no-container
+	                                       says out loud what is true: there is no data
+	                                       container, because there is no installd in this
+	                                       recipe to make one. The kernel answers the container
+	                                       question from CFFIXED_USER_HOME in the process's own
+	                                       environment and a process without it has no
+	                                       container (bsd/kern/kern_minimac.c), so this
+	                                       entitlement agrees with the kernel rather than
+	                                       asking it for anything.
+	  platform-application                 the other half of that pairing on a jailbroken
+	                                       device. Nothing is confined in this kernel -- the
+	                                       Sandbox stand-in allows every query -- so this
+	                                       changes no access; it changes what the daemons
+	                                       above believe about the process.
+
+	DELIBERATELY ABSENT: anything about the GPU, Metal, IOKit or the display. The driver is
+	reached by dlopen of a world-readable bundle and by IOServiceOpen on RedwoodGPU, and
+	SpringBoard already does both as mobile with no entitlement of its own for it. An
+	entitlement asked for here that was not needed would be a claim about this port that this
+	measurement had not made.
+-->
+<plist version="1.0">
+<dict>
+	<key>application-identifier</key>
+	<string>com.redwood.triangle</string>
+	<key>com.apple.private.security.no-container</key>
+	<true/>
+	<key>platform-application</key>
+	<true/>
+</dict>
+</plist>

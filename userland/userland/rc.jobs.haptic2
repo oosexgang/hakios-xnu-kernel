@@ -1,0 +1,16 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Everyday touches that give a haptic on an iPhone (with haptic=5, the kernel's "haptic:" lines and the plug-in's
+# "the actuator plays" say which did): a long press on an icon of the home screen (its menu), dismissed; Settings
+# opened and its Airplane Mode switch turned on and off; Settings closed; Control Center opened, a long press on its
+# brightness slider, Control Center closed. One step a command, so that the log says which step a line belongs to.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 15
+/redwood/bin/rwtouch hold 0.615 0.71 1200 wait 3
+/redwood/bin/rwtouch tap 0.5 0.15 wait 3
+/redwood/bin/rwtouch tap 0.615 0.71 wait 4
+/redwood/bin/rwtouch tap 0.84 0.32 wait 3
+/redwood/bin/rwtouch tap 0.84 0.32 wait 3
+/redwood/bin/rwtouch swipe 0.5 0.995 0.5 0.55 150 wait 3
+/redwood/bin/rwtouch swipe 0.92 0.003 0.92 0.5 300 wait 3
+/redwood/bin/rwtouch hold 0.6 0.62 1200 wait 3
+/redwood/bin/rwtouch button home wait 2 button home wait 3

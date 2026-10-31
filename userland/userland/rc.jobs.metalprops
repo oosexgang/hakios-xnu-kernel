@@ -1,0 +1,26 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalprops).
+#
+# The first boot where iOS's own daemons can reach our Metal device. metal_props puts the two
+# properties Metal reads on the IOAcceleratorES service; from that moment every process that
+# asks Metal composes /System/Library/Extensions/RedwoodMetal.bundle, takes our class and
+# gets RedwoodMetalDevice -- all five steps of discovery, done by Metal itself (10.14, and
+# measured alone, without launchd, in logs/125607-run.log).
+#
+# 10.14 says what can go wrong, and it is a measured risk rather than caution: Metal's
+# conditions are asserts, so a daemon handed a device that cannot serve it does not degrade,
+# it aborts, and launchd restarts an aborting daemon -- a loop. Nothing persists: the
+# properties live only in the registry, so ./xl stop and a boot without metal=1 is a clean
+# machine, and /redwood/bin/metal_props off stops new processes taking the Metal road.
+#
+# The last line asks Metal from a program that does not load our dylib, so the log says
+# whether the chain still works with the whole system running.
+/redwood/bin/metal_props show
+/redwood/bin/metal_props on
+/redwood/bin/metal_test
+#
+# And the counts, from a process that asks Metal for the system device the way the daemons do
+# -- no dlopen, no MTLAddDevice. Every class of the driver against every method its protocols
+# require, with "unanswered" meaning absent from the chain and an entry that refuses counted
+# as answered (docs/metal.md 10.17, 10.37). 865 required over eleven classes; 116 were absent
+# and 31 more were Apple's own abstract stubs, which abort exactly like a method nobody wrote.
+/redwood/bin/metal_drv_test --sweep

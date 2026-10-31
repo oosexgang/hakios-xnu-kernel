@@ -1,0 +1,13 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The flashlight for iOS (RC_JOBS=rc.jobs.torch, with torch=3): as a program works it (torch_test: AVFlashlight, i.e.
+# mediaserverd's FigFlashlight, i.e. the kernel's /dev/redwood-torch) at full and at a quarter, then off; then from
+# Control Center, as a finger works it: opened from the top right corner, its flashlight button pressed, pressed again
+# 5 s later, Control Center closed (a tap below its buttons); then on for 8 s, which the kernel cuts with torch_max_s=5
+# (and leaves alone at its default of 30). The kernel's "torch:" lines say what was lit, and the end of the run repeats
+# them.
+/redwood/bin/sound_test springboard
+/redwood/bin/torch_test state level 1.0 wait 3 state level 0.25 wait 3 state off wait 1 state
+/redwood/bin/rwtouch wait 2 swipe 0.85 0.005 0.85 0.6 300 wait 3
+/redwood/bin/rwtouch tap 0.385 0.61 wait 5 tap 0.385 0.61 wait 3 tap 0.5 0.92 wait 2
+/redwood/bin/torch_test state
+/redwood/bin/torch_test level 1.0 wait 8 state off wait 1 state

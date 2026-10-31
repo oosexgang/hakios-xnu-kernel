@@ -1,0 +1,6 @@
+# As rc.jobs.air, but after SpringBoard is up and drawing: does the kernel's GPU driver take
+# work from a second process at all? That question is owed to the whole port, not to the AIR
+# frontend, and a refusal here is as much of a result as a pixel.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 25
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01

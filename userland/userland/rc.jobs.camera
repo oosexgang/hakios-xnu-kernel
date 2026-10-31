@@ -1,0 +1,11 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The cameras for iOS (RC_JOBS=rc.jobs.camera, with cam=5; with cam_pattern=1 its frames are colour bars):
+# first what AVFoundation lists (camera_avtest: the device is libredwood-media.dylib's in mediaserverd,
+# camera_device.c, whose frames come from the kernel's /dev/redwood-camera), then Camera.app opened from the home
+# screen as a finger opens it (with cam=5 the loader's /arm-io/isp node puts its icon on the first page, top right),
+# its preview left running for 40 seconds (xl screenshot meanwhile), and then the camera is the hand's: the shutter,
+# the front camera, zoom, a tap to focus. The kernel's "camera:" lines say when the frames came and why they
+# stopped; mediaserverd's "redwood: camera:" lines what the capture stack asked of the device.
+/redwood/bin/sound_test springboard
+/redwood/bin/camera_avtest
+/redwood/bin/rwtouch wait 10 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 40

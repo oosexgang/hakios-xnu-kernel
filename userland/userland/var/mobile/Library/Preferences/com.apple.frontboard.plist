@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- one processor core and a software renderer: applications need more time to come up than the
+	     watchdog gives them on Apple's hardware (20 s for the first frame) -->
+	<key>FBLaunchWatchdogScale</key>
+	<real>20</real>
+</dict>
+</plist>

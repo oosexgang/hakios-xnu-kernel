@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64e-ios ]
+install-name:    '/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer'
+exports:
+  - targets:     [ arm64e-ios ]
+    symbols:     [ _IOMobileFramebufferSwapBegin, _IOMobileFramebufferSwapEnd,
+                   _IOMobileFramebufferSwapSetLayer, _IOMobileFramebufferSwapSetEventWait,
+                   _IOMobileFramebufferSwapSetEventSignal ]
+...

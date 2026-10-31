@@ -1,0 +1,13 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The buttons, pressed by a script (RC_JOBS=rc.jobs.buttons): button records written to
+# /dev/redwood-touch, which is where a driver's presses go too. Unlock, volume up, volume down,
+# the side button to turn the screen off, the side button to wake it, unlock again.
+# tools/buttons-watch.sh, run on the host meanwhile, takes a picture of the screen after each press.
+/redwood/bin/rwtouch wait 32 swipe 0.5 0.985 0.5 0.3 250 wait 6
+/redwood/bin/rwtouch button volup 80 wait 4
+/redwood/bin/rwtouch button voldown 80 wait 4
+/redwood/bin/rwtouch button lock 80 wait 8
+/redwood/bin/rwtouch button lock 80 wait 6
+/redwood/bin/rwtouch swipe 0.5 0.985 0.5 0.3 250 wait 4
+/redwood/bin/rwtouch button lock 80 wait 20
+/redwood/bin/rwtouch tap 0.5 0.5 wait 5

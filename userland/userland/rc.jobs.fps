@@ -1,0 +1,15 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The everyday cases for frame pacing (boot-arg touch_lat=1; tools/frames.py): unlock, then 100 s for the
+# start-up's background work to be over, then home-screen page swipes both ways, Search pulled down and
+# closed, Control Center from the top right corner and closed, Settings opened (the zoom), its list flung
+# down and up, and closed with the home gesture (the zoom back); all of it three times over.
+/redwood/bin/rwtouch wait 26 swipe 0.5 0.985 0.5 0.3 200 wait 100
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 300 wait 2 swipe 0.15 0.5 0.85 0.5 300 wait 2 swipe 0.85 0.5 0.15 0.5 300 wait 2 swipe 0.15 0.5 0.85 0.5 300 wait 3
+/redwood/bin/rwtouch swipe 0.5 0.4 0.5 0.7 300 wait 3 button home wait 3 swipe 0.92 0.003 0.92 0.5 300 wait 3 button home wait 3
+/redwood/bin/rwtouch tap 0.615 0.71 wait 3 swipe 0.5 0.8 0.5 0.3 150 wait 3 swipe 0.5 0.3 0.5 0.8 150 wait 3 swipe 0.5 0.995 0.5 0.55 150 wait 3
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 300 wait 2 swipe 0.15 0.5 0.85 0.5 300 wait 2 swipe 0.85 0.5 0.15 0.5 300 wait 2 swipe 0.15 0.5 0.85 0.5 300 wait 3
+/redwood/bin/rwtouch swipe 0.5 0.4 0.5 0.7 300 wait 3 button home wait 3 swipe 0.92 0.003 0.92 0.5 300 wait 3 button home wait 3
+/redwood/bin/rwtouch tap 0.615 0.71 wait 3 swipe 0.5 0.8 0.5 0.3 150 wait 3 swipe 0.5 0.3 0.5 0.8 150 wait 3 swipe 0.5 0.995 0.5 0.55 150 wait 3
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 300 wait 2 swipe 0.15 0.5 0.85 0.5 300 wait 2 swipe 0.85 0.5 0.15 0.5 300 wait 2 swipe 0.15 0.5 0.85 0.5 300 wait 3
+/redwood/bin/rwtouch swipe 0.5 0.4 0.5 0.7 300 wait 3 button home wait 3 swipe 0.92 0.003 0.92 0.5 300 wait 3 button home wait 3
+/redwood/bin/rwtouch tap 0.615 0.71 wait 3 swipe 0.5 0.8 0.5 0.3 150 wait 3 swipe 0.5 0.3 0.5 0.8 150 wait 3 swipe 0.5 0.995 0.5 0.55 150 wait 3

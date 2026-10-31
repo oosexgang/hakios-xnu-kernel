@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The UI bugs (RC_JOBS=rc.jobs.uib, a run of about four minutes): Search, pulled down from the home
+# screen, before and after an application is left with the gesture from the bottom edge (the strip
+# under the status bar used to come out black from one of these on); then the side button twice, to
+# the lock screen, and a long press on its wallpaper (the screen used to go black), a tap, a swipe up.
+/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 200 wait 8 swipe 0.5 0.4 0.5 0.7 300 wait 10 button home wait 5 tap 0.615 0.71 wait 12 swipe 0.5 0.985 0.5 0.3 200 wait 6 swipe 0.5 0.4 0.5 0.7 300 wait 10
+/redwood/bin/rwtouch button home wait 5 tap 0.615 0.475 wait 12 swipe 0.5 0.985 0.5 0.3 200 wait 6 swipe 0.5 0.4 0.5 0.7 300 wait 10 button home wait 5
+/redwood/bin/rwtouch button lock wait 4 button lock wait 6 hold 0.5 0.55 1500 wait 12 tap 0.5 0.3 wait 6 swipe 0.5 0.985 0.5 0.3 200 wait 10

@@ -1,0 +1,159 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.drawable).
+#
+# WHAT THIS BOOT IS FOR. The port has no drawable, and that is the single most expensive
+# thing about it: showing one finished frame costs 15.46 ms -- -getBytes: 11.96 ms to pull a
+# finished attachment into the process and kRedwoodShow 3.50 ms to push it into the kernel --
+# which caps everything at 64.7 frames a second with nothing drawn (docs/metal.md 10.43).
+# A drawable removes both copies, because the pass writes into memory the display controller
+# already scans out.
+#
+# -[CAMetalLayer nextDrawable] asks a Metal device exactly one thing for this:
+# -newTextureWithDescriptor:iosurface:plane:, a texture over an IOSurface CoreAnimation
+# allocated (docs/metal.md 10.46). The library grew rwa_texture_from_surface for it and
+# userland/src/redwooddrawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
+# This list is the first time, and it asks the one question that separates a texture over the
+# surface's own pages from a texture over a copy of them.
+#
+# THE QUESTION, AND WHY IT HAS TO BE ASKED IN BOTH DIRECTIONS. An import can return a texture
+# and still be wrong three ways: over the wrong pages, over the right pages at the wrong
+# stride, or over a staging copy that is written back later. In all three the library returns
+# a texture and the driver returns an object, so "it worked" means nothing by itself. So
+# drawable_test writes through ONE view of the memory and reads through the OTHER:
+#
+#   1  the processor writes a pattern through IOSurfaceGetBaseAddress, and the texture is read
+#      with rwa_texture_read. Equal values => the import found the surface's pages.
+#   2  rwa_texture_write puts different values in through the texture, and they are read back
+#      through IOSurfaceGetBaseAddress. Equal values => the texture IS those pages. Nothing in
+#      this direction writes the surface back, so a staging copy fails here and only here.
+#
+# The pattern is made from both coordinates, so a wrong stride returns a value that belongs to
+# a NAMED other texel instead of merely a wrong value; and the four texels checked are (0,0),
+# the end of the first row, the start of the last row and the far corner, because a pitch
+# confusion, a height confusion and an offset confusion each show first at one of those.
+#
+# WHAT IT NEEDS
+#
+#   gpu=1              in XL_CMDLINE. Without it there is no Adreno to import into, and the
+#                      library says so by name; the test then prints NOT MEASURED and stops,
+#                      which is not a failure and must not be read as one.
+#   an image with GL=1 for /redwood/lib/libredwoodair.dylib, and it must be a library built
+#                      AFTER rwa_texture_from_surface existed. An older one is the refusal
+#                      "the compiler library in this image has no rwa_texture_from_surface",
+#                      and that sentence means the image is stale, not that the path is wrong.
+#                      Check it on the machine before booting:
+#                        nm -gU xnu-deps/build/mesa/out/libredwoodair.dylib | grep from_surface
+#   JOBS=""            not required -- this test shares nothing with the window server -- but
+#                      kept for the first boot so that nothing else is allocating surfaces or
+#                      GPU buffers while the kernel's table is being read.
+#   metal=1            NOT needed. This list does not go through Metal at all: it drives the
+#                      bridge and the library directly, in a process that never asks
+#                      MTLCreateSystemDefaultDevice. That is deliberate -- the conditions
+#                      Metal puts on a device object are asserts (docs/metal.md 10.3), so a
+#                      boot that measures the import must not also be a boot that can abort
+#                      for an unrelated reason.
+#   XL_SECS=120        the boot plus two short processes.
+#
+# WHAT EACH LINE MUST PRINT, AND WHAT WOULD MAKE IT A LIE
+#
+# 1. THE REFUSALS, which need no GPU and no surface, so they are first and they run on any
+#    boot. Six of them, and each must come back with the sentence it is for:
+#
+#      no device        "a drawable's texture needs the compiler library's device"
+#      format 552       the ten-bit XR refusal, which must mention that the kernel substitutes
+#                       BGRA -- that is the whole reason it is refused rather than served
+#      format 7         "not one this import can lay over a single linear plane", and the
+#                       list of what it DOES serve, which the sentence builds from its own
+#                       table rather than quoting beside it
+#      format 500       must name MTLPixelFormatYCBCR8_420_2P and say TWO PLANES. This is the
+#                       one the window server really asked for -- 55 times in the first boot
+#                       that carried this file, all for IOSurface 0x104, out of backboardd --
+#                       and the refusal is checked for the NAME and for FITTING WHOLE in its
+#                       buffer. A reason cut off mid-sentence is a reason nobody can act on
+#      format 629/630   the ends of Metal's YCbCr block (500-629): 629 refused with the
+#                       block, 630 falling through to the general refusal
+#      row 4320         must name 4320 and 64. A refusal that does not quote the number is the
+#                       one thing a reader cannot act on
+#      row 4352         must NOT be refused: it is what the kernel gives for a 1080-wide BGRA
+#                       surface (1080x4 = 4320, aligned up to 4352) and what Adreno takes
+#      two planes       "a drawable's texture is one plane"
+#
+#    WRONG: any of them silent, or 4352 refused. 4352 refused means the agreement between
+#    MINISURF_ROW_ALIGN (64) and a6xx's pitchalign (also 64) has broken on one side, and then
+#    no drawable can exist until it is found.
+/redwood/bin/drawable_test --refusals
+#
+# 2. THE IMPORT, over a real IOSurface the size of the panel. In order, the log must hold:
+#
+#    (a) the surface as IOSurface.framework sees it: ID, width, height, bytes a row, alloc
+#        size, base address. For 1080x2400 BGRA with no bytes-per-row asked for, the row must
+#        be 4352 -- the kernel aligns it to 64 itself (MINISURF_ROW_ALIGN).
+#    (b) the same surface as the KERNEL describes it through kRedwoodSurface (0x7e), printed
+#        separately on purpose: the two answers come from opposite sides of one call, and
+#        either is only worth quoting because the other agrees. The FourCC must read 'BGRA'.
+#    (c) the GPU's name, which is the proof the library opened freedreno and not softpipe. If
+#        this says softpipe, every line after it is about a rasterizer in plain C and the
+#        import will be refused by name -- correctly, and measuring nothing.
+#    (d) "a texture over surface N exists".
+#    (e) four texels written through the surface and read through the texture, and
+#    (f) four texels written through the texture and read through the surface.
+#
+#    WRONG, and each means a different thing:
+#      - the import refused with the pitch sentence: the kernel's stride and a6xx's rule
+#        disagree, and the sentence names both numbers.
+#      - the import refused with "memory of a process's own": IOSurfaceCreate here wrapped
+#        this program's memory, which it was not asked to do. That would be a surprise about
+#        IOSurface.framework, not about the GPU.
+#      - (e) passes and (f) fails: the import mapped a COPY. The texture reads what was there
+#        and writes somewhere else. This is the failure the whole list exists to catch, and it
+#        is invisible to any test that reads back through the same path it wrote.
+#      - a texel comes back as another texel's value: the two sides disagree about the stride.
+#        The value says which texel it belongs to, so the arithmetic is in the log already.
+/redwood/bin/drawable_test 1080 2400
+#
+# 3. THE SAME, SMALL, as a second sample from a second process. 64x64 is one page's worth of
+#    rows and a stride of 256 -- already aligned, so it tests the import and not the
+#    alignment. Two processes agreeing is worth more than one process repeating: the kernel
+#    makes one GPU buffer per user client for a surface, so a second process is a second
+#    buffer over the same kind of memory, and a result that holds for only one of them would
+#    be about the client and not about the surface.
+/redwood/bin/drawable_test 64 64
+#
+# HOW TO READ THE LOG AFTERWARDS (grep -a: the log has NUL bytes in it)
+#
+#   grep -a 'drawable_test:' logs/*-run.log
+#       everything this list printed, in order.
+#   grep -a 'drawable_test: FAILED' logs/*-run.log
+#       the only line that must not be there. Nothing at all here and a "0 of N checks
+#       failed" line below is the boot this list was written for.
+#   grep -a 'drawable_test: .* checks failed' logs/*-run.log
+#       three lines, one a process. "0 of" on all three is the answer.
+#   grep -a 'drawable_test: NOT MEASURED' logs/*-run.log
+#       the honest non-answers: no gpu=1, no library, or a library without the call. Each
+#       names which, and none of them is a failure of the path.
+#   grep -a 'drawable_test: the kernel says' logs/*-run.log
+#       the geometry both sides agreed on, which is the number to quote in any write-up.
+#   grep -a 'drawable_test: the GPU is' logs/*-run.log
+#       must say an Adreno. "softpipe" here invalidates lines (d) to (f).
+#   grep -a 'redwooddrawable:' logs/*-run.log
+#       the bridge's own one-off lines: whether the compiler library is loaded and whether it
+#       has rwa_texture_from_surface, and whether this process had IOSurfaceGetID.
+#   grep -a 'RedwoodGPU: request' logs/*-run.log
+#       empty. A line here means the kernel was asked something it does not know, and 0x7e is
+#       the request this list depends on.
+#   grep -a 'MiniIOSurface' logs/*-run.log
+#       the kernel's own complaints about the surface, if any: a format it substituted or a
+#       plane count it would not make. Nothing expected for 1080x2400 BGRA.
+#
+# WHAT THIS BOOT STILL DOES NOT ANSWER, said here so that nobody reads it as more than it is:
+#
+#   - NO FRAME GOES THROUGH A DRAWABLE. This measures the memory, not the path: there is no
+#     CAMetalLayer in it, no nextDrawable, no present, and the driver hook that would make
+#     -newTextureWithDescriptor:iosurface:plane: reach this bridge is still only written out
+#     in docs/metal.md 10.46 and not applied.
+#   - NOTHING IS TIMED. The 15.46 ms the drawable is meant to remove is measured by
+#     rc.jobs.metalperf and nothing here replaces that; what a frame costs once a pass writes
+#     straight into a surface is unmeasured, and the arithmetic in 10.46 says which part of it
+#     is subtraction and which part is a guess.
+#   - NOTHING IS DRAWN INTO THE SURFACE BY A SHADER. rwa_texture_write is a transfer, not a
+#     render pass, so this says the memory is shared and not that a pass targets it. A pass
+#     into an imported surface is the next boot, and it needs the driver hook.

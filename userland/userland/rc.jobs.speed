@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The network's rate (RC_JOBS=rc.jobs.speed, with wifi=1 on the phone or QEMU_NET=1): once there is
+# an address, three downloads of 20 MB over HTTPS one after the other, the way the radio's rate has
+# been measured since 13 October (15 Mbit/s with one processor, 17 to 19 with four, polling).
+/redwood/bin/net_test waitaddr en0 60 wait 10
+/redwood/bin/net_test fetch https://speed.cloudflare.com/__down?bytes=20000000
+/redwood/bin/net_test fetch https://speed.cloudflare.com/__down?bytes=20000000
+/redwood/bin/net_test fetch https://speed.cloudflare.com/__down?bytes=20000000

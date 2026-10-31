@@ -1,0 +1,11 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# What the prefix brings with it before anything is installed over the network
+# (RC_JOBS=rc.jobs.preinstalled): the versions in dpkg's database, that launchctl and preferenceloader
+# are really there, and that the tweak loader finds PreferenceLoader and puts it into Settings.
+/redwood/bin/sound_test springboard
+/var/jb/bin/sh /var/jb/prep.sh
+/var/jb/usr/bin/dpkg-query -W -f${binary:Package}_${Version}_${Status}\n debianutils launchctl preferenceloader ellekit
+/var/jb/usr/bin/launchctl version
+/var/jb/bin/ls -la /var/jb/usr/lib/TweakInject/
+/var/jb/usr/bin/uiopen prefs:
+/redwood/bin/rwtouch wait 20

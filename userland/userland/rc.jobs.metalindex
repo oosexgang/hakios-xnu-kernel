@@ -1,0 +1,133 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalindex).
+#
+# Indexed drawing (docs/metal.md 10.35). Every drawing call in a real application is
+# -drawIndexedPrimitives:, and this driver had only -drawPrimitives:vertexStart:vertexCount:
+# -- so nothing that draws real geometry could use it, and the three indexed forms declined
+# out loud. They are now served: the contract carries the index buffer, the index type, the
+# byte offset, the base vertex and the instance count, and what it refuses it refuses by name.
+#
+# WHAT THIS LIST MEASURES. A draw of indices 0,1,2,3 over the generated quad is exactly the
+# picture the non-indexed draw of vertices 0..3 gives, so on its own it proves nothing -- it
+# is the control. The measurement is a PERMUTATION: one index buffer holds 0 1 2 3 1 2 3, and
+# three indices out of it make one triangle of the quad. 0,1,2 (at byte 0) is the half below
+# the diagonal, whose right angle is the pixel at (0, 0); 1,2,3 (at byte 8) is the other half,
+# whose right angle is (3, 3). The two draws differ in NOTHING but indexBufferOffset, so a
+# driver that ignored the index buffer or the offset draws the first triangle twice and (3, 3)
+# comes back as the clear colour both times.
+#
+# IF THE LIBRARY AND THE DRIVER ARE NOT FROM THE SAME BUILD, nothing below means anything,
+# and this is the one list where that failure is quiet rather than loud. struct rwa_draw grew
+# six fields at its END, so an older /redwood/lib/libredwoodair.dylib reads every field the
+# driver fills above them correctly -- the primitive, the attachments, the count -- and simply
+# does not look at the index buffer. The run then prints two IDENTICAL halves and line 2's
+# verdict reads "a right angle came back on the wrong side". That is what it looks like, and
+# it is not a GPU result: rebuild both from this tree (tools/mk-mesa.sh with AIR=1, then
+# userland/build.sh) before reading a word of it. On this machine the header and the driver's
+# hand-typed copy of it were checked to agree -- 224 bytes, all twenty field offsets equal.
+#
+# All of this needs gpu=1 and /redwood/lib/libredwoodair.dylib; without either, line 1 says so
+# and the rest repeat it. One process per line, as rc.jobs.metaldepth and rc.jobs.metalms have
+# it: a draw that hangs this GPU takes the whole boot with it, so every line above a hang stays
+# a measurement and the hang names itself. The regressions come first and the sweep last.
+#
+# 1. The proven colour draw, first and unchanged. clearFragment20 over the generated quad into
+#    three RGBA32Uint attachments. It is the regression for two things this work touched in
+#    every path: every buffer this driver allocates is now created able to be an index buffer
+#    as well (PIPE_BIND_INDEX_BUFFER beside the two it had), and every draw method of the
+#    encoder now records through one function instead of two. It must print the four words it
+#    has always printed: 2458616957 2930221209 3401825461 3873429713, and "THE SAME".
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. THE MEASUREMENT: the ordinary draw, then six indexed draws of the same pipeline into the
+#    same attachments, which is why they are one process. Expect, in order:
+#
+#      - the draw of line 1 again, with its four words and its 4x4 grid;
+#      - "the index buffer is a RedwoodMetalBuffer of 14 bytes, holding 0 1 2 3 1 2 3". A
+#        buffer of another class means it came from the kernel path and has no Gallium
+#        resource behind it, and the draw will be refused with that sentence;
+#      - step 0, the non-indexed strip: "####/####/####/####  16 of 16 pixels, (0,0) drawn,
+#        (3,3) drawn";
+#      - step 1, the indexed strip of 4: the same picture, and the line that says so calls
+#        itself the CONTROL;
+#      - step 2, indices [0 1 2]: "####/###./##../#...  10 of 16 pixels, (0,0) drawn,
+#        (3,3) clear";
+#      - step 3, indices [1 2 3] at byte 8: "..../...#/..##/.###  6 of 16 pixels, (0,0) clear,
+#        (3,3) drawn". Those two are softpipe's own pictures through the same library, and
+#        10 + 6 = 16 because the four pixels whose centres lie exactly on the shared diagonal
+#        go to one triangle and not both. A different split of the diagonal (6 and 10, or 10
+#        and 10) is the fill rule and not an error; (0,0) or (3,3) on the wrong side IS one;
+#      - step 4, [0 1 2] with baseVertex 1: step 3's picture exactly, 0 of 64 words different
+#        from it and 64 from step 2, and "baseVertex is added to every index". 0 words from
+#        step 2 instead would mean baseVertex was dropped;
+#      - steps 5 and 6, the same two triangles as MTLIndexTypeUInt32 at bytes 0 and 16: 0 of
+#        64 words different from the UInt16 pictures. A 32-bit index read two bytes at a time
+#        is 0, 0, 1 -- a triangle of no area -- so the alternative is an empty attachment;
+#      - two refusals, each arriving as the command buffer's NSError with the library's own
+#        sentence in it: UInt16 at an odd offset ("Metal requires the offset to be a multiple
+#        of the index size") and 8 indices of a buffer that holds 7 ("8 indices of 2 bytes at
+#        offset 0 want 16 bytes of an index buffer that holds 14"). A status 6 on either of
+#        those two is the failure;
+#      - "THE INDEX BUFFER AND THE OFFSET ARE READ ON THE ADRENO", and "6 of 6 drew and 2 of 2
+#        were refused by name".
+/redwood/bin/metal_drv_test --draw-index /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 3. The same six steps over APPLE'S OWN vertex shader, which is the path an application is
+#    actually on. clearVertex is `position = vtx[vertex_id]`, so here an index is not a row of
+#    a vertex attribute but the [[vertex_id]] the shader indexes its own buffer with -- the
+#    frontend's air.vertex_id, which until now could only ever have been 0, 1, 2, 3 in order.
+#    The pictures must be the same as line 2's, step for step, because the geometry is the
+#    same: the corners this test writes into the buffer at index 14 are the generated stage's
+#    own four. On softpipe they agree to the bit (air_metal_test --draw-index ... clearVertex).
+#    Line 2 passing and this one failing would mean the index reaches the vertex FETCH and not
+#    the shader, which are two different hardware paths on a6xx (VFD against the index, and
+#    the vertex id in a register).
+/redwood/bin/metal_drv_test --draw-index --vertex clearVertex /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 4. The proven TEXTURED draw, unchanged: one 4x4 RGBA32Uint texture of air_run's texels bound
+#    to Apple's texturedFragment2DUInt. The generated stage hands every fragment the coordinate
+#    0.375, which is texel (1, 1), so all three attachments must read 101 201 302 400 -- the
+#    same numbers as logs/081609-run.log. It is here because the draw path's validation was
+#    rewritten around the index checks and every binding check sits in that same function.
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DUInt --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 5. The depth draw of 10.30, which is the regression for the same function with a DEPTH
+#    attachment under it -- the one case where it has two kinds of attachment to agree about,
+#    and the only path that sets the rasterizer's clip_halfz. Expect what logs/080758-run.log
+#    printed: a RedwoodMetalTexture of pixel format 252, -getBytes: on it REFUSED with the
+#    library's sentence about two aspects, readsDepth=YES writesDepth=YES readsStencil=NO
+#    writesStencil=NO with 0 methods unanswered, four draws of status 6 with the far one
+#    DISCARDED, the nearer one PASSED, the control DREW, and the depth buffer 0.5 0.5 0.25 0.75.
+/redwood/bin/metal_drv_test --draw-depth depth32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 6. One compute kernel, because the buffer that changed is every buffer: rwa_buffer_create
+#    now asks for a third binding, and a dispatch reads its buffers through the same resource.
+#    MetalFaceMask_InitMinMax is one of the nine of rc.jobs.metalcompute and one of the four
+#    whose output is compared against the host, so it has a reference. Its numbers must not
+#    move.
+/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+#
+# 7. And the first sweep slice, last because it is the long one. It draws no indexed
+#    primitives at all -- the sweep has only -drawPrimitives: -- so what it measures here is
+#    that the 60 ordinary draws are unmoved by the allocation change. The counts of
+#    rc.jobs.metalms line 10 must come back unchanged: "54 drew, 0 refused at the draw, 2 got
+#    no pipeline, 4 could not be given the textures they declare ... 6 declared a texture".
+/redwood/bin/metal_drv_test --draw-all 0 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# WHAT THIS LIST CANNOT MEASURE, named rather than left to be noticed:
+#
+#  * the INSTANCE COUNT. -drawPrimitives:...instanceCount: and the indexed forms now carry it
+#    through to the draw, and three instances of this geometry are the same pixels in the same
+#    colour as one -- so no colour attachment can hold the difference. On the host it is
+#    measured in the STENCIL, with compare Always and depthStencilPassOperation IncrementClamp
+#    over a buffer cleared to zero, which leaves the number of fragments that covered each
+#    pixel: 1 for one instance and 3 for three (air_metal_test --draw-index prints all five
+#    runs). metal_drv_test cannot do that yet: the only place it builds a depth attachment is
+#    depth_path, whose depth/stencil states are the four of 10.30, so this would be a second
+#    change to that function and not a line here.
+#  * a BASE INSTANCE. It reaches Gallium's start_instance, and nothing on this device can see
+#    it: the generated vertex stage reads no [[instance_id]], and none of the corpus's three
+#    vertex functions declares one either (checked in their air metadata, not assumed).
+#  * the INDIRECT draws, both of them, which this driver now answers by declining out loud --
+#    and which were absent from the class altogether before, so an application that called one
+#    aborted on an unrecognized selector with OUR class's name on it (the trap of 10.1).
+#    Nothing in this list calls them; the reason they decline is in 10.35.

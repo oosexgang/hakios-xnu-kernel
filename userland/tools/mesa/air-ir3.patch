@@ -1,0 +1,225 @@
+Teach ir3_compiler to read AIR, the way it already reads SPIR-V.
+
+ir3_cmdline.c takes GLSL, TGSI and SPIR-V and compiles each for an Adreno. A
+.metallib (or one module's bitcode) is one more front end to it, and putting it
+here rather than in a tool of our own means the AIR path is compiled by the same
+ir3 the port's Mesa uses, with the same options, and that a regression in ir3
+shows against AIR as it does against the others.
+
+--chip-id takes the Adreno's chip id instead of the old gpu-id, because the
+redwood's Adreno 7c+ Gen 3 (A635) has no gpu-id of its own: freedreno knows it
+only as chip_id 0x007506030500.
+
+It also declares air_run here, next to ir3_compiler: air_run draws with a translated shader and
+reads the pixel back, and it needs libgallium, which meson has not defined yet where the rest of
+the frontend is read (src/compiler comes before src/gallium). Its source stays with the frontend.
+
+Also removes this tool's own call of ir3_nir_lower_variant, which is a bug of
+the tool: ir3_context_init already calls it on its clone of the NIR, and the
+const-state setup inside asserts the second time. It shows on any shader whose
+const state reserves something -- every vertex shader, and anything with image
+dimensions -- and hides on the rest, which is presumably why it survived.
+--- a/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
++++ b/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
+@@ -34,6 +34,7 @@
+ #include "compiler/glsl/standalone.h"
+ #include "compiler/spirv/nir_spirv.h"
+ #include "compiler/spirv/spirv_info.h"
++#include "compiler/air/nir_air.h"
+ 
+ #include "pipe/p_context.h"
+ 
+@@ -247,10 +248,69 @@
+    return nir;
+ }
+ 
+-static const char *shortopts = "g:hv";
++/* One function of a .metallib, or one module's bitcode, through the AIR
++ * frontend. Function constants are all taken as zero: the command line has no
++ * pipeline to get them from, and a module that needs real values says so.
++ */
++static nir_shader *
++load_air(const char *filename, const char *entry)
++{
++   void *buf;
++   size_t size;
++   read_file(filename, &buf, &size);
++
++   const void *bitcode = buf;
++   size_t bitcode_size = size;
++   struct air_metallib lib;
++   const char *err;
++   if (size >= 4 && !memcmp(buf, "MTLB", 4)) {
++      if (!air_metallib_parse(NULL, buf, size, &lib, &err))
++         errx(1, "%s: %s", filename, err);
++      unsigned pick = lib.num_functions;
++      for (unsigned i = 0; i < lib.num_functions; i++) {
++         if (!entry || !strcmp(entry, lib.functions[i].name)) {
++            pick = i;
++            break;
++         }
++      }
++      if (pick == lib.num_functions)
++         errx(1, "%s: no function %s", filename, entry ? entry : "(any)");
++      bitcode = lib.functions[pick].bitcode;
++      bitcode_size = lib.functions[pick].bitcode_size;
++      entry = lib.functions[pick].name;
++   }
++
++   struct air_constant_value *fc;
++   unsigned num_fc = air_module_function_constants(NULL, bitcode, bitcode_size, &fc);
++   /* An air.visible library function is not an entry point; the wrapper makes
++    * one that calls it, so that these 135 modules can be compiled for the
++    * Adreno at all (nir_air.h, docs/air.md section 5). Always on here: this
++    * tool exists to answer "does ir3 accept it", and a module that is not an
++    * entry point has no other way to be asked.
++    */
++   const struct air_to_nir_options options = {
++      .constants = fc,
++      .num_constants = num_fc,
++      .library_wrapper = true,
++   };
++   struct air_shader_info info;
++   nir_shader *nir = air_to_nir(NULL, bitcode, bitcode_size, NULL, &options,
++                                ir3_get_compiler_options(compiler), &info, &err);
++   if (!nir)
++      errx(1, "%s: %s", entry ? entry : filename, err);
++
++   printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
++          info.entry_point, info.num_resources, info.num_varyings,
++          info.num_render_targets);
++   nir_print_shader(nir, stdout);
++   return nir;
++}
++
++static const char *shortopts = "g:c:hv";
+ 
+ static const struct option longopts[] = {
+    {"gpu",     required_argument, 0, 'g'},
++   {"chip-id", required_argument, 0, 'c'},
+    {"help",    no_argument,       0, 'h'},
+    {"verbose", no_argument,       0, 'v'},
+ };
+@@ -261,6 +314,7 @@
+    printf("Usage: ir3_compiler [OPTIONS]... <file.tgsi | file.spv entry_point "
+           "| (file.vert | file.frag)*>\n");
+    printf("    -g, --gpu GPU_ID - specify gpu-id (default 320)\n");
++   printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
+    printf("    -h, --help       - show this message\n");
+    printf("    -v, --verbose    - verbose compiler/debug messages\n");
+ }
+@@ -274,10 +328,12 @@
+    unsigned stage = 0;
+    struct ir3_shader_key key = {};
+    unsigned gpu_id = 320;
++   uint64_t chip_id = 0;
+    const char *info;
+    const char *spirv_entry = NULL;
+    void *ptr;
+    bool from_tgsi = false;
++   const char *air_file = NULL, *air_entry = NULL;
+    size_t size;
+ 
+    while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
+@@ -286,6 +342,9 @@
+       case 'g':
+          gpu_id = strtol(optarg, NULL, 0);
+          break;
++      case 'c':
++         chip_id = strtoull(optarg, NULL, 0);
++         break;
+       case 'v':
+          ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
+          break;
+@@ -323,6 +382,15 @@
+             errx(1, "in SPIR-V mode, an entry point must be specified");
+          spirv_entry = argv[n];
+          n++;
++      } else if (strcmp(ext, ".metallib") == 0 || strcmp(ext, ".bc") == 0 ||
++                 strcmp(ext, ".air") == 0) {
++         if (num_files != 0 || from_tgsi || spirv_entry)
++            errx(1, "in AIR mode, only a single file may be specified");
++         air_file = filename;
++         n++;
++         if (n < argc && argv[n][0] != '-')
++            air_entry = argv[n++];
++         continue;
+       } else if (strcmp(ext, ".comp") == 0) {
+          if (from_tgsi || spirv_entry)
+             errx(1, "cannot mix GLSL/TGSI/SPIRV");
+@@ -354,12 +422,24 @@
+    nir_shader *nir;
+ 
+    struct fd_dev_id dev_id = {
+-         .gpu_id = gpu_id,
++         .gpu_id = chip_id ? 0 : gpu_id,
++         .chip_id = chip_id,
+    };
+    compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
+                                   &(struct ir3_compiler_options) {});
+ 
+-   if (from_tgsi) {
++   if (air_file) {
++      nir = load_air(air_file, air_entry);
++      stage = nir->info.stage;
++
++      /* The frontend emits NIR's own system values, as the SPIR-V one does;
++       * lowering them to what the hardware has is the consumer's job.
++       */
++      NIR_PASS(_, nir, nir_lower_system_values);
++      NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
++      NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
++               ir3_glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
++   } else if (from_tgsi) {
+       struct tgsi_token toks[65536];
+       const nir_shader_compiler_options *nir_options =
+          ir3_get_compiler_options(compiler);
+@@ -420,8 +500,13 @@
+    shader->variants = v;
+    shader->variant_count = 1;
+ 
+-   ir3_nir_lower_variant(v, &options, nir);
+-
++   /* ir3_nir_lower_variant is NOT called here: ir3_context_init does it, on
++    * its own clone of the shader's NIR, and the const-state setup inside it
++    * asserts when it runs twice on one variant. Calling it here as well is a
++    * bug of this tool that only shows on shaders whose const state reserves
++    * anything -- any vertex shader (PRIMITIVE_PARAM), or anything with image
++    * dimensions -- which is why it went unnoticed.
++    */
+    info = "NIR compiler";
+    ret = ir3_compile_shader_nir(compiler, shader, v);
+    if (ret) {
+--- a/src/gallium/drivers/freedreno/meson.build
++++ b/src/gallium/drivers/freedreno/meson.build
+@@ -303,6 +303,7 @@
+   include_directories : freedreno_includes,
+   dependencies : [
+     idep_nir,
++    idep_air,
+     idep_vtn,
+     idep_mesautil,
+   ],
+@@ -318,6 +319,22 @@
+   install : false,
+ )
+ 
++# air_run: draw with a Metal shader and read the pixels back. It lives here,
++# beside ir3_compiler, because this is where libgallium exists; its source is
++# with the rest of the frontend in src/compiler/air.
++air_run = executable(
++  'air_run',
++  files('../../../compiler/air/air_run.c'),
++  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium,
++                         inc_gallium_aux, inc_gallium_winsys_sw, inc_gallium_winsys,
++                         include_directories('../../drivers')],
++  dependencies : [dep_m, idep_air, idep_mesautil, driver_softpipe, driver_freedreno,
++                  dep_libdrm],
++  link_with : [libgallium, libgalliumvl_stub, libws_null, libfreedrenowinsys],
++  build_by_default : false,
++  install : false,
++)
++
+ gmemtool = executable(
+   'gmemtool',
+   [

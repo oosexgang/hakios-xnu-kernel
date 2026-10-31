@@ -1,0 +1,33 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# What fairplayd changes (RC_JOBS=rc.jobs.fairplay, the iOS volume on the flash as the root, where the
+# program exists: FLASHBOOT=1, mkjobs.py --root-volume). Two questions, in this order.
+#
+# First, and it needs no finger: does fairplayd stay up? It wants the IOKit user client
+# com_apple_driver_FairPlayIOKitUserClient (its own entitlement names it) and this kernel has no such
+# driver, so it may well go the way CommCenter does. "exited due to SIG" in the log answers it.
+#
+# Second, if it does stay up: the three applications the README blames on its absence. Unlock, then
+# App Store, Podcasts and the Weather widget for half a minute each, with `xl screenshot` from another
+# terminal while each is open. Icon places are the first home-screen page (docs/homescreen.jpg).
+#
+# Before the run: do NOT reload the loader as a reflex. The persist copy's resident loader is the main
+# line's plus a window for writes into darwin, and it keeps the page's version and size so any kernel reads
+# it as its own -- reloading over it stops that copy's runs being able to save, and its note on the phone
+# asks you to say so there if you do. Reload only if you have changed xnuloader yourself.
+# That said, one boot here did need it and the reason is not settled: with a loader left resident by
+# another copy, the kernel got no ufs_shared_pa= on its command line, so its UFS driver never came up,
+# /dev/ufs_darwin never appeared ("mount /dev/ufs_darwin: No such file or directory") and the boot fell
+# back to /sbin/launchd.ios, which exists only in the RAM image. `./xl reload` with this copy's prebuilt
+# loader fixed it immediately. So either that particular resident loader was not the persist one, or the
+# "any kernel" claim does not hold for a prebuilt kernel. Check the command line in the log for
+# ufs_shared_pa= before reaching for reload. Then
+# `./xl ramdisk userland/flashboot.apfs`, then
+#   XL_CMDLINE="root_apfs=ufs_darwin ufs=2 ufs_native=1 bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 \
+#               adsp=1 wifi=1" XL_SECS=260 ./xl run
+# built with CRYPTEXES=flash FLASHBOOT=1 PREBUILT=1 REST=1 RC_JOBS=rc.jobs.fairplay OSLOG=com.apple.fairplayd.H2
+/redwood/bin/rwtouch wait 32 swipe 0.5 0.985 0.5 0.3 250 wait 10
+/bin/ps -A
+/redwood/bin/rwtouch tap 0.615 0.59 wait 30 button home wait 6
+/redwood/bin/rwtouch tap 0.385 0.59 wait 30 button home wait 6
+/redwood/bin/rwtouch tap 0.27 0.18 wait 30 button home wait 6
+/bin/ps -A

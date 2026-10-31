@@ -1,0 +1,209 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalcaps).
+#
+# WHAT THIS BOOT IS FOR. An application decides its whole render path at startup from what the
+# device says it supports, and this port answers almost none of those questions itself:
+# -supportsFamily:, -supportsFeatureSet: and some forty more are INHERITED from Apple's private
+# _MTLDevice, which derives them from one number redwoodmetal.m supplies -- -featureProfile,
+# which returns 0. Reading Metal's own code says what 0 produces (docs/metal.md 10.48). Nothing
+# has ever asked the device. This boot asks it.
+#
+# It matters because an inherited answer is Apple's code running against ivars nothing in this
+# port fills, and that shape has already cost one crash here: -targetDeviceInfo was an inherited
+# nil stub that Metal dereferences without checking (10.40). -supportsFamily: has exactly the
+# same shape -- `ldr x9, [x0, #0x110]; ldp x8, x9, [x9]` -- so if the ivar at 0x110 were nil, the
+# first application to ask would take a load from address 0. The claim this boot tests first is
+# that it is NOT nil, because -[_MTLDevice initFeatureQueries] calls -initGPUFamilySupport, and
+# MTLAddDevice calls initFeatureQueries.
+#
+# WHAT IT NEEDS
+#
+#   the image          CRYPTEXES=flash SYSTEM=1 GL=1 REST=1 QUIET=1 \
+#                        RC_JOBS=rc.jobs.metalcaps ./build.sh
+#                      GL=1 only so the device is the same object a drawing boot has; nothing
+#                      below compiles a shader, so a missing libredwoodair.dylib changes no
+#                      answer here. REST is not needed by this measurement and is listed only
+#                      because a boot without it has fewer processes competing for the log.
+#   XL_CMDLINE         "bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 metal=1"
+#                      metal=1 for the two registry properties metal_props sets below; gpu=1 so
+#                      -initWithAcceleratorPort: finds RedwoodGPU and the device is the real one
+#                      rather than the compiler-less fallback.
+#   XL_SECS=180        nothing here waits for the window server.
+#
+# THE ANSWERS, PREDICTED BEFORE THE RUN, each from the instruction that computes it. Every one
+# of these is a disassembly result and not a measurement, which is the whole point of the boot.
+#
+#   caps: featureProfile = 0
+#         redwoodmetal.m returns 0. If this is not 0, nothing else below is predicted at all,
+#         because every answer is a function of it. (Apple's own A11 driver answers 5:
+#         -[AGXA11FamilyDevice featureProfile] is `mov w0, #5; ret` at 0x209210f10.)
+#
+#   caps:   supportsFamily(MTLGPUFamilyApple1   = 1001) yes
+#   caps:   supportsFamily(MTLGPUFamilyCommon1  = 3001) yes
+#         and NO to the other fourteen. -[_MTLDevice initGPUFamilySupport] (0x181a1be1c)
+#         switches on -featureProfile through a jump table at 0x181b5bc7c and pushes exactly
+#         {Apple1, Common1} for 0; -supportsFamily: (0x181a1bda8) is a linear search of that
+#         vector. A yes to Apple2 or above would mean the profile is not 0; a NO to Apple1 would
+#         mean the vector is empty, which is what profiles 2, 3 and anything over 30002 get --
+#         and an empty vector is also what a nil ivar would NOT give, because a nil ivar faults
+#         instead. logs/213739-run.log already has Apple1 = yes from metal_stubdev on a
+#         profile-0 stub, so a NO here is a change and not a surprise.
+#
+#   caps:   supportsFeatureSet( 0 iOS_GPUFamily1_v1   ) yes
+#   caps:   supportsFeatureSet( 2 iOS_GPUFamily1_v2   ) yes
+#   caps:   supportsFeatureSet( 5 iOS_GPUFamily1_v3   ) yes
+#   caps:   supportsFeatureSet( 8 iOS_GPUFamily1_v4   ) yes
+#   caps:   supportsFeatureSet(12 iOS_GPUFamily1_v5   ) yes
+#         and NO to the other fourteen, to 19 and to 30000.
+#         +[_MTLDevice featureProfile:supportsFeatureSet:] (0x181aab6e4) indexes a 19-byte table
+#         at 0x181b5bc90 by the FEATURE SET and compares the minimum profile it finds against
+#         ours: the five whose minimum is 0 are the five above. Anything above 18 is refused by
+#         `cmp x3, #0x12` without consulting the device at all, so the last two must be NO.
+#
+#   caps:   argumentBuffersSupport                     0 (0 = Tier1, 1 = Tier2)
+#         (caps & 7) == 7 over -indirectArgumentBufferCapabilities, which _MTLDevice answers 0
+#         from (0x181aac77c, two instructions). Note what the enumeration cannot say: Tier1 is
+#         still "argument buffers are supported" -- there is no value for "none".
+#   caps:   readWriteTextureSupport                    0 (0 = TierNone, 2 = Tier2)
+#         0x181a18738 asks supportsFamily:(1004 = Apple4) and answers 2 or 0.
+#   caps:   areRasterOrderGroupsSupported              no     (also supportsFamily:, 0x181aa9940)
+#   caps:   areProgrammableSamplePositionsSupported    no     (a nil stub, 0x181aa8e14)
+#
+#   every supports* in the _featureQueries block: no
+#   caps:   [[MTLDeviceFeatureQueries alloc] initWithDevice:dev] = nil
+#         THIS IS THE LOAD-BEARING ONE. Twelve of the device's -supportsX methods are
+#         `ldr x0, [self, #0x160]; b objc_msgSend$familySupportsX`, and 0x160 is the
+#         _featureQueries ivar. -[MTLDeviceFeatureQueries initWithDevice:] is `mov x0, #0; ret`
+#         (0x181b21d98), so the ivar holds nil, a message to nil returns 0, and all of them
+#         answer NO for any device that does not override them -- which is why Apple's own
+#         AGXA11FamilyDevice overrides about forty of them itself. If the init does NOT return
+#         nil on the device, then some of those twelve are answering from a real object and each
+#         one has to be read separately.
+#
+#   caps:   supportsCounterSampling(AtStageBoundary       ) no
+#   caps:   supportsCounterSampling(AtDrawBoundary        ) yes
+#   caps:   supportsCounterSampling(AtDispatchBoundary    ) yes
+#   caps:   supportsCounterSampling(AtTileDispatchBoundary) no
+#   caps:   supportsCounterSampling(AtBlitBoundary        ) yes
+#   caps:   counterSets                                nil
+#         THIS IS THE LIE, and the prediction is written so the boot can confirm it rather than
+#         discover it. -[_MTLDevice supportsCounterSampling:] (0x181aace20) is eight
+#         instructions of arithmetic on the ARGUMENT -- (arg-1) < 4 && ((0xb >> ((arg-1)&0xf))&1)
+#         -- reading no ivar and sending no message, so it answers the same for every device in
+#         the system including one with no counters at all. Beside it -counterSets is a nil stub
+#         (0x181aacdfc). An application told "yes, at draw boundaries" and then handed nil for
+#         the counter sets has been lied to by Metal on our behalf.
+#
+#   caps:   supportsTextureSampleCount(1) yes / supportsSampleCount(1) yes
+#   caps:   supportsTextureSampleCount(2) no  / supportsSampleCount(2) no     (4 and 8 likewise)
+#         -supportsTextureSampleCount: is one instruction that tail-calls -supportsSampleCount:,
+#         which only redwoodmetal.m implements (`count == 1`). The two must agree; if they do
+#         not, something other than our method is answering the forward.
+#
+#   caps:   maxThreadsPerThreadgroup                   1024 x 1024 x 64
+#         ours. AND IT DISAGREES WITH APPLE'S OWN TABLE FOR OUR OWN PROFILE: initLimits filled
+#         maxTotalComputeThreadsPerThreadgroup = 512 for profile 0 (logs/213739-run.log). Two
+#         answers to one question, differing by a factor of two, both reachable by an
+#         application -- see the report; this boot only records that both are still there.
+#   caps:   maxThreadgroupMemoryLength                 16384       ours, = the table's figure
+#   caps:   maxBufferLength                            268435456   ours (a placeholder, 256 MB)
+#   caps:   recommendedMaxWorkingSetSize               536870912   ours (a placeholder, 512 MB)
+#   caps:   currentAllocatedSize                       0           ours, and it tracks nothing
+#   caps:   maxArgumentBufferSamplerCount              96
+#         `ldr w0, [x0, #0xd8]; ret` (0x181aac64c), and 0xd8 is _limits.maxIndirectSamplersPerDevice
+#         -- 96 in the measured profile-0 table.
+#   caps:   maxVertexAmplificationCount                1      through -limits (0x181aabb30)
+#   caps:   maxTessellationFactor                      0      through -limits (0x181aaba70)
+#   caps:   hasUnifiedMemory                           yes    ours, and TRUE of this SoC
+#   caps:   isLowPower / isHeadless / isRemovable      no     ours
+#   caps:   isDepth24Stencil8PixelFormatSupported      no     ours, and correct for iOS
+#   caps:   vendorName                                 Apple
+#         `adrp; add; ret` over a constant string (0x181aaa068). We are not Apple and cannot
+#         decline: there is no vendorName of ours in the chain.
+#   caps:   format 70 / 115                            64
+#         _MTLDevice's own per-pixel-format table, not the limits table (0x181a35d9c). Format
+#         252 (Depth32Float) takes another branch and is NOT predicted here -- that one is a
+#         measurement.
+#
+#   caps:   respondsToSelector(gpuCoreCount)           no
+#   caps:   +[MTLFXTemporalScalerDescriptor supportsDevice:] no
+#   caps:   +[MTLFXSpatialScalerDescriptor supportsDevice:]  no
+#         THIS IS THE ACCEPTANCE TEST'S OWN GATE, and the reason it is in a capability sweep is
+#         that it can be measured without the game. Resident Evil 4 asks the device almost
+#         nothing itself: of the 1 238 selectors its metal-cpp table registers, only
+#         -hasUnifiedMemory and -currentAllocatedSize have a send site anywhere in its 200 MB of
+#         code (tools/metal/appsends.py). Its one real capability question goes through MetalFX,
+#         which it links and drives as a TEMPORAL upscaler (setJitterOffsetX:, setMotionTexture:,
+#         setExposureTexture: are all in its __objc_selrefs), and it sends
+#         +[MTLFXTemporalScalerDescriptor supportsDevice:]. That method (0x20b2f06b8) asks
+#         -supportsFamily:(0x3ef = MTLGPUFamilyApple7) and then -gpuCoreCount, and wants the
+#         count above 6. We answer Apple1 and nothing else, so: no. A real iPhone X answers
+#         Apple4 and also fails it, which is the useful part -- this gate is not something this
+#         port fails uniquely, and answering the TRUTHFUL profile would not change it.
+#
+#         -gpuCoreCount is answered by nothing in this port's chain: only Apple's own
+#         AGXA11FamilyDevice declares it, _MTLDevice has no entry, and redwoodmetal.m does not
+#         implement it. MetalFX guards it with respondsToSelector:, so it is a no and not an
+#         abort -- and the "respondsToSelector(gpuCoreCount) no" line above is there to record
+#         that the only thing between this device and an unrecognized selector is somebody
+#         else's guard.
+#
+#         AND THE TRAP, which is why answering LESS is not automatically the safe direction.
+#         The spatial gate (0x20b2f28a0) begins `supportsFamily(Apple1); cbz w0, -> return YES`:
+#         a device that is NOT in the Apple families is taken for a discrete GPU and spatial
+#         scaling is declared supported without further question. So if our family list were
+#         ever EMPTY -- which is exactly what Metal's own table produces for featureProfile 2, 3
+#         or anything above 30002 -- this would flip from no to YES, and the game would build a
+#         spatial upscaler on a driver that has no blit, no resolve and no upscaler kernel. One
+#         wrong feature profile turns a refusal into a promise.
+#
+# AND THE ONE OUTCOME THAT IS NOT A LINE: the log stopping, or an "unrecognized selector" naming
+# RedwoodMetalDevice. Each question is sent inside @try and prints
+# "NOT ANSWERED by anything in the chain" when respondsToSelector: says no, so a missing method
+# should be a line and not a death. A crash here would mean an inherited answer read an ivar
+# nothing filled -- the targetDeviceInfo shape -- and the selector printed last in the log is
+# the one that did it.
+#
+# 1. The switch: the two registry properties, so MTLCreateSystemDefaultDevice() reaches this
+#    driver through all five steps of discovery the way an application does (10.14). Nothing
+#    persists -- the properties live in the registry and a boot without metal=1 is clean.
+/redwood/bin/metal_props on
+#
+# 2. The sweep itself. It asks nothing that compiles or draws, so it is the one measurement in
+#    this tree that is about the ANSWERS and not about the work behind them.
+/redwood/bin/metal_caps
+#
+# 3. And the class sweep afterwards, for one reason: it says in this boot's own log that the
+#    chain was alive and the device was ours, so the answers above are answers of this driver's
+#    and not of a device that failed to be created (10.17, 10.37).
+/redwood/bin/metal_drv_test --sweep
+#
+# HOW TO READ THE LOG (the log has NUL bytes in it, so every grep needs -a):
+#
+#   grep -a '^caps:' logs/NNNNNN-run.log
+#     the whole measurement, in order. 70-odd lines.
+#
+#   grep -a -c '^caps:   supportsFamily' ; grep -a 'supportsFamily.*yes'
+#     must be 16 and exactly two -- Apple1 and Common1.
+#
+#   grep -a 'supportsFeatureSet.*yes'
+#     must be exactly five, and must be 0, 2, 5, 8 and 12.
+#
+#   grep -a 'initWithDevice:dev'
+#     must say nil. If it names a class, re-read every familySupports* answer above it.
+#
+#   grep -a 'supportsCounterSampling'
+#     the three yes lines are the lie, in Metal's words rather than ours.
+#
+#   grep -a 'NOT ANSWERED\|raised\|caps: done'
+#     "caps: done" must be there: without it the sweep died in the middle, and the last
+#     selector printed is the suspect. "NOT ANSWERED" lines are the methods no class in the
+#     chain has -- each one is a question an application may ask and get an abort for, since
+#     respondsToSelector: is the only thing between it and objc_msgSend.
+#
+#   grep -a 'supportsDevice:\|gpuCoreCount'
+#     three lines, all expected to be no. A YES to either scaler is the interesting outcome and
+#     means re-reading the family answers above it; a "raised" line means MetalFX asked this
+#     device something its respondsToSelector: guards missed.
+#
+#   grep -a 'MTLCreateSystemDefaultDevice() = nil'
+#     then the boot lacked metal=1 or metal_props failed, and nothing was measured.

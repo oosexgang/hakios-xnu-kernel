@@ -1,0 +1,178 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalattrib).
+#
+# WHAT THIS BOOT IS FOR. docs/metal.md 10.44 put MTLVertexDescriptor into the contract and
+# measured it on the host: the offsets, the stride, the formats, the buffer index, the step
+# function and its rate each changed what came back, and the element order proved to be the
+# shader's driver_location order and not Metal's attribute order. Three things in it could not
+# be measured there, and all three are hardware:
+#
+#   the BGRA order      MTLVertexFormatUChar4Normalized_BGRA becomes B8G8R8A8_UNORM, and the
+#                       byte order is not in the format: freedreno puts it in
+#                       VFD_DECODE_INSTR.swap. softpipe's own fetch reads the format
+#                       description instead, so the host proved the TRANSLATION and not the
+#                       register.
+#   the instanced bit   VFD_DECODE_INSTR.instanced and VFD_DECODE[k].STEP_RATE, which this
+#                       driver has never programmed.
+#   the placeholder     the element the library builds for an attribute gated by a function
+#                       constant whose descriptor configures nothing. On the host the pipeline
+#                       for such a module dies inside softpipe before any draw, so "accepted"
+#                       is all that could be said; an attribute with NO element would leave an
+#                       empty VFD slot, and an empty slot fetches from address 0 (10.18).
+#
+# So this boot does not wait for the window server to cooperate: metal_drv_test --draw-attrib
+# builds the pipelines itself, through Metal's own API, with a real MTLVertexDescriptor, and
+# draws. The pipeline is Apple's code on both sides and out of two libraries, which is a legal
+# Metal pipeline: QuartzCore's std_vert0_lpf (position = mvp_matrix * attribute(0), so an
+# identity matrix in its [[buffer(2)]] makes the position the attribute verbatim) over
+# AppleMetalGLRenderer's texturedFragment2DUInt (samples texture 0 at the first varying and
+# writes the texel to four RGBA32Uint targets). The COVERAGE of the picture measures attribute
+# 0 and every WORD in it measures attribute 3.
+#
+# AND THE DECOY, which is what makes it evidence rather than a picture: the module's own
+# [[attribute(1)]] is air.arg_unused -- nothing reads it -- and the descriptor configures it
+# anyway, pointing at bytes that hold a different coordinate. An element array built in
+# Metal's attribute order feeds that layout to attribute 3's fetch, and then the geometry is
+# still perfectly right and every pixel comes back (100, 200, 300, 400). That is the only
+# wrong answer here a coverage check could not see.
+#
+# WHAT IT NEEDS, AND THE ONE THING THE LAST BOOT GOT WRONG
+#
+# THE LIBRARY AND THE DRIVER MUST COME FROM ONE SNAPSHOT, and in logs/235006-run.log they did
+# not. That boot carried a fresh driver and a libredwoodair.dylib built an hour earlier
+# (xnu-deps/build/mesa/out/libredwoodair.dylib, 22:42, from a 204 161-byte air_metal.c against
+# this work's 234 981), so the two --vertex lines of rc.jobs.metalvertexdesc printed the OLD
+# refusal -- "carries no vertex attribute layout", a sentence that does not exist in the new
+# library -- which is exactly the tripwire that list wrote down. Nothing in that log is about
+# the layout. The mismatch was harmless only by luck: every field the old library reads sits at
+# the same offset in both shapes, because rwa_render_shape grew after sample_count and rwa_draw
+# grew at the end.
+#
+#   the library        AIR=1 tools/mk-mesa.sh, run FROM THIS WORKING COPY (it resolves its
+#                      sources from its own path, and 21 working copies hold 21 different
+#                      air_metal.c). It must print a libredwoodair.dylib line, and
+#                      xnu-deps/build/mesa/mesa-25.0.7/src/compiler/air/air_metal.c must then
+#                      be the same size as tools/mesa/air/air_metal.c.
+#   the image          CRYPTEXES=flash SYSTEM=1 GL=1 QUIET=1 JOBS="" \
+#                        RC_JOBS=rc.jobs.metalattrib ./build.sh
+#                      JOBS="" because nothing here needs the window server, and with it alive
+#                      the GPU and the panel are shared with something that is being measured
+#                      elsewhere. GL=1 is the compiler library.
+#   XL_CMDLINE         "bootcpu=7 cpus=8 cpufreq=1 gpu=1 gpu_log=1"
+#                      gpu=1 or there is no Adreno and every pipeline is refused with a
+#                      readable reason instead of being drawn. gpu_log=1 is optional and worth
+#                      having: a draw whose fetch faults shows up as a submission that never
+#                      finished.
+#   XL_SECS=240        the measurement takes about a second; the rest is the boot.
+#
+# WHAT THE LOG MUST HOLD, AND BOTH OUTCOMES WRITTEN DOWN BEFORE THE RUN
+#
+#   grep -a -c "carries no vertex attribute layout"
+#     must be 0        the sentence is not in the new library. Anything else means the image
+#                      still carries an older libredwoodair.dylib than the driver, and
+#                      nothing below is about this work -- exactly as in logs/235006-run.log.
+#
+#   grep -a "vertex descriptor configures"
+#     expected 10      one line per pipeline this mode builds with a descriptor that configures
+#                      something: "redwoodmetal: this pipeline's vertex descriptor configures 3
+#                      attributes, the highest from buffer index 5" (and 2 for the gated step,
+#                      which leaves three attributes alone). This is the first line in any log
+#                      of this port that says a vertex layout arrived at all.
+#
+#   grep -a "drvtest: attrib:"
+#     step 1           "16 of 16 hold texel x" and 16 holding one of the two orientations:
+#                      every pixel holds the texel its own interpolated coordinate lands in.
+#       if instead     "16 hold texel (0,0)" and still 16 of 16 covered -> the elements were
+#                      not built in driver_location order and attribute 1's layout fed
+#                      attribute 3's fetch. Right geometry, wrong stream: the decoy fired.
+#       if instead     nothing covered -> the position attribute did not arrive at all; read
+#                      the refusals and then 10.18 (a NULL vertex state faults at 0x208).
+#     step 2           "0 of 64 words differ from step 1": the same four vertices as
+#                      UChar4Normalized and Short4Normalized at another stride and other
+#                      offsets. Any difference means the VFD did not decode the bytes -- 0 and
+#                      255 read as a float are 0.0 and 3.57e-43, and a Short4Normalized
+#                      position read as Float4 is four denormals, a quad collapsed into the
+#                      origin.
+#     step 3           THE SWAP. "0 of 64 words differ from step 2" -> VFD_DECODE_INSTR.swap
+#                      delivers bytes 2 and 1 as x and y. The alternative is named in the log
+#                      and is a specific picture: "every pixel holds column 0", because the
+#                      coordinate's own byte 0 is zero and reading the bytes in memory order
+#                      puts that zero in x. On the host this step gives 0 of 64 as well
+#                      (air_metal_test --draw-attrib, step 2a), so a difference here is the
+#                      REGISTER and not the translation.
+#     step 4           the stride: a picture that differs from step 2 (the fetch walks
+#                      elements 0, 2, 4, 6 of an eight-element buffer). Equal to step 2 means
+#                      the stride is not read.
+#     step 5           the same layout fetched from buffer index 7, bound at 7 and nowhere
+#                      else: equal to step 2, or Metal's buffer index is not carried down to
+#                      VFD_FETCH[k].
+#     steps 6, 7       the indexed forms over a real layout, where an index is the ELEMENT THE
+#                      FETCH READS and not the [[vertex_id]] of 10.35: four indices must give
+#                      step 2's picture and the last three one triangle of it.
+#     steps 8, 9       THE INSTANCED BIT and THE STEP RATE: the coordinate from a second
+#                      stream stepping per instance, 2 instances, must leave 103 203 306 400
+#                      in all sixteen pixels (texel (3,3), instance 1's element); at a step
+#                      rate of 2 both instances share element 0 and it must be 100 200 300 400
+#                      instead. A GRADIENT instead of a flat picture means that stream stepped
+#                      per vertex; step 9 printing step 8's number means the rate was dropped.
+#     step 10          THE PLACEHOLDER: a module whose attributes are gated (fixed_vert_lpf_spc,
+#                      five attributes listed 0, 4, 1, 2, 3, three of them behind
+#                      vtx_attr_has_texcoords and vtx_attr_has_point_size) with only the two
+#                      ungated ones configured. Exactly two things are claimed: the pipeline
+#                      BUILDS and the GPU COMES BACK. The pixels are printed and claimed for
+#                      nothing -- no function constants are supplied, so what the shader reads
+#                      under a false predicate is the pipeline's business. A refusal here would
+#                      mean the runtime is demanding a binding the API does not owe it; a draw
+#                      that does not come back is what an empty VFD slot looks like.
+#     the refusals      three layouts must be refused by name on the device too: offset 4096
+#                      (a6xx's VFD_DECODE_INSTR.offset is twelve bits and the setter masks
+#                      rather than asserts), MTLVertexFormatUInt1010102Normalized (a packed
+#                      word whose channel order against Gallium's is unmeasured), and a stream
+#                      at buffer index 2, which this module reads as mvp_matrix -- Metal has
+#                      one table behind -setVertexBuffer:offset:atIndex: and an index is a
+#                      stream or an argument, never both.
+#     the last line     "THE VERTEX ATTRIBUTE LAYOUT IS READ ON THE ADRENO ..." or "SOMETHING
+#                      ABOVE DISAGREES". The second is a result too, and the step that printed
+#                      a number of its own says which.
+#
+#   and the outcome that is not a sentence: THE LOG STOPPING. A draw that fetches attributes is
+#   the first thing this port has ever asked the Adreno's vertex fetch unit to do with a layout
+#   of somebody else's making. A log that ends inside a draw is a hung 3D core (10.36 has the
+#   half-GX reset behind gpu_recover=1), not a quiet success -- and with gpu_log=1 the
+#   submission that never finished is in the kernel's own lines.
+#
+# 1. THE CANARY FIRST, and not timed: clearFragment20 into a 4x4 RGBA32Uint attachment, the
+#    four words it has printed since 10.22 -- 2458616957 2930221209 3401825461 3873429713 --
+#    and "THE SAME". It draws with the GENERATED vertex stage, which is the library's own quad
+#    and its own single vertex element: the road 255 pixel-compared draws went down. If it has
+#    changed, the layout work broke the path it was meant to leave alone, and nothing below is
+#    worth reading.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. THE MEASUREMENT. One line, because init splits on blanks and quotes nothing: the vertex
+#    library and the gated module are QuartzCore's, the fragment library is the positional
+#    argument, and the fragment function is named so that the default (clearFragment20, which
+#    writes a constant and would make every picture here identical) cannot be used by accident.
+/redwood/bin/metal_drv_test --draw-attrib --vertexlib /System/Library/Frameworks/QuartzCore.framework/default.metallib --vertex std_vert0_lpf --gated fixed_vert_lpf_spc --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 3. And the same over the HALF-PRECISION variants of the same two modules, which is the family
+#    the window server itself asked for (its one refused spec named downsample_blur_vert_lph).
+#    What this line adds over the one above is exactly two things, and what it does NOT settle
+#    is said here so that its pixels are not read for more than they are worth:
+#
+#      - a 16-BIT ATTRIBUTE through the hardware fetch. std_vert0_lph's [[attribute(3)]] is
+#        `half4`, so the fetch delivers a 32-bit register and the shader narrows it with an
+#        f2f16 -- the regime docs/air.md 3.1 chose and which softpipe cannot compile at all
+#        (it asserts on the 16-bit opcode, which is why 28 of QuartzCore's modules are
+#        measurable only here). Whether ir3 and the VFD agree about that register is a
+#        question only this line asks.
+#      - the gated module of the same family in step 10, whose five attributes include that
+#        same `half4`.
+#
+#    NOT settled by this line: the words in its picture. The varying it hands the fragment
+#    shader is `generated(5colorDv4_Dh)`, a HALF varying, and texturedFragment2DUInt declares
+#    a float2 there -- a width mismatch of this pairing and not of the layout. So read its
+#    COVERAGE (which comes from attribute 0, a float4, exactly as in line 2) and its refusals;
+#    if its words differ from line 2's while line 2's are right, that is the varying's width
+#    and not the fetch, and the thing to do with it is a measurement of its own rather than a
+#    conclusion about the descriptor.
+/redwood/bin/metal_drv_test --draw-attrib --vertexlib /System/Library/Frameworks/QuartzCore.framework/default.metallib --vertex std_vert0_lph --gated fixed_vert_lph_spc --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

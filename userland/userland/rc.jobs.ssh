@@ -1,0 +1,24 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# A way in over the network (RC_JOBS=rc.jobs.ssh, with wifi=1 among XL_CMDLINE and a long XL_SECS):
+# the phone's radio joins the network named in fw-wifi/network, configd gives en0 an address, and
+# OpenSSH from the package manager's prefix lets us log in as root with the key in
+# ssh/authorized_keys, which build.sh puts on the data volume. That spares a rebuilt image and a
+# six-minute boot for every question one wants to ask a running iOS.
+# (dropbear would be smaller, but its package in Procursus depends on libtomcrypt1 and libtommath1,
+# which are in no suite of that repository: it cannot be installed at all.)
+# The host key is made on the computer and shipped with the image (build.sh), because ssh-keygen on
+# the phone cannot make one: it asks who uid 0 is through libiosexec, the prefix's own lookups, which
+# init now answers by building /var/jb/etc/pwd.db when it grafts the prefix. PAM is turned off on the
+# command line: there is no pam.d for sshd in the prefix, and the key is all we want anyway.
+# The switcher of running applications is opened on the way, so that a run serves both purposes:
+# the purple cards are there to look at while the shell is open (see rc.jobs.switcher).
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
+/redwood/bin/net_test show
+/var/jb/usr/sbin/sshd -D -e -h /var/root/.ssh/ssh_host_ed25519_key -o UsePAM=no -o PasswordAuthentication=no -o PermitRootLogin=prohibit-password -o AuthorizedKeysFile=/var/root/.ssh/authorized_keys &
+/redwood/bin/rwtouch tap 0.151 0.358 wait 20 button home wait 8
+/redwood/bin/rwtouch tap 0.383 0.358 wait 20 button home wait 8
+/redwood/bin/rwtouch tap 0.614 0.481 wait 20
+/redwood/bin/rwtouch drag 0.5 0.995 0.5 0.62 600 2500 wait 8
+/redwood/bin/net_test show
+/redwood/bin/rwtouch wait 900

@@ -1,0 +1,147 @@
+# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalms).
+#
+# Multisample textures (docs/metal.md 10.34). Six of Apple's 271 fragment shaders declare
+# one -- texture2d_ms<float|int|uint|ushort, read> and depth2d_ms<float, read> -- and not
+# one of them has ever drawn. Until this change the compiler library refused the TYPE: "a
+# MTLTextureType2DMultisample: nothing in this path has bound a multisample texture, and
+# Metal's own -replaceRegion: cannot fill one". It now makes one, renders into one and
+# binds one, and what it refuses instead is what METAL refuses.
+#
+# WHAT THIS LIST MEASURES, AND WHAT IT CANNOT -- read this before the run, because the
+# third item is the point of the exercise and this list does not reach it:
+#
+#  1. that the proven paths are unchanged. Every draw this driver makes goes through the
+#     three functions this change touched (rwa_texture_create, rwa_render_create,
+#     rwa_render_draw), so lines 1 to 3 are the regression and they come first. On this
+#     machine, through the same library on softpipe, all 274 functions of this .metallib
+#     behave byte for byte as they did before the change: 257 draw with the same pixels,
+#     15 are refused with the same sentences, 2 abort inside Mesa as they always have.
+#  2. that the six compile on the Adreno and that the refusal is now METAL'S RULE rather
+#     than this path's absence -- lines 4 to 9 for the first, 10 to 12 for the second.
+#     If any line prints "nothing in this path has bound a multisample texture", the
+#     library in /redwood/lib is older than the driver beside it and nothing else in the
+#     run means anything (that is how a measurement was lost on the 21st: the driver
+#     compiled against a new header while the image held the old library).
+#  3. that a multisample texture WORKS on the Adreno. Not reached, and the obstacle is
+#     not the hardware: a6xx gives 2 and 4 samples per texel (a6xx/fd6_screen.cc,
+#     valid_sample_count) and the library asks it for exactly that. It is metal_drv_test
+#     that cannot ask. Every texture it builds is [td setSampleCount:1]
+#     (draw_texture_descriptor), and Metal's own rule is that a multisample texture has
+#     MORE than one sample -- so the descriptor is refused by that rule before the GPU is
+#     asked anything. A sample count alone would not be enough either: nothing can write
+#     texels into a multisample texture from the processor, so the harness would have to
+#     RENDER the fill into it in a first pass and sample it in a second. docs/metal.md
+#     10.34 gives that experiment, the number each of the six must then print, and the
+#     number each would print if the sample index were ignored; the host's reference
+#     implementation of the two passes is air_metal_test --draw-ms.
+#
+# One process per line, as rc.jobs.metaltex and rc.jobs.metaldepth have it: a draw that
+# hangs this GPU takes the whole boot with it, so every line above a hang stays a
+# measurement and the hang names itself. The cheap and isolated lines come first and the
+# three sweeps last for that reason. All of it needs gpu=1 and
+# /redwood/lib/libredwoodair.dylib; without either, line 1 says so and the rest repeat it.
+#
+# 1. The proven colour draw, first and unchanged. clearFragment20 over the generated quad
+#    into three RGBA32Uint attachments. It must print the four words it has always
+#    printed: 2458616957 2930221209 3401825461 3873429713.
+/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 2. The proven TEXTURED draw: one 4x4 RGBA32Uint texture of air_run's texels bound to
+#    Apple's texturedFragment2DUInt. The generated vertex stage hands every fragment the
+#    coordinate 0.375, which in normalised coordinates is texel (1, 1), so all three
+#    attachments must read 101 201 302 400 -- the same numbers as logs/081609-run.log and
+#    as this machine's --draw. It is here because the multisample work rewrote the check
+#    every attachment of every draw passes through (attachment_shape_fits) and the
+#    creation path every texture passes through.
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DUInt --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 3. The depth draw of 10.30, which is the regression for that same attachment check with
+#    a DEPTH attachment under it -- the one case where it has two kinds of texture to
+#    agree about. Expect what logs/080758-run.log printed: a RedwoodMetalTexture of pixel
+#    format 252, -getBytes: on it REFUSED with the library's sentence about two aspects,
+#    readsDepth=YES writesDepth=YES readsStencil=NO writesStencil=NO with 0 methods
+#    unanswered, four draws of status 6 with the far one DISCARDED, the nearer one PASSED,
+#    the control DREW, and the depth buffer 0.5 0.5 0.25 0.75.
+/redwood/bin/metal_drv_test --draw-depth depth32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 4-9. The six, one process each, and what these lines measure is the FRONT END: this is
+#    the single-draw path, which binds the 4x4 texture of --texslots and not what the
+#    shader declares, so each line must
+#
+#      - print "newRenderPipelineStateWithDescriptor: gave RedwoodMetalRenderPipeline",
+#        which is the measurement: the module translated on the device. None of the six
+#        has ever been translated on this GPU, because the sweep gave up on each at its
+#        texture before a pipeline was asked for. Four of them loop over read(coord, i)
+#        with the count from get_num_samples -- a texture query no shader of this corpus
+#        has needed before -- and five of the six carry air.read_texture_2d_ms. It is NOT
+#        a measurement that ir3 compiled them: this library makes the pipeline's state
+#        objects at creation and ir3 compiles and links its variants at the draw
+#        (ir3_cache_lookup), which these six do not reach; and
+#      - then be REFUSED at the draw, by the binding check and in its own words:
+#        "declares texture 0 as a texture2d_ms and the texture bound there is a
+#        MTLTextureType2D". That refusal is unchanged by this work and is right -- the
+#        texture really is the wrong kind -- and it must appear INSTEAD of a status, not
+#        after one.
+#
+#    One of the six is different and must be refused EARLIER, at the pipeline:
+#    texturedFragment2DDepthMultisample stores to [[depth]] and writes nothing to colour,
+#    so it gets 10.30's refusal -- "stores to [[depth]] and this pipeline has no depth
+#    attachment, so there is nowhere for that store to go" -- and no pipeline. That line
+#    therefore says nothing about its translation, and it is the same refusal
+#    texturedFragment2DDepth gets in the sweep.
+#
+#    A line that printed a status and a pixel would mean the binding check is not being
+#    made at all; a line with no pipeline and some other sentence names a translation this
+#    port has never been asked for before.
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DFloatMultisamplePoint --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DFloatMultisampleLinear --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DIntMultisample --texslots 0=2d:rgba32sint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DUIntMultisample --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DDepthMultisample --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DStencilMultisample --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+#
+# 10-12. The three sweep slices that reach the six through the DECLARATION, which is the
+#    only path in this harness that builds a multisample descriptor at all
+#    (textures_for_shader -> rwa_module_textures -> draw_texture_descriptor). These are
+#    the lines that measure the new refusal, and each must print, for every multisample
+#    shader in its window, the driver's
+#
+#      redwoodmetal: a MTLTextureType2DMultisample with a sampleCount of 1: Metal's own
+#      rule is "MTLTextureDescriptor sampleCount must be > 1 for multisample textures",
+#      and a texture of one sample is a MTLTextureType2D
+#
+#    followed by the harness's row naming the slot that asked:
+#
+#      drvtest: drawall <name> no texture: it declares texture 0 as texture2d_ms<...> and
+#      no MTLTextureType 4 of MTLPixelFormat NNN could be made for it
+#
+#    with each shader's own declaration and format, which the host already prints for all
+#    271 (tools/air/texdecl.sh): texture2d_ms<float, read> and 125 for the two Float ones
+#    and for depth2d_ms<float, read>, texture2d_ms<int, read> and 124,
+#    texture2d_ms<uint, read> and 123, texture2d_ms<ushort, read> and 123. A row whose
+#    declaration reads "a texture whose metadata carries no type name" would mean the
+#    library predates rwa_module_textures carrying air.arg_type_name, as in
+#    logs/083654-run.log -- the counts would still be right and the sentences wrong, which
+#    is the one way this list can mislead.
+#
+#    The windows are not arbitrary: -[MTLLibrary functionNames] is not in container order,
+#    and these three are the slices whose contents are known from logs that completed.
+#    Index 0..59 holds four of the six (texturedFragment2DStencilMultisample at 0,
+#    texturedFragment2DDepthMultisample at 1, texturedFragment2DUIntMultisample at 3,
+#    texturedFragment2DFloatMultisampleLinear at 6 -- logs/010522-run.log and
+#    logs/083654-run.log agree on all four across two boots), index 60 is
+#    texturedFragment2DFloatMultisamplePoint (logs/071543-run.log) and index 266 is
+#    texturedFragment2DIntMultisample (logs/081609-run.log).
+#
+#    The counts must not move, and that is the regression half of these three lines. From
+#    index 0: "54 drew, 0 refused at the draw, 2 got no pipeline, 4 could not be given the
+#    textures they declare ... 6 declared a texture" (the 2 without a pipeline are
+#    texturedFragment2DDepth and texturedFragment3DDepth, refused by name for storing to
+#    [[depth]] with no depth attachment -- 10.30). From index 60: "59 drew, 0 refused, 0
+#    got no pipeline, 1 could not be given the textures they declare". From index 240:
+#    "30 drew, 0 refused, 0 got no pipeline, 1 could not be given the textures they
+#    declare". A sweep that drew one MORE than that would have drawn a multisample shader
+#    against a texture nothing filled, which is the one outcome worse than a refusal.
+/redwood/bin/metal_drv_test --draw-all 0 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw-all 60 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/metal_drv_test --draw-all 240 31 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

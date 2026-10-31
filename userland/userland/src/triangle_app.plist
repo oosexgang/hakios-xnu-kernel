@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Info.plist of RedwoodTriangle.app (src/triangle_app.m), and every key in it is here
+	because something reads it; the shape is copied from the system's own small
+	applications rather than invented.
+
+	Where each came from:
+
+	  CFBundleExecutable, CFBundleIdentifier, CFBundleName, CFBundlePackageType,
+	  MinimumOSVersion, UIDeviceFamily, UIRequiredDeviceCapabilities,
+	  UISupportedInterfaceOrientations
+		the least LaunchServices needs to register a bundle at all, in the same
+		spelling Applications/MusicRecognition.app and Applications/Jellyfish.app
+		of ios165/rootfs use.
+
+	  UILaunchScreen = { UILaunchScreen = {} }
+		the launch screen in a plist and not in a storyboard. iOS 16 wants one of the
+		two, and a storyboard would have to be compiled by ibtool, which this machine
+		has not got. MusicRecognition.app carries exactly this dictionary.
+
+	  CFBundleIcons -> CFBundleIconFiles = [ AppIcon60x60 ]
+		Jellyfish.app's shape: the base name, with AppIcon60x60@2x.png and
+		AppIcon60x60@3x.png beside it. The icon is a triangle in the application's own
+		two colours, so the home screen states the prediction before anything is run.
+
+	  CFBundleURLTypes -> redwoodtriangle:
+		how the job list starts it. /redwood/bin/battery_test open redwoodtriangle://
+		asks SpringBoard to open it (SBSOpenSensitiveURLAndUnlock), which needs no icon
+		to be tapped and no icon position to be guessed. SpringBoard knows the scheme
+		because LaunchServices rebuilds its database by walking /Applications at every
+		boot.
+
+	  UIRequiresFullScreen, UIStatusBarHidden, UIViewControllerBasedStatusBarAppearance
+		so that the whole panel is the layer and nothing of iOS's own is drawn over the
+		picture. A status bar across the top would be pixels the count below could not
+		account for.
+
+	NO UIApplicationSceneManifest, deliberately: without it UIKit uses the application
+	delegate's own window, which is the lifecycle src/triangle_app.m implements.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Triangle</string>
+	<key>CFBundleExecutable</key>
+	<string>RedwoodTriangle</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.redwood.triangle</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>RedwoodTriangle</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+			</array>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.redwood.triangle</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>redwoodtriangle</string>
+			</array>
+		</dict>
+	</array>
+	<key>DTPlatformName</key>
+	<string>iphoneos</string>
+	<key>DTSDKName</key>
+	<string>iphoneos16.5</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>16.0</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UILaunchScreen</key>
+		<dict/>
+	</dict>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+</dict>
+</plist>
