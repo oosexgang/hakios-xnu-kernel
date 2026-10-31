@@ -56,6 +56,7 @@
 #include "../tests/fixtures/argbuf_res_bc.hpp"
 #include "../tests/fixtures/tex_sample_gid_air.hpp"
 #include "../tests/fixtures/tex_sample_gid_bc.hpp"
+#include "../tests/fixtures/tex_col16_bc.hpp"
 #include "../tests/fixtures/tri_color_fs_air.hpp"
 #include "../tests/fixtures/tri_color_fs_bc.hpp"
 #include "../tests/fixtures/tri_color_vs_air.hpp"
@@ -4787,6 +4788,49 @@ int main(int argc, char** argv) {
                                         std::to_string(int(best));
                             }
                             report(all, line);
+                        }
+                        // what a texture's layout costs a blur: tex_col16 (sixteen reads down a column, 8 rows apart) over
+                        // a 1125 x 2436 grid, from a linear R32Float texture and from a tiled (TILE6_3) Depth32Float one
+                        {
+                            std::string kwhy;
+                            auto col = compileAir(kernels::tex_col16_bc, kernels::tex_col16_bc_size, &kwhy);
+                            TextureDesc ld;
+                            ld.format = PixelFormat::kR32Float;
+                            ld.width = 1125;
+                            ld.height = 2436 + 128;
+                            ld.usage = kTextureUsageRead;
+                            TextureDesc dd = ld;
+                            dd.format = PixelFormat::kDepth32Float;
+                            dd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                            auto lin = Texture::make(gpu, ld, &kwhy);
+                            auto til = lin ? Texture::make(gpu, dd, &kwhy) : nullptr;
+                            auto sums = newBuffer(gpu, 1125ull * 2436 * 4, &kwhy);
+                            if (!col || !lin || !til || !sums) {
+                                report(false, "layout cost: tex_col16 and its textures: " + kwhy);
+                            } else {
+                                auto timeIt = [&](const Texture& t) {
+                                    double best = 1e30;
+                                    for (int rep = 0; rep < 3; rep++) {
+                                        Bindings b;
+                                        b.buffers = {Binding{sums.get(), 0}};
+                                        b.textures = {&t};
+                                        const uint32_t groups[3] = {1125 / 9, 2436 / 4, 1}, local[3] = {9, 4, 1};
+                                        auto c = queue->commandBuffer();
+                                        c->setProfile(true);
+                                        if (!c->dispatch(col->kernel, groups, local, b)) return -1.0;
+                                        c->commit();
+                                        c->waitUntilCompleted();
+                                        if (!completed(*c)) return -1.0;
+                                        best = std::min(best, gpuUs(*c));
+                                    }
+                                    return best;
+                                };
+                                const double l = timeIt(*lin), t = timeIt(*til);
+                                char text[200];
+                                snprintf(text, sizeof text, "layout cost: 16 column reads a thread over 1125x2436: linear %.0f us, tiled %.0f us (%.2fx)", l, t,
+                                         t > 0 ? l / t : 0.0);
+                                report(l > 0 && t > 0, text);
+                            }
                         }
                         // the cost: eight full-screen source-over draws, best of three
                         auto timed = [&](bool gm) {
