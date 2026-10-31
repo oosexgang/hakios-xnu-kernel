@@ -54,7 +54,9 @@ TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 
 .PHONY: test tsan asan ios clean sweep
 
-$(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wildcard tests/fixtures/*.hpp) tests/test.hpp
+# (and the front end's archive: a test binary linked before the front end changed passed or failed for the old one)
+$(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wildcard tests/fixtures/*.hpp) tests/test.hpp \
+		$(if $(strip $(MESA)),$(MESA_BUILD)/src/compiler/air/libair.a)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
 

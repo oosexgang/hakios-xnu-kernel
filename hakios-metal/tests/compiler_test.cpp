@@ -2,6 +2,8 @@
 // for field and word for word, the fixture tools/mesa/ir3-dump.patch had Mesa's ir3_compiler write (tests/fixtures/
 // *_air.hpp) -- the texture fields included, which hold the core's walk of the NIR (src/compiler.cpp) to the patch's.
 // Without Mesa's libraries in the build (no MESA_BUILD) the compiler is a refusal, and that is checked instead.
+#include <atomic>
+#include <thread>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -1152,6 +1154,36 @@ TEST(a_kernel_taking_a_word_into_bytes_compiles) {
 // four members, ids 0 to 3, eight bytes apart from 0 (the module's air.struct_type_info). There is no set at
 // [[buffer(1)]] -- the function's other buffers are the set's own members, not sets -- and that is refused by name,
 // as an index Metal would answer with its assertion. Before this, every such call aborted Resident Evil 4.
+// The same layout asked from eight threads at once while kernels compile on them too, as Resident Evil 4 does: every
+// answer the single-threaded one. The front end and ir3's compiler object are not reentrant; the layout once ran
+// outside the compilers' lock and came back with members missing and set numbers made of garbage.
+TEST(argument_buffer_layouts_and_compiles_on_many_threads_agree) {
+    if (!hasCompiler()) return;
+    std::vector<uint8_t> bc = bitcodeOf("argbuf_res"), k = bitcodeOf("fill_id");
+    CHECK(!bc.empty() && !k.empty());
+    if (bc.empty() || k.empty()) return;
+    const std::vector<std::pair<uint32_t, uint32_t>> want = {{0, 0}, {1, 8}, {2, 16}, {3, 24}};
+    std::atomic<unsigned> wrong{0}, compiled{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; i++) {
+        threads.emplace_back([&, i] {
+            for (int j = 0; j < 12; j++) {
+                if ((i + j) % 3 == 0) {
+                    std::string why;
+                    if (compileAir(k.data(), k.size(), &why, {}) != nullptr) compiled++;
+                    continue;
+                }
+                std::vector<std::pair<uint32_t, uint32_t>> members;
+                std::string why;
+                if (!argumentBufferLayout(bc.data(), bc.size(), 0, &members, &why) || members != want) wrong++;
+            }
+        });
+    }
+    for (auto& t : threads) t.join();
+    CHECK_EQ(wrong.load(), 0u);
+    CHECK_EQ(compiled.load(), 32u);
+}
+
 TEST(the_layout_of_an_argument_buffer_comes_from_the_metadata) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: argument buffer layouts did not run)\n");

@@ -1251,6 +1251,10 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
 }
 
 bool argumentBufferLayout(const void* bitcode, size_t size, uint32_t set, std::vector<std::pair<uint32_t, uint32_t>>* members, std::string* why) {
+    // under the compilers' lock as well: the front end and theCompiler() are the same ones compileAir uses, and Resident
+    // Evil 4 asks for encoders on one thread while it compiles on others -- unlocked, the same function's layout came
+    // back with 23 members, then 12, its set numbers garbage, and the encoders built from it wrote nothing
+    std::lock_guard<std::mutex> g(gCompilerLock);
     // the interface alone: a body the front end cannot translate yet does not keep a set's layout from being known
     Translation t;
     t.mem = ralloc_context(nullptr);
