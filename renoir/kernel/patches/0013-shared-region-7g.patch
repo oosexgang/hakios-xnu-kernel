@@ -1,0 +1,19 @@
+diff --git a/osfmk/mach/shared_region.h b/osfmk/mach/shared_region.h
+index f7c55b3..47e5ecb 100644
+--- a/osfmk/mach/shared_region.h
++++ b/osfmk/mach/shared_region.h
+@@ -88,7 +88,13 @@
+ /* ARM64_TODO: move to higher memory */
+ #endif
+ #define SHARED_REGION_BASE_ARM64                0x180000000ULL
+-#define SHARED_REGION_SIZE_ARM64                0x180000000ULL
++/*
++ * renoir: 7 GiB and not 6. iOS 27's dyld shared cache ends at 0x30794C000 and slides by up to 0x20000000
++ * (cache header: max slide 512 MiB): at most 0x32794C000, beyond 6 GiB from the base, and dyld's
++ * "syscall to map cache into shared region failed" (KERN_INVALID_ADDRESS) left nothing to run.
++ * A multiple of the 32 MiB a twig table nests on 16 KiB pages.
++ */
++#define SHARED_REGION_SIZE_ARM64                0x1C0000000ULL
+ #define SHARED_REGION_NESTING_BASE_ARM64        SHARED_REGION_BASE_ARM64
+ #define SHARED_REGION_NESTING_SIZE_ARM64        SHARED_REGION_SIZE_ARM64
+ #define SHARED_REGION_NESTING_MIN_ARM64         ?

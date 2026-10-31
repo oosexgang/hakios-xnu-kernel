@@ -16,13 +16,15 @@ from pathlib import Path
 
 DK = Path(__file__).resolve().parents[3]
 DR = DK / 'darwin-renoir'
-IOS = DK / 'ios26'
+IOS = DK / 'ios27'                      # iOS 27.2 (24B119); ios26 (23G90) takes --system/--root
 sys.path.insert(0, str(DR / 'recovery'))
 from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
-# what works on renoir with iOS 26 for now: touch, buttons and all eight cores; no GPU (CoreAnimation
-# draws in software), no Wi-Fi, sound, camera, haptics or battery (renoir/docs/ios26-boot.md)
-BOOT_ARGS = ['haptic=0', 'cpufreq=0', 'gpu=0', 'wifi=0', 'adsp=0', 'battmgr=0', 'speaker_probe=0',
+# what works on renoir with iOS 26 and 27 for now: touch, buttons and all eight cores at full speed; no
+# GPU (CoreAnimation draws in software), no Wi-Fi, sound, camera, haptics or battery
+# (renoir/docs/ios26-boot.md). cpufreq=1: without it every core runs at 300 MHz and the user interface
+# draws at well under a frame a second.
+BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0', 'wifi=0', 'adsp=0', 'battmgr=0', 'speaker_probe=0',
              'renoir_afe_probe=0', 'sound=0', 'cam=0', 'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1',
              'buttons=1', 'launchd_unsecure_cache=1']
 
@@ -30,7 +32,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
 p.add_argument('--kernel', type=Path,
                default=DK / 'xnu-12377-renoir/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')
-p.add_argument('--system', type=Path, default=IOS / 'system26-prune.apfs')
+p.add_argument('--system', type=Path, default=IOS / 'system27-prune.apfs')
 p.add_argument('--root', type=Path, default=IOS / 'root26-ios.apfs')
 p.add_argument('--boot-arg', action='append', default=[], metavar='NAME[=VALUE]',
                help='add (or replace) one boot argument, e.g. cpus=1; repeatable')

@@ -1,0 +1,28 @@
+diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
+index 837bf15..40767cb 100644
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -668,6 +668,14 @@ static struct getattrlist_attrtab getattrlistbulk_common_extended_tab[] = {
+ 	                         ATTR_VOL_ATTRIBUTES | ATTR_VOL_ENCODINGSUSED | \
+ 	                         ATTR_VOL_MOUNTEXTFLAGS)
+ 
++/*
++ * renoir: with ATTR_CMN_FULLPATH, which this layer builds for any filesystem (attrlist_build_path).
++ * iOS 27's CoreServicesInternal reads the root volume's ATTR_VOL_ATTRIBUTES once and drops from
++ * every URL resource property's attribute group what the volume does not list as valid: without
++ * it the canonical path (NSURLCanonicalPathKey) was never asked for, LaunchServices could not make
++ * a node for any bundle and registered no application, and SpringBoard died of "Got nil for
++ * _systemAppInfo".
++ */
+ #define VFS_DFLT_ATTR_CMN       (ATTR_CMN_NAME | ATTR_CMN_DEVID |  \
+ 	                         ATTR_CMN_FSID | ATTR_CMN_OBJTYPE |  \
+ 	                         ATTR_CMN_OBJTAG | ATTR_CMN_OBJID |  \
+@@ -679,7 +687,7 @@ static struct getattrlist_attrtab getattrlistbulk_common_extended_tab[] = {
+ 	                         ATTR_CMN_USERACCESS | ATTR_CMN_FILEID | \
+ 	                         ATTR_CMN_PARENTID | ATTR_CMN_RETURNED_ATTRS | \
+ 	                         ATTR_CMN_DOCUMENT_ID | ATTR_CMN_GEN_COUNT | \
+-	                         ATTR_CMN_DATA_PROTECT_FLAGS)
++	                         ATTR_CMN_DATA_PROTECT_FLAGS | ATTR_CMN_FULLPATH)
+ 
+ #define VFS_DFLT_ATTR_CMN_EXT   (ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_LINKID |  \
+ 	                         ATTR_CMNEXT_NOFIRMLINKPATH | ATTR_CMNEXT_REALDEVID |  \

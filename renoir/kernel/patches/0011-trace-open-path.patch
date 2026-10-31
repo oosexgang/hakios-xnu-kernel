@@ -1,0 +1,34 @@
+diff --git a/bsd/vfs/vfs_lookup.c b/bsd/vfs/vfs_lookup.c
+index 2f96d6f..0b8e2fd 100644
+--- a/bsd/vfs/vfs_lookup.c
++++ b/bsd/vfs/vfs_lookup.c
+@@ -272,7 +272,7 @@ static int namei_untraced(struct nameidata *ndp);
+ int
+ namei(struct nameidata *ndp)
+ {
+-	static char wanted[96];
++	static char wanted[96], only[64];
+ 	static int parsed, lines;
+ 	char path[160] = "";
+ 	const char *name = NULL;
+@@ -283,6 +283,10 @@ namei(struct nameidata *ndp)
+ 		if (!PE_parse_boot_arg_str("trace_open", wanted, sizeof(wanted))) {
+ 			wanted[0] = '\0';
+ 		}
++		/* renoir: trace_open_path=SUBSTRING, only the paths with it (the 400 lines go further) */
++		if (!PE_parse_boot_arg_str("trace_open_path", only, sizeof(only))) {
++			only[0] = '\0';
++		}
+ 	}
+ 	if (wanted[0] != '\0' && lines < 400) {
+ 		proc_t p = current_proc();
+@@ -301,6 +305,9 @@ namei(struct nameidata *ndp)
+ 			name = NULL;
+ 		}
+ 	}
++	if (name != NULL && only[0] != '\0' && strnstr(path, only, sizeof(path)) == NULL) {
++		name = NULL;
++	}
+ 	error = namei_untraced(ndp);
+ 	if (name != NULL && lines < 400) {
+ 		extern void loader_log_line(const char *line);

@@ -1,0 +1,27 @@
+diff --git a/bsd/kern/lockdown_mode.c b/bsd/kern/lockdown_mode.c
+index 1c104b3..662027e 100644
+--- a/bsd/kern/lockdown_mode.c
++++ b/bsd/kern/lockdown_mode.c
+@@ -40,6 +40,22 @@ int lockdown_mode_state = 0;
+ SYSCTL_DECL(_security_mac);
+ SYSCTL_INT(_security_mac, OID_AUTO, lockdown_mode_state, CTLFLAG_RD | CTLFLAG_LOCKED, &lockdown_mode_state, 0, "Lockdown Mode state");
+ 
++/*
++ * renoir: iOS 27's libsystem_darwin os_lockdown_mode_enabled() reads this one, a 64-bit value
++ * (sysctlbyname into a uint64_t, enabled when it is 1), and abort()s when the name is not there:
++ * launchd died right after "Early boot complete". Same state as lockdown_mode_state.
++ */
++static int
++sysctl_lockdown_mode_state_public SYSCTL_HANDLER_ARGS
++{
++#pragma unused(oidp, arg1, arg2)
++	uint64_t state = (uint64_t)(lockdown_mode_state != 0);
++
++	return SYSCTL_OUT(req, &state, sizeof(state));
++}
++SYSCTL_PROC(_security_mac, OID_AUTO, lockdown_mode_state_public, CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_LOCKED,
++    0, 0, sysctl_lockdown_mode_state_public, "Q", "Lockdown Mode state");
++
+ __startup_func
+ void
+ lockdown_mode_init(void)

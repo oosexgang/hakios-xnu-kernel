@@ -1,0 +1,76 @@
+diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
+index f83e29b..c0df63d 100644
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -50,6 +50,7 @@
+ #include <sys/xattr.h>
+ #include <sys/fsevents.h>
+ #include <kern/zalloc.h>
++#include <pexpert/pexpert.h>
+ #include <miscfs/specfs/specdev.h>
+ #include <security/audit/audit.h>
+ 
+@@ -2846,6 +2847,45 @@ out:
+ 	return error;
+ }
+ 
++/*
++ * renoir: boot-arg trace_attr=name[,name...] (p_comm) logs what such a process asks getattrlist,
++ * fgetattrlist and getattrlistbulk for and what it gets (common and extended-common attributes,
++ * options, the full path built for ATTR_CMN_FULLPATH): a newer userland asks for paths in ways this
++ * kernel may answer differently. At most 300 lines a boot.
++ */
++static void
++attr_trace(vnode_t vp, struct attrlist *alp, uint64_t options, const struct _attrlist_buf *abp,
++    const char *fullpath, int error)
++{
++	static char wanted[96];
++	static int parsed, lines;
++	extern void loader_log_line(const char *line);
++	const char *name, *vname;
++	char line[300];
++	proc_t p;
++
++	if (!parsed) {
++		parsed = 1;
++		if (!PE_parse_boot_arg_str("trace_attr", wanted, sizeof(wanted))) {
++			wanted[0] = '\0';
++		}
++	}
++	if (wanted[0] == '\0' || lines >= 300 || (p = current_proc()) == NULL) {
++		return;
++	}
++	name = proc_best_name(p);
++	if (name == NULL || name[0] == '\0' || strnstr(wanted, name, sizeof(wanted)) == NULL) {
++		return;
++	}
++	lines++;
++	vname = vp != NULL && vp->v_name != NULL ? vp->v_name : "-";
++	snprintf(line, sizeof(line), "hakios: attr %s[%d] %s cmn %#x fork %#x opt %#llx -> %d got cmn %#x fork %#x path [%s]\n",
++	    name, proc_selfpid(), vname, alp->commonattr, alp->forkattr, options, error,
++	    error == 0 && abp != NULL ? abp->actual.commonattr : 0, error == 0 && abp != NULL ? abp->actual.forkattr : 0,
++	    fullpath != NULL ? fullpath : "-");
++	loader_log_line(line);
++}
++
+ static errno_t
+ vfs_attr_pack_internal(mount_t mp, vnode_t vp, uio_t auio, struct attrlist *alp,
+     uint64_t options, struct vnode_attr *vap, __unused void *fndesc,
+@@ -3165,6 +3205,7 @@ vfs_attr_pack_internal(mount_t mp, vnode_t vp, uio_t auio, struct attrlist *alp,
+ 	}
+ 
+ out:
++	attr_trace(vp, alp, options, &ab, fullpathptr, error);
+ 	if (vname) {
+ 		vnode_putname(vname);
+ 	}
+@@ -3513,6 +3554,9 @@ out:
+ 	}
+ 	kfree_type(struct vnode_attr, va);
+ 
++	if (error != 0) {
++		attr_trace(vp, alp, options, NULL, NULL, error);
++	}
+ 	VFS_DEBUG(ctx, vp, "ATTRLIST - returning %d", error);
+ 	return error;
+ }

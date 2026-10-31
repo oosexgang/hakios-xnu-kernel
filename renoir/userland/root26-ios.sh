@@ -4,13 +4,14 @@
 # named jobs as they are, every other job with Mach services on demand only) into ios26/jobs26, for
 # the system image (LAUNCHDAEMONS=.../jobs26 mkimage26.py): iOS 26's launchd takes a job for a system
 # service only when its plist is on the system volume.
-# Writes ios26/root26-ios.apfs and ios26/jobs26. JOBS="label ..." replaces the named jobs; OSLOG as for
-# mkjobs.py.
+# Writes $IOS/root26-ios.apfs and $IOS/jobs26 (IOS=.../ios27 for iOS 27, with OBJ=.../obj27).
+# JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py.
 set -e
 DK=/home/wannq/darwin_kernel
 DR=$DK/darwin-renoir
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-IOS=$DK/ios26
+IOS=${IOS:-$DK/ios26}            # the extracted IPSW (ios26: 23G90, ios27: 24B119); the outputs go there
+OBJ=${OBJ:-$RN/userland/obj26}   # our arm64e libraries (inj26.sh), built for that IPSW's addresses
 T=$IOS/root26-ios-tree
 JOBS=${JOBS-"
 	com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.apple.logd
@@ -33,8 +34,8 @@ J=$IOS/jobs26
 rm -rf $T $J; cp -a $DR/userland/root $T
 mkdir -p $J; cp $T/LaunchDaemons/com.redwood.demo.plist $J/
 rm -f $T/LaunchDaemons/*.plist
-cp $RN/userland/obj26/*.dylib $T/lib/
-cp $RN/userland/obj26/gl_test $T/bin/gl_test
+cp $OBJ/*.dylib $T/lib/
+cp $OBJ/gl_test $T/bin/gl_test
 # iOS 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
 # ("unexpected exec of non-platform binary: /redwood/sbin/init"); the kernel's AMFI stand-in takes a
 # signature marked ad hoc (CodeDirectory flag CS_ADHOC) for one. darwin-renoir's programs are either
@@ -83,6 +84,28 @@ with open(sys.argv[1], 'wb') as f:
     plistlib.dump(manifest, f, fmt=plistlib.FMT_BINARY)
 PY
 printf 'd\t700\t0\t0\t/private/var/keybags\nf\t600\t0\t0\t/private/var/keybags/persona.kb\t/var/keybags/persona.kb\n' >> $T/etc/var.skel
+# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: renoir/userland/inject_poster.c)
+echo "/redwood/lib/libredwood-poster.dylib PosterBoard" >> $T/etc/inject.conf
+# SpringBoard: display mode changes that complete, there being no display driver to say so (src:
+# renoir/userland/inject_backlight.c)
+echo "/redwood/lib/libredwood-backlight.dylib SpringBoard" >> $T/etc/inject.conf
+# CONSOLE_LOG="NAME ...": these programs get libredwood-console.dylib (standard error on the console; with
+# boot-arg exec_env=NAME,...:OS_ACTIVITY_DT_MODE=1 their os_log as well)
+if [ -n "${CONSOLE_LOG:-}" ]; then
+	echo "/redwood/lib/libredwood-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
+fi
+# LOGGING_DEBUG="SUBSYSTEM ...": os_log of those subsystems at every level, Debug included (on the console
+# with boot-arg exec_env=NAME:OS_ACTIVITY_DT_MODE=1); /Library/Preferences is /private/var/preferences
+for subsystem in ${LOGGING_DEBUG:-}; do
+	mkdir -p $T/var/preferences/Logging/Subsystems
+	python3 - "$T/var/preferences/Logging/Subsystems/$subsystem.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump({'DEFAULT-OPTIONS': {'Level': {'Enable': 'Debug', 'Persist': 'Debug'}}}, f)
+PY
+	printf 'f\t644\t0\t0\t/private/var/preferences/Logging/Subsystems/%s.plist\t/var/preferences/Logging/Subsystems/%s.plist\n' \
+		"$subsystem" "$subsystem" >> $T/etc/var.skel
+done
 # what is running, at the start and twice later (net_test waits out its 60 s with no Wi-Fi)
 cat > $T/etc/rc.jobs <<'EOF'
 # iOS 26 on renoir: towards SpringBoard

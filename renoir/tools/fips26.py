@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """corecrypto's FIPS self test passing again on the rewritten dyld shared cache.
 
-usage: fips26.py CACHE_DIR      (ios26/dyld-strip, after pacstrip cache)
+usage: fips26.py CACHE_DIR [STORED COMPUTED]   (ios26/dyld-strip, after pacstrip cache)
 
 At boot launchd runs /usr/libexec/cc_fips_test (boot task "fips", RequireSuccess: a failure stops the
 system). Its integrity test computes an HMAC over corecrypto's code and compares it with the value
@@ -10,8 +10,9 @@ and the boot ends with "FIPS_POST failed!". The rewrite is deterministic: the va
 computes from the rewritten code is printed by the test ("MAC generated: ..."), and put here in place
 of the stored one ("In variable: ..."); then the file's page hashes are made again (pacstrip resign).
 
-Both values belong to iOS 26.6.2 (23G90, iPhone12,1) and to the pacstrip that rewrote the cache. If
-either changes, boot once, read the two lines from the log, and change them here.
+The values below belong to iOS 26.6.2 (23G90, iPhone12,1) and to the pacstrip that rewrote the cache.
+For another build (iOS 27.2, 24B119) or another pacstrip, boot once, read the two lines from the log
+("In variable" is STORED, "MAC generated" is COMPUTED) and give them as arguments.
 """
 import os
 import subprocess
@@ -23,9 +24,12 @@ PACSTRIP = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pacstrip')
 
 
 def main():
-    if len(sys.argv) != 2:
+    global STORED, COMPUTED
+    if len(sys.argv) not in (2, 4):
         sys.exit(__doc__)
     directory = sys.argv[1]
+    if len(sys.argv) == 4:
+        STORED, COMPUTED = bytes.fromhex(sys.argv[2]), bytes.fromhex(sys.argv[3])
     changed = []
     for name in sorted(os.listdir(directory)):
         path = os.path.join(directory, name)

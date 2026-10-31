@@ -3,7 +3,7 @@
 on its ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (ios26/dyld-strip).
 
-usage: mkimage26.py [--min | --prune] OUT.apfs
+usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracted IPSW, default ios26)
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
@@ -27,13 +27,13 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 DK = '/home/wannq/darwin_kernel'
-I = DK + '/ios26'
+I = os.environ.get('IOS', DK + '/ios26')         # the extracted IPSW: ios26 (23G90) or ios27 (24B119)
 ROOT = I + '/rootfs'
 CACHE = I + '/dyld-strip'
 DR = DK + '/darwin-renoir'
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACSTRIP = HERE + '/pacstrip'
-WORK = os.environ.get("WORK", DK + "/ios26/image-tree")
+WORK = os.environ.get("WORK", I + "/image-tree")
 CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
 
 MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname', 'usr/bin/sw_vers',
@@ -42,7 +42,26 @@ MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname'
 
 
 PRUNED_APPS = ('Podcasts', 'Maps', 'Freeform', 'Music', 'Books', 'Setup', 'Journal', 'Bridge', 'Fitness',
-               'SOSBuddy', 'Diagnostics', 'DiagnosticsService', 'SequoiaTranslator', 'Games', 'AppleTV', 'News')
+               'SOSBuddy', 'Diagnostics', 'DiagnosticsService', 'SequoiaTranslator', 'Games', 'AppleTV', 'News',
+               'ContinuityCaptureShieldUI')
+# What cannot work on this phone and is big (iOS 27's image is 4.59 GB with the rules above, over the
+# 4 GiB - 1 that fastboot can send in one download): the RAW camera's neural networks, Metal portrait
+# filters (no Metal here), the A13 camera ISP's firmware, DriverKit drivers (this kernel loads none),
+# and frameworks whose code is in the shared cache while their resources serve hardware or services not
+# here (Apple Intelligence, camera effects, iWork document previews, the App Store in Messages).
+PRUNED_PATHS = ('System/Library/CoreServices/RawCamera.bundle/RawSFD/',
+                'System/Library/CoreServices/RawCameraSupport.bundle/PlugIns.assets',
+                'System/Library/Isp/', 'System/Library/DriverExtensions/',
+                'System/Library/Messages/iMessageBalloons/ASMessagesProvider.bundle/')
+PRUNED_METALLIB_DIRS = ('System/Library/CoreImage/PortraitFilters.cifilter/',)
+PRUNED_FRAMEWORK_RESOURCES = ('System/Library/PrivateFrameworks/iWorkImport.framework/',
+                              'System/Library/PrivateFrameworks/IntelligenceFlowPlannerSupport.framework/',
+                              'System/Library/PrivateFrameworks/CameraEffectsKit.framework/')
+EMOJI = 'System/Library/Fonts/CoreAddition/AppleColorEmoji-160px.ttc'
+# What select-system.py (16.5's rules: framework resources up to SMALL) leaves out and iOS 27 cannot
+# do without: linkd dies at its start without the App Intents schema database ("AppIntentSchemas/
+# Database.swift:80: Fatal error: Failed to open database connection: databaseFileMissing").
+KEPT_FILES = ('System/Library/PrivateFrameworks/AppIntentSchemas.framework/AppIntentSchemas.sqlite',)
 LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
 
 
@@ -50,7 +69,23 @@ def pruned(rel):
     if rel.startswith('Applications/'):
         app = rel.split('/')[1]
         return app.endswith('PosterApp.app') or app[:-len('.app')] in PRUNED_APPS
+    if rel.startswith(PRUNED_PATHS):
+        return True
+    if rel.startswith(PRUNED_METALLIB_DIRS) and rel.endswith('.metallib'):
+        return True
+    if rel.startswith(PRUNED_FRAMEWORK_RESOURCES) and not rel.endswith('/Info.plist'):
+        return True
     return rel.startswith('System/Library/Fonts/AppFonts/')
+
+
+def trim_emoji():
+    """the emoji font with the strikes the screen uses only (darwin-renoir tools/font_trim.py, as 16.5)"""
+    path = os.path.join(WORK, EMOJI)
+    if not os.path.isfile(path):
+        return
+    tmp = path + '.trim'
+    subprocess.run([sys.executable, DR + '/tools/font_trim.py', 'emoji', path, tmp], check=True)
+    os.replace(tmp, path)       # the file in WORK is a hard link to the rootfs: replaced, not written through
 
 
 def trim_loctable(src, dst):
@@ -119,7 +154,7 @@ def selection(minimal):
                 rel = 'Applications/' + rel[len(sel.STAGED_APPS):]
             elif rel.startswith('private/var/'):
                 continue
-            if sel.wanted_file(rel, os.path.getsize(full)):
+            if sel.wanted_file(rel, os.path.getsize(full)) or rel in KEPT_FILES:
                 chosen.append((rel, full))
     for sub, prefix, skip in (('os', 'System/Cryptexes/OS/', ('System/Library/Caches/com.apple.dyld/', 'System/DriverKit/')),
                               ('app', 'System/Cryptexes/App/', ())):
@@ -165,6 +200,26 @@ def place(item):
         return 1
     shutil.copy2(src, dst)
     return 0
+
+
+def default_wallpaper():
+    """
+    The wallpaper iOS gives a new device, one it can draw here. DefaultWallpapers~iphone.plist names
+    7565 (collection "iOS 17"), whose files are for the iPhone 11's screen class (414w-896h@2x) only,
+    and pictures in HEIC; the display here is 375w-812h@3x, WallpaperKit finds "no compatible
+    wallpaper" and PosterBoard falls back to a Mercury poster, which draws with Metal: a black screen.
+    Stripe Blue (7390) is drawn by CoreAnimation layers for any screen class. (The file in WORK is a
+    hard link to the extracted rootfs: replaced, not written through.)
+    """
+    import plistlib
+
+    path = os.path.join(WORK, 'Library/Wallpaper/DefaultWallpapers~iphone.plist')
+    with open(path, 'rb') as f:
+        defaults = plistlib.load(f)
+    defaults['default'] = {'wallpaperIdentifier': 7390, 'collectionIdentifier': '2939274C-F444-4AA8-806E-6E3FAFBA79B1'}
+    os.remove(path)
+    with open(path, 'wb') as f:
+        plistlib.dump(defaults, f)
 
 
 def write_job_cache(jobs):
@@ -237,6 +292,10 @@ def main():
         write_job_cache(jobs)
     elif not os.path.lexists(ld):
         os.symlink('/redwood/LaunchDaemons', ld)
+    if not minimal:
+        default_wallpaper()
+    if PRUNE:
+        trim_emoji()
     for name in sorted(os.listdir(CACHE)):
         if name.endswith(('.symbols', '.atlas')):
             continue

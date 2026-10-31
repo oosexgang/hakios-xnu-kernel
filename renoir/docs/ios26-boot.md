@@ -72,3 +72,53 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
 9. **Activation and setup.** libredwood-sb answers SpringBoard's activation state and refuses the setup
    assistant, as on 16.5. inj26.sh moves those two hooks to their 23G90 addresses after the methods were
    read and found unchanged. The other SpringBoard hooks still carry 16.5 addresses and are left alone.
+
+## iOS 27
+
+State on 2026-10-31: iOS 27.2 (24B119, iPhone12,1 files) runs on the same kernel (there is no XNU source
+for iOS 27; patches 0013-0019 cover what its userland asks of a newer kernel). It shows the lock screen and
+the home screen with icons, the Stripe wallpaper, the dock and Search, all in software at full CPU speed.
+Not there yet: the lock screen's large clock, widget contents, Wi-Fi, sound.
+
+```
+renoir/kernel/build.sh                        # patches 0001-0019
+renoir/tools/pacstrip cache ios27/dyld-strip ios27/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+python3 renoir/tools/fips26.py ios27/dyld-strip \
+    AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
+    F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1
+BUILD=24B119 OBJ=renoir/userland/obj27 renoir/userland/inj26.sh
+IOS=ios27 OBJ=renoir/userland/obj27 renoir/userland/root26-ios.sh
+IOS=ios27 LAUNCHDAEMONS=ios27/jobs26 python3 renoir/tools/mkimage26.py --prune ios27/system27-prune.apfs
+python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF   # ios27 by default
+```
+
+(The two FIPS values come from the first boot's log: "In variable" and "MAC generated".)
+
+What stood between iOS 27 and its home screen, in order:
+
+1. **4 GiB - 1.** fastboot sends a download's size in eight hex digits; iOS 27's image was 4.59 GB.
+   mkimage26 `--prune` leaves out what cannot work here (RAW camera networks, Metal portrait filters, the
+   camera ISP's firmware, DriverKit drivers, resources of frameworks for Apple Intelligence, camera effects,
+   iWork previews) and trims the emoji font as 16.5 did: 4.20 GB.
+2. **The shared region** (0013). The cache ends at 0x30794C000 and slides by up to 512 MiB, past the
+   kernel's 6 GiB; dyld could not map it ("Library not loaded: libSystem"). 7 GiB now.
+3. **`security.mac.lockdown_mode_state_public`** (0014). libsystem's os_lockdown_mode_enabled() aborts
+   without it: launchd died at "Early boot complete". `trace_sysctl=1` (0015) logs every name asked for
+   that the kernel has not got.
+4. **posix_spawnattr** (0016). iOS 27's struct has 8 more bytes after `psa_sec_flags` (attr_size 0x100):
+   launchd's crash count became a kqworkloop limit and logd was killed at its second workloop.
+5. **Canonical paths** (0019). CoreServicesInternal drops from its URL property attributes what the root
+   volume's ATTR_VOL_ATTRIBUTES does not list; the kernel's default list lacked ATTR_CMN_FULLPATH, so no
+   bundle had a canonical path, LaunchServices registered no application and SpringBoard died of "Got nil
+   for _systemAppInfo". `trace_attr=name` (0017, 0018) logs getattrlist/fsgetpath of those processes.
+6. **linkd** needs `AppIntentSchemas.sqlite` (4.6 MB, over 16.5's size rule): mkimage26 KEPT_FILES.
+7. **The backlight** (libredwood-backlight, in SpringBoard). BacklightServices waits for the display driver
+   to confirm a display mode change and aborts SpringBoard after a watchdog; the library confirms it after
+   the ramp. The idle timer's timeouts are a day longer: the lock screen used to go dark seconds after the
+   interface first came up.
+8. **The wallpaper** (libredwood-poster, in PosterBoard). The first poster of a new device is Mercury,
+   drawn with Metal (black) on all but two product types; during the initial setup the library makes it
+   the WallpaperKit collections poster with the default wallpaper (Stripe), as on those two.
+9. **Speed.** `cpufreq=1`: without it all cores run at 300 MHz and the interface draws at under a frame a
+   second. The first boot's daemons (lsd, linkd, ScreenTimeAgent, assetsd: every boot is a first boot, /var
+   is in RAM) take a few minutes of CPU.

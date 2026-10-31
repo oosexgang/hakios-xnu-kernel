@@ -1,0 +1,53 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index f5bc1db..5c3c0d5 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -4554,6 +4554,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+ 			if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
+ 				goto bad;
+ 			}
++			/*
++			 * renoir: iOS 27's libsystem_kernel puts 8 bytes of new fields after psa_sec_flags
++			 * (a uint32_t at 0xac, a byte at 0xb0) and passes attr_size 0x100, not this kernel's
++			 * 0xf8. The fields after them sit 8 bytes further on: crash count and throttle timeout
++			 * at 0xb4, kqworkloop soft and hard limits at 0xbc, conclave memory limit at 0xc4
++			 * (posix_spawnattr_set_crash_count_np / _set_kqworklooplimit_ext /
++			 * _set_conclavememlimit_ext of 24B119). Read as this kernel's layout, launchd's crash
++			 * count became a kqworkloop limit and logd was killed at its second workloop, over and
++			 * over. The two new fields mean nothing to this kernel and are not kept.
++			 */
++			if (px_args.attr_size == PSA_IOS27_SIZE && IS_64BIT_PROCESS(p)) {
++				uint32_t tail[5];
++
++				if ((error = copyin(px_args.attrp + PSA_IOS27_TAIL, tail, sizeof(tail))) != 0) {
++					goto bad;
++				}
++				px_sa.psa_crash_count = tail[0];
++				px_sa.psa_throttle_timeout = tail[1];
++				px_sa.psa_kqworkloop_soft_limit = tail[2];
++				px_sa.psa_kqworkloop_hard_limit = tail[3];
++				px_sa.psa_conclave_mem_limit = tail[4];
++			}
+ 
+ 			imgp->ip_px_sa = &px_sa;
+ 		}
+diff --git a/bsd/sys/spawn_internal.h b/bsd/sys/spawn_internal.h
+index 4586f29..1e5f579 100644
+--- a/bsd/sys/spawn_internal.h
++++ b/bsd/sys/spawn_internal.h
+@@ -275,6 +275,15 @@ typedef struct _posix_spawnattr {
+ 	char                                *psa_conclave_id;         /* conclave string */
+ } *_posix_spawnattr_t;
+ 
++/*
++ * renoir: iOS 27's struct _posix_spawnattr (attr_size 0x100): the same as this one up to psa_sec_flags,
++ * then 8 bytes of fields this kernel has not got; psa_crash_count, psa_throttle_timeout,
++ * psa_kqworkloop_soft_limit, psa_kqworkloop_hard_limit and psa_conclave_mem_limit follow from 0xb4.
++ * posix_spawn() reads them from there (bsd/kern/kern_exec.c).
++ */
++#define PSA_IOS27_SIZE  0x100
++#define PSA_IOS27_TAIL  0xb4
++
+ /*
+  * Task Sec flags, psa_sec_flags
+  */
