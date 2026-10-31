@@ -2354,6 +2354,54 @@ RenderPass clearPass(const Texture* t, double r, double g, double b, double a) {
 }
 }  // namespace
 
+// a copy turned by a quarter: RB_2D_BLIT_CNTL and GRAS_2D_BLIT_CNTL carry the a6xx_rotation in bits 0..2, the
+// destination is the source's sides swapped, and a destination of the source's own size (a scale, turned) is refused
+TEST(a_turned_copy_sets_the_2d_rotation_and_takes_the_sides_swapped) {
+    using namespace a6xx;
+    Rig r;
+    std::string why;
+    TextureDesc a, b;
+    a.format = b.format = PixelFormat::kBGRA8Unorm;
+    a.width = 64;
+    a.height = 32;
+    b.width = 32;
+    b.height = 64;
+    a.usage = b.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+    std::shared_ptr<Texture> src = Texture::make(*r.gpu, a, &why);
+    std::shared_ptr<Texture> dst = Texture::make(*r.gpu, b, &why);
+    std::shared_ptr<Texture> same = Texture::make(*r.gpu, a, &why);
+    CHECK(src != nullptr && dst != nullptr && same != nullptr);
+    if (src == nullptr || dst == nullptr || same == nullptr) return;
+    auto table = newBuffer(*r.gpu, render::kTableBytes, &why);
+    auto lastReg = [](const pm4::Stream& st, uint32_t reg) {
+        uint32_t v = 0xdeadbeef;
+        const auto& w = st.words();
+        for (size_t i = 0; i < w.size();) {
+            pm4::Header h = pm4::decode(w[i]);
+            if (h.kind == pm4::Header::kRegisters && reg >= h.reg && reg < h.reg + h.count) v = w[i + 1 + (reg - h.reg)];
+            i += 1 + h.count;
+        }
+        return v;
+    };
+    for (uint32_t rot : {1u, 3u}) {
+        render::Options o;
+        o.rotate2d = rot;
+        pm4::Stream st;
+        CHECK(render::encodeBlit(st, *src, 0, render::BlitRect{0, 0, 64, 32}, *dst, 0, render::BlitRect{0, 0, 32, 64}, false, table->gpuAddress(),
+                                 static_cast<uint8_t*>(table->contents()), &why, o));
+        CHECK_EQ(lastReg(st, REG_A6XX_RB_2D_BLIT_CNTL) & 7u, rot);
+        CHECK_EQ(lastReg(st, REG_A6XX_GRAS_2D_BLIT_CNTL) & 7u, rot);
+        CHECK_EQ(lastReg(st, REG_A6XX_GRAS_2D_DST_BR), (63u << 16) | 31u);
+        pm4::Stream bad;
+        CHECK(!render::encodeBlit(bad, *src, 0, render::BlitRect{0, 0, 64, 32}, *same, 0, render::BlitRect{0, 0, 64, 32}, false, table->gpuAddress(),
+                                  static_cast<uint8_t*>(table->contents()), &why, o));
+    }
+    pm4::Stream plain;
+    CHECK(render::encodeBlit(plain, *src, 0, render::BlitRect{0, 0, 64, 32}, *same, 0, render::BlitRect{0, 0, 64, 32}, false, table->gpuAddress(),
+                             static_cast<uint8_t*>(table->contents()), &why, render::Options{}));
+    CHECK_EQ(lastReg(plain, REG_A6XX_RB_2D_BLIT_CNTL) & 7u, 0u);
+}
+
 TEST(a_clear_fills_the_target_through_the_2d_engine_before_the_draw) {
     using namespace a6xx;
     Rig r;

@@ -4274,6 +4274,69 @@ int main(int argc, char** argv) {
                     }
                 report(completed(*cb3) && copied == 128 && outside == 4096 - 128, "mip, a copy of 16 x 8 at (8, 4) into another texture at (0, 0): " + std::to_string(copied) +
                                                                                      " of 128 texels the source's, " + std::to_string(outside) + " of 3968 outside still canary" + status(*cb3, gpu));
+                // (3r) the 2D engine's rotations, measured: a 64 x 32 texture of words unique to each texel copied with
+                // RB_2D_BLIT_CNTL.ROTATE 1, 2 and 3 (a quarter turn into 32 x 64), and the result matched against every
+                // turn and flip a copy could be -- the one all texels agree with is what that ROTATE does. Nothing in
+                // Mesa uses the quarter turns, so this is the only statement of them; the plug-in's rotated framebuffer
+                // (a landscape CoreAnimation over the portrait display) is built on it.
+                {
+                    const uint32_t W = 64, H = 32;
+                    TextureDesc rd;
+                    rd.format = PixelFormat::kRGBA8Unorm;
+                    rd.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                    rd.width = W;
+                    rd.height = H;
+                    std::string rwhy;
+                    auto rsrc = Texture::make(gpu, rd, &rwhy);
+                    auto rsame = Texture::make(gpu, rd, &rwhy);
+                    rd.width = H;
+                    rd.height = W;
+                    auto rturn = Texture::make(gpu, rd, &rwhy);
+                    std::vector<uint32_t> words(W * H);
+                    for (uint32_t y = 0; y < H; y++)
+                        for (uint32_t x = 0; x < W; x++) words[y * W + x] = 0xff000000u | (y << 8) | x | 0x00a50000u;
+                    if (rsrc && rsame && rturn) rsrc->replace(0, 0, 0, W, H, words.data(), W * 4, &rwhy);
+                    auto at = [&](uint32_t x, uint32_t y) { return words[y * W + x]; };
+                    for (uint32_t rot = 1; rot <= 3 && rsrc && rsame && rturn; rot++) {
+                        const bool quarter = rot != 2;
+                        Texture& dst = quarter ? *rturn : *rsame;
+                        const uint32_t dw = quarter ? H : W, dh = quarter ? W : H;
+                        fillBo(dst, canary);
+                        render::Options ro;
+                        ro.rotate2d = rot;
+                        auto rcb = queue->commandBuffer();
+                        const bool encoded = rcb->blit(*rsrc, 0, render::BlitRect{0, 0, W, H}, dst, 0, render::BlitRect{0, 0, dw, dh}, false, ro);
+                        if (encoded) {
+                            rcb->commit();
+                            rcb->waitUntilCompleted();
+                        }
+                        std::vector<uint32_t> got(dw * dh);
+                        dst.read(0, 0, 0, dw, dh, got.data(), dw * 4, &rwhy);
+                        struct Cand { const char* name; std::function<uint32_t(uint32_t, uint32_t)> f; };
+                        const std::vector<Cand> cands = quarter
+                            ? std::vector<Cand>{{"clockwise: dst(i, j) = src(j, H-1-i)", [&](uint32_t i, uint32_t j) { return at(j, H - 1 - i); }},
+                                                {"anticlockwise: dst(i, j) = src(W-1-j, i)", [&](uint32_t i, uint32_t j) { return at(W - 1 - j, i); }},
+                                                {"transpose: dst(i, j) = src(j, i)", [&](uint32_t i, uint32_t j) { return at(j, i); }},
+                                                {"antitranspose: dst(i, j) = src(W-1-j, H-1-i)", [&](uint32_t i, uint32_t j) { return at(W - 1 - j, H - 1 - i); }}}
+                            : std::vector<Cand>{{"half turn: dst(i, j) = src(W-1-i, H-1-j)", [&](uint32_t i, uint32_t j) { return at(W - 1 - i, H - 1 - j); }},
+                                                {"identity", [&](uint32_t i, uint32_t j) { return at(i, j); }},
+                                                {"hflip: dst(i, j) = src(W-1-i, j)", [&](uint32_t i, uint32_t j) { return at(W - 1 - i, j); }},
+                                                {"vflip: dst(i, j) = src(i, H-1-j)", [&](uint32_t i, uint32_t j) { return at(i, H - 1 - j); }}};
+                        std::string counts, match = "none";
+                        bool first = true;
+                        for (const Cand& c : cands) {
+                            uint32_t n = 0;
+                            for (uint32_t j = 0; j < dh; j++)
+                                for (uint32_t i = 0; i < dw; i++) n += got[j * dw + i] == c.f(i, j);
+                            counts += (first ? "" : ", ") + std::to_string(n);
+                            first = false;
+                            if (n == dw * dh) match = c.name;
+                        }
+                        report(encoded && completed(*rcb) && match != "none",
+                               "2D rotation " + std::to_string(rot) + " of a 64 x 32 texture: " + match + " (texels agreeing with each candidate: " + counts +
+                                   " of " + std::to_string(dw * dh) + ")" + status(*rcb, gpu));
+                    }
+                }
                 // (4) generateMipmaps over a checkerboard
                 for (uint32_t y = 0; y < 64; y++)
                     for (uint32_t x = 0; x < 64; x++) rows[y * 64 + x] = (x + y) % 2 ? 0x60606060u : 0x20202020u;

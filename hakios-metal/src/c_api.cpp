@@ -657,6 +657,19 @@ int hakios_metal_cb_blit(hakios_metal_cb* cb, hakios_metal_texture* from, unsign
     return 0;
 }
 
+int hakios_metal_cb_blit_rotated(hakios_metal_cb* cb, hakios_metal_texture* from, hakios_metal_texture* to, unsigned rotation) {
+    render::Options o;
+    o.rotate2d = rotation;
+    const Texture &f = *from->texture, &t = *to->texture;
+    if (!cb->cb->blit(f, 0, render::BlitRect{0, 0, f.width(), f.height()}, t, 0, render::BlitRect{0, 0, t.width(), t.height()}, false, o)) {
+        failed(cb->cb->error());
+        return -1;
+    }
+    cb->cb->keepAlive(from->texture);
+    cb->cb->keepAlive(to->texture);
+    return 0;
+}
+
 int hakios_metal_cb_generate_mipmaps(hakios_metal_cb* cb, hakios_metal_texture* t) {
     if (!cb->cb->generateMipmaps(*t->texture)) {
         failed(cb->cb->error());

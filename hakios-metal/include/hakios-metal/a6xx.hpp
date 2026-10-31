@@ -4241,6 +4241,7 @@ enum a6xx_2d_ifmt : uint32_t {
 
 // RB_2D_BLIT_CNTL and GRAS_2D_BLIT_CNTL take the same word (r2d_setup_common writes one value to both)
 inline constexpr uint32_t REG_A6XX_RB_2D_BLIT_CNTL = 0x8c00;                                // a6xx.xml.h:6555
+inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_ROTATE__MASK = 0x00000007;                   // a6xx.xml: a6xx_rotation, bits 0..2
 inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_SOLID_COLOR = 128;                           // a6xx.xml.h:6569
 inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__MASK = 0x0000ff00;             // a6xx.xml.h:6570
 inline constexpr uint32_t A6XX_RB_2D_BLIT_CNTL_COLOR_FORMAT__SHIFT = 8;                     // a6xx.xml.h:6571

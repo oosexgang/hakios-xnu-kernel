@@ -431,6 +431,10 @@ int hakios_metal_cb_fill(hakios_metal_cb *cb, hakios_metal_buffer *buffer, uint6
 int hakios_metal_cb_blit(hakios_metal_cb *cb, hakios_metal_texture *from, unsigned from_level, unsigned sx, unsigned sy,
     unsigned sw, unsigned sh, hakios_metal_texture *to, unsigned to_level, unsigned dx, unsigned dy, unsigned dw,
     unsigned dh, int linear);
+/* FROM's level 0 into TO's level 0 turned by the 2D engine (a6xx_rotation ROTATION: 1 and 3 quarter turns, which take
+ * a TO of FROM's sides swapped, 2 a half turn, 4 and 5 the flips): one pixel format, copied pixel for pixel. A
+ * framebuffer CoreAnimation renders landscape over the portrait display surface goes into it so. -1 with the reason. */
+int hakios_metal_cb_blit_rotated(hakios_metal_cb *cb, hakios_metal_texture *from, hakios_metal_texture *to, unsigned rotation);
 /* -generateMipmapsForTexture: */
 int hakios_metal_cb_generate_mipmaps(hakios_metal_cb *cb, hakios_metal_texture *texture);
 /* KERNEL over GROUPS threadgroups of THREADS threads each (MTLComputeCommandEncoder's dispatchThreadgroups:

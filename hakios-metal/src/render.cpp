@@ -2075,7 +2075,18 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
         return refuse(why, "a copy of " + n(s.w) + " x " + n(s.h) + " at (" + n(s.x) + ", " + n(s.y) + ") of a " + n(SL.width) + " x " + n(SL.height) + " level into " +
                                n(d.w) + " x " + n(d.h) + " at (" + n(d.x) + ", " + n(d.y) + ") of a " + n(DL.width) + " x " + n(DL.height) + " one: a rectangle outside its level or empty");
     }
-    const bool scaled = s.w != d.w || s.h != d.h;
+    // a quarter turn (ROTATE_90, ROTATE_270) lays a W x H rectangle down as H x W: that is the copy's own size, not a
+    // scale, and the engine is asked for nothing it has not been measured doing (the probe's rotations), so it is copied
+    // pixel for pixel or refused
+    if (o.rotate2d > 5) {
+        return refuse(why, "a copy turned by rotation " + n(o.rotate2d) + ": a6xx_rotation has 0 to 5");
+    }
+    const bool quarter = o.rotate2d == 1 || o.rotate2d == 3;
+    const bool scaled = quarter ? (s.w != d.h || s.h != d.w) : (s.w != d.w || s.h != d.h);
+    if (o.rotate2d != 0 && (scaled || linear || src.samples() != 1)) {
+        return refuse(why, "a turned copy that scales, filters or resolves: " + n(s.w) + " x " + n(s.h) + " into " + n(d.w) + " x " + n(d.h) +
+                               " by rotation " + n(o.rotate2d) + " is copied pixel for pixel or not at all");
+    }
     // A multisample source is a resolve (turnip's resolve_sysmem through r2d): the engine reads its SAMPLES samples a
     // pixel and, for a float or unorm format, averages them (fdl6_view_init's samples_average); an integer one takes
     // sample 0, as Metal's resolve of an integer attachment does. Nothing is written into a multisample texture here.
@@ -2107,7 +2118,7 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (srgb) ifmt = R2D_UNORM8_SRGB;
     tableStart(tableCpu);
     passStart(stream, DL.width, DL.height, table, o);
-    const uint32_t blit = rb2dBlitCntlCopy(colorFmt(df), ifmt);
+    const uint32_t blit = rb2dBlitCntlCopy(colorFmt(df), ifmt) | (o.rotate2d & A6XX_RB_2D_BLIT_CNTL_ROTATE__MASK);
     reg(stream, REG_A6XX_RB_2D_UNKNOWN_8C01, 0);
     reg(stream, REG_A6XX_RB_2D_BLIT_CNTL, blit);
     reg(stream, REG_A6XX_GRAS_2D_BLIT_CNTL, blit);
