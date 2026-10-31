@@ -19,6 +19,8 @@ if [ -n "$GPU" ]; then
 		clang++ -std=c++17 -O1 -g -fsanitize=address -Wall -Wextra -Werror -Iinclude -c "$f" -o "$tmp/$(basename "$f" .cpp).o"
 	done
 	gpu="-DHAKIOS_METAL_GPU -Iinclude $tmp/*.o -lc++"
+	# with the core's fake GPU (HakiosMetal.m's gpu()): command buffers and blits are tried too
+	export HAKIOS_METAL_FAKE=1
 fi
 clang -O1 -g -fsanitize=address -Wall -Wno-unused-parameter -Iplugin -framework Foundation -framework Metal -lobjc \
 	plugin/tests/metal_plugin_test.m plugin/HakiosMetal.m plugin/hakios_metallib.c $gpu -o "$tmp/metal_test"

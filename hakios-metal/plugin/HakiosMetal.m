@@ -126,7 +126,13 @@ gpu(void)
 	static dispatch_once_t once;
 
 	dispatch_once(&once, ^{
+#if !TARGET_OS_IPHONE
+		/* on a Mac, HAKIOS_METAL_FAKE=1: the core's fake GPU, which runs the command streams it is given, so that command
+		 * buffers and blits are tried there too (plugin/tests/metal-plugin-test.sh, GPU=1) */
+		gGPU = getenv("HAKIOS_METAL_FAKE") != NULL ? hakios_metal_open_fake() : hakios_metal_open();
+#else
 		gGPU = hakios_metal_open();
+#endif
 		say(gGPU != NULL ? [NSString stringWithFormat:@"the GPU: Adreno %#llx, through hakios-metal", hakios_metal_gpu_id(gGPU)]
 		                 : [NSString stringWithFormat:@"no GPU (%s): buffers in plain memory, no command buffers", hakios_metal_error()]);
 	});
@@ -364,6 +370,36 @@ deallocWith(id self, SEL _cmd, Class cls, void (*free_state)(void *))
 		*slot = NULL;
 	}
 	((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&sup, _cmd);
+}
+
+/*
+ * -dealloc of the queue (and of what is made like it): the state freed by FREE (NULL: none), then NSObject's own, not Metal's.
+ * The queue is made with -init, not with Metal's initializer (-initWithDevice:), and _MTLCommandQueue's -dealloc lets go of what
+ * that makes: its dispatch queue, NULL here. dispatch_release(NULL) faulted on the phone as metal_test's blits ended, and does
+ * in plugin/tests/metal_plugin_test.m on a Mac (GPU=1).
+ */
+static void
+deallocPlain(id self, SEL _cmd, void (*free_state)(void *))
+{
+	void **slot = stateOf(self);
+	struct objc_super sup = { self, objc_getClass("NSObject") };
+
+	if (free_state != NULL && slot != NULL && *slot != NULL) {
+		free_state(*slot);
+		*slot = NULL;
+	}
+	((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&sup, _cmd);
+}
+
+static void
+queueDealloc(id self, SEL _cmd)
+{
+#ifdef HAKIOS_METAL_GPU
+	/* (no command buffer is in flight: each holds its queue) */
+	deallocPlain(self, _cmd, (void (*)(void *))hakios_metal_queue_free);
+#else
+	deallocPlain(self, _cmd, NULL);
+#endif
 }
 
 static id
@@ -1118,13 +1154,6 @@ slotState(id self)
 }
 
 static void
-queueDealloc(id self, SEL _cmd)
-{
-	/* (no command buffer is in flight: each holds its queue) */
-	deallocWith(self, _cmd, gQueueClass, (void (*)(void *))hakios_metal_queue_free);
-}
-
-static void
 commandBufferFree(void *state)
 {
 	struct commandbuffer *c = state;
@@ -1458,9 +1487,9 @@ registerQueueClass(void)
 	class_addMethod(gQueueClass, sel_registerName("setGPUPriority:"), (IMP)queueSetGPUPriority, "v@:Q");
 	class_addMethod(gQueueClass, sel_registerName("methodSignatureForSelector:"), (IMP)deviceSignature, "@@::");
 	class_addMethod(gQueueClass, sel_registerName("forwardInvocation:"), (IMP)deviceForward, "v@:@");
+	class_addMethod(gQueueClass, sel_registerName("dealloc"), (IMP)queueDealloc, "v@:");
 #ifdef HAKIOS_METAL_GPU
 	class_addIvar(gQueueClass, "_hakios", sizeof(void *), sizeof(void *) == 8 ? 3 : 2, "^v");
-	class_addMethod(gQueueClass, sel_registerName("dealloc"), (IMP)queueDealloc, "v@:");
 	class_addMethod(gQueueClass, sel_registerName("commandBuffer"), (IMP)queueCommandBuffer, "@@:");
 	class_addMethod(gQueueClass, sel_registerName("commandBufferWithUnretainedReferences"), (IMP)queueCommandBuffer, "@@:");
 #endif

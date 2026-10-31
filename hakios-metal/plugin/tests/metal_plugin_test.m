@@ -138,6 +138,48 @@ main(int argc, char **argv)
 			[universal release];
 			[plain release];
 		}
+		/* the queue: without a GPU it makes no command buffers; with one (GPU=1: the core's fake one) command buffers and blits,
+		 * as metal_test asks for them on the phone -- and every object let go of afterwards, which is where the phone's faulted */
+		id<MTLCommandQueue> queue = [device newCommandQueue];
+		check("newCommandQueue: a queue, conforming to MTLCommandQueue", queue != nil && [(id)queue conformsToProtocol:@protocol(MTLCommandQueue)]);
+		if (getenv("HAKIOS_METAL_FAKE") == NULL) {
+			@autoreleasepool {
+				check("without a GPU the queue makes no command buffers: nil", [queue commandBuffer] == nil);
+			}
+		} else if (queue != nil) {
+			const NSUInteger n = 1 << 20;
+			id<MTLBuffer> a = [device newBufferWithLength:n options:MTLResourceStorageModeShared];
+			id<MTLBuffer> c = [device newBufferWithLength:n options:MTLResourceStorageModeShared];
+			__block int handled = 0;
+
+			@autoreleasepool {
+				id<MTLCommandBuffer> cb = [queue commandBuffer];
+				check("a command buffer from the GPU's queue", cb != nil && [cb commandQueue] == queue);
+				uint32_t *pa = [a contents];
+				for (NSUInteger i = 0; i < n / 4; i++) {
+					pa[i] = (uint32_t)(i * 2654435761u);
+				}
+				id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+				[blit copyFromBuffer:a sourceOffset:4096 toBuffer:c destinationOffset:8192 size:500000];
+				[blit fillBuffer:c range:NSMakeRange(600000, 4096) value:0xa5];
+				[blit endEncoding];
+				[cb addCompletedHandler:^(id<MTLCommandBuffer> done) { handled = [done status] == MTLCommandBufferStatusCompleted ? 1 : -1; }];
+				[cb commit];
+				[cb waitUntilCompleted];
+				uint8_t *pc = [c contents];
+				BOOL filled = YES;
+				for (NSUInteger i = 600000; i < 604096; i++) {
+					filled = filled && pc[i] == 0xa5;
+				}
+				check("blits: completed, the handler ran, the copy and the fill are right and nothing else changed",
+				    [cb status] == MTLCommandBufferStatusCompleted && handled == 1 &&
+				    memcmp(pc + 8192, (uint8_t *)pa + 4096, 500000) == 0 && filled && pc[8191] == 0 && pc[8192 + 500000] == 0);
+			}
+			[a release];
+			[c release];
+		}
+		[queue release];
+		check("the queue (and its command buffer, encoder and buffers) let go of: no fault", YES);
 		[device release];
 	}
 	printf("metal_plugin_test: %s\n", failures ? "FAILED" : "all passed");
