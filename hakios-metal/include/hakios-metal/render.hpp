@@ -445,10 +445,9 @@ struct Options {
     bool visCullUse = false;     // CP_DRAW_INDX_OFFSET with USE_VISIBILITY (turnip's and fd6's pipelines) instead of r3d's IGNORE_VISIBILITY
     bool tailCcuFlush = true;    // CP_WAIT_FOR_IDLE, PC_CCU_FLUSH_COLOR_TS writing a value + CP_WAIT_REG_MEM for it
     bool fbReadBarrier = true;   // before a draw whose FS reads its target: the CCU flush waited for, CACHE_INVALIDATE (off: the probe's control)
-    bool fbReadOrdered = false;  // ...or instead the rasterizer's own ordering (GRAS_SC_CNTL.SINGLE_PRIM_MODE) and no barrier, as
-                                 // turnip's rasterization_order_attachment_access: the probe's fetches come out right so, but
-                                 // SpringBoard's did not (a widget's text cut by a band, the App Library's blur in blocks;
-                                 // clean again with the barrier, which cost 20 fetching draws 131 us against 113)
+    bool fbReadOrdered = true;   // ...in GMEM the rasterizer's own ordering (GRAS_SC_CNTL.SINGLE_PRIM_MODE) instead, the barrier
+                                 // kept for the first fetching draw after one that is not (fd6_draw.cc's rule); off: the
+                                 // barrier before every fetching draw there too
     bool tailDepthFlush = true;  // with a depth attachment: PC_CCU_FLUSH_DEPTH_TS writing a value + the wait for it
     bool tailLrzFlush = true;    // LRZ_FLUSH, 1 word
     bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail
@@ -497,6 +496,8 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]);
 // the pixels a draw can touch, X0 Y0 X1 Y1 inclusive: its viewport clamped to the window, within its scissor (both as
 // encodeInPass writes them); false for a draw it would refuse for them
 bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]);
+// what CommandQueue::preferGmem knows a pass by: its window and its attachments' formats, hashed, never 0
+uint64_t tuneKeyOf(const RenderPass& pass);
 // the colour attachments a draw of PROGRAM writes into, as a mask: a slot the stage writes, with an attachment, and a
 // write mask that lets something through
 uint32_t drawnAttachments(const Program& program, const RenderPass& pass);
@@ -533,10 +534,12 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why,
                  const Options& options = Options{});
 // (GMEM: the pass's plan when it is drawn in tiles -- the attachments' bins in RB_MRT's BASE_GMEM, a framebuffer fetch
-// reading its bin in GMEM with no barrier before it; nullptr in sysmem)
+// reading its bin in GMEM; nullptr in sysmem. AFTER_FETCH: the draw before it in the pass read its attachments too, so
+// in raster order a fetch needs no barrier)
 bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw,
                   const Bindings& vsBindings, const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram,
-                  uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{}, const GmemPlan* gmem = nullptr);
+                  uint64_t table, uint8_t* tableCpu, std::string* why, const Options& options = Options{}, const GmemPlan* gmem = nullptr,
+                  bool afterFetch = false);
 void encodeEnd(pm4::Stream& stream, const RenderPass& pass, uint64_t table, const Options& options = Options{});
 
 // A pass with no draw: the batch start, the pass begin, the Clear's fill, the tail. What -[MTLRenderCommandEncoder

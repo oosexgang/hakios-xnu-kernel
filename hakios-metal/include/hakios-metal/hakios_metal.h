@@ -452,6 +452,8 @@ void hakios_metal_cb_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *dra
 void hakios_metal_cb_set_gmem(hakios_metal_cb *cb, int on);
 /* GMEM's refinements turned off (CommandBuffer::setGmemOff's bits: 1 whole area, 2 every attachment, 4 fetch barrier) */
 void hakios_metal_cb_set_gmem_off(hakios_metal_cb *cb, unsigned bits);
+/* GMEM or sysmem for each of CB's passes by what such passes cost the queue before (CommandBuffer::setGmemTuned) */
+void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb *cb, int on);
 /* each draw of CB's sysmem passes timed alone (CommandBuffer::setProfileDraws, before anything is recorded) and, once it
  * has completed, draw I's program name (valid while CB lives) and microseconds; the count is returned, -1 past them */
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb *cb, int on);

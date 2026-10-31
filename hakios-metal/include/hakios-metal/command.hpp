@@ -133,7 +133,7 @@ public:
     // what each costs, beside what it was (a draw pass with its target's size and its draws, a copy, a clear, a
     // dispatch). Read once the buffer has completed. metal_fps names a frame's slowest passes with it.
     enum PassKind : uint32_t { kPassDraw = 0, kPassCopy = 1, kPassClear = 2, kPassDispatch = 3 };
-    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; };   // tiles 0: in sysmem
+    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; uint64_t tuneKey = 0; };   // tiles 0: in sysmem; tuneKey: CommandQueue::preferGmem's
     static constexpr uint32_t kMaxProfiled = 64;
     void setProfile(bool on) { profile_ = on; }
     // ...and each draw of a sysmem pass on its own, the first kMaxProfiledDraws: a wait for idle before it and after it,
@@ -149,6 +149,9 @@ public:
     // kGmemEveryAttachment loads and stores every attachment, kGmemFetchBarrier orders a fetch by the barrier
     enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4 };
     void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
+    // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
+    // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for
+    void setGmemTuned(bool on) { tuning_ = on; }
     // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
     const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
@@ -162,6 +165,7 @@ private:
     bool skipRefused_ = false;
     Counts counts_;
     bool profile_ = false;
+    bool tuning_ = false;     // setGmemTuned's (cleared by a failed stamp buffer too)
     bool profileDraws_ = false;
     std::vector<DrawTime> drawsProfiled_;
     std::shared_ptr<Buffer> drawStamps_;
@@ -200,6 +204,7 @@ private:
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
         uint32_t written = 0, read = 0;
+        bool lastFetched = false;   // the last draw read its attachments (render::encodeInPass's AFTER_FETCH for the next)
     };
     void closePass();
     void useAttachments(const RenderPass& pass);
@@ -265,6 +270,14 @@ public:
     // kept as long as the queue: a draw recorded against it may still be in flight. The buffer and *OUT its layout;
     // nullptr with *why.
     std::shared_ptr<Buffer> privateMemory(uint32_t bytes, bool perWave, PrivateMemory* out, std::string* why);
+    // GMEM or sysmem for a pass into the target at KEY (its memory's address), by what the GPU spent on such passes:
+    // each mode's time kept as a running average from the passes' own counter stamps (tuned), the cheaper one taken,
+    // the other tried again now and then, an untried one tried first -- turnip's autotune, by time instead of samples.
+    // GMEM is no gain for a pass that touches a corner of the screen (its tiles load and store the whole target: 23
+    // draws of CoreAnimation took 5 ms so, 0.1 ms in sysmem), nor for one of framebuffer fetches (the texture unit
+    // reads GMEM at a quarter of the rate it reads memory: probe "full-screen cost").
+    bool preferGmem(uint64_t key);
+    void tuned(uint64_t key, bool gmem, double us);
 
 
 private:
@@ -280,6 +293,8 @@ private:
     uint32_t privatePerFiber_[2] = {0, 0};
     uint32_t id_;
     std::mutex lock_;
+    struct Tune { double us[2] = {0, 0}; uint32_t runs[2] = {0, 0}; uint32_t passes = 0; };
+    std::unordered_map<uint64_t, Tune> tune_;   // (under lock_) preferGmem's, by target
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
     std::vector<std::unique_ptr<Bo>> idle_;

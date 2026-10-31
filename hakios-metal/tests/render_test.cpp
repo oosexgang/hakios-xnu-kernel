@@ -3972,13 +3972,14 @@ TEST(draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_
     auto t = target(r);
     RenderPass pass;
     pass.color0 = t.get();
-    // forty draws recorded: a buffer from the kernel for each table and program was 120 of them
+    // forty draws recorded: a buffer from the kernel for each table and program was 120 of them (and one more for the
+    // passes' counter stamps, which CommandQueue::preferGmem reads)
     auto cb = r.queue->commandBuffer();
     const uint32_t before = r.fake->liveBuffers();
     for (int i = 0; i < 40; i++) CHECK(cb->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
     const uint32_t asked = r.fake->liveBuffers() - before;
-    CHECK(asked >= 1 && asked <= 2);
-    if (asked > 2) std::printf("       %u buffers for 40 draws\n", asked);
+    CHECK(asked >= 1 && asked <= 3);
+    if (asked > 3) std::printf("       %u buffers for 40 draws\n", asked);
     cb->commit();
     cb->waitUntilCompleted();
     CHECK(cb->status() == CommandBuffer::kCompleted);
@@ -4165,17 +4166,41 @@ TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_bef
     RenderPass pass;
     pass.color0 = t.get();
     {
+        // In sysmem a fetch is never left to the rasterizer's ordering (FLUSH_PER_OVERLAP_AND_OVERWRITE flushes at every
+        // overlap): the barrier, NO_FLUSH. In a tile it is: FLUSH_PER_OVERLAP, and the texture caches dropped before the
+        // first fetching draw of a run alone (a CACHE_INVALIDATE before the draw; none for the one after it).
         render::Options ord;
         ord.fbReadOrdered = true;
         Encoded o(r, fb, pass, wholeDraw(6), ord);
         CHECK(o.ok);
-        CHECK_EQ((o.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK) >> A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__SHIFT,
-                 uint32_t(FLUSH_PER_OVERLAP_AND_OVERWRITE));
-        bool flushed = false;
-        for (size_t i = o.find(CP_EVENT_WRITE); i != size_t(-1); i = o.find(CP_EVENT_WRITE, i + 1)) {
-            flushed |= o.stream.words()[i + 2] == uint32_t(o.table->gpuAddress() + render::kTableFbReadFlushAt);
+        CHECK_EQ(o.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK, 0u);
+        auto invalidates = [&](const pm4::Stream& st) {
+            uint32_t n = 0;
+            for (size_t i = 0; i + 1 < st.words().size();) {
+                const pm4::Header h = pm4::decode(st.words()[i]);
+                n += h.kind == pm4::Header::kCommand && h.opcode == CP_EVENT_WRITE && (st.words()[i + 1] & CP_EVENT_WRITE_0_EVENT__MASK) == CACHE_INVALIDATE;
+                i += 1 + h.count;
+            }
+            return n;
+        };
+        render::GmemPlan plan;
+        CHECK(render::gmemPlan(pass, &plan, nullptr));
+        std::string owhy;
+        auto ot = newBuffer(*r.gpu, render::kTableBytes, &owhy);
+        pm4::Stream first, next;
+        CHECK(ot != nullptr && render::encodeInPass(first, fb, pass, wholeDraw(6), Bindings{}, Bindings{}, o.vsProgram->gpuAddress(), o.fsProgram->gpuAddress(),
+                                                    ot->gpuAddress(), static_cast<uint8_t*>(ot->contents()), &owhy, ord, &plan, false));
+        CHECK(ot != nullptr && render::encodeInPass(next, fb, pass, wholeDraw(6), Bindings{}, Bindings{}, o.vsProgram->gpuAddress(), o.fsProgram->gpuAddress(),
+                                                    ot->gpuAddress(), static_cast<uint8_t*>(ot->contents()), &owhy, ord, &plan, true));
+        CHECK(invalidates(first) == 1 && invalidates(next) == 0);
+        uint32_t sc = 0;
+        for (size_t i = 0; i < next.words().size();) {
+            const pm4::Header h = pm4::decode(next.words()[i]);
+            if (h.kind == pm4::Header::kRegisters)
+                for (uint32_t k = 0; k < h.count; k++) if (h.reg + k == REG_A6XX_GRAS_SC_CNTL) sc = next.words()[i + 1 + k];
+            i += 1 + h.count;
         }
-        CHECK(!flushed);
+        CHECK_EQ((sc & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK) >> A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__SHIFT, uint32_t(FLUSH_PER_OVERLAP));
         Encoded plain(r, flatProgram(), pass, wholeDraw(6));
         CHECK_EQ(plain.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK, 0u);
     }
@@ -5368,4 +5393,40 @@ TEST(a_fetch_in_a_corner_reads_bins_of_the_width_its_descriptor_has) {
     uint32_t gw[16] = {};
     if (gd.size() == 64) memcpy(gw, gd.data(), 64);
     CHECK_EQ((gw[2] & a6xx::A6XX_TEX_CONST_2_PITCH__MASK) >> a6xx::A6XX_TEX_CONST_2_PITCH__SHIFT, whole.binW * 4);
+}
+
+// GMEM or sysmem by what such passes cost: untried GMEM first, then sysmem, then the cheaper, the other again every
+// sixteenth pass. And a command buffer's completion feeds its passes' times in: after one GMEM pass into a target the
+// next is tried in sysmem.
+TEST(the_queue_picks_gmem_or_sysmem_by_what_each_cost_a_target) {
+    Rig r;
+    CHECK(r.queue->preferGmem(1));    // nothing known: GMEM tried
+    r.queue->tuned(1, true, 900);
+    CHECK(!r.queue->preferGmem(1));   // GMEM known, sysmem not: sysmem tried
+    r.queue->tuned(1, false, 100);
+    uint32_t gmem = 0;
+    for (int i = 0; i < 32; i++) gmem += r.queue->preferGmem(1);
+    CHECK_EQ(gmem, 2u);               // sysmem the cheaper: GMEM only on the sixteenth passes
+    r.queue->tuned(1, false, 5000);   // (sysmem grew dear: its average follows, GMEM taken)
+    r.queue->tuned(1, false, 5000);
+    gmem = 0;
+    for (int i = 0; i < 32; i++) gmem += r.queue->preferGmem(1);
+    CHECK_EQ(gmem, 30u);
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    auto cb = r.queue->commandBuffer();
+    cb->setGmemTuned(true);
+    CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    CHECK_EQ(cb->counts().gmemPasses, 1u);
+    CHECK(!r.queue->preferGmem(render::tuneKeyOf(a)));
+    // (untuned, the default: GMEM whatever the queue knows -- what a test asking for GMEM gets)
+    auto u = r.queue->commandBuffer();
+    CHECK(u->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+    u->commit();
+    u->waitUntilCompleted();
+    CHECK_EQ(u->counts().gmemPasses, 1u);
 }

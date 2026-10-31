@@ -168,7 +168,7 @@ void CommandBuffer::stamp(uint32_t slot) {
         std::string why;
         profileStamps_ = newBuffer(queue_.gpu(), 16 * kMaxProfiled, &why);
         if (profileStamps_ == nullptr) {
-            profile_ = false;
+            profile_ = tuning_ = false;
             return;
         }
         memset(profileStamps_->contents(), 0, 16 * kMaxProfiled);
@@ -181,14 +181,32 @@ void CommandBuffer::stamp(uint32_t slot) {
     use(*profileStamps_, true);
 }
 
+bool CommandQueue::preferGmem(uint64_t key) {
+    std::lock_guard<std::mutex> g(lock_);
+    Tune& t = tune_[key];
+    t.passes++;
+    if (t.runs[1] == 0) return true;
+    if (t.runs[0] == 0) return false;
+    const bool better = t.us[1] < t.us[0];
+    return t.passes % 16 == 0 ? !better : better;   // (the other mode again now and then: what a pass costs drifts)
+}
+
+void CommandQueue::tuned(uint64_t key, bool gmem, double us) {
+    if (!(us > 0)) return;
+    std::lock_guard<std::mutex> g(lock_);
+    Tune& t = tune_[key];
+    double& avg = t.us[gmem ? 1 : 0];
+    avg = t.runs[gmem ? 1 : 0]++ == 0 ? us : 0.75 * avg + 0.25 * us;
+}
+
 void CommandBuffer::stampStart(PassKind kind, uint32_t width, uint32_t height) {
-    if (!profile_ || profiled_.size() >= kMaxProfiled) return;
+    if (!(profile_ || tuning_) || profiled_.size() >= kMaxProfiled) return;
     profiled_.push_back(PassTime{kind, width, height, 0, 0, 0});
     stamp(uint32_t(2 * (profiled_.size() - 1)));
 }
 
 void CommandBuffer::stampEnd() {
-    if (!profile_ || profiled_.empty()) return;
+    if (!(profile_ || tuning_) || profiled_.empty()) return;
     stamp(uint32_t(2 * (profiled_.size() - 1) + 1));
 }
 
@@ -266,6 +284,11 @@ void CommandBuffer::waitUntilCompleted() {
 
 void CommandBuffer::finish(Status s) {
     status_ = s;
+    if (s == kCompleted && tuning_) {
+        for (const PassTime& t : passTimes()) {
+            if (t.tuneKey != 0) queue_.tuned(t.tuneKey, t.tiles != 0, t.us);
+        }
+    }
     for (auto& h : handlers_) {
         h(*this);
     }

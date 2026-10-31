@@ -4147,8 +4147,8 @@ int main(int argc, char** argv) {
             for (const FbKind& k : kinds) {
                 fillBo(*t, canary);
                 render::Options o;
-                o.fbReadOrdered = k.order == 0;
-                o.fbReadBarrier = k.order == 1;
+                o.fbReadOrdered = k.order == 0;   // (in sysmem the ordering is not used: the barrier, as order 1)
+                o.fbReadBarrier = k.order != 2;
                 o.gmem = k.gmem;
                 auto cb = queue->commandBuffer();
                 RenderPass rp;
@@ -4756,16 +4756,18 @@ int main(int argc, char** argv) {
                                    "GMEM: framebuffer fetch 4 times over a 1125x2436 BGRA8 pattern in " + std::to_string(fg) + " tiles: " + std::to_string(foff) +
                                        " pixels differ from sysmem; " + std::to_string(changed) + " changed from the pattern");
                         }
-                        // what a full-screen fetch costs: four tri_fb quads over the whole screen, sysmem with the barrier,
-                        // sysmem in raster order, GMEM in raster order
+                        // what a full-screen fetch costs, against a full-screen draw that reads nothing: four quads each,
+                        // by mode (sysmem, GMEM) and ordering (barrier, raster order)
                         {
                             const Program fbq{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
-                            std::string line = "full-screen fetch cost, 4 draws (us):";
+                            const Program flq{kernels::tri_flat_vs_air, kernels::tri_flat_fs_air, Linkage{}, "tri_flat"};
+                            std::string line = "full-screen cost, 4 draws (us):";
                             bool all = true;
-                            for (int m = 0; m < 3; m++) {
+                            for (int m = 0; m < 6; m++) {
                                 render::Options mo{};
-                                mo.gmem = m == 2;
-                                mo.fbReadOrdered = m != 0;
+                                mo.gmem = (m & 1) != 0;
+                                mo.fbReadOrdered = m >= 4;
+                                const bool fetch = m >= 2;
                                 double best = 1e30;
                                 for (int rep = 0; rep < 3; rep++) {
                                     auto c = queue->commandBuffer();
@@ -4773,7 +4775,7 @@ int main(int argc, char** argv) {
                                     RenderPass rp;
                                     rp.color0 = gt.get();
                                     bool ok = true;
-                                    for (int i = 0; i < 4 && ok; i++) ok = c->draw(fbq, rp, drawOf(0, 6, vps[0]), Bindings{}, Bindings{}, mo);
+                                    for (int i = 0; i < 4 && ok; i++) ok = c->draw(fetch ? fbq : flq, rp, drawOf(0, 6, vps[0]), Bindings{}, Bindings{}, mo);
                                     if (!ok) break;
                                     c->commit();
                                     c->waitUntilCompleted();
@@ -4781,7 +4783,8 @@ int main(int argc, char** argv) {
                                     best = std::min(best, gpuUs(*c));
                                 }
                                 all = all && best < 1e29;
-                                line += std::string(m == 0 ? " sysmem/barrier " : m == 1 ? " sysmem/ordered " : " gmem/ordered ") + std::to_string(int(best));
+                                line += std::string(" ") + (fetch ? "fetch" : "flat") + (mo.gmem ? "/gmem" : "/sysmem") + (fetch ? (mo.fbReadOrdered ? "/ordered " : "/barrier ") : " ") +
+                                        std::to_string(int(best));
                             }
                             report(all, line);
                         }

@@ -1207,7 +1207,7 @@ namespace {
 // the pass's table, which the batch start pointed the border colours at and the tail writes, is the pass's)
 bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
                 const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
-                const Options& o, bool whole, const GmemPlan* gmem = nullptr) {
+                const Options& o, bool whole, const GmemPlan* gmem = nullptr, bool afterFetch = false) {
     const Stage& vs = program.vs;
     // A [[color(n)]] the pass has no attachment n for is written nowhere: Metal leaves that pipeline slot's format Invalid
     // and discards the output (CoreAnimation's fixed_frag_lph_cpf writes three into passes of one). The stage is drawn
@@ -1546,12 +1546,20 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // In a tile the draws before it wrote GMEM, not memory, so there is nothing to flush; but the texture unit keeps
     // what it read of the bin before (a second fetch in a pass read the tile as it was loaded, probe 9u: 4096 of 4096),
     // so they are waited for and its caches dropped.
-    if (fs.fbRead && o.fbReadBarrier && !o.fbReadOrdered && gmem != nullptr) {
+    // In raster order the rasterizer orders a fetch after what the fetching draws before it wrote, but knows nothing of
+    // the draws before those (fd6_draw.cc: CoreAnimation's label shadow over icons, the first triangle of each quad read
+    // another tile): the first fetching draw after one that did not still gets the barrier. SpringBoard with the
+    // ordering alone showed a widget's text cut by a band and the App Library's blur in blocks.
+    // (in GMEM only: in sysmem the ordering bought nothing measurable over the barrier -- SpringBoard's heaviest passes
+    // took some 50 ms either way -- and the barrier is what SpringBoard was looked at with)
+    const bool ordered = fs.fbRead && o.fbReadOrdered && gmem != nullptr;
+    const bool barrier = fs.fbRead && o.fbReadBarrier && (!ordered || !afterFetch);
+    if (barrier && gmem != nullptr) {
         stream.waitForIdle();
         event(stream, CACHE_INVALIDATE);
         stream.waitForIdle();
     }
-    if (fs.fbRead && o.fbReadBarrier && !o.fbReadOrdered && gmem == nullptr) {
+    if (barrier && gmem == nullptr) {
         stream.waitForIdle();
         eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableFbReadFlushAt, kFbReadFlushValue, false);
         waitForWord(stream, table + kTableFbReadFlushAt, kFbReadFlushValue);
@@ -1913,10 +1921,8 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // a framebuffer fetch in raster order, as Metal's programmable blending reads: the rasterizer holds back a
         // fragment over one not yet written and flushes between them (turnip's rasterization_order_attachment_access,
         // tu_pipeline.cc:3351-3380 and 3955-3983: FLUSH_PER_OVERLAP_AND_OVERWRITE in sysmem, FLUSH_PER_OVERLAP in GMEM)
-        const bool ordered = fs.fbRead && o.fbReadOrdered;
         reg(stream, REG_A6XX_GRAS_SC_CNTL,
-            ordered ? A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(gmem != nullptr ? FLUSH_PER_OVERLAP : FLUSH_PER_OVERLAP_AND_OVERWRITE)
-                    : grasScCntlSysmem());
+            ordered ? A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP) : grasScCntlSysmem());
         // primitive restart on for an indexed draw (Metal restarts at the all-ones index; tu6_draw_common's primitive_restart,
         // :5851-5862, which is off for a draw without indices, where the index register would be stale)
         reg(stream, REG_A6XX_PC_PRIMITIVE_CNTL_0, draw.indexBuffer != nullptr ? A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART : 0u);
@@ -2070,8 +2076,8 @@ bool encode(pm4::Stream& stream, const Program& program, const RenderPass& pass,
 
 bool encodeInPass(pm4::Stream& stream, const Program& program, const RenderPass& pass, const Draw& draw, const Bindings& vsBindings,
                   const Bindings& fsBindings, uint64_t vsProgram, uint64_t fsProgram, uint64_t table, uint8_t* tableCpu, std::string* why,
-                  const Options& o, const GmemPlan* gmem) {
-    return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, false, gmem);
+                  const Options& o, const GmemPlan* gmem, bool afterFetch) {
+    return encodeDraw(stream, program, pass, draw, vsBindings, fsBindings, vsProgram, fsProgram, table, tableCpu, why, o, false, gmem, afterFetch);
 }
 
 bool encodeBegin(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
@@ -2171,6 +2177,20 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     for (uint32_t k = 0; k < 4; k++) p.area[k] = area[k];
     *plan = p;
     return true;
+}
+
+uint64_t tuneKeyOf(const RenderPass& pass) {
+    uint64_t k = 0xcbf29ce484222325ull;   // FNV-1a over the window and each attachment's format
+    auto mix = [&](uint64_t v) {
+        for (int i = 0; i < 8; i++) k = (k ^ ((v >> (8 * i)) & 0xff)) * 0x100000001b3ull;
+    };
+    const auto [W, H] = windowOf(pass);
+    mix(uint64_t(W) << 32 | H);
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        const Attachment a = attachmentOf(pass, i);
+        mix(a.texture != nullptr ? uint64_t(a.texture->format()) + 1 : 0);
+    }
+    return k | 1;   // (never 0, which says "not tuned")
 }
 
 bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]) {
@@ -2619,12 +2639,18 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     render::GmemPlan plan;
     bool gmem = false;
+    uint64_t tuneKey = 0;
     if (joins) {
         gmem = open_->gmem;
         plan = open_->plan;
     } else if (options.gmem && gmem_) {
         gmem = render::gmemPlan(pass, &plan, &gmemWhy_) && tileable;
         if (!tileable) gmemWhy_ = gmemWhy;
+        if (gmem && tuning_) {
+            // (by what the pass draws into, not where: the plug-in draws into a fresh copy of a surface each frame)
+            tuneKey = render::tuneKeyOf(pass);
+            gmem = queue_.preferGmem(tuneKey);
+        }
     }
     Piece passTable;
     pm4::Stream head, body;
@@ -2639,13 +2665,15 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     render::Options encodeOptions = options;
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
-                              gmem ? &plan : nullptr)) {
+                              gmem ? &plan : nullptr, joins && open_->lastFetched)) {
         return refuseWork(why);
     }
     if (!joins) {
         {
             const Texture* first = pass.color0 != nullptr ? pass.color0 : pass.depth;
+            const size_t stamped = profiled_.size();
             stampStart(kPassDraw, first ? first->width() : 0, first ? first->height() : 0);
+            if (profiled_.size() > stamped) profiled_.back().tuneKey = tuneKey;
         }
         open_ = std::make_unique<OpenPass>();
         open_->pass = pass;
@@ -2674,6 +2702,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             if (program.fs.k.textures[i].fbTarget != 0) open_->read |= 1u << (program.fs.k.textures[i].fbTarget - 1u);
         }
     }
+    open_->lastFetched = program.fs.fbRead != 0;
     pm4::Stream& into = open_->gmem ? open_->bodies : stream_;
     const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
     if (timed) {
@@ -2687,7 +2716,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     }
     if (timed) drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1) + 1));
     counts_.draws++;
-    if (profile_ && !profiled_.empty()) profiled_.back().draws++;
+    if ((profile_ || tuning_) && !profiled_.empty()) profiled_.back().draws++;
     // a stage with device buffers may write them (ldib's table is stib's): its whole table is used for writing
     for (const auto& [b, writes] : {std::pair<const Bindings*, bool>{vsb, program.vs.k.numSsbos != 0}, {fsb, program.fs.k.numSsbos != 0}}) {
         for (const Binding& x : b->buffers) {
@@ -2878,7 +2907,7 @@ void CommandBuffer::closePass() {
         appendStream(stream_, tiles);
         counts_.gmemPasses++;
         counts_.tiles += plan.tiles();
-        if (profile_ && !profiled_.empty()) profiled_.back().tiles = plan.tiles();
+        if ((profile_ || tuning_) && !profiled_.empty()) profiled_.back().tiles = plan.tiles();
     }
     pm4::Stream tail;
     render::encodeEnd(tail, open_->pass, open_->table, open_->options);
