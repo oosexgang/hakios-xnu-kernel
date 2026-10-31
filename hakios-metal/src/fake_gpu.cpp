@@ -1248,6 +1248,16 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
         fault("a draw before CP_SET_MARKER RM6_DIRECT_RENDER: the sysmem pass was not begun in this submission");
         return false;
     }
+    if (binning_) {
+        // (a draw of the binning pass: the vertex stage alone runs, into the VSC; GRAS_BIN_CONTROL says so)
+        if (fieldOf(reg(REG_A6XX_GRAS_BIN_CONTROL), A6XX_GRAS_BIN_CONTROL_RENDER_MODE__MASK, A6XX_GRAS_BIN_CONTROL_RENDER_MODE__SHIFT) != BINNING_PASS ||
+            fieldOf(reg(REG_A6XX_VFD_MODE_CNTL), A6XX_VFD_MODE_CNTL_RENDER_MODE__MASK, A6XX_VFD_MODE_CNTL_RENDER_MODE__SHIFT) != BINNING_PASS) {
+            fault("a draw of the binning pass without GRAS_BIN_CONTROL and VFD_MODE_CNTL in BINNING_PASS");
+            return false;
+        }
+        stats_.binnedDraws++;
+        return true;
+    }
     uint32_t binW = 0, binH = 0, tileWin[4] = {};
     if (inTile_ && !tileState(&binW, &binH, tileWin)) {
         return false;
@@ -1972,6 +1982,15 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     inTile_ = false;
                     stats_.passes++;
                 }
+                // the binning pass: within a pass begun, before its tiles
+                if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_VISIBILITY) {
+                    if (!passBegun_ || inTile_) {
+                        fault("RM6_BIN_VISIBILITY outside a pass or inside a tile");
+                        return false;
+                    }
+                    binning_ = true;
+                    stats_.binningPasses++;
+                }
                 // a GMEM tile: within a pass begun (the head's marker), ended by RM6_BIN_RENDER_END before the next
                 if (fieldOf(p[0], A6XX_CP_SET_MARKER_0_MODE__MASK, A6XX_CP_SET_MARKER_0_MODE__SHIFT) == RM6_BIN_RENDER_START) {
                     if (!passBegun_ || inTile_ || (p[0] & A6XX_CP_SET_MARKER_0_USES_GMEM) == 0) {
@@ -1979,6 +1998,7 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                         return false;
                     }
                     inTile_ = true;
+                    binning_ = false;
                     stats_.tiles++;
                     // (GMEM holds whatever the last tile left; a pattern no target here holds, so a store without its load shows)
                     std::fill(gmem_.begin(), gmem_.end(), uint8_t(0xcd));
@@ -1991,6 +2011,16 @@ bool FakeGpu::execute(uint64_t address, uint32_t words, int depth) {
                     inTile_ = false;
                 }
                 break;
+            case CP_SET_BIN_DATA5_OFFSET: {
+                // a tile's streams, at offsets from VSC_DRAW_STRM_ADDRESS, VSC_DRAW_STRM_SIZE_ADDRESS and VSC_PRIM_STRM_ADDRESS
+                if (h.count != 4 || !inTile_ || at(reg64(REG_A6XX_VSC_DRAW_STRM_ADDRESS) + p[1], 4) == nullptr ||
+                    at(reg64(REG_A6XX_VSC_DRAW_STRM_SIZE_ADDRESS) + p[2], 4) == nullptr || at(reg64(REG_A6XX_VSC_PRIM_STRM_ADDRESS) + p[3], 4) == nullptr) {
+                    fault("CP_SET_BIN_DATA5_OFFSET not of 4 words, outside a tile, or its streams outside every buffer");
+                    return false;
+                }
+                stats_.binData++;
+                break;
+            }
             case CP_SET_MODE:
             case CP_SKIP_IB2_ENABLE_GLOBAL:
             case CP_SKIP_IB2_ENABLE_LOCAL:
@@ -2290,7 +2320,7 @@ void FakeGpu::run(const Job& job) {
     gfxIbosLoaded_ = false;
     gfxIbosFrom_ = 0;
     gfxIboUnits_ = 0;
-    passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = inTile_ = false;
+    passBegun_ = ccuCntlWritten_ = ccuCntlAfterWfi_ = lastWasWfi_ = inTile_ = binning_ = false;
     drawsInSubmission_ = drawsWithoutCcuFlush_ = drawsWithoutCacheFlush_ = drawsWithoutDepthFlush_ = 0;
     written_.clear();
     bool ok = execute(job.address, job.words, 0);

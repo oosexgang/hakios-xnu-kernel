@@ -157,6 +157,8 @@ public:
     // 22 ms in GMEM against 17 to 31 in sysmem, its passes of 45 to 49 draws 8 to 10 against 6 to 8, its light ones 5
     // against 0.13.
     void setGmemMinDraws(uint32_t draws) { gmemMinDraws_ = draws; }
+    // render::Options::gmemBinning for this buffer's draws besides each draw's own (either asks for it)
+    void setGmemBinning(bool on) { gmemBinning_ = on; }
     // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
     const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
@@ -178,6 +180,7 @@ private:
     bool gmem_ = true;
     uint32_t gmemOff_ = 0;
     uint32_t gmemMinDraws_ = 0;
+    bool gmemBinning_ = false;
     uint32_t gmemClears_ = 0, gmemClearWords_[kMaxColorOutputs][4] = {};   // (draw's, for the pass it opens)
     std::string gmemWhy_;
     std::unordered_map<uint64_t, uint32_t> ordinals_;   // passes opened so far into each kind of target
@@ -293,6 +296,9 @@ public:
     // GMEM is no gain for a pass that touches a corner of the screen (its tiles load and store the whole target: 23
     // draws of CoreAnimation took 5 ms so, 0.1 ms in sysmem), nor for one of framebuffer fetches (the texture unit
     // reads GMEM at a quarter of the rate it reads memory: probe "full-screen cost").
+    // the visibility streams' memory binned GMEM passes share (render::vscBytes): one is enough, the GPU running one
+    // submission at a time and each pass's binning before its tiles; nullptr with *why
+    std::shared_ptr<Buffer> vscBuffer(std::string* why);
     bool preferGmem(uint64_t key);
     void tuned(uint64_t key, bool gmem, double us);
     // What tells passes into one kind of target apart: the draws the pass at that place in a command buffer (the Nth into
@@ -311,6 +317,7 @@ private:
 
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
+    std::shared_ptr<Buffer> vsc_;     // (under lock_) vscBuffer's
     std::vector<std::shared_ptr<Buffer>> private_[2];   // (under lock_) privateMemory's, by layout, the last the current one
     uint32_t privatePerFiber_[2] = {0, 0};
     uint32_t id_;

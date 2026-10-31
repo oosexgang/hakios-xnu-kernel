@@ -400,6 +400,9 @@ constexpr uint32_t kStencilClearDepthFlushValue = 10;
 // tile) and waited for before the tail, so what the tiles stored is in memory before anything reads it
 constexpr uint32_t kTableBlitFlushAt = 72;
 constexpr uint32_t kBlitFlushValue = 11;
+// the binning pass's cache flush, before the tiles read the visibility streams (fd6's FD6_FLUSH_CACHE after it)
+constexpr uint32_t kTableBinFlushAt = 76;
+constexpr uint32_t kBinFlushValue = 12;
 constexpr uint32_t kTableZeroedBytes = 96;        // what tableStart zeroes from kTableTimestampsAt: every word above
 static_assert(kTableMoreClearFlushAt + 4 * (kMaxColorOutputs - 1) <= kTableZeroedBytes, "the Clears' words are zeroed");
 // an occlusion query's two snapshots of the running sample count (RB_SAMPLE_COUNT_ADDR), begin and end, 64 bits each
@@ -462,6 +465,13 @@ struct Options {
                                  // left out (CommandBuffer::draw); off: every draw writes all of its state, as before
     bool gmem = true;            // a pass that qualifies (gmemPlan) is drawn tile by tile in GMEM: each tile loaded, every draw of the
                                  // pass replayed into it, stored once; off: every pass in sysmem, each draw's blending through memory
+    bool gmemBinning = false;    // a GMEM pass's draws binned first by the hardware (the VSC), each tile drawing only those that reach
+                                 // it, rather than every draw in every tile. NOT WORKING: the binning pass runs and the VSC
+                                 // writes its streams, but handing a tile its streams (CP_SET_BIN_DATA5 by address or by
+                                 // offset) hangs the command processor; worth at most the 0.31 us a draw a tile replays cost
+    uint8_t gmemBinningStage = 0;   // (the bisect of that on the phone: 1 the binning pass without its draws, 2 with them but the tiles
+                                    // ignoring the streams -- both run; 3 the streams given but the draws ignoring them, 4 all
+                                    // but CP_SKIP_IB2_ENABLE_GLOBAL, 5 the streams given under override 1, 0 all of it -- these hang)
     bool gmemLoad = true;        // each tile's load from memory (off: the fake's twin, whose stores then show GMEM's own contents)
     uint8_t rotate2d = 0;        // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
                                  // a quarter turn takes a destination rectangle of the source's sides swapped
@@ -517,8 +527,16 @@ bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw
 // FETCH: a draw of the pass reads an attachment (framebuffer fetch), so the texture caches are dropped at each tile.
 // CLEAR: the attachments cleared in GMEM instead of loaded (gmemClearWords' packing in CLEAR_WORDS), which
 // encodeBegin was told to leave unfilled
+// VSC: with Options::gmemBinning, the visibility streams' memory (vscBytes'), the draws having been encoded USE_VISIBILITY
 void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
-                uint32_t load, uint32_t store, bool fetch, uint32_t clear = 0, const uint32_t (*clearWords)[4] = nullptr);
+                uint32_t load, uint32_t store, bool fetch, uint32_t clear = 0, const uint32_t (*clearWords)[4] = nullptr, uint64_t vsc = 0);
+// the visibility streams' memory a binned GMEM pass needs: each pipe's draw stream and its size word, each pipe's
+// primitive stream
+constexpr uint32_t kVscDrawPitch = 0x4000, kVscPrimPitch = 0x20000;
+// (32: a6xx::kNumVscPipes; the size words in a page of their own, so that the primitive streams start page-aligned as
+// fd6's, which are a buffer of their own)
+constexpr uint64_t kVscSizesBytes = 0x1000;
+constexpr uint64_t vscBytes() { return 32ull * (kVscDrawPitch + kVscPrimPitch) + kVscSizesBytes; }
 // A Clear done in a tile by the event blit rather than by the 2D engine into memory and loaded back: the colour packed
 // as turnip packs it for RB_BLIT_CLEAR_COLOR (pack_blit_event_clear_value: the format's base, RGBA order, sRGB encoded)
 // -- 8-bit four-channel unorm and sRGB, and RGBA16Float; false for a format left to the fill

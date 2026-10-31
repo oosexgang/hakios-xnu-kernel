@@ -181,6 +181,12 @@ void CommandBuffer::stamp(uint32_t slot) {
     use(*profileStamps_, true);
 }
 
+std::shared_ptr<Buffer> CommandQueue::vscBuffer(std::string* why) {
+    std::lock_guard<std::mutex> g(lock_);
+    if (vsc_ == nullptr) vsc_ = newBuffer(gpu_, render::vscBytes(), why);
+    return vsc_;
+}
+
 bool CommandQueue::preferGmem(uint64_t key) {
     std::lock_guard<std::mutex> g(lock_);
     Tune& t = tune_[key];

@@ -293,6 +293,8 @@ enum vgt_event_type : uint32_t {
     PC_CCU_FLUSH_COLOR_TS = 29,    // adreno_pm4.xml.h:95   the colour CCU cache to memory: what puts a draw's pixels where the CPU reads them
     BLIT = 30,                     // adreno_pm4.xml.h:96
     LRZ_CLEAR = 37,                // adreno_pm4.xml.h:98
+    UNK_2C = 44,                   // adreno_pm4.xml.h:106  before the binning pass's draws (emit_binning_pass)
+    UNK_2D = 45,                   // adreno_pm4.xml.h:107  ...and after them
     LRZ_FLUSH = 38,                // adreno_pm4.xml.h:99   both witnesses end a sysmem pass with it (tu_lrz.cc:465; fd6_gmem.cc:2114)
     CACHE_INVALIDATE = 49,         // adreno_pm4.xml.h:108  invalidate UCHE: before reading what the CPU or a blit wrote
     LABEL = 63,                    // adreno_pm4.xml.h:109  a no-op event; Gallium's dummy to roll the register context
@@ -302,6 +304,7 @@ enum vgt_event_type : uint32_t {
 // there is no RM6_BYPASS in this Mesa, value 1 is this name (adreno_pm4.xml:1797-1798)
 enum a6xx_marker : uint32_t {
     RM6_DIRECT_RENDER = 1,         // adreno_pm4.xml.h:519
+    RM6_BIN_VISIBILITY = 2,        // adreno_pm4.xml.h:520  the binning pass (emit_binning_pass)
     RM6_BIN_RENDER_START = 4,      // adreno_pm4.xml.h:522  a GMEM tile's draws begin (tu6_emit_tile_select)
     RM6_BIN_RESOLVE = 6,           // adreno_pm4.xml.h:524  the tile's store to memory (tu6_emit_tile_store)
     RM6_BIN_RENDER_END = 7,        // adreno_pm4.xml.h:525
@@ -329,6 +332,8 @@ enum poll_memory_type : uint32_t {
 enum Opcode : uint32_t {
     CP_WAIT_MEM_WRITES = 0x12,     // adreno_pm4.xml.h:283  in turnip's flush order, after CACHE_INVALIDATE (tu_cmd_buffer.cc:194-250)
     CP_WAIT_FOR_ME = 0x13,         // adreno_pm4.xml.h:270
+    CP_SET_BIN_DATA5 = 0x2f,       // adreno_pm4.xml.h:227  a tile's visibility streams by address, 7 words (fd6_emit_tile_prep): hangs this CP
+    CP_SET_BIN_DATA5_OFFSET = 0x2e,   // adreno_pm4.xml.h:329  ...by offsets from the VSC_*_ADDRESS registers, 4 words (tu6_emit_tile_select)
     CP_WAIT_MEM_GTE = 0x14,        // adreno_pm4.xml.h:326  wait until a memory word >= REF (signed)
     CP_SKIP_IB2_ENABLE_GLOBAL = 0x1d,  // adreno_pm4.xml.h:294  1 word, 0 at pass begin and end (tu_cmd_buffer.cc:2134-2135, 2161-2162); undocumented
     CP_SKIP_IB2_ENABLE_LOCAL = 0x23,   // adreno_pm4.xml.h:295  1 word, 1: fd6 only ("I think that is not required", fd6_gmem.cc:2048)
@@ -4080,6 +4085,23 @@ constexpr uint32_t rbCcuCntlGmem() {
            A6XX_RB_CCU_CNTL_COLOR_CACHE_SIZE(CCU_CACHE_SIZE_QUARTER) | A6XX_RB_CCU_CNTL_COLOR_OFFSET(kGmemCcuColorOffset & 0x1fffff);
 }
 static_assert(rbCcuCntlGmem() == 0x3c400000, "the GMEM CCU layout turnip computes for this chip");
+
+// hardware binning (fd6_gmem.cc emit_binning_pass, update_vsc_pipe, fd6_emit_tile_prep): the binning pass runs every draw's
+// vertex stage once over the whole window and the VSC writes, for each pipe of bins, which draws and primitives reach
+// each bin; a tile then draws only those (CP_SET_BIN_DATA5, CP_SET_VISIBILITY_OVERRIDE 0, the draws USE_VISIBILITY)
+inline constexpr uint32_t kNumVscPipes = 32;                      // not-in-headers: freedreno_devices.py A635 num_vsc_pipes
+inline constexpr uint32_t REG_A6XX_VSC_BIN_SIZE = 0x0c02;                                    // a6xx.xml.h:4147  WIDTH >> 5 at 0, HEIGHT >> 4 at 8
+inline constexpr uint32_t REG_A6XX_VSC_DRAW_STRM_SIZE_ADDRESS = 0x0c03;                      // a6xx.xml.h:4164  64-bit: each pipe's draw-stream size written back
+inline constexpr uint32_t REG_A6XX_VSC_BIN_COUNT = 0x0c06;                                   // a6xx.xml.h:4167  NX at 1, NY at 11
+inline constexpr uint32_t REG_A6XX_VSC_PIPE_CONFIG_REG = 0x0c10;                             // a6xx.xml.h:4184  32 of them: X 0-9, Y 10-19, W 20-25, H 26-31 (bins)
+inline constexpr uint32_t REG_A6XX_VSC_PRIM_STRM_ADDRESS = 0x0c30;                           // a6xx.xml.h:4211  64-bit, then PITCH 0x0c32, LIMIT 0x0c33
+inline constexpr uint32_t REG_A6XX_VSC_PRIM_STRM_PITCH = 0x0c32;
+inline constexpr uint32_t REG_A6XX_VSC_DRAW_STRM_ADDRESS = 0x0c34;                           // a6xx.xml.h:4220  64-bit, then PITCH 0x0c36, LIMIT 0x0c37
+inline constexpr uint32_t REG_A6XX_VSC_DRAW_STRM_PITCH = 0x0c36;
+constexpr uint32_t vscBinSize(uint32_t w, uint32_t h) { return (w >> 5) | (h >> 4) << 8; }
+constexpr uint32_t vscBinCount(uint32_t nx, uint32_t ny) { return nx << 1 | ny << 11; }
+constexpr uint32_t vscPipeConfig(uint32_t x, uint32_t y, uint32_t w, uint32_t h) { return x | y << 10 | w << 20 | h << 26; }
+constexpr uint32_t cpSetBinData5_0(uint32_t vscSize, uint32_t n) { return vscSize << 16 | n << 22; }   // a6xx: VSC_SIZE 16-21, VSC_N 22-26
 
 // RB_MRT_BUF_INFO[i]: fd6_view.c:408-413 (no UNK10; A6XX has no LOSSLESSCOMPEN)
 constexpr uint32_t rbMrtBufInfo(a6xx_format fmt, a6xx_tile_mode tile, a3xx_color_swap swap) {

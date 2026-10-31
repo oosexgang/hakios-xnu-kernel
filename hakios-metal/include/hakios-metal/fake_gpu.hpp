@@ -155,6 +155,7 @@ public:
         uint32_t tiles = 0;         // GMEM tiles begun (CP_SET_MARKER RM6_BIN_RENDER_START | USES_GMEM)
         uint32_t tileLoads = 0, tileStores = 0;   // event blits, carried out between memory and the model's GMEM
         uint32_t tileClears = 0;    // ...and clears in GMEM
+        uint32_t binningPasses = 0, binnedDraws = 0, binData = 0;   // binning passes, the draws in them, tiles told their streams
         uint64_t storedPixels = 0;  // pixels the stores wrote: the whole target once, granule padding included, when the tiles tile it
     };
 
@@ -289,6 +290,7 @@ private:
     // inside a GMEM tile (between RM6_BIN_RENDER_START | USES_GMEM and RM6_BIN_RENDER_END), and GMEM itself: what the
     // event blits load and store (the draws rasterize nothing, so a tile holds what its load put there)
     bool inTile_ = false;
+    bool binning_ = false;   // between RM6_BIN_VISIBILITY and the first tile: the draws only bin
     std::vector<uint8_t> gmem_ = std::vector<uint8_t>(a6xx::kGmemBytes);
     bool tileState(uint32_t* binW, uint32_t* binH, uint32_t win[4]);
     bool eventBlit();

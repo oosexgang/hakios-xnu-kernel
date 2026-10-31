@@ -4681,10 +4681,13 @@ int main(int argc, char** argv) {
                             memcpy(gt->contents(), rowsG.data(), rowsG.size());
                         };
                         const Viewport vps[] = {{0, 0, 1125, 2436, 0, 1}, {37, 513, 1000, 1500, 0, 1}, {500, 1000, 625, 1436, 0, 1}, {0, 200, 600, 300, 0, 1}, {560, 0, 40, 2436, 0, 1}};
-                        auto run = [&](bool gm, bool load, unsigned* tiles) -> std::vector<uint8_t> {
+                        uint8_t gbStage = 0;
+                        auto run = [&](bool gm, bool load, unsigned* tiles, bool binned = false) -> std::vector<uint8_t> {
                             pattern();
                             render::Options o;
                             o.gmemLoad = load;
+                            o.gmemBinning = binned;
+                            o.gmemBinningStage = gbStage;
                             auto c = queue->commandBuffer();
                             c->setGmem(gm);
                             bool ok = true;
@@ -4708,6 +4711,25 @@ int main(int argc, char** argv) {
                         };
                         const bool have = !sys.empty() && !gm.empty() && !twin.empty();
                         const uint64_t off = have ? pixelsDiffer(sys, gm) : ~0ull, twinOff = have ? pixelsDiffer(sys, twin) : 0;
+                        {
+                            // The binning pass alone (stage 2: every draw binned, the tiles drawing all of them as before): it
+                            // runs, and the VSC writes its streams. Handing a tile its streams (CP_SET_BIN_DATA5, by address or
+                            // by offset) hangs this command processor -- stages 0, 3 and 5 timed out -- so binning stays off.
+                            gbStage = 2;
+                            unsigned st2 = 0;
+                            const std::vector<uint8_t> partial = run(true, true, &st2, true);
+                            const uint64_t poff = !partial.empty() && have ? pixelsDiffer(sys, partial) : ~0ull;
+                            uint32_t sizes[2] = {};
+                            {
+                                std::string vw;
+                                auto v = queue->vscBuffer(&vw);
+                                if (v != nullptr && v->contents() != nullptr) memcpy(sizes, static_cast<const uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch, 8);
+                            }
+                            gbStage = 0;
+                            report(!partial.empty() && poff == 0 && sizes[0] != 0 && sizes[1] != 0,
+                                   "GMEM with a binning pass, the tiles drawing every draw: " + std::to_string(poff) + " pixels differ from sysmem; the VSC wrote " +
+                                       std::to_string(sizes[0]) + " and " + std::to_string(sizes[1]) + " bytes of draw stream for pipes 0 and 1");
+                        }
                         report(have && st == 0 && gtl == 24 && off == 0 && twinOff > 100000,
                                "GMEM: 5 blended triangles over a 1125x2436 BGRA8 pattern in " + std::to_string(gtl) + " tiles: " + std::to_string(off) +
                                    " pixels differ from sysmem; twin without the loads: " + std::to_string(twinOff) + " differ (must be many)");
@@ -4843,13 +4865,14 @@ int main(int argc, char** argv) {
                             std::string swhy;
                             auto s0 = Texture::make(gpu, sd, &swhy), s1 = Texture::make(gpu, sd, &swhy);
                             const Program mrtp{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
-                            auto costOf = [&](int draws, bool gm) {
+                            auto costOf = [&](int draws, bool gm, bool binned = false) {
                                 double best = 1e30;
                                 for (int rep = 0; rep < 3; rep++) {
                                     auto c = queue->commandBuffer();
                                     c->setProfile(true);
                                     render::Options so;
                                     so.gmem = gm;
+                                    so.gmemBinning = binned;
                                     bool ok = true;
                                     for (int i = 0; i < draws && ok; i++) {
                                         RenderPass rp;

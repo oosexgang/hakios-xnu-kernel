@@ -5535,3 +5535,28 @@ TEST(a_clear_in_gmem_comes_out_as_the_fill_does) {
         CHECK_EQ(fills, packed ? 0u : 1u);
     }
 }
+
+// A binned GMEM pass: the binning pass runs every draw once (in BINNING_PASS), then each tile is given its streams
+// (CP_SET_BIN_DATA5) and draws USE_VISIBILITY; the target comes back as it was through the tiles' loads and stores
+TEST(a_binned_gmem_pass_bins_its_draws_then_tells_each_tile_its_streams) {
+    Rig r;
+    auto t = target(r, 1125, 300, kTextureUsageRenderTarget | kTextureUsageRead, PixelFormat::kBGRA8Unorm);
+    fillCoords(*t);
+    RenderPass a;
+    a.color0 = t.get();
+    render::GmemPlan p;
+    CHECK(render::gmemPlan(a, &p, nullptr));
+    render::Options o;
+    o.gmemBinning = true;
+    auto cb = r.queue->commandBuffer();
+    for (int i = 0; i < 3; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(3, 1125, 300), Bindings{}, Bindings{}, o));
+    cb->commit();
+    cb->waitUntilCompleted();
+    CHECK(cb->status() == CommandBuffer::kCompleted);
+    const auto s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
+    CHECK(s.binningPasses == 1 && s.binnedDraws == 3 && s.binData == p.tiles() && s.tiles == p.tiles());
+    CHECK_EQ(s.lastDraw.visCull, 1u);   // USE_VISIBILITY
+    CHECK_EQ(coordsWrong(*t), 0u);
+}
