@@ -49,6 +49,7 @@ void hakios_mali_init(void);           /* boot-arg mali=1: the MT6768's Mali-G52
 bool hakios_mali_ready(void);          /* ... and up: its jobs can be sent */
 void hakios_mtk_scp_init(void);        /* boot-arg scp_step=N: the MT6768's SCP (the sensor hub), steps 1 to N */
 void hakios_mtk_connsys_init(void);    /* boot-arg connsys_step=N: the MT6768's CONNSYS (Wi-Fi/BT), steps 1 to N */
+void hakios_mt6833_ccci_init(void);    /* boot-arg cellular=1: MT6833 CCCI 4G LTE packet data */
 void hakios_mtk_emmc_devfs(void);      /* /dev/emmc0, /dev/remmc0: the MT6768's eMMC partition xnusys, read only */
 int hakios_mtk_emmc_root(dev_t *root); /* emmc_root=1: that partition as the root; 0 or an errno */
 void hakios_mtk_ufs_devfs(void);       /* /dev/ufs0, /dev/rufs0: the MT6833's UFS partition xnusys, read only */

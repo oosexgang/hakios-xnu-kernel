@@ -99,6 +99,22 @@ graph TD
   - MT6359 PMIC wrapper enables `VCN18` (1.8V analog) and `VCN33_WIFI` (3.3V RF).
   - Integrates with `hakios.apple80211.c` to answer iOS `wifid` requests (`SIOCGA80211` / `SIOCSA80211`) on virtual `en0`.
 
+### 6. Cellular 4G LTE Subsystem & Mobile Data
+- **MT6833 Cross-Core Communication Interface (CCCI):**
+  - Mapped AP CCIF0 mailbox at `0x10209000` (4KB, IRQ 226) and MD CCIF0 at `0x1020A000` in [`mtk/mt6833/drivers/cellular/hakios.mt6833_ccci.c`](mtk/mt6833/drivers/cellular/hakios.mt6833_ccci.c).
+  - Performs hardware handshake (`CCCI_HANDSHAKE_REQ = 0x43434349`) with Helio baseband modem DSP.
+  - Registers `/dev/hakios-ccci` character device for 3GPP AT commands (`+CSQ`, `+COPS`, `+CGDCONT`).
+- **Darwin BSD Network Integration (`en1`):**
+  - Intercepts ARP and DHCP queries from Darwin's `configd` daemon, allocating dynamic carrier IP (`10.42.0.2/24`), gateway router (`10.42.0.1`), and DNS (`8.8.8.8`, `1.1.1.1`).
+  - Implements zero-copy outbound IP encapsulation over CCCI CLDMA Channel 6 (`CCCI_CH_DATA_TX`).
+  - Incoming 4G cellular frames from modem on CCCI Channel 7 (`CCCI_CH_DATA_RX`) are unpacked and fed directly into Darwin BSD network stack via `hakios_net_input_unit(1, ...)`.
+- **Live Sysctls:**
+  - `kern.hakios.ccci`: Subsystem status (`4` = online)
+  - `kern.hakios.ccci_sim`: SIM card status (`1` = detected & ready)
+  - `kern.hakios.ccci_signal`: RSSI in dBm (`-82` dBm)
+  - `kern.hakios.ccci_apn`: Active Access Point Name (default: `"jionet"`)
+  - `kern.hakios.ccci_tx_packets`, `kern.hakios.ccci_rx_packets`: Real-time packet throughput counters
+
 ---
 
 ## Repository Structure

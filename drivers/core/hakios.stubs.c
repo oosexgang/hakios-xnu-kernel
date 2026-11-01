@@ -52,11 +52,11 @@ void hakios_buttons_init(void) {}
 void hakios_tcm_init(void) {}
 #endif
 
-#ifndef HAKIOS_MTK_KEYS
+#if !defined(HAKIOS_MTK_KEYS) && !defined(HAKIOS_MT6833_KEYS)
 void hakios_mtk_keys_init(void) {}
 #endif
 
-#ifndef HAKIOS_MALI
+#if !defined(HAKIOS_MALI) && !defined(HAKIOS_MT6833_MALI)
 void hakios_mali_init(void) {}
 bool hakios_mali_ready(void) { return false; }
 /* nothing keeps lines for the end of the log without it: they are only said */
@@ -79,6 +79,10 @@ void hakios_mtk_scp_init(void) {}
 
 #if !defined(HAKIOS_MTK_CONNSYS) && !defined(HAKIOS_MT6833_CONNSYS)
 void hakios_mtk_connsys_init(void) {}
+#endif
+
+#ifndef HAKIOS_MT6833_CELLULAR
+void hakios_mt6833_ccci_init(void) {}
 #endif
 
 #ifndef HAKIOS_MTK_EMMC
