@@ -4,7 +4,8 @@
 What is checked: the dry run copies nothing; a real run copies exactly the bytes, proves them with three hashes and writes the
 manifest and the restore notes (which are text, never run); a partition the phone lacks is skipped and said; a partition that
 changes while it is read is read again, and one that never holds still is not kept; a phone without root stops the tool before
-a byte is copied; and the stand-in saw only reads (no `of=`, no write).
+a byte is copied; failed reads and checks leave no temporary files or unverified images and preserve previous copies;
+and the stand-in saw only reads (no `of=`, no write).
 """
 import hashlib
 import json
@@ -56,6 +57,11 @@ if m:
 m = re.fullmatch(r"sha256sum (\S+)", cmd)
 if m:
     b = data(m.group(1))
+    if mode in ("hash-before", "hash-after"):
+        n = int(open(counter).read()) if os.path.exists(counter) else 0
+        open(counter, "w").write(str(n + 1))
+        if mode == "hash-before" or n > 0:
+            sys.stderr.write("sha256sum: read error\n"); sys.exit(1)
     if mode == "change":                       # the partition changes under the copy: the first hash is of the old content
         n = int(open(counter).read()) if os.path.exists(counter) else 0
         open(counter, "w").write(str(n + 1))
@@ -71,10 +77,16 @@ if m:
     sys.stdout.buffer.write(data(m.group(1), int(m.group(3)), int(m.group(4)), int(m.group(2)))); sys.exit(0)
 m = re.fullmatch(r"dd if=(\S+) bs=1048576 2>/dev/null", cmd)
 if m:
-    sys.stdout.buffer.write(data(m.group(1)))
+    b = data(m.group(1))
+    if mode == "short":
+        sys.stdout.buffer.write(b[:-1]); sys.exit(0)
+    if mode == "readfail":
+        sys.stdout.buffer.write(b[:len(b) // 2])
+        sys.stderr.write("device offline\n"); sys.exit(1)
+    sys.stdout.buffer.write(b)
     if mode == "never":                         # one that never holds still: every look is different
         with open(node_file[m.group(1)], "r+b") as f:
-            f.seek(0); f.write(os.urandom(1))
+            f.seek(0); f.write(bytes([(b[0] + 1) % 256]))
     sys.exit(0)
 sys.stderr.write("stand-in adb: no such command: %s\n" % cmd); sys.exit(3)
 '''
@@ -154,6 +166,34 @@ try:
     out = os.path.join(work, "out-noroot")
     r = run(root, out, "--yes", mode="noroot")
     check("a phone without root stops the tool before anything is copied", r.returncode == 1 and "STOPPED" in r.stderr and not os.path.exists(out), r.stdout + r.stderr)
+
+    for mode, reason in (("short", "bytes arrived"), ("readfail", "device offline"),
+                         ("hash-before", "sha256sum: read error"), ("hash-after", "sha256sum: read error"),
+                         ("never", "could not be proven")):
+        for existing in (False, True):
+            shutil.rmtree(root); phone(root, parts)
+            out = os.path.join(work, "out-%s-%s" % (mode, "existing" if existing else "new"))
+            os.makedirs(out)
+            previous = {"boot_a.img": b"previous proven copy", "manifest.json": b"previous manifest", "restore.txt": b"previous restore notes"}
+            if existing:
+                for name, content in previous.items():
+                    open(os.path.join(out, name), "wb").write(content)
+            r = run(root, out, "--yes", "--only", "boot_a", mode=mode)
+            label = "%s (%s destination)" % (mode, "existing" if existing else "new")
+            check(label + ": stopped with the reason", r.returncode == 1 and reason in r.stderr and "Traceback" not in r.stderr, r.stdout + r.stderr)
+            check(label + ": no unverified or temporary files", sorted(os.listdir(out)) == (sorted(previous) if existing else []), os.listdir(out))
+            if existing:
+                check(label + ": previous backup is unchanged", all(os.path.isfile(os.path.join(out, name)) and open(os.path.join(out, name), "rb").read() == content for name, content in previous.items()))
+
+    # A new, proven copy may replace an old one, with no staging file left behind.
+    shutil.rmtree(root); phone(root, parts)
+    out = os.path.join(work, "out-replace")
+    os.makedirs(out)
+    open(os.path.join(out, "boot_a.img"), "wb").write(b"old backup")
+    r = run(root, out, "--yes", "--only", "boot_a")
+    check("a proven replacement succeeds", r.returncode == 0, r.stdout + r.stderr)
+    check("the replacement has the current bytes", open(os.path.join(out, "boot_a.img"), "rb").read() == boot)
+    check("a successful replacement leaves only final files", sorted(os.listdir(out)) == ["boot_a.img", "manifest.json", "restore.txt"], os.listdir(out))
 finally:
     shutil.rmtree(work, ignore_errors=True)
 

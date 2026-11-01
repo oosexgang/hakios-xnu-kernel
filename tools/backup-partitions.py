@@ -21,7 +21,9 @@ Never copied: userdata, super and the other big ones (they are Android's, and th
 How a copy is proven. The partition is read over adb (exec-out, so the bytes are not changed on the way), its SHA-256 is made as
 it arrives, and the phone is then asked for the SHA-256 of the same partition, once BEFORE and once AFTER the copy: the three must
 be the same, or the partition changed while it was read (then it is read again, up to three times) or the copy is wrong. The copy
-is kept only if they agree. manifest.json says what was copied, its size and hash, and when; restoring is NOT done by this tool:
+is read into a temporary file beside its destination and moved into place only if they agree. A failed read or check removes
+the temporary file and leaves any previous copy in place. manifest.json says what was copied, its size and hash, and when;
+restoring is NOT done by this tool:
 `restore.txt` says which fastboot command would put each back, for a person to run.
 
 These files are the phone's own and some of them (persist, modemst*, fsg) hold its identity: keep them off the network, and do
@@ -37,6 +39,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 BOOT = ["boot_a", "boot_b", "init_boot_a", "init_boot_b", "vendor_boot_a", "vendor_boot_b", "dtbo_a", "dtbo_b", "vbmeta_a", "vbmeta_b",
         "vbmeta_system_a", "vbmeta_system_b", "misc", "devinfo"]
@@ -116,17 +119,26 @@ def copy_one(adb, node, path, size, skip=None, count=None):
 
 def proven_copy(adb, node, path, size, skip=None, count=None):
     """A copy that three hashes agree on (the phone's before, the host's, the phone's after), or a Failure."""
-    last = ""
-    for attempt in range(1, TRIES + 1):
-        before = hash_on_phone(adb, node, count, skip)
-        mine = copy_one(adb, node, path, size, skip, count)
-        after = hash_on_phone(adb, node, count, skip)
-        if before == mine == after:
-            return mine
-        last = "phone before %s.., host %s.., phone after %s.." % (before[:12], mine[:12], after[:12])
-        print("    attempt %d: the hashes differ (%s)" % (attempt, last))
-    os.remove(path)
-    raise Failure("%s: the copy could not be proven after %d tries (%s); it was not kept" % (node, TRIES, last))
+    fd, pending = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", suffix=".part",
+                                  dir=os.path.dirname(os.path.abspath(path)))
+    os.close(fd)
+    try:
+        last = ""
+        for attempt in range(1, TRIES + 1):
+            before = hash_on_phone(adb, node, count, skip)
+            mine = copy_one(adb, node, pending, size, skip, count)
+            after = hash_on_phone(adb, node, count, skip)
+            if before == mine == after:
+                os.replace(pending, path)
+                return mine
+            last = "phone before %s.., host %s.., phone after %s.." % (before[:12], mine[:12], after[:12])
+            print("    attempt %d: the hashes differ (%s)" % (attempt, last))
+        raise Failure("%s: the copy could not be proven after %d tries (%s); it was not kept" % (node, TRIES, last))
+    finally:
+        try:
+            os.remove(pending)
+        except FileNotFoundError:
+            pass
 
 
 def main(argv=None):
