@@ -1320,6 +1320,10 @@ TEST(a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less) {
 // whether a stage writes its device buffers, which decides whether its draws may be replayed tile by tile in GMEM:
 // tri_dbuf_fs only reads one, tri_dwrite_fs (its twin) stores into it too
 TEST(a_stage_that_writes_its_device_buffers_is_told_from_one_that_reads_them) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the device-buffer writes did not run)\n");
+        return;
+    }
     std::string why;
     auto reads = compileStage(kernels::tri_dbuf_fs_bc, kernels::tri_dbuf_fs_bc_size, &why);
     CHECK(reads != nullptr);
