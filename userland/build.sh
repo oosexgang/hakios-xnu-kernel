@@ -248,6 +248,20 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		for HM_OUT in $HM/out/ios $HM/out/darwin; do
 			if [ -f $HM_OUT/libhakios-metal.a ]; then
 				METAL_GPU="-DHAKIOS_METAL_GPU -I$HM/include $HM_OUT/libhakios-metal.a -lc++ -framework IOKit -framework IOSurface"
+				# built with its compiler (make ios MESA=1): Mesa's archives of our iOS build too, as hakios-metal's
+				# tools/compiler.mk lists them (HAKIOS_METAL_IOS_MESA_LIBS)
+				if nm -g $HM_OUT/libhakios-metal.a 2>/dev/null | grep -q " U _air_"; then
+					MB=../xnu-deps/build/mesa/build-softpipe-freedreno
+					for a in src/compiler/air/libair.a src/freedreno/ir3/libfreedreno_ir3.a src/freedreno/isa/libir3encode.a \
+					    src/freedreno/isa/libir3decode.a src/compiler/isaspec/libisaspec.a src/compiler/nir/libnir.a \
+					    src/compiler/libcompiler.a src/freedreno/fdl/libfreedreno_layout.a \
+					    src/freedreno/common/libfreedreno_common.a src/util/libmesa_util.a src/util/libmesa_util_sse41.a \
+					    src/util/blake3/libblake3.a src/c11/impl/libmesa_util_c11.a; do
+						METAL_GPU="$METAL_GPU $MB/$a"
+					done
+					METAL_GPU="$METAL_GPU -lz -lm"
+					echo "build.sh: ... with its compiler (Mesa's archives from $MB)"
+				fi
 				echo "build.sh: HakiosMetal with hakios-metal ($HM_OUT)"
 				break
 			fi
