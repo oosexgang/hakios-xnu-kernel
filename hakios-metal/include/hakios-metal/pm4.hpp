@@ -1,4 +1,5 @@
-// The Adreno command processor's packets (PM4), as the A6xx family (the A660 of the SC7280) reads them.
+// The Adreno command processor's packets (PM4), as the A6xx family reads them (here the Adreno 7c+ Gen 3 of the
+// SM7325, chip id 0x06030500, an A635-family part to Mesa).
 //
 // Two kinds are written here, the same two freedreno writes on these GPUs:
 //   type 4   "write COUNT registers from REG on":  0x4 << 28 | count | parity(count) << 7 | reg << 8 | parity(reg) << 27
@@ -70,6 +71,8 @@ public:
     void memWrite(uint64_t address, const uint32_t* values, uint32_t count);
     void memcpy(uint64_t destination, uint64_t source, uint32_t words);
     void indirect(uint64_t address, uint32_t words);
+    // any type-7 packet: OPCODE with WORDS after its header (the compute dispatch's packets, compute.cpp)
+    void packet(uint32_t opcode, const uint32_t* words, uint32_t count);
 
     const std::vector<uint32_t>& words() const { return words_; }
     size_t size() const { return words_.size(); }
