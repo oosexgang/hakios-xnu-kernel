@@ -10,13 +10,13 @@ This repository ports Apple's open-source Darwin/XNU kernel (`xnu-8796.121.2` / 
 | :--- | :--- | :--- | :---: |
 | **SoC** | MediaTek Dimensity 700 (MT6833) | 2× Cortex-A76 @ 2.2 GHz + 6× Cortex-A55 @ 2.0 GHz | **WORKING** |
 | **Interrupt Controller** | ARM GICv3 (`0x0C000000`) | Native Darwin GICv3 interrupt routing | **WORKING** |
-| **Storage** | UFS 2.2 (`ufshci@11270000`) | Custom MT6833 UFS 2.2 driver (`hakios.mt6833_ufs.c`), rootfs mount | **WORKING** |
+| **Storage** | UFS 2.2 (`ufshci@11270000`) | Custom MT6833 UFS 2.2 driver (`hakios.mt6833_ufs.c`), APFS rootfs mount | **WORKING** |
 | **Display Pipeline** | 6.58" FHD+ 90Hz IPS LCD (1080×2408) | Zero-copy hardware page flipping on `DISP_OVL0` (`0x14005000`, `fb_flip=1`) | **WORKING (60 FPS)** |
-| **GPU / Acceleration** | ARM Mali-G57 MC2 (Valhall architecture) | Valhall probing (`0x13000000`), Panfrost tile allocation, `HakiosMetal` | **WORKING** |
+| **GPU / Acceleration** | ARM Mali-G57 MC2 (Valhall architecture) | TOPCKGEN 950MHz ungate, SPM power domain, L2 cache, Job Slots 0 & 1, `HakiosMetal` | **WORKING (UI Accel)** |
 | **Audio & Speaker** | MT6833 AFE & AW87389 / SIA8152 Smart PA | AFE DMA on `0x11210000`, 32KB SRAM ring buffer, I2S3 48kHz stereo, CoreAudio HAL | **WORKING** |
 | **Touchscreen** | FocalTech FT3518 & Novatek on SPI4 | SPI4 (`0x11018000`), IRQ GPIO 14, 10-point tracking, 1080×2408 to 65535×65535 calibration | **WORKING** |
 | **Buttons & PMIC** | MediaTek Keypad & MT6359 PMIC | Vol+/Vol- (`0x10010000`), Power button via PWRAP (`0x10026000`), 2-sample debounce | **WORKING** |
-| **Wi-Fi & Bluetooth** | MediaTek CONNSYS (MT6631/MT6635) | SPM power domain (`0x10006000`), MT6359 VCN18/VCN33 rails, `apple80211` IOCTLs | **WORKING** |
+| **Wi-Fi & Bluetooth** | MediaTek CONNSYS (MT6631/MT6635) | SPM power domain (`0x10006000`), MT6359 VCN rails, Apple80211 `en0` IOCTL translation | **PARTIAL (IOCTLs)** |
 | **Modem / Baseband** | Helio 5G Baseband / CCIF (`0x10209000`) | CCIF mailbox mapped; raw IP data channel shim (`pdp_ip0`) | **ARCHITECTED** |
 
 ---
@@ -26,15 +26,16 @@ This repository ports Apple's open-source Darwin/XNU kernel (`xnu-8796.121.2` / 
 ```mermaid
 graph TD
     subgraph iOS 16.5 Userland
-        SB[SpringBoard / UI] --> CA[CoreAnimation]
+        SB[SpringBoard / UI] --> CA[CoreAnimation RenderServer]
         MS[mediaserverd] --> HAL[HakiosAudio.driver]
-        WD[wifid] --> A80211[Apple80211 IOCTLs]
+        WD[wifid] --> A80211[Apple80211 IOCTLs en0]
         BB[backboardd] --> TOUCH_DEV[/dev/hakios-touch/]
     end
 
     subgraph Darwin / XNU Kernel
-        CA -->|Textures & Shaders| METAL[HakiosMetal / Panfrost Valhall]
-        METAL --> FB[MiniIOMobileFramebuffer: DISP_OVL0 0x14005000]
+        CA -->|2D Quads & Shaders| METAL[HakiosMetal / Panfrost Valhall]
+        METAL -->|Job Slot 1| MALI_HW[Mali-G57 MC2 @ 0x13000000]
+        MALI_HW -->|Render Complete| FB[MiniIOMobileFramebuffer: DISP_OVL0 0x14005000]
         HAL -->|PCM Ring Buffer| AFE[MT6833 AFE & AW87389 Smart PA]
         A80211 -->|Virtual en0| WMT[CONNSYS Wi-Fi Engine]
         TOUCH_DEV -->|HID Events| TOUCH_DRV[MT6833 SPI4 Touch Driver]
@@ -56,7 +57,23 @@ graph TD
   - Injected `SBReduceTransparency = true`, `SBReduceMotion = true`, and `BSUIVibrancyEffectViewDisabled = true` into `inject_sb.c` and user preferences.
   - Replaces heavy multi-pass live Gaussian blur shaders with fast solid fills, eliminating frame drops and maintaining a smooth **60 FPS** user experience.
 
-### 2. Audio & Loudspeaker Driver Bring-Up
+### 2. GPU Hardware Acceleration & Metal UI Pipeline
+- **Mali-G57 MC2 Valhall Engine ([`mtk/mt6833/drivers/gpu/hakios.mt6833_mali.c`](mtk/mt6833/drivers/gpu/hakios.mt6833_mali.c)):**
+  - Powers on the GPU clock gate via TOPCKGEN (`0x10000000`, ungate MFG clock at 950 MHz) and SPM power domain (`0x10006000`).
+  - Powers up the hardware L2 cache (`0x0040`) and both active Valhall shader cores (core mask `0x3`) via `MALI_REG_SHADER_PWRON_LO` (`0x0110`).
+  - Configures hardware **Job Slots 0 & 1** with completion and MMU fault interrupt masks for Panfrost.
+  - Implements `hakios_mali_submit_job(slot, job_head_phys)` for direct 2D batch submission from CoreAnimation.
+- **Dynamic HakiosMetal Recognition ([`userland/src/HakiosMetal.m`](userland/src/HakiosMetal.m)):**
+  - `HakiosMetalDevice` detects the kernel's Mali driver via `kern.hakios.mali` and registers as:  
+    `"HakiOS ARM Mali-G57 MC2 (Valhall: CoreAnimation Metal Accelerator)"`.
+- **Live Sysctl Telemetry:**
+  - `kern.hakios.mali`: Status (`3` = online & registered)
+  - `kern.hakios.mali_id`: Hardware ID register value
+  - `kern.hakios.mali_cores`: Active shader core count (`2`)
+  - `kern.hakios.mali_clock`: Core clock frequency (`950` MHz)
+  - `kern.hakios.mali_jobs`: Total GPU batch descriptors processed
+
+### 3. Audio & Loudspeaker Driver Bring-Up
 - **MT6833 Audio Front End (AFE) DMA:**
   - Mapped AFE base at `0x11210000` and Audio Internal SRAM at `0x11212000` in [`mtk/mt6833/drivers/audio/hakios.mt6833_audio.c`](mtk/mt6833/drivers/audio/hakios.mt6833_audio.c).
   - Configured 32 KB circular DMA playback buffer inside Audio SRAM (170.6 ms continuous low-latency audio buffer).
@@ -67,7 +84,7 @@ graph TD
 - **Apple CoreAudio HAL Driver:**
   - Packages `/redwood/lib/HakiosAudio.driver` and routes mixed audio frames from `mediaserverd` through `/dev/hakios-audio`.
 
-### 3. Touchscreen Calibration & Normalization
+### 4. Touchscreen Calibration & Normalization
 - **FocalTech FT3518 & Novatek Driver:**
   - Mapped SPI4 master controller at `0x11018000` and GPIO controller at `0x10005000` in [`mtk/mt6833/drivers/input/hakios.mt6833_touch.c`](mtk/mt6833/drivers/input/hakios.mt6833_touch.c).
   - Connected to active-low touch interrupt on GPIO 14.
@@ -75,7 +92,7 @@ graph TD
     $$\text{norm}_X = \frac{\text{clamp}(\text{raw}_X, 0, 1079) \times 65535}{1079}, \quad \text{norm}_Y = \frac{\text{clamp}(\text{raw}_Y, 0, 2407) \times 65535}{2407}$$
   - 2-pixel hysteresis deadband filter suppresses micro-jitter on stationary long-presses.
 
-### 4. Wi-Fi Networking & CONNSYS Subsystem
+### 5. Wi-Fi Networking & CONNSYS Subsystem
 - **MediaTek CONNSYS Wireless Engine:**
   - Controller mapped at `0x18002000` in [`mtk/mt6833/drivers/wifi/hakios.mt6833_connsys.c`](mtk/mt6833/drivers/wifi/hakios.mt6833_connsys.c).
   - System Power Manager (SPM) at `0x10006000` activates CONNSYS power domain.
@@ -90,8 +107,9 @@ graph TD
 ├── configs/                  # SoC and board configuration fragments
 ├── devices/
 │   ├── light/                # POCO M4 5G device tree, configs, specs & roadmap
+│   │   ├── boot.log          # Verified Darwin XNU boot log (loader to launchd PID 1)
 │   │   ├── configs/          # light.config (default bootargs, scale)
-│   │   ├── device.conf       # Device manifest entry
+│   │   ├── device.conf       # Device manifest entry (8 working, 1 partial)
 │   │   ├── hardware_specs.md # Hardware register map & memory offsets
 │   │   ├── plan.md           # Engineering optimization plan & workstreams
 │   │   ├── poco_m4_5g.dts    # Decompiled stock Device Tree Source
@@ -120,7 +138,7 @@ source ./xnu-env.sh
 make light_defconfig
 
 # Compile the kernel
-./xnu-build.sh -k
+tools/make-kernel.sh -j$(nproc)
 
 # Build the APFS ramdisk and payload
 python3 tools/apfs/mkapfs.py -o userland/root.apfs root=userland/root
@@ -152,11 +170,39 @@ fastboot flash userdata output/system.apfs
 
 ---
 
-## Contributing & Collaboration with the HakiOS Project
+## Testing in QEMU on PC / Laptop
 
-We actively collaborate with and welcome contributions to the [upstream HakiOS project](https://github.com/oosexgang). All drivers in this repository are written following HakiOS standards (`CONFIG_HAKIOS_*` conventions, layer separation under `mtk/<soc>/` and `devices/<device>/`, minimal diff impact on core XNU).
+You can also run the open Darwin kernel and verify drivers in QEMU on Linux:
 
-If you are porting other MediaTek SoCs (MT6789, MT6877, MT6893, Dimensity 8000/9000) or want to help with baseband CCCI telephony, feel free to open an issue or pull request!
+```bash
+# 1. Point to 64-bit ARM UEFI firmware
+export QEMU_EFI=/home/ankit/.local/usr/share/AAVMF/AAVMF_CODE.fd
+export QEMU_VARS=/home/ankit/.local/usr/share/AAVMF/AAVMF_VARS.fd
+
+# 2. Boot the open kernel
+make qemu-open
+
+# 3. Or launch an interactive GTK display window
+cd qemu
+qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp 2 -m 4G \
+  -accel tcg,tb-size=384 \
+  -drive if=pflash,format=raw,readonly=on,file="$QEMU_EFI" \
+  -drive if=pflash,format=raw,file=vars.fd \
+  -drive file=fat:rw:esp,format=raw,if=virtio \
+  -device loader,file=payload.bin,addr=0xF0000000,force-raw=on \
+  -device ramfb \
+  -device virtio-tablet-pci \
+  -device virtio-keyboard-pci \
+  -display gtk -serial stdio -monitor none
+```
+
+---
+
+## Upstream Collaboration with the HakiOS Project
+
+We actively collaborate with and welcome contributions to the [upstream HakiOS project](https://github.com/oosexgang). 
+- All drivers follow HakiOS conventions (`CONFIG_HAKIOS_*` macros, strict separation under `mtk/<soc>/` and `devices/<device>/`, minimal diff impact on core XNU).
+- Active discussion and port progress are tracked in [Upstream RFC Issue #46: MediaTek Dimensity 700 (MT6833) & POCO M4 5G (light) bring-up](https://github.com/oosexgang/hakios-xnu-kernel/issues/46).
 
 ---
 
