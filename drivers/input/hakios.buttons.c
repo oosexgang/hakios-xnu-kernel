@@ -94,21 +94,50 @@ wr(vm_offset_t address, uint32_t value)
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S (SM8475, dt: qcom,spmi@c42d000): arbiter version 7, its tables elsewhere. The two keys are where they
+ * are on the redwood: PMK8350's PON (slave 0), and GPIO6 of the PM8350 (slave 1) in place of the PM7325's.
+ */
+#define ARB_V7                  1
+#else
+#define ARB_V7                  0
+#endif
+#if ARB_V7
+#define ARB_CORE_PHYS           0x0c400000UL
+#define ARB_CORE_SIZE           0x3000UL
+#else
 #define ARB_CORE_PHYS           0x0c440000UL    /* "core": the version, and which peripheral each channel is */
 #define ARB_CORE_SIZE           0x1100UL
+#endif
+#if ARB_V7
+#define ARB_CNFG_PHYS           0x0c42d000UL
+#define ARB_OBSERVER_PHYS       0x0c440000UL
+#define ARB_CNFG_SIZE           0x4000UL
+#define ARB_OBSERVER_SIZE       0x8000UL
+#define ARB_OBSERVER_STEP       0x20UL
+#else
 #define ARB_CNFG_PHYS           0x0c40a000UL    /* "cnfg": which system owns each channel */
 #define ARB_CNFG_SIZE           0x1000UL
 #define ARB_OBSERVER_PHYS       0x0e600000UL    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
 #define ARB_OBSERVER_SIZE       0x10000UL       /* ours is the first */
+#define ARB_OBSERVER_STEP       0x80UL
+#endif
 #define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
 
 #define ARB_VERSION             0x000
 #define ARB_VERSION_5           0x50000000u     /* what follows is version 5's; 7 moved things again */
 #define ARB_VERSION_7           0x70000000u
 #define ARB_FEATURES            0x004           /* [10:0] the number of channels */
+#if ARB_V7
+#define ARB_CHANNEL(n)          (0x2000 + 4 * (n))      /* Linux: pmic_arb_apid_map_offset_v7 */
+#define ARB_OWNER(n)            (4 * (n))               /* Linux: pmic_arb_apid_owner_v7 */
+#define ARB_CHANNEL_INTERRUPTS  (1u << 24)
+#else
 #define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* core: [19:8] slave and peripheral, [24] interrupts go to the owner */
 #define ARB_CHANNEL_INTERRUPTS  (1u << 24)
 #define ARB_OWNER(n)            (0x700 + 4 * (n))       /* cnfg: [2:0] the system that may write through channel n */
+#endif
 #define ARB_MAX_CHANNELS        512
 
 #define OBSERVER_COMMAND        0x00
@@ -133,7 +162,7 @@ struct peripheral {
 	bool            found;
 };
 static struct peripheral pon = { .name = "the PMK8350's power-on block", .id = 0x013 };          /* registers 0x1300 of slave 0 */
-static struct peripheral pin = { .name = "GPIO6 of the PM7325", .id = 0x18d };                   /* registers 0x8d00 of slave 1 */
+static struct peripheral pin = { .name = "GPIO6 of the PM7325 (on the 12S: the PM8350)", .id = 0x18d };                   /* registers 0x8d00 of slave 1 */
 
 /* How the reads have gone: said once a minute. */
 static struct {
@@ -147,7 +176,7 @@ static struct {
 static const char *
 spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * p->channel;
+	vm_offset_t channel = arb_observer + ARB_OBSERVER_SIZE * ARB_SYSTEM + ARB_OBSERVER_STEP * p->channel;
 	uint64_t start = mach_absolute_time(), now, interval, taken;
 	uint32_t status, data[2];
 	const char *problem = NULL;
@@ -444,8 +473,8 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	version = rd(arb_core + ARB_VERSION);
 	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
 	printf("buttons: PMIC arbiter version %#x, %u channels\n", version, channels);
-	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
-		printf("buttons: this driver knows version 5 of the arbiter only: no buttons\n");
+	if (ARB_V7 ? version < ARB_VERSION_7 : (version < ARB_VERSION_5 || version >= ARB_VERSION_7)) {
+		printf("buttons: this driver knows this arbiter's version only as %s: no buttons\n", ARB_V7 ? "7" : "5");
 		goto out;
 	}
 	if (channels == 0 || channels > ARB_MAX_CHANNELS) {

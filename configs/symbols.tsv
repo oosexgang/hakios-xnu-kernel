@@ -14,6 +14,7 @@ ADSP_AGAIN	arg	adsp_again	Audio and battery	k	hakios.adsp.c
 ADSP_APR_WAIT	arg	adsp_apr_wait	Audio and battery	k	hakios.adsp.c	
 ADSP_KEEP	arg	adsp_keep	Audio and battery	k	hakios.adsp.c	
 ADSP_LISTEN	arg	adsp_listen	Audio and battery	k	hakios.adsp.c	
+ADSP_LOUD	arg	adsp_loud	Audio and battery	k	hakios.adsp.c	
 ADSP_NEW	arg	adsp_new	Audio and battery	k	hakios.adsp.c	
 ADSP_PAUSE	arg	adsp_pause	Audio and battery	k	hakios.adsp.c	
 ADSP_RETURN	arg	adsp_return	Audio and battery	k	hakios.adsp.c	
@@ -50,6 +51,7 @@ APFS_WRITE_LEN	arg	apfs_write_len	Storage and APFS	k	hakios.apfs_check.c	how man
 APFS_WRITE_PATH	arg	apfs_write_path	Storage and APFS	k	hakios.apfs_check.c	the file in it, by path from the volume's root
 APPLOG	arg	applog	CPU, memory and boot	k	(patch)	
 APPLOG_NAME	arg	applog_name	CPU, memory and boot	k	(patch)	
+AR_CLOCK	arg	ar_clock	Audio and battery	k	hakios.adsp.c	the first thing the speakers' path needs of the DSP, tried on its own once AudioReach is up
 AUTOUNLOCK	arg	autounlock	User space	u	inject_sb.c	
 BATTERY	arg	battery	Audio and battery	kl	hakios.adsp.c,hakios.battery.c,loader.c	
 BATTMGR	arg	battmgr	Audio and battery	k	hakios.adsp.c	every property once, for the log (which number is which on this phone's firmware)
@@ -72,6 +74,7 @@ CAM_SETTLE	arg	cam_settle	Cameras	k	hakios.camera.c
 CAM_SHUTTER	arg	cam_shutter	Cameras	k	hakios.camera.c	
 CAM_VBLANK	arg	cam_vblank	Cameras	k	hakios.camera.c	
 CC_FADE	arg	cc_fade	User space	u	inject_sb.c	
+CPU_SAMPLE	arg	cpu_sample	User space	k	hakios_cpusample.c	
 CPULOAD	arg	cpuload	CPU, memory and boot	k	hakios.cpufreq.c	every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture)
 CPUMASK	arg	cpumask	Loader	l	loader.c	
 DDR	arg	ddr	CPU, memory and boot	k	hakios.cpufreq.c	the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read
@@ -82,10 +85,18 @@ FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp
 FB_CA_HZ	arg	fb_ca_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
 FB_DIFF	arg	fb_diff	GPU and display	k	MiniIOMobileFramebuffer.cpp	which pixels of the panel each frame changed (it costs: the panel's memory is slow to read)
 FB_FILTER	arg	fb_filter	GPU and display	k	MiniIOMobileFramebuffer.cpp	the picture is scaled to the panel nearest neighbour, as it once was
+FB_FLIP	arg	fb_flip	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_FLIP_FLUSH	arg	fb_flip_flush	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_FLIP_GAP	arg	fb_flip_gap	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_HUD	arg	fb_hud	GPU and display	k	MiniIOMobileFramebuffer.cpp	the frame rate, the hottest temperature sensor and the processors' clocks in a corner of every frame
 FB_HZ	arg	fb_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_LINE	arg	fb_line	GPU and display	k	MiniIOMobileFramebuffer.cpp	a command-mode panel's line counter (a display interface's INTF_TEAR_LINE_COUNT), and fb_lines=N
+FB_LINES	arg	fb_lines	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_MDP	arg	fb_mdp	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_MEASURE	arg	fb_measure	GPU and display	k	MiniIOMobileFramebuffer.cpp	how often the panel is really refreshed
 FB_PRI	arg	fb_pri	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_QUEUE	arg	fb_queue	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_SCAN_US	arg	fb_scan_us	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_THREADS	arg	fb_threads	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FBHEIGHT	arg	fbheight	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FBSCALE	arg	fbscale	GPU and display	k	MiniIOMobileFramebuffer.cpp	the same 375 x 812 points drawn at two pixels a point instead of three
@@ -101,6 +112,7 @@ GLENV	arg	glenv	GPU and display	u	eagl.c
 GLFETCH	arg	glfetch	GPU and display	u	eagl.c	
 GLFRAMES	arg	glframes	GPU and display	u	eagl.c	
 GLGROUP	arg	glgroup	GPU and display	u	eagl.c	
+GLLOG	arg	gllog	GPU and display	u	eagl.c	the drawing thread's own lines as they were -- a line every 20 frames, a summary of some 40 lines
 GLNO	arg	glno	User space	u	inject.c	
 GLNUMBERS	arg	glnumbers	GPU and display	u	eagl.c	
 GLPLAIN	arg	glplain	GPU and display	u	eagl.c	leave such draws as they are; 2: also those without a texture; 3: the two with a colour matrix drawn plainly too
@@ -133,6 +145,7 @@ GPU_EXACT	arg	gpu_exact	GPU and display	k	hakios.adreno.c
 GPU_KEEP	arg	gpu_keep	GPU and display	k	hakios.gpu.cpp	
 GPU_LOG	arg	gpu_log	GPU and display	k	hakios.adreno.c	
 HAPTIC_EFFECT	arg	haptic_effect	Haptics and torch	k	hakios.haptic.c	
+ISLAND	arg	island	User space	u	inject_fps.c,mg_island.c	the Dynamic Island. iOS 16's SpringBoard has the "system aperture" on every phone and turns it on
 MACHINE_NAME	arg	machine_name	CPU, memory and boot	k	GenericARMPE.cpp	
 MEMBENCH	arg	membench	CPU, memory and boot	k	hakios.cpufreq.c	
 METAL	arg	metal	GPU and display	ku	HakiosMetal.m,MiniIOMobileFramebuffer.cpp	only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
@@ -185,6 +198,7 @@ PMIC_LIST	arg	pmic_list	Chip, thermal and PMIC	k	hakios.pmic.c	only the clock, n
 PRESS_POWER	arg	press_power	Touch and buttons	k	hakios.buttons.c	a short press of the power key that many seconds after boot, and another ten seconds later, given to Darwin as the key's own are (hakios_touch_post):
 PRESS_POWER_MS	arg	press_power_ms	Touch and buttons	k	hakios.buttons.c	
 PRIVS	arg	privs	Security stand-ins	k	kern_minimac.c	
+QCABT	arg	qcabt	Loader	l	loader.c	
 RD	arg	rd	CPU, memory and boot	kl	(patch),loader.c	
 REC_MB	arg	rec_mb	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 REC_RING	arg	rec_ring	GPU and display	k	MiniIOMobileFramebuffer.cpp	
@@ -216,9 +230,14 @@ SOC_SMEM_SIZE	hex	soc_smem_size	Chip, thermal and PMIC	k	hakios.socinfo.c
 SOUND_BELOW	arg	sound_below	Audio and battery	k	hakios.sound.c	
 SOUND_GAIN	arg	sound_gain	Audio and battery	k	hakios.sound.c	
 SOUND_GUARD_AS	arg	sound_guard_as	Audio and battery	k	hakios.sound.c	
+SOUND_MATRIX	arg	sound_matrix	Audio and battery	k	hakios.sound.c	the TDM sink, Android's rate, every layout of the frame still in question; the bus built anew for each
 SOUND_PAUSE	arg	sound_pause	Audio and battery	k	hakios.sound.c	
+SOUND_SD	arg	sound_sd	Audio and battery	k	hakios.sound.c	
 SOUND_SECS	arg	sound_secs	Audio and battery	k	hakios.sound.c	
+SPEAKER_ONLY	arg	speaker_only	Audio and battery	k	hakios.speaker.c	
 SPEAKER_PROBE	arg	speaker_probe	Audio and battery	k	hakios.speaker.c	reads registers and nothing else: the pins, the power names (below)
+SPEAKER_SPKSW	arg	speaker_spksw	Audio and battery	k	hakios.speaker.c	
+SPEAKER_SR	arg	speaker_sr	Audio and battery	k	hakios.speaker.c	
 SURF_CLEAR	arg	surf_clear	GPU and display	k	MiniIOSurface.cpp	kept memory is given out as it is (to see what the clearing costs; a surface is then not all zeroes)
 SURF_WRAP	arg	surf_wrap	GPU and display	k	MiniIOSurface.cpp	surfaces around the client's pictures refused, as before methodWrapClientImage (for comparing)
 SURFTRACE	arg	surftrace	GPU and display	k	MiniIOSurface.cpp	log the first N surfaces created (default 24)
@@ -285,6 +304,7 @@ WIFI_RADIO_READ	arg	wifi_radio_read	Wi-Fi	k	hakios.wifi.c	step 16 does read (2: 
 WIFI_READY	arg	wifi_ready	Wi-Fi	k	hakios.wlfw.c	
 WIFI_RETURN	arg	wifi_return	Wi-Fi	k	hakios.wifi.c	when all is over, go back to the loader instead of starting the system
 WIFI_SCAN	arg	wifi_scan	Wi-Fi	k	lx_bus.c	
+WIFI_SLEEP_CLOCK	arg	wifi_sleep_clock	Wi-Fi	k	lx_bus.c	
 WIFI_SMMU	arg	wifi_smmu	Wi-Fi	k	hakios.wifi.c	before any step: read what the boot chain has set up in the SMMU for the radio's stream (smmu_look() below; nothing is written)
 WIFI_STATION	arg	wifi_station	Wi-Fi	k	lx_bus.c	
 WIFI_STEP	arg	wifi_step	Wi-Fi	k	hakios.wifi.c	

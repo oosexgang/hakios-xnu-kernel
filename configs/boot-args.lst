@@ -15,6 +15,7 @@ adsp_again	k
 adsp_apr_wait	k
 adsp_keep	k
 adsp_listen	k
+adsp_loud	k
 adsp_new	k
 adsp_pause	k
 adsp_return	k
@@ -51,6 +52,7 @@ apfs_write_len	k
 apfs_write_path	k
 applog	k
 applog_name	k
+ar_clock	k
 autounlock	u
 battery	kl
 battery_shared_pa	k
@@ -78,6 +80,7 @@ cam_settle	k
 cam_shutter	k
 cam_vblank	k
 cc_fade	u
+cpu_sample	k
 cpufreq	k
 cpuload	k
 cpumask	l
@@ -91,10 +94,18 @@ fb_beat	k
 fb_ca_hz	k
 fb_diff	k
 fb_filter	k
+fb_flip	k
+fb_flip_flush	k
+fb_flip_gap	k
+fb_hud	k
 fb_hz	k
+fb_line	k
+fb_lines	k
+fb_mdp	k
 fb_measure	k
 fb_pri	k
 fb_queue	k
+fb_scan_us	k
 fb_threads	k
 fbheight	k
 fbscale	k
@@ -110,6 +121,7 @@ glenv	u
 glfetch	u
 glframes	u
 glgroup	u
+gllog	u
 glno	u
 glnumbers	u
 glplain	u
@@ -146,6 +158,7 @@ hakios_kver	k
 haptic	k
 haptic_effect	k
 hv_wdt_pet	k
+island	u
 loader_return_after	kl
 machine_name	k
 membench	k
@@ -206,6 +219,7 @@ pmic_list	k
 press_power	k
 press_power_ms	k
 privs	k
+qcabt	l
 rd	kl
 rec_mb	k
 rec_ring	k
@@ -240,9 +254,14 @@ sound	k
 sound_below	k
 sound_gain	k
 sound_guard_as	k
+sound_matrix	k
 sound_pause	k
+sound_sd	k
 sound_secs	k
+speaker_only	k
 speaker_probe	k
+speaker_spksw	k
+speaker_sr	k
 surf_clear	k
 surf_wrap	k
 surftrace	k
@@ -319,6 +338,7 @@ wifi_radio_read	k
 wifi_ready	k
 wifi_return	k
 wifi_scan	k
+wifi_sleep_clock	k
 wifi_smmu	k
 wifi_station	k
 wifi_step	k

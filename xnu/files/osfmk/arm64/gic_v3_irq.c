@@ -56,7 +56,9 @@
 #define GICD_IROUTER(n)         (0x6000 + 8 * (n))
 
 #define GICR_FRAME_SIZE         0x20000     /* RD_base + SGI_base per CPU */
+#define GICR_FRAME_SIZE_VLPI    0x40000     /* ... + VLPI_base + a reserved frame, when GICR_TYPER.VLPIS (GICv4) */
 #define GICR_TYPER              0x0008
+#define GICR_TYPER_VLPIS        (1u << 1)
 #define GICR_TYPER_LAST         (1u << 4)
 #define GICR_WAKER              0x0014
 #define GICR_WAKER_PROCSLEEP    (1u << 1)
@@ -399,7 +401,21 @@ gic_find_redistributor(void)
 	/* GICR_TYPER[63:32] packs Aff3.Aff2.Aff1.Aff0 */
 	uint32_t affinity = (uint32_t)(((mpidr >> 32) & 0xff) << 24 | (mpidr & 0xffffff));
 
-	for (vm_offset_t frame = gicr_base; frame + GICR_FRAME_SIZE <= gicr_base + gicr_size; frame += GICR_FRAME_SIZE) {
+	/*
+	 * A GICv4 redistributor (GICR_TYPER.VLPIS) has two more 64 KiB frames per processor, VLPI_base and a
+	 * reserved one, so the frames are 0x40000 apart instead of 0x20000: SM8450's GIC-600 is one
+	 * ("redistributor-stride = <0x0 0x40000>" in its device tree). Each frame says which it is, as Linux's
+	 * gic_iterate_rdists() reads it.
+	 */
+	vm_offset_t frame = gicr_base;
+	/*
+	 * Under SM8450's hypervisor (Gunyah) a core that reads the frame of another takes an external abort, so the walk
+	 * below can only ever work on core 0. Eight GICv4 frames in the region (its device tree's size): aff1 says which.
+	 */
+	if (gicr_size == 8 * GICR_FRAME_SIZE_VLPI && ((mpidr >> 8) & 0xff) < 8) {
+		frame = gicr_base + ((mpidr >> 8) & 0xff) * GICR_FRAME_SIZE_VLPI;
+	}
+	while (frame + GICR_FRAME_SIZE <= gicr_base + gicr_size) {
 		uint64_t typer = *(volatile uint64_t *)(frame + GICR_TYPER);
 
 		if ((uint32_t)(typer >> 32) == affinity) {
@@ -408,6 +424,7 @@ gic_find_redistributor(void)
 		if (typer & GICR_TYPER_LAST) {
 			break;
 		}
+		frame += (typer & GICR_TYPER_VLPIS) ? GICR_FRAME_SIZE_VLPI : GICR_FRAME_SIZE;
 	}
 	panic("gic: no redistributor for MPIDR 0x%llx", mpidr);
 }

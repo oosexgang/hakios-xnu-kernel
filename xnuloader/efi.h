@@ -17,6 +17,8 @@ typedef uint16_t char16;
 #define EFI_ERROR_BIT        0x8000000000000000ULL
 #define EFI_ERROR(s)         (((s) & EFI_ERROR_BIT) != 0)
 #define EFI_BUFFER_TOO_SMALL (EFI_ERROR_BIT | 5)
+#define EFI_DEVICE_ERROR     (EFI_ERROR_BIT | 7)
+#define EFI_OUT_OF_RESOURCES (EFI_ERROR_BIT | 9)
 
 typedef struct {
 	uint32_t a; uint16_t b; uint16_t c; uint8_t d[8];

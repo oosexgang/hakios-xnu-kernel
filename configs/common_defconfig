@@ -2,7 +2,7 @@
 # HakiOS common defconfig: every setting there is, with what it does.
 # Made by tools/hakios-config.py listing common -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol.
 #
-# 350 symbols in 18 groups; 34 are set, 25 of them drivers built in.
+# 372 symbols in 18 groups; 36 are set, 27 of them drivers built in.
 #
 
 #
@@ -19,7 +19,7 @@
 CONFIG_FIRMWARE="device"
 
 #
-# Drivers built in (25)
+# Drivers built in (27)
 #
 
 # the audio DSP started and linked (adsp=1, adsp_step=N); the battery's state comes through it too. Needs the DSP's ... [hakios.adsp.c]
@@ -49,7 +49,10 @@ CONFIG_HAKIOS_TORCH=y
 # the chip's identity from the firmware's shared memory: kern.hakios.soc_* (socinfo=1). Any Qualcomm SoC that keeps ... [hakios.socinfo.c]
 CONFIG_HAKIOS_SOCINFO=y
 
-# the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa and the window ... [hakios.adreno.c, hakios.gpu.cpp]
+# HakiosGPU, the IOKit service Mesa and the window server draw through, over a GPU driver that keeps the GPU on (the ... [hakios.gpu.cpp]
+CONFIG_HAKIOS_GPU=y
+
+# the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa and the window ... [hakios.adreno.c; requires CONFIG_HAKIOS_GPU]
 CONFIG_HAKIOS_ADRENO=y
 
 # the vibration motor: an Awinic AW86927 driving a linear resonant actuator (haptic=N), its waveforms from fw-haptic/ [hakios.haptic.c]
@@ -94,7 +97,10 @@ CONFIG_HAKIOS_UFS=y
 # a disk image of the host as /dev/rvblk0 (virtio_blk=1). QEMU only [hakios.virtio_blk.c]
 CONFIG_HAKIOS_VIRTIO_BLK=y
 
-# Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, Linux's ath11k (its object, made ... [hakios.wifi.c, hakios.wlfw.c, hakios.lx.c, hakios.sta.c, hakios.apple80211.c, hakios.wlan.cpp; requires CONFIG_HAKIOS_QMI]
+# what every phone's Wi-Fi shares: the kernel's side of Linux's ath11k (its object, made by tools/mk-ath11k.sh, is ... [hakios.lx.c, hakios.sta.c, hakios.apple80211.c, hakios.wlan.cpp]
+CONFIG_HAKIOS_WIFI_STACK=y
+
+# Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, Linux's ath11k (its object, made ... [hakios.wifi.c, hakios.wlfw.c; requires CONFIG_HAKIOS_QMI, CONFIG_HAKIOS_WIFI_STACK]
 CONFIG_HAKIOS_WIFI=y
 
 #
@@ -335,7 +341,7 @@ CONFIG_TOUCHSCREEN=y
 # CONFIG_VIRTIO_INPUT is not set
 
 #
-# GPU and display (74)
+# GPU and display (83)
 #
 
 # rendering on Adreno (an image built with GL=1; the GPU's firmware from your phone) [needs fw-gpu/ from the phone]
@@ -393,7 +399,28 @@ CONFIG_GPU=y
 # CONFIG_FB_FILTER is not set
 
 # read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FB_FLIP is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FB_FLIP_FLUSH is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FB_FLIP_GAP is not set
+
+# the frame rate, the hottest temperature sensor and the processors' clocks in a corner of every frame
+# CONFIG_FB_HUD is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_HZ is not set
+
+# a command-mode panel's line counter (a display interface's INTF_TEAR_LINE_COUNT), and fb_lines=N
+# CONFIG_FB_LINE is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FB_LINES is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FB_MDP is not set
 
 # how often the panel is really refreshed
 # CONFIG_FB_MEASURE is not set
@@ -403,6 +430,9 @@ CONFIG_GPU=y
 
 # read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_QUEUE is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FB_SCAN_US is not set
 
 # read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_THREADS is not set
@@ -439,6 +469,9 @@ CONFIG_GPU=y
 
 # read by eagl.c (user space)
 # CONFIG_GLGROUP is not set
+
+# the drawing thread's own lines as they were -- a line every 20 frames, a summary of some 40 lines
+# CONFIG_GLLOG is not set
 
 # read by eagl.c (user space)
 # CONFIG_GLNUMBERS is not set
@@ -561,7 +594,7 @@ CONFIG_GPU=y
 # CONFIG_VBLUR is not set
 
 #
-# Audio and battery (32)
+# Audio and battery (39)
 #
 
 # the audio DSP; the battery level in the UI and charging state come through it [needs fw-audio/ from the phone]
@@ -592,6 +625,9 @@ CONFIG_SOUND=4
 # CONFIG_ADSP_LISTEN is not set
 
 # read by hakios.adsp.c (kernel)
+# CONFIG_ADSP_LOUD is not set
+
+# read by hakios.adsp.c (kernel)
 # CONFIG_ADSP_NEW is not set
 
 # read by hakios.adsp.c (kernel)
@@ -605,6 +641,9 @@ CONFIG_SOUND=4
 
 # read by hakios.adsp.c (kernel)
 # CONFIG_ADSP_WAIT is not set
+
+# the first thing the speakers' path needs of the DSP, tried on its own once AudioReach is up
+# CONFIG_AR_CLOCK is not set
 
 # read by hakios.adsp.c, hakios.battery.c, loader.c (kernel and loader)
 # CONFIG_BATTERY is not set
@@ -648,20 +687,35 @@ CONFIG_SOUND=4
 # read by hakios.sound.c (kernel)
 # CONFIG_SOUND_GUARD_AS is not set
 
+# the TDM sink, Android's rate, every layout of the frame still in question; the bus built anew for each
+# CONFIG_SOUND_MATRIX is not set
+
 # read by hakios.sound.c (kernel)
 # CONFIG_SOUND_PAUSE is not set
 
 # read by hakios.sound.c (kernel)
+# CONFIG_SOUND_SD is not set
+
+# read by hakios.sound.c (kernel)
 # CONFIG_SOUND_SECS is not set
+
+# read by hakios.speaker.c (kernel)
+# CONFIG_SPEAKER_ONLY is not set
 
 # reads registers and nothing else: the pins, the power names (below)
 # CONFIG_SPEAKER_PROBE is not set
+
+# read by hakios.speaker.c (kernel)
+# CONFIG_SPEAKER_SPKSW is not set
+
+# read by hakios.speaker.c (kernel)
+# CONFIG_SPEAKER_SR is not set
 
 # read by hakios.virtio_sound.c (kernel)
 # CONFIG_VIRTIO_SOUND is not set
 
 #
-# Wi-Fi (31)
+# Wi-Fi (32)
 #
 
 # Wi-Fi: the radio, its driver, a connection (also fw-wifi/mac and fw-wifi/network) [needs fw-wifi/ from the phone]
@@ -738,6 +792,9 @@ CONFIG_WIFI=y
 
 # read by lx_bus.c (kernel)
 # CONFIG_WIFI_SCAN is not set
+
+# read by lx_bus.c (kernel)
+# CONFIG_WIFI_SLEEP_CLOCK is not set
 
 # before any step: read what the boot chain has set up in the SMMU for the radio's stream (smmu_look() below; nothing ...
 # CONFIG_WIFI_SMMU is not set
@@ -1059,7 +1116,7 @@ CONFIG_MODEM_AGAIN=y
 # CONFIG_USTACKS_TNAME is not set
 
 #
-# Loader (4)
+# Loader (5)
 #
 
 # read by loader.c (loader)
@@ -1069,13 +1126,16 @@ CONFIG_MODEM_AGAIN=y
 # CONFIG_GAMUT is not set
 
 # read by loader.c (loader)
+# CONFIG_QCABT is not set
+
+# read by loader.c (loader)
 # CONFIG_SERIAL is not set
 
 # read by loader.c (loader)
 # CONFIG_UFS_PROBE is not set
 
 #
-# User space (14)
+# User space (16)
 #
 
 # read by inject_sb.c (user space)
@@ -1096,6 +1156,9 @@ CONFIG_MODEM_AGAIN=y
 # read by inject_sb.c (user space)
 # CONFIG_CC_FADE is not set
 
+# read by hakios_cpusample.c (kernel)
+# CONFIG_CPU_SAMPLE is not set
+
 # not even with a GPU; gl=1: also without one, by Mesa's software driver (slow; for working on eagl.c in QEMU)
 # CONFIG_GL is not set
 
@@ -1110,6 +1173,9 @@ CONFIG_MODEM_AGAIN=y
 
 # the renderer is made to answer that it has those functions after all
 # CONFIG_GLYES is not set
+
+# the Dynamic Island. iOS 16's SpringBoard has the "system aperture" on every phone and turns it on
+# CONFIG_ISLAND is not set
 
 # the root is to be the Darwin root volume on /dev/DEV -- the phone's flash, read only
 # CONFIG_ROOT_APFS is not set
