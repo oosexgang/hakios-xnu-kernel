@@ -29,6 +29,7 @@ The first line whose glob matches a path decides. A path no line matches is unex
 Exit status: 0 clean, 1 something to fix.
 """
 import argparse
+import ast
 import fnmatch
 import os
 import re
@@ -103,6 +104,29 @@ def kind_of(head):
     return "binary"
 
 
+def without_python_docstrings(text):
+    """Mask actual docstrings, retaining executable text and diagnostic line numbers."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return text                         # malformed Python must not hide a command
+    lines = text.split("\n")
+    for owner in ast.walk(tree):
+        if not isinstance(owner, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not owner.body:
+            continue
+        doc = owner.body[0]
+        if not (isinstance(doc, ast.Expr) and isinstance(doc.value, ast.Constant) and isinstance(doc.value.value, str)):
+            continue
+        for i in range(doc.lineno - 1, doc.end_lineno):
+            # AST columns are UTF-8 byte offsets, not Python string indices.
+            # Mask only the string: code after a same-line docstring is still checked.
+            line = lines[i].encode("utf-8")
+            first = doc.col_offset if i == doc.lineno - 1 else 0
+            last = doc.end_col_offset if i == doc.end_lineno - 1 else len(line)
+            lines[i] = (line[:first] + b" " * (last - first) + line[last:]).decode("utf-8")
+    return "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--report", action="store_true")
@@ -151,6 +175,8 @@ def main():
                 text = open(full, "r", errors="replace").read()
             except OSError:
                 continue
+            if path.endswith(".py"):
+                text = without_python_docstrings(text)
             for n, line in enumerate(text.splitlines(), 1):
                 code = line.split("#", 1)[0] if path.endswith((".sh", "xl", "Makefile")) else line
                 found = (FLASHY_C if scan_c else FLASHY).search(code)
