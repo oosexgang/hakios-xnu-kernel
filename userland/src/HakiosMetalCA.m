@@ -5656,6 +5656,22 @@ hm_completed(hakios_metal_cb *cb, void *context)
 	HakiosMetalCommandBuffer *self = (HakiosMetalCommandBuffer *)context;
 
 	hm_timeline([self hakiosCreatedAt], [self GPUStartTime], hm_now(), (double)hakios_metal_cb_gpu_nanoseconds(cb) / 1e9);
+	{
+		/* (hakios) boot-arg touch_lat=1: "tl: M made US committed US done US gpu US" of every command buffer, in
+		 * the microseconds of mach_absolute_time the other "tl:" lines use (the display's tl: v and tl: y beside it) */
+		static int lines = -1;
+
+		if (lines < 0) {
+			char args[1024] = "";
+			size_t size = sizeof(args) - 1;
+
+			lines = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "touch_lat=1") != NULL;
+		}
+		if (lines) {
+			fprintf(stderr, "tl: M made %.0f committed %.0f done %.0f gpu %.0f\n", [self hakiosCreatedAt] * 1e6,
+				[self GPUStartTime] * 1e6, hm_now() * 1e6, (double)hakios_metal_cb_gpu_nanoseconds(cb) / 1e3);
+		}
+	}
 	hm_fps_note(NO, (double)hakios_metal_cb_gpu_nanoseconds(cb) / 1e9, hm_now() - [self GPUStartTime], cb);
 	/* hakios-metal's queue thread has no autorelease pool of its own, and the NSError built here and whatever a
 	 * handler autoreleases would otherwise leak, silently, once per command buffer */
