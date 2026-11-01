@@ -19,6 +19,8 @@ card starts the kernel, with no fastboot. docs/uefi-boot.md says what this does 
 It refuses what the loader would refuse, and says so here instead of on a phone's screen: a file that is not a
 payload (no XNUP), a payload with no kernel in it, one that does not fit in the loader's payload region (63 MiB: the
 big Darwin system image does not come this way).
+Truncated headers, entry data or padding, a missing end entry, and an empty kernel are refused before
+anything is written to OUTDIR.
 """
 import argparse
 import os
@@ -37,15 +39,25 @@ def entries(data):
     if len(data) < 8 or struct.unpack_from("<I", data)[0] != MAGIC:
         sys.exit("mkesp: not a payload: it does not start with XNUP (make one with xnuloader/mkpayload.py)")
     size = struct.unpack_from("<I", data, 4)[0]
+    end = 8 + size
+    if end > len(data):
+        sys.exit("mkesp: truncated payload: the header declares %d bytes, but the file holds %d" % (end, len(data)))
     out, at = {}, 8
-    while at + 24 <= min(8 + size, len(data)):
+    while at < end:
+        if at + 24 > end:
+            sys.exit("mkesp: truncated payload entry header at byte %d" % at)
         name = data[at:at + 16].split(b"\0")[0].decode(errors="replace")
         length = struct.unpack_from("<I", data, at + 16)[0]
         if not name:
-            break
+            return out
+        padded = (length + 15) & ~15
+        if at + 24 + length > end:
+            sys.exit("mkesp: payload entry %r extends past the declared payload" % name)
+        if at + 24 + padded > end:
+            sys.exit("mkesp: truncated padding for payload entry %r" % name)
         out[name] = data[at + 24:at + 24 + length]
-        at += 24 + ((length + 15) & ~15)
-    return out
+        at += 24 + padded
+    sys.exit("mkesp: payload has no end entry")
 
 
 def main():
@@ -67,12 +79,12 @@ def main():
         sys.exit("mkesp: %s is not empty" % args.outdir)
 
     data = open(args.payload, "rb").read()
-    parts = entries(data)
-    if "kernel" not in parts:
-        sys.exit("mkesp: the payload has no kernel in it (entries: %s)" % (", ".join(sorted(parts)) or "none"))
     if len(data) > PAYLOAD_LIMIT:
         sys.exit("mkesp: the payload is %d bytes and the loader's payload region holds %d: the root image is too big for "
                  "this way of booting (the big Darwin image goes in over USB, `xl ramdisk`)" % (len(data), PAYLOAD_LIMIT))
+    parts = entries(data)
+    if not parts.get("kernel"):
+        sys.exit("mkesp: the payload has no kernel data in it (entries: %s)" % (", ".join(sorted(parts)) or "none"))
     version = parts.get("kernel.ver", b"").rstrip(b"\0").decode(errors="replace")
     head = open(loader, "rb").read(2)
     if head != b"MZ":
