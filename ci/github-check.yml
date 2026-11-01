@@ -40,7 +40,7 @@ jobs:
           # (This replaces two lines of the form `! git ls-files | grep ...`: bash -e does not stop on
           # a negated pipeline, so the first of them could never fail, and a committed screenshot passed.)
           python3 tools/provenance-check.py
-      - name: The provenance check itself: what it lets through and what it stops
+      - name: "The provenance check itself: what it lets through and what it stops"
         run: python3 tools/provenance-test.py
       - name: A run sends only the soc_* values that differ from the kernel's defaults
         run: bash tools/soc-only-changes-test.sh
@@ -48,6 +48,8 @@ jobs:
         run: python3 tools/hakios-config-test.py
       - name: The EFI system partition tree is laid out as the loader looks for it
         run: python3 tools/mkesp-test.py
+      - name: Sparse image splitting validates limits and preserves existing outputs
+        run: python3 tools/sparse-split-test.py
       - name: The kernel's version string is made as it should be
         run: python3 tools/kernel-version-test.py
       - name: The backup tool only reads, copies exactly, and proves every copy
