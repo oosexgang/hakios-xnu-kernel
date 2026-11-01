@@ -6,7 +6,7 @@
 	<key>ReduceTransparencyKey</key>
 	<true/>
 	<key>ReduceMotionKey</key>
-	<true/>
+	<false/>
 	<key>DarkenSystemColors</key>
 	<false/>
 	<key>InvertColorsEnabled</key>

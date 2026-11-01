@@ -679,9 +679,9 @@ plain_vibrancy(void)
 {
 	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
 	CFPreferencesSetAppValue(CFSTR("SBReduceTransparency"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-	CFPreferencesSetAppValue(CFSTR("SBReduceMotion"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+	CFPreferencesSetAppValue(CFSTR("SBReduceMotion"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
 	CFPreferencesSetAppValue(CFSTR("SBDisableIconShadows"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-	say("hakios: SpringBoard: 60 FPS profile active (BSUIVibrancyEffectViewDisabled, ReduceTransparency, ReduceMotion)\n");
+	say("hakios: SpringBoard: 60 FPS profile active (animations ON, ReduceTransparency ON)\n");
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
