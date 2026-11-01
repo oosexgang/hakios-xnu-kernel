@@ -6,7 +6,6 @@
 #include <mach/mach_time.h>
 
 #include <cerrno>
-#include <cstdio>
 
 #include "hakios-metal/gpu.hpp"
 
@@ -30,11 +29,7 @@ public:
         case kIOReturnBusy: return EBUSY;
         case kIOReturnNotFound: return ENOENT;
         case kIOReturnUnsupported: return ENOSYS;
-        default:
-            // the kernel's own answer would be lost in a plain EIO: a code no case names is a failure nobody has
-            // looked at yet, so it is printed where it happens
-            fprintf(stderr, "hakios-metal: the driver's request %u answered %#x\n", request, unsigned(r));
-            return EIO;
+        default: return EIO;
         }
     }
 

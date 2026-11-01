@@ -15,7 +15,7 @@ trap 'rm -rf "$tmp"' EXIT
 gpu=
 if [ -n "$GPU" ]; then
 	# the core for this Mac, as `make test` builds it, under the same sanitizer
-	for f in src/pm4.cpp src/gpu.cpp src/command.cpp src/compute.cpp src/texture.cpp src/render.cpp src/link.cpp src/compiler.cpp src/metallib.cpp src/c_api.cpp src/fake_gpu.cpp; do
+	for f in src/pm4.cpp src/gpu.cpp src/command.cpp src/metallib.cpp src/c_api.cpp src/fake_gpu.cpp; do
 		clang++ -std=c++17 -O1 -g -fsanitize=address -Wall -Wextra -Werror -Iinclude -c "$f" -o "$tmp/$(basename "$f" .cpp).o"
 	done
 	gpu="-DHAKIOS_METAL_GPU -Iinclude $tmp/*.o -lc++"

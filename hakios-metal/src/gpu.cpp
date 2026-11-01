@@ -30,16 +30,6 @@ int Gpu::param(uint32_t which, uint64_t* value) {
     return e;
 }
 
-uint32_t Gpu::chipId() {
-    uint64_t v = 0;
-    return param(kParamChipId, &v) == 0 ? uint32_t(v) : 0;
-}
-
-uint64_t Gpu::faults() {
-    uint64_t v = 0;
-    return param(kParamFaults, &v) == 0 ? v : 0;
-}
-
 std::unique_ptr<Bo> Gpu::newBo(uint64_t size, uint32_t flags, int* error) {
     *error = 0;
     if (size == 0) {
@@ -67,53 +57,12 @@ std::unique_ptr<Bo> Gpu::newBo(uint64_t size, uint32_t flags, int* error) {
         *error = ENOMEM;
         return nullptr;
     }
-    std::unique_ptr<Bo> bo(new Bo(*this, n.handle, n.size, info.value, cpu));
-    bo->counted_ = true;
-    allocated_ += n.size;
-    return bo;
-}
-
-std::unique_ptr<Bo> Gpu::surfaceBo(uint32_t surfaceId, SurfaceInfo* out, int* error) {
-    HakiosSurface s{};
-    s.surface = surfaceId;
-    if ((*error = t_->call(kHakiosSurface, &s, sizeof(s))) != 0) {
-        return nullptr;
-    }
-    MsmGemInfo info{};
-    info.handle = s.handle;
-    info.info = kInfoGetIova;
-    if ((*error = t_->call(kGemInfo, &info, sizeof(info))) != 0) {
-        DrmGemClose c{s.handle, 0};
-        t_->call(kGemClose, &c, sizeof(c));
-        return nullptr;
-    }
-    *out = SurfaceInfo{s.size, s.offset, s.rowBytes, s.width, s.height, s.pixelFormat, s.planes};
-    return std::unique_ptr<Bo>(new Bo(*this, s.handle, s.size, info.value, t_->map(s.handle, s.size)));
-}
-
-void Gpu::disown(std::unique_ptr<Bo> bo) {
-    if (bo == nullptr) return;
-    if (bo->cpu_ != nullptr) {
-        t_->unmap(bo->handle_, bo->cpu_);
-        bo->cpu_ = nullptr;
-    }
-    bo->owned_ = false;
-    if (bo->counted_) {
-        allocated_ -= bo->size_;
-        bo->counted_ = false;
-    }
+    return std::unique_ptr<Bo>(new Bo(*this, n.handle, n.size, info.value, cpu));
 }
 
 Bo::~Bo() { gpu_.release(*this); }
 
 void Gpu::release(Bo& bo) {
-    if (!bo.owned_) {
-        return;
-    }
-    if (bo.counted_) {
-        allocated_ -= bo.size_;
-        bo.counted_ = false;
-    }
     if (bo.cpu_ != nullptr) {
         t_->unmap(bo.handle_, bo.cpu_);
     }

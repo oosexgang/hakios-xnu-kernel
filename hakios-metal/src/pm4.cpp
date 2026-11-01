@@ -78,9 +78,4 @@ void Stream::indirect(uint64_t a, uint32_t words) {
     words_.push_back(words);
 }
 
-void Stream::packet(uint32_t opcode, const uint32_t* words, uint32_t count) {
-    command(opcode, count);
-    words_.insert(words_.end(), words, words + count);
-}
-
 }  // namespace hakios::metal::pm4
