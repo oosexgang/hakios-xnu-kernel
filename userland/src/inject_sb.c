@@ -1226,6 +1226,171 @@ control_center_fades(const char *arguments)
 }
 
 /*
+ * The frame rates SpringBoard's display links ask for. After a page of the home screen settles, something of
+ * SpringBoard's goes on drawing at exactly 30 a second for most of a second (its run loop and the window server's
+ * frames 33.3 ms apart, tl: a and tl: g). It is UIKit's: the display link of UIViewInProcessAnimationManager, which
+ * runs the animations done in the application's own process, asks for 20..30. With dl_max=1 (the default) the rates
+ * asked of that one are dropped and it runs at the panel's rate; on an iPhone with ProMotion the lower rate saves
+ * power, here the panel refreshes at 120 whatever is drawn. The other display links keep what they ask (the clock's
+ * 10 and 60, the motion effects' 32): run at 120 they woke SpringBoard six times as often for nothing.
+ * With touch_lat=1 every display link made and every rate asked of one is said ("hakios: display link ...").
+ */
+typedef struct {
+	float minimum, maximum, preferred;
+} frame_rate_range;
+
+static id (*original_display_link_with)(id self, SEL selector, id target, SEL action);
+static void (*original_set_fps)(id self, SEL selector, long fps);
+static void (*original_set_range)(id self, SEL selector, frame_rate_range range);
+static bool dl_say, dl_max = true;
+static unsigned dl_said;
+#define DL_SAY_MAX 300
+#define DL_FULL_FOR "UIViewInProcessAnimationManager"
+static char dl_full;                    /* the key of the mark a display link made for DL_FULL_FOR carries */
+
+/* (a mark on the link itself: UIKit makes one of these for every animation, and a list of them filled up at once) */
+static bool
+full_rate(id link)
+{
+	return dl_max && objc_getAssociatedObject(link, &dl_full) != NULL;
+}
+
+static const char *
+caller(const void *address, char *buffer, size_t size)
+{
+	Dl_info info;
+	const char *image;
+
+	if (dladdr(address, &info) == 0 || info.dli_fname == NULL) {
+		snprintf(buffer, size, "%p", address);
+		return buffer;
+	}
+	image = strrchr(info.dli_fname, '/') ? strrchr(info.dli_fname, '/') + 1 : info.dli_fname;
+	snprintf(buffer, size, "%s+%#lx", image, (unsigned long)((uintptr_t)address - (uintptr_t)info.dli_fbase));
+	return buffer;
+}
+
+static id
+display_link_with(id self, SEL selector, id target, SEL action)
+{
+	id link = original_display_link_with(self, selector, target, action);
+	char who[256];
+
+	if (link != NULL && target != NULL && strcmp(object_getClassName(target), DL_FULL_FOR) == 0) {
+		objc_setAssociatedObject(link, &dl_full, (id)kCFBooleanTrue, OBJC_ASSOCIATION_ASSIGN);
+	}
+	if (dl_say && dl_said++ < DL_SAY_MAX) {
+		say("hakios: display link %p made for -[%s %s] by %s\n", (void *)link, target ? object_getClassName(target) : "nil",
+		    action ? sel_getName(action) : "", caller(__builtin_return_address(0), who, sizeof(who)));
+	}
+	return link;
+}
+
+static void
+set_fps(id self, SEL selector, long fps)
+{
+	char who[256];
+
+	if (dl_say && dl_said++ < DL_SAY_MAX) {
+		say("hakios: display link %p asked for %ld a second%s by %s\n", (void *)self, fps, full_rate(self) ? " (dropped)" : "",
+		    caller(__builtin_return_address(0), who, sizeof(who)));
+	}
+	original_set_fps(self, selector, full_rate(self) ? 0 : fps);
+}
+
+static void
+set_range(id self, SEL selector, frame_rate_range range)
+{
+	char who[256];
+
+	if (dl_say && dl_said++ < DL_SAY_MAX) {
+		say("hakios: display link %p asked for %.0f..%.0f, %.0f a second%s by %s\n", (void *)self, range.minimum,
+		    range.maximum, range.preferred, full_rate(self) ? " (dropped)" : "", caller(__builtin_return_address(0), who, sizeof(who)));
+	}
+	if (full_rate(self)) {
+		range = (frame_rate_range){ 0, 0, 0 };
+	}
+	original_set_range(self, selector, range);
+}
+
+static bool
+boot_arg(const char *arguments, const char *name)
+{
+	const char *at = strstr(arguments, name);
+
+	return at != NULL && (at == arguments || at[-1] == ' ');
+}
+
+static void
+display_link_rates(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	Class link = objc_getClass("CADisplayLink");
+	Method made, fps, range;
+
+	if (link == NULL || sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0) {
+		return;
+	}
+	dl_say = boot_arg(arguments, "touch_lat=1");
+	dl_max = !boot_arg(arguments, "dl_max=0");
+	if (!dl_say && !dl_max) {
+		return;
+	}
+	if ((made = class_getClassMethod(link, sel_registerName("displayLinkWithTarget:selector:"))) != NULL) {
+		original_display_link_with = (id (*)(id, SEL, id, SEL))method_setImplementation(made, (IMP)display_link_with);
+	}
+	if ((fps = class_getInstanceMethod(link, sel_registerName("setPreferredFramesPerSecond:"))) != NULL) {
+		original_set_fps = (void (*)(id, SEL, long))method_setImplementation(fps, (IMP)set_fps);
+	}
+	if ((range = class_getInstanceMethod(link, sel_registerName("setPreferredFrameRateRange:"))) != NULL) {
+		original_set_range = (void (*)(id, SEL, frame_rate_range))method_setImplementation(range, (IMP)set_range);
+	}
+	say("hakios: display links: made %s, fps %s, range %s%s\n", made ? "ok" : "NO", fps ? "ok" : "NO", range ? "ok" : "NO",
+	    dl_max ? "; " DL_FULL_FOR "'s at the panel's rate (dl_max=1)" : "");
+}
+
+/*
+ * Boot-args ax_rt=0|1 and ax_rm=0|1: Settings' Reduce Transparency and Reduce Motion, set as SpringBoard starts
+ * (libAccessibility's own setters, which keep them in its preferences as Settings does). Without them nothing is
+ * set. Reduce Transparency puts plain colours where CoreAnimation would blur what is behind (the dock, folders, an
+ * application opening over the home screen): the blurs are what the GPU spends most of an application's opening on.
+ */
+static void
+accessibility_settings(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	static const struct {
+		const char *arg, *setter, *what;
+	} settings[] = {
+		{ "ax_rt=", "_AXSSetEnhanceBackgroundContrastEnabled", "Reduce Transparency" },
+		{ "ax_rm=", "_AXSSetReduceMotionEnabled", "Reduce Motion" },
+	};
+	void *library;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0) {
+		return;
+	}
+	for (size_t i = 0; i < sizeof(settings) / sizeof(settings[0]); i++) {
+		const char *at = strstr(arguments, settings[i].arg);
+		void (*set)(Boolean);
+
+		if (at == NULL || (at != arguments && at[-1] != ' ')) {
+			continue;
+		}
+		if ((library = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW)) == NULL ||
+		    (set = (void (*)(Boolean))dlsym(library, settings[i].setter)) == NULL) {
+			say("hakios: %s: no %s in libAccessibility\n", settings[i].what, settings[i].setter);
+			continue;
+		}
+		set(atoi(at + strlen(settings[i].arg)) != 0);
+		say("hakios: %s %s (%s%d)\n", settings[i].what, atoi(at + strlen(settings[i].arg)) ? "on" : "off", settings[i].arg,
+		    atoi(at + strlen(settings[i].arg)));
+	}
+}
+
+/*
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
  */
@@ -1312,6 +1477,8 @@ hakios_springboard_init(void)
 		return;
 	}
 	caenv();
+	display_link_rates();
+	accessibility_settings();
 	/*
 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader
 	 * (/var/jb/usr/lib/TweakLoader.dylib) reads /var/jb/usr/lib/TweakInject and opens the tweaks

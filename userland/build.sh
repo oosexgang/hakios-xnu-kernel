@@ -240,14 +240,18 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
 		# the plug-in Metal loads when the kernel names it (boot-arg metal=1): a device, its buffers and the libraries it reads
 		# (src/HakiosMetal.m, src/hakios_metallib.c; tools/metal-plugin-test.sh tries the same objects on a Mac)
-		# With hakios-metal (github.com/oosexgang/hakios-metal, `make darwin` in it, beside this tree or at HAKIOS_METAL=): buffers in
+		# With hakios-metal (github.com/oosexgang/hakios-metal, `make ios` in it, beside this tree or at HAKIOS_METAL=): buffers in
 		# the GPU's memory, command buffers, and blits done by the GPU when the kernel has one (gpu=1). Without it, the plug-in as before.
+		# (out/ios/ since hakios-metal took vcvkk's history; out/darwin/ is where the older trees built it)
 		HM=${HAKIOS_METAL:-../../hakios-metal}
 		METAL_GPU=
-		if [ -f $HM/out/darwin/libhakios-metal.a ]; then
-			METAL_GPU="-DHAKIOS_METAL_GPU -I$HM/include $HM/out/darwin/libhakios-metal.a -lc++ -framework IOKit"
-			echo "build.sh: HakiosMetal with hakios-metal ($HM)"
-		fi
+		for HM_OUT in $HM/out/ios $HM/out/darwin; do
+			if [ -f $HM_OUT/libhakios-metal.a ]; then
+				METAL_GPU="-DHAKIOS_METAL_GPU -I$HM/include $HM_OUT/libhakios-metal.a -lc++ -framework IOKit -framework IOSurface"
+				echo "build.sh: HakiosMetal with hakios-metal ($HM_OUT)"
+				break
+			fi
+		done
 		# the plug-in itself is hakios-metal's now (plugin/, where it is tested); the copy in src/ is for a tree without it
 		METAL_SRC=src
 		if [ -f $HM/plugin/HakiosMetal.m ]; then
