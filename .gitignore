@@ -123,3 +123,6 @@ __pycache__/
 
 # Android platform-tools for xl on a Mac (tools/macos-bin/README.md): not part of the repository
 /tools/macos-bin/platform-tools
+
+# the Bluetooth chip's firmware (mayfly: hpbtfw21.tlv, hpnv21.*), the vendor's like fw-gpu/ and fw-wifi/
+/fw-bt

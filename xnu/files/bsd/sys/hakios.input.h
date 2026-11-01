@@ -80,6 +80,7 @@ void hakios_adreno_quiesce(void);      /* on the way back to the loader: the GPU
 void hakios_adreno_stop(void);         /* before that, where the ending is no panic's: the GPU given back in order */
 void hakios_adreno_minute(void);       /* once a minute: a line about how warm the GPU is, if it is in use */
 void hakios_wifi_init(void);           /* boot-arg wifi=1: the phone's Wi-Fi; wifi_step=N: the first N steps of it */
+void hakios_qcabt_init(void);          /* boot-arg qcabt=N: the QCA6490's Bluetooth over its UART (mayfly) */
 void hakios_adsp_init(void);           /* boot-arg adsp=1: the phone's audio DSP started and linked; adsp_step=N: the first N steps */
 void hakios_mpss_init(void);           /* boot-arg modem=1: the phone's modem started and linked; modem_step=N: the first N steps */
 void hakios_wifi_stop(void);           /* where a run ends in order: the Wi-Fi DSP, if it was started, shut down */

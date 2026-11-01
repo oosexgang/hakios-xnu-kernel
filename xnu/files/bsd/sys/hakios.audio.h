@@ -67,6 +67,9 @@ void hakios_camera_quiesce(void);      /* whatever of them was switched on, off:
 bool hakios_speaker_prepare(const uint8_t *acf, uint64_t size);       /* found, reset, configured: powered down, muted */
 bool hakios_speaker_start(void);       /* powered up and unmuted at the lowest volume: only while the I2S clock runs */
 bool hakios_speaker_volume(uint32_t below, uint32_t step_ms); /* below Android's level, in eighths of a dB; 6 dB a step */
+void hakios_speaker_options(uint32_t only, uint32_t spksw, int rate, bool force, unsigned profile); /* sound_matrix=1 */
+void hakios_speaker_now(uint16_t *status, uint16_t *pvdd);
+void hakios_speaker_dump(const char *when); /* what the amplifiers say of themselves, into the log */
 bool hakios_speaker_healthy(void);     /* no fault reported; on one, both are powered down at once */
 void hakios_speaker_stop(void);        /* faded out, muted, powered down, in Android's order */
 void hakios_speaker_quiesce(void);     /* powered down at once, without sleeping: on a panic's way out */
@@ -115,6 +118,10 @@ typedef bool (*hakios_apr_events_t)(uint8_t service, uint16_t port, uint32_t opc
 bool hakios_adsp_apr(uint8_t service, uint16_t port, uint32_t token, uint32_t opcode, const void *payload, uint32_t length,
     uint32_t wait_ms, struct hakios_apr_answer *answer);
 void hakios_adsp_apr_events(hakios_apr_events_t handler);
+/* the Xiaomi 12S (AudioReach): one GPR packet to a port of the DSP (APM 1, PRM 2, a module's instance id); events as above,
+ * with service 0 and the packet's source port as "port" */
+bool hakios_adsp_gpr(uint32_t port, uint32_t opcode, uint32_t token, const void *payload, uint32_t length, uint32_t wait_ms,
+    struct hakios_apr_answer *answer);
 const uint8_t *hakios_adsp_fw_file(const char *name, uint64_t *size);        /* /fw/name, read whole; give back with: */
 void hakios_adsp_fw_free(const uint8_t *data, uint64_t size);
 

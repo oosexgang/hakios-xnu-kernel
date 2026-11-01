@@ -131,7 +131,8 @@ INJECT=${INJECT-"/redwood/lib/libhakios.dylib backboardd containermanagerd conta
 /redwood/lib/libhakios.sb.dylib SpringBoard
 /redwood/lib/libhakios.media.dylib mediaserverd
 /redwood/lib/libhakios.app.dylib Sileo
-/redwood/lib/libhakios.tweaks.dylib Preferences"}
+/redwood/lib/libhakios.tweaks.dylib Preferences
+/redwood/lib/libhakios.fps.dylib @apps"}
 mkdir -p obj
 
 if [ -z "$PREBUILT" ] && ! command -v ld64 >/dev/null; then PREBUILT=1; fi
@@ -184,6 +185,7 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		$DYN -o obj/rwtouch src/rwtouch.c
 		$DYN -framework CoreFoundation -framework AudioToolbox -framework AVFoundation -lobjc -o obj/sound_test src/sound_test.c
 		$DYN -framework CoreFoundation -lMobileGestalt -o obj/mg_test src/mg_test.c
+		$DYN -framework CoreFoundation -o obj/mg_island src/mg_island.c
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/torch_test src/torch_test.c
 		$DYN -O2 -o obj/camera_test src/camera_test.c src/camera_isp.c
 		$DYN -fobjc-arc -framework Foundation -framework AVFoundation -o obj/camera_avtest src/camera_avtest.m
@@ -233,6 +235,9 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		# ... and inside an application, to say what killed it (src/inject_app.c)
 		$DYN -dynamiclib -install_name /redwood/lib/libhakios.app.dylib -lobjc \
 			-o obj/libhakios.app.dylib src/inject_app.c
+		# ... and in every application, 120 frames a second (src/inject_fps.c; etc/inject.conf "@apps")
+		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios.fps.dylib -framework CoreFoundation -lMobileGestalt -lobjc \
+			-o obj/libhakios.fps.dylib src/inject_fps.c
 		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios.media.dylib -framework CoreFoundation -framework CoreMedia \
 			-framework CoreVideo -framework IOSurface -lobjc \
 			-o obj/libhakios.media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
@@ -283,6 +288,7 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		fi
 	fi
 	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/mg_test root/bin/
+	[ -f obj/mg_island ] && cp obj/mg_island root/bin/      # (the Dynamic Island, island=1: rc.jobs)
 	[ -f obj/cpu_test ] && cp obj/cpu_test root/bin/        # (a prebuilt/ from before this program has none)
 	[ -f obj/cputop ] && cp obj/cputop root/bin/
 	[ -f obj/cow_test ] && cp obj/cow_test root/bin/
@@ -311,6 +317,7 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	cp obj/libhakios.dylib obj/libhakios.sb.dylib root/lib/
 	[ -f obj/libhakios.media.dylib ] && cp obj/libhakios.media.dylib root/lib/     # (as with cpu_test)
 	[ -f obj/libhakios.app.dylib ] && cp obj/libhakios.app.dylib root/lib/
+	[ -f obj/libhakios.fps.dylib ] && cp obj/libhakios.fps.dylib root/lib/
 	[ -f obj/libhakios.tweaks.dylib ] && cp obj/libhakios.tweaks.dylib root/lib/
 	if [ -f obj/HakiosAudio ]; then
 		mkdir -p root/lib/HakiosAudio.driver
@@ -397,11 +404,36 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	[ -n "$FLASHBOOT" ] && [ -f $DARWIN/rootfs.slt ] && VOLUME="--root-volume $DARWIN/rootfs.slt"
 	[ -n "$DARWIN_JOBS" ] && OSLOG=${OSLOG-com.apple.backboardd} ./mkjobs.py ${REST:+--rest} $VOLUME $DARWIN/rootfs root/LaunchDaemons $DARWIN_JOBS
 fi
+# BT=1: the stock bluetoothd on the QCA6490 (boot-arg qcabt=6), its transport the kernel's control socket, and in BlueTool's
+# place, which only boots Broadcom chips, src/qca_bluetool.c: the kernel has booted the chip already
+if [ -n "$BT" ] && [ -d root/LaunchDaemons ]; then
+	xcrun -sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot "$(xcrun -sdk iphoneos --show-sdk-path)" -O2 -Wall -fblocks \
+		src/qca_bluetool.c -o obj/qca_bluetool && codesign --force -s - --entitlements src/qca_bluetool.entitlements obj/qca_bluetool
+	cp obj/qca_bluetool root/bin/
+	python3 -I bt-jobs.py $DARWIN/rootfs/System/Library/LaunchDaemons root/LaunchDaemons /redwood/bin/qca_bluetool
+	# Apple's HAL plug-in for Bluetooth audio, out of the IPSW's root (sysimage/bt-audio: 7zz x rootfs.dmg 'System/Library/Audio/Plug-Ins/HAL/BTAudioHALPlugin.driver/*').
+	# init binds /redwood/hal over the system's HAL directory, so it has to be there to be seen; it talks to bluetoothd
+	if [ -d $DARWIN/bt-audio/System/Library/Audio/Plug-Ins/HAL/BTAudioHALPlugin.driver ]; then
+		mkdir -p root/lib
+		cp -R $DARWIN/bt-audio/System/Library/Audio/Plug-Ins/HAL/BTAudioHALPlugin.driver root/lib/
+		find root/lib/BTAudioHALPlugin.driver -name '*.lproj' -type d -prune -exec rm -rf {} +
+	fi
+fi
 # firmware of the phone's own hardware, where somebody has pulled it from the phone's Android into ../fw-gpu
 # (it is the vendor's and never in the repository): the kernel's GPU bring-up, drivers/gpu/hakios.adreno.c, finds it in fw/
 if [ -d ../fw-gpu ]; then
 	mkdir -p root/fw
 	cp ../fw-gpu/* root/fw/
+fi
+# ... the Xiaomi 12S's PCIe Wi-Fi chip's firmware, from image/qca6490 of its Android into ../fw-wifi
+if [ -f ../fw-wifi/amss20.bin ]; then
+	mkdir -p root/fw
+	install -m 0644 ../fw-wifi/amss20.bin ../fw-wifi/m3.bin ../fw-wifi/bd_l3s.elf ../fw-wifi/regdb_xiaomi.bin root/fw/
+fi
+# ... the same chip's Bluetooth firmware, from BTFM.bin of its Android into ../fw-bt/image (hakios.qca6490bt.c)
+if [ -f ../fw-bt/image/hpbtfw21.tlv ]; then
+	mkdir -p root/fw
+	install -m 0644 ../fw-bt/image/hpbtfw21.tlv ../fw-bt/image/hpnv21.* ../fw-bt/image/hpnv21g.* root/fw/
 fi
 # ... and the image of the Wi-Fi DSP, from /vendor/firmware_mnt/image of the same Android into ../fw-wifi
 # (drivers/wifi/hakios.wifi.c; 7.6 MB), with what the radio's firmware is sent once it runs: this phone's
@@ -443,11 +475,11 @@ for tuned in ../fw-camera/com.qti.tuned.hakios_*.bin; do
 	../tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null
 done
 # ... and with ADSP=1 the image of the audio DSP, from the same place into ../fw-audio (drivers/audio/hakios.adsp.c):
-# adsp.mdt and adsp.b02 to adsp.b36, 20 MB. Only when asked for: beside GL=1 the payload would be more than the 64 MB
+# adsp.mdt and adsp.b01 (a segment to load on the Xiaomi 12S; redwood has none) to adsp.b36, 20 MB. Only when asked for: beside GL=1 the payload would be more than the 64 MB
 # the loader takes.
 if [ -n "$ADSP" ] && [ -f ../fw-audio/adsp.mdt ]; then
 	mkdir -p root/fw
-	install -m 0644 ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] root/fw/
+	install -m 0644 ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[1-9] ../fw-audio/adsp.b[1-9][0-9] root/fw/
 fi
 # Firmware that is not there is otherwise silent at build time and speaks only much later, deep in a
 # device log -- "adreno: THE GPU IS NOT STARTED: the small image has no fw/a660_gmu.bin" cost a phone
@@ -480,6 +512,7 @@ for f in extensions.plist extensions.plist.sig; do
 	[ -f $DARWIN/rootfs/System/Library/xpc/$f ] && cp $DARWIN/rootfs/System/Library/xpc/$f root/xpc/
 done
 [ -d root/lib/HakiosAudio.driver ] && ln -s /redwood/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
+[ -d root/lib/BTAudioHALPlugin.driver ] && ln -s /redwood/lib/BTAudioHALPlugin.driver root/hal/BTAudioHALPlugin.driver
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (drivers/storage/hakios.image.c)
 python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs redwood=root | tail -1
@@ -522,9 +555,9 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_arm64 ]; then
 	# the audio DSP's firmware and the speaker amplifiers' configuration, as in the system image's /fw: the kernel
 	# reads the firmware as soon as there is a root (this image, adsp=1), the configuration maybe later -- by then
 	# from the Darwin volume's /fw, which src/init.c (flash_root) binds to this
-	if [ -f ../fw-audio/adsp.mdt ]; then
+	if [ -z "$ADSP" ] && [ -f ../fw-audio/adsp.mdt ]; then	# (with ADSP=1 it is in the small image already: not twice)
 		mkdir -p flashboot/fw
-		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] flashboot/fw/
+		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[1-9] ../fw-audio/adsp.b[1-9][0-9] flashboot/fw/
 	fi
 	if [ -f ../fw-audio/aw882xx_acf.bin ]; then
 		mkdir -p flashboot/fw
@@ -598,7 +631,7 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	# it once the root is mounted (drivers/audio/hakios.adsp.c, adsp=1): 20 MB that do not fit beside GL=1 in the small image
 	if [ -f ../fw-audio/adsp.mdt ]; then
 		mkdir -p sysroot/fw
-		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[2-9] ../fw-audio/adsp.b[1-9][0-9] sysroot/fw/
+		cp ../fw-audio/adsp.mdt ../fw-audio/adsp.b0[1-9] ../fw-audio/adsp.b[1-9][0-9] sysroot/fw/
 	fi
 	# MPSS firmware is much too large for the small boot image. Keep it in the system APFS,
 	# only when explicitly requested, after checking every loadable segment against this DTB.

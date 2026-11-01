@@ -119,10 +119,10 @@ index 4b83160780c3..8997af1f0e1b 100644
  include $(MakeInc_rule)
  include $(MakeInc_dir)
 diff --git a/bsd/conf/files b/bsd/conf/files
-index 44274016a4cf..27cccab98c8e 100644
+index 44274016a4cf..b7a031575560 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,51 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -109,6 +109,57 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c optional monotonic
@@ -165,16 +165,22 @@ index 44274016a4cf..27cccab98c8e 100644
 +bsd/dev/hakios.ufs.c                     optional hakios_ufs
 +bsd/dev/hakios.ufshc.c                   optional hakios_ufs
 +bsd/dev/hakios.virtio_blk.c              optional hakios_virtio_blk
++bsd/dev/hakios.lx.c                      optional hakios_wifi_stack
++bsd/dev/hakios.sta.c                     optional hakios_wifi_stack
++bsd/dev/hakios.apple80211.c              optional hakios_wifi_stack
 +bsd/dev/hakios.wifi.c                    optional hakios_wifi
 +bsd/dev/hakios.wlfw.c                    optional hakios_wifi
-+bsd/dev/hakios.lx.c                      optional hakios_wifi
-+bsd/dev/hakios.sta.c                     optional hakios_wifi
-+bsd/dev/hakios.apple80211.c              optional hakios_wifi
++bsd/dev/hakios.qca6490bt.c               optional hakios_qcabt
++bsd/dev/hakios.qcabt_h4.c                optional hakios_qcabt
++bsd/dev/hakios.qcabt_shim.c              optional hakios_qcabt
++bsd/dev/hakios.adreno7.c                 optional hakios_adreno7
++bsd/dev/hakios.stfts.c                   optional hakios_stfts
++bsd/dev/hakios.qca6490.c                 optional hakios_qca6490
 +# end of the HakiOS drivers
  bsd/dev/dev_perfmon.c optional config_perfmon
  
  bsd/libkern/crc32.c			standard
-@@ -155,6 +200,52 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+@@ -155,6 +206,52 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
  bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
@@ -227,7 +233,7 @@ index 44274016a4cf..27cccab98c8e 100644
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
-@@ -361,6 +452,7 @@ bsd/security/audit/audit_syscalls.c		standard
+@@ -361,6 +458,7 @@ bsd/security/audit/audit_syscalls.c		standard
  bsd/security/audit/audit_worker.c		optional config_audit
  
  bsd/pthread/pthread_shims.c		standard
@@ -235,7 +241,7 @@ index 44274016a4cf..27cccab98c8e 100644
  bsd/pthread/pthread_priority.c		standard
  bsd/pthread/pthread_workqueue.c		standard
  
-@@ -383,6 +475,7 @@ bsd/kern/kern_debug.c			standard
+@@ -383,6 +481,7 @@ bsd/kern/kern_debug.c			standard
  bsd/kern/kern_symfile.c			standard
  bsd/kern/kern_descrip.c			standard
  bsd/kern/kern_guarded.c			standard
@@ -519,7 +525,7 @@ index 95192dd62449..b00da803b5b4 100644
  
  	/*
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
-index 1d71c66629fb..a22095ccf5f0 100644
+index 1d71c66629fb..a32d2fc0030b 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
 @@ -1157,6 +1157,9 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
@@ -712,7 +718,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	ret = persona_proc_adopt(p, persona, cred);
  
  	kauth_cred_unref(&cred);
-@@ -5586,10 +5685,75 @@ bad:
+@@ -5586,10 +5685,84 @@ bad:
   * Note:	The argument and environment vectors are user space pointers
   *		to arrays of user space pointers.
   */
@@ -766,6 +772,15 @@ index 1d71c66629fb..a22095ccf5f0 100644
 +			    strncmp(word, name, namelen) == 0) {
 +				matched = true;         /* this group names this program; its library is added once */
 +			}
++			/*
++			 * "@apps": every program inside an application bundle (its path has ".app/" in it): what is too many
++			 * names for this string, every application of the system (userland's libhakios.fps, 120 frames a second)
++			 */
++			if (!matched && (size_t)(p - word) == 5 && strncmp(word, "@apps", 5) == 0 && liblen != 0 &&
++			    imgp->ip_strings != NULL &&
++			    strnstr(imgp->ip_strings + strlen(EXECUTABLE_KEY), ".app/", MAXPATHLEN) != NULL) {
++				matched = true;
++			}
 +		}
 +		if (matched && liblen != 0 && used + 1 + liblen < size) {
 +			if (any) {
@@ -788,7 +803,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	int error = 0;
  	int     ptr_size = (imgp->ip_flags & IMGPF_WAS_64BIT_ADDR) ? 8 : 4;
  	int new_ptr_size = (imgp->ip_flags & IMGPF_IS_64BIT_ADDR) ? 8 : 4;
-@@ -5759,6 +5923,33 @@ exec_extract_strings(struct image_params *imgp)
+@@ -5759,6 +5932,33 @@ exec_extract_strings(struct image_params *imgp)
  		imgp->ip_envc++;
  	}
  
@@ -822,7 +837,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	/* Save space for envv[] NULL terminator */
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
-@@ -6636,7 +6827,23 @@ handle_mac_transition:
+@@ -6636,7 +6836,23 @@ handle_mac_transition:
  	}
  
  	/* Update the process' identity version and set the security token */
@@ -847,7 +862,7 @@ index 1d71c66629fb..a22095ccf5f0 100644
  	task_set_uniqueid(task);
  	set_security_token_task_internal(p, task);
  
-@@ -7538,6 +7745,11 @@ process_signature(proc_t p, struct image_params *imgp)
+@@ -7538,6 +7754,11 @@ process_signature(proc_t p, struct image_params *imgp)
  	}
  
  done:
@@ -1900,7 +1915,7 @@ index 83259ebf9835..8864e5c7cc41 100644
  DOCONFDEPS += $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)
  endif
 diff --git a/iokit/conf/files b/iokit/conf/files
-index 5fb0a52062e0..7cfee3142b5b 100644
+index 5fb0a52062e0..ca2d6c08c4b3 100644
 --- a/iokit/conf/files
 +++ b/iokit/conf/files
 @@ -79,6 +79,17 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
@@ -1912,9 +1927,9 @@ index 5fb0a52062e0..7cfee3142b5b 100644
 +iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
 +# HakiOS drivers: made by tools/hakios-config.py kernel from drivers/*/conf. Edit those, not these lines.
 +iokit/Kernel/hakios.stubs.cpp            optional iokitcpp
-+iokit/Kernel/hakios.gpu.cpp              optional hakios_adreno iokitcpp
++iokit/Kernel/hakios.gpu.cpp              optional hakios_gpu iokitcpp
 +iokit/Kernel/hakios.battery.cpp          optional hakios_battery iokitcpp
-+iokit/Kernel/hakios.wlan.cpp             optional hakios_wifi iokitcpp
++iokit/Kernel/hakios.wlan.cpp             optional hakios_wifi_stack iokitcpp
 +# end of the HakiOS drivers
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
@@ -2250,6 +2265,19 @@ index e26a1d70f470..f91095c98d26 100644
  
  #if APPLE_ARM64_ARCH_FAMILY
  	configure_late_apple_regs();
+diff --git a/osfmk/arm/io_map.c b/osfmk/arm/io_map.c
+index 18ef2f02122f..b9f4298c4d41 100644
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -62,7 +62,7 @@
+ 
+ extern vm_offset_t virtual_space_start;     /* Next available kernel VA */
+ 
+-#define IO_MAP_SIZE            (8ul << 20)
++#define IO_MAP_SIZE            (64ul << 20)     /* HakiOS: 8 MB ran out on the Xiaomi 12S with the GPU, Wi-Fi, touch, speakers and audio DSP all mapped */
+ 
+ __startup_data static struct mach_vm_range io_range;
+ static SECURITY_READ_ONLY_LATE(vm_map_t) io_submap;
 diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
 index 39daaf8db949..64ceb1a5f201 100644
 --- a/osfmk/arm/model_dep.c
@@ -2595,6 +2623,18 @@ index e76e7e70ab9c..828a51171c7e 100644
  }
  
  void
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 2cc442e05791..2fc8e5f997af 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1626,6 +1626,7 @@ handle_kernel_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_ad
+ #endif
+ 	} else {
+ 		kprintf("Unclassified kernel abort (fault_code=0x%x)\n", fault_code);
++		kprintf("hakios-abort pc=%llx far=%llx esr=%llx lr=%llx cpu=%llx\n", (uint64_t)get_saved_state_pc(state), (uint64_t)fault_addr, (uint64_t)esr, (uint64_t)get_saved_state_lr(state), (uint64_t)__builtin_arm_rsr64("MPIDR_EL1"));
+ 	}
+ 
+ 	panic_with_thread_kernel_state("Kernel data abort.", state);
 diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 index e5336e5a1cce..a54e35035cde 100644
 --- a/osfmk/arm64/start.s
@@ -2946,16 +2986,17 @@ index 050f34a53c49..c58ff62cd419 100644
  DOCONFDEPS += $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)
  endif
 diff --git a/osfmk/conf/files b/osfmk/conf/files
-index 9d98c50094a0..9e3476124e54 100644
+index 9d98c50094a0..58b7bdf1fdf7 100644
 --- a/osfmk/conf/files
 +++ b/osfmk/conf/files
-@@ -361,3 +361,6 @@ osfmk/corecrypto/ccsha256_ltc_di.c	standard
+@@ -361,3 +361,7 @@ osfmk/corecrypto/ccsha256_ltc_di.c	standard
  
  osfmk/prng/prng_random.c	standard
  osfmk/prng/entropy.c   standard
 +osfmk/minicrypto/mc_digests.c	standard
 +osfmk/minicrypto/mc_provider.c	standard
 +osfmk/minicrypto/mc_aes.c	standard
++osfmk/kern/hakios_cpusample.c		standard
 diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
 index c40d57bcc677..1b7a1fcdfcdf 100644
 --- a/osfmk/conf/files.arm64

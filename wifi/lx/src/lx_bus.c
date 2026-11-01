@@ -78,8 +78,27 @@ static const struct ath11k_msi_config msi_config = {
 	.total_vectors = 28,
 	.total_users = 2,
 	.users = msi_users,
+#ifdef LX_QCA6490
+	.hw_rev = ATH11K_HW_WCN6855_HW21,
+#else
 	.hw_rev = ATH11K_HW_WCN6750_HW10,
+#endif
 };
+
+#ifdef LX_QCA6490
+/*
+ * The Xiaomi 12S's QCA6490 (ath11k: "wcn6855 hw2.1") on PCIe: BAR0 as pci.c reaches it, the first 512K as they are and
+ * everything else through the one window that can be moved (pci.c: ath11k_pci_select_window(); this chip has no static
+ * map). The registers answer whatever the firmware's mode: the link and MHI are up before the driver starts
+ * (hakios.adreno7.c), and pci.c's power-up -- a reset of the whole chip, MHI again -- is not done.
+ */
+#ifndef LX_RADIO_BAR
+#define LX_RADIO_BAR		0x60400000ull
+#endif
+#define LX_RADIO_BAR_SIZE	0x100000ul
+static spinlock_t window_lock;
+static u32 window_now = ~0u;
+#endif
 
 /* ---- what the driver says ---------------------------------------------------------------------- */
 
@@ -158,6 +177,39 @@ ath11k_dbg_dump(struct ath11k_base *ab, enum ath11k_debug_mask mask, const char 
  * the firmware names are the chip's first 512K; the second 512K show its data path's
  * registers, the third its copy engines'.
  */
+#ifdef LX_QCA6490
+static u32
+window(struct ath11k_base *ab, u32 offset)
+{
+	return (offset < ATH11K_PCI_WINDOW_START ? offset : ATH11K_PCI_WINDOW_START + (offset & ATH11K_PCI_WINDOW_RANGE_MASK));
+}
+
+/* (the caller holds window_lock) */
+static void
+window_select(struct ath11k_base *ab, u32 offset)
+{
+	u32 w = FIELD_GET(ATH11K_PCI_WINDOW_VALUE_MASK, offset);
+
+	if (offset >= ATH11K_PCI_WINDOW_START && w != window_now) {
+		iowrite32(ATH11K_PCI_WINDOW_ENABLE_BIT | w, (u8 *)ab->mem + ATH11K_PCI_WINDOW_REG_ADDRESS);
+		(void)ioread32((u8 *)ab->mem + ATH11K_PCI_WINDOW_REG_ADDRESS);
+		window_now = w;
+	}
+}
+
+static bool
+refused(struct ath11k_base *ab, u32 offset)
+{
+	if (!bus.closed && ab->mem != NULL) {
+		return (false);
+	}
+	if (bus.refused++ < 8) {
+		lx_tell("lx: the chip's %#x is reached %s: NOT DONE\n", offset, bus.closed ? "after the bus was stopped" :
+		    "before its registers are mapped");
+	}
+	return (true);
+}
+#else
 static u32
 window(struct ath11k_base *ab, u32 offset)
 {
@@ -194,6 +246,7 @@ refused(struct ath11k_base *ab, u32 offset)
 	}
 	return (true);
 }
+#endif
 
 /*
  * The accesses are said one by one, up to a number of lines; of writes to one register in a row
@@ -251,7 +304,14 @@ bus_read32(struct ath11k_base *ab, u32 offset)
 	}
 	bus.reads++;
 	if (bus.how >= 2 && ab->mem != NULL) {
+#ifdef LX_QCA6490
+		spin_lock_bh(&window_lock);
+		window_select(ab, offset);
 		value = ioread32((u8 *)ab->mem + window(ab, offset));
+		spin_unlock_bh(&window_lock);
+#else
+		value = ioread32((u8 *)ab->mem + window(ab, offset));
+#endif
 	}
 	if (bus.said < SAID_FIRST) {
 		say_repeats();
@@ -276,7 +336,14 @@ bus_write32(struct ath11k_base *ab, u32 offset, u32 value)
 	}
 	if (bus.how >= 2 && ab->mem != NULL) {
 		__asm __volatile("dsb sy");	/* (what was written to a ring is in memory before the radio is told of it) */
+#ifdef LX_QCA6490
+		spin_lock_bh(&window_lock);
+		window_select(ab, offset);
 		iowrite32(value, (u8 *)ab->mem + window(ab, offset));
+		spin_unlock_bh(&window_lock);
+#else
+		iowrite32(value, (u8 *)ab->mem + window(ab, offset));
+#endif
 	}
 }
 
@@ -383,6 +450,21 @@ lx_qmi_send_request(struct qmi_handle *qmi, struct sockaddr_qrtr *sq, struct qmi
 		bus.mission = mode == ATH11K_FIRMWARE_MODE_NORMAL;
 		lx_tell("lx: the firmware is asked for mode %u (0: mission, 4: off, 7: calibration)\n", mode);
 	}
+#ifdef LX_QCA6490
+	/*
+	 * qmi.c tells a chip of this family that the machine is no Qualcomm platform and has it choose its internal sleep
+	 * clock (hw_params.internal_sleep_clock), and that the host can reset the PCIe link (global_reset). This phone is
+	 * a Qualcomm platform with its own sleep clock, and with those bits the firmware falls over (MHI SYS_ERR) the moment
+	 * it is given its memory; our stand-in, which leaves them out, is answered (hakios.qca6490.c). Left out here too.
+	 */
+	if (msg_id == QMI_WLANFW_HOST_CAP_REQ_V01 && !lx_os_option("wifi_sleep_clock")) {
+		struct qmi_wlanfw_host_cap_req_msg_v01 *host = (struct qmi_wlanfw_host_cap_req_msg_v01 *)(uintptr_t)structure;
+
+		lx_tell("lx: what the host can do: nm_modem %#x left out (this is a Qualcomm platform)\n", host->nm_modem_valid ? host->nm_modem : 0);
+		host->nm_modem_valid = 0;
+		host->nm_modem = 0;
+	}
+#endif
 	return (qmi_send_request(qmi, sq, txn, msg_id, largest, ei, structure));
 }
 
@@ -747,10 +829,28 @@ lx_start(void)
 	device.kobj.name = "wifi";
 
 	/* ahb.c: ath11k_ahb_probe(), for this chip */
+#ifdef LX_QCA6490
+	ab = ath11k_core_alloc(&device, 0, ATH11K_BUS_PCI);
+#else
 	ab = ath11k_core_alloc(&device, 0, ATH11K_BUS_AHB);
+#endif
 	if (ab == NULL) {
 		return (ENOMEM);
 	}
+#ifdef LX_QCA6490
+	spin_lock_init(&window_lock);
+	ab->mem = lx_os_map_registers(LX_RADIO_BAR, LX_RADIO_BAR_SIZE);
+	ab->mem_len = LX_RADIO_BAR_SIZE;
+	if (ab->mem == NULL) {
+		lx_tell("lx: the chip's registers (%#llx, %lu KB) cannot be mapped\n", LX_RADIO_BAR, LX_RADIO_BAR_SIZE >> 10);
+		return (ENOMEM);
+	}
+	/*
+	 * pci.c: the copy engines' registers are in the same BAR, so ATH11K_CE_OFFSET() (mem_ce - mem) is 0. Left NULL it was
+	 * minus the BAR's address: the rings were told to the chip at 0x3f5b8000 and not 0x1b80000, and HTC's ready never came.
+	 */
+	ab->mem_ce = ab->mem;
+#endif
 	ab->hif.ops = &bus_ops;
 	bus.irq = false;
 	if (lx_os_option("wifi_irq")) {
@@ -771,7 +871,11 @@ lx_start(void)
 			lx_tell("lx: wifi_irq: the radio cannot be shown where to raise an interrupt: the rings are looked at, as before\n");
 		}
 	}
+#ifdef LX_QCA6490
+	ab->hw_rev = ATH11K_HW_WCN6855_HW21;
+#else
 	ab->hw_rev = ATH11K_HW_WCN6750_HW10;
+#endif
 	ab->fw_mode = ATH11K_FIRMWARE_MODE_NORMAL;
 	if ((ret = ath11k_core_pre_init(ab)) != 0 || (ret = ath11k_hal_srng_init(ab)) != 0 || (ret = ath11k_ce_alloc_pipes(ab)) != 0) {
 		lx_tell("lx: the driver does not get as far as its exchange with the firmware: %d\n", ret);

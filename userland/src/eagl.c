@@ -249,7 +249,7 @@ struct eagl {
 	id object;                      /* the EAGLContext */
 	struct hakios_gl *gl;
 	unsigned long api;
-	struct image images[256];
+	struct image images[2048];	/* the App Library and Spotlight hold many an icon: 256 ran out, and what did not fit came out black or white */
 	unsigned image_count;
 	GLuint framebuffer;             /* the one bound */
 	GLuint colour;                  /* ... and the texture that is its colour attachment (0: none, or no texture) */
@@ -668,8 +668,23 @@ surface_shared(struct eagl *e, struct image *image)
  * change seen makes it looked at every frame again. A still picture that does change is seen at most STILL_EVERY frames
  * late (67 ms); what keeps changing, a picture a program animates, is looked at every frame.
  */
-#define STILL_LOOKS     120
+/*
+ * (The Xiaomi 12S, 1 November: with STILL_LOOKS 120 every new picture -- an application's snapshot, its icons, as it
+ * opens -- was added up every frame for its first second, which is just when frames were late: surface_changed() was
+ * 19% of the drawing thread (glprof=500). Now every frame for the first STILL_LOOKS looks only, then every STILL_EVERY
+ * frames, and once it has been the same STILL_LONG looks, every STILL_LONG_EVERY: a change is seen at most 67 ms, and
+ * for a picture still for half a minute 267 ms, late.)
+ */
+#define STILL_LOOKS     15
 #define STILL_EVERY     8
+#define STILL_LONG      240
+#define STILL_LONG_EVERY 32
+/*
+ * Boot-arg gllog=1: the drawing thread's own lines as they were -- a line every 20 frames, a summary of some 40 lines
+ * every 200, the ASTC dumps. Without it (the Xiaomi 12S, 1 November: 2925 lines in 70 s, written from the drawing
+ * thread itself, the summaries 40 lines inside one frame) only the first frames' lines and one summary in 6000 frames.
+ */
+static int gl_log;
 static int still_seldom = 1;                    /* boot-arg glstill=0: every surface looked at every frame (for comparing) */
 static bool
 surface_changed(struct eagl *e, struct image *image)
@@ -683,7 +698,8 @@ surface_changed(struct eagl *e, struct image *image)
 	if (image->looked == e->frames + 1 || base == NULL || IOSurfaceGetPlaneCount(surface) > 0) {
 		return false;
 	}
-	if (still_seldom && image->unchanged >= STILL_LOOKS && (e->frames + IOSurfaceGetID(surface)) % STILL_EVERY != 0) {
+	if (still_seldom && image->unchanged >= STILL_LOOKS &&
+	    (e->frames + IOSurfaceGetID(surface)) % (image->unchanged >= STILL_LONG ? STILL_LONG_EVERY : STILL_EVERY) != 0) {
 		return false;
 	}
 	image->looked = e->frames + 1;
@@ -693,7 +709,7 @@ surface_changed(struct eagl *e, struct image *image)
 		sum ^= sum >> 29;
 	}
 	if (sum == image->sum) {
-		image->unchanged += image->unchanged < STILL_LOOKS;
+		image->unchanged += image->unchanged < STILL_LONG;
 		return false;
 	}
 	image->sum = sum;
@@ -1269,14 +1285,14 @@ frame_end(struct eagl *e, bool finished)
 	if (e->triangles > e->most_triangles) {
 		e->most_triangles = e->triangles;
 	}
-	if (e->frames <= 40 || e->frames % 20 == 0) {
+	if (e->frames <= 40 || (gl_log && e->frames % 20 == 0) || e->frames % 1000 == 0) {
 		say("hakios-gl: frame %u: %u GL calls, %u draws, %u triangles, %u clears; %u textures refilled from IOSurfaces "
 		    "(%llu KB); %u picture%s copied out, %u drawn in place; %llu us (%llu handing on, %llu waiting, %llu copying "
 		    "out), %llu before it for the IOSurfaces\n", e->frames, e->calls, e->draws, e->triangles, e->clears, e->uploads,
 		    e->upload_bytes >> 10, copied, copied == 1 ? "" : "s", in_place, after - e->began, e->flushing, waited - before,
 		    after - waited, e->attaching);
 	}
-	if (e->frames == 30 || e->frames % 200 == 0) {
+	if (e->frames == 30 || e->frames % (gl_log ? 200 : 6000) == 0) {
 		summary(e);
 	}
 	census_report();
@@ -4271,6 +4287,7 @@ install(void)
 		frame_lines = strstr(arguments, "glframes=1") != NULL;
 		latency_lines = strstr(arguments, "touch_lat=1") != NULL;
 		still_seldom = strstr(arguments, "glstill=0") == NULL;
+		gl_log = strstr(arguments, "gllog=1") != NULL;
 		if ((argument = strstr(arguments, "glprof=")) != NULL) {
 			prof_us = (unsigned)strtoul(argument + 7, NULL, 10);    /* (frame_begin() starts the profile: prof_main()) */
 		}

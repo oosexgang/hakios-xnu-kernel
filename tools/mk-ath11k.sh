@@ -125,6 +125,14 @@ CFLAGS="-mkernel -mgeneral-regs-only -fno-builtin -fno-common -ffreestanding -fn
 	-include $S/compat/linuxkpi/common/include/linux/kconfig.h -DLINUXKPI_VERSION=70000"
 DFLAGS="-Isrc/ath11k -Isrc -include $W/include/lx_prelude.h -DCONFIG_ATH11K_AHB -DCONFIG_ATH11K_DEBUG
 	-DKBUILD_MODNAME=\"ath11k\""
+# LX_CHIP: which radio the bus of wifi/lx/src/lx_bus.c is for: wcn6750 (the redwood's, by default) or qca6490 (the
+# Xiaomi 12S's, on PCIe). The objects are made again when it changes.
+LX_CHIP=${LX_CHIP:-wcn6750}
+case "$LX_CHIP" in
+wcn6750) ;;
+qca6490) DFLAGS="$DFLAGS -DLX_QCA6490" ;;
+*) echo "mk-ath11k.sh: LX_CHIP=$LX_CHIP: wcn6750 or qca6490" >&2; exit 1 ;;
+esac
 # two headers are the kernel's: what it offers this object (wifi/lx/include/lx_os.h), and its QMI
 # helpers (wifi/lx/include/linux/soc/qcom/qmi.h)
 source "$ROOT/xnu-env.sh"
@@ -133,6 +141,7 @@ for h in lx qmi; do
 done
 DFLAGS="$DFLAGS -DLX_HAKIOS_LX_H=\"$XNU_SRC/bsd/sys/hakios.lx.h\" -DLX_HAKIOS_QMI_H=\"$XNU_SRC/bsd/sys/hakios.qmi.h\""
 mkdir -p obj out
+[ "$(cat obj/.chip 2>/dev/null)" = "$LX_CHIP" ] || { rm -f obj/*.o obj/*.d; echo "$LX_CHIP" > obj/.chip; }
 rm -f obj/*.err
 compile() {		# compile SOURCE OBJECT [FLAGS]: only when the object is older than anything it was made of
 	local src=$1 obj=$2

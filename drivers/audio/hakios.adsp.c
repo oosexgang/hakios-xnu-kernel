@@ -182,6 +182,27 @@ tell(const char *format, ...)
 }
 #define printf say
 
+/* Lines worth seeing at the end of a long run too (the loader keeps only the last of the log): said again when the DSP stops. */
+static char notes[2048];
+static int note(const char *format, ...) __printflike(1, 2);
+static int
+note(const char *format, ...)
+{
+	char line[400];
+	va_list list;
+	int length;
+	size_t used = strlen(notes);
+
+	va_start(list, format);
+	length = vsnprintf(line, sizeof(line), format, list);
+	va_end(list);
+	say_line(line, true);
+	if (used + strlen(line) < sizeof(notes)) {
+		strlcpy(notes + used, line, sizeof(notes) - used);
+	}
+	return length;
+}
+
 static void
 sleep_us(uint32_t us)
 {
@@ -625,7 +646,11 @@ static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
 #define IPCC_GLINK              0u
 #define IPCC_SMP2P              2u
 
+#ifdef HAKIOS_ADRENO7
+static struct block ipcc = { "ipcc", 0x0ed18000, 0x1000 };	/* the Xiaomi 12S (mayfly): dt qcom,ipcc@ed18000 */
+#else
 static struct block ipcc = { "ipcc", 0x00408000, 0x1000 };
+#endif
 
 static struct {
 	uint32_t glink, smp2p, said;
@@ -816,7 +841,11 @@ struct cmd_db_entry {
 
 static const struct cmd_db_header *cmd_db;
 
+#ifdef HAKIOS_ADRENO7
+static struct block rsc = { "rsc", 0x17a20000, 0x10000 };	/* mayfly: rsc@17a00000, its "drv-2" (qcom,drv-id 2) */
+#else
 static struct block rsc = { "rsc", 0x18220000, 0x10000 };
+#endif
 #define RSC_TCS_BASE            0xd00
 #define RSC_IRQ_STATUS          (RSC_TCS_BASE + 0x04)   /* a bit per TCS: done */
 #define RSC_IRQ_CLEAR           (RSC_TCS_BASE + 0x08)
@@ -983,8 +1012,20 @@ step_survey(void)
 
 /* ---- step 2: the firmware -------------------------------------------------------------------------- */
 
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S (mayfly, SM8475): dt reserved-memory adsp_region@9fd00000, 49 MB, memory-region of remoteproc-adsp@03000000
+ * ("qcom,cape-adsp-pas"). Its image (image/adsp.* of NON-HLOS.bin) is linked for 0x86300000 and is exactly as big as the
+ * region: Linux's mdt loader moves it (relocatable), each segment by the same distance, and so does this.
+ */
+#define ADSP_MEMORY             0x9fd00000u
+#define ADSP_MEMORY_SIZE        0x03100000u
+#define ADSP_LINKED             0x86300000u
+#else
 #define ADSP_MEMORY             0x86700000u     /* dt: reserved-memory adsp@86700000, memory-region of qcom,lpass@3700000 */
 #define ADSP_MEMORY_SIZE        0x04000000u
+#define ADSP_LINKED             ADSP_MEMORY
+#endif
 #define PAS_ADSP                1               /* dt: qcom,pas-id */
 
 
@@ -1157,13 +1198,13 @@ step_firmware(void)
 		if (segment.type != 1 || MDT_HASH(segment.flags) || segment.memory_size == 0) {
 			continue;
 		}
-		if (segment.paddr < ADSP_MEMORY || segment.file_size > segment.memory_size ||
-		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)ADSP_MEMORY + ADSP_MEMORY_SIZE) {
+		if (segment.paddr < ADSP_LINKED || segment.file_size > segment.memory_size ||
+		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)ADSP_LINKED + ADSP_MEMORY_SIZE) {
 			printf("adsp: %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
 			    segment.memory_size);
 			goto fail;
 		}
-		image.segment[image.segments].at = segment.paddr - ADSP_MEMORY;
+		image.segment[image.segments].at = segment.paddr - ADSP_LINKED;
 		image.segment[image.segments].file_size = segment.file_size;
 		image.segment[image.segments].memory_size = segment.memory_size;
 		image.segment[image.segments].file = NULL;
@@ -1188,14 +1229,14 @@ step_firmware(void)
 		highest = segment.paddr + segment.memory_size > highest ? segment.paddr + segment.memory_size : highest;
 		image.segments++;
 	}
-	if (image.segments == 0 || lowest != ADSP_MEMORY || 52 + 32 * count + (uint64_t)hashes != size) {
+	if (image.segments == 0 || lowest != ADSP_LINKED || 52 + 32 * count + (uint64_t)hashes != size) {
 		printf("adsp: %u: not what TrustZone takes: %u segments to load, the lowest at %#x; the header file has %llu bytes, "
 		    "the header %u and the hashes %u\n", step, image.segments, lowest, size, 52 + 32 * count, hashes);
 		goto fail;
 	}
 	image.header = header;
 	image.header_size = size;
-	image.size = ((highest + 0xfff) & ~0xfffu) - ADSP_MEMORY;
+	image.size = ((highest + 0xfff) & ~0xfffu) - ADSP_LINKED;
 	printf("adsp: %u: the image is whole (%s): a header of %llu bytes (%u of hashes), %u segments, %llu bytes of files, %#x "
 	    "bytes of the DSP's %#x from %#x\n", step, from_root ? "from /fw on the root" : "from the small image", size, hashes,
 	    image.segments, files, image.size, ADSP_MEMORY_SIZE, ADSP_MEMORY);
@@ -1839,7 +1880,7 @@ struct glink_channel {
 	struct {
 		uint32_t id, size;
 		bool there, in_use;
-	} their_intents[64];                    /* what we may send into */
+	} their_intents[256];                   /* what we may send into (the DSP offers dozens of 128 bytes on adsp_apps) */
 	struct {
 		uint32_t size, fill;
 		uint8_t *data;
@@ -1860,7 +1901,12 @@ static struct {
 } glink = {
 	.channel = {
 		[CHANNEL_QRTR] = { .name = "IPCRTR", .ours = 1, .intents = { { 0x800, 5 }, { 0x2000, 3 }, { 0x4400, 2 } } },
+#ifdef HAKIOS_ADRENO7
+		/* the Xiaomi 12S: AudioReach's GPR on "adsp_apps" (dt: qcom,gpr, qcom,intents <0x200 0x14>), not APR */
+		[CHANNEL_APR] = { .name = "adsp_apps", .ours = 2, .intents = { { 0x200, 20 }, { 0x1000, 4 }, { 0x2000, 2 } } },
+#else
 		[CHANNEL_APR] = { .name = "apr_audio_svc", .ours = 2, .intents = { { 0x200, 8 }, { 0x1000, 4 }, { 0x2000, 2 } } },
+#endif
 		/* the battery manager's (battmgr below): answers of a few dozen bytes, a name of 128 */
 		[CHANNEL_PMIC] = { .name = "PMIC_RTR_ADSP_APPS", .ours = 3, .intents = { { 0x200, 6 }, { 0x1000, 2 }, { 0, 0 } } },
 	},
@@ -2136,15 +2182,26 @@ glink_pump(void)
 		case GLINK_INTENT:
 			channel = glink_theirs(message.param1);
 			for (uint32_t i = 0; channel != NULL && i < message.param2; i++) {
+				int slot = -1;
+
 				glink_peek(words, 8 + 8 * i, 8);
 				for (unsigned n = 0; n < sizeof(channel->their_intents) / sizeof(channel->their_intents[0]); n++) {
 					if (!channel->their_intents[n].there || channel->their_intents[n].id == words[1]) {
-						channel->their_intents[n].there = true;
-						channel->their_intents[n].in_use = false;
-						channel->their_intents[n].size = words[0];
-						channel->their_intents[n].id = words[1];
+						slot = (int)n;
 						break;
 					}
+				}
+				/* (all taken: the smallest one not in use makes room, so that one granted on request is never lost) */
+				for (unsigned n = 0; slot < 0 && n < sizeof(channel->their_intents) / sizeof(channel->their_intents[0]); n++) {
+					if (!channel->their_intents[n].in_use && channel->their_intents[n].size < words[0]) {
+						slot = (int)n;
+					}
+				}
+				if (slot >= 0) {
+					channel->their_intents[slot].there = true;
+					channel->their_intents[slot].in_use = false;
+					channel->their_intents[slot].size = words[0];
+					channel->their_intents[slot].id = words[1];
 				}
 			}
 			glink_advance(length);
@@ -2659,6 +2716,327 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
 	return hakios_adsp_apr(service, 0, 0, opcode, payload, length, ms, NULL);
 }
 
+/* ---- GPR: AudioReach's packet router, on the channel adsp_apps (the Xiaomi 12S) ---------------------- */
+
+#ifdef HAKIOS_ADRENO7
+/*
+ * On SM8450/SM8475 the audio DSP runs AudioReach (SPF) and speaks GPR, not APR (Linux: drivers/soc/qcom/apr.c in its GPR
+ * mode, include/linux/soc/qcom/apr.h struct gpr_hdr; sound/soc/qcom/qdsp6/q6apm.c). A packet is a header of six words --
+ * version (0) | header size in words (6) << 4 | packet size in bytes << 8; the destination domain | the source's << 8;
+ * source port; destination port; token; opcode -- and its payload. The graph manager (APM) is port 1 of the DSP's
+ * domain (2); we are domain 3. q6apm_is_adsp_ready(): APM_CMD_GET_SPF_STATE, answered by APM_CMD_RSP_GET_SPF_STATE
+ * with one word, 1 once the framework is up.
+ */
+#define GPR_DOMAIN_ADSP                 2
+#define GPR_DOMAIN_APPS                 3
+#define GPR_HEADER_WORDS                6
+#define GPR_PORT_APM                    1               /* APM_MODULE_INSTANCE_ID */
+#define GPR_PORT_OURS                   3               /* dt: spf_core's reg under qcom,gpr */
+#define GPR_BASIC_RSP_RESULT            0x02001005u
+#define APM_CMD_GET_SPF_STATE           0x01001021u
+#define APM_CMD_RSP_GET_SPF_STATE       0x02001007u
+
+struct gpr_header {
+	uint32_t sizes;                 /* version [3:0], header words [7:4], packet bytes [31:8] */
+	uint32_t domains;               /* destination [7:0], source [15:8] */
+	uint32_t source_port, destination_port, token, opcode;
+};
+
+static uint32_t gpr_in, gpr_out, gpr_next_token = 1;
+
+/* A packet from the DSP's AudioReach. From the link's thread. */
+static void
+gpr_input(const uint8_t *data, uint32_t length)
+{
+	struct gpr_header header;
+	uint32_t header_length, packet_length, payload;
+
+	gpr_in++;
+	if (length < sizeof(header)) {
+		tell("adsp: gpr: < %u bytes: too short for a header\n", length);
+		return;
+	}
+	memcpy(&header, data, sizeof(header));
+	header_length = ((header.sizes >> 4) & 15) * 4;
+	packet_length = header.sizes >> 8;
+	if (header_length < sizeof(header) || packet_length < header_length || packet_length > length) {
+		tell("adsp: gpr: < a header that does not add up: sizes %#x, %u bytes came\n", header.sizes, length);
+		return;
+	}
+	payload = packet_length - header_length;
+	if (gpr_in <= 40) {
+		tell("adsp: gpr: < opcode %#x from domain %u port %#x to port %#x, token %#x, %u bytes: %#x %#x\n", header.opcode,
+		    (header.domains >> 8) & 0xff, header.source_port, header.destination_port, header.token, payload,
+		    payload >= 4 ? *(const uint32_t *)(const void *)(data + header_length) : 0,
+		    payload >= 8 ? *(const uint32_t *)(const void *)(data + header_length + 4) : 0);
+	}
+	if (apr_waited_for == 0 || header.token != apr_waited_for) {
+		/* the sound's (hakios.sound.c): data buffers done, and whatever else nobody waits for; the GPR source port as "port" */
+		uint32_t words[64] = { 0 };
+
+		memcpy(words, data + header_length, payload < sizeof(words) ? payload : sizeof(words));
+		if (apr_events != NULL && apr_events(0, (uint16_t)header.source_port, header.opcode, header.token, words, payload)) {
+			return;
+		}
+		if (apr_events_second != NULL) {
+			(void)apr_events_second(0, (uint16_t)header.source_port, header.opcode, header.token, words, payload);
+		}
+		return;
+	}
+	bzero(apr_answer.words, sizeof(apr_answer.words));
+	memcpy(apr_answer.words, data + header_length, payload < sizeof(apr_answer.words) ? payload : sizeof(apr_answer.words));
+	apr_answer.length = payload;
+	apr_answer.opcode = header.opcode;
+	apr_answer.token = header.token;
+	os_atomic_store(&apr_answer.there, true, release);
+}
+
+/* A command to a port of the DSP's domain, and its answer waited for up to ms (one question at a time). */
+static bool
+gpr_ask(uint32_t port, uint32_t opcode, const void *payload, uint32_t length, uint32_t ms)
+{
+	uint8_t packet[sizeof(struct gpr_header) + 256];
+	struct gpr_header *header = (struct gpr_header *)(void *)packet;
+	bool answered = false;
+	uint32_t token;
+	int error;
+
+	if (length > sizeof(packet) - sizeof(*header) || !glink.channel[CHANNEL_APR].open) {
+		return false;
+	}
+	bzero(packet, sizeof(packet));
+	header->sizes = 0 | GPR_HEADER_WORDS << 4 | (uint32_t)(sizeof(*header) + length) << 8;
+	header->domains = GPR_DOMAIN_ADSP | GPR_DOMAIN_APPS << 8;
+	header->source_port = GPR_PORT_OURS;
+	header->destination_port = port;
+	header->opcode = opcode;
+	if (length != 0) {
+		memcpy(packet + sizeof(*header), payload, length);
+	}
+	lck_mtx_lock(&apr_lock);
+	token = gpr_next_token++;
+	header->token = token;
+	apr_answer.there = false;
+	apr_waited_for = token;
+	error = glink_send(&glink.channel[CHANNEL_APR], packet, (uint32_t)sizeof(*header) + length);
+	if (error != 0) {
+		printf("adsp: gpr: > opcode %#x to port %#x: NOT SENT (%d)\n", opcode, port, error);
+	} else {
+		gpr_out++;
+		for (uint32_t waited = 0; waited < ms && !answered; waited++) {
+			if (os_atomic_load(&apr_answer.there, acquire) && apr_answer.token == token) {
+				answered = true;
+				break;
+			}
+			sleep_ms(1);
+		}
+	}
+	apr_waited_for = 0;
+	lck_mtx_unlock(&apr_lock);
+	return answered;
+}
+
+/*
+ * For the sound (hakios.sound.c) on this phone: one GPR packet to a port of the DSP's domain (APM 1, PRM 2, a module's instance
+ * id), from our port; with `ms' its answer waited for and copied, without it sent and left to the events' handler. A token of 0
+ * is one of ours.
+ */
+bool
+hakios_adsp_gpr(uint32_t port, uint32_t opcode, uint32_t token, const void *payload, uint32_t length, uint32_t ms,
+    struct hakios_apr_answer *answer)
+{
+	uint8_t packet[sizeof(struct gpr_header) + 2048];       /* (a graph's opening is some 600 bytes) */
+	struct gpr_header *header = (struct gpr_header *)(void *)packet;
+	bool answered = false;
+	int error;
+
+	if (length > sizeof(packet) - sizeof(*header) || !glink.channel[CHANNEL_APR].open) {
+		return false;
+	}
+	bzero(packet, sizeof(*header));
+	header->sizes = 0 | GPR_HEADER_WORDS << 4 | (uint32_t)(sizeof(*header) + length) << 8;
+	header->domains = GPR_DOMAIN_ADSP | GPR_DOMAIN_APPS << 8;
+	header->source_port = GPR_PORT_OURS;
+	header->destination_port = port;
+	header->opcode = opcode;
+	if (length != 0) {
+		memcpy(packet + sizeof(*header), payload, length);
+	}
+	if (ms == 0) {
+		header->token = token;
+		error = glink_send(&glink.channel[CHANNEL_APR], packet, (uint32_t)sizeof(*header) + length);
+		gpr_out += error == 0;
+		return error == 0;
+	}
+	lck_mtx_lock(&apr_lock);
+	if (token == 0) {
+		token = gpr_next_token++;
+		if (gpr_next_token >= 0x01000000u) {
+			gpr_next_token = 1;
+		}
+	}
+	header->token = token;
+	apr_answer.there = false;
+	apr_waited_for = token;
+	error = glink_send(&glink.channel[CHANNEL_APR], packet, (uint32_t)sizeof(*header) + length);
+	if (error != 0) {
+		char sizes[200];
+		int at = 0;
+
+		for (unsigned n = 0; n < 256 && at < (int)sizeof(sizes) - 16; n++) {
+			if (glink.channel[CHANNEL_APR].their_intents[n].there) {
+				at += snprintf(sizes + at, sizeof(sizes) - (size_t)at, " %u%s", glink.channel[CHANNEL_APR].their_intents[n].size,
+				    glink.channel[CHANNEL_APR].their_intents[n].in_use ? "*" : "");
+			}
+		}
+		note("adsp: gpr: > opcode %#x, %u bytes, to port %#x: NOT SENT (%d); the DSP's intents (* in use):%s; request answered %d "
+		    "granted %d\n", opcode, (uint32_t)sizeof(*header) + length, port, error, sizes,
+		    glink.channel[CHANNEL_APR].request_answered, glink.channel[CHANNEL_APR].request_granted);
+	}
+	if (error == 0) {
+		gpr_out++;
+		for (uint32_t waited = 0; waited < ms; waited++) {
+			if (os_atomic_load(&apr_answer.there, acquire) && apr_answer.token == token) {
+				answered = true;
+				if (answer != NULL) {
+					answer->opcode = apr_answer.opcode;
+					answer->token = apr_answer.token;
+					answer->length = apr_answer.length;
+					memcpy(answer->words, apr_answer.words, sizeof(answer->words));
+				}
+				break;
+			}
+			sleep_ms(1);
+		}
+	}
+	apr_waited_for = 0;
+	lck_mtx_unlock(&apr_lock);
+	return answered;
+}
+
+/*
+ * Boot-arg ar_clock=1: the first thing the speakers' path needs of the DSP, tried on its own once AudioReach is up. The
+ * resource manager (PRM, port 2) is asked, as Linux's q6prm.c asks it, for the LPASS core (PARAM_ID_RSC_HW_CORE, block 1)
+ * and for the tertiary MI2S's internal bit clock (PARAM_ID_RSC_AUDIO_HW_CLK, clock 0x104, 48 kHz x 32 bits x 2 = 3.072 MHz,
+ * attribute 1 "couple no", root 0); the speakers' pins (gpio121 bit clock, 123 word select, 122/124 data: dt
+ * tert_tdm_pinctrl, function 1 "mi2s2_*" of pinctrl-sm8450.c) are given to the interface; the bit clock pin is sampled to
+ * see it toggle; then all is given back. Commands with their payload in the packet: an APM command header of four words
+ * (address 0, 0, map handle 0, the payload's size) and the payload, a parameter's header (module instance, parameter id,
+ * size, error) and its words.
+ */
+#define GPR_PORT_PRM                    2
+#define PRM_CMD_REQUEST_HW_RSC          0x0100100fu
+#define PRM_CMD_RSP_REQUEST_HW_RSC      0x02001002u
+#define PRM_CMD_RELEASE_HW_RSC          0x01001010u
+#define PRM_CMD_RSP_RELEASE_HW_RSC      0x02001003u
+#define PARAM_ID_RSC_HW_CORE            0x08001032u
+#define PARAM_ID_RSC_AUDIO_HW_CLK       0x0800102cu
+#define PRM_CLK_TER_MI2S_IBIT           0x104u
+
+static bool
+prm_command(uint32_t opcode, uint32_t param, const uint32_t *words, uint32_t count, const char *what)
+{
+	uint32_t payload[4 + 4 + 8] = { 0 };
+	uint32_t bytes = (4 + count) * 4;
+
+	payload[3] = bytes;                     /* the APM command header: payload in band, its size */
+	payload[4] = GPR_PORT_PRM;              /* the parameter's header: module instance, id, size, error */
+	payload[5] = param;
+	payload[6] = count * 4;
+	for (uint32_t i = 0; i < count; i++) {
+		payload[8 + i] = words[i];
+	}
+	if (!gpr_ask(GPR_PORT_PRM, opcode, payload, 16 + bytes, 1000)) {
+		note("adsp: ar: %s: NO ANSWER\n", what);
+		return false;
+	}
+	note("adsp: ar: %s: answer opcode %#x, %#x %#x\n", what, apr_answer.opcode, apr_answer.words[0], apr_answer.words[1]);
+	return apr_answer.opcode != GPR_BASIC_RSP_RESULT || apr_answer.words[1] == 0;
+}
+
+static void
+ar_clock_test(void)
+{
+	static const unsigned pins[4] = { 121, 123, 122, 124 };
+	vm_offset_t pin[4];
+	uint32_t saved[4], core[1] = { 1 }, clock[5] = { 1, PRM_CLK_TER_MI2S_IBIT, 3072000, 1, 0 }, release[2] = { 1,
+	    PRM_CLK_TER_MI2S_IBIT };
+	unsigned changes = 0, highs = 0, last = 2;
+	bool core_ok, clock_ok;
+
+	for (unsigned i = 0; i < 4; i++) {
+		pin[i] = ml_io_map(0x0f100000 + 0x1000 * (vm_offset_t)pins[i], 0x1000);
+		saved[i] = rd(pin[i]);
+	}
+	note("adsp: ar: the speakers' pins as found: gpio121 %#x, 123 %#x, 122 %#x, 124 %#x\n", saved[0], saved[1], saved[2],
+	    saved[3]);
+	core_ok = prm_command(PRM_CMD_REQUEST_HW_RSC, PARAM_ID_RSC_HW_CORE, core, 1, "the LPASS core");
+	clock_ok = prm_command(PRM_CMD_REQUEST_HW_RSC, PARAM_ID_RSC_AUDIO_HW_CLK, clock, 5,
+	    "the tertiary MI2S bit clock at 3.072 MHz");
+	for (unsigned i = 0; i < 4; i++) {
+		wr(pin[i], 1u << 2 | 3u << 6);  /* function 1, 8 mA, no pull */
+	}
+	__asm__ volatile ("dsb sy");
+	for (unsigned n = 0; n < 200000; n++) {
+		unsigned level = rd(pin[0] + 4) & 1;
+
+		changes += last != 2 && level != last;
+		highs += level;
+		last = level;
+	}
+	note("adsp: ar: the bit clock pin (gpio121) over 200000 reads: %u changes, high %u times: %s\n", changes, highs,
+	    changes > 1000 ? "THE TERTIARY MI2S BIT CLOCK RUNS" : "no clock seen");
+	for (unsigned i = 0; i < 4; i++) {
+		wr(pin[i], saved[i]);
+	}
+	if (clock_ok) {
+		(void)prm_command(PRM_CMD_RELEASE_HW_RSC, PARAM_ID_RSC_AUDIO_HW_CLK, release, 2, "the bit clock given back");
+	}
+	if (core_ok) {
+		(void)prm_command(PRM_CMD_RELEASE_HW_RSC, PARAM_ID_RSC_HW_CORE, core, 1, "the LPASS core given back");
+	}
+}
+
+/*
+ * Step 11 on this phone: whether AudioReach is up (again and again, as q6apm_is_adsp_ready() is asked until it says so).
+ * The DSP stays up either way (it also runs the battery's management): a framework that does not say it is up is noted.
+ */
+static bool
+step_gpr(void)
+{
+	uint32_t wait_seconds = 10, asked = 0, state = 0;
+	uint64_t began = now_us();
+
+	PE_parse_boot_argn("adsp_apr_wait", &wait_seconds, sizeof(wait_seconds));
+	announce("ask AudioReach's graph manager (APM, port 1) over GPR on \"adsp_apps\" whether the framework is up");
+	for (unsigned ms = 0; ms < 3000 && !glink.channel[CHANNEL_APR].open; ms++) {
+		sleep_ms(1);
+	}
+	if (!glink.channel[CHANNEL_APR].open) {
+		note("adsp: %u: the channel \"adsp_apps\" is not open: the DSP has not opened it (the DSP stays up)\n", step);
+		return true;
+	}
+	while (now_us() - began < wait_seconds * 1000000ull) {
+		asked++;
+		if (gpr_ask(GPR_PORT_APM, APM_CMD_GET_SPF_STATE, NULL, 0, 500) && apr_answer.opcode == APM_CMD_RSP_GET_SPF_STATE) {
+			state = apr_answer.words[0];
+			if (state == 1) {
+				break;
+			}
+		}
+		sleep_ms(200);
+	}
+	audio_up = state == 1;
+	note("adsp: %u: %s after %llu ms and %u questions (the last answer: opcode %#x, %u bytes, %#x %#x)\n", step,
+	    state == 1 ? "AUDIOREACH IS UP: THE AUDIO SERVICES ANSWER" : "AudioReach does not say it is up", (now_us() - began) / 1000,
+	    asked, apr_answer.opcode, apr_answer.length, apr_answer.words[0], apr_answer.words[1]);
+	if (audio_up && option("ar_clock")) {
+		ar_clock_test();
+	}
+	return true;
+}
+#endif
+
 /* ---- the battery manager, on the channel PMIC_RTR_ADSP_APPS ------------------------------------------ */
 
 /*
@@ -2938,7 +3316,11 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 			} else if (from == CHANNEL_PMIC) {
 				battmgr_input(packet->data, packet->length);
 			} else {
+#ifdef HAKIOS_ADRENO7
+				gpr_input(packet->data, packet->length);
+#else
 				apr_input(packet->data, packet->length);
+#endif
 			}
 			kfree_data(packet, sizeof(*packet) + packet->length);
 		}
@@ -3156,7 +3538,11 @@ step_apr(void)
 
 static bool (*const steps[STEPS])(void) = {
 	step_survey, step_firmware, step_mailbox, step_header, step_image, step_our_item, step_start, step_queues, step_link,
+#ifdef HAKIOS_ADRENO7
+	step_qrtr, step_gpr,
+#else
 	step_qrtr, step_apr,
+#endif
 };
 
 static bool keep;                       /* the DSP and the link stay up while the system runs (adsp_keep, adsp=1) */
@@ -3177,6 +3563,17 @@ steps_over(uint32_t done)
 void
 hakios_adsp_stop(void)
 {
+	for (char *line = notes, *end; *line != 0; line = end) {	/* (one line at a time: tell() takes 400 characters) */
+		char saved;
+
+		end = strchr(line, '\n');
+		end = end != NULL ? end + 1 : line + strlen(line);
+		saved = *end;
+		*end = 0;
+		tell("adsp: noted earlier: %s", line);
+		*end = saved;
+	}
+	notes[0] = 0;
 	battmgr_stop();
 	hakios_sound_dsp_down();               /* the amplifiers, the stream and the port first, while the DSP still listens */
 	hakios_mic_dsp_down();                 /* and what the microphones' path has asked for */
@@ -3216,6 +3613,17 @@ run_steps(void)
 {
 	uint32_t done = 0;
 
+	/*
+	 * The registers' maps first, before step 5 maps the DSP's whole memory (49 MB on the Xiaomi 12S): after that, with the
+	 * GPU's and the Wi-Fi's maps beside it, io_map had no room left for the sequencer's 64 KB (a panic in step 7).
+	 */
+	need(&aoss);
+	need(&ipcc);
+	need(&rsc);
+	need(&smem_lock);
+	if (cmd_db == NULL) {
+		cmd_db = (const struct cmd_db_header *)ml_io_map_unmappable(CMD_DB_PHYS, CMD_DB_SIZE, VM_WIMG_WCOMB);
+	}
 	for (step = 1; step <= last_step; step++) {
 		if (!steps[step - 1]()) {
 			printf("adsp: step %u: FAILED; the steps after it are not attempted\n", step);
@@ -3268,15 +3676,17 @@ hakios_adsp_init(void)
 	if (last_step == 0 && (!PE_parse_boot_argn("adsp", &on, sizeof(on)) || on != 1)) {
 		return;
 	}
+#ifndef HAKIOS_ADRENO7	/* (mayfly's drivers are built only into mayfly's kernel) */
 	if (pe_arm_get_soc_base_phys() != HAKIOS_SOC_BASE) {
 		printf("adsp: adsp=1 and adsp_step=N are for the phone's audio DSP, and this is not the phone\n");
 		return;
 	}
+#endif
 	if (last_step == 0) {
 		/* all of it, on a thread of its own, and left up */
 		last_step = STEPS;
 		keep = true;
-		quiet = true;
+		quiet = !option("adsp_loud");	/* (adsp_loud=1: every step into the loader's log as well) */
 		pause_ms = 0;
 		listen_seconds = 1;
 		new_from = STEPS + 1;

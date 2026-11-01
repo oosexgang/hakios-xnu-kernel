@@ -69,19 +69,25 @@ void hakios_cpufreq_init(void) {}
 void hakios_ddr_quiesce(void) {}
 #endif
 
-#ifndef HAKIOS_ADRENO
+#if !defined(HAKIOS_ADRENO) && !defined(HAKIOS_ADRENO7)
 void hakios_adreno_init(void) {}
 void hakios_adreno_quiesce(void) {}
 void hakios_adreno_stop(void) {}
 void hakios_adreno_minute(void) {}
 #endif
 
-#ifndef HAKIOS_WIFI
+#if !defined(HAKIOS_WIFI) && !defined(HAKIOS_QCA6490)
 void hakios_wifi_init(void) {}
 void hakios_wifi_stop(void) {}
 void hakios_wifi_quiesce(void) {}
+#endif
+#ifndef HAKIOS_WIFI_STACK
 errno_t hakios_apple80211_ioctl(__unused u_long command, __unused void *data) { return EOPNOTSUPP; }
 void HakiosWLANStart(__unused const char *interface, __unused const uint8_t *address) {}
+#endif
+
+#ifndef HAKIOS_QCABT
+void hakios_qcabt_init(void) {}
 #endif
 
 #ifndef HAKIOS_ADSP

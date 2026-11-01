@@ -579,6 +579,110 @@ brightness_fixes(void)
 	method_setImplementation(method, (IMP)wait_for_als_arrival);
 }
 
+/* ---- backboardd: the brightness, to the panel ------------------------------------------------------ */
+
+/*
+ * backboardd hands what the slider (and everything else) sets to CoreBrightness: "Set BrightnessSystem
+ * property:DisplayBrightness to:{ Brightness: 0.5 ... }" in its log. CoreBrightness would pass it to the
+ * display's backlight service, which this phone does not have; the panel takes its brightness as a DSI
+ * command (DCS 0x51) that the kernel sends (devices/mayfly/drivers/gpu/hakios.adreno7.c). So the client's
+ * setProperty:... is hooked: DisplayBrightness goes on, in thousandths, to kern.hakios.panel_brightness.
+ * Which of the client's methods it is goes into the log once (a guess at the name is not trusted).
+ */
+typedef BOOL (*set_property_t)(id self, SEL selector, id value, id key);
+static set_property_t brightness_original[4];
+static SEL brightness_selector[4];
+
+static void
+brightness_to_panel(CFTypeRef value)
+{
+	float level = -1;
+	int permille;
+
+	if (value != NULL && CFGetTypeID(value) == CFDictionaryGetTypeID()) {
+		value = CFDictionaryGetValue((CFDictionaryRef)value, CFSTR("Brightness"));
+	}
+	if (value == NULL || CFGetTypeID(value) != CFNumberGetTypeID() || !CFNumberGetValue((CFNumberRef)value, kCFNumberFloatType, &level) ||
+	    level < 0 || level > 1.5f) {
+		return;
+	}
+	permille = (int)(level * 1000 + 0.5f);
+	permille = permille > 1000 ? 1000 : permille;
+	if (sysctlbyname("kern.hakios.panel_brightness", NULL, NULL, &permille, sizeof(permille)) != 0) {
+		static int told;
+
+		if (told++ < 3) {
+			say("hakios: brightness %d/1000 not given to the panel: %s\n", permille, strerror(errno));
+		}
+	}
+}
+
+#define BRIGHTNESS_HOOK(n) \
+static BOOL \
+brightness_hook_##n(id self, SEL selector, id value, id key) \
+{ \
+	if (key != nil && CFGetTypeID((CFTypeRef)key) == CFStringGetTypeID() && \
+	    CFStringCompare((CFStringRef)key, CFSTR("DisplayBrightness"), 0) == kCFCompareEqualTo) { \
+		brightness_to_panel((CFTypeRef)value); \
+	} \
+	return brightness_original[n](self, selector, value, key); \
+}
+BRIGHTNESS_HOOK(0)
+BRIGHTNESS_HOOK(1)
+BRIGHTNESS_HOOK(2)
+BRIGHTNESS_HOOK(3)
+static const IMP brightness_hooks[4] = { (IMP)brightness_hook_0, (IMP)brightness_hook_1, (IMP)brightness_hook_2, (IMP)brightness_hook_3 };
+
+static bool
+brightness_hook_install(void)
+{
+	static const char *const classes[] = { "BrightnessSystemClient", "BrightnessSystem", "CBClient" };
+	unsigned hooked = 0;
+
+	for (unsigned c = 0; c < sizeof(classes) / sizeof(classes[0]); c++) {
+		Class cls = objc_getClass(classes[c]);
+		unsigned count = 0;
+		Method *methods;
+
+		if (cls == NULL) {
+			continue;
+		}
+		methods = class_copyMethodList(cls, &count);
+		for (unsigned m = 0; m < count && hooked < 4; m++) {
+			const char *name = sel_getName(method_getName(methods[m]));
+
+			/* -setProperty:forKey: / -setProperty:withKey: and the like: two objects in, a BOOL out */
+			if (strncmp(name, "setProperty:", 12) == 0 && strchr(name + 12, ':') != NULL && strchr(strchr(name + 12, ':') + 1, ':') == NULL) {
+				brightness_selector[hooked] = method_getName(methods[m]);
+				brightness_original[hooked] = (set_property_t)method_setImplementation(methods[m], brightness_hooks[hooked]);
+				say("hakios: brightness: -[%s %s] hooked: DisplayBrightness goes to the panel\n", classes[c], name);
+				hooked++;
+			}
+		}
+		free(methods);
+	}
+	return hooked != 0;
+}
+
+static void
+brightness_look(__unused void *context)
+{
+	for (int tries = 0; tries < 30; tries++) {
+		if (brightness_hook_install()) {
+			return;
+		}
+		usleep(500000);
+	}
+	say("hakios: brightness: no BrightnessSystemClient in backboardd: the panel keeps its brightness\n");
+}
+
+static void
+brightness_start(void)
+{
+	/* CoreBrightness's classes may come a moment after this: look again for a few seconds */
+	dispatch_async_f(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), NULL, brightness_look);
+}
+
 /* ---- backboardd: the touch screen and the buttons ---------------------------------------------- */
 
 /* IOKit's HID event system, the part that has no public header on Darwin (prototypes checked against 20F66) */
@@ -1141,6 +1245,7 @@ hakios_init(void)
 		 * survive; not tried again since, and until it is, the five seconds stay.)
 		 */
 		input_start();
+		brightness_start();
 	} else if (strncmp(name, "containermanagerd", 17) == 0) {
 		container_manager_fixes();
 	}

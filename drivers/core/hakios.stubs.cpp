@@ -4,7 +4,7 @@
  */
 #include "MiniIOSurface.h"
 
-#ifndef HAKIOS_ADRENO
+#ifndef HAKIOS_GPU
 /* the display's driver asks whether the GPU is done with a surface before it shows it: with no GPU nothing draws into one */
 bool
 MiniIOSurfaceDrawn(__unused MiniIOSurface * surface, __unused uint64_t milliseconds)

@@ -41,6 +41,7 @@
 #include <notify.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
+#include <mach-o/dyld.h>
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <stdbool.h>
@@ -1450,6 +1451,93 @@ caenv(void)
 	}
 }
 
+/*
+ * Control Center's brightness slider does not move, and backboardd never hears of it (the Settings slider works: its
+ * changes reach the panel). To see why: the classes of this process with "rightness" in their name, and their methods
+ * with it, once Control Center's bundle may have loaded (boot-arg cc_bright=0: not looked for).
+ */
+/*
+ * Control Center's display module keeps its slider still when -[CCUIDisplayModuleViewController _canAdjustBrightness]
+ * says no (it does here: there is no backlight service of Apple's kind, the panel takes its brightness from the kernel).
+ * The Settings slider never asks, and works. So the module is told it can: the value it sets goes through backboardd's
+ * BrightnessSystem, which src/inject.c passes to the panel.
+ */
+static BOOL
+can_adjust_brightness(__unused id self, __unused SEL selector)
+{
+	return YES;
+}
+
+static void
+control_center_brightness(void)
+{
+	static bool done;
+	Class cls;
+	Method method;
+
+	if (done || (cls = objc_getClass("CCUIDisplayModuleViewController")) == NULL ||
+	    (method = class_getInstanceMethod(cls, sel_registerName("_canAdjustBrightness"))) == NULL) {
+		return;
+	}
+	method_setImplementation(method, (IMP)can_adjust_brightness);
+	done = true;
+	say("hakios: Control Center: -[CCUIDisplayModuleViewController _canAdjustBrightness] answers yes: its slider moves\n");
+}
+
+/* (the module's bundle loads when Control Center is first opened: hooked the moment its image is added) */
+static void
+image_added(__unused const struct mach_header *header, __unused intptr_t slide_of_it)
+{
+	control_center_brightness();
+}
+
+static void
+brightness_classes(void)
+{
+	static Class seen[256];
+	static unsigned seen_count;
+	unsigned count = 0, said = 0;
+	Class *classes = objc_copyClassList(&count);
+
+	for (unsigned c = 0; c < count && said < 60; c++) {
+		const char *name = class_getName(classes[c]);
+		bool before = false;
+
+		for (unsigned k = 0; k < seen_count && !before; k++) {
+			before = seen[k] == classes[c];
+		}
+		if (before) {
+			continue;
+		}
+		unsigned methods_count = 0;
+		Method *methods;
+		char line[900];
+		int at;
+
+		if (name == NULL || (strstr(name, "rightness") == NULL && strstr(name, "DisplayModule") == NULL &&
+		    !(strncmp(name, "CCUI", 4) == 0 && strstr(name, "Slider") != NULL))) {
+			continue;
+		}
+		if (seen_count < 256) {
+			seen[seen_count++] = classes[c];
+		}
+		at = snprintf(line, sizeof(line), "hakios: brightness class %s:", name);
+		methods = class_copyMethodList(classes[c], &methods_count);
+		for (unsigned m = 0; m < methods_count && at < (int)sizeof(line) - 80; m++) {
+			const char *selector = sel_getName(method_getName(methods[m]));
+
+			if (strcasestr(selector, "bright") != NULL || strcasestr(selector, "slider") != NULL || strcasestr(selector, "enabled") != NULL ||
+			    strcasestr(selector, "value") != NULL) {
+				at += snprintf(line + at, sizeof(line) - (size_t)at, " %s", selector);
+			}
+		}
+		free(methods);
+		say("%s\n", line);
+		said++;
+	}
+	free(classes);
+}
+
 __attribute__((constructor))
 static void
 hakios_springboard_init(void)
@@ -1488,6 +1576,13 @@ hakios_springboard_init(void)
 	 */
 	load_tweaks();
 	slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
+	_dyld_register_func_for_add_image(image_added);
+	for (int64_t at = 40; at <= 160; at += 30) {	/* (again later: Control Center's modules load when it is first opened) */
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, at * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+			brightness_classes();
+			control_center_brightness();
+		});
+	}
 	activation = replace_method("SBLockdownManager", "_setupActivationState", 0x1c4bc8dfcUL, (IMP)setup_activation_state);
 	original_set_setup_required_reason = (void (*)(id, SEL, long))replace_method("SBSetupManager",
 	    "_setSetupRequiredReason:", 0x1c4cdd3a4UL, (IMP)set_setup_required_reason);
