@@ -272,8 +272,17 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			METAL_SRC=$HM/plugin
 			echo "build.sh: HakiosMetal from $HM/plugin"
 		fi
+		if [ "${METAL_PLUGIN:-}" = ca ]; then
+			# METAL_PLUGIN=ca: the plug-in that serves CoreAnimation's window server (src/HakiosMetalCA.m, vcvkk's with
+			# this tree's shader choice), over hakios-metal built with its compiler (make ios MESA=1); the window server
+			# also wants QuartzCore's default.metallib (tools/ca-metallib.py, EXTRA_SHARE=, boot-arg ca_metallib=)
+			echo "build.sh: HakiosMetal for CoreAnimation (src/HakiosMetalCA.m)"
+			$DYN -bundle -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
+				-I$HM/include -o obj/HakiosMetal src/HakiosMetalCA.m $METAL_GPU
+		else
 		$DYN -bundle -framework Foundation -framework Metal -lobjc -I$METAL_SRC -o obj/HakiosMetal $METAL_SRC/HakiosMetal.m \
 			$METAL_SRC/hakios_metallib.c $METAL_GPU
+		fi
 		if [ -n "$GL" ]; then
 			# the OpenGL ES library, and the table of functions that hands CoreAnimation's calls to it
 			# (Mesa says beside the library what it was built from: one from other patches is built again)
