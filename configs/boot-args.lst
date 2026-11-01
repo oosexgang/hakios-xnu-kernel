@@ -62,6 +62,7 @@ bt	k
 bt_again	k
 buttons	k
 buttons_steps	k
+ca_metallib	u
 ca_vbl	u
 caenv	u
 cam	kl
@@ -150,6 +151,7 @@ loader_return_after	kl
 machine_name	k
 membench	k
 metal	ku
+metal_watch	u
 mic	k
 mic_adc	k
 mic_input	k
