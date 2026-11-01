@@ -104,18 +104,46 @@ bool CommandBuffer::piece(uint64_t bytes, Piece* out, std::string* why) {
 
 uint64_t CommandBuffer::programAddress(const Kernel& k, std::string* why) {
     const uint32_t n = std::max<uint32_t>(k.numWords, 1);
-    for (auto& [ptr, u] : uploaded_) {
-        if (ptr == k.words && u.words.size() == k.numWords && std::memcmp(u.words.data(), k.words, 4ull * k.numWords) == 0) {
-            return u.gpuAddress;
+    auto same = [&](const Uploaded& u) {
+        if (u.words.size() != k.numWords) return false;
+        for (uint32_t i = 0; i < k.numWords; i += 64) {
+            if (u.words[i] != k.words[i]) return false;
         }
+        return k.numWords == 0 || u.words.back() == k.words[k.numWords - 1];
+    };
+    const auto [first, last] = uploaded_.equal_range(k.words);
+    for (auto it = first; it != last; ++it) {
+        if (same(it->second)) return it->second.gpuAddress;
     }
-    Piece p;
-    if (!piece(4ull * n, &p, why)) {
-        return 0;
+    (void)n;
+    std::shared_ptr<Buffer> b = queue_.programBuffer(k, why);
+    if (b == nullptr) return 0;
+    use(*b, false);
+    keep(b);
+    uploaded_.emplace(k.words, Uploaded{std::vector<uint32_t>(k.words, k.words + k.numWords), b->gpuAddress()});
+    return b->gpuAddress();
+}
+
+std::shared_ptr<Buffer> CommandQueue::programBuffer(const Kernel& k, std::string* why) {
+    std::lock_guard<std::mutex> g(lock_);
+    const auto [first, last] = resident_.equal_range(k.words);
+    for (auto it = first; it != last;) {
+        const Resident& r = it->second;
+        if (r.words.size() == k.numWords && std::memcmp(r.words.data(), k.words, 4ull * k.numWords) == 0) return r.buffer;
+        residentBytes_ -= 4ull * r.words.size();
+        it = resident_.erase(it);   // (the pointer's words have changed: a freed program's)
     }
-    memcpy(p.contents(), k.words, 4ull * k.numWords);
-    uploaded_.emplace_back(k.words, Uploaded{std::vector<uint32_t>(k.words, k.words + k.numWords), p.gpuAddress()});
-    return p.gpuAddress();
+    // (past 64 MB of programs, the ones kept are let go: a command buffer in flight keeps its own)
+    if (residentBytes_ > (64ull << 20)) {
+        resident_.clear();
+        residentBytes_ = 0;
+    }
+    std::shared_ptr<Buffer> b = newBuffer(gpu_, 4ull * std::max<uint32_t>(k.numWords, 1), why);
+    if (b == nullptr || b->contents() == nullptr) return nullptr;
+    memcpy(b->contents(), k.words, 4ull * k.numWords);
+    resident_.emplace(k.words, Resident{std::vector<uint32_t>(k.words, k.words + k.numWords), b});
+    residentBytes_ += 4ull * k.numWords;
+    return b;
 }
 
 namespace {
@@ -222,6 +250,14 @@ uint32_t CommandQueue::lastDraws(uint64_t kind, uint32_t ordinal) {
 void CommandQueue::noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws) {
     std::lock_guard<std::mutex> g(lock_);
     lastDraws_[kindKey(kind, ordinal)] = draws;
+    Peak& p = peakDraws_[kindKey(kind, ordinal)];
+    if (draws >= p.draws || ++p.below >= 16) p.draws = draws, p.below = 0;
+}
+
+uint32_t CommandQueue::peakDraws(uint64_t kind, uint32_t ordinal) {
+    std::lock_guard<std::mutex> g(lock_);
+    auto it = peakDraws_.find(kindKey(kind, ordinal));
+    return it == peakDraws_.end() ? 0 : it->second.draws;
 }
 
 void CommandQueue::tuned(uint64_t key, bool gmem, double us) {

@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <algorithm>
 #include <unordered_map>
 #include <vector>
 
@@ -202,19 +203,63 @@ private:
     // the end of it, however it ends: the status, the handlers (which see that status), and only then the waiters
     void finish(Status s);
     void use(const Buffer& b, bool write) { uses_.push_back(BoUse{&b.bo(), write}); }
+public:
+    // What each register written in a pass holds, for appendDeduped: a draw writes some 500 of them and almost all
+    // hold their value already, so each is looked up once, in an open-addressed table of its own (std::unordered_map's
+    // find and insert, two lookups and a node a register, were most of a draw's 20 us of deduplication on the phone)
+    class RegShadow {
+    public:
+        // whether REG held VALUE; it holds VALUE from now on
+        bool hold(uint32_t reg, uint32_t value) {
+            if (keys_.empty() || 2 * (used_ + 1) > keys_.size()) grow();
+            const size_t mask = keys_.size() - 1;
+            for (size_t i = (reg * 2654435761u) & mask;; i = (i + 1) & mask) {
+                if (keys_[i] == reg) {
+                    const bool same = values_[i] == value;
+                    values_[i] = value;
+                    return same;
+                }
+                if (keys_[i] == kEmpty) {
+                    keys_[i] = reg;
+                    values_[i] = value;
+                    used_++;
+                    return false;
+                }
+            }
+        }
+        void clear() {
+            std::fill(keys_.begin(), keys_.end(), kEmpty);
+            used_ = 0;
+        }
+    private:
+        static constexpr uint32_t kEmpty = ~0u;
+        void grow() {
+            std::vector<uint32_t> keys = std::move(keys_), values = std::move(values_);
+            keys_.assign(std::max<size_t>(1024, keys.size() * 2), kEmpty);
+            values_.assign(keys_.size(), 0);
+            used_ = 0;
+            for (size_t i = 0; i < keys.size(); i++) {
+                if (keys[i] != kEmpty) hold(keys[i], values[i]);
+            }
+        }
+        std::vector<uint32_t> keys_, values_;
+        size_t used_ = 0;
+    };
+
+private:
     // the pass draws are joining (render.cpp: draw), closed by its tail before anything else is recorded or it is submitted
     struct OpenPass {
         RenderPass pass;
         render::Options options;
         uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
-        std::unordered_map<uint32_t, uint32_t> regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
+        RegShadow regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
         // A pass drawn in GMEM (gmemPlan and every draw gmemDrawOk) is recorded rather than streamed: its draws gather
         // in BODIES, deduplicated among themselves from nothing (BODY_REGS) since each tile replays them after the
         // tile's own register writes, and closePass puts them in the tiles.
         bool gmem = false;
         render::GmemPlan plan;
         pm4::Stream bodies;
-        std::unordered_map<uint32_t, uint32_t> bodyRegs;
+        RegShadow bodyRegs;
         // what the draws touch: the render area (X0 Y0 X1 Y1, the union of render::drawArea's) and the attachments they
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
@@ -246,15 +291,17 @@ private:
     std::shared_ptr<Buffer> slab_;
     uint64_t slabUsed_ = 0;
     // A program's words where they are already in this command buffer, so that every draw with the program does not
-    // upload them again. Found by the caller's pointer, but taken only when the words are still the same: the pointer is
-    // the caller's to free and reuse, and the copy compared is a CPU one (reading the piece back is uncached memory).
+    // upload them again. Found by the caller's pointer, but taken only when the words still look the same: the pointer
+    // is the caller's to free and reuse. They are compared at every 64th word and the last, not all: the whole compare,
+    // once a draw, was 7-10 us of a draw's 50 on the phone, and CoreAnimation's uber shader is 31 000 words. (The copy
+    // compared is a CPU one: reading the piece back is uncached memory.)
     struct Uploaded {
         std::vector<uint32_t> words;
         uint64_t gpuAddress;
     };
     // the GPU address of K's words in this buffer, uploading them when they are not there; 0 with *WHY when out of memory
     uint64_t programAddress(const Kernel& k, std::string* why);
-    std::vector<std::pair<const uint32_t*, Uploaded>> uploaded_;
+    std::unordered_multimap<const uint32_t*, Uploaded> uploaded_;
 
     CommandQueue& queue_;
     std::atomic<Status> status_{kNotEnqueued};
@@ -303,6 +350,11 @@ public:
     // the visibility streams' memory binned GMEM passes share (render::vscBytes): one is enough, the GPU running one
     // submission at a time and each pass's binning before its tiles; nullptr with *why
     std::shared_ptr<Buffer> vscBuffer(std::string* why);
+    // K's words in a buffer of their own, made the first time a command buffer of this queue draws with them and kept
+    // for the next: copying them into each command buffer was most of a draw's first cost (CoreAnimation's uber shader is
+    // 124 KB, into write-combined memory). Found by the words' pointer and taken only when every word is the same -- a
+    // freed program's pointer may come back with other words, and then its entry goes. nullptr with *why.
+    std::shared_ptr<Buffer> programBuffer(const Kernel& k, std::string* why);
     // whether GMEM passes may still be binned: no pass's visibility streams have overrun their pitch (render::kVscOverflowAt,
     // read by checkVsc once a buffer with a binned pass has completed)
     bool binningOk() const { return !vscOverflowed_.load(); }
@@ -313,6 +365,9 @@ public:
     // this kind of target) had the last time, which preferGmem's key takes in as a class (a frame of CoreAnimation is
     // the same passes in the same order as the one before it, light or heavy). 0 when not seen yet.
     uint32_t lastDraws(uint64_t kind, uint32_t ordinal);
+    // ...and the most it had in the times since its peak, the peak let go after 16 times below it: a pass that is heavy
+    // only now and then (CoreAnimation's: light frames between the heavy ones of an animation) counts as heavy
+    uint32_t peakDraws(uint64_t kind, uint32_t ordinal);
     void noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws);
 
 
@@ -326,6 +381,9 @@ private:
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
     std::shared_ptr<Buffer> vsc_;     // (under lock_) vscBuffer's
+    struct Resident { std::vector<uint32_t> words; std::shared_ptr<Buffer> buffer; };
+    std::unordered_multimap<const uint32_t*, Resident> resident_;   // (under lock_) programBuffer's
+    uint64_t residentBytes_ = 0;
     std::atomic<bool> vscOverflowed_{false};
     std::vector<std::shared_ptr<Buffer>> private_[2];   // (under lock_) privateMemory's, by layout, the last the current one
     uint32_t privatePerFiber_[2] = {0, 0};
@@ -334,6 +392,8 @@ private:
     struct Tune { double us[2] = {0, 0}; uint32_t runs[2] = {0, 0}; uint32_t passes = 0; };
     std::unordered_map<uint64_t, Tune> tune_;   // (under lock_) preferGmem's, by target
     std::unordered_map<uint64_t, uint32_t> lastDraws_;   // (under lock_) noteDraws', by kind and ordinal
+    struct Peak { uint32_t draws = 0, below = 0; };
+    std::unordered_map<uint64_t, Peak> peakDraws_;        // (under lock_) noteDraws' too: peakDraws'
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
     std::vector<std::unique_ptr<Bo>> idle_;

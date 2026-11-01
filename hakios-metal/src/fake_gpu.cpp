@@ -412,7 +412,12 @@ bool FakeGpu::loadState(uint32_t opcode, const uint32_t* p, uint32_t count) {
         (xs ? xs->programUnits : cs_.programUnits) = units;
         break;
     case ST6_CONSTANTS:
-        (xs ? xs->consts : cs_.consts).push_back(ConstLoad{dstOff, units, src == SS6_DIRECT});
+        {
+            ConstLoad c{dstOff, units, src == SS6_DIRECT, {}};
+            const uint32_t* w = src == SS6_DIRECT ? p + 3 : reinterpret_cast<const uint32_t*>(at(from, uint64_t(units) * 16));
+            if (w != nullptr) c.words.assign(w, w + units * 4);
+            (xs ? xs->consts : cs_.consts).push_back(std::move(c));
+        }
         break;
     case ST6_IBO:
         cs_.ibosLoaded = true;

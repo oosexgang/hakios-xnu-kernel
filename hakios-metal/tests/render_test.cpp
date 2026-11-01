@@ -2001,10 +2001,11 @@ TEST(a_draw_pushes_a_fragment_constant_range_out_of_the_bound_buffer) {
     }
 }
 
-// A pushed range whose source is not a multiple of 16 is loaded direct, the words as the buffer holds them at encoding:
-// the CP rounds an indirect source down to 16 (probe 9o4), and the fake faults on one, so the draw completing is the
-// direct load having been taken. The same range at 16 stays an indirect load.
-TEST(a_pushed_range_off_16_bytes_is_loaded_direct) {
+// A pushed range whose source is not a multiple of 16 is copied by the command processor into the draw's table and
+// loaded from there: the CP rounds an indirect source down to 16 (probe 9o4), and the fake faults on one, so the draw
+// completing is the copy having been taken, and the words loaded are the buffer's from byte 8 at the draw's execution
+// (written after encoding: the copy is the GPU's, not a snapshot). The same range at 16 is loaded straight from the buffer.
+TEST(a_pushed_range_off_16_bytes_is_copied_by_the_gpu) {
     using namespace a6xx;
     Rig r;
     auto t = target(r);
@@ -2025,16 +2026,23 @@ TEST(a_pushed_range_off_16_bytes_is_loaded_direct) {
         if (at != size_t(-1)) {
             const auto& w = e.stream.words();
             const bool direct = ((w[at + 1] & CP_LOAD_STATE6_0_STATE_SRC__MASK) >> CP_LOAD_STATE6_0_STATE_SRC__SHIFT) == SS6_DIRECT;
-            CHECK_EQ(direct, off == 8);
-            if (direct) {
-                float first;
-                memcpy(&first, &w[at + 4], 4);
-                CHECK_EQ(first, 2.0f);   // the float at byte 8
-            }
+            CHECK(!direct);
         }
-        auto cb = drawOnce(r, p, pass, wholeDraw(3), render::Options{}, Bindings{}, fsb);
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->draw(p, pass, wholeDraw(3), Bindings{}, fsb));
+        f[2] = 42.0f;   // (after the draw's encoding, before its execution: the copy reads it then)
+        cb->commit();
+        cb->waitUntilCompleted();
+        f[2] = 2.0f;
         CHECK(cb->status() == CommandBuffer::kCompleted);
         if (cb->status() != CommandBuffer::kCompleted) std::printf("       %s | %s\n", cb->error().c_str(), r.fake->stats().lastFault.c_str());
+        const auto s = r.fake->stats();
+        CHECK(!s.lastDraw.fsConsts.empty() && !s.lastDraw.fsConsts[0].words.empty());
+        if (!s.lastDraw.fsConsts.empty() && !s.lastDraw.fsConsts[0].words.empty()) {
+            float first;
+            memcpy(&first, &s.lastDraw.fsConsts[0].words[0], 4);
+            CHECK_EQ(first, off == 8 ? 42.0f : 4.0f);   // the float at byte OFF
+        }
     }
 }
 
@@ -3975,17 +3983,28 @@ TEST(draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_
     auto t = target(r);
     RenderPass pass;
     pass.color0 = t.get();
-    // forty draws recorded: a buffer from the kernel for each table and program was 120 of them (and one more for the
-    // passes' counter stamps, which CommandQueue::preferGmem reads)
+    // forty draws recorded: a buffer from the kernel for each table and program was 120 of them (now the tables' slab,
+    // the passes' counter stamps, which CommandQueue::preferGmem reads, and the two programs' own buffers)
     auto cb = r.queue->commandBuffer();
     const uint32_t before = r.fake->liveBuffers();
     for (int i = 0; i < 40; i++) CHECK(cb->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
     const uint32_t asked = r.fake->liveBuffers() - before;
-    CHECK(asked >= 1 && asked <= 3);
-    if (asked > 3) std::printf("       %u buffers for 40 draws\n", asked);
+    CHECK(asked >= 1 && asked <= 5);
+    if (asked > 5) std::printf("       %u buffers for 40 draws\n", asked);
     cb->commit();
     cb->waitUntilCompleted();
     CHECK(cb->status() == CommandBuffer::kCompleted);
+    // ...and the next command buffer draws the programs from the queue's buffers: none made for them again
+    {
+        auto again = r.queue->commandBuffer();
+        const uint32_t was = r.fake->liveBuffers();
+        for (int i = 0; i < 40; i++) CHECK(again->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+        const uint32_t more = r.fake->liveBuffers() - was;
+        CHECK(more + 2 <= asked);
+        again->commit();
+        again->waitUntilCompleted();
+        CHECK(again->status() == CommandBuffer::kCompleted);
+    }
     // the same pointer with other words in it: the second draw's VS must be the new words, not the first upload. Both
     // word sets are the same length, so only the contents tell them apart.
     const Program base = flatProgram();
@@ -5479,6 +5498,27 @@ TEST(gmem_for_a_pass_of_enough_draws_decided_at_its_end) {
     CHECK(cb->status() == CommandBuffer::kCompleted);
     CHECK_EQ(r.fake->stats().faults, 0u);
     CHECK(cb->counts().gmemPasses == 0 && cb->counts().passes == 1);
+}
+
+// A pass whose like has had few draws lately (under half the bar) is recorded for sysmem only: a pass of 10 draws after
+// one of 1 stays in sysmem though 10 clears a bar of 8, saying why; the next like it, after 10, is GMEM again, and so is
+// one after a light one that followed a heavy one (the peak, not the last time, decides)
+TEST(a_pass_whose_like_was_light_is_recorded_for_sysmem_alone) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    for (const auto& [draws, want, light] : {std::tuple<int, uint32_t, bool>{1, 0, false}, {10, 0, true}, {10, 1, false}, {1, 0, false}, {10, 1, false}}) {
+        auto cb = r.queue->commandBuffer();
+        cb->setGmemMinDraws(8);
+        for (int i = 0; i < draws; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+        CHECK_EQ(cb->gmemRefusal().find("draws at most lately") != std::string::npos, light);
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(cb->counts().gmemPasses, want);
+    }
+    CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
 // A DontCare attachment is not loaded when the granules past its edge stay in its rows: 100 x 36 (the right edge in the

@@ -79,6 +79,7 @@ public:
     struct ConstLoad {
         uint32_t dstOffVec4, units;
         bool direct;
+        std::vector<uint32_t> words;   // what was loaded: the packet's words, or memory's at the load
     };
     struct Dispatch {
         uint32_t groups[3] = {0, 0, 0};

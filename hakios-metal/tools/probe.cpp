@@ -4918,6 +4918,7 @@ int main(int argc, char** argv) {
                             std::string swhy;
                             auto s0 = Texture::make(gpu, sd, &swhy), s1 = Texture::make(gpu, sd, &swhy);
                             const Program mrtp{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+                            bool tileWfi = true;
                             auto costOf = [&](int draws, bool gm, bool binned = false) {
                                 double best = 1e30;
                                 for (int rep = 0; rep < 3; rep++) {
@@ -4926,6 +4927,7 @@ int main(int argc, char** argv) {
                                     render::Options so;
                                     so.gmem = gm;
                                     so.gmemBinning = binned;
+                                    so.gmemTileWfi = tileWfi;
                                     bool ok = true;
                                     for (int i = 0; i < draws && ok; i++) {
                                         RenderPass rp;
@@ -4950,6 +4952,13 @@ int main(int argc, char** argv) {
                                 snprintf(text, sizeof text, "GMEM pass shape: 2 screens, Clear, 1 or 140 tiny draws: GMEM %.0f / %.0f us (%.2f us a draw a tile), sysmem %.0f / %.0f us",
                                          g1, g140, (g140 - g1) / (139.0 * 52), s1c, s140);
                                 report(g1 > 0 && g140 > 0 && s1c > 0 && s140 > 0, text);
+                                // what the wait for idle after each tile's stores costs (measured only: without it the next
+                                // tile's clear may land in GMEM before the store has read it)
+                                tileWfi = false;
+                                const double n1 = costOf(1, true), nb = costOf(140, true, true);
+                                tileWfi = true;
+                                const double b140 = costOf(140, true, true);
+                                std::printf("probe: (GMEM pass shape without the wait after each tile: %.0f us for 1 draw; 140 binned %.0f us, %.0f with it)\n", n1, nb, b140);
                             } else {
                                 report(false, "GMEM pass shape: the targets: " + swhy);
                             }

@@ -476,6 +476,7 @@ struct Options {
                                     // RM6_BIN_END_OF_DRAWS (which hangs at the third tile), 0 all of it)
     bool gmemBinningTrace = false;  // (the same bisect inside one run: the command processor writes where it has got to into the VSC
                                     // buffer's sizes page at kVscTraceAt, so that a hang still says which packet it stopped at)
+    bool gmemTileWfi = true;     // a CP_WAIT_FOR_IDLE after each tile's stores (turnip's tu6_render_tile): off only to measure it
     bool gmemLoad = true;        // each tile's load from memory (off: the fake's twin, whose stores then show GMEM's own contents)
     uint8_t rotate2d = 0;        // encodeBlit's RB_2D_BLIT_CNTL.ROTATE (a6xx_rotation: 0, 90, 180, 270, hflip, vflip as 0..5);
                                  // a quarter turn takes a destination rectangle of the source's sides swapped
