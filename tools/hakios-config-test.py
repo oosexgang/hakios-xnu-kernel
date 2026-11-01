@@ -283,7 +283,7 @@ try:
     check("kernel: conf/files has one block, a driver's files `optional hakios_<name>`, the rest of the file as it was",
           files.startswith("bsd/dev/a.c standard\n" + hc.FILES_BEGIN) and files.rstrip().endswith("bsd/dev/z.c standard") and
           "bsd/dev/hakios.goodix.c                  optional hakios_goodix" in files and "bsd/dev/hakios.input.c                   standard" in files and
-          "iokit/Kernel/hakios.gpu.cpp              optional hakios_adreno iokitcpp" in open(os.path.join(tree, "iokit/conf/files")).read(), files)
+          "iokit/Kernel/hakios.gpu.cpp              optional hakios_gpu iokitcpp" in open(os.path.join(tree, "iokit/conf/files")).read(), files)
     listed_line = [l for l in open(os.path.join(tree, "bsd/dev/hakios.drivers.h")) if l.startswith("#define HAKIOS_DRIVERS_LIST")]
     check("kernel: the header kern.hakios.drivers comes from", listed_line and " buttons " in listed_line[0] and "goodix" not in listed_line[0], listed_line)
     r = run("kernel", "--tree", tree, "--config", nog)
