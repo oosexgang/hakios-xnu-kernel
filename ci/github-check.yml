@@ -32,6 +32,8 @@ jobs:
           if [ -n "$bad" ]; then echo "not executable in git (git update-index --chmod=+x):"; echo "$bad"; exit 1; fi
       - name: Makefile help
         run: make help
+      - name: Window server refresh arguments and explicit CoreAnimation overrides
+        run: python3 tools/inject-refresh-test.py
       - name: Provenance - every binary and blob explained, nothing proprietary, nothing writes to the phone
         run: |
           # The rule of the repository: nothing of Darwin, no pictures of it, no vendor firmware, and a
