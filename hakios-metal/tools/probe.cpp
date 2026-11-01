@@ -4882,6 +4882,51 @@ int main(int argc, char** argv) {
                             }
                             report(all, line);
                         }
+                        // what sampling costs a full-screen draw: tri_tex blended over the screen 4 times, sampling a texture
+                        // of 4x4, 194x237 (CoreAnimation's blurred backdrop, stretched) and 1125x2436, nearest, in sysmem
+                        {
+                            const Program tq{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                            Program tqb = tq;
+                            tqb.blend = ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf};
+                            Sampler smp;
+                            std::string swhy;
+                            std::string line = "full-screen sampling, 4 blended draws (us):";
+                            bool all = makeSampler(SamplerDesc{}, &smp, &swhy);
+                            for (const auto [tw, th] : {std::pair<uint32_t, uint32_t>{4, 4}, {194, 237}, {1125, 2436}}) {
+                                TextureDesc sd;
+                                sd.format = PixelFormat::kBGRA8Unorm;
+                                sd.width = tw;
+                                sd.height = th;
+                                sd.usage = kTextureUsageRead;
+                                auto st = Texture::make(gpu, sd, &swhy);
+                                if (st == nullptr) {
+                                    all = false;
+                                    continue;
+                                }
+                                Bindings tb;
+                                tb.textures = {st.get()};
+                                tb.samplers = {&smp};
+                                double best = 1e30;
+                                for (int rep = 0; rep < 3; rep++) {
+                                    auto c = queue->commandBuffer();
+                                    c->setProfile(true);
+                                    RenderPass rp;
+                                    rp.color0 = gt.get();
+                                    render::Options so{};
+                                    so.gmem = false;
+                                    bool ok = true;
+                                    for (int i = 0; i < 4 && ok; i++) ok = c->draw(tqb, rp, drawOf(0, 6, vps[0]), Bindings{}, tb, so);
+                                    if (!ok) break;
+                                    c->commit();
+                                    c->waitUntilCompleted();
+                                    if (!completed(*c)) break;
+                                    best = std::min(best, gpuUs(*c));
+                                }
+                                all = all && best < 1e29;
+                                line += " " + std::to_string(tw) + "x" + std::to_string(th) + " " + std::to_string(int(best));
+                            }
+                            report(all, line);
+                        }
                         // a Clear in the tiles (RB_BLIT_CLEAR_COLOR) against the 2D engine's fill in sysmem: a Clear and one
                         // tri_flat triangle over a 1125 x 2436 target, byte for byte, BGRA8 and RGBA16Float
                         for (const PixelFormat cf : {PixelFormat::kBGRA8Unorm, PixelFormat::kRGBA16Float}) {
