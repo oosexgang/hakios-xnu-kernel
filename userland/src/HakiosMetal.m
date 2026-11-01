@@ -61,6 +61,11 @@ deviceInit(id self, SEL _cmd, unsigned int port)
 static id
 deviceName(__unused id self, __unused SEL _cmd)
 {
+	uint32_t mali_status = 0;
+	size_t len = sizeof(mali_status);
+	if (sysctlbyname("kern.hakios.mali", &mali_status, &len, NULL, 0) == 0 && mali_status >= 2) {
+		return @"HakiOS ARM Mali-G57 MC2 (Valhall: CoreAnimation Metal Accelerator)";
+	}
 	return @"HakiOS Adreno 642L (Metal: a device that exists, nothing more)";
 }
 
