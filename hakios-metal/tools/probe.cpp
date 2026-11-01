@@ -5037,10 +5037,16 @@ int main(int argc, char** argv) {
                                     if (okAll) bgot[c] = textureBo(*gt);
                                 }
                                 if (okAll && bgot[0].size() == bgot[1].size() && !bgot[0].empty()) boff = pixelsDiffer(bgot[0], bgot[1]);
+                                if (!okAll && uwhy.find("this build has none") != std::string::npos)
+                                    std::printf("probe: (no Mesa in this build: the compressed BGRA8 copy was not measured)\n");
+                                else
                                 report(okAll && boff == 0, "UBWC: a 1271x1823 BGRA8 texture written by replace, sampled over the screen 4 times through its compressed copy: " +
                                                                std::to_string(boff) + " pixels differ from the linear one's; linear " + std::to_string(int(bus[0])) +
                                                                " us, compressed " + std::to_string(int(bus[1])) + " us (the copy in included in the first run)");
                             }
+                            if (!okAll && uwhy.find("this build has none") != std::string::npos)
+                                std::printf("probe: (no Mesa in this build: UBWC, which takes Mesa's layout, was not measured; linear %d us)\n", int(us[0]));
+                            else
                             report(have && off == 0, "UBWC: a 1125x2436 RGBA8 picture drawn compressed and linear, then sampled over the screen 4 times: " +
                                                          std::to_string(off) + " pixels differ; linear " + std::to_string(int(us[0])) + " us, compressed " +
                                                          std::to_string(int(us[1])) + " us" + (okAll ? std::string() : " (" + uwhy + ")"));
