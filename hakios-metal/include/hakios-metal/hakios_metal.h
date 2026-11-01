@@ -477,6 +477,8 @@ int hakios_metal_cb_draw_time(hakios_metal_cb *cb, unsigned i, const char **name
 /* draw I's pass (an index of hakios_metal_cb_pass_time's) and the pixels it can touch, X0 Y0 X1 Y1; -1 past them */
 int hakios_metal_cb_draw_place(hakios_metal_cb *cb, unsigned i, unsigned *pass, unsigned area[4]);
 void hakios_metal_cb_gmem_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *tiles);
+/* pass I's colour attachments as a mask, and those its draws wrote or read (a GMEM pass's; 0 for a sysmem one): -1 past the passes */
+int hakios_metal_cb_pass_attachments(hakios_metal_cb *cb, unsigned i, unsigned *attached, unsigned *touched);
 int hakios_metal_cb_pass_tiles(hakios_metal_cb *cb, unsigned i);
 /* why CB's last pass refused for GMEM was refused ("" when none was); valid while CB lives */
 const char *hakios_metal_cb_gmem_refusal(hakios_metal_cb *cb);

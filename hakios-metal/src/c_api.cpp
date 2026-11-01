@@ -741,6 +741,14 @@ void hakios_metal_cb_gmem_counts(hakios_metal_cb* cb, unsigned* passes, unsigned
 
 const char* hakios_metal_cb_gmem_refusal(hakios_metal_cb* cb) { return cb->cb->gmemRefusal().c_str(); }
 
+int hakios_metal_cb_pass_attachments(hakios_metal_cb* cb, unsigned i, unsigned* attached, unsigned* touched) {
+    const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
+    if (i >= t.size()) return -1;
+    *attached = t[i].attached;
+    *touched = t[i].touched;
+    return 0;
+}
+
 int hakios_metal_cb_pass_tiles(hakios_metal_cb* cb, unsigned i) {
     const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
     return i < t.size() ? int(t[i].tiles) : -1;

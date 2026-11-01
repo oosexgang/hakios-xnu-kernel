@@ -3239,7 +3239,13 @@ void CommandBuffer::closePass() {
         counts_.gmemPasses++;
         if (vsc != 0) counts_.binnedPasses++;
         counts_.tiles += plan.tiles();
-        if ((profile_ || tuning_) && !profiled_.empty()) profiled_.back().tiles = plan.tiles();
+        if ((profile_ || tuning_) && !profiled_.empty()) {
+            profiled_.back().tiles = plan.tiles();
+            uint8_t attached = 0;
+            for (uint32_t i = 0; i < kMaxColorOutputs; i++) attached |= (i == 0 ? open_->pass.color0 : open_->pass.more[i - 1].texture) != nullptr ? 1u << i : 0u;
+            profiled_.back().attached = attached;
+            profiled_.back().touched = uint8_t(open_->written | open_->read);
+        }
     }
     pm4::Stream tail;
     render::encodeEnd(tail, open_->pass, open_->table, open_->options);
