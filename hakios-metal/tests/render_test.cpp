@@ -2932,6 +2932,40 @@ Sampler nearestClamp() {
 }
 }  // namespace
 
+// A draw whose program and pass are the last draw's leaves their state out (CommandBuffer::draw's staticKey), and one
+// whose program is not takes it all again: in one pass tri_flat, tri_tex, tri_tex end with the GPU holding tri_tex's
+// prefetch and outputs, as a pass of tri_tex alone does (left out by the pass alone, the second would keep tri_flat's)
+TEST(a_draw_like_the_last_leaves_out_its_program_and_pass_state) {
+    using namespace a6xx;
+    Rig r;
+    auto t = target(r);
+    auto tex = target(r, 4, 4, kTextureUsageRead);
+    Sampler smp = nearestClamp();
+    RenderPass pass;
+    pass.color0 = t.get();
+    Bindings fsb;
+    fsb.textures = {tex.get()};
+    fsb.samplers = {&smp};
+    const Program tp = texProgram(), fp = flatProgram();
+    auto run = [&](std::initializer_list<const Program*> list) {
+        auto cb = r.queue->commandBuffer();
+        for (const Program* p : list) CHECK(cb->draw(*p, pass, wholeDraw(6), Bindings{}, p == &tp ? fsb : Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        return r.fake->stats().lastDraw;
+    };
+    const auto mixed = run({&fp, &tp, &tp});
+    const auto alone = run({&tp});
+    CHECK_EQ(mixed.prefetchCount, alone.prefetchCount);
+    CHECK_EQ(mixed.prefetchCmd[0], alone.prefetchCmd[0]);
+    CHECK_EQ(mixed.renderComponents, alone.renderComponents);
+    CHECK_EQ(mixed.fsRenderComponents, alone.fsRenderComponents);
+    CHECK_EQ(mixed.spFsMrtReg, alone.spFsMrtReg);
+    CHECK_EQ(mixed.mrtFormat, alone.mrtFormat);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 TEST(a_draw_samples_a_texture_through_the_fs_prefetch) {
     using namespace a6xx;
     Rig r;
@@ -3978,6 +4012,28 @@ TEST(draws_into_the_same_attachments_share_one_pass) {
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
+// A command buffer let go of right after its commit is destroyed by the queue's own thread, the queue holding the last
+// reference: its buffers go back to the pool then without the queue's lock (taking that lock there hung the window
+// server at boot). Fifty such, then one waited for: they all ran, and the pool gave their slabs to the later ones.
+TEST(a_command_buffer_released_in_flight_gives_its_buffers_back) {
+    Rig r;
+    auto t = target(r);
+    RenderPass pass;
+    pass.color0 = t.get();
+    for (int i = 0; i < 50; i++) {
+        auto cb = r.queue->commandBuffer();
+        for (int k = 0; k < 3; k++) CHECK(cb->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+        cb->commit();
+    }
+    auto last = r.queue->commandBuffer();
+    CHECK(last->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+    last->commit();
+    last->waitUntilCompleted();
+    CHECK(last->status() == CommandBuffer::kCompleted);
+    CHECK(r.fake->liveBuffers() < 40u);   // (each of the 51 made its own slab and stamps without the pool: over 100)
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 TEST(draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_words_again) {
     Rig r;
     auto t = target(r);
@@ -4004,6 +4060,18 @@ TEST(draws_take_their_tables_and_programs_from_a_few_buffers_and_upload_changed_
         again->commit();
         again->waitUntilCompleted();
         CHECK(again->status() == CommandBuffer::kCompleted);
+    }
+    // ...and its table slab is the one the first gave back when it completed: the next one makes none of its own either
+    {
+        auto third = r.queue->commandBuffer();
+        const uint32_t was = r.fake->liveBuffers();
+        for (int i = 0; i < 40; i++) CHECK(third->draw(flatProgram(), pass, wholeDraw(), Bindings{}, Bindings{}));
+        const uint32_t more = r.fake->liveBuffers() - was;
+        CHECK(more + 3 <= asked);
+        if (more + 3 > asked) std::printf("       %u buffers for 40 more draws, %u for the first 40\n", more, asked);
+        third->commit();
+        third->waitUntilCompleted();
+        CHECK(third->status() == CommandBuffer::kCompleted);
     }
     // the same pointer with other words in it: the second draw's VS must be the new words, not the first upload. Both
     // word sets are the same length, so only the contents tell them apart.

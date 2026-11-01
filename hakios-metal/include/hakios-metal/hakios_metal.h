@@ -280,6 +280,8 @@ hakios_metal_program *hakios_metal_program_specialize(hakios_metal_program *base
 /* STAGE 0 = vertex, 1 = fragment: how many instruction words that stage compiled to */
 unsigned hakios_metal_program_stage_words(hakios_metal_program *program, unsigned stage);
 void hakios_metal_program_free(hakios_metal_program *program);
+/* the buffers made from the kernel and those taken again from a queue's pool since the last call, and the bytes made */
+void hakios_metal_buffer_counts(unsigned *made, unsigned *reused, unsigned long long *bytes);
 const char *hakios_metal_program_name(hakios_metal_program *program);   /* "vs+fs" */
 /* STAGE 0 = vertex, 1 = fragment: the resources that stage binds, as hakios_metal_kernel_resource reports a kernel's */
 unsigned hakios_metal_program_resource_count(hakios_metal_program *program, unsigned stage);

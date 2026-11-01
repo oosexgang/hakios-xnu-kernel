@@ -2693,7 +2693,8 @@ void appendStream(pm4::Stream& to, const pm4::Stream& from) {
 // time for a draw (12.4 us measured, probe "pass cost") goes on reading them. Written whatever it holds: a register
 // that is a command (HLSQ_INVALIDATE_CMD). Forgotten: everything, at a packet that may change registers behind the
 // stream's back -- anything but the waits, loads, draws, events and markers a draw is made of.
-void appendDeduped(pm4::Stream& to, const pm4::Stream& from, CommandBuffer::RegShadow& regs) {
+bool appendDeduped(pm4::Stream& to, const pm4::Stream& from, CommandBuffer::RegShadow& regs) {
+    bool forgot = false;
     using namespace a6xx;
     const std::vector<uint32_t>& w = from.words();
     to.packet(pm4::kNop, nullptr, 0);
@@ -2722,12 +2723,14 @@ void appendDeduped(pm4::Stream& to, const pm4::Stream& from, CommandBuffer::RegS
                 break;
             default:
                 regs.clear();   // (CP_SET_DRAW_STATE and the like: what the registers hold is no longer known here)
+                forgot = true;
                 break;
             }
             to.packet(h.opcode, h.count ? &w[i + 1] : nullptr, h.count);
         }
         i += 1 + h.count;
     }
+    return forgot;
 }
 
 bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const Draw& d, const Bindings& vsBindings, const Bindings& fsBindings,
@@ -2887,6 +2890,26 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     render::Options encodeOptions = options;
+    // The state a draw's program and pass alone decide (render::Options' zsNone, mrt, msaaOff, renderCntl, lrzOff, vpc,
+    // fsInputs, fsOutputs: register writes and nothing else) is not encoded again for a draw whose program, blending,
+    // sample count and options are the last draw's in this pass: deduplication dropped every word of it anyway, and
+    // making the words was most of a draw's encoding (some 190 of its 350). Not after a packet that made the
+    // deduplication forget what the registers hold (staticKey emptied then).
+    std::vector<uint8_t> staticKey;
+    if (options.dedupRegs) {
+        const void* ptrs[2] = {program.vs.k.words, program.fs.k.words};
+        const uint32_t sizes[3] = {program.vs.k.numWords, program.fs.k.numWords, program.samples};
+        auto add = [&](const void* p, size_t n) { staticKey.insert(staticKey.end(), static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n); };
+        add(ptrs, sizeof ptrs);
+        add(sizes, sizeof sizes);
+        add(&program.blend, sizeof program.blend);
+        add(program.moreBlend, sizeof program.moreBlend);
+        add(&encodeOptions, sizeof encodeOptions);
+        if (joins && !open_->staticKey.empty() && open_->staticKey == staticKey) {
+            encodeOptions.zsNone = encodeOptions.mrt = encodeOptions.msaaOff = encodeOptions.renderCntl = encodeOptions.lrzOff = false;
+            encodeOptions.vpc = encodeOptions.fsInputs = encodeOptions.fsOutputs = false;
+        }
+    }
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
     // (a binned pass's draws are skipped by the tiles they miss: USE_VISIBILITY, which an override of 1 ignores)
     if (gmem && (options.gmemBinning || gmemBinning_) && queue_.binningOk() && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
@@ -2981,8 +3004,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1)));
     }
     if (options.dedupRegs && open_->options.dedupRegs) {
-        appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
-        if (open_->dual) appendDeduped(open_->sysStream, bodySys, open_->regs);
+        bool forgot = appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
+        if (open_->dual) forgot = appendDeduped(open_->sysStream, bodySys, open_->regs) || forgot;
+        open_->staticKey = forgot ? std::vector<uint8_t>() : std::move(staticKey);
     } else {
         appendStream(into, body);
         if (open_->dual) appendStream(open_->sysStream, bodySys);

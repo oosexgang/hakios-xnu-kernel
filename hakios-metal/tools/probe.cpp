@@ -8,6 +8,7 @@
 // number of failures. Run it from a job list (hakios: RC_JOBS, EXTRA=).
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -403,6 +404,23 @@ int main(int argc, char** argv) {
     std::printf("probe: GPU %llu, chip id 0x%llx, %llu MHz, FAULTS %llu%s\n", (unsigned long long)id, (unsigned long long)chip,
                 (unsigned long long)(freq / 1000000), (unsigned long long)gpu.faults(),
                 recover ? "; the GPU will be hung on purpose at the end (--recover)" : "");
+    {
+        // what this processor's writes and reads of a GPU buffer cost against its own memory: a draw writes some 3 KB
+        // of descriptors into one, and an uncached mapping makes each store a bus transaction
+        std::string mwhy;
+        auto mb = newBuffer(gpu, 1 << 20, &mwhy);
+        std::vector<uint8_t> host(1 << 20);
+        if (mb != nullptr && mb->contents() != nullptr) {
+            auto us = [](auto f) { const auto t0 = std::chrono::steady_clock::now(); f(); return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count(); };
+            volatile uint32_t sink = 0;
+            const double wg = us([&] { for (int k = 0; k < 8; k++) memset(mb->contents(), k, 1 << 20); }) / 8;
+            const double wh = us([&] { for (int k = 0; k < 8; k++) memset(host.data(), k, 1 << 20); }) / 8;
+            const double rg = us([&] { uint32_t a = 0; const uint32_t* q = static_cast<const uint32_t*>(mb->contents()); for (int i = 0; i < (1 << 18); i += 16) a += q[i]; sink = a; });
+            const double small = us([&] { for (int k = 0; k < 256; k++) { memset(static_cast<uint8_t*>(mb->contents()) + 4096 * (k % 64), 0, 1280); memcpy(static_cast<uint8_t*>(mb->contents()) + 4096 * (k % 64) + 1280, host.data(), 1280); } }) / 256;
+            std::printf("probe: (CPU and GPU memory: 1 MB written in %.0f us to a GPU buffer, %.0f to its own; 16 K words read from a GPU buffer in %.0f us; a draw's 2.5 KB of table %.2f us)\n", wg, wh, rg, small);
+            (void)sink;
+        }
+    }
     auto queue = CommandQueue::make(gpu, &why);
     if (queue == nullptr) {
         report(false, "a queue: " + why);

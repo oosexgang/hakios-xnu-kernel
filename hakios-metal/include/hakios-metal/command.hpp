@@ -172,6 +172,9 @@ public:
 private:
     friend class CommandQueue;
     explicit CommandBuffer(CommandQueue& queue) : queue_(queue) {}
+public:
+    ~CommandBuffer();   // (its stamp buffers back to the queue: read until the last reader lets go, which is now)
+private:
     bool fail(const std::string& why);
     bool skipRefused_ = false;
     Counts counts_;
@@ -253,6 +256,7 @@ private:
         render::Options options;
         uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
         RegShadow regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
+        std::vector<uint8_t> staticKey;   // what decided the last draw's program-and-pass state (render.cpp: draw)
         // A pass drawn in GMEM (gmemPlan and every draw gmemDrawOk) is recorded rather than streamed: its draws gather
         // in BODIES, deduplicated among themselves from nothing (BODY_REGS) since each tile replays them after the
         // tile's own register writes, and closePass puts them in the tiles.
@@ -290,6 +294,7 @@ private:
     bool piece(uint64_t bytes, Piece* out, std::string* why);
     std::shared_ptr<Buffer> slab_;
     uint64_t slabUsed_ = 0;
+    std::vector<std::shared_ptr<Buffer>> slabs_;   // every slab this buffer took, given back to the queue when it is done
     // A program's words where they are already in this command buffer, so that every draw with the program does not
     // upload them again. Found by the caller's pointer, but taken only when the words still look the same: the pointer
     // is the caller's to free and reuse. They are compared at every 64th word and the last, not all: the whole compare,
@@ -355,6 +360,15 @@ public:
     // 124 KB, into write-combined memory). Found by the words' pointer and taken only when every word is the same -- a
     // freed program's pointer may come back with other words, and then its entry goes. nullptr with *why.
     std::shared_ptr<Buffer> programBuffer(const Kernel& k, std::string* why);
+    // A slab for draw tables (CommandBuffer::piece): one a completed command buffer gave back, zeroed as a new one comes,
+    // or a new one. The kernel's making of a 256 KB buffer, once every 32 draws, was most of a draw's CPU time on the
+    // phone (40 us a draw on a fast core, where the same encoding on the host takes 5).
+    std::shared_ptr<Buffer> takeSlab(uint64_t bytes, std::string* why);
+    void giveSlabs(std::vector<std::shared_ptr<Buffer>>* slabs);
+    // ...and any other buffer a command buffer makes for itself (a large piece, its counter stamps): BYTES rounded up to
+    // a power of two from 4 KB, zeroed; given back the same way, 32 MB of them kept at most
+    std::shared_ptr<Buffer> takeBuffer(uint64_t bytes, std::string* why);
+    void giveBuffer(std::shared_ptr<Buffer> b);
     // whether GMEM passes may still be binned: no pass's visibility streams have overrun their pitch (render::kVscOverflowAt,
     // read by checkVsc once a buffer with a binned pass has completed)
     bool binningOk() const { return !vscOverflowed_.load(); }
@@ -381,6 +395,11 @@ private:
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
     std::shared_ptr<Buffer> vsc_;     // (under lock_) vscBuffer's
+    // (under poolLock_, a lock of its own: a command buffer gives its stamps back as it is destroyed, which can be under
+    // lock_ -- the queue letting go of the last one in flight -- and lock_ there was the window server hung at boot)
+    std::mutex poolLock_;
+    std::unordered_map<uint64_t, std::vector<std::shared_ptr<Buffer>>> freeBuffers_;   // by size: giveSlabs', giveBuffer's
+    uint64_t freeBytes_ = 0;
     struct Resident { std::vector<uint32_t> words; std::shared_ptr<Buffer> buffer; };
     std::unordered_multimap<const uint32_t*, Resident> resident_;   // (under lock_) programBuffer's
     uint64_t residentBytes_ = 0;

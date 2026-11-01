@@ -1,3 +1,4 @@
+#include <atomic>
 // hakios_metal.h over the C++ core.
 #include <string>
 
@@ -67,7 +68,14 @@ struct hakios_metal_program {
     unsigned color = 0;                         // the colour format it was linked for (hakios_metal_program_specialize links again)
 };
 
+namespace hakios::metal { extern std::atomic<uint32_t> gBuffersMade, gBuffersReused; extern std::atomic<uint64_t> gBytesMade; }
 extern "C" {
+void hakios_metal_buffer_counts(unsigned* made, unsigned* reused, unsigned long long* bytes) {
+    *made = hakios::metal::gBuffersMade.exchange(0);
+    *reused = hakios::metal::gBuffersReused.exchange(0);
+    *bytes = hakios::metal::gBytesMade.exchange(0);
+}
+
 
 const char* hakios_metal_error(void) { return lastError.c_str(); }
 
