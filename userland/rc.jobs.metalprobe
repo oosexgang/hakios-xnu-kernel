@@ -1,0 +1,6 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# hakios-metal's probe on the phone's GPU beside the window server (../hakios-metal README, "On the phone"):
+#   EXTRA="../../hakios-metal/out/ios/hakios-metal-probe" GL=1 REST=1 RC_JOBS=rc.jobs.metalprobe userland/build.sh
+# with the kernel's gpu_recover=1, which turns a dispatch the GPU never finishes into a reset and a line of the probe.
+/redwood/bin/rwtouch wait 30 swipe 0.5 0.985 0.5 0.3 200 wait 30
+/redwood/bin/hakios-metal-probe
