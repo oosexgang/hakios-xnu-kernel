@@ -1,0 +1,4 @@
+# HakiOS defconfig for the Redmi Turbo 4 Pro / POCO F7 (onyx): the common kernel, the sm8735 family's facts, and this device's own.
+#include common_defconfig
+#include sm8735.config
+#include onyx.config

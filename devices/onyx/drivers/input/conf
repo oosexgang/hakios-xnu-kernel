@@ -1,0 +1,3 @@
+driver ONYX_TOUCH
+	file    bsd/dev/hakios.onyx_touch.c
+	help    Experimental Onyx NT38771 SPI/GPI driver; opt in with onyx_touch_probe=1. Hardware resets remain unresolved.
