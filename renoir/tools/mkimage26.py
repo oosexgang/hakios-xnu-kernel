@@ -46,9 +46,10 @@ PRUNED_APPS = ('Podcasts', 'Maps', 'Freeform', 'Music', 'Books', 'Setup', 'Journ
                'ContinuityCaptureShieldUI')
 # What cannot work on this phone and is big (iOS 27's image is 4.59 GB with the rules above, over the
 # 4 GiB - 1 that fastboot can send in one download): the RAW camera's neural networks, Metal portrait
-# filters (no Metal here), the A13 camera ISP's firmware, DriverKit drivers (this kernel loads none),
-# and frameworks whose code is in the shared cache while their resources serve hardware or services not
-# here (Apple Intelligence, camera effects, iWork document previews, the App Store in Messages).
+# filters, the A13 camera ISP's firmware, DriverKit
+# drivers (this kernel loads none), and frameworks whose code is in the shared cache while their resources
+# serve hardware or services not here (Apple Intelligence, camera effects, iWork document previews, the App
+# Store in Messages).
 PRUNED_PATHS = ('System/Library/CoreServices/RawCamera.bundle/RawSFD/',
                 'System/Library/CoreServices/RawCameraSupport.bundle/PlugIns.assets',
                 'System/Library/Isp/', 'System/Library/DriverExtensions/',
@@ -60,8 +61,10 @@ PRUNED_FRAMEWORK_RESOURCES = ('System/Library/PrivateFrameworks/iWorkImport.fram
 EMOJI = 'System/Library/Fonts/CoreAddition/AppleColorEmoji-160px.ttc'
 # What select-system.py (16.5's rules: framework resources up to SMALL) leaves out and iOS 27 cannot
 # do without: linkd dies at its start without the App Intents schema database ("AppIntentSchemas/
-# Database.swift:80: Fatal error: Failed to open database connection: databaseFileMissing").
-KEPT_FILES = ('System/Library/PrivateFrameworks/AppIntentSchemas.framework/AppIntentSchemas.sqlite',)
+# Database.swift:80: Fatal error: Failed to open database connection: databaseFileMissing"); and
+# QuartzCore's shader resource stays beside its bundle, even with hardware graphics disabled.
+KEPT_FILES = ('System/Library/PrivateFrameworks/AppIntentSchemas.framework/AppIntentSchemas.sqlite',
+              'System/Library/Frameworks/QuartzCore.framework/default.metallib')
 LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
 
 

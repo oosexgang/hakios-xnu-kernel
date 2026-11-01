@@ -75,13 +75,13 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
 
 ## iOS 27
 
-State on 2026-10-31: iOS 27.2 (24B119, iPhone12,1 files) runs on the same kernel (there is no XNU source
+State on 2026-11-01: iOS 27.2 (24B119, iPhone12,1 files) runs on the same kernel (there is no XNU source
 for iOS 27; patches 0013-0019 cover what its userland asks of a newer kernel). It shows the lock screen and
 the home screen with icons, the Stripe wallpaper, the dock and Search, drawn in software at 10-40 frames a second.
 Not there yet: the lock screen's large clock, widget contents, Wi-Fi, sound.
 
 ```
-renoir/kernel/build.sh                        # patches 0001-0019
+renoir/kernel/build.sh                        # patches 0001-0021
 renoir/tools/pacstrip cache ios27/dyld-strip ios27/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
 python3 renoir/tools/fips26.py ios27/dyld-strip \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
@@ -133,3 +133,11 @@ What stood between iOS 27 and its home screen, in order:
      Reduce Motion made no measurable difference.
    The first boot's daemons (lsd, linkd, assetsd: every boot is a first boot, /var is in RAM) take a few
    minutes of CPU.
+10. **Graphics and shaders.** Hardware Metal acceleration is disabled with `gpu=0`; the root image does
+    not include an external Metal plug-in. CoreAnimation's software renderer does not draw iOS 27's
+    Liquid Glass, CASDF shapes or the large lock-screen clock.
+    - **0021**: `gpu=1` looked for the firmware in `fw/` (redwood's) before starting; the steps read the
+      profile's `fw-renoir/`.
+    - **QuartzCore's shaders**: CoreAnimation reads `default.metallib` beside
+      `/System/Library/Frameworks/QuartzCore.framework`; 16.5's size rule had left it out (mkimage26
+      KEPT_FILES; 8.7 MB).

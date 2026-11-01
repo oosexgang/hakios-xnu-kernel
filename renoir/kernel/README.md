@@ -130,7 +130,7 @@ The following boot-args are verified safe on Renoir:
 | `fb_double=0` | 0 | Set to 1 to enable RAM backbuffering for tear elimination |
 | `cpufreq=1` | 0 | Enables EPSS hardware CPU frequency scaling |
 | `ddr=1` / `ddr=2` | 2 | Enables RPMh memory bus bandwidth voting |
-| `gpu=1` | 0 | Boots Adreno 642 if `fw-renoir` firmware binaries are present |
+| `gpu=1` | 0 | Boots Adreno 642 if `fw-renoir` firmware binaries are present (0021: checked there, not in `fw`) and keeps it for the service RedwoodGPU |
 | `buttons=1` | 0 | Starts PM8350 side power and volume button monitoring thread |
 | `battery=1` | 0 | Enables resident UEFI battery charge monitoring |
 | `small_cores=2`| 2 | Slower core topology configuration (0: uniform, 1/2: small cores) |
@@ -151,5 +151,5 @@ To comply with licensing and redistribution requirements:
 - **Path**: `xnu-12377-renoir/BUILD/obj/mach.development.bcm2837`
   (symlinked to `DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837`)
 - **File Type**: Mach-O 64-bit arm64 executable, flags `<NOUNDEFS|PIE>`
-- **Size**: ~18.9 MB (18,941,368 bytes)
+- **Size**: ~18.9 MB (18,961,152 bytes)
 - **CPUTYPE / SUBTYPE**: `CPU_TYPE_ARM64` (0x0100000c) / `CPU_SUBTYPE_ARM64_ALL` (0)
