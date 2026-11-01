@@ -1351,6 +1351,46 @@ display_link_rates(void)
 }
 
 /*
+ * Boot-args ax_rt=0|1 and ax_rm=0|1: Settings' Reduce Transparency and Reduce Motion, set as SpringBoard starts
+ * (libAccessibility's own setters, which keep them in its preferences as Settings does). Without them nothing is
+ * set. Reduce Transparency puts plain colours where CoreAnimation would blur what is behind (the dock, folders, an
+ * application opening over the home screen): the blurs are what the GPU spends most of an application's opening on.
+ */
+static void
+accessibility_settings(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	static const struct {
+		const char *arg, *setter, *what;
+	} settings[] = {
+		{ "ax_rt=", "_AXSSetEnhanceBackgroundContrastEnabled", "Reduce Transparency" },
+		{ "ax_rm=", "_AXSSetReduceMotionEnabled", "Reduce Motion" },
+	};
+	void *library;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0) {
+		return;
+	}
+	for (size_t i = 0; i < sizeof(settings) / sizeof(settings[0]); i++) {
+		const char *at = strstr(arguments, settings[i].arg);
+		void (*set)(Boolean);
+
+		if (at == NULL || (at != arguments && at[-1] != ' ')) {
+			continue;
+		}
+		if ((library = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW)) == NULL ||
+		    (set = (void (*)(Boolean))dlsym(library, settings[i].setter)) == NULL) {
+			say("hakios: %s: no %s in libAccessibility\n", settings[i].what, settings[i].setter);
+			continue;
+		}
+		set(atoi(at + strlen(settings[i].arg)) != 0);
+		say("hakios: %s %s (%s%d)\n", settings[i].what, atoi(at + strlen(settings[i].arg)) ? "on" : "off", settings[i].arg,
+		    atoi(at + strlen(settings[i].arg)));
+	}
+}
+
+/*
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
  */
@@ -1438,6 +1478,7 @@ hakios_springboard_init(void)
 	}
 	caenv();
 	display_link_rates();
+	accessibility_settings();
 	/*
 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader
 	 * (/var/jb/usr/lib/TweakLoader.dylib) reads /var/jb/usr/lib/TweakInject and opens the tweaks
