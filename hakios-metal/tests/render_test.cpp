@@ -2966,6 +2966,50 @@ TEST(a_draw_like_the_last_leaves_out_its_program_and_pass_state) {
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
+// A compressed texture (TextureDesc::compressed, UBWC): its rows are what replace and read see, and the first draw that
+// samples it after they changed copies them in by the 2D engine (the fake faults on a UBWC texture sampled before a
+// copy wrote it); a second draw copies nothing, and after another replace the next draw copies again (the twin)
+TEST(a_compressed_texture_is_copied_in_before_a_draw_samples_it_after_its_rows_changed) {
+    Rig r;
+    auto t = target(r);
+    TextureDesc cd;
+    cd.format = PixelFormat::kBGRA8Unorm;
+    cd.width = 256;
+    cd.height = 64;
+    cd.usage = kTextureUsageRead;
+    cd.compressed = true;
+    std::string why;
+    auto ct = Texture::make(*r.gpu, cd, &why);
+    CHECK(ct != nullptr);
+    if (ct == nullptr) { std::printf("       %s\n", why.c_str()); return; }
+    CHECK(ct->compressed() && ct->contents() == nullptr && ct->staging() != nullptr);
+    std::vector<uint8_t> rows(256 * 64 * 4), back(rows.size());
+    for (size_t i = 0; i < rows.size(); i++) rows[i] = uint8_t(i * 7);
+    CHECK(ct->replace(0, 0, 256, 64, rows.data(), 256 * 4, &why));
+    CHECK(ct->read(0, 0, 256, 64, back.data(), 256 * 4, &why) && back == rows);
+    Sampler smp = nearestClamp();
+    RenderPass pass;
+    pass.color0 = t.get();
+    Bindings fsb;
+    fsb.textures = {ct.get()};
+    fsb.samplers = {&smp};
+    auto copiesFor = [&](int draws) {
+        const uint32_t before = r.fake->stats().ubwcCopies;
+        auto cb = r.queue->commandBuffer();
+        for (int i = 0; i < draws; i++) CHECK(cb->draw(texProgram(), pass, wholeDraw(6), Bindings{}, fsb));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        return r.fake->stats().ubwcCopies - before;
+    };
+    CHECK_EQ(copiesFor(2), 1u);
+    CHECK_EQ(copiesFor(1), 0u);
+    CHECK(ct->replace(0, 0, 16, 16, rows.data(), 256 * 4, &why));
+    CHECK_EQ(copiesFor(1), 1u);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+    if (r.fake->stats().faults) std::printf("       %s\n", r.fake->stats().lastFault.c_str());
+}
+
 TEST(a_draw_samples_a_texture_through_the_fs_prefetch) {
     using namespace a6xx;
     Rig r;

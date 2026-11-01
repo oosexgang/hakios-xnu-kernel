@@ -62,6 +62,7 @@ MESA_ARCHIVE_PATHS = \
 	src/compiler/isaspec/libisaspec.a \
 	src/compiler/nir/libnir.a \
 	src/compiler/libcompiler.a \
+	src/freedreno/fdl/libfreedreno_layout.a \
 	src/freedreno/common/libfreedreno_common.a \
 	src/util/libmesa_util.a \
 	src/util/libmesa_util_sse41.a \

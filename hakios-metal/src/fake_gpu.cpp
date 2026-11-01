@@ -542,6 +542,15 @@ bool FakeGpu::check2d(const uint32_t* d, const char* what, uint32_t i, bool samp
     }
     // linear, or a depth layout's tiles (TILE6_3 on every level, so TILE_ALL; 32 bits a texel, its rows counted to 16 as
     // fdl6_tile_alignment counts them) -- sampled only, nothing stores into tiles here
+    if (tile == TILE6_3 && (d[3] & A6XX_TEX_CONST_3_FLAG) != 0) {
+        // a UBWC texture: read only once a copy has written it (ubwcWritten_), what this model knows of its contents
+        const uint64_t base = uint64_t(d[4]) | uint64_t(d[5] & 0x1ffff) << 32;
+        if (!sampled || ubwcWritten_.count(base) == 0) {
+            fault(who + ": a UBWC texture read before anything wrote it in compressed form");
+            return false;
+        }
+        return true;
+    }
     if (tile != TILE6_LINEAR && (tile != TILE6_3 || !sampled || bpp != 4 || (d[3] & A6XX_TEX_CONST_3_TILE_ALL) == 0)) {
         fault(who + text(": tile mode %llu", tile) + ((d[3] & A6XX_TEX_CONST_3_TILE_ALL) ? " with TILE_ALL" : " without TILE_ALL") +
               ": linear, or a sampled 32-bit depth layout (TILE6_3, TILE_ALL), is what this GPU model reads");
@@ -878,7 +887,10 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     // a linear image of a known format, or the one tiled image this driver makes: a depth texture (FMT6_32_FLOAT, TILE6_3)
     const uint32_t tile = fieldOf(info, A6XX_RB_2D_DST_INFO_TILE_MODE__MASK, A6XX_RB_2D_DST_INFO_TILE_MODE__SHIFT);
     const bool tiled = tile == TILE6_3 && (fmt == FMT6_32_FLOAT || fmt == FMT6_8_UINT);
-    if (bpp == 0 || (tile != TILE6_LINEAR && !tiled)) {
+    // ...or a UBWC one (TILE6_3 with FLAGS, RGBA8-sized, WZYX): what a copy fills a compressed texture through
+    const bool ubwc = copy && tile == TILE6_3 && (info & A6XX_RB_2D_DST_INFO_FLAGS) != 0 && fmt == FMT6_8_8_8_8_UNORM &&
+                      fieldOf(info, A6XX_RB_2D_DST_INFO_COLOR_SWAP__MASK, A6XX_RB_2D_DST_INFO_COLOR_SWAP__SHIFT) == WZYX;
+    if (bpp == 0 || (tile != TILE6_LINEAR && !tiled && !ubwc)) {
         fault(text("a fill into format %llu, tile mode %llu: a linear image of a known format (or a TILE6_3 depth texture) is what this GPU model fills", fmt, tile));
         return false;
     }
@@ -915,6 +927,20 @@ bool FakeGpu::execBlit(const uint32_t* p, uint32_t count) {
     if (x1 < x0 || y1 < y0 || pitch < uint64_t(x1 + 1) * bpp || base % 64 != 0) {
         fault(text("a fill of (%llu, %llu) to ", x0, y0) + text("(%llu, %llu) with a pitch of ", x1, y1) + text("%llu bytes at %#llx: an empty rectangle, rows wider than the pitch or a base not 64-aligned", pitch, base));
         return false;
+    }
+    if (copy && ubwc) {
+        // Its bytes and flags are in an order this model does not reproduce: the copy is judged (the source linear and
+        // in reach, a flag buffer in reach) and the image counted as written, which a sample of it then requires
+        const uint64_t flags = reg64(REG_A6XX_RB_2D_DST_FLAGS);
+        const uint32_t sinfo = reg(REG_A6XX_SP_PS_2D_SRC_INFO);
+        if (fieldOf(sinfo, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__MASK, A6XX_SP_PS_2D_SRC_INFO_TILE_MODE__SHIFT) != TILE6_LINEAR ||
+            at(reg64(REG_A6XX_SP_PS_2D_SRC), 64) == nullptr || at(flags, 64) == nullptr || at(base, uint64_t(y1 + 1) * pitch) == nullptr) {
+            fault("a copy into a UBWC image: from a linear source, into an image and a flag buffer in reach, is what this model takes");
+            return false;
+        }
+        ubwcWritten_.insert(base);
+        stats_.ubwcCopies++;
+        return true;
     }
     if (copy) {
         return execCopy(fmt, bpp, ifmt, x0, y0, x1, y1, base, pitch, tiled);

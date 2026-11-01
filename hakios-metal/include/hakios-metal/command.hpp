@@ -100,6 +100,12 @@ public:
     // of DST's level DL by the 2D engine, a pass of its own (render::encodeBlit says what it takes)
     bool blit(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
               const render::Options& options = render::Options{});
+    // the compressed textures among B's sampled ones made current (Texture::staging); a draw and a dispatch do it first
+    bool freshen(const Bindings& b, const render::Options& options = {});
+private:
+    bool blitInto(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
+                  const render::Options& options);
+public:
     // -generateMipmapsForTexture:: every level past 0 made from the one above it, halved with linear filtering, in order
     bool generateMipmaps(const Texture& texture, const render::Options& options = render::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state

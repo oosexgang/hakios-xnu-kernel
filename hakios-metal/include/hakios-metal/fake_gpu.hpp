@@ -154,6 +154,7 @@ public:
         uint32_t copies = 0;        // CP_BLIT copies (render::encodeBlit), carried out texel for texel or bilinear
         uint32_t tiledFills = 0;    // ...of which into a TILE6_3 depth texture: judged, not written (the tiled order is not modelled)
         uint32_t tiles = 0;         // GMEM tiles begun (CP_SET_MARKER RM6_BIN_RENDER_START | USES_GMEM)
+        uint32_t ubwcCopies = 0;   // 2D copies into a UBWC image
         uint32_t tileLoads = 0, tileStores = 0;   // event blits, carried out between memory and the model's GMEM
         uint32_t tileClears = 0;    // ...and clears in GMEM
         uint32_t binningPasses = 0, binnedDraws = 0, binData = 0;   // binning passes, the draws in them, tiles told their streams
@@ -291,6 +292,7 @@ private:
     // inside a GMEM tile (between RM6_BIN_RENDER_START | USES_GMEM and RM6_BIN_RENDER_END), and GMEM itself: what the
     // event blits load and store (the draws rasterize nothing, so a tile holds what its load put there)
     bool inTile_ = false;
+    std::set<uint64_t> ubwcWritten_;   // the UBWC images a copy has written (their data addresses)
     uint32_t binQueued_ = 0;   // tiles' streams handed over (CP_SET_BIN_DATA5*) and not yet let go by RM6_BIN_END_OF_DRAWS
     bool binning_ = false;   // between RM6_BIN_VISIBILITY and the first tile: the draws only bin
     std::vector<uint8_t> gmem_ = std::vector<uint8_t>(a6xx::kGmemBytes);

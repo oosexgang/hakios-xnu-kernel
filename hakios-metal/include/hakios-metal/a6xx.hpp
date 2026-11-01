@@ -1050,6 +1050,11 @@ inline constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ__SHIFT = 23;             
 inline constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ__SCALE = 12;                     // a6xx.xml.h:11413  the encoder's val >> 12
 inline constexpr uint32_t A6XX_TEX_CONST_3_TILE_ALL = 0x08000000;                       // a6xx.xml.h:11418
 inline constexpr uint32_t A6XX_TEX_CONST_3_FLAG = 0x10000000;                           // a6xx.xml.h:11419
+// a UBWC texture's flag buffer (fdl6_view_init, fd6_view.c:294-306): array pitch, pitch and the log2 of its blocks across and down
+constexpr uint32_t A6XX_TEX_CONST_9_FLAG_BUFFER_ARRAY_PITCH(uint32_t v) { return (v >> 4) & 0x0001ffffu; }      // a6xx.xml.h:11484
+constexpr uint32_t A6XX_TEX_CONST_10_FLAG_BUFFER_PITCH(uint32_t v) { return (v >> 6) & 0x7fu; }                  // a6xx.xml.h:11495
+constexpr uint32_t A6XX_TEX_CONST_10_FLAG_BUFFER_LOGW(uint32_t v) { return (v << 8) & 0xf00u; }                  // a6xx.xml.h:11502
+constexpr uint32_t A6XX_TEX_CONST_10_FLAG_BUFFER_LOGH(uint32_t v) { return (v << 12) & 0xf000u; }                // a6xx.xml.h:11508
 // a 3D texture's last level's slice size, in 4 KiB (fd6_view.c:308-310)
 constexpr uint32_t A6XX_TEX_CONST_3_MIN_LAYERSZ(uint32_t bytes) {
     return field(bytes >> A6XX_TEX_CONST_3_MIN_LAYERSZ__SCALE, A6XX_TEX_CONST_3_MIN_LAYERSZ__SHIFT, A6XX_TEX_CONST_3_MIN_LAYERSZ__MASK);
@@ -4390,6 +4395,8 @@ inline constexpr uint32_t REG_A6XX_RB_2D_DST_PITCH = 0x8c1a;                    
 inline constexpr uint32_t A6XX_RB_2D_DST_PITCH__MASK = 0x0000ffff;                          // a6xx.xml.h:6642
 inline constexpr uint32_t A6XX_RB_2D_DST_PITCH__SHIFT = 0;                                  // a6xx.xml.h:6643
 inline constexpr uint32_t REG_A6XX_RB_2D_DST_FLAGS = 0x8c20;                                // a6xx.xml.h:6667
+inline constexpr uint32_t A6XX_RB_2D_DST_INFO_FLAGS = 0x00001000;                          // a6xx.xml.h:6627  the destination is UBWC
+constexpr uint32_t A6XX_RB_2D_DST_FLAGS_PITCH(uint32_t v) { return (v >> 6) & 0xffu; }          // a6xx.xml.h:6673
 inline constexpr uint32_t A6XX_RB_2D_DST_PITCH__SCALE = 6;                                  // a6xx.xml.h:6644  the encoder's val >> 6
 constexpr uint32_t A6XX_RB_2D_DST_INFO_COLOR_FORMAT(uint32_t v) {
     return field(v, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__SHIFT, A6XX_RB_2D_DST_INFO_COLOR_FORMAT__MASK);

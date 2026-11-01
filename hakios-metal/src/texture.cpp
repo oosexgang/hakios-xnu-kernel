@@ -7,6 +7,12 @@
 #include <unordered_map>
 #include <cstring>
 
+#ifdef HAKIOS_METAL_MESA
+// (Mesa's headers carry their own C++ guards)
+#include "fdl/freedreno_layout.h"
+#include "common/freedreno_dev_info.h"
+#endif
+
 namespace hakios::metal {
 
 namespace {
@@ -438,6 +444,54 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
     if (!plan(desc, &info, &pitch, &bytes, why)) {
         return nullptr;
     }
+    if (desc.compressed) {
+        // UBWC as Mesa lays it out for this chip (fdl6_layout with the tile mode and UBWC asked for, as turnip asks when
+        // an image is optimal): the flag buffer first, then the tiled data, at offsets fdl gives
+#ifdef HAKIOS_METAL_MESA
+        if (desc.type != TextureType::k2D || desc.mipLevels != 1 || desc.samples != 1 ||
+            (desc.format != PixelFormat::kRGBA8Unorm && desc.format != PixelFormat::kBGRA8Unorm)) {
+            refuse(why, std::string("a compressed ") + info->name + " texture: one level of 2D, single-sampled RGBA8Unorm or BGRA8Unorm is what is served");
+            return nullptr;
+        }
+        // (rows for this processor only for one it does not draw into: a render target's truth is what the GPU drew,
+        // in the compressed layout alone, and replace and read refuse it)
+        std::shared_ptr<Texture> staging;
+        if ((desc.usage & kTextureUsageRenderTarget) == 0) {
+            TextureDesc linear = desc;
+            linear.compressed = false;
+            staging = make(gpu, linear, why);
+            if (staging == nullptr) return nullptr;
+        }
+        fd_dev_id id{};
+        id.chip_id = a6xx::kChipId;
+        const struct ::fd_dev_info* dev = ::fd_dev_info_raw(&id);
+        fdl_layout l{};
+        l.ubwc = true;
+        l.tile_mode = a6xx::TILE6_3;
+        if (dev == nullptr || !fdl6_layout(&l, dev, PIPE_FORMAT_R8G8B8A8_UNORM, 1, desc.width, desc.height, 1, 1, 1, false, false, true, nullptr) || !l.ubwc) {
+            refuse(why, "no UBWC layout for a " + n(desc.width) + " x " + n(desc.height) + " texture on this chip");
+            return nullptr;
+        }
+        std::shared_ptr<Buffer> buffer = newBuffer(gpu, l.size, why);
+        if (buffer == nullptr) return nullptr;
+        uint32_t bw = 0, bh = 0;
+        fdl6_get_ubwc_blockwidth(&l, &bw, &bh);
+        auto log2ceil = [](uint32_t v) { uint32_t r = 0; while ((1u << r) < v) r++; return r; };
+        Texture* t = new Texture(std::move(buffer), desc, info, fdl_pitch(&l, 0), fdl_surface_offset(&l, 0, 0), l.pitchalign - 6);
+        t->ubwc_ = true;
+        t->ubwcOffset_ = fdl_ubwc_offset(&l, 0, 0);
+        t->ubwcPitch_ = fdl_ubwc_pitch(&l, 0);
+        t->ubwcLayerSize_ = l.ubwc_layer_size;
+        t->ubwcLogW_ = log2ceil((desc.width + bw - 1) / bw);
+        t->ubwcLogH_ = log2ceil((desc.height + bh - 1) / bh);
+        t->stale_ = staging != nullptr;
+        t->staging_ = std::move(staging);   // (its first draw copies the rows in, zeros or not: the flag buffer's zeros are not known to read as them)
+        return adopt(t);
+#else
+        refuse(why, "a compressed texture: the UBWC layout is Mesa's, and this build has none");
+        return nullptr;
+#endif
+    }
     std::shared_ptr<Buffer> buffer = newBuffer(gpu, bytes, why);
     if (buffer == nullptr) {
         return nullptr;
@@ -587,6 +641,12 @@ void decodePvrtc(const uint8_t* data, uint32_t w, uint32_t h, uint32_t bpp, uint
 }
 
 bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const void* bytes, uint64_t bytesPerRow, std::string* why) {
+    if (staging_ != nullptr) {
+        const bool ok = staging_->replace(level, x, y, w, h, bytes, bytesPerRow, why);
+        if (ok) stale_ = true;
+        return ok;
+    }
+    if (ubwc_) return refuse(why, "a compressed render target: its pixels are the GPU's alone, in a layout this processor does not write");
     if (info_->pvrtcBpp != 0) {
         // PVRTC: the whole level, as Metal requires of it (its blocks are read by their neighbours' texels), decoded
         // into the RGBA8 this texture holds
@@ -630,6 +690,8 @@ bool Texture::replace(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32
 }
 
 bool Texture::read(uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h, void* bytes, uint64_t bytesPerRow, std::string* why) const {
+    if (staging_ != nullptr) return staging_->read(level, x, y, w, h, bytes, bytesPerRow, why);   // (the GPU never writes it: read-only usage)
+    if (ubwc_) return refuse(why, "a compressed render target: its pixels are the GPU's alone, in a layout this processor does not read");
     if (desc_.samples != 1) {
         return refuse(why, "a multisample texture's samples are the GPU's alone: resolve it into a texture of one sample first (Metal refuses this too)");
     }
@@ -746,6 +808,21 @@ a6xx::TexConst Texture::sampledDescriptor() const {
         d.dword[0] = (d.dword[0] & ~A6XX_TEX_CONST_0_SAMPLES__MASK) |
                      A6XX_TEX_CONST_0_SAMPLES(desc_.samples == 4 ? MSAA_FOUR : MSAA_TWO);
     }
+    if (ubwc_) {
+        // a UBWC texture (fdl6_view_init, fd6_view.c:251-306): TILE6_3, TILE_ALL (fdl6_layout sets it for UBWC on a
+        // chip without has_ubwc_linear_mipmap_fallback), and the flag buffer's address, pitch, layer and blocks
+        // (a tiled layout holds every 8-bit format in WZYX order: fd6_texture_swap gives WZYX for one that is not linear,
+        // and the 2D copy that fills it from the linear rows reorders a BGRA texture's bytes so)
+        d.dword[0] = (d.dword[0] & ~(A6XX_TEX_CONST_0_TILE_MODE__MASK | A6XX_TEX_CONST_0_SWAP__MASK)) | A6XX_TEX_CONST_0_TILE_MODE(TILE6_3) |
+                     A6XX_TEX_CONST_0_SWAP(WZYX);
+        d.dword[3] |= A6XX_TEX_CONST_3_TILE_ALL | A6XX_TEX_CONST_3_FLAG;
+        const uint64_t flags = flagAddress();
+        d.dword[7] = uint32_t(flags);
+        d.dword[8] = uint32_t(flags >> 32);
+        d.dword[9] |= A6XX_TEX_CONST_9_FLAG_BUFFER_ARRAY_PITCH(ubwcLayerSize_ >> 2);
+        d.dword[10] |= A6XX_TEX_CONST_10_FLAG_BUFFER_PITCH(ubwcPitch_) | A6XX_TEX_CONST_10_FLAG_BUFFER_LOGW(ubwcLogW_) |
+                       A6XX_TEX_CONST_10_FLAG_BUFFER_LOGH(ubwcLogH_);
+    }
     if (info_->depth) {
         // the depth plane as the TP reads it (fdl6_view_init over a depth layout): TILE6_3, and TILE_ALL since every level
         // of a depth layout is tiled (fd6_layout.c:157-164 "Linear D/S is not supported by HW"); FMT6_32_FLOAT, the depth
@@ -791,6 +868,7 @@ uint32_t Texture::swizzleWord(uint32_t dword0) const {
 }
 
 std::shared_ptr<Texture> Texture::swizzled(const std::shared_ptr<Texture>& texture, const uint8_t swizzle[4], std::string* why) {
+    if (texture->staging_ != nullptr) return swizzled(texture->staging_, swizzle, why);
     const Texture& p = *texture;
     for (int c = 0; c < 4; c++) {
         if (swizzle[c] > 5) {
@@ -981,11 +1059,15 @@ std::shared_ptr<Texture> Texture::overBuffer(std::shared_ptr<Buffer> buffer, uin
     }
     uint32_t pitchAlign = 0;
     while (pitchAlign < log2u(info->bytesPerPixel) && bytesPerRow % (64u << (pitchAlign + 1)) == 0) pitchAlign++;
-    return adopt(new Texture(std::move(buffer), desc, info, bytesPerRow, offset, pitchAlign));
+    Texture* t = new Texture(std::move(buffer), desc, info, bytesPerRow, offset, pitchAlign);
+    t->overBuffer_ = true;
+    return adopt(t);
 }
 
 std::shared_ptr<Texture> Texture::view(const std::shared_ptr<Texture>& parent, PixelFormat format, TextureType type, uint32_t baseLevel, uint32_t levels,
                                        uint32_t baseSlice, uint32_t slices, std::string* why) {
+    // (a view of a compressed texture is a view of its rows: their layout is the one a view reinterprets)
+    if (parent->staging_ != nullptr) return view(parent->staging_, format, type, baseLevel, levels, baseSlice, slices, why);
     const Texture& p = *parent;
     const FormatInfo* info = formatInfo(format);
     const bool layered = p.type() == TextureType::k2DArray || p.type() == TextureType::kCube || p.type() == TextureType::kCubeArray;

@@ -393,6 +393,29 @@ hakios_metal_texture* hakios_metal_texture_new_levels(hakios_metal_device* d, un
     return r;
 }
 
+unsigned hakios_metal_texture_origin(hakios_metal_texture* t) {
+    const Texture& x = *t->texture;
+    return x.compressed() ? 3 : x.overBufferRows() ? 2 : x.surface() != 0 ? 1 : 0;
+}
+
+hakios_metal_texture* hakios_metal_texture_new_compressed(hakios_metal_device* d, unsigned pixelFormat, unsigned width, unsigned height, unsigned usage) {
+    TextureDesc desc;
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.usage = usage;
+    desc.compressed = true;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
 namespace {
 hakios_metal_texture* textureOverSurface(hakios_metal_device* d, unsigned surfaceId, unsigned plane, unsigned pixelFormat, unsigned width, unsigned height,
                                          unsigned usage, const Texture::SurfacePlane* chroma) {

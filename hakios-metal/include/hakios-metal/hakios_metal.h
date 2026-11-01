@@ -125,6 +125,13 @@ unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel *kernel);   
  * buffer the command buffers keep alive while they use it) */
 hakios_metal_texture *hakios_metal_texture_new(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned usage);
+/* a 2D, one-level RGBA8Unorm (70) or BGRA8Unorm (80) texture the GPU reads compressed (UBWC): what replace and read see
+ * are its rows, copied in by the GPU before a draw or a dispatch samples it after they changed. For a texture that is
+ * sampled and never drawn into or written by a kernel. NULL with the reason. */
+hakios_metal_texture *hakios_metal_texture_new_compressed(hakios_metal_device *device, unsigned pixel_format, unsigned width, unsigned height,
+    unsigned usage);
+/* where a texture's pixels live: 0 its own memory, 1 an IOSurface, 2 a buffer's rows, 3 compressed (with rows of its own) */
+unsigned hakios_metal_texture_origin(hakios_metal_texture *texture);
 /* ...of LEVELS mip levels (MTLTextureDescriptor.mipmapLevelCount: 1 to floor(log2(max(width, height))) + 1) */
 hakios_metal_texture *hakios_metal_texture_new_levels(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned levels, unsigned usage);

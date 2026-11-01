@@ -116,6 +116,7 @@ void loadDirect(pm4::Stream& st, const Stage& s, a6xx_state_type type, uint32_t 
 struct MrtWords {
     uint32_t bufInfo, pitch, arrayPitch, baseLo, baseHi, baseGmem, spFsMrtReg;
     bool srgb;
+    uint32_t flagLo = 0, flagHi = 0, flagPitch = 0;   // a compressed target's flag buffer (RB_MRT_FLAG_BUFFER), 0 for a linear one
 };
 
 // the format RB_MRT_BUF_INFO names (GRAS_LRZ_MRT_BUF_INFO_0 repeats attachment 0's)
@@ -130,7 +131,14 @@ MrtWords mrtWords(const Texture& t, uint32_t level, uint32_t slice = 0) {
     MrtWords m{};
     // (a layer, a face or a depth plane: the slices are one 2D layout each, sliceBytes apart -- fd6_layout.c's layer_size)
     const uint64_t base = t.levelAddress(level) + (slice != 0 ? uint64_t(slice) * t.sliceBytes() : 0);
-    m.bufInfo = rbMrtBufInfo(colorFmt(f), TILE6_LINEAR, f.swap);
+    m.bufInfo = rbMrtBufInfo(colorFmt(f), t.compressed() ? TILE6_3 : TILE6_LINEAR, f.swap);
+    if (t.compressed()) {
+        // its flag buffer, as tu6_emit_mrt / fd6 emit_mrt write it (fd6_view.c's FLAG_BUFFER_PITCH: the pitch, the layer
+        // size over 4); RB_RENDER_CNTL.FLAG_MRTS turns its use on
+        m.flagLo = uint32_t(t.flagAddress());
+        m.flagHi = uint32_t(t.flagAddress() >> 32);
+        m.flagPitch = A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH(t.flagPitch()) | A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH(t.flagLayerSize() >> 2);
+    }
     m.pitch = rbMrtPitch(uint32_t(L.pitch));
     m.arrayPitch = rbMrtArrayPitch(uint32_t(t.buffer()->length()));
     m.baseLo = uint32_t(base);
@@ -991,6 +999,9 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         const FormatInfo& f = t.info();
         // (attachment 0's sentences are the ones a single target always had; a later one's name its index)
         const std::string which = "colour attachment " + n(i), of = i == 0 ? std::string() : " of " + which, at = i == 0 ? std::string() : which + ": ";
+        if (t.compressed() && (i == 0 ? pass.load : pass.more[i - 1].load) == LoadAction::kClear) {
+            return refuse(why, at + "a Clear of a compressed texture: the 2D engine's fill writes linear rows (not served yet)");
+        }
         if ((t.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the " + n(t.width()) + " x " + n(t.height()) + " " + f.name + " texture" + of +
                                    " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
@@ -1642,7 +1653,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             const MrtWords& m = mrts[i];
             regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, i), {m.bufInfo, m.pitch, m.arrayPitch, m.baseLo, m.baseHi, m.baseGmem});
             reg(stream, regSpFsMrtReg(i), m.spFsMrtReg);
-            regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {0, 0, 0});
+            regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {m.flagLo, m.flagHi, m.flagPitch});
         }
         reg(stream, REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(mrtFormatOf(mrts[0].bufInfo)));
         reg(stream, REG_A6XX_RB_DITHER_CNTL, 0);
@@ -1670,7 +1681,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // 7. RB_RENDER_CNTL: CCUSINGLECACHELINESIZE 2 in both pipelines (tu_cmd_buffer.cc:633-693; fd6_gmem.cc:531-552), 0 in
     // r3d_dst (tu_clear_blit.cc:1408) -- renderCntlZero for the bisect. A plain type-4: has_cp_reg_write is false here.
     if (o.renderCntl) {
-        reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem());
+        uint32_t flagMrts = 0;
+        for (uint32_t i = 0; i < numRt; i++) flagMrts |= mrts[i].flagPitch != 0 ? 1u << i : 0u;
+        reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem() | A6XX_RB_RENDER_CNTL_FLAG_MRTS(flagMrts));
     }
     // 8. LRZ off (tu_lrz.cc:936-944 via a zero state; r3d :1622-1623; fd6 build_lrz with no zsbuf, fd6_emit.cc:262-270)
     // and fd6's zeroed LRZ buffer registers (emit_lrz, fd6_gmem.cc:250-260): BASE (2), PITCH, FAST_CLEAR_BUFFER_BASE (2)
@@ -2162,6 +2175,7 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
             return refuse(why, which + ": GMEM takes single-sampled 4- and 8-byte float formats");
         }
         if (a.level >= t.levels()) return refuse(why, which + ": no such level");
+        if (t.compressed()) return refuse(why, which + ": compressed, which the tiles' loads and stores do not serve yet");
         const TextureLevel L = t.level(a.level);
         if (L.width != W || L.height != H) return refuse(why, which + ": not the window's size, " + n(W) + "x" + n(H));
         // The event blit moves whole 16 x 4 granules: past the right edge it reads and writes the row's padding, past
@@ -2533,7 +2547,13 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (sf.depth || df.depth) {
         return refuse(why, std::string("a copy of a ") + (sf.depth ? sf.name : df.name) + " texture: a depth texture is tiled, the 2D copy is written for linear ones");
     }
-    if (sf.fmt6 != df.fmt6 || sf.swap != df.swap) {
+    if (src.compressed()) {
+        return refuse(why, "a copy from a compressed texture: the 2D copy reads linear ones (not served yet)");
+    }
+    if (dst.compressed() && (sf.fmt6 != df.fmt6 || dstLevel != 0 || linear)) {
+        return refuse(why, "a copy into a compressed texture: from its own format, pixel for pixel, into level 0 is what is served");
+    }
+    if (sf.fmt6 != df.fmt6 || (sf.swap != df.swap && !dst.compressed())) {
         return refuse(why, std::string("a copy from ") + sf.name + " to " + df.name + ": the two must be one pixel format (an sRGB pair is one)");
     }
     if (srcLevel >= src.levels() || dstLevel >= dst.levels()) {
@@ -2623,8 +2643,16 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
                                               uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
     regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_LINEAR, dstSwap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
-    regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    if (dst.compressed()) {
+        // into a UBWC layout (r2d_dst over a UBWC view, tu_clear_blit.cc; fdl6_view_init's RB_2D_DST_INFO): TILE6_3, WZYX
+        // (the layout's order, the source's swap reordering a BGRA texture's bytes into it), FLAGS, and its flag buffer
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_3, WZYX, srgb) | A6XX_RB_2D_DST_INFO_FLAGS, uint32_t(to), uint32_t(to >> 32),
+                                                A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {uint32_t(dst.flagAddress()), uint32_t(dst.flagAddress() >> 32), A6XX_RB_2D_DST_FLAGS_PITCH(dst.flagPitch())});
+    } else {
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_LINEAR, dstSwap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    }
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
     // what a Clear's fill does after it, and then the pass's tail: the copy is in memory when the next thing reads it
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableClearFlushAt, kClearFlushValue, false);
@@ -2738,6 +2766,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (status_ > kEnqueued) {
         return fail("draw after commit");
     }
+    // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the
+    // copy first, by the 2D engine into the UBWC layout, in a pass of its own before this draw's
+    if (!freshen(vsBindings, options) || !freshen(fsBindings, options)) return false;
     std::string why;
     // the null texture's slot is the front end's, not the application's: the queue's texture goes there, over anything
     // bound at that index (an application cannot know the index, so whatever it bound there was not meant for it)
@@ -3045,6 +3076,33 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
 
 bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
                          const render::Options& options) {
+    // A compressed texture's rows are its truth (Texture::staging): a copy reads them and writes them, and a draw that
+    // samples it after one wrote copies them into the compressed layout first (freshen)
+    if (src.staging() != nullptr || dst.staging() != nullptr) {
+        const bool ok = blitInto(src.staging() != nullptr ? *src.staging() : src, srcLevel, s, dst.staging() != nullptr ? *dst.staging() : dst, dstLevel, d,
+                                 linear, options);
+        if (ok && dst.staging() != nullptr) dst.markStale();
+        return ok;
+    }
+    return blitInto(src, srcLevel, s, dst, dstLevel, d, linear, options);
+}
+
+// the textures' compressed copies in, for a draw or a dispatch about to sample them (Texture::staging): each one whose
+// rows changed since the last copy, by the 2D engine, in a pass of its own before the work's
+bool CommandBuffer::freshen(const Bindings& b, const render::Options& options) {
+    for (const Texture* t : b.textures) {
+        if (t == nullptr || t->staging() == nullptr || !t->takeStale()) continue;
+        const render::BlitRect all{0, 0, t->width(), t->height()};
+        if (!blitInto(*t->staging(), 0, all, *t, 0, all, false, options)) {
+            t->markStale();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CommandBuffer::blitInto(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
+                             const render::Options& options) {
     if (status_ > kEnqueued) {
         return fail("blit after commit");
     }

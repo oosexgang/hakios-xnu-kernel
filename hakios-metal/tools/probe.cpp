@@ -4927,6 +4927,122 @@ int main(int argc, char** argv) {
                             }
                             report(all, line);
                         }
+                        // UBWC: the same picture drawn into a compressed RGBA8 1125x2436 texture and a linear one (tri_color's
+                        // gradient, then tri_cflat blended over a corner), each then sampled over the screen 4 times, blended.
+                        // The two results must agree byte for byte -- the compressed one read back as what was drawn -- and the
+                        // times say what compression gives the texture unit on this GPU
+                        {
+                            const Program draw1{kernels::tri_color_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_color"};
+                            const Program tq{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                            Program tqb = tq;
+                            tqb.blend = ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf};
+                            Sampler smp;
+                            std::string uwhy;
+                            bool okAll = makeSampler(SamplerDesc{}, &smp, &uwhy);
+                            double us[2] = {0, 0};
+                            std::vector<uint8_t> got[2];
+                            for (int c = 0; c < 2 && okAll; c++) {
+                                TextureDesc ud;
+                                ud.format = PixelFormat::kRGBA8Unorm;
+                                ud.width = 1125;
+                                ud.height = 2436;
+                                ud.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                                ud.compressed = c == 1;
+                                auto ut = Texture::make(gpu, ud, &uwhy);
+                                if (ut == nullptr) {
+                                    okAll = false;
+                                    break;
+                                }
+                                render::Options so{};
+                                so.gmem = false;
+                                {
+                                    auto cb = queue->commandBuffer();
+                                    RenderPass rp;
+                                    rp.color0 = ut.get();
+                                    rp.load = LoadAction::kDontCare;
+                                    okAll = cb->draw(draw1, rp, drawOf(0, 6, vps[0]), Bindings{}, Bindings{}, so) &&
+                                            cb->draw(over, rp, drawOf(0, 3, vps[2]), Bindings{}, gfsb, so);
+                                    if (!okAll) { uwhy = cb->error(); break; }
+                                    cb->commit();
+                                    cb->waitUntilCompleted();
+                                    okAll = completed(*cb);
+                                    if (!okAll) { uwhy = "drawing it: " + cb->error(); break; }
+                                }
+                                Bindings tb;
+                                tb.textures = {ut.get()};
+                                tb.samplers = {&smp};
+                                double best = 1e30;
+                                for (int rep = 0; rep < 3 && okAll; rep++) {
+                                    pattern();
+                                    auto cb = queue->commandBuffer();
+                                    cb->setProfile(true);
+                                    RenderPass rp;
+                                    rp.color0 = gt.get();
+                                    for (int i = 0; i < 4 && okAll; i++) okAll = cb->draw(tqb, rp, drawOf(0, 6, vps[0]), Bindings{}, tb, so);
+                                    if (!okAll) { uwhy = cb->error(); break; }
+                                    cb->commit();
+                                    cb->waitUntilCompleted();
+                                    okAll = completed(*cb);
+                                    if (!okAll) { uwhy = "sampling it: " + cb->error(); break; }
+                                    best = std::min(best, gpuUs(*cb));
+                                }
+                                us[c] = best;
+                                if (okAll) got[c] = textureBo(*gt);
+                            }
+                            const bool have = okAll && !got[0].empty() && got[0].size() == got[1].size();
+                            const uint64_t off = have ? pixelsDiffer(got[0], got[1]) : ~0ull;
+                            // ...and a BGRA8 texture filled by this processor (replace) and copied in by the 2D engine before the
+                            // draw (CommandBuffer::freshen): sampled over the screen as the same rows in a linear texture are
+                            {
+                                uint64_t boff = ~0ull;
+                                double bus[2] = {0, 0};
+                                std::vector<uint8_t> bgot[2];
+                                std::vector<uint8_t> rows(1271ull * 1823 * 4);
+                                for (size_t i = 0; i < rows.size(); i++) rows[i] = uint8_t((i * 2654435761u) >> 13);
+                                for (int c = 0; c < 2 && okAll; c++) {
+                                    TextureDesc bd;
+                                    bd.format = PixelFormat::kBGRA8Unorm;
+                                    bd.width = 1271;
+                                    bd.height = 1823;
+                                    bd.usage = kTextureUsageRead;
+                                    bd.compressed = c == 1;
+                                    auto bt = Texture::make(gpu, bd, &uwhy);
+                                    if (bt == nullptr || !bt->replace(0, 0, 1271, 1823, rows.data(), 1271ull * 4, &uwhy)) {
+                                        okAll = false;
+                                        break;
+                                    }
+                                    Bindings tb;
+                                    tb.textures = {bt.get()};
+                                    tb.samplers = {&smp};
+                                    double best = 1e30;
+                                    for (int rep = 0; rep < 3 && okAll; rep++) {
+                                        pattern();
+                                        auto cb = queue->commandBuffer();
+                                        cb->setProfile(true);
+                                        RenderPass rp;
+                                        rp.color0 = gt.get();
+                                        render::Options so{};
+                                        so.gmem = false;
+                                        for (int i = 0; i < 4 && okAll; i++) okAll = cb->draw(tqb, rp, drawOf(0, 6, vps[0]), Bindings{}, tb, so);
+                                        if (!okAll) { uwhy = cb->error(); break; }
+                                        cb->commit();
+                                        cb->waitUntilCompleted();
+                                        okAll = completed(*cb);
+                                        if (!okAll) { uwhy = "BGRA: " + cb->error(); break; }
+                                        best = std::min(best, gpuUs(*cb));
+                                    }
+                                    bus[c] = best;
+                                    if (okAll) bgot[c] = textureBo(*gt);
+                                }
+                                if (okAll && bgot[0].size() == bgot[1].size() && !bgot[0].empty()) boff = pixelsDiffer(bgot[0], bgot[1]);
+                                report(okAll && boff == 0, "UBWC: a 1271x1823 BGRA8 texture written by replace, sampled over the screen 4 times through its compressed copy: " +
+                                                               std::to_string(boff) + " pixels differ from the linear one's; linear " + std::to_string(int(bus[0])) +
+                                                               " us, compressed " + std::to_string(int(bus[1])) + " us (the copy in included in the first run)");
+                            }
+                            report(have && off == 0, "UBWC: a 1125x2436 RGBA8 picture drawn compressed and linear, then sampled over the screen 4 times: " +
+                                                         std::to_string(off) + " pixels differ; linear " + std::to_string(int(us[0])) + " us, compressed " +
+                                                         std::to_string(int(us[1])) + " us" + (okAll ? std::string() : " (" + uwhy + ")"));
+                        }
                         // a Clear in the tiles (RB_BLIT_CLEAR_COLOR) against the 2D engine's fill in sysmem: a Clear and one
                         // tri_flat triangle over a 1125 x 2436 target, byte for byte, BGRA8 and RGBA16Float
                         for (const PixelFormat cf : {PixelFormat::kBGRA8Unorm, PixelFormat::kRGBA16Float}) {
