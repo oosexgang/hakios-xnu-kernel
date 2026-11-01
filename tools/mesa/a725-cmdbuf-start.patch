@@ -1,0 +1,129 @@
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_context.cc b/src/gallium/drivers/freedreno/a6xx/fd6_context.cc
+index a68b7fe..4110009 100644
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_context.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_context.cc
+@@ -56,6 +56,8 @@ fd6_context_destroy(struct pipe_context *pctx) in_dt
+       fd_bo_del(fd6_ctx->vsc_draw_strm);
+    if (fd6_ctx->vsc_prim_strm)
+       fd_bo_del(fd6_ctx->vsc_prim_strm);
++   if (fd6_ctx->a725_quirk_shader)
++      fd_bo_del(fd6_ctx->a725_quirk_shader);
+    fd_bo_del(fd6_ctx->control_mem);
+ 
+    fd_context_cleanup_common_vbos(&fd6_ctx->base);
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_context.h b/src/gallium/drivers/freedreno/a6xx/fd6_context.h
+index b3d342a..e9a1c11 100644
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_context.h
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_context.h
+@@ -69,6 +69,9 @@ fd6_descriptor_set_invalidate(struct fd6_descriptor_set *set)
+ struct fd6_context {
+    struct fd_context base;
+ 
++   /* the Adreno 725 quirk's little compute shader (fd6_emit_a725_quirk) */
++   struct fd_bo *a725_quirk_shader;
++
+    /* Two buffers related to hw binning / visibility stream (VSC).
+     * Compared to previous generations
+     *   (1) we cannot specify individual buffers per VSC, instead
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_emit.cc b/src/gallium/drivers/freedreno/a6xx/fd6_emit.cc
+index 89ed014..a35d89a 100644
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_emit.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_emit.cc
+@@ -11,6 +11,7 @@
+ 
+ #include "pipe/p_state.h"
+ #include "util/format/u_format.h"
++#include "util/u_debug.h"
+ #include "util/u_helpers.h"
+ #include "util/u_memory.h"
+ #include "util/u_string.h"
+@@ -1085,6 +1086,81 @@ FD_GENX(fd6_emit_static_regs);
+ /* emit setup at begin of new cmdstream buffer (don't rely on previous
+  * state, there could have been a context switch between ioctls):
+  */
++/* Darwin on hakios: what the blob runs at the start of every command buffer on the
++ * Adreno 730v3/725 (a7xx.cmdbuf_start_a725_quirk; Turnip's
++ * tu_init_cmdbuf_start_a725_quirk, without its CP_COND_REG_EXEC: BV is not used
++ * here).  Gallium has no copy of it.  FD_A725_QUIRK=0 leaves it out.
++ */
++template <chip CHIP>
++static void
++fd6_emit_a725_quirk(struct fd_context *ctx, struct fd_ringbuffer *ring)
++{
++   static const uint32_t shader[] = {
++      0x00040000, 0x40600000, 0x00050001, 0x40600001,
++      0x00060002, 0x40600002, 0x00070003, 0x40600003,
++      0x00000000, 0x03000000,
++   };
++   struct fd6_context *fd6_ctx = fd6_context(ctx);
++   static int wanted = -1;
++
++   if (wanted < 0)
++      wanted = debug_get_num_option("FD_A725_QUIRK", 1);
++   if (CHIP != A7XX || !wanted || !ctx->screen->info->a7xx.cmdbuf_start_a725_quirk)
++      return;
++
++   if (!fd6_ctx->a725_quirk_shader) {
++      fd6_ctx->a725_quirk_shader = fd_bo_new(ctx->screen->dev, 0x1000, FD_BO_GPUREADONLY,
++                                             "a725_quirk");
++      memcpy(fd_bo_map(fd6_ctx->a725_quirk_shader), shader, sizeof(shader));
++   }
++
++   OUT_REG(ring, HLSQ_INVALIDATE_CMD(CHIP,
++         .vs_state = true, .hs_state = true, .ds_state = true,
++         .gs_state = true, .fs_state = true, .gfx_ibo = true,
++         .cs_bindless = 0xff, .gfx_bindless = 0xff));
++   OUT_REG(ring, HLSQ_CS_CNTL(CHIP, .constlen = 4, .enabled = true));
++   OUT_REG(ring, A6XX_SP_CS_CONFIG(.enabled = true));
++   OUT_REG(ring, A6XX_SP_CS_CTRL_REG0(.threadmode = MULTI, .threadsize = THREAD128,
++                                      .mergedregs = true));
++   OUT_REG(ring, A6XX_SP_CS_CTRL_REG1(.shared_size = 1));
++   OUT_REG(ring, HLSQ_CS_KERNEL_GROUP_X(CHIP, 1), HLSQ_CS_KERNEL_GROUP_Y(CHIP, 1),
++           HLSQ_CS_KERNEL_GROUP_Z(CHIP, 1));
++   OUT_REG(ring, A6XX_SP_CS_INSTRLEN(.sp_cs_instrlen = 1));
++   OUT_REG(ring, A6XX_SP_CS_TEX_COUNT(0));
++   OUT_REG(ring, A6XX_SP_CS_IBO_COUNT(0));
++   OUT_REG(ring, HLSQ_CS_CNTL_1(CHIP, .linearlocalidregid = regid(63, 0),
++                                .threadsize = THREAD128,
++                                .workgrouprastorderzfirsten = true,
++                                .wgtilewidth = 4, .wgtileheight = 17));
++   OUT_REG(ring, A6XX_SP_CS_CNTL_0(.wgidconstid = regid(51, 3),
++                                   .wgsizeconstid = regid(48, 0),
++                                   .wgoffsetconstid = regid(63, 0),
++                                   .localidregid = regid(63, 0)));
++   OUT_REG(ring, SP_CS_CNTL_1(CHIP, .linearlocalidregid = regid(63, 0),
++                              .threadsize = THREAD128,
++                              .workitemrastorder = WORKITEMRASTORDER_TILED));
++   OUT_REG(ring, A7XX_SP_CS_UNKNOWN_A9BE(0));
++   OUT_REG(ring,
++           HLSQ_CS_NDRANGE_0(CHIP, .kerneldim = 3, .localsizex = 255,
++                             .localsizey = 1, .localsizez = 1),
++           HLSQ_CS_NDRANGE_1(CHIP, .globalsize_x = 3072),
++           HLSQ_CS_NDRANGE_2(CHIP, .globaloff_x = 0),
++           HLSQ_CS_NDRANGE_3(CHIP, .globalsize_y = 1),
++           HLSQ_CS_NDRANGE_4(CHIP, .globaloff_y = 0),
++           HLSQ_CS_NDRANGE_5(CHIP, .globalsize_z = 1),
++           HLSQ_CS_NDRANGE_6(CHIP, .globaloff_z = 0));
++   OUT_REG(ring, A7XX_HLSQ_CS_LAST_LOCAL_SIZE(.localsizex = 255, .localsizey = 0,
++                                              .localsizez = 0));
++   OUT_PKT4(ring, REG_A6XX_SP_CS_OBJ_FIRST_EXEC_OFFSET, 3);
++   OUT_RING(ring, 0);
++   OUT_RELOC(ring, fd6_ctx->a725_quirk_shader, 0, 0, 0);
++   OUT_PKT7(ring, CP_EXEC_CS, 4);
++   OUT_RING(ring, 0);
++   OUT_RING(ring, CP_EXEC_CS_1_NGROUPS_X(12));
++   OUT_RING(ring, CP_EXEC_CS_2_NGROUPS_Y(1));
++   OUT_RING(ring, CP_EXEC_CS_3_NGROUPS_Z(1));
++}
++
+ template <chip CHIP>
+ void
+ fd6_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
+@@ -1138,6 +1214,7 @@ fd6_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
+ 
+    fd6_emit_ib(ring, fd6_context(ctx)->restore);
+    fd6_emit_ccu_cntl<CHIP>(ring, screen, false);
++   fd6_emit_a725_quirk<CHIP>(ctx, ring);
+ 
+    OUT_PKT7(ring, CP_SET_AMBLE, 3);
+    uint32_t dwords = fd_ringbuffer_emit_reloc_ring_full(ring, fd6_context(ctx)->preamble, 0) / 4;

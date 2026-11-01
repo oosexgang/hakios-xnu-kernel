@@ -755,8 +755,14 @@ iounmap(void *address)
  * or the other way round. The first part of it is handed out for good, a stretch at a time
  * (rings); the rest is slots of one size, taken and given back (buffers).
  */
+#ifdef LX_QCA6490
+/* (and the firmware's own memory, asked for over QMI: 9.6 MB on the QCA6490, where the WCN6750's is reserved for it) */
+#define POOL_SIZE	(80u << 20)
+#define POOL_RINGS	(48u << 20)
+#else
 #define POOL_SIZE	(44u << 20)
 #define POOL_RINGS	(12u << 20)		/* (the data path's rings and link descriptors come to about 6 MB) */
+#endif
 #define POOL_SLOT	4096u
 #define POOL_SLOTS	((POOL_SIZE - POOL_RINGS) / POOL_SLOT)
 
@@ -799,6 +805,28 @@ linux_dma_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle
 	size = roundup2(size, 64);
 	lx_os_lock();
 	at = pool.rings_used;
+#ifdef LX_QCA6490
+	/*
+	 * Linux's IOMMU gives a piece of 64K and more an address aligned to its size, rounded up to a power of two; the
+	 * QCA6490's firmware falls over (MHI SYS_ERR) when its own memory (6 and 3.6 MB) is not so aligned.
+	 */
+	if (size >= 0x10000) {
+		size_t align = 0x10000;
+
+		while (align < size && align < (16u << 20)) {
+			align <<= 1;
+		}
+		if (size > (2u << 20)) {
+			/* (the firmware's own pieces, 6 and 3.6 MB: as our stand-in gives them, and is answered "memory ready";
+			 * the rings, 2 MB at most, keep Linux's alignment, or 16 MB each would leave no room for them) */
+			align = 16u << 20;
+		}
+		at = (uint32_t)roundup2(at, align);
+	}
+	if (pool.memory != NULL && at + size <= POOL_RINGS) {
+		pool.rings_used = at;
+	}
+#endif
 	if (pool.memory == NULL || at + size > POOL_RINGS) {
 		lx_os_unlock();
 		printf("lx: no room for %zu more bytes of rings\n", size);

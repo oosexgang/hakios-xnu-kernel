@@ -60,6 +60,41 @@ lx_os_free(void *memory, unsigned long size)
  * in between (as hakios.adreno.c does with what it shares with the GPU); the first, cached
  * view is written out and never used again.
  */
+#ifdef HAKIOS_QCA6490
+/*
+ * The Xiaomi 12S: the radio reaches memory through a context of the SMMU with page tables of ours, page by page, so the
+ * pool need not be one piece in physical memory (56 MB in one piece is more than the kernel has). Kernel memory, and a
+ * second, uncached view of the same pages one after another, made as io_map() makes one of a piece.
+ */
+extern vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
+extern bool hakios_wifi_radio_map_memory(vm_offset_t memory, uint64_t size, unsigned long long *address);
+
+void *
+lx_os_radio_memory(unsigned long size, unsigned long long *address)
+{
+	vm_offset_t cached = 0, uncached = 0;
+
+	size = round_page(size);
+	if (kmem_alloc(kernel_map, &cached, size, KMA_KOBJECT | KMA_ZERO | KMA_DATA | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
+	    kmem_alloc(kernel_map, &uncached, size, KMA_PAGEABLE | KMA_DATA | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		say("lx: no %lu bytes of memory\n", size);
+		return NULL;
+	}
+	for (vm_offset_t line = cached; line < cached + size; line += 64) {
+		__asm__ volatile ("dc civac, %0" : : "r" (line));
+	}
+	__asm__ volatile ("dsb sy");
+	for (vm_offset_t offset = 0; offset < size; offset += PAGE_SIZE) {
+		uint64_t physical = kvtophys(cached + offset);
+
+		pmap_map(uncached + offset, physical, physical + PAGE_SIZE, VM_PROT_READ | VM_PROT_WRITE, VM_WIMG_WCOMB);
+	}
+	if (!hakios_wifi_radio_map_memory(cached, size, address)) {
+		return NULL;
+	}
+	return (void *)uncached;
+}
+#else
 void *
 lx_os_radio_memory(unsigned long size, unsigned long long *address)
 {
@@ -84,6 +119,7 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 	}
 	return (void *)uncached;
 }
+#endif
 
 void *
 lx_os_map_registers(unsigned long long physical, unsigned long size)

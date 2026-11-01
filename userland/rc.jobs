@@ -1,4 +1,6 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# the Dynamic Island on or off by boot-arg island=1, in MobileGestalt's cache (src/mg_island.c): first, before the rest
+/redwood/bin/mg_island
 /redwood/bin/hello_dyn started by launchd
 /redwood/bin/svc_test
 /redwood/bin/surf_test

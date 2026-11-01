@@ -200,6 +200,16 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 	wr(b->base + offset, value);
 }
 
+#ifdef HAKIOS_ADRENO7
+/* the Xiaomi 12S speaks AudioReach (GPR) to the DSP, not APR: the four functions below that talk to it are ar_*() there */
+static bool ar_afe_on(void);
+static void ar_afe_off(void);
+static bool ar_stream_on(void);
+static void ar_stream_off(void);
+static bool ar_period_write(unsigned period);
+static bool ar_events(uint8_t service, uint16_t port, uint32_t opcode, uint32_t token, const uint32_t *payload, uint32_t length);
+#endif
+
 /* ---- the TDM pins ------------------------------------------------------------------------------------- */
 
 static struct block tlmm = { "pin controller", 0x0f100000, 0x100000 };
@@ -214,10 +224,18 @@ static const struct {
 	const char *name;
 	uint32_t cfg, io;               /* Android's active state */
 } tdm_pins[] = {
+#ifdef HAKIOS_ADRENO7
+	/* the Xiaomi 12S: the tertiary MI2S (dt tert_tdm_pinctrl; function 1 is mi2s2_* for all four, pinctrl-sm8450.c) */
+	{ 121, "gpio121 (bit clock)", CFG_MI2S0 | CFG_8MA | CFG_OUTPUT, 2 },
+	{ 123, "gpio123 (word select)", CFG_MI2S0 | CFG_8MA | CFG_OUTPUT, 2 },
+	{ 122, "gpio122 (data 0)", CFG_MI2S0 | CFG_8MA, 0 },
+	{ 124, "gpio124 (data 1)", CFG_MI2S0 | CFG_8MA, 0 },
+#else
 	{ 97, "gpio97 (bit clock)", CFG_MI2S0 | CFG_8MA | CFG_OUTPUT, 2 },
 	{ 100, "gpio100 (frame sync)", CFG_MI2S0 | CFG_8MA | CFG_OUTPUT, 2 },
 	{ 98, "gpio98 (data in)", CFG_MI2S0 | CFG_8MA, 0 },
 	{ 99, "gpio99 (data out)", CFG_MI2S0 | CFG_8MA, 0 },
+#endif
 };
 #define TDM_PINS                (sizeof(tdm_pins) / sizeof(tdm_pins[0]))
 static uint32_t found_cfg[TDM_PINS], found_io[TDM_PINS];
@@ -341,7 +359,20 @@ command(const char *what, uint8_t service, uint16_t port, uint32_t opcode, const
 #define PORT_INVALID            0xffff
 #define CLOCK_PRI_TDM_IBIT      0x200
 #define CLOCK_INVERT_COUPLE_NO  4
+#ifdef HAKIOS_ADRENO7
+/* Android's speaker on this phone: TDM-LPAIF-RX-TERTIARY-VIRT-0 at 96 kHz, and the amplifiers' profile says so (0x06); sound_matrix=1 tries others */
+static uint32_t bus_rate = 48000;       /* (what Darwin plays; the amplifiers told so: speaker_sr=8. sound_matrix=2 at 96000 is what first made them run) */
+/*
+ * The bus as Android has it (its log: TDM-LPAIF-RX-TERTIARY 96000, 32 bit; the tree's tert TDM node: internal clock and sync, sync mode 1,
+ * inverted, one bit of delay): MODULE_ID_TDM_SINK in place of the I2S sink, sound_matrix=2 trying the frame's layout.
+ */
+static struct { bool on; uint16_t nslots; uint32_t mask; uint16_t sync_mode, invert, delay; } bus_tdm = { true, 4, 3, 1, 1, 1 };
+#define CLOCK_TER_TDM_IBIT      0x204u
+#define CLOCK_TER_MI2S_IBIT     0x104u
+#define RATE                    bus_rate
+#else
 #define RATE                    48000
+#endif
 #define SLOTS                   2
 #define SLOT_BITS               32
 #define PORT_BITS               32              /* the mixer path's S32_LE */
@@ -431,6 +462,9 @@ afe_clock(bool on)
 static bool
 afe_on(void)
 {
+#ifdef HAKIOS_ADRENO7
+	return ar_afe_on();
+#else
 	struct afe_group_tdm group = {
 		.version = 1, .group = GROUP, .ports = { PORT, GROUP_OTHER_PORT, PORT_INVALID, PORT_INVALID, PORT_INVALID,
 		                                         PORT_INVALID, PORT_INVALID, PORT_INVALID },
@@ -465,11 +499,15 @@ afe_on(void)
 	}
 	port_on = command("the port 0x9000, started", APR_SVC_AFE, 0, AFE_PORT_CMD_DEVICE_START, start, sizeof(start), 0, NULL);
 	return port_on;
+#endif
 }
 
 static void
 afe_off(void)
 {
+#ifdef HAKIOS_ADRENO7
+	ar_afe_off();
+#else
 	uint16_t stop[2] = { PORT, 0 };
 	struct afe_group_enable disable = { GROUP, 0 };
 
@@ -486,6 +524,7 @@ afe_off(void)
 		afe_clock(false);
 		clock_on = false;
 	}
+#endif
 }
 
 /* ---- the DSP's view of our memory: stream 0x1801 of the SMMU ------------------------------------------- */
@@ -585,8 +624,22 @@ space_find(void)
 			space.old_s2cr = s2cr;
 		}
 	}
+#ifdef HAKIOS_ADRENO7
+	/*
+	 * the Xiaomi 12S: from the top, as the Wi-Fi's start chooses (devices/mayfly/drivers/gpu/hakios.adreno7.c): the low ones
+	 * are likeliest the boot chain's, and a context that is switched on (the Wi-Fi's) is passed by
+	 */
+	space.context = contexts;
+	for (uint32_t c = contexts; c-- > 1;) {
+		if (!used[c] && (rd(ml_io_map(apps_smmu.phys + (space.pages + c) * (vm_offset_t)space.page, 0x1000)) & 1) == 0) {
+			space.context = c;
+			break;
+		}
+	}
+#else
 	for (space.context = 0; space.context < contexts && used[space.context]; space.context++) {
 	}
+#endif
 	if (space.match == ~0u || space.context >= contexts) {
 		say("sound: the SMMU has no match register or no context left\n");
 		return false;
@@ -826,6 +879,9 @@ static volatile uint32_t written_done, underflows, write_errors;
 static bool
 events(uint8_t service, __unused uint16_t port, uint32_t opcode, uint32_t token, const uint32_t *payload, uint32_t length)
 {
+#ifdef HAKIOS_ADRENO7
+	return ar_events(service, port, opcode, token, payload, length);
+#else
 	if (service != APR_SVC_ASM) {
 		return false;
 	}
@@ -849,11 +905,15 @@ events(uint8_t service, __unused uint16_t port, uint32_t opcode, uint32_t token,
 		return true;
 	}
 	return false;
+#endif
 }
 
 static bool
 stream_on(void)
 {
+#ifdef HAKIOS_ADRENO7
+	return ar_stream_on();
+#else
 	struct {
 		uint16_t pool, regions;
 		uint32_t property;
@@ -918,11 +978,15 @@ stream_on(void)
 	       command("the stream's format: 2 channels of 16 bits at 48 kHz, left and right", APR_SVC_ASM, STREAM_PORT,
 	           ASM_DATA_CMD_MEDIA_FMT_UPDATE_V2, &format, sizeof(format), 0, NULL) &&
 	       command("the session, run", APR_SVC_ASM, STREAM_PORT, ASM_SESSION_CMD_RUN_V2, run, sizeof(run), 0, NULL);
+#endif
 }
 
 static void
 stream_off(void)
 {
+#ifdef HAKIOS_ADRENO7
+	ar_stream_off();
+#else
 	uint32_t handle = map_handle;
 
 	if (stream_open) {
@@ -937,6 +1001,7 @@ stream_off(void)
 		command("our periods, unmapped", APR_SVC_ASM, 0, ASM_CMD_SHARED_MEM_UNMAP_REGIONS, &handle, sizeof(handle), 0, NULL);
 		mapped = false;
 	}
+#endif
 }
 
 /* ---- the test tone ----------------------------------------------------------------------------------- */
@@ -949,6 +1014,9 @@ static const int16_t tone[48] = {
 	-3277, -3249, -3165, -3028, -2838, -2600, -2317, -1995, -1638, -1254, -848, -428,
 };
 static uint32_t tone_at;
+static unsigned looks_during_tone;
+static bool matrix_runs, matrix_looked;
+static uint16_t matrix_status, matrix_pvdd;
 
 static void
 period_fill(unsigned period, bool silent)
@@ -970,10 +1038,14 @@ period_fill(unsigned period, bool silent)
 static bool
 period_write(unsigned period)
 {
+#ifdef HAKIOS_ADRENO7
+	return ar_period_write(period);
+#else
 	uint32_t write[8] = { (uint32_t)(buffer_address + 4096 * period), (uint32_t)((buffer_address + 4096 * period) >> 32),
 		              map_handle, PERIOD_BYTES, period, 0, 0, 0 };
 
 	return hakios_adsp_apr(APR_SVC_ASM, STREAM_PORT, WRITE_TOKEN | period, ASM_DATA_CMD_WRITE_V2, write, sizeof(write), 0, NULL);
+#endif
 }
 
 /*
@@ -1045,6 +1117,16 @@ play(uint32_t ms, bool amplifiers)
 				tone_over = true;
 			}
 		}
+		if (amplifiers && looks_during_tone < 2 && now_us() - began > (looks_during_tone == 0 ? 1000000u : 2000000u)) {
+			looks_during_tone++;
+			if (!matrix_runs) {
+				hakios_speaker_dump(looks_during_tone == 1 ? "during the tone, 1 s" : "during the tone, 2 s");
+			}
+		}
+		if (amplifiers && matrix_runs && !matrix_looked && now_us() - began > 800000u) {
+			matrix_looked = true;
+			hakios_speaker_now(&matrix_status, &matrix_pvdd);
+		}
 		sleep_ms(2);
 	}
 	ended = now_us();
@@ -1062,6 +1144,429 @@ play(uint32_t ms, bool amplifiers)
 	return ok;
 }
 
+#ifdef HAKIOS_ADRENO7
+/* ---- the Xiaomi 12S: AudioReach -------------------------------------------------------------------------------- */
+
+/*
+ * The same path as above in AudioReach's terms (Linux: sound/soc/qcom/qdsp6/audioreach.c, q6apm.c, q6prm.c; the graph is
+ * that of linux-msm/audioreach-topology's ar-sm8250-rb5-i2s.m4, a stream and a tertiary MI2S device):
+ *   - "the port": the resource manager (PRM, GPR port 2) is asked for the LPASS core and the tertiary MI2S's internal bit
+ *     clock (clock 0x104) at 48 kHz x 32 bits x 2 = 3.072 MHz (ar_afe_on())
+ *   - "the stream": one graph of two sub-graphs. The stream's (0x4001, a container of capability CD): the shared memory
+ *     endpoint we write into (0x6001) -> the PCM decoder (0x6002, our 16-bit interleaved samples) -> the PCM converter
+ *     (0x6003, out as 32 bits deinterleaved). The device's (0x4002, capability EP): the I2S sink (0x6004) on the tertiary
+ *     interface, data line 0, word select made here, 2 channels of 32 bits at 48 kHz. Opened, configured, our periods
+ *     mapped (the 4K pool), prepared and started (ar_stream_on()); each period is a "write shared memory buffer" to 0x6001,
+ *     whose "done" comes back to the events' handler with our token (ar_period_write(), ar_events()).
+ * Every command with its payload in band: an APM command header (address 0, 0, map handle 0, the payload's size) and
+ * parameters, each a header (module instance, parameter id, size, error) and its data, padded to 8 bytes.
+ */
+#define AR_APM                  1u
+#define AR_PRM                  2u
+#define AR_BASIC_RSP            0x02001005u
+#define AR_GRAPH_OPEN           0x01001000u
+#define AR_GRAPH_PREPARE        0x01001001u
+#define AR_GRAPH_START          0x01001002u
+#define AR_GRAPH_STOP           0x01001003u
+#define AR_GRAPH_CLOSE          0x01001004u
+#define AR_SET_CFG              0x01001006u
+#define AR_MAP                  0x0100100cu
+#define AR_UNMAP                0x0100100du
+#define AR_MAP_RSP              0x02001001u
+#define AR_PRM_REQUEST          0x0100100fu
+#define AR_PRM_RELEASE          0x01001010u
+#define AR_WRITE                0x04001000u
+#define AR_WRITE_DONE           0x05001000u
+#define AR_WRITE_V2             0x0400100au
+#define AR_WRITE_DONE_V2        0x05001004u
+#define AR_SG_STREAM            0x00004001u
+#define AR_SG_DEVICE            0x00004002u
+#define AR_CONT_STREAM          0x00004001u
+#define AR_CONT_DEVICE          0x00004002u
+#define AR_WRSH                 0x00006001u
+#define AR_PCMDEC               0x00006002u
+#define AR_PCMCNV               0x00006003u
+#define AR_I2S                  0x00006004u
+
+static uint32_t ar_packet[384];
+static unsigned ar_at;                  /* words written into ar_packet */
+static bool ar_core_on, ar_clock_on, ar_graph_open, ar_started;
+
+static void
+ar_word(uint32_t word)
+{
+	if (ar_at < sizeof(ar_packet) / 4) {
+		ar_packet[ar_at++] = word;
+	}
+}
+
+/* A parameter's header; its size is filled in by ar_param_end(), which pads it to 8 bytes. Returns where it begins. */
+static unsigned
+ar_param(uint32_t instance, uint32_t id)
+{
+	unsigned at = ar_at;
+
+	ar_word(instance);
+	ar_word(id);
+	ar_word(0);
+	ar_word(0);
+	return at;
+}
+
+static void
+ar_param_end(unsigned at)
+{
+	if ((ar_at - at) & 1) {
+		ar_word(0);
+	}
+	ar_packet[at + 2] = (ar_at - at - 4) * 4;
+}
+
+static void
+ar_begin(bool command_header)
+{
+	ar_at = 0;
+	bzero(ar_packet, sizeof(ar_packet));
+	if (command_header) {
+		ar_word(0);
+		ar_word(0);
+		ar_word(0);
+		ar_word(0);
+	}
+}
+
+/* The packet sent to `port', its answer waited for: true if it is the basic answer with status 0, or `wanted' (then in *answer). */
+static bool
+ar_send(const char *what, uint32_t port, uint32_t opcode, bool command_header, uint32_t wanted, struct hakios_apr_answer *answer)
+{
+	struct hakios_apr_answer local;
+
+	if (answer == NULL) {
+		answer = &local;
+	}
+	if (command_header) {
+		ar_packet[3] = (ar_at - 4) * 4;
+	}
+	snprintf(last_write, sizeof(last_write), "sent %s (opcode %#x)", what, opcode);
+	if (!hakios_adsp_gpr(port, opcode, 0, ar_packet, ar_at * 4, APR_WAIT_MS, answer)) {
+		say("sound: %s (opcode %#x to port %#x): NO ANSWER\n", what, opcode, port);
+		return false;
+	}
+	if (answer->opcode == AR_BASIC_RSP && answer->words[0] == opcode) {
+		say("sound: %s: %s (%#x)\n", what, answer->words[1] == 0 ? "done" : "REFUSED", answer->words[1]);
+		return answer->words[1] == 0 && wanted == 0;
+	}
+	if (wanted != 0 && answer->opcode == wanted) {
+		say("sound: %s: done\n", what);
+		return true;
+	}
+	say("sound: %s: an answer not expected: opcode %#x, %u bytes: %#x %#x\n", what, answer->opcode, answer->length,
+	    answer->words[0], answer->words[1]);
+	return false;
+}
+
+static bool
+ar_prm(bool request, uint32_t param, const uint32_t *words, unsigned count, const char *what)
+{
+	unsigned p;
+
+	ar_begin(true);
+	p = ar_param(AR_PRM, param);
+	for (unsigned i = 0; i < count; i++) {
+		ar_word(words[i]);
+	}
+	ar_param_end(p);
+	return ar_send(what, AR_PRM, request ? AR_PRM_REQUEST : AR_PRM_RELEASE, true, request ? 0x02001002u : 0x02001003u, NULL);
+}
+
+static bool
+ar_afe_on(void)
+{
+	uint32_t core[1] = { 1 }, clock[5] = { 1, bus_tdm.on ? CLOCK_TER_TDM_IBIT : CLOCK_TER_MI2S_IBIT, RATE * 32 * (bus_tdm.on ? bus_tdm.nslots : 2u), 1, 0 };
+
+	announce("the DSP's resource manager is asked for the LPASS core and the tertiary MI2S bit clock (PRM)");
+	ar_core_on = ar_prm(true, 0x08001032u, core, 1, "the LPASS core");
+	ar_clock_on = ar_core_on && ar_prm(true, 0x0800102cu, clock, 5, "the tertiary bit clock");
+	return ar_clock_on;
+}
+
+static void
+ar_afe_off(void)
+{
+	uint32_t core[1] = { 1 }, clock[2] = { 1, bus_tdm.on ? CLOCK_TER_TDM_IBIT : CLOCK_TER_MI2S_IBIT };
+
+	if (ar_clock_on) {
+		(void)ar_prm(false, 0x0800102cu, clock, 2, "the bit clock given back");
+		ar_clock_on = false;
+	}
+	if (ar_core_on) {
+		(void)ar_prm(false, 0x08001032u, core, 1, "the LPASS core given back");
+		ar_core_on = false;
+	}
+}
+
+static void
+ar_sub_graph(uint32_t id, uint32_t perf, uint32_t direction)
+{
+	ar_word(id);
+	ar_word(3);
+	ar_word(0x0800100eu); ar_word(4); ar_word(perf);           /* perf mode */
+	ar_word(0x0800100fu); ar_word(4); ar_word(direction);      /* direction */
+	ar_word(0x08001010u); ar_word(4); ar_word(1);              /* scenario: playback */
+}
+
+static void
+ar_container(uint32_t id, uint32_t capability)
+{
+	ar_word(id);
+	ar_word(4);
+	ar_word(0x08001011u); ar_word(8); ar_word(1); ar_word(capability);   /* capability list */
+	ar_word(0x08001012u); ar_word(4); ar_word(1);              /* graph position: stream */
+	ar_word(0x08001013u); ar_word(4); ar_word(8192);           /* stack */
+	ar_word(0x08001014u); ar_word(4); ar_word(2);              /* processor domain: ADSP */
+}
+
+static void
+ar_prop(uint32_t instance, uint32_t inputs, uint32_t outputs)
+{
+	ar_word(instance);
+	ar_word(1);
+	ar_word(0x08001015u);
+	ar_word(8);
+	ar_word(inputs);
+	ar_word(outputs);
+}
+
+static void
+ar_connection(uint32_t from, uint32_t to)
+{
+	ar_word(from);
+	ar_word(1);             /* the first output port */
+	ar_word(to);
+	ar_word(2);             /* the first input port */
+}
+
+static bool
+ar_open(void)
+{
+	unsigned p;
+
+	ar_begin(true);
+	p = ar_param(AR_APM, 0x08001001u);              /* sub-graphs */
+	ar_word(2);
+	ar_sub_graph(AR_SG_STREAM, 2, 2);               /* (the stream: low latency, direction RX) */
+	ar_sub_graph(AR_SG_DEVICE, 2, 1);               /* (low latency, direction 1, as the topology has them) */
+	ar_param_end(p);
+	p = ar_param(AR_APM, 0x08001000u);              /* containers */
+	ar_word(2);
+	ar_container(AR_CONT_STREAM, 2);                /* CD */
+	ar_container(AR_CONT_DEVICE, 3);                /* EP */
+	ar_param_end(p);
+	p = ar_param(AR_APM, 0x08001002u);              /* modules, by sub-graph and container */
+	ar_word(2);
+	ar_word(AR_SG_STREAM); ar_word(AR_CONT_STREAM); ar_word(3);
+	ar_word(0x07001000u); ar_word(AR_WRSH);         /* WR_SHARED_MEM_EP */
+	ar_word(0x07001005u); ar_word(AR_PCMDEC);       /* PCM_DEC */
+	ar_word(0x07001003u); ar_word(AR_PCMCNV);       /* PCM_CNV */
+	ar_word(AR_SG_DEVICE); ar_word(AR_CONT_DEVICE); ar_word(1);
+	ar_word(bus_tdm.on ? 0x0700100eu : 0x0700100au); ar_word(AR_I2S);       /* TDM_SINK or I2S_SINK */
+	ar_param_end(p);
+	p = ar_param(AR_APM, 0x08001003u);              /* the modules' ports */
+	ar_word(4);
+	ar_prop(AR_WRSH, 0, 1);
+	ar_prop(AR_PCMDEC, 1, 1);
+	ar_prop(AR_PCMCNV, 1, 1);
+	ar_prop(AR_I2S, 1, 0);
+	ar_param_end(p);
+	p = ar_param(AR_APM, 0x08001004u);              /* connections */
+	ar_word(3);
+	ar_connection(AR_WRSH, AR_PCMDEC);
+	ar_connection(AR_PCMDEC, AR_PCMCNV);
+	ar_connection(AR_PCMCNV, AR_I2S);
+	ar_param_end(p);
+	return ar_send("the graph, opened: shared memory -> PCM decoder -> converter | I2S sink (tertiary MI2S)", AR_APM, AR_GRAPH_OPEN,
+	           true, 0, NULL);
+}
+
+/* PARAM_ID_PCM_OUTPUT_FORMAT_CFG of a decoder or converter: PCM, `bits', 2 channels, left and right */
+static void
+ar_pcm_output(uint32_t instance, uint16_t bits, uint16_t interleave)
+{
+	unsigned p = ar_param(instance, 0x08001008u);
+
+	ar_word(1);                             /* fixed point */
+	ar_word(0x09001000u);                   /* PCM */
+	ar_word(20);                            /* the payload's bytes: 8 halves and 2 channels' map, to 4 (as Linux) */
+	ar_word((uint32_t)bits | 1u << 16);     /* bit width, LSB-aligned */
+	ar_word((uint32_t)bits | (uint32_t)(bits - 1) << 16);   /* bits per sample, q factor */
+	ar_word(1u | (uint32_t)interleave << 16);               /* little endian, interleaving */
+	ar_word(0u | 2u << 16);                 /* reserved, 2 channels */
+	ar_word(1u | 2u << 8);                  /* left, right */
+	ar_param_end(p);
+}
+
+static bool
+ar_configure(void)
+{
+	unsigned p;
+
+	/* the shared memory endpoint's input: our 16-bit interleaved stereo at 48 kHz */
+	ar_begin(true);
+	p = ar_param(AR_WRSH, 0x0800100cu);
+	ar_word(1);
+	ar_word(0x09001000u);
+	ar_word(20);
+	ar_word(RATE);
+	ar_word(16u | 1u << 16);                /* bit width 16, LSB-aligned */
+	ar_word(16u | 15u << 16);               /* 16 bits a sample, q15 */
+	ar_word(1u | 2u << 16);                 /* little endian, 2 channels */
+	ar_word(1u | 2u << 8);                  /* left, right */
+	ar_param_end(p);
+	if (!ar_send("the shared memory endpoint's format: 2 channels of 16 bits at 48 kHz", AR_WRSH, AR_SET_CFG, true, 0, NULL)) {
+		return false;
+	}
+	ar_begin(true);
+	ar_pcm_output(AR_PCMDEC, 16, 1);        /* interleaved */
+	ar_pcm_output(AR_PCMCNV, 32, 3);        /* deinterleaved, unpacked */
+	if (!ar_send("the decoder and the converter: out as 16 bits interleaved, then 32 bits", AR_APM, AR_SET_CFG, true, 0, NULL)) {
+		return false;
+	}
+	ar_begin(true);
+	if (bus_tdm.on) {
+		p = ar_param(AR_I2S, 0x0800101bu);      /* PARAM_ID_TDM_INTF_CFG (AudioReach pcm_tdm_api.h) */
+		ar_word(0);                             /* LPAIF */
+		ar_word(2);                             /* tertiary */
+		ar_word(1u | 1u << 16);                 /* sync made here; data out enabled */
+		ar_word(bus_tdm.mask);
+		ar_word((uint32_t)bus_tdm.nslots | 32u << 16);  /* slots a frame, 32 bits each */
+		ar_word((uint32_t)bus_tdm.sync_mode | (uint32_t)bus_tdm.invert << 16);
+		ar_word(bus_tdm.delay);                 /* delay; reserved */
+		ar_param_end(p);
+	} else {
+		p = ar_param(AR_I2S, 0x08001019u);      /* PARAM_ID_I2S_INTF_CFG */
+		ar_word(0);                             /* LPAIF */
+		ar_word(2);                             /* tertiary */
+		{
+			uint32_t line = 1;              /* boot-arg sound_sd=N: the data line (1: SD0, gpio122; 2: SD1, gpio124) */
+	
+			PE_parse_boot_argn("sound_sd", &line, sizeof(line));
+			ar_word((line & 0xffff) | 1u << 16);    /* the data line; word select made here */
+		}
+		ar_param_end(p);
+	}
+	p = ar_param(AR_I2S, 0x08001017u);      /* PARAM_ID_HW_EP_MF_CFG */
+	ar_word(RATE);
+	ar_word(32u | 2u << 16);                /* 32 bits, 2 channels */
+	ar_word(1);                             /* fixed point */
+	ar_param_end(p);
+	p = ar_param(AR_I2S, 0x08001018u);      /* PARAM_ID_HW_EP_FRAME_SIZE_FACTOR */
+	ar_word(1);
+	ar_param_end(p);
+	return ar_send("the I2S sink: tertiary MI2S, data line 0, 2 channels of 32 bits at 48 kHz", AR_APM, AR_SET_CFG, true, 0, NULL);
+}
+
+static bool
+ar_sub_graphs(const char *what, uint32_t opcode)
+{
+	unsigned p;
+
+	ar_begin(true);
+	p = ar_param(AR_APM, 0x08001005u);      /* APM_PARAM_ID_SUB_GRAPH_LIST */
+	ar_word(2);
+	ar_word(AR_SG_STREAM);
+	ar_word(AR_SG_DEVICE);
+	ar_param_end(p);
+	return ar_send(what, AR_APM, opcode, true, 0, NULL);
+}
+
+static bool
+ar_stream_on(void)
+{
+	struct hakios_apr_answer answer;
+
+	announce("the DSP is given a graph: our periods -> PCM decoder -> converter -> the tertiary MI2S (AudioReach)");
+	ar_graph_open = ar_open();
+	if (!ar_graph_open || !ar_configure()) {
+		return false;
+	}
+	ar_begin(false);
+	ar_word(3u | 1u << 16);                 /* the 4K pool, one region */
+	ar_word(0);
+	ar_word((uint32_t)buffer_address);
+	ar_word((uint32_t)(buffer_address >> 32));
+	ar_word(BUFFER_BYTES);
+	if (!ar_send("our periods, mapped for the DSP", AR_APM, AR_MAP, false, AR_MAP_RSP, &answer)) {
+		return false;
+	}
+	mapped = true;
+	map_handle = answer.words[0];
+	say("sound: our %u KB at %#llx are the DSP's handle %#x\n", BUFFER_BYTES / 1024, buffer_address, map_handle);
+	stream_open = ar_sub_graphs("the graph, prepared", AR_GRAPH_PREPARE) &&
+	    ar_sub_graphs("the graph, started", AR_GRAPH_START);
+	ar_started = stream_open;
+	return stream_open;
+}
+
+static void
+ar_stream_off(void)
+{
+	if (ar_started) {
+		(void)ar_sub_graphs("the graph, stopped", AR_GRAPH_STOP);
+		ar_started = false;
+	}
+	stream_open = false;
+	if (ar_graph_open) {
+		(void)ar_sub_graphs("the graph, closed", AR_GRAPH_CLOSE);
+		ar_graph_open = false;
+	}
+	if (mapped) {
+		ar_begin(false);
+		ar_word(map_handle);
+		(void)ar_send("our periods, unmapped", AR_APM, AR_UNMAP, false, 0, NULL);
+		mapped = false;
+	}
+}
+
+static bool
+ar_period_write(unsigned period)
+{
+	/* DATA_CMD_WR_SH_MEM_EP_DATA_BUFFER_V2 (this firmware answers the first version "unsupported"): no metadata buffer */
+	uint32_t write[11] = { (uint32_t)(buffer_address + 4096 * period), (uint32_t)((buffer_address + 4096 * period) >> 32),
+		               map_handle, PERIOD_BYTES, 0, 0, 0, 0, 0, 0, 0 };
+
+	return hakios_adsp_gpr(AR_WRSH, AR_WRITE_V2, WRITE_TOKEN | period, write, sizeof(write), 0, NULL);
+}
+
+static bool
+ar_events(__unused uint8_t service, uint16_t port, uint32_t opcode, uint32_t token, const uint32_t *payload, uint32_t length)
+{
+	if ((opcode == AR_WRITE_DONE || opcode == AR_WRITE_DONE_V2) && (token & WRITE_TOKEN)) {
+		if (length >= 16 && payload[3] != 0) {
+			OSIncrementAtomic((volatile SInt32 *)&write_errors);
+		}
+		OSIncrementAtomic((volatile SInt32 *)&written_done);
+		OSBitOrAtomic(1u << (token & 31), &returned);
+		return true;
+	}
+	if (opcode == AR_BASIC_RSP && (token & WRITE_TOKEN)) {
+		OSIncrementAtomic((volatile SInt32 *)&write_errors);
+		OSIncrementAtomic((volatile SInt32 *)&written_done);
+		OSBitOrAtomic(1u << (token & 31), &returned);
+		return true;
+	}
+	if (port == AR_WRSH || port == AR_I2S) {
+		static unsigned told;
+
+		if (told++ < 10) {
+			say("sound: from module %#x: opcode %#x, token %#x, %u bytes: %#x %#x\n", port, opcode, token, length,
+			    length >= 4 ? payload[0] : 0, length >= 8 ? payload[1] : 0);
+		}
+		return true;
+	}
+	return false;
+}
+#endif
+
 /* ---- sound=4: what Darwin plays ------------------------------------------------------------------------------ */
 
 /*
@@ -1074,7 +1579,16 @@ play(uint32_t ms, bool amplifiers)
  */
 #define RING_FRAMES             32768           /* 0.68 s; a power of two, the indices run on and wrap */
 #define SILENCE                 8               /* samples no larger than this are silence (as hakios.audio.c's) */
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S: started again after a stop, an amplifier often does not lock and needs setting up from the beginning (a gap
+ * or a lost sound): kept running through 30 s of silence instead of three seconds (not longer: in silence they still read
+ * 55 to 63 degrees, the phone warm round them), so that sounds close together never wait for a start.
+ */
+#define QUIET_BEFORE_OFF_US     30000000ull
+#else
 #define QUIET_BEFORE_OFF_US     3000000ull
+#endif
 
 static int16_t ring[RING_FRAMES * 2];
 static volatile uint32_t ring_head, ring_tail;  /* frames: written by the sink, taken by the feeder */
@@ -1259,12 +1773,43 @@ guard_off(bool unheard)
  * far under the loudest, sound_below under Android's level), and off while Darwin's volume is 0;
  * their status looked at every 200 ms while they are on. On the sound's thread.
  */
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S: started again after a stop, an amplifier may not lock (status 0, every read of it): set up from the beginning, as at the
+ * first start, it does. A soft reset and the profile are some 50 ms each. Tries three times; the next sound tries again.
+ */
+static const uint8_t *amps_acf;
+static uint64_t amps_acf_size;
+
+static bool
+amps_up(uint32_t level_below)
+{
+	for (unsigned tries = 0; tries < 3; tries++) {
+		if (tries != 0) {
+			say("sound: the amplifiers are set up again (try %u)\n", tries + 1);
+			sleep_ms(20);
+			if (amps_acf == NULL || !hakios_speaker_prepare(amps_acf, amps_acf_size)) {
+				continue;
+			}
+		}
+		if (hakios_speaker_start() && hakios_speaker_volume(level_below, 1)) {
+			return true;
+		}
+	}
+	return false;
+}
+#else
+#define amps_up(level_below) (hakios_speaker_start() && hakios_speaker_volume(level_below, 1))
+#endif
+
 static void
 watch(void)
 {
 	bool on = false, given_up = false, muted = false;
 	uint64_t last_look = 0, last_monitor = 0;
 	uint32_t starts = 0, changes = 0, generation = 0, extra = 0, monitor = 0, monitor_looks = 0;
+	uint32_t faults = 0;				/* (counted on the Xiaomi 12S: see below) */
+	(void)faults;
 
 	guard_level(below);                     /* (from the first sample on: see guard_off()) */
 
@@ -1299,10 +1844,16 @@ watch(void)
 			say_when("Darwin plays: the amplifiers are started");
 			starts++;
 			darwin_peak = 0;
-			if (!hakios_speaker_start() || !hakios_speaker_volume(below_with(extra), 1)) {
+			if (!amps_up(below_with(extra))) {
+#ifdef HAKIOS_ADRENO7
+				say("sound: THE AMPLIFIERS DID NOT START; the next sound tries again\n");
+				guard_off(true);
+				sleep_ms(1000);
+#else
 				say("sound: THE AMPLIFIERS DID NOT START; Darwin's sound goes on to the DSP, unheard\n");
 				guard_off(true);
 				given_up = true;
+#endif
 			} else {
 				on = true;
 				guard_on = true;
@@ -1326,7 +1877,18 @@ watch(void)
 			if (!hakios_speaker_healthy()) {
 				guard_off(true);
 				on = false;
+#ifdef HAKIOS_ADRENO7
+				/* the Xiaomi 12S: powered down (speaker.c), then set up again by the next sound; given up after five faults */
+				if (++faults >= 5) {
+					say("sound: five faults: the amplifiers are given up on\n");
+					given_up = true;
+				} else {
+					say("sound: a fault (%u of 5): the next sound sets the amplifiers up again\n", faults);
+					sleep_ms(1000);
+				}
+#else
 				given_up = true;
+#endif
 			} else if (now - last_monitor >= 1000000) {
 				/* the amplifiers' temperature and the battery as they see it, every second: a reduction if Android's table asks for one */
 				uint32_t wanted;
@@ -1379,6 +1941,135 @@ take_down(void)
 	lck_mtx_unlock(&sound_lock);
 }
 
+#ifdef HAKIOS_ADRENO7
+/* sound_matrix=2: the TDM sink, Android's rate, every layout of the frame still in question; the bus built anew for each. */
+static bool
+sound_matrix_tdm(const uint8_t *acf, uint64_t acf_size, uint32_t below)
+{
+	static const uint16_t slots[] = { 4, 2 };
+	static const uint16_t syncs[] = { 1, 0, 2 };    /* long, short (bit), short (slot) */
+	static char table[48][96];
+	unsigned rows = 0;
+	bool found = false;
+
+	matrix_runs = true;
+	bus_rate = 96000;
+	for (unsigned n = 0; n < 2 && !found && !stopping; n++) {
+		for (unsigned y = 0; y < 3 && !found && !stopping; y++) {
+			for (unsigned i = 0; i < 2 && !found && !stopping; i++) {
+				for (unsigned d = 0; d < 2 && !found && !stopping; d++) {
+					bool bus, started = false;
+
+					stream_off();
+					afe_off();
+					bus_tdm.on = true;
+					bus_tdm.nslots = slots[n];
+					bus_tdm.mask = 3;
+					bus_tdm.sync_mode = syncs[y];
+					bus_tdm.invert = i == 0;
+					bus_tdm.delay = d == 0;
+					bus = afe_on() && stream_on();
+					if (bus) {
+						hakios_speaker_options(0, 0, 9, false, 0);
+						started = hakios_speaker_prepare(acf, acf_size) && hakios_speaker_start() && hakios_speaker_volume(below, 1);
+					}
+					matrix_looked = false;
+					matrix_status = 0;
+					matrix_pvdd = 0;
+					looks_during_tone = 0;
+					if (started) {
+						(void)play(1200, true);
+					}
+					found = (matrix_status & (1u << 8 | 1u << 9)) != 0;
+					if (rows < 48) {
+						snprintf(table[rows++], sizeof(table[0]), "tdm %u slots sync %u invert %u delay %u: %s status %04x pvdd %03x%s",
+						    bus_tdm.nslots, bus_tdm.sync_mode, bus_tdm.invert, bus_tdm.delay,
+						    !bus ? "BUS REFUSED" : started ? "ran" : "FAILED TO START", matrix_status, matrix_pvdd, found ? " <== SWITCHES" : "");
+						say("sound: matrix: %s\n", table[rows - 1]);
+					}
+					if (found) {
+						say("sound: THE OUTPUT STAGE SWITCHES WITH THIS LAYOUT: five more seconds of tone\n");
+						(void)play(5000, true);
+					}
+					hakios_speaker_stop();
+				}
+			}
+		}
+	}
+	matrix_runs = false;
+	say("sound: MATRIX DONE, %u tried, %s\n", rows, found ? "ONE SWITCHES" : "none switches");
+	for (unsigned i = 0; i < rows; i++) {
+		say("sound: table: %s\n", table[i]);
+	}
+	return true;
+}
+
+/*
+ * sound_matrix=1 (with sound=3): every combination still in question, one after the other in one run, a short tone each and the
+ * amplifiers' status during it, a table at the end. SWS or BSTS seen: said loudly, that one held for three more seconds, done.
+ */
+static bool
+sound_matrix(const uint8_t *acf, uint64_t acf_size, uint32_t below)
+{
+	static const struct { uint32_t bus; int amp; } rates[] = { { 96000, 9 }, { 48000, 8 }, { 48000, 9 } };
+	static const unsigned profiles[] = { 0, 6 };
+	static const struct { uint32_t only, spksw; const char *name; } amps[] = {
+		{ 0x35, 0, "bottom" }, { 0x34, 0, "top" }, { 0, 0, "both" },
+	};
+	static char table[48][96];
+	unsigned rows = 0;
+	bool found = false;
+
+	matrix_runs = true;
+	for (unsigned r = 0; r < 3 && !found && !stopping; r++) {
+		if (bus_rate != rates[r].bus) {
+			stream_off();
+			afe_off();
+			bus_rate = rates[r].bus;
+			if (!afe_on() || !stream_on()) {
+				say("sound: matrix: the bus does not come up at %u\n", bus_rate);
+				break;
+			}
+		}
+		for (unsigned p = 0; p < 2 && !found && !stopping; p++) {
+			for (unsigned force = 0; force < 2 && !found && !stopping; force++) {
+				for (unsigned a = 0; a < 3 && !found && !stopping; a++) {
+					bool started;
+
+					hakios_speaker_options(amps[a].only, amps[a].spksw, rates[r].amp, force != 0, profiles[p]);
+					started = hakios_speaker_prepare(acf, acf_size) && hakios_speaker_start() && hakios_speaker_volume(below, 1);
+					matrix_looked = false;
+					matrix_status = 0;
+					matrix_pvdd = 0;
+					looks_during_tone = 0;
+					if (started) {
+						(void)play(1200, true);
+					}
+					found = (matrix_status & (1u << 8 | 1u << 9)) != 0;
+					if (rows < 48) {
+						snprintf(table[rows++], sizeof(table[0]), "bus %u amp-rate %d profile %u force %u %s: %s status %04x pvdd %03x%s",
+						    rates[r].bus, rates[r].amp, profiles[p], force, amps[a].name, started ? "ran" : "FAILED TO START",
+						    matrix_status, matrix_pvdd, found ? " <== SWITCHES" : "");
+						say("sound: matrix: %s\n", table[rows - 1]);
+					}
+					if (found) {
+						say("sound: THE OUTPUT STAGE SWITCHES WITH THIS COMBINATION: three more seconds of tone\n");
+						(void)play(3000, true);
+					}
+					hakios_speaker_stop();
+				}
+			}
+		}
+	}
+	matrix_runs = false;
+	say("sound: MATRIX DONE, %u tried, %s\n", rows, found ? "ONE SWITCHES" : "none switches");
+	for (unsigned i = 0; i < rows; i++) {
+		say("sound: table: %s\n", table[i]);
+	}
+	return true;
+}
+#endif
+
 static void
 sound_thread(__unused void *parameter, __unused wait_result_t result)
 {
@@ -1417,14 +2108,14 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		ok = false;
 		hakios_adsp_apr_events(events);
 	}
-	announce("the TDM pins (GPIO 97 to 100) to the interface, as Android's active state has them");
+	announce("the TDM pins to the interface, as Android's active state has them");
 	pins_on();
 	if (!afe_on()) {
 		goto out;
 	}
 	sleep_ms(20);
-	pin_activity(97, "the bit clock (gpio97)", &changes, &ones);
-	pin_activity(100, "the frame sync (gpio100)", &sync_changes, &sync_ones);
+	pin_activity(tdm_pins[0].pin, tdm_pins[0].name, &changes, &ones);
+	pin_activity(tdm_pins[1].pin, tdm_pins[1].name, &sync_changes, &sync_ones);
 	say("sound: %s\n", changes > 100 && sync_changes > 4 ? "THE TDM CLOCK AND FRAME SYNC RUN at the pins" :
 	    "THE PINS DO NOT SHOW A RUNNING TDM CLOCK");
 	if (level == 1) {
@@ -1442,7 +2133,12 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		if (!hakios_speaker_prepare(acf, acf_size)) {
 			goto out;
 		}
+#ifdef HAKIOS_ADRENO7
+		amps_acf = acf;         /* (kept: amps_up() may need it again) */
+		amps_acf_size = acf_size;
+#else
 		hakios_adsp_fw_free(acf, acf_size);
+#endif
 		acf = NULL;
 		feeder_runs = true;
 		if (kernel_thread_start(feeder_thread, NULL, &feeder) != KERN_SUCCESS) {
@@ -1465,6 +2161,17 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		watch();
 		thread_terminate(current_thread());
 	}
+#ifdef HAKIOS_ADRENO7
+	{
+		uint32_t matrix = 0;
+
+		PE_parse_boot_argn("sound_matrix", &matrix, sizeof(matrix));
+		if (matrix != 0 && level == 3) {
+			ok = matrix == 2 ? sound_matrix_tdm(acf, acf_size, below) : sound_matrix(acf, acf_size, below);
+			goto out;
+		}
+	}
+#endif
 	if (level >= 3) {
 		/* the clock runs (the port is started, the stream as well): the amplifiers can lock to it */
 		announce("the amplifiers, set up from Android's Music profile, then started at the lowest volume");

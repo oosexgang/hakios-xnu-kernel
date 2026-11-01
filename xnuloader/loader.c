@@ -15,7 +15,14 @@
 /* ------------------------------------------------------------------------ */
 /* Fixed conventions shared with the boot shim, the packer and the kernel   */
 
+/*
+ * Where the boot shim leaves the payload: a region the device's UEFI memory map reserves for it ("XNU Payload").
+ * 0xF0000000 on redwood; on the SM8450 family that address is inside the TZ apps' carve-out, so a device built
+ * for another place says so: LOADER_CFLAGS=-DPAYLOAD_BASE=... xnuloader/build.sh (the shim gets the same value).
+ */
+#ifndef PAYLOAD_BASE
 #define PAYLOAD_BASE        0xF0000000ULL
+#endif
 #define PAYLOAD_MAGIC       0x50554E58u /* "XNUP" */
 
 struct payload_header { uint32_t magic; uint32_t size; };
@@ -316,6 +323,9 @@ static uint8_t log_verify[sizeof(out_buf) + 8192] __attribute__((aligned(0x2000)
 static const char *staged_data = out_buf;   /* what "upload" sends: normally the log in out_buf */
 static uint64_t staged_len;
 
+static int show_stfts_lines;
+static usb_device_protocol *USB;         /* mayfly: set when the platform is known */
+
 static void
 compose_logs(const char *klog, uint64_t klog_len)
 {
@@ -354,10 +364,49 @@ write_logs(const char *klog, uint64_t klog_len)
 		/* No log partition (QEMU): echo the returned kernel log on the console instead. */
 		if (klog != NULL) {
 			print("\n== KERNEL LOG ==\n");
+			if (!show_stfts_lines) {
 			for (uint64_t i = 0; i < klog_len; i++) {
 				put_char(klog[i]);
 			}
+			}
 			print("\n== END OF LOG ==\n");
+			if (show_stfts_lines) {
+				/* bring-up: no USB here to fetch the log with; what the touch driver said, left on the screen */
+				static char line[200];
+				unsigned shown = 0, fingers = 0, total = 0;
+				print("\n== stfts ==\n");
+				/* two passes: count, then show the last 95 (the screen holds about 100) */
+				for (int pass = 0; pass < 2; pass++) {
+					shown = fingers = 0;
+					for (uint64_t at = 0; klog != NULL && at + 6 < klog_len; at++) {
+						if (memcmp(klog + at, "stfts:", 6) != 0 && memcmp(klog + at, "adreno:", 7) != 0 &&
+						    memcmp(klog + at, "panic", 5) != 0 && memcmp(klog + at, "hakios-abort", 12) != 0 &&
+						    memcmp(klog + at, "Unclassified", 12) != 0 && memcmp(klog + at, "HakiosGPU", 9) != 0 &&
+						    memcmp(klog + at, "hakios-gl", 9) != 0 && memcmp(klog + at, "hakios: ", 8) != 0) {
+							continue;
+						}
+						unsigned k = 0;
+						while (at + k < klog_len && klog[at + k] != '\n' && k + 1 < sizeof(line)) {
+							line[k] = klog[at + k];
+							k++;
+						}
+						line[k] = 0;
+						at += k;
+						if (memcmp(line, "stfts: finger", 13) == 0 && ++fingers > 6) {
+							continue;
+						}
+						if (pass == 1 && shown + 95 >= total) {
+							print("%s\n", line);
+						}
+						shown++;
+					}
+					total = shown;
+				}
+				print("== %d lines, %d fingers: 10 minutes to read this ==\n", (uint64_t)shown, (uint64_t)fingers);
+				if (USB == NULL) {      /* with a host on the cable the log is fetched, not photographed */
+					BS->stall(600000000);
+				}
+			}
 		}
 		return;
 	}
@@ -554,6 +603,7 @@ struct platform {
 	const char *name;
 	uint64_t io_base, io_size;       /* one window covering the SoC peripherals */
 	uint64_t gic_dist, gic_redist;   /* GICv3 */
+	uint64_t gic_redist_size;        /* the redistributors' region, 0: 1 MiB (8 frames of 128 KiB) */
 	uint64_t uart;                   /* PL011, 0 if none */
 	int psci_hvc;                    /* the firmware's power interface is called with HVC, not SMC */
 	int log_other_cpu;               /* keep notes in the log partition while a kernel starts on another core */
@@ -585,6 +635,23 @@ static const struct platform platform_redwood = {
 	 * 2.5 times as fast. The kernel uses the small ones only when the big ones are all busy
 	 * (XNU's machine_routines.c, ml_choose_slow_core_partners()).
 	 */
+	.small_cores = 0x0f,
+};
+
+static const struct platform platform_mayfly = {
+	/*
+	 * Xiaomi 12S, SM8475 ("cape", of the SM8450 "waipio" family). From the phone's own device tree:
+	 * interrupt-controller@17100000 { reg = <0x17100000 0x10000>, <0x17180000 0x200000>;
+	 * redistributor-stride = <0x0 0x40000>; }: a GIC-600 with GICv4 frames, so eight processors
+	 * need 2 MiB (the kernel's walk follows GICR_TYPER.VLPIS). The cores are numbered in MPIDR's
+	 * second affinity field (cpu@0 ... cpu@700): 0-3 Cortex-A510, 4-6 Cortex-A710, 7 Cortex-X2.
+	 * ABL starts on core 0; the watchdog and the charger stay off until they are checked on this
+	 * phone (wdt_arm(), charger_start()).
+	 */
+	.name = "mayfly", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17100000, .gic_redist = 0x17180000, .gic_redist_size = 0x200000,
+	.uart = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 8,
 	.small_cores = 0x0f,
 };
 
@@ -1731,6 +1798,9 @@ hc_ms_since(uint64_t then)
 static int
 hc_list_is_uefis(void)
 {
+	if (PLAT == &platform_mayfly) {
+		return 1;          /* no UEFI driver here to keep out: the loader's own reads and its own list (mfu_*) */
+	}
 	return !hc_known || (hc_rd(HC_UTRLBA) == hc_uefi_lo && hc_rd(HC_UTRLBAU) == hc_uefi_hi &&
 	       (hc_rd(HC_UTRLRSR) & 1) != 0);
 }
@@ -1908,6 +1978,333 @@ block_is_darwin(const efi_partition_info *info, const efi_block_io *bio, const s
 	return 1;
 }
 
+/*
+ * mayfly: the storage without Qualcomm's UFSDxe. ABL read the boot image through the controller and leaves it enabled,
+ * with the device put to sleep and the controller's stream taken out of the SMMU, which faults what it does not match.
+ * So: the stream gets a free stream match and the last context bank, with stage 1 off; a transfer list of this loader's;
+ * START STOP UNIT wakes the device. Only reads and that one command are ever sent. Partitions come from LUN 0's GPT, and
+ * "userdata" is offered as "darwin": on this phone the Darwin volume lives there, Android's data having given way to it.
+ */
+#define MFU_BASE        0x1D84000ULL
+#define MFU_LIST        0xA9000000ULL      /* in mayflyPkg's "Kernel" region; list, command descriptor, PRDT */
+#define MFU_SCRATCH     0xA9010000ULL      /* one MiB for the GPT */
+#define MFU_R(o)        (((volatile uint32_t *)MFU_BASE)[(o) / 4])
+#define MFU_MAX_PRDT    128
+
+struct mfu_part {
+	efi_block_io io;
+	efi_block_media media;
+	uint64_t start;
+};
+static struct mfu_part mfu_parts[BLOCK_MAX_PARTS];
+static int mfu_ready;
+
+static int
+mfu_command(uint8_t lun, const uint8_t *cdb, unsigned cdb_len, uint64_t data, uint32_t bytes)
+{
+	volatile uint32_t *utrd = (volatile uint32_t *)MFU_LIST;
+	volatile uint8_t *ucd = (volatile uint8_t *)(MFU_LIST + 0x400);
+	volatile uint32_t *prdt = (volatile uint32_t *)(MFU_LIST + 0x800);
+	static uint8_t tag;
+	unsigned n = 0;
+
+	for (unsigned i = 0; i < 0x400; i++) {
+		ucd[i] = 0;
+	}
+	for (uint32_t off = 0; off < bytes && n < MFU_MAX_PRDT; n++) {
+		uint32_t piece = bytes - off > 0x40000 ? 0x40000 : bytes - off;
+
+		prdt[n * 4] = (uint32_t)(data + off);
+		prdt[n * 4 + 1] = (uint32_t)((data + off) >> 32);
+		prdt[n * 4 + 2] = 0;
+		prdt[n * 4 + 3] = piece - 1;
+		off += piece;
+	}
+	utrd[0] = (1u << 28) | ((bytes ? 2u : 0u) << 25) | (1u << 24);
+	utrd[1] = 0;
+	utrd[2] = 0x0F;
+	utrd[3] = 0;
+	utrd[4] = (uint32_t)(MFU_LIST + 0x400);
+	utrd[5] = 0;
+	utrd[6] = (0x80u << 16) | 0x80;
+	utrd[7] = (0x100u << 16) | n;
+	ucd[0] = 0x01;
+	ucd[1] = bytes ? 0x40 : 0;
+	ucd[2] = lun;
+	ucd[3] = ++tag;
+	ucd[12] = (uint8_t)(bytes >> 24);
+	ucd[13] = (uint8_t)(bytes >> 16);
+	ucd[14] = (uint8_t)(bytes >> 8);
+	ucd[15] = (uint8_t)bytes;
+	for (unsigned i = 0; i < cdb_len; i++) {
+		ucd[16 + i] = cdb[i];
+	}
+	flush_dcache(MFU_LIST, MFU_LIST + 0x1000);
+	if (bytes) {
+		flush_dcache(data, data + bytes);
+	}
+	MFU_R(0x58) = 1;
+	__asm__ volatile ("dsb sy");
+	for (unsigned waited = 0; (MFU_R(0x58) & 1) != 0; waited++) {
+		if (waited >= 5000000) {
+			print("ufs: no answer to command %x\n", (uint64_t)cdb[0]);
+			return -1;
+		}
+		BS->stall(1);
+	}
+	flush_dcache(MFU_LIST, MFU_LIST + 0x1000);
+	if (bytes) {
+		flush_dcache(data, data + bytes);
+	}
+	return (utrd[2] & 0xff) == 0 && ucd[0x200 + 6] == 0 && ucd[0x200 + 7] == 0 ? 0 : (int)(0x1000 | (utrd[2] & 0xff) << 8 | ucd[0x200 + 7]);
+}
+
+static int
+mfu_read(uint64_t lba, uint32_t blocks, uint64_t data)
+{
+	uint8_t cdb[10] = { 0x28, 0, (uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba, 0,
+	    (uint8_t)(blocks >> 8), (uint8_t)blocks, 0 };
+
+	return mfu_command(0, cdb, sizeof(cdb), data, blocks * 4096);
+}
+
+static int
+mfu_start(void)
+{
+	volatile uint32_t *smmu = (volatile uint32_t *)0x15000000ULL;
+	uint32_t id1 = smmu[0x24 / 4], groups = smmu[0x20 / 4] & 0xff, banks = id1 & 0xff, pages = 1u << (((id1 >> 28) & 7) + 1);
+	uint32_t bank = banks - 1, slot = 0xffffffffu, have = 0;
+
+	if (mfu_ready) {
+		return 1;
+	}
+	if ((MFU_R(0x34) & 1) == 0 || (MFU_R(0x30) & 2) == 0 || MFU_R(0x58) != 0) {
+		print("ufs: the controller is not as ABL leaves it (hce %x hcs %x dbr %x)\n", (uint64_t)MFU_R(0x34), (uint64_t)MFU_R(0x30), (uint64_t)MFU_R(0x58));
+		return 0;
+	}
+	for (uint32_t n = 0; n < groups; n++) {
+		uint32_t smr = smmu[(0x800 + 4 * n) / 4];
+
+		if (!(smr & (1u << 31))) {
+			slot = n;
+		} else if ((smr & 0x7fff) == 0xe0) {
+			have = 1;
+		} else if ((smr & 0x7fff) != 0 && ((smmu[(0xc00 + 4 * n) / 4] >> 16) & 3) == 0 &&
+		    (smmu[(0xc00 + 4 * n) / 4] & 0xff) == bank) {
+			print("ufs: the SMMU's last bank is in use\n");
+			return 0;
+		}
+	}
+	if (!have) {
+		volatile uint32_t *cb = (volatile uint32_t *)(0x15000000ULL + (uint64_t)(pages + bank) * 4096);
+
+		if (slot == 0xffffffffu || (cb[0] & 1) || pages > 128) {
+			print("ufs: no free place in the SMMU\n");
+			return 0;
+		}
+		cb[0] = 0;
+		smmu[(0x1800 + 4 * bank) / 4] = 1;
+		smmu[(0x1000 + 4 * bank) / 4] = 0x10000;
+		smmu[(0xc00 + 4 * slot) / 4] = bank;
+		smmu[(0x800 + 4 * slot) / 4] = (1u << 31) | 0xe0;
+		__asm__ volatile ("dsb sy");
+	}
+	for (unsigned i = 0; i < 0x1000; i++) {
+		((volatile uint8_t *)MFU_LIST)[i] = 0;
+	}
+	flush_dcache(MFU_LIST, MFU_LIST + 0x1000);
+	MFU_R(0x60) = 0;
+	__asm__ volatile ("dsb sy");
+	MFU_R(0x50) = (uint32_t)MFU_LIST;
+	MFU_R(0x54) = 0;
+	MFU_R(0x60) = 1;
+	__asm__ volatile ("dsb sy");
+	static const uint8_t start_unit[6] = { 0x1B, 0, 0, 0, 0x10, 0 };
+	static const uint8_t tur[6] = { 0 };
+	int r = mfu_command(0xD0, start_unit, sizeof(start_unit), 0, 0);
+	for (unsigned i = 0; i < 100 && mfu_command(0, tur, sizeof(tur), 0, 0) != 0; i++) {
+		BS->stall(10000);
+	}
+	print("ufs: controller taken over from ABL, device woken (%x)\n", (uint64_t)r);
+	mfu_ready = 1;
+	return 1;
+}
+
+static efi_status EFIAPI
+mfu_part_read(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t size, void *buf)
+{
+	struct mfu_part *p = (struct mfu_part *)self;
+
+	(void)media_id;
+	for (uint64_t done = 0; done < size;) {
+		uint64_t piece = size - done > MFU_MAX_PRDT * 0x40000ULL ? MFU_MAX_PRDT * 0x40000ULL : size - done;
+		int r = mfu_read(p->start + lba + done / 4096, (uint32_t)(piece / 4096), (uint64_t)(uintptr_t)buf + done);
+
+		if (r != 0) {
+			print("ufs: read of block %d failed: %x\n", p->start + lba + done / 4096, (uint64_t)r);
+			return 0x8000000000000007ULL;  /* EFI_DEVICE_ERROR */
+		}
+		done += piece;
+	}
+	return 0;
+}
+
+static efi_status EFIAPI
+mfu_part_write(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t size, void *buf)
+{
+	(void)self; (void)media_id; (void)lba; (void)size; (void)buf;
+	return 0x8000000000000008ULL;          /* EFI_WRITE_PROTECTED */
+}
+
+static efi_status EFIAPI
+mfu_part_flush(struct efi_block_io *self)
+{
+	(void)self;
+	return 0;
+}
+
+static int
+mfu_tables(void)
+{
+	const uint8_t *gpt = (const uint8_t *)MFU_SCRATCH;
+	int r;
+
+	if (!mfu_start()) {
+		return 0;
+	}
+	if ((r = mfu_read(1, 1, MFU_SCRATCH)) != 0 || memcmp(gpt, "EFI PART", 8) != 0) {
+		print("ufs: no GPT header on LUN 0 (%x)\n", (uint64_t)r);
+		return 0;
+	}
+	uint64_t first = *(const uint64_t *)(gpt + 72);
+	uint32_t count = *(const uint32_t *)(gpt + 80), entry = *(const uint32_t *)(gpt + 84);
+	if (entry != 128 || count > 128 || (r = mfu_read(first, (count * entry + 4095) / 4096, MFU_SCRATCH)) != 0) {
+		print("ufs: GPT entries at %d: %d of %d bytes: not read (%x)\n", first, (uint64_t)count, (uint64_t)entry, (uint64_t)r);
+		return 0;
+	}
+	for (uint32_t i = 0; i < count && block_shared.parts + 1 < BLOCK_MAX_PARTS; i++) {
+		const uint8_t *e = gpt + i * entry;
+		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
+		struct mfu_part *p = &mfu_parts[block_shared.parts];
+		uint64_t start = *(const uint64_t *)(e + 32), end = *(const uint64_t *)(e + 40);
+		unsigned k = 0;
+
+		if (start == 0 || end < start) {
+			continue;
+		}
+		for (; k + 1 < sizeof(bp->name) && k < 36 && e[56 + 2 * k]; k++) {
+			bp->name[k] = (char)e[56 + 2 * k];
+		}
+		bp->name[k] = 0;
+		if (memcmp(bp->name, "userdata", 9) == 0) {
+			memcpy(bp->name, "darwin", 7);
+			print("ufs: userdata (LBA %d..%d) is darwin\n", start, end);
+		}
+		bp->block_size = 4096;
+		bp->blocks = end - start + 1;
+		bp->start_lba = start;
+		bp->unit = 0;
+		bp->lun = 0;
+		p->start = start;
+		p->media.logical = 1;
+		p->media.present = 1;
+		p->media.read_only = 1;
+		p->media.block_size = 4096;
+		p->media.last_block = end - start;
+		p->io.media = &p->media;
+		p->io.read_blocks = mfu_part_read;
+		p->io.write_blocks = mfu_part_write;
+		p->io.flush_blocks = mfu_part_flush;
+		block_bios[block_shared.parts++] = &p->io;
+	}
+	return block_shared.parts != 0;
+}
+
+/*
+ * mayfly: ABL leaves the cores at a low clock and the kernel has no CPU frequency driver, so the loader asks
+ * each of the three clock domains' EPSS block (qcom,cpufreq-hw-epss at 0x17d91000, 0x17d92000, 0x17d93000:
+ * cores 0-3, 4-6, 7) for the highest regular entry of its own table, as Linux's qcom-cpufreq-hw does with
+ * the "performance" governor Android's command line picks. The hardware's limits management still throttles.
+ */
+static void
+mayfly_cpus_fast(void)
+{
+	static const uint64_t domain[3] = { 0x17d91000ULL, 0x17d92000ULL, 0x17d93000ULL };
+
+	for (int d = 0; d < 3; d++) {
+		volatile uint32_t *epss = (volatile uint32_t *)domain[d];
+		uint32_t before = (epss[0x20 / 4] & 0xff) * 192 / 10, best = 0, best_mhz = 0, prev_mhz = 0;
+
+		if (!(epss[0] & 1)) {
+			/* Linux gives up here; the vendor's driver does not look: the table decides */
+			print("cpu: clock domain %d: enable register %x, table starts %x %x, trying anyway\n", (uint64_t)d,
+			    (uint64_t)epss[0], (uint64_t)epss[0x100 / 4], (uint64_t)epss[0x104 / 4]);
+		}
+		for (uint32_t i = 0; i < 40; i++) {
+			uint32_t data = epss[(0x100 + 4 * i) / 4];
+			uint32_t mhz = data >> 30 ? (data & 0xff) * 192 / 10 : 300;
+
+			if (mhz == prev_mhz) {
+				break;          /* the table repeats its last entry */
+			}
+			prev_mhz = mhz;
+			if ((data >> 16 & 7) != 1 && mhz > best_mhz) {
+				best = i;       /* core count 1 marks a boost entry */
+				best_mhz = mhz;
+			}
+		}
+		if (best_mhz <= before) {
+			print("cpu: clock domain %d: %d MHz now, the table offers no more (best %d MHz): left alone\n", (uint64_t)d,
+			    (uint64_t)before, (uint64_t)best_mhz);
+			continue;
+		}
+		epss[0x320 / 4] = best;
+		BS->stall(2000);
+		print("cpu: clock domain %d: %d MHz before, entry %d (%d MHz) asked, now %d MHz\n", (uint64_t)d,
+		    (uint64_t)before, (uint64_t)best, (uint64_t)best_mhz, (uint64_t)((epss[0x20 / 4] & 0xff) * 192 / 10));
+	}
+}
+
+/*
+ * mayfly, bring-up: what ABL's fastboot leaves of USB (reads only). If the controller, its PHY and the repeater are
+ * still up, the loader's fastboot server can run on a small DWC3 driver of its own instead of UEFI's USB stack.
+ * Registers: gcc-sm8450.c (USB30_PRIM), Linux's dwc3 core.h, the phone's device tree (ssusb@a600000, hsphy@88e3000).
+ */
+static void
+mayfly_usb_probe(void)
+{
+	volatile uint32_t *gcc = (volatile uint32_t *)0x100000ULL;
+	volatile uint32_t *smmu = (volatile uint32_t *)0x15000000ULL;
+	uint32_t gdsc = gcc[0x49004 / 4], master = gcc[0x49018 / 4], utmi = gcc[0x49024 / 4], sleep = gcc[0x49020 / 4];
+	uint32_t noc = gcc[0x49084 / 4], aggre = gcc[0x49088 / 4], groups = smmu[0x20 / 4] & 0xff;
+
+	print("usb: gdsc %x, clocks master %x utmi %x sleep %x cfg_noc %x aggre %x\n", (uint64_t)gdsc, (uint64_t)master,
+	    (uint64_t)utmi, (uint64_t)sleep, (uint64_t)noc, (uint64_t)aggre);
+	for (uint32_t n = 0; n < groups; n++) {
+		uint32_t smr = smmu[(0x800 + 4 * n) / 4];
+
+		if ((smr >> 31) && ((smr & 0x7fff) & ~(smr >> 16 & 0x7fff)) == 0) {
+			print("usb: apps smmu: entry %d takes stream 0: smr %x s2cr %x\n", (uint64_t)n, (uint64_t)smr,
+			    (uint64_t)smmu[(0xc00 + 4 * n) / 4]);
+		}
+	}
+	if ((gdsc >> 31) == 0 || (master >> 31) != 0) {
+		print("usb: the controller has no power or no clock: not reading it\n");
+		return;
+	}
+	volatile uint32_t *dwc = (volatile uint32_t *)0xa600000ULL;
+	print("usb: dwc3 id %x, gctl %x, gusb2phycfg %x, dcfg %x, dctl %x, dsts %x, gevntadr %x:%x size %x count %x\n",
+	    (uint64_t)dwc[0xc120 / 4], (uint64_t)dwc[0xc110 / 4], (uint64_t)dwc[0xc200 / 4], (uint64_t)dwc[0xc700 / 4],
+	    (uint64_t)dwc[0xc704 / 4], (uint64_t)dwc[0xc70c / 4], (uint64_t)dwc[0xc404 / 4], (uint64_t)dwc[0xc400 / 4],
+	    (uint64_t)dwc[0xc408 / 4], (uint64_t)dwc[0xc40c / 4]);
+	print("usb: dalepena %x, gsts %x, gusb3pipectl %x, qscratch hs_phy_ctrl %x, ss_phy_ctrl %x, pwr_evnt %x\n",
+	    (uint64_t)dwc[0xc720 / 4], (uint64_t)dwc[0xc118 / 4], (uint64_t)dwc[0xc2c0 / 4], (uint64_t)dwc[(0xf8800 + 0x10) / 4],
+	    (uint64_t)dwc[(0xf8800 + 0x30) / 4], (uint64_t)dwc[(0xf8800 + 0x58) / 4]);
+	volatile uint32_t *phy = (volatile uint32_t *)0x88e3000ULL;
+	print("usb: eusb2 phy: %x %x %x %x %x %x %x %x\n", (uint64_t)phy[0], (uint64_t)phy[1], (uint64_t)phy[2], (uint64_t)phy[3],
+	    (uint64_t)phy[4], (uint64_t)phy[5], (uint64_t)phy[6], (uint64_t)phy[7]);
+}
+
 static void
 block_start(void)
 {
@@ -1927,6 +2324,15 @@ block_start(void)
 
 	memset(&block_shared, 0, sizeof(block_shared));
 	block_tables();
+	if (PLAT == &platform_mayfly) {
+		mayfly_cpus_fast();
+		mayfly_usb_probe();
+		if (!mfu_tables()) {
+			print("ufs: the block service is off\n");
+			return;
+		}
+		goto publish;
+	}
 	/* the logical units: the block devices that are not partitions of another */
 	if (!EFI_ERROR(BS->locate_handle_buffer(ByProtocol, &blk_guid, NULL, &count, &handles))) {
 		for (uint64_t i = 0; i < count && nunits < BLOCK_MAX_UNITS; i++) {
@@ -2006,6 +2412,7 @@ block_start(void)
 		bp->flags = BLOCK_PART_UNIT;
 		block_bios[block_shared.parts++] = units[u].bio;
 	}
+publish:
 	/* the kernel's own transfer list: this loader's area, if the controller is as UEFI keeps it */
 	if (hc_known && hc_list_is_uefis() && hc_rd(HC_UTRLDBR) == 0 && (hc_rd(HC_HCE) & 1)) {
 		memset(hc_area, 0, sizeof(hc_area));
@@ -2043,6 +2450,9 @@ block_start(void)
 	print("ufs: block service: %d partitions and %d units, page %x, buffer %x of %d KB\n",
 	    (uint64_t)block_shared.parts - nunits, nunits, (uint64_t)(uintptr_t)&block_shared, block_shared.buffer_pa,
 	    (uint64_t)(BLOCK_BUFFER_SIZE >> 10));
+	if (PLAT == &platform_mayfly) {
+		BS->stall(8000000);             /* bring-up: time to read the above */
+	}
 }
 
 /*
@@ -2999,6 +3409,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	int torch_requested = 0;
 	/* "cam=5" there too: the phone's wide camera is Darwin's (drivers/camera/hakios.camera.c) */
 	int camera_requested = 0;
+	int bluetooth_requested = 0;
 	/* (the loader stays for run after run: what the last run's arguments said must not hold for this one) */
 	gamut_p3 = 0;
 	/* a run that does not ask for writes does not get them, whatever an earlier run of this
@@ -3021,6 +3432,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		    (c[9] == 0 || c[9] == ' ');
 		torch_requested |= starts_with(c, "torch=") && (c == pi.cmdline || c[-1] == ' ') && c[6] >= '1' && c[6] <= '9';
 		camera_requested |= starts_with(c, "cam=5") && (c == pi.cmdline || c[-1] == ' ') && (c[5] == 0 || c[5] == ' ');
+		bluetooth_requested |= starts_with(c, "qcabt=6") && (c == pi.cmdline || c[-1] == ' ');
 		gamut_p3 |= starts_with(c, "gamut=p3") && (c == pi.cmdline || c[-1] == ' ');
 		if (starts_with(c, "ufs=") && (c == pi.cmdline || c[-1] == ' ') && c[4] >= '1' && c[4] <= '2' &&
 		    (c[5] == 0 || c[5] == ' ')) {
@@ -3410,6 +3822,24 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	}
 	dt_end(&w);
 
+	/*
+	 * qcabt=6 (devices/mayfly/drivers/bluetooth): what bluetoothd reads of its chip, as the iPhone's /arm-io/uart1/bluetooth has it
+	 * but for the address (mac-address-bluetooth0, which the kernel writes into the chip). 3: H4BC.
+	 * bluetoothd finds it by IOServiceNameMatching, so it has to be a nub, and those are made of the root's children.
+	 */
+	if (bluetooth_requested) {
+		static const uint8_t bluetooth_local_address[6] = { 0x02, 0x52, 0x44, 0x57, 0x00, 0x02 };
+
+		dt_begin(&w, "bluetooth");
+		dt_prop_str(&w, "device_type", "bluetooth");
+		dt_prop_str(&w, "compatible", "bluetooth,qca6490");
+		dt_prop(&w, "local-mac-address", bluetooth_local_address, sizeof(bluetooth_local_address));
+		dt_prop_u32(&w, "transport-encoding", 3);
+		dt_prop_u32(&w, "transport-speed", 3000000);
+		dt_prop_u32(&w, "vendor-id", 0x05ac);
+		dt_prop_u32(&w, "product-id", 0x12a0);
+		dt_end(&w);
+	}
 	dt_begin(&w, "arm-io");
 	dt_prop_str(&w, "device_type", plat->name);
 	dt_prop(&w, "ranges", ranges, sizeof(ranges));
@@ -3428,7 +3858,8 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_begin(&w, "gic");
 	dt_prop_str(&w, "device_type", "interrupt-controller");
 	dt_prop_str(&w, "compatible", "arm,gic-v3");
-	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base, 0x100000 };
+	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base,
+		                plat->gic_redist_size ? plat->gic_redist_size : 0x100000 };
 	dt_prop(&w, "reg", gic_reg, sizeof(gic_reg));
 	dt_end(&w);
 	if (plat->uart != 0) {
@@ -3613,7 +4044,6 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 #define USB_EP_IN    0x81
 #define USB_CHUNK    (1024 * 1024)
 
-static usb_device_protocol *USB;
 static int download_to_ramdisk;     /* set by "oem ramdisk" for the one download that follows */
 static uint8_t *usb_rx_buf, *usb_tx_buf;
 static int usb_connected;
@@ -3650,6 +4080,466 @@ usb_dummy_notify(void *event, void *ctx)
 {
 }
 
+/* ------------------------------------------------------------------------ */
+/* mayfly: a USB peripheral of our own on the DWC3 that ABL's fastboot      */
+/* leaves powered, clocked and with its eUSB2 PHY and repeater set up (seen */
+/* on the phone: USB30_PRIM GDSC on, every clock on, the PHY's registers    */
+/* live, the controller stopped). The firmware here has no USB driver; this */
+/* gives the fastboot server below the usb_device_protocol it is written    */
+/* for. High speed only, one bulk pair, polled. Register layout: Linux's    */
+/* drivers/usb/dwc3/core.h; the control endpoint's three stages as Linux's  */
+/* ep0.c drives them (each started on the controller's "not ready").        */
+/* ------------------------------------------------------------------------ */
+
+#define MFD_BASE        0xA600000ULL
+#define MFD(o)          (((volatile uint32_t *)MFD_BASE)[(o) / 4])
+#define MFD_MEM         0xA9100000ULL       /* mayflyPkg "Kernel", after the UFS list: events, TRBs, ep0's buffer */
+#define MFD_EVENTS      MFD_MEM
+#define MFD_EVENTS_SIZE 4096u
+#define MFD_TRB(ep)     (MFD_MEM + 0x1000 + 16 * (ep))
+#define MFD_EP0BUF      (MFD_MEM + 0x2000)
+#define MFD_XFER        0xA9200000ULL       /* the two 1 MB transfer buffers */
+#define MFD_GEVNTADRLO  0xc400
+#define MFD_GEVNTADRHI  0xc404
+#define MFD_GEVNTSIZ    0xc408
+#define MFD_GEVNTCOUNT  0xc40c
+#define MFD_DCFG        0xc700
+#define MFD_DCTL        0xc704
+#define MFD_DEVTEN      0xc708
+#define MFD_DSTS        0xc70c
+#define MFD_DALEPENA    0xc720
+#define MFD_DEPCMD(ep)  (0xc80c + 16 * (ep))
+#define MFD_CMD_CFG     1
+#define MFD_CMD_XFERCFG 2
+#define MFD_CMD_STALL   4
+#define MFD_CMD_CLRSTALL 5
+#define MFD_CMD_START   6
+#define MFD_CMD_END     8
+#define MFD_CMD_STARTCFG 9
+#define MFD_TRB_NORMAL  1
+#define MFD_TRB_SETUP   2
+#define MFD_TRB_STATUS2 3
+#define MFD_TRB_STATUS3 4
+#define MFD_TRB_DATA    5
+
+static usb_device_descriptor_set *mfd_set;
+static uint32_t mfd_event_at, mfd_xfer_index[4], mfd_asked[4], mfd_ep0_wants;    /* wants: 1 data, 2 status */
+static uint32_t mfd_ep0_len, mfd_new_address, mfd_configure;
+static int mfd_ep_busy[4], mfd_ep0_three, mfd_buffers;
+static struct {
+	uint32_t event;
+	usb_device_event_data data;
+} mfd_queue[16];
+static uint32_t mfd_queue_in, mfd_queue_out;
+
+static void
+mfd_post(uint32_t event, usb_device_event_data *data)
+{
+	if (mfd_queue_in - mfd_queue_out < 16) {
+		mfd_queue[mfd_queue_in % 16].event = event;
+		mfd_queue[mfd_queue_in % 16].data = *data;
+		mfd_queue_in++;
+	}
+}
+
+static int
+mfd_cmd(uint32_t ep, uint32_t cmd, uint32_t p0, uint32_t p1)
+{
+	MFD(MFD_DEPCMD(ep) - 0xc) = 0;          /* parameter 2 */
+	MFD(MFD_DEPCMD(ep) - 0x8) = p1;
+	MFD(MFD_DEPCMD(ep) - 0x4) = p0;
+	__asm__ volatile ("dsb sy");
+	MFD(MFD_DEPCMD(ep)) = cmd | (1u << 10);
+	for (int i = 0; i < 1000000; i++) {
+		if (!(MFD(MFD_DEPCMD(ep)) & (1u << 10))) {
+			return (MFD(MFD_DEPCMD(ep)) >> 12) & 0xf;
+		}
+	}
+	print("usb: endpoint %d command %d does not finish\n", (uint64_t)ep, (uint64_t)cmd);
+	return -1;
+}
+
+static void
+mfd_start_xfer(uint32_t ep, uint64_t buffer, uint32_t length, uint32_t kind)
+{
+	volatile uint32_t *trb = (volatile uint32_t *)MFD_TRB(ep);
+
+	trb[0] = (uint32_t)buffer;
+	trb[1] = (uint32_t)(buffer >> 32);
+	trb[2] = length;
+	trb[3] = 1u | 2u | kind << 4 | 1u << 11;        /* hardware owns it, last, the kind, interrupt on completion */
+	flush_dcache(MFD_TRB(ep), MFD_TRB(ep) + 16);
+	mfd_asked[ep] = length;
+	mfd_ep_busy[ep] = 1;
+	mfd_cmd(ep, MFD_CMD_START, (uint32_t)(MFD_TRB(ep) >> 32), (uint32_t)MFD_TRB(ep));
+	mfd_xfer_index[ep] = (MFD(MFD_DEPCMD(ep)) >> 16) & 0x7f;
+}
+
+static void
+mfd_configure_ep(uint32_t ep, uint32_t type, uint32_t packet, uint32_t events, int modify)
+{
+	uint32_t p0 = type << 1 | packet << 3 | ((ep & 1) ? (ep >> 1) << 17 : 0) | (modify ? 2u << 30 : 0);
+
+	mfd_cmd(ep, MFD_CMD_CFG, p0, events | ep << 25);
+	if (!modify) {
+		mfd_cmd(ep, MFD_CMD_XFERCFG, 1, 0);
+	}
+}
+
+static void
+mfd_setup_next(void)
+{
+	mfd_ep0_wants = 0;
+	mfd_start_xfer(0, MFD_EP0BUF, 8, MFD_TRB_SETUP);
+}
+
+static void
+mfd_ep0_stall(void)
+{
+	mfd_cmd(0, MFD_CMD_STALL, 0, 0);
+	mfd_setup_next();
+}
+
+/* a setup packet has come: what the host wants of the control endpoint */
+static void
+mfd_setup(void)
+{
+	uint8_t *setup;
+	const uint8_t *reply = NULL;
+	uint32_t length = 0, wanted;
+	static uint8_t small[2];
+
+	flush_dcache(MFD_EP0BUF, MFD_EP0BUF + 64);
+	setup = (uint8_t *)MFD_EP0BUF;
+	wanted = setup[6] | setup[7] << 8;
+	mfd_new_address = 0xffffffffu;
+	mfd_configure = 0;
+	if (setup[0] == 0x80 && setup[1] == 6) {                /* GET_DESCRIPTOR */
+		switch (setup[3]) {
+		case 1:
+			reply = mfd_set->device_descriptor;
+			length = 18;
+			break;
+		case 2:
+			reply = mfd_set->descriptors[0];
+			length = reply[2] | reply[3] << 8;
+			break;
+		case 3:
+			if (setup[2] < mfd_set->string_count) {
+				reply = mfd_set->strings[setup[2]];
+				length = reply[0];
+			}
+			break;
+		case 6:
+			reply = mfd_set->device_qualifier;
+			length = 10;
+			break;
+		case 15:
+			reply = mfd_set->bos;
+			length = reply[2] | reply[3] << 8;
+			break;
+		}
+		if (reply == NULL) {
+			mfd_ep0_stall();
+			return;
+		}
+	} else if (setup[0] == 0x00 && setup[1] == 5) {         /* SET_ADDRESS: in force at once, as Linux has it */
+		mfd_new_address = setup[2] & 0x7f;
+		MFD(MFD_DCFG) = (MFD(MFD_DCFG) & ~(0x7fu << 3)) | mfd_new_address << 3;
+	} else if (setup[0] == 0x00 && setup[1] == 9) {         /* SET_CONFIGURATION */
+		mfd_configure = setup[2] ? 1 : 2;
+	} else if ((setup[0] & 0x80) && setup[1] == 0) {        /* GET_STATUS */
+		small[0] = small[1] = 0;
+		reply = small;
+		length = 2;
+	} else if (setup[0] == 0x80 && setup[1] == 8) {         /* GET_CONFIGURATION */
+		small[0] = 1;
+		reply = small;
+		length = 1;
+	} else if (setup[0] == 0x02 && setup[1] == 1) {         /* CLEAR_FEATURE(ENDPOINT_HALT) */
+		uint32_t ep = (setup[4] & 0xf) * 2 + (setup[4] >> 7);
+
+		if (ep < 4 && ep > 1) {
+			mfd_cmd(ep, MFD_CMD_CLRSTALL, 0, 0);
+		}
+	} else if (setup[0] == 0x01 && setup[1] == 11) {        /* SET_INTERFACE */
+	} else {
+		mfd_ep0_stall();
+		return;
+	}
+	if (reply != NULL) {
+		if (length > wanted) {
+			length = wanted;
+		}
+		memcpy((void *)MFD_EP0BUF, reply, length);
+		mfd_ep0_len = length;
+
+		mfd_ep0_three = 1;
+		mfd_ep0_wants = 1;
+	} else {
+		mfd_ep0_three = 0;
+		mfd_ep0_wants = 2;
+	}
+}
+
+static void
+mfd_configured(void)
+{
+	usb_device_event_data data;
+
+	if (mfd_configure == 1) {
+		mfd_cmd(0, MFD_CMD_STARTCFG | 2u << 16, 0, 0);    /* resources from index 2 on: the command's own field, as Linux has it */
+		mfd_configure_ep(2, 2, 512, 1u << 8, 0);        /* bulk OUT 1: transfer complete */
+		mfd_configure_ep(3, 2, 512, 1u << 8, 0);        /* bulk IN 1 */
+		MFD(MFD_DALEPENA) |= 0xc;
+		memset(&data, 0, sizeof(data));
+		data.device_state = UsbDeviceStateConnected;
+		mfd_post(UsbDeviceEventDeviceStateChange, &data);
+	}
+	mfd_configure = 0;
+}
+
+static void
+mfd_poll(void)
+{
+	uint32_t count = MFD(MFD_GEVNTCOUNT) & 0xffff;
+	usb_device_event_data data;
+
+	while (count >= 4) {
+		volatile uint32_t *word = (volatile uint32_t *)(MFD_EVENTS + mfd_event_at);
+		uint32_t event;
+
+		flush_dcache((uint64_t)(uintptr_t)word, (uint64_t)(uintptr_t)word + 4);
+		event = *word;
+		mfd_event_at = (mfd_event_at + 4) % MFD_EVENTS_SIZE;
+		MFD(MFD_GEVNTCOUNT) = 4;
+		count -= 4;
+		if (event & 1) {                                /* the device's */
+			uint32_t kind = event >> 8 & 0xf;
+
+			if (kind == 0 || kind == 1) {           /* disconnect, reset */
+				memset(&data, 0, sizeof(data));
+				data.device_state = UsbDeviceStateDisconnected;
+				mfd_post(UsbDeviceEventDeviceStateChange, &data);
+				MFD(MFD_DCFG) &= ~(0x7fu << 3);
+			} else if (kind == 2) {                 /* connection done: the control endpoint's packet size */
+				mfd_configure_ep(0, 0, 64, 1u << 8 | 1u << 10, 1);
+				mfd_configure_ep(1, 0, 64, 1u << 8 | 1u << 10, 1);
+			}
+			continue;
+		}
+		uint32_t ep = event >> 1 & 0x1f, kind = event >> 6 & 0xf, status = event >> 12 & 0xf;
+
+		if (ep > 3) {
+			continue;
+		}
+		if (kind == 1) {                                /* transfer complete */
+			mfd_ep_busy[ep] = 0;
+			if (ep < 2) {
+				volatile uint32_t *trb = (volatile uint32_t *)MFD_TRB(ep);
+
+				flush_dcache(MFD_TRB(ep), MFD_TRB(ep) + 16);
+				if ((trb[3] >> 4 & 0x3f) == MFD_TRB_SETUP) {
+					mfd_setup();
+				} else if ((trb[3] >> 4 & 0x3f) == MFD_TRB_DATA) {
+					mfd_ep0_wants = 2;
+				} else {                        /* status done */
+					mfd_configured();
+					mfd_setup_next();
+				}
+			} else {
+				volatile uint32_t *trb = (volatile uint32_t *)MFD_TRB(ep);
+
+				flush_dcache(MFD_TRB(ep), MFD_TRB(ep) + 16);
+				memset(&data, 0, sizeof(data));
+				data.transfer.status = UsbDeviceTransferStatusCompleteOK;
+				data.transfer.endpoint_index = ep == 2 ? 0x01 : 0x81;
+				data.transfer.bytes_completed = mfd_asked[ep] - (trb[2] & 0xffffff);
+				mfd_post(UsbDeviceEventTransferNotification, &data);
+			}
+		} else if (kind == 3 && ep < 2) {               /* not ready: the next stage of a control transfer */
+			if ((status & 3) == 1 && mfd_ep0_wants == 1) {
+				mfd_ep0_wants = 0;
+				clean_dcache(MFD_EP0BUF, MFD_EP0BUF + 512);
+				mfd_start_xfer(1, MFD_EP0BUF, mfd_ep0_len, MFD_TRB_DATA);
+			} else if ((status & 3) == 2 && mfd_ep0_wants == 2) {
+				mfd_ep0_wants = 0;
+				mfd_start_xfer(ep, MFD_EP0BUF, 0, mfd_ep0_three ? MFD_TRB_STATUS3 : MFD_TRB_STATUS2);
+			}
+		}
+	}
+}
+
+/* the stream ABL's SMMU entries no longer pass: the controller's (dt: iommus = <&apps_smmu 0x0 0x0>) through the bank the UFS uses */
+static int
+mfd_smmu(void)
+{
+	volatile uint32_t *smmu = (volatile uint32_t *)0x15000000ULL;
+	uint32_t id1 = smmu[0x24 / 4], groups = smmu[0x20 / 4] & 0xff, banks = id1 & 0xff, pages = 1u << (((id1 >> 28) & 7) + 1);
+	uint32_t bank = banks - 1, slot = 0xffffffffu;
+	volatile uint32_t *cb = (volatile uint32_t *)(0x15000000ULL + (uint64_t)(pages + bank) * 4096);
+
+	for (uint32_t n = 0; n < groups; n++) {
+		uint32_t smr = smmu[(0x800 + 4 * n) / 4];
+
+		if (!(smr & (1u << 31))) {
+			slot = n;
+		} else if ((smr & 0x7fff) == 0) {
+			return 1;
+		}
+	}
+	if (slot == 0xffffffffu || (cb[0] & 1) || pages > 128) {
+		print("usb: no free place in the SMMU\n");
+		return 0;
+	}
+	cb[0] = 0;
+	smmu[(0x1800 + 4 * bank) / 4] = 1;
+	smmu[(0x1000 + 4 * bank) / 4] = 0x10000;
+	smmu[(0xc00 + 4 * slot) / 4] = bank;
+	smmu[(0x800 + 4 * slot) / 4] = 1u << 31;
+	__asm__ volatile ("dsb sy");
+	return 1;
+}
+
+static efi_status
+mfd_start_ex(usb_device_descriptor_set *set)
+{
+	volatile uint32_t *gcc = (volatile uint32_t *)0x100000ULL;
+
+	mfd_set = set;
+	if ((gcc[0x49004 / 4] >> 31) == 0 || (gcc[0x49018 / 4] >> 31) != 0) {
+		print("usb: the controller has no power or no clock (gdsc %x, master %x)\n", (uint64_t)gcc[0x49004 / 4],
+		    (uint64_t)gcc[0x49018 / 4]);
+		return EFI_DEVICE_ERROR;
+	}
+	if (!mfd_smmu()) {
+		return EFI_DEVICE_ERROR;
+	}
+	MFD(MFD_DCTL) &= ~(1u << 31);
+	for (int i = 0; i < 100000 && !(MFD(MFD_DSTS) & (1u << 22)); i++) {
+	}
+	for (unsigned i = 0; i < 0x3000; i++) {
+		((volatile uint8_t *)MFD_MEM)[i] = 0;
+	}
+	flush_dcache(MFD_MEM, MFD_MEM + 0x3000);
+	MFD(MFD_GEVNTADRLO) = (uint32_t)MFD_EVENTS;
+	MFD(MFD_GEVNTADRHI) = 0;
+	MFD(MFD_GEVNTSIZ) = MFD_EVENTS_SIZE | 1u << 31;  /* polled: the interrupt masked */
+	MFD(MFD_GEVNTCOUNT) = MFD(MFD_GEVNTCOUNT) & 0xffff;
+	mfd_event_at = 0;
+	MFD(MFD_DCFG) = MFD(MFD_DCFG) & ~0x3ffu;          /* high speed, address 0 */
+	MFD(MFD_DEVTEN) = 1u | 2u | 4u;                  /* disconnect, reset, connection done */
+	/*
+	 * Linux's dwc3-qcom.c, dwc3_qcom_vbus_override_enable(): the Qualcomm wrapper's "a host is there" for the
+	 * controller, which ABL takes back when it leaves fastboot (seen: hs_phy_ctrl 0). Without it no pull-up.
+	 */
+	MFD(0xf8800 + 0x10) |= 1u << 20 | 1u << 28;      /* QSCRATCH_HS_PHY_CTRL: UTMI_OTG_VBUS_VALID, SW_SESSVLD_SEL */
+	MFD(0xf8800 + 0x30) |= 1u << 24;                 /* QSCRATCH_SS_PHY_CTRL: LANE0_PWR_PRESENT */
+	mfd_cmd(0, MFD_CMD_STARTCFG, 0, 0);
+	mfd_configure_ep(0, 0, 64, 1u << 8 | 1u << 10, 0);
+	mfd_configure_ep(1, 0, 64, 1u << 8 | 1u << 10, 0);
+	MFD(MFD_DALEPENA) = 3;
+	mfd_setup_next();
+	MFD(MFD_DCTL) |= 1u << 31;
+	for (int i = 0; i < 100000 && (MFD(MFD_DSTS) & (1u << 22)); i++) {
+	}
+	print("usb: our own DWC3 peripheral is on (dsts %x, dcfg %x)\n", (uint64_t)MFD(MFD_DSTS), (uint64_t)MFD(MFD_DCFG));
+	return 0;
+}
+
+static efi_status
+mfd_send(uint8_t endpoint, uint64_t size, void *buffer)
+{
+	uint32_t ep = endpoint == 0x01 ? 2 : endpoint == 0x81 ? 3 : 0;
+
+	if (ep == 0 || mfd_ep_busy[ep] || size > 0x100000) {
+		return EFI_DEVICE_ERROR;
+	}
+	if (ep == 2) {
+		size = (size + 511) & ~511ull;          /* a receive is whole packets */
+		flush_dcache((uint64_t)(uintptr_t)buffer, (uint64_t)(uintptr_t)buffer + size);
+	} else {
+		clean_dcache((uint64_t)(uintptr_t)buffer, (uint64_t)(uintptr_t)buffer + size);
+	}
+	mfd_start_xfer(ep, (uint64_t)(uintptr_t)buffer, (uint32_t)size, MFD_TRB_NORMAL);
+	return 0;
+}
+
+static efi_status EFIAPI
+mfd_handle_event(uint32_t *event, uint64_t *size, usb_device_event_data *data)
+{
+	mfd_poll();
+	*size = 0;
+	if (mfd_queue_out == mfd_queue_in) {
+		*event = UsbDeviceEventNoEvent;
+		return 0;
+	}
+	*event = mfd_queue[mfd_queue_out % 16].event;
+	*data = mfd_queue[mfd_queue_out % 16].data;
+	*size = sizeof(*data);
+	mfd_queue_out++;
+	if (*event == UsbDeviceEventTransferNotification && data->transfer.endpoint_index == 0x01) {
+		flush_dcache(MFD_XFER, MFD_XFER + 0x100000);    /* what came in, not what the cache remembers */
+	}
+	return 0;
+}
+
+static efi_status EFIAPI
+mfd_allocate(uint64_t size, void **buffer)
+{
+	if (size > 0x100000 || mfd_buffers == 2) {
+		return EFI_OUT_OF_RESOURCES;
+	}
+	*buffer = (void *)(uintptr_t)(MFD_XFER + 0x100000ull * mfd_buffers++);
+	return 0;
+}
+
+static efi_status EFIAPI
+mfd_free(void *buffer)
+{
+	(void)buffer;
+	return 0;
+}
+
+static efi_status
+mfd_abort(uint8_t endpoint)
+{
+	uint32_t ep = endpoint == 0x01 ? 2 : endpoint == 0x81 ? 3 : 0;
+
+	if (ep != 0 && mfd_ep_busy[ep]) {
+		mfd_cmd(ep, MFD_CMD_END | 1u << 11 | mfd_xfer_index[ep] << 16, 0, 0);
+		mfd_ep_busy[ep] = 0;
+	}
+	return 0;
+}
+
+static efi_status
+mfd_stop(void)
+{
+	MFD(MFD_DCTL) &= ~(1u << 31);
+	return 0;
+}
+
+static efi_status EFIAPI
+mfd_stall(uint8_t endpoint, uint8_t state)
+{
+	(void)endpoint;
+	(void)state;
+	return 0;
+}
+
+static usb_device_protocol mfd_protocol = {
+	.revision = 0x10000,
+	.send = mfd_send,
+	.handle_event = mfd_handle_event,
+	.allocate_transfer_buffer = mfd_allocate,
+	.free_transfer_buffer = mfd_free,
+	.stop = mfd_stop,
+	.abort_xfer = mfd_abort,
+	.set_endpoint_stall_state = mfd_stall,
+	.start_ex = mfd_start_ex,
+};
+
 static int
 usb_start(void)
 {
@@ -3660,6 +4550,10 @@ usb_start(void)
 	static usb_device_descriptor_set set;
 	void *event;
 
+	if (PLAT == &platform_mayfly) {
+		USB = &mfd_protocol;            /* no USB in this firmware: ours, on what ABL left */
+		goto descriptors;
+	}
 	/* Ask the platform to bring the controller up in peripheral mode (as the stock fastboot does). */
 	if (!EFI_ERROR(BS->create_event_ex(0x200 /* EVT_NOTIFY_SIGNAL */, 8 /* TPL_CALLBACK */, usb_dummy_notify, NULL,
 	    &init_guid, &event))) {
@@ -3670,6 +4564,7 @@ usb_start(void)
 		print("usb: device protocol not found\n");
 		return 0;
 	}
+descriptors:
 	set.device_descriptor = usb_dev_desc;
 	set.descriptors = &cfg;
 	set.ss_device_descriptor = usb_ss_dev_desc;
@@ -4308,6 +5203,7 @@ print_banner(void)
 	print("\n");
 }
 
+
 efi_status EFIAPI
 efi_main(efi_handle image, efi_system_table *st)
 {
@@ -4345,8 +5241,20 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
 		if (SCREEN.base == 0xE1000000ULL) {
 			PLAT = &platform_redwood;
-		} else {
+		} else if (SCREEN.base == 0xB8000000ULL && SCREEN.width == 1080 && SCREEN.height == 2400) {
+			/*
+			 * mayfly: the panel's "cont_splash_region" (0xb8000000, 43 MiB), 1080 x 2400, which Silicium's
+			 * SimpleFbDxe hands out as "Display Reserved" (ABL keeps the panel scanning it out). The size
+			 * is checked with the address: every SM8450-family phone keeps its splash there. The stride is
+			 * whatever the firmware says.
+			 */
+			PLAT = &platform_mayfly;
+			show_stfts_lines = 1;
+		} else if (((READ_SYSREG(MIDR_EL1) >> 4) & 0xfff) == 0xd0b) {
+			/* QEMU virt's Cortex-A76 only: fw_cfg's address is somebody's register on a phone */
 			ramfb_phone_screen();
+		} else {
+			print("display at %x is no phone this loader knows: left as the firmware set it\n", SCREEN.base);
 		}
 		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
 	}

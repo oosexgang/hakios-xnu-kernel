@@ -58,6 +58,19 @@ private:
 
 OSDefineMetaClassAndStructors(HakiosBattery, IOPMPowerSource);
 
+/*
+ * Settings > Battery > Battery Health & Charging waits (a spinner, for good) for the battery's authentication: what an
+ * iPhone's battery authentication coprocessor says, which Settings finds as a service of the class AppleAuthCPRelay
+ * under the IOPMPowerSource (IOParentMatch), with isTrustedForUI and the battery's Serial (BatteryUsageUI's strings).
+ * This phone has no such coprocessor; its own battery is what is in it, so the answer is given here.
+ */
+class AppleAuthCPRelay : public IOService
+{
+	OSDeclareDefaultStructors(AppleAuthCPRelay);
+};
+
+OSDefineMetaClassAndStructors(AppleAuthCPRelay, IOService);
+
 static HakiosBattery * battery;
 
 void
@@ -146,6 +159,49 @@ HakiosBattery::report(const struct hakios_battery_state * b)
 	if (b->cycles > 0) {
 		setCycleCount((unsigned) b->cycles);
 	}
+	/*
+	 * Settings' Battery Health (powerd: "No battery serial number found", NominalCapacity / DesignCapacity, and the
+	 * gauge's own numbers in BatteryData): what the fuel gauge has learnt and what the battery was made for, as the
+	 * DSP gives them. No resistance is known here (WeightedRa 0: nothing asks for service); the percentage is worked
+	 * out the way powerd does, the full charge learnt over the designed, at most 100.
+	 */
+	if (b->full_uah > 0 && b->design_uah > 0) {
+		long long full = b->full_uah / 1000, design = b->design_uah / 1000;
+		long long health = full * 100 / design;
+		OSDictionary * data = OSDictionary::withCapacity(10);
+		OSString * serial = OSString::withCString("HAKIOS0MAYFLY0BATTERY");
+
+		health = health > 100 ? 100 : health < 0 ? 0 : health;
+		number("MaximumCapacityPercent", health);
+		if (serial != NULL) {
+			object("Serial", serial);
+			object("BatterySerialNumber", serial);
+			serial->release();
+		}
+		if (data != NULL) {
+			static const struct { const char * key; } keys[] = { { "DesignCapacity" }, { "MaximumFCC" }, { "MinimumFCC" },
+				                                             { "CycleCount" }, { "MaximumQmax" }, { "MinimumQmax" },
+				                                             { "WeightedRa" }, { "StateOfCharge" } };
+			long long values[] = { design, full, full, b->cycles > 0 ? b->cycles : 0, full, full, 0, percent };	/* (StateOfCharge: the charge now) */
+			OSArray * qmax = OSArray::withCapacity(1);
+			OSNumber * n;
+
+			for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+				if ((n = OSNumber::withNumber((unsigned long long) values[i], 32)) != NULL) {
+					data->setObject(keys[i].key, n);
+					n->release();
+				}
+			}
+			if (qmax != NULL && (n = OSNumber::withNumber((unsigned long long) full, 32)) != NULL) {
+				qmax->setObject(n);
+				data->setObject("Qmax", qmax);
+				n->release();
+			}
+			OSSafeReleaseNULL(qmax);
+			object("BatteryData", data);
+			data->release();
+		}
+	}
 
 	if (b->external) {
 		OSDictionary * adapter = OSDictionary::withCapacity(6);
@@ -224,6 +280,17 @@ HakiosBatteryReport(const void * state, unsigned size)
 		}
 		made->registerService();
 		battery = made;
+		{
+			AppleAuthCPRelay * relay = OSTypeAlloc(AppleAuthCPRelay);
+
+			if (relay != NULL && relay->init() && relay->attach(made)) {
+				relay->setProperty("isTrustedForUI", kOSBooleanTrue);
+				relay->setProperty("Serial", "HAKIOS0MAYFLY0BATTERY");
+				relay->registerService();
+				IOLog("HakiosBattery: the battery's authentication answered here (AppleAuthCPRelay, trusted)\n");
+			}
+			OSSafeReleaseNULL(relay);
+		}
 		/* (64-bit rounding, as in report(): no signed overflow on a large value from the DSP) */
 		IOLog("HakiosBattery: the battery's power source is up: %d%%, %s\n", (int) (((int64_t) b->percent_hundredths + 50) / 100),
 		    b->external ? (b->status == 1 ? "charging" : "on a charger, not charging") : "not on a charger");

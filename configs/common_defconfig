@@ -51,6 +51,7 @@ CONFIG_HAKIOS_SOCINFO=y
 
 # the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa and the window ... [hakios.adreno.c, hakios.gpu.cpp]
 CONFIG_HAKIOS_ADRENO=y
+CONFIG_HAKIOS_GPU=y
 
 # the vibration motor: an Awinic AW86927 driving a linear resonant actuator (haptic=N), its waveforms from fw-haptic/ [hakios.haptic.c]
 CONFIG_HAKIOS_HAPTIC=y
@@ -96,6 +97,9 @@ CONFIG_HAKIOS_VIRTIO_BLK=y
 
 # Wi-Fi of the WCN6750 (wifi=1, wifi_step=N): the DSP that runs the radio's firmware, Linux's ath11k (its object, made ... [hakios.wifi.c, hakios.wlfw.c, hakios.lx.c, hakios.sta.c, hakios.apple80211.c, hakios.wlan.cpp; requires CONFIG_HAKIOS_QMI]
 CONFIG_HAKIOS_WIFI=y
+
+# the Wi-Fi stack the radios share: ath11k's kernel side, the station, Apple80211 [hakios.lx.c, hakios.sta.c, hakios.apple80211.c, hakios.wlan.cpp]
+CONFIG_HAKIOS_WIFI_STACK=y
 
 #
 # CPU, memory and boot (21)
