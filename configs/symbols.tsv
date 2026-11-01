@@ -79,10 +79,10 @@ DDR_REST	arg	ddr_rest	CPU, memory and boot	k	hakios.cpufreq.c
 DDR_VOTE	arg	ddr_vote	CPU, memory and boot	k	hakios.cpufreq.c	
 DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c	before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written)
 FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp	
-FB_CA_HZ	arg	fb_ca_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
+FB_CA_HZ	arg	fb_ca_hz	GPU and display	ku	MiniIOMobileFramebuffer.cpp,inject.c	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
 FB_DIFF	arg	fb_diff	GPU and display	k	MiniIOMobileFramebuffer.cpp	which pixels of the panel each frame changed (it costs: the panel's memory is slow to read)
 FB_FILTER	arg	fb_filter	GPU and display	k	MiniIOMobileFramebuffer.cpp	the picture is scaled to the panel nearest neighbour, as it once was
-FB_HZ	arg	fb_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	
+FB_HZ	arg	fb_hz	GPU and display	ku	MiniIOMobileFramebuffer.cpp,inject.c	the display driver's refresh rate (1 to 240 Hz; default 60)
 FB_MEASURE	arg	fb_measure	GPU and display	k	MiniIOMobileFramebuffer.cpp	how often the panel is really refreshed
 FB_PRI	arg	fb_pri	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_QUEUE	arg	fb_queue	GPU and display	k	MiniIOMobileFramebuffer.cpp	

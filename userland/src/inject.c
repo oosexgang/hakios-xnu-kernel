@@ -1077,6 +1077,62 @@ opengl_es(void)
 	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
 }
 
+/*
+ * QuartzCore reads CA_HEARTBEAT_RATE before querying the display. Without it, applications can
+ * still be told 60 Hz when fb_hz asks the driver for more (#40). Follow the driver's effective
+ * advertised rate, including fb_ca_hz's explicit override; caenv below can override this default.
+ * Boot-arg fb_hz=N: the display driver's refresh rate (1 to 240 Hz; default 60).
+ * Boot-arg fb_ca_hz=N: override the rate advertised to CoreAnimation (1 to 480 Hz; default fb_hz).
+ */
+static void
+window_server_refresh(const char *arguments)
+{
+	unsigned refresh = 60, advertised = 0;
+	const char *argument = arguments;
+
+	while (*(argument += strspn(argument, " \t")) != 0) {
+		size_t length = strcspn(argument, " \t");
+		const char *value;
+		unsigned *setting, maximum, fallback;
+		char *end;
+		long rate;
+
+		if (strstr(argument, "fb_hz=") == argument) {
+			value = argument + 6;
+			setting = &refresh; maximum = 240; fallback = 60;
+		} else if (strstr(argument, "fb_ca_hz=") == argument) {
+			value = argument + 9;
+			setting = &advertised; maximum = 480; fallback = 0;
+		} else {
+			argument += length;
+			continue;
+		}
+		*setting = fallback;
+		if (*value >= '0' && *value <= '9') {
+			/* Boot arguments also accept hexadecimal, octal and 0b-prefixed binary numbers. */
+			int binary = value[0] == '0' && value[1] == 'b';
+			const char *digits = value + (binary ? 2 : 0);
+
+			if (*digits >= '0' && *digits <= '9') {
+				rate = strtol(digits, &end, binary ? 2 : 0);
+				if (end != digits && end == argument + length && rate >= 1 && rate <= maximum) {
+					*setting = (unsigned)rate;
+				}
+			}
+		}
+		argument += length;                       /* a later occurrence replaces an earlier one */
+	}
+	unsigned rate = advertised != 0 ? advertised : refresh;
+	if (rate > 60) {
+		char hz[16];
+
+		snprintf(hz, sizeof(hz), "%u", rate);
+		if (setenv("CA_HEARTBEAT_RATE", hz, 1) == 0) {
+			say("hakios: display boot-args: CA_HEARTBEAT_RATE=%s for the window server\n", hz);
+		}
+	}
+}
+
 __attribute__((constructor))
 static void
 hakios_init(void)
@@ -1100,9 +1156,12 @@ hakios_init(void)
 		 * (CADeviceUseVBL()); on the iPhone X it runs a timer of its own instead (CADisplayTimer),
 		 * whose phase it would set from the frame timings of a display driver this one is not.
 		 */
-		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "ca_vbl=1") != NULL) {
-			setenv("CA_FORCE_TIMER", "1", 1);
-			say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
+		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
+			if (strstr(arguments, "ca_vbl=1") != NULL) {
+				setenv("CA_FORCE_TIMER", "1", 1);
+				say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
+			}
+			window_server_refresh(arguments);
 		}
 		/*
 		 * Boot-arg caenv=NAME=VALUE (as many as wanted): into the window server's environment, for

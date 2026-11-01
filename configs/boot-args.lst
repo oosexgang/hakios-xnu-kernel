@@ -88,10 +88,10 @@ ddr_vote	k
 display_probe	k
 epoch	k
 fb_beat	k
-fb_ca_hz	k
+fb_ca_hz	ku
 fb_diff	k
 fb_filter	k
-fb_hz	k
+fb_hz	ku
 fb_measure	k
 fb_pri	k
 fb_queue	k
