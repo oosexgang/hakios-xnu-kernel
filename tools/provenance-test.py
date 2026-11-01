@@ -4,7 +4,8 @@
 Every kind of violation has a case that must fail and the same case, explained in tools/provenance.allow,
 that must pass; a clean tree passes; a `vendor` line is a tripwire that stays quiet while the files are
 gone and fails when one comes back; a stale line is reported; a comment that only mentions a flash
-command is not a flash command.
+command is not a flash command. Python docstrings are documentation, while executable command strings
+and code following a same-line docstring remain checked.
 """
 import os
 import shutil
@@ -68,6 +69,32 @@ flash_sh = {"tools/flash-it.sh": "#!/bin/sh\nfastboot flash boot x.img\n"}
 check("a script that flashes fails", {**SRC, **flash_sh}, "", False, ["writes to the phone"])
 check("a script that flashes, declared, passes with a warning", {**SRC, **flash_sh}, "flash tools/flash-it.sh a one-time job\n", True, ["declared exception"])
 check("a flash command in a comment is not a flash command", {**SRC, "tools/note.sh": "# never run: fastboot flash boot x.img\necho hi\n"}, "", True)
+check("a Python module docstring is documentation", {**SRC, "tools/note.py":
+      '#!/usr/bin/env python3\n"""Usage:\nfastboot flash darwin out.simg\n"""\nprint("local image only")\n'}, "", True)
+check("Python class and function docstrings are documentation", {**SRC, "tools/note.py":
+      'class Note:\n    """fastboot erase userdata"""\n    def example(self):\n        """fastboot flash boot image.img"""\n        return 1\n'}, "", True)
+check("a command after a same-line docstring is still caught", {**SRC, "tools/write.py":
+      '"""Description"""; import os; os.system("fastboot flash boot x.img")\n'}, "", False, ["tools/write.py:1"])
+check("UTF-8 docstring columns leave following code visible", {**SRC, "tools/write.py":
+      '"""' + '说明' * 20 + '"""; import os; os.system("fastboot erase userdata")\n'}, "", False, ["tools/write.py:1"])
+check("async function docstrings are documentation", {**SRC, "tools/note.py":
+      'async def example():\n    """fastboot flash boot image.img"""\n    return 1\n'}, "", True)
+check("a first bytes literal is not a docstring", {**SRC, "tools/write.py":
+      'b"fastboot flash boot x.img"\n'}, "", False, ["writes to the phone"])
+check("line numbers after a multiline docstring are preserved", {**SRC, "tools/write.py":
+      '"""Description\nfastboot flash darwin example.simg\n"""\nimport os\nos.system("fastboot flash boot x.img")\n'}, "", False, ["tools/write.py:5"])
+check("assigned Python command strings are still caught", {**SRC, "tools/write.py":
+      'command = "fastboot flash boot x.img"\n'}, "", False, ["writes to the phone"])
+check("commands in Python calls are still caught", {**SRC, "tools/write.py":
+      'import os\nos.system("""fastboot flash boot x.img""")\n'}, "", False, ["writes to the phone"])
+check("a first f-string is not a docstring", {**SRC, "tools/write.py":
+      'f"fastboot flash boot x.img"\n'}, "", False, ["writes to the phone"])
+check("invalid Python falls back to scanning the original text", {**SRC, "tools/write.py":
+      '"""unfinished documentation\nfastboot flash boot x.img\n'}, "", False, ["tools/write.py:2"])
+for utility in ("mkdatavol.py", "sparse-split.py"):
+    with open(os.path.join(HERE, utility), encoding="utf-8") as source:
+        check("the real %s documents flashing without doing it" % utility,
+              {**SRC, "tools/" + utility: source.read()}, "", True)
 check("erase and oem unlock are caught too", {**SRC, "tools/a.sh": "fastboot erase userdata\n", "tools/b.sh": "fastboot oem unlock\n"}, "", False, ["tools/a.sh", "tools/b.sh"])
 
 loader = {"xnuloader/loader.c": "void f(void) { bio->write_blocks(bio, 0, 0, 1, b); }\n"}
