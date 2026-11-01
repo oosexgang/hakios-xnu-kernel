@@ -1310,6 +1310,10 @@ TEST(argument_buffer_members_are_bound_from_the_words_in_their_set) {
 // compiled for 0.25, 0.5, 0.75, 1 it reads no constant at all and writes those four, while the same function compiled
 // without the bytes reads them from c0. Bytes too short for the read leave the read in place.
 TEST(a_stage_compiled_for_its_constant_buffer_reads_none_of_it) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the constant buffer's known reads did not run)\n");
+        return;
+    }
     std::vector<uint8_t> bc = bitcodeOf("tri_cflat_fs");
     CHECK(!bc.empty());
     if (bc.empty()) return;
