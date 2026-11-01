@@ -56,14 +56,16 @@ std::vector<uint8_t> bitcodeOf(const char* name) {
 }
 
 // every field of a Kernel A compiled here against its fixture B, the words included (NAME for the messages)
-void compareKernelFields(const char* name, const Kernel& a, const Kernel& b) {
+void compareKernelFields(const char* name, const Kernel& a, const Kernel& b, bool fragment = false) {
     CHECK_EQ(a.numWords, b.numWords);
     CHECK(memcmp(a.words, b.words, 4 * std::min(a.numWords, b.numWords)) == 0);
     CHECK_EQ(a.instrlen, b.instrlen);
     CHECK_EQ(a.constlen, b.constlen);
     CHECK_EQ(a.maxReg, b.maxReg);
     CHECK_EQ(a.maxHalfReg, b.maxHalfReg);
-    CHECK_EQ(a.doubleThreadsize, b.doubleThreadsize);
+    // (ir3_compiler builds its variant with the options zeroed, IR3_SINGLE_ONLY; a fragment stage here may take waves of
+    // 128, and these few registers fit twice)
+    CHECK_EQ(a.doubleThreadsize, fragment ? true : b.doubleThreadsize);
     CHECK_EQ(a.mergedRegs, b.mergedRegs);
     CHECK_EQ(a.earlyPreamble, b.earlyPreamble);
     CHECK_EQ(a.branchstackHw, b.branchstackHw);
@@ -437,7 +439,7 @@ std::shared_ptr<CompiledStage> compareStageWithFixture(const char* name, const S
         return nullptr;
     }
     const Stage& a = s->stage;
-    compareKernelFields(name, a.k, b.k);
+    compareKernelFields(name, a.k, b.k, b.kind == kStageFragment);
     CHECK_EQ(a.kind, b.kind);
     CHECK_EQ(a.numInputs, b.numInputs);
     for (uint32_t i = 0; i < kMaxStageInputs; i++) {
@@ -1304,6 +1306,37 @@ TEST(argument_buffer_members_are_bound_from_the_words_in_their_set) {
 
 // compileStage's second compilation without ir3's preamble is taken only when it spills less, or as little with fewer
 // registers: CoreAnimation's uber shader's numbers, and the ties and losses that keep the first
+// A stage compiled for what its constant buffer holds (KnownBuffer): tri_cflat_fs returns the float4 at [[buffer(0)]];
+// compiled for 0.25, 0.5, 0.75, 1 it reads no constant at all and writes those four, while the same function compiled
+// without the bytes reads them from c0. Bytes too short for the read leave the read in place.
+TEST(a_stage_compiled_for_its_constant_buffer_reads_none_of_it) {
+    std::vector<uint8_t> bc = bitcodeOf("tri_cflat_fs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    const float c[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+    KnownBuffer known;
+    known.binding = 0;
+    known.bytes.assign(reinterpret_cast<const uint8_t*>(c), reinterpret_cast<const uint8_t*>(c) + 16);
+    std::string why;
+    auto generic = compileStage(bc.data(), bc.size(), &why);
+    auto folded = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(generic != nullptr && folded != nullptr);
+    if (generic == nullptr || folded == nullptr) return;
+    CHECK(generic->listing.find("c0.x") != std::string::npos);
+    CHECK(folded->listing.find("c0.") == std::string::npos);
+    CHECK_EQ(folded->stage.k.constlen, 0u);
+    CHECK(folded->listing.find("0x3e800000") != std::string::npos || folded->listing.find("0.250000") != std::string::npos);
+    // (the twin: twelve bytes do not hold the float4, so it is read as before)
+    known.bytes.resize(12);
+    auto partial = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(partial != nullptr && partial->listing.find("c0.x") != std::string::npos);
+    // (another binding's bytes are not this buffer's)
+    known.bytes.assign(reinterpret_cast<const uint8_t*>(c), reinterpret_cast<const uint8_t*>(c) + 16);
+    known.binding = 1;
+    auto other = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(other != nullptr && other->listing.find("c0.x") != std::string::npos);
+}
+
 TEST(a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less) {
     Kernel with{}, without{};
     with.pvtmemSize = 512, with.maxReg = 47;

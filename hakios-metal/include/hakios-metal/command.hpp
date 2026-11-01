@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <algorithm>
 #include <unordered_map>
 #include <vector>
 
@@ -99,6 +100,12 @@ public:
     // of DST's level DL by the 2D engine, a pass of its own (render::encodeBlit says what it takes)
     bool blit(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
               const render::Options& options = render::Options{});
+    // the compressed textures among B's sampled ones made current (Texture::staging); a draw and a dispatch do it first
+    bool freshen(const Bindings& b, const render::Options& options = {});
+private:
+    bool blitInto(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
+                  const render::Options& options);
+public:
     // -generateMipmapsForTexture:: every level past 0 made from the one above it, halved with linear filtering, in order
     bool generateMipmaps(const Texture& texture, const render::Options& options = render::Options{});
     // a blit the caller could not record (a buffer not in the GPU's memory, say): the buffer ends in the error state
@@ -126,14 +133,14 @@ public:
     // What the buffer holds, counted as it is recorded: passes opened (each a pass start, its flushes and the wait for
     // idle at its tail, which is a fixed cost whatever is drawn), the draws in them, and dispatches, copies and clears
     // (each a pass of its own). What a frame's GPU time goes to is read off these beside the time (metal_fps).
-    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0, gmemPasses = 0, tiles = 0; };   // (gmemPasses of the passes drawn in tiles)
+    struct Counts { uint32_t passes = 0, draws = 0, dispatches = 0, copies = 0, clears = 0, gmemPasses = 0, tiles = 0, binnedPasses = 0; };   // (gmemPasses of the passes drawn in tiles, binnedPasses of those binned)
     const Counts& counts() const { return counts_; }
     // With profiling on, the command processor writes its always-on counter (CP_ALWAYS_ON_COUNTER, 19.2 MHz) at the start
     // of each pass and after its tail -- whose wait for idle makes the end the end -- for the first kMaxProfiled passes:
     // what each costs, beside what it was (a draw pass with its target's size and its draws, a copy, a clear, a
     // dispatch). Read once the buffer has completed. metal_fps names a frame's slowest passes with it.
     enum PassKind : uint32_t { kPassDraw = 0, kPassCopy = 1, kPassClear = 2, kPassDispatch = 3 };
-    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; uint64_t tuneKey = 0; };   // tiles 0: in sysmem; tuneKey: CommandQueue::preferGmem's
+    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; uint64_t tuneKey = 0; uint8_t attached = 0, touched = 0; };   // ATTACHED / TOUCHED: the colour attachments set, and those its draws wrote or read (a GMEM pass's)   // tiles 0: in sysmem; tuneKey: CommandQueue::preferGmem's
     static constexpr uint32_t kMaxProfiled = 64;
     void setProfile(bool on) { profile_ = on; }
     // ...and each draw of a sysmem pass on its own, the first kMaxProfiledDraws: a wait for idle before it and after it,
@@ -159,6 +166,9 @@ public:
     void setGmemMinDraws(uint32_t draws) { gmemMinDraws_ = draws; }
     // render::Options::gmemBinning for this buffer's draws besides each draw's own (either asks for it)
     void setGmemBinning(bool on) { gmemBinning_ = on; }
+    // every fragment texture the null texture (1x1, always in the texture cache): wrong pictures, but a draw's time then
+    // says what its shader costs without its texture reads -- a measurement switch, as setGmemOff is a bisect's
+    void setNullFsTextures(bool on) { nullFsTextures_ = on; }
     // why the last pass that could not be drawn in GMEM was not (gmemPlan's or gmemDrawOk's reason), empty when none was refused
     const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
@@ -168,6 +178,9 @@ public:
 private:
     friend class CommandQueue;
     explicit CommandBuffer(CommandQueue& queue) : queue_(queue) {}
+public:
+    ~CommandBuffer();   // (its stamp buffers back to the queue: read until the last reader lets go, which is now)
+private:
     bool fail(const std::string& why);
     bool skipRefused_ = false;
     Counts counts_;
@@ -181,6 +194,7 @@ private:
     uint32_t gmemOff_ = 0;
     uint32_t gmemMinDraws_ = 0;
     bool gmemBinning_ = false;
+    bool nullFsTextures_ = false;
     uint32_t gmemClears_ = 0, gmemClearWords_[kMaxColorOutputs][4] = {};   // (draw's, for the pass it opens)
     std::string gmemWhy_;
     std::unordered_map<uint64_t, uint32_t> ordinals_;   // passes opened so far into each kind of target
@@ -198,19 +212,64 @@ private:
     // the end of it, however it ends: the status, the handlers (which see that status), and only then the waiters
     void finish(Status s);
     void use(const Buffer& b, bool write) { uses_.push_back(BoUse{&b.bo(), write}); }
+public:
+    // What each register written in a pass holds, for appendDeduped: a draw writes some 500 of them and almost all
+    // hold their value already, so each is looked up once, in an open-addressed table of its own (std::unordered_map's
+    // find and insert, two lookups and a node a register, were most of a draw's 20 us of deduplication on the phone)
+    class RegShadow {
+    public:
+        // whether REG held VALUE; it holds VALUE from now on
+        bool hold(uint32_t reg, uint32_t value) {
+            if (keys_.empty() || 2 * (used_ + 1) > keys_.size()) grow();
+            const size_t mask = keys_.size() - 1;
+            for (size_t i = (reg * 2654435761u) & mask;; i = (i + 1) & mask) {
+                if (keys_[i] == reg) {
+                    const bool same = values_[i] == value;
+                    values_[i] = value;
+                    return same;
+                }
+                if (keys_[i] == kEmpty) {
+                    keys_[i] = reg;
+                    values_[i] = value;
+                    used_++;
+                    return false;
+                }
+            }
+        }
+        void clear() {
+            std::fill(keys_.begin(), keys_.end(), kEmpty);
+            used_ = 0;
+        }
+    private:
+        static constexpr uint32_t kEmpty = ~0u;
+        void grow() {
+            std::vector<uint32_t> keys = std::move(keys_), values = std::move(values_);
+            keys_.assign(std::max<size_t>(1024, keys.size() * 2), kEmpty);
+            values_.assign(keys_.size(), 0);
+            used_ = 0;
+            for (size_t i = 0; i < keys.size(); i++) {
+                if (keys[i] != kEmpty) hold(keys[i], values[i]);
+            }
+        }
+        std::vector<uint32_t> keys_, values_;
+        size_t used_ = 0;
+    };
+
+private:
     // the pass draws are joining (render.cpp: draw), closed by its tail before anything else is recorded or it is submitted
     struct OpenPass {
         RenderPass pass;
         render::Options options;
         uint64_t table;   // the GPU address of the pass's table: a piece (below), kept by the command buffer
-        std::unordered_map<uint32_t, uint32_t> regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
+        RegShadow regs;   // what each register written in the pass holds (render.cpp: appendDeduped)
+        std::vector<uint8_t> staticKey;   // what decided the last draw's program-and-pass state (render.cpp: draw)
         // A pass drawn in GMEM (gmemPlan and every draw gmemDrawOk) is recorded rather than streamed: its draws gather
         // in BODIES, deduplicated among themselves from nothing (BODY_REGS) since each tile replays them after the
         // tile's own register writes, and closePass puts them in the tiles.
         bool gmem = false;
         render::GmemPlan plan;
         pm4::Stream bodies;
-        std::unordered_map<uint32_t, uint32_t> bodyRegs;
+        RegShadow bodyRegs;
         // what the draws touch: the render area (X0 Y0 X1 Y1, the union of render::drawArea's) and the attachments they
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
@@ -241,16 +300,19 @@ private:
     bool piece(uint64_t bytes, Piece* out, std::string* why);
     std::shared_ptr<Buffer> slab_;
     uint64_t slabUsed_ = 0;
+    std::vector<std::shared_ptr<Buffer>> slabs_;   // every slab this buffer took, given back to the queue when it is done
     // A program's words where they are already in this command buffer, so that every draw with the program does not
-    // upload them again. Found by the caller's pointer, but taken only when the words are still the same: the pointer is
-    // the caller's to free and reuse, and the copy compared is a CPU one (reading the piece back is uncached memory).
+    // upload them again. Found by the caller's pointer, but taken only when the words still look the same: the pointer
+    // is the caller's to free and reuse. They are compared at every 64th word and the last, not all: the whole compare,
+    // once a draw, was 7-10 us of a draw's 50 on the phone, and CoreAnimation's uber shader is 31 000 words. (The copy
+    // compared is a CPU one: reading the piece back is uncached memory.)
     struct Uploaded {
         std::vector<uint32_t> words;
         uint64_t gpuAddress;
     };
     // the GPU address of K's words in this buffer, uploading them when they are not there; 0 with *WHY when out of memory
     uint64_t programAddress(const Kernel& k, std::string* why);
-    std::vector<std::pair<const uint32_t*, Uploaded>> uploaded_;
+    std::unordered_multimap<const uint32_t*, Uploaded> uploaded_;
 
     CommandQueue& queue_;
     std::atomic<Status> status_{kNotEnqueued};
@@ -299,12 +361,33 @@ public:
     // the visibility streams' memory binned GMEM passes share (render::vscBytes): one is enough, the GPU running one
     // submission at a time and each pass's binning before its tiles; nullptr with *why
     std::shared_ptr<Buffer> vscBuffer(std::string* why);
+    // K's words in a buffer of their own, made the first time a command buffer of this queue draws with them and kept
+    // for the next: copying them into each command buffer was most of a draw's first cost (CoreAnimation's uber shader is
+    // 124 KB, into write-combined memory). Found by the words' pointer and taken only when every word is the same -- a
+    // freed program's pointer may come back with other words, and then its entry goes. nullptr with *why.
+    std::shared_ptr<Buffer> programBuffer(const Kernel& k, std::string* why);
+    // A slab for draw tables (CommandBuffer::piece): one a completed command buffer gave back, zeroed as a new one comes,
+    // or a new one. The kernel's making of a 256 KB buffer, once every 32 draws, was most of a draw's CPU time on the
+    // phone (40 us a draw on a fast core, where the same encoding on the host takes 5).
+    std::shared_ptr<Buffer> takeSlab(uint64_t bytes, std::string* why);
+    void giveSlabs(std::vector<std::shared_ptr<Buffer>>* slabs);
+    // ...and any other buffer a command buffer makes for itself (a large piece, its counter stamps): BYTES rounded up to
+    // a power of two from 4 KB, zeroed; given back the same way, 32 MB of them kept at most
+    std::shared_ptr<Buffer> takeBuffer(uint64_t bytes, std::string* why);
+    void giveBuffer(std::shared_ptr<Buffer> b);
+    // whether GMEM passes may still be binned: no pass's visibility streams have overrun their pitch (render::kVscOverflowAt,
+    // read by checkVsc once a buffer with a binned pass has completed)
+    bool binningOk() const { return !vscOverflowed_.load(); }
+    void checkVsc();
     bool preferGmem(uint64_t key);
     void tuned(uint64_t key, bool gmem, double us);
     // What tells passes into one kind of target apart: the draws the pass at that place in a command buffer (the Nth into
     // this kind of target) had the last time, which preferGmem's key takes in as a class (a frame of CoreAnimation is
     // the same passes in the same order as the one before it, light or heavy). 0 when not seen yet.
     uint32_t lastDraws(uint64_t kind, uint32_t ordinal);
+    // ...and the most it had in the times since its peak, the peak let go after 16 times below it: a pass that is heavy
+    // only now and then (CoreAnimation's: light frames between the heavy ones of an animation) counts as heavy
+    uint32_t peakDraws(uint64_t kind, uint32_t ordinal);
     void noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws);
 
 
@@ -318,6 +401,15 @@ private:
     Gpu& gpu_;
     std::shared_ptr<Texture> null_;   // (under lock_) nullTexture's
     std::shared_ptr<Buffer> vsc_;     // (under lock_) vscBuffer's
+    // (under poolLock_, a lock of its own: a command buffer gives its stamps back as it is destroyed, which can be under
+    // lock_ -- the queue letting go of the last one in flight -- and lock_ there was the window server hung at boot)
+    std::mutex poolLock_;
+    std::unordered_map<uint64_t, std::vector<std::shared_ptr<Buffer>>> freeBuffers_;   // by size: giveSlabs', giveBuffer's
+    uint64_t freeBytes_ = 0;
+    struct Resident { std::vector<uint32_t> words; std::shared_ptr<Buffer> buffer; };
+    std::unordered_multimap<const uint32_t*, Resident> resident_;   // (under lock_) programBuffer's
+    uint64_t residentBytes_ = 0;
+    std::atomic<bool> vscOverflowed_{false};
     std::vector<std::shared_ptr<Buffer>> private_[2];   // (under lock_) privateMemory's, by layout, the last the current one
     uint32_t privatePerFiber_[2] = {0, 0};
     uint32_t id_;
@@ -325,6 +417,8 @@ private:
     struct Tune { double us[2] = {0, 0}; uint32_t runs[2] = {0, 0}; uint32_t passes = 0; };
     std::unordered_map<uint64_t, Tune> tune_;   // (under lock_) preferGmem's, by target
     std::unordered_map<uint64_t, uint32_t> lastDraws_;   // (under lock_) noteDraws', by kind and ordinal
+    struct Peak { uint32_t draws = 0, below = 0; };
+    std::unordered_map<uint64_t, Peak> peakDraws_;        // (under lock_) noteDraws' too: peakDraws'
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
     std::vector<std::unique_ptr<Bo>> idle_;

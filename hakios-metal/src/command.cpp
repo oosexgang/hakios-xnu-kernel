@@ -2,6 +2,7 @@
 #include "hakios-metal/texture.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <map>
 #include <mutex>
@@ -52,7 +53,12 @@ std::shared_ptr<Buffer> bufferAt(uint64_t address, uint64_t* offset) {
     return b;
 }
 
+std::atomic<uint32_t> gBuffersMade{0}, gBuffersReused{0};
+std::atomic<uint64_t> gBytesMade{0};
+
 std::shared_ptr<Buffer> newBuffer(Gpu& gpu, uint64_t length, std::string* why) {
+    gBuffersMade++;
+    gBytesMade += length;
     int error = 0;
     std::unique_ptr<Bo> bo = gpu.newBo(length, kBoWriteCombined, &error);
     if (bo == nullptr) {
@@ -79,12 +85,14 @@ bool CommandBuffer::piece(uint64_t bytes, Piece* out, std::string* why) {
     }
     if (bytes > kSlabBytes / 4) {
         // (a piece this large in a slab would leave most of the slab unused when the next one did not fit)
-        out->buffer = newBuffer(queue_.gpu(), bytes, why);
+        out->buffer = queue_.takeBuffer(bytes, why);
         out->offset = 0;
+        if (out->buffer != nullptr) slabs_.push_back(out->buffer);
     } else {
         if (slab_ == nullptr || kSlabBytes - slabUsed_ < bytes) {
-            slab_ = newBuffer(queue_.gpu(), kSlabBytes, why);
+            slab_ = queue_.takeSlab(kSlabBytes, why);
             slabUsed_ = 0;
+            if (slab_ != nullptr) slabs_.push_back(slab_);
         }
         out->buffer = slab_;
         out->offset = slabUsed_;
@@ -104,18 +112,88 @@ bool CommandBuffer::piece(uint64_t bytes, Piece* out, std::string* why) {
 
 uint64_t CommandBuffer::programAddress(const Kernel& k, std::string* why) {
     const uint32_t n = std::max<uint32_t>(k.numWords, 1);
-    for (auto& [ptr, u] : uploaded_) {
-        if (ptr == k.words && u.words.size() == k.numWords && std::memcmp(u.words.data(), k.words, 4ull * k.numWords) == 0) {
-            return u.gpuAddress;
+    auto same = [&](const Uploaded& u) {
+        if (u.words.size() != k.numWords) return false;
+        for (uint32_t i = 0; i < k.numWords; i += 64) {
+            if (u.words[i] != k.words[i]) return false;
+        }
+        return k.numWords == 0 || u.words.back() == k.words[k.numWords - 1];
+    };
+    const auto [first, last] = uploaded_.equal_range(k.words);
+    for (auto it = first; it != last; ++it) {
+        if (same(it->second)) return it->second.gpuAddress;
+    }
+    (void)n;
+    std::shared_ptr<Buffer> b = queue_.programBuffer(k, why);
+    if (b == nullptr) return 0;
+    use(*b, false);
+    keep(b);
+    uploaded_.emplace(k.words, Uploaded{std::vector<uint32_t>(k.words, k.words + k.numWords), b->gpuAddress()});
+    return b->gpuAddress();
+}
+
+namespace {
+uint64_t sizeClass(uint64_t bytes) {
+    uint64_t c = 4096;
+    while (c < bytes) c <<= 1;
+    return c;
+}
+}  // namespace
+
+std::shared_ptr<Buffer> CommandQueue::takeBuffer(uint64_t bytes, std::string* why) {
+    const uint64_t size = sizeClass(bytes);
+    std::shared_ptr<Buffer> b;
+    {
+        std::lock_guard<std::mutex> g(poolLock_);
+        auto it = freeBuffers_.find(size);
+        if (it != freeBuffers_.end() && !it->second.empty()) {
+            b = std::move(it->second.back());
+            it->second.pop_back();
+            freeBytes_ -= size;
         }
     }
-    Piece p;
-    if (!piece(4ull * n, &p, why)) {
-        return 0;
+    if (b == nullptr) return newBuffer(gpu_, size, why);
+    gBuffersReused++;
+    memset(b->contents(), 0, size);   // (as a new one comes from the kernel)
+    return b;
+}
+
+void CommandQueue::giveBuffer(std::shared_ptr<Buffer> b) {
+    // (only one no one else holds, of a size takeBuffer makes: a piece's buffer kept elsewhere is still someone's)
+    if (b == nullptr || b.use_count() != 1 || b->contents() == nullptr || b->length() != sizeClass(b->length())) return;
+    std::lock_guard<std::mutex> g(poolLock_);
+    if (freeBytes_ + b->length() > (32ull << 20)) return;
+    freeBytes_ += b->length();
+    freeBuffers_[b->length()].push_back(std::move(b));
+}
+
+std::shared_ptr<Buffer> CommandQueue::takeSlab(uint64_t bytes, std::string* why) { return takeBuffer(bytes, why); }
+
+void CommandQueue::giveSlabs(std::vector<std::shared_ptr<Buffer>>* slabs) {
+    for (auto& b : *slabs) giveBuffer(std::move(b));
+    slabs->clear();
+}
+
+std::shared_ptr<Buffer> CommandQueue::programBuffer(const Kernel& k, std::string* why) {
+    std::lock_guard<std::mutex> g(lock_);
+    const auto [first, last] = resident_.equal_range(k.words);
+    for (auto it = first; it != last;) {
+        const Resident& r = it->second;
+        if (r.words.size() == k.numWords && std::memcmp(r.words.data(), k.words, 4ull * k.numWords) == 0) return r.buffer;
+        residentBytes_ -= 4ull * r.words.size();
+        it = resident_.erase(it);   // (the pointer's words have changed: a freed program's)
     }
-    memcpy(p.contents(), k.words, 4ull * k.numWords);
-    uploaded_.emplace_back(k.words, Uploaded{std::vector<uint32_t>(k.words, k.words + k.numWords), p.gpuAddress()});
-    return p.gpuAddress();
+    // (past 64 MB of programs, the ones kept are let go: a command buffer in flight keeps its own)
+    if (residentBytes_ > (64ull << 20)) {
+        resident_.clear();
+        residentBytes_ = 0;
+    }
+    std::shared_ptr<Buffer> b = newBuffer(gpu_, 4ull * std::max<uint32_t>(k.numWords, 1), why);
+    if (b == nullptr || b->contents() == nullptr) return nullptr;
+    memcpy(b->contents(), k.words, 4ull * k.numWords);
+    resident_.emplace(k.words, Resident{std::vector<uint32_t>(k.words, k.words + k.numWords), b});
+    residentBytes_ += 4ull * k.numWords;
+    return b;
 }
 
 namespace {
@@ -166,7 +244,7 @@ bool CommandBuffer::fail(const std::string& why) {
 void CommandBuffer::stamp(uint32_t slot) {
     if (profileStamps_ == nullptr) {
         std::string why;
-        profileStamps_ = newBuffer(queue_.gpu(), 16 * kMaxProfiled, &why);
+        profileStamps_ = queue_.takeBuffer(16 * kMaxProfiled, &why);
         if (profileStamps_ == nullptr) {
             profile_ = tuning_ = false;
             return;
@@ -185,6 +263,13 @@ std::shared_ptr<Buffer> CommandQueue::vscBuffer(std::string* why) {
     std::lock_guard<std::mutex> g(lock_);
     if (vsc_ == nullptr) vsc_ = newBuffer(gpu_, render::vscBytes(), why);
     return vsc_;
+}
+
+void CommandQueue::checkVsc() {
+    std::lock_guard<std::mutex> g(lock_);
+    if (vsc_ == nullptr || vsc_->contents() == nullptr) return;
+    const uint32_t word = *reinterpret_cast<const volatile uint32_t*>(static_cast<const uint8_t*>(vsc_->contents()) + 32ull * render::kVscDrawPitch + render::kVscOverflowAt);
+    if (word != 0) vscOverflowed_ = true;
 }
 
 bool CommandQueue::preferGmem(uint64_t key) {
@@ -215,6 +300,14 @@ uint32_t CommandQueue::lastDraws(uint64_t kind, uint32_t ordinal) {
 void CommandQueue::noteDraws(uint64_t kind, uint32_t ordinal, uint32_t draws) {
     std::lock_guard<std::mutex> g(lock_);
     lastDraws_[kindKey(kind, ordinal)] = draws;
+    Peak& p = peakDraws_[kindKey(kind, ordinal)];
+    if (draws >= p.draws || ++p.below >= 16) p.draws = draws, p.below = 0;
+}
+
+uint32_t CommandQueue::peakDraws(uint64_t kind, uint32_t ordinal) {
+    std::lock_guard<std::mutex> g(lock_);
+    auto it = peakDraws_.find(kindKey(kind, ordinal));
+    return it == peakDraws_.end() ? 0 : it->second.draws;
 }
 
 void CommandQueue::tuned(uint64_t key, bool gmem, double us) {
@@ -239,7 +332,7 @@ void CommandBuffer::stampEnd() {
 void CommandBuffer::drawStamp(uint32_t slot) {
     if (drawStamps_ == nullptr) {
         std::string why;
-        drawStamps_ = newBuffer(queue_.gpu(), 16 * kMaxProfiledDraws, &why);
+        drawStamps_ = queue_.takeBuffer(16 * kMaxProfiledDraws, &why);
         if (drawStamps_ == nullptr) {
             profileDraws_ = false;
             return;
@@ -308,8 +401,18 @@ void CommandBuffer::waitUntilCompleted() {
     done_.wait(g, [this] { return finished_ || status_ <= kEnqueued; });
 }
 
+CommandBuffer::~CommandBuffer() {
+    // (a buffer never completed may be destroyed with the GPU still on it -- an error -- and its stamps are then not
+    // given back; one that completed has had its readers)
+    if (finished_) {
+        queue_.giveBuffer(std::move(profileStamps_));
+        queue_.giveBuffer(std::move(drawStamps_));
+    }
+}
+
 void CommandBuffer::finish(Status s) {
     status_ = s;
+    if (s == kCompleted && counts_.binnedPasses != 0) queue_.checkVsc();
     if (s == kCompleted && tuning_) {
         for (const PassTime& t : passTimes()) {
             if (t.tuneKey != 0) queue_.tuned(t.tuneKey, t.tiles != 0, t.us);
@@ -320,6 +423,8 @@ void CommandBuffer::finish(Status s) {
     }
     handlers_.clear();
     kept_.clear();
+    slab_.reset();
+    queue_.giveSlabs(&slabs_);   // (done with: the GPU has finished with this buffer, or never had it)
     keptAny_.clear();
     {
         std::lock_guard<std::mutex> g(lock_);

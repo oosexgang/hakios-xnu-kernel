@@ -116,6 +116,7 @@ void loadDirect(pm4::Stream& st, const Stage& s, a6xx_state_type type, uint32_t 
 struct MrtWords {
     uint32_t bufInfo, pitch, arrayPitch, baseLo, baseHi, baseGmem, spFsMrtReg;
     bool srgb;
+    uint32_t flagLo = 0, flagHi = 0, flagPitch = 0;   // a compressed target's flag buffer (RB_MRT_FLAG_BUFFER), 0 for a linear one
 };
 
 // the format RB_MRT_BUF_INFO names (GRAS_LRZ_MRT_BUF_INFO_0 repeats attachment 0's)
@@ -130,7 +131,14 @@ MrtWords mrtWords(const Texture& t, uint32_t level, uint32_t slice = 0) {
     MrtWords m{};
     // (a layer, a face or a depth plane: the slices are one 2D layout each, sliceBytes apart -- fd6_layout.c's layer_size)
     const uint64_t base = t.levelAddress(level) + (slice != 0 ? uint64_t(slice) * t.sliceBytes() : 0);
-    m.bufInfo = rbMrtBufInfo(colorFmt(f), TILE6_LINEAR, f.swap);
+    m.bufInfo = rbMrtBufInfo(colorFmt(f), t.compressed() ? TILE6_3 : TILE6_LINEAR, f.swap);
+    if (t.compressed()) {
+        // its flag buffer, as tu6_emit_mrt / fd6 emit_mrt write it (fd6_view.c's FLAG_BUFFER_PITCH: the pitch, the layer
+        // size over 4); RB_RENDER_CNTL.FLAG_MRTS turns its use on
+        m.flagLo = uint32_t(t.flagAddress());
+        m.flagHi = uint32_t(t.flagAddress() >> 32);
+        m.flagPitch = A6XX_RB_MRT_FLAG_BUFFER_PITCH_PITCH(t.flagPitch()) | A6XX_RB_MRT_FLAG_BUFFER_PITCH_ARRAY_PITCH(t.flagLayerSize() >> 2);
+    }
     m.pitch = rbMrtPitch(uint32_t(L.pitch));
     m.arrayPitch = rbMrtArrayPitch(uint32_t(t.buffer()->length()));
     m.baseLo = uint32_t(base);
@@ -145,48 +153,48 @@ MrtWords mrtWords(const Texture& t, uint32_t level, uint32_t slice = 0) {
 // serve in either stage (render.hpp's list)
 bool checkStage(const Stage& s, std::string* why) {
     const Kernel& k = s.k;
-    const std::string name = stageName(s);
+    auto name = [&s]() { return std::string(stageName(s)); };   // (built only for a refusal: a string a draw is an allocation a draw)
     if (k.instrlen == 0 || uint64_t(k.numWords) * 4 < uint64_t(k.instrlen) * 128) {
-        return refuse(why, name + ": " + n(k.numWords) + " words do not hold its instrlen of " + n(k.instrlen) + " units");
+        return refuse(why, name() + ": " + n(k.numWords) + " words do not hold its instrlen of " + n(k.instrlen) + " units");
     }
     if (k.numSamp > 31) {
-        return refuse(why, name + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
+        return refuse(why, name() + ": numSamp " + n(k.numSamp) + " does not fit SP_xS_CONFIG.NSAMP's 5 bits (31 at most)");
     }
     // A `constant` buffer is a range ir3 pushes or an ldc through a UBO descriptor (uboDescriptors); a `device` one an
     // SSBO through the 3D pipeline's IBO table (gfxIbos), its slots the Metal buffer indices; images there are not served
     if (k.numIbos > k.numSsbos || k.numSsbos > kMaxVertexBuffers) {
-        return refuse(why, name + " has " + n(k.numIbos) + " IBO slots for " + n(k.numSsbos) + " device buffer(s): images in a draw are not served");
+        return refuse(why, name() + " has " + n(k.numIbos) + " IBO slots for " + n(k.numSsbos) + " device buffer(s): images in a draw are not served");
     }
     if (k.numUbos > kMaxVertexBuffers) {
-        return refuse(why, name + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has " + n(kMaxVertexBuffers));
+        return refuse(why, name() + " indexes " + n(k.numUbos) + " constant buffers: Metal's buffer table has " + n(kMaxVertexBuffers));
     }
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
         if (k.textures[i].kind == kTexImage) {
             // an image is an IBO of the 3D pipe, the same table a device buffer needs (above)
-            return refuse(why, name + " stores through texture " + n(i) + " as an image: images in a draw (the 3D IBO table) are not served");
+            return refuse(why, name() + " stores through texture " + n(i) + " as an image: images in a draw (the 3D IBO table) are not served");
         }
     }
     if (k.numTextureSlots > kMaxTextureSlots || (k.samplerMask >> kMaxTextureSlots) != 0) {
-        return refuse(why, name + " names texture or sampler indices past " + n(kMaxTextureSlots - 1) + ": the tables hold " + n(kMaxTextureSlots));
+        return refuse(why, name() + " names texture or sampler indices past " + n(kMaxTextureSlots - 1) + ": the tables hold " + n(kMaxTextureSlots));
     }
     for (uint32_t i = k.numTextureSlots; i < kMaxTextureSlots; i++) {
         if (k.textures[i].kind == kTexSampled) {
-            return refuse(why, name + " samples texture " + n(i) + " past its numTextureSlots of " + n(k.numTextureSlots) + ": the stage's tables disagree");
+            return refuse(why, name() + " samples texture " + n(i) + " past its numTextureSlots of " + n(k.numTextureSlots) + ": the stage's tables disagree");
         }
     }
     if (k.driverParamsOffsetVec4 >= 0 && s.kind != kStageVertex) {
         // an FS's driver params (subgroup size, the fragment density words) are not worked out here
-        return refuse(why, name + " reads driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + ": only a vertex stage's are served");
+        return refuse(why, name() + " reads driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + ": only a vertex stage's are served");
     }
     if (k.driverParamsOffsetVec4 >= 0 && uint32_t(k.driverParamsOffsetVec4) + 1 > k.constlen) {
-        return refuse(why, name + ": its driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + " run past its constlen of " + n(k.constlen));
+        return refuse(why, name() + ": its driver params at vec4 " + n(uint32_t(k.driverParamsOffsetVec4)) + " run past its constlen of " + n(k.constlen));
     }
     if (k.constantDataSize != 0 && (k.constantDataUbo == 0 || uint64_t(k.constantDataOffset) + k.constantDataSize > 4ull * k.numWords)) {
-        return refuse(why, name + " carries " + n(k.constantDataSize) + " bytes of constant data that no UBO of ir3's reads, or outside its words");
+        return refuse(why, name() + " carries " + n(k.constantDataSize) + " bytes of constant data that no UBO of ir3's reads, or outside its words");
     }
     uint32_t immUnits = (k.numImmediates + 3) / 4;
     if (immUnits != 0 && k.immediatesOffsetVec4 + immUnits > k.constlen) {
-        return refuse(why, name + ": " + n(immUnits) + " vec4 of constants at " + n(k.immediatesOffsetVec4) + " run past its constlen of " + n(k.constlen));
+        return refuse(why, name() + ": " + n(immUnits) + " vec4 of constants at " + n(k.immediatesOffsetVec4) + " run past its constlen of " + n(k.constlen));
     }
     return true;
 }
@@ -201,6 +209,14 @@ struct PushedRange {
     uint32_t offsetVec4, units;
     uint64_t from;
     std::vector<uint32_t> words;   // non-empty: load these direct instead of reading FROM
+    // FROM not a multiple of 16: copied by the command processor to the draw's table at COPY_AT first and loaded from
+    // there (placeCopies), or, past the table's room, read by this processor into WORDS. The buffers are write-combined
+    // for this processor, and its reads of them go to memory one by one: CoreAnimation binds its uniforms at multiples
+    // of 8, and copying them so took 50-160 us a draw on the phone, most of a draw's encoding
+    bool copy = false;
+    uint32_t copyAt = 0;
+    const Buffer* buffer = nullptr;
+    uint64_t bufferOffset = 0;
 };
 
 // The stage's pushed ranges against its own [[buffer(n)]] table, by compute's rules (compute.cpp: the range is ir3's,
@@ -208,14 +224,14 @@ struct PushedRange {
 // pages, not inside the length bound; it must land inside the stage's constlen). False with *why naming the stage.
 bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* out, std::string* why) {
     const Kernel& k = s.k;
-    const std::string name = stageName(s);
+    auto name = [&s]() { return std::string(stageName(s)); };   // (built only for a refusal: a string a draw is an allocation a draw)
     for (uint32_t i = 0; i < k.numUboRanges; i++) {
         const KernelUboRange& r = k.uboRanges[i];
         // the constant data's range (a module's constant table, kernel.hpp: constantDataUbo): its words direct, from
         // the program's own, past their end zeros (ir3 pushes whole vec4, the table need not fill the last)
         if (k.constantDataUbo != 0 && r.block == k.constantDataUbo - 1) {
             if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
-                return refuse(why, name + ": its constant data's range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
+                return refuse(why, name() + ": its constant data's range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
             }
             PushedRange p{r.offsetVec4, r.sizeDwords / 4, 0, std::vector<uint32_t>(r.sizeDwords, 0u)};
             for (uint32_t d = 0; d < r.sizeDwords; d++) {
@@ -226,30 +242,28 @@ bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* o
             continue;
         }
         if (r.block >= b.buffers.size() || b.buffers[r.block].buffer == nullptr) {
-            return refuse(why, name + ": no buffer bound at index " + n(r.block) + " (its constant buffer)");
+            return refuse(why, name() + ": no buffer bound at index " + n(r.block) + " (its constant buffer)");
         }
         const Binding& x = b.buffers[r.block];
         if (x.offset % 4 != 0 || x.offset > x.buffer->length()) {
-            return refuse(why, name + ": buffer " + n(r.block) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
+            return refuse(why, name() + ": buffer " + n(r.block) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
         }
         uint64_t bytes = x.buffer->length() - x.offset, mapped = x.buffer->bo().size() - x.offset;
         if (r.sizeDwords == 0 || r.sizeDwords % 4 != 0) {
-            return refuse(why, name + ": a constant range of " + n(r.sizeDwords) + " dwords, not a whole number of vec4");
+            return refuse(why, name() + ": a constant range of " + n(r.sizeDwords) + " dwords, not a whole number of vec4");
         }
         if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
-            return refuse(why, name + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) + "; " +
+            return refuse(why, name() + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) + "; " +
                                    n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset");
         }
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
-            return refuse(why, name + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
+            return refuse(why, name() + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
         }
         PushedRange p{r.offsetVec4, r.sizeDwords / 4, x.buffer->gpuAddress() + x.offset + 4ull * r.startDword, {}};
         if (p.from % 16 != 0) {
-            if (x.buffer->contents() == nullptr) {
-                return refuse(why, name + ": constant buffer " + n(r.block) + " is bound at an address the CP cannot load from (not a multiple of 16) and is mapped nowhere to copy from");
-            }
-            p.words.resize(r.sizeDwords);
-            memcpy(p.words.data(), static_cast<const uint8_t*>(x.buffer->contents()) + x.offset + 4ull * r.startDword, 4ull * r.sizeDwords);
+            p.copy = true;
+            p.buffer = x.buffer;
+            p.bufferOffset = x.offset + 4ull * r.startDword;
         }
         out->push_back(std::move(p));
     }
@@ -538,6 +552,30 @@ constexpr uint32_t kFsTexSampAt = kTableFsAt + kMaxTextureSlots * 64;  // kMaxTe
 constexpr uint32_t kVsTexConstAt = kFsTexSampAt + kMaxTextureSlots * 16;
 constexpr uint32_t kVsTexSampAt = kVsTexConstAt + kMaxTextureSlots * 64;
 static_assert(kVsTexConstAt % 64 == 0 && kVsTexSampAt + kMaxTextureSlots * 16 <= kTableFsAt + 4096, "the two stages' tables fit the FS's part of the pass's table");
+// ...and past them the copies of the constant ranges bound where the command processor cannot load from (PushedRange::copy)
+constexpr uint32_t kConstCopyAt = kVsTexSampAt + kMaxTextureSlots * 16;
+constexpr uint32_t kConstCopyEnd = kTableFsAt + 4096;
+static_assert(kConstCopyAt % 16 == 0 && kConstCopyAt < kConstCopyEnd, "room for the constant copies, 16-aligned");
+
+// Each range to be copied a place in the table's copy room, in order; one that does not fit is read here instead (its
+// buffer's pages are this processor's to read, slowly). False with *why when that buffer is mapped nowhere.
+bool placeCopies(std::vector<PushedRange>* ranges, uint32_t* at, const Stage& stage, std::string* why) {
+    for (PushedRange& r : *ranges) {
+        if (!r.copy) continue;
+        if (*at + r.units * 16 <= kConstCopyEnd) {
+            r.copyAt = *at;
+            *at += r.units * 16;
+            continue;
+        }
+        if (r.buffer->contents() == nullptr) {
+            return refuse(why, std::string(stageName(stage)) + ": a constant buffer is bound at an address the CP cannot load from (not a multiple of 16), the table has no room to copy it to, and it is mapped nowhere to copy from");
+        }
+        r.copy = false;
+        r.words.resize(r.units * 4);
+        memcpy(r.words.data(), static_cast<const uint8_t*>(r.buffer->contents()) + r.bufferOffset, 16ull * r.units);
+    }
+    return true;
+}
 
 struct StageTextures {
     uint32_t numTex = 0, numSamp = 0;
@@ -707,7 +745,7 @@ bool stageTextures(const Stage& fs, const Bindings& b, const RenderPass& pass, S
 // unbound one there gets a descriptor of size 0, which the ldc's bound check turns into zeros, rather than whatever
 // the block held.
 bool uboDescriptors(const Stage& s, const Bindings& b, uint64_t program, std::vector<uint32_t>* out, std::string* why) {
-    const std::string name = stageName(s);
+    auto name = [&s]() { return std::string(stageName(s)); };   // (built only for a refusal: a string a draw is an allocation a draw)
     out->clear();
     for (uint32_t u = 0; u < s.k.numUbos; u++) {
         if (s.k.constantDataUbo != 0 && u == s.k.constantDataUbo - 1) {
@@ -720,7 +758,7 @@ bool uboDescriptors(const Stage& s, const Bindings& b, uint64_t program, std::ve
         }
         if (u >= b.buffers.size() || b.buffers[u].buffer == nullptr) {
             if (u + 1 == s.k.numUbos) {
-                return refuse(why, name + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
+                return refuse(why, name() + ": no buffer bound at index " + n(u) + " (a constant buffer it indexes)");
             }
             out->push_back(0);
             out->push_back(0);
@@ -730,7 +768,7 @@ bool uboDescriptors(const Stage& s, const Bindings& b, uint64_t program, std::ve
         // a multiple of 4, Metal's rule for a constant buffer's offset on iOS: probe 9o2 measured the ldc reading from
         // the descriptor's address as given at offsets 4, 8 and 120, not rounded to a vec4
         if (x.offset % 4 != 0 || x.offset > x.buffer->length()) {
-            return refuse(why, name + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
+            return refuse(why, name() + ": buffer " + n(u) + ": offset " + n(x.offset) + " is not a multiple of 4 inside it");
         }
         const uint64_t vec4s = (x.buffer->length() - x.offset + 15) / 16;
         uint32_t d[2];
@@ -961,6 +999,9 @@ bool checkTarget(const RenderPass& pass, std::string* why) {
         const FormatInfo& f = t.info();
         // (attachment 0's sentences are the ones a single target always had; a later one's name its index)
         const std::string which = "colour attachment " + n(i), of = i == 0 ? std::string() : " of " + which, at = i == 0 ? std::string() : which + ": ";
+        if (t.compressed() && (i == 0 ? pass.load : pass.more[i - 1].load) == LoadAction::kClear) {
+            return refuse(why, at + "a Clear of a compressed texture: the 2D engine's fill writes linear rows (not served yet)");
+        }
         if ((t.usage() & kTextureUsageRenderTarget) == 0) {
             return refuse(why, "the " + n(t.width()) + " x " + n(t.height()) + " " + f.name + " texture" + of +
                                    " was made without render-target usage (MTLTextureUsageRenderTarget, 4); a draw needs it");
@@ -1233,6 +1274,10 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     std::vector<PushedRange> vsRanges, fsRanges;
     if (!pushedRanges(vs, vsBindings, &vsRanges, why) || !pushedRanges(fs, fsBindings, &fsRanges, why)) {
         return false;
+    }
+    {
+        uint32_t copyAt = kConstCopyAt;
+        if (!placeCopies(&vsRanges, &copyAt, vs, why) || !placeCopies(&fsRanges, &copyAt, fs, why)) return false;
     }
     if (vs.k.constlen + fs.k.constlen > kMaxConstPipeline) {
         // ir3_compiler.c:185-188 max_const_pipeline = 512 vec4 for gen 6; ir3_trim_constlen (tu_pipeline.cc:2207) trims
@@ -1608,7 +1653,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             const MrtWords& m = mrts[i];
             regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, i), {m.bufInfo, m.pitch, m.arrayPitch, m.baseLo, m.baseHi, m.baseGmem});
             reg(stream, regSpFsMrtReg(i), m.spFsMrtReg);
-            regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {0, 0, 0});
+            regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {m.flagLo, m.flagHi, m.flagPitch});
         }
         reg(stream, REG_A6XX_GRAS_LRZ_MRT_BUF_INFO_0, A6XX_GRAS_LRZ_MRT_BUF_INFO_0_COLOR_FORMAT(mrtFormatOf(mrts[0].bufInfo)));
         reg(stream, REG_A6XX_RB_DITHER_CNTL, 0);
@@ -1636,7 +1681,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // 7. RB_RENDER_CNTL: CCUSINGLECACHELINESIZE 2 in both pipelines (tu_cmd_buffer.cc:633-693; fd6_gmem.cc:531-552), 0 in
     // r3d_dst (tu_clear_blit.cc:1408) -- renderCntlZero for the bisect. A plain type-4: has_cp_reg_write is false here.
     if (o.renderCntl) {
-        reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem());
+        uint32_t flagMrts = 0;
+        for (uint32_t i = 0; i < numRt; i++) flagMrts |= mrts[i].flagPitch != 0 ? 1u << i : 0u;
+        reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem() | A6XX_RB_RENDER_CNTL_FLAG_MRTS(flagMrts));
     }
     // 8. LRZ off (tu_lrz.cc:936-944 via a zero state; r3d :1622-1623; fd6 build_lrz with no zsbuf, fd6_emit.cc:262-270)
     // and fd6's zeroed LRZ buffer registers (emit_lrz, fd6_gmem.cc:250-260): BASE (2), PITCH, FAST_CLEAR_BUFFER_BASE (2)
@@ -1700,7 +1747,14 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             loadDirect(stream, s, ST6_CONSTANTS, s.k.immediatesOffsetVec4, uint32_t(imm.size() / 4), imm.data(), uint32_t(imm.size()));
         }
         for (const PushedRange& r : ranges) {
-            if (!r.words.empty()) {
+            if (r.copy) {
+                // (the copy landed before the load reads it: CP_WAIT_MEM_WRITES, then the micro engine caught up, as
+                // turnip waits after its own CP_MEM_TO_MEM)
+                stream.memcpy(table + r.copyAt, r.from, r.units * 4);
+                stream.packet(pm4::kWaitMemWrites, nullptr, 0);
+                stream.waitForMe();
+                loadIndirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, table + r.copyAt);
+            } else if (!r.words.empty()) {
                 loadDirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.words.data(), uint32_t(r.words.size()));
             } else {
                 loadIndirect(stream, s, ST6_CONSTANTS, r.offsetVec4, r.units, r.from);
@@ -2121,6 +2175,7 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
             return refuse(why, which + ": GMEM takes single-sampled 4- and 8-byte float formats");
         }
         if (a.level >= t.levels()) return refuse(why, which + ": no such level");
+        if (t.compressed()) return refuse(why, which + ": compressed, which the tiles' loads and stores do not serve yet");
         const TextureLevel L = t.level(a.level);
         if (L.width != W || L.height != H) return refuse(why, which + ": not the window's size, " + n(W) + "x" + n(H));
         // The event blit moves whole 16 x 4 granules: past the right edge it reads and writes the row's padding, past
@@ -2303,6 +2358,10 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     while (divUp(plan.rows, tppY) * divUp(plan.cols, tppX) > kNumVscPipes) tppX++;
     const uint32_t pipesX = divUp(plan.cols, tppX);
     const uint64_t drawStrm = vsc, drawSizes = vsc + uint64_t(kNumVscPipes) * kVscDrawPitch, primStrm = drawSizes + kVscSizesBytes;
+    auto crumb = [&](uint32_t v) {
+        if (o.gmemBinningTrace && vsc != 0) stream.memWrite(drawSizes + kVscTraceAt, &v, 1);
+    };
+    crumb(0xa);
     if (vsc != 0) {
         // the binning pass (emit_binning_pass): the whole window, RM6_BIN_VISIBILITY, the bins' layout, every draw once
         regs(stream, REG_A6XX_GRAS_SC_WINDOW_SCISSOR_TL, {regXY(plan.x0, plan.y0), regXY(plan.x0 + plan.cols * plan.binW - 1, plan.y0 + plan.rows * plan.binH - 1)});
@@ -2343,9 +2402,34 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         eventTimestamp(stream, CACHE_FLUSH_TS, table + kTableBinFlushAt, kBinFlushValue, false);
         waitForWord(stream, table + kTableBinFlushAt, kBinFlushValue);
         stream.waitForMe();
+        crumb(1);
+        // A stream past its pipe's limit is cut short and its tiles would miss draws: the command processor compares each
+        // used pipe's sizes with the limits (turnip's emit_vsc_overflow_test) and marks the queue's word, which turns the
+        // binning off from then on (CommandBuffer::finish) -- this frame is what it is, the next ones draw every draw
+        {
+            uint32_t used = 0;
+            for (uint32_t y = 0; y < plan.rows; y += tppY) used += divUp(plan.cols, tppX);
+            const uint64_t flag = drawSizes + kVscOverflowAt;
+            for (uint32_t p = 0; p < used; p++) {
+                for (uint32_t k = 0; k < 2; k++) {
+                    const uint32_t limit = k == 0 ? kVscDrawPitch - 64 : kVscPrimPitch - 64;
+                    const uint32_t w[8] = {uint32_t(WRITE_GE) | 1u << 8, (k == 0 ? 0x0c78u : 0x0c58u) + p, 0, limit, ~0u, uint32_t(flag), uint32_t(flag >> 32), 1u + k};
+                    stream.packet(CP_COND_WRITE5, w, 8);
+                }
+            }
+            stream.packet(CP_WAIT_MEM_WRITES, nullptr, 0);
+        }
+        // (and what the VSC says it wrote: VSC_STATE, VSC_PRIM_STRM_SIZE and VSC_DRAW_STRM_SIZE, 32 pipes each, after the word)
+        for (uint32_t k = 0; o.gmemBinningTrace && k < 3; k++) {
+            const uint64_t at = drawSizes + kVscTraceAt + 0x80 * (k + 1);
+            const uint32_t w[3] = {(0x0c38u + 0x20u * k) | 32u << CP_REG_TO_MEM_0_CNT__SHIFT, uint32_t(at), uint32_t(at >> 32)};
+            stream.packet(CP_REG_TO_MEM, w, 3);
+        }
     }
-    for (uint32_t ty = 0; ty < plan.rows; ty++) {
-        for (uint32_t tx = 0; tx < plan.cols; tx++) {
+    for (uint32_t ry = 0; ry < plan.rows; ry++) {
+        for (uint32_t rx = 0; rx < plan.cols; rx++) {
+            const bool reverse = o.gmemBinningStage == 8;   // (the bisect's: the tiles last to first)
+            const uint32_t ty = reverse ? plan.rows - 1 - ry : ry, tx = reverse ? plan.cols - 1 - rx : rx;
             const uint32_t x1 = plan.x0 + tx * plan.binW, y1 = plan.y0 + ty * plan.binH;
             const uint32_t x2 = x1 + plan.binW - 1, y2 = y1 + plan.binH - 1;
             // tu6_emit_tile_select without a binning pass: every draw visits every tile, the window scissor keeping
@@ -2363,20 +2447,29 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
             reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(x1, y1));
             reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(x1, y1));
             reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(x1, y1));
-            if (vsc != 0 && (o.gmemBinningStage == 0 || o.gmemBinningStage >= 3)) {
+            const bool streams = vsc != 0 && (o.gmemBinningStage == 0 || o.gmemBinningStage >= 3);
+            if (streams) {
                 // this tile's streams: its pipe's, and its place in the pipe (fd6_emit_tile_prep)
                 const uint32_t pipe = (ty / tppY) * pipesX + tx / tppX;
                 const uint32_t px = (tx / tppX) * tppX, py = (ty / tppY) * tppY;
                 const uint32_t pw = std::min(tppX, plan.cols - px), ph = std::min(tppY, plan.rows - py);
                 const uint32_t n = (ty - py) * pw + (tx - px);
+                crumb(0x100 + ty * plan.cols + tx);
                 stream.waitForMe();
                 command1(stream, CP_SET_MODE, 0);
-                // (by offsets from the VSC registers the binning pass set, as turnip on A6XX: CP_SET_BIN_DATA5 with the addresses,
-                // fd6's form, hung the command processor here -- probe "GMEM binned, stage 5")
+                // (by offsets from the VSC registers the binning pass set, as turnip on A6XX; fd6's CP_SET_BIN_DATA5 with the
+                // addresses works as well, stage 7, once RM6_BIN_END_OF_DRAWS lets each tile's streams go)
                 const uint32_t w[4] = {cpSetBinData5_0(pw * ph, n), pipe * kVscDrawPitch, pipe * 4, pipe * kVscPrimPitch};
-                if (o.gmemBinningStage != 6) stream.packet(CP_SET_BIN_DATA5_OFFSET, w, 4);
+                if (o.gmemBinningStage == 7) {
+                    const uint64_t d = drawStrm + uint64_t(pipe) * kVscDrawPitch, z = drawSizes + pipe * 4ull, q = primStrm + uint64_t(pipe) * kVscPrimPitch;
+                    const uint32_t a[7] = {w[0], uint32_t(d), uint32_t(d >> 32), uint32_t(z), uint32_t(z >> 32), uint32_t(q), uint32_t(q >> 32)};
+                    stream.packet(CP_SET_BIN_DATA5, a, 7);
+                } else if (o.gmemBinningStage != 6) {
+                    stream.packet(CP_SET_BIN_DATA5_OFFSET, w, 4);
+                }
                 command1(stream, CP_SET_VISIBILITY_OVERRIDE, o.gmemBinningStage == 5 ? 1 : 0);
                 if (o.gmemBinningStage != 4) command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 1);   // (fd6_emit_tile_prep's, with a binning pass)
+                crumb(0x200 + ty * plan.cols + tx);
             } else {
                 command1(stream, CP_SET_VISIBILITY_OVERRIDE, 1);
                 command1(stream, CP_SET_MODE, 0);
@@ -2402,13 +2495,19 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
                 event(stream, CACHE_INVALIDATE);
             }
             stream.indirect(bodies, bodyWords);   // (an IB2: the draws' words once in memory, not once a tile in the stream)
+            crumb(0x300 + ty * plan.cols + tx);
+            // The command processor queues each tile's streams and lets one go only at this marker (tu6_render_tile's,
+            // under hw binning): without it the third tile's CP_SET_BIN_DATA5 found the queue full and its draws hung
+            // in PC, in whichever order the tiles ran (probe --bin-trace)
+            if (streams && o.gmemBinningStage != 9) command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_END_OF_DRAWS) | A6XX_CP_SET_MARKER_0_USES_GMEM);
             command1(stream, CP_SKIP_IB2_ENABLE_GLOBAL, 0);
             command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RESOLVE) | A6XX_CP_SET_MARKER_0_USES_GMEM);
             for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
                 if ((store >> i) & 1) blit(i, BLIT_EVENT_STORE);
             }
-            stream.waitForIdle();
+            if (o.gmemTileWfi) stream.waitForIdle();
             command1(stream, CP_SET_MARKER, setMarker0(RM6_BIN_RENDER_END));
+            crumb(0x400 + ty * plan.cols + tx);
         }
     }
     // the stores out of the blit cache (tu6_tile_render_end's FD_CCU_CLEAN_BLIT_CACHE: PC_CCU_RESOLVE_TS on A6XX), waited
@@ -2417,6 +2516,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     waitForWord(stream, table + kTableBlitFlushAt, kBlitFlushValue);
     stream.waitForIdle();
     reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+    crumb(0x999);
 }
 
 bool encodeClear(pm4::Stream& stream, const RenderPass& pass, uint64_t table, uint8_t* tableCpu, std::string* why, const Options& o) {
@@ -2447,7 +2547,13 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     if (sf.depth || df.depth) {
         return refuse(why, std::string("a copy of a ") + (sf.depth ? sf.name : df.name) + " texture: a depth texture is tiled, the 2D copy is written for linear ones");
     }
-    if (sf.fmt6 != df.fmt6 || sf.swap != df.swap) {
+    if (src.compressed()) {
+        return refuse(why, "a copy from a compressed texture: the 2D copy reads linear ones (not served yet)");
+    }
+    if (dst.compressed() && (sf.fmt6 != df.fmt6 || dstLevel != 0 || linear)) {
+        return refuse(why, "a copy into a compressed texture: from its own format, pixel for pixel, into level 0 is what is served");
+    }
+    if (sf.fmt6 != df.fmt6 || (sf.swap != df.swap && !dst.compressed())) {
         return refuse(why, std::string("a copy from ") + sf.name + " to " + df.name + ": the two must be one pixel format (an sRGB pair is one)");
     }
     if (srcLevel >= src.levels() || dstLevel >= dst.levels()) {
@@ -2537,8 +2643,16 @@ bool encodeBlit(pm4::Stream& stream, const Texture& src, uint32_t srcLevel, Blit
     regs(stream, REG_A6XX_SP_PS_2D_SRC_INFO, {srcInfo, sp2dSrcSize(SL.width, SL.height), uint32_t(from),
                                               uint32_t(from >> 32), sp2dSrcPitch(uint32_t(SL.pitch))});
     regs(stream, REG_A6XX_SP_PS_2D_SRC_FLAGS, {0, 0, 0});
-    regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_LINEAR, dstSwap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
-    regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    if (dst.compressed()) {
+        // into a UBWC layout (r2d_dst over a UBWC view, tu_clear_blit.cc; fdl6_view_init's RB_2D_DST_INFO): TILE6_3, WZYX
+        // (the layout's order, the source's swap reordering a BGRA texture's bytes into it), FLAGS, and its flag buffer
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_3, WZYX, srgb) | A6XX_RB_2D_DST_INFO_FLAGS, uint32_t(to), uint32_t(to >> 32),
+                                                A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {uint32_t(dst.flagAddress()), uint32_t(dst.flagAddress() >> 32), A6XX_RB_2D_DST_FLAGS_PITCH(dst.flagPitch())});
+    } else {
+        regs(stream, REG_A6XX_RB_2D_DST_INFO, {rb2dDstInfo(dstFmt, TILE6_LINEAR, dstSwap, srgb), uint32_t(to), uint32_t(to >> 32), A6XX_RB_2D_DST_PITCH(uint32_t(DL.pitch))});
+        regs(stream, REG_A6XX_RB_2D_DST_FLAGS, {0, 0, 0});
+    }
     command1(stream, CP_BLIT, cpBlit0(BLIT_OP_SCALE));
     // what a Clear's fill does after it, and then the pass's tail: the copy is in memory when the next thing reads it
     eventTimestamp(stream, PC_CCU_FLUSH_COLOR_TS, table + kTableClearFlushAt, kClearFlushValue, false);
@@ -2607,7 +2721,8 @@ void appendStream(pm4::Stream& to, const pm4::Stream& from) {
 // time for a draw (12.4 us measured, probe "pass cost") goes on reading them. Written whatever it holds: a register
 // that is a command (HLSQ_INVALIDATE_CMD). Forgotten: everything, at a packet that may change registers behind the
 // stream's back -- anything but the waits, loads, draws, events and markers a draw is made of.
-void appendDeduped(pm4::Stream& to, const pm4::Stream& from, std::unordered_map<uint32_t, uint32_t>& regs) {
+bool appendDeduped(pm4::Stream& to, const pm4::Stream& from, CommandBuffer::RegShadow& regs) {
+    bool forgot = false;
     using namespace a6xx;
     const std::vector<uint32_t>& w = from.words();
     to.packet(pm4::kNop, nullptr, 0);
@@ -2617,9 +2732,7 @@ void appendDeduped(pm4::Stream& to, const pm4::Stream& from, std::unordered_map<
             uint32_t runStart = 0, runLen = 0;
             for (uint32_t k = 0; k < h.count; k++) {
                 const uint32_t reg = h.reg + k, value = w[i + 1 + k];
-                auto it = regs.find(reg);
-                const bool same = reg != REG_A6XX_HLSQ_INVALIDATE_CMD && it != regs.end() && it->second == value;
-                regs[reg] = value;
+                const bool same = regs.hold(reg, value) && reg != REG_A6XX_HLSQ_INVALIDATE_CMD;
                 if (!same) {
                     if (runLen == 0) runStart = k;
                     runLen++;
@@ -2634,15 +2747,18 @@ void appendDeduped(pm4::Stream& to, const pm4::Stream& from, std::unordered_map<
             case pm4::kNop: case CP_WAIT_MEM_GTE: case CP_SKIP_IB2_ENABLE_GLOBAL: case CP_WAIT_FOR_IDLE: case CP_LOAD_STATE6_GEOM:
             case CP_LOAD_STATE6_FRAG: case CP_LOAD_STATE6: case CP_DRAW_INDX_OFFSET: case CP_DRAW_INDIRECT_MULTI: case CP_WAIT_REG_MEM:
             case CP_EVENT_WRITE: case CP_SET_MODE: case CP_SET_VISIBILITY_OVERRIDE: case CP_SET_MARKER: case CP_REG_TO_MEM:
+            case pm4::kMemcpy: case pm4::kWaitMemWrites: case pm4::kWaitForMe:
                 break;
             default:
                 regs.clear();   // (CP_SET_DRAW_STATE and the like: what the registers hold is no longer known here)
+                forgot = true;
                 break;
             }
             to.packet(h.opcode, h.count ? &w[i + 1] : nullptr, h.count);
         }
         i += 1 + h.count;
     }
+    return forgot;
 }
 
 bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const Draw& d, const Bindings& vsBindings, const Bindings& fsBindings,
@@ -2650,6 +2766,9 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (status_ > kEnqueued) {
         return fail("draw after commit");
     }
+    // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the
+    // copy first, by the 2D engine into the UBWC layout, in a pass of its own before this draw's
+    if (!freshen(vsBindings, options) || !freshen(fsBindings, options)) return false;
     std::string why;
     // the null texture's slot is the front end's, not the application's: the queue's texture goes there, over anything
     // bound at that index (an application cannot know the index, so whatever it bound there was not meant for it)
@@ -2666,7 +2785,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const KernelTexture& kt = k->textures[i];
             if (kt.kind != kTexSampled || kt.fbTarget != 0) continue;
             const bool unbound = i >= given->textures.size() || given->textures[i] == nullptr;
-            if (!kt.isNull && !unbound) continue;
+            const bool measured = nullFsTextures_ && k == &program.fs.k;   // (setNullFsTextures: what a draw costs without its reads)
+            if (!kt.isNull && !unbound && !measured) continue;
             if (null == nullptr && (null = queue_.nullTexture(&why)) == nullptr) {
                 return fail(std::string("no null texture: ") + why);
             }
@@ -2753,7 +2873,20 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         gmem = render::gmemPlan(pass, &plan, &gmemWhy_) && tileable;
         if (!tileable) gmemWhy_ = gmemWhy;
         if (gmem && gmemMinDraws_ != 0) {
-            dual = true;
+            // Both ways, unless this pass's like has had few draws for a while: then it is sysmem and recorded only so
+            // (a light pass is most of CoreAnimation's, and recording each of its draws twice was 7.5 us a draw on the
+            // phone). By the peak of its recent times, not the last: an animation's heavy passes come between light
+            // ones of the same place, and judged by the last time, passes of 80 to 92 draws went to sysmem (the tour's
+            // GPU time 2.98 s to 4.42). One that grows past the bar after all stays in sysmem this once.
+            kind = render::tuneKeyOf(pass);
+            ordinal = ordinals_[kind]++;
+            const uint32_t peak = queue_.peakDraws(kind, ordinal);
+            if (peak != 0 && peak < gmemMinDraws_ / 2) {
+                gmem = false;
+                gmemWhy_ = "its like had " + std::to_string(peak) + " draws at most lately";
+            } else {
+                dual = true;
+            }
         } else if (gmem && tuning_) {
             // (by what the pass draws into, not where: the plug-in draws into a fresh copy of a surface each frame; and by
             // its place in the buffer and how many draws it had last time, as a class of 1, 2-15, 16-63, 64-127, more:
@@ -2788,9 +2921,29 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     render::Options encodeOptions = options;
+    // The state a draw's program and pass alone decide (render::Options' zsNone, mrt, msaaOff, renderCntl, lrzOff, vpc,
+    // fsInputs, fsOutputs: register writes and nothing else) is not encoded again for a draw whose program, blending,
+    // sample count and options are the last draw's in this pass: deduplication dropped every word of it anyway, and
+    // making the words was most of a draw's encoding (some 190 of its 350). Not after a packet that made the
+    // deduplication forget what the registers hold (staticKey emptied then).
+    std::vector<uint8_t> staticKey;
+    if (options.dedupRegs) {
+        const void* ptrs[2] = {program.vs.k.words, program.fs.k.words};
+        const uint32_t sizes[3] = {program.vs.k.numWords, program.fs.k.numWords, program.samples};
+        auto add = [&](const void* p, size_t n) { staticKey.insert(staticKey.end(), static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n); };
+        add(ptrs, sizeof ptrs);
+        add(sizes, sizeof sizes);
+        add(&program.blend, sizeof program.blend);
+        add(program.moreBlend, sizeof program.moreBlend);
+        add(&encodeOptions, sizeof encodeOptions);
+        if (joins && !open_->staticKey.empty() && open_->staticKey == staticKey) {
+            encodeOptions.zsNone = encodeOptions.mrt = encodeOptions.msaaOff = encodeOptions.renderCntl = encodeOptions.lrzOff = false;
+            encodeOptions.vpc = encodeOptions.fsInputs = encodeOptions.fsOutputs = false;
+        }
+    }
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
     // (a binned pass's draws are skipped by the tiles they miss: USE_VISIBILITY, which an override of 1 ignores)
-    if (gmem && (options.gmemBinning || gmemBinning_) && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
+    if (gmem && (options.gmemBinning || gmemBinning_) && queue_.binningOk() && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
                               gmem ? &plan : nullptr, joins && open_->lastFetched)) {
         gmemClears_ = 0;
@@ -2860,14 +3013,31 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
     if (timed) {
         DrawTime dt{program.name != nullptr ? program.name : "?", 0};
+        dt.name += " fs:" + std::to_string(program.fs.k.numWords) + "w v:" + std::to_string(d.vertexCount) + (program.blend.enabled ? " blend" : "");   // (which variant: one function's pipelines differ by their constants)
+        // (and what its fragment stage samples: a draw's cost is mostly its texture reads, which the name does not tell)
+        for (size_t i = 0; i < fsBindings.textures.size(); i++) {
+            const Texture* t = fsBindings.textures[i];
+            if (t == nullptr || ((fsBindings.nullMask >> i) & 1)) continue;
+            dt.name += " " + std::to_string(i) + ":" + std::to_string(t->width()) + "x" + std::to_string(t->height()) + "/" + t->info().name +
+                       (t->levels() > 1 ? "/" + std::to_string(t->levels()) + "levels" : std::string());
+        }
+        // ...and how: each sampler's first word (its filters, a6xx TEX_SAMP_0), in hex
+        for (size_t i = 0; i < fsBindings.samplers.size(); i++) {
+            const Sampler* sm = fsBindings.samplers[i];
+            if (sm == nullptr) continue;
+            char w[40];
+            snprintf(w, sizeof w, " s%zu:%x", i, sm->words[0]);
+            dt.name += w;
+        }
         dt.pass = profiled_.empty() ? 0 : uint32_t(profiled_.size() - 1);
         render::drawArea(pass, d, dt.area);
         drawsProfiled_.push_back(dt);
         drawStamp(uint32_t(2 * (drawsProfiled_.size() - 1)));
     }
     if (options.dedupRegs && open_->options.dedupRegs) {
-        appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
-        if (open_->dual) appendDeduped(open_->sysStream, bodySys, open_->regs);
+        bool forgot = appendDeduped(into, body, open_->gmem ? open_->bodyRegs : open_->regs);
+        if (open_->dual) forgot = appendDeduped(open_->sysStream, bodySys, open_->regs) || forgot;
+        open_->staticKey = forgot ? std::vector<uint8_t>() : std::move(staticKey);
     } else {
         appendStream(into, body);
         if (open_->dual) appendStream(open_->sysStream, bodySys);
@@ -2906,6 +3076,33 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
 
 bool CommandBuffer::blit(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
                          const render::Options& options) {
+    // A compressed texture's rows are its truth (Texture::staging): a copy reads them and writes them, and a draw that
+    // samples it after one wrote copies them into the compressed layout first (freshen)
+    if (src.staging() != nullptr || dst.staging() != nullptr) {
+        const bool ok = blitInto(src.staging() != nullptr ? *src.staging() : src, srcLevel, s, dst.staging() != nullptr ? *dst.staging() : dst, dstLevel, d,
+                                 linear, options);
+        if (ok && dst.staging() != nullptr) dst.markStale();
+        return ok;
+    }
+    return blitInto(src, srcLevel, s, dst, dstLevel, d, linear, options);
+}
+
+// the textures' compressed copies in, for a draw or a dispatch about to sample them (Texture::staging): each one whose
+// rows changed since the last copy, by the 2D engine, in a pass of its own before the work's
+bool CommandBuffer::freshen(const Bindings& b, const render::Options& options) {
+    for (const Texture* t : b.textures) {
+        if (t == nullptr || t->staging() == nullptr || !t->takeStale()) continue;
+        const render::BlitRect all{0, 0, t->width(), t->height()};
+        if (!blitInto(*t->staging(), 0, all, *t, 0, all, false, options)) {
+            t->markStale();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CommandBuffer::blitInto(const Texture& src, uint32_t srcLevel, render::BlitRect s, const Texture& dst, uint32_t dstLevel, render::BlitRect d, bool linear,
+                             const render::Options& options) {
     if (status_ > kEnqueued) {
         return fail("blit after commit");
     }
@@ -3022,6 +3219,7 @@ bool CommandBuffer::append(CommandBuffer& other) {
     counts_.copies += other.counts_.copies;
     counts_.clears += other.counts_.clears;
     counts_.gmemPasses += other.counts_.gmemPasses;
+    counts_.binnedPasses += other.counts_.binnedPasses;
     counts_.tiles += other.counts_.tiles;
     other.counts_ = Counts{};
     return true;
@@ -3081,7 +3279,7 @@ void CommandBuffer::closePass() {
             if ((every || cleared || ((open_->written >> i) & 1)) && sa != StoreAction::kDontCare) store |= 1u << i;
         }
         uint64_t vsc = 0;
-        if (open_->options.gmemBinning || gmemBinning_) {
+        if ((open_->options.gmemBinning || gmemBinning_) && queue_.binningOk()) {
             std::shared_ptr<Buffer> v = queue_.vscBuffer(&why);
             if (v == nullptr) {
                 open_.reset();
@@ -3097,8 +3295,15 @@ void CommandBuffer::closePass() {
                            open_->clears, open_->clearWords, vsc);
         appendStream(stream_, tiles);
         counts_.gmemPasses++;
+        if (vsc != 0) counts_.binnedPasses++;
         counts_.tiles += plan.tiles();
-        if ((profile_ || tuning_) && !profiled_.empty()) profiled_.back().tiles = plan.tiles();
+        if ((profile_ || tuning_) && !profiled_.empty()) {
+            profiled_.back().tiles = plan.tiles();
+            uint8_t attached = 0;
+            for (uint32_t i = 0; i < kMaxColorOutputs; i++) attached |= (i == 0 ? open_->pass.color0 : open_->pass.more[i - 1].texture) != nullptr ? 1u << i : 0u;
+            profiled_.back().attached = attached;
+            profiled_.back().touched = uint8_t(open_->written | open_->read);
+        }
     }
     pm4::Stream tail;
     render::encodeEnd(tail, open_->pass, open_->table, open_->options);

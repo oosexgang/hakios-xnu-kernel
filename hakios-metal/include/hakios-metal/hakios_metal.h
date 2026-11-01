@@ -125,6 +125,13 @@ unsigned hakios_metal_kernel_threadgroup_memory(hakios_metal_kernel *kernel);   
  * buffer the command buffers keep alive while they use it) */
 hakios_metal_texture *hakios_metal_texture_new(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned usage);
+/* a 2D, one-level RGBA8Unorm (70) or BGRA8Unorm (80) texture the GPU reads compressed (UBWC): what replace and read see
+ * are its rows, copied in by the GPU before a draw or a dispatch samples it after they changed. For a texture that is
+ * sampled and never drawn into or written by a kernel. NULL with the reason. */
+hakios_metal_texture *hakios_metal_texture_new_compressed(hakios_metal_device *device, unsigned pixel_format, unsigned width, unsigned height,
+    unsigned usage);
+/* where a texture's pixels live: 0 its own memory, 1 an IOSurface, 2 a buffer's rows, 3 compressed (with rows of its own) */
+unsigned hakios_metal_texture_origin(hakios_metal_texture *texture);
 /* ...of LEVELS mip levels (MTLTextureDescriptor.mipmapLevelCount: 1 to floor(log2(max(width, height))) + 1) */
 hakios_metal_texture *hakios_metal_texture_new_levels(hakios_metal_device *device, unsigned type, unsigned pixel_format,
     unsigned width, unsigned height, unsigned levels, unsigned usage);
@@ -271,7 +278,17 @@ hakios_metal_program *hakios_metal_program_new_bitcode(const void *vs_bitcode, s
 hakios_metal_program *hakios_metal_program_new_bitcode_constants(const void *vs_bitcode, size_t vs_size,
     const hakios_metal_constant *vs_constants, unsigned vs_count, const void *fs_bitcode, size_t fs_size,
     const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned color_pixel_format);
+/* BASE again with its fragment stage (FS_BITCODE and FS_CONSTANTS, as BASE was made) compiled for the LENGTH BYTES its
+ * constant buffer at [[buffer(BINDING)]] holds (compileStage's KnownBuffer): the branches those bytes decide are decided
+ * at compile time. Draws whose buffer holds exactly these bytes may use it in BASE's place; BASE's blending, vertex
+ * descriptor and sample count come with it. NULL with the reason. */
+hakios_metal_program *hakios_metal_program_specialize(hakios_metal_program *base, const void *fs_bitcode, size_t fs_size,
+    const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned binding, const void *bytes, size_t length);
+/* STAGE 0 = vertex, 1 = fragment: how many instruction words that stage compiled to */
+unsigned hakios_metal_program_stage_words(hakios_metal_program *program, unsigned stage);
 void hakios_metal_program_free(hakios_metal_program *program);
+/* the buffers made from the kernel and those taken again from a queue's pool since the last call, and the bytes made */
+void hakios_metal_buffer_counts(unsigned *made, unsigned *reused, unsigned long long *bytes);
 const char *hakios_metal_program_name(hakios_metal_program *program);   /* "vs+fs" */
 /* STAGE 0 = vertex, 1 = fragment: the resources that stage binds, as hakios_metal_kernel_resource reports a kernel's */
 unsigned hakios_metal_program_resource_count(hakios_metal_program *program, unsigned stage);
@@ -456,6 +473,10 @@ void hakios_metal_cb_set_gmem_off(hakios_metal_cb *cb, unsigned bits);
 void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb *cb, int on);
 /* GMEM only for a pass whose like had at least DRAWS draws the last time (CommandBuffer::setGmemMinDraws); 0: off */
 void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb *cb, unsigned draws);
+/* CB's GMEM passes binned by the hardware first, each tile drawing only the draws that reach it (CommandBuffer::setGmemBinning) */
+void hakios_metal_cb_set_gmem_binning(hakios_metal_cb *cb, int on);
+/* every fragment texture of CB's draws the null texture (CommandBuffer::setNullFsTextures): for measuring only */
+void hakios_metal_cb_set_null_fs_textures(hakios_metal_cb *cb, int on);
 /* each draw of CB's sysmem passes timed alone (CommandBuffer::setProfileDraws, before anything is recorded) and, once it
  * has completed, draw I's program name (valid while CB lives) and microseconds; the count is returned, -1 past them */
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb *cb, int on);
@@ -463,6 +484,8 @@ int hakios_metal_cb_draw_time(hakios_metal_cb *cb, unsigned i, const char **name
 /* draw I's pass (an index of hakios_metal_cb_pass_time's) and the pixels it can touch, X0 Y0 X1 Y1; -1 past them */
 int hakios_metal_cb_draw_place(hakios_metal_cb *cb, unsigned i, unsigned *pass, unsigned area[4]);
 void hakios_metal_cb_gmem_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *tiles);
+/* pass I's colour attachments as a mask, and those its draws wrote or read (a GMEM pass's; 0 for a sysmem one): -1 past the passes */
+int hakios_metal_cb_pass_attachments(hakios_metal_cb *cb, unsigned i, unsigned *attached, unsigned *touched);
 int hakios_metal_cb_pass_tiles(hakios_metal_cb *cb, unsigned i);
 /* why CB's last pass refused for GMEM was refused ("" when none was); valid while CB lives */
 const char *hakios_metal_cb_gmem_refusal(hakios_metal_cb *cb);

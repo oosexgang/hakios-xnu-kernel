@@ -8,6 +8,7 @@
 // number of failures. Run it from a job list (hakios: RC_JOBS, EXTRA=).
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -373,12 +374,13 @@ static const char* dimName(uint8_t dim) {
 }
 
 int main(int argc, char** argv) {
-    bool recover = false, bisect = false;
+    bool recover = false, bisect = false, binTrace = false;
     compute::Options chosen;   // what the dispatches of stage 5 are encoded with
     std::vector<std::pair<std::string, std::string>> metallibs;   // --metallib FILE FUNCTION: a kernel of the phone's own image
     for (int i = 1; i < argc; i++) {
         recover = recover || strcmp(argv[i], "--recover") == 0;
         bisect = bisect || strcmp(argv[i], "--bisect") == 0;
+        binTrace = binTrace || strcmp(argv[i], "--bin-trace") == 0;
         // --notail: no end-of-dispatch events and waits of our own; the kernel's own CACHE_FLUSH_TS fence closes the
         // submission (28 October: with them every dispatch hung, without them end_only completed in 48 us)
         if (strcmp(argv[i], "--notail") == 0) chosen.tail = false;
@@ -402,6 +404,23 @@ int main(int argc, char** argv) {
     std::printf("probe: GPU %llu, chip id 0x%llx, %llu MHz, FAULTS %llu%s\n", (unsigned long long)id, (unsigned long long)chip,
                 (unsigned long long)(freq / 1000000), (unsigned long long)gpu.faults(),
                 recover ? "; the GPU will be hung on purpose at the end (--recover)" : "");
+    {
+        // what this processor's writes and reads of a GPU buffer cost against its own memory: a draw writes some 3 KB
+        // of descriptors into one, and an uncached mapping makes each store a bus transaction
+        std::string mwhy;
+        auto mb = newBuffer(gpu, 1 << 20, &mwhy);
+        std::vector<uint8_t> host(1 << 20);
+        if (mb != nullptr && mb->contents() != nullptr) {
+            auto us = [](auto f) { const auto t0 = std::chrono::steady_clock::now(); f(); return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count(); };
+            volatile uint32_t sink = 0;
+            const double wg = us([&] { for (int k = 0; k < 8; k++) memset(mb->contents(), k, 1 << 20); }) / 8;
+            const double wh = us([&] { for (int k = 0; k < 8; k++) memset(host.data(), k, 1 << 20); }) / 8;
+            const double rg = us([&] { uint32_t a = 0; const uint32_t* q = static_cast<const uint32_t*>(mb->contents()); for (int i = 0; i < (1 << 18); i += 16) a += q[i]; sink = a; });
+            const double small = us([&] { for (int k = 0; k < 256; k++) { memset(static_cast<uint8_t*>(mb->contents()) + 4096 * (k % 64), 0, 1280); memcpy(static_cast<uint8_t*>(mb->contents()) + 4096 * (k % 64) + 1280, host.data(), 1280); } }) / 256;
+            std::printf("probe: (CPU and GPU memory: 1 MB written in %.0f us to a GPU buffer, %.0f to its own; 16 K words read from a GPU buffer in %.0f us; a draw's 2.5 KB of table %.2f us)\n", wg, wh, rg, small);
+            (void)sink;
+        }
+    }
     auto queue = CommandQueue::make(gpu, &why);
     if (queue == nullptr) {
         report(false, "a queue: " + why);
@@ -4684,18 +4703,20 @@ int main(int argc, char** argv) {
                         };
                         const Viewport vps[] = {{0, 0, 1125, 2436, 0, 1}, {37, 513, 1000, 1500, 0, 1}, {500, 1000, 625, 1436, 0, 1}, {0, 200, 600, 300, 0, 1}, {560, 0, 40, 2436, 0, 1}};
                         uint8_t gbStage = 0;
+                        bool gbTrace = false, gbCover = false;
                         auto run = [&](bool gm, bool load, unsigned* tiles, bool binned = false) -> std::vector<uint8_t> {
                             pattern();
                             render::Options o;
                             o.gmemLoad = load;
                             o.gmemBinning = binned;
                             o.gmemBinningStage = gbStage;
+                            o.gmemBinningTrace = gbTrace;
                             auto c = queue->commandBuffer();
                             c->setGmem(gm);
                             bool ok = true;
                             RenderPass rp;
                             rp.color0 = gt.get();
-                            for (const Viewport& vp : vps) ok = ok && c->draw(over, rp, drawOf(0, 3, vp), Bindings{}, gfsb, o);
+                            for (const Viewport& vp : vps) ok = ok && c->draw(over, rp, drawOf(0, gbCover ? 6 : 3, vp), Bindings{}, gfsb, o);
                             if (!ok) return {};
                             c->commit();
                             c->waitUntilCompleted();
@@ -4714,10 +4735,9 @@ int main(int argc, char** argv) {
                         const bool have = !sys.empty() && !gm.empty() && !twin.empty();
                         const uint64_t off = have ? pixelsDiffer(sys, gm) : ~0ull, twinOff = have ? pixelsDiffer(sys, twin) : 0;
                         {
-                            // The binning pass alone (stage 2: every draw binned, the tiles drawing all of them as before): it
-                            // runs, and the VSC writes its streams. Handing a tile its streams (CP_SET_BIN_DATA5, by address or
-                            // by offset) hangs this command processor -- stages 0, 3 and 5 timed out -- so binning stays off.
-                            gbStage = 2;
+                            // Binned: the binning pass, then each tile drawing only the draws its streams say reach it; must
+                            // agree with sysmem exactly, and the VSC must have written streams for the first two pipes (an
+                            // agreement with no streams written would be the tiles drawing everything)
                             unsigned st2 = 0;
                             const std::vector<uint8_t> partial = run(true, true, &st2, true);
                             const uint64_t poff = !partial.empty() && have ? pixelsDiffer(sys, partial) : ~0ull;
@@ -4728,8 +4748,59 @@ int main(int argc, char** argv) {
                                 if (v != nullptr && v->contents() != nullptr) memcpy(sizes, static_cast<const uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch, 8);
                             }
                             gbStage = 0;
+                            // --bin-trace: the stages that hang, each with the command processor writing where it has got to
+                            // (Options::gmemBinningTrace); the word after the hang names the last packet passed: 0xa started,
+                            // 1 binned, 0x1tt before tile tt's streams, 0x2tt after them, 0x3tt after its draws, 0x4tt its
+                            // end, 0x999 the pass done. Stage 2 traced as well: the run that completes must end at 0x999
+                            for (uint8_t sg : {uint8_t(2), uint8_t(3), uint8_t(8), uint8_t(0), uint8_t(0x80), uint8_t(9)}) {
+                                if (!binTrace) break;
+                                std::string vw;
+                                auto v = queue->vscBuffer(&vw);
+                                uint32_t* word = v != nullptr && v->contents() != nullptr
+                                                     ? reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(v->contents()) + 32ull * render::kVscDrawPitch + render::kVscTraceAt)
+                                                     : nullptr;
+                                if (word != nullptr) std::memset(v->contents(), 0, render::vscBytes()), *word = 0xdead;
+                                gbStage = sg & 0x7f;
+                                gbTrace = true;
+                                gbCover = (sg & 0x80) != 0;   // (0x80: every tile drawn into, no pipe left empty)
+                                unsigned tl = 0;
+                                const std::vector<uint8_t> r = run(true, true, &tl, true);
+                                gbCover = false;
+                                gbTrace = false;
+                                gbStage = 0;
+                                const uint64_t roff = !r.empty() && have ? pixelsDiffer(sys, r) : ~0ull;
+                                std::printf("probe: (binning trace, stage %#x: %s, %llu pixels differ; the command processor last passed %#x)\n", unsigned(sg),
+                                            r.empty() ? "HUNG" : "completed", (unsigned long long)roff, word != nullptr ? *word : 0u);
+                                for (uint32_t k = 0; word != nullptr && k < 3; k++) {
+                                    std::string line;
+                                    for (uint32_t p = 0; p < 24; p++) {
+                                        char b[16];
+                                        std::snprintf(b, sizeof b, " %x", word[0x20 * (k + 1) + p]);
+                                        line += b;
+                                    }
+                                    std::printf("probe: (  %s, pipes 0-23:%s)\n", k == 0 ? "VSC_STATE" : k == 1 ? "VSC_PRIM_STRM_SIZE" : "VSC_DRAW_STRM_SIZE", line.c_str());
+                                }
+                                if (sg == 2 && v != nullptr && v->contents() != nullptr) {
+                                    // where the streams landed: every 64-byte granule of the buffer holding a nonzero word
+                                    const uint32_t* all = static_cast<const uint32_t*>(v->contents());
+                                    const uint64_t words = render::vscBytes() / 4;
+                                    std::string line;
+                                    for (uint64_t g = 0; g < words; g += 16) {
+                                        if (g * 4 >= 32ull * render::kVscDrawPitch && g * 4 < 32ull * render::kVscDrawPitch + render::kVscSizesBytes) continue;
+                                        bool any = false;
+                                        for (uint64_t i = g; i < g + 16 && i < words; i++) any = any || all[i] != 0;
+                                        if (!any) continue;
+                                        char b[96];
+                                        std::snprintf(b, sizeof b, " %#llx:%08x,%08x,%08x,%08x", (unsigned long long)(g * 4), all[g], all[g + 1], all[g + 2], all[g + 3]);
+                                        line += b;
+                                        if (line.size() > 3000) break;
+                                    }
+                                    std::printf("probe: (  the streams' granules:%s)\n", line.c_str());
+                                }
+                                if (word != nullptr) std::memset(word, 0, 0x200);
+                            }
                             report(!partial.empty() && poff == 0 && sizes[0] != 0 && sizes[1] != 0,
-                                   "GMEM with a binning pass, the tiles drawing every draw: " + std::to_string(poff) + " pixels differ from sysmem; the VSC wrote " +
+                                   "GMEM binned by the hardware: " + std::to_string(poff) + " pixels differ from sysmem; the VSC wrote " +
                                        std::to_string(sizes[0]) + " and " + std::to_string(sizes[1]) + " bytes of draw stream for pipes 0 and 1");
                         }
                         report(have && st == 0 && gtl == 24 && off == 0 && twinOff > 100000,
@@ -4813,6 +4884,167 @@ int main(int argc, char** argv) {
                             }
                             report(all, line);
                         }
+                        // what sampling costs a full-screen draw: tri_tex blended over the screen 4 times, sampling a texture
+                        // of 4x4, 194x237 (CoreAnimation's blurred backdrop, stretched) and 1125x2436, nearest, in sysmem
+                        {
+                            const Program tq{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                            Program tqb = tq;
+                            tqb.blend = ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf};
+                            Sampler smp;
+                            std::string swhy;
+                            std::string line = "full-screen sampling, 4 blended draws (us):";
+                            bool all = makeSampler(SamplerDesc{}, &smp, &swhy);
+                            for (const auto [tw, th] : {std::pair<uint32_t, uint32_t>{4, 4}, {194, 237}, {1125, 2436}}) {
+                                TextureDesc sd;
+                                sd.format = PixelFormat::kBGRA8Unorm;
+                                sd.width = tw;
+                                sd.height = th;
+                                sd.usage = kTextureUsageRead;
+                                auto st = Texture::make(gpu, sd, &swhy);
+                                if (st == nullptr) {
+                                    all = false;
+                                    continue;
+                                }
+                                Bindings tb;
+                                tb.textures = {st.get()};
+                                tb.samplers = {&smp};
+                                double best = 1e30;
+                                for (int rep = 0; rep < 3; rep++) {
+                                    auto c = queue->commandBuffer();
+                                    c->setProfile(true);
+                                    RenderPass rp;
+                                    rp.color0 = gt.get();
+                                    render::Options so{};
+                                    so.gmem = false;
+                                    bool ok = true;
+                                    for (int i = 0; i < 4 && ok; i++) ok = c->draw(tqb, rp, drawOf(0, 6, vps[0]), Bindings{}, tb, so);
+                                    if (!ok) break;
+                                    c->commit();
+                                    c->waitUntilCompleted();
+                                    if (!completed(*c)) break;
+                                    best = std::min(best, gpuUs(*c));
+                                }
+                                all = all && best < 1e29;
+                                line += " " + std::to_string(tw) + "x" + std::to_string(th) + " " + std::to_string(int(best));
+                            }
+                            report(all, line);
+                        }
+                        // UBWC: the same picture drawn into a compressed RGBA8 1125x2436 texture and a linear one (tri_color's
+                        // gradient, then tri_cflat blended over a corner), each then sampled over the screen 4 times, blended.
+                        // The two results must agree byte for byte -- the compressed one read back as what was drawn -- and the
+                        // times say what compression gives the texture unit on this GPU
+                        {
+                            const Program draw1{kernels::tri_color_vs_air, kernels::tri_color_fs_air, Linkage{}, "tri_color"};
+                            const Program tq{kernels::tri_color_vs_air, kernels::tri_tex_fs_air, Linkage{}, "tri_tex"};
+                            Program tqb = tq;
+                            tqb.blend = ColorBlend{true, 0, 0, 4, 5, 1, 5, 0xf};
+                            Sampler smp;
+                            std::string uwhy;
+                            bool okAll = makeSampler(SamplerDesc{}, &smp, &uwhy);
+                            double us[2] = {0, 0};
+                            std::vector<uint8_t> got[2];
+                            for (int c = 0; c < 2 && okAll; c++) {
+                                TextureDesc ud;
+                                ud.format = PixelFormat::kRGBA8Unorm;
+                                ud.width = 1125;
+                                ud.height = 2436;
+                                ud.usage = kTextureUsageRead | kTextureUsageRenderTarget;
+                                ud.compressed = c == 1;
+                                auto ut = Texture::make(gpu, ud, &uwhy);
+                                if (ut == nullptr) {
+                                    okAll = false;
+                                    break;
+                                }
+                                render::Options so{};
+                                so.gmem = false;
+                                {
+                                    auto cb = queue->commandBuffer();
+                                    RenderPass rp;
+                                    rp.color0 = ut.get();
+                                    rp.load = LoadAction::kDontCare;
+                                    okAll = cb->draw(draw1, rp, drawOf(0, 6, vps[0]), Bindings{}, Bindings{}, so) &&
+                                            cb->draw(over, rp, drawOf(0, 3, vps[2]), Bindings{}, gfsb, so);
+                                    if (!okAll) { uwhy = cb->error(); break; }
+                                    cb->commit();
+                                    cb->waitUntilCompleted();
+                                    okAll = completed(*cb);
+                                    if (!okAll) { uwhy = "drawing it: " + cb->error(); break; }
+                                }
+                                Bindings tb;
+                                tb.textures = {ut.get()};
+                                tb.samplers = {&smp};
+                                double best = 1e30;
+                                for (int rep = 0; rep < 3 && okAll; rep++) {
+                                    pattern();
+                                    auto cb = queue->commandBuffer();
+                                    cb->setProfile(true);
+                                    RenderPass rp;
+                                    rp.color0 = gt.get();
+                                    for (int i = 0; i < 4 && okAll; i++) okAll = cb->draw(tqb, rp, drawOf(0, 6, vps[0]), Bindings{}, tb, so);
+                                    if (!okAll) { uwhy = cb->error(); break; }
+                                    cb->commit();
+                                    cb->waitUntilCompleted();
+                                    okAll = completed(*cb);
+                                    if (!okAll) { uwhy = "sampling it: " + cb->error(); break; }
+                                    best = std::min(best, gpuUs(*cb));
+                                }
+                                us[c] = best;
+                                if (okAll) got[c] = textureBo(*gt);
+                            }
+                            const bool have = okAll && !got[0].empty() && got[0].size() == got[1].size();
+                            const uint64_t off = have ? pixelsDiffer(got[0], got[1]) : ~0ull;
+                            // ...and a BGRA8 texture filled by this processor (replace) and copied in by the 2D engine before the
+                            // draw (CommandBuffer::freshen): sampled over the screen as the same rows in a linear texture are
+                            {
+                                uint64_t boff = ~0ull;
+                                double bus[2] = {0, 0};
+                                std::vector<uint8_t> bgot[2];
+                                std::vector<uint8_t> rows(1271ull * 1823 * 4);
+                                for (size_t i = 0; i < rows.size(); i++) rows[i] = uint8_t((i * 2654435761u) >> 13);
+                                for (int c = 0; c < 2 && okAll; c++) {
+                                    TextureDesc bd;
+                                    bd.format = PixelFormat::kBGRA8Unorm;
+                                    bd.width = 1271;
+                                    bd.height = 1823;
+                                    bd.usage = kTextureUsageRead;
+                                    bd.compressed = c == 1;
+                                    auto bt = Texture::make(gpu, bd, &uwhy);
+                                    if (bt == nullptr || !bt->replace(0, 0, 1271, 1823, rows.data(), 1271ull * 4, &uwhy)) {
+                                        okAll = false;
+                                        break;
+                                    }
+                                    Bindings tb;
+                                    tb.textures = {bt.get()};
+                                    tb.samplers = {&smp};
+                                    double best = 1e30;
+                                    for (int rep = 0; rep < 3 && okAll; rep++) {
+                                        pattern();
+                                        auto cb = queue->commandBuffer();
+                                        cb->setProfile(true);
+                                        RenderPass rp;
+                                        rp.color0 = gt.get();
+                                        render::Options so{};
+                                        so.gmem = false;
+                                        for (int i = 0; i < 4 && okAll; i++) okAll = cb->draw(tqb, rp, drawOf(0, 6, vps[0]), Bindings{}, tb, so);
+                                        if (!okAll) { uwhy = cb->error(); break; }
+                                        cb->commit();
+                                        cb->waitUntilCompleted();
+                                        okAll = completed(*cb);
+                                        if (!okAll) { uwhy = "BGRA: " + cb->error(); break; }
+                                        best = std::min(best, gpuUs(*cb));
+                                    }
+                                    bus[c] = best;
+                                    if (okAll) bgot[c] = textureBo(*gt);
+                                }
+                                if (okAll && bgot[0].size() == bgot[1].size() && !bgot[0].empty()) boff = pixelsDiffer(bgot[0], bgot[1]);
+                                report(okAll && boff == 0, "UBWC: a 1271x1823 BGRA8 texture written by replace, sampled over the screen 4 times through its compressed copy: " +
+                                                               std::to_string(boff) + " pixels differ from the linear one's; linear " + std::to_string(int(bus[0])) +
+                                                               " us, compressed " + std::to_string(int(bus[1])) + " us (the copy in included in the first run)");
+                            }
+                            report(have && off == 0, "UBWC: a 1125x2436 RGBA8 picture drawn compressed and linear, then sampled over the screen 4 times: " +
+                                                         std::to_string(off) + " pixels differ; linear " + std::to_string(int(us[0])) + " us, compressed " +
+                                                         std::to_string(int(us[1])) + " us" + (okAll ? std::string() : " (" + uwhy + ")"));
+                        }
                         // a Clear in the tiles (RB_BLIT_CLEAR_COLOR) against the 2D engine's fill in sysmem: a Clear and one
                         // tri_flat triangle over a 1125 x 2436 target, byte for byte, BGRA8 and RGBA16Float
                         for (const PixelFormat cf : {PixelFormat::kBGRA8Unorm, PixelFormat::kRGBA16Float}) {
@@ -4867,6 +5099,7 @@ int main(int argc, char** argv) {
                             std::string swhy;
                             auto s0 = Texture::make(gpu, sd, &swhy), s1 = Texture::make(gpu, sd, &swhy);
                             const Program mrtp{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
+                            bool tileWfi = true;
                             auto costOf = [&](int draws, bool gm, bool binned = false) {
                                 double best = 1e30;
                                 for (int rep = 0; rep < 3; rep++) {
@@ -4875,6 +5108,7 @@ int main(int argc, char** argv) {
                                     render::Options so;
                                     so.gmem = gm;
                                     so.gmemBinning = binned;
+                                    so.gmemTileWfi = tileWfi;
                                     bool ok = true;
                                     for (int i = 0; i < draws && ok; i++) {
                                         RenderPass rp;
@@ -4899,6 +5133,13 @@ int main(int argc, char** argv) {
                                 snprintf(text, sizeof text, "GMEM pass shape: 2 screens, Clear, 1 or 140 tiny draws: GMEM %.0f / %.0f us (%.2f us a draw a tile), sysmem %.0f / %.0f us",
                                          g1, g140, (g140 - g1) / (139.0 * 52), s1c, s140);
                                 report(g1 > 0 && g140 > 0 && s1c > 0 && s140 > 0, text);
+                                // what the wait for idle after each tile's stores costs (measured only: without it the next
+                                // tile's clear may land in GMEM before the store has read it)
+                                tileWfi = false;
+                                const double n1 = costOf(1, true), nb = costOf(140, true, true);
+                                tileWfi = true;
+                                const double b140 = costOf(140, true, true);
+                                std::printf("probe: (GMEM pass shape without the wait after each tile: %.0f us for 1 draw; 140 binned %.0f us, %.0f with it)\n", n1, nb, b140);
                             } else {
                                 report(false, "GMEM pass shape: the targets: " + swhy);
                             }

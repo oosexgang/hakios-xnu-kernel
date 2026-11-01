@@ -28,7 +28,7 @@ std::unique_ptr<CompiledKernel> compileAir(const void*, size_t, std::string* why
     return nullptr;
 }
 
-std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why, const FunctionConstants&, uint32_t) {
+std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why, const FunctionConstants&, uint32_t, const KnownBuffer*) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return nullptr;
 }
@@ -243,7 +243,26 @@ struct Translation {
 
 // AIR to NIR: the front end, with the module's function constants as the pipeline supplied them (the rest not
 // supplied: the front end tells the module so, and reads them as zero)
-bool translate(const void* bitcode, size_t size, Translation& t, std::string* why, const FunctionConstants& supplied) {
+// a load of the known buffer at a constant offset inside its bytes: those bytes, as the load's components
+bool foldKnownLoad(nir_builder* b, nir_intrinsic_instr* intr, void* data) {
+    const KnownBuffer* known = static_cast<const KnownBuffer*>(data);
+    if (intr->intrinsic != nir_intrinsic_load_ubo || !nir_src_is_const(intr->src[0]) || !nir_src_is_const(intr->src[1])) return false;
+    if (nir_src_as_uint(intr->src[0]) != known->binding) return false;
+    const unsigned bits = intr->def.bit_size, comps = intr->def.num_components;
+    const uint64_t at = nir_src_as_uint(intr->src[1]);
+    if (bits % 8 != 0 || at + uint64_t(comps) * (bits / 8) > known->bytes.size()) return false;
+    nir_const_value values[NIR_MAX_VEC_COMPONENTS];
+    for (unsigned c = 0; c < comps; c++) {
+        uint64_t v = 0;
+        memcpy(&v, known->bytes.data() + at + c * (bits / 8), bits / 8);   // (little-endian, as the GPU reads it)
+        values[c] = nir_const_value_for_raw_uint(v, bits);
+    }
+    b->cursor = nir_before_instr(&intr->instr);
+    nir_def_replace(&intr->def, nir_build_imm(b, comps, bits, values));
+    return true;
+}
+
+bool translate(const void* bitcode, size_t size, Translation& t, std::string* why, const FunctionConstants& supplied, const KnownBuffer* known = nullptr) {
     t.mem = ralloc_context(nullptr);
     air_constant_value* constants = nullptr;
     unsigned numConstants = air_module_function_constants(t.mem, bitcode, size, &constants);
@@ -261,6 +280,16 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
     const char* error = nullptr;
     t.nir = air_to_nir(t.mem, bitcode, size, nullptr, &options, ir3_get_compiler_options(theCompiler()), &t.info, &error);
     if (t.nir == nullptr) return refuse(why, std::string("the front end refused it: ") + (error ? error : "no reason given"));
+    // the known buffer's reads folded, its offsets folded first (a field's offset is the front end's arithmetic on the
+    // pointer), until nothing more folds: a value read may decide the offset of another read
+    // (called directly, not under NIR_PASS: a debug build validates the whole shader after each, and an uber shader
+    // takes rounds of this. nir_copy_prop's own answer does not count: on CoreAnimation's uber shader it says it made
+    // progress every time, 21 000 rounds and on)
+    for (bool progress = known != nullptr; progress;) {
+        nir_copy_prop(t.nir);
+        progress = nir_opt_constant_folding(t.nir);
+        progress = nir_shader_intrinsics_pass(t.nir, foldKnownLoad, nir_metadata_control_flow, const_cast<KnownBuffer*>(known)) || progress;
+    }
     return true;
 }
 
@@ -622,6 +651,24 @@ bool needsQuadHelpers(nir_shader* nir) {
     return false;
 }
 
+// Whether a stage works across its subgroup (a SIMD-group to Metal): asks its size or its lane, or reads, votes, reduces
+// or shuffles over it. Quad operations are not among them: a quad is four lanes at any wave size.
+bool usesSubgroup(nir_shader* nir) {
+    nir_foreach_function_impl(impl, nir) {
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+                if (instr->type != nir_instr_type_intrinsic) continue;
+                const char* name = nir_intrinsic_infos[nir_instr_as_intrinsic(instr)->intrinsic].name;
+                if (strncmp(name, "quad_", 5) == 0) continue;
+                for (const char* word : {"subgroup", "ballot", "vote", "shuffle", "reduce", "scan", "read_invocation", "read_first_invocation", "elect", "rotate"}) {
+                    if (strstr(name, word) != nullptr) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     ir3_compiler* compiler = theCompiler();
     nir_shader* nir = t.nir;
@@ -681,6 +728,13 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
         v->fs.color_is_dual_source = nir->info.fs.color_is_dual_source;
         v->fs.uses_fbfetch_output = nir->info.fs.uses_fbfetch_output;
         v->fs.fbfetch_coherent = nir->info.fs.fbfetch_coherent;
+    }
+    // A fragment stage in waves of 128 where its registers fit twice (ir3_should_double_threadsize), as turnip lets one
+    // (tu_shader.cc's SINGLE_OR_DOUBLE): a variant built by hand has its options zeroed, and zero is IR3_SINGLE_ONLY,
+    // which held every fragment stage here to 64. A stage that works across its subgroup keeps 64, the size it was
+    // given before
+    if (v->type == MESA_SHADER_FRAGMENT && !usesSubgroup(nir)) {
+        v->shader_options.api_wavesize = v->shader_options.real_wavesize = IR3_SINGLE_OR_DOUBLE;
     }
     t.shader->variants = v;
     t.shader->variant_count = 1;
@@ -1037,7 +1091,8 @@ std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std
 }
 
 namespace {
-std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase);
+std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase,
+                                                const KnownBuffer* known);
 }  // namespace
 
 // A stage compiled as turnip compiles it, unless that spills: ir3's preamble pass hoists what is uniform into a
@@ -1046,17 +1101,18 @@ std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size
 // registers the ISA addresses and still spilled to private memory -- 512 bytes a fiber, 144 reloads; without the
 // preamble the same function needs 21 registers and spills nothing. A stage that spills is compiled again without
 // it, and that one is taken when it spills less.
-std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase) {
+std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase,
+                                           const KnownBuffer* known) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
     }
-    std::unique_ptr<CompiledStage> with = compileStageOnce(bitcode, size, why, constants, iboBase);
+    std::unique_ptr<CompiledStage> with = compileStageOnce(bitcode, size, why, constants, iboBase, known);
     if (with == nullptr || with->stage.k.pvtmemSize == 0 || !theCompiler()->has_preamble) return with;
     theCompiler()->has_preamble = false;
     std::string whyNot;
-    std::unique_ptr<CompiledStage> without = compileStageOnce(bitcode, size, &whyNot, constants, iboBase);
+    std::unique_ptr<CompiledStage> without = compileStageOnce(bitcode, size, &whyNot, constants, iboBase, known);
     theCompiler()->has_preamble = true;
     return without != nullptr && preferWithoutPreamble(with->stage.k, without->stage.k) ? std::move(without) : std::move(with);
 }
@@ -1064,9 +1120,10 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
 
 
 namespace {
-std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase) {
+std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase,
+                                                const KnownBuffer* known) {
     Translation t;
-    if (!translate(bitcode, size, t, why, constants)) return nullptr;
+    if (!translate(bitcode, size, t, why, constants, known)) return nullptr;
     // the stage is the module's named metadata (air.vertex / air.fragment / air.kernel: air_to_nir.c module_stage)
     const std::string name = t.info.entry_point ? t.info.entry_point : "the function";
     switch (t.nir->info.stage) {

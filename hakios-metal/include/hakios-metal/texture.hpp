@@ -19,6 +19,7 @@
 // through and a test reads the same numbers the SDK headers show.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -219,6 +220,9 @@ struct TextureDesc {
     uint32_t usage = kTextureUsageRead;   // kTextureUsage* bits; a kernel that writes a texture made without kTextureUsageWrite is refused, a draw into one made without kTextureUsageRenderTarget too
     uint32_t depth = 1;                   // a 3D texture's slices (TextureType::k3D, one level); 1 for every other type
     uint32_t samples = 1;                 // MTLTextureDescriptor.sampleCount: 2 or 4 for TextureType::k2DMultisample, 1 for every other type
+    // laid out for the GPU alone, tiled and compressed (UBWC, Mesa's fdl6_layout): no rows a CPU can address, its bytes
+    // what the GPU reads compressed. A 2D, one-level, single-sample RGBA8 texture, in a build with Mesa
+    bool compressed = false;
 };
 
 class Texture {
@@ -288,9 +292,16 @@ public:
     uint64_t bytesPerRow() const { return pitch_; }                  // the GPU's pitch
     const std::shared_ptr<Buffer>& buffer() const { return buffer_; }
     uint64_t gpuAddress() const { return buffer_->gpuAddress() + offset_; }
-    void* contents() const {                                          // the rows, write-combined (nullptr for a surface the driver maps nowhere)
-        return buffer_->contents() != nullptr ? static_cast<uint8_t*>(buffer_->contents()) + offset_ : nullptr;
+    void* contents() const {                                          // the rows, write-combined (nullptr for a surface the driver maps nowhere, or a compressed texture)
+        return buffer_->contents() != nullptr && !ubwc_ ? static_cast<uint8_t*>(buffer_->contents()) + offset_ : nullptr;
     }
+    // TextureDesc::compressed: its flag buffer (the compression's metadata) in the GPU's memory, that buffer's pitch and
+    // layer size in bytes, and its blocks across and down as log2 (fdl_layout's)
+    bool compressed() const { return ubwc_; }
+    bool overBufferRows() const { return overBuffer_; }
+    uint64_t flagAddress() const { return buffer_->gpuAddress() + ubwcOffset_; }
+    uint32_t flagPitch() const { return ubwcPitch_; }
+    uint32_t flagLayerSize() const { return ubwcLayerSize_; }
 
     // -replaceRegion:mipmapLevel:withBytes:bytesPerRow: for level 0: H rows of W pixels from BYTES, the caller's rows
     // BYTES_PER_ROW apart, into the texture's rows at (X, Y). False with *why when the region lies outside the texture
@@ -347,6 +358,19 @@ private:
     uint64_t id_ = 0;
     static std::shared_ptr<Texture> adopt(Texture* t);   // every Texture is made through this: its id, and the registry
     SurfacePlane chroma_{0, 0};   // a two-plane format's second plane, in the buffer
+    bool overBuffer_ = false;     // made by overBuffer: its rows a Buffer's, which the CPU writes as it likes
+    bool ubwc_ = false;           // TextureDesc::compressed: TILE6_3 and a flag buffer
+    // ...and the linear rows this processor writes and reads (replace, read): copied into the compressed layout by the
+    // GPU before a draw samples the texture after they changed (CommandBuffer::draw, freshen)
+    std::shared_ptr<Texture> staging_;
+    mutable std::atomic<bool> stale_{false};
+public:
+    const Texture* staging() const { return staging_.get(); }
+    bool takeStale() const { return stale_.exchange(false); }   // true once a draw is to copy the rows in
+    void markStale() const { stale_ = true; }
+private:
+    uint64_t ubwcOffset_ = 0;
+    uint32_t ubwcPitch_ = 0, ubwcLayerSize_ = 0, ubwcLogW_ = 0, ubwcLogH_ = 0;
 };
 
 // The border colour table a sampler's BCOLOR indexes, 128 bytes an entry: Metal's MTLSamplerBorderColor in its own

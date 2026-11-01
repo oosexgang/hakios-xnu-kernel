@@ -609,6 +609,7 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
     if (status_ > kEnqueued) {
         return fail("dispatch after commit");
     }
+    if (!freshen(bindings)) return false;
     std::string why;
     const uint64_t program = programAddress(k, &why);
     if (program == 0) {

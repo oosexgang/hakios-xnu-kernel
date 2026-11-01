@@ -1,3 +1,4 @@
+#include <atomic>
 // hakios_metal.h over the C++ core.
 #include <string>
 
@@ -64,9 +65,17 @@ struct hakios_metal_sampler {
 };
 struct hakios_metal_program {
     std::shared_ptr<CompiledProgram> program;   // shared with every command buffer that drew with it and has not completed
+    unsigned color = 0;                         // the colour format it was linked for (hakios_metal_program_specialize links again)
 };
 
+namespace hakios::metal { extern std::atomic<uint32_t> gBuffersMade, gBuffersReused; extern std::atomic<uint64_t> gBytesMade; }
 extern "C" {
+void hakios_metal_buffer_counts(unsigned* made, unsigned* reused, unsigned long long* bytes) {
+    *made = hakios::metal::gBuffersMade.exchange(0);
+    *reused = hakios::metal::gBuffersReused.exchange(0);
+    *bytes = hakios::metal::gBytesMade.exchange(0);
+}
+
 
 const char* hakios_metal_error(void) { return lastError.c_str(); }
 
@@ -373,6 +382,29 @@ hakios_metal_texture* hakios_metal_texture_new_levels(hakios_metal_device* d, un
     desc.width = width;
     desc.height = height;
     desc.usage = usage;
+    std::string why;
+    std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
+    if (t == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    auto* r = new hakios_metal_texture;
+    r->texture = std::move(t);
+    return r;
+}
+
+unsigned hakios_metal_texture_origin(hakios_metal_texture* t) {
+    const Texture& x = *t->texture;
+    return x.compressed() ? 3 : x.overBufferRows() ? 2 : x.surface() != 0 ? 1 : 0;
+}
+
+hakios_metal_texture* hakios_metal_texture_new_compressed(hakios_metal_device* d, unsigned pixelFormat, unsigned width, unsigned height, unsigned usage) {
+    TextureDesc desc;
+    desc.format = PixelFormat(pixelFormat);
+    desc.width = width;
+    desc.height = height;
+    desc.usage = usage;
+    desc.compressed = true;
     std::string why;
     std::shared_ptr<Texture> t = Texture::make(*d->gpu, desc, &why);
     if (t == nullptr) {
@@ -703,6 +735,10 @@ void hakios_metal_cb_set_gmem_tuned(hakios_metal_cb* cb, int on) { cb->cb->setGm
 
 void hakios_metal_cb_set_gmem_min_draws(hakios_metal_cb* cb, unsigned draws) { cb->cb->setGmemMinDraws(draws); }
 
+void hakios_metal_cb_set_gmem_binning(hakios_metal_cb* cb, int on) { cb->cb->setGmemBinning(on != 0); }
+
+void hakios_metal_cb_set_null_fs_textures(hakios_metal_cb* cb, int on) { cb->cb->setNullFsTextures(on != 0); }
+
 void hakios_metal_cb_set_profile_draws(hakios_metal_cb* cb, int on) { cb->cb->setProfileDraws(on != 0); }
 
 int hakios_metal_cb_draw_place(hakios_metal_cb* cb, unsigned i, unsigned* pass, unsigned area[4]) {
@@ -727,6 +763,14 @@ void hakios_metal_cb_gmem_counts(hakios_metal_cb* cb, unsigned* passes, unsigned
 }
 
 const char* hakios_metal_cb_gmem_refusal(hakios_metal_cb* cb) { return cb->cb->gmemRefusal().c_str(); }
+
+int hakios_metal_cb_pass_attachments(hakios_metal_cb* cb, unsigned i, unsigned* attached, unsigned* touched) {
+    const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
+    if (i >= t.size()) return -1;
+    *attached = t[i].attached;
+    *touched = t[i].touched;
+    return 0;
+}
 
 int hakios_metal_cb_pass_tiles(hakios_metal_cb* cb, unsigned i) {
     const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
@@ -860,6 +904,7 @@ static hakios_metal_program* programOf(std::shared_ptr<CompiledStage> vs, std::s
     }
     auto* r = new hakios_metal_program;
     r->program = std::move(p);
+    r->color = colorPixelFormat;
     return r;
 }
 
@@ -891,6 +936,43 @@ hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsB
         return nullptr;
     }
     return programOf(std::move(vs), std::move(fs), colorPixelFormat);
+}
+
+hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base, const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants,
+                                                     unsigned fsCount, unsigned binding, const void* bytes, size_t length) {
+    if (base == nullptr || fsBitcode == nullptr || fsSize == 0 || bytes == nullptr) {
+        failed("a specialisation needs the program, its fragment function's bitcode and the buffer's bytes");
+        return nullptr;
+    }
+    std::string why;
+    KnownBuffer known;
+    known.binding = binding;
+    known.bytes.assign(static_cast<const uint8_t*>(bytes), static_cast<const uint8_t*>(bytes) + length);
+    const Program& was = base->program->program;
+    std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount), was.fsIboBase, &known);
+    if (fs == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    std::unique_ptr<CompiledProgram> p = linkProgram(base->program->vs, std::move(fs), PixelFormat(base->color), &why);
+    if (p == nullptr) {
+        failed(why);
+        return nullptr;
+    }
+    // the pipeline's own state, which the base was given after it was linked
+    p->program.vertexDescriptor = was.vertexDescriptor;
+    p->program.blend = was.blend;
+    for (uint32_t i = 0; i + 1 < kMaxColorOutputs; i++) p->program.moreBlend[i] = was.moreBlend[i];
+    p->program.samples = was.samples;
+    auto* r = new hakios_metal_program;
+    r->program = std::move(p);
+    r->color = base->color;
+    return r;
+}
+
+unsigned hakios_metal_program_stage_words(hakios_metal_program* p, unsigned stage) {
+    if (p == nullptr || stage > 1) return 0;
+    return (stage == 0 ? p->program->program.vs : p->program->program.fs).k.numWords;
 }
 
 // FUNCTION of LIBRARY as WANT (a vertex or a fragment function): its bitcode, or nullptr with the reason left
