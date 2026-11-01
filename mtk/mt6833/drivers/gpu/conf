@@ -1,0 +1,8 @@
+# mtk/mt6833/drivers/gpu/conf: the MT6833's Mali-G57 MC2 Valhall GPU.
+# CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel.
+
+driver MT6833_MALI
+	file    bsd/dev/hakios.mt6833_mali.c
+	default n
+	help    MediaTek MT6833 (Dimensity 700) Mali-G57 MC2 Valhall GPU initialization
+	help    (mali=1, gpu=1): registers at 0x13000000, power domains, clock gating, and sysctl

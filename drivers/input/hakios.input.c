@@ -237,9 +237,11 @@ hakios_input_init(void)
 	hakios_adreno_init();
 	hakios_mali_init();
 	hakios_mtk_connsys_init();
+	hakios_mt6833_ccci_init();
 	hakios_mtk_scp_init();
 	hakios_wifi_init();
 	hakios_adsp_init();
 	hakios_mpss_init();
 	hakios_mtk_emmc_devfs();
+	hakios_mtk_ufs_devfs();
 }

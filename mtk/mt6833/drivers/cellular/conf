@@ -1,0 +1,9 @@
+# mtk/mt6833/drivers/cellular/conf: MediaTek MT6833 CCCI 4G LTE Modem Subsystem.
+# CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel.
+
+driver MT6833_CELLULAR
+	file    bsd/dev/hakios.mt6833_ccci.c
+	default y
+	help    MediaTek MT6833 (Dimensity 700) Cross-Core Communication Interface (CCCI)
+	help    over AP CCIF0 at 0x10209000 and MD CCIF0 at 0x1020a000, bringing up 4G LTE
+	help    mobile packet data (pdp_ip0) and /dev/hakios-ccci AT command interface

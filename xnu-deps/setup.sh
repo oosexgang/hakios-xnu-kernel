@@ -162,14 +162,14 @@ stage1() {
 		cc -O2 -w -o host/bin/unzbm build/lzbitmap/unzbm.c build/lzbitmap/libzbitmap.c
 	fi
 	# the Mach-O linker and its companions come with theos
-	for tool in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool; do
+	for tool in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool dsymutil; do
 		link "$CCTOOLS/$tool" host/bin/$tool
 	done
 	if [ "$XNU_HOST_OS" = Darwin ]; then
 		# (not a link: Xcode's ld looks itself up by the name it was called by, and knows no "ld64")
 		printf '#!/bin/sh\nexec "%s" "$@"\n' "$(/usr/bin/xcrun -f ld)" > host/bin/ld64.new && chmod +x host/bin/ld64.new && mv host/bin/ld64.new host/bin/ld64
 	else
-		link "$CCTOOLS/ld" host/bin/ld64
+		printf '#!/bin/sh\nexport LD_LIBRARY_PATH="%s/../lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"\nexec "%s" "$@"\n' "$CCTOOLS" "$CCTOOLS/ld" > host/bin/ld64.new && chmod +x host/bin/ld64.new && mv host/bin/ld64.new host/bin/ld64
 	fi
 	link xnu-clang host/bin/xnu-clang++
 

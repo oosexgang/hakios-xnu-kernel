@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Accessibility performance keys for fast UI rendering -->
+	<key>ReduceTransparencyKey</key>
+	<true/>
+	<key>ReduceMotionKey</key>
+	<false/>
+	<key>DarkenSystemColors</key>
+	<false/>
+	<key>InvertColorsEnabled</key>
+	<false/>
+</dict>
+</plist>

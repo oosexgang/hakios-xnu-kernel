@@ -1,0 +1,8 @@
+# mtk/mt6833/drivers/storage/conf: MediaTek MT6833 UFS 2.2 storage
+# CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel (docs/drivers-config.md).
+
+driver MT6833_UFS
+	file    bsd/dev/hakios.mt6833_ufs.c
+	default n
+	help    MediaTek Dimensity 700 / MT6833 UFS 2.2 controller (ufshci@11270000), read-only:
+	help    the partition "xnusys" as /dev/ufs0, and with ufs_root=1 as the Darwin root filesystem

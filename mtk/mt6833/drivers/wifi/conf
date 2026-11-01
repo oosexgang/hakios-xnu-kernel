@@ -1,0 +1,9 @@
+# mtk/mt6833/drivers/wifi/conf: MediaTek MT6833 CONNSYS Wi-Fi and Bluetooth subsystem.
+# CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel.
+
+driver MT6833_CONNSYS
+	file    bsd/dev/hakios.mt6833_connsys.c
+	default y
+	help    MediaTek MT6833 (Dimensity 700) CONNSYS Wi-Fi & Bluetooth subsystem at 0x18002000,
+	help    BTIF at 0x1100c000, SPM power domain at 0x10006000, WMT protocol and Apple80211
+	help    shims for Darwin's wifid and en0 networking

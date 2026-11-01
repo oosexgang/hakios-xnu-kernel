@@ -1,0 +1,527 @@
+UEFI firmware (version 2025.11-3ubuntu7.3 built at 15:40:26 on Sep 23 2026)
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+== XNULOADER v3 ==
+
+   #   #   ###   #   #  #####   ###    ####
+   #   #  #   #  #  #     #    #   #  #
+   #####  #####  ###      #    #   #   ###
+   #   #  #   #  #  #     #    #   #      #
+   #   #  #   #  #   #  #####   ###   ####
+
+   hello hakios-kernel!
+   kernel.ver=2.1.13-hakios-darwin22.5-mt6833-g7c7fd363
+
+CurrentEL=1 MIDR=414fd0b1 MMFR0=101122 CNTFRQ=62500000 image=a1000000
+platform qemu-virt
+payload entry 'kernel' size e274d8
+payload entry 'ramdisk' size 4090
+payload entry 'cmdline' size 7
+payload entry 'kernel.ver' size 2a
+kernel va fffffff007004000..fffffff0081c34d8 entry fffffff00741d4a8
+largest free block 48000000 size 58000000
+phys window 48000000 size 58000000, claim status 0
+kernel loaded at pa 4b004000..4c1c4000
+ramdisk at pa 4c1c4000 size 8000
+return slot patched at 4b41e7f0, checkpoint 0
+cmdline: 86 of 607 characters
+cores for the kernel, in the order it takes them: 0
+device tree 4c1cc000 len 2ea8, boot_args 4c1dc000, top 4c1e0000
+cmdline: debug=0x8 serial=3 rd=md0 hakios_kver=2.1.13-hakios-darwin22.5-mt6833-g7c7fd363 cpus=1
+jumping to 4b41d4a8
+Darwin Kernel Version 22.5.0: Sun Nov  1 01:17:16 PM IST 2026; ankit:xnu-8796.121.2[xnu-8796.121.2-dirty]/BUILD/obj/DEVELOPMENT_ARM64_BCM2837
+pmap_startup() init/release time: 14342 microsec
+pmap_startup() delayed init/release of 0 pages
+vm_page_bootstrap: 85520 free pages, 4592 wired pages, (up to 0 of which are delayed free)
+VM boostrap: 102 maps, 204 entries and 512 holes available
+Maximum number of VM swap files: 5
+bsd_pageable            : 0xfffffff0022a0000 - 0xfffffff002be8000 (9M)
+compressor              : 0xfffffff076000000 - 0xfffffff0f6004000 (2048M)
+io_submap               : 0xfffffff0f6004000 - 0xfffffff0f6804000 (8M)
+zones                   : 0xfffffff0f6804000 - 0xfffffff6f6804000 (24G)
+gIOKitPageableFixed0    : 0xfffffff6f6804000 - 0xfffffff6fc804000 (96M)
+ipc_kernel_copy_map     : 0xfffffff6fc804000 - 0xfffffff6fd004000 (8M)
+gIOKitPageableFixed2    : 0xfffffff6fd004000 - 0xfffffff703004000 (96M)
+mb                      : 0xfffffff703004000 - 0xfffffff707004000 (64M)
+bufferhdr               : 0xfffffff707004000 - 0xfffffff707100000 (1008K)
+kmem_sprayqtn_range     : 0xfffffff707100000 - 0xfffffff730ff4000 (670M)
+ipc_kernel_map          : 0xfffffff730ff4000 - 0xfffffff732ff4000 (32M)
+kmem_data_range         : 0xfffffff732ff4000 - 0xfffffffab76d8000 (14G)
+kmem_ptr_range          : 0xfffffffab76d8000 - 0xfffffffbf17b8000 (5024M)
+zone_meta               : 0xfffffffbf17b8000 - 0xfffffffbf33c8000 (28M)
+gIOKitPageableFixed3    : 0xfffffffbf33c8000 - 0xfffffffbf93c8000 (96M)
+gIOKitPageableFixed1    : 0xfffffffbf93c8000 - 0xfffffffbff3c8000 (96M)
+kmem_ptr_range_meta     : 0xfffffffbff3c8000 - 0xfffffffbff4b4000 (944K)
+kmem_large_ranges[1]    : 0 - 0 (0B)
+kmem_large_ranges[2]    : 0 - 0 (0B)
+kmem_large_ranges[3]    : 0 - 0 (0B)
+kmem_large_ranges[4]    : 0xfffffff70c4de800 - 0xfffffff730ff4000 (587M)
+kmem_large_ranges[5]    : 0xfffffff7a38d0800 - 0xfffffffab76d8000 (12G)
+"vm_compressor_mode" is 2
+zone_init: pgzalloc  0xfffffff0f6804000:0xfffffff0f7280000 (10M) [335 slots]
+zone_init: map VM    0xfffffff0f7280000:0xfffffff1dd750000 (3684M)
+zone_init: map RO    0xfffffff1dd750000:0xfffffff22a394000 (1228M)
+zone_init: map GEN0  0xfffffff22a394000:0xfffffff310868000 (3684M)
+zone_init: map GEN1  0xfffffff310868000:0xfffffff3f6d3c000 (3684M)
+zone_init: map GEN2  0xfffffff3f6d3c000:0xfffffff4dd210000 (3684M)
+zone_init: map GEN3  0xfffffff4dd210000:0xfffffff5c36e4000 (3684M)
+zone_init: map DATA  0xfffffff5c36e4000:0xfffffff6f6804000 (4913M)
+zone_init: metadata  0xfffffffbf17c8000:0xfffffffbf2fc8000 (24M)
+zone_init: metabits  0xfffffffbf2fc8000:0xfffffffbf33b8000 (4032K)
+zone_init: extra     0:0 (0B)
+VM bootstrap done: 90 maps, 163 entries and 500 holes left
+OSLog stream configured: stream: 8192 bytes, cache: 2112 bytes
+OSLog stream verification: 0
+Firehose configured: 16 chunks, 8 io pages
+Long logs support configured: size: 16384
+Log queues configured: slot count: 8, per-slot size: 32768, total size: 262144
+standard timeslicing quantum is 10000 us
+standard background quantum is 2500 us
+mig_table_max_displ = 54 mach_kobj_count = 371
+kdp_core zlib memory 0x8000
+Serial requested, consistent debug disabled or debug boot arg not present, configuring debugging over serial
+iBoot version: iBoot-8422.100.650
+iBoot Stage 2 version: 
+IONVRAM.cpp:initImageFormat:1364 - NVRAM size is 8192 bytes
+IONVRAM.cpp:getNVRAMProperties:1176 - _bankSize=0x2000, _bankCount=0x1, _currentBank=0
+IONVRAMCHRPHandler.cpp:unserializeImage:479 - NVRAM : commonPartitionOffset - 0x30, commonPartitionSize - 0x1fd0, systemPartitionOffset - 0xffffffff, systemPartitionSize - 0
+minicrypto: registered (md5, sha1, sha2, hmac, aes-ecb/cbc/ctr, hmac-drbg prng); no xts/gcm, no RSA
+hakios-kernel: 6 drivers built in (.config): mt6833_audio mt6833_mali mt6833_keys mt6833_touch mt6833_ufs mt6833_connsys
+calling mpo_policy_init for vnguard
+Security policy loaded: Guarded vnode policy (vnguard)
+calling mpo_policy_init for AMFI
+Security policy loaded: Apple Mobile File Integrity (stand-in) (AMFI)
+calling mpo_policy_init for Sandbox
+Security policy loaded: Seatbelt sandbox policy (stand-in) (Sandbox)
+No POST boot-arg set.
+GenericARMPE: platform "device-tree"
+GenericARMCPU: cpu 0 (phys id 0x0) registered
+Copyright (c) 1982, 1986, 1989, 1991, 1993
+	The Regents of the University of California. All rights reserved.
+
+MAC Framework successfully initialized
+using 1717 buffer headers and 1717 cluster IO buffer headers
+ktriage_register_subsystem_strings: set subsystem 8 strings
+mcache: 1 CPU(s), 64 bytes CPU cache line size
+mbinit: done [64 MB total pool size, (42/21) split]
+dlil_init: Waiting for all the create dlil kernel threads to get scheduled at least once.
+dlil_init: All the created dlil kernel threads have been scheduled at least once. Proceeding.
+ifnet_attach: All kernel threads created for interface lo0 have been scheduled at least once. Proceeding.
+skip attaching fsw to lo0 using legacy TX modelMiniIOMobileFramebuffer: no usable boot framebuffer (0x0, depth 0)
+!BSD
+Added memory device md0/rmd0 (01000000/0D000000) at FFFFFFF0081C4000 for 0000000000008000
+BSD root: md0, major 1, minor 0
+hakios-kernel: version 2.1.13-hakios-darwin22.5-mt6833-g7c7fd363
+mt6833_touch: initializing MediaTek MT6833 Touchscreen Driver (POCO M4 5G)
+mt6833_touch: touch thread started successfully (1080x2408 -> 65535x65535)
+mt6833_keys: starting button monitoring thread
+mt6833_connsys: initializing MediaTek MT6833 CONNSYS Wi-Fi (step 4)...
+mt6833_connsys: initial power status: 0xffffffff/0xffffffff (CONNSYS is ON)
+mt6833_connsys: IP ver=0xffffffff, conf=0xf, hw_id=0xffff, fw_id=0xffff
+mt6833_connsys: MT6833 CONNSYS ready; virtual en0 available for Apple80211
+mt6833_audio: initializing MT6833 AFE sound system...
+mt6833_audio: MT6833 AFE initialized (SRAM=0x11212000, 32KB buffer, I2S3 48kHz stereo)
+mt6833_audio: found AW87xxx speaker amp at I2C 0x58 (chip_id=0xff)
+mt6833_touch: touch monitor thread active (rate=8333 us, flip=0)
+mt6833_audio: AW87389 speaker amplifier initialized and unmuted
+hakios-audio: sound goes to MT6833 AFE (POCO M4 5G Loudspeaker)
+VM Swap Subsystem is ON
+mt6833_keys: MT6833 keypad @ 0x10010000, PWRAP @ 0x10026000; PMIC status TIMEOUT
+No POST boot-arg set.
+load_init_program: attempting to load /usr/appleinternal/sbin/launchd.development
+load_init_program: attempting to load /sbin/launchd
+
+Hello from user space on Darwin!
+I am process 1, uid 0, console fd 0.
+kernel.ver=2.1.13-hakios-darwin22.5-mt6833-g7c7fd363
+pid 1 exited -- no exit reason available -- (signal 0, exit 0)
+coredump (launchd, pid 1): writing core to /private/var/cores/launchd.core
+coredump (launchd, pid 1): failed to open core dump file /private/var/cores/launchd.core: error 2
+coredump (launchd, pid 1): core dump failed: error 2
+
+Failed to generate core file for pid: 1: error 2, took 0.001 seconds
+panic(cpu 0 caller 0xfffffff007785568): initproc failed to start -- no exit reason available -- (signal 0, exit status 0 )
+Debugger message: panic
+Device: Not set yet
+Hardware Model: Not set yet
+ECID: 0000052445730001
+Boot args: debug=0x8 serial=3 rd=md0 hakios_kver=2.1.13-hakios-darwin22.5-mt6833-g7c7fd363 cpus=1
+Memory ID: 0x0
+OS release type: Not set yet
+OS version: Not set yet
+Kernel version: Darwin Kernel Version 22.5.0: Sun Nov  1 01:17:16 PM IST 2026; ankit:xnu-8796.121.2[xnu-8796.121.2-dirty]/BUILD/obj/DEVELOPMENT_ARM64_BCM2837
+Kernel UUID: C2270578-7FEB-3CB6-B642-E9885FE83A40
+Boot session UUID: 19CF1C53-CDD1-4CFC-9A4A-60A2BF87029A
+iBoot version: iBoot-8422.100.650
+iBoot Stage 2 version: 
+secure boot?: NO
+roots installed: 0
+Paniclog version: 14
+Kernel text base:  0xfffffff007004000
+mach_absolute_time: 0x1796a0a1
+Epoch Time:        sec       usec
+  Boot    : 0x6ae6fa1a 0x00000000
+  Sleep   : 0x00000000 0x00000000
+  Wake    : 0x00000000 0x00000000
+  Calendar: 0x6ae6fa1a 0x00056805
+
+Zone info:
+  Zone map: 0xfffffff0f6804000 - 0xfffffff6f6804000
+  . PGZ   : 0xfffffff0f6804000 - 0xfffffff0f7280000
+  . VM    : 0xfffffff0f7280000 - 0xfffffff1dd750000
+  . RO    : 0xfffffff1dd750000 - 0xfffffff22a394000
+  . GEN0  : 0xfffffff22a394000 - 0xfffffff310868000
+  . GEN1  : 0xfffffff310868000 - 0xfffffff3f6d3c000
+  . GEN2  : 0xfffffff3f6d3c000 - 0xfffffff4dd210000
+  . GEN3  : 0xfffffff4dd210000 - 0xfffffff5c36e4000
+  . DATA  : 0xfffffff5c36e4000 - 0xfffffff6f6804000
+  Metadata: 0xfffffffbf17c8000 - 0xfffffffbf2fc8000
+  Bitmaps : 0xfffffffbf2fc8000 - 0xfffffffbf33b8000
+  Extra   : 0 - 0
+
+TPIDRx_ELy = {1: 0xfffffff4dd4baf70  0: 0x0000000000000000  0ro: 0x0000000000000000 }
+CORE 0 is the one that panicked. Check the full backtrace for details.
+Compressor Info: 0% of compressed pages limit (OK) and 0% of segments limit (OK) with 0 swapfiles and OK swap space
+Panicked task 0xfffffff3107fb9b0: 2 pages, 1 threads: pid 1: launchd
+Panicked thread: 0xfffffff4dd4baf70, backtrace: 0xfffffff7072574f0, tid: 164
+		  lr: 0xfffffff00728fd44  fp: 0xfffffff707257580
+		  lr: 0xfffffff00742b9c8  fp: 0xfffffff7072575a0
+		  lr: 0xfffffff00741be1c  fp: 0xfffffff707257610
+		  lr: 0xfffffff00741ae50  fp: 0xfffffff707257730
+		  lr: 0xfffffff00741a5a4  fp: 0xfffffff707257740
+		  lr: 0xfffffff00728f384  fp: 0xfffffff707257af0
+		  lr: 0xfffffff0072904d8  fp: 0xfffffff707257b70
+		  lr: 0xfffffff007a34f30  fp: 0xfffffff707257b90
+		  lr: 0xfffffff007785568  fp: 0xfffffff707257cc0
+		  lr: 0xfffffff007784b34  fp: 0xfffffff707257d50
+		  lr: 0xfffffff007784964  fp: 0xfffffff707257d60
+		  lr: 0xfffffff0078f11bc  fp: 0xfffffff707257df0
+		  lr: 0xfffffff00741af30  fp: 0xfffffff707257f10
+		  lr: 0xfffffff00741a5a4  fp: 0xfffffff707257f20
+
+
+** Stackshot Succeeded ** Bytes Traced 5473 (Uncompressed 14944) **
+kernel returned: log at 4bae89c0, 24219 bytes
+returned 24219 0
+== KERNEL LOG ==
+mt6833_touch: initializing MediaTek MT6833 Touchscreen Driver (POCO M4 5G)
+mt6833_touch: touch thread started successfully (1080x2408 -> 65535x65535)
+mt6833_connsys: initializing MediaTek MT6833 CONNSYS Wi-Fi (step 4)...
+mt6833_connsys: initial power status: 0xffffffff/0xffffffff (CONNSYS is ON)
+mt6833_connsys: IP ver=0xffffffff, conf=0xf, hw_id=0xffff, fw_id=0xffff
+mt6833_connsys: MT6833 CONNSYS ready; virtual en0 available for Apple80211
+mt6833_audio: initializing MT6833 AFE sound system...
+mt6833_audio: MT6833 AFE initialized (SRAM=0x11212000, 32KB buffer, I2S3 48kHz stereo)
+mt6833_audio: found AW87xxx speaker amp at I2C 0x58 (chip_id=0xff)
+mt6833_touch: touch monitor thread active (rate=8333 us, flip=0)
+mt6833_audio: AW87389 speaker amplifier initialized and unmuted
+
+Hello from user space on Darwin!
+I am process 1, uid 0, console fd 0.
+kernel.ver=2.1.13-hakios-darwin22.5-mt6833-g7c7fd363
+
+--- kernel message buffer ---
+[    5.697580]:  vm_cache_geometry_colors: 4
+[    5.698383]: do_cacheid() - 131072 bytes Unknown cache (I:65536 D:65536 (separate)), 8-way assoc, 64 bytes/line
+[    5.708139]: kprintf initialized
+[    5.710462]: Serial mode specified: 00000003
+[    5.711333]: initialize_screen: b=00000000, w=00000000, h=00000000, r=00000000, d=00000000
+[    5.711456]: initialize_screen: No video - forcing serial mode
+[    5.711879]: pe_arm_init_interrupts: args: 0xfffffff007a96720
+[    5.711978]: pe_arm_map_interrupt_controller: soc_phys:  0x8000000
+[    5.712030]: pe_arm_map_interrupt_controller: failed to find the interrupt-controller.
+[    5.712082]: pe_arm_init_debug: failed to find cpu-debug-interface
+[    5.712824]: gic: v3, distributor 0xfffffff074e84000, cpu 0's redistributor 0xfffffff074e94000, virtual timer on PPI 27
+[    5.713958]: Darwin Kernel Version 22.5.0: Sun Nov  1 01:17:16 PM IST 2026; ankit:xnu-8796.121.2[xnu-8796.121.2-dirty]/BUILD/obj/DEVELOPMENT_ARM64_BCM2837
+[    5.734032]: pmap_startup() init/release time: 14342 microsec
+[    5.734244]: pmap_startup() delayed init/release of 0 pages
+[    5.734839]: vm_page_bootstrap: 85520 free pages, 4592 wired pages, (up to 0 of which are delayed free)
+[    5.746995]: VM boostrap: 102 maps, 204 entries and 512 holes available
+[    5.750280]: Maximum number of VM swap files: 5
+[    5.753517]: bsd_pageable            : 0xfffffff0022a0000 - 0xfffffff002be8000 (9M)
+[    5.753912]: compressor              : 0xfffffff076000000 - 0xfffffff0f6004000 (2048M)
+[    5.754132]: io_submap               : 0xfffffff0f6004000 - 0xfffffff0f6804000 (8M)
+[    5.754352]: zones                   : 0xfffffff0f6804000 - 0xfffffff6f6804000 (24G)
+[    5.754590]: gIOKitPageableFixed0    : 0xfffffff6f6804000 - 0xfffffff6fc804000 (96M)
+[    5.754819]: ipc_kernel_copy_map     : 0xfffffff6fc804000 - 0xfffffff6fd004000 (8M)
+[    5.755049]: gIOKitPageableFixed2    : 0xfffffff6fd004000 - 0xfffffff703004000 (96M)
+[    5.755304]: mb                      : 0xfffffff703004000 - 0xfffffff707004000 (64M)
+[    5.755556]: bufferhdr               : 0xfffffff707004000 - 0xfffffff707100000 (1008K)
+[    5.755784]: kmem_sprayqtn_range     : 0xfffffff707100000 - 0xfffffff730ff4000 (670M)
+[    5.756004]: ipc_kernel_map          : 0xfffffff730ff4000 - 0xfffffff732ff4000 (32M)
+[    5.756225]: kmem_data_range         : 0xfffffff732ff4000 - 0xfffffffab76d8000 (14G)
+[    5.756449]: kmem_ptr_range          : 0xfffffffab76d8000 - 0xfffffffbf17b8000 (5024M)
+[    5.756694]: zone_meta               : 0xfffffffbf17b8000 - 0xfffffffbf33c8000 (28M)
+[    5.756925]: gIOKitPageableFixed3    : 0xfffffffbf33c8000 - 0xfffffffbf93c8000 (96M)
+[    5.757266]: gIOKitPageableFixed1    : 0xfffffffbf93c8000 - 0xfffffffbff3c8000 (96M)
+[    5.757611]: kmem_ptr_range_meta     : 0xfffffffbff3c8000 - 0xfffffffbff4b4000 (944K)
+[    5.762490]: kmem_large_ranges[1]    : 0 - 0 (0B)
+[    5.762662]: kmem_large_ranges[2]    : 0 - 0 (0B)
+[    5.762787]: kmem_large_ranges[3]    : 0 - 0 (0B)
+[    5.763009]: kmem_large_ranges[4]    : 0xfffffff70c4de800 - 0xfffffff730ff4000 (587M)
+[    5.763230]: kmem_large_ranges[5]    : 0xfffffff7a38d0800 - 0xfffffffab76d8000 (12G)
+[    5.763723]: "vm_compressor_mode" is 2
+[    5.764374]: zone_init: pgzalloc  0xfffffff0f6804000:0xfffffff0f7280000 (10M) [335 slots]
+[    5.764889]: zone_init: map VM    0xfffffff0f7280000:0xfffffff1dd750000 (3684M)
+[    5.765214]: zone_init: map RO    0xfffffff1dd750000:0xfffffff22a394000 (1228M)
+[    5.765488]: zone_init: map GEN0  0xfffffff22a394000:0xfffffff310868000 (3684M)
+[    5.765740]: zone_init: map GEN1  0xfffffff310868000:0xfffffff3f6d3c000 (3684M)
+[    5.765982]: zone_init: map GEN2  0xfffffff3f6d3c000:0xfffffff4dd210000 (3684M)
+[    5.766219]: zone_init: map GEN3  0xfffffff4dd210000:0xfffffff5c36e4000 (3684M)
+[    5.766519]: zone_init: map DATA  0xfffffff5c36e4000:0xfffffff6f6804000 (4913M)
+[    5.766985]: zone_init: metadata  0xfffffffbf17c8000:0xfffffffbf2fc8000 (24M)
+[    5.767240]: zone_init: metabits  0xfffffffbf2fc8000:0xfffffffbf33b8000 (4032K)
+[    5.767373]: zone_init: extra     0:0 (0B)
+[    5.773447]: VM bootstrap done: 90 maps, 163 entries and 500 holes left
+[    5.788517]: IOKit IOMD setownership ENABLED
+[    5.788651]: ATM subsystem is initialized
+[    5.793552]: OSLog stream configured: stream: 8192 bytes, cache: 2112 bytes
+[    5.793685]: OSLog stream verification: 0
+[    5.794610]: Firehose configured: 16 chunks, 8 io pages
+[    5.795205]: Long logs support configured: size: 16384
+[    5.796558]: Log queues configured: slot count: 8, per-slot size: 32768, total size: 262144
+[    5.797146]: Telemetry: Sampling all tasks once per 1 second
+[    5.797457]: Scheduler: Default of clutch
+[    5.797517]: Setting scheduler priority decay band limit 18
+[    5.798263]: standard timeslicing quantum is 10000 us
+[    5.798434]: standard background quantum is 2500 us
+[    5.800661]: BANK subsystem is initialized
+[    5.801570]: mig_table_max_displ = 54 mach_kobj_count = 371
+[    5.827969]: panic_trace: PE_arm_debug_enable_trace enter
+[    5.828133]: panic_trace: PE_arm_debug_enable_trace exit
+[    5.828816]: kdp_core zlib memory 0x8000
+[    5.830181]: Registered coredump handler for kernel
+[    5.830581]: Serial requested, consistent debug disabled or debug boot arg not present, configuring debugging over serial
+[    5.830603]: Initializing serial KDP
+[    5.834995]: iBoot version: iBoot-8422.100.650
+[    5.835110]: iBoot Stage 2 version: 
+[    5.865697]: IONVRAM.cpp:initImageFormat:1364 - NVRAM size is 8192 bytes
+[    5.866553]: IONVRAM.cpp:getNVRAMProperties:1176 - _bankSize=0x2000, _bankCount=0x1, _currentBank=0
+[    5.867535]: IONVRAMCHRPHandler.cpp:unserializeImage:479 - NVRAM : commonPartitionOffset - 0x30, commonPartitionSize - 0x1fd0, systemPartitionOffset - 0xffffffff, systemPartitionSize - 0
+[    5.871974]: ulock_initialize>thread_max=1536, ull_hash_buckets=512
+[    5.874779]: minicrypto: registered (md5, sha1, sha2, hmac, aes-ecb/cbc/ctr, hmac-drbg prng); no xts/gcm, no RSA
+[    5.877440]: hakios-kernel: 6 drivers built in (.config): mt6833_audio mt6833_mali mt6833_keys mt6833_touch mt6833_ufs mt6833_connsys
+[    5.883117]: calling mpo_policy_init for vnguard
+[    5.883495]: Security policy loaded: Guarded vnode policy (vnguard)
+[    5.883674]: calling mpo_policy_init for AMFI
+[    5.883897]: Security policy loaded: Apple Mobile File Integrity (stand-in) (AMFI)
+[    5.884031]: calling mpo_policy_init for Sandbox
+[    5.884251]: Security policy loaded: Seatbelt sandbox policy (stand-in) (Sandbox)
+[    5.932992]: No POST boot-arg set.
+[    5.943991]: PMRD: PMTraceWorker 0x47a3a52efd509275
+[    5.948625]: PMRD: changePowerStateWithTagToPriv(ON_STATE, 10001)
+[    5.954275]: PMRD: power event 7 args 0x47a3a52efd0fdb35 0x0
+[    5.954444]: PMRD: power event 7 args 0x47a3a52efd0fee95 0x0
+[    5.957003]: PMRD: PowerChangeOverride (OFF_STATE->ON_STATE, f, 0x2) tag 0x20064
+[    5.958603]: PMRD: sysPowerDownHandler message kIOMessageSystemCapabilityChange
+[    5.958669]: PMRD: sysPowerDownHandler cap f -> f (flags 1)
+[    5.960504]: PMRD: sysPowerDownHandler message kIOMessageSystemCapabilityChange
+[    5.960532]: PMRD: sysPowerDownHandler cap f -> f (flags 2)
+[    5.960637]: PMRD: tellChangeUp OFF_STATE->ON_STATE
+[    5.961088]: PMRD: PowerChangeDone: OFF_STATE->ON_STATE
+[    5.961130]: PMRD: Force re-evaluating aggressiveness
+[    5.961193]: PMRD: changePowerStateWithTagToPriv(ON_STATE, 30002)
+[    5.961320]: PMRD: PowerChangeOverride (ON_STATE->ON_STATE, f, 0x2) tag 0x10001
+[    5.961341]: PMRD: PowerChangeDone: ON_STATE->ON_STATE
+[    5.961413]: PMRD: PowerChangeOverride (ON_STATE->ON_STATE, f, 0x302) tag 0x40064
+[    5.961611]: PMRD: PowerChangeDone: ON_STATE->ON_STATE
+[    5.961631]: PMRD: PowerChangeOverride (ON_STATE->ON_STATE, f, 0x302) tag 0x50064
+[    5.961665]: PMRD: PowerChangeDone: ON_STATE->ON_STATE
+[    5.961833]: PMRD: adjustPowerState ON_STATE, asap 0, idleSleepEnabled 0
+[    5.961891]: PMRD: changePowerStateWithTagToPriv(ON_STATE, 60008)
+[    5.961996]: PMRD: PowerChangeOverride (ON_STATE->ON_STATE, f, 0x2) tag 0x30002
+[    5.962016]: PMRD: PowerChangeDone: ON_STATE->ON_STATE
+[    5.962063]: PMRD: PowerChangeOverride (ON_STATE->ON_STATE, f, 0x2) tag 0x60008
+[    5.962081]: PMRD: PowerChangeDone: ON_STATE->ON_STATE
+[    5.968105]: GenericARMPE: platform "device-tree"
+[    5.968928]: [0]ml_processor_register>pset_find(cluster_id=0) returned pset 0
+[    5.968970]: [0]ml_processor_register>cpu_id 0xfffffff4dd0d65c0 cluster_id 0 cpu_number 0 is type 0
+[    5.969394]: GenericARMCPU: cpu 0 (phys id 0x0) registered
+[    5.970743]: Copyright (c) 1982, 1986, 1989, 1991, 1993
+	The Regents of the University of California. All rights reserved.
+
+[    5.970772]: bsd_init: calling kauth_init
+[    5.971071]: bsd_init: calling process_name
+[    5.971195]: bsd_init: calling get_bsdthread_info
+[    5.971359]: MAC Framework successfully initialized
+[    5.972115]: bsd_init: calling kauth_cred_create
+[    5.972344]: bsd_init: calling chgproccnt
+[    5.972428]: bsd_init: calling kmem_suballoc
+[    5.972502]: bsd_init: calling bsd_bufferinit
+[    5.977090]: using 1717 buffer headers and 1717 cluster IO buffer headers
+[    5.977404]: bsd_init: calling IOKitInitializeTime
+[    5.978263]: clock_initialize_calendar system does not have monotonic clock
+[    5.978546]: bsd_init: calling vfsinit
+[    5.982042]: ktriage_register_subsystem_strings: set subsystem 8 strings
+[    5.982594]: bsd_init: calling proc_uuid_policy_init()
+[    5.983717]: mcache: 1 CPU(s), 64 bytes CPU cache line size
+[    5.983759]: bsd_init: calling mbinit
+[    5.986693]: mbinit: done [64 MB total pool size, (42/21) split]
+[    5.986857]: bsd_init: calling knote_init
+[    5.986922]: bsd_init: calling eventhandler_init
+[    5.986946]: bsd_init: calling aio_init
+[    5.987300]: bsd_init: calling pshm_cache_init
+[    5.987340]: bsd_init: calling psem_cache_init
+[    5.987436]: bsd_init: calling nwk_wq_init
+[    5.987585]: bsd_init: calling dlil_init
+[    5.987729]: SK: netagent is enabled by default for this platform
+[    5.991831]: DLIL: running SUM16 self-tests ... PASSED
+[    5.995731]: dlil_init: Waiting for all the create dlil kernel threads to get scheduled at least once.
+[    5.999346]: dlil_init: All the created dlil kernel threads have been scheduled at least once. Proceeding.
+[    5.999390]: bsd_init: calling socketinit
+[    5.999636]: bsd_init: calling domaininit
+[    5.1006037]: bsd_init: calling skywalk_init
+[    5.1006580]: SK[0]: skmem_region_init              seg_size 16384, md_seg_size 16384, drv_buf_seg_size 65536 [eff 65536], usr_buf_seg_size 16384
+[    6.015494]: Skywalk: running self-tests
+[    6.015555]: Skywalk: sk_copy64_8 ... PASSED
+[    6.015640]: Skywalk: sk_copy32_8 ... PASSED
+[    6.015692]: Skywalk: sk_copy64_16 ... PASSED
+[    6.015738]: Skywalk: sk_copy32_16 ... PASSED
+[    6.015780]: Skywalk: sk_copy64_20 ... PASSED
+[    6.015827]: Skywalk: sk_copy64_24 ... PASSED
+[    6.015877]: Skywalk: sk_copy64_32 ... PASSED
+[    6.015936]: Skywalk: sk_copy32_32 ... PASSED
+[    6.015984]: Skywalk: sk_copy64_40 ... PASSED
+[    6.016034]: Skywalk: sk_copy64_64x ... PASSED
+[    6.016122]: Skywalk: sk_copy64_32x ... PASSED
+[    6.016205]: Skywalk: sk_copy64_8x ... PASSED
+[    6.016285]: Skywalk: sk_copy64_4x ... PASSED
+[    6.016414]: Skywalk: sk_zero_16 ... PASSED
+[    6.016476]: Skywalk: sk_zero_32 ... PASSED
+[    6.016540]: Skywalk: sk_zero_48 ... PASSED
+[    6.016600]: Skywalk: sk_zero_128 ... PASSED
+[    6.017089]: Skywalk: memcmp mask ... PASSED
+[    6.022327]: bsd_init: calling memorystatus_freeze_init
+[    6.022386]: bsd_init: calling memorystatus_init
+[    6.023557]: bsd_init: calling sysctl_mib_init
+[    6.023767]: bsd_init: calling bsd_autoconf
+[    6.023781]: bsd_autoconf: calling kminit
+[    6.037531]: bsd_init: calling loopattach
+[    6.041994]: ifnet_attach: All kernel threads created for interface lo0 have been scheduled at least once. Proceeding.
+[    6.042620]: bsd_init: calling ether_family_init
+[    6.044162]: bsd_init: calling net_init_run
+[    6.046615]: skip attaching fsw to lo0 using legacy TX modelReinit'd ND information for interface lo0
+[    6.056741]: bsd_init: calling inittodr
+[    6.056799]: bsd_init: calling setconf
+[    6.058678]: cpu_start() cpu: 0
+[    6.059723]: MiniIOMobileFramebuffer: no usable boot framebuffer (0x0, depth 0)
+[    6.160596]: !BSD
+[    6.161671]: Added memory device md0/rmd0 (01000000/0D000000) at FFFFFFF0081C4000 for 0000000000008000
+[    6.161870]: BSD root: md0, major 1, minor 0
+[    6.162149]: bsd_init: vfs_mountroot
+[    6.168801]: bsd_init: calling VFS_ROOT
+[    6.169356]: bsd_init: calling devfs_kernel_mount
+[    6.174866]: hakios-kernel: version 2.1.13-hakios-darwin22.5-mt6833-g7c7fd363
+[    6.175482]: mt6833_touch: initializing MediaTek MT6833 Touchscreen Driver (POCO M4 5G)
+[    6.176170]: mt6833_touch: touch thread started successfully (1080x2408 -> 65535x65535)
+[    6.176379]: mt6833_keys: starting button monitoring thread
+[    6.176872]: mt6833_connsys: initializing MediaTek MT6833 CONNSYS Wi-Fi (step 4)...
+[    6.177289]: mt6833_connsys: initial power status: 0xffffffff/0xffffffff (CONNSYS is ON)
+[    6.177613]: mt6833_connsys: IP ver=0xffffffff, conf=0xf, hw_id=0xffff, fw_id=0xffff
+[    6.177876]: mt6833_connsys: MT6833 CONNSYS ready; virtual en0 available for Apple80211
+[    6.178323]: mt6833_audio: initializing MT6833 AFE sound system...
+[    6.180333]: mt6833_audio: MT6833 AFE initialized (SRAM=0x11212000, 32KB buffer, I2S3 48kHz stereo)
+[    6.181520]: mt6833_audio: found AW87xxx speaker amp at I2C 0x58 (chip_id=0xff)
+[    6.182532]: mt6833_touch: touch monitor thread active (rate=8333 us, flip=0)
+[    6.186720]: mt6833_audio: AW87389 speaker amplifier initialized and unmuted
+[    6.187136]: hakios-audio: sound goes to MT6833 AFE (POCO M4 5G Loudspeaker)
+[    6.187490]: bsd_init: calling siginit
+[    6.187590]: bsd_init: calling bsd_utaskbootstrap
+[    6.192296]: bsd_init: calling mountroot_post_hook
+[    6.192335]: bsd_init: done
+[    6.192397]: Serial keyboard started
+[    6.192589]: vm_free_delayed_pages: initialized 0 free pages
+[    6.195407]: VM Swap Subsystem is ON
+[    6.209990]: mt6833_keys: MT6833 keypad @ 0x10010000, PWRAP @ 0x10026000; PMIC status TIMEOUT
+[    6.229207]: No POST boot-arg set.
+[    6.229265]: bsd_init: bsd_do_post - doneload_init_program: attempting to load /usr/appleinternal/sbin/launchd.development
+[    6.239775]: load_init_program: attempting to load /sbin/launchd
+[    6.327065]: pid 1 exited -- no exit reason available -- (signal 0, exit 0)
+[    6.327982]: coredump (launchd, pid 1): writing core to /private/var/cores/launchd.core
+[    6.328517]: coredump (launchd, pid 1): failed to open core dump file /private/var/cores/launchd.core: error 2
+[    6.328754]: coredump (launchd, pid 1): core dump failed: error 2
+
+[    6.329051]: Failed to generate core file for pid: 1: error 2, took 0.001 seconds
+
+--- panic buffer ---
+panic(cpu 0 caller 0xfffffff007785568): initproc failed to start -- no exit reason available -- (signal 0, exit status 0 )
+Debugger message: panic
+Device: Not set yet
+Hardware Model: Not set yet
+ECID: 0000052445730001
+Boot args: debug=0x8 serial=3 rd=md0 hakios_kver=2.1.13-hakios-darwin22.5-mt6833-g7c7fd363 cpus=1
+Memory ID: 0x0
+OS release type: Not set yet
+OS version: Not set yet
+Kernel version: Darwin Kernel Version 22.5.0: Sun Nov  1 01:17:16 PM IST 2026; ankit:xnu-8796.121.2[xnu-8796.121.2-dirty]/BUILD/obj/DEVELOPMENT_ARM64_BCM2837
+Kernel UUID: C2270578-7FEB-3CB6-B642-E9885FE83A40
+Boot session UUID: 19CF1C53-CDD1-4CFC-9A4A-60A2BF87029A
+iBoot version: iBoot-8422.100.650
+iBoot Stage 2 version: 
+secure boot?: NO
+roots installed: 0
+Paniclog version: 14
+Kernel text base:  0xfffffff007004000
+mach_absolute_time: 0x1796a0a1
+Epoch Time:        sec       usec
+  Boot    : 0x6ae6fa1a 0x00000000
+  Sleep   : 0x00000000 0x00000000
+  Wake    : 0x00000000 0x00000000
+  Calendar: 0x6ae6fa1a 0x00056805
+
+Zone info:
+  Zone map: 0xfffffff0f6804000 - 0xfffffff6f6804000
+  . PGZ   : 0xfffffff0f6804000 - 0xfffffff0f7280000
+  . VM    : 0xfffffff0f7280000 - 0xfffffff1dd750000
+  . RO    : 0xfffffff1dd750000 - 0xfffffff22a394000
+  . GEN0  : 0xfffffff22a394000 - 0xfffffff310868000
+  . GEN1  : 0xfffffff310868000 - 0xfffffff3f6d3c000
+  . GEN2  : 0xfffffff3f6d3c000 - 0xfffffff4dd210000
+  . GEN3  : 0xfffffff4dd210000 - 0xfffffff5c36e4000
+  . DATA  : 0xfffffff5c36e4000 - 0xfffffff6f6804000
+  Metadata: 0xfffffffbf17c8000 - 0xfffffffbf2fc8000
+  Bitmaps : 0xfffffffbf2fc8000 - 0xfffffffbf33b8000
+  Extra   : 0 - 0
+
+TPIDRx_ELy = {1: 0xfffffff4dd4baf70  0: 0x0000000000000000  0ro: 0x0000000000000000 }
+CORE 0 is the one that panicked. Check the full backtrace for details.
+Compressor Info: 0% of compressed pages limit (OK) and 0% of segments limit (OK) with 0 swapfiles and OK swap space
+Panicked task 0xfffffff3107fb9b0: 2 pages, 1 threads: pid 1: launchd
+Panicked thread: 0xfffffff4dd4baf70, backtrace: 0xfffffff7072574f0, tid: 164
+		  lr: 0xfffffff00728fd44  fp: 0xfffffff707257580
+		  lr: 0xfffffff00742b9c8  fp: 0xfffffff7072575a0
+		  lr: 0xfffffff00741be1c  fp: 0xfffffff707257610
+		  lr: 0xfffffff00741ae50  fp: 0xfffffff707257730
+		  lr: 0xfffffff00741a5a4  fp: 0xfffffff707257740
+		  lr: 0xfffffff00728f384  fp: 0xfffffff707257af0
+		  lr: 0xfffffff0072904d8  fp: 0xfffffff707257b70
+		  lr: 0xfffffff007a34f30  fp: 0xfffffff707257b90
+		  lr: 0xfffffff007785568  fp: 0xfffffff707257cc0
+		  lr: 0xfffffff007784b34  fp: 0xfffffff707257d50
+		  lr: 0xfffffff007784964  fp: 0xfffffff707257d60
+		  lr: 0xfffffff0078f11bc  fp: 0xfffffff707257df0
+		  lr: 0xfffffff00741af30  fp: 0xfffffff707257f10
+		  lr: 0xfffffff00741a5a4  fp: 0xfffffff707257f20
+
+PMOC??0?kcd_c_type??0?kcd_c_totaloutq??0?kcd_c_totalin`:?X?Y?Hbf``0?? ???????????????????b?8?dgy?c?h??b???@??? ??? 3?,?D???$.???b?r?????A????$57?hLI*6?A?!?????d`?
+? ?"????RB?gG??1????@?gp@U?????O
+5A?]???3???S??Rs??R??3??????L?????K???????????????????|?<?C??????????3K?*?Ju-?-????????Q??)?E%???N??>.??IY?.?a?>????~!?A?f&N??F???@7??????/?HwB????T?nkPa?P?Z???ck?P?b??b??????_??]?Zdk?g?gh????M??	?????3?cc?t?d???c3c????b[C??@
+??2?b? ?b??bF??
+??2???@??? h?<q?B???2?R?@??? ?z??[?x6?H?????b? f?b?p???0???r????? ??????d?????????j????b????k????sj??PF?& ???????(??????????h>2???r?????????????yH???????mN/;?_X9??@??b??o2:???024( ?????s?~=?B?Gf??????	:?$?8????8??R??G???????4?????B????h????O*T???????b????? ??0u????????LCdq?3??A??????	???`?F3D??=?????t?;?sD@?'P????? ???_????_Z?_?????$?????T????m?3X?nx????????`????????8*??~??B???:?r??%:D????1?-??Jf?G1?+7o?(?n??H?4???L?IUP6@?I??W?}??v????1(???????`?????_:T?=???B???????p??(?`?????"??e?8H=??3????]E\??'g????&f????%?%???d??&??!???~/? ???F5?????r??4??????@??? ??~??B????*??3?!?????8?
+oT??7????W??F`??\?5g???????Z???????P?????7??G?/??B?/L]??S?|??D???65???5???8??????????????Z^?$????????????????&???''??-`???????0@???a@I??????p????_?T?=???B?????OI????:???????????f-$)? ?L???E6? ?W???????bP??p??:i??5??????,?????o6D?#????B?_???Oh?????[IN??V$????4?>?v???????#,?????o?T?=????B?_?:???_X???&'|????????T?oS??_????Z????????o.??????B?_??????r???>Q??????0{???AL??!?!??b?;q??)?????j<???Z@$?+|0A?`]??b??????`?????_?T?=???B???:???D???? u??,????b ???`?B???H\?y?????e&?????f?%???P?=??
+????????7b6 ???6?N?pH???-??:c??X???)`?+D????????<????????????B???=?V`sa4T;N*Y?U??>?q?j?30??!??".???3??EI??M|r~NNjr	??????[??Y???????ra?????_1T?=???B?????????Gl?
+?
+&??J???=?=X?u3q??m_%????&?%?T?d&??????????f#*?W???B4?L? ??jP?Eo????????r??????????A=|???B????*???m???.v??6???Pa?T?!?T??	1?z??????^`?Aj??(???g???B0???????rK?4???????G?/??B?/L]C0?>?a'?>1tc????g???X????7U????????@}@????D?T?(dd?g((??,D?N?W??B?L?@?
+????ra?????_?T?=???B???:?9???+_9?6@?	???@,???????????oQ~~?K~nbf???Dqp??????N??????r+?4????_????~??B????
+???|&???LC????	?Jq???????_<C<X?S~???X?d??????e??e?dV??C?$?u8y?????c???V????r??4????_3???~??B???:??{?p?"YET??j@-?R?:????,??*`??\?]?5w???=????ra????????*??_??B?/L???c`~X?E?????@)?????jH????:????????r[?4???????G?/??B?/L???s???_]!??P?~-~??J??_o???h??????????????*??_??B?/L???H??'?????]??J?????????,=?F????L???t??@)?????0w???????*??_??B?/L???e`?l.%??????@??	???kI?=???h???????ra????????*??_??B?/L???]???J?K????I??W?j?}MT{????r;?4???????G?/??B?/L]A?=p??[>[?C-?R???w??????5w???=????ra????????*??_??B?/L????I??e~Tw????_??????j|?2?=????ra????????*??_??B?/L??NH?%6~???#n?~?>=O????oSD??????ra????????????A????B?o?X??CF!$=?hG?U^???j?R??&?????g??????	bE6F??
+?????z?4???????G?/??B?/L??"?s???oF.??(?bP???s?????Po^8?j?????ra????????*??_??B?/L??$??%6=??}?pK???[??4?FC??]?????????ra????????*??_??B?/L?K????K???XVETz?]??Jq?W?C==?????????????hF?????????_TY\?XRZ?o?&??????M/?Z?F?????ra??????D?8z????B?????!??????BT?]WFu????(??u.????k??W??? ]?@????????O|p?cHp|?k?PL!?4????oc?j?????ra??????4?8z????B???:?	?D???v????b?
+l??#?b???X??N???~????b??P?????6b??'??M??????:`???B?L???F??X?+D????????????????t?0F????B?/?:R?+???l?,???m??	?
+??????"h8U4C??l??Pb? &6??T????????????????????x???z????B???`U@"l)8?j???4L?????*?? ??^`_??????.??^???$?(51E!91'G!;?(/5GA???*?<\???4?;?P??????rg@i?????,(?=???B??????v?p??P?8???P?AU??mF	?N?8?~????~???9,???8??A)?????0w?????w6T?????B?/L??u`??9nETz	??X????E??????*\?!?????,@?????X??$???????V??LbN|f>$?At?'q?_04z?????????ra????????x???z????B??9`U??o?Y??FC?qR? ????%?q???|?g???????^??_QjqqiQ*???3q??????%?f?????r?@i???yK??B??????B?????G????d??Q?OY?j??J????????~?IY??%?r? ?(????v	?s????7???????ra??????<?8z????B????3'???-??1Q?w"?j??????~S????p?7??bp&'?=????ra??????w>T?????B?/L]7??28K\y?????????.'v?r???4???AX^%?????\~?D?$?W??@?o5??q????ra????????8z????B???:???p:??P?8)Y}T??U??OU??+.O,????????~????????????/???????B(?=???B????7?k??W??	G?v?????????8H???????R$?_ZfNj|2??*IE????W?=?j|????????????????"?8z????B??????[?E\?e?@,P????????*A???????1`????????d??RH\???jH?7?i????ra????a?????'#T???&??????R
+@??7?b??7????V?y??????7S@? ??b??o2:???@jA?????D???_??@b'?2??	H1C??)??9??y??)?R?|??R??G(???A7????B??A8?????r???@??S????????zz???BO?0u?????@??g@?EY?`???????/?b?k???,?a`?M??????????????????I????S?
+h ?????<?0B?PR?H?1H??'???+?R??1????[>k????,?`??1????&??:??B?????[???,??@???????K?4?????|?????????~?????Sb??!???????~?8???????_?????????
+?B?@e0?????BO??f???BO? {???????L? z????BO?0u03?l4?????{???R?
+???J?? ??f????X?A?H20????>FO?`?@b?%?h?#LL??????`??????????b???q???@qIbrvqF~I|ANF|qfU*D?N??????????n????^)'???tT???????
+?1?AU?????c??????A?>P?4-'1??"?%?Y^;"???[??X?
+** Stackshot Succeeded ** Bytes Traced 5473 (Uncompressed 14944) **
+
+== END OF LOG ==
