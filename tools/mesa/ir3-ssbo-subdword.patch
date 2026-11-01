@@ -1,0 +1,121 @@
+ir3: an SSBO is a buffer of dwords to the Gallium driver, so keep sub-dword
+access off it.
+
+An SSBO on a6xx/a7xx is reached through an IBO descriptor, and `ldib`/`stib`
+take an offset in *that descriptor's* texels -- the hardware multiplies the
+index by the texel size the descriptor declares. ir3 does the dividing on the
+other side, in ir3_nir_lower_io_offsets.c's lower_offset_for_ssbo(), and it
+divides by the size of the *instruction*: shift 2 for a 32-bit access, 1 for
+16-bit, 0 for 8-bit. The two only agree when the descriptor's texel is as wide
+as the access.
+
+Turnip keeps them agreeing by writing a descriptor per width and picking one:
+write_buffer_descriptor_addr() lays down FMT6_16_UINT, FMT6_32_UINT and
+FMT6_8_UINT descriptors next to each other, and tu_lower_io()'s
+`descriptor_idx + 1` selects the 8-bit one for an 8-bit load or store.
+
+The Gallium driver writes one descriptor per SSBO slot and it is always
+PIPE_FORMAT_R32_UINT (fd6_image.cc, fd6_ssbo_descriptor()), with nothing that
+selects another. So on that driver a 16-bit SSBO access addresses twice the
+byte offset it was given and an 8-bit one four times, and an 8-bit store is
+worse than mis-addressed: ir3_a6xx.c emits it as `stib.b.typed...u16.4`, which
+is the blob's encoding for an imageBuffer of VK_FORMAT_R8 and means nothing
+against a 32-bit descriptor. The driver also leaves
+ir3_compiler_options::storage_16bit and storage_8bit false, which is already
+how ir3 knows the difference elsewhere -- ir3_nir_lower_ssbo_size() shifts the
+buffer length by 1 or 2 depending on exactly that, "a byte length divided by
+IBO_0_FMT".
+
+Nothing in GL reaches it, which is why it has stood: a GLSL SSBO member is at
+least 32 bits and at least 4-byte aligned, so ir3_mem_access_size_align()'s
+`(bytes & 1)` and `(bytes & 2)` cases never fire. A Metal shader is a different
+matter -- `ushort` and `uchar` fields in a device buffer are ordinary there,
+and the AIR frontend (src/compiler/air) translates them to 16- and 8-bit
+load_ssbo/store_ssbo.
+
+Measured on the phone's Adreno 7c+ Gen 3, two of Apple's compute kernels from
+PortraitFilters.metallib, given input built from each module's own metadata
+(docs/air.md section 5):
+
+  MetalFaceMask_AddSeedPoint    one `uchar` store, to byte 28 of the span
+                                table. The dispatch finished and byte 28 was
+                                unchanged; the CPU reference over the same
+                                bytes writes 0x5a there.
+  MetalFaceMask_PropagateParents  walks a linked list of spans, leaving when
+                                `nextSpanID` is 0xffff. The dispatch never
+                                finished. Its `nextSpanID` reads land four
+                                bytes apart instead of two, which turns the
+                                lists 0, 1, 2, 3 of the input into the cycle
+                                0 -> 1 -> 3 -> 0, and that loop has no end.
+
+The fix is to ask for dwords whenever the descriptor is one, in
+ir3_mem_access_size_align(), where every other size decision is already made.
+nir_lower_mem_access_bit_sizes then does the work: a narrow load becomes a dword
+load at the masked offset plus a shift, and a narrow store becomes the iand/ior
+pair of 32-bit SSBO atomics the pass already keeps for this, which is why
+may_lower_unaligned_stores_to_atomics has to be set. Atomics rather than a plain
+read-modify-write matter here: these kernels have sixteen threads writing `uchar`
+fields that share a dword.
+
+Turnip is unaffected where it sets the options, and is fixed by the same change
+on a device where it cannot (a6xx without 16-bit storage, where an unaligned
+32-bit access is split into 16-bit ones against a 32-bit descriptor).
+
+cb_data was unset at both call sites, so it carries the compiler now; turnip's
+other call (push constants, tu_shader.cc) leaves it null and never sees an SSBO
+intrinsic, and a null is read as "no sub-dword descriptor" either way.
+
+--- a/src/freedreno/ir3/ir3_nir.c
++++ b/src/freedreno/ir3/ir3_nir.c
+@@ -953,6 +953,8 @@
+                  uint32_t align_offset, bool offset_is_const,
+                  enum gl_access_qualifier access, const void *cb_data)
+ {
++   const struct ir3_compiler *compiler = cb_data;
++
+    align = nir_combined_align(align, align_offset);
+    assert(util_is_power_of_two_nonzero(align));
+ 
+@@ -970,6 +972,29 @@
+    if (intrin == nir_intrinsic_load_ubo)
+       bit_size = 32;
+ 
++   /* ldib/stib scale the offset by the texel size of the IBO descriptor, while
++    * lower_offset_for_ssbo() scales it by the size of the access. A driver with
++    * no narrower descriptor to point them at must therefore stay on dwords:
++    * otherwise a 16-bit access reads and writes at twice the byte offset it was
++    * given and an 8-bit one at four times -- and an 8-bit store is emitted as a
++    * typed R8 store, which a 32-bit descriptor does not describe at all.
++    *
++    * nir_lower_mem_access_bit_sizes turns what is left into a dword load plus a
++    * shift, or a store into the pair of 32-bit atomics it keeps for this, so the
++    * narrow access still happens -- it happens through a descriptor that exists.
++    */
++   if ((intrin == nir_intrinsic_load_ssbo || intrin == nir_intrinsic_store_ssbo) &&
++       ((bit_size == 16 && (!compiler || !compiler->options.storage_16bit)) ||
++        (bit_size == 8 && (!compiler || !compiler->options.storage_8bit)))) {
++      bit_size = 32;
++      /* Below a dword of alignment the pass reads with a mask and a shift and
++       * writes with a pair of atomics, and both of those work a dword at a
++       * time -- so ask for one, however many narrow components there were.
++       */
++      if (align < 4)
++         bytes = MIN2(bytes, 4);
++   }
++
+    return (nir_mem_access_size_align){
+       .num_components = MAX2(1, MIN2(bytes / (bit_size / 8), 4)),
+       .bit_size = bit_size,
+@@ -1092,6 +1117,12 @@
+                nir_var_mem_global | nir_var_mem_shared |
+                nir_var_function_temp | nir_var_mem_ssbo,
+       .callback = ir3_mem_access_size_align,
++      /* so the callback can ask which descriptors this driver writes */
++      .cb_data = (void *)so->compiler,
++      /* a narrow store the callback widened becomes an iand/ior pair of 32-bit
++       * atomics; threads that share a dword then do not lose each other's bytes
++       */
++      .may_lower_unaligned_stores_to_atomics = true,
+    };
+ 
+    progress |= OPT(s, nir_lower_mem_access_bit_sizes, &mem_bit_size_options);

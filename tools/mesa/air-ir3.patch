@@ -29,7 +29,7 @@ dimensions -- and hides on the rest, which is presumably why it survived.
  
  #include "pipe/p_context.h"
  
-@@ -247,10 +248,62 @@
+@@ -247,10 +248,69 @@
     return nir;
  }
  
@@ -68,9 +68,16 @@ dimensions -- and hides on the rest, which is presumably why it survived.
 +
 +   struct air_constant_value *fc;
 +   unsigned num_fc = air_module_function_constants(NULL, bitcode, bitcode_size, &fc);
++   /* An air.visible library function is not an entry point; the wrapper makes
++    * one that calls it, so that these 135 modules can be compiled for the
++    * Adreno at all (nir_air.h, docs/air.md section 5). Always on here: this
++    * tool exists to answer "does ir3 accept it", and a module that is not an
++    * entry point has no other way to be asked.
++    */
 +   const struct air_to_nir_options options = {
 +      .constants = fc,
 +      .num_constants = num_fc,
++      .library_wrapper = true,
 +   };
 +   struct air_shader_info info;
 +   nir_shader *nir = air_to_nir(NULL, bitcode, bitcode_size, NULL, &options,

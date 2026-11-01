@@ -637,6 +637,20 @@ print_inst(struct printer *p, const struct air_inst *in)
          print_block_ref(p, in->targets[1]);
       }
       break;
+   case AIR_OP_SWITCH:
+      fputs("switch ", fp);
+      print_typed(p, in->operands[0]);
+      fputs(", ", fp);
+      print_block_ref(p, in->targets[0]);
+      fputs(" [", fp);
+      for (unsigned k = 1; k < in->num_targets; k++) {
+         fputs("\n    ", fp);
+         print_typed(p, in->operands[k]);
+         fputs(", ", fp);
+         print_block_ref(p, in->targets[k]);
+      }
+      fputs("\n  ]", fp);
+      break;
    case AIR_OP_UNREACHABLE:
       fputs("unreachable", fp);
       break;

@@ -5,7 +5,7 @@
 
 /*
  * Sizes and alignments from the module's datalayout string, by LLVM's rules
- * (LangRef, "Data Layout"). Every AIR module of Darwin userland 16.5 has the same layout,
+ * (LangRef, "Data Layout"). Every AIR module of iOS 16.5 has the same layout,
  * but it is read rather than assumed: GEP offsets are computed from it, and
  * a wrong offset is a wrong read.
  */
