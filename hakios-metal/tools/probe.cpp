@@ -3889,7 +3889,9 @@ int main(int argc, char** argv) {
             td.width = td.height = 4;
             td.usage = kTextureUsageRead;
             auto src = Texture::make(gpu, td, &why);
-            if (compiled == nullptr || compiled->inlineSamplers.size() != 1 || src == nullptr) {
+            if (compiled == nullptr && !hasCompiler()) {
+                std::printf("probe: (no compiler in this build: the constexpr sampler stage was not compiled on the phone)\n");
+            } else if (compiled == nullptr || compiled->inlineSamplers.size() != 1 || src == nullptr) {
                 report(false, "ctex: the stage compiled on the phone with its one constexpr sampler, and a 4x4 texture: " + (compiled == nullptr ? cwhy : why));
             } else {
                 auto texel = [](uint32_t x, uint32_t y) { return 0xff000000u | (0x10u + 0x30u * x) | (0x20u + 0x30u * y) << 8 | uint32_t(0x80 + 8 * (x + 4 * y)) << 16; };
@@ -4917,7 +4919,9 @@ int main(int argc, char** argv) {
                             auto lin = Texture::make(gpu, ld, &kwhy);
                             auto til = lin ? Texture::make(gpu, dd, &kwhy) : nullptr;
                             auto sums = newBuffer(gpu, 1125ull * 2436 * 4, &kwhy);
-                            if (!col || !lin || !til || !sums) {
+                            if (!col && !hasCompiler()) {
+                                std::printf("probe: (no compiler in this build: what a texture's layout costs a blur was not measured)\n");
+                            } else if (!col || !lin || !til || !sums) {
                                 report(false, "layout cost: tex_col16 and its textures: " + kwhy);
                             } else {
                                 auto timeIt = [&](const Texture& t) {
