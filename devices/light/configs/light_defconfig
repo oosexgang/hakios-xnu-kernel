@@ -1,0 +1,6 @@
+# HakiOS defconfig for POCO M4 5G (Xiaomi `light`, MediaTek MT6833):
+# Includes the common kernel configuration, the MT6833 SoC layer, and this device's own configuration.
+
+#include common_defconfig
+#include mt6833.config
+#include light.config

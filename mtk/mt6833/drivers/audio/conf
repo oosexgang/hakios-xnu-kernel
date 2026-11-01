@@ -1,0 +1,9 @@
+# mtk/mt6833/drivers/audio/conf: MediaTek MT6833 AFE & AW87389 Loudspeaker Audio Driver.
+# CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel.
+
+driver MT6833_AUDIO
+	file    bsd/dev/hakios.mt6833_audio.c
+	default y
+	help    MediaTek MT6833 (Dimensity 700) Audio Front End (AFE) DMA driver at 0x11210000,
+	help    Audio SRAM at 0x11212000, I2S3 speaker output, and AW87389/SIA8152 amplifier
+	help    on I2C6 (0x11f00000) for Darwin's /dev/hakios-audio

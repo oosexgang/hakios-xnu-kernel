@@ -242,4 +242,5 @@ hakios_input_init(void)
 	hakios_adsp_init();
 	hakios_mpss_init();
 	hakios_mtk_emmc_devfs();
+	hakios_mtk_ufs_devfs();
 }

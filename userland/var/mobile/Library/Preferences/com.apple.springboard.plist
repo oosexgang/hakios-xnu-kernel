@@ -17,5 +17,14 @@
 	     Percentage, which an iPhone X has off at first) -->
 	<key>SBShowBatteryPercentage</key>
 	<true/>
+	<!-- 60 FPS UI optimizations: bypass expensive real-time blur shaders & parallax transforms -->
+	<key>SBReduceTransparency</key>
+	<true/>
+	<key>SBReduceMotion</key>
+	<true/>
+	<key>SBDisableIconShadows</key>
+	<true/>
+	<key>BSUIVibrancyEffectViewDisabled</key>
+	<true/>
 </dict>
 </plist>

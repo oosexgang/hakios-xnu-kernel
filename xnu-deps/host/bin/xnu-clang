@@ -14,5 +14,7 @@ for a in "$@"; do
     *) args+=("$a");;
   esac
 done
-exec /usr/bin/$drv -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
+CLANG_BIN=$(command -v "$drv")
+[ -x "$CLANG_BIN" ] || CLANG_BIN="/usr/bin/$drv"
+exec "$CLANG_BIN" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
   -w "${extra[@]}" "${args[@]}"

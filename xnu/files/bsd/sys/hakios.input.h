@@ -51,6 +51,8 @@ void hakios_mtk_scp_init(void);        /* boot-arg scp_step=N: the MT6768's SCP 
 void hakios_mtk_connsys_init(void);    /* boot-arg connsys_step=N: the MT6768's CONNSYS (Wi-Fi/BT), steps 1 to N */
 void hakios_mtk_emmc_devfs(void);      /* /dev/emmc0, /dev/remmc0: the MT6768's eMMC partition xnusys, read only */
 int hakios_mtk_emmc_root(dev_t *root); /* emmc_root=1: that partition as the root; 0 or an errno */
+void hakios_mtk_ufs_devfs(void);       /* /dev/ufs0, /dev/rufs0: the MT6833's UFS partition xnusys, read only */
+int hakios_mtk_ufs_root(dev_t *root);  /* ufs_root=1: that partition as the root; 0 or an errno */
 /* a line kept and said again every minute, so that it reaches the end of a run's log (hakios.mali.c; else only said) */
 void hakios_keep(const char *format, ...) __printflike(1, 2);
 void hakios_ufs_init(void);           /* ufs=2 to xnuloader: the phone's storage, read only, through the loader (ufs_shared_pa=) */

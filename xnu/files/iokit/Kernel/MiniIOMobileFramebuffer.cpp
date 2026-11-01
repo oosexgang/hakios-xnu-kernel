@@ -512,10 +512,16 @@ IOMobileFramebuffer::publishModes(void)
  * mtkloader/mtkdbg.h): the second one is drawn while the first is shown, and then OVL0 is pointed at
  * it. Only when OVL0 reads where the console's framebuffer is and the second picture fits.
  */
-#define FLIP_OVL0               0x1400b000ULL           /* mtkloader/mtkdbg.h: OVL0_BASE */
-#define FLIP_OVL_L0_ADDR        0xf40
+#if defined(HAKIOS_MT6833_UFS) || defined(HAKIOS_MT6833_KEYS) || defined(HAKIOS_MT6833_MALI)
+#define FLIP_OVL0               0x14005000ULL           /* MT6833: disp_ovl0@14005000 */
+#define FLIP_LK_FB_BASE         0x60000000ULL           /* MT6833 dynamic LK FB range */
+#define FLIP_LK_FB_SIZE         0x30000000ULL           /* 768 MB window */
+#else
+#define FLIP_OVL0               0x1400b000ULL           /* MT6768: OVL0_BASE */
 #define FLIP_LK_FB_BASE         0x787b0000ULL
 #define FLIP_LK_FB_SIZE         0x1050000ULL
+#endif
+#define FLIP_OVL_L0_ADDR        0xf40
 extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern "C" vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 static TUNABLE(uint32_t, gFlipOn, "fb_flip", 0);

@@ -677,11 +677,11 @@ gpu_draws(void)
 static void
 plain_vibrancy(void)
 {
-	if (gpu_draws()) {
-		return;
-	}
 	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-	say("hakios: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
+	CFPreferencesSetAppValue(CFSTR("SBReduceTransparency"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+	CFPreferencesSetAppValue(CFSTR("SBReduceMotion"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+	CFPreferencesSetAppValue(CFSTR("SBDisableIconShadows"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
+	say("hakios: SpringBoard: 60 FPS profile active (BSUIVibrancyEffectViewDisabled, ReduceTransparency, ReduceMotion)\n");
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */

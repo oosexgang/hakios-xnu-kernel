@@ -1,0 +1,15 @@
+# mtk/mt6833/drivers/input/conf: the MT6833's keys and buttons.
+# CONFIG_HAKIOS_<NAME>=y in a defconfig builds a driver into the kernel.
+
+driver MT6833_KEYS
+	file    bsd/dev/hakios.mt6833_keys.c
+	default n
+	help    MediaTek MT6833 (Dimensity 700) volume up/down keys through keypad at 0x10010000
+	help    and power button through MT6359 PMIC wrapper at 0x10026000 (buttons=2)
+
+driver MT6833_TOUCH
+	file    bsd/dev/hakios.mt6833_touch.c
+	default y
+	help    MediaTek MT6833 (Dimensity 700) FocalTech/Novatek touchscreen driver on SPI4
+	help    at 0x11018000 with 1080x2408 coordinate calibration for /dev/hakios-touch
+

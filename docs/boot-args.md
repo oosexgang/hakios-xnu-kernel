@@ -371,6 +371,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ddr_rest` | K | `hakios.cpufreq.c` | `CONFIG_DDR_REST` |  |
 | `ddr_vote` | K | `hakios.cpufreq.c` | `CONFIG_DDR_VOTE` |  |
 | `emmc_root` | K | `(patch)` | `CONFIG_EMMC_ROOT` |  |
+| `ufs_root` | K | `(patch)` | `CONFIG_UFS_ROOT` |  |
 | `epoch` | K | `GenericARMPE.cpp` |  | xl (the host's clock) |
 | `hv_wdt_pet` | K | `loader_return.c` |  | the loader, when it has armed the watchdog (the runner also passes it) |
 | `loader_return_after` | KL | `loader.c`, `loader_return.c` |  | xl (XL_SECS) |
