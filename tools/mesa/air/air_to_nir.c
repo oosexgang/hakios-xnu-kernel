@@ -6119,8 +6119,20 @@ plan_globals(struct air_ctx *c)
 
          uint64_t word = 0;
          if (g->init && !air_const_uint(g->init, &word)) {
-            air_error(c, "interface: an inline sampler whose state is not a constant");
-            return;
+            /* newer AIR (macOS 26's CoreAnimation, home_affordance_base) gives the state as an aggregate: its
+             * first integer member is the 64-bit word the older form held alone (a zeroinitializer is all zero) */
+            const struct air_constant *k = air_value_as_constant(g->init);
+            bool found = k != NULL && k->ckind == AIR_CONST_NULL;
+            if (k != NULL && k->ckind == AIR_CONST_DATA && k->num_elems > 0) {
+               word = k->data[0];
+               found = true;
+            }
+            for (unsigned e = 0; !found && k != NULL && k->ckind == AIR_CONST_AGGREGATE && e < k->num_elems; e++)
+               found = air_const_uint(k->elems[e], &word);
+            if (!found) {
+               air_error(c, "interface: an inline sampler whose state is not a constant");
+               return;
+            }
          }
          struct air_shader_info *info = c->info;
          info->resources = reralloc(c->mem_ctx, info->resources, struct air_resource,
