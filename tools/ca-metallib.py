@@ -11,6 +11,11 @@ variant a pipeline's label names (userland/src/HakiosMetalCA.m, hm_bitcode_for()
 
 OUTDIR/QuartzCore-default.metallib is written; build the image with EXTRA_SHARE=OUTDIR and run with
 ca_metallib=/redwood/share/<OUTDIR's name>/QuartzCore-default.metallib (userland/src/inject.c).
+
+Off a Mac (Windows, WSL, Linux): CA_QC_METALLIB=FILE names the later CoreAnimation's library to take the air64 slice
+from -- a copy of a Mac's QuartzCore.framework/Versions/A/Resources/default.metallib, or iPadOS/iOS 17's
+QuartzCore.framework/default.metallib out of its IPSW (7z x the root filesystem's dmg), both universal with an air64
+slice. Without it, the Mac's own path above.
 """
 import os
 import struct
@@ -19,7 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import merge_metallib  # noqa: E402
 
-MAC_QC = '/System/Library/Frameworks/QuartzCore.framework/Versions/A/Resources/default.metallib'
+MAC_QC = os.environ.get('CA_QC_METALLIB') or '/System/Library/Frameworks/QuartzCore.framework/Versions/A/Resources/default.metallib'
 AIR64 = 0x01000017
 
 
@@ -51,6 +56,9 @@ def main():
         lib = merge_metallib.read(tmp)
         variants.setdefault(dict(lib['funcs'][0]['tags'])[b'NAME'], (lib['funcs'][0], lib['head']))
         at += total
+    if not os.path.isfile(MAC_QC):
+        raise SystemExit('%s: not found. Off a Mac, name a later CoreAnimation\'s library: CA_QC_METALLIB=FILE '
+                         '(a Mac\'s QuartzCore default.metallib copied over, or iOS 17\'s out of its IPSW)' % MAC_QC)
     mac = os.path.join(out, '.air64.metallib')
     open(mac, 'wb').write(air64_slice(MAC_QC))
     lib = merge_metallib.read(mac)

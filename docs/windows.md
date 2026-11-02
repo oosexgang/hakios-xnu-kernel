@@ -64,3 +64,31 @@ Nothing is flashed: everything is booted from RAM, and a reboot brings Android b
   `system.apfs` built with `MODEM=1` if it uses the modem (`tools/modem-cycle-win.sh`).
 - **`tools/modem-cycle.sh` fails under Git Bash:** use `tools/modem-cycle-win.sh`; the original puts the
   macOS helpers in `tools/macos-bin` first on `PATH`, and they do not run on Windows.
+
+## Metal: a run, measured, from Windows
+
+The window server drawing through Metal (`METAL_PLUGIN=ca`) and the frame-rate bench, with one command in Git Bash.
+
+```sh
+# WSL, in ~/hakios: QuartzCore's library for CoreAnimation, then the image with the Metal plug-in and the bench.
+# Off a Mac, name a later CoreAnimation's library to take the rest of its shaders from (a Mac's
+# QuartzCore.framework/Versions/A/Resources/default.metallib copied over, or iOS 17's out of its IPSW):
+CA_QC_METALLIB=/mnt/c/.../default.metallib tools/ca-metallib.py ~/ca-share
+METAL_PLUGIN=ca RC_JOBS=rc.jobs.bench EXTRA_SHARE=~/ca-share PREBUILT=1 REST=1 SYSTEM=1 userland/build.sh
+cp userland/root.apfs userland/system.apfs /mnt/d/.../hakios/userland/
+
+# Git Bash, in the Windows checkout (the phone in Android is fine: the script takes it into the loader):
+tools/metal-run.sh                       # 180 s; the summary in logs/<time>-metal.txt
+MORE="metal_gmem=1" tools/metal-run.sh   # with tiled rendering (each pass left in sysmem says why)
+SHOTS=20 tools/metal-run.sh              # and a screenshot every 20 s, logs/<time>-shots/
+```
+
+`tools/metal-run.sh` keeps `/private/var` between boots by default (`ufs=2 ufs_write=1 var_store=1`, the partition
+`darwin` only; `PERSIST=0` for none), so the shader stages the window server compiles are compiled once. To put them
+into the image, so that not even the first boot compiles them: with the phone back in Android,
+
+```sh
+tools/metal-cache-seed.sh                # reads darwin (read only, adb + root) into userland/hakios-metal-cache
+```
+
+and copy `userland/hakios-metal-cache` to WSL's `userland/` before the next `userland/build.sh`.
