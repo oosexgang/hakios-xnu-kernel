@@ -1380,6 +1380,7 @@ hm_strict(void)
 static NSData *hm_ca_functions;                 /* the functions file, mapped */
 static NSMutableDictionary *hm_ca_variants;     /* function label -> NSData of its module (the 0x0B17C0DE wrapper) */
 static NSMutableDictionary *hm_ca_pipelines;    /* draw label -> @[vertex label, fragment label] */
+static NSMutableDictionary *hm_ca_frag_vert;    /* fragment label -> the vertex label every pipeline of it has */
 
 static NSData *
 hm_ca_module(const uint8_t *lib, size_t size)
@@ -1433,6 +1434,7 @@ hm_ca_load(void)
 								 options:NSDataReadingMappedIfSafe error:NULL];
 		hm_ca_variants = [[NSMutableDictionary alloc] init];
 		hm_ca_pipelines = [[NSMutableDictionary alloc] init];
+		hm_ca_frag_vert = [[NSMutableDictionary alloc] init];
 		if (desc == nil || hm_ca_functions == nil || dn < 8) {
 			hm_print("CoreAnimation's pipeline library is not at " HM_CA_PIPELINELIB ": no variants to choose from\n");
 			return;
@@ -1501,6 +1503,7 @@ hm_ca_load(void)
 				}
 				if (draw != nil && vert != nil) {
 					hm_ca_pipelines[draw] = frag != nil ? @[vert, frag] : @[vert];
+					if (frag != nil) hm_ca_frag_vert[frag] = vert;
 				}
 			}
 		}
@@ -1518,6 +1521,42 @@ hm_bitcode_for(id function, NSString *pipeline, BOOL vertex)
 	NSString *name = [function respondsToSelector:@selector(name)] ? [function name] : nil, *label = nil, *chosen = nil;
 	NSData *own = ((NSData *(*)(id, SEL))objc_msgSend)(function, sel_getUid("bitcodeData")), *variant = nil;
 
+	if (name != nil && [name hasPrefix:@"edr_scale_"]) {
+		/* the stand-in at compile time too: the window server gets edr_scale by a road the library hooks do not see,
+		 * and the later CoreAnimation's reads buffers iOS 16.5's never binds (see hm_stand_ins) */
+		static NSData *copies[2];
+		static dispatch_once_t once;
+		const int lpf = [name hasSuffix:@"_lpf"];
+
+		dispatch_once(&once, ^{
+			id<MTLDevice> device = [function respondsToSelector:@selector(device)] ? [function device] : nil;
+
+			if (device == nil) device = MTLCreateSystemDefaultDevice();   /* (the function's own answered nil) */
+			NSError *e = nil;
+			id lib = [device newLibraryWithURL:[NSURL fileURLWithPath:@"/redwood/share/ca-share/QuartzCore-default.metallib"]
+						     error:&e];
+			hm_print("inplace_copy for edr_scale: device %s, library %s%s\n", device ? "yes" : "nil", lib ? "opened" : "not opened: ",
+				 lib ? "" : [[e description] UTF8String]);
+			for (int i = 0; i < 2 && lib != nil; i++) {
+				id f = [lib newFunctionWithName:i ? @"inplace_copy_lpf" : @"inplace_copy_lph"];
+
+				if (f != nil && [f respondsToSelector:sel_getUid("bitcodeData")]) {
+					copies[i] = [((NSData *(*)(id, SEL))objc_msgSend)(f, sel_getUid("bitcodeData")) retain];
+				}
+				[f release];
+			}
+			[lib release];
+		});
+		static unsigned told;
+		if (told++ < 3 || (told & (told - 1)) == 0) {
+			hm_print("CoreAnimation's %s: %s (%u times)\n", [name UTF8String], copies[lpf] != nil ?
+				 "compiled as inplace_copy, the source as it is" : "no inplace_copy to stand in, its own module", told);
+		}
+		if (copies[lpf] != nil) {
+			return copies[lpf];
+		}
+		return own;
+	}
 	if (name == nil || ![name hasPrefix:@"fixed_"]) {
 		return own;
 	}
@@ -1531,6 +1570,19 @@ hm_bitcode_for(id function, NSString *pipeline, BOOL vertex)
 		NSArray *pair = hm_ca_pipelines[pipeline];
 
 		chosen = vertex ? pair[0] : ([pair count] > 1 ? pair[1] : nil);
+		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
+	} else if (pipeline != nil && [pipeline hasPrefix:@"com.apple.coreanimation.draw."]) {
+		/* a pipeline CoreAnimation makes at run time, which the library does not name: its fragment function is the
+		 * spec after the first '_' (so in all 986 the library names) and its vertex one the one every pipeline of that
+		 * fragment function has (one each, in all 444) -- picked apart, a pipeline got the wrong vertex variant and
+		 * the link refused it ("reads varying slot 33, which the vertex stage does not write"), and CoreAnimation
+		 * aborted the window server */
+		NSString *spec = [pipeline substringFromIndex:[@"com.apple.coreanimation.draw." length]];
+		NSRange under = [spec rangeOfString:@"_"];
+		NSString *frag = under.location != NSNotFound ?
+			[@"com.apple.coreanimation.frag." stringByAppendingString:[spec substringFromIndex:NSMaxRange(under)]] : nil;
+
+		chosen = frag == nil ? nil : (vertex ? hm_ca_frag_vert[frag] : frag);
 		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
 	}
 	if (said++ < 40) {
@@ -1690,21 +1742,28 @@ hm_functions_encode_from_metadata(void)
 /*
  * Functions CoreAnimation of iOS 16.5 asks its library for that the library given it (QuartzCore-default.metallib:
  * this image's uber shaders and a later CoreAnimation's other functions) does not have under that name, each answered
- * with the nearest one it has: luma_boost (a picture's luminance raised, a later CoreAnimation scales by its EDR
- * factor instead). A function asked for that the library has is never touched. (hakios)
+ * with the nearest one it has: luma_boost (a picture's luminance raised) by inplace_copy, the picture as it is -- both
+ * read only the source at texture 3 beside std_vert1 (Metal's reflection on a Mac); edr_scale, tried first, reads
+ * buffers 5 and 7 that CoreAnimation binds for neither, and its draws were refused. A function asked for that the
+ * library has is never touched. (hakios)
  */
-static const char *const hm_stand_ins[][2] = {
-	{ "luma_boost_lph", "edr_scale_lph" },
-	{ "luma_boost_lpf", "edr_scale_lpf" },
+static const char *const hm_stand_ins[][3] = {
+	/* asked for, given instead, "always" when the library's own is the wrong one (not just missing) */
+	{ "luma_boost_lph", "inplace_copy_lph", "" },
+	{ "luma_boost_lpf", "inplace_copy_lpf", "" },
+	/* the later CoreAnimation's edr_scale reads buffers 5 and 7 and texture 9; iOS 16.5's binds three fragment
+	 * buffers and its source at 3, and 3 259 of its draws were refused in one run (logs/163451-run.log) */
+	{ "edr_scale_lph", "inplace_copy_lph", "always" },
+	{ "edr_scale_lpf", "inplace_copy_lpf", "always" },
 };
 static id (*hm_orig_fn_name)(id, SEL, NSString *);
 static id (*hm_orig_fn_constants)(id, SEL, NSString *, MTLFunctionConstantValues *, NSError **);
 
 static NSString *
-hm_stand_in(NSString *name)
+hm_stand_in(NSString *name, BOOL found)
 {
 	for (size_t i = 0; name != nil && i < sizeof(hm_stand_ins) / sizeof(hm_stand_ins[0]); i++) {
-		if (strcmp([name UTF8String], hm_stand_ins[i][0]) == 0) {
+		if (strcmp([name UTF8String], hm_stand_ins[i][0]) == 0 && (!found || hm_stand_ins[i][2][0] != 0)) {
 			return [NSString stringWithUTF8String:hm_stand_ins[i][1]];
 		}
 	}
@@ -1715,9 +1774,13 @@ static id
 hm_fn_name(id self, SEL sel, NSString *name)
 {
 	id f = hm_orig_fn_name(self, sel, name);
-	NSString *other = f == nil ? hm_stand_in(name) : nil;
+	NSString *other = hm_stand_in(name, f != nil);
 
-	if (other != nil && (f = hm_orig_fn_name(self, sel, other)) != nil) {
+	if (other != nil) {
+		[f release];
+		f = hm_orig_fn_name(self, sel, other);
+	}
+	if (other != nil && f != nil) {
 		HM_ONCE("the library has no %s: %s stands in for it\n", [name UTF8String], [other UTF8String]);
 	}
 	return f;
@@ -1727,9 +1790,13 @@ static id
 hm_fn_constants(id self, SEL sel, NSString *name, MTLFunctionConstantValues *values, NSError **error)
 {
 	id f = hm_orig_fn_constants(self, sel, name, values, error);
-	NSString *other = f == nil ? hm_stand_in(name) : nil;
+	NSString *other = hm_stand_in(name, f != nil);
 
-	if (other != nil && (f = hm_orig_fn_constants(self, sel, other, values, error)) != nil) {
+	if (other != nil) {
+		[f release];
+		f = hm_orig_fn_constants(self, sel, other, values, error);
+	}
+	if (other != nil && f != nil) {
 		if (error != NULL) *error = nil;
 		HM_ONCE("the library has no %s: %s stands in for it (with constants)\n", [name UTF8String], [other UTF8String]);
 	}
