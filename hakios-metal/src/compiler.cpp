@@ -1,6 +1,8 @@
 #include "hakios-metal/compiler.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 
@@ -825,7 +827,10 @@ bool fillKernel(Translation& t, const KernelHome& out, uint32_t highestSampler, 
     }
     out.words.assign(t.bin, t.bin + v->info.size / 4);
     out.immediates.assign(cs->immediates, cs->immediates + cs->immediates_count);
-    {
+    // (HAKIOS_METAL_LISTING=0: none -- the disassembly is a fifth of a CoreAnimation stage's compile, and the window
+    // server reads no listing)
+    static const bool listings = [] { const char* e = getenv("HAKIOS_METAL_LISTING"); return e == nullptr || e[0] != '0'; }();
+    if (listings) {
         char* text = nullptr;
         size_t length = 0;
         FILE* f = open_memstream(&text, &length);
@@ -1101,6 +1106,155 @@ std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size
 // registers the ISA addresses and still spilled to private memory -- 512 bytes a fiber, 144 reloads; without the
 // preamble the same function needs 21 registers and spills nothing. A stage that spills is compiled again without
 // it, and that one is taken when it spills less.
+// Stages compiled before, kept on disk (HAKIOS_METAL_CACHE=DIR): a CoreAnimation uber shader variant takes up to a
+// second to compile, and the window server draws nothing while one does -- 66 of them in a minute of use on the
+// phone, every time the process starts. A stage is filed under a hash of what made it (the bitcode, the constants,
+// IBO_BASE, the known buffer) and of this build (the layout of Stage is written as it lies in memory); what comes
+// back is the CompiledStage as it was, its Kernel's pointers set to its own vectors again.
+namespace {
+struct CacheWriter {
+    std::string out;
+    void raw(const void* p, size_t n) { out.append(static_cast<const char*>(p), n); }
+    void u32(uint32_t v) { raw(&v, 4); }
+    void str(const std::string& v) { u32(uint32_t(v.size())); raw(v.data(), v.size()); }
+};
+struct CacheReader {
+    const uint8_t* p;
+    const uint8_t* end;
+    bool ok = true;
+    bool raw(void* dst, size_t n) {
+        if (!ok || size_t(end - p) < n) return ok = false;
+        memcpy(dst, p, n);
+        p += n;
+        return true;
+    }
+    uint32_t u32() { uint32_t v = 0; raw(&v, 4); return v; }
+    std::string str() {
+        uint32_t n = u32();
+        if (!ok || size_t(end - p) < n) { ok = false; return {}; }
+        std::string v(reinterpret_cast<const char*>(p), n);
+        p += n;
+        return v;
+    }
+};
+constexpr uint32_t kCacheMagic = 0x53434d48;   // "HMCS"
+const char* const kCacheBuild = __DATE__ " " __TIME__;
+
+std::string stageCachePath(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t iboBase, const KnownBuffer* known) {
+    static const char* dir = getenv("HAKIOS_METAL_CACHE");
+    if (dir == nullptr || dir[0] == 0) return {};
+    uint64_t h[2] = {0xcbf29ce484222325ull, 0x84222325cbf29ce4ull};
+    auto mix = [&](const void* p, size_t n) {
+        for (size_t i = 0; i < n; i++) {
+            const uint8_t b = static_cast<const uint8_t*>(p)[i];
+            h[0] = (h[0] ^ b) * 0x100000001b3ull;
+            h[1] = (h[1] ^ b) * 0x1000193ull + (h[1] >> 29);
+        }
+    };
+    const uint32_t layout[3] = {uint32_t(sizeof(Stage)), uint32_t(sizeof(Kernel)), iboBase};
+    mix(kCacheBuild, strlen(kCacheBuild));
+    mix(layout, sizeof(layout));
+    mix(bitcode, size);
+    for (const FunctionConstant& c : constants) {
+        mix(&c.index, sizeof(c.index));
+        mix(&c.bits, sizeof(c.bits));
+    }
+    if (known != nullptr) {
+        mix(&known->binding, sizeof(known->binding));
+        mix(known->bytes.data(), known->bytes.size());
+    }
+    char name[64];
+    snprintf(name, sizeof(name), "/%016llx%016llx.stage", (unsigned long long)h[0], (unsigned long long)h[1]);
+    return std::string(dir) + name;
+}
+
+void stageCacheSave(const std::string& path, const CompiledStage& s) {
+    CacheWriter w;
+    w.u32(kCacheMagic);
+    w.raw(&s.stage, sizeof(s.stage));
+    w.u32(uint32_t(s.words.size()));
+    w.raw(s.words.data(), s.words.size() * 4);
+    w.u32(uint32_t(s.immediates.size()));
+    w.raw(s.immediates.data(), s.immediates.size() * 4);
+    w.u32(uint32_t(s.resources.size()));
+    for (const Resource& r : s.resources) {
+        w.u32(uint32_t(r.kind));
+        w.u32(r.index);
+        w.u32(r.sizeBytes);
+        const uint8_t flags[8] = {r.read, r.write, r.irWrite, r.textureDim, r.textureArray, r.element, r.nullTexture, r.inlineSampler};
+        w.raw(flags, sizeof(flags));
+        w.str(r.typeName);
+        w.u32(r.argbufSet);
+        w.u32(r.argbufOffset);
+    }
+    w.u32(uint32_t(s.varyingNames.size()));
+    for (const std::string& v : s.varyingNames) w.str(v);
+    w.u32(uint32_t(s.inlineSamplers.size()));
+    for (const auto& is : s.inlineSamplers) {
+        w.u32(is.first);
+        w.raw(&is.second, sizeof(is.second));
+    }
+    w.u32(s.iboBase);
+    w.u32(s.writesMemory ? 1 : 0);
+    w.str(s.name);
+    w.str(s.listing);
+    const std::string tmp = path + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "wb");
+    if (f == nullptr) return;
+    const bool written = fwrite(w.out.data(), 1, w.out.size(), f) == w.out.size();
+    fclose(f);
+    if (!written || rename(tmp.c_str(), path.c_str()) != 0) remove(tmp.c_str());
+}
+
+std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (f == nullptr) return nullptr;
+    std::string data;
+    char chunk[65536];
+    for (size_t n; (n = fread(chunk, 1, sizeof(chunk), f)) > 0;) data.append(chunk, n);
+    fclose(f);
+    CacheReader r{reinterpret_cast<const uint8_t*>(data.data()), reinterpret_cast<const uint8_t*>(data.data()) + data.size()};
+    auto s = std::make_unique<CompiledStage>();
+    if (r.u32() != kCacheMagic || !r.raw(&s->stage, sizeof(s->stage))) return nullptr;
+    s->words.resize(r.u32());
+    r.raw(s->words.data(), s->words.size() * 4);
+    s->immediates.resize(r.u32());
+    r.raw(s->immediates.data(), s->immediates.size() * 4);
+    s->resources.resize(r.u32());
+    for (Resource& res : s->resources) {
+        res.kind = Resource::Kind(r.u32());
+        res.index = r.u32();
+        res.sizeBytes = r.u32();
+        uint8_t flags[8] = {};
+        r.raw(flags, sizeof(flags));
+        res.read = flags[0], res.write = flags[1], res.irWrite = flags[2], res.textureDim = flags[3];
+        res.textureArray = flags[4], res.element = flags[5], res.nullTexture = flags[6], res.inlineSampler = flags[7];
+        res.typeName = r.str();
+        res.argbufSet = r.u32();
+        res.argbufOffset = r.u32();
+    }
+    s->varyingNames.resize(r.u32());
+    for (std::string& v : s->varyingNames) v = r.str();
+    s->inlineSamplers.resize(r.u32());
+    for (auto& is : s->inlineSamplers) {
+        is.first = r.u32();
+        r.raw(&is.second, sizeof(is.second));
+    }
+    s->iboBase = r.u32();
+    s->writesMemory = r.u32() != 0;
+    s->name = r.str();
+    s->listing = r.str();
+    if (!r.ok || r.p != r.end) return nullptr;
+    s->stage.k.words = s->words.data();
+    s->stage.k.numWords = uint32_t(s->words.size());
+    s->stage.k.immediates = s->immediates.empty() ? nullptr : s->immediates.data();
+    s->stage.k.numImmediates = uint32_t(s->immediates.size());
+    s->stage.k.name = s->name.c_str();
+    s->stage.k.source = "";
+    return s;
+}
+}  // namespace
+
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase,
                                            const KnownBuffer* known) {
     std::lock_guard<std::mutex> g(gCompilerLock);
@@ -1108,13 +1262,23 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
     }
+    const std::string cached = stageCachePath(bitcode, size, constants, iboBase, known);
+    if (!cached.empty()) {
+        if (std::unique_ptr<CompiledStage> s = stageCacheLoad(cached)) return s;
+    }
     std::unique_ptr<CompiledStage> with = compileStageOnce(bitcode, size, why, constants, iboBase, known);
-    if (with == nullptr || with->stage.k.pvtmemSize == 0 || !theCompiler()->has_preamble) return with;
-    theCompiler()->has_preamble = false;
-    std::string whyNot;
-    std::unique_ptr<CompiledStage> without = compileStageOnce(bitcode, size, &whyNot, constants, iboBase, known);
-    theCompiler()->has_preamble = true;
-    return without != nullptr && preferWithoutPreamble(with->stage.k, without->stage.k) ? std::move(without) : std::move(with);
+    std::unique_ptr<CompiledStage> chosen;
+    if (with == nullptr || with->stage.k.pvtmemSize == 0 || !theCompiler()->has_preamble) {
+        chosen = std::move(with);
+    } else {
+        theCompiler()->has_preamble = false;
+        std::string whyNot;
+        std::unique_ptr<CompiledStage> without = compileStageOnce(bitcode, size, &whyNot, constants, iboBase, known);
+        theCompiler()->has_preamble = true;
+        chosen = without != nullptr && preferWithoutPreamble(with->stage.k, without->stage.k) ? std::move(without) : std::move(with);
+    }
+    if (chosen != nullptr && !cached.empty()) stageCacheSave(cached, *chosen);
+    return chosen;
 }
 
 
