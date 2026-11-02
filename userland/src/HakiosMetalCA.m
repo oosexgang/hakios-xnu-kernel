@@ -552,6 +552,8 @@ static void hm_fps_waited(double seconds);   /* metal_fps: time in -waitUntilCom
 static void hm_fps_drew(double seconds, unsigned cpu);   /* metal_fps: our time in a draw call */
 static void hm_fps_core(double seconds);   /* metal_fps: the core's time in a draw call */
 static BOOL hm_fps_on(void);                          /* metal_fps: command buffers timed pass by pass */
+#define HM_CACHE_DIR  "/private/var/db/hakios-metal-cache"     /* compiled stages, kept across boots by var_store */
+#define HM_CACHE_SEED "/redwood/share/hakios-metal-cache"     /* the same, baked into the image (read-only) */
 static BOOL hm_gmem_on(void);                         /* metal_gmem=1: tiled rendering where a pass allows it */
 - (void)hakiosShadowYCbCr:(IOSurfaceRef)surface format:(MTLPixelFormat)format;
 - (void)hakiosRefreshShadow;
@@ -1978,9 +1980,23 @@ ca_prof_start(void)
 	hm_library_stand_ins();
 	ca_prof_start();
 	/* (hakios) the window server's compiled stages kept on disk (hakios-metal: compileStage's cache), so that a
-	 * CoreAnimation shader compiled once is not compiled again by the next window server; and no listings */
-	mkdir("/var/tmp/hakios-metal-cache", 0755);
-	setenv("HAKIOS_METAL_CACHE", "/var/tmp/hakios-metal-cache", 0);
+	 * CoreAnimation shader compiled once is not compiled again by the next window server; and no listings.
+	 * In /var/db, not /var/tmp: var_store (var_store=1 ufs_write=1) keeps /private/var across boots but leaves tmp
+	 * out by design, so a cache in /var/tmp started empty at every boot and the first minute of every boot paid the
+	 * 66 to 103 compiles again. A cache in the image (HM_CACHE_SEED, read-only, put there by
+	 * tools/metal-cache-seed.sh from an earlier boot's) is looked in after it and never written. */
+	/* (the skeleton makes HM_CACHE_DIR 1777, init.c from var.skel; an image without that line, or a process that may not
+	 * write there, falls back on /var/tmp as before: a cache for this boot only is better than none) */
+	mkdir(HM_CACHE_DIR, 01777);
+	setenv("HAKIOS_METAL_CACHE", access(HM_CACHE_DIR, W_OK | X_OK) == 0 ? HM_CACHE_DIR : (mkdir("/var/tmp/hakios-metal-cache", 0755),
+												 "/var/tmp/hakios-metal-cache"), 0);
+	{
+		struct stat st;
+
+		if (stat(HM_CACHE_SEED, &st) == 0 && S_ISDIR(st.st_mode)) {
+			setenv("HAKIOS_METAL_CACHE_SEED", HM_CACHE_SEED, 0);
+		}
+	}
 	setenv("HAKIOS_METAL_LISTING", "0", 0);
 	hm_ensure_spi([self class]);
 	hm_functions_encode_from_metadata();
@@ -5279,7 +5295,7 @@ static struct {
 	unsigned passes, draws, dispatches, copies, gmemPasses, tiles;
 	double shadowIn, shadowOut;   /* seconds in surface copies: taken from the surface, written back into it */
 	unsigned shadowIns, shadowOuts;
-	struct { unsigned kind, width, height, draws, tiles; double us; } slowest[4];   /* the slowest passes of the period */
+	struct { unsigned kind, width, height, draws, tiles; double us; char why[96]; } slowest[4];   /* the slowest passes of the period (WHY: a sysmem pass's reason) */
 	double passUs;                /* all passes timed, together */
 	char gmemWhy[160];            /* the last reason a pass stayed in sysmem */
 	struct { char name[96]; unsigned count; double us; } programs[48];   /* metal_fps=draws: GPU time by program */
@@ -5449,7 +5465,8 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				fewShown += few ? 1 : 0;
 				if ((slowUs > 20000 && !hm_fps.heavyShown) || few) {
 					hm_fps.heavyShown = YES;
-					hm_print("fps: ... a heavy pass, %.1f ms; its draws:\n", slowUs / 1e3);
+					hm_print("fps: ... a heavy pass, %.1f ms%s%s; its draws:\n", slowUs / 1e3,
+						 hakios_metal_cb_pass_sysmem_why(cb, slow)[0] != 0 ? ", in sysmem: " : "", hakios_metal_cb_pass_sysmem_why(cb, slow));
 					for (unsigned i = 0;; i++) {
 						const char *name = NULL;
 						unsigned pass, area[4];
@@ -5500,9 +5517,12 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				if (all != nil) {
 					unsigned attached = 0, touched = 0;
 					hakios_metal_cb_pass_attachments(cb, i, &attached, &touched);
+					const char *sysWhy = hakios_metal_cb_pass_sysmem_why(cb, i);
+
 					[all appendFormat:@" [%u %ux%u %u draws%@ %.2f ms]", kind, width, height, draws,
 							  hakios_metal_cb_pass_tiles(cb, i) > 0 ? [NSString stringWithFormat:@" %d tiles (attachments %#x, touched %#x)",
-														      hakios_metal_cb_pass_tiles(cb, i), attached, touched] : @"",
+														      hakios_metal_cb_pass_tiles(cb, i), attached, touched] :
+							  kind == 0 && sysWhy[0] != 0 ? [NSString stringWithFormat:@" in sysmem: %s", sysWhy] : @"",
 							  us / 1e3];
 				}
 				hm_fps.passUs += us;
@@ -5514,6 +5534,7 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 						hm_fps.slowest[k].height = height;
 						hm_fps.slowest[k].draws = draws;
 						hm_fps.slowest[k].tiles = (unsigned)MAX(hakios_metal_cb_pass_tiles(cb, i), 0);
+						strlcpy(hm_fps.slowest[k].why, hakios_metal_cb_pass_sysmem_why(cb, i), sizeof(hm_fps.slowest[k].why));
 						hm_fps.slowest[k].us = us;
 						break;
 					}
@@ -5578,19 +5599,23 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 		}
 		if (hm_fps.slowest[0].us > 0) {
 			static const char *const kinds[] = {"draw", "copy", "clear", "dispatch"};
-			char line[400];
+			char line[1024];
 			size_t n = 0;
 
-			for (int k = 0; k < 4 && hm_fps.slowest[k].us > 0; k++) {
-				char tiles[24] = "";
+			for (int k = 0; k < 4 && hm_fps.slowest[k].us > 0 && n < sizeof(line) - 1; k++) {
+				char tiles[128] = "";
 
 				if (hm_fps.slowest[k].tiles != 0) {
 					snprintf(tiles, sizeof(tiles), " in %u tiles", hm_fps.slowest[k].tiles);
+				} else if (hm_fps.slowest[k].kind == 0 && hm_fps.slowest[k].why[0] != 0) {
+					/* (why it stayed in sysmem: SpringBoard's "home" pass, 1127x2438 and 33 draws, did with no reason seen) */
+					snprintf(tiles, sizeof(tiles), " in sysmem (%s)", hm_fps.slowest[k].why);
 				}
 				n += (size_t)snprintf(line + n, sizeof(line) - n, "%s %s %ux%u%s%u%s %.2f ms", k ? ";" : "",
 						      kinds[hm_fps.slowest[k].kind & 3], hm_fps.slowest[k].width, hm_fps.slowest[k].height,
 						      hm_fps.slowest[k].kind == 0 ? " draws " : " ", hm_fps.slowest[k].kind == 0 ? hm_fps.slowest[k].draws : 0,
 						      tiles, hm_fps.slowest[k].us / 1e3);
+				n = MIN(n, sizeof(line) - 1);   /* (snprintf says what it would have written: never past the line) */
 			}
 			hm_print("fps: ... passes timed by the GPU: %.0f ms in all; the slowest:%s\n", hm_fps.passUs / 1e3, line);
 		}

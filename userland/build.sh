@@ -175,6 +175,16 @@ for d in $EXTRA_SHARE; do
 	[ -d "$d" ] || { echo "build.sh: EXTRA_SHARE: $d is not a directory"; exit 1; }
 	cp -rL "$d" root/share/
 done
+# Metal's compiled shader stages from an earlier boot (tools/metal-cache-seed.sh puts them in
+# userland/hakios-metal-cache): the window server reads them from /redwood/share/hakios-metal-cache
+# (HakiosMetalCA.m: HM_CACHE_SEED) instead of compiling CoreAnimation's shaders during the first minute
+# of the boot. Stages compiled by another build of the compiler are filed under other names and simply
+# not found, so a stale seed costs room and nothing else.
+rm -rf root/share/hakios-metal-cache
+if [ -d hakios-metal-cache ] && [ -n "$(ls hakios-metal-cache 2>/dev/null)" ]; then
+	cp -r hakios-metal-cache root/share/
+	echo "build.sh: $(ls hakios-metal-cache | wc -l | tr -d ' ') compiled Metal stages seeded into /redwood/share/hakios-metal-cache"
+fi
 if [ -d $DARWIN/rootfs/usr/lib ]; then
 	if [ -z "$PREBUILT" ]; then
 		# ordinary dynamically linked programs of our own, built against the Darwin SDK
@@ -383,6 +393,9 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	# the prefix with the root on the flash, downloads every package and index there, and without it each
 	# download ended in "No such file or directory"
 	printf 'd\t700\t501\t501\t/private/var/mobile/tmp\n' >> root/etc/var.skel
+	# Metal's compiled shader stages (HakiosMetalCA.m: HM_CACHE_DIR): in /var/db so that var_store keeps them (it
+	# leaves tmp out), open to every user like tmp, since the window server may not be root
+	printf 'd\t1777\t0\t0\t/private/var/db/hakios-metal-cache\n' >> root/etc/var.skel
 	# A key of ours for root, when there is one: ssh/authorized_keys, never in the repository (like
 	# fw-*). dropbear from the package manager's prefix reads it and lets us in over the phone's
 	# Wi-Fi, which saves rebuilding an image for every question one wants to ask a running Darwin. It
