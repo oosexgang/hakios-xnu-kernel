@@ -16,6 +16,12 @@ changes to it; the scripts named fetch the release and put the changes on.
 - the build tools: Apple's [libdispatch](https://github.com/apple-oss-distributions/libdispatch), [libpthread](https://github.com/apple-oss-distributions/libpthread) and [AvailabilityVersions](https://github.com/apple-oss-distributions/AvailabilityVersions), [bootstrap_cmds](https://github.com/markmentovai/bootstrap_cmds), [unifdef](https://github.com/fanf2/unifdef), the [macOS 13.3 SDK](https://github.com/joseluisq/macosx-sdks) and the [iPhoneOS 16.5 SDK](https://github.com/theos/sdks) -- `xnu-deps/setup.sh`
 - not fetched by anything here: the Darwin 16.5 user space, which you lay out from your own IPSW (`sysimage/`), and the phone's own firmware, pulled from its Android (`fw-*`)
 
+## 2026-11-02
+
+- metal: the window server's compiled shader stages outlive the boot -- kept in `/var/db/hakios-metal-cache` (var_store left the old `/var/tmp` out), keyed by what the compiler is, so a rebuilt plug-in keeps them; and carried in the image (`tools/metal-cache-seed.sh`), so no boot compiles them
+- metal: `metal_fps` says why each pass stayed in sysmem, the slowest and the heavy one included
+- windows: `tools/metal-run.sh`, a measured Metal run in one command from Git Bash (`var_store` on by default); `tools/ca-metallib.py` off a Mac with `CA_QC_METALLIB=`
+
 ## 2026-10-30
 
 - repositories: `main` is the branch of `hakios-xnu-kernel` -- what was `hakios` and then `u-boot`; `hakios` is gone, `git clone` needs no `-b`
