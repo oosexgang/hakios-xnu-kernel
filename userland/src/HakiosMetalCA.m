@@ -1752,6 +1752,143 @@ hm_library_stand_ins(void)
 	});
 }
 
+/*
+ * (hakios) boot-arg ca_prof=US, the window server: every US microseconds every thread of the process is looked at
+ * -- running or waiting -- and its stack taken (the program counter, the link register, the frame chain); every
+ * CA_PROF_DUMP looks the most frequent stacks of each named thread go to the log as "ca-prof: THREAD N%: ...", with
+ * the image and offset of each address. Where CoreAnimation's render loop waits on the Metal road is what this is for.
+ */
+#define CA_PROF_SLOTS   4096
+#define CA_PROF_DUMP    400
+#define CA_PROF_DEPTH   10
+static unsigned ca_prof_us;
+static struct {
+	char name[32];
+	uint64_t stack[CA_PROF_DEPTH];
+	unsigned count;
+} ca_prof_table[CA_PROF_SLOTS];
+
+static int
+ca_prof_order(const void *a, const void *b)
+{
+	const typeof(ca_prof_table[0]) *x = a, *y = b;
+	int byname = strcmp(x->name, y->name);
+
+	return byname != 0 ? byname : (int)y->count - (int)x->count;
+}
+
+static void *
+ca_prof_main(__unused void *argument)
+{
+	unsigned looks = 0;
+	thread_t self = mach_thread_self();
+
+	for (;;) {
+		thread_act_array_t threads;
+		mach_msg_type_number_t n = 0;
+
+		usleep(ca_prof_us);
+		if (task_threads(mach_task_self(), &threads, &n) != KERN_SUCCESS) {
+			continue;
+		}
+		looks++;
+		for (mach_msg_type_number_t t = 0; t < n; t++) {
+			thread_extended_info_data_t ext;
+			mach_msg_type_number_t count = THREAD_EXTENDED_INFO_COUNT;
+			arm_thread_state64_t state;
+			mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
+			uint64_t stack[CA_PROF_DEPTH] = { 0 }, hash = 0;
+
+			if (threads[t] == self || thread_info(threads[t], THREAD_EXTENDED_INFO, (thread_info_t)&ext, &count) != KERN_SUCCESS ||
+			    thread_suspend(threads[t]) != KERN_SUCCESS) {
+				mach_port_deallocate(mach_task_self(), threads[t]);
+				continue;
+			}
+			kern_return_t got = thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&state, &state_count);
+			if (got == KERN_SUCCESS) {
+				uint64_t sp = arm_thread_state64_get_sp(state), fp = arm_thread_state64_get_fp(state), top = 0;
+				pthread_t pt = pthread_from_mach_thread_np(threads[t]);
+
+				/* the frame chain is followed only within the thread's own stack (another thread's frame pointer
+				 * read blindly faulted the window server: SIGSEGV, logs/155201-run.log) */
+				if (pt != NULL) top = (uint64_t)(uintptr_t)pthread_get_stackaddr_np(pt);
+				stack[0] = arm_thread_state64_get_pc(state);
+				stack[1] = arm_thread_state64_get_lr(state);
+				for (unsigned d = 2; d < CA_PROF_DEPTH && top != 0 && fp >= sp && fp + 16 <= top && (fp & 15) == 0; d++) {
+					const uint64_t *record = (const uint64_t *)(uintptr_t)fp;
+
+					stack[d] = record[1];
+					if (record[0] <= fp) break;
+					fp = record[0];
+				}
+			}
+			thread_resume(threads[t]);
+			mach_port_deallocate(mach_task_self(), threads[t]);
+			if (got != KERN_SUCCESS) continue;
+			for (unsigned d = 0; d < CA_PROF_DEPTH; d++) hash = (hash ^ stack[d]) * 0x9e3779b97f4a7c15ull;
+			for (size_t c = 0; ext.pth_name[c] != 0; c++) hash = (hash ^ (uint8_t)ext.pth_name[c]) * 0x100000001b3ull;
+			for (unsigned i = (unsigned)(hash >> 32) % CA_PROF_SLOTS, probes = 0; probes < CA_PROF_SLOTS; i = (i + 1) % CA_PROF_SLOTS, probes++) {
+				if (ca_prof_table[i].count == 0 || (memcmp(ca_prof_table[i].stack, stack, sizeof(stack)) == 0 &&
+				    strncmp(ca_prof_table[i].name, ext.pth_name, sizeof(ca_prof_table[i].name)) == 0)) {
+					memcpy(ca_prof_table[i].stack, stack, sizeof(stack));
+					strlcpy(ca_prof_table[i].name, ext.pth_name[0] ? ext.pth_name : "(unnamed)", sizeof(ca_prof_table[i].name));
+					ca_prof_table[i].count++;
+					break;
+				}
+			}
+		}
+		vm_deallocate(mach_task_self(), (vm_address_t)threads, n * sizeof(thread_t));
+		if (looks < CA_PROF_DUMP) continue;
+		qsort(ca_prof_table, CA_PROF_SLOTS, sizeof(ca_prof_table[0]), ca_prof_order);
+		hm_print("ca-prof: %u looks at every thread\n", looks);
+		for (unsigned i = 0, shown = 0; i < CA_PROF_SLOTS; i++) {
+			char line[1400];
+			int at;
+
+			if (ca_prof_table[i].count == 0 || (i > 0 && strcmp(ca_prof_table[i].name, ca_prof_table[i - 1].name) == 0 && ++shown > 4)) continue;
+			if (i == 0 || strcmp(ca_prof_table[i].name, ca_prof_table[i - 1].name) != 0) shown = 0;
+			if (strstr(ca_prof_table[i].name, "render") == NULL && strstr(ca_prof_table[i].name, "coreanimation") == NULL &&
+			    strstr(ca_prof_table[i].name, "hakios") == NULL && strcmp(ca_prof_table[i].name, "(unnamed)") != 0) continue;
+			at = snprintf(line, sizeof(line), "ca-prof: %s %.0f%%:", ca_prof_table[i].name, 100.0 * ca_prof_table[i].count / looks);
+			for (unsigned d = 0; d < CA_PROF_DEPTH && ca_prof_table[i].stack[d] != 0 && at < (int)sizeof(line) - 80; d++) {
+				Dl_info where = { 0 };
+				const char *image = "?", *slash;
+				uint64_t offset = ca_prof_table[i].stack[d];
+
+				if (dladdr((void *)(uintptr_t)offset, &where) != 0 && where.dli_fname != NULL) {
+					image = (slash = strrchr(where.dli_fname, '/')) != NULL ? slash + 1 : where.dli_fname;
+					offset -= (uint64_t)(uintptr_t)where.dli_fbase;
+				}
+				at += snprintf(line + at, sizeof(line) - (size_t)at, " %s+0x%llx(%s)", image, (unsigned long long)offset,
+					       where.dli_sname != NULL ? where.dli_sname : "?");
+			}
+			hm_print("%s\n", line);
+		}
+		memset(ca_prof_table, 0, sizeof(ca_prof_table));
+		looks = 0;
+	}
+	return NULL;
+}
+
+static void
+ca_prof_start(void)
+{
+	static dispatch_once_t once;
+
+	dispatch_once(&once, ^{
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+		const char *at;
+		pthread_t sampler;
+
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0 || (at = strstr(args, "ca_prof=")) == NULL) return;
+		ca_prof_us = (unsigned)atoi(at + 8);
+		if (ca_prof_us == 0) return;
+		pthread_create(&sampler, NULL, ca_prof_main, NULL);
+		hm_print("ca-prof: every thread looked at every %u us\n", ca_prof_us);
+	});
+}
+
 - (instancetype)initWithAcceleratorPort:(io_service_t)port
 {
 	/* (hakios) the window server alone is shown the device: every other client of this image's Metal (SpringBoard
@@ -1772,6 +1909,7 @@ hm_library_stand_ins(void)
 		}
 	}
 	hm_library_stand_ins();
+	ca_prof_start();
 	hm_ensure_spi([self class]);
 	hm_functions_encode_from_metadata();
 	self = [super init];
