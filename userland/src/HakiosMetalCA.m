@@ -1910,6 +1910,11 @@ ca_prof_start(void)
 	}
 	hm_library_stand_ins();
 	ca_prof_start();
+	/* (hakios) the window server's compiled stages kept on disk (hakios-metal: compileStage's cache), so that a
+	 * CoreAnimation shader compiled once is not compiled again by the next window server; and no listings */
+	mkdir("/var/tmp/hakios-metal-cache", 0755);
+	setenv("HAKIOS_METAL_CACHE", "/var/tmp/hakios-metal-cache", 0);
+	setenv("HAKIOS_METAL_LISTING", "0", 0);
 	hm_ensure_spi([self class]);
 	hm_functions_encode_from_metadata();
 	self = [super init];
