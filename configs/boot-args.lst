@@ -63,6 +63,7 @@ bt_again	k
 buttons	k
 buttons_steps	k
 ca_metallib	u
+ca_prof	u
 ca_vbl	u
 caenv	u
 cam	kl
@@ -151,6 +152,14 @@ loader_return_after	kl
 machine_name	k
 membench	k
 metal	ku
+metal_all	u
+metal_dump	u
+metal_fps	u
+metal_gmem	u
+metal_gmem_draws	u
+metal_gmem_off	u
+metal_skip	u
+metal_trace	u
 metal_watch	u
 mic	k
 mic_adc	k

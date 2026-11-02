@@ -1321,6 +1321,53 @@ boot_arg(const char *arguments, const char *name)
 	return at != NULL && (at == arguments || at[-1] == ' ');
 }
 
+/*
+ * The animations SpringBoard hands the window server (an application opening from its icon and closing to it, the
+ * home screen coming back, folders): the window server moves them at the rate each asks for (CAAnimation's
+ * preferredFrameRateRange). Through Metal (METAL_PLUGIN=ca) it keeps to that, and what asks for nothing went at 24 a
+ * second -- frames exactly 41.7 ms apart with the GPU 0.3 ms busy each; through OpenGL ES it did not. With anim_max=1
+ * every animation added to a layer of SpringBoard's asks for 80..120 (a copy of it: one already added is read-only,
+ * and setting it raised). touch_lat=1 says the first ones and what they asked.
+ */
+static void (*original_add_animation)(id self, SEL selector, id animation, id key);
+static unsigned anim_said;
+
+static void
+add_animation_full_rate(id self, SEL selector, id animation, id key)
+{
+	SEL range_of = sel_registerName("preferredFrameRateRange"), set_range_of = sel_registerName("setPreferredFrameRateRange:");
+
+	if (animation != NULL && class_respondsToSelector(object_getClass(animation), set_range_of)) {
+		frame_rate_range asked = ((frame_rate_range (*)(id, SEL))objc_msgSend)(animation, range_of);
+
+		if (dl_say && anim_said++ < 40) {
+			say("hakios: animation %s (%s) asked for %.0f..%.0f, %.0f a second\n", object_getClassName(animation),
+			    key != NULL ? text_of(key) : "", asked.minimum, asked.maximum, asked.preferred);
+		}
+		if (asked.maximum == 0 || asked.maximum < 120 || asked.minimum < 80) {
+			id copy = SEND(id, animation, "copy");
+
+			((void (*)(id, SEL, frame_rate_range))objc_msgSend)(copy, set_range_of, (frame_rate_range){ 80, 120, 120 });
+			original_add_animation(self, selector, copy, key);
+			SEND(void, copy, "release");
+			return;
+		}
+	}
+	original_add_animation(self, selector, animation, key);
+}
+
+static void
+animation_rates(const char *arguments)
+{
+	Method add = class_getInstanceMethod(objc_getClass("CALayer"), sel_registerName("addAnimation:forKey:"));
+
+	if (!boot_arg(arguments, "anim_max=1") || add == NULL) {
+		return;
+	}
+	original_add_animation = (void (*)(id, SEL, id, id))method_setImplementation(add, (IMP)add_animation_full_rate);
+	say("hakios: SpringBoard's animations ask for 80..120 a second (anim_max=1)\n");
+}
+
 static void
 display_link_rates(void)
 {
@@ -1334,6 +1381,7 @@ display_link_rates(void)
 	}
 	dl_say = boot_arg(arguments, "touch_lat=1");
 	dl_max = !boot_arg(arguments, "dl_max=0");
+	animation_rates(arguments);
 	if (!dl_say && !dl_max) {
 		return;
 	}

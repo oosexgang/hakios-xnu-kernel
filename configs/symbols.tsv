@@ -58,6 +58,7 @@ BT_AGAIN	arg	bt_again	User space	k	hakios.bt.c	the second look this many seconds
 BUTTONS	arg	buttons	Touch and buttons	k	hakios.buttons.c	
 BUTTONS_STEPS	arg	buttons_steps	Touch and buttons	k	hakios.buttons.c	
 CA_METALLIB	arg	ca_metallib	User space	u	inject.c	
+CA_PROF	arg	ca_prof	User space	u	HakiosMetalCA.m	
 CA_VBL	arg	ca_vbl	User space	u	inject.c	CoreAnimation's frame clock from the display driver's refresh notifications
 CAENV	arg	caenv	User space	u	inject.c,inject_sb.c	CoreAnimation's switches here as in the window server (inject.c), set before QuartzCore reads them
 CAM_AFTER	arg	cam_after	Cameras	k	hakios.camera.c	
@@ -137,6 +138,14 @@ HAPTIC_EFFECT	arg	haptic_effect	Haptics and torch	k	hakios.haptic.c
 MACHINE_NAME	arg	machine_name	CPU, memory and boot	k	GenericARMPE.cpp	
 MEMBENCH	arg	membench	CPU, memory and boot	k	hakios.cpufreq.c	
 METAL	arg	metal	GPU and display	ku	HakiosMetal.m,MiniIOMobileFramebuffer.cpp	only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
+METAL_ALL	arg	metal_all	User space	u	HakiosMetalCA.m	
+METAL_DUMP	arg	metal_dump	User space	u	HakiosMetalCA.m	
+METAL_FPS	arg	metal_fps	User space	u	HakiosMetalCA.m	each draw of a sysmem pass timed alone, by program (only sysmem passes are: without metal_gmem=1)
+METAL_GMEM	arg	metal_gmem	User space	u	HakiosMetalCA.m	
+METAL_GMEM_DRAWS	arg	metal_gmem_draws	User space	u	HakiosMetalCA.m	GMEM for a pass whose like had at least N draws in the frame before (hakios_metal_cb_set_gmem_min_draws), sysmem for the rest; 56 when not given, 0
+METAL_GMEM_OFF	arg	metal_gmem_off	User space	u	HakiosMetalCA.m	
+METAL_SKIP	arg	metal_skip	User space	u	HakiosMetalCA.m	
+METAL_TRACE	arg	metal_trace	User space	u	HakiosMetalCA.m	
 METAL_WATCH	arg	metal_watch	User space	u	inject.c	
 MIC_ADC	arg	mic_adc	Audio and battery	k	hakios.mic.c	
 MIC_INPUT	arg	mic_input	Audio and battery	k	hakios.mic.c	
@@ -236,7 +245,7 @@ TORCH	arg	torch	Haptics and torch	kl	hakios.torch.c,loader.c	a look, reading onl
 TORCH_MAX_S	arg	torch_max_s	Haptics and torch	k	hakios.torch.c	
 TORCH_SECS	arg	torch_secs	Haptics and torch	k	hakios.torch.c	
 TOUCH_FLIP	arg	touch_flip	Touch and buttons	k	hakios.goodix.c	
-TOUCH_LAT	arg	touch_lat	GPU and display	ku	MiniIOMobileFramebuffer.cpp,eagl.c,hakios.goodix.c,hakios.gpu.cpp,hakios.input.c,inject.c,inject_sb.c	a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up
+TOUCH_LAT	arg	touch_lat	GPU and display	ku	HakiosMetalCA.m,MiniIOMobileFramebuffer.cpp,eagl.c,hakios.goodix.c,hakios.gpu.cpp,hakios.input.c,inject.c,inject_sb.c	a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up
 TOUCH_POLL_US	arg	touch_poll_us	Touch and buttons	k	hakios.goodix.c	
 TOUCH_RATE	arg	touch_rate	Touch and buttons	k	hakios.goodix.c	the chip reports twice as often (Xiaomi's game mode; 240 otherwise)
 TOUCH_SPI_HZ	arg	touch_spi_hz	Touch and buttons	k	hakios.goodix.c	the bus at N Hz (Android's device tree gives the chip 5 MHz)
