@@ -1,0 +1,47 @@
+diff --git a/src/gallium/drivers/freedreno/freedreno_draw.c b/src/gallium/drivers/freedreno/freedreno_draw.c
+index b352d12..5f3b421 100644
+--- a/src/gallium/drivers/freedreno/freedreno_draw.c
++++ b/src/gallium/drivers/freedreno/freedreno_draw.c
+@@ -17,6 +17,8 @@
+ #include "freedreno_blitter.h"
+ #include "freedreno_context.h"
+ #include "freedreno_draw.h"
++#include "ir3/ir3_gallium.h"
++#include "util/u_debug.h"
+ #include "freedreno_fence.h"
+ #include "freedreno_query_acc.h"
+ #include "freedreno_query_hw.h"
+@@ -402,6 +404,24 @@ fd_draw_vbo_dbg(struct pipe_context *pctx, const struct pipe_draw_info *info,
+                 const struct pipe_draw_start_count_bias *draws, unsigned num_draws)
+    in_dt
+ {
++   /* Darwin on hakios: on the Adreno 730v3 what a draw reads of the framebuffer
++    * inside a batch came out wrong (blocks of a blurred backdrop, triangle by
++    * triangle, in CoreAnimation's vibrant layers); flushing after every draw
++    * mended it.  So a draw that reads the framebuffer starts a batch of its own:
++    * what is before it is in memory.  FD_FBFETCH_FLUSH=0 leaves it out.
++    */
++   {
++      struct fd_context *ctx = fd_context(pctx);
++      static int wanted = -1;
++
++      if (wanted < 0)
++         wanted = debug_get_num_option("FD_FBFETCH_FLUSH", 1);
++      if (wanted && ctx->screen->gen >= 7 && ctx->prog.fs && ctx->batch &&
++          ctx->batch->num_draws != 0 &&
++          ir3_get_shader_info((struct ir3_shader_state *)ctx->prog.fs)->fs.uses_fbfetch_output)
++         pctx->flush(pctx, NULL, 0);
++   }
++
+    fd_draw_vbo(pctx, info, drawid_offset, indirect, draws, num_draws);
+ 
+    if (FD_DBG(DDRAW))
+@@ -632,7 +652,7 @@ fd_launch_grid(struct pipe_context *pctx,
+ void
+ fd_draw_init(struct pipe_context *pctx)
+ {
+-   if (FD_DBG(DDRAW) || FD_DBG(FLUSH)) {
++   if (FD_DBG(DDRAW) || FD_DBG(FLUSH) || fd_context(pctx)->screen->gen >= 7) {
+       pctx->draw_vbo = fd_draw_vbo_dbg;
+    } else {
+       pctx->draw_vbo = fd_draw_vbo;

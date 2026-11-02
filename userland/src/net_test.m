@@ -390,7 +390,7 @@ wifi(void)
 		return;
 	}
 	for (const char *word = strtok(arguments, " "); word != NULL; word = strtok(NULL, " ")) {
-		wanted |= strcmp(word, "wifi=1") == 0;
+		wanted |= strcmp(word, "wifi=1") == 0 || strcmp(word, "wifi_station=1") == 0;	/* (the Xiaomi 12S: wifi_station=1) */
 	}
 	if (!wanted) {
 		return;

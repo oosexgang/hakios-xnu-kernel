@@ -121,6 +121,14 @@ recover_phone() {
 	return 1
 }
 
+# Which build of Silicium's UEFI to pack: XL_UEFI_MODE, else RELEASE when there is one, else DEBUG (mayfly's bring-up builds
+# DEBUG only: its log on the screen is how its firmware was made to work)
+uefi_mode() {
+	if [ -n "${XL_UEFI_MODE:-}" ]; then echo "$XL_UEFI_MODE"
+	elif [ -f Mu-Silicium/Build/${DEVICE:-redwood}Pkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd ]; then echo RELEASE
+	else echo DEBUG; fi
+}
+
 # What the phone's bootloader starts the loader with: Project Silicium's UEFI (mkxnuimg.py) or HakiOS's U-Boot
 # (tools/mkubootimg.py, docs/u-boot.md). XL_FIRMWARE says which; without it, Silicium's when its image has been built
 # (it is made from the phone's own vendor drivers and is not in the repository), else U-Boot's.
@@ -128,7 +136,7 @@ firmware() {
 	case "${XL_FIRMWARE:-}" in
 	u-boot|silicium) echo "$XL_FIRMWARE"; return ;;
 	esac
-	if [ -f Mu-Silicium/Build/redwoodPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd ] || [ -f devices/redwood/prebuilt/SILICIUM_UEFI.fd ]; then
+	if [ -f Mu-Silicium/Build/${DEVICE:-redwood}Pkg/$(uefi_mode)_CLANGPDB/FV/SILICIUM_UEFI.fd ] || [ -f devices/${DEVICE:-redwood}/prebuilt/SILICIUM_UEFI.fd ]; then
 		echo silicium
 	else
 		echo u-boot
@@ -148,7 +156,7 @@ enter() {
 	xnuloader/mkpayload.py -o usb-payload.bin loader.efi=$L --usb >/dev/null || { echo "xl: payload build failed"; return 1; }
 	case "$(firmware)" in
 	u-boot) tools/mkubootimg.py -d "${DEVICE:-redwood}" -l $L -p usb-payload.bin -o xnu-usb.img >/dev/null ;;
-	*) ./mkxnuimg.py -p usb-payload.bin -o xnu-usb.img >/dev/null ;;
+	*) ./mkxnuimg.py -d "${DEVICE:-redwood}" --mode "$(uefi_mode)" -p usb-payload.bin -o xnu-usb.img >/dev/null ;;
 	esac || { echo "xl: image build failed ($(firmware))"; return 1; }
 	# Right after the phone enters fastboot the first "boot" is sometimes not taken: try twice.
 	local try

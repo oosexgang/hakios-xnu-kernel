@@ -181,6 +181,362 @@ static TUNABLE(uint32_t, gThreads, "fb_threads", 3);
  * as a rule but 10.9 for one in ten (touch_lat=1, 30 October), more than the whole of a refresh at 120 Hz.
  */
 static TUNABLE(uint32_t, gThreadPriority, "fb_pri", 92);
+/*
+ * Boot-arg fb_line=PA: a command-mode panel's line counter (a display interface's INTF_TEAR_LINE_COUNT), and fb_lines=N
+ * how many lines it counts, fb_scan_us=N how long a frame's transfer takes. This driver writes straight into the memory
+ * the controller sends the panel, so a frame written while one goes out is seen torn. With the counter a frame is
+ * written in the gap after the transfer, and goes on being written ahead of the next (writing is the faster), in place
+ * of a beat of its own that drifts against the panel's.
+ */
+static TUNABLE(uint64_t, gPanelLinePA, "fb_line", 0);
+static TUNABLE(uint32_t, gPanelLines, "fb_lines", 2400);
+static TUNABLE(uint32_t, gPanelScanUs, "fb_scan_us", 7000);
+extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+static vm_offset_t gPanelLine;
+static inline uint32_t refreshHz(void);
+
+/* Until the panel's transfer is over, or a refresh at most. */
+static void
+waitForPanelGap(void)
+{
+	uint64_t deadline, ns = 0;
+
+	if (gPanelLinePA == 0) {
+		return;
+	}
+	if (gPanelLine == 0) {
+		gPanelLine = ml_io_map((vm_offset_t) gPanelLinePA, 0x1000);
+	}
+	clock_interval_to_deadline(NSEC_PER_SEC / refreshHz() / NSEC_PER_USEC, NSEC_PER_USEC, &deadline);
+	for (;;) {
+		uint32_t line = *(volatile uint32_t *) gPanelLine & 0xffff;
+		uint64_t until;
+
+		if (line >= gPanelLines - 4 || mach_absolute_time() >= deadline) {
+			return;
+		}
+		ns = (uint64_t) (gPanelLines - line) * gPanelScanUs * NSEC_PER_USEC / gPanelLines;
+		nanoseconds_to_absolutetime(ns > 50 * NSEC_PER_USEC ? ns - 50 * NSEC_PER_USEC : 10 * NSEC_PER_USEC, &until);
+		clock_delay_until(mach_absolute_time() + until);
+	}
+}
+/*
+ * Boot-arg fb_flip=1: two framebuffers in place of one, for a panel the display controller fetches by itself (the
+ * Xiaomi 12S: a command-mode panel the controller refreshes from memory on every tear signal). Without it every frame
+ * is written into the memory being sent, and one written while a transfer goes out shows torn. With it a frame is
+ * written into the other buffer, the controller's pipe is pointed at it (its source address, then the control path's
+ * flush: the hardware takes it at the start of the next transfer), and the buffer before is written again only once
+ * the flush is seen taken. fb_mdp=PA: the display subsystem (the Xiaomi 12S's mdss 0xae00000, Linux's dpu catalog
+ * for sm8450: pipes at 0x5000.. and control paths at 0x16000.. from it); fb_flip_gap=N: where the second buffer is,
+ * after the first (inside the memory the boot loader reserved for the display: 0x2b00000 on the Xiaomi 12S).
+ * If the hardware does not take a flip three times running, the driver goes back to one buffer, the boot loader's.
+ */
+static TUNABLE(uint32_t, gFlip, "fb_flip", 0);
+static TUNABLE(uint64_t, gMdpPA, "fb_mdp", 0xae00000);
+static TUNABLE(uint32_t, gFlipGap, "fb_flip_gap", 0xa00000);
+static TUNABLE(uint32_t, gFlipExtra, "fb_flip_flush", 0);       /* more flush bits, if the pipe's alone is not taken */
+extern "C" vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
+
+#define FLIP_PIPES              8
+#define FLIP_CTLS               6
+#define FLIP_SRC0_ADDR          0x14
+#define FLIP_CTL_FLUSH          0x18
+#define FLIP_TAKEN_MS           50
+
+static const uint32_t kFlipPipe[FLIP_PIPES] = { 0x5000, 0x7000, 0x9000, 0xb000, 0x25000, 0x27000, 0x29000, 0x2b000 };
+static const char * const kFlipPipeName[FLIP_PIPES] = { "vig0", "vig1", "vig2", "vig3", "dma0", "dma1", "dma2", "dma3" };
+static const uint32_t kFlipPipeFlush[FLIP_PIPES] = { 1u << 0, 1u << 1, 1u << 2, 1u << 18, 1u << 11, 1u << 12, 1u << 24, 1u << 25 };
+static const uint32_t kFlipCtl[FLIP_CTLS] = { 0x16000, 0x17000, 0x18000, 0x19000, 0x1a000, 0x1b000 };
+
+static struct {
+	bool            on;
+	vm_offset_t     mdp;
+	uint32_t        pipe;                   /* the pipe that fetches the framebuffer */
+	uint32_t        ctls;                   /* the control paths that have layers: flushed */
+	uint32_t        flush;
+	uint64_t        pa[2];
+	uint8_t *       va[2];
+	unsigned        front;                  /* the buffer the controller was last pointed at */
+	bool            pending;                /* ... and the flush not yet seen taken */
+	uint32_t        flips, waited, misses, missesInRow;
+	uint64_t        waitAbs;
+} gFlipper;
+
+static inline uint32_t
+flip_rd(uint32_t offset)
+{
+	return *(volatile uint32_t *) (gFlipper.mdp + offset);
+}
+
+static inline void
+flip_wr(uint32_t offset, uint32_t value)
+{
+	*(volatile uint32_t *) (gFlipper.mdp + offset) = value;
+	__builtin_arm_dsb(0xf);
+}
+
+/* the flush bits still pending on any of the control paths flushed */
+static uint32_t
+flip_pending(void)
+{
+	uint32_t pending = 0;
+
+	for (unsigned c = 0; c < FLIP_CTLS; c++) {
+		if (gFlipper.ctls & (1u << c)) {
+			pending |= flip_rd(kFlipCtl[c] + FLIP_CTL_FLUSH) & gFlipper.flush;
+		}
+	}
+	return pending;
+}
+
+static void
+flip_point(unsigned buffer)
+{
+	flip_wr(kFlipPipe[gFlipper.pipe] + FLIP_SRC0_ADDR, (uint32_t) gFlipper.pa[buffer]);
+	for (unsigned c = 0; c < FLIP_CTLS; c++) {
+		if (gFlipper.ctls & (1u << c)) {
+			flip_wr(kFlipCtl[c] + FLIP_CTL_FLUSH, gFlipper.flush);
+		}
+	}
+	gFlipper.front = buffer;
+	gFlipper.pending = true;
+	gFlipper.flips++;
+}
+
+/*
+ * Until the last flip is taken: then the buffer that is not the front one is free to write. False if it was not taken
+ * in FLIP_TAKEN_MS (three such in a row: back to the boot loader's buffer alone).
+ */
+static bool
+flip_wait_taken(void)
+{
+	uint64_t began = mach_absolute_time(), deadline;
+
+	if (!gFlipper.pending) {
+		return true;
+	}
+	clock_interval_to_deadline(FLIP_TAKEN_MS, kMillisecondScale, &deadline);
+	while (flip_pending() != 0) {
+		if (mach_absolute_time() >= deadline) {
+			gFlipper.misses++;
+			if (++gFlipper.missesInRow >= 3) {
+				IOLog("MiniIOMobileFramebuffer: flip: three flips running not taken in %u ms (flush still %#x): "
+				    "ONE BUFFER AGAIN, the boot loader's\n", FLIP_TAKEN_MS, flip_pending());
+				flip_point(0);
+				gFlipper.pending = false;
+				gFlipper.on = false;
+			}
+			return false;
+		}
+		IODelay(100);
+	}
+	gFlipper.waitAbs += mach_absolute_time() - began;
+	gFlipper.waited++;
+	gFlipper.missesInRow = 0;
+	gFlipper.pending = false;
+	return true;
+}
+
+static void
+flip_setup(uint8_t * base, uint32_t rowBytes, uint32_t height)
+{
+	uint64_t size = (uint64_t) rowBytes * height;
+
+	if (!gFlip) {
+		return;
+	}
+	if (vinfo.v_physaddr == 0 || size > gFlipGap) {
+		IOLog("MiniIOMobileFramebuffer: flip: no (framebuffer at %#llx, %llu bytes, the gap %#x)\n", vinfo.v_physaddr, size,
+		    gFlipGap);
+		return;
+	}
+	gFlipper.mdp = ml_io_map((vm_offset_t) gMdpPA, 0x30000);
+	gFlipper.pa[0] = vinfo.v_physaddr;
+	gFlipper.pa[1] = vinfo.v_physaddr + gFlipGap;
+	gFlipper.pipe = FLIP_PIPES;
+	for (unsigned p = 0; p < FLIP_PIPES; p++) {
+		uint32_t at = flip_rd(kFlipPipe[p] + FLIP_SRC0_ADDR);
+
+		IOLog("MiniIOMobileFramebuffer: flip: pipe %s source %#x\n", kFlipPipeName[p], at);
+		if (gFlipper.pipe == FLIP_PIPES && at == (uint32_t) gFlipper.pa[0]) {
+			gFlipper.pipe = p;
+		}
+	}
+	for (unsigned c = 0; c < FLIP_CTLS; c++) {
+		vm_offset_t ctl = kFlipCtl[c];
+		uint32_t layers = flip_rd(ctl + 0x00) | flip_rd(ctl + 0x04) | flip_rd(ctl + 0x08) | flip_rd(ctl + 0x0c) |
+		    flip_rd(ctl + 0x10) | flip_rd(ctl + 0x24);
+
+		IOLog("MiniIOMobileFramebuffer: flip: control path %u: layers %#x %#x %#x %#x %#x %#x, top %#x, flush %#x\n", c,
+		    flip_rd(ctl + 0x00), flip_rd(ctl + 0x04), flip_rd(ctl + 0x08), flip_rd(ctl + 0x0c), flip_rd(ctl + 0x10),
+		    flip_rd(ctl + 0x24), flip_rd(ctl + 0x14), flip_rd(ctl + FLIP_CTL_FLUSH));
+		if (layers != 0) {
+			gFlipper.ctls |= 1u << c;
+		}
+	}
+	if (gFlipper.pipe == FLIP_PIPES || gFlipper.ctls == 0) {
+		IOLog("MiniIOMobileFramebuffer: flip: no pipe fetches %#llx or no control path has layers (%#x): one buffer\n",
+		    gFlipper.pa[0], gFlipper.ctls);
+		return;
+	}
+	{
+		uint32_t pipe = kFlipPipe[gFlipper.pipe];
+
+		/* (for a later hardware scaling: the pipe as the boot loader set it up; Linux's dpu_hw_sspp.c offsets) */
+		IOLog("MiniIOMobileFramebuffer: flip: pipe %s: source size %#x, image size %#x, at %#x, out size %#x at %#x, "
+		    "stride %#x, format %#x, unpack %#x, op mode %#x\n", kFlipPipeName[gFlipper.pipe], flip_rd(pipe + 0x00),
+		    flip_rd(pipe + 0x04), flip_rd(pipe + 0x08), flip_rd(pipe + 0x0c), flip_rd(pipe + 0x10), flip_rd(pipe + 0x24),
+		    flip_rd(pipe + 0x30), flip_rd(pipe + 0x34), flip_rd(pipe + 0x38));
+	}
+	gFlipper.flush = kFlipPipeFlush[gFlipper.pipe] | gFlipExtra;
+	gFlipper.va[0] = base;
+	gFlipper.va[1] = (uint8_t *) ml_io_map_wcomb((vm_offset_t) gFlipper.pa[1], (vm_size_t) size);
+	if (gFlipper.va[1] == NULL) {
+		return;
+	}
+	memcpy(gFlipper.va[1], base, (size_t) size);      /* (the same picture, whichever is fetched) */
+	gFlipper.front = 0;
+	gFlipper.on = true;
+	IOLog("MiniIOMobileFramebuffer: flip: TWO BUFFERS, %#llx and %#llx, on pipe %s, control paths %#x, flush %#x\n",
+	    gFlipper.pa[0], gFlipper.pa[1], kFlipPipeName[gFlipper.pipe], gFlipper.ctls, gFlipper.flush);
+}
+
+/*
+ * Boot-arg fb_hud=1: the frame rate, the hottest temperature sensor and the processors' clocks in a corner of every frame
+ * (written into the frame after its layers, before it goes to the panel; the Xiaomi 12S gives the numbers, through
+ * hakios_mayfly_hud_numbers() in hakios.adreno7.c, and without it only the frame rate is shown). In the kernel console's
+ * font (iso_font, 8 x 16, the low bit the leftmost), drawn twice the size.
+ */
+static TUNABLE(uint32_t, gHud, "fb_hud", 0);
+extern "C" unsigned char iso_font[256 * 16];
+extern "C" void hakios_mayfly_hud_numbers(int * temperature, uint32_t mhz[3], uint32_t * ceiling) __attribute__((weak));
+extern "C" uint32_t hakios_mayfly_gpu_mhz(void) __attribute__((weak));
+extern "C" unsigned int vm_page_free_count;
+#define HUD_SCALE       2
+#define HUD_X           24
+#define HUD_Y           150
+#define HUD_HISTORY     60              /* seconds in the graph under the numbers */
+#define HUD_BAR_W       6
+#define HUD_GRAPH_H     72              /* pixels for 120 frames a second */
+
+static struct {
+	uint64_t        since;
+	uint32_t        frames, fps;
+	int             temperature;
+	uint32_t        mhz[3], ceiling;
+	char            text[96];
+	uint32_t        colour;
+	uint8_t         history[HUD_HISTORY];   /* the frame rate of each of the last seconds, the newest at `newest' */
+	uint8_t         lateHistory[HUD_HISTORY]; /* ... and how many of its frames came a refresh and a half or more after the one before */
+	uint32_t        late;                   /* (counted by show(): this second's) */
+	uint32_t        newest, seconds;
+} gHudState;
+
+static void
+hud_tick(void)
+{
+	uint64_t now = mach_absolute_time(), second;
+
+	nanoseconds_to_absolutetime(NSEC_PER_SEC, &second);
+	gHudState.frames++;
+	if (gHudState.since == 0) {
+		gHudState.since = now;
+	}
+	if (now - gHudState.since < second && gHudState.text[0] != 0) {
+		return;
+	}
+	gHudState.fps = (uint32_t) ((uint64_t) gHudState.frames * second / (now - gHudState.since + 1));
+	gHudState.newest = (gHudState.newest + 1) % HUD_HISTORY;
+	gHudState.history[gHudState.newest] = (uint8_t) (gHudState.fps > 240 ? 240 : gHudState.fps);
+	gHudState.lateHistory[gHudState.newest] = (uint8_t) (gHudState.late > 255 ? 255 : gHudState.late);
+	gHudState.late = 0;
+	gHudState.seconds++;
+	gHudState.frames = 0;
+	gHudState.since = now;
+	gHudState.temperature = -1000;
+	if (hakios_mayfly_hud_numbers != NULL) {
+		hakios_mayfly_hud_numbers(&gHudState.temperature, gHudState.mhz, &gHudState.ceiling);
+	}
+	if (gHudState.temperature > -1000) {
+		int t = gHudState.temperature;
+
+		snprintf(gHudState.text, sizeof(gHudState.text), "%3u fps %d.%dC cpu %u/%u/%u free %uM", gHudState.fps, t / 10,
+		    (t < 0 ? -t : t) % 10, gHudState.mhz[0], gHudState.mhz[1], gHudState.mhz[2],
+		    (uint32_t) ((uint64_t) vm_page_free_count * PAGE_SIZE >> 20));
+		gHudState.colour = t < 650 ? 0xff40ff40 : t < 800 ? 0xffffd040 : 0xffff4040;
+	} else {
+		snprintf(gHudState.text, sizeof(gHudState.text), "%3u fps", gHudState.fps);
+		gHudState.colour = 0xff40ff40;
+	}
+}
+
+/* The text into the frame at base (rows of rowBytes, width x height pixels), on a black box. */
+static void
+hud_draw(uint8_t * base, uint32_t rowBytes, uint32_t width, uint32_t height)
+{
+	size_t length = strlen(gHudState.text);
+	uint32_t boxW = (uint32_t) length * 8 * HUD_SCALE + 16, boxH = 16 * HUD_SCALE + 8;
+
+	uint32_t graphW = HUD_HISTORY * HUD_BAR_W + 16;
+
+	boxW = boxW > graphW ? boxW : graphW;
+	boxH += HUD_GRAPH_H + 8;
+	if (length == 0 || HUD_X + boxW > width || HUD_Y + boxH > height) {
+		return;
+	}
+	for (uint32_t y = 0; y < boxH; y++) {
+		uint32_t * row = (uint32_t *) (base + (size_t) (HUD_Y + y) * rowBytes) + HUD_X;
+
+		for (uint32_t x = 0; x < boxW; x++) {
+			row[x] = 0xff000000;
+		}
+	}
+	for (size_t c = 0; c < length; c++) {
+		const unsigned char * glyph = iso_font + (unsigned char) gHudState.text[c] * 16;
+
+		for (uint32_t gy = 0; gy < 16; gy++) {
+			for (uint32_t sy = 0; sy < HUD_SCALE; sy++) {
+				uint32_t * row = (uint32_t *) (base + (size_t) (HUD_Y + 4 + gy * HUD_SCALE + sy) * rowBytes) + HUD_X + 8 +
+				    c * 8 * HUD_SCALE;
+
+				for (uint32_t gx = 0; gx < 8; gx++) {
+					if (glyph[gy] & (1u << gx)) {
+						for (uint32_t sx = 0; sx < HUD_SCALE; sx++) {
+							row[gx * HUD_SCALE + sx] = gHudState.colour;
+						}
+					}
+				}
+			}
+		}
+	}
+	/* the graph: a bar a second, the oldest on the left; a line at 60 and at 120 */
+	uint32_t top = HUD_Y + 16 * HUD_SCALE + 12, bottom = top + HUD_GRAPH_H;
+
+	for (uint32_t i = 0; i < HUD_HISTORY; i++) {
+		uint32_t index = (gHudState.newest + 1 + i) % HUD_HISTORY;
+		uint32_t fps = i + gHudState.seconds >= HUD_HISTORY ? gHudState.history[index] : 0;
+		/*
+		 * the height: frames that second; the colour: whether any came late -- a second with few frames because nothing moved
+		 * is a short green bar, a second of animation with frames that missed their refresh is red
+		 */
+		uint32_t late = i + gHudState.seconds >= HUD_HISTORY ? gHudState.lateHistory[index] : 0;
+		uint32_t bar = fps * HUD_GRAPH_H / 120, colour = late == 0 ? 0xff40ff40 : late <= 3 ? 0xffffd040 : 0xffff4040;
+
+		bar = bar > HUD_GRAPH_H ? HUD_GRAPH_H : bar;
+		for (uint32_t y = 0; y < bar; y++) {
+			uint32_t * row = (uint32_t *) (base + (size_t) (bottom - 1 - y) * rowBytes) + HUD_X + 8 + i * HUD_BAR_W;
+
+			for (uint32_t x = 0; x + 1 < HUD_BAR_W; x++) {
+				row[x] = colour;
+			}
+		}
+	}
+	for (uint32_t x = 0; x < HUD_HISTORY * HUD_BAR_W; x += 2) {
+		((uint32_t *) (base + (size_t) (bottom - HUD_GRAPH_H) * rowBytes))[HUD_X + 8 + x] = 0xff808080;
+		((uint32_t *) (base + (size_t) (bottom - HUD_GRAPH_H / 2) * rowBytes))[HUD_X + 8 + x] = 0xff808080;
+	}
+}
+
 extern "C" kern_return_t kernel_thread_start_priority(thread_continue_t continuation, void * parameter, integer_t priority,
     thread_t * new_thread);
 
@@ -351,6 +707,15 @@ public:
 	/* the screen recording, if one was asked for */
 	uint32_t *      fColumn;                /* drawLayer(): source column for every panel column */
 	uint16_t *      fColumnWeight;          /* ... with fb_filter: how much of the column after it, of 256 */
+	/*
+	 * ... and, unfiltered, the same map as runs: panel columns whose source columns follow each other, copied as one
+	 * piece (1125 onto 1080 is 45 runs of 24 or so a row: some 45 copies in place of 1080 lookups)
+	 */
+	uint32_t *      fRunFrom;
+	uint32_t *      fRunTo;
+	uint32_t *      fRunLength;
+	uint32_t        fRuns;
+	uint32_t        fStatReports;
 	uint32_t *      fBlendRow;              /* ... and a row of the picture blended from two (fBlendRowSize pixels) */
 	uint32_t        fBlendRowSize;
 	uint8_t *       fRecBase;
@@ -530,6 +895,7 @@ IOMobileFramebuffer::start(IOService * provider)
 	fPanelWidth = vinfo.v_width;
 	fPanelHeight = vinfo.v_height;
 	fRowBytes = vinfo.v_rowbytes;
+	flip_setup(fBase, fRowBytes, fPanelHeight);
 	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
 	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
 	if (gFBScale != 0 && gFBScale != kFBDefaultScale) {
@@ -549,6 +915,9 @@ IOMobileFramebuffer::start(IOService * provider)
 		}
 	}
 	fColumn = IONewZero(uint32_t, fPanelWidth);
+	fRunFrom = IONewZero(uint32_t, fPanelWidth);
+	fRunTo = IONewZero(uint32_t, fPanelWidth);
+	fRunLength = IONewZero(uint32_t, fPanelWidth);
 	fColumnWeight = IONewZero(uint16_t, fPanelWidth);
 	fDiff = gDiff != 0;
 	fDiffLeft = fDiffTop = ~0u;
@@ -806,6 +1175,12 @@ IOMobileFramebuffer::drawRows(const RowJob * job, int32_t y0, int32_t y1, uint32
 
 				out[i] = w == 0 || a == from[c + 1] ? a : blend(a, from[c + 1], w);
 			}
+		} else if (fRuns != 0) {
+			const uint32_t * __restrict runFrom = fRunFrom, * __restrict runTo = fRunTo, * __restrict runLength = fRunLength;
+
+			for (uint32_t r = 0, n = fRuns; r < n; r++) {
+				memcpy(to + runTo[r], from + runFrom[r], (size_t) runLength[r] * 4);
+			}
 		} else {
 			for (int32_t x = cx0; x < cx1; x++) {
 				to[x] = from[fColumn[x]];
@@ -951,6 +1326,19 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 			fColumnWeight[x] = (uint16_t) (fColumn[x] + 1 < (uint32_t) sw ? at & 255 : 0);
 		} else {
 			fColumn[x] = (uint32_t) (sx + (int64_t) (x - px0) * sw / (px1 - px0));
+		}
+	}
+	fRuns = 0;
+	if (!filter && !fDiff && fRunFrom != NULL && fRunTo != NULL && fRunLength != NULL) {
+		for (int32_t x = cx0; x < cx1; x++) {
+			if (fRuns != 0 && fColumn[x] == fColumn[x - 1] + 1 && (uint32_t) x == fRunTo[fRuns - 1] + fRunLength[fRuns - 1]) {
+				fRunLength[fRuns - 1]++;
+			} else {
+				fRunFrom[fRuns] = fColumn[x];
+				fRunTo[fRuns] = (uint32_t) x;
+				fRunLength[fRuns] = 1;
+				fRuns++;
+			}
 		}
 	}
 	job.pixels = s->pixels();
@@ -1135,6 +1523,10 @@ IOMobileFramebuffer::settle(const uint8_t * swap, MiniIOSurface ** surfaces)
 		return;
 	}
 	fSettling = true;
+	if (gFlipper.on) {
+		flip_wait_taken();
+		fBase = gFlipper.on ? gFlipper.va[1 - gFlipper.front] : gFlipper.va[0];
+	}
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 		MiniIOSurface * s = surfaces[layer];
 
@@ -1144,6 +1536,12 @@ IOMobileFramebuffer::settle(const uint8_t * swap, MiniIOSurface ** surfaces)
 		memcpy(src, swap + SWAP_SOURCE(layer), sizeof(src));
 		memcpy(dst, swap + SWAP_DEST(layer), sizeof(dst));
 		drawLayer(s, src, dst);
+	}
+	if (gHud) {
+		hud_draw(fBase, fRowBytes, fPanelWidth, fPanelHeight);
+	}
+	if (gFlipper.on) {
+		flip_point(1 - gFlipper.front);
 	}
 	fSettling = false;
 	fStatSettled++;
@@ -1167,7 +1565,12 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fStatWaiting += mach_absolute_time() - began;
 	began = ready = mach_absolute_time();
-	if (gOnTheBeat) {
+	if (gPanelLinePA != 0) {
+		waitForPanelGap();
+		fStatOnBeat++;
+		fStatBeatWait += mach_absolute_time() - began;
+		began = mach_absolute_time();
+	} else if (gOnTheBeat && !gFlipper.on) {
 		uint64_t period, aim, next;
 
 		nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
@@ -1191,6 +1594,18 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			began = mach_absolute_time();
 		}
 	}
+	if (gFlipper.on) {
+		/* (fb_flip) the buffer not being fetched: free once the last flip is taken -- the wait is the refresh's beat */
+		flip_wait_taken();
+		fStatOnBeat++;
+		fStatBeatWait += mach_absolute_time() - began;
+		began = mach_absolute_time();
+		if (gFlipper.on) {
+			fBase = gFlipper.va[1 - gFlipper.front];
+		} else {
+			fBase = gFlipper.va[0];
+		}
+	}
 	shown = began;
 	/* its turn has come: the swap after it may be handed over */
 	IOLockLock(fSwapLock);
@@ -1206,6 +1621,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			fFramePauses++;
 		} else {
 			fFrameTimes[nanos < FRAME_TIMES ? nanos : FRAME_TIMES]++;
+			gHudState.late += nanos * 2 >= 3000 / refreshHz();     /* (a refresh and a half: 12.5 ms at 120 Hz) */
 			fFrameLongest = nanos > fFrameLongest ? (uint32_t) nanos : fFrameLongest;
 		}
 	}
@@ -1264,6 +1680,13 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			}
 		}
 	}
+	if (gHud && fGraphics) {
+		hud_tick();
+		hud_draw(fBase, fRowBytes, fPanelWidth, fPanelHeight);
+	}
+	if (gFlipper.on) {
+		flip_point(1 - gFlipper.front);
+	}
 	drawn = mach_absolute_time();
 	if (recorded != NULL) {
 		record(recorded);
@@ -1301,6 +1724,25 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		    waiting / fStatFrames / NSEC_PER_USEC, fStatOnBeat, fStatOnBeat ? beat / fStatOnBeat / NSEC_PER_USEC : 0,
 		    fStatHeld, fStatLost, fStatSwapsLate, fStatSettled);
 		fStatSwapsLate = 0;
+		if (gFlip) {
+			uint64_t flipWait;
+
+			absolutetime_to_nanoseconds(gFlipper.waitAbs, &flipWait);
+			IOLog("MiniIOMobileFramebuffer: flip: %s; %u flips, %u seen taken (%llu us waited each), %u not taken in %u ms\n",
+			    gFlipper.on ? "two buffers" : "one buffer", gFlipper.flips, gFlipper.waited,
+			    gFlipper.waited ? flipWait / gFlipper.waited / NSEC_PER_USEC : 0, gFlipper.misses, FLIP_TAKEN_MS);
+			if (gFlipper.on && (fStatReports++ % 6) == 0) {
+				uint32_t pipe = kFlipPipe[gFlipper.pipe];
+
+				/* (again now and then: the boot's lines are long gone from the log when it is fetched) */
+				IOLog("MiniIOMobileFramebuffer: flip: pipe %s, control paths %#x: source size %#x, image size %#x, at %#x, "
+				    "out size %#x at %#x, stride %#x, format %#x, unpack %#x, op mode %#x\n", kFlipPipeName[gFlipper.pipe],
+				    gFlipper.ctls, flip_rd(pipe + 0x00), flip_rd(pipe + 0x04), flip_rd(pipe + 0x08), flip_rd(pipe + 0x0c),
+				    flip_rd(pipe + 0x10), flip_rd(pipe + 0x24), flip_rd(pipe + 0x30), flip_rd(pipe + 0x34), flip_rd(pipe + 0x38));
+			}
+			gFlipper.flips = gFlipper.waited = gFlipper.misses = 0;
+			gFlipper.waitAbs = 0;
+		}
 		for (different = 0; different < 8 && fStatSurfaces[different] != 0; different++) {
 		}
 		if (different == 8 && fStatFrames > 8) {

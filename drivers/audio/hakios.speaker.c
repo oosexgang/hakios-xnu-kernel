@@ -75,7 +75,7 @@ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
 extern void loader_log_putc(char c);
 
-static vm_offset_t tlmm, gcc, cmd_db;
+static vm_offset_t tlmm, cmd_db;
 static uint32_t probe_level;
 static bool leaving;                    /* on a panic's way out: nothing sleeps, nothing is said but to the loader */
 
@@ -144,6 +144,26 @@ wait_ms(uint32_t ms)
 #define CFG_PULL_UP             3
 #define CFG_OUTPUT              (1u << 9)
 
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S (mayfly): the same two AW88261 (chip 0x2113, Android's dmesg), on serial engine 15 (dt qupv3_se15_i2c,
+ * i2c@880000: gpio56 data, gpio57 clock); 0x34 is sound-channel 0 with its interrupt on gpio63 and the speaker switch
+ * (spksw-gpio) on gpio52, 0x35 sound-channel 1 with its interrupt on gpio118. Their TDM lines are LPASS's own pins
+ * (lpi_tdm1_*), not the main TLMM's: not shown here.
+ */
+#define PIN_SDA                 56
+#define PIN_SCL                 57
+
+static const struct {
+	unsigned pin;
+	const char *what;
+} pins[] = {
+	{ 56, "I2C data" }, { 57, "I2C clock" }, { 63, "the amplifier 0x34's interrupt" }, { 118, "the amplifier 0x35's interrupt" },
+	{ 52, "the amplifier 0x34's speaker switch" },
+	/* their audio: the tertiary MI2S/TDM of the main TLMM (dt tert_tdm_pinctrl: function mi2s2), which the DSP drives */
+	{ 121, "MI2S 2 bit clock" }, { 123, "MI2S 2 word select" }, { 122, "MI2S 2 data 0" }, { 124, "MI2S 2 data 1" },
+};
+#else
 #define PIN_SDA                 12      /* the serial engine's first pin is the data line, the second the clock */
 #define PIN_SCL                 13
 
@@ -155,6 +175,7 @@ static const struct {
 	{ 98, "MI2S 0 data 0" }, { 99, "MI2S 0 data 1" }, { 102, "the amplifier 0x35's interrupt" },
 	{ 45, "the amplifier 0x34's interrupt" },
 };
+#endif
 
 static void
 show_pins(void)
@@ -173,7 +194,15 @@ show_pins(void)
 static void
 half_bit(void)
 {
+#ifdef HAKIOS_ADRENO7
+	/*
+	 * The Xiaomi 12S: with the amplifiers' boost running, reads at 100 kHz came back wrong now and then (0xffff, the other
+	 * amplifier's values, another register's): 25 kHz gives the lines four times as long to settle.
+	 */
+	spin_us(20);
+#else
 	spin_us(5);                     /* 100 kHz at most, I2C's standard mode; the bus does not mind slower */
+#endif
 }
 
 /* A line is pulled low (the pin drives 0) or let go (the pin is an input and the pull-up raises it). */
@@ -189,6 +218,41 @@ level(unsigned pin)
 {
 	return rd(GPIO_IO(pin)) & 1;
 }
+
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S: the amplifier at 0x34 has a "speaker switch" (dt spksw-gpio, gpio52; Android's log: "spksw level cached = 0"
+ * while nothing plays). The top speaker is the earpiece's too, it seems, and the switch gives it to the amplifier: driven high
+ * before that amplifier's output stage is powered, low again once it is down. (A guess at its sense: with it low, the first
+ * power-up of 0x34's output reset the phone.) Boot-arg speaker_only=0x35 (or 0x34) starts that amplifier alone.
+ */
+#define PIN_SPKSW               52
+static uint32_t only_address;
+/* the test matrix of hakios.sound.c (sound_matrix=1): what it is trying now, in place of the boot-args */
+static unsigned wanted_profile;         /* (0: Music, ACF_PROFILE_MUSIC) */
+static bool options_set, option_force;
+static uint32_t option_spksw = 1;
+static int option_rate = -1;
+
+void
+hakios_speaker_options(uint32_t only, uint32_t spksw, int rate, bool force, unsigned profile)
+{
+	options_set = true;
+	only_address = only;
+	option_spksw = spksw;
+	option_rate = rate;
+	option_force = force;
+	wanted_profile = profile;
+}
+
+static void
+spksw(bool high)
+{
+	wr(GPIO_IO(PIN_SPKSW), high ? 2 : 0);
+	wr(GPIO_CFG(PIN_SPKSW), CFG_OUTPUT);    /* function 0 (a GPIO), 2 mA, no pull */
+	say("speaker: the speaker switch (gpio%u) %s\n", PIN_SPKSW, high ? "HIGH: the top speaker to the amplifier 0x34" : "low");
+}
+#endif
 
 static void
 i2c_start(void)
@@ -393,7 +457,15 @@ amplifier_name(uint16_t id)
 #define SYSST_UVLS              (1u << 14)
 #define SYSST_OVP2S             (1u << 15)
 #define SYSST_PLL_CHECK         (SYSST_CLKS | SYSST_PLLS)
+#ifdef HAKIOS_ADRENO7
+/*
+ * The Xiaomi 12S: with the amplifier still muted its output stage does not switch (Awinic's driver checks a status without SWS
+ * then), and the Music profile's boost only comes on with signal: neither bit is waited for, the faults still are.
+ */
+#define SYSST_CHECK             (SYSST_CLKS | SYSST_PLLS)
+#else
 #define SYSST_CHECK             (SYSST_BSTS | SYSST_SWS | SYSST_CLKS | SYSST_PLLS)
+#endif
 #define SYSST_FAULTS            (SYSST_OVP2S | SYSST_UVLS | SYSST_BSTOCS | SYSST_WDS | SYSST_NOCLKS | SYSST_OCDS | SYSST_OTHS)
 
 #define VOLUME_LOWEST           (90 * 8)        /* the driver's "mute volume", in eighths of a dB */
@@ -427,8 +499,13 @@ struct amplifier {
 };
 
 static struct amplifier amplifiers[2] = {
+#ifdef HAKIOS_ADRENO7	/* mayfly: 0x34 is sound-channel 0 */
+	{ .address = 0x34, .device = 0, .where = "0x34, slot 0", .temp_row = -1, .vbat_row = -1 },
+	{ .address = 0x35, .device = 1, .where = "0x35, slot 1", .temp_row = -1, .vbat_row = -1 },
+#else
 	{ .address = 0x35, .device = 0, .where = "0x35, slot 0", .temp_row = -1, .vbat_row = -1 },
 	{ .address = 0x34, .device = 1, .where = "0x34, slot 1", .temp_row = -1, .vbat_row = -1 },
+#endif
 };
 static bool broken;                     /* something went wrong: both have been powered down, nothing more is done */
 
@@ -554,7 +631,7 @@ acf_profiles(const uint8_t *acf, uint64_t size)
 			acf_monitor(device, acf + offset, (uint64_t)offset + length <= size ? length : 0);
 			continue;
 		}
-		if (kind != ACF_DATA_REGISTERS || profile != ACF_PROFILE_MUSIC || strcmp(name, "aw88261") != 0) {
+		if (kind != ACF_DATA_REGISTERS || profile != wanted_profile || strcmp(name, "aw88261") != 0) {
 			continue;
 		}
 		for (unsigned i = 0; i < 2; i++) {
@@ -651,6 +728,9 @@ power_down_now(const char *why)
 		say("speaker: the amplifier %s: 0x04 <- %#06x, reads %#06x\n", a->where, value, after);
 		a->started = false;
 	}
+#ifdef HAKIOS_ADRENO7
+	wr(GPIO_IO(PIN_SPKSW), 0);              /* (the speaker switch back to rest, without a word: this may be a panic's way out) */
+#endif
 }
 
 /* One register written, said and read back; false (and both powered down) if it did not stick. */
@@ -662,18 +742,24 @@ put(struct amplifier *a, uint8_t reg, uint16_t value)
 	if (broken) {
 		return false;
 	}
-	if (!register_write(a->address, reg, value)) {
-		say("speaker: the amplifier %s: %#04x <- %#06x NOT ACKNOWLEDGED\n", a->where, reg, value);
-		power_down_now("a write was not acknowledged");
-		return false;
-	}
-	if (!register_read(a->address, reg, &after)) {
-		say("speaker: the amplifier %s: %#04x <- %#06x, NOT READ BACK\n", a->where, reg, value);
-		power_down_now("a register could not be read back");
-		return false;
+	/*
+	 * (up to three tries: on the Xiaomi 12S, once the amplifiers switch, a read of the hand-driven bus came back 0xffff now and
+	 * then -- the register was right, the read was not; a fault is still a fault after the third)
+	 */
+	for (unsigned attempt = 0; attempt < 3; attempt++) {
+		if (attempt != 0) {
+			wait_ms(1);
+		}
+		if (!register_write(a->address, reg, value) || !register_read(a->address, reg, &after)) {
+			after = (uint16_t)~value;
+			continue;
+		}
+		if (after == value) {
+			break;
+		}
 	}
 	say("speaker: the amplifier %s: %#04x <- %#06x, reads %#06x%s\n", a->where, reg, value, after, after == value ? "" :
-	    ": NOT AS WRITTEN");
+	    ": NOT AS WRITTEN (three tries)");
 	if (after != value) {
 		power_down_now("a register did not read back as written");
 		return false;
@@ -684,11 +770,42 @@ put(struct amplifier *a, uint8_t reg, uint16_t value)
 static bool
 get(struct amplifier *a, uint8_t reg, uint16_t *value)
 {
-	if (!register_read(a->address, reg, value)) {
-		say("speaker: the amplifier %s: %#04x NOT READ\n", a->where, reg);
+#ifdef HAKIOS_ADRENO7
+	/*
+	 * The Xiaomi 12S: a disturbed read here may also give a plausible value that is not the register's (the other amplifier's,
+	 * another register's). A value counts once two reads in a row agree, up to six reads. Not the interrupt register, which a
+	 * read clears, nor the status and the measurements (0x20 to 0x29), which change from one read to the next while the
+	 * amplifier plays (the status between 0x0311 and 0x0111 with the boost): for the status faulty() asks twice instead.
+	 */
+	if (reg != AW_SYSINT && reg != AW_SYSST && !(reg >= 0x20 && reg <= 0x29)) {
+		uint16_t before = 0;
+		bool have = false;
+
+		for (unsigned attempt = 0; attempt < 6; attempt++) {
+			if (register_read(a->address, reg, value) && *value != 0xffff) {
+				if (have && *value == before) {
+					return true;
+				}
+				before = *value;
+				have = true;
+			} else {
+				have = false;
+				wait_ms(1);
+			}
+		}
+		say("speaker: the amplifier %s: %#04x NOT READ (no two reads in six agreed; the last %#06x)\n", a->where, reg, *value);
 		return false;
 	}
-	return true;
+#endif
+	/* (0xffff is what a disturbed read gives, as above, and no status this driver reads: read again, up to three times) */
+	for (unsigned attempt = 0; attempt < 3; attempt++) {
+		if (register_read(a->address, reg, value) && *value != 0xffff) {
+			return true;
+		}
+		wait_ms(1);
+	}
+	say("speaker: the amplifier %s: %#04x NOT READ (three tries; the last %#06x)\n", a->where, reg, *value);
+	return false;
 }
 
 /* The bits of 0x04 named in `bits' set or cleared, the rest as they read. */
@@ -728,10 +845,35 @@ set_volume(struct amplifier *a, uint16_t volume)
 static bool
 faulty(struct amplifier *a, uint16_t *status)
 {
+#ifdef HAKIOS_ADRENO7
+	/*
+	 * The Xiaomi 12S: a disturbed read can show fault bits that are not there. A fault counts when two reads in a row show
+	 * one (any), or when the status cannot be read at all, three times.
+	 */
+	unsigned seen = 0, unread = 0;
+
+	for (unsigned attempt = 0; attempt < 4; attempt++) {
+		if (!get(a, AW_SYSST, status)) {
+			if (++unread >= 3) {
+				return true;
+			}
+			continue;
+		}
+		if ((*status & SYSST_FAULTS) == 0) {
+			return false;
+		}
+		if (++seen >= 2) {
+			return true;
+		}
+		wait_ms(1);
+	}
+	return seen >= 2 || unread >= 3;
+#else
 	if (!get(a, AW_SYSST, status)) {
 		return true;
 	}
 	return (*status & SYSST_FAULTS) != 0;
+#endif
 }
 
 bool
@@ -809,6 +951,27 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 			case AW_I2SCTRL3:
 				value &= (uint16_t)~I2SCTRL3_TXEN;
 				break;
+			case 0x06: {
+				/*
+				 * I2SCTRL1, [3:0] the sample rate. The profile has Android's 96 kHz (resourcemanager: speaker on
+				 * TDM-LPAIF-RX-TERTIARY-VIRT-0 at 96000); boot-arg speaker_sr=N has what our bus really runs at.
+				 */
+				uint32_t rate = 0;
+
+#ifdef HAKIOS_ADRENO7
+				if (options_set) {
+					if (option_rate >= 0) {
+						value = (uint16_t)((value & ~0xfu) | ((uint32_t)option_rate & 0xf));
+					}
+					break;
+				}
+#endif
+				if (PE_parse_boot_argn("speaker_sr", &rate, sizeof(rate))) {
+					say("speaker: the amplifier %s: 0x06 of the profile %#06x, its rate field becomes %u\n", a->where, value, rate);
+					value = (uint16_t)((value & ~0xfu) | (rate & 0xf));
+				}
+				break;
+			}
 			case AW_VSNTM1:
 				continue;
 			}
@@ -824,6 +987,87 @@ hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 	return true;
 }
 
+#ifdef HAKIOS_ADRENO7
+/*
+ * The driver's aw_pid_2113_reg_force_set(), which Android does at every start on chips whose fuses say so (0x79 and 0x7d: bits
+ * 14:10 clear); the profile leaves these boost settings alone. Bits as aw88261.h has them.
+ */
+static void
+force_set(struct amplifier *a)
+{
+	static const struct { uint8_t reg; uint16_t mask, value; } sets[] = {
+		{ 0x62, 1u << 12, 1u << 12 },   /* FORCE_PWM */
+		{ 0x64, 7u, 4u },               /* BST_OS_WIDTH 50 ns */
+		{ 0x65, 3u, 2u },               /* BST_LOOPR 340k */
+		{ 0x66, 3u << 14, 2u << 14 },   /* RSQN_DLY 35 ns */
+		{ 0x67, 1u << 3, 0 },           /* BURST_SSMODE fast */
+		{ 0x68, 7u << 7, 2u << 7 },     /* BST_BURST 30 mA */
+	};
+	uint16_t high = 0, low = 0, now = 0;
+
+	if (!get(a, AW_EFRH3, &high) || !get(a, AW_EFRL3, &low)) {
+		return;
+	}
+	if (((high & low) & ~0x83ffu) != 0 && ((high | low) & ~0x83ffu) != 0) {
+		say("speaker: the amplifier %s: fuses %#x %#x: this chip takes no force set\n", a->where, high, low);
+		return;
+	}
+	for (unsigned i = 0; i < sizeof(sets) / sizeof(sets[0]); i++) {
+		if (get(a, sets[i].reg, &now)) {
+			(void)put(a, sets[i].reg, (uint16_t)((now & ~sets[i].mask) | sets[i].value));
+		}
+	}
+}
+
+/* Every status bit seen on the amplifiers that run, and the highest PVDD */
+void
+hakios_speaker_now(uint16_t *status, uint16_t *pvdd)
+{
+	*status = 0;
+	*pvdd = 0;
+	for (unsigned i = 0; i < 2; i++) {
+		struct amplifier *a = &amplifiers[i];
+		uint16_t value = 0;
+
+		if (a->started && register_read(a->address, AW_SYSST, &value)) {
+			*status |= value;
+		}
+		if (a->started && register_read(a->address, AW_PVDD, &value) && (value & 0x3ff) > *pvdd) {
+			*pvdd = value & 0x3ff;
+		}
+	}
+}
+#endif
+
+/*
+ * While the path is found: what each amplifier says of itself (aw88261.h: status, interrupts, DAC state, battery, temperature,
+ * PVDD, I2S interrupts and capture count, analog states). Only reads. `when' tells them apart: the boost of the Music profile
+ * comes on with signal, so only a look while sound plays says whether the output stage switches.
+ */
+void
+hakios_speaker_dump(const char *when)
+{
+	static const uint8_t regs[] = { 0x01, 0x02, 0x04, 0x05, 0x06, 0x07, 0x20, 0x21, 0x22, 0x23, 0x26, 0x27, 0x28, 0x29 };
+
+	for (unsigned i = 0; i < 2; i++) {
+		struct amplifier *a = &amplifiers[i];
+		char line[300];
+		int at;
+
+		if (!a->prepared) {
+			continue;
+		}
+		at = snprintf(line, sizeof(line), "speaker: %s: the amplifier %s now:", when, a->where);
+		for (unsigned r = 0; r < sizeof(regs) && at < (int)sizeof(line) - 16; r++) {
+			uint16_t value = 0;
+
+			(void)register_read(a->address, regs[r], &value);
+			at += snprintf(line + at, sizeof(line) - (size_t)at, " %02x=%04x", regs[r], value);
+		}
+		say("%s\n", line);
+	}
+}
+
 bool
 hakios_speaker_start(void)
 {
@@ -835,6 +1079,26 @@ hakios_speaker_start(void)
 		if (broken || !a->prepared) {
 			return false;
 		}
+#ifdef HAKIOS_ADRENO7
+		if (!options_set) {
+			PE_parse_boot_argn("speaker_only", &only_address, sizeof(only_address));
+		}
+		if (only_address != 0 && a->address != only_address) {
+			say("speaker: the amplifier %s is left powered down (speaker_only=%#x)\n", a->where, only_address);
+			continue;
+		}
+		if (a->address == 0x34) {
+			uint32_t level = 0;     /* low, as Android has it for the speaker; boot-arg speaker_spksw=1: high, its handset path */
+
+			if (options_set) {
+				level = option_spksw;
+			} else {
+				PE_parse_boot_argn("speaker_spksw", &level, sizeof(level));
+			}
+			spksw(level != 0);
+			wait_ms(2);
+		}
+#endif
 		say("speaker: the amplifier %s: power-down off\n", a->where);
 		a->started = true;
 		if (!sysctrl(a, SYSCTRL_PWDN, false)) {
@@ -877,6 +1141,11 @@ hakios_speaker_start(void)
 			    "the driver wants it");
 			return false;
 		}
+#ifdef HAKIOS_ADRENO7
+		if (option_force) {
+			force_set(a);
+		}
+#endif
 		if (!put(a, AW_I2SCTRL3, a->i2sctrl3) ||        /* the feedback on, as the profile has it */
 		    !sysctrl(a, SYSCTRL_ULS_HMUTE, false) || !sysctrl(a, SYSCTRL_HMUTE, false)) {
 			return false;
@@ -891,6 +1160,8 @@ hakios_speaker_start(void)
 			return false;
 		}
 		say("speaker: THE AMPLIFIER %s RUNS, unmuted at the lowest volume (status %#06x)\n", a->where, status);
+		wait_ms(20);
+		hakios_speaker_dump("started");
 	}
 	return true;
 }
@@ -910,7 +1181,15 @@ hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 		struct amplifier *a = &amplifiers[i];
 		uint32_t target = a->volume_at + below;
 
-		if (broken || !a->started) {
+		if (broken) {
+			return false;
+		}
+		if (!a->started) {
+#ifdef HAKIOS_ADRENO7
+			if (only_address != 0 && a->address != only_address) {
+				continue;       /* (speaker_only=: the other one was left off on purpose) */
+			}
+#endif
 			return false;
 		}
 		if (target > VOLUME_LOWEST) {
@@ -926,6 +1205,10 @@ hakios_speaker_volume(uint32_t below, uint32_t step_ms)
 		for (unsigned i = 0; i < 2; i++) {
 			struct amplifier *a = &amplifiers[i];
 			uint32_t target = a->volume_at + below, next;
+
+			if (!a->started) {
+				continue;
+			}
 
 			if (target > VOLUME_LOWEST) {
 				target = VOLUME_LOWEST;
@@ -1017,6 +1300,18 @@ hakios_speaker_monitor(bool tell)
 		if (!get(a, AW_VBAT, &vbat) || !get(a, AW_TEMP, &temp)) {
 			continue;
 		}
+#ifdef HAKIOS_ADRENO7
+		/*
+		 * The Xiaomi 12S: 0x263 is the battery register's value at reset, before the amplifier has measured anything (Android's
+		 * idle dump: 21=0263, 23=0263): 3598 mV, which the table answers with 7.875 dB less. Not a measurement: not counted.
+		 */
+		if ((vbat & 0x3ff) == 0x263) {
+			if (tell) {
+				say("speaker: the amplifier %s: no measurement yet (the battery register at its reset value)\n", a->where);
+			}
+			continue;
+		}
+#endif
 		a->temps[a->looks % 3] = (temp & 0x200) ? (int)(temp & 0x3ff) - 0x400 : (int)(temp & 0x3ff);
 		a->vbats[a->looks % 3] = (int)(vbat & 0x3ff) * 6025 / 1023;
 		a->looks++;
@@ -1092,6 +1387,11 @@ hakios_speaker_stop(void)
 		}
 		a->started = false;
 		say("speaker: THE AMPLIFIER %s IS POWERED DOWN\n", a->where);
+#ifdef HAKIOS_ADRENO7
+		if (a->address == 0x34) {
+			spksw(false);
+		}
+#endif
 	}
 }
 
@@ -1216,7 +1516,7 @@ probe_thread(__unused void *parameter, __unused wait_result_t result)
 	if (tlmm == 0) {
 		tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	}
-	gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
+	/* (the global clock controller is not mapped: nothing here reads it, and on the Xiaomi 12S mapping its 384 KB panicked in io_map) */
 	cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);      /* memory, not registers: no alignment rules */
 	say("speaker: a look at the phone's sound hardware (level %u; nothing is switched on)\n", probe_level);
 	show_pins();

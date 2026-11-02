@@ -777,19 +777,31 @@ GROUP_ORDER = ["Build facts", "Drivers built in", "CPU, memory and boot", "Stora
                "Debugging", "Loader", "User space", "Version", "Extra arguments"]
 
 
-def listing(config, title_lines):
+def external(name):
+    """A symbol of a driver that a SoC or device repository brings (drivers/*/conf there): the common configuration does not name it,
+    because the common repository must hold together without that repository checked out. Built like any driver unless left out."""
+    d = DRIVER_BY_SYMBOL.get(name)
+    return d is not None and d.origin is not None
+
+
+def listing(config, title_lines, common=False):
     """The documented defconfig of `config`: every symbol there is, by group, each with its meaning in a comment above it and its value
     (or `# CONFIG_X is not set`) under it. Linux's defconfigs list only what differs from the defaults; this one lists everything,
-    because here a symbol's default is "the kernel decides" and a reader should see every setting there is."""
+    because here a symbol's default is "the kernel decides" and a reader should see every setting there is.
+    common: the common defconfig, which leaves out the symbols of SoC and device repositories' own drivers (external())."""
     by_group = collections.defaultdict(list)
     for sym in SYMBOLS:
+        if common and external(sym[0]):
+            continue
         by_group[GROUP_OF.get(sym[0], "User space")].append(sym)
     built = drivers_built(config)
-    config = {k: v for k, v in config.items() if k not in built}
+    if common:
+        built = {k: on for k, on in built.items() if not external(k)}
+    config = {k: v for k, v in config.items() if k not in built and not (common and external(k))}
     config.update({k: "y" for k, on in built.items() if on})
     out = list(title_lines)
     out += ["# %d symbols in %d groups; %d are set, %d of them drivers built in." % (
-        len(SYMBOLS), len([g for g in by_group if by_group[g]]), len(config), sum(built.values())), "#", ""]
+        sum(len(v) for v in by_group.values()), len([g for g in by_group if by_group[g]]), len(config), sum(built.values())), "#", ""]
     for group in GROUP_ORDER + sorted(g for g in by_group if g not in GROUP_ORDER):
         syms = by_group.get(group)
         if not syms:
@@ -819,7 +831,7 @@ def cmd_listing(a):
     title = ["#", "# HakiOS %s defconfig: every setting there is, with what it does." % a.name,
              "# Made by tools/hakios-config.py listing %s -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol." % a.name,
              "#"]
-    text = listing(config, title)
+    text = listing(config, title, common=(a.name == "common"))
     if a.output_listing:
         # read first, written after: `listing common > configs/common_defconfig` has the shell empty the file before it is read,
         # and the configuration written is then the base one's alone (which is how common_defconfig once lost its values)
@@ -840,7 +852,8 @@ def cmd_complete(a):
         m = re.match(r"(?:# )?CONFIG_([A-Z0-9_]+)(?:=| is not set)", line.strip())
         if m:
             named.add(m.group(1))
-    missing = [s[0] for s in SYMBOLS if s[0] not in named]
+    common = os.path.basename(path) == "common_defconfig"
+    missing = [s[0] for s in SYMBOLS if s[0] not in named and not (common and external(s[0]))]
     for name in missing[:30]:
         print("hakios-config: %s does not name CONFIG_%s" % (rel(a.root, path), name))
     if len(missing) > 30:
