@@ -1138,11 +1138,24 @@ struct CacheReader {
     }
 };
 constexpr uint32_t kCacheMagic = 0x53434d48;   // "HMCS"
+// What the compiler is, for the cache's key: the Makefile's hash of this file, the driver's headers and the Mesa
+// archives linked in (HAKIOS_METAL_CACHE_BUILD), so that a stage compiled before stays good across a rebuild of the
+// library that changed nothing of the compiler -- with __DATE__ and __TIME__ every rebuild of the plug-in (any file
+// of the core recompiles them all) emptied a cache that var_store had kept across boots, and the window server paid
+// its 66 to 103 first compiles again. Without the define, the old key: a build is its own.
+#ifdef HAKIOS_METAL_CACHE_BUILD
+const char* const kCacheBuild = HAKIOS_METAL_CACHE_BUILD;
+#else
 const char* const kCacheBuild = __DATE__ " " __TIME__;
+#endif
 
-std::string stageCachePath(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t iboBase, const KnownBuffer* known) {
-    static const char* dir = getenv("HAKIOS_METAL_CACHE");
-    if (dir == nullptr || dir[0] == 0) return {};
+// The file name of a stage in the cache (no directory), "" when no cache is configured: the writable directory
+// HAKIOS_METAL_CACHE, and the read-only ones HAKIOS_METAL_CACHE_SEED (':' between them) -- stages compiled on an
+// earlier boot and put into the system image, looked in after the writable one and never written.
+std::string stageCacheName(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t iboBase, const KnownBuffer* known) {
+    const char* dir = getenv("HAKIOS_METAL_CACHE");
+    const char* seed = getenv("HAKIOS_METAL_CACHE_SEED");
+    if ((dir == nullptr || dir[0] == 0) && (seed == nullptr || seed[0] == 0)) return {};
     uint64_t h[2] = {0xcbf29ce484222325ull, 0x84222325cbf29ce4ull};
     auto mix = [&](const void* p, size_t n) {
         for (size_t i = 0; i < n; i++) {
@@ -1165,6 +1178,13 @@ std::string stageCachePath(const void* bitcode, size_t size, const FunctionConst
     }
     char name[64];
     snprintf(name, sizeof(name), "/%016llx%016llx.stage", (unsigned long long)h[0], (unsigned long long)h[1]);
+    return name;
+}
+
+// the writable cache's path for NAME, "" when there is none
+std::string stageCacheWritable(const std::string& name) {
+    const char* dir = getenv("HAKIOS_METAL_CACHE");
+    if (dir == nullptr || dir[0] == 0 || name.empty()) return {};
     return std::string(dir) + name;
 }
 
@@ -1262,9 +1282,20 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
     }
-    const std::string cached = stageCachePath(bitcode, size, constants, iboBase, known);
+    const std::string name = stageCacheName(bitcode, size, constants, iboBase, known);
+    const std::string cached = stageCacheWritable(name);
     if (!cached.empty()) {
         if (std::unique_ptr<CompiledStage> s = stageCacheLoad(cached)) return s;
+    }
+    if (!name.empty()) {
+        const char* seed = getenv("HAKIOS_METAL_CACHE_SEED");
+        for (const char* p = seed; p != nullptr && *p != 0;) {
+            const char* colon = strchr(p, ':');
+            const std::string dir(p, colon != nullptr ? size_t(colon - p) : strlen(p));
+            p = colon != nullptr ? colon + 1 : nullptr;
+            if (dir.empty()) continue;
+            if (std::unique_ptr<CompiledStage> s = stageCacheLoad(dir + name)) return s;
+        }
     }
     std::unique_ptr<CompiledStage> with = compileStageOnce(bitcode, size, why, constants, iboBase, known);
     std::unique_ptr<CompiledStage> chosen;

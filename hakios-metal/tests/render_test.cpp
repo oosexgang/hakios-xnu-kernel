@@ -5761,3 +5761,44 @@ TEST(a_visibility_stream_overflow_turns_the_binning_off) {
     CHECK_EQ(coordsWrong(*t), 0u);
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
+
+// Why each profiled pass stayed in sysmem, pass by pass (CommandBuffer::passSysmemWhy): a pass with depth says so while
+// the GMEM pass beside it says nothing; a pass of 1 draw under a bar of 2 names the bar; GMEM off names the boot-arg
+TEST(each_profiled_pass_says_why_it_was_drawn_in_sysmem) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    {
+        auto cb = r.queue->commandBuffer();
+        cb->setProfile(true);
+        cb->setGmemMinDraws(2);
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(cb->counts().gmemPasses, 0u);
+        CHECK(std::string(cb->passSysmemWhy(0)).find("fewer than metal_gmem_draws=2") != std::string::npos);
+        CHECK(cb->passSysmemWhy(1)[0] == 0);   // (past the passes)
+    }
+    {
+        auto cb = r.queue->commandBuffer();
+        cb->setProfile(true);
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK_EQ(cb->counts().gmemPasses, 1u);
+        CHECK(cb->passSysmemWhy(0)[0] == 0);
+    }
+    {
+        auto cb = r.queue->commandBuffer();
+        cb->setProfile(true);
+        cb->setGmem(false);
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK_EQ(cb->counts().gmemPasses, 0u);
+        CHECK(std::string(cb->passSysmemWhy(0)).find("GMEM off") != std::string::npos);
+    }
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}

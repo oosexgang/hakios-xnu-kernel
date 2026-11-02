@@ -4,6 +4,9 @@
 // Without Mesa's libraries in the build (no MESA_BUILD) the compiler is a refusal, and that is checked instead.
 #include <atomic>
 #include <thread>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -1369,4 +1372,73 @@ TEST(a_stage_that_writes_its_device_buffers_is_told_from_one_that_reads_them) {
     if (writes == nullptr) std::printf("       %s\n", why.c_str());
     CHECK(reads != nullptr && !reads->writesMemory);
     CHECK(writes != nullptr && writes->writesMemory);
+}
+
+// The compiled-stage cache (compileStage, HAKIOS_METAL_CACHE and HAKIOS_METAL_CACHE_SEED): a stage compiled once is
+// filed in the writable directory and comes back word for word; filed instead in a read-only seed directory (the
+// system image's, from an earlier boot) it is found there, after a seed that does not exist, and nothing is compiled
+// or written into the writable directory -- the window server's first minute without its 66 to 103 compiles
+TEST(a_compiled_stage_comes_back_from_the_cache_and_from_a_seed) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the cache did not run)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("tri_flat_vs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    char base[] = "/tmp/hakios-metal-cache-test-XXXXXX";
+    CHECK(mkdtemp(base) != nullptr);
+    const std::string writable = std::string(base) + "/w", seed = std::string(base) + "/seed", other = std::string(base) + "/o";
+    for (const std::string& d : {writable, seed, other}) CHECK(mkdir(d.c_str(), 0755) == 0);
+    auto files = [](const std::string& d) {
+        std::vector<std::string> out;
+        if (DIR* dir = opendir(d.c_str())) {
+            while (dirent* e = readdir(dir)) {
+                if (e->d_name[0] != '.') out.push_back(e->d_name);
+            }
+            closedir(dir);
+        }
+        return out;
+    };
+    std::string why;
+    setenv("HAKIOS_METAL_CACHE", writable.c_str(), 1);
+    unsetenv("HAKIOS_METAL_CACHE_SEED");
+    auto first = compileStage(bc.data(), bc.size(), &why);
+    CHECK(first != nullptr);
+    const std::vector<std::string> filed = files(writable);
+    CHECK_EQ(filed.size(), size_t(1));
+    auto again = compileStage(bc.data(), bc.size(), &why);
+    CHECK(again != nullptr && first != nullptr && again->words == first->words && again->stage.k.numWords == first->stage.k.numWords);
+    if (filed.size() == 1) {
+        CHECK(rename((writable + "/" + filed[0]).c_str(), (seed + "/" + filed[0]).c_str()) == 0);
+        setenv("HAKIOS_METAL_CACHE", other.c_str(), 1);
+        setenv("HAKIOS_METAL_CACHE_SEED", (std::string(base) + "/none:" + seed).c_str(), 1);
+        auto seeded = compileStage(bc.data(), bc.size(), &why);
+        CHECK(seeded != nullptr && first != nullptr && seeded->words == first->words);
+        CHECK(files(other).empty());   // found in the seed: not compiled, so not written
+        // a seed only, no writable directory: still read
+        unsetenv("HAKIOS_METAL_CACHE");
+        auto only = compileStage(bc.data(), bc.size(), &why);
+        CHECK(only != nullptr && first != nullptr && only->words == first->words);
+        // and a damaged stage in the seed is not taken: compiled instead
+        FILE* f = fopen((seed + "/" + filed[0]).c_str(), "r+b");
+        CHECK(f != nullptr);
+        if (f != nullptr) {
+            fseek(f, 0, SEEK_END);
+            const long n = ftell(f);
+            CHECK(ftruncate(fileno(f), n - 3) == 0);
+            fclose(f);
+        }
+        setenv("HAKIOS_METAL_CACHE", other.c_str(), 1);
+        auto recompiled = compileStage(bc.data(), bc.size(), &why);
+        CHECK(recompiled != nullptr && first != nullptr && recompiled->words == first->words);
+        CHECK_EQ(files(other).size(), size_t(1));
+    }
+    unsetenv("HAKIOS_METAL_CACHE");
+    unsetenv("HAKIOS_METAL_CACHE_SEED");
+    for (const std::string& d : {writable, seed, other}) {
+        for (const std::string& n : files(d)) remove((d + "/" + n).c_str());
+        rmdir(d.c_str());
+    }
+    rmdir(base);
 }

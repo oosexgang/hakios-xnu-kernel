@@ -140,7 +140,7 @@ public:
     // what each costs, beside what it was (a draw pass with its target's size and its draws, a copy, a clear, a
     // dispatch). Read once the buffer has completed. metal_fps names a frame's slowest passes with it.
     enum PassKind : uint32_t { kPassDraw = 0, kPassCopy = 1, kPassClear = 2, kPassDispatch = 3 };
-    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; uint64_t tuneKey = 0; uint8_t attached = 0, touched = 0; };   // ATTACHED / TOUCHED: the colour attachments set, and those its draws wrote or read (a GMEM pass's)   // tiles 0: in sysmem; tuneKey: CommandQueue::preferGmem's
+    struct PassTime { PassKind kind; uint32_t width, height, draws; double us; uint32_t tiles = 0; uint64_t tuneKey = 0; uint8_t attached = 0, touched = 0; std::string sysmemWhy; };   // ATTACHED / TOUCHED: the colour attachments set, and those its draws wrote or read (a GMEM pass's)   // tiles 0: in sysmem; tuneKey: CommandQueue::preferGmem's
     static constexpr uint32_t kMaxProfiled = 64;
     void setProfile(bool on) { profile_ = on; }
     // ...and each draw of a sysmem pass on its own, the first kMaxProfiledDraws: a wait for idle before it and after it,
@@ -174,6 +174,8 @@ public:
     // the words recorded so far (what the command processor will read)
     size_t streamWords() const { return stream_.words().size(); }
     std::vector<PassTime> passTimes() const;
+    // why profiled pass I of a draw was drawn in sysmem ("" for a GMEM pass, or one not profiled); valid while the buffer lives
+    const char* passSysmemWhy(size_t i) const { return i < profiled_.size() ? profiled_[i].sysmemWhy.c_str() : ""; }
 
 private:
     friend class CommandQueue;

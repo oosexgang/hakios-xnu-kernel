@@ -94,6 +94,14 @@ IOS_LIBS     =
 ifneq ($(strip $(MESA)),)
 IOS_CXXFLAGS += -DHAKIOS_METAL_MESA $(HAKIOS_METAL_IOS_MESA_CXXFLAGS)
 IOS_LIBS     += $(HAKIOS_METAL_IOS_MESA_LIBS)
+# the compiled-stage cache's key (src/compiler.cpp: kCacheBuild): what the compiler is made of -- its source, the
+# driver's headers and the Mesa archives linked in -- and not when it was built, so that a cache kept on the phone
+# across boots (var_store) outlives a rebuild of the plug-in that changed nothing of the compiler
+IOS_CACHE_BUILD := $(shell cat src/compiler.cpp include/hakios-metal/*.hpp $(wildcard $(filter %.a,$(HAKIOS_METAL_IOS_MESA_LIBS))) 2>/dev/null \
+	| (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-24)
+ifneq ($(strip $(IOS_CACHE_BUILD)),)
+IOS_CXXFLAGS += -DHAKIOS_METAL_CACHE_BUILD='"$(IOS_CACHE_BUILD)"'
+endif
 endif
 
 out/ios/libhakios-metal.a: $(CORE) src/fake_gpu.cpp src/iokit_transport.cpp $(wildcard include/hakios-metal/*.hpp)

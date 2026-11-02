@@ -320,7 +320,7 @@ void CommandQueue::tuned(uint64_t key, bool gmem, double us) {
 
 void CommandBuffer::stampStart(PassKind kind, uint32_t width, uint32_t height) {
     if (!(profile_ || tuning_) || profiled_.size() >= kMaxProfiled) return;
-    profiled_.push_back(PassTime{kind, width, height, 0, 0, 0});
+    { PassTime t{}; t.kind = kind, t.width = width, t.height = height; profiled_.push_back(std::move(t)); }
     stamp(uint32_t(2 * (profiled_.size() - 1)));
 }
 

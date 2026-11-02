@@ -2969,7 +2969,17 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const Texture* first = pass.color0 != nullptr ? pass.color0 : pass.depth;
             const size_t stamped = profiled_.size();
             stampStart(kPassDraw, first ? first->width() : 0, first ? first->height() : 0);
-            if (profiled_.size() > stamped) profiled_.back().tuneKey = tuneKey;
+            if (profiled_.size() > stamped) {
+                profiled_.back().tuneKey = tuneKey;
+                // (why not GMEM, pass by pass: the last reason alone named whichever pass came last, and the heavy
+                // full-screen pass of SpringBoard's "home" stayed in sysmem without its reason ever being seen)
+                if (!gmem) {
+                    profiled_.back().sysmemWhy = !(options.gmem && gmem_) ? std::string("GMEM off (metal_gmem=1 turns it on)")
+                                                 : tuneKey != 0           ? std::string("the queue measured such passes cheaper in sysmem")
+                                                 : gmemWhy_.empty()       ? std::string("not said")
+                                                                          : gmemWhy_;
+                }
+            }
         }
         open_ = std::make_unique<OpenPass>();
         open_->pass = pass;
@@ -3237,6 +3247,9 @@ void CommandBuffer::closePass() {
         } else {
             appendStream(stream_, open_->sysStream);
             open_->gmem = false;
+            if ((profile_ || tuning_) && !profiled_.empty()) {
+                profiled_.back().sysmemWhy = std::to_string(open_->draws) + " draws, fewer than metal_gmem_draws=" + std::to_string(gmemMinDraws_);
+            }
         }
         open_->dual = false;
     }

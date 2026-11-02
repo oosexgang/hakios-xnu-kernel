@@ -764,6 +764,8 @@ void hakios_metal_cb_gmem_counts(hakios_metal_cb* cb, unsigned* passes, unsigned
 
 const char* hakios_metal_cb_gmem_refusal(hakios_metal_cb* cb) { return cb->cb->gmemRefusal().c_str(); }
 
+const char* hakios_metal_cb_pass_sysmem_why(hakios_metal_cb* cb, unsigned i) { return cb->cb->passSysmemWhy(i); }
+
 int hakios_metal_cb_pass_attachments(hakios_metal_cb* cb, unsigned i, unsigned* attached, unsigned* touched) {
     const std::vector<CommandBuffer::PassTime> t = cb->cb->passTimes();
     if (i >= t.size()) return -1;
