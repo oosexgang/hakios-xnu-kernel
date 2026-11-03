@@ -4646,6 +4646,18 @@ HM_REFUSES_OUT_LOUD
 		[self release];
 		return nil;
 	}
+	{
+		/* boot-arg metal_defer=1: this queue's command buffers recorded by a thread of hakios-metal's own (deferred
+		 * recording), so that the window server's render thread does not wait for each draw's encoding (some 40 us a
+		 * draw on the phone, 2 November) */
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_defer=1") != NULL) {
+			hakios_metal_queue_set_deferred(_queue, 1);
+			HM_ONCE("command buffers recorded deferred, by a thread of hakios-metal's (metal_defer=1)\n");
+		}
+	}
 	_device = [device retain];
 	HM_ONCE("a command queue takes %lu command buffers at a time (maxCommandBufferCount); each one waits on the queue's "
 		"semaphore in -[_MTLCommandBuffer initWithQueue:...], and this plug-in gives the slot back when the buffer "
@@ -5446,6 +5458,32 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				hm_fps.tiles += tl;
 				if (hakios_metal_cb_gmem_refusal(cb)[0] != 0) {
 					strlcpy(hm_fps.gmemWhy, hakios_metal_cb_gmem_refusal(cb), sizeof(hm_fps.gmemWhy));
+				}
+			}
+			/* (diagnostic, metal_fps=passes) every pass of one command buffer in 200 that took the GPU 4 ms or more: what a
+			 * frame in motion is made of, pass by pass */
+			{
+				static int passesOn = -1;
+				static unsigned seen;
+				if (passesOn < 0) {
+					char args[1024] = "";
+					size_t size = sizeof(args) - 1;
+					passesOn = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_fps=passes") != NULL;
+				}
+				int n = passesOn ? hakios_metal_cb_pass_time(cb, 0, NULL, NULL, NULL, NULL, NULL) : 0;
+				double total = 0, us;
+				unsigned kind, width, height, draws;
+				for (int i = 0; i < n; i++) {
+					hakios_metal_cb_pass_time(cb, (unsigned)i, &kind, &width, &height, &draws, &us);
+					total += us;
+				}
+				if (n > 0 && total >= 4000 && seen++ % 200 == 0) {
+					hm_print("passes: %d passes, %.2f ms on the GPU\n", n, total / 1e3);
+					for (int i = 0; i < n; i++) {
+						hakios_metal_cb_pass_time(cb, (unsigned)i, &kind, &width, &height, &draws, &us);
+						hm_print("passes:   %2d kind %u %ux%u draws %u tiles %d %.3f ms\n", i, kind, width, height, draws,
+							 hakios_metal_cb_pass_tiles(cb, (unsigned)i), us / 1e3);
+					}
 				}
 			}
 			/* the draws of the slowest pass over 20 ms, once a period: what a heavy frame is made of */
@@ -7815,6 +7853,32 @@ hm_dump_config(const char *program, hakios_metal_buffer *const *buffers, const u
 	}
 }
 
+/*
+ * YES for a draw of luma_boost, unless boot-arg metal_luma_boost=1. A library that has its own (an iOS 17
+ * QuartzCore's, CA_QC_METALLIB off a Mac: the colour already drawn, by framebuffer fetch, through a LUT) gets it
+ * drawn as a full-screen pass at 1.5 ms a draw, 83% of the GPU's timed passes (logs/224205-run.log,
+ * metal_fps=draws); its stand-in there, inplace_copy, stores through texture 3 as an image, which a draw cannot
+ * (logs/225648-run.log: backboardd aborted). The picture as it is -- what inplace_copy stands for -- is the draw
+ * left out.
+ */
+static BOOL
+hm_luma_boost_left_out(const char *program)
+{
+	static int keep = -1;
+
+	if (program == NULL || strstr(program, "+luma_boost_l") == NULL) {
+		return NO;
+	}
+	if (keep < 0) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		keep = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_luma_boost=1") != NULL;
+		HM_ONCE("luma_boost: %s (metal_luma_boost=1 draws it)\n", keep ? "drawn" : "left out, the picture as it is");
+	}
+	return !keep;
+}
+
 /* YES when the draw is to be left out (metal_skip); prints the kind once when tracing */
 static BOOL
 hm_trace_draw(const void *which, const char *program, const struct hakios_metal_render_pass *pass, hakios_metal_texture *const *textures, unsigned count,
@@ -7947,6 +8011,9 @@ hm_trace_draw(const void *which, const char *program, const struct hakios_metal_
 
 	hm_dump_config(hakios_metal_program_name(program), fs, _fsOffsets, _fsHighest);
 	if (hm_trace_draw([_pipeline hakiosProgram], hakios_metal_program_name([_pipeline hakiosProgram]), &_pass, fsTex, _fsHighestTexture, (unsigned)primitive, 0)) {
+		return;
+	}
+	if (hm_luma_boost_left_out(hakios_metal_program_name([_pipeline hakiosProgram]))) {
 		return;
 	}
 	if (indexBuffer != nil && ![indexBuffer isKindOfClass:[HakiosMetalBuffer class]]) {
