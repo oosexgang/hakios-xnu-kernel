@@ -2099,6 +2099,11 @@ hm_boot_arg_set(const char *what)
 				});
 			}
 		}
+		/* boot-arg m2v_utrace=1: Turnip's GPU trace of every render pass (u_trace) into a file, printed during the run */
+		if (hm_boot_arg_set("m2v_utrace=1")) {
+			setenv("MESA_GPU_TRACES", "print", 1);
+			setenv("MESA_GPU_TRACEFILE", "/private/var/tmp/m2v-utrace.txt", 1);
+		}
 		if (&native_bridge_metal_variant_hook != NULL) {
 			native_bridge_metal_variant_hook = hm_m2v_variant;
 		}
@@ -2137,6 +2142,38 @@ hm_boot_arg_set(const char *what)
 					hm_print("metal2vulkan: %s | %s\n", status, formats);
 					if (hm_m2v_last_stderr[0] != 0) {
 						hm_print("metal2vulkan: last stderr: %s", hm_m2v_last_stderr);
+					}
+					/* the GPU trace (m2v_utrace=1): each kind of event since the last status, counted, at the 16th to the
+					 * 34th status (the gestures), the 30 commonest */
+					{
+						static int tick;
+						static long read_to;
+						FILE *trace = fopen("/private/var/tmp/m2v-utrace.txt", "r");
+						++tick;
+						if (trace != NULL) {
+							char line[400];
+							NSCountedSet *kinds = (tick >= 16 && tick <= 34) ? [NSCountedSet set] : nil;
+							fseek(trace, read_to, SEEK_SET);
+							while (fgets(line, sizeof(line), trace) != NULL) {
+								char *at = strstr(line, ": ");
+								if (kinds == nil || at == NULL) continue;
+								at += 2;
+								at[strcspn(at, "\n")] = 0;
+								if (strncmp(at, "end_", 4) == 0) continue;
+								[kinds addObject:@(at)];
+							}
+							read_to = ftell(trace);
+							fclose(trace);
+							if ([kinds count] > 0) {
+								NSArray *sorted = [[kinds allObjects] sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+									return [@([kinds countForObject:b]) compare:@([kinds countForObject:a])];
+								}];
+								for (NSUInteger i = 0; i < [sorted count] && i < 30; i++) {
+									hm_print("utrace %d: %6lu %s\n", tick, (unsigned long)[kinds countForObject:sorted[i]],
+										 [[sorted[i] substringToIndex:MIN([sorted[i] length], 200)] UTF8String]);
+								}
+							}
+						}
 					}
 					/* the textures the runtime keeps a shadow image of, and why (its shadow.log): the first 40 */
 					{

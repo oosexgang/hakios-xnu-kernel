@@ -52,7 +52,7 @@ index 2474ad8..74d6f0c 100644
        }
     }
 diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
-index 62ebfd0..951a198 100644
+index 62ebfd0..adb4e9c 100644
 --- a/src/freedreno/vulkan/tu_device.cc
 +++ b/src/freedreno/vulkan/tu_device.cc
 @@ -8,6 +8,10 @@
@@ -66,18 +66,30 @@ index 62ebfd0..951a198 100644
  
  #include "drm-uapi/drm_fourcc.h"
  #include "fdl/freedreno_layout.h"
-@@ -269,6 +273,10 @@ get_device_extensions(const struct tu_physical_device *device,
+@@ -269,6 +273,12 @@ get_device_extensions(const struct tu_physical_device *device,
        .EXT_extended_dynamic_state2 = true,
        .EXT_extended_dynamic_state3 = true,
        .EXT_external_memory_dma_buf = true,
 +#if defined(__APPLE__) && defined(TU_HAS_MSM)
 +      /* the memory of IOSurfaces, by their address (src/hakios-drm: hakios_drm_host_surface) */
 +      .EXT_external_memory_host = true,
++      /* linear images rendered in place, as the hardware does (metal2vulkan renders an IOSurface so, not through a copy) */
++      .NV_linear_color_attachment = true,
 +#endif
        .EXT_filter_cubic = device->info->a6xx.has_tex_filter_cubic,
        .EXT_fragment_density_map = true,
        .EXT_global_priority = true,
-@@ -1160,6 +1168,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
+@@ -697,6 +707,9 @@ tu_get_features(struct tu_physical_device *pdevice,
+ 
+    /* VK_EXT_rasterization_order_attachment_access */
+    features->rasterizationOrderColorAttachmentAccess = true;
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++   features->linearColorAttachment = true;
++#endif
+    features->rasterizationOrderDepthAttachmentAccess = true;
+    features->rasterizationOrderStencilAttachmentAccess = true;
+ 
+@@ -1160,6 +1173,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
  
     /* VK_EXT_custom_border_color */
     props->maxCustomBorderColorSamplers = TU_BORDER_COLOR_COUNT;
@@ -87,7 +99,7 @@ index 62ebfd0..951a198 100644
  
     /* VK_KHR_performance_query */
     props->allowCommandBufferQueryCopies = false;
-@@ -2709,6 +2720,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+@@ -2709,6 +2725,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
                                   "pthread condattr init");
        goto fail_timeline_cond;
     }
@@ -95,7 +107,7 @@ index 62ebfd0..951a198 100644
     if (pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC) != 0) {
        pthread_condattr_destroy(&condattr);
        result = vk_startup_errorf(physical_device->instance,
-@@ -2716,6 +2728,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+@@ -2716,6 +2733,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
                                   "pthread condattr clock setup");
        goto fail_timeline_cond;
     }
@@ -103,7 +115,7 @@ index 62ebfd0..951a198 100644
     if (pthread_cond_init(&device->timeline_cond, &condattr) != 0) {
        pthread_condattr_destroy(&condattr);
        result = vk_startup_errorf(physical_device->instance,
-@@ -3015,6 +3028,16 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
+@@ -3015,6 +3033,16 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
     return tu_GetInstanceProcAddr(instance, pName);
  }
  
@@ -120,7 +132,7 @@ index 62ebfd0..951a198 100644
  VKAPI_ATTR VkResult VKAPI_CALL
  tu_AllocateMemory(VkDevice _device,
                    const VkMemoryAllocateInfo *pAllocateInfo,
-@@ -3064,6 +3087,17 @@ tu_AllocateMemory(VkDevice _device,
+@@ -3064,6 +3092,17 @@ tu_AllocateMemory(VkDevice _device,
           /* take ownership and close the fd */
           close(fd_info->fd);
        }
@@ -138,7 +150,7 @@ index 62ebfd0..951a198 100644
     } else if (mem->vk.ahardware_buffer) {
  #if DETECT_OS_ANDROID
        const native_handle_t *handle = AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
-@@ -3402,6 +3436,21 @@ tu_GetMemoryFdPropertiesKHR(VkDevice _device,
+@@ -3402,6 +3441,21 @@ tu_GetMemoryFdPropertiesKHR(VkDevice _device,
     return VK_SUCCESS;
  }
  
@@ -160,6 +172,21 @@ index 62ebfd0..951a198 100644
  VKAPI_ATTR void VKAPI_CALL
  tu_GetPhysicalDeviceMultisamplePropertiesEXT(
     VkPhysicalDevice                            physicalDevice,
+diff --git a/src/freedreno/vulkan/tu_formats.cc b/src/freedreno/vulkan/tu_formats.cc
+index cb134a9..3ac1bf9 100644
+--- a/src/freedreno/vulkan/tu_formats.cc
++++ b/src/freedreno/vulkan/tu_formats.cc
+@@ -236,6 +236,10 @@ tu_physical_device_get_format_properties(
+     * DEPTH_STENCIL_ATTACHMENT_BIT for the optimal features.
+     */
+    linear = optimal;
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++   if (linear & VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT)
++      linear |= VK_FORMAT_FEATURE_2_LINEAR_COLOR_ATTACHMENT_BIT_NV;
++#endif
+    if (tu6_pipe2depth(vk_format) != DEPTH6_NONE)
+       optimal |= VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT;
+ 
 diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
 index 80e3900..3f00525 100644
 --- a/src/freedreno/vulkan/tu_knl.cc
