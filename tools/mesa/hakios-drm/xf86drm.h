@@ -108,6 +108,8 @@ int hakios_drm_surface(int fd, struct hakios_drm_surface *surface);
  * tools/m2v), for Turnip's VK_EXT_external_memory_host, which is given only the address: its ID, 0 if nobody said. */
 void hakios_drm_host_surface(const void *base, uint64_t size, uint32_t surface);
 uint32_t hakios_drm_host_surface_at(const void *base, uint64_t size);
+/* Not libdrm's: pages of this process (whole ones) as a buffer, Linux's userptr (the kernel's request 0x7d) */
+int hakios_drm_user_memory(int fd, const void *address, uint64_t size, uint32_t *handle);
 
 #ifdef __cplusplus
 }

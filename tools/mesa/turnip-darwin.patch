@@ -39,20 +39,21 @@ index d0a38c9..4f68424 100644
    install : true,
  )
 diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
-index 62ebfd0..d273d0e 100644
+index 62ebfd0..951a198 100644
 --- a/src/freedreno/vulkan/tu_device.cc
 +++ b/src/freedreno/vulkan/tu_device.cc
-@@ -8,6 +8,9 @@
+@@ -8,6 +8,10 @@
   */
  
  #include "tu_device.h"
 +#if defined(__APPLE__) && defined(TU_HAS_MSM)
 +#include <xf86drm.h>   /* hakios_drm_host_surface_at (src/hakios-drm) */
++extern thread_local const void *tu_darwin_host_pointer;
 +#endif
  
  #include "drm-uapi/drm_fourcc.h"
  #include "fdl/freedreno_layout.h"
-@@ -269,6 +272,10 @@ get_device_extensions(const struct tu_physical_device *device,
+@@ -269,6 +273,10 @@ get_device_extensions(const struct tu_physical_device *device,
        .EXT_extended_dynamic_state2 = true,
        .EXT_extended_dynamic_state3 = true,
        .EXT_external_memory_dma_buf = true,
@@ -63,7 +64,7 @@ index 62ebfd0..d273d0e 100644
        .EXT_filter_cubic = device->info->a6xx.has_tex_filter_cubic,
        .EXT_fragment_density_map = true,
        .EXT_global_priority = true,
-@@ -1160,6 +1167,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
+@@ -1160,6 +1168,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
  
     /* VK_EXT_custom_border_color */
     props->maxCustomBorderColorSamplers = TU_BORDER_COLOR_COUNT;
@@ -73,7 +74,7 @@ index 62ebfd0..d273d0e 100644
  
     /* VK_KHR_performance_query */
     props->allowCommandBufferQueryCopies = false;
-@@ -2709,6 +2719,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+@@ -2709,6 +2720,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
                                   "pthread condattr init");
        goto fail_timeline_cond;
     }
@@ -81,7 +82,7 @@ index 62ebfd0..d273d0e 100644
     if (pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC) != 0) {
        pthread_condattr_destroy(&condattr);
        result = vk_startup_errorf(physical_device->instance,
-@@ -2716,6 +2727,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+@@ -2716,6 +2728,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
                                   "pthread condattr clock setup");
        goto fail_timeline_cond;
     }
@@ -89,7 +90,7 @@ index 62ebfd0..d273d0e 100644
     if (pthread_cond_init(&device->timeline_cond, &condattr) != 0) {
        pthread_condattr_destroy(&condattr);
        result = vk_startup_errorf(physical_device->instance,
-@@ -3015,6 +3027,16 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
+@@ -3015,6 +3028,16 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
     return tu_GetInstanceProcAddr(instance, pName);
  }
  
@@ -106,7 +107,7 @@ index 62ebfd0..d273d0e 100644
  VKAPI_ATTR VkResult VKAPI_CALL
  tu_AllocateMemory(VkDevice _device,
                    const VkMemoryAllocateInfo *pAllocateInfo,
-@@ -3064,6 +3086,15 @@ tu_AllocateMemory(VkDevice _device,
+@@ -3064,6 +3087,17 @@ tu_AllocateMemory(VkDevice _device,
           /* take ownership and close the fd */
           close(fd_info->fd);
        }
@@ -114,15 +115,17 @@ index 62ebfd0..d273d0e 100644
 +   } else if (const VkImportMemoryHostPointerInfoEXT *host_info =
 +                 vk_find_struct_const(pAllocateInfo->pNext, IMPORT_MEMORY_HOST_POINTER_INFO_EXT)) {
 +      /* an IOSurface's memory: the kernel makes a buffer of the surface (as of a dma-buf, whose fd is its ID here) */
++      /* any other pages: the kernel wires them (its userptr; "fd" -1 with the pointer beside it) */
 +      uint32_t surface = hakios_drm_host_surface_at(host_info->pHostPointer, pAllocateInfo->allocationSize);
-+      result = surface != 0 ? tu_bo_init_dmabuf(device, &mem->bo, pAllocateInfo->allocationSize, (int) surface)
-+                            : vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
-+                                        "host pointer %p is not an IOSurface's", host_info->pHostPointer);
++      if (surface == 0)
++         tu_darwin_host_pointer = host_info->pHostPointer;
++      result = tu_bo_init_dmabuf(device, &mem->bo, pAllocateInfo->allocationSize, surface != 0 ? (int) surface : -1);
++      tu_darwin_host_pointer = NULL;
 +#endif
     } else if (mem->vk.ahardware_buffer) {
  #if DETECT_OS_ANDROID
        const native_handle_t *handle = AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
-@@ -3402,6 +3433,21 @@ tu_GetMemoryFdPropertiesKHR(VkDevice _device,
+@@ -3402,6 +3436,21 @@ tu_GetMemoryFdPropertiesKHR(VkDevice _device,
     return VK_SUCCESS;
  }
  
@@ -134,9 +137,9 @@ index 62ebfd0..d273d0e 100644
 +                                     VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
 +{
 +   VK_FROM_HANDLE(tu_device, device, _device);
-+   /* only an IOSurface's memory can be imported: any other pointer, no type (its user places the memory as ever) */
++   /* an IOSurface's memory, or pages of this process's own (whole ones): any type */
 +   pMemoryHostPointerProperties->memoryTypeBits =
-+      hakios_drm_host_surface_at(pHostPointer, 1) != 0 ? (1 << device->physical_device->memory.type_count) - 1 : 0;
++      ((uintptr_t) pHostPointer & 16383) == 0 ? (1 << device->physical_device->memory.type_count) - 1 : 0;
 +   return VK_SUCCESS;
 +}
 +#endif
@@ -245,7 +248,7 @@ index 27916d0..569b1d6 100644
  
     TU_RMV(bo_destroy, dev, bo);
 diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
-index 08831e7..0a75392 100644
+index 08831e7..8da1a57 100644
 --- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
 +++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
 @@ -191,7 +191,12 @@ tu_drm_is_memory_type_supported(int fd, uint32_t flags)
@@ -261,14 +264,27 @@ index 08831e7..0a75392 100644
     if (fd < 0) {
        return vk_startup_errorf(
              dev->physical_device->instance, VK_ERROR_INITIALIZATION_FAILED,
-@@ -680,9 +685,15 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+@@ -674,15 +679,28 @@ msm_bo_init(struct tu_device *dev,
+    return result;
+ }
+ 
++#ifdef __APPLE__
++/* the host pointer an import of "fd" -1 is of (tu_AllocateMemory, VK_EXT_external_memory_host) */
++thread_local const void *tu_darwin_host_pointer;
++#endif
++
+ static VkResult
+ msm_bo_init_dmabuf(struct tu_device *dev,
+                    struct tu_bo **out_bo,
                     uint64_t size,
                     int prime_fd)
  {
 +#ifdef __APPLE__
-+   /* the "fd" is an IOSurface's ID (src/hakios-drm): its size is the kernel's answer */
++   /* the "fd" is an IOSurface's ID (src/hakios-drm): its size is the kernel's answer; -1, the pages at
++    * tu_darwin_host_pointer (VK_EXT_external_memory_host) */
 +   struct hakios_drm_surface described = { .surface = (uint32_t) prime_fd };
-+   off_t real_size = hakios_drm_surface(dev->fd, &described) == 0 ? (off_t) described.size : -1;
++   off_t real_size = prime_fd < 0 ? (off_t) size
++                   : hakios_drm_surface(dev->fd, &described) == 0 ? (off_t) described.size : -1;
 +#else
     /* lseek() to get the real size */
     off_t real_size = lseek(prime_fd, 0, SEEK_END);
@@ -277,7 +293,21 @@ index 08831e7..0a75392 100644
     if (real_size < 0 || (uint64_t) real_size < size)
        return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
  
-@@ -735,6 +746,12 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+@@ -699,8 +717,13 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+    msm_vma_lock(dev);
+ 
+    uint32_t gem_handle;
++#ifdef __APPLE__
++   int ret = prime_fd < 0 ? hakios_drm_user_memory(dev->fd, tu_darwin_host_pointer, size, &gem_handle)
++                          : drmPrimeFDToHandle(dev->fd, prime_fd, &gem_handle);
++#else
+    int ret = drmPrimeFDToHandle(dev->fd, prime_fd,
+                                 &gem_handle);
++#endif
+    if (ret) {
+       msm_vma_unlock(dev);
+       u_rwlock_wrunlock(&dev->dma_bo_lock);
+@@ -735,6 +758,12 @@ msm_bo_init_dmabuf(struct tu_device *dev,
  static VkResult
  msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
  {
@@ -290,7 +320,7 @@ index 08831e7..0a75392 100644
     uint64_t offset = tu_gem_info(dev, bo->gem_handle, MSM_INFO_GET_OFFSET);
     if (!offset)
        return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-@@ -743,6 +760,7 @@ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+@@ -743,6 +772,7 @@ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
     void *map = mmap(placed_addr, bo->size, PROT_READ | PROT_WRITE,
                      MAP_SHARED | (placed_addr != NULL ? MAP_FIXED : 0),
                      dev->fd, offset);
