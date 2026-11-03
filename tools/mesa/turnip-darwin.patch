@@ -38,6 +38,19 @@ index d0a38c9..4f68424 100644
    link_depends : vulkan_icd_link_depends,
    install : true,
  )
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 2474ad8..74d6f0c 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -7296,6 +7296,8 @@ tu_barrier(struct tu_cmd_buffer *cmd,
+        */
+       if ((srcStage & ~framebuffer_space_stages) ||
+           (dstStage & ~framebuffer_space_stages)) {
++         perf_debug(cmd->device, "Disabling gmem due to a barrier in the render pass: stages %#llx -> %#llx",
++                    (unsigned long long) srcStage, (unsigned long long) dstStage);
+          cmd->state.rp.disable_gmem = true;
+       }
+    }
 diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
 index 62ebfd0..951a198 100644
 --- a/src/freedreno/vulkan/tu_device.cc

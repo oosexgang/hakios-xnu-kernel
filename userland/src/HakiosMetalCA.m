@@ -2077,7 +2077,19 @@ hm_boot_arg_set(const char *what)
 					int lines = 0;
 
 					while (in != NULL && fgets(line, sizeof(line), in) != NULL) {
-						if (lines++ < 40 || strstr(line, "metal2vulkan:") != NULL || strstr(line, "TU: ") != NULL) {
+						/* each distinct line once (digits aside), at most 120 of them */
+						static uint32_t seen[512];
+						static int distinct;
+						uint32_t h = 2166136261u;
+						for (const char *c = line; *c; c++) {
+							if (*c < '0' || *c > '9') h = (h ^ (uint8_t)*c) * 16777619u;
+						}
+						bool fresh = true;
+						for (int i = 0; i < distinct; i++) {
+							if (seen[i] == h) { fresh = false; break; }
+						}
+						if (fresh && distinct < 512) seen[distinct++] = h;
+						if (fresh && (lines++ < 40 || ((strstr(line, "metal2vulkan:") != NULL || strstr(line, "TU: ") != NULL) && distinct < 160))) {
 							hm_print("stderr: %s", line);
 						}
 						if (strcasestr(line, "error") || strcasestr(line, "refus") || strcasestr(line, "warn")) {
@@ -2125,6 +2137,24 @@ hm_boot_arg_set(const char *what)
 					hm_print("metal2vulkan: %s | %s\n", status, formats);
 					if (hm_m2v_last_stderr[0] != 0) {
 						hm_print("metal2vulkan: last stderr: %s", hm_m2v_last_stderr);
+					}
+					/* the textures the runtime keeps a shadow image of, and why (its shadow.log): the first 40 */
+					{
+						static long read_to;
+						static int told;
+						FILE *log = fopen("/private/var/db/m2v/shadow.log", "r");
+						char line[600];
+
+						if (log == NULL) log = fopen("/private/var/tmp/m2v/shadow.log", "r");
+						if (log != NULL) {
+							fseek(log, read_to, SEEK_SET);
+							while (told < 40 && fgets(line, sizeof(line), log) != NULL) {
+								hm_print("metal2vulkan: shadow: %s", line);
+								told++;
+							}
+							read_to = ftell(log);
+							fclose(log);
+						}
 					}
 				}
 			});
