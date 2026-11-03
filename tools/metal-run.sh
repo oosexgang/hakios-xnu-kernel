@@ -8,6 +8,7 @@
 #   PERSIST=0 tools/metal-run.sh        without var_store: /private/var starts empty and nothing is written to darwin
 #   UPLOAD=0 tools/metal-run.sh         keep the system image already in the phone's RAM (default: upload this copy's)
 #   SHOTS=N                             a screenshot every N seconds during the run into logs/<stamp>-shots/ (default 0)
+#   VERBOSE=1 tools/metal-run.sh        with -v: the kernel's text console drawn over the picture (off by default: the log has it all)
 #
 # What it needs, built in WSL (docs/windows.md) and copied here: userland/root.apfs and userland/system.apfs from
 #   METAL_PLUGIN=ca RC_JOBS=rc.jobs.bench EXTRA_SHARE=<dir of QuartzCore-default.metallib> PREBUILT=1 REST=1 SYSTEM=1 userland/build.sh
@@ -21,6 +22,13 @@
 #   ca_metallib=...                 QuartzCore's library for the window server (tools/ca-metallib.py)
 #   gpu_recover=1                   a GPU hang is reset and counted, not the end of the run
 #   anim_max=1                      SpringBoard's animations ask for 80..120 frames a second
+#   bootcpu=7 cpus=8 cpufreq=1      the kernel on a big core with all eight and their clocks (docs/u-boot.md): xl's own
+#                                   default is one small core, on which the first boot is still compiling CoreAnimation's
+#                                   shaders when the bench ends (2 November: first frame at 159 s on one core, 86 s on eight)
+#   fb_hz=120 fb_measure=1          the framebuffer's beat at the panel's 120 Hz, not its default 60, and the panel's own
+#                                   rate measured once (MiniIOMobileFramebuffer.cpp)
+#   fb_threads=6                    six processors scale a frame onto the panel, not three: Settings' scroll 75 -> 84 frames
+#                                   a second (2 November, tools/frames.py)
 #   ufs=2 ufs_write=1 var_store=1   (PERSIST=1, the default) /private/var kept in the partition darwin between boots: the
 #                                   compiled shader stages in /var/db/hakios-metal-cache survive, so only the first boot
 #                                   ever compiles them (tools/metal-cache-seed.sh then puts them in the image)
@@ -47,8 +55,9 @@ PERSIST=${PERSIST:-1}
 UPLOAD=${UPLOAD:-1}
 SHOTS=${SHOTS:-0}
 CA_METALLIB=${CA_METALLIB:-/redwood/share/ca-share/QuartzCore-default.metallib}
-ARGS="-v gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1"
+ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6"
 [ "$PERSIST" = 1 ] && ARGS="$ARGS ufs=2 ufs_write=1 var_store=1"
+[ "${VERBOSE:-0}" = 1 ] && ARGS="-v $ARGS"
 ARGS="$ARGS ${MORE:-}"
 stamp=$(date +%H%M%S)
 mkdir -p logs
@@ -81,11 +90,16 @@ log=logs/$(readlink logs/last.log 2>/dev/null || ls -t logs/*-run.log 2>/dev/nul
 	"$PY" -I tools/frames.py "$log" $(ls "$log".live.* 2>/dev/null) 2>&1 | head -60
 	echo
 	echo "== HakiosMetal"
-	grep -a 'HakiosMetal: fps:' "$log" | tail -40
-	grep -a -E 'HakiosMetal: (inplace_copy|CoreAnimation.s .*compiled as)' "$log" | sort | uniq -c | head
+	grep -a -E 'HakiosMetal(\[[^]]*\])?: fps:' "$log" | tail -40
+	grep -a -E 'HakiosMetal(\[[^]]*\])?: (inplace_copy|CoreAnimation.s .*compiled as)' "$log" | sort | uniq -c | head
 	echo
 	echo "== refused (count, kind)"
-	grep -a 'HakiosMetal: refused:' "$log" | sed -E 's/.*refused: //; s/[0-9]+ vertices.*: /...: /' | sort | uniq -c | sort -rn | head -15
+	grep -a -E 'HakiosMetal(\[[^]]*\])?: refused:' "$log" | sed -E 's/.*refused: //; s/[0-9]+ vertices.*: /...: /' | sort | uniq -c | sort -rn | head -15
+	echo
+	echo "== frames on the panel (MiniIOMobileFramebuffer, every 5 s: what the window server drew through Metal)"
+	grep -a -E 'MiniIOMobileFramebuffer: the panel:' "$log" | sed 's/^\[[^]]*\]: //'
+	grep -a -oE 'MiniIOMobileFramebuffer: [0-9]+ frames in [0-9]+ ms \([0-9]+ a second\), [0-9]+ us each in the driver, after [0-9]+ us waiting for the GPU' "$log" |
+		sed -E 's/MiniIOMobileFramebuffer: //' | tail -40
 	echo
 	echo "== shader cache and var_store"
 	grep -a -E 'var_store|hakios-metal-cache' "$log" | tail -12
