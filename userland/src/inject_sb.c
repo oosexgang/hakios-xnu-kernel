@@ -645,6 +645,20 @@ gpu_draws(void)
 	const char *argument;
 	io_service_t gpu;
 
+	/* ... or through Metal (boot-arg metal=1 with the GPU kept: HakiosMetal.bundle, an image built with METAL_PLUGIN) */
+	if (access("/redwood/lib/HakiosMetal.bundle/HakiosMetal", R_OK) == 0 &&
+	    sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
+		for (argument = arguments; (argument = strstr(argument, "metal=")) != NULL; argument += 6) {
+			if ((argument == arguments || argument[-1] == ' ') && argument[6] != '0') {
+				gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
+				if (gpu != 0) {
+					IOObjectRelease(gpu);
+					return true;
+				}
+			}
+		}
+	}
+	size = sizeof(arguments) - 1;
 	if (access(HAKIOS_GL, R_OK) != 0) {
 		return false;
 	}
@@ -682,6 +696,37 @@ plain_vibrancy(void)
 	}
 	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
 	say("hakios: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
+}
+
+/*
+ * Boot-arg ui_lite=1: the system's own "Reduce Transparency" and "Reduce Motion" (Settings, Accessibility), for this
+ * boot and, through var_store, the next. CoreAnimation then draws the dock, folders and widgets' platters in plain
+ * colours instead of blurring what is behind them every frame, and opens and closes applications with a fade instead
+ * of a zoom of the whole home screen -- the two things the Adreno spends a frame's GPU time on through Metal (2
+ * November: 6 to 10 ms a frame in motion, ~30 ms for an application's close). ui_lite=0 turns both off again (what
+ * var_store kept from a ui_lite=1 boot); without the boot-arg the settings are left alone.
+ */
+static void
+ui_lite(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+	CFBooleanRef on;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "ui_lite=")) == NULL || (argument != arguments && argument[-1] != ' ')) {
+		return;
+	}
+	on = argument[8] == '0' ? kCFBooleanFalse : kCFBooleanTrue;
+	CFPreferencesSetValue(CFSTR("EnhancedBackgroundContrastEnabled"), on, CFSTR("com.apple.Accessibility"),
+	    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+	CFPreferencesSetValue(CFSTR("ReduceMotionEnabled"), on, CFSTR("com.apple.Accessibility"),
+	    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+	CFPreferencesSynchronize(CFSTR("com.apple.Accessibility"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+	notify_post("com.apple.accessibility.cache.enhance.background.contrast");
+	notify_post("com.apple.accessibility.cache.reduce.motion");
+	say("hakios: SpringBoard: ui_lite=%c: Reduce Transparency and Reduce Motion %s\n", argument[8], on == kCFBooleanTrue ? "on" : "off");
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
@@ -1542,6 +1587,7 @@ hakios_springboard_init(void)
 	snapshot_format = replace_method_of_kind('+', "XBApplicationSnapshotManifestImpl", "_outputFormatForSnapshot:",
 	    0x1f1c91480UL, (IMP)snapshot_output_format);
 	plain_vibrancy();
+	ui_lite();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",
