@@ -111,6 +111,15 @@ static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBDefaultHeight);
 #define kFBPointsHigh           812
 #define kFBDefaultScale         3
 static TUNABLE(uint32_t, gFBScale, "fbscale", 0);
+/*
+ * Boot-arg fbsubtype=N with fbscale and fbwidth/fbheight: a screen of another iPhone's class -- its pixels (fbwidth x
+ * fbheight, as given, not 375 x 812 points at fbscale), its scale and its artwork-device-subtype (the device tree's
+ * /product, what MobileGestalt's screen class, corner radius and artwork come from). UIKit picks the status bar's look
+ * by width, scale and corner radius together and has none for the iPhone X's 375 points at 2 ("No status bar visual
+ * provider ... rdar://45025538", a red bar), and PosterBoard drew no wallpaper there (2 November). fbwidth=828
+ * fbheight=1792 fbscale=2 fbsubtype=1792 is the iPhone XR's: 1.85 times fewer pixels than this one's to draw.
+ */
+static TUNABLE(uint32_t, gFBSubtype, "fbsubtype", 0);
 /* Boot-arg fbtrace=N: log the first N calls of every selector (default 3). */
 static TUNABLE(uint32_t, gFBTrace, "fbtrace", 3);
 
@@ -536,8 +545,18 @@ IOMobileFramebuffer::start(IOService * provider)
 		static const char * const places[][2] = { { "/chosen", "display-scale" }, { "/product", "artwork-scale-factor" } };
 		uint32_t scale = gFBScale;
 
-		fWidth = kFBPointsWide * scale;
-		fHeight = kFBPointsHigh * scale;
+		if (gFBSubtype == 0) {
+			fWidth = kFBPointsWide * scale;
+			fHeight = kFBPointsHigh * scale;
+		} else {
+			IORegistryEntry * product = IORegistryEntry::fromPath("/product", gIODTPlane);
+			uint32_t subtype = gFBSubtype;
+
+			if (product != NULL) {
+				product->setProperty("artwork-device-subtype", &subtype, sizeof(subtype));
+				product->release();
+			}
+		}
 		/* what the loader's device tree says about the scale is where MobileGestalt has it from */
 		for (unsigned i = 0; i < sizeof(places) / sizeof(places[0]); i++) {
 			IORegistryEntry * node = IORegistryEntry::fromPath(places[i][0], gIODTPlane);
