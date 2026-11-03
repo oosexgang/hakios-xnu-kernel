@@ -7,6 +7,8 @@
  */
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <IOSurface/IOSurfaceRef.h>
+#include <mach/mach.h>
 #include <signal.h>
 #include <stdio.h>
 #include <dlfcn.h>
@@ -163,6 +165,81 @@ main(void)
 		}
 		printf("m2v_test: 100 full-screen clears, each committed and waited for: %.3f ms on average, %.3f at best\n",
 		    sum / 100, best);
-		return status(good != width * height);
+		int failed = good != width * height;
+
+		/* what the window server reads: an IOSurface written by the CPU, and pages of a program's own (no-copy), as textures */
+		const NSUInteger side = 256;
+		MTLTextureDescriptor *small = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+		    width:side height:side mipmapped:NO];
+		small.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+		small.storageMode = MTLStorageModeShared;
+		id<MTLTexture> into = [device newTextureWithDescriptor:small];
+		uint32_t *back = malloc(side * side * 4);
+		uint32_t (^copied)(id<MTLTexture>, uint32_t) = ^uint32_t(id<MTLTexture> from, uint32_t want) {
+			memset(back, 0, side * side * 4);
+			id<MTLCommandBuffer> c = [queue commandBuffer];
+			id<MTLBlitCommandEncoder> b = [c blitCommandEncoder];
+			[b copyFromTexture:from sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+			    sourceSize:MTLSizeMake(side, side, 1) toTexture:into destinationSlice:0 destinationLevel:0
+			    destinationOrigin:MTLOriginMake(0, 0, 0)];
+			[b endEncoding];
+			[c commit];
+			[c waitUntilCompleted];
+			[into getBytes:back bytesPerRow:side * 4 fromRegion:MTLRegionMake2D(0, 0, side, side) mipmapLevel:0];
+			uint32_t right = 0;
+			for (NSUInteger i = 0; i < side * side; i++)
+				right += back[i] == want;
+			printf("m2v_test:   status %ld, first pixel %#x, last %#x\n", (long)c.status, back[0], back[side * side - 1]);
+			return right;
+		};
+
+		NSDictionary *props = @{ (id)kIOSurfaceWidth: @(side), (id)kIOSurfaceHeight: @(side), (id)kIOSurfaceBytesPerElement: @4,
+		    (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA') };
+		IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+		IOSurfaceLock(surface, 0, NULL);
+		size_t row = IOSurfaceGetBytesPerRow(surface);
+		for (NSUInteger y = 0; y < side; y++)
+			for (NSUInteger x = 0; x < side; x++)
+				((uint32_t *)((uint8_t *)IOSurfaceGetBaseAddress(surface) + y * row))[x] = 0xff00ff00;
+		IOSurfaceUnlock(surface, 0, NULL);
+		id<MTLTexture> onSurface = [device newTextureWithDescriptor:small iosurface:surface plane:0];
+		right = onSurface ? copied(onSurface, 0xff00ff00) : 0;
+		printf("m2v_test: IOSurface written by the CPU, copied by the GPU: %lu of %lu pixels green%s\n", (unsigned long)right,
+		    (unsigned long)(side * side), right == side * side ? "" : " -- WRONG");
+		failed |= right != side * side;
+
+		vm_address_t pages = 0;
+		vm_allocate(mach_task_self(), &pages, side * side * 4, VM_FLAGS_ANYWHERE);
+		for (NSUInteger i = 0; i < side * side; i++)
+			((uint32_t *)pages)[i] = 0xffff0000;
+		id<MTLBuffer> noCopy = [device newBufferWithBytesNoCopy:(void *)pages length:side * side * 4
+		    options:MTLResourceStorageModeShared deallocator:nil];
+		id<MTLTexture> onPages = [noCopy newTextureWithDescriptor:small offset:0 bytesPerRow:side * 4];
+		right = onPages ? copied(onPages, 0xffff0000) : 0;
+		printf("m2v_test: own pages (no-copy buffer %s, texture %s) copied by the GPU: %lu of %lu pixels red%s\n",
+		    noCopy ? "made" : "REFUSED", onPages ? "made" : "REFUSED", right, (unsigned long)(side * side),
+		    right == side * side ? "" : " -- WRONG");
+		failed |= right != side * side;
+
+		/* and the other way: the GPU clears the IOSurface, the CPU reads it */
+		MTLRenderPassDescriptor *toSurface = [MTLRenderPassDescriptor renderPassDescriptor];
+		toSurface.colorAttachments[0].texture = onSurface;
+		toSurface.colorAttachments[0].loadAction = MTLLoadActionClear;
+		toSurface.colorAttachments[0].storeAction = MTLStoreActionStore;
+		toSurface.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 1, 1);
+		cb = [queue commandBuffer];
+		[[cb renderCommandEncoderWithDescriptor:toSurface] endEncoding];
+		[cb commit];
+		[cb waitUntilCompleted];
+		IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+		right = 0;
+		for (NSUInteger y = 0; y < side; y++)
+			for (NSUInteger x = 0; x < side; x++)
+				right += ((uint32_t *)((uint8_t *)IOSurfaceGetBaseAddress(surface) + y * row))[x] == 0xff0000ff;
+		printf("m2v_test: IOSurface cleared by the GPU, read by the CPU: %lu of %lu pixels blue (first %#x)%s\n", right,
+		    (unsigned long)(side * side), *(uint32_t *)IOSurfaceGetBaseAddress(surface), right == side * side ? "" : " -- WRONG");
+		IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+		failed |= right != side * side;
+		return status(failed);
 	}
 }

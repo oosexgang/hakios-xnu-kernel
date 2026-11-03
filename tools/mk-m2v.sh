@@ -32,7 +32,7 @@ fetch() {       # repository, revision, directory, patches...
 }
 fetch https://github.com/UniXNU/AdrenoMetal.git $AM_PIN AdrenoMetal $ROOT/tools/m2v/adrenometal-ios16.patch
 A=$B/AdrenoMetal
-fetch https://github.com/steelbrain/metal2vulkan.git $M2V_PIN metal2vulkan $A/bridge/patches/00*.patch
+fetch https://github.com/steelbrain/metal2vulkan.git $M2V_PIN metal2vulkan $A/bridge/patches/00*.patch $ROOT/tools/m2v/metal2vulkan-hakios.patch
 S=$B/metal2vulkan
 
 # the bridge: the runtime behind a C interface, as UniXNU's scripts/build-adreno-metal-bridge.py builds it

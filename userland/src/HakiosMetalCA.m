@@ -110,6 +110,7 @@
 /* --- printing ----------------------------------------------------------------------------------------------- */
 
 static void hm_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static int hm_print_fd = -1;    /* where hm_print writes: stderr, the console, or (metal_m2v=1) a copy of stderr kept aside */
 
 /* To stderr, as one write: a launchd job's stderr is the console (userland/mkjobs.py sets StandardErrorPath) and its
  * stdout is nowhere, so the window server's lines -- the client this plug-in is for -- reached no log while they went
@@ -135,7 +136,7 @@ hm_print(const char *fmt, ...)
 	/* An application's stderr is /dev/null (a launchd job's is the log); there the line goes to the console instead, as
 	 * libhakios.sb.dylib's does in the programs it is given to, so that what this plug-in says inside Maps is read too */
 	{
-		static int fd = -1;
+		int fd = hm_print_fd;
 
 		if (fd < 0) {
 			struct stat err, null;
@@ -147,6 +148,7 @@ hm_print(const char *fmt, ...)
 				if (console >= 0) fd = console;
 			}
 		}
+		hm_print_fd = fd;
 		(void)!write(fd, line, strlen(line));
 	}
 }
@@ -1595,6 +1597,47 @@ hm_bitcode_for(id function, NSString *pipeline, BOOL vertex)
 	return variant != nil ? variant : own;
 }
 
+/* The same choice for UniXNU's Metal on Vulkan (metal_m2v=1), whose functions are its own objects: by the function's name,
+ * its label and the pipeline's (native_bridge_metal_variant_hook, NativeBridgeMetalFrontend.mm: variantFunction()). */
+static const void *
+hm_m2v_variant(const char *name, const char *label, const char *pipeline, int vertex, size_t *length)
+{
+	static unsigned said;
+	NSString *chosen = nil;
+	NSData *variant = nil;
+
+	if (name == NULL || strncmp(name, "fixed_", 6) != 0) {
+		return NULL;
+	}
+	hm_ca_load();
+	NSString *flabel = label ? @(label) : nil, *plabel = pipeline ? @(pipeline) : nil;
+	if (flabel != nil && (variant = hm_ca_variants[flabel]) != nil) {
+		chosen = flabel;
+	} else if (plabel != nil && hm_ca_pipelines[plabel] != nil) {
+		NSArray *pair = hm_ca_pipelines[plabel];
+
+		chosen = vertex ? pair[0] : ([pair count] > 1 ? pair[1] : nil);
+		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
+	} else if (plabel != nil && [plabel hasPrefix:@"com.apple.coreanimation.draw."]) {
+		NSString *spec = [plabel substringFromIndex:[@"com.apple.coreanimation.draw." length]];
+		NSRange under = [spec rangeOfString:@"_"];
+		NSString *frag = under.location != NSNotFound ?
+			[@"com.apple.coreanimation.frag." stringByAppendingString:[spec substringFromIndex:NSMaxRange(under)]] : nil;
+
+		chosen = frag == nil ? nil : (vertex ? hm_ca_frag_vert[frag] : frag);
+		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
+	}
+	if (said++ < 20) {
+		hm_print("metal2vulkan: CoreAnimation's %s (label %s, pipeline %s): %s%s\n", name, label ? label : "none",
+			 pipeline ? pipeline : "none", variant ? "the variant " : "no variant", variant ? [chosen UTF8String] : "");
+	}
+	if (variant == nil) {
+		return NULL;
+	}
+	*length = [variant length];
+	return [variant bytes];         /* (the dictionary keeps it for good) */
+}
+
 static void
 hm_dump_function(const char *label, id function, const char *key, const hakios_metal_constant *constants, unsigned count)
 {
@@ -1964,6 +2007,10 @@ extern id native_bridge_metal_open(const char *loader, const char *cache, uint64
 extern uint64_t native_bridge_metal_first_problem(char *out, size_t size) __attribute__((weak_import));
 extern size_t native_bridge_metal_status(char *out, size_t size) __attribute__((weak_import));
 extern size_t native_bridge_metal_formats(char *out, size_t size) __attribute__((weak_import));
+extern const void *(*native_bridge_metal_variant_hook)(const char *, const char *, const char *, int, size_t *) __attribute__((weak_import));
+static const void *hm_m2v_variant(const char *name, const char *label, const char *pipeline, int vertex, size_t *length);
+
+static char hm_m2v_last_stderr[400];   /* the last line of Turnip's or the runtime's that said error, refused or warning */
 
 static void
 hm_m2v_missing(const char *class, const char *selector)
@@ -2015,12 +2062,59 @@ hm_boot_arg_set(const char *what)
 				hm_print("metal2vulkan: TU_DEBUG=%s\n", value);
 			}
 		}
+		/* Turnip's and the runtime's own messages (stderr) into this log: the first 200 lines */
+		{
+			static int pipe_fds[2];
+
+			hm_print("metal2vulkan: stderr into this log\n");    /* (hm_print_fd decided first: then kept aside from fd 2) */
+			if (hm_print_fd == 2) {
+				hm_print_fd = dup(2);
+			}
+			if (pipe(pipe_fds) == 0 && dup2(pipe_fds[1], 2) >= 0) {
+				dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+					FILE *in = fdopen(pipe_fds[0], "r");
+					char line[400];
+					int lines = 0;
+
+					while (in != NULL && fgets(line, sizeof(line), in) != NULL) {
+						if (lines++ < 40 || strstr(line, "metal2vulkan:") != NULL || strstr(line, "TU: ") != NULL) {
+							hm_print("stderr: %s", line);
+						}
+						if (strcasestr(line, "error") || strcasestr(line, "refus") || strcasestr(line, "warn")) {
+							strlcpy(hm_m2v_last_stderr, line, sizeof(hm_m2v_last_stderr));
+						}
+					}
+				});
+			}
+		}
+		if (&native_bridge_metal_variant_hook != NULL) {
+			native_bridge_metal_variant_hook = hm_m2v_variant;
+		}
 		mkdir("/private/var/db/m2v", 0700);
 		id device = native_bridge_metal_open("/redwood/lib/libvulkan_freedreno.dylib",
 		    access("/private/var/db/m2v", W_OK) == 0 ? "/private/var/db/m2v" : "/private/var/tmp/m2v", 0, hm_m2v_missing);
 		if (device != nil) {
 			hm_print("device: %s (metal2vulkan over Turnip, class %s)\n", [[device name] UTF8String],
 				 object_getClassName(device));
+			/* QuartzCore's pipeline library opened as for hakios-metal's device (this class's method, onto the
+			 * metal2vulkan device's class: it calls _MTLDevice's own, both devices' base): its pipelines then
+			 * carry the labels whose variants hm_m2v_variant() finds. Its cache wants the device's target, which
+			 * the frontend leaves to _MTLDevice (NULL): the name without spaces, as Metal names a device's. */
+			{
+				Class nb = object_getClass(device);
+				SEL open = @selector(newPipelineLibraryWithFilePath:error:);
+				Method ours = class_getInstanceMethod([self class], open);
+				static struct MTLTargetDeviceArch target;
+				static char name[64];
+
+				snprintf(name, sizeof(name), "%s", [[[device name] stringByReplacingOccurrencesOfString:@" " withString:@""] UTF8String]);
+				target.name = name;
+				if (ours != NULL) {
+					class_replaceMethod(nb, open, method_getImplementation(ours), method_getTypeEncoding(ours));
+				}
+				class_replaceMethod(nb, @selector(targetDeviceInfo),
+				    imp_implementationWithBlock(^const struct MTLTargetDeviceArch *(id me) { (void)me; return &target; }), "^v16@0:8");
+			}
 			/* what it did, every 5 s: commits, passes, draws, refusals; the textures and the surfaces imported */
 			dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
 				for (;;) {
@@ -2029,6 +2123,9 @@ hm_boot_arg_set(const char *what)
 					native_bridge_metal_status(status, sizeof(status));
 					native_bridge_metal_formats(formats, sizeof(formats));
 					hm_print("metal2vulkan: %s | %s\n", status, formats);
+					if (hm_m2v_last_stderr[0] != 0) {
+						hm_print("metal2vulkan: last stderr: %s", hm_m2v_last_stderr);
+					}
 				}
 			});
 			return [device retain];  /* (self not released: before -init, _MTLDevice's -dealloc reads what -init never set) */

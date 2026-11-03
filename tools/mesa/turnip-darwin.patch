@@ -248,7 +248,7 @@ index 27916d0..569b1d6 100644
  
     TU_RMV(bo_destroy, dev, bo);
 diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
-index 08831e7..8da1a57 100644
+index 08831e7..d2a7d07 100644
 --- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
 +++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
 @@ -191,7 +191,12 @@ tu_drm_is_memory_type_supported(int fd, uint32_t flags)
@@ -293,13 +293,20 @@ index 08831e7..8da1a57 100644
     if (real_size < 0 || (uint64_t) real_size < size)
        return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
  
-@@ -699,8 +717,13 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+@@ -699,8 +717,20 @@ msm_bo_init_dmabuf(struct tu_device *dev,
     msm_vma_lock(dev);
  
     uint32_t gem_handle;
 +#ifdef __APPLE__
 +   int ret = prime_fd < 0 ? hakios_drm_user_memory(dev->fd, tu_darwin_host_pointer, size, &gem_handle)
 +                          : drmPrimeFDToHandle(dev->fd, prime_fd, &gem_handle);
++   if (ret) {
++      static int said;
++      if (said++ < 8)
++         mesa_loge("import of %s %p (%llu bytes) refused: %s", prime_fd < 0 ? "host pages" : "IOSurface",
++                   prime_fd < 0 ? tu_darwin_host_pointer : (const void *) (uintptr_t) prime_fd,
++                   (unsigned long long) size, strerror(errno));
++   }
 +#else
     int ret = drmPrimeFDToHandle(dev->fd, prime_fd,
                                  &gem_handle);
@@ -307,7 +314,7 @@ index 08831e7..8da1a57 100644
     if (ret) {
        msm_vma_unlock(dev);
        u_rwlock_wrunlock(&dev->dma_bo_lock);
-@@ -735,6 +758,12 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+@@ -735,6 +765,12 @@ msm_bo_init_dmabuf(struct tu_device *dev,
  static VkResult
  msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
  {
@@ -320,7 +327,7 @@ index 08831e7..8da1a57 100644
     uint64_t offset = tu_gem_info(dev, bo->gem_handle, MSM_INFO_GET_OFFSET);
     if (!offset)
        return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-@@ -743,6 +772,7 @@ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+@@ -743,6 +779,7 @@ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
     void *map = mmap(placed_addr, bo->size, PROT_READ | PROT_WRITE,
                      MAP_SHARED | (placed_addr != NULL ? MAP_FIXED : 0),
                      dev->fd, offset);
