@@ -860,6 +860,64 @@ text_of(id object)
 }
 
 /*
+ * Boot-arg wallpaper_cache=1: the window that shows the wallpaper rasterized by the window server (CALayer's
+ * shouldRasterize), drawn from one texture instead of composed again every frame. iOS 16's Collections poster is
+ * eight to twelve full-screen layers blended together (textures of 1271 x 1823, 1326 x 1326, 1326 x 1160, ...), 1.5 to
+ * 2.4 ms each on the Adreno through Metal: 15 to 20 ms of every frame in which something moves over it (2 November,
+ * metal_fps=mainpass), for a picture that does not change -- nothing here moves it (no parallax without a gyroscope).
+ * Looked for every 15 s from 20 s on, for windows whose class names a wallpaper or a poster.
+ */
+static void
+wallpaper_cache_pass(void)
+{
+	static unsigned listed;
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+	id windows = app != NULL ? SEND(id, app, "windows") : NULL;
+	unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
+	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
+	double scale = screen != NULL ? ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("scale")) : 3.0;
+
+	for (unsigned long i = 0; i < count; i++) {
+		id window = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
+		const char *name = object_getClassName(window);
+		id layer = SEND(id, window, "layer");
+
+		if (listed < 12) {
+			id sub = SEND(id, layer, "sublayers");
+			say("hakios: SpringBoard: window %lu of %lu: %s, layer %s with %lu sublayers%s\n", i, count, name,
+			    layer != NULL ? object_getClassName(layer) : "-", sub != NULL ? SEND(unsigned long, sub, "count") : 0UL,
+			    layer != NULL && SEND(BOOL, layer, "shouldRasterize") ? ", rasterized" : "");
+		}
+		if ((strcasestr(name, "wallpaper") != NULL || strcasestr(name, "poster") != NULL) && layer != NULL &&
+		    !SEND(BOOL, layer, "shouldRasterize")) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), YES);
+			((void (*)(id, SEL, double))objc_msgSend)(layer, sel_registerName("setRasterizationScale:"), scale);
+			say("hakios: SpringBoard: %s rasterized at %g (wallpaper_cache=1)\n", name, scale);
+		}
+	}
+	listed++;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		wallpaper_cache_pass();
+	});
+}
+
+static void
+wallpaper_cache(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "wallpaper_cache=1")) == NULL || (argument != arguments && argument[-1] != ' ')) {
+		return;
+	}
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		wallpaper_cache_pass();
+	});
+}
+
+/*
  * The switcher of running applications lays a wash of wallpaper over every card behind the front
  * one, above the dimming: -[SBAppSwitcherPageView _createOrDestroyWallpaperOverlayView] makes it,
  * PaperBoardUI fills it from the image provider of the wallpaper, and the result is drawn at about
@@ -1588,6 +1646,7 @@ hakios_springboard_init(void)
 	    0x1f1c91480UL, (IMP)snapshot_output_format);
 	plain_vibrancy();
 	ui_lite();
+	wallpaper_cache();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",

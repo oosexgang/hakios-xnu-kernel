@@ -5481,8 +5481,10 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 					hm_print("passes: %d passes, %.2f ms on the GPU\n", n, total / 1e3);
 					for (int i = 0; i < n; i++) {
 						hakios_metal_cb_pass_time(cb, (unsigned)i, &kind, &width, &height, &draws, &us);
-						hm_print("passes:   %2d kind %u %ux%u draws %u tiles %d %.3f ms\n", i, kind, width, height, draws,
-							 hakios_metal_cb_pass_tiles(cb, (unsigned)i), us / 1e3);
+						unsigned attached = 0, touched = 0;
+						hakios_metal_cb_pass_attachments(cb, (unsigned)i, &attached, &touched);
+						hm_print("passes:   %2d kind %u %ux%u draws %u tiles %d attached %#x touched %#x %.3f ms\n", i, kind, width, height,
+							 draws, hakios_metal_cb_pass_tiles(cb, (unsigned)i), attached, touched, us / 1e3);
 					}
 				}
 			}
@@ -5501,7 +5503,18 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				}
 				const BOOL few = hm_timeline_on() && slowUs > 8000 && slowDraws <= 20 && fewShown < 15;
 				fewShown += few ? 1 : 0;
-				if ((slowUs > 20000 && !hm_fps.heavyShown) || few) {
+				/* (metal_fps=mainpass: the draws of a pass of 40 draws or more over 4 ms, 6 of them -- a frame in motion's
+				 * full-screen pass, which is under the 20 ms a heavy pass is shown from) */
+				static int mainOn = -1;
+				static unsigned mainShown;
+				if (mainOn < 0) {
+					char args[1024] = "";
+					size_t size = sizeof(args) - 1;
+					mainOn = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_fps=mainpass") != NULL;
+				}
+				const BOOL main = mainOn && slowUs > 4000 && slowDraws >= 40 && mainShown < 6;
+				mainShown += main ? 1 : 0;
+				if ((slowUs > 20000 && !hm_fps.heavyShown) || few || main) {
 					hm_fps.heavyShown = YES;
 					hm_print("fps: ... a heavy pass, %.1f ms%s%s; its draws:\n", slowUs / 1e3,
 						 hakios_metal_cb_pass_sysmem_why(cb, slow)[0] != 0 ? ", in sysmem: " : "", hakios_metal_cb_pass_sysmem_why(cb, slow));
