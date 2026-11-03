@@ -434,6 +434,13 @@ int hakios_metal_cb_clear(hakios_metal_cb *cb, const struct hakios_metal_render_
 
 hakios_metal_queue *hakios_metal_queue_new(hakios_metal_device *device);
 void hakios_metal_queue_free(hakios_metal_queue *queue);
+/* Deferred recording, off by default: with ON, what each command buffer of this queue is told to record (draws, clears,
+ * the state the draws read, the commit) is done by a thread of the queue's own, in the order it was told, and the call
+ * returns at once -- a draw's encoding then runs beside the caller's next work. A refused draw or clear is reported
+ * there (stderr) and fails its command buffer, as hakios_metal_cb_refuse would; the call itself returns 0. Copies,
+ * fills, blits, dispatches and anything asked back wait for what was told before them. Set it with no command buffer
+ * of the queue being recorded. */
+void hakios_metal_queue_set_deferred(hakios_metal_queue *queue, int on);
 
 hakios_metal_cb *hakios_metal_cb_new(hakios_metal_queue *queue);
 /* the command buffer is released by its owner; one still in flight is waited for first. It may be freed inside its
