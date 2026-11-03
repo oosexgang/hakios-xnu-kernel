@@ -16,6 +16,16 @@ changes to it; the scripts named fetch the release and put the changes on.
 - the build tools: Apple's [libdispatch](https://github.com/apple-oss-distributions/libdispatch), [libpthread](https://github.com/apple-oss-distributions/libpthread) and [AvailabilityVersions](https://github.com/apple-oss-distributions/AvailabilityVersions), [bootstrap_cmds](https://github.com/markmentovai/bootstrap_cmds), [unifdef](https://github.com/fanf2/unifdef), the [macOS 13.3 SDK](https://github.com/joseluisq/macosx-sdks) and the [iPhoneOS 16.5 SDK](https://github.com/theos/sdks) -- `xnu-deps/setup.sh`
 - not fetched by anything here: the Darwin 16.5 user space, which you lay out from your own IPSW (`sysimage/`), and the phone's own firmware, pulled from its Android (`fw-*`)
 
+## 2026-11-03
+
+- metal: luma_boost is left out when QuartzCore's library has its own (an iOS 17 one, off a Mac): it was 83% of the GPU's timed passes; `metal_luma_boost=1` draws it
+- metal: `metal_defer=1` records the window server's command buffers on a thread of hakios-metal's own -- a draw costs its render thread ~5 us instead of ~40
+- metal: `metal_fps=passes` prints every pass of a slow frame; the full-screen pass of the home screen is 6 to 13 ms of the GPU's ~10 a frame
+- display: `fbsubtype=N` with `fbwidth`, `fbheight` and `fbscale` reports another iPhone's screen class (the XR's 828 x 1792 at 2: no red rdar status bar)
+- springboard: vibrant views keep their filters when the window server draws through Metal; `ui_lite=1` turns on Reduce Transparency and Reduce Motion, `ui_lite=0` turns them off
+- windows: `tools/metal-run.sh` runs on eight cores at 120 Hz with six scaling threads and without `-v` (VERBOSE=1 brings it back), and its summary shows the frames on the panel; `tools/frames.py` counts the Metal road's frames and the share over 8.3 ms
+- loader: `xnuloader/mkidentity.sh` builds lzfse by its default target (there is no `lzfse` one)
+
 ## 2026-11-02
 
 - metal: the window server's compiled shader stages outlive the boot -- kept in `/var/db/hakios-metal-cache` (var_store left the old `/var/tmp` out), keyed by what the compiler is, so a rebuilt plug-in keeps them; and carried in the image (`tools/metal-cache-seed.sh`), so no boot compiles them
