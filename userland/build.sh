@@ -50,6 +50,9 @@
 #                      TURNIP=1     with Turnip, Mesa's Vulkan driver for the Adreno (tools/mk-turnip.sh), as
 #                                   lib/libvulkan_freedreno.dylib (11 MB), and bin/vk_test, which runs it once round
 #                                   (src/vk_test.c; RC_JOBS=rc.jobs.vktest): the first piece of a Metal on Vulkan
+#                      M2V=1        (with TURNIP=1) and UniXNU's Metal on Vulkan (tools/mk-m2v.sh: AdrenoMetal's
+#                                   frontend over metal2vulkan), in bin/m2v_test, which opens it as a Metal device
+#                                   and draws (src/m2v_test.m; RC_JOBS=rc.jobs.m2vtest)
 #                      ADSP=1       with the audio DSP's firmware from ../fw-audio in fw/ (20 MB; for the
 #                                   kernel's adsp_step=N, drivers/audio/hakios.adsp.c, which runs before the root is
 #                                   mounted). Not beside GL=1: the two do not fit the 64 MB the loader takes with
@@ -323,6 +326,12 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			[ -f $M/libvulkan_freedreno.dylib ] || ../tools/mk-turnip.sh
 			$DYN -I../xnu-deps/build/mesa/mesa-25.0.7/include -o obj/vk_test src/vk_test.c
 			cp $M/libvulkan_freedreno.dylib obj/
+			if [ -n "${M2V:-}" ]; then
+				V=../xnu-deps/build/m2v/out
+				[ -f $V/frontend.o ] || ../tools/mk-m2v.sh
+				${DYN/xnu-clang/xnu-clang++} -fobjc-arc -o obj/m2v_test src/m2v_test.m $V/frontend.o $V/libadreno_metal_bridge.a \
+					-framework Foundation -framework Metal -framework IOSurface -framework CoreFoundation -lc++ -lobjc
+			fi
 		fi
 	fi
 	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/mg_test root/bin/
@@ -368,6 +377,7 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	if [ -n "${TURNIP:-}" ]; then
 		cp obj/libvulkan_freedreno.dylib root/lib/
 		cp obj/vk_test root/bin/
+		[ -f obj/m2v_test ] && cp obj/m2v_test root/bin/
 	fi
 	if [ -n "$GL" ]; then
 		cp obj/libOSMesa.8.dylib root/lib/

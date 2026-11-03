@@ -39,7 +39,7 @@ index d0a38c9..4f68424 100644
    install : true,
  )
 diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
-index 62ebfd0..72aac15 100644
+index 62ebfd0..f1bc5f6 100644
 --- a/src/freedreno/vulkan/tu_device.cc
 +++ b/src/freedreno/vulkan/tu_device.cc
 @@ -2709,6 +2709,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -58,6 +58,23 @@ index 62ebfd0..72aac15 100644
     if (pthread_cond_init(&device->timeline_cond, &condattr) != 0) {
        pthread_condattr_destroy(&condattr);
        result = vk_startup_errorf(physical_device->instance,
+@@ -3015,6 +3017,16 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
+    return tu_GetInstanceProcAddr(instance, pName);
+ }
+ 
++#ifdef __APPLE__
++/* No Vulkan loader on Darwin: the driver is the loader too, for what opens it by the loader's entry point
++ * (metal2vulkan, through ash::Entry::load_from). */
++extern "C" PUBLIC VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
++vkGetInstanceProcAddr(VkInstance instance, const char *pName)
++{
++   return tu_GetInstanceProcAddr(instance, pName);
++}
++#endif
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ tu_AllocateMemory(VkDevice _device,
+                   const VkMemoryAllocateInfo *pAllocateInfo,
 diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
 index 80e3900..3f00525 100644
 --- a/src/freedreno/vulkan/tu_knl.cc

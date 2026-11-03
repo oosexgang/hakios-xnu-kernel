@@ -106,8 +106,7 @@ int
 drmCommandWriteRead(int fd, unsigned long index, void *data, unsigned long size)
 {
 	(void)fd;
-	if (index == DRM_MSM_GEM_SUBMIT && size >= sizeof(struct drm_msm_gem_submit) &&
-	    (((struct drm_msm_gem_submit *)data)->flags & (MSM_SUBMIT_SYNCOBJ_IN | MSM_SUBMIT_SYNCOBJ_OUT)) != 0) {
+	if (index == DRM_MSM_GEM_SUBMIT && size >= sizeof(struct drm_msm_gem_submit)) {
 		return submit_with_syncobjs(data, size);
 	}
 	return -call((unsigned)(DRM_COMMAND_BASE + index), data, size);
@@ -522,6 +521,8 @@ drmSyncobjTransfer(int fd, uint32_t dst, uint64_t dst_point, uint32_t src, uint6
 	return 0;
 }
 
+static uint32_t last_fence;     /* the fence of the last submission the kernel took */
+
 static int
 submit_with_syncobjs(struct drm_msm_gem_submit *submit, unsigned long size)
 {
@@ -545,8 +546,17 @@ submit_with_syncobjs(struct drm_msm_gem_submit *submit, unsigned long size)
 	submit->flags &= ~(uint32_t)(MSM_SUBMIT_SYNCOBJ_IN | MSM_SUBMIT_SYNCOBJ_OUT);
 	submit->in_syncobjs = submit->out_syncobjs = 0;
 	submit->nr_in_syncobjs = submit->nr_out_syncobjs = 0;
-	error = call((unsigned)(DRM_COMMAND_BASE + DRM_MSM_GEM_SUBMIT), submit, size);
-	if (error != 0) return -error;
+	if (submit->nr_cmds == 0) {
+		/*
+		 * Nothing for the GPU (Turnip's submissions that only signal): the kernel takes none, and what it stands for
+		 * is done when everything submitted before it is, the last fence -- there is one ring.
+		 */
+		submit->fence = __atomic_load_n(&last_fence, __ATOMIC_ACQUIRE);
+	} else {
+		error = call((unsigned)(DRM_COMMAND_BASE + DRM_MSM_GEM_SUBMIT), submit, size);
+		if (error != 0) return -error;
+		__atomic_store_n(&last_fence, submit->fence, __ATOMIC_RELEASE);
+	}
 	pthread_mutex_lock(&syncobj_lock);
 	for (uint32_t i = 0; i < nout; i++) {
 		const struct drm_msm_gem_submit_syncobj *x = (const void *)((const uint8_t *)out + i * stride);

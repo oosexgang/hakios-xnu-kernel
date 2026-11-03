@@ -1,0 +1,13 @@
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index aec500d..3b42251 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -4550,7 +4550,7 @@ extern "C" id native_bridge_metal_open(const char *loader,const char *cache,uint
+ #if defined(__arm64e__)
+  if(!base){NBLOG(@"native-metal: no _MTLDevice");return nil;}
+ #else
+- if(!base || class_getInstanceSize(base)!=536){NBLOG(@"native-metal: unexpected _MTLDevice ABI");return nil;}
++ if(!base){NBLOG(@"native-metal: no _MTLDevice");return nil;}  // (hakios: iOS 16.5, whose _MTLDevice is of another size)
+ #endif
+ #endif
+  if(!base)base=[NSObject class];
