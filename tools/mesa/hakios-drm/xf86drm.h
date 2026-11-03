@@ -15,6 +15,10 @@
 
 #include "drm-uapi/drm.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define DRM_NODE_PRIMARY        0
 #define DRM_NODE_RENDER         2
 #define DRM_CLOEXEC             O_CLOEXEC
@@ -48,6 +52,16 @@ int drmPrimeFDToHandle(int fd, int surface, uint32_t *handle);
 int drmSyncobjCreate(int fd, uint32_t flags, uint32_t *handle);
 int drmSyncobjDestroy(int fd, uint32_t handle);
 int drmSyncobjReset(int fd, const uint32_t *handles, uint32_t count);
+/* (syncobjs kept in this process, over the kernel's fences: hakios.drm.c) */
+int drmSyncobjSignal(int fd, const uint32_t *handles, uint32_t count);
+int drmSyncobjTimelineSignal(int fd, const uint32_t *handles, uint64_t *points, uint32_t count);
+int drmSyncobjWait(int fd, uint32_t *handles, unsigned count, int64_t timeout_nsec, unsigned flags, uint32_t *first_signaled);
+int drmSyncobjTimelineWait(int fd, uint32_t *handles, uint64_t *points, unsigned count, int64_t timeout_nsec, unsigned flags,
+    uint32_t *first_signaled);
+int drmSyncobjQuery(int fd, uint32_t *handles, uint64_t *points, uint32_t count);
+int drmSyncobjQuery2(int fd, uint32_t *handles, uint64_t *points, uint32_t count, uint32_t flags);
+int drmSyncobjTransfer(int fd, uint32_t dst_handle, uint64_t dst_point, uint32_t src_handle, uint64_t src_point, uint32_t flags);
+int drmGetNodeTypeFromFd(int fd);
 int drmSyncobjFDToHandle(int fd, int obj_fd, uint32_t *handle);
 int drmSyncobjHandleToFD(int fd, uint32_t handle, int *obj_fd);
 int drmSyncobjImportSyncFile(int fd, uint32_t handle, int sync_file_fd);
@@ -72,5 +86,9 @@ struct hakios_drm_surface {
 	uint32_t width, height, pixel_format, planes;   /* and what they are */
 };
 int hakios_drm_surface(int fd, struct hakios_drm_surface *surface);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

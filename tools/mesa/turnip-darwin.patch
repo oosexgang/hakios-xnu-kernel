@@ -1,0 +1,101 @@
+diff --git a/meson.build b/meson.build
+index f055df1..457fe06 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1716,7 +1716,7 @@ else
+   # dependencies (such as vk-runtime) linking to it
+   dep_libdrm = null_dep
+ endif
+-if host_machine.system() == 'darwin' and with_gallium_freedreno
++if host_machine.system() == 'darwin' and (with_gallium_freedreno or with_freedreno_vk)
+   # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
+   # for libdrm (src/hakios-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
+   # source file is built with freedreno's drm layer, src/freedreno/drm).
+diff --git a/src/freedreno/vulkan/meson.build b/src/freedreno/vulkan/meson.build
+index d0a38c9..4f68424 100644
+--- a/src/freedreno/vulkan/meson.build
++++ b/src/freedreno/vulkan/meson.build
+@@ -101,6 +101,10 @@ if freedreno_kmds.contains('msm')
+   tu_flags += '-DTU_HAS_MSM'
+   libtu_files += files('tu_knl_drm_msm.cc', 'tu_knl_drm.cc')
+   tu_deps += dep_libdrm
++  if host_machine.system() == 'darwin'
++    # the stand-in for libdrm (src/hakios-drm): msm's requests as calls of the kernel's IOKit user client
++    libtu_files += files('../../hakios-drm/hakios.drm.c')
++  endif
+ endif
+ 
+ if freedreno_kmds.contains('virtio')
+@@ -181,7 +185,10 @@ libvulkan_freedreno = shared_library(
+   c_args : [no_override_init_args, tu_flags],
+   cpp_args : [tu_cpp_args, tu_flags],
+   gnu_symbol_visibility : 'hidden',
+-  link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id],
++  # (Darwin: the entrypoint tables' weak references to what Turnip leaves to the common runtime are allowed
++  # undefined, as ELF lets them be, and come out NULL; UniXNU's Turnip does the same)
++  link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id,
++               host_machine.system() == 'darwin' ? ['-Wl,-undefined,dynamic_lookup'] : []],
+   link_depends : vulkan_icd_link_depends,
+   install : true,
+ )
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 62ebfd0..72aac15 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -2709,6 +2709,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+                                  "pthread condattr init");
+       goto fail_timeline_cond;
+    }
++#ifndef __APPLE__   /* (Darwin's condition variables have no clock to choose: timed waits go by the realtime one) */
+    if (pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC) != 0) {
+       pthread_condattr_destroy(&condattr);
+       result = vk_startup_errorf(physical_device->instance,
+@@ -2716,6 +2717,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+                                  "pthread condattr clock setup");
+       goto fail_timeline_cond;
+    }
++#endif
+    if (pthread_cond_init(&device->timeline_cond, &condattr) != 0) {
+       pthread_condattr_destroy(&condattr);
+       result = vk_startup_errorf(physical_device->instance,
+diff --git a/src/freedreno/vulkan/tu_wsi.cc b/src/freedreno/vulkan/tu_wsi.cc
+index 57cf904..3e0a1b1 100644
+--- a/src/freedreno/vulkan/tu_wsi.cc
++++ b/src/freedreno/vulkan/tu_wsi.cc
+@@ -9,7 +9,9 @@
+ #include "tu_wsi.h"
+ 
+ #include "vk_util.h"
++#ifndef __APPLE__   /* (no DRM devices on Darwin: src/hakios-drm) */
+ #include "wsi_common_drm.h"
++#endif
+ #include "drm-uapi/drm_fourcc.h"
+ 
+ #include "tu_device.h"
+@@ -26,7 +28,13 @@ tu_wsi_can_present_on_device(VkPhysicalDevice physicalDevice, int fd)
+ {
+ #ifdef HAVE_LIBDRM
+    VK_FROM_HANDLE(tu_physical_device, pdevice, physicalDevice);
++#ifdef __APPLE__
++   (void)fd;
++   (void)pdevice;
++   return true;   /* one GPU */
++#else
+    return wsi_common_drm_devices_equal(fd, pdevice->local_fd);
++#endif
+ #else
+    return true;
+ #endif
+diff --git a/src/vulkan/wsi/meson.build b/src/vulkan/wsi/meson.build
+index 6933eb7..b7ea38d 100644
+--- a/src/vulkan/wsi/meson.build
++++ b/src/vulkan/wsi/meson.build
+@@ -5,7 +5,7 @@ files_vulkan_wsi = files('wsi_common.c')
+ links_vulkan_wsi = []
+ platform_deps = []
+ 
+-if dep_libdrm.found()
++if dep_libdrm.found() and host_machine.system() != 'darwin'
+   files_vulkan_wsi += files('wsi_common_drm.c')
+ endif
+ 
