@@ -562,3 +562,8 @@ submit_with_syncobjs(struct drm_msm_gem_submit *submit, unsigned long size)
 
 /* Linux's device nodes, which Turnip's lists of devices ask about: one GPU, a render node 128 */
 int drmGetNodeTypeFromFd(int fd) { (void)fd; return DRM_NODE_RENDER; }
+
+int drmGetDevices2(uint32_t flags, drmDevicePtr devices[], int max_devices) { (void)flags; (void)devices; (void)max_devices; return 0; }
+void drmFreeDevices(drmDevicePtr devices[], int count) { (void)devices; (void)count; }
+int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device) { (void)fd; (void)flags; *device = NULL; return -ENODEV; }
+void drmFreeDevice(drmDevicePtr *device) { (void)device; }

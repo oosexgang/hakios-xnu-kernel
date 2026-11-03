@@ -58,6 +58,144 @@ index 62ebfd0..72aac15 100644
     if (pthread_cond_init(&device->timeline_cond, &condattr) != 0) {
        pthread_condattr_destroy(&condattr);
        result = vk_startup_errorf(physical_device->instance,
+diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
+index 80e3900..3f00525 100644
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -24,6 +24,9 @@
+ 
+ #include "tu_device.h"
+ #include "tu_knl.h"
++#ifdef __APPLE__
++#include <sys/sysctl.h>
++#endif
+ #include "tu_queue.h"
+ #include "tu_rmv.h"
+ 
+@@ -124,7 +127,11 @@ tu_bo_unmap(struct tu_device *dev, struct tu_bo *bo, bool reserve)
+          return vk_errorf(dev, VK_ERROR_MEMORY_MAP_FAILED,
+                           "Failed to replace mapping with reserved memory");
+    } else {
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++      hakios_drm_unmap(dev->fd, bo->gem_handle, bo->map);
++#else
+       munmap(bo->map, bo->size);
++#endif
+    }
+ 
+    bo->map = NULL;
+@@ -194,7 +201,14 @@ tu_get_l1_dcache_size()
+ if (!(DETECT_ARCH_AARCH64 || DETECT_ARCH_X86 || DETECT_ARCH_X86_64))
+    return 0;
+ 
+-#if DETECT_ARCH_AARCH64 &&                                                   \
++#if defined(__APPLE__)
++   /* CTR_EL0 is not readable from user space on Darwin: */
++   int64_t line = 0;
++   size_t size = sizeof(line);
++   if (sysctlbyname("hw.cachelinesize", &line, &size, NULL, 0) != 0)
++      return 64;
++   return line;
++#elif DETECT_ARCH_AARCH64 &&                                                   \
+    (!defined(_SC_LEVEL1_DCACHE_LINESIZE) || DETECT_OS_ANDROID)
+    /* Bionic does not implement _SC_LEVEL1_DCACHE_LINESIZE properly: */
+    uint64_t ctr_el0;
+@@ -352,6 +366,41 @@ tu_enumerate_devices(struct vk_instance *vk_instance)
+       mesa_logi("Found compatible device '%s'.", path);
+ 
+    return result;
++#elif defined(__APPLE__) && defined(TU_HAS_MSM)
++   /* Darwin: no DRM nodes to list. The one GPU is the kernel's service HakiosGPU, which speaks msm's requests through
++    * the stand-in for libdrm (src/hakios-drm); its file descriptor means nothing but "the connection". */
++   struct tu_instance *instance =
++      container_of(vk_instance, struct tu_instance, vk);
++   struct tu_physical_device *device = NULL;
++   int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
++   if (fd < 0)
++      return VK_ERROR_INCOMPATIBLE_DRIVER;
++   drmVersionPtr version = drmGetVersion(fd);
++   if (!version) {
++      close(fd);
++      return VK_ERROR_INCOMPATIBLE_DRIVER;
++   }
++   VkResult result = tu_knl_drm_msm_load(instance, fd, version, &device);
++   drmFreeVersion(version);
++   if (result != VK_SUCCESS) {
++      close(fd);
++      return result;
++   }
++   device->master_fd = -1;
++   device->kgsl_dma_fd = -1;
++   snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", "HakiosGPU");
++   device->has_master = false;
++   device->has_local = false;
++   result = tu_physical_device_init(device, instance);
++   if (result != VK_SUCCESS) {
++      vk_free(&instance->vk.alloc, device);
++      close(fd);
++      return result;
++   }
++   list_addtail(&device->vk.link, &instance->vk.physical_devices.list);
++   if (TU_DEBUG(STARTUP))
++      mesa_logi("Found compatible device HakiosGPU (msm).");
++   return VK_SUCCESS;
+ #else
+    return VK_ERROR_INCOMPATIBLE_DRIVER;
+ #endif
+diff --git a/src/freedreno/vulkan/tu_knl_drm.cc b/src/freedreno/vulkan/tu_knl_drm.cc
+index 27916d0..569b1d6 100644
+--- a/src/freedreno/vulkan/tu_knl_drm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm.cc
+@@ -72,7 +72,11 @@ tu_drm_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+ 
+    if (bo->map) {
+       TU_RMV(bo_unmap, dev, bo);
++#ifdef __APPLE__
++      hakios_drm_unmap(dev->fd, bo->gem_handle, bo->map);
++#else
+       munmap(bo->map, bo->size);
++#endif
+    }
+ 
+    TU_RMV(bo_destroy, dev, bo);
+diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+index 08831e7..7472ea6 100644
+--- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+@@ -191,7 +191,12 @@ tu_drm_is_memory_type_supported(int fd, uint32_t flags)
+ static VkResult
+ msm_device_init(struct tu_device *dev)
+ {
++#ifdef __APPLE__
++   /* no device node: a descriptor of the one connection to HakiosGPU (src/hakios-drm) */
++   int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
++#else
+    int fd = open(dev->physical_device->fd_path, O_RDWR | O_CLOEXEC);
++#endif
+    if (fd < 0) {
+       return vk_startup_errorf(
+             dev->physical_device->instance, VK_ERROR_INITIALIZATION_FAILED,
+@@ -735,6 +740,12 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+ static VkResult
+ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+ {
++#ifdef __APPLE__
++   /* no mmap() on a device here: the kernel's driver maps the buffer (src/hakios-drm) */
++   if (placed_addr != NULL)
++      return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
++   void *map = hakios_drm_map(dev->fd, bo->gem_handle, bo->size);
++#else
+    uint64_t offset = tu_gem_info(dev, bo->gem_handle, MSM_INFO_GET_OFFSET);
+    if (!offset)
+       return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+@@ -743,6 +754,7 @@ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+    void *map = mmap(placed_addr, bo->size, PROT_READ | PROT_WRITE,
+                     MAP_SHARED | (placed_addr != NULL ? MAP_FIXED : 0),
+                     dev->fd, offset);
++#endif
+    if (map == MAP_FAILED)
+       return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
+ 
 diff --git a/src/freedreno/vulkan/tu_wsi.cc b/src/freedreno/vulkan/tu_wsi.cc
 index 57cf904..3e0a1b1 100644
 --- a/src/freedreno/vulkan/tu_wsi.cc
@@ -86,6 +224,20 @@ index 57cf904..3e0a1b1 100644
  #else
     return true;
  #endif
+diff --git a/src/util/libdrm.h b/src/util/libdrm.h
+index 4bfe1d2..0062655 100644
+--- a/src/util/libdrm.h
++++ b/src/util/libdrm.h
+@@ -27,7 +27,8 @@
+  * the proliferation of #ifdef'ery to support environments without libdrm.
+  */
+ 
+-#ifdef HAVE_LIBDRM
++#if defined(HAVE_LIBDRM) || (defined(__APPLE__) && __has_include(<xf86drm.h>))
++/* (Darwin: the stand-in for libdrm, src/hakios-drm, where a target has it on its include path) */
+ #include <xf86drm.h>
+ #else
+ 
 diff --git a/src/vulkan/wsi/meson.build b/src/vulkan/wsi/meson.build
 index 6933eb7..b7ea38d 100644
 --- a/src/vulkan/wsi/meson.build

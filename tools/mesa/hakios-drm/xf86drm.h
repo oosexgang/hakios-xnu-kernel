@@ -62,6 +62,24 @@ int drmSyncobjQuery(int fd, uint32_t *handles, uint64_t *points, uint32_t count)
 int drmSyncobjQuery2(int fd, uint32_t *handles, uint64_t *points, uint32_t count, uint32_t flags);
 int drmSyncobjTransfer(int fd, uint32_t dst_handle, uint64_t dst_point, uint32_t src_handle, uint64_t src_point, uint32_t flags);
 int drmGetNodeTypeFromFd(int fd);
+
+/* Linux's list of DRM devices, which the Vulkan runtime walks: none here (Turnip finds the one GPU itself, tu_knl.cc) */
+#define DRM_NODE_MAX            3
+#define DRM_BUS_PCI             0
+#define DRM_BUS_USB             1
+#define DRM_BUS_PLATFORM        2
+#define DRM_BUS_HOST1X          3
+typedef struct _drmDevice {
+	char **nodes;
+	int available_nodes;
+	int bustype;
+	union { void *pci, *usb, *platform, *host1x; } businfo;
+	union { void *pci, *usb, *platform, *host1x; } deviceinfo;
+} drmDevice, *drmDevicePtr;
+int drmGetDevices2(uint32_t flags, drmDevicePtr devices[], int max_devices);
+void drmFreeDevices(drmDevicePtr devices[], int count);
+int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device);
+void drmFreeDevice(drmDevicePtr *device);
 int drmSyncobjFDToHandle(int fd, int obj_fd, uint32_t *handle);
 int drmSyncobjHandleToFD(int fd, uint32_t handle, int *obj_fd);
 int drmSyncobjImportSyncFile(int fd, uint32_t handle, int sync_file_fd);

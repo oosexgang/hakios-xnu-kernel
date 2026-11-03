@@ -1,0 +1,4 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist): Turnip once round (src/vk_test.c),
+# in an image built with TURNIP=1
+/redwood/bin/vk_test
+/redwood/bin/cputop 10 &

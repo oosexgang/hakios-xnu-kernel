@@ -47,6 +47,9 @@
 #                                   and nothing changes (src/inject.c, opengl_es()).
 #                                   GL=test: only the library and bin/gl_test (a triangle, src/gl_test.c;
 #                                   RC_JOBS=rc.jobs.gltest runs it); the window server stays as it is.
+#                      TURNIP=1     with Turnip, Mesa's Vulkan driver for the Adreno (tools/mk-turnip.sh), as
+#                                   lib/libvulkan_freedreno.dylib (11 MB), and bin/vk_test, which runs it once round
+#                                   (src/vk_test.c; RC_JOBS=rc.jobs.vktest): the first piece of a Metal on Vulkan
 #                      ADSP=1       with the audio DSP's firmware from ../fw-audio in fw/ (20 MB; for the
 #                                   kernel's adsp_step=N, drivers/audio/hakios.adsp.c, which runs before the root is
 #                                   mounted). Not beside GL=1: the two do not fit the 64 MB the loader takes with
@@ -314,6 +317,13 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			# it, and it is copied in when it is there.
 			[ -f $M/air_run ] && cp $M/air_run obj/air_run
 		fi
+		if [ -n "${TURNIP:-}" ]; then
+			# Turnip and its smallest whole round (src/vk_test.c): built by tools/mk-turnip.sh into the Mesa tree's out/
+			M=../xnu-deps/build/mesa/out
+			[ -f $M/libvulkan_freedreno.dylib ] || ../tools/mk-turnip.sh
+			$DYN -I../xnu-deps/build/mesa/mesa-25.0.7/include -o obj/vk_test src/vk_test.c
+			cp $M/libvulkan_freedreno.dylib obj/
+		fi
 	fi
 	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/mg_test root/bin/
 	[ -f obj/cpu_test ] && cp obj/cpu_test root/bin/        # (a prebuilt/ from before this program has none)
@@ -354,6 +364,10 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		mkdir -p root/lib/HakiosMetal.bundle
 		cp obj/HakiosMetal root/lib/HakiosMetal.bundle/
 		cp src/HakiosMetal.plist root/lib/HakiosMetal.bundle/Info.plist
+	fi
+	if [ -n "${TURNIP:-}" ]; then
+		cp obj/libvulkan_freedreno.dylib root/lib/
+		cp obj/vk_test root/bin/
 	fi
 	if [ -n "$GL" ]; then
 		cp obj/libOSMesa.8.dylib root/lib/
