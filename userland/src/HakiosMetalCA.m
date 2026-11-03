@@ -1958,6 +1958,28 @@ ca_prof_start(void)
 	});
 }
 
+/* UniXNU's Metal on Vulkan (NativeBridgeMetalFrontend.h), there when the bundle is linked with it (M2V=1) */
+extern id native_bridge_metal_open(const char *loader, const char *cache, uint64_t registryID,
+				   void (*missing)(const char *, const char *)) __attribute__((weak_import));
+extern uint64_t native_bridge_metal_first_problem(char *out, size_t size) __attribute__((weak_import));
+extern size_t native_bridge_metal_status(char *out, size_t size) __attribute__((weak_import));
+extern size_t native_bridge_metal_formats(char *out, size_t size) __attribute__((weak_import));
+
+static void
+hm_m2v_missing(const char *class, const char *selector)
+{
+	hm_print("metal2vulkan: no -[%s %s]\n", class, selector);
+}
+
+static bool
+hm_boot_arg_set(const char *what)
+{
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+
+	return sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, what) != NULL;
+}
+
 - (instancetype)initWithAcceleratorPort:(io_service_t)port
 {
 	/* (hakios) the window server alone is shown the device: every other client of this image's Metal (SpringBoard
@@ -1976,6 +1998,44 @@ ca_prof_start(void)
 			HM_ONCE("%s is not shown the device: the window server alone is (metal_all=1: every process)\n", name ? name : "?");
 			return nil;     /* (not released: before -init, _MTLDevice's -dealloc reads what -init never set) */
 		}
+	}
+	/* (hakios) metal_m2v=1: the device is UniXNU's Metal on Vulkan instead (AdrenoMetal's frontend over metal2vulkan
+	 * over Turnip, tools/mk-m2v.sh; linked in by userland/build.sh M2V=1): its own objects, from the device down */
+	if (native_bridge_metal_open != NULL && hm_boot_arg_set("metal_m2v=1")) {
+		/* boot-arg tu_debug=FLAGS[,FLAGS]: Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...) */
+		{
+			char args[1024] = "", value[64] = "";
+			size_t size = sizeof(args) - 1;
+			const char *at;
+
+			if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "tu_debug=")) != NULL) {
+				strlcpy(value, at + 9, sizeof(value));
+				value[strcspn(value, " ")] = 0;
+				setenv("TU_DEBUG", value, 1);
+				hm_print("metal2vulkan: TU_DEBUG=%s\n", value);
+			}
+		}
+		mkdir("/private/var/db/m2v", 0700);
+		id device = native_bridge_metal_open("/redwood/lib/libvulkan_freedreno.dylib",
+		    access("/private/var/db/m2v", W_OK) == 0 ? "/private/var/db/m2v" : "/private/var/tmp/m2v", 0, hm_m2v_missing);
+		if (device != nil) {
+			hm_print("device: %s (metal2vulkan over Turnip, class %s)\n", [[device name] UTF8String],
+				 object_getClassName(device));
+			/* what it did, every 5 s: commits, passes, draws, refusals; the textures and the surfaces imported */
+			dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+				for (;;) {
+					char status[600] = "", formats[300] = "";
+					sleep(5);
+					native_bridge_metal_status(status, sizeof(status));
+					native_bridge_metal_formats(formats, sizeof(formats));
+					hm_print("metal2vulkan: %s | %s\n", status, formats);
+				}
+			});
+			return [device retain];  /* (self not released: before -init, _MTLDevice's -dealloc reads what -init never set) */
+		}
+		char problem[256] = "";
+		native_bridge_metal_first_problem(problem, sizeof(problem));
+		hm_print("no metal2vulkan device (%s): hakios-metal's instead\n", problem);
 	}
 	hm_library_stand_ins();
 	ca_prof_start();

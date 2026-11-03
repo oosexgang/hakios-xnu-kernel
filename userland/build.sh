@@ -293,8 +293,14 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			# this tree's shader choice), over hakios-metal built with its compiler (make ios MESA=1); the window server
 			# also wants QuartzCore's default.metallib (tools/ca-metallib.py, EXTRA_SHARE=, boot-arg ca_metallib=)
 			echo "build.sh: HakiosMetal for CoreAnimation (src/HakiosMetalCA.m)"
+			# M2V=1: with UniXNU's Metal on Vulkan inside, the device boot-arg metal_m2v=1 gives the window server
+			M2V_OBJS=
+			if [ -n "${M2V:-}" ] && [ -f ../xnu-deps/build/m2v/out/frontend.o ]; then
+				M2V_OBJS="../xnu-deps/build/m2v/out/frontend.o ../xnu-deps/build/m2v/out/libadreno_metal_bridge.a -framework CoreFoundation -lc++ -Wl,-dead_strip"
+				echo "build.sh: with UniXNU's Metal on Vulkan (metal_m2v=1)"
+			fi
 			$DYN -bundle -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
-				-I$HM/include -o obj/HakiosMetal src/HakiosMetalCA.m $METAL_GPU
+				-I$HM/include -o obj/HakiosMetal src/HakiosMetalCA.m $METAL_GPU $M2V_OBJS
 		else
 		$DYN -bundle -framework Foundation -framework Metal -lobjc -I$METAL_SRC -o obj/HakiosMetal $METAL_SRC/HakiosMetal.m \
 			$METAL_SRC/hakios_metallib.c $METAL_GPU
@@ -540,6 +546,17 @@ for f in extensions.plist extensions.plist.sig; do
 	[ -f $DARWIN/rootfs/System/Library/xpc/$f ] && cp $DARWIN/rootfs/System/Library/xpc/$f root/xpc/
 done
 [ -d root/lib/HakiosAudio.driver ] && ln -s /redwood/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
+# Programs and libraries of more than 4 MB (Turnip, UniXNU's Metal on Vulkan: TURNIP=1, M2V=1) live in the system
+# image, in /usr/local/redwood, with a link in their place here: the small image is loaded with the kernel, in the
+# 64 MB the loader takes for both (with them it grew from 6.6 to 26 MB).
+rm -rf big
+for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
+	mkdir -p big/$(dirname $f)
+	mv root/$f big/$f
+	ln -s /usr/local/redwood/$f root/$f
+	echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
+done
+[ -d big ] && SYSTEM=1          # (the links point into it: it is made again with them)
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (drivers/storage/hakios.image.c)
 python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs redwood=root | tail -1
@@ -705,6 +722,8 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	mkdir -p sysroot/System/Library/Audio/Plug-Ins/HAL
 	ln -s /redwood/lib/HakiosAudio.driver sysroot/System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver
 	# the plug-in Metal opens when the accelerator names it (boot-arg metal=1; without it nothing names this bundle)
+	rm -rf sysroot/usr/local/redwood
+	[ -d big ] && mkdir -p sysroot/usr/local && cp -a big sysroot/usr/local/redwood
 	mkdir -p sysroot/System/Library/Extensions
 	[ -d root/lib/HakiosMetal.bundle ] && ln -sfn /redwood/lib/HakiosMetal.bundle sysroot/System/Library/Extensions/HakiosMetal.bundle
 	# the OS cryptex: on a device a separate volume grafted at /System/Cryptexes/OS. It holds the dyld

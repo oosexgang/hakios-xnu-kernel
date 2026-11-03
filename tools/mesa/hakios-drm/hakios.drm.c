@@ -577,3 +577,53 @@ int drmGetDevices2(uint32_t flags, drmDevicePtr devices[], int max_devices) { (v
 void drmFreeDevices(drmDevicePtr devices[], int count) { (void)devices; (void)count; }
 int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device) { (void)fd; (void)flags; *device = NULL; return -ENODEV; }
 void drmFreeDevice(drmDevicePtr *device) { (void)device; }
+
+/*
+ * The IOSurfaces mapped in this process, by address (hakios_drm_host_surface): a host pointer Turnip is asked to import
+ * (VK_EXT_external_memory_host) is the memory of one of them, and the kernel makes a buffer of a surface by its ID
+ * (drmPrimeFDToHandle). A surface's mapping lasts as long as the surface; a later surface at the same address replaces it.
+ */
+#define HOST_SURFACES 1024
+static struct { uintptr_t base; uint64_t size; uint32_t surface; } host_surfaces[HOST_SURFACES];
+static unsigned host_surfaces_next;
+static pthread_mutex_t host_surfaces_lock = PTHREAD_MUTEX_INITIALIZER;
+
+__attribute__((visibility("default")))     /* (called by AdrenoMetal's frontend, outside Turnip) */
+void
+hakios_drm_host_surface(const void *base, uint64_t size, uint32_t surface)
+{
+	unsigned i, free_slot = HOST_SURFACES;
+
+	pthread_mutex_lock(&host_surfaces_lock);
+	for (i = 0; i < HOST_SURFACES; i++) {
+		if (host_surfaces[i].base == (uintptr_t)base) {
+			break;
+		}
+		if (host_surfaces[i].base == 0 && free_slot == HOST_SURFACES) {
+			free_slot = i;
+		}
+	}
+	if (i == HOST_SURFACES) {
+		i = free_slot != HOST_SURFACES ? free_slot : host_surfaces_next++ % HOST_SURFACES;
+	}
+	host_surfaces[i].base = (uintptr_t)base;
+	host_surfaces[i].size = size;
+	host_surfaces[i].surface = surface;
+	pthread_mutex_unlock(&host_surfaces_lock);
+}
+
+uint32_t
+hakios_drm_host_surface_at(const void *base, uint64_t size)
+{
+	uint32_t surface = 0;
+
+	pthread_mutex_lock(&host_surfaces_lock);
+	for (unsigned i = 0; i < HOST_SURFACES; i++) {
+		if (host_surfaces[i].base == (uintptr_t)base && host_surfaces[i].size >= size) {
+			surface = host_surfaces[i].surface;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&host_surfaces_lock);
+	return surface;
+}
