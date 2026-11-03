@@ -62,7 +62,14 @@ button(uint32_t which, int ms)
 	write(device, &t, sizeof(t));
 }
 
-#define SAMPLE_MS       8               /* a sample every so many milliseconds: what the touch screen gives */
+/*
+ * A sample every so many milliseconds. Once 8, what the touch screen was polled at (touch_poll_us=8000): 125 samples a
+ * second for a display of 120 refreshes, each arriving 4.6 to 11.9 ms after the last, and a page dragged by them was
+ * drawn only when one had come -- a quarter of the frames of a swipe came a refresh late, 100 frames a second where
+ * the window server had time for 120 (3 November, touch_lat=1). 4 (touch_poll_us=4000 for the touch screen itself):
+ * a sample in every refresh.
+ */
+#define SAMPLE_MS       4
 
 static mach_timebase_info_data_t timebase;
 

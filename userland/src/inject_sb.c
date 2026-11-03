@@ -32,6 +32,7 @@
  *     answered, with that program's layers.
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
 #include <time.h>
 #include <IOKit/IOKitLib.h>
 #include <dispatch/dispatch.h>
@@ -901,6 +902,123 @@ wallpaper_cache_pass(void)
 	});
 }
 
+/*
+ * Boot-arg wallpaper_freeze=1: the wallpaper as one still picture. Rasterizing its window (wallpaper_cache=1) did not
+ * keep it from being composed again: the poster is another process's layers (PosterBoard's, through a layer host),
+ * and the window server rasterizes them again whenever that process commits -- the Collections poster's gradients
+ * (a 256 x 1 half-float ramp and a 32 x 32 dither each) were still drawn 3509 times in a run, at 0.6 ms each, and the
+ * rasterized copy 1460 times at 1.2 to 3.2 ms (3 November, metal_fps=draws). So once the poster has been drawn (30 s
+ * on), the window is drawn into an image by the window server (-drawViewHierarchyInRect:afterScreenUpdates:, which
+ * renders other processes' layers too), the image is put in the window as one opaque view, and what was there is
+ * hidden: one full-screen texture a frame instead of eight to twelve layers. What that gives up: the wallpaper does
+ * not change any more until the next boot (nothing here changes it), nor do the effects drawn in it.
+ */
+typedef struct { double x, y, width, height; } hk_rect;
+typedef struct { double width, height; } hk_size;
+
+static bool wallpaper_hide_only;        /* wallpaper_freeze=2: no picture, the wallpaper hidden (what it costs, measured) */
+
+static void
+wallpaper_freeze_pass(unsigned attempt)
+{
+	void *uikit = dlopen("/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore", RTLD_NOW | RTLD_NOLOAD);
+	void (*begin)(hk_size, bool, double) = uikit ? (void (*)(hk_size, bool, double))dlsym(uikit, "UIGraphicsBeginImageContextWithOptions") : NULL;
+	id (*grab)(void) = uikit ? (id (*)(void))dlsym(uikit, "UIGraphicsGetImageFromCurrentImageContext") : NULL;
+	void (*end)(void) = uikit ? (void (*)(void))dlsym(uikit, "UIGraphicsEndImageContext") : NULL;
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+	id windows = app != NULL ? SEND(id, app, "windows") : NULL;
+	unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
+	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
+	double scale = screen != NULL ? ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("scale")) : 3.0;
+	unsigned frozen = 0;
+
+	if (begin == NULL || grab == NULL || end == NULL) {
+		say("hakios: SpringBoard: wallpaper_freeze=1: no UIGraphics image context\n");
+		return;
+	}
+	for (unsigned long i = 0; i < count; i++) {
+		id window = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
+		const char *name = object_getClassName(window);
+
+		if (strcasestr(name, "wallpaper") == NULL && strcasestr(name, "poster") == NULL) {
+			continue;
+		}
+		if (objc_getAssociatedObject(window, (const void *)wallpaper_freeze_pass) != NULL) {
+			continue;               /* (frozen already) */
+		}
+		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+		if (bounds.width < 100 || bounds.height < 100) {
+			continue;
+		}
+		/* a secure window is left out of every picture taken of the screen (and so of this one): not this one */
+		if (class_respondsToSelector(object_getClass(window), sel_registerName("_setSecure:"))) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(window, sel_registerName("_setSecure:"), NO);
+		}
+		begin((hk_size){ bounds.width, bounds.height }, true, scale);
+		BOOL drawn = ((BOOL (*)(id, SEL, hk_rect, BOOL))objc_msgSend)(window, sel_registerName("drawViewHierarchyInRect:afterScreenUpdates:"),
+		    bounds, attempt > 0);       /* (from the second on, after the window server has drawn it as not secure) */
+		id image = grab();
+		end();
+		/* a picture that is all one colour is no wallpaper (nothing was drawn yet, or the window server could not): later */
+		unsigned long distinct = 0;
+		CGImageRef cg = image != NULL ? SEND(CGImageRef, image, "CGImage") : NULL;
+		CFDataRef data = cg != NULL ? CGDataProviderCopyData(CGImageGetDataProvider(cg)) : NULL;
+		if (data != NULL) {
+			const uint32_t *px = (const uint32_t *)CFDataGetBytePtr(data);
+			size_t n = (size_t)CFDataGetLength(data) / 4;
+			uint32_t first = n ? px[0] : 0;
+
+			for (size_t k = 0; k < n; k += n / 97 + 1) {
+				distinct += px[k] != first;
+			}
+			CFRelease(data);
+		}
+		say("hakios: SpringBoard: wallpaper_freeze=1: %s (%gx%g) drawn %s, %lu of 97 samples unlike the first\n", name,
+		    bounds.width, bounds.height, drawn ? "yes" : "no", distinct);
+		if (!wallpaper_hide_only && (!drawn || distinct < 10)) {
+			continue;
+		}
+		id view = ((id (*)(id, SEL, id))objc_msgSend)(SEND(id, objc_getClass("UIImageView"), "alloc"), sel_registerName("initWithImage:"), image);
+		((void (*)(id, SEL, hk_rect))objc_msgSend)(view, sel_registerName("setFrame:"), bounds);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(view, sel_registerName("setOpaque:"), YES);
+		id layer = SEND(id, window, "layer");
+		id sublayers = SEND(id, SEND(id, layer, "sublayers"), "copy");
+		unsigned long nsub = sublayers != NULL ? SEND(unsigned long, sublayers, "count") : 0;
+		((void (*)(id, SEL, id))objc_msgSend)(window, sel_registerName("addSubview:"), view);
+		for (unsigned long k = 0; k < nsub; k++) {
+			id sub = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), k);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(sub, sel_registerName("setHidden:"), YES);
+		}
+		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), NO);
+		objc_setAssociatedObject(window, (const void *)wallpaper_freeze_pass, view, OBJC_ASSOCIATION_RETAIN);
+		say("hakios: SpringBoard: wallpaper_freeze=1: %s is one picture now (%lu layers hidden)\n", name, nsub);
+		frozen++;
+	}
+	if (attempt < 12) {
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+			wallpaper_freeze_pass(attempt + 1);
+		});
+	}
+}
+
+static void
+wallpaper_freeze(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "wallpaper_freeze=")) == NULL || (argument != arguments && argument[-1] != ' ') ||
+	    (argument[17] != '1' && argument[17] != '2')) {
+		return;
+	}
+	wallpaper_hide_only = argument[17] == '2';
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		wallpaper_freeze_pass(0);
+	});
+}
+
 static void
 wallpaper_cache(void)
 {
@@ -1647,6 +1765,7 @@ hakios_springboard_init(void)
 	plain_vibrancy();
 	ui_lite();
 	wallpaper_cache();
+	wallpaper_freeze();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",

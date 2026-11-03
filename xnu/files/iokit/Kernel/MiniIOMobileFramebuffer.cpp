@@ -1110,7 +1110,19 @@ IOMobileFramebuffer::presenter(void)
 			clock_interval_to_deadline(SETTLE_MS, NSEC_PER_MSEC, &deadline);
 			if (IOLockSleepDeadline(fSwapLock, fSwap, deadline, THREAD_UNINT) == THREAD_TIMED_OUT && fSwapsWaiting == 0) {
 				IOLockUnlock(fSwapLock);
+				/* the frame's surfaces again, by their IDs: they were let go of as soon as the frame was on the panel */
+				for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+					uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
+
+					surfaces[layer] = sid != 0 ? MiniIOSurfaceCopy(sid) : NULL;
+				}
 				settle(swap, surfaces);
+				for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+					if (surfaces[layer] != NULL) {
+						MiniIOSurfaceDrop(surfaces[layer]);
+						surfaces[layer] = NULL;
+					}
+				}
 				unsettled = false;
 				IOLockLock(fSwapLock);
 			}
@@ -1129,12 +1141,16 @@ IOMobileFramebuffer::presenter(void)
 		IOLockUnlock(fSwapLock);
 		show(swap, surfaces);
 		unsettled = gFilter == 2;
-		if (!unsettled) {
-			for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
-				if (surfaces[layer] != NULL) {
-					MiniIOSurfaceDrop(surfaces[layer]);
-					surfaces[layer] = NULL;
-				}
+		/*
+		 * The surfaces are let go of as soon as their pixels are in the panel's memory, not when the next frame comes:
+		 * held, they were in use to CoreAnimation, which had no surface to draw the next frame into while that one
+		 * waited for its beat (up to a refresh) -- its swaps came 9.6 ms apart at the median, not 8.3 (3 November,
+		 * touch_lat=1). The filtered frame once they stop (fb_filter=2) takes them again by their IDs.
+		 */
+		for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+			if (surfaces[layer] != NULL) {
+				MiniIOSurfaceDrop(surfaces[layer]);
+				surfaces[layer] = NULL;
 			}
 		}
 		MiniIOSurfaceClearKept();               /* (the next frame is some milliseconds away) */
