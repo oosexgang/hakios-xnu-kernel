@@ -63,11 +63,8 @@ button(uint32_t which, int ms)
 }
 
 /*
- * A sample every so many milliseconds. Once 8, what the touch screen was polled at (touch_poll_us=8000): 125 samples a
- * second for a display of 120 refreshes, each arriving 4.6 to 11.9 ms after the last, and a page dragged by them was
- * drawn only when one had come -- a quarter of the frames of a swipe came a refresh late, 100 frames a second where
- * the window server had time for 120 (3 November, touch_lat=1). 4 (touch_poll_us=4000 for the touch screen itself):
- * a sample in every refresh.
+ * A sample every so many milliseconds: 4, a sample in every refresh at 120 Hz (touch_poll_us=4000 for the touch screen
+ * itself). Once 8. Measured (4 November): the frame rate of a swipe is the same with either, 100 to 104 a second.
  */
 #define SAMPLE_MS       4
 

@@ -33,6 +33,7 @@
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <time.h>
 #include <IOKit/IOKitLib.h>
 #include <dispatch/dispatch.h>
@@ -904,101 +905,192 @@ wallpaper_cache_pass(void)
 
 /*
  * Boot-arg wallpaper_freeze=1: the wallpaper as one still picture. Rasterizing its window (wallpaper_cache=1) did not
- * keep it from being composed again: the poster is another process's layers (PosterBoard's, through a layer host),
- * and the window server rasterizes them again whenever that process commits -- the Collections poster's gradients
- * (a 256 x 1 half-float ramp and a 32 x 32 dither each) were still drawn 3509 times in a run, at 0.6 ms each, and the
- * rasterized copy 1460 times at 1.2 to 3.2 ms (3 November, metal_fps=draws). So once the poster has been drawn (30 s
- * on), the window is drawn into an image by the window server (-drawViewHierarchyInRect:afterScreenUpdates:, which
- * renders other processes' layers too), the image is put in the window as one opaque view, and what was there is
- * hidden: one full-screen texture a frame instead of eight to twelve layers. What that gives up: the wallpaper does
- * not change any more until the next boot (nothing here changes it), nor do the effects drawn in it.
+ * keep it from being composed again: the poster is another process's layers (PosterBoard's, through a layer host), and
+ * its gradients (a 256 x 1 half-float ramp and a 32 x 32 dither each) were still drawn 3509 times in a run at 0.6 ms
+ * each, the rasterized copy 1460 times at 1.2 to 3.2 ms (3 November, metal_fps=draws). The home button's animation came
+ * at 28 frames a second with it and 78 with the wallpaper hidden (wallpaper_freeze=2).
+ *
+ * -drawViewHierarchyInRect: answers one colour for it here, secure window or not. So the picture is what is really on
+ * the panel: at the home screen, with the window of the icons hidden for a moment (they blink once per boot), the pixels of the IOSurface the window server last showed (kern.hakios.fb_surface) become one opaque view in
+ * the wallpaper's window, and what was there is hidden. What that gives up: the wallpaper does not change until the
+ * next boot, and the lock screen shows the same picture.
  */
 typedef struct { double x, y, width, height; } hk_rect;
-typedef struct { double width, height; } hk_size;
 
 static bool wallpaper_hide_only;        /* wallpaper_freeze=2: no picture, the wallpaper hidden (what it costs, measured) */
+static const void *wallpaper_frozen_key = &wallpaper_frozen_key;
 
-static void
-wallpaper_freeze_pass(unsigned attempt)
+static id
+wallpaper_window(void)
 {
-	void *uikit = dlopen("/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore", RTLD_NOW | RTLD_NOLOAD);
-	void (*begin)(hk_size, bool, double) = uikit ? (void (*)(hk_size, bool, double))dlsym(uikit, "UIGraphicsBeginImageContextWithOptions") : NULL;
-	id (*grab)(void) = uikit ? (id (*)(void))dlsym(uikit, "UIGraphicsGetImageFromCurrentImageContext") : NULL;
-	void (*end)(void) = uikit ? (void (*)(void))dlsym(uikit, "UIGraphicsEndImageContext") : NULL;
 	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
 	id windows = app != NULL ? SEND(id, app, "windows") : NULL;
 	unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
-	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
-	double scale = screen != NULL ? ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("scale")) : 3.0;
-	unsigned frozen = 0;
 
-	if (begin == NULL || grab == NULL || end == NULL) {
-		say("hakios: SpringBoard: wallpaper_freeze=1: no UIGraphics image context\n");
-		return;
-	}
 	for (unsigned long i = 0; i < count; i++) {
 		id window = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
 		const char *name = object_getClassName(window);
 
-		if (strcasestr(name, "wallpaper") == NULL && strcasestr(name, "poster") == NULL) {
-			continue;
+		if (strcasestr(name, "wallpaper") != NULL || strcasestr(name, "poster") != NULL) {
+			return window;
 		}
-		if (objc_getAssociatedObject(window, (const void *)wallpaper_freeze_pass) != NULL) {
-			continue;               /* (frozen already) */
-		}
-		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
-		if (bounds.width < 100 || bounds.height < 100) {
-			continue;
-		}
-		/* a secure window is left out of every picture taken of the screen (and so of this one): not this one */
-		if (class_respondsToSelector(object_getClass(window), sel_registerName("_setSecure:"))) {
-			((void (*)(id, SEL, BOOL))objc_msgSend)(window, sel_registerName("_setSecure:"), NO);
-		}
-		begin((hk_size){ bounds.width, bounds.height }, true, scale);
-		BOOL drawn = ((BOOL (*)(id, SEL, hk_rect, BOOL))objc_msgSend)(window, sel_registerName("drawViewHierarchyInRect:afterScreenUpdates:"),
-		    bounds, attempt > 0);       /* (from the second on, after the window server has drawn it as not secure) */
-		id image = grab();
-		end();
-		/* a picture that is all one colour is no wallpaper (nothing was drawn yet, or the window server could not): later */
-		unsigned long distinct = 0;
-		CGImageRef cg = image != NULL ? SEND(CGImageRef, image, "CGImage") : NULL;
-		CFDataRef data = cg != NULL ? CGDataProviderCopyData(CGImageGetDataProvider(cg)) : NULL;
-		if (data != NULL) {
-			const uint32_t *px = (const uint32_t *)CFDataGetBytePtr(data);
-			size_t n = (size_t)CFDataGetLength(data) / 4;
-			uint32_t first = n ? px[0] : 0;
+	}
+	return NULL;
+}
 
-			for (size_t k = 0; k < n; k += n / 97 + 1) {
-				distinct += px[k] != first;
-			}
-			CFRelease(data);
+/* A picture of the surface on the panel, opaque, in points of the screen's scale; NULL: none, or all one colour. */
+static id
+wallpaper_picture(double scale)
+{
+	uint32_t sid = 0;
+	size_t size = sizeof(sid);
+	IOSurfaceRef surface;
+	id image = NULL;
+
+	if (sysctlbyname("kern.hakios.fb_surface", &sid, &size, NULL, 0) != 0 || sid == 0 ||
+	    (surface = IOSurfaceLookup(sid)) == NULL) {
+		say("hakios: SpringBoard: wallpaper_freeze=1: no surface on the panel to read (%u)\n", sid);
+		return NULL;
+	}
+	size_t width = IOSurfaceGetWidth(surface), height = IOSurfaceGetHeight(surface), row = IOSurfaceGetBytesPerRow(surface);
+
+	IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+	CFDataRef pixels = CFDataCreate(NULL, IOSurfaceGetBaseAddress(surface), (CFIndex)(row * height));
+	IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+	unsigned distinct = 0;
+	if (pixels != NULL) {
+		const uint8_t *at = CFDataGetBytePtr(pixels);
+		uint32_t first = *(const uint32_t *)at;
+
+		for (unsigned k = 0; k < 97; k++) {
+			distinct += *(const uint32_t *)(at + (height * k / 97) * row + (width * k / 97) * 4) != first;
 		}
-		say("hakios: SpringBoard: wallpaper_freeze=1: %s (%gx%g) drawn %s, %lu of 97 samples unlike the first\n", name,
-		    bounds.width, bounds.height, drawn ? "yes" : "no", distinct);
-		if (!wallpaper_hide_only && (!drawn || distinct < 10)) {
-			continue;
+	}
+	say("hakios: SpringBoard: wallpaper_freeze=1: surface %u, %zux%zu, %zu bytes a row, format %#x: %u of 97 samples unlike the first (%#x)\n",
+	    sid, width, height, row, IOSurfaceGetPixelFormat(surface), distinct, pixels != NULL ? *(const uint32_t *)CFDataGetBytePtr(pixels) : 0);
+	if (pixels != NULL && distinct >= 10) {
+		CGDataProviderRef provider = CGDataProviderCreateWithCFData(pixels);
+		CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+		CGImageRef cg = CGImageCreate(width, height, 8, 32, row, space, kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst,
+		    provider, NULL, false, kCGRenderingIntentDefault);
+
+		if (cg != NULL) {
+			image = ((id (*)(id, SEL, CGImageRef, double, long))objc_msgSend)((id)objc_getClass("UIImage"),
+			    sel_registerName("imageWithCGImage:scale:orientation:"), cg, scale, 0L);
+			CGImageRelease(cg);
 		}
-		id view = ((id (*)(id, SEL, id))objc_msgSend)(SEND(id, objc_getClass("UIImageView"), "alloc"), sel_registerName("initWithImage:"), image);
+		CGColorSpaceRelease(space);
+		CGDataProviderRelease(provider);
+	}
+	if (pixels != NULL) {
+		CFRelease(pixels);
+	}
+	CFRelease(surface);
+	return image;
+}
+
+/* The picture into the wallpaper's window, in place of what was shown there (none: only hidden). */
+static void
+wallpaper_put(id window, id image)
+{
+	id layer = SEND(id, window, "layer");
+	id sublayers = SEND(id, SEND(id, layer, "sublayers"), "copy");
+	unsigned long count = sublayers != NULL ? SEND(unsigned long, sublayers, "count") : 0;
+	hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+
+	if (image != NULL) {
+		id view = ((id (*)(id, SEL, id))objc_msgSend)(SEND(id, objc_getClass("UIImageView"), "alloc"),
+		    sel_registerName("initWithImage:"), image);
+
 		((void (*)(id, SEL, hk_rect))objc_msgSend)(view, sel_registerName("setFrame:"), bounds);
 		((void (*)(id, SEL, BOOL))objc_msgSend)(view, sel_registerName("setOpaque:"), YES);
-		id layer = SEND(id, window, "layer");
-		id sublayers = SEND(id, SEND(id, layer, "sublayers"), "copy");
-		unsigned long nsub = sublayers != NULL ? SEND(unsigned long, sublayers, "count") : 0;
 		((void (*)(id, SEL, id))objc_msgSend)(window, sel_registerName("addSubview:"), view);
-		for (unsigned long k = 0; k < nsub; k++) {
-			id sub = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), k);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(sub, sel_registerName("setHidden:"), YES);
+		objc_setAssociatedObject(window, wallpaper_frozen_key, view, OBJC_ASSOCIATION_RETAIN);
+	} else {
+		objc_setAssociatedObject(window, wallpaper_frozen_key, window, OBJC_ASSOCIATION_ASSIGN);
+	}
+	for (unsigned long k = 0; k < count; k++) {
+		id sub = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), k);
+
+		((void (*)(id, SEL, BOOL))objc_msgSend)(sub, sel_registerName("setHidden:"), YES);
+	}
+	say("hakios: SpringBoard: wallpaper_freeze: %s %s (%lu layers hidden)\n", object_getClassName(window),
+	    image != NULL ? "is one picture now" : "hidden", count);
+}
+
+/* Whether the home screen is what is showing: unlocked, no application in front. */
+static bool
+wallpaper_home_showing(void)
+{
+	Class manager = objc_getClass("SBLockScreenManager");
+	id shared = manager != NULL ? SEND(id, manager, "sharedInstance") : NULL;
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+
+	if (shared == NULL || SEND(BOOL, shared, "isUILocked")) {
+		return false;
+	}
+	/* (a selector nobody answers would abort SpringBoard: unlocked is then all that is known) */
+	if (app == NULL || !class_respondsToSelector(object_getClass(app), sel_registerName("_accessibilityFrontMostApplication"))) {
+		return app != NULL;
+	}
+	return SEND(id, app, "_accessibilityFrontMostApplication") == NULL;
+}
+
+static void
+wallpaper_freeze_pass(unsigned attempt)
+{
+	id window = wallpaper_window();
+	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
+	double scale = screen != NULL ? ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("scale")) : 3.0;
+
+	if (window != NULL && objc_getAssociatedObject(window, wallpaper_frozen_key) != NULL) {
+		return;
+	}
+	if (window == NULL || !wallpaper_home_showing()) {
+		if (attempt < 720) {
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+				wallpaper_freeze_pass(attempt + 1);
+			});
 		}
-		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), NO);
-		objc_setAssociatedObject(window, (const void *)wallpaper_freeze_pass, view, OBJC_ASSOCIATION_RETAIN);
-		say("hakios: SpringBoard: wallpaper_freeze=1: %s is one picture now (%lu layers hidden)\n", name, nsub);
-		frozen++;
+		return;
 	}
-	if (attempt < 12) {
-		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-			wallpaper_freeze_pass(attempt + 1);
-		});
+	if (wallpaper_hide_only) {
+		wallpaper_put(window, NULL);
+		return;
 	}
+	/* the icons out of the way until the window server has drawn the wallpaper without them */
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+	id windows = SEND(id, app, "windows");
+	unsigned long count = SEND(unsigned long, windows, "count");
+	CFMutableArrayRef hidden = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+
+	for (unsigned long i = 0; i < count; i++) {
+		id other = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
+
+		/*
+		 * Only the window of the icons and the dock: with SpringBoard's other windows hidden as well the screen was all
+		 * black (0xff000000 in all 97 samples, 4 November), the wallpaper gone with them.
+		 */
+		if (strcmp(object_getClassName(other), "SBHomeScreenWindow") == 0 && !SEND(BOOL, other, "isHidden")) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(other, sel_registerName("setHidden:"), YES);
+			CFArrayAppendValue(hidden, other);
+		}
+	}
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+		id image = wallpaper_picture(scale);
+
+		for (CFIndex i = 0; i < CFArrayGetCount(hidden); i++) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)((id)CFArrayGetValueAtIndex(hidden, i), sel_registerName("setHidden:"), NO);
+		}
+		CFRelease(hidden);
+		if (image != NULL) {
+			wallpaper_put(window, image);
+		} else if (attempt < 720) {
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+				wallpaper_freeze_pass(attempt + 1);
+			});
+		}
+	});
 }
 
 static void
@@ -1014,7 +1106,7 @@ wallpaper_freeze(void)
 		return;
 	}
 	wallpaper_hide_only = argument[17] == '2';
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
 		wallpaper_freeze_pass(0);
 	});
 }
