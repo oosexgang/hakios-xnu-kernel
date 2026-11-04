@@ -23,7 +23,7 @@ What is looked for:
                xnu/hakios.patch adds to Apple's files
   the loader   starts_with(c, "name=...") on the payload's command line, in xnuloader/
   user space   a name given to strstr()/strncmp() on sysctl kern.bootargs, in userland/src/ (seen: sb_delay=, touch_lat=1,
-               ca_vbl=1 ...)
+               ca_vbl=1 ...), or to the Metal plug-in's helper hm_boot_arg_set("metal_m2v=1")
 """
 import argparse
 import collections
@@ -55,6 +55,8 @@ LOADER = re.compile(r'starts_with\((?:c|cmd|p|a|s), "([a-z][a-z0-9_.]*)=')
 # user space reads sysctl kern.bootargs into a buffer called arguments, args or argument, and looks in it with strstr:
 # strstr(arguments, "gltrace_at="), strstr(args, "touch_lat=1"): the name is what stands before the =
 USER = re.compile(r'strstr\(\s*(?:arguments|args|argument)\s*,\s*"([a-z][a-z0-9_]*)=')
+# ... and the Metal plug-in has a helper that is given the whole word: hm_boot_arg_set("metal_m2v=1") in HakiosMetalCA.m
+HM_ARG = re.compile(r'\bhm_boot_arg_set\(\s*"([a-z][a-z0-9_]*)=')
 
 # the group an argument is listed under: by the file that reads it (the first match decides)
 GROUPS = [
@@ -137,6 +139,8 @@ def scan(root, keep=None):
                 found[m.group(1)]["loader"].add(base)
         if f.startswith("userland/src/"):
             for m in USER.finditer(text):
+                found[m.group(1)]["user"].add(base)
+            for m in HM_ARG.finditer(text):
                 found[m.group(1)]["user"].add(base)
             if BOOT_ARG_DEF.search(text):
                 for m in BOOT_ARG_CALL.finditer(text):
@@ -266,7 +270,8 @@ def markdown(found, config):
         "that reads it. The stable switches have a symbol in the configuration (`tools/hakios-config.py help SYMBOL`, "
         "`docs/configs.md`); the rest are the knobs of bring-up (a driver's steps, pauses, traces, test modes) and can change "
         "with the driver. Any of them can be given in a configuration with `CONFIG_BOOTARGS=\"name=value ...\"`, which checks "
-        "that each name is in this list.",
+        "that each name is in this list. What the arguments of the two Metal paths do: "
+        "[Metal on the Adreno](reference/metal.md#boot-arguments).",
         "",
         "Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl kern.bootargs`).",
         "",
