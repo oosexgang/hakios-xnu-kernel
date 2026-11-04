@@ -29,6 +29,8 @@
 #                                   rate measured once (MiniIOMobileFramebuffer.cpp)
 #   fb_threads=6                    six processors scale a frame onto the panel, not three: Settings' scroll 75 -> 84 frames
 #   touch_poll_us=4000              the touch screen looked at every 4 ms, not 8: a sample in every refresh at 120 Hz
+#   wallpaper_freeze=1              the wallpaper one picture once at the home screen (the icons blink once): home button 28 -> 92 frames
+#   metal_defer=1                   a command buffer's draws recorded when it is committed, not on the way
 #                                   a second (2 November, tools/frames.py)
 #   ufs=2 ufs_write=1 var_store=1   (PERSIST=1, the default) /private/var kept in the partition darwin between boots: the
 #                                   compiled shader stages in /var/db/hakios-metal-cache survive, so only the first boot
@@ -56,7 +58,7 @@ PERSIST=${PERSIST:-1}
 UPLOAD=${UPLOAD:-1}
 SHOTS=${SHOTS:-0}
 CA_METALLIB=${CA_METALLIB:-/redwood/share/ca-share/QuartzCore-default.metallib}
-ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6 touch_poll_us=4000"
+ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1"
 [ "$PERSIST" = 1 ] && ARGS="$ARGS ufs=2 ufs_write=1 var_store=1"
 [ "${VERBOSE:-0}" = 1 ] && ARGS="-v $ARGS"
 ARGS="$ARGS ${MORE:-}"
