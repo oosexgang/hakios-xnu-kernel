@@ -51,7 +51,8 @@ program that can write to flash, and CI fails if one appears that is not listed.
   under its own license. They are listed with origin and license in `THIRD_PARTY_LICENSES.md`.
 - **Pre-built artifacts** in `prebuilt/`: the kernel, user-space programs and libraries built
   from this repository's own source. They carry the same licenses as the source they are built
-  from.
+  from. Metal on Vulkan (`M2V=1`) and the window server's Metal plug-in are not among them: you fetch and
+  build those yourself, and whether a binary of them may be distributed is to verify (`COMPLIANCE.md`).
 
 ## What this repository does NOT contain and never distributes
 

@@ -2,7 +2,7 @@
 # HakiOS common defconfig: every setting there is, with what it does.
 # Made by tools/hakios-config.py listing common -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol.
 #
-# 350 symbols in 18 groups; 34 are set, 25 of them drivers built in.
+# 371 symbols in 18 groups; 34 are set, 25 of them drivers built in.
 #
 
 #
@@ -49,7 +49,7 @@ CONFIG_HAKIOS_TORCH=y
 # the chip's identity from the firmware's shared memory: kern.hakios.soc_* (socinfo=1). Any Qualcomm SoC that keeps ... [hakios.socinfo.c]
 CONFIG_HAKIOS_SOCINFO=y
 
-# the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa and the window ... [hakios.adreno.c, hakios.gpu.cpp]
+# the Adreno 642L of the SC7280 woken step by step (adreno=N), and HakiosGPU, the IOKit service Mesa, Metal and the ... [hakios.adreno.c, hakios.gpu.cpp]
 CONFIG_HAKIOS_ADRENO=y
 
 # the vibration motor: an Awinic AW86927 driving a linear resonant actuator (haptic=N), its waveforms from fw-haptic/ [hakios.haptic.c]
@@ -335,7 +335,7 @@ CONFIG_TOUCHSCREEN=y
 # CONFIG_VIRTIO_INPUT is not set
 
 #
-# GPU and display (74)
+# GPU and display (76)
 #
 
 # rendering on Adreno (an image built with GL=1; the GPU's firmware from your phone) [needs fw-gpu/ from the phone]
@@ -380,6 +380,9 @@ CONFIG_GPU=y
 # before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are ...
 # CONFIG_DISPLAY_PROBE is not set
 
+# frames written to the panel's memory whenever their beat comes, as before
+# CONFIG_FB_BEAM is not set
+
 # read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_BEAT is not set
 
@@ -412,6 +415,9 @@ CONFIG_GPU=y
 
 # the same 375 x 812 points drawn at two pixels a point instead of three
 # CONFIG_FBSCALE is not set
+
+# read by MiniIOMobileFramebuffer.cpp (kernel)
+# CONFIG_FBSUBTYPE is not set
 
 # log the first N calls of every selector (default 3)
 # CONFIG_FBTRACE is not set
@@ -1075,7 +1081,7 @@ CONFIG_MODEM_AGAIN=y
 # CONFIG_UFS_PROBE is not set
 
 #
-# User space (14)
+# User space (33)
 #
 
 # read by inject_sb.c (user space)
@@ -1086,6 +1092,12 @@ CONFIG_MODEM_AGAIN=y
 
 # the second look this many seconds later (0: no second look; 30)
 # CONFIG_BT_AGAIN is not set
+
+# read by inject.c (user space)
+# CONFIG_CA_METALLIB is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_CA_PROF is not set
 
 # CoreAnimation's frame clock from the display driver's refresh notifications
 # CONFIG_CA_VBL is not set
@@ -1111,14 +1123,65 @@ CONFIG_MODEM_AGAIN=y
 # the renderer is made to answer that it has those functions after all
 # CONFIG_GLYES is not set
 
+# Turnip's GPU trace of every render pass (u_trace) into a file, printed during the run
+# CONFIG_M2V_UTRACE is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_ALL is not set
+
+# this queue's command buffers recorded by a thread of hakios-metal's own (deferred recording), so that the window ...
+# CONFIG_METAL_DEFER is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_DUMP is not set
+
+# each draw of a sysmem pass timed alone, by program (only sysmem passes are: without metal_gmem=1)
+# CONFIG_METAL_FPS is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_GMEM is not set
+
+# GMEM for a pass whose like had at least N draws in the frame before (hakios_metal_cb_set_gmem_min_draws), sysmem for ...
+# CONFIG_METAL_GMEM_DRAWS is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_GMEM_OFF is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_LUMA_BOOST is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_M2V is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_SKIP is not set
+
+# read by HakiosMetalCA.m (user space)
+# CONFIG_METAL_TRACE is not set
+
+# read by inject.c (user space)
+# CONFIG_METAL_WATCH is not set
+
 # the root is to be the Darwin root volume on /dev/DEV -- the phone's flash, read only
 # CONFIG_ROOT_APFS is not set
 
 # read by inject_sb.c (user space)
 # CONFIG_SWITCHER_WALLPAPER is not set
 
+# Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...)
+# CONFIG_TU_DEBUG is not set
+
+# the system's own "Reduce Transparency" and "Reduce Motion" (Settings, Accessibility), for this
+# CONFIG_UI_LITE is not set
+
 # read by init.c (user space)
 # CONFIG_VAR_HFS is not set
+
+# the window that shows the wallpaper rasterized by the window server (CALayer's shouldRasterize), drawn from one ...
+# CONFIG_WALLPAPER_CACHE is not set
+
+# the wallpaper as one still picture
+# CONFIG_WALLPAPER_FREEZE is not set
 
 #
 # Extra arguments (1)

@@ -1,0 +1,107 @@
+diff --git a/NativeBridgeMetalFrontend.h b/NativeBridgeMetalFrontend.h
+index 25ed8e5..1f45ee7 100644
+--- a/NativeBridgeMetalFrontend.h
++++ b/NativeBridgeMetalFrontend.h
+@@ -32,5 +32,7 @@ bool native_bridge_metal_work_stats(uint64_t out[10]);
+ size_t native_bridge_metal_benchmark(id device, const char *metallib, unsigned pairs, char *out, size_t size);
+ // Lets go of every held IOSurface import whose surface only the import still retains (also done at each command buffer's completion).
+ void native_bridge_metal_trim_surface_imports(void);
++// (hakios) Core Animation's uber shader variants: set by the plug-in (see the frontend's variantFunction()).
++extern const void *(*native_bridge_metal_variant_hook)(const char *name, const char *label, const char *pipeline, int vertex, size_t *length);
+ }
+ #endif
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index aec500d..b6ee810 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -994,6 +994,17 @@ static void holdImport(uint64_t identity,uint64_t address,uint64_t bytes,NBBuffe
+  pruneHeldImports(false,gone);
+  gHeldImports[{identity,address,bytes}]={buffer,buffer.importedSurface};
+ }
++// (hakios) Turnip there imports a host pointer only as an IOSurface's memory, which its kernel makes a buffer of by the surface's ID:
++// the surface mapped at base is told to it (tools/mesa/hakios-drm: hakios_drm_host_surface) before the runtime imports the pages.
++static void tellHostSurface(IOSurfaceRef surface,void *base,size_t bytes) {
++ static void (*tell)(const void *,uint64_t,uint32_t);
++ static std::once_flag once;
++ std::call_once(once,[]{
++  if(void *turnip=gLoaderPath.empty()?nullptr:dlopen(gLoaderPath.c_str(),RTLD_NOW|RTLD_NOLOAD))
++   tell=(void (*)(const void *,uint64_t,uint32_t))dlsym(turnip,"hakios_drm_host_surface");
++ });
++ if(tell)tell(base,bytes,IOSurfaceGetID(surface));
++}
+ static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
+  struct Key {uint64_t identity,address,bytes;};
+  const Key value={IOSurfaceGetID(surface),(uintptr_t)base,bytes};
+@@ -1005,6 +1016,7 @@ static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
+  NBBuffer *buffer=key?[gSurfaceImports objectForKey:key]:nil;
+  if(buffer){if(key)holdImport(value.identity,value.address,value.bytes,buffer,gone);return buffer;}
+  // The surface keeps its CPU mapping (the imported pages) until the import is freed.
++ tellHostSurface(surface,base,bytes);
+  NmbBuffer *handle=nmb_buffer_new_no_copy_releasing(gDevice,base,bytes,MTLResourceStorageModeShared,releaseSurface,(void *)CFRetain(surface));
+  if(!handle){CFRelease(surface);NBLOG(@"native-metal: surface import refused: %@",lastError());return nil;}
+  gSurfaceImportsMade++;buffer=[NBBuffer new];buffer.handle=handle;buffer.options=MTLResourceStorageModeShared;buffer.importedSurface=surface;
+@@ -1442,8 +1454,41 @@ static std::string quartzCoreCallers();
+ // no runtime handle: it is stitched from its bitcode (functionBitcode) and refused as a pipeline's own function.
+ static NBFunction *ciKernelFunction(NBLibrary *library,NSString *name);
+ static bool forEachLibraryEntry(NBLibrary *library,const std::function<bool(const std::string &,int)> &visit);
++// (hakios) The module of the variant of a Core Animation uber shader a pipeline is made of (its function's name, the function's
++// label, the pipeline's label, vertex or not), from the plug-in that knows QuartzCore's pipeline library; null: the function itself.
++extern "C" const void *(*native_bridge_metal_variant_hook)(const char *,const char *,const char *,int,size_t *);
++const void *(*native_bridge_metal_variant_hook)(const char *,const char *,const char *,int,size_t *);
++static id<MTLFunction> variantFunction(id<MTLFunction> f,NSString *pipeline,bool vertex) {
++ if(!f || ![f.name hasPrefix:@"fixed_"])return f;
++ size_t length=0;
++ NSString *label=[f respondsToSelector:@selector(label)]?[(id)f label]:nil;
++ const void *air=native_bridge_metal_variant_hook(f.name.UTF8String,label.UTF8String,pipeline.UTF8String,vertex,&length);
++ if(!air || !length)return f;
++ static NSMutableDictionary *libraries;static std::mutex lock;
++ id library;
++ {std::lock_guard<std::mutex> hold(lock);
++  if(!libraries)libraries=[NSMutableDictionary dictionary];
++  NSNumber *key=@((uintptr_t)air);
++  library=libraries[key];
++  if(!library){library=native_bridge_metal_library_with_air(air,length);if(library)libraries[key]=library;}}
++ if(!library)return f;
++ NSString *name=[[library functionNames] containsObject:f.name]?f.name:[[library functionNames] firstObject];
++ MTLFunctionConstantValues *values=[f isKindOfClass:[NBFunction class]]?((NBFunction *)f).constantValues:nil;
++ NSError *error=nil;
++ id<MTLFunction> chosen=values?[library newFunctionWithName:name constantValues:values error:&error]:[library newFunctionWithName:name];
++ if(!chosen && values)chosen=[library newFunctionWithName:name];
++ return chosen?:f;
++}
++
+ @implementation NBLibrary
+ - (void)dealloc {DetailSpan timing(9,(uintptr_t)_handle);nmb_library_release(_handle);}
++// (hakios) iOS 16's pipeline library builder (MTLPipelineLibrary over pipelines.desc) asks with Metal's function cache, which holds
++// nothing of this device's: the same as without it.
++- (id<MTLFunction>)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues *)values functionCache:(id)cache
++                                 error:(NSError **)error {
++ (void)cache;
++ return values?[self newFunctionWithName:name constantValues:values error:error]:[self newFunctionWithName:name];
++}
+ - (id<MTLFunction>)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues *)values error:(NSError **)error {
+  return [self nb_newFunctionWithName:name constantValues:values zeroRest:NO error:error];
+ }
+@@ -4367,6 +4412,13 @@ static bool pipelineArchives(NSArray *list,std::vector<NmbBinaryArchive *> &arch
+ - (id<MTLRenderPipelineState>)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d options:(MTLPipelineOption)options
+                                                         reflection:(MTLAutoreleasedRenderPipelineReflection *)reflection error:(NSError **)error {
+  if(reflection)*reflection=nil;
++ // (hakios) Core Animation's uber shaders: the variant of the pipeline (native_bridge_metal_variant_hook) in place of the function
++ if(native_bridge_metal_variant_hook && ([d.vertexFunction.name hasPrefix:@"fixed_"] || [d.fragmentFunction.name hasPrefix:@"fixed_"])) {
++  id<MTLFunction> vertex=variantFunction(d.vertexFunction,d.label,true),fragment=variantFunction(d.fragmentFunction,d.label,false);
++  if(vertex!=d.vertexFunction || fragment!=d.fragmentFunction) {
++   d=[d copy];d.vertexFunction=vertex;d.fragmentFunction=fragment;
++  }
++ }
+  auto *p=new NBRenderDescriptor();
+  if(!renderDescriptor(d,p,error)) {
+   static std::atomic<int> told{0};
+@@ -4550,7 +4602,7 @@ extern "C" id native_bridge_metal_open(const char *loader,const char *cache,uint
+ #if defined(__arm64e__)
+  if(!base){NBLOG(@"native-metal: no _MTLDevice");return nil;}
+ #else
+- if(!base || class_getInstanceSize(base)!=536){NBLOG(@"native-metal: unexpected _MTLDevice ABI");return nil;}
++ if(!base){NBLOG(@"native-metal: no _MTLDevice");return nil;}  // (hakios: iOS 16.5, whose _MTLDevice is of another size)
+ #endif
+ #endif
+  if(!base)base=[NSObject class];

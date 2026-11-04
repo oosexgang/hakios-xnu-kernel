@@ -2,6 +2,8 @@
 
 ## Scope and method
 
+(This review came before HakiosGPU's request `0x7d`, the client's own pages as a buffer, added 3 November: [Metal on the Adreno](../reference/metal.md#hakiosgpu-driversgpuhakiosgpucpp). That request has not been reviewed, and it adds to G6's wired memory without a cap of its own.)
+
 Read-only review of the user-reachable surface of the GPU and display code. Nothing was built or run; the XNU source tree itself is not in this repository (only `xnu/files` overlays), so XNU API behaviour is not verified here.
 
 | File | Lines |

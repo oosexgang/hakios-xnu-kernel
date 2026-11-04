@@ -64,3 +64,53 @@ Nothing is flashed: everything is booted from RAM, and a reboot brings Android b
   `system.apfs` built with `MODEM=1` if it uses the modem (`tools/modem-cycle-win.sh`).
 - **`tools/modem-cycle.sh` fails under Git Bash:** use `tools/modem-cycle-win.sh`; the original puts the
   macOS helpers in `tools/macos-bin` first on `PATH`, and they do not run on Windows.
+
+## Metal: a run, measured, from Windows
+
+The window server drawing through Metal (`METAL_PLUGIN=ca`) and the frame-rate bench, with one command in Git Bash. What the two paths
+are and what the arguments do: [Metal on the Adreno](reference/metal.md).
+
+The plug-in is compiled, so the build needs the cross toolchain (`xnu-deps/setup.sh`) and [hakios-metal](https://github.com/oosexgang/hakios-metal)
+beside the checkout; `PREBUILT=1` compiles nothing, and `prebuilt/userland` has no plug-in.
+
+```sh
+# WSL, in ~/hakios: QuartzCore's library for CoreAnimation, then the image with the Metal plug-in and the bench.
+# Off a Mac, name a later CoreAnimation's library to take the rest of its shaders from (a Mac's
+# QuartzCore.framework/Versions/A/Resources/default.metallib copied over, or a later system's out of its IPSW):
+CA_QC_METALLIB=/mnt/c/.../default.metallib tools/ca-metallib.py ~/ca-share
+(cd ../hakios-metal && make ios HAKIOS=../hakios MESA=1)
+METAL_PLUGIN=ca RC_JOBS=rc.jobs.bench EXTRA_SHARE=~/ca-share REST=1 SYSTEM=1 userland/build.sh
+cp userland/root.apfs userland/system.apfs /mnt/d/.../hakios/userland/
+
+# Git Bash, in the Windows checkout (the phone in Android is fine: the script takes it into the loader):
+tools/metal-run.sh                       # 180 s; the summary in logs/<time>-metal.txt
+MORE="metal_gmem=1" tools/metal-run.sh   # with tiled rendering (each pass left in sysmem says why)
+MORE="wallpaper_cache=1" tools/metal-run.sh   # any boot-argument beside the defaults
+SHOTS=20 tools/metal-run.sh              # and a screenshot every 20 s, logs/<time>-shots/
+```
+
+For UniXNU's Metal on Vulkan, build its pieces in WSL first, then the same image with two more options, and name it at boot. It takes
+rustup's cargo with Rust 1.98 and the `aarch64-apple-ios` target, `llvm-as` of LLVM 21, `glslang-tools`, and the theos iPhoneOS 16.5 SDK:
+
+```sh
+# WSL, in ~/hakios:
+tools/mk-mesa.sh && tools/mk-turnip.sh && tools/mk-m2v.sh
+METAL_PLUGIN=ca TURNIP=1 M2V=1 RC_JOBS=rc.jobs.bench EXTRA_SHARE=~/ca-share REST=1 SYSTEM=1 userland/build.sh
+cp userland/root.apfs userland/system.apfs /mnt/d/.../hakios/userland/
+
+# Git Bash:
+MORE="metal_m2v=1" tools/metal-run.sh
+MORE="metal_m2v=1 tu_debug=perf" tools/metal-run.sh   # and Turnip's own account of its render passes
+```
+
+The summary's frames per gesture come from `tools/frames.py`, which runs anywhere Python does: `python tools/frames.py logs/last.log`.
+
+`tools/metal-run.sh` keeps `/private/var` between boots by default (`ufs=2 ufs_write=1 var_store=1`, the partition
+`darwin` only; `PERSIST=0` for none), so the shader stages the window server compiles are compiled once. To put them
+into the image, so that not even the first boot compiles them: with the phone back in Android,
+
+```sh
+tools/metal-cache-seed.sh                # reads darwin (read only, adb + root) into userland/hakios-metal-cache
+```
+
+and copy `userland/hakios-metal-cache` to WSL's `userland/` before the next `userland/build.sh`.

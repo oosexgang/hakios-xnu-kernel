@@ -80,6 +80,7 @@ DDR	arg	ddr	CPU, memory and boot	k	hakios.cpufreq.c	the memory's bus clock manag
 DDR_REST	arg	ddr_rest	CPU, memory and boot	k	hakios.cpufreq.c	
 DDR_VOTE	arg	ddr_vote	CPU, memory and boot	k	hakios.cpufreq.c	
 DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c	before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written)
+FB_BEAM	arg	fb_beam	GPU and display	k	MiniIOMobileFramebuffer.cpp	frames written to the panel's memory whenever their beat comes, as before
 FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_CA_HZ	arg	fb_ca_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
 FB_DIFF	arg	fb_diff	GPU and display	k	MiniIOMobileFramebuffer.cpp	which pixels of the panel each frame changed (it costs: the panel's memory is slow to read)
@@ -91,6 +92,7 @@ FB_QUEUE	arg	fb_queue	GPU and display	k	MiniIOMobileFramebuffer.cpp
 FB_THREADS	arg	fb_threads	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FBHEIGHT	arg	fbheight	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FBSCALE	arg	fbscale	GPU and display	k	MiniIOMobileFramebuffer.cpp	the same 375 x 812 points drawn at two pixels a point instead of three
+FBSUBTYPE	arg	fbsubtype	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FBTRACE	arg	fbtrace	GPU and display	k	MiniIOMobileFramebuffer.cpp	log the first N calls of every selector (default 3)
 FBWIDTH	arg	fbwidth	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 GAMUT	arg	gamut	Loader	l	loader.c	
@@ -135,15 +137,19 @@ GPU_EXACT	arg	gpu_exact	GPU and display	k	hakios.adreno.c
 GPU_KEEP	arg	gpu_keep	GPU and display	k	hakios.gpu.cpp	
 GPU_LOG	arg	gpu_log	GPU and display	k	hakios.adreno.c	
 HAPTIC_EFFECT	arg	haptic_effect	Haptics and torch	k	hakios.haptic.c	
+M2V_UTRACE	arg	m2v_utrace	User space	u	HakiosMetalCA.m	Turnip's GPU trace of every render pass (u_trace) into a file, printed during the run
 MACHINE_NAME	arg	machine_name	CPU, memory and boot	k	GenericARMPE.cpp	
 MEMBENCH	arg	membench	CPU, memory and boot	k	hakios.cpufreq.c	
-METAL	arg	metal	GPU and display	ku	HakiosMetal.m,MiniIOMobileFramebuffer.cpp	only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
+METAL	arg	metal	GPU and display	ku	HakiosMetal.m,MiniIOMobileFramebuffer.cpp,inject_sb.c	only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
 METAL_ALL	arg	metal_all	User space	u	HakiosMetalCA.m	
+METAL_DEFER	arg	metal_defer	User space	u	HakiosMetalCA.m	this queue's command buffers recorded by a thread of hakios-metal's own (deferred recording), so that the window server's render thread does not wait
 METAL_DUMP	arg	metal_dump	User space	u	HakiosMetalCA.m	
 METAL_FPS	arg	metal_fps	User space	u	HakiosMetalCA.m	each draw of a sysmem pass timed alone, by program (only sysmem passes are: without metal_gmem=1)
 METAL_GMEM	arg	metal_gmem	User space	u	HakiosMetalCA.m	
 METAL_GMEM_DRAWS	arg	metal_gmem_draws	User space	u	HakiosMetalCA.m	GMEM for a pass whose like had at least N draws in the frame before (hakios_metal_cb_set_gmem_min_draws), sysmem for the rest; 56 when not given, 0
 METAL_GMEM_OFF	arg	metal_gmem_off	User space	u	HakiosMetalCA.m	
+METAL_LUMA_BOOST	arg	metal_luma_boost	User space	u	HakiosMetalCA.m	
+METAL_M2V	arg	metal_m2v	User space	u	HakiosMetalCA.m	
 METAL_SKIP	arg	metal_skip	User space	u	HakiosMetalCA.m	
 METAL_TRACE	arg	metal_trace	User space	u	HakiosMetalCA.m	
 METAL_WATCH	arg	metal_watch	User space	u	inject.c	
@@ -249,6 +255,7 @@ TOUCH_LAT	arg	touch_lat	GPU and display	ku	HakiosMetalCA.m,MiniIOMobileFramebuff
 TOUCH_POLL_US	arg	touch_poll_us	Touch and buttons	k	hakios.goodix.c	
 TOUCH_RATE	arg	touch_rate	Touch and buttons	k	hakios.goodix.c	the chip reports twice as often (Xiaomi's game mode; 240 otherwise)
 TOUCH_SPI_HZ	arg	touch_spi_hz	Touch and buttons	k	hakios.goodix.c	the bus at N Hz (Android's device tree gives the chip 5 MHz)
+TU_DEBUG	arg	tu_debug	User space	u	HakiosMetalCA.m	Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...)
 UFS_BENCH	arg	ufs_bench	Storage and APFS	k	hakios.ufs.c	what one request through the loader costs, by size
 UFS_CHECK	arg	ufs_check	Storage and APFS	k	hakios.ufs.c	
 UFS_NATIVE	arg	ufs_native	Storage and APFS	kl	hakios.ufs.c,loader.c	through this kernel's own driver instead, its own transfer list in the controller for the run, if all is as expected; 2: only look; 3: a dry run --
@@ -260,6 +267,7 @@ UFS_NATIVE_LEAVE	arg	ufs_native_leave	Storage and APFS	k	hakios.ufshc.c
 UFS_NATIVE_SLOTS	arg	ufs_native_slots	Storage and APFS	k	hakios.ufshc.c	
 UFS_NATIVE_SPIN	arg	ufs_native_spin	Storage and APFS	k	hakios.ufshc.c	
 UFS_PROBE	arg	ufs_probe	Loader	l	loader.c	
+UI_LITE	arg	ui_lite	User space	u	inject_sb.c	the system's own "Reduce Transparency" and "Reduce Motion" (Settings, Accessibility), for this
 USTACKS	arg	ustacks	Debugging	k	user_exception_trace.c	
 USTACKS_AT	arg	ustacks_at	Debugging	k	user_exception_trace.c	
 USTACKS_COUNT	arg	ustacks_count	Debugging	k	user_exception_trace.c	
@@ -272,6 +280,8 @@ VBLUR	arg	vblur	GPU and display	u	eagl.c
 VIRTIO_BLK	arg	virtio_blk	Storage and APFS	k	hakios.virtio_blk.c	
 VIRTIO_INPUT	arg	virtio_input	Touch and buttons	k	hakios.virtio_input.c	
 VIRTIO_SOUND	arg	virtio_sound	Audio and battery	k	hakios.virtio_sound.c	
+WALLPAPER_CACHE	arg	wallpaper_cache	User space	u	inject_sb.c	the window that shows the wallpaper rasterized by the window server (CALayer's shouldRasterize), drawn from one texture instead of composed again
+WALLPAPER_FREEZE	arg	wallpaper_freeze	User space	u	inject_sb.c	the wallpaper as one still picture
 WIFI_AGAIN	arg	wifi_again	Wi-Fi	k	hakios.wifi.c	start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two
 WIFI_ASK	arg	wifi_ask	Wi-Fi	k	hakios.wifi.c	step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer
 WIFI_BA	arg	wifi_ba	Wi-Fi	k	lx_80211.c	

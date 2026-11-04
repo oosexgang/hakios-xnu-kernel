@@ -1,0 +1,35 @@
+diff --git a/crates/metal2vulkan-runtime/src/host_memory.rs b/crates/metal2vulkan-runtime/src/host_memory.rs
+index e07a3208..f677399f 100644
+--- a/crates/metal2vulkan-runtime/src/host_memory.rs
++++ b/crates/metal2vulkan-runtime/src/host_memory.rs
+@@ -547,7 +547,20 @@ pub(super) fn host_page() -> Option<u64> {
+ }
+ 
+ /// The refusal of host memory this device cannot import exactly.
++#[track_caller]
+ pub(super) fn not_importable() -> Error {
++    // (hakios) where it was refused, once per site: the refusal itself names no reason
++    {
++        use std::sync::Mutex;
++        static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
++        let at = std::panic::Location::caller().to_string();
++        if let Ok(mut said) = SAID.lock() {
++            if !said.contains(&at) && said.len() < 32 {
++                eprintln!("metal2vulkan: host memory refused at {at} (error)");
++                said.push(at);
++            }
++        }
++    }
+     Error::Unsupported(Unsupported::not_representable(Feature::HostMemory))
+ }
+ 
+@@ -562,7 +575,9 @@ pub(super) fn refused(error: &Error) -> bool {
+ /// driver that refuses the memory is a device gap, anything else a Vulkan failure. Refusing
+ /// drivers answer `VK_ERROR_INVALID_EXTERNAL_HANDLE`, but RADV of Mesa 26.0.8 answers
+ /// `VK_ERROR_UNKNOWN` for the shared memory 26.2.4 refuses with it, so that is a refusal too.
++#[track_caller]
+ pub(super) fn import_refused(error: vk::Result) -> Error {
++    eprintln!("metal2vulkan: the driver refused an import: {error:?} (error)");
+     match error {
+         vk::Result::ERROR_INVALID_EXTERNAL_HANDLE | vk::Result::ERROR_UNKNOWN => not_importable(),
+         other => vulkan(other),

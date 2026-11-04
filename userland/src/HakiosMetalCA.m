@@ -110,6 +110,7 @@
 /* --- printing ----------------------------------------------------------------------------------------------- */
 
 static void hm_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static int hm_print_fd = -1;    /* where hm_print writes: stderr, the console, or (metal_m2v=1) a copy of stderr kept aside */
 
 /* To stderr, as one write: a launchd job's stderr is the console (userland/mkjobs.py sets StandardErrorPath) and its
  * stdout is nowhere, so the window server's lines -- the client this plug-in is for -- reached no log while they went
@@ -135,7 +136,7 @@ hm_print(const char *fmt, ...)
 	/* An application's stderr is /dev/null (a launchd job's is the log); there the line goes to the console instead, as
 	 * libhakios.sb.dylib's does in the programs it is given to, so that what this plug-in says inside Maps is read too */
 	{
-		static int fd = -1;
+		int fd = hm_print_fd;
 
 		if (fd < 0) {
 			struct stat err, null;
@@ -147,6 +148,7 @@ hm_print(const char *fmt, ...)
 				if (console >= 0) fd = console;
 			}
 		}
+		hm_print_fd = fd;
 		(void)!write(fd, line, strlen(line));
 	}
 }
@@ -552,6 +554,8 @@ static void hm_fps_waited(double seconds);   /* metal_fps: time in -waitUntilCom
 static void hm_fps_drew(double seconds, unsigned cpu);   /* metal_fps: our time in a draw call */
 static void hm_fps_core(double seconds);   /* metal_fps: the core's time in a draw call */
 static BOOL hm_fps_on(void);                          /* metal_fps: command buffers timed pass by pass */
+#define HM_CACHE_DIR  "/private/var/db/hakios-metal-cache"     /* compiled stages, kept across boots by var_store */
+#define HM_CACHE_SEED "/redwood/share/hakios-metal-cache"     /* the same, baked into the image (read-only) */
 static BOOL hm_gmem_on(void);                         /* metal_gmem=1: tiled rendering where a pass allows it */
 - (void)hakiosShadowYCbCr:(IOSurfaceRef)surface format:(MTLPixelFormat)format;
 - (void)hakiosRefreshShadow;
@@ -1593,6 +1597,47 @@ hm_bitcode_for(id function, NSString *pipeline, BOOL vertex)
 	return variant != nil ? variant : own;
 }
 
+/* The same choice for UniXNU's Metal on Vulkan (metal_m2v=1), whose functions are its own objects: by the function's name,
+ * its label and the pipeline's (native_bridge_metal_variant_hook, NativeBridgeMetalFrontend.mm: variantFunction()). */
+static const void *
+hm_m2v_variant(const char *name, const char *label, const char *pipeline, int vertex, size_t *length)
+{
+	static unsigned said;
+	NSString *chosen = nil;
+	NSData *variant = nil;
+
+	if (name == NULL || strncmp(name, "fixed_", 6) != 0) {
+		return NULL;
+	}
+	hm_ca_load();
+	NSString *flabel = label ? @(label) : nil, *plabel = pipeline ? @(pipeline) : nil;
+	if (flabel != nil && (variant = hm_ca_variants[flabel]) != nil) {
+		chosen = flabel;
+	} else if (plabel != nil && hm_ca_pipelines[plabel] != nil) {
+		NSArray *pair = hm_ca_pipelines[plabel];
+
+		chosen = vertex ? pair[0] : ([pair count] > 1 ? pair[1] : nil);
+		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
+	} else if (plabel != nil && [plabel hasPrefix:@"com.apple.coreanimation.draw."]) {
+		NSString *spec = [plabel substringFromIndex:[@"com.apple.coreanimation.draw." length]];
+		NSRange under = [spec rangeOfString:@"_"];
+		NSString *frag = under.location != NSNotFound ?
+			[@"com.apple.coreanimation.frag." stringByAppendingString:[spec substringFromIndex:NSMaxRange(under)]] : nil;
+
+		chosen = frag == nil ? nil : (vertex ? hm_ca_frag_vert[frag] : frag);
+		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
+	}
+	if (said++ < 20) {
+		hm_print("metal2vulkan: CoreAnimation's %s (label %s, pipeline %s): %s%s\n", name, label ? label : "none",
+			 pipeline ? pipeline : "none", variant ? "the variant " : "no variant", variant ? [chosen UTF8String] : "");
+	}
+	if (variant == nil) {
+		return NULL;
+	}
+	*length = [variant length];
+	return [variant bytes];         /* (the dictionary keeps it for good) */
+}
+
 static void
 hm_dump_function(const char *label, id function, const char *key, const hakios_metal_constant *constants, unsigned count)
 {
@@ -1956,6 +2001,32 @@ ca_prof_start(void)
 	});
 }
 
+/* UniXNU's Metal on Vulkan (NativeBridgeMetalFrontend.h), there when the bundle is linked with it (M2V=1) */
+extern id native_bridge_metal_open(const char *loader, const char *cache, uint64_t registryID,
+				   void (*missing)(const char *, const char *)) __attribute__((weak_import));
+extern uint64_t native_bridge_metal_first_problem(char *out, size_t size) __attribute__((weak_import));
+extern size_t native_bridge_metal_status(char *out, size_t size) __attribute__((weak_import));
+extern size_t native_bridge_metal_formats(char *out, size_t size) __attribute__((weak_import));
+extern const void *(*native_bridge_metal_variant_hook)(const char *, const char *, const char *, int, size_t *) __attribute__((weak_import));
+static const void *hm_m2v_variant(const char *name, const char *label, const char *pipeline, int vertex, size_t *length);
+
+static char hm_m2v_last_stderr[400];   /* the last line of Turnip's or the runtime's that said error, refused or warning */
+
+static void
+hm_m2v_missing(const char *class, const char *selector)
+{
+	hm_print("metal2vulkan: no -[%s %s]\n", class, selector);
+}
+
+static bool
+hm_boot_arg_set(const char *what)
+{
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+
+	return sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, what) != NULL;
+}
+
 - (instancetype)initWithAcceleratorPort:(io_service_t)port
 {
 	/* (hakios) the window server alone is shown the device: every other client of this image's Metal (SpringBoard
@@ -1975,12 +2046,181 @@ ca_prof_start(void)
 			return nil;     /* (not released: before -init, _MTLDevice's -dealloc reads what -init never set) */
 		}
 	}
+	/* (hakios) metal_m2v=1: the device is UniXNU's Metal on Vulkan instead (AdrenoMetal's frontend over metal2vulkan
+	 * over Turnip, tools/mk-m2v.sh; linked in by userland/build.sh M2V=1): its own objects, from the device down */
+	if (native_bridge_metal_open != NULL && hm_boot_arg_set("metal_m2v=1")) {
+		/* boot-arg tu_debug=FLAGS[,FLAGS]: Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...) */
+		{
+			char args[1024] = "", value[64] = "";
+			size_t size = sizeof(args) - 1;
+			const char *at;
+
+			if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "tu_debug=")) != NULL) {
+				strlcpy(value, at + 9, sizeof(value));
+				value[strcspn(value, " ")] = 0;
+				setenv("TU_DEBUG", value, 1);
+				hm_print("metal2vulkan: TU_DEBUG=%s\n", value);
+			}
+		}
+		/* Turnip's and the runtime's own messages (stderr) into this log: the first 200 lines */
+		{
+			static int pipe_fds[2];
+
+			hm_print("metal2vulkan: stderr into this log\n");    /* (hm_print_fd decided first: then kept aside from fd 2) */
+			if (hm_print_fd == 2) {
+				hm_print_fd = dup(2);
+			}
+			if (pipe(pipe_fds) == 0 && dup2(pipe_fds[1], 2) >= 0) {
+				dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+					FILE *in = fdopen(pipe_fds[0], "r");
+					char line[400];
+					int lines = 0;
+
+					while (in != NULL && fgets(line, sizeof(line), in) != NULL) {
+						/* each distinct line once (digits aside), at most 120 of them */
+						static uint32_t seen[512];
+						static int distinct;
+						uint32_t h = 2166136261u;
+						for (const char *c = line; *c; c++) {
+							if (*c < '0' || *c > '9') h = (h ^ (uint8_t)*c) * 16777619u;
+						}
+						bool fresh = true;
+						for (int i = 0; i < distinct; i++) {
+							if (seen[i] == h) { fresh = false; break; }
+						}
+						if (fresh && distinct < 512) seen[distinct++] = h;
+						if (fresh && (lines++ < 40 || ((strstr(line, "metal2vulkan:") != NULL || strstr(line, "TU: ") != NULL) && distinct < 160))) {
+							hm_print("stderr: %s", line);
+						}
+						if (strcasestr(line, "error") || strcasestr(line, "refus") || strcasestr(line, "warn")) {
+							strlcpy(hm_m2v_last_stderr, line, sizeof(hm_m2v_last_stderr));
+						}
+					}
+				});
+			}
+		}
+		/* boot-arg m2v_utrace=1: Turnip's GPU trace of every render pass (u_trace) into a file, printed during the run */
+		if (hm_boot_arg_set("m2v_utrace=1")) {
+			setenv("MESA_GPU_TRACES", "print", 1);
+			setenv("MESA_GPU_TRACEFILE", "/private/var/tmp/m2v-utrace.txt", 1);
+		}
+		if (&native_bridge_metal_variant_hook != NULL) {
+			native_bridge_metal_variant_hook = hm_m2v_variant;
+		}
+		mkdir("/private/var/db/m2v", 0700);
+		id device = native_bridge_metal_open("/redwood/lib/libvulkan_freedreno.dylib",
+		    access("/private/var/db/m2v", W_OK) == 0 ? "/private/var/db/m2v" : "/private/var/tmp/m2v", 0, hm_m2v_missing);
+		if (device != nil) {
+			hm_print("device: %s (metal2vulkan over Turnip, class %s)\n", [[device name] UTF8String],
+				 object_getClassName(device));
+			/* QuartzCore's pipeline library opened as for hakios-metal's device (this class's method, onto the
+			 * metal2vulkan device's class: it calls _MTLDevice's own, both devices' base): its pipelines then
+			 * carry the labels whose variants hm_m2v_variant() finds. Its cache wants the device's target, which
+			 * the frontend leaves to _MTLDevice (NULL): the name without spaces, as Metal names a device's. */
+			{
+				Class nb = object_getClass(device);
+				SEL open = @selector(newPipelineLibraryWithFilePath:error:);
+				Method ours = class_getInstanceMethod([self class], open);
+				static struct MTLTargetDeviceArch target;
+				static char name[64];
+
+				snprintf(name, sizeof(name), "%s", [[[device name] stringByReplacingOccurrencesOfString:@" " withString:@""] UTF8String]);
+				target.name = name;
+				if (ours != NULL) {
+					class_replaceMethod(nb, open, method_getImplementation(ours), method_getTypeEncoding(ours));
+				}
+				class_replaceMethod(nb, @selector(targetDeviceInfo),
+				    imp_implementationWithBlock(^const struct MTLTargetDeviceArch *(id me) { (void)me; return &target; }), "^v16@0:8");
+			}
+			/* what it did, every 5 s: commits, passes, draws, refusals; the textures and the surfaces imported */
+			dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+				for (;;) {
+					char status[600] = "", formats[300] = "";
+					sleep(5);
+					native_bridge_metal_status(status, sizeof(status));
+					native_bridge_metal_formats(formats, sizeof(formats));
+					hm_print("metal2vulkan: %s | %s\n", status, formats);
+					if (hm_m2v_last_stderr[0] != 0) {
+						hm_print("metal2vulkan: last stderr: %s", hm_m2v_last_stderr);
+					}
+					/* the GPU trace (m2v_utrace=1): each kind of event since the last status, counted, at the 16th to the
+					 * 34th status (the gestures), the 30 commonest */
+					{
+						static int tick;
+						static long read_to;
+						FILE *trace = fopen("/private/var/tmp/m2v-utrace.txt", "r");
+						++tick;
+						if (trace != NULL) {
+							char line[400];
+							NSCountedSet *kinds = (tick >= 16 && tick <= 34) ? [NSCountedSet set] : nil;
+							fseek(trace, read_to, SEEK_SET);
+							while (fgets(line, sizeof(line), trace) != NULL) {
+								char *at = strstr(line, ": ");
+								if (kinds == nil || at == NULL) continue;
+								at += 2;
+								at[strcspn(at, "\n")] = 0;
+								if (strncmp(at, "end_", 4) == 0) continue;
+								[kinds addObject:@(at)];
+							}
+							read_to = ftell(trace);
+							fclose(trace);
+							if ([kinds count] > 0) {
+								NSArray *sorted = [[kinds allObjects] sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+									return [@([kinds countForObject:b]) compare:@([kinds countForObject:a])];
+								}];
+								for (NSUInteger i = 0; i < [sorted count] && i < 30; i++) {
+									hm_print("utrace %d: %6lu %s\n", tick, (unsigned long)[kinds countForObject:sorted[i]],
+										 [[sorted[i] substringToIndex:MIN([sorted[i] length], 200)] UTF8String]);
+								}
+							}
+						}
+					}
+					/* the textures the runtime keeps a shadow image of, and why (its shadow.log): the first 40 */
+					{
+						static long read_to;
+						static int told;
+						FILE *log = fopen("/private/var/db/m2v/shadow.log", "r");
+						char line[600];
+
+						if (log == NULL) log = fopen("/private/var/tmp/m2v/shadow.log", "r");
+						if (log != NULL) {
+							fseek(log, read_to, SEEK_SET);
+							while (told < 40 && fgets(line, sizeof(line), log) != NULL) {
+								hm_print("metal2vulkan: shadow: %s", line);
+								told++;
+							}
+							read_to = ftell(log);
+							fclose(log);
+						}
+					}
+				}
+			});
+			return [device retain];  /* (self not released: before -init, _MTLDevice's -dealloc reads what -init never set) */
+		}
+		char problem[256] = "";
+		native_bridge_metal_first_problem(problem, sizeof(problem));
+		hm_print("no metal2vulkan device (%s): hakios-metal's instead\n", problem);
+	}
 	hm_library_stand_ins();
 	ca_prof_start();
 	/* (hakios) the window server's compiled stages kept on disk (hakios-metal: compileStage's cache), so that a
-	 * CoreAnimation shader compiled once is not compiled again by the next window server; and no listings */
-	mkdir("/var/tmp/hakios-metal-cache", 0755);
-	setenv("HAKIOS_METAL_CACHE", "/var/tmp/hakios-metal-cache", 0);
+	 * CoreAnimation shader compiled once is not compiled again by the next window server; and no listings.
+	 * In /var/db, not /var/tmp: var_store (var_store=1 ufs_write=1) keeps /private/var across boots but leaves tmp
+	 * out by design, so a cache in /var/tmp started empty at every boot and the first minute of every boot paid the
+	 * 66 to 103 compiles again. A cache in the image (HM_CACHE_SEED, read-only, put there by
+	 * tools/metal-cache-seed.sh from an earlier boot's) is looked in after it and never written. */
+	/* (the skeleton makes HM_CACHE_DIR 1777, init.c from var.skel; an image without that line, or a process that may not
+	 * write there, falls back on /var/tmp as before: a cache for this boot only is better than none) */
+	mkdir(HM_CACHE_DIR, 01777);
+	setenv("HAKIOS_METAL_CACHE", access(HM_CACHE_DIR, W_OK | X_OK) == 0 ? HM_CACHE_DIR : (mkdir("/var/tmp/hakios-metal-cache", 0755),
+												 "/var/tmp/hakios-metal-cache"), 0);
+	{
+		struct stat st;
+
+		if (stat(HM_CACHE_SEED, &st) == 0 && S_ISDIR(st.st_mode)) {
+			setenv("HAKIOS_METAL_CACHE_SEED", HM_CACHE_SEED, 0);
+		}
+	}
 	setenv("HAKIOS_METAL_LISTING", "0", 0);
 	hm_ensure_spi([self class]);
 	hm_functions_encode_from_metadata();
@@ -4630,6 +4870,18 @@ HM_REFUSES_OUT_LOUD
 		[self release];
 		return nil;
 	}
+	{
+		/* boot-arg metal_defer=1: this queue's command buffers recorded by a thread of hakios-metal's own (deferred
+		 * recording), so that the window server's render thread does not wait for each draw's encoding (some 40 us a
+		 * draw on the phone, 2 November) */
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_defer=1") != NULL) {
+			hakios_metal_queue_set_deferred(_queue, 1);
+			HM_ONCE("command buffers recorded deferred, by a thread of hakios-metal's (metal_defer=1)\n");
+		}
+	}
 	_device = [device retain];
 	HM_ONCE("a command queue takes %lu command buffers at a time (maxCommandBufferCount); each one waits on the queue's "
 		"semaphore in -[_MTLCommandBuffer initWithQueue:...], and this plug-in gives the slot back when the buffer "
@@ -5279,7 +5531,7 @@ static struct {
 	unsigned passes, draws, dispatches, copies, gmemPasses, tiles;
 	double shadowIn, shadowOut;   /* seconds in surface copies: taken from the surface, written back into it */
 	unsigned shadowIns, shadowOuts;
-	struct { unsigned kind, width, height, draws, tiles; double us; } slowest[4];   /* the slowest passes of the period */
+	struct { unsigned kind, width, height, draws, tiles; double us; char why[96]; } slowest[4];   /* the slowest passes of the period (WHY: a sysmem pass's reason) */
 	double passUs;                /* all passes timed, together */
 	char gmemWhy[160];            /* the last reason a pass stayed in sysmem */
 	struct { char name[96]; unsigned count; double us; } programs[48];   /* metal_fps=draws: GPU time by program */
@@ -5432,6 +5684,34 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 					strlcpy(hm_fps.gmemWhy, hakios_metal_cb_gmem_refusal(cb), sizeof(hm_fps.gmemWhy));
 				}
 			}
+			/* (diagnostic, metal_fps=passes) every pass of one command buffer in 200 that took the GPU 4 ms or more: what a
+			 * frame in motion is made of, pass by pass */
+			{
+				static int passesOn = -1;
+				static unsigned seen;
+				if (passesOn < 0) {
+					char args[1024] = "";
+					size_t size = sizeof(args) - 1;
+					passesOn = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_fps=passes") != NULL;
+				}
+				int n = passesOn ? hakios_metal_cb_pass_time(cb, 0, NULL, NULL, NULL, NULL, NULL) : 0;
+				double total = 0, us;
+				unsigned kind, width, height, draws;
+				for (int i = 0; i < n; i++) {
+					hakios_metal_cb_pass_time(cb, (unsigned)i, &kind, &width, &height, &draws, &us);
+					total += us;
+				}
+				if (n > 0 && total >= 4000 && seen++ % 200 == 0) {
+					hm_print("passes: %d passes, %.2f ms on the GPU\n", n, total / 1e3);
+					for (int i = 0; i < n; i++) {
+						hakios_metal_cb_pass_time(cb, (unsigned)i, &kind, &width, &height, &draws, &us);
+						unsigned attached = 0, touched = 0;
+						hakios_metal_cb_pass_attachments(cb, (unsigned)i, &attached, &touched);
+						hm_print("passes:   %2d kind %u %ux%u draws %u tiles %d attached %#x touched %#x %.3f ms\n", i, kind, width, height,
+							 draws, hakios_metal_cb_pass_tiles(cb, (unsigned)i), attached, touched, us / 1e3);
+					}
+				}
+			}
 			/* the draws of the slowest pass over 20 ms, once a period: what a heavy frame is made of */
 			/* (and with metal_fps=timeline every pass of a few draws over 8 ms, 15 of them: a few draws that cost so much
 			 * are a shader's doing, not the pass's) */
@@ -5447,9 +5727,21 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				}
 				const BOOL few = hm_timeline_on() && slowUs > 8000 && slowDraws <= 20 && fewShown < 15;
 				fewShown += few ? 1 : 0;
-				if ((slowUs > 20000 && !hm_fps.heavyShown) || few) {
+				/* (metal_fps=mainpass: the draws of a pass of 40 draws or more over 4 ms, 6 of them -- a frame in motion's
+				 * full-screen pass, which is under the 20 ms a heavy pass is shown from) */
+				static int mainOn = -1;
+				static unsigned mainShown;
+				if (mainOn < 0) {
+					char args[1024] = "";
+					size_t size = sizeof(args) - 1;
+					mainOn = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_fps=mainpass") != NULL;
+				}
+				const BOOL main = mainOn && slowUs > 4000 && slowDraws >= 40 && mainShown < 6;
+				mainShown += main ? 1 : 0;
+				if ((slowUs > 20000 && !hm_fps.heavyShown) || few || main) {
 					hm_fps.heavyShown = YES;
-					hm_print("fps: ... a heavy pass, %.1f ms; its draws:\n", slowUs / 1e3);
+					hm_print("fps: ... a heavy pass, %.1f ms%s%s; its draws:\n", slowUs / 1e3,
+						 hakios_metal_cb_pass_sysmem_why(cb, slow)[0] != 0 ? ", in sysmem: " : "", hakios_metal_cb_pass_sysmem_why(cb, slow));
 					for (unsigned i = 0;; i++) {
 						const char *name = NULL;
 						unsigned pass, area[4];
@@ -5500,9 +5792,12 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				if (all != nil) {
 					unsigned attached = 0, touched = 0;
 					hakios_metal_cb_pass_attachments(cb, i, &attached, &touched);
+					const char *sysWhy = hakios_metal_cb_pass_sysmem_why(cb, i);
+
 					[all appendFormat:@" [%u %ux%u %u draws%@ %.2f ms]", kind, width, height, draws,
 							  hakios_metal_cb_pass_tiles(cb, i) > 0 ? [NSString stringWithFormat:@" %d tiles (attachments %#x, touched %#x)",
-														      hakios_metal_cb_pass_tiles(cb, i), attached, touched] : @"",
+														      hakios_metal_cb_pass_tiles(cb, i), attached, touched] :
+							  kind == 0 && sysWhy[0] != 0 ? [NSString stringWithFormat:@" in sysmem: %s", sysWhy] : @"",
 							  us / 1e3];
 				}
 				hm_fps.passUs += us;
@@ -5514,6 +5809,7 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 						hm_fps.slowest[k].height = height;
 						hm_fps.slowest[k].draws = draws;
 						hm_fps.slowest[k].tiles = (unsigned)MAX(hakios_metal_cb_pass_tiles(cb, i), 0);
+						strlcpy(hm_fps.slowest[k].why, hakios_metal_cb_pass_sysmem_why(cb, i), sizeof(hm_fps.slowest[k].why));
 						hm_fps.slowest[k].us = us;
 						break;
 					}
@@ -5578,19 +5874,23 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 		}
 		if (hm_fps.slowest[0].us > 0) {
 			static const char *const kinds[] = {"draw", "copy", "clear", "dispatch"};
-			char line[400];
+			char line[1024];
 			size_t n = 0;
 
-			for (int k = 0; k < 4 && hm_fps.slowest[k].us > 0; k++) {
-				char tiles[24] = "";
+			for (int k = 0; k < 4 && hm_fps.slowest[k].us > 0 && n < sizeof(line) - 1; k++) {
+				char tiles[128] = "";
 
 				if (hm_fps.slowest[k].tiles != 0) {
 					snprintf(tiles, sizeof(tiles), " in %u tiles", hm_fps.slowest[k].tiles);
+				} else if (hm_fps.slowest[k].kind == 0 && hm_fps.slowest[k].why[0] != 0) {
+					/* (why it stayed in sysmem: SpringBoard's "home" pass, 1127x2438 and 33 draws, did with no reason seen) */
+					snprintf(tiles, sizeof(tiles), " in sysmem (%s)", hm_fps.slowest[k].why);
 				}
 				n += (size_t)snprintf(line + n, sizeof(line) - n, "%s %s %ux%u%s%u%s %.2f ms", k ? ";" : "",
 						      kinds[hm_fps.slowest[k].kind & 3], hm_fps.slowest[k].width, hm_fps.slowest[k].height,
 						      hm_fps.slowest[k].kind == 0 ? " draws " : " ", hm_fps.slowest[k].kind == 0 ? hm_fps.slowest[k].draws : 0,
 						      tiles, hm_fps.slowest[k].us / 1e3);
+				n = MIN(n, sizeof(line) - 1);   /* (snprintf says what it would have written: never past the line) */
 			}
 			hm_print("fps: ... passes timed by the GPU: %.0f ms in all; the slowest:%s\n", hm_fps.passUs / 1e3, line);
 		}
@@ -7790,6 +8090,32 @@ hm_dump_config(const char *program, hakios_metal_buffer *const *buffers, const u
 	}
 }
 
+/*
+ * YES for a draw of luma_boost, unless boot-arg metal_luma_boost=1. A library that has its own (an iOS 17
+ * QuartzCore's, CA_QC_METALLIB off a Mac: the colour already drawn, by framebuffer fetch, through a LUT) gets it
+ * drawn as a full-screen pass at 1.5 ms a draw, 83% of the GPU's timed passes (logs/224205-run.log,
+ * metal_fps=draws); its stand-in there, inplace_copy, stores through texture 3 as an image, which a draw cannot
+ * (logs/225648-run.log: backboardd aborted). The picture as it is -- what inplace_copy stands for -- is the draw
+ * left out.
+ */
+static BOOL
+hm_luma_boost_left_out(const char *program)
+{
+	static int keep = -1;
+
+	if (program == NULL || strstr(program, "+luma_boost_l") == NULL) {
+		return NO;
+	}
+	if (keep < 0) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		keep = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_luma_boost=1") != NULL;
+		HM_ONCE("luma_boost: %s (metal_luma_boost=1 draws it)\n", keep ? "drawn" : "left out, the picture as it is");
+	}
+	return !keep;
+}
+
 /* YES when the draw is to be left out (metal_skip); prints the kind once when tracing */
 static BOOL
 hm_trace_draw(const void *which, const char *program, const struct hakios_metal_render_pass *pass, hakios_metal_texture *const *textures, unsigned count,
@@ -7922,6 +8248,9 @@ hm_trace_draw(const void *which, const char *program, const struct hakios_metal_
 
 	hm_dump_config(hakios_metal_program_name(program), fs, _fsOffsets, _fsHighest);
 	if (hm_trace_draw([_pipeline hakiosProgram], hakios_metal_program_name([_pipeline hakiosProgram]), &_pass, fsTex, _fsHighestTexture, (unsigned)primitive, 0)) {
+		return;
+	}
+	if (hm_luma_boost_left_out(hakios_metal_program_name([_pipeline hakiosProgram]))) {
 		return;
 	}
 	if (indexBuffer != nil && ![indexBuffer isKindOfClass:[HakiosMetalBuffer class]]) {

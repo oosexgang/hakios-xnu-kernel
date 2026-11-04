@@ -20,7 +20,7 @@
 | touch | works | Goodix GT9916 / FocalTech FT3680 on SPI, multitouch (CONFIG_HAKIOS_GOODIX, touchscreen=1) |
 | buttons | works | power and volume through the PMIC (CONFIG_HAKIOS_BUTTONS) |
 | cpu | works | all 8 cores, the big core at 2.4 GHz (cpus=8 bootcpu=7 cpufreq=1) |
-| gpu | works | Adreno 642L, OpenGL ES through Mesa (gpu=1); Metal: buffers and libraries, no drawing yet |
+| gpu | works | Adreno 642L, OpenGL ES through Mesa (gpu=1); Metal: the window server draws through it (metal=1), swipes 100-104 frames a second, not 120 |
 | storage | works | UFS read through the loader; /private/var kept with var_store=1 ufs_write=1 |
 | audio | works | speakers and microphone through the audio DSP (adsp=1 sound=4 mic=4) |
 | battery | partly | the level in the UI through the audio DSP; charging under this kernel is not done |

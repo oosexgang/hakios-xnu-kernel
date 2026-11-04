@@ -1,0 +1,4 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist): UniXNU's Metal on Vulkan once round
+# (src/m2v_test.m), in an image built with TURNIP=1 M2V=1
+/redwood/bin/m2v_test
+/redwood/bin/cputop 10 &
