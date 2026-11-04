@@ -20,6 +20,13 @@ In the repository:
 - the Wi-Fi driver: Linux's ath11k (BSD-3-Clause-Clear) and FreeBSD's LinuxKPI headers (BSD-2-Clause) are
   fetched by tools/mk-ath11k.sh at pinned releases and built on our layer wifi/lx (MIT); only the layer is here.
 
+- patches to Mesa, tools/mesa/*.patch, and the libdrm stand-in tools/mesa/hakios-drm/: Mesa's and X.Org's MIT terms.
+- patches to UniXNU's AdrenoMetal, tools/m2v/adrenometal-ios16.patch: MIT, Copyright (c) 2026 NativeMetal contributors.
+- a patch to steelbrain's metal2vulkan, tools/m2v/metal2vulkan-hakios.patch: GPL-2.0-or-later OR LGPL-3.0-or-later, as the code it
+  changes, not MIT.
+- userland/src/HakiosMetalCA.m: begun from vcvkk's plug-in (github.com/vcvkk/darwin-redwood, branch hakios-workspace, at eb9fdf5),
+  with this tree's changes. That origin's license is "to verify" (THIRD_PARTY_LICENSES.md).
+
 Fetched at build time, never committed:
 
 - the Darwin userland 16.5 IPSW (Apple): the user space of the system image; the user gets it and
@@ -29,4 +36,11 @@ Fetched at build time, never committed:
 - the phone's firmware (GPU, Wi-Fi, audio DSP, modem, haptics, cameras): the vendor's, pulled from the
   user's own phone (devices/redwood/pull-firmware.sh).
 - lzfse (Apple, BSD-3-Clause), built by xnuloader/mkidentity.sh when no LZFSE decoder is installed.
-- Mesa (for GL=1 images), Procursus and Sileo packages (tools/mk-jb.sh): their own licenses.
+- Mesa (for GL=1 images; Turnip for TURNIP=1, tools/mk-turnip.sh), Procursus and Sileo packages (tools/mk-jb.sh): their own licenses.
+- hakios-metal (oosexgang, MIT), taken from beside this tree by userland/build.sh METAL_PLUGIN=ca.
+- for M2V=1, by tools/mk-m2v.sh, at pinned revisions: UniXNU's AdrenoMetal 243d63c (MIT, Copyright (c) 2026 NativeMetal contributors);
+  steelbrain's metal2vulkan 624bab3 (GPL-2.0-or-later OR LGPL-3.0-or-later) with AdrenoMetal's 30 patches; the Rust crates of its
+  Cargo.lock (MIT, Apache-2.0, ISC, Unlicense: their own licenses). None of it is in prebuilt/. A binary that statically links that
+  runtime has obligations, which are "to verify" before any distribution (THIRD_PARTY_LICENSES.md, COMPLIANCE.md).
+- QuartzCore's default.metallib for the window server's Metal (tools/ca-metallib.py): Apple's; what you supply from your own Mac or IPSW,
+  on your machine, never committed.

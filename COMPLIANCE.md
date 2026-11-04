@@ -35,8 +35,8 @@ License (`LICENSE`). Contributions are accepted under the same terms (`CONTRIBUT
 
 Each third-party component is listed in `THIRD_PARTY_LICENSES.md` with its origin, license, and
 whether it is redistributed in the tree or fetched at build time. Components fetched at build time
-(the Darwin SDK, Mesa, Procursus/Sileo, lzfse, ath11k, LinuxKPI headers) are never committed; they
-are obtained from their own upstreams under their own licenses.
+(the Darwin SDK, Mesa and its Turnip, AdrenoMetal, metal2vulkan and its Rust crates, Procursus/Sileo, lzfse, ath11k, LinuxKPI headers) are
+never committed; they are obtained from their own upstreams under their own licenses.
 
 ## Items still to verify
 
@@ -54,6 +54,16 @@ These are flagged for review and are **not** asserted to be settled:
   model the rest of the firmware already uses.
 - **Mu-Silicium / Project Mu** derived files under `devices/redwood/uefi/` carry upstream
   BSD-2-Clause-Patent and GPL-2.0-or-MIT headers; the derived parts keep those licenses.
+
+- **Metal on Vulkan (`M2V=1`).** metal2vulkan is `GPL-2.0-or-later OR LGPL-3.0-or-later`, and `userland/build.sh` links it statically into the
+  Metal plug-in and `m2v_test`. A binary so built has obligations; what they are here, and whether they can be met together with the other
+  parts of that binary, has not been settled. **No such binary is distributed**: nothing of it is in `prebuilt/`, and each user fetches and
+  builds it. Before anyone distributes one, this must be answered ([third-party licenses](THIRD_PARTY_LICENSES.md#a-binary-built-with-m2v1-to-verify)).
+- **`tools/m2v/metal2vulkan-hakios.patch`** is in the tree and changes GPL/LGPL code, so it is under those terms and not the MIT License
+  that `LICENSE` gives the rest of `tools/`. It carries no notice of its own.
+- **`userland/src/HakiosMetalCA.m`** began as vcvkk's plug-in (github.com/vcvkk/darwin-redwood). Its header names the origin; that
+  repository states no license (read 2026-11-04), so the permission to carry and change this file is not established.
+- **The Rust crates of `M2V=1`** not read from a local registry (`THIRD_PARTY_LICENSES.md`).
 
 If any of these cannot be confirmed as redistributable, the fallback is the same as for all
 device firmware: remove the file from the tree and have each user obtain it from their own

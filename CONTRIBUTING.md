@@ -13,14 +13,15 @@
   is worth more than an adjective.
 - Names: files are `hakios.<thing>.c`, identifiers `hakios_<thing>`, sysctls `kern.hakios.*`,
   devices `/dev/hakios-<thing>`.
-- Licenses: the kernel patch and files are APSL 2.0 (derived from XNU); everything else is MIT.
+- Licenses: the kernel patch and files are APSL 2.0 (derived from XNU); everything else is MIT, but for
+  a patch to third-party code, which keeps that code's license (`THIRD_PARTY_LICENSES.md`).
   Third-party code goes into `NOTICE`.
 
 ## Legal and licensing
 
 - HakiOS is an independent research project and is not affiliated with Apple. See `LEGAL.md`.
-- The kernel patch and files are APSL 2.0 (derived from XNU); everything else is MIT. Do not
-  relabel XNU-derived code as MIT. New third-party code goes into `NOTICE` and
+- The kernel patch and files are APSL 2.0 (derived from XNU); everything else is MIT, but for a
+  patch to third-party code, which keeps that code's license. Do not relabel XNU-derived code as MIT. New third-party code goes into `NOTICE` and
   `THIRD_PARTY_LICENSES.md` with its origin and license.
 - Nothing of Apple's in the tree: no Darwin files, images, caches, screenshots or headers derived
   from the firmware. Nothing of the vendor's firmware either. If you add a file whose origin or
