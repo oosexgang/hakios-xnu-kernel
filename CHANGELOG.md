@@ -13,12 +13,32 @@ changes to it; the scripts named fetch the release and put the changes on.
 - the boot: [U-Boot](https://source.denx.de/u-boot/u-boot) `v2026.07` -- `hakios-uefi/u-boot/apply.sh`, the changes in `hakios-uefi/u-boot/hakios.patch` and `files/`; the device's part in `hakios-sm7325/u-boot/`
 - the UEFI (the other way to start): [Project Silicium's Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) at `e51cd877e31c` -- `hakios-uefi/apply.sh`
 - the GPU's OpenGL ES: [Mesa](https://archive.mesa3d.org/) 25.0.7, the freedreno driver for the Adreno -- `tools/mk-mesa.sh`, the changes in `tools/mesa/`
+- the GPU's Vulkan: the same Mesa's Turnip -- `tools/mk-turnip.sh`, the changes in `tools/mesa/turnip-darwin.patch` and `tools/mesa/hakios-drm/`
+- Metal, the direct path: [hakios-metal](https://github.com/oosexgang/hakios-metal), beside this tree -- `userland/build.sh METAL_PLUGIN=ca`, with `userland/src/HakiosMetalCA.m`
+- Metal, on Vulkan: [UniXNU/AdrenoMetal](https://github.com/UniXNU/AdrenoMetal) at `243d63c` and [steelbrain/metal2vulkan](https://github.com/steelbrain/metal2vulkan) at `624bab3` with AdrenoMetal's 30 patches -- `tools/mk-m2v.sh`, the changes in `tools/m2v/`
 - the build tools: Apple's [libdispatch](https://github.com/apple-oss-distributions/libdispatch), [libpthread](https://github.com/apple-oss-distributions/libpthread) and [AvailabilityVersions](https://github.com/apple-oss-distributions/AvailabilityVersions), [bootstrap_cmds](https://github.com/markmentovai/bootstrap_cmds), [unifdef](https://github.com/fanf2/unifdef), the [macOS 13.3 SDK](https://github.com/joseluisq/macosx-sdks) and the [iPhoneOS 16.5 SDK](https://github.com/theos/sdks) -- `xnu-deps/setup.sh`
 - not fetched by anything here: the Darwin 16.5 user space, which you lay out from your own IPSW (`sysimage/`), and the phone's own firmware, pulled from its Android (`fw-*`)
 
+## 2026-11-04
+
+- metal: 120 frames a second is not reached: hakios-metal 100 to 104 in page swipes, about 90 in Settings' scroll and in opening an app, 28 at the home button with `wallpaper_cache=1`; after the finger lifts, 185 of a swipe's 205 frames take 8.3 ms, while it drags 75 to 80 a second; `docs/reference/metal-measurements.md`
+- metal: 250 touch samples a second instead of 125 change nothing (100 to 102); `touch_poll_us` stays 4000 in `tools/metal-run.sh`
+- display: (PENDING, its commit is being tuned) `fb_beam=1`, the default: each thread's rows are written behind the panel's scan line (2433 lines, 8338 us), and the moving bands are gone; `kern.hakios.fb_surface` is the IOSurface on the panel
+- docs: a short README and a front page by what you came to do; `docs/reference/metal.md` and its measurements; every boot-argument of both Metal paths in the catalogue (`tools/boot-args.py` reads `hm_boot_arg_set`)
+- licenses: Turnip, AdrenoMetal, metal2vulkan and the plug-in's origin in `THIRD_PARTY_LICENSES.md`; a binary built with `M2V=1` has obligations and is **to verify** before any distribution
+
 ## 2026-11-03
 
-- metal: luma_boost is left out when QuartzCore's library has its own (an iOS 17 one, off a Mac): it was 83% of the GPU's timed passes; `metal_luma_boost=1` draws it
+- metal: Metal on Vulkan, as UniXNU runs it: `tools/mk-turnip.sh`, `tools/mk-m2v.sh`, `userland/build.sh TURNIP=1 M2V=1`; nothing of it in `prebuilt/`, you fetch and build it
+- metal: `vk_test` passes on the phone (`RC_JOBS=rc.jobs.vktest`): Vulkan 1.3.305, a 4 MB fill checked word by word, a submission and its fence wait 2.0 ms on average
+- metal: `m2v_test` passes on the phone (`RC_JOBS=rc.jobs.m2vtest`): the device in 134 ms, a 1080 x 2400 clear checked pixel by pixel, a full-screen clear committed and waited for in 1.08 ms
+- metal: `metal_m2v=1`: the window server draws through metal2vulkan, correctly since it opens QuartzCore's pipeline library and picks CoreAnimation's shader variants by label: swipes 50 to 57, scroll 41, the GPU 14 to 21 ms a frame; `tu_debug=` and `m2v_utrace=1` say why
+- gpu: HakiosGPU's request `0x7d`: the client's own pages as a buffer; Turnip takes any page-aligned pointer through `VK_EXT_external_memory_host` (grey icons and text before)
+- gpu: Turnip has `VK_NV_linear_color_attachment` on Darwin, unused so far: the window server's pass has a second attachment that is not linear
+- springboard: `wallpaper_cache=1` rasterizes the wallpaper's window: page swipes 85-91 to 97-103, an app's close slower (22-30 against 40); `wallpaper_freeze=2` hides the wallpaper: home button 78 frames a second against 28, swipes unchanged; `wallpaper_freeze=1`'s picture comes out one colour here, and is not used
+- metal: `metal_fps=mainpass` prints the draws of a heavy pass, `metal_fps=passes` each pass's attachments
+- display: surfaces let go of when their pixels are on the panel, not when the next frame comes: no change in frame rate
+- metal: luma_boost is left out when QuartzCore's library has its own (a later system's, off a Mac): it was 83% of the GPU's timed passes; `metal_luma_boost=1` draws it
 - metal: `metal_defer=1` records the window server's command buffers on a thread of hakios-metal's own -- a draw costs its render thread ~5 us instead of ~40
 - metal: `metal_fps=passes` prints every pass of a slow frame; the full-screen pass of the home screen is 6 to 13 ms of the GPU's ~10 a frame
 - display: `fbsubtype=N` with `fbwidth`, `fbheight` and `fbscale` reports another iPhone's screen class (the XR's 828 x 1792 at 2: no red rdar status bar)
