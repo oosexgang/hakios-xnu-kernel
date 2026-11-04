@@ -5,7 +5,7 @@ measure it, and what is not known. The numbers: [Metal measurements](metal-measu
 [the plan](../metal-plan.md).
 
 **Status, POCO X5 Pro 5G, 3 and 4 November 2026.** Both paths draw the system correctly. hakios-metal is the faster: page swipes 100
-to 104 frames a second, Settings' scroll about 90. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
+to 104 frames a second, Settings' scroll 109, the home button 92. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
 reached on either.** Neither is on by default: without `metal=1` the window server draws through OpenGL ES, as it always has.
 <!-- FINAL-NUMBERS -->
 
@@ -119,25 +119,25 @@ Every argument is in [the catalogue](../boot-args.md), which is made from the so
 | `metal_fps=passes` | plug-in | also every pass of one slow command buffer in 200, with its attached and touched colour attachments |
 | `metal_fps=mainpass` | plug-in | also the draws of a pass of 40 draws or more over 4 ms (in sysmem, where draws are timed) |
 | `metal_fps=draws` | plug-in | also each draw of a sysmem pass timed alone, and the time counted by program |
-| `metal_defer=1` | plug-in | the window server's command buffers recorded on a thread of hakios-metal's own: a draw costs its render thread about 5 us instead of about 40 |
+| `metal_defer=1` | plug-in | the window server's command buffers recorded on a thread of hakios-metal's own: a draw costs its render thread about 5 us instead of about 40. `tools/metal-run.sh` sets it |
 | `metal_luma_boost=1` | plug-in | draws `luma_boost`, which is otherwise left out where the library has its own |
 | `wallpaper_cache=1` | SpringBoard | the wallpaper's window rasterized by the window server |
+| `wallpaper_freeze=1` | SpringBoard | the wallpaper as one still picture: at the home screen the window of the icons is hidden for a moment (they blink once a boot), the pixels of the IOSurface on the panel (`kern.hakios.fb_surface`) become one opaque view in the wallpaper's window, and its layers are hidden. It gives up: the wallpaper does not change until the next boot, and the lock screen shows the same picture. `tools/metal-run.sh` sets it |
 | `wallpaper_freeze=2` | SpringBoard | the wallpaper hidden: what it costs, measured |
-| `wallpaper_freeze=1` | SpringBoard | the wallpaper's window as one still picture. In this tree the picture comes out one colour and is not used. PENDING: taken from the IOSurface on the panel (`kern.hakios.fb_surface`) |
 | `ui_lite=1`, `ui_lite=0` | SpringBoard | Reduce Transparency and Reduce Motion on, off again. Without it the settings are left alone |
 | `fbwidth=`, `fbheight=`, `fbscale=`, `fbsubtype=` | framebuffer | another iPhone's screen class: `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` is the XR's |
 | `touch_poll_us=N` | touch driver | the touch screen read every N microseconds. The driver's default is 8000; `tools/metal-run.sh` sets 4000 |
 | `fb_hz=120`, `fb_threads=6`, `fb_measure=1` | framebuffer | the driver's beat at the panel's rate, six processors scaling a frame onto the panel, the panel's own rate measured once |
-| `fb_beam=1` | framebuffer | PENDING, not in this tree's kernel until that commit lands. The default: each thread's rows are written behind the panel's scan line. `fb_beam=0`: whenever the beat comes, as before. [Tearing](metal-measurements.md#tearing) |
+| `fb_beam=1` | framebuffer | the default: each thread's rows are written behind the panel's scan line. `fb_beam=0`: whenever the beat comes, as before. [Tearing](metal-measurements.md#tearing) |
 
-PENDING also: the sysctl `kern.hakios.fb_surface`, the IOSurface last put on the panel.
+And one sysctl: `kern.hakios.fb_surface`, the IOSurface last put on the panel.
 
 ## Measure
 
 ```sh
 tools/metal-run.sh                          # 180 s, hakios-metal; the summary in logs/<time>-metal.txt
 MORE="metal_m2v=1" tools/metal-run.sh       # the same on metal2vulkan
-MORE="wallpaper_cache=1" tools/metal-run.sh # any argument beside the defaults; a later one of a name wins
+MORE="wallpaper_cache=1" tools/metal-run.sh # any argument beside the defaults
 ```
 
 An image built with `RC_JOBS=rc.jobs.bench` unlocks, waits a minute for the start-up work to end, and does the same round four times:
@@ -147,8 +147,12 @@ four times in the same state of the system, and runs can be compared.
 `tools/metal-run.sh` takes the phone from Android, its bootloader or the loader, uploads the system image, runs, and writes a summary:
 `tools/frames.py`'s frames per gesture, the plug-in's `fps:` lines, what was refused, the frames on the panel, the shader cache and any
 crash. It sets `gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120
-fb_measure=1 fb_threads=6 touch_poll_us=4000`, the path of QuartzCore's library, and (unless `PERSIST=0`) `ufs=2 ufs_write=1
+fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1`, the path of QuartzCore's library, and (unless `PERSIST=0`) `ufs=2 ufs_write=1
 var_store=1`, which keeps `/private/var` in your `darwin` partition so that shader stages are compiled once.
+
+`MORE=` adds arguments at the end. The kernel's are its own to resolve, but the plug-in's and SpringBoard's are found with `strstr`, which
+takes the first of a name: `MORE` cannot turn off the script's `wallpaper_freeze=1` or `metal_defer=1`, and to run without them, change
+`ARGS` in the script.
 
 `tools/frames.py RUN.log [MORE.log ...]` on its own reads the `tl:` lines of `touch_lat=1`. For each gesture it gives the frames a
 second while frames came, the share of frame steps over 16.7 ms, 33 ms and 8.3 ms, and where a slow frame's time went. A window server
@@ -159,11 +163,13 @@ meaning unknown.
 
 - **Under 120.** While a finger drags, the window server waits 8 to 14 ms on GPU fences and frames come at 75 to 80 a second; after
   the finger lifts, 185 of 205 frames of a swipe take 8.3 ms. The cause of the wait is not established.
-- **The home button** takes 28 frames a second with `wallpaper_cache=1` and 78 with the wallpaper hidden. The wallpaper is many
-  full-screen layers from another process, and rasterizing its window does not stop them being composed again.
+- **The wallpaper is frozen to get the home button's rate.** 92 frames a second with `wallpaper_freeze=1`, 50 without it or
+  `wallpaper_cache=1`, 28 with `wallpaper_cache=1`. It is many full-screen layers from another process, and rasterizing its window does
+  not stop them being composed again. A wallpaper that moves or changes costs that, and it is not solved.
 - **metal2vulkan renders each frame to a tiled image and merges it back with a compute pass.** The linear attachment path stays unused
   because a second, non-linear attachment is in the pass, and the extension wants every colour attachment linear.
-- **Tearing.** The panel reads the one buffer the driver writes. `fb_beam` is the answer being tuned; it is not in this tree yet.
+- **Tearing.** The panel reads the one buffer the driver writes. `fb_beam` writes behind the scan; 2 to 16 frames in 5 s still miss
+  their scan, and whether the panel tears less is so far for the eye: [Tearing](metal-measurements.md#tearing).
 - **Not the same stack as UniXNU's.** Theirs runs on the Adreno 740 with its own kernel driver, [Adreno740](https://github.com/UniXNU/UniXNU/blob/main/docs/drivers/adreno740.md),
   and a newer system. Only the part above that driver was taken. What is measured here says nothing about theirs.
 - **hakios-metal is not pinned.** `userland/build.sh` takes whatever is beside the tree; `metal_defer=1` needs its

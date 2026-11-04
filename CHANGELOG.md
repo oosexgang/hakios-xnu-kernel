@@ -21,9 +21,11 @@ changes to it; the scripts named fetch the release and put the changes on.
 
 ## 2026-11-04
 
-- metal: 120 frames a second is not reached: hakios-metal 100 to 104 in page swipes, about 90 in Settings' scroll and in opening an app, 28 at the home button with `wallpaper_cache=1`; after the finger lifts, 185 of a swipe's 205 frames take 8.3 ms, while it drags 75 to 80 a second; `docs/reference/metal-measurements.md`
+- metal: 120 frames a second is not reached: hakios-metal 101 in page swipes, 109 in Settings' scroll, 92 at the home button, 4% of frames over 16.7 ms; after the finger lifts, 185 of a swipe's 205 frames take 8.3 ms, while it drags 75 to 80 a second; `docs/reference/metal-measurements.md`
+- springboard: `wallpaper_freeze=1` makes the wallpaper one picture, from the IOSurface on the panel (`kern.hakios.fb_surface`): home button 92 frames a second, against 28 with `wallpaper_cache=1` and 50 without either; the icons blink once, the wallpaper does not change until the next boot, and the lock screen shows the same picture
+- windows: `tools/metal-run.sh` sets `wallpaper_freeze=1` and `metal_defer=1`; `MORE` cannot turn them off
 - metal: 250 touch samples a second instead of 125 change nothing (100 to 102); `touch_poll_us` stays 4000 in `tools/metal-run.sh`
-- display: (PENDING, its commit is being tuned) `fb_beam=1`, the default: each thread's rows are written behind the panel's scan line (2433 lines, 8338 us), and the moving bands are gone; `kern.hakios.fb_surface` is the IOSurface on the panel
+- display: `fb_beam=1`, the default: each thread's rows are written behind the panel's scan line (2433 lines, 8338 us), and to the eye the moving bands are gone; it costs no frames (Settings' scroll 109 against 89, home button 92 against 81, swipes 101 against 99)
 - docs: a short README and a front page by what you came to do; `docs/reference/metal.md` and its measurements; every boot-argument of both Metal paths in the catalogue (`tools/boot-args.py` reads `hm_boot_arg_set`)
 - licenses: Turnip, AdrenoMetal, metal2vulkan and the plug-in's origin in `THIRD_PARTY_LICENSES.md`; a binary built with `M2V=1` has obligations and is **to verify** before any distribution
 

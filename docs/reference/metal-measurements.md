@@ -12,23 +12,25 @@ been reached**: not on hakios-metal, not on metal2vulkan, and not on OpenGL ES.
 | User space | the Darwin 16.5 user space, laid out from your own IPSW |
 | Panel | 1080 x 2400 at 120 Hz |
 | Rendered | 1125 x 2436, scaled onto the panel by the driver |
-| The run | `tools/metal-run.sh`: eight cores, `fb_hz=120 fb_threads=6 touch_poll_us=4000`, the round of `rc.jobs.bench` four times |
+| The run | `tools/metal-run.sh`: eight cores, `fb_hz=120 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1`, the round of `rc.jobs.bench` four times |
 
 ## The results
 
-Frames a second, 3 and 4 November 2026.
+Frames a second, 3 and 4 November 2026. hakios-metal as the last run of 4 November had it: `wallpaper_freeze=1 metal_defer=1 fb_beam=1`.
+metal2vulkan as measured on 3 November, before those.
 
 <!-- FINAL-NUMBERS -->
 
 | Motion | hakios-metal | metal2vulkan |
 |---|---|---|
-| Page swipe | 100 to 104 | 50 to 57 |
-| Settings' scroll | about 90 | 41 |
+| Page swipe | 101 (100 to 104 over the runs) | 50 to 57 |
+| Settings' scroll | 109 | 41 |
 | Opening an app | about 90 | not recorded |
-| Home button | 28 with `wallpaper_cache=1`; 78 with the wallpaper hidden | 41 to 57 |
-| GPU time a frame | about 10 ms at the home screen | 14 to 21 ms |
+| Home button | 92 | 41 to 57 |
+| Frames over 16.7 ms | 4% | not recorded |
+| GPU time a frame | about 10 ms at the home screen, 3 November | 14 to 21 ms |
 
-Both draw the system correctly.
+Both draw the system correctly. Not one of these is 120.
 
 **hakios-metal, inside a swipe.** Once the finger has lifted, 185 of the animation's 205 frames take 8.3 ms, one refresh of the panel.
 While the finger drags, frames come at 75 to 80 a second, and the window server waits 8 to 14 ms on GPU fences. The 100 to 104 in the
@@ -47,14 +49,16 @@ off and no texture was shadowed.
 | Surfaces let go of as soon as their pixels are on the panel, not when the next frame comes | in `MiniIOMobileFramebuffer` | unchanged |
 | The iPhone XR's screen class, 1.85 times fewer pixels | `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` | idle GPU time 2.2 ms, not 6.8; gestures not faster; the wallpaper black |
 | The iPhone 12 mini's screen class | `fbwidth=`, `fbheight=`, `fbscale=`, `fbsubtype=` | 103 to 107, with the red rdar://45025538 status bar |
-| The wallpaper hidden, for swipes | `wallpaper_freeze=2` | 101 to 103, as with it: the wallpaper is not what holds swipes under 120. It is what holds the home button |
+| The wallpaper hidden, for swipes | `wallpaper_freeze=2` | 101 to 103, as with it: the wallpaper is not what holds swipes under 120. It is what held the home button: 78 hidden, against 28 with `wallpaper_cache=1` |
+| The wallpaper's picture through `-drawViewHierarchyInRect:` | `wallpaper_freeze=1`, first version | one colour; with all of SpringBoard's windows hidden the screen itself was black. It now reads the IOSurface on the panel |
 
 ## What did help
 
-On hakios-metal, each as the commit that made the change measured it, in the order they were found.
+On hakios-metal, each as the commit that made the change measured it, newest first.
 
 | Change | Before | After |
 |---|---|---|
+| `wallpaper_freeze=1 metal_defer=1` | home button 50 (28 with `wallpaper_cache=1`); Settings' scroll 90; frames over 16.7 ms 9% | home button 92; scroll 109; 4%; swipes 101 |
 | Eight cores, not one, for the first boot | first frame at 159 s | 86 s |
 | `fb_threads=6`, not 3 | Settings' scroll 75 | 84 |
 | `wallpaper_cache=1` | swipes 85 to 91; an app's close 40 | swipes 97 to 103; an app's close 22 to 30, slower: the poster changes under its zoom |
@@ -85,16 +89,20 @@ The panel reads the very buffer the driver writes. It takes the scan 8.3 ms to r
 written across the line being read came out torn: a piece of the last frame and a piece of this one, moving bands with doubled icons and
 text wherever something moved. Seen on the phone.
 
-PENDING: `fb_beam`, the default once its commit lands, writes each thread's rows behind the scan line, read from the interface's own
-`INTF_LINE_COUNT`, so that the next scan reads all of the new frame. The scan measured 2433 lines, 8338 us. The bands were gone. If the
-counter does not count as a line counter should, frames stay on their beat, and the log says so.
+`fb_beam=1`, the default, writes each thread's rows behind the scan line, read from the interface's own `INTF_LINE_COUNT`, so that the next
+scan reads all of the new frame. The scan measured 2433 lines, 8338 us. It is looked at a minute after the driver starts; if the counter
+does not count as a line counter should, frames stay on their beat, and the log says so. 2 to 16 frames in 5 s miss their scan.
 
-The frame rates with `fb_beam` are still being tuned, and the table at the top is without it.
+The bands were gone to the eye. That is the only evidence: `xl screenshot` cannot tell, because it sends live memory in pieces of 1 MiB, and
+the bands in its pictures are 243 rows apart.
+
+It costs no frames. The same run otherwise, 4 November:
 
 <!-- FINAL-NUMBERS -->
 
-| With `fb_beam` | hakios-metal |
-|---|---|
-| Page swipe | being tuned |
-| Settings' scroll | being tuned |
-| Home button | being tuned |
+| | `fb_beam=1` | `fb_beam=0` |
+|---|---|---|
+| Page swipe | 101 | 99 |
+| Settings' scroll | 109 | 89 |
+| Home button | 92 | 81 |
+| Frames over 16.7 ms | 4% | 6% |

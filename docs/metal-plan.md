@@ -1,7 +1,7 @@
 # Metal on the Adreno: the plan, and where it stands
 
 **Where it stands, 4 November 2026.** The window server draws through Metal on the phone, on two paths, and the plan below is done as far
-as that: hakios-metal at 100 to 104 frames a second in page swipes, UniXNU's Metal on Vulkan at 50 to 57, on a 120 Hz panel. 120 has not
+as that: hakios-metal at 100 to 104 frames a second in page swipes (109 in Settings' scroll), UniXNU's Metal on Vulkan at 50 to 57, on a 120 Hz panel. 120 has not
 been reached. What to read now: [Metal on the Adreno](reference/metal.md) and [the measurements](reference/metal-measurements.md).
 Everything below the next section is the record of how it went, with the dates, and says what was known then. <!-- FINAL-NUMBERS -->
 

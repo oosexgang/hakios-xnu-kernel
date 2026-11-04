@@ -2,7 +2,7 @@
 # HakiOS common defconfig: every setting there is, with what it does.
 # Made by tools/hakios-config.py listing common -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol.
 #
-# 370 symbols in 18 groups; 34 are set, 25 of them drivers built in.
+# 371 symbols in 18 groups; 34 are set, 25 of them drivers built in.
 #
 
 #
@@ -335,7 +335,7 @@ CONFIG_TOUCHSCREEN=y
 # CONFIG_VIRTIO_INPUT is not set
 
 #
-# GPU and display (75)
+# GPU and display (76)
 #
 
 # rendering on Adreno (an image built with GL=1; the GPU's firmware from your phone) [needs fw-gpu/ from the phone]
@@ -379,6 +379,9 @@ CONFIG_GPU=y
 
 # before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are ...
 # CONFIG_DISPLAY_PROBE is not set
+
+# frames written to the panel's memory whenever their beat comes, as before
+# CONFIG_FB_BEAM is not set
 
 # read by MiniIOMobileFramebuffer.cpp (kernel)
 # CONFIG_FB_BEAT is not set

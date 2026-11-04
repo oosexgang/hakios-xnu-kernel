@@ -6,7 +6,7 @@
 
 **文档：** [docs/](docs/index.md)（英文），以及网站 [hackios-web.vercel.app](https://hackios-web.vercel.app)。
 
-**动态，2026 年 11 月 4 日：** 在 POCO X5 Pro 5G 上，窗口服务器通过 Metal 在 Adreno 642L 上绘制，有两条路径。hakios-metal：翻页每秒 100 至 104 帧，Settings 滚动约 90 帧。UniXNU 的 Metal on Vulkan：翻页 50 至 57 帧，滚动 41 帧。屏幕是 120 Hz，**尚未达到每秒 120 帧**。[Adreno 上的 Metal](docs/reference/metal.md)，[测量结果](docs/reference/metal-measurements.md)。<!-- FINAL-NUMBERS -->
+**动态，2026 年 11 月 4 日：** 在 POCO X5 Pro 5G 上，窗口服务器通过 Metal 在 Adreno 642L 上绘制，有两条路径。hakios-metal：翻页每秒 100 至 104 帧，Settings 滚动 109 帧，主屏幕按钮 92 帧。UniXNU 的 Metal on Vulkan：翻页 50 至 57 帧，滚动 41 帧。屏幕是 120 Hz，**尚未达到每秒 120 帧**。[Adreno 上的 Metal](docs/reference/metal.md)，[测量结果](docs/reference/metal-measurements.md)。<!-- FINAL-NUMBERS -->
 
 从 [Getting started](docs/getting-started/index.md)、[On the phone](docs/getting-started/phone.md) 或 [Port a device](docs/porting/index.md) 开始。各部分的工作情况：[文档首页](docs/index.md#what-works)。
 

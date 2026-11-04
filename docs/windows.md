@@ -85,7 +85,7 @@ cp userland/root.apfs userland/system.apfs /mnt/d/.../hakios/userland/
 # Git Bash, in the Windows checkout (the phone in Android is fine: the script takes it into the loader):
 tools/metal-run.sh                       # 180 s; the summary in logs/<time>-metal.txt
 MORE="metal_gmem=1" tools/metal-run.sh   # with tiled rendering (each pass left in sysmem says why)
-MORE="wallpaper_cache=1" tools/metal-run.sh   # any boot-argument beside the defaults; a later one of a name wins
+MORE="wallpaper_cache=1" tools/metal-run.sh   # any boot-argument beside the defaults
 SHOTS=20 tools/metal-run.sh              # and a screenshot every 20 s, logs/<time>-shots/
 ```
 
