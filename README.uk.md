@@ -12,7 +12,7 @@
 **Новини, 4 листопада 2026:** на POCO X5 Pro 5G віконний сервер малює через Metal на Adreno 642L, двома шляхами. hakios-metal: гортання
 сторінок 100–104 кадри на секунду, прокручування в Settings 109, кнопка «додому» 92. Metal поверх Vulkan від UniXNU: гортання 50–57, прокручування 41.
 Панель працює на 120 Гц, і **120 кадрів на секунду не досягнуто**. [Metal на Adreno](docs/reference/metal.md),
-[вимірювання](docs/reference/metal-measurements.md). <!-- FINAL-NUMBERS -->
+[вимірювання](docs/reference/metal-measurements.md).
 
 Почніть із [Getting started](docs/getting-started/index.md), [On the phone](docs/getting-started/phone.md) або
 [Port a device](docs/porting/index.md). Що працює, по частинах: [головна сторінка документації](docs/index.md#what-works).

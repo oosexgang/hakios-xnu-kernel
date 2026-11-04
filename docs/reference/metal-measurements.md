@@ -19,7 +19,7 @@ been reached**: not on hakios-metal, not on metal2vulkan, and not on OpenGL ES.
 Frames a second, 3 and 4 November 2026. hakios-metal as the last run of 4 November had it: `wallpaper_freeze=1 metal_defer=1 fb_beam=1`.
 metal2vulkan as measured on 3 November, before those.
 
-<!-- FINAL-NUMBERS -->
+
 
 | Motion | hakios-metal | metal2vulkan |
 |---|---|---|
@@ -98,7 +98,7 @@ the bands in its pictures are 243 rows apart.
 
 It costs no frames. The same run otherwise, 4 November:
 
-<!-- FINAL-NUMBERS -->
+
 
 | | `fb_beam=1` | `fb_beam=0` |
 |---|---|---|

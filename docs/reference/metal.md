@@ -7,7 +7,7 @@ measure it, and what is not known. The numbers: [Metal measurements](metal-measu
 **Status, POCO X5 Pro 5G, 3 and 4 November 2026.** Both paths draw the system correctly. hakios-metal is the faster: page swipes 100
 to 104 frames a second, Settings' scroll 109, the home button 92. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
 reached on either.** Neither is on by default: without `metal=1` the window server draws through OpenGL ES, as it always has.
-<!-- FINAL-NUMBERS -->
+
 
 ## The two paths
 
@@ -150,9 +150,7 @@ crash. It sets `gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 gpu_recover=
 fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1`, the path of QuartzCore's library, and (unless `PERSIST=0`) `ufs=2 ufs_write=1
 var_store=1`, which keeps `/private/var` in your `darwin` partition so that shader stages are compiled once.
 
-`MORE=` adds arguments at the end. The kernel's are its own to resolve, but the plug-in's and SpringBoard's are found with `strstr`, which
-takes the first of a name: `MORE` cannot turn off the script's `wallpaper_freeze=1` or `metal_defer=1`, and to run without them, change
-`ARGS` in the script.
+`MORE=` adds arguments at the end, and a default of the same name goes: `MORE="wallpaper_freeze=0 metal_defer=0"` runs without those two.
 
 `tools/frames.py RUN.log [MORE.log ...]` on its own reads the `tl:` lines of `touch_lat=1`. For each gesture it gives the frames a
 second while frames came, the share of frame steps over 16.7 ms, 33 ms and 8.3 ms, and where a slow frame's time went. A window server

@@ -6,7 +6,7 @@ phone's.
 
 **Where it stands.** The POCO X5 Pro 5G runs the Darwin 16.5 user space you lay out yourself, and its window server draws through Metal
 on the Adreno 642L, at 100 to 104 frames a second in page swipes on a 120 Hz panel. 120 has not been reached: [the measurements](reference/metal-measurements.md).
-<!-- FINAL-NUMBERS -->
+
 
 ## Guide: run it
 

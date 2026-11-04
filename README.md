@@ -12,7 +12,7 @@ Android.
 **News, 4 November 2026:** on the POCO X5 Pro 5G the window server draws through Metal on the Adreno 642L, two ways. hakios-metal: page
 swipes 100 to 104 frames a second, Settings' scroll 109, the home button 92. UniXNU's Metal on Vulkan: swipes 50 to 57, scroll 41. The panel is 120 Hz,
 and **120 frames a second has not been reached**. [Metal on the Adreno](docs/reference/metal.md),
-[the measurements](docs/reference/metal-measurements.md). <!-- FINAL-NUMBERS -->
+[the measurements](docs/reference/metal-measurements.md).
 
 Start with [Getting started](docs/getting-started/index.md), [On the phone](docs/getting-started/phone.md) or
 [Port a device](docs/porting/index.md). What works, part by part: [the documentation's front page](docs/index.md#what-works).
