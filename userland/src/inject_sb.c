@@ -1111,6 +1111,77 @@ wallpaper_freeze(void)
 	});
 }
 
+/*
+ * The status bar's legibility gradient at the top of the home screen (SBFStatusBarLegibilityView: a CAGradientLayer 100
+ * points high, compositing filter darkenSourceOver) comes out solid white through Metal, on hakios-metal and metal2vulkan
+ * alike: a white band over the top eighth of the wallpaper, the status bar's white text unreadable on it (seen on the
+ * phone, 4 November; the layers said by com.hakios.layers). Why that filter's shader gives white has not been found out.
+ * Without the filter the gradient is drawn as any other, source over, which is near enough what it is for and asks the
+ * GPU for no read of what lies under it.
+ */
+static IMP legibility_layout_original;
+
+static void
+legibility_plain(id view)
+{
+	id sublayers = SEND(id, SEND(id, view, "layer"), "sublayers");
+	unsigned long count = sublayers != NULL ? SEND(unsigned long, sublayers, "count") : 0;
+
+	for (unsigned long i = 0; i < count; i++) {
+		id layer = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), i);
+
+		if (SEND(id, layer, "compositingFilter") != NULL) {
+			((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setCompositingFilter:"), NULL);
+			say("hakios: SpringBoard: the status bar's legibility gradient: its compositing filter taken off\n");
+		}
+	}
+}
+
+static void
+legibility_layout(id self, SEL selector)
+{
+	((void (*)(id, SEL))legibility_layout_original)(self, selector);
+	legibility_plain(self);
+}
+
+/* the views there are already: they are laid out again only when something asks */
+static void
+legibility_find(id view, int depth)
+{
+	id subviews = SEND(id, view, "subviews");
+	unsigned long count = subviews != NULL ? SEND(unsigned long, subviews, "count") : 0;
+
+	if (strcmp(object_getClassName(view), "SBFStatusBarLegibilityView") == 0) {
+		legibility_plain(view);
+	}
+	for (unsigned long i = 0; depth < 6 && i < count; i++) {
+		legibility_find(((id (*)(id, SEL, unsigned long))objc_msgSend)(subviews, sel_registerName("objectAtIndex:"), i), depth + 1);
+	}
+}
+
+static void
+legibility_gradient(void)
+{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		Class view = objc_getClass("SBFStatusBarLegibilityView");
+		SEL layout = sel_registerName("layoutSubviews");
+		id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+		id windows = app != NULL ? SEND(id, app, "windows") : NULL;
+		unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
+
+		if (view == NULL) {
+			return;
+		}
+		if (legibility_layout_original == NULL) {
+			legibility_layout_original = class_getMethodImplementation(view, layout);
+			class_replaceMethod(view, layout, (IMP)legibility_layout, "v@:");
+		}
+		for (unsigned long i = 0; i < count; i++) {
+			legibility_find(((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i), 0);
+		}
+	});
+}
+
 static void
 wallpaper_cache(void)
 {
@@ -1858,6 +1929,7 @@ hakios_springboard_init(void)
 	ui_lite();
 	wallpaper_cache();
 	wallpaper_freeze();
+	legibility_gradient();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",

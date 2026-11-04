@@ -24,7 +24,7 @@ metal2vulkan as measured on 3 November, before those.
 | Motion | hakios-metal | metal2vulkan |
 |---|---|---|
 | Page swipe | 101 (100 to 104 over the runs) | 50 to 57 |
-| Settings' scroll | 109 | 41 |
+| Settings' scroll | 89 to 91 (109 in one run of six, not repeated) | 41 |
 | Opening an app | about 90 | not recorded |
 | Home button | 92 | 41 to 57 |
 | Frames over 16.7 ms | 4% | not recorded |
@@ -58,7 +58,7 @@ On hakios-metal, each as the commit that made the change measured it, newest fir
 
 | Change | Before | After |
 |---|---|---|
-| `wallpaper_freeze=1 metal_defer=1` | home button 50 (28 with `wallpaper_cache=1`); Settings' scroll 90; frames over 16.7 ms 9% | home button 92; scroll 109; 4%; swipes 101 |
+| `wallpaper_freeze=1 metal_defer=1` | home button 50 (28 with `wallpaper_cache=1`); Settings' scroll 90; frames over 16.7 ms 9% | home button 89 to 92; scroll 91 (109 once); 4 to 6%; swipes 101 to 103 |
 | Eight cores, not one, for the first boot | first frame at 159 s | 86 s |
 | `fb_threads=6`, not 3 | Settings' scroll 75 | 84 |
 | `wallpaper_cache=1` | swipes 85 to 91; an app's close 40 | swipes 97 to 103; an app's close 22 to 30, slower: the poster changes under its zoom |
@@ -103,6 +103,6 @@ It costs no frames. The same run otherwise, 4 November:
 | | `fb_beam=1` | `fb_beam=0` |
 |---|---|---|
 | Page swipe | 101 | 99 |
-| Settings' scroll | 109 | 89 |
+| Settings' scroll | 91 | 89 |
 | Home button | 92 | 81 |
 | Frames over 16.7 ms | 4% | 6% |
