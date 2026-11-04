@@ -362,6 +362,9 @@ public:
 	uint64_t        fBeamScan;              /* ... when the scan that shows the frame being written begins */
 	uint64_t        fBeamShare;             /* ... how long a thread's share of the rows takes to write */
 	uint32_t        fStatScans, fStatScansMissed;   /* ... frames in time for the next scan, and those that were not */
+	/* ... for each thread's share of the rows: how many, their time, begun after the scan reached them or not done before it left them, and done after it reached them */
+	uint64_t        fStatShareTime[8];
+	uint32_t        fStatShares[8], fStatShareTorn[8], fStatShareClose[8];
 	uint64_t        fReady;                 /* when the last frame was ready to be shown */
 	uint32_t        fStatOnBeat;            /* frames that waited for a refresh, and for how long together */
 	uint32_t        fStatSettled;           /* frames drawn again, filtered, once they stood still (fb_filter=2) */
@@ -412,6 +415,7 @@ public:
 	void beamProbe(void);
 	uint64_t beamNextScan(uint64_t now);
 	void beamWait(const struct RowJob * job, int32_t lastRow);
+	void beamShareDone(const struct RowJob * job, unsigned share, int32_t firstRow, int32_t lastRow, uint64_t began);
 	/* the scaling shared out (fb_threads): fThreads drawers, the presenter and fThreads - 1 helpers */
 	unsigned        fThreads;
 	IOLock *        fHelperLock;
@@ -895,7 +899,12 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
 		y1 = job->ry0 + (int32_t) ((int64_t) rows * (index + 2) / fb->fThreads);
 		blend = fb->fHelperBlend[index];
 		fb->beamWait(job, y1);
-		fb->drawRows(job, y0, y1, blend);
+		{
+			uint64_t began = mach_absolute_time();
+
+			fb->drawRows(job, y0, y1, blend);
+			fb->beamShareDone(job, index + 1, y0, y1, began);
+		}
 		IOLockLock(fb->fHelperLock);
 		fb->fHelpersBusy--;
 		if (fb->fHelpersBusy == 0) {
@@ -1001,6 +1010,27 @@ IOMobileFramebuffer::beamWait(const struct RowJob * job, int32_t lastRow)
 
 		if (mach_absolute_time() < passed) {
 			clock_delay_until(passed);
+		}
+	}
+}
+
+/* fb_beam: what a share of the rows did against the scan it is for (a frame torn at the share's edge is seen here, not in a screenshot). */
+void
+IOMobileFramebuffer::beamShareDone(const struct RowJob * job, unsigned share, int32_t firstRow, int32_t lastRow, uint64_t began)
+{
+	uint64_t now = mach_absolute_time();
+
+	__atomic_fetch_add(&fStatShareTime[share], now - began, __ATOMIC_RELAXED);
+	__atomic_fetch_add(&fStatShares[share], 1, __ATOMIC_RELAXED);
+	if (job->scan != 0) {
+		uint64_t blank = fBeamLines - fPanelHeight;
+		uint64_t top = job->scan + fBeamPeriod * ((uint64_t) firstRow + blank) / fBeamLines;
+		uint64_t bottom = job->scan + fBeamPeriod * ((uint64_t) lastRow + blank) / fBeamLines;
+
+		if (began > top || now > bottom) {
+			__atomic_fetch_add(&fStatShareTorn[share], 1, __ATOMIC_RELAXED);
+		} else if (now > top) {
+			__atomic_fetch_add(&fStatShareClose[share], 1, __ATOMIC_RELAXED);
 		}
 	}
 }
@@ -1141,6 +1171,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 		beamWait(&job, last);
 		wrote = mach_absolute_time();
 		drawRows(&job, job.ry0, last, fBlendRow);
+		beamShareDone(&job, 0, job.ry0, last, wrote);
 		wrote = mach_absolute_time() - wrote;
 		/* (on the average, lately: one preempted now and then is no reason to give up a scan every time) */
 		fBeamShare += (int64_t) (wrote - fBeamShare) / 8;
@@ -1486,6 +1517,21 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		    waiting / fStatFrames / NSEC_PER_USEC, fStatOnBeat, fStatOnBeat ? beat / fStatOnBeat / NSEC_PER_USEC : 0,
 		    fStatHeld, fStatLost, fStatSwapsLate, fStatSettled, fStatScansMissed, fStatScans);
 		fStatScans = fStatScansMissed = 0;
+		if (fBeamIntf != 0) {
+			char shares[8 * 24] = "";
+			size_t at = 0;
+
+			for (unsigned share = 0; share < fThreads && share < 8; share++) {
+				uint64_t took;
+
+				absolutetime_to_nanoseconds(fStatShareTime[share], &took);
+				at += (size_t) snprintf(shares + at, sizeof(shares) - at, " %llu/%u/%u", fStatShares[share] != 0 ? took / fStatShares[share] / NSEC_PER_USEC : 0,
+				    fStatShareTorn[share], fStatShareClose[share]);
+				fStatShareTime[share] = 0;
+				fStatShares[share] = fStatShareTorn[share] = fStatShareClose[share] = 0;
+			}
+			IOLog("MiniIOMobileFramebuffer: shares of the rows, us each/torn/close:%s\n", shares);
+		}
 		fStatSwapsLate = 0;
 		for (different = 0; different < 8 && fStatSurfaces[different] != 0; different++) {
 		}

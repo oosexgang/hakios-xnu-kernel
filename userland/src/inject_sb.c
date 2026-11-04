@@ -36,7 +36,10 @@
 #include <IOSurface/IOSurfaceRef.h>
 #include <time.h>
 #include <IOKit/IOKitLib.h>
+#include <Block.h>
 #include <dispatch/dispatch.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <mach/mach_time.h>
@@ -1124,6 +1127,21 @@ wallpaper_freeze_pass(unsigned attempt)
 	if (window != NULL && objc_getAssociatedObject(window, wallpaper_frozen_key) != NULL) {
 		return;
 	}
+	if (window != NULL && !wallpaper_hide_only) {
+		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+
+		if (bounds.width != 375 || bounds.height != 812 || scale != 3.0) {
+			id image = wallpaper_kept_picture(bounds.width, bounds.height, scale);
+
+			if (image != NULL) {
+				wallpaper_put(window, image);
+				return;
+			}
+			say("hakios: SpringBoard: wallpaper_freeze: no picture kept for this screen (%gx%g at %g): a boot at the iPhone X's screen first\n",
+			    bounds.width, bounds.height, scale);
+			return;
+		}
+	}
 	if (window == NULL || !wallpaper_home_showing()) {
 		if (attempt < 720) {
 			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -1140,7 +1158,7 @@ wallpaper_freeze_pass(unsigned attempt)
 	{
 		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
 
-		if (bounds.width != 375 || bounds.height != 812) {
+		if (bounds.width != 375 || bounds.height != 812 || scale != 3.0) {
 			id image = wallpaper_kept_picture(bounds.width, bounds.height, scale);
 
 			if (image != NULL) {
@@ -1187,6 +1205,20 @@ wallpaper_freeze_pass(unsigned attempt)
 }
 
 static void
+wallpaper_freeze_say(unsigned times)
+{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		id window = wallpaper_window();
+
+		say("hakios: SpringBoard: wallpaper_freeze: the wallpaper's window %s is %s\n", window != NULL ? object_getClassName(window) : "(none)",
+		    window != NULL && objc_getAssociatedObject(window, wallpaper_frozen_key) != NULL ? "one picture" : "not frozen");
+		if (times > 1) {
+			wallpaper_freeze_say(times - 1);
+		}
+	});
+}
+
+static void
 wallpaper_freeze(void)
 {
 	char arguments[1024] = "";
@@ -1202,6 +1234,90 @@ wallpaper_freeze(void)
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
 		wallpaper_freeze_pass(0);
 	});
+	/* (said again and again: the log of a long run keeps its beginning and its end) */
+	wallpaper_freeze_say(15);
+}
+
+/*
+ * The iPhone X's 375 x 812 points at 2 pixels a point (fbscale=2: the layout as it is at 3, with fewer pixels to draw):
+ * UIKit has no status bar for that and shows its fallback, a red bar reading rdar://45025538; nor for this panel's own
+ * 360 x 800 points at 3 (fbwidth=1080 fbheight=2400, a pixel of the picture for a pixel of the panel). The status bar of the
+ * iPhone of about that width does for it, it goes by points: the fallback class answers its class methods as that
+ * iPhone's does, and what is allocated of it is that iPhone's (the red bar is gone with this, 4 November; a hook on
+ * +visualProviderSubclassForScreen:visualProviderInfo: alone left it).
+ */
+static Class status_bar_split;
+
+static id
+status_bar_fallback_alloc(id self __unused, SEL selector)
+{
+	static unsigned said;
+
+	if (said++ < 2) {
+		say("hakios: SpringBoard: the status bar's fallback asked for: %s it is\n", class_getName(status_bar_split));
+	}
+	return ((id (*)(Class, SEL))objc_msgSend)(status_bar_split, selector);
+}
+
+static id
+status_bar_fallback_alloc_zone(id self __unused, SEL selector, void *zone)
+{
+	return ((id (*)(Class, SEL, void *))objc_msgSend)(status_bar_split, selector, zone);
+}
+
+static void
+status_bar_fallback_is_split(void)
+{
+	Class fallback = objc_getClass("_UIStatusBarVisualProvider_Fallback");
+	/* (no UIScreen here: this runs in the library's constructor, before UIKit is up -- +[UIScreen mainScreen] asserted) */
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+	const char *at;
+	unsigned width = 1125;
+
+	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "fbwidth=")) != NULL) {
+		width = (unsigned)atoi(at + 8);
+	}
+	status_bar_split = objc_getClass(width == 1080 ? "_UIStatusBarVisualProvider_Split1080" : "_UIStatusBarVisualProvider_Split1125");
+	if (fallback == NULL || status_bar_split == NULL) {
+		say("hakios: SpringBoard: no status bar fallback or split provider class (%p %p)\n", (void *)fallback, (void *)status_bar_split);
+		return;
+	}
+	/* the class methods from the split provider up to what the two have in common, the nearest last to win */
+	Class chain[8];
+	unsigned depth = 0, moved = 0;
+
+	for (Class c = status_bar_split; c != NULL && depth < 8; c = class_getSuperclass(c)) {
+		bool common = false;
+
+		for (Class f = fallback; f != NULL; f = class_getSuperclass(f)) {
+			common = common || f == c;
+		}
+		if (common) {
+			say("hakios: SpringBoard: the status bar's providers have %s in common, the fallback's parent is %s\n", class_getName(c),
+			    class_getName(class_getSuperclass(fallback)));
+			break;
+		}
+		chain[depth++] = c;
+	}
+	while (depth-- > 0) {
+		unsigned count = 0;
+		Method *methods = class_copyMethodList(object_getClass(chain[depth]), &count);
+
+		for (unsigned i = 0; i < count; i++) {
+			const char *name = sel_getName(method_getName(methods[i]));
+
+			if (strcmp(name, "load") != 0 && strcmp(name, "initialize") != 0 && strcmp(name, "alloc") != 0 && strcmp(name, "allocWithZone:") != 0) {
+				class_replaceMethod(object_getClass(fallback), method_getName(methods[i]), method_getImplementation(methods[i]),
+				    method_getTypeEncoding(methods[i]));
+				moved++;
+			}
+		}
+		free(methods);
+	}
+	class_replaceMethod(object_getClass(fallback), sel_registerName("alloc"), (IMP)status_bar_fallback_alloc, "@16@0:8");
+	class_replaceMethod(object_getClass(fallback), sel_registerName("allocWithZone:"), (IMP)status_bar_fallback_alloc_zone, "@24@0:8^v16");
+	say("hakios: SpringBoard: the status bar's fallback provider is %s from now on (%u class methods)\n", class_getName(status_bar_split), moved);
 }
 
 /*
@@ -2021,6 +2137,7 @@ hakios_springboard_init(void)
 	plain_vibrancy();
 	ui_lite();
 	wallpaper_cache();
+	status_bar_fallback_is_split();
 	wallpaper_freeze();
 	legibility_gradient();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
