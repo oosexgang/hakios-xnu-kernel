@@ -5,7 +5,7 @@ measure it, and what is not known. The numbers: [Metal measurements](metal-measu
 [the plan](../metal-plan.md).
 
 **Status, POCO X5 Pro 5G, 3 and 4 November 2026.** Both paths draw the system correctly. hakios-metal is the faster: page swipes 100
-to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at the iPhone XR's 828x1792, stretched to the panel (the default of `tools/metal-run.sh`), swipes 110 to 115, scroll 118, home button 106. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
+to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at 750x1624, stretched to the panel (`fbscale=2`, the default of `tools/metal-run.sh`), scroll 118 to 120, swipes 107 to 118, home button 95 to 111. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
 reached on either.** Neither is on by default: without `metal=1` the window server draws through OpenGL ES, as it always has.
 
 
@@ -125,7 +125,7 @@ Every argument is in [the catalogue](../boot-args.md), which is made from the so
 | `wallpaper_freeze=1` | SpringBoard | the wallpaper as one still picture: at the home screen the window of the icons is hidden for a moment (they blink once a boot), the pixels of the IOSurface on the panel (`kern.hakios.fb_surface`) become one opaque view in the wallpaper's window, and its layers are hidden. It gives up: the wallpaper does not change until the next boot, and the lock screen shows the same picture. `tools/metal-run.sh` sets it |
 | `wallpaper_freeze=2` | SpringBoard | the wallpaper hidden: what it costs, measured |
 | `ui_lite=1`, `ui_lite=0` | SpringBoard | Reduce Transparency and Reduce Motion on, off again. Without it the settings are left alone |
-| `fbwidth=`, `fbheight=`, `fbscale=`, `fbsubtype=` | framebuffer | another iPhone's screen class: `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` is the XR's |
+| `fbwidth=`, `fbheight=`, `fbscale=`, `fbsubtype=` | framebuffer | another iPhone's screen class: `fbscale=2` alone is the iPhone X's layout at 750x1624 (the default of `tools/metal-run.sh`); `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` is the XR's |
 | `touch_poll_us=N` | touch driver | the touch screen read every N microseconds. The driver's default is 8000; `tools/metal-run.sh` sets 4000 |
 | `fb_hz=120`, `fb_threads=6`, `fb_measure=1` | framebuffer | the driver's beat at the panel's rate, six processors scaling a frame onto the panel, the panel's own rate measured once |
 | `fb_beam=1` | framebuffer | the default: each thread's rows are written behind the panel's scan line. `fb_beam=0`: whenever the beat comes, as before. [Tearing](metal-measurements.md#tearing) |
