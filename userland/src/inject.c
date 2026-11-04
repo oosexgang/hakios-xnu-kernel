@@ -34,6 +34,7 @@
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <notify.h>
+#include <objc/message.h>
 #include <objc/runtime.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -1077,6 +1078,89 @@ opengl_es(void)
 	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
 }
 
+/*
+ * What CoreAnimation's Metal renderer looks for when it starts (CA::OGL::MetalContext asserts metallib_url != nil:
+ * this image, made for the iPhone X, has no default.metallib in QuartzCore.framework, only default.pipelinelib).
+ * Every NSBundle lookup of a "metallib" or "pipelinelib" resource in the window server is said, with what it found;
+ * boot-arg ca_metallib=PATH answers a lookup of default.metallib that found nothing with PATH.
+ */
+static id (*orig_url_for)(id self, SEL selector, id name, id extension);
+static id (*orig_url_for_in)(id self, SEL selector, id name, id extension, id subdirectory);
+static const char *ca_metallib;
+static unsigned lookups_said;
+
+static const char *
+utf8(id string)
+{
+	return string != NULL ? ((const char *(*)(id, SEL))objc_msgSend)(string, sel_registerName("UTF8String")) : "(nil)";
+}
+
+static id
+metallib_answer(id self, id name, id extension, id found)
+{
+	const char *ext = extension != NULL ? utf8(extension) : "";
+
+	if (strstr(ext, "metallib") == NULL && strstr(ext, "pipelinelib") == NULL) {
+		return found;
+	}
+	if (lookups_said++ < 40) {
+		id path = found != NULL ? ((id (*)(id, SEL))objc_msgSend)(found, sel_registerName("path")) : NULL;
+
+		say("hakios: %s asks bundle %s for %s.%s: %s\n", getprogname(),
+		    utf8(((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("bundlePath"))), utf8(name), ext,
+		    found != NULL ? utf8(path) : "nothing");
+	}
+	if (found == NULL && ca_metallib != NULL && name != NULL && strcmp(utf8(name), "default") == 0 &&
+	    strcmp(ext, "metallib") == 0) {
+		id text = ((id (*)(Class, SEL, const char *))objc_msgSend)(objc_getClass("NSString"),
+		    sel_registerName("stringWithUTF8String:"), ca_metallib);
+
+		return ((id (*)(Class, SEL, id))objc_msgSend)(objc_getClass("NSURL"), sel_registerName("fileURLWithPath:"), text);
+	}
+	return found;
+}
+
+static id
+my_url_for(id self, SEL selector, id name, id extension)
+{
+	return metallib_answer(self, name, extension, orig_url_for(self, selector, name, extension));
+}
+
+static id
+my_url_for_in(id self, SEL selector, id name, id extension, id subdirectory)
+{
+	return metallib_answer(self, name, extension, orig_url_for_in(self, selector, name, extension, subdirectory));
+}
+
+static void
+watch_metallib_lookups(const char *arguments)
+{
+	static char path[256];
+	const char *at = strstr(arguments, "ca_metallib=");
+	Class bundle = objc_getClass("NSBundle");
+	Method two, three;
+
+	if (at != NULL) {
+		size_t length = strcspn(at + 12, " ");
+
+		if (length < sizeof(path)) {
+			memcpy(path, at + 12, length);
+			ca_metallib = path;
+		}
+	}
+	if (bundle == NULL) {
+		return;
+	}
+	if ((two = class_getInstanceMethod(bundle, sel_registerName("URLForResource:withExtension:"))) != NULL) {
+		orig_url_for = (id (*)(id, SEL, id, id))method_setImplementation(two, (IMP)my_url_for);
+	}
+	if ((three = class_getInstanceMethod(bundle, sel_registerName("URLForResource:withExtension:subdirectory:"))) != NULL) {
+		orig_url_for_in = (id (*)(id, SEL, id, id, id))method_setImplementation(three, (IMP)my_url_for_in);
+	}
+	say("hakios: metallib lookups in %s are said%s%s\n", getprogname(), ca_metallib ? "; default.metallib is " : "",
+	    ca_metallib ? ca_metallib : "");
+}
+
 __attribute__((constructor))
 static void
 hakios_init(void)
@@ -1130,6 +1214,9 @@ hakios_init(void)
 				setenv(setting, equals + 1, 1);
 				say("hakios: caenv: %s=%s for the window server\n", setting, equals + 1);
 			}
+		}
+		if (strstr(arguments, "metal_watch=1") != NULL || strstr(arguments, "ca_metallib=") != NULL) {
+			watch_metallib_lookups(arguments);
 		}
 		opengl_es();
 		window_server_fixes();

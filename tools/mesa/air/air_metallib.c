@@ -6,7 +6,7 @@
 /*
  * The MTLB container of a .metallib: a header, a function list of tagged
  * fields, and one LLVM module per function. Worked out against the files of
- * Darwin userland 16.5 (docs/metal.md, section 9.1; tools/metallib.py is the same in
+ * iOS 16.5 (docs/metal.md, section 9.1; tools/metallib.py is the same in
  * Python).
  */
 
