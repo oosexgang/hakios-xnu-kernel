@@ -10,7 +10,7 @@ Android.
 **Documentation:** [docs/](docs/index.md), and the site, [hackios-web.vercel.app](https://hackios-web.vercel.app).
 
 **News, 4 November 2026:** on the POCO X5 Pro 5G the window server draws through Metal on the Adreno 642L, two ways. hakios-metal: page
-swipes 100 to 104 frames a second, Settings' scroll about 90, the home button about 90. UniXNU's Metal on Vulkan: swipes 50 to 57, scroll 41. The panel is 120 Hz,
+swipes 110 to 115 frames a second, Settings' scroll 118, the home button 106, rendering at 828x1792 stretched to the panel; 101, about 90 and about 90 at the full 1125x2436. UniXNU's Metal on Vulkan: swipes 50 to 57, scroll 41. The panel is 120 Hz,
 and **120 frames a second has not been reached**. [Metal on the Adreno](docs/reference/metal.md),
 [the measurements](docs/reference/metal-measurements.md).
 

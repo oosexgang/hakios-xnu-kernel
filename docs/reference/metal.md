@@ -5,7 +5,7 @@ measure it, and what is not known. The numbers: [Metal measurements](metal-measu
 [the plan](../metal-plan.md).
 
 **Status, POCO X5 Pro 5G, 3 and 4 November 2026.** Both paths draw the system correctly. hakios-metal is the faster: page swipes 100
-to 104 frames a second, Settings' scroll about 90, the home button about 90. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
+to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at the iPhone XR's 828x1792, stretched to the panel (the default of `tools/metal-run.sh`), swipes 110 to 115, scroll 118, home button 106. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
 reached on either.** Neither is on by default: without `metal=1` the window server draws through OpenGL ES, as it always has.
 
 

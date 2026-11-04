@@ -938,6 +938,83 @@ wallpaper_window(void)
 	return NULL;
 }
 
+/*
+ * The picture is kept in /private/var (var_store keeps that across boots), for a screen of another class (fbscale=2
+ * fbsubtype=1792: 1.85 times fewer pixels for the GPU), on which the poster draws nothing at all: black.
+ */
+#define WALLPAPER_KEPT "/var/mobile/Library/hakios-wallpaper.raw"
+struct wallpaper_kept { uint32_t magic, width, height, row; };
+#define WALLPAPER_MAGIC 0x57504b31
+
+static void
+wallpaper_keep(const uint8_t *pixels, size_t width, size_t height, size_t row)
+{
+	struct wallpaper_kept head = { WALLPAPER_MAGIC, (uint32_t)width, (uint32_t)height, (uint32_t)row };
+	int fd = open(WALLPAPER_KEPT ".new", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+	if (fd < 0) {
+		say("hakios: SpringBoard: wallpaper_freeze: %s cannot be written\n", WALLPAPER_KEPT);
+		return;
+	}
+	bool whole = write(fd, &head, sizeof(head)) == (ssize_t)sizeof(head) &&
+	    write(fd, pixels, row * height) == (ssize_t)(row * height);
+	close(fd);
+	if (whole) {
+		rename(WALLPAPER_KEPT ".new", WALLPAPER_KEPT);
+		say("hakios: SpringBoard: wallpaper_freeze: the picture kept, %zux%zu\n", width, height);
+	}
+}
+
+/* The picture kept, redrawn at this screen's pixels (a texture of the screen's own size to sample); NULL: none. */
+static id
+wallpaper_kept_picture(double width_points, double height_points, double scale)
+{
+	struct wallpaper_kept head;
+	int fd = open(WALLPAPER_KEPT, O_RDONLY);
+	id image = NULL;
+
+	if (fd < 0) {
+		return NULL;
+	}
+	if (read(fd, &head, sizeof(head)) == (ssize_t)sizeof(head) && head.magic == WALLPAPER_MAGIC && head.width != 0 && head.height != 0 &&
+	    head.row >= head.width * 4 && head.height < 16384) {
+		size_t bytes = (size_t)head.row * head.height;
+		uint8_t *pixels = malloc(bytes);
+
+		if (pixels != NULL && read(fd, pixels, bytes) == (ssize_t)bytes) {
+			size_t w = (size_t)(width_points * scale + 0.5), h = (size_t)(height_points * scale + 0.5);
+			CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+			CGBitmapInfo info = kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst;
+			CFDataRef data = CFDataCreateWithBytesNoCopy(NULL, pixels, bytes, kCFAllocatorNull);
+			CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+			CGImageRef kept = CGImageCreate(head.width, head.height, 8, 32, head.row, space, info, provider, NULL, false, kCGRenderingIntentDefault);
+			CGContextRef context = CGBitmapContextCreate(NULL, w, h, 8, 0, space, info);
+
+			if (kept != NULL && context != NULL) {
+				CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
+				CGContextDrawImage(context, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), kept);
+				CGImageRef made = CGBitmapContextCreateImage(context);
+
+				if (made != NULL) {
+					image = ((id (*)(id, SEL, CGImageRef, double, long))objc_msgSend)((id)objc_getClass("UIImage"),
+					    sel_registerName("imageWithCGImage:scale:orientation:"), made, scale, 0L);
+					CGImageRelease(made);
+				}
+			}
+			say("hakios: SpringBoard: wallpaper_freeze: the picture kept (%ux%u) drawn at %zux%zu: %s\n", head.width, head.height, w, h,
+			    image != NULL ? "yes" : "NO");
+			if (context != NULL) CGContextRelease(context);
+			if (kept != NULL) CGImageRelease(kept);
+			CGDataProviderRelease(provider);
+			CFRelease(data);
+			CGColorSpaceRelease(space);
+		}
+		free(pixels);
+	}
+	close(fd);
+	return image;
+}
+
 /* A picture of the surface on the panel, opaque, in points of the screen's scale; NULL: none, or all one colour. */
 static id
 wallpaper_picture(double scale)
@@ -969,6 +1046,7 @@ wallpaper_picture(double scale)
 	say("hakios: SpringBoard: wallpaper_freeze=1: surface %u, %zux%zu, %zu bytes a row, format %#x: %u of 97 samples unlike the first (%#x)\n",
 	    sid, width, height, row, IOSurfaceGetPixelFormat(surface), distinct, pixels != NULL ? *(const uint32_t *)CFDataGetBytePtr(pixels) : 0);
 	if (pixels != NULL && distinct >= 10) {
+		wallpaper_keep(CFDataGetBytePtr(pixels), width, height, row);
 		CGDataProviderRef provider = CGDataProviderCreateWithCFData(pixels);
 		CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
 		CGImageRef cg = CGImageCreate(width, height, 8, 32, row, space, kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst,
@@ -1057,6 +1135,21 @@ wallpaper_freeze_pass(unsigned attempt)
 	if (wallpaper_hide_only) {
 		wallpaper_put(window, NULL);
 		return;
+	}
+	/* a screen of another class than the iPhone X's: no poster to read off the panel, the picture kept instead */
+	{
+		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+
+		if (bounds.width != 375 || bounds.height != 812) {
+			id image = wallpaper_kept_picture(bounds.width, bounds.height, scale);
+
+			if (image != NULL) {
+				wallpaper_put(window, image);
+			} else {
+				say("hakios: SpringBoard: wallpaper_freeze: no picture kept for this screen: a boot at the iPhone X's first\n");
+			}
+			return;
+		}
 	}
 	/* the icons out of the way until the window server has drawn the wallpaper without them */
 	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");

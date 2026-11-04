@@ -7,6 +7,7 @@
 #   MORE="metal_gmem=1" tools/...       boot-args beside the ones below; one of the same name takes a default's place
 #   PERSIST=0 tools/metal-run.sh        without var_store: /private/var starts empty and nothing is written to darwin
 #   UPLOAD=0 tools/metal-run.sh         keep the system image already in the phone's RAM (default: upload this copy's)
+#   (bench at this screen: RC_JOBS=rc.jobs.bench.xr, Settings lies lower; UPLOAD=0 keeps the image in the phone's RAM)
 #   SHOTS=N                             a screenshot every N seconds during the run into logs/<stamp>-shots/ (default 0)
 #   VERBOSE=1 tools/metal-run.sh        with -v: the kernel's text console drawn over the picture (off by default: the log has it all)
 #
@@ -31,6 +32,9 @@
 #   touch_poll_us=4000              the touch screen looked at every 4 ms, not 8: a sample in every refresh at 120 Hz
 #   wallpaper_freeze=1              the wallpaper one picture once at the home screen (the icons blink once): home button 28 -> 92 frames
 #   metal_defer=1                   a command buffer's draws recorded when it is committed, not on the way
+#   fbwidth=828 ... fbsubtype=1792  the iPhone XR's screen, 1.85 times fewer pixels, stretched to the panel: Settings' scroll 91 -> 118 frames,
+#                                   swipes 101 -> 110-115, home button 90 -> 106. The poster draws nothing on it: wallpaper_freeze shows the
+#                                   picture a boot at the iPhone X's screen kept: once, MORE="fbwidth=1125 fbheight=2436 fbscale=3 fbsubtype=0"
 #                                   a second (2 November, tools/frames.py)
 #   ufs=2 ufs_write=1 var_store=1   (PERSIST=1, the default) /private/var kept in the partition darwin between boots: the
 #                                   compiled shader stages in /var/db/hakios-metal-cache survive, so only the first boot
@@ -58,7 +62,7 @@ PERSIST=${PERSIST:-1}
 UPLOAD=${UPLOAD:-1}
 SHOTS=${SHOTS:-0}
 CA_METALLIB=${CA_METALLIB:-/redwood/share/ca-share/QuartzCore-default.metallib}
-ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1"
+ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1 fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792"
 [ "$PERSIST" = 1 ] && ARGS="$ARGS ufs=2 ufs_write=1 var_store=1"
 [ "${VERBOSE:-0}" = 1 ] && ARGS="-v $ARGS"
 # (a default of the same name goes: the kernel takes the last of two, the plug-in and SpringBoard the first)

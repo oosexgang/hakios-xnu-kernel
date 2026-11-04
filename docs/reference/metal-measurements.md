@@ -41,6 +41,25 @@ the IOSurface with a compute pass. The linear attachment path (`VK_NV_linear_col
 attachment that is not linear, and the extension wants every colour attachment linear. With `tu_debug=perf`, no barrier turned GMEM
 off and no texture was shadowed.
 
+
+### The screen as the iPhone XR's (4 November)
+
+`fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792`, the default of `tools/metal-run.sh`, stretched to the panel by the CPU. 1.85 times fewer
+pixels for the GPU; the picture is softer than at 1125x2436. The poster draws nothing on this screen: `wallpaper_freeze=1` shows the picture a
+boot at the iPhone X's screen kept in `/var/mobile/Library/hakios-wallpaper.raw`.
+
+| Gesture (`rc.jobs.bench.xr`) | Frames a second | At 1125x2436 |
+|---|---|---|
+| Settings' scroll | 118 | 89 to 91 |
+| Page swipe | 110 to 115 | 101 to 103 |
+| Home button | 106 | 89 to 92 |
+| Opening Settings | 86 | about 95 |
+| Frames over 16.7 ms | 1% | 4 to 6% |
+
+While something moves, half the frames are 8.33 ms apart and most of the rest one refresh more. What keeps the averages under 120: SpringBoard's main
+thread at the start of a gesture (36 to 57 ms) and of an application (104 ms), frames the GPU delivers a refresh late now and then, and the
+measured stretch ending in the slow ticks of a still screen. These are synthetic gestures (`rwtouch`).
+
 ## Tried, and it did not help
 
 | What | Arguments | Result |
