@@ -98,8 +98,9 @@ The window server's Metal path is built for one GPU and one display controller s
 - **The scan.** `fb_beam` (frames written behind the panel's scan) and `fb_measure` read the display interface's registers.
   They are known for `sc7280`; on another SoC nothing is read and frames go on their beat. `fb_intf=PHYSICAL` names them,
   from Linux's catalogue for your SoC. `fb_beam` checks that they count like a line counter before it trusts them.
-- **The run.** `tools/metal-run.sh` starts redwood's way; `DEVICE_ARGS=` is your phone's: its big core, its cores, its
-  panel's rate and its touch poll, for instance `DEVICE_ARGS="bootcpu=7 cpus=8 fb_hz=60 fb_threads=4 touch_poll_us=8000"`.
+- **The run.** `tools/metal-run.sh` reads `devices/<your phone>/metal.args`, which `tools/hakios-device.py new` makes: its big core,
+  its cores, its panel's rate and its touch poll, for instance `bootcpu=7 cpus=8 fb_hz=60 fb_threads=4 touch_poll_us=8000`.
+  `DEVICE_ARGS=` overrides it for one run. Without either, a phone other than redwood gets `fb_hz=60 fb_threads=3`.
 - **The picture.** Any panel is stretched to from the screen class chosen: `fbscale=`, or `fbwidth=`, `fbheight=`, `fbsubtype=`.
 
 ## When a step does not work
