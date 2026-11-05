@@ -15,6 +15,11 @@ import subprocess
 import sys
 import tempfile
 
+# (--repo commits: a machine with no git identity of its own is no reason for the test to fail)
+for key, value in (("GIT_AUTHOR_NAME", "test"), ("GIT_AUTHOR_EMAIL", "test@example.invalid"),
+                   ("GIT_COMMITTER_NAME", "test"), ("GIT_COMMITTER_EMAIL", "test@example.invalid")):
+    os.environ.setdefault(key, value)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 failures = []
