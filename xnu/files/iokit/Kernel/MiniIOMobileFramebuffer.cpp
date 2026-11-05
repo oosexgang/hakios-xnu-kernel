@@ -246,8 +246,7 @@ micros(uint64_t absolute)
  * does not come back with the phone's log), in a thread of its own; off by default.
  */
 static TUNABLE(uint32_t, gMeasure, "fb_measure", 0);
-#define DPU_INTF1_PAGE          0x0ae34000UL            /* the 16 KB page INTF_1 is in */
-#define DPU_INTF1_OFFSET        0x2000
+#define DPU_SC7280_INTF1        0x0ae36000UL            /* SM7325 (sc7280): INTF_1, what the panel of redwood is on */
 #define INTF_TIMING_ENGINE_EN   0x000
 #define INTF_FRAME_COUNT        0x0ac
 #define INTF_LINE_COUNT         0x0b0                   /* the line the interface is scanning (Linux's dpu_hw_intf.c) */
@@ -265,6 +264,25 @@ static TUNABLE(uint32_t, gBeam, "fb_beam", 1);
 extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 static inline uint32_t refreshHz(void);
 
+/*
+ * Boot-arg fb_intf=PHYSICAL: the registers of the display interface the panel is on, for a port. Without it the SoC the kernel
+ * was configured for says (hakios_kver, CONFIG_SOC): SM7325's address read on another SoC is somebody else's registers, or an
+ * abort a minute after boot, so on a SoC not known here nothing is read and frames stay on their beat.
+ */
+static TUNABLE(uint64_t, gIntfPhysical, "fb_intf", 0);
+
+static vm_offset_t
+panelInterface(void)
+{
+	char version[128] = "";
+	uint64_t physical = gIntfPhysical;
+
+	if (physical == 0 && PE_parse_boot_argn("hakios_kver", version, sizeof(version)) && strnstr(version, "-sc7280-", sizeof(version)) != NULL) {
+		physical = DPU_SC7280_INTF1;
+	}
+	return physical != 0 ? ml_io_map((vm_offset_t) (physical & ~0x3fffULL), 0x4000) + (vm_offset_t) (physical & 0x3fffULL) : 0;
+}
+
 static void
 measurePanel(__unused void * arg, __unused wait_result_t wr)
 {
@@ -272,7 +290,11 @@ measurePanel(__unused void * arg, __unused wait_result_t wr)
 	uint32_t on, first, second;
 
 	IOSleep(60000);
-	intf = ml_io_map(DPU_INTF1_PAGE, 0x4000) + DPU_INTF1_OFFSET;
+	intf = panelInterface();
+	if (intf == 0) {
+		IOLog("MiniIOMobileFramebuffer: fb_measure: no display interface known for this SoC (fb_intf=)\n");
+		return;
+	}
 	on = *(volatile uint32_t *)(intf + INTF_TIMING_ENGINE_EN);
 	first = *(volatile uint32_t *)(intf + INTF_FRAME_COUNT);
 	IOSleep(1000);
@@ -936,7 +958,11 @@ IOMobileFramebuffer::beamProbe(void)
 	uint64_t began, ended, until;
 
 	IOSleep(60000);
-	intf = ml_io_map(DPU_INTF1_PAGE, 0x4000) + DPU_INTF1_OFFSET;
+	intf = panelInterface();
+	if (intf == 0) {
+		IOLog("MiniIOMobileFramebuffer: fb_beam: no display interface known for this SoC (fb_intf=): frames stay on their beat\n");
+		return;
+	}
 	if (!(*(volatile uint32_t *)(intf + INTF_TIMING_ENGINE_EN) & 1)) {
 		IOLog("MiniIOMobileFramebuffer: fb_beam: the interface's timing engine is off: frames stay on their beat\n");
 		return;
