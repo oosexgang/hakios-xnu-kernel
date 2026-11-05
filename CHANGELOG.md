@@ -21,6 +21,8 @@ changes to it; the scripts named fetch the release and put the changes on.
 
 ## 2026-11-05: 2.3.4
 
+- metal: a pipeline CoreAnimation makes at run time, which its library does not hold, gets the nearest variant of the same kind and not one that draws something else. That was the red at the top of the default wallpaper (its head was not drawn), the white band behind the status bar (`darkenSourceOver`), and materials like the Weather widget's
+- touch: a finger's lift 5 ms after its last move at most 6, on the phone under real fingers; 88 to 169 before. `touch: N strokes` in the log says so without `touch_lat=1`'s lines
 - docs: the READMEs, the index and the Windows guide name `hakios-metal/` of this tree; the repository beside it says it has moved
 
 ## 2026-11-05: 2.3.3
@@ -31,7 +33,6 @@ changes to it; the scripts named fetch the release and put the changes on.
 - tools: `tools/metal-run.sh` takes the phone's own arguments from `DEVICE_ARGS=`; [Port a device](docs/porting/index.md) says what Metal needs from a port
 - touch: with a finger down every look reads a report; a finger's lift no longer waits up to 169 ms for the look of every 80 ms. Not yet seen under fingers
 - framebuffer: slow frames are filtered at once, so a still screen no longer moves back and forth 10 times a second; nothing is drawn again from a surface the GPU has taken back
-- wallpaper: the default wallpaper's head is masked by a layer (`userland/mkwallpaper.py`), the top of the screen is no longer red; why its `sourceAtop` fails is not known
 
 ## 2026-11-04
 

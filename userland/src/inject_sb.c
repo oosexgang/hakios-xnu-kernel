@@ -42,6 +42,7 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <notify.h>
 #include <objc/message.h>
@@ -84,6 +85,8 @@ say(const char *format, ...)
  */
 #define CA_COMMIT_ORDER 2000000
 static uint64_t main_woke, commit_began;
+static volatile uint64_t turn_began;    /* mach_absolute_time at the start of the turn; 0 between turns (stall_watch()) */
+static uintptr_t main_stack_top, main_stack_bottom;
 static mach_timebase_info_data_t timebase;
 
 static uint64_t
@@ -97,12 +100,94 @@ main_loop_turn(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activit
 {
 	if (activity == kCFRunLoopAfterWaiting) {
 		main_woke = now_us();
+		turn_began = mach_absolute_time();
 	} else if (activity == kCFRunLoopBeforeWaiting && info == NULL) {
 		commit_began = now_us();
 	} else if (activity == kCFRunLoopBeforeWaiting && main_woke != 0) {
 		say("tl: a %llu %llu %llu\n", main_woke, commit_began, now_us());
 		main_woke = 0;
+		turn_began = 0;
 	}
+}
+
+/*
+ * What SpringBoard's main thread is doing when a turn of its run loop takes long (with touch_lat=1): turns of 100 to 300 ms come
+ * 40 to 100 ms after a finger comes down, before their commit, and that is what jerks at the start of a swipe. A thread looks every
+ * 10 ms; at 25 ms into a turn, and every 50 ms after, it stops the main thread for the moment of walking its frame pointers.
+ * "tl: t MS frame frame ...": an image's name and offset, its symbol if it exports one. mach_msg at the top is a wait for a service.
+ */
+static void
+stall_say(thread_t thread, uint64_t ms)
+{
+	arm_thread_state64_t state;
+	mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+	uintptr_t pcs[12];
+	unsigned depth = 0;
+	char line[1024];
+	int at;
+
+	if (thread_suspend(thread) != KERN_SUCCESS) {
+		return;
+	}
+	if (thread_get_state(thread, ARM_THREAD_STATE64, (thread_state_t)&state, &count) == KERN_SUCCESS) {
+		uintptr_t pc = (uintptr_t)arm_thread_state64_get_pc(state), fp = (uintptr_t)arm_thread_state64_get_fp(state);
+		pcs[depth++] = pc;
+		while (depth < sizeof(pcs) / sizeof(pcs[0]) && fp >= main_stack_bottom && fp + 16 <= main_stack_top && (fp & 15) == 0) {
+			uintptr_t next = ((uintptr_t *)fp)[0], lr = ((uintptr_t *)fp)[1];
+
+			if (lr == 0) {
+				break;
+			}
+			pcs[depth++] = lr;
+			if (next <= fp) {
+				break;
+			}
+			fp = next;
+		}
+	}
+	thread_resume(thread);
+	at = snprintf(line, sizeof(line), "tl: t %llu", ms);
+	for (unsigned i = 0; i < depth && at < (int)sizeof(line) - 96; i++) {
+		Dl_info info;
+
+		if (dladdr((void *)pcs[i], &info) != 0 && info.dli_fname != NULL) {
+			const char *image = strrchr(info.dli_fname, '/');
+
+			at += info.dli_sname != NULL && pcs[i] - (uintptr_t)info.dli_saddr < 0x4000 ?
+			    snprintf(line + at, sizeof(line) - at, " %s", info.dli_sname) :
+			    snprintf(line + at, sizeof(line) - at, " %s+%#lx", image != NULL ? image + 1 : info.dli_fname, pcs[i] - (uintptr_t)info.dli_fbase);
+		} else {
+			at += snprintf(line + at, sizeof(line) - at, " %#lx", pcs[i]);
+		}
+	}
+	say("%s\n", line);
+}
+
+static void *
+stall_watch(void *argument)
+{
+	thread_t main_thread = (thread_t)(uintptr_t)argument;
+	uint64_t said_turn = 0, next_ms = 25;
+
+	for (;;) {
+		uint64_t began = turn_began;
+
+		usleep(10000);
+		if (began == 0 || began != turn_began) {
+			continue;
+		}
+		uint64_t ms = (mach_absolute_time() - began) * timebase.numer / timebase.denom / 1000000;
+
+		if (began != said_turn) {
+			said_turn = began;
+			next_ms = 25;
+		}
+		if (ms >= next_ms && ms < 2000) {
+			stall_say(main_thread, ms);
+			next_ms = ms + 50;
+		}
+	}
+	return NULL;
 }
 
 static void
@@ -117,6 +202,15 @@ watch_main_loop(void)
 		return;
 	}
 	mach_timebase_info(&timebase);
+	{
+		pthread_t watcher;
+
+		main_stack_top = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
+		main_stack_bottom = main_stack_top - pthread_get_stacksize_np(pthread_self());
+		if (pthread_create(&watcher, NULL, stall_watch, (void *)(uintptr_t)mach_thread_self()) == 0) {
+			pthread_detach(watcher);
+		}
+	}
 	CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopAfterWaiting, true, LONG_MIN,
 	    main_loop_turn, NULL), kCFRunLoopCommonModes);
 	CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, true, CA_COMMIT_ORDER - 1,
@@ -1320,76 +1414,6 @@ status_bar_fallback_is_split(void)
 	say("hakios: SpringBoard: the status bar's fallback provider is %s from now on (%u class methods)\n", class_getName(status_bar_split), moved);
 }
 
-/*
- * The status bar's legibility gradient at the top of the home screen (SBFStatusBarLegibilityView: a CAGradientLayer 100
- * points high, compositing filter darkenSourceOver) comes out solid white through Metal, on hakios-metal and metal2vulkan
- * alike: a white band over the top eighth of the wallpaper, the status bar's white text unreadable on it (seen on the
- * phone, 4 November; the layers said by com.hakios.layers). Why that filter's shader gives white has not been found out.
- * Without the filter the gradient is drawn as any other, source over, which is near enough what it is for and asks the
- * GPU for no read of what lies under it.
- */
-static IMP legibility_layout_original;
-
-static void
-legibility_plain(id view)
-{
-	id sublayers = SEND(id, SEND(id, view, "layer"), "sublayers");
-	unsigned long count = sublayers != NULL ? SEND(unsigned long, sublayers, "count") : 0;
-
-	for (unsigned long i = 0; i < count; i++) {
-		id layer = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), i);
-
-		if (SEND(id, layer, "compositingFilter") != NULL) {
-			((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setCompositingFilter:"), NULL);
-			say("hakios: SpringBoard: the status bar's legibility gradient: its compositing filter taken off\n");
-		}
-	}
-}
-
-static void
-legibility_layout(id self, SEL selector)
-{
-	((void (*)(id, SEL))legibility_layout_original)(self, selector);
-	legibility_plain(self);
-}
-
-/* the views there are already: they are laid out again only when something asks */
-static void
-legibility_find(id view, int depth)
-{
-	id subviews = SEND(id, view, "subviews");
-	unsigned long count = subviews != NULL ? SEND(unsigned long, subviews, "count") : 0;
-
-	if (strcmp(object_getClassName(view), "SBFStatusBarLegibilityView") == 0) {
-		legibility_plain(view);
-	}
-	for (unsigned long i = 0; depth < 6 && i < count; i++) {
-		legibility_find(((id (*)(id, SEL, unsigned long))objc_msgSend)(subviews, sel_registerName("objectAtIndex:"), i), depth + 1);
-	}
-}
-
-static void
-legibility_gradient(void)
-{
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-		Class view = objc_getClass("SBFStatusBarLegibilityView");
-		SEL layout = sel_registerName("layoutSubviews");
-		id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
-		id windows = app != NULL ? SEND(id, app, "windows") : NULL;
-		unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
-
-		if (view == NULL) {
-			return;
-		}
-		if (legibility_layout_original == NULL) {
-			legibility_layout_original = class_getMethodImplementation(view, layout);
-			class_replaceMethod(view, layout, (IMP)legibility_layout, "v@:");
-		}
-		for (unsigned long i = 0; i < count; i++) {
-			legibility_find(((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i), 0);
-		}
-	});
-}
 
 static void
 wallpaper_cache(void)
@@ -2139,7 +2163,6 @@ hakios_springboard_init(void)
 	wallpaper_cache();
 	status_bar_fallback_is_split();
 	wallpaper_freeze();
-	legibility_gradient();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",
