@@ -1308,6 +1308,10 @@ focaltech_poll(void)
 		}
 		return;
 	}
+	/* (nothing to report: what the vendor's driver takes for a report that is not one; a finger would seem to have lifted) */
+	if (report[1] == 0xff && report[2] == 0xff && report[3] == 0xff) {
+		return;
+	}
 	seen.reports++;
 	focaltech_report(report);
 }
@@ -1454,6 +1458,23 @@ micros_now(void)
 	return ns / 1000;
 }
 
+/* Is a finger on the screen, as far as the reports have said? */
+static bool
+chip_touching(void)
+{
+	for (uint32_t i = 0; i < FOCALTECH_MAX_TOUCHES; i++) {
+		if (touch_chip == TOUCH_FOCALTECH && focaltech_contact[i].down) {
+			return true;
+		}
+	}
+	for (uint32_t i = 0; touch_chip != TOUCH_FOCALTECH && i < sizeof(contact) / sizeof(contact[0]); i++) {
+		if (contact[i].down) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static void
 goodix_thread(__unused void *parameter, __unused wait_result_t result)
 {
@@ -1466,7 +1487,7 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 	if (poll_us < 250 || poll_us > 100000) {
 		poll_us = 8000;
 	}
-	idle_looks = 80000 / poll_us;   /* a report read every 80 ms even with the line high, in case it is missed */
+	idle_looks = 16000 / poll_us;   /* a report read every 16 ms even with the line high, in case it is missed */
 
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
@@ -1495,8 +1516,13 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 	for (unsigned tick = 1;; tick++) {
 		uint64_t looked = micros_now(), read_at;
 
-		/* the interrupt line is low while a report waits; look anyway every 80 ms in case it is missed */
-		if (!gpio_get(PIN_INT)) {
+		/*
+		 * The interrupt line is low while a report waits, but on the phone's FocalTech not for long: looked at every 4 ms it
+		 * was seen to miss reports, and a finger's lift came 88 to 169 ms after its last move, by the look of every 80 ms
+		 * (4 November, real fingers, tl: p): the content stood still and then jumped at the end of each swipe, whatever the
+		 * frame rate. So with a finger down every look reads, and with none a report is read every 16 ms anyway.
+		 */
+		if (!gpio_get(PIN_INT) || chip_touching()) {
 			idle = 0;
 			chip_poll();
 			read_at = micros_now();
