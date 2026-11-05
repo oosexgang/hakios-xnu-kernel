@@ -1,6 +1,8 @@
 # hakios-metal
 
-The Metal driver of [hakios](https://github.com/oosexgang/hakios), in C++: Metal's command model on the phone's
+This is part of the kernel's tree: `make ios` here, and `userland/build.sh` links what it builds.
+
+The Metal driver of [hakios](https://github.com/oosexgang/hakios-xnu-kernel), in C++: Metal's command model on the phone's
 Adreno GPU (an Adreno 7c+ Gen 3, chip id 0x06030500), through the kernel's own GPU driver (HakiosGPU), without Mesa
 in between.
 
@@ -235,7 +237,7 @@ CoreAnimation drawing through Metal is behind all of that.
 make test     # on a Mac or on Linux: the tests against the fake GPU
 make tsan     # the same under ThreadSanitizer
 make asan     # ... and AddressSanitizer
-make ios      # out/ios/hakios-metal-probe and libhakios-metal.a, for iOS 16.5 (the SDK as hakios lays it out)
+make ios      # out/ios/libhakios-metal.a, for iOS 16.5 (the SDK as hakios lays it out), and the probe with a host build of Mesa
 make check    # the tests, then the Metal plug-in (plugin/) on this Mac, without and with hakios-metal
 make test MESA=1   # with the compiler linked in, against a Mesa host build carrying hakios's AIR front end
 make ios MESA=1    # ... and on the phone, against hakios's iOS build of the same libraries (tools/compiler.mk)
