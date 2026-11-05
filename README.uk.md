@@ -22,7 +22,7 @@
 | Репозиторій | Вміст |
 |---|---|
 | [hakios-xnu-kernel](https://github.com/oosexgang/hakios-xnu-kernel) | **спільний**: порт ядра, усі спільні драйвери, завантажувач, користувацький простір, інструменти, ця документація і `devices/qemu` |
-| [hakios-metal](https://github.com/oosexgang/hakios-metal) | модель команд Metal на Adreno через драйвер GPU ядра |
+| [`hakios-metal/`](hakios-metal) | модель команд Metal на Adreno через драйвер GPU ядра |
 | [hakios-sm7325](https://github.com/oosexgang/hakios-sm7325) | POCO X5 Pro 5G: defconfig, стан, платформа UEFI, скрипт прошивок і шар його SoC (сімейство Qualcomm SC7280) |
 | [hakios-mt6768](https://github.com/oosexgang/hakios-mt6768) | Infinix Hot 20 (MediaTek Helio G85): експериментальний порт із власним завантажувачем. Його немає в маніфесті цього репозиторію |
 | [hakios-uefi](https://github.com/oosexgang/hakios-uefi) | прошивка, що запускає завантажувач: Mu-Silicium зі шляхом завантаження, банером і назвою HakiOS, а також U-Boot від HakiOS |

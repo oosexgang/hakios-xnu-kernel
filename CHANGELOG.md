@@ -14,10 +14,14 @@ changes to it; the scripts named fetch the release and put the changes on.
 - the UEFI (the other way to start): [Project Silicium's Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) at `e51cd877e31c` -- `hakios-uefi/apply.sh`
 - the GPU's OpenGL ES: [Mesa](https://archive.mesa3d.org/) 25.0.7, the freedreno driver for the Adreno -- `tools/mk-mesa.sh`, the changes in `tools/mesa/`
 - the GPU's Vulkan: the same Mesa's Turnip -- `tools/mk-turnip.sh`, the changes in `tools/mesa/turnip-darwin.patch` and `tools/mesa/hakios-drm/`
-- Metal, the direct path: [hakios-metal](https://github.com/oosexgang/hakios-metal), beside this tree -- `userland/build.sh METAL_PLUGIN=ca`, with `userland/src/HakiosMetalCA.m`
+- Metal, the direct path: `hakios-metal/` in this tree -- `userland/build.sh METAL_PLUGIN=ca`, with `userland/src/HakiosMetalCA.m`
 - Metal, on Vulkan: [UniXNU/AdrenoMetal](https://github.com/UniXNU/AdrenoMetal) at `243d63c` and [steelbrain/metal2vulkan](https://github.com/steelbrain/metal2vulkan) at `624bab3` with AdrenoMetal's 30 patches -- `tools/mk-m2v.sh`, the changes in `tools/m2v/`
 - the build tools: Apple's [libdispatch](https://github.com/apple-oss-distributions/libdispatch), [libpthread](https://github.com/apple-oss-distributions/libpthread) and [AvailabilityVersions](https://github.com/apple-oss-distributions/AvailabilityVersions), [bootstrap_cmds](https://github.com/markmentovai/bootstrap_cmds), [unifdef](https://github.com/fanf2/unifdef), the [macOS 13.3 SDK](https://github.com/joseluisq/macosx-sdks) and the [iPhoneOS 16.5 SDK](https://github.com/theos/sdks) -- `xnu-deps/setup.sh`
 - not fetched by anything here: the Darwin 16.5 user space, which you lay out from your own IPSW (`sysimage/`), and the phone's own firmware, pulled from its Android (`fw-*`)
+
+## 2026-11-05: 2.3.4
+
+- docs: the READMEs, the index and the Windows guide name `hakios-metal/` of this tree; the repository beside it says it has moved
 
 ## 2026-11-05: 2.3.3
 

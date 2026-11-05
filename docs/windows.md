@@ -70,7 +70,7 @@ Nothing is flashed: everything is booted from RAM, and a reboot brings Android b
 The window server drawing through Metal (`METAL_PLUGIN=ca`) and the frame-rate bench, with one command in Git Bash. What the two paths
 are and what the arguments do: [Metal on the Adreno](reference/metal.md).
 
-The plug-in is compiled, so the build needs the cross toolchain (`xnu-deps/setup.sh`) and [hakios-metal](https://github.com/oosexgang/hakios-metal)
+The plug-in is compiled, so the build needs the cross toolchain (`xnu-deps/setup.sh`) and `hakios-metal/` of this tree
 beside the checkout; `PREBUILT=1` compiles nothing, and `prebuilt/userland` has no plug-in.
 
 ```sh
@@ -78,7 +78,7 @@ beside the checkout; `PREBUILT=1` compiles nothing, and `prebuilt/userland` has 
 # Off a Mac, name a later CoreAnimation's library to take the rest of its shaders from (a Mac's
 # QuartzCore.framework/Versions/A/Resources/default.metallib copied over, or a later system's out of its IPSW):
 CA_QC_METALLIB=/mnt/c/.../default.metallib tools/ca-metallib.py ~/ca-share
-(cd ../hakios-metal && make ios HAKIOS=../hakios MESA=1)
+(cd hakios-metal && make ios MESA=1)
 METAL_PLUGIN=ca RC_JOBS=rc.jobs.bench EXTRA_SHARE=~/ca-share REST=1 SYSTEM=1 userland/build.sh
 cp userland/root.apfs userland/system.apfs /mnt/d/.../hakios/userland/
 
