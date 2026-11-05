@@ -19,6 +19,16 @@ changes to it; the scripts named fetch the release and put the changes on.
 - the build tools: Apple's [libdispatch](https://github.com/apple-oss-distributions/libdispatch), [libpthread](https://github.com/apple-oss-distributions/libpthread) and [AvailabilityVersions](https://github.com/apple-oss-distributions/AvailabilityVersions), [bootstrap_cmds](https://github.com/markmentovai/bootstrap_cmds), [unifdef](https://github.com/fanf2/unifdef), the [macOS 13.3 SDK](https://github.com/joseluisq/macosx-sdks) and the [iPhoneOS 16.5 SDK](https://github.com/theos/sdks) -- `xnu-deps/setup.sh`
 - not fetched by anything here: the Darwin 16.5 user space, which you lay out from your own IPSW (`sysimage/`), and the phone's own firmware, pulled from its Android (`fw-*`)
 
+## 2026-11-05: 2.3.3
+
+- metal: `hakios-metal/` is in this tree with its history, and `userland/build.sh` links it: one checkout builds everything
+- framebuffer: `fb_beam` and `fb_measure` read the display interface's registers only on `sc7280` or with `fb_intf=`: they read SM7325's address on any SoC before
+- hakios-metal: a GPU of another chip ID is refused by name, and the window server stays on OpenGL ES
+- tools: `tools/metal-run.sh` takes the phone's own arguments from `DEVICE_ARGS=`; [Port a device](docs/porting/index.md) says what Metal needs from a port
+- touch: with a finger down every look reads a report; a finger's lift no longer waits up to 169 ms for the look of every 80 ms. Not yet seen under fingers
+- framebuffer: slow frames are filtered at once, so a still screen no longer moves back and forth 10 times a second; nothing is drawn again from a surface the GPU has taken back
+- wallpaper: the default wallpaper's head is masked by a layer (`userland/mkwallpaper.py`), the top of the screen is no longer red; why its `sourceAtop` fails is not known
+
 ## 2026-11-04
 
 - metal: 120 frames a second is not reached: hakios-metal 101 to 103 in page swipes, about 90 in Settings' scroll, 89 to 92 at the home button, 4 to 6% of frames over 16.7 ms; after the finger lifts, 185 of a swipe's 205 frames take 8.3 ms, while it drags 75 to 80 a second; `docs/reference/metal-measurements.md`
