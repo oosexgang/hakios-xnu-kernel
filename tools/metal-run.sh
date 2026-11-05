@@ -62,7 +62,10 @@ PERSIST=${PERSIST:-1}
 UPLOAD=${UPLOAD:-1}
 SHOTS=${SHOTS:-0}
 CA_METALLIB=${CA_METALLIB:-/redwood/share/ca-share/QuartzCore-default.metallib}
-ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1 fbscale=2"
+# what is this phone's (redwood: the big core, its 8 cores, its panel at 120 Hz, its touch chip): another's says its own, or fb_hz= goes
+# wrong by a factor of two. docs/porting/index.md
+DEVICE_ARGS=${DEVICE_ARGS:-bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_threads=6 touch_poll_us=4000}
+ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 $DEVICE_ARGS fb_measure=1 wallpaper_freeze=1 metal_defer=1 fbscale=2"
 [ "$PERSIST" = 1 ] && ARGS="$ARGS ufs=2 ufs_write=1 var_store=1"
 [ "${VERBOSE:-0}" = 1 ] && ARGS="-v $ARGS"
 # (a default of the same name goes: the kernel takes the last of two, the plug-in and SpringBoard the first)
