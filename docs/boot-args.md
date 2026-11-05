@@ -2,7 +2,7 @@
 
 Made by `tools/boot-args.py --markdown`; CI fails if it is out of date with the source (`tools/boot-args.py --check`).
 
-Every argument that the kernel, the loader or user space of this port reads, and which file reads it. **349 arguments**: 278 read by the kernel, 14 by the loader, 67 by user space (one is read in more than one place).
+Every argument that the kernel, the loader or user space of this port reads, and which file reads it. **359 arguments**: 288 read by the kernel, 14 by the loader, 67 by user space (one is read in more than one place).
 
 This is a catalogue of what exists and who reads it, not a manual. What an argument means is in the head of the file that reads it. The stable switches have a symbol in the configuration (`tools/hakios-config.py help SYMBOL`, `docs/configs.md`); the rest are the knobs of bring-up (a driver's steps, pauses, traces, test modes) and can change with the driver. Any of them can be given in a configuration with `CONFIG_BOOTARGS="name=value ..."`, which checks that each name is in this list. What the arguments of the two Metal paths do: [Metal on the Adreno](reference/metal.md#boot-arguments).
 
@@ -253,11 +253,11 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `buttons_steps` | K | `hakios.buttons.c` | `CONFIG_BUTTONS_STEPS` |  |
 | `press_power` | K | `hakios.buttons.c` | `CONFIG_PRESS_POWER` |  |
 | `press_power_ms` | K | `hakios.buttons.c` | `CONFIG_PRESS_POWER_MS` |  |
-| `touch_flip` | K | `hakios.goodix.c` | `CONFIG_TOUCH_FLIP` |  |
-| `touch_poll_us` | K | `hakios.goodix.c` | `CONFIG_TOUCH_POLL_US` |  |
+| `touch_flip` | K | `hakios.fts.c`, `hakios.goodix.c` | `CONFIG_TOUCH_FLIP` |  |
+| `touch_poll_us` | K | `hakios.fts.c`, `hakios.goodix.c` | `CONFIG_TOUCH_POLL_US` |  |
 | `touch_rate` | K | `hakios.goodix.c` | `CONFIG_TOUCH_RATE` |  |
 | `touch_spi_hz` | K | `hakios.goodix.c` | `CONFIG_TOUCH_SPI_HZ` |  |
-| `touchscreen` | K | `hakios.buttons.c`, `hakios.goodix.c` | `CONFIG_TOUCHSCREEN` |  |
+| `touchscreen` | K | `hakios.buttons.c`, `hakios.fts.c`, `hakios.goodix.c` | `CONFIG_TOUCHSCREEN` |  |
 | `virtio_input` | K | `hakios.virtio_input.c` | `CONFIG_VIRTIO_INPUT` |  |
 
 ## Storage and APFS (43)
@@ -397,7 +397,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ufs` | L | `loader.c` | `CONFIG_UFS` |  |
 | `ufs_probe` | L | `loader.c` | `CONFIG_UFS_PROBE` |  |
 
-## User space (35)
+## User space (45)
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
@@ -409,11 +409,18 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ca_vbl` | U | `inject.c` | `CONFIG_CA_VBL` |  |
 | `caenv` | U | `inject.c`, `inject_sb.c` | `CONFIG_CAENV` |  |
 | `cc_fade` | U | `inject_sb.c` | `CONFIG_CC_FADE` |  |
+| `dipper` | K | `hakios.fts.c` | `CONFIG_DIPPER` |  |
 | `gl` | U | `inject.c`, `inject_sb.c` | `CONFIG_GL` |  |
 | `glcompile` | U | `inject.c` | `CONFIG_GLCOMPILE` |  |
 | `glno` | U | `inject.c` | `CONFIG_GLNO` |  |
 | `glsb3` | U | `inject.c` | `CONFIG_GLSB3` |  |
 | `glyes` | U | `inject.c` | `CONFIG_GLYES` |  |
+| `i2c_addr` | K | `hakios.fts.c` | `CONFIG_I2C_ADDR` |  |
+| `i2c_clk` | K | `hakios.fts.c` | `CONFIG_I2C_CLK` |  |
+| `i2c_pull` | K | `hakios.fts.c` | `CONFIG_I2C_PULL` |  |
+| `i2c_scan` | K | `hakios.fts.c` | `CONFIG_I2C_SCAN` |  |
+| `i2c_speed` | K | `hakios.fts.c` | `CONFIG_I2C_SPEED` |  |
+| `i2c_test` | K | `hakios.fts.c` | `CONFIG_I2C_TEST` |  |
 | `m2v_utrace` | U | `HakiosMetalCA.m` | `CONFIG_M2V_UTRACE` |  |
 | `metal_all` | U | `HakiosMetalCA.m` | `CONFIG_METAL_ALL` |  |
 | `metal_defer` | U | `HakiosMetalCA.m` | `CONFIG_METAL_DEFER` |  |
@@ -430,6 +437,9 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `root_apfs` | U | `init.c` | `CONFIG_ROOT_APFS` |  |
 | `sb_delay` | U | `inject_sb.c` |  | xl (XL_SB_DELAY) |
 | `switcher_wallpaper` | U | `inject_sb.c` | `CONFIG_SWITCHER_WALLPAPER` |  |
+| `touch_max_x` | K | `hakios.fts.c` | `CONFIG_TOUCH_MAX_X` |  |
+| `touch_max_y` | K | `hakios.fts.c` | `CONFIG_TOUCH_MAX_Y` |  |
+| `touch_test` | K | `hakios.fts.c` | `CONFIG_TOUCH_TEST` |  |
 | `tu_debug` | U | `HakiosMetalCA.m` | `CONFIG_TU_DEBUG` |  |
 | `ui_lite` | U | `inject_sb.c` | `CONFIG_UI_LITE` |  |
 | `var_hfs` | U | `init.c` | `CONFIG_VAR_HFS` |  |

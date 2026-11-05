@@ -588,6 +588,13 @@ static const struct platform platform_redwood = {
 	.small_cores = 0x0f,
 };
 
+static const struct platform platform_dipper = {
+	.name = "dipper", .io_base = 0x00100000, .io_size = 0x3FC00000,
+	.gic_dist = 0x17A00000, .gic_redist = 0x17A60000, .uart = 0, .log_other_cpu = 0,
+	.cores = 8, .core_shift = 8,
+	.small_cores = 0x0f,
+};
+
 /* ------------------------------------------------------------------------ */
 
 static void
@@ -2498,6 +2505,28 @@ wdt_set_ms(uint64_t ms)
 	}
 }
 
+/*
+ * Xiaomi Mi 8 (dipper): power on touchscreen via RPMh VRM LDO28 (0x42100).
+ * Sets voltage to 3300 mV and enables regulator in active set.
+ */
+static void
+rpmh_ldo28_enable(void)
+{
+	volatile uint32_t *base = (volatile uint32_t *)0x179C0000ULL;
+	if (PLAT != &platform_dipper) {
+		return;
+	}
+	/* CMD 0: set voltage 3300 mV to VRM address 0x42100 */
+	base[(0x34 + 0) / 4] = 0x42100;
+	base[(0x38 + 0) / 4] = (1u << 31) | 3300;
+	/* CMD 1: enable regulator (1) to VRM address 0x42104 */
+	base[(0x34 + 8) / 4] = 0x42104;
+	base[(0x38 + 8) / 4] = (1u << 31) | 1;
+	/* Trigger TCS 0 command execution */
+	base[0x0 / 4] = 1;
+	BS->stall(10000);
+}
+
 static void
 wdt_arm(void)
 {
@@ -3125,6 +3154,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	for (const char *c = base_cmdline; *c && n < BOOT_LINE_LENGTH - 1; c++) {
 		ba->commandLine[n++] = *c;
 	}
+	if (PLAT == &platform_dipper) {
+		for (const char *c = "dipper=1 "; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
+	}
 	/* one processor unless the payload asks for more (of two "cpus=" the kernel takes the first) */
 	if (!more_cores) {
 		for (const char *c = "cpus=1 "; *c && n < BOOT_LINE_LENGTH - 1; c++) {
@@ -3141,7 +3175,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 			ba->commandLine[n++] = *c;
 		}
 	}
-	if (wdt_armed) {
+	if (wdt_armed && PLAT == &platform_redwood) {
 		for (const char *c = "hv_wdt_pet=1 "; *c && n < BOOT_LINE_LENGTH - 1; c++) {
 			ba->commandLine[n++] = *c;
 		}
@@ -4345,6 +4379,8 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
 		if (SCREEN.base == 0xE1000000ULL) {
 			PLAT = &platform_redwood;
+		} else if (SCREEN.base == 0x9D400000ULL || (SCREEN.width == 1080 && SCREEN.height == 2248)) {
+			PLAT = &platform_dipper;
 		} else {
 			ramfb_phone_screen();
 		}
@@ -4354,6 +4390,7 @@ efi_main(efi_handle image, efi_system_table *st)
 
 	install_exception_hook();
 	wdt_arm();
+	rpmh_ldo28_enable();
 
 	int have_payload = parse_payload(&pi, 0);
 	if (have_payload && pi.usb_mode && usb_start()) {

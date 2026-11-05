@@ -87,6 +87,7 @@ cpus	l
 ddr	k
 ddr_rest	k
 ddr_vote	k
+dipper	k
 display_probe	k
 epoch	k
 fb_beam	k
@@ -150,6 +151,12 @@ hakios_kver	k
 haptic	k
 haptic_effect	k
 hv_wdt_pet	k
+i2c_addr	k
+i2c_clk	k
+i2c_pull	k
+i2c_scan	k
+i2c_speed	k
+i2c_test	k
 loader_return_after	kl
 m2v_utrace	u
 machine_name	k
@@ -279,9 +286,12 @@ torch_max_s	k
 torch_secs	k
 touch_flip	k
 touch_lat	ku
+touch_max_x	k
+touch_max_y	k
 touch_poll_us	k
 touch_rate	k
 touch_spi_hz	k
+touch_test	k
 touchscreen	k
 tu_debug	u
 ufs	l

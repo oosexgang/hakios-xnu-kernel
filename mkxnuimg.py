@@ -21,12 +21,39 @@ FD_BASE, FD_SIZE = 0x9FD00000, 0x200000
 PAYLOAD_BASE, PAYLOAD_MAX = 0xF0000000, 0x04000000
 
 ap = argparse.ArgumentParser()
+ap.add_argument('-d', '--device', default='redwood', choices=['redwood', 'dipper'], help='target device')
 ap.add_argument('-p', '--payload')
-ap.add_argument('-o', '--output', default=os.path.join(HERE, 'xnu-redwood.img'))
+ap.add_argument('-o', '--output')
 ap.add_argument('--mode', default='RELEASE')
 args = ap.parse_args()
 
-fd_path = os.path.join(MU, f'Build/redwoodPkg/{args.mode}_CLANGPDB/FV/SILICIUM_UEFI.fd')
+if not args.output:
+    args.output = os.path.join(HERE, f'xnu-{args.device}.img')
+
+DEVICE_CONFIGS = {
+    'dipper': {
+        'fd_base': 0x9FC00000,
+        'fd_size': 0x300000,
+        'prebuilt_dir': os.path.join(HERE, 'devices', 'dipper', 'prebuilt'),
+        'pkg': 'dipperPkg',
+        'extra_boot_args': ['--base', '0x10000000', '--kernel_offset', '0x00000000',
+                            '--ramdisk_offset', '0x00000000', '--tags_offset', '0x00000000',
+                            '--os_version', '9.0.0', '--os_patch_level', '2020-09'],
+    },
+    'redwood': {
+        'fd_base': 0x9FD00000,
+        'fd_size': 0x200000,
+        'prebuilt_dir': os.path.join(HERE, 'devices', 'redwood', 'prebuilt'),
+        'pkg': 'redwoodPkg',
+        'extra_boot_args': [],
+    }
+}
+
+cfg = DEVICE_CONFIGS[args.device]
+FD_BASE, FD_SIZE = cfg['fd_base'], cfg['fd_size']
+PREBUILT = cfg['prebuilt_dir']
+
+fd_path = os.path.join(MU, f'Build/{cfg["pkg"]}/{args.mode}_CLANGPDB/FV/SILICIUM_UEFI.fd')
 if os.path.isfile(fd_path):
     shim_dir = os.path.join(MU, 'BootShim')
     for f in ('BootShim.elf', 'BootShim.bin'):
@@ -66,8 +93,10 @@ dtb = open(parts['dtb'], 'rb').read()
 kernel = args.output + '.kernel~'
 open(kernel, 'wb').write(gzip.compress(blob, 6) + dtb)
 try:
-    subprocess.check_call([sys.executable, parts['mkbootimg'], '--kernel', kernel, '--ramdisk', parts['ramdisk'],
-                           '--header_version', '1', '-o', args.output])
+    cmd = [sys.executable, parts['mkbootimg'], '--kernel', kernel, '--ramdisk', parts['ramdisk'],
+           '--header_version', '1', '-o', args.output]
+    cmd.extend(cfg.get('extra_boot_args', []))
+    subprocess.check_call(cmd)
 finally:
     os.unlink(kernel)
 print(f'{args.output}: {os.path.getsize(args.output)} bytes (shim {len(shim)}, uncompressed {len(blob)})')

@@ -9,6 +9,7 @@
 # Subsystems: input storage gpu camera haptic audio power wifi bluetooth modem net core
 
 input    bsd/dev/hakios.goodix.c
+input    bsd/dev/hakios.fts.c
 input    bsd/dev/hakios.focaltech_fw.h
 input    bsd/dev/hakios.input.c
 input    bsd/dev/hakios.buttons.c

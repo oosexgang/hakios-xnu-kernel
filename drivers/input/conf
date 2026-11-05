@@ -14,6 +14,10 @@ driver GOODIX
 	help    the touch screen: a Goodix GT9916 ("Berlin-D") or a FocalTech FT3680 on SPI (touchscreen=1). The bus,
 	help    pins and supplies are the POCO X5 Pro's; another phone with one of these controllers changes those
 
+driver FTS
+	file    bsd/dev/hakios.fts.c
+	help    FocalTech FT8719/FTS521 touchscreen on bit-bang I2C (touchscreen=1)
+
 driver BUTTONS
 	file    bsd/dev/hakios.buttons.c
 	help    the power and volume keys, read from the PMIC through the SPMI arbiter (buttons=1)

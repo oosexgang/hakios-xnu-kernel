@@ -160,6 +160,15 @@ mount_cryptex(const char *name, const char *container, const char *flashdev)
 		}
 		strcpy(spec, join(flashdev, container, ""));
 		if (mount("apfs", at, MNT_RDONLY, (void *)spec) != 0) {
+			char from[64];
+			strcpy(from, join("/System/Cryptexes/", name, ""));
+			if (mount("bindfs", at, MNT_RDONLY, (void *)from) == 0) {
+				strcpy(what, join("the ", name, " cryptex (bind from "));
+				strcpy(what, join(what, from, ") on "));
+				strcpy(what, join(what, at, ""));
+				check(1, what);
+				return;
+			}
 			printf("  the %s cryptex from %s: %s\n", name, spec, strerror(errno));
 			strcpy(what, join("the ", name, " cryptex: in neither md0 nor the flash"));
 			check(0, what);
@@ -1327,11 +1336,14 @@ run_command(char *line)
 				close(null);
 			}
 		}
-		if (flash_root_mode && strcmp(argv[1], "/sbin/launchd.darwin") == 0) {
-			argv[1] = "/sbin/launchd";      /* the root is Darwin's own volume: its launchd is that */
+		if (flash_root_mode && (strcmp(argv[1], "/sbin/launchd.darwin") == 0 || strcmp(argv[1], "/sbin/launchd.ios") == 0)) {
+			struct stat lst;
+			if (stat(argv[1], &lst) != 0) {
+				argv[1] = "/sbin/launchd";      /* the root is the flashed system volume: its launchd is Apple's /sbin/launchd */
+			}
 		}
 		execve(argv[1], argv + 1, envp);
-		printf("%s: %s\n", argv[1], strerror(errno));
+		printf("%s: %s (errno %d)\n", argv[1], strerror(errno), errno);
 		return;
 	}
 
