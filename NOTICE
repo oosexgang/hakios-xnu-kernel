@@ -37,7 +37,8 @@ Fetched at build time, never committed:
   user's own phone (devices/redwood/pull-firmware.sh).
 - lzfse (Apple, BSD-3-Clause), built by xnuloader/mkidentity.sh when no LZFSE decoder is installed.
 - Mesa (for GL=1 images; Turnip for TURNIP=1, tools/mk-turnip.sh), Procursus and Sileo packages (tools/mk-jb.sh): their own licenses.
-- hakios-metal (oosexgang, MIT), taken from beside this tree by userland/build.sh METAL_PLUGIN=ca.
+- hakios-metal (oosexgang, MIT), in hakios-metal/ of this tree with its own LICENSE and NOTICE, built by `make ios` there and
+  linked by userland/build.sh METAL_PLUGIN=ca (HAKIOS_METAL= names another copy).
 - for M2V=1, by tools/mk-m2v.sh, at pinned revisions: UniXNU's AdrenoMetal 243d63c (MIT, Copyright (c) 2026 NativeMetal contributors);
   steelbrain's metal2vulkan 624bab3 (GPL-2.0-or-later OR LGPL-3.0-or-later) with AdrenoMetal's 30 patches; the Rust crates of its
   Cargo.lock (MIT, Apache-2.0, ISC, Unlicense: their own licenses). None of it is in prebuilt/. A binary that statically links that

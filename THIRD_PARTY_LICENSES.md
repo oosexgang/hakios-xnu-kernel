@@ -39,7 +39,7 @@ This supersedes the summary in `NOTICE`, which stays as the short, canonical lis
 | ath11k (Wi-Fi driver) | `tools/mk-ath11k.sh` | Linux | BSD-3-Clause-Clear |
 | Mesa (GL=1 images) | `tools/mk-mesa.sh` | Mesa project | MIT and others |
 | Turnip, Mesa's Vulkan driver (TURNIP=1) | `tools/mk-turnip.sh`, in `tools/mk-mesa.sh`'s tree | Mesa project, 25.0.7 | MIT and others |
-| hakios-metal (METAL_PLUGIN=ca) | beside this tree, `userland/build.sh` | [oosexgang/hakios-metal](https://github.com/oosexgang/hakios-metal) | MIT |
+| hakios-metal (METAL_PLUGIN=ca) | `hakios-metal/` in this tree, `userland/build.sh` | [oosexgang/hakios-metal](https://github.com/oosexgang/hakios-metal) | MIT |
 | AdrenoMetal's frontend and bridge (M2V=1) | `tools/mk-m2v.sh`, pinned at `243d63c` | [UniXNU/AdrenoMetal](https://github.com/UniXNU/AdrenoMetal) | MIT, Copyright (c) 2026 NativeMetal contributors |
 | metal2vulkan (M2V=1) | `tools/mk-m2v.sh`, pinned at `624bab3`, with AdrenoMetal's 30 patches | [steelbrain/metal2vulkan](https://github.com/steelbrain/metal2vulkan) | `GPL-2.0-or-later OR LGPL-3.0-or-later`, the user's choice (its `LICENSE`) |
 | Rust crates of that build (M2V=1) | `cargo`, by `tools/mk-m2v.sh`; `xnu-deps/build/m2v/bridge/Cargo.lock` | crates.io: ash, libc, libloading, sha2 and their dependencies, 34 packages | those read: MIT OR Apache-2.0 (22), MIT (3), ISC (1), Unlicense OR MIT (1); the 7 not found in the local registry (proc-macro2, quote, serde, serde_derive, syn, unicode-ident, windows-link): **to verify** |
