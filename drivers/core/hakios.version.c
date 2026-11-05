@@ -4,7 +4,7 @@
  * Where the string comes from. VERSION (at the top of the repository) holds VERSION.PATCHLEVEL.SUBLEVEL and
  * EXTRAVERSION, in the form of the Makefile of Linux; tools/kernel-version.py makes the whole string from it,
  * from the Darwin the kernel is built on, from CONFIG_SOC of the active configuration and from git
- * (2.1.13-hakios-darwin22.5-sc7280-g1a2b3c4d). xnuloader/mkpayload.py puts it into the payload as the entry
+ * (2.3.4-hakios-darwin22.5-sc7280-g1a2b3c4d). xnuloader/mkpayload.py puts it into the payload as the entry
  * kernel.ver, the loader prints it under its banner ("kernel.ver=") and hands it to this kernel on its
  * command line as hakios_kver.
  *

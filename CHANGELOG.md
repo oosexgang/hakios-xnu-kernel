@@ -14,10 +14,28 @@ changes to it; the scripts named fetch the release and put the changes on.
 - the UEFI (the other way to start): [Project Silicium's Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) at `e51cd877e31c` -- `hakios-uefi/apply.sh`
 - the GPU's OpenGL ES: [Mesa](https://archive.mesa3d.org/) 25.0.7, the freedreno driver for the Adreno -- `tools/mk-mesa.sh`, the changes in `tools/mesa/`
 - the GPU's Vulkan: the same Mesa's Turnip -- `tools/mk-turnip.sh`, the changes in `tools/mesa/turnip-darwin.patch` and `tools/mesa/hakios-drm/`
-- Metal, the direct path: [hakios-metal](https://github.com/oosexgang/hakios-metal), beside this tree -- `userland/build.sh METAL_PLUGIN=ca`, with `userland/src/HakiosMetalCA.m`
+- Metal, the direct path: `hakios-metal/` in this tree -- `userland/build.sh METAL_PLUGIN=ca`, with `userland/src/HakiosMetalCA.m`
 - Metal, on Vulkan: [UniXNU/AdrenoMetal](https://github.com/UniXNU/AdrenoMetal) at `243d63c` and [steelbrain/metal2vulkan](https://github.com/steelbrain/metal2vulkan) at `624bab3` with AdrenoMetal's 30 patches -- `tools/mk-m2v.sh`, the changes in `tools/m2v/`
 - the build tools: Apple's [libdispatch](https://github.com/apple-oss-distributions/libdispatch), [libpthread](https://github.com/apple-oss-distributions/libpthread) and [AvailabilityVersions](https://github.com/apple-oss-distributions/AvailabilityVersions), [bootstrap_cmds](https://github.com/markmentovai/bootstrap_cmds), [unifdef](https://github.com/fanf2/unifdef), the [macOS 13.3 SDK](https://github.com/joseluisq/macosx-sdks) and the [iPhoneOS 16.5 SDK](https://github.com/theos/sdks) -- `xnu-deps/setup.sh`
 - not fetched by anything here: the Darwin 16.5 user space, which you lay out from your own IPSW (`sysimage/`), and the phone's own firmware, pulled from its Android (`fw-*`)
+
+## 2026-11-05: 2.3.4
+
+- metal: a pipeline CoreAnimation makes at run time, which its library does not hold, gets the nearest variant of the same kind and not one that draws something else. That was the red at the top of the default wallpaper (its head was not drawn), the white band behind the status bar (`darkenSourceOver`), and materials like the Weather widget's
+- touch: a finger's lift 5 ms after its last move at most 6, on the phone under real fingers; 88 to 169 before. `touch: N strokes` in the log says so without `touch_lat=1`'s lines
+- metal: at the default screen with the right shaders, on the phone: 109.6 frames a second over the bench's gestures, 1.3% of them over 16.7 ms. 120 is not reached: what is left is SpringBoard's main thread at the start of a gesture (up to 100 ms on the bench, up to 300 under fingers), and the GPU at the home button and opening an app
+- windows: `tools/metal-run.sh` renders at the iPhone X's layout at 2 pixels a point by default, 750x1624 stretched to the panel, in place of the iPhone XR's screen: at that class a swipe from the bottom edge opened a sheet under real fingers. Not yet seen under real fingers at this one
+- ports: `devices/<name>/metal.args` holds a phone's own arguments for `tools/metal-run.sh`, and a phone other than redwood no longer gets redwood's
+- docs: the READMEs, the index and the Windows guide name `hakios-metal/` of this tree; the repository beside it says it has moved
+
+## 2026-11-05: 2.3.3
+
+- metal: `hakios-metal/` is in this tree with its history, and `userland/build.sh` links it: one checkout builds everything
+- framebuffer: `fb_beam` and `fb_measure` read the display interface's registers only on `sc7280` or with `fb_intf=`: they read SM7325's address on any SoC before
+- hakios-metal: a GPU of another chip ID is refused by name, and the window server stays on OpenGL ES
+- tools: `tools/metal-run.sh` takes the phone's own arguments from `DEVICE_ARGS=`; [Port a device](docs/porting/index.md) says what Metal needs from a port
+- touch: with a finger down every look reads a report; a finger's lift no longer waits up to 169 ms for the look of every 80 ms
+- framebuffer: slow frames are filtered at once, so a still screen no longer moves back and forth 10 times a second; nothing is drawn again from a surface the GPU has taken back
 
 ## 2026-11-04
 
@@ -25,7 +43,7 @@ changes to it; the scripts named fetch the release and put the changes on.
 - springboard: `wallpaper_freeze=1` makes the wallpaper one picture, from the IOSurface on the panel (`kern.hakios.fb_surface`): home button 92 frames a second, against 28 with `wallpaper_cache=1` and 50 without either; the icons blink once, the wallpaper does not change until the next boot, and the lock screen shows the same picture
 - windows: `tools/metal-run.sh` sets `wallpaper_freeze=1` and `metal_defer=1`; an argument in `MORE` takes the place of a default of the same name
 - metal: 250 touch samples a second instead of 125 change nothing (100 to 102); `touch_poll_us` stays 4000 in `tools/metal-run.sh`
-- springboard: the status bar's legibility gradient (compositing filter `darkenSourceOver`) came out solid white over the top eighth of the home screen, on both Metal paths; it is drawn without the filter now, the wallpaper reaches the top and the status bar reads; why that filter's shader gives white is not known
+- springboard: the status bar's legibility gradient (compositing filter `darkenSourceOver`) came out solid white over the top eighth of the home screen, on both Metal paths; it is drawn without the filter now, the wallpaper reaches the top and the status bar reads (2.3.4 found why, and took this out)
 - windows: `tools/metal-run.sh` renders at the iPhone XR's screen by default, 828x1792 stretched to the panel: Settings' scroll 118 frames a second, swipes 110 to 115, home button 106, 1% of frames over 16.7 ms; the wallpaper is the picture a boot at the iPhone X's screen kept
 - display: `fb_beam=1`, the default: each thread's rows are written behind the panel's scan line (2433 lines, 8338 us), and to the eye the moving bands are gone; it costs no frames (Settings' scroll 91 against 89, home button 89 to 92 against 81, swipes 101 against 99)
 - docs: a short README and a front page by what you came to do; `docs/reference/metal.md` and its measurements; every boot-argument of both Metal paths in the catalogue (`tools/boot-args.py` reads `hm_boot_arg_set`)

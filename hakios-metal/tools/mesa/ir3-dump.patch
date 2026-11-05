@@ -1,0 +1,1207 @@
+Teach ir3_compiler to write the variant out: -o FILE, a hakios::metal::Kernel fixture.
+
+ir3_compiler prints a listing of what it compiled and keeps the binary to itself.
+hakios-metal dispatches kernels with raw PM4, as Mesa's computerator does, and
+needs the words together with the layout ir3 chose around them: where the driver
+params go, which UBO ranges were pushed to consts and to where, the immediates
+and their offset, the register ids of the ids the hardware loads, constlen,
+instrlen, the register footprint. No listing carries all of that, and the AIR
+path has no other place where the variant exists -- the frontend is reached only
+through this tool. So -o FILE writes the variant as the same C++ fixture that
+hakios-metal's tools/ir3-kernel writes for a text kernel (its
+include/hakios-metal/kernel.hpp documents every field and the register that
+reads it), and -s FILE carries the kernel text (the .ll) into it for the record.
+
+The variant is assembled once: ir3_shader_assemble frees the constant data it
+appends to the binary, so dump_info now takes the binary rather than calling it.
+
+Applies after air-frontend.patch, air-ir3.patch and ir3-round-default.patch
+(tools/air/mk-host.sh's order) on mesa-25.0.7, with the AIR frontend copied in.
+
+-o also writes the Kernel's texture fields (textures[], numTextureSlots,
+samplerMask) from a walk of the NIR before ir3 lowers it: which Metal texture
+index the code samples (sam/saml/isaml through the texture table) or stores
+to as an image (stib/ldib at IBO slot num_ssbos + index), with what dimension
+and element class and width, and which sampler indices it names. The dispatch
+sizes its tables from these, not from ir3's num_samp, which counts textures and
+images together and ignores sampler indices (ir3_compiler_nir.c), nor from the
+front end's resource list, which says what was declared and not what the code
+does. The same walk lives in hakios-metal's src/compiler.cpp, and compiler_test
+holds the two to each other over tools/kernels/*.ll. A sampled slot the front
+end reserved for Metal's null texture (air_resource.null_texture) is marked as
+such: the draw binds its own texture there, whatever the application bound.
+
+-o is stage-aware (29 October): a VERTEX or FRAGMENT variant is written as a
+hakios::metal::Stage (include/hakios-metal/render.hpp) -- the Kernel as its
+first member, then inputs[] (slot, regid, compmask, inloc, sysval, bary, flat,
+half) and outputs[] (slot, regid, half, and the output's declared class in the
+pad: float or integer, read off the NIR's shader_out variables before lowering)
+straight from ir3_shader_variant, and the regids and flags turnip's
+tu6_emit_vpc / tu6_emit_fs_inputs / tu6_emit_fs_outputs read (vertex id,
+position, the ij barycentrics, frag coord, face, the colour outputs with
+ir3_get_output_regid's HALF_REG_ID split, depth/stencil/sample mask, total_in,
+has_kill, per_samp...). The vertex-only and fragment-only fields are read from
+their own stage only, because the slot namespaces collide (VARYING_SLOT_POS and
+FRAG_RESULT_DEPTH are both 0). A compute variant is written as the Kernel it
+was, byte for byte; any other stage is refused by name, where before 29 October
+a VS came out as a compute-shaped Kernel and the tool exited 0.
+
+For a vertex or fragment AIR input the NIR is lowered in turnip's order:
+ir3_nir_lower_io_to_temporaries on the IO VARIABLES, nir_lower_io inside
+ir3_nir_post_finalize (ir3_nir.c:755; tu_shader.cc:2527). The AIR path used to
+lower IO first, so io_to_temporaries found nothing to copy and left orphan
+temporaries whose undef stores nir_opt_undef happened to remove; a second
+store_output to one slot would have won in ir3's setup_output. Compute keeps
+the old order (it has no IO variables) and its fixtures do not change.
+hakios-metal's compileStage runs the same passes in the same order, and
+compiler_test holds each Stage compiled there to the fixture written here.
+
+SPDX-License-Identifier: MIT
+--- a/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
++++ b/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
+@@ -6,7 +6,9 @@
+  *    Rob Clark <robclark@freedesktop.org>
+  */
+ 
++#include <ctype.h>
+ #include <err.h>
++#include <inttypes.h>
+ #include <fcntl.h>
+ #include <getopt.h>
+ #include <stdint.h>
+@@ -35,19 +37,926 @@
+ #include "compiler/spirv/nir_spirv.h"
+ #include "compiler/spirv/spirv_info.h"
+ #include "compiler/air/nir_air.h"
++#include "common/freedreno_dev_info.h"
+ 
+ #include "pipe/p_context.h"
+ 
+ static void
+-dump_info(struct ir3_shader_variant *so, const char *str)
++dump_info(struct ir3_shader_variant *so, uint32_t *bin, const char *str)
+ {
+-   uint32_t *bin;
+    const char *type = ir3_shader_stage(so);
+-   bin = ir3_shader_assemble(so);
+    printf("; %s: %s\n", type, str);
+    ir3_shader_disasm(so, bin, stdout);
+ }
+ 
++/* -o FILE: the compiled variant written out as a hakios::metal::Kernel fixture,
++ * in the format hakios-metal's tools/ir3-kernel writes for a text kernel (its
++ * include/hakios-metal/kernel.hpp documents every field and the register that
++ * reads it): constexpr arrays of the words and the immediates, a constexpr
++ * Kernel with every field in order, and the listing as comments. The two
++ * writers are kept in step by hand; a field added to the struct is added to
++ * both. It lives here because this is the only place where an AIR kernel's
++ * variant exists: ir3_compiler has no binary output of its own, and the driver
++ * needs the words together with the layout ir3 chose for them -- where the
++ * driver params and the pushed UBO ranges go -- which no listing carries whole.
++ */
++static void
++emit_words(FILE *out, const char *name, const uint32_t *words, uint32_t count)
++{
++   fprintf(out, "constexpr uint32_t %s[] = {", name);
++   for (uint32_t i = 0; i < count; i++) {
++      if (i % 4 == 0)
++         fputs("\n   ", out);
++      fprintf(out, " 0x%08x,", words[i]);
++   }
++   fputs("\n};\n", out);
++}
++
++static void
++emit_comment_block(FILE *out, const char *text)
++{
++   while (*text) {
++      const char *nl = strchr(text, '\n');
++      size_t len = nl ? (size_t)(nl - text) : strlen(text);
++      fprintf(out, "// %.*s\n", (int)len, text);
++      text += len + (nl ? 1 : 0);
++   }
++}
++
++/* -o: the kernel's textures, images and samplers as its INSTRUCTIONS address
++ * them (kernel.hpp: Kernel::textures, numTextureSlots, samplerMask), read off
++ * the NIR the front end produced, before ir3 lowers it. ir3's own num_samp
++ * counts sampled textures and images together and never looks at a sampler
++ * index (ir3_compiler_nir.c: num_samp = last texture used + 1 + num_images),
++ * so the dispatch cannot size its tables from it; and the front end's resource
++ * list says what was declared, not what the code does with it. The walk is the
++ * one hakios-metal's compileAir makes in-process (src/compiler.cpp), so that a
++ * fixture and an in-process compile agree field for field (compiler_test):
++ *
++ *   nir_tex_instr          slot texture_index, kind sampled (1): sam/saml with
++ *                          a sampler, isaml for texture.read (txf). dim from
++ *                          sampler_dim, element from dest_type -- but not from
++ *                          a query (txs, lod, query_levels...), whose int
++ *                          result is not the texture's class. The ops that take
++ *                          a sampler (tex, txb, txl, txd, tg4, lod:
++ *                          nir_tex_instr_need_sampler) set the sampler's bit;
++ *                          txf, txf_ms and the queries do not.
++ *   image_load/store       slot src[0] (always an immediate from the front end),
++ *                          kind image (2): ldib/stib at IBO slot num_ssbos +
++ *                          index (ir3_image.c:50-52). element from dest_type /
++ *                          src_type and the WIDTH from the value's bit size, as
++ *                          ir3_get_type_for_image_intrinsic reads them
++ *                          (ir3_image.c:96-141): a half image is a 16-bit stib
++ *                          into whatever descriptor is bound.
++ *   image_atomic(_swap)    the same, read and written, the atomic op's type.
++ *   image_size/levels/samples   the slot's kind and dimension only.
++ *
++ * A texture or sampler chosen at run time, an index at or past the Kernel's
++ * sixteen slots, a dimension or element class the Kernel has no name for, or
++ * one index used two ways are refused by name: the Kernel has no field for them.
++ */
++#define FIXTURE_TEXTURE_SLOTS 16   /* kernel.hpp's kMaxTextureSlots */
++
++struct fixture_texture {
++   uint8_t kind, dim, is_array, element, bits, read, write, is_null, fb_target;   /* KernelTexture */
++};
++
++struct fixture_textures {
++   struct fixture_texture slot[FIXTURE_TEXTURE_SLOTS];
++   unsigned num_slots;      /* highest SAMPLED index + 1: Kernel::numTextureSlots */
++   uint32_t sampler_mask;   /* Kernel::samplerMask */
++};
++
++static uint8_t
++fixture_dim(enum glsl_sampler_dim dim, const char *what, unsigned index)
++{
++   switch (dim) {
++   case GLSL_SAMPLER_DIM_1D:   return 1;   /* kTexDim1D */
++   case GLSL_SAMPLER_DIM_2D:
++   case GLSL_SAMPLER_DIM_RECT: return 2;   /* kTexDim2D */
++   case GLSL_SAMPLER_DIM_3D:   return 3;   /* kTexDim3D */
++   case GLSL_SAMPLER_DIM_CUBE: return 4;   /* kTexDimCube */
++   case GLSL_SAMPLER_DIM_MS:   return 5;   /* kTexDimMS */
++   default:
++      errx(1, "-o: %s %u has a dimension (glsl_sampler_dim %d) KernelTextureDim has no name for",
++           what, index, (int)dim);
++   }
++}
++
++static uint8_t
++fixture_element(nir_alu_type type, const char *what, unsigned index)
++{
++   switch (nir_alu_type_get_base_type(type)) {
++   case nir_type_float: return 0;   /* kElemFloat */
++   case nir_type_uint:  return 1;   /* kElemUint */
++   case nir_type_int:   return 2;   /* kElemInt */
++   default:
++      errx(1, "-o: %s %u moves values of nir_alu_type %d, which is not float, uint or int",
++           what, index, (int)type);
++   }
++}
++
++static struct fixture_texture *
++fixture_slot(struct fixture_textures *t, unsigned index, uint8_t kind, const char *what)
++{
++   if (index >= FIXTURE_TEXTURE_SLOTS)
++      errx(1, "-o: %s index %u: the Kernel holds %u texture slots", what, index,
++           FIXTURE_TEXTURE_SLOTS);
++   struct fixture_texture *s = &t->slot[index];
++   if (s->kind && s->kind != kind)
++      errx(1, "-o: texture index %u is both sampled and addressed as an image", index);
++   s->kind = kind;
++   return s;
++}
++
++/* The front end's reading of the function's metadata, kept from load_air for
++ * the check below: what Apple DECLARED each texture argument as. */
++static struct air_shader_info fixture_air_info;
++
++/* The element class a declaration names: the scalar type between the first '<'
++ * and the next ',' or '>' of air.arg_type_name ("texture2d<half, write>").
++ * -1 when the name has none (src/compiler.cpp: declaredElement, the same rule). */
++static int
++fixture_declared_element(const char *type_name)
++{
++   const char *lt = strchr(type_name, '<');
++   if (!lt)
++      return -1;
++   const char *b = lt + 1;
++   while (*b == ' ')
++      b++;
++   const char *e = b;
++   while (*e && *e != ',' && *e != '>' && *e != ' ')
++      e++;
++   size_t n = e - b;
++#define IS(word) (n == strlen(word) && !strncmp(b, word, n))
++   if (IS("half") || IS("float") || IS("bfloat"))
++      return 0;
++   if (IS("uint") || IS("ushort") || IS("uchar"))
++      return 1;
++   if (IS("int") || IS("short") || IS("char"))
++      return 2;
++#undef IS
++   return -1;
++}
++
++static void
++walk_textures(nir_shader *nir, struct fixture_textures *t)
++{
++   memset(t, 0, sizeof(*t));
++   nir_foreach_function_impl(impl, nir) {
++      nir_foreach_block(block, impl) {
++         nir_foreach_instr(instr, block) {
++            if (instr->type == nir_instr_type_tex) {
++               nir_tex_instr *tex = nir_instr_as_tex(instr);
++               if (nir_tex_instr_src_index(tex, nir_tex_src_texture_offset) >= 0 ||
++                   nir_tex_instr_src_index(tex, nir_tex_src_sampler_offset) >= 0 ||
++                   nir_tex_instr_src_index(tex, nir_tex_src_texture_handle) >= 0 ||
++                   nir_tex_instr_src_index(tex, nir_tex_src_sampler_handle) >= 0)
++                  errx(1, "-o: a texture or sampler chosen at run time: the Kernel addresses them by Metal's own indices only");
++               struct fixture_texture *s = fixture_slot(t, tex->texture_index, 1, "texture");
++               s->dim = fixture_dim(tex->sampler_dim, "texture", tex->texture_index);
++               s->is_array = tex->is_array;
++               s->read = 1;
++               if (!nir_tex_instr_is_query(tex))
++                  s->element = fixture_element(tex->dest_type, "texture", tex->texture_index);
++               if (nir_tex_instr_need_sampler(tex)) {
++                  if (tex->sampler_index >= FIXTURE_TEXTURE_SLOTS)
++                     errx(1, "-o: sampler index %u: the Kernel holds %u sampler slots",
++                          tex->sampler_index, FIXTURE_TEXTURE_SLOTS);
++                  t->sampler_mask |= 1u << tex->sampler_index;
++               }
++               if (tex->texture_index + 1 > t->num_slots)
++                  t->num_slots = tex->texture_index + 1;
++            } else if (instr->type == nir_instr_type_intrinsic) {
++               nir_intrinsic_instr *in = nir_instr_as_intrinsic(instr);
++               nir_alu_type type = nir_type_invalid;
++               bool read = false, write = false, typed = true;
++               switch (in->intrinsic) {
++               case nir_intrinsic_image_load:
++                  type = nir_intrinsic_dest_type(in);
++                  read = true;
++                  break;
++               case nir_intrinsic_image_store:
++                  type = nir_intrinsic_src_type(in);
++                  write = true;
++                  break;
++               case nir_intrinsic_image_atomic:
++               case nir_intrinsic_image_atomic_swap:
++                  type = nir_atomic_op_type(nir_intrinsic_atomic_op(in));
++                  read = write = true;
++                  break;
++               case nir_intrinsic_image_size:
++               case nir_intrinsic_image_levels:
++               case nir_intrinsic_image_samples:
++                  typed = false;
++                  break;
++               default:
++                  continue;
++               }
++               if (!nir_src_is_const(in->src[0]))
++                  errx(1, "-o: an image chosen at run time: the Kernel addresses images by Metal's own indices only");
++               unsigned index = nir_src_as_uint(in->src[0]);
++               struct fixture_texture *s = fixture_slot(t, index, 2, "image");
++               s->dim = fixture_dim(nir_intrinsic_image_dim(in), "image", index);
++               s->is_array = nir_intrinsic_image_array(in);
++               s->read |= read;
++               s->write |= write;
++               if (typed) {
++                  const nir_intrinsic_info *info = &nir_intrinsic_infos[in->intrinsic];
++                  unsigned bits = info->has_dest ? in->def.bit_size : nir_src_bit_size(in->src[3]);
++                  uint8_t element = fixture_element(type, "image", index);
++                  if (s->bits && (s->bits != bits || s->element != element))
++                     errx(1, "-o: image %u is addressed as %u-bit values of element class %u and as %u-bit values of class %u",
++                          index, s->bits, s->element, bits, element);
++                  s->element = element;
++                  s->bits = bits;
++               }
++            }
++         }
++      }
++   }
++   /* The declaration and the instructions must name the same class. They did
++    * not for every half or float image until 29 October: the front end typed
++    * a texture write by the call's return type (void, so uint), and ir3 then
++    * emitted stib.b.typed.*.u16/u32 for half and float values, which a typed
++    * store converts as integers. src/compiler.cpp refuses the same, so that a
++    * fixture and a kernel compiled on the phone agree in refusing it. */
++   static const char *const class_names[] = { "float", "uint", "int" };
++   for (unsigned i = 0; i < fixture_air_info.num_resources; i++) {
++      const struct air_resource *r = &fixture_air_info.resources[i];
++      if ((r->kind != AIR_RESOURCE_TEXTURE && r->kind != AIR_RESOURCE_IMAGE) ||
++          r->index >= FIXTURE_TEXTURE_SLOTS || !r->type_name)
++         continue;
++      const struct fixture_texture *s = &t->slot[r->index];
++      if (!s->kind)
++         continue;
++      int declared = fixture_declared_element(r->type_name);
++      if (declared >= 0 && declared != s->element)
++         errx(1, "-o: texture %u is declared %s but its instructions move %s values through it: "
++                 "the front end's typing of the access is off",
++              r->index, r->type_name, class_names[s->element]);
++   }
++   /* The front end's reserved slot for Metal's null texture (air_resource.null_texture),
++    * when the code samples it: the draw binds its own texture there. A slot declared
++    * and not sampled is no slot, as for any texture. */
++   for (unsigned i = 0; i < fixture_air_info.num_resources; i++) {
++      const struct air_resource *r = &fixture_air_info.resources[i];
++      if (r->kind == AIR_RESOURCE_TEXTURE && r->null_texture && r->index < FIXTURE_TEXTURE_SLOTS &&
++          t->slot[r->index].kind == 1)
++         t->slot[r->index].is_null = 1;
++   }
++}
++
++static int read_file(const char *filename, void **ptr, size_t *size);
++
++/* A framebuffer fetch lowered before ir3_nir_post_finalize would, with the
++ * layer and the sample it reads made 0 -- what hakios-metal's compiler does
++ * (src/compiler.cpp: lowerFbReadSingleLayer, which says why), so that its
++ * fixtures and its compiles agree. Only the reads the lowering added: the
++ * shader's own are counted first and left alone. */
++struct fixture_fb_counts {
++   unsigned layer, sample;
++};
++
++static bool
++fixture_count_layer_sample(nir_builder *b, nir_intrinsic_instr *in, void *data)
++{
++   struct fixture_fb_counts *c = data;
++   (void)b;
++   c->layer += in->intrinsic == nir_intrinsic_load_layer_id;
++   c->sample += in->intrinsic == nir_intrinsic_load_sample_id;
++   return false;
++}
++
++static bool
++fixture_zero_layer_sample(nir_builder *b, nir_intrinsic_instr *in, void *data)
++{
++   const struct fixture_fb_counts *own = data;
++   if (!((in->intrinsic == nir_intrinsic_load_layer_id && own->layer == 0) ||
++         (in->intrinsic == nir_intrinsic_load_sample_id && own->sample == 0)))
++      return false;
++   b->cursor = nir_before_instr(&in->instr);
++   nir_def_rewrite_uses(&in->def, nir_imm_intN_t(b, 0, in->def.bit_size));
++   nir_instr_remove(&in->instr);
++   return true;
++}
++
++/* ...and each fetch then an ordinary texel fetch of a slot of its target's own,
++ * one past the highest sampled slot plus the target's index, marked in the
++ * fixture's slot table (src/compiler.cpp: lowerFbRead, which says why). */
++/* whether the lowering below made a fetch slot: the stage reads its targets,
++ * which ir3's fb_read no longer says (it sees no txf_ms_fb) */
++static bool fixture_fb_lowered;
++
++/* src/compiler.cpp: fixPrefetchSamplers */
++static bool
++fix_prefetch_samplers(nir_shader *nir, struct ir3_shader_variant *v)
++{
++   uint8_t sampler_of[32];
++   memset(sampler_of, 0xfe, sizeof(sampler_of));
++   nir_foreach_function_impl (impl, nir) {
++      nir_foreach_block (block, impl) {
++         nir_foreach_instr (instr, block) {
++            if (instr->type != nir_instr_type_tex)
++               continue;
++            nir_tex_instr *tex = nir_instr_as_tex(instr);
++            if (!nir_tex_instr_need_sampler(tex) || tex->texture_index >= 32)
++               continue;
++            uint8_t *s = &sampler_of[tex->texture_index];
++            *s = *s == 0xfe ? (uint8_t)tex->sampler_index : *s == tex->sampler_index ? *s : 0xff;
++         }
++      }
++   }
++   for (unsigned i = 0; i < v->num_sampler_prefetch; i++) {
++      struct ir3_sampler_prefetch *p = &v->sampler_prefetch[i];
++      if (p->bindless || p->tex_id >= 32 || sampler_of[p->tex_id] == 0xfe)
++         continue;
++      if (sampler_of[p->tex_id] == 0xff)
++         return false;
++      p->samp_id = sampler_of[p->tex_id];
++   }
++   return true;
++}
++
++/* src/compiler.cpp: widenHalfVarying */
++static bool
++widen_half_varyings(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   const bool store = intr->intrinsic == nir_intrinsic_store_output && b->shader->info.stage == MESA_SHADER_VERTEX;
++   const bool load = (intr->intrinsic == nir_intrinsic_load_interpolated_input || intr->intrinsic == nir_intrinsic_load_input) &&
++                     b->shader->info.stage == MESA_SHADER_FRAGMENT;
++   if (store) {
++      if (nir_src_bit_size(intr->src[0]) != 16)
++         return false;
++      nir_alu_type base = nir_alu_type_get_base_type(nir_intrinsic_src_type(intr));
++      b->cursor = nir_before_instr(&intr->instr);
++      nir_def *w = base == nir_type_float ? nir_f2f32(b, intr->src[0].ssa) : base == nir_type_int ? nir_i2i32(b, intr->src[0].ssa) : nir_u2u32(b, intr->src[0].ssa);
++      nir_src_rewrite(&intr->src[0], w);
++      nir_intrinsic_set_src_type(intr, (nir_alu_type)(base | 32));
++      return true;
++   }
++   if (load) {
++      if (intr->def.bit_size != 16)
++         return false;
++      nir_alu_type base = nir_alu_type_get_base_type(nir_intrinsic_dest_type(intr));
++      nir_intrinsic_instr *wide = nir_instr_as_intrinsic(nir_instr_clone(b->shader, &intr->instr));
++      wide->def.bit_size = 32;
++      nir_intrinsic_set_dest_type(wide, (nir_alu_type)(base | 32));
++      b->cursor = nir_before_instr(&intr->instr);
++      nir_builder_instr_insert(b, &wide->instr);
++      nir_def *n = base == nir_type_float ? nir_f2f16(b, &wide->def) : nir_u2u16(b, &wide->def);
++      nir_def_rewrite_uses(&intr->def, n);
++      nir_instr_remove(&intr->instr);
++      return true;
++   }
++   return false;
++}
++
++/* src/compiler.cpp: lowerHalfDerivative */
++static bool
++lower_half_derivatives(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   switch (intr->intrinsic) {
++   case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
++   case nir_intrinsic_ddy: case nir_intrinsic_ddy_fine: case nir_intrinsic_ddy_coarse:
++      break;
++   default:
++      return false;
++   }
++   if (intr->def.bit_size != 16)
++      return false;
++   b->cursor = nir_before_instr(&intr->instr);
++   nir_def *wide = nir_f2f32(b, intr->src[0].ssa);
++   nir_intrinsic_instr *d = nir_intrinsic_instr_create(b->shader, intr->intrinsic);
++   d->num_components = intr->num_components;
++   d->src[0] = nir_src_for_ssa(wide);
++   nir_def_init(&d->instr, &d->def, intr->num_components, 32);
++   nir_builder_instr_insert(b, &d->instr);
++   nir_def_rewrite_uses(&intr->def, nir_f2f16(b, &d->def));
++   nir_instr_remove(&intr->instr);
++   return true;
++}
++
++static bool
++lower_point_coord(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   (void)data;
++   if (intr->intrinsic != nir_intrinsic_load_point_coord)
++      return false;
++   nir_variable *pc = nir_find_variable_with_location(b->shader, nir_var_shader_in, VARYING_SLOT_PNTC);
++   if (!pc)
++      pc = nir_create_variable_with_location(b->shader, nir_var_shader_in, VARYING_SLOT_PNTC, glsl_vec_type(2));
++   b->cursor = nir_before_instr(&intr->instr);
++   nir_def_rewrite_uses(&intr->def, nir_load_var(b, pc));
++   nir_instr_remove(&intr->instr);
++   return true;
++}
++
++static void
++fixture_lower_fb_read(nir_shader *nir, struct fixture_textures *t)
++{
++   if (nir->info.stage != MESA_SHADER_FRAGMENT || !nir->info.fs.uses_fbfetch_output)
++      return;
++   struct fixture_fb_counts own = { 0 };
++   nir_shader_intrinsics_pass(nir, fixture_count_layer_sample, nir_metadata_all, &own);
++   nir_lower_fb_read(nir);
++   nir_shader_intrinsics_pass(nir, fixture_zero_layer_sample, nir_metadata_control_flow, &own);
++   /* a target's slot: the lowest the function does not sample, in the order the targets are first read (not one past
++    * the highest sampled: the null texture sits high, and a target beside it would need a 17th) */
++   int slot_of[FIXTURE_TEXTURE_SLOTS];
++   for (unsigned i = 0; i < FIXTURE_TEXTURE_SLOTS; i++)
++      slot_of[i] = -1;
++   unsigned next_free = 0;
++   nir_foreach_function_impl (impl, nir) {
++      nir_builder b = nir_builder_create(impl);
++      nir_foreach_block (block, impl) {
++         nir_foreach_instr_safe (instr, block) {
++            if (instr->type != nir_instr_type_tex)
++               continue;
++            nir_tex_instr *fb = nir_instr_as_tex(instr);
++            if (fb->op != nir_texop_txf_ms_fb)
++               continue;
++            int h = nir_tex_instr_src_index(fb, nir_tex_src_texture_handle);
++            int c = nir_tex_instr_src_index(fb, nir_tex_src_coord);
++            unsigned target = h >= 0 && nir_src_is_const(fb->src[h].src) ? nir_src_as_uint(fb->src[h].src) : 0;
++            if (target >= FIXTURE_TEXTURE_SLOTS || c < 0)
++               errx(1, "-o: a framebuffer fetch of target %u, or one without a coordinate", target);
++            if (slot_of[target] < 0) {
++               while (next_free < FIXTURE_TEXTURE_SLOTS && BITSET_TEST(nir->info.textures_used, next_free))
++                  next_free++;
++               if (next_free >= FIXTURE_TEXTURE_SLOTS)
++                  errx(1, "-o: a framebuffer fetch needs a slot and all of the Kernel's %u are sampled", FIXTURE_TEXTURE_SLOTS);
++               slot_of[target] = (int)next_free++;
++            }
++            unsigned slot = (unsigned)slot_of[target];
++            b.cursor = nir_before_instr(instr);
++            nir_tex_instr *tx = nir_tex_instr_create(nir, 2);
++            tx->op = nir_texop_txf;
++            tx->sampler_dim = GLSL_SAMPLER_DIM_2D;
++            tx->coord_components = 2;
++            tx->dest_type = nir_type_float32;
++            tx->texture_index = slot;
++            tx->sampler_index = 0;
++            tx->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, nir_trim_vector(&b, fb->src[c].src.ssa, 2));
++            tx->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(&b, 0));
++            nir_def_init(&tx->instr, &tx->def, 4, 32);
++            nir_builder_instr_insert(&b, &tx->instr);
++            nir_def_rewrite_uses(&fb->def, &tx->def);
++            nir_instr_remove(instr);
++            BITSET_SET(nir->info.textures_used, slot);
++            fixture_fb_lowered = true;
++            if (t) {
++               struct fixture_texture *s = &t->slot[slot];
++               memset(s, 0, sizeof(*s));
++               s->kind = 1;      /* sampled */
++               s->dim = 2;       /* kTexDim2D */
++               s->element = 0;   /* float */
++               s->read = 1;
++               s->fb_target = target + 1;
++               if (slot + 1 > t->num_slots)
++                  t->num_slots = slot + 1;
++            }
++         }
++      }
++      nir_metadata_preserve(impl, nir_metadata_control_flow);
++   }
++}
++
++/* -o for a vertex or fragment stage: the class of each output's declared type,
++ * read off the NIR's shader_out variables before nir_lower_io, because ir3's
++ * outputs[] knows a register and a slot and not whether the shader meant the
++ * bits as a float or as an integer -- which is what a colour target's format
++ * must agree with (render.hpp: StageOutput). The front end types a float or
++ * half output as a float vector and EVERY integer output as GLSL_TYPE_INT
++ * (air_to_nir.c make_io_var: uint4 and int4 are both <4 x i32> in LLVM and it
++ * does not read air.arg_type_name for outputs), so the classes here are float
++ * (0, kElemFloat) and integer (1, kElemUint: the class of the Uint formats, the
++ * only integer formats served); a signed format would need the type name.
++ * Indexed by the output's location: gl_varying_slot for a VS, gl_frag_result
++ * for an FS, both below 64 + 32.
++ */
++#define FIXTURE_OUTPUT_LOCATIONS 96
++
++struct fixture_output_classes {
++   uint8_t class[FIXTURE_OUTPUT_LOCATIONS];
++   bool known[FIXTURE_OUTPUT_LOCATIONS];
++};
++
++static void
++walk_output_classes(nir_shader *nir, struct fixture_output_classes *oc)
++{
++   memset(oc, 0, sizeof(*oc));
++   if (nir->info.stage != MESA_SHADER_VERTEX && nir->info.stage != MESA_SHADER_FRAGMENT)
++      return;
++   nir_foreach_shader_out_variable(var, nir) {
++      unsigned loc = var->data.location;
++      if (loc >= FIXTURE_OUTPUT_LOCATIONS)
++         errx(1, "-o: an output at location %u, past the %u the fixture indexes", loc,
++              FIXTURE_OUTPUT_LOCATIONS);
++      const struct glsl_type *t = glsl_without_array(var->type);
++      oc->class[loc] = glsl_type_is_float_16_32_64(t) ? 0 : 1;
++      oc->known[loc] = true;
++   }
++}
++
++/* The Kernel's fields, as the initializer of a `constexpr Kernel` or of the
++ * `.k` of a `constexpr Stage` (render.hpp), one line each with the field's
++ * name beside its value, INDENT spaces in. The compute-only fields of a
++ * vertex or fragment stage (localSize, localIdRegid, workGroupIdRegid, bufs,
++ * numwgConstRegid) come out at their zeros / 0xfc / 0xff from the same code,
++ * which is what render.hpp says a Stage's Kernel holds there.
++ */
++static void
++emit_kernel_fields(FILE *out, const char *indent, struct ir3_shader_variant *v,
++                   const char *name, uint32_t num_words, const char *words_name,
++                   const char *imm_name, const void *source, size_t source_size,
++                   const struct fixture_textures *tex)
++{
++   const struct ir3_const_state *cs = ir3_const_state(v);
++   const unsigned max_ubo_ranges = 32;  /* kernel.hpp's kMaxUboRanges */
++   const unsigned max_bufs = 4;         /* kMaxBufs */
++   const unsigned no_const_regid = 0xff;
++   uint32_t local_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
++   uint32_t wg_id = ir3_find_sysval_regid(v, SYSTEM_VALUE_WORKGROUP_ID);
++   int32_t driver_params =
++      ir3_const_can_upload(&cs->allocs, IR3_CONST_ALLOC_DRIVER_PARAMS, v->constlen)
++         ? (int32_t)cs->allocs.consts[IR3_CONST_ALLOC_DRIVER_PARAMS].offset_vec4
++         : -1;
++
++   fprintf(out, "%s/* .words = */ %s,\n", indent, words_name);
++   fprintf(out, "%s/* .numWords = */ %u,\n", indent, num_words);
++   fprintf(out, "%s/* .instrlen = */ %u,\n", indent, v->instrlen);
++   fprintf(out, "%s/* .constlen = */ %u,\n", indent, v->constlen);
++   fprintf(out, "%s/* .maxReg = */ %d,\n", indent, v->info.max_reg);
++   fprintf(out, "%s/* .maxHalfReg = */ %d,\n", indent, v->info.max_half_reg);
++   fprintf(out, "%s/* .doubleThreadsize = */ %s,\n", indent, v->info.double_threadsize ? "true" : "false");
++   fprintf(out, "%s/* .mergedRegs = */ %s,\n", indent, v->mergedregs ? "true" : "false");
++   fprintf(out, "%s/* .earlyPreamble = */ %s,\n", indent, v->early_preamble ? "true" : "false");
++   fprintf(out, "%s/* .branchstackHw = */ %u,\n", indent, ir3_shader_branchstack_hw(v));
++   fprintf(out, "%s/* .sharedSize = */ %u,\n", indent, v->shared_size);
++   fprintf(out, "%s/* .pvtmemSize = */ %u,\n", indent, v->pvtmem_size);
++   fprintf(out, "%s/* .pvtmemPerWave = */ %s,\n", indent, v->pvtmem_per_wave ? "true" : "false");
++   fprintf(out, "%s/* .localSize = */ {%u, %u, %u},\n", indent, v->local_size[0], v->local_size[1],
++           v->local_size[2]);
++   fprintf(out, "%s/* .localSizeVariable = */ %s,\n", indent, v->local_size_variable ? "true" : "false");
++   fprintf(out, "%s/* .localIdRegid = */ 0x%02x,\n", indent, local_id);
++   fprintf(out, "%s/* .workGroupIdRegid = */ 0x%02x,\n", indent, wg_id);
++   fprintf(out, "%s/* .immediates = */ %s,\n", indent, cs->immediates_count ? imm_name : "nullptr");
++   fprintf(out, "%s/* .numImmediates = */ %u,\n", indent, cs->immediates_count);
++   fprintf(out, "%s/* .immediatesOffsetVec4 = */ %u,\n", indent, cs->allocs.max_const_offset_vec4);
++   fprintf(out, "%s/* .driverParamsOffsetVec4 = */ %d,\n", indent, driver_params);
++   fprintf(out, "%s/* .numUbos = */ %u,\n", indent, cs->num_ubos);
++   fprintf(out, "%s/* .numSsbos = */ %u,\n", indent, v->num_ssbos);
++   fprintf(out, "%s/* .numIbos = */ %u,\n", indent, v->num_ibos);
++   fprintf(out, "%s/* .numSamp = */ %d,\n", indent, v->num_samp);
++   fprintf(out, "%s/* .uboRanges = */ {", indent);
++   for (unsigned i = 0; i < max_ubo_ranges; i++) {
++      if (i < cs->ubo_state.num_enabled) {
++         const struct ir3_ubo_range *r = &cs->ubo_state.range[i];
++         fprintf(out, "%s{%u, %u, %u, %u}", i ? ", " : "", r->ubo.block, r->offset / 16,
++                 r->start / 4, (r->end - r->start) / 4);
++      } else {
++         fprintf(out, "%s{0, 0, 0, 0}", i ? ", " : "");
++      }
++   }
++   fputs("},\n", out);
++   fprintf(out, "%s/* .numUboRanges = */ %u,\n", indent, cs->ubo_state.num_enabled);
++   /* @buf and @numwg are the text assembler's; a compiled kernel binds its
++    * buffers as SSBOs/UBOs and reads its grid from the driver params.
++    */
++   fprintf(out, "%s/* .numBufs = */ 0,\n", indent);
++   fprintf(out, "%s/* .bufs = */ {", indent);
++   for (unsigned i = 0; i < max_bufs; i++)
++      fprintf(out, "%s{0, 0x%02x}", i ? ", " : "", no_const_regid);
++   fputs("},\n", out);
++   fprintf(out, "%s/* .numwgConstRegid = */ 0x%02x,\n", indent, no_const_regid);
++   fprintf(out, "%s/* .constantDataOffset = */ %u,\n", indent, v->info.constant_data_offset);
++   fprintf(out, "%s/* .constantDataSize = */ %u,\n", indent, v->constant_data_size);
++   fprintf(out, "%s/* .name = */ \"%s\",\n", indent, name);
++   fprintf(out, "%s/* .source = */ R\"ir3(%.*s)ir3\",\n", indent, (int)source_size,
++           source ? (const char *)source : "");
++   /* The texture slots: `{}` when the kernel addresses none (the text kernels'
++    * form, tools/ir3-kernel.cc), else every slot up to the highest addressed,
++    * all eight members of each (the pad too) so that -Wextra sees them
++    * initialized, with what each is in words beside it.
++    */
++   unsigned last_slot = 0;
++   bool any_slot = false;
++   for (unsigned i = 0; i < FIXTURE_TEXTURE_SLOTS; i++) {
++      if (tex->slot[i].kind) {
++         any_slot = true;
++         last_slot = i;
++      }
++   }
++   if (!any_slot) {
++      fprintf(out, "%s/* .textures = */ {},\n", indent);
++   } else {
++      static const char *const dims[] = { "?", "1D", "2D", "3D", "cube" };
++      static const char *const elements[] = { "float", "uint", "int" };
++      fprintf(out, "%s/* .textures = */ {\n", indent);
++      for (unsigned i = 0; i <= last_slot; i++) {
++         const struct fixture_texture *s = &tex->slot[i];
++         fprintf(out, "%s    /* [%u] */ {%u, %u, %u, %u, %u, %u, %u, %u, %u},", indent, i, s->kind, s->dim,
++                 s->is_array, s->element, s->bits, s->read, s->write, s->is_null, s->fb_target);
++         if (!s->kind)
++            fputs("   // not addressed\n", out);
++         else
++            fprintf(out, "   // %s %s%s of %s%s%s%s\n", s->kind == 1 ? "sampled" : "image",
++                    dims[s->dim], s->is_array ? " array" : "", elements[s->element],
++                    s->bits == 16 ? " as 16-bit" : s->bits ? " as 32-bit" : "",
++                    s->read ? ", read" : "", s->write ? ", written" : "");
++         if (s->is_null)
++            fprintf(out, "%s              // ...the null texture's slot\n", indent);
++         if (s->fb_target)
++            fprintf(out, "%s              // ...framebuffer fetch of colour attachment %u\n", indent, s->fb_target - 1u);
++      }
++      fprintf(out, "%s},\n", indent);
++   }
++   fprintf(out, "%s/* .numTextureSlots = */ %u,\n", indent, tex->num_slots);
++   if (tex->sampler_mask)
++      fprintf(out, "%s/* .samplerMask = */ 0x%x,\n", indent, tex->sampler_mask);
++   else
++      fprintf(out, "%s/* .samplerMask = */ 0,\n", indent);
++   /* the UBO ir3 reads the constant data through (consts_ubo), plus one: 0 is none, and so is a fixture written before
++    * the field was (kernel.hpp: Kernel::constantDataUbo) */
++   fprintf(out, "%s/* .constantDataUbo = */ %d,\n", indent,
++           ir3_const_state(v)->consts_ubo.idx >= 0 ? ir3_const_state(v)->consts_ubo.idx + 1 : 0);
++}
++
++/* r<n>.<c> for a comment, or "none" for regid(63, 0) */
++static const char *
++regid_name(uint32_t r, char *buf, size_t size)
++{
++   if (r == regid(63, 0))
++      return "none";
++   snprintf(buf, size, "%sr%u.%c", (r & HALF_REG_ID) ? "h" : "", (r & 0xff) >> 2, "xyzw"[r & 3]);
++   return buf;
++}
++
++/* -o for a VERTEX or FRAGMENT variant: the fields of render.hpp's Stage after
++ * its Kernel, in the struct's order, each with a comment, from the variant the
++ * way turnip and fd6 read them (the field comments in render.hpp name the
++ * register each feeds). The same semantics live in hakios-metal's compileStage
++ * (src/compiler.cpp), and compiler_test holds the two to each other field for
++ * field, so a rule changed here is changed there. Slot namespaces differ by
++ * stage -- VARYING_SLOT_POS and FRAG_RESULT_DEPTH are both 0, PSIZ and
++ * STENCIL both 1 -- so the vertex-only fields are read from a VS only and the
++ * fragment-only ones from an FS only; a sysval lookup (ir3_find_sysval_regid
++ * filters on the sysval bit, gl_system_value numbering) is the same for both.
++ */
++static void
++emit_stage_fields(FILE *out, struct ir3_shader_variant *v,
++                  const struct fixture_output_classes *oc)
++{
++   const bool vs = v->type == MESA_SHADER_VERTEX;
++   const unsigned max_inputs = 34;     /* render.hpp's kMaxStageInputs = ir3's inputs[32 + 2] */
++   const unsigned max_outputs = 32;    /* kMaxStageOutputs */
++   const unsigned max_colors = 8;      /* kMaxColorOutputs */
++   const unsigned ij_count = 7;        /* kIjCount = ir3's IJ_COUNT */
++   const uint32_t none = regid(63, 0);
++   char rb[16];
++
++   if (v->inputs_count > max_inputs)
++      errx(1, "-o: %u inputs, the Stage holds %u", v->inputs_count, max_inputs);
++   if (v->outputs_count > max_outputs)
++      errx(1, "-o: %u outputs, the Stage holds %u", v->outputs_count, max_outputs);
++
++   fprintf(out, "    /* .kind = */ %u,   // %s\n", vs ? 0 : 1, vs ? "kStageVertex" : "kStageFragment");
++   fputs("    /* .pad0 = */ {0, 0, 0},\n", out);
++
++   /* inputs[]: {slot, regid, compmask, inloc, sysval, bary, flat, half} */
++   if (!v->inputs_count) {
++      fputs("    /* .inputs = */ {},\n", out);
++   } else {
++      fputs("    /* .inputs = */ {\n", out);
++      for (unsigned i = 0; i < v->inputs_count; i++) {
++         const __typeof__(v->inputs[0]) *in = &v->inputs[i];
++         const char *slot_name = in->sysval ? gl_system_value_name(in->slot)
++                                 : vs ? gl_vert_attrib_name(in->slot)
++                                      : gl_varying_slot_name_for_stage(in->slot, v->type);
++         fprintf(out, "        /* [%u] */ {%u, 0x%02x, 0x%x, %u, %u, %u, %u, %u},   // %s %s cm=%x il=%u%s%s%s%s\n",
++                 i, in->slot, in->regid, in->compmask, in->inloc, in->sysval, in->bary, in->flat,
++                 in->half, slot_name, regid_name(in->regid, rb, sizeof(rb)), in->compmask, in->inloc,
++                 in->sysval ? " sysval" : "", in->bary ? " bary" : "", in->flat ? " flat" : "",
++                 in->half ? " half" : "");
++      }
++      fputs("    },\n", out);
++   }
++   fprintf(out, "    /* .numInputs = */ %u,\n", v->inputs_count);
++
++   /* outputs[]: {slot, regid, half, pad}; pad carries the output's declared
++    * class (0 float, 1 integer: walk_output_classes) until render.hpp names
++    * the field -- it is what a colour target's format is judged against.
++    */
++   if (!v->outputs_count) {
++      fputs("    /* .outputs = */ {},\n", out);
++   } else {
++      fputs("    /* .outputs = */ {\n", out);
++      for (unsigned i = 0; i < v->outputs_count; i++) {
++         const struct ir3_shader_output *o = &v->outputs[i];
++         const char *slot_name = vs ? gl_varying_slot_name_for_stage(o->slot, v->type)
++                                    : gl_frag_result_name(o->slot);
++         unsigned class = o->slot < FIXTURE_OUTPUT_LOCATIONS && oc->known[o->slot] ? oc->class[o->slot] : 0;
++         fprintf(out, "        /* [%u] */ {%u, 0x%02x, %u, %u},   // %s %s%s, %s\n", i, o->slot,
++                 o->regid, o->half, class, slot_name, regid_name(o->regid, rb, sizeof(rb)),
++                 o->half ? " half" : "", class ? "integer" : "float");
++      }
++      fputs("    },\n", out);
++   }
++   fprintf(out, "    /* .numOutputs = */ %u,\n", v->outputs_count);
++
++   /* --- a vertex stage --- */
++   unsigned num_attributes = 0;
++   bool writes_layer = false, writes_viewport = false;
++   uint32_t position = none, point_size = none;
++   if (vs) {
++      for (unsigned i = 0; i < v->inputs_count; i++)
++         if (!v->inputs[i].sysval && v->inputs[i].regid != none)
++            num_attributes++;
++      position = ir3_find_output_regid(v, VARYING_SLOT_POS);
++      point_size = ir3_find_output_regid(v, VARYING_SLOT_PSIZ);
++      writes_layer = ir3_find_output(v, VARYING_SLOT_LAYER) >= 0;
++      writes_viewport = ir3_find_output(v, VARYING_SLOT_VIEWPORT) >= 0;
++   }
++   fprintf(out, "    /* .numAttributes = */ %u,\n", num_attributes);
++   fprintf(out, "    /* .vertexIdRegid = */ 0x%02x,\n", ir3_find_sysval_regid(v, SYSTEM_VALUE_VERTEX_ID));
++   fprintf(out, "    /* .instanceIdRegid = */ 0x%02x,\n", ir3_find_sysval_regid(v, SYSTEM_VALUE_INSTANCE_ID));
++   fprintf(out, "    /* .positionRegid = */ 0x%02x,   // %s\n", position, regid_name(position, rb, sizeof(rb)));
++   fprintf(out, "    /* .pointSizeRegid = */ 0x%02x,\n", point_size);
++   fprintf(out, "    /* .clipMask = */ 0x%x, /* .cullMask = */ 0x%x, /* .writesLayer = */ %u, /* .writesViewport = */ %u,\n",
++           v->clip_mask, v->cull_mask, writes_layer, writes_viewport);
++
++   /* --- a fragment stage --- */
++   fprintf(out, "    /* .totalIn = */ %u,\n", v->total_in);
++   uint32_t frag_coord = ir3_find_sysval_regid(v, SYSTEM_VALUE_FRAG_COORD);
++   fprintf(out, "    /* .fragCoordRegid = */ 0x%02x,\n", frag_coord);
++   fprintf(out, "    /* .fragcoordCompmask = */ 0x%x,\n", v->fragcoord_compmask);
++   fputs("    /* .pad1 = */ {0, 0, 0},\n", out);
++   fputs("    /* .ijRegid = */ {", out);
++   for (unsigned i = 0; i < ij_count; i++)
++      fprintf(out, "%s0x%02x", i ? ", " : "",
++              ir3_find_sysval_regid(v, SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL + i));
++   fputs("},   // ir3's IJ order: persp pixel, sample, centroid, centre rhw; linear pixel, centroid, sample\n", out);
++   fprintf(out, "    /* .faceRegid = */ 0x%02x,\n", ir3_find_sysval_regid(v, SYSTEM_VALUE_FRONT_FACE));
++   fprintf(out, "    /* .sampleIdRegid = */ 0x%02x, /* .sampleMaskInRegid = */ 0x%02x,\n",
++           ir3_find_sysval_regid(v, SYSTEM_VALUE_SAMPLE_ID),
++           ir3_find_sysval_regid(v, SYSTEM_VALUE_SAMPLE_MASK_IN));
++   uint32_t color[8], color_half[8];
++   unsigned num_colors = 0;
++   for (unsigned i = 0; i < max_colors; i++) {
++      color[i] = none;
++      color_half[i] = 0;
++      if (!vs) {
++         int k = ir3_find_output(v, FRAG_RESULT_DATA0 + i);
++         if (k >= 0) {
++            /* ir3_get_output_regid's HALF_REG_ID, split into the two fields */
++            color[i] = v->outputs[k].regid;
++            color_half[i] = v->outputs[k].half;
++            num_colors = i + 1;
++         }
++      }
++   }
++   fputs("    /* .colorRegid = */ {", out);
++   for (unsigned i = 0; i < max_colors; i++)
++      fprintf(out, "%s0x%02x", i ? ", " : "", color[i]);
++   fputs("},\n", out);
++   fputs("    /* .colorHalf = */ {", out);
++   for (unsigned i = 0; i < max_colors; i++)
++      fprintf(out, "%s%u", i ? ", " : "", color_half[i]);
++   fputs("},\n", out);
++   fprintf(out, "    /* .numColorOutputs = */ %u,\n", num_colors);
++   uint32_t depth = none, sample_mask = none, stencil_ref = none;
++   if (!vs) {
++      depth = ir3_find_output_regid(v, FRAG_RESULT_DEPTH);
++      sample_mask = ir3_find_output_regid(v, FRAG_RESULT_SAMPLE_MASK);
++      stencil_ref = ir3_find_output_regid(v, FRAG_RESULT_STENCIL);
++   }
++   fprintf(out, "    /* .depthRegid = */ 0x%02x, /* .sampleMaskRegid = */ 0x%02x, /* .stencilRefRegid = */ 0x%02x,\n",
++           depth, sample_mask, stencil_ref);
++   fprintf(out, "    /* .writesPos = */ %u, /* .writesSmask = */ %u, /* .writesStencilref = */ %u, /* .dualSrcBlend = */ %u,\n",
++           v->writes_pos, v->writes_smask, v->writes_stencilref, v->dual_src_blend);
++   fprintf(out, "    /* .hasKill = */ %u, /* .perSamp = */ %u, /* .readsPrimid = */ %u, /* .fbRead = */ %u,\n",
++           v->has_kill, v->per_samp, v->reads_primid, v->fb_read || fixture_fb_lowered);
++   fprintf(out, "    /* .needPixlod = */ %u, /* .needFullQuad = */ %u,\n", v->need_pixlod, v->need_full_quad);
++   fputs("    /* .pad2 = */ {0, 0},\n", out);
++   fprintf(out, "    /* .numSamplerPrefetch = */ %u,\n", v->num_sampler_prefetch);
++   fputs("    /* .prefetch = */ {\n", out);
++   for (unsigned i = 0; i < 4; i++) {
++      const struct ir3_sampler_prefetch *p = &v->sampler_prefetch[i];
++      bool used = i < v->num_sampler_prefetch;
++      fprintf(out, "        /* [%u] */ {0x%02x, %u, %u, 0x%02x, 0x%x, %u, %u, %u},%s\n", i, used ? p->src : 0, used ? p->samp_id : 0,
++              used ? p->tex_id : 0, used ? p->dst : 0, used ? p->wrmask : 0, used ? p->half_precision : 0,
++              used && p->tex_opc == OPC_SAM ? 1 : 0, used ? p->bindless : 0, used ? "   // src, samp, tex, dst, wrmask, half, cmd, bindless" : "");
++   }
++   fputs("    },\n", out);
++   fprintf(out, "    /* .prefetchEndOfQuad = */ %u,\n", v->prefetch_end_of_quad);
++   fputs("    /* .pad3 = */ {0, 0, 0},\n", out);
++}
++
++static void
++dump_fixture(struct ir3_shader_variant *v, uint32_t *bin, const char *path,
++             const char *in_path, const char *source_path,
++             const char *kernel_name, const struct fd_dev_id *dev_id,
++             const struct fixture_textures *tex,
++             const struct fixture_output_classes *output_classes)
++{
++   const struct ir3_const_state *cs = ir3_const_state(v);
++   const struct fd_dev_info *dev_info = fd_dev_info_raw(dev_id);
++   const unsigned max_ubo_ranges = 32;  /* kernel.hpp's kMaxUboRanges */
++
++   /* What the fixture is: a Kernel for a compute variant, a Stage (render.hpp:
++    * a Kernel plus what the 3D registers read) for a vertex or fragment one.
++    * The other stages have no struct here: refused by name, not written as a
++    * compute-shaped Kernel, which is what this did for a VS until 29 October.
++    */
++   bool stage_fixture;
++   switch (v->type) {
++   case MESA_SHADER_COMPUTE:
++   case MESA_SHADER_KERNEL:
++      stage_fixture = false;
++      break;
++   case MESA_SHADER_VERTEX:
++   case MESA_SHADER_FRAGMENT:
++      stage_fixture = true;
++      break;
++   default:
++      errx(1, "-o: a %s shader: the fixtures hold a compute Kernel or a vertex/fragment Stage, nothing else",
++           gl_shader_stage_name(v->type));
++   }
++
++   /* The kernel's name: -n, else the entry point's (nir->info.name); made an identifier. */
++   char name[128];
++   const char *nir_name = kernel_name ? kernel_name : "kernel";
++   unsigned n = 0;
++   for (const char *c = nir_name; *c && n + 1 < sizeof(name); c++)
++      name[n++] = isalnum((unsigned char)*c) ? *c : '_';
++   name[n] = 0;
++   if (!n || isdigit((unsigned char)name[0]))
++      errx(1, "-o: cannot name the kernel after \"%s\"", nir_name);
++
++   /* The kernel text, when given (-s): the .ll of an AIR kernel, for the record. */
++   void *source = NULL;
++   size_t source_size = 0;
++   if (source_path && read_file(source_path, &source, &source_size))
++      errx(1, "-s %s: cannot read it", source_path);
++
++   if (cs->ubo_state.num_enabled > max_ubo_ranges)
++      errx(1, "-o: %u UBO ranges, the Kernel struct holds %u",
++           cs->ubo_state.num_enabled, max_ubo_ranges);
++
++   char *listing = NULL;
++   size_t listing_size = 0;
++   FILE *ls = open_memstream(&listing, &listing_size);
++   ir3_shader_disasm(v, bin, ls);
++   fclose(ls);
++
++   FILE *out = fopen(path, "w");
++   if (!out)
++      errx(1, "%s: cannot write it", path);
++
++   uint32_t num_words = v->info.size / 4;
++
++   fprintf(out,
++           "// %s: hakios::metal::%s fixture, generated by ir3_compiler -o (tools/mesa/ir3-dump.patch)\n"
++           "// from %s for %s (chip id 0x%" PRIx64 ", gen %u). Do not edit; recompile the %s.\n"
++           "// SPDX-License-Identifier: MIT\n"
++           "#pragma once\n\n"
++           "#include \"hakios-metal/%s.hpp\"\n\n"
++           "namespace hakios::metal::kernels {\n\n",
++           name, stage_fixture ? "Stage" : "Kernel", in_path, fd_dev_name(dev_id), dev_id->chip_id,
++           dev_info->chip, stage_fixture ? "shader" : "kernel", stage_fixture ? "render" : "kernel");
++
++   char words_name[160], imm_name[160];
++   snprintf(words_name, sizeof(words_name), "%s_words", name);
++   snprintf(imm_name, sizeof(imm_name), "%s_immediates", name);
++   emit_words(out, words_name, bin, num_words);
++   fputc('\n', out);
++   if (cs->immediates_count) {
++      emit_words(out, imm_name, cs->immediates, cs->immediates_count);
++      fputc('\n', out);
++   }
++
++   if (!stage_fixture) {
++      fprintf(out, "constexpr Kernel %s = {\n", name);
++      emit_kernel_fields(out, "    ", v, name, num_words, words_name, imm_name, source, source_size, tex);
++   } else {
++      fprintf(out, "constexpr Stage %s = {\n", name);
++      fputs("    /* .k = */ {\n", out);
++      emit_kernel_fields(out, "        ", v, name, num_words, words_name, imm_name, source, source_size, tex);
++      fputs("    },\n", out);
++      emit_stage_fields(out, v, output_classes);
++   }
++   fputs("};\n\n", out);
++
++   fputs("// The listing (ir3_shader_disasm):\n", out);
++   emit_comment_block(out, listing);
++   fputs("\n} // namespace hakios::metal::kernels\n", out);
++   fclose(out);
++   free(listing);
++   printf("wrote %s\n", path);
++}
++
+ static void
+ insert_sorted(struct exec_list *var_list, nir_variable *new_var)
+ {
+@@ -298,6 +1207,7 @@
+                                 ir3_get_compiler_options(compiler), &info, &err);
+    if (!nir)
+       errx(1, "%s: %s", entry ? entry : filename, err);
++   fixture_air_info = info;   /* for walk_textures' declaration check */
+ 
+    printf("; AIR: %s, %u resources, %u varyings, %u render targets\n",
+           info.entry_point, info.num_resources, info.num_varyings,
+@@ -306,13 +1216,16 @@
+    return nir;
+ }
+ 
+-static const char *shortopts = "g:c:hv";
++static const char *shortopts = "g:c:hvo:s:n:";
+ 
+ static const struct option longopts[] = {
+    {"gpu",     required_argument, 0, 'g'},
+    {"chip-id", required_argument, 0, 'c'},
+    {"help",    no_argument,       0, 'h'},
+    {"verbose", no_argument,       0, 'v'},
++   {"output",  required_argument, 0, 'o'},
++   {"source",  required_argument, 0, 's'},
++   {"name",    required_argument, 0, 'n'},
+ };
+ 
+ static void
+@@ -324,6 +1237,9 @@
+    printf("    -c, --chip-id ID - specify chip-id (e.g. 0x007506030500)\n");
+    printf("    -h, --help       - show this message\n");
+    printf("    -v, --verbose    - verbose compiler/debug messages\n");
++   printf("    -o, --output FILE - write the variant as a hakios::metal::Kernel fixture\n");
++   printf("    -s, --source FILE - the kernel text to carry in the fixture (with -o)\n");
++   printf("    -n, --name NAME   - the fixture's name (with -o; default: the entry point's)\n");
+ }
+ 
+ int
+@@ -341,6 +1257,7 @@
+    void *ptr;
+    bool from_tgsi = false;
+    const char *air_file = NULL, *air_entry = NULL;
++   const char *out_path = NULL, *source_path = NULL, *out_name = NULL;
+    size_t size;
+ 
+    while ((opt = getopt_long_only(argc, argv, shortopts, longopts, NULL)) !=
+@@ -355,6 +1272,15 @@
+       case 'v':
+          ir3_shader_debug |= IR3_DBG_OPTMSGS | IR3_DBG_DISASM;
+          break;
++      case 'o':
++         out_path = optarg;
++         break;
++      case 's':
++         source_path = optarg;
++         break;
++      case 'n':
++         out_name = optarg;
++         break;
+       default:
+          printf("unrecognized arg: %c\n", opt);
+          FALLTHROUGH;
+@@ -432,8 +1358,12 @@
+          .gpu_id = chip_id ? 0 : gpu_id,
+          .chip_id = chip_id,
+    };
++   /* the GLSL type cache, for the driver UBOs' types (src/compiler.cpp: theCompiler) */
++   glsl_type_singleton_init_or_ref();
+    compiler = ir3_compiler_create(NULL, &dev_id, fd_dev_info_raw(&dev_id),
+-                                  &(struct ir3_compiler_options) {});
++                                  /* the framebuffer fetch through the FS's own texture table, as
++                                   * hakios-metal's compiler and turnip have it (not bindless set 0) */
++                                  &(struct ir3_compiler_options) {.bindless_fb_read_descriptor = -1});
+ 
+    if (air_file) {
+       nir = load_air(air_file, air_entry);
+@@ -444,8 +1374,20 @@
+        */
+       NIR_PASS(_, nir, nir_lower_system_values);
+       NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
+-      NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
+-               ir3_glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
++      /* A vertex or fragment shader keeps its IO as VARIABLES here, in
++       * turnip's order (tu_shader.cc: ir3_nir_lower_io_to_temporaries on the
++       * variables, then ir3_nir_post_finalize's nir_lower_io, ir3_nir.c:755):
++       * io_to_temporaries after nir_lower_io finds no variables to copy and
++       * leaves orphan `out@position-temp` temporaries whose undef stores only
++       * nir_opt_undef removes later -- right output by luck, and a second
++       * store_output to one slot would win in ir3's setup_output. Compute has
++       * no IO variables, so its order stays as it was and its fixtures do not
++       * move; hakios-metal's compileAir keeps the compute order too, and its
++       * compileStage this one, so that a stage compiled there is this fixture.
++       */
++      if (stage == MESA_SHADER_COMPUTE || stage == MESA_SHADER_KERNEL)
++         NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
++                  ir3_glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
+    } else if (from_tgsi) {
+       struct tgsi_token toks[65536];
+       const nir_shader_compiler_options *nir_options =
+@@ -486,10 +1428,27 @@
+       return -1;
+    }
+ 
++   /* The fixture's texture fields are read now, before ir3_finalize_nir's
++    * nir_lower_tex and the image lowering rewrite what the walk reads.
++    */
++   struct fixture_textures textures = { 0 };
++   struct fixture_output_classes output_classes = { 0 };
++   if (out_path) {
++      walk_textures(nir, &textures);
++      walk_output_classes(nir, &output_classes);
++   }
++
+    const struct ir3_shader_nir_options options = {};
+ 
++   /* hakios-metal's compileStage takes a 16-bit derivative at 32 bits (src/compiler.cpp:
++    * lowerHalfDerivative says why); so does the fixture */
++   /* and its [[point_coord]] as a VARYING_SLOT_PNTC input (src/compiler.cpp: lowerPointCoord) */
++   if (nir->info.stage == MESA_SHADER_FRAGMENT)
++      nir_shader_intrinsics_pass(nir, lower_point_coord, nir_metadata_control_flow, NULL);
++   nir_shader_intrinsics_pass(nir, lower_half_derivatives, nir_metadata_control_flow, NULL);
+    ir3_nir_lower_io_to_temporaries(nir);
+    ir3_finalize_nir(compiler, &options, nir);
++   fixture_lower_fb_read(nir, out_path ? &textures : NULL);
+ 
+    struct ir3_shader *shader = rzalloc_size(NULL, sizeof(*shader));
+    shader->compiler = compiler;
+@@ -497,12 +1456,29 @@
+    shader->nir = nir;
+ 
+    ir3_nir_post_finalize(shader);
++   /* the varyings at 32 bits across the VPC, as hakios-metal's compileStage has them */
++   if (nir_shader_intrinsics_pass(nir, widen_half_varyings, nir_metadata_control_flow, NULL))
++      ir3_optimize_loop(compiler, &shader->options.nir_options, nir);
+ 
+    struct ir3_shader_variant *v = rzalloc_size(shader, sizeof(*v));
+    v->type = shader->type;
+    v->compiler = compiler;
+    v->key = key;
+    v->const_state = rzalloc_size(v, sizeof(*v->const_state));
++   /* the driver UBOs unassigned, as alloc_variant leaves them (src/compiler.cpp says why) */
++   v->const_state->consts_ubo.idx = -1;
++   v->const_state->driver_params_ubo.idx = -1;
++   v->const_state->primitive_map_ubo.idx = -1;
++   v->const_state->primitive_param_ubo.idx = -1;
++   /* What ir3_shader.c's alloc_variant sets and this hand-built variant did
++    * not: the merged register file (every gen 6 driver compiles with it, and
++    * SP_CS_CTRL_REG0.MERGEDREGS must say what the code was allocated for), the
++    * IBO counts the dispatch programs (SP_CS_CONFIG.NIBO), and the name.
++    */
++   v->mergedregs = compiler->gen >= 6;
++   v->num_ssbos = nir->info.num_ssbos;
++   v->num_ibos = nir->info.num_ssbos + nir->info.num_images;
++   v->name = ralloc_strdup(v, nir->info.name);
+ 
+    shader->variants = v;
+    shader->variant_count = 1;
+@@ -514,13 +1490,49 @@
+     * anything -- any vertex shader (PRIMITIVE_PARAM), or anything with image
+     * dimensions -- which is why it went unnoticed.
+     */
++   /* the quads a fragment stage needs whole, as nir_shader_gather_info would say (the front end does not run it): a
++    * sample with an implicit level or a derivative -- src/compiler.cpp: needsQuadHelpers, the same walk
++    */
++   if (nir->info.stage == MESA_SHADER_FRAGMENT) {
++      nir_foreach_function_impl(impl, nir) {
++         nir_foreach_block(block, impl) {
++            nir_foreach_instr(instr, block) {
++               if (instr->type == nir_instr_type_tex && nir_tex_instr_has_implicit_derivative(nir_instr_as_tex(instr)))
++                  nir->info.fs.needs_quad_helper_invocations = true;
++               if (instr->type == nir_instr_type_intrinsic) {
++                  switch (nir_instr_as_intrinsic(instr)->intrinsic) {
++                  case nir_intrinsic_ddx: case nir_intrinsic_ddx_fine: case nir_intrinsic_ddx_coarse:
++                  case nir_intrinsic_ddy: case nir_intrinsic_ddy_fine: case nir_intrinsic_ddy_coarse:
++                     nir->info.fs.needs_quad_helper_invocations = true;
++                     break;
++                  default:
++                     break;
++                  }
++               }
++            }
++         }
++      }
++   }
+    info = "NIR compiler";
+    ret = ir3_compile_shader_nir(compiler, shader, v);
+    if (ret) {
+       fprintf(stderr, "compiler failed!\n");
+       return ret;
+    }
+-   dump_info(v, info);
++   /* the prefetch's sampler as hakios-metal's compileStage corrects it */
++   if (!fix_prefetch_samplers(nir, v)) {
++      fprintf(stderr, "a prefetched texture is sampled through more than one sampler\n");
++      return -1;
++   }
++   /* Assembled once: ir3_shader_assemble frees the variant's constant data
++    * as it appends it to the binary, so a second call would copy from NULL.
++    */
++   uint32_t *bin = ir3_shader_assemble(v);
++   dump_info(v, bin, info);
++   if (out_path)
++      dump_fixture(v, bin, out_path, air_file ? air_file : filenames[0],
++                   source_path, out_name ? out_name : nir->info.name, &dev_id,
++                   &textures, &output_classes);
+ 
+    return 0;
+ }

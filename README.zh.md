@@ -15,7 +15,7 @@
 | 仓库 | 内容 |
 |---|---|
 | [hakios-xnu-kernel](https://github.com/oosexgang/hakios-xnu-kernel) | **公共部分**：内核移植、所有公共驱动、引导加载器、用户空间、工具、本文档以及 `devices/qemu` |
-| [hakios-metal](https://github.com/oosexgang/hakios-metal) | 通过内核的 GPU 驱动，在 Adreno 上实现 Metal 的命令模型 |
+| [`hakios-metal/`](hakios-metal) | 通过内核的 GPU 驱动，在 Adreno 上实现 Metal 的命令模型 |
 | [hakios-sm7325](https://github.com/oosexgang/hakios-sm7325) | POCO X5 Pro 5G：defconfig、状态、UEFI 平台、固件脚本及其 SoC 层（Qualcomm SC7280 系列） |
 | [hakios-mt6768](https://github.com/oosexgang/hakios-mt6768) | Infinix Hot 20（MediaTek Helio G85）：实验性移植，有自己的引导加载器。不在本仓库的清单中 |
 | [hakios-uefi](https://github.com/oosexgang/hakios-uefi) | 启动引导加载器的固件：带有 HakiOS 启动路径、横幅和名称的 Mu-Silicium，以及 HakiOS 的 U-Boot |

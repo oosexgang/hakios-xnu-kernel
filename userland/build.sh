@@ -256,10 +256,14 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
 		# the plug-in Metal loads when the kernel names it (boot-arg metal=1): a device, its buffers and the libraries it reads
 		# (src/HakiosMetal.m, src/hakios_metallib.c; tools/metal-plugin-test.sh tries the same objects on a Mac)
-		# With hakios-metal (github.com/oosexgang/hakios-metal, `make ios` in it, beside this tree or at HAKIOS_METAL=): buffers in
+		# With hakios-metal (hakios-metal/ in this tree, `make ios` in it; or one beside this tree, or at HAKIOS_METAL=): buffers in
 		# the GPU's memory, command buffers, and blits done by the GPU when the kernel has one (gpu=1). Without it, the plug-in as before.
 		# (out/ios/ since hakios-metal took vcvkk's history; out/darwin/ is where the older trees built it)
-		HM=${HAKIOS_METAL:-../../hakios-metal}
+		HM=${HAKIOS_METAL:-}
+		if [ -z "$HM" ]; then
+			HM=../hakios-metal
+			[ -f $HM/out/ios/libhakios-metal.a ] || [ ! -f ../../hakios-metal/out/ios/libhakios-metal.a ] || HM=../../hakios-metal
+		fi
 		METAL_GPU=
 		for HM_OUT in $HM/out/ios $HM/out/darwin; do
 			if [ -f $HM_OUT/libhakios-metal.a ]; then

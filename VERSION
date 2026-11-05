@@ -3,7 +3,7 @@
 #   VERSION.PATCHLEVEL.SUBLEVEL EXTRAVERSION
 #
 # tools/kernel-version.py makes the whole string from this file, the active configuration (.config) and
-# git: 2.1.13-hakios-darwin22.5-sc7280-g1a2b3c4d  (the version, EXTRAVERSION, the Darwin it is built on, the
+# git: 2.3.4-hakios-darwin22.5-sc7280-g1a2b3c4d  (the version, EXTRAVERSION, the Darwin it is built on, the
 # SoC family the configuration is for, and the commit; "-dirty" when the tracked files have changed).
 # The loader prints it as kernel.ver= under its banner, passes it to the kernel as the boot-arg hakios_kver,
 # and the kernel keeps it as sysctl kern.hakios.version. docs/versioning.md says when each number moves.
@@ -14,8 +14,8 @@
 # SUBLEVEL   a fix
 # EXTRAVERSION is what the tree is called; a vendor's branch says so here (Android's "-android12-9")
 VERSION = 2
-PATCHLEVEL = 1
-SUBLEVEL = 13
+PATCHLEVEL = 3
+SUBLEVEL = 4
 EXTRAVERSION = -hakios
 NAME = Hello Darwin
 

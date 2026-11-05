@@ -42,9 +42,45 @@ attachment that is not linear, and the extension wants every colour attachment l
 off and no texture was shadowed.
 
 
+### Under real fingers (5 November)
+
+Frames per second do not show what the eye calls jerking: the touch screen was read only when its interrupt line was seen low, and a report
+that line was missed for waited for the look of every 80 ms.
+
+| | Before | After (`drivers/input/hakios.goodix.c`) |
+|---|---|---|
+| A finger's lift after its last move | 88 to 169 ms | 5 ms, at most 6 |
+| Between moves, over 13 ms apart | some | none of 164, at most 6 ms |
+
+12 strokes kept in that log; `touch: N strokes` in the kernel's log now sums them up for a whole session. What is left of the jerking
+at the start of a gesture is SpringBoard's main thread, before its commit: turns of 100 to 300 ms, 40 to 100 ms after the finger comes down
+(`tl: t` in the log has its stack, with `touch_lat=1`). A share of a frame's rows late for its scan is counted too: 19 to 115 in a session.
+
+### The iPhone X's screen at 2 pixels a point (4 November)
+
+`fbscale=2`, the default of `tools/metal-run.sh`: 750x1624, stretched to the panel by the CPU, the layout of the iPhone X's 375 x 812 points with 2.25
+times fewer pixels for the GPU. The picture is softer than at 1125x2436, nearest neighbour while something moves and bilinear once it is still. A main
+pass is 5 ms in 21 tiles. UIKit has no status bar for this screen: SpringBoard (`inject_sb.c`) makes its fallback the iPhone X's.
+
+| Gesture (`rc.jobs.bench`, 4 runs) | Frames a second |
+|---|---|
+| Settings' scroll | 118 to 120 |
+| Page swipe | 107 to 118 |
+| Opening Settings | 107 to 108 |
+| Home button | 95 to 111 |
+| Frames over 16.7 ms | 1.1 to 1.2% |
+
+The scroll is at the panel's rate. The home button and the opening of an application are held by the GPU: two passes of 7 to 8 ms for a frame, more than the
+8.33 ms of a refresh, so those frames come a refresh late. The hitches at the start of a gesture are SpringBoard's main thread: 10 of its 4745 turns in a run
+were over 30 ms, the longest 101. These are synthetic gestures (`rwtouch`); fingers cost more.
+
+The framebuffer logs, for each thread's share of the rows, its time and how often it was late for the scan: 1 to 9 torn of about 49 000 shares in a run, all in the
+first two shares, whose rows the scan comes to first. The last shares take 2 to 3 ms and were never late. This counts against the scan as the interface's
+counters report it; what the panel shows has not been measured independently, and a phone's camera sees lines of its own on a panel refreshing at 120.
+
 ### The screen as the iPhone XR's (4 November)
 
-`fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792`, the default of `tools/metal-run.sh`, stretched to the panel by the CPU. 1.85 times fewer
+`fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792`, the default until the iPhone X's at 2 replaced it (under real fingers the bottom edge opened a sheet here), stretched to the panel by the CPU. 1.85 times fewer
 pixels for the GPU; the picture is softer than at 1125x2436. The poster draws nothing on this screen: `wallpaper_freeze=1` shows the picture a
 boot at the iPhone X's screen kept in `/var/mobile/Library/hakios-wallpaper.raw`.
 
@@ -64,6 +100,9 @@ measured stretch ending in the slow ticks of a still screen. These are synthetic
 
 | What | Arguments | Result |
 |---|---|---|
+| The threads that copy frames real-time, with the scan as their deadline | a build with a time-constraint policy, since removed | 684 shares late in a session, against 115 |
+| Bilinear on every frame, so that nothing jumps when motion starts or stops | `fb_filter=1` | under real fingers it jerks as much, and 125 shares late against 19 to 43 |
+| The stretch written by runs of a source column, a row the same as the one above it copied from there | in `MiniIOMobileFramebuffer` | worse: 8.7 ms in the driver a frame against 7 to 8, every swap waiting for the frame before, 102 frames a second against 110 |
 | Touch samples at 250 a second, not 125 | `touch_poll_us=4000`, `rwtouch` every 4 ms | swipes 100 to 102: unchanged |
 | Surfaces let go of as soon as their pixels are on the panel, not when the next frame comes | in `MiniIOMobileFramebuffer` | unchanged |
 | The iPhone XR's screen class, 1.85 times fewer pixels | `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` | idle GPU time 2.2 ms, not 6.8; gestures not faster; the wallpaper black |

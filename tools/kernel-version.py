@@ -4,9 +4,9 @@
 usage: tools/kernel-version.py [--short | --name | --darwin | --release | --all]
                                [--config FILE] [--root DIR]
 
-  (none)    2.1.13-hakios-darwin22.5-sc7280-g1a2b3c4d[-dirty]   what goes under the banner as kernel.ver=
-  --short   2.1.13                                              VERSION.PATCHLEVEL.SUBLEVEL
-  --release 2.1.13-hakios                                       with EXTRAVERSION: what a tag is called (v2.1.13-hakios)
+  (none)    2.3.4-hakios-darwin22.5-sc7280-g1a2b3c4d[-dirty]   what goes under the banner as kernel.ver=
+  --short   2.3.4                                              VERSION.PATCHLEVEL.SUBLEVEL
+  --release 2.3.4-hakios                                       with EXTRAVERSION: what a tag is called (v2.3.4-hakios)
   --name    Hello Darwin                                        the release's name
   --darwin  22.5.0 xnu-8796.121.2                               what it is built on
   --all     every part, one per line, for the build log

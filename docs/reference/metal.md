@@ -5,7 +5,7 @@ measure it, and what is not known. The numbers: [Metal measurements](metal-measu
 [the plan](../metal-plan.md).
 
 **Status, POCO X5 Pro 5G, 3 and 4 November 2026.** Both paths draw the system correctly. hakios-metal is the faster: page swipes 100
-to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at the iPhone XR's 828x1792, stretched to the panel (the default of `tools/metal-run.sh`), swipes 110 to 115, scroll 118, home button 106. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
+to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at 750x1624, stretched to the panel (`fbscale=2`, the default of `tools/metal-run.sh`), scroll 118 to 120, swipes 107 to 118, home button 95 to 111, about 110 over the bench as a whole. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
 reached on either.** Neither is on by default: without `metal=1` the window server draws through OpenGL ES, as it always has.
 
 
@@ -15,7 +15,7 @@ reached on either.** Neither is on by default: without `metal=1` the window serv
 |---|---|---|
 | Route | Metal, `HakiosMetalCA`, hakios-metal (the Adreno's own PM4 packets), HakiosGPU | Metal, AdrenoMetal's frontend, metal2vulkan, Turnip, `hakios-drm`, HakiosGPU |
 | Shaders | AIR to NIR to ir3, by Mesa's compiler inside the process | AIR through metal2vulkan into Vulkan pipelines, which Turnip compiles |
-| Where the code is | `userland/src/HakiosMetalCA.m` here, [hakios-metal](https://github.com/oosexgang/hakios-metal) beside this tree | `tools/mk-turnip.sh`, `tools/mk-m2v.sh`, `tools/m2v/`, `tools/mesa/`; the rest fetched by those scripts |
+| Where the code is | `userland/src/HakiosMetalCA.m` and `hakios-metal/` here | `tools/mk-turnip.sh`, `tools/mk-m2v.sh`, `tools/m2v/`, `tools/mesa/`; the rest fetched by those scripts |
 | Whose | ours; the plug-in began as vcvkk's (origin **to verify**, [third-party licenses](../../THIRD_PARTY_LICENSES.md)) | [UniXNU](https://github.com/UniXNU/UniXNU)'s stack, ported from the Adreno 740 and a later system |
 | Build | `METAL_PLUGIN=ca` | `METAL_PLUGIN=ca TURNIP=1 M2V=1` |
 | Boot arguments | `gpu=1 metal=1 ca_metallib=...` | the same and `metal_m2v=1` |
@@ -74,10 +74,10 @@ The library the window server asks for, for either path:
 CA_QC_METALLIB=/path/to/default.metallib tools/ca-metallib.py ~/ca-share    # off a Mac; on a Mac it reads the Mac's own
 ```
 
-**hakios-metal.** The repository goes beside this one, or `HAKIOS_METAL=` names it:
+**hakios-metal.** It is in this tree, in `hakios-metal/`; `HAKIOS_METAL=` names another copy:
 
 ```sh
-(cd ../hakios-metal && make ios HAKIOS=../hakios-xnu-kernel MESA=1)         # needs tools/mk-mesa.sh's tree
+(cd hakios-metal && make ios MESA=1)         # needs tools/mk-mesa.sh's tree
 METAL_PLUGIN=ca RC_JOBS=rc.jobs.bench EXTRA_SHARE=~/ca-share REST=1 SYSTEM=1 userland/build.sh
 ```
 
@@ -125,7 +125,8 @@ Every argument is in [the catalogue](../boot-args.md), which is made from the so
 | `wallpaper_freeze=1` | SpringBoard | the wallpaper as one still picture: at the home screen the window of the icons is hidden for a moment (they blink once a boot), the pixels of the IOSurface on the panel (`kern.hakios.fb_surface`) become one opaque view in the wallpaper's window, and its layers are hidden. It gives up: the wallpaper does not change until the next boot, and the lock screen shows the same picture. `tools/metal-run.sh` sets it |
 | `wallpaper_freeze=2` | SpringBoard | the wallpaper hidden: what it costs, measured |
 | `ui_lite=1`, `ui_lite=0` | SpringBoard | Reduce Transparency and Reduce Motion on, off again. Without it the settings are left alone |
-| `fbwidth=`, `fbheight=`, `fbscale=`, `fbsubtype=` | framebuffer | another iPhone's screen class: `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` is the XR's |
+| `fb_intf=` | framebuffer | the physical address of the display interface's registers, for a port: `fb_beam` and `fb_measure` read them. Without it they are known for sc7280 only (`CONFIG_SOC`); on another SoC nothing is read and frames stay on their beat |
+| `fbwidth=`, `fbheight=`, `fbscale=`, `fbsubtype=` | framebuffer | another iPhone's screen class: `fbscale=2` alone is the iPhone X's layout at 750x1624 (the default of `tools/metal-run.sh`); `fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792` is the XR's |
 | `touch_poll_us=N` | touch driver | the touch screen read every N microseconds. The driver's default is 8000; `tools/metal-run.sh` sets 4000 |
 | `fb_hz=120`, `fb_threads=6`, `fb_measure=1` | framebuffer | the driver's beat at the panel's rate, six processors scaling a frame onto the panel, the panel's own rate measured once |
 | `fb_beam=1` | framebuffer | the default: each thread's rows are written behind the panel's scan line. `fb_beam=0`: whenever the beat comes, as before. [Tearing](metal-measurements.md#tearing) |
@@ -170,10 +171,13 @@ meaning unknown.
   their scan, and whether the panel tears less is so far for the eye: [Tearing](metal-measurements.md#tearing).
 - **Not the same stack as UniXNU's.** Theirs runs on the Adreno 740 with its own kernel driver, [Adreno740](https://github.com/UniXNU/UniXNU/blob/main/docs/drivers/adreno740.md),
   and a newer system. Only the part above that driver was taken. What is measured here says nothing about theirs.
-- **hakios-metal is not pinned.** `userland/build.sh` takes whatever is beside the tree; `metal_defer=1` needs its
-  `hakios_metal_queue_set_deferred`.
 - **Other systems' libraries.** The window server's library takes the rest of its shaders from a later CoreAnimation than this
   system's, because this system has none. That it behaves the same as a matched one is not shown.
+- **Shaders chosen by their labels.** This system's QuartzCore holds its uber shaders as 451 specialised variants. A pipeline CoreAnimation
+  makes at run time that is not among them gets the nearest of the same kind (`hm_ca_nearest()`, `HakiosMetalCA.m`): sampling, blend and
+  varyings the same, then the fewest inputs changed. Before that it got one fixed variant, which was the red top of the default wallpaper,
+  the white band behind the status bar and the opaque Weather widget. What the letters of a label mean is read from the labels, so a
+  stand-in can differ in a flag; the log says each (`... stands in for it`).
 
 ## What is not verified
 

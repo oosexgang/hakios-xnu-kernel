@@ -32,10 +32,10 @@
 #   touch_poll_us=4000              the touch screen looked at every 4 ms, not 8: a sample in every refresh at 120 Hz
 #   wallpaper_freeze=1              the wallpaper one picture once at the home screen (the icons blink once): home button 28 -> 92 frames
 #   metal_defer=1                   a command buffer's draws recorded when it is committed, not on the way
-#   fbwidth=828 ... fbsubtype=1792  the iPhone XR's screen, 1.85 times fewer pixels, stretched to the panel: Settings' scroll 91 -> 118 frames,
-#                                   swipes 101 -> 110-115, home button 90 -> 106. The poster draws nothing on it: wallpaper_freeze shows the
-#                                   picture a boot at the iPhone X's screen kept: once, MORE="fbwidth=1125 fbheight=2436 fbscale=3 fbsubtype=0"
-#                                   a second (2 November, tools/frames.py)
+#   fbscale=2                       the iPhone X's 375 x 812 points at 2 pixels a point (750 x 1624, 2.25 times fewer pixels), stretched to the panel:
+#                                   110 frames a second over the bench's gestures, 1.1% over 16.7 ms (4 runs, 4 November, tools/frames.py). Its status
+#                                   bar comes from SpringBoard (inject_sb.c). The iPhone XR's class (fbwidth=828 fbheight=1792 fbsubtype=1792) drew
+#                                   a little more and at it the bottom edge opened Control Center under real fingers
 #   ufs=2 ufs_write=1 var_store=1   (PERSIST=1, the default) /private/var kept in the partition darwin between boots: the
 #                                   compiled shader stages in /var/db/hakios-metal-cache survive, so only the first boot
 #                                   ever compiles them (tools/metal-cache-seed.sh then puts them in the image)
@@ -62,7 +62,21 @@ PERSIST=${PERSIST:-1}
 UPLOAD=${UPLOAD:-1}
 SHOTS=${SHOTS:-0}
 CA_METALLIB=${CA_METALLIB:-/redwood/share/ca-share/QuartzCore-default.metallib}
-ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_measure=1 fb_threads=6 touch_poll_us=4000 wallpaper_freeze=1 metal_defer=1 fbwidth=828 fbheight=1792 fbscale=2 fbsubtype=1792"
+# what is the phone's own: its big core and cores, its panel's rate, how many threads copy frames, how often the touch screen is read.
+# DEVICE_ARGS= names them, or devices/<CONFIG_DEVICE>/metal.args (tools/hakios-device.py new makes one). Without either, on a phone that
+# is not redwood, what assumes nothing: a wrong bootcpu= does not boot and a wrong fb_hz= shows every frame's beat wrong.
+if [ -z "${DEVICE_ARGS:-}" ]; then
+	device=$(sed -n 's/^CONFIG_DEVICE="\(.*\)"/\1/p' .config 2>/dev/null)
+	if [ -n "$device" ] && [ -f "devices/$device/metal.args" ]; then
+		DEVICE_ARGS=$(grep -v '^#' "devices/$device/metal.args" | tr '\n' ' ')
+	elif [ -z "$device" ] || [ "$device" = redwood ]; then
+		DEVICE_ARGS="bootcpu=7 cpus=8 cpufreq=1 fb_hz=120 fb_threads=6 touch_poll_us=4000"
+	else
+		DEVICE_ARGS="fb_hz=60 fb_threads=3"
+		echo "metal-run: no devices/$device/metal.args: fb_hz=60 and one boot core; docs/porting/index.md" >&2
+	fi
+fi
+ARGS="gpu=1 metal=1 metal_fps=1 touch_lat=1 touchscreen=1 ca_metallib=$CA_METALLIB gpu_recover=1 anim_max=1 $DEVICE_ARGS fb_measure=1 wallpaper_freeze=1 metal_defer=1 fbscale=2"
 [ "$PERSIST" = 1 ] && ARGS="$ARGS ufs=2 ufs_write=1 var_store=1"
 [ "${VERBOSE:-0}" = 1 ] && ARGS="-v $ARGS"
 # (a default of the same name goes: the kernel takes the last of two, the plug-in and SpringBoard the first)

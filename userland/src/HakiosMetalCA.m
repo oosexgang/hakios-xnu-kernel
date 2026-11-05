@@ -1516,6 +1516,91 @@ hm_ca_load(void)
 	});
 }
 
+/*
+ * The nearest variant to a fragment function the library does not have. CoreAnimation makes pipelines at run time that no
+ * precompiled one is: TimgA2S1Xhf_Ixrg (an opaque image, for a compositing filter, the default wallpaper's head) or
+ * TimgBdsoA2Xhfn_Isrc (darkenSourceOver, the status bar's legibility gradient). Compiled from the one variant the window server's
+ * library holds, those drew something else altogether: the head nothing, the gradient solid white (4 November).
+ * A label is T(what is sampled) B(the blend) A(the varyings) S(a second sampler) X(flags)_(the inputs): what is sampled, the blend
+ * and the varyings must be the same, or it is another program. Then the fewest inputs changed, and a flag left out (a feature the
+ * program did not ask for is not fed) before a flag added. What the letters mean is read from the labels, not from a document.
+ */
+static NSString *
+hm_ca_nearest(NSString *frag)
+{
+	static NSMutableDictionary *told;
+	static NSRegularExpression *form;
+	static NSString *const prefix = @"com.apple.coreanimation.frag.";
+	NSString *best = nil;
+	NSInteger bestCost = NSIntegerMax;
+
+	if (![frag hasPrefix:prefix]) {
+		return nil;
+	}
+	static dispatch_once_t once;
+
+	dispatch_once(&once, ^{
+		form = [[NSRegularExpression alloc] initWithPattern:@"^(T[a-z0-9]{3})?(B[a-z]{3})?(D[a-z]{2})?(A[0-9])(S[0-9])?(L[a-z]{2})?X([a-z]*)((?:_[A-Za-z0-9]+)*)$"
+							    options:0 error:NULL];
+		told = [[NSMutableDictionary alloc] init];
+	});
+	NSString *(^part)(NSTextCheckingResult *, NSUInteger, NSString *) = ^NSString *(NSTextCheckingResult *m, NSUInteger i, NSString *of) {
+		NSRange r = [m rangeAtIndex:i];
+
+		return r.location == NSNotFound ? @"" : [of substringWithRange:r];
+	};
+	NSString *want = [frag substringFromIndex:[prefix length]];
+	NSTextCheckingResult *w = [form firstMatchInString:want options:0 range:NSMakeRange(0, [want length])];
+
+	if (w == nil) {
+		return nil;
+	}
+	for (NSString *candidate in hm_ca_frag_vert) {
+		if (![candidate hasPrefix:prefix] || hm_ca_variants[candidate] == nil) {
+			continue;
+		}
+		NSString *have = [candidate substringFromIndex:[prefix length]];
+		NSTextCheckingResult *h = [form firstMatchInString:have options:0 range:NSMakeRange(0, [have length])];
+		BOOL same = h != nil;
+		NSInteger cost = 0;
+
+		for (NSUInteger i = 1; same && i <= 6; i++) {
+			same = [part(w, i, want) isEqualToString:part(h, i, have)];
+		}
+		if (!same) {
+			continue;
+		}
+		NSString *wantFlags = part(w, 7, want), *haveFlags = part(h, 7, have);
+		NSArray *wantIn = [part(w, 8, want) componentsSeparatedByString:@"_"], *haveIn = [part(h, 8, have) componentsSeparatedByString:@"_"];
+
+		if ([wantIn count] != [haveIn count]) {
+			continue;
+		}
+		for (NSUInteger i = 0; i < [wantIn count]; i++) {
+			/* (an input that does more than was asked for last: IsrcN3Oc3mtc4 is a colour matrix, not a plain sample) */
+			cost += [wantIn[i] isEqualToString:haveIn[i]] ? 0 : 100 + labs((long)[haveIn[i] length] - (long)[wantIn[i] length]);
+		}
+		for (NSUInteger i = 0; i < [wantFlags length]; i++) {
+			cost += [haveFlags rangeOfString:[wantFlags substringWithRange:NSMakeRange(i, 1)]].location == NSNotFound ? 3 : 0;
+		}
+		for (NSUInteger i = 0; i < [haveFlags length]; i++) {
+			cost += [wantFlags rangeOfString:[haveFlags substringWithRange:NSMakeRange(i, 1)]].location == NSNotFound ? 10 : 0;
+		}
+		if (cost < bestCost || (cost == bestCost && [candidate compare:best] == NSOrderedAscending)) {
+			best = candidate;
+			bestCost = cost;
+		}
+	}
+	@synchronized (told) {
+		if (told[frag] == nil) {
+			told[frag] = @YES;
+			hm_print("CoreAnimation's %s is not in the library: %s stands in for it\n", [want UTF8String],
+				 best != nil ? [[best substringFromIndex:[prefix length]] UTF8String] : "nothing of the same kind");
+		}
+	}
+	return best;
+}
+
 /* The module to compile for FUNCTION (of the pipeline labelled PIPELINE, vertex stage or not): its variant when
  * CoreAnimation's labels name one, else what the function itself has. */
 static NSData *
@@ -1586,10 +1671,13 @@ hm_bitcode_for(id function, NSString *pipeline, BOOL vertex)
 		NSString *frag = under.location != NSNotFound ?
 			[@"com.apple.coreanimation.frag." stringByAppendingString:[spec substringFromIndex:NSMaxRange(under)]] : nil;
 
+		if (frag != nil && hm_ca_variants[frag] == nil) {
+			frag = hm_ca_nearest(frag);
+		}
 		chosen = frag == nil ? nil : (vertex ? hm_ca_frag_vert[frag] : frag);
 		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
 	}
-	if (said++ < 40) {
+	if (variant == nil || said++ < 40) {
 		hm_print("CoreAnimation's %s (label %s, pipeline %s): %s%s\n", [name UTF8String], label ? [label UTF8String] : "none",
 			 pipeline ? [pipeline UTF8String] : "none", variant ? "the variant " : "no variant: its own module",
 			 variant ? [chosen UTF8String] : "");
@@ -1624,6 +1712,9 @@ hm_m2v_variant(const char *name, const char *label, const char *pipeline, int ve
 		NSString *frag = under.location != NSNotFound ?
 			[@"com.apple.coreanimation.frag." stringByAppendingString:[spec substringFromIndex:NSMaxRange(under)]] : nil;
 
+		if (frag != nil && hm_ca_variants[frag] == nil) {
+			frag = hm_ca_nearest(frag);
+		}
 		chosen = frag == nil ? nil : (vertex ? hm_ca_frag_vert[frag] : frag);
 		variant = chosen != nil ? hm_ca_variants[chosen] : nil;
 	}
