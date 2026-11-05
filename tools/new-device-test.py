@@ -57,7 +57,7 @@ try:
 
     # 2. another SoC: an IPCC at the usual place, the AOSS mailbox elsewhere, nothing else
     other = fdt({"": ({"model": b"Some Phone\0", "compatible": compat("vendor,some-phone", "qcom,sm9999")},
-                      {"soc": ({}, {"qcom,ipcc@408000": ({"compatible": compat("qcom,ipcc"), "reg": cells(0x408000, 0x1000)}, {}),
+                      {"soc": ({"#address-cells": cells(1), "#size-cells": cells(1)}, {"qcom,ipcc@408000": ({"compatible": compat("qcom,ipcc"), "reg": cells(0x408000, 0x1000)}, {}),
                                     "power-controller@1000000": ({"compatible": compat("qcom,sc7280-aoss-qmp"),
                                                                   "reg": cells(0x1000000, 0x400)}, {})})})})
     other_path = os.path.join(work, "other.dtb")
