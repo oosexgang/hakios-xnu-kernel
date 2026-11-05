@@ -167,8 +167,13 @@ static TUNABLE(uint32_t, gFilter, "fb_filter", 2);
  * 4.3 by nearest neighbour (touch_lat=1, 30 October) -- and at 120 Hz a refresh is 8.3 ms. What nearest neighbour
  * gets wrong (a column in 25 and a row in 67 left out) does not show while the picture moves; so a frame drawn so is
  * drawn again, filtered, when no other has come for SETTLE_MS: what stands still on the screen is the bilinear one.
+ *
+ * Frames that come slowly are filtered at once. The home screen's clock asks for 10 frames a second, and each was drawn
+ * by nearest neighbour and 40 ms later by bilinear: 51 frames and 51 drawn again in 5 seconds, every edge of a still screen
+ * moving back and forth (4 November, "the screen jerks all the time"). Nearest neighbour is for FAST_FRAMES in a row and on.
  */
 #define SETTLE_MS       40
+#define FAST_FRAMES     2
 static TUNABLE(uint32_t, gRefreshHz, "fb_hz", kFBRefreshHz);
 /*
  * Boot-arg fb_ca_hz=N: the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's. On
@@ -365,6 +370,7 @@ public:
 	/* ... for each thread's share of the rows: how many, their time, begun after the scan reached them or not done before it left them, and done after it reached them */
 	uint64_t        fStatShareTime[8];
 	uint32_t        fStatShares[8], fStatShareTorn[8], fStatShareClose[8];
+	uint32_t        fStatSettleReused;      /* ... frames not drawn again filtered: the GPU had their surface for the next frame */
 	uint64_t        fReady;                 /* when the last frame was ready to be shown */
 	uint32_t        fStatOnBeat;            /* frames that waited for a refresh, and for how long together */
 	uint32_t        fStatSettled;           /* frames drawn again, filtered, once they stood still (fb_filter=2) */
@@ -405,6 +411,7 @@ public:
 	void show(const uint8_t * swap, MiniIOSurface ** surfaces);
 	void settle(const uint8_t * swap, MiniIOSurface ** surfaces);
 	bool fSettling;                 /* drawing the last frame again, filtered (fb_filter=2) */
+	bool fFilterFrame;              /* this frame came slowly: filtered as it is (fb_filter=2) */
 	void presenter(void);
 	static void presenterMain(void * self, wait_result_t result);
 	void reportFrameTimes(void);
@@ -1046,7 +1053,7 @@ IOMobileFramebuffer::drawLayer(MiniIOSurface * s, const int32_t * src, const int
 	int32_t sx = src[0], sy = src[1], sw = src[2], sh = src[3];
 	int32_t dx = dst[0], dy = dst[1], dw = dst[2], dh = dst[3];
 	int32_t px0, py0, px1, py1, cx0, cx1;
-	bool filter = gFilter == 1 || (gFilter == 2 && fSettling);
+	bool filter = gFilter == 1 || (gFilter == 2 && (fSettling || fFilterFrame));
 	RowJob job;
 
 	if (sw <= 0 || sh <= 0) {
@@ -1273,6 +1280,11 @@ IOMobileFramebuffer::presenter(void)
 	static uint8_t swap[SWAP_SIZE];         /* (one thread) */
 	MiniIOSurface * surfaces[SWAP_LAYERS] = { NULL };
 	bool unsettled = false;                 /* the frame on the panel was drawn unfiltered, and its surfaces are held */
+	uint64_t lastFrame = 0, settleTime;
+	unsigned fastFrames = 0;
+	uint32_t shownDrawn[SWAP_LAYERS] = { 0 };       /* what the GPU had last been asked to draw into the surfaces on the panel */
+
+	nanoseconds_to_absolutetime(SETTLE_MS * NSEC_PER_MSEC, &settleTime);
 
 	for (;;) {
 		IOLockLock(fSwapLock);
@@ -1292,7 +1304,23 @@ IOMobileFramebuffer::presenter(void)
 
 					surfaces[layer] = sid != 0 ? MiniIOSurfaceCopy(sid) : NULL;
 				}
-				settle(swap, surfaces);
+				/*
+				 * Not from a surface the GPU has been asked to draw into since: CoreAnimation has it back, and the
+				 * next frame in it half drawn, tile by tile, is what the panel would get (bands of the picture with
+				 * pieces missing, at the start of a gesture; the next frame comes in a moment anyway).
+				 */
+				{
+					bool reused = false;
+
+					for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+						reused = reused || (surfaces[layer] != NULL && surfaces[layer]->drawn != shownDrawn[layer]);
+					}
+					if (reused) {
+						fStatSettleReused++;
+					} else {
+						settle(swap, surfaces);
+					}
+				}
 				for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 					if (surfaces[layer] != NULL) {
 						MiniIOSurfaceDrop(surfaces[layer]);
@@ -1315,8 +1343,18 @@ IOMobileFramebuffer::presenter(void)
 		memcpy(swap, fSwap[fSwapFirst], SWAP_SIZE);
 		memcpy(surfaces, fSwapSurfaces[fSwapFirst], sizeof(surfaces));
 		IOLockUnlock(fSwapLock);
-		show(swap, surfaces);
-		unsettled = gFilter == 2;
+		{
+			uint64_t now = mach_absolute_time();
+
+			fastFrames = lastFrame != 0 && now - lastFrame <= settleTime ? fastFrames + 1 : 0;
+			fFilterFrame = fastFrames < FAST_FRAMES;
+			for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+				shownDrawn[layer] = surfaces[layer] != NULL ? surfaces[layer]->drawn : 0;
+			}
+			show(swap, surfaces);
+			lastFrame = mach_absolute_time();
+		}
+		unsettled = gFilter == 2 && !fFilterFrame;
 		/*
 		 * The surfaces are let go of as soon as their pixels are in the panel's memory, not when the next frame comes:
 		 * held, they were in use to CoreAnimation, which had no surface to draw the next frame into while that one
@@ -1530,7 +1568,8 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 				fStatShareTime[share] = 0;
 				fStatShares[share] = fStatShareTorn[share] = fStatShareClose[share] = 0;
 			}
-			IOLog("MiniIOMobileFramebuffer: shares of the rows, us each/torn/close:%s\n", shares);
+			IOLog("MiniIOMobileFramebuffer: shares of the rows, us each/torn/close:%s; %u not drawn again, their surface taken for the next frame\n", shares, fStatSettleReused);
+			fStatSettleReused = 0;
 		}
 		fStatSwapsLate = 0;
 		for (different = 0; different < 8 && fStatSurfaces[different] != 0; different++) {
