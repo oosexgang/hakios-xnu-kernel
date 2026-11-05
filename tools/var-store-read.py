@@ -39,6 +39,10 @@ ENT_DIR, ENT_FILE, ENT_SYMLINK, ENT_HARDLINK, ENT_DIRTIME = 1, 2, 3, 4, 5
 DEVICE = "/dev/block/by-name/darwin"
 
 
+class BadArchive(ValueError):
+    """A slot's bytes do not agree with its otherwise valid header."""
+
+
 class Source:
     """Bytes of darwin counted from STORE_AT."""
 
@@ -78,19 +82,25 @@ def read_head(src, slot):
     return dict(slot=slot, generation=generation, bytes=nbytes, entries=entries, seconds=seconds, crc=crc)
 
 
-def newest(src):
-    best = None
+def newest_archive(src):
+    """The newest header and verified stream, falling back past damaged slots."""
+    heads = []
     for slot in range(SLOTS):
         h = read_head(src, slot)
-        if h is not None and (best is None or h["generation"] > best["generation"]):
-            best = h
-    return best
+        if h is not None:
+            heads.append(h)
+    for h in sorted(heads, key=lambda h: h["generation"], reverse=True):
+        try:
+            return h, stream_of(src, h)
+        except BadArchive as error:
+            print(error, file=sys.stderr)
+    return None, None
 
 
 def stream_of(src, h):
     data = src.read(h["slot"] * SLOT_BYTES + BLOCK, h["bytes"])
     if len(data) != h["bytes"] or (zlib.crc32(data) & 0xffffffff) != h["crc"]:
-        raise SystemExit(f"var-store-read: slot {h['slot']}: the archive's checksum is not its header's: not read")
+        raise BadArchive(f"var-store-read: slot {h['slot']}: the archive's checksum is not its header's: not read")
     return data
 
 
@@ -140,11 +150,10 @@ def main(argv):
             print(f"slot {slot}: " + ("nothing good" if h is None else
                   f"generation {h['generation']}, {h['entries']} entries, {h['bytes']} bytes, written at {h['seconds']}"))
         return 0
-    h = newest(src)
+    h, data = newest_archive(src)
     if h is None:
-        print("var-store-read: no slot holds a good archive (nothing saved yet: var_store=1 ufs_write=1)")
+        print("var-store-read: no slot holds a good archive")
         return 1
-    data = stream_of(src, h)
     if cmd == "list":
         prefix = argv[2] if len(argv) > 2 else ""
         for e in entries(data):
@@ -190,19 +199,19 @@ def selftest():
                   entry(ENT_SYMLINK, "db/hakios-metal-cache/link", b"0123.stage"),
                   entry(ENT_DIRTIME, "db/hakios-metal-cache"), entry(ENT_DIRTIME, "db")):
         stream += piece + b"\0" * ((-len(piece)) % 8)
-    def head(slot, generation, data):
-        raw = HEAD.pack(MAGIC, 1, slot, generation, len(data), 9, 1700000001, zlib.crc32(data) & 0xffffffff, 0)
-        return HEAD.pack(MAGIC, 1, slot, generation, len(data), 9, 1700000001, zlib.crc32(data) & 0xffffffff, head_crc(raw))
+    def head(slot, generation, data, count=9):
+        raw = HEAD.pack(MAGIC, 1, slot, generation, len(data), count, 1700000001, zlib.crc32(data) & 0xffffffff, 0)
+        return HEAD.pack(MAGIC, 1, slot, generation, len(data), count, 1700000001, zlib.crc32(data) & 0xffffffff, head_crc(raw))
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         img = os.path.join(tmp, "store")
         with open(img, "wb") as f:
             # slot 0 an older generation, slot 1 the newest: the newest is read
-            f.write(head(0, 1, b"").ljust(BLOCK, b"\0"))
+            f.write(head(0, 1, b"", count=0).ljust(BLOCK, b"\0"))
             f.seek(SLOT_BYTES)
             f.write(head(1, 2, stream).ljust(BLOCK, b"\0") + stream)
         src = Source(img)
-        h = newest(src)
+        h, _ = newest_archive(src)
         failures += h is None or h["slot"] != 1
         dest = os.path.join(tmp, "out")
         main(["x", "--image", img, "extract", "db/hakios-metal-cache", dest])
@@ -214,10 +223,12 @@ def selftest():
             f.seek(SLOT_BYTES + BLOCK + 60)
             f.write(b"\xff")
         try:
-            stream_of(src, newest(src))
+            stream_of(src, read_head(src, 1))
             failures += 1
-        except SystemExit:
+        except BadArchive:
             pass
+        h, data = newest_archive(src)
+        failures += h is None or h["slot"] != 0 or data != b""
         # a header whose own checksum is wrong is not a slot
         with open(img, "r+b") as f:
             f.seek(SLOT_BYTES + 16)
