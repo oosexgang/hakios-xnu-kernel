@@ -1,0 +1,3 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist) for a session a person drives:
+# nothing but the load monitor, so that the phone is all theirs (RC_JOBS=rc.jobs.interactive)
+/redwood/bin/cputop 10 &

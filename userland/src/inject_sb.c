@@ -32,11 +32,17 @@
  *     answered, with that program's layers.
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <time.h>
 #include <IOKit/IOKitLib.h>
+#include <Block.h>
 #include <dispatch/dispatch.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <notify.h>
 #include <objc/message.h>
@@ -79,6 +85,8 @@ say(const char *format, ...)
  */
 #define CA_COMMIT_ORDER 2000000
 static uint64_t main_woke, commit_began;
+static volatile uint64_t turn_began;    /* mach_absolute_time at the start of the turn; 0 between turns (stall_watch()) */
+static uintptr_t main_stack_top, main_stack_bottom;
 static mach_timebase_info_data_t timebase;
 
 static uint64_t
@@ -92,12 +100,94 @@ main_loop_turn(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activit
 {
 	if (activity == kCFRunLoopAfterWaiting) {
 		main_woke = now_us();
+		turn_began = mach_absolute_time();
 	} else if (activity == kCFRunLoopBeforeWaiting && info == NULL) {
 		commit_began = now_us();
 	} else if (activity == kCFRunLoopBeforeWaiting && main_woke != 0) {
 		say("tl: a %llu %llu %llu\n", main_woke, commit_began, now_us());
 		main_woke = 0;
+		turn_began = 0;
 	}
+}
+
+/*
+ * What SpringBoard's main thread is doing when a turn of its run loop takes long (with touch_lat=1): turns of 100 to 300 ms come
+ * 40 to 100 ms after a finger comes down, before their commit, and that is what jerks at the start of a swipe. A thread looks every
+ * 10 ms; at 25 ms into a turn, and every 50 ms after, it stops the main thread for the moment of walking its frame pointers.
+ * "tl: t MS frame frame ...": an image's name and offset, its symbol if it exports one. mach_msg at the top is a wait for a service.
+ */
+static void
+stall_say(thread_t thread, uint64_t ms)
+{
+	arm_thread_state64_t state;
+	mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+	uintptr_t pcs[12];
+	unsigned depth = 0;
+	char line[1024];
+	int at;
+
+	if (thread_suspend(thread) != KERN_SUCCESS) {
+		return;
+	}
+	if (thread_get_state(thread, ARM_THREAD_STATE64, (thread_state_t)&state, &count) == KERN_SUCCESS) {
+		uintptr_t pc = (uintptr_t)arm_thread_state64_get_pc(state), fp = (uintptr_t)arm_thread_state64_get_fp(state);
+		pcs[depth++] = pc;
+		while (depth < sizeof(pcs) / sizeof(pcs[0]) && fp >= main_stack_bottom && fp + 16 <= main_stack_top && (fp & 15) == 0) {
+			uintptr_t next = ((uintptr_t *)fp)[0], lr = ((uintptr_t *)fp)[1];
+
+			if (lr == 0) {
+				break;
+			}
+			pcs[depth++] = lr;
+			if (next <= fp) {
+				break;
+			}
+			fp = next;
+		}
+	}
+	thread_resume(thread);
+	at = snprintf(line, sizeof(line), "tl: t %llu", ms);
+	for (unsigned i = 0; i < depth && at < (int)sizeof(line) - 96; i++) {
+		Dl_info info;
+
+		if (dladdr((void *)pcs[i], &info) != 0 && info.dli_fname != NULL) {
+			const char *image = strrchr(info.dli_fname, '/');
+
+			at += info.dli_sname != NULL && pcs[i] - (uintptr_t)info.dli_saddr < 0x4000 ?
+			    snprintf(line + at, sizeof(line) - at, " %s", info.dli_sname) :
+			    snprintf(line + at, sizeof(line) - at, " %s+%#lx", image != NULL ? image + 1 : info.dli_fname, pcs[i] - (uintptr_t)info.dli_fbase);
+		} else {
+			at += snprintf(line + at, sizeof(line) - at, " %#lx", pcs[i]);
+		}
+	}
+	say("%s\n", line);
+}
+
+static void *
+stall_watch(void *argument)
+{
+	thread_t main_thread = (thread_t)(uintptr_t)argument;
+	uint64_t said_turn = 0, next_ms = 25;
+
+	for (;;) {
+		uint64_t began = turn_began;
+
+		usleep(10000);
+		if (began == 0 || began != turn_began) {
+			continue;
+		}
+		uint64_t ms = (mach_absolute_time() - began) * timebase.numer / timebase.denom / 1000000;
+
+		if (began != said_turn) {
+			said_turn = began;
+			next_ms = 25;
+		}
+		if (ms >= next_ms && ms < 2000) {
+			stall_say(main_thread, ms);
+			next_ms = ms + 50;
+		}
+	}
+	return NULL;
 }
 
 static void
@@ -112,6 +202,15 @@ watch_main_loop(void)
 		return;
 	}
 	mach_timebase_info(&timebase);
+	{
+		pthread_t watcher;
+
+		main_stack_top = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
+		main_stack_bottom = main_stack_top - pthread_get_stacksize_np(pthread_self());
+		if (pthread_create(&watcher, NULL, stall_watch, (void *)(uintptr_t)mach_thread_self()) == 0) {
+			pthread_detach(watcher);
+		}
+	}
 	CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopAfterWaiting, true, LONG_MIN,
 	    main_loop_turn, NULL), kCFRunLoopCommonModes);
 	CFRunLoopAddObserver(CFRunLoopGetMain(), CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, true, CA_COMMIT_ORDER - 1,
@@ -645,6 +744,20 @@ gpu_draws(void)
 	const char *argument;
 	io_service_t gpu;
 
+	/* ... or through Metal (boot-arg metal=1 with the GPU kept: HakiosMetal.bundle, an image built with METAL_PLUGIN) */
+	if (access("/redwood/lib/HakiosMetal.bundle/HakiosMetal", R_OK) == 0 &&
+	    sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
+		for (argument = arguments; (argument = strstr(argument, "metal=")) != NULL; argument += 6) {
+			if ((argument == arguments || argument[-1] == ' ') && argument[6] != '0') {
+				gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
+				if (gpu != 0) {
+					IOObjectRelease(gpu);
+					return true;
+				}
+			}
+		}
+	}
+	size = sizeof(arguments) - 1;
 	if (access(HAKIOS_GL, R_OK) != 0) {
 		return false;
 	}
@@ -682,6 +795,37 @@ plain_vibrancy(void)
 	}
 	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
 	say("hakios: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
+}
+
+/*
+ * Boot-arg ui_lite=1: the system's own "Reduce Transparency" and "Reduce Motion" (Settings, Accessibility), for this
+ * boot and, through var_store, the next. CoreAnimation then draws the dock, folders and widgets' platters in plain
+ * colours instead of blurring what is behind them every frame, and opens and closes applications with a fade instead
+ * of a zoom of the whole home screen -- the two things the Adreno spends a frame's GPU time on through Metal (2
+ * November: 6 to 10 ms a frame in motion, ~30 ms for an application's close). ui_lite=0 turns both off again (what
+ * var_store kept from a ui_lite=1 boot); without the boot-arg the settings are left alone.
+ */
+static void
+ui_lite(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+	CFBooleanRef on;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "ui_lite=")) == NULL || (argument != arguments && argument[-1] != ' ')) {
+		return;
+	}
+	on = argument[8] == '0' ? kCFBooleanFalse : kCFBooleanTrue;
+	CFPreferencesSetValue(CFSTR("EnhancedBackgroundContrastEnabled"), on, CFSTR("com.apple.Accessibility"),
+	    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+	CFPreferencesSetValue(CFSTR("ReduceMotionEnabled"), on, CFSTR("com.apple.Accessibility"),
+	    kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+	CFPreferencesSynchronize(CFSTR("com.apple.Accessibility"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+	notify_post("com.apple.accessibility.cache.enhance.background.contrast");
+	notify_post("com.apple.accessibility.cache.reduce.motion");
+	say("hakios: SpringBoard: ui_lite=%c: Reduce Transparency and Reduce Motion %s\n", argument[8], on == kCFBooleanTrue ? "on" : "off");
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
@@ -812,6 +956,479 @@ text_of(id object)
 	id text = object ? SEND(id, object, "description") : NULL;
 
 	return text ? SEND(const char *, text, "UTF8String") : "-";
+}
+
+/*
+ * Boot-arg wallpaper_cache=1: the window that shows the wallpaper rasterized by the window server (CALayer's
+ * shouldRasterize), drawn from one texture instead of composed again every frame. iOS 16's Collections poster is
+ * eight to twelve full-screen layers blended together (textures of 1271 x 1823, 1326 x 1326, 1326 x 1160, ...), 1.5 to
+ * 2.4 ms each on the Adreno through Metal: 15 to 20 ms of every frame in which something moves over it (2 November,
+ * metal_fps=mainpass), for a picture that does not change -- nothing here moves it (no parallax without a gyroscope).
+ * Looked for every 15 s from 20 s on, for windows whose class names a wallpaper or a poster.
+ */
+static void
+wallpaper_cache_pass(void)
+{
+	static unsigned listed;
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+	id windows = app != NULL ? SEND(id, app, "windows") : NULL;
+	unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
+	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
+	double scale = screen != NULL ? ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("scale")) : 3.0;
+
+	for (unsigned long i = 0; i < count; i++) {
+		id window = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
+		const char *name = object_getClassName(window);
+		id layer = SEND(id, window, "layer");
+
+		if (listed < 12) {
+			id sub = SEND(id, layer, "sublayers");
+			say("hakios: SpringBoard: window %lu of %lu: %s, layer %s with %lu sublayers%s\n", i, count, name,
+			    layer != NULL ? object_getClassName(layer) : "-", sub != NULL ? SEND(unsigned long, sub, "count") : 0UL,
+			    layer != NULL && SEND(BOOL, layer, "shouldRasterize") ? ", rasterized" : "");
+		}
+		if ((strcasestr(name, "wallpaper") != NULL || strcasestr(name, "poster") != NULL) && layer != NULL &&
+		    !SEND(BOOL, layer, "shouldRasterize")) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), YES);
+			((void (*)(id, SEL, double))objc_msgSend)(layer, sel_registerName("setRasterizationScale:"), scale);
+			say("hakios: SpringBoard: %s rasterized at %g (wallpaper_cache=1)\n", name, scale);
+		}
+	}
+	listed++;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		wallpaper_cache_pass();
+	});
+}
+
+/*
+ * Boot-arg wallpaper_freeze=1: the wallpaper as one still picture. Rasterizing its window (wallpaper_cache=1) did not
+ * keep it from being composed again: the poster is another process's layers (PosterBoard's, through a layer host), and
+ * its gradients (a 256 x 1 half-float ramp and a 32 x 32 dither each) were still drawn 3509 times in a run at 0.6 ms
+ * each, the rasterized copy 1460 times at 1.2 to 3.2 ms (3 November, metal_fps=draws). The home button's animation came
+ * at 28 frames a second with it and 78 with the wallpaper hidden (wallpaper_freeze=2).
+ *
+ * -drawViewHierarchyInRect: answers one colour for it here, secure window or not. So the picture is what is really on
+ * the panel: at the home screen, with the window of the icons hidden for a moment (they blink once per boot), the pixels of the IOSurface the window server last showed (kern.hakios.fb_surface) become one opaque view in
+ * the wallpaper's window, and what was there is hidden. What that gives up: the wallpaper does not change until the
+ * next boot, and the lock screen shows the same picture.
+ */
+typedef struct { double x, y, width, height; } hk_rect;
+
+static bool wallpaper_hide_only;        /* wallpaper_freeze=2: no picture, the wallpaper hidden (what it costs, measured) */
+static const void *wallpaper_frozen_key = &wallpaper_frozen_key;
+
+static id
+wallpaper_window(void)
+{
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+	id windows = app != NULL ? SEND(id, app, "windows") : NULL;
+	unsigned long count = windows != NULL ? SEND(unsigned long, windows, "count") : 0;
+
+	for (unsigned long i = 0; i < count; i++) {
+		id window = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
+		const char *name = object_getClassName(window);
+
+		if (strcasestr(name, "wallpaper") != NULL || strcasestr(name, "poster") != NULL) {
+			return window;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * The picture is kept in /private/var (var_store keeps that across boots), for a screen of another class (fbscale=2
+ * fbsubtype=1792: 1.85 times fewer pixels for the GPU), on which the poster draws nothing at all: black.
+ */
+#define WALLPAPER_KEPT "/var/mobile/Library/hakios-wallpaper.raw"
+struct wallpaper_kept { uint32_t magic, width, height, row; };
+#define WALLPAPER_MAGIC 0x57504b31
+
+static void
+wallpaper_keep(const uint8_t *pixels, size_t width, size_t height, size_t row)
+{
+	struct wallpaper_kept head = { WALLPAPER_MAGIC, (uint32_t)width, (uint32_t)height, (uint32_t)row };
+	int fd = open(WALLPAPER_KEPT ".new", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+	if (fd < 0) {
+		say("hakios: SpringBoard: wallpaper_freeze: %s cannot be written\n", WALLPAPER_KEPT);
+		return;
+	}
+	bool whole = write(fd, &head, sizeof(head)) == (ssize_t)sizeof(head) &&
+	    write(fd, pixels, row * height) == (ssize_t)(row * height);
+	close(fd);
+	if (whole) {
+		rename(WALLPAPER_KEPT ".new", WALLPAPER_KEPT);
+		say("hakios: SpringBoard: wallpaper_freeze: the picture kept, %zux%zu\n", width, height);
+	}
+}
+
+/* The picture kept, redrawn at this screen's pixels (a texture of the screen's own size to sample); NULL: none. */
+static id
+wallpaper_kept_picture(double width_points, double height_points, double scale)
+{
+	struct wallpaper_kept head;
+	int fd = open(WALLPAPER_KEPT, O_RDONLY);
+	id image = NULL;
+
+	if (fd < 0) {
+		return NULL;
+	}
+	if (read(fd, &head, sizeof(head)) == (ssize_t)sizeof(head) && head.magic == WALLPAPER_MAGIC && head.width != 0 && head.height != 0 &&
+	    head.row >= head.width * 4 && head.height < 16384) {
+		size_t bytes = (size_t)head.row * head.height;
+		uint8_t *pixels = malloc(bytes);
+
+		if (pixels != NULL && read(fd, pixels, bytes) == (ssize_t)bytes) {
+			size_t w = (size_t)(width_points * scale + 0.5), h = (size_t)(height_points * scale + 0.5);
+			CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+			CGBitmapInfo info = kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst;
+			CFDataRef data = CFDataCreateWithBytesNoCopy(NULL, pixels, bytes, kCFAllocatorNull);
+			CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+			CGImageRef kept = CGImageCreate(head.width, head.height, 8, 32, head.row, space, info, provider, NULL, false, kCGRenderingIntentDefault);
+			CGContextRef context = CGBitmapContextCreate(NULL, w, h, 8, 0, space, info);
+
+			if (kept != NULL && context != NULL) {
+				CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
+				CGContextDrawImage(context, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), kept);
+				CGImageRef made = CGBitmapContextCreateImage(context);
+
+				if (made != NULL) {
+					image = ((id (*)(id, SEL, CGImageRef, double, long))objc_msgSend)((id)objc_getClass("UIImage"),
+					    sel_registerName("imageWithCGImage:scale:orientation:"), made, scale, 0L);
+					CGImageRelease(made);
+				}
+			}
+			say("hakios: SpringBoard: wallpaper_freeze: the picture kept (%ux%u) drawn at %zux%zu: %s\n", head.width, head.height, w, h,
+			    image != NULL ? "yes" : "NO");
+			if (context != NULL) CGContextRelease(context);
+			if (kept != NULL) CGImageRelease(kept);
+			CGDataProviderRelease(provider);
+			CFRelease(data);
+			CGColorSpaceRelease(space);
+		}
+		free(pixels);
+	}
+	close(fd);
+	return image;
+}
+
+/* A picture of the surface on the panel, opaque, in points of the screen's scale; NULL: none, or all one colour. */
+static id
+wallpaper_picture(double scale)
+{
+	uint32_t sid = 0;
+	size_t size = sizeof(sid);
+	IOSurfaceRef surface;
+	id image = NULL;
+
+	if (sysctlbyname("kern.hakios.fb_surface", &sid, &size, NULL, 0) != 0 || sid == 0 ||
+	    (surface = IOSurfaceLookup(sid)) == NULL) {
+		say("hakios: SpringBoard: wallpaper_freeze=1: no surface on the panel to read (%u)\n", sid);
+		return NULL;
+	}
+	size_t width = IOSurfaceGetWidth(surface), height = IOSurfaceGetHeight(surface), row = IOSurfaceGetBytesPerRow(surface);
+
+	IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+	CFDataRef pixels = CFDataCreate(NULL, IOSurfaceGetBaseAddress(surface), (CFIndex)(row * height));
+	IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+	unsigned distinct = 0;
+	if (pixels != NULL) {
+		const uint8_t *at = CFDataGetBytePtr(pixels);
+		uint32_t first = *(const uint32_t *)at;
+
+		for (unsigned k = 0; k < 97; k++) {
+			distinct += *(const uint32_t *)(at + (height * k / 97) * row + (width * k / 97) * 4) != first;
+		}
+	}
+	say("hakios: SpringBoard: wallpaper_freeze=1: surface %u, %zux%zu, %zu bytes a row, format %#x: %u of 97 samples unlike the first (%#x)\n",
+	    sid, width, height, row, IOSurfaceGetPixelFormat(surface), distinct, pixels != NULL ? *(const uint32_t *)CFDataGetBytePtr(pixels) : 0);
+	if (pixels != NULL && distinct >= 10) {
+		wallpaper_keep(CFDataGetBytePtr(pixels), width, height, row);
+		CGDataProviderRef provider = CGDataProviderCreateWithCFData(pixels);
+		CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+		CGImageRef cg = CGImageCreate(width, height, 8, 32, row, space, kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst,
+		    provider, NULL, false, kCGRenderingIntentDefault);
+
+		if (cg != NULL) {
+			image = ((id (*)(id, SEL, CGImageRef, double, long))objc_msgSend)((id)objc_getClass("UIImage"),
+			    sel_registerName("imageWithCGImage:scale:orientation:"), cg, scale, 0L);
+			CGImageRelease(cg);
+		}
+		CGColorSpaceRelease(space);
+		CGDataProviderRelease(provider);
+	}
+	if (pixels != NULL) {
+		CFRelease(pixels);
+	}
+	CFRelease(surface);
+	return image;
+}
+
+/* The picture into the wallpaper's window, in place of what was shown there (none: only hidden). */
+static void
+wallpaper_put(id window, id image)
+{
+	id layer = SEND(id, window, "layer");
+	id sublayers = SEND(id, SEND(id, layer, "sublayers"), "copy");
+	unsigned long count = sublayers != NULL ? SEND(unsigned long, sublayers, "count") : 0;
+	hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+
+	if (image != NULL) {
+		id view = ((id (*)(id, SEL, id))objc_msgSend)(SEND(id, objc_getClass("UIImageView"), "alloc"),
+		    sel_registerName("initWithImage:"), image);
+
+		((void (*)(id, SEL, hk_rect))objc_msgSend)(view, sel_registerName("setFrame:"), bounds);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(view, sel_registerName("setOpaque:"), YES);
+		((void (*)(id, SEL, id))objc_msgSend)(window, sel_registerName("addSubview:"), view);
+		objc_setAssociatedObject(window, wallpaper_frozen_key, view, OBJC_ASSOCIATION_RETAIN);
+	} else {
+		objc_setAssociatedObject(window, wallpaper_frozen_key, window, OBJC_ASSOCIATION_ASSIGN);
+	}
+	for (unsigned long k = 0; k < count; k++) {
+		id sub = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), k);
+
+		((void (*)(id, SEL, BOOL))objc_msgSend)(sub, sel_registerName("setHidden:"), YES);
+	}
+	say("hakios: SpringBoard: wallpaper_freeze: %s %s (%lu layers hidden)\n", object_getClassName(window),
+	    image != NULL ? "is one picture now" : "hidden", count);
+}
+
+/* Whether the home screen is what is showing: unlocked, no application in front. */
+static bool
+wallpaper_home_showing(void)
+{
+	Class manager = objc_getClass("SBLockScreenManager");
+	id shared = manager != NULL ? SEND(id, manager, "sharedInstance") : NULL;
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+
+	if (shared == NULL || SEND(BOOL, shared, "isUILocked")) {
+		return false;
+	}
+	/* (a selector nobody answers would abort SpringBoard: unlocked is then all that is known) */
+	if (app == NULL || !class_respondsToSelector(object_getClass(app), sel_registerName("_accessibilityFrontMostApplication"))) {
+		return app != NULL;
+	}
+	return SEND(id, app, "_accessibilityFrontMostApplication") == NULL;
+}
+
+static void
+wallpaper_freeze_pass(unsigned attempt)
+{
+	id window = wallpaper_window();
+	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
+	double scale = screen != NULL ? ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("scale")) : 3.0;
+
+	if (window != NULL && objc_getAssociatedObject(window, wallpaper_frozen_key) != NULL) {
+		return;
+	}
+	if (window != NULL && !wallpaper_hide_only) {
+		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+
+		if (bounds.width != 375 || bounds.height != 812 || scale != 3.0) {
+			id image = wallpaper_kept_picture(bounds.width, bounds.height, scale);
+
+			if (image != NULL) {
+				wallpaper_put(window, image);
+				return;
+			}
+			say("hakios: SpringBoard: wallpaper_freeze: no picture kept for this screen (%gx%g at %g): a boot at the iPhone X's screen first\n",
+			    bounds.width, bounds.height, scale);
+			return;
+		}
+	}
+	if (window == NULL || !wallpaper_home_showing()) {
+		if (attempt < 720) {
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+				wallpaper_freeze_pass(attempt + 1);
+			});
+		}
+		return;
+	}
+	if (wallpaper_hide_only) {
+		wallpaper_put(window, NULL);
+		return;
+	}
+	/* a screen of another class than the iPhone X's: no poster to read off the panel, the picture kept instead */
+	{
+		hk_rect bounds = ((hk_rect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+
+		if (bounds.width != 375 || bounds.height != 812 || scale != 3.0) {
+			id image = wallpaper_kept_picture(bounds.width, bounds.height, scale);
+
+			if (image != NULL) {
+				wallpaper_put(window, image);
+			} else {
+				say("hakios: SpringBoard: wallpaper_freeze: no picture kept for this screen: a boot at the iPhone X's first\n");
+			}
+			return;
+		}
+	}
+	/* the icons out of the way until the window server has drawn the wallpaper without them */
+	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
+	id windows = SEND(id, app, "windows");
+	unsigned long count = SEND(unsigned long, windows, "count");
+	CFMutableArrayRef hidden = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+
+	for (unsigned long i = 0; i < count; i++) {
+		id other = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
+
+		/*
+		 * Only the window of the icons and the dock: with SpringBoard's other windows hidden as well the screen was all
+		 * black (0xff000000 in all 97 samples, 4 November), the wallpaper gone with them.
+		 */
+		if (strcmp(object_getClassName(other), "SBHomeScreenWindow") == 0 && !SEND(BOOL, other, "isHidden")) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(other, sel_registerName("setHidden:"), YES);
+			CFArrayAppendValue(hidden, other);
+		}
+	}
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+		id image = wallpaper_picture(scale);
+
+		for (CFIndex i = 0; i < CFArrayGetCount(hidden); i++) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)((id)CFArrayGetValueAtIndex(hidden, i), sel_registerName("setHidden:"), NO);
+		}
+		CFRelease(hidden);
+		if (image != NULL) {
+			wallpaper_put(window, image);
+		} else if (attempt < 720) {
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+				wallpaper_freeze_pass(attempt + 1);
+			});
+		}
+	});
+}
+
+static void
+wallpaper_freeze_say(unsigned times)
+{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		id window = wallpaper_window();
+
+		say("hakios: SpringBoard: wallpaper_freeze: the wallpaper's window %s is %s\n", window != NULL ? object_getClassName(window) : "(none)",
+		    window != NULL && objc_getAssociatedObject(window, wallpaper_frozen_key) != NULL ? "one picture" : "not frozen");
+		if (times > 1) {
+			wallpaper_freeze_say(times - 1);
+		}
+	});
+}
+
+static void
+wallpaper_freeze(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "wallpaper_freeze=")) == NULL || (argument != arguments && argument[-1] != ' ') ||
+	    (argument[17] != '1' && argument[17] != '2')) {
+		return;
+	}
+	wallpaper_hide_only = argument[17] == '2';
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		wallpaper_freeze_pass(0);
+	});
+	/* (said again and again: the log of a long run keeps its beginning and its end) */
+	wallpaper_freeze_say(15);
+}
+
+/*
+ * The iPhone X's 375 x 812 points at 2 pixels a point (fbscale=2: the layout as it is at 3, with fewer pixels to draw):
+ * UIKit has no status bar for that and shows its fallback, a red bar reading rdar://45025538; nor for this panel's own
+ * 360 x 800 points at 3 (fbwidth=1080 fbheight=2400, a pixel of the picture for a pixel of the panel). The status bar of the
+ * iPhone of about that width does for it, it goes by points: the fallback class answers its class methods as that
+ * iPhone's does, and what is allocated of it is that iPhone's (the red bar is gone with this, 4 November; a hook on
+ * +visualProviderSubclassForScreen:visualProviderInfo: alone left it).
+ */
+static Class status_bar_split;
+
+static id
+status_bar_fallback_alloc(id self __unused, SEL selector)
+{
+	static unsigned said;
+
+	if (said++ < 2) {
+		say("hakios: SpringBoard: the status bar's fallback asked for: %s it is\n", class_getName(status_bar_split));
+	}
+	return ((id (*)(Class, SEL))objc_msgSend)(status_bar_split, selector);
+}
+
+static id
+status_bar_fallback_alloc_zone(id self __unused, SEL selector, void *zone)
+{
+	return ((id (*)(Class, SEL, void *))objc_msgSend)(status_bar_split, selector, zone);
+}
+
+static void
+status_bar_fallback_is_split(void)
+{
+	Class fallback = objc_getClass("_UIStatusBarVisualProvider_Fallback");
+	/* (no UIScreen here: this runs in the library's constructor, before UIKit is up -- +[UIScreen mainScreen] asserted) */
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+	const char *at;
+	unsigned width = 1125;
+
+	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "fbwidth=")) != NULL) {
+		width = (unsigned)atoi(at + 8);
+	}
+	status_bar_split = objc_getClass(width == 1080 ? "_UIStatusBarVisualProvider_Split1080" : "_UIStatusBarVisualProvider_Split1125");
+	if (fallback == NULL || status_bar_split == NULL) {
+		say("hakios: SpringBoard: no status bar fallback or split provider class (%p %p)\n", (void *)fallback, (void *)status_bar_split);
+		return;
+	}
+	/* the class methods from the split provider up to what the two have in common, the nearest last to win */
+	Class chain[8];
+	unsigned depth = 0, moved = 0;
+
+	for (Class c = status_bar_split; c != NULL && depth < 8; c = class_getSuperclass(c)) {
+		bool common = false;
+
+		for (Class f = fallback; f != NULL; f = class_getSuperclass(f)) {
+			common = common || f == c;
+		}
+		if (common) {
+			say("hakios: SpringBoard: the status bar's providers have %s in common, the fallback's parent is %s\n", class_getName(c),
+			    class_getName(class_getSuperclass(fallback)));
+			break;
+		}
+		chain[depth++] = c;
+	}
+	while (depth-- > 0) {
+		unsigned count = 0;
+		Method *methods = class_copyMethodList(object_getClass(chain[depth]), &count);
+
+		for (unsigned i = 0; i < count; i++) {
+			const char *name = sel_getName(method_getName(methods[i]));
+
+			if (strcmp(name, "load") != 0 && strcmp(name, "initialize") != 0 && strcmp(name, "alloc") != 0 && strcmp(name, "allocWithZone:") != 0) {
+				class_replaceMethod(object_getClass(fallback), method_getName(methods[i]), method_getImplementation(methods[i]),
+				    method_getTypeEncoding(methods[i]));
+				moved++;
+			}
+		}
+		free(methods);
+	}
+	class_replaceMethod(object_getClass(fallback), sel_registerName("alloc"), (IMP)status_bar_fallback_alloc, "@16@0:8");
+	class_replaceMethod(object_getClass(fallback), sel_registerName("allocWithZone:"), (IMP)status_bar_fallback_alloc_zone, "@24@0:8^v16");
+	say("hakios: SpringBoard: the status bar's fallback provider is %s from now on (%u class methods)\n", class_getName(status_bar_split), moved);
+}
+
+
+static void
+wallpaper_cache(void)
+{
+	char arguments[1024] = "";
+	size_t size = sizeof(arguments) - 1;
+	const char *argument;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 ||
+	    (argument = strstr(arguments, "wallpaper_cache=1")) == NULL || (argument != arguments && argument[-1] != ' ')) {
+		return;
+	}
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		wallpaper_cache_pass();
+	});
 }
 
 /*
@@ -1321,6 +1938,53 @@ boot_arg(const char *arguments, const char *name)
 	return at != NULL && (at == arguments || at[-1] == ' ');
 }
 
+/*
+ * The animations SpringBoard hands the window server (an application opening from its icon and closing to it, the
+ * home screen coming back, folders): the window server moves them at the rate each asks for (CAAnimation's
+ * preferredFrameRateRange). Through Metal (METAL_PLUGIN=ca) it keeps to that, and what asks for nothing went at 24 a
+ * second -- frames exactly 41.7 ms apart with the GPU 0.3 ms busy each; through OpenGL ES it did not. With anim_max=1
+ * every animation added to a layer of SpringBoard's asks for 80..120 (a copy of it: one already added is read-only,
+ * and setting it raised). touch_lat=1 says the first ones and what they asked.
+ */
+static void (*original_add_animation)(id self, SEL selector, id animation, id key);
+static unsigned anim_said;
+
+static void
+add_animation_full_rate(id self, SEL selector, id animation, id key)
+{
+	SEL range_of = sel_registerName("preferredFrameRateRange"), set_range_of = sel_registerName("setPreferredFrameRateRange:");
+
+	if (animation != NULL && class_respondsToSelector(object_getClass(animation), set_range_of)) {
+		frame_rate_range asked = ((frame_rate_range (*)(id, SEL))objc_msgSend)(animation, range_of);
+
+		if (dl_say && anim_said++ < 40) {
+			say("hakios: animation %s (%s) asked for %.0f..%.0f, %.0f a second\n", object_getClassName(animation),
+			    key != NULL ? text_of(key) : "", asked.minimum, asked.maximum, asked.preferred);
+		}
+		if (asked.maximum == 0 || asked.maximum < 120 || asked.minimum < 80) {
+			id copy = SEND(id, animation, "copy");
+
+			((void (*)(id, SEL, frame_rate_range))objc_msgSend)(copy, set_range_of, (frame_rate_range){ 80, 120, 120 });
+			original_add_animation(self, selector, copy, key);
+			SEND(void, copy, "release");
+			return;
+		}
+	}
+	original_add_animation(self, selector, animation, key);
+}
+
+static void
+animation_rates(const char *arguments)
+{
+	Method add = class_getInstanceMethod(objc_getClass("CALayer"), sel_registerName("addAnimation:forKey:"));
+
+	if (!boot_arg(arguments, "anim_max=1") || add == NULL) {
+		return;
+	}
+	original_add_animation = (void (*)(id, SEL, id, id))method_setImplementation(add, (IMP)add_animation_full_rate);
+	say("hakios: SpringBoard's animations ask for 80..120 a second (anim_max=1)\n");
+}
+
 static void
 display_link_rates(void)
 {
@@ -1334,6 +1998,7 @@ display_link_rates(void)
 	}
 	dl_say = boot_arg(arguments, "touch_lat=1");
 	dl_max = !boot_arg(arguments, "dl_max=0");
+	animation_rates(arguments);
 	if (!dl_say && !dl_max) {
 		return;
 	}
@@ -1494,6 +2159,10 @@ hakios_springboard_init(void)
 	snapshot_format = replace_method_of_kind('+', "XBApplicationSnapshotManifestImpl", "_outputFormatForSnapshot:",
 	    0x1f1c91480UL, (IMP)snapshot_output_format);
 	plain_vibrancy();
+	ui_lite();
+	wallpaper_cache();
+	status_bar_fallback_is_split();
+	wallpaper_freeze();
 	original_lock_long_press = (void (*)(id, SEL, id))replace_method("SBLockHardwareButton", "longPress:", 0x1c4f6ab44UL,
 	    (IMP)lock_long_press);
 	poster_switcher = replace_method("SBMainDisplayPolicyAggregator", "_allowsCapabilityPosterSwitcherWithExplanation:",

@@ -41,6 +41,12 @@ Every `make` target is a script below it; run the script itself for its options 
 | `provenance-check.py` | nothing in the tree that must not be, and every piece of code that can write to a phone declared | |
 | `metallib.py` | a `.metallib` taken apart | [AIR](../air.md) |
 | `metallib-test.sh`, `metal-plugin-test.sh` | the Metal plug-in's reading of libraries and its objects, under sanitizers | [Metal plan](../metal-plan.md) |
+| `metal-run.sh` | one Metal run on the phone, measured, with a summary in `logs/` | [Metal](metal.md#measure) |
+| `frames.py` | how evenly the frames of a run's gestures came, and what held up the slow ones | [Metal](metal.md#measure) |
+| `ca-metallib.py` | QuartzCore's `default.metallib` for the window server, on your machine, from what you supply | [Metal](metal.md#the-window-server-userlandsrchakiosmetalcam) |
+| `metal-cache-seed.sh` | the window server's compiled shader stages off the phone, into the next image | [Windows](../windows.md#metal-a-run-measured-from-windows) |
+| `mk-mesa.sh`, `mk-turnip.sh` | Mesa 25.0.7 for the Darwin user space, and its Vulkan driver | [Metal](metal.md#build) |
+| `mk-m2v.sh` | UniXNU's Metal on Vulkan: AdrenoMetal's frontend over metal2vulkan, fetched at pinned revisions | [Metal](metal.md#build) |
 | `modem-cycle.sh` | a whole phone session in one command | [On the phone](../getting-started/phone.md) |
 | `soc-args.py` | the `soc_*` addresses out of a device tree | |
 | `backup-partitions.py` | a read-only backup of the phone's partitions, each copy proven | [Install, safely](../install-safe.md) |

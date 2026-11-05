@@ -2,6 +2,7 @@
 # clones and files of Darwin, none of which belongs in the repository. Nothing is tracked unless it
 # is named here.
 /*
+!/hakios-metal/
 !/.gitignore
 !/.gitattributes
 !/VERSION

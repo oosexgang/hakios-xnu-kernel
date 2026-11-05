@@ -851,12 +851,33 @@ read_metadata_kind_block(struct reader *r)
 
 /* -- module records ----------------------------------------------------- */
 
+/* Module version 1 (LLVM before 5) has no string table: a GLOBALVAR or FUNCTION
+ * record is the version 2 one without its first two operands (the name's place in
+ * the table), and the names come from the module's own symbol table instead
+ * (read_module_vst). Apple's compiler service still writes version 1 for some of
+ * the MSL it compiles at run time (sokol-samples' debugtext and drawex), so such a
+ * record is read as the version 2 one with a name of no length, named later.
+ */
+static const struct air_bs_entry *
+as_version2(struct reader *r, const struct air_bs_entry *e, struct air_bs_entry *copy)
+{
+   if (r->m->version >= 2)
+      return e;
+   uint64_t *ops = ralloc_array(r->m, uint64_t, e->num_ops + 2);
+   ops[0] = ops[1] = 0;
+   memcpy(ops + 2, e->ops, e->num_ops * sizeof(uint64_t));
+   *copy = *e;
+   copy->ops = ops;
+   copy->num_ops = e->num_ops + 2;
+   return copy;
+}
+
 static bool
-read_globalvar(struct reader *r, const struct air_bs_entry *e)
+read_globalvar(struct reader *r, const struct air_bs_entry *e1)
 {
    struct air_module *m = r->m;
-   if (r->m->version < 2)
-      return fail(r, "module version %u: only bitcode with a string table is read", m->version);
+   struct air_bs_entry copy;
+   const struct air_bs_entry *e = as_version2(r, e1, &copy);
    if (e->num_ops < 8)
       return fail(r, "GLOBALVAR too short");
 
@@ -901,11 +922,11 @@ read_globalvar(struct reader *r, const struct air_bs_entry *e)
 }
 
 static bool
-read_function_record(struct reader *r, const struct air_bs_entry *e)
+read_function_record(struct reader *r, const struct air_bs_entry *e1)
 {
    struct air_module *m = r->m;
-   if (m->version < 2)
-      return fail(r, "module version %u: only bitcode with a string table is read", m->version);
+   struct air_bs_entry copy;
+   const struct air_bs_entry *e = as_version2(r, e1, &copy);
    if (e->num_ops < 8)
       return fail(r, "FUNCTION too short");
 
@@ -1289,6 +1310,45 @@ read_instruction(struct reader *r, const struct air_bs_entry *e, struct air_bloc
          return fail(r, "br of %u operands", e->num_ops);
       }
       break;
+   case FUNC_CODE_INST_SWITCH: {
+      /* [ type of the condition, condition, default block,
+       *   (case constant, block)* ]
+       *
+       * The condition is a RELATIVE value number and each case constant is an
+       * ABSOLUTE one, because that is what the writer does -- pushValue for
+       * the condition, getValueID for each case value. Reading them the same
+       * way gives the wrong constant for every case in any function that has
+       * more than a handful of values, which is every function here.
+       *
+       * The blocks are block numbers, as br's are, not value numbers.
+       */
+      if (e->num_ops < 3 || (e->num_ops - 3) % 2)
+         return fail(r, "a switch of %u operands", e->num_ops);
+      unsigned ty = take(&rc);
+      /* LLVM 3.0 wrote switches over ranges, with the case count and a bit
+       * width packed into the first operand under this magic instead of a type
+       * id. Nothing Apple's compiler emits uses it, and reading it as a type
+       * would silently take the wrong path, so it is named and refused.
+       */
+      if ((ty >> 16) == 0x4B5)
+         return fail(r, "a switch in LLVM 3.0's range form (SWITCH_INST_MAGIC)");
+      unsigned cond = take_value(r, &rc);
+      unsigned deflt = take(&rc);
+      unsigned n = (e->num_ops - 3) / 2;
+      in = new_inst(r, AIR_OP_SWITCH, NULL, 1 + n);
+      in->num_targets = 1 + n;
+      in->target_ids = ralloc_array(m, unsigned, 1 + n);
+      /* target 0 and operand 0 are the default edge and the condition; the
+       * cases follow, so case k is operand k+1 and target k+1
+       */
+      in->target_ids[0] = deflt;
+      in->operand_ids[0] = cond;
+      for (unsigned k = 0; k < n; k++) {
+         in->operand_ids[1 + k] = take(&rc);
+         in->target_ids[1 + k] = take(&rc);
+      }
+      break;
+   }
    case FUNC_CODE_INST_UNREACHABLE:
       in = new_inst(r, AIR_OP_UNREACHABLE, NULL, 0);
       break;
@@ -1651,6 +1711,29 @@ read_function_block(struct reader *r)
 
 /* -- the module block --------------------------------------------------- */
 
+/* A version 1 module's symbol table: ENTRY [value id, name...] for a global or a
+ * declaration, FNENTRY [value id, offset of its body, name...] for a function with
+ * a body. Version 2 keeps the same names in the string table and has no use for it.
+ */
+static bool
+read_module_vst(struct reader *r)
+{
+   for (;;) {
+      struct air_bs_entry e = air_bs_next(&r->bs);
+      if (e.kind == AIR_BS_END_BLOCK)
+         return true;
+      if (e.kind != AIR_BS_RECORD)
+         return check_bs(r) && fail(r, "module symbol table ends early");
+      unsigned skip = e.id == VST_CODE_ENTRY ? 1 : e.id == VST_CODE_FNENTRY ? 2 : 0;
+      if (!skip || e.num_ops < skip)
+         continue;
+      struct air_value *v = value_by_id(r, e.ops[0]);
+      if (!v)
+         return false;
+      v->name = air_bs_ops_to_string(r->m, e.ops + skip, e.num_ops - skip);
+   }
+}
+
 static bool
 read_module_block(struct reader *r)
 {
@@ -1692,9 +1775,18 @@ read_module_block(struct reader *r)
             air_bs_enter(&r->bs, e.id);
             ok = ok && read_function_block(r);
             break;
+         case VALUE_SYMTAB_BLOCK_ID:
+            /* a version 1 module's names (read_module_vst); version 2's are the string table's */
+            if (m->version < 2) {
+               air_bs_enter(&r->bs, e.id);
+               ok = read_module_vst(r);
+            } else {
+               ok = air_bs_skip_block(&r->bs);
+            }
+            break;
          default:
-            /* attributes, symbol table, operand bundle tags, sync scopes,
-             * use lists: nothing the translation depends on
+            /* attributes, operand bundle tags, sync scopes, use lists: nothing
+             * the translation depends on
              */
             ok = air_bs_skip_block(&r->bs);
             break;
@@ -1870,12 +1962,14 @@ air_module_read(void *mem_ctx, const void *data, size_t size, const char **error
       goto out;
    }
 
-   /* the string table comes after the module, so names come last */
-   for (unsigned i = 0; i < m->num_globals; i++)
+   /* the string table comes after the module, so names come last (a version 1
+    * module named them from its symbol table already, read_module_vst)
+    */
+   for (unsigned i = 0; m->version >= 2 && i < m->num_globals; i++)
       if (!(m->globals[i]->base.name =
                strtab_name(&r, m->globals[i]->strtab_offset, m->globals[i]->strtab_size)))
          goto out;
-   for (unsigned i = 0; i < m->num_functions; i++)
+   for (unsigned i = 0; m->version >= 2 && i < m->num_functions; i++)
       if (!(m->functions[i]->base.name =
                strtab_name(&r, m->functions[i]->strtab_offset, m->functions[i]->strtab_size)))
          goto out;

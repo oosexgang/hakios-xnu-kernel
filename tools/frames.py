@@ -19,12 +19,17 @@ to the next one or 2.5 s later -- is a segment; for each:
     copy      the display driver's copy into the panel's memory
 
 The thresholds are as the coordinator asked for them; 18.0 rather than 16.7 because a frame of a steady
-60 comes 16.6 to 16.8 ms after the one before.
+60 comes 16.6 to 16.8 ms after the one before. Beside them, the share over 8.3 ms (from 9.0: a 120 Hz frame
+missed), what a run at fb_hz=120 is measured by.
+
+A window server drawing through Metal says no "tl: g" (that is eagl.c's, the OpenGL ES road): its frames are
+counted all the same, by the swap that handed each over, and draw and idle are then unknown (0).
 """
 import os
 import sys
 
 OVER_ONE, OVER_TWO, SEGMENT_US = 18000, 34500, 2500000
+OVER_120 = 9000
 # the first cpu-id of a small core: the loader lists the boot core, then the big ones, then the small (xnuloader/loader.c);
 # on the phone with cpus=7 the Cortex-A55s are 4, 5 and 6 (FRAMES_SMALL_FROM= for another layout)
 SMALL_FROM = int(os.environ.get('FRAMES_SMALL_FROM', '4'))
@@ -77,9 +82,13 @@ def main():
             continue
         swap = swaps[sid]
         drawn = [f for f in frames if f[1] <= swap]
-        if not drawn:
+        if drawn:
+            began, ended, draws, cpu = drawn[-1]
+        elif not frames:
+            began = ended = swap            # the Metal road: no "tl: g", the swap is where its frame ended
+            cpu = -1
+        else:
             continue
-        began, ended, draws, cpu = drawn[-1]
         ready, shown, done = shows[sid]
         timeline.append(dict(began=began, ended=ended, swap=swap, ready=ready, shown=shown, done=done, cpu=cpu))
     timeline.sort(key=lambda f: f['done'])
@@ -101,6 +110,7 @@ def main():
         span = sum(g[0] for g in moving)
         over1 = [g for g in moving if g[0] > OVER_ONE]
         over2 = [g for g in moving if g[0] > OVER_TWO]
+        over120 = [g for g in moving if g[0] > OVER_120]
         all_counts[0] += len(moving)
         all_counts[1] += len(over1)
         all_counts[2] += len(over2)
@@ -112,6 +122,7 @@ def main():
         k[4] += len(over2)
         fps = len(moving) * 1e6 / span if span else 0
         line = (f'{i + 1:2}. {start / 1e6:9.3f} s {what}: {len(moving)} frames at {fps:4.1f} a second; '
+                f'over 8.3 ms {100 * len(over120) / max(1, len(moving)):3.0f}%, '
                 f'over 16.7 ms {100 * len(over1) / max(1, len(moving)):3.0f}%, over 33 ms {100 * len(over2) / max(1, len(moving)):3.0f}%')
         if over1:
             # where the slow frames' time went (means over them)

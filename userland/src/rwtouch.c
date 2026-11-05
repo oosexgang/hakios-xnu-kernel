@@ -62,7 +62,11 @@ button(uint32_t which, int ms)
 	write(device, &t, sizeof(t));
 }
 
-#define SAMPLE_MS       8               /* a sample every so many milliseconds: what the touch screen gives */
+/*
+ * A sample every so many milliseconds: 4, a sample in every refresh at 120 Hz (touch_poll_us=4000 for the touch screen
+ * itself). Once 8. Measured (4 November): the frame rate of a swipe is the same with either, 100 to 104 a second.
+ */
+#define SAMPLE_MS       4
 
 static mach_timebase_info_data_t timebase;
 

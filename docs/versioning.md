@@ -4,7 +4,7 @@ An Android kernel says `5.4.147-android12-9-...-g1a2b3c4d`: the Linux it is buil
 commit. This kernel says the same kind of thing about itself:
 
 ```
-2.1.13-hakios-darwin22.5-sc7280-g1a2b3c4d[-dirty]
+2.3.4-hakios-darwin22.5-sc7280-g1a2b3c4d[-dirty]
 │ │  │  │      │          │      └ the commit; "-dirty" if a tracked file differs from it
 │ │  │  │      │          └ the SoC family the configuration is for (CONFIG_SOC)
 │ │  │  │      └ the Darwin it is built on (22.5.0, Apple's open xnu-8796.121.2)
@@ -31,9 +31,9 @@ in an Android kernel next to the vendor's own string.
 string from it, from `CONFIG_SOC` of the `.config` (see [configs.md](configs.md)) and from git:
 
 ```bash
-tools/kernel-version.py            # 2.1.13-hakios-darwin22.5-sc7280-g1a2b3c4d (the -sc7280 part is there with a .config)
-tools/kernel-version.py --short    # 2.1.13
-tools/kernel-version.py --release  # 2.1.13-hakios: what a tag is called (v2.1.13-hakios)
+tools/kernel-version.py            # 2.3.4-hakios-darwin22.5-sc7280-g1a2b3c4d (the -sc7280 part is there with a .config)
+tools/kernel-version.py --short    # 2.3.4
+tools/kernel-version.py --release  # 2.3.4-hakios: what a tag is called (v2.3.4-hakios)
 tools/kernel-version.py --all      # every part, for a build log
 ```
 
@@ -49,8 +49,8 @@ not need the Mach-O rebuilt.
 | | moves when | example |
 |---|---|---|
 | **VERSION** (2) | a change that breaks what a user, a port or a boot image relies on | the payload format, the meaning of a boot-argument, the layout of the partition `darwin` |
-| **PATCHLEVEL** (1) | a feature | a driver, a device, a tool |
-| **SUBLEVEL** (13) | a fix | a bug in a driver, a wrong default |
+| **PATCHLEVEL** (3) | a feature | a driver, a device, a tool |
+| **SUBLEVEL** (4) | a fix | a bug in a driver, a wrong default |
 | **EXTRAVERSION** | the tree is somebody's branch | a vendor writes its own here, as Android's `-android12-9` |
 
 A boot-argument that is removed or changes its meaning is a **VERSION** change, which is why

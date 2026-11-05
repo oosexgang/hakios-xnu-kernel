@@ -64,6 +64,7 @@ FILES = {
     # user space: strstr on the kern.bootargs buffer, and its own boot_arg() helper
     "userland/src/eagl.c": 'void k(char *arguments) { strstr(arguments, "u_strstr=1"); strstr(arguments, "ku_both="); }\n',
     "userland/src/init.c": 'static const char *\nboot_arg(const char *name)\n{ return 0; }\nvoid m(void) { boot_arg("u_helper"); }\n',
+    "userland/src/HakiosMetalCA.m": 'void hm(void) { if (hm_boot_arg_set("u_hm_helper=1")) {} }\n',
     # the kernel also reads ku_both
     "drivers/net/hakios.net.c": 'void n(void) { PE_parse_boot_argn("ku_both", &v, 4); }\n',
     # NOT arguments: must not be found
@@ -77,7 +78,7 @@ d = repo(FILES)
 try:
     got = found(d)
     for name, layers in (("k_direct", "k"), ("k_string", "k"), ("k_tunable", "k"), ("k_writeable", "k"), ("k_wrapped", "k"),
-                         ("k_wifi_helper", "k"), ("k_wifi_lx", "k"), ("l_arg", "l"), ("u_strstr", "u"), ("u_helper", "u"),
+                         ("k_wifi_helper", "k"), ("k_wifi_lx", "k"), ("l_arg", "l"), ("u_strstr", "u"), ("u_helper", "u"), ("u_hm_helper", "u"),
                          ("ku_both", "klu")):
         check("found: %-14s layers %s" % (name, layers), got.get(name) == layers, "got %r" % got.get(name))
     for name in ("not_k_no_definition", "adreno_zap", "metadata", "not_u_other", "not_k_dt", "name", "arguments"):

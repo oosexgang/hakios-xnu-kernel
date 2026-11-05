@@ -1,0 +1,12 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# The frame-rate benchmark at the iPhone XR's screen (Settings lies lower there; RC_JOBS=rc.jobs.bench.xr, touch_lat=1, SECS=180; tools/frames.py): unlock, a minute for the
+# start-up work to be over (src/cputop.c beside it says whether it was; the home screen's layout is the same in every
+# boot once the widgets are up), then four times the same round -- Settings opened from its icon, its list scrolled,
+# the home button, a page swipe there and back -- so that each kind of motion is measured four times in the same state
+# of the system and runs can be compared.
+/redwood/bin/cputop 5 &
+/redwood/bin/rwtouch wait 30 swipe 0.5 0.985 0.5 0.3 200 wait 60
+/redwood/bin/rwtouch tap 0.615 0.80 wait 3 zigzag 0.5 0.75 0.35 500 3 wait 2 button home wait 3 swipe 0.85 0.5 0.15 0.5 300 wait 1 swipe 0.15 0.5 0.85 0.5 300 wait 2
+/redwood/bin/rwtouch tap 0.615 0.80 wait 3 zigzag 0.5 0.75 0.35 500 3 wait 2 button home wait 3 swipe 0.85 0.5 0.15 0.5 300 wait 1 swipe 0.15 0.5 0.85 0.5 300 wait 2
+/redwood/bin/rwtouch tap 0.615 0.80 wait 3 zigzag 0.5 0.75 0.35 500 3 wait 2 button home wait 3 swipe 0.85 0.5 0.15 0.5 300 wait 1 swipe 0.15 0.5 0.85 0.5 300 wait 2
+/redwood/bin/rwtouch tap 0.615 0.80 wait 3 zigzag 0.5 0.75 0.35 500 3 wait 2 button home wait 3 swipe 0.85 0.5 0.15 0.5 300 wait 1 swipe 0.15 0.5 0.85 0.5 300 wait 2

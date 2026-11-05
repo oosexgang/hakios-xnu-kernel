@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tools/kernel-version.py: how the version string is made, and what it refuses.
 
-  the real VERSION file          -> 2.1.13-hakios-darwin22.5-g<8 hex>, in the form Android's kernels have
+  the real VERSION file          -> 2.3.4-hakios-darwin22.5-g<8 hex>, in the form Android's kernels have
   a tracked file changed         -> "-dirty"; a new untracked file is not a change (as in Linux's setlocalversion)
   CONFIG_SOC in a .config        -> "-<soc>" between the Darwin and the commit
   HAKIOS_VERSION_SUFFIX          -> replaces the git part
@@ -94,7 +94,7 @@ try:
         return run(d)
 
     good = open(os.path.join(ROOT, "VERSION")).read()
-    r = with_version(good.replace("SUBLEVEL = 13", "SUBLEVEL = thirteen"))
+    r = with_version(re.sub(r"SUBLEVEL = \d+", "SUBLEVEL = thirteen", good))
     check("a SUBLEVEL that is not a number: refused", r.returncode != 0 and "SUBLEVEL" in r.stderr, r.stderr)
     r = with_version(good.replace("EXTRAVERSION = -hakios", "EXTRAVERSION = hakios"))
     check("an EXTRAVERSION without its dash: refused", r.returncode != 0 and "EXTRAVERSION" in r.stderr, r.stderr)

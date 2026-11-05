@@ -16,7 +16,9 @@ ROOT = Path(__file__).resolve().parent.parent
 source = (ROOT / 'userland/src/inject.c').read_text()
 constructor = source.index('__attribute__((constructor))\nstatic void\nhakios_init(void)')
 helper = source.find('static void\nwindow_server_refresh(')
-production = source[helper if helper >= 0 else constructor:]
+# Only the refresh helper and constructor are under test. Other helpers added
+# between them can use Objective-C or Darwin APIs; stub those startup hooks.
+production = (source[helper:source.index('\n}\n', helper) + 3] if helper >= 0 else '') + source[constructor:]
 
 # arguments, expected CA_HEARTBEAT_RATE, process, initial value, failed sysctl
 cases = [
@@ -46,6 +48,10 @@ cases = [
     ('fb_hz=120', None, 'SpringBoard'),
     ('fb_hz=120', None, 'backboardd', None, 1),
     ('padding=' + 'a' * 1024 + ' fb_hz=120', None),
+    ('fb_hz=120 metal_watch=1', '120'),
+    ('fb_hz=90 ca_metallib=/tmp/default.metallib', '90'),
+    ('metal_watch=1', None),
+    ('metal_watch=1', None, 'SpringBoard'),
 ]
 
 
@@ -89,6 +95,7 @@ static void opengl_es(void) { startup |= 1; }
 static void window_server_fixes(void) { startup |= 2; }
 static void input_start(void) { startup |= 4; }
 static void container_manager_fixes(void) { startup |= 8; }
+static void watch_metallib_lookups(const char *arguments) { (void)arguments; startup |= 16; }
 '''
 
 main = r'''
@@ -111,6 +118,8 @@ int main(void) {
         const char *actual = getenv("CA_HEARTBEAT_RATE");
         unsigned wanted_startup = !strcmp(program_name, "backboardd") ? 7 :
             (!strncmp(program_name, "containermanagerd", 17) ? 8 : 0);
+        if (!strcmp(program_name, "backboardd") &&
+            (strstr(test->args, "metal_watch=1") || strstr(test->args, "ca_metallib="))) wanted_startup |= 16;
         int good = (test->expected ? (actual && !strcmp(actual, test->expected)) : actual == NULL)
             && startup == wanted_startup;
         if (!good) {

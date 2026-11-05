@@ -106,6 +106,59 @@ count_fingers(uint32_t type, uint32_t finger)
 	}
 }
 
+/*
+ * What the fingers' samples were like, said every 8 strokes: the lines of touch_lat=1 are many, and a long run's log keeps only its
+ * beginning and its end. From the first move after a finger came down, between moves, and from the last move to its lift.
+ */
+static struct {
+	uint64_t last;
+	uint32_t strokes, moves, firsts, slow_moves, longest_move, first_sum, first_longest, lift_sum, lift_longest;
+	uint32_t finger;
+	bool down, moved;
+} touch_feel;
+
+static void
+touch_feel_add(uint32_t type, uint32_t finger, uint64_t now)
+{
+	uint64_t nanos;
+	uint32_t ms;
+
+	if (type == HAKIOS_TOUCH_DOWN && !touch_feel.down) {
+		touch_feel.down = true;
+		touch_feel.moved = false;
+		touch_feel.finger = finger;
+		touch_feel.last = now;
+		return;
+	}
+	if (!touch_feel.down || finger != touch_feel.finger) {
+		return;
+	}
+	absolutetime_to_nanoseconds(now - touch_feel.last, &nanos);
+	ms = (uint32_t)(nanos / 1000000);
+	touch_feel.last = now;
+	if (type == HAKIOS_TOUCH_UP) {
+		touch_feel.down = false;
+		touch_feel.strokes++;
+		touch_feel.lift_sum += ms;
+		touch_feel.lift_longest = ms > touch_feel.lift_longest ? ms : touch_feel.lift_longest;
+		if (touch_feel.strokes % 8 == 0) {
+			printf("touch: %u strokes: first move after %u ms on average, %u at most; %u moves, %u of them over 13 ms apart, %u at most; "
+			    "the lift %u ms after the last move on average, %u at most\n", touch_feel.strokes,
+			    touch_feel.firsts != 0 ? touch_feel.first_sum / touch_feel.firsts : 0, touch_feel.first_longest, touch_feel.moves,
+			    touch_feel.slow_moves, touch_feel.longest_move, touch_feel.lift_sum / touch_feel.strokes, touch_feel.lift_longest);
+		}
+	} else if (!touch_feel.moved) {
+		touch_feel.moved = true;
+		touch_feel.firsts++;
+		touch_feel.first_sum += ms;
+		touch_feel.first_longest = ms > touch_feel.first_longest ? ms : touch_feel.first_longest;
+	} else {
+		touch_feel.moves++;
+		touch_feel.slow_moves += ms > 13;
+		touch_feel.longest_move = ms > touch_feel.longest_move ? ms : touch_feel.longest_move;
+	}
+}
+
 static void
 touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y, bool from_driver)
 {
@@ -117,6 +170,9 @@ touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y, bool from_dri
 	}
 	t = &touch_queue[touch_tail++ % TOUCH_QUEUE];
 	t->time = mach_absolute_time();
+	if (from_driver) {
+		touch_feel_add(type, finger, t->time);
+	}
 	if (latency_lines()) {
 		uint64_t ns;
 

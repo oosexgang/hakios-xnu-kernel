@@ -41,7 +41,7 @@ try:
                        check=True, capture_output=True)
         return path
 
-    good = payload("good.bin", "--kernel-version", "2.1.13-hakios-darwin22.5-sc7280-gabc12345")
+    good = payload("good.bin", "--kernel-version", "2.3.4-hakios-darwin22.5-sc7280-gabc12345")
     out = os.path.join(work, "esp")
     r = run(out, good, "--loader", loader)
     check("a good payload: exit 0", r.returncode == 0, r.stdout + r.stderr)
@@ -50,8 +50,8 @@ try:
           ["EFI/BOOT/BOOTAA64.EFI", "EFI/hakios/kernel.ver", "EFI/hakios/payload.bin"])
     check("the payload is copied byte for byte", open(os.path.join(out, "EFI/hakios/payload.bin"), "rb").read() == open(good, "rb").read())
     check("the loader is copied byte for byte", open(os.path.join(out, "EFI/BOOT/BOOTAA64.EFI"), "rb").read() == open(loader, "rb").read())
-    check("kernel.ver is text, with the version", open(os.path.join(out, "EFI/hakios/kernel.ver")).read() == "2.1.13-hakios-darwin22.5-sc7280-gabc12345\n")
-    check("it says what the payload holds", "kernel (104)" in r.stdout and "ramdisk (300)" in r.stdout and "kernel.ver=2.1.13" in r.stdout, r.stdout)
+    check("kernel.ver is text, with the version", open(os.path.join(out, "EFI/hakios/kernel.ver")).read() == "2.3.4-hakios-darwin22.5-sc7280-gabc12345\n")
+    check("it says what the payload holds", "kernel (104)" in r.stdout and "ramdisk (300)" in r.stdout and "kernel.ver=2.3.4" in r.stdout, r.stdout)
 
     r = run(out, good, "--loader", loader)
     check("a directory that is not empty is refused", r.returncode != 0 and "not empty" in r.stderr, r.stderr)

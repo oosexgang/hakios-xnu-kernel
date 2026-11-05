@@ -6,7 +6,7 @@
 /*
  * The part of LLVM IR that AIR uses, read from bitcode into plain C
  * structures. It is a reader, not an IR library: nothing here is modified
- * after reading, and only what the 456 modules of Darwin 16.5's system
+ * after reading, and only what the 456 modules of iOS 16.5's system
  * libraries contain (plus a little margin) is understood. Anything else is an
  * error that names the record, never a silent skip, because a skipped
  * instruction is a wrong shader.

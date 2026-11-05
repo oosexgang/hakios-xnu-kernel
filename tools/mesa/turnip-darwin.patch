@@ -1,0 +1,432 @@
+diff --git a/meson.build b/meson.build
+index f055df1..457fe06 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1716,7 +1716,7 @@ else
+   # dependencies (such as vk-runtime) linking to it
+   dep_libdrm = null_dep
+ endif
+-if host_machine.system() == 'darwin' and with_gallium_freedreno
++if host_machine.system() == 'darwin' and (with_gallium_freedreno or with_freedreno_vk)
+   # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
+   # for libdrm (src/hakios-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
+   # source file is built with freedreno's drm layer, src/freedreno/drm).
+diff --git a/src/freedreno/vulkan/meson.build b/src/freedreno/vulkan/meson.build
+index d0a38c9..4f68424 100644
+--- a/src/freedreno/vulkan/meson.build
++++ b/src/freedreno/vulkan/meson.build
+@@ -101,6 +101,10 @@ if freedreno_kmds.contains('msm')
+   tu_flags += '-DTU_HAS_MSM'
+   libtu_files += files('tu_knl_drm_msm.cc', 'tu_knl_drm.cc')
+   tu_deps += dep_libdrm
++  if host_machine.system() == 'darwin'
++    # the stand-in for libdrm (src/hakios-drm): msm's requests as calls of the kernel's IOKit user client
++    libtu_files += files('../../hakios-drm/hakios.drm.c')
++  endif
+ endif
+ 
+ if freedreno_kmds.contains('virtio')
+@@ -181,7 +185,10 @@ libvulkan_freedreno = shared_library(
+   c_args : [no_override_init_args, tu_flags],
+   cpp_args : [tu_cpp_args, tu_flags],
+   gnu_symbol_visibility : 'hidden',
+-  link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id],
++  # (Darwin: the entrypoint tables' weak references to what Turnip leaves to the common runtime are allowed
++  # undefined, as ELF lets them be, and come out NULL; UniXNU's Turnip does the same)
++  link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id,
++               host_machine.system() == 'darwin' ? ['-Wl,-undefined,dynamic_lookup'] : []],
+   link_depends : vulkan_icd_link_depends,
+   install : true,
+ )
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 2474ad8..74d6f0c 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -7296,6 +7296,8 @@ tu_barrier(struct tu_cmd_buffer *cmd,
+        */
+       if ((srcStage & ~framebuffer_space_stages) ||
+           (dstStage & ~framebuffer_space_stages)) {
++         perf_debug(cmd->device, "Disabling gmem due to a barrier in the render pass: stages %#llx -> %#llx",
++                    (unsigned long long) srcStage, (unsigned long long) dstStage);
+          cmd->state.rp.disable_gmem = true;
+       }
+    }
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 62ebfd0..adb4e9c 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -8,6 +8,10 @@
+  */
+ 
+ #include "tu_device.h"
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++#include <xf86drm.h>   /* hakios_drm_host_surface_at (src/hakios-drm) */
++extern thread_local const void *tu_darwin_host_pointer;
++#endif
+ 
+ #include "drm-uapi/drm_fourcc.h"
+ #include "fdl/freedreno_layout.h"
+@@ -269,6 +273,12 @@ get_device_extensions(const struct tu_physical_device *device,
+       .EXT_extended_dynamic_state2 = true,
+       .EXT_extended_dynamic_state3 = true,
+       .EXT_external_memory_dma_buf = true,
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++      /* the memory of IOSurfaces, by their address (src/hakios-drm: hakios_drm_host_surface) */
++      .EXT_external_memory_host = true,
++      /* linear images rendered in place, as the hardware does (metal2vulkan renders an IOSurface so, not through a copy) */
++      .NV_linear_color_attachment = true,
++#endif
+       .EXT_filter_cubic = device->info->a6xx.has_tex_filter_cubic,
+       .EXT_fragment_density_map = true,
+       .EXT_global_priority = true,
+@@ -697,6 +707,9 @@ tu_get_features(struct tu_physical_device *pdevice,
+ 
+    /* VK_EXT_rasterization_order_attachment_access */
+    features->rasterizationOrderColorAttachmentAccess = true;
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++   features->linearColorAttachment = true;
++#endif
+    features->rasterizationOrderDepthAttachmentAccess = true;
+    features->rasterizationOrderStencilAttachmentAccess = true;
+ 
+@@ -1160,6 +1173,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
+ 
+    /* VK_EXT_custom_border_color */
+    props->maxCustomBorderColorSamplers = TU_BORDER_COLOR_COUNT;
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++   props->minImportedHostPointerAlignment = 16384;     /* a page of Darwin's */
++#endif
+ 
+    /* VK_KHR_performance_query */
+    props->allowCommandBufferQueryCopies = false;
+@@ -2709,6 +2725,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+                                  "pthread condattr init");
+       goto fail_timeline_cond;
+    }
++#ifndef __APPLE__   /* (Darwin's condition variables have no clock to choose: timed waits go by the realtime one) */
+    if (pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC) != 0) {
+       pthread_condattr_destroy(&condattr);
+       result = vk_startup_errorf(physical_device->instance,
+@@ -2716,6 +2733,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+                                  "pthread condattr clock setup");
+       goto fail_timeline_cond;
+    }
++#endif
+    if (pthread_cond_init(&device->timeline_cond, &condattr) != 0) {
+       pthread_condattr_destroy(&condattr);
+       result = vk_startup_errorf(physical_device->instance,
+@@ -3015,6 +3033,16 @@ vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName)
+    return tu_GetInstanceProcAddr(instance, pName);
+ }
+ 
++#ifdef __APPLE__
++/* No Vulkan loader on Darwin: the driver is the loader too, for what opens it by the loader's entry point
++ * (metal2vulkan, through ash::Entry::load_from). */
++extern "C" PUBLIC VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
++vkGetInstanceProcAddr(VkInstance instance, const char *pName)
++{
++   return tu_GetInstanceProcAddr(instance, pName);
++}
++#endif
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ tu_AllocateMemory(VkDevice _device,
+                   const VkMemoryAllocateInfo *pAllocateInfo,
+@@ -3064,6 +3092,17 @@ tu_AllocateMemory(VkDevice _device,
+          /* take ownership and close the fd */
+          close(fd_info->fd);
+       }
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++   } else if (const VkImportMemoryHostPointerInfoEXT *host_info =
++                 vk_find_struct_const(pAllocateInfo->pNext, IMPORT_MEMORY_HOST_POINTER_INFO_EXT)) {
++      /* an IOSurface's memory: the kernel makes a buffer of the surface (as of a dma-buf, whose fd is its ID here) */
++      /* any other pages: the kernel wires them (its userptr; "fd" -1 with the pointer beside it) */
++      uint32_t surface = hakios_drm_host_surface_at(host_info->pHostPointer, pAllocateInfo->allocationSize);
++      if (surface == 0)
++         tu_darwin_host_pointer = host_info->pHostPointer;
++      result = tu_bo_init_dmabuf(device, &mem->bo, pAllocateInfo->allocationSize, surface != 0 ? (int) surface : -1);
++      tu_darwin_host_pointer = NULL;
++#endif
+    } else if (mem->vk.ahardware_buffer) {
+ #if DETECT_OS_ANDROID
+       const native_handle_t *handle = AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
+@@ -3402,6 +3441,21 @@ tu_GetMemoryFdPropertiesKHR(VkDevice _device,
+    return VK_SUCCESS;
+ }
+ 
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++VKAPI_ATTR VkResult VKAPI_CALL
++tu_GetMemoryHostPointerPropertiesEXT(VkDevice _device,
++                                     VkExternalMemoryHandleTypeFlagBits handleType,
++                                     const void *pHostPointer,
++                                     VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
++{
++   VK_FROM_HANDLE(tu_device, device, _device);
++   /* an IOSurface's memory, or pages of this process's own (whole ones): any type */
++   pMemoryHostPointerProperties->memoryTypeBits =
++      ((uintptr_t) pHostPointer & 16383) == 0 ? (1 << device->physical_device->memory.type_count) - 1 : 0;
++   return VK_SUCCESS;
++}
++#endif
++
+ VKAPI_ATTR void VKAPI_CALL
+ tu_GetPhysicalDeviceMultisamplePropertiesEXT(
+    VkPhysicalDevice                            physicalDevice,
+diff --git a/src/freedreno/vulkan/tu_formats.cc b/src/freedreno/vulkan/tu_formats.cc
+index cb134a9..3ac1bf9 100644
+--- a/src/freedreno/vulkan/tu_formats.cc
++++ b/src/freedreno/vulkan/tu_formats.cc
+@@ -236,6 +236,10 @@ tu_physical_device_get_format_properties(
+     * DEPTH_STENCIL_ATTACHMENT_BIT for the optimal features.
+     */
+    linear = optimal;
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++   if (linear & VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT)
++      linear |= VK_FORMAT_FEATURE_2_LINEAR_COLOR_ATTACHMENT_BIT_NV;
++#endif
+    if (tu6_pipe2depth(vk_format) != DEPTH6_NONE)
+       optimal |= VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT;
+ 
+diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
+index 80e3900..3f00525 100644
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -24,6 +24,9 @@
+ 
+ #include "tu_device.h"
+ #include "tu_knl.h"
++#ifdef __APPLE__
++#include <sys/sysctl.h>
++#endif
+ #include "tu_queue.h"
+ #include "tu_rmv.h"
+ 
+@@ -124,7 +127,11 @@ tu_bo_unmap(struct tu_device *dev, struct tu_bo *bo, bool reserve)
+          return vk_errorf(dev, VK_ERROR_MEMORY_MAP_FAILED,
+                           "Failed to replace mapping with reserved memory");
+    } else {
++#if defined(__APPLE__) && defined(TU_HAS_MSM)
++      hakios_drm_unmap(dev->fd, bo->gem_handle, bo->map);
++#else
+       munmap(bo->map, bo->size);
++#endif
+    }
+ 
+    bo->map = NULL;
+@@ -194,7 +201,14 @@ tu_get_l1_dcache_size()
+ if (!(DETECT_ARCH_AARCH64 || DETECT_ARCH_X86 || DETECT_ARCH_X86_64))
+    return 0;
+ 
+-#if DETECT_ARCH_AARCH64 &&                                                   \
++#if defined(__APPLE__)
++   /* CTR_EL0 is not readable from user space on Darwin: */
++   int64_t line = 0;
++   size_t size = sizeof(line);
++   if (sysctlbyname("hw.cachelinesize", &line, &size, NULL, 0) != 0)
++      return 64;
++   return line;
++#elif DETECT_ARCH_AARCH64 &&                                                   \
+    (!defined(_SC_LEVEL1_DCACHE_LINESIZE) || DETECT_OS_ANDROID)
+    /* Bionic does not implement _SC_LEVEL1_DCACHE_LINESIZE properly: */
+    uint64_t ctr_el0;
+@@ -352,6 +366,41 @@ tu_enumerate_devices(struct vk_instance *vk_instance)
+       mesa_logi("Found compatible device '%s'.", path);
+ 
+    return result;
++#elif defined(__APPLE__) && defined(TU_HAS_MSM)
++   /* Darwin: no DRM nodes to list. The one GPU is the kernel's service HakiosGPU, which speaks msm's requests through
++    * the stand-in for libdrm (src/hakios-drm); its file descriptor means nothing but "the connection". */
++   struct tu_instance *instance =
++      container_of(vk_instance, struct tu_instance, vk);
++   struct tu_physical_device *device = NULL;
++   int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
++   if (fd < 0)
++      return VK_ERROR_INCOMPATIBLE_DRIVER;
++   drmVersionPtr version = drmGetVersion(fd);
++   if (!version) {
++      close(fd);
++      return VK_ERROR_INCOMPATIBLE_DRIVER;
++   }
++   VkResult result = tu_knl_drm_msm_load(instance, fd, version, &device);
++   drmFreeVersion(version);
++   if (result != VK_SUCCESS) {
++      close(fd);
++      return result;
++   }
++   device->master_fd = -1;
++   device->kgsl_dma_fd = -1;
++   snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", "HakiosGPU");
++   device->has_master = false;
++   device->has_local = false;
++   result = tu_physical_device_init(device, instance);
++   if (result != VK_SUCCESS) {
++      vk_free(&instance->vk.alloc, device);
++      close(fd);
++      return result;
++   }
++   list_addtail(&device->vk.link, &instance->vk.physical_devices.list);
++   if (TU_DEBUG(STARTUP))
++      mesa_logi("Found compatible device HakiosGPU (msm).");
++   return VK_SUCCESS;
+ #else
+    return VK_ERROR_INCOMPATIBLE_DRIVER;
+ #endif
+diff --git a/src/freedreno/vulkan/tu_knl_drm.cc b/src/freedreno/vulkan/tu_knl_drm.cc
+index 27916d0..569b1d6 100644
+--- a/src/freedreno/vulkan/tu_knl_drm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm.cc
+@@ -72,7 +72,11 @@ tu_drm_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+ 
+    if (bo->map) {
+       TU_RMV(bo_unmap, dev, bo);
++#ifdef __APPLE__
++      hakios_drm_unmap(dev->fd, bo->gem_handle, bo->map);
++#else
+       munmap(bo->map, bo->size);
++#endif
+    }
+ 
+    TU_RMV(bo_destroy, dev, bo);
+diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+index 08831e7..d2a7d07 100644
+--- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+@@ -191,7 +191,12 @@ tu_drm_is_memory_type_supported(int fd, uint32_t flags)
+ static VkResult
+ msm_device_init(struct tu_device *dev)
+ {
++#ifdef __APPLE__
++   /* no device node: a descriptor of the one connection to HakiosGPU (src/hakios-drm) */
++   int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
++#else
+    int fd = open(dev->physical_device->fd_path, O_RDWR | O_CLOEXEC);
++#endif
+    if (fd < 0) {
+       return vk_startup_errorf(
+             dev->physical_device->instance, VK_ERROR_INITIALIZATION_FAILED,
+@@ -674,15 +679,28 @@ msm_bo_init(struct tu_device *dev,
+    return result;
+ }
+ 
++#ifdef __APPLE__
++/* the host pointer an import of "fd" -1 is of (tu_AllocateMemory, VK_EXT_external_memory_host) */
++thread_local const void *tu_darwin_host_pointer;
++#endif
++
+ static VkResult
+ msm_bo_init_dmabuf(struct tu_device *dev,
+                    struct tu_bo **out_bo,
+                    uint64_t size,
+                    int prime_fd)
+ {
++#ifdef __APPLE__
++   /* the "fd" is an IOSurface's ID (src/hakios-drm): its size is the kernel's answer; -1, the pages at
++    * tu_darwin_host_pointer (VK_EXT_external_memory_host) */
++   struct hakios_drm_surface described = { .surface = (uint32_t) prime_fd };
++   off_t real_size = prime_fd < 0 ? (off_t) size
++                   : hakios_drm_surface(dev->fd, &described) == 0 ? (off_t) described.size : -1;
++#else
+    /* lseek() to get the real size */
+    off_t real_size = lseek(prime_fd, 0, SEEK_END);
+    lseek(prime_fd, 0, SEEK_SET);
++#endif
+    if (real_size < 0 || (uint64_t) real_size < size)
+       return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+ 
+@@ -699,8 +717,20 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+    msm_vma_lock(dev);
+ 
+    uint32_t gem_handle;
++#ifdef __APPLE__
++   int ret = prime_fd < 0 ? hakios_drm_user_memory(dev->fd, tu_darwin_host_pointer, size, &gem_handle)
++                          : drmPrimeFDToHandle(dev->fd, prime_fd, &gem_handle);
++   if (ret) {
++      static int said;
++      if (said++ < 8)
++         mesa_loge("import of %s %p (%llu bytes) refused: %s", prime_fd < 0 ? "host pages" : "IOSurface",
++                   prime_fd < 0 ? tu_darwin_host_pointer : (const void *) (uintptr_t) prime_fd,
++                   (unsigned long long) size, strerror(errno));
++   }
++#else
+    int ret = drmPrimeFDToHandle(dev->fd, prime_fd,
+                                 &gem_handle);
++#endif
+    if (ret) {
+       msm_vma_unlock(dev);
+       u_rwlock_wrunlock(&dev->dma_bo_lock);
+@@ -735,6 +765,12 @@ msm_bo_init_dmabuf(struct tu_device *dev,
+ static VkResult
+ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+ {
++#ifdef __APPLE__
++   /* no mmap() on a device here: the kernel's driver maps the buffer (src/hakios-drm) */
++   if (placed_addr != NULL)
++      return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
++   void *map = hakios_drm_map(dev->fd, bo->gem_handle, bo->size);
++#else
+    uint64_t offset = tu_gem_info(dev, bo->gem_handle, MSM_INFO_GET_OFFSET);
+    if (!offset)
+       return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+@@ -743,6 +779,7 @@ msm_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+    void *map = mmap(placed_addr, bo->size, PROT_READ | PROT_WRITE,
+                     MAP_SHARED | (placed_addr != NULL ? MAP_FIXED : 0),
+                     dev->fd, offset);
++#endif
+    if (map == MAP_FAILED)
+       return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
+ 
+diff --git a/src/freedreno/vulkan/tu_wsi.cc b/src/freedreno/vulkan/tu_wsi.cc
+index 57cf904..3e0a1b1 100644
+--- a/src/freedreno/vulkan/tu_wsi.cc
++++ b/src/freedreno/vulkan/tu_wsi.cc
+@@ -9,7 +9,9 @@
+ #include "tu_wsi.h"
+ 
+ #include "vk_util.h"
++#ifndef __APPLE__   /* (no DRM devices on Darwin: src/hakios-drm) */
+ #include "wsi_common_drm.h"
++#endif
+ #include "drm-uapi/drm_fourcc.h"
+ 
+ #include "tu_device.h"
+@@ -26,7 +28,13 @@ tu_wsi_can_present_on_device(VkPhysicalDevice physicalDevice, int fd)
+ {
+ #ifdef HAVE_LIBDRM
+    VK_FROM_HANDLE(tu_physical_device, pdevice, physicalDevice);
++#ifdef __APPLE__
++   (void)fd;
++   (void)pdevice;
++   return true;   /* one GPU */
++#else
+    return wsi_common_drm_devices_equal(fd, pdevice->local_fd);
++#endif
+ #else
+    return true;
+ #endif
+diff --git a/src/util/libdrm.h b/src/util/libdrm.h
+index 4bfe1d2..0062655 100644
+--- a/src/util/libdrm.h
++++ b/src/util/libdrm.h
+@@ -27,7 +27,8 @@
+  * the proliferation of #ifdef'ery to support environments without libdrm.
+  */
+ 
+-#ifdef HAVE_LIBDRM
++#if defined(HAVE_LIBDRM) || (defined(__APPLE__) && __has_include(<xf86drm.h>))
++/* (Darwin: the stand-in for libdrm, src/hakios-drm, where a target has it on its include path) */
+ #include <xf86drm.h>
+ #else
+ 
+diff --git a/src/vulkan/wsi/meson.build b/src/vulkan/wsi/meson.build
+index 6933eb7..b7ea38d 100644
+--- a/src/vulkan/wsi/meson.build
++++ b/src/vulkan/wsi/meson.build
+@@ -5,7 +5,7 @@ files_vulkan_wsi = files('wsi_common.c')
+ links_vulkan_wsi = []
+ platform_deps = []
+ 
+-if dep_libdrm.found()
++if dep_libdrm.found() and host_machine.system() != 'darwin'
+   files_vulkan_wsi += files('wsi_common_drm.c')
+ endif
+ 

@@ -47,6 +47,12 @@
 #                                   and nothing changes (src/inject.c, opengl_es()).
 #                                   GL=test: only the library and bin/gl_test (a triangle, src/gl_test.c;
 #                                   RC_JOBS=rc.jobs.gltest runs it); the window server stays as it is.
+#                      TURNIP=1     with Turnip, Mesa's Vulkan driver for the Adreno (tools/mk-turnip.sh), as
+#                                   lib/libvulkan_freedreno.dylib (11 MB), and bin/vk_test, which runs it once round
+#                                   (src/vk_test.c; RC_JOBS=rc.jobs.vktest): the first piece of a Metal on Vulkan
+#                      M2V=1        (with TURNIP=1) and UniXNU's Metal on Vulkan (tools/mk-m2v.sh: AdrenoMetal's
+#                                   frontend over metal2vulkan), in bin/m2v_test, which opens it as a Metal device
+#                                   and draws (src/m2v_test.m; RC_JOBS=rc.jobs.m2vtest)
 #                      ADSP=1       with the audio DSP's firmware from ../fw-audio in fw/ (20 MB; for the
 #                                   kernel's adsp_step=N, drivers/audio/hakios.adsp.c, which runs before the root is
 #                                   mounted). Not beside GL=1: the two do not fit the 64 MB the loader takes with
@@ -175,6 +181,16 @@ for d in $EXTRA_SHARE; do
 	[ -d "$d" ] || { echo "build.sh: EXTRA_SHARE: $d is not a directory"; exit 1; }
 	cp -rL "$d" root/share/
 done
+# Metal's compiled shader stages from an earlier boot (tools/metal-cache-seed.sh puts them in
+# userland/hakios-metal-cache): the window server reads them from /redwood/share/hakios-metal-cache
+# (HakiosMetalCA.m: HM_CACHE_SEED) instead of compiling CoreAnimation's shaders during the first minute
+# of the boot. Stages compiled by another build of the compiler are filed under other names and simply
+# not found, so a stale seed costs room and nothing else.
+rm -rf root/share/hakios-metal-cache
+if [ -d hakios-metal-cache ] && [ -n "$(ls hakios-metal-cache 2>/dev/null)" ]; then
+	cp -r hakios-metal-cache root/share/
+	echo "build.sh: $(ls hakios-metal-cache | wc -l | tr -d ' ') compiled Metal stages seeded into /redwood/share/hakios-metal-cache"
+fi
 if [ -d $DARWIN/rootfs/usr/lib ]; then
 	if [ -z "$PREBUILT" ]; then
 		# ordinary dynamically linked programs of our own, built against the Darwin SDK
@@ -224,7 +240,7 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		# our library for inside stock Darwin programs (the jobs in INJECT are started with it)
 		$DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc \
 			-o obj/libhakios.dylib src/inject.c
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios.sb.dylib -framework CoreFoundation -framework IOKit -lobjc \
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios.sb.dylib -framework CoreFoundation -framework CoreGraphics -framework IOKit -framework IOSurface -lobjc \
 			-o obj/libhakios.sb.dylib src/inject_sb.c
 		# ... the tweak loader of the package manager's prefix (src/inject_tweaks.c): it goes into a
 		# program either as the one library the kernel inserts or opened by a library of ours
@@ -240,14 +256,32 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
 		# the plug-in Metal loads when the kernel names it (boot-arg metal=1): a device, its buffers and the libraries it reads
 		# (src/HakiosMetal.m, src/hakios_metallib.c; tools/metal-plugin-test.sh tries the same objects on a Mac)
-		# With hakios-metal (github.com/oosexgang/hakios-metal, `make ios` in it, beside this tree or at HAKIOS_METAL=): buffers in
+		# With hakios-metal (hakios-metal/ in this tree, `make ios` in it; or one beside this tree, or at HAKIOS_METAL=): buffers in
 		# the GPU's memory, command buffers, and blits done by the GPU when the kernel has one (gpu=1). Without it, the plug-in as before.
 		# (out/ios/ since hakios-metal took vcvkk's history; out/darwin/ is where the older trees built it)
-		HM=${HAKIOS_METAL:-../../hakios-metal}
+		HM=${HAKIOS_METAL:-}
+		if [ -z "$HM" ]; then
+			HM=../hakios-metal
+			[ -f $HM/out/ios/libhakios-metal.a ] || [ ! -f ../../hakios-metal/out/ios/libhakios-metal.a ] || HM=../../hakios-metal
+		fi
 		METAL_GPU=
 		for HM_OUT in $HM/out/ios $HM/out/darwin; do
 			if [ -f $HM_OUT/libhakios-metal.a ]; then
 				METAL_GPU="-DHAKIOS_METAL_GPU -I$HM/include $HM_OUT/libhakios-metal.a -lc++ -framework IOKit -framework IOSurface"
+				# built with its compiler (make ios MESA=1): Mesa's archives of our iOS build too, as hakios-metal's
+				# tools/compiler.mk lists them (HAKIOS_METAL_IOS_MESA_LIBS)
+				if nm -g $HM_OUT/libhakios-metal.a 2>/dev/null | grep -q " U _air_"; then
+					MB=../xnu-deps/build/mesa/build-softpipe-freedreno
+					for a in src/compiler/air/libair.a src/freedreno/ir3/libfreedreno_ir3.a src/freedreno/isa/libir3encode.a \
+					    src/freedreno/isa/libir3decode.a src/compiler/isaspec/libisaspec.a src/compiler/nir/libnir.a \
+					    src/compiler/libcompiler.a src/freedreno/fdl/libfreedreno_layout.a \
+					    src/freedreno/common/libfreedreno_common.a src/util/libmesa_util.a src/util/libmesa_util_sse41.a \
+					    src/util/blake3/libblake3.a src/c11/impl/libmesa_util_c11.a; do
+						METAL_GPU="$METAL_GPU $MB/$a"
+					done
+					METAL_GPU="$METAL_GPU -lz -lm"
+					echo "build.sh: ... with its compiler (Mesa's archives from $MB)"
+				fi
 				echo "build.sh: HakiosMetal with hakios-metal ($HM_OUT)"
 				break
 			fi
@@ -258,8 +292,23 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			METAL_SRC=$HM/plugin
 			echo "build.sh: HakiosMetal from $HM/plugin"
 		fi
+		if [ "${METAL_PLUGIN:-}" = ca ]; then
+			# METAL_PLUGIN=ca: the plug-in that serves CoreAnimation's window server (src/HakiosMetalCA.m, vcvkk's with
+			# this tree's shader choice), over hakios-metal built with its compiler (make ios MESA=1); the window server
+			# also wants QuartzCore's default.metallib (tools/ca-metallib.py, EXTRA_SHARE=, boot-arg ca_metallib=)
+			echo "build.sh: HakiosMetal for CoreAnimation (src/HakiosMetalCA.m)"
+			# M2V=1: with UniXNU's Metal on Vulkan inside, the device boot-arg metal_m2v=1 gives the window server
+			M2V_OBJS=
+			if [ -n "${M2V:-}" ] && [ -f ../xnu-deps/build/m2v/out/frontend.o ]; then
+				M2V_OBJS="../xnu-deps/build/m2v/out/frontend.o ../xnu-deps/build/m2v/out/libadreno_metal_bridge.a -framework CoreFoundation -lc++ -Wl,-dead_strip"
+				echo "build.sh: with UniXNU's Metal on Vulkan (metal_m2v=1)"
+			fi
+			$DYN -bundle -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
+				-I$HM/include -o obj/HakiosMetal src/HakiosMetalCA.m $METAL_GPU $M2V_OBJS
+		else
 		$DYN -bundle -framework Foundation -framework Metal -lobjc -I$METAL_SRC -o obj/HakiosMetal $METAL_SRC/HakiosMetal.m \
 			$METAL_SRC/hakios_metallib.c $METAL_GPU
+		fi
 		if [ -n "$GL" ]; then
 			# the OpenGL ES library, and the table of functions that hands CoreAnimation's calls to it
 			# (Mesa says beside the library what it was built from: one from other patches is built again)
@@ -280,6 +329,19 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			# entry points this library exports; AIR=1 tools/mk-mesa.sh makes
 			# it, and it is copied in when it is there.
 			[ -f $M/air_run ] && cp $M/air_run obj/air_run
+		fi
+		if [ -n "${TURNIP:-}" ]; then
+			# Turnip and its smallest whole round (src/vk_test.c): built by tools/mk-turnip.sh into the Mesa tree's out/
+			M=../xnu-deps/build/mesa/out
+			[ -f $M/libvulkan_freedreno.dylib ] || ../tools/mk-turnip.sh
+			$DYN -I../xnu-deps/build/mesa/mesa-25.0.7/include -o obj/vk_test src/vk_test.c
+			cp $M/libvulkan_freedreno.dylib obj/
+			if [ -n "${M2V:-}" ]; then
+				V=../xnu-deps/build/m2v/out
+				[ -f $V/frontend.o ] || ../tools/mk-m2v.sh
+				${DYN/xnu-clang/xnu-clang++} -fobjc-arc -o obj/m2v_test src/m2v_test.m $V/frontend.o $V/libadreno_metal_bridge.a \
+					-framework Foundation -framework Metal -framework IOSurface -framework CoreFoundation -lc++ -lobjc
+			fi
 		fi
 	fi
 	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/mg_test root/bin/
@@ -322,6 +384,11 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 		cp obj/HakiosMetal root/lib/HakiosMetal.bundle/
 		cp src/HakiosMetal.plist root/lib/HakiosMetal.bundle/Info.plist
 	fi
+	if [ -n "${TURNIP:-}" ]; then
+		cp obj/libvulkan_freedreno.dylib root/lib/
+		cp obj/vk_test root/bin/
+		[ -f obj/m2v_test ] && cp obj/m2v_test root/bin/
+	fi
 	if [ -n "$GL" ]; then
 		cp obj/libOSMesa.8.dylib root/lib/
 		cp obj/gl_test root/bin/
@@ -360,6 +427,9 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 	# the prefix with the root on the flash, downloads every package and index there, and without it each
 	# download ended in "No such file or directory"
 	printf 'd\t700\t501\t501\t/private/var/mobile/tmp\n' >> root/etc/var.skel
+	# Metal's compiled shader stages (HakiosMetalCA.m: HM_CACHE_DIR): in /var/db so that var_store keeps them (it
+	# leaves tmp out), open to every user like tmp, since the window server may not be root
+	printf 'd\t1777\t0\t0\t/private/var/db/hakios-metal-cache\n' >> root/etc/var.skel
 	# A key of ours for root, when there is one: ssh/authorized_keys, never in the repository (like
 	# fw-*). dropbear from the package manager's prefix reads it and lets us in over the phone's
 	# Wi-Fi, which saves rebuilding an image for every question one wants to ask a running Darwin. It
@@ -480,6 +550,17 @@ for f in extensions.plist extensions.plist.sig; do
 	[ -f $DARWIN/rootfs/System/Library/xpc/$f ] && cp $DARWIN/rootfs/System/Library/xpc/$f root/xpc/
 done
 [ -d root/lib/HakiosAudio.driver ] && ln -s /redwood/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
+# Programs and libraries of more than 4 MB (Turnip, UniXNU's Metal on Vulkan: TURNIP=1, M2V=1) live in the system
+# image, in /usr/local/redwood, with a link in their place here: the small image is loaded with the kernel, in the
+# 64 MB the loader takes for both (with them it grew from 6.6 to 26 MB).
+rm -rf big
+for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
+	mkdir -p big/$(dirname $f)
+	mv root/$f big/$f
+	ln -s /usr/local/redwood/$f root/$f
+	echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
+done
+[ -d big ] && SYSTEM=1          # (the links point into it: it is made again with them)
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (drivers/storage/hakios.image.c)
 python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs redwood=root | tail -1
@@ -645,6 +726,8 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	mkdir -p sysroot/System/Library/Audio/Plug-Ins/HAL
 	ln -s /redwood/lib/HakiosAudio.driver sysroot/System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver
 	# the plug-in Metal opens when the accelerator names it (boot-arg metal=1; without it nothing names this bundle)
+	rm -rf sysroot/usr/local/redwood
+	[ -d big ] && mkdir -p sysroot/usr/local && cp -a big sysroot/usr/local/redwood
 	mkdir -p sysroot/System/Library/Extensions
 	[ -d root/lib/HakiosMetal.bundle ] && ln -sfn /redwood/lib/HakiosMetal.bundle sysroot/System/Library/Extensions/HakiosMetal.bundle
 	# the OS cryptex: on a device a separate volume grafted at /System/Cryptexes/OS. It holds the dyld
