@@ -671,6 +671,8 @@ if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	# bundle says CADisableMinimumFrameDurationOnPhone, which no application of an iPhone X's system does; the panel
 	# here runs at 120 (IOMFBDisplayRefresh, MiniIOMobileFramebuffer.cpp). New files, not edits: sysroot's are links
 	python3 mkhighrate.py sysroot
+	# the default wallpaper's head, which is not drawn through its compositing filter here (mkwallpaper.py)
+	python3 mkwallpaper.py sysroot
 	# the audio DSP's firmware, the phone's own from ../fw-audio (never in the repository), where the kernel reads
 	# it once the root is mounted (drivers/audio/hakios.adsp.c, adsp=1): 20 MB that do not fit beside GL=1 in the small image
 	if [ -f ../fw-audio/adsp.mdt ]; then
