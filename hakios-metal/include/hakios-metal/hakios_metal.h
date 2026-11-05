@@ -65,6 +65,8 @@ typedef struct hakios_metal_sampler hakios_metal_sampler;
 const char *hakios_metal_error(void);
 
 hakios_metal_device *hakios_metal_open(void);
+/* whether this driver's tables are for a GPU of that chip ID (hakios_metal_open() refuses any other, with hakios_metal_error()) */
+bool hakios_metal_chip_known(uint32_t chip);
 /* (for the tests: a device on the fake GPU, which runs the packets in this process) */
 hakios_metal_device *hakios_metal_open_fake(void);
 void hakios_metal_close(hakios_metal_device *device);
