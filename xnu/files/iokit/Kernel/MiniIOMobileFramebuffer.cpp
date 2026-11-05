@@ -198,7 +198,6 @@ static TUNABLE(uint32_t, gThreads, "fb_threads", 3);
 static TUNABLE(uint32_t, gThreadPriority, "fb_pri", 92);
 extern "C" kern_return_t kernel_thread_start_priority(thread_continue_t continuation, void * parameter, integer_t priority,
     thread_t * new_thread);
-
 /* a thread of the panel's, at fb_pri */
 static kern_return_t
 panel_thread_start(thread_continue_t continuation, void * parameter, thread_t * thread)
