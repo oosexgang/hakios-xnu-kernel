@@ -9,19 +9,12 @@
 #
 # The tool links Mesa's ir3 assembler, so it needs a Mesa source tree and a
 # meson build of it (the static libraries, and the generated headers). Point
-# MESA_SRC and MESA_BUILD at them. The default is hakios's own host build in
-# the frontend-port worktree (tools/air/mk-host.sh there), recognised by its
-# libair.a; when that is not built, the Darwin-on-redwood host build stands in.
-# Nothing of either tree is copied, only linked against.
-MESA_PUBLIC_HOST  ?= /home/vcvk/hakios/workspace-air/build/mesa-host
-MESA_PRIVATE_HOST ?= /home/vcvk/darwin-redwood-air/build/mesa-host
-ifneq ($(wildcard $(MESA_PUBLIC_HOST)/build/src/compiler/air/libair.a),)
-MESA_SRC   ?= $(MESA_PUBLIC_HOST)/mesa-25.0.7
-MESA_BUILD ?= $(MESA_PUBLIC_HOST)/build
-else
-MESA_SRC   ?= $(MESA_PRIVATE_HOST)/mesa-25.0.7
-MESA_BUILD ?= $(MESA_PRIVATE_HOST)/build
-endif
+# MESA_SRC and MESA_BUILD at them. The default is a host build in the kernel's tree (xnu-deps/build/mesa-host: a meson build
+# of Mesa with the AIR front end, tools/mk-mesa.sh's sources), recognised by its libair.a. Nothing of it is copied, only linked
+# against. Without it the tests that need the compiler cannot be built: `make ios` needs only the cross build.
+MESA_HOST  ?= $(abspath $(HAKIOS))/xnu-deps/build/mesa-host
+MESA_SRC   ?= $(MESA_HOST)/mesa-25.0.7
+MESA_BUILD ?= $(MESA_HOST)/build
 
 # The chip id the fixtures are assembled for: the phone's Adreno 7c+ Gen 3
 # (A635). Mesa's table matches it through its 0xffff06030500 wildcard row.

@@ -29,7 +29,8 @@ HOSTOUT   = out/host$(if $(SAN),-$(SAN))
 # the flags are settled when the rules are read.
 # the hakios tree (HAKIOS=), named before the fragments: compiler.mk reads the iOS Mesa build's -D set from
 # $(HAKIOS)/xnu-deps/build/mesa at parse time, which an unset HAKIOS would turn into a silent empty set
-HAKIOS    ?= ../workspace
+# (in the kernel's tree, hakios-metal/: that tree; beside it, HAKIOS= or the workspace of old)
+HAKIOS    ?= $(if $(wildcard ../xnu/apply.sh),..,../workspace)
 -include tools/kernels.mk
 -include tools/compiler.mk
 ifneq ($(strip $(MESA)),)
@@ -84,7 +85,9 @@ check: test
 	plugin/tests/metal-plugin-test.sh
 	GPU=1 plugin/tests/metal-plugin-test.sh
 
-ios: out/ios/hakios-metal-probe out/ios/libhakios-metal.a
+# (the probe wants the fixtures, which want a host build of Mesa to be made again: with none here the library alone, which is what
+# the kernel's userland/build.sh links)
+ios: out/ios/libhakios-metal.a $(if $(wildcard $(IR3_CMDLINE_C)),out/ios/hakios-metal-probe)
 
 darwin: ios
 
