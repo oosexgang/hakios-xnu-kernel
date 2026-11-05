@@ -42,6 +42,20 @@ attachment that is not linear, and the extension wants every colour attachment l
 off and no texture was shadowed.
 
 
+### Under real fingers (5 November)
+
+Frames per second do not show what the eye calls jerking: the touch screen was read only when its interrupt line was seen low, and a report
+that line was missed for waited for the look of every 80 ms.
+
+| | Before | After (`drivers/input/hakios.goodix.c`) |
+|---|---|---|
+| A finger's lift after its last move | 88 to 169 ms | 5 ms, at most 6 |
+| Between moves, over 13 ms apart | some | none of 164, at most 6 ms |
+
+12 strokes kept in that log; `touch: N strokes` in the kernel's log now sums them up for a whole session. What is left of the jerking
+at the start of a gesture is SpringBoard's main thread, before its commit: turns of 100 to 300 ms, 40 to 100 ms after the finger comes down
+(`tl: t` in the log has its stack, with `touch_lat=1`). A share of a frame's rows late for its scan is counted too: 19 to 115 in a session.
+
 ### The iPhone X's screen at 2 pixels a point (4 November)
 
 `fbscale=2`, the default of `tools/metal-run.sh`: 750x1624, stretched to the panel by the CPU, the layout of the iPhone X's 375 x 812 points with 2.25
@@ -86,6 +100,8 @@ measured stretch ending in the slow ticks of a still screen. These are synthetic
 
 | What | Arguments | Result |
 |---|---|---|
+| The threads that copy frames real-time, with the scan as their deadline | a build with a time-constraint policy, since removed | 684 shares late in a session, against 115 |
+| Bilinear on every frame, so that nothing jumps when motion starts or stops | `fb_filter=1` | under real fingers it jerks as much, and 125 shares late against 19 to 43 |
 | The stretch written by runs of a source column, a row the same as the one above it copied from there | in `MiniIOMobileFramebuffer` | worse: 8.7 ms in the driver a frame against 7 to 8, every swap waiting for the frame before, 102 frames a second against 110 |
 | Touch samples at 250 a second, not 125 | `touch_poll_us=4000`, `rwtouch` every 4 ms | swipes 100 to 102: unchanged |
 | Surfaces let go of as soon as their pixels are on the panel, not when the next frame comes | in `MiniIOMobileFramebuffer` | unchanged |

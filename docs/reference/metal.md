@@ -5,7 +5,7 @@ measure it, and what is not known. The numbers: [Metal measurements](metal-measu
 [the plan](../metal-plan.md).
 
 **Status, POCO X5 Pro 5G, 3 and 4 November 2026.** Both paths draw the system correctly. hakios-metal is the faster: page swipes 100
-to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at 750x1624, stretched to the panel (`fbscale=2`, the default of `tools/metal-run.sh`), scroll 118 to 120, swipes 107 to 118, home button 95 to 111. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
+to 104 frames a second, Settings' scroll about 90, the home button about 90 at the full 1125x2436; rendering at 750x1624, stretched to the panel (`fbscale=2`, the default of `tools/metal-run.sh`), scroll 118 to 120, swipes 107 to 118, home button 95 to 111, about 110 over the bench as a whole. metal2vulkan: swipes 50 to 57, scroll 41. **120 frames a second has not been
 reached on either.** Neither is on by default: without `metal=1` the window server draws through OpenGL ES, as it always has.
 
 
@@ -173,6 +173,11 @@ meaning unknown.
   and a newer system. Only the part above that driver was taken. What is measured here says nothing about theirs.
 - **Other systems' libraries.** The window server's library takes the rest of its shaders from a later CoreAnimation than this
   system's, because this system has none. That it behaves the same as a matched one is not shown.
+- **Shaders chosen by their labels.** This system's QuartzCore holds its uber shaders as 451 specialised variants. A pipeline CoreAnimation
+  makes at run time that is not among them gets the nearest of the same kind (`hm_ca_nearest()`, `HakiosMetalCA.m`): sampling, blend and
+  varyings the same, then the fewest inputs changed. Before that it got one fixed variant, which was the red top of the default wallpaper,
+  the white band behind the status bar and the opaque Weather widget. What the letters of a label mean is read from the labels, so a
+  stand-in can differ in a flag; the log says each (`... stands in for it`).
 
 ## What is not verified
 
