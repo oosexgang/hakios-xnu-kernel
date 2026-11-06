@@ -52,6 +52,7 @@ APPLOG	arg	applog	CPU, memory and boot	k	(patch)
 APPLOG_NAME	arg	applog_name	CPU, memory and boot	k	(patch)	
 AUTOUNLOCK	arg	autounlock	User space	u	inject_sb.c	
 BATTERY	arg	battery	Audio and battery	kl	hakios.adsp.c,hakios.battery.c,loader.c	
+BATTERY_LEVEL	arg	battery_level	Audio and battery	k	hakios.battery.c	
 BATTMGR	arg	battmgr	Audio and battery	k	hakios.adsp.c	every property once, for the log (which number is which on this phone's firmware)
 BT	arg	bt	User space	k	hakios.bt.c	
 BT_AGAIN	arg	bt_again	User space	k	hakios.bt.c	the second look this many seconds later (0: no second look; 30)
@@ -243,6 +244,7 @@ SURF_WRAP	arg	surf_wrap	GPU and display	k	MiniIOSurface.cpp	surfaces around the 
 SURFTRACE	arg	surftrace	GPU and display	k	MiniIOSurface.cpp	log the first N surfaces created (default 24)
 SURFTRACE_OF	arg	surftrace_of	GPU and display	k	MiniIOSurface.cpp	
 SWITCHER_WALLPAPER	arg	switcher_wallpaper	User space	u	inject_sb.c	
+SYNAPTICS_TCM	arg	synaptics_tcm	User space	k	hakios.synaptics.c	every pin below belongs to this phone
 SYSSLEEP	arg	syssleep	CPU, memory and boot	k	(patch)	
 SYSTRACE	arg	systrace	CPU, memory and boot	k	(patch),user_exception_trace.c	
 SYSTRACE_NAME	arg	systrace_name	CPU, memory and boot	k	(patch)	

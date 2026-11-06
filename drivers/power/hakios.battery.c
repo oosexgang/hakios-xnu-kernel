@@ -182,6 +182,25 @@ hakios_battery_init(void)
 	vm_offset_t page;
 	thread_t thread;
 
+	/*
+	 * battery_level=N (percent): for a phone whose battery gauge has no driver here yet (the Redmi Note 13's Qualcomm "QG"):
+	 * Darwin is told the charge the run started with, as it was in the phone's own Android just before, and that the phone is
+	 * on battery. A level that does not follow the battery: it is not a measurement.
+	 */
+	{
+		uint32_t level = 0;
+
+		if (PE_parse_boot_argn("battery_level", &level, sizeof(level)) && level <= 100) {
+			struct hakios_battery_state fixed = {
+				.size = sizeof(fixed), .percent_hundredths = (int32_t)level * 100, .voltage_uv = 3800000,
+				.temperature_hundredths = 3000, .present = 1, .external = 0, .status = 2,
+			};
+
+			hakios_battery_report(&fixed);
+			printf("battery: a fixed level of %u%% (battery_level=), no gauge\n", level);
+			return;
+		}
+	}
 	if (!PE_parse_boot_argn("battery", &enabled, sizeof(enabled)) || !enabled) return;
 	if (!PE_parse_boot_argn("battery_shared_pa", &shared_pa, sizeof(shared_pa)) || shared_pa == 0) {
 		printf("battery: xnuloader did not provide battery_shared_pa\n");

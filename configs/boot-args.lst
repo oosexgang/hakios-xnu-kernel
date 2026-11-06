@@ -53,6 +53,7 @@ applog	k
 applog_name	k
 autounlock	u
 battery	kl
+battery_level	k
 battery_shared_pa	k
 battery_stop	k
 battery_stop_poll	k
@@ -267,6 +268,7 @@ surf_wrap	k
 surftrace	k
 surftrace_of	k
 switcher_wallpaper	u
+synaptics_tcm	k
 syssleep	k
 systrace	k
 systrace_name	k
