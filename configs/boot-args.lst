@@ -253,6 +253,7 @@ soc_pas_ipa	k
 soc_pas_mpss	k
 soc_smem	k
 soc_smem_size	k
+soc_vtimer	k
 socinfo	k
 sound	k
 sound_below	k

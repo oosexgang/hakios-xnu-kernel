@@ -43,6 +43,13 @@
 
 #define GICD_CTLR               0x0000
 #define GICD_CTLR_ENABLE_G1NS   (1u << 1)
+/*
+ * Where the GIC keeps two security states (GICD_CTLR.DS = 0: the Snapdragon 685), a non-secure access sees EnableGrp1 in bit 0
+ * and EnableGrp1A in bit 1; with one state (DS = 1: the SC7280) bit 0 is EnableGrp0 and bit 1 EnableGrp1. All three bits are
+ * set so that either way group 1 is on.
+ */
+#define GICD_CTLR_ENABLE_G1     (1u << 0)
+#define GICD_CTLR_ENABLE_ALL    (GICD_CTLR_ENABLE_G1 | GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS)
 #define GICD_CTLR_ARE_NS        (1u << 4)
 #define GICD_CTLR_RWP           (1u << 31)
 #define GICD_IGROUPR(n)         (0x0080 + 4 * (n))
@@ -72,7 +79,23 @@
 
 #define GIC_SGI_SIGNAL          0           /* cpu_signal(): another processor wants this one's attention */
 #define GIC_SGI_STOP            1           /* psci_smp_stop_here(): the system is going back to the boot loader */
-#define GIC_INTID_VTIMER        27          /* EL1 virtual timer PPI */
+/*
+ * EL1 virtual timer PPI. 27 on most SoCs (GIC PPI 11); the Snapdragon 685 ("khaje", the Redmi Note 13) routes it as
+ * GIC_PPI 3 = 19 (its own device tree: timer interrupts <1 1> <1 2> <1 3> <1 0>). soc_vtimer=N overrides it.
+ */
+static uint32_t gic_vtimer_intid;
+static uint32_t
+gic_vtimer(void)
+{
+	if (gic_vtimer_intid == 0) {
+		uint32_t v = 27;
+
+		PE_parse_boot_argn("soc_vtimer", &v, sizeof(v));
+		gic_vtimer_intid = (v >= 16 && v <= 31) ? v : 27;
+	}
+	return gic_vtimer_intid;
+}
+#define GIC_INTID_VTIMER        gic_vtimer()
 #define GIC_INTID_SPI_MIN       32
 #define GIC_INTID_SPURIOUS_MIN  1020
 #define GIC_SPI_MOST            48          /* attached at a time */
@@ -485,6 +508,16 @@ gic_v3_irq_cpu_init(void)
 		gic_write32(gicd_base + GICD_CTLR, ctlr | GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS);
 		while (gic_read32(gicd_base + GICD_CTLR) & GICD_CTLR_RWP) {
 			/* wait for the write to take effect */
+		}
+		/*
+		 * With two security states the bit just written did not take (EnableGrp1A is writable only along with
+		 * EnableGrp1): try again with all three. Where it did take, this changes nothing.
+		 */
+		if ((gic_read32(gicd_base + GICD_CTLR) & GICD_CTLR_ENABLE_G1NS) == 0) {
+			gic_write32(gicd_base + GICD_CTLR, gic_read32(gicd_base + GICD_CTLR) | GICD_CTLR_ENABLE_ALL);
+			while (gic_read32(gicd_base + GICD_CTLR) & GICD_CTLR_RWP) {
+				/* wait for the write to take effect */
+			}
 		}
 	}
 

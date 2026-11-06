@@ -231,6 +231,7 @@ SOC_PAS_IPA	arg	soc_pas_ipa	Cellular	k	hakios.mpss.c
 SOC_PAS_MPSS	arg	soc_pas_mpss	Cellular	k	hakios.mpss.c	
 SOC_SMEM	hex	soc_smem	Cellular	k	hakios.mpss.c,hakios.socinfo.c	where SMEM is (also the modem driver's argument; 0x80900000 on the reference phone)
 SOC_SMEM_SIZE	hex	soc_smem_size	Chip, thermal and PMIC	k	hakios.socinfo.c	
+SOC_VTIMER	hex	soc_vtimer	User space	k	gic_v3_irq.c	
 SOUND_BELOW	arg	sound_below	Audio and battery	k	hakios.sound.c	
 SOUND_GAIN	arg	sound_gain	Audio and battery	k	hakios.sound.c	
 SOUND_GUARD_AS	arg	sound_guard_as	Audio and battery	k	hakios.sound.c	
