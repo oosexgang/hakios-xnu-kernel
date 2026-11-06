@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ButtonsDxe
+  FILE_GUID                      = 5BD181DB-0487-4F1A-AE73-820E165611B3
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|ButtonsDxe.depex|*
+  PE32|ButtonsDxe.patched.efi|*
+
+[Depex]
+  TRUE

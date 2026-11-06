@@ -1,0 +1,18 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The iOS root volume on the phone's flash as the root (flashboot.apfs resident,
+# root_apfs=ufs_darwin ufs=2 bootcpu=7; src/init.c, flash_root), seen from user space: what
+# is mounted where, the root's own files read through read(2) and through a mapping.
+# The host's hashes: SystemVersion.plist 47687daabd864929, usr/lib/dyld 602fba9751ad6aa7,
+# usr/sbin/mediaserverd 895037cd97f96801.
+/sbin/mount
+/bin/df
+/redwood/bin/vol_ls fs /
+/redwood/bin/vol_ls fs /private/preboot
+/redwood/bin/vol_ls ls /
+/redwood/bin/vol_ls ls /Applications
+/redwood/bin/vol_ls ls /System/Cryptexes/OS/System/Library/Caches/com.apple.dyld /redwood
+/redwood/bin/vol_ls cat /System/Library/CoreServices/SystemVersion.plist
+/redwood/bin/vol_ls hash /System/Library/CoreServices/SystemVersion.plist /usr/lib/dyld /usr/sbin/mediaserverd
+/redwood/bin/apfs_mmap_test mmap /usr/sbin
+/redwood/bin/apfs_mmap_test read /usr/sbin 65536
+/bin/ps -A

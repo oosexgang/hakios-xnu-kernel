@@ -1,0 +1,9 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The dark strip in Search, on demand (RC_JOBS=rc.jobs.strip, a run of about a minute and a half;
+# the way the user found): Search pulled down, then the gesture from the bottom edge begun and let
+# go after half a centimetre, eight times. Each time the strip under the status bar used to darken
+# to a quarter and come back -- and now and then stay dark (two of eight in run 093851): the blur's
+# opacity, multiplied in where it is to be mixed (see vblur_fragment in src/eagl.c). To be watched
+# with boot-args rec_secs=3600 rec_ring=1 rec_step=4 rec_mb=256 glframes=1.
+/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 200 wait 8 swipe 0.5 0.4 0.5 0.7 300 wait 6 swipe 0.5 0.995 0.5 0.965 150 wait 4 swipe 0.5 0.995 0.5 0.965 150 wait 4 swipe 0.5 0.995 0.5 0.96 200 wait 4 swipe 0.5 0.995 0.5 0.97 120 wait 4
+/redwood/bin/rwtouch swipe 0.5 0.995 0.5 0.965 150 wait 4 swipe 0.5 0.995 0.5 0.96 250 wait 4 swipe 0.5 0.995 0.5 0.965 150 wait 4 swipe 0.5 0.995 0.5 0.95 200 wait 8

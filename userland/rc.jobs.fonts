@@ -1,0 +1,11 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Text in scripts other than Latin: font_test says which font the system font falls back to for emoji, Chinese,
+# Japanese and Korean and how many pixels drawing them paints (and in colour); then, with wifi=1, Safari opens the
+# Chinese Wikipedia and a page of emoji as text, for screenshots.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 10
+/redwood/bin/font_test
+/redwood/bin/battery_test open https://zh.m.wikipedia.org/
+/redwood/bin/rwtouch wait 25
+/redwood/bin/battery_test open https://getemoji.com/
+/redwood/bin/rwtouch wait 25

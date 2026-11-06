@@ -1,0 +1,155 @@
+sub_1f22c7ad0                                      0x1f22c7c24 IOConnectCallMethod          sel=0x4a scalars_in=2
+sub_1f22c7f58                                      0x1f22c7fac IOConnectCallMethod          sel=0x6c scalars_in=1
+sub_1f22c84c8                                      0x1f22c8608 IOConnectCallMethod          sel=0x4c scalars_in=3
+sub_1f22c86b8                                      0x1f22c87f0 IOConnectCallMethod          sel=0x63 scalars_in=2
+sub_1f22c88bc                                      0x1f22c8a2c IOConnectCallMethod          sel=0x4d scalars_in=2
+sub_1f22c8ae0                                      0x1f22c8c1c IOConnectCallMethod          sel=0x54 scalars_in=4
+sub_1f22c8cdc                                      0x1f22c8e30 IOConnectCallMethod          sel=0x4b scalars_in=3
+sub_1f22c9274                                      0x1f22c92d0 IOConnectCallMethod          sel=0x56 scalars_in=3
+sub_1f22c9308                                      0x1f22c9378 IOConnectCallMethod          sel=0x56 scalars_in=3
+sub_1f22c93c4                                      0x1f22c93f8 IOConnectCallMethod          sel=0x10 scalars_in=0
+sub_1f22c9414                                      0x1f22c94e8 IOConnectCallMethod          sel=0x36 scalars_in=4
+sub_1f22c9690                                      0x1f22c96e8 IOConnectCallMethod          sel=0xf scalars_in=1
+sub_1f22c9740                                      0x1f22c97b4 IOConnectCallMethod          sel=0x10 scalars_in=1
+sub_1f22c97f4                                      0x1f22c9838 IOConnectCallMethod          sel=0x11 scalars_in=1
+sub_1f22c9864                                      0x1f22c98d0 IOConnectCallMethod          sel=0x12 scalars_in=1
+sub_1f22c9938                                      0x1f22c99fc IOConnectCallMethod          sel=0x0 scalars_in=0
+sub_1f22cb018                                      0x1f22cb10c IOConnectCallMethod          sel=0x2b scalars_in=1
+_aks_stash_create_for_bag_and_kek                  0x1f22d2b7c IOConnectCallMethod          sel=0x21 scalars_in=7
+sub_1f22d2c0c                                      0x1f22d2c7c IOConnectCallMethod          sel=0x22 scalars_in=2
+_aks_stash_destroy                                 0x1f22d2d64 IOConnectCallMethod          sel=0x25 scalars_in=0
+_aks_stash_commit                                  0x1f22d2dd4 IOConnectCallMethod          sel=0x24 scalars_in=1
+_aks_stash_enable                                  0x1f22d2e64 IOConnectCallMethod          sel=0x33 scalars_in=1
+_aks_stash_persist                                 0x1f22d2ef4 IOConnectCallMethod          sel=0x35 scalars_in=1
+sub_1f22d31f4                                      0x1f22d3354 IOConnectCallMethod          sel=0x1e scalars_in=3
+_aks_prederived_is_enabled                         0x1f22d348c IOConnectCallMethod          sel=0x1f scalars_in=1
+_aks_unlock_bag                                    0x1f22d3748 IOConnectCallMethod          sel=0xc scalars_in=3
+sub_1f22d38f8                                      0x1f22d399c IOConnectCallMethod          sel=0x2 scalars_in=6
+_aks_invalidate_sync_bags                          0x1f22d3ab0 IOConnectCallMethod          sel=0x42 scalars_in=0
+_aks_unlock_with_sync_bag                          0x1f22d3b4c IOConnectCallMethod          sel=0x43 scalars_in=3
+_aks_load_bag                                      0x1f22d3c0c IOConnectCallMethod          sel=0x6 scalars_in=0
+_aks_invalidate_bag                                0x1f22d3ca4 IOConnectCallMethod          sel=0x57 scalars_in=0
+_aks_unload_bag                                    0x1f22d3d1c IOConnectCallMethod          sel=0x4 scalars_in=1
+_aks_unload_session_bags                           0x1f22d3dac IOConnectCallMethod          sel=0x37 scalars_in=1
+_aks_save_bag                                      0x1f22d3e98 IOConnectCallMethod          sel=0x3 scalars_in=1
+_aks_change_secret_se                              0x1f22d3fdc IOConnectCallMethod          sel=0xf scalars_in=11
+_aks_get_bag_uuid                                  0x1f22d40f0 IOConnectCallMethod          sel=0x17 scalars_in=1
+_aks_copy_volume_cookie_persona                    0x1f22d4214 IOConnectCallMethod          sel=0x44 scalars_in=1
+_aks_lock_bag                                      0x1f22d4300 IOConnectCallMethod          sel=0xd scalars_in=1
+_aks_get_lock_state                                0x1f22d43ac IOConnectCallMethod          sel=0x7 scalars_in=1
+_aks_wrap_key                                      0x1f22d44a8 IOConnectCallMethod          sel=0xa scalars_in=2
+_aks_unwrap_key                                    0x1f22d45a8 IOConnectCallMethod          sel=0xb scalars_in=2
+_aks_rewrap_key_for_backup                         0x1f22d469c IOConnectCallMethod          sel=0x18 scalars_in=4
+_aks_get_system                                    0x1f22d4754 IOConnectCallMethod          sel=0xe scalars_in=None
+_aks_set_system_with_passcode                      0x1f22d4814 IOConnectCallMethod          sel=0x5 scalars_in=4
+_aks_set_keybag_for_volume_with_cookie_persona     0x1f22d4934 IOConnectCallMethod          sel=0x41 scalars_in=2
+_aks_backup_enable_volume                          0x1f22d4a64 IOConnectCallMethod          sel=0x6e scalars_in=2
+_aks_backup_disable_volume                         0x1f22d4b64 IOConnectCallMethod          sel=0x6f scalars_in=0
+_aks_backup_copy_current_bag_uuid                  0x1f22d4c24 IOConnectCallMethod          sel=0x70 scalars_in=0
+_aks_backup_rewrap_key                             0x1f22d4d34 IOConnectCallMethod          sel=0x71 scalars_in=3
+_aks_keybag_persona_create                         0x1f22d507c IOConnectCallMethod          sel=0x60 scalars_in=3
+_aks_keybag_persona_create_with_flags              0x1f22d5184 IOConnectCallMethod          sel=0x75 scalars_in=4
+_aks_keybag_persona_list                           0x1f22d5288 IOConnectCallMethod          sel=0x61 scalars_in=1
+_aks_keybag_persona_delete                         0x1f22d53c8 IOConnectCallMethod          sel=0x62 scalars_in=1
+_aks_auth_token_create                             0x1f22d54b4 IOConnectCallMethod          sel=0x26 scalars_in=4
+_aks_set_configuration                             0x1f22d5710 IOConnectCallMethod          sel=0x1e scalars_in=3
+_aks_get_configuration                             0x1f22d5934 IOConnectCallMethod          sel=0x1f scalars_in=1
+_aks_assert_hold                                   0x1f22d5df4 IOConnectCallMethod          sel=0x1a scalars_in=3
+_aks_assert_drop                                   0x1f22d5e7c IOConnectCallMethod          sel=0x1b scalars_in=2
+_aks_assert_promote                                0x1f22d5f10 IOConnectCallMethod          sel=0x64 scalars_in=2
+_aks_assert_consume                                0x1f22d5f98 IOConnectCallMethod          sel=0x65 scalars_in=1
+_aks_recover_with_escrow_bag                       0x1f22d606c IOConnectCallMethod          sel=0x12 scalars_in=1
+_aks_fdr_hmac_data                                 0x1f22d6170 IOConnectCallMethod          sel=0x29 scalars_in=0
+_aks_generation                                    0x1f22d6280 IOConnectCallMethod          sel=0x28 scalars_in=2
+_aks_verify_password                               0x1f22d6390 IOConnectCallMethod          sel=0x2a scalars_in=1
+_aks_create_signing_key                            0x1f22d64e8 IOConnectCallMethod          sel=0x31 scalars_in=2
+_aks_create_signing_key_with_params                0x1f22d6634 IOConnectCallMethod          sel=0x31 scalars_in=2
+sub_1f22d66e8                                      0x1f22d6798 IOConnectCallMethod          sel=x21 scalars_in=3
+_aks_sign_signing_key                              0x1f22d6944 IOConnectCallMethod          sel=0x32 scalars_in=3
+_aks_remote_session                                0x1f22d6ab0 IOConnectCallMethod          sel=0x2c scalars_in=2
+_aks_drain_backup_keys                             0x1f22d6e14 IOConnectCallMethod          sel=0x14 scalars_in=2
+_aks_drain_backup_keys_info                        0x1f22d6f5c IOConnectCallMethod          sel=0x14 scalars_in=2
+_aks_clear_backup_bag                              0x1f22d7098 IOConnectCallMethod          sel=0x16 scalars_in=1
+_aks_set_backup_bag                                0x1f22d71bc IOConnectCallMethod          sel=0x15 scalars_in=5
+_aks_make_public_backup_bag                        0x1f22d72c8 IOConnectCallMethod          sel=0x52 scalars_in=1
+sub_1f22d7370                                      0x1f22d740c IOConnectCallMethod          sel=x21 scalars_in=1
+_aks_remote_peer_get_state                         0x1f22d753c IOConnectCallMethod          sel=0x39 scalars_in=1
+_aks_remote_peer_drop                              0x1f22d76b0 IOConnectCallMethod          sel=0x3a scalars_in=1
+_aks_lock_device                                   0x1f22d774c IOConnectCallMethod          sel=None scalars_in=1
+_aks_unlock_device                                 0x1f22d77dc IOConnectCallMethod          sel=0x9 scalars_in=3
+_aks_obliterate_class_d                            0x1f22d7848 IOConnectCallMethod          sel=0x13 scalars_in=0
+_aks_migrate_s_key                                 0x1f22d78e0 IOConnectCallMethod          sel=0x3f scalars_in=4
+_aks_smartcard_register                            0x1f22d79bc IOConnectCallMethod          sel=0x3b scalars_in=4
+_aks_smartcard_unregister                          0x1f22d7ab0 IOConnectCallMethod          sel=0x3c scalars_in=1
+_aks_smartcard_request_unlock                      0x1f22d7b78 IOConnectCallMethod          sel=0x3d scalars_in=1
+_aks_smartcard_unlock                              0x1f22d7ce4 IOConnectCallMethod          sel=0x3e scalars_in=1
+_aks_se_fail                                       0x1f22d8078 IOConnectCallMethod          sel=0x47 scalars_in=1
+_aks_se_set_healthy                                0x1f22d80fc IOConnectCallMethod          sel=0x49 scalars_in=1
+_aks_se_set_secret                                 0x1f22d8190 IOConnectCallMethod          sel=0x45 scalars_in=1
+_aks_se_recover                                    0x1f22d821c IOConnectCallMethod          sel=0x46 scalars_in=3
+_aks_change_secret_epilogue                        0x1f22d82a4 IOConnectCallMethod          sel=0x69 scalars_in=3
+_aks_se_get_reset_token                            0x1f22d8378 IOConnectCallMethod          sel=0x48 scalars_in=1
+_aks_se_set_nonce                                  0x1f22d8530 IOConnectCallMethod          sel=0x58 scalars_in=1
+_aks_se_get_reset_sig                              0x1f22d8628 IOConnectCallMethod          sel=0x5a scalars_in=1
+_aks_se_get_reset_pubkey                           0x1f22d87cc IOConnectCallMethod          sel=0x59 scalars_in=1
+_aks_se_delete_reset_token                         0x1f22d88d0 IOConnectCallMethod          sel=0x5b scalars_in=1
+_aks_se_support_in_rm                              0x1f22d8954 IOConnectCallMethod          sel=0x5e scalars_in=1
+_aks_se_support_in_rm_is_set                       0x1f22d89e4 IOConnectCallMethod          sel=0x6b scalars_in=0
+_aks_se_stage_stash                                0x1f22d8a6c IOConnectCallMethod          sel=0x5f scalars_in=0
+_aks_fv_get_blob_state                             0x1f22d8bc4 IOConnectCallMethod          sel=0x55 scalars_in=0
+_aks_fv_get_size                                   0x1f22d8d8c IOConnectCallMethod          sel=0x4e scalars_in=1
+_aks_fv_import                                     0x1f22d8f38 IOConnectCallMethod          sel=0x4f scalars_in=1
+_aks_absinthe_collection                           0x1f22d95c4 IOConnectCallMethod          sel=0x50 scalars_in=1
+_aks_absinthe_generate                             0x1f22d9740 IOConnectCallMethod          sel=0x51 scalars_in=1
+_aks_drop_auxiliary_auth_by_uid                    0x1f22d97f0 IOConnectCallMethod          sel=0x53 scalars_in=2
+_aks_drop_auxiliary_auth_by_handle                 0x1f22d9878 IOConnectCallMethod          sel=0x53 scalars_in=2
+_aks_lower_iteration_count                         0x1f22d98e4 IOConnectCallMethod          sel=0x5c scalars_in=0
+_aks_se_secret_drop                                0x1f22d994c IOConnectCallMethod          sel=0x6a scalars_in=1
+_aks_get_internal_info                             0x1f22d9af0 IOConnectCallMethod          sel=0x5d scalars_in=1
+_aks_notify_state_set                              0x1f22d9bcc IOConnectCallMethod          sel=0x66 scalars_in=0
+_aks_notify_state_is_set                           0x1f22d9c48 IOConnectCallMethod          sel=0x67 scalars_in=0
+_aks_fairplay_wrap                                 0x1f22d9d20 IOConnectCallMethod          sel=0x68 scalars_in=1
+_aks_fairplay_generate_csk                         0x1f22d9df0 IOConnectCallMethod          sel=0x68 scalars_in=1
+sub_1f22d9e3c                                      0x1f22d9e74 IOConnectCallMethod          sel=0xc scalars_in=0
+_aks_prewarm_sps                                   0x1f22d9edc IOConnectCallMethod          sel=0x73 scalars_in=0
+_aks_sealed_hashes_set                             0x1f22da04c IOConnectCallMethod          sel=0x72 scalars_in=0
+sub_1f22da0b4                                      0x1f22da198 IOConnectCallMethod          sel=0x76 scalars_in=1
+_AKSIdentityMigrateFirst                           0x1f22da280 IOConnectCallMethod          sel=0x7f scalars_in=0
+_AKSIdentityDelete                                 0x1f22da36c IOConnectCallMethod          sel=0x77 scalars_in=0
+_AKSIdentityChangePasscode                         0x1f22da48c IOConnectCallMethod          sel=0x7c scalars_in=1
+sub_1f22da54c                                      0x1f22da5d4 IOConnectCallMethod          sel=0x78 scalars_in=1
+_AKSIdentityUnload                                 0x1f22da6fc IOConnectCallMethod          sel=0x79 scalars_in=1
+sub_1f22dafdc                                      0x1f22db068 IOConnectCallMethod          sel=0x7b scalars_in=1
+sub_1f22db0e0                                      0x1f22db138 IOConnectCallMethod          sel=0x7a scalars_in=1
+_AKSIdentityGetPrimary                             0x1f22db4e8 IOConnectCallMethod          sel=0x7d scalars_in=0
+sub_1f22db5fc                                      0x1f22db6b8 IOConnectCallMethod          sel=0x7e scalars_in=6
+_AKSGetLastUser                                    0x1f22db828 IOConnectCallMethod          sel=0x80 scalars_in=1
+--- callers of sub_ functions that call IOConnect
+sub_1f22c7ad0 <- _aks_fv_new_access_token
+sub_1f22c7f58 <- 
+sub_1f22c84c8 <- _aks_fv_new_verifier
+sub_1f22c86b8 <- 
+sub_1f22c88bc <- _aks_fv_rewrap_verifier
+sub_1f22c8ae0 <- _aks_fv_commit_stashed_kek _aks_fv_delete_verifier _aks_fv_destroy_stashed_kek _aks_fv_grant_ownership _aks_fv_lock_volume_bag _aks_fv_owners_exist _aks_fv_sidp_status _aks_fv_stash_kek
+sub_1f22c8cdc <- _aks_fv_unwrap_vek _aks_fv_verify_user _aks_fv_verify_user_opts sub_1f22c8ef4
+sub_1f22c9274 <- 
+sub_1f22c9308 <- 
+sub_1f22c93c4 <- 
+sub_1f22c9414 <- 
+sub_1f22c9690 <- 
+sub_1f22c9740 <- 
+sub_1f22c97f4 <- 
+sub_1f22c9864 <- 
+sub_1f22c9938 <- sub_1f22c9590 sub_1f22c9654
+sub_1f22cb018 <- _aks_get_sik_status _aks_ref_key_attest _aks_ref_key_compute_key _aks_ref_key_create _aks_ref_key_create_and_encrypt _aks_ref_key_create_and_wrap _aks_ref_key_decrypt _aks_ref_key_delete _aks_ref_key_ecies_decrypt _aks_ref_key_ecies_encrypt _aks_ref_key_ecies_transcode _aks_ref_key_enable_test_keys _aks_ref_key_encrypt _aks_ref_key_set_key_class _aks_ref_key_sign _aks_ref_key_transcrypt _aks_ref_key_unwrap _aks_ref_key_validate_key _aks_ref_key_wrap _aks_sik_collection _aks_system_key_attest _aks_system_key_collection _aks_system_key_get_public _aks_system_key_operate _aks_system_key_sign sub_1f22cd394
+sub_1f22d2c0c <- _aks_stash_load _aks_stash_verify
+sub_1f22d31f4 <- _aks_prederived_change_secret _aks_prederived_create
+sub_1f22d38f8 <- _aks_create_bag _aks_create_escrow_bag _aks_create_escrow_bag_with_auth _aks_create_sync_bag _aks_create_sync_bag_with_auth
+sub_1f22d66e8 <- _aks_obliterate_signing_keys _aks_remote_peer_confirm _aks_remote_peer_register _aks_remote_peer_setup _aks_remote_session_reset _aks_remote_session_reset_all _aks_remote_session_step _aks_remote_session_token _aks_reset_session _aks_validate_local_key
+sub_1f22d7370 <- _aks_get_device_state _aks_get_extended_device_state
+sub_1f22d9e3c <- 
+sub_1f22da0b4 <- _AKSIdentityCreate _AKSIdentityCreateFirst
+sub_1f22da54c <- _AKSIdentityLoad _AKSIdentityLogin
+sub_1f22dafdc <- _AKSIdentityLogin _AKSIdentityUnlock _AKSIdentityUnlockSession
+sub_1f22db0e0 <- _AKSIdentityLock _AKSIdentityLockSession
+sub_1f22db5fc <- _AKSIdentitySetPrimary _AKSIdentityTransferPrimary

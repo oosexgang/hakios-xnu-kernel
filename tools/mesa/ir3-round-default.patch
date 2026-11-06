@@ -1,0 +1,118 @@
+ir3: round integer-to-float conversions to nearest when nothing says otherwise.
+
+The a6xx `cov` instruction has a rounding-mode field, and create_cov() sets it
+only from float_controls_execution_mode, which is a SPIR-V declaration. When
+nothing is declared, nir_get_rounding_mode_from_float_controls returns
+nir_rounding_mode_undef, neither branch fires, and the field keeps the zero it
+was built with -- ROUND_ZERO in instr-a3xx.h, which is truncation toward zero.
+
+So every shader that does not come from SPIR-V with an explicit rounding mode
+gets truncation where IEEE-754, GLSL and OpenCL all require round-to-nearest-even.
+On this port that is every shader: the port's OpenGL ES declares nothing, and so
+does the AIR frontend. The hardware is not at fault -- it can round, and setting
+the field makes it.
+
+Measured on the phone's Adreno 7c+ Gen 3, uint -> float, GLSL ES 3.0 through
+OSMesa with the value in a uniform so nothing could be folded on the host
+(userland/src/u2f_test.c, RC=rc.u2f), expectations from C on the host:
+
+      input         before        after      C
+  0xFFFFFFFF    4294967040   4294967296   4294967296
+  0xFFFFFF80    4294967040   4294967296   4294967296
+  0x01000001      16777216     16777216     16777216
+  0x01000003      16777218     16777220     16777220
+  0x7FFFFFFF    2147483520   2147483648   2147483648
+  0x00FFFFFF      16777215     16777215     16777215
+
+0x01000003 is the value that identifies the rule rather than merely showing a
+disagreement: it is 2^24+3, half way between the representable 2^24+2 and
+2^24+4, and both round-half-to-even and round-half-away-from-zero give 2^24+4.
+The hardware gave 2^24+2, which is neither -- it is the low bits dropped. The
+two inputs that agree before the change are exactly the two where truncation and
+rounding coincide, so agreement there is the absence of a question.
+
+Reproduced independently down a second path with no GLSL in it at all: the AIR
+frontend's own test suite (tools/air/intrincheck.py, docs/air.md section 4)
+compiles one Metal operation per module and executes it on the same GPU, and
+air.convert.f.{f32,v2f32,v3f32}.{u,s}.* disagree with C on exactly the inputs
+that need rounding -- 5 declarations, and i2f truncates just as u2f does. Two
+unrelated front ends reaching the same instruction return the same wrong number.
+
+The case for this change does not need a standard quoted at it, because Mesa
+already contains both answers. NIR's own constant folder, with no rounding mode
+declared, rounds to nearest even: nir_opcodes.py generates, for the plain f2f16,
+
+    if (nir_is_rounding_mode_rtz(execution_mode, 16))
+       dst = _mesa_half_to_float(_mesa_float_to_float16_rtz(src0));
+    else
+       dst = _mesa_half_to_float(_mesa_float_to_float16_rtne(src0));
+
+-- RTZ only where RTZ was asked for, RTNE otherwise -- and it folds an integer
+to float conversion through the host's own, which is also RTNE. The backend, in
+the same circumstances, leaves the cov field at ROUND_ZERO and truncates.
+
+So one expression has two answers in one compiler depending on whether NIR could
+fold it. That is what the measurements above are: the same operation over the
+same inputs, folded by NIR and executed by the hardware, disagreeing. Whatever
+any specification requires, these two should not differ from each other, and
+making the backend ask for what the folder already assumes is the smaller change
+of the two.
+
+Not verified: whether the field is honoured for a 16-bit destination. The branch
+covers TYPE_F16 too, and the measurements do not reach it -- this port's harness
+packs every half result into a float4, so no shader it generates declares a half
+output, and a half render target appears in none of the 456 modules of the corpus
+it was built from.
+
+Worth a reviewer's attention rather than hidden: one F16 path through this branch
+is pack_half_2x16, and nir_lower_mediump.c says of it "pack_half rounding is
+undefined". Where nothing is required, setting ROUND_EVEN changes behaviour
+without correcting it -- permitted either way, and not part of the argument here.
+If that is unwelcome, the narrower change is to set the default only when the
+source is an integer type; the measurements above would be unaffected. I would
+not choose it, and the reason is worth stating rather than leaving the two
+looking equivalent.
+
+Of everything that reaches this branch, pack_half is the only destination with no
+requirement behind it. f2f32 and b2f are exact, so the mode cannot change them.
+i2f and u2f require round-to-nearest-even, and are measured above. And plain
+nir_op_f2f16 reaches it too -- f2f16_rtne and f2f16_rtz are taken by the two
+cases above, so an f32 -> f16 narrowing with no declared mode lands here and
+truncates by exactly the same mechanism, in an API that asks for RTE. The
+narrower change would leave that one unfixed while fixing its neighbours, which
+is a worse place to stop than either end.
+
+That last one is reasoning from the mechanism and is NOT measured here: this
+port's harness packs every half result into a float4, so it cannot reach an
+f2f16 either. It is offered as a thing to check, not as a result.
+
+Checked against Mesa 25.0.7 (this port's pin), the 26.2.5 release, and main as
+fetched on 20 October 2026: the rounding block of create_cov() is 750 characters
+in each and character-for-character identical in all three, with no trailing
+else. So this is not an artefact of the pin, and not something a newer release
+has already addressed. (ROUND_ZERO = 0 in instr-a3xx.h was verified in the pin
+and in 26.2.5; only ir3_compiler_nir.c was taken from main, so that header is
+not claimed for it.)
+
+The hunk applies to main's own copy of the file without a rebase, tested against
+it rather than against the pin: both patch(1) and git apply report "succeeded at
+410 (offset 2 lines)" and exit 0. The context matches; only the line number has
+moved, so anyone comparing the hunk header's 408 against main will see the two
+lines and should not take them for a mismatch.
+
+--- a/src/freedreno/ir3/ir3_compiler_nir.c
++++ b/src/freedreno/ir3/ir3_compiler_nir.c
+@@ -408,6 +408,13 @@
+          set_cat1_round(cov.rpts, nrpt, ROUND_EVEN);
+       else if (rounding_mode == nir_rounding_mode_rtz)
+          set_cat1_round(cov.rpts, nrpt, ROUND_ZERO);
++      else
++         /* Nothing declared a mode, and the field defaults to ROUND_ZERO,
++          * which is truncation. IEEE-754, GLSL and OpenCL all require
++          * round-to-nearest-even here, so ask for it rather than letting the
++          * hardware's own default stand.
++          */
++         set_cat1_round(cov.rpts, nrpt, ROUND_EVEN);
+    }
+ 
+    return cov;

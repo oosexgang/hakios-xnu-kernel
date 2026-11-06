@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = QcomWDogDxe
+  FILE_GUID                      = 040E1E61-0AFB-411B-9EC9-00F3FC59CC13
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|QcomWDogDxe.depex|*
+  PE32|QcomWDogDxe.efi|*
+
+[Depex]
+  TRUE

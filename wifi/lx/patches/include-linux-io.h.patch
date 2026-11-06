@@ -1,0 +1,11 @@
+--- a/sys/compat/linuxkpi/common/include/linux/io.h
++++ b/sys/compat/linuxkpi/common/include/linux/io.h
+@@ -413,7 +413,7 @@
+ static inline void *
+ devm_ioremap(struct device *dev, resource_size_t offset, resource_size_t size)
+ {
+-	return (NULL);
++	return (_ioremap_attr(offset, size, 0));	/* (never unmapped: nothing here unloads a driver) */
+ }
+ 
+ #ifdef VM_MEMATTR_DEVICE

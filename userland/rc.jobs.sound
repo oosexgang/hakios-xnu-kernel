@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Something to hear (RC_JOBS=rc.jobs.sound): once SpringBoard is up, a tone of three seconds (1000 Hz on the
+# left, 440 Hz on the right), then the lock sound, a keyboard click and a fanfare, as SpringBoard would play
+# them. What comes out of /dev/redwood-audio shows whether it worked: the kernel's "redwood-audio:" lines,
+# a recording (boot-arg rec_sound=N), QEMU's sound device.
+/redwood/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
+/bin/ps -A

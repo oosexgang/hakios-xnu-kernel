@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = UFSDxe
+  FILE_GUID                      = 0D35CD8E-97EA-4F9A-96AF-0F0D89F76567
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|UFSDxe.depex|*
+  PE32|UFSDxe.efi|*
+
+[Depex]
+  TRUE

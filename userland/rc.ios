@@ -1,0 +1,8 @@
+# Commands init runs after its own checks: one per line, words separated by blanks.
+# Our own program first, then programs taken unmodified from iOS 16.5.
+/redwood/bin/hello_dyn one two
+/bin/df
+/sbin/mount
+/bin/ps -A
+/usr/bin/vm_stat
+/usr/sbin/ioreg

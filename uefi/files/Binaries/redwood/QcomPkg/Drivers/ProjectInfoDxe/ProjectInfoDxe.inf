@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ProjectInfoDxeDriver
+  FILE_GUID                      = 0A8D6360-7EF3-11EA-B20F-B3A524584400
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|ProjectInfoDxe.depex|*
+  PE32|ProjectInfoDxe.efi|*
+
+[Depex]
+  TRUE

@@ -1,0 +1,183 @@
+# CoreAnimation pipelines each process builds at start (tools/rwm-recipes.py, src/redwoodmetal.m)
+=0 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=1 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,c9=1,ca=5,cb=1,cc=5,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=2 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,d1=1,d3=1,d5=f,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=3 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,ce=1,d1=1,d2=5,d3=1,d4=5,d5=f,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=4 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,c9=1,ca=1,cb=1,cc=1,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=5 0=50,1=50,8=2,b=1,c=1d,e=1,15=1b,16=8,17=1,6a=1,6b=1,6c=10,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,c9=1,ca=5,cb=1,cc=5,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=6 0=50,1=50,8=2,b=1,c=1d,e=1,15=1b,16=8,17=1,6a=1,6b=1,6c=10,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,ce=1,d1=1,d2=5,d3=1,d4=5,d5=f,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=7 0=50,1=50,8=2,b=1,c=1d,e=1,15=1b,16=8,17=1,6a=1,6b=1,6c=10,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,d1=1,d3=1,d5=f,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=8 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,ca=4,cc=4,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=9 0=50,1=50,8=2,b=1,c=1d,e=1,15=1b,16=8,17=1,6a=1,6b=1,6c=10,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,ca=5,cc=5,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=10 0=50,1=50,8=2,b=1,c=1d,e=1,15=1b,16=8,17=1,6a=1,6b=1,6c=10,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=11 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,ca=5,cc=5,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=12 0=73,1=73,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,cd=f,d1=1,d3=1,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=13 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c9=1,cb=1,ce=1,d1=8,d2=5,d3=8,d4=5,d5=f,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+=14 0=50,1=50,8=2,b=1,c=1f,e=1,f=1d,10=10,11=1,12=1d,13=18,14=1,15=1b,16=20,17=1,6a=1,6b=1,6c=30,6d=1,6e=1,70=1,71=1,73=1,74=1,76=1,77=1,79=1,7a=1,7c=1,7d=1,7f=1,80=1,82=1,83=1,85=1,86=1,88=1,89=1,8b=1,8c=1,8e=1,8f=1,91=1,92=1,94=1,95=1,97=1,98=1,9a=1,9b=1,9d=1,9e=1,a0=1,a1=1,a3=1,a4=1,a6=1,a7=1,a9=1,aa=1,ac=1,ad=1,af=1,b0=1,b2=1,b3=1,b5=1,b6=1,b8=1,b9=1,bb=1,bc=1,be=1,bf=1,c1=1,c2=1,c4=1,c5=1,c6=1,c9=1,ca=5,cb=1,cc=5,d1=1,d3=1,d5=f,d9=1,db=1,dd=f,e1=1,e3=1,e5=f,e9=1,eb=1,ed=f,f1=1,f3=1,f5=f,f9=1,fb=1,fd=f,101=1,103=1,105=f,106=8,
+[backboardd]
+com.apple.coreanimation.draw.PBGRAXm_A2Xhf @0
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Isrc @1
+com.apple.coreanimation.draw.PBGRAXm_A2S1Xhf @2
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2S1Xhf_Isrc @3
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_IsrcM1 @1
+com.apple.coreanimation.draw.PBGRAXm_TcimBdsoA2Xhf_Ialp @0
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Ialp @1
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Isup @1
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Ired @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Ired @1
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_Isrc_Isqr @1
+com.apple.coreanimation.draw.PBGRAXm_TmpcA2Xhf_Idst @0
+com.apple.coreanimation.draw.PBGRAXm_Tc3bA2Xhf_Idst @0
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhfn_IsrcCcl_Isup @1
+com.apple.coreanimation.draw.PBGRABaddXm_TcimA2Xhf_Ired @4
+com.apple.coreanimation.draw.PBGRABaddXm_TcimA2Xhf_Ialp @4
+com.apple.coreanimation.draw.PBGRABsovXm_A2Xhf @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcmaA2LlnXhf @5
+com.apple.coreanimation.draw.PBGRAXm_TimgA2S1Xhf_IsrcM0 @2
+com.apple.coreanimation.draw.PBGRAXm_TbdsA2Xhf_Isup_IsrcM1 @0
+com.apple.coreanimation.draw.PBGRABaddXm_TimgA2Xhf_Ialp @4
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhfn_Isrc @0
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhf_Isrc @0
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Ialp @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcmaA2S1LlnXhf @6
+com.apple.coreanimation.draw.PBGRAXm_TcmaA2S1LlnXhf @7
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_Isrc_IsrcM1 @1
+com.apple.coreanimation.draw.PBGRAXm_TbdsA2Xhf_Isup_Isrc @0
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Isrc @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhfn_Isrc @1
+com.apple.coreanimation.draw.PBGRAXm_Tc33A2Xhf_Idst @0
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_IsrcCcl @1
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhfn_IsrcCcl @0
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhfn_IsrcCcl @1
+com.apple.coreanimation.draw.PBGRAXm_Tc3bA2S1Xhf_Idst @2
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_IsrcM1_Isup @1
+com.apple.coreanimation.draw.PBGRAXm_BpldA2Xhf @0
+com.apple.coreanimation.draw.PBGRABaddXm_TcimA2Xhf_Igrn @4
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2S1Xhf_Ialp @3
+com.apple.coreanimation.draw.PBGRABaddXm_TcimA2Xhf_IsrcM1 @4
+com.apple.coreanimation.draw.PBGRAXm_BvcmA2Xhf @0
+com.apple.coreanimation.draw.PBGRABaddXm_A2Xhf @4
+com.apple.coreanimation.draw.PBGRABaddXm_TcimA2Xhf_Isup @4
+com.apple.coreanimation.draw.PBGRAXm_Tc4bA2Xhf_Idst @0
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhf_IsrcCcl @0
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Isrg @1
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_IsrcCcl @1
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhf_Icir @0
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Icir @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Icir @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Isrg @1
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhf_Ixrg @0
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Isup @1
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_IsrcM1 @1
+com.apple.coreanimation.draw.PBGRABsovXm_Tm1aA2Xhf_Isup_Isup @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Igrn @1
+com.apple.coreanimation.draw.PBGRABsovXm_TopaA2Xhf_Isrc @1
+com.apple.coreanimation.draw.PBGRABdinXm_TimgA2Xhf_Isup @8
+com.apple.coreanimation.draw.PBGRABsovXm_A2S1Xhf @3
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_Isrc_Isup @1
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhfn_IsrcCcl @1
+com.apple.coreanimation.draw.PBGRAXm_TcimA2Xhf_Idst @0
+com.apple.coreanimation.draw.PBGRAXm_Tc33A2Xhf_IsrcM1 @0
+com.apple.coreanimation.draw.PBGRAXm_TcimBvcmA2Xhf_Isup @0
+com.apple.coreanimation.draw.PBGRAXm_TimgA2S1Xhf_Icir @2
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2S1Xhf_Icir @3
+com.apple.coreanimation.draw.PBGRAXm_TcimBvcmA2Xhf_Ialp @0
+com.apple.coreanimation.draw.PBGRAXm_TimgBvcmA2Xhf_Isup @0
+com.apple.coreanimation.draw.PBGRAXm_TimgA2S1Xhf_Isrc @2
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2S1Xhf_IsrcM0 @3
+com.apple.coreanimation.draw.PBGRABsovXm_Tc3bA2S1Xhf_Idst @3
+com.apple.coreanimation.draw.PBGRABdotXm_TcmaA2LlnXhf @9
+com.apple.coreanimation.draw.PBGRAXm_TcmaA2LlnXhf @10
+com.apple.coreanimation.draw.PBGRAXm_TimgBvcmA2Xhf_Icir @0
+com.apple.coreanimation.draw.PBGRAXm_TimgBvcmA2Xhf_IalpCcl @0
+com.apple.coreanimation.draw.PBGRABsovXm_Tc33A2Xhf_IsrcM1 @1
+com.apple.coreanimation.draw.PBGRABdotXm_TimgA2Xhf_Icir @11
+com.apple.coreanimation.draw.PBGRAXm_TcimBvcmA2Xhf_IalpCcl @0
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2S1Xhf_Ialp @3
+com.apple.coreanimation.draw.PBGRAXm_TcimA2Xhf_IsrcM1 @0
+com.apple.coreanimation.draw.PBGRAXm_TbdsA2Xhf_Icir_IsrcM1 @0
+com.apple.coreanimation.draw.PBGRAXm_TcimA2Xhf_Isrc @0
+com.apple.coreanimation.draw.PBGRAXm_TbdsA2Xhf_Icir_Isrc @0
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_IalpCcl @1
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_IalpCcl @1
+com.apple.coreanimation.draw.P0551Xm_TlutA2Xhf_Isrc_Isrc @0 |std_vert1_lph|display_overdrive_lut_gen_lph||
+com.apple.coreanimation.draw.PBGRABsovXm_Tds4A2Xhf_Isrc @1 |downsample_blur_vert_lph|downsample_4_frag_lph||
+com.apple.coreanimation.draw.PBGRABsovXm_Tds8A2Xhf_Isrc @1 |downsample_blur_vert_lph|downsample_8_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_TatcA2S1Xhf @2 |path_blit_vert_lph|attachment_clear_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tds4A2Xhf_Isrc @0 |downsample_blur_vert_lph|downsample_4_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tds8A2Xhf_Isrc @0 |downsample_blur_vert_lph|downsample_8_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_ThomA2Xhf_Isrc_Isrc @0 |std_vert1_lph|home_affordance_base_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn11A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_11_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn15A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_15_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn19A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_19_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn23A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_23_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn27A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_27_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tnb7A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_7_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tsb3A2Xhf_Isrc @0 |downsample_blur_vert_lph|single_pass_blur_3_lph||
+com.apple.coreanimation.draw.PRGhAXm_Tn23A2Xhf_Isrc @12 |downsample_blur_vert_lph|narrow_blur_23_frag_lph||
+com.apple.coreanimation.draw.Pb3a8BsovXm_Tds4A2Xhf_Isrc @1 |downsample_blur_vert_lph|downsample_4_frag_lph||
+com.apple.coreanimation.draw.Pb3a8BsovXm_Tds8A2Xhf_Isrc @1 |downsample_blur_vert_lph|downsample_8_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_TatcA2S1Xhf @2 |path_blit_vert_lph|attachment_clear_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tds4A2Xhf_Isrc @0 |downsample_blur_vert_lph|downsample_4_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tds8A2Xhf_Isrc @0 |downsample_blur_vert_lph|downsample_8_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_ThomA2Xhf_Isrc_Isrc @0 |std_vert1_lph|home_affordance_base_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_ThrmA2Xhf @0 |std_vert0_lph|harmony_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_TlubA2Xhf_Isrc @0 |std_vert1_lph|luma_boost_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tn11A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_11_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tn15A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_15_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tn19A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_19_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tn23A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_23_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tn27A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_27_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tnb7A2Xhf_Isrc @0 |downsample_blur_vert_lph|narrow_blur_7_frag_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_TovrA2Xhf_Isrc_Isrc @0 |std_vert1_lph|display_overdrive_srgb_sampler_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tp3cA2Xhf @0 |std_vert0_lph|p3_clamp_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_Tsb3A2Xhf_Isrc @0 |downsample_blur_vert_lph|single_pass_blur_3_lph||
+com.apple.coreanimation.draw.Pb3a8Xm_TvrbA2Xhfn_Isrc_Isrc @0 |variable_blur_vert_lph|variable_blur_frag_lph||
+com.apple.coreanimation.draw.Pw30rXm_TatcA2S1Xhf @2 |path_blit_vert_lph|attachment_clear_frag_lph||
+com.apple.coreanimation.draw.Pw30rXm_ThrmA2Xhf @0 |std_vert0_lph|harmony_lph||
+com.apple.coreanimation.draw.Pw30rXm_TlubA2Xhf_Isrc @0 |std_vert1_lph|luma_boost_lph||
+com.apple.coreanimation.draw.Pw30rXm_TovrA2Xhf_Isrc_Isrc @0 |std_vert1_lph|display_overdrive_srgb_sampler_lph||
+com.apple.coreanimation.draw.Pw30rXm_Tp3cA2Xhf @0 |std_vert0_lph|p3_clamp_lph||
+com.apple.coreanimation.draw.PBGRAXm_TlubA2Xhf_Isrc @0 |std_vert1_lph|luma_boost_lph||
+com.apple.coreanimation.draw.PBGRAXm_TimgBdsoA2Xhfn_Isrc @0 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhfn_Isrc_Isqr @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2S1Xhf_Isrc_Isqr @3 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsapXm_TimgA2S1Xhf_Ixrg @13 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsapXm_TmuaA2S1Xhf_Ixrg_Isqr @13 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhfn_IsrcN3Oc3mtc4 @0 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TvrdA2Xhf_Isrc @0 |downsample_blur_vert_lph|variable_blur_downsample_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_TvrbA2Xhfn_Isrc_Isrc @0 |variable_blur_vert_lph|variable_blur_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tc33A2S1Xhf_Idst @2 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TmpcA2S1Xhf_Idst @2 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TcimBpldA2Xhf_Isup @0 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_IsrcCcl_Isrg @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2S1Xhfn_IsrcN3Oc3mtc4 @3 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_IsrcM1_Isqr @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhfn_IsrcN3Oc3mtc4 @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2S1Xhfn_Isrc @3 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TimgA2S1Xhfn_IsrcN3Oc3mtc4 @2 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_Tm1aA2S1Xhf_Isup_Isup @3 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TbdsA2Xhf_IsupCcl_Isrc @0 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2S1Xhf_Ialp_Isqr @3 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TmuaA2Xhf_Ixrg_Isqr @0 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_Ixrg_Isqr @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TcimBvcmA2Xhf_Icir @0 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TvdkA2Xhf_Isrc @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRAXm_TimgA2S1Xhf_Ixrg @2 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TmuaA2Xhf_Ixrg_Isup @1
+com.apple.coreanimation.draw.PBGRAXm_TatcA2S1Xhf @14 |path_blit_vert_lph|attachment_clear_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tds4A2Xhf_Isrc @1 |downsample_blur_vert_lph|downsample_4_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tds8A2Xhf_Isrc @1 |downsample_blur_vert_lph|downsample_8_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_ThomA2Xhf_Isrc_Isrc @1 |std_vert1_lph|home_affordance_base_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn11A2Xhf_Isrc @1 |downsample_blur_vert_lph|narrow_blur_11_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn15A2Xhf_Isrc @1 |downsample_blur_vert_lph|narrow_blur_15_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn19A2Xhf_Isrc @1 |downsample_blur_vert_lph|narrow_blur_19_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn23A2Xhf_Isrc @1 |downsample_blur_vert_lph|narrow_blur_23_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tn27A2Xhf_Isrc @1 |downsample_blur_vert_lph|narrow_blur_27_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tnb7A2Xhf_Isrc @1 |downsample_blur_vert_lph|narrow_blur_7_frag_lph||
+com.apple.coreanimation.draw.PBGRAXm_Tsb3A2Xhf_Isrc @1 |downsample_blur_vert_lph|single_pass_blur_3_lph||
+com.apple.coreanimation.draw.PBGRAXm_TimgA2Xhf_Isqr @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABsovXm_TimgA2Xhf_Isqr @1 |fixed_vert_lph_spc|fixed_frag_lph_cph||
+com.apple.coreanimation.draw.PBGRABdinXm_TimgA2Xhf_IsupCcl @8
+com.apple.coreanimation.draw.PBGRABsovXm_TcimA2Xhf_Ixrg @1
+com.apple.coreanimation.draw.PBGRABsovXm_TlrpA2Xhf_Iclr_Iclr @1

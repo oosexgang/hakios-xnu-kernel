@@ -1,0 +1,11 @@
+--- a/sys/compat/linuxkpi/common/include/linux/socket.h
++++ b/sys/compat/linuxkpi/common/include/linux/socket.h
+@@ -34,7 +34,7 @@
+ #define	AF_QIPCRTR			42
+ 
+ static inline int
+-kernel_connect(int sd, struct sockaddr *sa, size_t salen, int flags)
++kernel_connect(int sd, void *sa, size_t salen, int flags)	/* (Linux 7.0 passes a struct sockaddr_unsized *) */
+ {
+ 
+ 	/* kern_connectat()? It is used for sockaddr_qrtr by ath1xk/qmi. */

@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = UsbMassStorageDxe
+  FILE_GUID                      = 9FB4B4A7-42C0-4BCD-8540-9BCC6711F83E
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|UsbMassStorageDxe.efi|*

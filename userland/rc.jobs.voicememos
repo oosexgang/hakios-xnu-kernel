@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The microphone in an application (with adsp=1 mic=4): Voice Memos opened (voicememos://), past its welcome sheet
+# (Continue), and its record button pressed; it records until the run ends. For screenshots: the time running, the
+# waveform of what the microphone hears, the orange dot of a microphone in use.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 10
+/redwood/bin/battery_test open voicememos://
+/redwood/bin/rwtouch wait 10 tap 0.5 0.895 wait 10 tap 0.5 0.885 wait 30

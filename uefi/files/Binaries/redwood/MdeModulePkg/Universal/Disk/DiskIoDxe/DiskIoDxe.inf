@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = DiskIoDxe
+  FILE_GUID                      = 6B38F7B4-AD98-40E9-9093-ACA2B5A253C4
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|DiskIoDxe.efi|*

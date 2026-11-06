@@ -1,0 +1,10 @@
+# The key store watched (boot-arg aks_log=1, iokit/Kernel/MiniAppleKeyStore.cpp): keybagd among the jobs (MORE_JOBS),
+# and the keychain written and read, so that every call to AppleKeyStore of the boot and of a keychain round trip is said.
+sleep 60
+/redwood/bin/tolog /redwood/bin/psgrep keybagd
+/redwood/bin/tolog /redwood/bin/keychain_test
+/redwood/bin/tolog /redwood/bin/keychain_test keep
+/redwood/bin/tolog /redwood/bin/keychain_test read
+sleep 120
+/redwood/bin/tolog /redwood/bin/psgrep keybagd
+/redwood/bin/tolog /redwood/bin/keychain_test read

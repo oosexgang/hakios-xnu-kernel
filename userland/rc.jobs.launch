@@ -1,0 +1,9 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The first launch of an application (RC_JOBS=rc.jobs.launch, a run of about a minute and a half):
+# Settings opened and left, then the pictures SpringBoard keeps of it looked at as files (snap_test:
+# its launch images, light and dark, upright and on its side, and the snapshot it took on the way out),
+# then Maps. The zoom that opens each starts from its launch image; with boot-arg rec_secs=60 it can
+# be watched frame by frame. Its launch images used to come out black (see plain_draw_begin() in eagl.c).
+/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.615 0.71 wait 8 swipe 0.5 0.985 0.5 0.3 200 wait 5
+/redwood/bin/snap_test /private/var/mobile/Library/SplashBoard/Snapshots/com.apple.Preferences
+/redwood/bin/rwtouch tap 0.845 0.59 wait 12

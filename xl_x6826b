@@ -1,0 +1,101 @@
+#!/bin/bash
+# xl_x6826b — drive the XNU loader on Infinix Hot 20 (X6826B) over USB (macOS compatible).
+# Strictly bound to target device: <HAKIOS_SERIAL>
+
+DEVICE="${HAKIOS_SERIAL:?set HAKIOS_SERIAL to your phone adb serial}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
+
+K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+[ -f "$K" ] || K=prebuilt/mach.development.bcm2837
+L=xnuloader/loader.efi
+[ -f "$L" ] || L=prebuilt/loader.efi
+mkdir -p logs
+
+adb_cmd() { adb -s "$DEVICE" "$@"; }
+fb_cmd() { fastboot -s "$DEVICE" "$@"; }
+
+state() {
+	if fb_cmd devices 2>/dev/null | grep -q "$DEVICE"; then
+		echo "fastboot"
+	elif adb_cmd get-state 2>/dev/null | grep -q "device"; then
+		echo "android"
+	else
+		echo "absent"
+	fi
+}
+
+wait_for() { # wait_for <state> <seconds>
+	local target="$1" max_sec="$2" i
+	for ((i = 0; i < max_sec; i += 2)); do
+		[ "$(state)" = "$target" ] && return 0
+		sleep 2
+	done
+	return 1
+}
+
+enter_fastboot() {
+	case "$(state)" in
+		fastboot) return 0 ;;
+		android)
+			echo "xl_x6826b: rebooting to bootloader..."
+			adb_cmd reboot bootloader
+			wait_for fastboot 45 || { echo "xl_x6826b: device did not reach fastboot"; return 1; }
+			;;
+		absent)
+			echo "xl_x6826b: device $DEVICE not detected (check USB cable/authorization)"
+			return 1
+			;;
+	esac
+}
+
+boot_image() {
+	local img="${1:-xnu-x6826b.img}"
+	enter_fastboot || return 1
+	echo "xl_x6826b: booting $img via fastboot boot..."
+	fb_cmd boot "$img"
+}
+
+reboot_android() {
+	case "$(state)" in
+		fastboot) fb_cmd reboot ;;
+		android) adb_cmd reboot ;;
+		absent) echo "xl_x6826b: device not found" ;;
+	esac
+}
+
+build_payload_and_img() {
+	local rd="${XL_RAMDISK:-userland/root.packfs}"
+	local cmd="${XL_CMDLINE:- -v}"
+	local payload_args="loader.efi=$L kernel=$K"
+	if [ -f "$rd" ]; then
+		payload_args="$payload_args ramdisk=$rd"
+	fi
+	echo "xl_x6826b: creating payload with $payload_args (cmdline: '$cmd')..."
+	python3 xnuloader/mkpayload.py -o build-payload.bin $payload_args --cmdline="$cmd"
+	python3 mkxnuimg_x6826b.py -p build-payload.bin -o xnu-x6826b.img
+}
+
+case "$1" in
+	state)
+		echo "Device: $DEVICE | State: $(state)"
+		;;
+	enter)
+		enter_fastboot
+		;;
+	reboot)
+		reboot_android
+		;;
+	build)
+		build_payload_and_img
+		;;
+	boot)
+		shift
+		build_payload_and_img
+		boot_image "xnu-x6826b.img"
+		;;
+	*)
+		echo "Usage: $0 {state|enter|build|boot|reboot}"
+		exit 1
+		;;
+esac

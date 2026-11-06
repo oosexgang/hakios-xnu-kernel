@@ -1,0 +1,22 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The iOS root volume on the phone's flash as the root (flashboot.apfs resident, root_apfs=ufs_darwin
+# ufs=2 ufs_native=1). The APFS driver's numbers (kern.apfs_stats: the volume's lock by who takes it) for
+# three stretches: the boot, until 25 s after this list began (nothing of ours meanwhile, so that
+# SpringBoard's start is not shared); the next 30 s, iOS left to itself (only how busy each processor
+# was, sampled: vol_ls cpuload); then our reads -- /usr/sbin
+# through read(2) and a mapping (sum 3095b9e298a4df17) and /usr/libexec twice each way, only the totals
+# printed, each with the driver's numbers for itself. The results go to a file and are shown at the end,
+# where the kernel's log keeps them (its middle is lost to launchd's own lines).
+sleep 25
+/redwood/bin/vol_ls sysctl kern.apfs_stats >> /private/var/results
+/redwood/bin/vol_ls zero kern.apfs_stats
+/redwood/bin/vol_ls cpuload 30 >> /private/var/results
+/redwood/bin/vol_ls sysctl kern.apfs_stats >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/bin/ps -A >> /private/var/results
+/redwood/bin/vol_ls cat /private/var/results 262144

@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = PrintDxe
+  FILE_GUID                      = 79E4A61C-ED73-4312-94FE-E3E7563362A9
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|PrintDxe.depex|*
+  PE32|PrintDxe.efi|*
+
+[Depex]
+  TRUE

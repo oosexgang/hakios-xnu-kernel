@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The blur whose radius varies (RC_JOBS=rc.jobs.vblur, a run of about two and a half minutes): the
+# strip under the status bar in Search; the widgets of the Today view and the folders of the App
+# Library held up under it (the higher, the more blurred, where vblur=0 leaves them sharp); then Maps,
+# its first two sheets and its map, with such a strip at its top. vblur=2 paints the strips by their masks.
+/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 200 wait 8 swipe 0.5 0.4 0.5 0.7 300 wait 8 button home wait 4 swipe 0.1 0.5 0.9 0.5 400 wait 5 drag 0.5 0.7 0.5 0.3 1500 6000 wait 3 swipe 0.5 0.4 0.5 0.9 300 wait 3 button home wait 4
+/redwood/bin/rwtouch swipe 0.9 0.5 0.1 0.5 300 wait 3 swipe 0.9 0.5 0.1 0.5 300 wait 4 drag 0.5 0.7 0.5 0.35 1500 6000 wait 3 button home wait 3 button home wait 4
+/redwood/bin/rwtouch tap 0.845 0.59 wait 14 tap 0.5 0.895 wait 8 tap 0.5 0.92 wait 10

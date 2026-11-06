@@ -1,0 +1,17 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The speakers' volume (boot-arg sound=4 with adsp=1): once SpringBoard is up, a tone of two seconds at
+# iOS's volume as it is, then after every few presses of the volume buttons another one -- four steps down,
+# eight up (to the top), sixteen down (to 0: the amplifiers stay off), four up. Every setting of the
+# plug-in's volume control is in the log ("redwood: audio: the volume is ..."), and the kernel's "sound:" and
+# "speaker:" lines say what the amplifiers did with it (register 0x05).
+/redwood/bin/sound_test springboard route wait 2 tone 2 wait 4
+/redwood/bin/rwtouch button voldown wait 0.5 button voldown wait 0.5 button voldown wait 0.5 button voldown wait 1
+/redwood/bin/sound_test route tone 2 wait 4
+/redwood/bin/rwtouch button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 1
+/redwood/bin/sound_test route tone 2 wait 4
+/redwood/bin/rwtouch button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3
+/redwood/bin/rwtouch button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 0.3 button voldown wait 1
+/redwood/bin/sound_test route tone 2 wait 4
+/redwood/bin/rwtouch button volup wait 0.5 button volup wait 0.5 button volup wait 0.5 button volup wait 1
+/redwood/bin/sound_test route tone 2 wait 4
+/bin/ps -A

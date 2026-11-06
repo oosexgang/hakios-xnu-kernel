@@ -1,0 +1,7 @@
+# etc/rc for the key store's runs (no Metal: its plug-in is left out of these images for room): before launchd what launchd's own boot task "keybag" does on
+# a device (its boot tasks are built into /sbin/launchd: "keybag" is "/usr/libexec/keybagd --init", AllowCrash), which
+# launchd skips when it boots from a RAM disk ("[Event: keybag] Skipping boot-task", run 423).
+# The system bag made once, as a restore would (keybagd --init only loads it: run 469), then what the boot task does.
+/redwood/bin/tolog /redwood/bin/aks_restore
+/redwood/bin/tolog OS_ACTIVITY_DT_MODE=YES /usr/libexec/keybagd --init
+exec /sbin/launchd.ios

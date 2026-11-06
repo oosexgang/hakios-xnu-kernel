@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ICBDxe
+  FILE_GUID                      = 5824F9DE-17D2-4B1F-A5FE-5EB77FA53093
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|ICBDxe.depex|*
+  PE32|ICBDxe.efi|*
+
+[Depex]
+  TRUE

@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = VerifiedBootDxe
+  FILE_GUID                      = A25F5839-4D55-428F-8F0B-5CE1D565F53E
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|VerifiedBootDxe.depex|*
+  PE32|VerifiedBootDxe.efi|*
+
+[Depex]
+  TRUE

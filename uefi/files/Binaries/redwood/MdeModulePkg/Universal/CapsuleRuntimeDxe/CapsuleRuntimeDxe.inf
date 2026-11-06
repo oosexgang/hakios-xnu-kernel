@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = CapsuleRuntimeDxe
+  FILE_GUID                      = 42857F0A-13F2-4B21-8A23-53D3F714B840
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|CapsuleRuntimeDxe.depex|*
+  PE32|CapsuleRuntimeDxe.efi|*
+
+[Depex]
+  TRUE

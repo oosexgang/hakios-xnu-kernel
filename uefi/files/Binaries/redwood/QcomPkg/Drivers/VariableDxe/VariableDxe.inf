@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = VariableDxe
+  FILE_GUID                      = 2B0ECDCE-01AE-446E-9FFD-C4217DE0340F
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|VariableDxe.depex|*
+  PE32|VariableDxe.efi|*
+
+[Depex]
+  TRUE

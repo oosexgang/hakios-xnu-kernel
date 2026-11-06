@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = SecurityStubDxe
+  FILE_GUID                      = F80697E9-7FD6-4665-8646-88E33EF71DFC
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|SecurityStubDxe.depex|*
+  PE32|SecurityStubDxe.efi|*
+
+[Depex]
+  TRUE

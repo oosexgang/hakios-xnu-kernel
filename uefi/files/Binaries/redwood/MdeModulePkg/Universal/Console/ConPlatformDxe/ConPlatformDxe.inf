@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ConPlatformDxe
+  FILE_GUID                      = 51CCF399-4FDF-4E55-A45B-E123F84D456A
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|ConPlatformDxe.efi|*

@@ -1,0 +1,11 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# A tour for exercising memory and stability (RC_JOBS=rc.jobs.tour, a run of about 9 minutes): unlock,
+# then every application of the first home-screen page and of the dock for 20 seconds each, and a
+# look at who is still alive at the end. The kernel's "memory:" lines tell the rest.
+/redwood/bin/rwtouch wait 30 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.15 0.36 wait 20 button home wait 5 tap 0.385 0.36 wait 20 button home wait 5 tap 0.615 0.36 wait 20 button home wait 5 tap 0.845 0.36 wait 20 button home wait 5
+/redwood/bin/rwtouch tap 0.15 0.475 wait 20 button home wait 5 tap 0.385 0.475 wait 20 button home wait 5 tap 0.615 0.475 wait 20 button home wait 5 tap 0.845 0.475 wait 20 button home wait 5
+/redwood/bin/rwtouch tap 0.15 0.59 wait 20 button home wait 5 tap 0.385 0.59 wait 20 button home wait 5 tap 0.615 0.59 wait 20 button home wait 5 tap 0.845 0.59 wait 20 button home wait 5
+/redwood/bin/rwtouch tap 0.15 0.71 wait 20 button home wait 5 tap 0.385 0.71 wait 20 button home wait 5 tap 0.615 0.71 wait 20 button home wait 5
+/redwood/bin/rwtouch tap 0.15 0.925 wait 20 button home wait 5 tap 0.615 0.925 wait 20 button home wait 5 tap 0.845 0.925 wait 20 button home wait 5
+/bin/ps -A
+/usr/bin/vm_stat

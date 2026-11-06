@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = PwrUtilsDxe
+  FILE_GUID                      = 0401B830-BFF9-44A2-A5F6-95734A33C017
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|PwrUtilsDxe.depex|*
+  PE32|PwrUtilsDxe.efi|*
+
+[Depex]
+  TRUE

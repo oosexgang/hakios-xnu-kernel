@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- which languages can be dictated without the network: none. On a device Siri's daemon writes
+	     this; when it is missing altogether, -[AFDictationConnection
+	     forcedOfflineDictationIsAvailableForLanguage:synchronous:] keeps nil for the list, takes that
+	     for "not loaded yet" on every call and announces each time that availability has changed.
+	     The keyboard asks again whenever it hears that: the main thread of the application with the
+	     keyboard does nothing else from then on, and no key is ever handled. -->
+	<key>Offline Dictation Status</key>
+	<dict/>
+</dict>
+</plist>

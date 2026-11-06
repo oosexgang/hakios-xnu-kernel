@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = UsbfnDwc3Dxe
+  FILE_GUID                      = 94F8A6A7-DC34-4101-88C1-99179CCEAE83
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|UsbfnDwc3Dxe.depex|*
+  PE32|UsbfnDwc3Dxe.efi|*
+
+[Depex]
+  TRUE

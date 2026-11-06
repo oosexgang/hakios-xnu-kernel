@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PanelName>LS055D1SX04</PanelName>
+<PanelDescription>Sharp Dual DSI Video Mode Panel with DSC (2160x3840 24bpp)</PanelDescription>
+<Group id="Active Timing">
+ <HorizontalActive>2160</HorizontalActive>
+ <HorizontalFrontPorch>30</HorizontalFrontPorch>
+ <HorizontalBackPorch>100</HorizontalBackPorch>
+ <HorizontalSyncPulse>4</HorizontalSyncPulse>
+ <HorizontalSyncSkew>0</HorizontalSyncSkew>
+ <HorizontalLeftBorder>0</HorizontalLeftBorder>
+ <HorizontalRightBorder>0</HorizontalRightBorder>
+ <VerticalActive>3840</VerticalActive>
+ <VerticalFrontPorch>8</VerticalFrontPorch>
+ <VerticalBackPorch>7</VerticalBackPorch>
+ <VerticalSyncPulse>1</VerticalSyncPulse>
+ <VerticalSyncSkew>0</VerticalSyncSkew>
+ <VerticalTopBorder>0</VerticalTopBorder>
+ <VerticalBottomBorder>0</VerticalBottomBorder>
+ <InvertDataPolarity>False</InvertDataPolarity>
+ <InvertVsyncPolairty>False</InvertVsyncPolairty>
+ <InvertHsyncPolarity>False</InvertHsyncPolarity>
+ <BorderColor>0x0</BorderColor>
+</Group>
+<Group id="Display Interface">
+ <InterfaceType>8</InterfaceType>
+ <InterfaceColorFormat>3</InterfaceColorFormat>
+</Group>
+<Group id="DSI Interface">
+ <DSIChannelId>1</DSIChannelId>
+ <DSIVirtualId>0</DSIVirtualId>
+ <DSIColorFormat>36</DSIColorFormat>
+ <DSITrafficMode>1</DSITrafficMode>
+ <DSIDSCEnable>True</DSIDSCEnable>
+ <DSIDSCMajor>1</DSIDSCMajor>
+ <DSIDSCMinor>1</DSIDSCMinor>
+ <DSIDSCScr>0</DSIDSCScr>
+ <DSIDSCProfileID>4</DSIDSCProfileID>
+ <DSIDSCSliceWidth>1080</DSIDSCSliceWidth>
+ <DSIDSCSliceHeight>32</DSIDSCSliceHeight>
+ <DSILanes>4</DSILanes>
+   <DSIHsaHseAfterVsVe>False</DSIHsaHseAfterVsVe>
+   <DSILowPowerModeInHFP>False</DSILowPowerModeInHFP>
+   <DSILowPowerModeInHBP>False</DSILowPowerModeInHBP>
+   <DSILowPowerModeInHSA>False</DSILowPowerModeInHSA>
+   <DSILowPowerModeInBLLPEOF>True</DSILowPowerModeInBLLPEOF>
+   <DSILowPowerModeInBLLP>True</DSILowPowerModeInBLLP>
+   <DSIRefreshRate>0x3C0000</DSIRefreshRate>
+   <DSIPhyDCDCMode>True</DSIPhyDCDCMode>
+ <DSIControllerMapping>
+  00 01
+ </DSIControllerMapping>
+</Group>
+<DSIInitSequence>
+ 39 91 09 20 00 20 02 00 03 1c 04 21 00 0f 03 19 01 97
+ 39 92 10 f0
+ 15 90 03
+ 15 03 01
+ 39 f0 55 aa 52 08 04
+ 15 c0 03
+ 39 f0 55 aa 52 08 07
+ 15 ef 01
+ 39 f0 55 aa 52 08 00
+ 15 b4 10
+ 15 35 00
+ 39 f0 55 aa 52 08 01
+ 39 ff aa 55 a5 80
+ 15 6f 01
+ 15 f3 10
+ 39 ff aa 55 a5 00
+ 05 11
+ ff 78
+ 05 29
+ ff 78
+</DSIInitSequence>
+<DSITermSequence>
+ 05 28
+ 05 10
+</DSITermSequence>
+<TLMMGPIODefaultLow>0x1A</TLMMGPIODefaultLow>
+<Group id='Backlight Configuration'>
+ <BacklightType>1</BacklightType>
+ <BacklightPmicControlType>2</BacklightPmicControlType>
+ <DisplayResetInfo>0 10 1000 10000 0</DisplayResetInfo>
+</Group>

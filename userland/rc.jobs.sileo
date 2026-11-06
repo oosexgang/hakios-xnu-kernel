@@ -1,0 +1,18 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Sileo, the package manager (RC_JOBS=rc.jobs.sileo): the prefix is grafted onto /var/jb by init
+# (tools/mk-jb.sh puts it in the image). The preparation the bootstrap wants once per boot, the
+# network (Wi-Fi has an address and a name resolves: before that, apt finds no repository), a fresh
+# index, the half minute LaunchServices wants before it registers the prefix's applications (with the root
+# on the flash: prep.sh, uicache), and then the whole way a person goes: the package's own page is opened by URL (no typing),
+# GET puts it in the queue, Confirm installs it. At the end, what dpkg has to say about it.
+/redwood/bin/sound_test springboard
+/var/jb/bin/sh /var/jb/prep.sh
+/redwood/bin/net_test waitaddr en0 60 resolve apt.procurs.us
+/var/jb/usr/bin/apt-get update
+/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 6
+/var/jb/usr/bin/uiopen sileo://package/tree
+/redwood/bin/rwtouch wait 14 tap 0.32 0.59 wait 3 tap 0.5 0.826 wait 6
+/redwood/bin/rwtouch tap 0.86 0.303 wait 5 tap 0.2 0.862 wait 6 tap 0.5 0.85 wait 60
+/var/jb/bin/cat /var/jb/var/log/apt/term.log
+/var/jb/usr/bin/dpkg-query -W -f${binary:Package}_${Version}_${Status}\n tree
+/var/jb/usr/bin/tree -L 1 /var/jb

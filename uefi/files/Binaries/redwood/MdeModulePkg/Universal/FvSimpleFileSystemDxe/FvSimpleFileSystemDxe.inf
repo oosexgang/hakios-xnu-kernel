@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = FvSimpleFileSystem
+  FILE_GUID                      = 907125C0-A5F1-11E3-A3FE-A3198B49350C
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|FvSimpleFileSystemDxe.efi|*

@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = TsensDxe
+  FILE_GUID                      = F09AD92E-485C-9CDB-3E05-3385C38F94CC
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|TsensDxe.depex|*
+  PE32|TsensDxe.efi|*
+
+[Depex]
+  TRUE

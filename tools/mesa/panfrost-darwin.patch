@@ -1,0 +1,316 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1716,7 +1716,7 @@
+   # dependencies (such as vk-runtime) linking to it
+   dep_libdrm = null_dep
+ endif
+-if host_machine.system() == 'darwin' and with_gallium_freedreno
++if host_machine.system() == 'darwin' and (with_gallium_freedreno or with_gallium_panfrost)
+   # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
+   # for libdrm (src/redwood-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
+   # source file is built with freedreno's drm layer, src/freedreno/drm).
+--- a/src/panfrost/lib/kmod/meson.build
++++ b/src/panfrost/lib/kmod/meson.build
+@@ -6,6 +6,10 @@
+   'panfrost_kmod.c',
+   'panthor_kmod.c',
+ )
++# Darwin: the stand-in for libdrm (src/redwood-drm), built here unless freedreno's drm layer has it already
++if host_machine.system() == 'darwin' and not with_gallium_freedreno
++  libpankmod_lib_files += files('../../../redwood-drm/redwood_drm.c')
++endif
+ 
+ libpankmod_lib = static_library(
+   'pankmod_lib',
+--- a/src/panfrost/lib/kmod/pan_kmod.h
++++ b/src/panfrost/lib/kmod/pan_kmod.h
+@@ -27,6 +27,9 @@
+ #include "util/macros.h"
+ #include "util/os_file.h"
+ #include "util/os_mman.h"
++#ifdef __APPLE__
++#include <xf86drm.h>
++#endif
+ #include "util/ralloc.h"
+ #include "util/simple_mtx.h"
+ #include "util/sparse_array.h"
+@@ -615,8 +618,17 @@
+    if (mmap_offset < 0)
+       return MAP_FAILED;
+ 
++#ifdef __APPLE__
++   /* no mmap() on a device here: the kernel's driver maps the buffer, all of it (src/redwood-drm) */
++   (void)prot;
++   (void)flags;
++   host_addr = redwood_drm_map(bo->dev->fd, bo->handle, bo->size);
++   if (host_addr != MAP_FAILED)
++      host_addr = (char *)host_addr + bo_offset;
++#else
+    host_addr = os_mmap(host_addr, size, prot, flags, bo->dev->fd,
+                        mmap_offset + bo_offset);
++#endif
+    if (host_addr == MAP_FAILED) {
+       mesa_loge("mmap(..., size=%zu, prot=%d, flags=0x%x) failed: %s",
+                 size, prot, flags, strerror(errno));
+--- a/src/panfrost/lib/kmod/pan_kmod.c
++++ b/src/panfrost/lib/kmod/pan_kmod.c
+@@ -176,7 +176,13 @@
+ 
+       p_atomic_inc(&bo->refcnt);
+    } else {
++#ifdef __APPLE__
++      /* (what comes in here is an IOSurface, and the "file descriptor" its ID) */
++      struct redwood_drm_surface surface = { .surface = (uint32_t)fd };
++      size_t size = redwood_drm_surface(dev->fd, &surface) ? 0 : surface.size;
++#else
+       size_t size = lseek(fd, 0, SEEK_END);
++#endif
+       if (size == 0 || size == (size_t)-1) {
+          mesa_loge("invalid dmabuf size");
+          goto err_close_handle;
+--- a/src/gallium/drivers/panfrost/pan_bo.c
++++ b/src/gallium/drivers/panfrost/pan_bo.c
+@@ -355,10 +355,14 @@
+    if (!bo->ptr.cpu)
+       return;
+ 
++#ifdef __APPLE__
++   redwood_drm_unmap(bo->kmod_bo->dev->fd, bo->kmod_bo->handle, (void *)(uintptr_t)bo->ptr.cpu);
++#else
+    if (os_munmap((void *)(uintptr_t)bo->ptr.cpu, panfrost_bo_size(bo))) {
+       mesa_loge("munmap failed: %s", strerror(errno));
+       abort();
+    }
++#endif
+ 
+    bo->ptr.cpu = NULL;
+ }
+--- a/src/gallium/targets/osmesa/osmesa_target.c
++++ b/src/gallium/targets/osmesa/osmesa_target.c
+@@ -30,14 +30,18 @@
+ #include "pipe/p_screen.h"
+ #include "pipe/p_state.h"
+ 
+-#ifdef GALLIUM_FREEDRENO
+-#include "freedreno/drm/freedreno_drm_public.h"
++#if defined(GALLIUM_FREEDRENO) || defined(GALLIUM_PANFROST)
++#define REDWOOD_GPU 1
+ #include "util/driconf.h"
+ #include "util/xmlconfig.h"
+ #include <xf86drm.h>
+ 
+ static int gpu_fd = -1;
++#endif
+ 
++#ifdef GALLIUM_FREEDRENO
++#include "freedreno/drm/freedreno_drm_public.h"
++
+ static const driOptionDescription freedreno_options[] = {
+ #include "freedreno/driinfo_freedreno.h"
+ };
+@@ -65,6 +69,38 @@
+       gpu_fd = fd;
+    return screen ? debug_screen_wrap(screen) : NULL;
+ }
++#elif defined(GALLIUM_PANFROST)
++#include "panfrost/drm/panfrost_drm_public.h"
++
++static const driOptionDescription panfrost_options[] = {
++#include "panfrost/driinfo_panfrost.h"
++};
++
++/*
++ * The Mali's driver, where the kernel has the Mali up for programs (the Infinix: RedwoodMali,
++ * boot-arg mali=1); NULL: none, and the processor draws as before.
++ */
++static struct pipe_screen *
++osmesa_create_gpu_screen(void)
++{
++   static driOptionCache info, cache;
++   static struct pipe_screen_config config;
++   struct pipe_screen *screen;
++   int fd;
++
++   if (debug_get_bool_option("OSMESA_SOFTWARE", false))
++      return NULL;
++   fd = drmOpenWithType("panfrost", NULL, DRM_NODE_RENDER);
++   if (fd < 0)
++      return NULL;
++   driParseOptionInfo(&info, panfrost_options, ARRAY_SIZE(panfrost_options));
++   config.options = &cache;
++   config.options_info = &info;
++   screen = panfrost_drm_screen_create(fd, &config);
++   if (screen)
++      gpu_fd = fd;
++   return screen ? debug_screen_wrap(screen) : NULL;
++}
+ #endif
+ 
+ 
+@@ -79,7 +115,7 @@
+ struct pipe_resource *
+ osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface)
+ {
+-#ifdef GALLIUM_FREEDRENO
++#ifdef REDWOOD_GPU
+    struct redwood_drm_surface s = { .surface = surface };
+    struct pipe_resource templ = {
+       .target = PIPE_TEXTURE_2D,
+@@ -118,7 +154,7 @@
+    struct sw_winsys *winsys;
+    struct pipe_screen *screen;
+ 
+-#ifdef GALLIUM_FREEDRENO
++#ifdef REDWOOD_GPU
+    screen = osmesa_create_gpu_screen();
+    if (screen)
+       return screen;
+--- a/src/gallium/targets/osmesa/meson.build
++++ b/src/gallium/targets/osmesa/meson.build
+@@ -39,7 +39,7 @@
+   ],
+   dependencies : [
+     dep_ws2_32, dep_thread, dep_clock, dep_unwind, driver_swrast, idep_mesautil,
+-    driver_freedreno, idep_xmlconfig, dep_libdrm,
++    driver_freedreno, driver_panfrost, idep_xmlconfig, dep_libdrm,
+   ],
+   name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
+   soversion : host_machine.system() == 'windows' ? '' : '8',
+--- a/src/panfrost/lib/meson.build
++++ b/src/panfrost/lib/meson.build
+@@ -23,7 +23,8 @@
+ 
+ libpanfrost_per_arch = []
+ 
+-foreach ver : ['4', '5', '6', '7', '9', '10']
++# Darwin: the Infinix's Mali-G52 is Bifrost v7, and the image the driver travels in is small
++foreach ver : host_machine.system() == 'darwin' ? ['7'] : ['4', '5', '6', '7', '9', '10']
+   libpanfrost_per_arch += static_library(
+     'pan-arch-v' + ver,
+     [
+--- a/src/gallium/drivers/panfrost/meson.build
++++ b/src/gallium/drivers/panfrost/meson.build
+@@ -41,7 +41,8 @@
+   '-Wno-pointer-arith'
+ ]
+ 
+-panfrost_versions = ['4', '5', '6', '7', '9', '10']
++# Darwin: Bifrost v7 only (the Infinix's Mali-G52), for the size of the image the driver travels in
++panfrost_versions = host_machine.system() == 'darwin' ? ['7'] : ['4', '5', '6', '7', '9', '10']
+ libpanfrost_versions = []
+ 
+ foreach ver : panfrost_versions
+--- a/src/panfrost/lib/pan_shader.c
++++ b/src/panfrost/lib/pan_shader.c
+@@ -85,7 +85,7 @@
+ /* This is only needed on Midgard. It's the same on both v4 and v5, so only
+  * compile once to avoid the GenXML dependency for calls.
+  */
+-#if PAN_ARCH == 5
++#if PAN_ARCH == 5 || (defined(__APPLE__) && PAN_ARCH == 7)   /* Darwin builds v7 alone */
+ uint8_t
+ pan_raw_format_mask_midgard(enum pipe_format *formats)
+ {
+--- a/src/gallium/drivers/panfrost/pan_screen.c
++++ b/src/gallium/drivers/panfrost/pan_screen.c
+@@ -978,6 +978,15 @@
+       return NULL;
+    }
+ 
++#ifdef __APPLE__
++   /* Darwin builds Bifrost v7 alone, the Infinix's Mali-G52 */
++   if (dev->arch == 7)
++      panfrost_cmdstream_screen_init_v7(screen);
++   else {
++      panfrost_destroy_screen(&(screen->base));
++      return NULL;
++   }
++#else
+    if (dev->arch == 4)
+       panfrost_cmdstream_screen_init_v4(screen);
+    else if (dev->arch == 5)
+@@ -992,6 +1001,7 @@
+       panfrost_cmdstream_screen_init_v10(screen);
+    else
+       unreachable("Unhandled architecture major");
++#endif
+ 
+    return &screen->base;
+ }
+--- a/src/gallium/drivers/panfrost/pan_mempool.c
++++ b/src/gallium/drivers/panfrost/pan_mempool.c
+@@ -164,17 +164,23 @@
+    }
+ #endif
+ 
++   /* Darwin on redwood: 256 bytes of slack after every allocation. The fragment preload
++    * (pan_fb_preload.c, jm_preload_fb_v7) was seen writing up to 0x110 bytes past the end of
++    * one of its descriptor allocations -- past the end of a 64 KB pool buffer twice, a fault
++    * in the window server (24 October) -- and what it overruns now is its own slack. */
++   size_t slack = sz + 256;
++
+    /* If we don't fit, allocate a new backing */
+-   if (unlikely(bo == NULL || (offset + sz) >= pool->base.slab_size)) {
++   if (unlikely(bo == NULL || (offset + slack) >= pool->base.slab_size)) {
+       bo = panfrost_pool_alloc_backing(
+-         pool, ALIGN_POT(MAX2(pool->base.slab_size, sz), 4096));
++         pool, ALIGN_POT(MAX2(pool->base.slab_size, slack), 4096));
+       if (!bo)
+          return (struct panfrost_ptr){0};
+ 
+       offset = 0;
+    }
+ 
+-   pool->transient_offset = offset + sz;
++   pool->transient_offset = offset + slack;
+ 
+    struct panfrost_ptr ret = {
+       .cpu = bo->ptr.cpu + offset,
+--- a/src/gallium/drivers/panfrost/pan_job.c
++++ b/src/gallium/drivers/panfrost/pan_job.c
+@@ -35,6 +35,7 @@
+ #include "pan_bo.h"
+ #include "pan_context.h"
+ #include "pan_util.h"
++#include "util/os_time.h"
+ 
+ #define foreach_batch(ctx, idx)                                                \
+    BITSET_FOREACH_SET(idx, ctx->batches.active, PAN_MAX_BATCHES)
+@@ -648,6 +649,9 @@
+ panfrost_batch_submit(struct panfrost_context *ctx,
+                       struct panfrost_batch *batch)
+ {
++   /* Darwin on redwood: what submitting batches costs the processor (rwa_submit_profile) */
++   extern uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles;
++   int64_t redwood_began = os_time_get_nano();
+    struct pipe_screen *pscreen = ctx->base.screen;
+    struct panfrost_screen *screen = pan_screen(pscreen);
+    bool has_frag = panfrost_has_fragment_job(batch);
+@@ -709,8 +713,12 @@
+ 
+ out:
+    panfrost_batch_cleanup(ctx, batch);
++   redwood_pan_submit_ns += os_time_get_nano() - redwood_began;
++   redwood_pan_submits++;
+ }
+ 
++uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles;
++
+ /* Submit all batches */
+ 
+ void
+--- a/src/panfrost/lib/pan_blend.c
++++ b/src/panfrost/lib/pan_blend.c
+@@ -855,6 +855,12 @@
+    }
+ 
+    memcpy(variant->constants, state->constants, sizeof(variant->constants));
++
++   {
++      /* Darwin on redwood: blend shaders compiled (rwa_submit_profile) */
++      extern uint64_t redwood_pan_blend_compiles;
++      redwood_pan_blend_compiles++;
++   }
+ 
+    nir_shader *nir =
+       GENX(pan_blend_create_shader)(state, src0_type, src1_type, rt);

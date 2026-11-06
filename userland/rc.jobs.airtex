@@ -1,0 +1,26 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+#
+# The six texture shaders that return the exact texel on softpipe, run on the real Adreno
+# (RC_JOBS=rc.jobs.airtex). This is the question softpipe cannot answer: it takes a
+# pipe_sampler_view and samples it in C, while a6xx wants real descriptors in memory, a
+# sampler state block and the right binding slots for the texture instructions ir3 emits.
+# Six exact texels on softpipe say nothing about any of that.
+#
+# air_run binds a texture per slot whose texel (x,y,z) of slot n is
+# (100+x+1000n, 200+y, 300+x+y+z, 400) -- the slot is in the value so that reading the
+# wrong slot cannot return the right texel -- a nearest sampler with clamped addressing,
+# and a coordinate at the centre of texel (1,1). So each line below must print exactly:
+#
+#   2D float/int/uint:  101 201 302 400
+#   3D float/int/uint:  101 201 303 400
+#
+# Nearest filtering at a texel centre has no weights to round and clamping has no
+# arithmetic, so a mismatch here can only be binding or descriptors -- the narrowest
+# failure this test will ever have. Read each "on ..." line before its numbers.
+# (the full path on every line: nothing here promises these go through a shell)
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DFloat
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment3DFloat
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DInt
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment3DInt
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment2DUInt
+/redwood/bin/air_run /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib texturedFragment3DUInt

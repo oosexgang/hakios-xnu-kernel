@@ -1,0 +1,6 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The home screen with Metal in the system (METAL=1 RC=rc.launchd.metal, boot-arg metal=1): nothing is
+# drawn over it; only what MTLCreateSystemDefaultDevice() hands an ordinary program (src/metal_test.m)
+# once SpringBoard is up. For the picture: fbshot=60 fbshot_w=120 fbshot_band=2 (tools/fbshot.py).
+/redwood/bin/rwtouch wait 30
+/redwood/bin/tolog /redwood/bin/metal_test

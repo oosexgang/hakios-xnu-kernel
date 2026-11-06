@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.redwood.nullcomm</string>
+	<!-- CommCenter's services, there and answering nothing (src/nullxpc.c): this phone has no baseband for
+	     CommCenter, which dies at start, and SpringBoard looked its services up 480 times a second without them -->
+	<key>MachServices</key>
+	<dict>
+		<key>com.apple.aps.CommCenter</key>
+		<true/>
+		<key>com.apple.basebandd.xpc</key>
+		<true/>
+		<key>com.apple.CellularPlanDaemon.xpc</key>
+		<true/>
+		<key>com.apple.commcenter.ari.rt.xpc</key>
+		<true/>
+		<key>com.apple.commcenter.atcs.xpc</key>
+		<true/>
+		<key>com.apple.commcenter.coretelephony.xpc</key>
+		<true/>
+		<key>com.apple.commcenter.cupolicy.xpc</key>
+		<true/>
+		<key>com.apple.commcenter.mobile-helper-cbupdateservice</key>
+		<true/>
+		<key>com.apple.commcenter.xpc</key>
+		<true/>
+		<key>com.apple.ipTelephony</key>
+		<true/>
+		<key>com.apple.commcenter.mobile-helper-xpc</key>
+		<true/>
+	</dict>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/redwood/bin/nullxpc</string>
+		<string>com.apple.aps.CommCenter</string>
+		<string>com.apple.basebandd.xpc</string>
+		<string>com.apple.CellularPlanDaemon.xpc</string>
+		<string>com.apple.commcenter.ari.rt.xpc</string>
+		<string>com.apple.commcenter.atcs.xpc</string>
+		<string>com.apple.commcenter.coretelephony.xpc</string>
+		<string>com.apple.commcenter.cupolicy.xpc</string>
+		<string>com.apple.commcenter.mobile-helper-cbupdateservice</string>
+		<string>com.apple.commcenter.xpc</string>
+		<string>com.apple.ipTelephony</string>
+		<string>com.apple.commcenter.mobile-helper-xpc</string>
+	</array>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>

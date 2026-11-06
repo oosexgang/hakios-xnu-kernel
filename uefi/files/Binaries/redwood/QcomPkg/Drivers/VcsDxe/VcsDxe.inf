@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = VcsDxe
+  FILE_GUID                      = 8BD3B475-401A-4B0B-9315-EDEE61A1EAE5
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|VcsDxe.depex|*
+  PE32|VcsDxe.efi|*
+
+[Depex]
+  TRUE

@@ -1,0 +1,365 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1716,7 +1716,15 @@
+   # dependencies (such as vk-runtime) linking to it
+   dep_libdrm = null_dep
+ endif
+-if dep_libdrm.found()
++if host_machine.system() == 'darwin' and with_gallium_freedreno
++  # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
++  # for libdrm (src/redwood-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
++  # source file is built with freedreno's drm layer, src/freedreno/drm).
++  dep_libdrm = declare_dependency(
++    include_directories : include_directories('src/redwood-drm'),
++    link_args : ['-framework', 'IOKit', '-framework', 'CoreFoundation'],
++  )
++elif dep_libdrm.found()
+   pre_args += '-DHAVE_LIBDRM'
+   if with_dri_platform == 'drm' and with_dri
+     with_gallium_drisw_kms = true
+--- a/src/freedreno/drm/freedreno_bo.c
++++ b/src/freedreno/drm/freedreno_bo.c
+@@ -245,9 +245,15 @@
+    if (bo)
+       goto out_unlock;
+ 
++#ifdef __APPLE__
++   /* (what comes in here is an IOSurface, and the "file descriptor" its ID) */
++   struct redwood_drm_surface surface = { .surface = fd };
++   size = redwood_drm_surface(dev->fd, &surface) ? 0 : surface.size;
++#else
+    /* lseek() to get bo size */
+    size = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_CUR);
++#endif
+ 
+    bo = import_bo_from_handle(dev, size, handle);
+ 
+@@ -474,7 +480,11 @@
+    fd_bo_fini_fences(bo);
+ 
+    if (bo->map)
++#ifdef __APPLE__
++      redwood_drm_unmap(bo->dev->fd, bo->handle, bo->map);
++#else
+       os_munmap(bo->map, bo->size);
++#endif
+ 
+    if (handle) {
+       simple_mtx_lock(&table_lock);
+@@ -618,8 +628,13 @@
+    if (ret) {
+       return NULL;
+    }
++#ifdef __APPLE__
++   /* no mmap() on a device here: the kernel's driver maps the buffer (src/redwood-drm) */
++   return redwood_drm_map(bo->dev->fd, bo->handle, bo->size);
++#else
+    return os_mmap(0, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                   bo->dev->fd, offset);
++#endif
+ }
+ 
+ /* For internal use only, does not check FD_BO_NOMAP: */
+--- a/src/freedreno/drm/meson.build
++++ b/src/freedreno/drm/meson.build
+@@ -45,6 +45,9 @@
+   'msm/msm_ringbuffer_sp.c',
+ )
+ libfreedreno_drm_files += libfreedreno_drm_msm_files
++if host_machine.system() == 'darwin'
++  libfreedreno_drm_files += files('../../redwood-drm/redwood_drm.c')
++endif
+ 
+ libfreedreno_drm_virtio_files = files(
+   'virtio/virtio_bo.c',
+@@ -72,8 +75,7 @@
+   c_args : [no_override_init_args, libfreedreno_drm_flags],
+   gnu_symbol_visibility : 'hidden',
+   dependencies : libfreedreno_drm_deps,
+-  # TODO
+-  link_with : [libvdrm],
++  link_with : freedreno_kmds.contains('virtio') ? [libvdrm] : [],
+   build_by_default : false,
+ )
+ 
+--- a/src/freedreno/drm/msm/msm_priv.h
++++ b/src/freedreno/drm/msm/msm_priv.h
+@@ -176,7 +176,16 @@
+    if (ns == OS_TIMEOUT_INFINITE)
+       ns = 3600ULL * NSEC_PER_SEC; /* 1 hour timeout is almost infinite */
+ 
++#ifdef __APPLE__
++   /* The kernel's driver goes by the clock that runs on while the machine sleeps,
++    * mach_continuous_time(), which is this one. CLOCK_MONOTONIC is another on Darwin: the
++    * date less the date the system says it was started at. Where the two are not the
++    * same, a time made of the one is long past by the other, and nothing is waited for.
++    */
++   clock_gettime(CLOCK_MONOTONIC_RAW, &t);
++#else
+    clock_gettime(CLOCK_MONOTONIC, &t);
++#endif
+    tv->tv_sec = t.tv_sec + ns / NSEC_PER_SEC;
+    tv->tv_nsec = t.tv_nsec + ns % NSEC_PER_SEC;
+    if (tv->tv_nsec >= NSEC_PER_SEC) { /* handle nsec overflow */
+--- a/src/freedreno/ir3/ir3_disk_cache.c
++++ b/src/freedreno/ir3/ir3_disk_cache.c
+@@ -33,6 +33,10 @@
+    if (ir3_shader_debug & IR3_DBG_NOCACHE)
+       return;
+ 
++#ifdef __APPLE__
++   /* no build id in a Mach-O library to tell one build's shaders from another's: no cache */
++   return;
++#else
+    const char *renderer = fd_dev_name(compiler->dev_id);
+    const struct build_id_note *note =
+       build_id_find_nhdr_for_addr(ir3_disk_cache_init);
+@@ -46,6 +50,7 @@
+ 
+    uint64_t driver_flags = ir3_shader_debug_hash_key();
+    compiler->disk_cache = disk_cache_create(renderer, timestamp, driver_flags);
++#endif
+ }
+ 
+ void
+--- a/src/freedreno/meson.build
++++ b/src/freedreno/meson.build
+@@ -22,7 +22,7 @@
+ subdir('ir3')
+ subdir('fdl')
+ 
+-if system_has_kms_drm
++if system_has_kms_drm or host_machine.system() == 'darwin'
+   subdir('drm')
+ endif
+ 
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
+@@ -445,6 +445,21 @@
+        DRAW == DRAW_INDIRECT_OP_INDIRECT_COUNT)
+       ctx->batch->barrier |= FD6_WAIT_FOR_ME;
+ 
++   /* Darwin on redwood: a draw that reads the framebuffer reads it through
++    * UCHE.  Among primitives drawn with FLUSH_PER_OVERLAP the hardware sees
++    * to it that they read what the ones before them wrote, but it knows
++    * nothing of what was drawn before that mode was on: the first triangle
++    * to read the framebuffer after a draw that did not, read (with GMEM)
++    * pixels of another tile.  Seen on a642l with CoreAnimation, which draws
++    * a label's shadow that way over icons drawn the ordinary way: the first
++    * triangle of each such quad was wrong, the second right.  A CCU colour
++    * flush before the draw mends it, and so does a UCHE invalidate alone;
++    * the first such draw gets both, as a framebuffer barrier would give.
++    */
++   if (unlikely(emit.fs->fb_read) && !ctx->batch->prev_draw_read_fb)
++      ctx->batch->barrier |= FD6_FLUSH_CCU_COLOR | FD6_INVALIDATE_CACHE;
++   ctx->batch->prev_draw_read_fb = emit.fs->fb_read;
++
+    if (ctx->batch->barrier)
+       fd6_barrier_flush<CHIP>(ctx->batch);
+ 
+--- a/src/gallium/drivers/freedreno/freedreno_batch.h
++++ b/src/gallium/drivers/freedreno/freedreno_batch.h
+@@ -136,6 +136,9 @@
+    /* Driver specific barrier/flush flags: */
+    unsigned barrier;
+ 
++   /* The last draw emitted read the framebuffer (see fd6_draw.cc): */
++   bool prev_draw_read_fb;
++
+    /* A calculated "draw cost" value for the batch, which tries to
+     * estimate the bandwidth-per-sample of all the draws according
+     * to:
+--- a/src/gallium/drivers/freedreno/freedreno_screen.c
++++ b/src/gallium/drivers/freedreno/freedreno_screen.c
+@@ -25,7 +25,9 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include "drm-uapi/drm_fourcc.h"
++#ifndef __APPLE__
+ #include <sys/sysinfo.h>
++#endif
+ 
+ #include "freedreno_fence.h"
+ #include "freedreno_perfetto.h"
+@@ -1004,9 +1006,15 @@
+    screen->driconf.dual_color_blend_by_location =
+          driQueryOptionb(config->options, "dual_color_blend_by_location");
+ 
++#ifdef __APPLE__
++   uint64_t memory = 0;
++   os_get_total_physical_memory(&memory);
++   screen->ram_size = memory > UINT32_MAX ? UINT32_MAX : memory;
++#else
+    struct sysinfo si;
+    sysinfo(&si);
+    screen->ram_size = si.totalram;
++#endif
+ 
+    DBG("Pipe Info:");
+    DBG(" GPU-id:          %s", fd_dev_name(screen->dev_id));
+--- a/src/gallium/frontends/osmesa/osmesa.c
++++ b/src/gallium/frontends/osmesa/osmesa.c
+@@ -86,6 +86,9 @@
+ extern struct pipe_screen *
+ osmesa_create_screen(void);
+ 
++extern struct pipe_resource *
++osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface);
++
+ 
+ 
+ struct osmesa_buffer
+@@ -152,6 +155,28 @@
+    }
+ }
+ 
++/*
++ * There is no EGL here. What glEGLImageTargetTexture2DOES is given as an image is the ID of an
++ * IOSurface, whose memory becomes the texture's where the driver can do that (Darwin on redwood).
++ */
++static bool
++osmesa_st_get_egl_image(struct pipe_frontend_screen *fscreen, void *image,
++                        struct st_egl_image *out)
++{
++   out->texture = osmesa_surface_resource(fscreen->screen,
++                                          (uint32_t)(uintptr_t)image);
++   if (!out->texture)
++      return false;
++   out->format = out->texture->format;
++   return true;
++}
++
++static bool
++osmesa_st_validate_egl_image(struct pipe_frontend_screen *fscreen, void *image)
++{
++   return true;
++}
++
+ static void
+ create_st_manager(void)
+ {
+@@ -162,7 +187,8 @@
+    if (global_fscreen) {
+       global_fscreen->screen = osmesa_create_screen();
+       global_fscreen->get_param = osmesa_st_get_param;
+-      global_fscreen->get_egl_image = NULL;
++      global_fscreen->get_egl_image = osmesa_st_get_egl_image;
++      global_fscreen->validate_egl_image = osmesa_st_validate_egl_image;
+    }
+ }
+ 
+Только в b2/src/gallium/frontends/osmesa: osmesa.c.orig
+--- a/src/gallium/targets/osmesa/meson.build
++++ b/src/gallium/targets/osmesa/meson.build
+@@ -39,6 +39,7 @@
+   ],
+   dependencies : [
+     dep_ws2_32, dep_thread, dep_clock, dep_unwind, driver_swrast, idep_mesautil,
++    driver_freedreno, idep_xmlconfig, dep_libdrm,
+   ],
+   name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
+   soversion : host_machine.system() == 'windows' ? '' : '8',
+--- a/src/gallium/targets/osmesa/osmesa_target.c
++++ b/src/gallium/targets/osmesa/osmesa_target.c
+@@ -26,6 +26,87 @@
+ 
+ #include "sw/null/null_sw_winsys.h"
+ 
++#include "frontend/winsys_handle.h"
++#include "pipe/p_screen.h"
++#include "pipe/p_state.h"
++
++#ifdef GALLIUM_FREEDRENO
++#include "freedreno/drm/freedreno_drm_public.h"
++#include "util/driconf.h"
++#include "util/xmlconfig.h"
++#include <xf86drm.h>
++
++static int gpu_fd = -1;
++
++static const driOptionDescription freedreno_options[] = {
++#include "freedreno/driinfo_freedreno.h"
++};
++
++/* The GPU's driver, where the kernel has a GPU to drive (Darwin on redwood); NULL: none. */
++static struct pipe_screen *
++osmesa_create_gpu_screen(void)
++{
++   static driOptionCache info, cache;
++   static struct pipe_screen_config config;
++   struct pipe_screen *screen;
++   int fd;
++
++   if (debug_get_bool_option("OSMESA_SOFTWARE", false))
++      return NULL;
++   fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
++   if (fd < 0)
++      return NULL;
++   driParseOptionInfo(&info, freedreno_options, ARRAY_SIZE(freedreno_options));
++   driParseConfigFiles(&cache, &info, 0, "msm", NULL, NULL, NULL, 0, NULL, 0);
++   config.options = &cache;
++   config.options_info = &info;
++   screen = fd_drm_screen_create_renderonly(fd, NULL, &config);
++   if (screen)
++      gpu_fd = fd;
++   return screen ? debug_screen_wrap(screen) : NULL;
++}
++#endif
++
++
++struct pipe_resource *
++osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface);
++
++/*
++ * The memory of an IOSurface as a texture, to draw into and to draw with (Darwin on redwood):
++ * the kernel's GPU driver makes a buffer of the surface. NULL: the screen is not the GPU's, or
++ * the surface is not one plane of 32-bit pixels, blue first, in rows the GPU can address.
++ */
++struct pipe_resource *
++osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface)
++{
++#ifdef GALLIUM_FREEDRENO
++   struct redwood_drm_surface s = { .surface = surface };
++   struct pipe_resource templ = {
++      .target = PIPE_TEXTURE_2D,
++      .format = PIPE_FORMAT_B8G8R8A8_UNORM,
++      .depth0 = 1,
++      .array_size = 1,
++      .bind = PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_RENDER_TARGET,
++   };
++   struct winsys_handle handle = { .type = WINSYS_HANDLE_TYPE_FD };
++
++   if (gpu_fd < 0 || redwood_drm_surface(gpu_fd, &s) != 0)
++      return NULL;
++   if (s.pixel_format != 0x42475241 /* 'BGRA' */ || s.planes != 0)
++      return NULL;
++   /* (the surface comes in as Linux's buffers come in by file descriptor: see redwood-drm) */
++   templ.width0 = s.width;
++   templ.height0 = s.height;
++   handle.handle = surface;
++   handle.stride = s.row_bytes;
++   handle.offset = s.offset;
++   handle.size = s.size;
++   return screen->resource_from_handle(screen, &templ, &handle, 0);
++#else
++   return NULL;
++#endif
++}
++
+ 
+ struct pipe_screen *
+ osmesa_create_screen(void);
+@@ -37,6 +118,12 @@
+    struct sw_winsys *winsys;
+    struct pipe_screen *screen;
+ 
++#ifdef GALLIUM_FREEDRENO
++   screen = osmesa_create_gpu_screen();
++   if (screen)
++      return screen;
++#endif
++
+    /* We use a null software winsys since we always just render to ordinary
+     * driver resources.
+     */

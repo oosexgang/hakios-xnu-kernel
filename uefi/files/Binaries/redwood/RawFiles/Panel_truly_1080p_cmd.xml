@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PanelName>NT35695b</PanelName>
+<PanelDescription>Truly FHD Command Mode Panel (1080x1920 24bpp)</PanelDescription>
+<Group id="Active Timing">
+ <HorizontalActive>1080</HorizontalActive>
+ <HorizontalFrontPorch>120</HorizontalFrontPorch>
+ <HorizontalBackPorch>60</HorizontalBackPorch>
+ <HorizontalSyncPulse>12</HorizontalSyncPulse>
+ <HorizontalSyncSkew>0</HorizontalSyncSkew>
+ <HorizontalLeftBorder>0</HorizontalLeftBorder>
+ <HorizontalRightBorder>0</HorizontalRightBorder>
+ <VerticalActive>1920</VerticalActive>
+ <VerticalFrontPorch>12</VerticalFrontPorch>
+ <VerticalBackPorch>2</VerticalBackPorch>
+ <VerticalSyncPulse>2</VerticalSyncPulse>
+ <VerticalSyncSkew>0</VerticalSyncSkew>
+ <VerticalTopBorder>0</VerticalTopBorder>
+ <VerticalBottomBorder>0</VerticalBottomBorder>
+ <InvertDataPolarity>False</InvertDataPolarity>
+ <InvertVsyncPolairty>False</InvertVsyncPolairty>
+ <InvertHsyncPolarity>False</InvertHsyncPolarity>
+ <BorderColor>0x0</BorderColor>
+</Group>
+<Group id="Display Interface">
+ <InterfaceType>9</InterfaceType>
+ <InterfaceColorFormat>3</InterfaceColorFormat>
+</Group>
+<Group id="DSI Interface">
+ <DSIChannelId>2</DSIChannelId>
+ <DSIVirtualId>0</DSIVirtualId>
+ <DSIColorFormat>36</DSIColorFormat>
+ <DSITrafficMode>1</DSITrafficMode>
+ <DSILanes>4</DSILanes>
+ <DSIRefreshRate>0x3C0000</DSIRefreshRate>
+ <DSICmdSwapInterface>False</DSICmdSwapInterface>
+ <DSICmdUsingTrigger>False</DSICmdUsingTrigger>
+ <DSIEnableAutoRefresh>True</DSIEnableAutoRefresh>
+ <DSIAutoRefreshFrameNumDiv>2</DSIAutoRefreshFrameNumDiv>
+ <DSITECheckEnable>True</DSITECheckEnable>
+ <DSITEUsingDedicatedTEPin>True</DSITEUsingDedicatedTEPin>
+ <DSITEvSyncStartPos>1920</DSITEvSyncStartPos>
+ <DSITEvSyncInitVal>1920</DSITEvSyncInitVal>
+ <DSICmdModePixelAlignment>1</DSICmdModePixelAlignment>
+ <DSITimingMargin>1</DSITimingMargin>
+ <DSIControllerMapping>
+  00
+ </DSIControllerMapping>
+</Group>
+<DSIInitSequence>
+ 15 ff 20
+ 15 fb 01
+ 15 00 01
+ 15 01 55
+ 15 02 45
+ 15 03 55
+ 15 05 50
+ 15 06 a8
+ 15 07 ad
+ 15 08 0c
+ 15 0b aa
+ 15 0c aa
+ 15 0e b0
+ 15 0f b3
+ 15 11 28
+ 15 12 10
+ 15 13 01
+ 15 14 4a
+ 15 15 12
+ 15 16 12
+ 15 30 01
+ 15 72 11
+ 15 58 82
+ 15 59 00
+ 15 5a 02
+ 15 5b 00
+ 15 5c 82
+ 15 5d 80
+ 15 5e 02
+ 15 5f 00
+ 15 ff 24
+ 15 fb 01
+ 15 00 01
+ 15 01 0b
+ 15 02 0c
+ 15 03 89
+ 15 04 8a
+ 15 05 0f
+ 15 06 10
+ 15 07 10
+ 15 08 1c
+ 15 09 00
+ 15 0a 00
+ 15 0b 00
+ 15 0c 00
+ 15 0d 13
+ 15 0e 15
+ 15 0f 17
+ 15 10 01
+ 15 11 0b
+ 15 12 0c
+ 15 13 89
+ 15 14 8a
+ 15 15 0f
+ 15 16 10
+ 15 17 10
+ 15 18 1c
+ 15 19 00
+ 15 1a 00
+ 15 1b 00
+ 15 1c 00
+ 15 1d 13
+ 15 1e 15
+ 15 1f 17
+ 15 20 00
+ 15 21 01
+ 15 22 00
+ 15 23 40
+ 15 24 40
+ 15 25 6d
+ 15 26 40
+ 15 27 40
+ 15 29 d8
+ 15 2a 2a
+ 15 4b 03
+ 15 4c 11
+ 15 4d 10
+ 15 4e 01
+ 15 4f 01
+ 15 50 10
+ 15 51 00
+ 15 52 80
+ 15 53 00
+ 15 54 07
+ 15 55 25
+ 15 56 00
+ 15 58 07
+ 15 5b 43
+ 15 5c 00
+ 15 5f 73
+ 15 60 73
+ 15 63 22
+ 15 64 00
+ 15 67 08
+ 15 68 04
+ 15 7a 80
+ 15 7b 91
+ 15 7c d8
+ 15 7d 60
+ 15 93 06
+ 15 94 06
+ 15 8a 00
+ 15 9b 0f
+ 15 b3 c0
+ 15 b4 00
+ 15 b5 00
+ 15 b6 21
+ 15 b7 22
+ 15 b8 07
+ 15 b9 07
+ 15 ba 22
+ 15 bd 20
+ 15 be 07
+ 15 bf 07
+ 15 c1 6d
+ 15 c4 24
+ 15 e3 00
+ 15 ec 00
+ 15 ff 10
+ 15 bb 10
+ 15 35 00
+ 05 11 00
+ ff 78
+ 05 29 00
+ ff 78
+</DSIInitSequence>
+<DSITermSequence>
+ 05 28
+ 05 10
+</DSITermSequence>
+<TLMMGPIODefaultLow>0x1A</TLMMGPIODefaultLow>
+<Group id='Backlight Configuration'>
+ <BacklightType>1</BacklightType>
+ <BacklightPmicControlType>2</BacklightPmicControlType>
+ <DisplayResetInfo>0 10 1000 10000 0</DisplayResetInfo>
+</Group>
+

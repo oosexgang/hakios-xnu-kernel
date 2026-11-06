@@ -1,0 +1,12 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Settings > Battery and its usage pages (with adsp=1): opened, left 15 s for its data, scrolled down to the usage
+# charts, then Battery Health & Charging; for a screen recording and the logs of Settings and of the power log, and
+# at the end what the power log has collected (battery_test powerlog).
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 20
+/redwood/bin/battery_test open prefs:root=BATTERY_USAGE
+/redwood/bin/rwtouch wait 15 drag 0.5 0.85 0.5 0.35 1500 400 wait 4 drag 0.5 0.85 0.5 0.35 1500 400 wait 6
+/redwood/bin/battery_test open prefs:root=BATTERY_USAGE&path=BATTERY_HEALTH
+/redwood/bin/rwtouch wait 10
+/bin/ps -A
+/redwood/bin/battery_test powerlog

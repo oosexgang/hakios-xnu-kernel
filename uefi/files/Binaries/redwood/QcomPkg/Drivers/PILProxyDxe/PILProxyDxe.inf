@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = PILProxyDxe
+  FILE_GUID                      = 8CF9C920-D5E6-4DAC-BEF9-6E6A4EEC7ADD
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|PILProxyDxe.depex|*
+  PE32|PILProxyDxe.efi|*
+
+[Depex]
+  TRUE

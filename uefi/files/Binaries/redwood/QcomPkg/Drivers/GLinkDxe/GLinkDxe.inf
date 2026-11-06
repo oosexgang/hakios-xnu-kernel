@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = GlinkDxe
+  FILE_GUID                      = 7942A7EB-B7D5-4E2E-B908-831E4DE55B58
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|GLinkDxe.depex|*
+  PE32|GLinkDxe.efi|*
+
+[Depex]
+  TRUE

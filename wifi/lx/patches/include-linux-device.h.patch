@@ -1,0 +1,18 @@
+--- a/sys/compat/linuxkpi/common/include/linux/device.h
++++ b/sys/compat/linuxkpi/common/include/linux/device.h
+@@ -90,6 +90,7 @@
+ struct device_driver {
+ 	const char	*name;
+ 	const struct dev_pm_ops *pm;
++	const struct of_device_id *of_match_table;
+ 
+ 	void (*shutdown) (struct device *);
+ 	void (*coredump) (struct device *);
+@@ -125,6 +126,7 @@
+ 	unsigned int	irq_end;
+ 	const struct attribute_group **groups;
+ 	struct fwnode_handle *fwnode;
++	struct device_node *of_node;	/* the device's node of the device tree */
+ 	struct cdev	*backlight_dev;
+ 	struct backlight_device	*bd;
+ 

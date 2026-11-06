@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = UsbKbDxe
+  FILE_GUID                      = 2D2E62CF-9ECF-43B7-8219-94E7FC713DFE
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|UsbKbDxe.efi|*

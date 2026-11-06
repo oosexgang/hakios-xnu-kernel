@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = QcomChargerApp
+  FILE_GUID                      = EEE9C2B1-16CA-4F34-87EA-2E6D1E160CC4
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|QcomChargerApp.efi|*

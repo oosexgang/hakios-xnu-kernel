@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The home screen in edit mode (RC_JOBS=rc.jobs.jiggle, gpu=1): a long press on an empty place makes
+# the icons jiggle and puts the translucent minus on each of them. Then SpringBoard writes down the
+# layers it has on the screen (com.redwood.layers, see inject_sb.c), which names the badge's views.
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 8
+/redwood/bin/rwtouch hold 0.5 0.62 2000
+/redwood/bin/rwtouch wait 6 notify com.redwood.layers wait 10

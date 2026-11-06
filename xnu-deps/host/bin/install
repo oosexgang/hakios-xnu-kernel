@@ -1,0 +1,4 @@
+#!/bin/bash
+# BSD-style install wrapper: drop the BSD-only -S (safe copy) flag
+args=(); for a in "$@"; do [ "$a" = "-S" ] || args+=("$a"); done
+exec /usr/bin/install "${args[@]}"

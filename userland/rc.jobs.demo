@@ -1,0 +1,9 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+/redwood/bin/hello_dyn started by launchd
+/redwood/bin/svc_test
+/redwood/bin/surf_test
+/bin/ps -A
+# A tour for the screen recording (xl run with rec_secs=...): unlock, Settings > General > About, home;
+# the Clock's stopwatch, home; the Calendar, home.
+/redwood/bin/rwtouch wait 26 swipe 0.5 0.985 0.5 0.3 200 wait 4 tap 0.615 0.71 wait 5 tap 0.3 0.795 wait 4 tap 0.15 0.18 wait 5 swipe 0.5 0.995 0.5 0.55 150
+/redwood/bin/rwtouch wait 7 tap 0.615 0.475 wait 6 tap 0.625 0.925 wait 3 tap 0.845 0.514 wait 7 swipe 0.5 0.995 0.5 0.55 150 wait 5 tap 0.385 0.36 wait 6 button home

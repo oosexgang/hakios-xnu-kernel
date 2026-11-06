@@ -1,0 +1,350 @@
+--- a/src/gallium/drivers/panfrost/pan_shader.c
++++ b/src/gallium/drivers/panfrost/pan_shader.c
+@@ -36,6 +36,9 @@
+ #include "nir_serialize.h"
+ #include "pan_bo.h"
+ #include "pan_context.h"
++#include "util/os_time.h"
++#include <string.h>
++#include <sys/sysctl.h>
+ 
+ static struct panfrost_uncompiled_shader *
+ panfrost_alloc_shader(const nir_shader *nir)
+@@ -202,6 +203,23 @@
+     * we can relax this. */
+    assert(s->info.first_ubo_is_default_ubo);
+    inputs.pushable_ubos = BITFIELD_BIT(0);
++#ifdef __APPLE__
++   /* redwood: every UBO -- the Metal driver binds them all as user buffers (air_metal.c), which
++    * is what panfrost_emit_const_buf reads push words from */
++   {
++      /* boot-arg pushubo=0: only the default UBO pushed, as upstream, for telling what this changes */
++      static int off = -1;
++
++      if (off < 0) {
++         char args[1024] = "";
++         size_t n = sizeof(args) - 1;
++
++         off = sysctlbyname("kern.bootargs", args, &n, NULL, 0) == 0 && strstr(args, "pushubo=0") != NULL;
++      }
++      if (!off)
++         inputs.pushable_ubos = ~0u;
++   }
++#endif
+ 
+    if (out->sysvals.sysval_count != 0) {
+       unsigned sysval_ubo = s->info.num_ubos - 1;
+@@ -364,9 +370,15 @@
+       .key = *key,
+       .stream_output = uncompiled->stream_output,
+    };
++
++   /* Darwin on redwood: variants compiled while drawing (rwa_submit_profile) */
++   extern uint64_t redwood_pan_variant_compiles, redwood_pan_variant_ns;
++   int64_t redwood_began = os_time_get_nano();
+ 
+    panfrost_shader_get(ctx->base.screen, &ctx->shaders, &ctx->descs, uncompiled,
+                        &ctx->base.debug, prog, 0);
++   redwood_pan_variant_compiles++;
++   redwood_pan_variant_ns += os_time_get_nano() - redwood_began;
+ 
+    prog->earlyzs = pan_earlyzs_analyze(&prog->info);
+ 
+--- a/src/gallium/drivers/panfrost/pan_cmdstream.c
++++ b/src/gallium/drivers/panfrost/pan_cmdstream.c
+@@ -1501,10 +1501,20 @@
+          mapped_ubo = sysvals;
+       } else {
+          struct pipe_constant_buffer *cb = &buf->cb[src.ubo];
++#ifdef __APPLE__
++         /* redwood: any UBO is pushed (pan_shader.c); a resource's own mapping where it is not a
++          * user buffer */
++         if (cb->buffer != NULL) {
++            struct panfrost_resource *rsrc = pan_resource(cb->buffer);
++
++            mapped_ubo = rsrc->bo != NULL && rsrc->bo->ptr.cpu != NULL
++                            ? (const uint8_t *)rsrc->bo->ptr.cpu + cb->buffer_offset : NULL;
++         } else
++#else
+          assert(!cb->buffer && cb->user_buffer &&
+                 "only user buffers use this path");
+-
+-         mapped_ubo = cb->user_buffer + cb->buffer_offset;
++#endif
++         mapped_ubo = cb->user_buffer ? (const uint8_t *)cb->user_buffer + cb->buffer_offset : NULL;
+       }
+ 
+       if (!mapped_ubo)
+--- a/src/panfrost/compiler/bifrost_compile.c
++++ b/src/panfrost/compiler/bifrost_compile.c
+@@ -5849,9 +5849,209 @@
+       return false;
+ 
+    /* Otherwise, IDVS is usually better */
++   return true;
++}
++
++#ifdef __APPLE__
++/*
++ * redwood: a 16-bit UBO load at a constant offset as the 32-bit words around it. bi_opt_push_ubo pushes
++ * a uniform into the shader's own registers only as a word at a multiple of 4, and leaves any other a
++ * load from memory for every pixel. Metal's half-precision shaders keep their uniforms in halves:
++ * CoreAnimation's harmony_lph had nine such loads a pixel, its display passes 10 to 17 memory messages
++ * in all, 12 to 17 ms of the Mali a full-screen pass (26 October).
++ */
++static bool
++redwood_widen_ubo16(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   (void)data;
++   if (intr->intrinsic != nir_intrinsic_load_ubo || intr->def.bit_size != 16 ||
++       !nir_src_is_const(intr->src[1]))
++      return false;
++
++   uint32_t at = nir_src_as_uint(intr->src[1]);
++   unsigned comps = intr->def.num_components;
++   uint32_t first = at & ~3u, words = ((at & 3u) + 2 * comps + 3) / 4;
++
++   if (words > 4)
++      return false;
++   b->cursor = nir_before_instr(&intr->instr);
++   nir_def *w = nir_load_ubo(b, words, 32, intr->src[0].ssa, nir_imm_int(b, first),
++                             .align_mul = 4, .align_offset = 0, .range_base = 0,
++                             .range = nir_intrinsic_range(intr));
++   nir_def *halves[NIR_MAX_VEC_COMPONENTS];
++
++   for (unsigned i = 0; i < comps; i++) {
++      unsigned byte = (at & 3u) + 2 * i;
++      nir_def *word = nir_channel(b, w, byte / 4);
++
++      /* (a shift and a truncation: the unpack_32_2x16 opcodes are lowered by now, and the backend has none) */
++      halves[i] = nir_u2u16(b, (byte & 2) ? nir_ushr_imm(b, word, 16) : word);
++   }
++   nir_def_replace(&intr->def, nir_vec(b, halves, comps));
+    return true;
++}
++#endif
++
++
++#ifdef __APPLE__
++#include <sys/sysctl.h>
++
++/*
++ * redwood: a shader's private memory into registers. The AIR frontend gives a Metal function's local
++ * arrays scratch memory, and CoreAnimation's passes loaded and stored it up to 17 times a pixel -- a
++ * full-screen pass of 12 ms on this Mali (26 October). Where every access is of one width and the
++ * array is small, it becomes an array variable indexed by offset / width; nir_lower_indirect_derefs
++ * turns a computed index into a choice among registers, and nir_lower_vars_to_ssa does the rest.
++ */
++#define REDWOOD_SCRATCH_MAX 64          /* elements: beyond this a choice costs more than memory */
++
++/* bits [shift, shift + width) of a 32-bit word, as a value `width` bits wide */
++static nir_def *
++redwood_word_part(nir_builder *b, nir_def *word, unsigned shift, unsigned width)
++{
++   nir_def *v = shift ? nir_ushr_imm(b, word, shift) : word;
++
++   return width == 32 ? v : nir_u2uN(b, v, width);
+ }
+ 
++static bool
++redwood_scratch_to_regs(nir_shader *nir)
++{
++   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
++   unsigned widths = 0;
++   bool computed = false;
++   const char *why = NULL;
++   char line[160];
++
++   if (nir->scratch_size == 0 || impl == NULL)
++      return false;
++   {
++      /* boot-arg scratchregs=0: left in memory, for telling what this pass changes */
++      static int off = -1;
++
++      if (off < 0) {
++         char args[1024] = "";
++         size_t n = sizeof(args) - 1;
++
++         off = sysctlbyname("kern.bootargs", args, &n, NULL, 0) == 0 && strstr(args, "scratchregs=0") != NULL;
++      }
++      if (off)
++         return false;
++   }
++   nir_foreach_block(block, impl) {
++      nir_foreach_instr(instr, block) {
++         if (instr->type != nir_instr_type_intrinsic)
++            continue;
++         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++         bool load = intr->intrinsic == nir_intrinsic_load_scratch;
++
++         if (!load && intr->intrinsic != nir_intrinsic_store_scratch)
++            continue;
++         unsigned w = load ? intr->def.bit_size : nir_src_bit_size(intr->src[0]);
++         nir_src *off = &intr->src[load ? 0 : 1];
++
++         if (w != 8 && w != 16 && w != 32)
++            why = "an access of 1 or 64 bits";
++         else if (nir_src_is_const(*off) && nir_src_as_uint(*off) % (w / 8) != 0)
++            why = "an access not aligned to its width";
++         widths |= w;
++         computed |= !nir_src_is_const(*off);
++      }
++   }
++   /*
++    * Words of 32 bits, always: narrower accesses are parts of a word, taken out with a shift and put in
++    * with a mask -- the backend has no proper 8-bit arithmetic, and an array of bytes in registers was
++    * the frame drawn wrong (26 October: icons as thin strips). A computed index needs one width of 32.
++    */
++   unsigned words = DIV_ROUND_UP(nir->scratch_size, 4);
++
++   if (why == NULL && computed && (widths != 32 || words > REDWOOD_SCRATCH_MAX))
++      why = "a computed index into an array of mixed widths or a large one";
++   snprintf(line, sizeof(line), "!rwm scratch %s: %u bytes, widths %#x, %s", nir->info.name ? nir->info.name : "?",
++            nir->scratch_size, widths, why ? why : "into registers");
++   sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
++   if (why != NULL || widths == 0)
++      return false;
++
++   nir_variable *var = nir_local_variable_create(impl, glsl_array_type(glsl_uint_type(), words, 4), "redwood_scratch");
++   nir_builder b = nir_builder_create(impl);
++
++   nir_foreach_block(block, impl) {
++      nir_foreach_instr_safe(instr, block) {
++         if (instr->type != nir_instr_type_intrinsic)
++            continue;
++         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++         bool load = intr->intrinsic == nir_intrinsic_load_scratch;
++
++         if (!load && intr->intrinsic != nir_intrinsic_store_scratch)
++            continue;
++         b.cursor = nir_before_instr(instr);
++         unsigned w = load ? intr->def.bit_size : nir_src_bit_size(intr->src[0]);
++         nir_src *off = &intr->src[load ? 0 : 1];
++         nir_deref_instr *arr = nir_build_deref_var(&b, var);
++
++         if (!nir_src_is_const(*off)) {
++            /* (32 bits wide, every access: checked above) */
++            nir_def *first = nir_ushr_imm(&b, off->ssa, 2);
++
++            if (load) {
++               nir_def *c[NIR_MAX_VEC_COMPONENTS];
++
++               for (unsigned i = 0; i < intr->def.num_components; i++)
++                  c[i] = nir_load_deref(&b, nir_build_deref_array(&b, arr, nir_iadd_imm(&b, first, i)));
++               nir_def_replace(&intr->def, nir_vec(&b, c, intr->def.num_components));
++            } else {
++               for (unsigned i = 0; i < intr->src[0].ssa->num_components; i++) {
++                  if (nir_intrinsic_write_mask(intr) & (1u << i))
++                     nir_store_deref(&b, nir_build_deref_array(&b, arr, nir_iadd_imm(&b, first, i)),
++                                     nir_channel(&b, intr->src[0].ssa, i), 1);
++               }
++               nir_instr_remove(instr);
++            }
++            continue;
++         }
++
++         unsigned at = nir_src_as_uint(*off);
++
++         if (load) {
++            nir_def *c[NIR_MAX_VEC_COMPONENTS];
++
++            for (unsigned i = 0; i < intr->def.num_components; i++) {
++               unsigned byte = at + i * (w / 8);
++
++               c[i] = byte / 4 < words
++                         ? redwood_word_part(&b, nir_load_deref(&b, nir_build_deref_array_imm(&b, arr, byte / 4)),
++                                             (byte % 4) * 8, w)
++                         : nir_imm_intN_t(&b, 0, w);
++            }
++            nir_def_replace(&intr->def, nir_vec(&b, c, intr->def.num_components));
++         } else {
++            for (unsigned i = 0; i < intr->src[0].ssa->num_components; i++) {
++               unsigned byte = at + i * (w / 8), shift = (byte % 4) * 8;
++
++               if (!(nir_intrinsic_write_mask(intr) & (1u << i)) || byte / 4 >= words)
++                  continue;
++               nir_deref_instr *slot = nir_build_deref_array_imm(&b, arr, byte / 4);
++               nir_def *v = nir_u2u32(&b, nir_channel(&b, intr->src[0].ssa, i));
++
++               if (w < 32) {
++                  uint32_t mask = ((1u << w) - 1) << shift;
++                  nir_def *old = nir_load_deref(&b, slot);
++
++                  v = nir_ior(&b, nir_iand_imm(&b, old, ~mask), nir_ishl_imm(&b, nir_iand_imm(&b, v, (1u << w) - 1), shift));
++               }
++               nir_store_deref(&b, slot, v, 1);
++            }
++            nir_instr_remove(instr);
++         }
++      }
++   }
++   nir_metadata_preserve(impl, nir_metadata_none);
++   nir->scratch_size = 0;
++   return true;
++}
++#endif
++
+ void
+ bifrost_compile_shader_nir(nir_shader *nir,
+                            const struct panfrost_compile_inputs *inputs,
+@@ -5866,7 +6066,34 @@
+    NIR_PASS(_, nir, pan_nir_lower_zs_store);
+ 
+    bi_optimize_nir(nir, inputs->gpu_id, inputs->is_blend);
++#ifdef __APPLE__
++   {
++      bool widened = false;
+ 
++      /* boot-arg widen16=0: the 16-bit UBO loads left as they are, for telling what this changes */
++      static int no_widen = -1;
++
++      if (no_widen < 0) {
++         char args[1024] = "";
++         size_t n = sizeof(args) - 1;
++
++         no_widen = sysctlbyname("kern.bootargs", args, &n, NULL, 0) == 0 && strstr(args, "widen16=0") != NULL;
++      }
++      if (!no_widen)
++         NIR_PASS(widened, nir, nir_shader_intrinsics_pass, redwood_widen_ubo16, nir_metadata_control_flow, NULL);
++      if (widened) {
++         NIR_PASS(_, nir, nir_opt_cse);
++         NIR_PASS(_, nir, nir_opt_dce);
++      }
++      if (redwood_scratch_to_regs(nir)) {
++         NIR_PASS(_, nir, nir_lower_indirect_derefs, nir_var_function_temp, REDWOOD_SCRATCH_MAX);
++         NIR_PASS(_, nir, nir_split_array_vars, nir_var_function_temp);
++         NIR_PASS(_, nir, nir_lower_vars_to_ssa);
++         bi_optimize_nir(nir, inputs->gpu_id, inputs->is_blend);
++      }
++   }
++#endif
++
+    info->tls_size = nir->scratch_size;
+    info->vs.idvs = bi_should_idvs(nir, inputs);
+ 
+--- a/src/gallium/drivers/panfrost/pan_job.c
++++ b/src/gallium/drivers/panfrost/pan_job.c
+@@ -718,6 +718,7 @@
+ }
+ 
+ uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles;
++uint64_t redwood_pan_variant_compiles, redwood_pan_variant_ns;
+ 
+ /* Submit all batches */
+ 
+--- a/src/gallium/drivers/panfrost/pan_resource.c
++++ b/src/gallium/drivers/panfrost/pan_resource.c
+@@ -530,6 +530,13 @@
+     * size of the writeback buffer, so don't checksum formats
+     * that use too much space. */
+ 
++#ifdef __APPLE__
++   /* redwood: no transaction elimination. A tile is not written back when its checksum matches
++    * the one kept from this resource's last render, and the memory of an IOSurface changes behind
++    * that resource -- other textures over the same surface, copies, the processor -- so tiles of
++    * an older frame stayed on the screen: the rectangles of the user's video (27 October). */
++   return false;
++#endif
+    unsigned bytes_per_pixel_max = (dev->arch == 6) ? 6 : 4;
+ 
+    unsigned bytes_per_pixel = MAX2(pres->base.nr_samples, 1) *

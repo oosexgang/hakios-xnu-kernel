@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ArmTimerDxe
+  FILE_GUID                      = 49EA041E-6752-42CA-B0B1-7344FE2546B7
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|TimerDxe.depex|*
+  PE32|TimerDxe.efi|*
+
+[Depex]
+  TRUE

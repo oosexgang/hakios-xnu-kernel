@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.redwood.varstore</string>
+	<!-- with var_store=1 among the kernel's arguments: stays for the run and writes /private/var into
+	     the flash when the kernel says the run is ending (src/var_store.c, watch); without, it ends at
+	     once. An argument after "watch" is seconds between saves of its own accord as well; there is
+	     none by default, because each one costs seconds of the run and a hundred-odd megabytes. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/redwood/bin/var_store</string>
+		<string>watch</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>

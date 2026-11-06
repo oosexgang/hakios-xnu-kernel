@@ -1,0 +1,22 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Boot 1 of the series of rc.jobs.persist5, which is this list with its two minutes of quiet in
+# place of the three lines below: an icon of the home screen picked up and carried to the right
+# (a long press and then a drag, all of it one touch -- rwtouch drag ... GRAB), then home. Whether
+# it stays there is what the later boots' hash of IconState.plist says; ./xl screenshot during the
+# run shows it.
+/redwood/bin/var_store show
+/redwood/bin/vol_ls fs /private/var
+/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
+/redwood/bin/keychain_test keep
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls hash /private/var/mobile/Library/SpringBoard/IconState.plist
+/redwood/bin/vol_ls ls /private/var/mobile/Containers/Data/Application
+/redwood/bin/vol_ls ls /private/var/mobile/Containers/Shared/AppGroup
+/redwood/bin/var_store stamp /private/var/redwood-stamp
+/redwood/bin/rwtouch wait 55 drag 0.151 0.358 0.847 0.710 900 700 900
+/redwood/bin/rwtouch wait 3 button home
+sleep 55
+/bin/ps -A
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls hash /private/var/mobile/Library/SpringBoard/IconState.plist
+/redwood/bin/keychain_test read

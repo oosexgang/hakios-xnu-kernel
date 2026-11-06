@@ -1,0 +1,49 @@
+The Metal driver's library inside libOSMesa, on the Mali (Darwin, panfrost).
+
+src/compiler/air/air_metal.c is libredwoodair on the Adreno (tools/mesa/air-metal.patch). On the
+Infinix it is built into libOSMesa instead, which already has Gallium and panfrost: a second
+copy would not fit boot_a. Applied after panfrost-darwin.patch, whose lines it extends.
+
+--- a/src/gallium/targets/osmesa/meson.build
++++ b/src/gallium/targets/osmesa/meson.build
+@@ -22,16 +22,29 @@
+   command : gen_vs_module_defs_normal_command,
+ )
+ 
++# Darwin on redwood, the Mali: the Metal driver's library (src/compiler/air/air_metal.c,
++# libredwoodair on the Adreno) goes into this one, which has Gallium and panfrost already.
++# A second copy of both would not fit the boot partition the port travels in; the Metal
++# driver dlopens libredwoodair.dylib, which on the Mali is a link to this library.
++osmesa_air_sources = []
++osmesa_air_deps = []
++osmesa_air_includes = []
++if host_machine.system() == 'darwin' and with_gallium_panfrost
++  osmesa_air_sources += files('../../../compiler/air/air_metal.c')
++  osmesa_air_deps += idep_air
++  osmesa_air_includes += [inc_mapi, inc_mesa, inc_gallium_winsys_sw]
++endif
++
+ libosmesa = shared_library(
+   osmesa_lib_name,
+-  'osmesa_target.c',
++  ['osmesa_target.c'] + osmesa_air_sources,
+   gnu_symbol_visibility : 'hidden',
+   link_args : [ld_args_gc_sections, osmesa_link_args],
+   vs_module_defs : osmesa_def,
+   include_directories : [
+     inc_include, inc_src, inc_gallium, inc_gallium_aux, inc_gallium_winsys,
+     inc_gallium_drivers,
+-  ],
++  ] + osmesa_air_includes,
+   link_depends : osmesa_link_deps,
+   link_whole : [libosmesa_st, libglapi_static],
+   link_with : [
+@@ -40,7 +53,7 @@
+   dependencies : [
+     dep_ws2_32, dep_thread, dep_clock, dep_unwind, driver_swrast, idep_mesautil,
+     driver_freedreno, driver_panfrost, idep_xmlconfig, dep_libdrm,
+-  ],
++  ] + osmesa_air_deps,
+   name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
+   soversion : host_machine.system() == 'windows' ? '' : '8',
+   version : '8.0.0',

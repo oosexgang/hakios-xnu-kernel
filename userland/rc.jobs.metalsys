@@ -1,0 +1,8 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Metal in the running system (METAL=1 RC=rc.launchd.metal, boot-arg metal=1): once SpringBoard is up,
+# what MTLCreateSystemDefaultDevice() hands an ordinary program (src/metal_test.m), then Apple's shaders
+# drawn through the driver as Metal's discovery loads it (--bundle) and put on the panel for 20 s.
+# backboardd keeps OpenGL ES the whole time (src/inject.c, window_server_keeps_opengl_es).
+/redwood/bin/rwtouch wait 30
+/redwood/bin/tolog /redwood/bin/metal_test
+/redwood/bin/tolog /redwood/bin/metal_drv_test --bundle --picture 20 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

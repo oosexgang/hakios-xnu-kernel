@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = PlatformInfoDxeDriver
+  FILE_GUID                      = B105211B-BBBD-4ADD-A3B0-D1CF4A52154C
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|PlatformInfoDxe.depex|*
+  PE32|PlatformInfoDxe.efi|*
+
+[Depex]
+  TRUE

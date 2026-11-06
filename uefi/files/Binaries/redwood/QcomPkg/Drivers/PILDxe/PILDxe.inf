@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = PILDxe
+  FILE_GUID                      = 1D317734-4083-47C6-83EA-E3A42F2A6BFF
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|PILDxe.depex|*
+  PE32|PILDxe.efi|*
+
+[Depex]
+  TRUE

@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PanelName>NT36860</PanelName>
+<PanelDescription>NT36860 Single DSI CPhy DSC Video Mode Panel (1440x2560 24bpp)</PanelDescription>
+<Group id="Active Timing">
+ <HorizontalActive>1440</HorizontalActive>
+ <HorizontalFrontPorch>152</HorizontalFrontPorch>
+ <HorizontalBackPorch>32</HorizontalBackPorch>
+ <HorizontalSyncPulse>16</HorizontalSyncPulse>
+ <HorizontalSyncSkew>0</HorizontalSyncSkew>
+ <HorizontalLeftBorder>0</HorizontalLeftBorder>
+ <HorizontalRightBorder>0</HorizontalRightBorder>
+ <VerticalActive>2560</VerticalActive>
+ <VerticalFrontPorch>10</VerticalFrontPorch>
+ <VerticalBackPorch>9</VerticalBackPorch>
+ <VerticalSyncPulse>1</VerticalSyncPulse>
+ <VerticalSyncSkew>0</VerticalSyncSkew>
+ <VerticalTopBorder>0</VerticalTopBorder>
+ <VerticalBottomBorder>0</VerticalBottomBorder>
+ <InvertDataPolarity>False</InvertDataPolarity>
+ <InvertVsyncPolairty>False</InvertVsyncPolairty>
+ <InvertHsyncPolarity>False</InvertHsyncPolarity>
+ <BorderColor>0x0</BorderColor>
+</Group>
+<Group id="Display Interface">
+ <InterfaceType>8</InterfaceType>
+ <InterfaceColorFormat>3</InterfaceColorFormat>
+</Group>
+<Group id="DSI Interface">
+ <DSIChannelId>1</DSIChannelId>
+ <DSIVirtualId>0</DSIVirtualId>
+ <DSIColorFormat>36</DSIColorFormat>
+ <DSITrafficMode>1</DSITrafficMode>
+ <DSICPhyMode>True</DSICPhyMode>
+ <DSIDSCEnable>True</DSIDSCEnable>
+ <DSIDSCMajor>1</DSIDSCMajor>
+ <DSIDSCMinor>1</DSIDSCMinor>
+ <DSIDSCScr>0</DSIDSCScr>
+ <DSIDSCProfileID>7</DSIDSCProfileID>
+ <DSIDSCSliceWidth>720</DSIDSCSliceWidth>
+ <DSIDSCSliceHeight>32</DSIDSCSliceHeight>
+ <DSILanes>3</DSILanes>
+   <DSIHsaHseAfterVsVe>False</DSIHsaHseAfterVsVe>
+   <DSILowPowerModeInHFP>False</DSILowPowerModeInHFP>
+   <DSILowPowerModeInHBP>False</DSILowPowerModeInHBP>
+   <DSILowPowerModeInHSA>False</DSILowPowerModeInHSA>
+   <DSILowPowerModeInBLLPEOF>True</DSILowPowerModeInBLLPEOF>
+   <DSILowPowerModeInBLLP>True</DSILowPowerModeInBLLP>
+   <DSIRefreshRate>0x390000</DSIRefreshRate>
+ <DSICmdUsingTrigger>False</DSICmdUsingTrigger>
+ <DSIEnableAutoRefresh>True</DSIEnableAutoRefresh>
+ <DSIAutoRefreshFrameNumDiv>1</DSIAutoRefreshFrameNumDiv>
+ <DSIControllerMapping>
+  00
+ </DSIControllerMapping>
+ <DSITimingHSZeroOverride>True</DSITimingHSZeroOverride>
+ <DSITimingHSZeroValue>47</DSITimingHSZeroValue>
+ <DSITimingHSTrailOverride>True</DSITimingHSTrailOverride>
+ <DSITimingHSTrailValue>31</DSITimingHSTrailValue>
+</Group>
+<DSIInitSequence>
+ 15 ff d0
+ 15 fb 01
+ 15 ab 70
+ 15 c0 70
+ 15 c1 31
+ 15 c8 40
+ 15 c9 44
+ 15 ff e0
+ 15 fb 01
+ 15 18 00
+ 15 ae 09
+ 15 53 22
+ 15 ff f0
+ 15 fb 01
+ 15 8d 00
+ 15 ce 0a
+ 15 ff 20
+ 15 fb 01
+ 15 00 01
+ 15 01 55
+ 15 02 45
+ 15 05 40
+ 15 06 19
+ 15 07 23
+ 15 97 73
+ 15 98 73
+ 15 99 73
+ 15 9a 73
+ 15 ff 20
+ 15 fb 01
+ 15 0e b0
+ 15 0f b3
+ 15 11 b8
+ 15 13 00
+ 15 ff 24
+ 15 fb 01
+ 15 19 05
+ 15 1a 01
+ 15 1b 01
+ 15 1c 01
+ 15 1d 68
+ 15 1e 6d
+ 15 1f 01
+ 15 20 68
+ 15 2a 2b
+ 15 2b 02
+ 15 2d 02
+ 15 2f 00
+ 15 30 13
+ 15 31 00
+ 15 32 02
+ 15 33 64
+ 15 35 2d
+ 15 36 08
+ 15 37 02
+ 15 38 64
+ 15 59 c4
+ 15 5a c0
+ 15 5d 05
+ 15 5e 14
+ 15 61 01
+ 15 63 07
+ 15 9c 2a
+ 15 9d 0a
+ 15 9e 45
+ 15 a6 f3
+ 15 b3 00
+ 15 b5 53
+ 15 b6 22
+ 15 b7 06
+ 15 b8 17
+ 15 b9 64
+ 15 bb 03
+ 15 bc 17
+ 15 bd 64
+ 15 bf 02
+ 15 c0 02
+ 15 c3 05
+ 15 c4 00
+ 15 c5 00
+ 15 c6 00
+ 15 c7 f0
+ 15 ca 60
+ 15 cd 5b
+ 15 d1 00
+ 15 d8 00
+ 15 d9 00
+ 15 da 00
+ 15 db 02
+ 15 dc 01
+ 15 dd 0f
+ 15 de 0f
+ 15 df 33
+ 15 e2 30
+ 15 e5 8b
+ 15 eb 10
+ 15 f8 00
+ 15 ff 25
+ 15 fb 01
+ 15 00 00
+ 15 01 03
+ 15 02 05
+ 15 03 00
+ 15 04 00
+ 15 05 0b
+ 15 06 0c
+ 15 07 01
+ 15 08 00
+ 15 09 00
+ 15 0a 00
+ 15 0b 00
+ 15 0c 00
+ 15 0d 17
+ 15 0e 15
+ 15 0f 13
+ 15 12 00
+ 15 13 04
+ 15 14 06
+ 15 15 00
+ 15 16 00
+ 15 17 00
+ 15 18 0f
+ 15 19 01
+ 15 1a 10
+ 15 1b 90
+ 15 1c 00
+ 15 1d 00
+ 15 1e 00
+ 15 1f 17
+ 15 20 15
+ 15 21 13
+ 15 26 34
+ 15 27 12
+ 15 28 21
+ 15 29 44
+ 15 c0 00
+ 15 c2 00
+ 15 c3 6a
+ 15 c6 6a
+ 15 c9 00
+ 15 ca 0a
+ 15 cb 00
+ 15 cc 0a
+ 15 d8 90
+ 15 da 90
+ 15 ff 21
+ 15 fb 01
+ 39 e0 22 04 0a 00 06 08 03 05 0b 01 07 09
+ 15 ff d0
+ 15 fb 01
+ 15 97 04
+ 15 c7 00
+ 15 c8 40
+ 15 c9 44
+ 15 90 1f
+ 15 ff 10
+ 15 fb 01
+ 15 ba 03
+ 15 bb 03
+ 39 3b 00 0a 00 0a
+ 15 c0 03
+ 39 c1 ab 28 00 20 02 00 02 68 03 87 00 0a 03 19 02 63
+ 39 c2 10 f0
+ 05 11
+ ff 78
+ 15 51 ff
+ 15 53 20
+ 15 ff 10
+ 05 29
+ ff 78
+</DSIInitSequence>
+<DSITermSequence>
+ 05 28
+ 05 10
+</DSITermSequence>
+<TLMMGPIODefaultHigh>0x1A</TLMMGPIODefaultHigh>
+<Group id='Backlight Configuration'>
+ <BacklightType>1</BacklightType>
+ <BacklightPmicControlType>2</BacklightPmicControlType>
+</Group>

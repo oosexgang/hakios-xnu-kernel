@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ArmCpuDxe
+  FILE_GUID                      = B8D9777E-D72A-451F-9BDB-BAFB52A68415
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|CpuDxe.depex|*
+  PE32|CpuDxe.efi|*
+
+[Depex]
+  TRUE

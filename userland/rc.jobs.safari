@@ -1,0 +1,15 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Safari (RC_JOBS=rc.jobs.safari, with wifi=1): whether iOS takes the screen for one of extended colour (it must
+# not: WebKit then draws into surfaces of ten bits a colour that come out black), then yandex.ru and example.com
+# opened the way a link opens them (battery_test open URL: SpringBoard is asked to open it), for screenshots of what
+# Safari shows; Safari's layers, application state and web views are said in between (com.redwood.layers, when
+# libredwood-sb.dylib is in it: INJECT with MobileSafari on its line).
+/redwood/bin/mg_test HasExtendedColorDisplay
+/redwood/bin/sound_test springboard
+/redwood/bin/rwtouch wait 10
+/redwood/bin/battery_test open https://yandex.ru
+/redwood/bin/rwtouch wait 8 notify com.redwood.layers wait 15 notify com.redwood.layers wait 7
+/bin/ps -A
+/redwood/bin/battery_test open https://example.com
+/redwood/bin/rwtouch wait 25
+/bin/ps -A

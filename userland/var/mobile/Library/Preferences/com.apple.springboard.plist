@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- one processor core and a software renderer: applications need more time to come up than the
+	     watchdog gives them on Apple's hardware (20 s for the first frame) -->
+	<key>FBLaunchWatchdogScale</key>
+	<real>20</real>
+	<!-- ... and the other watchdogs have no scale: 10 s to answer any change to a scene (going to the
+	     background, the scene of the widgets coming up while the system starts) is not always enough
+	     under QEMU, where the window server takes most of the one processor during an animation. This
+	     switches all of FrontBoard's watchdogs off; an application that really hangs is closed from
+	     the application switcher. -->
+	<key>BKNoWatchdogs</key>
+	<true/>
+	<!-- the battery's percentage beside its icon in the status bar (Settings > Battery > Battery
+	     Percentage, which an iPhone X has off at first) -->
+	<key>SBShowBatteryPercentage</key>
+	<true/>
+</dict>
+</plist>

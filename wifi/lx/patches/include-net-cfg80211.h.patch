@@ -1,0 +1,39 @@
+--- a/sys/compat/linuxkpi/common/include/net/cfg80211.h
++++ b/sys/compat/linuxkpi/common/include/net/cfg80211.h
+@@ -139,6 +139,7 @@
+  * at the end of the file.
+  */
+ struct linuxkpi_ieee80211_channel {
++	int8_t					psd;	/* power spectral density, dBm/MHz */
+ 	uint32_t				center_freq;
+ 	uint16_t				hw_value;
+ 	enum ieee80211_channel_flags		flags;
+@@ -716,6 +717,7 @@
+ struct ieee80211_reg_rule {
+ 	/* TODO FIXME */
+ 	uint32_t	flags;
++	int8_t		psd;		/* power spectral density, dBm/MHz */
+ 	int	dfs_cac_ms;
+ 	struct freq_range {
+ 		int	start_freq_khz;
+@@ -1714,18 +1716,8 @@
+     struct linuxkpi_ieee80211_regdomain *regd)
+ {
+ 
+-	IMPROVE();
+-	if (regd == NULL)
+-		return (EINVAL);
+-
+-	/* XXX-BZ wild guessing here based on brcmfmac. */
+-	if (wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED)
+-		wiphy->regd = regd;
+-	else
+-		return (EPERM);
+-
+-	/* XXX FIXME, do we have to do anything with reg_notifier? */
+-	return (0);
++	/* (the caller keeps and may free regd: a copy is made, as Linux makes one) */
++	return (linuxkpi_regulatory_set_wiphy_regd_sync(wiphy, regd));
+ }
+ 
+ static __inline int

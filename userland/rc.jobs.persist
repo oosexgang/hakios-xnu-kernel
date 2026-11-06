@@ -1,0 +1,23 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The data volume of iOS kept between boots (var_store=1 ufs_write=1; src/var_store.c): what the
+# store held when this boot began, how much room the volume has, the line every run before this one
+# left in /private/var and the names SpringBoard had made by then with the seconds they were
+# written; then this run's own line, and after two and a half minutes of iOS left to itself the
+# same names again.
+# Nothing here saves. The job com.redwood.varstore stays for the run and writes the volume into the
+# flash when the kernel says the run is ending -- which is the point: a run that was never told to
+# save keeps what it wrote all the same. Run it twice over, with ./xl reboot in between; the second
+# run's output holds the first run's line and the first run's seconds.
+/redwood/bin/var_store show
+/redwood/bin/vol_ls fs /private/var
+/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/var_store stamp /private/var/redwood-stamp
+sleep 150
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls ls /private/var/mobile/Library
+/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
+/redwood/bin/var_store show
+# (what the saver then did, and how many writes went into darwin, is at the end of the run: the
+#  kernel's "var_store: the run is ending" and the loader's "ufs: N writes into darwin ... read
+#  back the same; K refused")

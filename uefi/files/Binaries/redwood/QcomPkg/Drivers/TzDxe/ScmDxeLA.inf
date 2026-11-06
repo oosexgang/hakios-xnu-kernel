@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ScmDxeLA
+  FILE_GUID                      = 4B4973EE-401B-4F36-A6A9-533DFCCDFC33
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|ScmDxeLA.efi|*

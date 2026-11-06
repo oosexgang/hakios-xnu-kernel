@@ -1,0 +1,7 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# How far behind the finger the screen is (boot-arg touch_lat=1, with rec_secs/rec_ring for the frames;
+# tools/latency.py): unlock, Settings, then a wait of 100 seconds -- for the first minutes after a start the
+# widget extensions, searchd and the rest keep all four processors busy, and the touch waits for them --, the
+# list scrolled a little down so that there is room both ways, then the finger goes up and down over it
+# without letting go: twice six times 300 ms each way, and every turn of the finger is looked for in the frames.
+/redwood/bin/rwtouch wait 26 swipe 0.5 0.985 0.5 0.3 200 wait 4 tap 0.615 0.71 wait 100 swipe 0.5 0.8 0.5 0.55 600 wait 3 zigzag 0.5 0.75 0.5 300 6 wait 2 zigzag 0.5 0.75 0.5 300 6

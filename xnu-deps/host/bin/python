@@ -1,0 +1,4 @@
+#!/bin/sh
+# The kernel's lldbmacros step runs "python"; macOS has only python3, and on Linux the name
+# may be missing just as well. Everything these scripts do works under python3.
+exec python3 "$@"

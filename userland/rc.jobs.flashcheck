@@ -1,0 +1,23 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The iOS root volume on the phone's flash as the root, everything in RAM as APFS (flashboot.apfs resident,
+# root.apfs with the kernel, built with GL=1; root_apfs=ufs_darwin ufs=2 ufs_native=1 gpu=1 adsp=1 sound=4
+# rec_sound=12 wifi=1, and no battery=1, which keeps the battery from the audio DSP off): what is mounted
+# from where, the firmware on /fw, the battery as iOS has it, something to hear (a tone of three seconds,
+# the lock sound, a click, a fanfare: ./xl sound), the network over the phone's Wi-Fi (an address by
+# DHCP, a name, a page over HTTPS), and Safari opening a page with its daemons from the App cryptex
+# (Apple's image as it is, the third container of flashboot.apfs, through the volume's own
+# /System/Cryptexes/App) -- all of it with APFS alone in RAM. The results also go to a file shown
+# at the end, where the kernel's log keeps them.
+/sbin/mount
+/redwood/bin/vol_ls fs / /redwood /private/preboot /private/preboot/Cryptexes/OS /private/preboot/Cryptexes/App
+/redwood/bin/vol_ls ls /System/Cryptexes/App/usr/libexec
+/redwood/bin/vol_ls ls /fw
+/redwood/bin/net_test show dhcp en0 waitaddr en0 60 >> /private/var/results
+/redwood/bin/net_test resolve example.com fetch https://example.com/ fetch https://www.apple.com/library/test/success.html >> /private/var/results
+/redwood/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
+/redwood/bin/battery_test open https://example.com
+/redwood/bin/rwtouch wait 20
+/redwood/bin/battery_test 1 >> /private/var/results
+/redwood/bin/vol_ls sysctl kern.redwood_memory >> /private/var/results
+/bin/ps -A
+/redwood/bin/vol_ls cat /private/var/results 262144

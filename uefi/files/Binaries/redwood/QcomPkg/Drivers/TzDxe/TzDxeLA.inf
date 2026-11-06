@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = TzDxeLA
+  FILE_GUID                      = CF6DFC66-14AB-4E13-84DB-9C02912D1404
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|TzDxeLA.patched.efi|*

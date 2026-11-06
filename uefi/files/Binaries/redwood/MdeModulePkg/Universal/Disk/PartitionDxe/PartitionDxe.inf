@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = PartitionDxe
+  FILE_GUID                      = 1FA1F39E-FEFF-4AAE-BD7B-38A070A3B609
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|PartitionDxe.efi|*

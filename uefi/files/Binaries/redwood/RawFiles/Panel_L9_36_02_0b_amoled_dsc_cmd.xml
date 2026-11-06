@@ -1,0 +1,139 @@
+<?xml version=\"1.0\" encoding=\"utf-8\"?>
+<PanelDescription>l9 36 02 0b Single DSI Cmd Mode AMOLED Panel with DSC (1080x2400 24bpp)</PanelDescription>
+<Group id=\"Active Timing\">
+ <HorizontalActive>1080</HorizontalActive>
+ <HorizontalFrontPorch>32</HorizontalFrontPorch>
+ <HorizontalBackPorch>32</HorizontalBackPorch>
+ <HorizontalSyncPulse>32</HorizontalSyncPulse>
+ <HorizontalSyncSkew>0</HorizontalSyncSkew>
+ <HorizontalLeftBorder>0</HorizontalLeftBorder>
+ <HorizontalRightBorder>0</HorizontalRightBorder>
+ <VerticalActive>2400</VerticalActive>
+ <VerticalFrontPorch>1300</VerticalFrontPorch>
+ <VerticalBackPorch>1335</VerticalBackPorch>
+ <VerticalSyncPulse>32</VerticalSyncPulse>
+ <VerticalSyncSkew>0</VerticalSyncSkew>
+ <VerticalTopBorder>0</VerticalTopBorder>
+ <VerticalBottomBorder>0</VerticalBottomBorder>
+ <InvertDataPolarity>False</InvertDataPolarity>
+ <InvertVsyncPolairty>False</InvertVsyncPolairty>
+ <InvertHsyncPolarity>False</InvertHsyncPolarity>
+ <BorderColor>0x0</BorderColor>
+</Group>
+<Group id="Display Interface">
+ <InterfaceType>9</InterfaceType>
+ <InterfaceColorFormat>3</InterfaceColorFormat>
+</Group>
+<Group id="DSI Interface">
+ <DSIChannelId>2</DSIChannelId>
+ <DSIVirtualId>0</DSIVirtualId>
+ <DSIFlags>0x8</DSIFlags>
+ <DSIColorFormat>36</DSIColorFormat>
+ <DSITrafficMode>1</DSITrafficMode>
+ <DSILanes>4</DSILanes>
+ <DSIRefreshRate>0x3C0000</DSIRefreshRate>
+ <DSIDSCEnable>True</DSIDSCEnable>
+ <DSIDSCMajor>1</DSIDSCMajor>
+ <DSIDSCMinor>1</DSIDSCMinor>
+ <DSIDSCScr>0</DSIDSCScr>
+ <DSIDSCProfileID>8</DSIDSCProfileID>
+ <DSIDSCSliceWidth>1080</DSIDSCSliceWidth>
+ <DSIDSCSliceHeight>12</DSIDSCSliceHeight>
+ <DSIDSCSlicePerPacket>1</DSIDSCSlicePerPacket>
+ <DSIBitClockFrequency>831000000</DSIBitClockFrequency>
+ <DSILP11AtInit>True</DSILP11AtInit>
+ <DSICmdSwapInterface>False</DSICmdSwapInterface>
+ <DSICmdUsingTrigger>False</DSICmdUsingTrigger>
+ <DSIEnableAutoRefresh>True</DSIEnableAutoRefresh>
+ <DSIAutoRefreshFrameNumDiv>1</DSIAutoRefreshFrameNumDiv>
+  <DSITECheckEnable>True</DSITECheckEnable>
+ <DSITEUsingDedicatedTEPin>True</DSITEUsingDedicatedTEPin>
+ <DSITEvSyncStartPos>2400</DSITEvSyncStartPos>
+ <DSITEvSyncInitVal>2400</DSITEvSyncInitVal>
+ <DSIControllerMapping>
+  00
+ </DSIControllerMapping>
+</Group>
+<DSIInitSequence>
+ 39 F0 55 AA 52 08 04
+ 39 6F 1C
+ 39 C0 15 27 38 00 00
+ 39 3B 00 10 00 04
+ 39 90 01
+ 39 91 89 28 00 0C C2 00 03 1C 01 7E 00 0F 08 BB 04 3D 10 F0
+ 39 03 01
+ 39 FF AA 55 A5 80
+ 39 6F 1D
+ 39 F2 05
+ 39 F0 55 AA 52 08 07
+ 39 C0 01
+ 39 C1 00
+ 39 C2 00
+ 39 C3 00
+ 39 C4 00
+ 39 C5 00
+ 39 C6 00
+ 39 C7 00
+ 39 C8 00
+ 39 C9 00
+ 39 CA 00
+ 39 CB 00
+ 39 CC 00
+ 39 51 07 FF 03 FF
+ 39 53 20
+ 39 F0 55 AA 52 08 00
+ 39 C0 7E B3 21
+ 39 6F 01
+ 39 C0 B3
+ 39 6F 11
+ 39 C0 30
+ 39 6F 06
+ 39 B5 2C 11 32
+ 39 B2 19
+ 39 6F 02
+ 39 B2 08 08
+ 39 35 00
+ 39 2A 00 00 04 37
+ 39 2B 00 00 09 5F
+ 39 2F 01
+ 39 5F 01
+ 39 2C 00
+ 39 F0 55 AA 52 08 01
+ 39 C3 94 01 8F D0 22 02 00
+ 39 F0 55 AA 52 08 08
+ 39 E2 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+ 39 E3 E8 46 62 88 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FC
+ 39 E4 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+ 39 E5 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+ 39 E6 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+ 39 E7 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+ 39 6F 04
+ 39 C1 00
+ 39 6F 03
+ 39 C1 02
+ 39 CE 12 00 0B 01 0B 6F 00 6F 38 00 38 3A 00 3A 26 00 26 26 00 26 20 00 20 20 00 20 20
+ 39 6F 09
+ 39 D5 00 00 00 00 00 00 00 00
+ 39 F0 55 AA 52 08 01
+ 39 CE 08
+ 05 11
+ FF 78
+ 39 F0 55 AA 52 08 08
+ 39 E1 63 00 73 00 00
+ 05 29
+ 39 F0 55 AA 52 08 01
+ 39 CE 00
+</DSIInitSequence>
+<DSITermSequence>
+ 05 28
+ FF 0A
+ 05 10
+ FF 64
+</DSITermSequence>
+<Group id='Backlight Configuration'>
+ <BacklightType>3</BacklightType>
+ <BacklightPmicControlType>2</BacklightPmicControlType>
+ <BacklightBitWidth>11</BacklightBitWidth>
+ <BacklightDefault>15</BacklightDefault>
+ <DisplayResetInfo>0 2000 2000 10000 0</DisplayResetInfo>
+</Group>

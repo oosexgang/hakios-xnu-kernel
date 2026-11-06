@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = UsbPwrCtrlDxe
+  FILE_GUID                      = 11FAED4C-B21F-4D88-8E48-C4C28A1E50DF
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|UsbPwrCtrlDxe.depex|*
+  PE32|UsbPwrCtrlDxe.efi|*
+
+[Depex]
+  TRUE

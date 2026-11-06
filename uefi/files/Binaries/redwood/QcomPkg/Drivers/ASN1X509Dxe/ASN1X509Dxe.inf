@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ASN1X509Dxe
+  FILE_GUID                      = C2F9A4F5-F7B4-43E7-BA99-5EA804CC103A
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|ASN1X509Dxe.efi|*

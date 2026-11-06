@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.redwood.metal</string>
+	<key>CFBundleName</key>
+	<string>RedwoodMetal</string>
+	<!-- What _CFBundleCopyExecutableName reads first (0x186e2f910). It would also fall back to
+	     the bundle directory's own name with the extension stripped, so this key is not
+	     strictly required; it is here because relying on a fallback is not the same as saying
+	     what we mean. -->
+	<key>CFBundleExecutable</key>
+	<string>RedwoodMetal</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<!-- Metal's step 4 reads the service's MetalPluginClassName and asks
+	     -[NSBundle classNamed:], which tests that the class came out of THIS bundle
+	     (0x1811e0dac: [NSBundle bundleForClass:cls] == self, else nil). When that answers
+	     nil, Metal falls through to -principalClass (0x181a39c8c), which makes no such test
+	     and reads this key. Naming the class here therefore covers both roads, and costs a
+	     line. -->
+	<key>NSPrincipalClass</key>
+	<string>RedwoodMetalDevice</string>
+</dict>
+</plist>

@@ -1,0 +1,10 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = XBLCore
+  FILE_GUID                      = 8AF09F13-44C5-96EC-1437-DD899CB5EE5D
+  MODULE_TYPE                    = SEC
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  RAW|XBLCore.raw|*
+  TE|XBLCore.te|*

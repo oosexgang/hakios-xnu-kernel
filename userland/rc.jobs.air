@@ -1,0 +1,24 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+#
+# The first draw on this GPU by a shader Apple compiled for Metal (RC_JOBS=rc.jobs.air).
+# /redwood/bin/air_run translates one function of a .metallib with the AIR frontend
+# (docs/air.md), hands the NIR to Gallium as PIPE_SHADER_IR_NIR, draws one quad and prints
+# the pixel it reads back. With the Adreno present it opens the msm device and ir3 compiles
+# the shader; without one it falls back to softpipe and says so in its first line, so the
+# line "air_run: <name> on FD643" (or similar) is what tells the two apart -- read it before
+# believing any number below it.
+#
+# clearFragment01 is the shader M1 is stated against: four LLVM instructions, no air.*
+# intrinsic, its colour read straight out of the constant buffer at index 14. The buffer is
+# filled with (i * 7 + 13) & 0xff, so the four floats expected are the ones LLVM itself
+# computes on a computer and softpipe draws there:
+#     2.10170319e-18  0.178894654  1.48687698e+16  1.21394141e+33
+# Anything else from this run is the finding, whatever it is.
+#
+# No wait for SpringBoard: this draws for itself and wants the GPU idle rather than busy with
+# the window server. With gpu=1 the window server has it too, which is worth knowing about on
+# purpose -- but the first run should be the simple one.
+# --disasm makes ir3 print the Adreno instructions it generated. The screen's name proves
+# fd_screen_create won; only ir3's own disassembly proves the shader went through ir3 and not
+# some later software path, and the four floats look identical either way.
+/redwood/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01

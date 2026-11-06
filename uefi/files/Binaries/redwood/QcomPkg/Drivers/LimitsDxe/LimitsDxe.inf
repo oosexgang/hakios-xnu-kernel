@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = LimitsDxe
+  FILE_GUID                      = F09AD92E-4E91-490F-AB89-E66939B840B2
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|LimitsDxe.depex|*
+  PE32|LimitsDxe.efi|*
+
+[Depex]
+  TRUE

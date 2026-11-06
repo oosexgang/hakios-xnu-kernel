@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = FeatureEnablerDxe
+  FILE_GUID                      = 1C04F529-0612-4319-9315-B2E75C16810A
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|FeatureEnablerDxe.efi|*

@@ -1,0 +1,15 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The microphone for iOS (RC_JOBS=rc.jobs.mic, with adsp=1 mic=4, haptic=5 and sound=4): first the speakers' path
+# as a check (a tone of two seconds and a keyboard click; with sound_below=720 the amplifiers play it 90 dB under
+# Android's level, which is silence), then two recordings the way an application makes them (record_test:
+# AVAudioRecorder through the built-in microphone, which the virtual audio device makes of RedwoodAudio.driver's
+# "Codec", whose samples come from the kernel's /dev/redwood-mic): six seconds with the vibration motor running
+# from the third to the fourth (its 175.5 Hz is what the microphone should hear), then four seconds of the room. The
+# kernel's "mic:" lines say when the microphone listened, and the end of the run repeats them. (A pause between
+# the two: a program in the background that records shows the orange dot but not the status bar's recording pill, and
+# mediaserverd's MediaSafetyNet stops itself after nine seconds of a microphone in use without the pill, as on
+# an iPhone; the pause lets it see the microphone off.)
+/redwood/bin/sound_test springboard route wait 2 tone 2 wait 4 system 1104 wait 4
+/redwood/bin/record_test 6 vibrate 3
+/redwood/bin/rwtouch wait 3
+/redwood/bin/record_test 4

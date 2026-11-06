@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = Ebl
+  FILE_GUID                      = 3CEF354A-3B7A-4519-AD70-72A134698311
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|Ebl.efi|*

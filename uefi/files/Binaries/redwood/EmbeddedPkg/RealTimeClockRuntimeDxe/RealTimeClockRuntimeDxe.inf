@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = RealTimeClock
+  FILE_GUID                      = B336F62D-4135-4A55-AE4E-4971BBF0885D
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|RealTimeClockRuntimeDxe.depex|*
+  PE32|RealTimeClockRuntimeDxe.efi|*
+
+[Depex]
+  TRUE

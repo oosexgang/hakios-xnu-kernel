@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = QcomBds
+  FILE_GUID                      = 5A50AA81-C3AE-4608-A0E3-41A2E69BAF94
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|QcomBds.depex|*
+  PE32|QcomBds.efi|*
+
+[Depex]
+  TRUE

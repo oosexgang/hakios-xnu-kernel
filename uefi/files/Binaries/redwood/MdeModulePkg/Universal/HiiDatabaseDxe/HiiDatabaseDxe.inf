@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = HiiDatabase
+  FILE_GUID                      = 348C4D62-BFBD-4882-9ECE-C80BB1C4783B
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|HiiDatabaseDxe.depex|*
+  PE32|HiiDatabaseDxe.efi|*
+
+[Depex]
+  TRUE

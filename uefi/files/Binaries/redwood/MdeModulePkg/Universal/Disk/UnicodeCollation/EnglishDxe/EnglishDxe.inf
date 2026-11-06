@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = EnglishDxe
+  FILE_GUID                      = CD3BAFB6-50FB-4FE8-8E4E-AB74D2C1A600
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|EnglishDxe.efi|*

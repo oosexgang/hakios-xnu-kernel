@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ChargerExDxe
+  FILE_GUID                      = 2E3042F3-2BB9-463F-8866-56D75B7C4AB0
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|ChargerExDxe.depex|*
+  PE32|ChargerExDxe.efi|*
+
+[Depex]
+  TRUE

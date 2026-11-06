@@ -1,0 +1,33 @@
+--- a/include/GL/osmesa.h
++++ b/include/GL/osmesa.h
+@@ -106,6 +106,7 @@
+ #define OSMESA_COMPAT_PROFILE        0x35
+ #define OSMESA_CONTEXT_MAJOR_VERSION 0x36
+ #define OSMESA_CONTEXT_MINOR_VERSION 0x37
++#define OSMESA_ES_PROFILE            0x38  /* an OpenGL ES 2 or 3 context, by the version asked for */
+ 
+ 
+ typedef struct osmesa_context *OSMesaContext;
+--- a/src/gallium/frontends/osmesa/osmesa.c
++++ b/src/gallium/frontends/osmesa/osmesa.c
+@@ -615,7 +615,8 @@
+       case OSMESA_PROFILE:
+          profile = attribList[i+1];
+          if (profile != OSMESA_CORE_PROFILE &&
+-             profile != OSMESA_COMPAT_PROFILE)
++             profile != OSMESA_COMPAT_PROFILE &&
++             profile != OSMESA_ES_PROFILE)
+             return NULL;
+          break;
+       case OSMESA_CONTEXT_MAJOR_VERSION:
+@@ -662,8 +663,8 @@
+     * Create the rendering context
+     */
+    memset(&attribs, 0, sizeof(attribs));
+-   attribs.profile = (profile == OSMESA_CORE_PROFILE)
+-      ? API_OPENGL_CORE : API_OPENGL_COMPAT;
++   attribs.profile = (profile == OSMESA_ES_PROFILE) ? API_OPENGLES2 :
++      (profile == OSMESA_CORE_PROFILE) ? API_OPENGL_CORE : API_OPENGL_COMPAT;
+    attribs.major = version_major;
+    attribs.minor = version_minor;
+    attribs.flags = 0;  /* ST_CONTEXT_FLAG_x */

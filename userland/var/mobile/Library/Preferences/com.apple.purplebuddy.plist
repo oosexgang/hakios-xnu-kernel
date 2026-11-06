@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- the first-boot setup assistant ("hello") has been gone through; nobody can do that here -->
+	<key>SetupDone</key>
+	<true/>
+	<key>SetupVersion</key>
+	<integer>11</integer>
+	<key>SetupState</key>
+	<string>SetupUsingAssistant</string>
+	<key>ForceNoBuddy</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = DDRInfoDxe
+  FILE_GUID                      = 7DB0793A-4402-4BE1-906E-D0FABAD2707E
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|DDRInfoDxe.depex|*
+  PE32|DDRInfoDxe.efi|*
+
+[Depex]
+  TRUE

@@ -1,0 +1,68 @@
+Build the AIR compute path as a shared library for the Metal driver.
+
+tools/mesa/air/air_metal.c is air_run's compute path -- a Metal function's LLVM module
+through the AIR frontend into a Gallium compute state and a grid on the Adreno -- behind
+the contract in tools/mesa/air/air_metal.h, which mentions nothing of NIR, Gallium or
+ir3: the Metal driver (userland/src/redwoodmetal.m) must not grow a dependency on Mesa's
+headers for it. On the device it is /redwood/lib/libredwoodair.dylib, which is where
+-newComputePipelineStateWithDescriptor: will compile the bitcode Metal hands it
+(docs/metal.md 10.12).
+
+Both targets are declared here rather than with the rest of the frontend for the reason
+air_run already is: they need libgallium, which meson has not defined when
+src/compiler/air is read, and they are given air_run's dependencies exactly so that a
+driver linking the library gets the path the harness measured.
+
+air_metal_test is that library driven the way the driver will drive it, on softpipe: it
+is handed the frontend's include directory and nothing else, so a call air_metal.h fails
+to provide shows up as a test that cannot be written.
+
+--- a/src/gallium/drivers/freedreno/meson.build
++++ b/src/gallium/drivers/freedreno/meson.build
+@@ -335,6 +335,46 @@
+   install : false,
+ )
+ 
++# libredwoodair: the same path air_run takes -- a Metal shader through the AIR frontend
++# into a compute state and a grid on the Adreno -- as a shared library, for the Metal
++# driver in userland/src/redwoodmetal.m. Its contract is src/compiler/air/air_metal.h and
++# mentions nothing of Mesa; this is only where it is built, beside air_run and for the
++# same reason, that libgallium exists here and not where the frontend is read. The
++# dependencies are deliberately air_run's: a driver that links this gets the path the
++# harness measured, not a second one assembled for it.
++redwoodair_link_args = []
++if host_machine.system() == 'darwin'
++  # the Metal driver links against this by name, so the name has to be where
++  # tools/mk-mesa.sh installs it on the device
++  redwoodair_link_args += '-Wl,-install_name,/redwood/lib/libredwoodair.dylib'
++endif
++
++libredwoodair = shared_library(
++  'redwoodair',
++  files('../../../compiler/air/air_metal.c'),
++  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium,
++                         inc_gallium_aux, inc_gallium_winsys_sw, inc_gallium_winsys,
++                         include_directories('../../drivers')],
++  dependencies : [dep_m, idep_air, idep_mesautil, driver_softpipe, driver_freedreno,
++                  dep_libdrm],
++  link_with : [libgallium, libgalliumvl_stub, libws_null, libfreedrenowinsys],
++  link_args : redwoodair_link_args,
++  build_by_default : false,
++  install : false,
++)
++
++# air_metal_test: the library driven the way the driver will drive it, on softpipe. It is
++# given the frontend's include directory and nothing else, so that a call the contract
++# does not provide shows up as a test that cannot be written.
++air_metal_test = executable(
++  'air_metal_test',
++  files('../../../compiler/air/air_metal_test.c'),
++  include_directories : include_directories('../../../compiler/air'),
++  link_with : [libredwoodair],
++  build_by_default : false,
++  install : false,
++)
++
+ gmemtool = executable(
+   'gmemtool',
+   [

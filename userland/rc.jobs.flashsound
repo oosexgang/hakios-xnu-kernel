@@ -1,0 +1,17 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# The iOS root volume on the phone's flash as the root (flashboot.apfs resident, root_apfs=ufs_darwin
+# ufs=2 [ufs_native=1] adsp=1 sound=4): what is mounted, the firmware on /fw, reading files through
+# read(2) and through a mapping (page-in) with the APFS driver's numbers before and after, then
+# something to hear -- a tone of three seconds, the lock sound, a keyboard click, a fanfare -- which
+# a recording (rec_sound=N, ./xl sound) shows came through.
+/sbin/mount
+/redwood/bin/vol_ls fs /
+/redwood/bin/vol_ls ls /fw
+/redwood/bin/vol_ls sysctl kern.apfs_stats
+/redwood/bin/apfs_mmap_test read /usr/libexec 65536
+/redwood/bin/apfs_mmap_test mmap /usr/libexec
+/redwood/bin/apfs_mmap_test mmap /usr/libexec
+/redwood/bin/vol_ls sysctl kern.apfs_stats
+/redwood/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
+/redwood/bin/vol_ls sysctl kern.apfs_stats
+/bin/ps -A

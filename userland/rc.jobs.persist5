@@ -1,0 +1,25 @@
+# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# What persistence buys, boot after boot (var_store=1 ufs_write=1; see rc.jobs.persist0 and
+# rc.jobs.persist1, which are this list with a little before it). Everything here is a measurement,
+# nothing here saves: the job com.redwood.varstore writes the volume when the kernel says the run is
+# ending. Boot it five times over and compare the boots:
+#   the store at the start, and how much room the volume has;
+#   the line every run before this one left, and the keychain item an earlier boot wrote ("keep"
+#   writes one only if there is none, so every later boot reads the first boot's);
+#   the containers iOS gives its applications -- the same identifiers boot after boot, or new ones;
+#   the home screen's layout by hash and by the second it was written;
+#   and, after two minutes of iOS left to itself, the same again, with the process list.
+/redwood/bin/var_store show
+/redwood/bin/vol_ls fs /private/var
+/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
+/redwood/bin/keychain_test keep
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls hash /private/var/mobile/Library/SpringBoard/IconState.plist
+/redwood/bin/vol_ls ls /private/var/mobile/Containers/Data/Application
+/redwood/bin/vol_ls ls /private/var/mobile/Containers/Shared/AppGroup
+/redwood/bin/var_store stamp /private/var/redwood-stamp
+sleep 120
+/bin/ps -A
+/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/redwood/bin/vol_ls hash /private/var/mobile/Library/SpringBoard/IconState.plist
+/redwood/bin/keychain_test read

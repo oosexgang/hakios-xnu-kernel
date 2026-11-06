@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = ParserDxe
+  FILE_GUID                      = 4A568B8A-4D9D-4984-9C75-CEE33698E451
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EfiEntry
+
+[Binaries.AARCH64]
+  DXE_DEPEX|ParserDxe.depex|*
+  PE32|ParserDxe.efi|*
+
+[Depex]
+  TRUE

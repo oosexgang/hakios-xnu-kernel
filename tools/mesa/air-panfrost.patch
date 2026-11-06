@@ -1,0 +1,30 @@
+Build air_run against panfrost: a Metal shader drawn on the Infinix's Mali (Bifrost v7).
+
+tools/mesa/air-ir3.patch does the same for the Adreno; this target is darwin-only, where the
+driver list is softpipe,panfrost (tools/mk-mesa.sh, AIR=1).
+
+--- a/src/gallium/drivers/panfrost/meson.build
++++ b/src/gallium/drivers/panfrost/meson.build
+@@ -84,3 +84,22 @@
+   compile_args : compile_args_panfrost,
+   link_with : [libpanfrost, libpanfrostwinsys, libpanfrost_shared, libpanfrost_midgard, libpanfrost_bifrost, libpanfrost_decode, libpanfrost_lib],
+ )
++
++# air_run: draw with a Metal shader and read the pixels back, on the Mali
++# (Darwin on redwood: tools/mesa/air-panfrost.patch). As beside ir3_compiler
++# for the Adreno (tools/mesa/air-ir3.patch): this is where libgallium exists;
++# its source is with the rest of the frontend in src/compiler/air.
++if host_machine.system() == 'darwin'
++  air_run = executable(
++    'air_run',
++    files('../../../compiler/air/air_run.c'),
++    include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium,
++                           inc_gallium_aux, inc_gallium_winsys_sw, inc_gallium_winsys,
++                           include_directories('../../drivers', '../../winsys')],
++    dependencies : [dep_m, idep_air, idep_mesautil, idep_xmlconfig, driver_softpipe, driver_panfrost,
++                    dep_libdrm],
++    link_with : [libgallium, libgalliumvl_stub, libws_null],
++    build_by_default : false,
++    install : false,
++  )
++endif

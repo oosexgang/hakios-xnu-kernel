@@ -1,0 +1,9 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = Fat
+  FILE_GUID                      = 961578FE-B6B7-44C3-AF35-6BC705CD2B1F
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+
+[Binaries.AARCH64]
+  PE32|Fat.efi|*
