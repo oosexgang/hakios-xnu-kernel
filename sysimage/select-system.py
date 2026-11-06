@@ -41,8 +41,14 @@ WHOLE = ('usr/libexec/', 'usr/sbin/', 'usr/bin/', 'usr/lib/', 'usr/share/', 'sbi
 # News refuses to start without its own -- "a legal requirement"; nor Health, the plug-ins the Health
 # application and its daemon are made of: both stop with a fatal error when the directory is not there.
 # Of Health only the pictures and films of the activity awards are left out, see SKIP_PREFIX and HEALTH)
+# (nor AccessibilityBundles, 59 MB: they are not needed to get a picture on the screen, but they are
+# what puts anything *in* the accessibility tree. UIKit.axbundle makes a control's label out of its
+# text, WebKit.axbundle and WebCore.axbundle describe what a web view drew, SpringBoard.axbundle the
+# home screen. Without them a UILabel has no label, a WKWebView offers no elements at all, and
+# SpringBoard answers with seventeen windows and nothing in any of them -- the screen looks right and
+# every question about it comes back empty, which is a hard thing to go looking for)
 SKIP_SYSTEM_LIBRARY = ('LinguisticData', 'PreinstalledAssetsV2', 'NanoTimeKit', 'Audio',
-                       'Assistant', 'AccessibilityBundles',
+                       'Assistant',
                        'VideoProcessors', 'ScreenReader', 'Photos', 'Carrier Bundles', 'NanoPreferenceBundles',
                        'ImagingNetworks', 'ProductDocuments', 'AppPlaceholders', 'UserNotifications',
                        'Caches')
