@@ -52,6 +52,10 @@ jobs:
         run: python3 tools/kernel-version-test.py
       - name: The backup tool only reads, copies exactly, and proves every copy
         run: python3 tools/backup-partitions-test.py
+      - name: Saved var archives use the newest intact slot
+        run: |
+          python3 tools/var-store-read.py selftest
+          python3 tools/var-store-read-test.py
       - name: The boot-argument catalogue is read from the source, and is current
         run: |
           python3 tools/boot-args-test.py
@@ -80,5 +84,6 @@ jobs:
           sh tools/soc-args-test.sh
           # ... and finds the AOSS mailbox however a phone's own device tree describes it
           python3 tools/soc-args-test-aoss.py
+          python3 tools/soc-args-test-reg.py
           # ... and tools/new-device.py makes a port's directory from a phone's tree, and refuses what it should
           python3 tools/new-device-test.py

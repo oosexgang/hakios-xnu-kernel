@@ -1,7 +1,8 @@
 """A tiny writer of flattened device trees, for tests: small trees of their own, so that no part of a
 real phone's tree has to be committed.
 
-    fdt({"": ({}, {"soc": ({}, {"qcom,ipcc@408000": ({"compatible": compat("qcom,ipcc"),
+    fdt({"": ({}, {"soc": ({"#address-cells": cells(1), "#size-cells": cells(1)},
+                              {"qcom,ipcc@408000": ({"compatible": compat("qcom,ipcc"),
                                                       "reg": cells(0x408000, 0x1000)}, {})})})})
 
 A tree is {name: (properties, children)}, properties are {name: bytes}.

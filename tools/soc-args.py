@@ -8,6 +8,10 @@ addresses as defaults and take any that differ from boot-args soc_* (see soc_ove
 reads a phone's own flattened device tree -- /sys/firmware/fdt on a rooted phone, or the dtb a port
 already has -- and prints the soc_* it needs, which devices/<name>/soc.args holds and the run
 scripts pass along. Only numbers are read out; no part of the tree is copied.
+Register tuples use their immediate parent's #address-cells and #size-cells (DT defaults: 2 and 1).
+One or two address cells and zero to two size cells are supported.
+Addresses wider than a kernel argument can hold are refused rather than truncated. Bus-address
+translation through ranges is not performed; the selected register addresses must already be CPU addresses.
 """
 import struct
 import sys
@@ -61,6 +65,31 @@ def u32(value, index=0):
     return struct.unpack_from('>I', value, index * 4)[0]
 
 
+def reg_address(nodes, path, index=0):
+    """An address from reg tuple `index`, or None if that tuple is absent."""
+    if path is None or 'reg' not in nodes[path]:
+        return None
+    # These properties describe the parent's children; they are not inherited from ancestors.
+    parent = nodes[path.rsplit('/', 1)[0]]
+
+    def width(name, default, allowed):
+        value = parent.get(name, struct.pack('>I', default))
+        if len(value) != 4 or u32(value) not in allowed:
+            sys.exit(f'soc-args.py: {path}: unsupported or malformed {name}')
+        return u32(value)
+
+    address_cells = width('#address-cells', 2, (1, 2))
+    size_cells = width('#size-cells', 1, (0, 1, 2))
+    stride = 4 * (address_cells + size_cells)
+    data = nodes[path]['reg']
+    if len(data) % stride:
+        sys.exit(f'soc-args.py: {path}: reg does not contain complete address/size tuples')
+    at = index * stride
+    if at >= len(data):
+        return None
+    return int.from_bytes(data[at:at + 4 * address_cells], 'big')
+
+
 def aoss_mailbox(nodes):
     """The address of the AOSS QMP mailbox, which one phone's device tree describes in two ways.
 
@@ -72,11 +101,15 @@ def aoss_mailbox(nodes):
     has a reg counts, and the mainline form is preferred when both are there."""
     for path, props in nodes.items():
         kinds = props.get('compatible', b'').split(b'\0')
-        if any(k.startswith(b'qcom,') and k.endswith(b'-aoss-qmp') for k in kinds) and len(props.get('reg', b'')) >= 4:
-            return u32(props['reg'], 0)
+        if any(k.startswith(b'qcom,') and k.endswith(b'-aoss-qmp') for k in kinds):
+            address = reg_address(nodes, path)
+            if address is not None:
+                return address
     for path, props in nodes.items():
-        if path.rsplit('/', 1)[-1].split('@', 1)[0] == 'qcom,qmp-aop' and len(props.get('reg', b'')) >= 4:
-            return u32(props['reg'], 0)
+        if path.rsplit('/', 1)[-1].split('@', 1)[0] == 'qcom,qmp-aop':
+            address = reg_address(nodes, path)
+            if address is not None:
+                return address
     return None
 
 
@@ -87,26 +120,29 @@ def main():
     nodes = nodes_of(open(sys.argv[1], 'rb').read())
     args = []
 
-    path, ipa = find(nodes, 'qcom,ipa')
-    if ipa and 'reg' in ipa and len(ipa['reg']) >= 16:  # reg = ipa-base, size, gsi-base, size (1 address + 1 size cell each)
-        ipa_region = u32(ipa['reg'], 0)                 # the IPA region's start; the registers the driver maps are 0x40000 into it
-        gsi_base = u32(ipa['reg'], 2)                   # the GSI's base is given directly
-        args.append(('soc_ipa_base', ipa_region + 0x40000))
-        args.append(('soc_gsi_base', gsi_base))
+    def address(arg, value, bits=32):
+        if value is not None:
+            if not 0 <= value < 1 << bits:
+                sys.exit(f'soc-args.py: {arg}={value:#x} does not fit the kernel\'s {bits}-bit argument')
+            args.append((arg, value))
 
-    def block(compatible, arg, cell=0):                 # these nodes have 1 address + 1 size cell: address at an even index
-        _, props = find(nodes, compatible)
-        if props and 'reg' in props and len(props['reg']) >= (cell + 1) * 4:
-            args.append((arg, u32(props['reg'], cell)))
+    path, _ = find(nodes, 'qcom,ipa')
+    ipa_region, gsi_base = reg_address(nodes, path), reg_address(nodes, path, 1)
+    if ipa_region is not None and gsi_base is not None:
+        address('soc_ipa_base', ipa_region + 0x40000, bits=64)  # the IPA registers are 0x40000 into the region
+        address('soc_gsi_base', gsi_base, bits=64)
 
-    block('qcom,ipcc', 'soc_ipcc')                      # cell 0: the address
+    def block(compatible, arg, index=0):
+        path, _ = find(nodes, compatible)
+        address(arg, reg_address(nodes, path, index))
+
+    block('qcom,ipcc', 'soc_ipcc')
     aoss = aoss_mailbox(nodes)                          # the AOSS mailbox: see aoss_mailbox() for the two ways it is described
     if aoss is not None:
-        args.append(('soc_aoss', aoss))
-    block('qcom,rpmh-rsc', 'soc_rsc', cell=4)           # drv-2 (the application processors') is the third addr/size pair (reg-names drv-0/1/2)
-    _, smmu = find_named(nodes, 'apps-smmu')            # not by compatible: the GPU's SMMU shares qcom,qsmmu-v500
-    if smmu and 'reg' in smmu:
-        args.append(('soc_apps_smmu', u32(smmu['reg'], 0)))
+        address('soc_aoss', aoss)
+    block('qcom,rpmh-rsc', 'soc_rsc', index=2)         # drv-2 is the third tuple (reg-names drv-0/1/2)
+    path, _ = find_named(nodes, 'apps-smmu')           # not by compatible: the GPU's SMMU shares qcom,qsmmu-v500
+    address('soc_apps_smmu', reg_address(nodes, path))
 
     # the memory addresses: the command DB and the modem's region are reserved-memory nodes named by
     # their address; shared memory is the reserved-memory the /soc/qcom,smem node points at; the SoC's
@@ -117,9 +153,8 @@ def main():
             by_phandle[u32(props['phandle'])] = (path, props)
 
     def reserved(leaf, arg):
-        _, props = find_named(nodes, leaf)
-        if props and 'reg' in props:
-            args.append((arg, u32(props['reg'], 1)))    # reserved-memory: 2 address cells, so the low word is cell 1
+        path, _ = find_named(nodes, leaf)
+        address(arg, reg_address(nodes, path))
 
     reserved('cmd_db', 'soc_cmd_db')
     reserved('mpss', 'soc_mpss_mem')
@@ -127,11 +162,12 @@ def main():
     _, smem = find(nodes, 'qcom,smem')
     if smem and 'memory-region' in smem:
         target = by_phandle.get(u32(smem['memory-region']))
-        if target and 'reg' in target[1]:
-            args.append(('soc_smem', u32(target[1]['reg'], 1)))
-    _, imem = find(nodes, 'qcom,msm-imem')
-    if imem and 'reg' in imem:
-        args.append(('soc_imem', u32(imem['reg'], 0) & ~0x1fffff))   # the 2 MB block that holds it
+        if target:
+            address('soc_smem', reg_address(nodes, target[0]))
+    path, _ = find(nodes, 'qcom,msm-imem')
+    imem = reg_address(nodes, path)
+    if imem is not None:
+        address('soc_imem', imem & ~0x1fffff)         # the 2 MB block that holds it
 
     def stream(compatible, arg):
         _, props = find(nodes, compatible)
