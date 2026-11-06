@@ -84,5 +84,6 @@ jobs:
           sh tools/soc-args-test.sh
           # ... and finds the AOSS mailbox however a phone's own device tree describes it
           python3 tools/soc-args-test-aoss.py
+          python3 tools/soc-args-test-reg.py
           # ... and tools/new-device.py makes a port's directory from a phone's tree, and refuses what it should
           python3 tools/new-device-test.py

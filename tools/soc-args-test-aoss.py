@@ -26,7 +26,7 @@ from fdtbuild import cells, compat, fdt  # noqa: E402  (tools/fdtbuild.py)
 
 
 def soc_with(**nodes):
-    return {"": ({}, {"soc": ({}, nodes)})}
+    return {"": ({}, {"soc": ({"#address-cells": cells(1), "#size-cells": cells(1)}, nodes)})}
 
 
 def run(tree):
