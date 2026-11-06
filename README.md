@@ -1,6 +1,8 @@
 # HakiOS
 
+[![Hacker News](https://hackergit.org/badge/oosexgang/hackios-xnu-kernel.svg)](https://hackergit.org/r/oosexgang/hackios-xnu-kernel)
 English · [中文](README.zh.md) · [Українська](README.uk.md)
+
 
 **Apple's open-source Darwin kernel (XNU, xnu-8796.121.2) on Android phones**, the way Android is Linux on phones: a boot loader of its
 own, drivers of its own, a configuration system and a version of its own. The same kernel runs in QEMU with nothing of Apple's and
