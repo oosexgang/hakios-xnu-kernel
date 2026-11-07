@@ -1844,7 +1844,7 @@ device_path_print(uint64_t unit, const efi_device_path *dp)
  * touches the storage; it reads for the kernel (block_poll) and writes the log (write_logs) only
  * while UEFI's list is the one in the controller.
  */
-#define HC_PA              0x1d84000ULL        /* ufshc@1d84000, "ufs_mem", in this phone's Android device tree */
+#define HC_PA_DEFAULT      0x1d84000ULL        /* ufshc@1d84000 on the first supported phone */
 #define HC_CAP             0x00
 #define HC_VER             0x08
 #define HC_IS              0x20
@@ -1864,6 +1864,8 @@ device_path_print(uint64_t unit, const efi_device_path *dp)
 #define HC_AREA_SIZE       (HC_UCD_OFFSET + HC_SLOTS * HC_UCD_SIZE)
 
 static uint8_t hc_area[HC_AREA_SIZE] __attribute__((aligned(0x2000)));
+static uint8_t hc_standby[0x2000] __attribute__((aligned(0x2000)));
+static uint64_t hc_pa = HC_PA_DEFAULT;
 static int hc_requested;                /* ufs_native= on the command line */
 static int hc_known;                    /* UEFI's list address is kept here: check it, put it back */
 static uint32_t hc_uefi_lo, hc_uefi_hi;
@@ -1872,14 +1874,14 @@ static int hc_refused_reads;
 static inline uint32_t
 hc_rd(uint32_t off)
 {
-	return *(volatile uint32_t *)(uintptr_t)(HC_PA + off);
+	return *(volatile uint32_t *)(uintptr_t)(hc_pa + off);
 }
 
 static inline void
 hc_wr(uint32_t off, uint32_t v)
 {
 	__asm__ volatile ("dsb sy" ::: "memory");
-	*(volatile uint32_t *)(uintptr_t)(HC_PA + off) = v;
+	*(volatile uint32_t *)(uintptr_t)(hc_pa + off) = v;
 	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
@@ -1988,7 +1990,7 @@ hc_init(void)
 	lo = hc_rd(HC_UTRLBA);
 	hi = hc_rd(HC_UTRLBAU);
 	print("ufs: controller at %x: CAP %x, VER %x, HCE %x, HCS %x, IS %x, IE %x, list %x:%x, run %x, doorbell %x\n",
-	    HC_PA, (uint64_t)hc_rd(HC_CAP), (uint64_t)hc_rd(HC_VER), (uint64_t)hc_rd(HC_HCE), (uint64_t)hc_rd(HC_HCS),
+	    hc_pa, (uint64_t)hc_rd(HC_CAP), (uint64_t)hc_rd(HC_VER), (uint64_t)hc_rd(HC_HCE), (uint64_t)hc_rd(HC_HCS),
 	    (uint64_t)hc_rd(HC_IS), (uint64_t)hc_rd(HC_IE), (uint64_t)hi, (uint64_t)lo, (uint64_t)hc_rd(HC_UTRLRSR),
 	    (uint64_t)hc_rd(HC_UTRLDBR));
 	if (!hc_known) {
@@ -2011,6 +2013,54 @@ hc_init(void)
 		}
 	}
 	return hc_list_is_uefis();
+}
+
+/*
+ * U-Boot does not own ABL's transfer list, and XNU may allocate the RAM that holds it. For a
+ * native-only run, replace it while idle with this loader's inert list. Slot 0 contains a valid
+ * READ(10) shape so the kernel can inspect and whitelist it, but its doorbell is never rung.
+ */
+static int
+hc_start_standby(void)
+{
+	volatile uint32_t *list = (volatile uint32_t *)hc_standby;
+	uint8_t *upiu = hc_standby + 0x1000;
+	uint64_t list_pa = (uint64_t)(uintptr_t)list, ucd_pa = (uint64_t)(uintptr_t)upiu;
+	uint64_t started;
+
+	if (!hc_known || !hc_list_is_uefis() || hc_rd(HC_UTRLDBR) != 0 || (hc_rd(HC_HCE) & 1) == 0) {
+		print("ufs: standby list not installed: the firmware's list is not ready and idle\n");
+		return 0;
+	}
+	memset(hc_standby, 0, sizeof(hc_standby));
+	list[0] = (1u << 28) | (2u << 25);        /* UFS storage command, data from the device */
+	list[2] = 0xf;                            /* invalid until a command is actually placed */
+	list[4] = (uint32_t)ucd_pa;
+	list[5] = (uint32_t)(ucd_pa >> 32);
+	upiu[0] = 0x01;                           /* command UPIU */
+	upiu[1] = 0x40;                           /* read */
+	upiu[12] = 0x00, upiu[13] = 0x00, upiu[14] = 0x10, upiu[15] = 0x00;
+	upiu[16] = 0x28;                          /* READ(10), one 4096-byte block */
+	upiu[23] = 0x00, upiu[24] = 0x01;
+	flush_dcache((uint64_t)(uintptr_t)hc_standby, (uint64_t)(uintptr_t)hc_standby + sizeof(hc_standby));
+	hc_wr(HC_UTRLRSR, 0);
+	for (started = READ_SYSREG(CNTVCT_EL0); (hc_rd(HC_UTRLRSR) & 1) && hc_ms_since(started) < 100;) {
+	}
+	if (hc_rd(HC_UTRLRSR) & 1) {
+		print("ufs: standby list not installed: the firmware's list did not stop\n");
+		return 0;
+	}
+	hc_wr(HC_UTRLBA, (uint32_t)list_pa);
+	hc_wr(HC_UTRLBAU, (uint32_t)(list_pa >> 32));
+	hc_wr(HC_UTRLRSR, 1);
+	hc_uefi_lo = (uint32_t)list_pa;
+	hc_uefi_hi = (uint32_t)(list_pa >> 32);
+	if (!hc_list_is_uefis()) {
+		print("ufs: standby list at %x was not accepted by the controller\n", list_pa);
+		return 0;
+	}
+	print("ufs: inert standby list at %x replaces ABL's list for this native-only run; no doorbell rung\n", list_pa);
+	return 1;
 }
 
 /*
@@ -2172,7 +2222,7 @@ block_start(void)
 	if (hc_known && hc_list_is_uefis() && hc_rd(HC_UTRLDBR) == 0 && (hc_rd(HC_HCE) & 1)) {
 		memset(hc_area, 0, sizeof(hc_area));
 		flush_dcache((uint64_t)(uintptr_t)hc_area, (uint64_t)(uintptr_t)hc_area + sizeof(hc_area));
-		block_shared.native.hc_pa = HC_PA;
+		block_shared.native.hc_pa = hc_pa;
 		block_shared.native.area_pa = (uint64_t)(uintptr_t)hc_area;
 		block_shared.native.area_size = sizeof(hc_area);
 		block_shared.native.ucd_offset = HC_UCD_OFFSET;
@@ -2205,6 +2255,40 @@ block_start(void)
 	print("ufs: block service: %d partitions and %d units, page %x, buffer %x of %d KB\n",
 	    (uint64_t)block_shared.parts - nunits, nunits, (uint64_t)(uintptr_t)&block_shared, block_shared.buffer_pa,
 	    (uint64_t)(BLOCK_BUFFER_SIZE >> 10));
+}
+
+/*
+ * ufs_native= without ufs=2: publish only the controller and memory for the kernel's own list.
+ * No UEFI block protocol is opened and no storage command is issued by this loader.
+ */
+static void
+block_start_native(void)
+{
+	memset(&block_shared, 0, sizeof(block_shared));
+	if (!hc_known || !hc_list_is_uefis() || hc_rd(HC_UTRLDBR) != 0 || (hc_rd(HC_HCE) & 1) == 0) {
+		print("ufs: native-only page not offered: the firmware's controller is not ready and idle\n");
+		return;
+	}
+	memset(hc_area, 0, sizeof(hc_area));
+	flush_dcache((uint64_t)(uintptr_t)hc_area, (uint64_t)(uintptr_t)hc_area + sizeof(hc_area));
+	block_shared.native.hc_pa = hc_pa;
+	block_shared.native.area_pa = (uint64_t)(uintptr_t)hc_area;
+	block_shared.native.area_size = sizeof(hc_area);
+	block_shared.native.ucd_offset = HC_UCD_OFFSET;
+	block_shared.native.ucd_size = HC_UCD_SIZE;
+	block_shared.native.slots = HC_SLOTS;
+	block_shared.native.uefi_utrlba = hc_uefi_lo;
+	block_shared.native.uefi_utrlbau = hc_uefi_hi;
+	block_shared.magic = BLOCK_MAGIC;
+	block_shared.version = BLOCK_VERSION;
+	block_shared.size = sizeof(block_shared);
+	block_shared.buffer_size = BLOCK_BUFFER_SIZE;
+	block_shared.buffer_pa = (uint64_t)(uintptr_t)block_buffer;
+	clean_dcache((uint64_t)(uintptr_t)&block_shared, (uint64_t)(uintptr_t)&block_shared + sizeof(block_shared));
+	block_enabled = 1;
+	print("ufs: native-only page %x: controller %x, firmware list %x:%x, kernel list area %x; no block service\n",
+	    (uint64_t)(uintptr_t)&block_shared, hc_pa, (uint64_t)hc_uefi_hi, (uint64_t)hc_uefi_lo,
+	    (uint64_t)(uintptr_t)hc_area);
 }
 
 /*
@@ -3157,6 +3241,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t this_mpidr = READ_SYSREG(MPIDR_EL1) & 0xFFFFFF, kernel_mpidr = this_mpidr;
 	/* "cpus=N" or "cpumask=M" there too: the kernel may have more cores than the one it starts on */
 	int more_cores = 0, battery_requested = 0, ufs_requested = 0;
+	uint64_t requested_hc_pa = HC_PA_DEFAULT;
 	/* "torch=N" (not 0) there too: the phone's flashlight is the kernel's (drivers/camera/hakios.torch.c) */
 	int torch_requested = 0;
 	/* "cam=5" there too: the phone's wide camera is Darwin's (drivers/camera/hakios.camera.c) */
@@ -3193,18 +3278,41 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		    (c[11] == 0 || c[11] == ' ');
 		hc_requested |= starts_with(c, "ufs_native=") && (c == pi.cmdline || c[-1] == ' ') && c[11] >= '1' &&
 		    c[11] <= '9';
+		/*
+		 * ufs_hc_pa: Use the UFSHCI register address from this device's firmware description
+		 */
+		if (starts_with(c, "ufs_hc_pa=") && (c == pi.cmdline || c[-1] == ' ')) {
+			const char *value = c + 10;
+
+			if (value[0] == '0' && value[1] == 'x') {
+				value += 2;
+			}
+			requested_hc_pa = parse_number(value, 16);
+		}
+	}
+	if (requested_hc_pa == 0 || (requested_hc_pa & 0xfff) != 0) {
+		print("ufs: controller address %x is not nonzero and page-aligned: native UFS is off\n", requested_hc_pa);
+		hc_requested = 0;
+	} else if (requested_hc_pa != hc_pa) {
+		hc_pa = requested_hc_pa;
+		hc_known = 0;
 	}
 	if (battery_requested) {
 		charger_start();
 	}
-	if (ufs_requested >= 2) {
+	if (hc_requested) {
 		hc_init();              /* (ufs_native=: UEFI's transfer list kept, before anything reads) */
+	}
+	if (hc_requested && ufs_requested < 2 && !hc_start_standby()) {
+		hc_requested = 0;
 	}
 	if (ufs_requested >= 1) {
 		ufs_survey();
 	}
 	if (ufs_requested >= 2) {
 		block_start();
+	} else if (hc_requested) {
+		block_start_native();
 	}
 	if (checkpoint == CHECKPOINT_SELFTEST) {
 		kernel_mpidr = this_mpidr;

@@ -2,7 +2,7 @@
 # HakiOS common defconfig: every setting there is, with what it does.
 # Made by tools/hakios-config.py listing common -o <this file>; the values are the ones that file sets, and tests/CI check that it names every symbol.
 #
-# 376 symbols in 18 groups; 35 are set, 26 of them drivers built in.
+# 378 symbols in 18 groups; 35 are set, 26 of them drivers built in.
 #
 
 #
@@ -168,7 +168,7 @@ CONFIG_HAKIOS_WIFI=y
 # CONFIG_XPCPROXY_IDVERSION is not set
 
 #
-# Storage and APFS (44)
+# Storage and APFS (45)
 #
 
 # the phone's storage: 1 a survey, read only; 2 the loader's block service, through which the kernel reads it (the ...
@@ -273,7 +273,7 @@ CONFIG_UFS=2
 # read by hakios.ufs.c (kernel)
 # CONFIG_UFS_CHECK is not set
 
-# through this kernel's own driver instead, its own transfer list in the controller for the run, if all is as ...
+# one known read from LUN 0, without needing UEFI Block I/O or a partition table
 # CONFIG_UFS_NATIVE is not set
 
 # read by hakios.ufs.c (kernel)
@@ -296,6 +296,9 @@ CONFIG_UFS=2
 
 # read by hakios.ufshc.c (kernel)
 # CONFIG_UFS_NATIVE_SPIN is not set
+
+# Report a firmware-initialised UFSHCI controller using register reads only
+# CONFIG_UFS_PROBE_PA is not set
 
 # read by hakios.ufs.c (kernel)
 # CONFIG_VAR_SAVE_MS is not set
@@ -1074,7 +1077,7 @@ CONFIG_MODEM_AGAIN=y
 # CONFIG_USTACKS_TNAME is not set
 
 #
-# Loader (4)
+# Loader (5)
 #
 
 # read by loader.c (loader)
@@ -1085,6 +1088,9 @@ CONFIG_MODEM_AGAIN=y
 
 # read by loader.c (loader)
 # CONFIG_SERIAL is not set
+
+# Use the UFSHCI register address from this device's firmware description
+# CONFIG_UFS_HC_PA is not set
 
 # read by loader.c (loader)
 # CONFIG_UFS_PROBE is not set

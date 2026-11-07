@@ -291,6 +291,7 @@ tu_debug	u
 ufs	l
 ufs_bench	k
 ufs_check	k
+ufs_hc_pa	l
 ufs_native	kl
 ufs_native_bench	k
 ufs_native_buffer	k
@@ -300,6 +301,7 @@ ufs_native_leave	k
 ufs_native_slots	k
 ufs_native_spin	k
 ufs_probe	l
+ufs_probe_pa	k
 ufs_shared_pa	k
 ufs_write	kl
 ui_lite	u

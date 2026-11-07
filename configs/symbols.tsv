@@ -262,7 +262,8 @@ TOUCH_SPI_HZ	arg	touch_spi_hz	Touch and buttons	k	hakios.goodix.c	the bus at N H
 TU_DEBUG	arg	tu_debug	User space	u	HakiosMetalCA.m	Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...)
 UFS_BENCH	arg	ufs_bench	Storage and APFS	k	hakios.ufs.c	what one request through the loader costs, by size
 UFS_CHECK	arg	ufs_check	Storage and APFS	k	hakios.ufs.c	
-UFS_NATIVE	arg	ufs_native	Storage and APFS	kl	hakios.ufs.c,loader.c	through this kernel's own driver instead, its own transfer list in the controller for the run, if all is as expected; 2: only look; 3: a dry run --
+UFS_HC_PA	hex	ufs_hc_pa	Loader	l	loader.c	Use the UFSHCI register address from this device's firmware description
+UFS_NATIVE	arg	ufs_native	Storage and APFS	kl	hakios.ufs.c,loader.c	one known read from LUN 0, without needing UEFI Block I/O or a partition table
 UFS_NATIVE_BENCH	arg	ufs_native_bench	Storage and APFS	k	hakios.ufs.c	
 UFS_NATIVE_BUFFER	hex	ufs_native_buffer	Storage and APFS	k	hakios.ufshc.c	
 UFS_NATIVE_CHECK	arg	ufs_native_check	Storage and APFS	k	hakios.ufs.c	what this kernel's own driver reads is what the loader reads, byte for byte
@@ -271,6 +272,7 @@ UFS_NATIVE_LEAVE	arg	ufs_native_leave	Storage and APFS	k	hakios.ufshc.c
 UFS_NATIVE_SLOTS	arg	ufs_native_slots	Storage and APFS	k	hakios.ufshc.c	
 UFS_NATIVE_SPIN	arg	ufs_native_spin	Storage and APFS	k	hakios.ufshc.c	
 UFS_PROBE	arg	ufs_probe	Loader	l	loader.c	
+UFS_PROBE_PA	hex	ufs_probe_pa	Storage and APFS	k	hakios.ufs.c	Report a firmware-initialised UFSHCI controller using register reads only
 UI_LITE	arg	ui_lite	User space	u	inject_sb.c	the system's own "Reduce Transparency" and "Reduce Motion" (Settings, Accessibility), for this
 USTACKS	arg	ustacks	Debugging	k	user_exception_trace.c	
 USTACKS_AT	arg	ustacks_at	Debugging	k	user_exception_trace.c	
