@@ -1387,6 +1387,42 @@ ufs_native_map(bool all_units)
 	return good;
 }
 
+/* ufs_native=4: one known read from LUN 0, without needing UEFI Block I/O or a partition table */
+static void
+ufs_native_gpt_probe(void)
+{
+	uint8_t *header = kalloc_data(4096, Z_WAITOK);
+	uint32_t want = 0, got = 0, size = 0;
+	int error;
+
+	if (header == NULL) {
+		printf("ufs: native: GPT probe: no memory\n");
+		return;
+	}
+	printf("ufs: native: GPT probe: TEST UNIT READY, then READ(10) of LUN 0 block 1; no write command is permitted\n");
+	error = ufs_native_in(true);
+	if (error == 0) {
+		error = ufshc_read(0, 4096, header, 4096);
+	}
+	if (error == 0 && memcmp(header, "EFI PART", 8) == 0) {
+		size = *(uint32_t *)(header + 12);
+		want = *(uint32_t *)(header + 16);
+		*(uint32_t *)(header + 16) = 0;
+		if (size >= 92 && size <= 4096) {
+			got = crc32(0, header, size);
+		}
+		printf("ufs: native: GPT probe: LUN 0 block 1 is an EFI GPT header; header CRC %s (%08x)\n",
+		    size >= 92 && size <= 4096 && got == want ? "right" : "WRONG", got);
+	} else if (error == 0) {
+		printf("ufs: native: GPT probe: LUN 0 block 1 has no EFI GPT signature: STOP\n");
+	} else {
+		printf("ufs: native: GPT probe: read failed (%d): STOP\n", error);
+	}
+	ufs_native_out("after the GPT probe");
+	ufshc_report("after the GPT probe");
+	kfree_data(header, 4096);
+}
+
 /*
  * ufs_native_check=1: what this kernel's own driver reads is what the loader reads, byte for
  * byte. Spans are read a batch at a time, first all through the loader (UEFI's list in), then
@@ -1709,10 +1745,16 @@ SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_fallbacks, CTLFLAG_RD | CTLFLAG_L
 void
 hakios_ufs_init(void)
 {
-	uint64_t pa = 0, buffer_pa;
+	uint64_t pa = 0, buffer_pa, survey_pa = 0;
 	uint32_t check = 0, made = 0;
 	vm_offset_t base;
 
+	/*
+	 * ufs_probe_pa: Report a firmware-initialised UFSHCI controller using register reads only
+	 */
+	if (PE_parse_boot_argn("ufs_probe_pa", &survey_pa, sizeof(survey_pa)) && survey_pa != 0) {
+		ufshc_survey(survey_pa);
+	}
 	if (!PE_parse_boot_argn("ufs_shared_pa", &pa, sizeof(pa)) || pa == 0) {
 		return;                 /* the loader was not asked for ufs=2: there is nothing to read through */
 	}
@@ -1816,7 +1858,8 @@ hakios_ufs_init(void)
 	/*
 	 * ufs_native=1: through this kernel's own driver instead, its own transfer list in the
 	 * controller for the run, if all is as expected; 2: only look; 3: a dry run -- the list in and
-	 * out again, and in once more for the end of the run to take out, no command sent.
+	 * out again, and in once more for the end of the run to take out, no command sent; 4: prove the
+	 * list with TEST UNIT READY, read LUN 0's GPT header once, validate it, and put the old list back.
 	 */
 	check = 0;
 	memset(ufs_lun, 0xff, sizeof(ufs_lun));
@@ -1847,6 +1890,8 @@ hakios_ufs_init(void)
 				ufs_native_in(false);
 				printf("ufs: native: dry run: the list stays in for the end of the run\n");
 			}
+		} else if (mode == 4) {
+			ufs_native_gpt_probe();
 		} else if (ufs_native_map(true)) {
 			ufs_native_mapped = true;
 			if (compare != 0) {

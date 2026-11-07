@@ -119,10 +119,10 @@ index 4b83160780c3..8997af1f0e1b 100644
  include $(MakeInc_rule)
  include $(MakeInc_dir)
 diff --git a/bsd/conf/files b/bsd/conf/files
-index 44274016a4cf..27cccab98c8e 100644
+index 44274016a4cf..239575c54e2b 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,51 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -109,6 +109,52 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c optional monotonic
@@ -150,6 +150,7 @@ index 44274016a4cf..27cccab98c8e 100644
 +bsd/dev/hakios.haptic.c                  optional hakios_haptic
 +bsd/dev/hakios.virtio_input.c            optional hakios_virtio_input
 +bsd/dev/hakios.goodix.c                  optional hakios_goodix
++bsd/dev/hakios.synaptics.c               optional hakios_synaptics_tcm
 +bsd/dev/hakios.buttons.c                 optional hakios_buttons
 +bsd/dev/hakios.qmi.c                     optional hakios_qmi
 +bsd/dev/hakios.mpss.c                    optional hakios_modem
@@ -174,7 +175,7 @@ index 44274016a4cf..27cccab98c8e 100644
  bsd/dev/dev_perfmon.c optional config_perfmon
  
  bsd/libkern/crc32.c			standard
-@@ -155,6 +200,52 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+@@ -155,6 +201,52 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
  bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
@@ -227,7 +228,7 @@ index 44274016a4cf..27cccab98c8e 100644
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
-@@ -361,6 +452,7 @@ bsd/security/audit/audit_syscalls.c		standard
+@@ -361,6 +453,7 @@ bsd/security/audit/audit_syscalls.c		standard
  bsd/security/audit/audit_worker.c		optional config_audit
  
  bsd/pthread/pthread_shims.c		standard
@@ -235,7 +236,7 @@ index 44274016a4cf..27cccab98c8e 100644
  bsd/pthread/pthread_priority.c		standard
  bsd/pthread/pthread_workqueue.c		standard
  
-@@ -383,6 +475,7 @@ bsd/kern/kern_debug.c			standard
+@@ -383,6 +476,7 @@ bsd/kern/kern_debug.c			standard
  bsd/kern/kern_symfile.c			standard
  bsd/kern/kern_descrip.c			standard
  bsd/kern/kern_guarded.c			standard
@@ -2053,19 +2054,20 @@ index bc39e19b3b8e..0a72a2d43908 100644
  ifeq ($(origin HOST_CODESIGN_ALLOCATE),undefined)
  	export HOST_CODESIGN_ALLOCATE	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find codesign_allocate)
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
-index 5bd6f23dd10c..252d50062da4 100644
+index 5bd6f23dd10c..c0cbeac64e56 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
-@@ -60,7 +60,7 @@ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
+@@ -60,7 +60,8 @@ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
  MACHINE_FLAGS_ARM64_T8103 = -DARM64_BOARD_CONFIG_T8103                  -mcpu=apple-a14
  MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000 		-mcpu=apple-a14
  MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
 -MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
-+MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837 -Xclang -target-feature -Xclang +pan
++# HAKIOS_ARMV8_0=1: cores without PAN (ARMv8.1), e.g. the Snapdragon 685's Kryo 265 / Cortex-A73: no +pan, and pexpert/arm64/BCM2837.h leaves __ARM_PAN_AVAILABLE__ out
++MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837 $(if $(HAKIOS_ARMV8_0),-DHAKIOS_NO_PAN,-Xclang -target-feature -Xclang +pan)
  
  
  #
-@@ -857,7 +857,10 @@ LDFILES_KERNEL_ONLY = $(TARGET)/all-kpi.exp $(TARGET)/all-alias.exp $(TARGET)/sy
+@@ -857,7 +858,10 @@ LDFILES_KERNEL_ONLY = $(TARGET)/all-kpi.exp $(TARGET)/all-alias.exp $(TARGET)/sy
  # Default runtime libraries to be linked with the kernel
  #
  LD_KERNEL_LIBS	   = -lcc_kext
@@ -3378,10 +3380,10 @@ index 050f34a53c49..c58ff62cd419 100644
  DOCONFDEPS += $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)
  endif
 diff --git a/pexpert/pexpert/arm64/BCM2837.h b/pexpert/pexpert/arm64/BCM2837.h
-index d9f0723244e5..53fe4f371d7f 100644
+index d9f0723244e5..d5914dde0d0e 100644
 --- a/pexpert/pexpert/arm64/BCM2837.h
 +++ b/pexpert/pexpert/arm64/BCM2837.h
-@@ -11,6 +11,15 @@
+@@ -11,6 +11,17 @@
  #define BCM2837
  #define BCM2837_BRINGUP
  #define ARM_ARCH_TIMER
@@ -3393,11 +3395,13 @@ index d9f0723244e5..53fe4f371d7f 100644
 + * ARMv8.2: they set PSTATE.PAN on every exception entry, so the kernel must
 + * know to lift it around user memory accesses.
 + */
++#ifndef HAKIOS_NO_PAN   /* ARMv8.0 cores (Snapdragon 685: Kryo 265, Cortex-A73) have no PAN (ARMv8.1) */
 +#define __ARM_PAN_AVAILABLE__     1
++#endif
  
  #define __ARM_ARCH__              8
  #define __ARM_VMSA__              8
-@@ -22,6 +31,7 @@
+@@ -22,6 +33,7 @@
  #ifndef ASSEMBLER
  
  #define PI3_UART
@@ -3405,7 +3409,7 @@ index d9f0723244e5..53fe4f371d7f 100644
  
  #define PI3_BREAK                               asm volatile("brk #0");
  
-@@ -60,8 +70,11 @@
+@@ -60,8 +72,11 @@
  #define BCM2837_PUT32(addr, value) do { *((volatile uint32_t *) addr) = value; } while(0)
  #define BCM2837_GET32(addr) *((volatile uint32_t *) addr)
  

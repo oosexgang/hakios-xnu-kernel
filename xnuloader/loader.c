@@ -559,9 +559,29 @@ struct platform {
 	int log_other_cpu;               /* keep notes in the log partition while a kernel starts on another core */
 	int cores;                       /* at most this many processor cores, numbered from 0 ... */
 	int core_shift;                  /* ... in this bit of MPIDR: the phone numbers them in the second affinity field */
+	int core_split;                  /* if not 0: this many cores to a cluster (cluster in Aff1, core in Aff0), instead of core_shift */
 	uint32_t timeout_scale;          /* a kernel on several cores gets this much longer to wait for a lock, 0: as it is */
 	uint32_t small_cores;            /* a bit for each of the slower cores, by number: "small-core" in the device tree */
 };
+
+/* a core's number (0 ...) to its MPIDR and back, as this platform numbers them */
+static uint64_t
+core_mpidr(const struct platform *p, int core)
+{
+	if (p->core_split) {
+		return ((uint64_t)(core / p->core_split) << 8) | (uint64_t)(core % p->core_split);
+	}
+	return (uint64_t)core << p->core_shift;
+}
+
+static int
+mpidr_core(const struct platform *p, uint64_t mpidr)
+{
+	if (p->core_split) {
+		return (int)(((mpidr >> 8) & 0xff) * p->core_split + (mpidr & 0xff));
+	}
+	return (int)(mpidr >> p->core_shift);
+}
 
 static const struct platform platform_qemu_virt = {
 	.name = "qemu-virt", .io_base = 0x08000000, .io_size = 0x08000000,
@@ -588,7 +608,131 @@ static const struct platform platform_redwood = {
 	.small_cores = 0x0f,
 };
 
+static const struct platform platform_khaje = {
+	/* Snapdragon 685 (SM6225 "khaje"), as the phone's own Android tree describes it (interrupt-controller@f200000,
+	 * cpu@0..3 and cpu@100..103): the peripherals are below RAM (0x40000000). */
+	.name = "khaje", .io_base = 0x00400000, .io_size = 0x3FC00000,
+	.gic_dist = 0x0F200000, .gic_redist = 0x0F300000, .uart = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 8, .core_split = 4,
+	/* cores 0-3 (MPIDR 0..3) are the slower ones (capacity 1024), 4-7 (0x100..0x103) the faster (1638) */
+	.small_cores = 0x0f,
+};
+
 /* ------------------------------------------------------------------------ */
+
+/*
+ * Which interrupt does this SoC's EL1 virtual timer raise? (khaje: the phone's own device tree says GIC_PPI 3, i.e. 19, not 27.)
+ * Every PPI is enabled in this core's redistributor, the virtual timer is armed for 10 ms and the interrupt acknowledge register
+ * is polled (no exception is taken); what it returns is the number. Seen in the log: "gic selftest: ...".
+ */
+static void
+gic_timer_selftest(const struct platform *plat)
+{
+	volatile uint8_t *gicd = (volatile uint8_t *)(uintptr_t)plat->gic_dist;
+	volatile uint8_t *gicr = (volatile uint8_t *)(uintptr_t)plat->gic_redist;
+	uint64_t mpidr = READ_SYSREG(MPIDR_EL1), aff, typer = 0, freq = READ_SYSREG(CNTFRQ_EL0), id = 1023, pend = 0, n;
+	uint32_t ctlr = *(volatile uint32_t *)(gicd + 0x0000), sre;
+	int frame;
+
+	aff = (mpidr & 0xffffff) | ((mpidr >> 8) & 0xff000000);
+	for (frame = 0; frame < 16; frame++) {
+		typer = *(volatile uint64_t *)(gicr + (uint64_t)frame * 0x20000 + 0x0008);
+		if ((typer >> 32) == aff) {
+			break;
+		}
+		if (typer & 0x10) {             /* Last */
+			frame = 16;
+			break;
+		}
+	}
+	print("gic selftest: GICD_CTLR %x TYPER %x IIDR %x PIDR2 %x\n", (uint64_t)ctlr, (uint64_t)*(volatile uint32_t *)(gicd + 4),
+	    (uint64_t)*(volatile uint32_t *)(gicd + 8), (uint64_t)*(volatile uint32_t *)(gicd + 0xffe8));
+	for (int f = 0; f < 4; f++) {
+		volatile uint8_t *r = gicr + (uint64_t)f * 0x20000;
+
+		print("gic selftest: redistributor %d: TYPER %x IIDR %x PIDR2 %x WAKER %x\n", (uint64_t)f, *(volatile uint64_t *)(r + 8),
+		    (uint64_t)*(volatile uint32_t *)(r + 4), (uint64_t)*(volatile uint32_t *)(r + 0xffe8), (uint64_t)*(volatile uint32_t *)(r + 0x14));
+	}
+	print("gic selftest: this core %x, redistributor frame %d (TYPER %x)\n", aff, (uint64_t)frame, typer);
+	*(volatile uint32_t *)(gicd + 0x0000) = (1u << 4) | (1u << 1) | 1u;  /* ARE_NS, EnableGrp1A, EnableGrp1 (the non-secure view, DS=0) */
+	for (n = 0; n < 1000000 && (*(volatile uint32_t *)(gicd + 0x0000) & 0x80000000u); n++) {
+	}
+	print("gic selftest: GICD_CTLR now %x\n", (uint64_t)*(volatile uint32_t *)(gicd + 0x0000));
+	if (frame >= 16) {
+		return;
+	}
+	volatile uint8_t *rd = gicr + (uint64_t)frame * 0x20000, *sgi = rd + 0x10000;
+
+	__asm__ volatile ("mrs %0, S3_0_C12_C12_5" : "=r" (sre));
+	__asm__ volatile ("msr S3_0_C12_C12_5, %0" :: "r" (sre | 1));
+	__asm__ volatile ("isb");
+	*(volatile uint32_t *)(rd + 0x0014) &= ~2u;                     /* GICR_WAKER.ProcessorSleep = 0 */
+	for (n = 0; n < 1000000 && (*(volatile uint32_t *)(rd + 0x0014) & 4); n++) {
+	}
+	*(volatile uint32_t *)(sgi + 0x0080) = 0xffff0000u;             /* IGROUPR0: PPIs in group 1 */
+	*(volatile uint32_t *)(sgi + 0x0d00) = 0;                       /* IGRPMODR0: non-secure group 1 */
+	for (n = 16; n < 32; n++) {
+		*(volatile uint8_t *)(sgi + 0x0400 + n) = 0xa0;
+	}
+	*(volatile uint32_t *)(sgi + 0x0100) = 0xffff0000u;             /* ISENABLER0 */
+	__asm__ volatile ("msr S3_0_C4_C6_0, %0" :: "r" (0xffULL));     /* ICC_PMR_EL1 */
+	__asm__ volatile ("msr S3_0_C12_C12_3, %0" :: "r" (0ULL));      /* ICC_BPR1_EL1 */
+	__asm__ volatile ("msr S3_0_C12_C12_7, %0" :: "r" (1ULL));      /* ICC_IGRPEN1_EL1 */
+	__asm__ volatile ("isb");
+	/* what is pending before the timer is armed: acknowledged and dropped, and told */
+	{
+		uint64_t drained = 0;
+
+		for (n = 0; n < 64; n++) {
+			__asm__ volatile ("mrs %0, S3_0_C12_C12_0" : "=r" (id));
+			if ((id & 0xffffff) >= 1020) {
+				break;
+			}
+			drained |= 1ULL << (id & 31);
+			__asm__ volatile ("msr S3_0_C12_C12_1, %0" :: "r" (id));
+		}
+		print("gic selftest: pending before the timer (mask of INTIDs): %x\n", drained);
+	}
+	for (int which = 0; which < 2; which++) {
+		uint64_t seen = 0, t0, t1, first_after = 0;
+
+		/* which 0: the virtual timer (CNTV), 1: the physical one (CNTP) */
+		t0 = READ_SYSREG(CNTVCT_EL0);
+		if (which == 0) {
+			__asm__ volatile ("msr S3_3_C14_C3_0, %0" :: "r" (freq / 50));   /* CNTV_TVAL_EL0: 20 ms */
+			__asm__ volatile ("msr S3_3_C14_C3_1, %0" :: "r" (1ULL));        /* CNTV_CTL_EL0 */
+		} else {
+			__asm__ volatile ("msr S3_3_C14_C2_0, %0" :: "r" (freq / 50));   /* CNTP_TVAL_EL0 */
+			__asm__ volatile ("msr S3_3_C14_C2_1, %0" :: "r" (1ULL));        /* CNTP_CTL_EL0 */
+		}
+		__asm__ volatile ("isb");
+		do {
+			__asm__ volatile ("mrs %0, S3_0_C12_C12_0" : "=r" (id));
+			t1 = READ_SYSREG(CNTVCT_EL0);
+			if ((id & 0xffffff) < 1020) {
+				seen |= 1ULL << (id & 31);
+				if (first_after == 0 && t1 - t0 >= freq / 50) {
+					first_after = id & 31;
+				}
+				__asm__ volatile ("msr S3_0_C12_C12_1, %0" :: "r" (id));
+			}
+		} while (t1 - t0 < freq / 20);                                         /* 50 ms */
+		print("gic selftest: %s timer armed for 20 ms: INTIDs seen %x (first one after the 20 ms: %d)\n",
+		    which == 0 ? "virtual" : "physical", seen, first_after);
+		if (which == 0) {
+			__asm__ volatile ("msr S3_3_C14_C3_1, %0" :: "r" (0ULL));
+		} else {
+			__asm__ volatile ("msr S3_3_C14_C2_1, %0" :: "r" (0ULL));
+		}
+	}
+	id = 1023;
+	n = 0;
+	pend = 0;
+	__asm__ volatile ("msr S3_3_C14_C3_1, %0" :: "r" (0ULL));
+	*(volatile uint32_t *)(sgi + 0x0180) = 0xffff0000u;             /* ICENABLER0 */
+	__asm__ volatile ("msr S3_0_C12_C12_7, %0" :: "r" (0ULL));
+	__asm__ volatile ("isb");
+}
 
 static void
 reboot(void)
@@ -678,8 +822,17 @@ __asm__ (
         /* PSTATE bits the kernel may have left set. PAN in particular is fatal:
          * UEFI maps its memory as EL0-accessible, so with PAN every data access
          * (including the exception handler's own stack push) faults. */
+        /* PAN is ARMv8.1 and UAO ARMv8.2: on a core without them (the Snapdragon 685's) these instructions are undefined */
+        "  mrs x9, id_aa64mmfr1_el1\n"
+        "  ubfx x9, x9, #20, #4\n"
+        "  cbz x9, 8f\n"
         "  .inst 0xd500409f\n"          /* msr PAN, #0 */
+        "8:\n"
+        "  mrs x9, id_aa64mmfr2_el1\n"
+        "  ubfx x9, x9, #4, #4\n"
+        "  cbz x9, 9f\n"
         "  .inst 0xd500407f\n"          /* msr UAO, #0 */
+        "9:\n"
         "  mrs x9, sctlr_el1\n"
         "  bic x9, x9, #0x1\n"
         "  bic x9, x9, #0x4\n"
@@ -850,8 +1003,17 @@ __asm__ (
         ".globl other_cpu_return_stub\n"
         "other_cpu_return_stub:\n"              /* x0..x7 as for loader_return_stub */
         "  msr daifset, #0xf\n"
-        "  .inst 0xd500409f\n"                  /* msr PAN, #0 */
-        "  .inst 0xd500407f\n"                  /* msr UAO, #0 */
+        /* PAN is ARMv8.1 and UAO ARMv8.2: on a core without them (the Snapdragon 685's) these instructions are undefined */
+        "  mrs x9, id_aa64mmfr1_el1\n"
+        "  ubfx x9, x9, #20, #4\n"
+        "  cbz x9, 8f\n"
+        "  .inst 0xd500409f\n"          /* msr PAN, #0 */
+        "8:\n"
+        "  mrs x9, id_aa64mmfr2_el1\n"
+        "  ubfx x9, x9, #4, #4\n"
+        "  cbz x9, 9f\n"
+        "  .inst 0xd500407f\n"          /* msr UAO, #0 */
+        "9:\n"
         "  mrs x9, sctlr_el1\n"
         "  bic x9, x9, #0x1\n"
         "  bic x9, x9, #0x4\n"
@@ -1682,7 +1844,7 @@ device_path_print(uint64_t unit, const efi_device_path *dp)
  * touches the storage; it reads for the kernel (block_poll) and writes the log (write_logs) only
  * while UEFI's list is the one in the controller.
  */
-#define HC_PA              0x1d84000ULL        /* ufshc@1d84000, "ufs_mem", in this phone's Android device tree */
+#define HC_PA_DEFAULT      0x1d84000ULL        /* ufshc@1d84000 on the first supported phone */
 #define HC_CAP             0x00
 #define HC_VER             0x08
 #define HC_IS              0x20
@@ -1702,6 +1864,8 @@ device_path_print(uint64_t unit, const efi_device_path *dp)
 #define HC_AREA_SIZE       (HC_UCD_OFFSET + HC_SLOTS * HC_UCD_SIZE)
 
 static uint8_t hc_area[HC_AREA_SIZE] __attribute__((aligned(0x2000)));
+static uint8_t hc_standby[0x2000] __attribute__((aligned(0x2000)));
+static uint64_t hc_pa = HC_PA_DEFAULT;
 static int hc_requested;                /* ufs_native= on the command line */
 static int hc_known;                    /* UEFI's list address is kept here: check it, put it back */
 static uint32_t hc_uefi_lo, hc_uefi_hi;
@@ -1710,14 +1874,14 @@ static int hc_refused_reads;
 static inline uint32_t
 hc_rd(uint32_t off)
 {
-	return *(volatile uint32_t *)(uintptr_t)(HC_PA + off);
+	return *(volatile uint32_t *)(uintptr_t)(hc_pa + off);
 }
 
 static inline void
 hc_wr(uint32_t off, uint32_t v)
 {
 	__asm__ volatile ("dsb sy" ::: "memory");
-	*(volatile uint32_t *)(uintptr_t)(HC_PA + off) = v;
+	*(volatile uint32_t *)(uintptr_t)(hc_pa + off) = v;
 	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
@@ -1826,7 +1990,7 @@ hc_init(void)
 	lo = hc_rd(HC_UTRLBA);
 	hi = hc_rd(HC_UTRLBAU);
 	print("ufs: controller at %x: CAP %x, VER %x, HCE %x, HCS %x, IS %x, IE %x, list %x:%x, run %x, doorbell %x\n",
-	    HC_PA, (uint64_t)hc_rd(HC_CAP), (uint64_t)hc_rd(HC_VER), (uint64_t)hc_rd(HC_HCE), (uint64_t)hc_rd(HC_HCS),
+	    hc_pa, (uint64_t)hc_rd(HC_CAP), (uint64_t)hc_rd(HC_VER), (uint64_t)hc_rd(HC_HCE), (uint64_t)hc_rd(HC_HCS),
 	    (uint64_t)hc_rd(HC_IS), (uint64_t)hc_rd(HC_IE), (uint64_t)hi, (uint64_t)lo, (uint64_t)hc_rd(HC_UTRLRSR),
 	    (uint64_t)hc_rd(HC_UTRLDBR));
 	if (!hc_known) {
@@ -1849,6 +2013,54 @@ hc_init(void)
 		}
 	}
 	return hc_list_is_uefis();
+}
+
+/*
+ * U-Boot does not own ABL's transfer list, and XNU may allocate the RAM that holds it. For a
+ * native-only run, replace it while idle with this loader's inert list. Slot 0 contains a valid
+ * READ(10) shape so the kernel can inspect and whitelist it, but its doorbell is never rung.
+ */
+static int
+hc_start_standby(void)
+{
+	volatile uint32_t *list = (volatile uint32_t *)hc_standby;
+	uint8_t *upiu = hc_standby + 0x1000;
+	uint64_t list_pa = (uint64_t)(uintptr_t)list, ucd_pa = (uint64_t)(uintptr_t)upiu;
+	uint64_t started;
+
+	if (!hc_known || !hc_list_is_uefis() || hc_rd(HC_UTRLDBR) != 0 || (hc_rd(HC_HCE) & 1) == 0) {
+		print("ufs: standby list not installed: the firmware's list is not ready and idle\n");
+		return 0;
+	}
+	memset(hc_standby, 0, sizeof(hc_standby));
+	list[0] = (1u << 28) | (2u << 25);        /* UFS storage command, data from the device */
+	list[2] = 0xf;                            /* invalid until a command is actually placed */
+	list[4] = (uint32_t)ucd_pa;
+	list[5] = (uint32_t)(ucd_pa >> 32);
+	upiu[0] = 0x01;                           /* command UPIU */
+	upiu[1] = 0x40;                           /* read */
+	upiu[12] = 0x00, upiu[13] = 0x00, upiu[14] = 0x10, upiu[15] = 0x00;
+	upiu[16] = 0x28;                          /* READ(10), one 4096-byte block */
+	upiu[23] = 0x00, upiu[24] = 0x01;
+	flush_dcache((uint64_t)(uintptr_t)hc_standby, (uint64_t)(uintptr_t)hc_standby + sizeof(hc_standby));
+	hc_wr(HC_UTRLRSR, 0);
+	for (started = READ_SYSREG(CNTVCT_EL0); (hc_rd(HC_UTRLRSR) & 1) && hc_ms_since(started) < 100;) {
+	}
+	if (hc_rd(HC_UTRLRSR) & 1) {
+		print("ufs: standby list not installed: the firmware's list did not stop\n");
+		return 0;
+	}
+	hc_wr(HC_UTRLBA, (uint32_t)list_pa);
+	hc_wr(HC_UTRLBAU, (uint32_t)(list_pa >> 32));
+	hc_wr(HC_UTRLRSR, 1);
+	hc_uefi_lo = (uint32_t)list_pa;
+	hc_uefi_hi = (uint32_t)(list_pa >> 32);
+	if (!hc_list_is_uefis()) {
+		print("ufs: standby list at %x was not accepted by the controller\n", list_pa);
+		return 0;
+	}
+	print("ufs: inert standby list at %x replaces ABL's list for this native-only run; no doorbell rung\n", list_pa);
+	return 1;
 }
 
 /*
@@ -2010,7 +2222,7 @@ block_start(void)
 	if (hc_known && hc_list_is_uefis() && hc_rd(HC_UTRLDBR) == 0 && (hc_rd(HC_HCE) & 1)) {
 		memset(hc_area, 0, sizeof(hc_area));
 		flush_dcache((uint64_t)(uintptr_t)hc_area, (uint64_t)(uintptr_t)hc_area + sizeof(hc_area));
-		block_shared.native.hc_pa = HC_PA;
+		block_shared.native.hc_pa = hc_pa;
 		block_shared.native.area_pa = (uint64_t)(uintptr_t)hc_area;
 		block_shared.native.area_size = sizeof(hc_area);
 		block_shared.native.ucd_offset = HC_UCD_OFFSET;
@@ -2043,6 +2255,40 @@ block_start(void)
 	print("ufs: block service: %d partitions and %d units, page %x, buffer %x of %d KB\n",
 	    (uint64_t)block_shared.parts - nunits, nunits, (uint64_t)(uintptr_t)&block_shared, block_shared.buffer_pa,
 	    (uint64_t)(BLOCK_BUFFER_SIZE >> 10));
+}
+
+/*
+ * ufs_native= without ufs=2: publish only the controller and memory for the kernel's own list.
+ * No UEFI block protocol is opened and no storage command is issued by this loader.
+ */
+static void
+block_start_native(void)
+{
+	memset(&block_shared, 0, sizeof(block_shared));
+	if (!hc_known || !hc_list_is_uefis() || hc_rd(HC_UTRLDBR) != 0 || (hc_rd(HC_HCE) & 1) == 0) {
+		print("ufs: native-only page not offered: the firmware's controller is not ready and idle\n");
+		return;
+	}
+	memset(hc_area, 0, sizeof(hc_area));
+	flush_dcache((uint64_t)(uintptr_t)hc_area, (uint64_t)(uintptr_t)hc_area + sizeof(hc_area));
+	block_shared.native.hc_pa = hc_pa;
+	block_shared.native.area_pa = (uint64_t)(uintptr_t)hc_area;
+	block_shared.native.area_size = sizeof(hc_area);
+	block_shared.native.ucd_offset = HC_UCD_OFFSET;
+	block_shared.native.ucd_size = HC_UCD_SIZE;
+	block_shared.native.slots = HC_SLOTS;
+	block_shared.native.uefi_utrlba = hc_uefi_lo;
+	block_shared.native.uefi_utrlbau = hc_uefi_hi;
+	block_shared.magic = BLOCK_MAGIC;
+	block_shared.version = BLOCK_VERSION;
+	block_shared.size = sizeof(block_shared);
+	block_shared.buffer_size = BLOCK_BUFFER_SIZE;
+	block_shared.buffer_pa = (uint64_t)(uintptr_t)block_buffer;
+	clean_dcache((uint64_t)(uintptr_t)&block_shared, (uint64_t)(uintptr_t)&block_shared + sizeof(block_shared));
+	block_enabled = 1;
+	print("ufs: native-only page %x: controller %x, firmware list %x:%x, kernel list area %x; no block service\n",
+	    (uint64_t)(uintptr_t)&block_shared, hc_pa, (uint64_t)hc_uefi_hi, (uint64_t)hc_uefi_lo,
+	    (uint64_t)(uintptr_t)hc_area);
 }
 
 /*
@@ -2995,6 +3241,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	uint64_t this_mpidr = READ_SYSREG(MPIDR_EL1) & 0xFFFFFF, kernel_mpidr = this_mpidr;
 	/* "cpus=N" or "cpumask=M" there too: the kernel may have more cores than the one it starts on */
 	int more_cores = 0, battery_requested = 0, ufs_requested = 0;
+	uint64_t requested_hc_pa = HC_PA_DEFAULT;
 	/* "torch=N" (not 0) there too: the phone's flashlight is the kernel's (drivers/camera/hakios.torch.c) */
 	int torch_requested = 0;
 	/* "cam=5" there too: the phone's wide camera is Darwin's (drivers/camera/hakios.camera.c) */
@@ -3014,7 +3261,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	block_enabled = 0;
 	for (const char *c = pi.cmdline; *c; c++) {
 		if (starts_with(c, "bootcpu=") && (c == pi.cmdline || c[-1] == ' ') && c[8] >= '0' && c[8] <= '7') {
-			kernel_mpidr = (uint64_t)(c[8] - '0') << PLAT->core_shift;
+			kernel_mpidr = core_mpidr(PLAT, c[8] - '0');
 		}
 		more_cores |= (starts_with(c, "cpus=") || starts_with(c, "cpumask=")) && (c == pi.cmdline || c[-1] == ' ');
 		battery_requested |= starts_with(c, "battery=1") && (c == pi.cmdline || c[-1] == ' ') &&
@@ -3031,18 +3278,41 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		    (c[11] == 0 || c[11] == ' ');
 		hc_requested |= starts_with(c, "ufs_native=") && (c == pi.cmdline || c[-1] == ' ') && c[11] >= '1' &&
 		    c[11] <= '9';
+		/*
+		 * ufs_hc_pa: Use the UFSHCI register address from this device's firmware description
+		 */
+		if (starts_with(c, "ufs_hc_pa=") && (c == pi.cmdline || c[-1] == ' ')) {
+			const char *value = c + 10;
+
+			if (value[0] == '0' && value[1] == 'x') {
+				value += 2;
+			}
+			requested_hc_pa = parse_number(value, 16);
+		}
+	}
+	if (requested_hc_pa == 0 || (requested_hc_pa & 0xfff) != 0) {
+		print("ufs: controller address %x is not nonzero and page-aligned: native UFS is off\n", requested_hc_pa);
+		hc_requested = 0;
+	} else if (requested_hc_pa != hc_pa) {
+		hc_pa = requested_hc_pa;
+		hc_known = 0;
 	}
 	if (battery_requested) {
 		charger_start();
 	}
-	if (ufs_requested >= 2) {
+	if (hc_requested) {
 		hc_init();              /* (ufs_native=: UEFI's transfer list kept, before anything reads) */
+	}
+	if (hc_requested && ufs_requested < 2 && !hc_start_standby()) {
+		hc_requested = 0;
 	}
 	if (ufs_requested >= 1) {
 		ufs_survey();
 	}
 	if (ufs_requested >= 2) {
 		block_start();
+	} else if (hc_requested) {
+		block_start_native();
 	}
 	if (checkpoint == CHECKPOINT_SELFTEST) {
 		kernel_mpidr = this_mpidr;
@@ -3361,13 +3631,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * this loader stays on while it watches is not the kernel's, nor any the firmware runs.
 	 */
 	uint64_t cpu_mpidr[8] = { kernel_mpidr };
-	int cpu_count = 1, boot_core = (int)(kernel_mpidr >> plat->core_shift);
+	int cpu_count = 1, boot_core = mpidr_core(plat, kernel_mpidr);
 
 	if (more_cores) {
 		for (int distance = 1; distance < plat->cores; distance++) {
 			for (int side = 0; side < 2; side++) {
 				int core = side == 0 ? boot_core + distance : boot_core - distance;
-				uint64_t mpidr = (uint64_t)core << plat->core_shift;
+				uint64_t mpidr = core_mpidr(plat, core);
 				int64_t state;
 
 				if (core < 0 || core >= plat->cores || mpidr == this_mpidr) {
@@ -3403,7 +3673,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		dt_prop_u64(&w, "bus-frequency", 100000000ULL);
 		dt_prop_u64(&w, "memory-frequency", 100000000ULL);
 		dt_prop_u64(&w, "peripheral-frequency", 24000000ULL);
-		if (plat->small_cores & (1u << ((cpu_mpidr[i] >> plat->core_shift) & 31))) {
+		if (plat->small_cores & (1u << (mpidr_core(plat, cpu_mpidr[i]) & 31))) {
 			dt_prop_u32(&w, "small-core", 1);
 		}
 		dt_end(&w);
@@ -4345,6 +4615,8 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
 		if (SCREEN.base == 0xE1000000ULL) {
 			PLAT = &platform_redwood;
+		} else if (SCREEN.base == 0x5C000000ULL) {
+			PLAT = &platform_khaje;
 		} else {
 			ramfb_phone_screen();
 		}
@@ -4353,6 +4625,9 @@ efi_main(efi_handle image, efi_system_table *st)
 	print("platform %s\n", PLAT->name);
 
 	install_exception_hook();
+	if (PLAT == &platform_khaje) {
+		gic_timer_selftest(PLAT);
+	}
 	wdt_arm();
 
 	int have_payload = parse_payload(&pi, 0);

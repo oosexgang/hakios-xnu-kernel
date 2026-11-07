@@ -14,6 +14,11 @@ driver GOODIX
 	help    the touch screen: a Goodix GT9916 ("Berlin-D") or a FocalTech FT3680 on SPI (touchscreen=1). The bus,
 	help    pins and supplies are the POCO X5 Pro's; another phone with one of these controllers changes those
 
+driver SYNAPTICS_TCM
+	file    bsd/dev/hakios.synaptics.c
+	help    the touch screen of the Redmi Note 13 4G NFC: a Synaptics controller (TCM) on I2C, driven by hand on GPIO 6 and 7
+	help    (synaptics_tcm=1). The pins and the address are that phone's
+
 driver BUTTONS
 	file    bsd/dev/hakios.buttons.c
 	help    the power and volume keys, read from the PMIC through the SPMI arbiter (buttons=1)

@@ -213,7 +213,18 @@ run() { # run <oem command> <label>
 		*" wifi="*|*" wifi_step="*) [ -s fw-wifi/mac ] && args="$args wifi_mac=$(tr -d ' \n\r' < fw-wifi/mac)" ;;
 		esac
 		xnuloader/mkpayload.py -o run-payload.bin kernel=$K ${rd:+ramdisk=$rd} --cmdline "loader_return_after=${XL_SECS:-8} epoch=$(date +%s) sb_delay=${XL_SB_DELAY:-8} $args" >/dev/null || return 1
-		FB_TIMEOUT=30 fb stage run-payload.bin | grep -q OKAY || { echo "xl: upload failed"; return 1; }
+		local upload= try
+		for try in 1 2; do
+			upload=$(FB_TIMEOUT=30 fb stage run-payload.bin)
+			echo "$upload" | grep -q OKAY && break
+			[ "$try" = 1 ] && { echo "xl: upload failed once; retrying"; sleep 2; }
+		done
+		if ! echo "$upload" | grep -q OKAY; then
+			echo "$upload"
+			echo "xl: upload failed twice; returning the phone to Android"
+			recover_phone
+			return 1
+		fi
 	fi
 	local live=; live_loader && live=1
 	fb $1 >/dev/null

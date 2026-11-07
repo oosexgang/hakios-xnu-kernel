@@ -53,6 +53,7 @@ applog	k
 applog_name	k
 autounlock	u
 battery	kl
+battery_level	k
 battery_shared_pa	k
 battery_stop	k
 battery_stop_poll	k
@@ -253,6 +254,7 @@ soc_pas_ipa	k
 soc_pas_mpss	k
 soc_smem	k
 soc_smem_size	k
+soc_vtimer	k
 socinfo	k
 sound	k
 sound_below	k
@@ -266,6 +268,7 @@ surf_wrap	k
 surftrace	k
 surftrace_of	k
 switcher_wallpaper	u
+synaptics_tcm	k
 syssleep	k
 systrace	k
 systrace_name	k
@@ -288,6 +291,7 @@ tu_debug	u
 ufs	l
 ufs_bench	k
 ufs_check	k
+ufs_hc_pa	l
 ufs_native	kl
 ufs_native_bench	k
 ufs_native_buffer	k
@@ -297,6 +301,7 @@ ufs_native_leave	k
 ufs_native_slots	k
 ufs_native_spin	k
 ufs_probe	l
+ufs_probe_pa	k
 ufs_shared_pa	k
 ufs_write	kl
 ui_lite	u
