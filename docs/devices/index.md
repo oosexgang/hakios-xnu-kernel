@@ -9,7 +9,7 @@ Every device with a repository, and how far each part of it works. A device of y
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | [QEMU virt (aarch64)](qemu.md) | `none` | yes | yes | yes |  | no | yes | yes |  |  |  |  |  |  |  | yes |  |  |
 | [POCO X5 Pro 5G](redwood.md) | `sc7280` | yes | yes | yes | yes | yes | yes | yes | partly | yes | yes | partly | yes | no | partly |  | partly |  |
-| [Redmi Note 13 4G NFC](sapphiren.md) | `khaje` | yes | partly |  | partly | no | no | no | partly | no | no |  |  | no | no |  | no | partly |
+| [Redmi Note 13 4G NFC](sapphiren.md) | `khaje` | yes | yes |  | yes | no | no | no | partly | no | no |  |  | no | no |  | no | partly |
 
 An empty cell is a part nobody has looked at on that device yet.
 
