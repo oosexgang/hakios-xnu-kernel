@@ -72,6 +72,45 @@ try:
     r = run(os.path.join(work, "esp4"), nokernel, "--loader", loader)
     check("a payload with no kernel is refused", r.returncode != 0 and "no kernel" in r.stderr, r.stderr)
 
+    def entry(name, data):
+        return struct.pack("<16sII", name, len(data), 0) + data + b"\0" * (-len(data) % 16)
+
+    def packed(body, size=None):
+        return struct.pack("<II", 0x50554E58, len(body) if size is None else size) + body
+
+    end = b"\0" * 24
+    kentry = entry(b"kernel", b"k" * 16)
+    malformed = [
+        ("missing-kernel-bytes", packed(struct.pack("<16sII", b"kernel", 4096, 0)), "extends past"),
+        ("empty-kernel", packed(entry(b"kernel", b"") + end), "no kernel data"),
+        ("truncated-body", packed(kentry + end, len(kentry + end) + 1), "truncated payload"),
+        ("entry-crosses-body", packed(kentry + end, 24), "extends past"),
+        ("truncated-padding", packed(struct.pack("<16sII", b"kernel", 1, 0) + b"k"), "truncated padding"),
+        ("partial-entry-header", packed(kentry + b"\0" * 23), "entry header"),
+        ("missing-end-entry", packed(kentry), "no end entry"),
+        ("truncated-ramdisk", packed(kentry + struct.pack("<16sII", b"ramdisk", 4096, 0) + end), "extends past"),
+        ("huge-entry-size", packed(struct.pack("<16sII", b"kernel", 0xffffffff, 0) + end), "extends past"),
+        ("last-kernel-empty", packed(kentry + entry(b"kernel", b"") + end), "no kernel data"),
+    ]
+    for name, data, reason in malformed:
+        path, target = os.path.join(work, name + ".bin"), os.path.join(work, name + "-esp")
+        open(path, "wb").write(data)
+        r = run(target, path, "--loader", loader)
+        check(name + " is refused with a reason", r.returncode != 0 and reason in r.stderr and "Traceback" not in r.stderr, r.stdout + r.stderr)
+        check(name + " leaves no output directory", not os.path.exists(target))
+
+    compatible = [
+        ("empty-optional-entry", packed(kentry + entry(b"ramdisk", b"") + end)),
+        ("unknown-entry", packed(kentry + entry(b"future", b"future data") + end)),
+        ("file-padding", packed(kentry + end) + b"\0" * 16),
+    ]
+    for name, data in compatible:
+        path, target = os.path.join(work, name + ".bin"), os.path.join(work, name + "-esp")
+        open(path, "wb").write(data)
+        r = run(target, path, "--loader", loader)
+        check(name + " is still accepted", r.returncode == 0, r.stdout + r.stderr)
+        check(name + " is copied unchanged", r.returncode == 0 and open(os.path.join(target, "EFI/hakios/payload.bin"), "rb").read() == data)
+
     big = os.path.join(work, "big.bin")
     kbody = struct.pack("<16sII", b"kernel", 0, 0) + b"\0" * 24
     open(big, "wb").write(struct.pack("<II", 0x50554E58, len(kbody)) + kbody + b"\0" * (63 * 1024 * 1024 + 4096))
