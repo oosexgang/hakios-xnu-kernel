@@ -645,8 +645,11 @@ fts_bring_up(void)
 	(void)fts_read(FTS_REG_FW_VER, &fw, 1);
 	(void)fts_read(FTS_REG_VENDOR_ID, &vendor, 1);
 	printf("synaptics: FocalTech FTS at %#x: chip id %#x %#x, firmware %#x, vendor %#x (%s)\n", FTS_ADDRESS, id, id2, fw, vendor,
-	    ok ? "read" : "the registers did not answer");
-	return ok;
+	    ok && id == 0x54 && id2 == 0x52 ? "read" : ok ? "invalid; the controller is not ready" : "the registers did not answer");
+	/* An acknowledged I2C transaction is not enough to call the controller ready.  During GPU bring-up this panel has
+	 * answered every register with 0xef while it was still coming out of reset; accepting that left the reader polling
+	 * a controller which would never assert its interrupt. */
+	return ok && id == 0x54 && id2 == 0x52;
 }
 
 static void
@@ -708,6 +711,18 @@ bring_up(void)
 	}
 	if (i2c_present(FTS_ADDRESS) && !i2c_present(I2C_ADDRESS)) {
 		fts_chip = fts_bring_up();
+		for (unsigned attempt = 1; !fts_chip && attempt <= 2; attempt++) {
+			printf("synaptics: FocalTech is not ready; power-cycle retry %u of 2\n", attempt);
+			gpio_output(PIN_RESET, false, PULL_UP, 8);
+			gpio_output(PIN_AVDD, false, PULL_NONE, 8);
+			sleep_ms(50);
+			gpio_set(PIN_AVDD, true);
+			sleep_ms(20);
+			gpio_set(PIN_RESET, true);
+			bus_pins();
+			sleep_ms(300);
+			fts_chip = fts_bring_up();
+		}
 		goto out;
 	}
 	if (!i2c_present(I2C_ADDRESS)) {

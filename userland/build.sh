@@ -552,14 +552,17 @@ done
 [ -d root/lib/HakiosAudio.driver ] && ln -s /redwood/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
 # Programs and libraries of more than 4 MB (Turnip, UniXNU's Metal on Vulkan: TURNIP=1, M2V=1) live in the system
 # image, in /usr/local/redwood, with a link in their place here: the small image is loaded with the kernel, in the
-# 64 MB the loader takes for both (with them it grew from 6.6 to 26 MB).
+# 64 MB the loader takes for both (with them it grew from 6.6 to 26 MB). FLASHBOOT_RESIDENT_BIG=1 keeps them in that
+# resident image instead, for testing a new userland against an already-written, read-only Darwin volume.
 rm -rf big
-for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
-	mkdir -p big/$(dirname $f)
-	mv root/$f big/$f
-	ln -s /usr/local/redwood/$f root/$f
-	echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
-done
+if [ -z "${FLASHBOOT_RESIDENT_BIG:-}" ]; then
+	for f in $(cd root && find lib bin -type f -size +4M 2>/dev/null); do
+		mkdir -p big/$(dirname $f)
+		mv root/$f big/$f
+		ln -s /usr/local/redwood/$f root/$f
+		echo "build.sh: $f ($(stat -c %s big/$f) bytes) in the system image, /usr/local/redwood/$f"
+	done
+fi
 [ -d big ] && SYSTEM=1          # (the links point into it: it is made again with them)
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (drivers/storage/hakios.image.c)
@@ -644,7 +647,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_arm64 ]; then
 fi
 
 # --- the system image -----------------------------------------------------------------------------
-if [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
+if [ -z "${FLASHBOOT_RESIDENT_BIG:-}" ] && [ -f $DARWIN/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	{ [ ! -f system.apfs ] || [ obj/stage0 -nt system.apfs ] || [ $DARWIN/system.manifest -nt system.apfs ] ||
 	  [ $DARWIN/cryptex -nt system.apfs ] || [ $DARWIN/cryptex-app -nt system.apfs ] || [ -n "$SYSTEM" ]; }; then
 	# what sysimage/select-system.py has chosen since sysimage/rootfs was extracted is not in it, and would not be

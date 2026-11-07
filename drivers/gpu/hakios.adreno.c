@@ -3370,7 +3370,7 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 		*value = a610 ? 13 : 14;
 		return true;
 	case 0x12:                              /* UBWC_SWIZZLE */
-		*value = 6;
+		*value = a610 ? 7 : 6;
 		return true;
 	case 0x13:                              /* MACROTILE_MODE */
 		*value = a610 ? 0 : 1;
