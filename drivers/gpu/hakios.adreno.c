@@ -131,18 +131,6 @@ static uint64_t zap_memory = 0x8b71a000ull;
 #define PLOG_PHYS               0x5d100000ul
 #define PLOG_SIZE               0x10000u
 #define PLOG_MAGIC              0x61363130u     /* "a610" */
-static volatile uint8_t *plog;                  /* [0..3] magic, [4..7] length, then the text */
-static uint32_t plog_len;
-
-static void
-plog_put(char c)
-{
-	if (plog == NULL || plog_len >= PLOG_SIZE - 16) {
-		return;
-	}
-	plog[8 + plog_len++] = (uint8_t)c;
-	*(volatile uint32_t *)(plog + 4) = plog_len;
-}
 
 /*
  * The kernel's log reaches the loader when a run is over, and a run that ends in a reset
@@ -151,6 +139,7 @@ plog_put(char c)
  * as well, before the next register is touched.
  */
 extern void loader_log_putc(char c);
+extern void hakios_plog_start(volatile uint8_t *where);
 
 static int say(const char *format, ...) __printflike(1, 2);
 
@@ -165,7 +154,6 @@ say(const char *format, ...)
 	va_end(list);
 	for (const char *c = line; *c != 0; c++) {
 		loader_log_putc(*c);
-		plog_put(*c);
 	}
 	return printf("%s", line);
 }
@@ -3364,10 +3352,10 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 		*value = 0;
 		return true;
 	case 0x02:                              /* GMEM_SIZE */
-		*value = 512 * 1024;
+		*value = a610 ? 128 * 1024 + 4096 : 512 * 1024;
 		return true;
 	case 0x03:                              /* CHIP_ID, with the speed bin above it */
-		*value = GPU_CHIP_ID | (uint64_t)speed_bin << 32;
+		*value = a610 ? 0x06010001ull : (GPU_CHIP_ID | (uint64_t)speed_bin << 32);
 		return true;
 	case 0x04:                              /* MAX_FREQ */
 		*value = core_khz * 1000ull;
@@ -3379,13 +3367,13 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 		*value = 1;
 		return true;
 	case 0x10:                              /* HIGHEST_BANK_BIT */
-		*value = 14;
+		*value = a610 ? 13 : 14;
 		return true;
 	case 0x12:                              /* UBWC_SWIZZLE */
 		*value = 6;
 		return true;
 	case 0x13:                              /* MACROTILE_MODE */
-		*value = 1;
+		*value = a610 ? 0 : 1;
 		return true;
 	default:                                /* among them VA_START, VA_SIZE: addresses are ours to give */
 		return false;
@@ -3738,6 +3726,7 @@ step610_power(void)
 	get(&gpu, "rbbm_status", RBBM_STATUS);
 	get(&gpu, "rbbm_int_0_status", RBBM_INT_0_STATUS);
 	core_is_on = true;
+	core_khz = 300000;
 	printf("adreno: %u: THE A610'S 3D CORE HAS POWER AND ANSWERS\n", step);
 	return true;
 }
@@ -3782,6 +3771,13 @@ step610_core_start(void)
 	put(&gpu, "rbbm_interface_hang_int_cntl", RBBM_INTERFACE_HANG_INT_CNTL, 1u << 30 | 0x3ffff);
 	put(&gpu, "uche_client_pf", UCHE_CLIENT_PF, 1u << 7 | 1);
 	/* (no CP_APRIV_CNTL and no CP_CHICKEN_DBG: Linux sets them for a650 and later, a660 only; not for a610) */
+	/* how tiled and compressed textures are laid out (Linux a6xx_calc_ubwc_config for the a610: highest bank bit 13,
+	 * minimum access length 64 bits, mode 1) */
+	put(&gpu, "rb_nc_mode_cntl", GPU_WORD(0x8e08), 1u << 3 | 1);
+	put(&gpu, "tpl1_nc_mode_cntl", GPU_WORD(0xb604), 1u << 3 | 1);
+	put(&gpu, "sp_nc_mode_cntl", GPU_WORD(0xae02), 1u << 3 | 1);
+	put(&gpu, "uche_mode_cntl", GPU_WORD(0x0e01), 1u << 23);
+	put(&gpu, "rbbm_nc_mode_cntl", GPU_WORD(0x0534), 0);
 	put64(&gpu, "cp_sqe_instr_base", CP_SQE_INSTR_BASE, CORE_SQE_ADDRESS);
 	put64(&gpu, "cp_rb_base", CP_RB_BASE, CORE_RING_ADDRESS);
 	put(&gpu, "cp_rb_cntl", CP_RB_CNTL, CP_RB_CNTL_VALUE);
@@ -3893,8 +3889,8 @@ hakios_adreno_minute(void)
 {
 	int32_t tenths[2];
 
-	if (!gpu_kept) {
-		return;
+	if (!gpu_kept || a610) {
+		return;         /* (the sensors' address is the 642L board's: on the 685 that read hangs the bus, seen 7 November) */
 	}
 	need(&tsens);
 	for (unsigned i = 0; i < 2; i++) {
@@ -4067,6 +4063,22 @@ start_by_itself(void)
 	const char *missing = NULL;
 	uint64_t size;
 
+	if (a610) {
+		static const char *const files610[] = { "a630_sqe.fw", "a610_zap.mdt", "a610_zap.b02" };
+
+		image_asked_quietly = true;
+		for (unsigned i = 0; i < sizeof(files610) / sizeof(files610[0]) && missing == NULL; i++) {
+			if (image_file("fw", files610[i], &size) == NULL) {
+				missing = files610[i];
+			}
+		}
+		image_asked_quietly = false;
+		if (missing != NULL) {
+			printf("adreno: THE GPU IS NOT STARTED: the small image has no fw/%s (fw-gpu/)\n", missing);
+			return false;
+		}
+		return true;
+	}
 	if (pe_arm_get_soc_base_phys() != HAKIOS_SOC_BASE) {
 		printf("adreno: THE GPU IS NOT STARTED: gpu=1 is for the phone, and this is not it\n");
 		return false;
@@ -4108,23 +4120,22 @@ hakios_adreno_init(void)
 	}
 	if (PE_parse_boot_argn("adreno610", &only, sizeof(only)) && only) {
 		volatile uint8_t *old_log = (volatile uint8_t *)ml_io_map(PLOG_PHYS, PLOG_SIZE);
-		uint32_t old_len = *(volatile uint32_t *)(old_log + 4);
+		uint32_t total = *(volatile uint32_t *)(old_log + 4);
 
-		/* what the last run said, if it ended without saying goodbye */
-		if (*(volatile uint32_t *)old_log == PLOG_MAGIC && old_len > 0 && old_len < PLOG_SIZE - 16) {
-			uint32_t from = old_len > 6000 ? old_len - 6000 : 0;
+		/* what the last run said, if it ended without saying goodbye: its last bytes, in order */
+		if (*(volatile uint32_t *)old_log == PLOG_MAGIC && total > 0) {
+			uint32_t size = 0xfff0u, have = total < size ? total : size, start = total < size ? 0 : total % size;
+			uint32_t from = have > 12000 ? have - 12000 : 0;
 
-			printf("adreno: ==== THE PREVIOUS RUN'S PERSISTENT LOG (%u bytes, the last %u shown) ====\n", old_len,
-			    old_len - from);
-			for (uint32_t i = from; i < old_len; i++) {
-				loader_log_putc((char)old_log[8 + i]);
+			printf("adreno: ==== THE PREVIOUS RUN'S PERSISTENT LOG (%u bytes written, the last %u shown) ====\n", total,
+			    have - from);
+			for (uint32_t i = from; i < have; i++) {
+				loader_log_putc((char)old_log[8 + (start + i) % size]);
 			}
 			printf("\nadreno: ==== END OF THE PREVIOUS RUN'S LOG ====\n");
 		}
-		plog = old_log;
-		*(volatile uint32_t *)plog = PLOG_MAGIC;
-		plog_len = 0;
-		*(volatile uint32_t *)(plog + 4) = 0;
+		*(volatile uint32_t *)old_log = PLOG_MAGIC;
+		hakios_plog_start(old_log);
 
 		a610 = true;
 		gcc.phys = A610_GCC;
@@ -4147,8 +4158,8 @@ hakios_adreno_init(void)
 			return;
 		}
 		by_itself = true;
-		last_step = 21;
-		skip_steps = 1u << 10 | 1u << 11 | 1u << 12;
+		last_step = a610 ? STEPS610 - 1 : 21;   /* (the 610's last step draws a test picture) */
+		skip_steps = a610 ? 0 : 1u << 10 | 1u << 11 | 1u << 12;
 		pause_ms = 0;
 		watch_seconds = 0;
 		keep = 1;
@@ -4186,7 +4197,7 @@ hakios_adreno_init(void)
 	}
 	PE_parse_boot_argn("adreno_keep", &keep, sizeof(keep));
 	if (keep) {
-		if (done >= (a610 ? STEPS610 : 21) && core_runs) {
+		if (done >= (a610 ? STEPS610 - 1 : 21) && core_runs) {
 			gpu_free[0].start = GPU_ADDRESSES_START;
 			gpu_free[0].size = GPU_ADDRESSES_SIZE;
 			gpu_free_count = 1;

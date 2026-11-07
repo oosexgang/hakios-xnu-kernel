@@ -86,6 +86,22 @@ static uint32_t loader_log_lock;
 
 static void loader_log_put_locked(char c);
 
+/*
+ * A copy of the whole log in memory that survives a reset (drivers/gpu/hakios.adreno.c maps 64 KB of the phone's ramoops
+ * area for it with adreno610=1): the last PLOG_DATA bytes are always there, [0] magic, [4] total bytes written, data from 8.
+ */
+volatile uint8_t *hakios_plog;
+static uint32_t hakios_plog_total;
+void hakios_plog_start(volatile uint8_t *where);
+void
+hakios_plog_start(volatile uint8_t *where)
+{
+	hakios_plog_total = 0;
+	*(volatile uint32_t *)(where + 4) = 0;
+	hakios_plog = where;
+}
+#define HAKIOS_PLOG_DATA 0xfff0u
+
 void
 loader_log_putc(char c)
 {
@@ -94,6 +110,11 @@ loader_log_putc(char c)
 
 	if (c == '\r') {
 		return;
+	}
+	if (hakios_plog != NULL) {
+		hakios_plog[8 + (hakios_plog_total % HAKIOS_PLOG_DATA)] = (uint8_t)c;
+		hakios_plog_total++;
+		*(volatile uint32_t *)(hakios_plog + 4) = hakios_plog_total;
 	}
 	daif = __builtin_arm_rsr64("DAIF");
 	__builtin_arm_wsr("DAIFSet", DAIFSC_IRQF | DAIFSC_FIQF);
