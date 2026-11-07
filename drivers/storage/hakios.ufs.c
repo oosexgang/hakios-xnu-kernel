@@ -173,7 +173,7 @@ static uint64_t ufs_last_end;
  */
 static uint8_t ufs_lun[BLOCK_MAX_PARTS];         /* 0xff: not known, read through the loader */
 static uint64_t ufs_lun_offset[BLOCK_MAX_PARTS];
-static bool ufs_native_mapped;
+static bool ufs_native_mapped, ufs_synth;
 static uint32_t ufs_native_luns;                /* how many units are mapped (LUN 0..n-1) */
 static volatile bool ufs_native_on;
 static uint64_t ufs_native_fallbacks, ufs_mailbox_refused;
@@ -1423,6 +1423,187 @@ ufs_native_gpt_probe(void)
 	kfree_data(header, 4096);
 }
 
+/* ufs_native=5: verify and list LUN 0's complete GPT, still issuing read commands only */
+static void
+ufs_native_gpt_survey(void)
+{
+	uint8_t *header = kalloc_data(4096, Z_WAITOK), *entries = NULL;
+	uint64_t entries_lba = 0, bytes = 0, read_bytes = 0;
+	uint32_t count = 0, entry_size = 0, want = 0, got = 0, used = 0;
+	int error;
+
+	if (header == NULL) {
+		printf("ufs: native: GPT survey: no memory\n");
+		return;
+	}
+	printf("ufs: native: GPT survey: reading LUN 0's header and entry array; no write command is permitted\n");
+	error = ufs_native_in(true);
+	if (error == 0) {
+		error = ufshc_read(0, 4096, header, 4096);
+	}
+	if (error == 0 && memcmp(header, "EFI PART", 8) == 0) {
+		entries_lba = *(uint64_t *)(header + 72);
+		count = *(uint32_t *)(header + 80);
+		entry_size = *(uint32_t *)(header + 84);
+		want = *(uint32_t *)(header + 88);
+		if (count == 0 || count > 4096 || entry_size < 128 || entry_size > 1024 ||
+		    (entry_size & 7) != 0 || count > (1u << 20) / entry_size || entries_lba > 0xffffffffULL) {
+			printf("ufs: native: GPT survey: unsafe entry array description (%u entries of %u bytes at block %llu): STOP\n",
+			    count, entry_size, entries_lba);
+			error = EINVAL;
+		} else {
+			bytes = (uint64_t)count * entry_size;
+			read_bytes = (bytes + 4095) & ~4095ULL;
+			entries = kalloc_data((vm_size_t)read_bytes, Z_WAITOK);
+			if (entries == NULL) {
+				error = ENOMEM;
+			} else {
+				error = ufshc_read(0, entries_lba * 4096, entries, read_bytes);
+			}
+		}
+	} else if (error == 0) {
+		printf("ufs: native: GPT survey: LUN 0 block 1 has no EFI GPT signature: STOP\n");
+		error = EINVAL;
+	}
+	if (error == 0) {
+		got = crc32(0, entries, (size_t)bytes);
+		printf("ufs: native: GPT survey: %u entries of %u bytes at block %llu; table CRC %s (%08x)\n",
+		    count, entry_size, entries_lba, got == want ? "right" : "WRONG", got);
+		if (got != want) {
+			error = EINVAL;
+		}
+	}
+	for (uint32_t i = 0; error == 0 && i < count; i++) {
+		const uint8_t *entry = entries + (uint64_t)i * entry_size;
+		uint64_t first, last;
+		char name[37];
+		bool present = false;
+
+		for (uint32_t j = 0; j < 16; j++) {
+			present |= entry[j] != 0;
+		}
+		if (!present) {
+			continue;
+		}
+		first = *(const uint64_t *)(entry + 32);
+		last = *(const uint64_t *)(entry + 40);
+		for (uint32_t j = 0; j < sizeof(name) - 1; j++) {
+			uint16_t c = *(const uint16_t *)(entry + 56 + j * 2);
+
+			name[j] = c == 0 ? 0 : c >= 0x20 && c < 0x7f ? (char)c : '?';
+			if (c == 0) {
+				break;
+			}
+		}
+		name[sizeof(name) - 1] = 0;
+		if (first > last) {
+			printf("ufs: native: GPT survey: entry %u (%s) has an inverted range: STOP\n", i + 1, name);
+			error = EINVAL;
+			break;
+		}
+		printf("ufs: native: GPT survey: entry %u: %s, blocks %llu..%llu (%llu MiB)\n", i + 1, name,
+		    first, last, (last - first + 1) >> 8);
+		used++;
+	}
+	printf("ufs: native: GPT survey: %s, %u used entries, %llu bytes read\n", error == 0 ? "done" : "STOPPED", used,
+	    4096 + (entries != NULL ? read_bytes : 0));
+	ufs_native_out("after the GPT survey");
+	ufshc_report("after the GPT survey");
+	if (entries != NULL) {
+		kfree_data(entries, (vm_size_t)read_bytes);
+	}
+	kfree_data(header, 4096);
+}
+
+/*
+ * ufs_native=6: the loader has no Block I/O to offer (U-Boot's UFS cannot be brought up on this phone, the
+ * firmware's controller is adopted as it is), so the partition table is read here, from LUN 0's GPT, by this
+ * kernel's own driver, read commands only, and put into the page's table as the loader would have: the
+ * partitions then are /dev/ufs_NAME, read through the native path. Anything unexpected: no partitions.
+ */
+static bool
+ufs_native_synth(void)
+{
+	uint8_t *header = kalloc_data(4096, Z_WAITOK), *entries = NULL;
+	uint64_t entries_lba, bytes, read_bytes = 0;
+	uint32_t count, entry_size, want, used = 0;
+	bool good = false;
+
+	if (header == NULL) {
+		return false;
+	}
+	ufshc_set_luns(1);
+	if (ufs_native_in(true) != 0 || ufshc_read(0, 4096, header, 4096) != 0 || memcmp(header, "EFI PART", 8) != 0) {
+		printf("ufs: native: partition table: LUN 0 has no GPT that can be read\n");
+		goto out;
+	}
+	entries_lba = *(uint64_t *)(header + 72);
+	count = *(uint32_t *)(header + 80);
+	entry_size = *(uint32_t *)(header + 84);
+	want = *(uint32_t *)(header + 88);
+	if (count == 0 || count > 4096 || entry_size < 128 || entry_size > 1024 || (entry_size & 7) != 0 ||
+	    count > (1u << 20) / entry_size || entries_lba > 0xffffffffULL) {
+		printf("ufs: native: partition table: unsafe description of the entries\n");
+		goto out;
+	}
+	bytes = (uint64_t)count * entry_size;
+	read_bytes = (bytes + 4095) & ~4095ULL;
+	entries = kalloc_data((vm_size_t)read_bytes, Z_WAITOK);
+	if (entries == NULL || ufshc_read(0, entries_lba * 4096, entries, read_bytes) != 0) {
+		printf("ufs: native: partition table: the entries could not be read\n");
+		goto out;
+	}
+	if (crc32(0, entries, (size_t)bytes) != want) {
+		printf("ufs: native: partition table: the CRC of the entries is wrong\n");
+		goto out;
+	}
+	for (uint32_t i = 0; i < count && used < BLOCK_MAX_PARTS; i++) {
+		const uint8_t *entry = entries + (uint64_t)i * entry_size;
+		volatile struct loader_block_part *e = &ufs_page->part[used];
+		uint64_t first = *(const uint64_t *)(entry + 32), last = *(const uint64_t *)(entry + 40);
+		bool present = false;
+
+		for (uint32_t j = 0; j < 16; j++) {
+			present |= entry[j] != 0;
+		}
+		if (!present) {
+			continue;
+		}
+		if (first > last) {
+			printf("ufs: native: partition table: entry %u has an inverted range\n", i + 1);
+			goto out;
+		}
+		memset((void *)e, 0, sizeof(*e));
+		for (uint32_t j = 0; j < sizeof(e->name) - 1; j++) {
+			uint16_t c = *(const uint16_t *)(entry + 56 + j * 2);
+
+			if (c == 0) {
+				break;
+			}
+			e->name[j] = c >= 0x20 && c < 0x7f ? (char)c : '_';
+		}
+		e->block_size = 4096;
+		e->blocks = last - first + 1;
+		e->start_lba = first;
+		e->unit = 0;
+		e->lun = 0;
+		e->flags = 0;
+		ufs_lun[used] = 0;
+		ufs_lun_offset[used] = first * 4096;
+		used++;
+	}
+	ufs_page->parts = used;
+	ufs_parts = used;
+	good = used != 0;
+	printf("ufs: native: partition table: %u partitions of LUN 0, from its GPT, read by this kernel's own driver\n", used);
+out:
+	if (entries != NULL) {
+		kfree_data(entries, (vm_size_t)read_bytes);
+	}
+	kfree_data(header, 4096);
+	return good;
+}
+
 /*
  * ufs_native_check=1: what this kernel's own driver reads is what the loader reads, byte for
  * byte. Spans are read a batch at a time, first all through the loader (UEFI's list in), then
@@ -1768,6 +1949,30 @@ hakios_ufs_init(void)
 		return;
 	}
 	ufs_parts = ufs_page->parts;
+	memset(ufs_lun, 0xff, sizeof(ufs_lun));
+	{
+		uint32_t mode6 = 0;
+
+		if (ufs_parts == 0 && PE_parse_boot_argn("ufs_native", &mode6, sizeof(mode6)) && mode6 == 6) {
+			struct ufshc_loader offer6 = {
+				.hc_pa = ufs_page->native.hc_pa, .area_pa = ufs_page->native.area_pa,
+				.area_size = ufs_page->native.area_size, .ucd_offset = ufs_page->native.ucd_offset,
+				.ucd_size = ufs_page->native.ucd_size, .slots = ufs_page->native.slots,
+				.uefi_lo = ufs_page->native.uefi_utrlba, .uefi_hi = ufs_page->native.uefi_utrlbau,
+				.take_back = &ufs_page->loader_native.take_back, .list_in = &ufs_page->kernel_native.list_in,
+				.switched_in = (uint32_t *)&ufs_page->kernel_native.switched_in,
+				.switched_out = (uint32_t *)&ufs_page->kernel_native.switched_out,
+				.cnr_at_switch = &ufs_page->kernel_native.cnr_at_switch,
+			};
+
+			if (ufshc_probe(&offer6, false) && ufs_native_synth()) {
+				ufs_native_mapped = true;
+				ufs_native_luns = 1;
+				ufs_native_on = true;
+				ufs_synth = true;
+			}
+		}
+	}
 	ufs_buffer_size = ufs_page->buffer_size;
 	buffer_pa = ufs_page->buffer_pa;
 	ufs_buffer = (const uint8_t *)(ml_io_map_unmappable((vm_offset_t)(buffer_pa & ~(UFS_PAGE - 1)),
@@ -1859,11 +2064,14 @@ hakios_ufs_init(void)
 	 * ufs_native=1: through this kernel's own driver instead, its own transfer list in the
 	 * controller for the run, if all is as expected; 2: only look; 3: a dry run -- the list in and
 	 * out again, and in once more for the end of the run to take out, no command sent; 4: prove the
-	 * list with TEST UNIT READY, read LUN 0's GPT header once, validate it, and put the old list back.
+	 * list with TEST UNIT READY, read LUN 0's GPT header once, validate it, and put the old list back;
+	 * 5: additionally read, CRC-check and list the complete GPT entry array, still read only.
 	 */
 	check = 0;
-	memset(ufs_lun, 0xff, sizeof(ufs_lun));
-	if (PE_parse_boot_argn("ufs_native", &check, sizeof(check)) && check != 0) {
+	if (!ufs_synth) {
+		memset(ufs_lun, 0xff, sizeof(ufs_lun));
+	}
+	if (!ufs_synth && PE_parse_boot_argn("ufs_native", &check, sizeof(check)) && check != 0) {
 		struct ufshc_loader offer = {
 			.hc_pa = ufs_page->native.hc_pa, .area_pa = ufs_page->native.area_pa,
 			.area_size = ufs_page->native.area_size, .ucd_offset = ufs_page->native.ucd_offset,
@@ -1892,6 +2100,8 @@ hakios_ufs_init(void)
 			}
 		} else if (mode == 4) {
 			ufs_native_gpt_probe();
+		} else if (mode == 5) {
+			ufs_native_gpt_survey();
 		} else if (ufs_native_map(true)) {
 			ufs_native_mapped = true;
 			if (compare != 0) {
