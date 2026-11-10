@@ -15,6 +15,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 android = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'backup', 'boot_a_magisk.img')
+if not os.path.isfile(android):
+    sys.exit(f'build_flashed.py: no {android}: it is your phone\'s own rooted boot image '
+             '(see docs/mtk-porting.md, "What the phone must allow"), never in the repository')
 subprocess.check_call([sys.executable, os.path.join(ROOT, 'tools', 'chainboot.py'), android,
                        os.path.join(HERE, 'mtkloader.bin'), os.path.join(ROOT, 'xnu-flashed-slot_a.img'),
                        os.path.join(ROOT, 'build-payload.bin')])

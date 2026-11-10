@@ -61,6 +61,16 @@
 set -e
 cd "$(dirname "$(readlink -f "$0")")"
 source ../xnu-env.sh
+# Three things GNU coreutils has and macOS has not: a tree of hard links (cp -al; Sonoma's cp fails on every
+# file of one, "Bad file descriptor"), sha256sum, and stat -c
+linktree() { # linktree DIR NEW: NEW (which is not there yet) becomes DIR's tree, every file a hard link
+	if [ "$(uname -s)" = Darwin ]; then
+		mkdir -p "$2" && (dst=$(cd "$2" && pwd) && cd "$1" && pax -rwl -p e . "$dst")
+	else
+		cp -al "$1" "$2"
+	fi
+}
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 
 CC="xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra"
 LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000"
@@ -268,7 +278,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 			# the OpenGL ES library, and the table of functions that hands CoreAnimation's calls to it
 			# (Mesa says beside the library what it was built from: one from other patches is built again)
 			M=../xnu-deps/build/mesa/out
-			[ "$(cat $M/built-from 2>/dev/null)" = "$(cat ../tools/mesa/*.patch ../tools/mesa/redwood-drm/* | sha256sum)" ] ||
+			[ "$(cat $M/built-from 2>/dev/null)" = "$(cat ../tools/mesa/*.patch ../tools/mesa/redwood-drm/* | sha256)" ] ||
 				../tools/mk-mesa.sh
 			./mkeagl.py src/eagl_slots.txt $M/gl.xml $M/exported-gl.txt src/eagl.c > obj/eagl_gen.h
 			$DYN -dynamiclib -install_name /redwood/lib/libredwood-gl.dylib -Iobj -framework CoreFoundation \
@@ -524,7 +534,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_arm64 ]; then
 	# with CRYPTEXES=flash the cryptexes are read from the phone's flash and this tree is
 	# built and thrown away unused
 	if [ "$CRYPTEXES" != flash ]; then
-	if [ -d $IOS/cryptex ]; then cp -al $IOS/cryptex flashboot.os; else mkdir -p flashboot.os; fi
+	if [ -d $IOS/cryptex ]; then linktree $IOS/cryptex flashboot.os; else mkdir -p flashboot.os; fi
 	# the audio DSP's firmware and the speaker amplifiers' configuration, as in the system image's /fw: the kernel
 	# reads the firmware as soon as there is a root (this image, adsp=1), the configuration maybe later -- by then
 	# from the iOS volume's /fw, which src/init.c (flash_root) binds to this
@@ -573,7 +583,7 @@ if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_arm64 ]; then
 		rm -f flashboot.os.apfs
 	fi
 	rm -rf flashboot flashboot.os flashboot.boot.apfs
-	echo "flashboot.apfs: $(( $(stat -c %s flashboot.apfs) / 1048576 )) MB"
+	echo "flashboot.apfs: $(( $(wc -c < flashboot.apfs) / 1048576 )) MB"
 fi
 
 # --- the system image -----------------------------------------------------------------------------
@@ -588,7 +598,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 		exit 1
 	fi
 	rm -rf sysroot
-	cp -al $IOS/rootfs sysroot                      # hard links: no copies of the 0.5 GB
+	linktree $IOS/rootfs sysroot                      # hard links: no copies of the 0.5 GB
 	# launchd must load our choice of jobs, not all 500 that iOS has
 	rm -rf sysroot/System/Library/LaunchDaemons sysroot/System/Library/NanoLaunchDaemons \
 		sysroot/System/Library/LaunchAngels sysroot/System/Library/xpc/launchd.plist
@@ -670,10 +680,10 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 	# the OS cryptex: on a device a separate volume grafted at /System/Cryptexes/OS. It holds the dyld
 	# shared cache (dyld looks there first) and a few libraries and resources outside the cache.
 	mkdir -p sysroot/System/Cryptexes
-	if [ -d $IOS/cryptex ]; then cp -al $IOS/cryptex sysroot/System/Cryptexes/OS; fi
+	if [ -d $IOS/cryptex ]; then linktree $IOS/cryptex sysroot/System/Cryptexes/OS; fi
 	# the App cryptex, the same way: Safari's daemons (eight launchd jobs run them from there), its settings and
 	# the bundles around it, which the root's links reach (System/Library/PreferenceBundles/MobileSafariSettings.bundle...)
-	if [ -d $IOS/cryptex-app ]; then cp -al $IOS/cryptex-app sysroot/System/Cryptexes/App; fi
+	if [ -d $IOS/cryptex-app ]; then linktree $IOS/cryptex-app sysroot/System/Cryptexes/App; fi
 	D=sysroot/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld
 	mkdir -p $D
 	for f in $CACHE/dyld_shared_cache_arm64*; do

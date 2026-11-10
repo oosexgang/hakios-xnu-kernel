@@ -19,6 +19,11 @@ WATCH=${XNU_WATCH:-$((SECS + 240))}
 # a kernel that hangs costs a power cycle and not a rescue through BROM.
 TEST_FLAGS=(-DXNU_WDT_SECONDS=0 -DXNU_CORES=$CORES -DXNU_WATCH_SECONDS=$WATCH
 	"-DXNU_RETURN_AFTER=\"$SECS\"" "-DXNU_EXTRA_ARGS=\"$XNU_ARGS epoch=$(date +%s)\"")
+for tool in adb fastboot python3; do
+	command -v $tool >/dev/null || { echo "xnu-cycle.sh: $tool is not in PATH"; exit 1; }
+done
+[ -f "$ROOT/build-payload.bin" ] || { echo "xnu-cycle.sh: no build-payload.bin: make it with ./xl_x6826b build"; exit 1; }
+mkdir -p "$(dirname "$OUT")"
 "$ROOT/mtkloader/build.sh" "${TEST_FLAGS[@]}" "$@" >/dev/null
 python3 "$ROOT/mtkloader/build_flashed.py" >/dev/null
 [ "$(adb -s $S get-state 2>/dev/null)" = device ] && adb -s $S reboot bootloader

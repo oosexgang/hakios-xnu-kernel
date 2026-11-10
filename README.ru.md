@@ -57,7 +57,8 @@ launchd → backboardd → SpringBoard → приложения.
 
 Ядро собирается из внешнего дерева исходников XNU плюс `xnu/redwood.patch` (`xnu-build.sh`); библиотеки и инструменты userland —
 `userland/build.sh`; загрузочный образ пакуется и прошивается, а сеанс запускается скриптом `tools/xnu-cycle.sh`. Образ системы собирается из
-твоего же IPSW (`ios165/fetch.sh`). См. [docs/mtk-porting.md](docs/mtk-porting.md).
+твоего же IPSW (`ios165/fetch.sh`). Все команды по порядку и что каждой нужно: [docs/from-a-clone.md](docs/from-a-clone.md).
+Для другого телефона: [docs/mtk-porting.md](docs/mtk-porting.md).
 
 ## Лицензия и правовое
 

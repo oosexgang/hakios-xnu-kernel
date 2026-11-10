@@ -7,6 +7,7 @@ by run, and is where the guide's facts were found. Journals marked (ru) are in R
 
 | | |
 | --- | --- |
+| [from-a-clone.md](from-a-clone.md) | **From a clone to the home screen**: every command, what each needs and how long it took, as done from an empty directory on 10 November 2026 |
 | [mtk-porting.md](mtk-porting.md) | **XNU on another MediaTek phone**: what the phone must allow, the boot chain, the values to read from it, the order of work with the check for each step, one run, what stopped the first phone |
 | [bluetooth-mtk-porting.md](bluetooth-mtk-porting.md) | Bluetooth: the skeleton driver and the five operations a phone supplies |
 | [camera-mtk-porting.md](camera-mtk-porting.md) | The camera: the skeleton driver and its table of operations |

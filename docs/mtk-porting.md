@@ -141,6 +141,9 @@ Each step has the check that proves it. Do not start a step whose predecessor's 
 
 ## One run
 
+The first time, from a new clone, there is more before these four: the kernel's sources and dependencies, zig for the loader, the files of iOS, the
+system image in its partition and your boot image in `backup/`. [from-a-clone.md](from-a-clone.md) has every command.
+
 ```
 export HAKIOS_SERIAL=<your phone's adb serial>          # never in a file
 ./xnu-build.sh -j8 -k                                   # the kernel (xnu/README.md for the first time)

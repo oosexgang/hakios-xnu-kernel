@@ -189,7 +189,7 @@ ramdisk() { # ramdisk [<file>|none]
 	if [ "$1" = none ]; then fb oem ramdisk none >/dev/null; echo "xl: resident ramdisk dropped"; return; fi
 	set -- "${1:-userland/system.apfs}"
 	[ -f "$1" ] || { echo "xl: $1 not found"; return 1; }
-	local t0=$(date +%s) size=$(stat -c %s "$1")
+	local t0=$(date +%s) size=$(( $(wc -c < "$1") ))
 	fb oem ramdisk | grep -q OKAY || { echo "xl: the loader refused (no memory window?)"; return 1; }
 	FB_TIMEOUT=1800 fb stage "$1" | grep -q OKAY || { echo "xl: upload failed"; return 1; }
 	local dt=$(( $(date +%s) - t0 )); [ $dt -lt 1 ] && dt=1

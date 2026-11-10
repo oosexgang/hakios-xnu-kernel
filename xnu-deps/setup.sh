@@ -66,8 +66,9 @@ update() {
 
 stage1() {
 	local missing= tool
-	local needed="git curl tar xz make cc clang clang++ flex bison m4 perl python3"
-	[ "$(uname -s)" = Darwin ] || needed="$needed autoreconf automake"   # only for building mig
+	local needed="git curl tar make cc clang clang++ flex bison m4 perl python3"
+	# only for building mig; and GNU tar calls xz, where macOS's bsdtar unpacks .tar.xz by itself
+	[ "$(uname -s)" = Darwin ] || needed="$needed xz autoreconf automake"
 	for tool in $needed; do
 		command -v $tool >/dev/null || missing="$missing $tool"
 	done
@@ -114,6 +115,13 @@ stage1() {
 		link "$mac_mig" host/bin/mig
 		link "$mac_migcom" host/bin/migcom
 		link /bin/tcsh host/bin/tcsh
+		# flex runs m4. Some Command Line Tools (15.3) have /usr/bin/m4 and nothing behind it, only gm4
+		if ! m4 --version >/dev/null 2>&1; then
+			local mac_gm4
+			mac_gm4=$(/usr/bin/xcrun -f gm4 2>/dev/null) && [ -x "$mac_gm4" ] ||
+				die "m4 does not run and there is no gm4 in the Command Line Tools"
+			link "$mac_gm4" host/bin/m4
+		fi
 	fi
 	# mig: Apple's own does not build on glibc; this is a port that does
 	if [ ! -x host/bin/migcom ] || [ ! -x host/bin/mig ]; then
@@ -152,8 +160,20 @@ stage1() {
 	mkdir -p sdk/Platforms/iPhoneOS.platform
 	if [ ! -d "$XNU_SDK_PATH/usr/include" ]; then
 		log "making the SDK: links to $IOS_SDK"
-		rm -rf "$XNU_SDK_PATH"
-		cp -rs "$(cd "$IOS_SDK" && pwd)" "$XNU_SDK_PATH"
+		rm -rf "$XNU_SDK_PATH" "$XNU_SDK_PATH.new"
+		# (not cp -rs: macOS 14's cp says "Bad file descriptor" for every file. Made aside and moved, so
+		# that a run that stopped half way does not leave a directory the test above takes for the SDK)
+		python3 - "$(cd "$IOS_SDK" && pwd)" "$XNU_SDK_PATH.new" <<'PY' || die "cannot make the SDK's tree of links"
+import os, sys
+src, dst = sys.argv[1], sys.argv[2]
+for root, dirs, files in os.walk(src):
+    out = os.path.join(dst, os.path.relpath(root, src))
+    os.makedirs(out, exist_ok=True)
+    for name in files + [d for d in dirs if os.path.islink(os.path.join(root, d))]:
+        os.symlink(os.path.join(root, name), os.path.join(out, name))
+    dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+PY
+		mv "$XNU_SDK_PATH.new" "$XNU_SDK_PATH"
 	fi
 	local sdk_local=$XNU_SDK_PATH/usr/local
 	mkdir -p $sdk_local/include/kernel/os $sdk_local/include/os $sdk_local/lib/kernel $sdk_local/libexec

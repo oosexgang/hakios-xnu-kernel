@@ -57,7 +57,8 @@ file, no phone firmware and no iOS screenshot is checked in.
 
 The kernel is built from an external XNU source tree plus `xnu/redwood.patch` (`xnu-build.sh`); the user-space libraries and tools are
 built with `userland/build.sh`; the boot image is packed and flashed, and a session is run, by `tools/xnu-cycle.sh`. The system
-image is assembled from your own IPSW (`ios165/fetch.sh`). See [docs/mtk-porting.md](docs/mtk-porting.md).
+image is assembled from your own IPSW (`ios165/fetch.sh`). Every command in order, with what it needs:
+[docs/from-a-clone.md](docs/from-a-clone.md). For another phone: [docs/mtk-porting.md](docs/mtk-porting.md).
 
 ## License and legal
 

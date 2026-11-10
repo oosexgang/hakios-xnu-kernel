@@ -2,12 +2,13 @@
 
 Наши правки XNU `xnu-8796.121.2` (ядро iOS 16.5, Darwin 22.5.0):
 
-- `redwood.patch` — изменения в файлах Apple (60 файлов);
-- `files/` — новые файлы по их путям в дереве XNU (37 файлов);
+- `redwood.patch` — изменения в файлах Apple (77 файлов);
+- `files/` — новые файлы по их путям в дереве XNU (124 файла);
 - `apply.sh` — берёт исходники у Apple и накладывает всё это; `export.sh` — обратное действие.
 
 Собирается на Linux стоковым clang, без macOS и Xcode, — и на macOS (проверено 20 октября
-2026 года на Darwin 25.5, Apple clang 2100.1.1.101; см. «На macOS» ниже).
+2026 года на Darwin 25.5, Apple clang 2100.1.1.101, и 10 ноября 2026 года с чистого клона на macOS 14.0 (Intel),
+Apple clang 15.0.0, Command Line Tools 15.3, без Homebrew; см. «На macOS» ниже).
 
 ## Сборка
 
@@ -32,13 +33,21 @@ tar xf iPhoneOS16.5.sdk.tar.xz
 Дальше всё как на Linux. Что `xnu-deps/setup.sh` делает иначе: берёт cctools у `xcrun`, не
 собирает `mig` и `tcsh` (они в системе), и не подкладывает `xnu-deps/hostinc` — слой
 совместимости нужен там, где нет macOS. Вспомогательные программы сборки компилируются против
-системного SDK: `SDKROOT` в сборке указывает на iOS, и без этого они не собираются вовсе.
+системного SDK: `SDKROOT` в сборке указывает на iOS, и без этого они не собираются вовсе
+(`xnu-deps/host/bin/xcrun` отдаёт запрос `-sdk macosx` настоящему `xcrun`).
+
+Homebrew и GNU coreutils не нужны. Что `setup.sh` обходит сам, потому что на чистой macOS 14 об это
+спотыкалась сборка: `xz`, `autoreconf`, `automake` на macOS не требуются (архивы `.tar.xz` распаковывает
+системный `tar`); дерево ссылок SDK делается через `python3`, а не `cp -rs` (у `cp` из Sonoma на этом
+«Bad file descriptor»); если `/usr/bin/m4` не запускается (в Command Line Tools 15.3 за ним ничего нет, есть
+только `gm4`), в `xnu-deps/host/bin` кладётся ссылка на `gm4` — без неё `flex` молча даёт пустой файл, и
+сборка падает много позже на `_yylex`.
 
 ```sh
-xnu/apply.sh             # ~6 с: тег xnu-8796.121.2 из apple-oss-distributions/xnu + наши правки
+xnu/apply.sh             # ~8 с: тег xnu-8796.121.2 из apple-oss-distributions/xnu + наши правки
                          #        → xnu-src/xnu-8796.121.2, ветка redwood, правки не закоммичены
-xnu-deps/setup.sh        # ~30 с: исходники зависимостей, mig/unifdef/tcsh, SDK-надстройка, две библиотеки
-./xnu-build.sh -j8 -k    # ~45 с на 12 потоках
+xnu-deps/setup.sh        # ~30 с и больше (зависит от сети): исходники зависимостей, mig/unifdef/tcsh, SDK-надстройка, две библиотеки
+./xnu-build.sh -j8 -k    # ~45 с на 12 потоках; 2 мин 36 с на 4-ядерном Intel Mac
 ```
 
 Результат: `xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837`.
