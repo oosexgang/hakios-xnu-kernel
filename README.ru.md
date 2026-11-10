@@ -11,7 +11,7 @@ launchd → backboardd → SpringBoard → приложения.
 сеанса телефон сам возвращается в Android. Образ системы iOS лежит в отдельном разделе `xnusys` и читается с eMMC по мере надобности.
 Это стенд для исследования, а не прошивка.
 
-**Документация:** [docs/](docs/).
+**Документация:** [docs/](docs/README.md); перенос на другой телефон MediaTek: [docs/mtk-porting.md](docs/mtk-porting.md).
 
 ## Что работает
 
@@ -52,8 +52,8 @@ launchd → backboardd → SpringBoard → приложения.
 ## Сборка
 
 Ядро собирается из внешнего дерева исходников XNU плюс `xnu/redwood.patch` (`xnu-build.sh`); библиотеки и инструменты userland —
-`userland/build.sh`; загрузочный образ пакуется и прошивается, а сеанс запускается скриптами из `runkit/`. Образ системы собирается из
-твоего же IPSW (`ios165/fetch.sh`). См. [docs/](docs/).
+`userland/build.sh`; загрузочный образ пакуется и прошивается, а сеанс запускается скриптом `tools/xnu-cycle.sh`. Образ системы собирается из
+твоего же IPSW (`ios165/fetch.sh`). См. [docs/mtk-porting.md](docs/mtk-porting.md).
 
 ## Лицензия и правовое
 

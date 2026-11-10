@@ -11,7 +11,7 @@ The phone loses nothing. `mtkloader` installs into `boot_a` ahead of the Android
 and after the session the phone returns to Android by itself. The iOS system image lives in its own `xnusys` partition and is read from
 eMMC on demand. A research bench, not a ROM.
 
-**Documentation:** [docs/](docs/).
+**Documentation:** [docs/](docs/README.md); porting to another MediaTek phone: [docs/mtk-porting.md](docs/mtk-porting.md).
 
 ## What works
 
@@ -52,8 +52,8 @@ file, no phone firmware and no iOS screenshot is checked in.
 ## Building
 
 The kernel is built from an external XNU source tree plus `xnu/redwood.patch` (`xnu-build.sh`); the user-space libraries and tools are
-built with `userland/build.sh`; the boot image is packed and flashed, and a session is run, by the scripts under `runkit/`. The system
-image is assembled from your own IPSW (`ios165/fetch.sh`). See [docs/](docs/).
+built with `userland/build.sh`; the boot image is packed and flashed, and a session is run, by `tools/xnu-cycle.sh`. The system
+image is assembled from your own IPSW (`ios165/fetch.sh`). See [docs/mtk-porting.md](docs/mtk-porting.md).
 
 ## License and legal
 
