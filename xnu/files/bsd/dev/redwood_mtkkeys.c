@@ -64,7 +64,7 @@ pwrap_wait(uint32_t state)
 
 /* One PMIC register through the wrapper's own channel: idle, command, wait for the answer, take it. */
 static bool
-pmic_read(uint32_t reg, uint32_t *value)
+pmic_read_raw(uint32_t reg, uint32_t *value)
 {
 	if (!pwrap_wait(PWRAP_FSM_IDLE)) {
 		return false;
@@ -78,15 +78,37 @@ pmic_read(uint32_t reg, uint32_t *value)
 	return true;
 }
 
+static bool
+pmic_read(uint32_t reg, uint32_t *value)
+{
+	bool ok;
+
+	redwood_pwrap_lock();
+	ok = pmic_read_raw(reg, value);
+	redwood_pwrap_unlock();
+	return ok;
+}
+
 /* The same channel the other way: a PMIC register written. */
 static bool
-pmic_write(uint32_t reg, uint32_t value)
+pmic_write_raw(uint32_t reg, uint32_t value)
 {
 	if (!pwrap_wait(PWRAP_FSM_IDLE)) {
 		return false;
 	}
 	wr(pwrap, PWRAP_WACS2_CMD, (1u << 31) | (reg >> 1) << 16 | (value & 0xffff));
 	return pwrap_wait(PWRAP_FSM_IDLE);
+}
+
+static bool
+pmic_write(uint32_t reg, uint32_t value)
+{
+	bool ok;
+
+	redwood_pwrap_lock();
+	ok = pmic_write_raw(reg, value);
+	redwood_pwrap_unlock();
+	return ok;
 }
 
 /*

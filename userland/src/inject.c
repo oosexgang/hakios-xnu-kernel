@@ -30,6 +30,9 @@
 #include <Block.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
+#include <execinfo.h>
+#include <mach-o/dyld.h>
+#include <libkern/OSCacheControl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <mach/mach.h>
@@ -45,6 +48,7 @@ static void *prof_main(void *unused);  /* bbd_prof=1 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/sysctl.h>
 #include <signal.h>
 #include <sys/ucontext.h>
@@ -2099,6 +2103,963 @@ orientation_start(void)
 	say("redwood: orientation: from kern.redwood.accel, five times a second (orientation=0 to leave out)\n");
 }
 
+/*
+ * bluetoothd (Bluetooth bring-up, boot-arg connsys_bt=2): said when it exits -- which way it went and from where -- as it
+ * leaves ("exited due to exit(1)" in launchd's log with nothing before it, runs 626-631: its own log of an instance that died is
+ * not in the console's). The frames are addresses in the program less its slide, to be looked up in its disassembly.
+ */
+static void
+bluetoothd_exits(void)
+{
+	void *frames[24];
+	int count = backtrace(frames, 24);
+	char text[24 * 12 + 64];
+	size_t used = 0;
+	intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+
+	for (int i = 0; i < count && used + 12 < sizeof(text); i++) {
+		used += (size_t)snprintf(text + used, sizeof(text) - used, " %lx", (unsigned long)((intptr_t)frames[i] - slide));
+	}
+	char line[400];
+
+	snprintf(line, sizeof(line), "redwood: bluetoothd[%d] exits (exit() or atexit), frames less the slide:%s", getpid(), text);
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+}
+
+/*
+ * ... and the raw _exit, which is how bluetoothd goes (0x90234 and 0x902a4 of its program: "Bluetooth error - restarting
+ * { build=release, reason=%d, context=\"%s\" }", then _exit(1); atexit handlers do not run -- run 633). Interposed in every
+ * program libredwood is in, said only in bluetoothd's; the frames are the caller's way to the reason.
+ */
+static bool in_bluetoothd, in_preferences;                    /* set at start: the os_log and _exit interposers below are in every program libredwood is in */
+__attribute__((visibility("hidden"), used)) volatile int bluetoothd_stalled;     /* its restart message said reason 3602, a VSC that stalled: not a reason to go (see raw_exit_entry) */
+__attribute__((visibility("hidden"), used)) uintptr_t bluetoothd_exit_site1, bluetoothd_exit_site2;   /* where its two restart functions return to from _exit: bluetoothd+0x90238 and +0x902a8 (20F66) */
+
+__attribute__((visibility("hidden"), used, noinline)) void
+raw_exit_watched(int status)
+{
+	if (in_bluetoothd) {
+		void *frames[16];
+		int count = backtrace(frames, 16);
+		char text[16 * 40], line[700];
+		size_t used = 0;
+
+		for (int i = 0; i < count && used + 40 < sizeof(text); i++) {
+			Dl_info info;
+
+			if (dladdr(frames[i], &info) != 0 && info.dli_fname != NULL) {
+				const char *base = strrchr(info.dli_fname, '/');
+
+				used += (size_t)snprintf(text + used, sizeof(text) - used, " %s+%lx", base != NULL ? base + 1 : info.dli_fname,
+				    (unsigned long)((uintptr_t)frames[i] - (uintptr_t)info.dli_fbase));
+			} else {
+				used += (size_t)snprintf(text + used, sizeof(text) - used, " ?%lx", (unsigned long)frames[i]);
+			}
+		}
+		snprintf(line, sizeof(line), "redwood: bluetoothd[%d] _exit(%d), frames (image+offset):%s", getpid(), status, text);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	}
+	_exit(status);
+}
+
+/*
+ * What stands in for _exit in bluetoothd: when the restart came of a VSC's stall (the os_log watcher saw reason 3602), it does not
+ * leave but returns from the restart function that called it, as that function's own epilogue would (the two of them,
+ * bluetoothd+0x901f4 -- frame of x20, x19, x29, x30 -- and +0x90294 -- x29, x30 only --, told by the address _exit was called from).
+ * The stall's handler has already completed the VSC with an error by then; bluetoothd goes on to the next one instead of
+ * restarting, and a thread is not left asleep in a serial queue (run 658). Anything else goes the way it did.
+ */
+__attribute__((visibility("hidden"), used, noinline)) void
+bluetoothd_unwinds(int site)
+{
+	char line[100];
+
+	snprintf(line, sizeof(line), "redwood: bluetoothd[%d] restart %d: _exit not done, returned from it", getpid(), site);
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+}
+
+__attribute__((naked, used)) static void
+raw_exit_entry(int status)
+{
+	__asm__ volatile (
+		"adrp x16, _bluetoothd_stalled@PAGE\n"
+		"ldr w17, [x16, _bluetoothd_stalled@PAGEOFF]\n"
+		"cbz w17, 1f\n"
+		"adrp x16, _bluetoothd_exit_site1@PAGE\n"
+		"ldr x16, [x16, _bluetoothd_exit_site1@PAGEOFF]\n"
+		"cmp x30, x16\n"
+		"b.ne 2f\n"
+		"stp x0, x30, [sp, #-0x10]!\n"
+		"mov w0, #1\n"
+		"bl _bluetoothd_unwinds\n"
+		"ldp x0, x30, [sp], #0x10\n"
+		"ldp x29, x30, [sp, #0x10]\n"
+		"ldp x20, x19, [sp], #0x20\n"
+		"ldrsb w8, [x19, #0x17]\n"      /* what the caller had in w8 for the code after the call (it reads the std::string's length byte there: bluetoothd+0x487d14) */
+		"ret\n"
+		"2:\n"
+		"adrp x16, _bluetoothd_exit_site2@PAGE\n"
+		"ldr x16, [x16, _bluetoothd_exit_site2@PAGEOFF]\n"
+		"cmp x30, x16\n"
+		"b.ne 1f\n"
+		"adrp x16, _bluetoothd_stalled@PAGE\n"
+		"str wzr, [x16, _bluetoothd_stalled@PAGEOFF]\n"
+		"stp x0, x30, [sp, #-0x10]!\n"
+		"mov w0, #2\n"
+		"bl _bluetoothd_unwinds\n"
+		"ldp x0, x30, [sp], #0x10\n"
+		"ldp x29, x30, [sp], #0x10\n"
+		"ret\n"
+		"1:\n"
+		"b _raw_exit_watched\n"
+	);
+}
+
+__attribute__((used)) static const struct {
+	const void *replacement;
+	const void *replacee;
+} raw_exit_interpose[] __attribute__((section("__DATA,__interpose"))) = {
+	{ (const void *)raw_exit_entry, (const void *)_exit },
+};
+
+/*
+ * Looking inside bluetoothd: the LE advertising reports reach it (run 676) but "advertisements delivered" stays 0. Entry points of
+ * the functions on the way (addresses of bluetoothd of iOS 16.5, unslid) get a 16-byte jump to a stub that says its arguments to the host
+ * buffer, runs the instructions the jump displaced, and goes on. The words found are compared with the stub's own copies first.
+ */
+__attribute__((visibility("hidden"), used)) uintptr_t bt_hook_cont[32];
+static volatile int bt_trace_on;      /* the ring of called functions below is written while this is set */
+static unsigned bluetoothd_may_say = 40;       /* lines of its log said at most (boot-arg bt_said=N; over 100 it is all the log has, not only the scan's) */
+static unsigned bluetoothd_say_from;          /* ... and only from this second of uptime on (boot-arg bt_said_from=SECONDS) */
+static bool bt_diag;                  /* boot-arg bt_diag=1: all the hooks that say what happens inside bluetoothd; without it only the one that is the fix is there */
+static uint32_t bt_ring_n, bt_ring_dumped;
+static void bt_trace_dump(uint32_t low, uint32_t high);
+static void bt_trace_window(void);
+static uintptr_t bt_base;
+static unsigned bt_hook_seen[32];
+
+static void
+bt_scan_entries(uint64_t a0, unsigned n)
+{
+	if (a0 > 0x100000000ULL) {
+		static unsigned long last_signature;
+		static unsigned logged;
+		const uint64_t *end_node = (const uint64_t *)(a0 + 0x1d0), *node = *(const uint64_t *const *)(a0 + 0x1c8);
+		unsigned long signature = *(const unsigned long *)(a0 + 0x1d8);
+
+		for (const uint64_t *w = node; w != end_node && (uintptr_t)w > 0x100000000UL;) {
+			signature = signature * 31 + (unsigned long)w[4] + ((const uint64_t *)w[5])[1];
+			if (w[1] != 0) {
+				w = (const uint64_t *)w[1];
+				while (w[0] != 0) {
+					w = (const uint64_t *)w[0];
+				}
+			} else {
+				while (w != (const uint64_t *)((const uint64_t *)w[2])[0]) {
+					w = (const uint64_t *)w[2];
+				}
+				w = (const uint64_t *)w[2];
+			}
+		}
+		if (signature != last_signature && logged < 30) {
+			char m[480];
+			int ml = snprintf(m, sizeof(m), "redwood: bt-hook 9 (report #%u) scan entries: %llu:", n, *(const unsigned long long *)(a0 + 0x1d8));
+
+			last_signature = signature;
+			logged++;
+			for (const uint64_t *w = node; w != end_node && (uintptr_t)w > 0x100000000UL && ml < 400;) {
+				const uint8_t *cfg = (const uint8_t *)((const uint64_t *)w[5])[1];
+
+				const uint8_t *entry = (const uint8_t *)w[5];
+
+				ml += snprintf(m + ml, sizeof(m) - (size_t)ml, " [key %llx cfg %llx rules %lld int %u win %u f6d %u f6f %u e50 %02x e51 %02x svc %lld cfg1 %02x cfg2 %02x]", (unsigned long long)w[4], (unsigned long long)cfg,
+				    (long long)((*(const uint64_t *)(cfg + 0x48) - *(const uint64_t *)(cfg + 0x40)) / 8), *(const uint32_t *)(cfg + 0x64), *(const uint32_t *)(cfg + 0x68), cfg[0x6d], cfg[0x6f],
+				    entry[0x50], entry[0x51], (long long)(*(const uint64_t *)(cfg + 0x10) - *(const uint64_t *)(cfg + 0x08)), cfg[1], cfg[2]);
+				if (w[1] != 0) {
+					w = (const uint64_t *)w[1];
+					while (w[0] != 0) {
+						w = (const uint64_t *)w[0];
+					}
+				} else {
+					while (w != (const uint64_t *)((const uint64_t *)w[2])[0]) {
+						w = (const uint64_t *)w[2];
+					}
+					w = (const uint64_t *)w[2];
+				}
+			}
+			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, m, (size_t)ml);
+		}
+	}
+}
+
+/*
+ * What a scan entry is made of (bluetoothd of iOS 16.5). CoreBluetooth gives an application scan results only if the entry made for its scan
+ * passes bluetoothd+0x58f2a0, which for the entry type 1 (an application: session byte +0x79, not a system client) wants the session in the
+ * foreground (byte +0x18 of the CBDaemon session, the third argument of the entry's constructor) and a list of services to scan for (config +8..+0x10).
+ * An application is what has the foreground, learnt from BKSApplicationStateMonitor by bundle; bt_test and whatever else is started from a shell
+ * has none, and gets nothing ("advertisements delivered 0", runs 676-709). So: every entry is made for a session in the foreground (the
+ * stub), and an entry with no services to look for, which is what scanForPeripherals(withServices: nil) is, becomes one of the type 0x20, the
+ * kind the daemon's own scans are: it looks at everything (config byte +1). Returns the type the entry is to have.
+ */
+__attribute__((visibility("hidden"), used, noinline)) uint64_t
+bt_entry_fix(uint64_t type, uint8_t *config)
+{
+	if (type == 1 && (uintptr_t)config > 0x100000000UL && *(const uint64_t *)(config + 0x08) == *(const uint64_t *)(config + 0x10)) {
+		config[1] = 1;
+		return 0x20;
+	}
+	return type;
+}
+
+__attribute__((visibility("hidden"), used, noinline)) void
+bt_hook_log(unsigned id, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3)
+{
+	char line[300];
+	unsigned n;
+	int len;
+
+	if (!bt_diag) {
+		return;
+	}
+	n = __atomic_add_fetch(&bt_hook_seen[id], 1, __ATOMIC_RELAXED);
+
+
+	if (id >= 18 && id != 23) {
+		return;
+	}
+	if (id == 17) {
+		/* OI_HCIIfc_DataReceived(type, data, length, info): every LE meta event, and the first few of the rest */
+		const uint8_t *d = (const uint8_t *)a1;
+		static unsigned le_logged;
+
+		if (a1 > 0x100000000ULL && a2 >= 2 && a2 < 600 && (d[0] == 0x3e ? le_logged++ < 60 : n <= 4)) {
+			char m[200];
+			int ml = snprintf(m, sizeof(m), "redwood: bt-rx #%u t=%.3f type %llu len %llu:", n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, a0, a2);
+
+			for (unsigned k = 0; k < 10 && k < a2; k++) {
+				ml += snprintf(m + ml, sizeof(m) - (size_t)ml, " %02x", d[k]);
+			}
+			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, m, (size_t)ml);
+		}
+		return;
+	}
+	if (id == 9) {
+		bt_scan_entries(a0, n);
+	}
+	if (id == 1 && n == 7) {
+		bt_trace_window();
+	}
+	if (n > 12 && n % 40 != 0 && id != 16 && id != 23) {
+		return;
+	}
+	len = snprintf(line, sizeof(line), "redwood: bt-hook %u #%u t=%.3f: %llx %llx %llx %llx", id, n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, a0, a1, a2, a3);
+	if (id <= 3 && a0 > 0x100000000ULL) {
+		const uint8_t *r = (const uint8_t *)a0;
+
+		len += snprintf(line + len, sizeof(line) - (size_t)len, " report type=%02x addr=%02x:%02x%02x%02x%02x%02x%02x len=%u rssi=%d b19=%u status=%u data=%llx",
+		    r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], *(const uint16_t *)(r + 8), (int)(int8_t)r[0x18], r[0x19], r[0x1c], *(const unsigned long long *)(r + 0x10));
+	}
+	if (id == 16 && a0 > 0x100000000ULL) {
+		len += snprintf(line + len, sizeof(line) - (size_t)len, " setObserverState: scan state %u, observer state %u -> %u", *(const uint32_t *)(a0 + 0x178), *(const uint32_t *)(a0 + 0x17c), (unsigned)a1);
+	}
+	if (id == 14 && a0 > 0x100000000ULL && a1 > 0x100000000ULL) {
+		const uint64_t *b = (const uint64_t *)a0;      /* list: lock, then begin, end of the vector */
+		const uint64_t *blk = (const uint64_t *)a1;
+
+		len += snprintf(line + len, sizeof(line) - (size_t)len, " list n=%lld block invoke=%llx", (long long)((b[2] - b[1]) / 8), (unsigned long long)blk[2] - bt_base);
+	}
+	if (id == 9 && a3 > 0x100000000ULL) {
+		const uint8_t *o = *(const uint8_t *const *)(a3 + 8);
+
+		if ((uintptr_t)o > 0x100000000UL) {
+			len += snprintf(line + len, sizeof(line) - (size_t)len, " obj c=%u d=%u e=%u 116=%u 117=%u 118=%u 119=%u b3=%u",
+			    o[0xc], o[0xd], o[0xe], o[0x116], o[0x117], o[0x118], o[0x119], o[0xb3]);
+		}
+	}
+	if (id == 2 && bt_base != 0) {
+		len += snprintf(line + len, sizeof(line) - (size_t)len, " cbA78=%lx cbA80=%lx flagA90=%u",
+		    *(const unsigned long *)(bt_base + 0x855a78), *(const unsigned long *)(bt_base + 0x855a80), *(const uint8_t *)(bt_base + 0x855a90));
+	}
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, (size_t)len);
+}
+
+#define BT_HOOK_STUB(N, DISPLACED) \
+extern const uint32_t bt_disp##N[]; \
+__attribute__((naked, used)) static void bt_hook_stub##N(void) \
+{ \
+	__asm__ volatile ( \
+		"sub sp, sp, #0xa0\n" \
+		"stp x0, x1, [sp]\n" "stp x2, x3, [sp, #16]\n" "stp x4, x5, [sp, #32]\n" "stp x6, x7, [sp, #48]\n" "stp x8, x9, [sp, #64]\n" \
+		"stp x29, x30, [sp, #80]\n" "stp q0, q1, [sp, #96]\n" "stp q2, q3, [sp, #128]\n" \
+		"mov x4, x3\n" "mov x3, x2\n" "mov x2, x1\n" "mov x1, x0\n" "mov w0, #" #N "\n" \
+		"bl _bt_hook_log\n" \
+		"ldp x0, x1, [sp]\n" "ldp x2, x3, [sp, #16]\n" "ldp x4, x5, [sp, #32]\n" "ldp x6, x7, [sp, #48]\n" "ldp x8, x9, [sp, #64]\n" \
+		"ldp x29, x30, [sp, #80]\n" "ldp q0, q1, [sp, #96]\n" "ldp q2, q3, [sp, #128]\n" \
+		"add sp, sp, #0xa0\n" \
+		".private_extern _bt_disp" #N "\n" \
+		"_bt_disp" #N ":\n" \
+		DISPLACED \
+		"adrp x16, _bt_hook_cont@PAGE\n" "add x16, x16, _bt_hook_cont@PAGEOFF\n" "ldr x16, [x16, #" #N "*8]\n" "br x16\n" \
+	); \
+}
+
+BT_HOOK_STUB(1, "sub sp, sp, #0x80\n" "stp x26, x25, [sp, #0x30]\n" "stp x24, x23, [sp, #0x40]\n" "stp x22, x21, [sp, #0x50]\n")
+BT_HOOK_STUB(2, "stp x22, x21, [sp, #-0x30]!\n" "stp x20, x19, [sp, #0x10]\n" "stp x29, x30, [sp, #0x20]\n" "add x29, sp, #0x20\n")
+BT_HOOK_STUB(3, "sub sp, sp, #0xd0\n" "stp x28, x27, [sp, #0x70]\n" "stp x26, x25, [sp, #0x80]\n" "stp x24, x23, [sp, #0x90]\n")
+BT_HOOK_STUB(4, "sub sp, sp, #0x70\n" "stp x26, x25, [sp, #0x20]\n" "stp x24, x23, [sp, #0x30]\n" "stp x22, x21, [sp, #0x40]\n")
+BT_HOOK_STUB(5, "sub sp, sp, #0xf0\n" "stp x28, x27, [sp, #0x90]\n" "stp x26, x25, [sp, #0xa0]\n" "stp x24, x23, [sp, #0xb0]\n")
+BT_HOOK_STUB(6, "sub sp, sp, #0x50\n" "stp x22, x21, [sp, #0x20]\n" "stp x20, x19, [sp, #0x30]\n" "stp x29, x30, [sp, #0x40]\n")
+BT_HOOK_STUB(7, "sub sp, sp, #0x190\n" "stp d9, d8, [sp, #0x120]\n" "stp x28, x27, [sp, #0x130]\n" "stp x26, x25, [sp, #0x140]\n")
+BT_HOOK_STUB(8, "stp x20, x19, [sp, #-0x20]!\n" "stp x29, x30, [sp, #0x10]\n" "add x29, sp, #0x10\n" "mov x19, x0\n")
+BT_HOOK_STUB(9, "stp d9, d8, [sp, #-0x70]!\n" "stp x28, x27, [sp, #0x10]\n" "stp x26, x25, [sp, #0x20]\n" "stp x24, x23, [sp, #0x30]\n")
+BT_HOOK_STUB(10, "sub sp, sp, #0x30\n" "stp x20, x19, [sp, #0x10]\n" "stp x29, x30, [sp, #0x20]\n" "add x29, sp, #0x20\n")
+BT_HOOK_STUB(11, "sub sp, sp, #0x60\n" "stp x24, x23, [sp, #0x20]\n" "stp x22, x21, [sp, #0x30]\n" "stp x20, x19, [sp, #0x40]\n")
+BT_HOOK_STUB(12, "stp x20, x19, [sp, #-0x20]!\n" "stp x29, x30, [sp, #0x10]\n" "add x29, sp, #0x10\n" "mov x19, x0\n")
+BT_HOOK_STUB(13, "stp x28, x27, [sp, #-0x60]!\n" "stp x26, x25, [sp, #0x10]\n" "stp x24, x23, [sp, #0x20]\n" "stp x22, x21, [sp, #0x30]\n")
+BT_HOOK_STUB(14, "sub sp, sp, #0x40\n" "stp x20, x19, [sp, #0x20]\n" "stp x29, x30, [sp, #0x30]\n" "add x29, sp, #0x30\n")
+BT_HOOK_STUB(15, "mov x8, x1\n" "ldp x2, x1, [x0, #0x20]\n" "add x3, x0, #0x30\n" "add x4, x0, #0x40\n")
+BT_HOOK_STUB(16, "sub sp, sp, #0x70\n" "stp x22, x21, [sp, #0x40]\n" "stp x20, x19, [sp, #0x50]\n" "stp x29, x30, [sp, #0x60]\n")
+BT_HOOK_STUB(17, "sub sp, sp, #0xd0\n" "stp x24, x23, [sp, #0x90]\n" "stp x22, x21, [sp, #0xa0]\n" "stp x20, x19, [sp, #0xb0]\n")
+/*
+ * The fix, the constructor of a scan entry (bluetoothd+0x58e798 (this, config, foreground, type)): see bt_entry_fix. Its own stub, since it
+ * changes two arguments: the type from bt_entry_fix's answer, the foreground flag to 1.
+ */
+extern const uint32_t bt_disp23[];
+__attribute__((naked, used)) static void bt_hook_stub23(void)
+{
+	__asm__ volatile (
+		"sub sp, sp, #0xa0\n"
+		"stp x0, x1, [sp]\n" "stp x2, x3, [sp, #16]\n" "stp x4, x5, [sp, #32]\n" "stp x6, x7, [sp, #48]\n" "stp x8, x9, [sp, #64]\n"
+		"stp x29, x30, [sp, #80]\n" "stp q0, q1, [sp, #96]\n" "stp q2, q3, [sp, #128]\n"
+		"mov x4, x3\n" "mov x3, x2\n" "mov x2, x1\n" "mov x1, x0\n" "mov w0, #23\n"
+		"bl _bt_hook_log\n"
+		"ldr x0, [sp, #24]\n" "ldr x1, [sp, #8]\n"
+		"bl _bt_entry_fix\n"
+		"str x0, [sp, #24]\n"
+		"ldp x0, x1, [sp]\n" "ldp x2, x3, [sp, #16]\n" "ldp x4, x5, [sp, #32]\n" "ldp x6, x7, [sp, #48]\n" "ldp x8, x9, [sp, #64]\n"
+		"ldp x29, x30, [sp, #80]\n" "ldp q0, q1, [sp, #96]\n" "ldp q2, q3, [sp, #128]\n"
+		"add sp, sp, #0xa0\n"
+		".private_extern _bt_disp23\n"
+		"_bt_disp23:\n"
+		"sub sp, sp, #0xb0\n" "stp x28, x27, [sp, #0x50]\n" "stp x26, x25, [sp, #0x60]\n" "stp x24, x23, [sp, #0x70]\n"
+		"mov x2, #1\n"
+		"adrp x16, _bt_hook_cont@PAGE\n" "add x16, x16, _bt_hook_cont@PAGEOFF\n" "ldr x16, [x16, #23*8]\n" "br x16\n"
+	);
+}
+
+/* the same, but the function is called from the stub, so that what it returns can be said (its arguments must all be in registers) */
+__attribute__((visibility("hidden"), used, noinline)) void
+bt_ret_log(unsigned id, uint64_t result)
+{
+	static unsigned seen[40];
+	unsigned n = __atomic_add_fetch(&seen[id], 1, __ATOMIC_RELAXED);
+	char line[120];
+	int len;
+
+	if (n <= 24) {
+		len = snprintf(line, sizeof(line), "redwood: bt-ret %u #%u t=%.3f -> %llx", id, n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, result);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, (size_t)len);
+	}
+}
+
+#define BT_HOOK_RET_STUB(N, DISPLACED) \
+extern const uint32_t bt_disp##N[]; \
+__attribute__((naked, used)) static void bt_hook_stub##N(void) \
+{ \
+	__asm__ volatile ( \
+		"sub sp, sp, #0xa0\n" \
+		"stp x0, x1, [sp]\n" "stp x2, x3, [sp, #16]\n" "stp x4, x5, [sp, #32]\n" "stp x6, x7, [sp, #48]\n" "stp x8, x9, [sp, #64]\n" \
+		"stp x29, x30, [sp, #80]\n" "stp q0, q1, [sp, #96]\n" "stp q2, q3, [sp, #128]\n" \
+		"mov x4, x3\n" "mov x3, x2\n" "mov x2, x1\n" "mov x1, x0\n" "mov w0, #" #N "\n" \
+		"bl _bt_hook_log\n" \
+		"ldp x0, x1, [sp]\n" "ldp x2, x3, [sp, #16]\n" "ldp x4, x5, [sp, #32]\n" "ldp x6, x7, [sp, #48]\n" "ldp x8, x9, [sp, #64]\n" \
+		"ldp x29, x30, [sp, #80]\n" "ldp q0, q1, [sp, #96]\n" "ldp q2, q3, [sp, #128]\n" \
+		"add sp, sp, #0xa0\n" \
+		"sub sp, sp, #0x10\n" "stp x29, x30, [sp]\n" \
+		"adr x30, 1f\n" \
+		".private_extern _bt_disp" #N "\n" \
+		"_bt_disp" #N ":\n" \
+		DISPLACED \
+		"adrp x16, _bt_hook_cont@PAGE\n" "add x16, x16, _bt_hook_cont@PAGEOFF\n" "ldr x16, [x16, #" #N "*8]\n" "br x16\n" \
+		"1:\n" \
+		"sub sp, sp, #0x20\n" "stp x0, x1, [sp]\n" \
+		"mov x1, x0\n" "mov w0, #" #N "\n" "bl _bt_ret_log\n" \
+		"ldp x0, x1, [sp]\n" "add sp, sp, #0x20\n" \
+		"ldp x29, x30, [sp], #0x10\n" "ret\n" \
+	); \
+}
+
+BT_HOOK_RET_STUB(18, "sub sp, sp, #0xc0\n" "stp x26, x25, [sp, #0x70]\n" "stp x24, x23, [sp, #0x80]\n" "stp x22, x21, [sp, #0x90]\n")
+BT_HOOK_RET_STUB(19, "stp x20, x19, [sp, #-0x20]!\n" "stp x29, x30, [sp, #0x10]\n" "add x29, sp, #0x10\n" "mov x19, x0\n")
+BT_HOOK_RET_STUB(20, "sub sp, sp, #0xd0\n" "stp x28, x27, [sp, #0x70]\n" "stp x26, x25, [sp, #0x80]\n" "stp x24, x23, [sp, #0x90]\n")
+BT_HOOK_RET_STUB(21, "sub sp, sp, #0x40\n" "stp x20, x19, [sp, #0x20]\n" "stp x29, x30, [sp, #0x30]\n" "add x29, sp, #0x30\n")
+BT_HOOK_RET_STUB(22, "sub sp, sp, #0x110\n" "stp x28, x27, [sp, #0xb0]\n" "stp x26, x25, [sp, #0xc0]\n" "stp x24, x23, [sp, #0xd0]\n")
+
+static void
+bt_hook_install(unsigned n, uintptr_t unslid, const uint32_t *disp, void *stub)
+{
+	uint32_t *at = (uint32_t *)(bt_base + (unslid - 0x100000000UL));
+	vm_address_t page = (vm_address_t)at & ~(vm_address_t)(vm_page_size - 1);
+	kern_return_t kr;
+	char line[160];
+
+	if ((vm_address_t)at + 16 > page + vm_page_size) {
+		snprintf(line, sizeof(line), "redwood: bt-hook %u: %lx crosses a page; left alone", n, unslid);
+	} else if (memcmp(at, disp, 16) != 0) {
+		snprintf(line, sizeof(line), "redwood: bt-hook %u: %lx holds %08x %08x %08x %08x, not what was read; left alone", n, unslid, at[0], at[1], at[2], at[3]);
+	} else if ((kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY)) != KERN_SUCCESS) {
+		snprintf(line, sizeof(line), "redwood: bt-hook %u: cannot write the code (%d)", n, kr);
+	} else {
+		uint32_t jump[4] = { 0x58000050, 0xd61f0200, (uint32_t)(uintptr_t)stub, (uint32_t)((uintptr_t)stub >> 32) };
+
+		bt_hook_cont[n] = (uintptr_t)at + 16;
+		memcpy(at, jump, 16);
+		kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
+		sys_icache_invalidate(at, 16);
+		snprintf(line, sizeof(line), "redwood: bt-hook %u: %lx is hooked (%d)", n, unslid, kr);
+	}
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+}
+
+
+/*
+ * A trace of which functions run: every function of bluetoothd between 0x100100000 and 0x1005e0000 (unslid) whose first four
+ * instructions can be moved (a stack adjustment, stores, loads, adds, moves -- nothing that reads the program counter) gets the same
+ * 16-byte jump as above, to a copy of a template that notes the function in a ring and runs the displaced four instructions. The
+ * ring is read out at the fourth advertising report: the functions that ran since the first one, in the order of their first call.
+ */
+__asm__(
+	".text\n.p2align 4\n"
+	".private_extern _bt_tpl_begin\n_bt_tpl_begin:\n"
+	"sub sp, sp, #0x140\n"
+	"stp x0, x1, [sp]\n" "stp x2, x3, [sp, #16]\n" "stp x4, x5, [sp, #32]\n" "stp x6, x7, [sp, #48]\n"
+	"stp x8, x9, [sp, #64]\n" "stp x10, x11, [sp, #80]\n" "stp x12, x13, [sp, #96]\n" "stp x14, x15, [sp, #112]\n"
+	"stp x29, x30, [sp, #128]\n"
+	"stp q0, q1, [sp, #144]\n" "stp q2, q3, [sp, #176]\n" "stp q4, q5, [sp, #208]\n" "stp q6, q7, [sp, #240]\n"
+	".private_extern _bt_tpl_id\n_bt_tpl_id:\n"
+	"movz w0, #0\n"
+	"ldr x16, 1f\n" "blr x16\n"
+	"ldp q6, q7, [sp, #240]\n" "ldp q4, q5, [sp, #208]\n" "ldp q2, q3, [sp, #176]\n" "ldp q0, q1, [sp, #144]\n"
+	"ldp x29, x30, [sp, #128]\n"
+	"ldp x14, x15, [sp, #112]\n" "ldp x12, x13, [sp, #96]\n" "ldp x10, x11, [sp, #80]\n" "ldp x8, x9, [sp, #64]\n"
+	"ldp x6, x7, [sp, #48]\n" "ldp x4, x5, [sp, #32]\n" "ldp x2, x3, [sp, #16]\n" "ldp x0, x1, [sp]\n"
+	"add sp, sp, #0x140\n"
+	".private_extern _bt_tpl_disp\n_bt_tpl_disp:\n"
+	"nop\n" "nop\n" "nop\n" "nop\n"
+	"ldr x16, 2f\n" "br x16\n"
+	"1: .quad 0\n"
+	"2: .quad 0\n"
+	".private_extern _bt_tpl_end\n_bt_tpl_end:\n"
+);
+extern const uint32_t bt_tpl_begin[], bt_tpl_id[], bt_tpl_disp[], bt_tpl_end[];
+
+#define BT_RING (1 << 21)
+static uint32_t bt_ring[BT_RING];
+static uint32_t bt_fn_off[16384];      /* unslid offset of the function an index stands for */
+static unsigned bt_fn_count;
+
+__attribute__((visibility("hidden"), used, noinline)) void
+bt_trace(unsigned index)
+{
+	if (bt_trace_on) {
+		uint32_t n = __atomic_fetch_add(&bt_ring_n, 1, __ATOMIC_RELAXED);
+
+		bt_ring[n & (BT_RING - 1)] = (index << 16) | (uint32_t)(((uintptr_t)pthread_self() >> 4) & 0xffff);
+	}
+}
+
+/* the functions that ran since the last read-out, in the order of their first call: offset:thread:times */
+static void
+bt_trace_dump(uint32_t low, uint32_t high)
+{
+	static uint32_t first[16384], times[16384], thread[16384];
+	static uint16_t tags[16];
+	unsigned seen = 0, tag_count = 0;
+	uint32_t from = bt_ring_dumped, to = bt_ring_n;
+	char line[460];
+	size_t used = 0;
+
+	bt_trace_on = 0;
+	if (to - from > BT_RING) {
+		from = to - BT_RING;
+	}
+	memset(first, 0xff, sizeof(first));
+	for (uint32_t i = from; i != to; i++) {
+		uint32_t e = bt_ring[i & (BT_RING - 1)], index = e >> 16;
+		unsigned t;
+
+		if (index >= bt_fn_count || bt_fn_off[index] < low || bt_fn_off[index] >= high) {
+			continue;
+		}
+		for (t = 0; t < tag_count && tags[t] != (uint16_t)e; t++) {
+		}
+		if (t == tag_count && tag_count < 16) {
+			tags[tag_count++] = (uint16_t)e;
+		}
+		if (first[index] == 0xffffffffu) {
+			first[index] = seen;
+			thread[index] = t;
+			times[index] = 0;
+			seen++;
+		}
+		times[index]++;
+	}
+	snprintf(line, sizeof(line), "redwood: bt-trace: %u entries, %u functions, %u threads", to - from, seen, tag_count);
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	{
+		uint32_t order[16384];
+
+		for (unsigned i = 0; i < bt_fn_count; i++) {
+			if (first[i] != 0xffffffffu) {
+				order[first[i]] = i;
+			}
+		}
+		used = (size_t)snprintf(line, sizeof(line), "redwood: bt-trace:");
+		for (unsigned k = 0; k < seen; k++) {
+			unsigned i = order[k];
+			int len;
+
+			if (used + 22 > sizeof(line)) {
+				(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, used);
+				used = (size_t)snprintf(line, sizeof(line), "redwood: bt-trace:");
+			}
+			len = snprintf(line + used, sizeof(line) - used, " %x.%x.%u", bt_fn_off[i], thread[i], times[i] > 99 ? 99 : times[i]);
+			used += (size_t)len;
+		}
+		if (used > 20) {
+			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, used);
+		}
+	}
+	bt_ring_dumped = to;
+}
+
+/* the seventh report (the last that gets through): what runs in the next 3 seconds, a report or two more arrive in there, is read out */
+static void
+bt_trace_window(void)
+{
+	static int once;
+
+	if (__atomic_exchange_n(&once, 1, __ATOMIC_RELAXED) == 0 && bt_fn_count != 0) {
+		bt_ring_dumped = bt_ring_n;
+		bt_trace_on = 1;
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+			bt_trace_dump(0x0, 0x5e0000);
+		});
+	}
+}
+
+static bool
+bt_movable(uint32_t w)
+{
+	return ((w & 0xff8003ff) == 0xd10003ff) ||                /* sub sp, sp, #imm */
+	    ((w >> 27 & 7) == 5 && (w >> 25 & 1) == 0) ||         /* ldp / stp */
+	    ((w >> 27 & 7) == 7 && (w >> 24 & 3) != 2) ||         /* ldr / str / ldur / stur, not the literal forms */
+	    ((w >> 24 & 0x1f) == 0x11) ||                         /* add / sub #imm */
+	    ((w >> 24 & 0x1f) == 0x0b) ||                         /* add / sub register */
+	    ((w & 0x7f200000) == 0x2a000000) ||                   /* orr (mov) */
+	    ((w >> 23 & 0x3f) == 0x25);                           /* movz / movn / movk */
+}
+
+static void
+bt_trace_install(uintptr_t base, uintptr_t from, uintptr_t to, const uintptr_t *skip, unsigned skips)
+{
+	const size_t tpl_bytes = (size_t)((const uint8_t *)bt_tpl_end - (const uint8_t *)bt_tpl_begin);
+	uintptr_t text = base;                                      /* the program's header: an offset from it is an unslid address less 0x100000000 */
+	uint32_t *found[16384];
+	unsigned count = 0, hooked = 0;
+	uint8_t *arena;
+	char line[200];
+
+	for (uintptr_t off = from; off < to && count < 16384; off += 4) {
+		const uint32_t *w = (const uint32_t *)(text + off);
+		bool skipped = false;
+
+		if (!(((w[0] & 0xff8003ff) == 0xd10003ff) || ((w[0] & 0xffc003e0) == 0xa98003e0) || ((w[0] & 0xffc003e0) == 0x6d8003e0) || ((w[0] & 0xffc003e0) == 0xad8003e0))) {
+			continue;
+		}
+		if (!bt_movable(w[1]) || !bt_movable(w[2]) || !bt_movable(w[3])) {
+			continue;
+		}
+		for (unsigned k = 0; k < skips; k++) {
+			skipped |= (off + 0x100000000UL) - skip[k] < 16 || skip[k] - (off + 0x100000000UL) < 16;     /* within 16 bytes of one done by hand, either side (unsigned wrap is the other half) */
+		}
+		if (skipped || (count > 0 && (uintptr_t)w - (uintptr_t)found[count - 1] < 16)) {
+			continue;
+		}
+		if ((((uintptr_t)w & (vm_page_size - 1)) + 16) > vm_page_size) {
+			continue;
+		}
+		found[count++] = (uint32_t *)w;
+	}
+	arena = mmap(NULL, (size_t)count * tpl_bytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+	if (arena == MAP_FAILED) {
+		snprintf(line, sizeof(line), "redwood: bt-trace: no memory for %u trampolines", count);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		return;
+	}
+	for (unsigned i = 0; i < count; i++) {
+		uint8_t *t = arena + (size_t)i * tpl_bytes;
+		uint32_t *words = (uint32_t *)t;
+		void *trace = (void *)bt_trace;
+		uintptr_t cont = (uintptr_t)found[i] + 16;
+
+		memcpy(t, bt_tpl_begin, tpl_bytes);
+		words[bt_tpl_id - bt_tpl_begin] = 0x52800000u | (i << 5);
+		memcpy(&words[bt_tpl_disp - bt_tpl_begin], found[i], 16);
+		memcpy(t + tpl_bytes - 16, &trace, 8);
+		memcpy(t + tpl_bytes - 8, &cont, 8);
+		bt_fn_off[i] = (uint32_t)((uintptr_t)found[i] - text);
+	}
+	bt_fn_count = count;
+	bt_trace_on = 1;
+	if (mprotect(arena, (size_t)count * tpl_bytes, PROT_READ | PROT_EXEC) != 0) {
+		snprintf(line, sizeof(line), "redwood: bt-trace: cannot make the trampolines run (%d)", errno);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		return;
+	}
+	sys_icache_invalidate(arena, (size_t)count * tpl_bytes);
+	for (unsigned i = 0; i < count;) {
+		vm_address_t page = (vm_address_t)found[i] & ~(vm_address_t)(vm_page_size - 1);
+		unsigned j = i;
+
+		if (vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) != KERN_SUCCESS) {
+			while (j < count && ((vm_address_t)found[j] & ~(vm_address_t)(vm_page_size - 1)) == page) {
+				j++;
+			}
+			i = j;
+			continue;
+		}
+		for (; j < count && ((vm_address_t)found[j] & ~(vm_address_t)(vm_page_size - 1)) == page; j++) {
+			uint64_t stub = (uint64_t)(arena + (size_t)j * tpl_bytes);
+			uint32_t jump[4] = { 0x58000050, 0xd61f0200, (uint32_t)stub, (uint32_t)(stub >> 32) };
+
+			memcpy(found[j], jump, 16);
+			hooked++;
+		}
+		vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
+		sys_icache_invalidate((void *)page, vm_page_size);
+		i = j;
+	}
+	snprintf(line, sizeof(line), "redwood: bt-trace: %u of %u functions hooked, template %zu bytes", hooked, count, tpl_bytes);
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+}
+
+static void
+bt_hooks(uintptr_t base)
+{
+	char args[1024] = "";
+	size_t size = sizeof(args) - 1;
+
+	bt_base = base;
+	(void)sysctlbyname("kern.bootargs", args, &size, NULL, 0);
+	bt_diag = strstr(args, "bt_diag=1") != NULL;
+	if (strstr(args, "bt_said_from=") != NULL) {
+		bluetoothd_say_from = (unsigned)atoi(strstr(args, "bt_said_from=") + 13);
+	}
+	if (strstr(args, "bt_said=") != NULL) {
+		bluetoothd_may_say = (unsigned)atoi(strstr(args, "bt_said=") + 8);
+	}
+	/*
+	 * The fix: CoreBluetooth gives a third-party session the scan results only while it is in the foreground (the entry it makes for the
+	 * scan has the session's flag, byte 0x18 of the CBDaemon session, as its second argument: bluetoothd+0x58e798). A program that is not an
+	 * application -- bt_test, and whatever else a person starts from a shell -- has no state to be in the foreground with (BKSApplicationStateMonitor
+	 * knows no bundle of it), and gets nothing (runs 676-707: "advertisements delivered 0"). Every scan entry is made for a foreground session.
+	 */
+	bt_hook_install(23, 0x10058e798UL, bt_disp23, (void *)bt_hook_stub23);
+	if (!bt_diag) {
+		return;
+	}
+	bt_hook_install(1, 0x100199348UL, bt_disp1, (void *)bt_hook_stub1);
+	bt_hook_install(2, 0x100190138UL, bt_disp2, (void *)bt_hook_stub2);
+	bt_hook_install(3, 0x10018f47cUL, bt_disp3, (void *)bt_hook_stub3);
+	bt_hook_install(4, 0x100243734UL, bt_disp4, (void *)bt_hook_stub4);
+	bt_hook_install(5, 0x100199710UL, bt_disp5, (void *)bt_hook_stub5);
+	bt_hook_install(6, 0x1001902d0UL, bt_disp6, (void *)bt_hook_stub6);
+	bt_hook_install(7, 0x10056aa38UL, bt_disp7, (void *)bt_hook_stub7);
+	bt_hook_install(8, 0x10057ab00UL, bt_disp8, (void *)bt_hook_stub8);
+	bt_hook_install(9, 0x10057646cUL, bt_disp9, (void *)bt_hook_stub9);
+	bt_hook_install(10, 0x100558fbcUL, bt_disp10, (void *)bt_hook_stub10);
+	bt_hook_install(11, 0x10058c448UL, bt_disp11, (void *)bt_hook_stub11);
+	bt_hook_install(12, 0x10058b078UL, bt_disp12, (void *)bt_hook_stub12);
+	bt_hook_install(13, 0x1005514a0UL, bt_disp13, (void *)bt_hook_stub13);
+	bt_hook_install(14, 0x10056d6e4UL, bt_disp14, (void *)bt_hook_stub14);
+	bt_hook_install(15, 0x100579418UL, bt_disp15, (void *)bt_hook_stub15);
+	bt_hook_install(16, 0x100579f24UL, bt_disp16, (void *)bt_hook_stub16);
+	bt_hook_install(17, 0x1001183a8UL, bt_disp17, (void *)bt_hook_stub17);
+	bt_hook_install(18, 0x10058edc4UL, bt_disp18, (void *)bt_hook_stub18);
+	bt_hook_install(19, 0x10058f2a0UL, bt_disp19, (void *)bt_hook_stub19);
+	bt_hook_install(20, 0x10058f2fcUL, bt_disp20, (void *)bt_hook_stub20);
+	bt_hook_install(21, 0x10058f7b4UL, bt_disp21, (void *)bt_hook_stub21);
+	bt_hook_install(22, 0x10058f8a8UL, bt_disp22, (void *)bt_hook_stub22);
+	{
+		static const uintptr_t hooked_by_hand[] = { 0x100199348UL, 0x100190138UL, 0x10018f47cUL, 0x100243734UL, 0x100199710UL, 0x1001902d0UL, 0x10056aa38UL,
+		    0x10057ab00UL, 0x10057646cUL, 0x100558fbcUL, 0x10058c448UL, 0x10058b078UL, 0x1005514a0UL, 0x10056d6e4UL, 0x100579418UL, 0x100579f24UL, 0x1001183a8UL, 0x10058edc4UL, 0x10058f2a0UL, 0x10058f2fcUL, 0x10058f7b4UL, 0x10058f8a8UL, 0x10058e798UL };
+
+		bt_trace_install(base, 0x100100000UL - 0x100000000UL, 0x1005e0000UL - 0x100000000UL, hooked_by_hand, sizeof(hooked_by_hand) / sizeof(hooked_by_hand[0]));
+	}
+}
+
+/*
+ * ... and what it says as it restarts: "Bluetooth error - restarting { build=release, reason=%d, context=\"%s\" }" is an os_log
+ * call, and its two arguments are what the console loses with the instance (run 635 shows only the way there). _os_log_impl is
+ * interposed in bluetoothd's own calls; the format is looked at, and when it is that one the reason and the context are said.
+ */
+extern void _os_log_impl(void *dso, void *log, int type, const char *format, uint8_t *buf, uint32_t size);
+extern void _os_log_error_impl(void *dso, void *log, int type, const char *format, uint8_t *buf, uint32_t size);
+extern void _os_log_fault_impl(void *dso, void *log, int type, const char *format, uint8_t *buf, uint32_t size);
+
+/* the call's text: its format with its string arguments (a "%{public}s" made of the message the program built) put in, for what is said */
+static bool bluetoothd_after_start, bluetoothd_on;
+static unsigned bluetoothd_said;       /* lines said so far: the host buffer is 64 KB */
+
+/* what bluetoothd's log says of its state, the format with its numbers and strings, to the host buffer (its console lines are lost with an instance, and flood the rest) */
+static void
+os_log_watched(const char *how, const char *format, uint8_t *buf, uint32_t size)
+{
+	char line[480], text[300] = "";
+	const uint8_t *at = buf + 2, *end = buf + size;
+	unsigned arg = 0, count = buf[1];
+	bool restart = strstr(format, "Bluetooth error") != NULL;
+	bool plain = strcmp(format, "%{public}s") == 0 || strcmp(format, "%s") == 0;
+	bool wanted = restart || plain || strstr(format, "ower") != NULL || strstr(format, "tate") != NULL ||
+	    strstr(format, "ession") != NULL || strstr(format, "VSC") != NULL || strstr(format, "stall") != NULL ||
+	    strstr(format, "ompleted") != NULL || strstr(format, "nable") != NULL || strstr(format, "eady") != NULL ||
+	    strstr(format, "ransport") != NULL || strstr(format, "tack") != NULL || strstr(format, "hipset") != NULL ||
+	    strstr(format, "Sending") != NULL || strstr(format, "XPC message") != NULL || strstr(format, "uthoriz") != NULL ||
+	    strstr(format, "Found device") != NULL || strstr(format, "ADVBUFF") != NULL;
+
+	if (strstr(format, "Stack Did Start") != NULL) {
+		bluetoothd_after_start = true;
+	}
+	if (strstr(format, "Sending 'power state changed' event") != NULL) {
+		bluetoothd_on = true;           /* powered on: from here only what concerns a scan (and a restart), the rest is a few thousand XPC lines */
+	}
+	if (bluetoothd_on && bluetoothd_may_say <= 100 && !restart && strstr(format, "can") == NULL && strstr(format, "iscover") == NULL && strstr(format, "dvertisement") == NULL && strstr(format, "rop") == NULL && !plain &&
+	    strstr(format, "Found device") == NULL && strstr(format, "ADVBUFF") == NULL) {
+		return;
+	}
+	if (bluetoothd_say_from != 0 && clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < (uint64_t)bluetoothd_say_from * NSEC_PER_SEC) {
+		return;
+	}
+	if (bluetoothd_may_say > 100 && (strstr(format, "canScanNow") != NULL || strstr(format, "ShouldScan") != NULL || strstr(format, "enableObjectDiscovery") != NULL ||
+	    strstr(format, "coexStateBitmap") != NULL || strstr(format, "PowerAssertionHistory") != NULL || strstr(format, "PowerManager power state") != NULL ||
+	    strstr(format, "Unable to locate device") != NULL || strstr(format, "ADVBUFF") != NULL || strstr(format, "TryReadMatch") != NULL)) {
+		return;                 /* what scans repeat all the time, when the rest of the log is wanted */
+	}
+	if (!wanted || bluetoothd_said > bluetoothd_may_say || (!bluetoothd_after_start && !restart && strstr(format, "Bluetooth error") == NULL && !plain)) {
+		return;                 /* before the stack started it is the same every time and fills the host buffer, which keeps the first 64 KB and drops the rest */
+	}
+	/* the arguments, in the order of the format's conversions: s a string, d/u/x... a number, @ and p skipped */
+	for (const char *f = format; *f != 0 && arg < count && at + 2 <= end; f++) {
+		char conversion;
+		uint8_t length;
+
+		if (*f != '%') {
+			continue;
+		}
+		f++;
+		if (*f == '%') {
+			continue;
+		}
+		if (*f == '{') {                /* %{public}s, %{bluetooth:BD_ADDR}.6P ...: the braces are not the conversion */
+			while (*f != 0 && *f != '}') {
+				f++;
+			}
+			if (*f == '}') {
+				f++;
+			}
+		}
+		while (*f != 0 && strchr("diouxXcsSpf@P", *f) == NULL) {
+			f++;
+		}
+		conversion = *f;
+		if (conversion == 0) {
+			break;
+		}
+		length = at[1];
+		if (at + 2 + length > end) {
+			break;
+		}
+		if (conversion == 's' && length == 8) {
+			const char *string;
+
+			memcpy(&string, at + 2, 8);
+			if (string != NULL && (uintptr_t)string > 0x100000000UL) {
+				snprintf(text + strlen(text), sizeof(text) - strlen(text), " \"%.200s\"", string);
+			}
+		} else if (strchr("diouxXc", conversion) != NULL && (length == 4 || length == 8 || length == 1 || length == 2)) {
+			long long number = 0;
+
+			memcpy(&number, at + 2, length);
+			snprintf(text + strlen(text), sizeof(text) - strlen(text), " %lld", number);
+		}
+		at += 2 + length;
+		arg++;
+	}
+	if (plain && strstr(text, "Bluetooth error") == NULL && strstr(text, "stall") == NULL) {
+		return;                 /* a bare string: only the restart message and stall ones */
+	}
+	if (restart || strstr(text, "reason=3602") != NULL) {
+		bluetoothd_stalled = 1;
+	}
+	if (bluetoothd_may_say > 100 && (strstr(text, "LocalDeviceStatusEvent") != NULL || strstr(text, "DiscoveryAgentStatusEvent") != NULL || strstr(text, "DiscoveryAgentStartScanMsg") != NULL ||
+	    strstr(format, "scan started") != NULL || strstr(format, "scan stopped") != NULL || strstr(format, "scan completed") != NULL || strstr(format, "discovery") != NULL ||
+	    strstr(format, "classic scan") != NULL || strstr(text, "scan stopped") != NULL || strstr(text, "scan started") != NULL || strstr(text, "discovery ") != NULL)) {
+		return;                 /* what a classic scan repeats every five seconds */
+	}
+	bluetoothd_said++;
+	snprintf(line, sizeof(line), "bt[%d] %s%s", getpid(), format, text);
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+}
+
+/* Settings' own log lines about Bluetooth and pairing (their formats and string arguments), for the Bluetooth pane's "Pairing Unsuccessful" (run 744) */
+static void
+preferences_log_watched(const char *format, const uint8_t *buf, uint32_t size)
+{
+	static unsigned said;
+
+	if (said < 80 && (strcasestr(format, "pair") != NULL || strcasestr(format, "bluetooth") != NULL || strstr(format, "BT") != NULL)) {
+		char line[400], text[200] = "";
+
+		if (buf != NULL && size >= 14 && strcmp(format, "%{public}@") != 0) {
+			const char *string;
+
+			memcpy(&string, buf + 4, 8);
+			if (strstr(format, "%{public}s") != NULL && (uintptr_t)string > 0x100000000UL) {
+				snprintf(text, sizeof(text), " \"%.150s\"", string);
+			}
+		}
+		said++;
+		snprintf(line, sizeof(line), "redwood: Preferences log: %.220s%s", format, text);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	}
+}
+
+#define OS_LOG_WATCHED(name, how)                                                                              \
+static void                                                                                                    \
+name##_watched(void *dso, void *log, int type, const char *format, uint8_t *buf, uint32_t size)               \
+{                                                                                                              \
+	if (in_bluetoothd && format != NULL && buf != NULL && size >= 2) {                                  \
+		os_log_watched(how, format, buf, size);                                                        \
+	}                                                                                                      \
+	if (in_preferences && format != NULL) {                                                                \
+		preferences_log_watched(format, buf, size);                                                    \
+	}                                                                                                      \
+	name(dso, log, type, format, buf, size);                                                               \
+}
+OS_LOG_WATCHED(_os_log_impl, "log")
+OS_LOG_WATCHED(_os_log_error_impl, "error")
+OS_LOG_WATCHED(_os_log_fault_impl, "fault")
+
+__attribute__((used)) static const struct {
+	const void *replacement;
+	const void *replacee;
+} os_log_interpose[] __attribute__((section("__DATA,__interpose"))) = {
+	{ (const void *)_os_log_impl_watched, (const void *)_os_log_impl },
+	{ (const void *)_os_log_error_impl_watched, (const void *)_os_log_error_impl },
+	{ (const void *)_os_log_fault_impl_watched, (const void *)_os_log_fault_impl },
+};
+
+/*
+ * BlueTool (the job's own program, /usr/sbin/BlueTool -R): iOS's BlueTool brings a Broadcom chip up before bluetoothd opens the
+ * serial port -- a boot script, a firmware patch from /usr/share/firmware/bluetooth, the UART's speed -- and this phone's chip is
+ * MediaTek's, brought up by the kernel (bsd/dev/redwood_connsys.c, boot-arg connsys_bt=2: its controller is on and answers HCI
+ * behind /dev/uart.bluetooth), with no Broadcom firmware in the image (run 609: "No WiFi - Iteration", "BlueTool timed out").
+ * So in this process the service com.apple.BlueTool is ours: bluetoothd's request -- {"script": "boot" or "init", "btaddress"} --
+ * is answered with success, "result" 0, and names the chip, "manufacturer" and "firmware" (bluetoothd makes "%lld/%s" of them).
+ * It has to be inside the process launchd started: our own program is not a platform binary, and launchd panics the kernel at the
+ * exec of one ("unexpected exec of non-platform binary", run 610). Does not return: BlueTool's own main never runs.
+ */
+typedef void *xpc_object_t;
+typedef xpc_object_t xpc_connection_t;
+extern const struct _xpc_type_s _xpc_type_connection, _xpc_type_dictionary;
+extern xpc_connection_t xpc_connection_create_mach_service(const char *name, dispatch_queue_t targetq, uint64_t flags);
+
+/* which Mach services bluetoothd listens on (and clients of): said once each, as the host buffer allows */
+static xpc_connection_t
+watched_xpc_connection_create_mach_service(const char *name, dispatch_queue_t targetq, uint64_t flags)
+{
+	xpc_connection_t connection = xpc_connection_create_mach_service(name, targetq, flags);
+
+	if ((in_bluetoothd || in_preferences) && name != NULL) {
+		char line[200];
+
+		snprintf(line, sizeof(line), "redwood: %s[%d] xpc_connection_create_mach_service(%s, %#llx) -> %p", in_preferences ? "Preferences" : "bluetoothd", getpid(), name, (unsigned long long)flags, connection);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	}
+	return connection;
+}
+
+extern pid_t xpc_connection_get_pid(xpc_connection_t connection);
+static pid_t
+watched_xpc_connection_get_pid(xpc_connection_t connection)
+{
+	pid_t pid = xpc_connection_get_pid(connection);
+
+	if (in_bluetoothd) {
+		static unsigned said;
+		char line[100];
+
+		if (said++ < 40) {
+			snprintf(line, sizeof(line), "redwood: bluetoothd xpc_connection_get_pid(%p) = %d", connection, pid);
+			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		}
+	}
+	return pid;
+}
+
+__attribute__((used)) static const struct {
+	const void *replacement;
+	const void *replacee;
+} xpc_service_interpose[] __attribute__((section("__DATA,__interpose"))) = {
+	{ (const void *)watched_xpc_connection_create_mach_service, (const void *)xpc_connection_create_mach_service },
+	{ (const void *)watched_xpc_connection_get_pid, (const void *)xpc_connection_get_pid },
+};
+extern void xpc_connection_set_event_handler(xpc_connection_t connection, void (^handler)(xpc_object_t object));
+extern void xpc_connection_resume(xpc_connection_t connection);
+extern void xpc_connection_send_message(xpc_connection_t connection, xpc_object_t message);
+extern const struct _xpc_type_s *xpc_get_type(xpc_object_t object);
+extern xpc_object_t xpc_dictionary_create_reply(xpc_object_t original);
+extern void xpc_dictionary_set_int64(xpc_object_t xdict, const char *key, int64_t value);
+extern void xpc_dictionary_set_string(xpc_object_t xdict, const char *key, const char *string);
+extern char *xpc_copy_description(xpc_object_t object);
+extern void xpc_release(xpc_object_t object);
+
+static void
+bluetool_serves(void)
+{
+	xpc_connection_t listener = xpc_connection_create_mach_service("com.apple.BlueTool", NULL, 1 /* LISTENER */);
+
+	say("redwood: BlueTool: com.apple.BlueTool is ours (the kernel has the controller on behind /dev/uart.bluetooth)\n");
+	xpc_connection_set_event_handler(listener, ^(xpc_object_t peer) {
+		if (xpc_get_type(peer) != &_xpc_type_connection) {
+			return;
+		}
+		xpc_connection_set_event_handler(peer, ^(xpc_object_t message) {
+			if (xpc_get_type(message) != &_xpc_type_dictionary) {
+				return;
+			}
+			char *text = xpc_copy_description(message);
+
+			say("redwood: BlueTool: asked %s\n", text != NULL ? text : "(?)");
+			free(text);
+			xpc_object_t reply = xpc_dictionary_create_reply(message);
+
+			if (reply != NULL) {
+				xpc_dictionary_set_int64(reply, "result", 0);
+				xpc_dictionary_set_int64(reply, "manufacturer", 15);
+				xpc_dictionary_set_string(reply, "firmware", "MT6631");
+				xpc_dictionary_set_string(reply, "output", "");
+				xpc_connection_send_message(peer, reply);
+				xpc_release(reply);
+			}
+		});
+		xpc_connection_resume(peer);
+	});
+	xpc_connection_resume(listener);
+	dispatch_main();
+}
+
 __attribute__((constructor))
 static void
 redwood_init(void)
@@ -2159,6 +3120,26 @@ redwood_init(void)
 		orientation_start();
 	} else if (strncmp(name, "containermanagerd", 17) == 0) {
 		container_manager_fixes();
+	} else if (strcmp(name, "bluetoothd") == 0) {
+		char line[80];
+
+		in_bluetoothd = true;
+		atexit(bluetoothd_exits);
+		for (uint32_t image = 0; image < _dyld_image_count(); image++) {
+			const char *path = _dyld_get_image_name(image);
+
+			if (path != NULL && strcmp(path + (strlen(path) >= 11 ? strlen(path) - 11 : 0), "/bluetoothd") == 0) {
+				bluetoothd_exit_site1 = (uintptr_t)_dyld_get_image_header(image) + 0x90238;
+				bluetoothd_exit_site2 = (uintptr_t)_dyld_get_image_header(image) + 0x902a8;
+				bt_hooks((uintptr_t)_dyld_get_image_header(image));
+			}
+		}
+		snprintf(line, sizeof(line), "redwood: bluetoothd[%d] is watched, exit sites %lx %lx", getpid(), (unsigned long)bluetoothd_exit_site1, (unsigned long)bluetoothd_exit_site2);
+		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	} else if (strcmp(name, "Preferences") == 0) {
+		in_preferences = true;           /* Settings: its XPC to bluetoothd is said (Bluetooth pane, run 732) */
+	} else if (strcmp(name, "BlueTool") == 0) {
+		bluetool_serves();
 	} else if (strcmp(name, "com.apple.WebKit.GPU") == 0) {
 		/*
 		 * WebKit's GPU process draws pages with CoreAnimation's Metal renderer too, and dies on the

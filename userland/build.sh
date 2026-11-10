@@ -180,6 +180,10 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		$DYN -framework CoreFoundation -lMobileGestalt -o obj/mg_test src/mg_test.c
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/torch_test src/torch_test.c
 		$DYN -O2 -o obj/camera_test src/camera_test.c src/camera_isp.c
+		$DYN -fobjc-arc -framework Foundation -framework CoreBluetooth -sectcreate __TEXT __info_plist src/bt_test.plist \
+			-o obj/bt_test src/bt_test.m &&
+			{ ${LDID:-ldid} -Ssrc/bt_test.entitlements obj/bt_test 2>/dev/null ||
+			  echo "build.sh: no ldid: bt_test is unsigned, and TCC may not let it use Bluetooth"; }
 		$DYN -fobjc-arc -framework Foundation -framework AVFoundation -o obj/camera_avtest src/camera_avtest.m
 		# (the microphone as an application records: allowed to, by an entitlement, if ldid is there)
 		$DYN -framework CoreFoundation -framework AVFoundation -lobjc -o obj/record_test src/record_test.c &&
@@ -220,6 +224,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		$DYN -framework CoreFoundation -framework CoreGraphics -framework ImageIO -o obj/snap_test src/snap_test.c
 		$DYN -framework CoreFoundation -framework CoreGraphics -framework CoreText -o obj/font_test src/font_test.c
 		$DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -o obj/net_test src/net_test.m
+		$DYN -fobjc-arc -framework Foundation -framework CoreGraphics -framework ImageIO -o obj/fbgrab src/fbgrab.m
 		# (with an entitlement for "battery_test open URL", if ldid is there: src/battery_test.c)
 		$DYN -framework CoreFoundation -framework IOKit -lsqlite3 -o obj/battery_test src/battery_test.c &&
 			{ ${LDID:-ldid} -Ssrc/battery_test.entitlements obj/battery_test 2>/dev/null ||
@@ -280,6 +285,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		fi
 	fi
 	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/cputop obj/nullxpc obj/mg_test root/bin/
+	[ -n "$BT" ] && [ -f obj/bt_test ] && cp obj/bt_test root/bin/     # (src/bt_test.m: CoreBluetooth's scan, for Bluetooth runs)
 	[ -f obj/cpu_test ] && cp obj/cpu_test root/bin/        # (a prebuilt/ from before this program has none)
 	[ -f obj/cow_test ] && cp obj/cow_test root/bin/
 	[ -f obj/cg_test ] && cp obj/cg_test root/bin/
@@ -290,6 +296,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 	[ -f obj/font_test ] && cp obj/font_test root/bin/
 	[ -f obj/metal_test ] && cp obj/metal_test root/bin/
 	[ -f obj/net_test ] && cp obj/net_test root/bin/
+	[ -f obj/fbgrab ] && cp obj/fbgrab root/bin/
 	[ -f obj/battery_test ] && cp obj/battery_test root/bin/
 	[ -f obj/keychain_test ] && cp obj/keychain_test root/bin/
 	[ -f obj/wifipw_test ] && cp obj/wifipw_test root/bin/
@@ -649,6 +656,13 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_arm64 ] &&
 			cp obj/metal_drv_test sysroot/usr/local/bin/
 		fi
 		echo "  the package manager's prefix: $(du -sh sysroot/jb | cut -f1) as /jb (init puts it at /var/jb)"
+	fi
+	# libOSMesa (11 MB, the Mali's compiler and GL inside it) in the system image as well, /usr/lib/redwood/libOSMesa.8.dylib: the boot
+	# partition (32 MB) is full, and with OSMESA_EXT=1 runkit/mk.sh makes /redwood/lib/libOSMesa.8.dylib a link to this copy. It does no
+	# harm to an image that keeps its own.
+	if [ -f obj/libOSMesa.8.dylib ]; then
+		mkdir -p sysroot/usr/lib/redwood
+		cp obj/libOSMesa.8.dylib sysroot/usr/lib/redwood/
 	fi
 	# our audio device, where the audio server looks for such plug-ins (and for no others: Apple's are left out)
 	mkdir -p sysroot/System/Library/Audio/Plug-Ins/HAL

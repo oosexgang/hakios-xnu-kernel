@@ -1,0 +1,7 @@
+# etc/rc for METAL=1 with the key store (aks_keys=1): what rc.launchd.aks does before launchd (the system bag made as a restore
+# would, then launchd's own boot task "keybag", skipped when it boots from a RAM disk) and what rc.launchd.metal does (our Metal
+# plug-in's name on IOAcceleratorES; needs boot-arg metal=1). Bluetooth wants it: bluetoothd keeps its identity root in the keychain.
+/redwood/bin/tolog /redwood/bin/aks_restore
+/redwood/bin/tolog OS_ACTIVITY_DT_MODE=YES /usr/libexec/keybagd --init
+/redwood/bin/tolog /redwood/bin/metal_props on ../../../redwood/lib/RedwoodMetal RedwoodMetalDevice
+exec /sbin/launchd.ios

@@ -81,6 +81,10 @@ void redwood_adreno_stop(void);         /* before that, where the ending is no p
 void redwood_adreno_minute(void);       /* once a minute: a line about how warm the GPU is, if it is in use */
 void redwood_scp_init(void);            /* boot-arg scp_step=N: the MT6768's SCP (the sensor hub), steps 1 to N */
 void redwood_connsys_init(void);        /* boot-arg connsys_step=N: the Infinix's CONNSYS (Wi-Fi/BT), steps 1 to N */
+void redwood_pwrap_lock(void);          /* the MT6358 PMIC wrapper (0x1000d000) takes one transaction at a time: the camera, the keys/GPU-voltage and CONNSYS drivers each hold this for a whole one */
+void redwood_pwrap_unlock(void);
+void redwood_mtkbatt_init(void);        /* boot-arg mtkbatt=1: the Infinix's battery from the PMIC's BATADC, to iOS's power source */
+void redwood_mtkcam_init(void);         /* boot-arg mtkcam=1: the Infinix's main camera (S5K JN1), one capture into memory, then all off */
 /* CONNSYS's memory (Android's consys-reserve-memory), and the AP's the Wi-Fi's DMA and BTIF's FIFO use (its
  * wifi-reserve-memory): both outside XNU's, which begins at 0xc0000000 (mtkloader.c) */
 #define REDWOOD_CONNSYS_EMI_PHYS        0x51000000u

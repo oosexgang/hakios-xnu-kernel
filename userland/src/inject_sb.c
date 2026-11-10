@@ -1560,6 +1560,52 @@ wallpaper_any_screen_class(void)
 	keep_line("%s: WallpaperKit takes a wallpaper of any screen class", getprogname());
 }
 
+/*
+ * Camera.app has no icon on the home screen (run 577): SpringBoard's icon model shows an icon whose app has a tag (SBAppTags: "still-camera") only when
+ * the tag is in its visible tags, which come from MobileGestalt's answers (venice, arkit, any-telephony, ...), and "still-camera" is not there: this
+ * tree's device tree has no /product/camera. (An interposed MGGetBoolAnswer did not reach it: the call is inside the shared cache.) The phone has a
+ * camera (/dev/redwood-camera, mtkcam=5): the tag is added to the visible ones, by the model's own call, a few seconds after start and again later.
+ */
+static void
+show_camera_icon(unsigned seconds)
+{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)seconds * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		Class ic = objc_getClass("SBIconController");
+		id controller = ic ? SEND(id, ic, "sharedInstance") : NULL;
+		SEL respond = sel_registerName("respondsToSelector:"), set = sel_registerName("setVisibilityOfIconsWithVisibleTags:hiddenTags:");
+		id manager = NULL, model = NULL, who[3];
+
+		if (controller && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(controller, respond, sel_registerName("iconManager"))) {
+			manager = SEND(id, controller, "iconManager");
+		}
+		if (manager && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(manager, respond, sel_registerName("iconModel"))) {
+			model = SEND(id, manager, "iconModel");
+		}
+		who[0] = model;
+		who[1] = manager;
+		who[2] = controller;
+		for (int k = 0; k < 3; k++) {
+			if (who[k] == NULL || !((BOOL (*)(id, SEL, SEL))objc_msgSend)(who[k], respond, sel_registerName("visibleIconTags"))) {
+				continue;
+			}
+			id visible = SEND(id, who[k], "visibleIconTags"), hidden = SEND(id, who[k], "hiddenIconTags");
+			id more = visible ? SEND1(id, visible, "setByAddingObject:", id, (id)CFSTR("still-camera")) : NULL;
+
+			if (more && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(who[k], respond, set)) {
+				((void (*)(id, SEL, id, id))objc_msgSend)(who[k], set, more, hidden);
+				keep_line("icons: still-camera added to the visible tags of %s", object_getClassName(who[k]));
+				break;
+			}
+		}
+		if (model) {
+			id icon = SEND1(id, model, "leafIconForIdentifier:", id, (id)CFSTR("com.apple.camera"));
+
+			keep_line("icons: camera icon %p visible %d", icon, icon && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(model, respond,
+			    sel_registerName("isIconVisible:")) ? SEND1(BOOL, model, "isIconVisible:", id, icon) : -1);
+		}
+	});
+}
+
 __attribute__((constructor))
 static void
 redwood_springboard_init(void)
@@ -1612,6 +1658,8 @@ redwood_springboard_init(void)
 	 * only one inserted library per program is reliable here, and SpringBoard's is this one; so
 	 * this one opens it, the way a jailbreak's own hook does.
 	 */
+	show_camera_icon(12);
+	show_camera_icon(40);
 	load_tweaks();
 	slide = (uintptr_t)_dyld_get_shared_cache_range(&length) - CACHE_BASE;
 	watch_for_faults();

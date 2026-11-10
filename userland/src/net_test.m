@@ -70,6 +70,18 @@ extern CFArrayRef SCDynamicStoreCopyKeyList(SCDynamicStoreRef store, CFStringRef
 extern CFPropertyListRef SCDynamicStoreCopyValue(SCDynamicStoreRef store, CFStringRef key);
 extern Boolean SCDynamicStoreSetNotificationKeys(SCDynamicStoreRef store, CFArrayRef keys, CFArrayRef patterns);
 extern CFRunLoopSourceRef SCDynamicStoreCreateRunLoopSource(CFAllocatorRef allocator, SCDynamicStoreRef store, CFIndex order);
+typedef const struct __SCPreferences *SCPreferencesRef;
+extern SCPreferencesRef SCPreferencesCreate(CFAllocatorRef allocator, CFStringRef name, CFStringRef prefsID);
+extern CFPropertyListRef SCPreferencesGetValue(SCPreferencesRef prefs, CFStringRef key);
+extern void SCPreferencesSynchronize(SCPreferencesRef prefs);
+extern Boolean SCPreferencesLock(SCPreferencesRef prefs, Boolean wait);
+extern Boolean SCPreferencesUnlock(SCPreferencesRef prefs);
+extern Boolean SCPreferencesSetComputerName(SCPreferencesRef prefs, CFStringRef name, CFStringEncoding encoding);
+extern Boolean SCPreferencesCommitChanges(SCPreferencesRef prefs);
+extern Boolean SCPreferencesApplyChanges(SCPreferencesRef prefs);
+extern CFStringRef SCDynamicStoreCopyComputerName(SCDynamicStoreRef store, CFStringEncoding *encoding);
+extern int SCError(void);
+extern const char *SCErrorString(int status);
 
 static double
 seconds(void)
@@ -357,6 +369,77 @@ reach(const char *name)
 }
 
 /*
+ * The device's name, which a restored iPhone has from its set-up and this one has not: Settings'
+ * Bluetooth pane wrote "discoverable as (null)" (BluetoothSettings asks SCDynamicStoreCopyComputerName,
+ * run 760) and bluetoothd named the radio "iOS". Written the way iOS writes it, into the system
+ * configuration's preferences, and only after configd has made its own (a set of network services):
+ * preferences of ours with nothing but a name in them would be taken for a configuration, and the
+ * Wi-Fi's service would not be made. Boot-arg devname=NAME names it otherwise (no spaces); "iPhone"
+ * is what MobileGestalt answers here.
+ */
+static void
+device_name(void)
+{
+	char arguments[1024] = "", chosen[64] = "iPhone";
+	size_t size = sizeof(arguments) - 1;
+	double start = seconds();
+	SCPreferencesRef preferences = NULL;
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
+		for (const char *word = strtok(arguments, " "); word != NULL; word = strtok(NULL, " ")) {
+			if (strncmp(word, "devname=", 8) == 0 && word[8] != 0) {
+				snprintf(chosen, sizeof(chosen), "%s", word + 8);
+			}
+		}
+	}
+	for (;;) {
+		CFStringRef has = SCDynamicStoreCopyComputerName(NULL, NULL);
+
+		if (has != NULL) {
+			printf("net_test: name: the device is already named \"%s\"\n", ((__bridge NSString *)has).UTF8String);
+			CFRelease(has);
+			return;
+		}
+		if (preferences != NULL) {
+			CFRelease(preferences);
+		}
+		preferences = SCPreferencesCreate(NULL, CFSTR("net_test"), NULL);
+		if (preferences != NULL && SCPreferencesGetValue(preferences, CFSTR("CurrentSet")) != NULL) {
+			break;
+		}
+		if (seconds() - start > 90) {
+			printf("net_test: name: configd has made no configuration in 90 s; the name is left unset\n");
+			return;
+		}
+		sleep(1);
+	}
+	CFStringRef name = CFStringCreateWithCString(NULL, chosen, kCFStringEncodingUTF8);
+	bool locked = SCPreferencesLock(preferences, true);
+	bool done = name != NULL && SCPreferencesSetComputerName(preferences, name, kCFStringEncodingUTF8) &&
+	    SCPreferencesCommitChanges(preferences) && SCPreferencesApplyChanges(preferences);
+	int error = done ? 0 : SCError();
+
+	if (locked) {
+		SCPreferencesUnlock(preferences);
+	}
+	if (!done) {
+		printf("net_test: name: \"%s\" not set: %s\n", chosen, SCErrorString(error));
+		return;
+	}
+	for (int i = 0; i < 20; i++) {
+		CFStringRef has = SCDynamicStoreCopyComputerName(NULL, NULL);
+
+		if (has != NULL) {
+			printf("net_test: name: the device is named \"%s\" after %.1f s\n", ((__bridge NSString *)has).UTF8String, seconds() - start);
+			CFRelease(has);
+			return;
+		}
+		usleep(250000);
+	}
+	printf("net_test: name: \"%s\" written, configd does not say it yet\n", chosen);
+}
+
+/*
  * With wifi=1 among the kernel's arguments: wait for en0, and for configd's own network service for
  * it ("Wi-Fi", made of the radio's IOKit objects, iokit/Kernel/RedwoodWLAN.cpp). That service runs
  * DHCP by itself, and it has to be the one that does: wifid takes the interface for usable only
@@ -566,7 +649,17 @@ main(int argc, char **argv)
 				reach(argv[++i]);
 			} else if (strcmp(step, "wait") == 0 && i + 1 < argc) {
 				usleep((useconds_t)(atof(argv[++i]) * 1e6));
+			} else if (strcmp(step, "name") == 0) {
+				device_name();
 			} else if (strcmp(step, "wifi") == 0) {
+				/* the job com.redwood.wifi is the one of ours that every image with configd runs at
+				 * its start: the name goes with it, beside the wait for the radio and not before it */
+				fflush(stdout);
+				if (fork() == 0) {
+					device_name();
+					fflush(stdout);
+					_exit(0);
+				}
 				wifi();
 			} else if (strcmp(step, "watch") == 0 && i + 1 < argc) {
 				watch(atof(argv[++i]));

@@ -62,10 +62,10 @@ index a4d25040f38f..aad72993d139 100644
  kern_debug.o_INCFLAGS += -I$(SRCROOT)/osfmk
  
 diff --git a/bsd/conf/files b/bsd/conf/files
-index 44274016a4cf..5bcb397ff5ca 100644
+index 44274016a4cf..4ab7ca03b301 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,46 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -109,6 +109,50 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c optional monotonic
@@ -76,6 +76,7 @@ index 44274016a4cf..5bcb397ff5ca 100644
 +bsd/dev/redwood_mtkkeys.c	standard
 +bsd/dev/redwood_mali.c	standard
 +bsd/dev/redwood_connsys.c	standard
++bsd/dev/redwood_btsk.c	standard
 +bsd/dev/redwood_mtkwifi.c	standard
 +bsd/dev/redwood_wpa.c	standard
 +bsd/dev/redwood_emmc.c	standard
@@ -97,6 +98,9 @@ index 44274016a4cf..5bcb397ff5ca 100644
 +bsd/dev/redwood_haptic.c		standard
 +bsd/dev/redwood_torch.c		standard
 +bsd/dev/redwood_camera.c	standard
++bsd/dev/redwood_mtkcam.c	standard
++bsd/dev/redwood_mtkbatt.c	standard
++bsd/dev/redwood_fbgrab.c	standard
 +bsd/dev/redwood_mic.c		standard
 +bsd/dev/redwood_wifi.c		standard
 +bsd/dev/redwood_adsp.c		standard
@@ -112,7 +116,7 @@ index 44274016a4cf..5bcb397ff5ca 100644
  bsd/dev/dev_perfmon.c optional config_perfmon
  
  bsd/libkern/crc32.c			standard
-@@ -155,6 +195,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+@@ -155,6 +199,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
  bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
  bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
@@ -127,7 +131,7 @@ index 44274016a4cf..5bcb397ff5ca 100644
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
-@@ -361,6 +409,7 @@ bsd/security/audit/audit_syscalls.c		standard
+@@ -361,6 +413,7 @@ bsd/security/audit/audit_syscalls.c		standard
  bsd/security/audit/audit_worker.c		optional config_audit
  
  bsd/pthread/pthread_shims.c		standard
@@ -135,7 +139,7 @@ index 44274016a4cf..5bcb397ff5ca 100644
  bsd/pthread/pthread_priority.c		standard
  bsd/pthread/pthread_workqueue.c		standard
  
-@@ -383,6 +432,7 @@ bsd/kern/kern_debug.c			standard
+@@ -383,6 +436,7 @@ bsd/kern/kern_debug.c			standard
  bsd/kern/kern_symfile.c			standard
  bsd/kern/kern_descrip.c			standard
  bsd/kern/kern_guarded.c			standard
@@ -419,7 +423,7 @@ index 43b1ea6c6303..75d027b3b7a3 100644
  }
  
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
-index 1d71c66629fb..3e1737c21b86 100644
+index 1d71c66629fb..f8d59ec2ef22 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
 @@ -1157,6 +1157,9 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
@@ -626,7 +630,7 @@ index 1d71c66629fb..3e1737c21b86 100644
 + * from a job description, which is why the kernel adds this one. Set once by our init (from
 + * etc/inject.conf) before it hands over to launchd.
 + */
-+static char exec_inject_conf[512];
++static char exec_inject_conf[2048];
 +SYSCTL_STRING(_kern, OID_AUTO, exec_inject, CTLFLAG_RW | CTLFLAG_LOCKED, exec_inject_conf, sizeof(exec_inject_conf),
 +    "LIBRARY NAME... [; LIBRARY NAME...]: programs started with the library inserted");
 +
@@ -1883,10 +1887,10 @@ index 5219fb0d9ed6..b2f000b00225 100644
  //	Now check if we are trying to root on a memory device
  //
 diff --git a/iokit/conf/files b/iokit/conf/files
-index 5fb0a52062e0..468ffc7d0414 100644
+index 5fb0a52062e0..274ed3282878 100644
 --- a/iokit/conf/files
 +++ b/iokit/conf/files
-@@ -79,6 +79,16 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+@@ -79,6 +79,17 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
  iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
  
  iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
@@ -1897,6 +1901,7 @@ index 5fb0a52062e0..468ffc7d0414 100644
 +iokit/Kernel/RedwoodMali.cpp				optional iokitcpp
 +iokit/Kernel/RedwoodWLAN.cpp			optional iokitcpp
 +iokit/Kernel/RedwoodBattery.cpp			optional iokitcpp
++iokit/Kernel/RedwoodBluetooth.cpp		optional iokitcpp
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
 +iokit/Kernel/MiniFairPlay.cpp			optional iokitcpp

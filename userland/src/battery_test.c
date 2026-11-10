@@ -167,6 +167,25 @@ open_url(const char *text)
 	return result ? 0 : 1;
 }
 
+/* SpringBoardServices' way of launching an application by its identifier (what a URL it has no scheme for cannot do: Settings' "prefs:" pages) */
+static int
+launch_app(const char *identifier)
+{
+	void *sbs = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_NOW);
+	int (*launch)(CFStringRef, Boolean) = sbs ? (int (*)(CFStringRef, Boolean))dlsym(sbs, "SBSLaunchApplicationWithIdentifier") : NULL;
+	CFStringRef name = CFStringCreateWithCString(NULL, identifier, kCFStringEncodingUTF8);
+	int result;
+
+	if (launch == NULL || name == NULL) {
+		printf("battery_test: cannot launch %s: no SBSLaunchApplicationWithIdentifier\n", identifier);
+		return 1;
+	}
+	result = launch(name, false);
+	printf("battery_test: SpringBoard was asked to launch %s: result %d\n", identifier, result);
+	CFRelease(name);
+	return result == 0 ? 0 : 1;
+}
+
 /* the power log's database, read only (aggregated keeps writing it) */
 static int
 powerlog(void)
@@ -245,6 +264,9 @@ main(int argc, char **argv)
 {
 	if (argc > 2 && strcmp(argv[1], "open") == 0) {
 		return open_url(argv[2]);
+	}
+	if (argc > 2 && strcmp(argv[1], "launch") == 0) {
+		return launch_app(argv[2]);
 	}
 	if (argc > 1 && strcmp(argv[1], "powerlog") == 0) {
 		return powerlog();

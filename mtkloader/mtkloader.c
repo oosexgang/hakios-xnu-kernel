@@ -90,6 +90,10 @@ static const uint8_t core_order[8] = { 0, 7, 6, 1, 2, 3, 4, 5 };
 #ifndef GPU_PROBE
 #define GPU_PROBE           0
 #endif
+/* 1: read the camera's pins, rails and I2C controller and report, if Android asked for it (tools/cam-probe.sh); then Android. */
+#ifndef CAM_PROBE
+#define CAM_PROBE           0
+#endif
 /* 1: read the eMMC and report, then go back to Android (no XNU). */
 #ifndef MSDC_TEST
 #define MSDC_TEST           0
@@ -3365,6 +3369,12 @@ rails_off:
 }
 #endif /* GPU_PROBE */
 
+#if CAM_PROBE
+#include "mtkcam.h"
+
+static const char cam_probe_flag[] = "DARWIN-REDWOOD:CAM-PROBE";
+#endif /* CAM_PROBE */
+
 void mtkloader_main(uint64_t dtb)
 {
 	uint32_t mark = marker_get();
@@ -3401,6 +3411,17 @@ void mtkloader_main(uint64_t dtb)
 		fbc.y = fbc.top = 0;
 		out("== mtkloader: GPU probe ==\n");
 		gpu_probe();
+		dbg_delay_ms(4000);
+	}
+	chain_android();
+#endif
+#if CAM_PROBE
+	if (pmsg_take(cam_probe_flag, sizeof(cam_probe_flag) - 1)) {
+		fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
+		fbc.x = 0;
+		fbc.y = fbc.top = 0;
+		out("== mtkloader: CAM probe ==\n");
+		cam_probe();
 		dbg_delay_ms(4000);
 	}
 	chain_android();

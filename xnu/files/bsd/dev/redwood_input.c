@@ -227,6 +227,24 @@ redwood_input_init(void)
 	redwood_mali_init();
 	redwood_connsys_init();
 	redwood_scp_init();
+	redwood_mtkcam_init();
+	redwood_mtkbatt_init();
 	redwood_wifi_init();
 	redwood_adsp_init();
+}
+
+/* One transaction at a time on the PMIC wrapper (redwood_mtkcam.c, redwood_mtkkeys.c, redwood_connsys.c each drive its WACS2 channel by hand). */
+static LCK_GRP_DECLARE(redwood_pwrap_grp, "redwood-pwrap");
+static LCK_MTX_DECLARE(redwood_pwrap_mtx, &redwood_pwrap_grp);
+
+void
+redwood_pwrap_lock(void)
+{
+	lck_mtx_lock(&redwood_pwrap_mtx);
+}
+
+void
+redwood_pwrap_unlock(void)
+{
+	lck_mtx_unlock(&redwood_pwrap_mtx);
 }

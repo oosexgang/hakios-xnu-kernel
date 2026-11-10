@@ -379,6 +379,7 @@ public:
 	MiniIOSurface * defaultSurface(void);
 	void present(const uint8_t * swap);
 	void shot(MiniIOSurface * s);
+	bool grab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride);
 	uint32_t        fShotStats;
 	void show(const uint8_t * swap, MiniIOSurface ** surfaces);
 	void presenter(void);
@@ -1199,6 +1200,39 @@ IOMobileFramebuffer::shot(MiniIOSurface * s)
 	    gShotBand == 4 ? taken++ % 3 : gShotBand ? gShotBand - 1 : 0, gShotBand ? 3 : 1);
 }
 
+/*
+ * The picture on the panel, whole, for bsd/dev/redwood_fbgrab.c (sysctl kern.redwood.fbgrab): what is in the front buffer now, B G R A in
+ * memory, a row of fRowBytes. fbshot's pictures go through the log and are 60 to 130 pixels wide; this one goes through a program that sends
+ * it over the network (src/fbgrab.m).
+ */
+static IOMobileFramebuffer * gLiveFB;
+
+bool
+IOMobileFramebuffer::grab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride)
+{
+	const uint8_t * from = fFlip ? fFlipVA[fFront] : fBase;
+	uint32_t w = fPanelWidth, h = fPanelHeight;
+
+	if (from == NULL || w == 0 || h == 0 || (uint64_t) w * h * 4 > max) {
+		return false;
+	}
+	IOLockLock(fLock);
+	for (uint32_t y = 0; y < h; y++) {
+		memcpy(out + (size_t) y * w * 4, from + (size_t) y * fRowBytes, (size_t) w * 4);
+	}
+	IOLockUnlock(fLock);
+	*width = w;
+	*height = h;
+	*stride = w * 4;
+	return true;
+}
+
+extern "C" bool
+RedwoodFramebufferGrab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride)
+{
+	return gLiveFB != NULL && gLiveFB->grab(out, max, width, height, stride);
+}
+
 /* SwapEnd: the swap is handed to the thread that puts frames on the panel, as soon as that has no other waiting. */
 void
 IOMobileFramebuffer::present(const uint8_t * swap)
@@ -1206,6 +1240,8 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 	AbsoluteTime deadline;
 
 	uint64_t now = mach_absolute_time(), period, pause;
+
+	gLiveFB = this;
 
 	/* (a frame that is late on the panel was late here already, or it was not: for telling whose it is) */
 	nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz() * 5 / 4, &period);

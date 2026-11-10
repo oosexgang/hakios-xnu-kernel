@@ -36,6 +36,19 @@
 #include <sys/vnode_internal.h>
 #include <kern/thread.h>
 #include <kern/kalloc.h>
+#include <kern/locks.h>
+#include <sys/conf.h>
+#include <sys/uio.h>
+#include <sys/proc.h>
+#include <sys/ttycom.h>
+#include <sys/termios.h>
+#include <sys/select.h>
+#include <sys/ioctl.h>
+#include <sys/kern_control.h>
+#include <sys/kpi_mbuf.h>
+#include <sys/sys_domain.h>
+#include <uuid/uuid.h>
+#include <miscfs/devfs/devfs.h>
 extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation, void *parameter, integer_t priority, thread_t *new_thread);
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
@@ -102,7 +115,7 @@ connsys_pwrap_wait(uint32_t state)
 }
 
 static bool
-connsys_pmic_read(uint32_t reg, uint32_t *value)
+connsys_pmic_read_raw(uint32_t reg, uint32_t *value)
 {
 	if (!connsys_pwrap_wait(0)) {
 		return false;
@@ -114,6 +127,17 @@ connsys_pmic_read(uint32_t reg, uint32_t *value)
 	*value = rd(connsys_pwrap, PWRAP_WACS2_RDATA) & 0xffff;
 	*(volatile uint32_t *)(connsys_pwrap + PWRAP_WACS2_VLDCLR) = 1;
 	return true;
+}
+
+static bool
+connsys_pmic_read(uint32_t reg, uint32_t *value)
+{
+	bool ok;
+
+	redwood_pwrap_lock();
+	ok = connsys_pmic_read_raw(reg, value);
+	redwood_pwrap_unlock();
+	return ok;
 }
 
 static void
@@ -137,13 +161,24 @@ connsys_power_report(void)
 }
 
 static bool
-connsys_pmic_write(uint32_t reg, uint32_t value)
+connsys_pmic_write_raw(uint32_t reg, uint32_t value)
 {
 	if (!connsys_pwrap_wait(0)) {
 		return false;
 	}
 	*(volatile uint32_t *)(connsys_pwrap + PWRAP_WACS2_CMD) = (1u << 31) | (reg >> 1) << 16 | (value & 0xffff);
 	return connsys_pwrap_wait(0);
+}
+
+static bool
+connsys_pmic_write(uint32_t reg, uint32_t value)
+{
+	bool ok;
+
+	redwood_pwrap_lock();
+	ok = connsys_pmic_write_raw(reg, value);
+	redwood_pwrap_unlock();
+	return ok;
 }
 
 /* a PMIC register's bits under `mask` set to `value`, read back; false if the wrapper did not answer */
@@ -686,6 +721,7 @@ connsys_btif_wake(void)
  */
 static bool connsys_stp_full;
 static uint8_t connsys_stp_seq, connsys_stp_ack, connsys_stp_expect;
+static unsigned connsys_stp_task = 4;     /* STP's channel a frame goes on and an answer is waited on: 4 WMT, 0 Bluetooth (BT_TASK_INDX) */
 static vm_offset_t connsys_hif;         /* CONN_HIF_ON (0x18007000): CPUPCR at +0x104, the MCU's program counter */
 static vm_offset_t connsys_mcu;         /* MCU (0x18002000): mapped once for register dumps */
 static vm_offset_t connsys_rgu;         /* RGU (0x10007000): software reset at +0x18 */
@@ -764,12 +800,16 @@ connsys_btif_byte(unsigned wait_ms)
 static void
 connsys_stp_send(const uint8_t *payload, unsigned length)
 {
-	uint8_t frame[4 + 64 + 2];
+	uint8_t frame[4 + 1100 + 2];
 	uint16_t crc = connsys_stp_full ? connsys_crc16(payload, length) : 0;
+
+	if (length > 1100) {
+		return;
+	}
 
 	/* In mandatory mode, MediaTek STP header byte 0 is fixed 0x80 (no seq increment). */
 	frame[0] = (uint8_t)(0x80 | (connsys_stp_full ? ((connsys_stp_seq << 3) | connsys_stp_ack) : 0));
-	frame[1] = (uint8_t)((4 << 4) | ((length >> 8) & 0xf));
+	frame[1] = (uint8_t)((connsys_stp_task << 4) | ((length >> 8) & 0xf));
 	frame[2] = (uint8_t)length;
 	frame[3] = connsys_stp_full ? (uint8_t)(frame[0] + frame[1] + frame[2]) : 0;
 	memcpy(frame + 4, payload, length);
@@ -835,8 +875,8 @@ connsys_stp_receive(uint8_t *payload, unsigned room, char *heard, size_t heard_r
 				continue;
 			}
 		}
-		/* another of STP's channels (Bluetooth 0, GPS 2, its own 5...) is not WMT's answer: taken, acked and said */
-		if (((b1 >> 4) & 7) != 4) {
+		/* another of STP's channels (WMT 4, Bluetooth 0, GPS 2, its own 5...) than the one waited on is not the answer: taken, acked and said */
+		if (((b1 >> 4) & 7) != connsys_stp_task) {
 			used += (size_t)snprintf(heard + used, heard_room - used, " [type %u, %u bytes]", (b1 >> 4) & 7, length);
 			continue;
 		}
@@ -877,6 +917,7 @@ connsys_btif_dump_state(const char *tag)
 	    iir, ier, dma_en, sleep_en, tri_lvl, wak, handshake, fakelcr, cpupcr, mcu600, mcu16c);
 }
 
+static bool connsys_skip_foreign;       /* WMT answers: an event of another opcode than the command's is not its answer (firmware's own, e.g. 02 16 ..) */
 static unsigned connsys_answer_ms;      /* when not 0, how long the next answer may take in full mode (else 1 s) */
 
 static bool
@@ -927,6 +968,12 @@ connsys_wmt(const char *what, const uint8_t *command, unsigned length, const uin
 		    !((unsigned)got >= expected_length && memcmp(answer, expected, expected_length) == 0); more++) {
 			used = strlen(line);
 			snprintf(line + used, sizeof(line) - used, " [event %02x]", answer[5]);
+			got = connsys_stp_receive(answer, sizeof(answer), line, sizeof(line), wait_ms);
+		}
+		for (unsigned more = 0; more < 8 && connsys_skip_foreign && connsys_stp_task == 4 && got >= 5 && answer[0] == 0x02 &&
+		    expected_length >= 2 && answer[1] != expected[1]; more++) {
+			used = strlen(line);
+			snprintf(line + used, sizeof(line) - used, " [event %02x, %d bytes]", answer[1], got);
 			got = connsys_stp_receive(answer, sizeof(answer), line, sizeof(line), wait_ms);
 		}
 		if (got >= 0) {
@@ -1169,6 +1216,9 @@ connsys_pda_patch(void)
  * Wi-Fi is not a WMT command on a SoC: mtk_wcn_wmt_func_on(WIFI) calls the Wi-Fi driver's probe (gen4m, chips/connac
  * on AXI), which loads WIFI_RAM_CODE itself -- the next step.
  */
+static void connsys_bt_start(void);
+extern bool RedwoodBluetoothNode(void);        /* iokit/Kernel/RedwoodBluetooth.cpp */
+
 static void
 connsys_sw_init(void)
 {
@@ -1242,6 +1292,692 @@ connsys_sw_init(void)
 	if (connsys_step >= 12) {
 		redwood_mtkwifi_start(connsys_step);
 	}
+	connsys_bt_start();
+}
+
+
+/*
+ * Bluetooth, second step (connsys_bt=2): the controller behind the serial ports iOS's bluetoothd looks for
+ * (/dev/cu.bluetooth, then /dev/uart.bluetooth: "No valid serial port found (tried cu.bluetooth and uart.bluetooth)" in
+ * bluetoothd's strings; H4, a type byte before each packet). A character device pair of the kernel's own: what the daemon
+ * writes is cut into H4 packets and sent on STP's channel 0, what the controller sends comes back as a byte stream; the
+ * terminal ioctls (tcgetattr, tcsetattr, a baud rate) are taken and said, a line each time the command is new.
+ * One thread (the one that brought the controller up) does all of BTIF: a write is sent within the 2 ms its read waits.
+ */
+static LCK_GRP_DECLARE(bt_lck_grp, "redwood-bt");
+static LCK_MTX_DECLARE(bt_lock, &bt_lck_grp);
+#define BT_RING         65536u
+#define BT_TXQ          8192u
+static uint8_t bt_ring[BT_RING];
+static unsigned bt_ring_head, bt_ring_count;    /* the bytes the controller sent, not yet read */
+static uint8_t bt_txq[BT_TXQ];
+static unsigned bt_txq_count;                   /* what has been written, not yet sent (maybe half a packet) */
+static struct selinfo bt_sel;
+static unsigned bt_opens;
+static uint32_t bt_said_packets_in, bt_said_packets_out;
+
+static void
+bt_dump(const char *direction, const uint8_t *bytes, unsigned length, uint32_t *counter)
+{
+	char text[3 * 32 + 1];
+
+	if (direction[0] == 'i' && length == 7 && bytes[1] == 0x0e && bytes[2] == 4 && bytes[6] == 0 && (bytes[5] >> 2) != 0x3f && false) {
+		return;                 /* a plain Command Complete, status 0: the command above it says enough (the vendor ones are said) */
+	}
+	{
+		/* everything, for 30 s after a classic connection is asked for (Create_Connection 0x0405), up to 500 lines: what comes of it */
+		static uint32_t until_ms;
+		static unsigned connection_said;
+
+		if (direction[0] == 'o' && length >= 4 && bytes[0] == 1 && bytes[1] == 0x05 && bytes[2] == 0x04) {
+			until_ms = connsys_ms() + 30000;
+		}
+		if (until_ms != 0 && (int32_t)(until_ms - connsys_ms()) > 0 && connection_said < 500 && *counter >= 130 && length < 400) {
+			connection_said++;
+			(*counter)--;
+		}
+	}
+	{
+		/* beyond the first of each direction, only what a scan is made of: its commands (LE_Set_Scan_Parameters 0x200b, _Enable 0x200c, the
+		 * extended ones 0x2041, 0x2042) and the LE Meta events (0x3e) that come of it, a few dozen */
+		static unsigned scan_said;
+		/* ... and a connection's: the link-control commands (OGF 1: Inquiry, Create_Connection, pairing's answers), LE_Create_Connection (0x200d), and their events */
+		const bool scan = (length >= 4 && bytes[0] == 1 && bytes[2] == 0x20 && (bytes[1] == 0x0b || bytes[1] == 0x0c || bytes[1] == 0x0d || bytes[1] == 0x41 || bytes[1] == 0x42)) ||
+		    (length >= 4 && bytes[0] == 1 && bytes[2] == 0x04) ||
+		    (length >= 4 && bytes[0] == 4 && (bytes[1] == 0x3e || bytes[1] == 0x03 || bytes[1] == 0x04 || bytes[1] == 0x05 || bytes[1] == 0x06 || bytes[1] == 0x07 || bytes[1] == 0x0b || bytes[1] == 0x0c ||
+		    bytes[1] == 0x17 || bytes[1] == 0x18 || bytes[1] == 0x1d || bytes[1] == 0x22 || bytes[1] == 0x31 || bytes[1] == 0x32 || bytes[1] == 0x33 || bytes[1] == 0x36 || bytes[1] == 0x3d)) ||
+		    (length >= 4 && bytes[0] == 4 && bytes[1] == 0x0f && !(bytes[4] == 0 && bytes[5] == 0x01 && bytes[6] == 0x04 && length == 7)) ||
+		    (length >= 6 && bytes[0] == 2);          /* ACL data, both ways */
+
+		const bool le = (length >= 4 && bytes[0] == 1 && bytes[2] == 0x20) || (length >= 4 && bytes[0] == 4 && bytes[1] == 0x3e);
+		static unsigned le_said;
+
+		if (*counter >= 130 && scan && le && le_said < 60) {
+			le_said++;
+			(*counter)--;
+		} else if (*counter >= 130 && scan && !le && scan_said < 300) {
+			scan_said++;
+			(*counter)--;
+		}
+	}
+	if ((*counter)++ >= 130) {              /* the first of each direction: the host buffer is 64 KB and bluetoothd's own lines (src/inject.c) want it */
+		return;
+	}
+	for (unsigned at = 0; at < length && at < (bytes[0] == 4 && bytes[1] == 0x3e ? 96u : 32u); at += 32) {
+		unsigned n = length - at < 32 ? length - at : 32;
+
+		for (unsigned i = 0; i < n; i++) {
+			snprintf(text + 3 * i, 4, " %02x", bytes[at + i]);
+		}
+		text[3 * n] = 0;
+		redwood_host_keep_add("connsys: bt %s %u bytes%s%s", direction, length, at == 0 ? ":" : " (cont.):", text);
+	}
+}
+
+/*
+ * What this controller says of itself that Apple's stack will not take as it is. Read_Local_Supported_Commands (the event
+ * 04 0e 44 01 02 10 00 and 64 octets): the MediaTek controller leaves the LE commands of octets 25-28 clear although it
+ * answers them (run 602: LE_Read_Buffer_Size), and bluetoothd, which looks in that mask before it sends one, does not send
+ * LE_Read_Local_Supported_Features and gives up ("HCI initialization failed", run 615). The standard Core 5.2 bits of those
+ * octets are set where the controller has none (OR, never cleared).
+ */
+static uint8_t bt_vsc_sub;              /* the first parameter of the last 0xfce2 command sent: its kind (0x0b, 0x1c: the antenna's, which have a byte in their answers; 0x15: LE features, which has none) */
+
+static unsigned
+bt_quirks(uint8_t *packet, unsigned length)
+{
+	static const uint8_t le_commands[4] = { 0xf7, 0xff, 0xff, 0x7f };
+
+	/*
+	 * Write_Default_Erroneous_Data_Reporting (0x0c5b) is a Core 2.1 command the MediaTek controller answers "Unknown HCI Command"
+	 * (Command Status 04 0f 04 01 01 5b 0c, run 617), and bluetoothd, which sends it in its start-up, takes that for a controller
+	 * that does not work ("HCI initialization failed", every 10 s). The setting means nothing to a controller that does not
+	 * report erroneous data in the first place, so it is answered as a done one: Command Complete, status 0.
+	 */
+	/*
+	 * The vendor commands of Apple's stack (OGF 0x3f: 0xfce9, 0xfce2, 0xfd47, 0xfd48 ... in run 627) are Broadcom's, for a chip
+	 * this one is not; the MediaTek controller says "Unknown HCI Command" to each (Command Status, status 1) and bluetoothd,
+	 * a few seconds after the last one, exits with 1 and is started again (every ~17 s, runs 626 and 627). They configure
+	 * Broadcom's antenna, coexistence and address handling, which has no meaning here: each is answered as done, Command
+	 * Complete with status 0 and nothing else.
+	 */
+	if (length == 7 && packet[0] == 0x04 && packet[1] == 0x0f && packet[2] == 0x04 && packet[3] == 0x01 && packet[4] == 0x01 &&
+	    (packet[6] >> 2) == 0x3f) {
+		/*
+		 * Status 0, and for 0xfd48 one more byte of 0: bluetoothd reads a byte of data after that one's status (AssertFail
+		 * bcm_vsc.c:642 ByteStream_NumReadBytesAvail >= 1, run 629), and takes one after the others' for a failure -- with the byte
+		 * on all of them BD_VSC_LE_META_ENA_FEATURES (0xfce2) failed with reason 3602 and bluetoothd restarted (run 638).
+		 */
+		/*
+		 * Some of them are read for data after the status: 0xfd48 for at least a byte (AssertFail bcm_vsc.c:642 ByteStream_NumReadBytesAvail
+		 * >= 1, run 629), the antenna's -- 0xfce2 with sub-command 0x0b or 0x1c, and 0xfce9 (BD_VSC_OLYMPIC_ANTENNA_PREF_B is the first
+		 * of the vendor commands to be sent, and its answer is a byte stream: "Invalid data size 0" in run 627, then "VSC stall
+		 * detected", reason 3602, which restarts bluetoothd, runs 626-646) -- for some. A parser asks that enough bytes are there, not
+		 * that no more are, so these get 16 of zeros; 0xfce2 with sub-command 0x15 (BD_VSC_LE_META_ENA_FEATURES) takes none (with a
+		 * byte it was the one that failed, run 638).
+		 */
+		/*
+		 * Which is which, by bluetoothd's own "Sending: BD_VSC_..." lines against the wire (run 659, src/inject.c's watcher): 0xfce9 is
+		 * BD_VSC_LE_META_ENA_FEATURES, 0xfce2 with 0x0b CHANGE_LE_SETTINGS, with 0x1c SET_MIN_AFH_LE_CHANNELS, 0xfd47
+		 * ENABLE_EXTENDED_DUPLICATE_FILTER -- each completed by the status alone (data on 0xfce9 left the next one unsent, runs
+		 * 650-658) -- and 0xfce2 with 0x15 (header 15 00 00 00, then six bytes of BT_VSCAntPrefParams_t) is
+		 * BD_VSC_OLYMPIC_ANTENNA_PREF_B, whose callback is a byte stream: with the status alone it stalled and bluetoothd restarted
+		 * (VSC stall, reason 3602, runs 626-659), so it gets data after the status; 0xfd48 reads a byte after the status.
+		 */
+		const bool antenna = packet[5] == 0xe2 && packet[6] == 0xfc && (bt_vsc_sub == 0x15 || bt_vsc_sub == 0x36);     /* (0x36: BT_VSC_OLYMPIC_SET_RETAIN_LE_SCAN_DUPLICATES_ON_START, run 673: a scan's start stalled on it) */
+		const bool cal = packet[5] == 0x1b && packet[6] == 0xfd;          /* 0xfd1b with 0x51: BD_VSC_FACTORY_CAL_READ_TABLE (run 669): a table is read */
+		const bool data = antenna || cal || (packet[5] == 0x48 && packet[6] == 0xfd);
+		const unsigned extra = cal ? 64 : (antenna ? 16 : (data ? 1 : 0));
+
+		packet[1] = 0x0e;
+		packet[2] = (uint8_t)(4 + extra);
+		packet[4] = packet[5];
+		packet[5] = packet[6];
+		packet[6] = 0x00;
+		for (unsigned i = 0; i < extra; i++) {
+			packet[7 + i] = 0x00;
+		}
+		if (cal) {
+			packet[7] = 0x51;               /* the table's number, as the Broadcom ones answer a read of a table (a guess) */
+		}
+		return 7 + extra;
+	}
+	if (length == 7 && memcmp(packet, "\x04\x0f\x04\x01\x01\x5b\x0c", 7) == 0) {
+		packet[1] = 0x0e;
+		packet[4] = 0x5b;
+		packet[5] = 0x0c;
+		packet[6] = 0x00;
+		return 7;
+	}
+	if (length >= 7 + 64 && memcmp(packet, "\x04\x0e\x44\x01\x02\x10\x00", 7) == 0) {
+		for (unsigned i = 0; i < 4; i++) {
+			packet[7 + 25 + i] |= le_commands[i];
+		}
+		packet[7 + 24] |= 0x60;         /* octet 24 bits 5, 6: Read and Write LE Host Support (run 616: WriteLeHostSupported, status 628) */
+	}
+	return length;
+}
+
+static int
+bt_open(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
+{
+	char name[32] = "";
+
+	proc_selfname(name, sizeof(name));
+	lck_mtx_lock(&bt_lock);
+	bt_opens++;
+	lck_mtx_unlock(&bt_lock);
+	redwood_host_keep_add("connsys: bt device %u opened by %s (pid %d) with flags %#x, %u open", minor(dev), name, proc_selfpid(), flags, bt_opens);
+	return 0;
+}
+
+static int
+bt_close(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
+{
+	lck_mtx_lock(&bt_lock);
+	if (bt_opens > 0) {
+		bt_opens--;
+	}
+	lck_mtx_unlock(&bt_lock);
+	redwood_host_keep_add("connsys: bt device %u closed (pid %d), %u open", minor(dev), proc_selfpid(), bt_opens);
+	return 0;
+}
+
+#define BT_INERT(dev)   (minor(dev) >= 2)      /* btwake, btreset, btpoweroff: BlueTool opens them, nothing is behind them */
+
+static int
+bt_read(dev_t dev, struct uio *uio, int ioflag)
+{
+	int error = 0;
+
+	if (BT_INERT(dev)) {
+		return 0;
+	}
+	lck_mtx_lock(&bt_lock);
+	while (bt_ring_count == 0) {
+		struct timespec ts = { 0, 100 * NSEC_PER_MSEC };
+
+		if (ioflag & IO_NDELAY) {
+			lck_mtx_unlock(&bt_lock);
+			return EWOULDBLOCK;
+		}
+		error = msleep(&bt_ring_count, &bt_lock, PZERO | PCATCH, "redwood-bt", &ts);
+		if (error != 0 && error != EWOULDBLOCK) {
+			lck_mtx_unlock(&bt_lock);
+			return error;
+		}
+	}
+	while (bt_ring_count > 0 && uio_resid(uio) > 0) {
+		uint8_t chunk[512];
+		unsigned n = bt_ring_count < sizeof(chunk) ? bt_ring_count : (unsigned)sizeof(chunk);
+
+		if ((user_ssize_t)n > uio_resid(uio)) {
+			n = (unsigned)uio_resid(uio);
+		}
+		for (unsigned i = 0; i < n; i++) {
+			chunk[i] = bt_ring[(bt_ring_head + i) % BT_RING];
+		}
+		lck_mtx_unlock(&bt_lock);
+		error = uiomove((caddr_t)chunk, (int)n, uio);
+		lck_mtx_lock(&bt_lock);
+		if (error != 0) {
+			break;
+		}
+		bt_ring_head = (bt_ring_head + n) % BT_RING;
+		bt_ring_count -= n;
+	}
+	lck_mtx_unlock(&bt_lock);
+	return error;
+}
+
+static int
+bt_write(dev_t dev, struct uio *uio, __unused int ioflag)
+{
+	if (BT_INERT(dev)) {
+		char text[48];
+		int n = (int)(uio_resid(uio) < 40 ? uio_resid(uio) : 40);
+
+		if (uiomove(text, n, uio) == 0) {
+			redwood_host_keep_add("connsys: bt device %u written %d byte(s): %02x", minor(dev), n, n > 0 ? (uint8_t)text[0] : 0);
+		}
+		uio_setresid(uio, 0);
+		return 0;
+	}
+	while (uio_resid(uio) > 0) {
+		uint8_t chunk[512];
+		unsigned n = (unsigned)(uio_resid(uio) < (user_ssize_t)sizeof(chunk) ? uio_resid(uio) : (user_ssize_t)sizeof(chunk));
+		int error = uiomove((caddr_t)chunk, (int)n, uio);
+
+		if (error != 0) {
+			return error;
+		}
+		lck_mtx_lock(&bt_lock);
+		if (bt_txq_count + n > BT_TXQ) {
+			lck_mtx_unlock(&bt_lock);
+			return ENOBUFS;
+		}
+		memcpy(bt_txq + bt_txq_count, chunk, n);
+		bt_txq_count += n;
+		lck_mtx_unlock(&bt_lock);
+	}
+	return 0;
+}
+
+static int
+bt_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, __unused struct proc *p)
+{
+	static u_long said[48];
+	static unsigned said_count;
+	bool known = false;
+	int result = 0;
+
+	switch (cmd) {
+	case TIOCGETA: {
+		struct termios *t = (struct termios *)data;
+
+		bzero(t, sizeof(*t));
+		t->c_cflag = CS8 | CREAD | CLOCAL | HUPCL;
+		t->c_ispeed = t->c_ospeed = 3000000;
+		known = true;
+		break;
+	}
+	case TIOCSETA: case TIOCSETAW: case TIOCSETAF: case TIOCEXCL: case TIOCNXCL: case TIOCSDTR: case TIOCCDTR:
+	case TIOCMBIS: case TIOCMBIC: case TIOCMSET: case TIOCFLUSH: case TIOCSBRK: case TIOCCBRK: case TIOCDRAIN:
+	case TIOCSCTTY: case TIOCSTI:
+		known = true;
+		break;
+	case TIOCMGET:
+		*(int *)data = TIOCM_CTS | TIOCM_DSR | TIOCM_CAR | TIOCM_RTS | TIOCM_DTR;
+		known = true;
+		break;
+	case FIONREAD:
+		lck_mtx_lock(&bt_lock);
+		*(int *)data = (int)bt_ring_count;
+		lck_mtx_unlock(&bt_lock);
+		known = true;
+		break;
+	case FIONBIO: case FIOASYNC:
+		known = true;
+		break;
+	default:
+		result = ENOTTY;
+		break;
+	}
+	{
+		bool seen = false;
+
+		for (unsigned i = 0; i < said_count; i++) {
+			seen |= said[i] == cmd;
+		}
+		if (!seen && said_count < sizeof(said) / sizeof(said[0])) {
+			said[said_count++] = cmd;
+			redwood_host_keep_add("connsys: bt ioctl %#lx (group '%c' number %lu, %lu bytes): %s", cmd, (char)((cmd >> 8) & 0xff),
+			    cmd & 0xff, (cmd >> 16) & 0x1fff, known ? "taken" : "not a command of this device (ENOTTY)");
+		}
+	}
+	return result;
+}
+
+static int
+bt_select(dev_t dev, int which, void *wql, struct proc *p)
+{
+	int ready = 0;
+
+	if (BT_INERT(dev)) {
+		return 1;
+	}
+	if (which == FREAD) {
+		lck_mtx_lock(&bt_lock);
+		ready = bt_ring_count != 0;
+		if (!ready) {
+			selrecord(p, &bt_sel, wql);
+		}
+		lck_mtx_unlock(&bt_lock);
+	} else if (which == FWRITE) {
+		ready = 1;
+	}
+	return ready;
+}
+
+static const struct cdevsw bt_cdevsw = {
+	.d_open = bt_open, .d_close = bt_close, .d_read = bt_read, .d_write = bt_write,
+	.d_ioctl = bt_ioctl, .d_stop = eno_stop, .d_reset = eno_reset, .d_select = bt_select,
+	.d_mmap = eno_mmap, .d_strategy = eno_strat, .d_type = 0
+};
+
+/* the length of the H4 packet that begins the bytes, or 0 while its header is not whole */
+static unsigned
+bt_h4_length(const uint8_t *b, unsigned have)
+{
+	if (have < 1) {
+		return 0;
+	}
+	switch (b[0]) {
+	case 1:                                 /* command: opcode (2), length (1) */
+		return have >= 4 ? 4u + b[3] : 0;
+	case 2:                                 /* ACL: handle (2), length (2) */
+		return have >= 5 ? 5u + (b[3] | ((unsigned)b[4] << 8)) : 0;
+	case 3:                                 /* SCO: handle (2), length (1) */
+		return have >= 4 ? 4u + b[3] : 0;
+	case 5:                                 /* ISO: handle (2), length (2, 14 bits) */
+		return have >= 5 ? 5u + ((b[3] | ((unsigned)b[4] << 8)) & 0x3fff) : 0;
+	default:
+		return 1;                       /* not H4: dropped a byte at a time */
+	}
+}
+
+
+/*
+ * The way bluetoothd's own transport reaches the controller (run 611): its default, H4BC ("UART", BM3UART in its strings), looks
+ * up the kernel control com.apple.uart.sk.bluetooth (ioctl CTLIOCGINFO on a PF_SYSTEM socket) -- Apple's Bluetooth UART as a
+ * Skywalk provider -- and the plain "H4" transport does not match any driver. This is that control: what bluetoothd sends on the
+ * socket is H4 for the controller (the same queue /dev/cu.bluetooth's writes go to), and what the controller sends is enqueued to
+ * it. Every control request (connect, options, disconnect) is said; unknown options are taken and ignored.
+ */
+extern void redwood_btsk_init(void);
+extern bool redwood_btsk_uuid(uuid_t out);
+extern void redwood_btsk_deliver(const uint8_t *bytes, unsigned length);
+
+static kern_ctl_ref bt_ctl_ref;
+static u_int32_t bt_ctl_unit;
+static bool bt_ctl_connected;
+
+static errno_t
+bt_ctl_connect(__unused kern_ctl_ref ref, struct sockaddr_ctl *sac, __unused void **unitinfo)
+{
+	char name[32] = "";
+
+	proc_selfname(name, sizeof(name));
+	lck_mtx_lock(&bt_lock);
+	bt_ctl_unit = sac->sc_unit;
+	bt_ctl_connected = true;
+	lck_mtx_unlock(&bt_lock);
+	redwood_host_keep_add("connsys: bt control connected by %s (pid %d): unit %u", name, proc_selfpid(), sac->sc_unit);
+	return 0;
+}
+
+static errno_t
+bt_ctl_disconnect(__unused kern_ctl_ref ref, u_int32_t unit, __unused void *unitinfo)
+{
+	lck_mtx_lock(&bt_lock);
+	bt_ctl_connected = false;
+	lck_mtx_unlock(&bt_lock);
+	redwood_host_keep_add("connsys: bt control: unit %u disconnected", unit);
+	return 0;
+}
+
+static errno_t
+bt_ctl_send(__unused kern_ctl_ref ref, __unused u_int32_t unit, __unused void *unitinfo, mbuf_t m, __unused int flags)
+{
+	errno_t error = 0;
+
+	lck_mtx_lock(&bt_lock);
+	for (mbuf_t part = m; part != NULL; part = mbuf_next(part)) {
+		size_t n = mbuf_len(part);
+
+		if (bt_txq_count + n > BT_TXQ) {
+			error = ENOBUFS;
+			break;
+		}
+		memcpy(bt_txq + bt_txq_count, mbuf_data(part), n);
+		bt_txq_count += (unsigned)n;
+	}
+	lck_mtx_unlock(&bt_lock);
+	mbuf_freem(m);
+	return error;
+}
+
+static errno_t
+bt_ctl_setopt(__unused kern_ctl_ref ref, __unused u_int32_t unit, __unused void *unitinfo, int opt, void *data, size_t len)
+{
+	char text[3 * 24 + 1];
+
+	redwood_host_keep_add("connsys: bt control: setsockopt %#x, %zu bytes", (unsigned)opt, len);
+	for (size_t at = 0; at < len && at < 96; at += 24) {
+		size_t n = len - at < 24 ? len - at : 24;
+
+		for (size_t i = 0; i < n; i++) {
+			snprintf(text + 3 * i, 4, " %02x", ((uint8_t *)data)[at + i]);
+		}
+		text[3 * n] = 0;
+		redwood_host_keep_add("connsys: bt control:   +%zu:%s", at, text);
+	}
+	return 0;
+}
+
+/* IOAOSSKYGETCHANNELUUID (getsockopt 0x40105412, 16 bytes): the Skywalk channel's nexus */
+static errno_t
+bt_ctl_getopt(__unused kern_ctl_ref ref, __unused u_int32_t unit, __unused void *unitinfo, int opt, void *data, size_t *len)
+{
+	uuid_t uuid;
+	bool have = (unsigned)opt == 0x40105412u && *len >= sizeof(uuid_t) && redwood_btsk_uuid(uuid);
+
+	redwood_host_keep_add("connsys: bt control: getsockopt %#x, room for %zu bytes: %s", (unsigned)opt, *len, have ? "the channel's UUID" : "nothing");
+	if (have) {
+		memcpy(data, uuid, sizeof(uuid_t));
+		*len = sizeof(uuid_t);
+	} else {
+		*len = 0;
+	}
+	return 0;
+}
+
+/* H4 bytes the Skywalk channel's user wrote, for the controller: the queue /dev/cu.bluetooth's writes go to */
+void
+redwood_connsys_bt_send(const uint8_t *bytes, unsigned length)
+{
+	lck_mtx_lock(&bt_lock);
+	if (bt_txq_count + length <= BT_TXQ) {
+		memcpy(bt_txq + bt_txq_count, bytes, length);
+		bt_txq_count += length;
+	}
+	lck_mtx_unlock(&bt_lock);
+}
+
+static void
+bt_ctl_register(void)
+{
+	struct kern_ctl_reg reg;
+	errno_t error;
+
+	bzero(&reg, sizeof(reg));
+	strlcpy(reg.ctl_name, "com.apple.uart.sk.bluetooth", sizeof(reg.ctl_name));
+	reg.ctl_flags = CTL_FLAG_REG_SOCK_STREAM;        /* bluetoothd connects a SOCK_STREAM (a datagram socket: "Protocol wrong type for socket", run 613) */
+	reg.ctl_sendsize = 65536;
+	reg.ctl_recvsize = 65536;
+	reg.ctl_connect = bt_ctl_connect;
+	reg.ctl_disconnect = bt_ctl_disconnect;
+	reg.ctl_send = bt_ctl_send;
+	reg.ctl_setopt = bt_ctl_setopt;
+	reg.ctl_getopt = bt_ctl_getopt;
+	error = ctl_register(&reg, &bt_ctl_ref);
+	redwood_host_keep_add("connsys: step 21: kernel control com.apple.uart.sk.bluetooth %s (%d)", error == 0 ? "registered" : "NOT REGISTERED", error);
+}
+
+static void
+bt_ctl_deliver(const uint8_t *bytes, unsigned length)
+{
+	bool connected;
+	u_int32_t unit;
+
+	lck_mtx_lock(&bt_lock);
+	connected = bt_ctl_connected;
+	unit = bt_ctl_unit;
+	lck_mtx_unlock(&bt_lock);
+	redwood_btsk_deliver(bytes, length);
+	if (connected && bt_ctl_ref != NULL && false) {
+		errno_t error = ctl_enqueuedata(bt_ctl_ref, unit, (void *)(uintptr_t)bytes, length, 0);
+
+		if (error != 0) {
+			redwood_host_keep_add("connsys: bt control: enqueue of %u bytes failed (%d)", length, error);
+		}
+	}
+}
+
+static uint8_t bt_frame[2048];
+
+/* what is written is sent a packet at a time; what comes is put in the ring. Never returns. */
+static void
+bt_bridge(void)
+{
+	static bool made;
+	char heard[96];
+
+	if (!made) {
+		int major = cdevsw_add(-1, &bt_cdevsw);
+
+		if (major < 0) {
+			redwood_host_keep_add("connsys: bt: cdevsw_add failed (%d)", major);
+			return;
+		}
+		(void)cdevsw_setkqueueok(major, &bt_cdevsw, CDEVSW_SELECT_KQUEUE);
+		made = devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "cu.bluetooth") != NULL;
+		made = devfs_make_node(makedev(major, 1), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "uart.bluetooth") != NULL && made;
+		made = devfs_make_node(makedev(major, 2), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "btwake") != NULL && made;
+		made = devfs_make_node(makedev(major, 3), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "btreset") != NULL && made;
+		made = devfs_make_node(makedev(major, 4), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "btpoweroff") != NULL && made;
+		redwood_host_keep_add("connsys: step 21 [%u ms]: /dev/cu.bluetooth and /dev/uart.bluetooth %s (major %d)", connsys_ms(),
+		    made ? "made" : "NOT MADE", major);
+		if (!made) {
+			return;
+		}
+	}
+	bt_ctl_register();
+	redwood_btsk_init();
+	connsys_stp_task = 0;
+	for (;;) {
+		int length;
+
+		for (;;) {
+			uint8_t packet[1100];
+			unsigned n;
+
+			lck_mtx_lock(&bt_lock);
+			n = bt_h4_length(bt_txq, bt_txq_count);
+			if (n == 0 || n > bt_txq_count) {
+				lck_mtx_unlock(&bt_lock);
+				break;
+			}
+			if (n > sizeof(packet)) {
+				n = bt_txq_count;
+				redwood_host_keep_add("connsys: bt: a packet of %u bytes is too long for STP; dropped", n);
+				bt_txq_count = 0;
+				lck_mtx_unlock(&bt_lock);
+				break;
+			}
+			memcpy(packet, bt_txq, n);
+			memmove(bt_txq, bt_txq + n, bt_txq_count - n);
+			bt_txq_count -= n;
+			lck_mtx_unlock(&bt_lock);
+			if (n >= 5 && packet[0] == 1 && packet[1] == 0xe2 && packet[2] == 0xfc) {
+				bt_vsc_sub = packet[4];
+			}
+			bt_dump("out", packet, n, &bt_said_packets_out);
+			connsys_btif_wake();
+			connsys_stp_send(packet, n);
+		}
+		{
+			/* bytes written but not a whole H4 packet for 2 s: said once, the first 24 of them (a packet this driver cannot frame) */
+			static unsigned waited;
+			static bool said_waiting;
+			unsigned pending;
+
+			lck_mtx_lock(&bt_lock);
+			pending = bt_txq_count;
+			lck_mtx_unlock(&bt_lock);
+			if (pending == 0) {
+				waited = 0;
+			} else if (++waited == 1000 && !said_waiting) {
+				char text[3 * 24 + 1];
+				unsigned n = pending < 24 ? pending : 24;
+
+				said_waiting = true;
+				for (unsigned i = 0; i < n; i++) {
+					snprintf(text + 3 * i, 4, " %02x", bt_txq[i]);
+				}
+				text[3 * n] = 0;
+				redwood_host_keep_add("connsys: bt: %u bytes written and not a whole H4 packet in 2 s:%s", pending, text);
+			}
+		}
+		heard[0] = 0;
+		length = connsys_stp_receive(bt_frame, sizeof(bt_frame), heard, sizeof(heard), 2);
+		if (length > 0) {
+			length = (int)bt_quirks(bt_frame, (unsigned)length);
+			bt_dump("in ", bt_frame, (unsigned)length, &bt_said_packets_in);
+			lck_mtx_lock(&bt_lock);
+			for (int i = 0; i < length && bt_ring_count < BT_RING; i++) {
+				bt_ring[(bt_ring_head + bt_ring_count) % BT_RING] = bt_frame[i];
+				bt_ring_count++;
+			}
+			wakeup(&bt_ring_count);
+			selwakeup(&bt_sel);
+			lck_mtx_unlock(&bt_lock);
+			bt_ctl_deliver(bt_frame, (unsigned)length);
+		} else if (length < 0) {
+			delay_for_interval(1, NSEC_PER_MSEC);
+		}
+	}
+}
+
+/*
+ * Bluetooth, first step (boot-arg connsys_bt=1, after WMT is up): what mtk_wcn_wmt_func_on(WMTDRV_TYPE_BT) does on an SoC
+ * (wmt_func_bt_on: wmt_core_func_ctrl_cmd; the PALDO is the VCN33 of step 3) -- WMT_FUNC_CTRL, 01 06 02 00 <type 0 = BT> <on 1>,
+ * answered 02 06 01 00 00 -- and then what Android's Bluetooth driver (bt/mt66xx/legacy/stp_chrdev_bt.c) does with the
+ * controller: raw HCI packets, H4 type byte first, as STP's payload on its channel 0 (BT_TASK_INDX, stp_exp.h; the HCI
+ * event comes back the same way). HCI_Reset and the controller's identity are asked for; each answer is said.
+ */
+static void
+connsys_bt_start(void)
+{
+	static const uint8_t on[] = { 0x01, 0x06, 0x02, 0x00, 0x00, 0x01 };
+	static const uint8_t on_done[] = { 0x02, 0x06, 0x01, 0x00, 0x00 };
+	static const uint8_t reset[] = { 0x01, 0x03, 0x0c, 0x00 };
+	static const uint8_t reset_done[] = { 0x04, 0x0e, 0x04, 0x01, 0x03, 0x0c, 0x00 };
+	static const uint8_t version[] = { 0x01, 0x01, 0x10, 0x00 };
+	static const uint8_t version_done[] = { 0x04, 0x0e, 0x0c, 0x01, 0x01, 0x10, 0x00 };
+	static const uint8_t address[] = { 0x01, 0x09, 0x10, 0x00 };
+	static const uint8_t address_done[] = { 0x04, 0x0e, 0x0a, 0x01, 0x09, 0x10, 0x00 };
+	static const uint8_t features[] = { 0x01, 0x03, 0x10, 0x00 };
+	static const uint8_t features_done[] = { 0x04, 0x0e, 0x0c, 0x01, 0x03, 0x10, 0x00 };
+	static const uint8_t buffers[] = { 0x01, 0x05, 0x10, 0x00 };
+	static const uint8_t buffers_done[] = { 0x04, 0x0e, 0x0b, 0x01, 0x05, 0x10, 0x00 };
+	static const uint8_t le_buffers[] = { 0x01, 0x02, 0x20, 0x00 };
+	static const uint8_t le_buffers_done[] = { 0x04, 0x0e, 0x07, 0x01, 0x02, 0x20, 0x00 };
+	uint32_t want = 0;
+	unsigned good = 0;
+
+	if (!PE_parse_boot_argn("connsys_bt", &want, sizeof(want)) || want == 0) {
+		return;
+	}
+	connsys_doing = 20;
+	connsys_stp_task = 4;
+	connsys_skip_foreign = true;
+	good = connsys_wmt("BT on (WMT_FUNC_CTRL)", on, sizeof(on), on_done, sizeof(on_done));
+	connsys_skip_foreign = false;
+	if (!good) {
+		redwood_host_keep_add("connsys: step 20 [%u ms]: Bluetooth's function did not come on", connsys_ms());
+		connsys_firmware_said("bt on failed");
+		return;
+	}
+	good = 0;
+	delay_for_interval(50, NSEC_PER_MSEC);
+	connsys_stp_task = 0;
+	good += connsys_wmt("HCI_Reset", reset, sizeof(reset), reset_done, sizeof(reset_done));
+	good += connsys_wmt("HCI Read_Local_Version_Information", version, sizeof(version), version_done, sizeof(version_done));
+	good += connsys_wmt("HCI Read_BD_ADDR", address, sizeof(address), address_done, sizeof(address_done));
+	good += connsys_wmt("HCI Read_Local_Supported_Features", features, sizeof(features), features_done, sizeof(features_done));
+	good += connsys_wmt("HCI Read_Buffer_Size", buffers, sizeof(buffers), buffers_done, sizeof(buffers_done));
+	good += connsys_wmt("HCI LE_Read_Buffer_Size", le_buffers, sizeof(le_buffers), le_buffers_done, sizeof(le_buffers_done));
+	redwood_host_keep_add("connsys: step 20 [%u ms]: Bluetooth on; %u of 6 HCI commands answered as a controller answers", connsys_ms(), good);
+	connsys_firmware_said("after bt");
+	if (want >= 2 && good == 6) {
+		/* iOS looks for the controller in the registry ("bluetooth"): without it BluetoothManager's attach fails with 9 and Settings' switch stays grey */
+		for (unsigned tries = 0; tries < 40 && !RedwoodBluetoothNode(); tries++) {
+			delay_for_interval(250, NSEC_PER_MSEC);
+		}
+		bt_bridge();
+	}
+	connsys_stp_task = 4;
 }
 
 static void

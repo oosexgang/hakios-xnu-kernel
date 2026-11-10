@@ -12,6 +12,7 @@
 
 #define WHITE           959             /* 1023 less the black level of 64 */
 #define LUT_WHITE       3836            /* WHITE in the gamma table's steps */
+#define ISP_CONTRAST    0.2             /* the share of the S-curve in the tone curve (0: plain sRGB) */
 
 void
 isp_init(struct isp *isp)
@@ -19,13 +20,21 @@ isp_init(struct isp *isp)
 	memset(isp, 0, sizeof(*isp));
 	isp->wb[0] = isp->wb[1] = isp->wb[2] = 1;
 	isp->digital = 1;
-	for (int i = 0; i < 3; i++) {
-		isp->ccm[i][i] = 1;
-	}
+	/* The colour matrix of a phone's sensor, not this one's (its vendor tuning is not read): the raw colours of a CMOS sensor with a
+	 * Bayer filter are washed out, and the stock camera's matrix puts about 1.4 on the diagonal and takes the rest from the other two;
+	 * rows sum to 1, so a grey stays grey. Camera.app's picture was flat with the identity matrix (run 575). */
+	static const float default_ccm[9] = {
+		1.42f, -0.28f, -0.14f,
+		-0.20f, 1.38f, -0.18f,
+		-0.04f, -0.36f, 1.40f,
+	};
+	isp_set_ccm(isp, default_ccm);
 	for (int i = 0; i < 4096; i++) {
 		double v = i >= LUT_WHITE ? 1 : (double)i / LUT_WHITE;
 
 		v = v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1 / 2.4) - 0.055;
+		/* a mild S-curve over sRGB's (smoothstep, a fifth of the way): the stock camera's contrast */
+		v = v * (1 - ISP_CONTRAST) + (v * v * (3 - 2 * v)) * ISP_CONTRAST;
 		isp->gamma[i] = (uint8_t)(v * 255 + 0.5);
 	}
 }

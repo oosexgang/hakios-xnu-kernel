@@ -32,6 +32,7 @@
  * arrives.
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <fcntl.h>
@@ -68,6 +69,12 @@ extern const void *_dyld_get_shared_cache_range(size_t *length);
 #define CACHE_BASE 0x180000000UL                /* where the cache was built to be, before the slide */
 
 static uintptr_t slide;
+uintptr_t redwood_cache_slide(void);
+uintptr_t
+redwood_cache_slide(void)
+{
+	return slide;
+}
 
 /* +[BWCoreImageFilterRenderer prewarmPortraitFilterVersion:semanticStyleFilters:] */
 static void
@@ -368,6 +375,187 @@ media_threads(void *argument)
 	return NULL;
 }
 
+/*
+ * Inside Camera.app (inserted by the diagnostic image only: the line "libredwood-media.dylib mediaserverd Camera" of etc/inject.conf): what the app does with a
+ * shutter tap and what it is told. mediaserverd's capture graph compresses the photo (run 581) and nothing reaches DCIM (runs 582, 583); the part between is the
+ * app's: -[AVCapturePhotoOutput capturePhotoWithSettings:delegate:] and the delegate's callbacks, with their errors, said to kern.redwood.host_keep.
+ */
+static void
+host_line(const char *format, ...)
+{
+	char line[400];
+	va_list ap;
+
+	va_start(ap, format);
+	vsnprintf(line, sizeof(line), format, ap);
+	va_end(ap);
+	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+}
+
+/* a long text as lines of its own (the host buffer takes 400 bytes a line) */
+static void
+host_long(const char *prefix, const char *text)
+{
+	size_t length = strlen(text), at = 0;
+
+	for (unsigned part = 0; at < length && part < 8; part++, at += 300) {
+		host_line("%s [%u] %.300s", prefix, part, text + at);
+	}
+}
+
+static const char *
+text_of_object(id object)
+{
+	id text = object ? ((id (*)(id, SEL))objc_msgSend)(object, sel_registerName("description")) : NULL;
+
+	return text ? ((const char *(*)(id, SEL))objc_msgSend)(text, sel_registerName("UTF8String")) : "-";
+}
+
+/* the delegate's callbacks that carry (output, object, error) or (output, object): each gets a line, then the original */
+static const char *const cb3[] = {
+	"captureOutput:didFinishProcessingPhoto:error:", "captureOutput:didFinishCaptureForResolvedSettings:error:",
+	"captureOutput:didFinishRecordingLivePhotoMovieForEventualFileAtURL:resolvedSettings:", "captureOutput:didFinishProcessingLivePhotoToMovieFileAtURL:duration:photoDisplayTime:resolvedSettings:error:",
+};
+static const char *const cb2[] = {
+	"captureOutput:willBeginCaptureForResolvedSettings:", "captureOutput:willCapturePhotoForResolvedSettings:", "captureOutput:didCapturePhotoForResolvedSettings:",
+};
+
+static void
+wrap_delegate(Class cls)
+{
+	static Class done[16];
+	static unsigned ndone;
+
+	for (unsigned i = 0; i < ndone; i++) {
+		if (done[i] == cls) {
+			return;
+		}
+	}
+	if (ndone < 16) {
+		done[ndone++] = cls;
+	}
+	for (unsigned k = 0; k < sizeof(cb3) / sizeof(cb3[0]); k++) {
+		SEL sel = sel_registerName(cb3[k]);
+		Method m = class_getInstanceMethod(cls, sel);
+
+		if (m == NULL) {
+			continue;
+		}
+		const char *name = cb3[k];
+		IMP orig = method_getImplementation(m);
+		unsigned nargs = method_getNumberOfArguments(m);
+
+		if (nargs == 5) {
+			method_setImplementation(m, imp_implementationWithBlock((id)^(id me, id output, id object, id error) {
+				host_long(error ? "camera app: error" : "camera app: no error", error ? text_of_object(error) : name);
+				((void (*)(id, SEL, id, id, id))orig)(me, sel, output, object, error);
+			}));
+		} else if (nargs == 4) {
+			method_setImplementation(m, imp_implementationWithBlock((id)^(id me, id output, id object) {
+				host_line("camera app: %s %s", class_getName(cls), name);
+				((void (*)(id, SEL, id, id))orig)(me, sel, output, object);
+			}));
+		}
+	}
+	for (unsigned k = 0; k < sizeof(cb2) / sizeof(cb2[0]); k++) {
+		SEL sel = sel_registerName(cb2[k]);
+		Method m = class_getInstanceMethod(cls, sel);
+
+		if (m == NULL || method_getNumberOfArguments(m) != 4) {
+			continue;
+		}
+		const char *name = cb2[k];
+		IMP orig = method_getImplementation(m);
+
+		method_setImplementation(m, imp_implementationWithBlock((id)^(id me, id output, id object) {
+			host_line("camera app: %s %s", class_getName(cls), name);
+			((void (*)(id, SEL, id, id))orig)(me, sel, output, object);
+		}));
+	}
+	host_line("camera app: delegate class %s wrapped", class_getName(cls));
+}
+
+/*
+ * Run 585: addMainImage:metadata:options: answers -12908 (kVTCouldNotFindVideoEncoderErr) for the HEIC photos Camera asks for (hvc1): this phone has no hardware HEVC
+ * encoder and no VideoToolbox plug-in for one. Run 586: emptying the output's codec list for HEIC only stopped the app's capture. The app's own switches are the ones to
+ * turn: CameraUI's "HEVC encoding supported" and "prefer HEVC" answers become NO, so that it asks for JPEG.
+ */
+static BOOL
+answer_no(__unused id me, __unused SEL sel)
+{
+	return NO;
+}
+
+static void
+no_hevc_in_camera_ui(void)
+{
+	static const char *const names[] = { "isHEVCEncodingSupported", "HEVCEncodingSupported", "preferHEVC", "_preferHEVC", "_preferHEVCWhenAvailable", "preferHEVCWhenAvailable" };
+	unsigned count = 0, changed = 0;
+	Class *list = objc_copyClassList(&count);
+
+	for (unsigned i = 0; i < count; i++) {
+		const char *image = class_getImageName(list[i]);
+
+		if (image == NULL || strstr(image, "CameraUI") == NULL) {
+			continue;
+		}
+		for (unsigned k = 0; k < sizeof(names) / sizeof(names[0]); k++) {
+			Method m = class_getInstanceMethod(list[i], sel_registerName(names[k]));
+			const char *type = m ? method_getTypeEncoding(m) : NULL;
+
+			if (m != NULL && type != NULL && type[0] == 'B' && class_getInstanceMethod(class_getSuperclass(list[i]), sel_registerName(names[k])) != m) {
+				method_setImplementation(m, (IMP)answer_no);
+				host_line("camera app: %s %s -> NO", class_getName(list[i]), names[k]);
+				changed++;
+			}
+		}
+	}
+	free(list);
+	host_line("camera app: %u HEVC switches of CameraUI turned off", changed);
+}
+
+static IMP orig_capture_photo;
+
+static void
+capture_photo(id me, SEL sel, id settings, id delegate)
+{
+	if (settings != NULL) {
+		SEL speed = sel_registerName("setPhotoQualityPrioritization:"), fusion = sel_registerName("setAutoVirtualDeviceFusionEnabled:"), highres = sel_registerName("setHighResolutionPhotoEnabled:");
+
+		if (((BOOL (*)(id, SEL, SEL))objc_msgSend)(settings, sel_registerName("respondsToSelector:"), speed)) {
+			((void (*)(id, SEL, long))objc_msgSend)(settings, speed, 1);              /* AVCapturePhotoQualityPrioritizationSpeed */
+		}
+		if (((BOOL (*)(id, SEL, SEL))objc_msgSend)(settings, sel_registerName("respondsToSelector:"), fusion)) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(settings, fusion, NO);
+		}
+		if (((BOOL (*)(id, SEL, SEL))objc_msgSend)(settings, sel_registerName("respondsToSelector:"), highres)) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(settings, highres, NO);
+		}
+	}
+	host_line("camera app: capturePhotoWithSettings: %s delegate %s", text_of_object(settings), delegate ? class_getName(object_getClass(delegate)) : "nil");
+	if (delegate) {
+		wrap_delegate(object_getClass(delegate));
+	}
+	((void (*)(id, SEL, id, id))orig_capture_photo)(me, sel, settings, delegate);
+}
+
+static void
+camera_app_probe(void)
+{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		Class output = objc_getClass("AVCapturePhotoOutput");
+		Method m = output ? class_getInstanceMethod(output, sel_registerName("capturePhotoWithSettings:delegate:")) : NULL;
+
+		if (m == NULL) {
+			host_line("camera app: no -[AVCapturePhotoOutput capturePhotoWithSettings:delegate:]");
+			return;
+		}
+		orig_capture_photo = method_setImplementation(m, (IMP)capture_photo);
+		host_line("camera app: capturePhotoWithSettings:delegate: watched");
+		no_hevc_in_camera_ui();
+	});
+}
+
 __attribute__((constructor))
 static void
 redwood_media_init(void)
@@ -375,6 +563,11 @@ redwood_media_init(void)
 	const char *name = getprogname();
 	size_t length = 0;
 
+	if (name != NULL && strcmp(name, "Camera") == 0) {
+		CFPreferencesSetAppValue(CFSTR("CAMUserPreferenceEnableResponsiveShutter"), kCFBooleanFalse, CFSTR("com.apple.camera"));
+		camera_app_probe();
+		return;
+	}
 	if (name == NULL || strcmp(name, "mediaserverd") != 0) {
 		return;
 	}

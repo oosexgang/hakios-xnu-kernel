@@ -89,6 +89,10 @@ __pycache__/
 /tools/android/f2fs-resize
 
 # build output of the bare-metal loader
+/mtkloader/camjn1.h
+/mtkloader/camrx.h
+/xnu/files/bsd/dev/redwood_mtkcam_jn1.h
+/xnu/files/bsd/dev/redwood_mtkcam_rx.h
 /mtkloader/*.bin
 /mtkloader/*.bin.gz
 /mtkloader/*.gz
@@ -126,3 +130,4 @@ fw-*/
 # (but the pipeline recipes backboardd builds at start: CoreAnimation's pipeline labels, shader function names
 # and blend/vertex layouts, as numbers -- tools/rwm-recipes.py, src/redwoodmetal.m)
 !/userland/share/rwm-recipes.txt
+/userland/src/camera_trace_local.h

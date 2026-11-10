@@ -171,9 +171,8 @@ Xiaomi выложила для Redmi 9 / POCO M2 (Helio G80/G85, платфор�
 
 ## 7. Bluetooth
 
-В проекте Bluetooth нет совсем — ни в `main`, ни здесь. На X6826B он в том же CONNSYS, что и Wi-Fi, так что
-шаги 1–2 общие. Сверху нужна вторая половина, которой ещё нет нигде: транспорт HCI, которого ждёт
-`bluetoothd` iOS. Это отдельная работа после Wi-Fi.
+На X6826B Bluetooth в том же CONNSYS, что и Wi-Fi, так что шаги 1–11 общие. Сверху нужна вторая половина:
+транспорт HCI, которого ждёт `bluetoothd` iOS. Первый шаг (прогон 602, 8 ноября 2026) сделан, см. раздел в конце.
 
 ## Прошивка и модули сняты с телефона (28 октября 2026)
 
@@ -614,3 +613,31 @@ runkit/mkimg.sh NNN [runkit/rc.jobs.wifi]`, прогон `CONNSYS_STEP=17 CONNSY
 На Sonoma нет `ldid`: `battery_test`, `keychain_test`, `wifipw_test`, `record_test` собирались без entitlements. Шим
 `xnu-deps/host/bin/ldid` (локальный, каталог в `.gitignore`) делает `-SFILE` через `/usr/bin/codesign -s - --entitlements`.
 Не проверено: цвета картинок в Safari (логотип Google на кадре 75 px — с искажёнными цветами).
+
+## Прогон 602 (8 ноября): Bluetooth отвечает по HCI
+
+Boot-arg `connsys_bt=1` (`connsys_bt_start` в `redwood_connsys.c`, после шага 11 и Wi-Fi). Что делает Android
+(`wmt_func_bt_on` → `wmt_core_func_ctrl_cmd`, `bt/mt66xx/legacy/stp_chrdev_bt.c`) и что повторяем мы:
+
+- `WMT_FUNC_CTRL` `01 06 02 00 00 01` (тип 0 = BT, 1 = вкл), ответ `02 06 01 00 00`. Перед ответом прошивка шлёт
+  свои события опкода 0x16 (`02 16 0a 00 …`, 14 байт, дважды) — это не ответ; без пропуска таких событий (прогон 601)
+  первое из них принималось за ответ и шаг считался проваленным. Питание BT (VCN33) уже включено шагом 3.
+- Сырой HCI (байт типа H4 первым) идёт полезной нагрузкой кадра STP в канале 0 (`BT_TASK_INDX`), ответ приходит так же.
+  Канал кадра и ожидаемый канал ответа — `connsys_stp_task` (4 WMT, 0 Bluetooth).
+
+Ответы контроллера (все 6 команд, 30,94 с, через ~50 мс после включения):
+
+| Команда | Ответ |
+| --- | --- |
+| HCI_Reset | `04 0e 04 01 03 0c 00` |
+| Read_Local_Version | HCI 0x0b (5.2), ревизия 0x1d3f, LMP 0x0b, производитель 0x0046 (MediaTek), подверсия 0xfff5 |
+| Read_BD_ADDR | `01 63 76 46 00 00` (адрес-заглушка по умолчанию; Android ставит свой вендорной командой) |
+| Read_Local_Supported_Features | `bf 3e 8d fe db ff 5b 87` |
+| Read_Buffer_Size | ACL 1021 байт × 696, SCO 0 |
+| LE_Read_Buffer_Size | LE ACL 251 байт × 8 |
+
+Дальше: у `bluetoothd` iOS 16.5 есть транспорт по последовательному порту (`/dev/cu.bluetooth`, `/dev/uart.bluetooth`,
+H4). Но он ждёт чип Broadcom и сам подбирает прошивку и платформу («Couldn't find a platform / chipset / firmware
+combination»), так что между ним и контроллером нужна прослойка: узел в ядре для H4 ⇄ STP 0, постоянное чтение BTIF
+(сейчас BTIF читает только поток CONNSYS) и подмена идентификации/вендорных команд Broadcom.
+

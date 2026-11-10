@@ -1309,7 +1309,7 @@ test_time(void)
 static void
 configure_inject(void)
 {
-	char conf[512];
+	char conf[2048];
 	int fd = open(in_image("/etc/inject.conf"), O_RDONLY, 0);
 	long n;
 
