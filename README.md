@@ -1,46 +1,40 @@
-# HakiOS ARM64e / Renoir
+# HakiOS ARM64e ports
 
 English | [简体中文](README.zh-CN.md)
 
-ARM64e userland and kernel bring-up for Renoir (SM7350), using Apple's open-source
-XNU xnu-12377.121.6 and the iOS 26 user space.
+## Current Renoir configuration
 
-Built on [HakiOS](https://github.com/oosexgang/hakios-xnu-kernel), with ARM64e and
-Renoir adaptations. Snapshot-specific build and boot notes are under `renoir/docs/`.
+The current target is Xiaomi Renoir (Snapdragon 780G / SM7350), using iOS 27.2 (24B119) userland with the compatibility patches in `renoir/kernel/`.
 
-> Experimental. Requires an unlocked bootloader. Use the Renoir RAM-only workflow;
-> do not flash or erase phone partitions.
+- RAM-only loading through the resident USB loader, started with stock `fastboot boot`.
+- CPU/software rendering (`gpu=0`); no external hardware Metal plug-in or its build dependencies.
+- Static wallpaper, display-completion hooks, activation/setup hooks and the approved status-bar clock offset remain.
+- Software rendering does not implement Liquid Glass and can leave UI elements incomplete.
+- Verified on Renoir on 2026-11-10: the rebuilt CPU-only kernel reached the home screen in a RAM-only boot; 40 bootstrap checks, 0 failed. Long-run stability remains unverified.
+- Wi-Fi, sound, camera, haptics and battery support are disabled in the current boot defaults. Thermal management and stable 60 FPS are not implemented.
 
-## Status
+Build and RAM-boot instructions: [renoir/docs/ios26-boot.md](renoir/docs/ios26-boot.md).
 
-| Part | Status |
-| --- | --- |
-| Target | Renoir / SM7350, without hardware PAC |
-| Kernel | XNU xnu-12377.121.6 with board and ARM64e adaptations |
-| User space | iOS 26 bring-up; see the snapshot's boot notes for its verification stage |
-| Rendering | CPU/software rendering (`gpu=0`) |
+> Experimental. Requires an unlocked bootloader. The Renoir workflow must not flash, erase or write phone storage. Other device tools in this repository are not part of that RAM-only workflow.
 
 ## Layout
 
-| Directory | Contents | Licence |
-| --- | --- | --- |
-| `kernel/` | `xnu-12377.121.6-hakios.patch`: every kernel change against Apple's xnu-12377.121.6; `apply.sh` makes the kernel tree | APSL 2.0 |
-| `base/` | HakiOS EFI loader (`xnuloader/`), build infrastructure, device configs and docs | HakiOS's (APSL 2.0) |
-| `userland/` | HakiOS user space with our changes: iOS 26 bring-up, injection, audio HAL plug-in | HakiOS's (APSL 2.0) |
-| `tools/` | `check-publishable.sh` looks for anything that must not be published before a commit | MIT |
+| Directory | Contents |
+| --- | --- |
+| `kernel/` | Kernel changes against Apple's xnu-12377.121.6 and `apply.sh` |
+| `renoir/` | Renoir kernel adaptation, userland injections, image builders and RAM-boot tool |
+| `base/` | HakiOS loader, kernel build infrastructure, device configurations and tools |
+| `userland/` | HakiOS userland sources, injections and audio HAL plug-in |
+| `tools/` | Publication checks and touch-firmware conversion tool |
 
-## Not included
-
-This repository contains no binaries or firmware from Apple, Qualcomm, Xiaomi or anyone else.
+See [NOTICE.md](NOTICE.md) and the source headers for licences. Apple system files, SDKs, device firmware and built images are local build inputs/outputs, not repository content.
 
 ## Acknowledgements
 
-- [HakiOS](https://github.com/oosexgang/hakios-xnu-kernel): the foundation of this project
-- [Data A Live](https://github.com/ShueiTsuki/data-a-live): reference for GPU, audio and CPU clocks of iOS on Snapdragon
-- [Mesa](https://mesa3d.org/) (Turnip / freedreno)
+- [HakiOS](https://github.com/oosexgang/hakios-xnu-kernel)
+- [Data A Live](https://github.com/ShueiTsuki/data-a-live)
+- [Mesa](https://mesa3d.org/)
 - [Project Silicium / Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
-- Linux's msm and qcom drivers: reference for register layouts and bring-up order
-
-The drivers are written from Linux's public descriptions. See NOTICE.md for details.
+- Apple's open-source XNU and the Linux drivers cited in individual source files
 
 Apple, iOS and Metal are trademarks of Apple Inc. This project is not affiliated with Apple, Qualcomm or Xiaomi.

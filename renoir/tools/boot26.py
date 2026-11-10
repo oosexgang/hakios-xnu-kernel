@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Boot iOS 26 on renoir from RAM (the images of renoir/docs/ios26-boot.md). No flashing, erasing or
-storage commands: the phone's stock fastboot boots darwin-renoir's resident loader, which takes the
-system image, the kernel and the small image over USB and runs them; a reboot brings back Android.
+"""Boot iOS 27 (default), or iOS 26 with --system/--root, on Renoir from RAM.
+No flashing, erasing or storage commands: stock fastboot boots the resident loader,
+which receives the system image, kernel and root image over USB. Reboot restores Android.
 
-Start with the phone in its own fastboot. Like darwin-renoir's recovery/boot.py, of which this is the
-iOS 26 counterpart (that one boots the 16.5 port)."""
+Start with the phone in stock fastboot. Inspect the screen and loader log to verify
+that the requested RAM run actually boots; a successful USB command is not boot proof."""
 import argparse
 import os
 import re
@@ -20,13 +20,12 @@ IOS = DK / 'ios27'                      # iOS 27.2 (24B119); ios26 (23G90) takes
 sys.path.insert(0, str(DR / 'recovery'))
 from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
-# what works on renoir with iOS 26 and 27 for now: touch, buttons and all eight cores at full speed; no
-# GPU (CoreAnimation draws in software), no Wi-Fi, sound, camera, haptics or battery
-# (renoir/docs/ios26-boot.md). cpufreq=1: without it every core runs at 300 MHz and the user interface
-# draws at well under a frame a second.
-BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0', 'wifi=0', 'adsp=0', 'battmgr=0', 'speaker_probe=0',
-             'renoir_afe_probe=0', 'sound=0', 'cam=0', 'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1',
-             'buttons=1', 'launchd_unsecure_cache=1']
+# Renoir's CPU/software-rendering configuration: no hardware graphics plug-in.
+# Touch, buttons and the CPU clock table stay enabled; Wi-Fi, sound, camera,
+# haptics and battery remain off (renoir/docs/ios26-boot.md).
+BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0',
+             'wifi=0', 'adsp=0', 'battmgr=0', 'speaker_probe=0', 'renoir_afe_probe=0', 'sound=0', 'cam=0',
+             'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1', 'buttons=1', 'launchd_unsecure_cache=1']
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
@@ -110,11 +109,11 @@ else:
     raise SystemExit('Resident loader did not appear; do not flash anything')
 check('xnuloader', 'board', 'renoir')
 cmd('oem', 'ramdisk', serial='xnuloader')
-print(f'Uploading the iOS 26 system image ({options.system.stat().st_size / 1e9:.2f} GB)...', flush=True)
+print(f'Uploading the iOS system image ({options.system.stat().st_size / 1e9:.2f} GB)...', flush=True)
 cmd('stage', file(options.system), serial='xnuloader', timeout=900, live=True)
 data = prepare(data, time.time())                       # the clock again, after the long upload
 run = IOS / 'run26-current.bin'
 run.write_bytes(data)
 cmd('stage', file(run), serial='xnuloader', timeout=180, live=True)
 cmd('oem', 'run', serial='xnuloader')
-print('iOS 26 started from RAM (the home screen after about a minute). Nothing was flashed or erased.')
+print('RAM run requested. Inspect the screen/log to verify startup. Nothing was flashed or erased.')

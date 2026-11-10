@@ -36,6 +36,12 @@ mkdir -p $J; cp $T/LaunchDaemons/com.redwood.demo.plist $J/
 rm -f $T/LaunchDaemons/*.plist
 cp $OBJ/*.dylib $T/lib/
 cp $OBJ/gl_test $T/bin/gl_test
+# the audio server's output device (inj26.sh): arm64e, in place of 16.5's arm64 one, which the audio server cannot load;
+# the system image links /System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver to it (mkimage26.py)
+if [ -f $OBJ/RedwoodAudio ]; then
+	cp $OBJ/RedwoodAudio $T/lib/RedwoodAudio.driver/RedwoodAudio
+	cp "$(dirname "$RN")/userland/userland/src/audio_plugin.plist" $T/lib/RedwoodAudio.driver/Info.plist
+fi
 # iOS 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
 # ("unexpected exec of non-platform binary: /redwood/sbin/init"); the kernel's AMFI stand-in takes a
 # signature marked ad hoc (CodeDirectory flag CS_ADHOC) for one. darwin-renoir's programs are either
@@ -60,7 +66,11 @@ PY
 	echo "  signed ad hoc: ${f#$T/}"
 done
 rm -f "$ENT"
-(cd $DR/userland && ./mkjobs.py --rest $S/rootfs $J $JOBS)
+# The audio server (audiomxd, iOS 26's) with its output device above: volume, the slider in Control Center and the
+# sound of a timer depend on it. bluetoothd stays enabled: without it audiomxd asks for com.apple.bluetooth.xpc
+# thousands of times a second.
+(cd $DR/userland && ALLOW="audio bluetooth ${ALLOW:-}" ./mkjobs.py --rest $S/rootfs $J $JOBS)
+ls $J | grep -E "audiomxd|bluetoothd" | sed 's/^/  job /'
 # No EDR here: backboardd's job names com.apple.libEDR.Notification, whose server (EDRServerStartService)
 # CoreBrightness starts, and CoreBrightness has no display to run here. launchd kept the port and queued
 # every request: CoreAnimation in backboardd asks EDR at each display state change while holding the lock
@@ -78,7 +88,10 @@ PY
 # Jobs that cost the phone more than they give it: ScreenTimeAgent (Screen Time) keeps a core busy all the
 # time on iOS 27 here (ustacks=top: ~90 % of a core, touched or not) while the window server draws in
 # software. Without the job its Mach services are unknown and their clients fail at once.
-for job in com.apple.ScreenTimeAgent; do
+# airplayd: the audio server starts it to look for AirPlay routes, and it dies at once (SIGSEGV), every 5 s.
+# PerfPowerServices is refused by the kernel (its busy loop does not work here). Do not leave its
+# Mach services advertised: PLClientLogger's synchronous permission request otherwise waits forever.
+for job in com.apple.ScreenTimeAgent com.apple.airplayd com.apple.PerfPowerServices; do
 	rm -f "$J/$job.plist" && echo "  no job $job"
 done
 # The last migration: darwin-renoir's skeleton says 20F66 (16.5), so iOS 26 took itself for just updated
@@ -104,11 +117,53 @@ with open(sys.argv[1], 'wb') as f:
     plistlib.dump(manifest, f, fmt=plistlib.FMT_BINARY)
 PY
 printf 'd\t700\t0\t0\t/private/var/keybags\nf\t600\t0\t0\t/private/var/keybags/persona.kb\t/var/keybags/persona.kb\n' >> $T/etc/var.skel
+# Feature flags (/Library/Preferences/FeatureFlags is /private/var/preferences/FeatureFlags; Domain/NAME.plist,
+# {feature: {Enabled: bool}}). MobileTimerFlags/core_data off: with it, mobiletimerd keeps alarms and timers in a
+# Core Data store that never finishes loading here, and answers every request "System isn't ready..." -- the
+# Clock's start button and Control Center's timer do nothing. Off, it keeps them in its defaults, as before.
+mkdir -p $T/var/preferences/FeatureFlags/Domain
+python3 - "$T/var/preferences/FeatureFlags/Domain" <<'PY'
+import plistlib, sys
+flags = {'MobileTimerFlags': {'core_data': {'Enabled': False}}}
+for domain, features in flags.items():
+    with open(f'{sys.argv[1]}/{domain}.plist', 'wb') as f:
+        plistlib.dump(features, f)
+PY
+printf 'd\t755\t0\t0\t/private/var/preferences/FeatureFlags\nd\t755\t0\t0\t/private/var/preferences/FeatureFlags/Domain\n' >> $T/etc/var.skel
+for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
+	printf 'f\t644\t0\t0\t/private/var/preferences/FeatureFlags/Domain/%s\t/var/preferences/FeatureFlags/Domain/%s\n' \
+		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
+done
 # PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: renoir/userland/inject_poster.c)
 echo "/redwood/lib/libredwood-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
 # renoir/userland/inject_backlight.c)
 echo "/redwood/lib/libredwood-backlight.dylib SpringBoard" >> $T/etc/inject.conf
+# The kernel matches executable names, not the build template's @apps token.
+python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
+import pathlib, plistlib, sys
+conf, root = map(pathlib.Path, sys.argv[1:])
+names = set()
+for base in ('Applications', 'private/var/staged_system_apps'):
+    for info in (root / base).glob('*.app/Info.plist'):
+        with info.open('rb') as f:
+            info = plistlib.load(f)
+            name = info.get('CFBundleExecutable') if 'hidden' not in info.get('SBAppTags', []) else None
+        if name:
+            names.add(name)
+lines = []
+for line in conf.read_text().splitlines():
+    words = line.split()
+    if '@apps' in words:
+        words = [word for word in words if word != '@apps'] + sorted(names)
+    lines.append(' '.join(words))
+text = '\n'.join(lines) + '\n'
+if len(text.encode()) >= 4096:
+    raise SystemExit('inject.conf exceeds kern.exec_inject capacity')
+conf.write_text(text)
+PY
+# chronod's CoreDuet store cannot create its missing parent directories in the fresh RAM /var.
+printf 'd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet\nd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet/Knowledge\n' >> $T/etc/var.skel
 # CONSOLE_LOG="NAME ...": these programs get libredwood-console.dylib (standard error on the console; with
 # boot-arg exec_env=NAME,...:OS_ACTIVITY_DT_MODE=1 their os_log as well)
 if [ -n "${CONSOLE_LOG:-}" ]; then

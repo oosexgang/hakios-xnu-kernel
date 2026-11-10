@@ -1,4 +1,4 @@
-# iOS 26 on renoir: building and booting to the home screen
+# iOS 26 and 27 on Renoir: RAM-only builds and boot notes
 
 State on 2026-10-31: iOS 26.6.2 (23G90, iPhone12,1 files) boots on renoir (Snapdragon 780G, no PAC) from
 RAM through darwin-renoir's resident loader. launchd takes the normal (not restore) path through all of
@@ -12,7 +12,7 @@ draws with materials (an alert's text). These are drawn with the GPU, and the GP
 All in WSL. `ios26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`, `dyld/`, `bin/ipsw`).
 
 ```
-renoir/kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + renoir/kernel/patches 0001-0009
+renoir/kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
 cc -O2 -o renoir/tools/pacstrip renoir/tools/pacstrip.c -lcrypto
 renoir/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
 python3 renoir/tools/fips26.py ios26/dyld-strip
@@ -25,7 +25,9 @@ LAUNCHDAEMONS=ios26/jobs26 WORK=ios26/image-tree-prune \
 Boot, with the phone in its stock fastboot (nothing is flashed or erased; a reboot brings Android back):
 
 ```
-python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
+python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF \
+    --system "$HOME/darwin_kernel/ios26/system26-prune.apfs" \
+    --root "$HOME/darwin_kernel/ios26/root26-ios.apfs"
 ```
 
 It boots darwin-renoir's resident loader, stages `system26-prune.apfs` (136 s over USB), then a payload with
@@ -75,21 +77,46 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
 
 ## iOS 27
 
-State on 2026-11-01: iOS 27.2 (24B119, iPhone12,1 files) runs on the same kernel (there is no XNU source
-for iOS 27; patches 0013-0019 cover what its userland asks of a newer kernel). It shows the lock screen and
-the home screen with icons, the Stripe wallpaper, the dock and Search, drawn in software at 10-40 frames a second.
-Not there yet: the lock screen's large clock, widget contents, Wi-Fi, sound.
+Current configuration (2026-11-10): iOS 27.2 (24B119, iPhone12,1 files), with CPU/software rendering.
+There is no XNU source for iOS 27; patches 0013-0019 supply the newer userland interfaces.
+Unused device-specific CPU/GPU/touch/display/camera/gauge/modem drivers and their loader profiles
+and tools have been deleted; the retained Qualcomm paths are Redwood/Renoir. No external Metal
+plug-in is packaged, and `boot26.py` defaults to `gpu=0`. The rebuilt kernel reached Renoir's home
+screen in a RAM-only boot on 2026-11-10.
+
+Host verification of the cleaned build:
+- The regenerated base patch and all 21 Renoir patches apply to the clean Apple release tree;
+  the resulting source tree exactly matches the cleaned patch-validation snapshot.
+- The kernel links at 18,360,080 bytes (SHA256
+  `e5b6fb0154092949cb65560260b5bdc520fc8ef887c4b8821fa6b342256b6ab9`);
+  removed board-driver, MHI transport and Bluetooth runtime symbols are absent.
+  The cleaned generic EFI loader also compiles.
+- `root26-ios.apfs` is 14,594,048 bytes and `system27-prune.apfs` is 4,288,716,800 bytes.
+  Both pass `apfsck -cw`; the kernel APFS reader reads back all 100 and 84,421 entries respectively,
+  matching their source trees.
+- The uploaded 32,954,600-byte RAM container embeds this exact kernel and root with `gpu=0`,
+  without Metal/Turnip boot arguments; `loader_return_after=0` disables timed return.
+- Physical check: stock fastboot reports `product: renoir`; the loader was started with
+  `fastboot boot`, then received both images through RAM staging. No storage commands were used.
+  At 115 seconds, the screenshot showed the home screen with populated Weather and Calendar widgets.
+  The log reports 40 bootstrap checks, 0 failed, SpringBoard PID 33, backboardd PID 36 and the
+  +24-point status-bar metric hook. Software-rendered dialogs still have visual artifacts.
+  This boot check does not establish long-run stability, stable 60 FPS or lower temperature.
 
 ```
-renoir/kernel/build.sh                        # patches 0001-0021
-renoir/tools/pacstrip cache ios27/dyld-strip ios27/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
-python3 renoir/tools/fips26.py ios27/dyld-strip \
+cd "$HOME/darwin_kernel/hakios-arm64e-renoir"
+export IOS="$HOME/darwin_kernel/ios27"
+export OBJ="$PWD/renoir/userland/obj27"
+bash renoir/kernel/build.sh
+renoir/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+python3 renoir/tools/fips26.py "$IOS/dyld-strip" \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
     F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1
-BUILD=24B119 OBJ=renoir/userland/obj27 renoir/userland/inj26.sh
-IOS=ios27 OBJ=renoir/userland/obj27 renoir/userland/root26-ios.sh
-IOS=ios27 LAUNCHDAEMONS=ios27/jobs26 python3 renoir/tools/mkimage26.py --prune ios27/system27-prune.apfs
-python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF   # ios27 by default
+BUILD=24B119 bash renoir/userland/inj26.sh
+bash renoir/userland/root26-ios.sh
+LAUNCHDAEMONS="$IOS/jobs26" WORK="$IOS/image-tree-prune" \
+    python3 renoir/tools/mkimage26.py --prune "$IOS/system27-prune.apfs"
+python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
 ```
 
 (The two FIPS values come from the first boot's log: "In variable" and "MAC generated".)
@@ -133,11 +160,35 @@ What stood between iOS 27 and its home screen, in order:
      Reduce Motion made no measurable difference.
    The first boot's daemons (lsd, linkd, assetsd: every boot is a first boot, /var is in RAM) take a few
    minutes of CPU.
-10. **Graphics and shaders.** Hardware Metal acceleration is disabled with `gpu=0`; the root image does
-    not include an external Metal plug-in. CoreAnimation's software renderer does not draw iOS 27's
-    Liquid Glass, CASDF shapes or the large lock-screen clock.
-    - **0021**: `gpu=1` looked for the firmware in `fw/` (redwood's) before starting; the steps read the
-      profile's `fw-renoir/`.
-    - **QuartzCore's shaders**: CoreAnimation reads `default.metallib` beside
-      `/System/Library/Frameworks/QuartzCore.framework`; 16.5's size rule had left it out (mkimage26
-      KEPT_FILES; 8.7 MB).
+10. **Software graphics (2026-11-10).** Hardware graphics is disabled with `gpu=0`; the root image no
+    longer includes a Metal plug-in, and the system image no longer creates a link to one.
+    CoreAnimation's software renderer does not draw iOS 27's Liquid Glass, CASDF shapes or the
+    large lock-screen clock. Missing effects and incomplete UI rendering are expected limitations.
+    The static collections wallpaper and display-completion hooks remain. The software-only RAM boot
+    reached the home screen; old hardware-GPU frame-time measurements do not describe this configuration.
+11. **Library insertion and the clock.** Patch 0022 raises `kern.exec_inject` from 512 to 4096 bytes,
+    matching init's input buffer. Longer diagnostic configurations previously failed as a whole with
+    `EINVAL`: even the backlight hook was absent, and SpringBoard repeatedly hit its display watchdog.
+    `root26-ios.sh` now expands the template's `@apps` to the executable names of non-hidden applications;
+    the kernel accepts exact names, not that token. UIKit-only leading-centering and Pad-inset hooks
+    did not move SpringBoard's clock on 24B119: runtime inspection found the live provider was
+    `STUIStatusBarVisualProvider_Split1125`. The hook now also adjusts StatusKitUI's native
+    `leadingCenteringOffset` by 24 points; the ineffective Pad-inset experiment was removed.
+    Verified on RAM-booted Renoir: at 360×800 screenshot size, the clock's leftmost bright pixel moved
+    from x=30 to x=54, with y=18 unchanged. The user also confirmed the clock moved.
+12. **Frequency checks (2026-11-07, before graphics removal).** The GPU clock counter measured 490,001,684 Hz with 490 MHz requested.
+    `cpufreq=1` selects the hardware table's top rows: 1900/2208/2400 MHz. `cpu_test 0` measured dependent
+    additions at about 1.7–2.2 GHz under the UI workload; this is not a pinned per-core frequency reading.
+    Seven CPUs are available to iOS in the resident-loader run. The early `membench=1` measured reads at
+    14,686 MB/s and copies at 6,725 MB/s; user-space copies under load were 4.96 GB/s. The slow home/lock
+    frames are not evidence of CPUs left at 300 MHz. Stable 60 FPS remains open.
+13. **White widgets (2026-11-07).** Resource-size pruning had dropped executable files still referenced
+    by retained launchd jobs, leaving advertised services without their servers. `mkimage26.py` now
+    retains each job's `Program` (or first `ProgramArguments` entry), regardless of the resource-size cap.
+    The resulting system image is 4,288,716,800 bytes; the builder rejects images beyond fastboot's
+    eight-hex-digit size limit. Both the earlier hardware-graphics run and the 2026-11-10 software-only
+    RAM boot showed Weather's “Location Access Needed” and Calendar's date and “No Events Today”.
+    This verifies those populated widgets, not every widget or graphical effect.
+14. **Heat remains unresolved.** Before graphics removal, a status-bar inspection run reached a GPU
+    sensor reading of 69.1°C. The current configuration disables the GPU but still selects fixed CPU
+    EPSS rows; it has no Renoir thermal capping. Lower temperature has not been verified.

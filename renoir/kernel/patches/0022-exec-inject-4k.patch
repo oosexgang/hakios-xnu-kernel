@@ -1,0 +1,18 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 5c3c0d5..fa83a71 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6874,9 +6874,11 @@ bad:
+  * libraries, joined with ":" in the one DYLD_INSERT_LIBRARIES, so SpringBoard can carry both
+  * our window-server library and the tweak loader. launchd refuses to pass DYLD_ variables
+  * from a job description, which is why the kernel adds this one. Set once by our init (from
+- * etc/inject.conf) before it hands over to launchd.
++ * etc/inject.conf) before it hands over to launchd. 4 KB, as init reads it: at 512 bytes a longer
++ * file was refused whole (EINVAL), no library went into any program, and without the backlight one
++ * SpringBoard died over and over.
+  */
+-static char exec_inject_conf[512];
++static char exec_inject_conf[4096];
+ SYSCTL_STRING(_kern, OID_AUTO, exec_inject, CTLFLAG_RW | CTLFLAG_LOCKED, exec_inject_conf, sizeof(exec_inject_conf),
+     "LIBRARY NAME... [; LIBRARY NAME...]: programs started with the library inserted");
+ 

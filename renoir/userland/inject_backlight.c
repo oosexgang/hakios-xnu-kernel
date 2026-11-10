@@ -10,7 +10,7 @@
  * over and over, and the screen stays black.
  *
  * Here the request still goes where it went, and once its ramp is over the interface is told it is
- * done, as the driver would.
+ * done on SpringBoard's main queue, as the driver would.
  *
  * With display modes that complete, SpringBoard's idle timer does what it does on a phone: the lock
  * screen dims and goes dark some ten seconds after the last touch. On this phone that came seconds after
@@ -77,7 +77,8 @@ static void
 transition(id self, SEL selector, long long mode, double duration, id curve_changed)
 {
 	original_transition(self, selector, mode, duration, curve_changed);
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * 1e9)), dispatch_get_main_queue(), ^{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * 1e9)),
+	    dispatch_get_main_queue(), ^{
 		((complete_fn)objc_msgSend)(self, complete_sel, mode, nil);
 	});
 }

@@ -29,13 +29,17 @@ esac
 [ -z "$SB_ACTIVATION" ] || sed -i -e "s/0x1c4bc8dfcUL/${SB_ACTIVATION}UL/" -e "s/0x1c4cdd3a4UL/${SB_SETUP}UL/" $O/src/inject_sb.c
 DYN="xnu-clang -arch arm64e -isysroot ${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk -O1 -mios-version-min=16.0"
 $DYN -dynamiclib -install_name /redwood/lib/libredwood.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood.dylib $O/src/inject.c
-$DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-sb.dylib $O/src/inject_sb.c $O/src/statusbar.c
-$DYN -dynamiclib -install_name /redwood/lib/libredwood-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-statusbar.dylib $O/src/statusbar.c
+# the status bar's clock past the hole punch: renoir/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
+$DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-sb.dylib $O/src/inject_sb.c $RN/userland/inject_statusbar.c
+$DYN -dynamiclib -install_name /redwood/lib/libredwood-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-statusbar.dylib $RN/userland/inject_statusbar.c
+# the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
+# volume, Control Center's slider included; the samples go to /dev/redwood-audio when the kernel has it
+$DYN -bundle -framework CoreFoundation -o $O/RedwoodAudio $(dirname $RN)/userland/userland/src/audio_plugin.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-app.dylib -lobjc -o $O/libredwood-app.dylib $O/src/inject_app.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-console.dylib -o $O/libredwood-console.dylib $RN/userland/console_log.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-poster.dylib -framework CoreFoundation -lobjc -o $O/libredwood-poster.dylib $RN/userland/inject_poster.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-backlight.dylib -lobjc -o $O/libredwood-backlight.dylib $RN/userland/inject_backlight.c
-for f in $O/*.dylib; do
+for f in $O/*.dylib $O/RedwoodAudio; do
   $RN/tools/pacstrip macho $f $f.strip > /dev/null && mv $f.strip $f
   ${THEOS}/toolchain/linux/iphone/bin/ldid -S $f
   file -b $f | cut -c1-70

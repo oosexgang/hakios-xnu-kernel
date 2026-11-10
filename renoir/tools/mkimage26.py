@@ -20,6 +20,7 @@ as on 16.5 (enough for the restore-mode boot of the first probes, not for a norm
 """
 import importlib.util
 import os
+import plistlib
 import shutil
 import struct
 import subprocess
@@ -146,6 +147,19 @@ def selection(minimal):
     spec = importlib.util.spec_from_file_location('sel', DR + '/ios165/select-system.py')
     sel = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sel)
+    # A launchd job is not usable without its executable. Framework-hosted daemons and large
+    # /usr programs otherwise fall through the 16.5 resource-size limits and leave clients waiting.
+    kept_files = set(KEPT_FILES)
+    jobs = os.environ.get('LAUNCHDAEMONS')
+    if jobs:
+        for name in sorted(os.listdir(jobs)):
+            if not name.endswith('.plist'):
+                continue
+            with open(os.path.join(jobs, name), 'rb') as f:
+                job = plistlib.load(f)
+            program = job.get('Program') or (job.get('ProgramArguments') or [None])[0]
+            if program and program.startswith('/') and not program.startswith('/redwood/'):
+                kept_files.add(program[1:])
     chosen = []
     for dp, dn, fns in os.walk(ROOT):
         for fn in fns:
@@ -157,7 +171,7 @@ def selection(minimal):
                 rel = 'Applications/' + rel[len(sel.STAGED_APPS):]
             elif rel.startswith('private/var/'):
                 continue
-            if sel.wanted_file(rel, os.path.getsize(full)) or rel in KEPT_FILES:
+            if sel.wanted_file(rel, os.path.getsize(full)) or rel in kept_files:
                 chosen.append((rel, full))
     for sub, prefix, skip in (('os', 'System/Cryptexes/OS/', ('System/Library/Caches/com.apple.dyld/', 'System/DriverKit/')),
                               ('app', 'System/Cryptexes/App/', ())):
@@ -233,8 +247,6 @@ def write_job_cache(jobs):
     launchd_unsecure_cache=/System/Library/xpc/launchd.plist has it taken without the .sig and AMFI's
     trust cache, which this kernel has not got.
     """
-    import plistlib
-
     with open(ROOT + '/System/Library/xpc/launchd.plist', 'rb') as f:
         cache = plistlib.load(f)
     daemons = {}
@@ -276,6 +288,11 @@ def main():
             continue
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.symlink(target, dst)
+    # the audio server's output device (root26-ios.sh): the HAL loads plug-ins from this directory only
+    hal = os.path.join(WORK, 'System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver')
+    if not os.path.lexists(hal):
+        os.makedirs(os.path.dirname(hal), exist_ok=True)
+        os.symlink('/redwood/lib/RedwoodAudio.driver', hal)
     # the jobs are ours (/redwood/LaunchDaemons, from mkjobs.py), as on 16.5: Apple's own lists go
     for rel in ('System/Library/NanoLaunchDaemons', 'System/Library/LaunchAngels', 'System/Library/xpc/launchd.plist'):
         path = os.path.join(WORK, rel)
@@ -305,6 +322,8 @@ def main():
         os.link(os.path.join(CACHE, name), os.path.join(WORK, CACHE_DIR, name))
     print(f'mkimage26: {len(chosen)} files ({stripped} arm64e Mach-Os rewritten by pacstrip), cache from {CACHE}')
     subprocess.run([sys.executable, DR + '/tools/apfs/mkapfs.py', '-z', '-o', out[0], 'System=' + WORK], check=True)
+    if os.path.getsize(out[0]) > 0xffffffff:
+        raise SystemExit('System image exceeds fastboot\'s 4 GiB - 1 download limit')
 
 
 if __name__ == '__main__':

@@ -12,14 +12,14 @@ for f in $files; do
 	case "$f" in *.png|*.jpg|*.jpeg) continue ;; esac
 	t=$(file -b "$f")
 	case "$t" in
-	*Mach-O*|*ELF*|*"PE32"*|*"Device Tree"*|*LLVM*|*"compiled Java"*) say "binary: $f ($t)" ;;
+	*Mach-O*|*ELF*|*"PE32"*|*"Device Tree"*|LLVM*|*"compiled Java"*) say "binary: $f ($t)" ;;
 	esac
 	case "$f" in
 	*/rc.jobs.*|*/rc.*) ;;
 	*.bin|*.mbn|*.elf|*.efi|*.fd|*.dtb|*.metallib|*.bc|*.air|*.ipsw|*.img|*.apfs|*_fw.h) say "firmware/Apple file name: $f" ;;
 	esac
 done
-grep -rlI --exclude-dir=.git --exclude=check-publishable.sh --exclude=export-from-work.sh -e "/Users/[a-z]" -e "/private/tmp/[a-z]*-[0-9]*/" . | while read -r f; do echo "home path: $f"; done | grep . && bad=1
+grep -rlI --exclude-dir=.git --exclude=check-publishable.sh -e "/Users/[a-z]" -e "/private/tmp/[a-z]*-[0-9]*/" . | while read -r f; do echo "home path: $f"; done | grep . && bad=1
 grep -rlIE --exclude-dir=.git --exclude=check-publishable.sh "(ghp_[A-Za-z0-9]{20}|github_pat_|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY)" . | while read -r f; do echo "secret: $f"; done | grep . && bad=1
 # e-mail addresses other than the author's (git config user.email)
 me=$(git config user.email)
