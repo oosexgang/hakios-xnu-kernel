@@ -65,7 +65,7 @@ reboot_android() {
 }
 
 build_payload_and_img() {
-	local rd="${XL_RAMDISK:-userland/root.packfs}"
+	local rd="${XL_RAMDISK:-userland/root.apfs}"
 	local cmd="${XL_CMDLINE:- -v}"
 	local payload_args="loader.efi=$L kernel=$K"
 	if [ -f "$rd" ]; then

@@ -6,7 +6,7 @@ cd "$XNU_SRC" || exit 1
 # does not see it change, so the linked kernel is thrown away when it has.
 LX=$XNUDEPS/build/ath11k/out/ath11k.o
 STAMP=BUILD/obj/redwood-objects
-if [ -f "$LX" ]; then now="$LX $(stat -c %Y "$LX")"; else LX= now=; fi
+if [ -f "$LX" ]; then now="$LX $(stat -c %Y "$LX" 2>/dev/null || stat -f %m "$LX")"; else LX= now=; fi
 if [ -d BUILD/obj ] && [ "$(cat $STAMP 2>/dev/null)" != "$now" ]; then
 	rm -f BUILD/obj/*/mach.*.unstripped
 	echo "$now" > $STAMP

@@ -7,7 +7,7 @@ Cut a large raw image into Android sparse images small enough for fastboot's dow
 fastboot refuses a file far larger than max-download-size (128 MB here), so each piece is a
 sparse image of the whole partition that says "leave everything before me alone" (a DONT_CARE
 chunk) and then carries its own slice as raw data. Flashing the pieces in order writes the
-image. Used for userland/system.packfs -> the xnusys partition (tools/system-flash.sh).
+image. Used for userland/system.apfs -> the xnusys partition (tools/system-flash.sh).
 """
 import os
 import struct

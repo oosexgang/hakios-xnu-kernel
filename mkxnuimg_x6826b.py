@@ -20,12 +20,9 @@ TAGS_OFFSET = 0x0BC08000
 PAGE_SIZE = 2048
 HEADER_VERSION = 2
 
-SCRATCH_DTB = '/Users/wryzzew/.gemini/antigravity/brain/e5a590d0-347f-432d-aa95-eb5755b91324/scratch/dtb_0.dtb'
 PREBUILT_DTB = os.path.join(PREBUILT, 'x6826b.dtb')
 
 def find_default_dtb():
-    if os.path.isfile(SCRATCH_DTB):
-        return SCRATCH_DTB
     if os.path.isfile(PREBUILT_DTB):
         return PREBUILT_DTB
     return None
@@ -36,6 +33,8 @@ def main():
     ap.add_argument('-o', '--output', default=os.path.join(HERE, 'xnu-x6826b.img'), help='Output boot image path')
     ap.add_argument('--dtb', default=find_default_dtb(), help='Path to MT6768 DTB')
     args = ap.parse_args()
+    if not args.dtb or not os.path.isfile(args.dtb):
+        sys.exit(f'Error: no device tree for the boot image header ({args.dtb or PREBUILT_DTB}): give one with --dtb')
 
     loader_bin = os.path.join(HERE, 'mtkloader', 'mtkloader.bin')
     if not os.path.isfile(loader_bin):

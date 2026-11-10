@@ -14,6 +14,11 @@ by run, and is where the guide's facts were found. Journals marked (ru) are in R
 
 ## The Infinix Hot 20 (X6826B, MT6768): journals
 
+The journals name scripts under `runkit/` (`mk.sh`, `mkimg.sh`, `bt-run.sh`, `wifi-run.sh`, `cam-run.sh`, `rc.jobs.*`). That is the author's
+local kit and is not in the tree: each one sets the boot-args and the list of jobs for a run and then does what "One run" of
+[mtk-porting.md](mtk-porting.md) does (`userland/build.sh`, `xl_x6826b build`, `mtkloader/build_flashed.py`, `tools/xnu-cycle.sh`).
+`context.md` and `GEMINI.md`, where a journal names them, are local notes as well.
+
 | | |
 | --- | --- |
 | [x6826b-emmc.md](x6826b-emmc.md) | The system image on the eMMC and not in memory; what it showed next |

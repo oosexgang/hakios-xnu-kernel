@@ -34,7 +34,7 @@
 /* Where the system image is put, clear of the kernel, as xnuloader does it (RESIDENT_RD_OFFSET). */
 #define SYSTEM_PA           (XNU_PHYS_BASE + 0x08000000ULL)
 #define SYSTEM_PART         "xnusys"
-/* 0: all of it. Smaller is for trying the path out: packfs will not mount a half image. */
+/* 0: all of it. Smaller is for trying the path out: a half image will not mount. */
 #ifndef SYSTEM_MAX_MB
 #define SYSTEM_MAX_MB       0
 #endif
@@ -541,9 +541,9 @@ static uint64_t kva_to_pa(uint64_t va)
 /* ---- the system image, on the flash ---- */
 
 /*
- * userland/system.packfs is the root XNU mounts (md0), 2.8 GB of it: too large for a boot image,
+ * userland/system.apfs is the root XNU mounts (md0), 2.6 GB of it: too large for a boot image,
  * so it lives in its own partition (tools/gpt-carve.py made "xnusys" out of the end of userdata)
- * and is read into DRAM here. The payload's small root.packfs stays the second disk (md1).
+ * and is read into DRAM here. The payload's small root.apfs stays the second disk (md1).
  */
 static uint8_t gpt_entries[128 * 128] __attribute__((aligned(16)));
 static uint8_t sector_buf[512] __attribute__((aligned(16)));
@@ -571,7 +571,7 @@ static int gpt_find(const char *name, uint64_t *lba, uint64_t *blocks)
 		const uint8_t *e = gpt_entries + i * size;
 		int same = 1;
 
-		for (int k = 0; same && name[k - (k ? 0 : 0)] != 0; k++) {
+		for (int k = 0; same && name[k] != 0; k++) {
 			same = e[56 + 2 * k] == (uint8_t)name[k] && e[57 + 2 * k] == 0;
 		}
 		if (same && e[56 + 2 * (int)strlen(name)] == 0) {
@@ -2311,8 +2311,8 @@ static void __attribute__((noreturn)) run_xnu(void)
 
 	out("md0 ");
 	out_hex(sys_size ? sys_pa : rd_pa);
-	out(sys_size ? " (the system image), md1 " : XNU_ROOT_EMMC ? " is none: md1 (root.packfs), the system image on the eMMC" :
-	    " (root.packfs only)");
+	out(sys_size ? " (the system image), md1 " : XNU_ROOT_EMMC ? " is none: md1 (root.apfs), the system image on the eMMC" :
+	    " (root.apfs only)");
 	if (sys_size) {
 		out_hex(rd_pa);
 	}

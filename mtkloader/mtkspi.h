@@ -1,6 +1,6 @@
 /*
  * The phone's SPI2 (0x11012000), where its touch screen is: a Synaptics/OmniVision TCM
- * controller (Android drives it as omnivision_tcm_spi, see context.md). Registers follow Linux's
+ * controller (Android drives it as omnivision_tcm_spi, see docs/touch-handover.md). Registers follow Linux's
  * drivers/spi/spi-mt65xx.c for "mediatek,mt6765-spi", which is what the phone's own device tree
  * calls this controller.
  *
@@ -211,7 +211,7 @@ static void spi_bitbang_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len, uint3
 }
 
 /*
- * The chip's own reset, GPIO0, active low (context.md). Only for a probe that has given up on
+ * The chip's own reset, GPIO0, active low (the phone's device tree). Only for a probe that has given up on
  * reading: a reset throws away the firmware Android downloaded, and the chip comes back up in its
  * bootloader, which still answers -- it just cannot report touches until something reloads it.
  */

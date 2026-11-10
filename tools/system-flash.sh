@@ -10,7 +10,7 @@ IMG="${1:-$ROOT/userland/system.apfs}"
 adb -s $S shell 'su -c "ls -l /dev/block/by-name/xnusys"' || {
 	echo "xnusys not there: reboot once so the kernel rereads the partition table"; exit 1; }
 # Through a file on /data: piping into dd over "adb exec-in su -c" silently drops most of it.
-TMP=/data/local/tmp/system.packfs
+TMP=/data/local/tmp/system.apfs
 echo "sending $(du -h "$IMG" | cut -f1) to the phone..."
 adb -s $S push "$IMG" $TMP
 echo "writing it to xnusys..."

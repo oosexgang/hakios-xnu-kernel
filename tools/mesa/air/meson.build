@@ -3,7 +3,7 @@
 
 # The AIR (Metal) frontend. In the Darwin on redwood repository this
 # directory is tools/mesa/air, copied to src/compiler/air by the build
-# scripts; tools/mesa/air.patch adds the subdir() that reaches it.
+# scripts; tools/mesa/air-frontend.patch adds the subdir() that reaches it.
 
 files_libair = files(
   'air_bitcode.c',

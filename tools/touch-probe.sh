@@ -9,6 +9,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 python3 "$ROOT/mtkloader/build_flashed.py" >/dev/null
 [ "$(adb -s $S get-state 2>/dev/null)" = device ] && adb -s $S reboot bootloader
 for i in $(seq 1 60); do fastboot devices | grep -q $S && break; sleep 1; done
+# (fastboot -s waits for ever for a phone that is not there)
+fastboot devices | grep -q $S || { echo "the phone did not come up in fastboot"; exit 1; }
+[ "$(fastboot -s $S getvar current-slot 2>&1 | sed -n 's/^current-slot: //p')" = a ] || { echo "current slot is not a"; exit 1; }
 fastboot -s $S flash boot_a "$ROOT/xnu-flashed-slot_a.img" >/dev/null 2>&1
 fastboot -s $S reboot >/dev/null 2>&1
 for i in $(seq 1 90); do [ "$(adb -s $S get-state 2>/dev/null)" = device ] && break; sleep 3; done

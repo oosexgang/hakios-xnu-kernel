@@ -18,7 +18,7 @@ document assumes those measurements and records the decisions taken on top of th
 is one function, `air_to_nir()` (`nir_air.h`), the analogue of `spirv_to_nir()`. In this
 repository the sources are `tools/mesa/air/`; `tools/mk-mesa.sh` and `tools/air/mk-host.sh` copy
 them to `src/compiler/air/` of the pinned Mesa release, exactly as `tools/mesa/redwood-drm/` is
-copied to `src/redwood-drm/`, and `tools/mesa/air.patch` adds the two lines of meson that build
+copied to `src/redwood-drm/`, and `tools/mesa/air-frontend.patch` adds the two lines of meson that build
 it. The tree is the shape an upstream merge request would have.
 
 Why not a standalone library that Mesa links:

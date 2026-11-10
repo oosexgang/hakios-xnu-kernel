@@ -5,7 +5,7 @@ phone (tools/gpt-carve.py <gpt-primary.bin> <gpt-secondary.bin> <total-sectors>)
 primary and secondary images beside the originals; nothing touches the phone.
 
 Here it is for the X6826B: 4 GiB off the end of userdata becomes "xnusys", where
-userland/system.packfs lives so that mtkloader can read it straight off the flash (the eMMC
+userland/system.apfs lives so that mtkloader can read it straight off the flash (the eMMC
 reader in mtkloader/msdc.h). Everything else -- every other entry, the disk GUID, the entry
 order -- is left exactly as it was.
 """

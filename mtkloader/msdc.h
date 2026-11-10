@@ -1,5 +1,5 @@
 /*
- * Reading the phone's eMMC from mtkloader, to fetch the big system image (userland/system.packfs)
+ * Reading the phone's eMMC from mtkloader, to fetch the big system image (userland/system.apfs)
  * that XNU needs as its root: it is far too large for a boot image, so it lives in a partition.
  *
  * LK has already powered the card, set the bus up and read partitions of its own by the time we
