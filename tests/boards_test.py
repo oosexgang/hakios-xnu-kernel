@@ -767,6 +767,13 @@ class DeviceTree(Sandbox):
         # another panel of the same tree is another answer
         text, differ = compared('qcom,mdss_dsi_second_video')
         self.assertRegex(text, r'\[backlight\] type +"dcs" +THE TREE SAYS "soft"')
+        # a panel's node that does not say how its light is controlled is not taken to say "soft"
+        tree_soc, tree_board, notes = boards.tree_to_compare(
+            '/ { qcom,mdss_dsi_half { qcom,mdss-dsi-panel-type = "dsi_video_mode"; qcom,mdss-dsi-bl-max-level = <4095>; }; };')
+        self.assertNotIn('backlight', tree_board)
+        self.assertTrue(any('[backlight] is not compared' in note for note in notes), notes)
+        # ... and with several panels, which one was taken is said
+        self.assertTrue(any('several panels' in note for note in boards.tree_to_compare(DTS)[2]))
 
     def test_a_new_board_is_started_from_a_device_tree(self):
         dts = self.dir / 'phone2.dts'

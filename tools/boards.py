@@ -839,6 +839,20 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     print('next: tools/boards.py check, then docs/porting.md')
 
 
+def tree_to_compare(text, panel=None):
+    """What a device tree says, for comparing: as from_dts() has it, without what the reader assumed where
+    the tree said nothing. Returns (soc_values, board_values, notes to show)."""
+    tree_soc, tree_board, notes = from_dts(text, panel)
+    said = [note for note in notes if 'several panels' in note]
+    if any('"not named"' in note for note in notes):
+        # a panel node that does not say how its light is controlled (a fragment whose other half is
+        # elsewhere): "soft" was the reader's choice for a new board, not the tree's word
+        tree_board.pop('backlight', None)
+        said.append("the panel's node does not say how its light is controlled (qcom,mdss-dsi-bl-pmic-control-type): "
+                    '[backlight] is not compared')
+    return tree_soc, tree_board, said
+
+
 def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
     """A board and its SoC file against what a device tree says: (the text, how many values differ)."""
     counts = {'same': 0, 'differ': 0, 'unsaid': 0}
@@ -936,12 +950,11 @@ def main():
         if options.board not in boards:
             raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
         board = boards[options.board]
-        tree_soc, tree_board, notes = from_dts(options.dts.read_text(errors='replace'), options.panel)
+        tree_soc, tree_board, notes = tree_to_compare(options.dts.read_text(errors='replace'), options.panel)
         text, differ = compare_text(options.board, board, socs[board['soc']], tree_soc, tree_board, options.dts.name)
         print(text, end='')
         for note in notes:
-            if 'panel' in note:         # (which panel was compared: the one thing the reader had to choose)
-                print(f'note: {note}')
+            print(f'note: {note}')
         return 1 if differ else 0
     elif options.command == 'show':
         if options.board not in boards:
