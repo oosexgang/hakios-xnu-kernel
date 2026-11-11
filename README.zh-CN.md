@@ -88,6 +88,8 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | 移植到自己的手机 | [docs/porting.md](docs/porting.md) |
 | 构建内核或引导器 | [docs/building.md](docs/building.md) |
 | 查某个驱动或启动参数的作用 | [docs/drivers.md](docs/drivers.md)、[docs/boot-args.md](docs/boot-args.md) |
+| 为还没有驱动的器件写驱动 | [docs/writing-a-driver.md](docs/writing-a-driver.md) |
+| 查日志里某条信息的含义 | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | 了解板型和设备包如何描述 | [devices/README.md](devices/README.md) |
 | 修改并提交 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 迁移旧目录结构下的分支或补丁 | [docs/migrating.md](docs/migrating.md) |

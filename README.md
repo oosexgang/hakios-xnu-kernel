@@ -93,6 +93,8 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | Port it to your phone | [docs/porting.md](docs/porting.md) |
 | Build the kernel or the loader | [docs/building.md](docs/building.md) |
 | Know what a driver or a boot argument does | [docs/drivers.md](docs/drivers.md), [docs/boot-args.md](docs/boot-args.md) |
+| Write a driver for a part nobody has one for | [docs/writing-a-driver.md](docs/writing-a-driver.md) |
+| Find out what a message in the log means | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Know how boards and packages are described | [devices/README.md](devices/README.md) |
 | Change something and send it back | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Carry over a branch or patch from an earlier layout | [docs/migrating.md](docs/migrating.md) |

@@ -39,6 +39,10 @@ restructuring: [docs/migrating.md](docs/migrating.md).
   first and leaves it alone, saying so, when it is not what it expects.
 - **Test what can run without the phone.** Arithmetic and state machines go in a header the host
   tests compile; a driver's register traffic can be tested against a model (`tests/`).
+- **What two drivers need is written once.** Registers, waits, the log, the SoC's pins, the PMICs and
+  RPMh have a header each in `kernel/overlay/bsd/dev/` (`hakios_*.h`), with a test.
+  [docs/writing-a-driver.md](docs/writing-a-driver.md) lists them, and has an example driver to
+  start from.
 - **Say what was verified.** "Compiles", "passes the host tests" and "seen working on the phone" are
   three different statements. Commit messages and documents say which one applies.
 
