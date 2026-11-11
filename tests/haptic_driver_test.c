@@ -1,0 +1,225 @@
+/*
+ * The vibration motor's driver itself (kernel/overlay/bsd/dev/redwood_haptic.c), run as a host program
+ * against the model of the SoC's pins with the motor's chip on them: an I2C device (i2c_device_model.h)
+ * that answers only while its reset pin is driven high. This driver moves a motor and switches a
+ * boost converter; what is tested here is what it does before it writes anything to the chip, and
+ * that the chip is back in reset when something is not as expected or the run ends.
+ *
+ *   haptic_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics
+ */
+#include <unistd.h>
+
+#include "fakekernel.h"
+
+#define I2C_DEVICE_SDA          36
+#define I2C_DEVICE_SCL          37
+#define I2C_DEVICE_ADDRESS      0x5a
+#include "i2c_device_model.h"
+
+extern char log_text[];
+
+#define RESET           35
+#define AS_FOUND        (1u << 2 | 3u)          /* the bus's pins: the serial engine's function, pulled up */
+#define HELD_IN_RESET   1u                      /* the reset pin as a boot loader leaves it: an input, pulled down */
+
+static unsigned resets_released;                /* times the reset pin went from low to high */
+static bool was_high;
+
+/* the chip answers while its reset pin is driven high */
+static void
+pins_changed(void)
+{
+	bool high = (model.cfg[RESET] & 1u << 9) && (model.io[RESET] & 2);
+
+	resets_released += high && !was_high;
+	was_high = high;
+	device.absent = !high;
+	changed();
+}
+
+uint32_t
+hakios_test_rd(vm_offset_t address)
+{
+	i2c_device_looked_at(address);
+	return tlmm_model_rd(address);
+}
+
+void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, value); }
+vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
+
+/* the small image's files, which only the levels that load waveforms ask for: none here */
+const uint8_t *redwood_wifi_file(const char *name, uint64_t *size) { return NULL; }
+void redwood_haptic_init(void);
+void redwood_haptic_quiesce(void);
+
+#pragma GCC diagnostic ignored "-Wformat"
+#define KERNEL 1
+#define HAKIOS_MMIO_TEST 1
+#define get haptic_get
+#include "hakios_board.c"
+#include "redwood_haptic.c"
+#undef get
+
+static int failures;
+#define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
+	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
+#define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
+
+/* a phone with the part: the pins where its SoC file has them, the chip held in reset, the bus at rest */
+static void
+phone(const char *name, uint16_t chip)
+{
+	board = name;
+	fake_delay_divisor = 5;
+	tlmm_model_at(hakios_board() != NULL ? hakios_board()->pins.tlmm : 0);
+	model.after_write = pins_changed;
+	model.cfg[I2C_DEVICE_SDA] = model.cfg[I2C_DEVICE_SCL] = AS_FOUND;
+	model.cfg[RESET] = HELD_IN_RESET;
+	device.reg[0x57] = (uint8_t)(chip >> 8);
+	device.reg[0x58] = (uint8_t)chip;
+	device.absent = true;
+	lines();
+	device.was_sda = device.was_scl = true;
+}
+
+static bool
+in_reset(void)
+{
+	return !((model.cfg[RESET] & 1u << 9) && (model.io[RESET] & 2));
+}
+
+static void
+never(void)
+{
+	CHECK(device.writes == 0, "%u bytes were written into the chip's registers", device.writes);
+	CHECK(device.driven_high == 0, "a line of the bus was driven high %u times", device.driven_high);
+	CHECK(model.elsewhere == 0, "%u accesses outside the pins' registers", model.elsewhere);
+	CHECK(model.cfg[I2C_DEVICE_SDA] == AS_FOUND && model.cfg[I2C_DEVICE_SCL] == AS_FOUND, "the bus's pins are not as they were found");
+	for (unsigned i = 0; i < PINS; i++) {
+		if (i != I2C_DEVICE_SDA && i != I2C_DEVICE_SCL && i != RESET && (model.cfg[i] != 0 || model.io[i] != 0)) {
+			CHECK(false, "pin %u was touched", i);
+			break;
+		}
+	}
+}
+
+/* ---- scenarios ---------------------------------------------------------------------------------- */
+
+/* without its boot argument: nothing */
+static void
+off_by_default(void)
+{
+	phone("phone-video", 0x9270);
+	boot_args = "";
+	redwood_haptic_init();
+	usleep(50000);
+	CHECK(model.writes == 0 && !logged("haptic:"), "nothing written, nothing said: %s", log_text);
+	redwood_haptic_quiesce();
+	CHECK(model.writes == 0, "and nothing at the run's end");
+}
+
+/* haptic=1: a look. The chip is in reset and stays there: it does not answer, and that is said */
+static void
+look_only(void)
+{
+	phone("phone-video", 0x9270);
+	boot_args = "haptic=1";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 5000);
+	CHECK(logged("haptic: level 1: a look, reading only"), "the level is said: %s", log_text);
+	CHECK(logged("nobody answers at 0x5a") && logged("does not drive high: the chip is held in reset or not powered"),
+	    "the chip in reset does not answer, and why is said");
+	CHECK(model.cfg[RESET] == HELD_IN_RESET && resets_released == 0, "the reset pin is as it was found: %#x", model.cfg[RESET]);
+	CHECK(!logged("PUT INTO RESET"), "nothing is given up that was never taken");
+	never();
+	redwood_haptic_quiesce();
+	CHECK(model.cfg[RESET] == HELD_IN_RESET, "nor at the run's end");
+}
+
+/* haptic=2: the reset released as Android releases it, the chip found, and nothing written to it */
+static void
+reset_released(void)
+{
+	phone("phone-video", 0x9270);
+	boot_args = "haptic=2";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 10000);
+	CHECK(logged("haptic: the reset is released: gpio35 low for 5 ms, then high") && resets_released == 1, "released once: %u",
+	    resets_released);
+	CHECK(logged("haptic: the chip at 0x5a is 0x9270, an AW86927"), "the chip answers and is the one expected: %s", log_text);
+	CHECK(logged("registers differ from what Android leaves in them"), "its registers are read and compared");
+	CHECK(!in_reset(), "the chip stays out of reset while the run goes on");
+	never();
+	redwood_haptic_quiesce();
+	CHECK(in_reset(), "at the run's end the chip is back in reset");
+	never();
+}
+
+/* a chip that is another: said, and put back into reset */
+static void
+another_chip(void)
+{
+	phone("phone-video", 0x9260);
+	boot_args = "haptic=3";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 10000);
+	CHECK(logged("haptic: the chip at 0x5a is 0x9260: NOT THE AW86927 EXPECTED"), "said: %s", log_text);
+	CHECK(logged("THE CHIP IS PUT INTO RESET") && in_reset(), "and it is back in reset");
+	never();
+}
+
+/* nobody answers after the reset is released: back into reset, nothing more */
+static void
+nobody_there(void)
+{
+	phone("phone-video", 0x9270);
+	model.after_write = changed;            /* (no chip: the reset pin frees nobody) */
+	boot_args = "haptic=4";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 10000);
+	CHECK(logged("nobody answers at 0x5a") && logged("drives high: the chip should answer"), "said: %s", log_text);
+	CHECK(logged("the chip does not answer: THE CHIP IS PUT INTO RESET") && in_reset(), "the pin is low again");
+	never();
+}
+
+/* a board that does not list the part, and a SoC file without the pins */
+static void
+not_listed(void)
+{
+	phone("qemu-virt", 0x9270);
+	boot_args = "haptic=5";
+	redwood_haptic_init();
+	usleep(50000);
+	CHECK(logged("haptic: disabled: this board's board.toml lists no \"haptic-aw86927\""), "said: %s", log_text);
+	CHECK(model.writes == 0 && model.elsewhere == 0, "nothing touched");
+	redwood_haptic_quiesce();
+	CHECK(model.writes == 0, "nor at the run's end");
+}
+
+int
+main(int argc, char **argv)
+{
+	static const struct { const char *name; void (*run)(void); } scenarios[] = {
+		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "reset_released", reset_released },
+		{ "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
+	};
+
+	if (argc < 2) {
+		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+			printf("%s\n", scenarios[i].name);
+		}
+		return 0;
+	}
+	for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+		if (strcmp(argv[1], scenarios[i].name) == 0) {
+			if (freopen("/dev/null", "w", stdout) == NULL) {
+				return 2;
+			}
+			scenarios[i].run();
+			fprintf(stderr, "%-20s %s\n", argv[1], failures ? "FAILED" : "ok");
+			return failures ? 1 : 0;
+		}
+	}
+	fprintf(stderr, "no scenario %s\n", argv[1]);
+	return 2;
+}
