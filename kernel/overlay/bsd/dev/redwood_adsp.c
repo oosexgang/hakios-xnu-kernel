@@ -749,8 +749,8 @@ out:
  * the list of its levels that the boot loader's command database keeps (cmd-db.c), the first
  * position at or above the level wanted.
  */
-#define CMD_DB_PHYS             0x80860000UL
-#define CMD_DB_SIZE             0x20000UL
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
 struct cmd_db_slave {
 	uint16_t id, header_offset, data_offset, count, version, reserved[3];
@@ -771,8 +771,8 @@ struct cmd_db_entry {
 
 static const struct cmd_db_header *cmd_db;
 
-static struct block rsc = { "rsc", 0x18220000, 0x10000 };
-#define RSC_TCS_BASE            0xd00
+static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's [rpmh], at the start */
+#define RSC_TCS_BASE            (hakios_board()->rpmh.tcs_offset)
 #define RSC_IRQ_STATUS          (RSC_TCS_BASE + 0x04)   /* a bit per TCS: done */
 #define RSC_IRQ_CLEAR           (RSC_TCS_BASE + 0x08)
 #define RSC_TCS(n)              (RSC_TCS_BASE + 672 * (n))
@@ -3198,6 +3198,11 @@ redwood_adsp_init(void)
 		    "an [adsp] section\n");
 		return;
 	}
+	if (board->rpmh.cmd_db == 0 || board->rpmh.rsc == 0) {
+		printf("adsp: disabled: the SoC file does not say where RPMh is ([rpmh]): the DSP's supplies are asked for there\n");
+		return;
+	}
+	rsc.phys = board->rpmh.rsc;
 	adsp_firmware = board->adsp.firmware;
 	adsp_memory_size = board->adsp.memory_size;
 	if (board->adsp.charge_counter_divisor != 0) {
