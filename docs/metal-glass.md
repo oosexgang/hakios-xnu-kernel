@@ -102,9 +102,17 @@ Each item was found on the phone, in this order:
 
 ## What is next
 
-- **Speed.** About 50 ms of GPU time per command buffer on the glass screens. The blurs run in system-memory
-  passes, so the first things to measure are GMEM (tiled) rendering, the blur passes' sizes and the clocks.
-  `metal_gmem_off` and the GPU's own counter (`gpuWait` in the probe) are the tools.
+- **Speed.** On the lock screen a command buffer takes about 37 ms of GPU time, measured with `metal_fps=draws`.
+  One full-screen pass, 90 draws in 56 tiles of GMEM, takes 32 ms of it. Its cost is iOS 27's path renderer,
+  which 16.5 did not have:
+  - `path_cubic_*` draws a path's coverage into a float render target (up to 1696 instances a draw);
+  - `path_blit_frag` reads that coverage back by framebuffer fetch and composites it;
+  - `path_clear_frag` resets the target.
+
+  Kept in system memory (`metal_gmem_draws=1000`), the same pass takes 95 ms. There `path_blit` costs 5.2 ms a draw
+  and `path_clear` 1.6 ms, about 12 times per buffer, so GMEM is already worth 3 times. What is left is the fetch
+  barrier, paid per tile per path. `SINGLE_PRIM_MODE` instead of it broke SpringBoard on 16.5. That is the place
+  to measure next, with the probe.
 - **Tile shaders** stay refused while `supportsTileShaders` is NO, as it is.
 - **Other phones' GPUs.** The driver's tables are the A635's (chip 0x06030500, redwood's Adreno 642L). It
   refuses another chip by name rather than hang it (`hakios_metal_chip_known`). Renoir's Adreno 642
