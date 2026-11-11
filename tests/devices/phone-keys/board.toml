@@ -12,6 +12,7 @@ features = [
     "buttons-pmic",
     "haptic-aw86927",               # (the same chip on other pins, another motor)
     "torch-pm8350c",                # (the part itself as the driver knows it; the way to it is this chip's)
+    "speaker-aw88261",              # (the same amplifiers on another bus, at the family's other two addresses)
 ]
 
 [backlight]
@@ -23,6 +24,12 @@ scl = 111
 reset = 9
 interrupt = 200
 f0_calibration = 0x1a
+
+[speaker]
+sda = 60
+scl = 61
+addresses = [0x36, 0x37]
+interrupts = [70, 71]
 
 # (its PM8350C is the bus's fourth chip, not the third)
 [torch]

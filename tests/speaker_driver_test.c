@@ -11,10 +11,11 @@
 
 #include "fakekernel.h"
 
-static unsigned sda_pin = 12, scl_pin = 13;
+/* which pins the bus is on and where the amplifiers answer is the board's: the model is put where it says */
+static unsigned sda_pin = 12, scl_pin = 13, first_address = 0x35;
 #define I2C_DEVICE_SDA          sda_pin
 #define I2C_DEVICE_SCL          scl_pin
-#define I2C_DEVICE_ADDRESS      0x35
+#define I2C_DEVICE_ADDRESS      first_address
 #include "i2c_device_model.h"
 #include "cmd_db_image.h"
 
@@ -71,10 +72,16 @@ phone(const char *name)
 	board = name;
 	fake_delay_divisor = 5;
 	tlmm_model_at(hakios_board() != NULL ? hakios_board()->pins.tlmm : 0);
+	device.address_b = 0x34;
+	if (hakios_board() != NULL && hakios_board()->speaker.sda != hakios_board()->speaker.scl) {
+		sda_pin = hakios_board()->speaker.sda;
+		scl_pin = hakios_board()->speaker.scl;
+		first_address = hakios_board()->speaker.address[0];
+		device.address_b = hakios_board()->speaker.address[1];
+	}
 	model.after_write = changed;
 	model.cfg[I2C_DEVICE_SDA] = model.cfg[I2C_DEVICE_SCL] = AS_FOUND;
 	device.wide = true;
-	device.address_b = 0x34;
 	wide(device.reg, 0x00, 0x2113);
 	wide(device.reg, 0x01, 0x0311);
 	wide(device.reg, 0x04, 0x4303);
@@ -147,6 +154,7 @@ pins_and_supplies(void)
 	CHECK(device.starts == 0 && device.bytes_in == 0 && device.bytes_out == 0, "the bus was used");
 	CHECK(logged("gpio12 (I2C data): function 1, pull 3, 2 mA, input, reads 1"), "the data pin as found: %s", log_text);
 	CHECK(logged("gpio13 (I2C clock): function 1, pull 3"), "the clock pin as found: %s", log_text);
+	CHECK(logged("gpio102 (the amplifier 0x35's interrupt): function 0, pull 0"), "the first one's interrupt: %s", log_text);
 	CHECK(logged("gpio45 (the amplifier 0x34's interrupt): function 0, pull 0"), "the last pin of the list: %s", log_text);
 	CHECK(logged("supply \"lcx.lvl\" can be asked for at RPMh address 0x30000"), "the first supply: %s", log_text);
 	CHECK(logged("supply \"lmx.lvl\" can be asked for at RPMh address 0x30010"), "the second: %s", log_text);
@@ -211,6 +219,22 @@ another_amplifier(void)
 	only_read();
 }
 
+/* a phone with the amplifiers on another bus, at other addresses, on a chip whose pins are elsewhere */
+static void
+another_wiring(void)
+{
+	phone("phone-keys");
+	look("speaker_probe=2");
+	CHECK(logged("gpio60 (I2C data): function 1, pull 3") && logged("gpio61 (I2C clock): function 1, pull 3"), "its bus: %s", log_text);
+	CHECK(logged("gpio70 (the amplifier 0x36's interrupt)") && logged("gpio71 (the amplifier 0x37's interrupt)"), "its interrupts: %s", log_text);
+	CHECK(!logged("gpio12 ") && !logged("gpio13 ") && !logged("gpio102 ") && !logged("gpio45 "), "not the first phone's pins: %s", log_text);
+	CHECK(logged("the amplifier 0x36, slot 0 is there: chip ID 0x2113, AW88261"), "the first: %s", log_text);
+	CHECK(logged("the amplifier 0x37, slot 1 is there: chip ID 0x2113, AW88261"), "the second: %s", log_text);
+	CHECK(logged("register 0x01 (status) = 0x0311") && logged("register 0x01 (status) = 0x0211"), "each one's status: %s", log_text);
+	CHECK(device.bytes_out == 16, "two bytes of each of eight registers were read, not %u", device.bytes_out);
+	only_read();
+}
+
 /* the data line is held low by something: the bus is not touched, and that is said */
 static void
 bus_not_at_rest(void)
@@ -229,7 +253,7 @@ bus_not_at_rest(void)
 static void
 not_listed(void)
 {
-	phone("phone-keys");
+	phone("qemu-virt");
 	boot_args = "speaker_probe=2";
 	redwood_speaker_init();
 	usleep(50000);
@@ -247,7 +271,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "pins_and_supplies", pins_and_supplies }, { "both_answer", both_answer },
 		{ "one_is_missing", one_is_missing }, { "nobody_there", nobody_there }, { "another_amplifier", another_amplifier },
-		{ "bus_not_at_rest", bus_not_at_rest }, { "not_listed", not_listed },
+		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "not_listed", not_listed },
 	};
 
 	if (argc < 2) {

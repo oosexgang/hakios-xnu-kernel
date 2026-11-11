@@ -22,6 +22,13 @@ tcs_offset = 0x1c00
 [pins]
 tlmm = 0x01100000
 
+# (what the part drivers ask for besides: the clock controller and the SMMU, elsewhere too)
+[clocks]
+gcc = 0x02100000
+
+[smmu]
+apps = 0x16000000
+
 [spmi]
 core = 0x04440000
 cnfg = 0x0440a000
