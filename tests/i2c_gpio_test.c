@@ -27,6 +27,7 @@ static struct {
 	unsigned stretch_left;
 	bool absent;                    /* nobody at the address */
 	bool stuck;                     /* it holds the data line low for good (a transfer that was cut off) */
+	unsigned midbyte;               /* it holds the data line low until it has seen this many more clocks */
 	unsigned driven_high;           /* a line driven high by the SoC: never, on an open-drain bus */
 } device;
 
@@ -39,7 +40,7 @@ soc_low(unsigned pin)
 static void
 lines(void)
 {
-	model.input[SDA] = !(soc_low(SDA) || device.sda_low || device.stuck);
+	model.input[SDA] = !(soc_low(SDA) || device.sda_low || device.stuck || device.midbyte != 0);
 	model.input[SCL] = !(soc_low(SCL) || device.scl_low);
 }
 
@@ -52,6 +53,10 @@ changed(void)
 		device.driven_high += (model.cfg[pin] & 1u << 9) && (model.io[pin] & 2);
 	}
 	lines();
+	if (device.midbyte != 0 && !model.input[SCL] && device.was_scl) {
+		device.midbyte--;               /* a clock: one bit less of the byte it was cut off in */
+		lines();
+	}
 	sda = model.input[SDA];
 	scl = model.input[SCL];
 	if (scl && device.was_scl && device.was_sda && !sda) {
@@ -292,6 +297,48 @@ not_at_rest(void)
 	never();
 }
 
+/* a device cut off in the middle of a byte holds the data line: clocked out of it, the bus is ours again */
+static void
+stuck_midbyte(void)
+{
+	unsigned clocks = 0;
+	bool acked;
+
+	a_bus();
+	device.midbyte = 5;
+	lines();
+	device.was_sda = false;
+	CHECK(!i2c_gpio_take(&bus), "not at rest: not taken as it is");
+	CHECK(model.cfg[SDA] == AS_FOUND && model.cfg[SCL] == AS_FOUND, "... and the pins are as they were");
+	CHECK(i2c_gpio_unwedge(&bus, &clocks) && clocks == 5, "after five clocks the data line is let go: %u", clocks);
+	i2c_gpio_start(&bus);
+	acked = i2c_gpio_write(&bus, ADDRESS << 1) && i2c_gpio_write(&bus, 0x46) && i2c_gpio_write(&bus, 0x12);
+	i2c_gpio_stop(&bus);
+	i2c_gpio_give_back(&bus);
+	CHECK(acked && device.reg[0x46] == 0x12, "and the device answers again: %#x", device.reg[0x46]);
+	never();
+}
+
+/* a line that nine clocks do not free, or the clock line itself held: left alone */
+static void
+stuck_for_good(void)
+{
+	unsigned clocks = 0;
+
+	a_bus();
+	device.stuck = true;
+	lines();
+	device.was_sda = false;
+	CHECK(!i2c_gpio_unwedge(&bus, &clocks), "nine clocks and the data line is still held: given up");
+	CHECK(model.cfg[SDA] == AS_FOUND && model.cfg[SCL] == AS_FOUND && !soc_low(SDA) && !soc_low(SCL), "the pins are as they were");
+	device.stuck = false;
+	device.scl_low = true;
+	device.stretch_left = 1000000;
+	lines();
+	CHECK(!i2c_gpio_unwedge(&bus, &clocks) && device.driven_high == 0, "a clock line held low is nobody's to clock");
+	never();
+}
+
 /* a device that holds the clock low until it is ready is waited for */
 static void
 clock_held(void)
@@ -331,7 +378,8 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "a_write", a_write }, { "a_read", a_read }, { "every_bit", every_bit }, { "nobody_there", nobody_there },
-		{ "not_at_rest", not_at_rest }, { "clock_held", clock_held }, { "given_back", given_back },
+		{ "not_at_rest", not_at_rest }, { "stuck_midbyte", stuck_midbyte }, { "stuck_for_good", stuck_for_good },
+		{ "clock_held", clock_held }, { "given_back", given_back },
 	};
 
 	if (argc < 2) {

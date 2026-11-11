@@ -136,4 +136,41 @@ i2c_gpio_take(struct i2c_gpio *bus)
 	return true;
 }
 
+/*
+ * A device stopped in the middle of a byte -- its master went away while it was answering -- goes on
+ * holding the data line down, and the bus never comes to rest again however long one waits. The way
+ * out is the one Linux's bit-banged master takes (i2c_generic_scl_recovery): clock the line that is
+ * free until the device has finished that byte and lets the data line go, then a stop. Nine clocks
+ * are a byte and the acknowledgement after it.
+ *
+ * For a bus i2c_gpio_take() refused: true if the data line alone was held and came back, and then
+ * the bus is taken, `clocks' saying after how many; else the pins are as they were.
+ */
+static inline bool
+i2c_gpio_unwedge(struct i2c_gpio *bus, unsigned *clocks)
+{
+	bus->found_cfg[0] = rd(GPIO_CFG(bus->sda));
+	bus->found_cfg[1] = rd(GPIO_CFG(bus->scl));
+	bus->found_io[0] = rd(GPIO_IO(bus->sda));
+	bus->found_io[1] = rd(GPIO_IO(bus->scl));
+	i2c_gpio_line(bus->sda, true);
+	i2c_gpio_line(bus->scl, true);
+	i2c_gpio_half_bit();
+	for (*clocks = 1; i2c_gpio_level(bus->scl) && !i2c_gpio_level(bus->sda) && *clocks <= 9; (*clocks)++) {
+		i2c_gpio_line(bus->scl, false);
+		i2c_gpio_half_bit();
+		i2c_gpio_line(bus->scl, true);
+		i2c_gpio_half_bit();
+		if (i2c_gpio_level(bus->sda)) {
+			i2c_gpio_stop(bus);
+			if (i2c_gpio_level(bus->scl) && i2c_gpio_level(bus->sda)) {
+				return true;
+			}
+			break;
+		}
+	}
+	i2c_gpio_give_back(bus);
+	return false;
+}
+
 #endif /* HAKIOS_I2C_GPIO_H */
