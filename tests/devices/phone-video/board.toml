@@ -39,6 +39,11 @@ radio_model = 0
 dsp_memory = 0x9ae00000
 dsp_memory_size = 0x01900000
 
+# Its flashlight: the flash LED module and the temperature alarm of the PM8350C, which is slave 2 here.
+[torch]
+flash = 0x2ee
+alarm = 0x20a
+
 [adsp]
 firmware = "fw-audio-video"
 memory = 0x86700000                 # the DSP's reserved memory (adsp@86700000)

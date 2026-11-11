@@ -91,6 +91,7 @@ BOARD_SCHEMA = {
                   'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
+    'torch': {'flash': (int, True), 'alarm': (int, True)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
              'charge_counter_divisor': (int, False)},
@@ -140,7 +141,7 @@ FEATURE_BOOTARGS = {
 # features that are a driver of one part as one phone has it wired, by the first word of their names
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
-FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons'}
+FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
@@ -365,6 +366,12 @@ def load(problems=None):
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
             if clocks_missing(soc):
                 problems.add(rel, f'backlight type "dcs" needs {clocks_missing(soc)} in [clocks] of soc/{data.get("soc")}.toml')
+        torch = data.get('torch')
+        if torch is not None:
+            for key in ('flash', 'alarm'):
+                if not 0 < torch[key] <= 0xfff or torch[key] & 0xff == 0:
+                    problems.add(f'{rel} [torch]', f'{key} = {torch[key]:#x}: SPMI slave << 8 | the high byte of the '
+                                 "peripheral's registers (0x2ee: slave 2, registers 0xee00)")
         keys = data.get('buttons')
         if keys is not None:
             for key in ('pon', 'volume_up'):
@@ -563,6 +570,9 @@ def table_text(socs, boards):
         if keys:
             names = ''.join(f', .{key} = {c_string(keys[key])}' for key in ('pon_name', 'volume_up_name') if key in keys)
             out.append(f'\t\t.buttons = {{ .pon = {keys["pon"]:#05x}, .volume_up = {keys["volume_up"]:#05x}{names} }},')
+        torch = board.get('torch')
+        if torch:
+            out.append(f'\t\t.torch = {{ .flash = {torch["flash"]:#05x}, .temp_alarm = {torch["alarm"]:#05x} }},')
         adsp = board.get('adsp')
         if adsp:
             out.append(f'\t\t.adsp = {{ .firmware = {c_string(adsp["firmware"])}, .memory = {adsp["memory"]:#010x}, '
@@ -929,7 +939,7 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
 
     out += side(f'soc/{board["soc"]}.toml', soc, tree_soc, SOC_SCHEMA, soc_value)
     out += side(f'{name}/board.toml', board, tree_board, BOARD_SCHEMA,
-                lambda key, value: f'{value:#05x}' if key in ('pon', 'volume_up') else toml_value(value))
+                lambda key, value: f'{value:#05x}' if key in ('pon', 'volume_up', 'flash', 'alarm') else toml_value(value))
     out.append(f'{counts["same"]} values as in the tree, {counts["differ"]} differ, {counts["unsaid"]} the tree does not say' +
                (' (clock offsets, the I/O window, firmware names and what was measured on the phone are never in one)'
                 if counts['unsaid'] else ''))

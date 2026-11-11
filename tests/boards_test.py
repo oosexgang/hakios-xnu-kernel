@@ -376,7 +376,8 @@ class Check(Sandbox):
         self.assertIn('.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .channels = 0x00000000, '
                       '.ee = 0 },', text)
         # a driver that writes to a PMIC needs to be told where writes go as well
-        path.write_text(path.read_text().replace('"buttons-pmic"', '"buttons-pmic", "torch-pm8350c"'))
+        path.write_text(path.read_text().replace('"buttons-pmic"', '"buttons-pmic", "torch-pm8350c"') +
+                        '[torch]\nflash = 0x2ee\nalarm = 0x20a\n')
         self.assertIn('feature "torch-pm8350c" needs channels in [spmi] of soc/sm0001.toml', self.problems())
         self.soc('observer = 0xe600000', 'observer = 0xe600000\nchannels = 0xc600000')
         self.assertEqual(self.problems(), '')
@@ -687,6 +688,26 @@ class Generate(Sandbox):
         self.soc('io_size = 0x3fc00000\n', 'io_size = 0x3fc00000\nufs = 0x1d84000\n')
         self.assertEqual(self.problems(), '')
         self.assertIn('.ufs = 0x01d84000', boards.platforms_text(*boards.load()))
+
+    def test_the_flashlight_needs_its_peripherals_and_a_tree_has_them(self):
+        self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\nchannels = 0xc600000\n[thermal]')
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "torch-pm8350c"')
+        self.assertIn('feature "torch-pm8350c" needs [torch] in the board file', self.problems())
+        path = self.dir / 'devices/phone/board.toml'
+        listed = path.read_text()
+        path.write_text(listed + '[torch]\nflash = 0x200\nalarm = 0x20a\n')
+        self.assertIn('flash = 0x200: SPMI slave << 8', self.problems())        # (a slave without a peripheral: a typo)
+        path.write_text(listed + '[torch]\nflash = 0x2ee\nalarm = 0x20a\n')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.torch = { .flash = 0x2ee, .temp_alarm = 0x20a },', boards.table_text(*boards.load()))
+        # the module's PMIC is found by its place in the tree; the alarm is that PMIC's, not another's
+        soc, board, notes = devicetree.from_dts('''/ { soc { qcom,spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            qcom,pm8350@1 { compatible = "qcom,spmi-pmic"; reg = <1 0>;
+                qcom,temp-alarm@a00 { compatible = "qcom,spmi-temp-alarm"; reg = <0xa00>; }; };
+            qcom,pm8350c@3 { compatible = "qcom,spmi-pmic"; reg = <3 0>;
+                qcom,temp-alarm@a00 { compatible = "qcom,spmi-temp-alarm"; reg = <0xa00>; };
+                qcom,flash_led@ee00 { compatible = "qcom,pm8350c-flash-led"; reg = <0xee00>; }; }; }; }; };''')
+        self.assertEqual(board['torch'], {'flash': 0x3ee, 'alarm': 0x30a})
 
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in

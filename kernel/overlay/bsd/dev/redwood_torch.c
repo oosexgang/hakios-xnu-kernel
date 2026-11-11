@@ -135,8 +135,9 @@ struct peripheral {
 	bool            found, writable;
 	vm_offset_t     write;          /* its write channel, mapped (only the flash module's) */
 };
-static struct peripheral flash = { .name = "the PM8350C's flash LED module", .id = 0x2ee };
-static struct peripheral alarm = { .name = "the PM8350C's temperature alarm", .id = 0x20a };
+/* (which peripherals of which PMIC: the board's [torch], at the start; 0x2ee and 0x20a where the PM8350C is slave 2) */
+static struct peripheral flash = { .name = "the PM8350C's flash LED module" };
+static struct peripheral alarm = { .name = "the PM8350C's temperature alarm" };
 
 static struct hakios_spmi arb;
 static uint8_t alarm_subtype;
@@ -248,7 +249,7 @@ put(uint8_t reg, uint8_t value)
 	for (size_t i = 0; i < sizeof(writable_regs); i++) {
 		allowed |= writable_regs[i] == reg;
 	}
-	if (broken || !allowed || !flash.writable || flash.write == 0 || flash.id != 0x2ee) {
+	if (broken || !allowed || !flash.writable || flash.write == 0 || flash.id == 0) {
 		give_up(allowed ? "a write that may not be made" : "a register that is not to be written");
 		return false;
 	}
@@ -652,6 +653,13 @@ redwood_torch_init(void)
 		level = 0;
 		return;
 	}
+	if (hakios_board()->torch.flash == 0 || hakios_board()->torch.temp_alarm == 0) {
+		say("torch: disabled: the board file does not say which peripherals of the PMIC the light is ([torch])\n");
+		level = 0;
+		return;
+	}
+	flash.id = hakios_board()->torch.flash;
+	alarm.id = hakios_board()->torch.temp_alarm;
 	level = level > 3 ? 3 : level;
 	if (kernel_thread_start(torch_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);

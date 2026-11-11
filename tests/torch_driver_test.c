@@ -130,8 +130,8 @@ phone(const char *name)
 	spmi.channels = b->spmi.channels;
 	spmi.ee = b->spmi.ee;
 	spmi.observer = b->spmi.observer + 0x10000 * spmi.ee;
-	flash_model.id = 0x2ee;                 /* the PM8350C: slave 2, registers 0xee00 */
-	alarm_model.id = 0x20a;
+	flash_model.id = b->torch.flash;        /* the PM8350C's, where the board says that chip is on the bus */
+	alarm_model.id = b->torch.temp_alarm;
 	flash_model.written = flash_written;
 	/* the module has a channel of another system's first, as real tables do; the alarm is only read */
 	spmi_channel(11, &flash_model, 3);
@@ -229,7 +229,7 @@ another_chip(void)
 	boot_args = "torch=2 torch_secs=1";
 	redwood_torch_init();
 	WAIT_FOR(lit_now(), 5000);
-	CHECK(logged("channel 20 is the PM8350C's flash LED module (0x2ee00); written by system 2, which is us"),
+	CHECK(logged("channel 20 is the PM8350C's flash LED module (0x3ee00); written by system 2, which is us"),
 	    "the channel of this system, which is the arbiter's third: %s", log_text);
 	CHECK(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 9, "lit at Android's current");
 	WAIT_FOR(logged("torch: done"), 5000);

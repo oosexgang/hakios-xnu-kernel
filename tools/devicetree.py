@@ -192,6 +192,13 @@ def from_dts(text, panel=None):
                     base, stride = only_reg(block)[0] + where[-2], where[-1]
                 if base:
                     ipc['smem_lock'] = base + stride * which[-1]
+        # the flashlight: the flash LED module of a PM8350C, and that PMIC's temperature alarm
+        if 'qcom,pm8350c-flash-led' in compatible and unit_address(node) is not None:
+            slave, pmic = pmic_of(node)
+            alarm = next((n for n in (node.parent.children if node.parent is not None else [])
+                          if 'qcom,spmi-temp-alarm' in strings(n.props.get('compatible')) and unit_address(n) is not None), None)
+            if slave is not None and alarm is not None:
+                board['torch'] = {'flash': slave << 8 | unit_address(node) >> 8, 'alarm': slave << 8 | unit_address(alarm) >> 8}
         # the audio DSP's reserved memory: what the node that loads "adsp" points at
         if strings(node.props.get('qcom,firmware-name')) == ['adsp']:
             region = referred(tree, node.props.get('memory-region'))

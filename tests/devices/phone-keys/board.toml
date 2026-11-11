@@ -16,6 +16,11 @@ features = [
 [backlight]
 type = "soft"
 
+# (its PM8350C is the bus's fourth chip, not the third)
+[torch]
+flash = 0x3ee
+alarm = 0x30a
+
 [buttons]
 pon = 0x208                         # slave 2, registers 0x0800
 pon_name = "the PMX200's power-on block"

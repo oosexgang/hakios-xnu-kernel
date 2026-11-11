@@ -170,6 +170,12 @@ struct hakios_board {
 		const char *pon_name, *volume_up_name;  /* for the log: "GPIO6 of the PM8350" */
 	} buttons;
 
+	/* the flashlight's part on the PMIC (board: [torch]); a peripheral as in [buttons] */
+	struct {
+		uint16_t flash;                 /* the flash LED module */
+		uint16_t temp_alarm;            /* that PMIC's temperature alarm, which the driver watches while the light is on */
+	} torch;
+
 	/* the audio DSP (board: [adsp]) */
 	struct {
 		const char *firmware;           /* the root's directory with the DSP's image (adsp.mdt and its parts) */

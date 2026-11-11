@@ -52,6 +52,12 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # on the slave its PMIC is (qcom,pm8350@1: 1)
 # volume_up_name = "GPIO6 of the PM8350"
 
+# The flashlight, for the feature "torch-pm8350c": the PM8350C's flash LED module and that PMIC's
+# temperature alarm, each as SPMI slave << 8 | the high byte of its registers.
+# [torch]
+# flash = 0x2ee                     # qcom,flash_led@ee00 (qcom,pm8350c-flash-led) under qcom,pm8350c@2
+# alarm = 0x20a                     # qcom,temp-alarm@a00 of the same PMIC
+
 # The audio DSP, for the feature "adsp".
 # [adsp]
 # firmware = "fw-audio-NAME"        # the root's directory with this phone's adsp.mdt and adsp.bNN (signed for
