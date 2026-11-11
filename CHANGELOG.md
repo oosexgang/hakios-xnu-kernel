@@ -74,7 +74,14 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   writes to the loader's log: `hakios_say()` in `hakios_log.h`. Fourteen had their own register
   access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
   clock are `hakios_time.h`. The PMIC arbiter's protocol, written out in three drivers, is
-  `hakios_spmi.h`, with a test of its own.
+  `hakios_spmi.h`, and the lookup in RPMh's command database, written out in eight, is
+  `hakios_cmd_db.h`; each has a test of its own.
+- **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
+  memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now.
+- **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
+  clock controller, RPMh, the SMMU, the PMIC arbiter and the way to the other processors were
+  constants in up to eight drivers each; they are `[pins]`, `[clocks]`, `[rpmh]`, `[smmu]`, `[spmi]`
+  and `[ipc]` of the SoC file. What is left in the part drivers is the part's own wiring.
 - **No board names in code.** Nothing compares the board's name any more: the name is looked up once,
   for the board's row. [CONTRIBUTING.md](CONTRIBUTING.md) has this and the other rules that keep the
   project portable, and says where each kind of change goes.
@@ -120,9 +127,11 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
   link and repository path in the documentation exists, checks the pins of `components.toml`, and looks
   for files that must never be published.
-- **The host tests** (`tests/run.sh`) run the backlight and thermal drivers unchanged against models of
-  their hardware, on the host and as arm64 code under `qemu-aarch64`. They also test the kernel's board
-  code, the board and package tools, the kernel source tools, the boot-argument reference and the
+- **The host tests** (`tests/run.sh`) run seven drivers unchanged against models of their hardware, on
+  the host and as arm64 code under `qemu-aarch64`: the backlight, the thermal limiter, CPU frequency,
+  the memory vote through RPMh, the keys, the flashlight and the battery. What the drivers share
+  (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
+  also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
   porting guide, and build the loader. They use two stand-in phones in `tests/devices/`.
   [tests/README.md](tests/README.md) lists each test.
 - **CI** runs `make check`, `kernel/verify.sh` and `kernel/syntax-check.sh` on every push and pull
