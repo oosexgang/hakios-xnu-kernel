@@ -848,22 +848,7 @@ step_mailbox(void)
 #define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
-struct cmd_db_slave {
-	uint16_t id, header_offset, data_offset, count, version, reserved[3];
-};
-struct cmd_db_header {
-	uint32_t version;
-	uint8_t magic[4];
-	struct cmd_db_slave slave[8];
-	uint32_t checksum, reserved;
-	uint8_t data[];
-};
-struct cmd_db_entry {
-	char id[8];
-	uint32_t priority[2];
-	uint32_t address;
-	uint16_t length, offset;
-};
+#include "hakios_cmd_db.h"
 
 static const struct cmd_db_header *cmd_db;
 
@@ -873,37 +858,25 @@ cmd_db_there(void)
 	if (cmd_db == NULL) {
 		cmd_db = (const struct cmd_db_header *)ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);       /* memory, not registers */
 	}
-	return cmd_db->magic[0] == 0xdb && cmd_db->magic[1] == 0x30 && cmd_db->magic[2] == 0x03 && cmd_db->magic[3] == 0x0c;
+	return hakios_cmd_db_valid(cmd_db);
 }
 
 /* The resource of that name, or (name NULL) the one an address belongs to: the nearest at or below it. */
 static const struct cmd_db_entry *
 rpmh_resource(const char *name, uint32_t address)
 {
-	const struct cmd_db_entry *best = NULL;
-	char id[8] = { 0 };
+	const struct cmd_db_entry *best = NULL, *entry;
 
 	if (!cmd_db_there()) {
 		return NULL;
 	}
 	if (name != NULL) {
-		strlcpy(id, name, sizeof(id));
+		return hakios_cmd_db_find(cmd_db, CMD_DB_SIZE, name, CMD_DB_ANY, NULL);
 	}
-	for (unsigned s = 0; s < 8; s++) {
-		const struct cmd_db_slave *slave = &cmd_db->slave[s];
-		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(cmd_db->data + slave->header_offset);
-
-		if (slave->id == 0 || slave->count > 512) {
-			continue;
-		}
-		for (unsigned i = 0; i < slave->count; i++) {
-			if (name != NULL ? memcmp(entry[i].id, id, sizeof(id)) == 0 :
-			    entry[i].address <= address && address - entry[i].address < 0x10 &&
-			    (best == NULL || entry[i].address > best->address)) {
-				best = &entry[i];
-				if (name != NULL) {
-					return best;
-				}
+	for (unsigned s = 0; s < CMD_DB_SLAVES; s++) {
+		for (unsigned i = 0; (entry = hakios_cmd_db_entry(cmd_db, CMD_DB_SIZE, s, i)) != NULL; i++) {
+			if (entry->address <= address && address - entry->address < 0x10 && (best == NULL || entry->address > best->address)) {
+				best = entry;
 			}
 		}
 	}
@@ -914,7 +887,6 @@ static void
 show_rpmh_resource(const char *name, const char *what)
 {
 	const struct cmd_db_entry *entry = rpmh_resource(name, 0);
-	const uint8_t *data;
 	char levels[160];
 	int at = 0;
 
@@ -925,24 +897,13 @@ show_rpmh_resource(const char *name, const char *what)
 	levels[0] = 0;
 	if (strlen(name) > 4 && strcmp(name + strlen(name) - 4, ".lvl") == 0) {
 		/* a rail asked for by level: the levels it has, which a request names by position */
-		for (unsigned s = 0; s < 8; s++) {
-			const struct cmd_db_slave *slave = &cmd_db->slave[s];
-			const struct cmd_db_entry *first = (const struct cmd_db_entry *)(cmd_db->data + slave->header_offset);
+		uint16_t level[16];
+		unsigned count = 0;
 
-			if (entry < first || entry >= first + slave->count ||
-			    (unsigned)slave->data_offset + entry->offset + entry->length > CMD_DB_SIZE - 0x1000) {
-				continue;
-			}
-			data = cmd_db->data + slave->data_offset + entry->offset;
-			at = snprintf(levels, sizeof(levels), "; levels:");
-			for (unsigned l = 0; l < entry->length / 2u && l < 16 && at < (int)sizeof(levels) - 8; l++) {
-				unsigned level = data[2 * l] | data[2 * l + 1] << 8;
-
-				if (l > 0 && level == 0) {
-					break;
-				}
-				at += snprintf(levels + at, sizeof(levels) - (size_t)at, " %u", level);
-			}
+		hakios_cmd_db_levels(cmd_db, CMD_DB_SIZE, name, level, 16, &count);
+		at = snprintf(levels, sizeof(levels), "; levels:");
+		for (unsigned l = 0; l < count && at < (int)sizeof(levels) - 8; l++) {
+			at += snprintf(levels + at, sizeof(levels) - (size_t)at, " %u", level[l]);
 		}
 	}
 	printf("wifi: %u: RPMh has \"%s\" at %#x (%s)%s\n", step, name, entry->address, what, levels);
