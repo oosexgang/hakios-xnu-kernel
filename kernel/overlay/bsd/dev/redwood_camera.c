@@ -4016,19 +4016,19 @@ redwood_camera_init(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
-		printf("camera: disabled: this board's board.toml lists no \"camera-redwood\"\n");
+		say("camera: disabled: this board's board.toml lists no \"camera-redwood\"\n");
 		level = 0;
 		return;
 	}
 	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
-		printf("camera: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
+		say("camera: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
 		level = 0;
 		return;
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0 ||
 	    hakios_board()->smmu.apps == 0 || hakios_board()->camera.camcc == 0 || hakios_board()->camera.ife == 0 ||
 	    hakios_board()->camera.csid == 0 || hakios_board()->camera.csiphy == 0) {
-		printf("camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the "
+		say("camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the "
 		    "camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])\n");
 		level = 0;
 		return;
