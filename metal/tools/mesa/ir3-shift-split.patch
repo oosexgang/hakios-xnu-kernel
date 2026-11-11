@@ -1,0 +1,84 @@
+ir3: moving a shift inside an add changes the number when the constant is
+negative.
+
+create_shift() in ir3_nir_lower_io_offsets.c turns the byte offset of an SSBO
+access into an element offset. When the offset has the shape `iadd constant,
+foo` it rewrites `(C + x) >> s` as `(x >> s) + (C >> s)`, so that
+nir_opt_offsets can fold the constant into the instruction's immediate field.
+
+That identity does not hold for a negative constant. `buf[i - 1].field` is
+ordinary code, and LLVM hands it over as `iadd 0xfffffffc, i*24` -- a
+subtraction. `(i*24 - 4) >> 2` borrows from the bits above the two it drops;
+`(i*24 >> 2) + (0xfffffffc >> 2)` adds 0x3fffffff instead of 0xffffffff and
+does not. The two differ by 2^30, which puts the element offset a gigabyte past
+the end of the buffer, and an out-of-range `ldib` returns zero without saying
+so. It also drops the low bits of a constant that is not a whole number of
+elements, which is the same mistake in a smaller way.
+
+Measured on the phone's Adreno 7c+ Gen 3. `fbs_bistochastize_iter` of
+PortraitFilters.metallib reads `grid_buf[id - 1].n` through exactly this shape
+and sums `id + 1` terms when the read returns 0 instead of `id`. With input
+built from the module's own metadata (tools/air/kinput.py, docs/air.md section
+5) its four outputs should all be 1/sqrt(3) -- one term each -- and on the
+device they were:
+
+      word     device        1/sqrt(n)     Apple's own LLVM on the host
+       0    0x3f13cd3a       1/sqrt(3)     0x3f13cd3a
+       1    0x3f000000       1/sqrt(4)     0x3f13cd3a
+       2    0x3ee4f92e       1/sqrt(5)     0x3f13cd3a
+       3    0x3ed105ec       1/sqrt(6)     0x3f13cd3a
+
+1/sqrt(3+i) in word i is the signature of the read returning 0 for every
+thread, and 0 is what that address returns. The three fbs_* kernels of the
+corpus carry this shape; the eight MetalFaceMask_* ones do not.
+
+So split the constant out only when it survives being shifted and cannot be a
+subtraction. Everything else keeps the shift outside the add, which is what the
+code did before the folding and is always right.
+
+--- a/src/freedreno/ir3/ir3_nir_lower_io_offsets.c
++++ b/src/freedreno/ir3/ir3_nir_lower_io_offsets.c
+@@ -126,6 +126,32 @@
+    return new_offset;
+ }
+ 
++/* Whether `(c + x) >> shift` and `(x >> shift) + (c >> shift)` are the same
++ * number for every x, which is what moving the shift inside the add assumes.
++ *
++ * They are not, twice over. A constant whose low `shift` bits are set loses
++ * them to `c >> shift`, so the offset comes out short. Worse, a negative
++ * constant -- a struct field reached through `buf[i - 1]`, which is ordinary
++ * code -- is a subtraction, and `(x - 4) >> 2` borrows from the bits above
++ * while `(x >> 2) + (0xfffffffc >> 2)` adds 0x3fffffff and does not: the two
++ * differ by 2^30 and the SSBO read lands outside the buffer, where a6xx
++ * returns zero without saying so.
++ *
++ * That was measured: fbs_bistochastize_iter reads grid_buf[id - 1].n with
++ * exactly this shape, and on an Adreno 7c+ Gen 3 it read 0 for every thread,
++ * which turned 1/sqrt(3) in all four of its outputs into 1/sqrt(3), 1/sqrt(4),
++ * 1/sqrt(5), 1/sqrt(6) (docs/air.md section 5).
++ *
++ * So split only a constant that is a whole number of elements and cannot be a
++ * subtraction. Everything else keeps the shift outside the add, which is what
++ * the code did before the folding was added and is always right.
++ */
++static bool
++shift_splits_over_iadd(uint32_t c, int shift)
++{
++   return (c & BITFIELD_MASK(shift)) == 0 && c < (1u << 31);
++}
++
+ static nir_def *
+ create_shift(nir_builder *b, nir_def *offset, int shift)
+ {
+@@ -138,7 +164,9 @@
+       nir_alu_instr *offset_instr = nir_instr_as_alu(offset->parent_instr);
+ 
+       if (offset_instr->op == nir_op_iadd &&
+-          nir_src_is_const(offset_instr->src[0].src)) {
++          nir_src_is_const(offset_instr->src[0].src) &&
++          shift_splits_over_iadd(
++             nir_src_as_const_value(offset_instr->src[0].src)->u32, shift)) {
+          nir_def *new_shift = ir3_nir_try_propagate_bit_shift(
+             b, offset_instr->src[1].src.ssa, -shift);
+ 

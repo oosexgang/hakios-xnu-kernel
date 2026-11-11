@@ -1,0 +1,18 @@
+Build the AIR frontend as part of Mesa.
+
+src/compiler/air is this repository's tools/mesa/air: the frontend that reads Apple's shader
+bitcode and produces NIR (docs/air.md). tools/air/mk-host.sh links it there for the build on
+this machine, tools/mk-mesa.sh copies it there for the cross build; this patch is only the one
+line of meson that reaches it, so that both builds get it the same way and neither needs a sed.
+
+--- a/src/compiler/meson.build
++++ b/src/compiler/meson.build
+@@ -63,6 +63,8 @@
+ 
+ subdir('spirv')
+ 
++subdir('air')
++
+ if with_clc
+   subdir('clc')
+ endif
