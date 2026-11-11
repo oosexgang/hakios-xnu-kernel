@@ -70,7 +70,9 @@ rm -f "$ENT"
 # sound of a timer depend on it. bluetoothd stays enabled: without it audiomxd asks for com.apple.bluetooth.xpc
 # thousands of times a second.
 (cd $DR/userland && ALLOW="audio bluetooth ${ALLOW:-}" ./mkjobs.py --rest $S/rootfs $J $JOBS)
-ls $J | grep -E "audiomxd|bluetoothd" | sed 's/^/  job /'
+for job in "$J"/*audiomxd* "$J"/*bluetoothd*; do
+	if [ -e "$job" ]; then echo "  job $(basename "$job")"; fi
+done
 # No EDR here: backboardd's job names com.apple.libEDR.Notification, whose server (EDRServerStartService)
 # CoreBrightness starts, and CoreBrightness has no display to run here. launchd kept the port and queued
 # every request: CoreAnimation in backboardd asks EDR at each display state change while holding the lock

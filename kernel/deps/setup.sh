@@ -59,7 +59,7 @@ update() {
 }
 
 stage1() {
-	local missing= tool
+	local missing='' tool
 	for tool in git curl tar xz make cc clang clang++ flex bison m4 perl python3 autoreconf automake; do
 		command -v $tool >/dev/null || missing="$missing $tool"
 	done
@@ -146,7 +146,7 @@ stage1() {
 # only Apple's open sources and the DriverKit headers are fetched. The SDK is Xcode's iPhoneOS SDK
 # (as links) with the same usr/local additions as on Linux.
 stage1_darwin() {
-	local missing= tool xsdk
+	local missing='' tool xsdk
 	for tool in git curl tar xz make clang flex bison m4 perl python3 xcrun; do
 		command -v $tool >/dev/null || missing="$missing $tool"
 	done

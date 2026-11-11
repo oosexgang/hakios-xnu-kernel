@@ -25,7 +25,7 @@ case $BUILD in
 23G90)	SB_ACTIVATION=0x22450fdc0 SB_SETUP=0x224675b68 ;;
 24B119)	SB_ACTIVATION=0x2274356b8 SB_SETUP=0x22757d3fc ;;   # 27.2: the reason at +0x38 now; the hook passes 0 on
 *)	echo "inj26.sh: no SpringBoard addresses for $BUILD: those hooks will be left alone" >&2
-	SB_ACTIVATION= SB_SETUP= ;;
+	SB_ACTIVATION='' SB_SETUP='' ;;
 esac
 [ -z "$SB_ACTIVATION" ] || sed -i -e "s/0x1c4bc8dfcUL/${SB_ACTIVATION}UL/" -e "s/0x1c4cdd3a4UL/${SB_SETUP}UL/" $O/src/inject_sb.c
 DYN="xnu-clang -arch arm64e -isysroot ${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk -O1 -mios-version-min=16.0"
@@ -35,7 +35,7 @@ $DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreF
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-statusbar.dylib $RN/userland/inject_statusbar.c
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/redwood-audio when the kernel has it
-$DYN -bundle -framework CoreFoundation -o $O/RedwoodAudio $(dirname $RN)/userland/userland/src/audio_plugin.c
+$DYN -bundle -framework CoreFoundation -o $O/RedwoodAudio "$(dirname "$RN")/userland/userland/src/audio_plugin.c"
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-app.dylib -lobjc -o $O/libredwood-app.dylib $O/src/inject_app.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-console.dylib -o $O/libredwood-console.dylib $RN/userland/console_log.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-poster.dylib -framework CoreFoundation -lobjc -o $O/libredwood-poster.dylib $RN/userland/inject_poster.c
