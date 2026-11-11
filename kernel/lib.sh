@@ -1,3 +1,4 @@
+# shellcheck shell=bash disable=SC2034  # sourced: its variables are used by the scripts that source it
 # Shared by kernel/assemble.sh, export.sh and verify.sh (sourced, not run).
 #
 # The kernel is kept as three things:
@@ -34,10 +35,10 @@ patch_for() {
 	while read -r patch patterns; do
 		case "$patch" in ''|'#'*) continue ;; esac
 		for pattern in $patterns; do
-			case "$pattern" in
-			*/) case "$file" in "$pattern"*) echo "$patch"; return 0 ;; esac ;;
+			[ "${pattern%/}" = "$pattern" ] || pattern="$pattern*"  # a directory: everything in it
 			# shellcheck disable=SC2254  # the pattern is meant to be a glob
-			*) case "$file" in $pattern) echo "$patch"; return 0 ;; esac ;;
+			case "$file" in
+			$pattern) echo "$patch"; return 0 ;;
 			esac
 		done
 	done < "$SERIES"

@@ -3,7 +3,7 @@
 # home directories, keys. Prints what it finds; exit status 1 if anything.
 set -uo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
-cd "$R"
+cd "$R" || exit 1
 bad=0
 say() { echo "$*"; bad=1; }
 files=$(find . -type f -not -path './.git/*')

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # source this (from bash) before building the kernel on Linux by hand; kernel/build.sh does it itself.
 #
 # What is where (each can be set in the environment before sourcing):

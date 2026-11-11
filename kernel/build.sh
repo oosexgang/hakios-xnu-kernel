@@ -55,7 +55,7 @@ link "$BD/hostinc" hostinc
 # iig implementation stand-ins: base/'s, plus kernel/iig-impl for classes new in xnu-12377
 [ -L iig-impl ] && rm iig-impl
 mkdir -p iig-impl
-for f in "$BD"/iig-impl/* "$K"/iig-impl/*; do link "$f" iig-impl/$(basename "$f"); done
+for f in "$BD"/iig-impl/* "$K"/iig-impl/*; do link "$f" "iig-impl/$(basename "$f")"; done
 # built on this machine by darwin-renoir's setup.sh
 for t in mig migcom tcsh unifdef unzbm; do link "$RD/host/bin/$t" host/bin/$t; done
 link tcsh host/bin/csh
