@@ -227,36 +227,9 @@ bl_poke(void)
 
 static vm_offset_t dsi, gcc, dispcc;
 
-static inline void
-barrier(void)
-{
-#if defined(__arm64__) || defined(__aarch64__)
-	__asm__ volatile ("dsb sy" ::: "memory");
-#else
-	__asm__ volatile ("" ::: "memory");     /* (the host tests on another processor) */
-#endif
-}
-
-#ifndef BL_TEST_MMIO
-static inline uint32_t
-rd(vm_offset_t address)
-{
-	return *(volatile uint32_t *)address;
-}
-
-static inline void
-wr(vm_offset_t address, uint32_t value)
-{
-	*(volatile uint32_t *)address = value;
-	barrier();
-}
-#else
-/* tests/backlight_driver_test.c: the registers are a model of the hardware's */
-extern uint32_t bl_test_rd(vm_offset_t address);
-extern void bl_test_wr(vm_offset_t address, uint32_t value);
-#define rd(a)           bl_test_rd(a)
-#define wr(a, v)        (bl_test_wr((a), (v)), barrier())
-#endif
+/* (each write has reached the controller before the next line runs: a command follows its payload) */
+#define HAKIOS_MMIO_SYNC
+#include "hakios_mmio.h"
 
 static uint64_t
 now_us(void)

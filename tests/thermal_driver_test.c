@@ -34,7 +34,7 @@ temperature(unsigned controller, unsigned which, int tenths)
 }
 
 uint32_t
-th_test_rd(vm_offset_t a)
+hakios_test_rd(vm_offset_t a)
 {
 	if (a >= TSENS0 && a < TSENS0 + 0x200) {
 		return a >= TSENS0 + 0xa0 && a < TSENS0 + 0xe0 ? sensor[0][(a - TSENS0 - 0xa0) / 4] : 0;
@@ -60,7 +60,7 @@ th_test_rd(vm_offset_t a)
 }
 
 void
-th_test_wr(vm_offset_t a, uint32_t v)
+hakios_test_wr(vm_offset_t a, uint32_t v)
 {
 	if (a >= EPSS && a < EPSS + 0x3000 && (a - EPSS) % 0x1000 == 0x320) {
 		perf[(a - EPSS) / 0x1000] = v;
@@ -74,7 +74,7 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
 void hakios_backlight_set_cap(uint32_t level) { cap = level; }
 
 #include "hakios_board.c"
-#define TH_TEST_MMIO 1
+#define HAKIOS_MMIO_TEST 1
 #include "hakios_thermal.c"
 
 /* ---- the scenarios ------------------------------------------------------------------------------ */

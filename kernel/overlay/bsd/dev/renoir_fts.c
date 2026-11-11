@@ -23,18 +23,8 @@ extern kern_return_t thread_terminate(thread_t thread);
 
 static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
-static inline uint32_t
-rd(vm_offset_t address)
-{
-	return *(volatile uint32_t *)address;
-}
-
-static inline void
-wr(vm_offset_t address, uint32_t value)
-{
-	*(volatile uint32_t *)address = value;
-	__asm__ volatile("dsb sy" ::: "memory");
-}
+#define HAKIOS_MMIO_SYNC
+#include "hakios_mmio.h"
 
 static void
 sleep_us(uint32_t us)

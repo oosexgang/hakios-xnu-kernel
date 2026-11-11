@@ -73,28 +73,8 @@ static unsigned groups;                         /* how many groups of cores the 
 static volatile int32_t hottest = TH_NONE;
 static volatile uint32_t step, most;
 
-#ifndef TH_TEST_MMIO
-static inline uint32_t
-rd(vm_offset_t address)
-{
-	return *(volatile uint32_t *)address;
-}
-
-static inline void
-wr(vm_offset_t address, uint32_t value)
-{
-	*(volatile uint32_t *)address = value;
-#if defined(__arm64__) || defined(__aarch64__)
-	__asm__ volatile ("dsb sy" ::: "memory");
-#endif
-}
-#else
-/* tests/thermal_driver_test.c: the registers are a model of the hardware's */
-extern uint32_t th_test_rd(vm_offset_t address);
-extern void th_test_wr(vm_offset_t address, uint32_t value);
-#define rd(a)           th_test_rd(a)
-#define wr(a, v)        th_test_wr((a), (v))
-#endif
+#define HAKIOS_MMIO_SYNC
+#include "hakios_mmio.h"
 
 /* the rows of the board's groups, as text: "8 8 8" */
 static const char *

@@ -103,7 +103,7 @@ model_trigger(void)
 }
 
 uint32_t
-bl_test_rd(vm_offset_t a)
+hakios_test_rd(vm_offset_t a)
 {
 	if (a >= DSI_BASE && a < DSI_BASE + 0x400) {
 		m.accesses++;
@@ -139,7 +139,7 @@ bl_test_rd(vm_offset_t a)
 }
 
 void
-bl_test_wr(vm_offset_t a, uint32_t v)
+hakios_test_wr(vm_offset_t a, uint32_t v)
 {
 	const uint32_t status_bits = 0x1u | 0x100u | 0x400u | 0x1000u | 0x4000u | 0x10000u | 0x100000u | 0x1000000u |
 	    0x10000000u | 0x40000000u;
@@ -203,13 +203,13 @@ bl_test_wr(vm_offset_t a, uint32_t v)
 vm_offset_t
 ml_io_map(vm_offset_t phys, vm_size_t size __unused)
 {
-	return phys;            /* (an address of the model's: bl_test_rd/wr tell them apart) */
+	return phys;            /* (an address of the model's: hakios_test_rd/wr tell them apart) */
 }
 
 /* ---- the driver, and the board table it reads (devices/, through tools/boards.py) -------------- */
 
 #include "hakios_board.c"
-#define BL_TEST_MMIO 1
+#define HAKIOS_MMIO_TEST 1
 #include "hakios_backlight.c"
 
 /* ---- the scenarios ------------------------------------------------------------------------------ */
