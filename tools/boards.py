@@ -62,8 +62,8 @@ SOC_SCHEMA = {
                  'gic_redist_size': (U64, False), 'gic_redist_stride': (U64, False), 'uart': (U64, False),
                  'cores': (int, True), 'core_shift': (int, True), 'small_cores': (int, False),
                  'psci': (('smc', 'hvc'), True), 'timeout_scale': (int, False)},
-    'clocks': {'gcc': (int, True), 'gcc_disp_ahb_cbcr': (int, True), 'dispcc': (int, True),
-               'dispcc_mdss_gdscr': (int, True), 'dispcc_mdss_ahb_cbcr': (int, True),
+    'clocks': {'gcc': (int, True), 'gcc_disp_ahb_cbcr': (int, False), 'dispcc': (int, False),
+               'dispcc_mdss_gdscr': (int, False), 'dispcc_mdss_ahb_cbcr': (int, False),
                'dispcc_mdss_pclk0_cbcr': (int, False), 'dispcc_mdss_mdp_cbcr': (int, False)},
     'display': {'dsi0': (int, True), 'intf1': (int, False)},
     'thermal': {'tsens': ([int], True)},
@@ -178,6 +178,16 @@ def features_of_header():
     return {name: 'HAKIOS_HAS_' + name.upper().replace('-', '_') for _, name in feature_bits()}
 
 
+# what of [clocks] the display's registers need before they can be touched: asked for by what touches them
+DISPLAY_CLOCKS = ('gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr')
+
+
+def clocks_missing(soc, keys=DISPLAY_CLOCKS):
+    """The keys of the SoC file's [clocks] that are not there, as text; '' when all are (or the section is not)."""
+    clocks = soc.get('clocks')
+    return ', '.join(key for key in keys if key not in clocks) if isinstance(clocks, dict) else ''
+
+
 def feature_needs(feature, board, soc):
     """What a board that lists the feature must have and has not, in words; [] when it has everything."""
     soc_file = f'soc/{board.get("soc")}.toml'
@@ -193,6 +203,10 @@ def feature_needs(feature, board, soc):
         needs.append(f'channels in [spmi] of {soc_file}')
     if feature == 'display-scan' and isinstance(display, dict) and ('intf1' not in display or 'clocks' not in soc):
         needs.append(f'intf1 in [display] and [clocks] in {soc_file}')
+    if feature == 'display-scan' and clocks_missing(soc):
+        needs.append(f'{clocks_missing(soc)} in [clocks] of {soc_file}')
+    if feature == 'gpu-a660' and clocks_missing(soc, ('gcc_disp_ahb_cbcr',)):
+        needs.append(f'gcc_disp_ahb_cbcr in [clocks] of {soc_file}')
     light = board.get('backlight')
     if feature == 'display-scan' and isinstance(light, dict) and light.get('panel_mode') == 'video':
         needs.append('a command-mode panel ([backlight] says video)')
@@ -337,6 +351,8 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+            if clocks_missing(soc):
+                problems.add(rel, f'backlight type "dcs" needs {clocks_missing(soc)} in [clocks] of soc/{data.get("soc")}.toml')
         keys = data.get('buttons')
         if keys is not None:
             for key in ('pon', 'volume_up'):
@@ -460,9 +476,9 @@ def table_text(socs, boards):
         if clocks:
             out += [
                 '\t\t.clocks = {',
-                f'\t\t\t.gcc = {clocks["gcc"]:#010x}, .gcc_disp_ahb_cbcr = {clocks["gcc_disp_ahb_cbcr"]:#x},',
-                f'\t\t\t.dispcc = {clocks["dispcc"]:#010x}, .dispcc_mdss_gdscr = {clocks["dispcc_mdss_gdscr"]:#x},',
-                f'\t\t\t.dispcc_mdss_ahb_cbcr = {clocks["dispcc_mdss_ahb_cbcr"]:#x},',
+                f'\t\t\t.gcc = {clocks["gcc"]:#010x}, .gcc_disp_ahb_cbcr = {clocks.get("gcc_disp_ahb_cbcr", 0):#x},',
+                f'\t\t\t.dispcc = {clocks.get("dispcc", 0):#010x}, .dispcc_mdss_gdscr = {clocks.get("dispcc_mdss_gdscr", 0):#x},',
+                f'\t\t\t.dispcc_mdss_ahb_cbcr = {clocks.get("dispcc_mdss_ahb_cbcr", 0):#x},',
             ]
             if 'dispcc_mdss_pclk0_cbcr' in clocks or 'dispcc_mdss_mdp_cbcr' in clocks:
                 out.append(f'\t\t\t.dispcc_mdss_pclk0_cbcr = {clocks.get("dispcc_mdss_pclk0_cbcr", 0):#x}, '

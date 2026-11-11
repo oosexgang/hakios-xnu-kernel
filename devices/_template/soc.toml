@@ -11,7 +11,8 @@ description = "Qualcomm Snapdragon NNN (SM0000, codename)"
 # the feature "display-scan". The addresses are in the tree; the offsets are not -- they are in Linux's
 # clock drivers for the SoC (gcc-CODENAME.c, dispcc-CODENAME.c).
 [clocks]
-gcc = 0x00100000                    # clock-controller@100000 (qcom,CODENAME-gcc)
+gcc = 0x00100000                    # clock-controller@100000 (qcom,CODENAME-gcc); the only key of this section
+                                    # that the part drivers need
 gcc_disp_ahb_cbcr = 0x27004         # gcc_disp_ahb_clk: its .halt_reg
 dispcc = 0x0af00000                 # clock-controller@af00000 (qcom,CODENAME-dispcc)
 dispcc_mdss_gdscr = 0x3000          # the display block's power switch (mdss_core_gdsc): its .gdscr

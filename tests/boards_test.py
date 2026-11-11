@@ -598,6 +598,21 @@ class Generate(Sandbox):
         self.assertNotIn('ipc', soc)
         self.assertTrue(any('missing: aoss, smem, smem_size, smem_lock' in note for note in notes), notes)
 
+    def test_the_display_clocks_are_asked_for_by_what_touches_the_display(self):
+        # a SoC file with the clock controller's address alone is one a part's driver can use
+        self.soc('gcc_disp_ahb_cbcr = 0x27004\ndispcc = 0xaf00000\ndispcc_mdss_gdscr = 0x3000\ndispcc_mdss_ahb_cbcr = 0x2080\n', '')
+        self.assertEqual(self.problems(), 'devices/phone/board.toml: backlight type "dcs" needs gcc_disp_ahb_cbcr, dispcc, '
+                         'dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in [clocks] of soc/sm0001.toml')
+        path = self.dir / 'devices/phone/board.toml'
+        path.write_text(re.sub(r'(?s)\[backlight\].*?\n\[', '[backlight]\ntype = "soft"\n[', path.read_text(), count=1))
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.gcc = 0x00100000, .gcc_disp_ahb_cbcr = 0x0,', boards.table_text(*boards.load()))
+        # ... and the GPU's driver, which switches the display's bus clock on, asks for that one
+        socs, found = boards.load()
+        self.assertIn('gcc_disp_ahb_cbcr in [clocks] of soc/sm0001.toml', boards.feature_needs('gpu-a660', found['phone'], socs['sm0001']))
+        self.assertIn('gcc_disp_ahb_cbcr, dispcc, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in [clocks] of soc/sm0001.toml',
+                      boards.feature_needs('display-scan', found['phone'], socs['sm0001']))
+
     def test_the_smmu_is_needed_carried_and_found(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "camera-redwood"')
         self.assertIn('feature "camera-redwood" needs [smmu] in soc/sm0001.toml', self.problems())
@@ -752,8 +767,9 @@ class DeviceTree(Sandbox):
         self.assertIn('wrote soc/sm0002.toml', said.getvalue())
         # as written it is refused for exactly what a device tree cannot say, and accepted once that is filled in
         problems = self.problems()
-        self.assertIn('"gcc_disp_ahb_cbcr" is missing', problems)
-        self.assertNotIn('devices/phone2/board.toml', problems.replace('soc/sm0002.toml', ''))
+        self.assertIn('backlight type "dcs" needs gcc_disp_ahb_cbcr, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in [clocks] of '
+                      'soc/sm0002.toml', problems)
+        self.assertEqual([line for line in problems.splitlines() if 'in [clocks] of' not in line and '"io_' not in line], [])
         path = self.dir / 'soc/sm0002.toml'
         text = path.read_text()
         for key, value in (('gcc_disp_ahb_cbcr', '0x27004'), ('dispcc_mdss_gdscr', '0x3000'), ('dispcc_mdss_ahb_cbcr', '0x2080')):
