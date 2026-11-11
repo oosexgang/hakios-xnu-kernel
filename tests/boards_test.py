@@ -90,6 +90,41 @@ DTS = '''/dts-v1/;
 			reg = <0x00 0x18591000 0x00 0x1000 0x00 0x18592000 0x00 0x1000 0x00 0x18593000 0x00 0x1000>;
 			reg-names = "freq-domain0\\0freq-domain1\\0freq-domain2";
 		};
+		spmi_bus: qcom,spmi@c440000 {
+			compatible = "qcom,spmi-pmic-arb";
+			reg = <0xc440000 0x1100 0xc600000 0x2000000 0xe600000 0x100000 0xe700000 0xa0000 0xc40a000 0x26000>;
+			reg-names = "core\\0chnls\\0obsrvr\\0intr\\0cnfg";
+			qcom,ee = <0x00>;
+			qcom,pmk8350@0 {
+				compatible = "qcom,spmi-pmic";
+				reg = <0x00 0x00>;
+				pon_hlos@1300 {
+					compatible = "qcom,qpnp-power-on";
+					reg = <0x1300 0x800>;
+				};
+			};
+			qcom,pm8350@1 {
+				compatible = "qcom,spmi-pmic";
+				reg = <0x01 0x00>;
+				pinctrl@8800 {
+					compatible = "qcom,pm8350-gpio";
+					reg = <0x8800>;
+					phandle = <0x33>;
+				};
+			};
+		};
+		gpio_keys {
+			compatible = "gpio-keys";
+			vol_up {
+				label = "volume_up";
+				gpios = <0x33 0x06 0x01>;
+				linux,code = <0x73>;
+			};
+			camera_snapshot {
+				gpios = <0x33 0x07 0x01>;
+				linux,code = <0x2fe>;
+			};
+		};
 		tsens0: tsens@c222000 {
 			compatible = "qcom,tsens24xx";
 			reg = <0x00 0xc222000 0x00 0x08 0x00 0xc263000 0x00 0x1ff>;
@@ -244,6 +279,32 @@ class Check(Sandbox):
                     for path, text in saved:
                         path.write_text(text)
 
+    def test_keys_need_the_arbiter_and_their_peripherals(self):
+        path = self.dir / 'devices/phone/board.toml'
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "buttons-pmic"')
+        said = self.problems()
+        self.assertIn('feature "buttons-pmic" needs [spmi] in soc/sm0001.toml', said)
+        self.assertIn('feature "buttons-pmic" needs a [buttons] section', said)
+        self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\n[thermal]')
+        listed = path.read_text()
+        for section, reason in (
+                ('[buttons]\npon = 0x013\nvolume_up = 0x18d\n', None),
+                ('[buttons]\npon = 0x013\nvolume_up = 0x18d\nvolume_up_name = "GPIO6 of the PM8350"\n', None),
+                ('[buttons]\npon = 0x013\nvolume_up = 0x8d00\n', 'SPMI slave << 8'),
+                ('[buttons]\npon = 0x100\nvolume_up = 0x18d\n', 'SPMI slave << 8'),
+                ('[buttons]\npon = 0x18d\nvolume_up = 0x18d\n', 'two peripherals'),
+                ('[buttons]\npon = 0x013\n', '"volume_up" is missing')):
+            with self.subTest(section=section):
+                path.write_text(listed + section)
+                if reason is None:
+                    self.assertEqual(self.problems(), '')
+                else:
+                    self.assertIn(reason, self.problems())
+        path.write_text(listed + '[buttons]\npon = 0x013\nvolume_up = 0x18d\n')
+        text = boards.table_text(*boards.load())
+        self.assertIn('.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .ee = 0 },', text)
+        self.assertIn('.buttons = { .pon = 0x013, .volume_up = 0x18d },', text)
+
     def test_an_audio_dsp_is_described(self):
         path = self.dir / 'devices/phone/board.toml'
         self.board('"cpufreq-epss"', '"cpufreq-epss", "adsp"')
@@ -385,11 +446,37 @@ class DeviceTree(Sandbox):
         self.assertEqual(soc['clocks'], {'gcc': 0x100000, 'dispcc': 0xaf00000})
         self.assertEqual(soc['platform'], {'gic_dist': 0x17a00000, 'gic_redist': 0x17a60000, 'psci': 'smc',
                                            'cores': 4, 'core_shift': 8, 'small_cores': 0b0011})
+        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0})
+        # the power-on block of the PMIC that is slave 0; GPIO6 of the one that is slave 1 (0x8800 + 0x100 * 5)
+        self.assertEqual(board['buttons'], {'pon': 0x013, 'pon_name': "the PMK8350's power-on block",
+                                            'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM8350'})
         light = board['backlight']
         self.assertEqual((light['type'], light['panel_mode'], light['min'], light['max'], light['restore'], light['bytes'],
                           light['byte_order']), ('dcs', 'command', 1, 0x7ff, 0x133, 2, 'msb-first'))
         self.assertTrue(any('several panels' in note for note in notes))
         self.assertTrue(any('dispcc_mdss_gdscr' in note for note in notes))
+
+    def test_the_keys_are_found_in_a_source_tree_too(self):
+        # as a vendor writes it: the GPIO controller by its label, the PMIC's slave in its node's name only
+        source = '''/ { soc { spmi_bus: qcom,spmi@c440000 {
+            compatible = "qcom,spmi-pmic-arb";
+            reg = <0xc440000 0x1100>, <0xc600000 0x2000000>, <0xe600000 0x100000>, <0xe700000 0xa0000>, <0xc40a000 0x26000>;
+            reg-names = "core", "chnls", "obsrvr", "intr", "cnfg";
+            qcom,ee = <0>;
+            qcom,pm7325@1 { compatible = "qcom,spmi-pmic"; reg = <1 SPMI_USID>;
+                pm7325_gpios: pinctrl@8800 { compatible = "qcom,pm7325-gpio"; reg = <0x8800>; }; };
+        }; };
+        gpio_keys { compatible = "gpio-keys";
+            vol_up { gpios = <&pm7325_gpios 6 GPIO_ACTIVE_LOW>; linux,code = <0x73>; }; }; };'''
+        soc, board, notes = boards.from_dts(source)
+        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0})
+        self.assertEqual(board['buttons'], {'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM7325'})
+
+    def test_a_key_that_is_not_on_a_pmic_is_left_to_be_filled_in(self):
+        soc, board, notes = boards.from_dts('''/ { tlmm: pinctrl@f000000 { phandle = <0x10>; };
+            gpio_keys { compatible = "gpio-keys"; vol_up { gpios = <0x10 0x20 0x01>; linux,code = <0x73>; }; }; };''')
+        self.assertNotIn('buttons', board)
+        self.assertTrue(any('volume_up is to be filled in by hand' in note for note in notes))
 
     def test_a_panel_without_dcs_brightness_is_dimmed_in_software(self):
         soc, board, notes = boards.from_dts(DTS, panel='qcom,mdss_dsi_second_video')
@@ -416,6 +503,14 @@ class DeviceTree(Sandbox):
         path.write_text(text)
         self.assertEqual(self.problems(), '')
         self.assertIn('.raw_min = 1, .raw_max = 2047, .raw_restore = 307,', boards.table_text(*boards.load()))
+        # the keys were found: listing the feature is all that is left to do for them
+        board = self.dir / 'devices/phone2/board.toml'
+        self.assertIn('[buttons]\npon = 0x013\npon_name = "the PMK8350\'s power-on block"\nvolume_up = 0x18d\n'
+                      'volume_up_name = "GPIO6 of the PM8350"\n', board.read_text())
+        board.write_text(board.read_text().replace('features = []', 'features = ["buttons-pmic"]'))
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.buttons = { .pon = 0x013, .volume_up = 0x18d, .pon_name = "the PMK8350\'s power-on block", '
+                      '.volume_up_name = "GPIO6 of the PM8350" },', boards.table_text(*boards.load()))
 
     def test_an_existing_board_is_not_overwritten(self):
         with self.assertRaises(SystemExit):

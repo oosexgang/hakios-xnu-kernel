@@ -29,6 +29,7 @@ TABLE = ROOT / 'kernel/overlay/bsd/dev/hakios_board_table.h'
 PLATFORMS = ROOT / 'loader/platforms.h'
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9-]*$')
+KEY_VOLUMEUP = 0x73     # Linux's input-event-codes.h: what gpio-keys calls the key in linux,code
 
 
 
@@ -48,6 +49,7 @@ SOC_SCHEMA = {
                'dispcc_mdss_pclk0_cbcr': (int, False), 'dispcc_mdss_mdp_cbcr': (int, False)},
     'display': {'dsi0': (int, True), 'intf1': (int, False)},
     'thermal': {'tsens': ([int], True)},
+    'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'ee': (int, False)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
 BOARD_SCHEMA = {
@@ -56,6 +58,7 @@ BOARD_SCHEMA = {
                   'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
+    'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory_size': (int, True), 'charge_counter_divisor': (int, False)},
     'gpu': {'model': (str, True), 'chip_id': (int, True), 'firmware': (str, True), 'gmem_kb': (int, True),
             'primitive_fifo': (int, True), 'hang_cycles': (int, True), 'uche_cmdq_config': (int, False),
@@ -67,9 +70,9 @@ BOARD_SCHEMA = {
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display'}
+FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi'}
 # ... and of the board's own file
-FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp'}
+FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
@@ -171,7 +174,7 @@ def load(problems=None):
                 problems.add(rel, f'feature "{feature}" is not one the kernel knows ({", ".join(sorted(known))})')
             elif FEATURE_NEEDS.get(feature) and FEATURE_NEEDS[feature] not in soc:
                 problems.add(rel, f'feature "{feature}" needs [{FEATURE_NEEDS[feature]}] in soc/{data.get("soc")}.toml')
-            elif FEATURE_NEEDS_OF_BOARD.get(feature) and FEATURE_NEEDS_OF_BOARD[feature] not in data:
+            if FEATURE_NEEDS_OF_BOARD.get(feature) and FEATURE_NEEDS_OF_BOARD[feature] not in data:
                 problems.add(rel, f'feature "{feature}" needs a [{FEATURE_NEEDS_OF_BOARD[feature]}] section')
         boards[name] = data
         if not well_formed:
@@ -197,6 +200,15 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        keys = data.get('buttons')
+        if keys is not None:
+            for key in ('pon', 'volume_up'):
+                # slave << 8 | peripheral: sixteen slaves on the bus, and no peripheral 0 for a key
+                if not 0 < keys[key] <= 0xfff or keys[key] & 0xff == 0:
+                    problems.add(f'{rel} [buttons]', f'{key} = {keys[key]:#x}: SPMI slave << 8 | the high byte of the '
+                                                     "peripheral's registers (0x18d: slave 1, registers 0x8d00)")
+            if keys['pon'] == keys['volume_up']:
+                problems.add(f'{rel} [buttons]', 'pon and volume_up are two peripherals')
         adsp = data.get('adsp')
         if adsp is not None:
             if adsp['memory_size'] == 0 or adsp['memory_size'] & 0xfff:
@@ -325,6 +337,14 @@ def table_text(socs, boards):
                     f'\t\t\t.epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x},',
                     f'\t\t\t.domain_cores = {{ {groups} }},',
                     '\t\t},']
+        spmi = soc.get('spmi')
+        if spmi:
+            out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '
+                       f'.observer = {spmi["observer"]:#010x}, .ee = {spmi.get("ee", 0)} }},')
+        keys = board.get('buttons')
+        if keys:
+            names = ''.join(f', .{key} = {c_string(keys[key])}' for key in ('pon_name', 'volume_up_name') if key in keys)
+            out.append(f'\t\t.buttons = {{ .pon = {keys["pon"]:#05x}, .volume_up = {keys["volume_up"]:#05x}{names} }},')
         adsp = board.get('adsp')
         if adsp:
             out.append(f'\t\t.adsp = {{ .firmware = {c_string(adsp["firmware"])}, .memory_size = {adsp["memory_size"]:#010x}, '
@@ -419,8 +439,8 @@ def platforms_text(socs, boards):
 # ---- an Android device tree source, read for what a board file wants -----------------------------
 
 class Node:
-    def __init__(self, name):
-        self.name, self.props, self.children = name, {}, []
+    def __init__(self, name, parent=None, labels=()):
+        self.name, self.props, self.children, self.parent, self.labels = name, {}, [], parent, list(labels)
 
     def walk(self):
         yield self
@@ -436,7 +456,7 @@ def parse_dts(text):
     text = re.sub(r'(?m)//.*$', '', text)
     position, root = 0, Node('/')
     stack = [root]
-    token = re.compile(r'\s*(?:(?P<close>\}\s*;)|(?P<node>(?:[\w,.+-]+:\s*)*(?P<name>[\w,.+@/-]+)\s*\{)|'
+    token = re.compile(r'\s*(?:(?P<close>\}\s*;)|(?P<node>(?P<labels>(?:[\w,.+-]+:\s*)*)(?P<name>[\w,.+@/-]+)\s*\{)|'
                        r'(?P<prop>[\w,.+#?-]+)\s*(?:=\s*(?P<value>(?:"(?:[^"\\]|\\.)*"|<[^>]*>|\[[^\]]*\]|[^;"<\[])*))?;)')
     while position < len(text):
         match = token.match(text, position)
@@ -450,7 +470,7 @@ def parse_dts(text):
             if len(stack) > 1:
                 stack.pop()
         elif match['node']:
-            node = Node(match['name'])
+            node = Node(match['name'], stack[-1], re.findall(r'([\w,.+-]+):', match['labels']))
             stack[-1].children.append(node)
             stack.append(node)
         else:
@@ -489,12 +509,34 @@ def unit_address(node):
     return int(node.name.split('@', 1)[1], 16) if '@' in node.name and re.fullmatch(r'[0-9a-fA-F]+', node.name.split('@', 1)[1]) else None
 
 
+def referred(tree, value):
+    """The node a property's first reference points at: <&label ...> in a source, <phandle ...> in a
+    tree that was compiled and dumped again."""
+    label = re.search(r'<\s*&([\w,.+-]+)', value or '')
+    if label:
+        return next((node for node in tree.walk() if label[1] in node.labels), None)
+    numbers = cells(value)
+    if not numbers:
+        return None
+    return next((node for node in tree.walk() if cells(node.props.get('phandle')) == numbers[:1]), None)
+
+
+def pmic_of(node):
+    """(SPMI slave, name) of the PMIC a peripheral's node is in: qcom,pm8350@1 { ... } is slave 1, "PM8350"."""
+    pmic = node.parent
+    if pmic is None or 'qcom,spmi-pmic' not in strings(pmic.props.get('compatible')):
+        return None, None
+    reg = cells(pmic.props.get('reg'))
+    slave = reg[0] if reg else unit_address(pmic)
+    return slave, pmic.name.split('@')[0].split(',')[-1].upper()
+
+
 def from_dts(text, panel=None):
     """What a device tree says of a board, and what it leaves open. Returns (soc_values, board_values, notes)."""
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform = {}
+    platform, keys = {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -533,6 +575,32 @@ def from_dts(text, panel=None):
             soc.setdefault('clocks', {})['gcc'] = unit_address(node)
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
+        if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):
+            soc['spmi'] = {'core': reg_named(node, 'core'), 'cnfg': reg_named(node, 'cnfg'),
+                           'observer': reg_named(node, 'obsrvr'), 'ee': (cells(node.props.get('qcom,ee')) or [0])[0]}
+        if 'qcom,qpnp-power-on' in compatible and unit_address(node):
+            # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N
+            slave, pmic = pmic_of(node)
+            if slave is not None:
+                keys.update(pon=slave << 8 | unit_address(node) >> 8, pon_name=f"the {pmic}'s power-on block")
+        if 'gpio-keys' in compatible:
+            for key in node.children:
+                code, pins = cells(key.props.get('linux,code')), cells(key.props.get('gpios'))
+                if code != [KEY_VOLUMEUP]:
+                    continue
+                gpios = referred(tree, key.props.get('gpios'))
+                # <&gpios N flags> in a source (the label is not a number), <phandle N flags> once compiled
+                number = pins[0] if '&' in key.props.get('gpios', '') else pins[1] if len(pins) > 1 else None
+                slave, pmic = pmic_of(gpios) if gpios is not None else (None, None)
+                if slave is None or number is None or unit_address(gpios) is None:
+                    notes.append("volume up's key is not a GPIO of a PMIC (or its controller is not in this tree): "
+                                 '[buttons] volume_up is to be filled in by hand')
+                    continue
+                # GPIO n of pinctrl@8800 has its registers at 0x8800 + 0x100 * (n - 1)
+                keys.update(volume_up=slave << 8 | ((unit_address(gpios) >> 8) + number - 1),
+                            volume_up_name=f'GPIO{number} of the {pmic}')
+    if keys:
+        board['buttons'] = keys
     if tsens:
         soc['thermal'] = {'tsens': sorted(set(tsens))[:2]}
     if cpus:
@@ -630,6 +698,14 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         if key in light:
             lines.append(f'{key} = {toml_value(light[key])}')
     lines.append('')
+    keys = board.get('buttons', {})
+    if 'pon' in keys and 'volume_up' in keys:
+        lines += ['# The keys on the PMICs, for the feature "buttons-pmic": SPMI slave << 8 | the high byte of the',
+                  "# peripheral's registers.",
+                  '[buttons]']
+        lines += [f'{key} = {keys[key]:#05x}' if isinstance(keys[key], int) else f'{key} = {toml_value(keys[key])}'
+                  for key in ('pon', 'pon_name', 'volume_up', 'volume_up_name') if key in keys]
+        lines.append('')
     board_path.parent.mkdir(parents=True)
     board_path.write_text('\n'.join(lines))
     print(f'wrote {board_path.relative_to(ROOT)}')
@@ -645,7 +721,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
             for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
                 text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
             text.append('')
-        for section in ('display', 'thermal', 'cpufreq'):
+        for section in ('display', 'spmi', 'thermal', 'cpufreq'):
             if section in soc:
                 text.append(f'[{section}]')
                 text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]
