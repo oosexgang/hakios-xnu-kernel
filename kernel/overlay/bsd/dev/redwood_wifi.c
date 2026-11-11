@@ -422,8 +422,8 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
  * how long. Who is who: we are processor 0; the Wi-Fi DSP is 13 (dt: qcom,remote-pid of
  * qcom,smp2p-wpss). Nothing here writes to this memory.
  */
-#define SMEM_PHYS               0x80900000UL
-#define SMEM_SIZE               0x00200000u
+#define SMEM_PHYS               ((unsigned long)hakios_board()->ipc.smem)       /* the SoC file's [ipc] */
+#define SMEM_SIZE               (hakios_board()->ipc.smem_size)
 #define SMEM_US                 0
 #define SMEM_WPSS               13
 #define SMEM_GLOBAL             0xfffe          /* both "hosts" of the global partition */
@@ -771,7 +771,7 @@ step_smem(void)
  * is. A message is text; it goes into our mailbox behind its length, the doorbell is rung, and
  * the always-on processor has taken it when the length reads zero.
  */
-static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
+static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's [ipc], at the start */
 #define QMP_MAGIC               0x00
 #define QMP_MAGIC_VALUE         0x4d41494c      /* "LIAM" */
 #define QMP_VERSION             0x04
@@ -797,7 +797,7 @@ static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
  * of its signals; clients: the always-on processor 0, the Wi-Fi DSP 24; signals: 0 the mailbox
  * or GLINK, 2 SMP2P (dt: the mboxes of power-controller@c300000, qcom,smp2p-wpss, glink wpss).
  */
-static struct block ipcc = { "ipcc", 0x00408000, 0x1000 };
+static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's [ipc], at the start */
 #define IPCC_SEND               0x0c            /* write client << 16 | signal: ring it */
 #define IPCC_RECEIVED           0x10            /* who rang us, the same way; all ones: nobody */
 #define IPCC_ENABLE             0x14            /* write: hear that client's signal */
@@ -1903,7 +1903,7 @@ step_image(void)
  * around the allocation only, and released on every way out; Linux waits a second for it,
  * and so does this: a lock that somebody keeps is said, not waited for.
  */
-static struct block smem_lock = { "shared memory's lock", 0x01f43000, 0x1000 };
+static struct block smem_lock = { "shared memory's lock", 0, 0x1000 }; /* where: the SoC file's [ipc], at the start */
 #define LOCK_OWNER              0x000
 #define LOCK_US                 1u
 
@@ -4255,11 +4255,16 @@ redwood_wifi_init(void)
 		return;
 	}
 	if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0 || hakios_board()->pins.tlmm == 0 ||
-	    hakios_board()->spmi.core == 0) {
-		printf("wifi: disabled: the SoC file does not say where RPMh, the pins and the PMIC arbiter are ([rpmh], [pins], "
-		    "[spmi]): the radio's supplies and its enable pins are reached there\n");
+	    hakios_board()->spmi.core == 0 || hakios_board()->ipc.aoss == 0 || hakios_board()->ipc.ipcc == 0 ||
+	    hakios_board()->ipc.smem == 0 || hakios_board()->ipc.smem_lock == 0) {
+		printf("wifi: disabled: the SoC file does not say where RPMh, the pins, the PMIC arbiter and the way to the other "
+		    "processors are ([rpmh], [pins], [spmi], [ipc]): the radio's supplies, its enable pins and its processor are "
+		    "reached there\n");
 		return;
 	}
+	aoss.phys = hakios_board()->ipc.aoss;
+	ipcc.phys = hakios_board()->ipc.ipcc;
+	smem_lock.phys = hakios_board()->ipc.smem_lock;
 	rsc.phys = hakios_board()->rpmh.rsc;
 	tlmm.phys = hakios_board()->pins.tlmm + 0x1000 * FIRST_PIN;
 	arb_core.phys = hakios_board()->spmi.core;
