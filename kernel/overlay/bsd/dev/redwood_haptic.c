@@ -1,13 +1,15 @@
 /*
  * The vibration motor of the POCO X5 Pro (redwood): a linear resonant actuator driven by an
  * Awinic AW86927 (chip ID 0x9270), Android's "haptic_hv" (Xiaomi's driver aw8692x, version 1.7.0).
- * Every address and number below belongs to this phone, from Android's own device tree, its
- * kernel's log and the chip's registers as Android leaves them (read from sysfs, read-only):
+ * Which pins the chip is on and the motor's calibration are the board's ([haptic], hakios_board.h);
+ * the chip's registers and Android's values for them are this driver's. On the phone it was written
+ * for, from Android's own device tree, its kernel's log and the chip's registers as Android leaves
+ * them (read from sysfs, read-only):
  *
  *   I2C        the serial engine 9 (qupv3_se9_i2c at 0xa84000, function qup11 on GPIO 36 data and
  *              37 clock, internal pull-ups, 400 kHz under Android), address 0x5a; done by hand here
- *              as for the amplifiers (redwood_speaker.c), the two pins taken for each transaction
- *              and given back as they were found
+ *              (hakios_i2c_gpio.h), the two pins taken for each transaction and given back as they
+ *              were found
  *   reset      GPIO 35, high = running (Android: low for 5 ms, then high, at its driver's start)
  *   interrupt  GPIO 18, pulled up, low when the chip has something to say (not used: polled)
  *   the motor  f0 175.5 Hz as Android calibrated it (f0_pre 170.0 Hz, calibration data 0x0d)
