@@ -993,8 +993,8 @@ step_pins(void)
 /* ---- step 6: the firmware ------------------------------------------------------------------------------ */
 
 #define PAS_WPSS                6               /* dt: qcom,pas-id of qcom,wpss@8a00000 */
-#define WPSS_MEMORY             0x9ae00000u     /* dt: reserved-memory wlan@9ae00000, that node's memory-region */
-#define WPSS_MEMORY_SIZE        0x01900000u
+#define WPSS_MEMORY             (hakios_board()->wifi.dsp_memory)       /* dt: the reserved memory the DSP's node points at; */
+#define WPSS_MEMORY_SIZE        (hakios_board()->wifi.dsp_memory_size)  /* the board's [wifi] */
 
 extern dev_t mdevlookup(int devid);
 extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
@@ -3998,10 +3998,12 @@ redwood_wifi_init(void)
 	}
 	if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0 || hakios_board()->pins.tlmm == 0 ||
 	    hakios_board()->spmi.core == 0 || hakios_board()->ipc.aoss == 0 || hakios_board()->ipc.ipcc == 0 ||
-	    hakios_board()->ipc.smem == 0 || hakios_board()->ipc.smem_lock == 0 || hakios_board()->smmu.apps == 0) {
+	    hakios_board()->ipc.smem == 0 || hakios_board()->ipc.smem_lock == 0 || hakios_board()->smmu.apps == 0 ||
+	    hakios_board()->wifi.dsp_memory == 0 || hakios_board()->wifi.dsp_memory_size == 0) {
 		printf("wifi: disabled: the SoC file does not say where RPMh, the pins, the PMIC arbiter, the way to the other "
-		    "processors and the SMMU are ([rpmh], [pins], [spmi], [ipc], [smmu]): the radio's supplies, its enable pins, "
-		    "its processor and its addresses are reached there\n");
+		    "processors and the SMMU are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's "
+		    "memory is ([wifi] dsp_memory): the radio's supplies, its enable pins, its processor and its addresses are "
+		    "reached there\n");
 		return;
 	}
 	apps_smmu.phys = hakios_board()->smmu.apps;
