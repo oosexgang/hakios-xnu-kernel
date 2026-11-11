@@ -116,6 +116,12 @@ struct hakios_board {
 		uint32_t ee;                    /* who this system is to the arbiter (the device tree's qcom,ee) */
 	} spmi;
 
+	/* RPMh (soc: [rpmh]): the command database the firmware left, and this system's sequencer */
+	struct {
+		uint32_t cmd_db, cmd_db_size;
+		uint32_t rsc, tcs_offset;       /* the application processor's "drv-2"; where its slot sets begin */
+	} rpmh;
+
 	/* the keys on the PMICs (board: [buttons]); a peripheral is slave << 8 | the high byte of its registers */
 	struct {
 		uint16_t pon;                   /* the power-on block: power, and volume down on its RESIN_N */

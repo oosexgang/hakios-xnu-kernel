@@ -90,6 +90,24 @@ DTS = '''/dts-v1/;
 			reg = <0x00 0x18591000 0x00 0x1000 0x00 0x18592000 0x00 0x1000 0x00 0x18593000 0x00 0x1000>;
 			reg-names = "freq-domain0\\0freq-domain1\\0freq-domain2";
 		};
+		aop_cmd_db@80860000 {
+			compatible = "qcom,cmd-db";
+			reg = <0x00 0x80860000 0x00 0x20000>;
+		};
+		rsc@18200000 {
+			compatible = "qcom,rpmh-rsc";
+			reg = <0x18200000 0x10000 0x18210000 0x10000 0x18220000 0x10000>;
+			reg-names = "drv-0\\0drv-1\\0drv-2";
+			qcom,tcs-offset = <0xd00>;
+			qcom,drv-id = <0x02>;
+		};
+		rsc@af20000 {
+			compatible = "qcom,rpmh-rsc";
+			reg = <0xaf20000 0x10000>;
+			reg-names = "drv-0";
+			qcom,tcs-offset = <0x1c00>;
+			qcom,drv-id = <0x00>;
+		};
 		spmi_bus: qcom,spmi@c440000 {
 			compatible = "qcom,spmi-pmic-arb";
 			reg = <0xc440000 0x1100 0xc600000 0x2000000 0xe600000 0x100000 0xe700000 0xa0000 0xc40a000 0x26000>;
@@ -249,6 +267,7 @@ class Check(Sandbox):
             (self.soc, '[display]\ndsi0 = 0xae94000\n', '', 'backlight type "dcs" needs [display]'),
             (self.soc, '[cpufreq]\nepss = 0x18591000\nepss_domain_size = 0x1000\n', '', 'feature "cpufreq-epss" needs [cpufreq]'),
             (self.soc, 'gcc = 0x100000', 'gcc = 0x100000000', 'a value of 32 bits'),
+            (self.board, '"cpufreq-epss"', '"cpufreq-epss", "ddr-rpmh"', 'feature "ddr-rpmh" needs [rpmh] in soc/sm0001.toml'),
             (self.soc, 'name = "sm0001"', 'name = "sm0002"', 'the file is sm0001.toml'),
             (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\ncpus = 8\nbootargs = ["cpus=8", "two words"]\n[loader]',
              '"two words" is not NAME or NAME=VALUE'),
@@ -416,6 +435,13 @@ class Generate(Sandbox):
                          '.speeds_khz = { 285000, 490000 },', '.speed_levels = { 64, 144 },'):
             self.assertIn(expected, text)
 
+    def test_the_table_carries_rpmh(self):
+        self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "ddr-rpmh"')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.rpmh = { .cmd_db = 0x80860000, .cmd_db_size = 0x20000, .rsc = 0x18220000, .tcs_offset = 0xd00 },',
+                      boards.table_text(*boards.load()))
+
     def test_the_loader_gets_its_platforms(self):
         (self.dir / 'devices/emu').mkdir()
         (self.dir / 'devices/emu/board.toml').write_text(
@@ -455,6 +481,8 @@ class DeviceTree(Sandbox):
                                            'cores': 4, 'core_shift': 8, 'small_cores': 0b0011})
         self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
                                        'channels': 0xc600000})
+        # the application processor's sequencer, not the display's
+        self.assertEqual(soc['rpmh'], {'cmd_db': 0x80860000, 'cmd_db_size': 0x20000, 'rsc': 0x18220000, 'tcs_offset': 0xd00})
         # the power-on block of the PMIC that is slave 0; GPIO6 of the one that is slave 1 (0x8800 + 0x100 * 5)
         self.assertEqual(board['buttons'], {'pon': 0x013, 'pon_name': "the PMK8350's power-on block",
                                             'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM8350'})

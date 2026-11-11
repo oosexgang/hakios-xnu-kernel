@@ -6,7 +6,7 @@ built with a table generated from these files and picks its row at boot.
 | Path | What it says |
 | --- | --- |
 | `devices/NAME/board.toml` | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`[backlight]`), thermal floors (`[thermal]`), its keys, audio DSP and GPU (`[buttons]`, `[adsp]`, `[gpu]`), how the loader recognises it (`[loader]`), its default boot arguments (`[boot]`). |
-| `soc/SOC.toml` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`[platform]`), clock controllers (`[clocks]`), the DSI controller (`[display]`), the PMIC arbiter (`[spmi]`), temperature sensors (`[thermal]`), the CPU frequency block and its groups of cores (`[cpufreq]`). |
+| `soc/SOC.toml` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`[platform]`), clock controllers (`[clocks]`), the DSI controller (`[display]`), the PMIC arbiter (`[spmi]`), RPMh (`[rpmh]`), temperature sensors (`[thermal]`), the CPU frequency block and its groups of cores (`[cpufreq]`). |
 | `devices/_template/board.toml` | Every key, explained. |
 
 ```sh

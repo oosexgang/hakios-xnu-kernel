@@ -314,8 +314,7 @@ load_start(void)
  * left, with what is needed to vote for bandwidth on them -- only read. (membench=2 says the cores
  * together get no more from memory than one alone: 12 GB/s; nobody here votes for more.)
  */
-#define CMD_DB_PHYS             0x80860000UL
-#define CMD_DB_SIZE             0x20000UL
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)      /* where it is: the SoC file's [rpmh] */
 #define CMD_DB_BCM              5               /* the kind of resource in a slave's id: bus clock managers */
 
 struct cmd_db_slave {
@@ -353,7 +352,7 @@ static void
 ddr_look(void)
 {
 	/* (memory, not registers: mapped so that reads of any size and alignment are allowed) */
-	const struct cmd_db_header *db = (const struct cmd_db_header *)ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);
+	const struct cmd_db_header *db = (const struct cmd_db_header *)ml_io_map_wcomb(hakios_board()->rpmh.cmd_db, CMD_DB_SIZE);
 
 	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
 		tell("ddr: no command database\n");
@@ -386,16 +385,15 @@ ddr_look(void)
  * each (sc7280's qcom,tcs-config): every command with an address, and which of them go to the BCMs
  * above -- the bandwidth it asked for, and that is in force whenever the processors are awake.
  */
-#define RSC_PHYS                0x18220000UL
-#define RSC_SIZE                0x10000UL
-#define RSC_TCS(n, reg)         (0xd00 + 0x2a0 * (n) + (reg))
+#define RSC_SIZE                0x10000UL       /* where it is: the SoC file's [rpmh] */
+#define RSC_TCS(n, reg)         (hakios_board()->rpmh.tcs_offset + 0x2a0 * (n) + (reg))
 #define RSC_TCS_COUNT           9
 #define RSC_CMDS                16
 
 static void
 ddr_slots(void)
 {
-	vm_offset_t rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
+	vm_offset_t rsc = ml_io_map(hakios_board()->rpmh.rsc, RSC_SIZE);
 
 	for (unsigned t = 0; t < RSC_TCS_COUNT; t++) {
 		uint32_t enabled = *(volatile uint32_t *)(rsc + RSC_TCS(t, 0x1c));
@@ -450,7 +448,7 @@ extern void redwood_rpmh_unlock(void);
 static uint32_t
 cmd_db_address(const char *name)
 {
-	const struct cmd_db_header *db = (const struct cmd_db_header *)ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);
+	const struct cmd_db_header *db = (const struct cmd_db_header *)ml_io_map_wcomb(hakios_board()->rpmh.cmd_db, CMD_DB_SIZE);
 	char id[8] = { 0 };
 
 	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
@@ -540,7 +538,7 @@ ddr_raise(void)
 		tell("ddr: no vote (MC0 %#x, SH0 %#x, ACV %#x, vote %u)\n", ddr_mc0, ddr_sh0, ddr_acv, vote);
 		return;
 	}
-	ddr_rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
+	ddr_rsc = ml_io_map(hakios_board()->rpmh.rsc, RSC_SIZE);
 	redwood_rpmh_lock();
 	ddr_voted = ddr_vote(vote);
 	redwood_rpmh_unlock();
@@ -578,12 +576,14 @@ redwood_cpufreq_init(void)
 	enabled = 2;
 	PE_parse_boot_argn("ddr", &enabled, sizeof(enabled));
 	/*
-	 * renoir (SM7350) has the command database, the application processor's RPMh sequencer ("DRV 2",
-	 * its first slot set an active one) and the BCMs MC0, SH0 and ACV where redwood has them
-	 * (renoir.dts: cmd-db at 0x80860000, apps_rsc drv-2 at 0x18220000, tcs-offset 0xd00).
+	 * Where the command database and the application processor's RPMh sequencer ("DRV 2") are comes
+	 * from the SoC file's [rpmh]. What is taken for granted beyond that, as on both phones so far: the
+	 * sequencer's first slot set is an active one, and the BCMs are named MC0, SH0 and ACV.
 	 */
 	if (!hakios_board_has(HAKIOS_HAS_DDR_RPMH)) {
 		if (enabled != 0) tell("ddr: no RPMh vote on this board (its board.toml lists no \"ddr-rpmh\")\n");
+	} else if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0) {
+		tell("ddr: no RPMh vote: the SoC file has no [rpmh]\n");
 	} else if (enabled == 1) {
 		ddr_look();
 		ddr_slots();

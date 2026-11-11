@@ -27,6 +27,13 @@ observer = 0x0e600000               # reads
 channels = 0x0c600000               # writes
 ee = 0                              # qcom,ee: which of the arbiter's systems this one is
 
+# RPMh, for the memory bandwidth vote (feature "ddr-rpmh").
+[rpmh]
+cmd_db = 0x80860000                 # reserved-memory, compatible "qcom,cmd-db": the resources' names and addresses
+cmd_db_size = 0x20000
+rsc = 0x18220000                    # apps_rsc (qcom,rpmh-rsc), reg "drv-2": the application processor's sequencer
+tcs_offset = 0xd00                  # qcom,tcs-offset
+
 [thermal]
 tsens = [0x0c263000, 0x0c265000]    # tsens0 and tsens1, reg "tsens_tm_physical"
 

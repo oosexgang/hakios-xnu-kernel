@@ -51,6 +51,7 @@ SOC_SCHEMA = {
     'thermal': {'tsens': ([int], True)},
     'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'channels': (int, False),
              'ee': (int, False)},
+    'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
 BOARD_SCHEMA = {
@@ -71,7 +72,7 @@ BOARD_SCHEMA = {
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi', 'torch-pm8350c': 'spmi',
+FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi', 'torch-pm8350c': 'spmi', 'ddr-rpmh': 'rpmh',
                  'camera-redwood': 'spmi'}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # ... and of the board's own file
@@ -348,6 +349,10 @@ def table_text(socs, boards):
             out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '
                        f'.observer = {spmi["observer"]:#010x}, .channels = {spmi.get("channels", 0):#010x}, '
                        f'.ee = {spmi.get("ee", 0)} }},')
+        rpmh = soc.get('rpmh')
+        if rpmh:
+            out.append(f'\t\t.rpmh = {{ .cmd_db = {rpmh["cmd_db"]:#010x}, .cmd_db_size = {rpmh["cmd_db_size"]:#x}, '
+                       f'.rsc = {rpmh["rsc"]:#010x}, .tcs_offset = {rpmh["tcs_offset"]:#x} }},')
         keys = board.get('buttons')
         if keys:
             names = ''.join(f', .{key} = {c_string(keys[key])}' for key in ('pon_name', 'volume_up_name') if key in keys)
@@ -543,7 +548,7 @@ def from_dts(text, panel=None):
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys = {}, {}
+    platform, keys, rpmh = {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -587,6 +592,18 @@ def from_dts(text, panel=None):
                            'observer': reg_named(node, 'obsrvr'), 'ee': (cells(node.props.get('qcom,ee')) or [0])[0]}
             if reg_named(node, 'chnls'):
                 soc['spmi']['channels'] = reg_named(node, 'chnls')
+        if 'qcom,cmd-db' in compatible:
+            reg = cells(node.props.get('reg'))
+            if len(reg) in (2, 4):              # address and size, of one cell each or two
+                half = len(reg) // 2
+                rpmh.update(cmd_db=reg[half - 1], cmd_db_size=reg[-1])
+        if 'qcom,rpmh-rsc' in compatible and reg_named(node, 'drv-2'):
+            # the application processor's: the one whose drv-2 is this system's (qcom,drv-id = <2>)
+            if cells(node.props.get('qcom,drv-id')) in ([], [2]):
+                rpmh['rsc'] = reg_named(node, 'drv-2')
+                offset = cells(node.props.get('qcom,tcs-offset'))
+                if offset:
+                    rpmh['tcs_offset'] = offset[0]
         if 'qcom,qpnp-power-on' in compatible and unit_address(node):
             # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N
             slave, pmic = pmic_of(node)
@@ -608,6 +625,8 @@ def from_dts(text, panel=None):
                 # GPIO n of pinctrl@8800 has its registers at 0x8800 + 0x100 * (n - 1)
                 keys.update(volume_up=slave << 8 | ((unit_address(gpios) >> 8) + number - 1),
                             volume_up_name=f'GPIO{number} of the {pmic}')
+    if all(key in rpmh for key in ('cmd_db', 'cmd_db_size', 'rsc', 'tcs_offset')):
+        soc['rpmh'] = rpmh
     if keys:
         board['buttons'] = keys
     if tsens:
@@ -730,7 +749,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
             for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
                 text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
             text.append('')
-        for section in ('display', 'spmi', 'thermal', 'cpufreq'):
+        for section in ('display', 'spmi', 'rpmh', 'thermal', 'cpufreq'):
             if section in soc:
                 text.append(f'[{section}]')
                 text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]
