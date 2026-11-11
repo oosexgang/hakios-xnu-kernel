@@ -67,23 +67,27 @@ run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 # the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" "$HERE/fakekernel/fakekernel.c")
+	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" "$HERE/fakekernel/fakekernel.c")
+# (the last is the example driver of docs/writing-a-driver.md, which lives beside the guide)
+EXAMPLES=$HERE/../docs/examples
 scenarios() {
 	local runner=$1 binary=$2 scenario
 	for scenario in $($runner "$binary"); do
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in board_test spmi_test cmd_db_test rpmh_test tlmm_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test; do
+for test in board_test spmi_test cmd_db_test rpmh_test tlmm_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test example_led_test; do
+	source=$HERE/$test.c
+	[ -f "$source" ] || source=$EXAMPLES/$test.c
 	echo "== $test (host)"
-	if "$CC" "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test"; then
+	if "$CC" "${DRIVER_FLAGS[@]}" "$source" -o "$WORK/$test"; then
 		scenarios "" "$WORK/$test"
 	else
 		failed=1
 	fi
 	if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
 		echo "== $test (aarch64, qemu-aarch64)"
-		if aarch64-linux-gnu-gcc -static "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test.a64"; then
+		if aarch64-linux-gnu-gcc -static "${DRIVER_FLAGS[@]}" "$source" -o "$WORK/$test.a64"; then
 			scenarios qemu-aarch64 "$WORK/$test.a64"
 		else
 			failed=1
