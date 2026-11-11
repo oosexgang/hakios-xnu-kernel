@@ -192,6 +192,25 @@ flash_root(const char *dev)
 	if (!ok) {
 		return;
 	}
+	/*
+	 * A system image of ours (ios/tools/mkimage26.py: /sbin/launchd is stage0, Apple's is launchd.ios) has in
+	 * it what is put in place below on Apple's own volume: our launchd jobs, which iOS 26 and 27 take for
+	 * system services only from the system volume itself, the audio device, the applications in
+	 * /Applications, the dyld shared cache, a /redwood. It only becomes the root.
+	 */
+	if (stat("/flash/sbin/launchd.ios", &fw_st) == 0) {
+		printf("  a system image of ours: its jobs, applications and shared cache are in it\n");
+		ok = sysctlbyname("kern.redwood_switch_root", NULL, NULL, "/flash private/preboot", 22) == 0;
+		if (!ok) {
+			printf("  switching the root: %s\n", strerror(errno));
+		}
+		check(ok, "the system image is the root, the RAM part of the boot on /private/preboot");
+		if (ok) {
+			chdir("/");
+			check(bind_dir("/private/preboot/redwood", "/redwood"), "this image back on /redwood");
+		}
+		return;
+	}
 	check(synthetic_dir("/flash/redwood"), "a synthetic /redwood on it, for this image");
 	check(bind_dir(in_image("/LaunchDaemons"), "/flash/System/Library/LaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/NanoLaunchDaemons") &&
