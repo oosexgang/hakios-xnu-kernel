@@ -200,8 +200,8 @@ Stated plainly, so nobody finds out the hard way:
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
 - **Sound, microphones, camera, Wi-Fi, haptics, flashlight, storage** are written for redwood's parts.
   They are the largest share of the work on a new phone. Where the SoC's pins, its clock controller,
-  RPMh and the way to its other processors are comes from the SoC file (`[pins]`, `[clocks]`, `[rpmh]`,
-  `[ipc]`); which pin a part is on, its
+  RPMh, its SMMU and the way to its other processors are comes from the SoC file (`[pins]`, `[clocks]`,
+  `[rpmh]`, `[smmu]`, `[ipc]`); which pin a part is on, its
   bus and the names of its supplies are still in each driver.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).
