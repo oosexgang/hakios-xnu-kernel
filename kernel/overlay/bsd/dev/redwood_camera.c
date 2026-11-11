@@ -134,9 +134,9 @@ give_up(const char *why)
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
 #define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
-#define TLMM_SIZE               0x100000UL
-#define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
-#define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
+static vm_offset_t tlmm;
+#define HAKIOS_TLMM             tlmm
+#include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 #define CFG_PULL_UP             3
 #define CFG_OUTPUT              (1u << 9)
 #define CFG_FUNCTION(f)         ((uint32_t)(f) << 2)
@@ -144,8 +144,6 @@ give_up(const char *why)
 
 #define PIN_PMIC_SDA            4       /* the serial engine 1's I2C: the PM8008i */
 #define PIN_PMIC_SCL            5
-
-static vm_offset_t tlmm;
 
 /*
  * The four sensors, as Android's device tree has them (cam-sensor2 the macro, cam-sensor0 the wide,
