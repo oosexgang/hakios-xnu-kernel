@@ -41,6 +41,7 @@
 #include <kern/clock.h>
 #include <mach/mach_time.h>
 #include <mach/vm_param.h>
+extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
 #include <sys/systm.h>
 
 #include "MiniIOSurface.h"
@@ -91,8 +92,9 @@ enum {
 	kMsmSubmitQueueNew      = 0x4a,
 	kMsmSubmitQueueClose    = 0x4b,
 	kMsmSubmitQueueQuery    = 0x4c,
+	kHakiosGPUWorked       = 0x7b,         /* ours: how long the 3D core itself has worked, and on how many */
 	kHakiosHost            = 0x7c,         /* ours: pages of the caller's own memory as a buffer (Metal's no-copy buffers) */
-	kHakiosGPUWorked       = 0x7d,         /* ours: how long the 3D core itself has worked, and on how many */
+	kHakiosUserMemory      = 0x7d,         /* ours: pages of the caller's own as a buffer (Linux's userptr: hakios-metal, Turnip) */
 	kHakiosSurface         = 0x7e,         /* ours: an IOSurface's memory as a buffer */
 	kHakiosShow            = 0x7f,         /* ours: pixels of the caller's onto the panel, to see a test's result */
 };
@@ -151,6 +153,11 @@ struct msm_submitqueue_query {
 };
 struct drm_gem_close {
 	uint32_t handle, pad;
+};
+struct hakios_user_memory {
+	uint64_t address, size;                 /* in the caller, in whole pages */
+	uint32_t handle;                        /* back: the buffer */
+	uint32_t flags;
 };
 /*
  * kHakiosHost: `bytes` of the caller's memory from `address` (both 4 KB aligned) as a buffer: the pages are wired and entered
@@ -352,10 +359,17 @@ static uint64_t
 millisecondsUntil(const struct msm_timespec * when)
 {
 	uint64_t now;
-	int64_t left;
+	int64_t left, end;
 
 	absolutetime_to_nanoseconds(mach_continuous_time(), &now);
-	left = when->seconds * (int64_t) NSEC_PER_SEC + when->nanoseconds - (int64_t) now;
+	/* the seconds are the caller's: a number too big to be nanoseconds is a time far ahead (or far behind), not a wrapped one */
+	if (__builtin_mul_overflow(when->seconds, (int64_t) NSEC_PER_SEC, &end) || __builtin_add_overflow(end, when->nanoseconds, &end)) {
+		return when->seconds > 0 && when->nanoseconds >= 0 ? GPU_PATIENCE_MS : 0;
+	}
+	if (end <= 0) {
+		return 0;                       /* (the clock's reading is never negative: this is past) */
+	}
+	left = end - (int64_t) now;
 	if (left <= 0) {
 		return 0;
 	}
@@ -446,6 +460,7 @@ struct gpu_buffer {
 	IOMemoryDescriptor *            memory;         /* NULL: this handle is free */
 	uint8_t *                       kernel;         /* where it is in the kernel */
 	MiniIOSurface *                 surface;        /* whose memory it is, when not its own */
+	bool                            client;         /* the client's own pages (no kernel view: out of the cache by their physical addresses) */
 	uint64_t                        address;        /* the GPU's for it */
 	uint64_t                        size;
 	uint32_t                        flags;
@@ -468,6 +483,7 @@ struct gpu_left {
 	IOMemoryDescriptor *            memory;
 	IOMemoryMap *                   map;            /* gpu_buffer's */
 	MiniIOSurface *                 surface;
+	bool                            client;
 	uint64_t                        address, size;
 	uint32_t                        fence, flags;
 };
@@ -522,6 +538,7 @@ class HakiosGPUUserClient : public IOUserClient
 	void freeBuffer(struct gpu_buffer * b);
 	bool keep(IOMemoryDescriptor * memory, uint8_t * kernel, uint64_t address, uint64_t size, uint32_t flags);
 	IOReturn hostBuffer(struct hakios_host * request);
+	IOReturn userBuffer(struct hakios_user_memory * request);
 	void dropKept(struct gpu_kept * k);
 	void reap(void);
 	IOReturn gemNew(struct msm_gem_new * request);
@@ -575,8 +592,22 @@ HakiosGPUUserClient::start(IOService * provider)
  * written, and must not be somebody else's by then.
  */
 void
-HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
+HakiosGPUUserClient::freeBuffer(struct gpu_buffer * slot)
 {
+	/*
+	 * gpuWait() below lets go of the lock: take the buffer out of its handle first and work on a copy, so that
+	 * a second close of the same handle (or the client's closing) cannot free the same memory and address twice.
+	 */
+	struct gpu_buffer saved = *slot;
+	struct gpu_buffer * b = &saved;
+
+	slot->memory = NULL;
+	slot->surface = NULL;
+	slot->map = NULL;
+	slot->client = false;
+	fBufferCount--;
+	fBufferBytes -= b->size;
+
 	bool busy = hakios_gpu_ready() && b->fence != 0 && !hakios_gpu_done(b->fence);
 
 	if (busy && fLeftCount == GPU_LEFT) {
@@ -588,6 +619,7 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
 		left->memory = b->memory;
 		left->map = b->map;
 		left->surface = b->surface;
+		left->client = b->client;
 		left->address = b->address;
 		left->size = b->size;
 		left->fence = b->fence;
@@ -604,7 +636,8 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
 			if (said++ < 8) {
 				IOLog("HakiosGPU: the GPU is not done with what it was given: a buffer of %llu bytes stays its own\n", b->size);
 			}
-		} else if (b->surface == NULL && hakios_gpu_ready() && keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
+		} else if (b->surface == NULL && !b->client && hakios_gpu_ready() &&
+		    keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
 			b->memory = NULL;               /* (now the kept one's) */
 		} else if (hakios_gpu_ready()) {
 			hakios_gpu_unmap(b->address, b->size);
@@ -620,10 +653,6 @@ HakiosGPUUserClient::freeBuffer(struct gpu_buffer * b)
 			MiniIOSurfaceDrop(b->surface);
 		}
 	}
-	b->memory = NULL;
-	b->surface = NULL;
-	fBufferCount--;
-	fBufferBytes -= b->size;
 }
 
 /* The buffers that were given back early and that the GPU is done with now: freed. With the lock held. */
@@ -637,7 +666,7 @@ HakiosGPUUserClient::reap(void)
 			i++;
 			continue;
 		}
-		if (left->surface == NULL && hakios_gpu_ready() &&
+		if (left->surface == NULL && !left->client && hakios_gpu_ready() &&
 		    keep(left->memory, NULL, left->address, left->size, left->flags)) {
 			left->memory = NULL;
 		} else if (hakios_gpu_ready()) {
@@ -773,6 +802,7 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 	b->flushSize = 0;
 	b->surface = NULL;
 	b->map = NULL;
+	b->client = false;
 	fBufferCount++;
 	fBufferBytes += size;
 	return b;
@@ -1174,6 +1204,81 @@ HakiosGPUUserClient::clientSurfaceBuffer(MiniIOSurface * s, struct hakios_surfac
 	return kIOReturnSuccess;
 }
 
+/*
+ * Pages of the client's own as a buffer, as Linux's userptr: wired for as long as the buffer is there,
+ * entered into the GPU's address space, and seen by the kernel through a mapping of its own (for the
+ * cache: they are ordinary memory, pushed out of this processor's cache at every submission that
+ * names them). Vulkan's VK_EXT_external_memory_host over it (Turnip, tools/mesa/hakios-drm): Metal's
+ * no-copy buffers, CoreAnimation's backing stores.
+ */
+IOReturn
+HakiosGPUUserClient::userBuffer(struct hakios_user_memory * request)
+{
+	IOMemoryDescriptor * memory = NULL;
+	struct gpu_buffer * b;
+	uint64_t began = mach_absolute_time();
+
+	if ((request->address & PAGE_MASK) || (request->size & PAGE_MASK) || request->size == 0 ||
+	    request->size > GPU_BUFFER_MAX) {
+		static uint32_t said;
+
+		if (said++ < 8) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's: not whole pages of %u bytes\n",
+			    request->address, request->size, (unsigned) PAGE_SIZE);
+		}
+		return kIOReturnBadArgument;
+	}
+	/* pages the client may only read (a window server's view of another program's backing store): the GPU reads them only */
+	IOReturn prepared = kIOReturnNoMemory;
+	for (int pass = 0; pass < 2 && prepared != kIOReturnSuccess; pass++) {
+		memory = IOMemoryDescriptor::withAddressRange(request->address, request->size,
+		    pass == 0 ? kIODirectionInOut : kIODirectionOut, fTask);
+		if (memory == NULL) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's: no descriptor\n", request->address, request->size);
+			return kIOReturnNoMemory;
+		}
+		prepared = memory->prepare();
+		if (prepared != kIOReturnSuccess) {
+			memory->release();
+			memory = NULL;
+		} else if (pass == 1) {
+			request->flags |= MSM_BO_GPU_READONLY;
+		}
+	}
+	if (memory == NULL) {
+		static uint32_t said;
+
+		if (said++ < 8) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's cannot be wired: %#x\n",
+			    request->address, request->size, prepared);
+		}
+		return kIOReturnVMError;
+	}
+	IOLockLock(gGPULock);
+	b = newBuffer(memory, 0, request->size, request->flags, &request->handle);
+	if (b != NULL) {
+		b->memory = memory;             /* (its pages unwired as it goes: IOGeneralMemoryDescriptor::free) */
+		b->kernel = NULL;
+		b->client = true;
+		b->seen = true;
+		gGPUStat.surfaces++;
+	}
+	gGPUStat.taking += mach_absolute_time() - began;
+	IOLockUnlock(gGPULock);
+	if (b == NULL) {
+		static uint32_t said;
+
+		if (said++ < 8) {
+			IOLog("HakiosGPU: pages at %#llx (%llu bytes) of the client's: no room for them in the GPU\n",
+			    request->address, request->size);
+		}
+		memory->complete();
+		memory->release();
+		return kIOReturnNoMemory;
+	}
+	return kIOReturnSuccess;
+}
+
 IOReturn
 HakiosGPUUserClient::gemInfo(struct msm_gem_info * request)
 {
@@ -1292,6 +1397,21 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 				b->seed = seed;
 				b->pushed = began;
 			}
+		} else if (b->client) {
+			/* the client's own pages are ordinary memory: out of the cache every time, by their physical addresses */
+			for (uint64_t offset = 0; offset < b->size;) {
+				IOByteCount length = 0;
+				addr64_t phys = b->memory->getPhysicalSegment(offset, &length, kIOMemoryMapperNone);
+
+				if (phys == 0 || length == 0) {
+					break;
+				}
+				length = MIN(length, b->size - offset);
+				flush_dcache64(phys, (unsigned) length, TRUE);
+				offset += length;
+			}
+			gGPUStat.flushed += b->size;
+			continue;
 		} else if (!(b->flags & GPU_BUFFER_HOST) && (!b->seen || !gGPUCached)) {
 			continue;               /* (a kHakiosHost buffer is the program's cached memory: pushed out every time) */
 		}
@@ -1372,8 +1492,9 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 	}
 	reap();
 	if (fSubmits++ < 4) {
+		/* (addresses and words are only set up to `count`: with no command buffer among the commands, the first would be stack garbage) */
 		IOLog("HakiosGPU: submission %u: %u command buffers, the first at %#llx, %u words\n", request->fence, count,
-		    addresses[0], words[0]);
+		    count != 0 ? addresses[0] : 0ull, count != 0 ? words[0] : 0u);
 	}
 	/* every five seconds in which something was submitted: how much, and what it cost here */
 	gGPUStat.submissions++;
@@ -1455,6 +1576,10 @@ HakiosGPUUserClient::show(const struct hakios_show * request)
 	    request->rowBytes < 4 * request->width) {
 		return kIOReturnBadArgument;
 	}
+	/* rowBytes is the caller's own number: without a limit it asks for terabytes of wired memory (no more than a buffer may be) */
+	if (size > GPU_BUFFER_MAX) {
+		return kIOReturnBadArgument;
+	}
 	pixels = (uint8_t *) IOMallocData(size);
 	if (pixels == NULL) {
 		return kIOReturnNoMemory;
@@ -1504,6 +1629,7 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		struct drm_gem_close close;
 		struct hakios_surface surface;
 		struct hakios_host host;
+		struct hakios_user_memory user;
 		struct hakios_show show;
 		struct hakios_worked worked;
 	} r;
@@ -1568,6 +1694,12 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 	case kMsmWaitFence:
 		waitBegan = mach_absolute_time();
 		IOLockLock(gGPULock);
+		/* a fence that was never issued is never done: refuse it, so that waiting for it cannot make gpuWait() declare the GPU dead for every client */
+		if ((int32_t)(r.waitFence.fence - hakios_gpu_last()) > 0) {
+			IOLockUnlock(gGPULock);
+			ret = kIOReturnBadArgument;
+			break;
+		}
 		patience = millisecondsUntil(&r.waitFence.timeout);
 		if (!gpuWait(r.waitFence.fence, patience)) {
 			ret = kIOReturnTimeout;
@@ -1635,6 +1767,9 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		break;
 	case kHakiosHost:
 		ret = hostBuffer(&r.host);
+		break;
+	case kHakiosUserMemory:
+		ret = userBuffer(&r.user);
 		break;
 	default:
 		IOLog("HakiosGPU: request %#x (%zu bytes) is not known here\n", selector, size);

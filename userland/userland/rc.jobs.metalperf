@@ -43,7 +43,7 @@
 #                      machine doing something else as well, and nothing says how much.
 #   XL_CMDLINE without -v, so the kernel's console does not write on the panel (the present
 #                      measurement copies a frame to it).
-#   the .gputime kernel armed, for THE SPLIT: it is the one that answers request 0x7d, so with
+#   the .gputime kernel armed, for THE SPLIT: it is the one that answers request 0x7b, so with
 #                      it each draw case prints the core's own time itself. Arm it with
 #                        cp BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.gputime \
 #                           BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
@@ -56,7 +56,7 @@
 #                      loader's log buffer with interrupts masked -- a few microseconds against
 #                      a quarter of a millisecond, measured not to move the numbers -- and
 #                      about 80 KB of log for this list's ~1300 submissions. Note that reading
-#                      0x7d takes the counters away from the kernel's own five-second report,
+#                      0x7b takes the counters away from the kernel's own five-second report,
 #                      so with both on, those lines will have gaps: expected, not a fault.
 #   XL_SECS=240        the boot, two processes of measurement and room for a slow boot. The
 #                      measuring process took 0.9 s of wall clock and the compute one 0.3 s in
@@ -68,7 +68,7 @@
 # numbers every submission on the machine, this test is not the only thing submitting, and the
 # 1694 "tl: q" lines of logs/225409-run.log could be sorted into three populations by eye (7 us
 # while the 4x4 case ran, 246 while 1080x648 ran, 305 while the panel ran) and no finer. So the
-# kernel now hands the numbers over on request: kHakiosGPUWorked (0x7d) on HakiosGPU answers
+# kernel now hands the numbers over on request: kHakiosGPUWorked (0x7b) on HakiosGPU answers
 # hakios_gpu_worked()'s microseconds, submissions and histogram, reading RESETS them, and --time
 # brackets each case's batched loop with two reads. That needs the kernel parked as
 # mach.development.bcm2837.gputime to be armed (docs/metal.md 10.43 has the cp); an older kernel

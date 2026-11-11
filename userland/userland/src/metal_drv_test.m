@@ -4964,7 +4964,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  * Three ways, in order of how much they can be trusted. The first did not exist when this mode
  * was written and was added because the other two were not enough (docs/metal.md 10.43):
  *
- *   (0) ASK THE KERNEL. Request kHakiosGPUWorked (0x7d) on HakiosGPU answers
+ *   (0) ASK THE KERNEL. Request kHakiosGPUWorked (0x7b) on HakiosGPU answers
  *       hakios_gpu_worked()'s three numbers -- the microseconds the 3D core worked, on how
  *       many submissions, and the histogram -- taken off CP_ALWAYS_ON_COUNTER. Reading resets
  *       them, so each case is bracketed by two reads and gets the core's own time for its own
@@ -5234,7 +5234,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  * arithmetic that produces a confident wrong answer (docs/metal.md 10.43 shows the three
  * populations it did produce, and the ambiguity in their boundaries).
  *
- * So the kernel now hands the numbers over: request kHakiosGPUWorked (0x7d) on HakiosGPU
+ * So the kernel now hands the numbers over: request kHakiosGPUWorked (0x7b) on HakiosGPU
  * answers hakios_gpu_worked()'s three outputs -- the microseconds the 3D core itself worked,
  * on how many submissions, and how many of those were under 0.1, 0.25, 0.5, 1, 2 and 4 ms --
  * measured off CP_ALWAYS_ON_COUNTER at 19.2 ticks a microsecond (bsd/dev/hakios_adreno.c).
@@ -5243,7 +5243,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  *
  * Two things this must never do, and both are why it is written this way:
  *
- *   - IT MUST BE OPTIONAL. An older kernel answers 0x7d with "request 0x7d is not known here"
+ *   - IT MUST BE OPTIONAL. An older kernel answers 0x7b with "request 0x7b is not known here"
  *     and kIOReturnUnsupported, and a zero from that is indistinguishable from a GPU that did
  *     no work. So the first failure disables it for the run and says so in words; it never
  *     prints a zero that could be read as a measurement.
@@ -5268,7 +5268,7 @@ tm_gpu_worked(struct tm_worked *out)
 	if (tm_worked_state < 0 || pic_connection == 0) {
 		return false;
 	}
-	kern_return_t kr = IOConnectCallStructMethod(pic_connection, 0x7d, &in, sizeof(in),
+	kern_return_t kr = IOConnectCallStructMethod(pic_connection, 0x7b, &in, sizeof(in),
 						     out, &size);
 
 	if (kr != KERN_SUCCESS || size < sizeof(*out)) {
@@ -5277,7 +5277,7 @@ tm_gpu_worked(struct tm_worked *out)
 		 * this request, kIOReturnNotReady (0xe00002d8) is this kernel with the Adreno
 		 * not started -- and in the second case nothing else here would be measuring
 		 * either. */
-		printf("drvtest: time: this kernel does not report GPU time: request 0x7d "
+		printf("drvtest: time: this kernel does not report GPU time: request 0x7b "
 		       "answered %#x and gave %zu of %zu bytes (0xe00002c7 is a kernel without "
 		       "the request, 0xe00002d8 is one whose GPU is not started). The GPU's own "
 		       "share is NOT measured in this run -- it is only in the kernel's own "
@@ -5288,7 +5288,7 @@ tm_gpu_worked(struct tm_worked *out)
 		return false;
 	}
 	if (tm_worked_state == 0) {
-		printf("drvtest: time: this kernel reports GPU time (request 0x7d), so each case "
+		printf("drvtest: time: this kernel reports GPU time (request 0x7b), so each case "
 		       "below is bracketed by a read of it. Reading RESETS the kernel's counters, "
 		       "which it shares with its own five-second \"the GPU worked N us\" report -- "
 		       "so that report will have gaps in this boot, and that is this mode's doing "
@@ -6705,7 +6705,7 @@ time_path(id<MTLDevice> dev, const char *metallib, unsigned repeats)
 	       "~0, the split in every line below is wrong\n");
 	printf("drvtest: time: the GPU's share is separated three ways, in order of how much "
 	       "they can be trusted: by ASKING THE KERNEL for the core's own time per case "
-	       "(request 0x7d, if this kernel has it -- the next line says whether it does), "
+	       "(request 0x7b, if this kernel has it -- the next line says whether it does), "
 	       "by subtracting the 4x4 case from the big ones, and by the kernel's own "
 	       "\"tl: q\" lines in this log with gpu_log=1\n");
 	fflush(stdout);
