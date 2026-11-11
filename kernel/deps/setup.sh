@@ -30,6 +30,7 @@ JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}
 CCTOOLS=$THEOS/toolchain/linux/iphone/bin
 IOS_SDK=$THEOS/sdks/iPhoneOS16.5.sdk
 MACOS_SDK_URL=https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz
+MACOS_SDK_SHA256=518e35eae6039b3f64e8025f4525c1c43786cc5cf39459d609852faf091e34be
 
 log() { echo "setup: $*"; }
 die() { echo "setup: $*" >&2; exit 1; }
@@ -84,6 +85,8 @@ stage1() {
 	if [ ! -d MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework/Headers/DriverKit ]; then
 		log "downloading the macOS 13.3 SDK for its DriverKit headers"
 		curl -L --fail --retry 3 -s -o macos-sdk.tar.xz "$MACOS_SDK_URL" || die "download failed: $MACOS_SDK_URL"
+		echo "$MACOS_SDK_SHA256  macos-sdk.tar.xz" | sha256sum -c --quiet ||
+			die "$MACOS_SDK_URL is not the archive this was written with (its SHA-256 differs): not unpacked"
 		tar -xJf macos-sdk.tar.xz --wildcards '*MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework*' ||
 			die "cannot unpack the macOS SDK"
 		rm -f macos-sdk.tar.xz
@@ -163,6 +166,9 @@ stage1_darwin() {
 	if [ ! -d MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework/Headers/DriverKit ]; then
 		log "downloading the macOS 13.3 SDK for its DriverKit headers"
 		curl -L --fail --retry 3 -s -o macos-sdk.tar.xz "$MACOS_SDK_URL" || die "download failed: $MACOS_SDK_URL"
+		# (macOS has shasum, not sha256sum)
+		echo "$MACOS_SDK_SHA256  macos-sdk.tar.xz" | shasum -a 256 -c - > /dev/null ||
+			die "$MACOS_SDK_URL is not the archive this was written with (its SHA-256 differs): not unpacked"
 		# bsdtar takes the member pattern as a glob without --wildcards
 		tar -xJf macos-sdk.tar.xz '*MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework*' ||
 			die "cannot unpack the macOS SDK"

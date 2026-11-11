@@ -20,6 +20,7 @@ mkdir -p "$1"
 D=$(cd "$1" && pwd)
 JOBS=${JOBS:-$(nproc)}
 MACOS_SDK_URL=https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz
+MACOS_SDK_SHA256=518e35eae6039b3f64e8025f4525c1c43786cc5cf39459d609852faf091e34be
 
 log() { echo "stage1: $*"; }
 die() { echo "stage1: $*" >&2; exit 1; }
@@ -54,6 +55,8 @@ fetch unifdef https://github.com/fanf2/unifdef.git 08d12cd3059fe072929ea001ad983
 if [ ! -d "$D/MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework/Headers/DriverKit" ]; then
 	log "downloading the macOS 13.3 SDK for its DriverKit headers"
 	curl -L --fail --retry 3 -s -o "$D/macos-sdk.tar.xz" "$MACOS_SDK_URL" || die "download failed: $MACOS_SDK_URL"
+	echo "$MACOS_SDK_SHA256  $D/macos-sdk.tar.xz" | sha256sum -c --quiet ||
+		die "$MACOS_SDK_URL is not the archive this was written with (its SHA-256 differs): not unpacked"
 	tar -C "$D" -xJf "$D/macos-sdk.tar.xz" --wildcards '*MacOSX13.3.sdk/System/Library/Frameworks/Kernel.framework*' ||
 		die "cannot unpack the macOS SDK"
 	rm -f "$D/macos-sdk.tar.xz"
