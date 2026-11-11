@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Tools
-        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck
+        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld
       - name: make check
         run: make check
       - name: The kernel sources assemble and export back unchanged

@@ -30,6 +30,15 @@ tsens = [0xc263000, 0xc265000]
 [cpufreq]
 epss = 0x18591000
 epss_domain_size = 0x1000
+[platform]
+io_base = 0x400000
+io_size = 0x3fc00000
+gic_dist = 0x17a00000
+gic_redist = 0x17a60000
+cores = 8
+core_shift = 8
+small_cores = 0x0f
+psci = "smc"
 '''
 BOARD = '''name = "phone"
 description = "A phone"
@@ -44,12 +53,29 @@ bytes = 2
 byte_order = "msb-first"
 [thermal]
 floor_mhz = [1000, 1100, 1100]
+[loader]
+fb_base = 0xe1000000
 '''
 # what `dtc -I dtb -O dts` prints for the nodes that matter, cut down
 DTS = '''/dts-v1/;
 / {
+	cpus {
+		cpu@0 { device_type = "cpu"; reg = <0x00 0x00>; enable-method = "psci"; capacity-dmips-mhz = <0x400>; };
+		cpu@100 { device_type = "cpu"; reg = <0x00 0x100>; enable-method = "psci"; capacity-dmips-mhz = <0x400>; };
+		cpu@200 { device_type = "cpu"; reg = <0x00 0x200>; enable-method = "psci"; capacity-dmips-mhz = <0x79a>; };
+		cpu@300 { device_type = "cpu"; reg = <0x00 0x300>; enable-method = "psci"; capacity-dmips-mhz = <0x7c1>; };
+		cpu-map { cluster0 { core0 { cpu = <0x11>; }; }; };
+	};
+	psci {
+		compatible = "arm,psci-1.0";
+		method = "smc";
+	};
 	soc {
 		#address-cells = <0x02>;
+		interrupt-controller@17a00000 {
+			compatible = "arm,gic-v3";
+			reg = <0x00 0x17a00000 0x00 0x10000 0x00 0x17a60000 0x00 0x100000>;
+		};
 		clock-controller@100000 {
 			compatible = "qcom,shima-gcc\\0syscon";
 			reg = <0x00 0x100000 0x00 0x1f0000>;
@@ -116,16 +142,16 @@ class Sandbox(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
-        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE)
+        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS)
         boards.ROOT, boards.DEVICES, boards.SOCS = self.dir, self.dir / 'devices', self.dir / 'soc'
-        boards.TABLE = self.dir / 'table.h'
+        boards.TABLE, boards.PLATFORMS = self.dir / 'table.h', self.dir / 'platforms.h'
         (self.dir / 'devices/phone').mkdir(parents=True)
         (self.dir / 'soc').mkdir()
         (self.dir / 'soc/sm0001.toml').write_text(SOC)
         (self.dir / 'devices/phone/board.toml').write_text(BOARD)
 
     def tearDown(self):
-        boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE = self.saved
+        boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS = self.saved
         shutil.rmtree(self.dir)
 
     def problems(self):
@@ -170,6 +196,9 @@ class Check(Sandbox):
             (self.soc, '[cpufreq]\nepss = 0x18591000\nepss_domain_size = 0x1000\n', '', 'feature "cpufreq-epss" needs [cpufreq]'),
             (self.soc, 'gcc = 0x100000', 'gcc = 0x100000000', 'a value of 32 bits'),
             (self.soc, 'name = "sm0001"', 'name = "sm0002"', 'the file is sm0001.toml'),
+            (self.soc, 'io_base = 0x400000', 'io_base = 0', 'io_base must not be 0'),
+            (self.soc, 'psci = "smc"', 'psci = "telepathy"', 'one of smc, hvc'),
+            (self.soc, 'gic_dist = 0x17a00000\n', '', '"gic_dist" is missing'),
         ]
         for change, old, new, reason in cases:
             with self.subTest(reason=reason):
@@ -182,6 +211,17 @@ class Check(Sandbox):
                 finally:
                     for path, text in saved:
                         path.write_text(text)
+
+    def test_the_loader_tells_boards_apart_by_their_framebuffer(self):
+        for name, loader, reason in (('twin', '[loader]\nfb_base = 0xe1000000\n', 'is also that of'),
+                                     ('emu1', '[loader]\n', None), ('emu2', '[loader]\n', 'more than one board')):
+            (self.dir / 'devices' / name).mkdir()
+            (self.dir / 'devices' / name / 'board.toml').write_text(
+                f'name = "{name}"\ndescription = "x"\nsoc = "sm0001"\nfeatures = []\n[backlight]\ntype = "soft"\n{loader}')
+            if reason:
+                self.assertIn(reason, self.problems())
+            else:
+                self.assertNotIn('emu1', self.problems())
 
     def test_a_soft_board_needs_nothing_of_its_soc(self):
         (self.dir / 'soc/sm0001.toml').write_text('name = "sm0001"\ndescription = "bare"\n')
@@ -207,6 +247,20 @@ class Generate(Sandbox):
             self.assertIn(expected, text)
         self.assertNotIn('*/board.toml', text, 'a path with */ in it would close the header\'s comment')
 
+    def test_the_loader_gets_its_platforms(self):
+        (self.dir / 'devices/emu').mkdir()
+        (self.dir / 'devices/emu/board.toml').write_text(
+            'name = "emu"\ndescription = "An emulator"\nsoc = "sm0001"\nfeatures = []\n[backlight]\ntype = "soft"\n[loader]\n')
+        text = boards.platforms_text(*boards.load())
+        for expected in ('static const struct platform platform_phone = {', '.name = "phone",', '.gic_redist = 0x17a60000,',
+                         '.psci_hvc = 0,', '.core_shift = 8,', '.small_cores = 0xf,', '.fb_base = 0xe1000000,',
+                         'static const struct platform platform_emu = {'):
+            self.assertIn(expected, text)
+        # only a board with a framebuffer to be known by is in the list the loader searches
+        listed = text[text.index('platforms[] = {'):]
+        self.assertIn('&platform_phone,', listed)
+        self.assertNotIn('&platform_emu,', listed)
+
     def test_it_is_the_same_every_time(self):
         self.assertEqual(boards.table_text(*boards.load()), boards.table_text(*boards.load()))
 
@@ -228,6 +282,8 @@ class DeviceTree(Sandbox):
         self.assertEqual(soc['thermal'], {'tsens': [0xc263000, 0xc265000]})
         self.assertEqual(soc['cpufreq'], {'epss': 0x18591000, 'epss_domain_size': 0x1000})
         self.assertEqual(soc['clocks'], {'gcc': 0x100000, 'dispcc': 0xaf00000})
+        self.assertEqual(soc['platform'], {'gic_dist': 0x17a00000, 'gic_redist': 0x17a60000, 'psci': 'smc',
+                                           'cores': 4, 'core_shift': 8, 'small_cores': 0b0011})
         light = board['backlight']
         self.assertEqual((light['type'], light['panel_mode'], light['min'], light['max'], light['restore'], light['bytes'],
                           light['byte_order']), ('dcs', 'command', 1, 0x7ff, 0x133, 2, 'msb-first'))
@@ -254,6 +310,8 @@ class DeviceTree(Sandbox):
         text = path.read_text()
         for key, value in (('gcc_disp_ahb_cbcr', '0x27004'), ('dispcc_mdss_gdscr', '0x3000'), ('dispcc_mdss_ahb_cbcr', '0x2080')):
             text = text.replace(f'# {key} = 0x...            # TO FILL IN', f'{key} = {value}')
+        self.assertIn('"io_base" is missing', problems)
+        text = text.replace('# io_base = 0x00400000', 'io_base = 0x00400000').replace('# io_size = 0x3FC00000', 'io_size = 0x3FC00000')
         path.write_text(text)
         self.assertEqual(self.problems(), '')
         self.assertIn('.raw_min = 1, .raw_max = 2047, .raw_restore = 307,', boards.table_text(*boards.load()))
@@ -270,9 +328,13 @@ class Repository(unittest.TestCase):
         self.assertEqual(list(problems), [])
         self.assertIn('renoir', found)
 
-    def test_the_committed_table_is_what_the_tool_writes(self):
-        self.assertEqual(boards.TABLE.read_text(), boards.table_text(*boards.load()),
-                         'run tools/boards.py gen')
+    def test_the_committed_tables_are_what_the_tool_writes(self):
+        self.assertEqual(boards.TABLE.read_text(), boards.table_text(*boards.load()), 'run tools/boards.py gen')
+        self.assertEqual(boards.PLATFORMS.read_text(), boards.platforms_text(*boards.load()), 'run tools/boards.py gen')
+
+    def test_the_loader_has_its_fallback(self):
+        # loader.c names platform_qemu_virt: the machine whose display matches no board
+        self.assertIn('static const struct platform platform_qemu_virt = {', boards.PLATFORMS.read_text())
 
 
 if __name__ == '__main__':

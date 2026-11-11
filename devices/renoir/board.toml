@@ -21,3 +21,8 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 # The slowest each group of cores is held back to when hot (docs/thermal.md): small, big, prime.
 [thermal]
 floor_mhz = [1000, 1100, 1100]
+
+# No [loader] section yet: this phone is started by the resident USB loader of the team's working tree,
+# which reports the board's name itself. To start it with loader/ under a UEFI, add
+#   [loader]
+#   fb_base = 0x...                 # what loader/ prints at start: "display W x H at ..."

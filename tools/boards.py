@@ -4,8 +4,9 @@
   tools/boards.py list                 the boards, one a line
   tools/boards.py show BOARD           one board with its SoC's values filled in
   tools/boards.py check                validate every file; non-zero exit and the reasons if one is wrong
-  tools/boards.py gen [--check]        write the kernel's table (kernel/overlay/bsd/dev/hakios_board_table.h);
-                                       --check: only say whether the committed one is up to date
+  tools/boards.py gen [--check]        write the kernel's table (kernel/overlay/bsd/dev/hakios_board_table.h) and
+                                       the loader's (loader/platforms.h); --check: only say whether the
+                                       committed ones are up to date
   tools/boards.py new NAME --soc SOC [--dts FILE [--panel NODE]]
                                        start devices/NAME/board.toml (and soc/SOC.toml if it is not there);
                                        with --dts, fill in what an Android device tree source says
@@ -25,12 +26,23 @@ DEVICES = ROOT / 'devices'
 SOCS = ROOT / 'soc'
 BOARD_HEADER = ROOT / 'kernel/overlay/bsd/dev/hakios_board.h'
 TABLE = ROOT / 'kernel/overlay/bsd/dev/hakios_board_table.h'
+PLATFORMS = ROOT / 'loader/platforms.h'
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9-]*$')
 
-# key: (type, required). Types: str, int (32-bit), bool, [int] and so on; a tuple of strings is a choice.
+
+
+class U64(int):
+    """A number of up to 64 bits (an address the loader works with), where int means 32."""
+
+
+# key: (type, required). Types: str, int (32-bit), U64, bool, [int] and so on; a tuple of strings is a choice.
 SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
+    'platform': {'io_base': (U64, True), 'io_size': (U64, True), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
+                 'gic_redist_size': (U64, False), 'gic_redist_stride': (U64, False), 'uart': (U64, False),
+                 'cores': (int, True), 'core_shift': (int, True), 'small_cores': (int, False),
+                 'psci': (('smc', 'hvc'), True), 'timeout_scale': (int, False)},
     'clocks': {'gcc': (int, True), 'gcc_disp_ahb_cbcr': (int, True), 'dispcc': (int, True),
                'dispcc_mdss_gdscr': (int, True), 'dispcc_mdss_ahb_cbcr': (int, True)},
     'display': {'dsi0': (int, True)},
@@ -43,6 +55,7 @@ BOARD_SCHEMA = {
                   'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
+    'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq'}
@@ -80,6 +93,9 @@ def check_table(where, table, schema, problems):
                 problems.add(where, f'{key}: a list of {kind[0].__name__}')
             elif kind[0] is int and any(not 0 <= v <= 0xffffffff for v in value):
                 problems.add(where, f'{key}: values of 32 bits')
+        elif kind is U64:
+            if type(value) is not int or not 0 <= value <= 0xffffffffffffffff:
+                problems.add(where, f'{key} = {value!r}: an address expected')
         elif type(value) is not kind:
             problems.add(where, f'{key} = {value!r}: {kind.__name__} expected')
         elif kind is int and not 0 <= value <= 0xffffffff:
@@ -162,6 +178,12 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        if 'loader' in data:
+            if 'platform' not in soc:
+                problems.add(rel, f'[loader] needs [platform] in soc/{data.get("soc")}.toml')
+            elif soc['platform'].get('io_base') == 0:
+                problems.add(rel, f'soc/{data.get("soc")}.toml [platform]: io_base must not be 0 (XNU then takes the '
+                                  'machine for one without a SoC)')
         thermal = data.get('thermal')
         if thermal is not None:
             if len(thermal.get('floor_mhz', [])) != 3:
@@ -171,6 +193,15 @@ def load(problems=None):
                     problems.add(rel, f'[thermal] needs [{section}] in soc/{data.get("soc")}.toml')
             if len(soc.get('thermal', {}).get('tsens', [])) > 2:
                 problems.add(rel, f'soc/{data.get("soc")}.toml: at most two TSENS controllers')
+    fallbacks = [name for name, data in boards.items() if 'loader' in data and 'fb_base' not in data['loader']]
+    if len(fallbacks) > 1:
+        problems.add('devices', 'more than one board with [loader] and no fb_base (' + ', '.join(fallbacks) +
+                     '): the loader tells boards apart by it, and only the emulator goes without')
+    seen = {}
+    for name, data in boards.items():
+        base = data.get('loader', {}).get('fb_base')
+        if base is not None and seen.setdefault(base, name) != name:
+            problems.add(f'devices/{name}/board.toml [loader]', f'fb_base {base:#x} is also that of {seen[base]}')
     if own and problems:
         raise SystemExit('\n'.join(problems))
     return socs, boards
@@ -255,6 +286,46 @@ def table_text(socs, boards):
     return '\n'.join(out)
 
 
+def platforms_text(socs, boards):
+    """loader/platforms.h: the loader's description of every board with a [loader] section."""
+    out = ['/*',
+           ' * GENERATED by tools/boards.py gen from devices/NAME/board.toml ([loader]) and soc/SOC.toml',
+           ' * ([platform]): do not edit. Included by loader.c, which has struct platform and says what each',
+           ' * field is for.',
+           ' */',
+           '']
+    listed = []
+    for name in sorted(boards):
+        board = boards[name]
+        if 'loader' not in board:
+            continue
+        loader, platform = board['loader'], socs[board['soc']]['platform']
+        symbol = 'platform_' + name.replace('-', '_')
+        fields = [f'.name = {c_string(name)}',
+                  f'.io_base = {platform["io_base"]:#010x}', f'.io_size = {platform["io_size"]:#010x}',
+                  f'.gic_dist = {platform["gic_dist"]:#010x}', f'.gic_redist = {platform["gic_redist"]:#010x}']
+        for key in ('gic_redist_size', 'gic_redist_stride', 'uart'):
+            if key in platform:
+                fields.append(f'.{key} = {platform[key]:#010x}')
+        fields += [f'.psci_hvc = {int(platform["psci"] == "hvc")}',
+                   f'.log_other_cpu = {int(loader.get("log_other_cpu", False))}',
+                   f'.cores = {platform["cores"]}', f'.core_shift = {platform["core_shift"]}',
+                   f'.timeout_scale = {platform.get("timeout_scale", 0)}',
+                   f'.small_cores = {platform.get("small_cores", 0):#x}',
+                   f'.fb_base = {loader.get("fb_base", 0):#010x}']
+        out += [f'/* {board["description"]} ({board["soc"]}) */',
+                f'static const struct platform {symbol} = {{']
+        out += [f'\t{field},' for field in fields]
+        out += ['};', '']
+        if 'fb_base' in loader:
+            listed.append(symbol)
+    out += ['/* the boards told apart by the framebuffer their firmware reports; one that matches none is the emulator */',
+            'static const struct platform *const platforms[] = {']
+    out += [f'\t&{symbol},' for symbol in listed]
+    out += ['};', '']
+    return '\n'.join(out)
+
+
 # ---- an Android device tree source, read for what a board file wants -----------------------------
 
 class Node:
@@ -332,9 +403,22 @@ def from_dts(text, panel=None):
     """What a device tree says of a board, and what it leaves open. Returns (soc_values, board_values, notes)."""
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
-    tsens, panels = [], []
+    tsens, panels, cpus = [], [], []
+    platform = {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
+        if 'arm,gic-v3' in compatible:
+            reg = cells(node.props.get('reg'))
+            if len(reg) == 4:                   # one cell an address
+                platform.update(gic_dist=reg[0], gic_redist=reg[2])
+            elif len(reg) >= 8:                 # two
+                platform.update(gic_dist=reg[0] << 32 | reg[1], gic_redist=reg[4] << 32 | reg[5])
+        if re.fullmatch(r'cpu@[0-9a-fA-F]+', node.name) and 'enable-method' in node.props:
+            reg = cells(node.props.get('reg'))
+            capacity = cells(node.props.get('capacity-dmips-mhz'))
+            cpus.append((reg[-1] if reg else int(node.name.split('@')[1], 16), capacity[0] if capacity else 0))
+        if node.name == 'psci' and strings(node.props.get('method')):
+            platform['psci'] = strings(node.props['method'])[0]
         if reg_named(node, 'dsi_ctrl') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
             soc.setdefault('display', {})['dsi0'] = reg_named(node, 'dsi_ctrl')
         if reg_named(node, 'tsens_tm_physical'):
@@ -355,6 +439,19 @@ def from_dts(text, panel=None):
             panels.append(node)
     if tsens:
         soc['thermal'] = {'tsens': sorted(set(tsens))[:2]}
+    if cpus:
+        # Qualcomm numbers its cores 0x000, 0x100 ...: in MPIDR's second affinity field
+        shift = 8 if any(number >= 0x100 for number, _ in cpus) else 0
+        capacities = [capacity for _, capacity in cpus if capacity]
+        small = 0
+        for number, capacity in cpus:
+            if capacities and capacity == min(capacities) and min(capacities) < max(capacities):
+                small |= 1 << (number >> shift)
+        platform.update(cores=len(cpus), core_shift=shift)
+        if small:
+            platform['small_cores'] = small
+    if platform:
+        soc['platform'] = platform
     if panels:
         chosen = [p for p in panels if p.name == panel] if panel else panels
         if panel and not chosen:
@@ -388,7 +485,8 @@ def from_dts(text, panel=None):
         board['backlight'] = light
     else:
         notes.append('no panel node in the tree (it may be in the dtbo: dump that as well)')
-    for section, keys in (('display', ['dsi0']), ('thermal', ['tsens']), ('cpufreq', ['epss'])):
+    for section, keys in (('display', ['dsi0']), ('thermal', ['tsens']), ('cpufreq', ['epss']),
+                          ('platform', ['gic_dist', 'cores', 'psci'])):
         if not all(key in soc.get(section, {}) for key in keys):
             notes.append(f'[{section}] not found in the tree')
     notes.append('gcc_disp_ahb_cbcr, dispcc_mdss_gdscr and dispcc_mdss_ahb_cbcr are not in a device tree: they are '
@@ -453,6 +551,13 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                 text.append(f'[{section}]')
                 text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]
                 text.append('')
+        if 'platform' in soc:
+            text += ['# What the loader tells the kernel of the machine (loader/loader.c, struct platform).',
+                     '[platform]',
+                     '# io_base = 0x00400000          # TO FILL IN: one window over the SoC\'s peripherals, never 0',
+                     '# io_size = 0x3FC00000          # (these two are what the Snapdragon 7-series ports use)']
+            text += [f'{key} = {toml_value(value)}' for key, value in soc['platform'].items()]
+            text.append('')
         soc_path.write_text('\n'.join(text))
         print(f'wrote {soc_path.relative_to(ROOT)}')
     else:
@@ -510,15 +615,17 @@ def main():
                 for k, v in value.items():
                     print(f'  {k} = {toml_value(v)}')
     elif options.command == 'gen':
-        text = table_text(socs, boards)
-        if options.check:
-            if not TABLE.exists() or TABLE.read_text() != text:
-                print(f'{TABLE.relative_to(ROOT)} is not what devices/ and soc/ say: run tools/boards.py gen', file=sys.stderr)
-                return 1
-            print(f'{TABLE.relative_to(ROOT)}: up to date')
-        else:
-            TABLE.write_text(text)
-            print(f'wrote {TABLE.relative_to(ROOT)}: {len(boards)} boards')
+        stale = 0
+        for path, text in ((TABLE, table_text(socs, boards)), (PLATFORMS, platforms_text(socs, boards))):
+            if not options.check:
+                path.write_text(text)
+                print(f'wrote {path.relative_to(ROOT)}')
+            elif not path.exists() or path.read_text() != text:
+                print(f'{path.relative_to(ROOT)} is not what devices/ and soc/ say: run tools/boards.py gen', file=sys.stderr)
+                stale = 1
+            else:
+                print(f'{path.relative_to(ROOT)}: up to date')
+        return stale
     return 0
 
 

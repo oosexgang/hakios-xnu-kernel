@@ -14,3 +14,4 @@ renoir/tools/a64census
 renoir/tools/pacstrip
 renoir/userland/obj26/
 renoir/userland/obj27/
+*.obj

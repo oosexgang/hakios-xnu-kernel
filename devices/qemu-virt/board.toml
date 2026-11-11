@@ -8,3 +8,6 @@ features = []
 # No panel to tell: the display driver darkens the picture itself.
 [backlight]
 type = "soft"
+
+# The loader's fallback: a machine whose display matches no board is taken for the emulator.
+[loader]

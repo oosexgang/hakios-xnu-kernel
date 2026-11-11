@@ -13,7 +13,7 @@
 - 2026-11-10 已在 Renoir 真机验证：重建的软件渲染内核通过 RAM 启动进入主屏幕，40 项引导检查全部通过。长期稳定性尚未验证。
 - 当前默认关闭 Wi-Fi、声音、相机、触觉和电池支持；尚未实现温控及稳定 60 FPS。
 
-构建及 RAM 启动步骤见 [renoir/docs/ios26-boot.md](renoir/docs/ios26-boot.md)。
+构建及 RAM 启动步骤见 [docs/ios26-boot.md](docs/ios26-boot.md)。
 
 > 实验性项目，需要解锁 Bootloader。Renoir 流程不得刷写、擦除或写入手机存储。仓库中其他机型的工具不属于此 RAM 启动流程。
 

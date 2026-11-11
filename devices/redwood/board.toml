@@ -18,3 +18,8 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 
 [thermal]
 floor_mhz = [1000, 1100, 1100]
+
+# The loader (loader/) under this phone's UEFI. It tells boards apart by the framebuffer the UEFI reports.
+[loader]
+fb_base = 0xE1000000                # the loader prints it at start: "display W x H at ..."
+log_other_cpu = true                # keep notes in the log partition while a kernel starts on another core

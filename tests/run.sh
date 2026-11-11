@@ -26,6 +26,22 @@ python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 "$HERE/../tools/boards.py" gen --check || failed=1
 
+# the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
+# loader/build.sh; left out where they are not installed)
+if command -v clang > /dev/null && command -v lld-link > /dev/null; then
+	echo "== loader (loader/loader.c with the generated loader/platforms.h)"
+	if clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
+		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -c "$HERE/../loader/loader.c" -o "$WORK/loader.obj" &&
+	    lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \
+		"/out:$WORK/loader.efi" "$WORK/loader.obj"; then
+		echo "loader.efi: $(stat -c %s "$WORK/loader.efi") bytes, ok"
+	else
+		failed=1
+	fi
+else
+	echo "== (no clang or lld-link: the loader is not built)"
+fi
+
 echo "== boot-args reference (tools/bootargs.py)"
 python3 "$HERE/bootargs_test.py" 2>&1 | tail -3 || failed=1
 
