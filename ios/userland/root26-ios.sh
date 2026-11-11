@@ -33,7 +33,7 @@ CC="xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding -fno-stack-protec
 LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000"
 $CC -I"$US/libmini" -c "$US/libmini/mini.c" -o "$OBJ/mini.o"
 $CC -c "$US/libmini/start.S" -o "$OBJ/start.o"
-for prog in init stage0; do
+for prog in init stage0 child; do
 	$CC -I"$US/libmini" $LD -o "$OBJ/$prog" "$US/src/$prog.c" "$OBJ/mini.o" "$OBJ/start.o"
 done
 # what the default job list asks the network (net_test waitaddr), as the libraries are: arm64e, pacstrip
@@ -44,10 +44,12 @@ $DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -o "$OBJ/ne
 rm -rf "$T"
 mkdir -p "$T/sbin" "$T/bin" "$T/etc" "$T/lib" "$T/share" "$T/LaunchDaemons"
 cp "$OBJ/init" "$T/sbin/init"
+cp "$OBJ/child" "$T/bin/child"           # (init execs it and collects its exit status: one of its checks)
 cp "$OBJ/net_test" "$T/bin/net_test"
 cp "$OBJ"/*.dylib "$T/lib/"
 cp "$US/rc.launchd" "$T/etc/rc"
-python3 -c "import plistlib, sys; m = plistlib.load(open(sys.argv[1], 'rb')); print('HakiOS: iOS', m['ProductVersion'], m['ProductBuildVersion'])" \
+# (init reads it back and looks for "Darwin" at its start: one of its checks)
+python3 -c "import plistlib, sys; m = plistlib.load(open(sys.argv[1], 'rb')); print('Darwin with iOS', m['ProductVersion'], m['ProductBuildVersion'], 'user space, HakiOS')" \
 	"$IOS/BuildManifest.plist" > "$T/etc/motd"
 # 300000 bytes, byte i = (i*31 + (i>>8)) & 0xff; init verifies it through read() and mmap()
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i*31 + (i>>8)) & 0xff for i in range(300000)))" > "$T/share/pattern.bin"
@@ -223,7 +225,7 @@ for base in ('Applications', 'private/var/staged_system_apps'):
         with info.open('rb') as f:
             info = plistlib.load(f)
             name = info.get('CFBundleExecutable') if 'hidden' not in info.get('SBAppTags', []) else None
-        if name:
+        if name and ' ' not in name:        # (names are separated by blanks in kern.exec_inject)
             names.add(name)
 lines = []
 for line in conf.read_text().splitlines():
