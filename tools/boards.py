@@ -98,6 +98,26 @@ FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'bu
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',), 'camera-redwood': ('spmi',),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh')}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
+# The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
+# first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
+FEATURE_BOOTARGS = {
+    'cpufreq-epss': 'cpufreq=1',
+    'ddr-rpmh': 'ddr=1 looks; ddr=2 with cpufreq=1 votes',
+    'battery-uefi': 'battery=1',
+    'buttons-pmic': 'buttons=1',
+    'adsp': 'adsp=1',
+    'display-scan': 'fb_scan=1, the default',
+    'gpu-a660': 'gpu=1',
+    'virtio': 'virtio_net=1, virtio_input=1',
+    'touch-goodix': 'touchscreen=1',
+    'touch-ft3658u': 'touchscreen=1',
+    'speaker-aw88261': 'speaker_probe=N looks; sound=N with adsp=1',
+    'haptic-aw86927': 'haptic=N',
+    'torch-pm8350c': 'torch=1 looks; torch=3 is the light for iOS',
+    'camera-redwood': 'cam=N',
+    'wifi-wcn6750': 'wifi=1',
+    'mic-wcd938x': 'mic=N with adsp=1',
+}
 # features that are a driver of one part as one phone has it wired, by the first word of their names
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
@@ -191,8 +211,9 @@ def status_text(name, board, soc):
     for _, feature in feature_bits():
         needs = feature_needs(feature, board, soc)
         part = feature.split('-')[0] in PART_DRIVERS
+        how = FEATURE_BOOTARGS.get(feature)
         if feature in listed:
-            line(feature, 'on' + (': STILL NEEDS ' + ', '.join(needs) if needs else ''))
+            line(feature, 'on' + (': STILL NEEDS ' + ', '.join(needs) if needs else f' ({how})' if how else ''))
         elif feature == 'virtio':
             line(feature, "an emulator's devices: not for a phone")
         elif needs:
@@ -200,9 +221,10 @@ def status_text(name, board, soc):
         elif part:
             line(feature, "one part's driver: only if this phone has that part wired the same way (docs/drivers.md)")
         else:
-            line(feature, 'can be listed: what it needs is there')
-    out += ['', 'A feature that is on is started only with its boot argument (docs/boot-args.md); docs/porting.md,',
-            'step 5, has the order to try them in and the log line that says each one worked.', '']
+            line(feature, 'can be listed: what it needs is there' + (f' (then {how})' if how else ''))
+    out += ['', 'A feature that is on is started only with its boot argument, in brackets (docs/boot-args.md has',
+            'them all); docs/porting.md, step 5, has the order to try them in and the log line that says each',
+            'one worked.', '']
     return '\n'.join(out)
 
 

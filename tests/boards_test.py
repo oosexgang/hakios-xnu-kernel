@@ -452,8 +452,8 @@ class Check(Sandbox):
         self.assertIn('phone: A phone (sm0001)', said)
         self.assertRegex(said, r'loader +known by its framebuffer')
         self.assertRegex(said, r'backlight +the panel takes MIPI DCS brightness')
-        self.assertRegex(said, r'cpufreq-epss +on\n')
-        self.assertRegex(said, r'battery-uefi +can be listed')
+        self.assertRegex(said, r'cpufreq-epss +on \(cpufreq=1\)\n')
+        self.assertRegex(said, r'battery-uefi +can be listed: what it needs is there \(then battery=1\)')
         # by the same rules as the checker: what is missing is named, file and section
         self.assertRegex(said, r'buttons-pmic +needs \[spmi\] in soc/sm0001.toml, \[buttons\] in the board file')
         self.assertRegex(said, r'ddr-rpmh +needs \[rpmh\] in soc/sm0001.toml')
@@ -465,7 +465,7 @@ class Check(Sandbox):
         path.write_text(path.read_text() + '[buttons]\npon = 0x013\nvolume_up = 0x18d\n')
         self.assertRegex(status(), r'buttons-pmic +can be listed')
         self.board('"cpufreq-epss"', '"cpufreq-epss", "buttons-pmic"')
-        self.assertRegex(status(), r'buttons-pmic +on\n')
+        self.assertRegex(status(), r'buttons-pmic +on \(buttons=1\)\n')
         # every feature the kernel knows has its line
         for _, feature in boards.feature_bits():
             self.assertRegex(said, rf'(?m)^  {feature} ')
@@ -727,6 +727,15 @@ class Repository(unittest.TestCase):
         socs, found = boards.load(problems)
         self.assertEqual(list(problems), [])
         self.assertIn('qemu-virt', found)
+
+    def test_every_feature_says_how_it_is_started_and_the_argument_is_one_the_kernel_reads(self):
+        reference = (ROOT / 'docs/boot-args.md').read_text()
+        for _, feature in boards.feature_bits():
+            how = boards.FEATURE_BOOTARGS.get(feature)
+            self.assertTrue(how, f'{feature} has no boot argument in FEATURE_BOOTARGS')
+            for argument in re.findall(r'\b([a-z_]+)=', how):
+                self.assertIn(f'| `{argument}` ', reference, f'{feature}: docs/boot-args.md has no {argument}=')
+        self.assertEqual(sorted(set(boards.FEATURE_BOOTARGS) - {name for _, name in boards.feature_bits()}), [])
 
     def test_the_repository_names_no_phone(self):
         # phones are device packages, kept on the devices branch: what the repository tracks under
