@@ -103,10 +103,12 @@ state() {
 		return
 	fi
 	rm -f "$PHONE.ours"                 # (no loader of ours is on USB now)
-	case "$(adb get-state 2>&1)" in
+	# (adb devices and not adb get-state: the first adb command after the computer starts also starts adb's
+	# server and says so, and that answer was taken for no phone at all)
+	case "$(adb devices 2> /dev/null | awk -F '\t' 'NF == 2 { print $2; exit }')" in
 	device) echo android ;;
-	recovery|sideload|rescue) echo recovery ;;
-	*unauthorized*) echo unauthorized ;;
+	recovery | sideload | rescue) echo recovery ;;
+	unauthorized) echo unauthorized ;;
 	*) echo absent ;;
 	esac
 }
