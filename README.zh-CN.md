@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img src="docs/assets/logo-light.svg" alt="HakiOS" width="380">
-  </picture>
+  <img src="docs/assets/banner.svg" alt="hakios" width="830">
 </p>
 
 <p align="center">
@@ -10,11 +7,15 @@
 </p>
 
 <p align="center">
+  <a href="docs/architecture.md">架构</a> · <a href="docs/porting.md">移植</a> · <a href="docs/building.md">构建</a> · <a href="docs/drivers.md">驱动</a> · <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices">设备</a> · <a href="CONTRIBUTING.md">贡献</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/oosexgang/xnu-kernel-qcom/actions/workflows/check.yml"><img alt="checks" src="https://github.com/oosexgang/xnu-kernel-qcom/actions/workflows/check.yml/badge.svg"></a>
-  <a href="docs/README.md"><img alt="documentation" src="https://img.shields.io/badge/docs-read-0b8494"></a>
-  <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices"><img alt="device packages" src="https://img.shields.io/badge/devices-branch-0b8494"></a>
-  <a href="https://t.me/oosexgangdevs"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-oosexgangdevs-26A5E4?logo=telegram&logoColor=white"></a>
-  <a href="kernel/UPSTREAM"><img alt="XNU release" src="https://img.shields.io/badge/XNU-12377.121.6-555"></a>
+  <a href="docs/README.md"><img alt="documentation" src="https://img.shields.io/badge/docs-read-5b6143"></a>
+  <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices"><img alt="device packages" src="https://img.shields.io/badge/devices-branch-5b6143"></a>
+  <a href="https://t.me/oosexgangdevs"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-oosexgangdevs-d8392b?logo=telegram&logoColor=white"></a>
+  <a href="kernel/UPSTREAM"><img alt="XNU release" src="https://img.shields.io/badge/XNU-12377.121.6-3a402e"></a>
 </p>
 
 <p align="center">

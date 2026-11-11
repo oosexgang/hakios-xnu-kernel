@@ -4,6 +4,7 @@ and nothing else, tools/components.py finds a pin that the fetching script no lo
 import contextlib
 import importlib.util
 import io
+import re
 import shutil
 import subprocess
 import tempfile
@@ -141,6 +142,16 @@ class Components(Sandbox):
 
 
 class Repository(unittest.TestCase):
+    def test_the_readmes_name_the_release_the_kernel_is_made_from(self):
+        tag = re.search(r'(?m)^UPSTREAM_TAG=xnu-(\S+)$', (ROOT / 'kernel/UPSTREAM').read_text())[1]
+        for name in ('README.md', 'README.zh-CN.md'):
+            self.assertIn(f'badge/XNU-{tag}-', (ROOT / name).read_text(), f"{name}'s badge is of another release")
+
+    def test_the_banner_is_a_picture_and_nothing_else(self):
+        banner = (ROOT / 'docs/assets/banner.svg').read_text()
+        for unwanted in ('<script', 'href=', '<image', 'http://', 'https://'):
+            self.assertNotIn(unwanted, banner.replace('http://www.w3.org/2000/svg', ''))
+
     def test_this_repository_passes_both(self):
         for name, arguments in (('check-links', []), ('components', ['check'])):
             done = subprocess.run([str(ROOT / 'tools' / f'{name}.py')] + arguments, capture_output=True, text=True)
