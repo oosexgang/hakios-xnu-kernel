@@ -1,6 +1,6 @@
 /*
- * a64census: which instructions in the executable mappings of a dyld shared cache (or of a Mach-O's
- * __TEXT,__text) a Cortex-A78/A55 (ARMv8.2: renoir, SM7350) cannot execute.
+ * a64census: which instructions in the executable mappings of a dyld shared cache a Cortex-A78/A55
+ * (ARMv8.2, as the SM7350 and SM7325 have) cannot execute. A file that is not a cache's is skipped.
  *
  *   a64census FILE...          (every file of a cache: the main file and its subcaches)
  *

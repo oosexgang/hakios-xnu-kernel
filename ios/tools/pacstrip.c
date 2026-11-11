@@ -6,8 +6,8 @@
  *                                   .symbols/.atlas and other non-cache files are copied unchanged)
  *                                   into OUTDIR and rewrite the code sections of every image there
  *   pacstrip macho IN OUT           copy a Mach-O (thin arm64e, or fat with an arm64e slice) and
- *                                   rewrite the code sections of its arm64e slice (the code
- *                                   signature is left as is: the renoir kernel does not enforce it)
+ *                                   rewrite the code sections of its arm64e slice; the page hashes
+ *                                   of its code signature, if it has one, are made again
  *   pacstrip census FILE...         read-only: the same walk and classification over a cache (all
  *                                   its files) or one Mach-O; rewritable classes are reported as
  *                                   "still present" (0 after pacstrip), plus the words of executable

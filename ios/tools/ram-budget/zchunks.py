@@ -5,7 +5,7 @@ fork (0x100 header + 4 + 4 + 8*count table + pieces + 50-byte map), rounded up t
 a file <= 64 KB whose zlib stream fits 3804-16 bytes goes inline (0 blocks); a file stays raw when
 the fork would not take fewer blocks.
 
-usage: rb_zchunks.py OUT.pkl FILE...   (writes {path: [compressed piece sizes]} and prints a table)
+usage: zchunks.py OUT.pkl FILE...   (writes {path: [compressed piece sizes]} and prints a table)
 """
 import os, sys, zlib, pickle
 from multiprocessing import Pool
