@@ -43,6 +43,9 @@ done
 # what the default job list asks the network (net_test waitaddr), as the libraries are: arm64e, pacstrip
 $DYN -fobjc-arc -framework Foundation -framework SystemConfiguration -o "$OBJ/net_test" "$US/src/net_test.m"
 "$PACSTRIP" macho "$OBJ/net_test" "$OBJ/net_test.strip" > /dev/null && mv "$OBJ/net_test.strip" "$OBJ/net_test"
+# touches, buttons and notifications for job lists (RC_JOBS=...; usage in its source): a swipe up unlocks, as a finger does
+$DYN -o "$OBJ/rwtouch" "$US/src/rwtouch.c"
+"$PACSTRIP" macho "$OBJ/rwtouch" "$OBJ/rwtouch.strip" > /dev/null && mv "$OBJ/rwtouch.strip" "$OBJ/rwtouch"
 
 # --- the tree ----------------------------------------------------------------------------------------
 rm -rf "$T"
@@ -50,6 +53,7 @@ mkdir -p "$T/sbin" "$T/bin" "$T/etc" "$T/lib" "$T/share" "$T/LaunchDaemons"
 cp "$OBJ/init" "$T/sbin/init"
 cp "$OBJ/child" "$T/bin/child"           # (init execs it and collects its exit status: one of its checks)
 cp "$OBJ/net_test" "$T/bin/net_test"
+cp "$OBJ/rwtouch" "$T/bin/rwtouch"
 cp "$OBJ"/*.dylib "$T/lib/"
 cp "$US/rc.launchd" "$T/etc/rc"
 # (init reads it back and looks for "Darwin" at its start: one of its checks)
