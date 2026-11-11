@@ -23,7 +23,10 @@ JOBS=${JOBS-"
 	com.apple.powerd com.apple.analyticsd com.apple.logd_helper
 	com.apple.iconservices.iconservicesagent com.apple.pluginkit.pkd
 	com.apple.SpringBoard
+	com.apple.wifid
 "}
+# (wifid: iOS's Wi-Fi daemon, which Settings shows Wi-Fi through; the kernel answers its Apple80211 requests,
+# bsd/dev/hakios_apple80211.c. Where there is no radio it starts, finds none and waits.)
 [ -f "$OBJ/libhakios.dylib" ] || { echo "root26-ios.sh: no libraries in $OBJ: ios/userland/inj26.sh first" >&2; exit 1; }
 [ -s "$IOS/var.skel" ] || { echo "root26-ios.sh: no $IOS/var.skel: ios/tools/unpack.sh makes it" >&2; exit 1; }
 
@@ -266,6 +269,8 @@ else
 cat > $T/etc/rc.jobs <<'EOF'
 # iOS 26/27: towards SpringBoard
 /bin/ps -A
+# (with wifi=1: en0 configured by configd's own Wi-Fi service, or else DHCP asked for it; without, nothing)
+/redwood/bin/net_test wifi
 /redwood/bin/net_test waitaddr en0 60
 /bin/ps -A
 /redwood/bin/net_test waitaddr en0 60
