@@ -7,48 +7,10 @@
  */
 #include "fakekernel.h"
 
-#define PINS            256
-static struct {
-	uint32_t base;
-	uint32_t cfg[PINS], io[PINS];
-	bool input[PINS];               /* what is outside on the pin */
-	unsigned writes, elsewhere;
-	unsigned drove_wrong;           /* a pin became an output while its level was not the one asked for last */
-	int wanted[PINS];               /* -1: nothing asked yet */
-} model;
+#include "tlmm_model.h"
 
-static uint32_t
-rd(vm_offset_t address)
-{
-	uint32_t offset = (uint32_t)(address - model.base), pin = offset / 0x1000, reg = offset % 0x1000;
-
-	if (address < model.base || pin >= PINS || (reg != 0 && reg != 4)) {
-		model.elsewhere++;
-		return 0;
-	}
-	return reg == 0 ? model.cfg[pin] : (model.io[pin] & 2) | (model.input[pin] ? 1 : 0);
-}
-
-static void
-wr(vm_offset_t address, uint32_t value)
-{
-	uint32_t offset = (uint32_t)(address - model.base), pin = offset / 0x1000, reg = offset % 0x1000;
-
-	if (address < model.base || pin >= PINS || (reg != 0 && reg != 4)) {
-		model.elsewhere++;
-		return;
-	}
-	model.writes++;
-	if (reg == 4) {
-		model.io[pin] = value;
-		model.wanted[pin] = (value & 2) ? 1 : 0;
-	} else {
-		if ((value & 1u << 9) && !(model.cfg[pin] & 1u << 9) && model.wanted[pin] < 0) {
-			model.drove_wrong++;    /* an output before anybody said which level */
-		}
-		model.cfg[pin] = value;
-	}
-}
+static uint32_t rd(vm_offset_t address) { return tlmm_model_rd(address); }
+static void wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address, value); }
 
 #define KERNEL 1
 static vm_offset_t tlmm;
@@ -62,11 +24,8 @@ static int failures;
 static void
 pins_at(uint32_t base)
 {
-	model.base = base;
+	tlmm_model_at(base);
 	tlmm = base;
-	for (unsigned i = 0; i < PINS; i++) {
-		model.wanted[i] = -1;
-	}
 }
 
 static unsigned
