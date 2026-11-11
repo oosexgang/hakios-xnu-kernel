@@ -23,5 +23,6 @@ Next to the code:
 | [../kernel/patches/README.md](../kernel/patches/README.md) | What each patch changes in Apple's files. |
 | [../loader/README.md](../loader/README.md) | The loader. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Where a change goes, and the rules. |
+| [../components.toml](../components.toml) | Everything taken from elsewhere, at the exact version, with its licence. |
 
 `base/README.md` and `base/docs/` describe the first generation (iOS 16.5 on redwood and QEMU).
