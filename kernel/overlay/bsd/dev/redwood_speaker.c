@@ -143,122 +143,23 @@ show_pins(void)
 
 /* ---- I2C by hand ----------------------------------------------------------------------------------- */
 
-static void
-half_bit(void)
-{
-	spin_us(5);                     /* 100 kHz at most, I2C's standard mode; the bus does not mind slower */
-}
+#include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken and given back */
 
-/* A line is pulled low (the pin drives 0) or let go (the pin is an input and the pull-up raises it). */
-static void
-line(unsigned pin, bool high)
-{
-	wr(GPIO_IO(pin), 0);
-	wr(GPIO_CFG(pin), CFG_PULL_UP | (high ? 0 : CFG_OUTPUT));
-}
-
-static bool
-level(unsigned pin)
-{
-	return rd(GPIO_IO(pin)) & 1;
-}
-
-static void
-i2c_start(void)
-{
-	line(PIN_SDA, true);
-	line(PIN_SCL, true);
-	half_bit();
-	line(PIN_SDA, false);
-	half_bit();
-	line(PIN_SCL, false);
-	half_bit();
-}
-
-static void
-i2c_stop(void)
-{
-	line(PIN_SDA, false);
-	half_bit();
-	line(PIN_SCL, true);
-	half_bit();
-	line(PIN_SDA, true);
-	half_bit();
-}
-
-/* One bit out (the other side's bit in, if we let the data line go): the clock goes up and down once. */
-static bool
-i2c_bit(bool out)
-{
-	bool in;
-
-	line(PIN_SDA, out);
-	half_bit();
-	line(PIN_SCL, true);
-	for (unsigned stretched = 0; !level(PIN_SCL) && stretched < 100; stretched++) {
-		half_bit();             /* (a device may hold the clock low until it is ready) */
-	}
-	half_bit();
-	in = level(PIN_SDA);
-	line(PIN_SCL, false);
-	return in;
-}
-
-/* Returns true if the byte was acknowledged. */
-static bool
-i2c_write(uint8_t byte)
-{
-	for (int bit = 7; bit >= 0; bit--) {
-		i2c_bit((byte >> bit) & 1);
-	}
-	return !i2c_bit(true);
-}
-
-static uint8_t
-i2c_read(bool more)
-{
-	uint8_t byte = 0;
-
-	for (int bit = 7; bit >= 0; bit--) {
-		byte = (uint8_t)(byte << 1 | i2c_bit(true));
-	}
-	i2c_bit(!more);                 /* acknowledge all but the last byte */
-	return byte;
-}
-
-/*
- * The two pins taken from the serial engine for one transaction, and given back as found. False
- * if the bus is not at rest: then nothing is driven.
- */
-static uint32_t taken_cfg[2], taken_io[2];
+static struct i2c_gpio i2c_bus = { .sda = PIN_SDA, .scl = PIN_SCL };
 
 static bool
 bus_take(void)
 {
-	taken_cfg[0] = rd(GPIO_CFG(PIN_SDA));
-	taken_cfg[1] = rd(GPIO_CFG(PIN_SCL));
-	taken_io[0] = rd(GPIO_IO(PIN_SDA));
-	taken_io[1] = rd(GPIO_IO(PIN_SCL));
-	line(PIN_SDA, true);
-	line(PIN_SCL, true);
-	half_bit();
-	if (!level(PIN_SDA) || !level(PIN_SCL)) {
-		wr(GPIO_IO(PIN_SDA), taken_io[0] & 2);
-		wr(GPIO_IO(PIN_SCL), taken_io[1] & 2);
-		wr(GPIO_CFG(PIN_SDA), taken_cfg[0]);
-		wr(GPIO_CFG(PIN_SCL), taken_cfg[1]);
-		return false;
+	if (i2c_gpio_take(&i2c_bus)) {
+		return true;
 	}
-	return true;
+	return false;
 }
 
 static void
 bus_give_back(void)
 {
-	wr(GPIO_IO(PIN_SDA), taken_io[0] & 2);
-	wr(GPIO_IO(PIN_SCL), taken_io[1] & 2);
-	wr(GPIO_CFG(PIN_SDA), taken_cfg[0]);
-	wr(GPIO_CFG(PIN_SCL), taken_cfg[1]);
+	i2c_gpio_give_back(&i2c_bus);
 }
 
 /* A 16-bit register of an Awinic amplifier, most significant byte first. Returns false if nobody answers. */
@@ -269,20 +170,20 @@ register_read(uint8_t address, uint8_t reg, uint16_t *value)
 
 	if (!bus_take()) {
 		say("speaker: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
-		    level(PIN_SDA), PIN_SCL, level(PIN_SCL));
+		    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
 		return false;
 	}
-	i2c_start();
-	answered = i2c_write((uint8_t)(address << 1)) && i2c_write(reg);
+	i2c_gpio_start(&i2c_bus);
+	answered = i2c_gpio_write(&i2c_bus, (uint8_t)(address << 1)) && i2c_gpio_write(&i2c_bus, reg);
 	if (answered) {
-		i2c_start();
-		answered = i2c_write((uint8_t)(address << 1 | 1));
+		i2c_gpio_start(&i2c_bus);
+		answered = i2c_gpio_write(&i2c_bus, (uint8_t)(address << 1 | 1));
 	}
 	if (answered) {
-		*value = (uint16_t)(i2c_read(true) << 8);
-		*value |= i2c_read(false);
+		*value = (uint16_t)(i2c_gpio_read(&i2c_bus, true) << 8);
+		*value |= i2c_gpio_read(&i2c_bus, false);
 	}
-	i2c_stop();
+	i2c_gpio_stop(&i2c_bus);
 	bus_give_back();
 	return answered;
 }
@@ -294,13 +195,13 @@ register_write(uint8_t address, uint8_t reg, uint16_t value)
 
 	if (!bus_take()) {
 		say("speaker: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
-		    level(PIN_SDA), PIN_SCL, level(PIN_SCL));
+		    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
 		return false;
 	}
-	i2c_start();
-	answered = i2c_write((uint8_t)(address << 1)) && i2c_write(reg) && i2c_write((uint8_t)(value >> 8)) &&
-	    i2c_write((uint8_t)value);
-	i2c_stop();
+	i2c_gpio_start(&i2c_bus);
+	answered = i2c_gpio_write(&i2c_bus, (uint8_t)(address << 1)) && i2c_gpio_write(&i2c_bus, reg) && i2c_gpio_write(&i2c_bus, (uint8_t)(value >> 8)) &&
+	    i2c_gpio_write(&i2c_bus, (uint8_t)value);
+	i2c_gpio_stop(&i2c_bus);
 	bus_give_back();
 	return answered;
 }
