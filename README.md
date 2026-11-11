@@ -88,6 +88,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | Know how boards and packages are described | [devices/README.md](devices/README.md) |
 | Change something and send it back | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Carry over a branch or patch from an earlier layout | [docs/migrating.md](docs/migrating.md) |
+| See what the restructuring changed | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Layout
 

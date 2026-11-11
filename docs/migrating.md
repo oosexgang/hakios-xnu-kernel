@@ -18,7 +18,7 @@ behaviour on redwood changed, and one thing changed on Renoir (below).
 | `renoir/tests/` | `tests/` |
 | `base/xnuloader/` | `loader/` (a link stays in `base/`) |
 | `base/xnu-deps/` | `kernel/deps/` (a link stays in `base/`) |
-| Board checks in drivers (`redwood_board_is("renoir")`) | `devices/NAME/board.toml` and `hakios_board_has()` for whether a driver starts; the name check remains where two phones really differ. |
+| Board checks in drivers (`redwood_board_is("renoir")`) | `devices/NAME/board.toml` and `hakios_board_has()` for whether a driver starts, and a key of the board file where two phones differ. No code compares the board's name any more: `redwood_board_is()` is gone. |
 | Default boot arguments in `boot26.py` | `[boot]` of the phone's board file. It was `devices/renoir/board.toml`; the phones' packages have since moved to the `devices` branch (last section). |
 
 <!-- end -->

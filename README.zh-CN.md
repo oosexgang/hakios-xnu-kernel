@@ -83,6 +83,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | 了解板型和设备包如何描述 | [devices/README.md](devices/README.md) |
 | 修改并提交 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 迁移旧目录结构下的分支或补丁 | [docs/migrating.md](docs/migrating.md) |
+| 了解这次重构改了什么 | [CHANGELOG.md](CHANGELOG.md) |
 
 ## 目录
 
