@@ -167,7 +167,7 @@ software without it.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])` | The driver's feature is listed, but the SoC file has no `[pins]`, or no `[clocks]`. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
+| `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])`, `adsp: disabled: ...`, `wifi: disabled: the SoC file does not say where RPMh is ([rpmh]): ...` | The driver's feature is listed, but the SoC file lacks a section the driver takes addresses from. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
 
 ### GPU ([metal-glass.md](metal-glass.md))
 
