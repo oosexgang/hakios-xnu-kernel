@@ -173,6 +173,7 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_board.h"
+#include "hakios_time.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
@@ -307,27 +308,6 @@ say_kept(void)
 	}
 }
 #define printf say
-
-static void
-sleep_us(uint32_t us)
-{
-	delay_for_interval(us, NSEC_PER_USEC);
-}
-
-static void
-sleep_ms(uint32_t ms)
-{
-	delay_for_interval(ms, NSEC_PER_MSEC);
-}
-
-static uint64_t
-now_us(void)
-{
-	uint64_t nanoseconds;
-
-	absolutetime_to_nanoseconds(mach_absolute_time(), &nanoseconds);
-	return nanoseconds / 1000;
-}
 
 /* Until every write to memory so far has been carried out. */
 static void

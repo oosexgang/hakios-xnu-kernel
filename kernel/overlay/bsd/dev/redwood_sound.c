@@ -84,6 +84,7 @@
 
 #include "hakios_board.h"
 #include "hakios_log.h"
+#include "hakios_time.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);
@@ -113,21 +114,6 @@ say(const char *format, ...)
 	length = hakios_vsay(true, format, list);
 	va_end(list);
 	return length;
-}
-
-static void
-sleep_ms(uint32_t ms)
-{
-	delay_for_interval(ms, NSEC_PER_MSEC);
-}
-
-static uint64_t
-now_us(void)
-{
-	uint64_t nanoseconds;
-
-	absolutetime_to_nanoseconds(mach_absolute_time(), &nanoseconds);
-	return nanoseconds / 1000;
 }
 
 /* The time of day (UTC, as the host gave it: boot-arg epoch) and since the kernel began, for whoever listens. */

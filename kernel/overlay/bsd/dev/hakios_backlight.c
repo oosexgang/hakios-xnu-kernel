@@ -230,15 +230,7 @@ static vm_offset_t dsi, gcc, dispcc;
 /* (each write has reached the controller before the next line runs: a command follows its payload) */
 #define HAKIOS_MMIO_SYNC
 #include "hakios_mmio.h"
-
-static uint64_t
-now_us(void)
-{
-	uint64_t ns;
-
-	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
-	return ns / NSEC_PER_USEC;
-}
+#include "hakios_time.h"
 
 /*
  * May the DSI controller's registers be touched now? The display block powered, the bus clock of its

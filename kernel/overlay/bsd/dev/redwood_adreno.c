@@ -110,6 +110,8 @@ extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
 #include "hakios_board.h"
 #include "hakios_log.h"
+#include "hakios_time.h"
+
 static const struct adreno_board_profile *gpu_profile;
 
 static uint32_t last_step, skip_steps, pause_ms = 2200, fine, watch_seconds = 20;
@@ -140,18 +142,6 @@ say(const char *format, ...)
 	return length;
 }
 #define printf say
-
-static void
-sleep_us(uint32_t us)
-{
-	delay_for_interval(us, NSEC_PER_USEC);
-}
-
-static void
-sleep_ms(uint32_t ms)
-{
-	delay_for_interval(ms, NSEC_PER_MSEC);
-}
 
 /* ---- register access ------------------------------------------------------------------------------- */
 

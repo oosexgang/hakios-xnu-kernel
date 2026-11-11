@@ -45,18 +45,7 @@ extern kern_return_t thread_terminate(thread_t thread);
 static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
 #include "hakios_mmio.h"
-
-static void
-sleep_us(uint32_t us)
-{
-	delay_for_interval(us, NSEC_PER_USEC);
-}
-
-static void
-sleep_ms(uint32_t ms)
-{
-	delay_for_interval(ms, NSEC_PER_MSEC);
-}
+#include "hakios_time.h"
 
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
