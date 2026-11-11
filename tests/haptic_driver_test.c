@@ -25,6 +25,21 @@ extern char log_text[];
 static unsigned resets_released;                /* times the reset pin went from low to high */
 static bool was_high;
 
+/* what is written into the chip, for the levels that write */
+static bool register_written[256];
+static unsigned analog_while_closed;            /* a write to the analog registers (0x70..) without their lock opened */
+static int deaf_register = -1;                  /* a register that does not take what is written into it */
+
+static void
+chip_written(uint8_t reg, uint8_t value)
+{
+	register_written[reg] = true;
+	analog_while_closed += reg >= 0x70 && device.reg[0x5b] != 0x7d;
+	if (reg != deaf_register) {
+		device.reg[reg] = value;
+	}
+}
+
 /* the chip answers while its reset pin is driven high */
 static void
 pins_changed(void)
@@ -75,8 +90,10 @@ phone(const char *name, uint16_t chip)
 	model.after_write = pins_changed;
 	model.cfg[I2C_DEVICE_SDA] = model.cfg[I2C_DEVICE_SCL] = AS_FOUND;
 	model.cfg[RESET] = HELD_IN_RESET;
+	memset(device.reg, 0, sizeof(device.reg));
 	device.reg[0x57] = (uint8_t)(chip >> 8);
 	device.reg[0x58] = (uint8_t)chip;
+	device.written = chip_written;
 	device.absent = true;
 	lines();
 	device.was_sda = device.was_scl = true;
@@ -155,6 +172,87 @@ reset_released(void)
 	never();
 }
 
+/* the registers Android's driver sets, and no others */
+static bool
+only_androids_registers(void)
+{
+	static const uint8_t allowed[] = { 0x03, 0x06, 0x1a, 0x1d, 0x1e, 0x2f, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x46, 0x47, 0x5b,
+		                           0x70, 0x71, 0x72, 0x74, 0x75, 0x79 };
+
+	for (unsigned reg = 0; reg < 256; reg++) {
+		bool ok = false;
+
+		for (unsigned i = 0; i < sizeof(allowed); i++) {
+			ok |= allowed[i] == reg;
+		}
+		if (register_written[reg] && !ok) {
+			fprintf(stderr, "register %#04x was written\n", reg);
+			return false;
+		}
+	}
+	return true;
+}
+
+/* haptic=3: Android's configuration, each write read back; the analog registers only while their lock is open */
+static void
+configured(void)
+{
+	/* what Android leaves in them, written down here a second time: the boost's voltage and the drive
+	 * levels are the motor's limits, and a changed number in the driver is to fail this test */
+	static const uint8_t androids[][2] = {
+		{ 0x03, 0x59 }, { 0x06, 0x47 }, { 0x1a, 0x71 }, { 0x1d, 0xcf }, { 0x1e, 0x28 }, { 0x2f, 0x46 }, { 0x36, 0x02 },
+		{ 0x37, 0x02 }, { 0x38, 0x02 }, { 0x39, 0x00 }, { 0x3a, 0x00 }, { 0x46, 0x09 }, { 0x47, 0x5a },
+		{ 0x70, 0x0f }, { 0x71, 0x93 }, { 0x72, 0x69 }, { 0x74, 0x89 }, { 0x75, 0x88 }, { 0x79, 0x0d },
+	};
+
+	phone("phone-video", 0x9270);
+	boot_args = "haptic=3";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(logged("haptic: Android's configuration is written"), "said: %s", log_text);
+	for (unsigned i = 0; i < sizeof(androids) / sizeof(androids[0]); i++) {
+		CHECK(register_written[androids[i][0]] && device.reg[androids[i][0]] == androids[i][1], "register %#04x holds %#04x, Android's is %#04x",
+		    androids[i][0], device.reg[androids[i][0]], androids[i][1]);
+	}
+	CHECK(device.reg[0x5b] == 0 && analog_while_closed == 0, "their lock was open for them and is closed again (%u written while closed)",
+	    analog_while_closed);
+	CHECK(only_androids_registers(), "nothing but the registers Android's driver sets was written");
+	CHECK(logged("no aw8697_haptic.bin in fw/"), "without the waveforms' file nothing is loaded, and that is said");
+	CHECK(!logged("PUT INTO RESET") && !in_reset(), "nothing was wrong: the chip stays out of reset for the run");
+	CHECK(device.driven_high == 0 && model.elsewhere == 0, "the bus was used as a bus");
+	redwood_haptic_quiesce();
+	CHECK(in_reset(), "at the run's end the chip is back in reset");
+}
+
+/* a register that does not read back as written: the chip into reset, and nothing more written */
+static void
+write_does_not_stick(void)
+{
+	phone("phone-video", 0x9270);
+	deaf_register = 0x1d;
+	boot_args = "haptic=3";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(logged("0x1d <- 0xcf, reads 0000: NOT AS WRITTEN"), "said which and what it reads: %s", log_text);
+	CHECK(logged("a register did not read back as written: THE CHIP IS PUT INTO RESET") && in_reset(), "into reset");
+	CHECK(!register_written[0x1e] && !register_written[0x70] && !register_written[0x5b], "and nothing after it was written");
+	CHECK(only_androids_registers(), "nor anything else");
+}
+
+/* the chip reports a fault after the configuration: into reset */
+static void
+fault_reported(void)
+{
+	phone("phone-video", 0x9270);
+	device.reg[0x02] = 0x20;
+	boot_args = "haptic=3";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(logged("after the configuration: the chip reports 0x20: UNDER-VOLTAGE"), "said which: %s", log_text);
+	CHECK(logged("a fault: THE CHIP IS PUT INTO RESET") && in_reset(), "into reset");
+	CHECK(device.reg[0x5b] == 0, "the analog registers' lock is not left open");
+}
+
 /* a chip that is another: said, and put back into reset */
 static void
 another_chip(void)
@@ -201,7 +299,8 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "reset_released", reset_released },
-		{ "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
+		{ "configured", configured },
+		{ "write_does_not_stick", write_does_not_stick }, { "fault_reported", fault_reported }, { "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
 	};
 
 	if (argc < 2) {
