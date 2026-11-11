@@ -25,6 +25,7 @@ Next to the code:
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |
 | [../kernel/patches/README.md](../kernel/patches/README.md) | What each patch changes in Apple's files. |
 | [../loader/README.md](../loader/README.md) | The loader. |
+| [../ios/README.md](../ios/README.md) | What iOS's user space needs: each library and tool, and what each needs. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Where a change goes, and the rules. |
 | [../components.toml](../components.toml) | Everything taken from elsewhere, at the exact version, with its licence. |
 
