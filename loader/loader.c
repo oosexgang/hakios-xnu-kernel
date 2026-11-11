@@ -565,6 +565,7 @@ struct platform {
 	uint64_t gic_redist_size;        /* the redistributors' region, 0 = 1 MB (8 GICv3 frames of 128 KB) */
 	uint64_t gic_redist_stride;      /* the distance between redistributors, 0 = as GICR_TYPER says */
 	uint64_t uart;                   /* PL011, 0 if none */
+	uint64_t ufs;                    /* the UFS host controller's registers, 0 if the SoC file does not say */
 	int psci_hvc;                    /* the firmware's power interface is called with HVC, not SMC */
 	int log_other_cpu;               /* keep notes in the log partition while a kernel starts on another core */
 	int uefi_charger;                /* the firmware has Qualcomm's charger protocols: the battery is read through them */
@@ -1795,7 +1796,7 @@ device_path_print(uint64_t unit, const efi_device_path *dp)
  * touches the storage; it reads for the kernel (block_poll) and writes the log (write_logs) only
  * while UEFI's list is the one in the controller.
  */
-#define HC_PA              0x1d84000ULL        /* ufshc@1d84000, "ufs_mem", in this phone's Android device tree */
+#define HC_PA              (PLAT->ufs)         /* the SoC file's [platform] ufs: the device tree's ufshc node, "ufs_mem" */
 #define HC_CAP             0x00
 #define HC_VER             0x08
 #define HC_IS              0x20
@@ -1934,6 +1935,10 @@ hc_init(void)
 	uint32_t lo, hi, area = (uint32_t)(uintptr_t)hc_area;
 
 	if (!hc_requested) {
+		return 0;
+	}
+	if (HC_PA == 0) {
+		print("ufs: native: this board's SoC file does not say where the UFS host controller is ([platform] ufs)\n");
 		return 0;
 	}
 	lo = hc_rd(HC_UTRLBA);
