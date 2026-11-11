@@ -2,7 +2,7 @@
 
 Liquid Glass, CASDF shapes and the large lock-screen clock are drawn by CoreAnimation's **Metal** renderer, in
 backboardd. iOS 27 has no OpenGL renderer left, and its software renderer skips these effects. That is why the
-current `gpu=0` configuration shows them incomplete (`renoir/docs/ios26-boot.md`, item 10). The glass needs three
+current `gpu=0` configuration shows them incomplete (`docs/ios26-boot.md`, item 10). The glass needs three
 things, all of them device-independent apart from the kernel's GPU profile:
 - a Metal device for backboardd;
 - a compiler from Apple's shader bitcode (AIR) to the Adreno;
@@ -61,7 +61,7 @@ Each of steps 2–6 needs at least one thing this environment does not have:
 - A Mesa build: it needs a third-party toolchain, and this session may not build or run external code.
 - The phone, or a Mac with an Apple GPU for the reference cases.
 
-The brightness work, by contrast, was finished and tested here (`renoir/docs/backlight.md`). It is independent of
+The brightness work, by contrast, was finished and tested here (`docs/backlight.md`). It is independent of
 the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims whatever the framebuffer copies.
 
 ## What the next person with the phone can do in an afternoon

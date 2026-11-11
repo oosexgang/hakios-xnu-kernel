@@ -19,7 +19,7 @@
  * the screen stays lit until the side button turns it off.
  *
  * The panel follows the display mode as well, through the kernel's backlight (hw.backlight.power,
- * renoir/docs/backlight.md): a mode named Off makes the panel dark when its ramp is over, one with Dim in
+ * docs/backlight.md): a mode named Off makes the panel dark when its ramp is over, one with Dim in
  * its name dims it, any other lights it at once. The names are iOS's own (its function that names a mode,
  * the one the watchdog's "ActiveOn" comes from), so no number of Apple's enumeration is assumed; where that
  * function is not found the panel is left as it is. Boot-arg bl_trace=1 logs every mode asked for.

@@ -8,7 +8,7 @@ usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracte
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
   (default) the files darwin-renoir/ios165/select-system.py chooses, applied to iOS 26
-  --prune the same, smaller for 6 GB of RAM (renoir/docs/ram-budget.md, scenario B): .loctable string
+  --prune the same, smaller for 6 GB of RAM (docs/ram-budget.md, scenario B): .loctable string
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
 

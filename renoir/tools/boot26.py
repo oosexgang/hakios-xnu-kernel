@@ -22,14 +22,14 @@ from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
 # Renoir's CPU/software-rendering configuration: no hardware graphics plug-in.
 # Touch, buttons and the CPU clock table stay enabled; Wi-Fi, sound, camera,
-# haptics and battery remain off (renoir/docs/ios26-boot.md).
+# haptics and battery remain off (docs/ios26-boot.md).
 BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0',
              'wifi=0', 'adsp=0', 'battmgr=0', 'speaker_probe=0', 'renoir_afe_probe=0', 'sound=0', 'cam=0',
              'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1', 'buttons=1', 'launchd_unsecure_cache=1',
-             # the panel's light (renoir/docs/backlight.md): 1 reads the DSI controller and logs it, nothing written
+             # the panel's light (docs/backlight.md): 1 reads the DSI controller and logs it, nothing written
              # to it; --boot-arg backlight=2 gives the brightness slider and Auto-Brightness the panel
              'backlight=1',
-             # the thermal limiter (renoir/docs/thermal.md): 1 logs the hottest sensor every ten seconds;
+             # the thermal limiter (docs/thermal.md): 1 logs the hottest sensor every ten seconds;
              # --boot-arg thermal=2 holds the processors and the panel back when hot
              'thermal=1']
 
@@ -90,7 +90,7 @@ if options.return_after:
 loader = DR / 'prebuilt/renoir/resident-usb.img'
 for path in (options.kernel, options.system, options.root, loader, DR / 'recovery/assets/renoir-ios-share.bin'):
     if not path.is_file():
-        raise SystemExit(f'Missing {path} (renoir/docs/ios26-boot.md says how it is made)')
+        raise SystemExit(f'Missing {path} (docs/ios26-boot.md says how it is made)')
 try:
     with options.system.open('rb') as image:
         validate_apfs(image.read(4096), options.system.stat().st_size)

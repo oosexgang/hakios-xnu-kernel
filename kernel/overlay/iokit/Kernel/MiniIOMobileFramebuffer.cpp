@@ -2174,7 +2174,7 @@ publishDisplayNode(void)
  *
  * With boot-arg metal=1 a user process may put those two properties here, which is the whole
  * of what keeps Metal from finding a driver of ours (userland/src/redwoodmetal.m); see setProperties
- * below and renoir/docs/metal-glass.md. Without it (the default) nothing changes: CoreAnimation keeps
+ * below and docs/metal-glass.md. Without it (the default) nothing changes: CoreAnimation keeps
  * its software renderer, as in the RAM-only release.
  */
 

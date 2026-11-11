@@ -22,7 +22,7 @@ writes to them, and it ignores implausible readings (below −40 °C or above 15
 The limiter never raises a group above the row it found at start: without `cpufreq=1` the groups stay at their
 300 MHz and it never writes. At the end of the run the rows are restored, so the loader is not left slow.
 
-The panel's cap goes to `hakios_backlight_set_cap()` (`renoir/docs/backlight.md`, `hw.backlight.cap`): an AMOLED
+The panel's cap goes to `hakios_backlight_set_cap()` (`docs/backlight.md`, `hw.backlight.cap`): an AMOLED
 at full white is heat as well, and an iPhone dims when hot. The GPU's speed is not changed here, because it
 belongs to its GMU (`adreno_speed`). `hakios_thermal_step()` exposes how far things are held back, for when the
 GPU driver wants to follow.

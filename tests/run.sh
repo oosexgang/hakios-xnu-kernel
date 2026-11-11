@@ -26,6 +26,9 @@ python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 "$HERE/../tools/boards.py" gen --check || failed=1
 
+echo "== boot-args reference (tools/bootargs.py)"
+python3 "$HERE/bootargs_test.py" 2>&1 | tail -3 || failed=1
+
 echo "== kernel_tools_test"
 "$HERE/kernel_tools_test.sh" || failed=1
 
