@@ -199,6 +199,8 @@ Stated plainly, so nobody finds out the hard way:
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
 - **Sound, microphones, camera, Wi-Fi, haptics, flashlight, storage** are written for redwood's parts.
-  They are the largest share of the work on a new phone.
+  They are the largest share of the work on a new phone. Where the SoC's pins and its clock controller
+  are comes from the SoC file (`[pins]`, `[clocks]`); which pin a part is on, and its bus, is still
+  in each driver.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).

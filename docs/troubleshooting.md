@@ -163,6 +163,12 @@ software without it.
 | `buttons: a key reads as held before anything was watched: .... It is not reported until it has been seen released` | A key read as pressed when the driver started. | Release it. `buttons: NAME is released now: believed from here on` follows. |
 | `buttons: nothing that can be read: no buttons`, `buttons: more than half of N reads have failed: giving up` | Neither peripheral passed the checks above, or the bus stopped answering. | The lines before it say which check failed. |
 
+### Parts on the SoC's pins
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])` | The driver's feature is listed, but the SoC file has no `[pins]`, or no `[clocks]`. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
+
 ### GPU ([metal-glass.md](metal-glass.md))
 
 | What you see | What it means | What to do |
