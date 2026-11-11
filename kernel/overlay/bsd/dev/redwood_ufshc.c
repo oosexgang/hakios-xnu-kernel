@@ -75,7 +75,7 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 extern void IOSleep(unsigned int milliseconds);
 extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 
-#define UFSHC_PHYS          0x1d84000ULL        /* ufshc@1d84000, "ufs_mem", in the phone's Android device tree */
+#define UFSHC_PHYS          (hc_at)             /* where the loader says the controller is (its SoC file's [platform] ufs) */
 #define UFSHC_SIZE          0x3000
 
 /* UFSHCI registers (JESD223). 0x38..0x48, the UIC error codes, clear when read: never read here. */
@@ -146,6 +146,7 @@ struct hc_slot {
 	uint64_t data_pa;
 };
 
+static uint64_t hc_at;                          /* where the controller is, as the loader said */
 static vm_offset_t hc;                          /* the registers */
 static struct ufshc_loader hc_loader;
 static uint32_t hc_list_lo, hc_list_hi;         /* this kernel's list's address */
@@ -1148,7 +1149,8 @@ ufshc_probe(const struct ufshc_loader *loader, bool only)
 	}
 	PE_parse_boot_argn("ufs_native_leave", &hc_leave, sizeof(hc_leave));
 	PE_parse_boot_argn("ufs_native_hang", &hc_hang_after, sizeof(hc_hang_after));
-	if (loader->hc_pa != UFSHC_PHYS || loader->area_pa == 0 || loader->slots != SLOTS || (loader->area_pa & 0x3ff) ||
+	hc_at = loader->hc_pa;
+	if (loader->hc_pa == 0 || (loader->hc_pa & 0xfff) || loader->area_pa == 0 || loader->slots != SLOTS || (loader->area_pa & 0x3ff) ||
 	    loader->ucd_size < UCD_PRDT + 16 * (hc_slot_buffer / PRD_MAX + 1) || (loader->ucd_offset & 0x7f) ||
 	    (loader->ucd_size & 0x7f) || loader->ucd_offset < SLOTS * 32 ||
 	    loader->area_size < loader->ucd_offset + SLOTS * loader->ucd_size) {
