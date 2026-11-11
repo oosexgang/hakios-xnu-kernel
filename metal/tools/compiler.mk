@@ -49,9 +49,12 @@ IOS_MESA_BUILD ?= $(IOS_MESA_ROOT)/build-$(IOS_ARCH)
 ifeq ($(origin IOS_MESA_DEFS), undefined)
 IOS_MESA_DEFS := $(shell grep -s -m1 -A4 '^build src/freedreno/ir3/libfreedreno_ir3.a.p/ir3.c.o:' $(IOS_MESA_BUILD)/build.ninja \
 	| grep -m1 ' ARGS = ' | tr ' ' '\n' | grep '^-D' | tr '\n' ' ')
-# an empty set compiles Mesa's headers for the wrong libc (c11/threads.h: "Not supported on this platform"): say so
-ifeq ($(strip $(IOS_MESA_DEFS)),)
+# an empty set compiles Mesa's headers for the wrong libc (c11/threads.h: "Not supported on this platform"): say so, where
+# something for iOS is being made with the compiler in
+ifeq ($(strip $(IOS_MESA_DEFS))$(strip $(MESA)),1)
+ifneq ($(filter ios darwin ios-compiler-smoke,$(MAKECMDGOALS)),)
 $(warning tools/compiler.mk: no -D set for the iOS Mesa build in $(IOS_MESA_BUILD)/build.ninja (not built, or XNUDEPS unset?); make ios MESA=1 will not compile)
+endif
 endif
 endif
 
