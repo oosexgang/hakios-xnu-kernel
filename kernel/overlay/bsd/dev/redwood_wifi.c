@@ -845,8 +845,8 @@ step_mailbox(void)
 /* ---- step 3: RPMh -------------------------------------------------------------------------------------- */
 
 /* dt: reserved-memory cmd_db@80860000: the boot loader's list of what RPMh can switch (cmd-db.c; as in redwood_adreno.c) */
-#define CMD_DB_PHYS             0x80860000UL
-#define CMD_DB_SIZE             0x20000UL
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
 struct cmd_db_slave {
 	uint16_t id, header_offset, data_offset, count, version, reserved[3];
@@ -956,10 +956,10 @@ show_rpmh_resource(const char *name, const char *what)
  * hold while the processor sleeps and three for when it wakes. What the slots hold now is what
  * was last put there by whoever ran here before us: the boot loader.
  */
-static struct block rsc = { "rsc", 0x18220000, 0x10000 };
+static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's [rpmh], at the start */
 #define RSC_ID                  0x000           /* [23:16] the major version: the layout below is that of versions before 3 */
 #define RSC_CONFIG              0x00c           /* per DRV six bits, the number of its TCSs; [31:27] commands in a TCS */
-#define RSC_TCS(n)              (0xd00 + 672 * (n))             /* dt: qcom,tcs-offset */
+#define RSC_TCS(n)              (hakios_board()->rpmh.tcs_offset + 672 * (n))   /* dt: qcom,tcs-offset */
 #define TCS_CONTROL             0x14
 #define TCS_STATUS              0x18
 #define TCS_ENABLED             0x1c            /* a bit per command */
@@ -971,7 +971,7 @@ step_rpmh(void)
 	static const char *const kinds[] = { "at once", "at once", "asleep", "asleep", "asleep", "awake", "awake", "awake" };
 	uint32_t id, config, count, commands;
 
-	announce("look up the supplies involved in the boot loader's list of RPMh resources (memory at 0x80860000)");
+	announce("look up the supplies involved in the boot loader's list of RPMh resources (the command database)");
 	if (!cmd_db_there()) {
 		printf("wifi: %u: the list is not there\n", step);
 		return false;
@@ -983,7 +983,7 @@ step_rpmh(void)
 	show_rpmh_resource("smpb1", "PM7325 S1: the radio's vdd-1.8-xo");
 	show_rpmh_resource("smpb8", "PM7325 S8: the radio's vdd-1.3-rfa");
 
-	announce("read the application processor's RPMh sequencer (0x18220000: the first access to that block): its version, "
+	announce("read the application processor's RPMh sequencer (the first access to that block): its version, "
 	    "and the commands its slots hold");
 	id = get(&rsc, "id", RSC_ID);
 	config = get(&rsc, "configuration", RSC_CONFIG);
@@ -1022,16 +1022,17 @@ step_rpmh(void)
  * every system has for every peripheral, whoever owns it. dt: qcom,spmi@c440000; on the bus the
  * PM7325 is slave 1 and the PM8350C slave 2.
  */
-static struct block arb_core = { "arbiter", 0x0c440000, 0x1100 };
-static struct block arb_cnfg = { "arbiter's owners", 0x0c40a000, 0x1000 };
-static struct block arb_observer = { "arbiter's observer", 0x0e600000, 0x10000 };
+/* (where: the SoC file's [spmi], at the start; the observer's is this system's part of it) */
+static struct block arb_core = { "arbiter", 0, 0x1100 };
+static struct block arb_cnfg = { "arbiter's owners", 0, 0x1000 };
+static struct block arb_observer = { "arbiter's observer", 0, 0x10000 };
 #define ARB_VERSION             0x000
 #define ARB_VERSION_5           0x50000000u     /* what follows is version 5's; 7 moved things again */
 #define ARB_VERSION_7           0x70000000u
 #define ARB_FEATURES            0x004           /* [10:0] the number of channels */
 #define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* core: [19:8] slave and peripheral */
 #define ARB_OWNER(n)            (0x700 + 4 * (n))       /* cnfg: [2:0] the system that may write through channel n */
-#define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
+#define ARB_SYSTEM              (hakios_board()->spmi.ee)       /* who we are to the arbiter: the device tree's "qcom,ee" */
 #define OBSERVER_COMMAND        0x00
 #define OBSERVER_STATUS         0x08
 #define OBSERVER_DATA0          0x18            /* the bytes read, the first in the lowest byte */
@@ -1067,7 +1068,7 @@ spmi_channel(uint16_t id)
 static const char *
 spmi_read(int channel, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t at = arb_observer.base + 0x10000UL * ARB_SYSTEM + 0x80UL * (uint32_t)channel;
+	vm_offset_t at = arb_observer.base + 0x80UL * (uint32_t)channel;
 	uint64_t start = now_us();
 	uint32_t status, data[2];
 
@@ -1202,7 +1203,7 @@ step_rails(void)
  * loader's node the crystal alone.)
  */
 #define FIRST_PIN               84
-static struct block tlmm = { "tlmm", 0x0f100000 + 0x1000 * FIRST_PIN, 0x3000 };        /* the three pins' registers */
+static struct block tlmm = { "tlmm", 0, 0x3000 };       /* the three pins' registers: FIRST_PIN's on, in the SoC file's [pins] */
 #define GPIO_CFG(n)             (0x1000 * ((n) - FIRST_PIN))            /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
 #define GPIO_IO(n)              (0x1000 * ((n) - FIRST_PIN) + 4)        /* bit 0 in, bit 1 out */
 
@@ -4253,6 +4254,17 @@ redwood_wifi_init(void)
 		}
 		return;
 	}
+	if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0 || hakios_board()->pins.tlmm == 0 ||
+	    hakios_board()->spmi.core == 0) {
+		printf("wifi: disabled: the SoC file does not say where RPMh, the pins and the PMIC arbiter are ([rpmh], [pins], "
+		    "[spmi]): the radio's supplies and its enable pins are reached there\n");
+		return;
+	}
+	rsc.phys = hakios_board()->rpmh.rsc;
+	tlmm.phys = hakios_board()->pins.tlmm + 0x1000 * FIRST_PIN;
+	arb_core.phys = hakios_board()->spmi.core;
+	arb_cnfg.phys = hakios_board()->spmi.cnfg;
+	arb_observer.phys = hakios_board()->spmi.observer + 0x10000 * hakios_board()->spmi.ee;
 	redwood_qmi_set_transport(&qrtr_ops);
 	if (last_step == 0) {
 		if (image_file("wpss.mdt", &size) == NULL) {
