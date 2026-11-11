@@ -43,6 +43,7 @@ known_phone(void)
 	    b->spmi.observer == 0x0e600000 && b->spmi.ee == 0, "the PMIC arbiter");
 	CHECK(b != NULL && b->buttons.pon == 0x013 && b->buttons.volume_up == 0x18d && b->buttons.volume_up_name != NULL &&
 	    strcmp(b->buttons.volume_up_name, "GPIO6 of the PM8350") == 0, "its [buttons]");
+	CHECK(b != NULL && b->pins.tlmm == 0x0f100000, "the SoC's pins");
 	CHECK(hakios_board_has(HAKIOS_HAS_DDR_RPMH) && b != NULL && b->rpmh.cmd_db == 0x80860000 && b->rpmh.cmd_db_size == 0x20000 &&
 	    b->rpmh.rsc == 0x18220000 && b->rpmh.tcs_offset == 0xd00, "RPMh for the memory vote");
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
@@ -168,6 +169,12 @@ table(void)
 		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without [spmi] or [buttons]", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD)) || (b->spmi.core != 0 &&
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
+		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
+		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_REDWOOD)) || b->pins.tlmm != 0,
+		    "%s: a driver that drives the SoC's pins without [pins]", b->name);
+		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
+		    HAKIOS_HAS_CAMERA_REDWOOD)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without [clocks]",
+		    b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&

@@ -23,6 +23,13 @@ dispcc_mdss_mdp_cbcr = 0x200c       # disp_cc_mdss_mdp_clk    }
 dsi0 = 0x0ae94000                   # the first DSI controller (cell-index 0), reg "dsi_ctrl"
 intf1 = 0x0ae6b800                  # optional, for "display-scan": the same node's reg "mdp_intf_base"
 
+# The SoC's own pins (TLMM), for the part drivers that drive them: the touch controllers', the speaker
+# amplifier's, the haptic motor's, the cameras'.
+[pins]
+tlmm = 0x0f100000                   # where GPIO 0's registers are; GPIO n's are 0x1000 n further. The pin
+                                    # controller's node (qcom,CODENAME-pinctrl): in Linux's trees its reg; in
+                                    # the vendor's, whose reg is the whole 16 MiB block, 0x100000 above it
+
 # The PMIC arbiter (qcom,spmi-pmic-arb), by its reg-names: for the features "buttons-pmic",
 # "torch-pm8350c" and "camera-redwood".
 [spmi]

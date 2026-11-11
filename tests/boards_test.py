@@ -458,7 +458,8 @@ class Check(Sandbox):
         self.assertRegex(said, r'buttons-pmic +needs \[spmi\] in soc/sm0001.toml, \[buttons\] in the board file')
         self.assertRegex(said, r'ddr-rpmh +needs \[rpmh\] in soc/sm0001.toml')
         self.assertRegex(said, r'display-scan +needs intf1 in \[display\] and \[clocks\] in soc/sm0001.toml')
-        self.assertRegex(said, r"touch-goodix +one part's driver")
+        self.assertRegex(said, r"wifi-wcn6750 +one part's driver")
+        self.assertRegex(said, r'touch-goodix +needs \[pins\] in soc/sm0001.toml')
         self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\n[thermal]')
         self.assertRegex(status(), r'buttons-pmic +needs \[buttons\] in the board file')
         path = self.dir / 'devices/phone/board.toml'
@@ -527,6 +528,29 @@ class Generate(Sandbox):
         self.assertEqual(self.problems(), '')
         self.assertIn('.rpmh = { .cmd_db = 0x80860000, .cmd_db_size = 0x20000, .rsc = 0x18220000, .tcs_offset = 0xd00 },',
                       boards.table_text(*boards.load()))
+
+    def test_part_drivers_need_the_pins_and_the_table_carries_them(self):
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "haptic-aw86927", "touch-goodix"')
+        said = self.problems()
+        self.assertIn('feature "haptic-aw86927" needs [pins] in soc/sm0001.toml', said)
+        self.assertIn('feature "touch-goodix" needs [pins] in soc/sm0001.toml', said)
+        self.assertNotIn('feature "touch-goodix" needs [clocks]', said)        # (which this SoC file has)
+        self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[thermal]')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.pins = { .tlmm = 0x0f100000 },', boards.table_text(*boards.load()))
+
+    def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
+        # the vendor's node is the whole block, in which the pins begin 1 MiB in
+        soc, board, notes = devicetree.from_dts('''/ { soc { tlmm: pinctrl@f000000 { compatible = "qcom,shima-pinctrl";
+            reg = <0xf000000 0x1000000>; gpio-controller; }; }; };''')
+        self.assertEqual(soc['pins'], {'tlmm': 0xf100000})
+        # Linux's is the pins themselves, with two cells an address
+        soc, board, notes = devicetree.from_dts('''/ { soc { tlmm: pinctrl@f100000 { compatible = "qcom,sc7280-pinctrl";
+            reg = <0 0x0f100000 0 0x300000>; gpio-controller; }; }; };''')
+        self.assertEqual(soc['pins'], {'tlmm': 0xf100000})
+        # a PMIC's GPIOs are not the SoC's pins
+        soc, board, notes = devicetree.from_dts('/ { pinctrl@8800 { compatible = "qcom,pm7325-gpio"; reg = <0x8800>; gpio-controller; }; };')
+        self.assertNotIn('pins', soc)
 
     def test_the_loader_gets_its_platforms(self):
         (self.dir / 'devices/emu').mkdir()

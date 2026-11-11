@@ -149,6 +149,13 @@ def from_dts(text, panel=None):
             soc.setdefault('clocks', {})['dispcc'] = unit_address(node)
         if any(re.fullmatch(r'qcom,.*-gcc(-.*)?|qcom,gcc-.*', c) for c in compatible) and unit_address(node):
             soc.setdefault('clocks', {})['gcc'] = unit_address(node)
+        if any(re.fullmatch(r'qcom,.*-pinctrl|qcom,.*-tlmm', c) for c in compatible) and 'gpio-controller' in node.props:
+            reg = cells(node.props.get('reg'))
+            if len(reg) in (2, 4):              # one cell an address, or two
+                base, size = (reg[0], reg[1]) if len(reg) == 2 else (reg[0] << 32 | reg[1], reg[2] << 32 | reg[3])
+                # the vendor's trees give the whole 16 MiB block, in which the pins begin 1 MiB in; Linux's
+                # give the pins themselves
+                soc['pins'] = {'tlmm': base + 0x100000 if size >= 0x1000000 else base}
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
         if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):

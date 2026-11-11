@@ -5,7 +5,7 @@ A device is described by data, in two places:
 | What | Where | What it says |
 | --- | --- | --- |
 | A **device package** | `NAME/board.toml`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`[backlight]`), thermal floors (`[thermal]`), its keys, audio DSP, GPU and Wi-Fi radio (`[buttons]`, `[adsp]`, `[gpu]`, `[wifi]`), what iOS's interface is told of its screen (`[screen]`), how the loader recognises it (`[loader]`), its default boot arguments (`[boot]`). |
-| A **SoC file** | `soc/SOC.toml` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`[platform]`), clock controllers (`[clocks]`), the DSI controller (`[display]`), the PMIC arbiter (`[spmi]`), RPMh (`[rpmh]`), the GPU's blocks (`[adreno]`), temperature sensors (`[thermal]`), the CPU frequency block and its groups of cores (`[cpufreq]`). |
+| A **SoC file** | `soc/SOC.toml` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`[platform]`), clock controllers (`[clocks]`), the DSI controller (`[display]`), its own pins (`[pins]`), the PMIC arbiter (`[spmi]`), RPMh (`[rpmh]`), the GPU's blocks (`[adreno]`), temperature sensors (`[thermal]`), the CPU frequency block and its groups of cores (`[cpufreq]`). |
 
 `devices/_template/board.toml` and `devices/_template/soc.toml` explain every key;
 `devices/_template/README.md` is the form of a package's README, which `tools/boards.py new` copies

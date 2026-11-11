@@ -125,6 +125,11 @@ struct hakios_board {
 		uint32_t ee;                    /* who this system is to the arbiter (the device tree's qcom,ee) */
 	} spmi;
 
+	/* the SoC's own pins (soc: [pins]) */
+	struct {
+		uint32_t tlmm;                  /* where GPIO 0's registers are; GPIO n's are 0x1000 n further */
+	} pins;
+
 	/* RPMh (soc: [rpmh]): the command database the firmware left, and this system's sequencer */
 	struct {
 		uint32_t cmd_db, cmd_db_size;

@@ -16,6 +16,11 @@ dispcc_mdss_mdp_cbcr = 0x1014       # disp_cc_mdss_mdp_clk    }
 dsi0 = 0x0ae94000                   # mdss_dsi0, reg "dsi_ctrl" (DSI controller 2.5)
 intf1 = 0x0ae36000                  # mdss_dsi0, reg "mdp_intf_base": the interface the panel hangs on
 
+# The SoC's own pins (TLMM, pinctrl@f000000): what the drivers of the touch controller, the speaker
+# amplifier, the haptic motor and the cameras drive.
+[pins]
+tlmm = 0x0f100000                   # GPIO 0's registers: 0x100000 into the block; 0x1000 for each GPIO
+
 # The PMIC arbiter: the way to the power management chips on the SPMI bus (qcom,spmi-pmic-arb, by
 # reg-names "core", "cnfg", "obsrvr" and "chnls"). The keys are read through it; the flashlight and the
 # cameras' supply switch are written through it.
