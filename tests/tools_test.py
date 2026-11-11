@@ -147,10 +147,13 @@ class Repository(unittest.TestCase):
         for name in ('README.md', 'README.zh-CN.md'):
             self.assertIn(f'badge/XNU-{tag}-', (ROOT / name).read_text(), f"{name}'s badge is of another release")
 
-    def test_the_banner_is_a_picture_and_nothing_else(self):
-        banner = (ROOT / 'docs/assets/banner.svg').read_text()
-        for unwanted in ('<script', 'href=', '<image', 'http://', 'https://'):
-            self.assertNotIn(unwanted, banner.replace('http://www.w3.org/2000/svg', ''))
+    def test_the_pictures_are_pictures_and_nothing_else(self):
+        pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
+        self.assertIn('banner.svg', [path.name for path in pictures])
+        for path in pictures:
+            text = path.read_text().replace('http://www.w3.org/2000/svg', '')
+            for unwanted in ('<script', 'href=', '<image', 'http://', 'https://'):
+                self.assertNotIn(unwanted, text, path.name)
 
     def test_this_repository_passes_both(self):
         for name, arguments in (('check-links', []), ('components', ['check'])):

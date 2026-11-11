@@ -46,6 +46,14 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
   Apple 的发布进行验证并做语法和类型编译，每次推送都会运行。
 - **固定版本的输入。** 从外部获取的所有内容都在 [`components.toml`](components.toml) 中，精确到版本。
 
+## 启动过程
+
+<p align="center">
+  <img src="docs/assets/boot-chain.svg" alt="启动链：原厂 fastboot、UEFI、引导器、内核、iOS 用户态" width="830">
+</p>
+
+各部分如何配合，见 [docs/architecture.md](docs/architecture.md)。
+
 ## 设备
 
 | 设备包 | 设备 | SoC | 状态 |

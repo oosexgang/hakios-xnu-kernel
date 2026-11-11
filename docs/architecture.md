@@ -5,6 +5,10 @@ anything; [porting.md](porting.md) is the step-by-step guide for a new device.
 
 ## The boot chain
 
+![The boot chain: stock fastboot, the UEFI, the loader, the kernel, iOS user space](assets/boot-chain.svg)
+
+In more detail:
+
 ```
 stock fastboot ──"fastboot boot"──► UEFI (Mu-Silicium port for the phone; nothing is flashed)
                                       │
@@ -42,6 +46,8 @@ The aim is that a new phone on a known SoC is a change to the first row only, an
 file to it. Where that is not yet true, [drivers.md](drivers.md) says so driver by driver.
 
 ## Device data
+
+![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](assets/device-data.svg)
 
 ```
 device packages (NAME/board.toml) ─┐

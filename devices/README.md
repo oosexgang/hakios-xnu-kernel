@@ -38,6 +38,8 @@ export HAKIOS_DEVICES=$PWD/../hakios-devices
 
 ## What is made of them
 
+![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](../docs/assets/device-data.svg)
+
 ```sh
 tools/boards.py list                    # the boards that are here
 tools/boards.py show renoir             # one board with its SoC's values

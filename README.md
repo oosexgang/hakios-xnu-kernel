@@ -50,6 +50,14 @@ brings it into a checkout.
 - **Pinned inputs.** Everything taken from elsewhere is in [`components.toml`](components.toml), at an
   exact version.
 
+## How it boots
+
+<p align="center">
+  <img src="docs/assets/boot-chain.svg" alt="The boot chain: stock fastboot, the UEFI, the loader, the kernel, iOS user space" width="830">
+</p>
+
+How the pieces fit together: [docs/architecture.md](docs/architecture.md).
+
 ## Devices
 
 | Package | Device | SoC | State |
