@@ -3,7 +3,7 @@ name = "qemu-virt"
 description = "QEMU virt (aarch64)"
 soc = "qemu-virt"
 
-features = []
+features = ["virtio"]               # its network card, tablet and keyboard are virtio devices
 
 # No panel to tell: the display driver darkens the picture itself.
 [backlight]

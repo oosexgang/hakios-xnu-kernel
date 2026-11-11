@@ -15,6 +15,7 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 #   adsp            the audio DSP: sound, and the battery manager behind it (adsp=1); needs [adsp]
 #   display-scan    a command-mode panel: frames are written ahead of its readout, read from the DSI
 #                   interface's counters (fb_scan); needs intf1 in the SoC file's [display]
+#   virtio          an emulator's virtio devices (network, tablet, keyboard): for QEMU's board, not a phone
 #   gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs [gpu]
 # and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 # has that part on the same pins and bus (kernel/overlay/bsd/dev/hakios_board.h, docs/drivers.md):

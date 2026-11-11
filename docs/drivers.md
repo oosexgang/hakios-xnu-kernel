@@ -51,7 +51,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on redwood's SPI. | `touch-goodix` / `touchscreen=1` | part |
 | `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on Renoir's SPI. | `touch-ft3658u` / `touchscreen=1` | part |
 | `bsd/dev/redwood_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
-| `bsd/dev/redwood_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | QEMU only | any (QEMU) |
+| `bsd/dev/redwood_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
 
 ## Power, CPU, temperature
 
@@ -84,7 +84,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_lx.c`, `redwood_qmi.c`, `redwood_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/redwood_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
 | `bsd/dev/redwood_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |
-| `bsd/dev/redwood_virtio_net.c` | QEMU's network device behind `en0`. | QEMU only | any (QEMU) |
+| `bsd/dev/redwood_virtio_net.c` | QEMU's network device behind `en0`. | `virtio` / `virtio_net=1` | any (QEMU) |
 
 ## Storage, file systems
 

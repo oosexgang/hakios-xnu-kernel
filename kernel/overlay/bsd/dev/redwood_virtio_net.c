@@ -23,6 +23,8 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
@@ -289,8 +291,8 @@ redwood_virtio_net_init(void)
 	if (!PE_parse_boot_argn("virtio_net", &enabled, sizeof(enabled)) || !enabled) {
 		return;
 	}
-	if (!redwood_board_is("qemu-virt")) {
-		printf("net: virtio MMIO transport is only available on qemu-virt\n");
+	if (!hakios_board_has(HAKIOS_HAS_VIRTIO)) {
+		printf("net: disabled: this board's board.toml lists no \"virtio\" (an emulator's MMIO transport)\n");
 		return;
 	}
 	if (!virtio_net_start(virtio_link.address) || !redwood_net_attach(&virtio_link)) {

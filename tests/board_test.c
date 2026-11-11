@@ -122,9 +122,10 @@ emulator(void)
 	CHECK(adreno_profile_for_board() == NULL, "no GPU to start");
 	CHECK(hakios_board() != NULL && hakios_board()->backlight.type == HAKIOS_BACKLIGHT_SOFT, "the row of QEMU");
 	for (unsigned bit = 0; bit < 32; bit++) {
-		CHECK(!hakios_board_has(1u << bit), "QEMU has no feature of a phone (bit %u)", bit);
+		CHECK(hakios_board_has(1u << bit) == ((1u << bit) == HAKIOS_HAS_VIRTIO), "QEMU has its virtio devices and no "
+		    "feature of a phone (bit %u)", bit);
 	}
-	CHECK(strcmp(get_string("features"), "") == 0, "hw.board.features \"%s\"", get_string("features"));
+	CHECK(strcmp(get_string("features"), "virtio") == 0, "hw.board.features \"%s\"", get_string("features"));
 	CHECK(hakios_board_cpu_groups() == 0 && hakios_board_cpu_group_of(0) == -1, "no groups of cores to clock");
 }
 
@@ -176,6 +177,8 @@ table(void)
 				CHECK(b->gpu.speeds_khz[s - 1] < b->gpu.speeds_khz[s], "%s: GPU speeds from the slowest up", b->name);
 			}
 		}
+		CHECK(!(b->features & HAKIOS_HAS_VIRTIO) || !(b->features & ~HAKIOS_HAS_VIRTIO), "%s: virtio beside a phone's parts",
+		    b->name);
 		CHECK(!((b->features & HAKIOS_HAS_TOUCH_GOODIX) && (b->features & HAKIOS_HAS_TOUCH_FT3658U)),
 		    "%s lists two touch controllers", b->name);
 		for (unsigned j = 0; j < i; j++) {

@@ -190,6 +190,8 @@ def status_text(name, board, soc):
         part = feature.split('-')[0] in PART_DRIVERS
         if feature in listed:
             line(feature, 'on' + (': STILL NEEDS ' + ', '.join(needs) if needs else ''))
+        elif feature == 'virtio':
+            line(feature, "an emulator's devices: not for a phone")
         elif needs:
             line(feature, 'needs ' + ', '.join(needs))
         elif part:
@@ -340,6 +342,8 @@ def load(problems=None):
                 problems.add(f'{rel} [wifi]', 'radio_model: 0 (a WCN6750 on the SoC\'s own bus) or 1 (a WCN6855 on PCIe)')
             if radio.get('early_pool_mb', 0) > 512:
                 problems.add(f'{rel} [wifi]', 'early_pool_mb is in megabytes: some tens')
+        if 'virtio' in data.get('features', []) and len(data['features']) > 1:
+            problems.add(rel, 'feature "virtio" is an emulator\'s: not beside the features of a phone')
         if data.get('screen', {}).get('statusbar_leading_shift', 0) > 200:
             problems.add(f'{rel} [screen]', 'statusbar_leading_shift is in points: some tens, not hundreds')
         for argument in data.get('boot', {}).get('bootargs', []):

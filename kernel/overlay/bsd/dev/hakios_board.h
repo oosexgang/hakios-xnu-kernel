@@ -38,6 +38,8 @@ enum {
 	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (redwood_adsp.c) */
 	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a command-mode panel whose readout is followed on the DSI interface's
 	                                         * counters, for frames without tearing (redwood_adreno.c, fb_scan) */
+	HAKIOS_HAS_VIRTIO       = 1u << 15,     /* an emulator's virtio devices on its MMIO transport: network, tablet
+	                                         * and keyboard (redwood_virtio_net.c, redwood_virtio_input.c) */
 	HAKIOS_HAS_GPU_A660     = 1u << 14,     /* an Adreno of the A660 family behind a GMU; what differs from one to
 	                                         * the next is the board's [gpu] (redwood_adreno.c, gpu=1) */
 	/*

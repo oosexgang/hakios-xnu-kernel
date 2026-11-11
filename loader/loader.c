@@ -3880,8 +3880,8 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	/* how the kernel is to ask the firmware for more cores (PSCI) */
 	dt_prop_str(&w, "psci-method", plat->psci_hvc ? "hvc" : "smc");
 	/*
-	 * which machine this is, for the kernel's drivers (redwood_board_is(): virtio on "qemu-virt", the
-	 * backlight's profile): an unnamed board gets no access to anything of a phone
+	 * which machine this is, for the kernel (bsd/dev/hakios_board.c finds the board's row by it): a board
+	 * the kernel has no row for gets no access to anything of a phone
 	 */
 	dt_prop_str(&w, "darwin-board", plat->name);
 	/* where the kernel is to start its other cores: the PAC keys first (secondary_cpu_entry) */
