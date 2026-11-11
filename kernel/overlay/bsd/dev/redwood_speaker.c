@@ -96,17 +96,7 @@ say(const char *format, ...)
 	return length;
 }
 
-static inline uint32_t
-rd(vm_offset_t address)
-{
-	return *(volatile uint32_t *)address;
-}
-
-static inline void
-wr(vm_offset_t address, uint32_t value)
-{
-	*(volatile uint32_t *)address = value;
-}
+#include "hakios_mmio.h"
 
 /* Waits without sleeping (also with interrupts off, on a panic's way out). */
 static void
