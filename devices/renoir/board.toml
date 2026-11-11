@@ -30,6 +30,14 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 [thermal]
 floor_mhz = [1000, 1100, 1100]
 
+# The keys on the PMICs (xiaomi-sm7350-common.dtsi): a peripheral is SPMI slave << 8 | the high byte of
+# its registers.
+[buttons]
+pon = 0x013                         # pon_hlos@1300 of the PMK8350 (slave 0): power, and volume down on RESIN_N
+pon_name = "the PMK8350's power-on block"
+volume_up = 0x18d                   # gpio_keys: GPIO6 of the PM8350 (slave 1, pinctrl@8800: 0x8800 + 0x100 * 5)
+volume_up_name = "GPIO6 of the PM8350"
+
 # The audio DSP, and the battery manager behind it.
 [adsp]
 firmware = "fw-audio-renoir"        # the root's directory with this phone's adsp.mdt and its parts

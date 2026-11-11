@@ -38,6 +38,11 @@ known_phone(void)
 	CHECK(strcmp(get_string("name"), "renoir") == 0, "hw.board.name %s", get_string("name"));
 	CHECK(strcmp(get_string("soc"), "sm7350") == 0, "hw.board.soc %s", get_string("soc"));
 	CHECK(strstr(get_string("features"), "cpufreq-epss") != NULL, "hw.board.features %s", get_string("features"));
+	/* its keys: the PMK8350's power-on block and GPIO6 of the PM8350, through the arbiter of its SoC */
+	CHECK(hakios_board_has(HAKIOS_HAS_BUTTONS_PMIC) && b != NULL && b->spmi.core == 0x0c440000 && b->spmi.cnfg == 0x0c40a000 &&
+	    b->spmi.observer == 0x0e600000 && b->spmi.ee == 0, "the PMIC arbiter");
+	CHECK(b != NULL && b->buttons.pon == 0x013 && b->buttons.volume_up == 0x18d && b->buttons.volume_up_name != NULL &&
+	    strcmp(b->buttons.volume_up_name, "GPIO6 of the PM8350") == 0, "its [buttons]");
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
 	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-renoir") == 0 &&
 	    b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
@@ -149,6 +154,8 @@ table(void)
 		    "%s: DCS bytes %u", b->name, b->backlight.bytes);
 		CHECK(!(b->features & HAKIOS_HAS_DISPLAY_SCAN) || (b->display.intf != 0 && b->clocks.dispcc != 0 &&
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_BUTTONS_PMIC) || (b->spmi.core != 0 && b->spmi.cnfg != 0 && b->spmi.observer != 0 &&
+		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without [spmi] or [buttons]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
 		    b->adsp.charge_counter_divisor != 0), "%s: adsp without [adsp]", b->name);
 		if (b->features & HAKIOS_HAS_GPU_A660) {

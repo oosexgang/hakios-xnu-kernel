@@ -50,7 +50,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_input.c` | `/dev/redwood-touch`: the queue of touches and button presses every source feeds. | — | any |
 | `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on redwood's SPI. | `touch-goodix` / `touchscreen=1` | part |
 | `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on Renoir's SPI. | `touch-ft3658u` / `touchscreen=1` | part |
-| `bsd/dev/redwood_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | phone (PMIC pins; the same on both phones) |
+| `bsd/dev/redwood_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
 | `bsd/dev/redwood_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | QEMU only | any (QEMU) |
 
 ## Power, CPU, temperature

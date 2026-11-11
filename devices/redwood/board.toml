@@ -25,6 +25,13 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 [thermal]
 floor_mhz = [1000, 1100, 1100]
 
+# The keys on the PMICs: a peripheral is SPMI slave << 8 | the high byte of its registers.
+[buttons]
+pon = 0x013                         # pon_hlos@1300 of the PMK8350 (slave 0): power, and volume down on RESIN_N
+pon_name = "the PMK8350's power-on block"
+volume_up = 0x18d                   # gpio_keys: GPIO6 of the PM7325 (slave 1)
+volume_up_name = "GPIO6 of the PM7325"
+
 # The audio DSP, and the battery manager behind it.
 [adsp]
 firmware = "fw"

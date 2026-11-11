@@ -1,12 +1,14 @@
 /*
- * The buttons of the POCO X5 Pro (redwood) -- power, volume up, volume down -- as a source of
- * button records for /dev/redwood-touch (sys/redwood_input.h). Only with boot-arg buttons=1:
- * every address below belongs to this phone.
+ * A phone's buttons -- power, volume up, volume down -- as a source of button records for
+ * /dev/redwood-touch (sys/redwood_input.h). Only with boot-arg buttons=1, on a board that lists
+ * "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys
+ * are on from the board file ([buttons]).
  *
- * None of the three is a pin of the SoC. They are inputs of two of the power management chips:
+ * None of the three is a pin of the SoC. They are inputs of two of the power management chips; on
+ * the two phones this was written on:
  *   power        KPDPWR_N of the power-on block ("PON") of the PMK8350
  *   volume down  RESIN_N of the same block
- *   volume up    GPIO6 of the PM7325, pulled up; the key pulls it low
+ *   volume up    GPIO6 of the PM7325 (redwood) or PM8350 (renoir), pulled up; the key pulls it low
  * Both chips sit on the SPMI bus (slaves 0 and 1), and the way to that bus is the SoC's "PMIC
  * arbiter": it owns the bus and gives each of the systems on the chip (this one, the modem, the
  * always-on processor, TrustZone...) a set of registers per PMIC peripheral -- a "channel" -- to
@@ -95,13 +97,12 @@ wr(vm_offset_t address, uint32_t value)
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 
-#define ARB_CORE_PHYS           0x0c440000UL    /* "core": the version, and which peripheral each channel is */
-#define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_PHYS           0x0c40a000UL    /* "cnfg": which system owns each channel */
-#define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_PHYS       0x0e600000UL    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
-#define ARB_OBSERVER_SIZE       0x10000UL       /* ours is the first */
-#define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
+/* Where its blocks are: the SoC file's [spmi] (the device tree's qcom,spmi-pmic-arb, by reg-names). */
+#define ARB_CORE_SIZE           0x1100UL        /* "core": the version, and which peripheral each channel is */
+#define ARB_CNFG_SIZE           0x1000UL        /* "cnfg": which system owns each channel */
+#define ARB_OBSERVER_SIZE       0x10000UL       /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
+static uint32_t arb_system;                     /* who we are to the arbiter: the device tree's "qcom,ee" */
+#define ARB_SYSTEM              arb_system
 
 #define ARB_VERSION             0x000
 #define ARB_VERSION_5           0x50000000u     /* what follows is version 5's; 7 moved things again */
@@ -151,8 +152,10 @@ struct peripheral {
 	uint16_t        channel;
 	bool            found;
 };
-static struct peripheral pon = { .name = "the PMK8350's power-on block", .id = 0x013 };          /* registers 0x1300 of slave 0 */
-static struct peripheral pin = { .name = "GPIO6 of the PM7325", .id = 0x18d };                   /* registers 0x8d00 of slave 1 */
+/* The board's [buttons]; on both phones so far 0x013 (registers 0x1300 of slave 0) and 0x18d (0x8d00 of slave 1). */
+static struct peripheral pon = { .name = "the power-on block" };
+static struct peripheral pin = { .name = "volume up's GPIO" };
+#define REGISTERS(p)            (((p)->id & 0xffu) << 8)        /* where its registers begin, on its slave */
 
 /* How the reads have gone: said once a minute. */
 static struct {
@@ -166,7 +169,7 @@ static struct {
 static const char *
 spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * p->channel;
+	vm_offset_t channel = arb_observer + 0x80UL * p->channel;       /* (our system's part of the block is what is mapped) */
 	uint64_t start = mach_absolute_time(), now, interval, taken;
 	uint32_t status, data[2];
 	const char *problem = NULL;
@@ -388,7 +391,8 @@ pon_inputs(void)
 	const char *problem;
 	uint8_t r[8], more[2];
 
-	printf("buttons: next: read the status and the interrupt setup of %s (registers 0x1310 to 0x1319)\n", pon.name);
+	printf("buttons: next: read the status and the interrupt setup of %s (registers %#x to %#x)\n", pon.name,
+	    REGISTERS(&pon) + 0x10, REGISTERS(&pon) + 0x19);
 	problem = spmi_read(&pon, REG_RT_STATUS, r, 8);
 	if (problem == NULL) {
 		problem = spmi_read(&pon, REG_INT_LATCHED, more, 2);
@@ -414,7 +418,8 @@ pin_input(void)
 	uint8_t c[8], status = 0;
 	unsigned mode, pull;
 
-	printf("buttons: next: read the setup and the level of %s (registers 0x8d40 to 0x8d47, 0x8d10)\n", pin.name);
+	printf("buttons: next: read the setup and the level of %s (registers %#x to %#x, %#x)\n", pin.name,
+	    REGISTERS(&pin) + 0x40, REGISTERS(&pin) + 0x47, REGISTERS(&pin) + 0x10);
 	problem = spmi_read(&pin, GPIO_REG_MODE, c, 8);
 	if (problem == NULL) {
 		problem = spmi_read(&pin, REG_RT_STATUS, &status, 1);
@@ -452,14 +457,15 @@ say_summary(void)
 static void
 buttons_thread(void *parameter, __unused wait_result_t result)
 {
+	const struct hakios_board *board = hakios_board();
 	uint32_t steps = (uint32_t)(uintptr_t)parameter, version, channels;
 	bool pon_known, pin_known;
 
-	printf("buttons: step 1: map the PMIC arbiter (%#lx, %#lx, %#lx) and read its version\n", ARB_CORE_PHYS, ARB_CNFG_PHYS,
-	    ARB_OBSERVER_PHYS);
-	arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
+	printf("buttons: step 1: map the PMIC arbiter (%#x, %#x, %#x) and read its version\n", board->spmi.core, board->spmi.cnfg,
+	    board->spmi.observer);
+	arb_core = ml_io_map(board->spmi.core, ARB_CORE_SIZE);
+	arb_cnfg = ml_io_map(board->spmi.cnfg, ARB_CNFG_SIZE);
+	arb_observer = ml_io_map(board->spmi.observer + ARB_OBSERVER_SIZE * arb_system, ARB_OBSERVER_SIZE);
 	version = rd(arb_core + ARB_VERSION);
 	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
 	printf("buttons: PMIC arbiter version %#x, %u channels\n", version, channels);
@@ -536,6 +542,7 @@ out:
 void
 redwood_buttons_init(void)
 {
+	const struct hakios_board *board = hakios_board();
 	uint32_t enabled = 0, steps = 5;
 	thread_t thread;
 
@@ -555,11 +562,19 @@ redwood_buttons_init(void)
 		printf("buttons: disabled: this board's board.toml lists no \"buttons-pmic\"\n");
 		return;
 	}
-	/* xiaomi-sm7350-common.dtsi: PMK8350 SID0 PON, PM8350 SID1 GPIO6.
-	 * The peripheral addresses, input layout and arbiter EE0 match redwood.
-	 * buttons_thread still checks the arbiter version and peripheral types. */
-	if (redwood_board_is("renoir")) {
-		pin.name = "GPIO6 of the PM8350";
+	if (board->spmi.core == 0 || board->buttons.pon == 0 || board->buttons.volume_up == 0) {
+		printf("buttons: disabled: no [spmi] in the SoC file or no [buttons] in the board file\n");
+		return;
+	}
+	/* buttons_thread still checks the arbiter's version and that each peripheral is of the kind taken for. */
+	arb_system = board->spmi.ee;
+	pon.id = board->buttons.pon;
+	pin.id = board->buttons.volume_up;
+	if (board->buttons.pon_name != NULL) {
+		pon.name = board->buttons.pon_name;
+	}
+	if (board->buttons.volume_up_name != NULL) {
+		pin.name = board->buttons.volume_up_name;
 	}
 	PE_parse_boot_argn("buttons_steps", &steps, sizeof(steps));
 	if (steps == 0) {

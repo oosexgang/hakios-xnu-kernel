@@ -37,7 +37,8 @@ that SoC is new. From the tree it reads:
 - the interrupt controller, the cores with their MPIDR numbering, which cores are the small ones, the
   PSCI method;
 - the panel: brightness range, byte order, command or video mode. Pass `--panel NODE` if it reports
-  several panels.
+  several panels;
+- the PMIC arbiter, and which PMIC peripherals the power and volume keys are on.
 
 It prints what it could not find. Two things are never in a device tree and are yours to fill in:
 
@@ -113,7 +114,7 @@ first. Every argument is in [boot-args.md](boot-args.md); every driver in [drive
 | CPU frequency | `cpufreq-epss`, `[cpufreq]` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
 | Memory bandwidth | `ddr-rpmh` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
 | GPU (Adreno 642, 642L, 643) | `gpu-a660`, `[gpu]` | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
-| Buttons | `buttons-pmic` | `buttons=1` | Each press and release is logged. |
+| Buttons | `buttons-pmic`, `[spmi]`, `[buttons]` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
 | Audio DSP | `adsp`, `[adsp]` | `adsp=1` | The DSP's services come up. |
 

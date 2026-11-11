@@ -16,6 +16,14 @@ dispcc_mdss_mdp_cbcr = 0x1014       # disp_cc_mdss_mdp_clk    }
 dsi0 = 0x0ae94000                   # mdss_dsi0, reg "dsi_ctrl" (DSI controller 2.5)
 intf1 = 0x0ae36000                  # mdss_dsi0, reg "mdp_intf_base": the interface the panel hangs on
 
+# The PMIC arbiter: the way to the power management chips on the SPMI bus (qcom,spmi-pmic-arb, by
+# reg-names "core", "cnfg" and "obsrvr"). The keys and the flashlight are read and written through it.
+[spmi]
+core = 0x0c440000
+cnfg = 0x0c40a000
+observer = 0x0e600000
+ee = 0                              # qcom,ee: which of the arbiter's systems this one is
+
 [thermal]
 tsens = [0x0c263000, 0x0c265000]    # tsens0 and tsens1, reg "tsens_tm_physical"
 

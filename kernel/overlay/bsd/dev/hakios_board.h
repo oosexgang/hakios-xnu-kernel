@@ -109,6 +109,19 @@ struct hakios_board {
 		uint32_t speeds_khz[5], speed_levels[5];        /* the core clock's steps and their supply levels */
 	} gpu;
 
+	/* the PMICs' bus (soc: [spmi]): the three blocks of the SPMI arbiter this system reads through */
+	struct {
+		uint32_t core, cnfg, observer;
+		uint32_t ee;                    /* who this system is to the arbiter (the device tree's qcom,ee) */
+	} spmi;
+
+	/* the keys on the PMICs (board: [buttons]); a peripheral is slave << 8 | the high byte of its registers */
+	struct {
+		uint16_t pon;                   /* the power-on block: power, and volume down on its RESIN_N */
+		uint16_t volume_up;             /* the GPIO volume up pulls low */
+		const char *pon_name, *volume_up_name;  /* for the log: "GPIO6 of the PM8350" */
+	} buttons;
+
 	/* the audio DSP (board: [adsp]) */
 	struct {
 		const char *firmware;           /* the root's directory with the DSP's image (adsp.mdt and its parts) */
