@@ -10,6 +10,9 @@
  *
  * and makes `changed' the model's after_write. The lines are open drain: one is low if the SoC or the
  * device pulls it down. A line the SoC drives high is counted: on such a bus that is a fault.
+ *
+ * A second device answers at `address_b' if that is not 0, with registers of its own (`reg_b'); with
+ * `wide' a register is two bytes, the most significant first, as some chips have them.
  */
 #ifndef I2C_DEVICE_MODEL_H
 #define I2C_DEVICE_MODEL_H
@@ -18,6 +21,9 @@
 
 static struct {
 	uint8_t reg[256], at;           /* its registers, and which is next */
+	uint8_t address_b, reg_b[256];  /* a second device on the same lines, if the test gives it an address */
+	uint8_t *bank;                  /* the registers of the device that was addressed */
+	bool wide;                      /* registers of two bytes, the most significant first: register r is bytes 2r and 2r + 1 */
 	bool active, reading, first, expect_register, pending_read, master_acked;
 	unsigned bit;                   /* clock pulses seen of the nine a byte takes */
 	uint8_t shift, out;
@@ -91,19 +97,21 @@ changed(void)
 				bool ours = true;
 
 				if (device.first) {
-					ours = !device.absent && (device.shift >> 1) == I2C_DEVICE_ADDRESS;
+					ours = !device.absent && ((device.shift >> 1) == I2C_DEVICE_ADDRESS ||
+					    (device.address_b != 0 && (device.shift >> 1) == device.address_b));
+					device.bank = (device.shift >> 1) == I2C_DEVICE_ADDRESS ? device.reg : device.reg_b;
 					device.pending_read = device.shift & 1;
 					device.expect_register = !device.pending_read;
 					device.first = false;
 				} else if (device.expect_register) {
-					device.at = device.shift;
+					device.at = device.wide ? (uint8_t)(device.shift * 2) : device.shift;
 					device.expect_register = false;
 					device.bytes_in++;
 				} else {
 					if (device.written != NULL) {
 						device.written(device.at++, device.shift);
 					} else {
-						device.reg[device.at++] = device.shift;
+						device.bank[device.at++] = device.shift;
 					}
 					device.bytes_in++;
 					device.writes++;
@@ -128,7 +136,7 @@ changed(void)
 			}
 			if (device.reading) {
 				if (device.master_acked) {
-					device.out = device.reg[device.at++];
+					device.out = device.bank[device.at++];
 					device.bytes_out++;
 					device.sda_low = !(device.out & 0x80);
 				} else {

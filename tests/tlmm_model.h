@@ -14,7 +14,7 @@ static struct {
 	uint32_t base;
 	uint32_t cfg[PINS], io[PINS];
 	bool input[PINS];               /* what is outside on the pin */
-	unsigned writes, elsewhere;
+	unsigned reads, writes, elsewhere;
 	unsigned drove_wrong;           /* a pin became an output while its level was not the one asked for last */
 	int wanted[PINS];               /* -1: nothing asked yet */
 	void (*after_write)(void);      /* for a test with something on the pins: called when a pin's registers changed */
@@ -29,6 +29,7 @@ tlmm_model_rd(vm_offset_t address)
 		model.elsewhere++;
 		return 0;
 	}
+	model.reads++;
 	return reg == 0 ? model.cfg[pin] : (model.io[pin] & 2) | (model.input[pin] ? 1 : 0);
 }
 
