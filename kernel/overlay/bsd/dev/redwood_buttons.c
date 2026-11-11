@@ -102,34 +102,10 @@ extern void buttons_test_wr(vm_offset_t address, uint32_t value);
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 
-/* Where its blocks are: the SoC file's [spmi] (the device tree's qcom,spmi-pmic-arb, by reg-names). */
-#define ARB_CORE_SIZE           0x1100UL        /* "core": the version, and which peripheral each channel is */
-#define ARB_CNFG_SIZE           0x1000UL        /* "cnfg": which system owns each channel */
-#define ARB_OBSERVER_SIZE       0x10000UL       /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
-static uint32_t arb_system;                     /* who we are to the arbiter: the device tree's "qcom,ee" */
-#define ARB_SYSTEM              arb_system
+/* Where its blocks are, its registers and one transfer: hakios_spmi.h, shared with the other drivers of PMICs. */
+#include "hakios_spmi.h"
 
-#define ARB_VERSION             0x000
-#define ARB_VERSION_5           0x50000000u     /* what follows is version 5's; 7 moved things again */
-#define ARB_VERSION_7           0x70000000u
-#define ARB_FEATURES            0x004           /* [10:0] the number of channels */
-#define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* core: [19:8] slave and peripheral, [24] interrupts go to the owner */
-#define ARB_CHANNEL_INTERRUPTS  (1u << 24)
-#define ARB_OWNER(n)            (0x700 + 4 * (n))       /* cnfg: [2:0] the system that may write through channel n */
-#define ARB_MAX_CHANNELS        512
-
-#define OBSERVER_COMMAND        0x00
-#define OBSERVER_STATUS         0x08
-#define OBSERVER_DATA0          0x18            /* the bytes read, the first in the lowest byte */
-#define OBSERVER_DATA1          0x1c
-#define STATUS_DONE             0x1
-#define STATUS_FAILURE          0x2
-#define STATUS_DENIED           0x4
-#define STATUS_DROPPED          0x8
-#define COMMAND_READ            (1u << 27)      /* "extended register read long"; [11:4] register, [2:0] bytes - 1 */
-#define READ_TIMEOUT_US         2000            /* a read takes some tens of microseconds */
-
-static vm_offset_t arb_core, arb_cnfg, arb_observer;
+static struct hakios_spmi arb;
 
 /*
  * One transfer at a time through the arbiter for this system, whoever asks (the flashlight's
@@ -174,36 +150,13 @@ static struct {
 static const char *
 spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x80UL * p->channel;       /* (our system's part of the block is what is mapped) */
-	uint64_t start = mach_absolute_time(), now, interval, taken;
-	uint32_t status, data[2];
-	const char *problem = NULL;
+	uint64_t start = mach_absolute_time(), taken;
+	const char *problem;
 
-	nanoseconds_to_absolutetime(READ_TIMEOUT_US * (uint64_t)NSEC_PER_USEC, &interval);
 	redwood_spmi_lock();
-	wr(channel + OBSERVER_COMMAND, COMMAND_READ | (uint32_t)reg << 4 | (count - 1));
-	do {
-		status = rd(channel + OBSERVER_STATUS);
-		now = mach_absolute_time();
-	} while (!(status & STATUS_DONE) && now - start < interval);
-	data[0] = rd(channel + OBSERVER_DATA0);
-	data[1] = count > 4 ? rd(channel + OBSERVER_DATA1) : 0;
+	problem = hakios_spmi_read(hakios_spmi_observer(&arb, p->channel), reg, bytes, count);
 	redwood_spmi_unlock();
-
-	if (!(status & STATUS_DONE)) {
-		problem = "no answer from the arbiter";
-	} else if (status & STATUS_DENIED) {
-		problem = "the arbiter refuses";
-	} else if (status & STATUS_FAILURE) {
-		problem = "the transfer failed (nobody at that address?)";
-	} else if (status & STATUS_DROPPED) {
-		problem = "the transfer was dropped";
-	} else {
-		for (uint32_t i = 0; i < count; i++) {
-			bytes[i] = (uint8_t)(data[i / 4] >> (8 * (i % 4)));
-		}
-	}
-	absolutetime_to_nanoseconds(now - start, &taken);
+	absolutetime_to_nanoseconds(mach_absolute_time() - start, &taken);
 	bus.reads++;
 	bus.total_ns += taken;
 	bus.last_ns = taken;
@@ -221,18 +174,18 @@ spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t coun
  * Linux chooses: the first, unless a later one is ours to write through.
  */
 static void
-find_channel(struct peripheral *p, uint32_t channels)
+find_channel(struct peripheral *p)
 {
-	for (uint32_t n = 0; n < channels; n++) {
-		uint32_t map = rd(arb_core + ARB_CHANNEL(n)), owner;
+	for (uint32_t n = 0; n < arb.channels; n++) {
+		uint32_t map = hakios_spmi_channel_map(&arb, n), owner;
 
-		if (map == 0 || ((map >> 8) & 0xfff) != p->id) {
+		if (map == 0 || SPMI_ID_OF(map) != p->id) {
 			continue;
 		}
-		owner = rd(arb_cnfg + ARB_OWNER(n)) & 7;
+		owner = hakios_spmi_channel_owner(&arb, n);
 		printf("buttons: channel %u is %s (%#x); written by system %u%s\n", n, p->name, map, owner,
 		    (map & ARB_CHANNEL_INTERRUPTS) ? ", which also gets its interrupts" : "");
-		if (!p->found || owner == ARB_SYSTEM) {
+		if (!p->found || owner == arb.system) {
 			p->found = true;
 			p->channel = (uint16_t)n;
 		}
@@ -463,31 +416,24 @@ static void
 buttons_thread(void *parameter, __unused wait_result_t result)
 {
 	const struct hakios_board *board = hakios_board();
-	uint32_t steps = (uint32_t)(uintptr_t)parameter, version, channels;
-	bool pon_known, pin_known;
+	uint32_t steps = (uint32_t)(uintptr_t)parameter;
+	bool known, pon_known, pin_known;
 
 	printf("buttons: step 1: map the PMIC arbiter (%#x, %#x, %#x) and read its version\n", board->spmi.core, board->spmi.cnfg,
 	    board->spmi.observer);
-	arb_core = ml_io_map(board->spmi.core, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(board->spmi.cnfg, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(board->spmi.observer + ARB_OBSERVER_SIZE * arb_system, ARB_OBSERVER_SIZE);
-	version = rd(arb_core + ARB_VERSION);
-	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
-	printf("buttons: PMIC arbiter version %#x, %u channels\n", version, channels);
-	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
+	known = hakios_spmi_map(&arb);
+	printf("buttons: PMIC arbiter version %#x, %u channels\n", arb.version, arb.channels);
+	if (!known) {
 		printf("buttons: this driver knows version 5 of the arbiter only: no buttons\n");
 		goto out;
-	}
-	if (channels == 0 || channels > ARB_MAX_CHANNELS) {
-		channels = ARB_MAX_CHANNELS;
 	}
 	if (steps < 2) {
 		goto out;
 	}
 
 	printf("buttons: step 2: look through the arbiter's table for the channels of the two peripherals\n");
-	find_channel(&pon, channels);
-	find_channel(&pin, channels);
+	find_channel(&pon);
+	find_channel(&pin);
 	if (steps < 3) {
 		goto out;
 	}
@@ -572,7 +518,6 @@ redwood_buttons_init(void)
 		return;
 	}
 	/* buttons_thread still checks the arbiter's version and that each peripheral is of the kind taken for. */
-	arb_system = board->spmi.ee;
 	pon.id = board->buttons.pon;
 	pin.id = board->buttons.volume_up;
 	if (board->buttons.pon_name != NULL) {
