@@ -100,20 +100,7 @@ gpio_output(unsigned pin, bool high, unsigned pull, unsigned ma)
 #define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* the application processor's "DRV 2" */
 #define RSC_SIZE                0x10000UL
 #define TCS(reg)                (rsc + hakios_board()->rpmh.tcs_offset + (reg))           /* command slot set 0, an "active" one */
-#define TCS_IRQ_ENABLE          0x00
-#define TCS_IRQ_STATUS          0x04
-#define TCS_IRQ_CLEAR           0x08
-#define TCS_WAIT_FOR_COMPLETION 0x10
-#define TCS_CONTROL             0x14
-#define TCS_CONTROL_ENABLE      (1u << 16)
-#define TCS_CONTROL_TRIGGER     (1u << 24)
-#define TCS_STATUS              0x18            /* 0 while busy */
-#define TCS_CMD_ENABLE          0x1c
-#define TCS_CMD_MSGID(n)        (0x30 + 20 * (n))
-#define TCS_CMD_ADDR(n)         (0x34 + 20 * (n))
-#define TCS_CMD_DATA(n)         (0x38 + 20 * (n))
-#define MSGID_WRITE_4_BYTES     0x10008
-#define MSGID_RESPONSE          0x100
+#include "hakios_rpmh.h"                    /* a slot set's registers, and one request through it */
 
 #define VRM_VOLTAGE             0               /* a regulator's registers, from its address: millivolts */
 #define VRM_ENABLE              4
@@ -136,56 +123,16 @@ rpmh_address(const char *name)
 	return hakios_cmd_db_address(db, CMD_DB_SIZE, name);
 }
 
-static bool
-rpmh_wait(uint32_t reg, uint32_t mask, uint32_t value, const char *what)
-{
-	for (int i = 0; i < 2000; i++) {
-		if ((rd(TCS(reg)) & mask) == value) {
-			return true;
-		}
-		sleep_us(100);
-	}
-	printf("goodix: RPMh: timeout waiting for %s (register %#x = %#x)\n", what, reg, rd(TCS(reg)));
-	return false;
-}
-
-/* Send up to three register writes to RPMh and wait until they are done. */
+/* Send up to three register writes to RPMh and wait until they are done (hakios_rpmh.h); what went wrong is said. */
 static bool
 rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	uint32_t irq_enable = rd(TCS(TCS_IRQ_ENABLE));
-	bool done;
+	const char *problem = hakios_rpmh_send(TCS(0), address, data, count);
 
-	/* the slot set must be idle, and switched off the way the hardware wants it: trigger, then enable */
-	for (int i = 0; rd(TCS(TCS_STATUS)) == 0; i++) {
-		if (i > 2000) {
-			printf("goodix: RPMh: the command slots stay busy\n");
-			return false;
-		}
-		sleep_us(100);
+	if (problem != NULL) {
+		printf("goodix: RPMh: %s\n", problem);
 	}
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
-	wr(TCS(TCS_IRQ_CLEAR), 1);
-	for (unsigned i = 0; i < count; i++) {
-		wr(TCS(TCS_CMD_MSGID(i)), MSGID_WRITE_4_BYTES | MSGID_RESPONSE);
-		wr(TCS(TCS_CMD_ADDR(i)), address[i]);
-		wr(TCS(TCS_CMD_DATA(i)), data[i]);
-	}
-	wr(TCS(TCS_WAIT_FOR_COMPLETION), (1u << count) - 1);
-	wr(TCS(TCS_CMD_ENABLE), (1u << count) - 1);
-	wr(TCS(TCS_IRQ_ENABLE), irq_enable | 1);        /* the status bit follows the enable; the interrupt itself stays masked */
-	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE);
-	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE | TCS_CONTROL_TRIGGER);
-
-	done = rpmh_wait(TCS_IRQ_STATUS, 1, 1, "the request");
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
-	wr(TCS(TCS_CMD_ENABLE), 0);
-	wr(TCS(TCS_WAIT_FOR_COMPLETION), 0);
-	wr(TCS(TCS_IRQ_CLEAR), 1);
-	wr(TCS(TCS_IRQ_ENABLE), irq_enable);
-	return done;
+	return problem == NULL;
 }
 
 /* The chip's I/O supply: 1.8 V from LDO2 of the PM8350C ("ldoc2"). Nothing else is connected to it. */

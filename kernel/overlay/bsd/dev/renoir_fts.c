@@ -27,15 +27,9 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #include "hakios_board.h"
 #include "hakios_mmio.h"
 
-static void
-sleep_us(uint32_t us)
-{
-	delay_for_interval(us, NSEC_PER_USEC);
-}
-
 static char sleep_event;
 static void
-sleep_ms(uint32_t ms)
+fts_sleep_ms(uint32_t ms)
 {
     /* Yield the CPU while polling/resetting; do not busy-spin for whole milliseconds. */
     assert_wait_timeout((event_t)&sleep_event, THREAD_UNINT, ms, NSEC_PER_MSEC);
@@ -91,20 +85,7 @@ gpio_output(unsigned pin, bool high, unsigned pull, unsigned ma)
 #define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* the application processor's "DRV 2" */
 #define RSC_SIZE                0x10000UL
 #define TCS(reg)                (rsc + hakios_board()->rpmh.tcs_offset + (reg))           /* command slot set 0, an "active" one */
-#define TCS_IRQ_ENABLE          0x00
-#define TCS_IRQ_STATUS          0x04
-#define TCS_IRQ_CLEAR           0x08
-#define TCS_WAIT_FOR_COMPLETION 0x10
-#define TCS_CONTROL             0x14
-#define TCS_CONTROL_ENABLE      (1u << 16)
-#define TCS_CONTROL_TRIGGER     (1u << 24)
-#define TCS_STATUS              0x18            /* 0 while busy */
-#define TCS_CMD_ENABLE          0x1c
-#define TCS_CMD_MSGID(n)        (0x30 + 20 * (n))
-#define TCS_CMD_ADDR(n)         (0x34 + 20 * (n))
-#define TCS_CMD_DATA(n)         (0x38 + 20 * (n))
-#define MSGID_WRITE_4_BYTES     0x10008
-#define MSGID_RESPONSE          0x100
+#include "hakios_rpmh.h"                    /* a slot set's registers, and one request through it */
 
 #define VRM_VOLTAGE             0               /* a regulator's registers, from its address: millivolts */
 #define VRM_ENABLE              4
@@ -127,56 +108,16 @@ rpmh_address(const char *name)
 	return hakios_cmd_db_address(db, CMD_DB_SIZE, name);
 }
 
-static bool
-rpmh_wait(uint32_t reg, uint32_t mask, uint32_t value, const char *what)
-{
-	for (int i = 0; i < 2000; i++) {
-		if ((rd(TCS(reg)) & mask) == value) {
-			return true;
-		}
-		sleep_us(100);
-	}
-	printf("fts: RPMh: timeout waiting for %s (register %#x = %#x)\n", what, reg, rd(TCS(reg)));
-	return false;
-}
-
-/* Send up to three register writes to RPMh and wait until they are done. */
+/* Send up to three register writes to RPMh and wait until they are done (hakios_rpmh.h); what went wrong is said. */
 static bool
 rpmh_write_locked(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	uint32_t irq_enable = rd(TCS(TCS_IRQ_ENABLE));
-	bool done;
+	const char *problem = hakios_rpmh_send(TCS(0), address, data, count);
 
-	/* the slot set must be idle, and switched off the way the hardware wants it: trigger, then enable */
-	for (int i = 0; rd(TCS(TCS_STATUS)) == 0; i++) {
-		if (i > 2000) {
-			printf("fts: RPMh: the command slots stay busy\n");
-			return false;
-		}
-		sleep_us(100);
+	if (problem != NULL) {
+		printf("fts: RPMh: %s\n", problem);
 	}
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
-	wr(TCS(TCS_IRQ_CLEAR), 1);
-	for (unsigned i = 0; i < count; i++) {
-		wr(TCS(TCS_CMD_MSGID(i)), MSGID_WRITE_4_BYTES | MSGID_RESPONSE);
-		wr(TCS(TCS_CMD_ADDR(i)), address[i]);
-		wr(TCS(TCS_CMD_DATA(i)), data[i]);
-	}
-	wr(TCS(TCS_WAIT_FOR_COMPLETION), (1u << count) - 1);
-	wr(TCS(TCS_CMD_ENABLE), (1u << count) - 1);
-	wr(TCS(TCS_IRQ_ENABLE), irq_enable | 1);        /* the status bit follows the enable; the interrupt itself stays masked */
-	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE);
-	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE | TCS_CONTROL_TRIGGER);
-
-	done = rpmh_wait(TCS_IRQ_STATUS, 1, 1, "the request");
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
-	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
-	wr(TCS(TCS_CMD_ENABLE), 0);
-	wr(TCS(TCS_WAIT_FOR_COMPLETION), 0);
-	wr(TCS(TCS_IRQ_CLEAR), 1);
-	wr(TCS(TCS_IRQ_ENABLE), irq_enable);
-	return done;
+	return problem == NULL;
 }
 
 static bool
@@ -627,9 +568,9 @@ static void
 fts_reset(void)
 {
     gpio_set(PIN_RESET, false);
-    sleep_ms(1);
+    fts_sleep_ms(1);
     gpio_set(PIN_RESET, true);
-    sleep_ms(200);
+    fts_sleep_ms(200);
 }
 
 static bool
@@ -648,7 +589,7 @@ fts_probe(void)
             }
             return true;
         }
-        sleep_ms(100);
+        fts_sleep_ms(100);
     }
     printf("fts: no application ID 0x5652 (last 0x%02x%02x); no firmware is flashed\n", high, low);
     return false;
@@ -661,11 +602,11 @@ fts_bring_up(void)
     printf("fts: renoir SE10 0x988000; reset gpio30, IRQ gpio31; L2C/L7C\n");
     gpio_output(PIN_RESET, false, PULL_UP, 8);
     gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
-    sleep_ms(1);
+    fts_sleep_ms(1);
     if (!supply_on("ldoc2", 1800)) { return false; }
-    sleep_ms(1);
+    fts_sleep_ms(1);
     if (!supply_on("ldoc7", 3300)) { return false; }
-    sleep_ms(15);
+    fts_sleep_ms(15);
     const char *problem = "SPI clocks unavailable";
     if (clocks_on(spi_hz)) {
         printf("fts: GENI firmware %#x, interface %#x, parameters %#x\n",
@@ -725,7 +666,7 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
         bool pending = !gpio_get(PIN_INT), active = false;
         for (unsigned id = 0; id < FTS_CONTACTS; id++) { active |= contact[id].down; }
         if (!pending && !active && tick % 10 != 0) {
-            sleep_ms(8);
+            fts_sleep_ms(8);
             continue;
         }
         seen.polls++;
@@ -735,7 +676,7 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
          * only on IRQ; our periodic fallback must not reset an idle controller. */
         if (read_ok && !pending && !active && fts_report_empty(report, sizeof(report))) {
             failures = 0;
-            sleep_ms(8);
+            fts_sleep_ms(8);
             continue;
         }
         if (read_ok && fts_decode(report, sizeof(report), &frame)) {
@@ -767,7 +708,7 @@ fts_thread(__unused void *parameter, __unused wait_result_t result)
                 seen.polls, seen.reports, seen.bad, seen.transfers_failed, seen.positions,
                 gpio_get(PIN_INT) ? "high" : "low");
         }
-        sleep_ms(8);
+        fts_sleep_ms(8);
     }
     fts_release();
     printf("fts: stopped after repeated controller errors\n");
