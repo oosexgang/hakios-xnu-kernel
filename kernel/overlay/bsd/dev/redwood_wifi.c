@@ -2053,11 +2053,7 @@ step_start(void)
 #define ITEM_GLINK_DESCRIPTOR   478
 #define ITEM_GLINK_OUR_QUEUE    479
 #define ITEM_GLINK_THEIR_QUEUE  480
-#define GLINK_OUR_TAIL          0               /* the descriptor's words: how far the DSP has read our queue (its to move) */
-#define GLINK_OUR_HEAD          4               /* how far we have written it */
-#define GLINK_THEIR_TAIL        8               /* how far we have read the DSP's queue */
-#define GLINK_THEIR_HEAD        12              /* how far it has written it (its to move) */
-#define GLINK_RESERVE           16              /* of our queue, never filled (Linux's reserve, and room for one short message) */
+#include "hakios_glink_queue.h"             /* the descriptor's words, and the arithmetic of the two queues' marks */
 #define IPCC_GLINK              0u              /* the signal */
 
 enum {
@@ -2121,8 +2117,7 @@ glink_find(void)
 	}
 	glink.ours = smem_item(ITEM_GLINK_OUR_QUEUE, &glink.ours_size);
 	glink.theirs = smem_item(ITEM_GLINK_THEIR_QUEUE, &glink.theirs_size);
-	return glink.ours != 0 && glink.theirs != 0 && glink.ours_size >= 1024 && glink.theirs_size >= 1024 &&
-	       !(glink.ours_size & 7) && !(glink.theirs_size & 7);
+	return glink.ours != 0 && glink.theirs != 0 && glink_queues_usable(glink.ours_size, glink.theirs_size);
 }
 
 /* Our two marks to zero, if they are not: before the DSP starts (see above). */
@@ -2151,41 +2146,29 @@ glink_reset(void)
 static uint32_t
 glink_waiting(void)
 {
-	uint32_t head = smem_word(glink.descriptor + GLINK_THEIR_HEAD), tail = smem_word(glink.descriptor + GLINK_THEIR_TAIL);
-
-	if (head >= glink.theirs_size || tail >= glink.theirs_size) {
-		return 0;
-	}
-	return head >= tail ? head - tail : glink.theirs_size - tail + head;
+	return glink_queue_unread(smem_word(glink.descriptor + GLINK_THEIR_HEAD), smem_word(glink.descriptor + GLINK_THEIR_TAIL),
+	           glink.theirs_size);
 }
 
 static void
 glink_peek(void *to, uint32_t offset, uint32_t count)
 {
-	uint32_t at = (smem_word(glink.descriptor + GLINK_THEIR_TAIL) + offset) % glink.theirs_size;
-
-	for (uint32_t i = 0; i < count; i++) {
-		((uint8_t *)to)[i] = smem[glink.theirs + (at + i) % glink.theirs_size];
-	}
+	glink_queue_peek(smem + glink.theirs, glink.theirs_size, smem_word(glink.descriptor + GLINK_THEIR_TAIL), offset, to, count);
 }
 
 static void
 glink_advance(uint32_t count)
 {
-	smem_poke(glink.descriptor + GLINK_THEIR_TAIL, (smem_word(glink.descriptor + GLINK_THEIR_TAIL) + count) % glink.theirs_size);
+	smem_poke(glink.descriptor + GLINK_THEIR_TAIL,
+	    glink_queue_after(smem_word(glink.descriptor + GLINK_THEIR_TAIL), count, glink.theirs_size));
 }
 
 /* How much we may write into our queue now. */
 static uint32_t
 glink_room(void)
 {
-	uint32_t head = smem_word(glink.descriptor + GLINK_OUR_HEAD), tail = smem_word(glink.descriptor + GLINK_OUR_TAIL), room;
-
-	if (head >= glink.ours_size || tail >= glink.ours_size) {
-		return 0;
-	}
-	room = tail <= head ? glink.ours_size - head + tail : tail - head;
-	return room < GLINK_RESERVE ? 0 : room - GLINK_RESERVE;
+	return glink_queue_room(smem_word(glink.descriptor + GLINK_OUR_HEAD), smem_word(glink.descriptor + GLINK_OUR_TAIL),
+	           glink.ours_size);
 }
 
 /* A message into our queue, in two pieces, padded to eight bytes; then our mark, and the DSP's doorbell. */
@@ -2199,12 +2182,9 @@ glink_put(const void *first, uint32_t first_length, const void *second, uint32_t
 	if (!glink.up || glink_room() < padded) {
 		return false;
 	}
-	for (uint32_t i = 0; i < padded; i++) {
-		queue[(head + i) % glink.ours_size] = i < first_length ? ((const uint8_t *)first)[i] :
-		    i < length ? ((const uint8_t *)second)[i - first_length] : 0;
-	}
+	(void)glink_queue_put(queue, glink.ours_size, head, first, first_length, second, second_length);
 	settle();
-	smem_poke(glink.descriptor + GLINK_OUR_HEAD, (head + padded) % glink.ours_size);
+	smem_poke(glink.descriptor + GLINK_OUR_HEAD, glink_queue_after(head, padded, glink.ours_size));
 	settle();
 	wr(ipcc.base + IPCC_SEND, IPCC_WPSS << 16 | IPCC_GLINK);
 	glink.said++;
