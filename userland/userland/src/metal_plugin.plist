@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.redwood.metal</string>
+	<string>com.hakios.metal</string>
 	<key>CFBundleName</key>
-	<string>RedwoodMetal</string>
+	<string>HakiosMetal</string>
 	<!-- What _CFBundleCopyExecutableName reads first (0x186e2f910). It would also fall back to
 	     the bundle directory's own name with the extension stripped, so this key is not
 	     strictly required; it is here because relying on a fallback is not the same as saying
 	     what we mean. -->
 	<key>CFBundleExecutable</key>
-	<string>RedwoodMetal</string>
+	<string>HakiosMetal</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -29,6 +29,6 @@
 	     and reads this key. Naming the class here therefore covers both roads, and costs a
 	     line. -->
 	<key>NSPrincipalClass</key>
-	<string>RedwoodMetalDevice</string>
+	<string>HakiosMetalDevice</string>
 </dict>
 </plist>

@@ -1,5 +1,5 @@
 /*
- * The battery's driver itself (kernel/overlay/bsd/dev/redwood_battery.c), run as a host program. The
+ * The battery's driver itself (kernel/overlay/bsd/dev/hakios_battery.c), run as a host program. The
  * loader keeps the firmware's charger drivers and publishes what they say in a page of memory, written
  * while the kernel runs; the kernel only reads it. So the model here is that page, as a loader would
  * write it: whole, in the middle of an update, with values that cannot be, or not there at all.
@@ -63,10 +63,10 @@ publish(uint32_t flags, int soc, int mv, int ma, int c)
 	cache->sequence++;
 }
 
-/* what the kernel's power source would be handed (iokit/Kernel/RedwoodBattery.cpp) */
+/* what the kernel's power source would be handed (iokit/Kernel/HakiosBattery.cpp) */
 static unsigned reported, reported_size;
 void
-RedwoodBatteryReport(const void *state __unused, unsigned size)
+HakiosBatteryReport(const void *state __unused, unsigned size)
 {
 	reported++;
 	reported_size = size;
@@ -76,7 +76,7 @@ RedwoodBatteryReport(const void *state __unused, unsigned size)
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #include "hakios_board.c"
-#include "redwood_battery.c"
+#include "hakios_battery.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -107,15 +107,15 @@ read_and_followed(void)
 {
 	phone("phone-cmd");
 	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID | CHARGING, 73, 4012, 850, 31);
-	CHECK(redwood_battery_temperature() == -273, "the temperature is not known before the first look");
-	redwood_battery_init();
+	CHECK(hakios_battery_temperature() == -273, "the temperature is not known before the first look");
+	hakios_battery_init();
 	WAIT_FOR(s("battery_soc") == 73, 2000);
 	CHECK(s("battery_soc") == 73 && s("battery_voltage_mv") == 4012 && s("battery_current_ma") == 850 &&
 	    s("battery_temperature_c") == 31, "charge %d, %d mV, %d mA, %d C", s("battery_soc"), s("battery_voltage_mv"),
 	    s("battery_current_ma"), s("battery_temperature_c"));
 	CHECK(s("battery_present") == 1 && s("battery_charger_present") == 1 && s("battery_charging") == 1 &&
 	    s("battery_soc_estimated") == 0 && s("battery_charger_action") == 7, "the flags, one a sysctl");
-	CHECK(redwood_battery_temperature() == 31, "... and for the flashlight's guard: %d C", redwood_battery_temperature());
+	CHECK(hakios_battery_temperature() == 31, "... and for the flashlight's guard: %d C", hakios_battery_temperature());
 	CHECK(mapped == 1 && mapped_elsewhere == 0, "the cache's page is mapped once, and nothing else");
 	publish(VALID | PRESENT | VOLTAGE_VALID, 72, 3987, -410, 33);
 	WAIT_FOR(s("battery_soc") == 72, 2000);
@@ -130,7 +130,7 @@ estimated_and_without_voltage(void)
 {
 	phone("phone-cmd");
 	publish(VALID | PRESENT | ESTIMATED, 40, 3700, 0, 25);
-	redwood_battery_init();
+	hakios_battery_init();
 	WAIT_FOR(s("battery_soc") == 40, 2000);
 	CHECK(s("battery_soc_estimated") == 1, "an estimate is said to be one");
 	CHECK(s("battery_voltage_mv") == -1, "a voltage the firmware does not vouch for is not passed on: %d", s("battery_voltage_mv"));
@@ -142,7 +142,7 @@ torn_update(void)
 {
 	phone("phone-cmd");
 	publish(VALID | PRESENT | VOLTAGE_VALID, 55, 3800, -200, 28);
-	redwood_battery_init();
+	hakios_battery_init();
 	WAIT_FOR(s("battery_soc") == 55, 2000);
 	cache->sequence++;                      /* an update begins ... */
 	cache->soc_percent = 99;
@@ -162,7 +162,7 @@ impossible_values(void)
 {
 	phone("phone-cmd");
 	publish(VALID | PRESENT | VOLTAGE_VALID, 61, 3900, 0, 27);
-	redwood_battery_init();
+	hakios_battery_init();
 	WAIT_FOR(s("battery_soc") == 61, 2000);
 	publish(VALID | PRESENT | VOLTAGE_VALID, 150, 3900, 0, 27);
 	usleep(250 * 1000);
@@ -183,7 +183,7 @@ not_a_cache(void)
 	cache->magic = 0x1122334455667788ull;
 	cache->soc_percent = 50;
 	cache->flags = VALID;
-	redwood_battery_init();
+	hakios_battery_init();
 	usleep(250 * 1000);
 	CHECK(s("battery_soc") == -1 && s("battery_temperature_c") == -273, "unknown stays unknown: %d%%, %d C", s("battery_soc"),
 	    s("battery_temperature_c"));
@@ -195,7 +195,7 @@ another_version(void)
 	phone("phone-cmd");
 	cache->version = 2;
 	publish(VALID, 50, 0, 0, 20);
-	redwood_battery_init();
+	hakios_battery_init();
 	usleep(250 * 1000);
 	CHECK(s("battery_soc") == -1, "a cache of a layout this driver does not know is not read: %d", s("battery_soc"));
 }
@@ -207,7 +207,7 @@ no_address(void)
 	phone("phone-cmd");
 	boot_args = "battery=1";
 	publish(VALID, 50, 0, 0, 20);
-	redwood_battery_init();
+	hakios_battery_init();
 	usleep(150 * 1000);
 	CHECK(mapped == 0 && mapped_elsewhere == 0 && s("battery_soc") == -1, "nothing mapped, nothing known");
 }
@@ -221,7 +221,7 @@ off_by_default(void)
 	snprintf(arguments, sizeof(arguments), "battery_shared_pa=%#llx", CACHE_PA);
 	boot_args = arguments;
 	publish(VALID, 50, 0, 0, 20);
-	redwood_battery_init();
+	hakios_battery_init();
 	usleep(150 * 1000);
 	CHECK(mapped == 0 && s("battery_soc") == -1, "without battery=1 the page is not even mapped");
 }
@@ -231,7 +231,7 @@ board_without_it(void)
 {
 	phone("qemu-virt");
 	publish(VALID, 50, 0, 0, 20);
-	redwood_battery_init();
+	hakios_battery_init();
 	usleep(150 * 1000);
 	CHECK(mapped == 0 && mapped_elsewhere == 0 && s("battery_soc") == -1, "a board that does not list the feature maps nothing");
 }
@@ -240,14 +240,14 @@ board_without_it(void)
 static void
 from_the_dsp(void)
 {
-	struct redwood_battery_state state = {
+	struct hakios_battery_state state = {
 		.size = sizeof(state), .percent_hundredths = 8349, .voltage_uv = 4201000, .current_ua = -512000,
 		.temperature_hundredths = 3149, .present = 1, .external = 1, .status = 1, .full_uah = 4100000,
 		.design_uah = 4250000, .cycles = 212,
 	};
 
 	phone("phone-cmd");
-	redwood_battery_report(&state);
+	hakios_battery_report(&state);
 	CHECK(s("battery_soc") == 83 && s("battery_voltage_mv") == 4201 && s("battery_current_ma") == -512 &&
 	    s("battery_temperature_c") == 31, "rounded to what the sysctls carry: %d%%, %d mV, %d mA, %d C", s("battery_soc"),
 	    s("battery_voltage_mv"), s("battery_current_ma"), s("battery_temperature_c"));
@@ -257,7 +257,7 @@ from_the_dsp(void)
 	CHECK(reported == 1 && reported_size == sizeof(state), "handed on whole to the power source iOS reads");
 	state.percent_hundredths = 10160;       /* (a gauge above its own full charge: 102%) */
 	state.full_uah = 0;
-	redwood_battery_report(&state);
+	hakios_battery_report(&state);
 	CHECK(s("battery_soc") == 100 && s("battery_full_uah") == 4100000, "never above 100%%; a value not known yet keeps the last");
 }
 

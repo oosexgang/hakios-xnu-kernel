@@ -13,9 +13,9 @@
  * hand against the library that build is already producing:
  *
  *   FD=build/mesa-host/build/src/gallium/drivers/freedreno
- *   tools/air/mk-host.sh                                   # if $FD/libredwoodair.so is not there
+ *   tools/air/mk-host.sh                                   # if $FD/libhakiosair.so is not there
  *   gcc -O1 -Wall -I tools/mesa/air -o /tmp/picture_host tools/air/picture_host.c \
- *       -L$FD -l:libredwoodair.so -Wl,-rpath,$PWD/$FD
+ *       -L$FD -l:libhakiosair.so -Wl,-rpath,$PWD/$FD
  *
  * and run it on the modules of the library the device test reads, unpacked from the
  * container (the device gets them from Metal itself, through -[_MTLFunction bitcodeData];
@@ -345,7 +345,7 @@ main(int argc, char **argv)
 	 *
 	 * On the phone it is there to say which axis the stall is on; here it is the
 	 * reference for its counts AND one honest half of the question. This program calls
-	 * the library directly, so it never goes through redwoodmetal.m -- and the phone
+	 * the library directly, so it never goes through hakiosmetal.m -- and the phone
 	 * stopped inside -renderCommandEncoderWithDescriptor:, which is exactly the part
 	 * this cannot reach. What four passing rungs here DO say is that the library is
 	 * willing to make and draw all four shapes; what they cannot say is anything about

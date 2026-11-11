@@ -21,7 +21,7 @@ Auto-Brightness switch ────────────┤  ("DisplayBrightn
      backend soft: the display driver darkens each pixel on its way to the panel (QEMU, unknown panels)
 ```
 
-The display mode follows iOS too. `libredwood-backlight.dylib` already completes SpringBoard's display-mode
+The display mode follows iOS too. `libhakios-backlight.dylib` already completes SpringBoard's display-mode
 transitions; it now also looks up iOS's own name for each mode, using the function behind the watchdog's
 "ActiveOn":
 - a mode with "Off" in its name makes the panel dark once the ramp is over;

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 #
 # The six texture shaders that return the exact texel on softpipe, run on the real Adreno
 # (RC_JOBS=rc.jobs.airtex). This is the question softpipe cannot answer: it takes a

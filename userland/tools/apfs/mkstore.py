@@ -26,7 +26,7 @@ partition darwin, past the blocks the loader and the kernel both refuse to write
 Android with tools/darwin-write.py and it destroys whatever the store held before, so the image
 is made once and kept.
 
-Check it as any other image is checked: tools/apfs/check-image.sh IMAGE RedwoodStore=DIR, and
+Check it as any other image is checked: tools/apfs/check-image.sh IMAGE HakiosStore=DIR, and
 `apfs-tool store info IMAGE` says whether the driver will have it.
 """
 import argparse
@@ -37,7 +37,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VOLUME = 'RedwoodStore'                 # apfs_store.h: the name is a gate, not decoration
+VOLUME = 'HakiosStore'                 # apfs_store.h: the name is a gate, not decoration
 HEAD = 4096                             # APFS_STORE_PAYLOAD: the header block at the front
 
 

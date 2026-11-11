@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalvertexdesc).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalvertexdesc).
 #
 # WHAT THIS BOOT IS FOR. On 21 October the phone's own window server reached our Metal driver
 # and asked it for render pipelines. One specification was refused 80 times -- by us, in our
@@ -36,7 +36,7 @@
 #
 #   the image          CRYPTEXES=flash SYSTEM=1 GL=1 REST=1 QUIET=1 \
 #                        RC_JOBS=rc.jobs.metalvertexdesc ./build.sh
-#                      GL=1 for /redwood/lib/libredwoodair.dylib (the compiler library, which
+#                      GL=1 for /redwood/lib/libhakiosair.dylib (the compiler library, which
 #                      must be rebuilt from this tree: air_metal.h grew two arrays in the middle
 #                      of rwa_render_shape and the driver's own copy grew with them -- a driver
 #                      built against one shape and a library built against the other read a
@@ -53,12 +53,12 @@
 #
 #   grep -a -c "carries no vertex attribute layout"
 #     must be 0        That string is gone from the library. Anything but 0 means the image
-#                      carries an older libredwoodair.dylib than this driver, and NOTHING else in
+#                      carries an older libhakiosair.dylib than this driver, and NOTHING else in
 #                      this log is about the new code.
 #
 #   grep -a "vertex descriptor configures"
 #     expected         one line per pipeline whose descriptor configures anything:
-#                      "redwoodmetal: this pipeline's vertex descriptor configures 3 attributes,
+#                      "hakiosmetal: this pipeline's vertex descriptor configures 3 attributes,
 #                      the highest from buffer index 0". QuartzCore's stage-in modules declare
 #                      attributes 0, 1 and 3 (position float4, texcoord0 float2, color half4),
 #                      so 2 or 3 attributes a pipeline is the shape to expect.
@@ -149,7 +149,7 @@
 #    layout" to "this descriptor has not got one", and the attribute's NAME and Apple's own type
 #    string come out of the module's metadata on the device.
 #
-#    if it still says "carries no vertex attribute layout": the image's libredwoodair.dylib is
+#    if it still says "carries no vertex attribute layout": the image's libhakiosair.dylib is
 #    older than this driver and the two must be rebuilt together.
 /redwood/bin/metal_drv_test --draw --vertex downsample_blur_vert_lph --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
 #
@@ -165,7 +165,7 @@
 # 4. The switch, so that iOS's own daemons take the Metal road and the window server reaches
 #    this driver (10.14, rc.jobs.metalprops): metal_props puts MetalPluginName and
 #    MetalPluginClassName on the IOAcceleratorES service, and from that moment every process
-#    that asks Metal composes RedwoodMetal.bundle. Nothing persists -- the properties live in the
+#    that asks Metal composes HakiosMetal.bundle. Nothing persists -- the properties live in the
 #    registry, and a boot without metal=1 is a clean machine.
 /redwood/bin/metal_props on
 #

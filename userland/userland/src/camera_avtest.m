@@ -1,7 +1,7 @@
 /*
  * camera_avtest: what cameras iOS lists for applications, as AVFoundation gives them: the video
- * devices, and every format of the default one (on this machine the device is libredwood-media.dylib's
- * in mediaserverd: camera_device.c, the kernel's /dev/redwood-camera, cam=5).
+ * devices, and every format of the default one (on this machine the device is libhakios-media.dylib's
+ * in mediaserverd: camera_device.c, the kernel's /dev/hakios-camera, cam=5).
  *
  * usage: camera_avtest
  *

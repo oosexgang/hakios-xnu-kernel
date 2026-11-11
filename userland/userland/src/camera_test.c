@@ -4,7 +4,7 @@
  * usage: camera_test raw [FRAMES] [noae] [noawb] [keepraw|full] [ccm M] [sensor N]
  *        camera_test cycle [FRAMES]
  *        camera_test noise [SENSOR|all]
- *   raw: reads FRAMES frames (default 150) from the kernel's /dev/redwood-camera, with src/camera_isp.c's
+ *   raw: reads FRAMES frames (default 150) from the kernel's /dev/hakios-camera, with src/camera_isp.c's
  *   exposure (unless noae: the kernel's, boot-args cam_shutter and cam_gain) and white balance working
  *   on them, says what came and how fast, and leaves the last one as a picture for the host (xl
  *   camera: logs/, never the repository): one pixel a cell, NV12, or with full every pixel (bilinear
@@ -56,11 +56,11 @@ ticks_ms(uint64_t ticks)
 
 static const char *const sensor_names[4] = { "macro", "wide", "front", "ultra-wide" };
 
-/* REDWOOD_CAMERA_SENSOR: the kernel changes to that sensor (its usual mode) before the next frames */
+/* HAKIOS_CAMERA_SENSOR: the kernel changes to that sensor (its usual mode) before the next frames */
 static bool
 choose_sensor(int device, unsigned n)
 {
-	struct redwood_camera_command c = { .command = REDWOOD_CAMERA_SENSOR, .a = n, .b = ~0u };
+	struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = n, .b = ~0u };
 
 	if (write(device, &c, sizeof(c)) != (ssize_t)sizeof(c)) {
 		printf("camera_test: the %s camera cannot be chosen: %s\n", n < 4 ? sensor_names[n] : "?", strerror(errno));
@@ -72,16 +72,16 @@ choose_sensor(int device, unsigned n)
 static int
 cycle(int frames)
 {
-	int device = open(REDWOOD_CAMERA_DEVICE, O_RDWR), failures = 0;
+	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), failures = 0;
 	uint8_t *buffer = NULL;
 	size_t size = 0;
 
 	if (device < 0) {
-		perror("camera_test: " REDWOOD_CAMERA_DEVICE);
+		perror("camera_test: " HAKIOS_CAMERA_DEVICE);
 		return 1;
 	}
 	for (unsigned n = 0; n < 4; n++) {
-		struct redwood_camera_frame head, *f = &head;
+		struct hakios_camera_frame head, *f = &head;
 		uint64_t asked = mach_absolute_time(), first = 0, last_seq = 0, first_seq = 0;
 		int got = 0;
 		ssize_t r;
@@ -92,7 +92,7 @@ cycle(int frames)
 		}
 		for (int tries = 0; (r = read(device, &head, sizeof(head))) < 0 && errno == EAGAIN && tries < 3; tries++) {
 		}
-		if (r != (ssize_t)sizeof(head) || memcmp(head.magic, REDWOOD_CAMERA_MAGIC, 8) != 0 || head.sensor != n) {
+		if (r != (ssize_t)sizeof(head) || memcmp(head.magic, HAKIOS_CAMERA_MAGIC, 8) != 0 || head.sensor != n) {
 			printf("camera_test: the %s camera: no frames (%s, header of sensor %u)\n", sensor_names[n],
 			    r < 0 ? strerror(errno) : "short", r == (ssize_t)sizeof(head) ? head.sensor : 99);
 			failures++;
@@ -118,7 +118,7 @@ cycle(int frames)
 				    r < 0 ? strerror(errno) : "short");
 				break;
 			}
-			f = (struct redwood_camera_frame *)buffer;
+			f = (struct hakios_camera_frame *)buffer;
 			got++;
 			first = first ? first : f->time;
 			first_seq = first_seq ? first_seq : f->sequence;
@@ -141,7 +141,7 @@ cycle(int frames)
 
 /* the value of pixel x of line y of a RAW10 frame */
 static inline int
-raw10(const struct redwood_camera_frame *f, const uint8_t *raw, uint32_t x, uint32_t y)
+raw10(const struct hakios_camera_frame *f, const uint8_t *raw, uint32_t x, uint32_t y)
 {
 	const uint8_t *g = raw + (size_t)y * f->stride + (size_t)(x >> 2) * 5;
 
@@ -153,7 +153,7 @@ static bool
 read_settled(int device, uint8_t *buffer, size_t bytes, uint32_t lines, uint32_t gain)
 {
 	for (int tries = 0; tries < 12; tries++) {
-		const struct redwood_camera_frame *f = (const void *)buffer;
+		const struct hakios_camera_frame *f = (const void *)buffer;
 
 		if (read(device, buffer, bytes) != (ssize_t)bytes) {
 			return false;
@@ -168,7 +168,7 @@ read_settled(int device, uint8_t *buffer, size_t bytes, uint32_t lines, uint32_t
 static int
 noise_one(int device, unsigned n)
 {
-	struct redwood_camera_frame head;
+	struct hakios_camera_frame head;
 	uint8_t *a, *b;
 	size_t bytes;
 	ssize_t r;
@@ -192,7 +192,7 @@ noise_one(int device, unsigned n)
 	    head.width, head.height, head.black, lines * (double)head.line_ns / 1e6, lines);
 	for (int k = 0; k < 5; k++) {
 		uint32_t gain = gains[k] ? gains[k] * head.gain_unity : head.gain_max;
-		struct redwood_camera_command c = { .command = REDWOOD_CAMERA_EXPOSURE, .a = lines, .b = gain, .c = 0 };
+		struct hakios_camera_command c = { .command = HAKIOS_CAMERA_EXPOSURE, .a = lines, .b = gain, .c = 0 };
 
 		if (gain > head.gain_max) {
 			continue;
@@ -202,7 +202,7 @@ noise_one(int device, unsigned n)
 			printf("camera_test: noise: the %s camera at gain %u: no frames with that exposure\n", sensor_names[n], gain);
 			continue;
 		}
-		const struct redwood_camera_frame *f = (const void *)a;
+		const struct hakios_camera_frame *f = (const void *)a;
 		const uint8_t *ra = a + f->header_bytes, *rb = b + f->header_bytes;
 		double sum[4] = { 0 }, sumd2[4] = { 0 }, sumd[4] = { 0 }, summ2[4] = { 0 }, cnt[4] = { 0 };
 		double rows = 0, rows2 = 0, nrows = 0;
@@ -254,10 +254,10 @@ noise_one(int device, unsigned n)
 static int
 noise(const char *which)
 {
-	int device = open(REDWOOD_CAMERA_DEVICE, O_RDWR), failures = 0;
+	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), failures = 0;
 
 	if (device < 0) {
-		perror("camera_test: " REDWOOD_CAMERA_DEVICE);
+		perror("camera_test: " HAKIOS_CAMERA_DEVICE);
 		return 1;
 	}
 	for (unsigned n = 0; n < 4; n++) {
@@ -272,7 +272,7 @@ noise(const char *which)
 /* a piece of a picture of every pixel (one of 8 bands of lines, each an even number of them) */
 struct full_job {
 	const struct isp *isp;
-	const struct redwood_camera_frame *f;
+	const struct hakios_camera_frame *f;
 	const uint8_t *raw;
 	uint8_t *y, *uv;
 	uint32_t width;
@@ -292,16 +292,16 @@ static float ccm[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 static int
 raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 {
-	struct redwood_camera_frame head, *f;
+	struct hakios_camera_frame head, *f;
 	struct isp isp;
 	struct isp_stats s;
 	uint64_t started = mach_absolute_time(), previous = 0, first_seq = 0;
 	size_t bytes;
-	int device = open(REDWOOD_CAMERA_DEVICE, O_RDWR), got = 0, failures = 0;
+	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), got = 0, failures = 0;
 	ssize_t n;
 
 	if (device < 0) {
-		perror("camera_test: " REDWOOD_CAMERA_DEVICE);
+		perror("camera_test: " HAKIOS_CAMERA_DEVICE);
 		return 1;
 	}
 	if (sensor >= 0 && !choose_sensor(device, (unsigned)sensor)) {
@@ -309,7 +309,7 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	}
 	for (int tries = 0; (n = read(device, &head, sizeof(head))) < 0 && errno == EAGAIN && tries < 3; tries++) {
 	}
-	if (n != (ssize_t)sizeof(head) || memcmp(head.magic, REDWOOD_CAMERA_MAGIC, 8) != 0) {
+	if (n != (ssize_t)sizeof(head) || memcmp(head.magic, HAKIOS_CAMERA_MAGIC, 8) != 0) {
 		perror("camera_test: the first frame's header");
 		return 1;
 	}
@@ -322,7 +322,7 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	isp_init(&isp);
 	isp_set_ccm(&isp, ccm);
 	while (got < frames && failures < 5) {
-		struct redwood_camera_command c;
+		struct hakios_camera_command c;
 		uint64_t t0 = mach_absolute_time();
 
 		n = read(device, f, bytes);
@@ -359,12 +359,12 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	    f->sequence - first_seq + 1 - got, ms_since(started) / 1000);
 
 	if (keep_raw) {
-		struct redwood_camera_command *k = (struct redwood_camera_command *)((uint8_t *)f + f->header_bytes) - 1;
+		struct hakios_camera_command *k = (struct hakios_camera_command *)((uint8_t *)f + f->header_bytes) - 1;
 		uint32_t frame_bytes = f->stride * f->height, w = f->width, h = f->height, stride = f->stride;
 
 		/* (the command goes over the end of the header, just before the frame's bytes) */
 		memset(k, 0, sizeof(*k));
-		k->command = REDWOOD_CAMERA_KEEP;
+		k->command = HAKIOS_CAMERA_KEEP;
 		k->bytes = frame_bytes;
 		k->a = w;
 		k->b = h;
@@ -381,7 +381,7 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	/* the last one, as a picture for the host: one pixel per cell, or every pixel; NV12 */
 	uint32_t w = full ? f->width : f->width / 2, h = full ? f->height : f->height / 2;
 	size_t picture = (size_t)w * h * 3 / 2;
-	struct redwood_camera_command *keep = malloc(sizeof(*keep) + picture);
+	struct hakios_camera_command *keep = malloc(sizeof(*keep) + picture);
 	uint8_t *y = (uint8_t *)(keep + 1);
 	uint64_t t0 = mach_absolute_time();
 
@@ -394,7 +394,7 @@ raw(int frames, bool ae, bool awb, bool keep_raw, bool full, int sensor)
 	}
 	printf("camera_test: the picture (%ux%u NV12%s) made in %.1f ms\n", w, h, full ? ", every pixel" : "", ms_since(t0));
 	memset(keep, 0, sizeof(*keep));
-	keep->command = REDWOOD_CAMERA_KEEP;
+	keep->command = HAKIOS_CAMERA_KEEP;
 	keep->bytes = (uint32_t)picture;
 	keep->a = w;
 	keep->b = h;

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Installing a tweak the way Sileo does it (RC_JOBS=rc.jobs.tweakinstall): a package whose trigger
 # runs uicache, which rebuilds the database of applications -- the moment a running Sileo used to be
 # killed ("uninstalling app") instead of offering a respring. Afterwards: is Sileo still registered,

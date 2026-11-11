@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.airkernels).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.airkernels).
 #
 # Every compute kernel of the corpus, dispatched on the Adreno (docs/air.md section 5).
 # air_run waits on a fence, so a dispatch the GPU does not finish says so and exits
@@ -12,7 +12,7 @@
 # boot, each failing at the fourth dispatch: MetalFaceMask_GenerateToothMask
 # (logs/190426-run.log, the list reversed) and fbs_bistochastize_iter
 # (logs/190715-run.log, those kernels run first). After one hang this port's driver
-# latches -- gpuWait in RedwoodGPU.cpp returns false at once from then on -- so the rest
+# latches -- gpuWait in HakiosGPU.cpp returns false at once from then on -- so the rest
 # of a boot is unmeasured rather than wrong. Both go last, where a hang costs least.
 #
 # MetalFaceMask_GenerateMask is NOT in that pair, though an earlier version of this file

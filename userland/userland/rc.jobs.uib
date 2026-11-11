@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The UI bugs (RC_JOBS=rc.jobs.uib, a run of about four minutes): Search, pulled down from the home
 # screen, before and after an application is left with the gesture from the bottom edge (the strip
 # under the status bar used to come out black from one of these on); then the side button twice, to

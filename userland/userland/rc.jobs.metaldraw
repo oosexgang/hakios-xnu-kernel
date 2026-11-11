@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldraw).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaldraw).
 #
 # One triangle, with one of Apple's own fragment shaders, and nothing else in the boot -- so
 # that the question "did it draw" cannot be answered by a log whose middle was dropped.

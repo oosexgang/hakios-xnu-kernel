@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "redwood_gl.h"
+#include "hakios_gl.h"
 
 /* GL/osmesa.h of Mesa */
 #define OSMESA_RGBA                     0x1908
@@ -42,20 +42,20 @@ extern unsigned glGetError(void);
  */
 #define WINDOW  16
 
-struct redwood_gl {
+struct hakios_gl {
 	OSMesaContext context;
 	unsigned char window[WINDOW * WINDOW * 4];
 };
 
-struct redwood_gl *
-redwood_gl_create(int version)
+struct hakios_gl *
+hakios_gl_create(int version)
 {
 	const int attributes[] = {
 		OSMESA_FORMAT, OSMESA_RGBA, OSMESA_DEPTH_BITS, 24, OSMESA_STENCIL_BITS, 8,
 		OSMESA_PROFILE, OSMESA_ES_PROFILE, OSMESA_CONTEXT_MAJOR_VERSION, version, OSMESA_CONTEXT_MINOR_VERSION, 0,
 		0
 	};
-	struct redwood_gl *gl = calloc(1, sizeof(*gl));
+	struct hakios_gl *gl = calloc(1, sizeof(*gl));
 
 	if (gl != NULL && (gl->context = OSMesaCreateContextAttribs(attributes, NULL)) == NULL) {
 		free(gl);
@@ -65,7 +65,7 @@ redwood_gl_create(int version)
 }
 
 int
-redwood_gl_make_current(struct redwood_gl *gl)
+hakios_gl_make_current(struct hakios_gl *gl)
 {
 	if (gl == NULL) {
 		return OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
@@ -74,14 +74,14 @@ redwood_gl_make_current(struct redwood_gl *gl)
 }
 
 void
-redwood_gl_destroy(struct redwood_gl *gl)
+hakios_gl_destroy(struct hakios_gl *gl)
 {
 	OSMesaDestroyContext(gl->context);
 	free(gl);
 }
 
 const char *
-redwood_gl_library(void)
+hakios_gl_library(void)
 {
 	return "Mesa, off-screen (OSMesa)";
 }
@@ -92,7 +92,7 @@ redwood_gl_library(void)
  * of their own with this processor are not asked: they refuse every time.
  */
 int
-redwood_gl_surface_texture(struct redwood_gl *gl, uint32_t surface)
+hakios_gl_surface_texture(struct hakios_gl *gl, uint32_t surface)
 {
 	static void (*image_target)(unsigned target, void *image);
 	static int asked, software;

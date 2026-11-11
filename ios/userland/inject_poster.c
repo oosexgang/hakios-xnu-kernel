@@ -1,5 +1,5 @@
 /*
- * libredwood-poster.dylib: inside PosterBoard, a first wallpaper that can be drawn here.
+ * libhakios-poster.dylib: inside PosterBoard, a first wallpaper that can be drawn here.
  *
  * A new device gets the "hero" poster as its first lock screen and home screen wallpaper. PosterBoard
  * picks it in _defaultLockScreenWallpaperExtensionIdentifier(): on two product types the WallpaperKit

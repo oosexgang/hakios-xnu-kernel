@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The switcher of running applications (RC_JOBS=rc.jobs.switcher, gpu=1): three applications are
 # started one after another (ones that ask nothing: an application that puts up a question of its
 # own -- Photos asks about notifications -- leaves a modal alert on the screen, and with one of
@@ -16,7 +16,7 @@
 /redwood/bin/rwtouch tap 0.383 0.358 wait 20 button home wait 8
 /redwood/bin/rwtouch tap 0.614 0.481 wait 20
 /redwood/bin/rwtouch drag 0.5 0.995 0.5 0.62 600 2500 wait 8
-/redwood/bin/rwtouch notify com.redwood.layers wait 30
+/redwood/bin/rwtouch notify com.hakios.layers wait 30
 # And what the wallpaper left on the volume for the frosted materials to take their bottom layer
 # from: PaperBoardUI asks its source for a snapshot or a blurred copy, by image or by file name.
 /var/jb/usr/bin/find /var -maxdepth 7 -iname "*allpaper*" -ls

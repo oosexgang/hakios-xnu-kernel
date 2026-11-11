@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # preferenceloader, the package nearly every tweak with a settings pane depends on
 # (RC_JOBS=rc.jobs.pl): it wants "mobilesubstrate", which ElleKit Provides, so apt can take it at
 # all now; then Settings is opened, and the tweak loader says whether PreferenceLoader went into it.

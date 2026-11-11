@@ -2,7 +2,7 @@
  * Does the driver's device object, built as an ordinary library, get through Metal?
  *
  * metal_stubdev proved the contract with classes assembled at runtime. This asks the same
- * question of the real thing: /redwood/lib/libredwoodmetal.dylib, whose RedwoodMetalDevice
+ * question of the real thing: /redwood/lib/libhakiosmetal.dylib, whose HakiosMetalDevice
  * is declared in source and linked against the private `_OBJC_CLASS_$__MTLDevice`. Whether
  * that symbol binds at all is the first thing this program measures -- if dyld cannot find
  * it, the library does not load and the driver has to go back to building its class at
@@ -18,7 +18,7 @@
  * happens when the whole system takes the Metal road with nothing behind it.
  *
  * With --bundle it loads the driver the way Metal's own discovery would -- through NSBundle,
- * out of /redwood/lib/RedwoodMetal.bundle -- instead of dlopen'ing the dylib. That tests the
+ * out of /redwood/lib/HakiosMetal.bundle -- instead of dlopen'ing the dylib. That tests the
  * one part of discovery that cannot be reasoned about: whether a flat, unsigned bundle of
  * ours gives up its class to -[NSBundle classNamed:], whose identity test
  * ([NSBundle bundleForClass:cls] == self, 0x1811e0dac) is the thing most likely to refuse.
@@ -64,13 +64,13 @@
 extern id MTLCreateSystemDefaultDevice(void);
 
 /*
- * One call of the compiler library's own contract, declared here as redwoodmetal.m
+ * One call of the compiler library's own contract, declared here as hakiosmetal.m
  * declares the rest of it (tools/mesa/air/air_metal.h is in the Mesa tree and this
  * program must not grow a dependency on it): what textures a module declares.
  *
- * It is asked of the same /redwood/lib/libredwoodair.dylib the driver loaded -- dyld
+ * It is asked of the same /redwood/lib/libhakiosair.dylib the driver loaded -- dyld
  * uniques images by install_name, so this dlopen gets that image and not a second one --
- * and of the same `struct rwa_device` the driver holds, which RedwoodMetalDevice hands
+ * and of the same `struct rwa_device` the driver holds, which HakiosMetalDevice hands
  * out through -mesaDevice. So the answer here is the answer the driver will judge a
  * binding by at the draw, and not a second opinion about the same shader.
  *
@@ -140,7 +140,7 @@ argbuf_records(id<MTLBuffer> buffer, size_t offset)
 static void
 load_texture_query(id<MTLDevice> dev)
 {
-	void *lib = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW);
+	void *lib = dlopen("/redwood/lib/libhakiosair.dylib", RTLD_NOW);
 
 	if (lib == NULL) {
 		printf("drvtest: no compiler library to ask what a shader declares: %s\n",
@@ -204,7 +204,7 @@ class_from_bundle(const char *path)
 	       [bundle executablePath] != nil ? [[bundle executablePath] UTF8String] : "(none)");
 
 	/* what step 4 does first, and the test that can refuse it */
-	Class named = [bundle classNamed:@"RedwoodMetalDevice"];
+	Class named = [bundle classNamed:@"HakiosMetalDevice"];
 
 	printf("drvtest: [bundle classNamed:] gave %s\n",
 	       named != Nil ? class_getName(named) : "nil -- the identity test refused");
@@ -2762,11 +2762,11 @@ fill_depth_texture(id<MTLTexture> tex)
 static bool
 read_depth_buffer(id<MTLTexture> zt, float *depth, const char *what)
 {
-	SEL sel = sel_getUid("redwoodReadDepth:stencil:fromRegion:");
+	SEL sel = sel_getUid("hakiosReadDepth:stencil:fromRegion:");
 
 	if (![zt respondsToSelector:sel]) {
 		printf("drvtest: depth: this texture does not answer "
-		       "redwoodReadDepth:stencil:fromRegion:, so the driver is older than this "
+		       "hakiosReadDepth:stencil:fromRegion:, so the driver is older than this "
 		       "test\n");
 		return false;
 	}
@@ -3469,7 +3469,7 @@ depth_path(id<MTLDevice> dev, const char *metallib)
  * A program that faults on this port leaves nothing behind -- the kernel prints "Failed to
  * send exception EXC_CORPSE_NOTIFY" and that is all -- so the fault has to print itself. The
  * addresses that matter here are not in the shared cache but inside
- * /redwood/lib/libredwoodair.dylib, so the slide trick the other probes use (docs/metal.md
+ * /redwood/lib/libhakiosair.dylib, so the slide trick the other probes use (docs/metal.md
  * section 6) is no help: dladdr gives the image and the offset within it, which
  * llvm-addr2line on the machine turns back into a line.
  */
@@ -3719,8 +3719,8 @@ draw_every(id<MTLDevice> dev, id<MTLLibrary> library, id<MTLCommandQueue> queue,
  *                     hardware; it is also the band in which every pixel is exactly one
  *                     texel, so every pixel of it can be counted.
  *
- * The pixels reach the panel through the kernel's own GPU service -- kRedwoodShow,
- * iokit/Kernel/RedwoodGPU.cpp, the selector src/gl_test.c already puts its triangle on the
+ * The pixels reach the panel through the kernel's own GPU service -- kHakiosShow,
+ * iokit/Kernel/HakiosGPU.cpp, the selector src/gl_test.c already puts its triangle on the
  * screen with -- and that is what `./xl screenshot` reads. Said plainly because it
  * matters: THE PRESENTATION IS A COPY IN THE KERNEL AND IS NOT METAL'S. What is claimed
  * is that every one of the 2 592 000 pixels handed over was computed by this driver's
@@ -3747,7 +3747,7 @@ draw_every(id<MTLDevice> dev, id<MTLLibrary> library, id<MTLCommandQueue> queue,
  */
 enum {
 	/* The panel, not the display. A swap through IOMobileFramebuffer is scaled from the
-	 * 1125x2436 user space sees down to this; kRedwoodShow is not scaled at all -- it is
+	 * 1125x2436 user space sees down to this; kHakiosShow is not scaled at all -- it is
 	 * a row-by-row copy cut to the panel -- so this is the size to draw. */
 	PANEL_W = 1080, PANEL_H = 2400,
 	PIC_TILES = 8,
@@ -3792,7 +3792,7 @@ pic_texel_colour(unsigned x, unsigned y, unsigned char bgra[4])
 }
 
 /* The panel's pixels as this process holds them, and the request the kernel takes them in
- * (iokit/Kernel/RedwoodGPU.cpp, struct redwood_show). Declared here and not included,
+ * (iokit/Kernel/HakiosGPU.cpp, struct hakios_show). Declared here and not included,
  * because this program has no header of the kernel's -- exactly as src/gl_test.c does. */
 static unsigned char *pic_panel;
 
@@ -3819,7 +3819,7 @@ static io_connect_t pic_connection;
 static void
 pic_open_panel(void)
 {
-	io_service_t service = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+	io_service_t service = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
 
 	if (service == 0 || IOServiceOpen(service, mach_task_self(), 0, &pic_connection) != 0) {
 		pic_connection = 0;
@@ -3944,7 +3944,7 @@ pic_heartbeat(void *unused)
  * The second ladder named the stall as -[MTLCommandQueue commandBuffer] on the 65th
  * command buffer of the process, and 64 was Metal's own maxCommandBufferCount: every
  * _MTLCommandBuffer waits on the queue's semaphore in its designated initialiser and owes
- * it a signal, and this driver never paid (redwoodmetal.m). That was an inference from a
+ * it a signal, and this driver never paid (hakiosmetal.m). That was an inference from a
  * number that happened to be 64. These two lines are the measurement instead: the queue
  * reports how many buffers it takes at a time and how many of this process's still hold a
  * slot, and it says OUT LOUD when the next one will block -- before it does.
@@ -3953,8 +3953,8 @@ static unsigned long
 pic_queue_state(id<MTLCommandQueue> queue, const char *when)
 {
 	NSUInteger (*ask)(id, SEL) = (NSUInteger (*)(id, SEL))objc_msgSend;
-	SEL outstanding = sel_getUid("redwoodOutstandingCommandBuffers");
-	SEL made = sel_getUid("redwoodCommandBuffersMade");
+	SEL outstanding = sel_getUid("hakiosOutstandingCommandBuffers");
+	SEL made = sel_getUid("hakiosCommandBuffersMade");
 	SEL most = sel_getUid("maxCommandBufferCount");
 
 	if (![queue respondsToSelector:outstanding] || ![queue respondsToSelector:most]) {
@@ -4085,7 +4085,7 @@ pic_draw(id<MTLCommandQueue> queue, MTLRenderPassDescriptor *rp,
 	/* The second boot stopped between these two calls and the one line covered both, so
 	 * they are two lines now. Neither of them has anything in it proportional to the
 	 * attachment's area -- -commandBuffer allocates an object and an NSMutableArray, and
-	 * the encoder's init reads four properties per attachment (redwoodmetal.m) -- which
+	 * the encoder's init reads four properties per attachment (hakiosmetal.m) -- which
 	 * is exactly why the two have to be told apart before anything else is believed. */
 	if (trace) {
 		snprintf(line, sizeof(line), "%s: asking the queue for a command buffer", what);
@@ -4901,7 +4901,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *
  * WHERE THE TIME GOES HERE, AND WHY IT IS NOT WHERE AN APPLICATION EXPECTS IT.
  *
- * -[RedwoodMetalCommandBuffer commit] does the work (docs/metal.md 10.13). The encoder only
+ * -[HakiosMetalCommandBuffer commit] does the work (docs/metal.md 10.13). The encoder only
  * RECORDS; commit walks the recorded list calling rwa_render_draw / rwa_dispatch, and each of
  * those flushes the Gallium context and WAITS ON ITS OWN FENCE before returning
  * (tools/mesa/air/air_metal.c, finish_or_say_why with required = true). Three consequences,
@@ -4941,7 +4941,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *   with and without the clear   the same attachments drawn through two render passes that
  *                         differ in ONE field, loadAction. Every draw in a pass whose
  *                         loadAction is Clear re-clears the attachment in this driver
- *                         (redwoodmetal.m copies _clears into every recorded draw), and an
+ *                         (hakiosmetal.m copies _clears into every recorded draw), and an
  *                         application clears once a frame, so the two have to be told apart
  *                         before a per-draw cost means anything.
  *   a texture upload      -replaceRegion: of the whole attachment-sized image, in MB/s: what
@@ -4953,7 +4953,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *                         under any frame rate, and the one number that would catch a
  *                         regression of the 64-slot semaphore bug (10.33) as a slowdown
  *                         rather than as a hang.
- *   the present           -getBytes: of the finished attachment plus the kernel's kRedwoodShow
+ *   the present           -getBytes: of the finished attachment plus the kernel's kHakiosShow
  *                         row copy. NOT Metal's, and said so where it is printed -- but a
  *                         frame that is never shown is not a frame, and this is the only way
  *                         this port has to show one, so a frame rate that leaves it out is a
@@ -4964,8 +4964,8 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  * Three ways, in order of how much they can be trusted. The first did not exist when this mode
  * was written and was added because the other two were not enough (docs/metal.md 10.43):
  *
- *   (0) ASK THE KERNEL. Request kRedwoodGPUWorked (0x7d) on RedwoodGPU answers
- *       redwood_gpu_worked()'s three numbers -- the microseconds the 3D core worked, on how
+ *   (0) ASK THE KERNEL. Request kHakiosGPUWorked (0x7d) on HakiosGPU answers
+ *       hakios_gpu_worked()'s three numbers -- the microseconds the 3D core worked, on how
  *       many submissions, and the histogram -- taken off CP_ALWAYS_ON_COUNTER. Reading resets
  *       them, so each case is bracketed by two reads and gets the core's own time for its own
  *       draws. An older kernel answers kIOReturnUnsupported and the mode says in words that
@@ -4980,8 +4980,8 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *       its fill and the bandwidth of one pass over the attachment. This attributes nothing
  *       it cannot see: it says "fixed" and "proportional to area", not "ours" and "theirs".
  *   (b) BY THE KERNEL'S OWN COUNTER, which needs the boot argument gpu_log=1 and a log to
- *       read afterwards. bsd/dev/redwood_adreno.c times every submission off the GPU's
- *       always-on counter and writes "tl: q <fence> took <us>" per submission; RedwoodGPU.cpp
+ *       read afterwards. bsd/dev/hakios_adreno.c times every submission off the GPU's
+ *       always-on counter and writes "tl: q <fence> took <us>" per submission; HakiosGPU.cpp
  *       prints, every five seconds in which something was submitted, "the GPU worked N us on
  *       each of M" with a histogram. Those lines land in the same run log as these, so the
  *       reader subtracts. This mode cannot print them itself and does not pretend to: what it
@@ -5234,10 +5234,10 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  * arithmetic that produces a confident wrong answer (docs/metal.md 10.43 shows the three
  * populations it did produce, and the ambiguity in their boundaries).
  *
- * So the kernel now hands the numbers over: request kRedwoodGPUWorked (0x7d) on RedwoodGPU
- * answers redwood_gpu_worked()'s three outputs -- the microseconds the 3D core itself worked,
+ * So the kernel now hands the numbers over: request kHakiosGPUWorked (0x7d) on HakiosGPU
+ * answers hakios_gpu_worked()'s three outputs -- the microseconds the 3D core itself worked,
  * on how many submissions, and how many of those were under 0.1, 0.25, 0.5, 1, 2 and 4 ms --
- * measured off CP_ALWAYS_ON_COUNTER at 19.2 ticks a microsecond (bsd/dev/redwood_adreno.c).
+ * measured off CP_ALWAYS_ON_COUNTER at 19.2 ticks a microsecond (bsd/dev/hakios_adreno.c).
  * Reading it RESETS it, which is what makes bracketing a case possible: read once to zero,
  * draw, read again.
  *
@@ -5248,7 +5248,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  *     no work. So the first failure disables it for the run and says so in words; it never
  *     prints a zero that could be read as a measurement.
  *   - IT MUST SAY THAT IT TAKES THE NUMBERS AWAY. The kernel's own five-second report in
- *     RedwoodGPU.cpp shares these counters, so a boot that runs this mode leaves gaps in those
+ *     HakiosGPU.cpp shares these counters, so a boot that runs this mode leaves gaps in those
  *     lines. That is expected rather than a fault, and it is printed once.
  */
 struct tm_worked {
@@ -5350,7 +5350,7 @@ tm_say_gpu_side(const char *what, const struct tm_worked *w, uint64_t ours_ns,
  * Both descriptors hold the same textures; `*clear` loads by clearing and `*load` keeps what
  * is there. That is the only difference between them, which is what makes the difference
  * between their timings the cost of the clear and nothing else. (In this driver the clear is
- * attachment 0's alone -- redwoodmetal.m reads loadAction only for i == 0 -- so what the
+ * attachment 0's alone -- hakiosmetal.m reads loadAction only for i == 0 -- so what the
  * difference prices is one full-attachment clear, however many targets are bound.)
  */
 static bool
@@ -5481,7 +5481,7 @@ tm_one_buffer(id<MTLCommandQueue> queue, MTLRenderPassDescriptor *rp,
  * actually written.
  *
  * What it does NOT include is said as plainly as what it does. The device, the Mesa screen and
- * the GPU context are opened in -initWithAcceleratorPort: (redwoodmetal.m calls
+ * the GPU context are opened in -initWithAcceleratorPort: (hakiosmetal.m calls
  * rwa_device_open there), which main() did above, so they are inside the "before this mode"
  * part and not inside the compile. And main()'s part also contains this test's own sweep of
  * every class of the driver, which no application does -- so the breakdown is printed in three
@@ -6023,7 +6023,7 @@ out:
 /*
  * The compute round trip, which is the same question as the draw's asked of the other path.
  *
- * A dispatch goes through the same -commit and the same fence as a draw (redwoodmetal.m's
+ * A dispatch goes through the same -commit and the same fence as a draw (hakiosmetal.m's
  * commit loop calls rwa_dispatch for it), so the difference between this number and the 4x4
  * draw's is the difference between the two paths' own work and nothing else -- which is the
  * only way to say whether the per-submission cost lives in the render path or under both.
@@ -6443,8 +6443,8 @@ tm_queue(id<MTLCommandQueue> queue)
  * What it costs to show a frame -- which is NOT Metal's, and is said so where it is printed.
  *
  * This port has no drawable: a finished attachment reaches the panel by being read back into
- * this process (-getBytes:) and handed to the kernel's kRedwoodShow, which copies it row by
- * row into the boot framebuffer (iokit/Kernel/RedwoodGPU.cpp). Both halves are measured
+ * this process (-getBytes:) and handed to the kernel's kHakiosShow, which copies it row by
+ * row into the boot framebuffer (iokit/Kernel/HakiosGPU.cpp). Both halves are measured
  * because a frame rate that leaves them out is a frame rate for a game nobody can see.
  */
 static void
@@ -6490,7 +6490,7 @@ tm_present(id<MTLDevice> dev)
 	}
 	if (pic_connection == 0) {
 		printf("drvtest: time: no GPU service open, so the panel copy is NOT MEASURED "
-		       "(that is the kernel's kRedwoodShow, not Metal's)\n");
+		       "(that is the kernel's kHakiosShow, not Metal's)\n");
 		fflush(stdout);
 		return;
 	}
@@ -6503,7 +6503,7 @@ tm_present(id<MTLDevice> dev)
 		IOConnectCallStructMethod(pic_connection, 0x7f, &req, sizeof(req), NULL, NULL);
 		tm_add(&show, tm_now_ns() - t0);
 	}
-	tm_say_rate("the panel copy in the KERNEL (kRedwoodShow), 1080x2400", &show, bytes,
+	tm_say_rate("the panel copy in the KERNEL (kHakiosShow), 1080x2400", &show, bytes,
 		    "this is counted as Metal's: it is a row-by-row copy in the kernel and the "
 		    "same call src/gl_test.c shows a triangle with");
 
@@ -6551,7 +6551,7 @@ tm_slots(id<MTLCommandQueue> queue)
 	/* The queue's own count, asked rather than inferred -- the same two selectors
 	 * pic_queue_state uses, printed here so that every line of this mode reads alike. */
 	NSUInteger (*ask)(id, SEL) = (NSUInteger (*)(id, SEL))objc_msgSend;
-	SEL outstanding = sel_getUid("redwoodOutstandingCommandBuffers");
+	SEL outstanding = sel_getUid("hakiosOutstandingCommandBuffers");
 	SEL most = sel_getUid("maxCommandBufferCount");
 
 	if ([queue respondsToSelector:outstanding] && [queue respondsToSelector:most]) {
@@ -6772,7 +6772,7 @@ time_path(id<MTLDevice> dev, const char *metallib, unsigned repeats)
  * 10.17 counted this for the device object and found nothing owed; the objects below it
  * were never counted, and the first boot in which iOS's own daemons could reach them
  * (logs/130132-run.log, metal=1 with launchd alive) answered why that mattered: 88 aborts
- * in a hundred seconds, all of them -[RedwoodMetalCommandQueue setGPUPriority:] and
+ * in a hundred seconds, all of them -[HakiosMetalCommandQueue setGPUPriority:] and
  * -setCompletionQueue:, each followed by launchd restarting the daemon.
  *
  * Counting them is not simply "ask the runtime", for two reasons, and both of them are the
@@ -7036,17 +7036,17 @@ static const char *const chain_depthstencilstate[] = {
 };
 
 static const struct rw_class rw_classes[] = {
-	{ "RedwoodMetalDevice", chain_device },
-	{ "RedwoodMetalCommandQueue", chain_commandqueue },
-	{ "RedwoodMetalCommandBuffer", chain_commandbuffer },
-	{ "RedwoodMetalRenderEncoder", chain_renderencoder },
-	{ "RedwoodMetalComputeEncoder", chain_computeencoder },
-	{ "RedwoodMetalRenderPipeline", chain_renderpipeline },
-	{ "RedwoodMetalComputePipeline", chain_computepipeline },
-	{ "RedwoodMetalTexture", chain_texture },
-	{ "RedwoodMetalBuffer", chain_buffer },
-	{ "RedwoodMetalSampler", chain_sampler },
-	{ "RedwoodMetalDepthStencilState", chain_depthstencilstate },
+	{ "HakiosMetalDevice", chain_device },
+	{ "HakiosMetalCommandQueue", chain_commandqueue },
+	{ "HakiosMetalCommandBuffer", chain_commandbuffer },
+	{ "HakiosMetalRenderEncoder", chain_renderencoder },
+	{ "HakiosMetalComputeEncoder", chain_computeencoder },
+	{ "HakiosMetalRenderPipeline", chain_renderpipeline },
+	{ "HakiosMetalComputePipeline", chain_computepipeline },
+	{ "HakiosMetalTexture", chain_texture },
+	{ "HakiosMetalBuffer", chain_buffer },
+	{ "HakiosMetalSampler", chain_sampler },
+	{ "HakiosMetalDepthStencilState", chain_depthstencilstate },
 };
 
 /* The target of the first branch out of this body, which for an abstract method of Apple's
@@ -7292,7 +7292,7 @@ main(int argc, char **argv)
 	sigaction(SIGBUS, &sa, NULL);
 	sigaction(SIGILL, &sa, NULL);
 	sigaction(SIGABRT, &sa, NULL);
-	const char *path = "/redwood/lib/libredwoodmetal.dylib";
+	const char *path = "/redwood/lib/libhakiosmetal.dylib";
 	const char *metallib = "/System/Library/VideoDecoders/AV1SW.metallib";
 	const char *only = NULL;
 	bool as_bundle = false;
@@ -7522,7 +7522,7 @@ main(int argc, char **argv)
 	if (found == nil && as_bundle) {
 		/* Only one of the two images may be loaded: both define the same classes, and
 		 * the Objective-C runtime would keep one of them and not say which. */
-		cls = class_from_bundle("/redwood/lib/RedwoodMetal.bundle");
+		cls = class_from_bundle("/redwood/lib/HakiosMetal.bundle");
 		if (cls == Nil) {
 			return 1;
 		}
@@ -7536,14 +7536,14 @@ main(int argc, char **argv)
 			return 1;
 		}
 		printf("drvtest: %s loaded, so _OBJC_CLASS_$__MTLDevice binds\n", path);
-		cls = objc_getClass("RedwoodMetalDevice");
+		cls = objc_getClass("HakiosMetalDevice");
 	}
 	Class base = objc_getClass("_MTLDevice");
 	if (found != nil) {
 		goto have_device;           /* steps 4 and 5 are Metal's own work in this boot */
 	}
 	if (cls == Nil || base == Nil) {
-		printf("drvtest: RedwoodMetalDevice %s, _MTLDevice %s\n",
+		printf("drvtest: HakiosMetalDevice %s, _MTLDevice %s\n",
 		       cls != Nil ? "is here" : "is missing", base != Nil ? "is here" : "is missing");
 		return 1;
 	}

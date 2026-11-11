@@ -5,7 +5,7 @@
  *
  * The iOS system volume is the Android DSU image on the phone's storage, which
  * the loader serves block by block as the partition "dsu" (ufs=2; the kernel's /dev/ufs_dsu,
- * bsd/dev/redwood_ufs.c): only what is read comes off the storage, so the system can be as big as
+ * bsd/dev/hakios_ufs.c): only what is read comes off the storage, so the system can be as big as
  * the DSU slot (15 GiB) instead of what fits in the kernel's memory window. This program mounts that
  * volume read only on /flash, makes it the root -- this image goes to /redwood, where the system
  * volume has the directory stage0 mounts it on otherwise (src/stage0.c) -- and runs init from there,
@@ -37,7 +37,7 @@ main(int argc, char **argv, char **envp)
 	}
 	if (tries == 50) {
 		printf("stage0dsu: cannot mount /dev/ufs_dsu on /flash: %s\n", strerror(errno));
-	} else if (sysctlbyname("kern.redwood_switch_root", NULL, NULL, switch_to, sizeof(switch_to) - 1) != 0) {
+	} else if (sysctlbyname("kern.hakios_switch_root", NULL, NULL, switch_to, sizeof(switch_to) - 1) != 0) {
 		printf("stage0dsu: switching the root: %s\n", strerror(errno));
 	} else {
 		chdir("/");

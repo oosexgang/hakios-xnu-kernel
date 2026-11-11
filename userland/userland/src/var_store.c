@@ -9,7 +9,7 @@
  * here -- what is needed is that the bytes come back. So the tree is packed into a plain archive
  * and the archive is written into the one place on the phone's flash this port owns and nothing of
  * it uses: the partition darwin, past the iOS volume and both cryptexes. The kernel takes those
- * writes on /dev/rufs_darwin alone and refuses anything else (bsd/dev/redwood_ufs.c, ufs_write=1).
+ * writes on /dev/rufs_darwin alone and refuses anything else (bsd/dev/hakios_ufs.c, ufs_write=1).
  *
  *   var_store save          pack /private/var into the store
  *   var_store load          unpack the newest good store into /private/var (init, at boot)
@@ -20,15 +20,15 @@
  *   var_store stamp PATH    write a line into PATH saying when: a marker for a run
  *   var_store bootok        tell the loader's boot guard that this generation came up
  *
- * Nobody has to remember to save. `watch` registers with the kernel (kern.redwood.var_save), and
+ * Nobody has to remember to save. `watch` registers with the kernel (kern.hakios.var_save), and
  * on the orderly way back to the loader -- the run's time up, or "xl stop" -- the kernel asks it
- * for the volume and waits, bounded, before it goes (bsd/dev/redwood_ufs.c,
- * redwood_var_save_on_return). A save every SECS seconds is there as well but is not the default:
+ * for the volume and waits, bounded, before it goes (bsd/dev/hakios_ufs.c,
+ * hakios_var_save_on_return). A save every SECS seconds is there as well but is not the default:
  * one costs seconds of the run and a hundred-odd megabytes of flash, and while it runs the
  * storage is read through the loader rather than through this kernel's own driver.
  *
  * One saver at a time: a write to the store is refused unless the writer holds the claim
- * (kern.redwood.var_busy), so two of them cannot interleave into one slot. Even if they did, the
+ * (kern.hakios.var_busy), so two of them cannot interleave into one slot. Even if they did, the
  * slot being written is never the one holding the newest good archive, and a header is written
  * last and over a zeroed one -- so the worst an interrupted or doubled save can do is lose itself.
  *
@@ -176,7 +176,7 @@ sysctl_set_int(const char *name, int value)
 static int
 claim(void)
 {
-	if (sysctl_set_int("kern.redwood.var_busy", 1) != 0) {
+	if (sysctl_set_int("kern.hakios.var_busy", 1) != 0) {
 		printf("var_store: the store is claimed by another saver (%s)\n", strerror(errno));
 		return 0;
 	}
@@ -186,7 +186,7 @@ claim(void)
 static void
 release(void)
 {
-	(void)sysctl_set_int("kern.redwood.var_busy", 0);
+	(void)sysctl_set_int("kern.hakios.var_busy", 0);
 }
 
 /* ---- checksum (the same one the loader reads a write back with) ---- */
@@ -1254,7 +1254,7 @@ save_once(void)
 	/*
 	 * The device is opened for the save and closed again, not held: while a write is in flight
 	 * this kernel's own transfer list is out of the controller, and it goes back in when the
-	 * device is closed (bsd/dev/redwood_ufs.c, ufs_cclose). A watcher that kept the device open
+	 * device is closed (bsd/dev/hakios_ufs.c, ufs_cclose). A watcher that kept the device open
 	 * would leave iOS reading the flash through the loader for the rest of the run.
 	 */
 	fd = open(DEVICE, O_RDWR, 0);
@@ -1348,7 +1348,7 @@ watch(int seconds)
 	}
 	close(fd);
 	fd = -1;
-	if (sysctl_set_int("kern.redwood.var_save", VAR_SAVE_IDLE) != 0) {
+	if (sysctl_set_int("kern.hakios.var_save", VAR_SAVE_IDLE) != 0) {
 		printf("var_store: this kernel does not keep the data volume (%s)\n", strerror(errno));
 		return 0;
 	}
@@ -1370,7 +1370,7 @@ watch(int seconds)
 			(void)bootok();
 		}
 
-		if (sysctl_int("kern.redwood.var_save", &state) == 0 && state == VAR_SAVE_WANTED) {
+		if (sysctl_int("kern.hakios.var_save", &state) == 0 && state == VAR_SAVE_WANTED) {
 			asked = 1;
 		}
 		gettimeofday(&tv, NULL);
@@ -1383,7 +1383,7 @@ watch(int seconds)
 			last = (uint64_t)tv.tv_sec;
 			if (asked) {
 				/* answered either way: the kernel is waiting on this to go back to the loader */
-				(void)sysctl_set_int("kern.redwood.var_save", VAR_SAVE_DONE);
+				(void)sysctl_set_int("kern.hakios.var_save", VAR_SAVE_DONE);
 				return ok;
 			}
 		}
@@ -1445,7 +1445,7 @@ main(int argc, char **argv, char **envp)
 		return bootok() ? 0 : 1;
 	}
 	if (strcmp(what, "stamp") == 0) {
-		return stamp(argc > 2 ? argv[2] : "/private/var/redwood-stamp") ? 0 : 1;
+		return stamp(argc > 2 ? argv[2] : "/private/var/hakios-stamp") ? 0 : 1;
 	}
 	buffer = mmap(NULL, BUFFER, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	links = mmap(NULL, LINKS * sizeof(*links), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);

@@ -15,7 +15,7 @@
 #   src/compiler/air/air2nir                           the frontend alone
 #   src/gallium/drivers/freedreno/ir3_compiler         AIR -> NIR -> Adreno
 #   src/gallium/drivers/freedreno/air_run              AIR -> NIR -> drawn, pixel read back
-#   src/gallium/drivers/freedreno/libredwoodair.so     the same path as the library the Metal
+#   src/gallium/drivers/freedreno/libhakiosair.so     the same path as the library the Metal
 #                                                      driver links (tools/mesa/air/air_metal.h)
 #   src/gallium/drivers/freedreno/air_metal_test       that library driven through its own header
 set -e

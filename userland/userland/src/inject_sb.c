@@ -1,5 +1,5 @@
 /*
- * libredwood-sb.dylib: code of ours inside SpringBoard (see inject.c for how it gets there).
+ * libhakios-sb.dylib: code of ours inside SpringBoard (see inject.c for how it gets there).
  *
  *   - The phone is "activated". SpringBoard asks mobileactivationd, which is not running (and
  *     could not talk to Apple anyway); without an answer it treats the device as bricked and
@@ -25,9 +25,9 @@
  *   - A long press on the lock screen's wallpaper does not open the poster switcher, which the
  *     window server here shows as a black screen: see poster_switcher_allowed().
  *   - Darwin notifications as a remote control, for scripts (rwtouch notify NAME):
- *       com.redwood.unlock      what the lock screen does after "swipe up to open"
- *       com.redwood.layers      write down the layers SpringBoard has on the screen: see layers()
- *       com.redwood.switcher    open the switcher of running applications: see switcher()
+ *       com.hakios.unlock      what the lock screen does after "swipe up to open"
+ *       com.hakios.layers      write down the layers SpringBoard has on the screen: see layers()
+ *       com.hakios.switcher    open the switcher of running applications: see switcher()
  *     In any other program given this library (INJECT in build.sh) only the last of them is
  *     answered, with that program's layers.
  */
@@ -219,13 +219,13 @@ snapshot_output_format(__unused id self, __unused SEL selector, id snapshot)
  * iOS reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
  * status bar reads it the same way via SBBatteryController. Where the battery has no power source
  * of its own in the kernel (battery=1, the loader's way through Qualcomm's UEFI charger protocols),
- * we hook the UIDevice accessors to return what XNU publishes as kern.redwood.battery_soc (0..100)
- * and kern.redwood.battery_charging.
+ * we hook the UIDevice accessors to return what XNU publishes as kern.hakios.battery_soc (0..100)
+ * and kern.hakios.battery_charging.
  * When the sysctl is missing (battery=1 not in boot-args, or the driver never started) we hand
  * back the value the real implementation computed; the status bar then shows whatever iOS last
  * knew, which is better than crashing.
- * With adsp=1 the battery is a power source (the service RedwoodBattery, an IOPMPowerSource:
- * iokit/Kernel/RedwoodBattery.cpp), which powerd reads like an iPhone's own, and from it iOS knows
+ * With adsp=1 the battery is a power source (the service HakiosBattery, an IOPMPowerSource:
+ * iokit/Kernel/HakiosBattery.cpp), which powerd reads like an iPhone's own, and from it iOS knows
  * everything by itself; once that service is there, the hooks hand everything to iOS's own code.
  */
 static float  (*original_battery_level)(id self, SEL sel);
@@ -254,7 +254,7 @@ battery_power_source(void)
 	static bool found;
 	io_service_t service;
 
-	if (!found && (service = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodBattery"))) != 0) {
+	if (!found && (service = IOServiceGetMatchingService(0, IOServiceMatching("HakiosBattery"))) != 0) {
 		IOObjectRelease(service);
 		found = true;
 	}
@@ -265,7 +265,7 @@ battery_power_source(void)
 static float
 battery_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_level ? original_battery_level(self, sel) : -1.0f;
@@ -277,10 +277,10 @@ battery_level(id self, SEL sel)
 static long
 battery_state(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.redwood.battery_charging");
-	int present = sysctl_int("kern.redwood.battery_present");
-	int plugged = sysctl_int("kern.redwood.battery_charger_present");
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int charging = sysctl_int("kern.hakios.battery_charging");
+	int present = sysctl_int("kern.hakios.battery_present");
+	int plugged = sysctl_int("kern.hakios.battery_charger_present");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (charging == -1 || present == -1 || plugged == -1 || soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_state ? original_battery_state(self, sel) : 0;
@@ -298,7 +298,7 @@ battery_state(id self, SEL sel)
 static BOOL
 battery_view_shows_percentage(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return YES;
 	return original_battery_view_shows_percentage ? original_battery_view_shows_percentage(self, sel) : NO;
@@ -307,7 +307,7 @@ battery_view_shows_percentage(id self, SEL sel)
 static void
 battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	original_battery_view_set_shows_percentage(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? YES : shows);
 }
@@ -315,9 +315,9 @@ battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 static BOOL
 battery_view_should_show_bolt(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.redwood.battery_charging");
-	int present = sysctl_int("kern.redwood.battery_present");
-	int plugged = sysctl_int("kern.redwood.battery_charger_present");
+	int charging = sysctl_int("kern.hakios.battery_charging");
+	int present = sysctl_int("kern.hakios.battery_present");
+	int plugged = sysctl_int("kern.hakios.battery_charger_present");
 
 	if (charging != -1 && present != -1 && plugged != -1 && !battery_power_source()) return charging && present && plugged;
 	return original_battery_view_should_show_bolt ? original_battery_view_should_show_bolt(self, sel) : NO;
@@ -333,7 +333,7 @@ battery_view_should_show_bolt(id self, SEL sel)
 static double
 battery_view_charge_percent(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_battery_view_charge_percent ? original_battery_view_charge_percent(self, sel) : 0.0;
@@ -342,7 +342,7 @@ battery_view_charge_percent(id self, SEL sel)
 static void
 battery_view_set_charge_percent(id self, SEL sel, double p)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	original_battery_view_set_charge_percent(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? (double)soc / 100.0 : p);
 }
@@ -351,7 +351,7 @@ battery_view_set_charge_percent(id self, SEL sel, double p)
 static double
 ring_charging_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_ring_charging_level ? original_ring_charging_level(self, sel) : 0.0;
@@ -381,7 +381,7 @@ battery_post_notifications(void)
 
 /* ---- the lock screen's clock without a GPU ------------------------------------------------------- */
 
-#define REDWOOD_GL "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL "/redwood/lib/libhakios-gl.dylib"
 
 /* Does the window server draw with OpenGL ES? The same question, asked the same way, as opengl_es() in inject.c. */
 static bool
@@ -392,7 +392,7 @@ gpu_draws(void)
 	const char *argument;
 	io_service_t gpu;
 
-	if (access(REDWOOD_GL, R_OK) != 0) {
+	if (access(HAKIOS_GL, R_OK) != 0) {
 		return false;
 	}
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
@@ -402,7 +402,7 @@ gpu_draws(void)
 			}
 		}
 	}
-	gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+	gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
 	if (gpu != 0) {
 		IOObjectRelease(gpu);
 	}
@@ -457,7 +457,7 @@ lock_button_held(void)
 	static int token = NOTIFY_TOKEN_INVALID;
 	uint64_t state = 0;
 
-	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.redwood.button.lock", &token) != NOTIFY_STATUS_OK) {
+	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.hakios.button.lock", &token) != NOTIFY_STATUS_OK) {
 		token = NOTIFY_TOKEN_INVALID;
 		return true;
 	}
@@ -922,7 +922,7 @@ layers(void)
 }
 
 /*
- * The switcher of running applications, on the notification com.redwood.switcher (rwtouch notify).
+ * The switcher of running applications, on the notification com.hakios.switcher (rwtouch notify).
  * A drag up from the bottom edge is the way to it on a phone, but the touches a script puts in do
  * not reach iOS's system gestures -- nothing comes of such a drag, not even going home -- and two
  * presses of the home button only go home (there is no home button on a phone of this shape, and
@@ -1054,7 +1054,7 @@ control_center_fades(const char *arguments)
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
  */
-#define REDWOOD_TWEAK_LOADER    "/redwood/lib/libredwood-tweaks.dylib"
+#define HAKIOS_TWEAK_LOADER    "/redwood/lib/libhakios-tweaks.dylib"
 
 static void
 load_tweaks(void)
@@ -1064,16 +1064,16 @@ load_tweaks(void)
 	if (stat("/var/jb/usr/lib/TweakInject", &st) != 0) {
 		return;                 /* no package manager's prefix here, so no tweaks */
 	}
-	if (dlopen(REDWOOD_TWEAK_LOADER, RTLD_NOW | RTLD_GLOBAL) == NULL) {
-		say("redwood: the tweak loader %s: %s\n", REDWOOD_TWEAK_LOADER, dlerror());
+	if (dlopen(HAKIOS_TWEAK_LOADER, RTLD_NOW | RTLD_GLOBAL) == NULL) {
+		say("redwood: the tweak loader %s: %s\n", HAKIOS_TWEAK_LOADER, dlerror());
 	} else {
-		say("redwood: tweaks: %s opened\n", REDWOOD_TWEAK_LOADER);
+		say("redwood: tweaks: %s opened\n", HAKIOS_TWEAK_LOADER);
 	}
 }
 
 __attribute__((constructor))
 static void
-redwood_springboard_init(void)
+hakios_springboard_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;
@@ -1091,8 +1091,8 @@ redwood_springboard_init(void)
 		if ((say_fd = open("/dev/console", O_WRONLY | O_NOCTTY)) < 0) {
 			say_fd = 2;
 		}
-		say("redwood: in %s[%d]: its layers are said on the notification com.redwood.layers\n", name, getpid());
-		notify_register_dispatch("com.redwood.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+		say("redwood: in %s[%d]: its layers are said on the notification com.hakios.layers\n", name, getpid());
+		notify_register_dispatch("com.hakios.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 			layers();
 		});
 		return;
@@ -1109,7 +1109,7 @@ redwood_springboard_init(void)
 	 * Everything the Metal driver says, it says with printf, and SpringBoard's standard output
 	 * goes nowhere -- so inside this process every refusal our driver prints has been invisible.
 	 * That is not a small blindness: the boot of 22 October showed SpringBoard dying in Siri's
-	 * orb with MTLCreateSystemDefaultDevice() answering RedwoodMetalDevice, which means our
+	 * orb with MTLCreateSystemDefaultDevice() answering HakiosMetalDevice, which means our
 	 * device was there and refused something, and the sentence naming what was written to a
 	 * file descriptor that is closed. Pointing stdout at stderr, which IS the console here, is
 	 * the whole fix and it costs nothing: the driver keeps its printf, and we get to read it.
@@ -1206,17 +1206,17 @@ redwood_springboard_init(void)
 			}
 		}
 		say("redwood: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
-		    sysctl_int("kern.redwood.battery_soc"), sysctl_int("kern.redwood.battery_present"),
-		    sysctl_int("kern.redwood.battery_charger_present"), sysctl_int("kern.redwood.battery_charging"));
+		    sysctl_int("kern.hakios.battery_soc"), sysctl_int("kern.hakios.battery_present"),
+		    sysctl_int("kern.hakios.battery_charger_present"), sysctl_int("kern.hakios.battery_charging"));
 		battery_post_notifications();
 	});
-	notify_register_dispatch("com.redwood.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		unlock();
 	});
-	notify_register_dispatch("com.redwood.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		layers();
 	});
-	notify_register_dispatch("com.redwood.switcher", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.switcher", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		switcher();
 	});
 	/*

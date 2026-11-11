@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalms).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalms).
 #
 # Multisample textures (docs/metal.md 10.34). Six of Apple's 271 fragment shaders declare
 # one -- texture2d_ms<float|int|uint|ushort, read> and depth2d_ms<float, read> -- and not
@@ -39,7 +39,7 @@
 # hangs this GPU takes the whole boot with it, so every line above a hang stays a
 # measurement and the hang names itself. The cheap and isolated lines come first and the
 # three sweeps last for that reason. All of it needs gpu=1 and
-# /redwood/lib/libredwoodair.dylib; without either, line 1 says so and the rest repeat it.
+# /redwood/lib/libhakiosair.dylib; without either, line 1 says so and the rest repeat it.
 #
 # 1. The proven colour draw, first and unchanged. clearFragment20 over the generated quad
 #    into three RGBA32Uint attachments. It must print the four words it has always
@@ -57,7 +57,7 @@
 #
 # 3. The depth draw of 10.30, which is the regression for that same attachment check with
 #    a DEPTH attachment under it -- the one case where it has two kinds of texture to
-#    agree about. Expect what logs/080758-run.log printed: a RedwoodMetalTexture of pixel
+#    agree about. Expect what logs/080758-run.log printed: a HakiosMetalTexture of pixel
 #    format 252, -getBytes: on it REFUSED with the library's sentence about two aspects,
 #    readsDepth=YES writesDepth=YES readsStencil=NO writesStencil=NO with 0 methods
 #    unanswered, four draws of status 6 with the far one DISCARDED, the nearer one PASSED,
@@ -68,7 +68,7 @@
 #    the single-draw path, which binds the 4x4 texture of --texslots and not what the
 #    shader declares, so each line must
 #
-#      - print "newRenderPipelineStateWithDescriptor: gave RedwoodMetalRenderPipeline",
+#      - print "newRenderPipelineStateWithDescriptor: gave HakiosMetalRenderPipeline",
 #        which is the measurement: the module translated on the device. None of the six
 #        has ever been translated on this GPU, because the sweep gave up on each at its
 #        texture before a pipeline was asked for. Four of them loop over read(coord, i)
@@ -106,7 +106,7 @@
 #    the lines that measure the new refusal, and each must print, for every multisample
 #    shader in its window, the driver's
 #
-#      redwoodmetal: a MTLTextureType2DMultisample with a sampleCount of 1: Metal's own
+#      hakiosmetal: a MTLTextureType2DMultisample with a sampleCount of 1: Metal's own
 #      rule is "MTLTextureDescriptor sampleCount must be > 1 for multisample textures",
 #      and a texture of one sample is a MTLTextureType2D
 #

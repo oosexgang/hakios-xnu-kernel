@@ -1,7 +1,7 @@
 /*
  * torch_test: the flashlight the way a program (and Control Center) works it: AVFlashlight, which
  * asks mediaserverd's FigFlashlight, which sets the back camera's torch level (on this machine:
- * libredwood-media.dylib in mediaserverd, the kernel's /dev/redwood-torch, torch=3).
+ * libhakios-media.dylib in mediaserverd, the kernel's /dev/hakios-torch, torch=3).
  *
  * usage: torch_test STEP...
  *   wait SECONDS
@@ -45,11 +45,11 @@ text(id object)
 static void
 kernel_state(void)
 {
-	int device = open("/dev/redwood-torch", O_RDONLY);
+	int device = open("/dev/hakios-torch", O_RDONLY);
 	uint32_t lit = 0;
 
 	if (device < 0 || read(device, &lit, sizeof(lit)) != (ssize_t)sizeof(lit)) {
-		printf("torch_test: the kernel has no flashlight (/dev/redwood-torch)\n");
+		printf("torch_test: the kernel has no flashlight (/dev/hakios-torch)\n");
 	} else {
 		printf("torch_test: the kernel says: %s%u of 1000\n", lit ? "LIT at " : "dark, ", lit);
 	}

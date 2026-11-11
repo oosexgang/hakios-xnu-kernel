@@ -10,7 +10,7 @@
 #include "apfs_write.h"
 
 /* The volume this will touch and no other: its name, and the names of the slots in its root. */
-#define APFS_STORE_VOLNAME  "RedwoodStore"
+#define APFS_STORE_VOLNAME  "HakiosStore"
 #define APFS_STORE_SLOTS    2
 #define APFS_STORE_SLOT0    "slot0"
 #define APFS_STORE_SLOT1    "slot1"

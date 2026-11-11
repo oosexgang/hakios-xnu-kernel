@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldrawall).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaldrawall).
 #
 # Every fragment shader of AppleMetalGLRenderer's library, drawn through the Metal driver,
 # one line each. One shader drawn is an example; air_run has drawn all of them on softpipe and

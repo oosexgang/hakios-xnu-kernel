@@ -40,9 +40,9 @@ extern struct vc_info vinfo;            /* the boot framebuffer, as the text con
 
 #include "MiniIOSurface.h"
 
-extern "C" void redwood_tl(const char * format, ...) __printflike(1, 2);
+extern "C" void hakios_tl(const char * format, ...) __printflike(1, 2);
 /* hakios: once user space owns the console the kernel's IOLog reaches no log we can read: say it in the loader's */
-#define IOLog(...) redwood_tl(__VA_ARGS__)
+#define IOLog(...) hakios_tl(__VA_ARGS__)
 
 
 /* IOConnectCallMethod selectors of the framebuffer user client (iOS 16.5) */
@@ -187,18 +187,18 @@ static TUNABLE(uint32_t, gThreads, "fb_threads", 4);
  * scaling streams through memory and keeps up on the small cores.
  */
 static TUNABLE(uint32_t, gSmallCores, "fb_small", 1);
-extern "C" unsigned redwood_slow_cores(void);           /* osfmk/arm64/psci_smp.c */
-extern "C" int redwood_bind_slow_core(unsigned n);
+extern "C" unsigned hakios_slow_cores(void);           /* osfmk/arm64/psci_smp.c */
+extern "C" int hakios_bind_slow_core(unsigned n);
 
 static void
 bindDrawer(unsigned index, const char * who)
 {
 	int cpu;
 
-	if (!gSmallCores || redwood_slow_cores() < 2) {
+	if (!gSmallCores || hakios_slow_cores() < 2) {
 		return;
 	}
-	cpu = redwood_bind_slow_core(index);
+	cpu = hakios_bind_slow_core(index);
 	if (cpu >= 0) {
 		IOLog("MiniIOMobileFramebuffer: %s on cpu %d, a slower core\n", who, cpu);
 	} else {
@@ -216,7 +216,7 @@ swapQueue(void)
  * Boot-arg touch_lat=1: a line for every swap handed over ("tl: s ID at US") and for every frame
  * put on the panel ("tl: v ID ready US shown US done US": the GPU done with it, its beat come, the
  * pixels in the panel's memory), in microseconds of mach_absolute_time, for measuring how long a
- * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/redwood_input.c).
+ * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/hakios_input.c).
  */
 static TUNABLE(uint32_t, gTouchLat, "touch_lat", 0);
 
@@ -242,7 +242,7 @@ recStep(void)
 #define REC_STEP        recStep()
 
 /*
- * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/redwood_adreno.c says where it is
+ * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/hakios_adreno.c says where it is
  * read from). Renoir's panel is a command-mode one: at each of its refreshes the display controller
  * reads this framebuffer out to it, top to bottom, in about half a refresh, and leaves it alone the
  * rest. Two things follow from knowing when:
@@ -255,8 +255,8 @@ recStep(void)
  * The model: a readout began at `start` (the counter said `frame`), they come every `period`, and a
  * line takes `line_ticks` to read out. It is kept up to date from the counters (scanObserve()).
  */
-extern "C" bool redwood_display_scan_start(void);
-extern "C" bool redwood_display_scan(uint32_t * frame, uint32_t * line);
+extern "C" bool hakios_display_scan_start(void);
+extern "C" bool hakios_display_scan(uint32_t * frame, uint32_t * line);
 static TUNABLE(uint32_t, gScan, "fb_scan", 1);
 static TUNABLE(uint32_t, gScanLeadUs, "fb_scan_lead", 2000);   /* the first lead from a frame's start to its target */
 
@@ -289,7 +289,7 @@ scanObserve(void)
 	uint32_t frame, line;
 	uint64_t now;
 
-	if (!gPanel.ok || !redwood_display_scan(&frame, &line)) {
+	if (!gPanel.ok || !hakios_display_scan(&frame, &line)) {
 		gPanel.ok = false;
 		return;
 	}
@@ -696,8 +696,8 @@ IOMobileFramebuffer::start(IOService * provider)
 	thread_set_thread_name(thread, "frames to the panel");
 	thread_deallocate(thread);
 	fThreads = gThreads >= 1 && gThreads <= 8 ? gThreads : 1;
-	if (gSmallCores && redwood_slow_cores() >= 2 && fThreads > redwood_slow_cores()) {
-		fThreads = redwood_slow_cores();
+	if (gSmallCores && hakios_slow_cores() >= 2 && fThreads > hakios_slow_cores()) {
+		fThreads = hakios_slow_cores();
 	}
 	fHelperLock = IOLockAlloc();
 	for (unsigned i = 0; i + 1 < fThreads; i++) {
@@ -817,7 +817,7 @@ IOMobileFramebuffer::start(IOService * provider)
 
 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
 	/* for who draws with the GPU (userland/src/eagl.c): a frame need not be waited for before it is handed over */
-	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+	setProperty("HakiosWaitsForGPU", kOSBooleanTrue);
 	publishModes();
 	setName("disp0");
 	registerService();
@@ -1112,13 +1112,13 @@ IOMobileFramebuffer::scanCalibrate(void)
 	uint32_t frame, line, frames[2] = { 0, 0 }, lines[2] = { 0, 0 }, firstFrame = 0;
 	bool counting = false;
 
-	if (!redwood_display_scan_start()) {
+	if (!hakios_display_scan_start()) {
 		printf("MiniIOMobileFramebuffer: panel scan: no readout counters on this board: frames written at once\n");
 		return;
 	}
 	gPanel.lines = fPanelHeight;
 	while ((now = mach_absolute_time()) < deadline) {
-		if (!redwood_display_scan(&frame, &line)) {
+		if (!hakios_display_scan(&frame, &line)) {
 			return;
 		}
 		now = mach_absolute_time();
@@ -1141,7 +1141,7 @@ IOMobileFramebuffer::scanCalibrate(void)
 	}
 	/* the beginning of a later readout, for the period */
 	while ((now = mach_absolute_time()) < deadline) {
-		if (!redwood_display_scan(&frame, &line)) {
+		if (!hakios_display_scan(&frame, &line)) {
 			return;
 		}
 		now = mach_absolute_time();
@@ -1399,7 +1399,7 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 	nanoseconds_to_absolutetime(FRAME_PAUSE * NSEC_PER_MSEC, &pause);
 	clock_interval_to_deadline(SWAP_HELD_MS, kMillisecondScale, &deadline);
 	if (gTouchLat) {
-		redwood_tl("tl: s %u at %llu\n", swapWord(swap, SWAP_ID), micros(now));
+		hakios_tl("tl: s %u at %llu\n", swapWord(swap, SWAP_ID), micros(now));
 	}
 	IOLockLock(fSwapLock);
 	fStatSwapsLate += fSwapTime != 0 && now - fSwapTime > period && now - fSwapTime < pause;
@@ -1685,7 +1685,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fSwapsShown++;
 	if (gTouchLat) {
-		redwood_tl("tl: v %u ready %llu shown %llu done %llu composed %llu target %llu late %u lead %llu\n",
+		hakios_tl("tl: v %u ready %llu shown %llu done %llu composed %llu target %llu late %u lead %llu\n",
 		    swapWord(swap, SWAP_ID), micros(ready), micros(shown), micros(drawn), micros(composed),
 		    fScanTarget != 0 ? micros(fScanTarget) : 0, fScanLate, micros(fScanLead));
 	}
@@ -1971,10 +1971,10 @@ IOMobileFramebufferUserClient::vsync(void)
 		absolutetime_to_nanoseconds(mach_absolute_time() - now, &late);
 		if (gTouchLat && late > NSEC_PER_MSEC) {
 			/* tl: y COUNT due DUE late US: a refresh told to the window server over a millisecond late */
-			redwood_tl("tl: y %llu due %llu late %llu\n", fVSyncCount, micros(now), late / NSEC_PER_USEC);
+			hakios_tl("tl: y %llu due %llu late %llu\n", fVSyncCount, micros(now), late / NSEC_PER_USEC);
 		}
 	} else if (gTouchLat) {
-		redwood_tl("tl: Y off at %llu\n", micros(mach_absolute_time()));
+		hakios_tl("tl: Y off at %llu\n", micros(mach_absolute_time()));
 	}
 }
 
@@ -2067,7 +2067,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 
 	case kFBMethodSwapWait:                         /* a swap is on the screen as soon as it is made */
 		if (gTouchLat) {
-			redwood_tl("tl: w %llu %#llx %#llx at %llu\n", args->scalarInputCount > 0 ? in[0] : 0,
+			hakios_tl("tl: w %llu %#llx %#llx at %llu\n", args->scalarInputCount > 0 ? in[0] : 0,
 			    args->scalarInputCount > 1 ? in[1] : 0, args->scalarInputCount > 2 ? in[2] : 0, micros(mach_absolute_time()));
 		}
 		return kIOReturnSuccess;
@@ -2086,7 +2086,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 		fCallbacks[in[2]] = in[0];
 		fRefcons[in[2]] = in[1];
 		if (in[2] == kFBNotifyVSync && gTouchLat) {
-			redwood_tl("tl: Y %s at %llu\n", in[0] != 0 ? (fVSyncRunning ? "on-running" : "on") : "asked-off",
+			hakios_tl("tl: Y %s at %llu\n", in[0] != 0 ? (fVSyncRunning ? "on-running" : "on") : "asked-off",
 			    micros(mach_absolute_time()));
 		}
 		if (in[2] == kFBNotifyVSync && in[0] != 0 && !fVSyncRunning && !fClosed) {
@@ -2195,7 +2195,7 @@ publishDisplayNode(void)
  * over by both, which leaves CoreAnimation with its software renderer, as before.
  *
  * With boot-arg metal=1 a user process may put those two properties here, which is the whole
- * of what keeps Metal from finding a driver of ours (userland/src/redwoodmetal.m); see setProperties
+ * of what keeps Metal from finding a driver of ours (userland/src/hakiosmetal.m); see setProperties
  * below and docs/metal-glass.md. Without it (the default) nothing changes: CoreAnimation keeps
  * its software renderer, as in the RAM-only release.
  */

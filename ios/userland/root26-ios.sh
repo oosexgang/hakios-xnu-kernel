@@ -9,7 +9,7 @@
 # for a system service only when its plist is on the system volume.
 # Writes $IOS/root26-ios.apfs, $IOS/jobs26, $OBJ/stage0 (the system image's /sbin/launchd) and $IOS/flashboot.apfs
 # (the RAM part of a boot whose system image is on the flash).
-# JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py; RC_JOBS=FILE: what com.redwood.demo runs.
+# JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py; RC_JOBS=FILE: what com.hakios.demo runs.
 set -e
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=env.sh
@@ -24,7 +24,7 @@ JOBS=${JOBS-"
 	com.apple.iconservices.iconservicesagent com.apple.pluginkit.pkd
 	com.apple.SpringBoard
 "}
-[ -f "$OBJ/libredwood.dylib" ] || { echo "root26-ios.sh: no libraries in $OBJ: ios/userland/inj26.sh first" >&2; exit 1; }
+[ -f "$OBJ/libhakios.dylib" ] || { echo "root26-ios.sh: no libraries in $OBJ: ios/userland/inj26.sh first" >&2; exit 1; }
 [ -s "$IOS/var.skel" ] || { echo "root26-ios.sh: no $IOS/var.skel: ios/tools/unpack.sh makes it" >&2; exit 1; }
 
 # --- our programs ------------------------------------------------------------------------------------
@@ -82,9 +82,9 @@ printf 'd\t700\t501\t501\t/private/var/mobile/tmp\n' >> "$T/etc/var.skel"
 # the libraries the kernel inserts (kern.exec_inject, set by init): LIBRARY NAME..., one line each; @apps is
 # every application (below)
 cat > "$T/etc/inject.conf" <<'CONF'
-/redwood/lib/libredwood.dylib backboardd containermanagerd containermanagerd_system
-/redwood/lib/libredwood-sb.dylib SpringBoard
-/redwood/lib/libredwood-statusbar.dylib @apps
+/redwood/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
+/redwood/lib/libhakios-sb.dylib SpringBoard
+/redwood/lib/libhakios-statusbar.dylib @apps
 CONF
 # the phone's own firmware, where it was taken from that phone (firmware/BOARD/fw/: the GPU's, the Wi-Fi
 # DSP's, the network to join), uncompressed in the image: the drivers read it where it lies in memory
@@ -97,10 +97,10 @@ else
 	echo "root26-ios.sh: no phone's firmware in the image (board: ${BOARD:-none}; firmware/BOARD/fw/): no GPU, no Wi-Fi" >&2
 fi
 # the audio server's output device (inj26.sh): arm64e, in place of 16.5's arm64 one, which the audio server cannot load;
-# the system image links /System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver to it (mkimage26.py)
-mkdir -p "$T/lib/RedwoodAudio.driver"
-cp "$OBJ/RedwoodAudio" "$T/lib/RedwoodAudio.driver/RedwoodAudio"
-cp "$US/src/audio_plugin.plist" "$T/lib/RedwoodAudio.driver/Info.plist"
+# the system image links /System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver to it (mkimage26.py)
+mkdir -p "$T/lib/HakiosAudio.driver"
+cp "$OBJ/HakiosAudio" "$T/lib/HakiosAudio.driver/HakiosAudio"
+cp "$US/src/audio_plugin.plist" "$T/lib/HakiosAudio.driver/Info.plist"
 
 # mkjobs.py looks for the cryptexes beside the root filesystem, as ios165/ has them
 S=$IOS/jobsrc
@@ -112,7 +112,7 @@ ln -s "$IOS/cryptex/app" "$S/cryptex-app"
 J=$IOS/jobs26
 rm -rf "$J"
 mkdir -p "$J"
-cp "$US/com.redwood.demo.plist" "$J/"
+cp "$US/com.hakios.demo.plist" "$J/"
 # iOS 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
 # ("unexpected exec of non-platform binary: /redwood/sbin/init"); the kernel's AMFI stand-in takes a
 # signature marked ad hoc (CodeDirectory flag CS_ADHOC) for one. Our programs are either unsigned or
@@ -208,10 +208,10 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
 done
 # PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: ios/userland/inject_poster.c)
-echo "/redwood/lib/libredwood-poster.dylib PosterBoard" >> $T/etc/inject.conf
+echo "/redwood/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
 # ios/userland/inject_backlight.c)
-echo "/redwood/lib/libredwood-backlight.dylib SpringBoard" >> $T/etc/inject.conf
+echo "/redwood/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
 # hw.backlight; backboardd for CoreBrightness's own side (src: ios/userland/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
@@ -241,10 +241,10 @@ conf.write_text(text)
 PY
 # chronod's CoreDuet store cannot create its missing parent directories in the fresh RAM /var.
 printf 'd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet\nd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet/Knowledge\n' >> $T/etc/var.skel
-# CONSOLE_LOG="NAME ...": these programs get libredwood-console.dylib (standard error on the console; with
+# CONSOLE_LOG="NAME ...": these programs get libhakios-console.dylib (standard error on the console; with
 # boot-arg exec_env=NAME,...:OS_ACTIVITY_DT_MODE=1 their os_log as well)
 if [ -n "${CONSOLE_LOG:-}" ]; then
-	echo "/redwood/lib/libredwood-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
+	echo "/redwood/lib/libhakios-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
 fi
 # LOGGING_DEBUG="SUBSYSTEM ...": os_log of those subsystems at every level, Debug included (on the console
 # with boot-arg exec_env=NAME:OS_ACTIVITY_DT_MODE=1); /Library/Preferences is /private/var/preferences

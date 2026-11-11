@@ -31,9 +31,9 @@
 
 #include "MiniIOSurface.h"
 
-extern "C" void redwood_tl(const char * format, ...) __printflike(1, 2);
+extern "C" void hakios_tl(const char * format, ...) __printflike(1, 2);
 /* hakios: once user space owns the console the kernel's IOLog reaches no log we can read: say it in the loader's */
-#define IOLog(...) redwood_tl(__VA_ARGS__)
+#define IOLog(...) hakios_tl(__VA_ARGS__)
 
 static_assert(sizeof(struct minisurf_plane) == 0x80, "plane layout");
 static_assert(sizeof(struct minisurf_result) == 0x68, "result layout");
@@ -704,7 +704,7 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 		}
 		s->kpixels = (uint8_t *) s->clientMap->getVirtualAddress();
 		/* the pixels as they are now (see `snapshot`): rows to spare after them, as freedreno lays an image out
-		 * with its height aligned to four rows, and the page after (RedwoodGPU.cpp clientSurfaceBuffer) */
+		 * with its height aligned to four rows, and the page after (HakiosGPU.cpp clientSurfaceBuffer) */
 		s->snapshot = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
 		    kIODirectionInOut | kIOMemoryKernelUserShared | kIOMapWriteCombineCache,
 		    (vm_size_t) round_page_64((uint64_t) alloc + 4 * (uint64_t) bpr) + PAGE_SIZE, PAGE_SIZE);

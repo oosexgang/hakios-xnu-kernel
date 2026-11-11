@@ -10,7 +10,7 @@
  *                                      full scale, through an audio queue: what a music player does
  *   level PEAK                         the tones after this one at PEAK of full scale (0 to 1) instead
  *                                      (before iOS's volume, which scales the samples itself)
- *   raw SECONDS                        the same tone written straight to /dev/redwood-audio, past iOS's own
+ *   raw SECONDS                        the same tone written straight to /dev/hakios-audio, past iOS's own
  *                                      processing and volume (which keep a tone more than 12 dB under full
  *                                      scale even at the top): to try what the kernel does with full scale
  *   system ID                          a system sound by its number (1100 is the lock sound,
@@ -25,7 +25,7 @@
  *   restart                            kill the audio server (launchd starts it again when it is next asked for):
  *                                      what every program then sees as "media services were reset"
  *
- * The samples come out of /dev/redwood-audio (see sys/redwood_audio.h); a tone is something one
+ * The samples come out of /dev/hakios-audio (see sys/hakios_audio.h); a tone is something one
  * can recognize there without ears: two peaks in the spectrum, where they were put.
  */
 #include <AudioToolbox/AudioToolbox.h>
@@ -77,17 +77,17 @@ fill(__unused void *context, AudioQueueRef queue, AudioQueueBufferRef buffer)
 static int
 raw(double seconds)
 {
-	int device = open("/dev/redwood-audio", O_WRONLY);
+	int device = open("/dev/hakios-audio", O_WRONLY);
 	int16_t block[2 * 480];
 	uint64_t total = (uint64_t)(seconds * RATE), written = 0, start;
 	mach_timebase_info_data_t timebase;
 
 	if (device < 0) {
-		printf("sound_test: /dev/redwood-audio: %s\n", strerror(errno));
+		printf("sound_test: /dev/hakios-audio: %s\n", strerror(errno));
 		return 1;
 	}
 	mach_timebase_info(&timebase);
-	printf("sound_test: a tone of %.0f and %.0f Hz at %.2f of full scale for %.1f s, straight to /dev/redwood-audio\n",
+	printf("sound_test: a tone of %.0f and %.0f Hz at %.2f of full scale for %.1f s, straight to /dev/hakios-audio\n",
 	    frequency[0], frequency[1], peak, seconds);
 	fflush(stdout);
 	start = mach_absolute_time();
@@ -104,7 +104,7 @@ raw(double seconds)
 			}
 		}
 		if (write(device, block, count * 4) != (ssize_t)(count * 4)) {
-			printf("sound_test: /dev/redwood-audio: a write failed: %s\n", strerror(errno));
+			printf("sound_test: /dev/hakios-audio: a write failed: %s\n", strerror(errno));
 			break;
 		}
 		written += count;

@@ -25,7 +25,7 @@
 
 extern char *proc_name_address(void *p);
 extern lck_mtx_t tasks_threads_lock;
-extern void redwood_tl(const char *format, ...) __printflike(1, 2);
+extern void hakios_tl(const char *format, ...) __printflike(1, 2);
 extern kern_return_t cpu_xcall(int cpu_number, broadcastFunc func, void *param);
 
 #define PROF_CPUS       8
@@ -94,7 +94,7 @@ prof_images(task_t task)
 	}
 	if (task->all_image_info_addr != 0 &&
 	    vm_map_read_user(map, task->all_image_info_addr, &infos, sizeof(infos)) == KERN_SUCCESS && infos.infoArray != 0) {
-		redwood_tl("dprof: images %u, shared cache at %#llx slide %#llx, kernel slide %#lx\n", infos.infoArrayCount,
+		hakios_tl("dprof: images %u, shared cache at %#llx slide %#llx, kernel slide %#lx\n", infos.infoArrayCount,
 		    infos.sharedCacheBaseAddress, infos.sharedCacheSlide, (unsigned long)vm_kernel_slide);
 		for (uint32_t i = 0; i < infos.infoArrayCount && i < 1024; i++) {
 			struct user64_dyld_image_info img;
@@ -109,7 +109,7 @@ prof_images(task_t task)
 			}
 			bzero(path, sizeof(path));
 			(void)vm_map_read_user(map, img.imageFilePath, path, sizeof(path) - 1);
-			redwood_tl("dprof: image %#llx %s\n", img.imageLoadAddress, path);
+			hakios_tl("dprof: image %#llx %s\n", img.imageLoadAddress, path);
 		}
 	}
 	vm_map_deallocate(map);
@@ -146,9 +146,9 @@ prof_report(void)
 	user = prof_user;
 	prof_samples = prof_user = 0;
 	lck_spin_unlock(&prof_lock);
-	redwood_tl("dprof: %s: %llu samples (%llu in user code), %llu lost\n", prof_name, samples, user, prof_lost);
+	hakios_tl("dprof: %s: %llu samples (%llu in user code), %llu lost\n", prof_name, samples, user, prof_lost);
 	for (unsigned t = 0; t < 100 && top[t].count; t++) {
-		redwood_tl("dprof: %c %#llx %u\n", (top[t].pc & 1) ? 'k' : (top[t].pc & 2) ? 'l' : 'u', top[t].pc & ~3ull,
+		hakios_tl("dprof: %c %#llx %u\n", (top[t].pc & 1) ? 'k' : (top[t].pc & 2) ? 'l' : 'u', top[t].pc & ~3ull,
 		    top[t].count);
 	}
 }
@@ -276,7 +276,7 @@ prof_all_thread(__unused void *arg, __unused wait_result_t wr)
 				    seen[best].count * 100 / total);
 				seen[best].count = 0;
 			}
-			redwood_tl("dprof: who is on the CPUs (%u samples):%s\n", total, line);
+			hakios_tl("dprof: who is on the CPUs (%u samples):%s\n", total, line);
 			bzero(seen, sizeof(seen));
 			total = 0;
 		}

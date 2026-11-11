@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # How far behind the finger the screen is (boot-arg touch_lat=1, with rec_secs/rec_ring for the frames;
 # tools/latency.py): unlock, Settings, then a wait of 100 seconds -- for the first minutes after a start the
 # widget extensions, searchd and the rest keep all four processors busy, and the touch waits for them --, the

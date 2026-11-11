@@ -1,8 +1,8 @@
 /*
  * thermal_probe: a root of its own for a short run on the phone that checks the kernel's thermal service
  * and lists the audio DSP's services, with no iOS needed (XL_RAMDISK=userland/thermal_probe, as with hello).
- * Every ten seconds for a minute and a half it prints kern.redwood.thermal and, once, the DSP's QMI
- * services (kern.redwood.adsp_services); between prints it keeps one core busy, so the governor has heat
+ * Every ten seconds for a minute and a half it prints kern.hakios.thermal and, once, the DSP's QMI
+ * services (kern.hakios.adsp_services); between prints it keeps one core busy, so the governor has heat
  * to see. Then it waits for the kernel's run to end (loader_return_after / XL_SECS).
  */
 #include "mini.h"
@@ -50,9 +50,9 @@ main(int argc, char **argv, char **envp)
 	}
 	printf("probe: thermal and DSP probe, pid %d\n", getpid());
 	for (int round = 0; round < 9; round++) {
-		show("kern.redwood.thermal");
+		show("kern.hakios.thermal");
 		if (round == 1 || round == 8) {
-			show("kern.redwood.adsp_services");
+			show("kern.hakios.adsp_services");
 		}
 		busy(9000);
 		usleep(1000000);

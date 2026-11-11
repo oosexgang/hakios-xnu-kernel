@@ -1,11 +1,11 @@
 /*
  * glassref: one Metal draw, on Apple's GPU and through our AIR -> NIR path, compared pixel by pixel.
  *
- * The phone's driver (userland/src/redwoodmetal.m) hands each pipeline's bitcode -- -[MTLFunction
- * bitcodeData], function constants registered beside it -- to libredwoodair, which translates it and
+ * The phone's driver (userland/src/hakiosmetal.m) hands each pipeline's bitcode -- -[MTLFunction
+ * bitcodeData], function constants registered beside it -- to libhakiosair, which translates it and
  * draws with Mesa. This machine's Metal loads the very same iOS 26 libraries (QuartzCore's
  * default.metallib, AIR slice), so the same draw can be made twice: once by Apple's compiler on the
- * M-series GPU, which is the answer, and once by the host build of libredwoodair on softpipe
+ * M-series GPU, which is the answer, and once by the host build of libhakiosair on softpipe
  * (RWA_SOFTWARE=1), which is ours. Whatever differs is a translation bug, found without the phone.
  *
  * Inputs are made up but plausible: a full-target quad from the library's own vertex shader (positions
@@ -400,7 +400,7 @@ main(int argc, char **argv)
 			}
 			uint8_t bytes[32] = { 0 };
 			unsigned size = 4;
-			/* "x" and raw bytes in hex, as redwoodmetal logs them ("fcvals NAME: I=HEX ..."):
+			/* "x" and raw bytes in hex, as hakiosmetal logs them ("fcvals NAME: I=HEX ..."):
 			 * any type, a uint4 of RenderBox's _shader_state included */
 			if ([given hasPrefix:@"x"]) {
 				const char *h = given.UTF8String + 1;

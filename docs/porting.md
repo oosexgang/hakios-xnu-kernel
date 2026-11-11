@@ -139,8 +139,8 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
   the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
   there: [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps.
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
-  `hakios_board.h`. `renoir_fts.c` beside `redwood_goodix.c` is the example: two touch controllers,
-  one interface to iOS (`/dev/redwood-touch`, `bsd/sys/redwood_input.h`).
+  `hakios_board.h`. `hakios_fts.c` beside `hakios_goodix.c` is the example: two touch controllers,
+  one interface to iOS (`/dev/hakios-touch`, `bsd/sys/hakios_input.h`).
 
 [drivers.md](drivers.md) lists every driver with the part it is for and how tied to one phone it is.
 Touch first: without it the phone is a picture.
@@ -190,7 +190,7 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 
 Stated plainly, so nobody finds out the hard way:
 
-- **GPU.** `redwood_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
+- **GPU.** `hakios_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
   is data (`[gpu]` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
   (`[adreno]` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
   (the GMU's registers, the clock controller's layout, the zap shader's hand-over) has only been run on

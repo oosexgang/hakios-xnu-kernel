@@ -16,7 +16,7 @@ package here with a [uefi] section). Blocks are darwin's own, 4096 bytes, counte
 
 darwin has two parts with one writer each. The system part, blocks 0 to SYSTEM_END - 1, is this tool's:
 the iOS system image the kernel mounts as its root, read only (ios/tools/mkimage26.py). The rest is the
-running kernel's, the one place it may write (bsd/dev/redwood_ufs.c, UFS_WRITE_FIRST, ufs_write=1): the
+running kernel's, the one place it may write (bsd/dev/hakios_ufs.c, UFS_WRITE_FIRST, ufs_write=1): the
 data iOS keeps between runs. This tool never writes there.
 
 What it takes to write:
@@ -48,7 +48,7 @@ import boards  # noqa: E402
 
 NAME = 'darwin'
 BS = 4096
-SYSTEM_END = 2042368            # where the kernel's part begins: UFS_WRITE_FIRST of bsd/dev/redwood_ufs.c
+SYSTEM_END = 2042368            # where the kernel's part begins: UFS_WRITE_FIRST of bsd/dev/hakios_ufs.c
 DEV = '/dev/block/by-name/darwin'
 TMP = '/data/local/tmp/darwin-write.img'
 LOG = os.path.join(ROOT, 'logs', 'darwin-write.log')

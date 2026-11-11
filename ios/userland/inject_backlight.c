@@ -1,5 +1,5 @@
 /*
- * libredwood-backlight.dylib: inside SpringBoard, a display that says it has changed mode.
+ * libhakios-backlight.dylib: inside SpringBoard, a display that says it has changed mode.
  *
  * BacklightServicesHost asks CoreBrightness to take the panel to a display mode (on, dimmed, off:
  * -[BLSHOSDisplayInterface transitionToDisplayMode:withDuration:didChangeAlwaysOnBrightnessCurve:])

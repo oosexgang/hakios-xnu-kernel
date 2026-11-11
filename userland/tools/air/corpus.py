@@ -42,7 +42,7 @@ TOOL_MAINS = {"air2nir.c": "air2nir", "air_run.c": "air_run",
               # the library the Metal driver links and its test (air_metal.h):
               # in no binary whose numbers this script reports, so a change to
               # them makes none of those stale.
-              "air_metal.c": "libredwoodair", "air_metal.h": "libredwoodair",
+              "air_metal.c": "libhakiosair", "air_metal.h": "libhakiosair",
               "air_metal_test.c": "air_metal_test"}
 
 

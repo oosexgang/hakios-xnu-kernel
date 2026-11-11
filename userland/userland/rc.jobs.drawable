@@ -1,8 +1,8 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.drawable).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.drawable).
 #
 # WHAT THIS BOOT IS FOR. The port has no drawable, and that is the single most expensive
 # thing about it: showing one finished frame costs 15.46 ms -- -getBytes: 11.96 ms to pull a
-# finished attachment into the process and kRedwoodShow 3.50 ms to push it into the kernel --
+# finished attachment into the process and kHakiosShow 3.50 ms to push it into the kernel --
 # which caps everything at 64.7 frames a second with nothing drawn (docs/metal.md 10.43).
 # A drawable removes both copies, because the pass writes into memory the display controller
 # already scans out.
@@ -10,7 +10,7 @@
 # -[CAMetalLayer nextDrawable] asks a Metal device exactly one thing for this:
 # -newTextureWithDescriptor:iosurface:plane:, a texture over an IOSurface CoreAnimation
 # allocated (docs/metal.md 10.46). The library grew rwa_texture_from_surface for it and
-# userland/src/redwooddrawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
+# userland/src/hakiosdrawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
 # This list is the first time, and it asks the one question that separates a texture over the
 # surface's own pages from a texture over a copy of them.
 #
@@ -36,12 +36,12 @@
 #   gpu=1              in XL_CMDLINE. Without it there is no Adreno to import into, and the
 #                      library says so by name; the test then prints NOT MEASURED and stops,
 #                      which is not a failure and must not be read as one.
-#   an image with GL=1 for /redwood/lib/libredwoodair.dylib, and it must be a library built
+#   an image with GL=1 for /redwood/lib/libhakiosair.dylib, and it must be a library built
 #                      AFTER rwa_texture_from_surface existed. An older one is the refusal
 #                      "the compiler library in this image has no rwa_texture_from_surface",
 #                      and that sentence means the image is stale, not that the path is wrong.
 #                      Check it on the machine before booting:
-#                        nm -gU xnu-deps/build/mesa/out/libredwoodair.dylib | grep from_surface
+#                        nm -gU xnu-deps/build/mesa/out/libhakiosair.dylib | grep from_surface
 #   JOBS=""            not required -- this test shares nothing with the window server -- but
 #                      kept for the first boot so that nothing else is allocating surfaces or
 #                      GPU buffers while the kernel's table is being read.
@@ -87,7 +87,7 @@
 #    (a) the surface as IOSurface.framework sees it: ID, width, height, bytes a row, alloc
 #        size, base address. For 1080x2400 BGRA with no bytes-per-row asked for, the row must
 #        be 4352 -- the kernel aligns it to 64 itself (MINISURF_ROW_ALIGN).
-#    (b) the same surface as the KERNEL describes it through kRedwoodSurface (0x7e), printed
+#    (b) the same surface as the KERNEL describes it through kHakiosSurface (0x7e), printed
 #        separately on purpose: the two answers come from opposite sides of one call, and
 #        either is only worth quoting because the other agrees. The FourCC must read 'BGRA'.
 #    (c) the GPU's name, which is the proof the library opened freedreno and not softpipe. If
@@ -134,10 +134,10 @@
 #       the geometry both sides agreed on, which is the number to quote in any write-up.
 #   grep -a 'drawable_test: the GPU is' logs/*-run.log
 #       must say an Adreno. "softpipe" here invalidates lines (d) to (f).
-#   grep -a 'redwooddrawable:' logs/*-run.log
+#   grep -a 'hakiosdrawable:' logs/*-run.log
 #       the bridge's own one-off lines: whether the compiler library is loaded and whether it
 #       has rwa_texture_from_surface, and whether this process had IOSurfaceGetID.
-#   grep -a 'RedwoodGPU: request' logs/*-run.log
+#   grep -a 'HakiosGPU: request' logs/*-run.log
 #       empty. A line here means the kernel was asked something it does not know, and 0x7e is
 #       the request this list depends on.
 #   grep -a 'MiniIOSurface' logs/*-run.log

@@ -217,7 +217,7 @@ accelerators(void)
 static void
 gpu_services(void)
 {
-	static const char *const classes[] = { "RedwoodGPU", "IOGPU", "AGXAccelerator", "IOAccelerator" };
+	static const char *const classes[] = { "HakiosGPU", "IOGPU", "AGXAccelerator", "IOAccelerator" };
 	int found = 0;
 
 	for (size_t i = 0; i < sizeof(classes) / sizeof(classes[0]); i++) {
@@ -356,7 +356,7 @@ static int coreimage_over_eagl;
  * an EAGLContext (which on an image built with GL=1, on a phone with gpu=1, is our Mesa behind
  * src/eagl.c) and hand it over.
  */
-#define REDWOOD_GL      "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL      "/redwood/lib/libhakios-gl.dylib"
 
 static EAGLContext *
 make_eagl(void)
@@ -364,15 +364,15 @@ make_eagl(void)
 	EAGLContext *gl;
 
 	/*
-	 * Our OpenGL ES has to be put behind EAGLContext in THIS process first. libredwood.dylib does
+	 * Our OpenGL ES has to be put behind EAGLContext in THIS process first. libhakios.dylib does
 	 * it only for backboardd (src/inject.c, opengl_es(), which is called for that name alone), and
 	 * the way it does it -- replacing methods of EAGLContext through the ObjC runtime -- is local
 	 * to a process. The library installs itself from a constructor, so loading it is enough; what
-	 * it replaced it says itself in lines "redwood-gl:". Without this, EAGLContext here would be
+	 * it replaced it says itself in lines "hakios-gl:". Without this, EAGLContext here would be
 	 * iOS's own, which is AppleMetalGLRenderer over Metal -- the thing that is missing.
 	 */
-	if (access(REDWOOD_GL, R_OK) != 0) {
-		printf("metal_test:   %s is not in this image: build it with GL=1\n", REDWOOD_GL);
+	if (access(HAKIOS_GL, R_OK) != 0) {
+		printf("metal_test:   %s is not in this image: build it with GL=1\n", HAKIOS_GL);
 		return nil;
 	}
 	/*
@@ -385,11 +385,11 @@ make_eagl(void)
 		setenv("OSMESA_SOFTWARE", "1", 1);
 		printf("metal_test:   OSMESA_SOFTWARE=1: Mesa's software driver, not the GPU\n");
 	}
-	if (dlopen(REDWOOD_GL, RTLD_NOW) == NULL) {
-		printf("metal_test:   %s: %s\n", REDWOOD_GL, dlerror());
+	if (dlopen(HAKIOS_GL, RTLD_NOW) == NULL) {
+		printf("metal_test:   %s: %s\n", HAKIOS_GL, dlerror());
 		return nil;
 	}
-	printf("metal_test:   %s loaded; EAGLContext is ours now\n", REDWOOD_GL);
+	printf("metal_test:   %s loaded; EAGLContext is ours now\n", HAKIOS_GL);
 	gl = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
 
 	if (gl == nil) {

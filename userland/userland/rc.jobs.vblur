@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The blur whose radius varies (RC_JOBS=rc.jobs.vblur, a run of about two and a half minutes): the
 # strip under the status bar in Search; the widgets of the Today view and the folders of the App
 # Library held up under it (the higher, the more blurred, where vblur=0 leaves them sharp); then Maps,

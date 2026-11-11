@@ -20,7 +20,7 @@
  * Asking Metal is bin/metal_drv_test's job, in a process of its own, afterwards.
  *
  *   metal_props                 show what the service carries now
- *   metal_props on              set RedwoodMetal / RedwoodMetalDevice (what this port installs)
+ *   metal_props on              set HakiosMetal / HakiosMetalDevice (what this port installs)
  *   metal_props on NAME CLASS   set those two instead
  *   metal_props off             remove both (an empty string removes, see setProperties)
  */
@@ -133,8 +133,8 @@ main(int argc, char **argv)
 		return 1;
 	}
 	if (strcmp(what, "on") == 0) {
-		bad = set_both(service, argc > 3 ? argv[2] : "RedwoodMetal",
-		    argc > 3 ? argv[3] : "RedwoodMetalDevice");
+		bad = set_both(service, argc > 3 ? argv[2] : "HakiosMetal",
+		    argc > 3 ? argv[3] : "HakiosMetalDevice");
 	} else if (strcmp(what, "off") == 0) {
 		bad = set_both(service, "", "");
 	} else if (strcmp(what, "show") != 0) {

@@ -1,7 +1,7 @@
 /*
  * One draw of tools/air/glassref, kept as a file: everything our side needs to draw it again (the two
  * functions' bitcode, the function constants, the vertices, every buffer and texture) and what Apple's GPU
- * drew. glassref writes one with --case FILE; tools/air/glasscase.c draws it again through libredwoodair --
+ * drew. glassref writes one with --case FILE; tools/air/glasscase.c draws it again through libhakiosair --
  * softpipe or llvmpipe on this Mac, freedreno on the phone's Adreno 830 -- and says how far it is from Apple's.
  *
  * The file is the fields below in order, each variable-length one as a uint32 length and the bytes, all

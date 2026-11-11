@@ -1,5 +1,5 @@
 /*
- * libredwood-fairplay.dylib: code of ours inside fairplayd.H2 (see inject.c for how it gets there).
+ * libhakios-fairplay.dylib: code of ours inside fairplayd.H2 (see inject.c for how it gets there).
  *
  * Why. The App Store's front page never loads, and the root of that is not in the store: an
  * AppleMediaServices thread inside appstored sits in a Mach call in _AMSFairPlayGetDeviceType
@@ -608,7 +608,7 @@ __attribute__((used)) static struct {
 
 __attribute__((constructor))
 static void
-redwood_fairplay_init(void)
+hakios_fairplay_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;

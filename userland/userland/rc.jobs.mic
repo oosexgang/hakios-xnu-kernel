@@ -1,9 +1,9 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The microphone for iOS (RC_JOBS=rc.jobs.mic, with adsp=1 mic=4, haptic=5 and sound=4): first the speakers' path
 # as a check (a tone of two seconds and a keyboard click; with sound_below=720 the amplifiers play it 90 dB under
 # Android's level, which is silence), then two recordings the way an application makes them (record_test:
-# AVAudioRecorder through the built-in microphone, which the virtual audio device makes of RedwoodAudio.driver's
-# "Codec", whose samples come from the kernel's /dev/redwood-mic): six seconds with the vibration motor running
+# AVAudioRecorder through the built-in microphone, which the virtual audio device makes of HakiosAudio.driver's
+# "Codec", whose samples come from the kernel's /dev/hakios-mic): six seconds with the vibration motor running
 # from the third to the fourth (its 175.5 Hz is what the microphone should hear), then four seconds of the room. The
 # kernel's "mic:" lines say when the microphone listened, and the end of the run repeats them. (A pause between
 # the two: a program in the background that records shows the orange dot but not the status bar's recording pill, and

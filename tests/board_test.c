@@ -9,7 +9,7 @@
 extern char log_text[];
 
 #include "hakios_board.c"
-#include "redwood_adreno_profile.h"
+#include "hakios_adreno_profile.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

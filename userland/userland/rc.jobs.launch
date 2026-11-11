@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The first launch of an application (RC_JOBS=rc.jobs.launch, a run of about a minute and a half):
 # Settings opened and left, then the pictures SpringBoard keeps of it looked at as files (snap_test:
 # its launch images, light and dark, upright and on its side, and the snapshot it took on the way out),

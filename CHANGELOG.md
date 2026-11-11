@@ -4,6 +4,16 @@ What changed in HakiOS, for people who use it, build it or port it to a phone. C
 what a reader does with the project, not by commit: `git log` has the detail. There are no release
 tags yet, so the current work is one section.
 
+## Unreleased: the port's names, and iOS 27 on redwood
+
+- **No phone gives its name to code.** What the first generation called after its first phone is
+  `hakios` now, as in hakios-xnu-kernel: files and symbols `redwood_*` → `hakios_*`, `REDWOOD_*` →
+  `HAKIOS_*`, classes `Redwood*` → `Hakios*` (`HakiosGPU`), sysctls `kern.redwood*` → `kern.hakios*`,
+  devices `/dev/redwood-*` → `/dev/hakios-*`, libraries `libredwood*` → `libhakios*`, launchd jobs
+  `com.redwood.*` → `com.hakios.*`; Renoir's touch driver `renoir_fts.c` → `hakios_fts.c`. Left as they
+  were: a phone's name where it names the phone (boards, features such as `camera-redwood`, vendor
+  sources), the small image's mount point `/redwood`, and `base/`, the first generation's workspace.
+
 ## Unreleased: the restructuring
 
 The project's structure was reworked: where a phone is described, how the kernel's sources are kept,

@@ -1,8 +1,8 @@
 /*
  * thermald: the phone's heat, as iOS hears about it.
  *
- * The kernel's thermal service (bsd/dev/redwood_thermal.c in hakios-xnu-kernel) reads the SoC's
- * sensors, slows the cores when they get hot, and keeps a pressure level in kern.redwood.thermal_pressure:
+ * The kernel's thermal service (the first generation's, drivers/power/hakios.thermal.c in hakios-xnu-kernel) reads the SoC's
+ * sensors, slows the cores when they get hot, and keeps a pressure level in kern.hakios.thermal_pressure:
  * iOS's own scale, 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping. On an iPhone it is
  * thermalmonitord that says how hot the phone is; here nobody would, so apps would never hear of it --
  * ProcessInfo.thermalState would stay "nominal" while the cores are being slowed down. This daemon
@@ -10,8 +10,8 @@
  * com.apple.system.thermalpressurelevel (OSThermalNotification.h, which ProcessInfo reads), posted
  * whenever it changes.
  *
- *   thermald            stay, and pass the level on (the job com.redwood.thermald does this)
- *   thermald show       the kernel's table: every sensor, every group of cores (kern.redwood.thermal)
+ *   thermald            stay, and pass the level on (the job com.hakios.thermald does this)
+ *   thermald show       the kernel's table: every sensor, every group of cores (kern.hakios.thermal)
  *   thermald level      the level now, as a number and a word
  *
  * Without the kernel's service (QEMU, thermal=0) it says so once and ends.
@@ -35,11 +35,11 @@ kernel_level(void)
 	int level = -1, running = 0;
 	size_t len = sizeof(running);
 
-	if (sysctlbyname("kern.redwood.thermal_running", &running, &len, NULL, 0) != 0 || !running) {
+	if (sysctlbyname("kern.hakios.thermal_running", &running, &len, NULL, 0) != 0 || !running) {
 		return -1;
 	}
 	len = sizeof(level);
-	if (sysctlbyname("kern.redwood.thermal_pressure", &level, &len, NULL, 0) != 0) {
+	if (sysctlbyname("kern.hakios.thermal_pressure", &level, &len, NULL, 0) != 0) {
 		return -1;
 	}
 	return level;
@@ -51,7 +51,7 @@ show(void)
 	static char text[4096];
 	size_t len = sizeof(text);
 
-	if (sysctlbyname("kern.redwood.thermal", text, &len, NULL, 0) != 0) {
+	if (sysctlbyname("kern.hakios.thermal", text, &len, NULL, 0) != 0) {
 		printf("thermald: this kernel has no thermal service\n");
 		return 1;
 	}

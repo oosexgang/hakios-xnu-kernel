@@ -7,8 +7,8 @@
 #   DRIVERS="softpipe,freedreno"
 #                        the gallium drivers to build. softpipe: a rasterizer in plain C; it needs no
 #                        LLVM and nothing of the machine but its processor. freedreno: the Adreno's;
-#                        it talks to the kernel's GPU driver (the service RedwoodGPU) through
-#                        tools/mesa/redwood-drm, which stands in for libdrm (tools/mesa/freedreno-darwin.patch
+#                        it talks to the kernel's GPU driver (the service HakiosGPU) through
+#                        tools/mesa/hakios-drm, which stands in for libdrm (tools/mesa/freedreno-darwin.patch
 #                        makes Mesa build it where there is no DRM). The library takes the GPU when the
 #                        kernel has one and the environment does not say OSMESA_SOFTWARE=1.
 #
@@ -20,8 +20,8 @@
 #   gl.xml               their prototypes (the Khronos registry as Mesa has it): for userland/mkeagl.py
 # and with AIR=1, the two things the Metal subsystem needs (docs/air.md, docs/metal.md 10.12):
 #   air_run              the test program: a Metal shader translated, drawn or dispatched, read back
-#   libredwoodair.dylib  the same path as a library (tools/mesa/air/air_metal.h), install name
-#                        /redwood/lib/libredwoodair.dylib, which is what userland's Metal driver
+#   libhakiosair.dylib  the same path as a library (tools/mesa/air/air_metal.h), install name
+#                        /redwood/lib/libhakiosair.dylib, which is what userland's Metal driver
 #                        links against to compile a function Metal hands it
 # Needs on this machine: meson, ninja, bison, flex, python3 with venv (Mako is installed into a
 # private environment), llvm-ar.
@@ -58,17 +58,17 @@ cd "$B"
 # patched with the earlier ones is of no use (and builds without a word into a library that does not match
 # the rest): the sources are taken from the archive again and everything is built anew, about a minute.
 PATCHES=$(cat "$ROOT"/tools/mesa/*.patch | sha256sum | cut -d' ' -f1)
-if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.redwood-patches 2>/dev/null)" != "$PATCHES" ]; then
+if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.hakios-patches 2>/dev/null)" != "$PATCHES" ]; then
 	[ -f mesa-$VERSION.tar.xz ] || curl -sL --fail -o mesa-$VERSION.tar.xz https://archive.mesa3d.org/mesa-$VERSION.tar.xz
 	echo "$SHA256  mesa-$VERSION.tar.xz" | sha256sum -c --quiet
 	rm -rf mesa-$VERSION build-*
 	tar xJf mesa-$VERSION.tar.xz
 	for p in "$ROOT"/tools/mesa/*.patch; do patch -s --no-backup-if-mismatch -d mesa-$VERSION -p1 < "$p"; done
-	echo "$PATCHES" > mesa-$VERSION/.redwood-patches
+	echo "$PATCHES" > mesa-$VERSION/.hakios-patches
 fi
 # ours, kept in the repository: always the current ones
-rm -rf mesa-$VERSION/src/redwood-drm
-cp -r "$ROOT/tools/mesa/redwood-drm" mesa-$VERSION/src/redwood-drm
+rm -rf mesa-$VERSION/src/hakios-drm
+cp -r "$ROOT/tools/mesa/hakios-drm" mesa-$VERSION/src/hakios-drm
 # the AIR frontend (docs/air.md): the Metal runtime will call it in this
 # library's own process, and tools/mesa/air-frontend.patch is the meson that
 # reaches it. Copied rather than linked, because this tree is cross-built.
@@ -123,11 +123,11 @@ if [ "${AIR:-}" = 1 ]; then
 	# libOSMesa is below -- -x keeps the global symbols, which here are the rwa_* of
 	# tools/mesa/air/air_metal.h, and the install name has to be the path on the device
 	# because meson's own is @rpath.
-	ninja -C $BUILD src/gallium/drivers/freedreno/libredwoodair.dylib >> ninja.log
-	llvm-strip -x -o out/libredwoodair.dylib $BUILD/src/gallium/drivers/freedreno/libredwoodair.dylib
-	install_name_tool -id /redwood/lib/libredwoodair.dylib out/libredwoodair.dylib
-	echo "mk-mesa.sh: $B/out/libredwoodair.dylib ($(stat -c %s out/libredwoodair.dylib) bytes," \
-		"$(nm -gU out/libredwoodair.dylib | grep -c ' _rwa_') rwa_* functions)"
+	ninja -C $BUILD src/gallium/drivers/freedreno/libhakiosair.dylib >> ninja.log
+	llvm-strip -x -o out/libhakiosair.dylib $BUILD/src/gallium/drivers/freedreno/libhakiosair.dylib
+	install_name_tool -id /redwood/lib/libhakiosair.dylib out/libhakiosair.dylib
+	echo "mk-mesa.sh: $B/out/libhakiosair.dylib ($(stat -c %s out/libhakiosair.dylib) bytes," \
+		"$(nm -gU out/libhakiosair.dylib | grep -c ' _rwa_') rwa_* functions)"
 	# what this library was built from, so userland/build.sh can tell that it is older than the
 	# sources and come back here instead of shipping it beside a driver that disagrees with it
 	cat "$ROOT"/tools/mesa/air/* | sha256sum > out/built-from-air
@@ -138,6 +138,6 @@ install_name_tool -id /redwood/lib/libOSMesa.8.dylib out/libOSMesa.8.dylib
 nm -gU out/libOSMesa.8.dylib | awk '$3 ~ /^_gl/ { print substr($3, 2) }' > out/exported-gl.txt
 cp mesa-$VERSION/src/mapi/glapi/registry/gl.xml out/gl.xml
 # (userland/build.sh comes here again when this no longer matches)
-cat "$ROOT"/tools/mesa/*.patch "$ROOT"/tools/mesa/redwood-drm/* | sha256sum > out/built-from
+cat "$ROOT"/tools/mesa/*.patch "$ROOT"/tools/mesa/hakios-drm/* | sha256sum > out/built-from
 echo "mk-mesa.sh: Mesa $VERSION ($DRIVERS): $B/out/libOSMesa.8.dylib, $(stat -c %s out/libOSMesa.8.dylib) bytes," \
 	"$(wc -l < out/exported-gl.txt) gl* functions"

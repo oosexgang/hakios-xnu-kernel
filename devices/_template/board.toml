@@ -84,7 +84,7 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # alt_model = "Adreno 643"          # qcom,gpu-models: another name for the parts with the speed bins
 # alt_bins = [0xac, 0xbe]           # ... listed here
 
-# The Wi-Fi radio, for the driver's layer in the kernel (redwood_lx.c). Left out: a WCN6750, no pool.
+# The Wi-Fi radio, for the driver's layer in the kernel (hakios_lx.c). Left out: a WCN6750, no pool.
 # [wifi]
 # radio_model = 1                   # 0: a WCN6750 on the SoC's own bus (feature "wifi-wcn6750");
 #                                   # 1: a WCN6855 on PCIe (its driver is being brought over)

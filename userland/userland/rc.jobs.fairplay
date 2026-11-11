@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # What fairplayd changes (RC_JOBS=rc.jobs.fairplay, the iOS volume on the flash as the root, where the
 # program exists: FLASHBOOT=1, mkjobs.py --root-volume). Two questions, in this order.
 #

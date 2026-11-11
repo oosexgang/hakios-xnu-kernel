@@ -112,10 +112,12 @@ What the overlay provides, in the order a boot meets it:
 4. **Drivers** (`bsd/dev/`): display and GPU, touch, buttons, battery, sound, camera, Wi-Fi, storage,
    CPU frequency, backlight, thermal. Each does nothing until its boot argument asks.
 
-Naming: files and symbols called `redwood_*` carry the name of the first phone. It is the historical
-prefix of the platform layer and of the kernel/user-space interfaces (`/dev/redwood-touch`, the
-`RedwoodGPU` service), not a statement about which phone the code is for. New device-independent code
-is named `hakios_*`.
+Naming: the port's files and symbols are named `hakios_*` (`HakiosGPU` for a class), and so are its
+interfaces between the kernel and user space (`/dev/hakios-touch`, `kern.hakios.*`). No phone gives
+its name to code: a driver for one part is named after the part, and which boards may start it is
+their data. Phones' names are left where they name a phone (a board, a device tree, a vendor's source),
+and in `/redwood`, the mount point of the small image, which the loader, stage0 and the image builders
+agree on.
 
 More: [kernel/README.md](../kernel/README.md), [kernel/patches/README.md](../kernel/patches/README.md).
 

@@ -2,7 +2,7 @@
  * The phone's cameras as iOS's capture stack wants them: a FigCaptureDevice with two FigCaptureStreams,
  * the wide camera as the back camera and the front one as the front camera, made for mediaserverd's
  * BWFigCaptureDeviceVendor in place of the device Apple's H10ISP.mediacapture makes of the iPhone's ISP
- * (part of libredwood-media.dylib; inject_media.c gives the vendor our device's create function when
+ * (part of libhakios-media.dylib; inject_media.c gives the vendor our device's create function when
  * the kernel has a camera: cam=5).
  *
  * Both are CoreMedia "derived objects" (CMDerivedObjectCreate): a table of functions for the base
@@ -12,7 +12,7 @@
  * A stream's frames go to the capture graph through the blocks it is given in its property
  * "VideoOutputHandlers" ({ output: { PixelBufferHandler: ^(CVPixelBufferRef, CMTime) } }), for the
  * outputs "VideoOutputConfigurations" describes (the graph's own buffer pools) and "VideoOutputsEnabled"
- * switches on. A frame: read from the kernel's /dev/redwood-camera (RAW10), made into a picture by
+ * switches on. A frame: read from the kernel's /dev/hakios-camera (RAW10), made into a picture by
  * camera_isp.c (exposure, white balance kept to the sensor's reference lights, the colour matrix and
  * lens shading of the camera's own tuning, gamma, zoom), one pixel buffer for each output, with the
  * metadata the graph keeps its frame statistics and its zoom by. The kernel gives one sensor's frames
@@ -48,10 +48,10 @@
 #include <unistd.h>
 #include "camera_isp.h"
 
-void redwood_camera_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void hakios_camera_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
 void
-redwood_camera_say(const char *format, ...)
+hakios_camera_say(const char *format, ...)
 {
 	char line[400];
 	va_list ap;
@@ -66,7 +66,7 @@ redwood_camera_say(const char *format, ...)
 	line[n++] = '\n';
 	write(2, line, (size_t)n);
 }
-#define say redwood_camera_say
+#define say hakios_camera_say
 
 /* ---- CoreMedia's derived objects, as iOS 16.5 lays them out ---------------------------------------- */
 
@@ -425,7 +425,7 @@ static const char *const output_names[OUTPUTS] = { "PrimaryScaler", "SecondarySc
  * gives one sensor's frames at a time; a stream's frames start with its own sensor's (see worker()).
  */
 static const struct camera {
-	uint32_t        sensor;         /* the kernel's (the frames' sensor, REDWOOD_CAMERA_SENSOR) */
+	uint32_t        sensor;         /* the kernel's (the frames' sensor, HAKIOS_CAMERA_SENSOR) */
 	const char      *name, *unique_id;
 	bool            turned;         /* its sensor the other way up from the iPhone's: the pictures turned half round */
 	double          focal_length, f_number, pixel_size, fov;
@@ -785,7 +785,7 @@ stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 	return 0;
 }
 
-/* the flashlight: TorchLevel (0 to 1) as thousandths to the kernel's /dev/redwood-torch (torch=3) */
+/* the flashlight: TorchLevel (0 to 1) as thousandths to the kernel's /dev/hakios-torch (torch=3) */
 static void
 torch_set(struct stream *s, CFTypeRef value)
 {
@@ -798,10 +798,10 @@ torch_set(struct stream *s, CFTypeRef value)
 	level = level < 0 ? 0 : level > 1 ? 1 : level;
 	thousandths = (uint32_t)(level * 1000 + 0.5f);
 	if (s->torch < 0) {
-		s->torch = open("/dev/redwood-torch", O_WRONLY);
+		s->torch = open("/dev/hakios-torch", O_WRONLY);
 	}
 	if (s->torch < 0 || write(s->torch, &thousandths, sizeof(thousandths)) != (ssize_t)sizeof(thousandths)) {
-		say("the flashlight at %u of 1000 NOT TAKEN (no /dev/redwood-torch)", thousandths);
+		say("the flashlight at %u of 1000 NOT TAKEN (no /dev/hakios-torch)", thousandths);
 	} else {
 		say("the flashlight at %u of 1000", thousandths);
 	}
@@ -811,7 +811,7 @@ torch_set(struct stream *s, CFTypeRef value)
 
 struct render_job {
 	const struct isp *isp;
-	const struct redwood_camera_frame *f;
+	const struct hakios_camera_frame *f;
 	const uint8_t *raw;
 	CVPixelBufferRef pb;
 	uint32_t format, width, height, pieces;
@@ -918,7 +918,7 @@ md_put(CFMutableDictionaryRef m, int key, CFTypeRef value)
 
 /* the frame's metadata, as H10ISP's stream gives them (see md_names) */
 static CFDictionaryRef
-frame_metadata(const struct isp *isp, const struct redwood_camera_frame *f, const struct isp_stats *st, CFStringRef port)
+frame_metadata(const struct isp *isp, const struct hakios_camera_frame *f, const struct isp_stats *st, CFStringRef port)
 {
 	CFMutableDictionaryRef m;
 	double exposure = f->exposure_lines * (double)f->line_ns / 1e9, analog = f->gain_unity ? (double)f->gain / f->gain_unity : 1;
@@ -957,7 +957,7 @@ frame_metadata(const struct isp *isp, const struct redwood_camera_frame *f, cons
 }
 
 static void
-deliver(struct stream *s, struct output *out, const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw,
+deliver(struct stream *s, struct output *out, const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw,
     CFDictionaryRef metadata)
 {
 	CVPixelBufferRef pb = output_buffer(out);
@@ -1039,7 +1039,7 @@ deliver(struct stream *s, struct output *out, const struct isp *isp, const struc
  * 15.9-16x, at the longest exposure a frame at 30 a second allows.
  */
 static float
-lux_index(const struct isp *isp, const struct redwood_camera_frame *f)
+lux_index(const struct isp *isp, const struct hakios_camera_frame *f)
 {
 	double exposure = f->exposure_lines * (double)f->line_ns / 1e9 * f->gain / f->gain_unity * isp->digital;
 
@@ -1076,7 +1076,7 @@ colour_temperature(const struct isp *isp)
 }
 
 /*
- * Focus, where the camera has a lens motor (the frames' focus is a position, not REDWOOD_CAMERA_NO_FOCUS:
+ * Focus, where the camera has a lens motor (the frames' focus is a position, not HAKIOS_CAMERA_NO_FOCUS:
  * the wide camera's): by contrast, as there is nothing else to go by -- the sensor's phase-detection
  * pixels are not read. A search climbs from where the lens is: a step of AF_STEP one way, on that way
  * while the middle of the picture gets sharper, back the other way if the first step was not, until
@@ -1119,7 +1119,7 @@ struct af {
 static void
 af_go(int device, struct af *af, uint32_t target)
 {
-	struct redwood_camera_command c = { .command = REDWOOD_CAMERA_FOCUS };
+	struct hakios_camera_command c = { .command = HAKIOS_CAMERA_FOCUS };
 
 	af->target = target < AF_NEAR ? AF_NEAR : target > AF_FAR ? AF_FAR : target;
 	c.a = af->at < af->target ? (af->target - af->at > AF_STEP ? af->at + AF_STEP : af->target) :
@@ -1138,12 +1138,12 @@ af_go(int device, struct af *af, uint32_t target)
 }
 
 static void
-af_frame(int device, struct af *af, const struct redwood_camera_frame *f, const uint8_t *raw, const float window[4], bool locked)
+af_frame(int device, struct af *af, const struct hakios_camera_frame *f, const uint8_t *raw, const float window[4], bool locked)
 {
 	float level, sharpness;
 	unsigned needed = f->gain >= 16 * f->gain_unity ? 2 : 1;      /* (in the dark, two frames to a measurement) */
 
-	if (f->focus == REDWOOD_CAMERA_NO_FOCUS) {
+	if (f->focus == HAKIOS_CAMERA_NO_FOCUS) {
 		return;
 	}
 	if (af->at == 0 && af->target == 0) {
@@ -1307,7 +1307,7 @@ worker(void *context)
 {
 	CMBaseObjectRef o = context;
 	struct stream *s = stream_of(o);
-	struct redwood_camera_frame head;
+	struct hakios_camera_frame head;
 	struct isp isp;
 	struct isp_stats st;
 	uint8_t *buffer = NULL;
@@ -1316,11 +1316,11 @@ worker(void *context)
 	bool switched = false;
 	float lux = -1, cct = -1;
 	struct af af = { 0 };
-	int device = open(REDWOOD_CAMERA_DEVICE, O_RDWR), failures = 0;
+	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), failures = 0;
 
-	pthread_setname_np("redwood-camera");
+	pthread_setname_np("hakios-camera");
 	if (device < 0) {
-		say("no %s (%s): no frames", REDWOOD_CAMERA_DEVICE, strerror(errno));
+		say("no %s (%s): no frames", HAKIOS_CAMERA_DEVICE, strerror(errno));
 		return NULL;
 	}
 	isp_init(&isp);
@@ -1340,7 +1340,7 @@ worker(void *context)
 			if (head.sensor != s->camera->sensor) {
 				/* another camera's frames (the kernel's last sensor): changed, and the next ones are this one's */
 				if (!switched) {
-					struct redwood_camera_command c = { .command = REDWOOD_CAMERA_SENSOR, .a = s->camera->sensor, .b = ~0u };
+					struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = s->camera->sensor, .b = ~0u };
 
 					switched = true;
 					say("the kernel's frames are camera %u's: to %u, the %s", head.sensor, s->camera->sensor, s->camera->name);
@@ -1364,9 +1364,9 @@ worker(void *context)
 		}
 		failures = 0;
 
-		const struct redwood_camera_frame *f = (const void *)buffer;
+		const struct hakios_camera_frame *f = (const void *)buffer;
 		const uint8_t *raw = buffer + f->header_bytes;
-		struct redwood_camera_command c;
+		struct hakios_camera_command c;
 
 		isp_measure(&isp, f, raw, &st);
 		isp_awb(&isp, &st);
@@ -1619,7 +1619,7 @@ static CFStringRef
 stream_description(CMBaseObjectRef o)
 {
 	(void)o;
-	return CFRetain(CFSTR("<RedwoodCaptureStream: the wide camera>"));
+	return CFRetain(CFSTR("<HakiosCaptureStream: the wide camera>"));
 }
 
 static const struct base_class stream_base = {
@@ -1773,7 +1773,7 @@ static CFStringRef
 device_description(CMBaseObjectRef o)
 {
 	(void)o;
-	return CFRetain(CFSTR("<RedwoodCaptureDevice: the POCO X5 Pro's wide camera>"));
+	return CFRetain(CFSTR("<HakiosCaptureDevice: the POCO X5 Pro's wide camera>"));
 }
 
 static const struct base_class device_base = {
@@ -1784,10 +1784,10 @@ static const struct device_class device_derived = { 3, NULL, device_request_stre
 static const struct vtable device_vtable = { NULL, &device_base, &device_derived };
 
 /* The vendor's device create function (as H10ISPCaptureDeviceCreate is called). */
-OSStatus redwood_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out);
+OSStatus hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out);
 
 OSStatus
-redwood_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out)
+hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out)
 {
 	static bool found, usable;
 	CMBaseObjectRef device = NULL, stream[2];

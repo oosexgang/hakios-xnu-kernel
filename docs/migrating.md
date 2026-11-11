@@ -18,7 +18,7 @@ behaviour on redwood changed, and one thing changed on Renoir (below).
 | `renoir/tests/` | `tests/` |
 | `base/xnuloader/` | `loader/` (a link stays in `base/`) |
 | `base/xnu-deps/` | `kernel/deps/` (a link stays in `base/`) |
-| Board checks in drivers (`redwood_board_is("renoir")`) | `devices/NAME/board.toml` and `hakios_board_has()` for whether a driver starts, and a key of the board file where two phones differ. No code compares the board's name any more: `redwood_board_is()` is gone. |
+| Board checks in drivers (`hakios_board_is("renoir")`) | `devices/NAME/board.toml` and `hakios_board_has()` for whether a driver starts, and a key of the board file where two phones differ. No code compares the board's name any more: `hakios_board_is()` is gone. |
 | Default boot arguments in `boot26.py` | `[boot]` of the phone's board file. It was `devices/renoir/board.toml`; the phones' packages have since moved to the `devices` branch (last section). |
 
 <!-- end -->
@@ -97,6 +97,9 @@ What to do:
   changed.
 - **A branch that changes a phone's board file** carries that change to the `devices` branch. A change
   to a SoC file, to a driver or to a key of the board file stays on the main branch.
-- **Drivers did not move or change names.** `redwood_*.c`, `renoir_fts.c` and features such as
-  `camera-redwood` or `touch-ft3658u` are drivers for parts, started only on a board that lists the
-  feature.
+- **The port's names lost the first phone's.** `redwood_*` files and symbols are `hakios_*` now
+  (`RedwoodGPU` is `HakiosGPU`, `kern.redwood` is `kern.hakios`, `/dev/redwood-*` is `/dev/hakios-*`,
+  `libredwood*` is `libhakios*`, `com.redwood.*` jobs are `com.hakios.*`), and `renoir_fts.c` is
+  `hakios_fts.c`; the small image's mount point is still `/redwood`. A change made before carries over
+  once the same names are put in it (the rules are in `CHANGELOG.md`). Drivers for parts are started,
+  as before, only on a board that lists their feature (`camera-redwood`, `touch-ft3658u`).

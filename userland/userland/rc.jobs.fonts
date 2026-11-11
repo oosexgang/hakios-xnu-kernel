@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Text in scripts other than Latin: font_test says which font the system font falls back to for emoji, Chinese,
 # Japanese and Korean and how many pixels drawing them paints (and in colour); then, with wifi=1, Safari opens the
 # Chinese Wikipedia and a page of emoji as text, for screenshots.

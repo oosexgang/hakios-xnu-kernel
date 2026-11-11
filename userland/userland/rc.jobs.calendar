@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The Calendar icon (RC_JOBS=rc.jobs.calendar, gpu=1, a run of about two and a half minutes): the home
 # screen, and SignificantTimeChangeNotification posted every three seconds, 26 times. Each makes
 # SpringBoard draw the Calendar's icon anew, for a date that may have changed (with wifi=1 the network

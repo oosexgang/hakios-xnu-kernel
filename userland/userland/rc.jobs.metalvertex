@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalvertex).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalvertex).
 #
 # Why these four, in this order: the generated vertex stage draws on the Adreno and its pixel
 # matches, while Apple's own clearVertex dies in fd6_emit_3d_state with signal 11 (a null

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The user database (RC_JOBS=rc.jobs.users). iOS has no flat-file user lookup left: getpwuid and
 # getpwnam go over Mach to com.apple.system.libinfo.muser, which usermanagerd serves, and a program
 # that cannot reach it sees every user as missing ("No user exists for uid 0" is what OpenSSH says).

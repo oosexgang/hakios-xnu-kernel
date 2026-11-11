@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metal1).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metal1).
 #
 # Batch 1 of 3. Each kernel is told, PER SLOT, which kind and element type of texture to
 # bind -- read out of its own air.texture entries on the machine. One format for every slot

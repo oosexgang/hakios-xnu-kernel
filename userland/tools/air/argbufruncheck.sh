@@ -21,7 +21,7 @@
 #
 # Everything runs through the contract in tools/mesa/air/air_metal.h and
 # nothing else: air_metal_test knows that header and no more, which is what
-# makes it stand in for the Metal driver (userland/src/redwoodmetal.m drives
+# makes it stand in for the Metal driver (userland/src/hakiosmetal.m drives
 # the same calls on the phone -- see userland/rc.jobs.argbuf).
 #
 #   tools/air/argbufruncheck.sh

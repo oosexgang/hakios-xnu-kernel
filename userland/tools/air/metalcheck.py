@@ -54,7 +54,7 @@ a pass. The three that occur are kept apart because they mean different things:
   dispatch                      is not a result about the kernel at all.
 
 What agreement here does NOT prove: both sides compile Apple's bitcode with the
-same frontend of ours (libredwoodair.dylib on the device is air_run's own path
+same frontend of ours (libhakiosair.dylib on the device is air_run's own path
 through air_to_nir, tools/mk-mesa.sh), so a mistranslation of the bitcode is on
 both sides and invisible here. What this catches is ir3 and the Adreno
 disagreeing with nir_to_tgsi and softpipe. Independence from our frontend lives
@@ -104,14 +104,14 @@ TIMEOUT = 180               # a kernel softpipe cannot finish is a named row, no
 # The driver's MTLCommandBufferStatus used to be its own invention -- committed 3,
 # scheduled 4, completed 6, and 6 is not a status at all -- and since 2026-10-21 it is
 # Metal's: NotEnqueued 0, Enqueued 1, Committed 2, Scheduled 3, Completed 4, Error 5
-# (userland/src/redwoodmetal.m). The logs under logs/ are evidence and are not going to
+# (userland/src/hakiosmetal.m). The logs under logs/ are evidence and are not going to
 # be regenerated, so this tool does not reinterpret their numbers and does not quietly
 # follow the new ones: it DATES each log and reads it in the numbering it was written in.
 #
 # The driver says which that is, once per process, printed out of the very constants that
 # answer -status:
 #
-#   redwoodmetal: MTLCommandBufferStatus: committed 2, scheduled 3, completed 4, error 5 -- ...
+#   hakiosmetal: MTLCommandBufferStatus: committed 2, scheduled 3, completed 4, error 5 -- ...
 #
 # A log without that line is older than the change, and the fallback is not a guess
 # either: 6 cannot occur under Metal's numbering at all, so a log holding "status 6" is
@@ -122,7 +122,7 @@ TIMEOUT = 180               # a kernel softpipe cannot finish is a named row, no
 # so a NEW log can lose its banner in the cut, and 4 can only mean the new numbering.
 OLD_SCHEME = (3, 4, 6, 5)   # committed, scheduled, completed, error -- before 2026-10-21
 NEW_SCHEME = (2, 3, 4, 5)   # MTLCommandBufferStatus itself
-RE_CB_SCHEME = re.compile(r"redwoodmetal: MTLCommandBufferStatus: committed (\d+), "
+RE_CB_SCHEME = re.compile(r"hakiosmetal: MTLCommandBufferStatus: committed (\d+), "
                           r"scheduled (\d+), completed (\d+), error (\d+)")
 # every status the device's test printed, whichever of its lines it was on
 RE_ANY_STATUS = re.compile(r"drvtest: [^\n]*?status (\d+)")
@@ -221,7 +221,7 @@ def status_scheme(path):
     elif OLD_SCHEME[2] in seen:
         scheme = (OLD_SCHEME[2], OLD_SCHEME[3],
                   "metalcheck: THIS LOG IS OLDER than the renumbering of 2026-10-21: it carries "
-                  "no `redwoodmetal: MTLCommandBufferStatus:` line and it holds status %d, which "
+                  "no `hakiosmetal: MTLCommandBufferStatus:` line and it holds status %d, which "
                   "Metal does not define. Its numbers are the old ones -- committed %d, "
                   "scheduled %d, completed %d, error %d -- and the rows below are read that way, "
                   "so they say the same as they said before the change. A log from after it says "
@@ -240,7 +240,7 @@ def status_scheme(path):
         else:
             why = "it holds no status line at all, so nothing in it depends on the answer"
         scheme = (NEW_SCHEME[2], NEW_SCHEME[3],
-                  "metalcheck: this log carries no `redwoodmetal: MTLCommandBufferStatus:` line "
+                  "metalcheck: this log carries no `hakiosmetal: MTLCommandBufferStatus:` line "
                   "and no status %d, so its numbering is not stated anywhere in it. Read as "
                   "Metal's (completed %d, error %d): %s, and that line can be lost in the "
                   "loader's cut."

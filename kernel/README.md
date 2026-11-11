@@ -22,7 +22,7 @@ Where things are in `overlay/`:
 
 | Path | Contents |
 | --- | --- |
-| `bsd/dev/` | Device drivers: display and GPU, touch, buttons, battery, audio, camera, Wi-Fi, storage, CPU frequency, backlight, thermal. Files named `hakios_*` are device-independent; `redwood_*` is the historical prefix of the platform layer (the first phone), not a statement about which phone the code is for. |
+| `bsd/dev/` | Device drivers: display and GPU, touch, buttons, battery, audio, camera, Wi-Fi, storage, CPU frequency, backlight, thermal. Files of the port are named `hakios_*`; a driver for one part is named after the part (`hakios_goodix.c`), and which phones may start it is the boards' data. |
 | `iokit/Kernel/` | Stand-ins for Apple's closed kernel extensions: IOMobileFramebuffer, IOSurface, AppleKeyStore, the GPU service, the battery, the platform expert. |
 | `bsd/miscfs/apfs/`, `ramfs/` | A read/write APFS implementation and the RAM file system the root lives in. |
 | `osfmk/arm64/` | Platform support: PSCI and CPU bring-up, GICv3, return to the loader, profiling. |

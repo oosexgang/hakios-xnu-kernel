@@ -1,9 +1,9 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalprops).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalprops).
 #
 # The first boot where iOS's own daemons can reach our Metal device. metal_props puts the two
 # properties Metal reads on the IOAcceleratorES service; from that moment every process that
-# asks Metal composes /System/Library/Extensions/RedwoodMetal.bundle, takes our class and
-# gets RedwoodMetalDevice -- all five steps of discovery, done by Metal itself (10.14, and
+# asks Metal composes /System/Library/Extensions/HakiosMetal.bundle, takes our class and
+# gets HakiosMetalDevice -- all five steps of discovery, done by Metal itself (10.14, and
 # measured alone, without launchd, in logs/125607-run.log).
 #
 # 10.14 says what can go wrong, and it is a measured risk rather than caution: Metal's

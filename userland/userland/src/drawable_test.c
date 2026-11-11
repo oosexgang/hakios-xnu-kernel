@@ -6,7 +6,7 @@
  *   drawable_test --refusals          only the cases the bridge must decline, by name
  *
  * WHY IT IS A PROGRAM AND NOT A UNIT TEST. The drawable path of the Metal driver
- * (src/redwooddrawable.m, docs/metal.md 10.46) ends in a texture laid over memory the
+ * (src/hakiosdrawable.m, docs/metal.md 10.46) ends in a texture laid over memory the
  * kernel allocated for an IOSurface, and everything about it can be made to look right
  * without being right: the import can succeed over the wrong pages, over the right pages
  * at the wrong stride, or over a staging copy that is written back later -- and in all
@@ -29,7 +29,7 @@
  *
  * WHAT IT NEEDS: a kernel booted with gpu=1 (without it the library has no GPU to import
  * into and says so by name, which this program prints and reports as not-measured rather
- * than as a failure), and /redwood/lib/libredwoodair.dylib in the image (GL=1).
+ * than as a failure), and /redwood/lib/libhakiosair.dylib in the image (GL=1).
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOSurface/IOSurfaceRef.h>
@@ -38,7 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "redwood_drawable.h"
+#include "hakios_drawable.h"
 
 static int failed, checks;
 
@@ -49,10 +49,10 @@ static int failed, checks;
 
 /*
  * The three calls of the compiler library this program needs, looked up the way the driver
- * looks them up (src/redwoodmetal.m): the library is opened by its path on the device, and a
+ * looks them up (src/hakiosmetal.m): the library is opened by its path on the device, and a
  * symbol that is not there is a sentence rather than a failed link. rwa_texture_from_surface
- * is NOT among them -- redwooddrawable.m finds that one itself, and this program goes through
- * redwooddrawable.m on purpose, because the bridge is what is under test.
+ * is NOT among them -- hakiosdrawable.m finds that one itself, and this program goes through
+ * hakiosdrawable.m on purpose, because the bridge is what is under test.
  */
 static struct {
 	void *handle;
@@ -69,7 +69,7 @@ static struct {
 static int
 open_library(void)
 {
-	mesa.handle = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW);
+	mesa.handle = dlopen("/redwood/lib/libhakiosair.dylib", RTLD_NOW);
 	if (mesa.handle == NULL) {
 		printf("drawable_test: NOT MEASURED: no compiler library: %s\n", dlerror());
 		return -1;

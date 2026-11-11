@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Sileo, the package manager (RC_JOBS=rc.jobs.sileo): the prefix is grafted onto /var/jb by init
 # (tools/mk-jb.sh puts it in the image). The preparation the bootstrap wants once per boot, the
 # network (Wi-Fi has an address and a name resolves: before that, apt finds no repository), a fresh

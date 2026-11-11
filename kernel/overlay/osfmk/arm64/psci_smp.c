@@ -449,7 +449,7 @@ psci_smp_stop_here(void)
 #include <kern/sched_prim.h>
 
 unsigned
-redwood_slow_cores(void)
+hakios_slow_cores(void)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
 	unsigned count = 0;
@@ -461,7 +461,7 @@ redwood_slow_cores(void)
 }
 
 int
-redwood_bind_slow_core(unsigned n)
+hakios_bind_slow_core(unsigned n)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
 	unsigned seen = 0;

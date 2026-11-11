@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalrecover).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalrecover).
 #
 # One question, and the whole list exists to answer it: does a 3D core that has stopped
 # answering come back? Boot the kernel with gpu_recover=1 among the boot-args and nothing else
@@ -8,7 +8,7 @@
 #
 # The control is the same list booted WITHOUT gpu_recover=1, which is the behaviour of every
 # boot so far: after the first hang gpuWait latches (gGPUReported in
-# iokit/Kernel/RedwoodGPU.cpp) and every later wait returns false at once, so everything below
+# iokit/Kernel/HakiosGPU.cpp) and every later wait returns false at once, so everything below
 # the first hang writes nothing and says so.
 #
 # Both outcomes are written down here before the run, line by line, because the point of the
@@ -90,7 +90,7 @@
 #   adreno: gpu: THE 3D CORE DOES NOT TAKE COMMANDS AGAIN after the reset: it is given up for this run, ...
 # and from there the list reads exactly like the control. That is a clear negative: the reset
 # happened and the core did not come back from it, which is the one thing the sources could not
-# settle in advance (see redwood_gpu_recover() in bsd/dev/redwood_adreno.c).
+# settle in advance (see hakios_gpu_recover() in bsd/dev/hakios_adreno.c).
 #
 # The control (no gpu_recover=1): the two "no answer" lines ONCE, for the first hang only, and
 # nothing of the rest -- the later hangs are not even reported, because the latch is already set.

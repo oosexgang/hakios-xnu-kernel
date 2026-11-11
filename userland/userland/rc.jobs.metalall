@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalall).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalall).
 #
 # Every compute kernel of the corpus that tools/air/kstruct.py did not measure as unable to
 # terminate -- including the ones that declare textures and samplers, which the compiler

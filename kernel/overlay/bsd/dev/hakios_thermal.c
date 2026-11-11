@@ -29,7 +29,7 @@
  *
  * Adding a device: the TSENS controllers ("tsens_tm_physical") and the EPSS block ("cpufreq-hw") in its
  * SoC's file, the floors in its board file. GPU frequency is not touched here: the GPU's speed belongs to
- * its GMU (bsd/dev/redwood_adreno.c, boot-arg adreno_speed); hakios_thermal_step() tells it how far to go.
+ * its GMU (bsd/dev/hakios_adreno.c, boot-arg adreno_speed); hakios_thermal_step() tells it how far to go.
  */
 #include <kern/clock.h>
 #include <kern/sched_prim.h>

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The battery (RC_JOBS=rc.jobs.battery, with adsp=1): what the kernel's power source says and what
 # powerd and IOPS have made of it (src/battery_test.c); then the places that show it, for screenshots:
 # the home screen's status bar, the Today view with its widgets (Batteries among them), Settings >

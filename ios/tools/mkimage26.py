@@ -291,10 +291,10 @@ def main():
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.symlink(target, dst)
     # the audio server's output device (root26-ios.sh): the HAL loads plug-ins from this directory only
-    hal = os.path.join(WORK, 'System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver')
+    hal = os.path.join(WORK, 'System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver')
     if not os.path.lexists(hal):
         os.makedirs(os.path.dirname(hal), exist_ok=True)
-        os.symlink('/redwood/lib/RedwoodAudio.driver', hal)
+        os.symlink('/redwood/lib/HakiosAudio.driver', hal)
     # the jobs are ours (/redwood/LaunchDaemons, from mkjobs.py), as on 16.5: Apple's own lists go
     for rel in ('System/Library/NanoLaunchDaemons', 'System/Library/LaunchAngels', 'System/Library/xpc/launchd.plist'):
         path = os.path.join(WORK, rel)

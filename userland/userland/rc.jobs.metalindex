@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalindex).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalindex).
 #
 # Indexed drawing (docs/metal.md 10.35). Every drawing call in a real application is
 # -drawIndexedPrimitives:, and this driver had only -drawPrimitives:vertexStart:vertexCount:
@@ -17,7 +17,7 @@
 #
 # IF THE LIBRARY AND THE DRIVER ARE NOT FROM THE SAME BUILD, nothing below means anything,
 # and this is the one list where that failure is quiet rather than loud. struct rwa_draw grew
-# six fields at its END, so an older /redwood/lib/libredwoodair.dylib reads every field the
+# six fields at its END, so an older /redwood/lib/libhakiosair.dylib reads every field the
 # driver fills above them correctly -- the primitive, the attachments, the count -- and simply
 # does not look at the index buffer. The run then prints two IDENTICAL halves and line 2's
 # verdict reads "a right angle came back on the wrong side". That is what it looks like, and
@@ -25,7 +25,7 @@
 # userland/build.sh) before reading a word of it. On this machine the header and the driver's
 # hand-typed copy of it were checked to agree -- 224 bytes, all twenty field offsets equal.
 #
-# All of this needs gpu=1 and /redwood/lib/libredwoodair.dylib; without either, line 1 says so
+# All of this needs gpu=1 and /redwood/lib/libhakiosair.dylib; without either, line 1 says so
 # and the rest repeat it. One process per line, as rc.jobs.metaldepth and rc.jobs.metalms have
 # it: a draw that hangs this GPU takes the whole boot with it, so every line above a hang stays
 # a measurement and the hang names itself. The regressions come first and the sweep last.
@@ -42,7 +42,7 @@
 #    same attachments, which is why they are one process. Expect, in order:
 #
 #      - the draw of line 1 again, with its four words and its 4x4 grid;
-#      - "the index buffer is a RedwoodMetalBuffer of 14 bytes, holding 0 1 2 3 1 2 3". A
+#      - "the index buffer is a HakiosMetalBuffer of 14 bytes, holding 0 1 2 3 1 2 3". A
 #        buffer of another class means it came from the kernel path and has no Gallium
 #        resource behind it, and the draw will be refused with that sentence;
 #      - step 0, the non-indexed strip: "####/####/####/####  16 of 16 pixels, (0,0) drawn,
@@ -93,7 +93,7 @@
 # 5. The depth draw of 10.30, which is the regression for the same function with a DEPTH
 #    attachment under it -- the one case where it has two kinds of attachment to agree about,
 #    and the only path that sets the rasterizer's clip_halfz. Expect what logs/080758-run.log
-#    printed: a RedwoodMetalTexture of pixel format 252, -getBytes: on it REFUSED with the
+#    printed: a HakiosMetalTexture of pixel format 252, -getBytes: on it REFUSED with the
 #    library's sentence about two aspects, readsDepth=YES writesDepth=YES readsStencil=NO
 #    writesStencil=NO with 0 methods unanswered, four draws of status 6 with the far one
 #    DISCARDED, the nearer one PASSED, the control DREW, and the depth buffer 0.5 0.5 0.25 0.75.

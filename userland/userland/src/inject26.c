@@ -1,9 +1,9 @@
 /*
- * libredwood26.dylib: the touch screen and the buttons for iOS 26's backboardd.
+ * libhakios26.dylib: the touch screen and the buttons for iOS 26's backboardd.
  *
  * backboardd is the HID event server, and without Apple's multitouch driver it has no touch
  * screen. This library (inserted by the kernel, see kern.exec_inject and build.sh's INJECT) gives
- * it one: a "virtual" HID service that turns the samples of /dev/redwood-touch -- from the phone's
+ * it one: a "virtual" HID service that turns the samples of /dev/hakios-touch -- from the phone's
  * own touch controller, or from rwtouch -- into the events Apple's
  * driver would have sent, and a consumer-control service for the buttons.
  *
@@ -35,7 +35,7 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#include "redwood_input.h"
+#include "hakios_input.h"
 
 static void
 say(const char *format, ...)
@@ -300,10 +300,10 @@ static pthread_mutex_t touch_lock = PTHREAD_MUTEX_INITIALIZER;   /* the screen's
 
 /* One frame of the touch screen: the hand, and under it every finger that is down or has just lifted. */
 static void
-send_touch_locked(IOHIDServiceClientRef screen, const struct redwood_touch *t);
+send_touch_locked(IOHIDServiceClientRef screen, const struct hakios_touch *t);
 
 static void
-send_touch(IOHIDServiceClientRef screen, const struct redwood_touch *t)
+send_touch(IOHIDServiceClientRef screen, const struct hakios_touch *t)
 {
 	pthread_mutex_lock(&touch_lock);
 	send_touch_locked(screen, t);
@@ -311,20 +311,20 @@ send_touch(IOHIDServiceClientRef screen, const struct redwood_touch *t)
 }
 
 static void
-send_touch_locked(IOHIDServiceClientRef screen, const struct redwood_touch *t)
+send_touch_locked(IOHIDServiceClientRef screen, const struct hakios_touch *t)
 {
-	uint32_t change = t->type == REDWOOD_TOUCH_MOVE ? DIGITIZER_POSITION : DIGITIZER_RANGE | DIGITIZER_TOUCH;
+	uint32_t change = t->type == HAKIOS_TOUCH_MOVE ? DIGITIZER_POSITION : DIGITIZER_RANGE | DIGITIZER_TOUCH;
 	IOHIDEventRef hand, finger;
 	bool any = false;
 	unsigned f = t->finger;
 
-	if (f >= MAX_FINGERS || (t->type != REDWOOD_TOUCH_DOWN && !fingers[f].touching)) {
+	if (f >= MAX_FINGERS || (t->type != HAKIOS_TOUCH_DOWN && !fingers[f].touching)) {
 		return;
 	}
-	fingers[f].touching = t->type != REDWOOD_TOUCH_UP;
+	fingers[f].touching = t->type != HAKIOS_TOUCH_UP;
 	fingers[f].x = t->x / 65535.0;
 	fingers[f].y = t->y / 65535.0;
-	if (t->type == REDWOOD_TOUCH_DOWN) {
+	if (t->type == HAKIOS_TOUCH_DOWN) {
 		fingers[f].edge = fingers[f].x < EDGE_SIDE || fingers[f].x > 1 - EDGE_SIDE || fingers[f].y < EDGE_TOP ||
 		    fingers[f].y > 1 - EDGE_BOTTOM;
 	}
@@ -361,7 +361,7 @@ publish_lock_button(bool down)
 {
 	static int token = NOTIFY_TOKEN_INVALID;
 
-	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.redwood.button.lock", &token) != NOTIFY_STATUS_OK) {
+	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.hakios.button.lock", &token) != NOTIFY_STATUS_OK) {
 		token = NOTIFY_TOKEN_INVALID;
 		return;
 	}
@@ -369,20 +369,20 @@ publish_lock_button(bool down)
 }
 
 static void
-send_button(IOHIDServiceClientRef buttons, const struct redwood_touch *t)
+send_button(IOHIDServiceClientRef buttons, const struct hakios_touch *t)
 {
-	uint32_t usage = t->finger == REDWOOD_BUTTON_LOCK ? HID_USAGE_POWER : t->finger == REDWOOD_BUTTON_HOME ? HID_USAGE_MENU :
-	    t->finger == REDWOOD_BUTTON_VOLUME_UP ? HID_USAGE_VOLUME_UP : t->finger == REDWOOD_BUTTON_VOLUME_DOWN ?
+	uint32_t usage = t->finger == HAKIOS_BUTTON_LOCK ? HID_USAGE_POWER : t->finger == HAKIOS_BUTTON_HOME ? HID_USAGE_MENU :
+	    t->finger == HAKIOS_BUTTON_VOLUME_UP ? HID_USAGE_VOLUME_UP : t->finger == HAKIOS_BUTTON_VOLUME_DOWN ?
 	    HID_USAGE_VOLUME_DOWN : 0;
 	IOHIDEventRef event;
 
 	if (usage == 0) {
 		return;
 	}
-	if (t->finger == REDWOOD_BUTTON_LOCK) {
-		publish_lock_button(t->type == REDWOOD_BUTTON_DOWN);
+	if (t->finger == HAKIOS_BUTTON_LOCK) {
+		publish_lock_button(t->type == HAKIOS_BUTTON_DOWN);
 	}
-	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == REDWOOD_BUTTON_DOWN, 0);
+	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == HAKIOS_BUTTON_DOWN, 0);
 	IOHIDEventSetIntegerValue(event, FIELD_IS_BUILT_IN, 1);
 	IOHIDVirtualServiceClientDispatchEvent(buttons, event);
 	CFRelease(event);
@@ -410,7 +410,7 @@ input_thread(__unused void *arg)
 	static const int types[] = { HID_CLIENT_SIMPLE, HID_CLIENT_RATE_CONTROLLED };
 	IOHIDEventSystemClientRef client = NULL;
 	IOHIDServiceClientRef screen = NULL, buttons = NULL;
-	struct redwood_touch t;
+	struct hakios_touch t;
 	unsigned count = 0, waking = 0;         /* waking: the fingers whose touch went into waking the display */
 	int device;
 
@@ -424,9 +424,9 @@ input_thread(__unused void *arg)
 		}
 		mach_timebase_info(&timebase);
 	}
-	device = open(REDWOOD_TOUCH_DEVICE, O_RDONLY);
+	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
 	if (device < 0) {
-		say("redwood: input: %s: %s\n", REDWOOD_TOUCH_DEVICE, strerror(errno));
+		say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -456,28 +456,28 @@ input_thread(__unused void *arg)
 	while (read(device, &t, sizeof(t)) == (ssize_t)sizeof(t)) {
 		uint64_t read_at = mach_absolute_time();
 
-		if (t.type == REDWOOD_TOUCH_DOWN || t.type == REDWOOD_TOUCH_UP || count++ < 4) {
+		if (t.type == HAKIOS_TOUCH_DOWN || t.type == HAKIOS_TOUCH_UP || count++ < 4) {
 			say("redwood: input: %s finger %u at %u %u (%.0f%% %.0f%%)\n",
-			    t.type == REDWOOD_TOUCH_DOWN ? "DOWN" : t.type == REDWOOD_TOUCH_UP ? "UP  " : "move",
+			    t.type == HAKIOS_TOUCH_DOWN ? "DOWN" : t.type == HAKIOS_TOUCH_UP ? "UP  " : "move",
 			    t.finger, t.x, t.y, t.x * 100.0 / 65535, t.y * 100.0 / 65535);
 		}
-		if (t.type > REDWOOD_TOUCH_UP) {
+		if (t.type > HAKIOS_TOUCH_UP) {
 			if (buttons != NULL) {
 				send_button(buttons, &t);
 			}
-		} else if (t.type == REDWOOD_TOUCH_DOWN && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
+		} else if (t.type == HAKIOS_TOUCH_DOWN && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
 			/*
 			 * The display is off and a tap is to wake it. The lock button is what wakes it here:
 			 * press it for the finger, and keep the rest of this touch to ourselves.
 			 */
-			struct redwood_touch press = { .time = t.time, .type = REDWOOD_BUTTON_DOWN, .finger = REDWOOD_BUTTON_LOCK };
+			struct hakios_touch press = { .time = t.time, .type = HAKIOS_BUTTON_DOWN, .finger = HAKIOS_BUTTON_LOCK };
 
 			send_button(buttons, &press);
-			press.type = REDWOOD_BUTTON_UP;
+			press.type = HAKIOS_BUTTON_UP;
 			send_button(buttons, &press);
 			waking |= 1u << (t.finger & 31);
 		} else if (waking & (1u << (t.finger & 31))) {
-			if (t.type == REDWOOD_TOUCH_UP) {
+			if (t.type == HAKIOS_TOUCH_UP) {
 				waking &= ~(1u << (t.finger & 31));
 			}
 		} else {
@@ -488,7 +488,7 @@ input_thread(__unused void *arg)
 			}
 		}
 	}
-	say("redwood: input: %s: %s\n", REDWOOD_TOUCH_DEVICE, strerror(errno));
+	say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 	return NULL;
 }
 
@@ -506,7 +506,7 @@ static IOHIDServiceClientRef script_screen, script_buttons;
 static void
 script_touch(uint32_t type, double x, double y)
 {
-	struct redwood_touch t = { .time = mach_absolute_time(), .type = type, .finger = SCRIPT_FINGER,
+	struct hakios_touch t = { .time = mach_absolute_time(), .type = type, .finger = SCRIPT_FINGER,
 		                   .x = (uint32_t)(x * 65535 / 100), .y = (uint32_t)(y * 65535 / 100) };
 
 	send_touch(script_screen, &t);
@@ -536,27 +536,27 @@ script_thread(__unused void *arg)
 			usleep((useconds_t)(a * 1000000));
 		} else if (sscanf(line, "tap %lf %lf", &a, &b) == 2) {
 			say("redwood: taps: %u: tap %.0f%% %.0f%%\n", lineno, a, b);
-			script_touch(REDWOOD_TOUCH_DOWN, a, b);
+			script_touch(HAKIOS_TOUCH_DOWN, a, b);
 			usleep(80000);
-			script_touch(REDWOOD_TOUCH_UP, a, b);
+			script_touch(HAKIOS_TOUCH_UP, a, b);
 		} else if (sscanf(line, "swipe %lf %lf %lf %lf %lf", &a, &b, &c, &d, &ms) == 5) {
 			unsigned steps = (unsigned)(ms / 8) + 1;
 
 			say("redwood: taps: %u: swipe %.0f,%.0f -> %.0f,%.0f in %.0f ms\n", lineno, a, b, c, d, ms);
-			script_touch(REDWOOD_TOUCH_DOWN, a, b);
+			script_touch(HAKIOS_TOUCH_DOWN, a, b);
 			for (unsigned i = 1; i <= steps; i++) {
 				usleep(8000);
-				script_touch(REDWOOD_TOUCH_MOVE, a + (c - a) * i / steps, b + (d - b) * i / steps);
+				script_touch(HAKIOS_TOUCH_MOVE, a + (c - a) * i / steps, b + (d - b) * i / steps);
 			}
-			script_touch(REDWOOD_TOUCH_UP, c, d);
+			script_touch(HAKIOS_TOUCH_UP, c, d);
 		} else if (strcmp(line, "home") == 0 && script_buttons != NULL) {
-			struct redwood_touch press = { .time = mach_absolute_time(), .type = REDWOOD_BUTTON_DOWN,
-				                       .finger = REDWOOD_BUTTON_HOME };
+			struct hakios_touch press = { .time = mach_absolute_time(), .type = HAKIOS_BUTTON_DOWN,
+				                       .finger = HAKIOS_BUTTON_HOME };
 
 			say("redwood: taps: %u: home\n", lineno);
 			send_button(script_buttons, &press);
 			usleep(60000);
-			press.type = REDWOOD_BUTTON_UP;
+			press.type = HAKIOS_BUTTON_UP;
 			press.time = mach_absolute_time();
 			send_button(script_buttons, &press);
 		} else if (strncmp(line, "say ", 4) == 0) {

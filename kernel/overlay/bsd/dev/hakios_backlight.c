@@ -29,7 +29,7 @@
  *          pattern" store, which Linux's display driver uses where it may not use memory. The
  *          controller is the one the firmware set the panel going with; nothing of its setup is
  *          changed, only a command added. Every read and write is behind the same checks of clocks as
- *          the display scan (bsd/dev/redwood_adreno.c): the display block's power switch and the bus
+ *          the display scan (bsd/dev/hakios_adreno.c): the display block's power switch and the bus
  *          clock of its registers. A command the controller does not report sent within 20 ms stops
  *          this backend for the run.
  *   soft   no panel to tell: the display driver (MiniIOMobileFramebuffer.cpp) darkens every pixel on

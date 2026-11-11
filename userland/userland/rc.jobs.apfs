@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Reading the APFS volume the kernel mounted on /private/var/apfs-check (boot-arg
 # apfs_check=3), from user space.  The three roads, over one fixed set of files
 # (/usr/sbin: 32 files, 47.8 MB) so that two kernels can be compared on equal terms:

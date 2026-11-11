@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldepth).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaldepth).
 #
 # The first depth test this port has ever run. Every draw the Metal driver has made so far
 # ran with no depth attachment, so with depth testing off -- which nobody chose, it was an
@@ -21,7 +21,7 @@
 # One process per line, and not one process for all of it, for rc.jobs.metaltex's reason: a
 # draw that hangs this GPU takes the whole boot with it, so each line above a hang stays a
 # measurement and the hang names itself. All of this needs gpu=1 and
-# /redwood/lib/libredwoodair.dylib; without either, line 1 says so and the rest will repeat
+# /redwood/lib/libhakiosair.dylib; without either, line 1 says so and the rest will repeat
 # it.
 #
 # 1. The proven colour draw, unchanged, FIRST and on purpose. The depth work changed one
@@ -34,9 +34,9 @@
 # 2. The depth experiment with MTLPixelFormatDepth32Float, which is one plane on both back
 #    ends and holds 0.25, 0.5 and 0.75 exactly, so the depths are compared with == and not
 #    with a tolerance that could hide a real difference. This is the line that answers the
-#    question. Expect, in order: a RedwoodMetalTexture of pixel format 252; -getBytes: on it
-#    REFUSED with the library's own sentence about two aspects; a RedwoodMetalRenderPipeline;
-#    "stores nothing to [[depth]]"; a RedwoodMetalDepthStencilState answering readsDepth=YES
+#    question. Expect, in order: a HakiosMetalTexture of pixel format 252; -getBytes: on it
+#    REFUSED with the library's own sentence about two aspects; a HakiosMetalRenderPipeline;
+#    "stores nothing to [[depth]]"; a HakiosMetalDepthStencilState answering readsDepth=YES
 #    writesDepth=YES readsStencil=NO writesStencil=NO with 0 of MTLDepthStencilState's
 #    methods unanswered; then four draws of status 6, the far one DISCARDED, the nearer one
 #    PASSED, the control DREW, and "DEPTH TESTING DISCARDS ON THE ADRENO".
