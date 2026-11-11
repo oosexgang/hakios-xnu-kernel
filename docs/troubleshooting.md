@@ -169,6 +169,13 @@ software without it.
 | --- | --- | --- |
 | `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])`, `mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])`, `adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], [ipc]): ...`, `sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])`, `wifi: disabled: the SoC file does not say where ... are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's memory is ([wifi] dsp_memory): ...` | The driver's feature is listed, but the SoC file lacks a section the driver takes addresses from. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
 
+### Flashlight
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `torch: disabled: the board file does not say which peripherals of the PMIC the light is ([torch])` | The feature is listed without `[torch]`; `tools/boards.py check` refuses such a board. | `flash` and `alarm` in `[torch]`: the PM8350C's `qcom,flash_led@ee00` and `qcom,temp-alarm@a00`, each as slave << 8 and the high byte of its registers. `tools/boards.py new --dts` reads both. |
+| `torch: no channel of the arbiter is the PM8350C's flash LED module` | The arbiter's table has no channel for the peripheral `[torch]` names. | Check the slave: the number behind `qcom,pm8350c@` in the tree. |
+
 ### GPU ([metal-glass.md](metal-glass.md))
 
 | What you see | What it means | What to do |
