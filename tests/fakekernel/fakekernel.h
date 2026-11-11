@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,19 @@ typedef void (*thread_continue_t)(void *, wait_result_t);
 
 uint64_t mach_absolute_time(void);
 void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
+void nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t *result);
 void delay(int usec);
+void delay_for_interval(uint32_t interval, uint32_t scale);     /* (scale: nanoseconds a unit) */
+typedef unsigned long clock_sec_t;
+typedef unsigned int clock_usec_t;
+void clock_get_calendar_microtime(clock_sec_t *seconds, clock_usec_t *micro);
+
+/* locks (kern/locks.h): one a declaration, a mutex of the host's behind each */
+struct fake_lock { pthread_mutex_t mutex; };
+#define LCK_GRP_DECLARE(group, name)    int group __attribute__((unused))
+#define LCK_SPIN_DECLARE(lock, group)   struct fake_lock lock = { PTHREAD_MUTEX_INITIALIZER }
+#define lck_spin_lock(lock)             pthread_mutex_lock(&(lock)->mutex)
+#define lck_spin_unlock(lock)           pthread_mutex_unlock(&(lock)->mutex)
 
 void assert_wait(void *event, int interruptible);
 void assert_wait_timeout(void *event, int interruptible, uint32_t interval, uint64_t scale);
@@ -44,6 +57,8 @@ wait_result_t thread_block(thread_continue_t continuation);
 void thread_wakeup(void *event);
 kern_return_t kernel_thread_start(thread_continue_t fn, void *arg, thread_t *thread);
 void thread_deallocate(thread_t thread);
+thread_t current_thread(void);
+kern_return_t thread_terminate(thread_t thread);        /* (the calling thread's end) */
 
 bool ml_get_interrupts_enabled(void);
 bool PE_parse_boot_argn(const char *name, void *value, int size);

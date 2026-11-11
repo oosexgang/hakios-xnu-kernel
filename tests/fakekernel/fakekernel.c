@@ -128,6 +128,39 @@ kernel_thread_start(thread_continue_t fn, void *arg, thread_t *thread)
 
 void thread_deallocate(thread_t thread __unused) {}
 void thread_set_thread_name(thread_t thread __unused, const char *name __unused) {}
+
+thread_t current_thread(void) { return NULL; }
+
+kern_return_t
+thread_terminate(thread_t thread __unused)
+{
+	pthread_exit(NULL);
+}
+
+void
+nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t *result)
+{
+	*result = nanoseconds;          /* (the fake clock counts nanoseconds) */
+}
+
+void
+delay_for_interval(uint32_t interval, uint32_t scale)
+{
+	uint64_t nanoseconds = (uint64_t)interval * scale;
+	struct timespec t = { (time_t)(nanoseconds / 1000000000ull), (long)(nanoseconds % 1000000000ull) };
+
+	nanosleep(&t, NULL);
+}
+
+void
+clock_get_calendar_microtime(clock_sec_t *seconds, clock_usec_t *micro)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_REALTIME, &t);
+	*seconds = (clock_sec_t)t.tv_sec;
+	*micro = (clock_usec_t)(t.tv_nsec / 1000);
+}
 bool ml_get_interrupts_enabled(void) { return false; }      /* (everything to the loader's log only) */
 
 void

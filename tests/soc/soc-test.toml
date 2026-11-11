@@ -1,0 +1,12 @@
+# A chip that is nobody's: the PMIC arbiter at addresses unlike any real SoC's, and this system as the
+# arbiter's third (ee = 2). For the tests of what must come from the SoC file and not from the code
+# (tests/buttons_driver_test.c); tests/run.sh takes this directory with --soc.
+name = "soc-test"
+description = "A made-up chip for the tests"
+
+[spmi]
+core = 0x04440000
+cnfg = 0x0440a000
+observer = 0x06600000
+channels = 0x04600000
+ee = 2

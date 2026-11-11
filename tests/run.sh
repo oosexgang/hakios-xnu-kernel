@@ -29,11 +29,12 @@ python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 echo "== device packages (tools/device.py)"
 python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
-# The tables the code under test is built with: the repository's own boards and the tests' two phones
-# (tests/devices), which stand in for real ones -- device packages are not part of this repository.
+# The tables the code under test is built with: the repository's own boards and the tests' phones
+# (tests/devices, with a chip of their own in tests/soc), which stand in for real ones -- device
+# packages are not part of this repository.
 BOARDS=$WORK/boards
-"$HERE/../tools/boards.py" --devices "$HERE/devices" check || failed=1
-"$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$BOARDS" || failed=1
+"$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" check || failed=1
+"$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$BOARDS" || failed=1
 
 # the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
 # loader/build.sh; left out where they are not installed)
@@ -66,14 +67,14 @@ run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 # the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE/fakekernel" -I"$SRC" -I"$BOARDS" "$HERE/fakekernel/fakekernel.c")
+	-I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" "$HERE/fakekernel/fakekernel.c")
 scenarios() {
 	local runner=$1 binary=$2 scenario
 	for scenario in $($runner "$binary"); do
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in board_test backlight_driver_test thermal_driver_test; do
+for test in board_test backlight_driver_test thermal_driver_test buttons_driver_test; do
 	echo "== $test (host)"
 	if "$CC" "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test"; then
 		scenarios "" "$WORK/$test"

@@ -736,10 +736,11 @@ class Repository(unittest.TestCase):
 
     def test_the_tests_phones_are_valid_packages(self):
         boards.MORE_DEVICES.append(ROOT / 'tests/devices')
+        boards.MORE_SOCS.append(ROOT / 'tests/soc')
         problems = boards.Problems()
         socs, found = boards.load(problems)
         self.assertEqual(list(problems), [])
-        for name in ('phone-cmd', 'phone-video'):
+        for name in ('phone-cmd', 'phone-video', 'phone-keys'):
             self.assertIn(name, found)
             names = [argument.split('=')[0] for argument in found[name].get('boot', {}).get('bootargs', [])]
             self.assertEqual(len(names), len(set(names)))
@@ -749,10 +750,11 @@ class Repository(unittest.TestCase):
         try:
             for arguments, environment in ((['--devices', str(ROOT / 'tests/devices')], {}),
                                            ([], {'HAKIOS_DEVICES': str(ROOT / 'tests/devices')})):
-                done = subprocess.run([str(ROOT / 'tools/boards.py')] + arguments + ['gen', '--out', str(out)],
+                done = subprocess.run([str(ROOT / 'tools/boards.py'), '--soc', str(ROOT / 'tests/soc')] + arguments +
+                                      ['gen', '--out', str(out)],
                                       capture_output=True, text=True, env={**os.environ, **environment})
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertIn('phone-cmd, phone-video', done.stdout)
+                self.assertIn('phone-cmd, phone-keys, phone-video', done.stdout)
                 self.assertIn('.name = "phone-cmd"', (out / 'hakios_board_table.h').read_text())
         finally:
             shutil.rmtree(out)

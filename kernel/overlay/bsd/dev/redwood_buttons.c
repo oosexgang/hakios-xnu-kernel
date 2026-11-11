@@ -80,6 +80,7 @@ say(const char *format, ...)
 }
 #define printf say
 
+#ifndef BUTTONS_TEST_MMIO
 static inline uint32_t
 rd(vm_offset_t address)
 {
@@ -91,6 +92,13 @@ wr(vm_offset_t address, uint32_t value)
 {
 	*(volatile uint32_t *)address = value;
 }
+#else
+/* tests/buttons_driver_test.c: the registers are a model of the arbiter's */
+extern uint32_t buttons_test_rd(vm_offset_t address);
+extern void buttons_test_wr(vm_offset_t address, uint32_t value);
+#define rd(a)           buttons_test_rd(a)
+#define wr(a, v)        buttons_test_wr((a), (v))
+#endif
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 

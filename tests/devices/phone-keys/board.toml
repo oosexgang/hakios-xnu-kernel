@@ -1,0 +1,17 @@
+# A test phone whose keys are wired unlike the real ones: on the third PMIC of the bus, volume up on
+# its ninth GPIO, behind an arbiter that is elsewhere (tests/soc/soc-test.toml). A value of the first
+# phones that is still written into the driver shows here as a key that is never read.
+name = "phone-keys"
+description = "Test phone, keys on another PMIC"
+soc = "soc-test"
+
+features = ["buttons-pmic"]
+
+[backlight]
+type = "soft"
+
+[buttons]
+pon = 0x208                         # slave 2, registers 0x0800
+pon_name = "the PMX200's power-on block"
+volume_up = 0x2c8                   # slave 2, registers 0xc800: GPIO9 of a pinctrl@c000
+volume_up_name = "GPIO9 of the PMX200"
