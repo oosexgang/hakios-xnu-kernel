@@ -1,73 +1,117 @@
-# Metal for Liquid Glass on Renoir (iOS 27): state and plan
+# Metal on the Adreno, iOS 27: Liquid Glass drawn by the GPU
 
 Liquid Glass, CASDF shapes and the large lock-screen clock are drawn by CoreAnimation's **Metal** renderer, in
-backboardd. iOS 27 has no OpenGL renderer left, and its software renderer skips these effects. That is why the
-current `gpu=0` configuration shows them incomplete (`docs/ios26-boot.md`, item 10). The glass needs three
-things, all of them device-independent apart from the kernel's GPU profile:
-- a Metal device for backboardd;
-- a compiler from Apple's shader bitcode (AIR) to the Adreno;
-- a kernel path that runs the work.
+backboardd. iOS 27 has no OpenGL renderer left, and its software renderer leaves these effects out. That is what
+`gpu=0` shows: the glass incomplete (`docs/ios26-boot.md`, item 10).
 
-## What already exists in this repository
+With `gpu=1 metal=1` and the pieces below, backboardd takes a Metal device of ours, and CoreAnimation draws
+the screen on the Adreno.
 
-| Piece | Where | State |
+## State (redwood, iOS 27.2 24B119)
+
+Drawn by the GPU, as CoreAnimation means them to look:
+- the lock screen with its glass clock;
+- the home screen with its widgets and icons, the dock's and the search field's glass;
+- a system alert's blurred glass over the home screen.
+
+Four boots of 240–300 s ran with no crash of backboardd. The last one, with every fix below, had no refusal by
+the plug-in before the run's end, except an accounting setter it takes without keeping.
+
+Speed: the GPU works about 50 ms per command buffer on the glass screens (HakiosGPU's five-second lines). That
+gives about 20 frames a second. With the software renderer the lock screen ran at 60, without the glass.
+
+## The pieces
+
+| Piece | Where | What it does |
 | --- | --- | --- |
-| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/hakios_adreno.c`; the profile is `[gpu]` of the renoir package's board file (`renoir/board.toml` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
-| GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/HakiosGPU.cpp` | Mesa's shim and the Metal device both use it |
-| AIR → NIR → ir3 compiler (Mesa frontend) | `userland/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the iOS 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`userland/docs/air.md`) |
-| Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/hakiosmetal.m` | Written and measured against iOS 16 and 26's Metal; not packaged for iOS 27 |
-| Liquid Glass validation: QuartzCore's own pipelines drawn by Apple's GPU and by ours, compared pixel by pixel | `userland/tools/air/glassref.m`, `glasscase.c`, `glasscases.sh` | Built for iOS 26's `default.metallib`; needs a Mac with an Apple GPU to record cases |
-| MetalPerformanceShaders for CA's blurs (`productName` = "Paravirtual device") | `hakiosmetal.m` | iOS 26 |
+| GPU service | `kernel/overlay/iokit/Kernel/HakiosGPU.cpp`, `bsd/dev/hakios_adreno.c` | msm-shaped buffers, submissions and fences through IOKit; an IOSurface's memory or a program's own pages as a GPU buffer (requests 0x7e, 0x7d); recovery after a hang (`gpu_recover`) |
+| The plug-in's name | `IOAcceleratorES` in `MiniIOMobileFramebuffer.cpp` | with `metal=1`: `MetalPluginName` = HakiosMetal, `MetalPluginClassName` = HakiosMetalDevice. User space may remove them (an empty string) to go back to the software renderer without a reboot |
+| The driver | `metal/` (hakios-metal, with its history) | Metal's command model on the Adreno: blits, compute, the render pass, textures, IOSurface textures. Its tests run against a fake GPU; `make test` |
+| The compiler | `metal/tools/mesa/air` and `metal/src/compiler.cpp` | Apple's AIR to NIR (our front end), NIR to ir3 (Mesa), inside the driver, at pipeline creation |
+| The plug-in | `metal/plugin/HakiosMetalCA.m` | the `MTLDevice` and its objects as Metal's private base classes want them, over the driver; the one that serves CoreAnimation |
+| Mesa for the phone | `metal/tools/mk-mesa.sh` | Mesa 25.0.7's compiler archives, cross-built arm64e |
+| Mesa for this machine | `metal/tools/mk-mesa-host.sh` | the same with the front end, for `make test MESA=1` and `make sweep MESA=1` |
+| The bundle | `ios/userland/metal.sh` | the plug-in over the driver and Mesa, arm64e, pacstrip, ldid → `$OBJ/HakiosMetal` |
+| The images | `ios/userland/root26-ios.sh`, `ios/tools/mkimage26.py --metal` | the bundle in the small image (`/redwood/lib/HakiosMetal.bundle`); in the system image the link `/System/Library/Extensions/HakiosMetal.bundle` to it, and the system's `.metallib` files |
 
-## What stands between that and glass on iOS 27, in order
+Only the window server is shown the device (the plug-in's default). `metal_all=1` shows it to every process.
 
-1. **Kernel, `gpu=1` on the 12377 kernel.** Boot with `--boot-arg gpu=1` and the `fw-renoir/` firmware, and check
-   that `HakiosGPU` publishes and that a submit retires.
-   Heat: at 490 MHz the GPU sensor read 69.1 °C (`ios26-boot.md`, item 14). hxff's thermal work has to cap the
-   GPU's OPP (the profile's 285/365/443/490 table) before long runs. Until then, `adreno_speed=N` (an index into
-   that table, 1 and up) is the safe start.
-2. **Mesa for arm64e iOS 27.** `ios/userland/mesa26e.sh` builds OSMesa+freedreno for the GL shim. Extend it
-   to build `libhakiosair.dylib` (Mesa with `air-frontend.patch`, `air-ir3.patch` and `air-metal.patch`,
-   `air_metal.h` contract), then run it through pacstrip and `ldid -Cadhoc` like the other libraries
-   (root26-ios.sh).
-3. **Metal device on iOS 27.**
-   - Diff Metal's requirements between 26 and 27 with the existing tools (`userland/tools/metal/owes.py`,
-     `refusals.py`, `protometh.py` against iOS 27's Metal): `MTLAddDevice` asserts on `MTLDevice`/`MTLDeviceSPI`
-     conformance and four methods, and iOS 27 may add required SPI.
-   - Rebuild `hakiosmetal.m` for 24B119 and put it in the root image.
-   - Publish the plug-in name on the accelerator service. On iOS 16.5 that was the only thing keeping Metal from
-     finding a driver of ours. The 12377 cleanup had removed it; `IOAcceleratorES::setProperties` in `kernel/overlay/iokit/Kernel/MiniIOMobileFramebuffer.cpp`
-     restores it. With boot-arg `metal=1`, a user process may set `MetalPluginName`/`MetalPluginClassName` on
-     `IOAcceleratorES`; nothing else is accepted, and an empty string removes them. Without it (the default),
-     CoreAnimation keeps its software renderer, as in the release.
-   - Keep the system image's QuartzCore `default.metallib` (mkimage26 `KEPT_FILES` already keeps it) and its
-     `default.pipelinelib`. The plug-in's `newLibraryWithFile` path was the first crash on 26 (`hakiosmetal.m`).
-4. **QuartzCore's iOS 27 shaders.**
-   - Extract the AIR slice of iOS 27's `QuartzCore.framework/default.metallib` (`userland/tools/metallib.py`).
-   - Run `userland/tools/air/check.sh` over it: what our reader, the NIR translation and ir3 accept.
-   - On a Mac running macOS 27, `glasscases.sh` records reference cases for every render pipeline glassref
-     can feed. On the phone, `glasscase` replays them on the Adreno. Every difference is a translator bug, found
-     shader by shader rather than as a wrong-looking screen.
-5. **CoreAnimation's Metal context.** Boot with `gpu=1 metal=1` and `CA_DEBUG_*`/`trace_open=backboardd`. Then
-   follow `CA::OGL::new_metal_context` until the home screen is drawn by the GPU, and the glass effects with it.
-6. **Frame rate.** With the GPU drawing, `fb_scan` and `fb_double` frame timing (`MiniIOMobileFramebuffer.cpp`)
-   applies again. This overlaps hxff's FPS work.
+## Building and booting
 
-## Why it was not done in this pass
+On top of the iOS 27 steps in `docs/ios26-boot.md`, with the kernel built:
 
-Each of steps 2–6 needs at least one thing this environment does not have:
-- iOS 27's own files: the IPSW and its `default.metallib`. Apple's files are local build inputs, never repository
-  content.
-- A Mesa build: it needs a third-party toolchain, and this session may not build or run external code.
-- The phone, or a Mac with an Apple GPU for the reference cases.
+```sh
+bash ios/userland/metal.sh            # Mesa's compiler, the driver, the plug-in: $OBJ/HakiosMetal
+bash ios/userland/root26-ios.sh       # the small image, with lib/HakiosMetal.bundle
+LAUNCHDAEMONS="$IOS/jobs26" WORK="$IOS/image-tree-prune" \
+    python3 ios/tools/mkimage26.py --prune --metal "$IOS/system27-metal.apfs"
+python3 ios/tools/darwin-write.py plan "$IOS/system27-metal.apfs" 0
+DARWIN_WRITE=yes python3 ios/tools/darwin-write.py write "$IOS/system27-metal.apfs" 0
+./xl enter; ./xl ramdisk "$IOS/flashboot.apfs"
+XL_RAMDISK="$IOS/root26-ios.apfs" XL_CMDLINE="gpu=1 metal=1 wifi=1" ./xl run
+```
 
-The brightness work, by contrast, was finished and tested here (`docs/backlight.md`). It is independent of
-the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims whatever the framebuffer copies.
+Notes:
+- `--metal` keeps 280 Metal libraries, CoreAnimation's among them. That puts the image past fastboot's
+  4 GiB - 1, so it is for the flash (`darwin-write.py`).
+- A new plug-in needs only a new small image. The system image links to it and does not change.
+- `RC_JOBS=ios/userland/rc.jobs.unlock` for `root26-ios.sh` swipes the lock screen away 100 s after the jobs
+  start, which shows the home screen.
 
-## What the next person with the phone can do in an afternoon
+## Finding what is not served
 
-1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with `fw-renoir/` in
-   place and the renoir package brought in before the kernel was built (`tools/device.py add renoir`).
-   Confirm the GPU block starts on 12377, and read the temperature lines.
-2. On the build machine: `userland/tools/metallib.py` on iOS 27's `QuartzCore.framework/default.metallib`, then
-   `userland/tools/air/check.sh`. The number of iOS 27 pipelines our compiler accepts tells how far step 4 is.
+**On the phone.** Every line of the plug-in starts `HakiosMetal[PROCESS PID]:`. Every selector or descriptor it
+does not serve says `refused:` with the caller. Lines near the end of a run are not refusals of the plug-in's:
+there the kernel answers its requests "not ready" because the run is ending (`--- loader_return_after expired ---`
+in the log).
+
+**On this machine.** The sweep compiles every function of a library, then lists the refusals by how often they
+occur, in seconds:
+
+```sh
+metal/tools/mk-mesa-host.sh
+make -C metal sweep MESA=1
+metal/out/host-mesa/sweep "$IOS/rootfs/System/Library/Frameworks/QuartzCore.framework/default.metallib"
+```
+
+For iOS 27.2's QuartzCore (249 functions):
+
+| Kind | Compiled |
+| --- | --- |
+| Vertex | 39 of 39 |
+| Fragment | 154 of 156 |
+| Kernel | 8 of 54 |
+
+The 46 kernels left are tile shaders, which CoreAnimation asks only of a device that supports them. The two
+fragment functions are the uber shaders `fixed_frag_lph_cph`/`_cpf`, whose pipelines specialise them first.
+
+## What iOS 27 asked that 16.5 had not
+
+Each item was found on the phone, in this order:
+
+1. `-targetDeviceArchitecture` (Metal's loader asserts on nil): a `MTLTargetDeviceArchitecture` of cpu type 0, so
+   no precompiled slice is ours and every pipeline is compiled from AIR.
+2. `-setResponsibleTaskIDs:count:` on every command buffer, and `-setResponsibleProcess:` on buffers. These are
+   accounting setters that no protocol declares. Setters like these are now taken and logged instead of raising.
+3. Texture usage `0x10005`: the private hints 0x10000/0x20000. They change nothing for a linear texture and are
+   dropped.
+4. `air.get_read_sampler()`: a texel read takes a sampler and an offset (16 functions, `compute_average_luma`
+   among them). Also `llvm.umax` and its kin (2 functions).
+5. 48 bytes of constants bound at the last 48 of a page, for a range ir3 pads to 64. The driver now loads such a
+   range itself, from the processor, instead of refusing the draw.
+
+## What is next
+
+- **Speed.** About 50 ms of GPU time per command buffer on the glass screens. The blurs run in system-memory
+  passes, so the first things to measure are GMEM (tiled) rendering, the blur passes' sizes and the clocks.
+  `metal_gmem_off` and the GPU's own counter (`gpuWait` in the probe) are the tools.
+- **Tile shaders** stay refused while `supportsTileShaders` is NO, as it is.
+- **Other phones' GPUs.** The driver's tables are the A635's (chip 0x06030500, redwood's Adreno 642L). It
+  refuses another chip by name rather than hang it (`hakios_metal_chip_known`). Renoir's Adreno 642
+  (0x06060010) needs its registers checked against `a6xx.hpp` before it is let through.
+
+## The first generation
+
+`userland/userland/src/hakiosmetal.m` and `userland/tools/mesa/air` are the Gallium-based plug-in and its front end
+of the iOS 16/26 work. That plug-in found most of what iOS 26 asks (items 1, 2 and 4 above came from it). Neither
+is built for iOS 27. The glass validation tools are with them: `userland/tools/air/glassref.m`, `glasscase.c`.

@@ -9,7 +9,7 @@
 | [boot-args.md](boot-args.md) | Every boot argument the kernel reads. Generated from the sources. |
 | [backlight.md](backlight.md) | Brightness and Auto-Brightness: design, boot arguments, sysctls, testing. |
 | [thermal.md](thermal.md) | The thermal limiter: what it does at which temperature, tuning, testing. |
-| [metal-glass.md](metal-glass.md) | What exists for Metal on the Adreno, and the steps to Liquid Glass on iOS 27. |
+| [metal-glass.md](metal-glass.md) | Metal on the Adreno for iOS 27: the pieces, how to build and boot them, what is still refused. |
 | [ios26-boot.md](ios26-boot.md) | The lab notebook: how iOS 26 and 27 were brought to the home screen on Renoir, the build and boot commands, measurements. |
 | [ram-budget.md](ram-budget.md) | Fitting the iOS system image into the phone's RAM. |
 | [glossary.md](glossary.md) | The words of three worlds, one line each: this project's, Qualcomm's and Android's, Apple's. |
