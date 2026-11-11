@@ -102,7 +102,7 @@ More: [loader/README.md](../loader/README.md).
 ## iOS user space
 
 iOS's own programs and frameworks are used as Apple ships them, with one transformation: on CPUs
-without pointer authentication, `ios/tools/pacstrip` rewrites PAC instructions to their plain
+without pointer authentication, `ios/tools/pacstrip.c` rewrites PAC instructions to their plain
 equivalents and re-signs the pages.
 
 | Path | Contents |
