@@ -48,6 +48,8 @@ known_phone(void)
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
 	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-cmd") == 0 &&
 	    b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
+	/* its radio: the one on PCIe, with its pool kept early */
+	CHECK(b != NULL && b->wifi.radio_model == 1 && b->wifi.early_pool_mb == 80, "its [wifi]");
 	/* its groups of cores: four small, three big, one prime */
 	CHECK(hakios_board_cpu_groups() == 3, "%u groups", hakios_board_cpu_groups());
 	CHECK(hakios_board_cpu_group_of(0) == 0 && hakios_board_cpu_group_of(3) == 0 && hakios_board_cpu_group_of(4) == 1 &&
@@ -105,6 +107,7 @@ gpu_a642l(void)
 	CHECK(p->speed_fuse == 0x1e9 && p->gaming_fuse == 0x1f5 && p->highest_bank_bit == 14 && p->gcc_debug_gpucc == 0x146,
 	    "fuses, bank bit, debug multiplexer");
 	CHECK(!p->zap_must_authenticate, "the firmware's zap shader is fallen back on");
+	CHECK(hakios_board()->wifi.radio_model == 0 && hakios_board()->wifi.early_pool_mb == 0, "a board without [wifi]");
 	CHECK(strcmp(hakios_board()->adsp.firmware, "fw-audio-video") == 0 && hakios_board()->adsp.memory_size == 0x04000000 &&
 	    hakios_board()->adsp.charge_counter_divisor == 1, "its [adsp]");
 	CHECK(p->speed_count == 4 && p->default_speed == 3, "%u speeds, default %u", p->speed_count, p->default_speed);

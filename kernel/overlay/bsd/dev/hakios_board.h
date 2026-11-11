@@ -136,6 +136,12 @@ struct hakios_board {
 		uint32_t charge_counter_divisor;        /* the battery manager's charge counter, in this many parts of a uAh */
 	} adsp;
 
+	/* the Wi-Fi radio (board: [wifi]), for the driver's layer under it (redwood_lx.c) */
+	struct {
+		uint32_t radio_model;           /* which radio: 0 a WCN6750 on the SoC's own bus, 1 a WCN6855 on PCIe */
+		uint32_t early_pool_mb;         /* memory in one piece kept for the radio's driver from early on; 0: none */
+	} wifi;
+
 	/* CPU frequency (soc: [cpufreq]) */
 	struct {
 		uint32_t epss, epss_domain_size;        /* EPSS: a block of registers a group of cores */

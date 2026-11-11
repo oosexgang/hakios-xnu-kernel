@@ -32,6 +32,8 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 extern kern_return_t thread_terminate(thread_t thread);
@@ -56,25 +58,28 @@ lx_os_free(void *memory, unsigned long size)
 	kfree_data(memory, size);
 }
 
-/* Renoir's ath11k pool is 80 MiB (wifi/lx/src/lx_base.c). Reserve it
- * before userland fragments RAM; only lx_os_radio_memory may map it to
- * the radio, after PCIe and the SMMU have been initialized. Boot lifetime,
- * like the driver's pool itself. A failed reservation leaves the normal
- * allocation path available; no device or page table is touched here. */
-#define RENOIR_LX_POOL_BYTES (80ul << 20)
+/* A radio whose driver wants a large pool in one piece (ath11k on PCIe: 80 MiB, wifi/lx/src/lx_base.c)
+ * has it kept from before userland fragments RAM: the board's [wifi] early_pool_mb says how much.
+ * Only lx_os_radio_memory may map it to the radio, after PCIe and the SMMU have been initialized.
+ * Boot lifetime, like the driver's pool itself. A failed reservation leaves the normal allocation
+ * path available; no device or page table is touched here. */
 static vm_offset_t lx_early_pool;
+static unsigned long lx_early_pool_bytes;
 
 static void
 lx_reserve_radio_pool(void)
 {
-    if (!redwood_board_is("renoir") || lx_early_pool != 0) return;
-    if (kmem_alloc_contig(kernel_map, &lx_early_pool, RENOIR_LX_POOL_BYTES,
+    const struct hakios_board *board = hakios_board();
+
+    if (board == NULL || board->wifi.early_pool_mb == 0 || lx_early_pool != 0) return;
+    lx_early_pool_bytes = (unsigned long)board->wifi.early_pool_mb << 20;
+    if (kmem_alloc_contig(kernel_map, &lx_early_pool, lx_early_pool_bytes,
         0, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
         lx_early_pool = 0;
-        say("lx: early Renoir 80 MiB radio pool reservation failed\n");
+        say("lx: early %u MiB radio pool reservation failed\n", board->wifi.early_pool_mb);
         return;
     }
-    say("lx: reserved Renoir 80 MiB radio pool before userland; not mapped to the radio yet\n");
+    say("lx: reserved a %u MiB radio pool before userland; not mapped to the radio yet\n", board->wifi.early_pool_mb);
 }
 
 /*
@@ -89,10 +94,10 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 	uint64_t physical;
 
 	size = round_page(size);
-    if (size == RENOIR_LX_POOL_BYTES && lx_early_pool != 0) {
+    if (size == lx_early_pool_bytes && lx_early_pool != 0) {
         cached = lx_early_pool;
         lx_early_pool = 0; /* exactly one consumer; the pool retains ownership */
-        say("lx: using the early Renoir radio pool\n");
+        say("lx: using the early radio pool\n");
     } else if (kmem_alloc_contig(kernel_map, &cached, size, 0, 0, 0, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) !=
 	    KERN_SUCCESS) {
 		say("lx: no %lu bytes of memory in one piece\n", size);
@@ -240,7 +245,9 @@ lx_os_option(const char *name)
 unsigned
 lx_os_radio_model(void)
 {
-	return redwood_board_is("renoir") ? 1 : 0;
+	const struct hakios_board *board = hakios_board();
+
+	return board != NULL ? board->wifi.radio_model : 0;     /* the board's [wifi] radio_model */
 }
 
 int

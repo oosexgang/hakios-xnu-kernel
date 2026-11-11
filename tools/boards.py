@@ -87,6 +87,7 @@ BOARD_SCHEMA = {
             'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'screen': {'statusbar_leading_shift': (int, True)},
+    'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
@@ -333,6 +334,12 @@ def load(problems=None):
                 problems.add(f'{rel} [gpu]', 'chip_id must not be 0')
             if ('alt_model' in gpu) != ('alt_bins' in gpu) or not 1 <= len(gpu.get('alt_bins', [0])) <= 2:
                 problems.add(f'{rel} [gpu]', 'alt_model goes with alt_bins, one or two speed bins')
+        radio = data.get('wifi')
+        if radio is not None:
+            if radio['radio_model'] not in (0, 1):
+                problems.add(f'{rel} [wifi]', 'radio_model: 0 (a WCN6750 on the SoC\'s own bus) or 1 (a WCN6855 on PCIe)')
+            if radio.get('early_pool_mb', 0) > 512:
+                problems.add(f'{rel} [wifi]', 'early_pool_mb is in megabytes: some tens')
         if data.get('screen', {}).get('statusbar_leading_shift', 0) > 200:
             problems.add(f'{rel} [screen]', 'statusbar_leading_shift is in points: some tens, not hundreds')
         for argument in data.get('boot', {}).get('bootargs', []):
@@ -458,6 +465,9 @@ def table_text(socs, boards):
         if adsp:
             out.append(f'\t\t.adsp = {{ .firmware = {c_string(adsp["firmware"])}, .memory_size = {adsp["memory_size"]:#010x}, '
                        f'.charge_counter_divisor = {adsp.get("charge_counter_divisor", 1)} }},')
+        radio = board.get('wifi')
+        if radio:
+            out.append(f'\t\t.wifi = {{ .radio_model = {radio["radio_model"]}, .early_pool_mb = {radio.get("early_pool_mb", 0)} }},')
         gpu = board.get('gpu')
         if gpu:
             out += [

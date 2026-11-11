@@ -61,6 +61,11 @@ speeds_khz = [285000, 365000, 443000, 490000]       # qcom,gpu-pwrlevels, slowes
 speed_levels = [64, 80, 128, 144]   # their supply levels: LOW_SVS, LOW_SVS_L1, SVS, SVS_L0
 default_speed = 4                   # which of them to run at, counted from 1
 
+# The Wi-Fi radio: a WCN6855 on PCIe, whose driver is not on yet (wifi=0). Its pool is kept from early on.
+[wifi]
+radio_model = 1
+early_pool_mb = 80                  # ath11k's pool, in one piece
+
 # What iOS's interface is told of the screen: this phone's front camera is a hole at the top left.
 [screen]
 statusbar_leading_shift = 24        # points: the status bar's clock and what follows it move right, past the camera

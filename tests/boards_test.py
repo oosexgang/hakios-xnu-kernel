@@ -288,6 +288,8 @@ class Check(Sandbox):
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [2, 2, 2, 1, 1]', 'one to four groups'),
             (self.board, 'floor_mhz = [1000, 1100, 1100]', 'floor_mhz = [1000, 1100]', 'one value for each of the 3 groups'),
             (self.soc, 'psci = "smc"', 'psci = "telepathy"', 'one of smc, hvc'),
+            (self.board, '[loader]', '[wifi]\nradio_model = 2\n[loader]', 'radio_model: 0 (a WCN6750'),
+            (self.board, '[loader]', '[wifi]\nradio_model = 1\nearly_pool_mb = 80\n[loader]', None),
             (self.soc, 'gic_dist = 0x17a00000\n', '', '"gic_dist" is missing'),
         ]
         for change, old, new, reason in cases:
