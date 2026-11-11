@@ -150,6 +150,32 @@ class Packages(Sandbox):
         self.assertEqual(sorted(boards.load()[1]), ['beta', 'emulator'])
         self.assertIn('there is no package devices/alpha', str(self.run_tool('remove', 'alpha')[0]))
 
+    def test_a_package_made_here_is_exported_to_where_packages_are_kept(self):
+        (self.dir / 'devices/mine/notes').mkdir(parents=True)
+        (self.dir / 'devices/mine/board.toml').write_text(board('mine', 'My phone'))
+        (self.dir / 'devices/mine/notes/pins.md').write_text('pins\n')
+        (self.dir / 'devices/mine/.from').write_text('somewhere\n')
+        out = Path(tempfile.mkdtemp())
+        try:
+            code, said, _ = self.run_tool('export', 'mine', str(out))
+            self.assertEqual(code, 0)
+            self.assertIn('it has no README.md yet', said)
+            self.assertEqual(sorted(str(path.relative_to(out)) for path in out.rglob('*') if path.is_file()),
+                             ['mine/board.toml', 'mine/notes/pins.md'])        # (not the note of where it came from)
+            # ... and can be brought in from there again
+            shutil.rmtree(self.dir / 'devices/mine')
+            self.assertEqual(self.run_tool('add', 'mine', '--from', str(out))[0], 0)
+            # one that is not right is not sent
+            (self.dir / 'devices/mine/board.toml').write_text(board('mine', more='[warp]\nfactor = 9\n'))
+            code, _, complained = self.run_tool('export', 'mine', str(out))
+            self.assertEqual(code, 1)
+            self.assertIn('not exported', complained)
+            self.assertNotIn('warp', (out / 'mine/board.toml').read_text())
+            self.assertIn('there is no package devices/none', str(self.run_tool('export', 'none', str(out))[0]))
+            self.assertIn('is not a directory', str(self.run_tool('export', 'mine', str(out / 'nowhere'))[0]))
+        finally:
+            shutil.rmtree(out)
+
     def test_what_is_not_there_is_said_with_what_is(self):
         code, _, _ = self.run_tool('add', 'delta')
         self.assertIn('has no package "delta" (it has: alpha, beta)', str(code))

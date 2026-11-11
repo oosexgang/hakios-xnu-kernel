@@ -23,6 +23,7 @@ tools/device.py add renoir              # bring one into this checkout: devices/
 tools/device.py list                    # what is here, and where each is from
 tools/device.py remove renoir           # take it out again
 tools/device.py add mido --from ../my-packages      # from a directory, or another branch or commit
+tools/device.py export mido ../hakios-devices       # a package made here, to a checkout of the devices branch
 ```
 
 A package that was brought in lies in `devices/NAME/`, which git ignores here: it is changed where it
@@ -72,8 +73,9 @@ The whole procedure, with what to take from the device tree and in which order t
 2. `tools/boards.py check`, then `tools/boards.py status NAME`.
 3. Make the loader pass `darwin-board = "NAME"`.
 4. Boot with features off, then enable them one at a time.
-5. Send the package (`devices/NAME/`, with a README that says what works) to the `devices` branch. A
-   SoC file that is new goes to this branch, in `soc/`.
+5. Send the package (`devices/NAME/`, with a README that says what works) to the `devices` branch:
+   `git worktree add ../hakios-devices devices`, then `tools/device.py export NAME ../hakios-devices`
+   and commit it there. A SoC file that is new goes to this branch, in `soc/`.
 
 Drivers that are specific to one device's parts (a touch controller, a speaker amplifier) are code,
 not data: they live in `kernel/overlay/bsd/dev/` and are started for the boards that have the part.

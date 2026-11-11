@@ -4,6 +4,8 @@
   tools/device.py available [--from SOURCE]     the packages a source has
   tools/device.py add NAME... [--from SOURCE]   copy packages into devices/ and check them
   tools/device.py remove NAME...                take them out again
+  tools/device.py export NAME DIR               copy the package devices/NAME to DIR/NAME: into a checkout of
+                                                the devices branch, to send it there
   tools/device.py list                          the packages that are here, and where each is from
 
 A device package is a directory NAME with board.toml in it (devices/_template/board.toml explains the
@@ -18,7 +20,9 @@ SOURCE is where packages are taken from:
                          otherwise, fetched from origin first when there is an origin to ask
 
 devices/NAME is not tracked here (.gitignore): a package is changed where it is kept, not in a checkout
-of the code. To send a new phone, copy its directory to the devices branch.
+of the code. A new phone is made here (tools/boards.py new), and sent with `export`:
+  git worktree add ../hakios-devices devices
+  tools/device.py export NAME ../hakios-devices
 """
 import argparse
 import shutil
@@ -143,6 +147,31 @@ def remove(names):
     return 0
 
 
+def export(name, directory):
+    """The package as it is here to DIR/NAME, checked first: what is sent is what was validated."""
+    source = boards.DEVICES / name
+    if not boards.NAME.match(name) or not (source / 'board.toml').exists():
+        raise SystemExit(f'there is no package devices/{name}')
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise SystemExit(f'{directory} is not a directory (a checkout of the devices branch: git worktree add DIR {BRANCH})')
+    problems = boards.Problems()
+    boards.load(problems)
+    mine = [problem for problem in problems if f'devices/{name}/' in problem]
+    for problem in mine:
+        print(problem, file=sys.stderr)
+    if mine:
+        print(f'devices/{name} is not right yet: not exported', file=sys.stderr)
+        return 1
+    target = directory / name
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns('.git', NOTE))
+    print(f'{target}: the package {name}' + ('' if (target / 'README.md').exists() else
+                                           '; it has no README.md yet: say there what works and how it was verified'))
+    return 0
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -152,6 +181,9 @@ def main(arguments=None):
         if name == 'add':
             command.add_argument('names', nargs='+', metavar='NAME')
     commands.add_parser('remove').add_argument('names', nargs='+', metavar='NAME')
+    command = commands.add_parser('export')
+    command.add_argument('name', metavar='NAME')
+    command.add_argument('directory', metavar='DIR')
     commands.add_parser('list')
     options = parser.parse_args(arguments)
 
@@ -174,6 +206,8 @@ def main(arguments=None):
         return add(options.names, Source(options.source))
     if options.command == 'remove':
         return remove(options.names)
+    if options.command == 'export':
+        return export(options.name, options.directory)
     for path in boards.board_files():
         name = path.parent.name
         note = path.parent / NOTE

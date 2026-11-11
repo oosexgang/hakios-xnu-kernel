@@ -173,8 +173,15 @@ A port goes to two places:
 | The device package: the `devices/NAME/` directory with `board.toml`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
 | The SoC file if new (`soc/SOC.toml`), any new driver with its feature, a new key of the board file | The main branch. |
 
-No generated table is sent: none is in the repository. For the package, copy your `devices/NAME/`
-directory to the top of a checkout of the `devices` branch and send it there. Others then get it with
+No generated table is sent: none is in the repository. For the package:
+
+```sh
+git worktree add ../hakios-devices devices          # a checkout of the devices branch, beside this one
+tools/device.py export NAME ../hakios-devices       # validates the package, then copies it there
+```
+
+Write its `README.md` there (what works, what was verified on the phone and when, where the values come
+from; the packages that are there show the form), commit and send it. Others then get it with
 `tools/device.py add NAME`, which copies it into their checkout and validates it against the code they
 have. When a package needs a key or a feature the main branch does not have yet, the two changes belong
 together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
