@@ -757,12 +757,23 @@ class DeviceTree(Sandbox):
         path = self.dir / 'soc/sm0002.toml'
         text = path.read_text()
         for key, value in (('gcc_disp_ahb_cbcr', '0x27004'), ('dispcc_mdss_gdscr', '0x3000'), ('dispcc_mdss_ahb_cbcr', '0x2080')):
-            text = text.replace(f'# {key} = 0x...            # TO FILL IN', f'{key} = {value}')
+            self.assertIn(f'# {key} = 0x...', text)
+            text = text.replace(f'# {key} = 0x...', f'{key} = {value}')       # (what is said after it stays a comment)
         self.assertIn('"io_base" is missing', problems)
         text = text.replace('# io_base = 0x00400000', 'io_base = 0x00400000').replace('# io_size = 0x3FC00000', 'io_size = 0x3FC00000')
         path.write_text(text)
         self.assertEqual(self.problems(), '')
         self.assertIn('.raw_min = 1, .raw_max = 2047, .raw_restore = 307,', boards.table_text(*boards.load()))
+        # the file explains itself: each section and value with what the template says of it, addresses
+        # in eight digits, offsets in hex, counts as a person counts
+        for line in ('# The PMIC arbiter (qcom,spmi-pmic-arb), by its reg-names: for the features "buttons-pmic",',
+                     'core = 0x0c440000                   # "core"',
+                     'tcs_offset = 0xd00                  # qcom,tcs-offset of that node',
+                     'tsens = [0x0c263000, 0x0c265000]    # the TSENS controllers (at most two), reg "tsens_tm_physical"',
+                     'cores = 4 ', 'small_cores = 0x3 ',
+                     '# TO FILL IN: gcc_disp_ahb_clk: its .halt_reg'):
+            self.assertIn(line, text)
+        self.assertEqual([line for line in text.splitlines() if line != line.rstrip()], [])
         # the keys were found: listing the feature is all that is left to do for them
         board = self.dir / 'devices/phone2/board.toml'
         self.assertIn('[buttons]\npon = 0x013\npon_name = "the PMK8350\'s power-on block"\nvolume_up = 0x18d\n'

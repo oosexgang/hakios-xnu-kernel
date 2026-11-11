@@ -693,6 +693,55 @@ def toml_value(value):
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+COUNTS = ('cores', 'core_shift', 'ee', 'timeout_scale', 'domain_cores')     # numbers a person counts in
+
+
+def soc_value(key, value):
+    """A value of a SoC file as a person writes it: addresses in eight hex digits, offsets and masks in
+    hex, counts in decimal."""
+    if isinstance(value, bool) or not isinstance(value, (int, list)) or key in COUNTS:
+        return toml_value(value)
+    if isinstance(value, list):
+        return '[' + ', '.join(soc_value(key, v) for v in value) + ']'
+    return f'{value:#010x}' if value >= 0x10000 else f'{value:#x}'
+
+
+def template_says(template):
+    """What the template of a SoC file says of each section and key: {section: lines above its header},
+    {(section, key): the comment after the value, with the lines that continue it}."""
+    above, after, section, pending, last = {}, {}, '', [], None
+    for line in template.read_text().splitlines() if template.exists() else []:
+        text = line.strip()
+        header, value = re.fullmatch(r'\[(\w+)\]', text), re.match(r'(\w+) = [^#]*#\s?(.*)', text)
+        if header:
+            section, last = header[1], None
+            above[section], pending = pending, []
+        elif value and not line.startswith('#'):
+            last = (section, value[1])
+            after[last], pending = [value[2]], []
+        elif line.startswith(' ') and text.startswith('#') and last:
+            after[last].append(text[1:].strip())          # a comment that goes on under the value's
+        elif text.startswith('#'):
+            pending, last = pending + [text], None
+        else:
+            pending, last = [], None
+    return above, after
+
+
+def soc_lines(section, values, above, after, keys=None):
+    """A section of a new SoC file: each value with what the template says of its key."""
+    lines = above.get(section, []) + [f'[{section}]']
+    for key in keys or values:
+        if key in values:
+            said = after.get((section, key), [])
+            lines.append(f'{key} = {soc_value(key, values[key])}'.ljust(36) + (f'# {said[0]}' if said else ''))
+            lines += [' ' * 36 + f'# {more}' for more in said[1:]]
+            lines[-1 - len(said[1:])] = lines[-1 - len(said[1:])].rstrip()
+        else:
+            lines.append(f'# {key} = 0x...            # TO FILL IN' + (f': {after[(section, key)][0]}' if (section, key) in after else ''))
+    return lines + ['']
+
+
 def new_board(name, soc_name, dts=None, panel=None, description=None):
     if not NAME.match(name) or not NAME.match(soc_name):
         raise SystemExit('names are lower-case letters, digits and dashes')
@@ -743,24 +792,22 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                 f'name = "{soc_name}"',
                 f'description = "{soc_name}"',
                 '']
+        # each value with what the template says of its key: the file explains itself
+        template = DEVICES / '_template' / 'soc.toml'
+        above, after = template_says(template if template.exists() else
+                                     Path(__file__).resolve().parent.parent / 'devices' / '_template' / 'soc.toml')
         clocks = soc.get('clocks', {})
         if light.get('type') == 'dcs' or clocks:
-            text.append('[clocks]')
-            for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
-                text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
-            text.append('')
+            text += soc_lines('clocks', clocks, above, after,
+                              ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'))
         for section in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'smmu', 'adreno', 'thermal', 'cpufreq'):
             if section in soc:
-                text.append(f'[{section}]')
-                text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]
-                text.append('')
+                text += soc_lines(section, soc[section], above, after)
         if 'platform' in soc:
-            text += ['# What the loader tells the kernel of the machine (loader/loader.c, struct platform).',
-                     '[platform]',
-                     '# io_base = 0x00400000          # TO FILL IN: one window over the SoC\'s peripherals, never 0',
-                     '# io_size = 0x3FC00000          # (these two are what the Snapdragon 7-series ports use)']
-            text += [f'{key} = {toml_value(value)}' for key, value in soc['platform'].items()]
-            text.append('')
+            lines = soc_lines('platform', soc['platform'], above, after)
+            at = lines.index('[platform]') + 1
+            text += lines[:at] + ['# io_base = 0x00400000          # TO FILL IN: one window over the SoC\'s peripherals, never 0',
+                                  '# io_size = 0x3FC00000          # (these two are what the Snapdragon 7-series ports use)'] + lines[at:]
         soc_path.write_text('\n'.join(text))
         print(f'wrote {shown(soc_path)}')
     else:
