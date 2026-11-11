@@ -100,30 +100,12 @@ needs its feature in the board's `features`.
 
 ## Adding one
 
-1. Write the driver in `kernel/overlay/bsd/dev/`, and add it to `bsd/conf/files` in an assembled
-   tree (then `kernel/export.sh`; see [kernel/README.md](../kernel/README.md)).
-   `kernel/syntax-check.sh --tree DIR bsd/dev/your_driver.c` compiles it in a second, without the
-   kernel toolchain.
-2. If it is for a part, add a `HAKIOS_HAS_…` feature in `hakios_board.h` and check it at the start,
-   after the boot argument. If it needs addresses, add them to `struct hakios_board` and to
-   `tools/boards.py`, as `[backlight]` and `[thermal]` are.
-3. Start with a level that only reads and logs. `hakios_say()` (`hakios_log.h`) puts a line in the
-   loader's log at once, where it can be read while the phone runs, and in the kernel's own.
-   Registers are read and written with `rd()` and `wr()` of `hakios_mmio.h`, which also says when a
-   driver needs each write to have arrived (`HAKIOS_MMIO_SYNC`) or each access to be one plain
-   instruction (`HAKIOS_MMIO_EXACT`, for what the hypervisor imitates).
-   Waits and the clock are `hakios_time.h`'s (`sleep_ms()`, `spin_us()` for where nothing may sleep,
-   `now_us()`).
-   The SoC's pins are configured, set and read with `hakios_tlmm.h` (`gpio_configure()`,
-   `gpio_output()`, `gpio_get()`), where the SoC file's `[pins]` says they are.
-   A resource of RPMh (a supply rail, a regulator, a bus clock manager) is looked up by name with
-   `hakios_cmd_db.h`, in the command database the SoC file's `[rpmh]` names, and asked for with
-   `hakios_rpmh_send()` of `hakios_rpmh.h`, under `redwood_rpmh_lock()`.
-   A driver that reaches a PMIC does it through `hakios_spmi.h`: the arbiter's registers, a channel's
-   lookup, one read, one write, and what a status means, for the arbiter the SoC file's `[spmi]`
-   names. It takes the bus with `redwood_spmi_lock()`, as the keys', the flashlight's and the
-   camera's drivers do.
-4. Give it a comment that names its boot argument as `name=…`: `make docs` puts it in the reference.
-5. Where the logic can run without hardware, test it on the host. `tests/backlight_driver_test.c` runs a
-   driver unchanged against a model of its registers: a driver that uses `hakios_mmio.h` has the
-   seam for it already.
+[writing-a-driver.md](writing-a-driver.md) is the guide: the rules a driver follows and why, the
+headers it has at hand (the board's data, the log, registers, waits, the SoC's pins, the PMICs, RPMh),
+and the steps, with an example driver and its host test that `make check` builds and runs.
+
+In short: write the driver in `kernel/overlay/bsd/dev/` from the example, give it a feature and take
+its addresses from the board, start it with a level that only reads, test it on the host against a
+model of its hardware, add it to `bsd/conf/files` in an assembled tree and export
+([kernel/README.md](../kernel/README.md)), and name its boot argument in a comment so that `make docs`
+lists it.
