@@ -109,9 +109,10 @@ struct hakios_board {
 		uint32_t speeds_khz[5], speed_levels[5];        /* the core clock's steps and their supply levels */
 	} gpu;
 
-	/* the PMICs' bus (soc: [spmi]): the three blocks of the SPMI arbiter this system reads through */
+	/* the PMICs' bus (soc: [spmi]): the blocks of the SPMI arbiter this system reads and writes through */
 	struct {
 		uint32_t core, cnfg, observer;
+		uint32_t channels;              /* writes; 0: not given, and nothing here writes to a PMIC */
 		uint32_t ee;                    /* who this system is to the arbiter (the device tree's qcom,ee) */
 	} spmi;
 

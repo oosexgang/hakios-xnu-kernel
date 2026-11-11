@@ -72,7 +72,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part |
 | `bsd/dev/redwood_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part |
 | `bsd/dev/redwood_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part |
-| `bsd/dev/redwood_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part |
+| `bsd/dev/redwood_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter is data (`[spmi]`) |
 | `bsd/dev/redwood_camera.c` | redwood's four cameras: sensors, CSI, ISP. | `camera-redwood` / `cam=` | part |
 | `bsd/dev/redwood_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
 

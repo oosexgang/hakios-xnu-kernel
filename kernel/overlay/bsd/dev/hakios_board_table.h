@@ -37,7 +37,7 @@ const struct hakios_board hakios_boards[] = {
 			.epss = 0x18591000, .epss_domain_size = 0x1000,
 			.domain_cores = { 4, 3, 1 },
 		},
-		.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .ee = 0 },
+		.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .channels = 0x0c600000, .ee = 0 },
 		.buttons = { .pon = 0x013, .volume_up = 0x18d, .pon_name = "the PMK8350's power-on block", .volume_up_name = "GPIO6 of the PM7325" },
 		.adsp = { .firmware = "fw", .memory_size = 0x04000000, .charge_counter_divisor = 1 },
 		.gpu = {
@@ -77,7 +77,7 @@ const struct hakios_board hakios_boards[] = {
 			.epss = 0x18591000, .epss_domain_size = 0x1000,
 			.domain_cores = { 4, 3, 1 },
 		},
-		.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .ee = 0 },
+		.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .channels = 0x0c600000, .ee = 0 },
 		.buttons = { .pon = 0x013, .volume_up = 0x18d, .pon_name = "the PMK8350's power-on block", .volume_up_name = "GPIO6 of the PM8350" },
 		.adsp = { .firmware = "fw-audio-renoir", .memory_size = 0x03000000, .charge_counter_divisor = 100 },
 		.gpu = {

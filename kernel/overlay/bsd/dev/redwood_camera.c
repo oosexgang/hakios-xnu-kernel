@@ -458,14 +458,12 @@ i2c_transfer(struct bus *b, uint8_t address, const uint8_t *out, unsigned out_co
 
 /* ---- the PMIC arbiter (version 5), for the PM8350C's GPIO 3: as in redwood_torch.c ------------------ */
 
-#define ARB_CORE_PHYS           0x0c440000UL
+/* Where its blocks are: the SoC file's [spmi] (hakios_board.h). */
 #define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_PHYS           0x0c40a000UL
 #define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_PHYS       0x0e600000UL
 #define ARB_OBSERVER_SIZE       0x10000UL
-#define ARB_CHNLS_PHYS          0x0c600000UL
-#define ARB_SYSTEM              0
+static uint32_t arb_system;                     /* who we are to the arbiter: the device tree's "qcom,ee" */
+#define ARB_SYSTEM              arb_system
 
 #define ARB_VERSION             0x000
 #define ARB_CHANNEL(n)          (0x900 + 4 * (n))
@@ -532,7 +530,7 @@ unlock(void)
 static const char *
 pgpio_read(uint8_t reg, uint8_t *value)
 {
-	vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * pgpio_channel;
+	vm_offset_t channel = arb_observer + 0x80UL * pgpio_channel;    /* (our system's part of the block is what is mapped) */
 	const char *problem = "no channel";
 
 	for (int tries = 0; pgpio_found && tries < 3; tries++) {
@@ -601,7 +599,7 @@ pgpio_find(void)
 		}
 	}
 	if (pgpio_found && pgpio_writable) {
-		pgpio_write = ml_io_map(ARB_CHNLS_PHYS + 0x10000UL * pgpio_channel, 0x1000);
+		pgpio_write = ml_io_map(hakios_board()->spmi.channels + 0x10000UL * pgpio_channel, 0x1000);
 	}
 }
 
@@ -1616,7 +1614,7 @@ pmic_peek(uint16_t id, uint8_t reg, uint8_t *values, unsigned count)
 			continue;
 		}
 		for (unsigned i = 0; i < count; i++) {
-			vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * n;
+			vm_offset_t channel = arb_observer + 0x80UL * n;
 
 			lock();
 			wr(channel + CHANNEL_COMMAND, COMMAND_READ | (uint32_t)(reg + i) << 4);
@@ -4185,9 +4183,10 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	gcc = ml_io_map(GCC_PHYS, 0x30000);
 	camcc = ml_io_map(CAMCC_PHYS, CAMCC_SIZE);
-	arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
+	arb_system = hakios_board()->spmi.ee;
+	arb_core = ml_io_map(hakios_board()->spmi.core, ARB_CORE_SIZE);
+	arb_cnfg = ml_io_map(hakios_board()->spmi.cnfg, ARB_CNFG_SIZE);
+	arb_observer = ml_io_map(hakios_board()->spmi.observer + ARB_OBSERVER_SIZE * arb_system, ARB_OBSERVER_SIZE);
 	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for iOS" :
 	    level == 4 ? ": its frames through its CSIPHY and RDI 0 into memory" :
 	    level == 3 ? ": the CSID's test pattern through RDI 0 into memory" :
@@ -4229,6 +4228,11 @@ redwood_camera_init(void)
 	if (!hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
 		printf("camera: disabled: this board's board.toml lists no \"camera-redwood\"\n");
+		level = 0;
+		return;
+	}
+	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
+		printf("camera: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
 		level = 0;
 		return;
 	}

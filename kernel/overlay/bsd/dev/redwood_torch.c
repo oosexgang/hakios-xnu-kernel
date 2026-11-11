@@ -153,14 +153,13 @@ wait_ms(uint32_t ms)
 
 /* ---- the PMIC arbiter (version 5) ---------------------------------------------------------------- */
 
-#define ARB_CORE_PHYS           0x0c440000UL    /* the version, and which peripheral each channel is */
-#define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_PHYS           0x0c40a000UL    /* which system may write through each channel */
-#define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_PHYS       0x0e600000UL    /* reads: 0x80 per channel for our system (the first) */
-#define ARB_OBSERVER_SIZE       0x10000UL
-#define ARB_CHNLS_PHYS          0x0c600000UL    /* writes: 0x10000 per channel */
-#define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
+/* Where its blocks are: the SoC file's [spmi] (hakios_board.h). */
+#define ARB_CORE_SIZE           0x1100UL        /* core: the version, and which peripheral each channel is */
+#define ARB_CNFG_SIZE           0x1000UL        /* cnfg: which system may write through each channel */
+#define ARB_OBSERVER_SIZE       0x10000UL       /* observer: reads, 0x10000 per system and 0x80 per channel in it */
+                                                /* channels: writes, 0x10000 per channel */
+static uint32_t arb_system;                     /* who we are to the arbiter: the device tree's "qcom,ee" */
+#define ARB_SYSTEM              arb_system
 
 #define ARB_VERSION             0x000
 #define ARB_VERSION_5           0x50000000u
@@ -251,7 +250,7 @@ spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t coun
 static const char *
 spmi_read_once(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * p->channel;
+	vm_offset_t channel = arb_observer + 0x80UL * p->channel;       /* (our system's part of the block is what is mapped) */
 	const char *problem;
 	uint32_t data[2];
 
@@ -648,9 +647,10 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 
 	say("torch: level %u: %s\n", level, level == 1 ? "a look, reading only" : level == 2 ? "the light on once" :
 	    "the light for iOS");
-	arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
+	arb_system = hakios_board()->spmi.ee;
+	arb_core = ml_io_map(hakios_board()->spmi.core, ARB_CORE_SIZE);
+	arb_cnfg = ml_io_map(hakios_board()->spmi.cnfg, ARB_CNFG_SIZE);
+	arb_observer = ml_io_map(hakios_board()->spmi.observer + ARB_OBSERVER_SIZE * arb_system, ARB_OBSERVER_SIZE);
 	version = rd(arb_core + ARB_VERSION);
 	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
 	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
@@ -684,7 +684,7 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 		say("torch: the channel is not ours to write through: nothing written\n");
 		goto out;
 	}
-	flash.write = ml_io_map(ARB_CHNLS_PHYS + 0x10000UL * flash.channel, 0x1000);
+	flash.write = ml_io_map(hakios_board()->spmi.channels + 0x10000UL * flash.channel, 0x1000);
 	PE_parse_boot_argn("torch_max_s", &max_secs, sizeof(max_secs));
 	max_secs = max_secs < 1 ? 1 : max_secs > 120 ? 120 : max_secs;
 	if (level == 2) {
@@ -736,6 +736,11 @@ redwood_torch_init(void)
 	if (!hakios_board_has(HAKIOS_HAS_TORCH_PM8350C)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
 		printf("torch: disabled: this board's board.toml lists no \"torch-pm8350c\"\n");
+		level = 0;
+		return;
+	}
+	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
+		printf("torch: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
 		level = 0;
 		return;
 	}

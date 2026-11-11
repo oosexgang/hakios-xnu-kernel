@@ -18,11 +18,13 @@ dsi0 = 0x0ae94000                   # mdss_dsi0, reg "dsi_ctrl" (DSI controller 
 intf1 = 0x0ae6b800                  # mdss_dsi0, reg "mdp_intf_base": the interface the panel hangs on
 
 # The PMIC arbiter: the way to the power management chips on the SPMI bus (qcom,spmi-pmic-arb, by
-# reg-names "core", "cnfg" and "obsrvr"). The keys and the flashlight are read and written through it.
+# reg-names "core", "cnfg", "obsrvr" and "chnls"). The keys are read through it; the flashlight and the
+# cameras' supply switch are written through it.
 [spmi]
-core = 0x0c440000
-cnfg = 0x0c40a000
-observer = 0x0e600000
+core = 0x0c440000                   # the version, and which peripheral each channel is
+cnfg = 0x0c40a000                   # which system may write through each channel
+observer = 0x0e600000               # reads
+channels = 0x0c600000               # writes
 ee = 0                              # qcom,ee: which of the arbiter's systems this one is
 
 [thermal]

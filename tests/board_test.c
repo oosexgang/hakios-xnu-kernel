@@ -156,6 +156,8 @@ table(void)
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_BUTTONS_PMIC) || (b->spmi.core != 0 && b->spmi.cnfg != 0 && b->spmi.observer != 0 &&
 		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without [spmi] or [buttons]", b->name);
+		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD)) || (b->spmi.core != 0 &&
+		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
 		    b->adsp.charge_counter_divisor != 0), "%s: adsp without [adsp]", b->name);
 		if (b->features & HAKIOS_HAS_GPU_A660) {

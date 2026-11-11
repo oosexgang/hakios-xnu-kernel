@@ -302,7 +302,14 @@ class Check(Sandbox):
                     self.assertIn(reason, self.problems())
         path.write_text(listed + '[buttons]\npon = 0x013\nvolume_up = 0x18d\n')
         text = boards.table_text(*boards.load())
-        self.assertIn('.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .ee = 0 },', text)
+        self.assertIn('.spmi = { .core = 0x0c440000, .cnfg = 0x0c40a000, .observer = 0x0e600000, .channels = 0x00000000, '
+                      '.ee = 0 },', text)
+        # a driver that writes to a PMIC needs to be told where writes go as well
+        path.write_text(path.read_text().replace('"buttons-pmic"', '"buttons-pmic", "torch-pm8350c"'))
+        self.assertIn('feature "torch-pm8350c" needs channels in [spmi] of soc/sm0001.toml', self.problems())
+        self.soc('observer = 0xe600000', 'observer = 0xe600000\nchannels = 0xc600000')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.channels = 0x0c600000,', boards.table_text(*boards.load()))
         self.assertIn('.buttons = { .pon = 0x013, .volume_up = 0x18d },', text)
 
     def test_an_audio_dsp_is_described(self):
@@ -446,7 +453,8 @@ class DeviceTree(Sandbox):
         self.assertEqual(soc['clocks'], {'gcc': 0x100000, 'dispcc': 0xaf00000})
         self.assertEqual(soc['platform'], {'gic_dist': 0x17a00000, 'gic_redist': 0x17a60000, 'psci': 'smc',
                                            'cores': 4, 'core_shift': 8, 'small_cores': 0b0011})
-        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0})
+        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
+                                       'channels': 0xc600000})
         # the power-on block of the PMIC that is slave 0; GPIO6 of the one that is slave 1 (0x8800 + 0x100 * 5)
         self.assertEqual(board['buttons'], {'pon': 0x013, 'pon_name': "the PMK8350's power-on block",
                                             'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM8350'})
@@ -469,7 +477,8 @@ class DeviceTree(Sandbox):
         gpio_keys { compatible = "gpio-keys";
             vol_up { gpios = <&pm7325_gpios 6 GPIO_ACTIVE_LOW>; linux,code = <0x73>; }; }; };'''
         soc, board, notes = boards.from_dts(source)
-        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0})
+        self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
+                                       'channels': 0xc600000})
         self.assertEqual(board['buttons'], {'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM7325'})
 
     def test_a_key_that_is_not_on_a_pmic_is_left_to_be_filled_in(self):

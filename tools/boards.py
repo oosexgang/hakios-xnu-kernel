@@ -49,7 +49,8 @@ SOC_SCHEMA = {
                'dispcc_mdss_pclk0_cbcr': (int, False), 'dispcc_mdss_mdp_cbcr': (int, False)},
     'display': {'dsi0': (int, True), 'intf1': (int, False)},
     'thermal': {'tsens': ([int], True)},
-    'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'ee': (int, False)},
+    'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'channels': (int, False),
+             'ee': (int, False)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
 BOARD_SCHEMA = {
@@ -70,7 +71,9 @@ BOARD_SCHEMA = {
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi'}
+FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi', 'torch-pm8350c': 'spmi',
+                 'camera-redwood': 'spmi'}
+WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
@@ -200,6 +203,9 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        for feature in data.get('features', []):
+            if feature in WRITES_TO_PMIC and 'spmi' in soc and 'channels' not in soc['spmi']:
+                problems.add(rel, f'feature "{feature}" needs channels in [spmi] of soc/{data.get("soc")}.toml')
         keys = data.get('buttons')
         if keys is not None:
             for key in ('pon', 'volume_up'):
@@ -340,7 +346,8 @@ def table_text(socs, boards):
         spmi = soc.get('spmi')
         if spmi:
             out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '
-                       f'.observer = {spmi["observer"]:#010x}, .ee = {spmi.get("ee", 0)} }},')
+                       f'.observer = {spmi["observer"]:#010x}, .channels = {spmi.get("channels", 0):#010x}, '
+                       f'.ee = {spmi.get("ee", 0)} }},')
         keys = board.get('buttons')
         if keys:
             names = ''.join(f', .{key} = {c_string(keys[key])}' for key in ('pon_name', 'volume_up_name') if key in keys)
@@ -578,6 +585,8 @@ def from_dts(text, panel=None):
         if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):
             soc['spmi'] = {'core': reg_named(node, 'core'), 'cnfg': reg_named(node, 'cnfg'),
                            'observer': reg_named(node, 'obsrvr'), 'ee': (cells(node.props.get('qcom,ee')) or [0])[0]}
+            if reg_named(node, 'chnls'):
+                soc['spmi']['channels'] = reg_named(node, 'chnls')
         if 'qcom,qpnp-power-on' in compatible and unit_address(node):
             # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N
             slave, pmic = pmic_of(node)
