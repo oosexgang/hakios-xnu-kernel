@@ -104,6 +104,14 @@ fi
 mkdir -p "$T/lib/HakiosAudio.driver"
 cp "$OBJ/HakiosAudio" "$T/lib/HakiosAudio.driver/HakiosAudio"
 cp "$US/src/audio_plugin.plist" "$T/lib/HakiosAudio.driver/Info.plist"
+# the Metal plug-in (ios/userland/metal.sh), when it has been built: Metal opens it with boot-arg metal=1 through the
+# system image's /System/Library/Extensions/HakiosMetal.bundle (mkimage26.py)
+if [ -f "$OBJ/HakiosMetal" ]; then
+	mkdir -p "$T/lib/HakiosMetal.bundle"
+	cp "$OBJ/HakiosMetal" "$T/lib/HakiosMetal.bundle/HakiosMetal"
+	cp "$IOS_REPO/metal/plugin/HakiosMetal.plist" "$T/lib/HakiosMetal.bundle/Info.plist"
+	echo "  the Metal plug-in: lib/HakiosMetal.bundle"
+fi
 
 # mkjobs.py looks for the cryptexes beside the root filesystem, as ios165/ has them
 S=$IOS/jobsrc
