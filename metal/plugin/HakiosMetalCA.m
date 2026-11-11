@@ -303,6 +303,44 @@ hm_protocol_signature(Class cls, SEL sel)
 	return nil;
 }
 
+/*
+ * A setter no protocol here declares: -setX: (and -setX:y:...) of a later Metal's, sent without -respondsToSelector:.
+ * iOS 26 and 27's CoreAnimation sends its command buffers and resources such setters for its accounting
+ * (-setResponsibleTaskIDs:count:, -setResponsibleProcess:), and each one raised and ended backboardd at its first
+ * frame. A setter returns nothing, so the one thing a guessed signature could get wrong -- where the caller reads the
+ * answer from -- does not arise, and this plug-in reads none of the arguments: the signature is void and an integer
+ * per argument, the call is refused out loud like any other and nothing is kept. Anything else still raises.
+ */
+static NSMethodSignature *
+hm_setter_signature(SEL sel)
+{
+	const char *name = sel_getName(sel);
+	char types[24] = "v@:";
+	size_t args = 0;
+
+	if (strncmp(name, "set", 3) != 0 || !(name[3] >= 'A' && name[3] <= 'Z') || name[strlen(name) - 1] != ':') {
+		return nil;
+	}
+	for (const char *c = name; *c != '\0'; c++) {
+		args += *c == ':';
+	}
+	if (args > sizeof(types) - 4) {
+		return nil;
+	}
+	memset(types + 3, 'q', args);
+	types[3 + args] = '\0';
+	return [NSMethodSignature signatureWithObjCTypes:types];
+}
+
+/* what a selector this file does not implement is answered with: a protocol's declared signature, else a setter's */
+static NSMethodSignature *
+hm_signature(Class cls, SEL sel)
+{
+	NSMethodSignature *s = hm_protocol_signature(cls, sel);
+
+	return s != nil ? s : hm_setter_signature(sel);
+}
+
 /* the refusal itself: the line, then zeros of the declared return width, which is what Metal's own nil-stubs return */
 static void
 hm_forward(id self, NSInvocation *invocation)
@@ -310,7 +348,9 @@ hm_forward(id self, NSInvocation *invocation)
 	NSMethodSignature *signature = [invocation methodSignature];
 	NSUInteger length = [signature methodReturnLength];
 
-	hm_refusal(self, [invocation selector], "is not implemented in this plug-in; it returns zeros");
+	hm_refusal(self, [invocation selector], hm_protocol_signature(object_getClass(self), [invocation selector]) != nil
+			? "is not implemented in this plug-in; it returns zeros"
+			: "is a setter no protocol in this process declares (a later Metal's); what it sets is not kept");
 	if (length > 0) {
 		void *zero = calloc(1, length);
 
@@ -330,7 +370,7 @@ hm_forward(id self, NSInvocation *invocation)
 {										\
 	NSMethodSignature *s = [super methodSignatureForSelector:sel];		\
 										\
-	return s != nil ? s : hm_protocol_signature([self class], sel);		\
+	return s != nil ? s : hm_signature([self class], sel);			\
 }										\
 - (void)forwardInvocation:(NSInvocation *)invocation				\
 {										\
@@ -480,6 +520,7 @@ _Static_assert(sizeof(struct MTLTargetDeviceArch) == 24 && __builtin_offsetof(st
 	hakios_metal_device *_gpu;               /* hakios-metal's device: the kernel's HakiosGPU client */
 	struct MTLTargetDeviceArch _target;      /* answered by pointer: see -targetDeviceInfo */
 	char _targetName[96];                    /* the bytes _target.name points at, inside the object */
+	id _architecture;                        /* iOS 26 and later: -targetDeviceArchitecture's object, made once */
 	NSString *_name;
 }
 - (hakios_metal_device *)hakiosDevice;
@@ -2364,6 +2405,7 @@ hm_boot_arg_set(const char *what)
 		IOObjectRelease(_acceleratorService);
 	}
 	[_name release];
+	[_architecture release];
 	[super dealloc];
 }
 
@@ -2403,6 +2445,37 @@ hm_boot_arg_set(const char *what)
 	HM_ONCE("targetDeviceInfo was asked for (pipelines.%s); answered with a real struct because _MTLDevice's own "
 		"answer is a NULL its caller dereferences\n", _target.name);
 	return &_target;
+}
+
+/*
+ * iOS 26 and 27 ask this where 16.5 asked -targetDeviceInfo: +[MTLLoader sliceIDForDevice:legacyDriverVersion:
+ * airntDriverVersion:] sends -targetDeviceArchitecture and asserts "Target device architecture is nil" on a nil -- the
+ * first thing backboardd's CoreAnimation did with a device of ours on iOS 26, 117 ms into its life (measured with the
+ * first generation's plug-in, userland/userland/src/hakiosmetal.m, whose answer this is). The answer is Metal's own
+ * MTLTargetDeviceArchitecture, of which the loader reads the cpu type and subtype (the slice of a binary archive to
+ * take) and the driver version: a cpu type of 0 is no Apple GPU's, so every precompiled slice misses and each pipeline
+ * is compiled from its AIR, which is what this driver does anyway.
+ */
+- (id)targetDeviceArchitecture
+{
+	if (_architecture == nil) {
+		Class arch = NSClassFromString(@"MTLTargetDeviceArchitecture");
+		id a = arch != Nil ? [[arch alloc] init] : nil;
+
+		if ([a respondsToSelector:sel_getUid("setCpuType:")]) {
+			((void (*)(id, SEL, uint32_t))objc_msgSend)(a, sel_getUid("setCpuType:"), 0);
+		}
+		if ([a respondsToSelector:sel_getUid("setSubType:")]) {
+			((void (*)(id, SEL, uint32_t))objc_msgSend)(a, sel_getUid("setSubType:"), 0);
+		}
+		if ([a respondsToSelector:sel_getUid("setDriverVersion:")]) {
+			((void (*)(id, SEL, uint64_t))objc_msgSend)(a, sel_getUid("setDriverVersion:"), 0);
+		}
+		_architecture = a;
+		hm_print("targetDeviceArchitecture answers %s (cpu type 0: no precompiled slice is this device's)\n",
+			 a != nil ? "a MTLTargetDeviceArchitecture" : "NIL: Metal has no such class here");
+	}
+	return _architecture;
 }
 
 - (NSString *)name { return _name != nil ? _name : @"Adreno (hakios-metal; no GPU)"; }
@@ -3561,6 +3634,16 @@ hm_compress(MTLTextureDescriptor *descriptor, MTLTextureUsage usage)
 	/* the right to make views of it later: the view that changes nothing is made, one that reinterprets the format is
 	 * refused by name where it is asked for (-newTextureViewWithPixelFormat:...), so the bit is nothing to refuse here */
 	usage &= ~(MTLTextureUsage)MTLTextureUsagePixelFormatView;
+	/* 0x10000 and 0x20000: the two private hints a later Metal names after PixelFormatView in its usage strings,
+	 * MTLTextureUsageNoConcurrentAccess and MTLTextureUsageBlockWritesOnly (iOS 27.2's shared cache). They promise the
+	 * driver how a texture will be used, so that it may compress it or skip synchronisation; a texture here is linear
+	 * and uncompressed, and there is nothing either promise changes. iOS 27's window server asks for 0x10005 (2470
+	 * refusals in one boot while they were refused, and with them part of every frame). */
+	if (usage & 0x30000) {
+		HM_ONCE("a texture was asked for with usage %#lx: the private hints 0x10000 and 0x20000 change nothing for a linear "
+			"uncompressed texture, and are dropped\n", (unsigned long)usage);
+		usage &= ~(MTLTextureUsage)0x30000;
+	}
 	/* ShaderRead, ShaderWrite and RenderTarget (4) all go to hakios_metal_texture_new as Metal's bits: the layout is the
 	 * same linear one for all three, and the usage decides what a dispatch (write) or a draw (render target) may do to
 	 * the texture, each refused by name without its bit */
@@ -6533,6 +6616,17 @@ hm_completed(hakios_metal_cb *cb, void *context)
 
 - (NSUInteger)protectionOptions { return _protectionOptions; }
 
+/* iOS 26 and 27: CA::OGL::MetalContext::start_command_buffer names the tasks a command buffer's GPU time is billed to
+ * (memory and energy accounting, Apple's GPU driver), on every command buffer of the window server; declared by no
+ * protocol, so the forwarder raised and backboardd ended at its first frame (iOS 27.2: 5 times in 180 s). There is no
+ * such accounting here: the tasks are not kept. */
+- (void)setResponsibleTaskIDs:(const unsigned int *)ids count:(NSUInteger)count
+{
+	(void)ids;
+	HM_ONCE("command buffers name %lu responsible task(s) for their GPU time; there is no accounting of it here\n",
+		(unsigned long)count);
+}
+
 @end
 
 /* ============================================================================================================
@@ -6957,7 +7051,7 @@ hm_rows_texture(HakiosMetalBlitCommandEncoder *self, hakios_metal_cb *cb, hakios
 {
 	NSMethodSignature *s = [super methodSignatureForSelector:sel];
 
-	return s != nil ? s : hm_protocol_signature([self class], sel);
+	return s != nil ? s : hm_signature([self class], sel);
 }
 
 /* A refused binding (a function table, a stage-in region, an acceleration structure ...) is remembered, and the next
@@ -7514,7 +7608,7 @@ hm_spec_off(void)
 {
 	NSMethodSignature *s = [super methodSignatureForSelector:sel];
 
-	return s != nil ? s : hm_protocol_signature([self class], sel);
+	return s != nil ? s : hm_signature([self class], sel);
 }
 
 /* A refused binding or state (tile buffers, function tables, imageblocks ...) is remembered and the next draw is FAILED
