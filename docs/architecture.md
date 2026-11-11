@@ -69,8 +69,12 @@ soc/sm7350.toml, soc/… ────────────┘  (run by the bu
 - A **board file** says what the device has: its SoC, the drivers it may start (`features`), how its
   panel's brightness is set, thermal floors, how the loader recognises it, its default boot arguments.
 - A **SoC file** says where the blocks of the chip are: interrupt controller, cores, clock
-  controllers, DSI controller, temperature sensors, the CPU frequency block. It is shared by every
-  board with that chip, so it stays in `soc/` on the main branch.
+  controllers, DSI controller, temperature sensors, the CPU frequency block, the SoC's pins, the PMIC
+  arbiter, RPMh, the SMMU, the way to its other processors, the storage controller, the camera's and
+  the audio subsystem's blocks. It is shared by every board with that chip, so it stays in `soc/` on
+  the main branch. No driver has the address of a block of the chip in its code.
+- `tools/boards.py new` starts both files from a phone's Android device tree, and
+  `tools/boards.py compare` holds them against one later.
 - The generated files are not committed. `tools/boards.py gen` writes them into `build/boards/`
   (ignored by git) or into the directory given with `--out`, and every build runs it itself, some into
   a directory of their own: `kernel/build.sh` (which puts the kernel's table
@@ -94,8 +98,8 @@ Details and every key: [devices/README.md](../devices/README.md), `devices/_temp
 | Path | Contents |
 | --- | --- |
 | `kernel/UPSTREAM` | The Apple release, pinned by commit. |
-| `kernel/overlay/` | The files HakiOS adds (129 of them), as ordinary sources at their place in the XNU tree. |
-| `kernel/patches/` | The changes to Apple's own 89 files, as 7 patches by topic. |
+| `kernel/overlay/` | The files HakiOS adds, as ordinary sources at their place in the XNU tree. |
+| `kernel/patches/` | The changes to Apple's own files, as 7 patches by topic (`kernel/verify.sh` prints how many files each side has). |
 | `kernel/assemble.sh`, `export.sh`, `verify.sh` | Make the tree that is compiled; take work back; check the round trip. |
 | `kernel/syntax-check.sh` | Compile what HakiOS adds for syntax and types, with any clang. |
 | `kernel/build.sh`, `deps/`, `host/`, `iig-impl/` | The build on Linux. |
@@ -111,6 +115,10 @@ What the overlay provides, in the order a boot meets it:
    from RAM, and the RAM file system for `/private/var`.
 4. **Drivers** (`bsd/dev/`): display and GPU, touch, buttons, battery, sound, camera, Wi-Fi, storage,
    CPU frequency, backlight, thermal. Each does nothing until its boot argument asks.
+5. **What the drivers share** (`bsd/dev/hakios_*.h`): the board's data, the log, registers, waits,
+   the SoC's pins, the PMIC arbiter's protocol, RPMh's command database and a request to it, the
+   processors' shared memory. Each is written once and, where it has logic, tested on the host;
+   [writing-a-driver.md](writing-a-driver.md) lists them.
 
 Naming: files and symbols called `redwood_*` carry the name of the first phone. It is the historical
 prefix of the platform layer and of the kernel/user-space interfaces (`/dev/redwood-touch`, the
