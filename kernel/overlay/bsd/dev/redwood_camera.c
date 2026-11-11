@@ -248,152 +248,66 @@ reset_pin(bool high)
 
 /* ---- I2C by hand (as in redwood_haptic.c) ---------------------------------------------------------- */
 
+#include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken, given back, and freed of a stuck device */
+
 struct bus {
 	const char *    name;
-	unsigned        sda, scl;
-	uint32_t        cfg[2], io[2];  /* the pins as they were found, while taken */
+	struct i2c_gpio pins;
 };
-static struct bus pmic_bus = { .name = "the PM8008i's I2C", .sda = PIN_PMIC_SDA, .scl = PIN_PMIC_SCL };
+static struct bus pmic_bus = { .name = "the PM8008i's I2C", .pins = { .sda = PIN_PMIC_SDA, .scl = PIN_PMIC_SCL } };
 static struct bus cci_bus;              /* the sensor's (from hw) */
-
-static void
-half_bit(void)
-{
-	spin_us(5);                     /* 100 kHz at most */
-}
-
-static void
-line(unsigned pin, bool high)
-{
-	wr(GPIO_IO(pin), 0);
-	wr(GPIO_CFG(pin), CFG_PULL_UP | (high ? 0 : CFG_OUTPUT));
-}
-
-static bool
-level_of(unsigned pin)
-{
-	return rd(GPIO_IO(pin)) & 1;
-}
 
 static void
 i2c_start(struct bus *b)
 {
-	line(b->sda, true);
-	line(b->scl, true);
-	half_bit();
-	line(b->sda, false);
-	half_bit();
-	line(b->scl, false);
-	half_bit();
+	i2c_gpio_start(&b->pins);
 }
 
 static void
 i2c_stop(struct bus *b)
 {
-	line(b->sda, false);
-	half_bit();
-	line(b->scl, true);
-	half_bit();
-	line(b->sda, true);
-	half_bit();
-}
-
-static bool
-i2c_bit(struct bus *b, bool out)
-{
-	bool in;
-
-	line(b->sda, out);
-	half_bit();
-	line(b->scl, true);
-	for (unsigned stretched = 0; !level_of(b->scl) && stretched < 100; stretched++) {
-		half_bit();
-	}
-	half_bit();
-	in = level_of(b->sda);
-	line(b->scl, false);
-	return in;
+	i2c_gpio_stop(&b->pins);
 }
 
 static bool
 i2c_write(struct bus *b, uint8_t byte)
 {
-	for (int bit = 7; bit >= 0; bit--) {
-		i2c_bit(b, (byte >> bit) & 1);
-	}
-	return !i2c_bit(b, true);
+	return i2c_gpio_write(&b->pins, byte);
 }
 
 static uint8_t
 i2c_read(struct bus *b, bool more)
 {
-	uint8_t byte = 0;
-
-	for (int bit = 7; bit >= 0; bit--) {
-		byte = (uint8_t)(byte << 1 | i2c_bit(b, true));
-	}
-	i2c_bit(b, !more);
-	return byte;
+	return i2c_gpio_read(&b->pins, more);
 }
 
 static void
 bus_give_back(struct bus *b)
 {
-	wr(GPIO_IO(b->sda), b->io[0] & 2);
-	wr(GPIO_IO(b->scl), b->io[1] & 2);
-	wr(GPIO_CFG(b->sda), b->cfg[0]);
-	wr(GPIO_CFG(b->scl), b->cfg[1]);
+	i2c_gpio_give_back(&b->pins);
 }
 
 /*
- * A sensor stopped in the middle of a byte -- the camera switched away from it between frames, its
- * digital rail left on because the driver found it on -- goes on holding the data line down, and the
- * bus never comes to rest again however long one waits for it. The way out is the one Linux's
- * bit-banged master takes (i2c_generic_scl_recovery): clock the line that is free until the sensor has
- * finished that byte and lets the data line go, then a stop. Nine clocks are a byte and the
- * acknowledgement after it. This is what kept the wide camera's bus (CCI 0 master 1) for the rest of a
- * session once Camera.app had switched to the front camera and back.
+ * The bus taken for a transaction. A sensor stopped in the middle of a byte -- the camera switched
+ * away from it between frames, its digital rail left on because the driver found it on -- goes on
+ * holding the data line down: it is clocked out of that byte (hakios_i2c_gpio.h). This is what kept
+ * the wide camera's bus (CCI 0 master 1) for the rest of a session once Camera.app had switched to
+ * the front camera and back.
  */
-static bool
-bus_unwedge(struct bus *b)
-{
-	for (unsigned clocks = 1; clocks <= 9; clocks++) {
-		line(b->scl, false);
-		half_bit();
-		line(b->scl, true);
-		half_bit();
-		if (level_of(b->sda)) {
-			i2c_stop(b);
-			say("camera: %s: the data line was held down and came back after %u clock(s)\n", b->name, clocks);
-			return true;
-		}
-	}
-	return false;
-}
-
 static bool
 bus_take(struct bus *b)
 {
-	b->cfg[0] = rd(GPIO_CFG(b->sda));
-	b->cfg[1] = rd(GPIO_CFG(b->scl));
-	b->io[0] = rd(GPIO_IO(b->sda));
-	b->io[1] = rd(GPIO_IO(b->scl));
-	line(b->sda, true);
-	line(b->scl, true);
-	half_bit();
-	if (level_of(b->sda) && level_of(b->scl)) {
-		return true;
-	}
-	/* the data line alone held down is a sensor that did not finish a byte: clock it out (see above) */
-	if (level_of(b->scl) && !level_of(b->sda) && bus_unwedge(b) && level_of(b->scl)) {
-		return true;
-	}
-	{
-		bool sda = level_of(b->sda), scl = level_of(b->scl);
+	unsigned clocks = 0;
 
-		bus_give_back(b);
-		say("camera: %s is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", b->name, b->sda, sda, b->scl, scl);
+	if (i2c_gpio_take(&b->pins)) {
+		return true;
 	}
+	if (i2c_gpio_unwedge(&b->pins, &clocks)) {
+		say("camera: %s: the data line was held down and came back after %u clock(s)\n", b->name, clocks);
+		return true;
+	}
+	say("camera: %s is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", b->name, b->pins.sda,
+	    i2c_gpio_level(b->pins.sda), b->pins.scl, i2c_gpio_level(b->pins.scl));
 	return false;
 }
 
@@ -1026,8 +940,8 @@ select_sensor(unsigned i)
 	hw_index = i;
 	hw = &sensors[i];
 	cci_bus.name = hw->bus_name;
-	cci_bus.sda = hw->sda;
-	cci_bus.scl = hw->scl;
+	cci_bus.pins.sda = hw->sda;
+	cci_bus.pins.scl = hw->scl;
 	ctab = NULL;
 }
 static const uint8_t *ctab_power, *ctab_tables;
