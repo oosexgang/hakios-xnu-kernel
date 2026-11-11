@@ -18,6 +18,9 @@ behaviour on redwood changed, and one thing changed on Renoir (below).
 | `renoir/tests/` | `tests/` |
 | `base/xnuloader/` | `loader/` (a link stays in `base/`) |
 | `base/xnu-deps/` | `kernel/deps/` (a link stays in `base/`) |
+| `bsd/dev/redwood_cpufreq.c` (in the tree) | `bsd/dev/hakios_cpufreq.c` (the cores' clocks), `hakios_ddr.c` (the memory vote), `hakios_bench.c` (`membench=`, `cpuload=`). A patch to the old file applies to none of them as it is: take each hunk to the file its function is in now. |
+| `bsd/dev/redwood_buttons.c` (in the tree) | `bsd/dev/hakios_buttons.c`; the arbiter's protocol it had is `hakios_spmi.h`. |
+| A driver's own copies of `rd()`/`wr()`, of the waits, of the lookup in RPMh's command database, of a request to RPMh, of a pin's registers | The headers `hakios_mmio.h`, `hakios_time.h`, `hakios_cmd_db.h`, `hakios_rpmh.h`, `hakios_tlmm.h` in `bsd/dev/` ([writing-a-driver.md](writing-a-driver.md)). A patch that touches such a copy has nothing to apply to; what it changed belongs in the header, or in the driver's call of it. |
 | Board checks in drivers (`redwood_board_is("renoir")`) | `devices/NAME/board.toml` and `hakios_board_has()` for whether a driver starts, and a key of the board file where two phones differ. No code compares the board's name any more: `redwood_board_is()` is gone. |
 | Default boot arguments in `boot26.py` | `[boot]` of the phone's board file. It was `devices/renoir/board.toml`; the phones' packages have since moved to the `devices` branch (last section). |
 

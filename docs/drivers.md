@@ -50,14 +50,14 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_input.c` | `/dev/redwood-touch`: the queue of touches and button presses every source feeds. | — | any |
 | `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on redwood's SPI. | `touch-goodix` / `touchscreen=1` | part |
 | `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on Renoir's SPI. | `touch-ft3658u` / `touchscreen=1` | part |
-| `bsd/dev/redwood_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
+| `bsd/dev/hakios_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
 | `bsd/dev/redwood_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
 
 ## Power, CPU, temperature
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/redwood_cpufreq.c` | CPU frequency through EPSS. | `cpufreq-epss` / `cpufreq=1` | data (`[cpufreq]`) |
+| `bsd/dev/hakios_cpufreq.c` | CPU frequency through EPSS. | `cpufreq-epss` / `cpufreq=1` | data (`[cpufreq]`) |
 | `bsd/dev/hakios_ddr.c` | Memory bandwidth votes through RPMh. | `ddr-rpmh` / `ddr=` | data (`[rpmh]`), with the slot layout and BCM names of the 7-series |
 | `bsd/dev/hakios_bench.c` | Measurements: how fast the cores get at memory, how busy each core is. | — / `membench=`, `cpuload=` | any |
 | `bsd/dev/hakios_thermal.c` | Reads TSENS; holds CPU groups and the panel back when hot. | `[thermal]` / `thermal=` | data |
