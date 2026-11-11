@@ -89,7 +89,7 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
 static int battery_c = 30;
 int redwood_battery_temperature(void) { return battery_c; }
 
-/* the one lock of the bus is the buttons' driver's (bsd/dev/redwood_buttons.c) */
+/* the one lock of the bus is the buttons' driver's (bsd/dev/hakios_buttons.c) */
 static pthread_mutex_t bus = PTHREAD_MUTEX_INITIALIZER;
 void redwood_spmi_lock(void) { pthread_mutex_lock(&bus); }
 void redwood_spmi_unlock(void) { pthread_mutex_unlock(&bus); }

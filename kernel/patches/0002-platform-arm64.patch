@@ -981,7 +981,7 @@ diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
 +	(void)loader_log_line;
 +}
 +
-+/* How long processor cpu_id has been idle since it started, in mach_absolute_time() units (redwood_cpufreq.c's cpuload). */
++/* How long processor cpu_id has been idle since it started, in mach_absolute_time() units (hakios_bench.c's cpuload). */
 +bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
 +
 +bool

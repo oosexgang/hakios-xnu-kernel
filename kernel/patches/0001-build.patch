@@ -91,14 +91,14 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 +bsd/dev/redwood_goodix.c	standard
 +bsd/dev/renoir_fts.c	standard
 +bsd/dev/hakios_cputop.c	standard
-+bsd/dev/redwood_buttons.c	standard
++bsd/dev/hakios_buttons.c	standard
 +bsd/dev/redwood_battery.c	standard
 +bsd/dev/redwood_ufs.c	standard
 +bsd/dev/redwood_ufshc.c	standard
 +bsd/dev/redwood_net.c	standard
 +bsd/dev/redwood_virtio_net.c	standard
 +bsd/dev/redwood_apple80211.c	standard
-+bsd/dev/redwood_cpufreq.c	standard
++bsd/dev/hakios_cpufreq.c	standard
 +bsd/dev/hakios_ddr.c	standard
 +bsd/dev/hakios_bench.c	standard
 +bsd/dev/redwood_adreno.c	standard

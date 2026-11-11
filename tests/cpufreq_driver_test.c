@@ -1,5 +1,5 @@
 /*
- * The CPU frequency driver itself (kernel/overlay/bsd/dev/redwood_cpufreq.c), run as a host program
+ * The CPU frequency driver itself (kernel/overlay/bsd/dev/hakios_cpufreq.c), run as a host program
  * against a model of the EPSS block: a frequency table and a "row wanted" register for each group of
  * cores, where the board's SoC file says they are. What is tested: every group that has a core of the
  * kernel's is asked for the top row of its own table, a group without one is left alone, and nothing
@@ -82,7 +82,7 @@ void redwood_cpufreq_init(void);
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
 #include "hakios_board.c"
-#include "redwood_cpufreq.c"
+#include "hakios_cpufreq.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

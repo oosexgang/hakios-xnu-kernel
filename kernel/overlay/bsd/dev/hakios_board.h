@@ -31,10 +31,10 @@
  * here and nowhere else.
  */
 enum {
-	HAKIOS_HAS_CPUFREQ_EPSS = 1u << 0,      /* CPU frequency through Qualcomm's EPSS (bsd/dev/redwood_cpufreq.c) */
-	HAKIOS_HAS_DDR_RPMH     = 1u << 1,      /* memory bandwidth votes through RPMh (redwood_cpufreq.c) */
+	HAKIOS_HAS_CPUFREQ_EPSS = 1u << 0,      /* CPU frequency through Qualcomm's EPSS (bsd/dev/hakios_cpufreq.c) */
+	HAKIOS_HAS_DDR_RPMH     = 1u << 1,      /* memory bandwidth votes through RPMh (hakios_ddr.c) */
 	HAKIOS_HAS_BATTERY_UEFI = 1u << 2,      /* the battery as the firmware reports it to the loader (redwood_battery.c) */
-	HAKIOS_HAS_BUTTONS_PMIC = 1u << 3,      /* power and volume keys on the PMIC, through the SPMI arbiter (redwood_buttons.c) */
+	HAKIOS_HAS_BUTTONS_PMIC = 1u << 3,      /* power and volume keys on the PMIC, through the SPMI arbiter (hakios_buttons.c) */
 	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (redwood_adsp.c) */
 	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a command-mode panel whose readout is followed on the DSI interface's
 	                                         * counters, for frames without tearing (redwood_adreno.c, fb_scan) */

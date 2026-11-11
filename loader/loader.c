@@ -3991,7 +3991,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * The buttons, as the iPhone 17 Pro's own device tree has them (DeviceTree.v53ap): home-button-type 2,
 	 * no home button but the gesture -- MobileGestalt's HomeButtonType. Without the node iOS 26 took the
 	 * phone for one with a home button ("Press home to open" on the lock screen, instead of swiping up).
-	 * No compatible: no driver matches it; the phone's real keys are the kernel's (redwood_buttons).
+	 * No compatible: no driver matches it; the phone's real keys are the kernel's (bsd/dev/hakios_buttons.c).
 	 */
 	dt_begin(&w, "buttons");
 	dt_prop_u32(&w, "home-button-type", 2);

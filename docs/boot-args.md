@@ -29,6 +29,14 @@ beside the code, so the file named in each heading has the full explanation.
 | `bl_max` | bl_min= bl_max= the panel's numbers for the lowest and the highest brightness |
 | `bl_min` | bl_min= bl_max= the panel's numbers for the lowest and the highest brightness |
 
+### `bsd/dev/hakios_buttons.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys are on from the board file ([buttons]). |
+| `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
+| `touchscreen` | — |
+
 ### `bsd/dev/redwood_adreno.c`
 
 | Argument | What the source says |
@@ -52,14 +60,6 @@ beside the code, so the file named in each heading has the full explanation.
 | `gpu_recover` | gpu_recover=1: a submission the core never finishes does not cost the rest of the run. |
 | `gpu_va` | gpu_va: 0 (the default) as it has always been. |
 | `renoir_display_clocks` | — |
-
-### `bsd/dev/redwood_buttons.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys are on from the board file ([buttons]). |
-| `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
-| `touchscreen` | — |
 
 ### `bsd/dev/redwood_goodix.c`
 
@@ -147,6 +147,12 @@ beside the code, so the file named in each heading has the full explanation.
 | `cpuload` | cpuload=MS: every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture): tl: u at US 7:NN 6:NN ... 1:NN the core's number (as in its MPIDR), then its share of the time it was not idle (interrupts included). |
 | `membench` | membench=1: how fast this processor reads, writes and copies memory, in MB a second (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which nobody here asks to be raised. |
 
+### `bsd/dev/hakios_cpufreq.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `cpufreq` | cpufreq=1 every group of cores that has a core of ours is asked for the top row of its table |
+
 ### `bsd/dev/hakios_cputop.c`
 
 | Argument | What the source says |
@@ -177,12 +183,6 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `battery` | — |
 | `battery_shared_pa` | — |
-
-### `bsd/dev/redwood_cpufreq.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `cpufreq` | cpufreq=1 every group of cores that has a core of ours is asked for the top row of its table |
 
 ### `iokit/Kernel/GenericARMPE.cpp`
 

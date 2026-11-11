@@ -50,7 +50,7 @@ void redwood_ufs_report(const char *when); /* where reading the storage has spen
 bool redwood_ufs_dev(dev_t dev);           /* one of the storage's devices */
 void redwood_battery_init(void);        /* boot-arg battery=1: Qualcomm UEFI charger state shared by xnuloader */
 int redwood_battery_temperature(void);  /* the battery's temperature in C, -273 while it is not known */
-/* one transfer at a time through the PMIC arbiter for this system (bsd/dev/redwood_buttons.c) */
+/* one transfer at a time through the PMIC arbiter for this system (bsd/dev/hakios_buttons.c) */
 void redwood_spmi_lock(void);
 void redwood_spmi_unlock(void);
 /*

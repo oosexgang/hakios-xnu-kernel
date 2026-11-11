@@ -821,7 +821,7 @@ step_rpmh(void)
 /* ---- step 4: the supplies themselves ------------------------------------------------------------------- */
 
 /*
- * The PMIC arbiter, as in redwood_buttons.c: reads go through the "observer" channels, which
+ * The PMIC arbiter, as in hakios_buttons.c: reads go through the "observer" channels, which
  * every system has for every peripheral, whoever owns it. dt: qcom,spmi@c440000; on the bus the
  * PM7325 is slave 1 and the PM8350C slave 2.
  */
@@ -4076,7 +4076,7 @@ redwood_wifi_init(void)
 
 /*
  * What interrupts would take, instead of looking. The buttons want the same (the PMIC arbiter's
- * line, see the end of redwood_buttons.c), and the radio will: so the general case first.
+ * line, see the end of hakios_buttons.c), and the radio will: so the general case first.
  *
  * The general case is one shared peripheral interrupt (an "SPI": the interrupt controller's
  * number for it is 32 more than the device tree's) with a handler. osfmk/arm64/gic_v3_irq.c
