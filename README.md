@@ -63,7 +63,7 @@ How the pieces fit together: [docs/architecture.md](docs/architecture.md).
 | Package | Device | SoC | State |
 | --- | --- | --- | --- |
 | `renoir` | Xiaomi Mi 11 Lite 5G | Snapdragon 780G (SM7350) | iOS 27.2 (24B119) boots from RAM to the home screen. Verified on the phone on 2026-11-10. |
-| `redwood` | POCO X5 Pro 5G | Snapdragon 778G (SM7325) | The first port, on iOS 16.5 (`base/`). Its drivers are in this kernel; not yet booted with iOS 26/27. |
+| `redwood` | POCO X5 Pro 5G | Snapdragon 778G (SM7325) | iOS 27.2 (24B119) boots to the lock screen, with touch, the keys and seven cores at full speed; the system image on the port's own partition. Verified on the phone on 2026-11-11. |
 | `qemu-virt` | QEMU `virt` | — | In this branch. The iOS 16.5 generation runs there; not yet set up for the current kernel. |
 
 What works on each phone, what is written but not yet verified on it, and what is still off is in the
