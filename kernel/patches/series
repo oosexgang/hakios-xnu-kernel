@@ -23,7 +23,7 @@
 0003-iokit.patch                iokit/
 
 # Mach: scheduling, IPC policy, panics and what is logged about them.
-0004-mach.patch                 osfmk/ipc/ osfmk/kern/ bsd/kern/sys_work_interval.c
+0004-mach.patch                 osfmk/ipc/ osfmk/kern/ bsd/kern/sys_work_interval.c libkern/c++/OSKext.cpp
 
 # Virtual memory: the shared region and the dyld pager for a cache rewritten without PAC.
 0005-vm.patch                   osfmk/vm/ osfmk/mach/shared_region.h bsd/vm/
