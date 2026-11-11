@@ -6,6 +6,7 @@ first lines; `make` lists the common ones.
 | Tool | What it does |
 | --- | --- |
 | `boards.py` | The boards as data. Validates board and SoC files (`check`), says what a board has on and what it can turn on next (`status`), starts a board from a phone's Android device tree (`new`), writes the tables the code is built with (`gen`). |
+| `boards.py compare BOARD --dts FILE` | A board and its SoC file against an Android device tree: each value as in the tree, different, or not in any tree. For checking a file written by hand, or one that is years old, against the phone's own tree. |
 | `devicetree.py` | What `boards.py new --dts` reads from a device tree: the blocks' addresses, the panel's brightness control, the cores, the keys. A module, not a command. |
 | `device.py` | Device packages: brings a phone's package into the checkout from the `devices` branch or a directory (`add`), lists what there is (`available`, `list`), takes one out (`remove`), sends one made here to where packages are kept (`export`). |
 | `bootargs.py` | Finds every boot argument the kernel reads, with the comment that describes it, and writes `docs/boot-args.md` (`--write`; `--check` says whether it is current). |

@@ -60,6 +60,13 @@ tools/boards.py check        # says which file and why, until everything is cons
 make check
 ```
 
+A file that was written by hand, or taken from someone else's port, can be held against the phone's own
+tree at any time:
+
+```sh
+tools/boards.py compare mido --dts phone.dts     # each value: as in the tree, different, or not in any tree
+```
+
 There are no tables to regenerate by hand: every build makes them itself from the packages that are
 present (`make boards` validates and writes them into `build/boards/` if you want to look at them).
 

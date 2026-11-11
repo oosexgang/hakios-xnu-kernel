@@ -48,6 +48,7 @@ tools/boards.py show renoir             # one board with its SoC's values
 tools/boards.py status renoir           # what it has on, what it could turn on, what the rest waits for
 tools/boards.py check                   # validate everything; says which file and why
 tools/boards.py new NAME --soc SOC --dts device-tree.dts    # start a new board from an Android device tree
+tools/boards.py compare renoir --dts device-tree.dts        # a board and its SoC file against a device tree
 ```
 
 `tools/boards.py gen` writes three tables into `build/boards/`, for the boards that are there:
