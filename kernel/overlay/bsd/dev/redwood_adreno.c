@@ -155,21 +155,9 @@ sleep_ms(uint32_t ms)
 
 /* ---- register access ------------------------------------------------------------------------------- */
 
-/*
- * One access is one plain load or store of a general register. Some of what is touched here (the
- * SMMU at least) is not the hardware but the hypervisor's imitation of it: the access traps and
- * is carried out on our behalf, which works for the simplest instruction forms only, and the
- * vendor's SMMU driver warns that this imitation "goes horribly wrong" for a store of the zero
- * register. So the compiler does not get to choose the instruction.
- */
-static uint32_t __attribute__((noinline))
-rd(vm_offset_t address)
-{
-	uint32_t value;
-
-	__asm__ volatile ("ldr %w0, [%1]" : "=r" (value) : "r" (address) : "memory");
-	return value;
-}
+/* One access is one plain load or store of a general register: hakios_mmio.h says why. */
+#define HAKIOS_MMIO_EXACT
+#include "hakios_mmio.h"
 
 static uint32_t __attribute__((noinline))
 rd8(vm_offset_t address)
@@ -180,11 +168,6 @@ rd8(vm_offset_t address)
 	return value;
 }
 
-static void __attribute__((noinline))
-wr(vm_offset_t address, uint32_t value)
-{
-	__asm__ volatile ("str %w0, [%1]" : : "r" (value), "r" (address) : "memory");
-}
 
 /* A stretch of registers; mapped when a step first needs it. */
 struct block {

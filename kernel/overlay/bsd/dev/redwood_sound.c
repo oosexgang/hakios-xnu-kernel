@@ -153,20 +153,8 @@ announce(const char *what)
 	}
 }
 
-static uint32_t __attribute__((noinline))
-rd(vm_offset_t address)
-{
-	uint32_t value;
-
-	__asm__ volatile ("ldr %w0, [%1]" : "=r" (value) : "r" (address) : "memory");
-	return value;
-}
-
-static void __attribute__((noinline))
-wr(vm_offset_t address, uint32_t value)
-{
-	__asm__ volatile ("str %w0, [%1]" : : "r" (value), "r" (address) : "memory");
-}
+#define HAKIOS_MMIO_EXACT
+#include "hakios_mmio.h"
 
 struct block {
 	const char *name;
