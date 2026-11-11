@@ -18,6 +18,7 @@ lives here, with the code, and not in a phone's package.
 | `[display]` | The first DSI controller, and the interface the panel hangs on | The same |
 | `[pins]` | Where the SoC's own pins (TLMM) are | The part drivers that drive pins: the touch controllers, the speaker amplifier, the microphones' codec, the haptic motor, the cameras, Wi-Fi |
 | `[spmi]` | The PMIC arbiter's blocks | `buttons-pmic`, the part drivers that write to a PMIC, and Wi-Fi, which reads its supplies there |
+| `[ipc]` | The always-on processor's mailbox, the block the processors ring each other through, the shared memory and its lock | `adsp`, Wi-Fi |
 | `[rpmh]` | The command database and the application processor's sequencer | `ddr-rpmh`, `adsp`, `gpu-a660`, and the part drivers that ask RPMh for a supply: the touch controllers, the speaker amplifier, the cameras, Wi-Fi |
 | `[adreno]` | The GPU's blocks: the 3D core, the GMU, its clock controller, its SMMU, the fuses | `gpu-a660`, with a board's `[gpu]` |
 | `[thermal]` | The TSENS controllers | A board's `[thermal]` |

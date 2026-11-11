@@ -39,6 +39,15 @@ observer = 0x0e600000               # "obsrvr": reads
 channels = 0x0c600000               # "chnls": writes; optional, needed only by the drivers that write to a PMIC
 ee = 0                              # qcom,ee; optional, 0 if left out
 
+# The way to the SoC's other processors, for the features "adsp" and "wifi-wcn6750".
+[ipc]
+aoss = 0x0c300000                   # the always-on processor's mailbox: qcom,qmp-mbox (Linux: qcom,aoss-qmp), its reg
+ipcc = 0x00408000                   # qcom,ipcc, its reg: what the processors ring each other through
+smem = 0x80900000                   # the memory they share: the memory-region of the qcom,smem node
+smem_size = 0x200000                # ... and its size
+smem_lock = 0x01f43000              # the lock on it: hwlocks = <&tcsr_mutex N> of the qcom,smem node, which is
+                                    # N x 0x1000 into the qcom,tcsr-mutex block (0x1f40000 + 3 x 0x1000)
+
 # RPMh: for the features "ddr-rpmh", "adsp" and "gpu-a660", and for the part drivers that ask it for a
 # supply (the touch controllers', the speaker amplifier's, the cameras', Wi-Fi's).
 [rpmh]

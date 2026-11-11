@@ -130,6 +130,14 @@ struct hakios_board {
 		uint32_t tlmm;                  /* where GPIO 0's registers are; GPIO n's are 0x1000 n further */
 	} pins;
 
+	/* the way to the SoC's other processors (soc: [ipc]) */
+	struct {
+		uint32_t aoss;                  /* the always-on processor's mailbox (QMP) */
+		uint32_t ipcc;                  /* the block the processors ring each other through */
+		uint32_t smem, smem_size;       /* the memory they share, as the boot loader laid it out */
+		uint32_t smem_lock;             /* the hardware lock that guards its allocations */
+	} ipc;
+
 	/* RPMh (soc: [rpmh]): the command database the firmware left, and this system's sequencer */
 	struct {
 		uint32_t cmd_db, cmd_db_size;

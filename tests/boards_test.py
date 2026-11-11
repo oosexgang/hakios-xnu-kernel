@@ -387,8 +387,10 @@ class Check(Sandbox):
         path = self.dir / 'devices/phone/board.toml'
         self.board('"cpufreq-epss"', '"cpufreq-epss", "adsp"')
         self.assertIn('feature "adsp" needs [adsp] in the board file', self.problems())
-        # ... and RPMh, which its supplies are asked of
+        # ... and RPMh, which its supplies are asked of, and the way to the DSP
         self.assertIn('feature "adsp" needs [rpmh] in soc/sm0001.toml', self.problems())
+        self.assertIn('feature "adsp" needs [ipc] in soc/sm0001.toml', self.problems())
+        self.soc('[thermal]', '[ipc]\naoss = 0xc300000\nipcc = 0x408000\nsmem = 0x80900000\nsmem_size = 0x200000\nsmem_lock = 0x1f43000\n[thermal]')
         self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
         listed = path.read_text()
         for section, reason in (
@@ -547,6 +549,54 @@ class Generate(Sandbox):
         self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
         self.assertEqual(self.problems(), '')
         self.assertIn('.pins = { .tlmm = 0x0f100000 },', boards.table_text(*boards.load()))
+
+    def test_the_table_carries_the_way_to_the_other_processors(self):
+        self.soc('[thermal]', '[ipc]\naoss = 0xc300000\nipcc = 0x408000\nsmem = 0x80900000\nsmem_size = 0x200000\nsmem_lock = 0x1f43000\n[thermal]')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.ipc = { .aoss = 0x0c300000, .ipcc = 0x00408000, .smem = 0x80900000, .smem_size = 0x200000, '
+                      '.smem_lock = 0x01f43000 },', boards.table_text(*boards.load()))
+        # all of it or none: a mailbox without the memory is no way to anybody
+        self.soc('smem_lock = 0x1f43000\n', '')
+        self.assertIn('"smem_lock" is missing', self.problems())
+
+    def test_the_way_to_the_other_processors_is_found_in_a_vendors_tree_and_in_linuxs(self):
+        # the vendor's: the lock is a slice of a syscon block, the mailbox is a "qmp-mbox"
+        vendor = '''/ {
+            reserved-memory { smem_mem: smem_region@80900000 { no-map; reg = <0x0 0x80900000 0x0 0x200000>; }; };
+            soc {
+                ipcc_mproc: qcom,ipcc@408000 { compatible = "qcom,ipcc"; reg = <0x408000 0x1000>; };
+                tcsr_mutex_block: syscon@1f40000 { compatible = "syscon"; reg = <0x1f40000 0x20000>; };
+                tcsr_mutex: hwlock { compatible = "qcom,tcsr-mutex"; syscon = <&tcsr_mutex_block 0 0x1000>; };
+                smem: qcom,smem { compatible = "qcom,smem"; memory-region = <&smem_mem>; hwlocks = <&tcsr_mutex 3>; };
+                qmp_aop: qcom,qmp-aop@c300000 { compatible = "qcom,qmp-mbox"; reg = <0xc300000 0x400>; reg-names = "msgram"; };
+            }; };'''
+        expected = {'aoss': 0xc300000, 'ipcc': 0x408000, 'smem': 0x80900000, 'smem_size': 0x200000, 'smem_lock': 0x1f43000}
+        self.assertEqual(devicetree.from_dts(vendor)[0]['ipc'], expected)
+        # the same tree compiled and dumped: the references are numbers
+        dumped = '''/ {
+            reserved-memory { smem_region@80900000 { reg = <0x00 0x80900000 0x00 0x200000>; phandle = <0x21>; }; };
+            soc {
+                qcom,ipcc@408000 { compatible = "qcom,ipcc"; reg = <0x408000 0x1000>; };
+                syscon@1f40000 { compatible = "syscon"; reg = <0x1f40000 0x20000>; phandle = <0x54>; };
+                hwlock { compatible = "qcom,tcsr-mutex"; syscon = <0x54 0x00 0x1000>; phandle = <0x55>; };
+                qcom,smem { compatible = "qcom,smem"; memory-region = <0x21>; hwlocks = <0x55 0x03>; };
+                qcom,qmp-aop@c300000 { compatible = "qcom,qmp-mbox"; reg = <0xc300000 0x400>; };
+            }; };'''
+        self.assertEqual(devicetree.from_dts(dumped)[0]['ipc'], expected)
+        # Linux's: the lock's node has the registers, the mailbox is an "aoss-qmp"
+        linux = '''/ {
+            reserved-memory { smem_mem: memory@80900000 { reg = <0 0x80900000 0 0x200000>; no-map; }; };
+            smem { compatible = "qcom,smem"; memory-region = <&smem_mem>; hwlocks = <&tcsr_mutex 3>; };
+            soc {
+                ipcc: mailbox@408000 { compatible = "qcom,sc7280-ipcc", "qcom,ipcc"; reg = <0 0x00408000 0 0x1000>; };
+                tcsr_mutex: hwlock@1f40000 { compatible = "qcom,tcsr-mutex"; reg = <0 0x01f40000 0 0x20000>; };
+                aoss_qmp: power-management@c300000 { compatible = "qcom,sc7280-aoss-qmp", "qcom,aoss-qmp"; reg = <0 0x0c300000 0 0x400>; };
+            }; };'''
+        self.assertEqual(devicetree.from_dts(linux)[0]['ipc'], expected)
+        # half of it: said, and the section left out
+        soc, board, notes = devicetree.from_dts('/ { soc { m@408000 { compatible = "qcom,ipcc"; reg = <0x408000 0x1000>; }; }; };')
+        self.assertNotIn('ipc', soc)
+        self.assertTrue(any('missing: aoss, smem, smem_size, smem_lock' in note for note in notes), notes)
 
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in

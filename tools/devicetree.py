@@ -85,6 +85,16 @@ def unit_address(node):
     return int(node.name.split('@', 1)[1], 16) if '@' in node.name and re.fullmatch(r'[0-9a-fA-F]+', node.name.split('@', 1)[1]) else None
 
 
+def only_reg(node):
+    """(address, size) of a node whose reg is one entry, of one cell each or of two."""
+    reg = cells(node.props.get('reg'))
+    if len(reg) == 2:
+        return reg[0], reg[1]
+    if len(reg) == 4:
+        return reg[0] << 32 | reg[1], reg[2] << 32 | reg[3]
+    return None, None
+
+
 def referred(tree, value):
     """The node a property's first reference points at: <&label ...> in a source, <phandle ...> in a
     tree that was compiled and dumped again."""
@@ -112,7 +122,7 @@ def from_dts(text, panel=None):
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys, rpmh, adreno = {}, {}, {}, {}
+    platform, keys, rpmh, adreno, ipc = {}, {}, {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -156,6 +166,25 @@ def from_dts(text, panel=None):
                 # the vendor's trees give the whole 16 MiB block, in which the pins begin 1 MiB in; Linux's
                 # give the pins themselves
                 soc['pins'] = {'tlmm': base + 0x100000 if size >= 0x1000000 else base}
+        # the way to the other processors: the always-on one's mailbox, the block they ring each other
+        # through, the memory they share and the lock on it
+        if any(c == 'qcom,qmp-mbox' or re.fullmatch(r'qcom,(.*-)?aoss-qmp', c) for c in compatible) and only_reg(node)[0]:
+            ipc['aoss'] = only_reg(node)[0]
+        if 'qcom,ipcc' in compatible and only_reg(node)[0]:
+            ipc['ipcc'] = only_reg(node)[0]
+        if 'qcom,smem' in compatible:
+            region = referred(tree, node.props.get('memory-region'))
+            if region is not None and only_reg(region)[0]:
+                ipc['smem'], ipc['smem_size'] = only_reg(region)
+            lock, which = referred(tree, node.props.get('hwlocks')), cells(node.props.get('hwlocks'))
+            if lock is not None and which:
+                # Linux: the lock's node has the registers; the vendor: <&block OFFSET STRIDE> points at them
+                base, stride = only_reg(lock)[0], 0x1000
+                block, where = referred(tree, lock.props.get('syscon')), cells(lock.props.get('syscon'))
+                if base is None and block is not None and len(where) >= 2 and only_reg(block)[0]:
+                    base, stride = only_reg(block)[0] + where[-2], where[-1]
+                if base:
+                    ipc['smem_lock'] = base + stride * which[-1]
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
         if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):
@@ -208,6 +237,13 @@ def from_dts(text, panel=None):
                 # GPIO n of pinctrl@8800 has its registers at 0x8800 + 0x100 * (n - 1)
                 keys.update(volume_up=slave << 8 | ((unit_address(gpios) >> 8) + number - 1),
                             volume_up_name=f'GPIO{number} of the {pmic}')
+    wanted = ('aoss', 'ipcc', 'smem', 'smem_size', 'smem_lock')
+    if all(key in ipc for key in wanted):
+        soc['ipc'] = {key: ipc[key] for key in wanted}
+    elif ipc:
+        notes.append('the way to the other processors was not all found (missing: ' +
+                     ', '.join(k for k in wanted if k not in ipc) + '): [ipc] is left out; fill it in from '
+                     'devices/_template/soc.toml for the features "adsp" and "wifi-wcn6750"')
     if all(key in rpmh for key in ('cmd_db', 'cmd_db_size', 'rsc', 'tcs_offset')):
         soc['rpmh'] = rpmh
     wanted = ('gpu', 'gmu', 'gpucc', 'cx_misc', 'rscc', 'smmu', 'pdc', 'qfprom')

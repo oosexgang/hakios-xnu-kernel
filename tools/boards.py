@@ -72,6 +72,8 @@ SOC_SCHEMA = {
     'adreno': {'gpu': (int, True), 'gmu': (int, True), 'gpucc': (int, True), 'cx_misc': (int, True), 'rscc': (int, True),
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
+    'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
+            'smem_lock': (int, True)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
@@ -103,7 +105,7 @@ FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'bu
                  # RPMh for a part's supply
                  'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
                  'speaker-aw88261': ('pins', 'clocks', 'rpmh'), 'haptic-aw86927': ('pins',),
-                 'adsp': ('rpmh',), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi'), 'mic-wcd938x': ('pins',)}
+                 'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc'), 'mic-wcd938x': ('pins',)}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
@@ -499,6 +501,10 @@ def table_text(socs, boards):
         pins = soc.get('pins')
         if pins:
             out.append(f'\t\t.pins = {{ .tlmm = {pins["tlmm"]:#010x} }},')
+        ipc = soc.get('ipc')
+        if ipc:
+            out.append(f'\t\t.ipc = {{ .aoss = {ipc["aoss"]:#010x}, .ipcc = {ipc["ipcc"]:#010x}, .smem = {ipc["smem"]:#010x}, '
+                       f'.smem_size = {ipc["smem_size"]:#x}, .smem_lock = {ipc["smem_lock"]:#010x} }},')
         rpmh = soc.get('rpmh')
         if rpmh:
             out.append(f'\t\t.rpmh = {{ .cmd_db = {rpmh["cmd_db"]:#010x}, .cmd_db_size = {rpmh["cmd_db_size"]:#x}, '
@@ -740,7 +746,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
             for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
                 text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
             text.append('')
-        for section in ('display', 'pins', 'spmi', 'rpmh', 'adreno', 'thermal', 'cpufreq'):
+        for section in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'adreno', 'thermal', 'cpufreq'):
             if section in soc:
                 text.append(f'[{section}]')
                 text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]

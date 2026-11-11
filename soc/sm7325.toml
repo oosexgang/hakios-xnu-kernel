@@ -31,6 +31,14 @@ observer = 0x0e600000               # reads
 channels = 0x0c600000               # writes
 ee = 0                              # qcom,ee: which of the arbiter's systems this one is
 
+# The way to the SoC's other processors: the audio DSP and the Wi-Fi radio are reached through these.
+[ipc]
+aoss = 0x0c300000                   # qmp_aop (qcom,qmp-mbox): the always-on processor's mailbox
+ipcc = 0x00408000                   # ipcc_mproc (qcom,ipcc): what the processors ring each other through
+smem = 0x80900000                   # smem_mem: the memory they share
+smem_size = 0x200000
+smem_lock = 0x01f43000              # tcsr_mutex 3 (0x1f40000 + 3 x 0x1000): the lock on its allocations
+
 # RPMh, for the memory bandwidth vote (feature "ddr-rpmh").
 [rpmh]
 cmd_db = 0x80860000                 # reserved-memory, compatible "qcom,cmd-db": the resources' names and addresses
