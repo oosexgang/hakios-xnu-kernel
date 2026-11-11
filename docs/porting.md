@@ -104,8 +104,9 @@ Start with one core (`cpus=1`), then all of them. A hang at the second core is P
 
 ## 5. Turn hardware on, one piece at a time
 
-Each row is independent. Add the feature to `features`, run `tools/boards.py gen`, rebuild, and pass
-the boot argument. Most drivers have a "look only" level that reads and logs without writing: use it
+`tools/boards.py status NAME` lists every feature for your board: on, ready to be listed, or the
+section it still needs. Each row below is independent. Add the feature to `features`, run
+`tools/boards.py gen`, rebuild, and pass the boot argument. Most drivers have a "look only" level that reads and logs without writing: use it
 first. Every argument is in [boot-args.md](boot-args.md); every driver in [drivers.md](drivers.md).
 
 | Step | In the board or SoC file | Boot argument | It worked when |

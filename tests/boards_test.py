@@ -306,7 +306,7 @@ class Check(Sandbox):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "buttons-pmic"')
         said = self.problems()
         self.assertIn('feature "buttons-pmic" needs [spmi] in soc/sm0001.toml', said)
-        self.assertIn('feature "buttons-pmic" needs a [buttons] section', said)
+        self.assertIn('feature "buttons-pmic" needs [buttons] in the board file', said)
         self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\n[thermal]')
         listed = path.read_text()
         for section, reason in (
@@ -337,7 +337,7 @@ class Check(Sandbox):
     def test_an_audio_dsp_is_described(self):
         path = self.dir / 'devices/phone/board.toml'
         self.board('"cpufreq-epss"', '"cpufreq-epss", "adsp"')
-        self.assertIn('feature "adsp" needs a [adsp] section', self.problems())
+        self.assertIn('feature "adsp" needs [adsp] in the board file', self.problems())
         listed = path.read_text()
         for section, reason in (
                 ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n', None),
@@ -360,7 +360,7 @@ class Check(Sandbox):
         path = self.dir / 'devices/phone/board.toml'
         plain = path.read_text()
         self.board('"cpufreq-epss"', '"cpufreq-epss", "gpu-a660"')
-        self.assertIn('feature "gpu-a660" needs a [gpu] section', self.problems())
+        self.assertIn('feature "gpu-a660" needs [gpu] in the board file', self.problems())
         with_gpu = path.read_text() + GPU
         cases = [
             ('', '', None),
@@ -389,6 +389,32 @@ class Check(Sandbox):
         # described but not listed: the data may be there before the driver is turned on
         path.write_text(plain + GPU)
         self.assertEqual(self.problems(), '')
+
+    def test_status_says_what_can_be_turned_on_next(self):
+        def status():
+            socs, found = boards.load()
+            return boards.status_text('phone', found['phone'], socs['sm0001'])
+        said = status()
+        self.assertIn('phone: A phone (sm0001)', said)
+        self.assertRegex(said, r'loader +known by its framebuffer')
+        self.assertRegex(said, r'backlight +the panel takes MIPI DCS brightness')
+        self.assertRegex(said, r'cpufreq-epss +on\n')
+        self.assertRegex(said, r'battery-uefi +can be listed')
+        # by the same rules as the checker: what is missing is named, file and section
+        self.assertRegex(said, r'buttons-pmic +needs \[spmi\] in soc/sm0001.toml, \[buttons\] in the board file')
+        self.assertRegex(said, r'ddr-rpmh +needs \[rpmh\] in soc/sm0001.toml')
+        self.assertRegex(said, r'display-scan +needs intf1 in \[display\] and \[clocks\] in soc/sm0001.toml')
+        self.assertRegex(said, r"touch-goodix +one part's driver")
+        self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\n[thermal]')
+        self.assertRegex(status(), r'buttons-pmic +needs \[buttons\] in the board file')
+        path = self.dir / 'devices/phone/board.toml'
+        path.write_text(path.read_text() + '[buttons]\npon = 0x013\nvolume_up = 0x18d\n')
+        self.assertRegex(status(), r'buttons-pmic +can be listed')
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "buttons-pmic"')
+        self.assertRegex(status(), r'buttons-pmic +on\n')
+        # every feature the kernel knows has its line
+        for _, feature in boards.feature_bits():
+            self.assertRegex(said, rf'(?m)^  {feature} ')
 
     def test_the_loader_tells_boards_apart_by_their_framebuffer(self):
         for name, loader, reason in (('twin', '[loader]\nfb_base = 0xe1000000\n', 'is also that of'),

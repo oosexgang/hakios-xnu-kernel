@@ -12,6 +12,7 @@ built with a table generated from these files and picks its row at boot.
 ```sh
 tools/boards.py list                    # the boards
 tools/boards.py show renoir             # one board with its SoC's values
+tools/boards.py status renoir           # what it has on, what it could turn on, what the rest waits for
 tools/boards.py check                   # validate everything; says which file and why
 tools/boards.py gen                     # rewrite the kernel's table after a change
 tools/boards.py new NAME --soc SOC --dts device-tree.dts    # start a new board from an Android device tree

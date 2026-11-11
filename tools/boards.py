@@ -3,6 +3,7 @@
 
   tools/boards.py list                 the boards, one a line
   tools/boards.py show BOARD           one board with its SoC's values filled in
+  tools/boards.py status BOARD         what the board has on, what it could turn on, what the rest waits for
   tools/boards.py check                validate every file; non-zero exit and the reasons if one is wrong
   tools/boards.py gen [--check]        write the kernel's table (kernel/overlay/bsd/dev/hakios_board_table.h) and
                                        the loader's (loader/platforms.h); --check: only say whether the
@@ -77,6 +78,8 @@ BOARD_SCHEMA = {
 FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi', 'torch-pm8350c': 'spmi', 'ddr-rpmh': 'rpmh',
                  'camera-redwood': 'spmi'}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
+# features that are a driver of one part as one phone has it wired, by the first word of their names
+PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
@@ -96,6 +99,59 @@ def feature_bits():
 def features_of_header():
     """... as a dictionary from that spelling to the C name."""
     return {name: 'HAKIOS_HAS_' + name.upper().replace('-', '_') for _, name in feature_bits()}
+
+
+def feature_needs(feature, board, soc):
+    """What a board that lists the feature must have and has not, in words; [] when it has everything."""
+    soc_file = f'soc/{board.get("soc")}.toml'
+    needs = []
+    section = FEATURE_NEEDS.get(feature)
+    if section and section not in soc:
+        needs.append(f'[{section}] in {soc_file}')
+    section = FEATURE_NEEDS_OF_BOARD.get(feature)
+    if section and section not in board:
+        needs.append(f'[{section}] in the board file')
+    spmi, display = soc.get('spmi'), soc.get('display')
+    if feature in WRITES_TO_PMIC and isinstance(spmi, dict) and 'channels' not in spmi:
+        needs.append(f'channels in [spmi] of {soc_file}')
+    if feature == 'display-scan' and isinstance(display, dict) and ('intf1' not in display or 'clocks' not in soc):
+        needs.append(f'intf1 in [display] and [clocks] in {soc_file}')
+    return needs
+
+
+def status_text(name, board, soc):
+    """One board as a porter wants it: what is on, what could be, what each of the rest waits for."""
+    listed = board.get('features', [])
+    light = board.get('backlight', {})
+    out = [f'{name}: {board["description"]} ({board["soc"]})', '']
+
+    def line(what, state):
+        out.append(f'  {what:18} {state}')
+
+    line('loader', 'known by its framebuffer' if 'fb_base' in board.get('loader', {}) else
+         "the loader's fallback (the emulator)" if 'loader' in board else
+         'no [loader] section: started by another loader, or not yet (docs/porting.md, step 3)')
+    line('backlight', {'dcs': 'the panel takes MIPI DCS brightness (backlight=1 looks, backlight=2 writes)',
+                       'soft': 'the picture is darkened in software',
+                       'none': 'none'}.get(light.get('type'), 'no [backlight] section'))
+    line('thermal', 'its floors are set (thermal=1 looks, thermal=2 limits)' if 'thermal' in board else
+         'no [thermal] section' + ('' if 'thermal' in soc and 'cpufreq' in soc else
+                                   f': needs [thermal] and [cpufreq] in soc/{board["soc"]}.toml first'))
+    out.append('')
+    for _, feature in feature_bits():
+        needs = feature_needs(feature, board, soc)
+        part = feature.split('-')[0] in PART_DRIVERS
+        if feature in listed:
+            line(feature, 'on' + (': STILL NEEDS ' + ', '.join(needs) if needs else ''))
+        elif needs:
+            line(feature, 'needs ' + ', '.join(needs))
+        elif part:
+            line(feature, "one part's driver: only if this phone has that part wired the same way (docs/drivers.md)")
+        else:
+            line(feature, 'can be listed: what it needs is there')
+    out += ['', 'A feature that is on is started only with its boot argument (docs/boot-args.md); docs/porting.md,',
+            'step 5, has the order to try them in and the log line that says each one worked.', '']
+    return '\n'.join(out)
 
 
 def check_table(where, table, schema, problems):
@@ -178,18 +234,13 @@ def load(problems=None):
         for feature in data.get('features', []):
             if feature not in known:
                 problems.add(rel, f'feature "{feature}" is not one the kernel knows ({", ".join(sorted(known))})')
-            elif FEATURE_NEEDS.get(feature) and FEATURE_NEEDS[feature] not in soc:
-                problems.add(rel, f'feature "{feature}" needs [{FEATURE_NEEDS[feature]}] in soc/{data.get("soc")}.toml')
-            if FEATURE_NEEDS_OF_BOARD.get(feature) and FEATURE_NEEDS_OF_BOARD[feature] not in data:
-                problems.add(rel, f'feature "{feature}" needs a [{FEATURE_NEEDS_OF_BOARD[feature]}] section')
+            for need in feature_needs(feature, data, soc):
+                problems.add(rel, f'feature "{feature}" needs {need}')
         boards[name] = data
         if not well_formed:
             continue
-        if 'display-scan' in data.get('features', []):
-            if 'intf1' not in soc.get('display', {}) or 'clocks' not in soc:
-                problems.add(rel, f'feature "display-scan" needs intf1 in [display] and [clocks] in soc/{data.get("soc")}.toml')
-            if data.get('backlight', {}).get('panel_mode') == 'video':
-                problems.add(rel, 'feature "display-scan" is for a command-mode panel; [backlight] says video')
+        if 'display-scan' in data.get('features', []) and data.get('backlight', {}).get('panel_mode') == 'video':
+            problems.add(rel, 'feature "display-scan" is for a command-mode panel; [backlight] says video')
         light = data.get('backlight', {})
         if light.get('type') == 'dcs':
             for key in ('panel_mode', 'min', 'max', 'bytes'):
@@ -206,9 +257,6 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
-        for feature in data.get('features', []):
-            if feature in WRITES_TO_PMIC and 'spmi' in soc and 'channels' not in soc['spmi']:
-                problems.add(rel, f'feature "{feature}" needs channels in [spmi] of soc/{data.get("soc")}.toml')
         keys = data.get('buttons')
         if keys is not None:
             for key in ('pon', 'volume_up'):
@@ -535,6 +583,7 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list')
     commands.add_parser('show').add_argument('board')
+    commands.add_parser('status').add_argument('board')
     commands.add_parser('check')
     commands.add_parser('gen').add_argument('--check', action='store_true')
     new = commands.add_parser('new')
@@ -560,6 +609,10 @@ def main():
     if options.command == 'list':
         for name, board in sorted(boards.items()):
             print(f'{name:12} {board["soc"]:10} {board["description"]}')
+    elif options.command == 'status':
+        if options.board not in boards:
+            raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
+        print(status_text(options.board, boards[options.board], socs[boards[options.board]['soc']]), end='')
     elif options.command == 'show':
         if options.board not in boards:
             raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')

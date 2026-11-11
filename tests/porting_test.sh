@@ -198,6 +198,8 @@ refuses "thermal floors that do not match the SoC's groups are refused" "one val
 sed -i 's/^floor_mhz = \[900, 1200, 1300\]/floor_mhz = [900, 1200]/' "$R/devices/testphone/board.toml"
 check "... and taken when they do" sh -c "\"$B\" check && \"$B\" gen"
 says "the thermal limiter gets the SoC's sensor and the board's floors" "thermal tsens=0x4411000,0 floors=900,1200" ask testphone
+says "the tool says what can be turned on next" "buttons-pmic *can be listed" "$B" status testphone
+says "... and what the rest waits for" "gpu-a660 *needs \[gpu\] in the board file" "$B" status testphone
 # the keys: the tool found the arbiter and both peripherals in the tree, so the feature is all there is to add
 says "the SoC file has the PMIC arbiter of the tree" "spmi core=0x4440000 cnfg=0x440a000 observer=0x6600000 channels=0x4600000 ee=0" \
 	ask testphone
@@ -207,7 +209,7 @@ sed -i 's/"cpufreq-epss"/"cpufreq-epss", "buttons-pmic"/' "$R/devices/testphone/
 check "the keys' feature is added" sh -c "\"$B\" check && \"$B\" gen"
 says "... and the kernel has it" "buttons=1 pon=0x208" ask testphone
 sed -i '/^\[buttons\]/,/^$/d' "$R/devices/testphone/board.toml"
-refuses "without its section the feature is refused" 'feature "buttons-pmic" needs a \[buttons\] section' "$B" check
+refuses "without its section the feature is refused" 'feature "buttons-pmic" needs \[buttons\] in the board file' "$B" check
 printf '\n[buttons]\npon = 0x208\nvolume_up = 0x2c8\n' >> "$R/devices/testphone/board.toml"
 check "... and taken again with it written by hand" "$B" check
 sed -i 's/"cpufreq-epss"/"cpufreq-epss", "torch-pm8350c", "warp-drive"/' "$R/devices/testphone/board.toml"
