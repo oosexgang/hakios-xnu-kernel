@@ -394,20 +394,23 @@ class Check(Sandbox):
         self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
         listed = path.read_text()
         for section, reason in (
-                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n', None),
-                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\ncharge_counter_divisor = 100\n', None),
-                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\ncharge_counter_divisor = 0\n', 'must not be 0'),
-                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000001\n', 'whole pages'),
-                ('[adsp]\nfirmware = "/fw/../etc"\nmemory_size = 0x3000000\n', 'without slashes'),
-                ('[adsp]\nmemory_size = 0x3000000\n', '"firmware" is missing')):
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory = 0x86700000\nmemory_size = 0x3000000\n', None),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory = 0x86700000\nmemory_size = 0x3000000\ncharge_counter_divisor = 100\n', None),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory = 0x86700000\nmemory_size = 0x3000000\ncharge_counter_divisor = 0\n', 'must not be 0'),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory = 0x86700000\nmemory_size = 0x3000001\n', 'whole pages'),
+                ('[adsp]\nfirmware = "/fw/../etc"\nmemory = 0x86700000\nmemory_size = 0x3000000\n', 'without slashes'),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory = 0x86700123\nmemory_size = 0x3000000\n', 'on a page'),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n', '"memory" is missing'),
+                ('[adsp]\nmemory = 0x86700000\nmemory_size = 0x3000000\n', '"firmware" is missing')):
             with self.subTest(section=section):
                 path.write_text(listed + section)
                 if reason is None:
                     self.assertEqual(self.problems(), '')
                 else:
                     self.assertIn(reason, self.problems())
-        path.write_text(listed + '[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n')
-        self.assertIn('.adsp = { .firmware = "fw-audio-phone", .memory_size = 0x03000000, .charge_counter_divisor = 1 },',
+        path.write_text(listed + '[adsp]\nfirmware = "fw-audio-phone"\nmemory = 0x86700000\nmemory_size = 0x3000000\n')
+        self.assertIn('.adsp = { .firmware = "fw-audio-phone", .memory = 0x86700000, .memory_size = 0x03000000, '
+                      '.charge_counter_divisor = 1 },',
                       boards.table_text(*boards.load()))
 
     def test_a_gpu_is_described_in_full(self):
@@ -630,6 +633,23 @@ class Generate(Sandbox):
             iommu@3da0000 { compatible = "qcom,sc7280-smmu-500", "qcom,adreno-smmu", "qcom,smmu-500", "arm,mmu-500"; };
             iommu@15000000 { compatible = "qcom,sc7280-smmu-500", "qcom,smmu-500", "arm,mmu-500"; }; }; };''')
         self.assertEqual(soc['smmu'], {'apps': 0x15000000})
+
+    def test_the_audio_dsps_memory_is_found_and_offered(self):
+        source = '''/ {
+            reserved-memory { pil_adsp_mem: pil_adsp_region@86100000 { no-map; reg = <0x0 0x86100000 0x0 0x2100000>; };
+                              pil_cdsp_mem: cdsp@88200000 { no-map; reg = <0x0 0x88200000 0x0 0x1400000>; }; };
+            soc { qcom,turing@a300000 { qcom,firmware-name = "cdsp"; memory-region = <&pil_cdsp_mem>; };
+                  qcom,lpass@17300000 { qcom,firmware-name = "adsp"; memory-region = <&pil_adsp_mem>; qcom,pas-id = <1>; }; }; };'''
+        soc, board, notes = devicetree.from_dts(source)
+        self.assertEqual(board['adsp'], {'memory': 0x86100000, 'memory_size': 0x2100000})    # the audio DSP's, not another's
+        dts = self.dir / 'dsp.dts'
+        dts.write_text(source)
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone4', 'sm0001', dts)
+        text = (self.dir / 'devices/phone4/board.toml').read_text()
+        # offered, not switched on: the section is a comment until the firmware's directory is named
+        self.assertIn('# [adsp]\n# firmware = "fw-audio-phone4"\n# memory = 0x86100000\n# memory_size = 0x02100000\n', text)
+        self.assertEqual(self.problems(), '')
 
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in

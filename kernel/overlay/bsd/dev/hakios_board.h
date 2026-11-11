@@ -159,7 +159,8 @@ struct hakios_board {
 	/* the audio DSP (board: [adsp]) */
 	struct {
 		const char *firmware;           /* the root's directory with the DSP's image (adsp.mdt and its parts) */
-		uint32_t memory_size;           /* how much of its reserved memory the image may take */
+		uint32_t memory;                /* where its reserved memory is */
+		uint32_t memory_size;           /* how much of it the image may take */
 		uint32_t charge_counter_divisor;        /* the battery manager's charge counter, in this many parts of a uAh */
 	} adsp;
 

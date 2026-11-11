@@ -39,6 +39,7 @@ volume_up_name = "GPIO6 of the PM8350"
 # The audio DSP, and the battery manager behind it.
 [adsp]
 firmware = "fw-audio-cmd"        # the root's directory with this phone's adsp.mdt and its parts
+memory = 0x86700000                 # the DSP's reserved memory (adsp@86700000)
 memory_size = 0x03000000            # 48 MiB of the DSP's reserved memory (adsp@86700000)
 charge_counter_divisor = 100        # this gauge counts charge in 1/100 uAh (qti_battery_charger.c)
 

@@ -56,6 +56,8 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # [adsp]
 # firmware = "fw-audio-NAME"        # the root's directory with this phone's adsp.mdt and adsp.bNN (signed for
 #                                   # the phone: take them from its own firmware partition)
+# memory = 0x86700000               # where the DSP's reserved memory is: the reserved-memory node that the
+#                                   # memory-region of the node with qcom,firmware-name = "adsp" points at
 # memory_size = 0x03000000          # how much of the DSP's reserved memory the image may take: the size of the
 #                                   # reserved-memory node the DSP's memory-region points at
 # charge_counter_divisor = 100      # 100 when the battery manager counts charge in 1/100 uAh (a gauge that is

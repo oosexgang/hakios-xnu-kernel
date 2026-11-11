@@ -88,7 +88,8 @@ BOARD_SCHEMA = {
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
-    'adsp': {'firmware': (str, True), 'memory_size': (int, True), 'charge_counter_divisor': (int, False)},
+    'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
+             'charge_counter_divisor': (int, False)},
     'gpu': {'model': (str, True), 'chip_id': (int, True), 'firmware': (str, True), 'gmem_kb': (int, True),
             'primitive_fifo': (int, True), 'hang_cycles': (int, True), 'uche_cmdq_config': (int, False),
             'speed_fuse': (int, True), 'gaming_fuse': (int, True), 'highest_bank_bit': (int, True),
@@ -369,6 +370,8 @@ def load(problems=None):
         if adsp is not None:
             if adsp['memory_size'] == 0 or adsp['memory_size'] & 0xfff:
                 problems.add(f'{rel} [adsp]', 'memory_size: whole pages, and not 0')
+            if adsp['memory'] == 0 or adsp['memory'] & 0xfff:
+                problems.add(f'{rel} [adsp]', 'memory: the address of the DSP\'s reserved memory, on a page, and not 0')
             if adsp.get('charge_counter_divisor', 1) == 0:
                 problems.add(f'{rel} [adsp]', 'charge_counter_divisor must not be 0')
             if not re.fullmatch(r'[A-Za-z0-9._-]+', adsp['firmware']):
@@ -540,7 +543,8 @@ def table_text(socs, boards):
             out.append(f'\t\t.buttons = {{ .pon = {keys["pon"]:#05x}, .volume_up = {keys["volume_up"]:#05x}{names} }},')
         adsp = board.get('adsp')
         if adsp:
-            out.append(f'\t\t.adsp = {{ .firmware = {c_string(adsp["firmware"])}, .memory_size = {adsp["memory_size"]:#010x}, '
+            out.append(f'\t\t.adsp = {{ .firmware = {c_string(adsp["firmware"])}, .memory = {adsp["memory"]:#010x}, '
+                       f'.memory_size = {adsp["memory_size"]:#010x}, '
                        f'.charge_counter_divisor = {adsp.get("charge_counter_divisor", 1)} }},')
         radio = board.get('wifi')
         if radio:
@@ -798,6 +802,15 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         lines += [f'{key} = {keys[key]:#05x}' if isinstance(keys[key], int) else f'{key} = {toml_value(keys[key])}'
                   for key in ('pon', 'pon_name', 'volume_up', 'volume_up_name') if key in keys]
         lines.append('')
+    dsp = board.get('adsp', {})
+    if 'memory' in dsp:
+        lines += ['# The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',
+                  "# this phone's adsp.mdt and its parts is yours to name (devices/_template/board.toml).",
+                  '# [adsp]',
+                  '# firmware = "fw-audio-' + name + '"',
+                  f'# memory = {dsp["memory"]:#010x}',
+                  f'# memory_size = {dsp["memory_size"]:#010x}',
+                  '']
     board_path.parent.mkdir(parents=True)
     board_path.write_text('\n'.join(lines))
     print(f'wrote {shown(board_path)}')

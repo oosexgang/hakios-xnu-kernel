@@ -35,6 +35,7 @@ volume_up_name = "GPIO6 of the PM7325"
 # The audio DSP, and the battery manager behind it.
 [adsp]
 firmware = "fw-audio-video"
+memory = 0x86700000                 # the DSP's reserved memory (adsp@86700000)
 memory_size = 0x04000000            # 64 MiB of the DSP's reserved memory (adsp@86700000)
 
 # The GPU. Sources: yupik-gpu.dtsi, Linux's adreno-gpulist.h and adreno_a6xx_gmu.c.

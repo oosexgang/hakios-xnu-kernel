@@ -51,7 +51,7 @@ known_phone(void)
 	    b->rpmh.rsc == 0x18220000 && b->rpmh.tcs_offset == 0xd00, "RPMh for the memory vote");
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
 	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-cmd") == 0 &&
-	    b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
+	    b->adsp.memory == 0x86700000 && b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
 	/* its GPU's blocks, as its SoC's file has them */
 	CHECK(b != NULL && b->adreno.gpu == 0x03d00000 && b->adreno.gmu == 0x03d6a000 && b->adreno.gpucc == 0x03d90000 &&
 	    b->adreno.cx_misc == 0x03d9e000 && b->adreno.rscc == 0x03de0000 && b->adreno.smmu == 0x03da0000 &&
@@ -190,7 +190,7 @@ table(void)
 		    "%s: a driver that talks to another processor without [ipc]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
-		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
+		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory != 0 && b->adsp.memory_size != 0 &&
 		    b->adsp.charge_counter_divisor != 0), "%s: adsp without [adsp]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_GPU_A660) || (b->adreno.gpu != 0 && b->adreno.gmu != 0 && b->adreno.gpucc != 0 &&
 		    b->adreno.cx_misc != 0 && b->adreno.rscc != 0 && b->adreno.smmu != 0 && b->adreno.pdc != 0 &&

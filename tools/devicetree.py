@@ -190,6 +190,11 @@ def from_dts(text, panel=None):
                     base, stride = only_reg(block)[0] + where[-2], where[-1]
                 if base:
                     ipc['smem_lock'] = base + stride * which[-1]
+        # the audio DSP's reserved memory: what the node that loads "adsp" points at
+        if strings(node.props.get('qcom,firmware-name')) == ['adsp']:
+            region = referred(tree, node.props.get('memory-region'))
+            if region is not None and only_reg(region)[0]:
+                board['adsp'] = dict(zip(('memory', 'memory_size'), only_reg(region)))
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
         if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):
