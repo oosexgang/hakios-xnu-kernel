@@ -373,7 +373,7 @@ step_outside(void)
 	get(&gcc, "gpu_snoc_dvm_gfx", GCC_GPU_SNOC_DVM_GFX_CBCR);
 	get(&gcc, "ddrss_gpu_axi", GCC_DDRSS_GPU_AXI_CBCR);
 
-	announce("look up the GPU's supply rails in the boot loader's list of RPMh resources (memory at 0x80860000)");
+	announce("look up the GPU's supply rails in the boot loader's list of RPMh resources (the command database)");
 	show_rpmh_resource("gfx.lvl");          /* the 3D core's own rail (dt: VDD_GFX_LEVEL, PM8350C S7) */
 	show_rpmh_resource("cx.lvl");           /* the rail of the CX half, shared with most of the SoC */
 	show_rpmh_resource("mx.lvl");           /* memories */
