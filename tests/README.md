@@ -42,11 +42,23 @@ loader is built. What is not installed is left out, and said.
 
 `fakekernel/` has just enough of XNU's interfaces for a driver's own source file to be compiled as a
 host program: threads are pthreads, the clock is the host's, sysctls go into a table the test reads
-and writes, boot arguments are a string the test sets. A driver reaches hardware through one seam: its `rd()` and
-`wr()` are `hakios_mmio.h`'s, and built with `HAKIOS_MMIO_TEST` they are the test's `hakios_test_rd()`
-and `hakios_test_wr()`, behind which the test puts a model of the registers. The model of the PMIC arbiter is shared (`tests/spmi_model.h`), and a driver's
-`/dev` node is read and written by its name (`fake_dev_read()`, `fake_dev_write()`). The file that is
-tested is the file the kernel compiles.
+and writes, boot arguments are a string the test sets, the kernel has as many cores as the test says.
+A driver reaches hardware through one seam: its `rd()` and `wr()` are `hakios_mmio.h`'s, and built
+with `HAKIOS_MMIO_TEST` they are the test's `hakios_test_rd()` and `hakios_test_wr()`, behind which
+the test puts a model of the registers. A driver's `/dev` node is read and written by its name
+(`fake_dev_read()`, `fake_dev_write()`). The file that is tested is the file the kernel compiles.
+
+The models that several tests use are headers:
+
+| Header | What it models |
+| --- | --- |
+| `spmi_model.h` | The PMIC arbiter, with the peripherals a test puts behind it. It can refuse a write, fail a transfer, or never answer. |
+| `rsc_model.h` | The first command slot set of an RPMh sequencer. It records what is triggered, can be deaf or busy, and notices commands written while the set is triggered. |
+| `tlmm_model.h` | The SoC's pins. It notices a pin made an output before its level was set, and writes outside a pin's two registers. |
+| `cmd_db_image.h` | A command database built in the test's memory, with a canary behind it. |
+
+Each takes its addresses from the board the driver under test reads, so a wrong address in a driver
+is an access to nothing, which the model counts.
 
 A scenario is a process: a driver looks its board up once and starts its threads once, as in the
 kernel. Run without an argument a test lists its scenarios; `tests/run.sh` runs each.
