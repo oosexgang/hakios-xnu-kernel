@@ -47,6 +47,12 @@ body:
       description: "If the board file exists. It lists every feature for the board: on, ready to be listed, or the section it still needs."
       render: text
   - type: textarea
+    id: compare
+    attributes:
+      label: Last lines of tools/boards.py compare NAME --dts your.dts
+      description: "The summary line, and every line that says THE TREE SAYS: where the files differ from the phone's own device tree. The tree itself stays with you."
+      render: text
+  - type: textarea
     id: blocking
     attributes:
       label: What is blocking
