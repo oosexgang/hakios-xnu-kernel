@@ -1,0 +1,1962 @@
+diff --git a/bsd/dev/arm/km.c b/bsd/dev/arm/km.c
+--- a/bsd/dev/arm/km.c
++++ b/bsd/dev/arm/km.c
+@@ -199,6 +199,15 @@ kmioctl(dev_t dev, u_long cmd, caddr_t data, int flag, proc_t p)
+ 		error = EINVAL;
+ 		break;
+ 
++	case TIOCSCTTY:
++		/*
++		 * The console is every daemon's standard error in this system. If
++		 * the first session leader to open it took it for its controlling
++		 * terminal, its exit would revoke the console for all the others.
++		 */
++		error = ENOTTY;
++		break;
++
+ 	/* Bodge in the CLOCAL flag as the km device is always local */
+ 	case TIOCSETA_32:
+ 	case TIOCSETAW_32:
+@@ -246,6 +255,9 @@ fallthrough:
+  *		assumptions here, this routine should be static (and
+  *		inlined, given there is only one call site).
+  */
++
++extern void loader_log_putc(char c);
++
+ int
+ kmputc(__unused dev_t dev, char c)
+ {
+@@ -357,6 +369,8 @@ kmoutput(struct tty * tp)
+ 		for (cp = buf; cp < &buf[cc]; cp++) {
+ 			/* output the buffer one charatcer at a time */
+ 			*cp = *cp & 0x7f;
++			/* What user space writes to /dev/console also goes to the loader's log. */
++			loader_log_putc((char)*cp);
+ 		}
+ 		if (cc > 1) {
+ 			console_write((char *)buf, cc);
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -75,6 +75,9 @@
+ #include <sys/kdebug.h>
+ 
+ #include <pexpert/pexpert.h>
++#if defined(__arm64__)
++#include <arm64/psci_smp.h>
++#endif
+ 
+ #include <console/serial_protos.h>
+ 
+@@ -345,7 +348,11 @@ arm_auxkc_init(void *mh, void *base)
+  */
+ 
+ __startup_func
++/* Bring-up checkpoints, see osfmk/arm64/loader_return.c */
++extern void loader_checkpoint(uint64_t n);
++
+ void
++
+ arm_init(
+ 	boot_args       *args)
+ {
+@@ -356,9 +363,12 @@ arm_init(
+ 	DTEntry chosen = NULL;
+ 	unsigned int dt_entry_size = 0;
+ 
++	loader_checkpoint(30);   /* hakios: reached arm_init (C) at all (ret from start.s worked) */
+ 	arm_slide_rebase_and_sign_image();
++	loader_checkpoint(31);   /* past slide/rebase/sign */
+ 
+ 	arm_static_if_init(args);
++	loader_checkpoint(32);   /* past static_if_init */
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
+@@ -368,7 +378,9 @@ arm_init(
+ 	reset_vector_vaddr = (vm_offset_t) &LowResetVectorBase;
+ #endif /* APPLEVIRTUALPLATFORM */
+ 
++	loader_checkpoint(4);   /* before cpu_data_init */
+ 	cpu_data_init(&BootCpuData);
++	loader_checkpoint(5);   /* past cpu_data_init */
+ #if defined(HAS_APPLE_PAC)
+ 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
+ 	BootCpuData.rop_key = ml_default_rop_pid();
+@@ -376,6 +388,7 @@ arm_init(
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	loader_checkpoint(6);   /* past PE_init_platform */
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
+@@ -489,12 +502,16 @@ arm_init(
+ 	 * preemption level is not really meaningful for the bootstrap thread.
+ 	 */
+ 	thread->machine.preemption_count = 0;
++	loader_checkpoint(44);
+ 	cpu_bootstrap();
++	loader_checkpoint(13);
+ 
+ 	rtclock_early_init();
++	loader_checkpoint(14);
+ 
+ 	kernel_debug_string_early("kernel_startup_bootstrap");
+ 	kernel_startup_bootstrap();
++	loader_checkpoint(15);
+ 
+ 	/*
+ 	 * Initialize the timer callout world
+@@ -502,6 +519,7 @@ arm_init(
+ 	timer_call_init();
+ 
+ 	cpu_init();
++	loader_checkpoint(16);
+ 
+ 	processor_bootstrap();
+ 
+@@ -583,8 +601,11 @@ arm_init(
+ 
+ 	/* Setup debugging output. */
+ 	const unsigned int serial_exists = serial_init();
++	loader_checkpoint(18);
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
++	loader_checkpoint(19);
+ 	kprintf("kprintf initialized\n");
++	loader_checkpoint(50);   /* hakios: past the first kprintf */
+ 
+ 	serialmode = 0;
+ 	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+@@ -614,6 +635,7 @@ arm_init(
+ 		}
+ 		serial_set_on_demand(on_demand);
+ 	}
++	loader_checkpoint(51);   /* hakios: past the serial boot-arg block */
+ 	if (kern_feature_override(KF_SERIAL_OVRD)) {
+ 		serialmode = 0;
+ 	}
+@@ -624,7 +646,9 @@ arm_init(
+ 		(void)switch_to_serial_console(); /* Switch into serial mode from video console */
+ 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+ 	}
++	loader_checkpoint(52);   /* hakios: about to PE_create_console */
+ 	PE_create_console();
++	loader_checkpoint(20);
+ 
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
+@@ -687,6 +711,7 @@ arm_init(
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
++	loader_checkpoint(21);
+ 	machine_startup(args);
+ }
+ 
+@@ -696,6 +721,75 @@ arm_init(
+  *    Runs on S2R resume (all CPUs) and SMP boot (non-boot CPUs only).
+  */
+ 
++
++#if HAS_STD_PAC        /* renoir: pacib and the key registers do not exist on an ARMv8.2 core */
++/*
++ * hakios: the IB key a core really uses, before and after rewriting TTBR0 (which the hypervisor may
++ * trap): pacib of a fixed value is its fingerprint, the register read-back what the core claims. A
++ * leaf function, so that it signs no return address of its own across the write.
++ */
++struct hk_ibprobe { uint64_t before, after, reg_before, reg_after, cpacr, ttbr; };
++static void __attribute__((noinline))
++hk_ib_probe(struct hk_ibprobe *r)
++{
++	uint64_t v, ttbr;
++
++	__asm__ volatile ("mrs %0, cpacr_el1" : "=r" (r->cpacr));
++	v = 0xfffffff007004000ULL;
++	__asm__ volatile (".arch_extension pauth\n pacib %0, %1" : "+r" (v) : "r" (0x1234ULL));
++	r->before = v;
++	__asm__ volatile ("mrs %0, APIBKeyLo_EL1" : "=r" (r->reg_before));
++	__asm__ volatile ("mrs %0, ttbr0_el1\n msr ttbr0_el1, %0\n isb" : "=r" (ttbr) : : "memory");
++	r->ttbr = ttbr;
++	v = 0xfffffff007004000ULL;
++	__asm__ volatile ("pacib %0, %1" : "+r" (v) : "r" (0x1234ULL));
++	r->after = v;
++	__asm__ volatile ("mrs %0, APIBKeyLo_EL1" : "=r" (r->reg_after));
++}
++
++extern void loader_log_line(const char *line);
++
++/* no printf: on a core whose CPACR is not what was written, varargs (SIMD registers) trap */
++static char *
++hk_hex(char *o, uint64_t v)
++{
++	for (int i = 60; i >= 0; i -= 4) {
++		*o++ = "0123456789abcdef"[(v >> i) & 15];
++	}
++	*o++ = ' ';
++	return o;
++}
++
++void hk_ib_report(const char *where);
++void
++hk_ib_report(const char *where)
++{
++	struct hk_ibprobe r;
++	char line[200], *o = line;
++	const char *prefix = "hakios: ib ";
++
++	hk_ib_probe(&r);
++	while (*prefix) {
++		*o++ = *prefix++;
++	}
++	while (*where && o < line + 40) {
++		*o++ = *where++;
++	}
++	*o++ = ' ';
++	*o++ = (char)('0' + cpu_number());
++	*o++ = ' ';
++	o = hk_hex(o, r.before);
++	o = hk_hex(o, r.after);
++	o = hk_hex(o, r.reg_before);
++	o = hk_hex(o, r.reg_after);
++	o = hk_hex(o, r.cpacr);
++	o = hk_hex(o, r.ttbr);
++	*o++ = '\n';
++	*o = 0;
++	loader_log_line(line);
++}
++#endif /* HAS_STD_PAC */
++
+ void
+ arm_init_cpu(
+ 	cpu_data_t      *cpu_data_ptr,
+@@ -719,6 +813,10 @@ arm_init_cpu(
+ 
+ 
+ 	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
++#if defined(GENERIC_PSCI_SMP)
++	/* hakios: tell the PSCI SMP bring-up this secondary core reached arm_init_cpu() */
++	psci_smp_cpu_reached(PSCI_SMP_CPU_IN_KERNEL);
++#endif
+ 
+ #if APPLE_ARM64_ARCH_FAMILY
+ 	configure_late_apple_regs(false);
+@@ -750,6 +848,7 @@ arm_init_cpu(
+ 
+ #if __arm64__
+ 	wfe_timeout_init();
++
+ 	pmap_clear_user_ttb();
+ 	flush_mmu_tlb();
+ #endif
+diff --git a/osfmk/arm/model_dep.c b/osfmk/arm/model_dep.c
+--- a/osfmk/arm/model_dep.c
++++ b/osfmk/arm/model_dep.c
+@@ -86,6 +86,9 @@
+ #include <arm/cpu_data_internal.h>
+ #include <arm/cpu_internal.h>
+ #include <arm/misc_protos.h>
++#if defined(__arm64__)
++#include <arm64/psci_smp.h>
++#endif
+ #include <libkern/OSKextLibPrivate.h>
+ #include <vm/vm_kern.h>
+ #include <kern/kern_cdata.h>
+@@ -1368,6 +1371,13 @@ wait_while_mp_kdp_trap(bool check_SIGPdebug)
+ 			found_SIGPdebug = true;
+ 			break;
+ 		}
++#if defined(GENERIC_PSCI_SMP)
++		/*
++		 * The panic this processor is waiting out ends in a return to the boot loader:
++		 * its interrupts are off here, so this is where it is told (psci_smp.c).
++		 */
++		psci_smp_stop_here();
++#endif
+ 		__builtin_arm_wfe();
+ 	}
+ 	os_atomic_clear_exclusive();
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -93,6 +93,8 @@
+ 
+ #include <pexpert/device_tree.h>
+ 
++MARK_AS_PMAP_TEXT static void pmap_phys_write_disable(vm_address_t va);
++
+ #include <san/kasan.h>
+ #include <sys/cdefs.h>
+ 
+@@ -128,6 +130,11 @@ _Static_assert(ARM_PGBYTES == PMAP_ROOT_ALLOC_SIZE, "Unexpected L1 Size");
+ 
+ extern u_int32_t random(void); /* from <libkern/libkern.h> */
+ 
++/* hakios: a physical range of RAM outside the kernel's window that VM_WIMG_WCOMB maps as Normal
++ * non-cacheable (see wimg_to_pte); set by a driver before it maps its DMA memory there */
++extern pmap_paddr_t hakios_normal_nc_lo, hakios_normal_nc_hi;
++pmap_paddr_t hakios_normal_nc_lo, hakios_normal_nc_hi;
++
+ static bool alloc_asid(pmap_t pmap);
+ static void free_asid(pmap_t pmap);
+ static void flush_mmu_tlb_region_asid_async(vm_offset_t va, size_t length, pmap_t pmap, bool last_level_only, bool strong);
+@@ -4952,8 +4959,8 @@ pmap_page_protect_options_with_flush_range(
+ 			}
+ #endif
+ 			if (remove && (options & PMAP_OPTIONS_COMPRESSOR)) {
+-				panic("pmap_page_protect: attempt to compress ppnum 0x%x owned by iommu %p, pve_p=%p",
+-				    ppnum, ptep_get_iommu(pte_p), pve_p);
++				panic("pmap_page_protect: attempt to compress ppnum 0x%x owned by iommu, pte_p=%p, pve_p=%p",
++				    ppnum, pte_p, pve_p);
+ 			}
+ 			goto protect_skip_pve_pass1;
+ 		}
+@@ -6028,7 +6035,11 @@ wimg_to_pte(unsigned int wimg, pmap_paddr_t pa)
+ 		pte |= ARM_PTE_NX | ARM_PTE_PNX;
+ 		break;
+ 	case VM_WIMG_WCOMB:
+-		if (is_dram_addr(pa)) {
++		/* hakios: RAM outside the kernel's own window that a driver uses for DMA (such as Wi-Fi heap in
++		 * the loader's lowdma=) is RAM all the same, and must be Normal non-cacheable rather than
++		 * Device: the driver bzero()s and memcpy()s it, and DC ZVA or an unaligned access to Device
++		 * memory is an alignment fault (panic "Unaligned kernel data abort" in bzero). */
++		if (is_dram_addr(pa) || (pa >= hakios_normal_nc_lo && pa < hakios_normal_nc_hi)) {
+ 			pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITECOMB);
+ 		} else {
+ #if HAS_FEAT_XS
+@@ -7235,7 +7246,8 @@ void
+ pmap_sync_page_attributes_phys(
+ 	ppnum_t pp)
+ {
+-	flush_dcache((vm_offset_t) (pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
++	/* (redwood: the page number is 32 bits wide and memory goes on above 4 GB: widen before shifting) */
++	flush_dcache((vm_offset_t) pp << PAGE_SHIFT, PAGE_SIZE, TRUE);
+ }
+ 
+ #if CONFIG_COREDUMP
+@@ -12243,7 +12255,8 @@ pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+ #if XNU_MONITOR
+ 	pmap_ppl_lockdown_pages(kva, size, PVH_FLAG_LOCKDOWN_CS, ppl_writable);
+ #else
+-	pmap_ppl_lockdown_pages(kva, size, 0, ppl_writable);
++	/* No PPL on this platform: nothing to lock down. */
++	(void)kva; (void)size; (void)ppl_writable;
+ #endif
+ }
+ 
+@@ -12253,7 +12266,8 @@ pmap_cs_unlockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+ #if XNU_MONITOR
+ 	pmap_ppl_unlockdown_pages(kva, size, PVH_FLAG_LOCKDOWN_CS, ppl_writable);
+ #else
+-	pmap_ppl_unlockdown_pages(kva, size, 0, ppl_writable);
++	/* No PPL on this platform: nothing to lock down. */
++	(void)kva; (void)size; (void)ppl_writable;
+ #endif
+ }
+ 
+diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
+--- a/osfmk/arm/pmap/pmap.h
++++ b/osfmk/arm/pmap/pmap.h
+@@ -116,7 +116,13 @@
+  */
+ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
+ #else /* defined(ARM_LARGE_MEMORY) */
+-#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
++/*
++ * With 4K pages every GB of DRAM costs one L2 page in each of the two
++ * bootstrap mappings (start.s maps all of memSize). Apple sized this for a
++ * 2 GB device (8 pages); 20 pages cover 8 GB, enough for a boot image of
++ * several GB next to the kernel.
++ */
++#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 20)
+ #endif /* defined(ARM_LARGE_MEMORY) */
+ 
+ typedef uint64_t tt_entry_t; /* translation table entry type */
+diff --git a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
+--- a/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
++++ b/osfmk/arm64/corecrypto/arm64_isa_compatibility.h
+@@ -37,7 +37,7 @@
+ // #include <Availability.h>
+ #include <sys/cdefs.h>
+ 
+-#if defined(__clang__) && ((defined(__apple_build_version__) && __apple_build_version__ > 5010000))
++#if defined(__clang__) && (!defined(__apple_build_version__) || __apple_build_version__ > 5010000)
+ #define __USES_V_CRYPTO_INTRINSICS 1
+ #else
+ #define __USES_V_CRYPTO_INTRINSICS 0
+diff --git a/osfmk/arm64/cpu.c b/osfmk/arm64/cpu.c
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -586,7 +586,12 @@ cpu_idle(void)
+ #endif /* CONFIG_CPU_COUNTERS */
+ 
+ 	if (wfi) {
+-#if !defined(APPLE_ARM64_ARCH_FAMILY)
++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !defined(GENERIC_PSCI_SMP)
++		/*
++		 * (Not on the generic boards either. There a core keeps its cache while it waits,
++		 * and this would empty it by set and way every time: slow, wrong among several
++		 * processors, and under a hypervisor every one of those instructions is a trap.)
++		 */
+ 		platform_cache_idle_enter();
+ #endif
+ 
+diff --git a/osfmk/arm64/kpc.c b/osfmk/arm64/kpc.c
+--- a/osfmk/arm64/kpc.c
++++ b/osfmk/arm64/kpc.c
+@@ -1,180 +1,88 @@
+ /*
+- * Copyright (c) 2012-2023 Apple Inc. All rights reserved.
+- *
+- * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+- *
+- * This file contains Original Code and/or Modifications of Original Code
+- * as defined in and that are subject to the Apple Public Source License
+- * Version 2.0 (the 'License'). You may not use this file except in
+- * compliance with the License. The rights granted to you under the License
+- * may not be used to create, or enable the creation or redistribution of,
+- * unlawful or unlicensed copies of an Apple operating system, or to
+- * circumvent, violate, or enable the circumvention or violation of, any
+- * terms of an Apple operating system software license agreement.
+- *
+- * Please obtain a copy of the License at
+- * http://www.opensource.apple.com/apsl/ and read it before using this file.
+- *
+- * The Original Code and all software distributed under the License are
+- * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+- * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+- * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+- * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+- * Please see the License for the specific language governing rights and
+- * limitations under the License.
+- *
+- * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
++ * Machine-dependent kpc (kernel performance counters) for non-Apple ARMv8
++ * cores. Apple does not publish its arm64 kpc.c. This version reports a PMU
++ * with no counters, so the kpc/kperf machinery stays linked but inert.
+  */
+-
+-#include <arm/cpu_data_internal.h>
+-#include <arm/cpu_internal.h>
+-#include <kern/cpu_number.h>
+ #include <kern/kpc.h>
+-#include <kern/thread.h>
+-#include <kern/processor.h>
+-#include <mach/mach_types.h>
+-#include <machine/machine_routines.h>
+-#include <kern/cpc.h>
+-#include <stdint.h>
++#include <kern/kern_types.h>
++#include <mach/kern_return.h>
+ #include <sys/errno.h>
+ 
+-// KPC's implementation is maintained for backwards-compatibility,
+-// but on ARM, its internals have been replaced by CPC.
+-
+-#if HAS_CPMU_PC_CAPTURE
+-int kpc_pc_capture = 1;
+-#else /* HAS_CPMU_PC_CAPTURE */
+ int kpc_pc_capture = 0;
+-#endif /* !HAS_CPMU_PC_CAPTURE */
+-
+-static uint64_t _kpc_read_pmesr(uint32_t counter);
+ 
+-#define KPC_ARM64_FIXED_COUNT        (2)
+-#define KPC_ARM64_CONFIGURABLE_COUNT (CPMU_PMC_COUNT - KPC_ARM64_FIXED_COUNT)
+-
+-#if CPMU_64BIT_PMCS
+-#define KPC_ARM64_COUNTER_WIDTH    (63)
+-#define KPC_ARM64_COUNTER_OVF_BIT  (63)
+-#else // CPMU_64BIT_PMCS
+-#define KPC_ARM64_COUNTER_WIDTH    (47)
+-#define KPC_ARM64_COUNTER_OVF_BIT  (47)
+-#endif // !CPMU_64BIT_PMCS
+-
+-/*
+- * Configuration registers that can be controlled by RAWPMU:
+- *
+- * All: PMCR2-4, OPMAT0-1, OPMSK0-1.
+- * Later: PM_MEMFLT_CTL23, PM_MEMFLT_CTL45, PMEFR2-9.
+- */
+-#if CPMU_EVENT_FILTERING
+-#define RAWPMU_CONFIG_COUNT 17
+-#else /* CPMU_EVENT_FILTERING */
+-#define RAWPMU_CONFIG_COUNT 7
+-#endif /* !CPMU_EVENT_FILTERING */
+-
+-#if CPMU_16BIT_EVENTS
+-#define PMESR_PMC_WIDTH UINT64_C(16)
+-#define PMESR_PMC_MASK  ((uint64_t)UINT16_MAX)
+-#else // CPMU_16BIT_EVENTS
+-#define PMESR_PMC_WIDTH UINT64_C(8)
+-#define PMESR_PMC_MASK  ((uint64_t)UINT8_MAX)
+-#endif // !CPMU_16BIT_EVENTS
+-
+-#define CFGWORD_EL0A32EN_MASK (0x10000)
+-#define CFGWORD_EL0A64EN_MASK (0x20000)
+-#define CFGWORD_EL1EN_MASK    (0x40000)
+-#define CFGWORD_EL3EN_MASK    (0x80000)
+-
+-kpc_config_t
+-kpc_config_arch_process(kpc_config_t config)
++void
++kpc_arch_init(void)
+ {
+-	if (cpc_is_secure()) {
+-		config &= ~CFGWORD_EL1EN_MASK;
+-	}
+-	return config;
+ }
+ 
+-cpc_event_flags_t
+-kpc_config_arch_flags(kpc_config_t config)
++uint32_t
++kpc_get_classes(void)
+ {
+-	// The low 16 bits of a configuration word selects the event.
+-	// Bits 16-19 are mapped to exception level filters.
+-
+-	cpc_event_flags_t flags = CPC_EF_NONE;
+-	// Assume no masks means all masks on.
+-	kpc_config_t all_on = CFGWORD_EL0A64EN_MASK | CFGWORD_EL0A32EN_MASK;
+-	if (!cpc_is_secure()) {
+-		all_on |= CFGWORD_EL1EN_MASK;
+-	}
+-	if ((config & (CFGWORD_EL0A64EN_MASK | CFGWORD_EL0A32EN_MASK |
+-	    CFGWORD_EL1EN_MASK)) == 0) {
+-		config |= all_on;
+-	}
+-	if (!(config & (CFGWORD_EL0A64EN_MASK | CFGWORD_EL0A32EN_MASK))) {
+-		flags |= CPC_EF_NO_USER;
+-	}
+-	if (!(config & CFGWORD_EL1EN_MASK)) {
+-		flags |= CPC_EF_NO_KERNEL;
+-	}
+-	return flags;
++	return 0;
+ }
+ 
+-#pragma mark - Non-CPC
+-
+-static uint32_t kpc_xread_sync;
+-static void
+-kpc_get_curcpu_counters_xcall(void *args)
++int
++kpc_get_pmu_version(void)
+ {
+-	struct kpc_get_counters_remote *handler = args;
+-
+-	assert(handler != NULL);
+-	assert(handler->buf != NULL);
++	return KPC_PMU_ERROR;
++}
+ 
+-	int offset = cpu_number() * handler->buf_stride;
+-	int r = kpc_get_curcpu_counters(handler->classes, NULL, &handler->buf[offset]);
++int
++kpc_set_sw_inc(uint32_t mask __unused)
++{
++	return ENOTSUP;
++}
+ 
+-	/* number of counters added by this CPU, needs to be atomic  */
+-	os_atomic_add(&(handler->nb_counters), r, relaxed);
++void
++kpc_idle(void)
++{
++}
+ 
+-	if (os_atomic_dec(&kpc_xread_sync, relaxed) == 0) {
+-		thread_wakeup((event_t) &kpc_xread_sync);
+-	}
++void
++kpc_idle_exit(void)
++{
+ }
+ 
+ int
+-kpc_get_all_cpus_counters(uint32_t classes, int *curcpu, uint64_t *buf)
++kpc_get_all_cpus_counters(uint32_t classes __unused, int *curcpu __unused, uint64_t *buf __unused)
+ {
+-	assert(buf != NULL);
++	return 0;
++}
+ 
+-	int enabled = ml_set_interrupts_enabled(FALSE);
++int
++kpc_get_fixed_counters(uint64_t *counterv __unused)
++{
++	return 0;
++}
+ 
+-	if (curcpu) {
+-		*curcpu = cpu_number();
+-	}
+-	struct kpc_get_counters_remote hdl = {
+-		.classes = classes,
+-		.nb_counters = 0,
+-		.buf = buf,
+-		.buf_stride = kpc_get_counter_count(classes)
+-	};
+-	cpu_broadcast_xcall(&kpc_xread_sync, TRUE, kpc_get_curcpu_counters_xcall, &hdl);
+-	int offset = hdl.nb_counters;
++int
++kpc_get_configurable_counters(uint64_t *counterv __unused, uint64_t pmc_mask __unused)
++{
++	return 0;
++}
+ 
+-	(void)ml_set_interrupts_enabled(enabled);
++boolean_t
++kpc_is_running_fixed(void)
++{
++	return FALSE;
++}
+ 
+-	return offset;
++boolean_t
++kpc_is_running_configurable(uint64_t pmc_mask __unused)
++{
++	return FALSE;
+ }
+ 
+ uint32_t
+ kpc_fixed_count(void)
+ {
+-	return KPC_ARM64_FIXED_COUNT;
++	return 0;
+ }
+ 
+ uint32_t
+ kpc_configurable_count(void)
+ {
+-	return KPC_ARM64_CONFIGURABLE_COUNT;
++	return 0;
+ }
+ 
+ uint32_t
+@@ -184,177 +92,61 @@ kpc_fixed_config_count(void)
+ }
+ 
+ uint32_t
+-kpc_configurable_config_count(uint64_t pmc_mask)
++kpc_configurable_config_count(uint64_t pmc_mask __unused)
+ {
+-	assert3u(kpc_popcount(pmc_mask), <=, kpc_configurable_count());
+-	return kpc_popcount(pmc_mask);
++	return 0;
+ }
+ 
+-int
+-kpc_get_fixed_config(kpc_config_t *configv __unused)
++uint32_t
++kpc_rawpmu_config_count(void)
+ {
+ 	return 0;
+ }
+ 
+-uint64_t
+-kpc_fixed_max(void)
++int
++kpc_get_fixed_config(kpc_config_t *configv __unused)
+ {
+-	return (1ULL << KPC_ARM64_COUNTER_WIDTH) - 1;
++	return 0;
+ }
+ 
+-uint64_t
+-kpc_configurable_max(void)
++int
++kpc_get_configurable_config(kpc_config_t *configv __unused, uint64_t pmc_mask __unused)
+ {
+-	return (1ULL << KPC_ARM64_COUNTER_WIDTH) - 1;
++	return 0;
+ }
+ 
+ int
+-kpc_get_configurable_config(kpc_config_t *configv, uint64_t pmc_mask)
++kpc_get_rawpmu_config(kpc_config_t *configv __unused)
+ {
+-	const uint32_t cfg_count = kpc_configurable_count();
+-	const uint32_t offset = kpc_fixed_count();
+-
+-	assert(configv != NULL);
+-
+-	for (uint32_t i = 0; i < cfg_count; ++i) {
+-		if ((1ULL << i) & pmc_mask) {
+-			*configv++ = _kpc_read_pmesr(i + offset);
+-		}
+-	}
+ 	return 0;
+ }
+ 
+-uint32_t
+-kpc_get_classes(void)
++uint64_t
++kpc_fixed_max(void)
+ {
+-	return KPC_CLASS_FIXED_MASK | KPC_CLASS_CONFIGURABLE_MASK |
+-	       KPC_CLASS_RAWPMU_MASK;
++	return 0;
+ }
+ 
+-int
+-kpc_get_pmu_version(void)
++uint64_t
++kpc_configurable_max(void)
+ {
+-	return KPC_PMU_ARM_APPLE;
++	return 0;
+ }
+ 
+-#pragma mark - Direct CPMU Access
+-
+-#define PMCR_PMC_8_9_OFFSET     (32)
+-#define PMCR_PMC_8_9_SHIFT(PMC) (((PMC) - 8) + PMCR_PMC_8_9_OFFSET)
+-#define PMCR_PMC_SHIFT(PMC)     (((PMC) <= 7) ? (PMC) : \
+-	                        PMCR_PMC_8_9_SHIFT(PMC))
+-
+-#define PMESR_SHIFT(PMC, OFF)     ((PMESR_PMC_WIDTH) * ((PMC) - (OFF)))
+-#define PMESR_EVT_MASK(PMC, OFF)  (PMESR_PMC_MASK << PMESR_SHIFT(PMC, OFF))
+-#define PMESR_EVT_CLEAR(PMC, OFF) (~PMESR_EVT_MASK(PMC, OFF))
+-
+-#define PMESR_EVT_DECODE(PMESR, PMC, OFF) \
+-	(((PMESR) >> PMESR_SHIFT(PMC, OFF)) & PMESR_PMC_MASK)
+-#define PMESR_EVT_ENCODE(EVT, PMC, OFF) \
+-	(((EVT) & PMESR_PMC_MASK) << PMESR_SHIFT(PMC, OFF))
+-
+-#define PMCR1_EL0_A32_OFFSET (0)
+-#define PMCR1_EL0_A64_OFFSET (8)
+-#define S3_1_C15_C1_0_A64_OFFSET (16)
+-#define PMCR1_EL3_A64_OFFSET (24)
+-
+-#define PMCR1_EL0_A32_SHIFT(PMC) (PMCR1_EL0_A32_OFFSET + PMCR_PMC_SHIFT(PMC))
+-#define PMCR1_EL0_A64_SHIFT(PMC) (PMCR1_EL0_A64_OFFSET + PMCR_PMC_SHIFT(PMC))
+-#define S3_1_C15_C1_0_A64_SHIFT(PMC) (S3_1_C15_C1_0_A64_OFFSET + PMCR_PMC_SHIFT(PMC))
+-#define PMCR1_EL3_A64_SHIFT(PMC) (PMCR1_EL0_A64_OFFSET + PMCR_PMC_SHIFT(PMC))
+-
+-#define PMCR1_EL0_A32_ENABLE_MASK(PMC) (UINT64_C(1) << PMCR1_EL0_A32_SHIFT(PMC))
+-#define PMCR1_EL0_A64_ENABLE_MASK(PMC) (UINT64_C(1) << PMCR1_EL0_A64_SHIFT(PMC))
+-#define S3_1_C15_C1_0_A64_ENABLE_MASK(PMC) (UINT64_C(1) << S3_1_C15_C1_0_A64_SHIFT(PMC))
+-
+-#define SREG_READ(SR)     ({ uint64_t VAL; \
+-	                     __asm__ volatile("mrs %0, " SR : "=r"(VAL)); \
+-	                     VAL; })
+-
+-/*
+- * Configuration registers that can be controlled by RAWPMU:
+- *
+- * All: PMCR2-4, OPMAT0-1, OPMSK0-1.
+- * Later: PM_MEMFLT_CTL23, PM_MEMFLT_CTL45, PMEFR2-9.
+- */
+-#if CPMU_EVENT_FILTERING
+-#define RAWPMU_CONFIG_COUNT 17
+-#else /* CPMU_EVENT_FILTERING */
+-#define RAWPMU_CONFIG_COUNT 7
+-#endif /* !CPMU_EVENT_FILTERING */
+-
+-uint32_t
+-kpc_rawpmu_config_count(void)
++int
++kpc_set_config_arch(struct kpc_config_remote *mp_config __unused)
+ {
+-	return RAWPMU_CONFIG_COUNT;
++	return ENOTSUP;
+ }
+ 
+ int
+-kpc_get_rawpmu_config(kpc_config_t *configv)
++kpc_set_period_arch(struct kpc_config_remote *mp_config __unused)
+ {
+-	configv[0] = SREG_READ("S3_1_C15_C2_0");
+-	configv[1] = SREG_READ("S3_1_C15_C3_0");
+-	configv[2] = SREG_READ("S3_1_C15_C4_0");
+-	configv[3] = SREG_READ("S3_1_C15_C7_0");
+-	configv[4] = SREG_READ("S3_1_C15_C8_0");
+-	configv[5] = SREG_READ("S3_1_C15_C9_0");
+-	configv[6] = SREG_READ("S3_1_C15_C10_0");
+-#if CPMU_EVENT_FILTERING
+-	configv[7] = SREG_READ("PM_MEMFLT_CTL23_EL1");
+-	configv[8] = SREG_READ("PM_MEMFLT_CTL45_EL1");
+-	/*
+-	 * Use coproc addresses for PMEFR{2,9} instead of register names due to rdar://152681387
+-	 */
+-	configv[9] = SREG_READ("S3_2_C15_C2_1");
+-	configv[10] = SREG_READ("S3_2_C15_C3_1");
+-	configv[11] = SREG_READ("S3_2_C15_C4_1");
+-	configv[12] = SREG_READ("S3_2_C15_C5_1");
+-	configv[13] = SREG_READ("S3_2_C15_C6_1");
+-	configv[14] = SREG_READ("S3_2_C15_C7_1");
+-	configv[15] = SREG_READ("S3_2_C15_C8_1");
+-	configv[16] = SREG_READ("S3_2_C15_C9_1");
+-#endif /* CPMU_EVENT_FILTERING */
+-	return 0;
++	return ENOTSUP;
+ }
+ 
+-static uint64_t
+-_kpc_read_pmesr(uint32_t counter)
++int
++kpc_set_running_arch(struct kpc_running_remote *mp_config __unused)
+ {
+-	uint64_t pmesr;
+-
+-	switch (counter) {
+-	case 2:
+-	case 3:
+-	case 4:
+-	case 5:
+-		pmesr = PMESR_EVT_DECODE(SREG_READ("S3_1_C15_C5_0"), counter, 2);
+-		break;
+-	case 6:
+-	case 7:
+-#if KPC_ARM64_CONFIGURABLE_COUNT > 6
+-	case 8:
+-	case 9:
+-#endif // KPC_ARM64_CONFIGURABLE_COUNT > 6
+-		pmesr = PMESR_EVT_DECODE(SREG_READ("S3_1_C15_C6_0"), counter, 6);
+-		break;
+-	default:
+-		pmesr = 0;
+-		break;
+-	}
+-
+-	kpc_config_t config = pmesr;
+-
+-	uint64_t pmcr1 = SREG_READ("S3_1_C15_C1_0");
+-
+-	if (pmcr1 & PMCR1_EL0_A32_ENABLE_MASK(counter)) {
+-		config |= CFGWORD_EL0A32EN_MASK;
+-	}
+-	if (pmcr1 & PMCR1_EL0_A64_ENABLE_MASK(counter)) {
+-		config |= CFGWORD_EL0A64EN_MASK;
+-	}
+-	if (pmcr1 & S3_1_C15_C1_0_A64_ENABLE_MASK(counter)) {
+-		config |= CFGWORD_EL1EN_MASK | CFGWORD_EL3EN_MASK;
+-	}
+-
+-	return config;
++	return ENOTSUP;
+ }
+diff --git a/osfmk/arm64/locore.s b/osfmk/arm64/locore.s
+--- a/osfmk/arm64/locore.s
++++ b/osfmk/arm64/locore.s
+@@ -1061,15 +1061,48 @@ check_ktrr_sctlr_trap:
+ 	.text
+ 	.align 2
+ fleh_dispatch64:
+-#if HAS_APPLE_PAC
++#if HAS_APPLE_PAC && !HAS_STD_PAC
++	/*
++	 * Apple PAC: the kernel's IA key is always live for in-kernel pacia, so the handler
++	 * pointer can be signed here on entry.
++	 */
+ 	pacia	x1, sp
+ #endif
++	/*
++	 * hakios/HAS_STD_PAC: do NOT sign the handler here.  Standard PAC shares one set of key
++	 * registers between EL0 and EL1, so an exception from EL0 arrives with the process's keys
++	 * still loaded; signing x1 now would use the user IA key, but the braa below (after the
++	 * kernel keys are restored) authenticates with the kernel IA key -> FPAC.  The pacia is
++	 * deferred until just after the key reload, exactly as the xnu-8796 hakios tree did.
++	 */
+ 
+ 	/* Save arm_saved_state64 */
+ 	SPILL_REGISTERS KERNEL_MODE, options_register=x2
+ 
+ 	/* If exception is from userspace, zero unused registers */
+ 	and		x23, x23, #(PSR64_MODE_EL_MASK)
++#if HAS_STD_PAC
++	/*
++	 * Standard ARM has one set of pointer authentication key registers for EL0 and EL1, and an
++	 * exception taken from EL0 arrives with that process's keys in them (the return path below
++	 * put them there).  The kernel's own return addresses are signed with its keys, so they
++	 * have to be back before anything signed runs.  This is the first such point: the register
++	 * spill above only signs the thread state with the GA key, which is never swapped.
++	 */
++	cbnz	x23, 9f							// from EL1: the kernel's keys are in place
++	adrp	x24, EXT(pac_std_keys)@page
++	add		x24, x24, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_KEYS x24, x9, x10
++	isb	sy
++9:
++	/*
++	 * hakios: the kernel keys are now in place (either reloaded just above for an EL0-origin
++	 * exception, or already live for one from EL1), so sign the FLEH handler pointer with the
++	 * kernel IA key.  x1 still holds the plain handler (adrp/add in the vector); it is unchanged
++	 * by SPILL_REGISTERS and the key reload, and sp is the same value the braa below uses.
++	 */
++	pacia	x1, sp
++#endif /* HAS_STD_PAC */
+ 	cmp		x23, #(PSR64_MODE_EL0)
+ 	bne		1f
+ 
+@@ -1949,6 +1982,21 @@ Lskip_el0_eret_mapping:
+ #endif /* !__ARM_KERNEL_PROTECT__ */
+ 
+ Lexception_return_restore_registers:
++#if HAS_STD_PAC
++	/*
++	 * On the way out the keys have to be the process's, not the kernel's, by the time control
++	 * reaches EL0.  This is the last point that can program them; the eret at the end of the
++	 * path is a context synchronization event, so no isb is needed.  A return to EL1 (a kernel
++	 * thread, or a nested exception) keeps the kernel's keys, which are in place already.
++	 */
++	ldr		w9, [sp, SS64_CPSR]
++	tbnz	w9, PSR64_MODE_EL_SHIFT, 9f
++	mrs		x9, TPIDR_EL1						// the process whose keys these are
++	adrp	x10, EXT(pac_std_keys)@page
++	add		x10, x10, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_USER_KEYS x10, x9, x11, x12, x13, x14, x15, x2, x3
++9:
++#endif /* HAS_STD_PAC */
+ 	mov 	x0, sp								// x0 = &pcb
+ 	// Loads authed $x0->ss_64.pc into x1 and $x0->ss_64.cpsr into w2
+ 	AUTH_THREAD_STATE_IN_X0	x20, x21, x22, x23, x24, x25, el0_state_allowed=1
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -907,6 +907,9 @@ ml_get_machine_mem(void)
+ 	return machine_info.memory_size;
+ }
+ 
++extern void loader_return(void);
++extern void redwood_adreno_stop(void);
++
+ __attribute__((noreturn))
+ void
+ halt_all_cpus(boolean_t reboot)
+@@ -918,6 +921,9 @@ halt_all_cpus(boolean_t reboot)
+ 		printf("CPU halted\n");
+ 		PEHaltRestart(kPEHaltCPU);
+ 	}
++	/* No platform driver powers the machine off: hand control (and the log) back to the loader. */
++	redwood_adreno_stop();
++	loader_return();
+ 	while (1) {
+ 		;
+ 	}
+@@ -1140,6 +1146,61 @@ ml_read_chip_revision(unsigned int *rev __unused)
+ #endif
+ }
+ 
++/*
++ * The slower cores (an L2 access penalty, or the loader's "small-core"): each is made the SMT
++ * sibling ("secondary") of a faster core of its own, and the scheduler then treats it as XNU
++ * treats the second thread of a hyperthreaded core: a thread is put on it only when no faster
++ * core is idle or running something of lower priority; it looks for work only when none of
++ * them is idle; and what runs on it goes back to the run queue at every rescheduling, to be
++ * put on a faster core that has come free meanwhile. (XNU itself pairs such a core with the
++ * boot processor, which allows one of them; the phone has three: with cpus=8, cores 3, 2 and
++ * 1 go with 4, 5 and 6, so that 7, the boot core and the fastest, where real-time threads go
++ * first, stays alone: the scheduler idles a secondary while its primary runs a real-time
++ * thread.)
++ */
++static uint32_t small_cores_apart = 2;          /* boot-arg small_cores, read in ml_parse_cpu_topology() (before tunables are) */
++static int ml_slow_core_partner[MAX_CPUS];      /* by cpu_id: the faster core it is paired with, -1 if none */
++
++extern void loader_log_line(const char *line);
++
++/*
++ * redwood/xnu-12377: the slow-core ("secondary") pairing is a big.LITTLE optimization that used
++ * struct processor's processor_primary field and processor_set_primary(), both removed by
++ * xnu-12377's scheduler refactor.  It is irrelevant on the homogeneous cores this port boots on
++ * (QEMU virt; ml_choose_slow_core_partners() would find no pairs anyway), so both are no-ops here.
++ * Reintroducing it means adapting to 12377's new scheduler topology (see docs/ARM64E.md M4).
++ */
++static void
++ml_choose_slow_core_partners(void)
++{
++	for (int i = 0; i < MAX_CPUS; i++) {
++		ml_slow_core_partner[i] = -1;
++	}
++}
++
++static void
++ml_pair_slow_processors(int cpu_id)
++{
++	(void)cpu_id;
++	(void)small_cores_apart;
++	(void)loader_log_line;
++}
++
++/* How long processor cpu_id has been idle since it started, in mach_absolute_time() units (redwood_cpufreq.c's cpuload). */
++bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
++
++bool
++ml_cpu_idle_time(int cpu_id, uint64_t *idle)
++{
++	struct recount_usage usage = { 0 };
++
++	if (cpu_id < 0 || cpu_id >= MAX_CPUS || processor_array[cpu_id] == PROCESSOR_NULL) {
++		return false;
++	}
++	recount_processor_usage(&processor_array[cpu_id]->pr_recount, &usage, idle);
++	return true;
++}
++
+ void
+ ml_parse_cpu_topology(void)
+ {
+@@ -1153,6 +1214,7 @@ ml_parse_cpu_topology(void)
+ 	int64_t cluster_max_cpu_phys_id[MAX_CPU_CLUSTER_PHY_ID + 1];
+ 	const boolean_t cpus_boot_arg_present = PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
+ 	const boolean_t cpumask_boot_arg_present = PE_parse_boot_argn("cpumask", &cpumask_boot_arg, sizeof(cpumask_boot_arg));
++	PE_parse_boot_argn("small_cores", &small_cores_apart, sizeof(small_cores_apart));
+ 
+ 	// The cpus=N and cpumask=N boot args cannot be used simultaneously. Flag this
+ 	// so that we trigger a panic later in the boot process, once serial is enabled.
+@@ -1218,6 +1280,11 @@ ml_parse_cpu_topology(void)
+ 
+ 		cpu->phys_id = (uint32_t)ml_readprop(child, "reg", ML_READPROP_MANDATORY);
+ 
++		cpu->l2_access_penalty = (uint32_t)ml_readprop(child, "l2-access-penalty", 0);
++		if (cpu->l2_access_penalty == 0 && ml_readprop(child, "small-core", 0) != 0 && small_cores_apart) {
++			cpu->l2_access_penalty = 1;
++		}
++
+ 		cpu->l2_cache_size = (uint32_t)ml_readprop(child, "l2-cache-size", 0);
+ 		cpu->l2_cache_id = (uint32_t)ml_readprop(child, "l2-cache-id", 0);
+ 		cpu->l3_cache_size = (uint32_t)ml_readprop(child, "l3-cache-size", 0);
+@@ -1334,6 +1401,7 @@ ml_parse_cpu_topology(void)
+ 	cluster_offsets[0] = 0;
+ #endif
+ 	assert(topology_info.boot_cpu != NULL);
++	ml_choose_slow_core_partners();
+ 	ml_read_chip_revision(&topology_info.chip_revision);
+ 	ml_cluster_power_override(&topology_info.cluster_power_down);
+ 
+@@ -1414,7 +1482,7 @@ ml_get_boot_cluster_type(void)
+ int
+ ml_get_cpu_number(uint32_t phys_id)
+ {
+-	phys_id &= MPIDR_AFF1_MASK | MPIDR_AFF0_MASK;
++	phys_id &= MPIDR_AFF2_MASK | MPIDR_AFF1_MASK | MPIDR_AFF0_MASK;   /* (support Aff0, Aff1, and Aff2) */
+ 
+ 	for (unsigned i = 0; i < topology_info.num_cpus; i++) {
+ 		if (topology_info.cpus[i].phys_id == phys_id) {
+@@ -1705,6 +1773,12 @@ ml_processor_register(ml_processor_info_t *in_processor_info,
+ 
+ 	processor_t processor = PERCPU_GET_WITH_BASE(other_percpu_base(this_cpu_datap->cpu_number), processor);
+ 	*processor_out = processor;
++	/*
++	 * Cores with a non-zero L2 access penalty (or the loader's "small-core") are de-prioritized by
++	 * the scheduler, each paired with a faster core of its own rather than all with the boot
++	 * processor (ml_choose_slow_core_partners()).  A no-op on homogeneous cores (QEMU virt).
++	 */
++	ml_pair_slow_processors(this_cpu_datap->cpu_number);
+ 	if (!is_boot_cpu) {
+ 		smr_cpu_init(*processor_out);
+ 	}
+@@ -2708,11 +2782,19 @@ _enable_virtual_timer(void)
+ 	uint64_t cntvctl = CNTV_CTL_EL0_ENABLE; /* One wants to use 32 bits, but "mrs" prefers it this way */
+ 
+ 	__builtin_arm_wsr64(KERNEL_CNTV_CTL_EL0, cntvctl);
++#if defined(APPLE_ARM64_ARCH_FAMILY)
+ 	/* disable the physical timer as a precaution, as its registers reset to architecturally unknown values */
+ 	__builtin_arm_wsr64("CNTP_CTL_EL0", CNTP_CTL_EL0_IMASKED);
+ #if HAS_APPLE_GENERIC_TIMER
+ 	__builtin_arm_wsr64("S3_1_C15_C13_4", CNTP_CTL_EL0_IMASKED);
+ #endif
++#else
++	/*
++	 * When running at EL1 under a third-party hypervisor (e.g. Qualcomm's),
++	 * the EL1 physical timer registers are trapped and the access faults.
++	 * The guest only owns the virtual timer.
++	 */
++#endif
+ }
+ 
+ void
+@@ -3394,6 +3476,17 @@ ml_unsafe_kernel_text_init(void)
+ 	    size == sizeof(int)) {
+ 		_unsafe_kernel_text_initialized = true;
+ 		_unsafe_kernel_text = (0 == *(const int *)value);
++	} else {
++		/*
++		 * hakios: the non-Apple bring-up board has no iBoot to write
++		 * "kernel-ctrr-to-be-enabled", and it performs no CTRR/AMCC kernel-text
++		 * lockdown (osfmk amcc_rorgn is disabled for this board).  Kernel text is
++		 * therefore genuinely unprotected, so mark the subsystem initialized and
++		 * report the text as unsafe, instead of leaving the flag false and tripping
++		 * the assert in ml_unsafe_kernel_text() during bsd_init.
++		 */
++		_unsafe_kernel_text_initialized = true;
++		_unsafe_kernel_text = true;
+ 	}
+ }
+ STARTUP(TUNABLES, STARTUP_RANK_FIRST, ml_unsafe_kernel_text_init);
+diff --git a/osfmk/arm64/machine_routines_asm.h b/osfmk/arm64/machine_routines_asm.h
+--- a/osfmk/arm64/machine_routines_asm.h
++++ b/osfmk/arm64/machine_routines_asm.h
+@@ -130,7 +130,7 @@
+  * diversifier (input): The diversifier constant to blend with \address.
+  */
+ .macro AUTDA_DIVERSIFIED value, address, diversifier
+-#if __has_feature(ptrauth_calls)
++#if __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ 	/* Blend */
+ 	movk		\address, \diversifier, lsl #48
+ 	autda		\value, \address
+@@ -142,7 +142,12 @@
+ 	brk		#BRK_AUTDA_FAILURE
+ Lautda_ok_\@:
+ #endif /* !__ARM_ARCH_8_6__ */
+-#endif /* __has_feature(ptrauth_calls) */
++#endif /* __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN */
++	/*
++	 * hakios: when data pointers are left plain (XNU_PTRAUTH_DATA_PTRS_PLAIN), the field was
++	 * stored unsigned by the C side, so \value already holds the final pointer and no autda is
++	 * emitted.  \address is still clobbered as documented.
++	 */
+ .endmacro
+ 
+ /**
+diff --git a/osfmk/arm64/machine_routines_asm.s b/osfmk/arm64/machine_routines_asm.s
+--- a/osfmk/arm64/machine_routines_asm.s
++++ b/osfmk/arm64/machine_routines_asm.s
+@@ -93,6 +93,23 @@ Lcre_start_\@:
+ 
+ #if defined(HAS_APPLE_PAC)
+ 
++#if HAS_STD_PAC
++/*
++ * The kernel's five pointer authentication keys: APIAKey, APIBKey, APDAKey, APDBKey, APGAKey, 128
++ * bits each.  The boot loader fills this section before it starts the kernel (it has to: it signs
++ * the kernel image's pointers with the same keys), and PAC_INIT_KEY_STATE (pac_std_asm.h) loads
++ * them into the key registers on every CPU.  In a section of its own so that the loader finds it
++ * without symbols.
++ */
++	.section __DATA,__pac_keys
++	.align 4
++	.globl EXT(pac_std_keys)
++LEXT(pac_std_keys)
++	.space 16 * 5, 0
++
++	.text
++#endif /* HAS_STD_PAC */
++
+ 
+ .macro LOAD_CPU_JOP_KEY	dst, tmp
+ 	mrs		\tmp, TPIDR_EL1
+@@ -115,6 +132,20 @@ LEXT(ml_enable_user_jop_key)
+ 	cbnz		x0, .
+ 	LOAD_CPU_JOP_KEY x0, x1
+ 	ret
++#elif HAS_STD_PAC
++	/*
++	 * A caller (pmap_sign_user_ptr, pmap_auth_user_ptr) needs to sign or authenticate a user
++	 * pointer at EL1, which standard ARM can only do with the process's own A keys in the key
++	 * registers.  It runs with interrupts disabled and makes no indirect call in between, so
++	 * the user keys can stay there until ml_disable_user_jop_key() puts the kernel's back.
++	 * Nothing has to be handed back: the kernel's keys are in pac_std_keys.
++	 */
++	adrp	x8, EXT(pac_std_keys)@page
++	add	x8, x8, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_A_KEYS x8, x0, x1, x2, x3, x4, x5, x6
++	isb	sy
++	mov	x0, #0
++	ret
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+ 
+ /*
+@@ -131,6 +162,12 @@ LEXT(ml_disable_user_jop_key)
+ 	hvc		#0
+ 	cbnz		x0, .
+ 	ret
++#elif HAS_STD_PAC
++	adrp	x8, EXT(pac_std_keys)@page
++	add	x8, x8, EXT(pac_std_keys)@pageoff
++	PAC_STD_LOAD_KEYS x8, x0, x1
++	isb	sy
++	ret
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+ 
+ #endif /* defined(HAS_APPLE_PAC) */
+diff --git a/osfmk/arm64/pac_asm.h b/osfmk/arm64/pac_asm.h
+--- a/osfmk/arm64/pac_asm.h
++++ b/osfmk/arm64/pac_asm.h
+@@ -43,6 +43,15 @@
+ 
+ #if defined(HAS_APPLE_PAC)
+ 
++#if HAS_STD_PAC
++/*
++ * The architectural keys of a standard ARMv8.3 CPU: these are programmed and switched by the
++ * kernel itself, see pac_std_asm.h.  The macros that follow in this file describe Apple's
++ * implementation and are not used there.
++ */
++#include "pac_std_asm.h"
++#endif /* HAS_STD_PAC */
++
+ 
+ /* BEGIN IGNORE CODESTYLE */
+ 
+@@ -96,6 +105,7 @@
+  *   new_jop_key - process's jop_pid
+  *   tmp - scratch register
+  */
++#if !HAS_STD_PAC
+ .macro SET_JOP_KEY_REGISTERS	new_jop_key, tmp
+ #if HAS_PARAVIRTUALIZED_PAC
+ 	SAVE_SMCCC_CLOBBERED_REGISTERS
+@@ -160,6 +170,7 @@
+ 	cbnz		x0, .
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+ .endmacro
++#endif /* !HAS_STD_PAC */
+ 
+ /*
+  * For pacga diversification we always put the tag type in the
+diff --git a/osfmk/arm64/proc_reg.h b/osfmk/arm64/proc_reg.h
+--- a/osfmk/arm64/proc_reg.h
++++ b/osfmk/arm64/proc_reg.h
+@@ -80,6 +80,19 @@
+ #include <pexpert/arm/board_config.h>
+ #endif
+ 
++/*
++ * hakios/HAS_STD_PAC: mirror libkern/os/base.h's XNU_PTRAUTH_DATA_PTRS_PLAIN here so the
++ * assembler sees it too.  machine_routines_asm.h includes this header but NOT base.h, and the
++ * data-pointer auth macros (AUTDA_DIVERSIFIED etc.) must be gated on the exact same condition
++ * the C field qualifiers (XNU_PTRAUTH_SIGNED_PTR) are, or asm will autda a field the C side
++ * stored plain -> FPAC.  On this arm64e tree data pointers are left unsigned (the plain Mach-O
++ * loader has no keys to sign chained data fixups with); only code pointers / return addresses
++ * and the pacga state hash are authenticated.
++ */
++#if defined(__arm64e__) && !defined(XNU_PTRAUTH_SIGNED_DATA_PTRS) && !defined(XNU_PTRAUTH_DATA_PTRS_PLAIN)
++#define XNU_PTRAUTH_DATA_PTRS_PLAIN 1
++#endif
++
+ #if !CONFIG_SPTM
+ /*
+  * Processor registers for ARM
+@@ -251,6 +264,12 @@
+ /* D-Cache. */
+ #define MMU_CLINE   6
+ 
++#elif defined (BCM2837)
++
++/* Generic ARMv8.2+/ARMv9 (Cortex-A, QEMU virt): 64-byte cache lines. */
++#define MMU_I_CLINE 6
++#define MMU_CLINE   6
++
+ #else
+ #error processor not supported
+ #endif
+@@ -609,7 +628,21 @@
+ 
+ #define SCTLR_RESERVED     ((3ULL << 28) | (1ULL << 20))
+ #if defined(HAS_APPLE_PAC)
+-
++#if HAS_STD_PAC
++/*
++ * Standard ARMv8.3 SCTLR_EL1.  EnIA, EnIB, EnDA and EnDB enable the signing instructions that use
++ * the A and B keys for EL0 and EL1 alike (with a bit clear, the instruction executes as a NOP and
++ * authentication always passes, which is how the kernel boots before it has keys).  The positions
++ * are architectural (ARM DDI 0487): EnIA 31, EnIB 30, EnDA 27, EnDB 13.  Bits 29:28 are LSMAOE and
++ * nTLSMD (RES1, set by SCTLR_RESERVED) -- not PAC enables; the loader's pac_enable() must set the
++ * same four bits, or it signs with a data key the kernel never actually enabled.
++ */
++#define SCTLR_PACIA_ENABLED_SHIFT 31
++#define SCTLR_PACIA_ENABLED       (1ULL << SCTLR_PACIA_ENABLED_SHIFT)
++#define SCTLR_PACIB_ENABLED       (1ULL << 30)
++#define SCTLR_PACDA_ENABLED       (1ULL << 27)
++#define SCTLR_PACDB_ENABLED       (1ULL << 13)
++#else /* HAS_STD_PAC */
+ // 31    PACIA_ENABLED AddPACIA and AuthIA functions enabled
+ #define SCTLR_PACIA_ENABLED_SHIFT 31
+ #define SCTLR_PACIA_ENABLED       (1ULL << SCTLR_PACIA_ENABLED_SHIFT)
+@@ -620,6 +653,7 @@
+ #define SCTLR_PACDA_ENABLED       (1ULL << 27)
+ // 13    PACDB_ENABLED  AddPACDB and AuthDB functions enabled
+ #define SCTLR_PACDB_ENABLED       (1ULL << 13)
++#endif /* HAS_STD_PAC */
+ 
+ #define SCTLR_PAC_KEYS_ENABLED    (SCTLR_PACIA_ENABLED | SCTLR_PACIB_ENABLED | SCTLR_PACDA_ENABLED | SCTLR_PACDB_ENABLED)
+ #endif /* defined(HAS_APPLE_PAC) */
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -168,6 +168,7 @@ static void handle_bti_fail(arm_saved_state_t *state, uint64_t esr);
+ extern kern_return_t arm_fast_fault(pmap_t, vm_map_address_t, vm_prot_t, bool, bool);
+ 
+ static void handle_uncategorized(arm_saved_state_t *);
++extern bool redwood_a64emu(arm_context_t *context);
+ 
+ static void handle_kernel_breakpoint(arm_saved_state_t *, uint64_t);
+ 
+@@ -766,6 +767,8 @@ is_platform_error(uint64_t esr)
+ 	       is_table_walk_error(fault_code);
+ }
+ 
++extern void loader_log_line(const char *line);
++
+ void
+ sleh_synchronous(arm_context_t *context, uint64_t esr, vm_offset_t far, __unused bool did_initiate_panic_lockdown)
+ {
+@@ -804,6 +807,23 @@ sleh_synchronous(arm_context_t *context, uint64_t esr, vm_offset_t far, __unused
+ #endif
+ 	bool is_user = PSR64_IS_USER(get_saved_state_cpsr(state));
+ 
++	if (is_user && class != ESR_EC_SVC_64) {
++		/* hakios: the first user-mode faults, on one line each, before they become signals */
++		static uint32_t hk_user_faults;
++		if (hk_user_faults++ < 16) {
++			char line[200];
++			uint64_t ia = 0, ga = 0;
++#if HAS_STD_PAC        /* renoir: no key registers on an ARMv8.2 core */
++			__asm__ volatile ("mrs %0, APIAKeyLo_EL1" : "=r" (ia));
++			__asm__ volatile ("mrs %0, APGAKeyLo_EL1" : "=r" (ga));
++#endif
++			snprintf(line, sizeof(line), "hakios: user exception esr=0x%llx far=0x%lx pc=0x%llx lr=0x%llx sp=0x%llx iaLo=%llx\n",
++			    esr, far, get_saved_state_pc(state), get_saved_state_lr(state), get_saved_state_sp(state), ia);
++			loader_log_line(line);
++			(void)ga;
++		}
++	}
++
+ #if CONFIG_SPTM
+ 	// Lockdown should only be initiated for kernel exceptions
+ 	assert(!(is_user && did_initiate_panic_lockdown));
+@@ -1010,6 +1030,10 @@ sleh_synchronous(arm_context_t *context, uint64_t esr, vm_offset_t far, __unused
+ 			break;
+ 		}
+ #endif /* CONFIG_XNUPOST */
++		/* renoir: arm64e instructions this ARMv8.2 core lacks (osfmk/arm64/redwood_a64emu.c) */
++		if (is_user && redwood_a64emu(context)) {
++			break;
++		}
+ 		handle_uncategorized(&context->ss);
+ 		break;
+ 
+@@ -2989,7 +3013,10 @@ handle_simd_trap(arm_saved_state_t *state, uint64_t esr)
+ 	uint32_t                   instr     = 0;
+ 
+ 	if (PSR64_IS_KERNEL(get_saved_state_cpsr(state))) {
+-		panic("ESR (0x%llx) for SIMD trap from userland, actually came from kernel?", esr);
++		uint64_t hk_cpacr;
++		__asm__ volatile ("mrs %0, cpacr_el1" : "=r" (hk_cpacr));
++		panic("ESR (0x%llx) for SIMD trap from userland, actually came from kernel? pc 0x%llx lr 0x%llx cpacr 0x%llx cpu %d",
++		    esr, get_saved_state_pc(state), get_saved_state_lr(state), hk_cpacr, cpu_number());
+ 	}
+ 
+ 	COPYIN(get_saved_state_pc(state), (char *)&instr, sizeof(instr));
+@@ -3236,12 +3263,23 @@ sleh_interrupt_handler_epilogue(void)
+ 	recount_leave_interrupt();
+ }
+ 
++extern void loader_log_line(const char *line);
++
+ void
+ sleh_invalid_stack(arm_context_t *context, uint64_t esr __unused, vm_offset_t far __unused)
+ {
+ 	thread_t thread = current_thread();
+ 	vm_offset_t kernel_stack_bottom, sp;
+ 
++	{
++		/* hakios: the panic text below gets cut short this early; the syndrome first, on one line */
++		char line[200];
++		snprintf(line, sizeof(line), "hakios: early exception esr=0x%llx far=0x%lx pc=0x%llx x20=0x%llx x21=0x%llx\n",
++		    esr, far, get_saved_state_pc(&context->ss), get_saved_state_reg(&context->ss, 20),
++		    get_saved_state_reg(&context->ss, 21));
++		loader_log_line(line);
++	}
++
+ 	sp = get_saved_state_sp(&context->ss);
+ 	vm_offset_t kstackptr = (vm_offset_t)thread->machine.kstackptr;
+ 	kernel_stack_bottom = round_page(kstackptr) - KERNEL_STACK_SIZE;
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -126,6 +126,27 @@ LEXT(LowResetVectorBase)
+ 	.globl EXT(reset_vector)
+ LEXT(reset_vector)
+ 	// Preserve x0 for start_first_cpu, if called
++#if defined(GENERIC_PSCI_SMP)
++	/*
++	 * A core that the firmware has just started for us (PSCI CPU_ON, see
++	 * psci_smp.c) has no vectors at all, and under a third-party hypervisor
++	 * even the OS lock write can trap: vectors first. Not the boot
++	 * processor's early ones, which hand the exception to the boot loader:
++	 * that is not for this core to do.
++	 */
++	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
++	adrp	x0, EXT(LowSecondaryExceptionVectorBase)@page
++	add		x0, x0, EXT(LowSecondaryExceptionVectorBase)@pageoff
++	msr		VBAR_EL1, x0
++	isb
++	// The MMU and the caches are off, says PSCI; of the rest of SCTLR it
++	// says nothing. Only the bits that must be set, until common_start.
++	MOV64	x0, 0x30D00800
++	msr		SCTLR_EL1, x0
++	isb
++	// Unlock the core for debugging
++	msr		OSLAR_EL1, xzr
++#else /* defined(GENERIC_PSCI_SMP) */
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+@@ -136,6 +157,7 @@ LEXT(reset_vector)
+ 	add     x0, x0, EXT(LowExceptionVectorBase)@pageoff
+ 	msr     VBAR_EL1, x0
+ #endif
++#endif /* defined(GENERIC_PSCI_SMP) */
+ 
+ 
+ 
+@@ -143,8 +165,10 @@ LEXT(reset_vector)
+ 	adrp	x19, EXT(ResetHandlerData)@page			// Get address of the reset handler data
+ 	add		x19, x19, EXT(ResetHandlerData)@pageoff
+ 	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
+-#if HAS_CLUSTER
+-	and		x0, x15, #0xFFFF					// CPU number in Affinity0, cluster ID in Affinity1
++#if HAS_CLUSTER || defined(GENERIC_PSCI_SMP)
++	// (generic boards: some number their cores in Affinity1 and leave Affinity0 at zero;
++	// a cpu data's phys id is both fields, as the device tree's "reg" has them)
++	and		x0, x15, #0xFFFFFF					// CPU number in Affinity0, cluster ID in Affinity1 and 2
+ #else
+ 	and		x0, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+ #endif
+@@ -243,40 +267,175 @@ LEXT(_start)
+ 	.global	EXT(LowExceptionVectorBase)
+ LEXT(LowExceptionVectorBase)
+ 	/* EL1 SP 0 */
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	/* EL1 SP1 */
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	/* EL0 64 */
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	/* EL0 32 */
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
+ 	.align	7
+-	b		.
++	b		Lloader_early_exception
++
++/*
++ * Early-boot exceptions used to spin here. When the XNU loader has patched
++ * the address of its return stub into the slot below, report the exception
++ * to it instead (see osfmk/arm64/loader_return.c):
++ *   x0/x1 = PA/length of the captured kernel log, x2 = 1 (early exception),
++ *   x3 = ESR, x4 = ELR, x5 = FAR, x6 = LR, x7 = SP
++ * This vector is only installed while VBAR holds a physical address, so
++ * PC-relative addressing yields physical addresses, MMU on (V=P) or off.
++ */
++	.align	3
++Lloader_early_exception:
++	mov		x6, lr
++	mov		x7, sp
++	mrs		x3, ESR_EL1
++	mrs		x4, ELR_EL1
++	mrs		x5, FAR_EL1
++	adrp	x0, EXT(loader_log)@page
++	add		x0, x0, EXT(loader_log)@pageoff
++	adrp	x1, EXT(loader_log_len)@page
++	add		x1, x1, EXT(loader_log_len)@pageoff
++	ldr		w1, [x1]
++	// Write the log back to RAM: cached copies are lost once the MMU is off
++	mov		x9, x0
++	add		x10, x0, x1
++1:
++	dc		cvac, x9
++	add		x9, x9, #64
++	cmp		x9, x10
++	b.lo	1b
++	dsb		sy
++	mov		x2, #1
++	mrs		x9, SCTLR_EL1
++	bic		x9, x9, #1
++	msr		SCTLR_EL1, x9
++	isb
++	adr		x9, Lloader_stub_slot
++	ldr		x9, [x9, #8]
++	cbz		x9, .
++	br		x9
++	.align	3
++	.globl EXT(loader_stub_slot)
++LEXT(loader_stub_slot)
++Lloader_stub_slot:
++	.ascii	"XNULDRST"				// magic the loader searches for
++	.quad	0						// PA of the loader's return stub
++	.quad	0						// checkpoint number to stop at (0 = none)
++	.quad	0						// (physical - virtual) offset of the static kernel image
++
++#if defined(GENERIC_PSCI_SMP)
++/*
++ * The same for a core other than the boot processor, from its first
++ * instruction (reset_vector) until common_start gives it the kernel's
++ * vectors. The boot loader is not this core's to return to; it leaves a note
++ * of what happened where the processor that is waiting for it looks
++ * (psci_smp_start_cpu()) and switches itself off again.
++ *
++ * VBAR holds a physical address here too, so the note is addressed
++ * physically; the store goes straight to memory when the MMU is still off,
++ * and is sent there when it is not.
++ */
++	.align	11
++	.globl EXT(LowSecondaryExceptionVectorBase)
++LEXT(LowSecondaryExceptionVectorBase)
++	/* EL1 SP 0 */
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	/* EL1 SP1 */
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	/* EL0 64 */
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	/* EL0 32 */
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++	.align	7
++	b		Lsecondary_early_exception
++
++	.align	3
++Lsecondary_early_exception:
++	// struct psci_smp_start_fault: { valid, MPIDR, ESR, ELR, FAR, LR, SP }
++	adrp	x9, EXT(psci_smp_start_fault)@page
++	add		x9, x9, EXT(psci_smp_start_fault)@pageoff
++	mrs		x10, MPIDR_EL1
++	str		x10, [x9, #8]
++	mrs		x10, ESR_EL1
++	str		x10, [x9, #16]
++	mrs		x10, ELR_EL1
++	str		x10, [x9, #24]
++	mrs		x10, FAR_EL1
++	str		x10, [x9, #32]
++	str		lr, [x9, #40]
++	mov		x10, sp
++	str		x10, [x9, #48]
++	mov		x10, #1
++	str		x10, [x9]
++	dc		cvac, x9
++	dsb		sy
++	// PSCI CPU_OFF, by the firmware's calling convention (psci_smp_hvc)
++	adrp	x9, EXT(psci_smp_hvc)@page
++	add		x9, x9, EXT(psci_smp_hvc)@pageoff
++	ldr		w9, [x9]
++	mov		x0, #0x0002
++	movk	x0, #0x8400, lsl #16
++	cbnz	w9, 1f
++	smc		#0
++	b		2f
++1:
++	hvc		#0
++2:
++	wfi											// it does not return; if it does, stay here
++	b		2b
++#endif /* defined(GENERIC_PSCI_SMP) */
+ 	.align 12, 0
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
+@@ -463,22 +622,51 @@ start_cpu:
+  * Cold boot init routine.  Called from __start
+  *   x0 - Boot args
+  */
++/*
++ * LOADER_CHECKPOINT n
++ *   Bring-up aid: if the loader asked to stop at checkpoint n, return to it
++ *   right here (reason 2, code n). Usable while executing at physical
++ *   addresses, MMU off or on (V=P). Clobbers x0-x3, x9-x11.
++ */
++.macro LOADER_CHECKPOINT
++	adrp	x9, EXT(loader_stub_slot)@page
++	add		x9, x9, EXT(loader_stub_slot)@pageoff
++	ldr		x10, [x9, #16]
++	cmp		x10, #$0
++	b.ne	1f
++	mov		x0, #0
++	mov		x1, #0
++	mov		x2, #2
++	mov		x3, #$0
++	mrs		x11, SCTLR_EL1
++	bic		x11, x11, #1
++	msr		SCTLR_EL1, x11
++	isb
++	ldr		x9, [x9, #8]
++	br		x9
++1:
++.endmacro
++
+ 	.align 2
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
+ 
+-	// Unlock the core for debugging
+-	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+ 
+ 	mov		x20, x0
+ 	mov		x21, #0
++	LOADER_CHECKPOINT 1
+ 
+-	// Set low reset vector before attempting any loads
++	// Set low reset vector before attempting anything that might trap
++	// (under a third-party hypervisor even the OS lock write below can).
+ 	adrp	x0, EXT(LowExceptionVectorBase)@page
+ 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+ 	MSR_VBAR_EL1_X0
+ 
++	// Unlock the core for debugging
++	msr		OSLAR_EL1, xzr
++	LOADER_CHECKPOINT 2
++
+ 
+ 	// Get the kernel memory parameters from the boot args
+ 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
+@@ -623,6 +811,7 @@ Lkernelcache_base_found:
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
++	LOADER_CHECKPOINT 3
+ 
+ 	b		common_start
+ 
+@@ -743,10 +932,11 @@ common_start:
+ 1:
+ 	MSR_VBAR_EL1_X0
+ 
+-#if HAS_APPLE_PAC
++#if HAS_APPLE_PAC && !HAS_STD_PAC
+ 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+-#endif /* HAS_APPLE_PAC */
++#endif /* HAS_APPLE_PAC && !HAS_STD_PAC */
+ 
++	LOADER_CHECKPOINT 7		// hakios: reached common_start, about to enable the MMU
+ 	// Enable caches, MMU, ROP and JOP
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+@@ -757,6 +947,7 @@ common_start:
+ 	cmp		x0, x1
+ 	bne		.
+ #endif /* !VMAPPLE */
++	LOADER_CHECKPOINT 8		// hakios: MMU enabled and SCTLR read-back matched
+ 
+ #if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
+ 	/* Watchtower
+@@ -773,6 +964,40 @@ common_start:
+ 	// Clear thread pointer
+ 	msr		TPIDR_EL1, xzr						// Set thread register
+ 
++#if HAS_STD_PAC
++	/*
++	 * The kernel's pointer authentication keys, now that the MMU is on (the key block is
++	 * addressed by its virtual address) and SCTLR_EL1 has enabled the signing instructions, and
++	 * still before the first C function: the first signed pointer the kernel makes has to be
++	 * signed with these keys.  On a secondary CPU this loads the keys the boot CPU made.
++	 */
++	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
++#endif /* HAS_STD_PAC */
++#if HAS_STD_PAC        /* renoir: no key registers on an ARMv8.2 core */
++	// hakios DIAGNOSTIC (checkpoint 9): report the key registers the kernel actually loaded, as an
++	// "early exception" (reason 1): esr=0x9d9d elr=APIAKeyLo far=APIBKeyLo lr=TCR_EL1 sp=mem IB lo.
++	adrp	x9, EXT(loader_stub_slot)@page
++	add		x9, x9, EXT(loader_stub_slot)@pageoff
++	ldr		x10, [x9, #16]
++	cmp		x10, #9
++	b.ne	1f
++	mrs		x4, APIAKeyLo_EL1
++	mrs		x5, APIBKeyLo_EL1
++	mrs		x6, TCR_EL1
++	ldr		x7, [x2, #16]
++	mov		x0, #0
++	mov		x1, #0
++	mov		x2, #1
++	mov		x3, #0x9d9d
++	mrs		x11, SCTLR_EL1
++	bic		x11, x11, #1
++	msr		SCTLR_EL1, x11
++	isb
++	ldr		x9, [x9, #8]
++	br		x9
++1:
++#endif /* HAS_STD_PAC */
++
+ 
+ #if defined(APPLE_ARM64_ARCH_FAMILY)
+ 	mrs		x12, MDSCR_EL1
+@@ -785,6 +1010,7 @@ common_start:
+ 	mrs x12, MIDR_EL1
+ 
+ 	APPLY_TUNABLES x12, x13, x14
++	LOADER_CHECKPOINT 10		// hakios: past APPLY_TUNABLES
+ 
+ #if HAS_CLUSTER && !NO_CPU_OVRD
+ 	// Unmask external IRQs if we're restarting from non-retention WFI
+@@ -813,6 +1039,7 @@ common_start:
+ 	mov	lr, x21
+ #endif
+ 
++	LOADER_CHECKPOINT 11		// hakios: about to ret into arm_init()
+ 	// Return to arm_init()
+ 	ret
+ 
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -2793,6 +2793,8 @@ vc_initialize(__unused struct vc_info * vinfo_p)
+ 	}
+ }
+ 
++extern void loader_checkpoint(uint64_t n);
++
+ void
+ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ {
+@@ -2801,6 +2803,7 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ 	boolean_t graphics_now;
+ 	uint32_t delay;
+ 
++	loader_checkpoint(56);   /* hakios: entered initialize_screen */
+ 	if (boot_vinfo) {
+ 		struct vc_info new_vinfo = vinfo;
+ 		boolean_t makeMapping = FALSE;
+@@ -2847,6 +2850,7 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ #ifndef __LP64__
+ 			new_vinfo.v_physaddr |= (((uint64_t) boot_vinfo->v_baseAddrHigh) << 32);
+ #endif
++			loader_checkpoint(57);   /* hakios: about to kprintf the framebuffer */
+ 			kprintf("initialize_screen: b=%08llX, w=%08X, h=%08X, r=%08X, d=%08X\n",                  /* (BRINGUP) */
+ 			    new_vinfo.v_physaddr, new_vinfo.v_width, new_vinfo.v_height, new_vinfo.v_rowbytes, new_vinfo.v_type);       /* (BRINGUP) */
+ 		}
+@@ -2860,8 +2864,12 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ 			gc_acquired = TRUE;
+ 		} else {
+ 			if (makeMapping) {
+-#if HAS_UCNORMAL_MEM || APPLEVIRTUALPLATFORM
++#if HAS_UCNORMAL_MEM || APPLEVIRTUALPLATFORM || defined(BCM2837)
+ 				/*
++				 * (Generic ARM boards too: scrolling reads the framebuffer
++				 * back, and as device memory that is one bus access per
++				 * word - seconds per line on a phone-sized screen.)
++				 *
+ 				 * Framebuffers would normally use VM_WIMG_RT, which
+ 				 * io_map doesn't support.  However this buffer is set up
+ 				 * by the bootloader and doesn't require D$ cleaning, so
+@@ -2877,7 +2885,9 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ 				} else {
+ 					newMapSize = (unsigned int) round_page(new_vinfo.v_height * new_vinfo.v_rowbytes);                      /* Remember size */
+ 				}
++				loader_checkpoint(53);   /* hakios: about to map the framebuffer */
+ 				newVideoVirt = ml_io_map_unmappable((vm_map_offset_t)new_vinfo.v_physaddr, newMapSize, flags);   /* Allocate address space for framebuffer */
++				loader_checkpoint(54);   /* hakios: framebuffer mapped */
+ 			}
+ 			new_vinfo.v_baseaddr = newVideoVirt + boot_vinfo->v_offset;                     /* Set the new framebuffer address */
+ 		}
+@@ -2927,6 +2937,7 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ 			gc_ops.show_cursor  = vc_reverse_cursor;
+ 			gc_ops.update_color = vc_update_color;
+ 			gc_initialize(&vinfo);
++			loader_checkpoint(55);   /* hakios: past gc_initialize */
+ 		}
+ 	}
+ 
+diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
+--- a/osfmk/prng/prng_random.c
++++ b/osfmk/prng/prng_random.c
+@@ -67,6 +67,18 @@ bootseed_init_bootloader(uint32_t request_size, uint8_t *dst)
+ 	uint32_t n;
+ 
+ 	n = PE_get_random_seed(dst, request_size);
++	/*
++	 * renoir: our loader hands over SHA512_DIGEST_LENGTH (64) bytes of the firmware's randomness, not
++	 * the 4 x 64 this kernel asks for on arm64. The rest repeats them, each copy marked with its offset:
++	 * the kernel's DRBG mixes all of it, and there is no more entropy than the 64 bytes either way --
++	 * what the kernel of iOS 16.5 started from.
++	 */
++	if (n >= SEED_SIZE && n < request_size) {
++		for (uint32_t at = n; at < request_size; at++) {
++			dst[at] = dst[at % n] ^ (uint8_t)(at / n) ^ (uint8_t)(at >> 8);
++		}
++		n = request_size;
++	}
+ 	if (n < request_size) {
+ 		/*
+ 		 * Insufficient entropy is fatal.  We must fill the
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -169,6 +169,15 @@ pe_init_fiq()
+ 	__builtin_arm_wsr64("ICC_IGRPEN0_EL1", 1);
+ 	__builtin_arm_isb(ISB_SY);
+ }
++#elif defined(GENERIC_GIC_V3_IRQ)
++/* Generic boards: Group 1 IRQs through a GICv3, see osfmk/arm64/gic_v3_irq.c */
++extern void gic_v3_irq_cpu_init(void);
++
++void
++pe_init_fiq()
++{
++	gic_v3_irq_cpu_init();
++}
+ #else
+ void
+ pe_init_fiq()
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -125,6 +125,8 @@ pe_init_fill_buffer_from_property(DTEntry entry, const char *property_name, char
+ 	}
+ }
+ 
++extern void loader_checkpoint(uint64_t n);
++
+ static void
+ check_for_panic_log(void)
+ {
+@@ -170,7 +172,9 @@ check_for_panic_log(void)
+ 		return;
+ 	}
+ 
++	loader_checkpoint(60);   /* hakios: about to map the panic region */
+ 	gPanicBase = ml_io_map_wcomb(reg_prop[0], panic_region_length[0]);
++	loader_checkpoint(61);   /* hakios: panic region mapped */
+ 
+ 	/* Deduct the size of the panic header from the panic region size */
+ 	panic_text_len = panic_region_length[0] - sizeof(struct embedded_panic_header);
+@@ -193,6 +197,9 @@ check_for_panic_log(void)
+ 	panic_info = (struct embedded_panic_header *)gPanicBase;
+ 
+ 	/* Check if a shared memory console is running in the panic buffer */
++	uint32_t hakios_magic = panic_info->eph_magic;
++	loader_checkpoint(62);   /* hakios: read the panic region magic */
++	(void)hakios_magic;
+ 	if (panic_info->eph_magic == 'SHMC') {
+ 		panic_console_available = TRUE;
+ 		return;
+@@ -212,7 +219,15 @@ check_for_panic_log(void)
+ 
+ 	/* Clear panic region */
+ 	CleanPoC_DcacheRegion_Force(gPanicBase, gPanicSize);
+-	bzero((void *)gPanicBase, gPanicSize);
++	loader_checkpoint(63);   /* hakios: panic region cleaned to PoC */
++	/*
++	 * hakios: not bzero(): its DC ZVA faults on this mapping on Qualcomm/Gunyah (the hypervisor's stage 2
++	 * is presumably Device here), and plain stores do not.
++	 */
++	for (volatile uint64_t *p = (volatile uint64_t *)gPanicBase; p < (volatile uint64_t *)(gPanicBase + gPanicSize); p++) {
++		*p = 0;
++	}
++	loader_checkpoint(64);   /* hakios: panic region zeroed */
+ }
+ 
+ int
+diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -32,6 +32,7 @@ SECURITY_READ_ONLY_LATE(bool) enable_dklog_serial_output = false;
+ static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
+ 
+ static void serial_putc_crlf(char c);
++extern void loader_log_putc(char c);
+ 
+ __startup_func
+ static void
+@@ -163,6 +164,7 @@ serial_putc_crlf(char c)
+ 	if (c == '\n') {
+ 		uart_putc('\r');
+ 	}
++	loader_log_putc(c);
+ 	uart_putc(c);
+ }
+ 
+diff --git a/pexpert/pexpert/arm64/board_config.h b/pexpert/pexpert/arm64/board_config.h
+--- a/pexpert/pexpert/arm64/board_config.h
++++ b/pexpert/pexpert/arm64/board_config.h
+@@ -304,6 +304,17 @@
+ 
+ 
+ 
++#ifdef ARM64_BOARD_CONFIG_BCM2837
++#include <pexpert/arm64/BCM2837.h>
++
++#define MAX_L2_CLINE                   6
++#define MAX_CPUS                       8 /* QEMU virt / standard ARMv9 bring-up */
++#define MAX_CPU_CLUSTERS               1
++
++#define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
++#endif  /* ARM64_BOARD_CONFIG_BCM2837 */
++
++
+ #ifdef ARM64_BOARD_CONFIG_VMAPPLE
+ #include <pexpert/arm64/VMAPPLE.h>
+ 
+diff --git a/pexpert/pexpert/arm64/boot.h b/pexpert/pexpert/arm64/boot.h
+--- a/pexpert/pexpert/arm64/boot.h
++++ b/pexpert/pexpert/arm64/boot.h
+@@ -15,7 +15,12 @@
+ #include <pexpert/arm/consistent_debug.h>
+ #include <pexpert/arm/protos.h>
+ 
+-#define BOOT_LINE_LENGTH 1024
++/*
++ * renoir: 608, as before xnu-12377: the layout the resident loader (darwin-renoir xnuloader/loader.c)
++ * fills in. At 1024 the kernel read bootFlags and memSizeActual 416 bytes past what the loader wrote,
++ * and sized everything from garbage (thread_max < 0, sys_ulock.c assertion).
++ */
++#define BOOT_LINE_LENGTH 608
+ 
+ /*
+  * Video information..

@@ -1,0 +1,6 @@
+# The Apple release this kernel is made from. kernel/assemble.sh fetches exactly this commit and
+# refuses anything else; to move to another release, change the three values, assemble, fix what
+# no longer applies in the tree and run kernel/export.sh.
+UPSTREAM_URL=https://github.com/apple-oss-distributions/xnu.git
+UPSTREAM_TAG=xnu-12377.121.6
+UPSTREAM_COMMIT=ac9718fb1af618d5ce8678d0dc6e8a58f252216f

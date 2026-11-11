@@ -1,0 +1,504 @@
+diff --git a/bsd/dev/memdev.c b/bsd/dev/memdev.c
+--- a/bsd/dev/memdev.c
++++ b/bsd/dev/memdev.c
+@@ -159,7 +159,8 @@ static const struct cdevsw mdevcdevsw = {
+ 
+ struct mdev {
+ 	uint64_t        mdBase;         /* base page number (pages are assumed to be 4K). Multiply by 4096 to find actual address */
+-	uint32_t        mdSize;         /* size in pages (pages are assumed to be 4K). Multiply by 4096 to find actual size. */
++	uint64_t        mdSize;         /* size in pages (pages are assumed to be 4K). Multiply by 4096 to find actual size.
++	                                 * 64 bits wide so that "mdSize << 12" does not wrap for a disk of 4 GB or more. */
+ 	int                     mdFlags;        /* flags */
+ 	int                     mdSecsize;      /* sector size */
+ 	int                     mdBDev;         /* Block device number */
+@@ -179,6 +180,7 @@ int mdevCMajor = -1;
+ static int      mdevioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p, int is_char);
+ dev_t           mdevadd(int devid, uint64_t base, unsigned int size, int phys);
+ dev_t           mdevlookup(int devid);
++int             mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
+ void            mdevremoveall(void);
+ int             mdevgetrange(int devid, uint64_t *base, uint64_t *size);
+ 
+@@ -245,7 +247,9 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
+ 	if (uio->uio_offset > (mdev[devid].mdSize << 12)) {
+ 		count = 0;
+ 	} else {
+-		count = imin(uio_resid(uio), (mdev[devid].mdSize << 12) - uio->uio_offset);
++		uint64_t room = (mdev[devid].mdSize << 12) - (uint64_t)uio->uio_offset;
++
++		count = (uint64_t)uio_resid(uio) < room ? (int)uio_resid(uio) : (int)(room > INT_MAX ? INT_MAX : room);
+ 	}
+ 
+ 	status = uiomove64(mdata, count, uio);     /* Move the data */
+@@ -450,8 +454,8 @@ mdevioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+ 		}
+ 		memdev_info->mi_mdev = TRUE;
+ 		memdev_info->mi_phys = (mdev[devid].mdFlags & mdPhys) ? TRUE : FALSE;
+-		memdev_info->mi_base = (uint32_t)mdev[devid].mdBase;
+-		memdev_info->mi_size = mdev[devid].mdSize;
++		memdev_info->mi_base = mdev[devid].mdBase;
++		memdev_info->mi_size = (typeof(memdev_info->mi_size))mdev[devid].mdSize;
+ 		break;
+ 
+ 	default:
+@@ -720,6 +724,26 @@ mdevlookup(int devid)
+ 	return mdev[devid].mdBDev;                                                      /* Return the device number */
+ }
+ 
++/*
++ * For a filesystem that reads a memory disk in place: where the disk is in the kernel's
++ * address space. Not for disks given by physical address (those are not mapped).
++ */
++int
++mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size)
++{
++	for (int i = 0; i < NB_MAX_MDEVICES; i++) {
++		if ((mdev[i].mdFlags & mdInited) && mdev[i].mdBDev == dev) {
++			if (mdev[i].mdFlags & mdPhys) {
++				return ENOTSUP;
++			}
++			*base = (vm_offset_t)(mdev[i].mdBase << 12);
++			*size = mdev[i].mdSize << 12;
++			return 0;
++		}
++	}
++	return ENXIO;
++}
++
+ void
+ mdevremoveall(void)
+ {
+diff --git a/bsd/miscfs/bindfs/bind_vfsops.c b/bsd/miscfs/bindfs/bind_vfsops.c
+--- a/bsd/miscfs/bindfs/bind_vfsops.c
++++ b/bsd/miscfs/bindfs/bind_vfsops.c
+@@ -136,8 +136,12 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
+ 		return ENOTSUP;
+ 	}
+ 
+-	/* check entitlement */
+-	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
++	/*
++	 * check entitlement -- redwood: or process 1, the port's own init, unsigned, which binds
++	 * its choice of launchd jobs and the like onto the read-only iOS root volume before it
++	 * hands over to launchd (userland/src/init.c, root_apfs=)
++	 */
++	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT) && proc_getpid(current_proc()) != 1) {
+ 		return EPERM;
+ 	}
+ 
+diff --git a/bsd/miscfs/devfs/devfs_vfsops.c b/bsd/miscfs/devfs/devfs_vfsops.c
+--- a/bsd/miscfs/devfs/devfs_vfsops.c
++++ b/bsd/miscfs/devfs/devfs_vfsops.c
+@@ -112,8 +112,13 @@ devfs_init(__unused struct vfsconf *vfsp)
+ 	if (devfs_sinit()) {
+ 		return ENOTSUP;
+ 	}
++	/*
++	 * hakios: readable by everyone. Every launchd job here has the console as its standard output
++	 * and error, and iOS 26's launchd opens them read-write after taking on the job's user: with
++	 * 0622 every daemon that is not root (logd, distnoted, ...) failed to spawn with EACCES.
++	 */
+ 	devfs_make_node(makedev(0, 0), DEVFS_CHAR,
+-	    UID_ROOT, GID_WHEEL, 0622, "console");
++	    UID_ROOT, GID_WHEEL, 0666, "console");
+ 	devfs_make_node(makedev(2, 0), DEVFS_CHAR,
+ 	    UID_ROOT, GID_WHEEL, 0666, "tty");
+ #if CONFIG_DEV_KMEM
+diff --git a/bsd/miscfs/mockfs/mockfs.h b/bsd/miscfs/mockfs/mockfs.h
+--- a/bsd/miscfs/mockfs/mockfs.h
++++ b/bsd/miscfs/mockfs/mockfs.h
+@@ -59,7 +59,7 @@ struct mockfs_mount {
+ 	mockfs_fsnode_t mockfs_root;            /* Root of the node tree */
+ 	boolean_t       mockfs_memory_backed;   /* Does the backing store reside in memory */
+ 	boolean_t       mockfs_physical_memory; /* (valid if memory backed) */
+-	uint32_t        mockfs_memdev_base;     /* Base page of the backing store (valid if memory backed) */
++	uint64_t        mockfs_memdev_base;     /* Base page of the backing store (valid if memory backed) */
+ 	uint64_t        mockfs_memdev_size;     /* Size of the backing store (valid if memory backed) */
+ };
+ 
+diff --git a/bsd/miscfs/mockfs/mockfs_fsnode.c b/bsd/miscfs/mockfs/mockfs_fsnode.c
+--- a/bsd/miscfs/mockfs/mockfs_fsnode.c
++++ b/bsd/miscfs/mockfs/mockfs_fsnode.c
+@@ -85,7 +85,7 @@ mockfs_fsnode_create(mount_t mp, uint8_t type, mockfs_fsnode_t * fsnpp)
+ 		goto done;
+ 	}
+ 
+-	*fsnpp = kalloc_type(mockfs_fsnode_t, Z_WAITOK | Z_ZERO | Z_NOFAIL);
++	*fsnpp = kalloc_type(struct mockfs_fsnode, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+ 	(*fsnpp)->size = new_size;
+ 	(*fsnpp)->type = type;
+ 	(*fsnpp)->mnt = mp;
+@@ -154,7 +154,7 @@ mockfs_fsnode_destroy(mockfs_fsnode_t fsnp)
+ 		}
+ 	}
+ 
+-	kfree_type(mockfs_fsnode_t, fsnp);
++	kfree_type(struct mockfs_fsnode, fsnp);
+ done:
+ 	return rvalue;
+ }
+@@ -345,10 +345,12 @@ mockfs_fsnode_vnode(mockfs_fsnode_t fsnp, vnode_t * vpp)
+ 				panic("mockfs_fsvnode failed to get ubc_mem_object for a new vnode");
+ 			}
+ 
+-			rvalue = pager_map_to_phys_contiguous(ubc_mem_object, 0, (mockfs_mnt->mockfs_memdev_base << PAGE_SHIFT), fsnp->size);
++			/* memdev counts its base in 4K pages whatever the kernel page size is (see bsd/dev/memdev.c) */
++			rvalue = pager_map_to_phys_contiguous(ubc_mem_object, 0, (mockfs_mnt->mockfs_memdev_base << 12), fsnp->size);
+ 
+ 			if (rvalue) {
+-				panic("mockfs_fsnode_vnode failed to create fictitious pages for a memory-backed device; rvalue = %d", rvalue);
++				panic("mockfs_fsnode_vnode failed to create fictitious pages for a memory-backed device; rvalue = %d, base page 0x%llx, size 0x%llx",
++				    rvalue, (unsigned long long)mockfs_mnt->mockfs_memdev_base, (unsigned long long)fsnp->size);
+ 			}
+ 		}
+ 
+diff --git a/bsd/sys/disk_private.h b/bsd/sys/disk_private.h
+--- a/bsd/sys/disk_private.h
++++ b/bsd/sys/disk_private.h
+@@ -44,7 +44,7 @@
+ typedef struct{
+ 	boolean_t mi_mdev; /* Is this a memdev device? */
+ 	boolean_t mi_phys; /* Physical memory? */
+-	uint32_t mi_base; /* Base page number of the device? */
++	uint64_t mi_base; /* Base page number of the device (hakios: a kernel VA page number does not fit in 32 bits) */
+ 	uint64_t mi_size; /* Size of the device (in ) */
+ } dk_memdev_info_t;
+ 
+diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -50,6 +50,7 @@
+ #include <sys/xattr.h>
+ #include <sys/fsevents.h>
+ #include <kern/zalloc.h>
++#include <pexpert/pexpert.h>
+ #include <miscfs/specfs/specdev.h>
+ #include <security/audit/audit.h>
+ 
+@@ -667,6 +668,14 @@ static struct getattrlist_attrtab getattrlistbulk_common_extended_tab[] = {
+ 	                         ATTR_VOL_ATTRIBUTES | ATTR_VOL_ENCODINGSUSED | \
+ 	                         ATTR_VOL_MOUNTEXTFLAGS)
+ 
++/*
++ * renoir: with ATTR_CMN_FULLPATH, which this layer builds for any filesystem (attrlist_build_path).
++ * iOS 27's CoreServicesInternal reads the root volume's ATTR_VOL_ATTRIBUTES once and drops from
++ * every URL resource property's attribute group what the volume does not list as valid: without
++ * it the canonical path (NSURLCanonicalPathKey) was never asked for, LaunchServices could not make
++ * a node for any bundle and registered no application, and SpringBoard died of "Got nil for
++ * _systemAppInfo".
++ */
+ #define VFS_DFLT_ATTR_CMN       (ATTR_CMN_NAME | ATTR_CMN_DEVID |  \
+ 	                         ATTR_CMN_FSID | ATTR_CMN_OBJTYPE |  \
+ 	                         ATTR_CMN_OBJTAG | ATTR_CMN_OBJID |  \
+@@ -678,7 +687,7 @@ static struct getattrlist_attrtab getattrlistbulk_common_extended_tab[] = {
+ 	                         ATTR_CMN_USERACCESS | ATTR_CMN_FILEID | \
+ 	                         ATTR_CMN_PARENTID | ATTR_CMN_RETURNED_ATTRS | \
+ 	                         ATTR_CMN_DOCUMENT_ID | ATTR_CMN_GEN_COUNT | \
+-	                         ATTR_CMN_DATA_PROTECT_FLAGS)
++	                         ATTR_CMN_DATA_PROTECT_FLAGS | ATTR_CMN_FULLPATH)
+ 
+ #define VFS_DFLT_ATTR_CMN_EXT   (ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_LINKID |  \
+ 	                         ATTR_CMNEXT_NOFIRMLINKPATH | ATTR_CMNEXT_REALDEVID |  \
+@@ -2846,6 +2855,61 @@ out:
+ 	return error;
+ }
+ 
++/*
++ * renoir: boot-arg trace_attr=name[,name...] (p_comm) logs what such a process asks getattrlist,
++ * fgetattrlist and getattrlistbulk for and what it gets (common and extended-common attributes,
++ * options, the full path built for ATTR_CMN_FULLPATH): a newer userland asks for paths in ways this
++ * kernel may answer differently; fsgetpath too (bsd/vfs/vfs_syscalls.c). At most 300 lines a boot.
++ */
++const char *
++attr_trace_wanted(void)
++{
++	static char wanted[96];
++	static int parsed, lines;
++	const char *name;
++	proc_t p;
++
++	if (!parsed) {
++		parsed = 1;
++		if (!PE_parse_boot_arg_str("trace_attr", wanted, sizeof(wanted))) {
++			wanted[0] = '\0';
++		}
++	}
++	if (wanted[0] == '\0' || lines >= 300 || (p = current_proc()) == NULL) {
++		return NULL;
++	}
++	name = proc_best_name(p);
++	if (name == NULL || name[0] == '\0' || strnstr(wanted, name, sizeof(wanted)) == NULL) {
++		return NULL;
++	}
++	lines++;
++	return name;
++}
++
++static void
++attr_trace(vnode_t vp, struct attrlist *alp, uint64_t options, const struct _attrlist_buf *abp,
++    const char *fullpath, int error)
++{
++	extern void loader_log_line(const char *line);
++	const char *name, *vname;
++	char line[300];
++
++	/* what failed and what asked for a path; the rest would only fill the lines */
++	if (error == 0 && !(alp->commonattr & ATTR_CMN_FULLPATH) &&
++	    !(alp->forkattr & (ATTR_CMNEXT_RELPATH | ATTR_CMNEXT_NOFIRMLINKPATH))) {
++		return;
++	}
++	if ((name = attr_trace_wanted()) == NULL) {
++		return;
++	}
++	vname = vp != NULL && vp->v_name != NULL ? vp->v_name : "-";
++	snprintf(line, sizeof(line), "hakios: attr %s[%d] %s cmn %#x fork %#x opt %#llx -> %d got cmn %#x fork %#x path [%s]\n",
++	    name, proc_selfpid(), vname, alp->commonattr, alp->forkattr, options, error,
++	    error == 0 && abp != NULL ? abp->actual.commonattr : 0, error == 0 && abp != NULL ? abp->actual.forkattr : 0,
++	    fullpath != NULL ? fullpath : "-");
++	loader_log_line(line);
++}
++
+ static errno_t
+ vfs_attr_pack_internal(mount_t mp, vnode_t vp, uio_t auio, struct attrlist *alp,
+     uint64_t options, struct vnode_attr *vap, __unused void *fndesc,
+@@ -3165,6 +3229,7 @@ vfs_attr_pack_internal(mount_t mp, vnode_t vp, uio_t auio, struct attrlist *alp,
+ 	}
+ 
+ out:
++	attr_trace(vp, alp, options, &ab, fullpathptr, error);
+ 	if (vname) {
+ 		vnode_putname(vname);
+ 	}
+@@ -3513,6 +3578,9 @@ out:
+ 	}
+ 	kfree_type(struct vnode_attr, va);
+ 
++	if (error != 0) {
++		attr_trace(vp, alp, options, NULL, NULL, error);
++	}
+ 	VFS_DEBUG(ctx, vp, "ATTRLIST - returning %d", error);
+ 	return error;
+ }
+diff --git a/bsd/vfs/vfs_conf.c b/bsd/vfs/vfs_conf.c
+--- a/bsd/vfs/vfs_conf.c
++++ b/bsd/vfs/vfs_conf.c
+@@ -103,13 +103,24 @@ extern  struct vfsops mockfs_vfsops;
+ extern  int mockfs_mountroot(mount_t, vnode_t, vfs_context_t);
+ #endif /* MOCKFS */
+ 
++#if RAMFS
++extern  struct vfsops ramfs_vfsops;
++#endif /* RAMFS */
++
++#if APFS
++extern  struct vfsops apfs_vfsops;
++extern  int apfs_mountroot(mount_t, vnode_t, vfs_context_t);
++#endif /* APFS */
++
+ enum fs_type_num {
+ 	FT_DEVFS = 19,
+ 	FT_SYNTHFS = 20,
+ 	FT_ROUTEFS = 21,
+ 	FT_NULLFS = 22,
+ 	FT_BINDFS = 23,
+-	FT_MOCKFS  = 0x6D6F636B
++	FT_MOCKFS  = 0x6D6F636B,
++	FT_RAMFS   = 0x72616D66,
++	FT_APFS    = 0x61706673
+ };
+ 
+ int fstypenumstart = FT_BINDFS + 1;
+@@ -193,6 +204,54 @@ static struct vfstable vfstbllist[] = {
+ 	},
+ #endif /* BINDFS */
+ 
++#if RAMFS
++	/* Read-write filesystem in memory (no device, no mount arguments) */
++	{
++		.vfc_vfsops = &ramfs_vfsops,
++		.vfc_name = "ramfs",
++		.vfc_typenum = FT_RAMFS,
++		.vfc_refcount = 0,
++		.vfc_flags = MNT_LOCAL,
++		.vfc_mountroot = NULL,
++		.vfc_next = NULL,
++		.vfc_reserved1 = 0,
++		.vfc_reserved2 = 0,
++		.vfc_vfsflags = VFC_VFSGENERICARGS | VFC_VFS64BITREADY | VFC_VFSNATIVEXATTR,
++		.vfc_descptr = NULL,
++		.vfc_descsize = 0,
++		.vfc_sysctl = NULL
++	},
++#endif /* RAMFS */
++
++#if APFS
++	/*
++	 * Apple File System, read only: the root and every image of this port's (the RAM
++	 * disks are APFS containers).  Before mockfs, which accepts any root device: a device
++	 * that is not APFS comes back EINVAL and vfs_mountroot() goes on to the next.
++	 */
++	{
++		.vfc_vfsops = &apfs_vfsops,
++		.vfc_name = "apfs",
++		.vfc_typenum = FT_APFS,
++		.vfc_refcount = 0,
++		.vfc_flags = MNT_LOCAL | MNT_RDONLY,
++		.vfc_mountroot = apfs_mountroot,
++		.vfc_next = NULL,
++		.vfc_reserved1 = 0,
++		.vfc_reserved2 = 0,
++		/*
++		 * Generic args, not local: a kernel mount of a filesystem marked
++		 * VFC_VFSLOCALARGS is refused outright (mount_common), and this one has to be
++		 * mountable from the kernel.  So apfs_mount() takes the device's path as its
++		 * mount data and opens it itself.
++		 */
++		.vfc_vfsflags = VFC_VFSGENERICARGS | VFC_VFS64BITREADY | VFC_VFSNATIVEXATTR,
++		.vfc_descptr = NULL,
++		.vfc_descsize = 0,
++		.vfc_sysctl = NULL
++	},
++#endif /* APFS */
++
+ #if MOCKFS
+ 	/* If we are configured for it, mockfs should always be the last standard entry (and thus the last FS we attempt mountroot with) */
+ 	{
+@@ -297,6 +356,15 @@ extern const struct vnodeopv_desc devfs_fdesc_vnodeop_opv_desc;
+ extern const struct vnodeopv_desc mockfs_vnodeop_opv_desc;
+ #endif /* MOCKFS */
+ 
++
++#if RAMFS
++extern const struct vnodeopv_desc ramfs_vnodeop_opv_desc;
++#endif /* RAMFS */
++
++#if APFS
++extern const struct vnodeopv_desc apfs_vnodeop_opv_desc;
++#endif /* APFS */
++
+ extern const struct vnodeopv_desc nullfs_vnodeop_opv_desc;
+ extern const struct vnodeopv_desc bindfs_vnodeop_opv_desc;
+ 
+@@ -326,5 +394,11 @@ const struct vnodeopv_desc *vfs_opv_descs[] = {
+ #if MOCKFS
+ 	&mockfs_vnodeop_opv_desc,
+ #endif /* MOCKFS */
++#if RAMFS
++	&ramfs_vnodeop_opv_desc,
++#endif /* RAMFS */
++#if APFS
++	&apfs_vnodeop_opv_desc,
++#endif /* APFS */
+ 	NULL
+ };
+diff --git a/bsd/vfs/vfs_lookup.c b/bsd/vfs/vfs_lookup.c
+--- a/bsd/vfs/vfs_lookup.c
++++ b/bsd/vfs/vfs_lookup.c
+@@ -261,8 +261,67 @@ __typed_allocators_ignore_pop
+  *		lookup: ???
+  *		VNOP_READLINK:???
+  */
++static int namei_untraced(struct nameidata *ndp);
++#include <pexpert/pexpert.h>
++
++/*
++ * hakios: boot-arg trace_open=name[,name...] (p_comm) puts every path such a process looks up --
++ * open, stat, access, getattrlist all come through here -- and what came of it into the loader's log,
++ * to see which file a daemon looks for and does not find. At most 400 lines a boot.
++ */
+ int
+ namei(struct nameidata *ndp)
++{
++	static char wanted[96], only[64];
++	static int parsed, lines;
++	char path[160] = "";
++	const char *name = NULL;
++	int error;
++
++	if (!parsed) {
++		parsed = 1;
++		if (!PE_parse_boot_arg_str("trace_open", wanted, sizeof(wanted))) {
++			wanted[0] = '\0';
++		}
++		/* renoir: trace_open_path=SUBSTRING, only the paths with it (the 400 lines go further) */
++		if (!PE_parse_boot_arg_str("trace_open_path", only, sizeof(only))) {
++			only[0] = '\0';
++		}
++	}
++	if (wanted[0] != '\0' && lines < 400) {
++		proc_t p = current_proc();
++
++		name = p != NULL ? proc_best_name(p) : NULL;
++		if (name != NULL && name[0] != '\0' && strnstr(wanted, name, sizeof(wanted)) != NULL) {
++			size_t got = 0;
++
++			if (UIO_SEG_IS_USER_SPACE(ndp->ni_segflg)) {
++				(void)copyinstr(ndp->ni_dirp, path, sizeof(path), &got);
++			} else {
++				(void)copystr(CAST_DOWN(void *, ndp->ni_dirp), path, sizeof(path), &got);
++			}
++			path[sizeof(path) - 1] = '\0';
++		} else {
++			name = NULL;
++		}
++	}
++	if (name != NULL && only[0] != '\0' && strnstr(path, only, sizeof(path)) == NULL) {
++		name = NULL;
++	}
++	error = namei_untraced(ndp);
++	if (name != NULL && lines < 400) {
++		extern void loader_log_line(const char *line);
++		char line[220];
++
++		lines++;
++		snprintf(line, sizeof(line), "hakios: open %s[%d] %s -> %d\n", name, proc_selfpid(), path, error);
++		loader_log_line(line);
++	}
++	return error;
++}
++
++static int
++namei_untraced(struct nameidata *ndp)
+ {
+ 	struct vnode *dp;       /* the directory we are searching */
+ 	struct vnode *usedvp = ndp->ni_dvp;  /* store pointer to vp in case we must loop due to
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -14427,6 +14427,16 @@ fsgetpath_extended(user_addr_t buf, user_size_t bufsize, user_addr_t user_fsid,
+ 	int error;
+ 
+ 	if (options & ~(FSOPT_NOFIRMLINKPATH | FSOPT_ISREALFSID)) {
++		extern const char *attr_trace_wanted(void);
++		extern void loader_log_line(const char *line);
++		const char *name = attr_trace_wanted();
++		char line[160];
++
++		if (name != NULL) {
++			snprintf(line, sizeof(line), "hakios: fsgetpath %s[%d] obj %#llx opt %#x -> EINVAL (options)\n",
++			    name, proc_selfpid(), objid, options);
++			loader_log_line(line);
++		}
+ 		return EINVAL;
+ 	}
+ 
+@@ -14456,6 +14466,19 @@ fsgetpath_extended(user_addr_t buf, user_size_t bufsize, user_addr_t user_fsid,
+ 
+ 	*retval = (user_ssize_t)length; /* may be superseded by error */
+ out:
++	{
++		/* renoir: boot-arg trace_attr (bsd/vfs/vfs_attrlist.c) */
++		extern const char *attr_trace_wanted(void);
++		extern void loader_log_line(const char *line);
++		const char *name = attr_trace_wanted();
++		char line[300];
++
++		if (name != NULL) {
++			snprintf(line, sizeof(line), "hakios: fsgetpath %s[%d] fsid %#x obj %#llx opt %#x -> %d [%s]\n",
++			    name, proc_selfpid(), fsid.val[0], objid, options, error, error == 0 ? realpath : "-");
++			loader_log_line(line);
++		}
++	}
+ 	kfree_data(realpath, bufsize);
+ 	return error;
+ }

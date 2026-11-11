@@ -1,0 +1,227 @@
+diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
+--- a/iokit/Kernel/IOPMrootDomain.cpp
++++ b/iokit/Kernel/IOPMrootDomain.cpp
+@@ -564,7 +564,16 @@ static uint32_t         gDarkWakeFlags = kDarkWakeFlagPromotionEarly;
+ #endif /* !defined(XNU_TARGET_OS_OSX) */
+ 
+ static uint32_t         gNoIdleFlag = 0;
+-static uint32_t         gSleepDisabledFlag = 0;
++/*
++ * redwood: the system does not sleep. There is nothing here to sleep into and nothing that would
++ * wake it: with the screen locked, powerd asks for system sleep within seconds, and that request
++ * ended in IOCPUSleepKernel() -- with one processor it came straight back out, again and again
++ * (every time a round of sleep and wake notifications to all the system); with more than one it
++ * stopped there for good, waiting for a processor to go that never goes. Refused instead, the
++ * system stays awake with its display off, and the side button or a tap wakes the screen.
++ * Boot-arg syssleep=1 gives the old behaviour back.
++ */
++static uint32_t         gSleepDisabledFlag = 1;
+ static uint32_t         gSwdPanic = 1;
+ static uint32_t         gSwdSleepTimeout = 0;
+ static uint32_t         gSwdWakeTimeout = 0;
+@@ -1762,6 +1771,13 @@ IOPMrootDomain::start( IOService * nub )
+ #endif /* DEVELOPMENT || DEBUG */
+ 
+ 	PE_parse_boot_argn("noidle", &gNoIdleFlag, sizeof(gNoIdleFlag));
++	{
++		uint32_t syssleep = 0;
++
++		if (PE_parse_boot_argn("syssleep", &syssleep, sizeof(syssleep)) && syssleep) {
++			gSleepDisabledFlag = 0;
++		}
++	}
+ 	PE_parse_boot_argn("swd_sleeptimeout", &gSwdSleepTimeout, sizeof(gSwdSleepTimeout));
+ 	PE_parse_boot_argn("swd_waketimeout", &gSwdWakeTimeout, sizeof(gSwdWakeTimeout));
+ 	PE_parse_boot_argn("swd_timeout", &gSwdSleepWakeTimeout, sizeof(gSwdSleepWakeTimeout));
+diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.cpp
+--- a/iokit/Kernel/IOPlatformExpert.cpp
++++ b/iokit/Kernel/IOPlatformExpert.cpp
+@@ -51,6 +51,9 @@
+ #include <libkern/c++/OSContainers.h>
+ #include <libkern/c++/OSSharedPtr.h>
+ #include <libkern/crypto/sha1.h>
++#include <libkern/crypto/register_crypto.h>
++
++extern "C" crypto_functions_t g_crypto_funcs;     /* NULL until a crypto provider has registered */
+ #include <libkern/OSAtomic.h>
+ 
+ #if defined(__arm64__)
+@@ -2222,6 +2225,14 @@ IOPlatformExpertDevice::generatePlatformUUID( void )
+ 	uuid_string_t     uuid;
+ 
+ #if !defined(__x86_64__)
++	/*
++	 * The first call (configureDefaults, from InitIOKit) comes before the crypto provider
++	 * has registered when that provider is not Apple's corecrypto; the identifier is then
++	 * made by the second call, when the platform expert starts.
++	 */
++	if (g_crypto_funcs == NULL) {
++		return;
++	}
+ 	entry = IORegistryEntry::fromPath( "/chosen", gIODTPlane );
+ 	if (entry) {
+ 		OSData * data1;
+diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
+--- a/iokit/Kernel/IOService.cpp
++++ b/iokit/Kernel/IOService.cpp
+@@ -5396,7 +5396,15 @@ IOService::publishHiddenMedia(IOService * parent)
+ 	bool                wasHiding;
+ 
+ 	iomediaClass = OSMetaClass::getMetaClassWithName(gIOMediaKey);
+-	assert(iomediaClass);
++	/*
++	 * hakios: IOMedia lives in the IOStorageFamily kext, which is not built into the
++	 * non-Apple bring-up kernel, so its metaclass is never registered.  With no IOMedia
++	 * class there are no (hidden) IOMedia instances to publish -- make this a safe no-op
++	 * instead of asserting during root-media setup for the md0 RAM disk.
++	 */
++	if (iomediaClass == NULL) {
++		return;
++	}
+ 
+ 	LOCKWRITENOTIFY();
+ 	wasHiding = gIOServiceHideIOMedia;
+@@ -5449,7 +5457,10 @@ IOService::setRootMedia(IOService * root)
+ 	bool unhide;
+ 
+ 	ioblockstoragedriverClass = OSMetaClass::getMetaClassWithName(gIOBlockStorageDriverKey);
+-	assert(ioblockstoragedriverClass);
++	if (!ioblockstoragedriverClass) {
++		// No IOStorageFamily in this kernel: the root cannot be a block storage device
++		root = NULL;
++	}
+ 
+ 	while (root) {
+ 		if (root->metaCast(ioblockstoragedriverClass)) {
+diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -3679,6 +3679,25 @@ IOCopyPropertyCompatible(IORegistryEntry * regEntry, const char * name)
+ 	return obj;
+ }
+ 
++/*
++ * Boot-arg regtrace=1: report the registry properties user space asks for and does not
++ * find (regtrace=2: every property asked for). Shows what a daemon expects of a driver.
++ */
++static TUNABLE(uint32_t, regtrace_level, "regtrace", 0);
++
++static void
++regtrace_report(IORegistryEntry * entry, const char * property, bool found)
++{
++	char procname[32] = "?";
++
++	if (regtrace_level == 0 || (found && regtrace_level < 2)) {
++		return;
++	}
++	proc_selfname(procname, sizeof(procname));
++	IOLog("regtrace: %s[%d] %s(%s).%s %s\n", procname, proc_selfpid(), entry->getName(),
++	    entry->getMetaClass()->getClassName(), property, found ? "found" : "MISSING");
++}
++
+ /* Routine io_registry_entry_get_property */
+ kern_return_t
+ is_io_registry_entry_get_property_bytes(
+@@ -3706,6 +3725,7 @@ is_io_registry_entry_get_property_bytes(
+ #endif
+ 
+ 	obj = IOCopyPropertyCompatible(entry, property_name);
++	regtrace_report(entry, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return kIOReturnNoResources;
+ 	}
+@@ -3774,6 +3794,7 @@ is_io_registry_entry_get_property(
+ #endif
+ 
+ 	obj = IOCopyPropertyCompatible(entry, property_name);
++	regtrace_report(entry, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return kIOReturnNotFound;
+ 	}
+@@ -3822,6 +3843,7 @@ is_io_registry_entry_get_property_recursively(
+ 
+ 	obj = entry->copyProperty( property_name,
+ 	    IORegistryEntry::getPlane( plane ), options );
++	regtrace_report(entry, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return kIOReturnNotFound;
+ 	}
+@@ -4016,6 +4038,7 @@ is_io_registry_entry_get_property_bin_buf(
+ 	}
+ 
+ 	err = kIOReturnNotFound;
++	IORegistryEntry * asked = entry;
+ 	if (gIORegistryEntryPropertyKeysKey == sym) {
+ 		obj = entry->copyPropertyKeys();
+ 	} else {
+@@ -4048,6 +4071,7 @@ is_io_registry_entry_get_property_bin_buf(
+ 	}
+ 
+ 	sym->release();
++	regtrace_report(asked, property_name, obj != NULL);
+ 	if (!obj) {
+ 		return err;
+ 	}
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -32,6 +32,10 @@
+  * Version 2.0.
+  */
+ 
++#if defined(__arm64__)
++#include <pexpert/arm64/board_config.h>
++#endif
++
+ const char * gIOKernelConfigTables =
+     "("
+     "   {"
+@@ -44,4 +48,11 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOService;"
+     "     'IOExclaveProxy'  = 1:32;"
+     "   }"
++#if defined(__arm64__) && !defined(APPLE_ARM64_ARCH_FAMILY)
++    "   ,{"
++    "     'IOClass'         = GenericARMPE;"
++    "     'IOProviderClass' = IOPlatformExpertDevice;"
++    "     'IOProbeScore'    = 1000:32;"
++    "   }"
++#endif
+     ")";
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -708,7 +708,14 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	assert(matching);
+ 	matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
+ 
+-	if ((service = IOService::waitForMatchingService(matching, 30ULL * kSecondScale))) {
++	// A memory-device root needs no filesystem kext, so do not sit out the timeout for one
++	char rdEarly[kMaxBootVar];
++	uint64_t bsdWait = 30ULL * kSecondScale;
++	if (PE_parse_boot_argn("rd", rdEarly, sizeof(rdEarly)) && rdEarly[0] == 'm' && rdEarly[1] == 'd') {
++		bsdWait = kSecondScale / 10;
++	}
++
++	if ((service = IOService::waitForMatchingService(matching, bsdWait))) {
+ 		OSSafeReleaseNULL(service);
+ 	} else {
+ 		IOLog("!BSD\n");
+@@ -791,6 +798,17 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ #endif /* __LP64__ */
+ 				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
+ 			}
++			/*
++			 * A second image the loader may have left in memory (it becomes
++			 * /dev/md1): a volume for user space to mount, never the root.
++			 */
++			data = (OSData *)regEntry->getProperty("RAMDisk1");
++			if (data && data->getLength() >= 2 * sizeof(uintptr_t)) {
++				uintptr_t *ramdParms = (uintptr_t *)data->getBytesNoCopy();
++				if (ramdParms[1] <= (((uint64_t)UINT_MAX) << 12)) {
++					(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);
++				}
++			}
+ 			regEntry->release();                                                            /* Toss the entry */
+ 		}
+ 	}

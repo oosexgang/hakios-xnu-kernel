@@ -1,0 +1,465 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -143,8 +143,8 @@ installsrc:
+ 
+ else ifneq ($(findstring xnu_tests,$(RC_ProjectName)),)
+ 
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
++export SYSCTL_HW_LOGICALCPU  := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ default: install
+@@ -160,8 +160,8 @@ installsrc:
+ 
+ else ifeq ($(RC_ProjectName),xnu_tests_driverkit)
+ 
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
++export SYSCTL_HW_LOGICALCPU  := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ default: install
+@@ -193,8 +193,8 @@ endif
+ # CPUs. If the system does not support SMT, use N+1.
+ # If MAKEJOBS or -jN is passed on the make line, that takes precedence.
+ #
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
++export SYSCTL_HW_LOGICALCPU  := $(shell nproc 2>/dev/null || /usr/sbin/sysctl -n hw.ncpu)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ TOP_TARGETS = \
+diff --git a/SETUP/config/doconf b/SETUP/config/doconf
+--- a/SETUP/config/doconf
++++ b/SETUP/config/doconf
+@@ -1,4 +1,4 @@
+-#!/bin/csh -f
++#!/usr/bin/env -S csh -f
+ set path = ($path .)
+ ######################################################################
+ # HISTORY
+diff --git a/SETUP/kextsymboltool/kextsymboltool.c b/SETUP/kextsymboltool/kextsymboltool.c
+--- a/SETUP/kextsymboltool/kextsymboltool.c
++++ b/SETUP/kextsymboltool/kextsymboltool.c
+@@ -710,8 +710,15 @@ main(int argc, char * argv[])
+ 	strtabpad = (strtabsize + 3) & ~3;
+ 
+ 	if (require_imports && num_removed_syms) {
+-		err = kError;
+-		goto finish;
++		/*
++		 * HakiOS builds XNU without the full DriverKit / IOUserServer surface, so a few
++		 * declared exports -- the generated *_Invoke and _Dispatch dispatch symbols -- are
++		 * not present in the kernel.  A stock build has them, keeps num_removed_syms at 0 and
++		 * never reaches here.  Omit the absent symbols from the set and carry on rather than
++		 * failing the build: no external kext that would need them is loaded on this bench.
++		 */
++		fprintf(stderr, "kextsymboltool: %u exported symbol(s) absent from the kernel, omitted\n",
++		    num_removed_syms);
+ 	}
+ 
+ 	fd = open(output_name, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+diff --git a/bsd/conf/Makefile.arm64 b/bsd/conf/Makefile.arm64
+--- a/bsd/conf/Makefile.arm64
++++ b/bsd/conf/Makefile.arm64
+@@ -5,6 +5,11 @@
+ # Inline assembly doesn't interact well with LTO
+ fbt_arm.o_CFLAGS_ADD += $(CFLAGS_NOLTO_FLAG)
+ 
++# libdeflate's arm headers (bsd/miscfs/apfs/libdeflate) include the compiler's own <arm_acle.h>
++# and <arm_neon.h>, which the kernel's include paths do not have: they come after those paths,
++# so the kernel's <stdint.h> and the rest are still the ones found.
++apfs_deflate.o_CFLAGS_ADD += -idirafter $(shell $(CC) -print-resource-dir)/include
++
+ kern_csr.o_INCFLAGS += -I$(SRCROOT)/osfmk
+ kern_debug.o_INCFLAGS += -I$(SRCROOT)/osfmk
+ 
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -108,6 +108,41 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+ 
+ bsd/dev/monotonic.c         optional config_cpu_counters
++bsd/dev/redwood_input.c	standard
++bsd/dev/redwood_virtio_input.c	standard
++bsd/dev/redwood_goodix.c	standard
++bsd/dev/renoir_fts.c	standard
++bsd/dev/hakios_cputop.c	standard
++bsd/dev/redwood_buttons.c	standard
++bsd/dev/redwood_battery.c	standard
++bsd/dev/redwood_ufs.c	standard
++bsd/dev/redwood_ufshc.c	standard
++bsd/dev/redwood_net.c	standard
++bsd/dev/redwood_virtio_net.c	standard
++bsd/dev/redwood_apple80211.c	standard
++bsd/dev/redwood_cpufreq.c	standard
++bsd/dev/redwood_adreno.c	standard
++bsd/dev/redwood_audio.c	standard
++bsd/dev/redwood_virtio_sound.c	standard
++bsd/dev/redwood_speaker.c	standard
++bsd/dev/redwood_guard.c	standard
++bsd/dev/redwood_haptic.c	standard
++bsd/dev/redwood_torch.c	standard
++bsd/dev/hakios_backlight.c	standard
++bsd/dev/hakios_thermal.c	standard
++bsd/dev/redwood_camera.c	standard
++bsd/dev/redwood_mic.c	standard
++bsd/dev/redwood_wifi.c	standard
++bsd/dev/redwood_adsp.c	standard
++bsd/dev/redwood_image.c	standard
++bsd/dev/redwood_virtio_blk.c	standard
++bsd/dev/redwood_sparse.c	standard
++bsd/dev/redwood_sound.c	standard
++bsd/dev/redwood_qmi.c	standard
++bsd/dev/redwood_wlfw.c	standard
++bsd/dev/redwood_lx.c	standard
++bsd/dev/redwood_sta.c	standard
++bsd/dev/redwood_apfs_check.c	optional apfs
+ 
+ bsd/libkern/crc32.c			standard
+ bsd/libkern/random.c			standard
+@@ -155,6 +190,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+ bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
+ bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
+ bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
++bsd/miscfs/apfs/apfs_deflate.c		optional apfs
++bsd/miscfs/apfs/apfs_zbitmap.c		optional apfs
++bsd/miscfs/apfs/apfs_lib.c		optional apfs
++bsd/miscfs/apfs/apfs_write.c		optional apfs
++bsd/miscfs/apfs/apfs_store.c		optional apfs
++bsd/miscfs/apfs/apfs_vfsops.c		optional apfs
++bsd/miscfs/apfs/apfs_vnops.c		optional apfs
++bsd/miscfs/ramfs/ramfs.c			optional ramfs
+ 
+ bsd/miscfs/routefs/routefs_ops.c	optional routefs
+ 
+@@ -380,6 +423,7 @@ bsd/security/audit/audit_syscalls.c		standard
+ bsd/security/audit/audit_worker.c		optional config_audit
+ 
+ bsd/pthread/pthread_shims.c		standard
++bsd/pthread/pthread_kext_static.c    standard
+ bsd/pthread/pthread_priority.c		standard
+ bsd/pthread/pthread_workqueue.c		standard
+ 
+@@ -403,6 +447,7 @@ bsd/kern/kern_debug.c			standard
+ bsd/kern/kern_symfile.c			standard
+ bsd/kern/kern_descrip.c			standard
+ bsd/kern/kern_guarded.c			standard
++bsd/kern/kern_minimac.c			optional config_macf
+ bsd/kern/kern_event.c			standard
+ bsd/kern/kern_control.c			optional networking bound-checks
+ bsd/kern/kern_exec.c			standard
+diff --git a/config/MASTER b/config/MASTER
+--- a/config/MASTER
++++ b/config/MASTER
+@@ -112,6 +112,8 @@ options		CONFIG_WORKLOOP_DEBUG	# <config_workloop_debug>
+ #	4.4 filesystems
+ #
+ options		MOCKFS		# Boot from an executable	# <mockfs>
++options		APFS		# Apple File System, read only	# <apfs>
++options		RAMFS		# Read-write filesystem in memory	# <ramfs>
+ options		FIFO		# fifo support			# <fifo>
+ options		FDESC		# fdesc_fs support		# <fdesc>
+ options		DEVFS		# devfs support			# <devfs>
+diff --git a/iokit/IOKit/IOCircularDataQueueImplementation.h b/iokit/IOKit/IOCircularDataQueueImplementation.h
+--- a/iokit/IOKit/IOCircularDataQueueImplementation.h
++++ b/iokit/IOKit/IOCircularDataQueueImplementation.h
+@@ -312,7 +312,7 @@ typedef struct IOCircularDataQueueDescription {
+ #else //  __has_feature(ptrauth_calls)
+ #define OS_PTRAUTH_SIGNED_PTR(type)
+ #define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type)
+-#define OS_PTRAUTH_DISCRIMINATOR(str) 0
++#define OS_PTRAUTH_DISCRIMINATOR(str) 0ULL     /* 64-bit: callers shift it by 48 (an int shifted by 48 is undefined) */
+ #define __ptrauth_only __unused
+ #endif // __has_feature(ptrauth_calls)
+ #endif /* !KERNEL */
+diff --git a/iokit/conf/files b/iokit/conf/files
+--- a/iokit/conf/files
++++ b/iokit/conf/files
+@@ -80,6 +80,14 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+ iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
+ 
+ iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
++iokit/Kernel/GenericARMPE.cpp			optional iokitcpp
++iokit/Kernel/MiniIOSurface.cpp			optional iokitcpp
++iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
++iokit/Kernel/RedwoodGPU.cpp				optional iokitcpp
++iokit/Kernel/RedwoodWLAN.cpp			optional iokitcpp
++iokit/Kernel/RedwoodBattery.cpp			optional iokitcpp
++iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
++iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
+ iokit/Kernel/IOPlatformIO.cpp				optional iokitcpp
+ 
+ iokit/Kernel/IOCPU.cpp					optional iokitcpp
+@@ -111,8 +119,10 @@ iokit/Tests/TestServices/TestIODeviceMemoryRosetta.cpp optional iokitcpp
+ iokit/Tests/TestServices/TestIOUserClient2022Entitlements.cpp optional iokitcpp
+ iokit/Tests/TestServices/TestIOServiceUserNotification.cpp optional iokitcpp
+ iokit/Tests/TestServices/TestIODataQueues.cpp optional iokitcpp
+-./Tests/TestServices/TestDextRematch.iig.cpp optional iokitcpp
+-iokit/Tests/TestServices/TestDextRematchKernel.cpp optional iokitcpp
++# renoir: an xnu-internal DriverKit test whose iig output no SDK carries (Apple's iig is closed and
++# macOS-only); left out unless the option iig_test_dext_rematch is configured
++./Tests/TestServices/TestDextRematch.iig.cpp optional iig_test_dext_rematch
++iokit/Tests/TestServices/TestDextRematchKernel.cpp optional iig_test_dext_rematch
+ 
+ iokit/Kernel/IOStatistics.cpp				optional iokitcpp
+ iokit/Kernel/IOInterruptAccounting.cpp			optional iokitcpp
+diff --git a/libkern/conf/files b/libkern/conf/files
+--- a/libkern/conf/files
++++ b/libkern/conf/files
+@@ -110,6 +110,8 @@ libkern/img4/interface.c 		standard
+ libkern/image4/dlxk.c 		standard
+ 
+ libkern/amfi/amfi.c 		standard
++libkern/amfi/miniamfi.c 		standard
++libkern/amfi/miniamfi_entitlements.cpp 	standard
+ 
+ libkern/stack_protector.c       standard
+ libkern/ptrauth_utils.c         standard
+diff --git a/libkern/libkern/c++/OSData.h b/libkern/libkern/c++/OSData.h
+--- a/libkern/libkern/c++/OSData.h
++++ b/libkern/libkern/c++/OSData.h
+@@ -967,7 +967,7 @@ private:
+ 		    "only trivially copyable types can be contained");
+ 		static_assert(!__is_pointer(T) || (acquisition == kValueNoCopy),
+ 		    "pointers cannot be contained");
+-		static_assert(KALLOC_TYPE_IS_DATA_ONLY(T) || (acquisition == kValueNoCopy),
++		static_assert(XNU_NO_TYPE_BUILTINS || KALLOC_TYPE_IS_DATA_ONLY(T) || (acquisition == kValueNoCopy),
+ 		    "only plain data types can be contained (consider using OSValueObject)");
+ 		return 0; // C++11 does not support void-returning constexpr functions
+ 	}
+diff --git a/libkern/os/base.h b/libkern/os/base.h
+--- a/libkern/os/base.h
++++ b/libkern/os/base.h
+@@ -351,23 +351,38 @@ typedef void (*os_function_t)(void *_Nullable);
+ typedef void (^os_block_t)(void);
+ #endif
+ 
++/*
++ * Signed data pointers (the __ptrauth qualifier on a field) have to be signed when the image is
++ * loaded: the linker writes them as chained "auth" fixups, which only dyld or Apple's kernelcache
++ * generator can apply, because applying them needs the keys.  This project loads the kernel as a
++ * plain Mach-O with its own loader, which has no keys yet, so on an arm64e build of this tree those
++ * qualifiers are left out and such fields hold plain pointers.  What still is authenticated: return
++ * addresses, indirect calls, function pointers in this file, the pacga thread-state hash, and the
++ * per-process keys the kernel switches to on the way back to EL0 (the EL0/EL1 key switch that
++ * docs/ARM64E.md is about).  A build for Apple silicon would define XNU_PTRAUTH_SIGNED_DATA_PTRS.
++ */
++#if defined(__arm64e__) && !defined(XNU_PTRAUTH_SIGNED_DATA_PTRS)
++#define XNU_PTRAUTH_DATA_PTRS_PLAIN 1
++#endif
++
+ #if KERNEL
+-#if __has_feature(ptrauth_calls)
++#if __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ #include <ptrauth.h>
+ #define OS_PTRAUTH_SIGNED_PTR(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type))
+ #define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type), "authenticates-null-values")
+ #define OS_PTRAUTH_DISCRIMINATOR(str) ptrauth_string_discriminator(str)
+ #define __ptrauth_only
+-#else //  __has_feature(ptrauth_calls)
++#else //  __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
++#include <ptrauth.h>
+ #define OS_PTRAUTH_SIGNED_PTR(type)
+ #define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type)
+-#define OS_PTRAUTH_DISCRIMINATOR(str) 0
++#define OS_PTRAUTH_DISCRIMINATOR(str) 0ULL     /* 64-bit: callers shift it by 48 (an int shifted by 48 is undefined) */
+ #define __ptrauth_only __unused
+-#endif // __has_feature(ptrauth_calls)
++#endif // __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ #endif // KERNEL
+ 
+ #if KERNEL
+-#if __has_feature(ptrauth_calls)
++#if __has_feature(ptrauth_calls) && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ #define XNU_PTRAUTH_SIGNED_FUNCTION_PTR(type) \
+ 	__ptrauth(ptrauth_key_function_pointer, 1, ptrauth_string_discriminator(type))
+ #else
+diff --git a/makedefs/MakeInc.cmd b/makedefs/MakeInc.cmd
+--- a/makedefs/MakeInc.cmd
++++ b/makedefs/MakeInc.cmd
+@@ -103,12 +103,12 @@ ifeq ($(VERBOSE),YES)
+ 	_v =
+ 	_vstdout =
+ 	_vstderr =
+-	XCRUN = /usr/bin/xcrun -verbose
++	XCRUN = xcrun -verbose
+ else
+ 	_v = @
+ 	_vstdout = > /dev/null
+ 	_vstderr = 2> /dev/null
+-	XCRUN = /usr/bin/xcrun
++	XCRUN = xcrun
+ endif
+ 
+ VERBOSE_GENERATED_MAKE_FRAGMENTS = NO
+@@ -371,7 +371,7 @@ ifeq ($(origin HOST_GM4),undefined)
+ 	export HOST_GM4		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find gm4)
+ endif
+ ifeq ($(origin HOST_CODESIGN),undefined)
+-	export HOST_CODESIGN	:= /usr/bin/codesign
++	export HOST_CODESIGN	:= codesign
+ endif
+ ifeq ($(origin HOST_CODESIGN_ALLOCATE),undefined)
+ 	export HOST_CODESIGN_ALLOCATE	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find codesign_allocate)
+diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -29,7 +29,7 @@ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
+ else ifneq ($(findstring _host,$(RC_ProjectName)),)
+ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
+ else
+-SUPPORTED_ARM64_MACHINE_CONFIGS = T6000 T6020 T6030 T6031 T6041 T6050 T8101 T8103 T8112 T8122 T8132 T8142 VMAPPLE
++SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T6020 T6030 T6031 T6041 T6050 T8101 T8103 T8112 T8122 T8132 T8142 VMAPPLE
+ 
+ SPTM_ENABLED_SOCS_MacOSX = t6000 t8112 t6020 t8122 t6030 t6031 t6041 t6050 t8132 t8142
+ EXCLAVES_ENABLED_SOCS_MacOSX = t8142 t6050
+@@ -79,6 +79,7 @@ COMPONENT_LIST	= osfmk bsd libkern iokit pexpert libsa security san
+ COMPONENT	= $(if $(word 2,$(subst /, ,$(RELATIVE_SOURCE_PATH))),$(word 2,$(subst /, ,$(RELATIVE_SOURCE_PATH))),$(firstword $(subst /, ,$(RELATIVE_SOURCE_PATH))))
+ COMPONENT_IMPORT_LIST = $(filter-out $(COMPONENT),$(COMPONENT_LIST))
+ 
++MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837 -Xclang -target-feature -Xclang +pan
+ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_T8103 = -DARM64_BOARD_CONFIG_T8103                  -mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000			-mcpu=apple-a14
+@@ -1148,10 +1149,14 @@ LDFILES_KERNEL_ONLY = $(TARGET)/all-kpi.exp $(TARGET)/all-alias.exp $(TARGET)/sy
+ # Default runtime libraries to be linked with the kernel
+ #
+ LD_KERNEL_LIBS	   = -lcc_kext
+-LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel
+-
+-# Link binary support library
+-ifneq ($(CURRENT_MACHINE_CONFIG),NONE)
++LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel -lpthread_kext
++# redwood: objects made outside this tree (the Wi-Fi driver, redwood_lx.c), linked when given
++LD_KERNEL_ARCHIVES += $(REDWOOD_OBJECTS)
++
++# Link binary support library.  redwood: BCM2837 is a non-Apple board with no closed
++# KernelSupport lib$(CURRENT_MACHINE_CONFIG).os.*.a; its platform code is built into the kernel
++# (GenericARMPE and the redwood drivers), so skip the force_load for it.
++ifeq ($(filter NONE BCM2837,$(CURRENT_MACHINE_CONFIG)),)
+         LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a
+ endif
+ 
+diff --git a/makedefs/MakeInc.top b/makedefs/MakeInc.top
+--- a/makedefs/MakeInc.top
++++ b/makedefs/MakeInc.top
+@@ -298,7 +298,7 @@ endif
+ # $(warning PRIMARY_KERNEL_CONFIGS is $(PRIMARY_KERNEL_CONFIGS))
+ # $(warning VARIANT_CONFIGS is $(VARIANT_CONFIGS))
+ 
+-MEMORY_SIZE := $(shell /usr/sbin/sysctl -n hw.memsize)
++MEMORY_SIZE := $(shell awk '/MemTotal/{printf "%d", $$2*1024}' /proc/meminfo 2>/dev/null || /usr/sbin/sysctl -n hw.memsize)
+ 
+ # Assume LTO scaling by default, unless it is being explicitly passed on the command-line
+ LARGE_BUILD_FOOTPRINT := $(if $(BUILD_LTO),$(BUILD_LTO),1)
+diff --git a/osfmk/conf/files b/osfmk/conf/files
+--- a/osfmk/conf/files
++++ b/osfmk/conf/files
+@@ -407,3 +407,6 @@ osfmk/corecrypto/ccsha512_ltc_di.c	standard
+ 
+ osfmk/prng/prng_random.c	standard
+ osfmk/prng/entropy.c   standard
++osfmk/minicrypto/mc_digests.c	standard
++osfmk/minicrypto/mc_provider.c	standard
++osfmk/minicrypto/mc_aes.c	standard
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -21,7 +21,7 @@ osfmk/arm64/sptm/pmap/pmap_iommu.c	optional nos_arm_asm config_sptm
+ osfmk/arm64/sptm/pmap/pmap_misc.c	optional nos_arm_asm config_sptm
+ osfmk/arm64/sptm/pmap/pmap_ppl_interface.c	optional nos_arm_asm config_sptm
+ osfmk/arm64/sptm/start_sptm.s		optional nos_arm_asm config_sptm
+-osfmk/arm64/amcc_rorgn_sptm.c		optional nos_arm_asm config_sptm
++#osfmk/arm64/amcc_rorgn_sptm.c		optional nos_arm_asm config_sptm   # redwood: Apple AMCC/CTRR lockdown, N/A on BCM2837
+ osfmk/arm64/sptm/arm_init_sptm.c	optional config_sptm
+ osfmk/arm64/sop.c			optional config_sptm
+ 
+@@ -35,10 +35,10 @@ osfmk/arm64/WKdmCompress_4k.s	standard
+ osfmk/arm64/WKdmData.s		standard
+ osfmk/arm64/lz4_decode_arm64.s  standard
+ osfmk/arm64/lz4_encode_arm64.s  standard
+-osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
+-osfmk/arm64/amcc_rorgn_ppl_amcc.c optional nos_arm_asm config_pmap_ppl
+-osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
+-osfmk/arm64/amcc_rorgn_pv_ctrr.c optional nos_arm_asm
++#osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
++#osfmk/arm64/amcc_rorgn_ppl_amcc.c optional nos_arm_asm config_pmap_ppl
++#osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
++#osfmk/arm64/amcc_rorgn_pv_ctrr.c optional nos_arm_asm   # redwood: Apple AMCC/CTRR lockdown, N/A on BCM2837
+ osfmk/arm64/bcopy.s standard
+ osfmk/arm64/bzero.s standard
+ osfmk/arm/caches.c		standard
+@@ -123,6 +123,15 @@ osfmk/arm64/corecrypto/sha256_compress_arm64.s	standard
+ osfmk/arm64/x86_64_compat.c	standard
+ 
+ osfmk/arm/counter.c	standard
++osfmk/arm64/redwood_kernelsupport.c	standard
++osfmk/arm64/generic_arm64_support.c	optional nos_arm_asm
++osfmk/arm64/loader_return.c	optional nos_arm_asm
++osfmk/arm64/user_exception_trace.c	standard
++osfmk/arm64/gic_v3_irq.c	optional nos_arm_asm
++osfmk/arm64/psci_smp.c	optional nos_arm_asm
++osfmk/arm64/redwood_a64emu.c	standard
++osfmk/arm64/hakios_prof.c	standard
++osfmk/arm64/hakios_cpu_idle.c	standard
+ 
+ # ECC Support
+ osfmk/kern/ecc_init.c		standard
+diff --git a/osfmk/kern/kalloc.h b/osfmk/kern/kalloc.h
+--- a/osfmk/kern/kalloc.h
++++ b/osfmk/kern/kalloc.h
+@@ -920,10 +920,16 @@ __options_decl(kt_granule_t, uint32_t, {
+  * @param ptr           the pointer whose type needs to be checked.
+  * @param type          the type which the pointer will be checked against.
+  */
++#if XNU_NO_TYPE_BUILTINS
++/* hakios: toolchains without __builtin_xnu_types_compatible skip the check. */
++#define KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type)  (1)
++#else
+ #define KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type)                         \
+ 	(__builtin_xnu_types_compatible(os_get_pointee_type(ptr), type) ||   \
+ 	    __builtin_xnu_types_compatible(os_get_pointee_type(ptr), void))  \
+ 
++#endif /* XNU_NO_TYPE_BUILTINS */
++
+ #define KALLOC_TYPE_ASSERT_COMPATIBLE_POINTER(ptr, type) \
+ 	_Static_assert(KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type), \
+ 	    "Pointer type is not compatible with specified type")
+diff --git a/pexpert/pexpert/arm64/Makefile b/pexpert/pexpert/arm64/Makefile
+--- a/pexpert/pexpert/arm64/Makefile
++++ b/pexpert/pexpert/arm64/Makefile
+@@ -33,7 +33,8 @@ PRIVATE_KERNELFILES = \
+ 	H15.h \
+ 	H16.h \
+ 	H17.h \
+-	VMAPPLE.h
++	VMAPPLE.h \
++	BCM2837.h
+ 
+ 
+ # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).
+diff --git a/san/conf/files b/san/conf/files
+--- a/san/conf/files
++++ b/san/conf/files
+@@ -1,5 +1,6 @@
+ OPTIONS/CONFIG_KASAN                   optional config_kasan
+ OPTIONS/CONFIG_UBSAN                   optional config_ubsan
++OPTIONS/CONFIG_UBSAN_MINIMAL           optional ubsan_minimal
+ OPTIONS/CONFIG_KCOV                    optional config_kcov
+ OPTIONS/CONFIG_KSANCOV                 optional config_ksancov
+ OPTIONS/CONFIG_STKSZ                   optional config_stksz
+@@ -12,6 +13,7 @@ san/memory/kasan-report.c              optional config_kasan
+ san/memory/kasan-helper.c              optional config_kasan
+ 
+ san/memory/ubsan.c                     optional config_ubsan
++san/memory/ubsan_minimal.c             standard
+ san/memory/ubsan_log.c                 optional config_ubsan
+ 
+ san/coverage/kcov_ksancov.c            optional config_ksancov

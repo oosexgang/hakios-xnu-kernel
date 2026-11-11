@@ -1,0 +1,1130 @@
+diff --git a/bsd/dev/arm/kern_machdep.c b/bsd/dev/arm/kern_machdep.c
+--- a/bsd/dev/arm/kern_machdep.c
++++ b/bsd/dev/arm/kern_machdep.c
+@@ -91,6 +91,16 @@ ml_grade_binary(cpu_type_t exectype, cpu_subtype_t execsubtype, cpu_subtype_t ex
+ 				return 10;
+ 			case CPU_SUBTYPE_ARM64_ALL:
+ 				return 9;
++#if !__has_feature(ptrauth_calls)
++			/*
++			 * renoir: a core without pointer authentication runs arm64e code as arm64. Its PAC
++			 * instructions are identities there: pacstrip rewrote them, osfmk/arm64/redwood_a64emu.c
++			 * does the rest, and nothing is ever signed (exec sets IMGPF_NOJOP, the shared-region and
++			 * dyld pagers write authenticated pointers unsigned). After any arm64 slice.
++			 */
++			case CPU_SUBTYPE_ARM64E:
++				return 8;
++#endif
+ 			}
+ 			break;
+ 
+diff --git a/bsd/dev/arm/systemcalls.c b/bsd/dev/arm/systemcalls.c
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -36,6 +36,92 @@
+ #include <security/mac_framework.h>
+ #endif
+ 
++/*
++ * Bring-up aid: boot-arg systrace=1 logs every BSD system call that fails,
++ * systrace=2 logs all of them (to the kernel message buffer). For calls that
++ * take a path, the path is shown. systrace_name=NAME keeps it to the processes
++ * of that name: with a whole system running, everybody's failed calls are
++ * megabytes a minute.
++ */
++static TUNABLE(uint32_t, systrace_level, "systrace", 0);
++static TUNABLE_STR(systrace_name, MAXCOMLEN + 1, "systrace_name", "");
++extern const char *syscallnames[];
++
++static void
++systrace_report(struct proc *proc, unsigned short syscode, struct uthread *uthread, int error)
++{
++	/* system calls whose first (or, for the second list, second) argument is a path */
++	static const unsigned short path_arg0[] = {
++		SYS_open, SYS_link, SYS_unlink, SYS_chdir, SYS_mknod, SYS_chmod, SYS_chown, SYS_access, SYS_readlink,
++		SYS_execve, SYS_chroot, SYS_rename, SYS_mkdir, SYS_rmdir, SYS_pathconf, SYS_getattrlist, SYS_setattrlist,
++		SYS_getxattr, SYS_listxattr, SYS_fsctl, SYS_stat64, SYS_lstat64, SYS_statfs64, SYS_open_nocancel,
++		SYS_open_dprotected_np, SYS_symlink, SYS_unmount, SYS_stat64_extended, SYS_lstat64_extended,
++	};
++	static const unsigned short path_arg1[] = {
++		SYS_mount, SYS_posix_spawn, SYS_openat, SYS_openat_nocancel, SYS_fstatat64, SYS_faccessat, SYS_readlinkat,
++		SYS_getattrlistat, SYS_mkdirat, SYS_unlinkat,
++	};
++	char path[160] = "";
++	/*
++	 * Two calls are worth more than their arguments' addresses, because what they ASK is the whole
++	 * of what they do. __mac_syscall carries the policy's name and the request number: this
++	 * kernel's AMFI stand-in answers only 0x5a and 0x60 and returns ENOPOLICY to anything else
++	 * (bsd/kern/kern_minimac.c), so a daemon refused there is refused in a way nothing in user
++	 * space can see -- and a library of ours cannot watch it either, since the call is made inside
++	 * libsystem and dyld interposing only stands between images. The name matters as much as the
++	 * number: the same call goes to Sandbox as well. And sysctl carries its MIB, which is the only
++	 * thing that says what was asked about.
++	 */
++	char detail[112] = "";
++	size_t done;
++
++	if (systrace_level < 2 && (error == 0 || error == EJUSTRETURN || error == ERESTART)) {
++		return;
++	}
++	if (systrace_name[0] != 0 && strncmp(proc->p_comm, systrace_name, MAXCOMLEN) != 0) {
++		return;
++	}
++	for (unsigned i = 0; i < sizeof(path_arg0) / sizeof(path_arg0[0]); i++) {
++		if (path_arg0[i] == syscode) {
++			(void)copyinstr((user_addr_t)uthread->uu_arg[0], path, sizeof(path), &done);
++		}
++	}
++	for (unsigned i = 0; i < sizeof(path_arg1) / sizeof(path_arg1[0]); i++) {
++		if (path_arg1[i] == syscode) {
++			(void)copyinstr((user_addr_t)uthread->uu_arg[1], path, sizeof(path), &done);
++		}
++	}
++	path[sizeof(path) - 1] = 0;
++	if (syscode == SYS___mac_syscall) {
++		char policy[32] = "";
++
++		(void)copyinstr((user_addr_t)uthread->uu_arg[0], policy, sizeof(policy), &done);
++		policy[sizeof(policy) - 1] = 0;
++		snprintf(detail, sizeof(detail), " policy \"%s\" request %lld", policy,
++		    (long long)uthread->uu_arg[1]);
++	} else if (syscode == SYS_sysctl) {
++		int mib[6];
++		unsigned count = (unsigned)uthread->uu_arg[1];
++
++		if (count > 6) {
++			count = 6;
++		}
++		if (count > 0 && copyin((user_addr_t)uthread->uu_arg[0], mib, count * sizeof(mib[0])) == 0) {
++			size_t used = (size_t)snprintf(detail, sizeof(detail), " mib");
++
++			for (unsigned i = 0; i < count && used + 12 < sizeof(detail); i++) {
++				used += (size_t)snprintf(detail + used, sizeof(detail) - used, " %d", mib[i]);
++			}
++		}
++	}
++	detail[sizeof(detail) - 1] = 0;
++	printf("systrace: %s[%d] %s(0x%llx, 0x%llx, 0x%llx, 0x%llx)%s%s%s%s = %d\n",
++	    proc->p_comm, proc_getpid(proc), syscallnames[syscode],
++	    (unsigned long long)uthread->uu_arg[0], (unsigned long long)uthread->uu_arg[1],
++	    (unsigned long long)uthread->uu_arg[2], (unsigned long long)uthread->uu_arg[3],
++	    path[0] ? " \"" : "", path, path[0] ? "\"" : "", detail, error);
++}
++
+ #if CONFIG_DTRACE
+ extern int32_t dtrace_systrace_syscall(struct proc *, void *, int *);
+ extern void dtrace_systrace_syscall_return(unsigned short, int, int *);
+@@ -181,6 +267,10 @@ unix_syscall(
+ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
+ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
+ 
++	if (__improbable(systrace_level != 0)) {
++		systrace_report(proc, syscode, uthread, error);
++	}
++
+ #if CONFIG_MACF
+ skip_syscall:
+ #endif /* CONFIG_MACF */
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -146,6 +146,13 @@
+ #include <net/if_ether.h>               /* for ether_family_init() */
+ #include <net/if_gif.h>                 /* for gif_init() */
+ #include <miscfs/devfs/devfsdefs.h>     /* for devfs_kernel_mount() */
++#include <sys/redwood_input.h>
++#include <sys/redwood_audio.h>
++#include <sys/redwood_virtio_blk.h>
++#include <sys/redwood_sparse.h>
++#if APFS
++#include <sys/redwood_apfs_check.h>
++#endif
+ #include <vm/vm_kern.h>                 /* for kmem_suballoc() */
+ #include <sys/proc_uuid_policy.h>       /* proc_uuid_policy_init() */
+ #include <netinet/flow_divert.h>        /* flow_divert_init() */
+@@ -498,7 +505,7 @@ bsd_init(void)
+ 	check_for_failure_injection(XNU_STAGE_BSD_INIT_START);
+ #endif
+ 
+-#define DEBUG_BSDINIT 0
++#define DEBUG_BSDINIT 1 /* bring-up: trace bsd_init steps (only visible with -enable_kprintf_spam) */
+ 
+ #if DEBUG_BSDINIT
+ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
+@@ -1002,6 +1009,14 @@ bsd_init(void)
+ 
+ 		bsd_init_kprintf("calling devfs_kernel_mount\n");
+ 		devfs_kernel_mount(mounthere);
++		redwood_input_init();           /* /dev/redwood-touch */
++		redwood_audio_init();           /* /dev/redwood-audio */
++		redwood_virtio_blk_init();      /* /dev/rvblk0, a disk image of the host (QEMU) */
++		redwood_sparse_init();          /* /dev/rsp0, part of an image too big to hold */
++#if APFS
++		/* mounts and walks /dev/rvblk0 once userland has /private/var up */
++		redwood_apfs_check_init();
++#endif
+ 	}
+ #endif /* DEVFS */
+ 
+diff --git a/bsd/kern/kern_credential.c b/bsd/kern/kern_credential.c
+--- a/bsd/kern/kern_credential.c
++++ b/bsd/kern/kern_credential.c
+@@ -3722,7 +3722,13 @@ kauth_cred_alloc(kauth_cred_t parent_cred, kauth_cred_t model_cred)
+ 	newcred = zalloc_ro(ZONE_ID_KAUTH_CRED, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+ 	new_rw->crw_cred = newcred;
+ 
+-#if HAS_APPLE_PAC
++	/*
++	 * cr_label is declared OS_PTRAUTH_SIGNED_PTR, which this tree leaves plain unless
++	 * XNU_PTRAUTH_SIGNED_DATA_PTRS is set (libkern/os/base.h, XNU_PTRAUTH_DATA_PTRS_PLAIN).
++	 * Only sign it by hand when the field is actually signed; otherwise the reads (plain) see a
++	 * signed pointer and e.g. the free path hands it to kvtophys as a raw VA and panics.
++	 */
++#if HAS_APPLE_PAC && !XNU_PTRAUTH_DATA_PTRS_PLAIN
+ 	{
+ 		void *naked_ptr = model_cred->cr_label;
+ 		void *signed_ptr;
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1919,6 +1919,10 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
+  *		activators should not be given the opportunity to attempt
+  *		to activate the image.
+  */
++/* Bring-up aid: with boot-arg systrace set, say which stage of an exec refused the image. */
++extern void loader_log_line(const char *line);
++static TUNABLE(uint32_t, exec_trace, "systrace", 0);
++
+ static int
+ exec_mach_imgact(struct image_params *imgp)
+ {
+@@ -2076,6 +2080,9 @@ grade:
+ 	 * Actually load the image file we previously decided to load.
+ 	 */
+ 	lret = load_machfile(imgp, mach_header, thread, &map, &load_result);
++	if (lret != LOAD_SUCCESS && exec_trace) {
++		printf("exectrace: %s: load_machfile failed: %d\n", imgp->ip_ndp->ni_cnd.cn_pnbuf, lret);
++	}
+ 	if (lret != LOAD_SUCCESS) {
+ 		error = load_return_to_errno(lret);
+ 
+@@ -2984,11 +2991,36 @@ exec_activate_image(struct image_params *imgp)
+ 
+ 	ndp = kalloc_type(struct nameidata, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+ 
++	/*
++	 * Boot-arg exec_swap=NAME:PATH: a program of that file name is run from PATH instead -- for a job whose
++	 * definition is on the system image (BlueTool: Apple's knows no Qualcomm chip, "result 10", run w83o2; ours,
++	 * /redwood/bin/bluetool, answers for the chip the kernel brought up)
++	 */
++	{
++		static char swap[128];
++		static int swap_read;
++		const char *colon, *base;
++
++		if (!swap_read) {
++			swap_read = 1;
++			(void)PE_parse_boot_arg_str("exec_swap", swap, sizeof(swap));
++		}
++		colon = swap[0] != 0 ? strchr(swap, ':') : NULL;
++		base = strrchr(excpath, '/');
++		base = base != NULL ? base + 1 : excpath;
++		if (colon != NULL && strlen(base) == (size_t)(colon - swap) && strncmp(base, swap, (size_t)(colon - swap)) == 0) {
++			printf("exec: %s run from %s (exec_swap)\n", excpath, colon + 1);
++			excpath = colon + 1;
++		}
++	}
+ 	NDINIT(ndp, LOOKUP, OP_LOOKUP, FOLLOW | LOCKLEAF | AUDITVNPATH1,
+ 	    UIO_SYSSPACE, CAST_USER_ADDR_T(excpath), imgp->ip_vfs_context);
+ 
+ again:
+ 	error = namei(ndp);
++	if (error && error != ENOENT) {
++		{ char hk_line[200]; snprintf(hk_line, sizeof(hk_line), "hakios: exec lookup of %s: error %d (uid %d)\n", imgp->ip_strings, error, kauth_getuid()); loader_log_line(hk_line); }
++	}
+ 	if (error) {
+ 		if (error == ERESTART) {
+ 			error = EINTR;
+@@ -3018,6 +3050,9 @@ again:
+ 	}
+ 
+ 	error = exec_check_permissions(imgp);
++	if (error && exec_trace) {
++		printf("exectrace: %s: exec_check_permissions failed: %d\n", imgp->ip_ndp->ni_cnd.cn_pnbuf, error);
++	}
+ 	if (error) {
+ 		goto bad;
+ 	}
+@@ -3517,6 +3552,57 @@ exec_handle_exception_port_actions(const struct image_params *imgp,
+ }
+ 
+ 
++/*
++ * Bring-up aid, boot-arg applog=1: what applications and other programs started without a
++ * terminal say is worth reading here. Their standard output and error, which launchd opens on
++ * /dev/null, go to the console instead (that shows NSLog and the "Terminating app due to
++ * uncaught exception" kind of message). With applog=2 every program also gets
++ * OS_ACTIVITY_DT_MODE in its environment, which makes os_log write to standard error as well:
++ * everything any program logs, and a much slower system. applog_name=NAME[,NAME...] with
++ * applog=1 does that for the programs whose file names begin with one of the NAMEs only,
++ * which is how to read what one application extension has to say (launchd starts those for
++ * whoever asks, so there is no job description of ours to put the variable in).
++ */
++static TUNABLE(uint32_t, exec_applog, "applog", 0);
++static TUNABLE_STR(exec_applog_name, 128, "applog_name", "");
++
++static bool
++exec_applog_oslog(struct image_params *imgp)
++{
++	const char *name, *p = exec_applog_name;
++
++	if (exec_applog >= 2) {
++		return true;
++	}
++	if (exec_applog == 0 || *p == 0 || imgp->ip_ndp == NULL) {
++		return false;
++	}
++	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
++	while (*p != 0) {
++		const char *word = p;
++
++		while (*p != 0 && *p != ',') {
++			p++;
++		}
++		if (p != word && (size_t)(p - word) <= imgp->ip_ndp->ni_cnd.cn_namelen && strncmp(word, name, (size_t)(p - word)) == 0) {
++			return true;
++		}
++		if (*p == ',') {
++			p++;
++		}
++	}
++	return false;
++}
++
++static const char *
++exec_applog_path(int fd, const char *path)
++{
++	if (exec_applog && (fd == 1 || fd == 2) && strcmp(path, "/dev/null") == 0) {
++		return "/dev/console";
++	}
++	return path;
++}
++
+ /*
+  * exec_handle_file_actions
+  *
+@@ -3587,7 +3673,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+ 			AUDIT_SUBCALL_ENTER(OPEN, p, uthread);
+ 
+ 			NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1, UIO_SYSSPACE,
+-			    CAST_USER_ADDR_T(psfa->psfaa_openargs.psfao_path),
++			    CAST_USER_ADDR_T(exec_applog_path(psfa->psfaa_filedes, psfa->psfaa_openargs.psfao_path)),
+ 			    imgp->ip_vfs_context);
+ 
+ 			error = open1(imgp->ip_vfs_context, ndp,
+@@ -3970,10 +4056,12 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 	struct persona *persona = NULL;
+ 	kauth_cred_t mycred = kauth_cred_get();
+ 
+-	if (!IOCurrentTaskHasEntitlement( PERSONA_MGMT_ENTITLEMENT)) {
+-		return EPERM;
+-	}
+-
++	/*
++	 * redwood: do not require PERSONA_MGMT_ENTITLEMENT -- nothing is signed here and AMFI is a
++	 * stub, so no task carries it, yet ordinary programs (and package managers like Sileo, which
++	 * becomes root by spawning into persona 99) depend on persona spawns.  The uid/gid-0 check
++	 * below still keeps a non-root caller from gaining root this way.
++	 */
+ 	if (px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GROUPS) {
+ 		if (px_persona->pspi_ngroups > NGROUPS_MAX) {
+ 			return EINVAL;
+@@ -3981,9 +4069,7 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 	}
+ 
+ 	persona = persona_lookup(px_persona->pspi_id);
+-	if (!persona) {
+-		return ESRCH;
+-	}
++	/* redwood: no personas exist in this port; a missing one is not an error (see spawn_persona_adopt) */
+ 
+ 	// non-root process should not be allowed to set persona with uid/gid 0
+ 	if (!kauth_cred_issuser(mycred) &&
+@@ -3991,7 +4077,9 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 		error = EPERM;
+ 	}
+ 
+-	persona_put(persona);
++	if (persona) {
++		persona_put(persona);
++	}
+ 	return error;
+ }
+ 
+@@ -4038,7 +4126,20 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+ 	 */
+ 	persona = persona_lookup(px_persona->pspi_id);
+ 	if (!persona) {
+-		return ESRCH;
++		/*
++		 * redwood: no personas exist in this port, so persona_lookup() fails for everyone.
++		 * What a caller asking for a persona actually wants is its credential (uid/gid/groups),
++		 * not the persona object -- so apply that credential directly to the process instead of
++		 * failing the spawn with ESRCH (which left callers such as a package manager waiting
++		 * forever for a child that was never started).  persona_proc_adopt()'s per-uid process
++		 * accounting is skipped here; boot-time daemons do not churn enough persona-less root
++		 * spawns for the count to drift.
++		 */
++		(void)kauth_cred_proc_update(p, PROC_SETTOKEN_SETUGID,
++		    ^bool (kauth_cred_t parent __unused, kauth_cred_t model) {
++			return kauth_cred_model_setpersona(model, px_persona);
++		});
++		return 0;
+ 	}
+ 
+ 	return persona_proc_adopt(p, persona,
+@@ -4333,6 +4434,7 @@ int
+ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+ {
+ 	proc_t p = ap;
++	int hk_stage = 0;       /* hakios: which step a failed spawn stopped at (see bad:) */
+ 	user_addr_t pid = uap->pid;
+ 	int ival[2];            /* dummy retval for setpgid() */
+ 	char *subsystem_root_path = NULL;
+@@ -4452,6 +4554,28 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+ 			if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
+ 				goto bad;
+ 			}
++			/*
++			 * renoir: iOS 27's libsystem_kernel puts 8 bytes of new fields after psa_sec_flags
++			 * (a uint32_t at 0xac, a byte at 0xb0) and passes attr_size 0x100, not this kernel's
++			 * 0xf8. The fields after them sit 8 bytes further on: crash count and throttle timeout
++			 * at 0xb4, kqworkloop soft and hard limits at 0xbc, conclave memory limit at 0xc4
++			 * (posix_spawnattr_set_crash_count_np / _set_kqworklooplimit_ext /
++			 * _set_conclavememlimit_ext of 24B119). Read as this kernel's layout, launchd's crash
++			 * count became a kqworkloop limit and logd was killed at its second workloop, over and
++			 * over. The two new fields mean nothing to this kernel and are not kept.
++			 */
++			if (px_args.attr_size == PSA_IOS27_SIZE && IS_64BIT_PROCESS(p)) {
++				uint32_t tail[5];
++
++				if ((error = copyin(px_args.attrp + PSA_IOS27_TAIL, tail, sizeof(tail))) != 0) {
++					goto bad;
++				}
++				px_sa.psa_crash_count = tail[0];
++				px_sa.psa_throttle_timeout = tail[1];
++				px_sa.psa_kqworkloop_soft_limit = tail[2];
++				px_sa.psa_kqworkloop_hard_limit = tail[3];
++				px_sa.psa_conclave_mem_limit = tail[4];
++			}
+ 
+ 			imgp->ip_px_sa = &px_sa;
+ 		}
+@@ -4891,6 +5015,7 @@ do_fork1:
+ 		struct kaudit_record *save_uu_ar = uthread->uu_ar;
+ 		uthread->uu_ar = NULL;
+ #endif
++		hk_stage = 1;
+ 		error = exec_handle_file_actions(imgp,
+ 		    imgp->ip_px_sa != NULL ? px_sa.psa_flags : 0);
+ #if CONFIG_AUDIT
+@@ -4912,6 +5037,7 @@ do_fork1:
+ 		struct kaudit_record *save_uu_ar = uthread->uu_ar;
+ 		uthread->uu_ar = NULL;
+ #endif
++		hk_stage = 2;
+ 		error = exec_handle_port_actions(imgp, &port_actions);
+ #if CONFIG_AUDIT
+ 		/* Restore the AUE_POSIX_SPAWN audit record. */
+@@ -4953,6 +5079,7 @@ do_fork1:
+ 				goto bad;
+ 			}
+ 
++			hk_stage = 3;
+ 			error = spawn_posix_cred_adopt(p, imgp->ip_px_pcred_info);
+ 			if (error != 0) {
+ 				goto bad;
+@@ -4974,6 +5101,7 @@ do_fork1:
+ 			 * to ensure that the new persona has access to the image/file
+ 			 * being executed.
+ 			 */
++			hk_stage = 4;
+ 			error = spawn_persona_adopt(p, imgp->ip_px_persona);
+ 			if (error != 0) {
+ 				goto bad;
+@@ -5052,6 +5180,7 @@ do_fork1:
+ 
+ #if MAC_SPAWN   /* XXX */
+ 	if (uap->mac_p != USER_ADDR_NULL) {
++		hk_stage = 5;
+ 		error = mac_execve_enter(uap->mac_p, imgp);
+ 		if (error) {
+ 			goto bad;
+@@ -5063,6 +5192,7 @@ do_fork1:
+ 	 * Warning: If activation failed after point of no return, it returns error
+ 	 * as 0 and pretends the call succeeded.
+ 	 */
++	hk_stage = 6;
+ 	error = exec_activate_image(imgp);
+ #if defined(HAS_APPLE_PAC)
+ 	const uint8_t disable_user_jop = imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE;
+@@ -5219,6 +5349,10 @@ bad_px_sa:
+ 	}
+ 
+ bad:
++	if (error == EACCES || error == EPERM) {
++		{ char hk_line[200]; snprintf(hk_line, sizeof(hk_line), "hakios: posix_spawn %s: error %d at stage %d (uid %d)\n",
++		    imgp && imgp->ip_strings ? imgp->ip_strings : "?", error, hk_stage, kauth_getuid()); loader_log_line(hk_line); }
++	}
+ 
+ 	if (error == 0) {
+ 		/* reset delay idle sleep status if set */
+@@ -5282,6 +5416,7 @@ bad:
+ 
+ 		/* Set task exception ports now that we can check entitlements */
+ 		if (imgp->ip_px_spa != NULL) {
++			hk_stage = 7;
+ 			error = exec_handle_exception_port_actions(imgp, &port_actions);
+ 		}
+ 
+@@ -5358,6 +5493,7 @@ bad:
+ 			task_set_thread_limit(new_task, (uint16_t)px_sa.psa_thread_limit);
+ 		}
+ 		if (error == 0 && imgp->ip_px_sa != NULL && px_sa.psa_conclave_mem_limit > 0) {
++			hk_stage = 8;
+ 			error = task_set_conclave_mem_limit_internal(new_task, px_sa.psa_conclave_mem_limit);
+ 		}
+ 
+@@ -5411,6 +5547,7 @@ bad:
+ 		 * exec_activate_image because task_bank_init checks entitlements that
+ 		 * aren't loaded until subsequent calls (including exec_resettextvp).
+ 		 */
++		hk_stage = 9;
+ 		error = proc_transstart(p, 0, 0);
+ 
+ 		if (error == 0) {
+@@ -5473,6 +5610,7 @@ bad:
+ 	if (error == 0 && imgp->ip_px_sa != NULL) {
+ 		struct _posix_spawnattr *psa = (struct _posix_spawnattr *) imgp->ip_px_sa;
+ 
++		hk_stage = 10;
+ 		error = exec_handle_spawnattr_policy(p, imgp->ip_new_thread, psa->psa_apptype, psa->psa_qos_clamp,
+ 		    psa->psa_darwin_role, &port_actions);
+ 	}
+@@ -5537,6 +5675,7 @@ bad:
+ 	 * fire.
+ 	 */
+ 	if (error == 0) {
++		hk_stage = 12;
+ 		error = process_signature(p, imgp);
+ 
+ 		/*
+@@ -5765,6 +5904,9 @@ bad:
+ #endif
+ 
+ 	assert(spawn_no_exec || exec_failure_reason == NULL);
++	if (error == EACCES || error == EPERM) {
++		{ char hk_line[200]; snprintf(hk_line, sizeof(hk_line), "hakios: posix_spawn returns %d, last stage %d (uid %d)\n", error, hk_stage, kauth_getuid()); loader_log_line(hk_line); }
++	}
+ 	return error;
+ }
+ 
+@@ -6724,16 +6866,145 @@ bad:
+  * Note:	The argument and environment vectors are user space pointers
+  *		to arrays of user space pointers.
+  */
++/*
++ * Bring-up aid: the sysctl kern.exec_inject holds "LIBRARY NAME NAME ..."; every program
++ * whose file name is one of the NAMEs is started with DYLD_INSERT_LIBRARIES=LIBRARY in its
++ * environment, so that dyld loads our library into it. Several such groups may follow each
++ * other, separated by ";". A program named in more than one group gets every one of those
++ * libraries, joined with ":" in the one DYLD_INSERT_LIBRARIES, so SpringBoard can carry both
++ * our window-server library and the tweak loader. launchd refuses to pass DYLD_ variables
++ * from a job description, which is why the kernel adds this one. Set once by our init (from
++ * etc/inject.conf) before it hands over to launchd. 4 KB, as init reads it: at 512 bytes a longer
++ * file was refused whole (EINVAL), no library went into any program, and without the backlight one
++ * SpringBoard died over and over.
++ */
++static char exec_inject_conf[4096];
++SYSCTL_STRING(_kern, OID_AUTO, exec_inject, CTLFLAG_RW | CTLFLAG_LOCKED, exec_inject_conf, sizeof(exec_inject_conf),
++    "LIBRARY NAME... [; LIBRARY NAME...]: programs started with the library inserted");
++
++static bool
++exec_inject_env(struct image_params *imgp, char *env, size_t size)
++{
++	const char *name, *p = exec_inject_conf;
++	size_t namelen, used;
++	bool any = false;
++
++	if (*p == 0 || imgp->ip_ndp == NULL) {
++		return false;
++	}
++	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
++	namelen = imgp->ip_ndp->ni_cnd.cn_namelen;
++	used = strlcpy(env, "DYLD_INSERT_LIBRARIES=", size);
++	while (*p != 0) {
++		const char *library;
++		size_t liblen;
++		bool matched = false;
++
++		while (*p == ' ' || *p == ';') {
++			p++;
++		}
++		library = p;
++		while (*p != 0 && *p != ' ' && *p != ';') {
++			p++;
++		}
++		liblen = (size_t)(p - library);
++		while (*p == ' ') {
++			const char *word = ++p;
++
++			while (*p != 0 && *p != ' ' && *p != ';') {
++				p++;
++			}
++			if (!matched && (size_t)(p - word) == namelen && namelen != 0 && liblen != 0 &&
++			    strncmp(word, name, namelen) == 0) {
++				matched = true;         /* this group names this program; its library is added once */
++			}
++		}
++		if (matched && liblen != 0 && used + 1 + liblen < size) {
++			if (any) {
++				env[used++] = ':';      /* dyld takes several libraries separated by ":" */
++			}
++			memcpy(env + used, library, liblen);
++			used += liblen;
++			env[used] = 0;
++			any = true;
++		}
++	}
++	return any;
++}
++
++/*
++ * Boot-arg exec_deny=NAME[,NAME...] (default "PerfPowerServices"): programs of those file names are not started
++ * (EPERM). iOS 26's power log spun one core at 100 % from boot to the end of every run, saying nothing, with the cores at
++ * 102-105 C; launchd starts it on demand for a Mach service, from a definition outside the image's job list (g2k48), so it
++ * is refused here. exec_deny= (empty): nothing refused.
++ */
++static TUNABLE_STR(exec_deny_names, 128, "exec_deny", "PerfPowerServices");
++
++static bool
++exec_denied(struct image_params *imgp)
++{
++	const char *name, *p = exec_deny_names;
++	size_t namelen;
++
++	if (imgp->ip_ndp == NULL) {
++		return false;
++	}
++	name = imgp->ip_ndp->ni_cnd.cn_nameptr;
++	namelen = imgp->ip_ndp->ni_cnd.cn_namelen;
++	/* Boot-arg exec_log=NAME: the whole path each program of that file name is started from (which binary runs) */
++	{
++		static char log_name[32];
++		static int log_read;
++		static uint32_t logged;
++
++		if (!log_read) {
++			log_read = 1;
++			(void)PE_parse_boot_arg_str("exec_log", log_name, sizeof(log_name));
++		}
++		if (log_name[0] != 0 && strlen(log_name) == namelen && strncmp(log_name, name, namelen) == 0 && logged++ < 16) {
++			printf("exec: %s started from %s\n", log_name,
++			    imgp->ip_ndp->ni_cnd.cn_pnbuf != NULL ? imgp->ip_ndp->ni_cnd.cn_pnbuf : "(no path)");
++		}
++	}
++	if (*p == 0) {
++		return false;
++	}
++	while (*p != 0) {
++		const char *word = p;
++
++		while (*p != 0 && *p != ',') {
++			p++;
++		}
++		if ((size_t)(p - word) == namelen && strncmp(word, name, namelen) == 0) {
++			static uint32_t said;
++
++			if (said++ < 8) {
++				printf("exec: %.*s refused (boot-arg exec_deny)\n", (int)namelen, name);
++			}
++			return true;
++		}
++		if (*p == ',') {
++			p++;
++		}
++	}
++	return false;
++}
++
+ __attribute__((noinline))
+ static int
+ exec_extract_strings(struct image_params *imgp)
+ {
++	char            inject_env[512];
+ 	int error = 0;
+ 	int     ptr_size = (imgp->ip_flags & IMGPF_WAS_64BIT_ADDR) ? 8 : 4;
+ 	int new_ptr_size = (imgp->ip_flags & IMGPF_IS_64BIT_ADDR) ? 8 : 4;
+ 	user_addr_t     argv = imgp->ip_user_argv;
+ 	user_addr_t     envv = imgp->ip_user_envv;
+ 
++	if (exec_denied(imgp)) {
++		return EPERM;
++	}
++
+ 	/*
+ 	 * Adjust space reserved for the path name by however much padding it
+ 	 * needs. Doing this here since we didn't know if this would be a 32-
+@@ -6897,6 +7168,114 @@ exec_extract_strings(struct image_params *imgp)
+ 		imgp->ip_envc++;
+ 	}
+ 
++	/*
++	 * Boot-arg exec_env=NAME:VAR=VALUE: one more environment variable for the programs of that file name -- for
++	 * jobs whose definition is on the system image and cannot be changed from ours (bluetoothd's BT_HCI_TRANSPORT=H4:
++	 * launchd took /usr/sbin/bluetoothd and its own job file whatever our LaunchDaemons said, run w81n1)
++	 */
++	{
++		static char rule[160];
++		static int rule_read;
++		const char *colon, *name;
++		bool named = false;
++
++		if (!rule_read) {
++			rule_read = 1;
++			(void)PE_parse_boot_arg_str("exec_env", rule, sizeof(rule));
++		}
++		colon = rule[0] != 0 ? strchr(rule, ':') : NULL;
++		/*
++		 * NAME[,NAME...]:VAR=VALUE[;VAR=VALUE...], '~' for a space (boot-args end at spaces). renoir: several
++		 * names, for one variable given to a group of programs (OS_ACTIVITY_DT_MODE=1 to the processes of
++		 * the wallpaper, within the 608 bytes of boot-args)
++		 */
++		for (name = rule; colon != NULL && imgp->ip_ndp != NULL && name < colon && !named;) {
++			const char *end = name;
++
++			while (end < colon && *end != ',') {
++				end++;
++			}
++			named = (size_t)(end - name) == imgp->ip_ndp->ni_cnd.cn_namelen &&
++			    strncmp(name, imgp->ip_ndp->ni_cnd.cn_nameptr, (size_t)(end - name)) == 0;
++			name = end + 1;
++		}
++		if (named) {
++			const char *v = colon + 1;
++
++			while (*v != 0) {
++				char one[96];
++				size_t n = 0;
++
++				while (v[n] != 0 && v[n] != ';' && n < sizeof(one) - 1) {
++					one[n] = v[n] == '~' ? ' ' : v[n];
++					n++;
++				}
++				one[n] = 0;
++				if (n != 0 && imgp->ip_argspace >= new_ptr_size &&
++				    exec_add_user_string(imgp, CAST_USER_ADDR_T(one), UIO_SYSSPACE, TRUE) == 0 && imgp->ip_argspace >= new_ptr_size) {
++					imgp->ip_argspace -= new_ptr_size;
++					imgp->ip_envc++;
++					printf("exec: %.*s gets %s (exec_env)\n", (int)imgp->ip_ndp->ni_cnd.cn_namelen,
++					    imgp->ip_ndp->ni_cnd.cn_nameptr, one);
++				}
++				v += n;
++				if (*v == ';') {
++					v++;
++				}
++			}
++		}
++	}
++	/* one more variable for the programs that get our library inside them (see exec_inject_env) */
++	if (exec_inject_env(imgp, inject_env, sizeof(inject_env))) {
++		{
++			extern void loader_log_line(const char *line);
++			char line[160];
++
++			snprintf(line, sizeof(line), "exec: %.*s gets %s\n", (int)imgp->ip_ndp->ni_cnd.cn_namelen,
++			    imgp->ip_ndp->ni_cnd.cn_nameptr, inject_env);
++			loader_log_line(line);
++		}
++		error = exec_add_user_string(imgp, CAST_USER_ADDR_T(inject_env), UIO_SYSSPACE, TRUE);
++		if (error) {
++			goto bad;
++		}
++		if (imgp->ip_argspace < new_ptr_size) {
++			error = E2BIG;
++			goto bad;
++		}
++		imgp->ip_argspace -= new_ptr_size;
++		imgp->ip_envc++;
++		/* boot-arg inject_print=1: and dyld says what it loads (does it take our library?) */
++		{
++			uint32_t print = 0;
++
++			if (PE_parse_boot_argn("inject_print", &print, sizeof(print)) && print &&
++			    exec_add_user_string(imgp, CAST_USER_ADDR_T("DYLD_PRINT_LIBRARIES=1"), UIO_SYSSPACE, TRUE) == 0 &&
++			    imgp->ip_argspace >= new_ptr_size) {
++				imgp->ip_argspace -= new_ptr_size;
++				imgp->ip_envc++;
++			}
++		}
++	}
++	/* ... and one for everybody when the logs are wanted on the console (see exec_applog_path) */
++	if (exec_applog_oslog(imgp)) {
++		/* iOS 26's libsystem_trace also wants ACTIVITY_LOG_STDERR (mkjobs.py's STDERR_LOG) */
++		static const char * const oslog_env[] = { "OS_ACTIVITY_DT_MODE=YES", "ACTIVITY_LOG_STDERR=1", "CFLOG_FORCE_STDERR=1" };
++
++		for (unsigned v = 0; v < sizeof(oslog_env) / sizeof(oslog_env[0]); v++) {
++			error = exec_add_user_string(imgp, CAST_USER_ADDR_T(oslog_env[v]), UIO_SYSSPACE, TRUE);
++			if (error) {
++				goto bad;
++			}
++			if (imgp->ip_argspace < new_ptr_size) {
++				error = E2BIG;
++				goto bad;
++			}
++			imgp->ip_argspace -= new_ptr_size;
++			imgp->ip_envc++;
++		}
++	}
++
+ 	/* Save space for envv[] NULL terminator */
+ 	if (imgp->ip_argspace < new_ptr_size) {
+ 		error = E2BIG;
+@@ -7789,11 +8168,25 @@ handle_mac_transition:
+ 	 * Also, ensure we always see a modified identity version (rdar://129775819).
+ 	 */
+ 	int previous_pid_version = proc_get_ro(p)->p_idversion;
+-	int new_pid_version;
+-	do {
+-		new_pid_version = OSIncrementAtomic(&nextpidversion);
+-	} while (new_pid_version == previous_pid_version);
+-	proc_setpidversion(p, new_pid_version);
++	{
++		/*
++		 * (redwood) Except when xpcproxy becomes the service it was spawned for: then the process keeps
++		 * xpcproxy's identity version, as if launchd had spawned the service itself, which is what launchd
++		 * means by eliding xpcproxy ("service will attempt to elide xpcproxy"; here it spawns xpcproxy all
++		 * the same).  RunningBoard keeps the audit token of such a process from before the exec and never
++		 * takes the newer one: every entitlement check it made for it failed (SecTaskLoadEntitlements
++		 * error 3) and web processes got no assertions.  Boot-arg xpcproxy_idversion=1: a new version, as XNU.
++		 */
++		static TUNABLE(uint32_t, xpcproxy_idversion, "xpcproxy_idversion", 0);
++
++		if (xpcproxy_idversion || strncmp(p->p_comm, "xpcproxy", sizeof(p->p_comm)) != 0) {
++			int new_pid_version;
++			do {
++				new_pid_version = OSIncrementAtomic(&nextpidversion);
++			} while (new_pid_version == previous_pid_version);
++			proc_setpidversion(p, new_pid_version);
++		}
++	}
+ 	task_set_uniqueid(proc_task(p));
+ 
+ 	/*
+@@ -8767,6 +9160,11 @@ process_signature(proc_t p, struct image_params *imgp)
+ 	}
+ 
+ done:
++	if (error && exec_trace) {
++		printf("exectrace: %s[%d]: process_signature failed: %d (csflags 0x%x, mac %d, cs_error %d)\n",
++		    p->p_comm, proc_getpid(p), error, imgp->ip_csflags, imgp->ip_mac_return,
++		    signature_failure_reason != OS_REASON_NULL);
++	}
+ 	if (0 == error) {
+ 		/*
+ 		 * Update the new process's signature-dependent process state.
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1524,6 +1524,19 @@ abort_with_payload_internal(proc_t p,
+ 	if (abort_should_be_throttled(p, reason_namespace, internal_flags)) {
+ 		return EQFULL;
+ 	}
++	/* hakios: why a process gave up (dyld's halt() among them), in the loader's log ("exec: " is kept) */
++	{
++		extern void loader_log_line(const char *line);
++		char text[160] = "", line[240];
++		size_t got = 0;
++
++		if (reason_string != USER_ADDR_NULL) {
++			(void)copyinstr(reason_string, text, sizeof(text), &got);
++		}
++		snprintf(line, sizeof(line), "exec: abort by %s[%d], namespace %u code %#llx: %s\n", proc_best_name(p),
++		    proc_getpid(p), reason_namespace, reason_code, text);
++		loader_log_line(line);
++	}
+ 
+ 	KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_CREATE) | DBG_FUNC_NONE,
+ 	    proc_getpid(p), reason_namespace,
+@@ -1647,6 +1660,17 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
+ 	int error = 0;
+ 	bool proc_exiting = false;
+ 
++	/* hakios: an exit by a signal with a reason (a guard exception, code signing...) says which */
++	if (WIFSIGNALED(rv) && exit_reason != OS_REASON_NULL && exit_reason->osr_namespace != 0) {
++		extern void loader_log_line(const char *line);
++		char line[200];
++
++		snprintf(line, sizeof(line), "exec: %s[%d] ends by signal %d, reason namespace %u code %#llx, from %p\n",
++		    proc_best_name(p), proc_getpid(p), WTERMSIG(rv), exit_reason->osr_namespace, exit_reason->osr_code,
++		    (void *)VM_KERNEL_UNSLIDE(__builtin_return_address(0)));
++		loader_log_line(line);
++	}
++
+ #if DEVELOPMENT || DEBUG
+ 	/*
+ 	 * Debug boot-arg: panic here if matching process is exiting with non-zero code.
+diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -1043,7 +1043,7 @@ __options_closed_decl(memorystatus_policy_t, uint8_t, {
+ 
+ static memorystatus_policy_t memstat_policy_config = kPolicyDefault;
+ 
+-#define MEMSTAT_PAGE_SHORTAGE_THRESHOLD_MAX ((uint32_t)(atop_64(max_mem) / 2))
++#define MEMSTAT_PAGE_SHORTAGE_THRESHOLD_MAX ((uint32_t)(atop_64(memstat_memory_size) / 2)) /* redwood: sane_size, not max_mem (the RAM-disk image is not manageable memory) */
+ 
+ /*
+  * Jetsam Page Shortage Thresholds (PSTs):
+diff --git a/bsd/kern/kern_memorystatus_internal.h b/bsd/kern/kern_memorystatus_internal.h
+--- a/bsd/kern/kern_memorystatus_internal.h
++++ b/bsd/kern/kern_memorystatus_internal.h
+@@ -277,7 +277,15 @@ memorystatus_action_t memorystatus_pick_action(jetsam_state_t state,
+     bool suspended_swappable_apps_remaining,
+     bool swappable_apps_remaining, int *jld_idle_kills);
+ 
+-#define MEMSTAT_PERCENT_TOTAL_PAGES(p) ((uint32_t)(p * atop_64(max_mem) / 100))
++/*
++ * redwood: the memory there is to manage.  max_mem is the kernel's whole memory window, and here
++ * more than half of it is the system image -- a RAM disk the kernel boots from, which is nobody's
++ * to use or give back.  Thresholds taken as a per-cent of max_mem had idle daemons (and soon the
++ * window server) jetsammed with a quarter of the usable memory still free.  sane_size leaves the
++ * image and the kernel out, so jetsam sizes itself to the memory processes can actually use.
++ */
++#define memstat_memory_size     sane_size
++#define MEMSTAT_PERCENT_TOTAL_PAGES(p) ((uint32_t)(p * atop_64(memstat_memory_size) / 100))
+ 
+ /*
+  * Take a (redacted) zprint snapshot along with the jetsam snapshot.
+diff --git a/bsd/kern/kern_newsysctl.c b/bsd/kern/kern_newsysctl.c
+--- a/bsd/kern/kern_newsysctl.c
++++ b/bsd/kern/kern_newsysctl.c
+@@ -1159,6 +1159,27 @@ name2oid(char *name, int *oid, size_t *len)
+ 	return ENOENT;
+ }
+ 
++/*
++ * renoir: boot-arg trace_sysctl=1 logs the names a process asks for that this kernel has not got
++ * ("sysctl: launchd[1] has no security.mac.foo"), the first 300 of them: a newer userland than the
++ * kernel looks up sysctls the kernel never had, and often abort()s on the answer.
++ */
++static void
++sysctl_trace_missing(const char *name)
++{
++	static int enabled = -1;
++	static uint32_t lines;
++	int on = 0;
++
++	if (enabled < 0) {
++		enabled = PE_parse_boot_argn("trace_sysctl", &on, sizeof(on)) && on != 0;
++	}
++	if (!enabled || os_atomic_inc_orig(&lines, relaxed) >= 300) {
++		return;
++	}
++	printf("sysctl: %s[%d] has no %s\n", proc_best_name(current_proc()), proc_pid(current_proc()), name);
++}
++
+ /*
+  * sysctl_sysctl_name2oid
+  *
+@@ -1234,6 +1255,9 @@ sysctl_sysctl_name2oid(__unused struct sysctl_oid *oidp, __unused void *arg1,
+ 	error = name2oid(p, oid, &len);
+ 	lck_rw_done(&sysctl_geometry_lock);
+ 
++	if (error) {
++		sysctl_trace_missing(p);
++	}
+ 	kfree_data(p, req->newlen + 1);
+ 
+ 	if (error) {
+@@ -1753,6 +1777,7 @@ sysctl_root(boolean_t from_kernel, boolean_t string_is_canonical,
+ 		/* namestring is actually canonical, name/namelen needs to be populated */
+ 		error = name2oid(namestring, name, &namelen);
+ 		if (error) {
++			sysctl_trace_missing(namestring);
+ 			goto err;
+ 		}
+ 	}
+diff --git a/bsd/kern/kern_priv.c b/bsd/kern/kern_priv.c
+--- a/bsd/kern/kern_priv.c
++++ b/bsd/kern/kern_priv.c
+@@ -82,6 +82,19 @@ priv_check_cred(kauth_cred_t cred, int priv, int flags)
+ #endif
+ 	int error;
+ 
++	/*
++	 * redwood: nothing is signed here and no process carries an entitlement (AMFI is a stub), so
++	 * every privilege that an entitlement would answer for is refused -- and iOS leans on one of
++	 * them for ordinary work. A daemon that goes to the network on behalf of an application
++	 * (trustd checking the certificate for whoever opened the connection, nsurlsessiond carrying
++	 * out its downloads) describes the connection to NECP as delegated, and without this
++	 * privilege the kernel refuses it with EPERM: the download then never starts and never fails.
++	 * These daemons run as mobile, so the "root gets everything" rule below does not reach them.
++	 */
++	if (priv == PRIV_NET_PRIVILEGED_SOCKET_DELEGATE) {
++		return 0;
++	}
++
+ 	/*
+ 	 * We first evaluate policies that may deny the granting of
+ 	 * privilege unilaterally.
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -1107,6 +1107,14 @@ __pthread_kill(__unused proc_t p, struct __pthread_kill_args *uap,
+ 	thread_t target_act;
+ 	int error = 0;
+ 	int signum = uap->sig;
++
++#if defined(__arm64__)
++	if (signum == SIGABRT) {
++		extern void user_abort_trace(void);
++
++		user_abort_trace();             /* no crash reporter here: this is where an abort() gets recorded */
++	}
++#endif
+ 	struct uthread *uth;
+ 
+ 	target_act = (thread_t)port_name_to_thread(uap->thread_port,
+@@ -2064,6 +2072,18 @@ psignal_internal(proc_t p, task_t task, thread_t thread, int flavor, int signum,
+ 	char                    *launchd_exit_reason_desc = NULL;
+ 	boolean_t               update_thread_policy = FALSE;
+ 
++	/* hakios: who is killed, by whom and why: a SIGKILL otherwise leaves no word ("exec: " is kept) */
++	if (signum == SIGKILL && p != PROC_NULL) {
++		extern void loader_log_line(const char *line);
++		char line[200];
++		proc_t self = current_proc();
++
++		snprintf(line, sizeof(line), "exec: SIGKILL to %s[%d] from %s[%d], reason namespace %u code %#llx\n",
++		    proc_best_name(p), proc_getpid(p), self ? proc_best_name(self) : "?", self ? proc_getpid(self) : -1,
++		    signal_reason ? signal_reason->osr_namespace : 0, signal_reason ? signal_reason->osr_code : 0ull);
++		loader_log_line(line);
++	}
++
+ 	if ((u_int)signum >= NSIG || signum == 0) {
+ 		panic("psignal: bad signal number %d", signum);
+ 	}
+@@ -3108,6 +3128,10 @@ postsig_locked(int signum)
+ 
+ 		p->p_acflag |= AXSIG;
+ 		if (sigprop[signum] & SA_CORE) {
++			{
++				extern void hk_crash_report(const char *name, int pid, int sig);
++				hk_crash_report(p->p_comm, proc_getpid(p), signum);   /* hakios: see loader_return.c */
++			}
+ 			p->p_sigacts.ps_sig = signum;
+ 			proc_signalend(p, 1);
+ 			proc_unlock(p);
+diff --git a/bsd/kern/kern_sysctl.c b/bsd/kern/kern_sysctl.c
+--- a/bsd/kern/kern_sysctl.c
++++ b/bsd/kern/kern_sysctl.c
+@@ -2361,6 +2361,21 @@ sysctl_sysctl_bootargs
+ 	char buf[BOOT_LINE_LENGTH];
+ 
+ 	strlcpy(buf, PE_boot_args(), BOOT_LINE_LENGTH);
++	/*
++	 * renoir: the root is a RAM disk (rd=mdN), and iOS 26's launchd takes "rd=md0" in the boot-args
++	 * for the restore environment: it then runs only the restore boot tasks (no keybagd --init, no
++	 * usermanagerd --init, so no persona manifest and no personas) and every daemon that needs them
++	 * waits. The kernel has found its root already; user space is shown the line without that word.
++	 */
++	for (char *w = buf; (w = strnstr(w, "rd=md", (size_t)(buf + sizeof(buf) - w))) != NULL;) {
++		if (w == buf || w[-1] == ' ') {
++			while (*w != '\0' && *w != ' ') {
++				*w++ = ' ';
++			}
++		} else {
++			w++;
++		}
++	}
+ 	error = sysctl_io_string(req, buf, BOOT_LINE_LENGTH, 0, NULL);
+ 	return error;
+ }
+diff --git a/bsd/kern/lockdown_mode.c b/bsd/kern/lockdown_mode.c
+--- a/bsd/kern/lockdown_mode.c
++++ b/bsd/kern/lockdown_mode.c
+@@ -40,6 +40,22 @@ int lockdown_mode_state = 0;
+ SYSCTL_DECL(_security_mac);
+ SYSCTL_INT(_security_mac, OID_AUTO, lockdown_mode_state, CTLFLAG_RD | CTLFLAG_LOCKED, &lockdown_mode_state, 0, "Lockdown Mode state");
+ 
++/*
++ * renoir: iOS 27's libsystem_darwin os_lockdown_mode_enabled() reads this one, a 64-bit value
++ * (sysctlbyname into a uint64_t, enabled when it is 1), and abort()s when the name is not there:
++ * launchd died right after "Early boot complete". Same state as lockdown_mode_state.
++ */
++static int
++sysctl_lockdown_mode_state_public SYSCTL_HANDLER_ARGS
++{
++#pragma unused(oidp, arg1, arg2)
++	uint64_t state = (uint64_t)(lockdown_mode_state != 0);
++
++	return SYSCTL_OUT(req, &state, sizeof(state));
++}
++SYSCTL_PROC(_security_mac, OID_AUTO, lockdown_mode_state_public, CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_LOCKED,
++    0, 0, sysctl_lockdown_mode_state_public, "Q", "Lockdown Mode state");
++
+ __startup_func
+ void
+ lockdown_mode_init(void)
+diff --git a/bsd/kern/ubc_subr.c b/bsd/kern/ubc_subr.c
+--- a/bsd/kern/ubc_subr.c
++++ b/bsd/kern/ubc_subr.c
+@@ -3954,6 +3954,28 @@ ubc_cs_convert_to_multilevel_hash(struct cs_blob *blob)
+ static void
+ cs_blob_cleanup(struct cs_blob *blob)
+ {
++	/*
++	 * hakios: an entitlements object that is no kernel address (seen with the whole iOS 26 system
++	 * read from the phone's storage: 0x0031e7c000000000, 0x0014980000000000 -- the vnode laundry
++	 * reclaiming a vnode, osobject_release() on it a data abort): this kernel's AMFI stand-in never
++	 * sets one, so something wrote over the blob. Say so with what else the blob holds, and leave
++	 * it alone instead of releasing it, until whatever writes over it is found.
++	 */
++	if (blob->csb_entitlements != NULL &&
++	    ((uintptr_t)blob->csb_entitlements >> 40) != ((uintptr_t)VM_MIN_KERNEL_ADDRESS >> 40)) {
++		extern void loader_log_line(const char *line);
++		static unsigned said;
++		char line[200];
++
++		if (said++ < 8) {
++			snprintf(line, sizeof(line), "hakios: crash cs_blob %p: entitlements %p (no kernel address), "
++			    "mem %p size %lu teamid %p flags %#x cpu %d\n", blob, blob->csb_entitlements,
++			    blob->csb_mem_kaddr, (unsigned long)blob->csb_mem_size, blob->csb_teamid, blob->csb_flags,
++			    cpu_number());
++			loader_log_line(line);
++		}
++		blob->csb_entitlements = NULL;
++	}
+ 	if (blob->csb_entitlements != NULL) {
+ 		amfi->OSEntitlements_invalidate(blob->csb_entitlements);
+ 		osobject_release(blob->csb_entitlements);
+diff --git a/bsd/sys/spawn_internal.h b/bsd/sys/spawn_internal.h
+--- a/bsd/sys/spawn_internal.h
++++ b/bsd/sys/spawn_internal.h
+@@ -275,6 +275,15 @@ typedef struct _posix_spawnattr {
+ 	char                                *psa_conclave_id;         /* conclave string */
+ } *_posix_spawnattr_t;
+ 
++/*
++ * renoir: iOS 27's struct _posix_spawnattr (attr_size 0x100): the same as this one up to psa_sec_flags,
++ * then 8 bytes of fields this kernel has not got; psa_crash_count, psa_throttle_timeout,
++ * psa_kqworkloop_soft_limit, psa_kqworkloop_hard_limit and psa_conclave_mem_limit follow from 0xb4.
++ * posix_spawn() reads them from there (bsd/kern/kern_exec.c).
++ */
++#define PSA_IOS27_SIZE  0x100
++#define PSA_IOS27_TAIL  0xb4
++
+ /*
+  * Task Sec flags, psa_sec_flags
+  */

@@ -1,0 +1,554 @@
+diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
+--- a/bsd/kern/sys_work_interval.c
++++ b/bsd/kern/sys_work_interval.c
+@@ -265,6 +265,22 @@ work_interval_ctl(__unused proc_t p, struct work_interval_ctl_args *uap,
+ 
+ 		break;
+ 
++	case 6:
++	case 7:
++	case 8:
++		/*
++		 * (redwood) Not in the open source: what os_workgroup_interval_start(), _update() and
++		 * _finish() of iOS send, for the performance controller, which is not here either.
++		 * CoreAudio does it in every I/O cycle and logs an error each time it is refused: fifty
++		 * lines a second from the audio server's real-time thread. For its threads, and only
++		 * for them, there is nothing to do and nothing wrong. (The window server asks for its
++		 * frames too, and is used to the refusal.)
++		 */
++		if (kern_work_interval_type_of_thread(current_thread()) == WORK_INTERVAL_TYPE_COREAUDIO) {
++			return 0;
++		}
++		return ENOTSUP;
++
+ 	default:
+ 		return ENOTSUP;
+ 	}
+diff --git a/osfmk/ipc/ipc_kmsg.c b/osfmk/ipc/ipc_kmsg.c
+--- a/osfmk/ipc/ipc_kmsg.c
++++ b/osfmk/ipc/ipc_kmsg.c
+@@ -449,12 +449,75 @@ ipc_kmsg_get_thread_group(ipc_kmsg_t kmsg)
+ 
+ #pragma mark ipc_kmsg signing
+ 
++/* hakios: what each kmsg looked like when it was signed, to compare against on a mismatch */
++struct hk_sign_rec {
++	ipc_kmsg_t      kmsg;
++	void           *trailer;
++	uint32_t        sig;
++	uint8_t         base[sizeof(mach_msg_base_t)];
++	uint8_t         tr[MAX_TRAILER_SIZE];
++};
++#define HK_SIGN_RING 64
++static struct hk_sign_rec hk_sign_ring[HK_SIGN_RING];
++static uint32_t hk_sign_next;
++extern void loader_log_line(const char *line);
++static uint32_t __ipc_kmsg_sign(ipc_kmsg_t kmsg, mach_msg_max_trailer_t *trailer, mach_msg_size_t *dsc_count);
++
++static void
++hk_sign_record(ipc_kmsg_t kmsg, mach_msg_max_trailer_t *trailer, uint32_t sig)
++{
++	struct hk_sign_rec *r = &hk_sign_ring[os_atomic_inc_orig(&hk_sign_next, relaxed) % HK_SIGN_RING];
++
++	r->kmsg = kmsg;
++	r->trailer = trailer;
++	r->sig = sig;
++	memcpy(r->base, ikm_header(kmsg), sizeof(r->base));
++	memcpy(r->tr, trailer, sizeof(r->tr));
++}
++
++static void
++hk_sign_explain(ipc_kmsg_t kmsg, uint32_t sig)
++{
++	char line[200];
++	mach_msg_max_trailer_t *trailer = ipc_kmsg_get_trailer(kmsg);
++	const uint8_t *now_base = (const uint8_t *)ikm_header(kmsg), *now_tr = (const uint8_t *)trailer;
++	uint32_t again1 = __ipc_kmsg_sign(kmsg, trailer, NULL);
++	uint32_t again2 = __ipc_kmsg_sign(kmsg, trailer, NULL);
++
++	snprintf(line, sizeof(line), "hakios kmsg: kmsg=%p sig now=0x%08x again=0x%08x/0x%08x stored=0x%08x trailer=%p\n",
++	    kmsg, sig, again1, again2, kmsg->ikm_signature, trailer);
++	loader_log_line(line);
++	for (int i = HK_SIGN_RING - 1; i >= 0; i--) {
++		struct hk_sign_rec *r = &hk_sign_ring[(hk_sign_next + (uint32_t)i) % HK_SIGN_RING];
++		if (r->kmsg != kmsg) {
++			continue;
++		}
++		snprintf(line, sizeof(line), "hakios kmsg: signed with sig=0x%08x trailer=%p\n", r->sig, r->trailer);
++		loader_log_line(line);
++		for (size_t j = 0; j < sizeof(r->base); j++) {
++			if (r->base[j] != now_base[j]) {
++				snprintf(line, sizeof(line), "hakios kmsg: base[%zu] 0x%02x -> 0x%02x\n", j, r->base[j], now_base[j]);
++				loader_log_line(line);
++			}
++		}
++		for (size_t j = 0; j < sizeof(r->tr); j++) {
++			if (r->tr[j] != now_tr[j]) {
++				snprintf(line, sizeof(line), "hakios kmsg: trailer[%zu] 0x%02x -> 0x%02x\n", j, r->tr[j], now_tr[j]);
++				loader_log_line(line);
++			}
++		}
++		return;
++	}
++	loader_log_line("hakios kmsg: no signing record for this kmsg\n");
++}
++
+ __abortlike
+ static void
+ __ikm_signature_check_panic(ipc_kmsg_t kmsg, uint32_t sig)
+ {
+ 	mach_msg_header_t *hdr = ikm_header(kmsg);
+ 
++	hk_sign_explain(kmsg, sig);
+ 	panic("IPC kmsg header signature mismatch: "
+ 	    "kmsg=%p, hdr=%p, id=%d, sig=0x%08x (expected 0x%08x)",
+ 	    kmsg, hdr, hdr->msgh_id, sig, kmsg->ikm_signature);
+@@ -516,6 +579,7 @@ static void
+ ipc_kmsg_sign(ipc_kmsg_t kmsg, mach_msg_max_trailer_t *trailer)
+ {
+ 	kmsg->ikm_signature = __ipc_kmsg_sign(kmsg, trailer, NULL);
++	hk_sign_record(kmsg, trailer, kmsg->ikm_signature);
+ }
+ 
+ /*
+diff --git a/osfmk/ipc/ipc_policy.c b/osfmk/ipc/ipc_policy.c
+--- a/osfmk/ipc/ipc_policy.c
++++ b/osfmk/ipc/ipc_policy.c
+@@ -50,6 +50,7 @@
+ #include <kdp/kdp_dyld.h> /* dyld_all_image_infos structures */
+ 
+ #include <ipc/ipc_policy.h>
++#include <pexpert/pexpert.h>
+ #include <ipc/ipc_service_port.h>
+ #include <ipc/port.h>
+ 
+@@ -2031,6 +2032,28 @@ ipc_sec_policy_configs_validate(void)
+ STARTUP(TUNABLES, STARTUP_RANK_LAST, ipc_sec_policy_configs_validate);
+ #endif /* DEVELOPMENT || DEBUG */
+ 
++/*
++ * hakios: boot-arg ipc_legacy=1 switches the enforced IPC security policies off, so that an older
++ * iOS user space (one that predates them, e.g. iOS 16's launchd and its OOL port arrays) can be run
++ * on this kernel to test the platform. Off by default; the iOS 26 user space does not need it.
++ */
++__startup_func
++static void
++hakios_ipc_legacy(void)
++{
++	uint32_t legacy = 0;
++
++	if (!PE_parse_boot_argn("ipc_legacy", &legacy, sizeof(legacy)) || legacy == 0) {
++		return;
++	}
++	for (uint32_t i = IPC_SEC_POLICY_NONE + 1; i < IPC_SEC_POLICY_UNKNOWN; i++) {
++		if (ipc_sec_policy_array[i].enforcement_mode == IPC_SEC_POLICY_MODE_ENFORCEMENT) {
++			ipc_sec_policy_array[i].enforcement_mode = IPC_SEC_POLICY_MODE_DISABLED;
++		}
++	}
++}
++STARTUP(TUNABLES, STARTUP_RANK_FIRST, hakios_ipc_legacy);
++
+ ipc_sec_policy_config_t*
+ ipc_sec_policy_config_get(ipc_sec_policy_t p)
+ {
+diff --git a/osfmk/ipc/mach_port.c b/osfmk/ipc/mach_port.c
+--- a/osfmk/ipc/mach_port.c
++++ b/osfmk/ipc/mach_port.c
+@@ -2970,10 +2970,6 @@ mach_port_is_connection_for_service(
+ 		return KERN_INVALID_ARGUMENT;
+ 	}
+ 
+-	if (!mach_msg_filter_at_least(MACH_MSG_FILTER_CALLBACKS_VERSION_1)) {
+-		return KERN_NOT_SUPPORTED;
+-	}
+-
+ 	ret = ipc_port_translate_receive(space, service_port_name, &service_port);
+ 	if (ret) {
+ 		return ret;
+@@ -2985,6 +2981,19 @@ mach_port_is_connection_for_service(
+ 		return KERN_INVALID_CAPABILITY;
+ 	}
+ 
++	/*
++	 * hakios: the message filter (its callbacks) is the Sandbox kext's, and there is none here. Without
++	 * it no service port carries a sandbox label, which is the "nothing to check" answer below -- give
++	 * that, not KERN_NOT_SUPPORTED: iOS 26's libxpc asks this of every peer that checks in with a
++	 * listener, and on KERN_NOT_SUPPORTED every service dropped every client as a "bogus check-in"
++	 * (cfprefsd, usermanagerd, containermanagerd ... nothing could talk to anything).
++	 */
++	if (!mach_msg_filter_at_least(MACH_MSG_FILTER_CALLBACKS_VERSION_1)) {
++		ip_mq_unlock_label_put(service_port, &label);
++		*filter_policy_id = 0;
++		return KERN_SUCCESS;
++	}
++
+ 	/* Port is locked and active */
+ 	service_port_sblabel = label.iol_service->ispl_sblabel;
+ 	if (service_port_sblabel) {
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1262,10 +1262,30 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ 		char buf[EARLY_PANIC_BUFLEN];
+ 		vsnprintf(buf, EARLY_PANIC_BUFLEN, panic_format_str, *panic_args);
+ 		paniclog_append_noflush("panic: %s\n", buf);
++		/* redwood: PE_kputc is not hooked yet, so send the reason to the always-available loader log. */
++		{
++			extern void loader_log_line(const char *);
++			loader_log_line("\n== EARLY PANIC: ");
++			loader_log_line(buf);
++			loader_log_line(" ==\n");
++		}
+ 		paniclog_append_noflush("Kernel panicked very early before serial init, spinning forever...\n");
+ 		panic_spin_forever();
+ 	}
+ 
++	/* redwood: capture every panic's reason into the always-available loader log (QEMU bring-up). */
++	{
++		extern void loader_log_line(const char *);
++		char rbuf[256];
++		va_list ap;
++		va_copy(ap, *panic_args);
++		vsnprintf(rbuf, sizeof(rbuf), panic_format_str, ap);
++		va_end(ap);
++		loader_log_line("\n== PANIC: ");
++		loader_log_line(rbuf);
++		loader_log_line(" ==\n");
++	}
++
+ 	/* optionally call sync, to reduce lost logs on restart, avoid on recursive panic. Unsafe due to unbounded sync() duration */
+ 	if ((panic_options_mask & DEBUGGER_OPTION_SYNC_ON_PANIC_UNSAFE) && (CPUDEBUGGERCOUNT == 0)) {
+ 		sync_internal();
+@@ -1366,10 +1386,26 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ 	__builtin_unreachable();
+ }
+ 
++extern void loader_return(void);
++
+ /* We rely on this symbol being visible in the debugger for triage automation */
+ void __attribute__((noinline, optnone))
+ panic_spin_forever(void)
+ {
++	/* redwood: hand the panic text to the loader log, so a QEMU bring-up boot shows why it stopped. */
++	{
++		extern char *debug_buf_base, *debug_buf_ptr;
++		extern void loader_log_putc(char);
++		extern void loader_log_line(const char *);
++		loader_log_line("\n== PANIC ==\n");
++		if (debug_buf_base != NULL && debug_buf_ptr > debug_buf_base) {
++			for (char *p = debug_buf_base; p < debug_buf_ptr; p++) {
++				loader_log_putc(*p);
++			}
++			loader_log_putc('\n');
++		}
++	}
++	loader_return();
+ 	for (;;) {
+ #if defined(__arm__) || defined(__arm64__)
+ 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
+@@ -1390,6 +1426,7 @@ panic_stackshot_release_lock(void)
+ static void
+ kdp_machine_reboot_type(unsigned int type, uint64_t debugger_flags)
+ {
++	loader_return();
+ 	if ((type == kPEPanicRestartCPU) && (debugger_flags & DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS)) {
+ 		PEHaltRestart(kPEPanicRestartCPUNoCallouts);
+ 	} else {
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -739,6 +739,11 @@ check_exc_receiver_dependency(
+  *	Returns:
+  *		KERN_SUCCESS if exception is handled by any of the handlers.
+  */
++#if defined(__arm64__)
++extern void user_exception_trace(exception_type_t exception, mach_exception_data_t code,
++    mach_msg_type_number_t count, thread_t thread);
++#endif
++
+ kern_return_t
+ exception_triage_thread(
+ 	exception_type_t        exception,
+@@ -753,6 +758,11 @@ exception_triage_thread(
+ 	struct exception_action *actions;
+ 	kern_return_t   kr = KERN_FAILURE;
+ 
++#if defined(__arm64__)
++	/* bring-up aid, see osfmk/arm64/user_exception_trace.c */
++	user_exception_trace(exception, code, codeCnt, thread);
++#endif
++
+ 	assert(exception != EXC_RPC_ALERT);
+ 
+ 	/*
+@@ -879,6 +889,13 @@ maybe_unrecoverable_exception_triage(
+ 	int pid = proc_selfpid();
+ 	char *proc_name = proc_name_address(proc);
+ 	os_log_error(OS_LOG_DEFAULT, "%s: process %s[%d] hit an unrecoverable exception\n", __func__, proc_name, pid);
++	{
++		/* hakios: the trap that ends it (esr holds the BRK comment) and where, in the loader's log;
++		 * it never reaches postsig, where a crash is otherwise reported */
++		extern void hk_crash_report(const char *name, int pid, int sig);
++
++		hk_crash_report(proc_name, pid, 9 /* SIGKILL */);
++	}
+ 
+ 	exception_info_t info = {
+ 		/*
+diff --git a/osfmk/kern/sched.h b/osfmk/kern/sched.h
+--- a/osfmk/kern/sched.h
++++ b/osfmk/kern/sched.h
+@@ -461,4 +461,12 @@ extern int sched_rt_n_backup_processors;
+ extern bool system_is_SMT;
+ #endif /* CONFIG_SCHED_SMT */
+ 
++/*
++ * The "secondaries" are not the second threads of hyperthreaded cores but slower cores of their
++ * own, each paired with a faster one (ml_pair_slow_processors() in osfmk/arm64/machine_routines.c):
++ * the scheduler still prefers the primaries, but what runs on one core does not slow the other.
++ * On homogeneous cores (QEMU virt) nothing pairs, so this stays false.
++ */
++extern bool sched_slow_secondaries;
++
+ #endif  /* _KERN_SCHED_H_ */
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -2109,6 +2109,7 @@ sched_vm_group_maintenance(void)
+ #define SCHED_AVOID_CPU0 0
+ #endif
+ 
++bool sched_slow_secondaries = false;
+ int sched_avoid_cpu0 = SCHED_AVOID_CPU0;
+ int sched_backup_cpu_timeout_count = 5; /* The maximum number of 10us delays to wait before using a backup cpu */
+ int sched_rt_n_backup_processors = SCHED_DEFAULT_BACKUP_PROCESSORS;
+@@ -2150,6 +2151,7 @@ bool
+ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ {
+ 	processor_t ast_processor = NULL;
++	sched_ipi_type_t ipi_type = SCHED_IPI_NONE;
+ 
+ #if (DEVELOPMENT || DEBUG)
+ 	if (__improbable(sched_smt_balance == 0)) {
+@@ -2158,7 +2160,39 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ #endif
+ 
+ 	assert(cprocessor == current_processor());
+-	if (cprocessor->is_SMT == FALSE) {
++	if (cprocessor->is_SMT == FALSE && !sched_slow_secondaries) {
++		goto smt_balance_exit;
++	}
++
++	if (sched_slow_secondaries) {
++		/*
++		 * A faster core is going idle: the thread of highest priority that runs on a slower one
++		 * (not a real-time one: those stay where they are) is sent here. Its core is made to
++		 * reschedule; a thread on a secondary goes back to the run queue then, and an idle
++		 * primary is where it is put.
++		 */
++		integer_t highest = -1;
++
++		if (cprocessor->processor_primary != cprocessor) {
++			goto smt_balance_exit;
++		}
++		uint64_t running_secondaries = (cpset->cpu_state_map[PROCESSOR_RUNNING] & ~cpset->primary_map &
++		    ~cpset->pending_AST_URGENT_cpu_mask);
++		for (int cpuid = lsb_first(running_secondaries); cpuid >= 0; cpuid = lsb_next(running_secondaries, cpuid)) {
++			processor_t sprocessor = processor_array[cpuid];
++
++			if (sprocessor->current_pri < BASEPRI_RTQUEUES && sprocessor->current_pri > highest &&
++			    sprocessor->current_pri > MINPRI) {
++				highest = sprocessor->current_pri;
++				ast_processor = sprocessor;
++			}
++		}
++		if (ast_processor != PROCESSOR_NULL) {
++			ipi_type = sched_ipi_action(ast_processor, NULL, SCHED_IPI_EVENT_SMT_REBAL);
++			if (ipi_type == SCHED_IPI_NONE) {
++				ast_processor = PROCESSOR_NULL;
++			}
++		}
+ 		goto smt_balance_exit;
+ 	}
+ 
+@@ -2173,7 +2207,6 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ 
+ 	processor_t sprocessor;
+ 
+-	sched_ipi_type_t ipi_type = SCHED_IPI_NONE;
+ 	uint64_t running_secondary_map = (cpset->cpu_state_map[PROCESSOR_RUNNING] &
+ 	    ~cpset->primary_map);
+ 	for (int cpuid = lsb_first(running_secondary_map); cpuid >= 0; cpuid = lsb_next(running_secondary_map, cpuid)) {
+@@ -2578,6 +2611,10 @@ thread_select(thread_t          thread,
+ 
+ #if CONFIG_SCHED_SMT
+ 		bool needs_smt_rebalance = !is_yielding && thread->sched_pri < BASEPRI_RTQUEUES && processor->processor_primary != processor;
++		if (needs_smt_rebalance && sched_slow_secondaries) {
++			/* (a slower core of its own: worth leaving only for a faster one that is idle) */
++			needs_smt_rebalance = (pset->recommended_bitmask & pset->primary_map & pset->cpu_state_map[PROCESSOR_IDLE]) != 0;
++		}
+ #endif /* CONFIG_SCHED_SMT */
+ 
+ 		bool affinity_mismatch   = thread->affinity_set != AFFINITY_SET_NULL && thread->affinity_set->aset_pset != pset;
+@@ -2727,7 +2764,7 @@ pick_new_rt_thread:
+ 				clear_pending_AST_bits(pset, processor, select_outcome);
+ 
+ #if CONFIG_SCHED_SMT
+-				if (processor->processor_secondary != NULL) {
++				if (processor->processor_secondary != NULL && !sched_slow_secondaries) {
+ 					processor_t sprocessor = processor->processor_secondary;
+ 					if ((sprocessor->state == PROCESSOR_RUNNING) || (sprocessor->state == PROCESSOR_DISPATCHING)) {
+ 						ipi_type = sched_ipi_action(sprocessor, NULL, SCHED_IPI_EVENT_SMT_REBAL);
+@@ -2800,7 +2837,8 @@ send_followup_ipi_before_idle:
+ 			}
+ 
+ #if CONFIG_SCHED_SMT
+-			if ((processor->processor_primary != processor) && (processor->processor_primary->current_pri >= BASEPRI_RTQUEUES)) {
++			if ((processor->processor_primary != processor) && (processor->processor_primary->current_pri >= BASEPRI_RTQUEUES) &&
++			    !sched_slow_secondaries) {
+ 				/* secondary can only run realtime thread */
+ 				if (select_outcome == IDLE_NONE) {
+ 					select_outcome = IDLE_SMT_PAIR_REALTIME;
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -160,6 +160,7 @@ extern void mbuf_tag_init(void);
+ #include <security/mac_mach_internal.h>
+ #if CONFIG_VNGUARD
+ extern void vnguard_policy_init(void);
++extern void minimac_policy_init(void);
+ #endif
+ #endif
+ 
+@@ -834,6 +835,9 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("vnguard_policy_init");
+ 	vnguard_policy_init();
+ #endif
++	/* stand-ins for the AMFI and Sandbox policies (bsd/kern/kern_minimac.c) */
++	kernel_bootstrap_log("minimac_policy_init");
++	minimac_policy_init();
+ #endif
+ 
+ #if CONFIG_DTRACE
+@@ -861,6 +865,14 @@ kernel_bootstrap_thread(void)
+ 	csm_initialize_provisioning_profiles();
+ #endif
+ 
++#ifndef BCM2837
++	/*
++	 * hakios: the non-Apple bring-up board registers no Image4 (img4if) or AMFI (amfi)
++	 * interface -- those come from closed AppleImage4 / AMFI kexts -- so trust_cache_runtime_init()
++	 * would panic ("image4 interface not available", kern_trustcache.c), and there is no static
++	 * trust cache to load.  Skip the whole trust-cache bring-up for this board, exactly as the
++	 * xnu-8796 hakios tree does.  hello is self-signed and code-signing enforcement is off here.
++	 */
+ 	kernel_bootstrap_log("trust_cache_init");
+ 
+ 	/* Initialize the runtime for the trust cache interface */
+@@ -868,6 +880,7 @@ kernel_bootstrap_thread(void)
+ 
+ 	/* Load the static and engineering trust caches */
+ 	load_static_trust_cache();
++#endif /* !BCM2837 */
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_LOCKDOWN);
+ 
+@@ -1111,6 +1124,21 @@ scale_setup(void)
+ 		serverperfmode = (pe_serverperfmode != 0);
+ 	}
+ #if defined(__LP64__)
++	/*
++	 * If task_max or thread_max held garbage here, before any driver ran,
++	 * ulock_initialize's hash for thread_max threads would panic.
++	 * Put back to the built-in value, with what lies around it.
++	 */
++	if (task_max <= 0 || task_max > 100000 || thread_max <= 0 || thread_max > 500000) {
++		const uint32_t *around = (const uint32_t *)((uintptr_t)&task_max & ~(uintptr_t)0x1f) - 8;
++
++		printf("scale_setup: task_max %d thread_max %d are not what was built (%d, %d): something wrote the kernel's data; "
++		    "at %p: %08x %08x %08x %08x %08x %08x %08x %08x | %08x %08x %08x %08x %08x %08x %08x %08x\n", task_max, thread_max,
++		    CONFIG_TASK_MAX, CONFIG_THREAD_MAX, around, around[0], around[1], around[2], around[3], around[4], around[5], around[6],
++		    around[7], around[8], around[9], around[10], around[11], around[12], around[13], around[14], around[15]);
++		task_max = CONFIG_TASK_MAX;
++		thread_max = CONFIG_THREAD_MAX;
++	}
+ 	typeof(task_max) task_max_base = task_max;
+ 
+ 
+@@ -1138,8 +1166,11 @@ scale_setup(void)
+ 		task_threadmax = task_max;
+ 		thread_max = task_max * 5;
+ 	}
++	/* What it was worked out from */
++	printf("scale_setup: max_mem_actual %#llx sane_size %#llx serverperfmode %d scale %d base %d -> task_max %d thread_max %d\n",
++	    (unsigned long long)max_mem_actual, (unsigned long long)sane_size, (int)serverperfmode, scale, (int)task_max_base, task_max,
++	    thread_max);
+ 
+ #endif
+-
+ 	bsd_scale_setup(scale);
+ }
+diff --git a/osfmk/kern/thread.c b/osfmk/kern/thread.c
+--- a/osfmk/kern/thread.c
++++ b/osfmk/kern/thread.c
+@@ -3088,6 +3088,26 @@ thread_get_tag(thread_t th)
+ 	return thread_get_tag_internal(th);
+ }
+ 
++/*
++ * For apfs's lock statistics (bsd/miscfs/apfs/apfs_vnops.c): how long the current thread has
++ * been runnable (running included) and how long it has run, in mach_absolute_time() units.
++ * Taken before and after a wait for a lock, the two tell the wait apart: blocked, queued for
++ * a processor, or spinning on one.
++ */
++void thread_runnable_and_run_self(uint64_t *runnable, uint64_t *run);
++
++void
++thread_runnable_and_run_self(uint64_t *runnable, uint64_t *run)
++{
++	thread_t thread = current_thread();
++	boolean_t istate = ml_set_interrupts_enabled(FALSE);
++	uint64_t now = mach_absolute_time();
++
++	*runnable = thread->runnable_timer.all_bits + (now - thread->runnable_timer.tstamp);
++	*run = recount_current_thread_time_mach();
++	ml_set_interrupts_enabled(istate);
++}
++
+ uint64_t
+ thread_last_run_time(thread_t th)
+ {
+diff --git a/osfmk/kern/work_interval.c b/osfmk/kern/work_interval.c
+--- a/osfmk/kern/work_interval.c
++++ b/osfmk/kern/work_interval.c
+@@ -719,6 +719,18 @@ work_interval_get_priority(thread_t thread)
+ 	return priority;
+ }
+ 
++/*
++ * (redwood) What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
++ * or WORK_INTERVAL_TYPE_LAST for a thread that has joined none.
++ */
++uint32_t
++kern_work_interval_type_of_thread(thread_t thread)
++{
++	const struct work_interval *work_interval = thread->th_work_interval;
++
++	return work_interval ? work_interval->wi_create_flags & WORK_INTERVAL_TYPE_MASK : WORK_INTERVAL_TYPE_LAST;
++}
++
+ kern_return_t
+ kern_work_interval_get_policy(struct work_interval *work_interval,
+     integer_t *policy,
+diff --git a/osfmk/kern/work_interval.h b/osfmk/kern/work_interval.h
+--- a/osfmk/kern/work_interval.h
++++ b/osfmk/kern/work_interval.h
+@@ -132,6 +132,8 @@ extern kern_return_t
+ kern_work_interval_notify(thread_t thread, struct kern_work_interval_args* kwi_args);
+ extern kern_return_t
+ kern_work_interval_set_name(mach_port_name_t port_name, char *name, size_t len);
++extern uint32_t
++kern_work_interval_type_of_thread(thread_t thread);
+ extern kern_return_t
+ kern_work_interval_set_workload_id(mach_port_name_t port_name,
+     struct kern_work_interval_workload_id_args *workload_id_args);

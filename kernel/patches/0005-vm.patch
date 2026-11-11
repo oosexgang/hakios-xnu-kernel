@@ -1,0 +1,183 @@
+diff --git a/bsd/vm/vm_unix.c b/bsd/vm/vm_unix.c
+--- a/bsd/vm/vm_unix.c
++++ b/bsd/vm/vm_unix.c
+@@ -1724,7 +1724,19 @@ after_root_check:
+ #define PREBOOT_CRYPTEX_PATH "/private/preboot/Cryptexes"
+ #endif
+ 			error = vnode_lookup(PREBOOT_CRYPTEX_PATH, 0, &preboot_vp, vfs_context_current());
+-			if (error || srfmp->vp->v_mount != preboot_vp->v_mount) {
++			/*
++			 * (redwood) Or a volume of its own mounted on a directory right inside it: iOS
++			 * grafts each cryptex image into the Preboot volume (graftdmg), so its files are
++			 * that volume's; this port mounts the image there as it is (bsd/miscfs/apfs), a
++			 * mount of its own whose covered directory is Preboot's Cryptexes/<name>.
++			 */
++			if (error == 0 && srfmp->vp->v_mount != preboot_vp->v_mount &&
++			    srfmp->vp->v_mount != NULL && srfmp->vp->v_mount->mnt_vnodecovered != NULLVP &&
++			    srfmp->vp->v_mount->mnt_vnodecovered->v_mount == preboot_vp->v_mount &&
++			    srfmp->vp->v_mount->mnt_vnodecovered->v_parent == preboot_vp) {
++				(void)vnode_put(preboot_vp);
++				preboot_vp = NULL;
++			} else if (error || srfmp->vp->v_mount != preboot_vp->v_mount) {
+ 				SHARED_REGION_TRACE_ERROR(
+ 					("shared_region: %p [%d(%s)] map(%p:'%s'): "
+ 					"not on process' root volume nor preboot volume\n",
+diff --git a/osfmk/mach/shared_region.h b/osfmk/mach/shared_region.h
+--- a/osfmk/mach/shared_region.h
++++ b/osfmk/mach/shared_region.h
+@@ -88,7 +88,13 @@
+ /* ARM64_TODO: move to higher memory */
+ #endif
+ #define SHARED_REGION_BASE_ARM64                0x180000000ULL
+-#define SHARED_REGION_SIZE_ARM64                0x180000000ULL
++/*
++ * renoir: 7 GiB and not 6. iOS 27's dyld shared cache ends at 0x30794C000 and slides by up to 0x20000000
++ * (cache header: max slide 512 MiB): at most 0x32794C000, beyond 6 GiB from the base, and dyld's
++ * "syscall to map cache into shared region failed" (KERN_INVALID_ADDRESS) left nothing to run.
++ * A multiple of the 32 MiB a twig table nests on 16 KiB pages.
++ */
++#define SHARED_REGION_SIZE_ARM64                0x1C0000000ULL
+ #define SHARED_REGION_NESTING_BASE_ARM64        SHARED_REGION_BASE_ARM64
+ #define SHARED_REGION_NESTING_SIZE_ARM64        SHARED_REGION_SIZE_ARM64
+ #define SHARED_REGION_NESTING_MIN_ARM64         ?
+diff --git a/osfmk/vm/vm_dyld_pager.c b/osfmk/vm/vm_dyld_pager.c
+--- a/osfmk/vm/vm_dyld_pager.c
++++ b/osfmk/vm/vm_dyld_pager.c
+@@ -63,8 +63,18 @@
+ #if defined(HAS_APPLE_PAC)
+ #include <ptrauth.h>
+ #include <arm/misc_protos.h>
++#elif defined(__arm64__)
++#include <ptrauth.h>            /* (ptrauth_key: renoir runs arm64e code without pointer authentication) */
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
++/*
++ * The arm64e fixup formats: with pointer authentication, and on renoir (arm64 without it) too, where
++ * an authenticated pointer is written unsigned (see bsd/dev/arm/kern_machdep.c).
++ */
++#if defined(HAS_APPLE_PAC) || defined(__arm64__)
++#define DYLD_PAGER_ARM64E_FIXUPS 1
++#endif
++
+ 
+ /* For speculation macros */
+ #if __arm64__
+@@ -557,7 +567,7 @@ fixupPage32(
+ 	return KERN_SUCCESS;
+ }
+ 
+-#if defined(HAS_APPLE_PAC)
++#if DYLD_PAGER_ARM64E_FIXUPS
+ /*
+  * Sign a pointer needed for fixups.
+  */
+@@ -576,6 +586,17 @@ signPointer(
+ 		*signedAddr = 0;
+ 		return KERN_SUCCESS;
+ 	}
++#if !defined(HAS_APPLE_PAC)
++	(void)loc;
++	(void)addrDiv;
++	(void)diversity;
++	(void)pager;
++	if (key > ptrauth_key_asdb) {
++		return KERN_FAILURE;
++	}
++	*signedAddr = unsignedAddr;     /* renoir: no pointer authentication, nothing is signed */
++	return KERN_SUCCESS;
++#else /* !defined(HAS_APPLE_PAC) */
+ 
+ 	uint64_t extendedDiscriminator = diversity;
+ 	if (addrDiv) {
+@@ -585,7 +606,14 @@ signPointer(
+ 	switch (key) {
+ 	case ptrauth_key_asia:
+ 	case ptrauth_key_asda:
+-		if (pager->dyld_a_key == 0 || arm_user_jop_disabled()) {
++		/*
++		 * dyld_a_key == 0 is the default shared region (launchd).  On Apple that means the
++		 * process-independent default key and the pointer is left as-is; the standard-PAC
++		 * backend instead derives a real key from the jop value (0 included) and the process
++		 * authenticates with it, so we must sign for key 0 too (same as the shared-region
++		 * pager -- vm_shared_region.c; docs/ARM64E.md milestone 3).
++		 */
++		if (arm_user_jop_disabled()) {
+ 			*signedAddr = unsignedAddr;
+ 		} else {
+ 			*signedAddr = (uintptr_t)pmap_sign_user_ptr((void *)unsignedAddr, key, extendedDiscriminator, pager->dyld_a_key);
+@@ -601,6 +629,7 @@ signPointer(
+ 		return KERN_FAILURE;
+ 	}
+ 	return KERN_SUCCESS;
++#endif /* !defined(HAS_APPLE_PAC) */
+ }
+ 
+ /*
+@@ -813,7 +842,7 @@ fixupCachePageAuth64(
+ 	} while (valid_chain);
+ 	return KERN_SUCCESS;
+ }
+-#endif /* defined(HAS_APPLE_PAC) */
++#endif /* DYLD_PAGER_ARM64E_FIXUPS */
+ 
+ 
+ /*
+@@ -922,7 +951,7 @@ fixup_page(
+ 	 * Route to the appropriate fixup routine
+ 	 */
+ 	switch (hdr->mwli_pointer_format) {
+-#if defined(HAS_APPLE_PAC)
++#if DYLD_PAGER_ARM64E_FIXUPS
+ 	case DYLD_CHAINED_PTR_ARM64E:
+ 		fixupPageAuth64(userVA, contents, pager, segInfo, pageIndex, false);
+ 		break;
+@@ -933,7 +962,7 @@ fixup_page(
+ 	case DYLD_CHAINED_PTR_ARM64E_SHARED_CACHE:
+ 		fixupCachePageAuth64(userVA, contents, pager, segInfo, pageIndex);
+ 		break;
+-#endif /* defined(HAS_APPLE_PAC) */
++#endif /* DYLD_PAGER_ARM64E_FIXUPS */
+ 	case DYLD_CHAINED_PTR_64:
+ 		fixupPage64(userVA, contents, link_info, segInfo, pageIndex, false);
+ 		break;
+diff --git a/osfmk/vm/vm_shared_region.c b/osfmk/vm/vm_shared_region.c
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -3331,7 +3331,7 @@ vm_shared_region_slide_page_v3(
+ 				discriminator = __builtin_ptrauth_blend_discriminator((void*)(((uintptr_t)uservaddr) + pageOffset), discriminator);
+ 			}
+ 
+-			if (jop_key != 0 && si->si_ptrauth && !arm_user_jop_disabled()) {
++			if (si->si_ptrauth && !arm_user_jop_disabled()) {
+ #if CONFIG_SPTM
+ 				pmap_batch_sign_user_ptr(rebaseLocation, (void *)value, key, discriminator, jop_key);
+ #else /* CONFIG_SPTM */
+@@ -3345,6 +3345,9 @@ vm_shared_region_slide_page_v3(
+ 			} else {
+ 				memcpy(rebaseLocation, &value, sizeof(value));
+ 			}
++#else /* __has_feature(ptrauth_calls) */
++			/* renoir: no pointer authentication, the pointer stays unsigned (see bsd/dev/arm/kern_machdep.c) */
++			memcpy(rebaseLocation, &value, sizeof(value));
+ #endif /* __has_feature(ptrauth_calls) */
+ 		} else {
+ 			// The new value for a rebase is the low 51-bits of the threaded value plus the slide.
+@@ -3550,7 +3553,7 @@ vm_shared_region_slide_page_v5(
+ 				discriminator = __builtin_ptrauth_blend_discriminator((void*)(((uintptr_t)uservaddr) + pageOffset), discriminator);
+ 			}
+ 
+-			if (jop_key != 0 && si->si_ptrauth && !arm_user_jop_disabled()) {
++			if (si->si_ptrauth && !arm_user_jop_disabled()) {
+ #if CONFIG_SPTM
+ 				pmap_batch_sign_user_ptr(rebaseLocation, (void *)value, key, discriminator, jop_key);
+ #else /* CONFIG_SPTM */
+@@ -3564,6 +3567,9 @@ vm_shared_region_slide_page_v5(
+ 			} else {
+ 				memcpy(rebaseLocation, &value, sizeof(value));
+ 			}
++#else /* __has_feature(ptrauth_calls) */
++			/* renoir: no pointer authentication, the pointer stays unsigned (see bsd/dev/arm/kern_machdep.c) */
++			memcpy(rebaseLocation, &value, sizeof(value));
+ #endif /* __has_feature(ptrauth_calls) */
+ 		} else {
+ 			// the value already has the correct low bits, so just add in the high8 if it exists

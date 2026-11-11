@@ -1,0 +1,35 @@
+# The changes to Apple's own files, one patch a topic. (The files HakiOS adds are not here: they are
+# kernel/overlay/, as they are.)
+#
+# Every changed file of the tree belongs to exactly one patch: the first line below with a pattern
+# that matches it -- a directory (ending in /), a path, or a glob. kernel/assemble.sh applies the
+# patches in this order; kernel/export.sh writes them from an assembled tree by this table and stops
+# at a changed file no line claims. What each patch is for: kernel/patches/README.md.
+#
+# patch                         files
+
+# What is compiled and how: the build on Linux with upstream clang, the configuration, the lists of
+# files, headers that Apple's own compiler needs nothing for.
+0001-build.patch                Makefile SETUP/ makedefs/ config/
+0001-build.patch                bsd/conf/ iokit/conf/ libkern/conf/ osfmk/conf/ san/conf/ pexpert/pexpert/arm64/Makefile
+0001-build.patch                libkern/os/base.h libkern/libkern/c++/OSData.h osfmk/kern/kalloc.h
+0001-build.patch                iokit/IOKit/IOCircularDataQueueImplementation.h
+
+# A generic arm64 machine: the boot protocol of our loader, a CPU without pointer authentication,
+# interrupts, timers, the console.
+0002-platform-arm64.patch       pexpert/ osfmk/arm/ osfmk/arm64/ osfmk/console/ osfmk/prng/ bsd/dev/arm/km.c
+
+# IOKit without Apple's platform drivers.
+0003-iokit.patch                iokit/
+
+# Mach: scheduling, IPC policy, panics and what is logged about them.
+0004-mach.patch                 osfmk/ipc/ osfmk/kern/ bsd/kern/sys_work_interval.c
+
+# Virtual memory: the shared region and the dyld pager for a cache rewritten without PAC.
+0005-vm.patch                   osfmk/vm/ osfmk/mach/shared_region.h bsd/vm/
+
+# Processes: exec, code signing, entitlements, sysctls and system calls of newer iOS user space.
+0006-bsd-process.patch          bsd/kern/ bsd/dev/arm/ bsd/sys/spawn_internal.h
+
+# File systems: the root in memory, APFS and ramfs registered, paths and attributes iOS asks for.
+0007-vfs.patch                  bsd/vfs/ bsd/miscfs/ bsd/dev/memdev.c bsd/sys/disk_private.h
