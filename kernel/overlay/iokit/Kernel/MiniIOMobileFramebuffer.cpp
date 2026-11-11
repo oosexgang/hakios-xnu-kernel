@@ -2194,10 +2194,13 @@ publishDisplayNode(void)
  * accelerator without the properties that name its Metal and OpenGL ES drivers is passed
  * over by both, which leaves CoreAnimation with its software renderer, as before.
  *
- * With boot-arg metal=1 a user process may put those two properties here, which is the whole
- * of what keeps Metal from finding a driver of ours (userland/src/hakiosmetal.m); see setProperties
- * below and docs/metal-glass.md. Without it (the default) nothing changes: CoreAnimation keeps
- * its software renderer, as in the RAM-only release.
+ * With boot-arg metal=1 the service names our Metal plug-in from the start: MetalPluginName
+ * "HakiosMetal", MetalPluginClassName "HakiosMetalDevice" (metal/plugin/HakiosMetal.m, installed as
+ * /System/Library/Extensions/HakiosMetal.bundle), and a program that asks Metal for a device gets
+ * ours -- CoreAnimation in backboardd among them, which then draws the screen with the GPU. A user
+ * process may also change or remove the two (setProperties below), which is the way back to the
+ * software renderer without a reboot. Without metal=1 (the default) nothing changes: CoreAnimation
+ * keeps its software renderer, as in the RAM-only release. See docs/metal-glass.md.
  */
 
 /* Metal's step 2 reads exactly these two, in this order, off this service (docs/metal.md 1). */
@@ -2318,12 +2321,15 @@ publishAccelerator(IOService * provider)
 	gAcceleratorTakesProperties = PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0;
 	if (accelerator != NULL && accelerator->init() && accelerator->attach(provider)) {
 		accelerator->setName("sgx");
-		accelerator->registerService();
-		/* the first line to look for in the log of such a boot: the gate is open, nothing is set yet */
+		/* (before registerService: whoever finds the service finds it with them) */
 		if (gAcceleratorTakesProperties) {
-			IOLog("IOAcceleratorES: metal=%u: this service takes " kAcceleratorPluginNameKey
-			    " and " kAcceleratorPluginClassNameKey " from user space\n", metal);
+			accelerator->setProperty(kAcceleratorPluginNameKey, "HakiosMetal");
+			accelerator->setProperty(kAcceleratorPluginClassNameKey, "HakiosMetalDevice");
+			/* the first line to look for in the log of such a boot */
+			IOLog("IOAcceleratorES: metal=%u: Metal's plug-in is HakiosMetal (HakiosMetalDevice); user space may "
+			    "change or remove " kAcceleratorPluginNameKey " and " kAcceleratorPluginClassNameKey "\n", metal);
 		}
+		accelerator->registerService();
 	}
 	OSSafeReleaseNULL(accelerator);
 }
