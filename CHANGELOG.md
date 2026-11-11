@@ -21,7 +21,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   `tools/boards.py new NAME --soc SOC --dts FILE` reads the DSI controller, the temperature sensors,
   the CPU frequency block and its groups of cores, the clock controllers' addresses, the interrupt
   controller, the cores, the PSCI method, the panel's brightness range and mode, the PMIC arbiter with
-  the keys, the SoC's own pins, and RPMh. It prints what it could not find. Two things are never in a device tree and are
+  the keys, the SoC's own pins, the way to its other processors, and RPMh. It prints what it could not find. Two things are never in a device tree and are
   filled in by hand: the display clocks' register offsets and the I/O window.
 - **`tools/boards.py status NAME`** lists every feature for a board: on, ready to be listed, or the
   section it still waits for. `tools/boards.py check` validates every file and says which and why.
