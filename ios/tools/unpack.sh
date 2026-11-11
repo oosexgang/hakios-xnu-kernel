@@ -5,6 +5,7 @@
 #   DIR/cryptex/os/      the OS cryptex, with the dyld shared cache (Cryptex1,SystemOS)
 #   DIR/cryptex/app/     the App cryptex (Cryptex1,AppOS)
 #   DIR/dyld             a link to the shared cache's directory in cryptex/os
+#   DIR/var.skel         the template of /private/var, with owners and modes (mkvarskel.py)
 #   DIR/DeviceTree.bin   the iPhone's device tree, decoded: loader/build.sh takes its identity from it
 #   DIR/BuildManifest.plist
 #
@@ -75,21 +76,43 @@ if made:
 PY
 }
 
+image() { # image PATH-IN-IPSW: the disk image out of the IPSW, decrypted, in WORK; its path on stdout
+	local image
+	image=$WORK/$(basename "$1")
+	unzip -o -q -j "$IPSW" "$1" -d "$WORK"
+	if [ "${image%.aea}" != "$image" ]; then
+		(cd "$WORK" && ipsw fw aea "$image" -o "$WORK" > /dev/null 2>&1)
+		rm "$image"
+		image=${image%.aea}
+	fi
+	echo "$image"
+}
+
+# The template of /private/var with its owners and modes, which extraction on Linux does not keep: from the
+# system volume's listing (mkvarskel.py). init makes the directories from it at every boot.
+var_skel() { # var_skel IMAGE
+	7z l -slt "$1" > "$WORK/listing" 2> /dev/null || true
+	python3 "$HERE/mkvarskel.py" "$WORK/listing" > "$OUT/var.skel"
+	rm "$WORK/listing"
+	echo "unpack.sh: var.skel: $(grep -c . "$OUT/var.skel") entries"
+}
+
 unpack() { # unpack NAME PATH-IN-IPSW
-	local dir=$OUT/$1 image=$WORK/$(basename "$2")
+	local dir=$OUT/$1 image
 	if [ -f "$dir/.done" ]; then
 		echo "unpack.sh: $1: there already ($dir/.done)"
+		if [ "$1" = rootfs ] && [ ! -s "$OUT/var.skel" ]; then
+			image=$(image "$2")
+			var_skel "$image"
+			rm "$image"
+		fi
 		return
 	fi
 	rm -rf "$dir"
 	echo "unpack.sh: $1: $2"
-	unzip -o -q -j "$IPSW" "$2" -d "$WORK"
-	if [ "${image%.aea}" != "$image" ]; then
-		(cd "$WORK" && ipsw fw aea "$image" -o "$WORK" > /dev/null)
-		rm "$image"
-		image=${image%.aea}
-	fi
+	image=$(image "$2")
 	7z x -y -snl "$image" -o"$dir" > "$WORK/7z.log" 2>&1 || true
+	[ "$1" = rootfs ] && var_skel "$image"
 	rm "$image"
 	if ! grep -q '^Everything is Ok' "$WORK/7z.log"; then
 		# what 7z calls errors here are the links above and the LZBITMAP files ("Unsupported Method", finished
