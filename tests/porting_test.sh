@@ -9,6 +9,7 @@
 #   step 4   the kernel finds its row, and nothing of a phone is on until asked
 #   step 5   features and sections are added one at a time (CPU frequency, thermal floors, the keys); the
 #            kernel's own board code answers with what was written
+#   step 8   the package is exported to where packages are kept, taken out, and brought in again
 #
 # The repository itself is not touched.
 set -uo pipefail
@@ -214,6 +215,21 @@ printf '\n[buttons]\npon = 0x208\nvolume_up = 0x2c8\n' >> "$R/devices/testphone/
 check "... and taken again with it written by hand" "$B" check
 sed -i 's/"cpufreq-epss"/"cpufreq-epss", "torch-pm8350c", "warp-drive"/' "$R/devices/testphone/board.toml"
 refuses "a feature the kernel has no driver for is refused" 'feature "warp-drive" is not one the kernel knows' "$B" check
+
+# --- step 8: the package is sent to where packages are kept, and brought in from there -------------
+sed -i 's/, "torch-pm8350c", "warp-drive"//' "$R/devices/testphone/board.toml"
+D="$R/tools/device.py"
+mkdir "$W/packages"
+says "the package is exported to a checkout of the devices branch" "the package testphone" "$D" export testphone "$W/packages"
+check "... as one directory, with its board file" test -f "$W/packages/testphone/board.toml"
+says "... and is listed there" "testphone  *sm9999  *Maker Testphone" "$D" available --from "$W/packages"
+check "it is taken out of the checkout" "$D" remove testphone
+check "(the tables, made anew as a build would)" "$B" gen
+says "... and the kernel's code no longer knows it" "unknown" ask testphone
+check "another checkout brings it in" "$D" add testphone --from "$W/packages"
+says "... validated against the code that is there" "ok" "$B" check
+check "(the tables again)" "$B" gen
+says "... and has its board again, with what was turned on" "buttons=1 pon=0x208" ask testphone
 
 # --- the repository itself --------------------------------------------------------------------------
 check "the repository was not touched" sh -c "cd \"$REPO\" && test ! -e devices/testphone && test ! -e soc/sm9999.toml"
