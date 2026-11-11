@@ -22,3 +22,6 @@ ios/userland/obj27/
 /devices/*/
 !/devices/_template/
 !/devices/qemu-virt/
+
+# a phone's own files, taken from it or built from its firmware (loader/mkboot.py, docs/porting.md): never published
+/firmware/

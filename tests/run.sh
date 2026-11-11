@@ -29,6 +29,8 @@ python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
 echo "== device packages (tools/device.py)"
 python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
+echo "== the boot image a phone is started with (loader/mkboot.py)"
+python3 "$HERE/mkboot_test.py" 2>&1 | tail -3 || failed=1
 # The tables the code under test is built with: the repository's own boards and the tests' phones
 # (tests/devices, with a chip of their own in tests/soc), which stand in for real ones -- device
 # packages are not part of this repository.

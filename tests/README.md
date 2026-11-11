@@ -24,6 +24,7 @@ loader is built. What is not installed is left out, and said.
 | `backlight_test.c`, `thermal_test.c` | The arithmetic of both drivers (`hakios_*_core.h`) | Curves, ranges and steps, over every input. |
 | `boards_test.py` | `tools/boards.py` and `tools/devicetree.py` | What a board file may say and what is refused, with the reason; what is read from a device tree; where packages are found; the tables written. |
 | `device_test.py` | `tools/device.py`, in a repository of its own | A package is brought in from a branch or a directory, listed, exported and removed; work that is not the tool's is left alone. |
+| `mkboot_test.py` | `loader/mkboot.py`, on a made-up UEFI | The boot image a phone's bootloader is given: the shim, the UEFI and the payload compressed, the device tree after them, Android's header and digest; a shim built for another memory map, a UEFI of another size and what is not a payload are refused. |
 | `porting_test.sh` | `docs/porting.md`, on a made-up phone with a made-up SoC | The guide's tool and data steps work for a device nobody has described, with none of the addresses of the phones the code was written on. |
 | `kernel_tools_test.sh` | `kernel/assemble.sh`, `export.sh`, `verify.sh`, `import-patch.sh`, `syntax-check.sh`, on a small made-up release | A tree is what the repository says; work in a tree is never run over; an export brings it back. |
 | `bootargs_test.py` | `tools/bootargs.py` | Every boot argument the kernel reads is found and described; `docs/boot-args.md` is current. |

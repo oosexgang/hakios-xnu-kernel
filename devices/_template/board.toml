@@ -105,6 +105,13 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # uefi_charger = true               # the firmware has Qualcomm's charger protocols: the loader reads the battery
 #                                   # through them and hands it to the kernel (feature "battery-uefi")
 
+# Its UEFI, as loader/mkboot.py packs it for `fastboot boot`; the build itself is in firmware/NAME/uefi/.
+# [uefi]
+# fd_base = 0x9FD00000              # where the UEFI runs: FD_BASE of its port's memory map (BootShim's header says
+#                                   # the same; mkboot.py compares them)
+# fd_size = 0x200000                # the size of SILICIUM_UEFI.fd
+# header_version = 1                # the Android boot image header its bootloader takes (default 1)
+
 # How ios/tools/boot26.py starts this phone (--board NAME).
 # [boot]
 # fastboot_product = "codename"     # what `fastboot getvar product` must answer: the tool refuses any other phone
