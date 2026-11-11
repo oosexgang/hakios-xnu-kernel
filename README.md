@@ -54,7 +54,7 @@ make check
 | `ios/` | What iOS 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
 | `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
 | `tests/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
-| `tools/` | `boards.py` (board files), `bootargs.py` (the generated reference), lint and publish checks. |
+| `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree), `bootargs.py` (the generated reference), lint and publish checks. |
 | `components.toml` | Everything taken from elsewhere, pinned to an exact version. |
 | `docs/` | Documentation. |
 | `base/` | The first generation's workspace (iOS 16.5 on redwood and QEMU). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |

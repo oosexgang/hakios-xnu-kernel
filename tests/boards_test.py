@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('boards', ROOT / 'tools/boards.py')
 boards = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boards)
+import devicetree  # noqa: E402  (tools/, which loading boards put on the path)
 
 SOC = '''name = "sm0001"
 description = "a made-up SoC"
@@ -464,17 +465,17 @@ class Generate(Sandbox):
 
 class DeviceTree(Sandbox):
     def test_nodes_and_properties_are_read(self):
-        tree = boards.parse_dts(DTS)
+        tree = devicetree.parse_dts(DTS)
         names = [node.name for node in tree.walk()]
         for name in ('clock-controller@af00000', 'tsens@c222000', 'qcom,mdss_dsi_first_cmd', 'timing@0'):
             self.assertIn(name, names)
         panel = next(node for node in tree.walk() if node.name == 'qcom,mdss_dsi_first_cmd')
-        self.assertEqual(boards.cells(panel.props['qcom,mdss-dsi-bl-max-level']), [0x7ff])
+        self.assertEqual(devicetree.cells(panel.props['qcom,mdss-dsi-bl-max-level']), [0x7ff])
         self.assertIn('qcom,mdss-dsi-bl-inverted-dbv', panel.props)
-        self.assertEqual(boards.strings('"a\\0b", "c"'), ['a', 'b', 'c'])
+        self.assertEqual(devicetree.strings('"a\\0b", "c"'), ['a', 'b', 'c'])
 
     def test_what_a_board_needs_is_found(self):
-        soc, board, notes = boards.from_dts(DTS)
+        soc, board, notes = devicetree.from_dts(DTS)
         self.assertEqual(soc['display'], {'dsi0': 0xae94000, 'intf1': 0xae6b800})      # of controller 0, not 1
         self.assertEqual(soc['thermal'], {'tsens': [0xc263000, 0xc265000]})
         self.assertEqual(soc['cpufreq'], {'epss': 0x18591000, 'epss_domain_size': 0x1000, 'domain_cores': [2, 1, 1]})
@@ -506,19 +507,19 @@ class DeviceTree(Sandbox):
         }; };
         gpio_keys { compatible = "gpio-keys";
             vol_up { gpios = <&pm7325_gpios 6 GPIO_ACTIVE_LOW>; linux,code = <0x73>; }; }; };'''
-        soc, board, notes = boards.from_dts(source)
+        soc, board, notes = devicetree.from_dts(source)
         self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
                                        'channels': 0xc600000})
         self.assertEqual(board['buttons'], {'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM7325'})
 
     def test_a_key_that_is_not_on_a_pmic_is_left_to_be_filled_in(self):
-        soc, board, notes = boards.from_dts('''/ { tlmm: pinctrl@f000000 { phandle = <0x10>; };
+        soc, board, notes = devicetree.from_dts('''/ { tlmm: pinctrl@f000000 { phandle = <0x10>; };
             gpio_keys { compatible = "gpio-keys"; vol_up { gpios = <0x10 0x20 0x01>; linux,code = <0x73>; }; }; };''')
         self.assertNotIn('buttons', board)
         self.assertTrue(any('volume_up is to be filled in by hand' in note for note in notes))
 
     def test_a_panel_without_dcs_brightness_is_dimmed_in_software(self):
-        soc, board, notes = boards.from_dts(DTS, panel='qcom,mdss_dsi_second_video')
+        soc, board, notes = devicetree.from_dts(DTS, panel='qcom,mdss_dsi_second_video')
         self.assertEqual(board['backlight']['type'], 'soft')
         self.assertTrue(any('bl_ctrl_wled' in note for note in notes))
 

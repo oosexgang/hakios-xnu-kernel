@@ -54,7 +54,7 @@ make check
 | `ios/` | iOS 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
 | `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
 | `tests/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
-| `tools/` | `boards.py`（板型文件）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
+| `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
 | `components.toml` | 从外部获取的所有内容及其固定版本。 |
 | `docs/` | 文档。 |
 | `base/` | 第一代工作区（redwood 和 QEMU 上的 iOS 16.5）。保留尚未迁移的部分：UEFI 移植、Wi-Fi 兼容层、QEMU 脚本。 |
