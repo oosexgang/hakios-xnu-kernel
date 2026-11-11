@@ -4099,13 +4099,10 @@ redwood_display_scan(uint32_t *frame, uint32_t *line)
  * Boot-arg gpu=1: is this the phone, and is its GPU's firmware in the small image? Then the
  * GPU is started and kept for the system to draw with, which is what
  * "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps
- * that only look (10 to 12) left out, no pauses, no watch. Anywhere else -- QEMU, whose machine
- * has its peripherals elsewhere -- not one register of the above is touched.
+ * that only look (10 to 12) left out, no pauses, no watch. On a board without a GPU profile -- QEMU,
+ * a phone whose board file lists no "gpu-a660" -- this is not reached, and not one register of the
+ * above is touched.
  */
-#define REDWOOD_SOC_BASE        0x00400000ul    /* where the loader says the phone's peripherals begin (its "redwood") */
-
-extern vm_offset_t pe_arm_get_soc_base_phys(void);
-
 static bool
 start_by_itself(void)
 {
@@ -4115,8 +4112,8 @@ start_by_itself(void)
 	const char *missing = NULL;
 	uint64_t size;
 
-	if (pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
-		printf("adreno: THE GPU IS NOT STARTED: gpu=1 is for the phone, and this is not it\n");
+	if (gpu_profile == NULL) {
+		printf("adreno: THE GPU IS NOT STARTED: this board has no GPU profile\n");
 		return false;
 	}
 	image_asked_quietly = true;

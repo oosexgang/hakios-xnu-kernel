@@ -4142,9 +4142,6 @@ redwood_wifi_quiesce(void)
 	dsp_shutdown("the kernel is on its way back to the loader");
 }
 
-#define REDWOOD_SOC_BASE        0x00400000ul    /* where the loader says the phone's peripherals begin (its "redwood") */
-
-extern vm_offset_t pe_arm_get_soc_base_phys(void);
 
 /* The steps' end: the DSP stopped, or left as asked. */
 static void
@@ -4277,7 +4274,7 @@ redwood_wifi_init(void)
 		printf("wifi: wifi=%u is not understood: wifi=1 turns the radio on, wifi_step=N goes the first N steps of that\n", on);
 		return;
 	}
-	if (pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE || !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750)) {
+	if (!hakios_board_has(HAKIOS_HAS_WIFI_WCN6750)) {
 		if (last_step != 0 && PE_parse_boot_argn("wifi_lx", &back, sizeof(back)) && back) {
 			/* a check of what is under the driver: it gets as far as finding no firmware to talk to */
 			printf("wifi: this is not the phone; with wifi_lx the driver is started all the same, for what it does before "
