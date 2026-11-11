@@ -34,4 +34,5 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # Holding the processors back when hot (docs/thermal.md). Leave the section out until [thermal] and
 # [cpufreq] are in the SoC file.
 # [thermal]
-# floor_mhz = [1000, 1100, 1100]    # the slowest the small, big and prime cores are held back to
+# floor_mhz = [1000, 1100, 1100]    # the slowest each group of cores is held back to: one value for each
+#                                   # group of the SoC file's [cpufreq] domain_cores

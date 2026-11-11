@@ -30,6 +30,7 @@ tsens = [0xc263000, 0xc265000]
 [cpufreq]
 epss = 0x18591000
 epss_domain_size = 0x1000
+domain_cores = [4, 3, 1]
 [platform]
 io_base = 0x400000
 io_size = 0x3fc00000
@@ -60,10 +61,10 @@ fb_base = 0xe1000000
 DTS = '''/dts-v1/;
 / {
 	cpus {
-		cpu@0 { device_type = "cpu"; reg = <0x00 0x00>; enable-method = "psci"; capacity-dmips-mhz = <0x400>; };
-		cpu@100 { device_type = "cpu"; reg = <0x00 0x100>; enable-method = "psci"; capacity-dmips-mhz = <0x400>; };
-		cpu@200 { device_type = "cpu"; reg = <0x00 0x200>; enable-method = "psci"; capacity-dmips-mhz = <0x79a>; };
-		cpu@300 { device_type = "cpu"; reg = <0x00 0x300>; enable-method = "psci"; capacity-dmips-mhz = <0x7c1>; };
+		cpu@0 { device_type = "cpu"; reg = <0x00 0x00>; enable-method = "psci"; capacity-dmips-mhz = <0x400>; qcom,freq-domain = <0x0d 0x00 0x04>; };
+		cpu@100 { device_type = "cpu"; reg = <0x00 0x100>; enable-method = "psci"; capacity-dmips-mhz = <0x400>; qcom,freq-domain = <0x0d 0x00 0x04>; };
+		cpu@200 { device_type = "cpu"; reg = <0x00 0x200>; enable-method = "psci"; capacity-dmips-mhz = <0x79a>; qcom,freq-domain = <0x0d 0x01 0x04>; };
+		cpu@300 { device_type = "cpu"; reg = <0x00 0x300>; enable-method = "psci"; capacity-dmips-mhz = <0x7c1>; qcom,freq-domain = <0x0d 0x02 0x04>; };
 		cpu-map { cluster0 { core0 { cpu = <0x11>; }; }; };
 	};
 	psci {
@@ -189,7 +190,7 @@ class Check(Sandbox):
             (self.board, 'min = 1', 'min = "one"', 'int expected'),
             (self.board, 'min = 1', 'min = 1\nbrightness = 5', 'unknown key "brightness"'),
             (self.board, '[thermal]', '[thermals]', 'unknown section [thermals]'),
-            (self.board, 'floor_mhz = [1000, 1100, 1100]', 'floor_mhz = [1000]', 'three values'),
+            (self.board, 'floor_mhz = [1000, 1100, 1100]', 'floor_mhz = [1000]', 'one value for each of the 3 groups'),
             (self.board, 'description = "A phone"\n', '', '"description" is missing'),
             (self.board, 'soc = "sm0001"', 'soc = "sm0001', 'not TOML'),
             (self.soc, '[display]\ndsi0 = 0xae94000\n', '', 'backlight type "dcs" needs [display]'),
@@ -200,6 +201,10 @@ class Check(Sandbox):
              '"two words" is not NAME or NAME=VALUE'),
             (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\n[loader]', '"bootargs" is missing'),
             (self.soc, 'io_base = 0x400000', 'io_base = 0', 'io_base must not be 0'),
+            (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [4, 3]', 'domain_cores adds up to 7 cores, [platform] has 8'),
+            (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [4, 2, 2]\n', None),
+            (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [2, 2, 2, 1, 1]', 'one to four groups'),
+            (self.board, 'floor_mhz = [1000, 1100, 1100]', 'floor_mhz = [1000, 1100]', 'one value for each of the 3 groups'),
             (self.soc, 'psci = "smc"', 'psci = "telepathy"', 'one of smc, hvc'),
             (self.soc, 'gic_dist = 0x17a00000\n', '', '"gic_dist" is missing'),
         ]
@@ -209,6 +214,9 @@ class Check(Sandbox):
                 try:
                     change(old, new)
                     said = self.problems()
+                    if reason is None:              # (a change that is fine)
+                        self.assertEqual(said, '')
+                        continue
                     self.assertIn(reason, said)
                     self.assertTrue('devices/phone/board.toml' in said or 'soc/sm0001.toml' in said, said)
                 finally:
@@ -246,7 +254,7 @@ class Generate(Sandbox):
                          '.type = HAKIOS_BACKLIGHT_DCS, .video_mode = 0, .bytes = 2,', '.dsi = 0x0ae94000,',
                          '.raw_min = 1, .raw_max = 2047, .raw_restore = 0,', '.dispcc_mdss_gdscr = 0x3000,',
                          '.tsens = { 0x0c263000, 0x0c265000 },', '.floor_mhz = { 1000, 1100, 1100 },',
-                         '.epss = 0x18591000, .epss_domain_size = 0x1000', '"cpufreq-epss"'):
+                         '.epss = 0x18591000, .epss_domain_size = 0x1000,', '.domain_cores = { 4, 3, 1 },', '"cpufreq-epss"'):
             self.assertIn(expected, text)
         self.assertNotIn('*/board.toml', text, 'a path with */ in it would close the header\'s comment')
 
@@ -283,7 +291,7 @@ class DeviceTree(Sandbox):
         soc, board, notes = boards.from_dts(DTS)
         self.assertEqual(soc['display'], {'dsi0': 0xae94000})          # controller 0, not 1
         self.assertEqual(soc['thermal'], {'tsens': [0xc263000, 0xc265000]})
-        self.assertEqual(soc['cpufreq'], {'epss': 0x18591000, 'epss_domain_size': 0x1000})
+        self.assertEqual(soc['cpufreq'], {'epss': 0x18591000, 'epss_domain_size': 0x1000, 'domain_cores': [2, 1, 1]})
         self.assertEqual(soc['clocks'], {'gcc': 0x100000, 'dispcc': 0xaf00000})
         self.assertEqual(soc['platform'], {'gic_dist': 0x17a00000, 'gic_redist': 0x17a60000, 'psci': 'smc',
                                            'cores': 4, 'core_shift': 8, 'small_cores': 0b0011})

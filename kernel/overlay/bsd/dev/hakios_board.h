@@ -58,6 +58,8 @@ enum {
 	HAKIOS_BACKLIGHT_SOFT = 2,              /* the display driver darkens the picture */
 };
 
+#define HAKIOS_CPU_GROUPS       4               /* groups of cores with a clock of their own, at most */
+
 struct hakios_board {
 	const char *name;                       /* /chosen/darwin-board */
 	const char *description;
@@ -83,13 +85,14 @@ struct hakios_board {
 
 	/* CPU frequency (soc: [cpufreq]) */
 	struct {
-		uint32_t epss, epss_domain_size;
+		uint32_t epss, epss_domain_size;        /* EPSS: a block of registers a group of cores */
+		uint8_t domain_cores[HAKIOS_CPU_GROUPS]; /* how many cores each group has, in the cores' order; 0: no more */
 	} cpufreq;
 
 	/* temperature (soc: [thermal]; board: [thermal]) */
 	struct {
 		uint32_t tsens[2];              /* the TSENS controllers' readings, 0: none */
-		uint32_t floor_mhz[3];          /* the slowest each group of cores is held back to */
+		uint32_t floor_mhz[HAKIOS_CPU_GROUPS];  /* the slowest each group of cores is held back to */
 	} thermal;
 };
 
@@ -98,6 +101,13 @@ const struct hakios_board *hakios_board(void);
 
 /* Has this board the feature (one HAKIOS_HAS_*)? Never, on a board that is not known. */
 bool hakios_board_has(uint32_t feature);
+
+/*
+ * The groups of cores with a clock of their own (soc: [cpufreq] domain_cores): how many there are, and
+ * which one a core is in, by its number among the cores (0 up; -1 when the board does not say).
+ */
+unsigned hakios_board_cpu_groups(void);
+int hakios_board_cpu_group_of(unsigned core);
 
 /* The table itself (hakios_board_table.h), for who wants to list it. */
 extern const struct hakios_board hakios_boards[];

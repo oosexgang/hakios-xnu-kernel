@@ -47,7 +47,7 @@ SOC_SCHEMA = {
                'dispcc_mdss_gdscr': (int, True), 'dispcc_mdss_ahb_cbcr': (int, True)},
     'display': {'dsi0': (int, True)},
     'thermal': {'tsens': ([int], True)},
-    'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True)},
+    'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
 BOARD_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True), 'soc': (str, True), 'features': ([str], True)},
@@ -188,10 +188,17 @@ def load(problems=None):
             elif soc['platform'].get('io_base') == 0:
                 problems.add(rel, f'soc/{data.get("soc")}.toml [platform]: io_base must not be 0 (XNU then takes the '
                                   'machine for one without a SoC)')
+        groups = soc.get('cpufreq', {}).get('domain_cores', [])
+        if groups and (not 1 <= len(groups) <= 4 or any(not 1 <= n <= 255 for n in groups)):
+            problems.add(rel, f'soc/{data.get("soc")}.toml [cpufreq]: domain_cores is one to four groups of at least one core')
+        elif groups and 'platform' in soc and sum(groups) != soc['platform'].get('cores'):
+            problems.add(rel, f'soc/{data.get("soc")}.toml: domain_cores adds up to {sum(groups)} cores, [platform] has '
+                              f'{soc["platform"].get("cores")}')
         thermal = data.get('thermal')
         if thermal is not None:
-            if len(thermal.get('floor_mhz', [])) != 3:
-                problems.add(f'{rel} [thermal]', 'floor_mhz: three values (small, big and prime cores)')
+            if groups and len(thermal.get('floor_mhz', [])) != len(groups):
+                problems.add(f'{rel} [thermal]', f'floor_mhz: one value for each of the {len(groups)} groups of cores '
+                                                 f'(soc/{data.get("soc")}.toml [cpufreq] domain_cores)')
             for section in ('thermal', 'cpufreq'):
                 if section not in soc:
                     problems.add(rel, f'[thermal] needs [{section}] in soc/{data.get("soc")}.toml')
@@ -265,7 +272,11 @@ def table_text(socs, boards):
         else:
             out.append(f'\t\t.backlight = {{ .type = {kind} }},')
         if cpufreq:
-            out.append(f'\t\t.cpufreq = {{ .epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x} }},')
+            groups = ', '.join(str(n) for n in cpufreq['domain_cores'])
+            out += ['\t\t.cpufreq = {',
+                    f'\t\t\t.epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x},',
+                    f'\t\t\t.domain_cores = {{ {groups} }},',
+                    '\t\t},']
         if thermal:
             floors = ', '.join(str(v) for v in thermal['floor_mhz'])
             out += [
@@ -420,7 +431,11 @@ def from_dts(text, panel=None):
         if re.fullmatch(r'cpu@[0-9a-fA-F]+', node.name) and 'enable-method' in node.props:
             reg = cells(node.props.get('reg'))
             capacity = cells(node.props.get('capacity-dmips-mhz'))
-            cpus.append((reg[-1] if reg else int(node.name.split('@')[1], 16), capacity[0] if capacity else 0))
+            # <&cpufreq_hw GROUP ...>: in a compiled tree the label is a number too, and comes first
+            domain = cells(node.props.get('qcom,freq-domain'))
+            group = (domain[1] if '&' not in node.props.get('qcom,freq-domain', '') and len(domain) >= 2 else
+                     domain[0] if domain else None)
+            cpus.append((reg[-1] if reg else int(node.name.split('@')[1], 16), capacity[0] if capacity else 0, group))
         if node.name == 'psci' and strings(node.props.get('method')):
             platform['psci'] = strings(node.props['method'])[0]
         if reg_named(node, 'dsi_ctrl') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
@@ -445,10 +460,13 @@ def from_dts(text, panel=None):
         soc['thermal'] = {'tsens': sorted(set(tsens))[:2]}
     if cpus:
         # Qualcomm numbers its cores 0x000, 0x100 ...: in MPIDR's second affinity field
-        shift = 8 if any(number >= 0x100 for number, _ in cpus) else 0
-        capacities = [capacity for _, capacity in cpus if capacity]
+        shift = 8 if any(number >= 0x100 for number, _, _ in cpus) else 0
+        capacities = [capacity for _, capacity, _ in cpus if capacity]
         small = 0
-        for number, capacity in cpus:
+        groups = [group for _, _, group in sorted(cpus)]
+        if 'cpufreq' in soc and None not in groups and groups == sorted(groups):
+            soc['cpufreq']['domain_cores'] = [groups.count(group) for group in sorted(set(groups))]
+        for number, capacity, _ in cpus:
             if capacities and capacity == min(capacities) and min(capacities) < max(capacities):
                 small |= 1 << (number >> shift)
         platform.update(cores=len(cpus), core_shift=shift)

@@ -31,7 +31,10 @@ const struct hakios_board hakios_boards[] = {
 			.lsb_first = 0, .dsi = 0x0ae94000,
 			.raw_min = 8, .raw_max = 2047, .raw_restore = 307,
 		},
-		.cpufreq = { .epss = 0x18591000, .epss_domain_size = 0x1000 },
+		.cpufreq = {
+			.epss = 0x18591000, .epss_domain_size = 0x1000,
+			.domain_cores = { 4, 3, 1 },
+		},
 		.thermal = {
 			.tsens = { 0x0c263000, 0x0c265000 },
 			.floor_mhz = { 1000, 1100, 1100 },
@@ -52,7 +55,10 @@ const struct hakios_board hakios_boards[] = {
 			.lsb_first = 0, .dsi = 0x0ae94000,
 			.raw_min = 1, .raw_max = 2047, .raw_restore = 307,
 		},
-		.cpufreq = { .epss = 0x18591000, .epss_domain_size = 0x1000 },
+		.cpufreq = {
+			.epss = 0x18591000, .epss_domain_size = 0x1000,
+			.domain_cores = { 4, 3, 1 },
+		},
 		.thermal = {
 			.tsens = { 0x0c263000, 0x0c265000 },
 			.floor_mhz = { 1000, 1100, 1100 },

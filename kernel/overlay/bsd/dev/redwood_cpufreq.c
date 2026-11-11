@@ -21,7 +21,7 @@
 #include <sys/redwood_input.h>
 #include <sys/systm.h>
 #include <vm/vm_kern.h>
-#include <vm/vm_kern_xnu.h>  /* xnu-12377: KMA_*/kmem_alloc moved to the internal header */
+#include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_board.h"
 
@@ -57,9 +57,12 @@ tell(const char *format, ...)
 	}
 }
 
-#define EPSS_PHYS               0x18591000UL    /* three groups ("domains") of 0x1000: small cores, big, biggest */
-#define EPSS_DOMAIN_SIZE        0x1000UL
-#define EPSS_DOMAINS            3
+/*
+ * Where the EPSS block is and which cores each of its groups ("domains") has is the board's data
+ * (hakios_board.h; soc/SOC.toml [cpufreq]): on the two phones this was written for, three groups of
+ * 0x1000 at 0x18591000 -- four small cores, three big, one biggest.
+ */
+#define EPSS_DOMAINS            HAKIOS_CPU_GROUPS
 #define EPSS_FREQ_TABLE         0x100           /* a word per row: [31:30] clock source, [7:0] multiple of 19.2 MHz */
 #define EPSS_TABLE_ROWS         40
 #define EPSS_PERF_STATE         0x320           /* the row that is wanted */
@@ -80,13 +83,14 @@ loop_speed(void)
 	return nanos ? (uint32_t)(2000000ULL * 1000 / nanos) : 0;
 }
 
-/* The group of the core with that number in its MPIDR (the device tree's "reg": the number is the second field). */
-static uint32_t
+/*
+ * The group of the core with that number in its MPIDR (the device tree's "reg": the number is the second
+ * field), by the board's data; -1 for a core the board's groups do not reach.
+ */
+static int
 domain_of(uint32_t phys_id)
 {
-	uint32_t core = (phys_id >> 8) & 0xff;
-
-	return core < 4 ? 0 : core < 7 ? 1 : 2;
+	return hakios_board_cpu_group_of((phys_id >> 8) & 0xff);
 }
 
 static void
@@ -95,7 +99,8 @@ raise_domain(uint32_t domain, uint32_t cores)
 	uint32_t top = 0, top_khz = 0, was;
 	vm_offset_t base;
 
-	base = ml_io_map(EPSS_PHYS + domain * EPSS_DOMAIN_SIZE, EPSS_DOMAIN_SIZE);
+	base = ml_io_map(hakios_board()->cpufreq.epss + domain * hakios_board()->cpufreq.epss_domain_size,
+	    hakios_board()->cpufreq.epss_domain_size);
 	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
 		uint32_t entry = *(volatile uint32_t *)(base + EPSS_FREQ_TABLE + 4 * row);
 		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
@@ -589,13 +594,16 @@ redwood_cpufreq_init(void)
 	if (!PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled)) || !enabled) {
 		return;
 	}
-	/* SM7350 uses the same three EPSS domains (renoir.dts). */
 	if (!hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS)) {
 		printf("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\"\n");
 		return;
 	}
 	for (unsigned int i = 0; i < topology->num_cpus; i++) {
-		cores[domain_of(topology->cpus[i].phys_id)]++;
+		int domain = domain_of(topology->cpus[i].phys_id);
+
+		if (domain >= 0) {
+			cores[domain]++;
+		}
 	}
 	/* (whichever core this thread happens to be on, and stays on or not: it only goes to the log) */
 	here = (uint32_t)(__builtin_arm_rsr64("MPIDR_EL1") >> 8) & 0xff;

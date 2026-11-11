@@ -74,7 +74,7 @@ say(const char *format, ...)
 
 #define TH_CONTROLLERS          2               /* a SoC has up to two TSENS controllers ... */
 #define TH_SENSORS              16              /* ... of up to 16 sensors each */
-#define TH_DOMAINS              3               /* the groups of cores: small, big, prime */
+#define TH_DOMAINS              HAKIOS_CPU_GROUPS       /* the groups of cores, at most (the board says how many) */
 
 #define TSENS_STATUS(sensor)    (0xa0 + 4 * (sensor))
 #define EPSS_FREQ_TABLE         0x100
@@ -88,6 +88,7 @@ static uint32_t mode;
 static struct th_policy policy = { 700, 620, 950 };
 static vm_offset_t tsens[TH_CONTROLLERS], epss[TH_DOMAINS];
 static uint32_t top_row[TH_DOMAINS], floor_row[TH_DOMAINS], row_now[TH_DOMAINS];
+static unsigned groups;                         /* how many groups of cores the board has */
 static volatile int32_t hottest = TH_NONE;
 static volatile uint32_t step, most;
 
@@ -113,6 +114,19 @@ extern void th_test_wr(vm_offset_t address, uint32_t value);
 #define rd(a)           th_test_rd(a)
 #define wr(a, v)        th_test_wr((a), (v))
 #endif
+
+/* the rows of the board's groups, as text: "8 8 8" */
+static const char *
+rows_text(const uint32_t *rows, char *text, size_t size)
+{
+	size_t at = 0;
+
+	text[0] = 0;
+	for (unsigned d = 0; d < groups && at < size; d++) {
+		at += (size_t)snprintf(text + at, size - at, "%s%u", d ? " " : "", rows[d]);
+	}
+	return text;
+}
 
 /* the hottest reading of every sensor of both controllers */
 static int32_t
@@ -197,8 +211,10 @@ th_thread(__unused void *argument, __unused wait_result_t result)
 				apply(step);
 			}
 			if (step != said_step) {
-				say("thermal: %d.%d C: held back %u of %u (rows %u %u %u)\n", t / 10, t % 10 < 0 ? -(t % 10) : t % 10,
-				    step, most, row_now[0], row_now[1], row_now[2]);
+				char rows[48];
+
+				say("thermal: %d.%d C: held back %u of %u (rows %s)\n", t / 10, t % 10 < 0 ? -(t % 10) : t % 10,
+				    step, most, rows_text(row_now, rows, sizeof(rows)));
 				said_step = step;
 			}
 		}
@@ -277,15 +293,20 @@ hakios_thermal_init(void)
 		tsens[c] = this_board->thermal.tsens[c] ? ml_io_map(this_board->thermal.tsens[c], 0x200) : 0;
 	}
 	most = 0;
-	for (unsigned d = 0; d < TH_DOMAINS && mode >= 2; d++) {
+	groups = hakios_board_cpu_groups();
+	for (unsigned d = 0; d < groups && mode >= 2; d++) {
 		epss[d] = ml_io_map(this_board->cpufreq.epss + d * this_board->cpufreq.epss_domain_size, this_board->cpufreq.epss_domain_size);
 		read_table(d);
 		most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
 	}
-	say("thermal: %s: trip %d.%d C, clear %d.%d C, critical %d.%d C; the groups at rows %u %u %u, floors %u %u %u%s\n",
-	    this_board->name, policy.trip / 10, policy.trip % 10, policy.clear / 10, policy.clear % 10, policy.critical / 10,
-	    policy.critical % 10, top_row[0], top_row[1], top_row[2], floor_row[0], floor_row[1], floor_row[2],
-	    mode >= 2 ? "" : " (thermal=1: looking only)");
+	{
+		char tops[48], floors[48];
+
+		say("thermal: %s: trip %d.%d C, clear %d.%d C, critical %d.%d C; the groups at rows %s, floors %s%s\n",
+		    this_board->name, policy.trip / 10, policy.trip % 10, policy.clear / 10, policy.clear % 10,
+		    policy.critical / 10, policy.critical % 10, rows_text(top_row, tops, sizeof(tops)),
+		    rows_text(floor_row, floors, sizeof(floors)), mode >= 2 ? "" : " (thermal=1: looking only)");
+	}
 	if (kernel_thread_start(th_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_set_thread_name(thread, "thermal");
 		thread_deallocate(thread);
@@ -305,5 +326,9 @@ hakios_thermal_quiesce(void)
 			row_now[d] = top_row[d];
 		}
 	}
-	say("thermal: at the run's end: the groups back at rows %u %u %u\n", top_row[0], top_row[1], top_row[2]);
+	{
+		char rows[48];
+
+		say("thermal: at the run's end: the groups back at rows %s\n", rows_text(top_row, rows, sizeof(rows)));
+	}
 }

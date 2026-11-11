@@ -161,7 +161,7 @@ Stated plainly, so nobody finds out the hard way:
   there, and likely more.
 - **Display scan timing** (`fb_scan`) reads the DSI interface's counters at Renoir's addresses.
   Without it frames are written on a timer, which works.
-- **CPU frequency and thermal** assume three groups of cores at one EPSS block, as on the 7-series.
+- **The memory bandwidth vote** (`ddr-rpmh`) uses the RPMh addresses of the 7-series.
 - **Sound, microphones, camera, Wi-Fi, haptics, flashlight, storage** are written for redwood's parts.
   They are the largest share of the work on a new phone.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet

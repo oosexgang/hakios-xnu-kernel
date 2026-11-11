@@ -80,7 +80,7 @@
 #include <sys/systm.h>
 #include <sys/redwood_audio.h>
 #include <vm/vm_kern.h>
-#include <vm/vm_kern_xnu.h>  /* xnu-12377: KMA_*/kmem_alloc moved to the internal header */
+#include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_board.h"
 

@@ -45,6 +45,33 @@ hakios_board_has(uint32_t feature)
 	return board != NULL && (board->features & feature) != 0;
 }
 
+unsigned
+hakios_board_cpu_groups(void)
+{
+	const struct hakios_board *board = hakios_board();
+	unsigned groups = 0;
+
+	while (board != NULL && groups < HAKIOS_CPU_GROUPS && board->cpufreq.domain_cores[groups] != 0) {
+		groups++;
+	}
+	return groups;
+}
+
+int
+hakios_board_cpu_group_of(unsigned core)
+{
+	const struct hakios_board *board = hakios_board();
+	unsigned first = 0;
+
+	for (unsigned group = 0; board != NULL && group < HAKIOS_CPU_GROUPS && board->cpufreq.domain_cores[group] != 0; group++) {
+		if (core < first + board->cpufreq.domain_cores[group]) {
+			return (int)group;
+		}
+		first += board->cpufreq.domain_cores[group];
+	}
+	return -1;
+}
+
 /* "cpufreq-epss ddr-rpmh", or "" */
 static void
 features_text(const struct hakios_board *board, char *text, size_t size)

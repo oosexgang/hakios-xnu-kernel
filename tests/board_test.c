@@ -34,6 +34,11 @@ known_phone(void)
 	CHECK(strcmp(get_string("name"), "renoir") == 0, "hw.board.name %s", get_string("name"));
 	CHECK(strcmp(get_string("soc"), "sm7350") == 0, "hw.board.soc %s", get_string("soc"));
 	CHECK(strstr(get_string("features"), "cpufreq-epss") != NULL, "hw.board.features %s", get_string("features"));
+	/* its groups of cores: four small, three big, one prime */
+	CHECK(hakios_board_cpu_groups() == 3, "%u groups", hakios_board_cpu_groups());
+	CHECK(hakios_board_cpu_group_of(0) == 0 && hakios_board_cpu_group_of(3) == 0 && hakios_board_cpu_group_of(4) == 1 &&
+	    hakios_board_cpu_group_of(6) == 1 && hakios_board_cpu_group_of(7) == 2, "which core is in which group");
+	CHECK(hakios_board_cpu_group_of(8) == -1, "a core beyond the groups is in none");
 	hakios_board_init();
 	CHECK(logged("board: renoir (Xiaomi Mi 11 Lite 5G, sm7350): cpufreq-epss"), "said in the log: %s", log_text);
 }
@@ -47,6 +52,7 @@ emulator(void)
 		CHECK(!hakios_board_has(1u << bit), "QEMU has no feature of a phone (bit %u)", bit);
 	}
 	CHECK(strcmp(get_string("features"), "") == 0, "hw.board.features \"%s\"", get_string("features"));
+	CHECK(hakios_board_cpu_groups() == 0 && hakios_board_cpu_group_of(0) == -1, "no groups of cores to clock");
 }
 
 static void
