@@ -33,9 +33,15 @@ turns on: one with `features = []` and a software backlight needs none.
 ## Adding a chip
 
 `tools/boards.py new NAME --soc SOC --dts phone.dts` writes `soc/SOC.toml` with what the phone's
-device tree says, when the file is not there yet. Two things are never in a device tree and are filled
-in by hand: the display clocks' register offsets (from Linux's clock drivers for the chip) and the
-window over the peripherals. [docs/porting.md](../docs/porting.md) has both, in step 1.
+device tree says, when the file is not there yet: every value with what the template says of its
+key. Two things are never in a device tree and are filled in by hand: the display clocks' register
+offsets (from Linux's clock drivers for the chip) and the window over the peripherals.
+[docs/porting.md](../docs/porting.md) has both, in step 1. `[camera]` and `[lpass]` are not read from
+a tree yet; the template says where in the vendor's trees their values are.
+
+`tools/boards.py compare NAME --dts phone.dts` holds a SoC file (and a board that uses it) against a
+device tree at any later time: the two that are here agree with their SoCs' trees in every value a
+tree has.
 
 A SoC file names where each value is from, in a comment: the device tree node, the Linux file. It is
 sent to this branch; the phone's package goes to the `devices` branch.

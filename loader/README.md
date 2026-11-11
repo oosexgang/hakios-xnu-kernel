@@ -20,6 +20,9 @@ The UEFI reports a framebuffer; the loader compares its base with `fb_base` of e
 one that matches. A display that matches none is QEMU's. The board's name then goes to the kernel as
 `/chosen/darwin-board`, where the kernel finds its own row (`kernel/overlay/bsd/dev/hakios_board.c`).
 
+The storage controller the loader and the kernel may use directly (`ufs_native=`) is where
+`ufs` of `[platform]` says; without that key it is not touched.
+
 So a new device needs no code here: its `[loader]` section and its SoC's `[platform]` section, then
 `build.sh`. [docs/porting.md](../docs/porting.md) says where each value comes from.
 
