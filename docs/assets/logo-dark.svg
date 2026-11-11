@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 414 112" width="414" height="112" role="img" aria-labelledby="hakios-title">
+  <title id="hakios-title">HakiOS</title>
+  <g fill="none" stroke="#e6edf3" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke-width="7">
+      <rect x="22.5" y="10.5" width="70" height="91" rx="18"/>
+      <path d="M40.5 30v52M74.5 30v52M40.5 56h7M67.5 56h7"/>
+    </g>
+    <path stroke-width="6" d="M10 38h8M10 56h8M10 74h8M97 38h8M97 56h8M97 74h8"/>
+    <g stroke-width="8">
+      <path d="M138 30v52M172 30v52M138 56h34"/>
+      <circle cx="208" cy="64" r="18"/>
+      <path d="M226 46v36"/>
+      <path d="M246 30v52M246 66l20-20M254 58l14 24"/>
+      <path d="M285 46v36"/>
+      <circle cx="329" cy="56" r="26"/>
+      <path d="M399.3 35.5A15 13 0 1 0 387 56A15 13 0 1 1 374.7 76.5"/>
+    </g>
+  </g>
+  <circle cx="57.5" cy="56" r="7.5" fill="none" stroke="#3fc8d4" stroke-width="4"/>
+  <g fill="#3fc8d4">
+    <circle cx="57.5" cy="56" r="2.5"/>
+    <circle cx="285" cy="31" r="5"/>
+  </g>
+</svg>
