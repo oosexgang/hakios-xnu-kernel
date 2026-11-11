@@ -20,9 +20,18 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Tools
-        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld
+        # (the runner's package mirror is not always there: tried three times before the job gives up)
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld; then
+              exit 0
+            fi
+            echo "attempt $attempt failed; waiting"
+            sleep $((attempt * 30))
+          done
+          exit 1
       - name: make check
         run: make check
       - name: The kernel sources assemble and export back unchanged
