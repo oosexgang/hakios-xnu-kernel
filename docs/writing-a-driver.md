@@ -36,6 +36,7 @@ hardware has a test of its own in `tests/`.
 | `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `redwood_spmi_lock()`. | `[spmi]` |
 | `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `[rpmh]` |
 | `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `redwood_rpmh_lock()`. | `[rpmh]` |
+| `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `[ipc]` |
 
 What is not there yet is written in the driver first, and moves to a header when a second driver
 needs it.
