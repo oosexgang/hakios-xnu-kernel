@@ -59,7 +59,7 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 | 设备包 | 设备 | SoC | 状态 |
 | --- | --- | --- | --- |
 | `renoir` | 小米 11 青春版 5G（Mi 11 Lite 5G） | 骁龙 780G（SM7350） | iOS 27.2（24B119）从 RAM 启动到主屏幕。2026-11-10 已在真机验证。 |
-| `redwood` | POCO X5 Pro 5G | 骁龙 778G（SM7325） | iOS 27.2（24B119）可启动到锁屏，触摸、按键和七个核心满速运行；系统镜像位于移植自己的分区。2026-11-11 在手机上验证。 |
+| `redwood` | POCO X5 Pro 5G | 骁龙 778G（SM7325） | iOS 27.2（24B119）可启动到主屏幕，由 Adreno 通过 Metal 绘制，包括液态玻璃（[docs/metal-glass.md](docs/metal-glass.md)）；触摸、按键、七个核心满速运行、Wi-Fi；系统镜像位于移植自己的分区。2026-11-11 在手机上验证。 |
 | `qemu-virt` | QEMU `virt` | — | 在本分支中。iOS 16.5 一代可在其上运行；尚未适配当前内核。 |
 
 每部手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭，见
@@ -102,7 +102,8 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 | `kernel/` | 内核：固定版本的 Apple 发布、HakiOS 新增的文件（`overlay/`）、对 Apple 文件的修改（`patches/`），以及组装、检查和构建工具。 |
 | `loader/` | 启动内核并常驻以接收日志的 UEFI 应用。 |
 | `ios/` | iOS 26/27 用户态所需：注入少数进程的库、PAC 重写工具、镜像构建工具、启动工具。 |
-| `userland/` | 仍在使用或正在移植的早期用户态源码：Metal 设备、供 Mesa 使用的着色器编译器、音频插件、APFS 镜像工具。 |
+| `metal/` | Adreno 的 Metal 驱动（hakios-metal，保留历史）：核心、AIR 编译器、CoreAnimation 通过它绘制的插件，以及针对模拟 GPU 的测试。 |
+| `userland/` | 仍在使用或正在移植的早期用户态源码：第一代的 Metal 设备与着色器编译器、音频插件、APFS 镜像工具。 |
 | `tests/` | 主机测试：内核中与设备无关的驱动（对照硬件模型）以及各工具。 |
 | `tools/` | `boards.py`（板型文件）及 `devicetree.py`（从手机设备树读取的内容）、`device.py`（设备包）、`bootargs.py`（生成的参考文档）、lint 与发布检查。 |
 | `components.toml` | 从外部获取的所有内容及其固定版本。 |

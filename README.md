@@ -63,7 +63,7 @@ How the pieces fit together: [docs/architecture.md](docs/architecture.md).
 | Package | Device | SoC | State |
 | --- | --- | --- | --- |
 | `renoir` | Xiaomi Mi 11 Lite 5G | Snapdragon 780G (SM7350) | iOS 27.2 (24B119) boots from RAM to the home screen. Verified on the phone on 2026-11-10. |
-| `redwood` | POCO X5 Pro 5G | Snapdragon 778G (SM7325) | iOS 27.2 (24B119) boots to the lock screen, with touch, the keys and seven cores at full speed; the system image on the port's own partition. Verified on the phone on 2026-11-11. |
+| `redwood` | POCO X5 Pro 5G | Snapdragon 778G (SM7325) | iOS 27.2 (24B119) boots to the home screen, drawn by the Adreno through Metal ([docs/metal-glass.md](docs/metal-glass.md)) with its Liquid Glass; touch, the keys, seven cores at full speed, Wi-Fi; the system image on the port's own partition. Verified on the phone on 2026-11-11. |
 | `qemu-virt` | QEMU `virt` | — | In this branch. The iOS 16.5 generation runs there; not yet set up for the current kernel. |
 
 What works on each phone, what is written but not yet verified on it, and what is still off is in the
@@ -107,7 +107,8 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `kernel/` | The kernel: Apple's pinned release, the files HakiOS adds (`overlay/`), the changes to Apple's files (`patches/`), and the tools that assemble, check and build it. |
 | `loader/` | The UEFI application that starts the kernel and stays resident for its log. |
 | `ios/` | What iOS 26/27 user space needs: libraries inserted into a few processes, the PAC rewriter, image builders, the boot tool. |
-| `userland/` | Earlier user-space sources still in use or being ported: the Metal device, the shader compiler for Mesa, the audio plug-in, APFS image tools. |
+| `metal/` | The Metal driver for the Adreno (hakios-metal, with its history): its core, the AIR compiler, the plug-in CoreAnimation draws through, its tests against a fake GPU. |
+| `userland/` | Earlier user-space sources still in use or being ported: the first generation's Metal device and shader compiler, the audio plug-in, APFS image tools. |
 | `tests/` | Host tests: the kernel's device-independent drivers against models of the hardware, and the tools. |
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
 | `components.toml` | Everything taken from elsewhere, pinned to an exact version. |
