@@ -97,7 +97,8 @@ BOARD_SCHEMA = {
             'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'screen': {'statusbar_leading_shift': (int, True)},
-    'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False)},
+    'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
+             'dsp_memory_size': (int, False)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
@@ -211,6 +212,9 @@ def feature_needs(feature, board, soc):
         needs.append(f'{clocks_missing(soc)} in [clocks] of {soc_file}')
     if feature == 'gpu-a660' and clocks_missing(soc, ('gcc_disp_ahb_cbcr',)):
         needs.append(f'gcc_disp_ahb_cbcr in [clocks] of {soc_file}')
+    radio = board.get('wifi')
+    if feature == 'wifi-wcn6750' and not (isinstance(radio, dict) and 'dsp_memory' in radio and 'dsp_memory_size' in radio):
+        needs.append('dsp_memory and dsp_memory_size in [wifi] of the board file')
     light = board.get('backlight')
     if feature == 'display-scan' and isinstance(light, dict) and light.get('panel_mode') == 'video':
         needs.append('a command-mode panel ([backlight] says video)')
@@ -399,6 +403,9 @@ def load(problems=None):
                 problems.add(f'{rel} [wifi]', 'radio_model: 0 (a WCN6750 on the SoC\'s own bus) or 1 (a WCN6855 on PCIe)')
             if radio.get('early_pool_mb', 0) > 512:
                 problems.add(f'{rel} [wifi]', 'early_pool_mb is in megabytes: some tens')
+            if ('dsp_memory' in radio) != ('dsp_memory_size' in radio) or radio.get('dsp_memory', 0x1000) & 0xfff or \
+                    radio.get('dsp_memory_size', 0x1000) & 0xfff or 0 in (radio.get('dsp_memory', 1), radio.get('dsp_memory_size', 1)):
+                problems.add(f'{rel} [wifi]', 'dsp_memory and dsp_memory_size go together: an address and a size in whole pages')
         if 'virtio' in data.get('features', []) and len(data['features']) > 1:
             problems.add(rel, 'feature "virtio" is an emulator\'s: not beside the features of a phone')
         if data.get('screen', {}).get('statusbar_leading_shift', 0) > 200:
@@ -548,7 +555,8 @@ def table_text(socs, boards):
                        f'.charge_counter_divisor = {adsp.get("charge_counter_divisor", 1)} }},')
         radio = board.get('wifi')
         if radio:
-            out.append(f'\t\t.wifi = {{ .radio_model = {radio["radio_model"]}, .early_pool_mb = {radio.get("early_pool_mb", 0)} }},')
+            out.append(f'\t\t.wifi = {{ .radio_model = {radio["radio_model"]}, .early_pool_mb = {radio.get("early_pool_mb", 0)}, '
+                       f'.dsp_memory = {radio.get("dsp_memory", 0):#010x}, .dsp_memory_size = {radio.get("dsp_memory_size", 0):#010x} }},')
         gpu = board.get('gpu')
         if gpu:
             out += [

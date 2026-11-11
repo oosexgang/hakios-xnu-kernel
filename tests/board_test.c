@@ -115,7 +115,9 @@ gpu_a642l(void)
 	CHECK(p->speed_fuse == 0x1e9 && p->gaming_fuse == 0x1f5 && p->highest_bank_bit == 14 && p->gcc_debug_gpucc == 0x146,
 	    "fuses, bank bit, debug multiplexer");
 	CHECK(!p->zap_must_authenticate, "the firmware's zap shader is fallen back on");
-	CHECK(hakios_board()->wifi.radio_model == 0 && hakios_board()->wifi.early_pool_mb == 0, "a board without [wifi]");
+	CHECK(hakios_board()->wifi.radio_model == 0 && hakios_board()->wifi.early_pool_mb == 0 &&
+	    hakios_board()->wifi.dsp_memory == 0x9ae00000 && hakios_board()->wifi.dsp_memory_size == 0x01900000,
+	    "a radio on the SoC's own DSP, and where that DSP's memory is");
 	CHECK(strcmp(hakios_board()->adsp.firmware, "fw-audio-video") == 0 && hakios_board()->adsp.memory_size == 0x04000000 &&
 	    hakios_board()->adsp.charge_counter_divisor == 1, "its [adsp]");
 	CHECK(p->speed_count == 4 && p->default_speed == 3, "%u speeds, default %u", p->speed_count, p->default_speed);
@@ -188,6 +190,8 @@ table(void)
 		CHECK(!(b->features & (HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->ipc.aoss != 0 && b->ipc.ipcc != 0 &&
 		    b->ipc.smem != 0 && b->ipc.smem_size != 0 && b->ipc.smem_lock != 0),
 		    "%s: a driver that talks to another processor without [ipc]", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_WIFI_WCN6750) || (b->wifi.dsp_memory != 0 && b->wifi.dsp_memory_size != 0),
+		    "%s: a radio on the SoC's DSP without the DSP's memory", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory != 0 && b->adsp.memory_size != 0 &&

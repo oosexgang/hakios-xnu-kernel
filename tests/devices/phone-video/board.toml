@@ -33,6 +33,12 @@ volume_up = 0x18d                   # gpio_keys: GPIO6 of the PM7325 (slave 1)
 volume_up_name = "GPIO6 of the PM7325"
 
 # The audio DSP, and the battery manager behind it.
+# Its radio is on the SoC's own Wi-Fi DSP, whose image goes into the DSP's reserved memory (wlan@9ae00000).
+[wifi]
+radio_model = 0
+dsp_memory = 0x9ae00000
+dsp_memory_size = 0x01900000
+
 [adsp]
 firmware = "fw-audio-video"
 memory = 0x86700000                 # the DSP's reserved memory (adsp@86700000)

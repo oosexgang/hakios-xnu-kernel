@@ -168,6 +168,7 @@ struct hakios_board {
 	struct {
 		uint32_t radio_model;           /* which radio: 0 a WCN6750 on the SoC's own bus, 1 a WCN6855 on PCIe */
 		uint32_t early_pool_mb;         /* memory in one piece kept for the radio's driver from early on; 0: none */
+		uint32_t dsp_memory, dsp_memory_size;   /* the Wi-Fi DSP's reserved memory, for a radio on the SoC's own DSP */
 	} wifi;
 
 	/* CPU frequency (soc: [cpufreq]) */

@@ -651,6 +651,27 @@ class Generate(Sandbox):
         self.assertIn('# [adsp]\n# firmware = "fw-audio-phone4"\n# memory = 0x86100000\n# memory_size = 0x02100000\n', text)
         self.assertEqual(self.problems(), '')
 
+    def test_a_radio_on_the_socs_dsp_needs_the_dsps_memory(self):
+        socs, found = boards.load()
+        self.assertIn('dsp_memory and dsp_memory_size in [wifi] of the board file',
+                      boards.feature_needs('wifi-wcn6750', found['phone'], socs['sm0001']))
+        path = self.dir / 'devices/phone/board.toml'
+        listed = path.read_text()
+        path.write_text(listed + '[wifi]\nradio_model = 0\ndsp_memory = 0x9ae00000\n')
+        self.assertIn('dsp_memory and dsp_memory_size go together', self.problems())
+        path.write_text(listed + '[wifi]\nradio_model = 0\ndsp_memory = 0x9ae00000\ndsp_memory_size = 0x1900000\n')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.wifi = { .radio_model = 0, .early_pool_mb = 0, .dsp_memory = 0x9ae00000, .dsp_memory_size = 0x01900000 },',
+                      boards.table_text(*boards.load()))
+        socs, found = boards.load()
+        self.assertNotIn('dsp_memory and dsp_memory_size in [wifi] of the board file',
+                         boards.feature_needs('wifi-wcn6750', found['phone'], socs['sm0001']))
+        # ... and a device tree says where it is
+        soc, board, notes = devicetree.from_dts('''/ {
+            reserved-memory { pil_wpss_mem: wlan@9ae00000 { no-map; reg = <0x0 0x9ae00000 0x0 0x1900000>; }; };
+            soc { qcom,wpss@8a00000 { qcom,firmware-name = "wpss"; memory-region = <&pil_wpss_mem>; }; }; };''')
+        self.assertEqual(board['wifi'], {'dsp_memory': 0x9ae00000, 'dsp_memory_size': 0x1900000})
+
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in
         soc, board, notes = devicetree.from_dts('''/ { soc { tlmm: pinctrl@f000000 { compatible = "qcom,shima-pinctrl";
