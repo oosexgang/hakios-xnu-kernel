@@ -85,4 +85,13 @@ int fake_sysctl_out(struct sysctl_req *req, const void *data, size_t size);
 #define SYSCTL_PROC(parent, nbr, name, access, ptr, arg, handler, fmt, descr) FAKE_OID(parent, name, 0, ptr, arg, handler, access)
 #define SYSCTL_UINT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 1, (void *)(ptr), val, NULL, access)
 #define SYSCTL_INT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 2, (void *)(ptr), val, NULL, access)
+
+/* for the tests (fakekernel.c) */
+extern const char *boot_args;
+extern const char *board;
+bool logged(const char *text);
+uint32_t get(const char *name);
+const char *get_string(const char *name);
+void set(const char *name, uint32_t value);
+void set_as_root(const char *name, int32_t value);
 #endif

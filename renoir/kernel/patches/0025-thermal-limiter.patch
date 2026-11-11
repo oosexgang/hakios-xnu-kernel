@@ -1,0 +1,545 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 3432a64..3b4cd62 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -129,6 +129,7 @@ bsd/dev/redwood_guard.c	standard
+ bsd/dev/redwood_haptic.c	standard
+ bsd/dev/redwood_torch.c	standard
+ bsd/dev/hakios_backlight.c	standard
++bsd/dev/hakios_thermal.c	standard
+ bsd/dev/redwood_camera.c	standard
+ bsd/dev/redwood_mic.c	standard
+ bsd/dev/redwood_wifi.c	standard
+diff --git a/bsd/dev/hakios_backlight.c b/bsd/dev/hakios_backlight.c
+index 199ea01..51caa64 100644
+--- a/bsd/dev/hakios_backlight.c
++++ b/bsd/dev/hakios_backlight.c
+@@ -14,6 +14,7 @@
+  *              renoir/userland/inject_backlight.c from iOS's display modes (the side button, the idle timer)
+  *   lux        the ambient light in thousandths of a lux. Written: a reading of the "virtual" sensor
+  *              (QEMU, tests, or user space with a sensor of its own); read: the light in use
++ *   cap        the most it may show while the phone is hot (bsd/dev/hakios_thermal.c), 1000 otherwise
+  *   shown      what is on the panel now, 0 to 1000 (it moves towards the level, see bl_step())
+  *   raw        the last number the panel was given (backend dcs)
+  *   offset     the user's move of the automatic curve
+@@ -193,6 +194,7 @@ bl_choose(void)
+ static volatile uint32_t user_level = 600;      /* the slider */
+ static volatile uint32_t automatic;             /* automatic brightness */
+ static volatile uint32_t power = 1;             /* the display: 0 off, 1 on, 2 dimmed (hw.backlight.power) */
++static volatile uint32_t thermal_cap = BL_LEVEL_MAX;    /* the most the panel may show while the phone is hot */
+ static volatile int32_t auto_offset;            /* the user's move of the curve */
+ static volatile uint32_t ambient_mlx = 300000;  /* the light around, thousandths of a lux (an office until told) */
+ static const char *ambient_source = "virtual";
+@@ -543,6 +545,7 @@ bl_thread(__unused void *argument, __unused wait_result_t result)
+ 			target = want;
+ 		}
+ 		goal = power == 2 && target > BL_DIMMED_MAX ? BL_DIMMED_MAX : target;
++		goal = goal > thermal_cap ? thermal_cap : goal;
+ 		if (now != goal << 10) {
+ 			/* by hand: there in a fifth of a second; automatic: bl_step()'s pace */
+ 			now = automatic ? bl_step(now, goal << 10) : (now < goal << 10 ?
+@@ -581,6 +584,17 @@ hakios_backlight_set_redraw(void (*redraw)(void))
+ 	soft_redraw = redraw;
+ }
+ 
++/* the thermal limiter (bsd/dev/hakios_thermal.c): the most the panel may show, 0 to 1000 */
++void
++hakios_backlight_set_cap(uint32_t level)
++{
++	level = level > BL_LEVEL_MAX ? BL_LEVEL_MAX : level;
++	if (level != thermal_cap) {
++		thermal_cap = level;
++		bl_poke();
++	}
++}
++
+ /* a light sensor's reading */
+ void
+ hakios_als_report(uint32_t millilux, const char *source)
+@@ -642,6 +656,8 @@ SYSCTL_UINT(_hw_backlight, OID_AUTO, shown, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOL
+     "on the panel now, 0 to 1000");
+ SYSCTL_UINT(_hw_backlight, OID_AUTO, raw, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &shown_raw), 0,
+     "the panel's number");
++SYSCTL_UINT(_hw_backlight, OID_AUTO, cap, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &thermal_cap), 0,
++    "the most the panel may show while the phone is hot");
+ SYSCTL_INT(_hw_backlight, OID_AUTO, offset, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &auto_offset), 0,
+     "the user's move of the automatic curve");
+ 
+diff --git a/bsd/dev/hakios_thermal.c b/bsd/dev/hakios_thermal.c
+new file mode 100644
+index 0000000..d699875
+--- /dev/null
++++ b/bsd/dev/hakios_thermal.c
+@@ -0,0 +1,324 @@
++/*
++ * Keeping the phone from getting hot, for any device of the Qualcomm kind: one driver with what differs
++ * between devices in a table (th_profiles below), the arithmetic in hakios_thermal_core.h (tested on the
++ * host: renoir/tests/thermal_test.c, and the driver itself: renoir/tests/thermal_driver_test.c).
++ *
++ * Every second the SoC's temperature sensors are read (both TSENS controllers, every sensor that has a
++ * reading: Linux's tsens-v2.c; read only, never written), and from the hottest of them:
++ *
++ *   - the processors: each group's (EPSS domain's) frequency row is held back one row a second while the
++ *     hottest is at or above th_trip, given back one row a second at or below th_clear, all the way down
++ *     to the group's floor at once at th_critical. Never above the row the group was at when this started
++ *     (cpufreq=1 raises them first; without it nothing is ever raised here), never below its floor (the
++ *     first row at the profile's floor_mhz: the interface must stay usable);
++ *   - the panel's light: hakios_backlight_set_cap(), from full when nothing is held back down to 60%
++ *     when everything is (an AMOLED at full white is heat as well), as an iPhone dims when hot.
++ *
++ * At the run's end the rows are given back, so the loader is not left slow.
++ *
++ * Boot-args:
++ *   thermal=0          off (default): nothing read
++ *   thermal=1          the hottest reading logged every ten seconds, nothing held back
++ *   thermal=2          held back as above
++ *   th_trip=N th_clear=N th_critical=N   in tenths of a degree (default 700, 620, 950)
++ *   th_period_ms=N     how often it looks (default 1000)
++ *
++ * sysctl hw.thermal: hottest (tenths of a degree), step and most (how far held back, of how far it can
++ * be), trip, clear, critical (root may change them while it runs: tuning without a new kernel).
++ *
++ * Adding a device: its TSENS "tsens_tm_physical" addresses from its device tree, its EPSS ("cpufreq-hw")
++ * address, and the floors. GPU frequency is not touched here: the GPU's speed belongs to its GMU
++ * (bsd/dev/redwood_adreno.c, boot-arg adreno_speed); hakios_thermal_step() tells it how far to go.
++ */
++#include <kern/clock.h>
++#include <kern/sched_prim.h>
++#include <kern/thread.h>
++#include <libkern/libkern.h>
++#include <mach/mach_types.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++#include <sys/sysctl.h>
++#include <sys/systm.h>
++
++#include "hakios_thermal_core.h"
++
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern bool redwood_board_is(const char *name);
++extern void loader_log_putc(char c);
++extern void thread_set_thread_name(thread_t thread, const char *name);
++extern void hakios_backlight_set_cap(uint32_t level);
++
++static int say(const char *format, ...) __printflike(1, 2);
++
++static int
++say(const char *format, ...)
++{
++	char line[256];
++	va_list list;
++	int length;
++
++	va_start(list, format);
++	length = vsnprintf(line, sizeof(line), format, list);
++	va_end(list);
++	for (const char *c = line; *c != 0; c++) {
++		loader_log_putc(*c);
++	}
++	if (ml_get_interrupts_enabled()) {
++		printf("%s", line);
++	}
++	return length;
++}
++
++/* ---- what differs between devices ----------------------------------------------------------------- */
++
++#define TH_CONTROLLERS          2
++#define TH_SENSORS              16              /* a TSENS controller has up to 16 */
++#define TH_DOMAINS              3
++
++struct th_profile {
++	const char *board;
++	uint32_t tsens[TH_CONTROLLERS];         /* "tsens_tm_physical" of tsens0, tsens1 (0: none) */
++	uint32_t epss, epss_size;               /* "cpufreq-hw": a block of epss_size a group */
++	uint32_t floor_mhz[TH_DOMAINS];         /* the slowest each group is held back to */
++};
++
++static const struct th_profile th_profiles[] = {
++	/* SM7350 (shima) and SM7325 (yupik), both lahaina-family: tsens at 0xc263000/0xc265000, EPSS at 0x18591000 */
++	{ "renoir", { 0x0c263000, 0x0c265000 }, 0x18591000, 0x1000, { 1000, 1100, 1100 } },
++	{ "redwood", { 0x0c263000, 0x0c265000 }, 0x18591000, 0x1000, { 1000, 1100, 1100 } },
++};
++
++#define TSENS_STATUS(sensor)    (0xa0 + 4 * (sensor))
++#define EPSS_FREQ_TABLE         0x100
++#define EPSS_TABLE_ROWS         40
++#define EPSS_PERF_STATE         0x320
++#define XO_KHZ                  19200
++#define ALTERNATE_KHZ           300000
++
++static struct th_profile profile;
++static uint32_t mode;
++static struct th_policy policy = { 700, 620, 950 };
++static vm_offset_t tsens[TH_CONTROLLERS], epss[TH_DOMAINS];
++static uint32_t top_row[TH_DOMAINS], floor_row[TH_DOMAINS], row_now[TH_DOMAINS];
++static volatile int32_t hottest = TH_NONE;
++static volatile uint32_t step, most;
++
++#ifndef TH_TEST_MMIO
++static inline uint32_t
++rd(vm_offset_t address)
++{
++	return *(volatile uint32_t *)address;
++}
++
++static inline void
++wr(vm_offset_t address, uint32_t value)
++{
++	*(volatile uint32_t *)address = value;
++#if defined(__arm64__) || defined(__aarch64__)
++	__asm__ volatile ("dsb sy" ::: "memory");
++#endif
++}
++#else
++/* renoir/tests/thermal_driver_test.c: the registers are a model of the hardware's */
++extern uint32_t th_test_rd(vm_offset_t address);
++extern void th_test_wr(vm_offset_t address, uint32_t value);
++#define rd(a)           th_test_rd(a)
++#define wr(a, v)        th_test_wr((a), (v))
++#endif
++
++/* the hottest reading of every sensor of both controllers */
++static int32_t
++read_hottest(void)
++{
++	int32_t readings[TH_CONTROLLERS * TH_SENSORS];
++	unsigned n = 0;
++
++	for (unsigned c = 0; c < TH_CONTROLLERS; c++) {
++		for (unsigned s = 0; tsens[c] != 0 && s < TH_SENSORS; s++) {
++			int32_t t = TH_NONE;
++
++			/* a sensor caught between two readings has none for a moment: asked again */
++			for (unsigned again = 0; again < 4 && t == TH_NONE; again++) {
++				t = th_tsens_tenths(rd(tsens[c] + TSENS_STATUS(s)));
++			}
++			readings[n++] = t;
++		}
++	}
++	return th_hottest(readings, n);
++}
++
++/* a group's frequency table: its top row and the first row at or above its floor */
++static void
++read_table(unsigned d)
++{
++	uint32_t top_khz = 0;
++
++	floor_row[d] = UINT32_MAX;
++	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
++		uint32_t entry = rd(epss[d] + EPSS_FREQ_TABLE + 4 * row);
++		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
++
++		if (row > 0 && khz <= top_khz) {
++			break;                  /* the table ends by repeating its last row */
++		}
++		top_khz = khz;
++		if (floor_row[d] == UINT32_MAX && khz >= profile.floor_mhz[d] * 1000) {
++			floor_row[d] = row;
++		}
++	}
++	/* never above where the group is now: this only holds back, it does not raise */
++	top_row[d] = row_now[d] = rd(epss[d] + EPSS_PERF_STATE);
++	if (floor_row[d] == UINT32_MAX || floor_row[d] > top_row[d]) {
++		floor_row[d] = top_row[d];
++	}
++}
++
++static void
++apply(uint32_t s)
++{
++	for (unsigned d = 0; d < TH_DOMAINS; d++) {
++		uint32_t row = th_row(top_row[d], floor_row[d], s);
++
++		if (epss[d] != 0 && row != row_now[d]) {
++			wr(epss[d] + EPSS_PERF_STATE, row);
++			row_now[d] = row;
++		}
++	}
++	hakios_backlight_set_cap(th_backlight_cap(s, most, 600));
++}
++
++#define PERIOD_MS       1000
++static uint32_t period_ms = PERIOD_MS;          /* boot-arg th_period_ms (100 to 10000) */
++
++static int poke;
++
++static void
++th_thread(__unused void *argument, __unused wait_result_t result)
++{
++	uint32_t looks = 0, said_step = 0;
++
++	for (;;) {
++		int32_t t = read_hottest();
++		uint32_t next;
++
++		hottest = t;
++		if (mode >= 2) {
++			next = th_next_step(step, most, t, &policy);
++			if (next != step) {
++				step = next;
++				apply(step);
++			}
++			if (step != said_step) {
++				say("thermal: %d.%d C: held back %u of %u (rows %u %u %u)\n", t / 10, t % 10 < 0 ? -(t % 10) : t % 10,
++				    step, most, row_now[0], row_now[1], row_now[2]);
++				said_step = step;
++			}
++		}
++		if (looks++ % 10 == 0) {
++			say("thermal: hottest sensor %d.%d C%s\n", t / 10, t % 10 < 0 ? -(t % 10) : t % 10,
++			    mode >= 2 ? "" : " (thermal=1: looking only)");
++		}
++		assert_wait_timeout(&poke, THREAD_UNINT, period_ms, NSEC_PER_MSEC);
++		thread_block(THREAD_CONTINUE_NULL);
++	}
++}
++
++/* how far the processors are held back now, 0 to `*of` (for the GPU's driver, should it want to follow) */
++uint32_t
++hakios_thermal_step(uint32_t *of)
++{
++	if (of != NULL) {
++		*of = most;
++	}
++	return step;
++}
++
++/* ---- sysctl hw.thermal ---------------------------------------------------------------------------- */
++
++SYSCTL_NODE(_hw, OID_AUTO, thermal, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "keeping the phone from getting hot");
++SYSCTL_INT(_hw_thermal, OID_AUTO, hottest, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &hottest), 0,
++    "the hottest sensor, tenths of a degree");
++SYSCTL_UINT(_hw_thermal, OID_AUTO, step, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &step), 0,
++    "how far held back");
++SYSCTL_UINT(_hw_thermal, OID_AUTO, most, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &most), 0,
++    "how far it can be held back");
++SYSCTL_INT(_hw_thermal, OID_AUTO, trip, CTLFLAG_RW | CTLFLAG_LOCKED, &policy.trip, 0, "held back from, tenths of a degree");
++SYSCTL_INT(_hw_thermal, OID_AUTO, clear, CTLFLAG_RW | CTLFLAG_LOCKED, &policy.clear, 0, "given back at, tenths of a degree");
++SYSCTL_INT(_hw_thermal, OID_AUTO, critical, CTLFLAG_RW | CTLFLAG_LOCKED, &policy.critical, 0,
++    "all the way at once, tenths of a degree");
++
++/* ---- start and end ------------------------------------------------------------------------------- */
++
++void
++hakios_thermal_init(void)
++{
++	thread_t thread;
++	int32_t value;
++	bool known = false;
++
++	if (!PE_parse_boot_argn("thermal", &mode, sizeof(mode)) || mode == 0) {
++		return;
++	}
++	for (unsigned i = 0; i < sizeof(th_profiles) / sizeof(th_profiles[0]); i++) {
++		if (redwood_board_is(th_profiles[i].board)) {
++			profile = th_profiles[i];
++			known = true;
++			break;
++		}
++	}
++	if (!known) {
++		say("thermal: no profile for this board: nothing read\n");
++		mode = 0;
++		return;
++	}
++	if (PE_parse_boot_argn("th_trip", &value, sizeof(value))) {
++		policy.trip = value;
++	}
++	if (PE_parse_boot_argn("th_clear", &value, sizeof(value))) {
++		policy.clear = value;
++	}
++	if (PE_parse_boot_argn("th_critical", &value, sizeof(value))) {
++		policy.critical = value;
++	}
++	if (PE_parse_boot_argn("th_period_ms", &value, sizeof(value)) && value >= 100 && value <= 10000) {
++		period_ms = (uint32_t)value;
++	}
++	if (policy.clear >= policy.trip || policy.trip >= policy.critical) {
++		say("thermal: th_clear < th_trip < th_critical does not hold (%d, %d, %d): the defaults\n", policy.clear,
++		    policy.trip, policy.critical);
++		policy = (struct th_policy){ 700, 620, 950 };
++	}
++	for (unsigned c = 0; c < TH_CONTROLLERS; c++) {
++		tsens[c] = profile.tsens[c] ? ml_io_map(profile.tsens[c], 0x200) : 0;
++	}
++	most = 0;
++	for (unsigned d = 0; d < TH_DOMAINS && mode >= 2; d++) {
++		epss[d] = ml_io_map(profile.epss + d * profile.epss_size, profile.epss_size);
++		read_table(d);
++		most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
++	}
++	say("thermal: %s: trip %d.%d C, clear %d.%d C, critical %d.%d C; the groups at rows %u %u %u, floors %u %u %u%s\n",
++	    profile.board, policy.trip / 10, policy.trip % 10, policy.clear / 10, policy.clear % 10, policy.critical / 10,
++	    policy.critical % 10, top_row[0], top_row[1], top_row[2], floor_row[0], floor_row[1], floor_row[2],
++	    mode >= 2 ? "" : " (thermal=1: looking only)");
++	if (kernel_thread_start(th_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_set_thread_name(thread, "thermal");
++		thread_deallocate(thread);
++	}
++}
++
++/* At the run's end: the groups back where they were found. */
++void
++hakios_thermal_quiesce(void)
++{
++	if (mode < 2 || step == 0) {
++		return;
++	}
++	for (unsigned d = 0; d < TH_DOMAINS; d++) {
++		if (epss[d] != 0 && row_now[d] != top_row[d]) {
++			wr(epss[d] + EPSS_PERF_STATE, top_row[d]);
++			row_now[d] = top_row[d];
++		}
++	}
++	say("thermal: at the run's end: the groups back at rows %u %u %u\n", top_row[0], top_row[1], top_row[2]);
++}
+diff --git a/bsd/dev/hakios_thermal_core.h b/bsd/dev/hakios_thermal_core.h
+new file mode 100644
+index 0000000..57f39c8
+--- /dev/null
++++ b/bsd/dev/hakios_thermal_core.h
+@@ -0,0 +1,106 @@
++/*
++ * The arithmetic of the thermal limiter (bsd/dev/hakios_thermal.c), apart from any hardware: what a
++ * sensor's word says, how hot the phone is, how far to hold the processors back. Integers only, no
++ * state; compiled by the host tests too (renoir/tests/thermal_test.c).
++ *
++ * Temperatures are in tenths of a degree Celsius throughout.
++ */
++#ifndef _HAKIOS_THERMAL_CORE_H
++#define _HAKIOS_THERMAL_CORE_H
++
++#include <stdbool.h>
++#include <stdint.h>
++
++#define TH_NONE                 (-2730)         /* no reading */
++#define TH_PLAUSIBLE_LOW        (-400)
++#define TH_PLAUSIBLE_HIGH       1500
++
++/*
++ * A Qualcomm TSENS (v2) sensor's status word: the last reading in its low 12 bits, signed, in tenths of a
++ * degree, and bit 21 when there is one (Linux's tsens-v2.c). TH_NONE when there is none or it cannot be
++ * true (a sensor not wired up reads -273 or nonsense).
++ */
++#define TSENS_VALID             (1u << 21)
++
++static inline int32_t
++th_tsens_tenths(uint32_t status)
++{
++	int32_t tenths;
++
++	if (!(status & TSENS_VALID)) {
++		return TH_NONE;
++	}
++	tenths = (int32_t)(status << 20) >> 20;
++	return tenths < TH_PLAUSIBLE_LOW || tenths > TH_PLAUSIBLE_HIGH ? TH_NONE : tenths;
++}
++
++/* the hottest of `n` readings (TH_NONE if none of them is one) */
++static inline int32_t
++th_hottest(const int32_t *tenths, unsigned n)
++{
++	int32_t hottest = TH_NONE;
++
++	for (unsigned i = 0; i < n; i++) {
++		if (tenths[i] != TH_NONE && tenths[i] > hottest) {
++			hottest = tenths[i];
++		}
++	}
++	return hottest;
++}
++
++/*
++ * How far the processors are held back: 0 not at all, each step one row of every group's frequency
++ * table lower, up to `most`. Above `trip` a step more each look; at or below `clear` a step less; in
++ * between it stays (so it does not go up and down around one temperature); at `critical` all the way at
++ * once. No reading at all: one step less, as if it were cool -- a sensor gone silent is no reason to keep
++ * the phone slow, and the critical point is guarded by the hardware's own reset as well.
++ */
++struct th_policy {
++	int32_t trip, clear, critical;
++};
++
++static inline uint32_t
++th_next_step(uint32_t step, uint32_t most, int32_t hottest, const struct th_policy *p)
++{
++	if (hottest == TH_NONE) {
++		return step > 0 ? step - 1 : 0;
++	}
++	if (hottest >= p->critical) {
++		return most;
++	}
++	if (hottest >= p->trip) {
++		return step < most ? step + 1 : most;
++	}
++	if (hottest <= p->clear && step > 0) {
++		return step - 1;
++	}
++	return step > most ? most : step;
++}
++
++/* a group's row at `step`: its top row, so many lower, never below its floor */
++static inline uint32_t
++th_row(uint32_t top, uint32_t floor, uint32_t step)
++{
++	if (floor > top) {
++		floor = top;
++	}
++	return top - floor < step ? floor : top - step;
++}
++
++/*
++ * The panel's light is heat too (an AMOLED at full white draws more than a core): the most the backlight
++ * may show at `step` of `most`, 1000 when not held back, down to `lowest` when held back all the way.
++ */
++static inline uint32_t
++th_backlight_cap(uint32_t step, uint32_t most, uint32_t lowest)
++{
++	if (step == 0 || most == 0) {
++		return 1000;
++	}
++	if (step >= most) {
++		return lowest;
++	}
++	return 1000 - (1000 - lowest) * step / most;
++}
++
++#endif /* _HAKIOS_THERMAL_CORE_H */
+diff --git a/bsd/dev/redwood_input.c b/bsd/dev/redwood_input.c
+index c289e35..c74a416 100644
+--- a/bsd/dev/redwood_input.c
++++ b/bsd/dev/redwood_input.c
+@@ -261,6 +261,11 @@ redwood_input_init(void)
+ 
+ 		hakios_backlight_init();        /* boot-arg backlight=N: the panel's light, hw.backlight.* (bsd/dev/hakios_backlight.c) */
+ 	}
++	{
++		extern void hakios_thermal_init(void);
++
++		hakios_thermal_init();          /* boot-arg thermal=N: held back when hot, hw.thermal.* (bsd/dev/hakios_thermal.c) */
++	}
+ 	redwood_wifi_init();
+ 	redwood_adsp_init();
+ }
+diff --git a/osfmk/arm64/loader_return.c b/osfmk/arm64/loader_return.c
+index d8ce067..7dfb8dc 100644
+--- a/osfmk/arm64/loader_return.c
++++ b/osfmk/arm64/loader_return.c
+@@ -56,6 +56,7 @@ extern void redwood_ddr_quiesce(void);
+ extern void redwood_haptic_quiesce(void);
+ extern void redwood_torch_quiesce(void);
+ extern void hakios_backlight_quiesce(void);
++extern void hakios_thermal_quiesce(void);
+ extern void redwood_camera_quiesce(void);
+ extern void redwood_mic_quiesce(void);
+ extern void redwood_ufs_quiesce(void);
+@@ -526,6 +527,7 @@ loader_return(void)
+ 	redwood_haptic_quiesce();       /* the vibration motor's chip back into reset, if it was let out */
+ 	redwood_torch_quiesce();        /* the flashlight off, if it was lit */
+ 	hakios_backlight_quiesce();     /* the panel's light back where the loader expects it */
++	hakios_thermal_quiesce();       /* the processors' groups back at the rows they were found at */
+ 	redwood_camera_quiesce();       /* the camera powered down, if it was powered up */
+ 	redwood_mic_quiesce();          /* (what the microphones' path did, said again: it happens in the log's middle) */
+ 	/*

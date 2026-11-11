@@ -11,12 +11,6 @@ CC=${CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# extract FILE from PATCH (a file the patch creates) into $WORK/src
-extract() {
-	mkdir -p "$WORK/src"
-	(cd "$WORK/src" && git apply --include="$2" "$PATCHES/$1")
-}
-
 failed=0
 run() {
 	local name=$1; shift
@@ -28,35 +22,40 @@ run() {
 	fi
 }
 
-extract 0023-universal-backlight.patch bsd/dev/hakios_backlight_core.h
-extract 0023-universal-backlight.patch bsd/dev/hakios_backlight.c
+# the patches in order, as the kernel tree has them: later ones change files of earlier ones
+for p in "$PATCHES"/0023-*.patch "$PATCHES"/0025-*.patch; do
+	(cd "$WORK/src" 2>/dev/null || mkdir -p "$WORK/src"; cd "$WORK/src" && git apply --include='bsd/dev/hakios_*' "$p")
+done
 run backlight_test -I"$WORK/src/bsd/dev" "$HERE/backlight_test.c"
+run thermal_test -I"$WORK/src/bsd/dev" "$HERE/thermal_test.c"
 
-# the driver itself against a model of the hardware (backlight_driver_test.c), one scenario a process; on the
-# host, then built for aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
+# the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
+# aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE/fakekernel" -I"$WORK/src/bsd/dev" "$HERE/backlight_driver_test.c")
+	-I"$HERE/fakekernel" -I"$WORK/src/bsd/dev" "$HERE/fakekernel/fakekernel.c")
 scenarios() {
 	local runner=$1 binary=$2 scenario
 	for scenario in $($runner "$binary"); do
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-echo "== backlight_driver_test (host)"
-if "$CC" "${DRIVER_FLAGS[@]}" -o "$WORK/backlight_driver_test"; then
-	scenarios "" "$WORK/backlight_driver_test"
-else
-	failed=1
-fi
-if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
-	echo "== backlight_driver_test (aarch64, qemu-aarch64)"
-	if aarch64-linux-gnu-gcc -static "${DRIVER_FLAGS[@]}" -o "$WORK/backlight_driver_test.a64"; then
-		scenarios qemu-aarch64 "$WORK/backlight_driver_test.a64"
+for test in backlight_driver_test thermal_driver_test; do
+	echo "== $test (host)"
+	if "$CC" "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test"; then
+		scenarios "" "$WORK/$test"
 	else
 		failed=1
 	fi
-else
-	echo "== (no aarch64-linux-gnu-gcc or qemu-aarch64: the aarch64 run is left out)"
-fi
+	if command -v aarch64-linux-gnu-gcc > /dev/null && command -v qemu-aarch64 > /dev/null; then
+		echo "== $test (aarch64, qemu-aarch64)"
+		if aarch64-linux-gnu-gcc -static "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test.a64"; then
+			scenarios qemu-aarch64 "$WORK/$test.a64"
+		else
+			failed=1
+		fi
+	else
+		echo "== (no aarch64-linux-gnu-gcc or qemu-aarch64: the aarch64 run is left out)"
+	fi
+done
 
 exit $failed

@@ -28,7 +28,10 @@ BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0',
              'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1', 'buttons=1', 'launchd_unsecure_cache=1',
              # the panel's light (renoir/docs/backlight.md): 1 reads the DSI controller and logs it, nothing written
              # to it; --boot-arg backlight=2 gives the brightness slider and Auto-Brightness the panel
-             'backlight=1']
+             'backlight=1',
+             # the thermal limiter (renoir/docs/thermal.md): 1 logs the hottest sensor every ten seconds;
+             # --boot-arg thermal=2 holds the processors and the panel back when hot
+             'thermal=1']
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
