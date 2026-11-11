@@ -3,17 +3,18 @@
 on its ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (ios26/dyld-strip).
 
-usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracted IPSW, default ios26)
+usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the unpacked IPSW, default ios27 beside the
+                                                              repository; ios/tools/unpack.sh)
 
   --min   only what proves the user space runs: launchd, dyld, the cache and a few programs of /bin
           and /usr/bin; the rest of the system is left out
-  (default) the files darwin-renoir/ios165/select-system.py chooses, applied to iOS 26
+  (default) the files select-system.py chooses (the rules of 16.5's image), applied to iOS 26/27
   --prune the same, smaller for 6 GB of RAM (docs/ram-budget.md, scenario B): .loctable string
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
 
-/sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /redwood and runs its init), the
-real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (ios/userland/root26-ios.sh writes ios26/jobs26)
+/sbin/launchd is our stage0 ($OBJ/stage0, which ios/userland/root26-ios.sh builds: it mounts the small image
+on /redwood and runs its init), the real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (ios/userland/root26-ios.sh writes ios26/jobs26)
 the jobs are in /System/Library/LaunchDaemons itself and in the launchd job cache
 System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /redwood/LaunchDaemons,
 as on 16.5 (enough for the restore-mode boot of the first probes, not for a normal one).
@@ -27,12 +28,13 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
-I = os.environ.get('IOS', DK + '/ios26')         # the extracted IPSW: ios26 (23G90) or ios27 (24B119)
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+I = os.environ.get('IOS') or os.path.join(os.path.dirname(REPO), 'ios27')    # the unpacked IPSW (24B119, 23G90 ...)
 ROOT = I + '/rootfs'
 CACHE = I + '/dyld-strip'
-DR = DK + '/darwin-renoir'
-HERE = os.path.dirname(os.path.abspath(__file__))
+OBJ = os.environ.get('OBJ') or I + '/obj'           # what ios/userland/root26-ios.sh built: stage0
+APFS = REPO + '/userland/tools/apfs/mkapfs.py'
 PACSTRIP = HERE + '/pacstrip'
 WORK = os.environ.get("WORK", I + "/image-tree")
 CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
@@ -83,12 +85,12 @@ def pruned(rel):
 
 
 def trim_emoji():
-    """the emoji font with the strikes the screen uses only (darwin-renoir tools/font_trim.py, as 16.5)"""
+    """the emoji font with the strikes the screen uses only (userland/tools/font_trim.py, as 16.5)"""
     path = os.path.join(WORK, EMOJI)
     if not os.path.isfile(path):
         return
     tmp = path + '.trim'
-    subprocess.run([sys.executable, DR + '/tools/font_trim.py', 'emoji', path, tmp], check=True)
+    subprocess.run([sys.executable, REPO + '/userland/tools/font_trim.py', 'emoji', path, tmp], check=True)
     os.replace(tmp, path)       # the file in WORK is a hard link to the rootfs: replaced, not written through
 
 
@@ -144,7 +146,7 @@ def selection(minimal):
                 if os.path.isfile(full) and not os.path.islink(full):
                     chosen.append((full[len(ROOT) + 1:], full))
         return chosen
-    spec = importlib.util.spec_from_file_location('sel', DR + '/ios165/select-system.py')
+    spec = importlib.util.spec_from_file_location('sel', HERE + '/select-system.py')
     sel = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sel)
     # A launchd job is not usable without its executable. Framework-hosted daemons and large
@@ -281,7 +283,7 @@ def main():
         stripped = sum(pool.map(place, chosen))
     # launchd: ours first (stage0), Apple's as launchd.ios
     os.replace(os.path.join(WORK, 'sbin/launchd'), os.path.join(WORK, 'sbin/launchd.ios'))
-    shutil.copy2(DR + '/userland/obj/stage0', os.path.join(WORK, 'sbin/launchd'))
+    shutil.copy2(OBJ + '/stage0', os.path.join(WORK, 'sbin/launchd'))
     for rel, target in links(minimal):
         dst = os.path.join(WORK, rel)
         if os.path.lexists(dst) or rel.startswith('System/Library/LaunchDaemons'):
@@ -321,7 +323,7 @@ def main():
             continue
         os.link(os.path.join(CACHE, name), os.path.join(WORK, CACHE_DIR, name))
     print(f'mkimage26: {len(chosen)} files ({stripped} arm64e Mach-Os rewritten by pacstrip), cache from {CACHE}')
-    subprocess.run([sys.executable, DR + '/tools/apfs/mkapfs.py', '-z', '-o', out[0], 'System=' + WORK], check=True)
+    subprocess.run([sys.executable, APFS, '-z', '-o', out[0], 'System=' + WORK], check=True)
     if os.path.getsize(out[0]) > 0xffffffff:
         raise SystemExit('System image exceeds fastboot\'s 4 GiB - 1 download limit')
 
