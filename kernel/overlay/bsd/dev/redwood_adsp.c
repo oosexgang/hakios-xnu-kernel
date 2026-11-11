@@ -253,8 +253,8 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 
 /* ---- the shared memory (redwood_wifi.c, step 1) --------------------------------------------------- */
 
-#define SMEM_PHYS               0x80900000UL
-#define SMEM_SIZE               0x00200000u
+#define SMEM_PHYS               ((unsigned long)hakios_board()->ipc.smem)       /* the SoC file's [ipc] */
+#define SMEM_SIZE               (hakios_board()->ipc.smem_size)
 #define SMEM_US                 0
 #define SMEM_ADSP               2               /* dt: qcom,remote-pid of qcom,smp2p-adsp and qcom,glink/adsp */
 #define SMEM_GLOBAL             0xfffe
@@ -568,7 +568,7 @@ show_crash_reason(void)
 #define QMP_DOWN                0xffff0000u
 #define QMP_MESSAGE             64
 
-static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
+static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's [ipc], at the start */
 
 #define IPCC_SEND               0x0c
 #define IPCC_RECEIVED           0x10
@@ -581,7 +581,7 @@ static struct block aoss = { "mailbox", 0x0c300000, 0x400 };
 #define IPCC_GLINK              0u
 #define IPCC_SMP2P              2u
 
-static struct block ipcc = { "ipcc", 0x00408000, 0x1000 };
+static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's [ipc], at the start */
 
 static struct {
 	uint32_t glink, smp2p, said;
@@ -1469,7 +1469,7 @@ step_image(void)
 
 /* ---- step 6: our SMP2P item ------------------------------------------------------------------------ */
 
-static struct block smem_lock = { "shared memory's lock", 0x01f43000, 0x1000 };
+static struct block smem_lock = { "shared memory's lock", 0, 0x1000 }; /* where: the SoC file's [ipc], at the start */
 #define LOCK_OWNER              0x000
 #define LOCK_US                 1u
 
@@ -3198,11 +3198,16 @@ redwood_adsp_init(void)
 		    "an [adsp] section\n");
 		return;
 	}
-	if (board->rpmh.cmd_db == 0 || board->rpmh.rsc == 0) {
-		printf("adsp: disabled: the SoC file does not say where RPMh is ([rpmh]): the DSP's supplies are asked for there\n");
+	if (board->rpmh.cmd_db == 0 || board->rpmh.rsc == 0 || board->ipc.aoss == 0 || board->ipc.ipcc == 0 ||
+	    board->ipc.smem == 0 || board->ipc.smem_lock == 0) {
+		printf("adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], "
+		    "[ipc]): the DSP's supplies are asked for there, and the DSP is talked to through it\n");
 		return;
 	}
 	rsc.phys = board->rpmh.rsc;
+	aoss.phys = board->ipc.aoss;
+	ipcc.phys = board->ipc.ipcc;
+	smem_lock.phys = board->ipc.smem_lock;
 	adsp_firmware = board->adsp.firmware;
 	adsp_memory_size = board->adsp.memory_size;
 	if (board->adsp.charge_counter_divisor != 0) {

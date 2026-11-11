@@ -44,6 +44,9 @@ known_phone(void)
 	CHECK(b != NULL && b->buttons.pon == 0x013 && b->buttons.volume_up == 0x18d && b->buttons.volume_up_name != NULL &&
 	    strcmp(b->buttons.volume_up_name, "GPIO6 of the PM8350") == 0, "its [buttons]");
 	CHECK(b != NULL && b->pins.tlmm == 0x0f100000, "the SoC's pins");
+	CHECK(hakios_board_has(HAKIOS_HAS_ADSP) && b != NULL && b->ipc.aoss == 0x0c300000 && b->ipc.ipcc == 0x00408000 &&
+	    b->ipc.smem == 0x80900000 && b->ipc.smem_size == 0x200000 && b->ipc.smem_lock == 0x01f43000,
+	    "the way to the other processors, for its audio DSP");
 	CHECK(hakios_board_has(HAKIOS_HAS_DDR_RPMH) && b != NULL && b->rpmh.cmd_db == 0x80860000 && b->rpmh.cmd_db_size == 0x20000 &&
 	    b->rpmh.rsc == 0x18220000 && b->rpmh.tcs_offset == 0xd00, "RPMh for the memory vote");
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
@@ -180,6 +183,9 @@ table(void)
 		    HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->rpmh.cmd_db != 0 &&
 		    b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 && b->rpmh.tcs_offset != 0),
 		    "%s: a driver that asks RPMh for a supply without [rpmh]", b->name);
+		CHECK(!(b->features & (HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->ipc.aoss != 0 && b->ipc.ipcc != 0 &&
+		    b->ipc.smem != 0 && b->ipc.smem_size != 0 && b->ipc.smem_lock != 0),
+		    "%s: a driver that talks to another processor without [ipc]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
