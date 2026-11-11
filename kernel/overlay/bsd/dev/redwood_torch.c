@@ -110,6 +110,7 @@ note(const char *format, ...)
 	say("torch: %s\n", slot);
 }
 
+#ifndef TORCH_TEST_MMIO
 static inline uint32_t
 rd(vm_offset_t address)
 {
@@ -121,6 +122,13 @@ wr(vm_offset_t address, uint32_t value)
 {
 	*(volatile uint32_t *)address = value;
 }
+#else
+/* tests/torch_driver_test.c: the registers are a model of the arbiter's */
+extern uint32_t torch_test_rd(vm_offset_t address);
+extern void torch_test_wr(vm_offset_t address, uint32_t value);
+#define rd(a)           torch_test_rd(a)
+#define wr(a, v)        torch_test_wr((a), (v))
+#endif
 
 static void
 spin_us(uint32_t us)
@@ -727,12 +735,12 @@ redwood_torch_init(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_TORCH_PM8350C)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
-		printf("torch: disabled: this board's board.toml lists no \"torch-pm8350c\"\n");
+		say("torch: disabled: this board's board.toml lists no \"torch-pm8350c\"\n");
 		level = 0;
 		return;
 	}
 	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
-		printf("torch: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
+		say("torch: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
 		level = 0;
 		return;
 	}

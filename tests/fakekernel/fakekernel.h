@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/sysmacros.h>
+#include <sys/types.h>
 
 #define __printflike(a, b)      __attribute__((format(printf, a, b)))
 #define __unused                __attribute__((unused))
@@ -100,6 +102,42 @@ int fake_sysctl_out(struct sysctl_req *req, const void *data, size_t size);
 #define SYSCTL_PROC(parent, nbr, name, access, ptr, arg, handler, fmt, descr) FAKE_OID(parent, name, 0, ptr, arg, handler, access)
 #define SYSCTL_UINT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 1, (void *)(ptr), val, NULL, access)
 #define SYSCTL_INT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 2, (void *)(ptr), val, NULL, access)
+
+/*
+ * Character devices (sys/conf.h, sys/uio.h, miscfs/devfs/devfs.h): a driver's /dev node is kept by its
+ * name, and a test reads and writes it as a program would (fake_dev_read(), fake_dev_write()).
+ */
+typedef long user_ssize_t;
+struct proc;
+struct uio {
+	char *base;
+	size_t resid;
+	bool to_kernel;                 /* a write(): the bytes go from the program to the driver */
+};
+user_ssize_t uio_resid(struct uio *uio);
+int uiomove(caddr_t kernel, int n, struct uio *uio);
+struct cdevsw {
+	int (*d_open)(dev_t dev, int flags, int type, struct proc *p);
+	int (*d_close)(dev_t dev, int flags, int type, struct proc *p);
+	int (*d_read)(dev_t dev, struct uio *uio, int ioflag);
+	int (*d_write)(dev_t dev, struct uio *uio, int ioflag);
+	void *d_ioctl, *d_stop, *d_reset, *d_select, *d_mmap, *d_strategy;
+	int d_type;
+};
+#define eno_ioctl               NULL
+#define eno_stop                NULL
+#define eno_reset               NULL
+#define eno_select              NULL
+#define eno_mmap                NULL
+#define eno_strat               NULL
+#define DEVFS_CHAR              0
+#define UID_ROOT                0
+#define GID_WHEEL               0
+int cdevsw_add(int index, const struct cdevsw *devsw);
+void *devfs_make_node(dev_t dev, int type, int uid, int gid, int perms, const char *name, ...);
+/* for the tests: 0, an errno of the driver's, or -1 when no driver has made a node of that name */
+int fake_dev_write(const char *name, const void *data, size_t size);
+int fake_dev_read(const char *name, void *data, size_t size);
 
 /* the device tree, of which a driver asks only what the loader named the board (pexpert/device_tree.h) */
 typedef void *DTEntry;

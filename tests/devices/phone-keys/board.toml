@@ -1,11 +1,15 @@
-# A test phone whose keys are wired unlike the real ones: on the third PMIC of the bus, volume up on
-# its ninth GPIO, behind an arbiter that is elsewhere (tests/soc/soc-test.toml). A value of the first
-# phones that is still written into the driver shows here as a key that is never read.
+# A test phone wired unlike the real ones: its keys on the third PMIC of the bus, volume up on its ninth
+# GPIO, behind an arbiter that is elsewhere and that knows this system as its third
+# (tests/soc/soc-test.toml). A value of the first phones that is still written into a driver shows here
+# as a key that is never read, or a write that goes nowhere.
 name = "phone-keys"
 description = "Test phone, keys on another PMIC"
 soc = "soc-test"
 
-features = ["buttons-pmic"]
+features = [
+    "buttons-pmic",
+    "torch-pm8350c",                # (the part itself as the driver knows it; the way to it is this chip's)
+]
 
 [backlight]
 type = "soft"

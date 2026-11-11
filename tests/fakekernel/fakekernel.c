@@ -129,6 +129,81 @@ kernel_thread_start(thread_continue_t fn, void *arg, thread_t *thread)
 void thread_deallocate(thread_t thread __unused) {}
 void thread_set_thread_name(thread_t thread __unused, const char *name __unused) {}
 
+/* ---- character devices: the nodes drivers make, by name ---- */
+
+static struct { const struct cdevsw *devsw; char name[48]; } nodes[8];
+static const struct cdevsw *added[8];
+static unsigned added_n;
+
+int
+cdevsw_add(int index __unused, const struct cdevsw *devsw)
+{
+	if (added_n >= 8) {
+		return -1;
+	}
+	added[added_n] = devsw;
+	return (int)added_n++;
+}
+
+void *
+devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused, int perms __unused, const char *name, ...)
+{
+	unsigned index = major(dev);
+
+	if (index >= added_n) {
+		return NULL;
+	}
+	nodes[index].devsw = added[index];
+	snprintf(nodes[index].name, sizeof(nodes[index].name), "%s", name);
+	return &nodes[index];
+}
+
+user_ssize_t uio_resid(struct uio *uio) { return (user_ssize_t)uio->resid; }
+
+int
+uiomove(caddr_t kernel, int n, struct uio *uio)
+{
+	size_t count = (size_t)n < uio->resid ? (size_t)n : uio->resid;
+
+	if (uio->to_kernel) {
+		memcpy(kernel, uio->base, count);
+	} else {
+		memcpy(uio->base, kernel, count);
+	}
+	uio->base += count;
+	uio->resid -= count;
+	return 0;
+}
+
+static const struct cdevsw *
+node_named(const char *name)
+{
+	for (unsigned i = 0; i < 8; i++) {
+		if (nodes[i].devsw != NULL && strcmp(nodes[i].name, name) == 0) {
+			return nodes[i].devsw;
+		}
+	}
+	return NULL;
+}
+
+int
+fake_dev_write(const char *name, const void *data, size_t size)
+{
+	const struct cdevsw *devsw = node_named(name);
+	struct uio uio = { __DEVOLATILE(char *, data), size, true };
+
+	return devsw == NULL ? -1 : devsw->d_write(0, &uio, 0);
+}
+
+int
+fake_dev_read(const char *name, void *data, size_t size)
+{
+	const struct cdevsw *devsw = node_named(name);
+	struct uio uio = { data, size, false };
+
+	return devsw == NULL ? -1 : devsw->d_read(0, &uio, 0);
+}
+
 thread_t current_thread(void) { return NULL; }
 
 kern_return_t
