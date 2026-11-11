@@ -39,6 +39,8 @@ $DYN -dynamiclib -install_name /redwood/lib/libredwood-app.dylib -lobjc -o $O/li
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-console.dylib -o $O/libredwood-console.dylib $RN/userland/console_log.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-poster.dylib -framework CoreFoundation -lobjc -o $O/libredwood-poster.dylib $RN/userland/inject_poster.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-backlight.dylib -lobjc -o $O/libredwood-backlight.dylib $RN/userland/inject_backlight.c
+# the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: renoir/userland/inject_brightness.c)
+$DYN -dynamiclib -install_name /redwood/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o $O/libhakios-brightness.dylib $RN/userland/inject_brightness.c
 for f in $O/*.dylib $O/RedwoodAudio; do
   $RN/tools/pacstrip macho $f $f.strip > /dev/null && mv $f.strip $f
   ${THEOS}/toolchain/linux/iphone/bin/ldid -S $f

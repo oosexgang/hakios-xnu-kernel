@@ -63,6 +63,9 @@ The renoir port adds minimal patches in `renoir/kernel/patches/`:
 4. **`0004-renoir-drivers.patch`**:
    - Ports core renoir hardware drivers and platform support from darwin-renoir (xnu-8796) into xnu-12377.
 
+5. **`0023-universal-backlight.patch`**:
+   - `bsd/dev/hakios_backlight.c`: brightness and automatic brightness for any device: `hw.backlight.*`, board profiles (Renoir, Redwood: MIPI DCS 0x51 through the Qualcomm DSI command FIFO; QEMU and unknown boards: software dimming in `MiniIOMobileFramebuffer`). See `renoir/docs/backlight.md`; tests in `renoir/tests/`.
+
 ## renoir drivers
 
 Hardware support brought into XNU 12377 from `darwin-renoir`:

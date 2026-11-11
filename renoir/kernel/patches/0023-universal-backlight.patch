@@ -1,0 +1,1125 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 5ed8636..3432a64 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -128,6 +128,7 @@ bsd/dev/redwood_speaker.c	standard
+ bsd/dev/redwood_guard.c	standard
+ bsd/dev/redwood_haptic.c	standard
+ bsd/dev/redwood_torch.c	standard
++bsd/dev/hakios_backlight.c	standard
+ bsd/dev/redwood_camera.c	standard
+ bsd/dev/redwood_mic.c	standard
+ bsd/dev/redwood_wifi.c	standard
+diff --git a/bsd/dev/hakios_backlight.c b/bsd/dev/hakios_backlight.c
+new file mode 100644
+index 0000000..ecd5de4
+--- /dev/null
++++ b/bsd/dev/hakios_backlight.c
+@@ -0,0 +1,656 @@
++/*
++ * The panel's light, for any device: one driver with what differs between devices in a table
++ * (bl_profiles below), and the arithmetic in hakios_backlight_core.h (tested on the host:
++ * renoir/tests/backlight_test.c).
++ *
++ * What iOS sees: the sysctls hw.backlight.* (any user may write the first four; the injected library
++ * renoir/userland/inject_brightness.c is who does, for the slider of Control Center and Settings and
++ * for the switch of automatic brightness):
++ *
++ *   level      0 to 1000: the slider (iOS's DisplayBrightness times 1000). Written while the brightness
++ *              is automatic, it moves the automatic curve by the difference, as on an iPhone
++ *   auto       0 or 1: automatic brightness (iOS's DisplayBrightnessAuto)
++ *   lux        the ambient light in thousandths of a lux. Written: a reading of the "virtual" sensor
++ *              (QEMU, tests, or user space with a sensor of its own); read: the light in use
++ *   shown      what is on the panel now, 0 to 1000 (it moves towards the level, see bl_step())
++ *   raw        the last number the panel was given (backend dcs)
++ *   offset     the user's move of the automatic curve
++ *   backend    "dcs", "soft" or "none"; als: where the light readings come from
++ *
++ * A driver of a real light sensor reports with hakios_als_report(millilux, name).
++ *
++ * The backends:
++ *
++ *   dcs    MIPI DCS set_display_brightness (0x51) to a DSI panel, through a Qualcomm DSI controller
++ *          (2.2 or later: SM7325, SM7350, SM8x50 ...) in its command FIFO -- the controller's "test
++ *          pattern" store, which Linux's display driver uses where it may not use memory. The
++ *          controller is the one the firmware set the panel going with; nothing of its setup is
++ *          changed, only a command added. Every read and write is behind the same checks of clocks as
++ *          the display scan (bsd/dev/redwood_adreno.c): the display block's power switch and the bus
++ *          clock of its registers. A command the controller does not report sent within 20 ms stops
++ *          this backend for the run.
++ *   soft   no panel to tell: the display driver (MiniIOMobileFramebuffer.cpp) darkens every pixel on
++ *          its way to the panel, from a copy in memory, so a new level is shown at once even when no
++ *          new frame comes. Works anywhere (QEMU); costs a copy of each frame.
++ *   none   nothing (the default where nothing is known and backlight=0).
++ *
++ * Boot-args (each overrides the profile of the board, so another device can be tried without a new
++ * kernel):
++ *
++ *   backlight=0        off (default): nothing touched, no sysctls answer anything but "none"
++ *   backlight=1        the profile's backend, read only: the DSI controller's version and state logged
++ *   backlight=2        the profile's backend in use
++ *   bl_backend=dcs|soft|none
++ *   bl_dsi=ADDRESS     the DSI controller's registers (physical)
++ *   bl_min= bl_max=    the panel's numbers for the lowest and the highest brightness
++ *   bl_bytes=1|2       how many bytes the panel's 0x51 takes; bl_le=1: least significant first
++ *   bl_level=N         the level at boot (default 600)
++ *   bl_auto=1          automatic brightness from the start
++ *   bl_floor=N         backend soft: what is kept of a pixel at level 0, of 256 (default 24)
++ *
++ * Adding a device: a line in bl_profiles (the board's name as its loader puts it in /chosen
++ * darwin-board, the DSI controller's address from the device tree's mdss_dsi0 "dsi_ctrl" reg, the
++ * panel's qcom,mdss-dsi-bl-min-level / bl-max-level, and qcom,mdss-dsi-bl-inverted-dbv: MSB first),
++ * and for the clocks the display clock controller's offsets (Linux dispcc-*.c / *-gdsc.dtsi). Until
++ * then the boot-args above do the same.
++ */
++#include <kern/clock.h>
++#include <kern/sched_prim.h>
++#include <kern/thread.h>
++#include <libkern/libkern.h>
++#include <mach/mach_types.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++#include <sys/sysctl.h>
++#include <sys/systm.h>
++
++#include "hakios_backlight_core.h"
++
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern bool redwood_board_is(const char *name);
++extern void loader_log_putc(char c);
++extern void thread_set_thread_name(thread_t thread, const char *name);
++
++static int say(const char *format, ...) __printflike(1, 2);
++
++static int
++say(const char *format, ...)
++{
++	char line[256];
++	va_list list;
++	int length;
++
++	va_start(list, format);
++	length = vsnprintf(line, sizeof(line), format, list);
++	va_end(list);
++	for (const char *c = line; *c != 0; c++) {
++		loader_log_putc(*c);
++	}
++	if (ml_get_interrupts_enabled()) {
++		printf("%s", line);
++	}
++	return length;
++}
++
++/* ---- what differs between devices ----------------------------------------------------------------- */
++
++enum bl_backend { BL_NONE, BL_DCS, BL_SOFT };
++static const char *const bl_backend_names[] = { "none", "dcs", "soft" };
++
++struct bl_profile {
++	const char *board;              /* /chosen darwin-board */
++	enum bl_backend backend;
++	/* backend dcs */
++	uint32_t dsi;                   /* the DSI controller's registers (dt: mdss_dsi0 "dsi_ctrl") */
++	uint32_t raw_min, raw_max;      /* the panel's numbers: qcom,mdss-dsi-bl-min-level, -max-level (without HBM) */
++	uint32_t raw_restore;           /* what the panel is left at for the loader (qcom,mdss-brightness-init-level) */
++	uint8_t bytes;                  /* 0x51 takes 1 or 2 bytes */
++	bool little_endian;             /* (2 bytes) least significant first: no qcom,mdss-dsi-bl-inverted-dbv */
++	bool video_mode;                /* a video-mode panel: commands go between frames */
++	/* the clocks the DSI controller's registers need (the same chain as the display scan) */
++	uint32_t gcc, gcc_disp_ahb_cbcr;
++	uint32_t dispcc, dispcc_core_gdscr, dispcc_ahb_cbcr;
++};
++
++static const struct bl_profile bl_profiles[] = {
++	/*
++	 * Xiaomi Mi 11 Lite 5G (SM7350, shima): dsi_k9_36_02_0a_*_dsc_cmd, a command-mode AMOLED panel,
++	 * "bl_ctrl_dcs" from 1 to 0x7ff, inverted DBV (MSB first), init level 0x133; DSI 2.5 at 0xae94000;
++	 * dispcc-shima.c: MDSS GDSC 0x3000, mdss_ahb 0x2080.
++	 */
++	{ "renoir", BL_DCS, 0x0ae94000, 1, 2047, 0x133, 2, false, false, 0x00100000, 0x27004, 0x0af00000, 0x3000, 0x2080 },
++	/*
++	 * POCO X5 Pro 5G (SM7325, yupik): dsi_m20_36_02_0a_dsc_vid, a video-mode AMOLED panel, "bl_ctrl_dcs"
++	 * from 8 to 4095 of which 2047 and above is its high brightness mode (left out here), inverted DBV,
++	 * init level 307; DSI 2.5 at 0xae94000 (redwood-sde.dtsi); dispcc-yupik.c: 0x1004, 0x1050.
++	 */
++	{ "redwood", BL_DCS, 0x0ae94000, 8, 2047, 307, 2, false, true, 0x00100000, 0x27004, 0x0af00000, 0x1004, 0x1050 },
++	/* QEMU's virt machine: a framebuffer and no panel */
++	{ "qemu-virt", BL_SOFT, 0, 0, 0, 0, 0, false, false, 0, 0, 0, 0, 0 },
++};
++
++/* the profile in use: the board's, with the boot-args over it */
++static struct bl_profile profile;
++static uint32_t mode;                   /* backlight=: 0 off, 1 look only, 2 in use */
++static bool chosen;
++
++static void
++bl_choose(void)
++{
++	char backend[8];
++	uint32_t value;
++
++	if (chosen) {
++		return;
++	}
++	chosen = true;
++	bzero(&profile, sizeof(profile));
++	profile.backend = BL_SOFT;              /* a board not in the table: only what is safe anywhere */
++	profile.board = "unknown";
++	for (unsigned i = 0; i < sizeof(bl_profiles) / sizeof(bl_profiles[0]); i++) {
++		if (redwood_board_is(bl_profiles[i].board)) {
++			profile = bl_profiles[i];
++			break;
++		}
++	}
++	if (!PE_parse_boot_argn("backlight", &mode, sizeof(mode))) {
++		mode = 0;
++	}
++	mode = mode > 2 ? 2 : mode;
++	if (PE_parse_boot_argn("bl_backend", backend, sizeof(backend))) {
++		profile.backend = strcmp(backend, "dcs") == 0 ? BL_DCS : strcmp(backend, "soft") == 0 ? BL_SOFT : BL_NONE;
++	}
++	if (PE_parse_boot_argn("bl_dsi", &value, sizeof(value))) {
++		profile.dsi = value;
++	}
++	if (PE_parse_boot_argn("bl_min", &value, sizeof(value))) {
++		profile.raw_min = value;
++	}
++	if (PE_parse_boot_argn("bl_max", &value, sizeof(value))) {
++		profile.raw_max = value;
++	}
++	if (PE_parse_boot_argn("bl_bytes", &value, sizeof(value))) {
++		profile.bytes = (uint8_t)value;
++	}
++	if (PE_parse_boot_argn("bl_le", &value, sizeof(value))) {
++		profile.little_endian = value != 0;
++	}
++	if (mode == 0) {
++		profile.backend = BL_NONE;
++	}
++	if (profile.backend == BL_DCS && (profile.dsi == 0 || profile.dispcc == 0 || profile.gcc == 0 ||
++	    profile.raw_max <= profile.raw_min || (profile.bytes != 1 && profile.bytes != 2))) {
++		say("backlight: %s: no complete DCS profile (DSI %#x, %u to %u, %u bytes): nothing done\n", profile.board,
++		    profile.dsi, profile.raw_min, profile.raw_max, profile.bytes);
++		profile.backend = BL_NONE;
++	}
++}
++
++/* ---- state ------------------------------------------------------------------------------------- */
++
++static volatile uint32_t user_level = 600;      /* the slider */
++static volatile uint32_t automatic;             /* automatic brightness */
++static volatile int32_t auto_offset;            /* the user's move of the curve */
++static volatile uint32_t ambient_mlx = 300000;  /* the light around, thousandths of a lux (an office until told) */
++static const char *ambient_source = "virtual";
++static volatile uint32_t shown_level;           /* on the panel now, 0 to 1000 */
++static volatile uint32_t shown_raw;
++static volatile uint32_t soft_dim = 256;        /* backend soft: what the display driver keeps of a pixel */
++static uint32_t soft_floor = 24;
++static bool broken;                             /* backend dcs: something went wrong, nothing more is written */
++static int poke;                                /* the thread's wait channel */
++static void (*soft_redraw)(void);
++
++static void
++bl_poke(void)
++{
++	thread_wakeup(&poke);
++}
++
++/* ---- backend dcs: a Qualcomm DSI controller (dsi_ctrl_reg.h, dsi_ctrl_hw_cmn.c of Linux's SDE driver) --- */
++
++#define DSI_HW_VERSION                  0x000
++#define DSI_CTRL                        0x004
++#define   DSI_CTRL_ENABLE               (1u << 0)
++#define   DSI_CTRL_VIDEO_MODE           (1u << 1)
++#define   DSI_CTRL_CMD_MODE             (1u << 2)
++#define DSI_STATUS                      0x008
++#define   DSI_STATUS_CMD_MDP_BUSY       (1u << 2)
++#define DSI_COMMAND_MODE_DMA_CTRL       0x03c
++#define   DMA_CTRL_EMBEDDED             (1u << 28)
++#define   DMA_CTRL_LOW_POWER            (1u << 26)
++#define   DMA_CTRL_BROADCAST            (3u << 30)
++#define DSI_DMA_CMD_LENGTH              0x04c
++#define DSI_CMD_MODE_DMA_SW_TRIGGER     0x090
++#define DSI_INT_CTRL                    0x110
++#define   INT_CMD_DMA_DONE              (1u << 0)
++#define   INT_VIDEO_DONE                (1u << 16)
++#define   INT_ERROR                     (1u << 24)
++/* the status bits of INT_CTRL (written 1: cleared); the others enable interrupts and are kept as they are */
++#define   INT_STATUS_BITS               (0x1u | 0x100u | 0x400u | 0x1000u | 0x4000u | 0x10000u | 0x100000u | \
++	                                 0x1000000u | 0x10000000u | 0x40000000u)
++#define DSI_TEST_PATTERN_GEN_CTRL       0x15c
++#define   TPG_CMD_DMA_FIFO              ((1u << 1) | (1u << 2) | (3u << 16))   /* TPG on, its DMA FIFO, our pattern */
++#define DSI_TEST_PATTERN_GEN_CMD_DMA_INIT_VAL 0x17c
++#define DSI_TPG_DMA_FIFO_RESET          0x1ec
++#define DSI_SIZE                        0x400
++
++#define CBCR_ENABLE                     (1u << 0)
++#define CBCR_OFF                        (1u << 31)
++#define GDSC_POWER_ON                   (1u << 31)
++
++static vm_offset_t dsi, gcc, dispcc;
++
++static inline void
++barrier(void)
++{
++#if defined(__arm64__) || defined(__aarch64__)
++	__asm__ volatile ("dsb sy" ::: "memory");
++#else
++	__asm__ volatile ("" ::: "memory");     /* (the host tests on another processor) */
++#endif
++}
++
++#ifndef BL_TEST_MMIO
++static inline uint32_t
++rd(vm_offset_t address)
++{
++	return *(volatile uint32_t *)address;
++}
++
++static inline void
++wr(vm_offset_t address, uint32_t value)
++{
++	*(volatile uint32_t *)address = value;
++	barrier();
++}
++#else
++/* renoir/tests/backlight_driver_test.c: the registers are a model of the hardware's */
++extern uint32_t bl_test_rd(vm_offset_t address);
++extern void bl_test_wr(vm_offset_t address, uint32_t value);
++#define rd(a)           bl_test_rd(a)
++#define wr(a, v)        (bl_test_wr((a), (v)), barrier())
++#endif
++
++static uint64_t
++now_us(void)
++{
++	uint64_t ns;
++
++	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
++	return ns / NSEC_PER_USEC;
++}
++
++/*
++ * May the DSI controller's registers be touched now? The display block powered, the bus clock of its
++ * registers running -- turned on if the firmware left it off, as the display scan does (the same two
++ * writes, and only those). Every command looks again: whoever else might take the clock away.
++ */
++static bool
++dsi_reachable(void)
++{
++	uint32_t clock;
++
++	if (gcc == 0 || dispcc == 0 || dsi == 0) {
++		return false;
++	}
++	clock = rd(gcc + profile.gcc_disp_ahb_cbcr);
++	if (!(clock & CBCR_ENABLE)) {
++		wr(gcc + profile.gcc_disp_ahb_cbcr, clock | CBCR_ENABLE);
++		delay(10000);
++		if (!(rd(gcc + profile.gcc_disp_ahb_cbcr) & CBCR_ENABLE)) {
++			return false;
++		}
++	}
++	if (!(rd(dispcc + profile.dispcc_core_gdscr) & GDSC_POWER_ON)) {
++		return false;
++	}
++	clock = rd(dispcc + profile.dispcc_ahb_cbcr);
++	if (clock & CBCR_OFF) {
++		wr(dispcc + profile.dispcc_ahb_cbcr, clock | CBCR_ENABLE);
++		delay(10000);
++		if (rd(dispcc + profile.dispcc_ahb_cbcr) & CBCR_OFF) {
++			return false;
++		}
++	}
++	return true;
++}
++
++static bool
++dcs_start(void)
++{
++	uint32_t version, control;
++
++	gcc = ml_io_map(profile.gcc, 0x80000);
++	dispcc = ml_io_map(profile.dispcc, 0x4000);
++	dsi = ml_io_map(profile.dsi, DSI_SIZE);
++	if (!dsi_reachable()) {
++		say("backlight: dcs: the display block is off or its registers have no clock: nothing done\n");
++		return false;
++	}
++	version = rd(dsi + DSI_HW_VERSION);
++	control = rd(dsi + DSI_CTRL);
++	say("backlight: dcs: DSI controller at %#x: version %u.%u (%#x), ctrl %#x (%s%s%s), status %#x, dma ctrl %#x, int %#x\n",
++	    profile.dsi, version >> 28, version >> 16 & 0xfff, version, control, control & DSI_CTRL_ENABLE ? "on" : "OFF",
++	    control & DSI_CTRL_VIDEO_MODE ? ", video" : "", control & DSI_CTRL_CMD_MODE ? ", command" : "", rd(dsi + DSI_STATUS),
++	    rd(dsi + DSI_COMMAND_MODE_DMA_CTRL), rd(dsi + DSI_INT_CTRL));
++	if (version >> 28 != 2 || (version >> 16 & 0xfff) < 2) {
++		say("backlight: dcs: not a DSI controller of 2.2 or later (no command FIFO): nothing done\n");
++		return false;
++	}
++	if (!(control & DSI_CTRL_ENABLE)) {
++		say("backlight: dcs: the controller is off (the firmware did not leave the panel lit through it): nothing done\n");
++		return false;
++	}
++	if (((control & DSI_CTRL_VIDEO_MODE) != 0) != profile.video_mode) {
++		say("backlight: dcs: the controller runs a %s-mode panel, the profile says %s mode: going by the controller\n",
++		    control & DSI_CTRL_VIDEO_MODE ? "video" : "command", profile.video_mode ? "video" : "command");
++		profile.video_mode = (control & DSI_CTRL_VIDEO_MODE) != 0;
++	}
++	return true;
++}
++
++/* wait until `bit` of INT_CTRL is set, at most `us` microseconds */
++static bool
++int_wait(uint32_t bit, uint64_t us)
++{
++	uint64_t until = now_us() + us;
++
++	while (!(rd(dsi + DSI_INT_CTRL) & bit)) {
++		if (now_us() > until) {
++			return false;
++		}
++		delay(20);
++	}
++	return true;
++}
++
++static void
++int_clear(uint32_t bits)
++{
++	wr(dsi + DSI_INT_CTRL, (rd(dsi + DSI_INT_CTRL) & ~INT_STATUS_BITS) | bits);
++}
++
++static bool
++dcs_send(uint32_t raw)
++{
++	uint32_t words[4], length = 0, control, dma_control;
++	unsigned n = bl_dcs_brightness_words(raw, profile.bytes, profile.little_endian, 0, words, &length);
++	bool sent;
++	uint64_t began = now_us();
++
++	if (broken || n == 0 || !dsi_reachable()) {
++		return false;
++	}
++	control = rd(dsi + DSI_CTRL);
++	if (!(control & DSI_CTRL_ENABLE)) {
++		say("backlight: dcs: the controller has been switched off: no more commands this run\n");
++		broken = true;
++		return false;
++	}
++	if (profile.video_mode) {
++		/* between two frames: the end of one, then the command in the blanking after it */
++		int_clear(INT_VIDEO_DONE);
++		(void)int_wait(INT_VIDEO_DONE, 40000);
++	} else {
++		/* not while a frame is on its way to the panel (8.6 ms of every 16.7 on renoir) */
++		uint64_t until = now_us() + 20000;
++
++		while ((rd(dsi + DSI_STATUS) & DSI_STATUS_CMD_MDP_BUSY) && now_us() < until) {
++			delay(50);
++		}
++	}
++	if (!(control & DSI_CTRL_CMD_MODE)) {
++		wr(dsi + DSI_CTRL, control | DSI_CTRL_CMD_MODE);       /* (Linux's driver does the same for a video panel) */
++	}
++	int_clear(INT_CMD_DMA_DONE);
++	/* the command into the FIFO, then the length, embedded mode, high speed, this controller alone, and go */
++	wr(dsi + DSI_TEST_PATTERN_GEN_CTRL, TPG_CMD_DMA_FIFO);
++	for (unsigned i = 0; i < n; i++) {
++		wr(dsi + DSI_TEST_PATTERN_GEN_CMD_DMA_INIT_VAL, words[i]);
++	}
++	dma_control = rd(dsi + DSI_COMMAND_MODE_DMA_CTRL);
++	wr(dsi + DSI_COMMAND_MODE_DMA_CTRL, (dma_control & ~(DMA_CTRL_BROADCAST | DMA_CTRL_LOW_POWER)) | DMA_CTRL_EMBEDDED);
++	wr(dsi + DSI_DMA_CMD_LENGTH, length);
++	wr(dsi + DSI_CMD_MODE_DMA_SW_TRIGGER, 1);
++	sent = int_wait(INT_CMD_DMA_DONE, 20000);
++	/* the FIFO emptied and the pattern generator off, as after every command of Linux's */
++	wr(dsi + DSI_TEST_PATTERN_GEN_CTRL, 0);
++	wr(dsi + DSI_TPG_DMA_FIFO_RESET, 1);
++	delay(1);
++	wr(dsi + DSI_TPG_DMA_FIFO_RESET, 0);
++	wr(dsi + DSI_COMMAND_MODE_DMA_CTRL, dma_control);
++	if (!(control & DSI_CTRL_CMD_MODE)) {
++		wr(dsi + DSI_CTRL, rd(dsi + DSI_CTRL) & ~DSI_CTRL_CMD_MODE);
++	}
++	int_clear(INT_CMD_DMA_DONE);
++	if (!sent) {
++		say("backlight: dcs: brightness %u NOT SENT in 20 ms (int %#x, status %#x): no more commands this run\n", raw,
++		    rd(dsi + DSI_INT_CTRL), rd(dsi + DSI_STATUS));
++		broken = true;
++		return false;
++	}
++	if (rd(dsi + DSI_INT_CTRL) & INT_ERROR) {
++		say("backlight: dcs: the controller reports an error after brightness %u (int %#x)\n", raw, rd(dsi + DSI_INT_CTRL));
++	}
++	(void)began;
++	return true;
++}
++
++/* ---- the light, followed ------------------------------------------------------------------------- */
++
++static void
++apply(uint32_t level)
++{
++	shown_level = level;
++	switch (profile.backend) {
++	case BL_DCS: {
++		uint32_t raw = bl_level_to_raw(level, profile.raw_min, profile.raw_max);
++
++		if (raw != shown_raw && dcs_send(raw)) {
++			shown_raw = raw;
++		}
++		break;
++	}
++	case BL_SOFT: {
++		uint32_t dim = bl_level_to_dim(level, soft_floor);
++
++		if (dim != soft_dim) {
++			soft_dim = dim;
++			if (soft_redraw != NULL) {
++				soft_redraw();
++			}
++		}
++		break;
++	}
++	default:
++		break;
++	}
++}
++
++static uint32_t
++wanted_level(void)
++{
++	return automatic ? bl_auto_target(ambient_mlx, auto_offset) : user_level;
++}
++
++#define TICK_MS         50
++
++static void
++bl_thread(__unused void *argument, __unused wait_result_t result)
++{
++	uint32_t now = user_level << 10;        /* in 1024ths of a level */
++	uint32_t reference_mlx = ambient_mlx, target = wanted_level();
++
++	apply(user_level);
++	for (;;) {
++		uint32_t want = wanted_level();
++
++		if (!automatic) {
++			target = want;
++		} else if (bl_lux_moved(ambient_mlx, reference_mlx) || (want > target ? want - target : target - want) > 20) {
++			/* a real change of the light (not a flicker), or the user's own move of the curve */
++			reference_mlx = ambient_mlx;
++			target = want;
++		}
++		if (now != target << 10) {
++			/* by hand: there in a fifth of a second; automatic: bl_step()'s pace */
++			now = automatic ? bl_step(now, target << 10) : (now < target << 10 ?
++			    now + ((target << 10) - now + 3) / 4 : now - (now - (target << 10) + 3) / 4);
++			apply((now + 512) >> 10);
++		}
++		if (now == target << 10 && !automatic) {
++			assert_wait(&poke, THREAD_UNINT);
++		} else {
++			assert_wait_timeout(&poke, THREAD_UNINT, TICK_MS, NSEC_PER_MSEC);
++		}
++		thread_block(THREAD_CONTINUE_NULL);
++	}
++}
++
++/* ---- for other parts of the kernel -------------------------------------------------------------- */
++
++/* the display driver: is the light made in software (then it keeps a copy of the frame to darken) */
++bool
++hakios_backlight_soft(void)
++{
++	bl_choose();
++	return profile.backend == BL_SOFT;
++}
++
++/* ... how much of a pixel to keep (256: all), and whom to tell when that changes */
++uint32_t
++hakios_backlight_dim(void)
++{
++	return soft_dim;
++}
++
++void
++hakios_backlight_set_redraw(void (*redraw)(void))
++{
++	soft_redraw = redraw;
++}
++
++/* a light sensor's reading */
++void
++hakios_als_report(uint32_t millilux, const char *source)
++{
++	ambient_mlx = millilux;
++	ambient_source = source;
++	if (automatic) {
++		bl_poke();
++	}
++}
++
++/* ---- sysctl hw.backlight ------------------------------------------------------------------------ */
++
++SYSCTL_NODE(_hw, OID_AUTO, backlight, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "the panel's light");
++
++static int
++sysctl_level SYSCTL_HANDLER_ARGS
++{
++#pragma unused(oidp, arg2)
++	uint32_t value = *(volatile uint32_t *)arg1;
++	int changed = 0;
++	int error = sysctl_io_number(req, value, sizeof(value), &value, &changed);
++
++	if (error != 0 || !changed) {
++		return error;
++	}
++	if (arg1 == &user_level) {
++		value = value > BL_LEVEL_MAX ? BL_LEVEL_MAX : value;
++		user_level = value;
++		if (automatic) {
++			/* by hand while automatic: the curve moves by the difference */
++			auto_offset = (int32_t)value - (int32_t)bl_auto_level(ambient_mlx);
++		}
++	} else if (arg1 == &automatic) {
++		value = value != 0;
++		if (value != automatic) {
++			auto_offset = 0;
++		}
++		automatic = value;
++	} else if (arg1 == &ambient_mlx) {
++		ambient_mlx = value;
++		ambient_source = "virtual";
++	}
++	bl_poke();
++	return 0;
++}
++
++SYSCTL_PROC(_hw_backlight, OID_AUTO, level, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
++    __DEVOLATILE(void *, &user_level), 0, sysctl_level, "IU", "the slider, 0 to 1000");
++SYSCTL_PROC(_hw_backlight, OID_AUTO, auto, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
++    __DEVOLATILE(void *, &automatic), 0, sysctl_level, "IU", "automatic brightness");
++SYSCTL_PROC(_hw_backlight, OID_AUTO, lux, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
++    __DEVOLATILE(void *, &ambient_mlx), 0, sysctl_level, "IU", "ambient light, thousandths of a lux");
++SYSCTL_UINT(_hw_backlight, OID_AUTO, shown, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &shown_level), 0,
++    "on the panel now, 0 to 1000");
++SYSCTL_UINT(_hw_backlight, OID_AUTO, raw, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &shown_raw), 0,
++    "the panel's number");
++SYSCTL_INT(_hw_backlight, OID_AUTO, offset, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(int32_t *, &auto_offset), 0,
++    "the user's move of the automatic curve");
++
++static int
++sysctl_names SYSCTL_HANDLER_ARGS
++{
++#pragma unused(oidp, arg1, arg2)
++	const char *name = arg2 == 0 ? bl_backend_names[profile.backend] : ambient_source;
++
++	return SYSCTL_OUT(req, name, strlen(name) + 1);
++}
++
++SYSCTL_PROC(_hw_backlight, OID_AUTO, backend, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, NULL, 0, sysctl_names, "A",
++    "dcs, soft or none");
++SYSCTL_PROC(_hw_backlight, OID_AUTO, als, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, NULL, 1, sysctl_names, "A",
++    "where the light readings come from");
++
++/* ---- start and end ------------------------------------------------------------------------------- */
++
++void
++hakios_backlight_init(void)
++{
++	thread_t thread;
++	uint32_t value;
++
++	bl_choose();
++	if (PE_parse_boot_argn("bl_level", &value, sizeof(value))) {
++		user_level = value > BL_LEVEL_MAX ? BL_LEVEL_MAX : value;
++	}
++	if (PE_parse_boot_argn("bl_auto", &value, sizeof(value))) {
++		automatic = value != 0;
++	}
++	if (PE_parse_boot_argn("bl_floor", &value, sizeof(value))) {
++		soft_floor = value > 256 ? 256 : value;
++	}
++	say("backlight: board %s, backend %s%s, level %u%s\n", profile.board, bl_backend_names[profile.backend],
++	    mode == 1 ? " (backlight=1: looking only)" : "", user_level, automatic ? ", automatic" : "");
++	if (profile.backend == BL_DCS) {
++		if (!dcs_start() || mode < 2) {
++			profile.backend = BL_NONE;
++			return;
++		}
++		say("backlight: dcs: the panel's brightness is ours: %u to %u, %u byte%s%s, %s mode\n", profile.raw_min,
++		    profile.raw_max, profile.bytes, profile.bytes == 1 ? "" : "s", profile.bytes == 2 ?
++		    (profile.little_endian ? " LSB first" : " MSB first") : "", profile.video_mode ? "video" : "command");
++	}
++	if (profile.backend == BL_NONE) {
++		return;
++	}
++	if (kernel_thread_start(bl_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_set_thread_name(thread, "backlight");
++		thread_deallocate(thread);
++	}
++}
++
++/* At the run's end (and on a panic's way out): the panel left lit for the loader and whatever comes next. */
++void
++hakios_backlight_quiesce(void)
++{
++	if (profile.backend != BL_DCS || broken || profile.raw_restore == 0) {
++		return;
++	}
++	if (dcs_send(profile.raw_restore)) {
++		say("backlight: at the run's end: the panel back at %u\n", profile.raw_restore);
++	}
++}
+diff --git a/bsd/dev/hakios_backlight_core.h b/bsd/dev/hakios_backlight_core.h
+new file mode 100644
+index 0000000..9aad135
+--- /dev/null
++++ b/bsd/dev/hakios_backlight_core.h
+@@ -0,0 +1,256 @@
++/*
++ * The arithmetic of the backlight (bsd/dev/hakios_backlight.c), apart from any hardware: what a level of
++ * the brightness slider is on a panel, what the light around the phone asks for, how the light follows,
++ * and the command that tells a DSI panel its brightness. Integers only (the kernel has no floating
++ * point), no state, nothing of the kernel's: the same file is compiled by the host tests
++ * (renoir/tests/backlight_test.c), so what is tested there is what runs here.
++ *
++ * Units, everywhere below:
++ *   level      0 to 1000, the slider's position (iOS's DisplayBrightness, 0.0 to 1.0, times 1000). The
++ *              slider is perceptual: equal steps look like equal steps, which on a panel whose light
++ *              grows in proportion to the number it is given means a power of about 2.2 between the two
++ *   raw        the number the panel is given (a DSI panel's DBV, for example 1 to 2047)
++ *   millilux   the ambient light, in thousandths of a lux (0 to 100,000 lux and some)
++ *   dim        0 to 256: how much of every pixel is kept when the light is made in software
++ */
++#ifndef _HAKIOS_BACKLIGHT_CORE_H
++#define _HAKIOS_BACKLIGHT_CORE_H
++
++#include <stdint.h>
++#include <stdbool.h>
++
++#define BL_LEVEL_MAX            1000
++#define BL_Q16                  65536u
++
++/* (i / 16) ^ 2.2 in 65536ths, i = 0 to 16 */
++static const uint32_t bl_gamma_table[17] = {
++	0, 147, 676, 1648, 3104, 5072, 7574, 10632, 14263, 18482, 23303, 28739, 34802, 41503, 48853, 56860, 65535,
++};
++
++/* A level as a fraction of the panel's whole light, in 65536ths (0 to 65535): level ^ 2.2. */
++static inline uint32_t
++bl_light_q16(uint32_t level)
++{
++	uint32_t at, i, part;
++
++	if (level >= BL_LEVEL_MAX) {
++		return bl_gamma_table[16];
++	}
++	at = level * 16 * 256 / BL_LEVEL_MAX;           /* where the level falls in the table, in 256ths of a step */
++	i = at >> 8;
++	part = at & 255;
++	return bl_gamma_table[i] + (uint32_t)(((uint64_t)(bl_gamma_table[i + 1] - bl_gamma_table[i]) * part) >> 8);
++}
++
++/*
++ * The number for the panel: its least at level 0 (iOS's lowest brightness is dim, not dark), its most
++ * at 1000, and the light in between growing as the eye expects it to.
++ */
++static inline uint32_t
++bl_level_to_raw(uint32_t level, uint32_t raw_min, uint32_t raw_max)
++{
++	if (raw_max <= raw_min) {
++		return raw_min;
++	}
++	return raw_min + (uint32_t)(((uint64_t)(raw_max - raw_min) * bl_light_q16(level) + 32767) / 65535);
++}
++
++/*
++ * The light made in software, by darkening every pixel (a machine with no way to change its panel's
++ * light: QEMU, or a panel not yet known): 256 keeps a pixel as it is. `floor` (0 to 256) is what is
++ * kept at level 0, so that the lowest brightness is still readable.
++ */
++static inline uint32_t
++bl_level_to_dim(uint32_t level, uint32_t floor)
++{
++	if (floor > 256) {
++		floor = 256;
++	}
++	return floor + (uint32_t)(((uint64_t)(256 - floor) * bl_light_q16(level) + 32767) / 65535);
++}
++
++/* A pixel (four 8-bit channels in a word) darkened: each channel times dim / 256. */
++static inline uint32_t
++bl_dim_pixel(uint32_t pixel, uint32_t dim)
++{
++	uint32_t rb = ((pixel & 0x00ff00ffu) * dim >> 8) & 0x00ff00ffu;
++	uint32_t ga = (((pixel >> 8) & 0x00ff00ffu) * dim) & 0xff00ff00u;
++
++	return rb | ga;
++}
++
++/*
++ * log2(1 + millilux / 1000), in 256ths (0 for darkness, about 4250 for 100,000 lux): the eye
++ * goes by ratios of light, so the curve below is laid out on this.
++ */
++static inline uint32_t
++bl_log2_lux_q8(uint32_t millilux)
++{
++	uint64_t x = (uint64_t)millilux + 1000;         /* 1 + lux, in thousandths */
++	uint32_t whole = 0, frac;
++
++	/* the whole part, from the highest bit of x / 1000 */
++	while ((x >> 1) >= 1000) {
++		x >>= 1;
++		whole++;
++	}
++	/* now 1000 <= x < 2000: the rest, log2(x / 1000), by the curve log2(1 + t) ~ t (1.4 - 0.4 t) */
++	{
++		uint32_t t = (uint32_t)((x - 1000) * 256 / 1000);       /* 0 to 255 */
++
++		frac = (t * (358 - (t * 102 >> 8))) >> 8;               /* 358 = 1.4 * 256, 102 = 0.4 * 256 */
++		frac = frac > 255 ? 255 : frac;
++	}
++	return whole * 256 + frac;
++}
++
++/*
++ * The light around the phone and the level it asks for. A curve of the usual shape (dark room: dim,
++ * office: half, daylight: full), on log2(1 + lux); between its points straight lines.
++ */
++struct bl_point {
++	uint32_t lux;
++	uint32_t level;
++};
++
++static const struct bl_point bl_auto_curve[] = {
++	{ 0, 60 }, { 2, 130 }, { 10, 220 }, { 30, 310 }, { 100, 410 }, { 300, 530 }, { 1000, 670 }, { 3000, 810 },
++	{ 10000, 930 }, { 30000, 1000 },
++};
++#define BL_AUTO_POINTS          (sizeof(bl_auto_curve) / sizeof(bl_auto_curve[0]))
++
++static inline uint32_t
++bl_auto_level(uint32_t millilux)
++{
++	uint32_t at = bl_log2_lux_q8(millilux);
++
++	for (unsigned i = 0; i + 1 < BL_AUTO_POINTS; i++) {
++		uint32_t x0 = bl_log2_lux_q8(bl_auto_curve[i].lux * 1000), x1 = bl_log2_lux_q8(bl_auto_curve[i + 1].lux * 1000);
++		uint32_t y0 = bl_auto_curve[i].level, y1 = bl_auto_curve[i + 1].level;
++
++		if (at <= x1) {
++			if (at <= x0 || x1 == x0) {
++				return y0;
++			}
++			return y0 + (uint32_t)((uint64_t)(y1 - y0) * (at - x0) / (x1 - x0));
++		}
++	}
++	return bl_auto_curve[BL_AUTO_POINTS - 1].level;
++}
++
++/* the curve moved by the user's own preference (the slider moved while the brightness is automatic) */
++static inline uint32_t
++bl_auto_target(uint32_t millilux, int32_t offset)
++{
++	int32_t level = (int32_t)bl_auto_level(millilux) + offset;
++
++	return level < 0 ? 0 : level > BL_LEVEL_MAX ? BL_LEVEL_MAX : (uint32_t)level;
++}
++
++/*
++ * Has the light changed enough to follow it? Not for every flicker: a change of more than about a
++ * fifth (a quarter of a stop: 64 / 256) either way.
++ */
++#define BL_LUX_HYSTERESIS_Q8    64
++
++static inline bool
++bl_lux_moved(uint32_t millilux, uint32_t reference_millilux)
++{
++	uint32_t a = bl_log2_lux_q8(millilux), b = bl_log2_lux_q8(reference_millilux);
++
++	return (a > b ? a - b : b - a) > BL_LUX_HYSTERESIS_Q8;
++}
++
++/*
++ * One step of the light towards where it should be, `now` and `target` in 1024ths of a level: a
++ * fraction of the way each step, quicker brightening than darkening (the eye minds a screen too
++ * dark in a bright place more than the other way round), and at least an eighth of a level so that
++ * the last of the way does not take long. At 20 steps a second, brightening is mostly done within
++ * about a second, darkening within some four.
++ */
++#define BL_STEP_UP_DIV          4
++#define BL_STEP_DOWN_DIV        16
++#define BL_STEP_MIN             128
++
++static inline uint32_t
++bl_step(uint32_t now, uint32_t target)
++{
++	uint32_t move;
++
++	if (now < target) {
++		move = (target - now) / BL_STEP_UP_DIV;
++		move = move < BL_STEP_MIN ? BL_STEP_MIN : move;
++		return target - now < move ? target : now + move;
++	}
++	if (now > target) {
++		move = (now - target) / BL_STEP_DOWN_DIV;
++		move = move < BL_STEP_MIN ? BL_STEP_MIN : move;
++		return now - target < move ? target : now - move;
++	}
++	return now;
++}
++
++/*
++ * MIPI DCS set_display_brightness (0x51) as a Qualcomm DSI controller (2.2 and later) takes a command
++ * in its FIFO: 32-bit words, of which the first is the packet's header in the controller's order
++ * (two data bytes or the word count, then the data identifier, then the controller's own flags:
++ * bit 7 the last command, bit 6 a long packet), then the payload padded with 0xff to a whole word,
++ * and an even number of words (a zero word added: "the hardware requires it").
++ *
++ *   bytes = 1  short write with one parameter (DT 0x15): 0x51 v
++ *   bytes = 2  long write (DT 0x39) of three bytes: 0x51 then the value most significant byte first,
++ *              or least significant first with `little_endian` (the panels of both phones here are the
++ *              first kind: "qcom,mdss-dsi-bl-inverted-dbv" in their device trees)
++ *
++ * Returns the number of words to put in the FIFO (`words`, at most 4), 0 if asked for something else;
++ * `*length` is the command's length in bytes for DSI_DMA_CMD_LENGTH (the padding to a whole word in,
++ * the extra word not).
++ */
++#define DCS_SET_DISPLAY_BRIGHTNESS      0x51
++#define DSI_DT_DCS_SHORT_WRITE_1        0x15
++#define DSI_DT_DCS_LONG_WRITE           0x39
++#define DSI_CMD_LAST                    0x80
++#define DSI_CMD_LONG                    0x40
++
++static inline unsigned
++bl_dcs_brightness_words(uint32_t raw, unsigned bytes, bool little_endian, unsigned channel, uint32_t words[4],
++    uint32_t *length_out)
++{
++	uint8_t b[16];
++	unsigned length, n;
++
++	for (unsigned i = 0; i < sizeof(b); i++) {
++		b[i] = 0xff;
++	}
++	channel &= 3;
++	if (bytes == 1) {
++		b[0] = DCS_SET_DISPLAY_BRIGHTNESS;
++		b[1] = (uint8_t)(raw > 0xff ? 0xff : raw);
++		b[2] = (uint8_t)(channel << 6 | DSI_DT_DCS_SHORT_WRITE_1);
++		b[3] = DSI_CMD_LAST;
++		length = 4;
++	} else if (bytes == 2) {
++		raw = raw > 0xffff ? 0xffff : raw;
++		b[0] = 3;                       /* word count, low byte */
++		b[1] = 0;                       /* ... high byte */
++		b[2] = (uint8_t)(channel << 6 | DSI_DT_DCS_LONG_WRITE);
++		b[3] = DSI_CMD_LAST | DSI_CMD_LONG;
++		b[4] = DCS_SET_DISPLAY_BRIGHTNESS;
++		b[5] = (uint8_t)(little_endian ? raw & 0xff : raw >> 8);
++		b[6] = (uint8_t)(little_endian ? raw >> 8 : raw & 0xff);
++		length = 7;                     /* padded with 0xff to 8 */
++	} else {
++		return 0;
++	}
++	n = (length + 3) / 4;
++	*length_out = n * 4;
++	for (unsigned i = 0; i < n; i++) {
++		words[i] = (uint32_t)b[4 * i] | (uint32_t)b[4 * i + 1] << 8 | (uint32_t)b[4 * i + 2] << 16 | (uint32_t)b[4 * i + 3] << 24;
++	}
++	if (n & 1) {
++		words[n++] = 0;
++	}
++	return n;
++}
++
++#endif /* _HAKIOS_BACKLIGHT_CORE_H */
+diff --git a/bsd/dev/redwood_input.c b/bsd/dev/redwood_input.c
+index 5676eb7..c289e35 100644
+--- a/bsd/dev/redwood_input.c
++++ b/bsd/dev/redwood_input.c
+@@ -256,6 +256,11 @@ redwood_input_init(void)
+ 	redwood_ufs_init();
+ 	redwood_net_init();
+ 	redwood_adreno_init();
++	{
++		extern void hakios_backlight_init(void);
++
++		hakios_backlight_init();        /* boot-arg backlight=N: the panel's light, hw.backlight.* (bsd/dev/hakios_backlight.c) */
++	}
+ 	redwood_wifi_init();
+ 	redwood_adsp_init();
+ }
+diff --git a/iokit/Kernel/MiniIOMobileFramebuffer.cpp b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+index 1fbd768..5550ab5 100644
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -354,6 +354,43 @@ struct rec_frame {
+ 
+ extern "C" uint64_t loader_recording[3];        /* { physical address, bytes, kernel address }: osfmk/arm64/loader_return.c */
+ 
++/*
++ * The panel's light made in software (bsd/dev/hakios_backlight.c, backend soft: a machine whose panel's
++ * light cannot be set, QEMU among them): the frame is drawn into a copy in memory (as with fb_double)
++ * and darkened on its way to the panel, so that a new level can be shown at once from that copy, also
++ * when no new frame comes.
++ */
++extern "C" bool hakios_backlight_soft(void);
++extern "C" uint32_t hakios_backlight_dim(void);
++extern "C" void hakios_backlight_set_redraw(void (*redraw)(void));
++
++static inline uint32_t
++dimPixel(uint32_t pixel, uint32_t dim)
++{
++	uint32_t rb = ((pixel & 0x00ff00ffu) * dim >> 8) & 0x00ff00ffu;
++	uint32_t ga = (((pixel >> 8) & 0x00ff00ffu) * dim) & 0xff00ff00u;
++
++	return rb | ga;
++}
++
++/* Rows from the copy in memory to the panel: as they are, or darkened (aligned 32-bit stores only). */
++static void
++toPanel(uint8_t * to, const uint8_t * from, size_t bytes)
++{
++	uint32_t dim = hakios_backlight_dim();
++
++	if (dim >= 256) {
++		memcpy(to, from, bytes);
++		return;
++	}
++	volatile uint32_t * out = (volatile uint32_t *) to;
++	const uint32_t * in = (const uint32_t *) from;
++
++	for (size_t i = 0, n = bytes / 4; i < n; i++) {
++		out[i] = dimPixel(in[i], dim);
++	}
++}
++
+ static uint32_t
+ swapWord(const uint8_t * swap, unsigned offset)
+ {
+@@ -458,6 +495,10 @@ public:
+ 	void drawShare(const struct RowJob * job, unsigned share, uint32_t * blendRow);
+ 	static void helperMain(void * self, wait_result_t result);
+ 	void copyBackBuffer(void);
++	void redrawForLight(void);
++	static void lightChanged(void);
++	static void lightCall(thread_call_param_t self, thread_call_param_t unused);
++	thread_call_t   fLightCall;             /* (backend soft) the copy shown again at a new light */
+ 	/* the scaling shared out (fb_threads): fThreads drawers, the presenter and fThreads - 1 helpers */
+ 	unsigned        fThreads;
+ 	IOLock *        fHelperLock;
+@@ -476,6 +517,8 @@ public:
+ 
+ OSDefineMetaClassAndStructors(IOMobileFramebuffer, IOService);
+ 
++static IOMobileFramebuffer * gLightFramebuffer;      /* (backend soft) whom a new light is shown by */
++
+ static void
+ setNumber(OSDictionary * dict, const char * key, uint64_t value)
+ {
+@@ -695,7 +738,7 @@ IOMobileFramebuffer::start(IOService * provider)
+ 	if (gScan) {
+ 		scanCalibrate();
+ 	}
+-	if (gDoubleBuffer) {
++	if (gDoubleBuffer || hakios_backlight_soft()) {
+ 		vm_size_t backBufferSize = (vm_size_t) fPanelHeight * fRowBytes;
+ 		IOBufferMemoryDescriptor * memory = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+ 		    kIODirectionInOut, backBufferSize, 64);
+@@ -714,6 +757,12 @@ IOMobileFramebuffer::start(IOService * provider)
+ 		fBackBuffer = NULL;
+ 		fBackBufferDescriptor = NULL;
+ 	}
++	if (fBackBuffer != NULL && hakios_backlight_soft()) {
++		fLightCall = thread_call_allocate(&IOMobileFramebuffer::lightCall, this);
++		gLightFramebuffer = this;
++		hakios_backlight_set_redraw(&IOMobileFramebuffer::lightChanged);
++		IOLog("MiniIOMobileFramebuffer: the panel's light is made here (hw.backlight, backend soft)\n");
++	}
+ 
+ 	if (gRecSeconds != 0) {
+ 		/* one piece of physical memory: the loader will send it over USB as it lies */
+@@ -1007,7 +1056,7 @@ IOMobileFramebuffer::helperMain(void * self, wait_result_t result __unused)
+ 			if (y1 > y0 && fb->fBackBuffer != NULL && fb->fBase != NULL) {
+ 				bool timely = scanWaitRows(y0, y1, job->target);
+ 
+-				memcpy(fb->fBase + (size_t) y0 * fb->fRowBytes, fb->fBackBuffer + (size_t) y0 * fb->fRowBytes, (size_t) (y1 - y0) * fb->fRowBytes);
++				toPanel(fb->fBase + (size_t) y0 * fb->fRowBytes, fb->fBackBuffer + (size_t) y0 * fb->fRowBytes, (size_t) (y1 - y0) * fb->fRowBytes);
+ 				if (!timely || !scanInTime(y0, job->target)) {
+ 					__atomic_fetch_add(&fb->fScanLate, 1, __ATOMIC_RELAXED);
+ 				}
+@@ -1094,6 +1143,35 @@ IOMobileFramebuffer::scanCalibrate(void)
+ 	}
+ 	printf("MiniIOMobileFramebuffer: panel scan: no second readout in 100 ms: frames written at once\n");
+ }
++/*
++ * (backend soft) The light has changed: the frame in memory shown again, darkened as it now is, at
++ * once and not only with the next frame (a still screen may not get one for minutes). Under the lock
++ * show() draws under, one processor: the helpers belong to show().
++ */
++void
++IOMobileFramebuffer::lightChanged(void)
++{
++	if (gLightFramebuffer != NULL && gLightFramebuffer->fLightCall != NULL) {
++		thread_call_enter(gLightFramebuffer->fLightCall);
++	}
++}
++
++void
++IOMobileFramebuffer::lightCall(thread_call_param_t self, thread_call_param_t unused __unused)
++{
++	((IOMobileFramebuffer *) self)->redrawForLight();
++}
++
++void
++IOMobileFramebuffer::redrawForLight(void)
++{
++	IOLockLock(fLock);
++	if (fBackBuffer != NULL && fGraphics) {
++		toPanel(fBase, fBackBuffer, (size_t) fPanelHeight * fRowBytes);
++	}
++	IOLockUnlock(fLock);
++}
++
+ void
+ IOMobileFramebuffer::copyBackBuffer(void)
+ {
+@@ -1103,7 +1181,7 @@ IOMobileFramebuffer::copyBackBuffer(void)
+ 	if (fThreads <= 1 || fHelpersStarted + 1 < fThreads) {
+ 		bool timely = scanWaitRows(0, (int32_t) fPanelHeight, fScanTarget);
+ 
+-		memcpy(fBase, fBackBuffer, (size_t) fPanelHeight * fRowBytes);
++		toPanel(fBase, fBackBuffer, (size_t) fPanelHeight * fRowBytes);
+ 		if (!timely || !scanInTime(0, fScanTarget)) {
+ 			__atomic_fetch_add(&fScanLate, 1, __ATOMIC_RELAXED);
+ 		}
+@@ -1126,7 +1204,7 @@ IOMobileFramebuffer::copyBackBuffer(void)
+ 	int32_t y1 = (int32_t) ((int64_t) fPanelHeight / fThreads);
+ 	bool timely = scanWaitRows(y0, y1, fScanTarget);
+ 
+-	memcpy(fBase, fBackBuffer, (size_t) (y1 - y0) * fRowBytes);
++	toPanel(fBase, fBackBuffer, (size_t) (y1 - y0) * fRowBytes);
+ 	if (!timely || !scanInTime(y0, fScanTarget)) {
+ 		__atomic_fetch_add(&fScanLate, 1, __ATOMIC_RELAXED);
+ 	}
+diff --git a/osfmk/arm64/loader_return.c b/osfmk/arm64/loader_return.c
+index 2ca0816..d8ce067 100644
+--- a/osfmk/arm64/loader_return.c
++++ b/osfmk/arm64/loader_return.c
+@@ -55,6 +55,7 @@ extern void redwood_adsp_quiesce(void);
+ extern void redwood_ddr_quiesce(void);
+ extern void redwood_haptic_quiesce(void);
+ extern void redwood_torch_quiesce(void);
++extern void hakios_backlight_quiesce(void);
+ extern void redwood_camera_quiesce(void);
+ extern void redwood_mic_quiesce(void);
+ extern void redwood_ufs_quiesce(void);
+@@ -524,6 +525,7 @@ loader_return(void)
+ 	redwood_ddr_quiesce();          /* and the vote for the memory's bandwidth taken away */
+ 	redwood_haptic_quiesce();       /* the vibration motor's chip back into reset, if it was let out */
+ 	redwood_torch_quiesce();        /* the flashlight off, if it was lit */
++	hakios_backlight_quiesce();     /* the panel's light back where the loader expects it */
+ 	redwood_camera_quiesce();       /* the camera powered down, if it was powered up */
+ 	redwood_mic_quiesce();          /* (what the microphones' path did, said again: it happens in the log's middle) */
+ 	/*

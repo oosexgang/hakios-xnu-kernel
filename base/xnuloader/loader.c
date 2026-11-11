@@ -3903,6 +3903,11 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_prop_u32(&w, "display-rotation", 0);
 	/* how the kernel is to ask the firmware for more cores (PSCI) */
 	dt_prop_str(&w, "psci-method", plat->psci_hvc ? "hvc" : "smc");
+	/*
+	 * which machine this is, for the kernel's drivers (redwood_board_is(): virtio on "qemu-virt", the
+	 * backlight's profile): an unnamed board gets no access to anything of a phone
+	 */
+	dt_prop_str(&w, "darwin-board", plat->name);
 	/* where the kernel is to start its other cores: the PAC keys first (secondary_cpu_entry) */
 	dt_prop_u64(&w, "hakios,secondary-entry", (uint64_t)(uintptr_t)&secondary_cpu_entry);
 	/* the time now, by the firmware's clock (the kernel has no real-time clock driver) */

@@ -139,6 +139,10 @@ echo "/redwood/lib/libredwood-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
 # renoir/userland/inject_backlight.c)
 echo "/redwood/lib/libredwood-backlight.dylib SpringBoard" >> $T/etc/inject.conf
+# The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
+# hw.backlight; backboardd for CoreBrightness's own side (src: renoir/userland/inject_brightness.c). It does
+# nothing where the kernel has no backlight (boot-arg backlight=0).
+echo "/redwood/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.
 python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys

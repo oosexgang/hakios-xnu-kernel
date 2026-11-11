@@ -25,7 +25,10 @@ from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 # haptics and battery remain off (renoir/docs/ios26-boot.md).
 BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0',
              'wifi=0', 'adsp=0', 'battmgr=0', 'speaker_probe=0', 'renoir_afe_probe=0', 'sound=0', 'cam=0',
-             'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1', 'buttons=1', 'launchd_unsecure_cache=1']
+             'cam_stream_test=0', 'touch_lat=0', 'touchscreen=1', 'buttons=1', 'launchd_unsecure_cache=1',
+             # the panel's light (renoir/docs/backlight.md): 1 reads the DSI controller and logs it, nothing written
+             # to it; --boot-arg backlight=2 gives the brightness slider and Auto-Brightness the panel
+             'backlight=1']
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
