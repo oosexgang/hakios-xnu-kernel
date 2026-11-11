@@ -130,7 +130,8 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **the same part on other pins or another bus**, the driver needs those made data. Move
-  the constants into the board file and `hakios_board.h`, as the backlight driver does.
+  the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
+  there: [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps.
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
   `hakios_board.h`. `renoir_fts.c` beside `redwood_goodix.c` is the example: two touch controllers,
   one interface to iOS (`/dev/redwood-touch`, `bsd/sys/redwood_input.h`).
