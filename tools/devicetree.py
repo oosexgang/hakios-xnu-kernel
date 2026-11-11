@@ -112,7 +112,7 @@ def from_dts(text, panel=None):
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys, rpmh = {}, {}, {}
+    platform, keys, rpmh, adreno = {}, {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -168,6 +168,18 @@ def from_dts(text, panel=None):
                 offset = cells(node.props.get('qcom,tcs-offset'))
                 if offset:
                     rpmh['tcs_offset'] = offset[0]
+        # the Adreno's blocks, by the names their reg entries have (qcom,kgsl-3d0 and qcom,gmu), and the
+        # three that are nodes of their own
+        for key, name in (('gpu', 'kgsl_3d0_reg_memory'), ('cx_misc', 'cx_misc'), ('rscc', 'rscc'),
+                          ('gmu', 'kgsl_gmu_reg'), ('pdc', 'kgsl_gmu_pdc_cfg')):
+            if reg_named(node, name):
+                adreno.setdefault(key, reg_named(node, name))
+        if any(re.fullmatch(r'qcom,.*-gpucc(-.*)?|qcom,gpucc-.*', c) for c in compatible) and unit_address(node):
+            adreno['gpucc'] = unit_address(node)
+        if (re.fullmatch(r'kgsl-smmu@[0-9a-fA-F]+', node.name) or 'kgsl_smmu' in node.labels) and unit_address(node):
+            adreno['smmu'] = unit_address(node)
+        if 'qcom,qfprom' in compatible and unit_address(node):
+            adreno.setdefault('qfprom', unit_address(node))
         if 'qcom,qpnp-power-on' in compatible and unit_address(node):
             # the power-on block of the PMIC with the keys: power on KPDPWR_N, volume down on RESIN_N
             slave, pmic = pmic_of(node)
@@ -191,6 +203,12 @@ def from_dts(text, panel=None):
                             volume_up_name=f'GPIO{number} of the {pmic}')
     if all(key in rpmh for key in ('cmd_db', 'cmd_db_size', 'rsc', 'tcs_offset')):
         soc['rpmh'] = rpmh
+    wanted = ('gpu', 'gmu', 'gpucc', 'cx_misc', 'rscc', 'smmu', 'pdc', 'qfprom')
+    if all(key in adreno for key in wanted):
+        soc['adreno'] = {key: adreno[key] for key in wanted}
+    elif any(key in adreno for key in ('gpu', 'gmu', 'smmu')):
+        notes.append("the GPU's blocks were not all found (missing: " + ', '.join(k for k in wanted if k not in adreno) +
+                     '): [adreno] is left out; fill it in from devices/_template/soc.toml for the feature "gpu-a660"')
     if keys:
         board['buttons'] = keys
     if tsens:

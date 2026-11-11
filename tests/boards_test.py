@@ -95,6 +95,31 @@ DTS = '''/dts-v1/;
 			reg = <0x00 0x18591000 0x00 0x1000 0x00 0x18592000 0x00 0x1000 0x00 0x18593000 0x00 0x1000>;
 			reg-names = "freq-domain0\\0freq-domain1\\0freq-domain2";
 		};
+		qfprom@780000 {
+			compatible = "qcom,qfprom";
+			reg = <0x780000 0x7000>;
+		};
+		qfprom@0 {
+			compatible = "qcom,qfprom-sys";
+		};
+		clock-controller@3d90000 {
+			compatible = "qcom,shima-gpucc\\0syscon";
+			reg = <0x3d90000 0x9000>;
+		};
+		kgsl-smmu@3da0000 {
+			compatible = "qcom,qsmmu-v500";
+			reg = <0x3da0000 0x20000>;
+		};
+		qcom,kgsl-3d0@3d00000 {
+			compatible = "qcom,kgsl-3d0\\0qcom,kgsl-3d";
+			reg = <0x3d00000 0x40000 0x3d61000 0x800 0x3de0000 0x10000 0x3d9e000 0x1000>;
+			reg-names = "kgsl_3d0_reg_memory\\0cx_dbgc\\0rscc\\0cx_misc";
+		};
+		qcom,gmu@3d6a000 {
+			compatible = "qcom,gpu-gmu";
+			reg = <0x3d6a000 0x34000 0xb290000 0x10000>;
+			reg-names = "kgsl_gmu_reg\\0kgsl_gmu_pdc_cfg";
+		};
 		aop_cmd_db@80860000 {
 			compatible = "qcom,cmd-db";
 			reg = <0x00 0x80860000 0x00 0x20000>;
@@ -552,6 +577,9 @@ class DeviceTree(Sandbox):
                                            'cores': 4, 'core_shift': 8, 'small_cores': 0b0011})
         self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
                                        'channels': 0xc600000})
+        # the GPU's blocks, each by the name of its reg entry or by its own node
+        self.assertEqual(soc['adreno'], {'gpu': 0x3d00000, 'gmu': 0x3d6a000, 'gpucc': 0x3d90000, 'cx_misc': 0x3d9e000,
+                                         'rscc': 0x3de0000, 'smmu': 0x3da0000, 'pdc': 0xb290000, 'qfprom': 0x780000})
         # the application processor's sequencer, not the display's
         self.assertEqual(soc['rpmh'], {'cmd_db': 0x80860000, 'cmd_db_size': 0x20000, 'rsc': 0x18220000, 'tcs_offset': 0xd00})
         # the power-on block of the PMIC that is slave 0; GPIO6 of the one that is slave 1 (0x8800 + 0x100 * 5)
@@ -579,6 +607,16 @@ class DeviceTree(Sandbox):
         self.assertEqual(soc['spmi'], {'core': 0xc440000, 'cnfg': 0xc40a000, 'observer': 0xe600000, 'ee': 0,
                                        'channels': 0xc600000})
         self.assertEqual(board['buttons'], {'volume_up': 0x18d, 'volume_up_name': 'GPIO6 of the PM7325'})
+
+    def test_a_gpu_that_is_only_half_in_the_tree_is_left_to_be_filled_in(self):
+        soc, board, notes = devicetree.from_dts('''/ { soc {
+            qcom,kgsl-3d0@3d00000 { reg = <0x3d00000 0x40000>; reg-names = "kgsl_3d0_reg_memory"; };
+            clock-controller@3d90000 { compatible = "qcom,shima-gpucc"; reg = <0x3d90000 0x9000>; }; }; };''')
+        self.assertNotIn('adreno', soc)
+        self.assertTrue(any('missing: gmu, cx_misc, rscc, smmu, pdc, qfprom' in note for note in notes), notes)
+        # ... and a tree without a GPU node says nothing of it
+        soc, board, notes = devicetree.from_dts('/ { soc { clock-controller@3d90000 { compatible = "qcom,x-gpucc"; }; }; };')
+        self.assertFalse(any('GPU' in note for note in notes), notes)
 
     def test_a_key_that_is_not_on_a_pmic_is_left_to_be_filled_in(self):
         soc, board, notes = devicetree.from_dts('''/ { tlmm: pinctrl@f000000 { phandle = <0x10>; };
