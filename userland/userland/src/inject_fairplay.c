@@ -196,7 +196,7 @@ say_the_fault(int signal_number, siginfo_t *info, void *context_in)
 		fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(context->uc_mcontext->__ss);
 	}
 	frames_from(fp, frames, sizeof(frames));
-	say("redwood: fairplayd: signal %d at %p, pc %#lx, called from%s (unslid)\n", signal_number,
+	say("hakios: fairplayd: signal %d at %p, pc %#lx, called from%s (unslid)\n", signal_number,
 	    info != NULL ? info->si_addr : NULL, pc - slide, frames);
 	signal(signal_number, SIG_DFL);
 	raise(signal_number);
@@ -210,7 +210,7 @@ watched_IOServiceMatching(const char *name)
 	CFMutableDictionaryRef matching = IOServiceMatching(name);
 
 	if (ours) {
-		say("redwood: fairplayd: IOServiceMatching(\"%s\") -> %s\n", name != NULL ? name : "(null)",
+		say("hakios: fairplayd: IOServiceMatching(\"%s\") -> %s\n", name != NULL ? name : "(null)",
 		    matching != NULL ? "a dictionary" : "nothing");
 	}
 	return matching;
@@ -224,7 +224,7 @@ watched_IOServiceGetMatchingServices(mach_port_t port, CFDictionaryRef matching,
 	if (ours) {
 		io_object_t one = existing != NULL ? IOIteratorNext(*existing) : 0;
 
-		say("redwood: fairplayd: IOServiceGetMatchingServices -> %#x, %s\n", result,
+		say("hakios: fairplayd: IOServiceGetMatchingServices -> %#x, %s\n", result,
 		    one != 0 ? "something matched" : "NOTHING MATCHED");
 		if (one != 0) {
 			IOObjectRelease(one);
@@ -240,7 +240,7 @@ watched_IOServiceGetMatchingService(mach_port_t port, CFDictionaryRef matching)
 	io_service_t service = IOServiceGetMatchingService(port, matching);
 
 	if (ours) {
-		say("redwood: fairplayd: IOServiceGetMatchingService -> %s\n", service != 0 ? "a service" : "NOTHING");
+		say("hakios: fairplayd: IOServiceGetMatchingService -> %s\n", service != 0 ? "a service" : "NOTHING");
 	}
 	return service;
 }
@@ -251,7 +251,7 @@ watched_IOServiceOpen(io_service_t service, task_port_t task, uint32_t type, io_
 	kern_return_t result = IOServiceOpen(service, task, type, connect);
 
 	if (ours) {
-		say("redwood: fairplayd: IOServiceOpen(type %u) -> %#x\n", type, result);
+		say("hakios: fairplayd: IOServiceOpen(type %u) -> %#x\n", type, result);
 	}
 	return result;
 }
@@ -265,7 +265,7 @@ watched_IOConnectCallMethod(mach_port_t connection, uint32_t selector, const uin
 	    input_struct_count, output, output_count, output_struct, output_struct_count);
 
 	if (ours) {
-		say("redwood: fairplayd: IOConnectCallMethod selector %u -> %#x\n", selector, result);
+		say("hakios: fairplayd: IOConnectCallMethod selector %u -> %#x\n", selector, result);
 	}
 	return result;
 }
@@ -295,7 +295,7 @@ watched_open(const char *path, int flags, ...)
 	 * came back.
 	 */
 	if (ours) {
-		say("redwood: fairplayd: open(\"%s\") -> %d%s\n", path != NULL ? path : "(null)", fd,
+		say("hakios: fairplayd: open(\"%s\") -> %d%s\n", path != NULL ? path : "(null)", fd,
 		    fd < 0 ? (errno == ENOENT ? " (no such file)" : " (refused)") : "");
 	}
 	return fd;
@@ -313,7 +313,7 @@ watched_sysctl(int *mib, unsigned count, void *out, size_t *out_size, void *in, 
 	int result = sysctl(mib, count, out, out_size, in, in_size);
 
 	if (ours && mib != NULL && count >= 1) {
-		say("redwood: fairplayd: sysctl [%d %d %d %d] (%u deep) -> %d\n", mib[0], count > 1 ? mib[1] : -1,
+		say("hakios: fairplayd: sysctl [%d %d %d %d] (%u deep) -> %d\n", mib[0], count > 1 ? mib[1] : -1,
 		    count > 2 ? mib[2] : -1, count > 3 ? mib[3] : -1, count, result);
 	}
 	return result;
@@ -334,7 +334,7 @@ watched___sysctl(int *mib, unsigned count, void *out, size_t *out_size, void *in
 	int result = __sysctl(mib, count, out, out_size, in, in_size);
 
 	if (ours && mib != NULL && count >= 1) {
-		say("redwood: fairplayd: sysctl [%d %d %d %d] (%u deep) -> %d\n", mib[0], count > 1 ? mib[1] : -1,
+		say("hakios: fairplayd: sysctl [%d %d %d %d] (%u deep) -> %d\n", mib[0], count > 1 ? mib[1] : -1,
 		    count > 2 ? mib[2] : -1, count > 3 ? mib[3] : -1, count, result);
 	}
 	return result;
@@ -349,7 +349,7 @@ watched___mac_syscall(const char *policy, int call, void *arg)
 	int result = __mac_syscall(policy, call, arg);
 
 	if (ours) {
-		say("redwood: fairplayd: __mac_syscall(\"%s\", %d) -> %d\n", policy != NULL ? policy : "(null)",
+		say("hakios: fairplayd: __mac_syscall(\"%s\", %d) -> %d\n", policy != NULL ? policy : "(null)",
 		    call, result);
 	}
 	return result;
@@ -361,7 +361,7 @@ watched_sysctlbyname(const char *name, void *out, size_t *out_size, void *in, si
 	int result = sysctlbyname(name, out, out_size, in, in_size);
 
 	if (ours) {
-		say("redwood: fairplayd: sysctlbyname(\"%s\") -> %d\n", name != NULL ? name : "(null)", result);
+		say("hakios: fairplayd: sysctlbyname(\"%s\") -> %d\n", name != NULL ? name : "(null)", result);
 	}
 	return result;
 }
@@ -372,7 +372,7 @@ watched_dlopen(const char *path, int mode)
 	void *library = dlopen(path, mode);
 
 	if (ours) {
-		say("redwood: fairplayd: dlopen(\"%s\") -> %s\n", path != NULL ? path : "(null)",
+		say("hakios: fairplayd: dlopen(\"%s\") -> %s\n", path != NULL ? path : "(null)",
 		    library != NULL ? "loaded" : dlerror());
 	}
 	return library;
@@ -391,7 +391,7 @@ watched_xpc_connection_create_mach_service(const char *name, dispatch_queue_t qu
 	xpc_connection_t connection = xpc_connection_create_mach_service(name, queue, flags);
 
 	if (ours) {
-		say("redwood: fairplayd: xpc_connection_create_mach_service(\"%s\") -> %s\n",
+		say("hakios: fairplayd: xpc_connection_create_mach_service(\"%s\") -> %s\n",
 		    name != NULL ? name : "(null)", connection != NULL ? "a connection" : "nothing");
 	}
 	return connection;
@@ -403,7 +403,7 @@ watched_stat(const char *path, struct stat *out)
 	int result = stat(path, out);
 
 	if (ours) {
-		say("redwood: fairplayd: stat(\"%s\") -> %d\n", path != NULL ? path : "(null)", result);
+		say("hakios: fairplayd: stat(\"%s\") -> %d\n", path != NULL ? path : "(null)", result);
 	}
 	return result;
 }
@@ -414,7 +414,7 @@ watched_access(const char *path, int mode)
 	int result = access(path, mode);
 
 	if (ours) {
-		say("redwood: fairplayd: access(\"%s\") -> %d\n", path != NULL ? path : "(null)", result);
+		say("hakios: fairplayd: access(\"%s\") -> %d\n", path != NULL ? path : "(null)", result);
 	}
 	return result;
 }
@@ -425,7 +425,7 @@ watched_mkdir(const char *path, mode_t mode)
 	int result = mkdir(path, mode);
 
 	if (ours) {
-		say("redwood: fairplayd: mkdir(\"%s\") -> %d\n", path != NULL ? path : "(null)", result);
+		say("hakios: fairplayd: mkdir(\"%s\") -> %d\n", path != NULL ? path : "(null)", result);
 	}
 	return result;
 }
@@ -466,7 +466,7 @@ watched_MGCopyAnswer(CFStringRef key)
 		if (key == NULL || !CFStringGetCString(key, text, sizeof(text), kCFStringEncodingUTF8)) {
 			strlcpy(text, "(unreadable)", sizeof(text));
 		}
-		say("redwood: fairplayd: MGCopyAnswer(\"%s\") -> %s\n", text, answer != NULL ? "an answer" : "NOTHING");
+		say("hakios: fairplayd: MGCopyAnswer(\"%s\") -> %s\n", text, answer != NULL ? "an answer" : "NOTHING");
 	}
 	return answer;
 }
@@ -482,7 +482,7 @@ watched_SecTaskCopyValueForEntitlement(void *task, CFStringRef entitlement, CFEr
 		if (entitlement == NULL || !CFStringGetCString(entitlement, text, sizeof(text), kCFStringEncodingUTF8)) {
 			strlcpy(text, "(unreadable)", sizeof(text));
 		}
-		say("redwood: fairplayd: entitlement \"%s\" -> %s\n", text, value != NULL ? "held" : "NOT HELD");
+		say("hakios: fairplayd: entitlement \"%s\" -> %s\n", text, value != NULL ? "held" : "NOT HELD");
 	}
 	return value;
 }
@@ -494,7 +494,7 @@ watched__exit(int status)
 
 	if (ours) {
 		frames_from((uintptr_t)__builtin_frame_address(0), frames, sizeof(frames));
-		say("redwood: fairplayd: LEAVING, _exit(%d), called from%s (unslid)\n", status, frames);
+		say("hakios: fairplayd: LEAVING, _exit(%d), called from%s (unslid)\n", status, frames);
 	}
 	_exit(status);
 }
@@ -506,7 +506,7 @@ watched_abort(void)
 
 	if (ours) {
 		frames_from((uintptr_t)__builtin_frame_address(0), frames, sizeof(frames));
-		say("redwood: fairplayd: LEAVING, abort(), called from%s (unslid)\n", frames);
+		say("hakios: fairplayd: LEAVING, abort(), called from%s (unslid)\n", frames);
 	}
 	abort();
 }
@@ -551,7 +551,7 @@ at_the_end(void)
 	if (!ours) {
 		return;
 	}
-	say("redwood: fairplayd: at the end (an exit handler ran: it left of its own accord), %u samples\n",
+	say("hakios: fairplayd: at the end (an exit handler ran: it left of its own accord), %u samples\n",
 	    sample_count);
 	/* every distinct pc, newest first: a fifth of a second of a daemon is a short story */
 	for (unsigned i = sample_count; i > 0 && shown < 40; i--) {
@@ -565,7 +565,7 @@ at_the_end(void)
 			continue;
 		}
 		shown++;
-		say("redwood: fairplayd: was at %#lx (cache %#lx, own %#lx)\n", pc, pc - slide, pc - own_slide);
+		say("hakios: fairplayd: was at %#lx (cache %#lx, own %#lx)\n", pc, pc - slide, pc - own_slide);
 	}
 }
 
@@ -576,7 +576,7 @@ watched_exit(int status)
 
 	if (ours) {
 		frames_from((uintptr_t)__builtin_frame_address(0), frames, sizeof(frames));
-		say("redwood: fairplayd: LEAVING, exit(%d), called from%s (unslid)\n", status, frames);
+		say("hakios: fairplayd: LEAVING, exit(%d), called from%s (unslid)\n", status, frames);
 	}
 	exit(status);
 }
@@ -641,9 +641,9 @@ hakios_fairplay_init(void)
 		char ***argv = _NSGetArgv();
 		int *argc = _NSGetArgc();
 
-		say("redwood: fairplayd: ours is in, %d argument(s)\n", argc != NULL ? *argc : -1);
+		say("hakios: fairplayd: ours is in, %d argument(s)\n", argc != NULL ? *argc : -1);
 		for (int i = 0; argv != NULL && argc != NULL && i < *argc && i < 6; i++) {
-			say("redwood: fairplayd: argv[%d] = %s\n", i, (*argv)[i] != NULL ? (*argv)[i] : "(null)");
+			say("hakios: fairplayd: argv[%d] = %s\n", i, (*argv)[i] != NULL ? (*argv)[i] : "(null)");
 		}
 	}
 }

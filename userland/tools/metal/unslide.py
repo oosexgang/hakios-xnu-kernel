@@ -10,7 +10,7 @@ address is:
     address, and prints the slide separately in the same line.  So every frame
     needs 0xS subtracted, and 0xS must be read from that line: it is a different
     number every boot.
-  * `redwood: signal N at 0xRAW, pc 0xP, lr 0xL, called from A B C ... (unslid)`
+  * `hakios: signal N at 0xRAW, pc 0xP, lr 0xL, called from A B C ... (unslid)` (`redwood:` in older logs)
     -- our own handler (`userland/src/inject.c`).  It has already subtracted the
     slide, so nothing may be subtracted twice.  The `at` address is `si_addr`,
     which for a SIGABRT raised out of a syscall is the pc and so states that
@@ -49,7 +49,7 @@ KERNEL = re.compile(
     r"shared cache slide\s+(?P<slide>0x[0-9a-f]+);\s+called from:(?P<frames>[\s0-9a-fx]+)")
 
 OURS = re.compile(
-    r"redwood:\s+signal\s+(?P<sig>\d+)\s+at\s+(?P<raw>0x[0-9a-f]+),\s+"
+    r"(?:hakios|redwood):\s+signal\s+(?P<sig>\d+)\s+at\s+(?P<raw>0x[0-9a-f]+),\s+"
     r"pc\s+(?P<pc>0x[0-9a-f]+),\s+lr\s+(?P<lr>0x[0-9a-f]+),\s+"
     r"called from(?P<frames>[\s0-9a-fx]+)\(unslid\)")
 
@@ -136,7 +136,7 @@ def main():
             said = ("this boot's slide, if `at` is the pc: %s" % hex(d)
                     if 0 < d < 0x100000000 and d % 0x4000 == 0
                     else "fault address %s, no slide derivable" % hex(raw))
-            report("redwood: signal %s (%s)" % (m.group("sig"), said), 0, frames,
+            report("hakios: signal %s (%s)" % (m.group("sig"), said), 0, frames,
                    extra=[("pc", pc), ("lr", int(m.group("lr"), 16))])
             continue
     annot._save()
