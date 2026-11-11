@@ -101,7 +101,7 @@ AREAS = [
                                      'bsd/dev/redwood_adreno', 'bsd/dev/hakios_backlight', 'bsd/dev/redwood_input',
                                      'bsd/dev/redwood_goodix', 'bsd/dev/renoir_fts', 'bsd/dev/redwood_buttons',
                                      'bsd/dev/redwood_virtio_input')),
-    ('Power, CPU and temperature', ('bsd/dev/redwood_cpufreq', 'bsd/dev/hakios_thermal', 'bsd/dev/hakios_cputop',
+    ('Power, CPU and temperature', ('bsd/dev/redwood_cpufreq', 'bsd/dev/hakios_ddr', 'bsd/dev/hakios_bench', 'bsd/dev/hakios_thermal', 'bsd/dev/hakios_cputop',
                                     'bsd/dev/redwood_battery', 'iokit/Kernel/RedwoodBattery', 'osfmk/arm64/hakios_cpu_idle',
                                     'osfmk/arm64/psci_smp', 'iokit/Kernel/GenericARMPE')),
     ('Sound, camera, haptics, flashlight', ('bsd/dev/redwood_adsp', 'bsd/dev/redwood_audio', 'bsd/dev/redwood_sound',

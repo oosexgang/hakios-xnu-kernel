@@ -57,7 +57,9 @@ needs its feature in the board's `features`.
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/redwood_cpufreq.c` | CPU frequency through EPSS; memory bandwidth votes through RPMh. | `cpufreq-epss`, `ddr-rpmh` / `cpufreq=1`, `ddr=` | EPSS: data (`[cpufreq]`). The RPMh vote: data (`[rpmh]`), with the slot layout and BCM names of the 7-series |
+| `bsd/dev/redwood_cpufreq.c` | CPU frequency through EPSS. | `cpufreq-epss` / `cpufreq=1` | data (`[cpufreq]`) |
+| `bsd/dev/hakios_ddr.c` | Memory bandwidth votes through RPMh. | `ddr-rpmh` / `ddr=` | data (`[rpmh]`), with the slot layout and BCM names of the 7-series |
+| `bsd/dev/hakios_bench.c` | Measurements: how fast the cores get at memory, how busy each core is. | — / `membench=`, `cpuload=` | any |
 | `bsd/dev/hakios_thermal.c` | Reads TSENS; holds CPU groups and the panel back when hot. | `[thermal]` / `thermal=` | data |
 | `bsd/dev/redwood_battery.c` | The battery as the UEFI's charger drivers report it to the loader. | `battery-uefi` / `battery=1` | any phone whose loader provides it |
 | `bsd/dev/hakios_cputop.c` | Which processes use the CPU (`cputop=S`). | — | any |

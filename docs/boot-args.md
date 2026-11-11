@@ -140,11 +140,26 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Power, CPU and temperature
 
+### `bsd/dev/hakios_bench.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `cpuload` | cpuload=MS: every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture): tl: u at US 7:NN 6:NN ... 1:NN the core's number (as in its MPIDR), then its share of the time it was not idle (interrupts included). |
+| `membench` | membench=1: how fast this processor reads, writes and copies memory, in MB a second (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which nobody here asks to be raised. |
+
 ### `bsd/dev/hakios_cputop.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `cputop` | cputop=S: every S seconds, the processes that took the most CPU time since the last time, by name and pid, and how many processes came and went meanwhile. |
+
+### `bsd/dev/hakios_ddr.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `ddr` | ddr=1: the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read. |
+| `ddr_rest` | the vote left for the loader (ddr_rest=N); see redwood_ddr_quiesce() |
+| `ddr_vote` | ddr_vote=N: N instead of the most (16383). |
 
 ### `bsd/dev/hakios_thermal.c`
 
@@ -167,12 +182,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `cpufreq` | Only with boot-arg cpufreq=1: the addresses are this phone's. |
-| `cpuload` | cpuload=MS: every MS milliseconds, how busy each of our cores was meanwhile, in percent, to the loader's log (tools/frames.py shows it per gesture): tl: u at US 7:NN 6:NN ... 1:NN the core's number (as in its MPIDR), then its share of the time it was not idle (interrupts included). |
-| `ddr` | ddr=1: the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read. |
-| `ddr_rest` | the vote left for the loader (ddr_rest=N); see redwood_ddr_quiesce() |
-| `ddr_vote` | ddr_vote=N: N instead of the most (16383). |
-| `membench` | membench=1: how fast this processor reads, writes and copies memory, in MB a second (32 MB at a time, far more than any cache): what the memory's clock allows a processor, which nobody here asks to be raised. |
+| `cpufreq` | cpufreq=1 every group of cores that has a core of ours is asked for the top row of its table |
 
 ### `iokit/Kernel/GenericARMPE.cpp`
 
