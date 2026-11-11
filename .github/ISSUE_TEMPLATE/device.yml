@@ -1,0 +1,61 @@
+name: A new phone
+description: You are porting HakiOS to a phone, or want to know whether it can be done.
+labels: ["device"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The procedure is [docs/porting.md](https://github.com/oosexgang/xnu-kernel-qcom/blob/HEAD/docs/porting.md), in the order to do it. A realistic target is a Qualcomm phone with an unlockable bootloader and a UEFI port in Mu-Silicium.
+
+        A port goes to two places. The phone's package (`NAME/board.toml`, with its README and notes) goes to the [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices). SoC files (`soc/SOC.toml`) and drivers go to the main branch.
+  - type: input
+    id: device
+    attributes:
+      label: Device and codename
+      placeholder: "Xiaomi Mi 11 Lite 5G (renoir)"
+    validations:
+      required: true
+  - type: input
+    id: soc
+    attributes:
+      label: SoC
+      description: "Say whether `soc/` already has it: SM7350 and SM7325 so far. A new SoC adds one file."
+      placeholder: "Snapdragon 780G (SM7350), already in soc/"
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: How far it is
+      description: "The step of `docs/porting.md` you are at."
+      options:
+        - "Not started: asking whether it is feasible"
+        - "1. Describing the board"
+        - "2. The UEFI"
+        - "3. The loader"
+        - "4. First boot: nothing but the display"
+        - "5. Turning hardware on, one piece at a time"
+        - "6. Parts that need a driver"
+        - "7. iOS user space"
+        - "8. Sent back"
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of tools/boards.py status NAME
+      description: "If the board file exists. It lists every feature for the board: on, ready to be listed, or the section it still needs."
+      render: text
+  - type: textarea
+    id: blocking
+    attributes:
+      label: What is blocking
+      description: "What you tried, the line of the log you expected and what came instead. For a part that has no driver yet, name the part and the bus it is on."
+  - type: checkboxes
+    id: publishable
+    attributes:
+      label: Nothing that must not be published
+      description: "A value read from a device tree or a vendor's driver (an address, a range) is a fact and is fine; the file itself is not. See `CONTRIBUTING.md` and `tools/check-publishable.sh`."
+      options:
+        - label: The text and attachments contain no Apple files, vendor firmware or device trees
+          required: true

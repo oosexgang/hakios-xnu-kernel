@@ -1,0 +1,53 @@
+name: Something does not work
+description: A boot that stops, a driver that misbehaves, a tool or a check that fails.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a phone that has no package yet, use the form "A new phone" instead.
+
+        Do not attach Apple's files, the phone maker's firmware or device trees: the repository must never receive them. A value read from one (an address, a range) is a fact and is fine.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected
+      description: "Say what was verified: \"compiles\", \"passes the host tests\" and \"seen on the phone\" are three different statements."
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board and SoC
+      description: "The package's name and its SoC, as `tools/boards.py list` prints them. For a tool or a check that needs no phone, write `none`."
+      placeholder: "renoir, SM7350"
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: iOS build and kernel commit
+      description: "The iOS version with its build number, and the commit of this repository the kernel was built from."
+      placeholder: "iOS 27.2 (24B119), commit 0123abc"
+  - type: textarea
+    id: boot-args
+    attributes:
+      label: Boot arguments
+      description: "All of them, as passed to the boot tool or in the loader's command line. `docs/boot-args.md` lists what each one does."
+      placeholder: "cpus=1 backlight=1"
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: The kernel's log
+      description: "The relevant part. The first lines (`board: ...`) and the driver's own lines matter most."
+      placeholder: "board: renoir (Xiaomi Mi 11 Lite 5G, sm7350): ..."
+      render: text
+  - type: checkboxes
+    id: publishable
+    attributes:
+      label: Nothing that must not be published
+      description: "See \"What must never be committed\" in `CONTRIBUTING.md`; `tools/check-publishable.sh` looks for the same things in the repository."
+      options:
+        - label: The log and attachments contain no Apple files, vendor firmware or device trees
+          required: true

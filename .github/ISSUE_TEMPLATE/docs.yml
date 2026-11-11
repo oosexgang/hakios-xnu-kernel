@@ -1,0 +1,23 @@
+name: The documentation is wrong or unclear
+description: A document says something that is not so, leaves a step out, or cannot be followed.
+labels: ["documentation"]
+body:
+  - type: input
+    id: document
+    attributes:
+      label: Which document
+      description: "Its path, and the section or step. `docs/boot-args.md` is generated from the comments in the kernel's sources: for it, name the argument."
+      placeholder: "docs/porting.md, step 3"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+      description: "Quote the sentence or the command, and say what happens when it is followed."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to find
