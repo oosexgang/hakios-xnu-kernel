@@ -12,7 +12,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
 
 | Piece | Where | State |
 | --- | --- | --- |
-| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/…hakios.patch` `bsd/dev/redwood_adreno.c`, `renoir/kernel/patches/0004`, `0021` | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
+| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/redwood_adreno.c`, `redwood_adreno_profile.h` | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
 | GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/RedwoodGPU.cpp` | Mesa's shim and the Metal device both use it |
 | AIR → NIR → ir3 compiler (Mesa frontend) | `userland/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the iOS 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`userland/docs/air.md`) |
 | Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/redwoodmetal.m` | Written and measured against iOS 16 and 26's Metal; not packaged for iOS 27 |
@@ -36,7 +36,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
      conformance and four methods, and iOS 27 may add required SPI.
    - Rebuild `redwoodmetal.m` for 24B119 and put it in the root image.
    - Publish the plug-in name on the accelerator service. On iOS 16.5 that was the only thing keeping Metal from
-     finding a driver of ours. The 12377 cleanup had removed it; `renoir/kernel/patches/0024-metal-plugin-gate.patch`
+     finding a driver of ours. The 12377 cleanup had removed it; `IOAcceleratorES::setProperties` in `kernel/overlay/iokit/Kernel/MiniIOMobileFramebuffer.cpp`
      restores it. With boot-arg `metal=1`, a user process may set `MetalPluginName`/`MetalPluginClassName` on
      `IOAcceleratorES`; nothing else is accepted, and an empty string removes them. Without it (the default),
      CoreAnimation keeps its software renderer, as in the release.

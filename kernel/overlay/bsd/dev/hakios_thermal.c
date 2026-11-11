@@ -1,7 +1,7 @@
 /*
  * Keeping the phone from getting hot, for any device of the Qualcomm kind: one driver with what differs
  * between devices in a table (th_profiles below), the arithmetic in hakios_thermal_core.h (tested on the
- * host: renoir/tests/thermal_test.c, and the driver itself: renoir/tests/thermal_driver_test.c).
+ * host: tests/thermal_test.c, and the driver itself: tests/thermal_driver_test.c).
  *
  * Every second the SoC's temperature sensors are read (both TSENS controllers, every sensor that has a
  * reading: Linux's tsens-v2.c; read only, never written), and from the hottest of them:
@@ -119,7 +119,7 @@ wr(vm_offset_t address, uint32_t value)
 #endif
 }
 #else
-/* renoir/tests/thermal_driver_test.c: the registers are a model of the hardware's */
+/* tests/thermal_driver_test.c: the registers are a model of the hardware's */
 extern uint32_t th_test_rd(vm_offset_t address);
 extern void th_test_wr(vm_offset_t address, uint32_t value);
 #define rd(a)           th_test_rd(a)

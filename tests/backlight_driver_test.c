@@ -1,8 +1,8 @@
 /*
- * The backlight driver itself (bsd/dev/hakios_backlight.c from renoir/kernel/patches/0023-universal-backlight.patch),
- * run as a host program: the kernel's interfaces are renoir/tests/fakekernel, the registers a model of the
+ * The backlight driver itself (kernel/overlay/bsd/dev/hakios_backlight.c),
+ * run as a host program: the kernel's interfaces are tests/fakekernel, the registers a model of the
  * hardware's (a Qualcomm DSI controller 2.5 and the display's clocks, as Linux's SDE driver and the phones'
- * device trees describe them). renoir/tests/run.sh builds it for the host and for aarch64, the second run
+ * device trees describe them). tests/run.sh builds it for the host and for aarch64, the second run
  * under qemu-aarch64 (so the driver's arm64 code runs, its barriers included).
  *
  *   backlight_driver_test SCENARIO      one scenario a process: the driver keeps its state in statics

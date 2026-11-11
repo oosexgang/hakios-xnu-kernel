@@ -1,12 +1,11 @@
 #!/bin/bash
-# Host tests of what the Renoir patches add that can run without a phone or a kernel build: each test
-# takes the files it tests out of the patch they are in (so it tests what the kernel compiles) and is
-# built with the host's cc.
+# Host tests of kernel code that can run without a phone or a kernel build: each test includes the
+# kernel's own source files (kernel/overlay), so it tests what the kernel compiles, built with the host's cc.
 #
-#   renoir/tests/run.sh             all of them
+#   tests/run.sh             all of them
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PATCHES=$HERE/../kernel/patches
+SRC=$HERE/../kernel/overlay/bsd/dev          # the drivers under test, as the kernel compiles them
 CC=${CC:-cc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -22,17 +21,13 @@ run() {
 	fi
 }
 
-# the patches in order, as the kernel tree has them: later ones change files of earlier ones
-for p in "$PATCHES"/0023-*.patch "$PATCHES"/0025-*.patch; do
-	(cd "$WORK/src" 2>/dev/null || mkdir -p "$WORK/src"; cd "$WORK/src" && git apply --include='bsd/dev/hakios_*' "$p")
-done
-run backlight_test -I"$WORK/src/bsd/dev" "$HERE/backlight_test.c"
-run thermal_test -I"$WORK/src/bsd/dev" "$HERE/thermal_test.c"
+run backlight_test -I"$SRC" "$HERE/backlight_test.c"
+run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 
 # the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE/fakekernel" -I"$WORK/src/bsd/dev" "$HERE/fakekernel/fakekernel.c")
+	-I"$HERE/fakekernel" -I"$SRC" "$HERE/fakekernel/fakekernel.c")
 scenarios() {
 	local runner=$1 binary=$2 scenario
 	for scenario in $($runner "$binary"); do

@@ -1,7 +1,7 @@
 /*
  * The arithmetic of the thermal limiter (bsd/dev/hakios_thermal.c), apart from any hardware: what a
  * sensor's word says, how hot the phone is, how far to hold the processors back. Integers only, no
- * state; compiled by the host tests too (renoir/tests/thermal_test.c).
+ * state; compiled by the host tests too (tests/thermal_test.c).
  *
  * Temperatures are in tenths of a degree Celsius throughout.
  */

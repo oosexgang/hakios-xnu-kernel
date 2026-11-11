@@ -1,7 +1,7 @@
 /*
- * The thermal limiter itself (bsd/dev/hakios_thermal.c from renoir/kernel/patches/0025-thermal-limiter.patch),
+ * The thermal limiter itself (kernel/overlay/bsd/dev/hakios_thermal.c),
  * run as a host program on the fake kernel (fakekernel/) against a model of two TSENS controllers and the
- * three EPSS groups of a lahaina-family SoC. renoir/tests/run.sh builds it for the host and for aarch64
+ * three EPSS groups of a lahaina-family SoC. tests/run.sh builds it for the host and for aarch64
  * under qemu-aarch64.
  *
  *   thermal_driver_test SCENARIO

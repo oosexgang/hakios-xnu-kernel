@@ -2,7 +2,7 @@
 
 The phone heats up: before graphics were removed, a GPU sensor read 69.1 °C (`ios26-boot.md`, item 14), and
 `cpufreq=1` runs every core group at its top row with nothing holding it back. The kernel side is
-`renoir/kernel/patches/0025-thermal-limiter.patch` (`bsd/dev/hakios_thermal.c`; the arithmetic is in
+`kernel/overlay/bsd/dev/hakios_thermal.c` (the arithmetic is in
 `hakios_thermal_core.h`). It is device-independent: a board needs one line with its sensor and frequency
 controller addresses.
 
@@ -49,7 +49,7 @@ To add a device, take those addresses from its device tree.
 
 ## Testing
 
-`renoir/tests/run.sh` runs:
+`tests/run.sh` runs:
 - `thermal_test.c`: the arithmetic (sensor word, hottest reading, steps, hysteresis, rows, panel cap).
 - `thermal_driver_test.c`: the driver itself, unchanged, against a model of two TSENS controllers and three EPSS
   groups. Scenarios:

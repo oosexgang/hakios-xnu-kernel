@@ -1,6 +1,6 @@
 /*
  * libhakios-brightness.dylib: iOS's brightness slider and its automatic brightness switch, to the kernel's
- * backlight (hw.backlight.*: bsd/dev/hakios_backlight.c in renoir/kernel/patches/0023-universal-backlight.patch).
+ * backlight (hw.backlight.*: kernel/overlay/bsd/dev/hakios_backlight.c).
  *
  * On an iPhone the slider of Control Center and of Settings, and the switch of Auto-Brightness, are
  * properties of CoreBrightness: a process sets "DisplayBrightness" (0.0 to 1.0) or "DisplayBrightnessAuto"

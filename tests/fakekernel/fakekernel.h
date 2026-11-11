@@ -1,6 +1,6 @@
 /*
  * Just enough of XNU's kernel interfaces for a driver's own code to run as a host program
- * (renoir/tests/backlight_driver_test.c): threads are pthreads, waits are condition variables, the
+ * (tests/backlight_driver_test.c): threads are pthreads, waits are condition variables, the
  * clock is the host's, sysctls go into a table the test reads and writes, boot-args are a string the
  * test sets. Every header of this directory includes this one.
  */

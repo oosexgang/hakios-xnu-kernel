@@ -1,6 +1,5 @@
 /*
- * Host tests of the thermal limiter's arithmetic (bsd/dev/hakios_thermal_core.h, from
- * renoir/kernel/patches/0025-thermal-limiter.patch; renoir/tests/run.sh takes it out of the patch).
+ * Host tests of the thermal limiter's arithmetic (kernel/overlay/bsd/dev/hakios_thermal_core.h).
  */
 #include <stdio.h>
 

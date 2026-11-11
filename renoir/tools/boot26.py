@@ -36,7 +36,7 @@ BOOT_ARGS = ['haptic=0', 'cpufreq=1', 'gpu=0',
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
 p.add_argument('--kernel', type=Path,
-               default=DK / 'xnu-12377-renoir/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')
+               default=DK / 'xnu-12377-hakios/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')
 p.add_argument('--system', type=Path, default=IOS / 'system27-prune.apfs')
 p.add_argument('--root', type=Path, default=IOS / 'root26-ios.apfs')
 p.add_argument('--boot-arg', action='append', default=[], metavar='NAME[=VALUE]',

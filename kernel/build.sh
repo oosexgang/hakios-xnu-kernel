@@ -1,20 +1,21 @@
 #!/bin/bash
-# Build the renoir iOS 26 kernel on Linux (WSL): Apple's xnu-12377.121.6 + kernel/xnu-12377.121.6-hakios.patch
-# + renoir/kernel/patches/*.patch, as plain arm64 (no PAC), MACHINE=BCM2837, DEVELOPMENT.
+# Build the kernel on Linux: Apple's release (kernel/UPSTREAM) with kernel/overlay and kernel/patches,
+# as plain arm64 (no PAC), MACHINE=BCM2837, DEVELOPMENT. One kernel serves every board: which one it runs
+# on it learns at boot (/chosen/darwin-board; devices/).
 #
-#   renoir/kernel/build.sh [make args]      e.g. build.sh -j12 (default -j$(nproc))
+#   kernel/build.sh [make args]      e.g. build.sh -j12 (default -j$(nproc))
 #
 # From scratch it makes, in order (each step is skipped when its result is already there):
-#   1. $XNU_SRC (default ../xnu-12377-renoir next to the repository): the tree of kernel/apply.sh,
-#      then the renoir patches (recorded with their checksums in $XNU_SRC/.renoir-patches)
+#   1. $XNU_SRC (default: next to the repository, named after the release): kernel/assemble.sh; a tree
+#      that is there already is brought up to date with the repository (only changed files are touched)
 #   2. $XNUDEPS ($XNU_SRC-deps): links to darwin-renoir's host tools and fetched sources, base/'s
 #      wrappers, its own SDK (links to theos' iPhoneOS16.5.sdk plus usr/local)
 #   3. the kernel's exported headers, then libfirehose_kernel.a and libpthread_kext.a built against them
 #   4. the kernel: $XNU_SRC/BUILD/obj/mach.development.bcm2837
-# Needs darwin-renoir's xnu-deps (its setup.sh stage 1 done) and theos; see README.md.
+# Needs darwin-renoir's xnu-deps (its setup.sh stage 1 done) and theos; see docs/building.md.
 set -e -o pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/xnu-env.sh"
-K=$RENOIR_KERNEL
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+K=$HAKIOS_KERNEL
 RD=$DARWIN_RENOIR/xnu-deps
 BD=$HAKIOS/base/xnu-deps
 JOBS=$(nproc)
@@ -24,33 +25,19 @@ link() { [ "$(readlink "$2" 2>/dev/null)" = "$1" ] || ln -sfn "$1" "$2"; }
 update() { cat > "$1.new"; if cmp -s "$1.new" "$1"; then rm "$1.new"; else mv "$1.new" "$1"; fi; }
 
 # --- 1. the tree ------------------------------------------------------------------------------
-if [ ! -f "$XNU_SRC/makedefs/MakeInc.def" ]; then
-	[ -e "$XNU_SRC" ] && die "$XNU_SRC exists but is no kernel tree; remove it"
-	log "making $XNU_SRC (kernel/apply.sh)"
-	"$HAKIOS/kernel/apply.sh" "$XNU_SRC"
-	# a local commit of the HakiOS base, so that `git diff` there shows only the renoir patches
-	git -C "$XNU_SRC" add -A
-	git -C "$XNU_SRC" -c user.name=renoir -c user.email=renoir@localhost commit -q \
-		-m 'xnu-12377.121.6 + HakiOS patch (local baseline for renoir/kernel/patches)'
+if [ ! -e "$XNU_SRC" ]; then
+	"$K/assemble.sh" "$XNU_SRC"
+elif git -C "$XNU_SRC" rev-parse -q --verify refs/tags/upstream > /dev/null 2>&1; then
+	"$K/assemble.sh" --update "$XNU_SRC"
+else
+	die "$XNU_SRC is not a tree made by kernel/assemble.sh (one of the old apply.sh, perhaps): move it away or set XNU_SRC"
 fi
-STAMP=$XNU_SRC/.renoir-patches
-touch "$STAMP"
-for p in "$K"/patches/*.patch; do
-	[ -e "$p" ] || continue
-	n=$(basename "$p") sum=$(sha256sum "$p" | cut -d' ' -f1)
-	old=$(awk -v n="$n" '$1 == n { print $2 }' "$STAMP")
-	[ "$old" = "$sum" ] && continue
-	[ -n "$old" ] && die "$n changed since it was applied: start over (rm -rf $XNU_SRC) or revert it there by hand"
-	log "applying patches/$n"
-	git -C "$XNU_SRC" apply --whitespace=nowarn "$p"
-	echo "$n $sum" >> "$STAMP"
-done
 # redwood's touch firmware is not ours to publish (tools/mk-focaltech-fw.py makes it from a phone):
-# an empty one keeps redwood_goodix.c compiling; renoir has no FocalTech panel
+# an empty one keeps redwood_goodix.c compiling; a board without that panel needs none
 FW=$XNU_SRC/bsd/dev/redwood_focaltech_fw.h
 if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
-	printf '%s\n' '/* renoir/kernel/build.sh: stub, no FocalTech firmware (redwood only; see tools/mk-focaltech-fw.py) */' \
+	printf '%s\n' '/* kernel/build.sh: stub, no FocalTech firmware (redwood only; see tools/mk-focaltech-fw.py) */' \
 		'#ifndef _REDWOOD_FOCALTECH_FW_H' '#define _REDWOOD_FOCALTECH_FW_H' '#define FOCALTECH_FW_LENGTH 0' \
 		'static const unsigned char focaltech_fw[1] = { 0 };' '#endif' > "$FW"
 fi
@@ -65,14 +52,14 @@ mkdir -p "$XNUDEPS/host/bin" "$XNUDEPS/build/firehose" "$XNUDEPS/build/pthread" 
 cd "$XNUDEPS"
 for d in AvailabilityVersions libdispatch libpthread MacOSX13.3.sdk; do link "$RD/$d" $d; done
 link "$BD/hostinc" hostinc
-# iig implementation stand-ins: base/'s, plus renoir/kernel/iig-impl for classes new in xnu-12377
+# iig implementation stand-ins: base/'s, plus kernel/iig-impl for classes new in xnu-12377
 [ -L iig-impl ] && rm iig-impl
 mkdir -p iig-impl
 for f in "$BD"/iig-impl/* "$K"/iig-impl/*; do link "$f" iig-impl/$(basename "$f"); done
 # built on this machine by darwin-renoir's setup.sh
 for t in mig migcom tcsh unifdef unzbm; do link "$RD/host/bin/$t" host/bin/$t; done
 link tcsh host/bin/csh
-# base/'s wrappers, and our own iig and clang wrappers (renoir/kernel/host: xnu-12377's DriverKit
+# base/'s wrappers, and our own iig and clang wrappers (kernel/host: xnu-12377's DriverKit
 # headers, and the Apple-only flags xnu-12377 adds)
 for t in codesign install plutil sw_vers xcrun; do link "$BD/host/bin/$t" host/bin/$t; done
 chmod +x "$K/host/xnu-clang" "$K/host/iig"
@@ -114,7 +101,7 @@ update $SL/include/kernel/os/firehose_types.defs < libdispatch/src/firehose/fire
 # names /usr/bin/plutil, so the no-op wrapper is passed as well.
 xnumake() {
 	(cd "$XNU_SRC" && make DEFAULT_TARGET=build REDWOOD_OBJECTS= SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=BCM2837 \
-		KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=$XNU_ARCH RC_DARWIN_KERNEL_VERSION=12377.121.6 \
+		KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=$XNU_ARCH RC_DARWIN_KERNEL_VERSION=${UPSTREAM_TAG#xnu-} \
 		BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 BUILD_DSYM=0 PLUTIL=plutil \
 		HOST_CC="clang -include $XNUDEPS/hostinc/hostcompat.h -I$XNUDEPS/hostinc -Wno-unused-command-line-argument -Wno-error=implicit-function-declaration" \
 		HOST_FLEX=flex HOST_BISON=bison HOST_GM4=m4 CC=xnu-clang CXX=xnu-clang++ LOGCOLORS=n "$@")

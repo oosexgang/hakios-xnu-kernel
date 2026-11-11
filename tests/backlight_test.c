@@ -1,7 +1,6 @@
 /*
- * Host tests of the backlight's arithmetic (bsd/dev/hakios_backlight_core.h of the kernel, from
- * renoir/kernel/patches/0023-universal-backlight.patch): renoir/tests/run.sh builds and runs this with
- * the header taken out of the patch, so what is tested is what the kernel compiles.
+ * Host tests of the backlight's arithmetic (kernel/overlay/bsd/dev/hakios_backlight_core.h): tests/run.sh
+ * builds this against the kernel's own header, so what is tested is what the kernel compiles.
  */
 #include <stdio.h>
 #include <stdlib.h>

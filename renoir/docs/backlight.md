@@ -1,6 +1,6 @@
 # Brightness and Auto-Brightness
 
-The panel's brightness and automatic brightness, for any device. Kernel: `renoir/kernel/patches/0023-universal-backlight.patch`
+The panel's brightness and automatic brightness, for any device. Kernel: `kernel/overlay/bsd/dev/hakios_backlight.c`
 (`bsd/dev/hakios_backlight.c`, the arithmetic in `bsd/dev/hakios_backlight_core.h`). iOS side:
 `renoir/userland/inject_brightness.c` (`libhakios-brightness.dylib`).
 
@@ -109,9 +109,9 @@ When the kernel returns to the loader, the panel goes back to the profile's init
 
 ## Testing
 
-`renoir/tests/run.sh` covers three things:
+`tests/run.sh` covers three things:
 - `backlight_test.c`: the arithmetic (10k checks).
-- `backlight_driver_test.c`: the driver itself, unchanged, on stubs of the kernel interfaces (`renoir/tests/fakekernel`), against a model of the DSI controller and the display clocks. The model rejects anything outside the protocol: a trigger without the command engine, the FIFO written with the TPG off, a length that does not match the words, an access to a register the driver has no business with.
+- `backlight_driver_test.c`: the driver itself, unchanged, on stubs of the kernel interfaces (`tests/fakekernel`), against a model of the DSI controller and the display clocks. The model rejects anything outside the protocol: a trigger without the command engine, the FIFO written with the TPG off, a length that does not match the words, an access to a register the driver has no business with.
 - The scenarios:
   - Renoir command mode and Redwood video mode
   - `backlight=1` reads only

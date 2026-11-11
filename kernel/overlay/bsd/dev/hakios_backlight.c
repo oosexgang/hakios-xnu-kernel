@@ -1,7 +1,7 @@
 /*
  * The panel's light, for any device: one driver with what differs between devices in a table
  * (bl_profiles below), and the arithmetic in hakios_backlight_core.h (tested on the host:
- * renoir/tests/backlight_test.c).
+ * tests/backlight_test.c).
  *
  * What iOS sees: the sysctls hw.backlight.* (any user may write the first four; the injected library
  * renoir/userland/inject_brightness.c is who does, for the slider of Control Center and Settings and
@@ -270,7 +270,7 @@ wr(vm_offset_t address, uint32_t value)
 	barrier();
 }
 #else
-/* renoir/tests/backlight_driver_test.c: the registers are a model of the hardware's */
+/* tests/backlight_driver_test.c: the registers are a model of the hardware's */
 extern uint32_t bl_test_rd(vm_offset_t address);
 extern void bl_test_wr(vm_offset_t address, uint32_t value);
 #define rd(a)           bl_test_rd(a)

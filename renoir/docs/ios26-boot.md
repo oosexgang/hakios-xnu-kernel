@@ -12,7 +12,7 @@ draws with materials (an alert's text). These are drawn with the GPU, and the GP
 All in WSL. `ios26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`, `dyld/`, `bin/ipsw`).
 
 ```
-renoir/kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
+kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
 cc -O2 -o renoir/tools/pacstrip renoir/tools/pacstrip.c -lcrypto
 renoir/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
 python3 renoir/tools/fips26.py ios26/dyld-strip
@@ -107,7 +107,7 @@ Host verification of the cleaned build:
 cd "$HOME/darwin_kernel/hakios-arm64e-renoir"
 export IOS="$HOME/darwin_kernel/ios27"
 export OBJ="$PWD/renoir/userland/obj27"
-bash renoir/kernel/build.sh
+bash kernel/build.sh
 renoir/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
 python3 renoir/tools/fips26.py "$IOS/dyld-strip" \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
