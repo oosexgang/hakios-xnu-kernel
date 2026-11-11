@@ -1086,8 +1086,8 @@ show_amplifiers(void)
 
 /* ---- power names of the audio subsystem ------------------------------------------------------------- */
 
-#define CMD_DB_PHYS             0x80860000UL
-#define CMD_DB_SIZE             0x20000UL
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_SIZE                0x60000UL
 
@@ -1189,8 +1189,8 @@ redwood_speaker_init(void)
 		probe_level = 0;
 		return;
 	}
-	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0) {
-		printf("speaker: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])\n");
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
+		printf("speaker: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
 		probe_level = 0;
 		return;
 	}

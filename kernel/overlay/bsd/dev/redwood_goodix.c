@@ -95,11 +95,11 @@ gpio_output(unsigned pin, bool high, unsigned pull, unsigned ma)
 
 /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
 
-#define CMD_DB_PHYS             0x80860000UL
-#define CMD_DB_SIZE             0x20000UL
-#define RSC_PHYS                0x18220000UL    /* the application processor's "DRV 2" */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
+#define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* the application processor's "DRV 2" */
 #define RSC_SIZE                0x10000UL
-#define TCS(reg)                (rsc + 0xd00 + (reg))           /* command slot set 0, an "active" one */
+#define TCS(reg)                (rsc + hakios_board()->rpmh.tcs_offset + (reg))           /* command slot set 0, an "active" one */
 #define TCS_IRQ_ENABLE          0x00
 #define TCS_IRQ_STATUS          0x04
 #define TCS_IRQ_CLEAR           0x08
@@ -1489,8 +1489,8 @@ redwood_goodix_init(void)
 		return;
 	}
 	/* (called only on a board that lists "touch-goodix": bsd/dev/redwood_input.c) */
-	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0) {
-		printf("touch: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])\n");
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
+		printf("touch: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
 		return;
 	}
 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));

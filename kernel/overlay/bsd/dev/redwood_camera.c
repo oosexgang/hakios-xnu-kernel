@@ -1429,10 +1429,10 @@ healthy(void)
  * regulators (PM8350C S2 and S10); what the SMMU has for the IFEs' streams (dt: 0x800 and 0xc00 with
  * the mask 0x4e0); camcc's PLL0 and PLL6.
  */
-#define CMD_DB_PHYS             0x80860000UL
-#define CMD_DB_SIZE             0x20000UL
-#define RSC_PHYS                0x18220000UL    /* DRV 2's (dt: rsc@18200000, drv-id 2) */
-#define RSC_TCS_BASE            0xd00
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
+#define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* DRV 2's (dt: rsc@18200000, drv-id 2) */
+#define RSC_TCS_BASE            (hakios_board()->rpmh.tcs_offset)
 #define RSC_TCS(n)              (RSC_TCS_BASE + 672 * (n))
 #define TCS_CONTROL             0x14
 #define TCS_STATUS              0x18
@@ -4166,8 +4166,8 @@ redwood_camera_init(void)
 		level = 0;
 		return;
 	}
-	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0) {
-		printf("camera: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])\n");
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
+		printf("camera: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
 		level = 0;
 		return;
 	}
