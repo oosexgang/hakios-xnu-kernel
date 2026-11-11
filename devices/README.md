@@ -50,3 +50,27 @@ The whole procedure, with what to take from the device tree and in which order t
 
 Drivers that are specific to one device's parts (a touch controller, a speaker amplifier) are code,
 not data: they live in `kernel/overlay/bsd/dev/` and are started for the boards that have the part.
+
+## Adding a kind of data
+
+When a driver needs something of a device that no section has yet (an address, a pin, a firmware
+directory), it becomes a key, not a constant in the driver. The `[spmi]` and `[buttons]` sections are a
+small example to copy; each step is one place:
+
+1. **The kernel's struct.** A field in `struct hakios_board` (`kernel/overlay/bsd/dev/hakios_board.h`),
+   with a comment that says which file and section it comes from.
+2. **The schema.** The key and its type in `SOC_SCHEMA` or `BOARD_SCHEMA` of `tools/boards.py`: what
+   every board with the chip shares goes in the SoC file, what one phone has goes in the board file.
+   If a feature cannot work without the section, say so in `FEATURE_NEEDS` or
+   `FEATURE_NEEDS_OF_BOARD`; values that can be wrong in a way worth catching get a check in `load()`.
+3. **The table.** A line in `table_text()` that writes the field.
+4. **The files.** The values in the boards that have them, each with a comment naming where in the
+   device tree or in Linux it is from, and the key explained in `devices/_template/`.
+5. **The device tree**, if the value is in one: `from_dts()` in `tools/devicetree.py`, so that
+   `tools/boards.py new --dts` fills it in for the next phone.
+6. **The driver** reads `hakios_board()->…` and says so in its log when the data is missing, rather
+   than falling back to one phone's value.
+7. **Tests.** `tests/boards_test.py` for what the tool takes and refuses, `tests/board_test.c` for what
+   the kernel sees. `make check` also fails while the template does not explain a key the schema has.
+
+Then `tools/boards.py gen` and `make check`.
