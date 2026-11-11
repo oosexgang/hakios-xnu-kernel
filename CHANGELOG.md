@@ -21,8 +21,12 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   `tools/boards.py new NAME --soc SOC --dts FILE` reads the DSI controller, the temperature sensors,
   the CPU frequency block and its groups of cores, the clock controllers' addresses, the interrupt
   controller, the cores, the PSCI method, the panel's brightness range and mode, the PMIC arbiter with
-  the keys, the SoC's own pins, the way to its other processors, and RPMh. It prints what it could not find. Two things are never in a device tree and are
+  the keys, the SoC's own pins, its SMMU, the way to its other processors, RPMh, the UFS host
+  controller, and the reserved memory of the audio and Wi-Fi DSPs. It prints what it could not find. Two things are never in a device tree and are
   filled in by hand: the display clocks' register offsets and the I/O window.
+- **`tools/boards.py compare NAME --dts FILE`** holds a board and its SoC file against a device tree:
+  each value as in the tree, different, or not in any tree. The SoC file a tool starts explains
+  itself: every value is written with what the template says of its key.
 - **`tools/boards.py status NAME`** lists every feature for a board: on, ready to be listed, or the
   section it still waits for. `tools/boards.py check` validates every file and says which and why.
 - **Drivers start by feature, not by a phone's name.** A board lists the drivers it may start in
@@ -81,7 +85,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   GLINK's queues (`hakios_glink_queue.h`), the mailbox's and the doorbells' registers
   (`hakios_ipc.h`). Each that has logic has a test of its own.
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
-  memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now.
+  memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
+  from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
+- **A guide to writing a driver**, with an example driver and its test that `make check` builds and
+  runs: [docs/writing-a-driver.md](docs/writing-a-driver.md).
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
   clock controller, RPMh, the SMMU, the PMIC arbiter and the way to the other processors were
   constants in up to eight drivers each; they are `[pins]`, `[clocks]`, `[rpmh]`, `[smmu]`, `[spmi]`
