@@ -2,10 +2,13 @@
  * Which board this is (hakios_board.h): the row of the generated table whose name the loader put in
  * /chosen/darwin-board. Also as sysctls, for user space and for a person at a shell:
  *
- *   hw.board.name          "renoir"; "unknown" when the loader named none or the table has not got it
+ *   hw.board.name          the package's name; "unknown" when the loader named none or the table has not got it
  *   hw.board.soc           "sm7350"
- *   hw.board.description   "Xiaomi Mi 11 Lite 5G"
+ *   hw.board.description   "Maker Model"
  *   hw.board.features      "cpufreq-epss ddr-rpmh ..."
+ *
+ * The table is made when the kernel is built (tools/boards.py gen, by kernel/build.sh), with a row for
+ * every device package that was there: a kernel knows the boards it was built with.
  */
 #include <libkern/libkern.h>
 #include <machine/machine_routines.h>
@@ -13,6 +16,7 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#include "hakios_board.h"
 #include "hakios_board_table.h"
 
 extern bool redwood_board_is(const char *name);        /* bsd/dev/redwood_input.c: /chosen/darwin-board */

@@ -77,7 +77,8 @@ Light readings: until a sensor driver reports through `hakios_als_report(millilu
 ## Device data
 
 The driver has no table of its own. It reads the board's row (`hakios_board()`), which comes from
-`[backlight]` in `devices/NAME/board.toml` and `[clocks]` and `[display]` in the SoC's file:
+`[backlight]` in the board file of the phone's device package (`devices/NAME/board.toml` once
+`tools/device.py add NAME` has brought it in) and `[clocks]` and `[display]` in the SoC's file:
 
 | Board | Panel | Backend | DSI | Range | Order | Mode |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -85,6 +86,9 @@ The driver has no table of its own. It reads the board's row (`hakios_board()`),
 | `redwood` (POCO X5 Pro, SM7325) | `m20_36_02_0a` AMOLED | dcs | 0xae94000 (2.5) | 8–2047 (4095 = HBM, left out) | MSB first | video |
 | `qemu-virt` | framebuffer | soft | — | — | — | — |
 | anything else | — | soft | — | — | — | — |
+
+The `renoir` and `redwood` rows are those phones' packages, kept on the `devices` branch. A kernel has
+a phone's row only when it was built with the package present.
 
 Adding a device is a `[backlight]` section in its board file. `tools/boards.py new --dts` fills it in
 from the Android device tree:
@@ -118,7 +122,7 @@ When the kernel returns to the loader, the panel goes back to the profile's init
 - `backlight_test.c`: the arithmetic (10k checks).
 - `backlight_driver_test.c`: the driver itself, unchanged, on stubs of the kernel interfaces (`tests/fakekernel`), against a model of the DSI controller and the display clocks. The model rejects anything outside the protocol: a trigger without the command engine, the FIFO written with the TPG off, a length that does not match the words, an access to a register the driver has no business with.
 - The scenarios:
-  - Renoir command mode and Redwood video mode
+  - Renoir's command mode and Redwood's video mode, on the tests' two stand-in phones (`tests/devices/`)
   - `backlight=1` reads only
   - off by default
   - an unpowered display block

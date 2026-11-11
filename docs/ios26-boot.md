@@ -3,11 +3,15 @@
 > This is the lab notebook of the bring-up: what was done, in order, with dates and measurements.
 > For how the project is organised, start with [architecture.md](architecture.md).
 >
-> Two things changed after these notes were written, and the commands below were updated for them:
+> Three things changed after these notes were written, and the commands below were updated for them:
 > - The kernel is built with `kernel/build.sh` from `kernel/overlay/` and `kernel/patches/`. The patch
 >   numbers in the text (0005 to 0022) are those of the earlier patch series; the same changes are now in
 >   the topic patches, mapped in [kernel/patches/README.md](../kernel/patches/README.md).
-> - Renoir's default boot arguments are in `devices/renoir/board.toml` (`[boot]`), not in `boot26.py`.
+> - Renoir's default boot arguments are in `[boot]` of its board file, not in `boot26.py`.
+> - The main branch no longer describes Renoir. Its board file is in the renoir package
+>   (`renoir/board.toml` on the `devices` branch); `tools/device.py add renoir` copies the package into
+>   `devices/` of a checkout. The kernel build, `inj26.sh` and `boot26.py` take the board from there, so
+>   bring it in first.
 >
 > The scripts under `ios/` expect the team's working tree (`darwin-renoir`) and an extracted IPSW beside
 > the repository; see "What is not in this repository" in the architecture document.
@@ -24,6 +28,7 @@ draws with materials (an alert's text). These are drawn with the GPU, and the GP
 All in WSL. `ios26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`, `dyld/`, `bin/ipsw`).
 
 ```
+tools/device.py add renoir             # Renoir's package, from the devices branch
 kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
 cc -O2 -o ios/tools/pacstrip ios/tools/pacstrip.c -lcrypto
 ios/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas

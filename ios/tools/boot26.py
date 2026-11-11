@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Boot iOS 27 (default), or iOS 26 with --system/--root, on a phone from RAM (--board, default renoir).
+"""Boot iOS 27 (default), or iOS 26 with --system/--root, on a phone from RAM (--board NAME: the phone's
+package, brought in with tools/device.py add; not needed when only one phone's package is here).
 No flashing, erasing or storage commands: stock fastboot boots the resident loader,
 which receives the system image, kernel and root image over USB. Reboot restores Android.
 
@@ -25,7 +26,9 @@ sys.path.insert(0, str(REPO / 'tools'))
 import boards  # noqa: E402  (devices/NAME/board.toml: what the phone must say it is, its default boot-args)
 
 p = argparse.ArgumentParser(description=__doc__)
-p.add_argument('--board', default='renoir', help='the board, as in devices/ (default: renoir)')
+p.add_argument('--board', default=os.environ.get('HAKIOS_BOARD'),
+               help='the phone, by its package\'s name (tools/boards.py list). Without it: $HAKIOS_BOARD, or the '
+                    'one package here that has a [boot] section')
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
 p.add_argument('--kernel', type=Path,
                default=DK / 'xnu-12377-hakios/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')
@@ -74,9 +77,16 @@ def check(serial, key, value):
         raise SystemExit(f'Wrong device: expected {key} {value}')
 
 
-board = boards.load()[1].get(options.board)
-if board is None or 'boot' not in board:
-    raise SystemExit(f'devices/{options.board}/board.toml has no [boot] section (tools/boards.py list)')
+bootable = {name: board for name, board in boards.load()[1].items() if 'boot' in board}
+if options.board is None:
+    if len(bootable) != 1:
+        raise SystemExit('which phone? --board NAME (here: ' + (', '.join(sorted(bootable)) or 'no package with a [boot] '
+                         'section; a phone is brought in with tools/device.py add NAME') + ')')
+    options.board = next(iter(bootable))
+board = bootable.get(options.board)
+if board is None:
+    raise SystemExit(f'no board "{options.board}" with a [boot] section here (tools/boards.py list); a phone is '
+                     f'brought in with tools/device.py add {options.board}')
 boot = board['boot']
 args = {a.split('=', 1)[0]: a for a in boot['bootargs']}
 for a in options.boot_arg:

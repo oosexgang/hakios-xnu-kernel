@@ -94,6 +94,8 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # fb_base = 0xE1000000              # what the loader prints at start: "display W x H at ..." (docs/porting.md,
 #                                   # step 3). Only the emulator's board goes without.
 # log_other_cpu = true              # keep notes in the log partition while a kernel starts on another core
+# uefi_charger = true               # the firmware has Qualcomm's charger protocols: the loader reads the battery
+#                                   # through them and hands it to the kernel (feature "battery-uefi")
 
 # How ios/tools/boot26.py starts this phone (--board NAME).
 # [boot]

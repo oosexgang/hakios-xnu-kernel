@@ -5,19 +5,25 @@
   tools/boards.py show BOARD           one board with its SoC's values filled in
   tools/boards.py status BOARD         what the board has on, what it could turn on, what the rest waits for
   tools/boards.py check                validate every file; non-zero exit and the reasons if one is wrong
-  tools/boards.py gen [--check]        write the kernel's table (kernel/overlay/bsd/dev/hakios_board_table.h),
-                                       the loader's (loader/platforms.h) and user space's
-                                       (ios/userland/hakios_boards.h); --check: only say whether the
-                                       committed ones are up to date
+  tools/boards.py gen [--out DIR]      write the tables the code is built with, for the boards that are there:
+                                       the kernel's (hakios_board_table.h), the loader's (platforms.h) and
+                                       user space's (hakios_boards.h), into DIR (build/boards). The builds
+                                       and the tests run this themselves.
   tools/boards.py new NAME --soc SOC [--dts FILE [--panel NODE]]
                                        start devices/NAME/board.toml (and soc/SOC.toml if it is not there);
                                        with --dts, fill in what an Android device tree source says
 
 A board file says what a device has; a SoC file says where the blocks of its chip are, once for every
-board with that chip. The kernel is built with one table of all boards and picks its row at boot by
-/chosen/darwin-board. docs/porting.md walks through adding a device.
+board with that chip. The kernel is built with one table of the boards that are there and picks its row
+at boot by /chosen/darwin-board. docs/porting.md walks through adding a device.
+
+A board is a device package: a directory NAME with board.toml in it. Packages are looked for in
+devices/ and in the directories of --devices DIR and of HAKIOS_DEVICES; SoC files in soc/ and --soc DIR.
+The repository itself has the emulator's board and a template; phones are packages kept apart from it
+(tools/device.py brings one in).
 """
 import argparse
+import os
 import re
 import sys
 import tomllib
@@ -30,9 +36,16 @@ ROOT = Path(__file__).resolve().parents[1]
 DEVICES = ROOT / 'devices'
 SOCS = ROOT / 'soc'
 BOARD_HEADER = ROOT / 'kernel/overlay/bsd/dev/hakios_board.h'
-TABLE = ROOT / 'kernel/overlay/bsd/dev/hakios_board_table.h'
-PLATFORMS = ROOT / 'loader/platforms.h'
-USER_BOARDS = ROOT / 'ios/userland/hakios_boards.h'
+# What `gen` writes, into one directory (--out; build/boards unless told otherwise). None of it is kept
+# in the repository: it is made from whichever device packages are there when something is built.
+OUT = ROOT / 'build/boards'
+KERNEL_TABLE = 'hakios_board_table.h'   # the kernel's table (bsd/dev/hakios_board.c includes it)
+LOADER_TABLE = 'platforms.h'            # the loader's (loader/loader.c)
+USER_TABLE = 'hakios_boards.h'          # user space's (ios/userland/)
+# Where else device packages and SoC files are looked for, besides devices/ and soc/: the directories of
+# --devices and --soc, and of HAKIOS_DEVICES (as PATH is written). A package is DIR/NAME/board.toml.
+MORE_DEVICES = []
+MORE_SOCS = []
 
 NAME = re.compile(r'^[a-z0-9][a-z0-9-]*$')
 
@@ -74,7 +87,7 @@ BOARD_SCHEMA = {
             'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'screen': {'statusbar_leading_shift': (int, True)},
-    'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False)},
+    'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
@@ -86,6 +99,33 @@ PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
+
+
+def shown(path):
+    """A path as it is said to people: from the repository's top where it is inside it."""
+    try:
+        return Path(path).resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return Path(path)
+
+
+def soc_files():
+    """Every SoC file there is, soc/'s first: a name that is there twice is the first one's."""
+    seen = {}
+    for directory in [SOCS] + MORE_SOCS:
+        for path in sorted(Path(directory).glob('*.toml')):
+            seen.setdefault(path.stem, path)
+    return [seen[name] for name in sorted(seen)]
+
+
+def board_files():
+    """Every device package's board file, devices/'s first (the template is not a board)."""
+    seen = {}
+    for directory in [DEVICES] + MORE_DEVICES:
+        for path in sorted(Path(directory).glob('*/board.toml')):
+            if not path.parent.name.startswith('_'):
+                seen.setdefault(path.parent.name, path)
+    return [seen[name] for name in sorted(seen)]
 
 
 class Problems(list):
@@ -119,6 +159,9 @@ def feature_needs(feature, board, soc):
         needs.append(f'channels in [spmi] of {soc_file}')
     if feature == 'display-scan' and isinstance(display, dict) and ('intf1' not in display or 'clocks' not in soc):
         needs.append(f'intf1 in [display] and [clocks] in {soc_file}')
+    light = board.get('backlight')
+    if feature == 'display-scan' and isinstance(light, dict) and light.get('panel_mode') == 'video':
+        needs.append('a command-mode panel ([backlight] says video)')
     return needs
 
 
@@ -186,7 +229,7 @@ def check_table(where, table, schema, problems):
 
 
 def check_file(path, data, schema, problems):
-    rel = path.relative_to(ROOT)
+    rel = shown(path)
     check_table(rel, data, schema[''], problems)
     for section, value in data.items():
         if not isinstance(value, dict):
@@ -202,27 +245,25 @@ def load(problems=None):
     own = problems is None
     problems = Problems() if own else problems
     socs, boards = {}, {}
-    for path in sorted(SOCS.glob('*.toml')):
+    for path in soc_files():
         try:
             data = tomllib.loads(path.read_text())
         except tomllib.TOMLDecodeError as error:
-            problems.add(path.relative_to(ROOT), f'not TOML: {error}')
+            problems.add(shown(path), f'not TOML: {error}')
             continue
         check_file(path, data, SOC_SCHEMA, problems)
         if data.get('name') != path.stem:
-            problems.add(path.relative_to(ROOT), f'name = {data.get("name")!r}: the file is {path.stem}.toml')
+            problems.add(shown(path), f'name = {data.get("name")!r}: the file is {path.stem}.toml')
         socs[path.stem] = data
     known = features_of_header()
-    for path in sorted(DEVICES.glob('*/board.toml')):
-        rel = path.relative_to(ROOT)
+    for path in board_files():
+        rel = shown(path)
         try:
             data = tomllib.loads(path.read_text())
         except tomllib.TOMLDecodeError as error:
             problems.add(rel, f'not TOML: {error}')
             continue
         name = path.parent.name
-        if name.startswith('_'):
-            continue                    # (the template)
         before = len(problems)
         check_file(path, data, BOARD_SCHEMA, problems)
         well_formed = len(problems) == before   # (what follows compares values: only if they are of the right kind)
@@ -242,8 +283,6 @@ def load(problems=None):
         boards[name] = data
         if not well_formed:
             continue
-        if 'display-scan' in data.get('features', []) and data.get('backlight', {}).get('panel_mode') == 'video':
-            problems.add(rel, 'feature "display-scan" is for a command-mode panel; [backlight] says video')
         light = data.get('backlight', {})
         if light.get('type') == 'dcs':
             for key in ('panel_mode', 'min', 'max', 'bytes'):
@@ -299,6 +338,9 @@ def load(problems=None):
         for argument in data.get('boot', {}).get('bootargs', []):
             if not re.fullmatch(r'[A-Za-z0-9_-]+(=\S*)?', argument):
                 problems.add(f'{rel} [boot]', f'bootargs: "{argument}" is not NAME or NAME=VALUE')
+        named = [argument.split('=')[0] for argument in data.get('boot', {}).get('bootargs', [])]
+        for argument in sorted({name for name in named if named.count(name) > 1}):
+            problems.add(f'{rel} [boot]', f'bootargs: "{argument}" is there twice')
         if 'loader' in data:
             if 'platform' not in soc:
                 problems.add(rel, f'[loader] needs [platform] in soc/{data.get("soc")}.toml')
@@ -343,13 +385,13 @@ def table_text(socs, boards):
     known = features_of_header()
     out = ['/*',
            ' * GENERATED by tools/boards.py gen from devices/NAME/board.toml and soc/SOC.toml: do not edit.',
-           ' * To change a board, change its file there and run the tool; `tools/boards.py gen --check`',
-           ' * (part of `make check`) fails while this file is not what the tool writes.',
+           ' * It has a row for every device package that was there when it was made (the build makes it',
+           ' * anew each time); to change a board, change its file.',
            ' */',
            '#ifndef _HAKIOS_BOARD_TABLE_H',
            '#define _HAKIOS_BOARD_TABLE_H',
            '',
-           '#include "hakios_board.h"',
+           '/* (struct hakios_board and the features are hakios_board.h, which bsd/dev/hakios_board.c includes first) */',
            '',
            'const struct hakios_board hakios_boards[] = {']
     for name in sorted(boards):
@@ -464,7 +506,7 @@ def table_text(socs, boards):
 
 
 def platforms_text(socs, boards):
-    """loader/platforms.h: the loader's description of every board with a [loader] section."""
+    """platforms.h: the loader's description of every board with a [loader] section."""
     out = ['/*',
            ' * GENERATED by tools/boards.py gen from devices/NAME/board.toml ([loader]) and soc/SOC.toml',
            ' * ([platform]): do not edit. Included by loader.c, which has struct platform and says what each',
@@ -486,6 +528,7 @@ def platforms_text(socs, boards):
                 fields.append(f'.{key} = {platform[key]:#010x}')
         fields += [f'.psci_hvc = {int(platform["psci"] == "hvc")}',
                    f'.log_other_cpu = {int(loader.get("log_other_cpu", False))}',
+                   f'.uefi_charger = {int(loader.get("uefi_charger", False))}',
                    f'.cores = {platform["cores"]}', f'.core_shift = {platform["core_shift"]}',
                    f'.timeout_scale = {platform.get("timeout_scale", 0)}',
                    f'.small_cores = {platform.get("small_cores", 0):#x}',
@@ -504,7 +547,7 @@ def platforms_text(socs, boards):
 
 
 def user_boards_text(socs, boards):
-    """ios/userland/hakios_boards.h: what the libraries injected into iOS's processes know of each board."""
+    """hakios_boards.h: what the libraries injected into iOS's processes know of each board."""
     out = ['/*',
            ' * GENERATED by tools/boards.py gen from devices/NAME/board.toml ([screen]): do not edit.',
            ' * What user space is told of a board. The libraries of ios/userland/ read the board\'s name from',
@@ -529,6 +572,26 @@ def user_boards_text(socs, boards):
     return '\n'.join(out)
 
 
+def generated(socs, boards):
+    """What gen writes: {file name: text}."""
+    return {KERNEL_TABLE: table_text(socs, boards), LOADER_TABLE: platforms_text(socs, boards),
+            USER_TABLE: user_boards_text(socs, boards)}
+
+
+def write_generated(out, socs, boards):
+    """Write the tables into the directory `out`; a file that is what it would be is left alone, so that
+    nothing is recompiled for it. Returns the names of the files that were written."""
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, text in generated(socs, boards).items():
+        path = out / name
+        if not path.exists() or path.read_text() != text:
+            path.write_text(text)
+            written.append(name)
+    return written
+
+
 def toml_value(value):
     if isinstance(value, bool):
         return 'true' if value else 'false'
@@ -545,7 +608,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     board_path = DEVICES / name / 'board.toml'
     soc_path = SOCS / f'{soc_name}.toml'
     if board_path.exists():
-        raise SystemExit(f'{board_path.relative_to(ROOT)} is there already')
+        raise SystemExit(f'{shown(board_path)} is there already')
     soc, board, notes = from_dts(dts.read_text(errors='replace'), panel) if dts else ({}, {}, [])
     light = board.get('backlight', {'type': 'soft'})
     lines = [f'# {description or name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
@@ -575,7 +638,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         lines.append('')
     board_path.parent.mkdir(parents=True)
     board_path.write_text('\n'.join(lines))
-    print(f'wrote {board_path.relative_to(ROOT)}')
+    print(f'wrote {shown(board_path)}')
     if not soc_path.exists():
         text = [f'# {soc_name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
                 '# What every board with this SoC shares: where its blocks are (docs/porting.md).',
@@ -601,9 +664,9 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
             text += [f'{key} = {toml_value(value)}' for key, value in soc['platform'].items()]
             text.append('')
         soc_path.write_text('\n'.join(text))
-        print(f'wrote {soc_path.relative_to(ROOT)}')
+        print(f'wrote {shown(soc_path)}')
     else:
-        print(f'{soc_path.relative_to(ROOT)} is there already: left as it is')
+        print(f'{shown(soc_path)} is there already: left as it is')
     for note in notes:
         print(f'note: {note}')
     print('next: tools/boards.py check, then docs/porting.md')
@@ -611,12 +674,16 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--devices', action='append', default=[], type=Path, metavar='DIR',
+                        help='a directory of device packages (DIR/NAME/board.toml) to take as well as devices/')
+    parser.add_argument('--soc', action='append', default=[], type=Path, metavar='DIR', dest='soc_dirs',
+                        help='a directory of SoC files to take as well as soc/')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list')
     commands.add_parser('show').add_argument('board')
     commands.add_parser('status').add_argument('board')
     commands.add_parser('check')
-    commands.add_parser('gen').add_argument('--check', action='store_true')
+    commands.add_parser('gen').add_argument('--out', type=Path, default=OUT, metavar='DIR')
     new = commands.add_parser('new')
     new.add_argument('name')
     new.add_argument('--soc', required=True)
@@ -624,6 +691,9 @@ def main():
     new.add_argument('--panel')
     new.add_argument('--description')
     options = parser.parse_args()
+    MORE_DEVICES.extend(options.devices)
+    MORE_DEVICES.extend(Path(d) for d in os.environ.get('HAKIOS_DEVICES', '').split(os.pathsep) if d)
+    MORE_SOCS.extend(options.soc_dirs)
 
     if options.command == 'new':
         new_board(options.name, options.soc, options.dts, options.panel, options.description)
@@ -662,18 +732,10 @@ def main():
                 for k, v in value.items():
                     print(f'  {k} = {toml_value(v)}')
     elif options.command == 'gen':
-        stale = 0
-        for path, text in ((TABLE, table_text(socs, boards)), (PLATFORMS, platforms_text(socs, boards)),
-                           (USER_BOARDS, user_boards_text(socs, boards))):
-            if not options.check:
-                path.write_text(text)
-                print(f'wrote {path.relative_to(ROOT)}')
-            elif not path.exists() or path.read_text() != text:
-                print(f'{path.relative_to(ROOT)} is not what devices/ and soc/ say: run tools/boards.py gen', file=sys.stderr)
-                stale = 1
-            else:
-                print(f'{path.relative_to(ROOT)}: up to date')
-        return stale
+        written = write_generated(options.out, socs, boards)
+        names = ', '.join(sorted(boards))
+        print(f'{shown(options.out)}: {len(boards)} boards ({names}); ' +
+              (f'wrote {", ".join(written)}' if written else 'nothing changed'))
     return 0
 
 

@@ -8,11 +8,11 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | File | What it is |
 | --- | --- |
 | `loader.c` | The loader itself. `struct platform` there says what it needs to know of a machine. |
-| `platforms.h` | The boards it knows. **Generated** by `tools/boards.py gen` from `devices/NAME/board.toml` (`[loader]`) and `soc/SOC.toml` (`[platform]`). |
+| `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`[loader]` of `devices/NAME/board.toml`) and `soc/SOC.toml` (`[platform]`). |
 | `efi.h` | The parts of UEFI it uses. |
 | `identity.h`, `mkidentity.py` | Which iPhone iOS is told it runs on, taken from that iPhone's own device tree. |
 | `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments. |
-| `build.sh` | Builds `loader.efi` with clang and lld. No EDK2. The build is reproducible. |
+| `build.sh` | Makes `platforms.h`, then builds `loader.efi` with clang and lld. No EDK2. The build is reproducible. |
 
 ## How it knows the board
 
@@ -21,7 +21,15 @@ one that matches. A display that matches none is QEMU's. The board's name then g
 `/chosen/darwin-board`, where the kernel finds its own row (`kernel/overlay/bsd/dev/hakios_board.c`).
 
 So a new device needs no code here: its `[loader]` section and its SoC's `[platform]` section, then
-`tools/boards.py gen`. [docs/porting.md](../docs/porting.md) says where each value comes from.
+`build.sh`. [docs/porting.md](../docs/porting.md) says where each value comes from.
+
+The loader knows the boards whose packages were present when it was built. The repository describes
+no phone: `tools/device.py add NAME` brings a phone's package in from the `devices` branch. Built with
+none, the loader knows only the emulator's board.
+
+No phone is named in `loader.c`. What differs between boards beyond the framebuffer is in `[loader]`
+as well: `uefi_charger = true` says the firmware has Qualcomm's charger protocols, and the loader then
+reads the battery through them.
 
 ## Where it runs
 

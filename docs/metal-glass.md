@@ -12,7 +12,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
 
 | Piece | Where | State |
 | --- | --- | --- |
-| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/redwood_adreno.c`; the profile is `[gpu]` of `devices/renoir/board.toml` | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
+| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/redwood_adreno.c`; the profile is `[gpu]` of the renoir package's board file (`renoir/board.toml` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
 | GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/RedwoodGPU.cpp` | Mesa's shim and the Metal device both use it |
 | AIR → NIR → ir3 compiler (Mesa frontend) | `userland/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the iOS 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`userland/docs/air.md`) |
 | Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/redwoodmetal.m` | Written and measured against iOS 16 and 26's Metal; not packaged for iOS 27 |
@@ -67,6 +67,7 @@ the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims
 ## What the next person with the phone can do in an afternoon
 
 1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with `fw-renoir/` in
-   place. Confirm the GPU block starts on 12377, and read the temperature lines.
+   place and the renoir package brought in before the kernel was built (`tools/device.py add renoir`).
+   Confirm the GPU block starts on 12377, and read the temperature lines.
 2. On the build machine: `userland/tools/metallib.py` on iOS 27's `QuartzCore.framework/default.metallib`, then
    `userland/tools/air/check.sh`. The number of iOS 27 pipelines our compiler accepts tells how far step 4 is.

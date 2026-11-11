@@ -6,8 +6,8 @@
 make check
 ```
 
-It must pass. It runs the lint, validates the board files, checks that generated files are current and
-runs the host tests. CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
+It must pass. It runs the lint, validates the board and SoC files, checks that `docs/boot-args.md` is
+current and runs the host tests. CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
 a change to a driver, `kernel/syntax-check.sh --tree DIR` says in seconds whether it still compiles,
 without the kernel toolchain.
 
@@ -15,7 +15,8 @@ without the kernel toolchain.
 
 | The change | Goes in | Then |
 | --- | --- | --- |
-| A new phone, or a value of an existing one | `devices/NAME/board.toml`, `soc/SOC.toml` | `tools/boards.py gen` |
+| A new phone, or a value of an existing one | Its device package on the `devices` branch: `NAME/board.toml`, with its README and notes. Not `devices/NAME` on the main branch, which git ignores there. | `tools/boards.py check`, with the package in `devices/` of a checkout of the main branch (`tools/device.py add NAME --from DIR` copies it there from a directory and checks it) |
+| A new SoC, or a value of an existing one | `soc/SOC.toml` on the main branch | `tools/boards.py check` |
 | A driver, or anything else HakiOS adds to the kernel | `kernel/overlay/` | — |
 | A change to one of Apple's files | An assembled tree, then `kernel/export.sh` | Never edit `kernel/patches/*.patch` by hand: `kernel/verify.sh` rejects it. |
 | A boot argument | A comment naming it as `name=…` beside its read | `make docs` |
@@ -56,8 +57,8 @@ its source named in a comment.
 
 - One change per commit, in the imperative, with a body that says what changed and why.
 - Name the paths. Say how it was verified, and what was not.
-- Regenerate before committing: `tools/boards.py gen`, `make docs`, `kernel/export.sh` if you worked
-  in a tree.
+- Regenerate before committing: `make docs`, `kernel/export.sh` if you worked in a tree. The board
+  tables are not committed: the builds make them from the packages that are present.
 
 ## Style
 

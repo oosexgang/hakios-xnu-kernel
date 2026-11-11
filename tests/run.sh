@@ -27,14 +27,20 @@ python3 "$HERE/tools_test.py" 2>&1 | tail -3 || failed=1
 echo "== boards (devices/, soc/, tools/boards.py)"
 python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
 "$HERE/../tools/boards.py" check || failed=1
-"$HERE/../tools/boards.py" gen --check || failed=1
+echo "== device packages (tools/device.py)"
+python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
+# The tables the code under test is built with: the repository's own boards and the tests' two phones
+# (tests/devices), which stand in for real ones -- device packages are not part of this repository.
+BOARDS=$WORK/boards
+"$HERE/../tools/boards.py" --devices "$HERE/devices" check || failed=1
+"$HERE/../tools/boards.py" --devices "$HERE/devices" gen --out "$BOARDS" || failed=1
 
 # the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
 # loader/build.sh; left out where they are not installed)
 if command -v clang > /dev/null && command -v lld-link > /dev/null; then
-	echo "== loader (loader/loader.c with the generated loader/platforms.h)"
+	echo "== loader (loader/loader.c with the generated platforms.h)"
 	if clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
-		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -c "$HERE/../loader/loader.c" -o "$WORK/loader.obj" &&
+		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I"$BOARDS" -c "$HERE/../loader/loader.c" -o "$WORK/loader.obj" &&
 	    lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \
 		"/out:$WORK/loader.efi" "$WORK/loader.obj"; then
 		echo "loader.efi: $(stat -c %s "$WORK/loader.efi") bytes, ok"
@@ -60,7 +66,7 @@ run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 # the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE/fakekernel" -I"$SRC" "$HERE/fakekernel/fakekernel.c")
+	-I"$HERE/fakekernel" -I"$SRC" -I"$BOARDS" "$HERE/fakekernel/fakekernel.c")
 scenarios() {
 	local runner=$1 binary=$2 scenario
 	for scenario in $($runner "$binary"); do

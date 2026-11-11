@@ -1,7 +1,8 @@
-# Xiaomi Mi 11 Lite 5G. Sources: the phone's Android device tree (dtbo: xiaomi-sm7350-common, the panel
-# dsi_k9_36_02_0a_*_dsc_cmd) and what was measured on the phone (docs/ios26-boot.md).
-name = "renoir"                     # what the loader puts in /chosen/darwin-board
-description = "Xiaomi Mi 11 Lite 5G"
+# A test phone with a command-mode panel: the stand-in the host tests run the kernel's drivers against
+# (tests/run.sh takes this directory as a device search path). Its values are those of a real SM7350
+# phone, so that the tests compute what a phone computes; it is not a device anybody boots.
+name = "phone-cmd"
+description = "Test phone, command-mode panel"
 soc = "sm7350"
 
 # What this board has a working driver for. The kernel starts a driver only where its feature is
@@ -11,9 +12,6 @@ features = [
     "touch-ft3658u",
     "display-scan",                 # a command-mode panel: frames are written ahead of its readout (fb_scan)
     "gpu-a660",                     # the Adreno of [gpu]; started with gpu=1 only (docs/metal-glass.md)
-    # Not here: speaker, microphones, haptics, flashlight, camera and Wi-Fi. The drivers in the kernel are wired for
-    # redwood's parts (AW88261, AW86927, the PM8350C's flash, its cameras, a WCN6750); this phone's
-    # (a TFA9873, a PM8350B actuator, a WCN6855 ...) get their own drivers and features when ported.
 ]
 
 # The panel's light (docs/backlight.md). A command-mode AMOLED panel whose brightness is MIPI DCS 0x51.
@@ -30,7 +28,7 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 [thermal]
 floor_mhz = [1000, 1100, 1100]
 
-# The keys on the PMICs (xiaomi-sm7350-common.dtsi): a peripheral is SPMI slave << 8 | the high byte of
+# The keys on the PMICs: a peripheral is SPMI slave << 8 | the high byte of
 # its registers.
 [buttons]
 pon = 0x013                         # pon_hlos@1300 of the PMK8350 (slave 0): power, and volume down on RESIN_N
@@ -40,7 +38,7 @@ volume_up_name = "GPIO6 of the PM8350"
 
 # The audio DSP, and the battery manager behind it.
 [adsp]
-firmware = "fw-audio-renoir"        # the root's directory with this phone's adsp.mdt and its parts
+firmware = "fw-audio-cmd"        # the root's directory with this phone's adsp.mdt and its parts
 memory_size = 0x03000000            # 48 MiB of the DSP's reserved memory (adsp@86700000)
 charge_counter_divisor = 100        # this gauge counts charge in 1/100 uAh (qti_battery_charger.c)
 
@@ -49,7 +47,7 @@ charge_counter_divisor = 100        # this gauge counts charge in 1/100 uAh (qti
 [gpu]
 model = "Adreno 642"
 chip_id = 0x06060010                # qcom,chipid
-firmware = "fw-renoir"              # the directory of the small image with this phone's a660_zap.*
+firmware = "fw-cmd"              # the directory of the small image with this phone's a660_zap.*
 gmem_kb = 1536                      # adreno-gpulist.h: gmem_size
 primitive_fifo = 0x00300000         # adreno-gpulist.h: prim_fifo_threshold
 hang_cycles = 0x3ffff               # adreno-gpulist.h: hang_detect_cycles
@@ -67,17 +65,12 @@ default_speed = 4                   # which of them to run at, counted from 1
 [screen]
 statusbar_leading_shift = 24        # points: the status bar's clock and what follows it move right, past the camera
 
-# No [loader] section yet: this phone is started by the resident USB loader of the team's working tree,
-# which reports the board's name itself. To start it with loader/ under a UEFI, add
-#   [loader]
-#   fb_base = 0x...                 # what loader/ prints at start: "display W x H at ..."
-
-# How the boot tool starts this phone (ios/tools/boot26.py --board renoir): what stock fastboot must say it
+# How the boot tool starts this phone (ios/tools/boot26.py --board NAME): what stock fastboot must say it
 # is, how many cores the kernel is given, and the boot arguments of a plain run. Touch, buttons and the
 # CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their iOS 27 ports
 # land (docs/ios26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
 [boot]
-fastboot_product = "renoir"
+fastboot_product = "phone-cmd"
 cpus = 8
 bootargs = [
     "haptic=0", "cpufreq=1", "gpu=0",

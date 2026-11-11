@@ -41,7 +41,8 @@ change while running, for tuning without a new kernel.
 ## Device data
 
 The driver reads the board's row (`hakios_board()`): `[thermal]` and `[cpufreq]` of the SoC's file, and
-`[thermal]` of the board's. For `renoir` (SM7350) and `redwood` (SM7325):
+`[thermal]` of the board's. For `renoir` (SM7350) and `redwood` (SM7325), whose board files are their
+packages on the `devices` branch:
 - TSENS `tsens_tm_physical` at 0x0c263000 and 0x0c265000;
 - EPSS at 0x18591000, three groups of 0x1000;
 - floors 1000/1100/1100 MHz.

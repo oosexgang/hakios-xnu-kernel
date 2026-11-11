@@ -34,7 +34,7 @@ A reboot brings Android back.
 
 | Layer | Where | Changes when |
 | --- | --- | --- |
-| **Device data** | `devices/NAME/board.toml`, `soc/SOC.toml` | A new phone, or a new SoC. No code. |
+| **Device data** | A device package per phone (`NAME/board.toml`, kept on the `devices` branch), `soc/SOC.toml` on the main branch | A new phone, or a new SoC. No code. |
 | **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
 | **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `ios/` | Apple's kernel or iOS changes, or the port learns something new. Same for every device. |
 
@@ -44,18 +44,37 @@ file to it. Where that is not yet true, [drivers.md](drivers.md) says so driver 
 ## Device data
 
 ```
-devices/renoir/board.toml ─┐
-soc/sm7350.toml ───────────┤  tools/boards.py gen
-                           ├──────────────────────►  kernel/overlay/bsd/dev/hakios_board_table.h  (the kernel's table)
-devices/…  soc/… ──────────┘                         loader/platforms.h                            (the loader's)
+device packages (NAME/board.toml) ─┐
+  from the devices branch, or any  │  tools/boards.py gen       build/boards/hakios_board_table.h  (the kernel's table)
+  directory on the search path     ├──────────────────────►     build/boards/platforms.h           (the loader's)
+soc/sm7350.toml, soc/… ────────────┘  (run by the builds)       build/boards/hakios_boards.h       (the injected libraries')
 ```
 
+- The repository describes no phone. `devices/` on the main branch has the emulator's board
+  (`devices/qemu-virt/`) and a template (`devices/_template/`).
+- A phone is a **device package**: a directory `NAME/` with its `board.toml`, its README and its notes.
+  Packages are kept on the `devices` branch, one directory per phone (`renoir/`, `redwood/`).
+  `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/NAME/` of a
+  checkout, which git ignores there: a package is changed where it is kept. `tools/device.py available`
+  lists what the branch has, `list` what is here, `remove` takes one out, and `--from SOURCE` takes
+  packages from a directory or another branch or commit.
+- `tools/boards.py` looks for packages in `devices/`, in `--devices DIR` and in the directories of the
+  environment variable `HAKIOS_DEVICES` (written like `PATH`); for SoC files in `soc/` and `--soc DIR`.
 - A **board file** says what the device has: its SoC, the drivers it may start (`features`), how its
   panel's brightness is set, thermal floors, how the loader recognises it, its default boot arguments.
 - A **SoC file** says where the blocks of the chip are: interrupt controller, cores, clock
-  controllers, DSI controller, temperature sensors, the CPU frequency block.
-- Both generated files are committed. `make check` fails if they are not what the data says, so
-  the data and the code cannot drift apart.
+  controllers, DSI controller, temperature sensors, the CPU frequency block. It is shared by every
+  board with that chip, so it stays in `soc/` on the main branch.
+- The generated files are not committed. `tools/boards.py gen` writes them into `build/boards/`
+  (ignored by git) or into the directory given with `--out`, and every build runs it itself, some into
+  a directory of their own: `kernel/build.sh` (which puts the kernel's table
+  into the assembled tree as `bsd/dev/hakios_board_table.h`, only when it changed), `loader/build.sh`,
+  `ios/userland/inj26.sh`, `kernel/syntax-check.sh` and `tests/run.sh`. So the kernel, the loader and
+  the libraries know the boards whose packages were present when they were built, and the data and the
+  code cannot drift apart. Built with no package, they know only the emulator's board.
+- The host tests do not use real phones. They run against two stand-ins in `tests/devices/`:
+  `phone-cmd` (a command-mode panel on sm7350) and `phone-video` (a video-mode panel on sm7325, every
+  part driver listed).
 - At boot the kernel finds its row by `/chosen/darwin-board`. A driver asks
   `hakios_board_has(HAKIOS_HAS_…)` before it starts and reads addresses from `hakios_board()`.
   A board that is not in the table has no feature: nothing of a phone is touched on a machine nobody
@@ -69,7 +88,7 @@ Details and every key: [devices/README.md](../devices/README.md), `devices/_temp
 | Path | Contents |
 | --- | --- |
 | `kernel/UPSTREAM` | The Apple release, pinned by commit. |
-| `kernel/overlay/` | The files HakiOS adds (130 of them), as ordinary sources at their place in the XNU tree. |
+| `kernel/overlay/` | The files HakiOS adds (129 of them), as ordinary sources at their place in the XNU tree. |
 | `kernel/patches/` | The changes to Apple's own 89 files, as 7 patches by topic. |
 | `kernel/assemble.sh`, `export.sh`, `verify.sh` | Make the tree that is compiled; take work back; check the round trip. |
 | `kernel/syntax-check.sh` | Compile what HakiOS adds for syntax and types, with any clang. |
@@ -98,7 +117,10 @@ More: [kernel/README.md](../kernel/README.md), [kernel/patches/README.md](../ker
 
 `loader/loader.c` is one file: UEFI glue, the payload format ("XNUP": kernel + images + boot
 arguments), the device tree it builds for XNU, the USB link. It needs nothing of EDK2 to build.
-Its knowledge of machines is `loader/platforms.h`, generated from the board files.
+Its knowledge of machines is `platforms.h`, which `loader/build.sh` generates from the device packages
+that are present. No phone is named in its code: what differs between boards, down to whether the battery
+is read through the firmware's Qualcomm charger protocols (`uefi_charger`), is in the board file's
+`[loader]` section.
 More: [loader/README.md](../loader/README.md).
 
 ## iOS user space
@@ -134,6 +156,9 @@ against the scripts that fetch).
 
 The last row is the gap between this repository and booting Renoir from a clean checkout.
 Everything under `make check` and the kernel build itself do not depend on it.
+
+A phone's device package is in the repository, but not on the main branch: `tools/device.py add NAME`
+brings it into a checkout from the `devices` branch ("Device data" above).
 
 ## Legacy
 

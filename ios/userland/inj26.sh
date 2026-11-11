@@ -31,8 +31,10 @@ esac
 DYN="xnu-clang -arch arm64e -isysroot ${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk -O1 -mios-version-min=16.0"
 $DYN -dynamiclib -install_name /redwood/lib/libredwood.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood.dylib $O/src/inject.c
 # the status bar's clock past the hole punch: ios/userland/inject_statusbar.c (16.5's statusbar.c checks 16.5's addresses)
-$DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-sb.dylib $O/src/inject_sb.c $RN/userland/inject_statusbar.c
-$DYN -dynamiclib -install_name /redwood/lib/libredwood-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-statusbar.dylib $RN/userland/inject_statusbar.c
+# (what it knows of each board, hakios_boards.h, is made from the device packages that are there now)
+"$RN/../tools/boards.py" gen --out "$O/boards" > /dev/null
+$DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-sb.dylib $O/src/inject_sb.c -I$O/boards $RN/userland/inject_statusbar.c
+$DYN -dynamiclib -install_name /redwood/lib/libredwood-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-statusbar.dylib -I$O/boards $RN/userland/inject_statusbar.c
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
 # volume, Control Center's slider included; the samples go to /dev/redwood-audio when the kernel has it
 $DYN -bundle -framework CoreFoundation -o $O/RedwoodAudio "$(dirname "$RN")/userland/userland/src/audio_plugin.c"

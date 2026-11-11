@@ -254,16 +254,16 @@ phone(const char *name, bool video)
 	c.gcc_disp_ahb = 0x8000000b & ~1u;      /* (as the firmware leaves it: asked off) */
 	c.gdsc = 0x80000000;
 	c.ahb = 0x80000000;                     /* off */
-	c.gdsc_offset = strcmp(name, "renoir") == 0 ? 0x3000 : 0x1004;
-	c.ahb_offset = strcmp(name, "renoir") == 0 ? 0x2080 : 0x1050;
+	c.gdsc_offset = strcmp(name, "phone-cmd") == 0 ? 0x3000 : 0x1004;
+	c.ahb_offset = strcmp(name, "phone-cmd") == 0 ? 0x2080 : 0x1050;
 }
 
 static void
-renoir_dcs(void)
+command_panel(void)
 {
 	uint32_t ctrl0;
 
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	ctrl0 = m.ctrl;
 	boot_args = "backlight=2 bl_level=500";
 	hakios_backlight_init();
@@ -296,14 +296,14 @@ renoir_dcs(void)
 }
 
 static void
-redwood_video(void)
+video_panel(void)
 {
-	phone("redwood", true);
+	phone("phone-video", true);
 	boot_args = "backlight=2 bl_level=1000";
 	hakios_backlight_init();
 	WAIT_FOR(last_sent() == 2047, 2000);
 	settle();
-	CHECK(last_sent() == 2047, "redwood's top without HBM: %u", last_sent());
+	CHECK(last_sent() == 2047, "the top without the high-brightness range: %u", last_sent());
 	CHECK(m.cmd_mode_during_send, "the command engine on for the command");
 	CHECK(!(m.ctrl & 4), "... and off again: %#x", m.ctrl);
 	CHECK(m.errors == 0, "%s", m.error);
@@ -312,7 +312,7 @@ redwood_video(void)
 static void
 look_only(void)
 {
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	boot_args = "backlight=1";
 	hakios_backlight_init();
 	usleep(200000);
@@ -325,7 +325,7 @@ look_only(void)
 static void
 off_by_default(void)
 {
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	boot_args = "";
 	hakios_backlight_init();
 	usleep(100000);
@@ -337,7 +337,7 @@ off_by_default(void)
 static void
 display_unpowered(void)
 {
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	c.gdsc = 0;
 	boot_args = "backlight=2";
 	hakios_backlight_init();
@@ -349,7 +349,7 @@ display_unpowered(void)
 static void
 deaf_controller(void)
 {
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	m.deaf = true;
 	boot_args = "backlight=2";
 	hakios_backlight_init();
@@ -384,7 +384,7 @@ soft_unknown_board(void)
 static void
 automatic_brightness(void)
 {
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	boot_args = "backlight=2 bl_level=500";
 	hakios_backlight_init();
 	WAIT_FOR(m.sent_n >= 1, 1000);
@@ -421,7 +421,7 @@ display_power(void)
 {
 	uint32_t lit;
 
-	phone("renoir", false);
+	phone("phone-cmd", false);
 	boot_args = "backlight=2 bl_level=600";
 	hakios_backlight_init();
 	lit = bl_level_to_raw(600, 1, 2047);
@@ -469,7 +469,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "renoir_dcs", renoir_dcs }, { "redwood_video", redwood_video }, { "look_only", look_only },
+		{ "command_panel", command_panel }, { "video_panel", video_panel }, { "look_only", look_only },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },

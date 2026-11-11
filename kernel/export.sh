@@ -35,6 +35,7 @@ out=$(cd "$out" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"; rm -f "$D/.git/hakios-export-index"' EXIT
 
+tree_excludes "$D"
 # The tree as it lies there (committed or not, new files included) in an index of its own.
 export GIT_INDEX_FILE=$D/.git/hakios-export-index
 rm -f "$GIT_INDEX_FILE"

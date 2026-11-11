@@ -6,7 +6,7 @@ What can be built, from the least setup to the most.
 | --- | --- | --- |
 | The checks | `make check` | A C compiler, Python 3.11+, git. Optional: `gcc-aarch64-linux-gnu` and `qemu-user` (driver tests as arm64 code), `shellcheck`, `clang` and `lld` (the loader). |
 | The loader | `loader/build.sh` | `clang`, `lld`. |
-| The kernel | `kernel/build.sh` | Linux, theos, and the packages below. |
+| The kernel | `kernel/build.sh` | Linux, theos, the system packages below, and the device package of the phone it is for. |
 | iOS images, and a boot | [ios26-boot.md](ios26-boot.md) | Apple's IPSW, the phone, and parts of the team's working tree that are not published yet. |
 
 ## The checks
@@ -15,8 +15,9 @@ What can be built, from the least setup to the most.
 make check
 ```
 
-Runs the lint, validates `devices/` and `soc/`, checks that the generated files are current, and runs
-the host tests. Nothing here needs a phone or iOS. CI runs the same on every push, plus
+Runs the lint, validates the device packages that are present and `soc/`, checks that
+`docs/boot-args.md` is current, and runs the host tests. Nothing here needs a phone, a phone's package
+or iOS: the tests run against two stand-in phones in `tests/devices/`. CI runs the same on every push, plus
 `kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
 
 ```sh
@@ -29,8 +30,10 @@ sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld
 loader/build.sh             # loader/loader.efi
 ```
 
-It includes `loader/platforms.h`. After changing a board or SoC file, run `tools/boards.py gen` first.
-The link is reproducible: the same sources give the same file.
+It includes `platforms.h`, the boards it knows, which the script first makes into `build/boards/` from
+the device packages that are present and `soc/`. Nothing is run by hand after changing a board or SoC
+file. The loader knows the boards it was built with; with no package, only the emulator's.
+The link is reproducible: the same sources and the same packages give the same file.
 
 ## The kernel
 
@@ -40,6 +43,18 @@ Requirements:
   flex bison m4 autoconf automake`.
 - [theos](https://theos.dev/docs/installation-linux) with its Linux toolchain and `iPhoneOS16.5.sdk`,
   in `~/theos` or wherever `THEOS` points. It provides the Mach-O linker and the SDK headers.
+
+The kernel is built with a table of the boards whose device packages are present. The repository
+describes no phone, so bring the phone's package in first:
+
+```sh
+tools/device.py available   # the packages the devices branch has
+tools/device.py add renoir  # copies it into devices/renoir/; or: make device DEVICE=renoir
+```
+
+Packages elsewhere are found through the environment variable `HAKIOS_DEVICES` (directories, written
+like `PATH`). A kernel built with no package knows only the emulator's board (`qemu-virt`): on a phone
+it finds no row for itself and starts no driver of a phone.
 
 ```sh
 kernel/build.sh             # or: kernel/build.sh -j12
@@ -55,6 +70,10 @@ The first run does everything, each step skipped when its result is there:
 3. **Two static libraries** of the kernel (firehose, pthread), built against the tree's exported headers.
 4. **The kernel**: `../xnu-12377-hakios/BUILD/obj/mach.development.bcm2837`.
 
+Every run makes the board table anew (`tools/boards.py gen`) and puts it in the tree as
+`bsd/dev/hakios_board_table.h`, only when it differs, so a build with the same boards recompiles
+nothing for it.
+
 Later runs bring the tree up to date with the repository, touching only changed files, and rebuild
 what depends on them. Work done in the tree is never overwritten ([kernel/README.md](../kernel/README.md)).
 
@@ -65,7 +84,7 @@ what depends on them. Work done in the tree is never overwritten ([kernel/README
 | `THEOS` | `~/theos` | theos. |
 | `DARWIN_RENOIR` | `../darwin-renoir` | Optional. If this checkout exists and has its `xnu-deps` built, its host tools are used and step 2 fetches less. |
 
-One kernel serves every board. It is built as `MACHINE=BCM2837`, the open board configuration the
+One kernel serves every board it was built with. It is built as `MACHINE=BCM2837`, the open board configuration the
 port reuses, `DEVELOPMENT`, plain arm64.
 
 If `kernel/build.sh` says the tree "is not a tree made by kernel/assemble.sh", it found one made by
@@ -78,9 +97,9 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | `make check`, `kernel/verify.sh` | On every push, in CI. |
 | The kernel's drivers compile | `kernel/syntax-check.sh`, on every push: the 53 C files of `kernel/overlay` that a stock clang can check, for syntax and types. With the DriverKit headers also the 9 C++ files. The 10 of `kernel/syntax-check.skip` and linking need the real build. |
 | The assembled tree | Byte for byte what the previous patch series produced. |
-| The loader build | Compiles without a warning; identical to the build before its board table was generated. |
+| The loader build | Compiles without a warning with the boards of the repository and the tests' two phones, on every push. Its last on-phone run was before its board table was generated and before `uefi_charger` replaced a board's name in its code. |
 | The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |
-| Drivers whose constants became board data | The GPU's profile, the audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh now come from `devices/` and `soc/`. The values are the ones the code had (`tests/board_test.c` holds them for both phones) and the drivers compile. None has run on a phone since the change. |
+| Drivers whose constants became board data | The GPU's profile, the audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh now come from the device packages and `soc/`. The values are the ones the code had (`tests/board_test.c` holds them for the tests' two stand-in phones in `tests/devices/`, which carry the two real phones' values under other names) and the drivers compile. None has run on a phone since the change. |
 | The full kernel build, and a boot | By the team, on their machines, before this restructuring. Not repeated since: it needs the Darwin toolchain and a phone. |
 | `kernel/deps/stage1.sh` | Not run end to end. It runs the commands of the setup script the team builds with. |
 

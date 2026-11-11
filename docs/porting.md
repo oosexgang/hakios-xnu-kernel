@@ -30,8 +30,10 @@ the log line to look for at each step.
 tools/boards.py new mido --soc sm7325 --dts phone.dts --description "Maker Model"
 ```
 
-This writes the board file (`devices/NAME/board.toml`, here with `mido` for NAME), and the SoC file if
-that SoC is new. From the tree it reads:
+This writes the board file (`devices/NAME/board.toml`, here with `mido` for NAME), and the SoC file in
+`soc/` if that SoC is new. The directory `devices/NAME/` is your phone's device package. Git ignores it in
+a checkout of the main branch, because packages are kept on the `devices` branch (step 8); a new SoC file
+is an ordinary new file of the main branch. From the tree it reads:
 
 - the DSI controller, the TSENS controllers, the CPU frequency block, the clock controllers' addresses;
 - the interrupt controller, the cores with their MPIDR numbering, which cores are the small ones, the
@@ -54,12 +56,15 @@ Then:
 
 ```sh
 tools/boards.py check        # says which file and why, until everything is consistent
-tools/boards.py gen          # rewrites the kernel's and the loader's tables
 make check
 ```
 
+There are no tables to regenerate by hand: every build makes them itself from the packages that are
+present (`make boards` validates and writes them into `build/boards/` if you want to look at them).
+
 Leave `features = []` for now. Every key is explained in `devices/_template/board.toml` and
-`devices/_template/soc.toml`.
+`devices/_template/soc.toml`. To see how an existing phone is described, bring its package in:
+`tools/device.py available` lists them, `tools/device.py add renoir` copies one into `devices/`.
 
 ## 2. The UEFI
 
@@ -85,8 +90,8 @@ At start it prints `display W x H at ADDRESS`. Put that address in the board fil
 fb_base = 0xE1000000
 ```
 
-and run `tools/boards.py gen` and `loader/build.sh` again. From now on the loader recognises the
-phone, prints `platform mido`, and passes `darwin-board = "mido"` to the kernel.
+and run `loader/build.sh` again (it makes its table of boards itself). From now on the loader
+recognises the phone, prints `platform mido`, and passes `darwin-board = "mido"` to the kernel.
 
 ## 4. First boot: nothing but the display
 
@@ -95,7 +100,7 @@ comes back through the loader. Look for, in this order:
 
 | Line in the log | Meaning |
 | --- | --- |
-| `board: mido (Maker Model, sm7325): no features listed` | The kernel found its row. If it says `not one of the N this kernel knows`, the loader passed another name or the table was not regenerated. |
+| `board: mido (Maker Model, sm7325): no features listed` | The kernel found its row. If it says `not one of the N this kernel knows`, the loader passed another name or the kernel was built without the phone's package present. |
 | `MiniIOMobileFramebuffer: display … on a panel of …` | The UEFI's framebuffer is the display. |
 | launchd, then SpringBoard | iOS is up, drawn in software. |
 
@@ -105,8 +110,8 @@ Start with one core (`cpus=1`), then all of them. A hang at the second core is P
 ## 5. Turn hardware on, one piece at a time
 
 `tools/boards.py status NAME` lists every feature for your board: on, ready to be listed, or the
-section it still needs. Each row below is independent. Add the feature to `features`, run
-`tools/boards.py gen`, rebuild, and pass the boot argument. Most drivers have a "look only" level that reads and logs without writing: use it
+section it still needs. Each row below is independent. Add the feature to `features`, rebuild, and
+pass the boot argument. Most drivers have a "look only" level that reads and logs without writing: use it
 first. Every argument is in [boot-args.md](boot-args.md); every driver in [drivers.md](drivers.md).
 
 | Step | In the board or SoC file | Boot argument | It worked when |
@@ -161,8 +166,18 @@ How the images are built and what iOS needed on the way to the home screen: [ios
 make check
 ```
 
-A port is the board file, the SoC file if new, the two regenerated tables, and any new driver with its
-feature. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
+A port goes to two places:
+
+| What | Where it goes |
+| --- | --- |
+| The device package: the `devices/NAME/` directory with `board.toml`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
+| The SoC file if new (`soc/SOC.toml`), any new driver with its feature, a new key of the board file | The main branch. |
+
+No generated table is sent: none is in the repository. For the package, copy your `devices/NAME/`
+directory to the top of a checkout of the `devices` branch and send it there. Others then get it with
+`tools/device.py add NAME`, which copies it into their checkout and validates it against the code they
+have. When a package needs a key or a feature the main branch does not have yet, the two changes belong
+together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 
 ## What is still tied to the first two phones
 

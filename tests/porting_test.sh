@@ -50,7 +50,7 @@ says() {
 
 # --- a copy of what a port touches ----------------------------------------------------------------
 R=$W/repo
-mkdir -p "$R/kernel/overlay/bsd/dev" "$R/tests" "$R/ios/userland"
+mkdir -p "$R/kernel/overlay/bsd/dev" "$R/tests"
 cp -r "$REPO/devices" "$REPO/soc" "$REPO/tools" "$REPO/loader" "$R/"
 cp "$REPO"/kernel/overlay/bsd/dev/hakios_* "$R/kernel/overlay/bsd/dev/"
 cp -r "$REPO/tests/fakekernel" "$R/tests/"
@@ -123,18 +123,18 @@ says "with those filled in, everything is consistent" "ok" "$B" check
 check "the tables are regenerated" "$B" gen
 says "the board is listed" "testphone" "$B" list
 check "the boards that were there are as they were" \
-	sh -c "\"$B\" show renoir > \"$W/after\" && \"$REPO/tools/boards.py\" show renoir > \"$W/before\" && cmp \"$W/before\" \"$W/after\""
+	sh -c "\"$B\" show qemu-virt > \"$W/after\" && \"$REPO/tools/boards.py\" show qemu-virt > \"$W/before\" && cmp \"$W/before\" \"$W/after\""
 
 # --- step 3: the loader ---------------------------------------------------------------------------
 check "without a [loader] section the loader does not list the board" \
-	sh -c "! grep -q platform_testphone \"$R/loader/platforms.h\""
+	sh -c "! grep -q platform_testphone \"$R/build/boards/platforms.h\""
 printf '\n[loader]\nfb_base = 0x9C000000\n' >> "$R/devices/testphone/board.toml"
-check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/loader/platforms.h\""
+check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/build/boards/platforms.h\""
 check "... with the machine as the SoC file has it" \
-	sh -c "grep -A14 'platform_testphone = ' \"$R/loader/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"
+	sh -c "grep -A14 'platform_testphone = ' \"$R/build/boards/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.uefi_charger = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"
 if command -v clang > /dev/null && command -v lld-link > /dev/null; then
 	check "the loader builds with the new board" \
-		sh -c "clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar -mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -c \"$R/loader/loader.c\" -o \"$W/loader.obj\" && lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \"/out:$W/loader.efi\" \"$W/loader.obj\""
+		sh -c "clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar -mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I\"$R/build/boards\" -c \"$R/loader/loader.c\" -o \"$W/loader.obj\" && lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \"/out:$W/loader.efi\" \"$W/loader.obj\""
 	check "... and carries the board's name for the kernel" grep -q testphone "$W/loader.efi"
 fi
 
@@ -176,7 +176,7 @@ main(int argc, char **argv)
 }
 EOF
 ask() {
-	${CC:-cc} -std=gnu11 -w -pthread -I"$R/tests/fakekernel" -I"$R/kernel/overlay/bsd/dev" "$W/ask.c" \
+	${CC:-cc} -std=gnu11 -w -pthread -I"$R/tests/fakekernel" -I"$R/kernel/overlay/bsd/dev" -I"$R/build/boards" "$W/ask.c" \
 		"$R/tests/fakekernel/fakekernel.c" -o "$W/ask" && "$W/ask" "$1"
 }
 says "the kernel finds the new board's row" "name=testphone soc=sm9999 features=\[\]" ask testphone
@@ -187,7 +187,7 @@ says "... its clocks as the SoC file has them" "clocks gcc=0x1400000+0x33004 dis
 says "... its two groups of cores: four and two" \
 	"cpufreq epss=0x17d91000 size=0x1000 groups=2 group_of(3)=0 group_of(4)=1 group_of(6)=-1" ask testphone
 says "a board the kernel was not told of is still unknown" "unknown" ask otherphone
-says "the phones that were there answer as before" "name=renoir soc=sm7350" ask renoir
+says "the board that was there answers as before" "name=qemu-virt soc=qemu-virt" ask qemu-virt
 
 # step 5: one thing at a time
 sed -i 's/^features = \[\]/features = ["cpufreq-epss"]/' "$R/devices/testphone/board.toml"

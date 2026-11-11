@@ -41,7 +41,7 @@ test_gamma(void)
 static void
 test_raw(void)
 {
-	/* renoir: 1 to 2047 */
+	/* a panel of 1 to 2047 */
 	CHECK(bl_level_to_raw(0, 1, 2047) == 1, "%u", bl_level_to_raw(0, 1, 2047));
 	CHECK(bl_level_to_raw(1000, 1, 2047) == 2047, "%u", bl_level_to_raw(1000, 1, 2047));
 	CHECK(bl_level_to_raw(500, 1, 2047) > 420 && bl_level_to_raw(500, 1, 2047) < 470, "%u", bl_level_to_raw(500, 1, 2047));
@@ -53,7 +53,7 @@ test_raw(void)
 	for (uint32_t level = 1, last = bl_level_to_raw(0, 8, 2047); level <= 1000; level++) {
 		uint32_t raw = bl_level_to_raw(level, 8, 2047);
 
-		CHECK(raw >= last && raw >= 8 && raw <= 2047, "redwood level %u -> %u", level, raw);
+		CHECK(raw >= last && raw >= 8 && raw <= 2047, "8..2047 level %u -> %u", level, raw);
 		last = raw;
 	}
 }
@@ -145,7 +145,7 @@ test_dcs(void)
 	uint32_t w[4] = { 0 }, length = 0;
 	unsigned n;
 
-	/* renoir/redwood: 0x51, then 0x07 0xff for 2047 (MSB first) */
+	/* 0x51, then 0x07 0xff for 2047 (MSB first) */
 	n = bl_dcs_brightness_words(2047, 2, false, 0, w, &length);
 	CHECK(n == 2 && length == 8, "n %u length %u", n, length);
 	CHECK(w[0] == 0xc0390003u, "header %08x", w[0]);

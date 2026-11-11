@@ -74,7 +74,6 @@ if [ $update = 0 ]; then
 	[ "$got" = "$UPSTREAM_COMMIT" ] ||
 		die "$from has $UPSTREAM_TAG at $got, not at $UPSTREAM_COMMIT (kernel/UPSTREAM): not using it"
 	git -C "$D" tag upstream "$got"
-	printf '%s\n' "${TREE_EXCLUDES[@]}" >> "$D/.git/info/exclude"
 else
 	is_assembled_tree "$D" || die "$D is not a tree made by assemble.sh"
 	D=$(cd "$D" && pwd)
@@ -85,6 +84,7 @@ else
 		git -C "$D" clean -q -fd
 	fi
 fi
+tree_excludes "$D"
 
 tree=$(assembled_tree)
 if [ $update = 1 ]; then

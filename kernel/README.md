@@ -1,7 +1,7 @@
 # Kernel
 
 Apple's open-source XNU, built for Qualcomm phones: plain arm64 (no pointer authentication), one kernel
-for every supported board. The board is identified at boot from `/chosen/darwin-board`.
+for every board it was built with. The board is identified at boot from `/chosen/darwin-board`.
 
 ## How the sources are kept
 
@@ -15,7 +15,7 @@ for every supported board. The board is identified at boot from `/chosen/darwin-
 | `import-patch.sh` | Takes a patch written against the tree into `overlay/` and `patches/`. |
 | `verify.sh` | Checks that assembling and exporting give back exactly what is committed. |
 | `syntax-check.sh` | Compiles the files of `overlay/` for syntax and types with the machine's clang: no Darwin toolchain needed. `syntax-check.skip` lists the files only the real build can check. |
-| `build.sh`, `env.sh` | The build on Linux. |
+| `build.sh`, `env.sh` | The build on Linux. `build.sh` also makes the board table from the device packages that are present (below). |
 | `host/`, `iig-impl/` | Build wrappers: clang and stand-ins for Apple's closed `iig`. |
 
 Where things are in `overlay/`:
@@ -38,6 +38,12 @@ The first run makes the tree next to the repository (`../xnu-12377-hakios`), the
 dependencies, then the kernel: `BUILD/obj/mach.development.bcm2837` in the tree. Later runs bring the
 tree up to date with the repository and recompile only what changed. Requirements and details:
 [docs/building.md](../docs/building.md).
+
+The board table is not a file of `overlay/`. On every run `build.sh` makes it with `tools/boards.py gen`
+from the device packages that are present (`devices/` and the directories of `HAKIOS_DEVICES`) and puts it
+in the tree as `bsd/dev/hakios_board_table.h`, only when it changed. So the kernel knows the boards it
+was built with. The repository describes no phone: bring a phone's package in first, with
+`tools/device.py add NAME`. With none, the kernel knows only the emulator's board.
 
 ## Working on the kernel
 
@@ -65,6 +71,8 @@ git diff                                         # review, commit
   patch in a tree and exports.
 - New source files also need a line in the tree's `bsd/conf/files` (or `iokit/conf/files`,
   `osfmk/conf/files.arm64`), like their neighbours.
+- `bsd/dev/hakios_board_table.h` in the tree is the build's, like `BUILD/`: `export.sh` leaves it out.
+  A board is changed in its package, not there.
 
 ## Checks
 

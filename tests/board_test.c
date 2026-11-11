@@ -20,9 +20,9 @@ known_phone(void)
 {
 	const struct hakios_board *b;
 
-	board = "renoir";
+	board = "phone-cmd";
 	b = hakios_board();
-	CHECK(b != NULL && strcmp(b->name, "renoir") == 0 && strcmp(b->soc, "sm7350") == 0, "the row of renoir");
+	CHECK(b != NULL && strcmp(b->name, "phone-cmd") == 0 && strcmp(b->soc, "sm7350") == 0, "the row of the phone");
 	CHECK(hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS) && hakios_board_has(HAKIOS_HAS_ADSP), "its features");
 	/* its own touch controller, and none of the parts only the other phone has */
 	CHECK(hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U) && !hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX), "its touch controller");
@@ -35,7 +35,7 @@ known_phone(void)
 	    "no driver wired for another phone's parts");
 	CHECK(b != NULL && b->backlight.type == HAKIOS_BACKLIGHT_DCS && b->backlight.dsi != 0 && b->clocks.dispcc != 0 &&
 	    b->backlight.raw_min < b->backlight.raw_max, "a DCS panel has what the driver needs");
-	CHECK(strcmp(get_string("name"), "renoir") == 0, "hw.board.name %s", get_string("name"));
+	CHECK(strcmp(get_string("name"), "phone-cmd") == 0, "hw.board.name %s", get_string("name"));
 	CHECK(strcmp(get_string("soc"), "sm7350") == 0, "hw.board.soc %s", get_string("soc"));
 	CHECK(strstr(get_string("features"), "cpufreq-epss") != NULL, "hw.board.features %s", get_string("features"));
 	/* its keys: the PMK8350's power-on block and GPIO6 of the PM8350, through the arbiter of its SoC */
@@ -46,7 +46,7 @@ known_phone(void)
 	CHECK(hakios_board_has(HAKIOS_HAS_DDR_RPMH) && b != NULL && b->rpmh.cmd_db == 0x80860000 && b->rpmh.cmd_db_size == 0x20000 &&
 	    b->rpmh.rsc == 0x18220000 && b->rpmh.tcs_offset == 0xd00, "RPMh for the memory vote");
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
-	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-renoir") == 0 &&
+	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-cmd") == 0 &&
 	    b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
 	/* its groups of cores: four small, three big, one prime */
 	CHECK(hakios_board_cpu_groups() == 3, "%u groups", hakios_board_cpu_groups());
@@ -54,23 +54,23 @@ known_phone(void)
 	    hakios_board_cpu_group_of(6) == 1 && hakios_board_cpu_group_of(7) == 2, "which core is in which group");
 	CHECK(hakios_board_cpu_group_of(8) == -1, "a core beyond the groups is in none");
 	hakios_board_init();
-	CHECK(logged("board: renoir (Xiaomi Mi 11 Lite 5G, sm7350): cpufreq-epss"), "said in the log: %s", log_text);
+	CHECK(logged("board: phone-cmd (Test phone, command-mode panel, sm7350): cpufreq-epss"), "said in the log: %s", log_text);
 }
 
 /* the GPU as its driver is handed it: the board's [gpu], with "off" before the speeds */
 static void
-gpu_renoir(void)
+gpu_a642(void)
 {
 	const struct adreno_board_profile *p;
 
-	board = "renoir";
+	board = "phone-cmd";
 	p = adreno_profile_for_board();
-	CHECK(p != NULL, "renoir has a GPU profile");
+	CHECK(p != NULL, "the phone has a GPU profile");
 	if (p == NULL) {
 		return;
 	}
-	CHECK(strcmp(p->board, "renoir") == 0 && strcmp(p->model, "Adreno 642") == 0 &&
-	    strcmp(p->firmware_directory, "fw-renoir") == 0, "%s, %s, %s", p->board, p->model, p->firmware_directory);
+	CHECK(strcmp(p->board, "phone-cmd") == 0 && strcmp(p->model, "Adreno 642") == 0 &&
+	    strcmp(p->firmware_directory, "fw-cmd") == 0, "%s, %s, %s", p->board, p->model, p->firmware_directory);
 	CHECK(p->chip_id == 0x06060010 && p->gmem_bytes == 1536 * 1024, "chip %#x, GMEM %u", p->chip_id, p->gmem_bytes);
 	CHECK(adreno642_gmu_chip_id(p->chip_id) == 0x16060000, "as the GMU wants it: %#x", adreno642_gmu_chip_id(p->chip_id));
 	CHECK(p->primitive_fifo == 0x00300000 && p->hang_cycles == 0x3ffff && p->uche_cmdq_config == 0x66906, "register values");
@@ -86,17 +86,17 @@ gpu_renoir(void)
 }
 
 static void
-gpu_redwood(void)
+gpu_a642l(void)
 {
 	const struct adreno_board_profile *p;
 
-	board = "redwood";
+	board = "phone-video";
 	p = adreno_profile_for_board();
-	CHECK(p != NULL, "redwood has a GPU profile");
+	CHECK(p != NULL, "the phone has a GPU profile");
 	if (p == NULL) {
 		return;
 	}
-	CHECK(strcmp(p->model, "Adreno 642L") == 0 && strcmp(p->firmware_directory, "fw") == 0, "%s, %s", p->model,
+	CHECK(strcmp(p->model, "Adreno 642L") == 0 && strcmp(p->firmware_directory, "fw-video") == 0, "%s, %s", p->model,
 	    p->firmware_directory);
 	CHECK(p->alt_model != NULL && strcmp(p->alt_model, "Adreno 643") == 0 && p->alt_bins[0] == 0xac && p->alt_bins[1] == 0xbe,
 	    "the speed bins sold as the 643");
@@ -105,8 +105,8 @@ gpu_redwood(void)
 	CHECK(p->speed_fuse == 0x1e9 && p->gaming_fuse == 0x1f5 && p->highest_bank_bit == 14 && p->gcc_debug_gpucc == 0x146,
 	    "fuses, bank bit, debug multiplexer");
 	CHECK(!p->zap_must_authenticate, "the firmware's zap shader is fallen back on");
-	CHECK(strcmp(hakios_board()->adsp.firmware, "fw") == 0 && hakios_board()->adsp.memory_size == 0x04000000 &&
-	    hakios_board()->adsp.charge_counter_divisor == 1, "redwood's [adsp]");
+	CHECK(strcmp(hakios_board()->adsp.firmware, "fw-audio-video") == 0 && hakios_board()->adsp.memory_size == 0x04000000 &&
+	    hakios_board()->adsp.charge_counter_divisor == 1, "its [adsp]");
 	CHECK(p->speed_count == 4 && p->default_speed == 3, "%u speeds, default %u", p->speed_count, p->default_speed);
 	CHECK(p->speeds[1].khz == 315000 && p->speeds[1].level == 64 && p->speeds[2].khz == 450000 && p->speeds[2].level == 128 &&
 	    p->speeds[3].khz == 550000 && p->speeds[3].level == 192, "the speeds and their supply levels");
@@ -185,7 +185,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "known_phone", known_phone }, { "gpu_renoir", gpu_renoir }, { "gpu_redwood", gpu_redwood },
+		{ "known_phone", known_phone }, { "gpu_a642", gpu_a642 }, { "gpu_a642l", gpu_a642l },
 		{ "emulator", emulator }, { "unknown", unknown }, { "table", table },
 	};
 

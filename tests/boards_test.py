@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""tools/boards.py: what it accepts, what it refuses and says why, what it reads out of a device tree, and
-that the kernel's committed table is what it writes."""
+"""tools/boards.py: what it accepts, what it refuses and says why, what it reads out of a device tree,
+where it finds device packages, and the tables it writes for the boards that are there."""
 import importlib.util
 import io
+import os
 import re
+import subprocess
 import tomllib
 import contextlib
 import shutil
@@ -217,17 +219,16 @@ class Sandbox(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
-        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS, boards.USER_BOARDS)
+        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS)
         boards.ROOT, boards.DEVICES, boards.SOCS = self.dir, self.dir / 'devices', self.dir / 'soc'
-        boards.TABLE, boards.PLATFORMS = self.dir / 'table.h', self.dir / 'platforms.h'
-        boards.USER_BOARDS = self.dir / 'user_boards.h'
         (self.dir / 'devices/phone').mkdir(parents=True)
         (self.dir / 'soc').mkdir()
         (self.dir / 'soc/sm0001.toml').write_text(SOC)
         (self.dir / 'devices/phone/board.toml').write_text(BOARD)
 
     def tearDown(self):
-        boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS, boards.USER_BOARDS = self.saved
+        boards.ROOT, boards.DEVICES, boards.SOCS = self.saved
+        del boards.MORE_DEVICES[:], boards.MORE_SOCS[:]
         shutil.rmtree(self.dir)
 
     def problems(self):
@@ -276,10 +277,12 @@ class Check(Sandbox):
             (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\ncpus = 8\nbootargs = ["cpus=8", "two words"]\n[loader]',
              '"two words" is not NAME or NAME=VALUE'),
             (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\n[loader]', '"bootargs" is missing'),
+            (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\ncpus = 8\nbootargs = ["gpu=0", "cpus=8", "gpu=1"]\n[loader]',
+             'bootargs: "gpu" is there twice'),
             (self.soc, 'io_base = 0x400000', 'io_base = 0', 'io_base must not be 0'),
             (self.board, '"cpufreq-epss"', '"cpufreq-epss", "display-scan"', 'feature "display-scan" needs intf1'),
             (self.board, '"cpufreq-epss"]\n[backlight]\ntype = "dcs"\npanel_mode = "command"',
-             '"display-scan"]\n[backlight]\ntype = "dcs"\npanel_mode = "video"', 'is for a command-mode panel'),
+             '"display-scan"]\n[backlight]\ntype = "dcs"\npanel_mode = "video"', 'needs a command-mode panel'),
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [4, 3]', 'domain_cores adds up to 7 cores, [platform] has 8'),
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [4, 2, 2]\n', None),
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [2, 2, 2, 1, 1]', 'one to four groups'),
@@ -594,25 +597,99 @@ class DeviceTree(Sandbox):
             boards.new_board('phone', 'sm0001')
 
 
+class Packages(Sandbox):
+    """Device packages kept somewhere else than devices/, and the tables written for what is there."""
+
+    def package(self, directory, name, soc='sm0001'):
+        (directory / name).mkdir(parents=True)
+        (directory / name / 'board.toml').write_text(
+            f'name = "{name}"\ndescription = "A package"\nsoc = "{soc}"\nfeatures = []\n[backlight]\ntype = "soft"\n')
+
+    def test_packages_are_found_in_the_other_directories_too(self):
+        elsewhere = self.dir / 'elsewhere'
+        self.package(elsewhere, 'other')
+        self.assertEqual(sorted(boards.load()[1]), ['phone'])
+        boards.MORE_DEVICES.append(elsewhere)
+        self.assertEqual(self.problems(), '')
+        self.assertEqual(sorted(boards.load()[1]), ['other', 'phone'])
+        self.assertIn('.name = "other"', boards.table_text(*boards.load()))
+
+    def test_a_package_of_the_repository_comes_before_one_of_the_same_name_elsewhere(self):
+        elsewhere = self.dir / 'elsewhere'
+        self.package(elsewhere, 'phone')
+        boards.MORE_DEVICES.append(elsewhere)
+        self.assertEqual(boards.load()[1]['phone']['description'], 'A phone')
+
+    def test_what_is_wrong_with_a_package_elsewhere_is_said_with_its_path(self):
+        elsewhere = self.dir.parent / (self.dir.name + '-elsewhere')
+        try:
+            self.package(elsewhere, 'other', soc='sm9999')
+            boards.MORE_DEVICES.append(elsewhere)
+            self.assertIn(f'{elsewhere}/other/board.toml: soc = \'sm9999\': there is no soc/sm9999.toml', self.problems())
+        finally:
+            shutil.rmtree(elsewhere)
+
+    def test_soc_files_are_found_elsewhere_too(self):
+        more = self.dir / 'more-soc'
+        more.mkdir()
+        (more / 'sm0002.toml').write_text('name = "sm0002"\ndescription = "Another chip"\n')
+        self.package(self.dir / 'devices', 'second', soc='sm0002')
+        self.assertIn('there is no soc/sm0002.toml', self.problems())
+        boards.MORE_SOCS.append(more)
+        self.assertEqual(self.problems(), '')
+
+    def test_the_tables_are_written_once_and_left_alone_while_nothing_changes(self):
+        out = self.dir / 'out'
+        socs, found = boards.load()
+        self.assertEqual(sorted(boards.write_generated(out, socs, found)),
+                         ['hakios_board_table.h', 'hakios_boards.h', 'platforms.h'])
+        stamp = (out / 'hakios_board_table.h').stat().st_mtime_ns
+        self.assertEqual(boards.write_generated(out, socs, found), [])
+        self.assertEqual((out / 'hakios_board_table.h').stat().st_mtime_ns, stamp)   # nothing to recompile for
+        # a board that says something new of its screen: user space's table, and only it
+        path = self.dir / 'devices/phone/board.toml'
+        path.write_text(path.read_text() + '[screen]\nstatusbar_leading_shift = 24\n')
+        self.assertEqual(boards.write_generated(out, *boards.load()), ['hakios_boards.h'])
+
+
 class Repository(unittest.TestCase):
-    def test_the_real_boards_are_valid(self):
+    def tearDown(self):
+        del boards.MORE_DEVICES[:], boards.MORE_SOCS[:]
+
+    def test_the_boards_of_the_repository_are_valid(self):
         problems = boards.Problems()
         socs, found = boards.load(problems)
         self.assertEqual(list(problems), [])
-        self.assertIn('renoir', found)
+        self.assertIn('qemu-virt', found)
 
-    def test_the_committed_tables_are_what_the_tool_writes(self):
-        self.assertEqual(boards.TABLE.read_text(), boards.table_text(*boards.load()), 'run tools/boards.py gen')
-        self.assertEqual(boards.PLATFORMS.read_text(), boards.platforms_text(*boards.load()), 'run tools/boards.py gen')
-        self.assertEqual(boards.USER_BOARDS.read_text(), boards.user_boards_text(*boards.load()), 'run tools/boards.py gen')
+    def test_the_repository_names_no_phone(self):
+        # phones are device packages, kept on the devices branch: what the repository tracks under
+        # devices/ is the emulator's board and the templates
+        tracked = subprocess.run(['git', 'ls-files', 'devices'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(sorted({name.split('/')[1] for name in tracked}), ['README.md', '_template', 'qemu-virt'])
 
-    def test_renoir_boots_with_its_own_arguments(self):
-        boot = boards.load()[1]['renoir']['boot']
-        self.assertEqual(boot['fastboot_product'], 'renoir')
-        for argument in ('touchscreen=1', 'gpu=0', 'backlight=1', 'thermal=1'):
-            self.assertIn(argument, boot['bootargs'])
-        names = [argument.split('=')[0] for argument in boot['bootargs']]
-        self.assertEqual(len(names), len(set(names)), 'an argument is there twice')
+    def test_the_tests_phones_are_valid_packages(self):
+        boards.MORE_DEVICES.append(ROOT / 'tests/devices')
+        problems = boards.Problems()
+        socs, found = boards.load(problems)
+        self.assertEqual(list(problems), [])
+        for name in ('phone-cmd', 'phone-video'):
+            self.assertIn(name, found)
+            names = [argument.split('=')[0] for argument in found[name].get('boot', {}).get('bootargs', [])]
+            self.assertEqual(len(names), len(set(names)))
+
+    def test_the_tool_takes_packages_from_where_it_is_told(self):
+        out = Path(tempfile.mkdtemp())
+        try:
+            for arguments, environment in ((['--devices', str(ROOT / 'tests/devices')], {}),
+                                           ([], {'HAKIOS_DEVICES': str(ROOT / 'tests/devices')})):
+                done = subprocess.run([str(ROOT / 'tools/boards.py')] + arguments + ['gen', '--out', str(out)],
+                                      capture_output=True, text=True, env={**os.environ, **environment})
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertIn('phone-cmd, phone-video', done.stdout)
+                self.assertIn('.name = "phone-cmd"', (out / 'hakios_board_table.h').read_text())
+        finally:
+            shutil.rmtree(out)
 
     def test_what_the_tool_takes_is_explained_where_a_porter_looks(self):
         root = boards.ROOT
@@ -644,7 +721,7 @@ class Repository(unittest.TestCase):
 
     def test_the_loader_has_its_fallback(self):
         # loader.c names platform_qemu_virt: the machine whose display matches no board
-        self.assertIn('static const struct platform platform_qemu_virt = {', boards.PLATFORMS.read_text())
+        self.assertIn('static const struct platform platform_qemu_virt = {', boards.platforms_text(*boards.load()))
 
 
 if __name__ == '__main__':

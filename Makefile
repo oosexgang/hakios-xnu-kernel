@@ -10,9 +10,10 @@ SHELL := /bin/bash
 .PHONY: help
 help:
 	@echo "make check          lint + boards + docs + test: everything that needs no phone (what CI runs)"
+	@echo "make device DEVICE=NAME   bring a phone's package in from the devices branch (tools/device.py add)"
 	@echo "make test           host tests of kernel drivers and of the tools (tests/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
-	@echo "make boards         validate devices/ and soc/, regenerate the kernel's board table"
+	@echo "make boards         validate the device packages and soc/, write the tables the code is built with (build/boards)"
 	@echo "make docs           regenerate docs/boot-args.md from the sources"
 	@echo "make verify-kernel  Apple's release + overlay + patches assemble and export back unchanged (network)"
 	@echo "make syntax-kernel  compile the kernel files HakiOS adds, for syntax and types, with this machine's clang (network)"
@@ -37,7 +38,10 @@ boards:
 .PHONY: boards-check
 boards-check:
 	tools/boards.py check
-	tools/boards.py gen --check
+
+.PHONY: device
+device:
+	tools/device.py add $(DEVICE)
 
 .PHONY: docs
 docs:

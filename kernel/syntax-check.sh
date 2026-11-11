@@ -61,6 +61,11 @@ for header in debug.h mach_assert.h mach_ldebug.h mach/clock.h mach/clock_priv.h
 done
 [ -z "$driverkit" ] || ln -s "$(cd "$driverkit" && pwd)" "$gen/DriverKit"
 focaltech_stub > "$gen/redwood_focaltech_fw.h"  # (found only where the tree has none: kernel/build.sh makes the same)
+# ... and the board table, for the device packages that are there (a kernel directory without the
+# repository's tools around it, as the tests make one, has no boards to compile)
+if [ -x "$KERNEL_DIR/../tools/boards.py" ]; then
+	"$KERNEL_DIR/../tools/boards.py" gen --out "$gen" > /dev/null
+fi
 
 flags=(--target=arm64-apple-ios16.5 -fsyntax-only -w -ferror-limit=5 -nostdinc
 	-isystem "$(clang -print-resource-dir)/include"

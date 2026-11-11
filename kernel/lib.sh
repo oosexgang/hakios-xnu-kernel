@@ -20,8 +20,19 @@ source "$KERNEL_DIR/UPSTREAM"
 log() { echo "${0##*/}: $*"; }
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 
-# Files the build makes inside the tree: never part of the kernel's sources.
-TREE_EXCLUDES=(/BUILD/ /bsd/dev/redwood_focaltech_fw.h '*.orig' '*.rej')
+# Files the build makes inside the tree: never part of the kernel's sources. (The board table is made
+# from the device packages that are there when the kernel is built: tools/boards.py gen.)
+TREE_EXCLUDES=(/BUILD/ /bsd/dev/redwood_focaltech_fw.h /bsd/dev/hakios_board_table.h '*.orig' '*.rej')
+
+# tree_excludes DIR: tell the tree's git which files are the build's. Written anew each time, so that
+# a tree made before the list grew learns of what was added.
+tree_excludes() {
+	mkdir -p "$1/.git/info"
+	{
+		echo "# kernel/lib.sh (TREE_EXCLUDES): what the build makes in this tree"
+		printf '%s\n' "${TREE_EXCLUDES[@]}"
+	} > "$1/.git/info/exclude"
+}
 
 # redwood's touch firmware is not ours to publish (tools/mk-focaltech-fw.py makes the header from a
 # phone's own file): this empty one keeps redwood_goodix.c compiling where there is none.

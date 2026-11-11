@@ -18,7 +18,7 @@ Next to the code:
 
 | Document | |
 | --- | --- |
-| [../devices/README.md](../devices/README.md) | The board and SoC files. |
+| [../devices/README.md](../devices/README.md) | Device packages, the board and SoC files. |
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |
 | [../kernel/patches/README.md](../kernel/patches/README.md) | What each patch changes in Apple's files. |
 | [../loader/README.md](../loader/README.md) | The loader. |

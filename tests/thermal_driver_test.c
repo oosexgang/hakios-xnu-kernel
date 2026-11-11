@@ -84,11 +84,11 @@ static int failures;
 	printf(__VA_ARGS__); printf("\n"); } } while (0)
 #define WAIT_FOR(cond, ms) do { for (int waited_ = 0; !(cond) && waited_ < (ms); waited_ += 5) usleep(5000); } while (0)
 
-/* the floors of the renoir profile, 1000/1100/1100 MHz: the first row at or above, rows 3 (1017.6) and 4 (1248) */
+/* the floors of the test phone, 1000/1100/1100 MHz: the first row at or above, rows 3 (1017.6) and 4 (1248) */
 static void
-renoir(int tenths)
+phone(int tenths)
 {
-	board = "renoir";
+	board = "phone-cmd";
 	for (unsigned c = 0; c < 2; c++) {
 		for (unsigned s = 0; s < 16; s++) {
 			sensor[c][s] = 0;               /* not wired up */
@@ -102,7 +102,7 @@ renoir(int tenths)
 static void
 off_by_default(void)
 {
-	renoir(900);
+	phone(900);
 	boot_args = "";
 	hakios_thermal_init();
 	usleep(100000);
@@ -112,7 +112,7 @@ off_by_default(void)
 static void
 look_only(void)
 {
-	renoir(900);
+	phone(900);
 	boot_args = "thermal=1 th_period_ms=100";
 	hakios_thermal_init();
 	WAIT_FOR(get("hottest") == 900, 1000);
@@ -126,22 +126,22 @@ look_only(void)
 static void
 heat_and_cool(void)
 {
-	renoir(500);
+	phone(500);
 	boot_args = "thermal=2 th_period_ms=100";
 	hakios_thermal_init();
 	CHECK(get("most") == 5, "the small group from row 8 to its floor row 3: %u", get("most"));
 	usleep(300000);
 	CHECK(get("step") == 0 && writes == 0 && cap == 1000, "cool: nothing");
-	renoir(720);
+	phone(720);
 	WAIT_FOR(get("step") >= 2, 2000);
 	CHECK(perf[0] <= ROWS - 3 && perf[0] >= 3, "a step a look: row %u", perf[0]);
 	WAIT_FOR(get("step") == 5, 3000);
 	CHECK(perf[0] == 3 && perf[1] == 4 && perf[2] == 4, "at the floors: %u %u %u", perf[0], perf[1], perf[2]);
 	CHECK(cap == 600, "the panel held back too: %u", cap);
-	renoir(660);                            /* between clear and trip */
+	phone(660);                            /* between clear and trip */
 	usleep(500000);
 	CHECK(get("step") == 5, "held: %u", get("step"));
-	renoir(550);
+	phone(550);
 	WAIT_FOR(get("step") == 0, 3000);
 	CHECK(perf[0] == ROWS - 1 && perf[1] == ROWS - 1 && perf[2] == ROWS - 1, "all given back: %u %u %u", perf[0], perf[1],
 	    perf[2]);
@@ -152,11 +152,11 @@ heat_and_cool(void)
 static void
 critical(void)
 {
-	renoir(500);
+	phone(500);
 	boot_args = "thermal=2 th_period_ms=100";
 	hakios_thermal_init();
 	usleep(200000);
-	renoir(960);
+	phone(960);
 	WAIT_FOR(perf[0] == 3, 500);
 	CHECK(get("step") == 5 && perf[0] == 3 && perf[1] == 4, "all the way at once: step %u", get("step"));
 	hakios_thermal_quiesce();
@@ -166,11 +166,11 @@ critical(void)
 static void
 never_raises(void)
 {
-	renoir(500);
+	phone(500);
 	perf[0] = perf[1] = perf[2] = 0;        /* cpufreq=0: 300 MHz */
 	boot_args = "thermal=2 th_period_ms=100";
 	hakios_thermal_init();
-	renoir(800);
+	phone(800);
 	perf[0] = perf[1] = perf[2] = 0;
 	usleep(500000);
 	CHECK(perf[0] == 0 && perf[1] == 0 && perf[2] == 0 && writes == 0, "rows %u %u %u, %u writes", perf[0], perf[1], perf[2],
@@ -181,7 +181,7 @@ never_raises(void)
 static void
 silent_sensors(void)
 {
-	renoir(720);
+	phone(720);
 	boot_args = "thermal=2 th_period_ms=100";
 	hakios_thermal_init();
 	WAIT_FOR(get("step") >= 3, 2000);
@@ -198,7 +198,7 @@ silent_sensors(void)
 static void
 tuned_while_running(void)
 {
-	renoir(650);
+	phone(650);
 	boot_args = "thermal=2 th_period_ms=100";
 	hakios_thermal_init();
 	usleep(300000);
@@ -212,7 +212,7 @@ tuned_while_running(void)
 static void
 unknown_board(void)
 {
-	renoir(900);
+	phone(900);
 	board = "some-new-phone";
 	boot_args = "thermal=2";
 	hakios_thermal_init();
@@ -225,7 +225,7 @@ unknown_board(void)
 static void
 board_without_thermal(void)
 {
-	renoir(900);
+	phone(900);
 	board = "qemu-virt";
 	boot_args = "thermal=2";
 	hakios_thermal_init();
@@ -237,7 +237,7 @@ board_without_thermal(void)
 static void
 bad_policy(void)
 {
-	renoir(500);
+	phone(500);
 	boot_args = "thermal=2 th_trip=900 th_clear=950 th_period_ms=100";
 	hakios_thermal_init();
 	CHECK(logged("the defaults"), "a clear above the trip is refused");

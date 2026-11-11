@@ -41,6 +41,12 @@ if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
 	focaltech_stub > "$FW"
 fi
+# the board table: a row for every device package that is there now (devices/ of the repository and
+# HAKIOS_DEVICES). Made anew each build and put in the tree only when it differs, so that a build with
+# the same boards recompiles nothing for it.
+mkdir -p "$XNUDEPS/boards"
+"$HAKIOS/tools/boards.py" gen --out "$XNUDEPS/boards" | sed 's/^/build.sh: boards: /'
+update "$XNU_SRC/bsd/dev/hakios_board_table.h" < "$XNUDEPS/boards/hakios_board_table.h"
 
 # --- 2. the dependency directory --------------------------------------------------------------
 # Apple's open sources and the host tools (mig, tcsh, unifdef): a darwin-renoir checkout has them

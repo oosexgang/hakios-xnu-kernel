@@ -1,7 +1,7 @@
-# POCO X5 Pro 5G. Sources: the phone's Android device tree (redwood-sm7325-sde-display.dtsi, the panel
-# dsi_m20_36_02_0a_dsc_vid) and what was measured on the phone under iOS 16.5 (base/README.md).
-name = "redwood"                    # what the loader puts in /chosen/darwin-board
-description = "POCO X5 Pro 5G"
+# A test phone with a video-mode panel and every part driver listed: the second stand-in of the host
+# tests (see tests/devices/phone-cmd). Its values are those of a real SM7325 phone.
+name = "phone-video"
+description = "Test phone, video-mode panel"
 soc = "sm7325"
 
 features = [
@@ -34,7 +34,7 @@ volume_up_name = "GPIO6 of the PM7325"
 
 # The audio DSP, and the battery manager behind it.
 [adsp]
-firmware = "fw"
+firmware = "fw-audio-video"
 memory_size = 0x04000000            # 64 MiB of the DSP's reserved memory (adsp@86700000)
 
 # The GPU. Sources: yupik-gpu.dtsi, Linux's adreno-gpulist.h and adreno_a6xx_gmu.c.
@@ -43,7 +43,7 @@ model = "Adreno 642L"
 alt_model = "Adreno 643"            # qcom,gpu-models: what the parts with these speed bins are sold as
 alt_bins = [0xac, 0xbe]
 chip_id = 0x06030500
-firmware = "fw"
+firmware = "fw-video"
 gmem_kb = 512
 primitive_fifo = 0x00200000
 hang_cycles = 0x1fffff
@@ -56,7 +56,8 @@ speeds_khz = [315000, 450000, 550000]
 speed_levels = [64, 128, 192]
 default_speed = 3
 
-# The loader (loader/) under this phone's UEFI. It tells boards apart by the framebuffer the UEFI reports.
+# The loader knows this one by its framebuffer, as it knows a phone under its UEFI.
 [loader]
-fb_base = 0xE1000000                # the loader prints it at start: "display W x H at ..."
-log_other_cpu = true                # keep notes in the log partition while a kernel starts on another core
+fb_base = 0x9B000000                # (no phone's: a real package beside this one must not look the same to the loader)
+log_other_cpu = true
+uefi_charger = true                 # the UEFI's Qualcomm charger protocols give the battery's state

@@ -15,3 +15,10 @@ ios/tools/pacstrip
 ios/userland/obj26/
 ios/userland/obj27/
 *.obj
+
+# what tools/boards.py gen writes (the tables the code is built with, for the boards that are there)
+/build/
+# device packages brought in with tools/device.py: they are kept on the devices branch, not here
+/devices/*/
+!/devices/_template/
+!/devices/qemu-virt/
