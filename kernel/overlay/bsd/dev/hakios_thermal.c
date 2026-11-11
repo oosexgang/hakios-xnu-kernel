@@ -43,32 +43,13 @@
 
 #include "hakios_board.h"
 #include "hakios_thermal_core.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern void loader_log_putc(char c);
 extern void thread_set_thread_name(thread_t thread, const char *name);
 extern void hakios_backlight_set_cap(uint32_t level);
 
-static int say(const char *format, ...) __printflike(1, 2);
-
-static int
-say(const char *format, ...)
-{
-	char line[256];
-	va_list list;
-	int length;
-
-	va_start(list, format);
-	length = vsnprintf(line, sizeof(line), format, list);
-	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	if (ml_get_interrupts_enabled()) {
-		printf("%s", line);
-	}
-	return length;
-}
+#define say hakios_say
 
 /* ---- what differs between devices: the board's data (hakios_board.h) -------------------------------- */
 

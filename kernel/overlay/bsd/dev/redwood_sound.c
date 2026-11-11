@@ -83,11 +83,11 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_board.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);
 extern kern_return_t thread_terminate(thread_t thread);
-extern void loader_log_putc(char c);
 
 /* The SMMU's match registers and contexts are found free and taken by the Wi-Fi's start as well (redwood_wifi.c). */
 extern lck_mtx_t redwood_smmu_lock;
@@ -106,17 +106,12 @@ static int say(const char *format, ...) __printflike(1, 2);
 static int
 say(const char *format, ...)
 {
-	char line[400];
 	va_list list;
 	int length;
 
 	va_start(list, format);
-	length = vsnprintf(line, sizeof(line), format, list);
+	length = hakios_vsay(true, format, list);
 	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	printf("%s", line);
 	return length;
 }
 

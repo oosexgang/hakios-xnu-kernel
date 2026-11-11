@@ -24,10 +24,10 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_board.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
-extern void loader_log_putc(char c);
 extern void redwood_tl(const char *format, ...) __printflike(1, 2);
 extern bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
 
@@ -37,25 +37,7 @@ extern bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
  * kernel's console may not be written there, and printf was a panic ("Console I/O from interrupt-disabled
  * context") at the end of every run once the memory vote was taken away on the way back.
  */
-static void
-tell(const char *format, ...) __printflike(1, 2);
-
-static void
-tell(const char *format, ...)
-{
-	char line[256];
-	va_list list;
-
-	va_start(list, format);
-	vsnprintf(line, sizeof(line), format, list);
-	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	if (ml_get_interrupts_enabled()) {
-		printf("%s", line);
-	}
-}
+#define tell hakios_say
 
 /*
  * Where the EPSS block is and which cores each of its groups ("domains") has is the board's data

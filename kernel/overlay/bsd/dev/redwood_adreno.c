@@ -109,6 +109,7 @@ extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 #include "redwood_adreno_profile.h"
 
 #include "hakios_board.h"
+#include "hakios_log.h"
 static const struct adreno_board_profile *gpu_profile;
 
 static uint32_t last_step, skip_steps, pause_ms = 2200, fine, watch_seconds = 20;
@@ -124,23 +125,19 @@ static bool quiet;                      /* repeating accesses that have been ann
  * while it runs (loader_return.c; xl keeps it with XL_FOLLOW): every line said here goes there
  * as well, before the next register is touched.
  */
-extern void loader_log_putc(char c);
 
 static int say(const char *format, ...) __printflike(1, 2);
 
 static int
 say(const char *format, ...)
 {
-	char line[400];
 	va_list list;
+	int length;
 
 	va_start(list, format);
-	vsnprintf(line, sizeof(line), format, list);
+	length = hakios_vsay(true, format, list);
 	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	return printf("%s", line);
+	return length;
 }
 #define printf say
 

@@ -62,33 +62,25 @@
 #include <sys/uio.h>
 
 #include "hakios_board.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
-extern void loader_log_putc(char c);
 
 static uint32_t level;
 static bool broken, leaving;
 
 static int say(const char *format, ...) __printflike(1, 2);
 
-/* every line to the loader's log as well (and to the console when that may be written) */
 static int
 say(const char *format, ...)
 {
-	char line[300];
 	va_list list;
 	int length;
 
 	va_start(list, format);
-	length = vsnprintf(line, sizeof(line), format, list);
+	length = hakios_vsay(!leaving && ml_get_interrupts_enabled(), format, list);
 	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	if (!leaving && ml_get_interrupts_enabled()) {
-		printf("%s", line);
-	}
 	return length;
 }
 

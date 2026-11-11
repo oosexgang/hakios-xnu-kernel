@@ -71,11 +71,11 @@
 #include <sys/redwood_audio.h>
 
 #include "hakios_board.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
-extern void loader_log_putc(char c);
 
 static vm_offset_t tlmm, gcc, cmd_db;
 static uint32_t probe_level;
@@ -87,19 +87,12 @@ static int say(const char *format, ...) __printflike(1, 2);
 static int
 say(const char *format, ...)
 {
-	char line[300];
 	va_list list;
 	int length;
 
 	va_start(list, format);
-	length = vsnprintf(line, sizeof(line), format, list);
+	length = hakios_vsay(!leaving, format, list);
 	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	if (!leaving) {
-		printf("%s", line);
-	}
 	return length;
 }
 

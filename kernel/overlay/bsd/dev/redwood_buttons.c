@@ -54,6 +54,7 @@
 #include <sys/systm.h>
 
 #include "hakios_board.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
@@ -63,23 +64,19 @@ extern kern_return_t thread_terminate(thread_t thread);
  * reach that log only at the end of a run (with the kernel's message buffer), and "xl log"
  * during a run is to show a press when it happens.
  */
-extern void loader_log_putc(char c);
 
 static int say(const char *format, ...) __printflike(1, 2);
 
 static int
 say(const char *format, ...)
 {
-	char line[400];
 	va_list list;
+	int length;
 
 	va_start(list, format);
-	vsnprintf(line, sizeof(line), format, list);
+	length = hakios_vsay(true, format, list);
 	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
-	return printf("%s", line);
+	return length;
 }
 #define printf say
 

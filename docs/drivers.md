@@ -103,7 +103,8 @@ needs its feature in the board's `features`.
 2. If it is for a part, add a `HAKIOS_HAS_…` feature in `hakios_board.h` and check it at the start,
    after the boot argument. If it needs addresses, add them to `struct hakios_board` and to
    `tools/boards.py`, as `[backlight]` and `[thermal]` are.
-3. Start with a level that only reads and logs.
+3. Start with a level that only reads and logs. `hakios_say()` (`hakios_log.h`) puts a line in the
+   loader's log at once, where it can be read while the phone runs, and in the kernel's own.
 4. Give it a comment that names its boot argument as `name=…`: `make docs` puts it in the reference.
 5. Where the logic can run without hardware, test it on the host. `tests/backlight_driver_test.c` runs a
    driver unchanged against a model of its registers.

@@ -65,6 +65,7 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <vm/memory_types.h>
 #include "redwood_ufshc.h"
+#include "hakios_log.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
@@ -188,7 +189,6 @@ SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_most_in_flight, CTLFLAG_RD | CTL
  * run's log does not come back to the loader (the buffer wraps), so they are said again at the
  * end, into the loader's log directly (redwood_ufs_quiesce; printf is not for that moment).
  */
-extern void loader_log_putc(char c);
 #define KEPT_LINES          64
 static char hc_kept[KEPT_LINES][208];
 static uint32_t hc_kept_count;
@@ -209,20 +209,16 @@ hc_say(const char *format, ...)
 }
 
 /* the same, at the end: into the loader's log only */
-static void
-hc_say_late(const char *format, ...) __printflike(1, 2);
+static void hc_say_late(const char *format, ...) __printflike(1, 2);
+
 static void
 hc_say_late(const char *format, ...)
 {
-	char line[208];
 	va_list list;
 
 	va_start(list, format);
-	vsnprintf(line, sizeof(line), format, list);
+	hakios_vsay(false, format, list);
 	va_end(list);
-	for (const char *c = line; *c != 0; c++) {
-		loader_log_putc(*c);
-	}
 }
 
 static inline uint32_t
