@@ -795,8 +795,8 @@ redwood_speaker_volume(uint32_t below, uint32_t step_ms)
 			if (a->volume == target) {
 				continue;
 			}
-			next = a->volume > target ? (a->volume - target > VOLUME_STEP ? a->volume - VOLUME_STEP : target) :
-			    (target - a->volume > VOLUME_STEP ? a->volume + VOLUME_STEP : target);
+			next = a->volume > target ? (a->volume - target > VOLUME_STEP ? (uint32_t)a->volume - VOLUME_STEP : target) :
+			    (target - a->volume > VOLUME_STEP ? (uint32_t)a->volume + VOLUME_STEP : target);
 			if (!set_volume(a, (uint16_t)next)) {
 				return false;
 			}
