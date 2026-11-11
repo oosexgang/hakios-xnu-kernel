@@ -16,6 +16,8 @@
 # Needs theos (the cctools and iPhoneOS16.5.sdk); see docs/building.md.
 set -e -o pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"         # (focaltech_stub)
 K=$HAKIOS_KERNEL
 BD=$K/deps
 JOBS=$(nproc)
@@ -37,9 +39,7 @@ fi
 FW=$XNU_SRC/bsd/dev/redwood_focaltech_fw.h
 if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
-	printf '%s\n' '/* kernel/build.sh: stub, no FocalTech firmware (redwood only; see tools/mk-focaltech-fw.py) */' \
-		'#ifndef _REDWOOD_FOCALTECH_FW_H' '#define _REDWOOD_FOCALTECH_FW_H' '#define FOCALTECH_FW_LENGTH 0' \
-		'static const unsigned char focaltech_fw[1] = { 0 };' '#endif' > "$FW"
+	focaltech_stub > "$FW"
 fi
 
 # --- 2. the dependency directory --------------------------------------------------------------
