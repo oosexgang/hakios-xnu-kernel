@@ -79,6 +79,7 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | The assembled tree | Byte for byte what the previous patch series produced. |
 | The loader build | Compiles without a warning; identical to the build before its board table was generated. |
 | Changed kernel sources | Compile-checked with clang against the tree's headers, not linked. |
+| The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |
 | The full kernel build, and a boot | By the team, on their machines, before this restructuring. Not repeated since: it needs the Darwin toolchain and a phone. |
 | `kernel/deps/stage1.sh` | Not run end to end. It runs the commands of the setup script the team builds with. |
 

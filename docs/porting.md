@@ -10,6 +10,11 @@ described (`soc/sm7325.toml`, `soc/sm7350.toml`) needs the least; a new SoC adds
 Nothing in this procedure writes to the phone's storage. The UEFI is started with `fastboot boot`,
 everything runs from RAM, and a reboot brings Android back.
 
+Steps 1, 3 and the data side of 4 and 5 are run on every push by `tests/porting_test.sh`: a made-up
+phone on a made-up SoC, with none of the addresses the two real phones have, is taken through them in
+a copy of the repository. What that cannot show is the hardware answering; for that the guide gives
+the log line to look for at each step.
+
 ## What you need from the phone
 
 | What | How to get it | Used for |

@@ -45,6 +45,9 @@ fi
 echo "== boot-args reference (tools/bootargs.py)"
 python3 "$HERE/bootargs_test.py" 2>&1 | tail -3 || failed=1
 
+echo "== porting_test (docs/porting.md on a made-up phone)"
+"$HERE/porting_test.sh" || failed=1
+
 echo "== kernel_tools_test"
 "$HERE/kernel_tools_test.sh" || failed=1
 
