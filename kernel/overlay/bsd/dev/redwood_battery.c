@@ -16,6 +16,8 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 #define LOADER_BATTERY_MAGIC            0x2154544142574452ULL
@@ -180,7 +182,7 @@ redwood_battery_init(void)
 	vm_offset_t page;
 	thread_t thread;
 
-	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) return;
+	if (!hakios_board_has(HAKIOS_HAS_BATTERY_UEFI)) return;
 	if (!PE_parse_boot_argn("battery", &enabled, sizeof(enabled)) || !enabled) return;
 	if (!PE_parse_boot_argn("battery_shared_pa", &shared_pa, sizeof(shared_pa)) || shared_pa == 0) {
 		printf("battery: xnuloader did not provide battery_shared_pa\n");

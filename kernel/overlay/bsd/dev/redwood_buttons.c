@@ -51,6 +51,8 @@
 #include <sys/redwood_input.h>
 #include <sys/systm.h>
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
 
@@ -549,8 +551,8 @@ redwood_buttons_init(void)
 	if (!enabled) {
 		return;
 	}
-	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) {
-		printf("buttons: disabled: unsupported physical board\n");
+	if (!hakios_board_has(HAKIOS_HAS_BUTTONS_PMIC)) {
+		printf("buttons: disabled: this board's board.toml lists no \"buttons-pmic\"\n");
 		return;
 	}
 	/* xiaomi-sm7350-common.dtsi: PMK8350 SID0 PON, PM8350 SID1 GPIO6.

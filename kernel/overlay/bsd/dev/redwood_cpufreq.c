@@ -23,6 +23,8 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: KMA_*/kmem_alloc moved to the internal header */
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern void loader_log_putc(char c);
@@ -575,8 +577,8 @@ redwood_cpufreq_init(void)
 	 * its first slot set an active one) and the BCMs MC0, SH0 and ACV where redwood has them
 	 * (renoir.dts: cmd-db at 0x80860000, apps_rsc drv-2 at 0x18220000, tcs-offset 0xd00).
 	 */
-	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) {
-		if (enabled != 0) tell("ddr: no RPMh vote on this board\n");
+	if (!hakios_board_has(HAKIOS_HAS_DDR_RPMH)) {
+		if (enabled != 0) tell("ddr: no RPMh vote on this board (its board.toml lists no \"ddr-rpmh\")\n");
 	} else if (enabled == 1) {
 		ddr_look();
 		ddr_slots();
@@ -588,8 +590,8 @@ redwood_cpufreq_init(void)
 		return;
 	}
 	/* SM7350 uses the same three EPSS domains (renoir.dts). */
-	if (!redwood_board_is("redwood") && !redwood_board_is("renoir")) {
-		printf("cpufreq: disabled: unsupported physical board\n");
+	if (!hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS)) {
+		printf("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\"\n");
 		return;
 	}
 	for (unsigned int i = 0; i < topology->num_cpus; i++) {

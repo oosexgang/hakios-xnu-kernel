@@ -97,6 +97,7 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: KMA_*/kmem_alloc moved to the internal header */
 #include <sys/redwood_audio.h>
 #include <sys/redwood_input.h>
+#include "hakios_board.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
@@ -3224,7 +3225,7 @@ redwood_adsp_init(void)
 	if (last_step == 0 && (!PE_parse_boot_argn("adsp", &on, sizeof(on)) || on != 1)) {
 		return;
 	}
-	if ((!redwood_board_is("redwood") && !redwood_board_is("renoir")) || pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
+	if (!hakios_board_has(HAKIOS_HAS_ADSP) || pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
 		printf("adsp: adsp=1 and adsp_step=N are for the phone's audio DSP, and this is not the phone\n");
 		return;
 	}
