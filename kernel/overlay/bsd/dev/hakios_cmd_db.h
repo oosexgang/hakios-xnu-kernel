@@ -129,4 +129,35 @@ hakios_cmd_db_address(const struct cmd_db_header *db, uint32_t size, const char 
 	return entry != NULL ? entry->address : 0;
 }
 
+/*
+ * A supply rail that is asked for by level: what RPMh is told for it (0: the database has no such
+ * resource), and the levels it knows, in the order RPMh numbers them -- a request names a level by its
+ * position in this list. At most `max' of them go into `levels'; `count' is how many did. Either
+ * may be NULL for who wants the address alone.
+ */
+static inline uint32_t
+hakios_cmd_db_levels(const struct cmd_db_header *db, uint32_t size, const char *name, uint16_t *levels, unsigned max,
+    unsigned *count)
+{
+	unsigned slave = 0, length = 0;
+	const struct cmd_db_entry *entry = hakios_cmd_db_find(db, size, name, CMD_DB_ANY, &slave);
+	const uint8_t *data;
+
+	if (count != NULL) {
+		*count = 0;
+	}
+	if (entry == NULL) {
+		return 0;
+	}
+	data = hakios_cmd_db_data(db, size, slave, entry, &length);
+	for (unsigned l = 0; data != NULL && levels != NULL && count != NULL && l < length / 2u && l < max; l++) {
+		levels[l] = (uint16_t)(data[2 * l] | data[2 * l + 1] << 8);
+		if (l > 0 && levels[l] == 0) {
+			break;                  /* (the list is filled up with zeros; the first level may be zero itself) */
+		}
+		*count = l + 1;
+	}
+	return entry->address;
+}
+
 #endif /* HAKIOS_CMD_DB_H */

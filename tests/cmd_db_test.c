@@ -85,6 +85,26 @@ own_data(void)
 	CHECK(entry != NULL && hakios_cmd_db_data(DB, SIZE, where, entry, &length) == NULL && length == 0, "one without data has none");
 }
 
+/* a rail's levels: what a request names a level by */
+static void
+levels_of_a_rail(void)
+{
+	uint16_t levels[16] = { 0 };
+	unsigned count = 99;
+
+	as_a_boot_loader_leaves_it();
+	CHECK(hakios_cmd_db_levels(DB, SIZE, "cx.lvl", levels, 16, &count) == 0x30000 && count == 7, "its address and seven levels: %u", count);
+	CHECK(levels[0] == 0 && levels[1] == 48 && levels[6] == 416, "the first may be zero; the list ends at the next: %u %u %u",
+	    levels[0], levels[1], levels[6]);
+	CHECK(hakios_cmd_db_levels(DB, SIZE, "cx.lvl", levels, 3, &count) == 0x30000 && count == 3, "no more than asked for: %u", count);
+	CHECK(hakios_cmd_db_levels(DB, SIZE, "mx.lvl", levels, 16, &count) == 0x30010 && count == 0, "a rail without a list: its address, no level");
+	CHECK(hakios_cmd_db_levels(DB, SIZE, "none", levels, 16, &count) == 0 && count == 0, "what is not there");
+	CHECK(hakios_cmd_db_levels(DB, SIZE, "cx.lvl", NULL, 0, NULL) == 0x30000, "the address alone");
+	DB->slave[0].data_offset = (uint16_t)(SIZE - sizeof(*DB) - 4);
+	CHECK(hakios_cmd_db_levels(DB, SIZE, "cx.lvl", levels, 16, &count) == 0x30000 && count == 0 && canary_whole(),
+	    "levels that would lie outside the mapping are not read");
+}
+
 static void
 every_entry(void)
 {
@@ -145,7 +165,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "found_by_name", found_by_name }, { "found_by_kind", found_by_kind }, { "own_data", own_data },
+		{ "found_by_name", found_by_name }, { "found_by_kind", found_by_kind }, { "own_data", own_data }, { "levels_of_a_rail", levels_of_a_rail },
 		{ "every_entry", every_entry }, { "not_a_database", not_a_database }, { "lies_about_itself", lies_about_itself },
 	};
 
