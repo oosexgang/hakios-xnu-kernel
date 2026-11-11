@@ -303,6 +303,10 @@ void air_note(struct air_ctx *c, const char *fmt, ...) PRINTFLIKE(2, 3);
  */
 int air_null_texture_slot(struct air_ctx *c);
 
+/* the binding of the sampler air.get_read_sampler() hands a texel read (iOS 26 and later): no sampler of the
+ * shader's, and nothing a sample may name */
+#define AIR_READ_SAMPLER_BINDING 0xfffffffeu
+
 nir_def *air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
                       unsigned align);
 bool air_store_ptr(struct air_ctx *c, struct air_ptr ptr, nir_def *value, unsigned align);

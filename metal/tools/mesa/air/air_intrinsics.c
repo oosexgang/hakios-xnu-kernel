@@ -1759,6 +1759,22 @@ llvm_op(struct air_ctx *c, const struct air_inst *in, const char *name)
       air_set(c, &in->base, air_val_ssa(c, nir_fabs(&c->b, a)));
       return true;
    }
+   /* LLVM's integer minimum and maximum, which a later Metal compiler writes where an earlier wrote a compare
+    * and a select (iOS 27.2's stroke_arc_instanced_vert_*: llvm.umax.i32(n, 1)); scalars and vectors alike */
+   static const struct { const char *prefix; nir_op op; } minmax[] = {
+      { "llvm.umax.", nir_op_umax }, { "llvm.umin.", nir_op_umin },
+      { "llvm.smax.", nir_op_imax }, { "llvm.smin.", nir_op_imin },
+   };
+   for (unsigned i = 0; i < sizeof(minmax) / sizeof(minmax[0]); i++) {
+      if (!strncmp(name, minmax[i].prefix, strlen(minmax[i].prefix))) {
+         nir_def *a = air_get_ssa(c, in->operands[1]);
+         nir_def *b = air_get_ssa(c, in->operands[2]);
+         if (!a || !b)
+            return false;
+         air_set(c, &in->base, air_val_ssa(c, nir_build_alu2(&c->b, minmax[i].op, a, b)));
+         return true;
+      }
+   }
    if (!strcmp(name, "llvm.trap"))
       return air_error(c, "intrinsic: llvm.trap");
    return air_error(c, "intrinsic: %s", name);
@@ -2238,6 +2254,12 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       air_set(c, &in->base, air_val_ssa(c, nir_imm_bool(&c->b, is_null)));
       return true;
    }
+   /* iOS 26 and later: a texel read takes a sampler too, the one this returns (below) */
+   if (!strcmp(n->part[0], "get_read_sampler")) {
+      struct air_ptr p = { .class = AIR_PTR_SAMPLER, .binding = AIR_READ_SAMPLER_BINDING };
+      air_set(c, &in->base, air_val_ptr(c, p));
+      return true;
+   }
 
    struct air_tex_name t;
    if (!parse_tex_name(n->part[0], &t))
@@ -2278,7 +2300,28 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
    if (have_sampler) {
       if (!tex_handle(c, in, arg, AIR_PTR_SAMPLER, &samp))
          return false;
+      if (samp.binding == AIR_READ_SAMPLER_BINDING)
+         return air_error(c, "intrinsic: air.%s through air.get_read_sampler's sampler, which "
+                             "is a texel read's and names no filter or addressing", n->part[0]);
       arg++;
+   }
+   /* iOS 26 and 27's AIR passes a texel read a sampler as well, the one air.get_read_sampler()
+    * returns, and an offset after the coordinate:
+    *   { <4 x half>, i8 } air.read_texture_2d.v4f16(ptr as(1) tex, ptr as(2) sampler,
+    *                                                 <2 x i32> coord, <2 x i32> offset,
+    *                                                 i32 lod, i32)
+    * (QuartzCore's fixed_frag_* of iOS 26's 23G90, and 45 of the 249 functions of iOS 27.2's, among them
+    * compute_average_luma and the compute blurs). A texel fetch has no use for a sampler -- no
+    * filter, no addressing beyond the texture's own size -- so it is passed over, and the offset
+    * is taken when it is zero, which is every call seen; another is refused. (The first
+    * generation's front end, userland/tools/mesa/air, found this on iOS 26.)
+    */
+   bool read_with_sampler = false;
+   if (!strcmp(t.op, "read") && in->num_operands > arg &&
+       in->operands[arg]->type->kind == AIR_TYPE_POINTER &&
+       in->operands[arg]->type->addrspace == 2) {
+      arg++;
+      read_with_sampler = true;
    }
 
    /* A depth texture takes a plane or aspect selector before the coordinate,
@@ -2373,6 +2416,21 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
    nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);
    if (!coord)
       return false;
+
+   if (read_with_sampler && in->num_operands > arg &&
+       in->operands[arg]->type->kind == AIR_TYPE_VECTOR) {
+      const struct air_constant *off = air_value_as_constant(in->operands[arg]);
+      bool zero = off && off->ckind == AIR_CONST_NULL;
+      if (off && off->ckind == AIR_CONST_DATA) {
+         zero = true;
+         for (unsigned i = 0; i < off->num_elems; i++)
+            zero &= off->data[i] == 0;
+      }
+      if (!zero)
+         return air_error(c, "intrinsic: air.%s with a texel offset that is not zero",
+                          n->part[0]);
+      arg++;
+   }
 
    if (!strcmp(t.op, "read") && tex.is_image) {
       uint64_t extra;
@@ -2652,7 +2710,7 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
    const char *op = n.part[0];
    if (strstr(op, "texture") || strstr(op, "_depth_") || !strncmp(op, "sample", 6) ||
        !strncmp(op, "gather", 6) || !strncmp(op, "read_", 5) || !strncmp(op, "write_", 6) ||
-       strstr(op, "_lod_"))
+       strstr(op, "_lod_") || !strcmp(op, "get_read_sampler"))
       return texture_op(c, in, &n);
 
    /* The rest of Apple's pack family, named as absent rather than as undecided.
