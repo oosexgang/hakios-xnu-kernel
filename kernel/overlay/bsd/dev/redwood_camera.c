@@ -86,6 +86,8 @@
 #include <sys/redwood_camera.h>
 #include <sys/redwood_input.h>
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
 extern void loader_log_putc(char c);
@@ -4222,6 +4224,12 @@ redwood_camera_init(void)
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("cam", &level, sizeof(level)) || level == 0) {
+		return;
+	}
+	if (!hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD)) {
+		/* every address below is one phone's: not on a board that does not say it is wired the same */
+		printf("camera: disabled: this board's board.toml lists no \"camera-redwood\"\n");
+		level = 0;
 		return;
 	}
 	level = level > 5 ? 5 : level;

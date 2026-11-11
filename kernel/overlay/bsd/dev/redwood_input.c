@@ -244,10 +244,17 @@ redwood_input_init(void)
 	hakios_board_init();            /* which board this is and what it has (bsd/dev/hakios_board.c), in the log */
 	redwood_cpufreq_init();
 	redwood_virtio_input_init();
-	if (redwood_board_is("renoir")) {
+	/* the touch screen: the driver of the controller this board has, if it lists one */
+	if (hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U)) {
 		renoir_fts_init();
-	} else {
+	} else if (hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX)) {
 		redwood_goodix_init();
+	} else {
+		uint32_t asked = 0;
+
+		if (PE_parse_boot_argn("touchscreen", &asked, sizeof(asked)) && asked != 0) {
+			printf("touch: touchscreen=1, but this board's board.toml lists no touch controller (\"touch-...\")\n");
+		}
 	}
 	{
 		extern void hakios_prof_start(void);

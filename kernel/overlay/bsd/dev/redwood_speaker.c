@@ -70,6 +70,8 @@
 #include <sys/systm.h>
 #include <sys/redwood_audio.h>
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
@@ -1203,6 +1205,12 @@ redwood_speaker_init(void)
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("speaker_probe", &probe_level, sizeof(probe_level)) || probe_level == 0) {
+		return;
+	}
+	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261)) {
+		/* every address below is one phone's: not on a board that does not say it is wired the same */
+		printf("speaker: disabled: this board's board.toml lists no \"speaker-aw88261\"\n");
+		probe_level = 0;
 		return;
 	}
 	if (kernel_thread_start(probe_thread, NULL, &thread) == KERN_SUCCESS) {

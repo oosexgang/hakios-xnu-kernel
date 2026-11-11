@@ -23,6 +23,11 @@ known_phone(void)
 	b = hakios_board();
 	CHECK(b != NULL && strcmp(b->name, "renoir") == 0 && strcmp(b->soc, "sm7350") == 0, "the row of renoir");
 	CHECK(hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS) && hakios_board_has(HAKIOS_HAS_ADSP), "its features");
+	/* its own touch controller, and none of the parts only the other phone has */
+	CHECK(hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U) && !hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX), "its touch controller");
+	CHECK(!hakios_board_has(HAKIOS_HAS_HAPTIC_AW86927) && !hakios_board_has(HAKIOS_HAS_TORCH_PM8350C) &&
+	    !hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) && !hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD) &&
+	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750), "no driver wired for another phone's parts");
 	CHECK(b != NULL && b->backlight.type == HAKIOS_BACKLIGHT_DCS && b->backlight.dsi != 0 && b->clocks.dispcc != 0 &&
 	    b->backlight.raw_min < b->backlight.raw_max, "a DCS panel has what the driver needs");
 	CHECK(strcmp(get_string("name"), "renoir") == 0, "hw.board.name %s", get_string("name"));
@@ -61,7 +66,8 @@ static void
 table(void)
 {
 	CHECK(hakios_board_count >= 3, "%u boards", hakios_board_count);
-	CHECK(hakios_feature_count >= 5 && strcmp(hakios_feature_names[0], "cpufreq-epss") == 0, "the features' names");
+	CHECK(hakios_feature_count >= 12 && strcmp(hakios_feature_names[0], "cpufreq-epss") == 0 &&
+	    strcmp(hakios_feature_names[11], "wifi-wcn6750") == 0, "the features' names, by bit");
 	for (unsigned i = 0; i < hakios_board_count; i++) {
 		const struct hakios_board *b = &hakios_boards[i];
 
@@ -70,6 +76,8 @@ table(void)
 		    "%s: cpufreq-epss without [cpufreq]", b->name);
 		CHECK(b->backlight.type != HAKIOS_BACKLIGHT_DCS || (b->backlight.bytes >= 1 && b->backlight.bytes <= 2),
 		    "%s: DCS bytes %u", b->name, b->backlight.bytes);
+		CHECK(!((b->features & HAKIOS_HAS_TOUCH_GOODIX) && (b->features & HAKIOS_HAS_TOUCH_FT3658U)),
+		    "%s lists two touch controllers", b->name);
 		for (unsigned j = 0; j < i; j++) {
 			CHECK(strcmp(b->name, hakios_boards[j].name) != 0, "%s is there twice", b->name);
 		}

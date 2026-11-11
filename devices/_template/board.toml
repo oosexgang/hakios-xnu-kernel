@@ -12,6 +12,10 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 #   battery-uefi    the battery as the firmware reports it to the loader (battery=1)
 #   buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1)
 #   adsp            the audio DSP: sound, and the battery manager behind it (adsp=1)
+# and these, each a driver of one part wired the way one phone has it -- list one only if your phone
+# has that part on the same pins and bus (kernel/overlay/bsd/dev/hakios_board.h, docs/drivers.md):
+#   touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-redwood,
+#   wifi-wcn6750
 features = []
 
 # The panel's light (docs/backlight.md).

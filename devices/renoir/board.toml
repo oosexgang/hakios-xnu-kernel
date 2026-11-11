@@ -6,7 +6,13 @@ soc = "sm7350"
 
 # What this board has a working driver for. The kernel starts a driver only where its feature is
 # listed (and its boot-arg asks for it); docs/porting.md says what each needs.
-features = ["cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp"]
+features = [
+    "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp",
+    "touch-ft3658u",
+    # Not here: speaker, haptics, flashlight, camera and Wi-Fi. The drivers in the kernel are wired for
+    # redwood's parts (AW88261, AW86927, the PM8350C's flash, its cameras, a WCN6750); this phone's
+    # (a TFA9873, a PM8350B actuator, a WCN6855 ...) get their own drivers and features when ported.
+]
 
 # The panel's light (docs/backlight.md). A command-mode AMOLED panel whose brightness is MIPI DCS 0x51.
 [backlight]

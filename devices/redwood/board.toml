@@ -4,7 +4,11 @@ name = "redwood"                    # what the loader puts in /chosen/darwin-boa
 description = "POCO X5 Pro 5G"
 soc = "sm7325"
 
-features = ["cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp"]
+features = [
+    "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp",
+    # this phone's own parts, as its drivers have them wired
+    "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750",
+]
 
 # A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.
 [backlight]

@@ -172,6 +172,8 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: KMA_*/kmem_alloc moved to the internal header */
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
@@ -4275,14 +4277,14 @@ redwood_wifi_init(void)
 		printf("wifi: wifi=%u is not understood: wifi=1 turns the radio on, wifi_step=N goes the first N steps of that\n", on);
 		return;
 	}
-	if (pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
+	if (pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE || !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750)) {
 		if (last_step != 0 && PE_parse_boot_argn("wifi_lx", &back, sizeof(back)) && back) {
 			/* a check of what is under the driver: it gets as far as finding no firmware to talk to */
 			printf("wifi: this is not the phone; with wifi_lx the driver is started all the same, for what it does before "
 			    "it needs a radio\n");
 			printf("wifi: the driver's start returns %d\n", redwood_lx_start());
 		} else {
-			printf("wifi: wifi=1 and wifi_step=N are for the phone's radio, and this is not the phone\n");
+			printf("wifi: wifi=1 and wifi_step=N are for a phone whose board.toml lists \"wifi-wcn6750\", and this is not one\n");
 		}
 		return;
 	}

@@ -36,6 +36,18 @@ enum {
 	HAKIOS_HAS_BATTERY_UEFI = 1u << 2,      /* the battery as the firmware reports it to the loader (redwood_battery.c) */
 	HAKIOS_HAS_BUTTONS_PMIC = 1u << 3,      /* power and volume keys on the PMIC, through the SPMI arbiter (redwood_buttons.c) */
 	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (redwood_adsp.c) */
+	/*
+	 * Drivers of one part, wired the way one phone has it (the pins, the bus, the chip): a board lists
+	 * one only if it has that part wired that way. Asked for on any other board, the driver says so and
+	 * does nothing, rather than write to another phone's pins.
+	 */
+	HAKIOS_HAS_TOUCH_GOODIX    = 1u << 5,   /* Goodix GT9916 or FocalTech FT3680 on redwood's SPI (redwood_goodix.c) */
+	HAKIOS_HAS_TOUCH_FT3658U   = 1u << 6,   /* FocalTech FT3658U on renoir's SPI (renoir_fts.c) */
+	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (redwood_speaker.c) */
+	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (redwood_haptic.c) */
+	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (redwood_torch.c) */
+	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* redwood's four cameras and their wiring (redwood_camera.c) */
+	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (redwood_wifi.c) */
 };
 
 /* how the panel's light is set (bsd/dev/hakios_backlight.c) */
