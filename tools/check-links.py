@@ -43,7 +43,9 @@ def main():
                 # placeholders (NAME, SOC, …) and globs are not paths
                 if re.search(r'NAME|SOC|[*…]|\.\.\.', target):
                     continue
-                if not (ROOT / target.rstrip('/.')).exists():
+                # (from the repository's top, or from the document's own directory: metal/README.md names metal/'s
+                # files as metal/ itself does, tools/ and tests/ of its own)
+                if not (ROOT / target.rstrip('/.')).exists() and not (path.parent / target.rstrip('/.')).exists():
                     problems.append(f'{name}:{number}: `{target}` is not in the repository')
     for problem in problems:
         print(problem, file=sys.stderr)
