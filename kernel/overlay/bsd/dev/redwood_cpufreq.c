@@ -23,6 +23,8 @@
 
 #include "hakios_board.h"
 #include "hakios_log.h"
+#include "hakios_mmio.h"
+#include "hakios_time.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
@@ -74,7 +76,7 @@ raise_domain(uint32_t domain, uint32_t cores)
 	base = ml_io_map(hakios_board()->cpufreq.epss + domain * hakios_board()->cpufreq.epss_domain_size,
 	    hakios_board()->cpufreq.epss_domain_size);
 	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
-		uint32_t entry = *(volatile uint32_t *)(base + EPSS_FREQ_TABLE + 4 * row);
+		uint32_t entry = rd(base + EPSS_FREQ_TABLE + 4 * row);
 		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
 
 		if (row > 0 && khz <= top_khz) {
@@ -83,9 +85,9 @@ raise_domain(uint32_t domain, uint32_t cores)
 		top = row;
 		top_khz = khz;
 	}
-	was = *(volatile uint32_t *)(base + EPSS_PERF_STATE);
-	*(volatile uint32_t *)(base + EPSS_PERF_STATE) = top;
-	delay_for_interval(20, NSEC_PER_MSEC);
+	was = rd(base + EPSS_PERF_STATE);
+	wr(base + EPSS_PERF_STATE, top);
+	sleep_ms(20);
 	tell("cpufreq: group %u (%u of our cores): row %u -> %u of the frequency table, %u MHz\n", domain, cores, was, top,
 	    top_khz / 1000);
 }
@@ -103,7 +105,7 @@ redwood_cpufreq_init(void)
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS)) {
-		printf("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\"\n");
+		tell("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\"\n");
 		return;
 	}
 	for (unsigned int i = 0; i < topology->num_cpus; i++) {
@@ -121,6 +123,6 @@ redwood_cpufreq_init(void)
 			raise_domain(domain, cores[domain]);
 		}
 	}
-	printf("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
+	tell("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
 	hakios_membench();                      /* (after the cores' clocks: bsd/dev/hakios_bench.c) */
 }
