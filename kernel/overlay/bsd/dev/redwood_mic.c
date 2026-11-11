@@ -72,6 +72,7 @@
 #include <sys/uio.h>
 
 #include "hakios_board.h"
+#include "hakios_time.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
@@ -136,25 +137,8 @@ redwood_mic_quiesce(void)
 	}
 }
 
-static void
-sleep_ms(uint32_t ms)
-{
-	delay_for_interval(ms, NSEC_PER_MSEC);
-}
-
 #define HAKIOS_MMIO_EXACT
 #include "hakios_mmio.h"
-
-static void
-spin_us(uint32_t us)
-{
-	uint64_t until;
-
-	nanoseconds_to_absolutetime((uint64_t)us * NSEC_PER_USEC, &until);
-	until += mach_absolute_time();
-	while (mach_absolute_time() < until) {
-	}
-}
 
 static bool broken;                     /* a write that did not read back: nothing more is written, all is undone */
 static char last_write[120] = "nothing written";

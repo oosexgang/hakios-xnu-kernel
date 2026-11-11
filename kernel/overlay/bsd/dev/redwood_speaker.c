@@ -97,18 +97,7 @@ say(const char *format, ...)
 }
 
 #include "hakios_mmio.h"
-
-/* Waits without sleeping (also with interrupts off, on a panic's way out). */
-static void
-spin_us(uint32_t us)
-{
-	uint64_t until;
-
-	nanoseconds_to_absolutetime((uint64_t)us * NSEC_PER_USEC, &until);
-	until += mach_absolute_time();
-	while (mach_absolute_time() < until) {
-	}
-}
+#include "hakios_time.h"
 
 static void
 wait_ms(uint32_t ms)

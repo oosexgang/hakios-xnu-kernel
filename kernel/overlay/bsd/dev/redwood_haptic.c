@@ -85,17 +85,7 @@ say(const char *format, ...)
 }
 
 #include "hakios_mmio.h"
-
-static void
-spin_us(uint32_t us)
-{
-	uint64_t until;
-
-	nanoseconds_to_absolutetime((uint64_t)us * NSEC_PER_USEC, &until);
-	until += mach_absolute_time();
-	while (mach_absolute_time() < until) {
-	}
-}
+#include "hakios_time.h"
 
 static void
 wait_ms(uint32_t ms)
@@ -659,15 +649,6 @@ static volatile uint64_t onset_us;              /* when iOS's last waveform bega
 static volatile uint32_t heard_peak;            /* the largest sample of that waveform, or since the service last looked */
 static uint64_t written_frames;
 static unsigned taps, loops, capped;            /* what has been played, for the run's end */
-
-static uint64_t
-now_us(void)
-{
-	uint64_t ns;
-
-	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
-	return ns / NSEC_PER_USEC;
-}
 
 /* From the audio server's I/O thread: never waits. */
 static int
