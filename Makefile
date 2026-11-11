@@ -11,6 +11,7 @@ SHELL := /bin/bash
 help:
 	@echo "make check          lint + boards + docs + test: everything that needs no phone (what CI runs)"
 	@echo "make device DEVICE=NAME   bring a phone's package in from the devices branch (tools/device.py add)"
+	@echo "make compare DEVICE=NAME DTS=FILE   hold a board and its SoC file against a device tree (tools/boards.py compare)"
 	@echo "make test           host tests of kernel drivers and of the tools (tests/run.sh)"
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
 	@echo "make boards         validate the device packages and soc/, write the tables the code is built with (build/boards)"
@@ -42,6 +43,10 @@ boards-check:
 .PHONY: device
 device:
 	tools/device.py add $(DEVICE)
+
+.PHONY: compare
+compare:
+	tools/boards.py compare $(DEVICE) --dts $(DTS)
 
 .PHONY: docs
 docs:
