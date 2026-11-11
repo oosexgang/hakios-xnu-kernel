@@ -299,6 +299,12 @@ GenericARMPE::start(IOService * provider)
 
 	/* BSD looks the platform expert up by class (IOSecureBSDRoot). */
 	registerService();
+	/*
+	 * The clock is this platform expert (getGMTTimeOfDay below). IOKitInitializeTime waits up to 30 s for a
+	 * resource "IORTC", which a real-time clock's driver publishes, before it sets the calendar: without it
+	 * every boot of xnu-12377 stood still for those 30 s at "bsd_init: calling IOKitInitializeTime".
+	 */
+	publishResource("IORTC", this);
 
 	/* Stand-ins for the closed graphics drivers that the iOS window server talks to. */
 	MiniIOSurfaceStart(this);
