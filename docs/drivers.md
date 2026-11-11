@@ -68,8 +68,8 @@ needs its feature in the board's `features`.
 | --- | --- | --- | --- |
 | `bsd/dev/redwood_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp` / `adsp=1` | phone (both phones) |
 | `bsd/dev/redwood_audio.c` | `/dev/redwood-audio`: what iOS plays, to whichever sink is there. | — | any |
-| `bsd/dev/redwood_sound.c`, `redwood_guard.c` | What the DSP is told so the speakers play; speaker protection. | `sound=N` with `adsp=1` | phone (redwood); not gated by a feature yet |
-| `bsd/dev/redwood_mic.c` | The microphones, through the DSP. | `mic=N` with `adsp=1` | phone (redwood); not gated by a feature yet |
+| `bsd/dev/redwood_sound.c`, `redwood_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
+| `bsd/dev/redwood_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part |
 | `bsd/dev/redwood_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part |
 | `bsd/dev/redwood_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part |
 | `bsd/dev/redwood_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part |

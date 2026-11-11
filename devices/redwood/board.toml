@@ -8,6 +8,7 @@ features = [
     "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp",
     # this phone's own parts, as its drivers have them wired
     "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750",
+    "mic-wcd938x",
 ]
 
 # A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.

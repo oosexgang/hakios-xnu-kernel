@@ -20,7 +20,7 @@ const struct hakios_board hakios_boards[] = {
 		.name = "redwood",
 		.description = "POCO X5 Pro 5G",
 		.soc = "sm7325",
-		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_WIFI_WCN6750,
+		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_WIFI_WCN6750 | HAKIOS_HAS_MIC_WCD938X,
 		.clocks = {
 			.gcc = 0x00100000, .gcc_disp_ahb_cbcr = 0x27004,
 			.dispcc = 0x0af00000, .dispcc_mdss_gdscr = 0x1004,
@@ -63,7 +63,7 @@ const struct hakios_board hakios_boards[] = {
 const unsigned hakios_board_count = sizeof(hakios_boards) / sizeof(hakios_boards[0]);
 
 /* the features by their bit, as board.toml spells them */
-const char *const hakios_feature_names[] = { "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "touch-ft3658u", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750" };
+const char *const hakios_feature_names[] = { "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "touch-ft3658u", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750", "mic-wcd938x" };
 const unsigned hakios_feature_count = sizeof(hakios_feature_names) / sizeof(hakios_feature_names[0]);
 
 #endif /* _HAKIOS_BOARD_TABLE_H */

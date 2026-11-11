@@ -27,7 +27,8 @@ known_phone(void)
 	CHECK(hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U) && !hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX), "its touch controller");
 	CHECK(!hakios_board_has(HAKIOS_HAS_HAPTIC_AW86927) && !hakios_board_has(HAKIOS_HAS_TORCH_PM8350C) &&
 	    !hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) && !hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD) &&
-	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750), "no driver wired for another phone's parts");
+	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750) && !hakios_board_has(HAKIOS_HAS_MIC_WCD938X),
+	    "no driver wired for another phone's parts");
 	CHECK(b != NULL && b->backlight.type == HAKIOS_BACKLIGHT_DCS && b->backlight.dsi != 0 && b->clocks.dispcc != 0 &&
 	    b->backlight.raw_min < b->backlight.raw_max, "a DCS panel has what the driver needs");
 	CHECK(strcmp(get_string("name"), "renoir") == 0, "hw.board.name %s", get_string("name"));

@@ -82,6 +82,8 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: KMA_*/kmem_alloc moved to the internal header */
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);
 extern kern_return_t thread_terminate(thread_t thread);
@@ -1478,6 +1480,12 @@ redwood_sound_dsp_up(void)
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("sound", &level, sizeof(level)) || level == 0) {
+		return;
+	}
+	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261)) {
+		/* what the DSP is told here is for those amplifiers and their wiring */
+		say("sound: disabled: this board's board.toml lists no \"speaker-aw88261\"\n");
+		level = 0;
 		return;
 	}
 	if (level > 4) {

@@ -71,6 +71,8 @@
 #include <sys/systm.h>
 #include <sys/uio.h>
 
+#include "hakios_board.h"
+
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
 extern void loader_log_putc(char c);
@@ -1817,6 +1819,12 @@ redwood_mic_dsp_up(void)
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("mic", &level, sizeof(level)) || level == 0) {
+		return;
+	}
+	if (!hakios_board_has(HAKIOS_HAS_MIC_WCD938X)) {
+		/* the codec, its pins and its SoundWire wiring below are one phone's */
+		say("mic: disabled: this board's board.toml lists no \"mic-wcd938x\"\n");
+		level = 0;
 		return;
 	}
 	level = level > 4 ? 4 : level;

@@ -9,7 +9,7 @@ soc = "sm7350"
 features = [
     "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp",
     "touch-ft3658u",
-    # Not here: speaker, haptics, flashlight, camera and Wi-Fi. The drivers in the kernel are wired for
+    # Not here: speaker, microphones, haptics, flashlight, camera and Wi-Fi. The drivers in the kernel are wired for
     # redwood's parts (AW88261, AW86927, the PM8350C's flash, its cameras, a WCN6750); this phone's
     # (a TFA9873, a PM8350B actuator, a WCN6855 ...) get their own drivers and features when ported.
 ]

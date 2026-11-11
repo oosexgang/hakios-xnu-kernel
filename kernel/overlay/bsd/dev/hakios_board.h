@@ -43,11 +43,12 @@ enum {
 	 */
 	HAKIOS_HAS_TOUCH_GOODIX    = 1u << 5,   /* Goodix GT9916 or FocalTech FT3680 on redwood's SPI (redwood_goodix.c) */
 	HAKIOS_HAS_TOUCH_FT3658U   = 1u << 6,   /* FocalTech FT3658U on renoir's SPI (renoir_fts.c) */
-	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (redwood_speaker.c) */
+	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (redwood_speaker.c, redwood_sound.c) */
 	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (redwood_haptic.c) */
 	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (redwood_torch.c) */
 	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* redwood's four cameras and their wiring (redwood_camera.c) */
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (redwood_wifi.c) */
+	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (redwood_mic.c) */
 };
 
 /* how the panel's light is set (bsd/dev/hakios_backlight.c) */

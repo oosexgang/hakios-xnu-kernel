@@ -15,7 +15,7 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 # and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 # has that part on the same pins and bus (kernel/overlay/bsd/dev/hakios_board.h, docs/drivers.md):
 #   touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-redwood,
-#   wifi-wcn6750
+#   wifi-wcn6750, mic-wcd938x
 features = []
 
 # The panel's light (docs/backlight.md).
