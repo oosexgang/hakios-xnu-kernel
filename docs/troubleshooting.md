@@ -169,6 +169,14 @@ software without it.
 | --- | --- | --- |
 | `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])`, `mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])`, `adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], [ipc]): ...`, `sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])`, `wifi: disabled: the SoC file does not say where ... are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's memory is ([wifi] dsp_memory): ...` | The driver's feature is listed, but the SoC file lacks a section the driver takes addresses from. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
 
+### Vibration motor
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `haptic: disabled: the board file does not say which pins the chip is on ([haptic])` | The feature is listed without `[haptic]`; `tools/boards.py check` refuses such a board. | The chip's I2C lines, reset and interrupt as pins of the SoC, and `f0_calibration` from Android's log on the same phone (`f0_cali_data`). |
+| `haptic: nobody answers at 0x5a on the bus of gpioN/N`, then `(the reset pin does not drive high: the chip is held in reset or not powered)` | With `haptic=1` this is expected: a look leaves the chip in reset. | `haptic=2` releases the reset and reads the chip, still writing nothing to it. |
+| `haptic: ...: THE CHIP IS PUT INTO RESET (gpioN low) and nothing more is done` | A write was not acknowledged or did not read back, the chip reported a fault, or it is not the chip expected. The reason is the start of the line. | For "NOT THE AW86927 EXPECTED": another chip needs its own driver. For a write that does not stick: check the pins in `[haptic]`. |
+
 ### Flashlight
 
 | What you see | What it means | What to do |
