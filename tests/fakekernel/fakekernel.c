@@ -155,10 +155,28 @@ logged(const char *text)
 	return found;
 }
 
-bool
-redwood_board_is(const char *name)
+/* The device tree as the loader leaves it: /chosen with darwin-board, the test's `board` with its end.
+ * A test that sets `board` to NULL has a loader that named none. */
+int
+SecureDTLookupEntry(const DTEntry search, const char *path, DTEntry *entry)
 {
-	return strcmp(name, board) == 0;
+	(void)search;
+	if (strcmp(path, "/chosen") != 0) {
+		return kError;
+	}
+	*entry = (DTEntry)&board;
+	return kSuccess;
+}
+
+int
+SecureDTGetProperty(const DTEntry entry, const char *name, void const **value, unsigned int *size)
+{
+	if (entry != (DTEntry)&board || strcmp(name, "darwin-board") != 0 || board == NULL) {
+		return kError;
+	}
+	*value = board;
+	*size = (unsigned int)strlen(board) + 1;
+	return kSuccess;
 }
 
 /* "name=value" among the boot-args: a number (decimal or 0x hex) or a string */

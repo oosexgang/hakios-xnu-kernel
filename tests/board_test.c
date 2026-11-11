@@ -187,12 +187,28 @@ table(void)
 	}
 }
 
+/* a loader that named no board, and one whose name only begins like a board's */
+static void
+unnamed(void)
+{
+	board = NULL;
+	CHECK(hakios_board() == NULL && !hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS), "no name, no board");
+	CHECK(strcmp(get_string("name"), "unknown") == 0, "hw.board.name %s", get_string("name"));
+}
+
+static void
+almost_named(void)
+{
+	board = "phone-cmd-2";          /* (not "phone-cmd": the whole name is compared, with its end) */
+	CHECK(hakios_board() == NULL, "a name that begins like a board's is not that board");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "known_phone", known_phone }, { "gpu_a642", gpu_a642 }, { "gpu_a642l", gpu_a642l },
-		{ "emulator", emulator }, { "unknown", unknown }, { "table", table },
+		{ "emulator", emulator }, { "unknown", unknown }, { "unnamed", unnamed }, { "almost_named", almost_named }, { "table", table },
 	};
 
 	if (argc < 2) {

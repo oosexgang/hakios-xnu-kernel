@@ -6,7 +6,6 @@
 #include <kern/thread_call.h>
 #include <libkern/libkern.h>
 #include <miscfs/devfs/devfs.h>
-#include <pexpert/device_tree.h>
 #include <sys/conf.h>
 #include <sys/errno.h>
 #include <sys/proc.h>
@@ -18,21 +17,6 @@
 #include "hakios_board.h"
 
 #define TOUCH_QUEUE     512             /* records; a power of two */
-
-/* Never infer a physical board from hw.machine: it is an iPhone for iOS.
- * Missing/unknown identity is deliberately not permission to access MMIO. */
-bool
-redwood_board_is(const char *name)
-{
-	DTEntry chosen;
-	const void *value;
-	unsigned int size;
-	size_t length = strlen(name) + 1;
-
-	return SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
-	       SecureDTGetProperty(chosen, "darwin-board", &value, &size) == kSuccess &&
-	       size == length && memcmp(value, name, length) == 0;
-}
 
 /*
  * Boot-arg touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every

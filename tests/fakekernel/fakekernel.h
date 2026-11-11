@@ -86,9 +86,15 @@ int fake_sysctl_out(struct sysctl_req *req, const void *data, size_t size);
 #define SYSCTL_UINT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 1, (void *)(ptr), val, NULL, access)
 #define SYSCTL_INT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 2, (void *)(ptr), val, NULL, access)
 
+/* the device tree, of which a driver asks only what the loader named the board (pexpert/device_tree.h) */
+typedef void *DTEntry;
+enum { kError = -1, kSuccess = 0 };
+int SecureDTLookupEntry(const DTEntry search, const char *path, DTEntry *entry);
+int SecureDTGetProperty(const DTEntry entry, const char *name, void const **value, unsigned int *size);
+
 /* for the tests (fakekernel.c) */
 extern const char *boot_args;
-extern const char *board;
+extern const char *board;               /* /chosen/darwin-board; NULL: the loader named none */
 bool logged(const char *text);
 uint32_t get(const char *name);
 const char *get_string(const char *name);

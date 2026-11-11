@@ -12,6 +12,7 @@
  */
 #include <libkern/libkern.h>
 #include <machine/machine_routines.h>
+#include <pexpert/device_tree.h>
 #include <pexpert/pexpert.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -19,11 +20,29 @@
 #include "hakios_board.h"
 #include "hakios_board_table.h"
 
-extern bool redwood_board_is(const char *name);        /* bsd/dev/redwood_input.c: /chosen/darwin-board */
 extern void loader_log_putc(char c);
 
 static const struct hakios_board *found;
 static bool looked;
+
+/*
+ * Is this the board the loader named (/chosen/darwin-board, a string with its end)? The name is the
+ * loader's word and nothing else is: a board is never inferred from hw.machine, which is an iPhone's
+ * for iOS's sake, and a machine whose loader named none is no board at all -- which is not permission
+ * to touch anything of a phone.
+ */
+static bool
+loader_named(const char *name)
+{
+	DTEntry chosen;
+	const void *value;
+	unsigned int size;
+	size_t length = strlen(name) + 1;
+
+	return SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
+	       SecureDTGetProperty(chosen, "darwin-board", &value, &size) == kSuccess &&
+	       size == length && memcmp(value, name, length) == 0;
+}
 
 const struct hakios_board *
 hakios_board(void)
@@ -31,7 +50,7 @@ hakios_board(void)
 	if (!looked) {
 		/* (twice at once finds the same row twice: nothing to guard) */
 		for (unsigned i = 0; i < hakios_board_count; i++) {
-			if (redwood_board_is(hakios_boards[i].name)) {
+			if (loader_named(hakios_boards[i].name)) {
 				found = &hakios_boards[i];
 				break;
 			}
