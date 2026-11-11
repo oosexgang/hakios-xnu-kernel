@@ -13,6 +13,7 @@ The current target is Xiaomi Renoir (Snapdragon 780G / SM7350), using iOS 27.2 (
 - Verified on Renoir on 2026-11-10: the rebuilt CPU-only kernel reached the home screen in a RAM-only boot; 40 bootstrap checks, 0 failed. Long-run stability remains unverified.
 - Wi-Fi, sound, camera, haptics and battery support are disabled in the current boot defaults. Thermal management and stable 60 FPS are not implemented.
 - Brightness and Auto-Brightness: a device-independent kernel backlight (DSI DCS on Qualcomm panels, software dimming elsewhere, QEMU included) and the iOS slider/switch wired to it. The boot default only reads the DSI controller; `--boot-arg backlight=2` hands the panel to iOS. Host and qemu-aarch64 tests pass; not yet verified on the phone: [renoir/docs/backlight.md](renoir/docs/backlight.md).
+- A device-independent thermal limiter: it reads the SoC's TSENS sensors and steps the CPU groups' frequency rows down when hot, capping the panel's brightness too. The boot default only logs temperatures; `--boot-arg thermal=2` turns it on. Host and qemu-aarch64 tests pass; not yet verified on the phone: [renoir/docs/thermal.md](renoir/docs/thermal.md).
 
 Build and RAM-boot instructions: [renoir/docs/ios26-boot.md](renoir/docs/ios26-boot.md).
 

@@ -68,6 +68,8 @@ The renoir port adds minimal patches in `renoir/kernel/patches/`:
 
 6. **`0024-metal-plugin-gate.patch`**:
    - `IOAcceleratorES::setProperties` back from the 16.5 kernel: with boot-arg `metal=1`, user space may name a Metal plug-in (`MetalPluginName`, `MetalPluginClassName`) and nothing else. Off by default. See `renoir/docs/metal-glass.md`.
+7. **`0025-thermal-limiter.patch`**:
+   - `bsd/dev/hakios_thermal.c`: every TSENS sensor read each second; the EPSS groups held back a row at a time above `th_trip`, given back below `th_clear`, at their floors at `th_critical`; the panel's brightness capped with them. `thermal=1` looks only, `thermal=2` acts. See `renoir/docs/thermal.md`.
 
 ## renoir drivers
 
