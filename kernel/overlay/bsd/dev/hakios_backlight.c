@@ -4,14 +4,14 @@
  * (tested on the host: tests/backlight_test.c, and the driver itself: tests/backlight_driver_test.c).
  *
  * What iOS sees: the sysctls hw.backlight.* (any user may write the first four; the injected library
- * renoir/userland/inject_brightness.c is who does, for the slider of Control Center and Settings and
+ * ios/userland/inject_brightness.c is who does, for the slider of Control Center and Settings and
  * for the switch of automatic brightness):
  *
  *   level      0 to 1000: the slider (iOS's DisplayBrightness times 1000). Written while the brightness
  *              is automatic, it moves the automatic curve by the difference, as on an iPhone
  *   auto       0 or 1: automatic brightness (iOS's DisplayBrightnessAuto)
  *   power      the display: 1 on, 0 off (the panel dark), 2 dimmed (at most level 150); written by
- *              renoir/userland/inject_backlight.c from iOS's display modes (the side button, the idle timer)
+ *              ios/userland/inject_backlight.c from iOS's display modes (the side button, the idle timer)
  *   lux        the ambient light in thousandths of a lux. Written: a reading of the "virtual" sensor
  *              (QEMU, tests, or user space with a sensor of its own); read: the light in use
  *   cap        the most it may show while the phone is hot (bsd/dev/hakios_thermal.c), 1000 otherwise

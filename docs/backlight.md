@@ -2,7 +2,7 @@
 
 The panel's brightness and automatic brightness, for any device. Kernel: `kernel/overlay/bsd/dev/hakios_backlight.c`
 (`bsd/dev/hakios_backlight.c`, the arithmetic in `bsd/dev/hakios_backlight_core.h`). iOS side:
-`renoir/userland/inject_brightness.c` (`libhakios-brightness.dylib`).
+`ios/userland/inject_brightness.c` (`libhakios-brightness.dylib`).
 
 ## How it fits together
 

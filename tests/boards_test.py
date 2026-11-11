@@ -196,6 +196,9 @@ class Check(Sandbox):
             (self.soc, '[cpufreq]\nepss = 0x18591000\nepss_domain_size = 0x1000\n', '', 'feature "cpufreq-epss" needs [cpufreq]'),
             (self.soc, 'gcc = 0x100000', 'gcc = 0x100000000', 'a value of 32 bits'),
             (self.soc, 'name = "sm0001"', 'name = "sm0002"', 'the file is sm0001.toml'),
+            (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\ncpus = 8\nbootargs = ["cpus=8", "two words"]\n[loader]',
+             '"two words" is not NAME or NAME=VALUE'),
+            (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\n[loader]', '"bootargs" is missing'),
             (self.soc, 'io_base = 0x400000', 'io_base = 0', 'io_base must not be 0'),
             (self.soc, 'psci = "smc"', 'psci = "telepathy"', 'one of smc, hvc'),
             (self.soc, 'gic_dist = 0x17a00000\n', '', '"gic_dist" is missing'),
@@ -331,6 +334,14 @@ class Repository(unittest.TestCase):
     def test_the_committed_tables_are_what_the_tool_writes(self):
         self.assertEqual(boards.TABLE.read_text(), boards.table_text(*boards.load()), 'run tools/boards.py gen')
         self.assertEqual(boards.PLATFORMS.read_text(), boards.platforms_text(*boards.load()), 'run tools/boards.py gen')
+
+    def test_renoir_boots_with_its_own_arguments(self):
+        boot = boards.load()[1]['renoir']['boot']
+        self.assertEqual(boot['fastboot_product'], 'renoir')
+        for argument in ('touchscreen=1', 'gpu=0', 'backlight=1', 'thermal=1'):
+            self.assertIn(argument, boot['bootargs'])
+        names = [argument.split('=')[0] for argument in boot['bootargs']]
+        self.assertEqual(len(names), len(set(names)), 'an argument is there twice')
 
     def test_the_loader_has_its_fallback(self):
         # loader.c names platform_qemu_virt: the machine whose display matches no board

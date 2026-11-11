@@ -13,19 +13,19 @@ All in WSL. `ios26/` holds the extracted IPSW (`rootfs/`, `cryptex/{os,app}/`, `
 
 ```
 kernel/build.sh                        # kernel: xnu-12377 + HakiOS base + Renoir patch series
-cc -O2 -o renoir/tools/pacstrip renoir/tools/pacstrip.c -lcrypto
-renoir/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
-python3 renoir/tools/fips26.py ios26/dyld-strip
-renoir/userland/inj26.sh                      # our libraries, arm64e
-renoir/userland/root26-ios.sh                 # /redwood image ios26/root26-ios.apfs, and the jobs ios26/jobs26
+cc -O2 -o ios/tools/pacstrip ios/tools/pacstrip.c -lcrypto
+ios/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
+python3 ios/tools/fips26.py ios26/dyld-strip
+ios/userland/inj26.sh                      # our libraries, arm64e
+ios/userland/root26-ios.sh                 # /redwood image ios26/root26-ios.apfs, and the jobs ios26/jobs26
 LAUNCHDAEMONS=ios26/jobs26 WORK=ios26/image-tree-prune \
-    python3 renoir/tools/mkimage26.py --prune ios26/system26-prune.apfs
+    python3 ios/tools/mkimage26.py --prune ios26/system26-prune.apfs
 ```
 
 Boot, with the phone in its stock fastboot (nothing is flashed or erased; a reboot brings Android back):
 
 ```
-python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF \
+python3 ios/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF \
     --system "$HOME/darwin_kernel/ios26/system26-prune.apfs" \
     --root "$HOME/darwin_kernel/ios26/root26-ios.apfs"
 ```
@@ -106,17 +106,17 @@ Host verification of the cleaned build:
 ```
 cd "$HOME/darwin_kernel/hakios-arm64e-renoir"
 export IOS="$HOME/darwin_kernel/ios27"
-export OBJ="$PWD/renoir/userland/obj27"
+export OBJ="$PWD/ios/userland/obj27"
 bash kernel/build.sh
-renoir/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
-python3 renoir/tools/fips26.py "$IOS/dyld-strip" \
+ios/tools/pacstrip cache "$IOS/dyld-strip" "$IOS"/dyld/dyld_shared_cache_arm64e{,.[0-9]*}
+python3 ios/tools/fips26.py "$IOS/dyld-strip" \
     AE2C707EB9149A03BA76C9B332CA5C2FBF758191271C221E28EACA40D8065C18 \
     F0BBB5196E13FC74FEF80014965B915B0882AD557535BCAA07E34BA4959771D1
-BUILD=24B119 bash renoir/userland/inj26.sh
-bash renoir/userland/root26-ios.sh
+BUILD=24B119 bash ios/userland/inj26.sh
+bash ios/userland/root26-ios.sh
 LAUNCHDAEMONS="$IOS/jobs26" WORK="$IOS/image-tree-prune" \
-    python3 renoir/tools/mkimage26.py --prune "$IOS/system27-prune.apfs"
-python3 renoir/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
+    python3 ios/tools/mkimage26.py --prune "$IOS/system27-prune.apfs"
+python3 ios/tools/boot26.py --wifi-mac AA:BB:CC:DD:EE:FF
 ```
 
 (The two FIPS values come from the first boot's log: "In variable" and "MAC generated".)

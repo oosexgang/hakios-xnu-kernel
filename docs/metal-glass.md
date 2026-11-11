@@ -26,7 +26,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
    Heat: at 490 MHz the GPU sensor read 69.1 °C (`ios26-boot.md`, item 14). hxff's thermal work has to cap the
    GPU's OPP (the profile's 285/365/443/490 table) before long runs. Until then, `adreno_speed=N` (an index into
    that table, 1 and up) is the safe start.
-2. **Mesa for arm64e iOS 27.** `renoir/userland/mesa26e.sh` builds OSMesa+freedreno for the GL shim. Extend it
+2. **Mesa for arm64e iOS 27.** `ios/userland/mesa26e.sh` builds OSMesa+freedreno for the GL shim. Extend it
    to build `libredwoodair.dylib` (Mesa with `air-frontend.patch`, `air-ir3.patch` and `air-metal.patch`,
    `air_metal.h` contract), then run it through pacstrip and `ldid -Cadhoc` like the other libraries
    (root26-ios.sh).
@@ -66,7 +66,7 @@ the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims
 
 ## What the next person with the phone can do in an afternoon
 
-1. `python3 renoir/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with `fw-renoir/` in
+1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with `fw-renoir/` in
    place. Confirm the GPU block starts on 12377, and read the temperature lines.
 2. On the build machine: `tools/metallib.py` on iOS 27's `QuartzCore.framework/default.metallib`, then
    `userland/tools/air/check.sh`. The number of iOS 27 pipelines our compiler accepts tells how far step 4 is.

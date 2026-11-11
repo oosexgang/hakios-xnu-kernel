@@ -56,6 +56,7 @@ BOARD_SCHEMA = {
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False)},
+    'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq'}
@@ -178,6 +179,9 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        for argument in data.get('boot', {}).get('bootargs', []):
+            if not re.fullmatch(r'[A-Za-z0-9_-]+(=\S*)?', argument):
+                problems.add(f'{rel} [boot]', f'bootargs: "{argument}" is not NAME or NAME=VALUE')
         if 'loader' in data:
             if 'platform' not in soc:
                 problems.add(rel, f'[loader] needs [platform] in soc/{data.get("soc")}.toml')

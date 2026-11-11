@@ -134,13 +134,13 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 	printf 'f\t644\t0\t0\t/private/var/preferences/FeatureFlags/Domain/%s\t/var/preferences/FeatureFlags/Domain/%s\n' \
 		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
 done
-# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: renoir/userland/inject_poster.c)
+# PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: ios/userland/inject_poster.c)
 echo "/redwood/lib/libredwood-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
-# renoir/userland/inject_backlight.c)
+# ios/userland/inject_backlight.c)
 echo "/redwood/lib/libredwood-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
-# hw.backlight; backboardd for CoreBrightness's own side (src: renoir/userland/inject_brightness.c). It does
+# hw.backlight; backboardd for CoreBrightness's own side (src: ios/userland/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
 echo "/redwood/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.

@@ -100,7 +100,7 @@ Measured from `userland/system.apfs` (2,546,769,920 B; `7z l -slt`, "Packed Size
 
 ## 2. iOS 26 dyld cache, raw and as mkapfs stores it
 
-Method: `renoir/tools/ram-budget/zchunks.py` reproduces `compressed_fork`/`zlib_rsrc` from `mkapfs.py`
+Method: `ios/tools/ram-budget/zchunks.py` reproduces `compressed_fork`/`zlib_rsrc` from `mkapfs.py`
 exactly. It was checked byte-exact against three files in the 16.5 image (SpringBoard
 112048 → 16384, `dyld_shared_cache_arm64.35` 115834880 → 48005120, `.32` 606208 → 159744). It runs as
 16 processes over 4 MB spans: 24 s for 5.2 GB.
@@ -254,7 +254,7 @@ The scenarios B–D at the top subtract the measured savings from A:
 
 ## Reproduce
 
-Run in WSL. Scripts are in `renoir/tools/ram-budget/`; intermediate files go to `/tmp`.
+Run in WSL. Scripts are in `ios/tools/ram-budget/`; intermediate files go to `/tmp`.
 
 ```
 cd /home/wannq/darwin_kernel/ios26/dyld
@@ -263,5 +263,5 @@ python3 .../cache_images.py /tmp/rb_dyld26.pkl jobs|apps|broad
 python3 .../rootfs_select.py            # writes /tmp/rb_rootfs26.pkl
 python3 .../loctable_trim.py            # needs /tmp/rb_rootfs26.pkl
 python3 .../prune_candidates.py         # needs /tmp/rb_rootfs26.pkl
-7z l -slt darwin-renoir/userland/system.apfs > /tmp/sys165.slt && python3 .../slt_summary.py /tmp/sys165.slt
+7z l -slt darwin-ios/userland/system.apfs > /tmp/sys165.slt && python3 .../slt_summary.py /tmp/sys165.slt
 ```

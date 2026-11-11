@@ -26,3 +26,18 @@ floor_mhz = [1000, 1100, 1100]
 # which reports the board's name itself. To start it with loader/ under a UEFI, add
 #   [loader]
 #   fb_base = 0x...                 # what loader/ prints at start: "display W x H at ..."
+
+# How the boot tool starts this phone (ios/tools/boot26.py --board renoir): what stock fastboot must say it
+# is, how many cores the kernel is given, and the boot arguments of a plain run. Touch, buttons and the
+# CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their iOS 27 ports
+# land (docs/ios26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
+[boot]
+fastboot_product = "renoir"
+cpus = 8
+bootargs = [
+    "haptic=0", "cpufreq=1", "gpu=0",
+    "wifi=0", "adsp=0", "battmgr=0", "speaker_probe=0", "renoir_afe_probe=0", "sound=0", "cam=0",
+    "cam_stream_test=0", "touch_lat=0", "touchscreen=1", "buttons=1", "launchd_unsecure_cache=1",
+    "backlight=1",                  # read the DSI controller and log it, write nothing; =2: iOS has the panel
+    "thermal=1",                    # log the hottest sensor; =2: hold the processors and the panel back when hot
+]

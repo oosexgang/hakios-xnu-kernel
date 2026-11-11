@@ -3,7 +3,7 @@
 and how much of the zlib-compressed cache belongs to images outside that closure.
 
 usage: cache_images.py PIECES.pkl MODE   (PIECES.pkl from zchunks.py over the cache files)
-  MODE jobs:  the launchd jobs darwin-renoir/userland/build.sh loads (IOS_JOBS + wifid), SpringBoard
+  MODE jobs:  the launchd jobs darwin-ios/userland/build.sh loads (IOS_JOBS + wifid), SpringBoard
   MODE apps:  jobs + the 15 applications the 16.5 port's screenshots show, with their extensions
   MODE broad: every Mach-O executable in rootfs (daemons, CoreServices, applications, XPC services)
 Static closure over LC_LOAD/WEAK/REEXPORT/UPWARD_DYLIB only: dlopen() is not seen.
