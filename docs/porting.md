@@ -149,8 +149,8 @@ The user-space side is the same for every phone: the libraries in `ios/userland/
 built by `ios/tools/`. What depends on the device is small:
 
 - which iPhone iOS is told it is (`loader/identity.h`), and through that the screen layout;
-- the status bar's clock offset for a hole-punch camera (`ios/userland/inject_statusbar.c` reads the
-  board name);
+- the status bar's clock offset for a hole-punch camera at the top left: `[screen]
+  statusbar_leading_shift` in the board file, in points (`ios/userland/inject_statusbar.c` applies it);
 - the boot defaults, in the board file's `[boot]` section.
 
 How the images are built and what iOS needed on the way to the home screen: [ios26-boot.md](ios26-boot.md).

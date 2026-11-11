@@ -217,16 +217,17 @@ class Sandbox(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
-        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS)
+        self.saved = (boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS, boards.USER_BOARDS)
         boards.ROOT, boards.DEVICES, boards.SOCS = self.dir, self.dir / 'devices', self.dir / 'soc'
         boards.TABLE, boards.PLATFORMS = self.dir / 'table.h', self.dir / 'platforms.h'
+        boards.USER_BOARDS = self.dir / 'user_boards.h'
         (self.dir / 'devices/phone').mkdir(parents=True)
         (self.dir / 'soc').mkdir()
         (self.dir / 'soc/sm0001.toml').write_text(SOC)
         (self.dir / 'devices/phone/board.toml').write_text(BOARD)
 
     def tearDown(self):
-        boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS = self.saved
+        boards.ROOT, boards.DEVICES, boards.SOCS, boards.TABLE, boards.PLATFORMS, boards.USER_BOARDS = self.saved
         shutil.rmtree(self.dir)
 
     def problems(self):
@@ -485,6 +486,16 @@ class Generate(Sandbox):
         self.assertIn('&platform_phone,', listed)
         self.assertNotIn('&platform_emu,', listed)
 
+    def test_user_space_gets_what_it_is_told_of_each_board(self):
+        text = boards.user_boards_text(*boards.load())
+        self.assertIn('\t{ "phone", 0 },', text)        # a board that says nothing of its screen: no shift
+        path = self.dir / 'devices/phone/board.toml'
+        path.write_text(path.read_text() + '[screen]\nstatusbar_leading_shift = 24\n')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('\t{ "phone", 24 },', boards.user_boards_text(*boards.load()))
+        path.write_text(path.read_text().replace('= 24', '= 2400'))
+        self.assertIn('some tens, not hundreds', self.problems())
+
     def test_it_is_the_same_every_time(self):
         self.assertEqual(boards.table_text(*boards.load()), boards.table_text(*boards.load()))
 
@@ -593,6 +604,7 @@ class Repository(unittest.TestCase):
     def test_the_committed_tables_are_what_the_tool_writes(self):
         self.assertEqual(boards.TABLE.read_text(), boards.table_text(*boards.load()), 'run tools/boards.py gen')
         self.assertEqual(boards.PLATFORMS.read_text(), boards.platforms_text(*boards.load()), 'run tools/boards.py gen')
+        self.assertEqual(boards.USER_BOARDS.read_text(), boards.user_boards_text(*boards.load()), 'run tools/boards.py gen')
 
     def test_renoir_boots_with_its_own_arguments(self):
         boot = boards.load()[1]['renoir']['boot']
@@ -608,21 +620,21 @@ class Repository(unittest.TestCase):
         readme = (root / 'devices/README.md').read_text()
         drivers = (root / 'docs/drivers.md').read_text()
         for _, feature in boards.feature_bits():
-            self.assertIn(feature, template, 'a feature the template does not list')
-            self.assertIn(f'`{feature}`', drivers, 'a feature docs/drivers.md does not have')
+            self.assertTrue(feature in template, f'the template does not list the feature {feature}')
+            self.assertTrue(f'`{feature}`' in drivers, f'docs/drivers.md does not have the feature {feature}')
         for section, keys in boards.BOARD_SCHEMA.items():
             if section:
-                self.assertIn(f'[{section}]', template, 'a section the template does not show')
-                self.assertIn(f'`[{section}]`', readme, 'a section devices/README.md does not name')
+                self.assertTrue(f'[{section}]' in template, f'the template does not show [{section}]')
+                self.assertTrue(f'`[{section}]`' in readme, f'devices/README.md does not name [{section}]')
             for key in keys:
                 self.assertTrue(re.search(rf'(?m)^(# )?{key} = ', template), f'[{section}] {key} is not explained in the template')
         for section in boards.SOC_SCHEMA:
             if section:
-                self.assertIn(f'`[{section}]`', readme, 'a SoC section devices/README.md does not name')
+                self.assertTrue(f'`[{section}]`' in readme, f'devices/README.md does not name the SoC section [{section}]')
         soc_template = (root / 'devices/_template/soc.toml').read_text()
         for section, keys in boards.SOC_SCHEMA.items():
             if section:
-                self.assertIn(f'[{section}]', soc_template, 'a section the SoC template does not show')
+                self.assertTrue(f'[{section}]' in soc_template, f'the SoC template does not show [{section}]')
             for key in keys:
                 self.assertTrue(re.search(rf'(?m)^{key} = ', soc_template), f'[{section}] {key} is not explained in the SoC template')
         # the template is a SoC file the tool takes as it is

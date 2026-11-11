@@ -83,6 +83,11 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # alt_model = "Adreno 643"          # qcom,gpu-models: another name for the parts with the speed bins
 # alt_bins = [0xac, 0xbe]           # ... listed here
 
+# What iOS's interface is told of the screen (ios/userland/inject_statusbar.c). Only for a phone whose
+# front camera is a hole at the top left, where the status bar's clock would be drawn.
+# [screen]
+# statusbar_leading_shift = 24      # points (not pixels) the status bar's leading items move right
+
 # The loader (loader/) under this phone's UEFI, which tells boards apart by the framebuffer the firmware
 # reports. Needs [platform] in the SoC file. Leave the section out while the phone is started another way.
 # [loader]

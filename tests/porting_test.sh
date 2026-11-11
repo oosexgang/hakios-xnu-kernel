@@ -50,7 +50,7 @@ says() {
 
 # --- a copy of what a port touches ----------------------------------------------------------------
 R=$W/repo
-mkdir -p "$R/kernel/overlay/bsd/dev" "$R/tests"
+mkdir -p "$R/kernel/overlay/bsd/dev" "$R/tests" "$R/ios/userland"
 cp -r "$REPO/devices" "$REPO/soc" "$REPO/tools" "$REPO/loader" "$R/"
 cp "$REPO"/kernel/overlay/bsd/dev/hakios_* "$R/kernel/overlay/bsd/dev/"
 cp -r "$REPO/tests/fakekernel" "$R/tests/"

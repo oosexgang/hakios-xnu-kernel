@@ -1,5 +1,6 @@
 /*
- * Move Renoir's leading status-bar region past its top-left hole punch by 24 points.
+ * Move the status bar's leading region past a hole-punch camera at the top left, by the points the
+ * board's file gives ([screen] statusbar_leading_shift; nothing is done on a board that gives none).
  * iOS 27's live status bar uses STUIStatusBarVisualProvider, not UIKit's
  * retained _UIStatusBarVisualProvider classes. Both use leadingCenteringOffset.
  * Keep native layout and apply the offset once across superclass calls.
@@ -13,7 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define SHIFT_POINTS 24.0
+#include "hakios_boards.h"      /* generated from devices/NAME/board.toml by tools/boards.py gen */
 
 static const char *const providers[] = {
 	"_UIStatusBarVisualProvider_Split", "_UIStatusBarVisualProvider_Split828", "_UIStatusBarVisualProvider_Split1080",
@@ -30,10 +31,12 @@ static const char *const providers[] = {
 
 static __thread int depth;      /* > 0 inside a hooked metric: a call to the superclass's is not shifted again */
 
-static int
-is_renoir(void)
+/* The points this board's status bar is shifted by: its row of the generated table, by the name the
+ * loader put in /chosen/darwin-board. 0 for a board that is not there or asks for none. */
+static double
+leading_shift(void)
 {
-	int match = 0;
+	double points = 0;
 	io_registry_entry_t chosen = IORegistryEntryFromPath(MACH_PORT_NULL, "IODeviceTree:/chosen");
 
 	if (chosen) {
@@ -41,12 +44,20 @@ is_renoir(void)
 		if (board && CFGetTypeID(board) == CFDataGetTypeID()) {
 			CFIndex n = CFDataGetLength((CFDataRef)board);
 			const UInt8 *p = CFDataGetBytePtr((CFDataRef)board);
-			match = (n == 6 || (n == 7 && p[6] == 0)) && memcmp(p, "renoir", 6) == 0;
+
+			if (n > 0 && p[n - 1] == 0) n--;        /* (the property is a string with its end) */
+			for (size_t i = 0; i < sizeof(hakios_user_boards) / sizeof(hakios_user_boards[0]); i++) {
+				const char *name = hakios_user_boards[i].name;
+
+				if (strlen(name) == (size_t)n && memcmp(p, name, (size_t)n) == 0) {
+					points = hakios_user_boards[i].statusbar_leading_shift;
+				}
+			}
 		}
 		if (board) CFRelease(board);
 		IOObjectRelease(chosen);
 	}
-	return match;
+	return points;
 }
 
 /* Ignore inherited methods: changing one must not hook its superclass twice. */
@@ -63,9 +74,10 @@ static void
 renoir_statusbar26_init(void)
 {
 	SEL sel = sel_registerName("leadingCenteringOffset");
+	const double shift = leading_shift();
 	unsigned hooked = 0;
 
-	if (!is_renoir()) return;
+	if (shift <= 0) return;
 	for (size_t i = 0; i < sizeof(providers) / sizeof(providers[0]); i++) {
 		Class cls = objc_getClass(providers[i]);
 		Method method = cls ? own_class_method(cls, sel) : NULL;
@@ -76,15 +88,15 @@ renoir_statusbar26_init(void)
 			depth++;
 			double offset = original(self, sel);
 			depth--;
-			return depth == 0 ? offset + SHIFT_POINTS : offset;
+			return depth == 0 ? offset + shift : offset;
 		};
 		method_setImplementation(method, imp_implementationWithBlock((id)(void *)shifted));
 		hooked++;
 	}
 	int fd = open("/dev/console", O_WRONLY | O_NOCTTY);
 	if (fd >= 0) {
-		dprintf(fd, "renoir: statusbar %s[%d]: leading metric +%.0f pt in %u UIKit/StatusKitUI providers\n",
-		    getprogname(), getpid(), SHIFT_POINTS, hooked);
+		dprintf(fd, "hakios: statusbar %s[%d]: leading metric +%.0f pt in %u UIKit/StatusKitUI providers\n",
+		    getprogname(), getpid(), shift, hooked);
 		close(fd);
 	}
 }

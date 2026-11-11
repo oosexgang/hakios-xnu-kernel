@@ -63,6 +63,10 @@ speeds_khz = [285000, 365000, 443000, 490000]       # qcom,gpu-pwrlevels, slowes
 speed_levels = [64, 80, 128, 144]   # their supply levels: LOW_SVS, LOW_SVS_L1, SVS, SVS_L0
 default_speed = 4                   # which of them to run at, counted from 1
 
+# What iOS's interface is told of the screen: this phone's front camera is a hole at the top left.
+[screen]
+statusbar_leading_shift = 24        # points: the status bar's clock and what follows it move right, past the camera
+
 # No [loader] section yet: this phone is started by the resident USB loader of the team's working tree,
 # which reports the board's name itself. To start it with loader/ under a UEFI, add
 #   [loader]
