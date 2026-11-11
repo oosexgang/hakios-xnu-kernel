@@ -451,29 +451,7 @@ i2c_transfer(struct bus *b, uint8_t address, const uint8_t *out, unsigned out_co
 /* ---- the PMIC arbiter (version 5), for the PM8350C's GPIO 3: as in redwood_torch.c ------------------ */
 
 /* Where its blocks are: the SoC file's [spmi] (hakios_board.h). */
-#define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_SIZE       0x10000UL
-static uint32_t arb_system;                     /* who we are to the arbiter: the device tree's "qcom,ee" */
-#define ARB_SYSTEM              arb_system
-
-#define ARB_VERSION             0x000
-#define ARB_CHANNEL(n)          (0x900 + 4 * (n))
-#define ARB_OWNER(n)            (0x700 + 4 * (n))
-#define ARB_MAX_CHANNELS        512
-
-#define CHANNEL_COMMAND         0x00
-#define CHANNEL_STATUS          0x08
-#define CHANNEL_WDATA0          0x10
-#define OBSERVER_DATA0          0x18
-#define STATUS_DONE             0x1
-#define STATUS_FAILURE          0x2
-#define STATUS_DENIED           0x4
-#define STATUS_DROPPED          0x8
-#define COMMAND_WRITE           (0u << 27)
-#define COMMAND_READ            (1u << 27)
-#define TRANSFER_TIMEOUT_US     2000
-#define DROPPED                 "the transfer was dropped"
+#include "hakios_spmi.h"
 
 #define PGPIO_ID                0x28a   /* the PM8350C (slave 2), GPIO 3's peripheral (0x8800 + 0x100 x 2) */
 #define PGPIO_TYPE              0x04    /* 0x10: a GPIO */
@@ -485,23 +463,10 @@ static uint32_t arb_system;                     /* who we are to the arbiter: th
 #define PGPIO_OUT_SOURCE_CTL    0x44    /* LV/MV: [7] the level (inverted "normal"), [3:0] the function: 0 normal */
 #define PGPIO_EN_CTL            0x46    /* [7] enabled */
 
-static vm_offset_t arb_core, arb_cnfg, arb_observer, pgpio_write;
+static struct hakios_spmi arb;
+static vm_offset_t pgpio_write;
 static uint16_t pgpio_channel;
 static bool pgpio_found, pgpio_writable;
-
-static const char *
-wait_done(vm_offset_t channel)
-{
-	uint64_t start = mach_absolute_time(), interval;
-	uint32_t status;
-
-	nanoseconds_to_absolutetime(TRANSFER_TIMEOUT_US * (uint64_t)NSEC_PER_USEC, &interval);
-	do {
-		status = rd(channel + CHANNEL_STATUS);
-	} while (!(status & STATUS_DONE) && mach_absolute_time() - start < interval);
-	return !(status & STATUS_DONE) ? "no answer from the arbiter" : (status & STATUS_DENIED) ? "the arbiter refuses" :
-	       (status & STATUS_FAILURE) ? "the transfer failed" : (status & STATUS_DROPPED) ? DROPPED : NULL;
-}
 
 static void
 lock(void)
@@ -522,16 +487,13 @@ unlock(void)
 static const char *
 pgpio_read(uint8_t reg, uint8_t *value)
 {
-	vm_offset_t channel = arb_observer + 0x80UL * pgpio_channel;    /* (our system's part of the block is what is mapped) */
 	const char *problem = "no channel";
 
 	for (int tries = 0; pgpio_found && tries < 3; tries++) {
 		lock();
-		wr(channel + CHANNEL_COMMAND, COMMAND_READ | (uint32_t)reg << 4);
-		problem = wait_done(channel);
-		*value = (uint8_t)rd(channel + OBSERVER_DATA0);
+		problem = hakios_spmi_read(hakios_spmi_observer(&arb, pgpio_channel), reg, value, 1);
 		unlock();
-		if (problem == NULL || strcmp(problem, DROPPED) != 0) {
+		if (problem == NULL || strcmp(problem, SPMI_SAYS_DROPPED) != 0) {
 			break;
 		}
 	}
@@ -550,17 +512,15 @@ pgpio_put(uint8_t reg, uint8_t value, bool force)
 		give_up("a write to the PM8350C that may not be made");
 		return false;
 	}
-	if (((rd(arb_core + ARB_CHANNEL(pgpio_channel)) >> 8) & 0xfff) != PGPIO_ID) {
+	if (SPMI_ID_OF(hakios_spmi_channel_map(&arb, pgpio_channel)) != PGPIO_ID) {
 		give_up("the arbiter's channel is no longer the PM8350C's GPIO 3");
 		return false;
 	}
 	for (int tries = 0; tries < 3; tries++) {
 		lock();
-		wr(pgpio_write + CHANNEL_WDATA0, value);
-		wr(pgpio_write + CHANNEL_COMMAND, COMMAND_WRITE | (uint32_t)reg << 4);
-		problem = wait_done(pgpio_write);
+		problem = hakios_spmi_write(pgpio_write, reg, value);
 		unlock();
-		if (problem == NULL || strcmp(problem, DROPPED) != 0) {
+		if (problem == NULL || strcmp(problem, SPMI_SAYS_DROPPED) != 0) {
 			break;
 		}
 	}
@@ -575,23 +535,23 @@ pgpio_put(uint8_t reg, uint8_t value, bool force)
 static void
 pgpio_find(void)
 {
-	for (uint32_t n = 0; n < ARB_MAX_CHANNELS; n++) {
-		uint32_t map = rd(arb_core + ARB_CHANNEL(n)), owner;
+	for (uint32_t n = 0; n < arb.channels; n++) {
+		uint32_t map = hakios_spmi_channel_map(&arb, n), owner;
 
-		if (map == 0 || ((map >> 8) & 0xfff) != PGPIO_ID) {
+		if (map == 0 || SPMI_ID_OF(map) != PGPIO_ID) {
 			continue;
 		}
-		owner = rd(arb_cnfg + ARB_OWNER(n)) & 7;
+		owner = hakios_spmi_channel_owner(&arb, n);
 		say("camera: channel %u is the PM8350C's GPIO 3 (%#x); written by system %u%s\n", n, map, owner,
-		    owner == ARB_SYSTEM ? ", which is us" : "");
-		if (!pgpio_found || owner == ARB_SYSTEM) {
+		    owner == arb.system ? ", which is us" : "");
+		if (!pgpio_found || owner == arb.system) {
 			pgpio_found = true;
 			pgpio_channel = (uint16_t)n;
-			pgpio_writable = owner == ARB_SYSTEM;
+			pgpio_writable = owner == arb.system;
 		}
 	}
 	if (pgpio_found && pgpio_writable) {
-		pgpio_write = ml_io_map(hakios_board()->spmi.channels + 0x10000UL * pgpio_channel, 0x1000);
+		pgpio_write = hakios_spmi_map_write(pgpio_channel);
 	}
 }
 
@@ -1599,19 +1559,17 @@ show_rail(const char *name, uint32_t *address)
 static bool
 pmic_peek(uint16_t id, uint8_t reg, uint8_t *values, unsigned count)
 {
-	for (uint32_t n = 0; n < ARB_MAX_CHANNELS; n++) {
-		uint32_t map = rd(arb_core + ARB_CHANNEL(n));
+	for (uint32_t n = 0; n < arb.channels; n++) {
+		uint32_t map = hakios_spmi_channel_map(&arb, n);
 
-		if (map == 0 || ((map >> 8) & 0xfff) != id) {
+		if (map == 0 || SPMI_ID_OF(map) != id) {
 			continue;
 		}
 		for (unsigned i = 0; i < count; i++) {
-			vm_offset_t channel = arb_observer + 0x80UL * n;
+			const char *problem;
 
 			lock();
-			wr(channel + CHANNEL_COMMAND, COMMAND_READ | (uint32_t)(reg + i) << 4);
-			const char *problem = wait_done(channel);
-			values[i] = (uint8_t)rd(channel + OBSERVER_DATA0);
+			problem = hakios_spmi_read(hakios_spmi_observer(&arb, n), (uint8_t)(reg + i), &values[i], 1);
 			unlock();
 			if (problem != NULL) {
 				return false;
@@ -4175,10 +4133,10 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	gcc = ml_io_map(GCC_PHYS, 0x30000);
 	camcc = ml_io_map(CAMCC_PHYS, CAMCC_SIZE);
-	arb_system = hakios_board()->spmi.ee;
-	arb_core = ml_io_map(hakios_board()->spmi.core, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(hakios_board()->spmi.cnfg, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(hakios_board()->spmi.observer + ARB_OBSERVER_SIZE * arb_system, ARB_OBSERVER_SIZE);
+	if (!hakios_spmi_map(&arb)) {
+		say("camera: PMIC arbiter version %#x, not 5: the PM8350C's GPIO 3 is left alone\n", arb.version);
+		arb.channels = 0;       /* (no channel is looked for, so nothing of a PMIC is read or written) */
+	}
 	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for iOS" :
 	    level == 4 ? ": its frames through its CSIPHY and RDI 0 into memory" :
 	    level == 3 ? ": the CSID's test pattern through RDI 0 into memory" :
