@@ -17,6 +17,7 @@ static struct {
 	unsigned writes, elsewhere;
 	unsigned drove_wrong;           /* a pin became an output while its level was not the one asked for last */
 	int wanted[PINS];               /* -1: nothing asked yet */
+	void (*after_write)(void);      /* for a test with something on the pins: called when a pin's registers changed */
 } model;
 
 static inline uint32_t
@@ -49,6 +50,9 @@ tlmm_model_wr(vm_offset_t address, uint32_t value)
 			model.drove_wrong++;    /* an output before anybody said which level */
 		}
 		model.cfg[pin] = value;
+	}
+	if (model.after_write != NULL) {
+		model.after_write();
 	}
 }
 

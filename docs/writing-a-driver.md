@@ -33,6 +33,7 @@ hardware has a test of its own in `tests/`.
 | `hakios_mmio.h` | `rd()`, `wr()`: 32-bit registers. `HAKIOS_MMIO_SYNC` when a write must have arrived before the next line, `HAKIOS_MMIO_EXACT` for what the hypervisor imitates. With `HAKIOS_MMIO_TEST` they are the test's. | — |
 | `hakios_time.h` | `sleep_ms()`, `sleep_us()`, `spin_us()` (where nothing may sleep), `now_us()`. | — |
 | `hakios_tlmm.h` | The SoC's pins: `gpio_configure()`, `gpio_output()`, `gpio_set()`, `gpio_get()`. | `[pins]` of the SoC file |
+| `hakios_i2c_gpio.h` | I2C by hand on two of those pins, for a part on a bus nobody here drives: the bus taken and given back, a start, a byte out, a byte in. | — |
 | `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `redwood_spmi_lock()`. | `[spmi]` |
 | `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `[rpmh]` |
 | `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `redwood_rpmh_lock()`. | `[rpmh]` |
