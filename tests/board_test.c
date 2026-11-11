@@ -9,6 +9,7 @@
 extern char log_text[];
 
 #include "hakios_board.c"
+#include "redwood_adreno_profile.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -46,10 +47,64 @@ known_phone(void)
 	CHECK(logged("board: renoir (Xiaomi Mi 11 Lite 5G, sm7350): cpufreq-epss"), "said in the log: %s", log_text);
 }
 
+/* the GPU as its driver is handed it: the board's [gpu], with "off" before the speeds */
+static void
+gpu_renoir(void)
+{
+	const struct adreno_board_profile *p;
+
+	board = "renoir";
+	p = adreno_profile_for_board();
+	CHECK(p != NULL, "renoir has a GPU profile");
+	if (p == NULL) {
+		return;
+	}
+	CHECK(strcmp(p->board, "renoir") == 0 && strcmp(p->model, "Adreno 642") == 0 &&
+	    strcmp(p->firmware_directory, "fw-renoir") == 0, "%s, %s, %s", p->board, p->model, p->firmware_directory);
+	CHECK(p->chip_id == 0x06060010 && p->gmem_bytes == 1536 * 1024, "chip %#x, GMEM %u", p->chip_id, p->gmem_bytes);
+	CHECK(adreno642_gmu_chip_id(p->chip_id) == 0x16060000, "as the GMU wants it: %#x", adreno642_gmu_chip_id(p->chip_id));
+	CHECK(p->primitive_fifo == 0x00300000 && p->hang_cycles == 0x3ffff && p->uche_cmdq_config == 0x66906, "register values");
+	CHECK(p->speed_fuse == 0x1e1 && p->gaming_fuse == 0x1ed && p->highest_bank_bit == 14 && p->gcc_debug_gpucc == 0x13c,
+	    "fuses, bank bit, debug multiplexer");
+	CHECK(p->zap_must_authenticate, "nothing to fall back on when the zap shader is refused");
+	CHECK(p->alt_model == NULL, "one name");
+	CHECK(p->speed_count == 5 && p->default_speed == 4, "%u speeds, default %u", p->speed_count, p->default_speed);
+	CHECK(p->speeds[0].khz == 0 && p->speeds[0].level == 0, "speed 0 is off");
+	CHECK(p->speeds[1].khz == 285000 && p->speeds[1].level == 64 && p->speeds[2].khz == 365000 && p->speeds[2].level == 80 &&
+	    p->speeds[3].khz == 443000 && p->speeds[3].level == 128 && p->speeds[4].khz == 490000 && p->speeds[4].level == 144,
+	    "the speeds and their supply levels");
+}
+
+static void
+gpu_redwood(void)
+{
+	const struct adreno_board_profile *p;
+
+	board = "redwood";
+	p = adreno_profile_for_board();
+	CHECK(p != NULL, "redwood has a GPU profile");
+	if (p == NULL) {
+		return;
+	}
+	CHECK(strcmp(p->model, "Adreno 642L") == 0 && strcmp(p->firmware_directory, "fw") == 0, "%s, %s", p->model,
+	    p->firmware_directory);
+	CHECK(p->alt_model != NULL && strcmp(p->alt_model, "Adreno 643") == 0 && p->alt_bins[0] == 0xac && p->alt_bins[1] == 0xbe,
+	    "the speed bins sold as the 643");
+	CHECK(p->chip_id == 0x06030500 && p->gmem_bytes == 512 * 1024, "chip %#x, GMEM %u", p->chip_id, p->gmem_bytes);
+	CHECK(p->primitive_fifo == 0x00200000 && p->hang_cycles == 0x1fffff && p->uche_cmdq_config == 0, "register values");
+	CHECK(p->speed_fuse == 0x1e9 && p->gaming_fuse == 0x1f5 && p->highest_bank_bit == 14 && p->gcc_debug_gpucc == 0x146,
+	    "fuses, bank bit, debug multiplexer");
+	CHECK(!p->zap_must_authenticate, "the firmware's zap shader is fallen back on");
+	CHECK(p->speed_count == 4 && p->default_speed == 3, "%u speeds, default %u", p->speed_count, p->default_speed);
+	CHECK(p->speeds[1].khz == 315000 && p->speeds[1].level == 64 && p->speeds[2].khz == 450000 && p->speeds[2].level == 128 &&
+	    p->speeds[3].khz == 550000 && p->speeds[3].level == 192, "the speeds and their supply levels");
+}
+
 static void
 emulator(void)
 {
 	board = "qemu-virt";
+	CHECK(adreno_profile_for_board() == NULL, "no GPU to start");
 	CHECK(hakios_board() != NULL && hakios_board()->backlight.type == HAKIOS_BACKLIGHT_SOFT, "the row of QEMU");
 	for (unsigned bit = 0; bit < 32; bit++) {
 		CHECK(!hakios_board_has(1u << bit), "QEMU has no feature of a phone (bit %u)", bit);
@@ -63,6 +118,7 @@ unknown(void)
 {
 	board = "a-phone-nobody-described";
 	CHECK(hakios_board() == NULL, "no row");
+	CHECK(adreno_profile_for_board() == NULL, "no GPU to start");
 	for (unsigned bit = 0; bit < 32; bit++) {
 		CHECK(!hakios_board_has(1u << bit), "no feature (bit %u)", bit);
 	}
@@ -88,6 +144,15 @@ table(void)
 		    "%s: DCS bytes %u", b->name, b->backlight.bytes);
 		CHECK(!(b->features & HAKIOS_HAS_DISPLAY_SCAN) || (b->display.intf != 0 && b->clocks.dispcc != 0 &&
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
+		if (b->features & HAKIOS_HAS_GPU_A660) {
+			CHECK(b->gpu.chip_id != 0 && b->gpu.model != NULL && b->gpu.firmware != NULL, "%s: gpu-a660 without [gpu]", b->name);
+			CHECK(b->gpu.speed_count >= 1 && b->gpu.speed_count <= 5 && b->gpu.default_speed >= 1 &&
+			    b->gpu.default_speed <= b->gpu.speed_count, "%s: %u GPU speeds, default %u", b->name, b->gpu.speed_count,
+			    b->gpu.default_speed);
+			for (unsigned s = 1; s < b->gpu.speed_count && s < 5; s++) {
+				CHECK(b->gpu.speeds_khz[s - 1] < b->gpu.speeds_khz[s], "%s: GPU speeds from the slowest up", b->name);
+			}
+		}
 		CHECK(!((b->features & HAKIOS_HAS_TOUCH_GOODIX) && (b->features & HAKIOS_HAS_TOUCH_FT3658U)),
 		    "%s lists two touch controllers", b->name);
 		for (unsigned j = 0; j < i; j++) {
@@ -100,7 +165,8 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "known_phone", known_phone }, { "emulator", emulator }, { "unknown", unknown }, { "table", table },
+		{ "known_phone", known_phone }, { "gpu_renoir", gpu_renoir }, { "gpu_redwood", gpu_redwood },
+		{ "emulator", emulator }, { "unknown", unknown }, { "table", table },
 	};
 
 	if (argc < 2) {

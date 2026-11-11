@@ -447,8 +447,11 @@ step_fuses(void)
 	bin = bin >> 5 & 0xff;
 	speed_bin = bin;
 	gaming = get8(&qfprom, "gaming bin", QFPROM_CORRECTED + QFPROM_GPU_GAMING_BIN) >> 5 & 1;
-	/* dt: qcom,gpu-models: 0xac and 0xbe are sold as Adreno 643, anything else is the 642L */
-	printf("adreno: %u: speed bin %u: an Adreno %s; gaming bin %u\n", step, bin, gpu_profile == &adreno_redwood && (bin == 0xac || bin == 0xbe) ? "643" : gpu_profile ? gpu_profile->model : "unknown",
+	/* dt: qcom,gpu-models: some speed bins are sold under another name (redwood: 0xac and 0xbe as the 643) */
+	printf("adreno: %u: speed bin %u: %s; gaming bin %u\n", step, bin,
+	    gpu_profile == NULL ? "unknown" :
+	    gpu_profile->alt_model != NULL && (bin == gpu_profile->alt_bins[0] || bin == gpu_profile->alt_bins[1]) ?
+	    gpu_profile->alt_model : gpu_profile->model,
 	    gaming);
 
 	announce("read the same fuses where the phone's device tree has them (0x780000)");
@@ -2665,22 +2668,22 @@ step_zap_load(void)
 	if (scm("to take the zap shader's signature", SCM_64 | SCM_SIP | SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_GPU,
 	    header, 0, &answer) != 0 || answer != 0) {
 		printf("adreno: %u: TrustZone does not take the signature (%#llx)\n", step, answer);
-		if (gpu_profile == &adreno_renoir) {
-			printf("adreno: renoir: authentication not confirmed; GPU startup stops\n");
+		if (gpu_profile != NULL && gpu_profile->zap_must_authenticate) {
+			printf("adreno: %s: authentication not confirmed; GPU startup stops\n", gpu_profile->board);
 			return false;
 		}
-		printf("adreno: using the zap shader presumed to remain from before (redwood)\n");
+		printf("adreno: using the zap shader presumed to remain from before\n");
 		zap_is_loaded = true;
 		return true;
 	}
 	if (scm("where the image will be", SCM_64 | SCM_SIP | SCM_PAS_MEM_SETUP, SCM_THREE_VALUES, PAS_GPU, ZAP_MEMORY, 0x1000,
 	    &answer) != 0 || answer != 0) {
 		printf("adreno: %u: TrustZone does not take the place (%#llx)\n", step, answer);
-		if (gpu_profile == &adreno_renoir) {
-			printf("adreno: renoir: zap memory setup not confirmed; GPU startup stops\n");
+		if (gpu_profile != NULL && gpu_profile->zap_must_authenticate) {
+			printf("adreno: %s: zap memory setup not confirmed; GPU startup stops\n", gpu_profile->board);
 			return false;
 		}
-		printf("adreno: using the zap shader presumed to remain from before (redwood)\n");
+		printf("adreno: using the zap shader presumed to remain from before\n");
 		zap_is_loaded = true;
 		return true;
 	}
@@ -2757,8 +2760,8 @@ step_core_start(void)
 	put(&gpu, "rbbm_interface_hang_int_cntl", RBBM_INTERFACE_HANG_INT_CNTL, 1u << 30 | (gpu_profile ? gpu_profile->hang_cycles : 0x1fffff));
 	put(&gpu, "uche_client_pf", UCHE_CLIENT_PF, 1u << 7 | 1);
 	/* a6xx_start: A642 uses the A660 dual queue / almost-full configuration. */
-	if (gpu_profile == &adreno_renoir) {
-		put(&gpu, "uche_cmdq_config", GPU_WORD(0x0e3c), 0x66906);
+	if (gpu_profile != NULL && gpu_profile->uche_cmdq_config != 0) {
+		put(&gpu, "uche_cmdq_config", GPU_WORD(0x0e3c), gpu_profile->uche_cmdq_config);
 	}
 	put(&gpu, "cp_chicken_dbg", CP_CHICKEN_DBG, 1);
 	put(&gpu, "rbbm_gbif_client_qos_cntl", RBBM_GBIF_CLIENT_QOS_CNTL, 0);
@@ -4148,27 +4151,29 @@ redwood_adreno_init(void)
 	uint32_t only = 0, done = 0, failed = 0, keep = 0;
 	bool by_itself = false;
 
-	gpu_profile = adreno_profile_for_board(redwood_board_is("renoir") ? "renoir" :
-	    redwood_board_is("redwood") ? "redwood" : NULL);
+	gpu_profile = adreno_profile_for_board();
 	if (gpu_profile == NULL) {
-		printf("adreno: disabled: unsupported physical board\n");
+		printf("adreno: disabled: this board's board.toml has no \"gpu-a660\" with a [gpu] section\n");
 		return;
 	}
-	if (gpu_profile == &adreno_renoir) {
-		printf("adreno: renoir A642 profile (285, 365, 443, 490 MHz)\n");
-	}
+	printf("adreno: %s: %s (chip %#x), %u speeds up to %u MHz, default %u MHz\n", gpu_profile->board, gpu_profile->model,
+	    gpu_profile->chip_id, gpu_profile->speed_count - 1, gpu_profile->speeds[gpu_profile->speed_count - 1].khz / 1000,
+	    gpu_profile->speeds[gpu_profile->default_speed].khz / 1000);
 
 	/* Opt-in, read-only clock-state probe. MDP itself is deliberately not touched. */
 	uint32_t display_clock_probe = 0;
-	if (gpu_profile == &adreno_renoir && PE_parse_boot_argn("renoir_display_clocks", &display_clock_probe, sizeof(display_clock_probe)) && display_clock_probe) {
+	if (PE_parse_boot_argn("renoir_display_clocks", &display_clock_probe, sizeof(display_clock_probe)) && display_clock_probe &&
+	    display_layout_known()) {
+		const struct hakios_board *board = hakios_board();
+
 		need(&gcc);
 		if (gcc.base) {
-			uint32_t cfg = rd(gcc.base + 0x27004);
+			uint32_t cfg = rd(gcc.base + board->clocks.gcc_disp_ahb_cbcr);
 			printf("renoir-display-clocks: gcc display ahb %#x\n", cfg);
 			if (cfg & 1) {
-				vm_offset_t cc = ml_io_map(0x0af00000, 0x5000);
+				vm_offset_t cc = ml_io_map(board->clocks.dispcc, 0x5000);
 				if (cc) {
-					uint32_t gdsc = rd(cc + 0x3000), ahb = rd(cc + 0x2080);
+					uint32_t gdsc = rd(cc + board->clocks.dispcc_mdss_gdscr), ahb = rd(cc + board->clocks.dispcc_mdss_ahb_cbcr);
 					printf("renoir-display-clocks: gdsc %#x mdss ahb %#x\n", gdsc, ahb);
 				}
 			} else printf("renoir-display-clocks: upstream clock disabled; not reading DISPCC\n");
