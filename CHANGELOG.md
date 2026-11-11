@@ -80,7 +80,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
   clock are `hakios_time.h`. The PMIC arbiter's protocol, written out in three drivers, is
   `hakios_spmi.h`; the lookup in RPMh's command database, written out in eight, is
-  `hakios_cmd_db.h`; a request to RPMh is `hakios_rpmh.h`; the SoC's pins are `hakios_tlmm.h`. What
+  `hakios_cmd_db.h`; a request to RPMh is `hakios_rpmh.h`; the SoC's pins are `hakios_tlmm.h`, and I2C by hand on two
+  of them, which three drivers had, is `hakios_i2c_gpio.h`. What
   the audio DSP's driver and the Wi-Fi's both had of the way to another processor is shared as
   well: the shared memory (`hakios_smem.h`), SMP2P's items (`hakios_smp2p.h`), the arithmetic of
   GLINK's queues (`hakios_glink_queue.h`), the mailbox's and the doorbells' registers
@@ -139,9 +140,10 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
   link and repository path in the documentation exists, checks the pins of `components.toml`, and looks
   for files that must never be published.
-- **The host tests** (`tests/run.sh`) run seven drivers unchanged against models of their hardware, on
+- **The host tests** (`tests/run.sh`) run eight drivers unchanged against models of their hardware, on
   the host and as arm64 code under `qemu-aarch64`: the backlight, the thermal limiter, CPU frequency,
-  the memory vote through RPMh, the keys, the flashlight and the battery. What the drivers share
+  the memory vote through RPMh, the keys, the flashlight, the battery, and the vibration motor's
+  first two levels. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
   porting guide, and build the loader. They use two stand-in phones in `tests/devices/`.
