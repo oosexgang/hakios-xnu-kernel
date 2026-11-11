@@ -820,10 +820,7 @@ renoir_fts_init(void)
     uint32_t enabled = 0;
     thread_t thread;
     if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) { return; }
-    if (!redwood_board_is("renoir")) {
-        printf("fts: disabled: FT3658U wiring is for renoir only\n");
-        return;
-    }
+    /* (called only on a board that lists "touch-ft3658u": bsd/dev/redwood_input.c) */
     PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
     PE_parse_boot_argn("fts_trace", &trace, sizeof(trace));
     PE_parse_boot_argn("fts_spi_hz", &spi_hz, sizeof(spi_hz));
