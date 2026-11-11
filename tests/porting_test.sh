@@ -7,7 +7,8 @@
 #   step 1   tools/boards.py new from the device tree; what it cannot know is refused by name, then filled in
 #   step 3   the loader knows the board by its framebuffer and builds
 #   step 4   the kernel finds its row, and nothing of a phone is on until asked
-#   step 5   features and sections are added one at a time; the drivers' tests of board data see them
+#   step 5   features and sections are added one at a time (CPU frequency, thermal floors, the keys); the
+#            kernel's own board code answers with what was written
 #
 # The repository itself is not touched.
 set -uo pipefail
@@ -57,7 +58,8 @@ B="$R/tools/boards.py"
 
 # --- the phone's device tree, as `dtc -I dtb -O dts /sys/firmware/fdt` gives it (cut down) ----------
 # Six cores in two groups, its blocks elsewhere than on the 7-series, a video-mode panel of 8-bit
-# brightness sent least significant byte first... everything unlike the phones the code was written on.
+# brightness sent least significant byte first, its keys on the third PMIC of the bus... everything
+# unlike the phones the code was written on.
 cat > "$W/phone.dts" <<'EOF'
 / {
 	cpus {
@@ -76,6 +78,23 @@ cat > "$W/phone.dts" <<'EOF'
 		qcom,cpufreq-hw { compatible = "qcom,cpufreq-hw-epss"; reg = <0x00 0x17d91000 0x00 0x1000 0x00 0x17d92000 0x00 0x1000>; reg-names = "freq-domain0\0freq-domain1"; };
 		tsens@4410000 { compatible = "qcom,tsens24xx"; reg = <0x00 0x4410000 0x00 0x08 0x00 0x4411000 0x00 0x1ff>; reg-names = "tsens_srot_physical\0tsens_tm_physical"; };
 		qcom,mdss_dsi_ctrl0@5e94000 { compatible = "qcom,dsi-ctrl-hw-v2.4"; cell-index = <0x00>; reg = <0x00 0x5e94000 0x00 0x400 0x00 0x5f08000 0x00 0x04>; reg-names = "dsi_ctrl\0disp_cc_base"; };
+		qcom,spmi@4440000 {
+			compatible = "qcom,spmi-pmic-arb";
+			reg = <0x00 0x4440000 0x00 0x1100 0x00 0x4600000 0x00 0x2000000 0x00 0x6600000 0x00 0x100000 0x00 0x6700000 0x00 0xa0000 0x00 0x440a000 0x00 0x26000>;
+			reg-names = "core\0chnls\0obsrvr\0intr\0cnfg";
+			qcom,ee = <0x00>;
+			qcom,pmx100@0 { compatible = "qcom,spmi-pmic"; reg = <0x00 0x00>; };
+			qcom,pmx200@2 {
+				compatible = "qcom,spmi-pmic";
+				reg = <0x02 0x00>;
+				pon_hlos@800 { compatible = "qcom,qpnp-power-on"; reg = <0x800>; };
+				pinctrl@c000 { compatible = "qcom,pmx200-gpio"; reg = <0xc000>; phandle = <0x77>; };
+			};
+		};
+		gpio_keys {
+			compatible = "gpio-keys";
+			vol_up { label = "volume_up"; gpios = <0x77 0x09 0x01>; linux,code = <0x73>; };
+		};
 		qcom,mdss_dsi_madeup_video {
 			qcom,mdss-dsi-panel-name = "a made-up video panel";
 			qcom,mdss-dsi-panel-type = "dsi_video_mode";
@@ -146,6 +165,11 @@ main(int argc, char **argv)
 	    hakios_board_cpu_group_of(6));
 	printf("thermal tsens=%#x,%#x floors=%u,%u\n", b->thermal.tsens[0], b->thermal.tsens[1], b->thermal.floor_mhz[0],
 	    b->thermal.floor_mhz[1]);
+	printf("spmi core=%#x cnfg=%#x observer=%#x channels=%#x ee=%u\n", b->spmi.core, b->spmi.cnfg, b->spmi.observer,
+	    b->spmi.channels, b->spmi.ee);
+	printf("buttons=%d pon=%#x (%s) volume_up=%#x (%s)\n", hakios_board_has(HAKIOS_HAS_BUTTONS_PMIC), b->buttons.pon,
+	    b->buttons.pon_name ? b->buttons.pon_name : "-", b->buttons.volume_up,
+	    b->buttons.volume_up_name ? b->buttons.volume_up_name : "-");
 	printf("epss=%d touch=%d torch=%d\n", hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS), hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX) ||
 	    hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U), hakios_board_has(HAKIOS_HAS_TORCH_PM8350C));
 	return 0;
@@ -174,6 +198,18 @@ refuses "thermal floors that do not match the SoC's groups are refused" "one val
 sed -i 's/^floor_mhz = \[900, 1200, 1300\]/floor_mhz = [900, 1200]/' "$R/devices/testphone/board.toml"
 check "... and taken when they do" sh -c "\"$B\" check && \"$B\" gen"
 says "the thermal limiter gets the SoC's sensor and the board's floors" "thermal tsens=0x4411000,0 floors=900,1200" ask testphone
+# the keys: the tool found the arbiter and both peripherals in the tree, so the feature is all there is to add
+says "the SoC file has the PMIC arbiter of the tree" "spmi core=0x4440000 cnfg=0x440a000 observer=0x6600000 channels=0x4600000 ee=0" \
+	ask testphone
+says "the keys were found, and are not on until listed" \
+	"buttons=0 pon=0x208 (the PMX200's power-on block) volume_up=0x2c8 (GPIO9 of the PMX200)" ask testphone
+sed -i 's/"cpufreq-epss"/"cpufreq-epss", "buttons-pmic"/' "$R/devices/testphone/board.toml"
+check "the keys' feature is added" sh -c "\"$B\" check && \"$B\" gen"
+says "... and the kernel has it" "buttons=1 pon=0x208" ask testphone
+sed -i '/^\[buttons\]/,/^$/d' "$R/devices/testphone/board.toml"
+refuses "without its section the feature is refused" 'feature "buttons-pmic" needs a \[buttons\] section' "$B" check
+printf '\n[buttons]\npon = 0x208\nvolume_up = 0x2c8\n' >> "$R/devices/testphone/board.toml"
+check "... and taken again with it written by hand" "$B" check
 sed -i 's/"cpufreq-epss"/"cpufreq-epss", "torch-pm8350c", "warp-drive"/' "$R/devices/testphone/board.toml"
 refuses "a feature the kernel has no driver for is refused" 'feature "warp-drive" is not one the kernel knows' "$B" check
 
