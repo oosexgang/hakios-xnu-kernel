@@ -1,7 +1,8 @@
 /*
- * Keeping the phone from getting hot, for any device of the Qualcomm kind: one driver with what differs
- * between devices in a table (th_profiles below), the arithmetic in hakios_thermal_core.h (tested on the
- * host: tests/thermal_test.c, and the driver itself: tests/thermal_driver_test.c).
+ * Keeping the phone from getting hot, for any device of the Qualcomm kind: one driver; what differs
+ * between devices is the board's data (hakios_board.h: [thermal] of devices/NAME/board.toml, [thermal] and
+ * [cpufreq] of its SoC's file), and the arithmetic is hakios_thermal_core.h (tested on the host:
+ * tests/thermal_test.c, and the driver itself: tests/thermal_driver_test.c).
  *
  * Every second the SoC's temperature sensors are read (both TSENS controllers, every sensor that has a
  * reading: Linux's tsens-v2.c; read only, never written), and from the hottest of them:
@@ -26,9 +27,9 @@
  * sysctl hw.thermal: hottest (tenths of a degree), step and most (how far held back, of how far it can
  * be), trip, clear, critical (root may change them while it runs: tuning without a new kernel).
  *
- * Adding a device: its TSENS "tsens_tm_physical" addresses from its device tree, its EPSS ("cpufreq-hw")
- * address, and the floors. GPU frequency is not touched here: the GPU's speed belongs to its GMU
- * (bsd/dev/redwood_adreno.c, boot-arg adreno_speed); hakios_thermal_step() tells it how far to go.
+ * Adding a device: the TSENS controllers ("tsens_tm_physical") and the EPSS block ("cpufreq-hw") in its
+ * SoC's file, the floors in its board file. GPU frequency is not touched here: the GPU's speed belongs to
+ * its GMU (bsd/dev/redwood_adreno.c, boot-arg adreno_speed); hakios_thermal_step() tells it how far to go.
  */
 #include <kern/clock.h>
 #include <kern/sched_prim.h>
@@ -40,10 +41,10 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#include "hakios_board.h"
 #include "hakios_thermal_core.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern bool redwood_board_is(const char *name);
 extern void loader_log_putc(char c);
 extern void thread_set_thread_name(thread_t thread, const char *name);
 extern void hakios_backlight_set_cap(uint32_t level);
@@ -69,24 +70,11 @@ say(const char *format, ...)
 	return length;
 }
 
-/* ---- what differs between devices ----------------------------------------------------------------- */
+/* ---- what differs between devices: the board's data (hakios_board.h) -------------------------------- */
 
-#define TH_CONTROLLERS          2
-#define TH_SENSORS              16              /* a TSENS controller has up to 16 */
-#define TH_DOMAINS              3
-
-struct th_profile {
-	const char *board;
-	uint32_t tsens[TH_CONTROLLERS];         /* "tsens_tm_physical" of tsens0, tsens1 (0: none) */
-	uint32_t epss, epss_size;               /* "cpufreq-hw": a block of epss_size a group */
-	uint32_t floor_mhz[TH_DOMAINS];         /* the slowest each group is held back to */
-};
-
-static const struct th_profile th_profiles[] = {
-	/* SM7350 (shima) and SM7325 (yupik), both lahaina-family: tsens at 0xc263000/0xc265000, EPSS at 0x18591000 */
-	{ "renoir", { 0x0c263000, 0x0c265000 }, 0x18591000, 0x1000, { 1000, 1100, 1100 } },
-	{ "redwood", { 0x0c263000, 0x0c265000 }, 0x18591000, 0x1000, { 1000, 1100, 1100 } },
-};
+#define TH_CONTROLLERS          2               /* a SoC has up to two TSENS controllers ... */
+#define TH_SENSORS              16              /* ... of up to 16 sensors each */
+#define TH_DOMAINS              3               /* the groups of cores: small, big, prime */
 
 #define TSENS_STATUS(sensor)    (0xa0 + 4 * (sensor))
 #define EPSS_FREQ_TABLE         0x100
@@ -95,7 +83,7 @@ static const struct th_profile th_profiles[] = {
 #define XO_KHZ                  19200
 #define ALTERNATE_KHZ           300000
 
-static struct th_profile profile;
+static const struct hakios_board *this_board;      /* (hakios_board(), looked up once) */
 static uint32_t mode;
 static struct th_policy policy = { 700, 620, 950 };
 static vm_offset_t tsens[TH_CONTROLLERS], epss[TH_DOMAINS];
@@ -162,7 +150,7 @@ read_table(unsigned d)
 			break;                  /* the table ends by repeating its last row */
 		}
 		top_khz = khz;
-		if (floor_row[d] == UINT32_MAX && khz >= profile.floor_mhz[d] * 1000) {
+		if (floor_row[d] == UINT32_MAX && khz >= this_board->thermal.floor_mhz[d] * 1000) {
 			floor_row[d] = row;
 		}
 	}
@@ -254,22 +242,19 @@ hakios_thermal_init(void)
 {
 	thread_t thread;
 	int32_t value;
-	bool known = false;
 
 	if (!PE_parse_boot_argn("thermal", &mode, sizeof(mode)) || mode == 0) {
 		return;
 	}
-	for (unsigned i = 0; i < sizeof(th_profiles) / sizeof(th_profiles[0]); i++) {
-		if (redwood_board_is(th_profiles[i].board)) {
-			profile = th_profiles[i];
-			known = true;
-			break;
-		}
-	}
-	if (!known) {
-		say("thermal: no profile for this board: nothing read\n");
+	this_board = hakios_board();
+	if (this_board == NULL || this_board->thermal.tsens[0] == 0) {
+		say("thermal: this board's file has no [thermal] (devices/NAME/board.toml): nothing read\n");
 		mode = 0;
 		return;
+	}
+	if (mode >= 2 && this_board->cpufreq.epss == 0) {
+		say("thermal: this board's SoC file has no [cpufreq]: looking only\n");
+		mode = 1;
 	}
 	if (PE_parse_boot_argn("th_trip", &value, sizeof(value))) {
 		policy.trip = value;
@@ -289,16 +274,16 @@ hakios_thermal_init(void)
 		policy = (struct th_policy){ 700, 620, 950 };
 	}
 	for (unsigned c = 0; c < TH_CONTROLLERS; c++) {
-		tsens[c] = profile.tsens[c] ? ml_io_map(profile.tsens[c], 0x200) : 0;
+		tsens[c] = this_board->thermal.tsens[c] ? ml_io_map(this_board->thermal.tsens[c], 0x200) : 0;
 	}
 	most = 0;
 	for (unsigned d = 0; d < TH_DOMAINS && mode >= 2; d++) {
-		epss[d] = ml_io_map(profile.epss + d * profile.epss_size, profile.epss_size);
+		epss[d] = ml_io_map(this_board->cpufreq.epss + d * this_board->cpufreq.epss_domain_size, this_board->cpufreq.epss_domain_size);
 		read_table(d);
 		most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
 	}
 	say("thermal: %s: trip %d.%d C, clear %d.%d C, critical %d.%d C; the groups at rows %u %u %u, floors %u %u %u%s\n",
-	    profile.board, policy.trip / 10, policy.trip % 10, policy.clear / 10, policy.clear % 10, policy.critical / 10,
+	    this_board->name, policy.trip / 10, policy.trip % 10, policy.clear / 10, policy.clear % 10, policy.critical / 10,
 	    policy.critical % 10, top_row[0], top_row[1], top_row[2], floor_row[0], floor_row[1], floor_row[2],
 	    mode >= 2 ? "" : " (thermal=1: looking only)");
 	if (kernel_thread_start(th_thread, NULL, &thread) == KERN_SUCCESS) {

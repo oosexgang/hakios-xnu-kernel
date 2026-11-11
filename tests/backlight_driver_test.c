@@ -206,8 +206,9 @@ ml_io_map(vm_offset_t phys, vm_size_t size __unused)
 	return phys;            /* (an address of the model's: bl_test_rd/wr tell them apart) */
 }
 
-/* ---- the driver --------------------------------------------------------------------------------- */
+/* ---- the driver, and the board table it reads (devices/, through tools/boards.py) -------------- */
 
+#include "hakios_board.c"
 #define BL_TEST_MMIO 1
 #include "hakios_backlight.c"
 
@@ -415,8 +416,8 @@ display_power(void)
 	WAIT_FOR(last_sent() == bl_level_to_raw(900, 1, 2047), 2000);
 	CHECK(last_sent() == bl_level_to_raw(900, 1, 2047), "lit again at the new level: %u", last_sent());
 	set("power", 2);                        /* the idle timer's dimming */
-	WAIT_FOR(get("shown") == 150, 2000);
-	CHECK(last_sent() == bl_level_to_raw(150, 1, 2047), "dimmed: %u", last_sent());
+	WAIT_FOR(last_sent() == bl_level_to_raw(150, 1, 2047), 2000);    /* (shown moves first, the command follows) */
+	CHECK(get("shown") == 150 && last_sent() == bl_level_to_raw(150, 1, 2047), "dimmed: %u", last_sent());
 	set("power", 1);
 	WAIT_FOR(get("shown") == 900, 2000);
 	CHECK(get("shown") == 900, "back: %u", get("shown"));

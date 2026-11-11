@@ -1,7 +1,7 @@
 /*
- * The panel's light, for any device: one driver with what differs between devices in a table
- * (bl_profiles below), and the arithmetic in hakios_backlight_core.h (tested on the host:
- * tests/backlight_test.c).
+ * The panel's light, for any device: one driver; what differs between devices is the board's data
+ * (hakios_board.h, from devices/NAME/board.toml), and the arithmetic is hakios_backlight_core.h
+ * (tested on the host: tests/backlight_test.c, and the driver itself: tests/backlight_driver_test.c).
  *
  * What iOS sees: the sysctls hw.backlight.* (any user may write the first four; the injected library
  * renoir/userland/inject_brightness.c is who does, for the slider of Control Center and Settings and
@@ -51,11 +51,11 @@
  *   bl_auto=1          automatic brightness from the start
  *   bl_floor=N         backend soft: what is kept of a pixel at level 0, of 256 (default 24)
  *
- * Adding a device: a line in bl_profiles (the board's name as its loader puts it in /chosen
- * darwin-board, the DSI controller's address from the device tree's mdss_dsi0 "dsi_ctrl" reg, the
- * panel's qcom,mdss-dsi-bl-min-level / bl-max-level, and qcom,mdss-dsi-bl-inverted-dbv: MSB first),
- * and for the clocks the display clock controller's offsets (Linux dispcc-*.c / *-gdsc.dtsi). Until
- * then the boot-args above do the same.
+ * Adding a device: [backlight] in its devices/NAME/board.toml -- the panel's
+ * qcom,mdss-dsi-bl-min-level / -max-level, qcom,mdss-dsi-bl-inverted-dbv (MSB first), the panel's mode --
+ * and in its SoC's file the DSI controller (mdss_dsi0 "dsi_ctrl") and the display clock controller's
+ * offsets (Linux dispcc-*.c). `tools/boards.py new --dts` reads most of it from the device tree. Until
+ * then the boot-args above do the same, and a board not described at all gets backend soft.
  */
 #include <kern/clock.h>
 #include <kern/sched_prim.h>
@@ -68,9 +68,9 @@
 #include <sys/systm.h>
 
 #include "hakios_backlight_core.h"
+#include "hakios_board.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern bool redwood_board_is(const char *name);
 extern void loader_log_putc(char c);
 extern void thread_set_thread_name(thread_t thread, const char *name);
 
@@ -100,6 +100,10 @@ say(const char *format, ...)
 enum bl_backend { BL_NONE, BL_DCS, BL_SOFT };
 static const char *const bl_backend_names[] = { "none", "dcs", "soft" };
 
+/*
+ * What is used: the board's values (hakios_board.h: devices/NAME/board.toml [backlight], and its SoC's
+ * [clocks] and [display]) with the boot-args over them.
+ */
 struct bl_profile {
 	const char *board;              /* /chosen darwin-board */
 	enum bl_backend backend;
@@ -115,23 +119,6 @@ struct bl_profile {
 	uint32_t dispcc, dispcc_core_gdscr, dispcc_ahb_cbcr;
 };
 
-static const struct bl_profile bl_profiles[] = {
-	/*
-	 * Xiaomi Mi 11 Lite 5G (SM7350, shima): dsi_k9_36_02_0a_*_dsc_cmd, a command-mode AMOLED panel,
-	 * "bl_ctrl_dcs" from 1 to 0x7ff, inverted DBV (MSB first), init level 0x133; DSI 2.5 at 0xae94000;
-	 * dispcc-shima.c: MDSS GDSC 0x3000, mdss_ahb 0x2080.
-	 */
-	{ "renoir", BL_DCS, 0x0ae94000, 1, 2047, 0x133, 2, false, false, 0x00100000, 0x27004, 0x0af00000, 0x3000, 0x2080 },
-	/*
-	 * POCO X5 Pro 5G (SM7325, yupik): dsi_m20_36_02_0a_dsc_vid, a video-mode AMOLED panel, "bl_ctrl_dcs"
-	 * from 8 to 4095 of which 2047 and above is its high brightness mode (left out here), inverted DBV,
-	 * init level 307; DSI 2.5 at 0xae94000 (redwood-sde.dtsi); dispcc-yupik.c: 0x1004, 0x1050.
-	 */
-	{ "redwood", BL_DCS, 0x0ae94000, 8, 2047, 307, 2, false, true, 0x00100000, 0x27004, 0x0af00000, 0x1004, 0x1050 },
-	/* QEMU's virt machine: a framebuffer and no panel */
-	{ "qemu-virt", BL_SOFT, 0, 0, 0, 0, 0, false, false, 0, 0, 0, 0, 0 },
-};
-
 /* the profile in use: the board's, with the boot-args over it */
 static struct bl_profile profile;
 static uint32_t mode;                   /* backlight=: 0 off, 1 look only, 2 in use */
@@ -140,6 +127,7 @@ static bool chosen;
 static void
 bl_choose(void)
 {
+	const struct hakios_board *board = hakios_board();
 	char backend[8];
 	uint32_t value;
 
@@ -148,13 +136,25 @@ bl_choose(void)
 	}
 	chosen = true;
 	bzero(&profile, sizeof(profile));
-	profile.backend = BL_SOFT;              /* a board not in the table: only what is safe anywhere */
-	profile.board = "unknown";
-	for (unsigned i = 0; i < sizeof(bl_profiles) / sizeof(bl_profiles[0]); i++) {
-		if (redwood_board_is(bl_profiles[i].board)) {
-			profile = bl_profiles[i];
-			break;
-		}
+	if (board == NULL) {
+		profile.backend = BL_SOFT;      /* a board the table has not got: only what is safe anywhere */
+		profile.board = "unknown";
+	} else {
+		profile.board = board->name;
+		profile.backend = board->backlight.type == HAKIOS_BACKLIGHT_DCS ? BL_DCS :
+		    board->backlight.type == HAKIOS_BACKLIGHT_SOFT ? BL_SOFT : BL_NONE;
+		profile.dsi = board->backlight.dsi;
+		profile.raw_min = board->backlight.raw_min;
+		profile.raw_max = board->backlight.raw_max;
+		profile.raw_restore = board->backlight.raw_restore;
+		profile.bytes = board->backlight.bytes;
+		profile.little_endian = board->backlight.lsb_first != 0;
+		profile.video_mode = board->backlight.video_mode != 0;
+		profile.gcc = board->clocks.gcc;
+		profile.gcc_disp_ahb_cbcr = board->clocks.gcc_disp_ahb_cbcr;
+		profile.dispcc = board->clocks.dispcc;
+		profile.dispcc_core_gdscr = board->clocks.dispcc_mdss_gdscr;
+		profile.dispcc_ahb_cbcr = board->clocks.dispcc_mdss_ahb_cbcr;
 	}
 	if (!PE_parse_boot_argn("backlight", &mode, sizeof(mode))) {
 		mode = 0;

@@ -73,6 +73,7 @@ th_test_wr(vm_offset_t a, uint32_t v)
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_backlight_set_cap(uint32_t level) { cap = level; }
 
+#include "hakios_board.c"
 #define TH_TEST_MMIO 1
 #include "hakios_thermal.c"
 
@@ -217,7 +218,20 @@ unknown_board(void)
 	hakios_thermal_init();
 	usleep(100000);
 	CHECK(writes == 0 && foreign == 0, "nothing touched");
-	CHECK(logged("no profile"), "said so");
+	CHECK(logged("no [thermal]"), "said so");
+}
+
+/* a board the table has, but without [thermal] (QEMU): the same */
+static void
+board_without_thermal(void)
+{
+	renoir(900);
+	board = "qemu-virt";
+	boot_args = "thermal=2";
+	hakios_thermal_init();
+	usleep(100000);
+	CHECK(writes == 0 && foreign == 0, "nothing touched");
+	CHECK(logged("no [thermal]"), "said so");
 }
 
 static void
@@ -236,7 +250,8 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
 		{ "critical", critical }, { "never_raises", never_raises }, { "silent_sensors", silent_sensors },
-		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "bad_policy", bad_policy },
+		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
+		{ "bad_policy", bad_policy },
 	};
 
 	if (argc < 2) {
