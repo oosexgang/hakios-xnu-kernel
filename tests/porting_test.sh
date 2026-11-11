@@ -200,7 +200,7 @@ sed -i 's/^floor_mhz = \[900, 1200, 1300\]/floor_mhz = [900, 1200]/' "$R/devices
 check "... and taken when they do" sh -c "\"$B\" check && \"$B\" gen"
 says "the thermal limiter gets the SoC's sensor and the board's floors" "thermal tsens=0x4411000,0 floors=900,1200" ask testphone
 says "the tool says what can be turned on next" "buttons-pmic *can be listed" "$B" status testphone
-says "... and what the rest waits for" "gpu-a660 *needs \[gpu\] in the board file" "$B" status testphone
+says "... and what the rest waits for" "gpu-a660 *needs \[adreno\] in soc/sm9999.toml, .*\[gpu\] in the board file" "$B" status testphone
 # the keys: the tool found the arbiter and both peripherals in the tree, so the feature is all there is to add
 says "the SoC file has the PMIC arbiter of the tree" "spmi core=0x4440000 cnfg=0x440a000 observer=0x6600000 channels=0x4600000 ee=0" \
 	ask testphone

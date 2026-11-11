@@ -34,6 +34,19 @@ cmd_db_size = 0x20000
 rsc = 0x18220000                    # apps_rsc (qcom,rpmh-rsc), reg "drv-2": the application processor's sequencer
 tcs_offset = 0xd00                  # qcom,tcs-offset
 
+# The Adreno's blocks, for the feature "gpu-a660" (qcom,kgsl-3d0 and qcom,gmu, by their reg-names).
+# What differs from one phone to the next -- the chip, its fuses, its speeds -- is the board's [gpu].
+[adreno]
+gpu = 0x03d00000                    # qcom,kgsl-3d0, reg "kgsl_3d0_reg_memory": the 3D core
+gmu = 0x03d6a000                    # qcom,gmu, reg "kgsl_gmu_reg"
+gpucc = 0x03d90000                  # the GPU's clock controller (clock-controller@3d90000)
+cx_misc = 0x03d9e000                # qcom,kgsl-3d0, reg "cx_misc"
+rscc = 0x03de0000                   # qcom,kgsl-3d0, reg "rscc": the GMU's RPMh channel
+smmu = 0x03da0000                   # the GPU's SMMU (kgsl-smmu@3da0000)
+pdc = 0x0b290000                    # qcom,gmu, reg "kgsl_gmu_pdc_cfg"
+qfprom = 0x00780000                 # the fuses (qfprom@780000), where the board's [gpu] finds its bins
+tsens = 0x0c265000                  # the TSENS controller with the GPU's two sensors (gpuss-0, gpuss-1)
+
 [thermal]
 tsens = [0x0c263000, 0x0c265000]    # tsens0 and tsens1, reg "tsens_tm_physical"
 

@@ -214,6 +214,23 @@ default_speed = 2
 '''
 
 
+GPU_SOC = '''[adreno]
+gpu = 0x3d00000
+gmu = 0x3d6a000
+gpucc = 0x3d90000
+cx_misc = 0x3d9e000
+rscc = 0x3de0000
+smmu = 0x3da0000
+pdc = 0xb290000
+qfprom = 0x780000
+[rpmh]
+cmd_db = 0x80860000
+cmd_db_size = 0x20000
+rsc = 0x18220000
+tcs_offset = 0xd00
+'''
+
+
 class Sandbox(unittest.TestCase):
     """A repository of its own for each test: one SoC, one board, the real kernel header."""
 
@@ -367,7 +384,12 @@ class Check(Sandbox):
         path = self.dir / 'devices/phone/board.toml'
         plain = path.read_text()
         self.board('"cpufreq-epss"', '"cpufreq-epss", "gpu-a660"')
-        self.assertIn('feature "gpu-a660" needs [gpu] in the board file', self.problems())
+        said = self.problems()
+        self.assertIn('feature "gpu-a660" needs [gpu] in the board file', said)
+        # ... and of its SoC, where the GPU's blocks are and the command database
+        self.assertIn('feature "gpu-a660" needs [adreno] in soc/sm0001.toml', said)
+        self.assertIn('feature "gpu-a660" needs [rpmh] in soc/sm0001.toml', said)
+        self.soc('[thermal]', GPU_SOC + '[thermal]')
         with_gpu = path.read_text() + GPU
         cases = [
             ('', '', None),
@@ -461,6 +483,7 @@ class Generate(Sandbox):
     def test_the_table_carries_the_gpu(self):
         path = self.dir / 'devices/phone/board.toml'
         self.assertNotIn('.gpu = {', boards.table_text(*boards.load()))
+        self.soc('[thermal]', GPU_SOC + '[thermal]')
         path.write_text(path.read_text().replace('"cpufreq-epss"', '"cpufreq-epss", "gpu-a660"') + GPU +
                         'alt_model = "Adreno 643"\nalt_bins = [0xac]\nzap_must_authenticate = true\n')
         text = boards.table_text(*boards.load())
@@ -468,7 +491,9 @@ class Generate(Sandbox):
                          '.alt_model = "Adreno 643", .alt_bins = { 0xac, 0xac },',       # (not bin 0 in the empty place)
                          '.chip_id = 0x06060010, .gmem_bytes = 1536 * 1024,', '.uche_cmdq_config = 0x0,',
                          '.gcc_debug_gpucc = 0x13c, .zap_must_authenticate = 1,', '.speed_count = 2, .default_speed = 2,',
-                         '.speeds_khz = { 285000, 490000 },', '.speed_levels = { 64, 144 },'):
+                         '.speeds_khz = { 285000, 490000 },', '.speed_levels = { 64, 144 },',
+                         '.gpu = 0x03d00000, .gmu = 0x03d6a000, .gpucc = 0x03d90000,',
+                         '.pdc = 0x0b290000, .qfprom = 0x00780000, .tsens = 0x00000000,'):
             self.assertIn(expected, text)
 
     def test_the_table_carries_rpmh(self):

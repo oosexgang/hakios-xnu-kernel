@@ -48,6 +48,10 @@ known_phone(void)
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
 	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-cmd") == 0 &&
 	    b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
+	/* its GPU's blocks, as its SoC's file has them */
+	CHECK(b != NULL && b->adreno.gpu == 0x03d00000 && b->adreno.gmu == 0x03d6a000 && b->adreno.gpucc == 0x03d90000 &&
+	    b->adreno.cx_misc == 0x03d9e000 && b->adreno.rscc == 0x03de0000 && b->adreno.smmu == 0x03da0000 &&
+	    b->adreno.pdc == 0x0b290000 && b->adreno.qfprom == 0x00780000 && b->adreno.tsens == 0x0c265000, "[adreno]");
 	/* its radio: the one on PCIe, with its pool kept early */
 	CHECK(b != NULL && b->wifi.radio_model == 1 && b->wifi.early_pool_mb == 80, "its [wifi]");
 	/* its groups of cores: four small, three big, one prime */
@@ -168,6 +172,10 @@ table(void)
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
 		    b->adsp.charge_counter_divisor != 0), "%s: adsp without [adsp]", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_GPU_A660) || (b->adreno.gpu != 0 && b->adreno.gmu != 0 && b->adreno.gpucc != 0 &&
+		    b->adreno.cx_misc != 0 && b->adreno.rscc != 0 && b->adreno.smmu != 0 && b->adreno.pdc != 0 &&
+		    b->adreno.qfprom != 0 && b->clocks.gcc != 0 && b->rpmh.cmd_db != 0), "%s: gpu-a660 without the GPU's blocks",
+		    b->name);
 		if (b->features & HAKIOS_HAS_GPU_A660) {
 			CHECK(b->gpu.chip_id != 0 && b->gpu.model != NULL && b->gpu.firmware != NULL, "%s: gpu-a660 without [gpu]", b->name);
 			CHECK(b->gpu.speed_count >= 1 && b->gpu.speed_count <= 5 && b->gpu.default_speed >= 1 &&

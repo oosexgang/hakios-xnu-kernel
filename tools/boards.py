@@ -69,6 +69,8 @@ SOC_SCHEMA = {
     'thermal': {'tsens': ([int], True)},
     'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'channels': (int, False),
              'ee': (int, False)},
+    'adreno': {'gpu': (int, True), 'gmu': (int, True), 'gpucc': (int, True), 'cx_misc': (int, True), 'rscc': (int, True),
+               'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
@@ -92,8 +94,9 @@ BOARD_SCHEMA = {
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display', 'buttons-pmic': 'spmi', 'torch-pm8350c': 'spmi', 'ddr-rpmh': 'rpmh',
-                 'camera-redwood': 'spmi'}
+FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
+                 'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',), 'camera-redwood': ('spmi',),
+                 'gpu-a660': ('adreno', 'clocks', 'rpmh')}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # features that are a driver of one part as one phone has it wired, by the first word of their names
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
@@ -149,9 +152,9 @@ def feature_needs(feature, board, soc):
     """What a board that lists the feature must have and has not, in words; [] when it has everything."""
     soc_file = f'soc/{board.get("soc")}.toml'
     needs = []
-    section = FEATURE_NEEDS.get(feature)
-    if section and section not in soc:
-        needs.append(f'[{section}] in {soc_file}')
+    for section in FEATURE_NEEDS.get(feature, ()):
+        if section not in soc:
+            needs.append(f'[{section}] in {soc_file}')
     section = FEATURE_NEEDS_OF_BOARD.get(feature)
     if section and section not in board:
         needs.append(f'[{section}] in the board file')
@@ -457,6 +460,13 @@ def table_text(socs, boards):
             out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '
                        f'.observer = {spmi["observer"]:#010x}, .channels = {spmi.get("channels", 0):#010x}, '
                        f'.ee = {spmi.get("ee", 0)} }},')
+        adreno = soc.get('adreno')
+        if adreno:
+            out += ['\t\t.adreno = {',
+                    f'\t\t\t.gpu = {adreno["gpu"]:#010x}, .gmu = {adreno["gmu"]:#010x}, .gpucc = {adreno["gpucc"]:#010x},',
+                    f'\t\t\t.cx_misc = {adreno["cx_misc"]:#010x}, .rscc = {adreno["rscc"]:#010x}, .smmu = {adreno["smmu"]:#010x},',
+                    f'\t\t\t.pdc = {adreno["pdc"]:#010x}, .qfprom = {adreno["qfprom"]:#010x}, .tsens = {adreno.get("tsens", 0):#010x},',
+                    '\t\t},']
         rpmh = soc.get('rpmh')
         if rpmh:
             out.append(f'\t\t.rpmh = {{ .cmd_db = {rpmh["cmd_db"]:#010x}, .cmd_db_size = {rpmh["cmd_db_size"]:#x}, '
@@ -665,7 +675,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
             for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
                 text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
             text.append('')
-        for section in ('display', 'spmi', 'rpmh', 'thermal', 'cpufreq'):
+        for section in ('display', 'spmi', 'rpmh', 'adreno', 'thermal', 'cpufreq'):
             if section in soc:
                 text.append(f'[{section}]')
                 text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]

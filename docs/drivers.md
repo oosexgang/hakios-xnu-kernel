@@ -46,7 +46,7 @@ needs its feature in the board's `features`.
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
 | `bsd/dev/hakios_backlight.c` | Panel brightness: MIPI DCS through a Qualcomm DSI controller, or software. Automatic brightness. | `[backlight]` / `backlight=` | data |
-| `bsd/dev/redwood_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `[gpu]` / `gpu=1`, `adreno=` | data for a 642 or 642L (`[gpu]`); another Adreno generation: the driver |
+| `bsd/dev/redwood_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `[gpu]` / `gpu=1`, `adreno=` | data for a 642 or 642L (`[gpu]`, and `[adreno]` of the SoC file for where its blocks are); another Adreno generation: the driver |
 | `bsd/dev/redwood_input.c` | `/dev/redwood-touch`: the queue of touches and button presses every source feeds. | — | any |
 | `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on redwood's SPI. | `touch-goodix` / `touchscreen=1` | part |
 | `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on Renoir's SPI. | `touch-ft3658u` / `touchscreen=1` | part |

@@ -18,6 +18,7 @@ lives here, with the code, and not in a phone's package.
 | `[display]` | The first DSI controller, and the interface the panel hangs on | The same |
 | `[spmi]` | The PMIC arbiter's blocks | `buttons-pmic`, and the part drivers that write to a PMIC |
 | `[rpmh]` | The command database and the application processor's sequencer | `ddr-rpmh` |
+| `[adreno]` | The GPU's blocks: the 3D core, the GMU, its clock controller, its SMMU, the fuses | `gpu-a660`, with a board's `[gpu]` |
 | `[thermal]` | The TSENS controllers | A board's `[thermal]` |
 | `[cpufreq]` | The EPSS block and its groups of cores | `cpufreq-epss`, a board's `[thermal]` |
 

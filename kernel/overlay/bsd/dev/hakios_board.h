@@ -95,6 +95,13 @@ struct hakios_board {
 		uint32_t raw_restore;           /* what the panel is left at for the loader */
 	} backlight;
 
+	/* the Adreno's blocks (soc: [adreno]); what differs from one phone to the next is [gpu] below */
+	struct {
+		uint32_t gpu, gmu, gpucc, cx_misc, rscc, smmu, pdc;
+		uint32_t qfprom;                /* the fuses, where the speed and gaming bins are */
+		uint32_t tsens;                 /* the TSENS controller with the GPU's two sensors; 0: not read */
+	} adreno;
+
 	/* the GPU (board: [gpu]) */
 	struct {
 		const char *model;              /* "Adreno 642" */

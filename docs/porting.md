@@ -121,7 +121,7 @@ first. Every argument is in [boot-args.md](boot-args.md); every driver in [drive
 | Temperature | `[thermal]` in both files | `thermal=1` | `thermal: hottest sensor NN.N C` with plausible numbers. Compare with Android's. [thermal.md](thermal.md) |
 | CPU frequency | `cpufreq-epss`, `[cpufreq]` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
 | Memory bandwidth | `ddr-rpmh`, `[rpmh]` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
-| GPU (Adreno 642, 642L, 643) | `gpu-a660`, `[gpu]` | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
+| GPU (Adreno 642, 642L, 643) | `gpu-a660`, `[gpu]`, `[adreno]` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
 | Buttons | `buttons-pmic`, `[spmi]`, `[buttons]` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
 | Audio DSP | `adsp`, `[adsp]` | `adsp=1` | The DSP's services come up. |
@@ -191,9 +191,10 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 Stated plainly, so nobody finds out the hard way:
 
 - **GPU.** `redwood_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
-  is data (`[gpu]` in the board file, feature `gpu-a660`), so a third 642 or 642L is a section to fill
-  in. The sequence itself (the GMU's registers, the clock controller's layout, the zap shader's hand-over)
-  has only been run on these two chips: another generation of Adreno needs work in the driver.
+  is data (`[gpu]` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
+  (`[adreno]` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
+  (the GMU's registers, the clock controller's layout, the zap shader's hand-over) has only been run on
+  these two chips: another generation of Adreno needs work in the driver.
 - **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`[rpmh]`), but expects
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
