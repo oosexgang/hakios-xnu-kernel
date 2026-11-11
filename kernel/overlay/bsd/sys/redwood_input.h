@@ -75,6 +75,10 @@ struct redwood_battery_state {
 void redwood_battery_report(const struct redwood_battery_state *state);
 void redwood_net_init(void);            /* en0, if there is something to carry its frames: sys/redwood_net.h */
 void redwood_cpufreq_init(void);        /* boot-arg cpufreq=1: the phone's processor at full speed */
+void hakios_ddr_init(bool with_cpufreq); /* boot-arg ddr=: the memory's bandwidth, asked of RPMh (bsd/dev/hakios_ddr.c) */
+void redwood_ddr_quiesce(void);         /* ... and given back on the way to the loader */
+void hakios_cpuload_start(void);        /* boot-arg cpuload=MS: how busy each core is, to the loader's log (bsd/dev/hakios_bench.c) */
+void hakios_membench(void);             /* boot-arg membench=: how fast the cores get at memory */
 void redwood_adreno_init(void);         /* boot-arg adreno=N: the first N steps of waking the phone's GPU */
 void redwood_adreno_quiesce(void);      /* on the way back to the loader: the GPU block stopped, out of our memory */
 void redwood_adreno_stop(void);         /* before that, where the ending is no panic's: the GPU given back in order */
