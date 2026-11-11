@@ -120,50 +120,20 @@ gpio_output(unsigned pin, bool high, unsigned pull, unsigned ma)
 #define VRM_MODE                8
 #define VRM_MODE_LDO_HPM        7
 
-struct cmd_db_slave {
-	uint16_t id, header_offset, data_offset, count, version, reserved[3];
-};
-struct cmd_db_header {
-	uint32_t version;
-	uint8_t magic[4];
-	struct cmd_db_slave slave[8];
-	uint32_t checksum, reserved;
-	uint8_t data[];
-};
-struct cmd_db_entry {
-	char id[8];
-	uint32_t priority[2];
-	uint32_t address;
-	uint16_t length, offset;
-};
+#include "hakios_cmd_db.h"
 
 /* The RPMh address of a resource by its name in the command database the boot loader left; 0 = none. */
 static uint32_t
 rpmh_address(const char *name)
 {
 	const struct cmd_db_header *db = (const struct cmd_db_header *)cmd_db;
-	char id[8] = { 0 };
 
-	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
+	if (!hakios_cmd_db_valid(db)) {
 		printf("goodix: no command database (magic %02x %02x %02x %02x)\n", db->magic[0], db->magic[1], db->magic[2],
 		    db->magic[3]);
 		return 0;
 	}
-	strlcpy(id, name, sizeof(id));
-	for (unsigned s = 0; s < 8; s++) {
-		const struct cmd_db_slave *slave = &db->slave[s];
-		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(db->data + slave->header_offset);
-
-		if (slave->id == 0 || slave->header_offset >= CMD_DB_SIZE - 0x1000 || slave->count > 512) {
-			continue;
-		}
-		for (unsigned i = 0; i < slave->count; i++) {
-			if (memcmp(entry[i].id, id, sizeof(id)) == 0) {
-				return entry[i].address;
-			}
-		}
-	}
-	return 0;
+	return hakios_cmd_db_address(db, CMD_DB_SIZE, name);
 }
 
 static bool
