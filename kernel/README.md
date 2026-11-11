@@ -14,6 +14,7 @@ for every supported board. The board is identified at boot from `/chosen/darwin-
 | `export.sh` | Takes work done in a tree back into `overlay/` and `patches/`. |
 | `import-patch.sh` | Takes a patch written against the tree into `overlay/` and `patches/`. |
 | `verify.sh` | Checks that assembling and exporting give back exactly what is committed. |
+| `syntax-check.sh` | Compiles the files of `overlay/` for syntax and types with the machine's clang: no Darwin toolchain needed. `syntax-check.skip` lists the files only the real build can check. |
 | `build.sh`, `env.sh` | The build on Linux. |
 | `host/`, `iig-impl/` | Build wrappers: clang and stand-ins for Apple's closed `iig`. |
 
@@ -69,7 +70,13 @@ git diff                                         # review, commit
 
 ```sh
 kernel/verify.sh            # the release assembles and exports back unchanged
+kernel/syntax-check.sh      # the files HakiOS adds compile (syntax and types), with any clang
 tests/run.sh                # host tests of drivers, also under qemu-aarch64
 ```
 
 `verify.sh --from DIR` takes the release from a clone on this machine instead of the network.
+
+`syntax-check.sh --tree ../xnu-12377-hakios` checks against the tree you build in, in a few seconds:
+run it after editing a driver, before the build. It says whether the file compiles, not whether the
+kernel links or works. With `--driverkit DIR` (the macOS SDK's DriverKit headers, which `build.sh`
+fetches) the C++ stand-ins are checked as well.

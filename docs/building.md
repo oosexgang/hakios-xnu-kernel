@@ -17,7 +17,7 @@ make check
 
 Runs the lint, validates `devices/` and `soc/`, checks that the generated files are current, and runs
 the host tests. Nothing here needs a phone or iOS. CI runs the same on every push, plus
-`kernel/verify.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
+`kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
 
 ```sh
 sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld
@@ -76,9 +76,9 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | | Verified |
 | --- | --- |
 | `make check`, `kernel/verify.sh` | On every push, in CI. |
+| The kernel's drivers compile | `kernel/syntax-check.sh`, on every push: the 53 C files of `kernel/overlay` that a stock clang can check, for syntax and types. With the DriverKit headers also the 9 C++ files. The 10 of `kernel/syntax-check.skip` and linking need the real build. |
 | The assembled tree | Byte for byte what the previous patch series produced. |
 | The loader build | Compiles without a warning; identical to the build before its board table was generated. |
-| Changed kernel sources | Compile-checked with clang against the tree's headers, not linked. |
 | The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |
 | The full kernel build, and a boot | By the team, on their machines, before this restructuring. Not repeated since: it needs the Darwin toolchain and a phone. |
 | `kernel/deps/stage1.sh` | Not run end to end. It runs the commands of the setup script the team builds with. |

@@ -72,6 +72,7 @@ Details and every key: [devices/README.md](../devices/README.md), `devices/_temp
 | `kernel/overlay/` | The files HakiOS adds (130 of them), as ordinary sources at their place in the XNU tree. |
 | `kernel/patches/` | The changes to Apple's own 89 files, as 7 patches by topic. |
 | `kernel/assemble.sh`, `export.sh`, `verify.sh` | Make the tree that is compiled; take work back; check the round trip. |
+| `kernel/syntax-check.sh` | Compile what HakiOS adds for syntax and types, with any clang. |
 | `kernel/build.sh`, `deps/`, `host/`, `iig-impl/` | The build on Linux. |
 
 What the overlay provides, in the order a boot meets it:

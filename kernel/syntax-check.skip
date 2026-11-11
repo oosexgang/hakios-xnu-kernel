@@ -1,0 +1,18 @@
+# The files kernel/syntax-check.sh leaves out: they include what only the real build has -- headers the
+# build generates, internals that take the kernel's own compile flags, builtins of Apple's clang -- so
+# the machine's clang cannot say whether they compile. One path of kernel/overlay a line; kernel/build.sh
+# is their check. A file here that does compile fails syntax-check.sh: keep the list to what needs it.
+
+# the platform layer under osfmk: the scheduler's and the pmap's internals (MACH_KERNEL_PRIVATE)
+osfmk/arm64/generic_arm64_support.c
+osfmk/arm64/gic_v3_irq.c
+osfmk/arm64/hakios_cpu_idle.c
+osfmk/arm64/hakios_prof.c
+osfmk/arm64/loader_return.c
+osfmk/arm64/psci_smp.c
+osfmk/arm64/redwood_a64emu.c
+osfmk/arm64/user_exception_trace.c
+
+# the network stack's and the MAC framework's private headers
+bsd/dev/redwood_net.c
+bsd/kern/kern_minimac.c

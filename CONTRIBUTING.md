@@ -7,7 +7,9 @@ make check
 ```
 
 It must pass. It runs the lint, validates the board files, checks that generated files are current and
-runs the host tests. CI runs the same, plus `kernel/verify.sh`.
+runs the host tests. CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
+a change to a driver, `kernel/syntax-check.sh --tree DIR` says in seconds whether it still compiles,
+without the kernel toolchain.
 
 ## Where a change goes
 

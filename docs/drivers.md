@@ -100,6 +100,8 @@ needs its feature in the board's `features`.
 
 1. Write the driver in `kernel/overlay/bsd/dev/`, and add it to `bsd/conf/files` in an assembled
    tree (then `kernel/export.sh`; see [kernel/README.md](../kernel/README.md)).
+   `kernel/syntax-check.sh --tree DIR bsd/dev/your_driver.c` compiles it in a second, without the
+   kernel toolchain.
 2. If it is for a part, add a `HAKIOS_HAS_…` feature in `hakios_board.h` and check it at the start,
    after the boot argument. If it needs addresses, add them to `struct hakios_board` and to
    `tools/boards.py`, as `[backlight]` and `[thermal]` are.

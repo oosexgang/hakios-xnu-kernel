@@ -1,5 +1,5 @@
 #!/bin/bash
-# The kernel's source tools (kernel/assemble.sh, export.sh, verify.sh) on a small made-up release: no
+# The kernel's source tools (kernel/assemble.sh, export.sh, verify.sh, syntax-check.sh) on a small made-up release: no
 # network, a few seconds. What is checked is what a kernel developer relies on: the tree is what the
 # repository says, an update touches only what changed, work in a tree is never run over, and an export
 # brings it back.
@@ -166,6 +166,36 @@ refuses "a patch that does not apply exports nothing" "does not apply" "$K/impor
 sed -i 's/return 14/return 15/' "$T/drivers/theirs.c"
 refuses "patches are not applied over unexported work" "not in the repository" "$K/import-patch.sh" --tree "$T" "$W/theirs.patch"
 git -C "$T" checkout -q -- drivers/theirs.c 2> /dev/null || "$K/assemble.sh" --update --discard "$T" > /dev/null
+
+# --- the syntax check: every file of the overlay through the machine's clang ----------------------
+if command -v clang > /dev/null; then
+	cp "$HERE/../kernel/syntax-check.sh" "$K/"
+	mkdir -p "$K/deps/hostinc"
+	cp "$HERE/../kernel/deps/hostinc/xnu_clang_compat.h" "$K/deps/hostinc/"
+	: > "$K/syntax-check.skip"
+	says "the overlay's files compile" "ok: [0-9]* files compile (syntax and types); 0 need the real build" \
+		"$K/syntax-check.sh" --tree "$T"
+	says "one file can be asked for" "ok: 1 files compile" "$K/syntax-check.sh" --tree "$T" drivers/ours.c
+	refuses "a file that is not there is said to be" "is not a file of the tree" "$K/syntax-check.sh" --tree "$T" drivers/none.c
+	printf 'int broken(void)\n{\n\treturn not_declared;\n}\n' > "$K/overlay/drivers/broken.c"
+	refuses "a file that does not compile fails the check, with the error" "not_declared" "$K/syntax-check.sh" --tree "$T"
+	echo 'drivers/broken.c' > "$K/syntax-check.skip"
+	says "a file on the list of those that need the real build is left out" "1 need the real build" \
+		"$K/syntax-check.sh" --tree "$T"
+	printf 'int broken(void)\n{\n\treturn 0;\n}\n' > "$K/overlay/drivers/broken.c"
+	refuses "... and must come off the list once it compiles" "take it off" "$K/syntax-check.sh" --tree "$T"
+	: > "$K/syntax-check.skip"
+	printf 'class thing { };\n' > "$K/overlay/drivers/thing.cpp"
+	says "C++ files wait for the DriverKit headers" "1 C++ files not checked (no --driverkit)" "$K/syntax-check.sh" --tree "$T"
+	mkdir "$W/driverkit"
+	refuses "a directory without them is not taken for them" "has no OSObject.h" \
+		"$K/syntax-check.sh" --tree "$T" --driverkit "$W/driverkit"
+	: > "$W/driverkit/OSObject.h"
+	says "... and are compiled with them" "0 need the real build (kernel/syntax-check.skip)$" \
+		"$K/syntax-check.sh" --tree "$T" --driverkit "$W/driverkit"
+	rm "$K/overlay/drivers/broken.c" "$K/overlay/drivers/thing.cpp"
+	check "(the tree as it was for what follows)" "$K/assemble.sh" --update "$T"
+fi
 
 # --- what must be refused ------------------------------------------------------------------------
 sed -i 's/return 3/return 300/' "$T/c.c"
