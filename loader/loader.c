@@ -3912,8 +3912,15 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_prop_u64(&w, "dram-base", phys_base);
 	dt_prop_u64(&w, "dram-size", win_size);
 	dt_prop_u32(&w, "debug-enabled", 1);
-	/* what MobileGestalt answers "main screen scale" from: 3 device pixels per point */
-	dt_prop_u32(&w, "display-scale", 3);
+	/*
+	 * The iPhone's screen (identity.h, from its /product): what MobileGestalt answers "main screen scale" from,
+	 * and the size the kernel's display reports (MiniIOMobileFramebuffer), whatever the panel really is
+	 */
+	dt_prop_u32(&w, "display-scale", IDENTITY_SCREEN_SCALE);
+	{
+		uint32_t size[2] = { IDENTITY_SCREEN_WIDTH, IDENTITY_SCREEN_HEIGHT };
+		dt_prop(&w, "display-size", size, sizeof(size));
+	}
 	dt_prop_u32(&w, "display-rotation", 0);
 	/* how the kernel is to ask the firmware for more cores (PSCI) */
 	dt_prop_str(&w, "psci-method", plat->psci_hvc ? "hvc" : "smc");

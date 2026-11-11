@@ -99,26 +99,26 @@ static uint64_t gFBLogged[2];           /* selectors already reported */
 static uint8_t  gFBCalls[128];          /* how many calls of each selector were traced */
 
 /*
- * The display user space is told about. The system carries the identity of the iPhone X
- * (see the loader), and iOS knows what screen that phone has: with any other size
- * MobileGestalt reports an unknown screen class and the user interface has no layout for it.
- * So the display is always the iPhone's, and a swap scales the picture to the panel that is
- * really there (in QEMU the loader makes the panel exactly this size and nothing is scaled).
- * Boot-args fbwidth= and fbheight= change the size reported.
+ * The display user space is told about. The system carries the identity of an iPhone (the loader's
+ * identity.h, from the IPSW's device tree), and iOS knows what screen that phone has: with any other
+ * size MobileGestalt reports an unknown screen class and the user interface has no layout for it.
+ * So the display is always the iPhone's -- the loader puts its pixels in /chosen/display-size and its
+ * scale in /chosen/display-scale -- and a swap scales the picture to the panel that is really there
+ * (in QEMU the loader makes the panel exactly this size and nothing is scaled). Without the loader's
+ * word it is the iPhone X's. Boot-args fbwidth= and fbheight= change the size reported (0: the panel's).
  */
 #define kFBDefaultWidth         1125
 #define kFBDefaultHeight        2436
-#define kFBDotsPerInch          458
+#define kFBDotsPerInch          458             /* the iPhone X's: other widths are given in proportion */
+#define kFBNotGiven             0xffffffffu
 
-static TUNABLE(uint32_t, gFBWidth, "fbwidth", kFBDefaultWidth);
-static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBDefaultHeight);
+static TUNABLE(uint32_t, gFBWidth, "fbwidth", kFBNotGiven);
+static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBNotGiven);
 /*
- * Boot-arg fbscale=2: the same 375 x 812 points drawn at two pixels a point instead of three.
- * Everything that is drawn is drawn by the processor, and this is 2.25 times fewer pixels to
- * draw; the picture is then enlarged to the panel and is that much less sharp.
+ * Boot-arg fbscale=N: the same points drawn at N pixels a point instead of the iPhone's own scale (fbscale=2 on
+ * an iPhone X's 375 x 812 points). Everything that is drawn is drawn by the processor, and this is that many
+ * fewer pixels to draw; the picture is then enlarged to the panel and is that much less sharp.
  */
-#define kFBPointsWide           375
-#define kFBPointsHigh           812
 #define kFBDefaultScale         3
 static TUNABLE(uint32_t, gFBScale, "fbscale", 0);
 /* Boot-arg fbtrace=N: log the first N calls of every selector (default 3). */
@@ -712,14 +712,36 @@ IOMobileFramebuffer::start(IOService * provider)
 	fPanelWidth = vinfo.v_width;
 	fPanelHeight = vinfo.v_height;
 	fRowBytes = vinfo.v_rowbytes;
-	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
-	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
-	if (gFBScale != 0 && gFBScale != kFBDefaultScale) {
+	uint32_t width = kFBDefaultWidth, height = kFBDefaultHeight, ownScale = kFBDefaultScale;
+	{
+		IORegistryEntry * chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+		OSData * size = chosen ? OSDynamicCast(OSData, chosen->getProperty("display-size")) : NULL;
+		OSData * scale = chosen ? OSDynamicCast(OSData, chosen->getProperty("display-scale")) : NULL;
+
+		if (size != NULL && size->getLength() == 2 * sizeof(uint32_t)) {
+			const uint32_t * pixels = (const uint32_t *) size->getBytesNoCopy();
+			width = pixels[0];
+			height = pixels[1];
+		}
+		if (scale != NULL && scale->getLength() == sizeof(uint32_t) && *(const uint32_t *) scale->getBytesNoCopy() != 0) {
+			ownScale = *(const uint32_t *) scale->getBytesNoCopy();
+		}
+		OSSafeReleaseNULL(chosen);
+	}
+	if (gFBWidth != kFBNotGiven) {
+		width = gFBWidth;
+	}
+	if (gFBHeight != kFBNotGiven) {
+		height = gFBHeight;
+	}
+	fWidth = width ? width : fPanelWidth;
+	fHeight = height ? height : fPanelHeight;
+	if (gFBScale != 0 && gFBScale != ownScale) {
 		static const char * const places[][2] = { { "/chosen", "display-scale" }, { "/product", "artwork-scale-factor" } };
 		uint32_t scale = gFBScale;
 
-		fWidth = kFBPointsWide * scale;
-		fHeight = kFBPointsHigh * scale;
+		fWidth = fWidth / ownScale * scale;
+		fHeight = fHeight / ownScale * scale;
 		/* what the loader's device tree says about the scale is where MobileGestalt has it from */
 		for (unsigned i = 0; i < sizeof(places) / sizeof(places[0]); i++) {
 			IORegistryEntry * node = IORegistryEntry::fromPath(places[i][0], gIODTPlane);
