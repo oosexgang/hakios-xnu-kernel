@@ -34,9 +34,9 @@ loader is built. What is not installed is left out, and said.
 
 `fakekernel/` has just enough of XNU's interfaces for a driver's own source file to be compiled as a
 host program: threads are pthreads, the clock is the host's, sysctls go into a table the test reads
-and writes, boot arguments are a string the test sets. A driver reaches hardware through one seam (for
-the backlight, `BL_TEST_MMIO`; for the buttons, `BUTTONS_TEST_MMIO`), behind which the test puts a
-model of the registers. The model of the PMIC arbiter is shared (`tests/spmi_model.h`), and a driver's
+and writes, boot arguments are a string the test sets. A driver reaches hardware through one seam: its `rd()` and
+`wr()` are `hakios_mmio.h`'s, and built with `HAKIOS_MMIO_TEST` they are the test's `hakios_test_rd()`
+and `hakios_test_wr()`, behind which the test puts a model of the registers. The model of the PMIC arbiter is shared (`tests/spmi_model.h`), and a driver's
 `/dev` node is read and written by its name (`fake_dev_read()`, `fake_dev_write()`). The file that is
 tested is the file the kernel compiles.
 

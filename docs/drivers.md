@@ -107,10 +107,14 @@ needs its feature in the board's `features`.
    `tools/boards.py`, as `[backlight]` and `[thermal]` are.
 3. Start with a level that only reads and logs. `hakios_say()` (`hakios_log.h`) puts a line in the
    loader's log at once, where it can be read while the phone runs, and in the kernel's own.
+   Registers are read and written with `rd()` and `wr()` of `hakios_mmio.h`, which also says when a
+   driver needs each write to have arrived (`HAKIOS_MMIO_SYNC`) or each access to be one plain
+   instruction (`HAKIOS_MMIO_EXACT`, for what the hypervisor imitates).
    A driver that reaches a PMIC does it through `hakios_spmi.h`: the arbiter's registers, a channel's
    lookup, one read, one write, and what a status means, for the arbiter the SoC file's `[spmi]`
    names. It takes the bus with `redwood_spmi_lock()`, as the keys', the flashlight's and the
    camera's drivers do.
 4. Give it a comment that names its boot argument as `name=…`: `make docs` puts it in the reference.
 5. Where the logic can run without hardware, test it on the host. `tests/backlight_driver_test.c` runs a
-   driver unchanged against a model of its registers.
+   driver unchanged against a model of its registers: a driver that uses `hakios_mmio.h` has the
+   seam for it already.
