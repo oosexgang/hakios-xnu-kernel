@@ -155,6 +155,17 @@ class Repository(unittest.TestCase):
             for unwanted in ('<script', 'href=', '<image', 'http://', 'https://'):
                 self.assertNotIn(unwanted, text, path.name)
 
+    def test_the_loader_writes_the_boot_line_the_kernel_reads(self):
+        # boot_args is written by loader.c and read by the kernel through boot.h (kernel/patches/0002). The
+        # line's length moves bootFlags and memSizeActual: when the two disagree the kernel sizes its memory
+        # from whatever lies past what the loader wrote, and panics in its first second.
+        loader = re.findall(r'(?m)^#define BOOT_LINE_LENGTH (\d+)$', (ROOT / 'loader/loader.c').read_text())
+        kernel = re.findall(r'(?m)^\+#define BOOT_LINE_LENGTH (\d+)$',
+                            (ROOT / 'kernel/patches/0002-platform-arm64.patch').read_text())
+        self.assertEqual(len(loader), 1, 'loader.c defines BOOT_LINE_LENGTH once')
+        self.assertEqual(len(kernel), 1, 'the patch sets boot.h BOOT_LINE_LENGTH once')
+        self.assertEqual(loader, kernel, 'loader.c and the kernel disagree on the length of the boot line')
+
     def test_this_repository_passes_both(self):
         for name, arguments in (('check-links', []), ('components', ['check'])):
             done = subprocess.run([str(ROOT / 'tools' / f'{name}.py')] + arguments, capture_output=True, text=True)

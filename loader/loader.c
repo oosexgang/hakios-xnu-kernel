@@ -63,12 +63,13 @@ struct boot_video {
 };
 
 /*
- * xnu-12377's (iOS 26) pexpert/arm64/boot.h: 1024. This was 608, an older layout: the kernel then read bootFlags and
- * memSizeActual 416 bytes past what was written and zeroed here -- whatever an earlier run left in that memory, which moved with
- * the payload's size. Some images booted; others gave max_mem_actual garbage, scale_setup a thread_max of 0x7ffff600 and
- * ulock_initialize a 16 GB hash: a panic in the first second, every boot of those images.
+ * The kernel's pexpert/arm64/boot.h, as kernel/patches/0002 leaves it: 608, the layout before xnu-12377 (which has 1024).
+ * The two must agree. When they did not, the kernel read bootFlags and memSizeActual past what was written and zeroed here --
+ * whatever an earlier run left in that memory, which moved with the payload's size. Some images booted; others gave
+ * max_mem_actual garbage, scale_setup a thread_max of 0x7ffff600 and ulock_initialize a 16 GB hash: a panic in the first
+ * second, every boot of those images. tests/tools_test.py compares the two.
  */
-#define BOOT_LINE_LENGTH 1024
+#define BOOT_LINE_LENGTH 608
 
 struct boot_args {
 	uint16_t revision;
