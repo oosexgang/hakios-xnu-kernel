@@ -74,7 +74,7 @@ scenarios() {
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in board_test spmi_test backlight_driver_test thermal_driver_test buttons_driver_test torch_driver_test battery_driver_test; do
+for test in board_test spmi_test backlight_driver_test thermal_driver_test cpufreq_driver_test buttons_driver_test torch_driver_test battery_driver_test; do
 	echo "== $test (host)"
 	if "$CC" "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test"; then
 		scenarios "" "$WORK/$test"
