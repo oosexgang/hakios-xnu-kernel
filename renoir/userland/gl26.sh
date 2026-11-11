@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
-DR=/home/wannq/darwin_kernel/darwin-renoir
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository and darwin-renoir
+DR=${DR:-$DK/darwin-renoir}
 cd $DR/userland
 source ../xnu-env.sh
 O=$RN/userland/obj26

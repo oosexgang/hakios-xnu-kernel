@@ -7,9 +7,9 @@
 # Writes $IOS/root26-ios.apfs and $IOS/jobs26 (IOS=.../ios27 for iOS 27, with OBJ=.../obj27).
 # JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py.
 set -e
-DK=/home/wannq/darwin_kernel
-DR=$DK/darwin-renoir
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository, darwin-renoir and ios26/ios27
+DR=${DR:-$DK/darwin-renoir}
 IOS=${IOS:-$DK/ios26}            # the extracted IPSW (ios26: 23G90, ios27: 24B119); the outputs go there
 OBJ=${OBJ:-$RN/userland/obj26}   # our arm64e libraries (inj26.sh), built for that IPSW's addresses
 T=$IOS/root26-ios-tree

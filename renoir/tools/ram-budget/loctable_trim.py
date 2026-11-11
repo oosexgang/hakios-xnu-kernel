@@ -4,7 +4,7 @@ import pickle, plistlib, os, sys, importlib.util
 from multiprocessing import Pool
 spec = importlib.util.spec_from_file_location('r', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rootfs_select.py'))
 r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
-ROOT = '/home/wannq/darwin_kernel/ios26/rootfs/'
+ROOT = r.ROOT + '/'
 KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
 
 

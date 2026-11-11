@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
-DR=/home/wannq/darwin_kernel/darwin-renoir
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-T=/home/wannq/darwin_kernel/ios26/root26-tree
+DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository, darwin-renoir and ios26
+DR=${DR:-$DK/darwin-renoir}
+IOS=${IOS:-$DK/ios26}
+T=$IOS/root26-tree
 rm -rf $T; cp -a $DR/userland/root $T
 cp $RN/userland/obj26/*.dylib $T/lib/
 cp $RN/userland/obj26/gl_test $T/bin/gl_test
@@ -17,5 +19,5 @@ EOF
 cp $RN/userland/rc.jobs.ios26-probe $T/etc/rc.jobs
 cd $DR/userland
 M=; [ -f obj/apfs-root-source/manifest ] && M=,manifest=obj/apfs-root-source/manifest
-python3 ../tools/apfs/mkapfs.py -z --plain fw --plain fw-renoir --plain fw-wifi-renoir --plain fw-audio-renoir -o /home/wannq/darwin_kernel/ios26/root26.apfs redwood=$T$M | tail -1
-ls -la /home/wannq/darwin_kernel/ios26/root26.apfs
+python3 ../tools/apfs/mkapfs.py -z --plain fw --plain fw-renoir --plain fw-wifi-renoir --plain fw-audio-renoir -o $IOS/root26.apfs redwood=$T$M | tail -1
+ls -la $IOS/root26.apfs

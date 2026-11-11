@@ -27,7 +27,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-DK = '/home/wannq/darwin_kernel'
+DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
 I = os.environ.get('IOS', DK + '/ios26')         # the extracted IPSW: ios26 (23G90) or ios27 (24B119)
 ROOT = I + '/rootfs'
 CACHE = I + '/dyld-strip'

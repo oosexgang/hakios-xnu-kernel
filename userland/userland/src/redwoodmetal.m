@@ -3013,8 +3013,8 @@ static NSData *rw_function_air(id function);
 
 /* Without this the device inherits _MTLDevice's own answer, which is "Apple GPU" -- true of
  * the code and false of the hardware. The name is Mesa's renderer string for this chip
- * (docs/air.md: `Adreno 7c+ Gen 3, chip 0x06030500`), and the identifier beside it is asked
- * of the kernel rather than written down, so a different phone says something different.
+ * (docs/air.md: `Adreno 7c+ Gen 3, chip 0x06030500`) where the chip is known, and the identifier is
+ * asked of the kernel rather than written down, so a different phone says something different.
  * Nothing in Metal's registration reads this; a person reading a log does. */
 /*
  * What MetalPerformanceShaders recognises a GPU by. MPSDevice::GetMPSDevice (MPSCore) maps a known
@@ -3038,15 +3038,27 @@ static NSData *rw_function_air(id function);
 	return [self supportsFamily:family];
 }
 
+/* Mesa's renderer names for the chips this port has run on; any other is named by its number */
+static const struct { uint32_t chip; const char *name; } known_chips[] = {
+	{ 0x06030500, "Adreno 7c+ Gen 3" },     /* redwood (SM7325): docs/air.md */
+	{ 0x06060010, "Adreno 642" },           /* renoir (SM7350): the kernel's GPU profile */
+};
+
 - (NSString *)name
 {
 	uint64_t chip = 0;
+	uint32_t id;
 
-	if (gpu_param(_gpu, 0x03, &chip)) {
-		return [NSString stringWithFormat:@"Adreno 7c+ Gen 3 (chip %#x, Redwood)",
-				 (unsigned)(chip & 0xffffffffu)];
+	if (!gpu_param(_gpu, 0x03, &chip)) {
+		return @"Adreno (the GPU is not started)";
 	}
-	return @"Adreno (Redwood; the GPU is not started)";
+	id = (uint32_t)(chip & 0xffffffffu);
+	for (unsigned i = 0; i < sizeof(known_chips) / sizeof(known_chips[0]); i++) {
+		if (known_chips[i].chip == id) {
+			return [NSString stringWithFormat:@"%s (chip %#x)", known_chips[i].name, id];
+		}
+	}
+	return [NSString stringWithFormat:@"Adreno (chip %#x)", id];
 }
 
 /*

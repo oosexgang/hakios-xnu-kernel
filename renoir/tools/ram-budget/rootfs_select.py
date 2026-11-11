@@ -4,12 +4,13 @@ extracted iOS 26 root filesystem and cryptexes; size the result raw and as mkapf
 import os, sys, zlib, importlib.util, collections, pickle
 from multiprocessing import Pool
 
+DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))
 spec = importlib.util.spec_from_file_location(
-    'sel', '/home/wannq/darwin_kernel/darwin-renoir/ios165/select-system.py')
+    'sel', os.environ.get('DR', DK + '/darwin-renoir') + '/ios165/select-system.py')
 sel = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sel)
 
-I = '/home/wannq/darwin_kernel/ios26'
+I = os.environ.get('IOS', DK + '/ios26')
 ROOT = I + '/rootfs'
 PIECE, BS, XMAX = 65536, 4096, 3804
 

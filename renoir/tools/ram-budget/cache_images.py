@@ -10,9 +10,11 @@ Static closure over LC_LOAD/WEAK/REEXPORT/UPWARD_DYLIB only: dlopen() is not see
 """
 import os, sys, struct, pickle, plistlib, glob, collections
 
-D = '/home/wannq/darwin_kernel/ios26/dyld/'
-ROOT = '/home/wannq/darwin_kernel/ios26/rootfs'
-CRYPTEXES = ['/home/wannq/darwin_kernel/ios26/cryptex/os', '/home/wannq/darwin_kernel/ios26/cryptex/app']
+DK = os.environ.get('DK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))
+I = os.environ.get('IOS', DK + '/ios26')
+D = I + '/dyld/'
+ROOT = I + '/rootfs'
+CRYPTEXES = [I + '/cryptex/os', I + '/cryptex/app']
 PIECE = 65536
 LC_SEGMENT_64 = 0x19
 DEP_CMDS = {0xc: 'load', 0x80000018: 'weak', 0x8000001f: 'reexport', 0x80000023: 'upward'}

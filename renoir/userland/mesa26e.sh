@@ -2,8 +2,9 @@
 # Mesa 26.2.5 (softpipe + freedreno, OSMesa) for arm64e iOS 26 processes on renoir: darwin-renoir's
 # tools/mk-mesa.sh with -arch arm64e, then pacstrip (pointer authentication made the identity).
 set -eo pipefail
-DR=/home/wannq/darwin_kernel/darwin-renoir
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DK=${DK:-$(cd "$RN/../.." && pwd)}   # the directory holding this repository and darwin-renoir
+DR=${DR:-$DK/darwin-renoir}
 source $DR/xnu-env.sh
 B=$DR/xnu-deps/build/mesa
 SDK=$THEOS/sdks/iPhoneOS16.5.sdk
