@@ -147,10 +147,15 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **the same part on other pins or another bus**, the driver needs those made data. Move
   the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
-  there: [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps.
+  in `[buttons]` and the flashlight's in `[torch]`:
+  [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. The
+  flashlight's driver is the example of how that is kept safe: its test runs it on a second phone
+  with the part elsewhere on the bus (`tests/torch_driver_test.c`).
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
-  `hakios_board.h`. `renoir_fts.c` beside `redwood_goodix.c` is the example: two touch controllers,
-  one interface to iOS (`/dev/redwood-touch`, `bsd/sys/redwood_input.h`).
+  `hakios_board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
+  and its test to start from, and the headers a driver has at hand: the SoC's pins, I2C by hand on
+  two of them, the PMICs, RPMh. `renoir_fts.c` beside `redwood_goodix.c` shows two parts of a kind:
+  two touch controllers, one interface to iOS (`/dev/redwood-touch`, `bsd/sys/redwood_input.h`).
 
 [drivers.md](drivers.md) lists every driver with the part it is for and how tied to one phone it is.
 Touch first: without it the phone is a picture.
