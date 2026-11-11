@@ -63,6 +63,7 @@ SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
     'platform': {'io_base': (U64, False), 'io_size': (U64, False), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
                  'gic_redist_size': (U64, False), 'gic_redist_stride': (U64, False), 'uart': (U64, False),
+                 'ufs': (U64, False),
                  'cores': (int, True), 'core_shift': (int, True), 'small_cores': (int, False),
                  'psci': (('smc', 'hvc'), True), 'timeout_scale': (int, False)},
     'clocks': {'gcc': (int, True), 'gcc_disp_ahb_cbcr': (int, False), 'dispcc': (int, False),
@@ -622,7 +623,7 @@ def platforms_text(socs, boards):
         fields = [f'.name = {c_string(name)}',
                   f'.io_base = {platform["io_base"]:#010x}', f'.io_size = {platform["io_size"]:#010x}',
                   f'.gic_dist = {platform["gic_dist"]:#010x}', f'.gic_redist = {platform["gic_redist"]:#010x}']
-        for key in ('gic_redist_size', 'gic_redist_stride', 'uart'):
+        for key in ('gic_redist_size', 'gic_redist_stride', 'uart', 'ufs'):
             if key in platform:
                 fields.append(f'.{key} = {platform[key]:#010x}')
         fields += [f'.psci_hvc = {int(platform["psci"] == "hvc")}',

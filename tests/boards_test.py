@@ -672,6 +672,15 @@ class Generate(Sandbox):
             soc { qcom,wpss@8a00000 { qcom,firmware-name = "wpss"; memory-region = <&pil_wpss_mem>; }; }; };''')
         self.assertEqual(board['wifi'], {'dsp_memory': 0x9ae00000, 'dsp_memory_size': 0x1900000})
 
+    def test_the_storage_controller_is_found_and_reaches_the_loader(self):
+        soc, board, notes = devicetree.from_dts('''/ { soc { ufshc_mem: ufshc@1d84000 { compatible = "qcom,ufshc";
+            reg = <0x1d84000 0x3000>, <0x1d88000 0x8000>; reg-names = "ufs_mem", "ufs_ice"; }; }; };''')
+        self.assertEqual(soc['platform']['ufs'], 0x1d84000)
+        self.assertNotIn('.ufs = ', boards.platforms_text(*boards.load()))      # (this SoC file does not say)
+        self.soc('io_size = 0x3fc00000\n', 'io_size = 0x3fc00000\nufs = 0x1d84000\n')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.ufs = 0x01d84000', boards.platforms_text(*boards.load()))
+
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in
         soc, board, notes = devicetree.from_dts('''/ { soc { tlmm: pinctrl@f000000 { compatible = "qcom,shima-pinctrl";

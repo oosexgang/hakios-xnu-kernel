@@ -91,6 +91,8 @@ domain_cores = [4, 3, 1]            # how many cores each group has, in the core
 io_base = 0x00400000                # one window over the SoC's peripherals; never 0. Not in a device tree;
                                     # needed once a board has a [loader] section
 io_size = 0x3FC00000                # (these two are what the Snapdragon 7-series ports use)
+ufs = 0x01D84000                    # optional: the UFS host controller (the ufshc node's reg "ufs_mem"), for the
+                                    # loader's and the kernel's own requests to the storage (ufs_native=)
 gic_dist = 0x17A00000               # the arm,gic-v3 node's reg: its first entry
 gic_redist = 0x17A60000             # ... its second
 gic_redist_size = 0x100000          # optional: the redistributors' region; 1 MB (eight cores) if left out

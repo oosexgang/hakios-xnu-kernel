@@ -76,6 +76,7 @@ domain_cores = [4, 3, 1]            # the cores of each group, in the cores' ord
 [platform]
 io_base = 0x00400000                # one window over the SoC's peripherals; never 0
 io_size = 0x3FC00000
+ufs = 0x01d84000                    # ufshc@1d84000, reg "ufs_mem": the UFS host controller
 gic_dist = 0x17A00000               # interrupt-controller@17a00000 (arm,gic-v3): reg, first entry
 gic_redist = 0x17A60000             # ... second entry
 cores = 8                           # the cpu@ nodes

@@ -139,6 +139,8 @@ def from_dts(text, panel=None):
             group = (domain[1] if '&' not in node.props.get('qcom,freq-domain', '') and len(domain) >= 2 else
                      domain[0] if domain else None)
             cpus.append((reg[-1] if reg else int(node.name.split('@')[1], 16), capacity[0] if capacity else 0, group))
+        if re.fullmatch(r'ufshc@[0-9a-fA-F]+', node.name) and reg_named(node, 'ufs_mem'):
+            platform['ufs'] = reg_named(node, 'ufs_mem')
         if node.name == 'psci' and strings(node.props.get('method')):
             platform['psci'] = strings(node.props['method'])[0]
         if reg_named(node, 'dsi_ctrl') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
