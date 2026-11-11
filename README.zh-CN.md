@@ -63,7 +63,8 @@ make check
 
 一部手机由 `devices/NAME/board.toml` 描述，其芯片由 `soc/SOC.toml` 描述。
 `tools/boards.py new NAME --soc SOC --dts phone.dts` 可从手机的 Android 设备树生成这两个文件的初稿。
-内核只在列出了相应驱动的板型上启动该驱动，因此新手机一开始只有显示，之后逐行增加硬件。
+内核只在列出了相应驱动的板型上启动该驱动，因此新手机一开始只有显示，之后逐行增加硬件；
+`tools/boards.py status NAME` 会说明接下来可以启用什么，以及其余各项还缺什么。
 尚无驱动的器件（触摸控制器、功放等）需要另写驱动。指南见 [docs/porting.md](docs/porting.md)。
 
 ## 不在本仓库中的内容

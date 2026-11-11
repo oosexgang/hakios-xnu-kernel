@@ -64,7 +64,8 @@ make check
 A phone is described by `devices/NAME/board.toml` and its chip by `soc/SOC.toml`.
 `tools/boards.py new NAME --soc SOC --dts phone.dts` starts both from the phone's Android device tree.
 The kernel starts a driver only on a board that lists it, so a new phone begins with nothing but the
-display and gains hardware one line at a time. Parts nobody has a driver for yet (a touch controller,
+display and gains hardware one line at a time; `tools/boards.py status NAME` says what can be turned
+on next and what each of the rest still needs. Parts nobody has a driver for yet (a touch controller,
 an amplifier) need one written. The guide: [docs/porting.md](docs/porting.md).
 
 ## What is not in this repository
