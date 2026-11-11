@@ -112,7 +112,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 | `tools/` | `boards.py` (board files) with `devicetree.py` (what it reads from a phone's device tree), `device.py` (packages), `bootargs.py` (the generated reference), lint and publish checks. |
 | `components.toml` | Everything taken from elsewhere, pinned to an exact version. |
 | `docs/` | Documentation. |
-| `base/` | The first generation's workspace (iOS 16.5). Kept for the parts not yet brought over: the UEFI port, the Wi-Fi layer, the QEMU scripts. |
+| `base/` | The first generation's workspace (iOS 16.5). Kept for the parts not yet brought over: the UEFI port, the QEMU scripts. |
 
 ## Porting in one paragraph
 

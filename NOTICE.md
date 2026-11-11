@@ -18,7 +18,7 @@
 
 Our drivers (`hakios_*.c`, `HakiosGPU.cpp`, ...) name the Linux drivers whose register layouts and bring-up
 order they follow (msm/adreno, qcom clocks and PHYs, cs35l41, spi-geni, ...). They are written for xnu, not copied.
-The optional Wi-Fi build script (`base/tools/mk-ath11k.sh`) fetches Linux's ath11k
+The optional Wi-Fi build script (`kernel/lx/build.sh`) fetches Linux's ath11k
 (BSD-3-Clause-Clear, with an ISC header) and FreeBSD's LinuxKPI headers (BSD-2-Clause).
 Those fetched sources are not in this repository. The current Renoir configuration does not link
 an external Wi-Fi object.

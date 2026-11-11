@@ -131,7 +131,7 @@ id = "linux-ath11k"
 what = "Linux's ath11k Wi-Fi driver, compiled unmodified on a compatibility layer"
 source = "https://cdn.kernel.org/pub/linux/kernel/"
 pins = ["7.0.14", "de9999b784d2293f00d39c62d8f92a08ab8a54bc4e80ffd250a0c09cb07a0f98"]
-pinned_in = "base/tools/mk-ath11k.sh"
+pinned_in = "kernel/lx/build.sh"
 used_for = "Wi-Fi (optional object linked into the kernel)"
 licence = "BSD-3-Clause-Clear"
 
@@ -140,7 +140,7 @@ id = "freebsd-linuxkpi"
 what = "FreeBSD's LinuxKPI headers, the base of that compatibility layer"
 source = "https://download.freebsd.org/releases/"
 pins = ["15.1", "cf5762da53fd52e1eaf0f9ceee9bf58cbe314c821031d0d9ffa76823185a89e1"]
-pinned_in = "base/tools/mk-ath11k.sh"
+pinned_in = "kernel/lx/build.sh"
 used_for = "Wi-Fi (optional object linked into the kernel)"
 licence = "BSD-2-Clause"
 
