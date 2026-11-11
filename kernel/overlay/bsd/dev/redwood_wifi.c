@@ -482,51 +482,15 @@ smem_items(uint32_t partition, uint32_t cacheline, struct smem_item *found, unsi
 	return hakios_smem_items(&area, partition, cacheline, found, max);
 }
 
-/* An item the DSP and we share: in the partition of the two, or else in the global one. Where it is; 0: nowhere. */
 static uint32_t
 smem_item(uint32_t item, uint32_t *size)
 {
-	static struct smem_item found[256];
-	static const uint16_t hosts[2][2] = { { SMEM_US, SMEM_WPSS }, { SMEM_GLOBAL, SMEM_GLOBAL } };
+	struct hakios_smem area = smem_area();
 
-	for (unsigned h = 0; h < 2; h++) {
-		uint32_t cacheline = 0, partition_size = 0;
-		uint32_t partition = smem_partition(hosts[h][0], hosts[h][1], &cacheline, &partition_size);
-		unsigned count = smem_items(partition, cacheline, found, 256);
-
-		for (unsigned i = 0; i < count && i < 256; i++) {
-			if (found[i].item == item) {
-				*size = found[i].size;
-				return found[i].offset;
-			}
-		}
-	}
-	return 0;
+	return hakios_smem_item(&area, SMEM_US, SMEM_WPSS, item, size);
 }
 
-/* An SMP2P item: who it is from and to, and up to 16 named words. */
-struct smp2p {
-	uint32_t magic;                         /* "$SMP" */
-	uint32_t version;                       /* [7:0]; [31:8] features: bit 0, "restarts are acknowledged" */
-	uint16_t local, remote, total, valid;
-	uint32_t flags;                         /* bit 0 "restart done", bit 1 "restart acknowledged" */
-	struct {
-		char name[16];
-		uint32_t value;
-	} entry[16];
-};
-#define SMP2P_MAGIC             0x504d5324
-#define SMP2P_VERSION           1
-#define SMP2P_RESTART_ACKS      1u              /* the feature: a side that restarts says so in its flags, the other answers in its own */
-#define SMP2P_RESTART_DONE      (1u << 0)       /* flags: toggled by the side that has restarted */
-#define SMP2P_RESTART_ACK       (1u << 1)       /* ... and made equal to it by the other */
-/* where the words of an item are, for writing them one at a time */
-#define SMP2P_AT_VERSION        4
-#define SMP2P_AT_PROCESSORS     8
-#define SMP2P_AT_COUNTS         12              /* entries there is room for; << 16: entries that are valid */
-#define SMP2P_AT_FLAGS          16
-#define SMP2P_AT_NAME(i)        (20 + 20 * (i))
-#define SMP2P_AT_VALUE(i)       (36 + 20 * (i))
+#include "hakios_smp2p.h"                   /* an SMP2P item's shape, and a word of it by name */
 
 /* The bits of the DSP's entry "slave-kernel" (dt: the interrupts of qcom,wpss@8a00000). */
 #define DSP_FATAL               (1u << 0)       /* "err-fatal": it has given up */
@@ -550,18 +514,6 @@ dsp_words(struct smp2p *words)
 		}
 	}
 	return smem_peek(at, words, sizeof(*words)) && words->magic == SMP2P_MAGIC;
-}
-
-/* Which of an item's entries has that name; -1: none. */
-static int
-smp2p_entry(const struct smp2p *words, const char *name)
-{
-	for (unsigned i = 0; i < words->valid && i < 16; i++) {
-		if (strncmp(words->entry[i].name, name, sizeof(words->entry[i].name)) == 0) {
-			return (int)i;
-		}
-	}
-	return -1;
 }
 
 /* The word of the DSP's entry "slave-kernel". */
