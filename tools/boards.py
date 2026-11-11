@@ -142,10 +142,17 @@ def soc_files():
     return [seen[name] for name in sorted(seen)]
 
 
+def device_dirs():
+    """Where device packages are looked for: devices/, --devices DIR, then the directories of HAKIOS_DEVICES.
+    The variable is read here and not in main(), so that a tool importing this module finds the same packages."""
+    from_environment = [Path(d) for d in os.environ.get('HAKIOS_DEVICES', '').split(os.pathsep) if d]
+    return [DEVICES] + MORE_DEVICES + from_environment
+
+
 def board_files():
     """Every device package's board file, devices/'s first (the template is not a board)."""
     seen = {}
-    for directory in [DEVICES] + MORE_DEVICES:
+    for directory in device_dirs():
         for path in sorted(Path(directory).glob('*/board.toml')):
             if not path.parent.name.startswith('_'):
                 seen.setdefault(path.parent.name, path)
@@ -771,7 +778,6 @@ def main():
     new.add_argument('--description')
     options = parser.parse_args()
     MORE_DEVICES.extend(options.devices)
-    MORE_DEVICES.extend(Path(d) for d in os.environ.get('HAKIOS_DEVICES', '').split(os.pathsep) if d)
     MORE_SOCS.extend(options.soc_dirs)
 
     if options.command == 'new':

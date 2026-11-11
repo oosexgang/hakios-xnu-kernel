@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# The tests describe boards of their own; packages of the machine they run on (HAKIOS_DEVICES) are not theirs.
+os.environ.pop('HAKIOS_DEVICES', None)
 spec = importlib.util.spec_from_file_location('boards', ROOT / 'tools/boards.py')
 boards = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boards)
