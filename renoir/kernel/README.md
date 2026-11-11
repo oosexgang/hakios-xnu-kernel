@@ -66,6 +66,9 @@ The renoir port adds minimal patches in `renoir/kernel/patches/`:
 5. **`0023-universal-backlight.patch`**:
    - `bsd/dev/hakios_backlight.c`: brightness and automatic brightness for any device: `hw.backlight.*`, board profiles (Renoir, Redwood: MIPI DCS 0x51 through the Qualcomm DSI command FIFO; QEMU and unknown boards: software dimming in `MiniIOMobileFramebuffer`). See `renoir/docs/backlight.md`; tests in `renoir/tests/`.
 
+6. **`0024-metal-plugin-gate.patch`**:
+   - `IOAcceleratorES::setProperties` back from the 16.5 kernel: with boot-arg `metal=1`, user space may name a Metal plug-in (`MetalPluginName`, `MetalPluginClassName`) and nothing else. Off by default. See `renoir/docs/metal-glass.md`.
+
 ## renoir drivers
 
 Hardware support brought into XNU 12377 from `darwin-renoir`:
