@@ -80,8 +80,12 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | The assembled tree | Byte for byte what the previous patch series produced. |
 | The loader build | Compiles without a warning; identical to the build before its board table was generated. |
 | The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |
+| Drivers whose constants became board data | The GPU's profile, the audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh now come from `devices/` and `soc/`. The values are the ones the code had (`tests/board_test.c` holds them for both phones) and the drivers compile. None has run on a phone since the change. |
 | The full kernel build, and a boot | By the team, on their machines, before this restructuring. Not repeated since: it needs the Darwin toolchain and a phone. |
 | `kernel/deps/stage1.sh` | Not run end to end. It runs the commands of the setup script the team builds with. |
 
-The first full build after the restructuring is the one to watch. If it fails, the cause is in
-`kernel/build.sh` steps 1 and 2, the only parts whose behaviour changed.
+The first full build after the restructuring is the one to watch. If it fails to build, look first at
+`kernel/build.sh` steps 1 and 2, the parts of the build whose behaviour changed, and at the ten files
+`kernel/syntax-check.sh` cannot check. If a driver behaves differently on the phone, compare
+`hw.board.*` and the driver's first log lines with the board file: every value it used to carry is
+printed or can be read there.
