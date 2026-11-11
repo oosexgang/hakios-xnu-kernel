@@ -11,14 +11,16 @@
 
 #include "fakekernel.h"
 
-#define I2C_DEVICE_SDA          36
-#define I2C_DEVICE_SCL          37
+/* which pins the chip is on is the board's: the model is put where the board the driver reads says */
+static unsigned sda_pin = 36, scl_pin = 37, reset_pin_of_chip = 35;
+#define I2C_DEVICE_SDA          sda_pin
+#define I2C_DEVICE_SCL          scl_pin
 #define I2C_DEVICE_ADDRESS      0x5a
 #include "i2c_device_model.h"
 
 extern char log_text[];
 
-#define RESET           35
+#define RESET           reset_pin_of_chip
 #define AS_FOUND        (1u << 2 | 3u)          /* the bus's pins: the serial engine's function, pulled up */
 #define HELD_IN_RESET   1u                      /* the reset pin as a boot loader leaves it: an input, pulled down */
 
@@ -87,6 +89,11 @@ phone(const char *name, uint16_t chip)
 	board = name;
 	fake_delay_divisor = 5;
 	tlmm_model_at(hakios_board() != NULL ? hakios_board()->pins.tlmm : 0);
+	if (hakios_board() != NULL && hakios_board()->haptic.sda != hakios_board()->haptic.scl) {
+		sda_pin = hakios_board()->haptic.sda;
+		scl_pin = hakios_board()->haptic.scl;
+		reset_pin_of_chip = hakios_board()->haptic.reset;
+	}
 	model.after_write = pins_changed;
 	model.cfg[I2C_DEVICE_SDA] = model.cfg[I2C_DEVICE_SCL] = AS_FOUND;
 	model.cfg[RESET] = HELD_IN_RESET;
@@ -224,6 +231,26 @@ configured(void)
 	CHECK(in_reset(), "at the run's end the chip is back in reset");
 }
 
+/* the same chip on other pins of another SoC, and another motor: all of it from the board */
+static void
+another_wiring(void)
+{
+	phone("phone-keys", 0x9270);
+	boot_args = "haptic=3";
+	redwood_haptic_init();
+	WAIT_FOR(logged("haptic: done"), 20000);
+	CHECK(model.base == 0x01100000 && sda_pin == 110 && scl_pin == 111 && reset_pin_of_chip == 9, "that board's pins: %#x, %u/%u, %u",
+	    model.base, sda_pin, scl_pin, reset_pin_of_chip);
+	CHECK(logged("haptic: the reset is released: gpio9 low for 5 ms, then high") && logged("is 0x9270, an AW86927"),
+	    "the chip is found there: %s", log_text);
+	CHECK(device.reg[0x79] == 0x1a && device.reg[0x06] == 0x47, "that motor's calibration, Android's values otherwise: %#x",
+	    device.reg[0x79]);
+	CHECK(model.cfg[36] == 0 && model.cfg[37] == 0 && model.cfg[35] == 0 && model.io[35] == 0, "the first phone's pins are not touched");
+	CHECK(device.driven_high == 0 && model.elsewhere == 0 && analog_while_closed == 0, "and the rest is as on the first");
+	redwood_haptic_quiesce();
+	CHECK(in_reset(), "back in reset at the run's end");
+}
+
 /* a register that does not read back as written: the chip into reset, and nothing more written */
 static void
 write_does_not_stick(void)
@@ -299,7 +326,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "reset_released", reset_released },
-		{ "configured", configured },
+		{ "configured", configured }, { "another_wiring", another_wiring },
 		{ "write_does_not_stick", write_does_not_stick }, { "fault_reported", fault_reported }, { "another_chip", another_chip }, { "nobody_there", nobody_there }, { "not_listed", not_listed },
 	};
 

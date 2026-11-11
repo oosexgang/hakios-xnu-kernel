@@ -92,6 +92,8 @@ BOARD_SCHEMA = {
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
     'torch': {'flash': (int, True), 'alarm': (int, True)},
+    'haptic': {'sda': (int, True), 'scl': (int, True), 'reset': (int, True), 'interrupt': (int, True),
+               'f0_calibration': (int, True)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
              'charge_counter_divisor': (int, False)},
@@ -141,7 +143,8 @@ FEATURE_BOOTARGS = {
 # features that are a driver of one part as one phone has it wired, by the first word of their names
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
-FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch'}
+FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
+                          'haptic-aw86927': 'haptic'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
@@ -366,6 +369,13 @@ def load(problems=None):
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
             if clocks_missing(soc):
                 problems.add(rel, f'backlight type "dcs" needs {clocks_missing(soc)} in [clocks] of soc/{data.get("soc")}.toml')
+        motor = data.get('haptic')
+        if motor is not None:
+            wires = [motor[key] for key in ('sda', 'scl', 'reset', 'interrupt')]
+            if any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
+                problems.add(f'{rel} [haptic]', 'sda, scl, reset and interrupt are four different pins of the SoC, 0 to 255')
+            if not 0 <= motor['f0_calibration'] <= 0x3f:
+                problems.add(f'{rel} [haptic]', 'f0_calibration is the six bits of the chip\'s trim register')
         torch = data.get('torch')
         if torch is not None:
             for key in ('flash', 'alarm'):
@@ -570,6 +580,10 @@ def table_text(socs, boards):
         if keys:
             names = ''.join(f', .{key} = {c_string(keys[key])}' for key in ('pon_name', 'volume_up_name') if key in keys)
             out.append(f'\t\t.buttons = {{ .pon = {keys["pon"]:#05x}, .volume_up = {keys["volume_up"]:#05x}{names} }},')
+        motor = board.get('haptic')
+        if motor:
+            out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
+                       f'.interrupt = {motor["interrupt"]}, .f0_calibration = {motor["f0_calibration"]:#04x} }},')
         torch = board.get('torch')
         if torch:
             out.append(f'\t\t.torch = {{ .flash = {torch["flash"]:#05x}, .temp_alarm = {torch["alarm"]:#05x} }},')

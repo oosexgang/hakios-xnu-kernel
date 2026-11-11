@@ -39,6 +39,14 @@ radio_model = 0
 dsp_memory = 0x9ae00000
 dsp_memory_size = 0x01900000
 
+# Its vibration motor's chip: on GPIO 36/37, reset on 35, as Android calibrated this motor.
+[haptic]
+sda = 36
+scl = 37
+reset = 35
+interrupt = 18
+f0_calibration = 0x0d
+
 # Its flashlight: the flash LED module and the temperature alarm of the PM8350C, which is slave 2 here.
 [torch]
 flash = 0x2ee

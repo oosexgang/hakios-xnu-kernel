@@ -197,6 +197,8 @@ table(void)
 		CHECK(!(b->features & HAKIOS_HAS_MIC_WCD938X) || (b->lpass.tx_macro != 0 && b->lpass.va_macro != 0 &&
 		    b->lpass.tx_swr != 0 && b->lpass.tx_swr_hctl != 0 && b->lpass.lpi != 0 && b->lpass.lpi_slew != 0),
 		    "%s: the microphones' driver without the audio subsystem's blocks", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_HAPTIC_AW86927) || (b->haptic.sda != b->haptic.scl && b->haptic.reset != b->haptic.sda &&
+		    b->haptic.reset != b->haptic.scl), "%s: the vibration motor's driver without its pins", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_TORCH_PM8350C) || (b->torch.flash != 0 && b->torch.temp_alarm != 0),
 		    "%s: the flashlight's driver without its peripherals", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&

@@ -120,7 +120,7 @@ pin_in_use(void)
 static void
 no_pins(void)
 {
-	phone("phone-keys");
+	phone("qemu-virt");
 	boot_args = "led=2";
 	example_led_init();
 	CHECK(logged("led: disabled: the SoC file does not say where the pins are ([pins])"), "said: %s", log_text);

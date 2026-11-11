@@ -170,6 +170,14 @@ struct hakios_board {
 		const char *pon_name, *volume_up_name;  /* for the log: "GPIO6 of the PM8350" */
 	} buttons;
 
+	/* the vibration motor's chip (board: [haptic]): which of the SoC's pins it is on, and this motor's calibration */
+	struct {
+		uint8_t sda, scl;               /* its I2C bus's two lines */
+		uint8_t reset;                  /* high: the chip runs */
+		uint8_t interrupt;              /* low when the chip has something to say (only looked at) */
+		uint8_t f0_calibration;         /* what Android's driver found for this motor's resonance (its trim register) */
+	} haptic;
+
 	/* the flashlight's part on the PMIC (board: [torch]); a peripheral as in [buttons] */
 	struct {
 		uint16_t flash;                 /* the flash LED module */

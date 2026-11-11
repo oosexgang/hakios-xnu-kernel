@@ -548,6 +548,11 @@ class Generate(Sandbox):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "haptic-aw86927", "touch-goodix"')
         said = self.problems()
         self.assertIn('feature "haptic-aw86927" needs [pins] in soc/sm0001.toml', said)
+        self.assertIn('feature "haptic-aw86927" needs [haptic] in the board file', said)       # (which pins it is on)
+        path = self.dir / 'devices/phone/board.toml'
+        path.write_text(path.read_text() + '[haptic]\nsda = 36\nscl = 36\nreset = 35\ninterrupt = 18\nf0_calibration = 0x0d\n')
+        self.assertIn('four different pins', self.problems())
+        path.write_text(path.read_text().replace('scl = 36', 'scl = 37'))
         self.assertIn('feature "touch-goodix" needs [pins] in soc/sm0001.toml', said)
         self.assertNotIn('feature "touch-goodix" needs [clocks]', said)        # (which this SoC file has)
         self.assertIn('feature "touch-goodix" needs [rpmh] in soc/sm0001.toml', said)  # (its supply is asked of RPMh)

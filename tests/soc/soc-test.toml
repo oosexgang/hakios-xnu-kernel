@@ -18,6 +18,10 @@ cmd_db_size = 0x2000
 rsc = 0x07220000
 tcs_offset = 0x1c00
 
+# (the SoC's own pins elsewhere as well)
+[pins]
+tlmm = 0x01100000
+
 [spmi]
 core = 0x04440000
 cnfg = 0x0440a000

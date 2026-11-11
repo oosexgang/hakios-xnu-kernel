@@ -10,11 +10,19 @@ features = [
     "cpufreq-epss",                 # (on a chip with two groups of cores)
     "ddr-rpmh",                     # (... and RPMh where no real chip has it)
     "buttons-pmic",
+    "haptic-aw86927",               # (the same chip on other pins, another motor)
     "torch-pm8350c",                # (the part itself as the driver knows it; the way to it is this chip's)
 ]
 
 [backlight]
 type = "soft"
+
+[haptic]
+sda = 110
+scl = 111
+reset = 9
+interrupt = 200
+f0_calibration = 0x1a
 
 # (its PM8350C is the bus's fourth chip, not the third)
 [torch]

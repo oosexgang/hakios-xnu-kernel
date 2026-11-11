@@ -103,15 +103,16 @@ wait_ms(uint32_t ms)
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-#define PIN_SDA                 36      /* the serial engine's first pin is the data line, the second the clock */
-#define PIN_SCL                 37
-#define PIN_RESET               35
-#define PIN_INT                 18
+/* which pins: the board's [haptic] (on the phone this was written for: 36 data, 37 clock, 35 reset, 18 interrupt) */
+#define PIN_SDA                 (hakios_board()->haptic.sda)
+#define PIN_SCL                 (hakios_board()->haptic.scl)
+#define PIN_RESET               (hakios_board()->haptic.reset)
+#define PIN_INT                 (hakios_board()->haptic.interrupt)
 
 static void
 show_pins(void)
 {
-	static const struct {
+	const struct {
 		unsigned pin;
 		const char *what;
 	} pins[] = { { PIN_SDA, "I2C data" }, { PIN_SCL, "I2C clock" }, { PIN_RESET, "reset" }, { PIN_INT, "interrupt" } };
@@ -137,7 +138,7 @@ reset_pin(bool high)
 
 #include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken and given back */
 
-static struct i2c_gpio i2c_bus = { .sda = PIN_SDA, .scl = PIN_SCL };
+static struct i2c_gpio i2c_bus;          /* (its two pins: the board's, at the start) */
 
 static bool
 bus_take(void)
@@ -373,8 +374,8 @@ static const uint8_t android_config[][2] = {
  */
 static const uint8_t android_analog[][2] = {
 	{ 0x70, 0x0f }, { 0x71, 0x93 }, { 0x72, 0x69 }, { 0x74, 0x89 }, { 0x75, 0x88 },
-	{ AW_TRIM_LRA, 0x0d },  /* Android's f0 calibration of this motor (its log: "f0_cali_data = 0x0D") */
 };
+/* ... and Android's f0 calibration of the motor (its log: "f0_cali_data = 0x0D" on the first phone): the board's [haptic] */
 
 /* The analog registers opened or closed for writing (AW_TMCFG reads back as 0 either way: what tells is that the writes stick). */
 static bool
@@ -407,6 +408,10 @@ configure(void)
 			(void)unlock(false);
 			return false;
 		}
+	}
+	if (!put(AW_TRIM_LRA, hakios_board()->haptic.f0_calibration)) {
+		(void)unlock(false);
+		return false;
 	}
 	return unlock(false) && healthy("after the configuration");
 }
@@ -864,6 +869,13 @@ redwood_haptic_init(void)
 		level = 0;
 		return;
 	}
+	if (hakios_board()->haptic.sda == hakios_board()->haptic.scl) {
+		say("haptic: disabled: the board file does not say which pins the chip is on ([haptic])\n");
+		level = 0;
+		return;
+	}
+	i2c_bus.sda = PIN_SDA;
+	i2c_bus.scl = PIN_SCL;
 	if (level > 5) {
 		level = 5;
 	}

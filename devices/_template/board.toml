@@ -52,6 +52,15 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # on the slave its PMIC is (qcom,pm8350@1: 1)
 # volume_up_name = "GPIO6 of the PM8350"
 
+# The vibration motor's chip, for the feature "haptic-aw86927": an Awinic AW86927 on two of the SoC's
+# pins (I2C by hand), its reset and its interrupt, and what Android's driver found for this motor.
+# [haptic]
+# sda = 36                          # the I2C bus's data line: the first pin of the bus's pinctrl node
+# scl = 37                          # ... and its clock, the second
+# reset = 35                        # the chip's node: reset-gpio
+# interrupt = 18                    # ... and irq-gpio
+# f0_calibration = 0x0d             # Android's log at boot: "f0_cali_data = 0x0D" (per motor: read it on your phone)
+
 # The flashlight, for the feature "torch-pm8350c": the PM8350C's flash LED module and that PMIC's
 # temperature alarm, each as SPMI slave << 8 | the high byte of its registers.
 # [torch]
