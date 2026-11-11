@@ -752,22 +752,7 @@ out:
 #define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
-struct cmd_db_slave {
-	uint16_t id, header_offset, data_offset, count, version, reserved[3];
-};
-struct cmd_db_header {
-	uint32_t version;
-	uint8_t magic[4];
-	struct cmd_db_slave slave[8];
-	uint32_t checksum, reserved;
-	uint8_t data[];
-};
-struct cmd_db_entry {
-	char id[8];
-	uint32_t priority[2];
-	uint32_t address;
-	uint16_t length, offset;
-};
+#include "hakios_cmd_db.h"
 
 static const struct cmd_db_header *cmd_db;
 
@@ -790,55 +775,35 @@ static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's
 static int
 rail_position(const char *name, uint32_t level, uint32_t *address)
 {
-	char id[8] = { 0 };
+	uint16_t levels[16];
+	unsigned count = 0;
+	uint32_t at_rpmh;
+	char text[160];
+	int at;
 
 	if (cmd_db == NULL) {
 		cmd_db = (const struct cmd_db_header *)ml_io_map_unmappable(CMD_DB_PHYS, CMD_DB_SIZE, VM_WIMG_WCOMB);
 	}
-	if (!(cmd_db->magic[0] == 0xdb && cmd_db->magic[1] == 0x30 && cmd_db->magic[2] == 0x03 && cmd_db->magic[3] == 0x0c)) {
+	if (!hakios_cmd_db_valid(cmd_db)) {
 		printf("adsp: %u: the boot loader's command database is not there\n", step);
 		return -1;
 	}
-	strlcpy(id, name, sizeof(id));
-	for (unsigned s = 0; s < 8; s++) {
-		const struct cmd_db_slave *slave = &cmd_db->slave[s];
-		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(cmd_db->data + slave->header_offset);
-
-		if (slave->id == 0 || slave->count > 512) {
-			continue;
-		}
-		for (unsigned i = 0; i < slave->count; i++) {
-			const uint8_t *data;
-			char levels[160];
-			int at;
-
-			if (memcmp(entry[i].id, id, sizeof(id)) != 0) {
-				continue;
-			}
-			if ((unsigned)slave->data_offset + entry[i].offset + entry[i].length > CMD_DB_SIZE - 0x1000) {
-				return -1;
-			}
-			data = cmd_db->data + slave->data_offset + entry[i].offset;
-			at = snprintf(levels, sizeof(levels), "%s at %#x, levels:", name, entry[i].address);
-			for (unsigned l = 0; l < entry[i].length / 2u && l < 16; l++) {
-				unsigned value = data[2 * l] | data[2 * l + 1] << 8;
-
-				if (l > 0 && value == 0) {
-					break;
-				}
-				at += snprintf(levels + at, sizeof(levels) - (size_t)at, " %u", value);
-			}
-			printf("adsp: %u: RPMh has %s\n", step, levels);
-			for (unsigned l = 0; l < entry[i].length / 2u && l < 16; l++) {
-				if ((uint32_t)(data[2 * l] | data[2 * l + 1] << 8) >= level) {
-					*address = entry[i].address;
-					return (int)l;
-				}
-			}
-			return -1;
+	at_rpmh = hakios_cmd_db_levels(cmd_db, CMD_DB_SIZE, name, levels, 16, &count);
+	if (at_rpmh == 0) {
+		printf("adsp: %u: RPMh has no \"%s\"\n", step, name);
+		return -1;
+	}
+	at = snprintf(text, sizeof(text), "%s at %#x, levels:", name, at_rpmh);
+	for (unsigned l = 0; l < count; l++) {
+		at += snprintf(text + at, sizeof(text) - (size_t)at, " %u", levels[l]);
+	}
+	printf("adsp: %u: RPMh has %s\n", step, text);
+	for (unsigned l = 0; l < count; l++) {
+		if (levels[l] >= level) {
+			*address = at_rpmh;
+			return (int)l;
 		}
 	}
-	printf("adsp: %u: RPMh has no \"%s\"\n", step, name);
 	return -1;
 }
 
