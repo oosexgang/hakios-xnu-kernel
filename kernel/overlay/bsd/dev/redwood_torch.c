@@ -110,25 +110,7 @@ note(const char *format, ...)
 	say("torch: %s\n", slot);
 }
 
-#ifndef TORCH_TEST_MMIO
-static inline uint32_t
-rd(vm_offset_t address)
-{
-	return *(volatile uint32_t *)address;
-}
-
-static inline void
-wr(vm_offset_t address, uint32_t value)
-{
-	*(volatile uint32_t *)address = value;
-}
-#else
-/* tests/torch_driver_test.c: the registers are a model of the arbiter's */
-extern uint32_t torch_test_rd(vm_offset_t address);
-extern void torch_test_wr(vm_offset_t address, uint32_t value);
-#define rd(a)           torch_test_rd(a)
-#define wr(a, v)        torch_test_wr((a), (v))
-#endif
+#include "hakios_mmio.h"
 
 static void
 spin_us(uint32_t us)

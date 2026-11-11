@@ -24,8 +24,8 @@ extern char log_text[];
 
 static struct spmi_peripheral pon_model, pin_model, other_model;
 
-uint32_t buttons_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
-void buttons_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
+uint32_t hakios_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
+void hakios_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
@@ -34,7 +34,7 @@ vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; 
  * not everywhere, and what is tested here is not the spelling of a format.) */
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
-#define BUTTONS_TEST_MMIO 1
+#define HAKIOS_MMIO_TEST 1
 #include "hakios_board.c"
 #include "redwood_buttons.c"
 

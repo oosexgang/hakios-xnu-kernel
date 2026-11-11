@@ -81,8 +81,8 @@ lit_now(void)
 	return lit;
 }
 
-uint32_t torch_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
-void torch_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
+uint32_t hakios_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
+void hakios_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
 /* the battery's temperature, which the driver asks for (bsd/dev/redwood_battery.c in the kernel) */
@@ -99,7 +99,7 @@ void redwood_spmi_unlock(void) { pthread_mutex_unlock(&bus); }
  * fake kernel, alarm() by the C library.) */
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
-#define TORCH_TEST_MMIO 1
+#define HAKIOS_MMIO_TEST 1
 #define get torch_get
 #define alarm torch_alarm
 #include "hakios_board.c"
