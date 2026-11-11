@@ -192,7 +192,7 @@ fake_dev_write(const char *name, const void *data, size_t size)
 	const struct cdevsw *devsw = node_named(name);
 	struct uio uio = { __DEVOLATILE(char *, data), size, true };
 
-	return devsw == NULL ? -1 : devsw->d_write(0, &uio, 0);
+	return devsw == NULL || devsw->d_write == NULL ? -1 : devsw->d_write(0, &uio, 0);
 }
 
 int
@@ -201,7 +201,7 @@ fake_dev_read(const char *name, void *data, size_t size)
 	const struct cdevsw *devsw = node_named(name);
 	struct uio uio = { data, size, false };
 
-	return devsw == NULL ? -1 : devsw->d_read(0, &uio, 0);
+	return devsw == NULL || devsw->d_read == NULL ? -1 : devsw->d_read(0, &uio, 0);
 }
 
 thread_t current_thread(void) { return NULL; }

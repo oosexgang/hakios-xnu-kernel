@@ -124,6 +124,7 @@ struct cdevsw {
 	void *d_ioctl, *d_stop, *d_reset, *d_select, *d_mmap, *d_strategy;
 	int d_type;
 };
+#define eno_rdwrt               NULL            /* (a node that cannot be read, or written) */
 #define eno_ioctl               NULL
 #define eno_stop                NULL
 #define eno_reset               NULL
