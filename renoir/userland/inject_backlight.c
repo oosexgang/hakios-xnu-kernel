@@ -18,15 +18,24 @@
  * timeout of -[SBBacklightIdleTimer _effectiveTimeoutForBaseTimeout:] (dim, sleep) is a day longer:
  * the screen stays lit until the side button turns it off.
  *
+ * The panel follows the display mode as well, through the kernel's backlight (hw.backlight.power,
+ * renoir/docs/backlight.md): a mode named Off makes the panel dark when its ramp is over, one with Dim in
+ * its name dims it, any other lights it at once. The names are iOS's own (its function that names a mode,
+ * the one the watchdog's "ActiveOn" comes from), so no number of Apple's enumeration is assumed; where that
+ * function is not found the panel is left as it is. Boot-arg bl_trace=1 logs every mode asked for.
+ *
  * Methods are found by name and checked by their type encoding; a build where they differ is left
  * alone and says so.
  */
+#include <CoreFoundation/CoreFoundation.h>
 #include <dispatch/dispatch.h>
+#include <dlfcn.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 typedef void (*transition_fn)(id, SEL, long long, double, id);
@@ -34,7 +43,11 @@ typedef void (*complete_fn)(id, SEL, long long, id);
 
 typedef double (*timeout_fn)(id, SEL, double);
 
+typedef CFStringRef (*mode_name_fn)(long long);
+
 static transition_fn original_transition;
+static mode_name_fn mode_name;
+static bool trace;
 static timeout_fn original_timeout;
 static SEL complete_sel;
 
@@ -73,14 +86,78 @@ is_integer(char c)
 	return c == 'q' || c == 'Q' || c == 'i' || c == 'I';
 }
 
+/* the kernel's backlight: 0 dark, 1 lit, 2 dimmed (nothing happens where the kernel has none) */
+static void
+set_power(int power)
+{
+	sysctlbyname("hw.backlight.power", NULL, NULL, &power, sizeof(power));
+}
+
+/* what a display mode means for the panel, by iOS's name for it: -1 when it cannot be told */
+static int
+power_for(long long mode)
+{
+	char name[64] = "";
+	CFStringRef text = mode_name ? mode_name(mode) : NULL;
+	int power = -1;
+
+	if (text != NULL && CFGetTypeID(text) == CFStringGetTypeID()) {
+		CFStringGetCString(text, name, sizeof(name), kCFStringEncodingUTF8);
+		power = strstr(name, "Off") != NULL ? 0 : strstr(name, "Dim") != NULL ? 2 : 1;
+	}
+	if (trace) {
+		char line[128];
+
+		snprintf(line, sizeof(line), "redwood: SpringBoard: display mode %lld (%s): panel %s\n", mode, name[0] ? name : "?",
+		    power == 0 ? "dark" : power == 2 ? "dimmed" : power == 1 ? "lit" : "left alone");
+		say(line);
+	}
+	return power;
+}
+
 static void
 transition(id self, SEL selector, long long mode, double duration, id curve_changed)
 {
+	int power = power_for(mode);
+
+	if (power > 0) {
+		set_power(power);               /* lit or dimmed from the start of the ramp */
+	}
 	original_transition(self, selector, mode, duration, curve_changed);
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * 1e9)),
 	    dispatch_get_main_queue(), ^{
+		if (power == 0) {
+			set_power(0);           /* dark once the ramp is over */
+		}
 		((complete_fn)objc_msgSend)(self, complete_sel, mode, nil);
 	});
+}
+
+/* iOS's function that names a display mode, by the names it has had */
+static void
+mode_name_init(void)
+{
+	static const char *const names[] = {
+		"NSStringFromBLSBacklightDisplayMode", "NSStringFromBLSDisplayMode", "NSStringFromBLSHDisplayMode",
+		"BLSBacklightDisplayModeDescription",
+	};
+	char arguments[1024], line[160];
+	size_t size = sizeof(arguments);
+
+	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
+		arguments[sizeof(arguments) - 1] = '\0';
+		trace = strstr(arguments, "bl_trace=1") != NULL;
+	}
+	for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]) && mode_name == NULL; i++) {
+		mode_name = (mode_name_fn)dlsym(RTLD_DEFAULT, names[i]);
+		if (mode_name != NULL) {
+			snprintf(line, sizeof(line), "redwood: SpringBoard: display modes named by %s: the panel follows them\n", names[i]);
+			say(line);
+		}
+	}
+	if (mode_name == NULL) {
+		say("redwood: SpringBoard: no function that names a display mode: the panel does not follow them\n");
+	}
 }
 
 static double
@@ -117,6 +194,7 @@ backlight_init(void)
 	char types[32] = "?", done_types[32] = "?", line[256];
 
 	idle_timer_init();
+	mode_name_init();
 	complete_sel = sel_registerName("didCompleteTransitionToDisplayMode:withError:");
 	done = interface ? class_getInstanceMethod(interface, complete_sel) : NULL;
 	if (m == NULL || done == NULL) {

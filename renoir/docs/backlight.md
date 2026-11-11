@@ -21,6 +21,16 @@ Auto-Brightness switch ────────────┤  ("DisplayBrightn
      backend soft: the display driver darkens each pixel on its way to the panel (QEMU, unknown panels)
 ```
 
+The display mode follows iOS too. `libredwood-backlight.dylib` already completes SpringBoard's display-mode
+transitions; it now also looks up iOS's own name for each mode, using the function behind the watchdog's
+"ActiveOn":
+- a mode with "Off" in its name makes the panel dark once the ramp is over;
+- a mode with "Dim" in its name dims it;
+- any other mode lights it at once.
+
+So the side button really turns the panel dark (DCS brightness 0 is black on AMOLED; on the `soft` backend
+every pixel is black), and a tap or the button lights it again at the slider's level.
+
 CoreBrightness has no panel it recognises here, so the library takes the two properties in `setProperty:forKey:`
 and answers them in `copyPropertyForKey:`. The kernel is the single source of truth: every process sees the same
 values, and the slider follows the light when brightness is automatic.
@@ -45,6 +55,7 @@ values, and the slider follows the light when brightness is automatic.
 | --- | --- | --- |
 | `level` | any user, rw | Slider position, 0 to 1000. Written while brightness is automatic, it shifts the curve by the difference |
 | `auto` | any user, rw | Automatic brightness |
+| `power` | any user, rw | Display: 1 on, 0 off (panel dark), 2 dimmed (at most level 150). `inject_backlight.c` sets it from iOS's display modes |
 | `lux` | any user, rw | Ambient light in thousandths of a lux. Writing it feeds the "virtual" sensor |
 | `shown` | ro | Level on the panel now (it ramps towards the target) |
 | `raw` | ro | Last value sent to the panel (`dcs`) |
@@ -109,6 +120,7 @@ When the kernel returns to the loader, the panel goes back to the profile's init
   - a controller that never reports done
   - the `soft` backend on an unknown board
   - automatic brightness: dark room, sun, ignored flicker, office, user offset, back to manual
+  - display power: dark, slider moved while dark, lit at the new level, dimmed, the loader gets a lit panel; the same on `soft`
 
 The driver test runs twice: built for the host, and for aarch64 under `qemu-aarch64`, so the arm64 code runs
 with its barriers. The kernel sources were also checked with clang against xnu-12377's headers: no errors, no new
@@ -119,4 +131,6 @@ On the phone, in order:
    `backlight: dcs: DSI controller at 0xae94000: version 2.5 ... (on, command)`.
 2. `--boot-arg backlight=2`. Move the Control Center slider: the panel should follow, and
    `backlight: dcs: ... NOT SENT` must not appear.
-3. `--boot-arg bl_auto=1`, then for example `sysctl hw.backlight.lux=0` and `=30000000` over SSH, to watch the ramps.
+3. Press the side button: the panel should go dark, and light again on wake (`--boot-arg bl_trace=1` logs the
+   mode names).
+4. `--boot-arg bl_auto=1`, then for example `sysctl hw.backlight.lux=0` and `=30000000` over SSH, to watch the ramps.

@@ -12,10 +12,10 @@ index 5ed8636..3432a64 100644
  bsd/dev/redwood_wifi.c	standard
 diff --git a/bsd/dev/hakios_backlight.c b/bsd/dev/hakios_backlight.c
 new file mode 100644
-index 0000000..ecd5de4
+index 0000000..199ea01
 --- /dev/null
 +++ b/bsd/dev/hakios_backlight.c
-@@ -0,0 +1,656 @@
+@@ -0,0 +1,710 @@
 +/*
 + * The panel's light, for any device: one driver with what differs between devices in a table
 + * (bl_profiles below), and the arithmetic in hakios_backlight_core.h (tested on the host:
@@ -28,6 +28,8 @@ index 0000000..ecd5de4
 + *   level      0 to 1000: the slider (iOS's DisplayBrightness times 1000). Written while the brightness
 + *              is automatic, it moves the automatic curve by the difference, as on an iPhone
 + *   auto       0 or 1: automatic brightness (iOS's DisplayBrightnessAuto)
++ *   power      the display: 1 on, 0 off (the panel dark), 2 dimmed (at most level 150); written by
++ *              renoir/userland/inject_backlight.c from iOS's display modes (the side button, the idle timer)
 + *   lux        the ambient light in thousandths of a lux. Written: a reading of the "virtual" sensor
 + *              (QEMU, tests, or user space with a sensor of its own); read: the light in use
 + *   shown      what is on the panel now, 0 to 1000 (it moves towards the level, see bl_step())
@@ -208,6 +210,7 @@ index 0000000..ecd5de4
 +
 +static volatile uint32_t user_level = 600;      /* the slider */
 +static volatile uint32_t automatic;             /* automatic brightness */
++static volatile uint32_t power = 1;             /* the display: 0 off, 1 on, 2 dimmed (hw.backlight.power) */
 +static volatile int32_t auto_offset;            /* the user's move of the curve */
 +static volatile uint32_t ambient_mlx = 300000;  /* the light around, thousandths of a lux (an office until told) */
 +static const char *ambient_source = "virtual";
@@ -486,6 +489,36 @@ index 0000000..ecd5de4
 +	}
 +}
 +
++/*
++ * The display off: the panel dark (a DSI panel at brightness 0: black, and back at once; the software light:
++ * every pixel black). Not the panel's display-off command, which would need its power-on sequence again.
++ */
++static void
++apply_dark(void)
++{
++	shown_level = 0;
++	switch (profile.backend) {
++	case BL_DCS:
++		if (shown_raw != 0 && dcs_send(0)) {
++			shown_raw = 0;
++		}
++		break;
++	case BL_SOFT:
++		if (soft_dim != 0) {
++			soft_dim = 0;
++			if (soft_redraw != NULL) {
++				soft_redraw();
++			}
++		}
++		break;
++	default:
++		break;
++	}
++}
++
++/* dimmed (the idle timer's first step, or iOS's dimmed display mode): at most this */
++#define BL_DIMMED_MAX   150
++
 +static uint32_t
 +wanted_level(void)
 +{
@@ -500,9 +533,25 @@ index 0000000..ecd5de4
 +	uint32_t now = user_level << 10;        /* in 1024ths of a level */
 +	uint32_t reference_mlx = ambient_mlx, target = wanted_level();
 +
++	bool dark = false;
++
 +	apply(user_level);
 +	for (;;) {
-+		uint32_t want = wanted_level();
++		uint32_t want = wanted_level(), goal;
++
++		if (power == 0) {
++			if (!dark) {
++				apply_dark();
++				dark = true;
++			}
++			assert_wait(&poke, THREAD_UNINT);
++			thread_block(THREAD_CONTINUE_NULL);
++			continue;
++		}
++		if (dark) {
++			dark = false;
++			apply((now + 512) >> 10);       /* lit again at once, where it was */
++		}
 +
 +		if (!automatic) {
 +			target = want;
@@ -511,13 +560,14 @@ index 0000000..ecd5de4
 +			reference_mlx = ambient_mlx;
 +			target = want;
 +		}
-+		if (now != target << 10) {
++		goal = power == 2 && target > BL_DIMMED_MAX ? BL_DIMMED_MAX : target;
++		if (now != goal << 10) {
 +			/* by hand: there in a fifth of a second; automatic: bl_step()'s pace */
-+			now = automatic ? bl_step(now, target << 10) : (now < target << 10 ?
-+			    now + ((target << 10) - now + 3) / 4 : now - (now - (target << 10) + 3) / 4);
++			now = automatic ? bl_step(now, goal << 10) : (now < goal << 10 ?
++			    now + ((goal << 10) - now + 3) / 4 : now - (now - (goal << 10) + 3) / 4);
 +			apply((now + 512) >> 10);
 +		}
-+		if (now == target << 10 && !automatic) {
++		if (now == goal << 10 && !automatic) {
 +			assert_wait(&poke, THREAD_UNINT);
 +		} else {
 +			assert_wait_timeout(&poke, THREAD_UNINT, TICK_MS, NSEC_PER_MSEC);
@@ -588,6 +638,8 @@ index 0000000..ecd5de4
 +			auto_offset = 0;
 +		}
 +		automatic = value;
++	} else if (arg1 == &power) {
++		power = value > 2 ? 1 : value;
 +	} else if (arg1 == &ambient_mlx) {
 +		ambient_mlx = value;
 +		ambient_source = "virtual";
@@ -600,6 +652,8 @@ index 0000000..ecd5de4
 +    __DEVOLATILE(void *, &user_level), 0, sysctl_level, "IU", "the slider, 0 to 1000");
 +SYSCTL_PROC(_hw_backlight, OID_AUTO, auto, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
 +    __DEVOLATILE(void *, &automatic), 0, sysctl_level, "IU", "automatic brightness");
++SYSCTL_PROC(_hw_backlight, OID_AUTO, power, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
++    __DEVOLATILE(void *, &power), 0, sysctl_level, "IU", "the display: 0 off, 1 on, 2 dimmed");
 +SYSCTL_PROC(_hw_backlight, OID_AUTO, lux, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
 +    __DEVOLATILE(void *, &ambient_mlx), 0, sysctl_level, "IU", "ambient light, thousandths of a lux");
 +SYSCTL_UINT(_hw_backlight, OID_AUTO, shown, CTLFLAG_RD | CTLFLAG_LOCKED, __DEVOLATILE(uint32_t *, &shown_level), 0,
@@ -661,7 +715,7 @@ index 0000000..ecd5de4
 +	}
 +}
 +
-+/* At the run's end (and on a panic's way out): the panel left lit for the loader and whatever comes next. */
++/* At the run's end (and on a panic's way out): the panel left lit for the loader and whatever comes next (also when it was dark). */
 +void
 +hakios_backlight_quiesce(void)
 +{

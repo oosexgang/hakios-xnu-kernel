@@ -358,7 +358,7 @@ model_trigger(void)
 		if (wc != 3 || (b[3] & 0x40) == 0 || b[4] != 0x51) {
 			model_error("long write that is not 0x51 with two bytes");
 		}
-		m.sent[m.sent_n++ % 4096] = (uint32_t)b[5] << 8 | b[6];     /* the panels here: MSB first */
+		m.sent[m.sent_n++ % 4096] = (uint32_t)b[5] << 8 | b[6];     /* the panels here: MSB first (0: dark) */
 	} else if (type == 0x15) {
 		if (b[0] != 0x51) {
 			model_error("short write that is not 0x51");
@@ -666,6 +666,55 @@ automatic_brightness(void)
 	CHECK(m.errors == 0, "%s", m.error);
 }
 
+static void
+display_power(void)
+{
+	uint32_t lit;
+
+	phone("renoir", false);
+	boot_args = "backlight=2 bl_level=600";
+	hakios_backlight_init();
+	lit = bl_level_to_raw(600, 1, 2047);
+	WAIT_FOR(last_sent() == lit, 1000);
+	set("power", 0);                        /* the side button */
+	WAIT_FOR(last_sent() == 0, 1000);
+	CHECK(last_sent() == 0 && get("shown") == 0, "dark: %u", last_sent());
+	set("level", 900);                      /* (moved while dark: kept for later, nothing sent) */
+	usleep(200000);
+	CHECK(last_sent() == 0, "still dark: %u", last_sent());
+	set("power", 1);
+	WAIT_FOR(last_sent() == bl_level_to_raw(900, 1, 2047), 2000);
+	CHECK(last_sent() == bl_level_to_raw(900, 1, 2047), "lit again at the new level: %u", last_sent());
+	set("power", 2);                        /* the idle timer's dimming */
+	WAIT_FOR(get("shown") == 150, 2000);
+	CHECK(last_sent() == bl_level_to_raw(150, 1, 2047), "dimmed: %u", last_sent());
+	set("power", 1);
+	WAIT_FOR(get("shown") == 900, 2000);
+	CHECK(get("shown") == 900, "back: %u", get("shown"));
+	set("power", 0);
+	WAIT_FOR(last_sent() == 0, 1000);
+	hakios_backlight_quiesce();
+	CHECK(last_sent() == 0x133, "the loader gets a lit panel even after dark: %u", last_sent());
+	CHECK(m.errors == 0, "%s", m.error);
+}
+
+static void
+soft_power(void)
+{
+	board = "qemu-virt";
+	boot_args = "backlight=2 bl_level=1000";
+	hakios_backlight_set_redraw(redraw);
+	hakios_backlight_init();
+	usleep(100000);
+	set("power", 0);
+	WAIT_FOR(hakios_backlight_dim() == 0, 1000);
+	CHECK(hakios_backlight_dim() == 0, "black: %u", hakios_backlight_dim());
+	set("power", 1);
+	WAIT_FOR(hakios_backlight_dim() == 256, 1000);
+	CHECK(hakios_backlight_dim() == 256, "lit: %u", hakios_backlight_dim());
+	CHECK(m.accesses == 0, "no hardware");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -673,6 +722,7 @@ main(int argc, char **argv)
 		{ "renoir_dcs", renoir_dcs }, { "redwood_video", redwood_video }, { "look_only", look_only },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "automatic", automatic_brightness },
+		{ "display_power", display_power }, { "soft_power", soft_power },
 	};
 
 	if (argc < 2) {
