@@ -1440,22 +1440,7 @@ healthy(void)
 #define TCS_COMMAND(c)          (0x30 + 20 * (c))       /* message id, address, value, status */
 #define RSC_TCS_COUNT           8               /* dt qcom,tcs-config: 2 active, 3 sleep, 3 wake */
 
-struct cmd_db_slave {
-	uint16_t id, header_offset, data_offset, count, version, reserved[3];
-};
-struct cmd_db_header {
-	uint32_t version;
-	uint8_t magic[4];
-	struct cmd_db_slave slave[8];
-	uint32_t checksum, reserved;
-	uint8_t data[];
-};
-struct cmd_db_entry {
-	char id[8];
-	uint32_t priority[2];
-	uint32_t address;
-	uint16_t length, offset;
-};
+#include "hakios_cmd_db.h"
 
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 static const struct cmd_db_header *cmd_db;
@@ -1465,44 +1450,10 @@ static vm_offset_t rsc;
 static uint32_t
 rpmh_resource(const char *name, uint16_t *levels, unsigned max, unsigned *count)
 {
-	char id[8] = { 0 };
-
-	*count = 0;
 	if (cmd_db == NULL) {
 		cmd_db = (const struct cmd_db_header *)ml_io_map_unmappable(CMD_DB_PHYS, CMD_DB_SIZE, VM_WIMG_WCOMB);
 	}
-	if (!(cmd_db->magic[0] == 0xdb && cmd_db->magic[1] == 0x30 && cmd_db->magic[2] == 0x03 && cmd_db->magic[3] == 0x0c)) {
-		return 0;
-	}
-	strlcpy(id, name, sizeof(id));
-	for (unsigned s = 0; s < 8; s++) {
-		const struct cmd_db_slave *slave = &cmd_db->slave[s];
-		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(cmd_db->data + slave->header_offset);
-
-		if (slave->id == 0 || slave->count > 512) {
-			continue;
-		}
-		for (unsigned i = 0; i < slave->count; i++) {
-			const uint8_t *data;
-
-			if (memcmp(entry[i].id, id, sizeof(id)) != 0) {
-				continue;
-			}
-			if ((unsigned)slave->data_offset + entry[i].offset + entry[i].length > CMD_DB_SIZE - 0x1000) {
-				return entry[i].address;
-			}
-			data = cmd_db->data + slave->data_offset + entry[i].offset;
-			for (unsigned l = 0; l < entry[i].length / 2u && l < max; l++) {
-				levels[l] = (uint16_t)(data[2 * l] | data[2 * l + 1] << 8);
-				if (l > 0 && levels[l] == 0) {
-					break;
-				}
-				*count = l + 1;
-			}
-			return entry[i].address;
-		}
-	}
-	return 0;
+	return hakios_cmd_db_levels(cmd_db, CMD_DB_SIZE, name, levels, max, count);
 }
 
 static void
