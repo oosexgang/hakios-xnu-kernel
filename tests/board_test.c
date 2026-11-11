@@ -199,6 +199,9 @@ table(void)
 		    "%s: the microphones' driver without the audio subsystem's blocks", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_HAPTIC_AW86927) || (b->haptic.sda != b->haptic.scl && b->haptic.reset != b->haptic.sda &&
 		    b->haptic.reset != b->haptic.scl), "%s: the vibration motor's driver without its pins", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_SPEAKER_AW88261) || (b->speaker.sda != b->speaker.scl &&
+		    b->speaker.address[0] != 0 && b->speaker.address[1] != 0 && b->speaker.address[0] != b->speaker.address[1]),
+		    "%s: the speaker amplifiers' driver without their bus and addresses", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_TORCH_PM8350C) || (b->torch.flash != 0 && b->torch.temp_alarm != 0),
 		    "%s: the flashlight's driver without its peripherals", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&

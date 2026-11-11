@@ -52,6 +52,14 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # on the slave its PMIC is (qcom,pm8350@1: 1)
 # volume_up_name = "GPIO6 of the PM8350"
 
+# The speaker's two amplifiers, for the feature "speaker-aw88261": Awinic AW88261 on two of the SoC's
+# pins (I2C by hand), each with an address and an interrupt pin of its own.
+# [speaker]
+# sda = 12                          # the I2C bus's data line: the first pin of the bus's pinctrl node
+# scl = 13                          # ... and its clock, the second
+# addresses = [0x35, 0x34]          # the two aw882xx_smartpa@NN nodes' reg; the first is the one with sound-channel 0
+# interrupts = [102, 45]            # ... and their irq-gpio, in the same order
+
 # The vibration motor's chip, for the feature "haptic-aw86927": an Awinic AW86927 on two of the SoC's
 # pins (I2C by hand), its reset and its interrupt, and what Android's driver found for this motor.
 # [haptic]

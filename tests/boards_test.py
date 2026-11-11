@@ -544,6 +544,24 @@ class Generate(Sandbox):
         self.assertIn('.rpmh = { .cmd_db = 0x80860000, .cmd_db_size = 0x20000, .rsc = 0x18220000, .tcs_offset = 0xd00 },',
                       boards.table_text(*boards.load()))
 
+    def test_the_speaker_amplifiers_need_their_wiring(self):
+        self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[smmu]\napps = 0x15000000\n[thermal]')
+        self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "speaker-aw88261"')
+        self.assertIn('feature "speaker-aw88261" needs [speaker] in the board file', self.problems())
+        path = self.dir / 'devices/phone/board.toml'
+        plain = path.read_text()
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x35]\ninterrupts = [102, 12]\n')
+        said = self.problems()
+        self.assertIn('four different pins', said)                      # (an interrupt on the bus's data line)
+        self.assertIn('different I2C addresses', said)
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35]\ninterrupts = [102, 45]\n')
+        self.assertIn('different I2C addresses', self.problems())      # (there are two amplifiers)
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x34]\ninterrupts = [102, 45]\n')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.speaker = { .sda = 12, .scl = 13, .address = { 0x35, 0x34 }, .interrupt = { 102, 45 } },',
+                      boards.table_text(*boards.load()))
+
     def test_part_drivers_need_the_pins_and_the_table_carries_them(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "haptic-aw86927", "touch-goodix"')
         said = self.problems()

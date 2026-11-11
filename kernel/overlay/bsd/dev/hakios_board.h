@@ -178,6 +178,13 @@ struct hakios_board {
 		uint8_t f0_calibration;         /* what Android's driver found for this motor's resonance (its trim register) */
 	} haptic;
 
+	/* the speaker's two amplifiers (board: [speaker]): the I2C bus they share and what tells them apart */
+	struct {
+		uint8_t sda, scl;               /* the bus's two lines, pins of the SoC */
+		uint8_t address[2];             /* each one's I2C address; the first plays the sound's slot 0 */
+		uint8_t interrupt[2];           /* each one's interrupt pin (only looked at) */
+	} speaker;
+
 	/* the flashlight's part on the PMIC (board: [torch]); a peripheral as in [buttons] */
 	struct {
 		uint16_t flash;                 /* the flash LED module */

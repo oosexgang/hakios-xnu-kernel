@@ -39,6 +39,13 @@ radio_model = 0
 dsp_memory = 0x9ae00000
 dsp_memory_size = 0x01900000
 
+# Its speaker's two amplifiers: their I2C bus on GPIO 12/13, at 0x35 and 0x34, interrupts on GPIO 102 and 45.
+[speaker]
+sda = 12
+scl = 13
+addresses = [0x35, 0x34]
+interrupts = [102, 45]
+
 # Its vibration motor's chip: on GPIO 36/37, reset on 35, as Android calibrated this motor.
 [haptic]
 sda = 36

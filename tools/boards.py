@@ -94,6 +94,7 @@ BOARD_SCHEMA = {
     'torch': {'flash': (int, True), 'alarm': (int, True)},
     'haptic': {'sda': (int, True), 'scl': (int, True), 'reset': (int, True), 'interrupt': (int, True),
                'f0_calibration': (int, True)},
+    'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
              'charge_counter_divisor': (int, False)},
@@ -144,7 +145,7 @@ FEATURE_BOOTARGS = {
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
-                          'haptic-aw86927': 'haptic'}
+                          'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
@@ -376,6 +377,13 @@ def load(problems=None):
                 problems.add(f'{rel} [haptic]', 'sda, scl, reset and interrupt are four different pins of the SoC, 0 to 255')
             if not 0 <= motor['f0_calibration'] <= 0x3f:
                 problems.add(f'{rel} [haptic]', 'f0_calibration is the six bits of the chip\'s trim register')
+        amps = data.get('speaker')
+        if amps is not None:
+            wires = [amps['sda'], amps['scl']] + list(amps['interrupts'])
+            if len(amps['interrupts']) != 2 or any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
+                problems.add(f'{rel} [speaker]', 'sda, scl and the two interrupts are four different pins of the SoC, 0 to 255')
+            if len(amps['addresses']) != 2 or len(set(amps['addresses'])) != 2 or any(not 0x08 <= a <= 0x77 for a in amps['addresses']):
+                problems.add(f'{rel} [speaker]', 'addresses are the two amplifiers\' different I2C addresses, 0x08 to 0x77')
         torch = data.get('torch')
         if torch is not None:
             for key in ('flash', 'alarm'):
@@ -584,6 +592,11 @@ def table_text(socs, boards):
         if motor:
             out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
                        f'.interrupt = {motor["interrupt"]}, .f0_calibration = {motor["f0_calibration"]:#04x} }},')
+        amps = board.get('speaker')
+        if amps:
+            out.append(f'\t\t.speaker = {{ .sda = {amps["sda"]}, .scl = {amps["scl"]}, '
+                       f'.address = {{ {amps["addresses"][0]:#04x}, {amps["addresses"][1]:#04x} }}, '
+                       f'.interrupt = {{ {amps["interrupts"][0]}, {amps["interrupts"][1]} }} }},')
         torch = board.get('torch')
         if torch:
             out.append(f'\t\t.torch = {{ .flash = {torch["flash"]:#05x}, .temp_alarm = {torch["alarm"]:#05x} }},')

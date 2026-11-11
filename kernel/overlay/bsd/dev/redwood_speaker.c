@@ -115,35 +115,45 @@ wait_ms(uint32_t ms)
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-#define PIN_SDA                 12      /* the serial engine's first pin is the data line, the second the clock */
-#define PIN_SCL                 13
+#include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken and given back */
 
-static const struct {
-	unsigned pin;
-	const char *what;
-} pins[] = {
-	{ 12, "I2C data" }, { 13, "I2C clock" }, { 97, "MI2S 0 bit clock" }, { 100, "MI2S 0 word select" },
-	{ 98, "MI2S 0 data 0" }, { 99, "MI2S 0 data 1" }, { 102, "the amplifier 0x35's interrupt" },
-	{ 45, "the amplifier 0x34's interrupt" },
-};
+/* which pins the bus is on, and each amplifier's address and interrupt pin, are the board's ([speaker]) */
+static struct i2c_gpio i2c_bus;
+#define PIN_SDA                 (i2c_bus.sda)
+#define PIN_SCL                 (i2c_bus.scl)
+
+static void
+show_pin(unsigned pin, const char *what)
+{
+	uint32_t cfg = rd(GPIO_CFG(pin)), io = rd(GPIO_IO(pin));
+
+	say("speaker: gpio%u (%s): function %u, pull %u, %u mA, %s, reads %u\n", pin, what, (cfg >> 2) & 15, cfg & 3,
+	    (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") : "input", io & 1);
+}
 
 static void
 show_pins(void)
 {
-	for (unsigned i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-		uint32_t cfg = rd(GPIO_CFG(pins[i].pin)), io = rd(GPIO_IO(pins[i].pin));
+	/* the sound's own pins are the SoC's first MI2S (redwood_sound.c sets them up) */
+	static const struct {
+		unsigned pin;
+		const char *what;
+	} sound[] = { { 97, "MI2S 0 bit clock" }, { 100, "MI2S 0 word select" }, { 98, "MI2S 0 data 0" }, { 99, "MI2S 0 data 1" } };
 
-		say("speaker: gpio%u (%s): function %u, pull %u, %u mA, %s, reads %u\n", pins[i].pin, pins[i].what,
-		    (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") :
-		    "input", io & 1);
+	show_pin(PIN_SDA, "I2C data");
+	show_pin(PIN_SCL, "I2C clock");
+	for (unsigned i = 0; i < sizeof(sound) / sizeof(sound[0]); i++) {
+		show_pin(sound[i].pin, sound[i].what);
+	}
+	for (unsigned i = 0; i < 2; i++) {
+		char what[40];
+
+		snprintf(what, sizeof(what), "the amplifier %#x's interrupt", hakios_board()->speaker.address[i]);
+		show_pin(hakios_board()->speaker.interrupt[i], what);
 	}
 }
 
 /* ---- I2C by hand ----------------------------------------------------------------------------------- */
-
-#include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken and given back */
-
-static struct i2c_gpio i2c_bus = { .sda = PIN_SDA, .scl = PIN_SCL };
 
 static bool
 bus_take(void)
@@ -282,7 +292,7 @@ amplifier_name(uint16_t id)
 struct amplifier {
 	uint8_t address;
 	unsigned device;                /* the file's device number for it (Android's sound-channel) */
-	const char *where;
+	char where[20];                 /* for the log: "0x35, slot 0" */
 	uint16_t profile[64][2];        /* register, value */
 	unsigned count;
 	uint16_t sysctrl;               /* what the profile has for 0x04, 0x08 and 0x05 */
@@ -299,10 +309,28 @@ struct amplifier {
 };
 
 static struct amplifier amplifiers[2] = {
-	{ .address = 0x35, .device = 0, .where = "0x35, slot 0", .temp_row = -1, .vbat_row = -1 },
-	{ .address = 0x34, .device = 1, .where = "0x34, slot 1", .temp_row = -1, .vbat_row = -1 },
+	{ .device = 0, .temp_row = -1, .vbat_row = -1 },
+	{ .device = 1, .temp_row = -1, .vbat_row = -1 },
 };
 static bool broken;                     /* something went wrong: both have been powered down, nothing more is done */
+
+/* The board's [speaker] taken: the bus's pins, each amplifier's address. False if the board file has none. */
+static bool
+wired(void)
+{
+	const struct hakios_board *b = hakios_board();
+
+	if (b->speaker.sda == b->speaker.scl) {
+		return false;
+	}
+	i2c_bus.sda = b->speaker.sda;
+	i2c_bus.scl = b->speaker.scl;
+	for (unsigned i = 0; i < 2; i++) {
+		amplifiers[i].address = b->speaker.address[i];
+		snprintf(amplifiers[i].where, sizeof(amplifiers[i].where), "%#x, slot %u", amplifiers[i].address, i);
+	}
+	return true;
+}
 
 static uint32_t
 le32(const uint8_t *p)
@@ -603,6 +631,10 @@ redwood_speaker_prepare(const uint8_t *acf, uint64_t size)
 {
 	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) || hakios_board()->pins.tlmm == 0) {
 		say("speaker: not on this board: its board.toml lists no \"speaker-aw88261\", or its SoC file has no [pins]\n");
+		return false;
+	}
+	if (!wired()) {
+		say("speaker: the board file does not say which pins the amplifiers are on ([speaker])\n");
 		return false;
 	}
 	if (tlmm == 0) {
@@ -1056,6 +1088,11 @@ redwood_speaker_init(void)
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
 		say("speaker: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+		probe_level = 0;
+		return;
+	}
+	if (!wired()) {
+		say("speaker: disabled: the board file does not say which pins the amplifiers are on ([speaker])\n");
 		probe_level = 0;
 		return;
 	}
