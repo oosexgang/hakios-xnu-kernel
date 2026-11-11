@@ -708,6 +708,16 @@ class Generate(Sandbox):
                 qcom,temp-alarm@a00 { compatible = "qcom,spmi-temp-alarm"; reg = <0xa00>; };
                 qcom,flash_led@ee00 { compatible = "qcom,pm8350c-flash-led"; reg = <0xee00>; }; }; }; }; };''')
         self.assertEqual(board['torch'], {'flash': 0x3ee, 'alarm': 0x30a})
+        # ... and a board started from that tree has the section, with the feature still to be listed
+        dts = self.dir / 'light.dts'
+        dts.write_text('''/ { soc { qcom,spmi@c440000 { compatible = "qcom,spmi-pmic-arb";
+            qcom,pm8350c@2 { compatible = "qcom,spmi-pmic"; reg = <2 0>;
+                qcom,temp-alarm@a00 { compatible = "qcom,spmi-temp-alarm"; reg = <0xa00>; };
+                qcom,flash_led@ee00 { compatible = "qcom,pm8350c-flash-led"; reg = <0xee00>; }; }; }; }; };''')
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone5', 'sm0001', dts)
+        self.assertIn('[torch]\nflash = 0x2ee\nalarm = 0x20a\n', (self.dir / 'devices/phone5/board.toml').read_text())
+        self.assertEqual(self.problems(), '')
 
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in

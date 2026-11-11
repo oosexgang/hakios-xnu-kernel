@@ -835,6 +835,14 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         lines += [f'{key} = {keys[key]:#05x}' if isinstance(keys[key], int) else f'{key} = {toml_value(keys[key])}'
                   for key in ('pon', 'pon_name', 'volume_up', 'volume_up_name') if key in keys]
         lines.append('')
+    light_part = board.get('torch', {})
+    if 'flash' in light_part and 'alarm' in light_part:
+        lines += ['# The flashlight\'s part on the PMIC, for the feature "torch-pm8350c": the flash LED module and that',
+                  "# PMIC's temperature alarm, each as SPMI slave << 8 | the high byte of its registers.",
+                  '[torch]',
+                  f'flash = {light_part["flash"]:#05x}',
+                  f'alarm = {light_part["alarm"]:#05x}',
+                  '']
     dsp = board.get('adsp', {})
     if 'memory' in dsp:
         lines += ['# The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',
