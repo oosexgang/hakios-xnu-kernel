@@ -7,7 +7,8 @@
 # plists (US/mkjobs.py: the named jobs as they are, every other job with Mach services on demand only) into
 # $IOS/jobs26, for the system image (LAUNCHDAEMONS=$IOS/jobs26 mkimage26.py): iOS 26's launchd takes a job
 # for a system service only when its plist is on the system volume.
-# Writes $IOS/root26-ios.apfs, $IOS/jobs26 and $OBJ/stage0 (the system image's /sbin/launchd).
+# Writes $IOS/root26-ios.apfs, $IOS/jobs26, $OBJ/stage0 (the system image's /sbin/launchd) and $IOS/flashboot.apfs
+# (the RAM part of a boot whose system image is on the flash).
 # JOBS="label ..." replaces the named jobs; OSLOG as for mkjobs.py; RC_JOBS=FILE: what com.redwood.demo runs.
 set -e
 RN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -273,3 +274,13 @@ EOF
 fi
 python3 "$IOS_REPO/userland/tools/apfs/mkapfs.py" -z "${PLAIN[@]}" -o "$IOS/root26-ios.apfs" redwood="$T" | tail -1
 ls -la "$IOS/root26-ios.apfs"
+
+# The RAM part of a boot whose system image is on the phone's flash (boot-arg root_apfs=DEV): the kernel's first
+# root, the resident RAM disk md0 -- stage0 as /sbin/launchd, which mounts this small image on /redwood, and the
+# mount points it and init use. init gives it up for the system image on the flash (userland/src/init.c,
+# flash_root), and it stays under that one's /private/preboot.
+F=$IOS/flashboot-tree
+rm -rf "$F"
+mkdir -p "$F/sbin" "$F/redwood" "$F/dev" "$F/flash"
+cp "$OBJ/stage0" "$F/sbin/launchd"
+python3 "$IOS_REPO/userland/tools/apfs/mkapfs.py" -o "$IOS/flashboot.apfs" Boot="$F" | tail -1
