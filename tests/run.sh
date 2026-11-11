@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host tests of kernel code that can run without a phone or a kernel build: each test includes the
+# Host tests: of the tools, and of kernel code that can run without a phone or a kernel build. Each of the latter includes the
 # kernel's own source files (kernel/overlay), so it tests what the kernel compiles, built with the host's cc.
 #
 #   tests/run.sh             all of them
@@ -20,6 +20,9 @@ run() {
 		failed=1
 	fi
 }
+
+echo "== the repository's own checks (tools/check-links.py, tools/components.py)"
+python3 "$HERE/tools_test.py" 2>&1 | tail -3 || failed=1
 
 echo "== boards (devices/, soc/, tools/boards.py)"
 python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
