@@ -12,7 +12,7 @@
 # MESA_SRC and MESA_BUILD at them. The default is a host build in the kernel's tree (xnu-deps/build/mesa-host: a meson build
 # of Mesa with the AIR front end, tools/mk-mesa.sh's sources), recognised by its libair.a. Nothing of it is copied, only linked
 # against. Without it the tests that need the compiler cannot be built: `make ios` needs only the cross build.
-MESA_HOST  ?= $(abspath $(HAKIOS))/xnu-deps/build/mesa-host
+MESA_HOST  ?= $(XNUDEPS)/build/mesa-host
 MESA_SRC   ?= $(MESA_HOST)/mesa-25.0.7
 MESA_BUILD ?= $(MESA_HOST)/build
 
@@ -26,7 +26,7 @@ CHIP_ID    ?= 0x06030500
 # build's ninja file, off one ir3 object, rather than copied here, so that a
 # build on another machine or of another Mesa gets its own.
 ifeq ($(origin MESA_DEFS), undefined)
-MESA_DEFS := $(shell grep -m1 -A4 '^build src/freedreno/ir3/libfreedreno_ir3.a.p/ir3.c.o:' $(MESA_BUILD)/build.ninja \
+MESA_DEFS := $(shell grep -s -m1 -A4 '^build src/freedreno/ir3/libfreedreno_ir3.a.p/ir3.c.o:' $(MESA_BUILD)/build.ninja \
 	| grep -m1 ' ARGS = ' | tr ' ' '\n' | grep '^-D' | tr '\n' ' ')
 endif
 
@@ -75,8 +75,13 @@ out/host/ir3-kernel: tools/ir3-kernel.cc include/hakios-metal/kernel.hpp tools/k
 	@mkdir -p $(dir $@)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -Iinclude $(MESA_DEFS) $(MESA_INC) -o $@ tools/ir3-kernel.cc $(MESA_LIBS)
 
+# The fixtures are in the repository. They are made again from their sources only where the Mesa host build is, which
+# `make fixtures` and `make air-fixtures` need; without it a source that merely looks newer (a fresh clone writes the
+# files in no particular order) leaves its fixture as it was committed, instead of stopping `make test` on a missing Mesa.
+ifneq ($(wildcard $(MESA_BUILD)/build.ninja),)
 tests/fixtures/%.hpp: tools/kernels/%.asm out/host/ir3-kernel
 	out/host/ir3-kernel --chip-id $(CHIP_ID) -o $@ $<
+endif
 
 fixtures: $(KERNEL_FIXTURES)
 
@@ -93,9 +98,9 @@ fixtures: $(KERNEL_FIXTURES)
 LLVM_AS      ?= llvm-as
 IR3_COMPILER ?= out/host/ir3_compiler
 IR3_CMDLINE_C = $(MESA_SRC)/src/gallium/drivers/freedreno/ir3/ir3_cmdline.c
-IR3_CMDLINE_ARGS = $(shell grep -m1 -A4 '^build src/gallium/drivers/freedreno/ir3_compiler.p/ir3_ir3_cmdline.c.o:' $(MESA_BUILD)/build.ninja \
+IR3_CMDLINE_ARGS = $(shell grep -s -m1 -A4 '^build src/gallium/drivers/freedreno/ir3_compiler.p/ir3_ir3_cmdline.c.o:' $(MESA_BUILD)/build.ninja \
 	| grep -m1 ' ARGS = ' | sed 's/^ ARGS = //')
-IR3_COMPILER_LINK_ARGS = $(shell grep -m1 -A4 '^build src/gallium/drivers/freedreno/ir3_compiler:' $(MESA_BUILD)/build.ninja \
+IR3_COMPILER_LINK_ARGS = $(shell grep -s -m1 -A4 '^build src/gallium/drivers/freedreno/ir3_compiler:' $(MESA_BUILD)/build.ninja \
 	| grep -m1 ' LINK_ARGS = ' | sed 's/^ LINK_ARGS = //')
 KERNEL_LL        = $(wildcard tools/kernels/*.ll)
 KERNEL_BC        = $(patsubst tools/kernels/%.ll,out/host/kernels/%.bc,$(KERNEL_LL))
@@ -120,7 +125,9 @@ out/host/kernels/%.bc: tools/kernels/%.ll
 	@mkdir -p $(dir $@)
 	$(LLVM_AS) -o $@ $<
 
+ifneq ($(wildcard $(MESA_BUILD)/build.ninja),)
 tests/fixtures/%_air.hpp: out/host/kernels/%.bc tools/kernels/%.ll $(IR3_COMPILER)
 	$(IR3_COMPILER) --chip-id $(CHIP_ID) -o $@ -s tools/kernels/$*.ll -n $*_air $< > out/host/kernels/$*.listing
+endif
 
 air-fixtures: $(KERNEL_AIR_FIXTURES)

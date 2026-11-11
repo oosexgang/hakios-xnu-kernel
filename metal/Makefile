@@ -27,10 +27,15 @@ HOSTOUT   = out/host$(if $(SAN),-$(SAN))
 # host build with hakios's AIR front end in it) and compiler_test compares it with the fixture; without MESA=1 the
 # tests build on any C++17 and compileAir() is a refusal by name. Included here, before the rules, so that HOSTOUT and
 # the flags are settled when the rules are read.
-# the hakios tree (HAKIOS=), named before the fragments: compiler.mk reads the iOS Mesa build's -D set from
-# $(HAKIOS)/xnu-deps/build/mesa at parse time, which an unset HAKIOS would turn into a silent empty set
-# (in the kernel's tree, hakios-metal/: that tree; beside it, HAKIOS= or the workspace of old)
-HAKIOS    ?= $(if $(wildcard ../xnu/apply.sh),..,../workspace)
+# the hakios tree (HAKIOS=) and what its builds put beside it (XNUDEPS=: the cross compiler, the Mesa builds), named
+# before the fragments: compiler.mk reads the iOS Mesa build's -D set from $(XNUDEPS)/build/mesa at parse time, which
+# an unset one would turn into a silent empty set. As metal/ of a tree with kernel/env.sh, that tree, and XNUDEPS as
+# that file sets it (export it, or source kernel/env.sh first); as hakios-metal/ of the older tree, that tree and its
+# xnu-deps/; beside it, HAKIOS= or the workspace of old
+HAKIOS    ?= $(if $(wildcard ../kernel/env.sh)$(wildcard ../xnu/apply.sh),..,../workspace)
+XNUDEPS   ?= $(abspath $(HAKIOS))/xnu-deps
+# arm64 for iOS 16.5; arm64e for iOS 26 and 27, whose processes load no other (ios/userland/metal.sh)
+IOS_ARCH  ?= arm64
 -include tools/kernels.mk
 -include tools/compiler.mk
 ifneq ($(strip $(MESA)),)
@@ -47,7 +52,7 @@ else
 # On Linux the cross compiler is hakios's wrapper around clang and the cctools linker (xnu-deps/host/bin, laid out by
 # xnu-deps/setup.sh), and the archive must be in the form Apple's ld reads: with GNU ar's symbol table the probe failed
 # to link against every symbol of the library.
-IOS_CXX   ?= $(abspath $(HAKIOS))/xnu-deps/host/bin/xnu-clang++ -arch arm64 -isysroot $(SDK) -miphoneos-version-min=16.0
+IOS_CXX   ?= $(XNUDEPS)/host/bin/xnu-clang++ -arch $(IOS_ARCH) -isysroot $(SDK) -miphoneos-version-min=16.0
 IOS_AR    ?= llvm-ar --format=darwin rcs
 endif
 
@@ -85,9 +90,8 @@ check: test
 	plugin/tests/metal-plugin-test.sh
 	GPU=1 plugin/tests/metal-plugin-test.sh
 
-# (the probe wants the fixtures, which want a host build of Mesa to be made again: with none here the library alone, which is what
-# the kernel's userland/build.sh links)
-ios: out/ios/libhakios-metal.a $(if $(wildcard $(IR3_CMDLINE_C)),out/ios/hakios-metal-probe)
+# (the probe compiles in the fixtures as they are in the repository; a host build of Mesa is needed only to make them again)
+ios: out/ios/libhakios-metal.a out/ios/hakios-metal-probe
 
 darwin: ios
 

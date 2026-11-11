@@ -37,9 +37,9 @@ HAKIOS_METAL_MESA_LIBS = -Wl,--start-group $(MESA_BUILD)/src/compiler/air/libair
 # libair.a is not a target of the default build (nothing of libOSMesa links it):
 # `ninja -C <build> src/compiler/air/libair.a` once after mk-mesa.sh. Override
 # IOS_MESA_SRC and IOS_MESA_BUILD for a build elsewhere.
-IOS_MESA_ROOT  ?= $(abspath $(HAKIOS))/xnu-deps/build/mesa
+IOS_MESA_ROOT  ?= $(XNUDEPS)/build/mesa
 IOS_MESA_SRC   ?= $(IOS_MESA_ROOT)/mesa-25.0.7
-IOS_MESA_BUILD ?= $(IOS_MESA_ROOT)/build-softpipe-freedreno
+IOS_MESA_BUILD ?= $(IOS_MESA_ROOT)/build-$(IOS_ARCH)
 
 # Its -D set, read the same way as the host's (kernels.mk): off the ir3.c.o line
 # of its ninja file. It differs from the host's where the libc does (no
@@ -47,11 +47,11 @@ IOS_MESA_BUILD ?= $(IOS_MESA_ROOT)/build-softpipe-freedreno
 # NDEBUG), and a header compiled with the host's set would declare things the
 # iOS objects do not have.
 ifeq ($(origin IOS_MESA_DEFS), undefined)
-IOS_MESA_DEFS := $(shell grep -m1 -A4 '^build src/freedreno/ir3/libfreedreno_ir3.a.p/ir3.c.o:' $(IOS_MESA_BUILD)/build.ninja \
+IOS_MESA_DEFS := $(shell grep -s -m1 -A4 '^build src/freedreno/ir3/libfreedreno_ir3.a.p/ir3.c.o:' $(IOS_MESA_BUILD)/build.ninja \
 	| grep -m1 ' ARGS = ' | tr ' ' '\n' | grep '^-D' | tr '\n' ' ')
 # an empty set compiles Mesa's headers for the wrong libc (c11/threads.h: "Not supported on this platform"): say so
 ifeq ($(strip $(IOS_MESA_DEFS)),)
-$(warning tools/compiler.mk: no -D set for the iOS Mesa build in $(IOS_MESA_BUILD)/build.ninja (not built, or HAKIOS unset?); make ios MESA=1 will not compile)
+$(warning tools/compiler.mk: no -D set for the iOS Mesa build in $(IOS_MESA_BUILD)/build.ninja (not built, or XNUDEPS unset?); make ios MESA=1 will not compile)
 endif
 endif
 
@@ -77,8 +77,10 @@ HAKIOS_METAL_IOS_MESA_LIBS = $(IOS_MESA_BUILD)/src/compiler/air/libair.a $(addpr
 # The cross compiler as the main Makefile names it; these are no-ops when it is
 # included from there, and let `make -f tools/compiler.mk` work alone.
 HAKIOS    ?= ../workspace
+XNUDEPS   ?= $(abspath $(HAKIOS))/xnu-deps
+IOS_ARCH  ?= arm64
 SDK       ?= $(abspath $(firstword $(wildcard $(THEOS)/sdks/iPhoneOS16.5.sdk $(HAKIOS)/xnu-deps/theos-mac/sdks/iPhoneOS16.5.sdk $(HOME)/theos/sdks/iPhoneOS16.5.sdk)))
-IOS_CXX   ?= $(abspath $(HAKIOS))/xnu-deps/host/bin/xnu-clang++ -arch arm64 -isysroot $(SDK) -miphoneos-version-min=16.0
+IOS_CXX   ?= $(XNUDEPS)/host/bin/xnu-clang++ -arch $(IOS_ARCH) -isysroot $(SDK) -miphoneos-version-min=16.0
 
 # --- the smoke program ----------------------------------------------------------
 .PHONY: compiler-smoke ios-compiler-smoke
