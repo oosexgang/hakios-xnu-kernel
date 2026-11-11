@@ -21,7 +21,9 @@
 #include <sys/systm.h>
 
 #include "hakios_board.h"
+#include "hakios_cmd_db.h"
 #include "hakios_log.h"
+#include "hakios_mmio.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
@@ -40,24 +42,6 @@ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
  * together get no more from memory than one alone: 12 GB/s; nobody here votes for more.)
  */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)      /* where it is: the SoC file's [rpmh] */
-#define CMD_DB_BCM              5               /* the kind of resource in a slave's id: bus clock managers */
-
-struct cmd_db_slave {
-	uint16_t id, header_offset, data_offset, count, version, reserved[3];
-};
-struct cmd_db_header {
-	uint32_t version;
-	uint8_t magic[4];
-	struct cmd_db_slave slave[8];
-	uint32_t checksum, reserved;
-	uint8_t data[];
-};
-struct cmd_db_entry {
-	char id[8];
-	uint32_t priority[2];
-	uint32_t address;
-	uint16_t length, offset;
-};
 struct cmd_db_bcm {                             /* a BCM's auxiliary data (Linux: struct bcm_db) */
 	uint32_t unit;
 	uint16_t width;
@@ -70,27 +54,28 @@ ddr_look(void)
 	/* (memory, not registers: mapped so that reads of any size and alignment are allowed) */
 	const struct cmd_db_header *db = (const struct cmd_db_header *)ml_io_map_wcomb(hakios_board()->rpmh.cmd_db, CMD_DB_SIZE);
 
-	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
+	if (!hakios_cmd_db_valid(db)) {
 		tell("ddr: no command database\n");
 		return;
 	}
-	for (unsigned s = 0; s < 8; s++) {
-		const struct cmd_db_slave *slave = &db->slave[s];
-		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(db->data + slave->header_offset);
+	for (unsigned s = 0; s < CMD_DB_SLAVES; s++) {
+		const struct cmd_db_entry *entry;
 
-		if (slave->id != CMD_DB_BCM || slave->header_offset >= CMD_DB_SIZE - 0x1000 || slave->count > 512) {
+		if (db->slave[s].id != CMD_DB_BCM) {
 			continue;
 		}
-		for (unsigned i = 0; i < slave->count; i++) {
+		for (unsigned i = 0; (entry = hakios_cmd_db_entry(db, CMD_DB_SIZE, s, i)) != NULL; i++) {
 			struct cmd_db_bcm aux = { 0 };
 			char name[9] = { 0 };
+			unsigned length;
+			const uint8_t *data = hakios_cmd_db_data(db, CMD_DB_SIZE, s, entry, &length);
 
-			memcpy(name, entry[i].id, 8);
-			if (entry[i].length >= sizeof(aux) && slave->data_offset + entry[i].offset + sizeof(aux) < CMD_DB_SIZE - 0x40) {
-				memcpy(&aux, db->data + slave->data_offset + entry[i].offset, sizeof(aux));
+			memcpy(name, entry->id, 8);
+			if (data != NULL && length >= sizeof(aux)) {
+				memcpy(&aux, data, sizeof(aux));
 			}
-			tell("ddr: BCM %-8s at %#x: unit %u, width %u, vcd %u (aux %u bytes)\n", name, entry[i].address, aux.unit,
-			    aux.width, aux.vcd, entry[i].length);
+			tell("ddr: BCM %-8s at %#x: unit %u, width %u, vcd %u (aux %u bytes)\n", name, entry->address, aux.unit,
+			    aux.width, aux.vcd, entry->length);
 		}
 	}
 }
@@ -112,12 +97,12 @@ ddr_slots(void)
 	vm_offset_t rsc = ml_io_map(hakios_board()->rpmh.rsc, RSC_SIZE);
 
 	for (unsigned t = 0; t < RSC_TCS_COUNT; t++) {
-		uint32_t enabled = *(volatile uint32_t *)(rsc + RSC_TCS(t, 0x1c));
+		uint32_t enabled = rd(rsc + RSC_TCS(t, 0x1c));
 
 		for (unsigned c = 0; c < RSC_CMDS; c++) {
-			uint32_t msgid = *(volatile uint32_t *)(rsc + RSC_TCS(t, 0x30 + 20 * c));
-			uint32_t address = *(volatile uint32_t *)(rsc + RSC_TCS(t, 0x34 + 20 * c));
-			uint32_t data = *(volatile uint32_t *)(rsc + RSC_TCS(t, 0x38 + 20 * c));
+			uint32_t msgid = rd(rsc + RSC_TCS(t, 0x30 + 20 * c));
+			uint32_t address = rd(rsc + RSC_TCS(t, 0x34 + 20 * c));
+			uint32_t data = rd(rsc + RSC_TCS(t, 0x38 + 20 * c));
 
 			if (address == 0 && data == 0) {
 				continue;
@@ -161,71 +146,55 @@ static bool ddr_voted;
 extern void redwood_rpmh_lock(void);
 extern void redwood_rpmh_unlock(void);
 
+/* What RPMh is told for the bus clock manager of that name; 0: the command database has none. */
 static uint32_t
 cmd_db_address(const char *name)
 {
 	const struct cmd_db_header *db = (const struct cmd_db_header *)ml_io_map_wcomb(hakios_board()->rpmh.cmd_db, CMD_DB_SIZE);
-	char id[8] = { 0 };
+	const struct cmd_db_entry *entry = hakios_cmd_db_find(db, CMD_DB_SIZE, name, CMD_DB_BCM, NULL);
 
-	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
-		return 0;
-	}
-	strlcpy(id, name, sizeof(id));
-	for (unsigned s = 0; s < 8; s++) {
-		const struct cmd_db_slave *slave = &db->slave[s];
-		const struct cmd_db_entry *entry = (const struct cmd_db_entry *)(db->data + slave->header_offset);
-
-		if (slave->id != CMD_DB_BCM || slave->header_offset >= CMD_DB_SIZE - 0x1000 || slave->count > 512) {
-			continue;
-		}
-		for (unsigned i = 0; i < slave->count; i++) {
-			if (memcmp(entry[i].id, id, sizeof(id)) == 0) {
-				return entry[i].address;
-			}
-		}
-	}
-	return 0;
+	return entry != NULL ? entry->address : 0;
 }
 
 /* Up to three writes through command slot set 0, and the wait until RPMh has done them (as bsd/dev/redwood_goodix.c) */
 static bool
 ddr_rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	uint32_t irq_enable = *(volatile uint32_t *)TCS_REG(0x00);
+	uint32_t irq_enable = rd(TCS_REG(0x00));
 	bool done = false;
 
-	for (int i = 0; *(volatile uint32_t *)TCS_REG(0x18) == 0; i++) {
+	for (int i = 0; rd(TCS_REG(0x18)) == 0; i++) {
 		if (i > 2000) {
 			tell("ddr: RPMh: the command slots stay busy\n");
 			return false;
 		}
 		delay_for_interval(100, NSEC_PER_USEC);
 	}
-	*(volatile uint32_t *)TCS_REG(0x14) &= ~(1u << 24);
-	*(volatile uint32_t *)TCS_REG(0x14) &= ~(1u << 16);
-	*(volatile uint32_t *)TCS_REG(0x08) = 1;
+	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 24));
+	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 16));
+	wr(TCS_REG(0x08), 1);
 	for (unsigned i = 0; i < count; i++) {
-		*(volatile uint32_t *)TCS_REG(0x30 + 20 * i) = 0x10008 | 0x100;        /* a 4-byte write, with a response */
-		*(volatile uint32_t *)TCS_REG(0x34 + 20 * i) = address[i];
-		*(volatile uint32_t *)TCS_REG(0x38 + 20 * i) = data[i];
+		wr(TCS_REG(0x30 + 20 * i), 0x10008 | 0x100);        /* a 4-byte write, with a response */
+		wr(TCS_REG(0x34 + 20 * i), address[i]);
+		wr(TCS_REG(0x38 + 20 * i), data[i]);
 	}
-	*(volatile uint32_t *)TCS_REG(0x10) = (1u << count) - 1;
-	*(volatile uint32_t *)TCS_REG(0x1c) = (1u << count) - 1;
-	*(volatile uint32_t *)TCS_REG(0x00) = irq_enable | 1;
-	*(volatile uint32_t *)TCS_REG(0x14) = 1u << 16;
-	*(volatile uint32_t *)TCS_REG(0x14) = 1u << 16 | 1u << 24;
+	wr(TCS_REG(0x10), (1u << count) - 1);
+	wr(TCS_REG(0x1c), (1u << count) - 1);
+	wr(TCS_REG(0x00), irq_enable | 1);
+	wr(TCS_REG(0x14), 1u << 16);
+	wr(TCS_REG(0x14), 1u << 16 | 1u << 24);
 	for (int i = 0; i < 2000 && !done; i++) {
-		done = (*(volatile uint32_t *)TCS_REG(0x04) & 1) != 0;
+		done = (rd(TCS_REG(0x04)) & 1) != 0;
 		if (!done) {
 			delay_for_interval(100, NSEC_PER_USEC);
 		}
 	}
-	*(volatile uint32_t *)TCS_REG(0x14) &= ~(1u << 24);
-	*(volatile uint32_t *)TCS_REG(0x14) &= ~(1u << 16);
-	*(volatile uint32_t *)TCS_REG(0x1c) = 0;
-	*(volatile uint32_t *)TCS_REG(0x10) = 0;
-	*(volatile uint32_t *)TCS_REG(0x08) = 1;
-	*(volatile uint32_t *)TCS_REG(0x00) = irq_enable;
+	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 24));
+	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 16));
+	wr(TCS_REG(0x1c), 0);
+	wr(TCS_REG(0x10), 0);
+	wr(TCS_REG(0x08), 1);
+	wr(TCS_REG(0x00), irq_enable);
 	if (!done) {
 		tell("ddr: RPMh: no answer to the vote\n");
 	}
