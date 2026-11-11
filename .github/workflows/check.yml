@@ -1,0 +1,26 @@
+# Everything that can be checked without a phone, on every push and pull request:
+#   make check        lint, the board files and their generated table, the generated docs, the host
+#                     tests of the kernel's drivers (also under qemu-aarch64) and of the tools
+#   kernel/verify.sh  Apple's pinned release + kernel/overlay + kernel/patches assemble, and exporting
+#                     the assembled tree gives back exactly what is committed
+# The kernel itself is not built here: that needs the Darwin toolchain (docs/building.md).
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck
+      - name: make check
+        run: make check
+      - name: The kernel sources assemble and export back unchanged
+        run: kernel/verify.sh
