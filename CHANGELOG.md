@@ -1,0 +1,180 @@
+# Changelog
+
+What changed in HakiOS, for people who use it, build it or port it to a phone. Changes are grouped by
+what a reader does with the project, not by commit: `git log` has the detail. There are no release
+tags yet, so the current work is one section.
+
+## Unreleased: the restructuring
+
+The project's structure was reworked: where a phone is described, how the kernel's sources are kept,
+the documentation and the checks. What works on which phone did not change, with one exception on
+Renoir ("What you will notice" below). What has not been verified since is at the end of this section.
+
+### Porting to a new phone
+
+- **A phone is data.** `devices/NAME/board.toml` says what a phone has. `soc/SOC.toml` says where the
+  blocks of its chip are, once for every phone with that chip. Before, each driver carried its own list
+  of phones and addresses, and the loader described each machine in C. Every key is explained in
+  `devices/_template/board.toml` and `devices/_template/soc.toml`; [devices/README.md](devices/README.md)
+  has every section, and the steps for making one more constant data.
+- **A tool starts both files from the phone's Android device tree.**
+  `tools/boards.py new NAME --soc SOC --dts FILE` reads the DSI controller, the temperature sensors,
+  the CPU frequency block and its groups of cores, the clock controllers' addresses, the interrupt
+  controller, the cores, the PSCI method, the panel's brightness range and mode, the PMIC arbiter with
+  the keys, and RPMh. It prints what it could not find. Two things are never in a device tree and are
+  filled in by hand: the display clocks' register offsets and the I/O window.
+- **`tools/boards.py status NAME`** lists every feature for a board: on, ready to be listed, or the
+  section it still waits for. `tools/boards.py check` validates every file and says which and why.
+- **Drivers start by feature, not by a phone's name.** A board lists the drivers it may start in
+  `features`. A driver asks for its feature after its boot argument. On a board that does not list it,
+  the driver prints which line is missing and does nothing. A machine nobody described has no feature.
+- **What was a constant in a driver and is a section now:**
+  - in the board file: `[backlight]` (how brightness is set, its range and byte order), `[thermal]`
+    (the floors), `[buttons]` (the keys' PMIC peripherals), `[adsp]` (firmware directory, memory, the
+    gauge's units), `[gpu]` (the Adreno's profile), `[wifi]` (the radio and its early memory pool),
+    `[screen]` (the status bar's shift past the camera), `[loader]` (framebuffer base,
+    `uefi_charger`), `[boot]` (the boot tool's defaults);
+  - in the SoC file: `[platform]` (interrupt controller, cores, PSCI, I/O window), `[clocks]`,
+    `[display]` (DSI controller, the panel's interface), `[spmi]` (PMIC arbiter), `[rpmh]`, `[thermal]`
+    (TSENS), `[cpufreq]` (the EPSS block and its groups of cores).
+- **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
+  the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
+  `board.toml` and README on the `devices` branch (`renoir` and `redwood` so far). `tools/device.py`
+  brings one into a checkout and takes it out again: `available`, `add`, `list`, `remove`, `export`
+  (`make device DEVICE=NAME` is `add`). Packages elsewhere are found through `HAKIOS_DEVICES`.
+- **The board tables are build outputs.** `tools/boards.py gen` writes the kernel's table, the loader's
+  and the injected libraries' into `build/boards/`, and every build runs it. None is in the repository.
+  The kernel, the loader and the libraries know the boards whose packages were present when built.
+- **A porting guide.** [docs/porting.md](docs/porting.md) goes from the device tree to sending the
+  package back in eight steps, with the log line that shows each piece worked, and ends with what is
+  still tied to the first two phones. `tests/porting_test.sh` runs its tool and data steps (1, 3, 8 and
+  the data side of 4 and 5) on a made-up phone with a made-up SoC, on every push.
+- **A catalog of drivers.** [docs/drivers.md](docs/drivers.md) lists every driver with its part, its
+  feature and boot argument, and how tied it is to one phone.
+
+### Building or changing the kernel
+
+- **The sources are ordinary files.** The kernel was one 75,000-line patch against Apple's release with
+  25 patches stacked on it. It is three things now: `kernel/UPSTREAM` pins the Apple release by commit;
+  `kernel/overlay/` holds the 129 files HakiOS adds, at their place in the XNU tree; `kernel/patches/`
+  holds the changes to Apple's own 89 files as 7 patches by topic (`kernel/patches/series` says which
+  file belongs to which).
+- **Tools for the round trip.** `kernel/assemble.sh` makes the tree that is compiled.
+  `kernel/export.sh` takes work done in a tree back. `kernel/verify.sh` checks that assembling and
+  exporting give back exactly what is committed. `kernel/import-patch.sh` takes a patch written against
+  the tree into the overlay and the topic patches. An update never overwrites work in a tree that has
+  not been exported.
+- **`kernel/build.sh` is the one command**, with theos installed. It assembles or updates the tree,
+  fetches and builds its host tools (`kernel/deps/stage1.sh`), makes the board table and builds. A
+  separate darwin-renoir checkout is no longer needed; it is still used if it is there.
+- **A syntax check without the Darwin toolchain.** `kernel/syntax-check.sh` compiles what HakiOS adds
+  for syntax and types with the machine's own clang, in seconds against a tree that is there. It does
+  not build or link the kernel.
+- **One log helper.** Eleven drivers each had their own copy of the function that writes to the
+  loader's log. `hakios_say()` in `hakios_log.h` is that function once.
+- **No board names in code.** Nothing compares the board's name any more: the name is looked up once,
+  for the board's row. [CONTRIBUTING.md](CONTRIBUTING.md) has this and the other rules that keep the
+  project portable, and says where each kind of change goes.
+- **Every boot argument is listed.** `tools/bootargs.py` writes [docs/boot-args.md](docs/boot-args.md)
+  from the comments beside the code: 236 arguments, 34 of them without a description yet.
+- **Pinned inputs in one place.** `components.toml` lists the sixteen things fetched from elsewhere at
+  their exact versions, and the lint checks it against the scripts that fetch. The macOS SDK archive is
+  checked against its SHA-256 before unpacking.
+- **Build scripts run on any machine.** The iOS image scripts named one home directory. They take their
+  directories from where the checkout lies or from the environment.
+
+### What you will notice
+
+- **Bring the phone's package in before you build**: `tools/device.py add renoir`. A kernel or loader
+  built with no package knows only the emulator's board and starts no driver of a phone.
+- **On Renoir, the drivers wired for redwood's parts no longer start.** The speaker, microphone,
+  haptic, flashlight, camera and Wi-Fi drivers have no Renoir code path. Asked for there, they print
+  which line is missing instead of writing to redwood's pins. Renoir's boot defaults had them off.
+- **The assembled tree is `../xnu-12377-hakios`.** A tree made by the earlier `apply.sh` is refused.
+- **The boot tool reads its defaults from the board file.** `ios/tools/boot26.py` takes `--board NAME`,
+  or the one phone whose package is present.
+- **A branch or patch from the old layout** is carried over with `kernel/import-patch.sh`.
+  [docs/migrating.md](docs/migrating.md) has the steps.
+
+### Repository layout
+
+| Before | Now |
+| --- | --- |
+| The single kernel patch, `apply.sh`, the numbered patches | `kernel/overlay/`, `kernel/patches/`, `kernel/assemble.sh` |
+| `renoir/kernel/build.sh` and its environment script | `kernel/build.sh`, `kernel/env.sh` |
+| `renoir/userland/`, `renoir/tools/` | `ios/userland/`, `ios/tools/` |
+| `renoir/docs/`, `renoir/tests/` | `docs/`, `tests/` |
+| `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
+| Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
+
+The full table is in [docs/migrating.md](docs/migrating.md). [docs/architecture.md](docs/architecture.md)
+says how the parts fit together, and [docs/README.md](docs/README.md) is the index of the documentation.
+
+### Checks
+
+- **`make check`** runs everything that needs no phone, no iOS files and no kernel toolchain: the lint,
+  the validation of the board and SoC files, whether `docs/boot-args.md` is current, the host tests.
+- **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
+  link and repository path in the documentation exists, checks the pins of `components.toml`, and looks
+  for files that must never be published.
+- **The host tests** (`tests/run.sh`) run the backlight and thermal drivers unchanged against models of
+  their hardware, on the host and as arm64 code under `qemu-aarch64`. They also test the kernel's board
+  code, the board and package tools, the kernel source tools, the boot-argument reference and the
+  porting guide, and build the loader. They use two stand-in phones in `tests/devices/`.
+  [tests/README.md](tests/README.md) lists each test.
+- **CI** runs `make check`, `kernel/verify.sh` and `kernel/syntax-check.sh` on every push and pull
+  request. The kernel is not built or linked there.
+
+### New drivers and features
+
+- **Brightness and Auto-Brightness** (`hakios_backlight.c`, [docs/backlight.md](docs/backlight.md)).
+  Brightness is set by MIPI DCS through the Qualcomm DSI controller, or in software on boards without a
+  description. The side button and the idle timer make the panel dark or dimmed. Tested on the host and
+  under `qemu-aarch64`. Not yet verified on a phone. The default, `backlight=1`, only reads. There is
+  no light sensor driver yet: the light reading is the sysctl `hw.backlight.lux`.
+- **A thermal limiter** (`hakios_thermal.c`, [docs/thermal.md](docs/thermal.md)). It reads the
+  temperature sensors and, when hot, lowers the CPU groups' frequency and caps the panel's brightness.
+  Tested on the host and under `qemu-aarch64`. Not yet verified on a phone. The default, `thermal=1`,
+  only logs the hottest sensor; `thermal=2` holds back.
+- **The Metal plug-in gate** is back in the 12377 kernel, behind `metal=1`. It is one step of the plan
+  in [docs/metal-glass.md](docs/metal-glass.md). The Metal device plug-in is not packaged for iOS 27.
+
+### Not changed, and not yet verified
+
+Not changed:
+
+- Drivers did not move or change names. `redwood_*` is the historical prefix of the platform layer, not
+  a statement about which phone the code is for.
+- Sound, microphones, camera, Wi-Fi, haptics, flashlight and storage are still written for redwood's
+  parts. They are the largest share of the work on a new phone.
+- The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
+  needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
+- redwood has not been booted with iOS 26/27. The emulator's board is not set up for this kernel.
+
+Not yet verified ([docs/building.md](docs/building.md) has the table):
+
+- **The full kernel build and a boot have not been repeated since the restructuring.** They were last
+  done by the team before it. Renoir's boot to the home screen was verified on the phone on 2026-11-10.
+  The assembled tree is byte for byte what the previous patch series produced, but the build's first
+  steps changed.
+- **No driver whose constants became board data has run on a phone since.** The GPU's profile, the
+  audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh are named there. The values are
+  the ones the code had, the tests hold them, and the drivers compile. That is all that is known.
+- **The loader** compiles on every push. Its last run on a phone was before its board table was
+  generated and before `uefi_charger` replaced a board's name in its code.
+- **`kernel/deps/stage1.sh` has not been run end to end.** It runs the commands of the setup script the
+  team builds with.
+- **The syntax check is not a build.** Ten files and linking still need the real build.
+- **The porting procedure has not been followed on a third real phone.** The test cannot show the
+  hardware answering.
+- **Renoir cannot be booted from a clean checkout.** Its resident loader, its recovery payload tool and
+  the user-space root tree are in the team's working tree, which is not published.
+  `ios/tools/boot26.py` and the image scripts in `ios/userland/` need it.
+
+## Before the restructuring
+
+The first generation ran iOS 16.5 on the POCO X5 Pro (redwood) and in QEMU. Its workspace is kept in
+`base/`, and [base/README.md](base/README.md) describes it. Parts of it are still the only place for
+something: the UEFI port, the Wi-Fi compatibility layer and the QEMU scripts. Its kernel is superseded
+by `kernel/`. The notes on how iOS 26 and 27 were brought to the home screen on Renoir, written before
+the restructuring, are in [docs/ios26-boot.md](docs/ios26-boot.md).
