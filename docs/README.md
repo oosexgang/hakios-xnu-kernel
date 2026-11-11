@@ -19,6 +19,9 @@ Next to the code:
 | Document | |
 | --- | --- |
 | [../devices/README.md](../devices/README.md) | Device packages, the board and SoC files. |
+| [../soc/README.md](../soc/README.md) | The SoC files: which chips there are, what each section is for. |
+| [../tests/README.md](../tests/README.md) | What is tested without a phone, and how a driver runs without a kernel. |
+| [../tools/README.md](../tools/README.md) | The tools, one line each. |
 | [../kernel/README.md](../kernel/README.md) | How the kernel's sources are kept and worked on. |
 | [../kernel/patches/README.md](../kernel/patches/README.md) | What each patch changes in Apple's files. |
 | [../loader/README.md](../loader/README.md) | The loader. |
