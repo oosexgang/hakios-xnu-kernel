@@ -145,6 +145,23 @@ enum { kError = -1, kSuccess = 0 };
 int SecureDTLookupEntry(const DTEntry search, const char *path, DTEntry *entry);
 int SecureDTGetProperty(const DTEntry entry, const char *name, void const **value, unsigned int *size);
 
+/*
+ * The cores (machine/machine_routines.h): as many as the test says, numbered in their MPIDR as the
+ * phones' are (core n is n << 8). A driver that asks which core it runs on is told fake_core.
+ */
+#define MAX_CPUS                8
+typedef struct {
+	uint32_t phys_id;
+} ml_topology_cpu_t;
+typedef struct {
+	unsigned int num_cpus;
+	ml_topology_cpu_t cpus[MAX_CPUS];
+} ml_topology_info_t;
+const ml_topology_info_t *ml_get_topology_info(void);
+extern unsigned fake_cores;             /* how many cores the kernel has (1) */
+extern unsigned fake_core;              /* the core "this" code runs on (0) */
+#define __builtin_arm_rsr64(name)       ((uint64_t)fake_core << 8)
+
 /* for the tests (fakekernel.c) */
 extern unsigned fake_delay_divisor;     /* a driver's waits are this many times shorter (1: as long as it asks) */
 extern const char *boot_args;

@@ -220,6 +220,22 @@ nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t *result)
 
 unsigned fake_delay_divisor = 1;
 
+/* ---- the cores ---------------------------------------------------------------------------------- */
+
+unsigned fake_cores = 1, fake_core;
+
+const ml_topology_info_t *
+ml_get_topology_info(void)
+{
+	static ml_topology_info_t topology;
+
+	topology.num_cpus = fake_cores > MAX_CPUS ? MAX_CPUS : fake_cores;
+	for (unsigned i = 0; i < topology.num_cpus; i++) {
+		topology.cpus[i].phys_id = i << 8;
+	}
+	return &topology;
+}
+
 void
 delay_for_interval(uint32_t interval, uint32_t scale)
 {
