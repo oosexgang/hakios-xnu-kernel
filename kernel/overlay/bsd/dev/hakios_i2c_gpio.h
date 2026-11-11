@@ -32,7 +32,7 @@ static inline void
 i2c_gpio_line(unsigned pin, bool high)
 {
 	wr(GPIO_IO(pin), 0);
-	wr(GPIO_CFG(pin), PULL_UP | (high ? 0 : 1u << 9));
+	wr(GPIO_CFG(pin), CFG_PULL_UP | (high ? 0 : CFG_OUTPUT));
 }
 
 static inline bool

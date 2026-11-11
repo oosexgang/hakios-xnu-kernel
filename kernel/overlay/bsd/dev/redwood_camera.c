@@ -137,10 +137,6 @@ give_up(const char *why)
 static vm_offset_t tlmm;
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
-#define CFG_PULL_UP             3
-#define CFG_OUTPUT              (1u << 9)
-#define CFG_FUNCTION(f)         ((uint32_t)(f) << 2)
-#define CFG_DRIVE_MA(ma)        ((uint32_t)((ma) / 2 - 1) << 6)
 
 #define PIN_PMIC_SDA            4       /* the serial engine 1's I2C: the PM8008i */
 #define PIN_PMIC_SCL            5

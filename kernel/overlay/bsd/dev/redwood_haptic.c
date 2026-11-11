@@ -102,8 +102,6 @@ wait_ms(uint32_t ms)
 #define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
-#define CFG_PULL_UP             3
-#define CFG_OUTPUT              (1u << 9)
 
 #define PIN_SDA                 36      /* the serial engine's first pin is the data line, the second the clock */
 #define PIN_SCL                 37

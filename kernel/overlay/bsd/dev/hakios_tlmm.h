@@ -26,12 +26,17 @@
 #define PULL_DOWN               1
 #define PULL_KEEPER             2
 #define PULL_UP                 3
+/* the fields of a pin's configuration, for a driver that puts one together itself */
+#define CFG_PULL_UP             PULL_UP
+#define CFG_FUNCTION(f)         ((uint32_t)(f) << 2)
+#define CFG_DRIVE_MA(ma)        ((uint32_t)((ma) / 2 - 1) << 6)
+#define CFG_OUTPUT              (1u << 9)
 
 /* `function' 0 is a plain GPIO, the others are the SoC's own uses of the pin; `ma' the drive strength, 2 to 16 in twos */
 static inline void __attribute__((unused))
 gpio_configure(unsigned pin, unsigned function, unsigned pull, unsigned ma, bool output)
 {
-	wr(GPIO_CFG(pin), pull | function << 2 | (ma / 2 - 1) << 6 | (output ? 1u << 9 : 0));
+	wr(GPIO_CFG(pin), pull | CFG_FUNCTION(function) | CFG_DRIVE_MA(ma) | (output ? CFG_OUTPUT : 0));
 }
 
 static inline void __attribute__((unused))
