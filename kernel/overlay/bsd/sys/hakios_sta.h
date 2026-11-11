@@ -1,14 +1,14 @@
 /*
- * Darwin-on-redwood: the station boundary.
+ * Darwin-on-hakios: the station boundary.
  *
  * On one side whatever does the scanning and the joining with a radio: the station logic over
- * ath11k on the phone (wifi/lx in the repository). On the other whoever wants a network: the
- * Apple80211 requests of iOS's Wi-Fi side, answered in bsd/dev/hakios_apple80211.c, and the
- * kernel's own join of the network it was given in a file (bsd/dev/hakios_wifi.c). Frames do
+ * ath11k on the phone (kernel/lx in the repository). On the other whoever wants a network: the
+ * Apple80211 requests of Darwin's Wi-Fi side, answered in drivers/wifi/hakios_apple80211.c, and the
+ * kernel's own join of the network it was given in a file (drivers/wifi/hakios_wifi.c). Frames do
  * not pass here, and neither does "the link is up": those go through bsd/sys/hakios_net.h,
  * which the station side calls itself.
  *
- * Between the two stands bsd/dev/hakios_sta.c: one thread, on which every call into the station
+ * Between the two stands drivers/wifi/hakios_sta.c: one thread, on which every call into the station
  * side is made, one at a time, and what the last scan heard, kept for whoever asks.
  *
  * Nothing but C's own types here: the station side is not compiled as XNU's code.
@@ -114,7 +114,7 @@ void     hakios_sta_state(struct hakios_sta_state *state);
 unsigned hakios_sta_channels(struct hakios_sta_channel *channels, unsigned most);
 bool     hakios_sta_address(uint8_t *address);
 
-/* ---- the listener: bsd/dev/hakios_apple80211.c ---- */
+/* ---- the listener: drivers/wifi/hakios_apple80211.c ---- */
 void     hakios_apple80211_event(enum hakios_sta_event event, int status);
 void     hakios_apple80211_summary(void);                              /* what was asked in this run, to the log */
 #endif

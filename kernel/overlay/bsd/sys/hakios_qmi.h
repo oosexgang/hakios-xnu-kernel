@@ -2,7 +2,7 @@
  * QMI, the message protocol the firmware of Qualcomm's processors speaks (the Wi-Fi DSP's
  * "WLFW" service among them): the helpers a client needs, under the names and with the meaning
  * of Linux's <linux/soc/qcom/qmi.h>, so that a driver written for Linux -- ath11k's qmi.c --
- * compiles against this header unchanged. The implementation (bsd/dev/hakios_qmi.c) is ours,
+ * compiles against this header unchanged. The implementation (drivers/modem/hakios_qmi.c) is ours,
  * written from what the interface and the wire format are publicly described to be; nothing of
  * Linux's implementation is in it.
  *
@@ -151,6 +151,8 @@ struct qmi_handle {
 	struct socket *sock;            /* what kernel_connect() is given; not NULL while the handle is in use */
 };
 
+struct hakios_qrtr_ops;
+
 struct qmi_txn {
 	struct qmi_handle *qmi;
 	uint16_t id;
@@ -166,6 +168,9 @@ struct qmi_txn {
  * errno: -ENXIO where there is no router (hakios_qmi_set_transport() has not been called).
  */
 int qmi_handle_init(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *ops, const struct qmi_msg_handler *handlers);
+/* Bind a handle to a specific processor's QRTR transport (e.g. WPSS or MPSS). */
+int hakios_qmi_handle_init_transport(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *ops,
+    const struct qmi_msg_handler *handlers, const struct hakios_qrtr_ops *transport);
 void qmi_handle_release(struct qmi_handle *qmi);
 /* Ask for a service: ops->new_server is called for every server of it there is and will be. */
 int qmi_add_lookup(struct qmi_handle *qmi, unsigned int service, unsigned int version, unsigned int instance);

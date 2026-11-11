@@ -759,9 +759,9 @@ qmi_server(void *context, bool arrived, uint32_t service, uint32_t version, uint
 }
 
 int
-qmi_handle_init(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *ops, const struct qmi_msg_handler *handlers)
+hakios_qmi_handle_init_transport(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *ops,
+    const struct qmi_msg_handler *handlers, const struct hakios_qrtr_ops *transport)
 {
-	const struct hakios_qrtr_ops *transport = qmi_transport;
 	struct qmi_state *s;
 
 	qmi->sock = NULL;
@@ -789,6 +789,12 @@ qmi_handle_init(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *op
 		return -ENXIO;
 	}
 	return 0;
+}
+
+int
+qmi_handle_init(struct qmi_handle *qmi, size_t largest, const struct qmi_ops *ops, const struct qmi_msg_handler *handlers)
+{
+	return hakios_qmi_handle_init_transport(qmi, largest, ops, handlers, qmi_transport);
 }
 
 /* Nobody may be waiting in qmi_txn_wait() on this handle any more. */

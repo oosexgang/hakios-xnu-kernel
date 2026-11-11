@@ -1,14 +1,14 @@
 /*
- * HakiosWLAN: the registry entries by which iOS finds the Wi-Fi interface.
+ * HakiosWLAN: the registry entries by which Darwin finds the Wi-Fi interface.
  *
- * en0 is made with the BSD interface KPI (bsd/dev/hakios_net.c) and has no IOKit object behind
- * it of its own; iOS looks for two, as IO80211Family would have made them:
+ * en0 is made with the BSD interface KPI (drivers/net/hakios_net.c) and has no IOKit object behind
+ * it of its own; Darwin looks for two, as IO80211Family would have made them:
  *
  *   - wifid's device is whatever service has the property IO80211InterfaceRole =
  *     "Infrastructure", and IO80211.framework binds to an interface through a service whose
  *     IOInterfaceName is the interface's name. The service has no user client, on purpose:
  *     the framework's attempt to open one fails, it says "Falling back to IOCTL path", and
- *     from then on every request is an ioctl on a socket, which bsd/dev/hakios_apple80211.c
+ *     from then on every request is an ioctl on a socket, which drivers/wifi/hakios_apple80211.c
  *     answers.
  *   - SystemConfiguration (SCNetworkInterfaceCopyAll) lists the network interfaces it finds as
  *     objects of the class IONetworkInterface, and calls one a Wi-Fi interface when its parent
@@ -18,9 +18,19 @@
  *     service can be the one the system routes through -- which wifid waits for after a join
  *     ("failed to become routable interface") before Settings ticks the network.
  *
- * So: a controller of the class IO80211Controller under the platform, and below it one object
- * that is both, an IONetworkInterface with wifid's properties. Both classes are ours, named as
- * IO80211Family and IONetworkingFamily name theirs; neither has anything but properties.
+ *   - MobileGestalt, which lsd asks for the Wi-Fi address of every bundle it registers, looks the
+ *     address up as the property local-mac-address of the device tree's "wlan" node, as a phone
+ *     has it; without that it waits, up to 5 s every time, for a service of the class
+ *     IONetworkController under that node. With neither, each such question cost 5 s, and a
+ *     LaunchServices database rebuilt in full (a first boot on an empty data volume) takes hours,
+ *     SpringBoard waiting. (Found by the ios-sapphire port, patches 0157 and 0158, which carries
+ *     this file on: github.com/Angelpro09xd/ios-sapphire, APSL 2.0.)
+ *
+ * So: a controller of the class IO80211Controller -- an IOEthernetController and so an
+ * IONetworkController, as in IO80211Family -- under the "wlan" node (the platform when there is
+ * none), the radio's address on that node as local-mac-address, and below the controller one
+ * object that is both, an IONetworkInterface with wifid's properties. The classes are ours, named
+ * as IO80211Family and IONetworkingFamily name theirs; none has anything but properties.
  */
 
 #include <IOKit/IOLib.h>
@@ -32,12 +42,26 @@
 
 extern "C" void HakiosWLANStart(const char * interface, const uint8_t * address);
 
-class IO80211Controller : public IOService
+class IONetworkController : public IOService
+{
+	OSDeclareDefaultStructors(IONetworkController);
+};
+
+OSDefineMetaClassAndStructors(IONetworkController, IOService);
+
+class IOEthernetController : public IONetworkController
+{
+	OSDeclareDefaultStructors(IOEthernetController);
+};
+
+OSDefineMetaClassAndStructors(IOEthernetController, IONetworkController);
+
+class IO80211Controller : public IOEthernetController
 {
 	OSDeclareDefaultStructors(IO80211Controller);
 };
 
-OSDefineMetaClassAndStructors(IO80211Controller, IOService);
+OSDefineMetaClassAndStructors(IO80211Controller, IOEthernetController);
 
 class IONetworkInterface : public IOService
 {
@@ -92,6 +116,8 @@ void
 HakiosWLANStart(const char * interface, const uint8_t * address)
 {
 	IOService * platform = IOService::getPlatform();
+	OSDictionary * match = IOService::nameMatching("wlan");
+	IOService * node = match != NULL ? IOService::copyMatchingService(match) : NULL;   /* the device tree's */
 	IO80211Controller * controller = OSTypeAlloc(IO80211Controller);
 	HakiosWLAN * wlan = OSTypeAlloc(HakiosWLAN);
 	OSData * mac;
@@ -100,15 +126,23 @@ HakiosWLANStart(const char * interface, const uint8_t * address)
 	if (platform == NULL || controller == NULL || wlan == NULL || !controller->init() || !wlan->init()) {
 		OSSafeReleaseNULL(controller);
 		OSSafeReleaseNULL(wlan);
+		OSSafeReleaseNULL(node);
+		OSSafeReleaseNULL(match);
 		IOLog("HakiosWLAN: cannot create the services\n");
 		return;
 	}
 	if ((mac = OSData::withBytes(address, 6)) != NULL) {
 		controller->setProperty("IOMACAddress", mac);
+		if (node != NULL) {
+			node->setProperty("local-mac-address", mac);     /* where MobileGestalt reads it first */
+		}
 		mac->release();
 	}
 	controller->setProperty("IOBuiltin", true);
-	if ((controller = (IO80211Controller *) publish(controller, platform, "HakiosWLANController")) == NULL) {
+	OSSafeReleaseNULL(match);
+	controller = (IO80211Controller *) publish(controller, node != NULL ? node : platform, "HakiosWLANController");
+	OSSafeReleaseNULL(node);
+	if (controller == NULL) {
 		wlan->release();
 		IOLog("HakiosWLAN: the controller did not start\n");
 		return;

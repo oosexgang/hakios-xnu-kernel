@@ -80,7 +80,7 @@
  *
  * wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that
  * only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask
- * (sys/hakios_sta.h: iOS's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network
+ * (sys/hakios_sta.h: Darwin's Wi-Fi side does, through drivers/wifi/hakios_apple80211.c), the network
  * of fw/network joined if the small image has that file, and everything left running while the
  * system does -- on a thread of its own, so that the system's start does not wait for it, and
  * without a word in the log but the outcome (what the steps say is kept, and shown if the radio
@@ -185,15 +185,11 @@ extern kern_return_t thread_terminate(thread_t thread);
 static LCK_GRP_DECLARE(wifi_lock_group, "hakios-wifi");
 
 /*
- * What the audio DSP's start (hakios_adsp.c) uses as well, while this may be at work beside it:
- * the mailbox to the always-on processor, one message at a time, and the allocation of items in
- * the shared memory (whose hardware lock both take under the same number, so it does not keep
- * the two apart).
+ * What the audio DSP's start (hakios_adsp.c), the modem's and the sound's use as well, while this may be at work beside
+ * them: the always-on processor's mailbox, the shared memory's allocation, RPMh's sequencer and the SMMU's free match
+ * registers. They are drivers/core/hakios_platform.c's, so that each of those drivers can be built without this one.
  */
-LCK_MTX_DECLARE(hakios_aop_mailbox_lock, &wifi_lock_group);
-LCK_MTX_DECLARE(hakios_smem_alloc_lock, &wifi_lock_group);
-/* ... and the sound's (hakios_sound.c): a free match register and context of the SMMU, found and taken */
-LCK_MTX_DECLARE(hakios_smmu_lock, &wifi_lock_group);
+extern lck_mtx_t hakios_aop_mailbox_lock, hakios_smem_alloc_lock, hakios_rsc_lock, hakios_smmu_lock;
 
 static uint32_t last_step, pause_ms = 2200, fine, watch_seconds = 3;
 static uint32_t step;                   /* the one being performed */
@@ -503,7 +499,8 @@ smem_peek(uint64_t offset, void *to, uint32_t size)
 		/* memory, not registers; and from the kernel's own map: where ml_io_map() puts things there are 8 MB in all */
 		smem = (const volatile uint8_t *)ml_io_map_unmappable(SMEM_PHYS, SMEM_SIZE, VM_WIMG_WCOMB);
 	}
-	if (offset + size > SMEM_SIZE) {
+	/* A failed map must not be read through: that would be a load from a low address. */
+	if (smem == NULL || offset + size > SMEM_SIZE) {
 		return false;
 	}
 	for (uint32_t i = 0; i < size; i++) {
@@ -516,6 +513,10 @@ smem_peek(uint64_t offset, void *to, uint32_t size)
 static void
 smem_poke(uint32_t offset, uint32_t value)
 {
+	/* An offset that came from an item of another processor must not store outside the 2 MB mapping. */
+	if (smem == NULL || offset > SMEM_SIZE - 4) {
+		return;
+	}
 	wr((vm_offset_t)smem + offset, value);
 }
 
@@ -568,6 +569,15 @@ smem_items(uint32_t partition, uint32_t cacheline, struct smem_item *found, unsi
 		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > header.size) {
 			break;
 		}
+		/*
+		 * An entry whose data padding is larger than its data would make the item's size wrap to about 4 GB,
+		 * and one that reaches past the used part of the partition would put the item outside it (and
+		 * possibly outside the mapping): the walk ends there.
+		 */
+		if (entry.padding_data > entry.size ||
+		    (uint64_t)at + sizeof(entry) + entry.padding_header + entry.size > header.free_uncached) {
+			break;
+		}
 		if (count < max) {
 			found[count].item = entry.item;
 			found[count].offset = partition + at + sizeof(entry) + entry.padding_header;
@@ -583,6 +593,10 @@ smem_items(uint32_t partition, uint32_t cacheline, struct smem_item *found, unsi
 	step_back = ((uint32_t)sizeof(entry) + cacheline - 1) & ~(cacheline - 1);
 	for (at = header.size - step_back; at > header.free_cached && at < header.size;) {
 		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > at) {
+			break;
+		}
+		/* A data padding larger than the data would make the item's size wrap to about 4 GB. */
+		if (entry.padding_data > entry.size) {
 			break;
 		}
 		if (count < max) {
@@ -865,7 +879,8 @@ step_mailbox(void)
 		printf("wifi: %u: that is not the mailbox's description\n", step);
 		return false;
 	}
-	if (size >= QMP_MESSAGE + 4 && box >= 0x3c && box + size <= aoss.size) {
+	/* (box + size would wrap for a huge size: the check is made as a subtraction, after box is known to be inside) */
+	if (size >= QMP_MESSAGE + 4 && box >= 0x3c && box <= aoss.size && size <= aoss.size - box) {
 		get(&aoss, "the length of the message in our mailbox", box);
 	}
 
@@ -1479,7 +1494,8 @@ step_mailbox_open_locked(void)
 	}
 	box = get(&aoss, "our mailbox", QMP_OUR_BOX);
 	size = get(&aoss, "our mailbox's size", QMP_OUR_BOX_SIZE);
-	if (size < QMP_MESSAGE + 4 || box < 0x3c || box + size > aoss.size || (box & 3)) {
+	/* The AOP chooses box and size: box + size would wrap for a huge size and let our_box lie outside the mapped block. */
+	if (size < QMP_MESSAGE + 4 || box < 0x3c || box > aoss.size || size > aoss.size - box || (box & 3)) {
 		printf("wifi: %u: our mailbox is not where a message fits\n", step);
 		return false;
 	}
@@ -1889,12 +1905,19 @@ step_image(void)
 	 * is mapped for as long as this takes: 25 MB do not fit where ml_io_map() puts what stays.)
 	 */
 	dsp_memory = (volatile uint64_t *)ml_io_map_unmappable(WPSS_MEMORY, WPSS_MEMORY_SIZE, VM_WIMG_WCOMB);
+	/* A failed map must not be read or written through. */
+	if (dsp_memory == NULL) {
+		printf("wifi: %u: the DSP's memory could not be mapped\n", step);
+		return false;
+	}
 	printf("wifi: %u: the memory begins %#llx, the image %#llx\n", step, dsp_memory[0], segment_word(0, 0));
 	for (unsigned s = 0; s < image.segments; s++) {
 		volatile uint64_t *to = dsp_memory + image.segment[s].at / 8;
 
 		if ((image.segment[s].at | image.segment[s].memory_size) & 7) {
 			printf("wifi: %u: a segment that does not begin and end at a multiple of eight bytes: not written\n", step);
+			/* The 25 MB mapping is given back on this way out too, or every failed try would keep it. */
+			ml_io_unmap((vm_offset_t)dsp_memory, WPSS_MEMORY_SIZE);
 			return false;
 		}
 		printf("wifi: %u: about to write %#x bytes at %#x (%#x of them the file's)\n", step, image.segment[s].memory_size,
@@ -2301,6 +2324,10 @@ static struct {
 static uint32_t
 smem_word(uint32_t offset)
 {
+	/* An offset outside the 2 MB mapping reads as zero instead of loading from outside it. */
+	if (smem == NULL || offset > SMEM_SIZE - 4) {
+		return 0;
+	}
 	return rd((vm_offset_t)smem + offset);
 }
 
@@ -2316,8 +2343,11 @@ glink_find(void)
 	}
 	glink.ours = smem_item(ITEM_GLINK_OUR_QUEUE, &glink.ours_size);
 	glink.theirs = smem_item(ITEM_GLINK_THEIR_QUEUE, &glink.theirs_size);
+	/* Each item must lie wholly inside the 2 MB mapping: the queues are indexed by remote-chosen head and tail words. */
 	return glink.ours != 0 && glink.theirs != 0 && glink.ours_size >= 1024 && glink.theirs_size >= 1024 &&
-	       !(glink.ours_size & 7) && !(glink.theirs_size & 7);
+	       !(glink.ours_size & 7) && !(glink.theirs_size & 7) &&
+	       (uint64_t)glink.descriptor + 32 <= SMEM_SIZE && (uint64_t)glink.ours + glink.ours_size <= SMEM_SIZE &&
+	       (uint64_t)glink.theirs + glink.theirs_size <= SMEM_SIZE;
 }
 
 /* Our two marks to zero, if they are not: before the DSP starts (see above). */
@@ -2439,7 +2469,12 @@ glink_offer(uint32_t size)
 	if (i >= sizeof(glink.our_intents) / sizeof(glink.our_intents[0]) || size == 0 || size > 0x10000) {
 		return false;
 	}
-	if (glink.our_intents[i].data == NULL || glink.our_intents[i].size != size) {
+	/* A kept buffer of another size is given back before it is replaced: its pointer would be lost, and the memory with it. */
+	if (glink.our_intents[i].data != NULL && glink.our_intents[i].size != size) {
+		kfree_data(glink.our_intents[i].data, glink.our_intents[i].size);
+		glink.our_intents[i].data = NULL;
+	}
+	if (glink.our_intents[i].data == NULL) {
 		glink.our_intents[i].data = kalloc_data(size, Z_WAITOK | Z_ZERO);       /* (kept for good: a later link uses it again) */
 	}
 	if (glink.our_intents[i].data == NULL) {
@@ -2469,30 +2504,33 @@ glink_pump(void)
 	char name[33];
 
 	while (glink.up && !glink.broken) {
-		uint32_t waiting = glink_waiting(), length = sizeof(message);
+		uint32_t waiting = glink_waiting(), length;
+		/* 64 bits: the lengths below come from the DSP, and in 32 bits their sums wrap to 0 and the message is never consumed */
+		uint64_t wide = sizeof(message);
 
 		if (waiting < sizeof(message)) {
 			return;
 		}
 		glink_peek(&message, 0, sizeof(message));
 		if (message.command == GLINK_OPEN) {
-			length += message.param2;
+			wide += message.param2;
 		} else if (message.command == GLINK_INTENT) {
-			length += 8 * message.param2;
+			wide += 8ull * message.param2;
 		} else if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
 			if (waiting < 16) {
 				return;
 			}
 			glink_peek(words, 8, 8);                /* the size of this piece, and what is still to come */
-			length = 16 + words[0];
+			wide = 16ull + words[0];
 		}
-		length = (length + 7) & ~7u;
-		if (length > glink.theirs_size - 8) {
-			printf("wifi: glink: A MESSAGE OF %u BYTES (%s %u %#x): not believed, and nothing more is read\n", length,
+		wide = (wide + 7) & ~7ull;
+		if (wide > glink.theirs_size - 8) {
+			printf("wifi: glink: A MESSAGE OF %llu BYTES (%s %u %#x): not believed, and nothing more is read\n", wide,
 			    glink_name(message.command), message.param1, message.param2);
 			glink.broken = true;
 			return;
 		}
+		length = (uint32_t)wide;                /* (it fits the queue now, and is at least eight) */
 		if (waiting < length) {
 			return;                                 /* (the rest of it is on its way) */
 		}
@@ -2725,7 +2763,7 @@ glink_send(const void *data, uint32_t length)
  * ("new server": a service, an instance, a node, a port), and later their going. We are node 1
  * (Linux's default, and what this phone's Android is); the DSP says who it is in what it sends.
  * The interface for the rest of the kernel is sys/hakios_qrtr.h: the four calls at the end of
- * this section, handed to the QMI helpers (bsd/dev/hakios_qmi.c), which is what speaks to the
+ * this section, handed to the QMI helpers (drivers/modem/hakios_qmi.c), which is what speaks to the
  * services.
  */
 #define HAKIOS_QRTR_MAX        8192            /* the most a datagram holds, either way */
@@ -2914,7 +2952,8 @@ qrtr_input(const uint8_t *data, uint32_t length)
 		printf("wifi: qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
 		return;
 	}
-	if (header.size == 0 || at + header.size > length) {
+	/* (at + header.size would wrap for a huge size and pass: the check is a subtraction, after the size is known to fit) */
+	if (header.size == 0 || header.size > length || at > length - header.size) {
 		printf("wifi: qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
 		return;
 	}
@@ -3112,6 +3151,8 @@ link_thread(__unused void *parameter, __unused wait_result_t result)
 		qrtr_fresh();
 		lck_mtx_unlock(&qrtr_calling);
 	}
+	/* This thread's handle is no longer one once it ends: a new thread at the same address must not be taken for it (qrtr_close()). */
+	link_thread_is = NULL;
 	link_runs = false;
 	thread_terminate(current_thread());
 }
@@ -3271,7 +3312,7 @@ static void radio_space_faults(void);
  * for mission mode with the configuration ce.c and hal.c work out (the shadow registers), has
  * them set the copy engines' rings up in the radio's registers and waits for the firmware's
  * first message over a copy engine; how far the parts built so far go from there, and what is
- * in their place meanwhile, is wifi/lx/src/lx_bus.c's to say. wifi_lx=2 IS WHERE THE RADIO'S
+ * in their place meanwhile, is kernel/lx/src/lx_bus.c's to say. wifi_lx=2 IS WHERE THE RADIO'S
  * REGISTERS ARE WRITTEN.
  *
  * What the phone said (13 October, ath11k of Linux 7.0.14: core.c, hal.c, qmi.c, ce.c, hw.c,
@@ -3296,7 +3337,7 @@ static void radio_space_faults(void);
  * give it one). Then the driver is taken down in order, mode "off" included.
  *
  * With mac.c, reg.c and peer.c built, and with wifi_scan=1 (the same day): the driver registers
- * its radio with what stands in for mac80211 (wifi/lx/src/lx_80211.c) -- 14 channels at
+ * its radio with what stands in for mac80211 (kernel/lx/src/lx_80211.c) -- 14 channels at
  * 2.4 GHz, 28 at 5, 60 at 6, of which the firmware's regulatory domain allows 13, 13 and none
  * --, takes the address it was given, starts the radio, makes an interface in station mode
  * and has the firmware scan those 26 channels, listening only. The scan takes 4.1 s (150 ms a
@@ -3314,7 +3355,7 @@ static void radio_space_faults(void);
  * CCMP), authenticates, associates (20 MHz, HT and VHT, two streams) and answers the access
  * point's handshake; 130 ms after the association both keys are with the firmware and frames
  * pass. With wifi_keep=1 and the system started on top, configd's DHCP has an address in 4 to
- * 6 s, names resolve, and pages are fetched over HTTPS: iOS on the network through the
+ * 6 s, names resolve, and pages are fetched over HTTPS: Darwin on the network through the
  * phone's own radio. 20 MB come down in 10.5 s (15 Mbit/s) with one processor, the rings
  * looked at by a thread and the radio's buffers not behind the processor's cache; what of
  * that holds the rate down was not taken apart. With four processors the network works as
@@ -3436,7 +3477,12 @@ step_registers(void)
 	uint32_t size = 0, asked = 0;
 	bool mission = false;
 
-	if (!hakios_wlfw_registers(&address, &size, &mission) || address > 0xffffffffull || size < 3 * RADIO_WINDOW) {
+	/*
+	 * The firmware chooses the window: it must be inside the first 4 GB (radio.phys is 32 bits) and no larger than the
+	 * 2 MB it is said to be, or the map below would cover whatever lies there.
+	 */
+	if (!hakios_wlfw_registers(&address, &size, &mission) || address > 0xffffffffull || size < 3 * RADIO_WINDOW ||
+	    size > 4 * RADIO_WINDOW || address + size > 0x100000000ull) {
 		printf("wifi: %u: the firmware has not said where the radio's registers are (step 15)\n", step);
 		return false;
 	}
@@ -3454,6 +3500,11 @@ step_registers(void)
 	radio.phys = (uint32_t)address;
 	radio.size = size;
 	radio.base = ml_io_map_unmappable(radio.phys, radio.size, VM_WIMG_IO);
+	/* A failed map must not be read through. */
+	if (radio.base == 0) {
+		printf("wifi: %u: the radio's registers could not be mapped\n", step);
+		return false;
+	}
 	for (unsigned i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
 		uint32_t chip = words[i].chip, at;
 
@@ -4162,7 +4213,7 @@ steps_over(uint32_t done)
 }
 
 /*
- * The network of the file, joined the way anybody joins one: by asking the station. iOS's Wi-Fi
+ * The network of the file, joined the way anybody joins one: by asking the station. Darwin's Wi-Fi
  * side may ask for another later, or for none.
  */
 static void
