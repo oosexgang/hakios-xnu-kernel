@@ -415,7 +415,7 @@ ddr_slots(void)
 #define BCM_COMMIT              (1u << 30)
 #define BCM_VALID               (1u << 29)
 #define BCM_VOTE(x, y)          (BCM_COMMIT | BCM_VALID | ((uint32_t)(x) & 0x3fff) << 14 | ((uint32_t)(y) & 0x3fff))
-#define TCS_REG(reg)            (ddr_rsc + 0xd00 + (reg))       /* command slot set 0, an "active" one */
+#define TCS_REG(reg)            (ddr_rsc + hakios_board()->rpmh.tcs_offset + (reg))     /* command slot set 0, an "active" one */
 #define BCM_ACV_APPS            8
 #define DDR_REST                1024            /* the vote left for the loader (ddr_rest=N); see redwood_ddr_quiesce() */
 
