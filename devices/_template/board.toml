@@ -14,6 +14,7 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 #   adsp            the audio DSP: sound, and the battery manager behind it (adsp=1)
 #   display-scan    a command-mode panel: frames are written ahead of its readout, read from the DSI
 #                   interface's counters (fb_scan); needs intf1 in the SoC file's [display]
+#   gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs [gpu]
 # and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 # has that part on the same pins and bus (kernel/overlay/bsd/dev/hakios_board.h, docs/drivers.md):
 #   touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-redwood,
@@ -38,3 +39,26 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # [thermal]
 # floor_mhz = [1000, 1100, 1100]    # the slowest each group of cores is held back to: one value for each
 #                                   # group of the SoC file's [cpufreq] domain_cores
+
+# The GPU, for the feature "gpu-a660" (docs/drivers.md). From the SoC's -gpu.dtsi in the Android device
+# tree and the chip's entry in Linux's adreno-gpulist.h.
+# [gpu]
+# model = "Adreno 642"              # for the log
+# chip_id = 0x06060010              # qcom,chipid
+# firmware = "fw-NAME"              # the directory of the small image with a660_gmu.bin, a660_sqe.fw and this
+#                                   # phone's own a660_zap.* (signed for it: another phone's is refused)
+# gmem_kb = 1536                    # adreno-gpulist.h: gmem_size
+# primitive_fifo = 0x00300000       # adreno-gpulist.h: prim_fifo_threshold
+# hang_cycles = 0x3ffff             # adreno-gpulist.h: hang_detect_cycles
+# uche_cmdq_config = 0x66906        # written to UCHE_CMDQ_CONFIG if given
+# speed_fuse = 0x1e1                # qcom,gpu-speed-bin: its place in the fuses
+# gaming_fuse = 0x1ed               # qcom,gpu-gaming-bin
+# highest_bank_bit = 14             # qcom,highest-bank-bit; 14 with LPDDR4X whatever the tree says (a6xx_init)
+# gcc_debug_gpucc = 0x13c           # the GPU clock controller in GCC's debug multiplexer (Linux's debugcc)
+# zap_must_authenticate = true      # stop when TrustZone does not confirm the zap shader. Without it the driver
+#                                   # goes on with the one presumed to remain from the firmware
+# speeds_khz = [285000, 365000, 443000, 490000]     # qcom,gpu-pwrlevels of the phone's speed bin, slowest first
+# speed_levels = [64, 80, 128, 144] # the supply level of each (qcom,level / the OPP table's opp-level)
+# default_speed = 4                 # which of them to run at, counted from 1
+# alt_model = "Adreno 643"          # qcom,gpu-models: another name for the parts with the speed bins
+# alt_bins = [0xac, 0xbe]           # ... listed here

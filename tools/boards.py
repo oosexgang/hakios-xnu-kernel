@@ -56,11 +56,20 @@ BOARD_SCHEMA = {
                   'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
+    'gpu': {'model': (str, True), 'chip_id': (int, True), 'firmware': (str, True), 'gmem_kb': (int, True),
+            'primitive_fifo': (int, True), 'hang_cycles': (int, True), 'uche_cmdq_config': (int, False),
+            'speed_fuse': (int, True), 'gaming_fuse': (int, True), 'highest_bank_bit': (int, True),
+            'gcc_debug_gpucc': (int, True), 'zap_must_authenticate': (bool, False),
+            'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
+            'alt_model': (str, False), 'alt_bins': ([int], False)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display'}
+# ... and of the board's own file
+FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu'}
+GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
 class Problems(list):
@@ -161,6 +170,8 @@ def load(problems=None):
                 problems.add(rel, f'feature "{feature}" is not one the kernel knows ({", ".join(sorted(known))})')
             elif FEATURE_NEEDS.get(feature) and FEATURE_NEEDS[feature] not in soc:
                 problems.add(rel, f'feature "{feature}" needs [{FEATURE_NEEDS[feature]}] in soc/{data.get("soc")}.toml')
+            elif FEATURE_NEEDS_OF_BOARD.get(feature) and FEATURE_NEEDS_OF_BOARD[feature] not in data:
+                problems.add(rel, f'feature "{feature}" needs a [{FEATURE_NEEDS_OF_BOARD[feature]}] section')
         boards[name] = data
         if not well_formed:
             continue
@@ -185,6 +196,21 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        gpu = data.get('gpu')
+        if gpu is not None:
+            speeds, levels = gpu['speeds_khz'], gpu['speed_levels']
+            if not 1 <= len(speeds) <= GPU_SPEEDS:
+                problems.add(f'{rel} [gpu]', f'speeds_khz: one to {GPU_SPEEDS} speeds')
+            elif len(levels) != len(speeds):
+                problems.add(f'{rel} [gpu]', 'speed_levels: one supply level for each of speeds_khz')
+            elif speeds != sorted(set(speeds)) or 0 in speeds:
+                problems.add(f'{rel} [gpu]', 'speeds_khz: from the slowest up, none of them 0')
+            elif not 1 <= gpu['default_speed'] <= len(speeds):
+                problems.add(f'{rel} [gpu]', f'default_speed: which of speeds_khz, 1 to {len(speeds)}')
+            if gpu['chip_id'] == 0:
+                problems.add(f'{rel} [gpu]', 'chip_id must not be 0')
+            if ('alt_model' in gpu) != ('alt_bins' in gpu) or not 1 <= len(gpu.get('alt_bins', [0])) <= 2:
+                problems.add(f'{rel} [gpu]', 'alt_model goes with alt_bins, one or two speed bins')
         for argument in data.get('boot', {}).get('bootargs', []):
             if not re.fullmatch(r'[A-Za-z0-9_-]+(=\S*)?', argument):
                 problems.add(f'{rel} [boot]', f'bootargs: "{argument}" is not NAME or NAME=VALUE')
@@ -288,6 +314,29 @@ def table_text(socs, boards):
                     f'\t\t\t.epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x},',
                     f'\t\t\t.domain_cores = {{ {groups} }},',
                     '\t\t},']
+        gpu = board.get('gpu')
+        if gpu:
+            out += [
+                '\t\t.gpu = {',
+                f'\t\t\t.model = {c_string(gpu["model"])}, .firmware = {c_string(gpu["firmware"])},',
+            ]
+            if 'alt_model' in gpu:
+                bins = (gpu['alt_bins'] * 2)[:2]        # (one bin: twice, an empty place would be bin 0)
+                out.append(f'\t\t\t.alt_model = {c_string(gpu["alt_model"])}, '
+                           f'.alt_bins = {{ {bins[0]:#x}, {bins[1]:#x} }},')
+            out += [
+                f'\t\t\t.chip_id = {gpu["chip_id"]:#010x}, .gmem_bytes = {gpu["gmem_kb"]} * 1024,',
+                f'\t\t\t.primitive_fifo = {gpu["primitive_fifo"]:#010x}, .hang_cycles = {gpu["hang_cycles"]:#x}, '
+                f'.uche_cmdq_config = {gpu.get("uche_cmdq_config", 0):#x},',
+                f'\t\t\t.speed_fuse = {gpu["speed_fuse"]:#x}, .gaming_fuse = {gpu["gaming_fuse"]:#x}, '
+                f'.highest_bank_bit = {gpu["highest_bank_bit"]},',
+                f'\t\t\t.gcc_debug_gpucc = {gpu["gcc_debug_gpucc"]:#x}, '
+                f'.zap_must_authenticate = {int(gpu.get("zap_must_authenticate", False))},',
+                f'\t\t\t.speed_count = {len(gpu["speeds_khz"])}, .default_speed = {gpu["default_speed"]},',
+                f'\t\t\t.speeds_khz = {{ {", ".join(str(v) for v in gpu["speeds_khz"])} }},',
+                f'\t\t\t.speed_levels = {{ {", ".join(str(v) for v in gpu["speed_levels"])} }},',
+                '\t\t},',
+            ]
         if thermal:
             floors = ', '.join(str(v) for v in thermal['floor_mhz'])
             out += [

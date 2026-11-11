@@ -138,6 +138,24 @@ DTS = '''/dts-v1/;
 '''
 
 
+GPU = '''
+[gpu]
+model = "Adreno 642"
+chip_id = 0x06060010
+firmware = "fw-phone"
+gmem_kb = 1536
+primitive_fifo = 0x00300000
+hang_cycles = 0x3ffff
+speed_fuse = 0x1e1
+gaming_fuse = 0x1ed
+highest_bank_bit = 14
+gcc_debug_gpucc = 0x13c
+speeds_khz = [285000, 490000]
+speed_levels = [64, 144]
+default_speed = 2
+'''
+
+
 class Sandbox(unittest.TestCase):
     """A repository of its own for each test: one SoC, one board, the real kernel header."""
 
@@ -226,6 +244,40 @@ class Check(Sandbox):
                     for path, text in saved:
                         path.write_text(text)
 
+    def test_a_gpu_is_described_in_full(self):
+        path = self.dir / 'devices/phone/board.toml'
+        plain = path.read_text()
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "gpu-a660"')
+        self.assertIn('feature "gpu-a660" needs a [gpu] section', self.problems())
+        with_gpu = path.read_text() + GPU
+        cases = [
+            ('', '', None),
+            ('speed_levels = [64, 144]', 'speed_levels = [64]', 'one supply level for each of speeds_khz'),
+            ('speeds_khz = [285000, 490000]', 'speeds_khz = [490000, 285000]', 'from the slowest up'),
+            ('speeds_khz = [285000, 490000]', 'speeds_khz = []', 'one to 5 speeds'),
+            ('default_speed = 2', 'default_speed = 3', 'which of speeds_khz, 1 to 2'),
+            ('default_speed = 2', 'default_speed = 0', 'which of speeds_khz, 1 to 2'),
+            ('chip_id = 0x06060010', 'chip_id = 0', 'chip_id must not be 0'),
+            ('chip_id = 0x06060010\n', '', '"chip_id" is missing'),
+            ('default_speed = 2', 'default_speed = 2\nalt_model = "Adreno 643"', 'alt_model goes with alt_bins'),
+            ('default_speed = 2', 'default_speed = 2\nalt_model = "Adreno 643"\nalt_bins = [1, 2, 3]', 'one or two speed bins'),
+            ('default_speed = 2', 'default_speed = 2\nalt_model = "Adreno 643"\nalt_bins = [0xac]', None),
+            ('default_speed = 2', 'default_speed = 2\nzap_must_authenticate = "yes"', 'bool expected'),
+        ]
+        for old, new, reason in cases:
+            with self.subTest(reason=reason):
+                self.assertIn(old, with_gpu)
+                path.write_text(with_gpu.replace(old, new))
+                said = self.problems()
+                if reason is None:
+                    self.assertEqual(said, '')
+                else:
+                    self.assertIn(reason, said)
+                    self.assertIn('devices/phone/board.toml', said)
+        # described but not listed: the data may be there before the driver is turned on
+        path.write_text(plain + GPU)
+        self.assertEqual(self.problems(), '')
+
     def test_the_loader_tells_boards_apart_by_their_framebuffer(self):
         for name, loader, reason in (('twin', '[loader]\nfb_base = 0xe1000000\n', 'is also that of'),
                                      ('emu1', '[loader]\n', None), ('emu2', '[loader]\n', 'more than one board')):
@@ -260,6 +312,19 @@ class Generate(Sandbox):
                          '.epss = 0x18591000, .epss_domain_size = 0x1000,', '.domain_cores = { 4, 3, 1 },', '"cpufreq-epss"'):
             self.assertIn(expected, text)
         self.assertNotIn('*/board.toml', text, 'a path with */ in it would close the header\'s comment')
+
+    def test_the_table_carries_the_gpu(self):
+        path = self.dir / 'devices/phone/board.toml'
+        self.assertNotIn('.gpu = {', boards.table_text(*boards.load()))
+        path.write_text(path.read_text().replace('"cpufreq-epss"', '"cpufreq-epss", "gpu-a660"') + GPU +
+                        'alt_model = "Adreno 643"\nalt_bins = [0xac]\nzap_must_authenticate = true\n')
+        text = boards.table_text(*boards.load())
+        for expected in ('HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_GPU_A660,', '.model = "Adreno 642", .firmware = "fw-phone",',
+                         '.alt_model = "Adreno 643", .alt_bins = { 0xac, 0xac },',       # (not bin 0 in the empty place)
+                         '.chip_id = 0x06060010, .gmem_bytes = 1536 * 1024,', '.uche_cmdq_config = 0x0,',
+                         '.gcc_debug_gpucc = 0x13c, .zap_must_authenticate = 1,', '.speed_count = 2, .default_speed = 2,',
+                         '.speeds_khz = { 285000, 490000 },', '.speed_levels = { 64, 144 },'):
+            self.assertIn(expected, text)
 
     def test_the_loader_gets_its_platforms(self):
         (self.dir / 'devices/emu').mkdir()

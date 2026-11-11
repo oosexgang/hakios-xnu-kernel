@@ -9,6 +9,7 @@ features = [
     # this phone's own parts, as its drivers have them wired
     "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750",
     "mic-wcd938x",
+    "gpu-a660",                     # the Adreno of [gpu] (gpu=1)
 ]
 
 # A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.
@@ -23,6 +24,25 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 
 [thermal]
 floor_mhz = [1000, 1100, 1100]
+
+# The GPU. Sources: yupik-gpu.dtsi, Linux's adreno-gpulist.h and adreno_a6xx_gmu.c.
+[gpu]
+model = "Adreno 642L"
+alt_model = "Adreno 643"            # qcom,gpu-models: what the parts with these speed bins are sold as
+alt_bins = [0xac, 0xbe]
+chip_id = 0x06030500
+firmware = "fw"
+gmem_kb = 512
+primitive_fifo = 0x00200000
+hang_cycles = 0x1fffff
+speed_fuse = 0x1e9
+gaming_fuse = 0x1f5
+highest_bank_bit = 14               # LPDDR4X (a6xx_init)
+gcc_debug_gpucc = 0x146
+# (not zap_must_authenticate: this phone's firmware leaves a zap shader loaded, which is used when ours is refused)
+speeds_khz = [315000, 450000, 550000]
+speed_levels = [64, 128, 192]
+default_speed = 3
 
 # The loader (loader/) under this phone's UEFI. It tells boards apart by the framebuffer the UEFI reports.
 [loader]

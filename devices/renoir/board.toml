@@ -10,6 +10,7 @@ features = [
     "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp",
     "touch-ft3658u",
     "display-scan",                 # a command-mode panel: frames are written ahead of its readout (fb_scan)
+    "gpu-a660",                     # the Adreno of [gpu]; started with gpu=1 only (docs/metal-glass.md)
     # Not here: speaker, microphones, haptics, flashlight, camera and Wi-Fi. The drivers in the kernel are wired for
     # redwood's parts (AW88261, AW86927, the PM8350C's flash, its cameras, a WCN6750); this phone's
     # (a TFA9873, a PM8350B actuator, a WCN6855 ...) get their own drivers and features when ported.
@@ -28,6 +29,25 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 # The slowest each group of cores is held back to when hot (docs/thermal.md): small, big, prime.
 [thermal]
 floor_mhz = [1000, 1100, 1100]
+
+# The GPU. Sources: shima-gpu.dtsi (the fuses, the speeds of speed bin 105), Linux's adreno-gpulist.h
+# (chip, GMEM, the register values) and debugcc-shima.c.
+[gpu]
+model = "Adreno 642"
+chip_id = 0x06060010                # qcom,chipid
+firmware = "fw-renoir"              # the directory of the small image with this phone's a660_zap.*
+gmem_kb = 1536                      # adreno-gpulist.h: gmem_size
+primitive_fifo = 0x00300000         # adreno-gpulist.h: prim_fifo_threshold
+hang_cycles = 0x3ffff               # adreno-gpulist.h: hang_detect_cycles
+uche_cmdq_config = 0x66906
+speed_fuse = 0x1e1                  # qcom,gpu-speed-bin: where in the fuses (0x780000) the speed bin is
+gaming_fuse = 0x1ed                 # qcom,gpu-gaming-bin
+highest_bank_bit = 14               # LPDDR4X (a6xx_init)
+gcc_debug_gpucc = 0x13c             # debugcc-shima.c: gpu_cc_debug_mux
+zap_must_authenticate = true        # the firmware leaves no zap shader loaded: without ours the GPU stays secure
+speeds_khz = [285000, 365000, 443000, 490000]       # qcom,gpu-pwrlevels, slowest first
+speed_levels = [64, 80, 128, 144]   # their supply levels: LOW_SVS, LOW_SVS_L1, SVS, SVS_L0
+default_speed = 4                   # which of them to run at, counted from 1
 
 # No [loader] section yet: this phone is started by the resident USB loader of the team's working tree,
 # which reports the board's name itself. To start it with loader/ under a UEFI, add

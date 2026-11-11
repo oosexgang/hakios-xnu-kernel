@@ -38,6 +38,8 @@ enum {
 	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (redwood_adsp.c) */
 	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a command-mode panel whose readout is followed on the DSI interface's
 	                                         * counters, for frames without tearing (redwood_adreno.c, fb_scan) */
+	HAKIOS_HAS_GPU_A660     = 1u << 14,     /* an Adreno of the A660 family behind a GMU; what differs from one to
+	                                         * the next is the board's [gpu] (redwood_adreno.c, gpu=1) */
 	/*
 	 * Drivers of one part, wired the way one phone has it (the pins, the bus, the chip): a board lists
 	 * one only if it has that part wired that way. Asked for on any other board, the driver says so and
@@ -90,6 +92,22 @@ struct hakios_board {
 		uint32_t raw_min, raw_max;      /* the panel's numbers for the lowest and highest brightness */
 		uint32_t raw_restore;           /* what the panel is left at for the loader */
 	} backlight;
+
+	/* the GPU (board: [gpu]) */
+	struct {
+		const char *model;              /* "Adreno 642" */
+		const char *firmware;           /* the small image's directory with a660_gmu.bin, a660_sqe.fw, a660_zap.* */
+		const char *alt_model;          /* what the parts with the speed bins alt_bins are sold as; NULL: none */
+		uint32_t alt_bins[2];
+		uint32_t chip_id, gmem_bytes;
+		uint32_t primitive_fifo, hang_cycles, uche_cmdq_config;         /* register values; 0: left alone */
+		uint32_t speed_fuse, gaming_fuse;       /* where in the fuses the speed and gaming bins are */
+		uint32_t highest_bank_bit;
+		uint32_t gcc_debug_gpucc;       /* the GPU clock controller's place in GCC's debug multiplexer */
+		uint8_t zap_must_authenticate;  /* stop when TrustZone does not confirm the zap shader */
+		uint8_t speed_count, default_speed;     /* how many of speeds_khz; the one to run at, counted from 1 */
+		uint32_t speeds_khz[5], speed_levels[5];        /* the core clock's steps and their supply levels */
+	} gpu;
 
 	/* CPU frequency (soc: [cpufreq]) */
 	struct {

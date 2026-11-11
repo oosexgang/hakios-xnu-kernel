@@ -20,7 +20,7 @@ const struct hakios_board hakios_boards[] = {
 		.name = "redwood",
 		.description = "POCO X5 Pro 5G",
 		.soc = "sm7325",
-		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_WIFI_WCN6750 | HAKIOS_HAS_MIC_WCD938X,
+		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_WIFI_WCN6750 | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_GPU_A660,
 		.clocks = {
 			.gcc = 0x00100000, .gcc_disp_ahb_cbcr = 0x27004,
 			.dispcc = 0x0af00000, .dispcc_mdss_gdscr = 0x1004,
@@ -37,6 +37,17 @@ const struct hakios_board hakios_boards[] = {
 			.epss = 0x18591000, .epss_domain_size = 0x1000,
 			.domain_cores = { 4, 3, 1 },
 		},
+		.gpu = {
+			.model = "Adreno 642L", .firmware = "fw",
+			.alt_model = "Adreno 643", .alt_bins = { 0xac, 0xbe },
+			.chip_id = 0x06030500, .gmem_bytes = 512 * 1024,
+			.primitive_fifo = 0x00200000, .hang_cycles = 0x1fffff, .uche_cmdq_config = 0x0,
+			.speed_fuse = 0x1e9, .gaming_fuse = 0x1f5, .highest_bank_bit = 14,
+			.gcc_debug_gpucc = 0x146, .zap_must_authenticate = 0,
+			.speed_count = 3, .default_speed = 3,
+			.speeds_khz = { 315000, 450000, 550000 },
+			.speed_levels = { 64, 128, 192 },
+		},
 		.thermal = {
 			.tsens = { 0x0c263000, 0x0c265000 },
 			.floor_mhz = { 1000, 1100, 1100 },
@@ -46,7 +57,7 @@ const struct hakios_board hakios_boards[] = {
 		.name = "renoir",
 		.description = "Xiaomi Mi 11 Lite 5G",
 		.soc = "sm7350",
-		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_DISPLAY_SCAN,
+		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_DISPLAY_SCAN | HAKIOS_HAS_GPU_A660,
 		.clocks = {
 			.gcc = 0x00100000, .gcc_disp_ahb_cbcr = 0x27004,
 			.dispcc = 0x0af00000, .dispcc_mdss_gdscr = 0x3000,
@@ -63,6 +74,16 @@ const struct hakios_board hakios_boards[] = {
 			.epss = 0x18591000, .epss_domain_size = 0x1000,
 			.domain_cores = { 4, 3, 1 },
 		},
+		.gpu = {
+			.model = "Adreno 642", .firmware = "fw-renoir",
+			.chip_id = 0x06060010, .gmem_bytes = 1536 * 1024,
+			.primitive_fifo = 0x00300000, .hang_cycles = 0x3ffff, .uche_cmdq_config = 0x66906,
+			.speed_fuse = 0x1e1, .gaming_fuse = 0x1ed, .highest_bank_bit = 14,
+			.gcc_debug_gpucc = 0x13c, .zap_must_authenticate = 1,
+			.speed_count = 4, .default_speed = 4,
+			.speeds_khz = { 285000, 365000, 443000, 490000 },
+			.speed_levels = { 64, 80, 128, 144 },
+		},
 		.thermal = {
 			.tsens = { 0x0c263000, 0x0c265000 },
 			.floor_mhz = { 1000, 1100, 1100 },
@@ -73,7 +94,7 @@ const struct hakios_board hakios_boards[] = {
 const unsigned hakios_board_count = sizeof(hakios_boards) / sizeof(hakios_boards[0]);
 
 /* the features by their bit, as board.toml spells them */
-const char *const hakios_feature_names[] = { "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "touch-ft3658u", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750", "mic-wcd938x", "display-scan" };
+const char *const hakios_feature_names[] = { "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "touch-ft3658u", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750", "mic-wcd938x", "display-scan", "gpu-a660" };
 const unsigned hakios_feature_count = sizeof(hakios_feature_names) / sizeof(hakios_feature_names[0]);
 
 #endif /* _HAKIOS_BOARD_TABLE_H */
