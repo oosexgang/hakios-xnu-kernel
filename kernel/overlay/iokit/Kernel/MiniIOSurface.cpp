@@ -577,6 +577,11 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 			}
 			p->width = dictNumber(pd, "IOSurfacePlaneWidth", width);
 			p->height = dictNumber(pd, "IOSurfacePlaneHeight", height);
+			/* a plane is no bigger than a surface may be: the sizes below are not allowed to wrap */
+			if (p->width > MINISURF_MAX_DIMENSION || p->height > MINISURF_MAX_DIMENSION) {
+				s->release();
+				return NULL;
+			}
 			p->bytesPerElement = (uint16_t) dictNumber(pd, "IOSurfacePlaneBytesPerElement", bpe ? bpe : 1);
 			p->elementWidth = (uint8_t) pew;
 			p->elementHeight = (uint8_t) peh;
@@ -586,7 +591,14 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 			}
 			p->size = dictNumber(pd, "IOSurfacePlaneSize", 0);
 			if (p->size == 0) {
-				p->size = p->bytesPerRow * ((p->height + peh - 1) / peh);
+				/* (in 64 bits: a stride of the caller's times the rows can pass 32) */
+				uint64_t planeBytes = (uint64_t) p->bytesPerRow * ((p->height + peh - 1) / peh);
+
+				if (planeBytes > MINISURF_MAX_ALLOC) {
+					s->release();
+					return NULL;
+				}
+				p->size = (uint32_t) planeBytes;
 			}
 			p->offset = dictNumber(pd, "IOSurfacePlaneOffset", dictNumber(pd, "IOSurfacePlaneBase", (uint32_t) needed));
 			p->extendedPixels[0] = dictNumber(pd, "IOSurfacePlaneExtendedPixelsOnLeft", 0);
@@ -644,7 +656,8 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 	needed += offset;
 	alloc = dictNumber(props, "IOSurfaceAllocSize", 0);
 	if (alloc < needed) {
-		if (alloc != 0) {
+		/* (a surface around the owner's memory has the owner's size: a mask's last row is only as long as it is wide) */
+		if (alloc != 0 && wrapped == NULL) {
 			IOLog("MiniIOSurface: alloc size %u too small for %ux%u '%.4s', using %llu\n", alloc, width, height,
 			    (const char *) &format, needed);
 		}
@@ -663,6 +676,11 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 	} else {
 		/* (the memory is as big as its owner says, and not a byte of ours is added to it) */
 		alloc = dictNumber(props, "IOSurfaceAllocSize", (uint32_t) needed);
+		/* the owner's number replaced the checked one above: it gets the same limits, so that a size of 0 or of gigabytes is not taken */
+		if (alloc == 0 || alloc > MINISURF_MAX_ALLOC) {
+			s->release();
+			return NULL;
+		}
 	}
 
 	s->memory = surfaceMemory((vm_size_t) PAGE_SIZE + (wrapped ? 0 : alloc));
@@ -1422,6 +1440,9 @@ IOSurfaceRootUserClient::methodCreate(IOExternalMethodArguments * args)
 	}
 
 	uint64_t mapped_at = mach_absolute_time();
+	/* the surface can be gone once the creator's hold is dropped (when the reply did not fit): its size is read now, not after */
+	uint32_t createdBytes = s->info.allocSize;
+
 	IOLockLock(gSurfaceLock);
 	ref = addRef(s);
 	ret = ref ? returnSurface(ref, false, args) : kIOReturnNoMemory;
@@ -1433,7 +1454,7 @@ IOSurfaceRootUserClient::methodCreate(IOExternalMethodArguments * args)
 	mapped_at = mach_absolute_time() - mapped_at;
 	OSAddAtomic64((SInt64) (mach_absolute_time() - began), (SInt64 *) &gSurfaceMaking);
 	OSIncrementAtomic(&gSurfacesMade);
-	if (s->info.allocSize >= SURFACE_KEEP_FROM) {
+	if (createdBytes >= SURFACE_KEEP_FROM) {
 		/* the big ones (the window server's of the whole display): where the time to make one goes, every 5 s */
 		static uint64_t since, all, making, mapping;
 		static uint32_t count;

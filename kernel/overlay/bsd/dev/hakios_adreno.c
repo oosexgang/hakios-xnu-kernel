@@ -1815,7 +1815,9 @@ step_gmu_firmware(void)
 			if (block.size == 0) {
 				continue;
 			}
-			if (in_tcm(block.address) && in_tcm(block.address + block.size - 1)) {
+			/* the end is worked out in 64 bits: a block whose address and size wrap past 4 GB is not "inside the TCM" and is not written */
+			if (in_tcm(block.address) && (uint64_t)block.address + block.size <= 0x100000000ull &&
+			    in_tcm(block.address + block.size - 1)) {
 				uint32_t registers = block.address < GMU_DTCM_ADDRESS ? GMU_ITCM + block.address - GMU_ITCM_ADDRESS :
 				    GMU_DTCM + block.address - GMU_DTCM_ADDRESS;
 
@@ -1841,8 +1843,9 @@ step_gmu_firmware(void)
 					    block.size, block.address);
 					return false;
 				}
+				/* (64-bit sum: with 32 bits a block that wraps would pass and the copy would run past the block's memory) */
 				if (block.address >= gmu_blocks[i].address &&
-				    block.address + block.size <= gmu_blocks[i].address + gmu_blocks[i].size) {
+				    (uint64_t)block.address + block.size <= gmu_blocks[i].address + gmu_blocks[i].size) {
 					memcpy((void *)(gmu_blocks[i].memory + (block.address - gmu_blocks[i].address)), data, block.size);
 					to_memory(gmu_blocks[i].memory, gmu_blocks[i].size);
 					printf("adreno: %u: %#x bytes at the GMU's %#x, in memory\n", step, block.size, block.address);
@@ -3441,10 +3444,16 @@ hakios_gpu_address_free(uint64_t address, uint64_t size)
 	unsigned at;
 
 	size = gpu_address_span(size);
-	gpu_va_used -= size;
-	gpu_va_live--;
 	for (at = 0; at < gpu_free_count && gpu_free[at].start < address; at++) {
 	}
+	/* a range that overlaps one that is free already was given back twice: leave the list as it is, instead of merging it into nonsense */
+	if ((at > 0 && gpu_free[at - 1].start + gpu_free[at - 1].size > address) ||
+	    (at < gpu_free_count && address + size > gpu_free[at].start)) {
+		printf("adreno: the addresses %#llx (%#llx bytes) are free already: not given back again\n", address, size);
+		return;
+	}
+	gpu_va_used -= size;
+	gpu_va_live--;
 	if (at > 0 && gpu_free[at - 1].start + gpu_free[at - 1].size == address) {
 		gpu_free[at - 1].size += size;
 		if (at < gpu_free_count && address + size == gpu_free[at].start) {
