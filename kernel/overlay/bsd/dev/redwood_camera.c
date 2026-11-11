@@ -754,7 +754,7 @@ ldo_off(unsigned n)
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_CAMERA_AHB_CBCR     0x26004         /* always on (gcc-yupik.c keeps it so) */
 #define GCC_CAMERA_XO_CBCR      0x26028
-#define CAMCC_PHYS              0x0ad00000UL
+#define CAMCC_PHYS              (hakios_board()->camera.camcc)  /* the SoC file's [camera] */
 #define CAMCC_SIZE              0x20000UL
 #define MCLK_CMD_RCGR           (hw->mclk_cmd)          /* [0] update, [31] the root is off */
 #define MCLK_CFG_RCGR           (hw->mclk_cmd + 4)      /* [4:0] divider (2n - 1), [10:8] source (0: the crystal), [13:12] M/N mode */
@@ -2169,9 +2169,9 @@ smmu_down(void)
 
 /* ---- CSID-lite 0 and IFE-lite 0 ----------------------------------------------------------------------- */
 
-#define CSID_PHYS               0x0acc8000UL
-#define IFE_PHYS                0x0acc4000UL
-#define CSIPHY_PHYS(n)          (0x0ace0000UL + 0x2000UL * (n))
+#define CSID_PHYS               (hakios_board()->camera.csid)   /* the SoC file's [camera] */
+#define IFE_PHYS                (hakios_board()->camera.ife)
+#define CSIPHY_PHYS(n)          (hakios_board()->camera.csiphy + 0x2000UL * (n))
 
 #define CSID_HW_VERSION         0x000
 #define CSID_RST_STROBES        0x010
@@ -4116,9 +4116,10 @@ redwood_camera_init(void)
 		return;
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0 ||
-	    hakios_board()->smmu.apps == 0) {
-		printf("camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh and the SMMU are "
-		    "([pins], [clocks], [rpmh], [smmu])\n");
+	    hakios_board()->smmu.apps == 0 || hakios_board()->camera.camcc == 0 || hakios_board()->camera.ife == 0 ||
+	    hakios_board()->camera.csid == 0 || hakios_board()->camera.csiphy == 0) {
+		printf("camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the "
+		    "camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])\n");
 		level = 0;
 		return;
 	}
