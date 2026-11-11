@@ -51,7 +51,7 @@ It prints what it could not find. Two things are never in a device tree and are 
   registers: `backlight type = "dcs"`, `display-scan` and the GPU. Until you have them, set
   `type = "soft"`, which works anywhere; `gcc` alone is enough for everything else.
 - **The I/O window** in `[platform]`: `io_base` and `io_size`, one range that covers the SoC's
-  peripherals and does not start at 0. The 7-series SoCs here use `0x00400000` and `0x3FC00000`.
+  peripherals and does not start at 0. It is asked for once the board has a `[loader]` section (step 3). The 7-series SoCs here use `0x00400000` and `0x3FC00000`.
 
 Then:
 
