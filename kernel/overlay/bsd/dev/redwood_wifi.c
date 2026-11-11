@@ -983,28 +983,10 @@ step_rpmh(void)
  * every system has for every peripheral, whoever owns it. dt: qcom,spmi@c440000; on the bus the
  * PM7325 is slave 1 and the PM8350C slave 2.
  */
-/* (where: the SoC file's [spmi], at the start; the observer's is this system's part of it) */
-static struct block arb_core = { "arbiter", 0, 0x1100 };
-static struct block arb_cnfg = { "arbiter's owners", 0, 0x1000 };
-static struct block arb_observer = { "arbiter's observer", 0, 0x10000 };
-#define ARB_VERSION             0x000
-#define ARB_VERSION_5           0x50000000u     /* what follows is version 5's; 7 moved things again */
-#define ARB_VERSION_7           0x70000000u
-#define ARB_FEATURES            0x004           /* [10:0] the number of channels */
-#define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* core: [19:8] slave and peripheral */
-#define ARB_OWNER(n)            (0x700 + 4 * (n))       /* cnfg: [2:0] the system that may write through channel n */
-#define ARB_SYSTEM              (hakios_board()->spmi.ee)       /* who we are to the arbiter: the device tree's "qcom,ee" */
-#define OBSERVER_COMMAND        0x00
-#define OBSERVER_STATUS         0x08
-#define OBSERVER_DATA0          0x18            /* the bytes read, the first in the lowest byte */
-#define OBSERVER_DATA1          0x1c
-#define STATUS_DONE             0x1
-#define STATUS_FAILURE          0x2
-#define STATUS_DENIED           0x4
-#define STATUS_DROPPED          0x8
-#define COMMAND_READ            (1u << 27)      /* "extended register read long"; [11:4] register, [2:0] bytes - 1 */
+/* The arbiter's registers and one transfer: hakios_spmi.h, as in the keys' and the flashlight's drivers. */
+#include "hakios_spmi.h"
 
-static uint32_t arb_channels;
+static struct hakios_spmi arb;
 
 /* The channel of a peripheral (slave << 8 | peripheral), as Linux chooses: the first, unless a later one is ours. -1: none. */
 static int
@@ -1012,49 +994,32 @@ spmi_channel(uint16_t id)
 {
 	int found = -1;
 
-	for (uint32_t n = 0; n < arb_channels; n++) {
-		uint32_t map = rd(arb_core.base + ARB_CHANNEL(n));
+	for (uint32_t n = 0; n < arb.channels; n++) {
+		uint32_t map = hakios_spmi_channel_map(&arb, n);
 
-		if (map == 0 || ((map >> 8) & 0xfff) != id) {
+		if (map == 0 || SPMI_ID_OF(map) != id) {
 			continue;
 		}
-		if (found < 0 || (rd(arb_cnfg.base + ARB_OWNER(n)) & 7) == ARB_SYSTEM) {
+		if (found < 0 || hakios_spmi_channel_owner(&arb, n) == arb.system) {
 			found = (int)n;
 		}
 	}
 	return found;
 }
 
-/* Read `count` (1 to 8) registers of a peripheral, from register `reg` on. Returns NULL, or what went wrong. */
+/*
+ * Read `count` (1 to 8) registers of a peripheral, from register `reg` on. Returns NULL, or what went
+ * wrong. One transfer at a time on the bus, whoever asks: the keys' driver may be reading meanwhile.
+ */
 static const char *
 spmi_read(int channel, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t at = arb_observer.base + 0x80UL * (uint32_t)channel;
-	uint64_t start = now_us();
-	uint32_t status, data[2];
+	const char *problem;
 
-	wr(at + OBSERVER_COMMAND, COMMAND_READ | (uint32_t)reg << 4 | (count - 1));
-	do {
-		status = rd(at + OBSERVER_STATUS);
-	} while (!(status & STATUS_DONE) && now_us() - start < 2000);
-	if (!(status & STATUS_DONE)) {
-		return "no answer from the arbiter";
-	}
-	if (status & STATUS_DENIED) {
-		return "the arbiter refuses";
-	}
-	if (status & STATUS_FAILURE) {
-		return "the transfer failed (nobody at that address?)";
-	}
-	if (status & STATUS_DROPPED) {
-		return "the transfer was dropped";
-	}
-	data[0] = rd(at + OBSERVER_DATA0);
-	data[1] = count > 4 ? rd(at + OBSERVER_DATA1) : 0;
-	for (uint32_t i = 0; i < count; i++) {
-		bytes[i] = (uint8_t)(data[i / 4] >> (8 * (i % 4)));
-	}
-	return NULL;
+	redwood_spmi_lock();
+	problem = hakios_spmi_read(hakios_spmi_observer(&arb, (uint32_t)channel), reg, bytes, count);
+	redwood_spmi_unlock();
+	return problem;
 }
 
 /*
@@ -1075,20 +1040,15 @@ spmi_read(int channel, uint8_t reg, uint8_t *bytes, uint32_t count)
 static bool
 step_rails(void)
 {
-	uint32_t version;
+	bool known;
 
-	announce("map the PMIC arbiter (0xc440000, 0xc40a000, 0xe600000; the buttons' driver reads through it too) and read "
-	    "its version");
-	version = get(&arb_core, "version", ARB_VERSION);
-	arb_channels = get(&arb_core, "features", ARB_FEATURES) & 0x7ff;
-	need(&arb_cnfg);
-	need(&arb_observer);
-	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
+	announce("map the PMIC arbiter (where the SoC file's [spmi] has it; the buttons' driver reads through it too) and "
+	    "read its version");
+	known = hakios_spmi_map(&arb);
+	printf("wifi: %u: arbiter version %#x, %u channels\n", step, arb.version, arb.channels);
+	if (!known) {
 		printf("wifi: %u: this knows version 5 of the arbiter only: the supplies are not read\n", step);
 		return true;
-	}
-	if (arb_channels == 0 || arb_channels > 512) {
-		arb_channels = 512;
 	}
 
 	announce("ask every peripheral of the PM7325 (slave 1) and the PM8350C (slave 2) what it is, and the switching "
@@ -1101,8 +1061,8 @@ step_rails(void)
 		int at = 0;
 
 		bzero(there, sizeof(there));
-		for (uint32_t n = 0; n < arb_channels; n++) {
-			uint32_t map = rd(arb_core.base + ARB_CHANNEL(n)), peripheral = (map >> 8) & 0xff;
+		for (uint32_t n = 0; n < arb.channels; n++) {
+			uint32_t map = hakios_spmi_channel_map(&arb, n), peripheral = (map >> 8) & 0xff;
 
 			if (map == 0 || ((map >> 16) & 0xf) != slave || there[peripheral]) {
 				continue;
@@ -4229,9 +4189,6 @@ redwood_wifi_init(void)
 	smem_lock.phys = hakios_board()->ipc.smem_lock;
 	rsc.phys = hakios_board()->rpmh.rsc;
 	tlmm.phys = hakios_board()->pins.tlmm + 0x1000 * FIRST_PIN;
-	arb_core.phys = hakios_board()->spmi.core;
-	arb_cnfg.phys = hakios_board()->spmi.cnfg;
-	arb_observer.phys = hakios_board()->spmi.observer + 0x10000 * hakios_board()->spmi.ee;
 	redwood_qmi_set_transport(&qrtr_ops);
 	if (last_step == 0) {
 		if (image_file("wpss.mdt", &size) == NULL) {
