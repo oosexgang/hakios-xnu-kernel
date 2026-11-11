@@ -36,6 +36,7 @@ Renoir 目前：
 | 构建内核或引导器 | [docs/building.md](docs/building.md) |
 | 查某个驱动或启动参数的作用 | [docs/drivers.md](docs/drivers.md)、[docs/boot-args.md](docs/boot-args.md) |
 | 修改并提交 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 迁移旧目录结构下的分支或补丁 | [docs/migrating.md](docs/migrating.md) |
 
 不需要手机的检查，一条命令即可运行：
 

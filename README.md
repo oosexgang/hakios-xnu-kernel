@@ -36,6 +36,7 @@ On Renoir today:
 | Build the kernel or the loader | [docs/building.md](docs/building.md) |
 | Know what a driver or a boot argument does | [docs/drivers.md](docs/drivers.md), [docs/boot-args.md](docs/boot-args.md) |
 | Change something and send it back | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Carry over a branch or patch from the old layout | [docs/migrating.md](docs/migrating.md) |
 
 Everything that needs no phone runs with one command:
 

@@ -21,7 +21,8 @@ runs the host tests. CI runs the same, plus `kernel/verify.sh`.
 | A library inserted into an iOS process | `ios/userland/` | — |
 
 [docs/architecture.md](docs/architecture.md) explains the split; [kernel/README.md](kernel/README.md)
-has the two ways of working on the kernel.
+has the two ways of working on the kernel. If you have a branch or a patch from before the
+restructuring: [docs/migrating.md](docs/migrating.md).
 
 ## Rules that keep the project portable
 

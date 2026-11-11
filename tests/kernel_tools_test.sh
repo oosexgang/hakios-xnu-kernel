@@ -52,7 +52,7 @@ g -C "$W/upstream" tag rel-1
 
 K=$W/repo/kernel
 mkdir -p "$K/overlay/drivers" "$K/patches"
-cp "$HERE"/../kernel/{lib.sh,assemble.sh,export.sh,verify.sh} "$K/"
+cp "$HERE"/../kernel/{lib.sh,assemble.sh,export.sh,verify.sh,import-patch.sh} "$K/"
 cat > "$K/UPSTREAM" <<EOF
 UPSTREAM_URL=$W/upstream
 UPSTREAM_TAG=rel-1
@@ -120,6 +120,52 @@ check "... the work is still there" grep -q 'return 201' "$T/dir/b.c"
 check "--discard throws the work away" "$K/assemble.sh" --update --discard "$T"
 check "... the tree is the repository's" grep -q 'return 200' "$T/dir/b.c"
 check "... with the repository's change" grep -q 'return 13' "$T/drivers/ours.c"
+
+# --- a patch written against the tree, by somebody else --------------------------------------------
+cat > "$W/theirs.patch" <<'PATCH'
+diff --git a/dir/b.c b/dir/b.c
+--- a/dir/b.c
++++ b/dir/b.c
+@@ -1,4 +1,5 @@
+ int b(void)
+ {
++	/* theirs */
+ 	return 200;
+ }
+diff --git a/drivers/theirs.c b/drivers/theirs.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/theirs.c
+@@ -0,0 +1,4 @@
++int theirs(void)
++{
++	return 14;
++}
+PATCH
+check "a patch against the tree is imported" "$K/import-patch.sh" --tree "$T" "$W/theirs.patch"
+check "... its new file is in the overlay" grep -q 'return 14' "$K/overlay/drivers/theirs.c"
+check "... its change of Apple's file is in the topic's patch" grep -q '^+	/\* theirs \*/' "$K/patches/0002-dir.patch"
+check "... and the repository verifies" "$K/verify.sh"
+cat > "$W/second.patch" <<'PATCH'
+diff --git a/drivers/second.c b/drivers/second.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/second.c
+@@ -0,0 +1,4 @@
++int second(void)
++{
++	return 16;
++}
+PATCH
+check "a patch is imported without a tree at hand, too" env XNU_SRC="$W/none" "$K/import-patch.sh" "$W/second.patch"
+check "... into the overlay" grep -q 'return 16' "$K/overlay/drivers/second.c"
+check "... and the tree at hand follows at its next update" "$K/assemble.sh" --update "$T"
+check "... with the file" grep -q 'return 16' "$T/drivers/second.c"
+printf 'garbage\n' > "$W/bad.patch"
+refuses "a patch that does not apply exports nothing" "does not apply" "$K/import-patch.sh" --tree "$T" "$W/bad.patch"
+sed -i 's/return 14/return 15/' "$T/drivers/theirs.c"
+refuses "patches are not applied over unexported work" "not in the repository" "$K/import-patch.sh" --tree "$T" "$W/theirs.patch"
+git -C "$T" checkout -q -- drivers/theirs.c 2> /dev/null || "$K/assemble.sh" --update --discard "$T" > /dev/null
 
 # --- what must be refused ------------------------------------------------------------------------
 sed -i 's/return 3/return 300/' "$T/c.c"

@@ -70,6 +70,7 @@ for patch in $(series_patches); do
 		--src-prefix=a/ --dst-prefix=b/ upstream -- "${files[@]}" |
 		sed -E '/^index [0-9a-f]+\.\.[0-9a-f]+( [0-7]+)?$/d' > "$work/patches/$patch"
 done
+exported=$(tree_git "$D" write-tree)
 unset GIT_INDEX_FILE
 
 # In place of what was there; the series is the repository's and stays.
@@ -80,5 +81,15 @@ rm -f "$out"/patches/*.patch
 for patch in "$work"/patches/*.patch; do
 	[ -e "$patch" ] && mv "$patch" "$out/patches/"
 done
-[ "$out" = "$KERNEL_DIR" ] || cp "$SERIES" "$out/patches/series"
+if [ "$out" = "$KERNEL_DIR" ]; then
+	# The tree is now what the repository says: noted in the tree, so that the next update knows the work
+	# was taken over (and touches nothing for it).
+	commit=$(tree_git "$D" commit-tree "$exported" -p upstream -m "$UPSTREAM_TAG + HakiOS (exported to the repository)")
+	git -C "$D" symbolic-ref HEAD refs/heads/hakios
+	git -C "$D" update-ref refs/heads/hakios "$commit"
+	git -C "$D" read-tree "$commit"
+	git -C "$D" tag -f assembled "$commit" > /dev/null
+else
+	cp "$SERIES" "$out/patches/series"
+fi
 log "$(find "$out/overlay" -type f | wc -l) files in overlay, $(find "$out/patches" -name '*.patch' | wc -l) patches in $out"

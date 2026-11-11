@@ -12,6 +12,7 @@ for every supported board. The board is identified at boot from `/chosen/darwin-
 | `patches/` | The changes to Apple's own files, one patch per topic. `patches/series` says which file belongs to which patch; [patches/README.md](patches/README.md) says what each patch is for. |
 | `assemble.sh` | Makes the tree that is compiled: the release + `overlay/` + `patches/`. |
 | `export.sh` | Takes work done in a tree back into `overlay/` and `patches/`. |
+| `import-patch.sh` | Takes a patch written against the tree into `overlay/` and `patches/`. |
 | `verify.sh` | Checks that assembling and exporting give back exactly what is committed. |
 | `build.sh`, `env.sh` | The build on Linux. |
 | `host/`, `iig-impl/` | Build wrappers: clang and stand-ins for Apple's closed `iig`. |
@@ -59,7 +60,8 @@ git diff                                         # review, commit
   exported. `--discard` throws that work away.
 - A changed file of Apple's that no line of `patches/series` claims stops the export. Add the file to the
   topic it belongs to.
-- To take over a `.patch` file written against the tree, apply it there with `git apply`, then export.
+- To take over a `.patch` file written against the tree: `kernel/import-patch.sh FILE.patch`. It applies the
+  patch in a tree and exports.
 - New source files also need a line in the tree's `bsd/conf/files` (or `iokit/conf/files`,
   `osfmk/conf/files.arm64`), like their neighbours.
 
