@@ -1,5 +1,11 @@
 # HakiOS — XNU kernel
 
+> **Earlier generation.** These are the user-space sources of the iOS 16.5 port, with its own layout and
+> build scripts. Parts are still used or being ported to iOS 26/27: `userland/src/` (init, the injected
+> libraries, the audio plug-in, the Metal device), `tools/mesa/` and `tools/air/` (the Metal shader
+> compiler for Mesa), `tools/apfs/` (image tools). The current project starts at the
+> [top-level README](../README.md); the iOS 26/27 side is `../ios/`.
+
 **HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of iOS 16.5) on Android phone
 hardware and runs the **unmodified iOS 16.5 user space** on top of it: launchd → backboardd → SpringBoard →
 apps. Our own EFI loader, our own replacements for Apple's closed drivers, a UEFI port, and a Linux Wi-Fi driver

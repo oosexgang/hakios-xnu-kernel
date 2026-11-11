@@ -1,5 +1,14 @@
 # HakiOS — XNU kernel
 
+> **Legacy.** This directory is the workspace of the first generation: iOS 16.5 on the POCO X5 Pro
+> (redwood) and QEMU. What follows describes that generation, and its paths are those of that workspace,
+> not of this repository. The current project starts at the [top-level README](../README.md).
+>
+> What moved out: the kernel is `../kernel/` (this directory's `xnu/` is the old xnu-8796 one), the loader
+> is `../loader/`, the kernel build's dependencies are `../kernel/deps/` (`xnuloader` and `xnu-deps` here
+> are links to them), devices are described in `../devices/`. What is still only here: the UEFI port
+> (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
+
 **HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of iOS 16.5) on Android phone
 hardware and runs the **unmodified iOS 16.5 user space** on top of it: launchd → backboardd → SpringBoard →
 apps. Our own EFI loader, our own replacements for Apple's closed drivers, a UEFI port, and a Linux Wi-Fi driver

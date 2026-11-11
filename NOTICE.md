@@ -2,13 +2,14 @@
 
 ## Our work
 
-- `kernel/xnu-12377.121.6-hakios.patch` modifies and extends Apple's xnu, published under the Apple Public Source
-  License 2.0, and is distributed under the same licence (`LICENSES/APSL-2.0.txt`).
+- `kernel/overlay/` and `kernel/patches/` modify and extend Apple's xnu, published under the Apple Public Source
+  License 2.0, and are distributed under the same licence (`LICENSES/APSL-2.0.txt`).
 - `base/` and `userland/` are HakiOS (hakios-xnu-kernel; the user space has since moved into it) with our changes; they keep
-  HakiOS's licence (`base/LICENSE`, APSL 2.0).
-- `tools/` of this repository and the documentation written for it: MIT (`LICENSES/MIT.txt`).
+  HakiOS's licence (`base/LICENSE`, APSL 2.0). So do `loader/` and `kernel/deps/`, which were `base/xnuloader/` and
+  `base/xnu-deps/`.
+- `tools/`, `tests/`, `devices/`, `soc/` of this repository and the documentation written for it: MIT (`LICENSES/MIT.txt`).
 
-## Files inside the kernel patch that keep their own licence
+## Files inside the kernel overlay that keep their own licence
 
 - `bsd/miscfs/apfs/libdeflate/`, `apfs_deflate.c`: libdeflate, MIT (Eric Biggers; Google LLC)
 - `bsd/miscfs/apfs/libzbitmap/`, `apfs_zbitmap.c`: libzbitmap, GPL-2.0+ OR MIT, taken under MIT (Corellium LLC)
