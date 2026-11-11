@@ -51,11 +51,8 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
 #define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
-#define TLMM_SIZE               0x100000UL
-#define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
-#define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
-#define PULL_NONE               0
-#define PULL_UP                 3
+#define HAKIOS_TLMM             tlmm
+#include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
 #define PIN_MISO                52
 #define PIN_MOSI                53
@@ -67,31 +64,6 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #define PIN_FOCALTECH_ID        68      /* FocalTech if this reads 0 ... */
 #define PIN_GOODIX_ID           96      /* ... and this reads 1 (sm8350-kernel-OKX convention) */
 #define PIN_FUNCTION_SPI        1       /* "qup15" */
-
-static void
-gpio_configure(unsigned pin, unsigned function, unsigned pull, unsigned ma, bool output)
-{
-	wr(GPIO_CFG(pin), pull | function << 2 | (ma / 2 - 1) << 6 | (output ? 1u << 9 : 0));
-}
-
-static void
-gpio_set(unsigned pin, bool high)
-{
-	wr(GPIO_IO(pin), high ? 2 : 0);
-}
-
-static bool
-gpio_get(unsigned pin)
-{
-	return rd(GPIO_IO(pin)) & 1;
-}
-
-static void
-gpio_output(unsigned pin, bool high, unsigned pull, unsigned ma)
-{
-	gpio_set(pin, high);            /* the level first, so that the pin never drives the wrong one */
-	gpio_configure(pin, 0, pull, ma, true);
-}
 
 /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
 
