@@ -160,6 +160,15 @@ class Packages(Sandbox):
             code, said, _ = self.run_tool('export', 'mine', str(out))
             self.assertEqual(code, 0)
             self.assertIn('it has no README.md yet', said)
+            template = (ROOT / 'devices/_template/README.md').read_text()
+            self.assertIn(device.TEMPLATE_LINE, template)
+            (self.dir / 'devices/mine/README.md').write_text(template)
+            self.assertIn('its README.md is still the template', self.run_tool('export', 'mine', str(out))[1])
+            (self.dir / 'devices/mine/README.md').write_text('# My phone\n\nBoots to the home screen.\n')
+            self.assertEqual(self.run_tool('export', 'mine', str(out))[1].strip(), f'{out}/mine: the package mine')
+            (self.dir / 'devices/mine/README.md').unlink()
+            shutil.rmtree(out / 'mine')
+            self.run_tool('export', 'mine', str(out))
             self.assertEqual(sorted(str(path.relative_to(out)) for path in out.rglob('*') if path.is_file()),
                              ['mine/board.toml', 'mine/notes/pins.md'])        # (not the note of where it came from)
             # ... and can be brought in from there again

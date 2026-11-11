@@ -685,6 +685,13 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     board_path.parent.mkdir(parents=True)
     board_path.write_text('\n'.join(lines))
     print(f'wrote {shown(board_path)}')
+    # the package's README, from the template: what works is for the porter to say
+    template = DEVICES / '_template' / 'README.md'
+    if template.exists():
+        readme = board_path.parent / 'README.md'
+        readme.write_text(template.read_text().replace('MAKER MODEL', description or name).replace('NAME', name)
+                          .replace('soc/SOC.toml', f'soc/{soc_name}.toml').replace('(SOC)', f'({soc_name})'))
+        print(f'wrote {shown(readme)}: say there what works, and how it was verified')
     if not soc_path.exists():
         text = [f'# {soc_name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
                 '# What every board with this SoC shares: where its blocks are (docs/porting.md).',

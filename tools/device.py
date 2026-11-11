@@ -35,6 +35,9 @@ import boards  # noqa: E402  (what a board file is, and whether one is right)
 
 BRANCH = 'devices'              # where packages are kept when nothing else is said
 NOTE = '.from'                  # devices/NAME/.from: where a package that was brought in is from
+# a line of devices/_template/README.md that a README somebody has written no longer has
+TEMPLATE_LINE = 'One sentence: how far it boots'
+
 
 
 def git(*arguments, check=True):
@@ -167,8 +170,11 @@ def export(name, directory):
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(source, target, ignore=shutil.ignore_patterns('.git', NOTE))
-    print(f'{target}: the package {name}' + ('' if (target / 'README.md').exists() else
-                                           '; it has no README.md yet: say there what works and how it was verified'))
+    readme = target / 'README.md'
+    print(f'{target}: the package {name}' + (
+        '; it has no README.md yet: say there what works and how it was verified' if not readme.exists() else
+        '; its README.md is still the template: say there what works and how it was verified'
+        if TEMPLATE_LINE in readme.read_text() else ''))
     return 0
 
 

@@ -635,6 +635,19 @@ class DeviceTree(Sandbox):
         with contextlib.redirect_stdout(io.StringIO()) as said:
             boards.new_board('phone2', 'sm0002', dts, 'qcom,mdss_dsi_first_cmd', 'Another phone')
         self.assertIn('wrote devices/phone2/board.toml', said.getvalue())
+        self.assertFalse((self.dir / 'devices/phone2/README.md').exists())      # (this repository of the test has no template)
+        (self.dir / 'devices/_template').mkdir()
+        (self.dir / 'devices/_template/README.md').write_text((ROOT / 'devices/_template/README.md').read_text())
+        with contextlib.redirect_stdout(io.StringIO()) as again:
+            boards.new_board('phone3', 'sm0002', dts, 'qcom,mdss_dsi_first_cmd', 'A third phone')
+        readme = (self.dir / 'devices/phone3/README.md').read_text()
+        self.assertIn('wrote devices/phone3/README.md', again.getvalue())
+        self.assertTrue(readme.startswith('# A third phone (`phone3`)'), readme[:60])
+        self.assertIn('`soc/sm0002.toml` on the main branch', readme)
+        self.assertIn('tools/boards.py status phone3', readme)
+        self.assertNotIn('NAME', readme)
+        shutil.rmtree(self.dir / 'devices/phone3')
+        shutil.rmtree(self.dir / 'devices/_template')
         self.assertIn('wrote soc/sm0002.toml', said.getvalue())
         # as written it is refused for exactly what a device tree cannot say, and accepted once that is filled in
         problems = self.problems()
