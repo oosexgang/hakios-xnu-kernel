@@ -14,7 +14,7 @@
   <a href="docs/README.md"><img alt="documentation" src="https://img.shields.io/badge/docs-read-0b8494"></a>
   <a href="https://github.com/oosexgang/xnu-kernel-qcom/tree/devices"><img alt="device packages" src="https://img.shields.io/badge/devices-branch-0b8494"></a>
   <a href="https://t.me/oosexgangdevs"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-oosexgangdevs-26A5E4?logo=telegram&logoColor=white"></a>
-  <a href="https://github.com/oosexgang/xnu-kernel-qcom/commits"><img alt="last commit" src="https://img.shields.io/github/last-commit/oosexgang/xnu-kernel-qcom"></a>
+  <a href="kernel/UPSTREAM"><img alt="XNU release" src="https://img.shields.io/badge/XNU-12377.121.6-555"></a>
 </p>
 
 <p align="center">
