@@ -158,4 +158,29 @@ hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t c
 	return count;
 }
 
+/*
+ * An item two processors share: in the partition of the two, or else in the global one. Where it
+ * is, from the area's start, and how long; 0: nowhere.
+ */
+static inline uint32_t
+hakios_smem_item(const struct hakios_smem *area, uint16_t us, uint16_t them, uint32_t item, uint32_t *size)
+{
+	static struct smem_item found[256];             /* (one caller at a time: a driver's own thread) */
+	const uint16_t hosts[2][2] = { { us, them }, { SMEM_GLOBAL, SMEM_GLOBAL } };
+
+	for (unsigned h = 0; h < 2; h++) {
+		uint32_t cacheline = 0, partition_size = 0;
+		uint32_t partition = hakios_smem_partition(area, hosts[h][0], hosts[h][1], &cacheline, &partition_size);
+		unsigned count = hakios_smem_items(area, partition, cacheline, found, 256);
+
+		for (unsigned i = 0; i < count && i < 256; i++) {
+			if (found[i].item == item) {
+				*size = found[i].size;
+				return found[i].offset;
+			}
+		}
+	}
+	return 0;
+}
+
 #endif /* HAKIOS_SMEM_H */

@@ -9,6 +9,7 @@
 
 #define KERNEL 1
 #include "hakios_smem.h"
+#include "hakios_smp2p.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -169,6 +170,40 @@ items_found(void)
 	CHECK(count == 1 && found[0].item == 137 && found[0].size == 18, "the global partition's one item");
 }
 
+/* an item of two processors: in their partition, or else in the global one */
+static void
+an_item_of_two(void)
+{
+	uint32_t size = 0;
+
+	as_a_boot_loader_lays_it_out();
+	CHECK(hakios_smem_item(&area, US, DSP, 429, &size) == second_at && size == 5, "in the partition of the two: %u bytes", size);
+	CHECK(hakios_smem_item(&area, US, DSP, 478, &size) == cached_at && size == 17, "one from its top");
+	CHECK(hakios_smem_item(&area, US, DSP, 137, &size) != 0 && size == 18, "one that is only in the global partition");
+	CHECK(hakios_smem_item(&area, US, RADIO, 137, &size) != 0, "... which a processor without a partition of its own with us finds too");
+	CHECK(hakios_smem_item(&area, US, RADIO, 429, &size) == 0, "but not another pair's item");
+	CHECK(hakios_smem_item(&area, US, DSP, 999, &size) == 0, "an item nobody made");
+}
+
+/* an SMP2P item's words by name */
+static void
+smp2p_words(void)
+{
+	struct smp2p words = { .magic = SMP2P_MAGIC, .version = SMP2P_VERSION, .total = 16, .valid = 3 };
+
+	memcpy(words.entry[0].name, "master-kernel", 14);
+	memcpy(words.entry[1].name, "sixteen letters!", 16);    /* (no zero after it) */
+	memcpy(words.entry[2].name, "sleepstate", 11);
+	memcpy(words.entry[3].name, "not valid yet", 14);
+	CHECK(smp2p_entry(&words, "master-kernel") == 0 && smp2p_entry(&words, "sleepstate") == 2, "by name");
+	CHECK(smp2p_entry(&words, "sixteen letters!") == 1, "a name that fills its sixteen bytes");
+	CHECK(smp2p_entry(&words, "master") == -1 && smp2p_entry(&words, "") == -1, "the whole name");
+	CHECK(smp2p_entry(&words, "not valid yet") == -1, "only among the words that are valid");
+	words.valid = 60000;                                    /* (as the other side might write) */
+	CHECK(smp2p_entry(&words, "not valid yet") == 3 && smp2p_entry(&words, "nobody") == -1, "a count beyond sixteen is sixteen");
+	CHECK(sizeof(words) == 20 + 16 * 20 && SMP2P_AT_NAME(1) == 40 && SMP2P_AT_VALUE(0) == 36, "the item's shape: %zu bytes", sizeof(words));
+}
+
 /* more items than the caller has room for: counted, not written */
 static void
 more_than_room(void)
@@ -257,7 +292,8 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "partitions_found", partitions_found }, { "items_found", items_found }, { "more_than_room", more_than_room },
+		{ "partitions_found", partitions_found }, { "items_found", items_found }, { "an_item_of_two", an_item_of_two },
+		{ "smp2p_words", smp2p_words }, { "more_than_room", more_than_room },
 		{ "odd_cacheline", odd_cacheline }, { "not_an_area", not_an_area }, { "lies_about_itself", lies_about_itself },
 	};
 
