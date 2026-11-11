@@ -638,26 +638,9 @@ step_smem(void)
  * is. A message is text; it goes into our mailbox behind its length, the doorbell is rung, and
  * the always-on processor has taken it when the length reads zero.
  */
+#include "hakios_ipc.h"                     /* the mailbox's words and the doorbells' registers */
+
 static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's [ipc], at the start */
-#define QMP_MAGIC               0x00
-#define QMP_MAGIC_VALUE         0x4d41494c      /* "LIAM" */
-#define QMP_VERSION             0x04
-#define QMP_FEATURES            0x08
-#define QMP_THEIR_LINK          0x0c
-#define QMP_THEIR_LINK_ACK      0x10            /* ours to write: we have seen their link state */
-#define QMP_THEIR_CHANNEL       0x14
-#define QMP_THEIR_CHANNEL_ACK   0x18            /* ours to write */
-#define QMP_THEIR_BOX_SIZE      0x1c
-#define QMP_THEIR_BOX           0x20
-#define QMP_OUR_LINK            0x24            /* ours to write */
-#define QMP_OUR_LINK_ACK        0x28
-#define QMP_OUR_CHANNEL         0x2c            /* ours to write */
-#define QMP_OUR_CHANNEL_ACK     0x30
-#define QMP_OUR_BOX_SIZE        0x34
-#define QMP_OUR_BOX             0x38
-#define QMP_UP                  0x0000ffffu
-#define QMP_DOWN                0xffff0000u
-#define QMP_MESSAGE             64              /* what Linux sends, whatever the text's length */
 
 /*
  * dt: qcom,ipcc@408000 (its interrupt: SPI 229). A doorbell is a processor ("client") and one
@@ -665,15 +648,7 @@ static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the S
  * or GLINK, 2 SMP2P (dt: the mboxes of power-controller@c300000, qcom,smp2p-wpss, glink wpss).
  */
 static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's [ipc], at the start */
-#define IPCC_SEND               0x0c            /* write client << 16 | signal: ring it */
-#define IPCC_RECEIVED           0x10            /* who rang us, the same way; all ones: nobody */
-#define IPCC_ENABLE             0x14            /* write: hear that client's signal */
-#define IPCC_DISABLE            0x18            /* write: no longer */
-#define IPCC_CLEAR              0x1c            /* write: that one has been heard */
-#define IPCC_NOBODY             0xffffffffu
-#define IPCC_AOP                0u
 #define IPCC_WPSS               24u
-#define IPCC_SMP2P              2u              /* the signal */
 
 static bool
 step_mailbox(void)
@@ -2006,7 +1981,6 @@ step_start(void)
 #define ITEM_GLINK_OUR_QUEUE    479
 #define ITEM_GLINK_THEIR_QUEUE  480
 #include "hakios_glink_queue.h"             /* the descriptor's words, and the arithmetic of the two queues' marks */
-#define IPCC_GLINK              0u              /* the signal */
 
 enum {
 	GLINK_VERSION = 0, GLINK_VERSION_ACK = 1, GLINK_OPEN = 2, GLINK_CLOSE = 3, GLINK_OPEN_ACK = 4, GLINK_INTENT = 5,

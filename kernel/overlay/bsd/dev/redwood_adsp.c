@@ -426,35 +426,11 @@ show_crash_reason(void)
 
 /* ---- the doorbells, and the mailbox to the always-on processor (redwood_wifi.c, steps 2 and 7) ------ */
 
-#define QMP_MAGIC               0x00
-#define QMP_MAGIC_VALUE         0x4d41494c
-#define QMP_VERSION             0x04
-#define QMP_THEIR_LINK          0x0c
-#define QMP_THEIR_LINK_ACK      0x10
-#define QMP_THEIR_CHANNEL       0x14
-#define QMP_THEIR_CHANNEL_ACK   0x18
-#define QMP_OUR_LINK            0x24
-#define QMP_OUR_LINK_ACK        0x28
-#define QMP_OUR_CHANNEL         0x2c
-#define QMP_OUR_CHANNEL_ACK     0x30
-#define QMP_OUR_BOX_SIZE        0x34
-#define QMP_OUR_BOX             0x38
-#define QMP_UP                  0x0000ffffu
-#define QMP_DOWN                0xffff0000u
-#define QMP_MESSAGE             64
+#include "hakios_ipc.h"                     /* the mailbox's words and the doorbells' registers */
 
 static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's [ipc], at the start */
 
-#define IPCC_SEND               0x0c
-#define IPCC_RECEIVED           0x10
-#define IPCC_ENABLE             0x14
-#define IPCC_DISABLE            0x18
-#define IPCC_CLEAR              0x1c
-#define IPCC_NOBODY             0xffffffffu
-#define IPCC_AOP                0u
 #define IPCC_LPASS              3u              /* dt: mboxes of qcom,smp2p-adsp and qcom,glink/adsp */
-#define IPCC_GLINK              0u
-#define IPCC_SMP2P              2u
 
 static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's [ipc], at the start */
 
