@@ -11,6 +11,13 @@ epss = 0x05591000
 epss_domain_size = 0x2000
 domain_cores = [6, 2]
 
+# (RPMh's command database and sequencer elsewhere too, the slot sets further into the sequencer)
+[rpmh]
+cmd_db = 0x90860000
+cmd_db_size = 0x2000
+rsc = 0x07220000
+tcs_offset = 0x1c00
+
 [spmi]
 core = 0x04440000
 cnfg = 0x0440a000

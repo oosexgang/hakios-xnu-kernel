@@ -8,6 +8,7 @@ soc = "soc-test"
 
 features = [
     "cpufreq-epss",                 # (on a chip with two groups of cores)
+    "ddr-rpmh",                     # (... and RPMh where no real chip has it)
     "buttons-pmic",
     "torch-pm8350c",                # (the part itself as the driver knows it; the way to it is this chip's)
 ]
