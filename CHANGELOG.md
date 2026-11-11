@@ -61,7 +61,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 
 - **The sources are ordinary files.** The kernel was one 75,000-line patch against Apple's release with
   25 patches stacked on it. It is three things now: `kernel/UPSTREAM` pins the Apple release by commit;
-  `kernel/overlay/` holds the 129 files HakiOS adds, at their place in the XNU tree; `kernel/patches/`
+  `kernel/overlay/` holds the files HakiOS adds, at their place in the XNU tree; `kernel/patches/`
   holds the changes to Apple's own 89 files as 7 patches by topic (`kernel/patches/series` says which
   file belongs to which).
 - **Tools for the round trip.** `kernel/assemble.sh` makes the tree that is compiled.
