@@ -25,6 +25,9 @@ known_phone(void)
 	CHECK(hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS) && hakios_board_has(HAKIOS_HAS_ADSP), "its features");
 	/* its own touch controller, and none of the parts only the other phone has */
 	CHECK(hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U) && !hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX), "its touch controller");
+	/* a command-mode panel, followed on the interface it hangs on */
+	CHECK(hakios_board_has(HAKIOS_HAS_DISPLAY_SCAN) && b != NULL && b->display.intf == 0x0ae6b800 && !b->backlight.video_mode,
+	    "its panel's readout: %#x", b ? b->display.intf : 0);
 	CHECK(!hakios_board_has(HAKIOS_HAS_HAPTIC_AW86927) && !hakios_board_has(HAKIOS_HAS_TORCH_PM8350C) &&
 	    !hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) && !hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD) &&
 	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750) && !hakios_board_has(HAKIOS_HAS_MIC_WCD938X),
@@ -83,6 +86,8 @@ table(void)
 		    "%s: cpufreq-epss without [cpufreq]", b->name);
 		CHECK(b->backlight.type != HAKIOS_BACKLIGHT_DCS || (b->backlight.bytes >= 1 && b->backlight.bytes <= 2),
 		    "%s: DCS bytes %u", b->name, b->backlight.bytes);
+		CHECK(!(b->features & HAKIOS_HAS_DISPLAY_SCAN) || (b->display.intf != 0 && b->clocks.dispcc != 0 &&
+		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
 		CHECK(!((b->features & HAKIOS_HAS_TOUCH_GOODIX) && (b->features & HAKIOS_HAS_TOUCH_FT3658U)),
 		    "%s lists two touch controllers", b->name);
 		for (unsigned j = 0; j < i; j++) {

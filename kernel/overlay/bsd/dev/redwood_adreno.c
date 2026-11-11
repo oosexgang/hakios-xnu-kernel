@@ -107,6 +107,8 @@ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
 #include "redwood_adreno_profile.h"
+
+#include "hakios_board.h"
 static const struct adreno_board_profile *gpu_profile;
 
 static uint32_t last_step, skip_steps, pause_ms = 2200, fine, watch_seconds = 20;
@@ -3881,17 +3883,33 @@ static struct block dispcc = { "dispcc", 0x0af00000, 0x4000 };          /* dt: c
 static struct block disp_intf;                                          /* the interface the panel hangs on */
 #define GCC_DISP_AHB_CBCR       0x27004         /* (both boards: gcc_disp_ahb_clk) */
 /*
- * Where the clocks and the panel's interface are: Redwood's by its device tree (yupik), Renoir's by
- * its own (shima: dispcc-shima.c, shima-gdsc.dtsi, shima-sde-common.dtsi: the DSI interfaces are
- * intf1 and intf2 at 0x6b800 and 0x6c000 in the display block, not where Redwood has them).
+ * Where the clocks and the panel's interface are differs between SoCs (on shima the DSI interfaces are
+ * intf1 and intf2 at 0x6b800 and 0x6c000 in the display block; yupik has its one elsewhere), so it is
+ * the board's data: soc/SOC.toml, [clocks] and [display] intf1.
  */
 struct display_layout {
 	uint32_t core_gdscr, pclk0_cbcr, mdp_cbcr, ahb_cbcr;
 	uint32_t intf_page, intf_at;                    /* the interface's page, and its registers within it */
 };
-static const struct display_layout display_redwood = { 0x1004, 0x1010, 0x1014, 0x1050, 0x0ae36000, 0 };
-static const struct display_layout display_renoir = { 0x3000, 0x2004, 0x200c, 0x2080, 0x0ae6b000, 0x800 };
-static const struct display_layout *display = &display_redwood;
+/* the board's (hakios_board.h: [clocks] and [display] of its SoC's file), once display_layout_known() has said yes */
+static struct display_layout display_of_board;
+static const struct display_layout *display = &display_of_board;
+
+static bool
+display_layout_known(void)
+{
+	const struct hakios_board *board = hakios_board();
+
+	if (board == NULL || board->display.intf == 0 || board->clocks.dispcc == 0) {
+		return false;
+	}
+	display_of_board = (struct display_layout){
+		.core_gdscr = board->clocks.dispcc_mdss_gdscr, .pclk0_cbcr = board->clocks.dispcc_mdss_pclk0_cbcr,
+		.mdp_cbcr = board->clocks.dispcc_mdss_mdp_cbcr, .ahb_cbcr = board->clocks.dispcc_mdss_ahb_cbcr,
+		.intf_page = board->display.intf & ~0xfffu, .intf_at = board->display.intf & 0xfffu,
+	};
+	return true;
+}
 #define DISPCC_MDSS_CORE_GDSCR  (display->core_gdscr)
 #define DISPCC_MDSS_PCLK0_CBCR  (display->pclk0_cbcr)
 #define DISPCC_MDSS_MDP_CBCR    (display->mdp_cbcr)
@@ -4025,10 +4043,9 @@ redwood_display_scan_start(void)
 	if (scan_ready) {
 		return true;
 	}
-	if (!redwood_board_is("renoir")) {
-		return false;                   /* (Redwood's is a video panel: not this) */
+	if (!hakios_board_has(HAKIOS_HAS_DISPLAY_SCAN) || !display_layout_known()) {
+		return false;                   /* (a video panel has no readout to follow; or the board does not say where) */
 	}
-	display = &display_renoir;
 	need(&gcc);
 	need(&dispcc);
 	if (gcc.base == 0 || dispcc.base == 0) {
@@ -4157,10 +4174,12 @@ redwood_adreno_init(void)
 			} else printf("renoir-display-clocks: upstream clock disabled; not reading DISPCC\n");
 		}
 	}
-	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only &&
-	    (gpu_profile == &adreno_redwood || gpu_profile == &adreno_renoir)) {
-		display = gpu_profile == &adreno_renoir ? &display_renoir : &display_redwood;
-		display_probe();
+	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only) {
+		if (display_layout_known()) {
+			display_probe();
+		} else {
+			printf("adreno: display_probe=1: this board's SoC file has no [display] intf1 and [clocks]: nothing read\n");
+		}
 	}
 	if (!PE_parse_boot_argn("adreno", &last_step, sizeof(last_step))) {
 		if (!(PE_parse_boot_argn("gpu", &only, sizeof(only)) && only) || !start_by_itself()) {

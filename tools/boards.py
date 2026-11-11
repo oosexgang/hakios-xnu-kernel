@@ -44,8 +44,9 @@ SOC_SCHEMA = {
                  'cores': (int, True), 'core_shift': (int, True), 'small_cores': (int, False),
                  'psci': (('smc', 'hvc'), True), 'timeout_scale': (int, False)},
     'clocks': {'gcc': (int, True), 'gcc_disp_ahb_cbcr': (int, True), 'dispcc': (int, True),
-               'dispcc_mdss_gdscr': (int, True), 'dispcc_mdss_ahb_cbcr': (int, True)},
-    'display': {'dsi0': (int, True)},
+               'dispcc_mdss_gdscr': (int, True), 'dispcc_mdss_ahb_cbcr': (int, True),
+               'dispcc_mdss_pclk0_cbcr': (int, False), 'dispcc_mdss_mdp_cbcr': (int, False)},
+    'display': {'dsi0': (int, True), 'intf1': (int, False)},
     'thermal': {'tsens': ([int], True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
@@ -59,7 +60,7 @@ BOARD_SCHEMA = {
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq'}
+FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display'}
 
 
 class Problems(list):
@@ -163,6 +164,11 @@ def load(problems=None):
         boards[name] = data
         if not well_formed:
             continue
+        if 'display-scan' in data.get('features', []):
+            if 'intf1' not in soc.get('display', {}) or 'clocks' not in soc:
+                problems.add(rel, f'feature "display-scan" needs intf1 in [display] and [clocks] in soc/{data.get("soc")}.toml')
+            if data.get('backlight', {}).get('panel_mode') == 'video':
+                problems.add(rel, 'feature "display-scan" is for a command-mode panel; [backlight] says video')
         light = data.get('backlight', {})
         if light.get('type') == 'dcs':
             for key in ('panel_mode', 'min', 'max', 'bytes'):
@@ -252,14 +258,19 @@ def table_text(socs, boards):
             f'\t\t.soc = {c_string(board["soc"])},',
             f'\t\t.features = {features},',
         ]
-        if dcs:
+        if clocks:
             out += [
                 '\t\t.clocks = {',
                 f'\t\t\t.gcc = {clocks["gcc"]:#010x}, .gcc_disp_ahb_cbcr = {clocks["gcc_disp_ahb_cbcr"]:#x},',
                 f'\t\t\t.dispcc = {clocks["dispcc"]:#010x}, .dispcc_mdss_gdscr = {clocks["dispcc_mdss_gdscr"]:#x},',
                 f'\t\t\t.dispcc_mdss_ahb_cbcr = {clocks["dispcc_mdss_ahb_cbcr"]:#x},',
-                '\t\t},',
             ]
+            if 'dispcc_mdss_pclk0_cbcr' in clocks or 'dispcc_mdss_mdp_cbcr' in clocks:
+                out.append(f'\t\t\t.dispcc_mdss_pclk0_cbcr = {clocks.get("dispcc_mdss_pclk0_cbcr", 0):#x}, '
+                           f'.dispcc_mdss_mdp_cbcr = {clocks.get("dispcc_mdss_mdp_cbcr", 0):#x},')
+            out.append('\t\t},')
+        if 'intf1' in soc.get('display', {}):
+            out.append(f'\t\t.display = {{ .intf = {soc["display"]["intf1"]:#010x} }},')
         kind = {'dcs': 'HAKIOS_BACKLIGHT_DCS', 'soft': 'HAKIOS_BACKLIGHT_SOFT'}.get(light.get('type'), 'HAKIOS_BACKLIGHT_NONE')
         if dcs:
             out += [
@@ -440,6 +451,8 @@ def from_dts(text, panel=None):
             platform['psci'] = strings(node.props['method'])[0]
         if reg_named(node, 'dsi_ctrl') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
             soc.setdefault('display', {})['dsi0'] = reg_named(node, 'dsi_ctrl')
+        if reg_named(node, 'mdp_intf_base') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
+            soc.setdefault('display', {})['intf1'] = reg_named(node, 'mdp_intf_base')
         if reg_named(node, 'tsens_tm_physical'):
             tsens.append(reg_named(node, 'tsens_tm_physical'))
         if any(c.startswith('qcom,cpufreq-hw') or c == 'qcom,cpufreq-epss' for c in compatible):

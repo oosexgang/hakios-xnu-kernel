@@ -107,6 +107,7 @@ first. Every argument is in [boot-args.md](boot-args.md); every driver in [drive
 
 | Step | In the board or SoC file | Boot argument | It worked when |
 | --- | --- | --- | --- |
+| Frames without tearing (command-mode panels) | `display-scan`, `[display]` intf1 | `fb_scan=1` (the default) | `panel scan:` lines with a period near 16.7 ms. Without it frames are written on a timer, which works. |
 | Brightness | `[backlight]`, `[clocks]`, `[display]` | `backlight=1` (reads only), then `backlight=2` | `backlight: dcs: DSI controller at …: version 2.x … (on, …)`, then the panel follows the slider. `NOT SENT` means the wrong controller or mode. [backlight.md](backlight.md) |
 | Temperature | `[thermal]` in both files | `thermal=1` | `thermal: hottest sensor NN.N C` with plausible numbers. Compare with Android's. [thermal.md](thermal.md) |
 | CPU frequency | `cpufreq-epss`, `[cpufreq]` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
@@ -164,8 +165,6 @@ Stated plainly, so nobody finds out the hard way:
 - **GPU.** `redwood_adreno.c` starts an Adreno 642/642L; its per-board values are a C table
   (`redwood_adreno_profile.h`), and some steps branch on the board. Another Adreno needs a profile
   there, and likely more.
-- **Display scan timing** (`fb_scan`) reads the DSI interface's counters at Renoir's addresses.
-  Without it frames are written on a timer, which works.
 - **The memory bandwidth vote** (`ddr-rpmh`) uses the RPMh addresses of the 7-series.
 - **Sound, microphones, camera, Wi-Fi, haptics, flashlight, storage** are written for redwood's parts.
   They are the largest share of the work on a new phone.

@@ -25,7 +25,9 @@ const struct hakios_board hakios_boards[] = {
 			.gcc = 0x00100000, .gcc_disp_ahb_cbcr = 0x27004,
 			.dispcc = 0x0af00000, .dispcc_mdss_gdscr = 0x1004,
 			.dispcc_mdss_ahb_cbcr = 0x1050,
+			.dispcc_mdss_pclk0_cbcr = 0x1010, .dispcc_mdss_mdp_cbcr = 0x1014,
 		},
+		.display = { .intf = 0x0ae36000 },
 		.backlight = {
 			.type = HAKIOS_BACKLIGHT_DCS, .video_mode = 1, .bytes = 2,
 			.lsb_first = 0, .dsi = 0x0ae94000,
@@ -44,12 +46,14 @@ const struct hakios_board hakios_boards[] = {
 		.name = "renoir",
 		.description = "Xiaomi Mi 11 Lite 5G",
 		.soc = "sm7350",
-		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_FT3658U,
+		.features = HAKIOS_HAS_CPUFREQ_EPSS | HAKIOS_HAS_DDR_RPMH | HAKIOS_HAS_BATTERY_UEFI | HAKIOS_HAS_BUTTONS_PMIC | HAKIOS_HAS_ADSP | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_DISPLAY_SCAN,
 		.clocks = {
 			.gcc = 0x00100000, .gcc_disp_ahb_cbcr = 0x27004,
 			.dispcc = 0x0af00000, .dispcc_mdss_gdscr = 0x3000,
 			.dispcc_mdss_ahb_cbcr = 0x2080,
+			.dispcc_mdss_pclk0_cbcr = 0x2004, .dispcc_mdss_mdp_cbcr = 0x200c,
 		},
+		.display = { .intf = 0x0ae6b800 },
 		.backlight = {
 			.type = HAKIOS_BACKLIGHT_DCS, .video_mode = 0, .bytes = 2,
 			.lsb_first = 0, .dsi = 0x0ae94000,
@@ -69,7 +73,7 @@ const struct hakios_board hakios_boards[] = {
 const unsigned hakios_board_count = sizeof(hakios_boards) / sizeof(hakios_boards[0]);
 
 /* the features by their bit, as board.toml spells them */
-const char *const hakios_feature_names[] = { "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "touch-ft3658u", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750", "mic-wcd938x" };
+const char *const hakios_feature_names[] = { "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "touch-ft3658u", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750", "mic-wcd938x", "display-scan" };
 const unsigned hakios_feature_count = sizeof(hakios_feature_names) / sizeof(hakios_feature_names[0]);
 
 #endif /* _HAKIOS_BOARD_TABLE_H */

@@ -102,8 +102,8 @@ DTS = '''/dts-v1/;
 		qcom,mdss_dsi_ctrl0@ae94000 {
 			compatible = "qcom,dsi-ctrl-hw-v2.5";
 			cell-index = <0x00>;
-			reg = <0x00 0xae94000 0x00 0x400 0x00 0xaf08000 0x00 0x04>; /* a comment */
-			reg-names = "dsi_ctrl\\0disp_cc_base";
+			reg = <0x00 0xae94000 0x00 0x400 0x00 0xaf08000 0x00 0x04 0x00 0xae6b800 0x00 0x300>; /* a comment */
+			reg-names = "dsi_ctrl\\0disp_cc_base\\0mdp_intf_base";
 		};
 		qcom,mdss_dsi_ctrl1@ae96000 {
 			cell-index = <0x01>;
@@ -201,6 +201,9 @@ class Check(Sandbox):
              '"two words" is not NAME or NAME=VALUE'),
             (self.board, '[loader]', '[boot]\nfastboot_product = "phone"\n[loader]', '"bootargs" is missing'),
             (self.soc, 'io_base = 0x400000', 'io_base = 0', 'io_base must not be 0'),
+            (self.board, '"cpufreq-epss"', '"cpufreq-epss", "display-scan"', 'feature "display-scan" needs intf1'),
+            (self.board, '"cpufreq-epss"]\n[backlight]\ntype = "dcs"\npanel_mode = "command"',
+             '"display-scan"]\n[backlight]\ntype = "dcs"\npanel_mode = "video"', 'is for a command-mode panel'),
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [4, 3]', 'domain_cores adds up to 7 cores, [platform] has 8'),
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [4, 2, 2]\n', None),
             (self.soc, 'domain_cores = [4, 3, 1]', 'domain_cores = [2, 2, 2, 1, 1]', 'one to four groups'),
@@ -289,7 +292,7 @@ class DeviceTree(Sandbox):
 
     def test_what_a_board_needs_is_found(self):
         soc, board, notes = boards.from_dts(DTS)
-        self.assertEqual(soc['display'], {'dsi0': 0xae94000})          # controller 0, not 1
+        self.assertEqual(soc['display'], {'dsi0': 0xae94000, 'intf1': 0xae6b800})      # of controller 0, not 1
         self.assertEqual(soc['thermal'], {'tsens': [0xc263000, 0xc265000]})
         self.assertEqual(soc['cpufreq'], {'epss': 0x18591000, 'epss_domain_size': 0x1000, 'domain_cores': [2, 1, 1]})
         self.assertEqual(soc['clocks'], {'gcc': 0x100000, 'dispcc': 0xaf00000})

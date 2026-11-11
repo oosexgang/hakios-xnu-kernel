@@ -32,7 +32,7 @@ needs its feature in the board's `features`.
 
 | File | Stands in for | Portability |
 | --- | --- | --- |
-| `iokit/Kernel/MiniIOMobileFramebuffer.cpp` | The display driver family: swaps, vsync, scaling to the panel, software dimming, the Metal plug-in gate (`metal=1`). | any; `fb_scan` timing is **phone** (Renoir) |
+| `iokit/Kernel/MiniIOMobileFramebuffer.cpp` | The display driver family: swaps, vsync, scaling to the panel, software dimming, the Metal plug-in gate (`metal=1`). | any; `fb_scan` timing is **data** (`display-scan`, `[display]` intf1) |
 | `iokit/Kernel/MiniIOSurface.cpp` | IOSurface. | any |
 | `iokit/Kernel/MiniAppleKeyStore.cpp` | AppleKeyStore: a device without a passcode. | any |
 | `iokit/Kernel/MiniIONetworkStack.cpp`, `RedwoodWLAN.cpp` | The registry entries by which iOS finds network interfaces. | any |

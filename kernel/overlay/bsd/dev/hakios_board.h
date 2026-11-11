@@ -36,6 +36,8 @@ enum {
 	HAKIOS_HAS_BATTERY_UEFI = 1u << 2,      /* the battery as the firmware reports it to the loader (redwood_battery.c) */
 	HAKIOS_HAS_BUTTONS_PMIC = 1u << 3,      /* power and volume keys on the PMIC, through the SPMI arbiter (redwood_buttons.c) */
 	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (redwood_adsp.c) */
+	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a command-mode panel whose readout is followed on the DSI interface's
+	                                         * counters, for frames without tearing (redwood_adreno.c, fb_scan) */
 	/*
 	 * Drivers of one part, wired the way one phone has it (the pins, the bus, the chip): a board lists
 	 * one only if it has that part wired that way. Asked for on any other board, the driver says so and
@@ -70,7 +72,13 @@ struct hakios_board {
 	struct {
 		uint32_t gcc, gcc_disp_ahb_cbcr;
 		uint32_t dispcc, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr;
+		uint32_t dispcc_mdss_pclk0_cbcr, dispcc_mdss_mdp_cbcr;  /* only looked at (display_probe=1); 0: not known */
 	} clocks;
+
+	/* the display controller (soc: [display]) */
+	struct {
+		uint32_t intf;                  /* the interface the panel hangs on (INTF_*): its timing and counters */
+	} display;
 
 	/* the panel's light (board: [backlight]; soc: [display]) */
 	struct {

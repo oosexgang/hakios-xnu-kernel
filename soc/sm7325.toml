@@ -9,9 +9,12 @@ gcc_disp_ahb_cbcr = 0x27004         # gcc_disp_ahb_clk
 dispcc = 0x0af00000                 # clock-controller@af00000
 dispcc_mdss_gdscr = 0x1004          # the display block's power switch (mdss_core_gdsc)
 dispcc_mdss_ahb_cbcr = 0x1050       # disp_cc_mdss_ahb_clk
+dispcc_mdss_pclk0_cbcr = 0x1010     # disp_cc_mdss_pclk0_clk  } only looked at, by display_probe=1
+dispcc_mdss_mdp_cbcr = 0x1014       # disp_cc_mdss_mdp_clk    }
 
 [display]
 dsi0 = 0x0ae94000                   # mdss_dsi0, reg "dsi_ctrl" (DSI controller 2.5)
+intf1 = 0x0ae36000                  # mdss_dsi0, reg "mdp_intf_base": the interface the panel hangs on
 
 [thermal]
 tsens = [0x0c263000, 0x0c265000]    # tsens0 and tsens1, reg "tsens_tm_physical"
