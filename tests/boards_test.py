@@ -598,6 +598,24 @@ class Generate(Sandbox):
         self.assertNotIn('ipc', soc)
         self.assertTrue(any('missing: aoss, smem, smem_size, smem_lock' in note for note in notes), notes)
 
+    def test_the_smmu_is_needed_carried_and_found(self):
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "camera-redwood"')
+        self.assertIn('feature "camera-redwood" needs [smmu] in soc/sm0001.toml', self.problems())
+        self.board('"cpufreq-epss", "camera-redwood"', '"cpufreq-epss"')
+        self.soc('[thermal]', '[smmu]\napps = 0x15000000\n[thermal]')
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.smmu = { .apps = 0x15000000 },', boards.table_text(*boards.load()))
+        # the vendor's node is named; the GPU's own is not this one
+        soc, board, notes = devicetree.from_dts('''/ { soc {
+            kgsl_smmu: kgsl-smmu@3da0000 { compatible = "qcom,qsmmu-v500"; reg = <0x3da0000 0x20000>; };
+            apps_smmu: apps-smmu@15000000 { compatible = "qcom,qsmmu-v500"; reg = <0x15000000 0x100000>; }; }; };''')
+        self.assertEqual(soc['smmu'], {'apps': 0x15000000})
+        # Linux's is the iommu that is not Adreno's
+        soc, board, notes = devicetree.from_dts('''/ { soc {
+            iommu@3da0000 { compatible = "qcom,sc7280-smmu-500", "qcom,adreno-smmu", "qcom,smmu-500", "arm,mmu-500"; };
+            iommu@15000000 { compatible = "qcom,sc7280-smmu-500", "qcom,smmu-500", "arm,mmu-500"; }; }; };''')
+        self.assertEqual(soc['smmu'], {'apps': 0x15000000})
+
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in
         soc, board, notes = devicetree.from_dts('''/ { soc { tlmm: pinctrl@f000000 { compatible = "qcom,shima-pinctrl";

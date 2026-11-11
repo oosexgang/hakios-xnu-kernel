@@ -72,6 +72,7 @@ SOC_SCHEMA = {
     'adreno': {'gpu': (int, True), 'gmu': (int, True), 'gpucc': (int, True), 'cx_misc': (int, True), 'rscc': (int, True),
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
+    'smmu': {'apps': (int, True)},
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
             'smem_lock': (int, True)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
@@ -99,13 +100,13 @@ BOARD_SCHEMA = {
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
-                 'camera-redwood': ('spmi', 'pins', 'clocks', 'rpmh'),
+                 'camera-redwood': ('spmi', 'pins', 'clocks', 'rpmh', 'smmu'),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh'),
-                 # the part drivers that drive the SoC's pins, switch a bus's clocks on in the GCC, and ask
-                 # RPMh for a part's supply
+                 # the part drivers that drive the SoC's pins, switch a bus's clocks on in the GCC, ask RPMh
+                 # for a part's supply, and give a device its addresses in the SMMU
                  'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
-                 'speaker-aw88261': ('pins', 'clocks', 'rpmh'), 'haptic-aw86927': ('pins',),
-                 'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc'), 'mic-wcd938x': ('pins',)}
+                 'speaker-aw88261': ('pins', 'clocks', 'rpmh', 'smmu'), 'haptic-aw86927': ('pins',),
+                 'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins',)}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
@@ -501,6 +502,8 @@ def table_text(socs, boards):
         pins = soc.get('pins')
         if pins:
             out.append(f'\t\t.pins = {{ .tlmm = {pins["tlmm"]:#010x} }},')
+        if 'smmu' in soc:
+            out.append(f'\t\t.smmu = {{ .apps = {soc["smmu"]["apps"]:#010x} }},')
         ipc = soc.get('ipc')
         if ipc:
             out.append(f'\t\t.ipc = {{ .aoss = {ipc["aoss"]:#010x}, .ipcc = {ipc["ipcc"]:#010x}, .smem = {ipc["smem"]:#010x}, '
@@ -746,7 +749,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
             for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
                 text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
             text.append('')
-        for section in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'adreno', 'thermal', 'cpufreq'):
+        for section in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'smmu', 'adreno', 'thermal', 'cpufreq'):
             if section in soc:
                 text.append(f'[{section}]')
                 text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]

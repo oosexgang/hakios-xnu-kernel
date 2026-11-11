@@ -130,6 +130,11 @@ struct hakios_board {
 		uint32_t tlmm;                  /* where GPIO 0's registers are; GPIO n's are 0x1000 n further */
 	} pins;
 
+	/* the SMMU that stands between the SoC's devices and memory (soc: [smmu]); the GPU has its own ([adreno]) */
+	struct {
+		uint32_t apps;
+	} smmu;
+
 	/* the way to the SoC's other processors (soc: [ipc]) */
 	struct {
 		uint32_t aoss;                  /* the always-on processor's mailbox (QMP) */

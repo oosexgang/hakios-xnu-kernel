@@ -39,6 +39,11 @@ observer = 0x0e600000               # "obsrvr": reads
 channels = 0x0c600000               # "chnls": writes; optional, needed only by the drivers that write to a PMIC
 ee = 0                              # qcom,ee; optional, 0 if left out
 
+# The SMMU between the SoC's devices and memory, for the part drivers that give a device its addresses
+# (the speakers' audio path, the cameras, Wi-Fi). The GPU's own is in [adreno].
+[smmu]
+apps = 0x15000000                   # apps_smmu (the vendor's apps-smmu@15000000; Linux's iommu@15000000)
+
 # The way to the SoC's other processors, for the features "adsp" and "wifi-wcn6750".
 [ipc]
 aoss = 0x0c300000                   # the always-on processor's mailbox: qcom,qmp-mbox (Linux: qcom,aoss-qmp), its reg

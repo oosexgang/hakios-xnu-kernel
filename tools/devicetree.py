@@ -166,6 +166,11 @@ def from_dts(text, panel=None):
                 # the vendor's trees give the whole 16 MiB block, in which the pins begin 1 MiB in; Linux's
                 # give the pins themselves
                 soc['pins'] = {'tlmm': base + 0x100000 if size >= 0x1000000 else base}
+        # the SMMU of everything but the GPU: the vendor names it, Linux's is the iommu that is not Adreno's
+        if unit_address(node) and (re.fullmatch(r'apps-smmu@[0-9a-fA-F]+', node.name) or 'apps_smmu' in node.labels or (
+                node.name.startswith('iommu@') and any(re.fullmatch(r'qcom,(.*-)?smmu-500|arm,mmu-500', c) for c in compatible)
+                and not any('adreno' in c for c in compatible))):
+            soc.setdefault('smmu', {'apps': unit_address(node)})
         # the way to the other processors: the always-on one's mailbox, the block they ring each other
         # through, the memory they share and the lock on it
         if any(c == 'qcom,qmp-mbox' or re.fullmatch(r'qcom,(.*-)?aoss-qmp', c) for c in compatible) and only_reg(node)[0]:

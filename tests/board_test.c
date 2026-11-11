@@ -183,6 +183,8 @@ table(void)
 		    HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->rpmh.cmd_db != 0 &&
 		    b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 && b->rpmh.tcs_offset != 0),
 		    "%s: a driver that asks RPMh for a supply without [rpmh]", b->name);
+		CHECK(!(b->features & (HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_WIFI_WCN6750)) ||
+		    b->smmu.apps != 0, "%s: a driver that gives a device its addresses without [smmu]", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->ipc.aoss != 0 && b->ipc.ipcc != 0 &&
 		    b->ipc.smem != 0 && b->ipc.smem_size != 0 && b->ipc.smem_lock != 0),
 		    "%s: a driver that talks to another processor without [ipc]", b->name);

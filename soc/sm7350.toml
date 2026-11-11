@@ -32,6 +32,10 @@ observer = 0x0e600000               # reads
 channels = 0x0c600000               # writes
 ee = 0                              # qcom,ee: which of the arbiter's systems this one is
 
+# The SMMU between the SoC's devices and memory (the GPU has its own, in [adreno]).
+[smmu]
+apps = 0x15000000                   # apps_smmu
+
 # The way to the SoC's other processors: the audio DSP and the Wi-Fi radio are reached through these.
 [ipc]
 aoss = 0x0c300000                   # qmp_aop (qcom,qmp-mbox): the always-on processor's mailbox
