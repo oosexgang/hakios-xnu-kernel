@@ -1,0 +1,29 @@
+# How the files of this repository are laid out; editors that know EditorConfig follow it.
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+
+# the kernel, the loader and the tests follow XNU: tabs, eight columns wide
+[*.{c,h,cpp,s,S,m}]
+indent_style = tab
+indent_size = 8
+
+[*.sh]
+indent_style = tab
+indent_size = 8
+
+[Makefile]
+indent_style = tab
+
+[*.{py,toml,yml,md}]
+indent_style = space
+indent_size = 4
+
+# Apple's files as they are changed: a patch keeps the whitespace of what it patches
+[*.patch]
+trim_trailing_whitespace = false
+insert_final_newline = false

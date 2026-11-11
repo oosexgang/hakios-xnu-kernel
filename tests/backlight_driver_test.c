@@ -221,6 +221,24 @@ static int failures;
 /* wait (up to `ms`) until `cond` holds */
 #define WAIT_FOR(cond, ms) do { for (int waited_ = 0; !(cond) && waited_ < (ms); waited_ += 5) usleep(5000); } while (0)
 
+/*
+ * Wait until the driver has stopped talking to the controller (no access for a tenth of a second): a
+ * command is noted by the model the moment it is triggered, and the driver still has the FIFO to empty
+ * and the controller's setup to put back after that.
+ */
+static void
+settle(void)
+{
+	for (int tries = 0; tries < 40; tries++) {
+		unsigned before = m.accesses;
+
+		usleep(100000);
+		if (m.accesses == before) {
+			return;
+		}
+	}
+}
+
 static uint32_t
 last_sent(void)
 {
@@ -264,6 +282,7 @@ renoir_dcs(void)
 	set("level", 0);
 	WAIT_FOR(last_sent() == 1, 2000);
 	CHECK(last_sent() == 1, "lowest: %u", last_sent());
+	settle();
 	/* the ramp went down in steps, not in one jump, and never out of the panel's range */
 	CHECK(m.sent_n >= 4, "%u commands", m.sent_n);
 	for (unsigned i = 0; i < m.sent_n; i++) {
@@ -282,7 +301,8 @@ redwood_video(void)
 	phone("redwood", true);
 	boot_args = "backlight=2 bl_level=1000";
 	hakios_backlight_init();
-	WAIT_FOR(m.sent_n >= 1, 1000);
+	WAIT_FOR(last_sent() == 2047, 2000);
+	settle();
 	CHECK(last_sent() == 2047, "redwood's top without HBM: %u", last_sent());
 	CHECK(m.cmd_mode_during_send, "the command engine on for the command");
 	CHECK(!(m.ctrl & 4), "... and off again: %#x", m.ctrl);
@@ -336,7 +356,7 @@ deaf_controller(void)
 	WAIT_FOR(logged("NOT SENT"), 2000);
 	CHECK(logged("NOT SENT"), "a command the controller did not send is said");
 	set("level", 100);
-	usleep(300000);
+	settle();
 	CHECK(m.sent_n == 1, "and nothing more is sent: %u", m.sent_n);
 	CHECK(m.tpg == 0, "the TPG off even so");
 }
