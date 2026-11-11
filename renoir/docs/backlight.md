@@ -133,4 +133,8 @@ On the phone, in order:
    `backlight: dcs: ... NOT SENT` must not appear.
 3. Press the side button: the panel should go dark, and light again on wake (`--boot-arg bl_trace=1` logs the
    mode names).
-4. `--boot-arg bl_auto=1`, then for example `sysctl hw.backlight.lux=0` and `=30000000` over SSH, to watch the ramps.
+4. To check on the first phone boot with `bl_trace=1`: whether backboardd's own CoreBrightness calls
+   `setProperty:DisplayBrightness` by itself (for example, a stored value at start). Such a call is passed to the
+   kernel like the slider's, and with Auto-Brightness on it would move the curve. If the log shows it, drop the
+   server-side hook (`SERVER` in `inject_brightness.c`) and keep the client side.
+5. `--boot-arg bl_auto=1`, then for example `sysctl hw.backlight.lux=0` and `=30000000` over SSH, to watch the ramps.
