@@ -1,0 +1,8 @@
+# Text is kept with Unix line endings, whatever the machine that checks it out.
+* text=auto eol=lf
+
+# A patch is bytes: what it carries is not to be touched (one has both kinds of line ending in it).
+*.patch -text
+
+# Written by a tool (make docs), not by hand: collapsed in a review, not counted as a language.
+docs/boot-args.md linguist-generated
