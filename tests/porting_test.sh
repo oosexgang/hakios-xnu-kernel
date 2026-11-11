@@ -113,13 +113,11 @@ says "a board is started from the device tree" "wrote devices/testphone/board.to
 	"$B" new testphone --soc sm9999 --dts "$W/phone.dts" --description "Maker Testphone"
 check "... and its SoC, which is new" test -f "$R/soc/sm9999.toml"
 refuses "what a device tree cannot say is asked for by name" "gcc_disp_ahb_cbcr" "$B" check
-refuses "... the I/O window too" '"io_base" is missing' "$B" check
 check "... and nothing else is wrong with what was written" \
-	sh -c "\"$B\" check 2>&1 | grep -v 'gcc_disp_ahb_cbcr\\|dispcc_mdss_gdscr\\|dispcc_mdss_ahb_cbcr\\|io_base\\|io_size' | grep -q . && exit 1 || exit 0"
+	sh -c "\"$B\" check 2>&1 | grep -v 'gcc_disp_ahb_cbcr, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in \\[clocks\\]' | grep -q . && exit 1 || exit 0"
 sed -i -e 's/^# gcc_disp_ahb_cbcr = 0x\.\.\..*/gcc_disp_ahb_cbcr = 0x33004/' \
 	-e 's/^# dispcc_mdss_gdscr = 0x\.\.\..*/dispcc_mdss_gdscr = 0x4000/' \
-	-e 's/^# dispcc_mdss_ahb_cbcr = 0x\.\.\..*/dispcc_mdss_ahb_cbcr = 0x4080/' \
-	-e 's/^# io_base = 0x00400000.*/io_base = 0x01000000/' -e 's/^# io_size = 0x3FC00000.*/io_size = 0x3F000000/' "$R/soc/sm9999.toml"
+	-e 's/^# dispcc_mdss_ahb_cbcr = 0x\.\.\..*/dispcc_mdss_ahb_cbcr = 0x4080/' "$R/soc/sm9999.toml"
 says "with those filled in, everything is consistent" "ok" "$B" check
 check "the tables are regenerated" "$B" gen
 says "the board is listed" "testphone" "$B" list
@@ -130,6 +128,9 @@ check "the boards that were there are as they were" \
 check "without a [loader] section the loader does not list the board" \
 	sh -c "! grep -q platform_testphone \"$R/build/boards/platforms.h\""
 printf '\n[loader]\nfb_base = 0x9C000000\n' >> "$R/devices/testphone/board.toml"
+refuses "the I/O window, which no tree has, is asked for when the loader is to know the board" \
+	'\[loader\] needs io_base and io_size in \[platform\]' "$B" check
+sed -i -e 's/^# io_base = 0x00400000.*/io_base = 0x01000000/' -e 's/^# io_size = 0x3FC00000.*/io_size = 0x3F000000/' "$R/soc/sm9999.toml"
 check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/build/boards/platforms.h\""
 check "... with the machine as the SoC file has it" \
 	sh -c "grep -A14 'platform_testphone = ' \"$R/build/boards/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.uefi_charger = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"

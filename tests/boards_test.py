@@ -769,13 +769,19 @@ class DeviceTree(Sandbox):
         problems = self.problems()
         self.assertIn('backlight type "dcs" needs gcc_disp_ahb_cbcr, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in [clocks] of '
                       'soc/sm0002.toml', problems)
-        self.assertEqual([line for line in problems.splitlines() if 'in [clocks] of' not in line and '"io_' not in line], [])
+        self.assertEqual([line for line in problems.splitlines() if 'in [clocks] of' not in line], [])
         path = self.dir / 'soc/sm0002.toml'
         text = path.read_text()
         for key, value in (('gcc_disp_ahb_cbcr', '0x27004'), ('dispcc_mdss_gdscr', '0x3000'), ('dispcc_mdss_ahb_cbcr', '0x2080')):
             self.assertIn(f'# {key} = 0x...', text)
             text = text.replace(f'# {key} = 0x...', f'{key} = {value}')       # (what is said after it stays a comment)
-        self.assertIn('"io_base" is missing', problems)
+        path.write_text(text)
+        self.assertEqual(self.problems(), '')
+        # the I/O window, which no tree has either, is asked for when the loader is to know the board
+        board = self.dir / 'devices/phone2/board.toml'
+        board.write_text(board.read_text() + '[loader]\nfb_base = 0x9c000000\n')
+        self.assertEqual(self.problems(), 'devices/phone2/board.toml: [loader] needs io_base and io_size in [platform] of '
+                         'soc/sm0002.toml')
         text = text.replace('# io_base = 0x00400000', 'io_base = 0x00400000').replace('# io_size = 0x3FC00000', 'io_size = 0x3FC00000')
         path.write_text(text)
         self.assertEqual(self.problems(), '')

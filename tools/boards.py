@@ -58,7 +58,7 @@ class U64(int):
 # key: (type, required). Types: str, int (32-bit), U64, bool, [int] and so on; a tuple of strings is a choice.
 SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
-    'platform': {'io_base': (U64, True), 'io_size': (U64, True), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
+    'platform': {'io_base': (U64, False), 'io_size': (U64, False), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
                  'gic_redist_size': (U64, False), 'gic_redist_stride': (U64, False), 'uart': (U64, False),
                  'cores': (int, True), 'core_shift': (int, True), 'small_cores': (int, False),
                  'psci': (('smc', 'hvc'), True), 'timeout_scale': (int, False)},
@@ -406,6 +406,9 @@ def load(problems=None):
         if 'loader' in data:
             if 'platform' not in soc:
                 problems.add(rel, f'[loader] needs [platform] in soc/{data.get("soc")}.toml')
+            elif 'io_base' not in soc['platform'] or 'io_size' not in soc['platform']:
+                # (no device tree has them, so they are asked for when the loader is to know the board)
+                problems.add(rel, f'[loader] needs io_base and io_size in [platform] of soc/{data.get("soc")}.toml')
             elif soc['platform'].get('io_base') == 0:
                 problems.add(rel, f'soc/{data.get("soc")}.toml [platform]: io_base must not be 0 (XNU then takes the '
                                   'machine for one without a SoC)')
@@ -822,7 +825,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         if 'platform' in soc:
             lines = soc_lines('platform', soc['platform'], above, after)
             at = lines.index('[platform]') + 1
-            text += lines[:at] + ['# io_base = 0x00400000          # TO FILL IN: one window over the SoC\'s peripherals, never 0',
+            text += lines[:at] + ['# io_base = 0x00400000          # TO FILL IN for [loader]: one window over the SoC\'s peripherals, never 0',
                                   '# io_size = 0x3FC00000          # (these two are what the Snapdragon 7-series ports use)'] + lines[at:]
         soc_path.write_text('\n'.join(text))
         print(f'wrote {shown(soc_path)}')

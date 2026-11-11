@@ -88,7 +88,8 @@ domain_cores = [4, 3, 1]            # how many cores each group has, in the core
 
 # What the loader (loader/) tells the kernel of the machine, for boards with a [loader] section.
 [platform]
-io_base = 0x00400000                # one window over the SoC's peripherals; never 0. Not in a device tree
+io_base = 0x00400000                # one window over the SoC's peripherals; never 0. Not in a device tree;
+                                    # needed once a board has a [loader] section
 io_size = 0x3FC00000                # (these two are what the Snapdragon 7-series ports use)
 gic_dist = 0x17A00000               # the arm,gic-v3 node's reg: its first entry
 gic_redist = 0x17A60000             # ... its second
