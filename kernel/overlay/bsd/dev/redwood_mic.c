@@ -365,12 +365,13 @@ clocks_off(void)
 
 /* ---- the blocks, read ------------------------------------------------------------------------------ */
 
-static struct block tx_macro = { "the TX macro", 0x03220000, 0x1000 };
-static struct block va_macro = { "the VA macro", 0x03370000, 0x1000 };
-static struct block tx_swr = { "the TX SoundWire master", 0x03230000, 0x2000 };
-static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0x032a9000, 0x1000 };
-static struct block lpi = { "the LPASS pins", 0x033c0000, 0x10000 };
-static struct block lpi_high = { "the LPASS pins", 0x033ce000, 0x1000 };
+/* (where each is: the SoC file's [lpass], at the start) */
+static struct block tx_macro = { "the TX macro", 0, 0x1000 };
+static struct block va_macro = { "the VA macro", 0, 0x1000 };
+static struct block tx_swr = { "the TX SoundWire master", 0, 0x2000 };
+static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0, 0x1000 };
+static struct block lpi = { "the LPASS pins", 0, 0x10000 };
+static struct block lpi_high = { "the LPASS pins", 0, 0x1000 };          /* pin 14's two registers: 0xe000 into them */
 static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's [pins], at the start */
 
 static void
@@ -456,7 +457,7 @@ reset_restore(void)
 	reset_taken = false;
 }
 
-static struct block lpi_slew = { "the LPASS pins' slew rates", 0x0355a000, 0x1000 };
+static struct block lpi_slew = { "the LPASS pins' slew rates", 0, 0x1000 };     /* where: the SoC file's [lpass] */
 static const struct { unsigned pin, slew_bit; uint32_t pull; const char *name; } swr_pins[] = {
 	{ 0, 0, 0, "gpio0 (SoundWire TX clock)" }, { 1, 2, 2, "gpio1 (data 0)" }, { 2, 4, 2, "gpio2 (data 1)" },
 	{ 14, 6, 2, "gpio14 (data 2)" },
@@ -1799,12 +1800,19 @@ redwood_mic_dsp_up(void)
 		level = 0;
 		return;
 	}
-	if (hakios_board()->pins.tlmm == 0) {
-		say("mic: disabled: the SoC file does not say where the pins are ([pins])\n");
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->lpass.tx_macro == 0) {
+		say("mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])\n");
 		level = 0;
 		return;
 	}
 	tlmm.phys = hakios_board()->pins.tlmm;
+	tx_macro.phys = hakios_board()->lpass.tx_macro;
+	va_macro.phys = hakios_board()->lpass.va_macro;
+	tx_swr.phys = hakios_board()->lpass.tx_swr;
+	tx_hctl.phys = hakios_board()->lpass.tx_swr_hctl;
+	lpi.phys = hakios_board()->lpass.lpi;
+	lpi_high.phys = hakios_board()->lpass.lpi + 0xe000;
+	lpi_slew.phys = hakios_board()->lpass.lpi_slew;
 	level = level > 4 ? 4 : level;
 	PE_parse_boot_argn("mic_secs", &mic_secs, sizeof(mic_secs));
 	PE_parse_boot_argn("mic_input", &smic_input, sizeof(smic_input));
