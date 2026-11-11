@@ -66,7 +66,7 @@ needs its feature in the board's `features`.
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/redwood_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp` / `adsp=1` | phone (both phones) |
+| `bsd/dev/redwood_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `[adsp]` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`[adsp]`); the DSP's own addresses are the 7-series' |
 | `bsd/dev/redwood_audio.c` | `/dev/redwood-audio`: what iOS plays, to whichever sink is there. | — | any |
 | `bsd/dev/redwood_sound.c`, `redwood_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
 | `bsd/dev/redwood_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part |
