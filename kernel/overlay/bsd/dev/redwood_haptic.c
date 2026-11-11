@@ -99,7 +99,7 @@ wait_ms(uint32_t ms)
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
-#define TLMM_PHYS               0x0f100000UL
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
 #define TLMM_SIZE               0x100000UL
 #define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
 #define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
@@ -951,6 +951,11 @@ redwood_haptic_init(void)
 	if (!hakios_board_has(HAKIOS_HAS_HAPTIC_AW86927)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
 		printf("haptic: disabled: this board's board.toml lists no \"haptic-aw86927\"\n");
+		level = 0;
+		return;
+	}
+	if (hakios_board()->pins.tlmm == 0) {
+		printf("haptic: disabled: the SoC file does not say where the pins are ([pins])\n");
 		level = 0;
 		return;
 	}

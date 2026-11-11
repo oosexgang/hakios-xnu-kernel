@@ -111,7 +111,7 @@ wait_ms(uint32_t ms)
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
-#define TLMM_PHYS               0x0f100000UL
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
 #define TLMM_SIZE               0x100000UL
 #define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
 #define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
@@ -703,6 +703,10 @@ faulty(struct amplifier *a, uint16_t *status)
 bool
 redwood_speaker_prepare(const uint8_t *acf, uint64_t size)
 {
+	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) || hakios_board()->pins.tlmm == 0) {
+		say("speaker: not on this board: its board.toml lists no \"speaker-aw88261\", or its SoC file has no [pins]\n");
+		return false;
+	}
 	if (tlmm == 0) {
 		tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	}
@@ -1084,7 +1088,7 @@ show_amplifiers(void)
 
 #define CMD_DB_PHYS             0x80860000UL
 #define CMD_DB_SIZE             0x20000UL
-#define GCC_PHYS                0x00100000UL
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_SIZE                0x60000UL
 
 struct cmd_db_slave {
@@ -1182,6 +1186,11 @@ redwood_speaker_init(void)
 	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
 		printf("speaker: disabled: this board's board.toml lists no \"speaker-aw88261\"\n");
+		probe_level = 0;
+		return;
+	}
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0) {
+		printf("speaker: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])\n");
 		probe_level = 0;
 		return;
 	}

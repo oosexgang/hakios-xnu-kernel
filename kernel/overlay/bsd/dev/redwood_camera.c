@@ -133,7 +133,7 @@ give_up(const char *why)
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
-#define TLMM_PHYS               0x0f100000UL
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
 #define TLMM_SIZE               0x100000UL
 #define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
 #define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
@@ -753,7 +753,7 @@ ldo_off(unsigned n)
 
 /* ---- the camera's clocks: camcc --------------------------------------------------------------------- */
 
-#define GCC_PHYS                0x00100000UL
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_CAMERA_AHB_CBCR     0x26004         /* always on (gcc-yupik.c keeps it so) */
 #define GCC_CAMERA_XO_CBCR      0x26028
 #define CAMCC_PHYS              0x0ad00000UL
@@ -4163,6 +4163,11 @@ redwood_camera_init(void)
 	}
 	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
 		printf("camera: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
+		level = 0;
+		return;
+	}
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0) {
+		printf("camera: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])\n");
 		level = 0;
 		return;
 	}

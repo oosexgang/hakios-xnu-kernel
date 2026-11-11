@@ -44,12 +44,13 @@ extern kern_return_t thread_terminate(thread_t thread);
 
 static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
+#include "hakios_board.h"
 #include "hakios_mmio.h"
 #include "hakios_time.h"
 
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
-#define TLMM_PHYS               0x0f100000UL
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
 #define TLMM_SIZE               0x100000UL
 #define GPIO_CFG(n)             (tlmm + 0x1000UL * (n))         /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
 #define GPIO_IO(n)              (tlmm + 0x1000UL * (n) + 4)     /* bit 0 in, bit 1 out */
@@ -241,7 +242,7 @@ io_supply_on(void)
 
 /* ---- clocks (GCC) -------------------------------------------------------------------------------- */
 
-#define GCC_PHYS                0x00100000UL
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + 0x52008)         /* the application processor's votes */
 #define VOTE_QUP1_CORE_2X       (1u << 18)
@@ -1485,6 +1486,11 @@ redwood_goodix_init(void)
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) {
+		return;
+	}
+	/* (called only on a board that lists "touch-goodix": bsd/dev/redwood_input.c) */
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0) {
+		printf("touch: disabled: the SoC file does not say where the pins and the clock controller are ([pins], [clocks])\n");
 		return;
 	}
 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
