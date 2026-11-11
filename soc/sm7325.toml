@@ -1,0 +1,21 @@
+# Qualcomm Snapdragon 778G. What every board with this SoC shares: where its blocks are.
+# Sources: the SoC's device tree (yupik*.dtsi) and Linux's clock drivers (dispcc-yupik.c).
+name = "sm7325"
+description = "Qualcomm Snapdragon 778G (SM7325, yupik)"
+
+[clocks]
+gcc = 0x00100000                    # clock-controller@100000
+gcc_disp_ahb_cbcr = 0x27004         # gcc_disp_ahb_clk
+dispcc = 0x0af00000                 # clock-controller@af00000
+dispcc_mdss_gdscr = 0x1004          # the display block's power switch (mdss_core_gdsc)
+dispcc_mdss_ahb_cbcr = 0x1050       # disp_cc_mdss_ahb_clk
+
+[display]
+dsi0 = 0x0ae94000                   # mdss_dsi0, reg "dsi_ctrl" (DSI controller 2.5)
+
+[thermal]
+tsens = [0x0c263000, 0x0c265000]    # tsens0 and tsens1, reg "tsens_tm_physical"
+
+[cpufreq]
+epss = 0x18591000                   # cpufreq-hw: one block of registers a group of cores
+epss_domain_size = 0x1000

@@ -15,6 +15,8 @@
 #include <sys/uio.h>
 #include <pexpert/pexpert.h>
 
+#include "hakios_board.h"
+
 #define TOUCH_QUEUE     512             /* records; a power of two */
 
 /* Never infer a physical board from hw.machine: it is an iPhone for iOS.
@@ -239,6 +241,7 @@ redwood_input_init(void)
 		printf("redwood-touch: cannot create the device\n");
 	}
 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
+	hakios_board_init();            /* which board this is and what it has (bsd/dev/hakios_board.c), in the log */
 	redwood_cpufreq_init();
 	redwood_virtio_input_init();
 	if (redwood_board_is("renoir")) {

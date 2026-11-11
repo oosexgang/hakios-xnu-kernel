@@ -1,0 +1,3 @@
+# QEMU's `virt` machine: no phone hardware. Its devices are virtio, found by the drivers themselves.
+name = "qemu-virt"
+description = "QEMU virt (aarch64)"

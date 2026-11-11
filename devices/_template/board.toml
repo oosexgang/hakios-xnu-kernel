@@ -1,0 +1,33 @@
+# A board file with every key, explained. `tools/boards.py new NAME --soc SOC --dts FILE` writes a
+# shorter one with what your device tree says; this is the reference. docs/porting.md is the guide.
+
+name = "NAME"                       # the directory's name, and what the loader puts in /chosen/darwin-board
+description = "Maker Model"         # for people: logs, hw.board.description, tools/boards.py list
+soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the chip are
+
+# The drivers this board may start. Empty at first: add one once its driver has been seen to work
+# here, in the order of docs/porting.md. The kernel knows these:
+#   cpufreq-epss    CPU frequency through Qualcomm's EPSS (boot-arg cpufreq=1); needs [cpufreq] in the SoC file
+#   ddr-rpmh        memory bandwidth votes through RPMh (ddr=)
+#   battery-uefi    the battery as the firmware reports it to the loader (battery=1)
+#   buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1)
+#   adsp            the audio DSP: sound, and the battery manager behind it (adsp=1)
+features = []
+
+# The panel's light (docs/backlight.md).
+[backlight]
+type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI controller (most AMOLED panels);
+                                    # "soft": the picture is darkened in software, which works anywhere;
+                                    # "none": nothing
+# For "dcs", from the panel's node in the Android device tree:
+# panel_mode = "command"            # qcom,mdss-dsi-panel-type: dsi_cmd_mode -> "command", dsi_video_mode -> "video"
+# min = 1                           # qcom,mdss-dsi-bl-min-level
+# max = 2047                        # qcom,mdss-dsi-bl-max-level (without the panel's high-brightness range)
+# restore = 307                     # qcom,mdss-brightness-init-level: the panel is left at this for the loader
+# bytes = 2                         # 2 when max is above 255
+# byte_order = "msb-first"          # "msb-first" when the node has qcom,mdss-dsi-bl-inverted-dbv, else "lsb-first"
+
+# Holding the processors back when hot (docs/thermal.md). Leave the section out until [thermal] and
+# [cpufreq] are in the SoC file.
+# [thermal]
+# floor_mhz = [1000, 1100, 1100]    # the slowest the small, big and prime cores are held back to

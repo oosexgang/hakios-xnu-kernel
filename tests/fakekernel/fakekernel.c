@@ -261,7 +261,7 @@ get(const char *name)
 const char *
 get_string(const char *name)
 {
-	static char text[32];
+	static char text[256];
 	struct sysctl_oid *oid = oid_named(name);
 	struct sysctl_req req = { NULL, 0, text, sizeof(text), 0 };
 

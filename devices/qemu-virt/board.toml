@@ -1,0 +1,10 @@
+# QEMU's `virt` machine: any Linux computer, no phone needed.
+name = "qemu-virt"
+description = "QEMU virt (aarch64)"
+soc = "qemu-virt"
+
+features = []
+
+# No panel to tell: the display driver darkens the picture itself.
+[backlight]
+type = "soft"

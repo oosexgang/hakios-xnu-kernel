@@ -1,0 +1,23 @@
+# Xiaomi Mi 11 Lite 5G. Sources: the phone's Android device tree (dtbo: xiaomi-sm7350-common, the panel
+# dsi_k9_36_02_0a_*_dsc_cmd) and what was measured on the phone (docs/ios26-boot.md).
+name = "renoir"                     # what the loader puts in /chosen/darwin-board
+description = "Xiaomi Mi 11 Lite 5G"
+soc = "sm7350"
+
+# What this board has a working driver for. The kernel starts a driver only where its feature is
+# listed (and its boot-arg asks for it); docs/porting.md says what each needs.
+features = ["cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp"]
+
+# The panel's light (docs/backlight.md). A command-mode AMOLED panel whose brightness is MIPI DCS 0x51.
+[backlight]
+type = "dcs"
+panel_mode = "command"
+min = 1                             # qcom,mdss-dsi-bl-min-level
+max = 2047                          # qcom,mdss-dsi-bl-max-level
+restore = 0x133                     # qcom,mdss-brightness-init-level: what the loader is handed back
+bytes = 2
+byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
+
+# The slowest each group of cores is held back to when hot (docs/thermal.md): small, big, prime.
+[thermal]
+floor_mhz = [1000, 1100, 1100]

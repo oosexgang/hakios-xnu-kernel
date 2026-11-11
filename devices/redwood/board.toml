@@ -1,0 +1,20 @@
+# POCO X5 Pro 5G. Sources: the phone's Android device tree (redwood-sm7325-sde-display.dtsi, the panel
+# dsi_m20_36_02_0a_dsc_vid) and what was measured on the phone under iOS 16.5 (base/README.md).
+name = "redwood"                    # what the loader puts in /chosen/darwin-board
+description = "POCO X5 Pro 5G"
+soc = "sm7325"
+
+features = ["cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp"]
+
+# A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.
+[backlight]
+type = "dcs"
+panel_mode = "video"
+min = 8                             # qcom,mdss-dsi-bl-min-level
+max = 2047                          # of qcom,mdss-dsi-bl-max-level 4095: 2047 and up is its high brightness mode
+restore = 307                       # qcom,mdss-brightness-init-level
+bytes = 2
+byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
+
+[thermal]
+floor_mhz = [1000, 1100, 1100]

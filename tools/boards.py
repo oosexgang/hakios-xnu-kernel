@@ -1,0 +1,526 @@
+#!/usr/bin/env python3
+"""The boards this project knows, as data: devices/NAME/board.toml and soc/SOC.toml.
+
+  tools/boards.py list                 the boards, one a line
+  tools/boards.py show BOARD           one board with its SoC's values filled in
+  tools/boards.py check                validate every file; non-zero exit and the reasons if one is wrong
+  tools/boards.py gen [--check]        write the kernel's table (kernel/overlay/bsd/dev/hakios_board_table.h);
+                                       --check: only say whether the committed one is up to date
+  tools/boards.py new NAME --soc SOC [--dts FILE [--panel NODE]]
+                                       start devices/NAME/board.toml (and soc/SOC.toml if it is not there);
+                                       with --dts, fill in what an Android device tree source says
+
+A board file says what a device has; a SoC file says where the blocks of its chip are, once for every
+board with that chip. The kernel is built with one table of all boards and picks its row at boot by
+/chosen/darwin-board. docs/porting.md walks through adding a device.
+"""
+import argparse
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DEVICES = ROOT / 'devices'
+SOCS = ROOT / 'soc'
+BOARD_HEADER = ROOT / 'kernel/overlay/bsd/dev/hakios_board.h'
+TABLE = ROOT / 'kernel/overlay/bsd/dev/hakios_board_table.h'
+
+NAME = re.compile(r'^[a-z0-9][a-z0-9-]*$')
+
+# key: (type, required). Types: str, int (32-bit), bool, [int] and so on; a tuple of strings is a choice.
+SOC_SCHEMA = {
+    '': {'name': (str, True), 'description': (str, True)},
+    'clocks': {'gcc': (int, True), 'gcc_disp_ahb_cbcr': (int, True), 'dispcc': (int, True),
+               'dispcc_mdss_gdscr': (int, True), 'dispcc_mdss_ahb_cbcr': (int, True)},
+    'display': {'dsi0': (int, True)},
+    'thermal': {'tsens': ([int], True)},
+    'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True)},
+}
+BOARD_SCHEMA = {
+    '': {'name': (str, True), 'description': (str, True), 'soc': (str, True), 'features': ([str], True)},
+    'backlight': {'type': (('dcs', 'soft', 'none'), True), 'panel_mode': (('command', 'video'), False),
+                  'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
+                  'byte_order': (('msb-first', 'lsb-first'), False)},
+    'thermal': {'floor_mhz': ([int], True)},
+}
+# what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
+FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq'}
+
+
+class Problems(list):
+    def add(self, where, what):
+        self.append(f'{where}: {what}')
+
+
+def feature_bits():
+    """The features the kernel knows, HAKIOS_HAS_* of hakios_board.h: [(bit, name as board.toml spells it)]."""
+    found = re.findall(r'^\s*HAKIOS_HAS_([A-Z0-9_]+)\s*=\s*1u\s*<<\s*(\d+)', BOARD_HEADER.read_text(), re.M)
+    return sorted((int(bit), name.lower().replace('_', '-')) for name, bit in found)
+
+
+def features_of_header():
+    """... as a dictionary from that spelling to the C name."""
+    return {name: 'HAKIOS_HAS_' + name.upper().replace('-', '_') for _, name in feature_bits()}
+
+
+def check_table(where, table, schema, problems):
+    for key, value in table.items():
+        if isinstance(value, dict):
+            continue
+        if key not in schema:
+            problems.add(where, f'unknown key "{key}" (known: {", ".join(sorted(schema))})')
+            continue
+        kind = schema[key][0]
+        if isinstance(kind, tuple):
+            if value not in kind:
+                problems.add(where, f'{key} = {value!r}: one of {", ".join(kind)}')
+        elif isinstance(kind, list):
+            if not isinstance(value, list) or any(type(v) is not kind[0] for v in value):
+                problems.add(where, f'{key}: a list of {kind[0].__name__}')
+            elif kind[0] is int and any(not 0 <= v <= 0xffffffff for v in value):
+                problems.add(where, f'{key}: values of 32 bits')
+        elif type(value) is not kind:
+            problems.add(where, f'{key} = {value!r}: {kind.__name__} expected')
+        elif kind is int and not 0 <= value <= 0xffffffff:
+            problems.add(where, f'{key} = {value}: a value of 32 bits')
+    for key, (_, required) in schema.items():
+        if required and key not in table:
+            problems.add(where, f'"{key}" is missing')
+
+
+def check_file(path, data, schema, problems):
+    rel = path.relative_to(ROOT)
+    check_table(rel, data, schema[''], problems)
+    for section, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        if section not in schema:
+            problems.add(rel, f'unknown section [{section}] (known: {", ".join(s for s in schema if s)})')
+        else:
+            check_table(f'{rel} [{section}]', value, schema[section], problems)
+
+
+def load(problems=None):
+    """Every SoC and board, checked. Returns (socs, boards) by name; problems are collected or raised."""
+    own = problems is None
+    problems = Problems() if own else problems
+    socs, boards = {}, {}
+    for path in sorted(SOCS.glob('*.toml')):
+        try:
+            data = tomllib.loads(path.read_text())
+        except tomllib.TOMLDecodeError as error:
+            problems.add(path.relative_to(ROOT), f'not TOML: {error}')
+            continue
+        check_file(path, data, SOC_SCHEMA, problems)
+        if data.get('name') != path.stem:
+            problems.add(path.relative_to(ROOT), f'name = {data.get("name")!r}: the file is {path.stem}.toml')
+        socs[path.stem] = data
+    known = features_of_header()
+    for path in sorted(DEVICES.glob('*/board.toml')):
+        rel = path.relative_to(ROOT)
+        try:
+            data = tomllib.loads(path.read_text())
+        except tomllib.TOMLDecodeError as error:
+            problems.add(rel, f'not TOML: {error}')
+            continue
+        name = path.parent.name
+        if name.startswith('_'):
+            continue                    # (the template)
+        before = len(problems)
+        check_file(path, data, BOARD_SCHEMA, problems)
+        well_formed = len(problems) == before   # (what follows compares values: only if they are of the right kind)
+        if data.get('name') != name:
+            problems.add(rel, f'name = {data.get("name")!r}: the directory is devices/{name}')
+        if not NAME.match(name):
+            problems.add(rel, 'a board is named in lower-case letters, digits and dashes')
+        soc = socs.get(data.get('soc'))
+        if soc is None:
+            problems.add(rel, f'soc = {data.get("soc")!r}: there is no soc/{data.get("soc")}.toml')
+            soc = {}
+        for feature in data.get('features', []):
+            if feature not in known:
+                problems.add(rel, f'feature "{feature}" is not one the kernel knows ({", ".join(sorted(known))})')
+            elif FEATURE_NEEDS.get(feature) and FEATURE_NEEDS[feature] not in soc:
+                problems.add(rel, f'feature "{feature}" needs [{FEATURE_NEEDS[feature]}] in soc/{data.get("soc")}.toml')
+        boards[name] = data
+        if not well_formed:
+            continue
+        light = data.get('backlight', {})
+        if light.get('type') == 'dcs':
+            for key in ('panel_mode', 'min', 'max', 'bytes'):
+                if key not in light:
+                    problems.add(f'{rel} [backlight]', f'type "dcs" needs "{key}"')
+            if 'min' in light and 'max' in light and not light['min'] < light['max']:
+                problems.add(f'{rel} [backlight]', 'min must be below max')
+            if light.get('bytes') not in (None, 1, 2):
+                problems.add(f'{rel} [backlight]', 'bytes is 1 or 2')
+            if light.get('bytes') == 2 and 'byte_order' not in light:
+                problems.add(f'{rel} [backlight]', 'two bytes need "byte_order"')
+            if 'max' in light and light.get('bytes') in (1, 2) and light['max'] >= 1 << (8 * light['bytes']):
+                problems.add(f'{rel} [backlight]', f'max does not fit in {light["bytes"]} byte(s)')
+            for section in ('clocks', 'display'):
+                if section not in soc:
+                    problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        thermal = data.get('thermal')
+        if thermal is not None:
+            if len(thermal.get('floor_mhz', [])) != 3:
+                problems.add(f'{rel} [thermal]', 'floor_mhz: three values (small, big and prime cores)')
+            for section in ('thermal', 'cpufreq'):
+                if section not in soc:
+                    problems.add(rel, f'[thermal] needs [{section}] in soc/{data.get("soc")}.toml')
+            if len(soc.get('thermal', {}).get('tsens', [])) > 2:
+                problems.add(rel, f'soc/{data.get("soc")}.toml: at most two TSENS controllers')
+    if own and problems:
+        raise SystemExit('\n'.join(problems))
+    return socs, boards
+
+
+def c_string(text):
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def table_text(socs, boards):
+    known = features_of_header()
+    out = ['/*',
+           ' * GENERATED by tools/boards.py gen from devices/NAME/board.toml and soc/SOC.toml: do not edit.',
+           ' * To change a board, change its file there and run the tool; `tools/boards.py gen --check`',
+           ' * (part of `make check`) fails while this file is not what the tool writes.',
+           ' */',
+           '#ifndef _HAKIOS_BOARD_TABLE_H',
+           '#define _HAKIOS_BOARD_TABLE_H',
+           '',
+           '#include "hakios_board.h"',
+           '',
+           'const struct hakios_board hakios_boards[] = {']
+    for name in sorted(boards):
+        board = boards[name]
+        soc = socs[board['soc']]
+        features = ' | '.join(known[f] for f in board['features']) or '0'
+        clocks = soc.get('clocks', {})
+        light = board.get('backlight', {})
+        thermal = board.get('thermal', {})
+        tsens = (soc.get('thermal', {}).get('tsens', []) + [0, 0])[:2] if thermal else [0, 0]
+        cpufreq = soc.get('cpufreq', {})
+        dcs = light.get('type') == 'dcs'
+        out += [
+            '\t{',
+            f'\t\t.name = {c_string(name)},',
+            f'\t\t.description = {c_string(board["description"])},',
+            f'\t\t.soc = {c_string(board["soc"])},',
+            f'\t\t.features = {features},',
+        ]
+        if dcs:
+            out += [
+                '\t\t.clocks = {',
+                f'\t\t\t.gcc = {clocks["gcc"]:#010x}, .gcc_disp_ahb_cbcr = {clocks["gcc_disp_ahb_cbcr"]:#x},',
+                f'\t\t\t.dispcc = {clocks["dispcc"]:#010x}, .dispcc_mdss_gdscr = {clocks["dispcc_mdss_gdscr"]:#x},',
+                f'\t\t\t.dispcc_mdss_ahb_cbcr = {clocks["dispcc_mdss_ahb_cbcr"]:#x},',
+                '\t\t},',
+            ]
+        kind = {'dcs': 'HAKIOS_BACKLIGHT_DCS', 'soft': 'HAKIOS_BACKLIGHT_SOFT'}.get(light.get('type'), 'HAKIOS_BACKLIGHT_NONE')
+        if dcs:
+            out += [
+                '\t\t.backlight = {',
+                f'\t\t\t.type = {kind}, .video_mode = {int(light["panel_mode"] == "video")}, .bytes = {light["bytes"]},',
+                f'\t\t\t.lsb_first = {int(light.get("byte_order") == "lsb-first")}, .dsi = {soc["display"]["dsi0"]:#010x},',
+                f'\t\t\t.raw_min = {light["min"]}, .raw_max = {light["max"]}, .raw_restore = {light.get("restore", 0)},',
+                '\t\t},',
+            ]
+        else:
+            out.append(f'\t\t.backlight = {{ .type = {kind} }},')
+        if cpufreq:
+            out.append(f'\t\t.cpufreq = {{ .epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x} }},')
+        if thermal:
+            floors = ', '.join(str(v) for v in thermal['floor_mhz'])
+            out += [
+                '\t\t.thermal = {',
+                f'\t\t\t.tsens = {{ {tsens[0]:#010x}, {tsens[1]:#010x} }},',
+                f'\t\t\t.floor_mhz = {{ {floors} }},',
+                '\t\t},',
+            ]
+        out.append('\t},')
+    bits = dict(feature_bits())
+    names = ', '.join(c_string(bits.get(bit, '?')) for bit in range(max(bits) + 1))
+    out += ['};',
+            '',
+            'const unsigned hakios_board_count = sizeof(hakios_boards) / sizeof(hakios_boards[0]);',
+            '',
+            '/* the features by their bit, as board.toml spells them */',
+            f'const char *const hakios_feature_names[] = {{ {names} }};',
+            'const unsigned hakios_feature_count = sizeof(hakios_feature_names) / sizeof(hakios_feature_names[0]);',
+            '',
+            '#endif /* _HAKIOS_BOARD_TABLE_H */',
+            '']
+    return '\n'.join(out)
+
+
+# ---- an Android device tree source, read for what a board file wants -----------------------------
+
+class Node:
+    def __init__(self, name):
+        self.name, self.props, self.children = name, {}, []
+
+    def walk(self):
+        yield self
+        for child in self.children:
+            yield from child.walk()
+
+
+def parse_dts(text):
+    """A device tree source (dtc -I dtb -O dts, or a vendor's .dts with its includes already merged) as a
+    tree of nodes. Properties keep their text; cells(), strings() below read it. Not a full parser: what it
+    does not understand (/directives/, labels, deletions) it skips."""
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+    text = re.sub(r'(?m)//.*$', '', text)
+    position, root = 0, Node('/')
+    stack = [root]
+    token = re.compile(r'\s*(?:(?P<close>\}\s*;)|(?P<node>(?:[\w,.+-]+:\s*)*(?P<name>[\w,.+@/-]+)\s*\{)|'
+                       r'(?P<prop>[\w,.+#?-]+)\s*(?:=\s*(?P<value>(?:"(?:[^"\\]|\\.)*"|<[^>]*>|\[[^\]]*\]|[^;"<\[])*))?;)')
+    while position < len(text):
+        match = token.match(text, position)
+        if match is None:
+            # something of the syntax this does not know: on to the next line
+            end = text.find('\n', position)
+            position = len(text) if end < 0 else end + 1
+            continue
+        position = match.end()
+        if match['close']:
+            if len(stack) > 1:
+                stack.pop()
+        elif match['node']:
+            node = Node(match['name'])
+            stack[-1].children.append(node)
+            stack.append(node)
+        else:
+            stack[-1].props[match['prop']] = (match['value'] or '').strip()
+    return root
+
+
+def cells(value):
+    """The numbers of a property written as <...> (several groups are joined)."""
+    return [int(c, 0) for group in re.findall(r'<([^>]*)>', value or '') for c in group.split()
+            if re.fullmatch(r'(0[xX][0-9a-fA-F]+|\d+)', c)]
+
+
+def strings(value):
+    """The strings of a property: "a", "b" or "a\\0b"."""
+    return [part for s in re.findall(r'"((?:[^"\\]|\\.)*)"', value or '') for part in s.split('\\0')]
+
+
+def reg_named(node, name):
+    """The address of the reg entry with that name in reg-names (64-bit cells: address then size, each of
+    one or two words; taken as pairs of equal width)."""
+    names = strings(node.props.get('reg-names'))
+    reg = cells(node.props.get('reg'))
+    if name not in names or not reg:
+        return None
+    index = names.index(name)
+    width = len(reg) // len(names) // 2 if len(names) and len(reg) % (2 * len(names)) == 0 else 1
+    words = reg[index * 2 * width: index * 2 * width + width]
+    address = 0
+    for word in words:
+        address = address << 32 | word
+    return address or None
+
+
+def unit_address(node):
+    return int(node.name.split('@', 1)[1], 16) if '@' in node.name and re.fullmatch(r'[0-9a-fA-F]+', node.name.split('@', 1)[1]) else None
+
+
+def from_dts(text, panel=None):
+    """What a device tree says of a board, and what it leaves open. Returns (soc_values, board_values, notes)."""
+    tree = parse_dts(text)
+    soc, board, notes = {}, {}, []
+    tsens, panels = [], []
+    for node in tree.walk():
+        compatible = strings(node.props.get('compatible'))
+        if reg_named(node, 'dsi_ctrl') and node.props.get('cell-index', '<0>').strip() in ('<0>', '<0x00>', '<0x0>'):
+            soc.setdefault('display', {})['dsi0'] = reg_named(node, 'dsi_ctrl')
+        if reg_named(node, 'tsens_tm_physical'):
+            tsens.append(reg_named(node, 'tsens_tm_physical'))
+        if any(c.startswith('qcom,cpufreq-hw') or c == 'qcom,cpufreq-epss' for c in compatible):
+            reg = cells(node.props.get('reg'))
+            names = strings(node.props.get('reg-names'))
+            if names and reg and len(reg) % len(names) == 0:
+                width = len(reg) // len(names) // 2 or 1
+                first = reg[width - 1] if width else reg[0]
+                second = reg[2 * width + width - 1] if len(names) > 1 else None
+                soc['cpufreq'] = {'epss': first, 'epss_domain_size': (second - first) if second and second > first else 0x1000}
+        if any(re.fullmatch(r'qcom,.*-dispcc(-.*)?|qcom,dispcc-.*', c) for c in compatible) and unit_address(node):
+            soc.setdefault('clocks', {})['dispcc'] = unit_address(node)
+        if any(re.fullmatch(r'qcom,.*-gcc(-.*)?|qcom,gcc-.*', c) for c in compatible) and unit_address(node):
+            soc.setdefault('clocks', {})['gcc'] = unit_address(node)
+        if 'qcom,mdss-dsi-panel-type' in node.props:
+            panels.append(node)
+    if tsens:
+        soc['thermal'] = {'tsens': sorted(set(tsens))[:2]}
+    if panels:
+        chosen = [p for p in panels if p.name == panel] if panel else panels
+        if panel and not chosen:
+            raise SystemExit(f'no panel node "{panel}"; the tree has: {", ".join(p.name for p in panels)}')
+        if len(chosen) > 1:
+            notes.append('several panels in the tree; took the first. The phone uses one of them (Android: '
+                         'cat /proc/cmdline, "msm_drm.dsi_display0="): --panel NODE picks it. They are: ' +
+                         ', '.join(p.name for p in chosen))
+        node = chosen[0]
+        props = node.props
+        kind = (strings(props.get('qcom,mdss-dsi-panel-type')) or [''])[0]
+        control = (strings(props.get('qcom,mdss-dsi-bl-pmic-control-type')) or [''])[0]
+        light = {'panel': node.name, 'panel_name': (strings(props.get('qcom,mdss-dsi-panel-name')) or [''])[0]}
+        if control == 'bl_ctrl_dcs':
+            low = cells(props.get('qcom,mdss-dsi-bl-min-level'))
+            high = cells(props.get('qcom,mdss-dsi-bl-max-level'))
+            start = cells(props.get('qcom,mdss-brightness-init-level'))
+            light.update(type='dcs', panel_mode='video' if kind == 'dsi_video_mode' else 'command',
+                         min=low[0] if low else 1, max=high[0] if high else 255)
+            if start:
+                light['restore'] = start[0]
+            light['bytes'] = 2 if light['max'] > 255 else 1
+            if light['bytes'] == 2:
+                light['byte_order'] = 'msb-first' if 'qcom,mdss-dsi-bl-inverted-dbv' in props else 'lsb-first'
+            if not low or not high:
+                notes.append('the panel names no brightness range (qcom,mdss-dsi-bl-min/max-level): guessed')
+        else:
+            light['type'] = 'soft'
+            notes.append(f'the panel\'s light is "{control or "not named"}", not DCS: no driver for that yet, so '
+                         'the picture is darkened in software (type "soft")')
+        board['backlight'] = light
+    else:
+        notes.append('no panel node in the tree (it may be in the dtbo: dump that as well)')
+    for section, keys in (('display', ['dsi0']), ('thermal', ['tsens']), ('cpufreq', ['epss'])):
+        if not all(key in soc.get(section, {}) for key in keys):
+            notes.append(f'[{section}] not found in the tree')
+    notes.append('gcc_disp_ahb_cbcr, dispcc_mdss_gdscr and dispcc_mdss_ahb_cbcr are not in a device tree: they are '
+                 'register offsets from Linux\'s clock drivers for the SoC (gcc-*.c: gcc_disp_ahb_clk; dispcc-*.c: '
+                 'the MDSS GDSC and disp_cc_mdss_ahb_clk)')
+    return soc, board, notes
+
+
+def toml_value(value):
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, int):
+        return f'{value:#x}' if value > 4096 else str(value)
+    if isinstance(value, list):
+        return '[' + ', '.join(toml_value(v) for v in value) + ']'
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def new_board(name, soc_name, dts=None, panel=None, description=None):
+    if not NAME.match(name) or not NAME.match(soc_name):
+        raise SystemExit('names are lower-case letters, digits and dashes')
+    board_path = DEVICES / name / 'board.toml'
+    soc_path = SOCS / f'{soc_name}.toml'
+    if board_path.exists():
+        raise SystemExit(f'{board_path.relative_to(ROOT)} is there already')
+    soc, board, notes = from_dts(dts.read_text(errors='replace'), panel) if dts else ({}, {}, [])
+    light = board.get('backlight', {'type': 'soft'})
+    lines = [f'# {description or name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
+             '# Every value here is to be checked against the device before it is relied on (docs/porting.md).',
+             f'name = "{name}"                     # what the loader puts in /chosen/darwin-board',
+             f'description = {toml_value(description or name)}',
+             f'soc = "{soc_name}"',
+             '',
+             '# Nothing yet: a feature is listed once its driver has been seen to work on this board',
+             '# (docs/porting.md goes through them in the order to try).',
+             'features = []',
+             '']
+    if light.get('panel'):
+        lines.append(f'# The panel: {light["panel"]}' + (f' ("{light["panel_name"]}")' if light.get('panel_name') else ''))
+    lines.append('[backlight]')
+    for key in ('type', 'panel_mode', 'min', 'max', 'restore', 'bytes', 'byte_order'):
+        if key in light:
+            lines.append(f'{key} = {toml_value(light[key])}')
+    lines.append('')
+    board_path.parent.mkdir(parents=True)
+    board_path.write_text('\n'.join(lines))
+    print(f'wrote {board_path.relative_to(ROOT)}')
+    if not soc_path.exists():
+        text = [f'# {soc_name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
+                '# What every board with this SoC shares: where its blocks are (docs/porting.md).',
+                f'name = "{soc_name}"',
+                f'description = "{soc_name}"',
+                '']
+        clocks = soc.get('clocks', {})
+        if light.get('type') == 'dcs' or clocks:
+            text.append('[clocks]')
+            for key in ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'):
+                text.append(f'{key} = {toml_value(clocks[key])}' if key in clocks else f'# {key} = 0x...            # TO FILL IN')
+            text.append('')
+        for section in ('display', 'thermal', 'cpufreq'):
+            if section in soc:
+                text.append(f'[{section}]')
+                text += [f'{key} = {toml_value(value)}' for key, value in soc[section].items()]
+                text.append('')
+        soc_path.write_text('\n'.join(text))
+        print(f'wrote {soc_path.relative_to(ROOT)}')
+    else:
+        print(f'{soc_path.relative_to(ROOT)} is there already: left as it is')
+    for note in notes:
+        print(f'note: {note}')
+    print('next: tools/boards.py check, then docs/porting.md')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('list')
+    commands.add_parser('show').add_argument('board')
+    commands.add_parser('check')
+    commands.add_parser('gen').add_argument('--check', action='store_true')
+    new = commands.add_parser('new')
+    new.add_argument('name')
+    new.add_argument('--soc', required=True)
+    new.add_argument('--dts', type=Path)
+    new.add_argument('--panel')
+    new.add_argument('--description')
+    options = parser.parse_args()
+
+    if options.command == 'new':
+        new_board(options.name, options.soc, options.dts, options.panel, options.description)
+        return 0
+    if options.command == 'check':
+        problems = Problems()
+        socs, boards = load(problems)
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        if not problems:
+            print(f'{len(boards)} boards, {len(socs)} SoCs: ok')
+        return 1 if problems else 0
+    socs, boards = load()
+    if options.command == 'list':
+        for name, board in sorted(boards.items()):
+            print(f'{name:12} {board["soc"]:10} {board["description"]}')
+    elif options.command == 'show':
+        if options.board not in boards:
+            raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
+        board = boards[options.board]
+        for key, value in board.items():
+            if isinstance(value, dict):
+                print(f'[{key}]')
+                for k, v in value.items():
+                    print(f'  {k} = {toml_value(v)}')
+            else:
+                print(f'{key} = {toml_value(value)}')
+        print(f'--- soc/{board["soc"]}.toml')
+        for key, value in socs[board['soc']].items():
+            if isinstance(value, dict):
+                print(f'[{key}]')
+                for k, v in value.items():
+                    print(f'  {k} = {toml_value(v)}')
+    elif options.command == 'gen':
+        text = table_text(socs, boards)
+        if options.check:
+            if not TABLE.exists() or TABLE.read_text() != text:
+                print(f'{TABLE.relative_to(ROOT)} is not what devices/ and soc/ say: run tools/boards.py gen', file=sys.stderr)
+                return 1
+            print(f'{TABLE.relative_to(ROOT)}: up to date')
+        else:
+            TABLE.write_text(text)
+            print(f'wrote {TABLE.relative_to(ROOT)}: {len(boards)} boards')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -21,6 +21,11 @@ run() {
 	fi
 }
 
+echo "== boards (devices/, soc/, tools/boards.py)"
+python3 "$HERE/boards_test.py" 2>&1 | tail -3 || failed=1
+"$HERE/../tools/boards.py" check || failed=1
+"$HERE/../tools/boards.py" gen --check || failed=1
+
 echo "== kernel_tools_test"
 "$HERE/kernel_tools_test.sh" || failed=1
 
@@ -37,7 +42,7 @@ scenarios() {
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in backlight_driver_test thermal_driver_test; do
+for test in board_test backlight_driver_test thermal_driver_test; do
 	echo "== $test (host)"
 	if "$CC" "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$WORK/$test"; then
 		scenarios "" "$WORK/$test"
