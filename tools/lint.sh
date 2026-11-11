@@ -2,6 +2,7 @@
 # The checks of form, for every file the repository tracks:
 #   - every shell script parses (bash -n), every Python script parses
 #   - the scripts this repository's own workflow rests on (kernel/, tests/, tools/) pass shellcheck
+#   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
 # `make lint` runs this; it changes nothing.
 set -uo pipefail
@@ -21,6 +22,8 @@ if command -v shellcheck > /dev/null; then
 else
 	echo "lint: no shellcheck on this machine: only the syntax was checked"
 fi
+
+tools/check-links.py || failed=1
 
 tools/check-publishable.sh > /dev/null || { tools/check-publishable.sh; failed=1; }
 

@@ -49,7 +49,7 @@ SpringBoard working set of the dyld cache.
 ## 1. How the iOS 16.5 image is chosen (darwin-renoir)
 
 `ios165/select-system.py` reads `7z l -slt rootfs.dmg` and writes `system.files` (what to extract)
-and `system.manifest` (mode/uid/gid/symlinks, used by `tools/apfs/mkapfs.py`). Rules (`wanted_file`):
+and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapfs.py`). Rules (`wanted_file`):
 
 - Taken whole: `usr/{libexec,sbin,bin,lib,share}`, `sbin`, `bin`, `private/etc`, `System/Library`,
   `Applications`, `Library`.
@@ -71,7 +71,7 @@ and `system.manifest` (mode/uid/gid/symlinks, used by `tools/apfs/mkapfs.py`). R
 - Applications: taken without their media or ML models. `private/var/staged_system_apps` moves into
   `/Applications`. The rest of `private/var` is left out.
 - Fonts: those ≤ 25 MB, plus AppleColorEmoji and PingFang, which are trimmed afterwards
-  (`tools/font_trim.py`).
+  (`userland/tools/font_trim.py`).
 
 `ios165/fetch.sh` adds the OS cryptex. It leaves out the dyld cache and DriverKit, then adds the dyld
 cache separately without `.symbols`. `userland/build.sh` (system image section) does the rest:

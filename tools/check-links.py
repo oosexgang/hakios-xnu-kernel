@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Every relative link in the repository's Markdown points at something that is there, and every
+`path` in backticks that looks like a file of this repository exists. Part of `make lint`.
+
+The first generation's documents (base/, userland/) describe a workspace that is not this
+repository's layout and are left out.
+"""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+LEGACY = ('base/', 'userland/')
+LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)\)')
+# a path in backticks: starts at one of the repository's top-level directories and names a file or a directory
+TOP = ('devices', 'soc', 'kernel', 'loader', 'ios', 'tests', 'tools', 'docs')
+PATH = re.compile(r'`((?:' + '|'.join(TOP) + r')/[A-Za-z0-9_./-]+)`')
+
+
+def main():
+    files = subprocess.run(['git', 'ls-files', '*.md'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+    problems = []
+    for name in files:
+        if name.startswith(LEGACY):
+            continue
+        path = ROOT / name
+        text = path.read_text()
+        for number, line in enumerate(text.split('\n'), 1):
+            for target in LINK.findall(line):
+                if re.match(r'[a-z]+:', target) or target.startswith('#'):
+                    continue
+                if not (path.parent / target.split('#')[0]).exists():
+                    problems.append(f'{name}:{number}: link to {target}, which is not there')
+            for target in PATH.findall(line):
+                # placeholders (NAME, SOC, …) and globs are not paths
+                if re.search(r'NAME|SOC|[*…]|\.\.\.', target):
+                    continue
+                if not (ROOT / target.rstrip('/.')).exists():
+                    problems.append(f'{name}:{number}: `{target}` is not in the repository')
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    if not problems:
+        print(f'check-links: {len([f for f in files if not f.startswith(LEGACY)])} documents, ok')
+    return 1 if problems else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

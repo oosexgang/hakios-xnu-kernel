@@ -74,9 +74,10 @@ Light readings: until a sensor driver reports through `hakios_als_report(millilu
 `hw.backlight.lux` (default 300 lux). On Renoir and Redwood the ambient light sensor sits behind the sensor DSP
 (SSC, QMI), so it needs a QMI sensor client. That driver feeds this path when it lands, and nothing else changes.
 
-## Device profiles
+## Device data
 
-`bl_profiles[]` in `hakios_backlight.c`, keyed by the loader's `/chosen/darwin-board`:
+The driver has no table of its own. It reads the board's row (`hakios_board()`), which comes from
+`[backlight]` in `devices/NAME/board.toml` and `[clocks]` and `[display]` in the SoC's file:
 
 | Board | Panel | Backend | DSI | Range | Order | Mode |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -85,14 +86,18 @@ Light readings: until a sensor driver reports through `hakios_als_report(millilu
 | `qemu-virt` | framebuffer | soft | — | — | — | — |
 | anything else | — | soft | — | — | — | — |
 
-Adding a device takes one line. Values come from the device's Android device tree:
-- `mdss_dsi0` `reg` "dsi_ctrl" gives the DSI address.
+Adding a device is a `[backlight]` section in its board file. `tools/boards.py new --dts` fills it in
+from the Android device tree:
+- `mdss_dsi0` `reg` "dsi_ctrl" gives the DSI address (the SoC file's `[display]`).
 - The panel node gives `qcom,mdss-dsi-bl-min-level` and `-max-level`.
 - `qcom,mdss-dsi-bl-inverted-dbv` present means MSB first.
 - `qcom,mdss-brightness-init-level` is the level left for the loader.
-- The display clock controller's MDSS GDSC and `mdss_ahb` offsets come from Linux `dispcc-*.c`.
 
-To try a device before writing its line, pass the `bl_*` boot arguments.
+The display clock controller's MDSS GDSC and `mdss_ahb` offsets are not in a device tree. They come from
+Linux `dispcc-*.c` and go in the SoC file's `[clocks]`.
+
+To try values before writing them down, pass the `bl_*` boot arguments. A board with no description at
+all gets the `soft` backend.
 
 ### The DCS path, step by step
 

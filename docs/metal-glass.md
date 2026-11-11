@@ -68,5 +68,5 @@ the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims
 
 1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with `fw-renoir/` in
    place. Confirm the GPU block starts on 12377, and read the temperature lines.
-2. On the build machine: `tools/metallib.py` on iOS 27's `QuartzCore.framework/default.metallib`, then
+2. On the build machine: `userland/tools/metallib.py` on iOS 27's `QuartzCore.framework/default.metallib`, then
    `userland/tools/air/check.sh`. The number of iOS 27 pipelines our compiler accepts tells how far step 4 is.

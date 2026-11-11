@@ -1,5 +1,17 @@
 # iOS 26 and 27 on Renoir: RAM-only builds and boot notes
 
+> This is the lab notebook of the bring-up: what was done, in order, with dates and measurements.
+> For how the project is organised, start with [architecture.md](architecture.md).
+>
+> Two things changed after these notes were written, and the commands below were updated for them:
+> - The kernel is built with `kernel/build.sh` from `kernel/overlay/` and `kernel/patches/`. The patch
+>   numbers in the text (0005 to 0022) are those of the earlier patch series; the same changes are now in
+>   the topic patches, mapped in [kernel/patches/README.md](../kernel/patches/README.md).
+> - Renoir's default boot arguments are in `devices/renoir/board.toml` (`[boot]`), not in `boot26.py`.
+>
+> The scripts under `ios/` expect the team's working tree (`darwin-renoir`) and an extracted IPSW beside
+> the repository; see "What is not in this repository" in the architecture document.
+
 State on 2026-10-31: iOS 26.6.2 (23G90, iPhone12,1 files) boots on renoir (Snapdragon 780G, no PAC) from
 RAM through darwin-renoir's resident loader. launchd takes the normal (not restore) path through all of
 its boot tasks, about 110 iOS processes run, and SpringBoard shows the home screen with the status bar,

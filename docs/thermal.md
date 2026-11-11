@@ -3,8 +3,8 @@
 The phone heats up: before graphics were removed, a GPU sensor read 69.1 °C (`ios26-boot.md`, item 14), and
 `cpufreq=1` runs every core group at its top row with nothing holding it back. The kernel side is
 `kernel/overlay/bsd/dev/hakios_thermal.c` (the arithmetic is in
-`hakios_thermal_core.h`). It is device-independent: a board needs one line with its sensor and frequency
-controller addresses.
+`hakios_thermal_core.h`). It is device-independent: the sensor and frequency controller addresses come
+from the board's files.
 
 ## What it does
 
@@ -38,14 +38,16 @@ GPU driver wants to follow.
 `sysctl hw.thermal`: `hottest` (tenths of a degree), `step`, `most`, and `trip`/`clear`/`critical`, which root can
 change while running, for tuning without a new kernel.
 
-## Profiles
+## Device data
 
-`renoir` (SM7350) and `redwood` (SM7325), both lahaina family:
+The driver reads the board's row (`hakios_board()`): `[thermal]` and `[cpufreq]` of the SoC's file, and
+`[thermal]` of the board's. For `renoir` (SM7350) and `redwood` (SM7325):
 - TSENS `tsens_tm_physical` at 0x0c263000 and 0x0c265000;
 - EPSS at 0x18591000, three groups of 0x1000;
 - floors 1000/1100/1100 MHz.
 
-To add a device, take those addresses from its device tree.
+`tools/boards.py new --dts` reads the first two from a device tree. A board without `[thermal]` is
+told so and nothing is read. Without `[cpufreq]` in its SoC file the limiter only looks.
 
 ## Testing
 
