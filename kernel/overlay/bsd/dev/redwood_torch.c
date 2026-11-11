@@ -153,35 +153,8 @@ wait_ms(uint32_t ms)
 
 /* ---- the PMIC arbiter (version 5) ---------------------------------------------------------------- */
 
-/* Where its blocks are: the SoC file's [spmi] (hakios_board.h). */
-#define ARB_CORE_SIZE           0x1100UL        /* core: the version, and which peripheral each channel is */
-#define ARB_CNFG_SIZE           0x1000UL        /* cnfg: which system may write through each channel */
-#define ARB_OBSERVER_SIZE       0x10000UL       /* observer: reads, 0x10000 per system and 0x80 per channel in it */
-                                                /* channels: writes, 0x10000 per channel */
-static uint32_t arb_system;                     /* who we are to the arbiter: the device tree's "qcom,ee" */
-#define ARB_SYSTEM              arb_system
-
-#define ARB_VERSION             0x000
-#define ARB_VERSION_5           0x50000000u
-#define ARB_VERSION_7           0x70000000u
-#define ARB_FEATURES            0x004
-#define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* [19:8] slave and peripheral */
-#define ARB_OWNER(n)            (0x700 + 4 * (n))       /* [2:0] the system that may write through channel n */
-#define ARB_MAX_CHANNELS        512
-
-#define CHANNEL_COMMAND         0x00
-#define CHANNEL_STATUS          0x08
-#define CHANNEL_WDATA0          0x10
-#define OBSERVER_DATA0          0x18
-#define OBSERVER_DATA1          0x1c
-#define STATUS_DONE             0x1
-#define STATUS_FAILURE          0x2
-#define STATUS_DENIED           0x4
-#define STATUS_DROPPED          0x8
-#define COMMAND_WRITE           (0u << 27)      /* "extended register write long"; [11:4] register, [2:0] bytes - 1 */
-#define COMMAND_READ            (1u << 27)      /* "extended register read long" */
-#define TRANSFER_TIMEOUT_US     2000
-#define DROPPED                 "the transfer was dropped"
+/* Where its blocks are, its registers and one transfer: hakios_spmi.h, shared with the other drivers of PMICs. */
+#include "hakios_spmi.h"
 
 struct peripheral {
 	const char *    name;
@@ -193,7 +166,7 @@ struct peripheral {
 static struct peripheral flash = { .name = "the PM8350C's flash LED module", .id = 0x2ee };
 static struct peripheral alarm = { .name = "the PM8350C's temperature alarm", .id = 0x20a };
 
-static vm_offset_t arb_core, arb_cnfg, arb_observer;
+static struct hakios_spmi arb;
 static uint8_t alarm_subtype;
 
 /* (the arbiter one transfer at a time with the buttons' driver; at the run's end the others are stopped, perhaps holding it) */
@@ -213,20 +186,6 @@ unlock(void)
 	}
 }
 
-static const char *
-wait_done(vm_offset_t channel)
-{
-	uint64_t start = mach_absolute_time(), interval;
-	uint32_t status;
-
-	nanoseconds_to_absolutetime(TRANSFER_TIMEOUT_US * (uint64_t)NSEC_PER_USEC, &interval);
-	do {
-		status = rd(channel + CHANNEL_STATUS);
-	} while (!(status & STATUS_DONE) && mach_absolute_time() - start < interval);
-	return !(status & STATUS_DONE) ? "no answer from the arbiter" : (status & STATUS_DENIED) ? "the arbiter refuses" :
-	       (status & STATUS_FAILURE) ? "the transfer failed" : (status & STATUS_DROPPED) ? DROPPED : NULL;
-}
-
 /*
  * `count' (1 to 8) registers from `reg' on; NULL, or what went wrong. A transfer the arbiter drops
  * now and then (the buttons' driver sees one in a thousand or so, from whatever else is on the bus)
@@ -240,7 +199,7 @@ spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t coun
 	const char *problem = NULL;
 
 	for (int tries = 0; tries < 3; tries++) {
-		if ((problem = spmi_read_once(p, reg, bytes, count)) == NULL || strcmp(problem, DROPPED) != 0) {
+		if ((problem = spmi_read_once(p, reg, bytes, count)) == NULL || strcmp(problem, SPMI_SAYS_DROPPED) != 0) {
 			break;
 		}
 	}
@@ -250,26 +209,15 @@ spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t coun
 static const char *
 spmi_read_once(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x80UL * p->channel;       /* (our system's part of the block is what is mapped) */
 	const char *problem;
-	uint32_t data[2];
 
 	if (!p->found) {
 		return "no channel";
 	}
 	lock();
-	wr(channel + CHANNEL_COMMAND, COMMAND_READ | (uint32_t)reg << 4 | (count - 1));
-	problem = wait_done(channel);
-	data[0] = rd(channel + OBSERVER_DATA0);
-	data[1] = count > 4 ? rd(channel + OBSERVER_DATA1) : 0;
+	problem = hakios_spmi_read(hakios_spmi_observer(&arb, p->channel), reg, bytes, count);
 	unlock();
-	if (problem != NULL) {
-		return problem;
-	}
-	for (uint32_t i = 0; i < count; i++) {
-		bytes[i] = (uint8_t)(data[i / 4] >> (8 * (i % 4)));
-	}
-	return NULL;
+	return problem;
 }
 
 /* ---- the flash LED module -------------------------------------------------------------------------- */
@@ -333,17 +281,15 @@ put(uint8_t reg, uint8_t value)
 		return false;
 	}
 	/* (the channel is still the module's: its entry in the arbiter's table is looked at again) */
-	if (((rd(arb_core + ARB_CHANNEL(flash.channel)) >> 8) & 0xfff) != flash.id) {
+	if (SPMI_ID_OF(hakios_spmi_channel_map(&arb, flash.channel)) != flash.id) {
 		give_up("the arbiter's channel is no longer the flash module's");
 		return false;
 	}
 	for (int tries = 0; tries < 3; tries++) {
 		lock();
-		wr(flash.write + CHANNEL_WDATA0, value);
-		wr(flash.write + CHANNEL_COMMAND, COMMAND_WRITE | (uint32_t)reg << 4);
-		problem = wait_done(flash.write);
+		problem = hakios_spmi_write(flash.write, reg, value);
 		unlock();
-		if (problem == NULL || strcmp(problem, DROPPED) != 0) {
+		if (problem == NULL || strcmp(problem, SPMI_SAYS_DROPPED) != 0) {
 			break;          /* (a dropped write has not been made: asked for again, then read back) */
 		}
 	}
@@ -386,21 +332,21 @@ put_bits(uint8_t reg, uint8_t mask, uint8_t value)
 }
 
 static void
-find_channel(struct peripheral *p, uint32_t channels)
+find_channel(struct peripheral *p)
 {
-	for (uint32_t n = 0; n < channels; n++) {
-		uint32_t map = rd(arb_core + ARB_CHANNEL(n)), owner;
+	for (uint32_t n = 0; n < arb.channels; n++) {
+		uint32_t map = hakios_spmi_channel_map(&arb, n), owner;
 
-		if (map == 0 || ((map >> 8) & 0xfff) != p->id) {
+		if (map == 0 || SPMI_ID_OF(map) != p->id) {
 			continue;
 		}
-		owner = rd(arb_cnfg + ARB_OWNER(n)) & 7;
+		owner = hakios_spmi_channel_owner(&arb, n);
 		say("torch: channel %u is %s (%#x); written by system %u%s\n", n, p->name, map, owner,
-		    owner == ARB_SYSTEM ? ", which is us" : "");
-		if (!p->found || owner == ARB_SYSTEM) {
+		    owner == arb.system ? ", which is us" : "");
+		if (!p->found || owner == arb.system) {
 			p->found = true;
 			p->channel = (uint16_t)n;
-			p->writable = owner == ARB_SYSTEM;
+			p->writable = owner == arb.system;
 		}
 	}
 	if (!p->found) {
@@ -642,26 +588,16 @@ serve(void)
 static void
 torch_thread(__unused void *parameter, __unused wait_result_t result)
 {
-	uint32_t version, channels;
 	uint8_t id[2] = { 0, 0 }, revision = 0, alarm_status = 0;
 
 	say("torch: level %u: %s\n", level, level == 1 ? "a look, reading only" : level == 2 ? "the light on once" :
 	    "the light for iOS");
-	arb_system = hakios_board()->spmi.ee;
-	arb_core = ml_io_map(hakios_board()->spmi.core, ARB_CORE_SIZE);
-	arb_cnfg = ml_io_map(hakios_board()->spmi.cnfg, ARB_CNFG_SIZE);
-	arb_observer = ml_io_map(hakios_board()->spmi.observer + ARB_OBSERVER_SIZE * arb_system, ARB_OBSERVER_SIZE);
-	version = rd(arb_core + ARB_VERSION);
-	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
-	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
-		say("torch: PMIC arbiter version %#x, not 5: nothing done\n", version);
+	if (!hakios_spmi_map(&arb)) {
+		say("torch: PMIC arbiter version %#x, not 5: nothing done\n", arb.version);
 		goto out;
 	}
-	if (channels == 0 || channels > ARB_MAX_CHANNELS) {
-		channels = ARB_MAX_CHANNELS;
-	}
-	find_channel(&flash, channels);
-	find_channel(&alarm, channels);
+	find_channel(&flash);
+	find_channel(&alarm);
 	if (!flash.found || spmi_read(&flash, FLASH_TYPE, id, 2) != NULL || spmi_read(&flash, FLASH_REVISION1, &revision, 1) != NULL) {
 		say("torch: the flash module cannot be read\n");
 		goto out;
@@ -684,7 +620,7 @@ torch_thread(__unused void *parameter, __unused wait_result_t result)
 		say("torch: the channel is not ours to write through: nothing written\n");
 		goto out;
 	}
-	flash.write = ml_io_map(hakios_board()->spmi.channels + 0x10000UL * flash.channel, 0x1000);
+	flash.write = hakios_spmi_map_write(flash.channel);
 	PE_parse_boot_argn("torch_max_s", &max_secs, sizeof(max_secs));
 	max_secs = max_secs < 1 ? 1 : max_secs > 120 ? 120 : max_secs;
 	if (level == 2) {
