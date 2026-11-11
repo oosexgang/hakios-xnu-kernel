@@ -135,6 +135,13 @@ struct hakios_board {
 		uint32_t apps;
 	} smmu;
 
+	/* the camera subsystem's blocks (soc: [camera]) */
+	struct {
+		uint32_t camcc;                 /* its clock controller */
+		uint32_t ife, csid;             /* the image front end the sensors' data goes through, and its CSI decoder */
+		uint32_t csiphy;                /* the first CSI receiver; the others follow, 0x2000 apart */
+	} camera;
+
 	/* the low-power audio subsystem's blocks the microphones' path goes through (soc: [lpass]) */
 	struct {
 		uint32_t tx_macro, va_macro;    /* the codec macros for capture */

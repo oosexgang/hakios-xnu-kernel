@@ -45,6 +45,15 @@ ee = 0                              # qcom,ee; optional, 0 if left out
 [smmu]
 apps = 0x15000000                   # apps_smmu (the vendor's apps-smmu@15000000; Linux's iommu@15000000)
 
+# The camera subsystem's blocks, for the feature "camera-redwood". From the SoC's -camera.dtsi (the
+# vendor's; tools/boards.py new does not read these yet).
+[camera]
+camcc = 0x0ad00000                  # the camera clock controller (qcom,CODENAME-camcc)
+ife = 0x0acc4000                    # the image front end the driver takes frames through: here the first
+                                    # "lite" one (qcom,ife-lite, reg "ife-lite")
+csid = 0x0acc8000                   # ... and its CSI decoder (qcom,csid-lite, reg "csid-lite")
+csiphy = 0x0ace0000                 # the first CSI receiver (qcom,csiphy, cell-index 0); the others follow at 0x2000
+
 # The low-power audio subsystem's blocks on the microphones' path, for the feature "mic-wcd938x". From the
 # SoC's -audio.dtsi (the vendor's; tools/boards.py new does not read these yet).
 [lpass]

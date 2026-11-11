@@ -192,6 +192,8 @@ table(void)
 		    "%s: a driver that talks to another processor without [ipc]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_WIFI_WCN6750) || (b->wifi.dsp_memory != 0 && b->wifi.dsp_memory_size != 0),
 		    "%s: a radio on the SoC's DSP without the DSP's memory", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_CAMERA_REDWOOD) || (b->camera.camcc != 0 && b->camera.ife != 0 && b->camera.csid != 0 &&
+		    b->camera.csiphy != 0), "%s: the cameras' driver without the camera subsystem's blocks", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_MIC_WCD938X) || (b->lpass.tx_macro != 0 && b->lpass.va_macro != 0 &&
 		    b->lpass.tx_swr != 0 && b->lpass.tx_swr_hctl != 0 && b->lpass.lpi != 0 && b->lpass.lpi_slew != 0),
 		    "%s: the microphones' driver without the audio subsystem's blocks", b->name);

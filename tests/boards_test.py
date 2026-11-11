@@ -622,9 +622,13 @@ class Generate(Sandbox):
     def test_the_smmu_is_needed_carried_and_found(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "camera-redwood"')
         self.assertIn('feature "camera-redwood" needs [smmu] in soc/sm0001.toml', self.problems())
+        self.assertIn('feature "camera-redwood" needs [camera] in soc/sm0001.toml', self.problems())
+        self.soc('[thermal]', '[camera]\ncamcc = 0xad00000\nife = 0xacc4000\ncsid = 0xacc8000\ncsiphy = 0xace0000\n[thermal]')
         self.board('"cpufreq-epss", "camera-redwood"', '"cpufreq-epss"')
         self.soc('[thermal]', '[smmu]\napps = 0x15000000\n[thermal]')
         self.assertEqual(self.problems(), '')
+        self.assertIn('.camera = { .camcc = 0x0ad00000, .ife = 0x0acc4000, .csid = 0x0acc8000, .csiphy = 0x0ace0000 },',
+                      boards.table_text(*boards.load()))
         self.assertIn('.smmu = { .apps = 0x15000000 },', boards.table_text(*boards.load()))
         # the vendor's node is named; the GPU's own is not this one
         soc, board, notes = devicetree.from_dts('''/ { soc {

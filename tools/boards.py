@@ -77,6 +77,7 @@ SOC_SCHEMA = {
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
     'smmu': {'apps': (int, True)},
+    'camera': {'camcc': (int, True), 'ife': (int, True), 'csid': (int, True), 'csiphy': (int, True)},
     'lpass': {'tx_macro': (int, True), 'va_macro': (int, True), 'tx_swr': (int, True), 'tx_swr_hctl': (int, True),
               'lpi': (int, True), 'lpi_slew': (int, True)},
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
@@ -108,7 +109,7 @@ BOARD_SCHEMA = {
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
-                 'camera-redwood': ('spmi', 'pins', 'clocks', 'rpmh', 'smmu'),
+                 'camera-redwood': ('spmi', 'pins', 'clocks', 'rpmh', 'smmu', 'camera'),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh'),
                  # the part drivers that drive the SoC's pins, switch a bus's clocks on in the GCC, ask RPMh
                  # for a part's supply, and give a device its addresses in the SMMU
@@ -537,6 +538,10 @@ def table_text(socs, boards):
         pins = soc.get('pins')
         if pins:
             out.append(f'\t\t.pins = {{ .tlmm = {pins["tlmm"]:#010x} }},')
+        camera = soc.get('camera')
+        if camera:
+            out.append(f'\t\t.camera = {{ .camcc = {camera["camcc"]:#010x}, .ife = {camera["ife"]:#010x}, '
+                       f'.csid = {camera["csid"]:#010x}, .csiphy = {camera["csiphy"]:#010x} }},')
         lpass = soc.get('lpass')
         if lpass:
             out += ['\t\t.lpass = {',

@@ -35,6 +35,13 @@ ee = 0                              # qcom,ee: which of the arbiter's systems th
 [smmu]
 apps = 0x15000000                   # apps_smmu
 
+# The camera subsystem's blocks (yupik-camera.dtsi), for "camera-redwood".
+[camera]
+camcc = 0x0ad00000                  # the camera clock controller
+ife = 0x0acc4000                    # the first IFE "lite", which the driver takes frames through
+csid = 0x0acc8000                   # its CSI decoder
+csiphy = 0x0ace0000                 # CSIPHY 0; the others follow at 0x2000
+
 # The low-power audio subsystem's blocks on the microphones' path (yupik-audio.dtsi), for "mic-wcd938x".
 [lpass]
 tx_macro = 0x03220000               # tx-macro@3220000
