@@ -257,32 +257,8 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 #define SMEM_SIZE               (hakios_board()->ipc.smem_size)
 #define SMEM_US                 0
 #define SMEM_ADSP               2               /* dt: qcom,remote-pid of qcom,smp2p-adsp and qcom,glink/adsp */
-#define SMEM_GLOBAL             0xfffe
-#define SMEM_CANARY             0xa5a5
 
-struct smem_table_entry {
-	uint32_t offset, size, flags;
-	uint16_t host0, host1;
-	uint32_t cacheline, reserved[7];
-};
-struct smem_table {
-	uint8_t magic[4];
-	uint32_t version, count, reserved[5];
-};
-struct smem_partition {
-	uint8_t magic[4];
-	uint16_t host0, host1;
-	uint32_t size, free_uncached, free_cached, reserved[3];
-};
-struct smem_entry {
-	uint16_t canary, item;
-	uint32_t size;
-	uint16_t padding_data, padding_header;
-	uint32_t reserved;
-};
-struct smem_item {
-	uint32_t item, offset, size;
-};
+#include "hakios_smem.h"                    /* the area's structures, its partitions and their items */
 
 /*
  * The DSP's items (dt: qcom,smem of qcom,smp2p-adsp, <443 429>: the item the DSP writes first, then
@@ -301,13 +277,17 @@ smem_peek(uint64_t offset, void *to, uint32_t size)
 	if (smem == NULL) {
 		smem = (const volatile uint8_t *)ml_io_map_unmappable(SMEM_PHYS, SMEM_SIZE, VM_WIMG_WCOMB);
 	}
-	if (offset + size > SMEM_SIZE) {
-		return false;
-	}
-	for (uint32_t i = 0; i < size; i++) {
-		((uint8_t *)to)[i] = smem[offset + i];
-	}
-	return true;
+	return hakios_smem_peek(&(struct hakios_smem){ smem, SMEM_SIZE }, offset, to, size);
+}
+
+/* The area for hakios_smem.h, mapped if it was not yet. */
+static struct hakios_smem
+smem_area(void)
+{
+	uint8_t first;
+
+	(void)smem_peek(0, &first, sizeof(first));
+	return (struct hakios_smem){ smem, SMEM_SIZE };
 }
 
 static void
@@ -325,77 +305,17 @@ smem_word(uint32_t offset)
 static uint32_t
 smem_partition(uint16_t one, uint16_t other, uint32_t *cacheline, uint32_t *size)
 {
-	struct smem_table table;
-	struct smem_table_entry entry;
-	struct smem_partition header;
+	struct hakios_smem area = smem_area();
 
-	if (!smem_peek(SMEM_SIZE - 0x1000, &table, sizeof(table)) || memcmp(table.magic, "$TOC", 4) != 0 || table.version != 1 ||
-	    table.count > 64) {
-		return 0;
-	}
-	for (uint32_t i = 0; i < table.count; i++) {
-		if (!smem_peek(SMEM_SIZE - 0x1000 + sizeof(table) + i * sizeof(entry), &entry, sizeof(entry)) || entry.offset == 0 ||
-		    entry.size == 0) {
-			continue;
-		}
-		if (!((entry.host0 == one && entry.host1 == other) || (entry.host0 == other && entry.host1 == one))) {
-			continue;
-		}
-		if ((uint64_t)entry.offset + entry.size > SMEM_SIZE - 0x1000 || !smem_peek(entry.offset, &header, sizeof(header)) ||
-		    memcmp(header.magic, "$PRT", 4) != 0 || header.size != entry.size) {
-			return 0;
-		}
-		*cacheline = entry.cacheline;
-		*size = entry.size;
-		return entry.offset;
-	}
-	return 0;
+	return hakios_smem_partition(&area, one, other, cacheline, size);
 }
 
 static unsigned
 smem_items(uint32_t partition, uint32_t cacheline, struct smem_item *found, unsigned max)
 {
-	struct smem_partition header;
-	struct smem_entry entry;
-	uint32_t at, step_back;
-	unsigned count = 0;
+	struct hakios_smem area = smem_area();
 
-	if (partition == 0 || !smem_peek(partition, &header, sizeof(header)) || header.free_uncached > header.size ||
-	    header.free_cached > header.size) {
-		return 0;
-	}
-	for (at = sizeof(header); at + sizeof(entry) <= header.free_uncached;) {
-		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > header.size) {
-			break;
-		}
-		if (count < max) {
-			found[count].item = entry.item;
-			found[count].offset = partition + at + sizeof(entry) + entry.padding_header;
-			found[count].size = entry.size - entry.padding_data;
-		}
-		count++;
-		at += sizeof(entry) + entry.padding_header + entry.size;
-	}
-	if (cacheline == 0 || (cacheline & (cacheline - 1))) {
-		return count;
-	}
-	step_back = ((uint32_t)sizeof(entry) + cacheline - 1) & ~(cacheline - 1);
-	for (at = header.size - step_back; at > header.free_cached && at < header.size;) {
-		if (!smem_peek(partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > at) {
-			break;
-		}
-		if (count < max) {
-			found[count].item = entry.item;
-			found[count].offset = partition + at - entry.size;
-			found[count].size = entry.size - entry.padding_data;
-		}
-		count++;
-		if (entry.size + step_back > at) {
-			break;
-		}
-		at -= entry.size + step_back;
-	}
-	return count;
+	return hakios_smem_items(&area, partition, cacheline, found, max);
 }
 
 /* An item the DSP and we share: in the partition of the two, or else in the global one. Where it is; 0: nowhere. */
