@@ -12,6 +12,13 @@ usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the unpacked
   --prune the same, smaller for 6 GB of RAM (docs/ram-budget.md, scenario B): .loctable string
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
+  --metal with the system's Metal libraries (.metallib), which select-system.py leaves out, for a boot
+          with metal=1: CoreAnimation, Core Image and Metal Performance Shaders read their shaders from
+          them (the machine-learning ones excepted: METAL_LEFT_OUT). About 0.3 GB more: an image for the
+          flash (ios/tools/darwin-write.py), past what one fastboot download takes into RAM
+
+/System/Library/Extensions/HakiosMetal.bundle leads to /redwood/lib/HakiosMetal.bundle, the plug-in Metal opens
+when the kernel names it (boot-arg metal=1; metal/plugin, built by ios/userland/metal.sh into the small image).
 
 /sbin/launchd is our stage0 ($OBJ/stage0, which ios/userland/root26-ios.sh builds: it mounts the small image
 on /redwood and runs its init), the real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (ios/userland/root26-ios.sh writes ios26/jobs26)
@@ -69,6 +76,14 @@ EMOJI = 'System/Library/Fonts/CoreAddition/AppleColorEmoji-160px.ttc'
 KEPT_FILES = ('System/Library/PrivateFrameworks/AppIntentSchemas.framework/AppIntentSchemas.sqlite',
               'System/Library/Frameworks/QuartzCore.framework/default.metallib')
 LOCTABLE_KEEP = ('en', 'Base', 'English', 'en_US', 'en_GB')
+# --metal: the Metal libraries that stay out all the same, 0.26 GB of machine learning's and the GPU tools' that
+# nothing on the screen draws with (GESS's MLX, Espresso, MPS's graph and neural network kernels, the GPU trace
+# replayer)
+METAL_LEFT_OUT = ('System/Library/PrivateFrameworks/GESS.framework/', 'System/Library/PrivateFrameworks/Espresso.framework/',
+                  'System/Library/Frameworks/MetalPerformanceShaders.framework/Frameworks/MPSNDArray.framework/',
+                  'System/Library/Frameworks/MetalPerformanceShaders.framework/Frameworks/MPSNeuralNetwork.framework/',
+                  'System/Library/PrivateFrameworks/GPUToolsReplay.framework/')
+METAL = False
 
 
 def pruned(rel):
@@ -173,7 +188,8 @@ def selection(minimal):
                 rel = 'Applications/' + rel[len(sel.STAGED_APPS):]
             elif rel.startswith('private/var/'):
                 continue
-            if sel.wanted_file(rel, os.path.getsize(full)) or rel in kept_files:
+            if sel.wanted_file(rel, os.path.getsize(full)) or rel in kept_files or \
+                    (METAL and rel.endswith('.metallib') and not rel.startswith(METAL_LEFT_OUT)):
                 chosen.append((rel, full))
     for sub, prefix, skip in (('os', 'System/Cryptexes/OS/', ('System/Library/Caches/com.apple.dyld/', 'System/DriverKit/')),
                               ('app', 'System/Cryptexes/App/', ())):
@@ -264,9 +280,10 @@ def write_job_cache(jobs):
 
 
 def main():
-    global PRUNE
+    global PRUNE, METAL
     minimal = '--min' in sys.argv
     PRUNE = '--prune' in sys.argv
+    METAL = '--metal' in sys.argv
     out = [a for a in sys.argv[1:] if not a.startswith('--')]
     if len(out) != 1:
         sys.exit(__doc__)
@@ -295,6 +312,11 @@ def main():
     if not os.path.lexists(hal):
         os.makedirs(os.path.dirname(hal), exist_ok=True)
         os.symlink('/redwood/lib/HakiosAudio.driver', hal)
+    # the Metal plug-in: Metal opens /System/Library/Extensions/<the accelerator's MetalPluginName>.bundle
+    plugin = os.path.join(WORK, 'System/Library/Extensions/HakiosMetal.bundle')
+    if not os.path.lexists(plugin):
+        os.makedirs(os.path.dirname(plugin), exist_ok=True)
+        os.symlink('/redwood/lib/HakiosMetal.bundle', plugin)
     # the jobs are ours (/redwood/LaunchDaemons, from mkjobs.py), as on 16.5: Apple's own lists go
     for rel in ('System/Library/NanoLaunchDaemons', 'System/Library/LaunchAngels', 'System/Library/xpc/launchd.plist'):
         path = os.path.join(WORK, rel)
@@ -325,7 +347,11 @@ def main():
     print(f'mkimage26: {len(chosen)} files ({stripped} arm64e Mach-Os rewritten by pacstrip), cache from {CACHE}')
     subprocess.run([sys.executable, APFS, '-z', '-o', out[0], 'System=' + WORK], check=True)
     if os.path.getsize(out[0]) > 0xffffffff:
-        raise SystemExit('System image exceeds fastboot\'s 4 GiB - 1 download limit')
+        if not METAL:
+            raise SystemExit('System image exceeds fastboot\'s 4 GiB - 1 download limit')
+        # (--metal: an image for the flash, which has no such limit)
+        print(f'mkimage26: {os.path.getsize(out[0]) / 1e9:.2f} GB: for the flash only (ios/tools/darwin-write.py), '
+              'past what one fastboot download takes into RAM')
 
 
 if __name__ == '__main__':
