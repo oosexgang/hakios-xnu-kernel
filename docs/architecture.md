@@ -72,7 +72,8 @@ soc/sm7350.toml, soc/… ────────────┘  (run by the bu
   controllers, DSI controller, temperature sensors, the CPU frequency block, the SoC's pins, the PMIC
   arbiter, RPMh, the SMMU, the way to its other processors, the storage controller, the camera's and
   the audio subsystem's blocks. It is shared by every board with that chip, so it stays in `soc/` on
-  the main branch. No driver has the address of a block of the chip in its code.
+  the main branch. The drivers take these addresses from it; the one address still in a driver's
+  code is the serial port a touch controller is wired to, which is that part's wiring.
 - `tools/boards.py new` starts both files from a phone's Android device tree, and
   `tools/boards.py compare` holds them against one later.
 - The generated files are not committed. `tools/boards.py gen` writes them into `build/boards/`

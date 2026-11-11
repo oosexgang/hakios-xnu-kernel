@@ -123,10 +123,11 @@ A phone is described by one board file and its chip by `soc/SOC.toml`. `tools/bo
 driver only on a board that lists it, so a new phone begins with nothing but the display and gains
 hardware one line at a time; `tools/boards.py status NAME` says what can be turned on next and what
 each of the rest still needs, and `tools/boards.py compare NAME --dts phone.dts` holds the files
-against the tree at any time. No driver has the address of a block of the chip in its code: they
-come from the SoC file, once for every phone with that chip. Parts nobody has a driver for yet (a
-touch controller, an amplifier) need one written, from an example that is built and tested with the
-rest ([docs/writing-a-driver.md](docs/writing-a-driver.md)). When it works, the package goes to the
+against the tree at any time. Where the blocks of the chip are comes from the SoC file, once for
+every phone with that chip, not from the drivers' code (the one exception is the serial port a touch
+controller is wired to, which is in that part's driver). Parts nobody has a driver for yet (a touch
+controller, an amplifier) need one written, from an example that is built and tested with the rest
+([docs/writing-a-driver.md](docs/writing-a-driver.md)). When it works, the package goes to the
 `devices` branch. The guide: [docs/porting.md](docs/porting.md).
 
 ## What is not in this repository
