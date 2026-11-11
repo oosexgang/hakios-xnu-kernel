@@ -75,8 +75,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
   clock are `hakios_time.h`. The PMIC arbiter's protocol, written out in three drivers, is
   `hakios_spmi.h`; the lookup in RPMh's command database, written out in eight, is
-  `hakios_cmd_db.h`; a request to RPMh is `hakios_rpmh.h`; the SoC's pins are `hakios_tlmm.h`. Each
-  has a test of its own.
+  `hakios_cmd_db.h`; a request to RPMh is `hakios_rpmh.h`; the SoC's pins are `hakios_tlmm.h`. What
+  the audio DSP's driver and the Wi-Fi's both had of the way to another processor is shared as
+  well: the shared memory (`hakios_smem.h`), SMP2P's items (`hakios_smp2p.h`), the arithmetic of
+  GLINK's queues (`hakios_glink_queue.h`), the mailbox's and the doorbells' registers
+  (`hakios_ipc.h`). Each that has logic has a test of its own.
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now.
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
