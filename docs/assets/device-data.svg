@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 804" width="1200" height="804" role="img" aria-labelledby="t">
+  <title id="t">Device data: device packages and SoC files go through tools/boards.py gen into three tables, built into the kernel, the loader and the injected libraries; at boot the kernel finds its board by /chosen/darwin-board.</title>
+  <defs>
+    <radialGradient id="g" cx="50%" cy="42%" r="75%">
+      <stop offset="0" stop-color="#666d4b"/>
+      <stop offset="1" stop-color="#3a402e"/>
+    </radialGradient>
+    <clipPath id="c"><rect width="1200" height="804" rx="28"/></clipPath>
+  </defs>
+  <g clip-path="url(#c)">
+    <rect width="1200" height="804" fill="url(#g)"/>
+    <path stroke="#fff" stroke-opacity=".055" stroke-width="2" d="M48 0V804M96 0V804M144 0V804M192 0V804M240 0V804M288 0V804M336 0V804M384 0V804M432 0V804M480 0V804M528 0V804M576 0V804M624 0V804M672 0V804M720 0V804M768 0V804M816 0V804M864 0V804M912 0V804M960 0V804M1008 0V804M1056 0V804M1104 0V804M1152 0V804M0 34H1200M0 82H1200M0 130H1200M0 178H1200M0 226H1200M0 274H1200M0 322H1200M0 370H1200M0 418H1200M0 466H1200M0 514H1200M0 562H1200M0 610H1200M0 658H1200M0 706H1200M0 754H1200M0 802H1200"/>
+    <g fill="#ece5d0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+      <text x="60" y="56" font-size="18" letter-spacing="3" fill-opacity=".72">AT BUILD</text>
+
+      <g fill-opacity=".06" stroke="#ece5d0" stroke-width="3.5">
+        <rect x="60" y="76" width="510" height="100" rx="14"/>
+        <rect x="630" y="76" width="510" height="100" rx="14"/>
+        <rect x="60" y="226" width="1080" height="60" rx="14"/>
+        <rect x="60" y="340" width="320" height="78" rx="14"/>
+        <rect x="440" y="340" width="320" height="78" rx="14"/>
+        <rect x="820" y="340" width="320" height="78" rx="14"/>
+        <rect x="60" y="466" width="320" height="100" rx="14"/>
+        <rect x="440" y="466" width="320" height="100" rx="14"/>
+        <rect x="820" y="466" width="320" height="100" rx="14"/>
+        <rect x="60" y="640" width="320" height="100" rx="14"/>
+        <rect x="440" y="640" width="320" height="100" rx="14"/>
+        <rect x="820" y="640" width="320" height="100" rx="14"/>
+      </g>
+
+      <path fill="none" stroke="#ece5d0" stroke-width="3.5" stroke-linecap="round" d="M315 185V203M885 185V203M220 295V317M600 295V317M980 295V317M220 427V443M600 427V443M980 427V443M389 690H415M769 690H795"/>
+      <path fill="#d8392b" stroke="#d8392b" stroke-width="3" stroke-linejoin="round" d="M315 216l-9-14h18zM885 216l-9-14h18zM220 330l-9-14h18zM600 330l-9-14h18zM980 330l-9-14h18zM220 456l-9-14h18zM600 456l-9-14h18zM980 456l-9-14h18zM430 690l-14-9v18zM810 690l-14-9v18z"/>
+
+      <g font-size="23" font-weight="bold">
+        <text x="82" y="111">device packages</text>
+        <text x="652" y="111">SoC files</text>
+      </g>
+      <g font-size="17" text-anchor="end">
+        <text x="548" y="110">NAME/board.toml</text>
+        <text x="1118" y="110">soc/SOC.toml</text>
+      </g>
+      <g font-size="16">
+        <text x="82" y="139">one directory per phone, on the devices branch</text>
+        <text x="82" y="161">brought in by tools/device.py add NAME</text>
+        <text x="652" y="139">one file per chip, on the main branch</text>
+        <text x="652" y="161">shared by every board with that chip</text>
+      </g>
+
+      <text x="600" y="264" text-anchor="middle"><tspan font-size="23" font-weight="bold">tools/boards.py gen</tspan><tspan font-size="17" dx="22">(run by the builds)</tspan></text>
+
+      <g font-size="16" text-anchor="middle" fill-opacity=".72">
+        <text x="410" y="319">three tables in build/boards/</text>
+        <text x="790" y="319">not kept in the repository</text>
+      </g>
+
+      <g font-size="22" font-weight="bold" text-anchor="middle">
+        <text x="220" y="374">hakios_board_table.h</text>
+        <text x="600" y="374">platforms.h</text>
+        <text x="980" y="374">hakios_boards.h</text>
+        <text x="220" y="500">kernel</text>
+        <text x="600" y="500">loader</text>
+        <text x="980" y="500">injected libraries</text>
+        <text x="220" y="674">loader</text>
+        <text x="600" y="674">kernel</text>
+        <text x="980" y="674">driver</text>
+      </g>
+      <g font-size="16" text-anchor="middle">
+        <text x="220" y="400">for the kernel</text>
+        <text x="600" y="400">for the loader</text>
+        <text x="980" y="400">for the injected libraries</text>
+        <text x="220" y="528">XNU + overlay + patches</text>
+        <text x="600" y="528">a UEFI application</text>
+        <text x="980" y="528">in a few of iOS's processes</text>
+        <text x="220" y="550">by kernel/build.sh</text>
+        <text x="600" y="550">by loader/build.sh</text>
+        <text x="980" y="550">by ios/userland/inj26.sh</text>
+        <text x="220" y="702">passes the board's name in</text>
+        <text x="220" y="724">/chosen/darwin-board</text>
+        <text x="600" y="702">finds its row in the table</text>
+        <text x="600" y="724">by that name</text>
+        <text x="980" y="702">starts only if the board</text>
+        <text x="980" y="724">lists its feature</text>
+      </g>
+
+      <path stroke="#ece5d0" stroke-opacity=".3" stroke-width="2" stroke-linecap="round" d="M60 590H1140"/>
+      <text x="60" y="622" font-size="18" letter-spacing="3" fill-opacity=".72">AT BOOT</text>
+      <text x="60" y="778" font-size="17">A board that is not in the table has no feature: nothing of a phone is touched.</text>
+    </g>
+  </g>
+</svg>

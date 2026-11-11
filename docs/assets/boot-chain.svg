@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-labelledby="t">
+  <title id="t">The boot chain: stock fastboot, UEFI, loader, kernel, iOS user space. Nothing is flashed; a reboot brings Android back.</title>
+  <defs>
+    <radialGradient id="g" cx="50%" cy="42%" r="75%">
+      <stop offset="0" stop-color="#666d4b"/>
+      <stop offset="1" stop-color="#3a402e"/>
+    </radialGradient>
+    <clipPath id="c"><rect width="1200" height="700" rx="28"/></clipPath>
+  </defs>
+  <g clip-path="url(#c)">
+    <rect width="1200" height="700" fill="url(#g)"/>
+    <path stroke="#fff" stroke-opacity=".055" stroke-width="2" d="M48 0V700M96 0V700M144 0V700M192 0V700M240 0V700M288 0V700M336 0V700M384 0V700M432 0V700M480 0V700M528 0V700M576 0V700M624 0V700M672 0V700M720 0V700M768 0V700M816 0V700M864 0V700M912 0V700M960 0V700M1008 0V700M1056 0V700M1104 0V700M1152 0V700M0 34H1200M0 82H1200M0 130H1200M0 178H1200M0 226H1200M0 274H1200M0 322H1200M0 370H1200M0 418H1200M0 466H1200M0 514H1200M0 562H1200M0 610H1200M0 658H1200"/>
+    <g fill="#ece5d0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+      <text x="60" y="58" font-size="18" letter-spacing="3" fill-opacity=".72">THE BOOT CHAIN</text>
+
+      <g fill-opacity=".06" stroke="#ece5d0" stroke-width="3.5">
+        <rect x="60" y="88" width="340" height="64" rx="14"/>
+        <rect x="60" y="204" width="340" height="64" rx="14"/>
+        <rect x="60" y="320" width="340" height="64" rx="14"/>
+        <rect x="60" y="436" width="340" height="64" rx="14"/>
+        <rect x="60" y="552" width="340" height="64" rx="14"/>
+      </g>
+
+      <g font-size="24" font-weight="bold" text-anchor="middle">
+        <text x="230" y="129">stock fastboot</text>
+        <text x="230" y="245">UEFI</text>
+        <text x="230" y="361">loader</text>
+        <text x="230" y="477">kernel</text>
+        <text x="230" y="593">iOS user space</text>
+      </g>
+
+      <path fill="none" stroke="#ece5d0" stroke-width="3.5" stroke-linecap="round" d="M230 161V181M230 277V297M230 393V413M230 509V529"/>
+      <path fill="#d8392b" stroke="#d8392b" stroke-width="3" stroke-linejoin="round" d="M230 194l-9-14h18zM230 310l-9-14h18zM230 426l-9-14h18zM230 542l-9-14h18z"/>
+      <text x="256" y="184" font-size="17">fastboot boot</text>
+
+      <path fill="none" stroke="#ece5d0" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 9" d="M421 352H424Q440 352 440 368V452Q440 468 424 468H407"/>
+      <path stroke="#ece5d0" stroke-width="3" stroke-linejoin="round" d="M409 352l12-8v16z"/>
+      <text x="470" y="416" font-size="16" fill-opacity=".72">when the kernel is done, or panics, it returns to the loader</text>
+
+      <g font-size="17">
+        <text x="470" y="126">the phone's own bootloader, unlocked</text>
+        <text x="470" y="242">Mu-Silicium port for the phone; nothing is flashed</text>
+        <text x="470" y="347">a UEFI application: builds the Apple-format device tree</text>
+        <text x="470" y="369">and boot_args; stays resident, takes the next run over USB</text>
+        <text x="470" y="463">Apple's XNU + overlay + patches: starts only the drivers</text>
+        <text x="470" y="485">the board lists; the root file system and /var live in RAM</text>
+        <text x="470" y="579">unmodified apart from pointer authentication:</text>
+        <text x="470" y="601">launchd → backboardd → SpringBoard → apps</text>
+      </g>
+
+      <path stroke="#ece5d0" stroke-opacity=".3" stroke-width="2" stroke-linecap="round" d="M60 640H1140"/>
+      <text x="60" y="672" font-size="17">Nothing is flashed: the system lives in RAM, and a reboot brings Android back.</text>
+    </g>
+  </g>
+</svg>
