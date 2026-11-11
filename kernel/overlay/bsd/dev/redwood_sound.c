@@ -174,7 +174,7 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 
 /* ---- the TDM pins ------------------------------------------------------------------------------------- */
 
-static struct block tlmm = { "pin controller", 0x0f100000, 0x100000 };
+static struct block tlmm = { "pin controller", 0, 0x100000 };   /* where: the SoC file's [pins], at the start */
 #define GPIO_CFG(n)             (0x1000u * (n))         /* [1:0] pull, [5:2] function, [8:6] drive (mA / 2 - 1), [9] output */
 #define GPIO_IO(n)              (0x1000u * (n) + 4)     /* bit 0 in, bit 1 out */
 #define CFG_MI2S0               (1u << 2)
@@ -1457,6 +1457,12 @@ redwood_sound_dsp_up(void)
 		level = 0;
 		return;
 	}
+	if (hakios_board()->pins.tlmm == 0) {
+		say("sound: disabled: the SoC file does not say where the pins are ([pins])\n");
+		level = 0;
+		return;
+	}
+	tlmm.phys = hakios_board()->pins.tlmm;
 	if (level > 4) {
 		level = 4;
 	}

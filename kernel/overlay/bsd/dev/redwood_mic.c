@@ -371,7 +371,7 @@ static struct block tx_swr = { "the TX SoundWire master", 0x03230000, 0x2000 };
 static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0x032a9000, 0x1000 };
 static struct block lpi = { "the LPASS pins", 0x033c0000, 0x10000 };
 static struct block lpi_high = { "the LPASS pins", 0x033ce000, 0x1000 };
-static struct block tlmm = { "the pin controller", 0x0f100000, 0x100000 };
+static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's [pins], at the start */
 
 static void
 look(void)
@@ -1799,6 +1799,12 @@ redwood_mic_dsp_up(void)
 		level = 0;
 		return;
 	}
+	if (hakios_board()->pins.tlmm == 0) {
+		say("mic: disabled: the SoC file does not say where the pins are ([pins])\n");
+		level = 0;
+		return;
+	}
+	tlmm.phys = hakios_board()->pins.tlmm;
 	level = level > 4 ? 4 : level;
 	PE_parse_boot_argn("mic_secs", &mic_secs, sizeof(mic_secs));
 	PE_parse_boot_argn("mic_input", &smic_input, sizeof(smic_input));
