@@ -110,6 +110,8 @@ needs its feature in the board's `features`.
    Registers are read and written with `rd()` and `wr()` of `hakios_mmio.h`, which also says when a
    driver needs each write to have arrived (`HAKIOS_MMIO_SYNC`) or each access to be one plain
    instruction (`HAKIOS_MMIO_EXACT`, for what the hypervisor imitates).
+   Waits and the clock are `hakios_time.h`'s (`sleep_ms()`, `spin_us()` for where nothing may sleep,
+   `now_us()`).
    A driver that reaches a PMIC does it through `hakios_spmi.h`: the arbiter's registers, a channel's
    lookup, one read, one write, and what a status means, for the arbiter the SoC file's `[spmi]`
    names. It takes the bus with `redwood_spmi_lock()`, as the keys', the flashlight's and the
