@@ -169,6 +169,15 @@ software without it.
 | --- | --- | --- |
 | `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])`, `mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])`, `adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], [ipc]): ...`, `sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])`, `wifi: disabled: the SoC file does not say where ... are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's memory is ([wifi] dsp_memory): ...` | The driver's feature is listed, but the SoC file lacks a section the driver takes addresses from. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
 
+### Speaker amplifiers
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `speaker: disabled: the board file does not say which pins the amplifiers are on ([speaker])` | The feature is listed without `[speaker]`; `tools/boards.py check` refuses such a board. | The bus's two lines, the two addresses and the two interrupt pins: `devices/_template/board.toml` says where each is in the device tree. |
+| `speaker: nobody at I2C address 0xNN: not powered, or not there` | Nothing acknowledged that address. With `speaker_probe=2` before the audio DSP runs this is usual: the amplifiers' supply may be off. | Compare `addresses` with the amplifiers' `reg` in the device tree; look again with `adsp=1`. |
+| `speaker: the I2C bus is not at rest (gpioN reads 0, ...): not touched` | A line of the bus is low before anything was sent. The driver does not drive a bus it did not find idle. | Check `sda` and `scl` against the bus's pinctrl node; level 1 (`speaker_probe=1`) shows how each pin was found. |
+| `speaker: the amplifier 0xNN, slot N is there: chip ID 0x...., an amplifier this list does not know` | Something answers, but it is not a chip of the family the driver names. | The driver configures only an AW88261 (ID 0x2113); another chip needs its own register profile. |
+
 ### Vibration motor
 
 | What you see | What it means | What to do |

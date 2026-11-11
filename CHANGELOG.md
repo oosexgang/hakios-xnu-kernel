@@ -89,9 +89,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
   from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
-- **Two parts on other wiring are a board file.** Where the flashlight's module is on the PMICs' bus
-  (`[torch]`) and which pins the vibration motor's chip is on, with the motor's calibration
-  (`[haptic]`), were in the drivers. Each driver's test runs a second phone with the part elsewhere.
+- **Three parts on other wiring are a board file.** Where the flashlight's module is on the PMICs' bus
+  (`[torch]`), which pins the vibration motor's chip is on, with the motor's calibration
+  (`[haptic]`), and the speaker amplifiers' bus, addresses and interrupts (`[speaker]`) were in the
+  drivers. Each driver's test runs a second phone with the part elsewhere.
 - **A guide to writing a driver**, with an example driver and its test that `make check` builds and
   runs: [docs/writing-a-driver.md](docs/writing-a-driver.md).
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
