@@ -5,6 +5,8 @@ behaviour on redwood changed, and one thing changed on Renoir (below).
 
 ## Where things went
 
+<!-- paths of the old layout -->
+
 | Before | Now |
 | --- | --- |
 | `kernel/xnu-12377.121.6-hakios.patch`, `kernel/apply.sh` | `kernel/overlay/` (files HakiOS adds), `kernel/patches/` (changes to Apple's files), `kernel/assemble.sh` |
@@ -18,6 +20,8 @@ behaviour on redwood changed, and one thing changed on Renoir (below).
 | `base/xnu-deps/` | `kernel/deps/` (a link stays in `base/`) |
 | Board checks in drivers (`redwood_board_is("renoir")`) | `devices/NAME/board.toml` and `hakios_board_has()` for whether a driver starts; the name check remains where two phones really differ. |
 | Default boot arguments in `boot26.py` | `devices/renoir/board.toml`, `[boot]` |
+
+<!-- end -->
 
 ## Carrying a patch over
 

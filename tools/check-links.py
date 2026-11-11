@@ -3,7 +3,8 @@
 `path` in backticks that looks like a file of this repository exists. Part of `make lint`.
 
 The first generation's documents (base/, userland/) describe a workspace that is not this
-repository's layout and are left out.
+repository's layout and are left out. A document that has to name paths that no longer exist puts them
+between `<!-- paths of the old layout -->` and `<!-- end -->`; links are checked there all the same.
 """
 import re
 import subprocess
@@ -26,13 +27,19 @@ def main():
             continue
         path = ROOT / name
         text = path.read_text()
+        past = False
         for number, line in enumerate(text.split('\n'), 1):
+            # between these two marks a document names paths that are gone on purpose (docs/migrating.md)
+            if '<!-- paths of the old layout -->' in line:
+                past = True
+            elif '<!-- end -->' in line:
+                past = False
             for target in LINK.findall(line):
                 if re.match(r'[a-z]+:', target) or target.startswith('#'):
                     continue
                 if not (path.parent / target.split('#')[0]).exists():
                     problems.append(f'{name}:{number}: link to {target}, which is not there')
-            for target in PATH.findall(line):
+            for target in ([] if past else PATH.findall(line)):
                 # placeholders (NAME, SOC, …) and globs are not paths
                 if re.search(r'NAME|SOC|[*…]|\.\.\.', target):
                     continue
