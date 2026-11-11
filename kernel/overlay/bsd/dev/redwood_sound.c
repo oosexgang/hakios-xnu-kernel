@@ -462,7 +462,7 @@ afe_off(void)
 
 /* ---- the DSP's view of our memory: stream 0x1801 of the SMMU ------------------------------------------- */
 
-static struct block apps_smmu = { "apps smmu", 0x15000000, 0x2000 };
+static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's [smmu], at the start */
 static struct block apps_smmu_second = { "apps smmu", 0, 0x1000 };              /* the second page: a word per context */
 static struct block apps_smmu_context = { "apps smmu, the audio context", 0, 0x1000 };
 #define SMMU_SCR0               0x000
@@ -1457,12 +1457,13 @@ redwood_sound_dsp_up(void)
 		level = 0;
 		return;
 	}
-	if (hakios_board()->pins.tlmm == 0) {
-		say("sound: disabled: the SoC file does not say where the pins are ([pins])\n");
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->smmu.apps == 0) {
+		say("sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])\n");
 		level = 0;
 		return;
 	}
 	tlmm.phys = hakios_board()->pins.tlmm;
+	apps_smmu.phys = hakios_board()->smmu.apps;
 	if (level > 4) {
 		level = 4;
 	}
