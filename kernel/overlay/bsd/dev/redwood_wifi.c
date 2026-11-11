@@ -3506,7 +3506,7 @@ step_qrtr(void)
  * registers -- the ones the hypervisor answers for, see redwood_adreno.c -- and says which of
  * its stream match registers cover that stream. Nothing is written.
  */
-static struct block apps_smmu = { "apps smmu", 0x15000000, 0x2000 };
+static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's [smmu], at the start */
 #define SMMU_SCR0               0x000           /* bit 0: the whole SMMU off; bit 10: a stream nobody matches faults; bit 3:
 	                                         * streams are numbered with 16 bits */
 #define SMMU_IDR0               0x020           /* [7:0] stream match registers */
@@ -4256,12 +4256,13 @@ redwood_wifi_init(void)
 	}
 	if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0 || hakios_board()->pins.tlmm == 0 ||
 	    hakios_board()->spmi.core == 0 || hakios_board()->ipc.aoss == 0 || hakios_board()->ipc.ipcc == 0 ||
-	    hakios_board()->ipc.smem == 0 || hakios_board()->ipc.smem_lock == 0) {
-		printf("wifi: disabled: the SoC file does not say where RPMh, the pins, the PMIC arbiter and the way to the other "
-		    "processors are ([rpmh], [pins], [spmi], [ipc]): the radio's supplies, its enable pins and its processor are "
-		    "reached there\n");
+	    hakios_board()->ipc.smem == 0 || hakios_board()->ipc.smem_lock == 0 || hakios_board()->smmu.apps == 0) {
+		printf("wifi: disabled: the SoC file does not say where RPMh, the pins, the PMIC arbiter, the way to the other "
+		    "processors and the SMMU are ([rpmh], [pins], [spmi], [ipc], [smmu]): the radio's supplies, its enable pins, "
+		    "its processor and its addresses are reached there\n");
 		return;
 	}
+	apps_smmu.phys = hakios_board()->smmu.apps;
 	aoss.phys = hakios_board()->ipc.aoss;
 	ipcc.phys = hakios_board()->ipc.ipcc;
 	smem_lock.phys = hakios_board()->ipc.smem_lock;
