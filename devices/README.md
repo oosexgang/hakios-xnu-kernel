@@ -5,8 +5,8 @@ built with a table generated from these files and picks its row at boot.
 
 | Path | What it says |
 | --- | --- |
-| `devices/NAME/board.toml` | What the device has: its SoC, the drivers it may start, its panel's brightness control, thermal floors. |
-| `soc/SOC.toml` | Where the blocks of the chip are, once for every board with that chip: clock controllers, the DSI controller, temperature sensors, the CPU frequency block. |
+| `devices/NAME/board.toml` | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`[backlight]`), thermal floors (`[thermal]`), how the loader recognises it (`[loader]`), its default boot arguments (`[boot]`). |
+| `soc/SOC.toml` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`[platform]`), clock controllers (`[clocks]`), the DSI controller (`[display]`), temperature sensors (`[thermal]`), the CPU frequency block and its groups of cores (`[cpufreq]`). |
 | `devices/_template/board.toml` | Every key, explained. |
 
 ```sh
@@ -25,10 +25,16 @@ tools/boards.py new NAME --soc SOC --dts device-tree.dts    # start a new board 
 
 ## How the kernel uses it
 
-`tools/boards.py gen` writes `kernel/overlay/bsd/dev/hakios_board_table.h`. At boot the kernel looks up
-the name the loader passed in `/chosen/darwin-board`, and drivers ask `hakios_board()` for addresses
-and `hakios_board_has(HAKIOS_HAS_...)` before they start (`hakios_board.h`). A board that is not in
-the table gets no feature: nothing of a phone is touched on a machine nobody described.
+`tools/boards.py gen` writes two files, both committed:
+
+- `kernel/overlay/bsd/dev/hakios_board_table.h`, the kernel's table. At boot the kernel looks up the
+  name the loader passed in `/chosen/darwin-board`. Drivers ask `hakios_board()` for addresses and
+  `hakios_board_has(HAKIOS_HAS_...)` before they start (`hakios_board.h` lists the features). A board
+  that is not in the table gets no feature: nothing of a phone is touched on a machine nobody described.
+- `loader/platforms.h`, the loader's table, for the boards with a `[loader]` section. The loader tells
+  them apart by the framebuffer address their UEFI reports.
+
+`make check` fails while either file is not what the data says.
 
 `sysctl hw.board` shows what the running kernel found: `name`, `soc`, `description`, `features`.
 
