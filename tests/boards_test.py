@@ -745,6 +745,29 @@ class DeviceTree(Sandbox):
         self.assertEqual(board['backlight']['type'], 'soft')
         self.assertTrue(any('bl_ctrl_wled' in note for note in notes))
 
+    def test_a_board_is_compared_with_a_device_tree(self):
+        def compared(panel='qcom,mdss_dsi_first_cmd'):
+            socs, found = boards.load()
+            tree_soc, tree_board, notes = devicetree.from_dts(DTS, panel)
+            return boards.compare_text('phone', found['phone'], socs['sm0001'], tree_soc, tree_board, 'phone.dts')
+        text, differ = compared()
+        self.assertEqual(differ, 3, text)       # this SoC file's cores and their groups are not the tree's
+        self.assertRegex(text, r'\[clocks\] gcc +0x00100000 +as in the tree')
+        self.assertRegex(text, r'\[clocks\] gcc_disp_ahb_cbcr +0x00027004 +not in the tree')
+        self.assertRegex(text, r'\[cpufreq\] domain_cores +\[4, 3, 1\] +THE TREE SAYS \[2, 1, 1\]')
+        self.assertRegex(text, r'\[platform\] cores +8 +THE TREE SAYS 4')
+        self.assertRegex(text, r'\[backlight\] max +2047 +as in the tree')
+        # a section the tree knows nothing of is one line; one the file lacks is offered with its values
+        self.assertRegex(text, r'\[thermal\] +1 value, none of which the tree says\n')
+        self.assertIn('the tree also has, of [spmi]: core = 0x0c440000, cnfg = 0x0c40a000, observer = 0x0e600000, '
+                      'ee = 0, channels = 0x0c600000', text)
+        self.assertIn('the tree also has, of [buttons]: pon = 0x013,', text)
+        self.assertIn('the tree also has, of [backlight]: restore = 307', text)
+        self.assertRegex(text, r'\d+ values as in the tree, 3 differ, \d+ the tree does not say')
+        # another panel of the same tree is another answer
+        text, differ = compared('qcom,mdss_dsi_second_video')
+        self.assertRegex(text, r'\[backlight\] type +"dcs" +THE TREE SAYS "soft"')
+
     def test_a_new_board_is_started_from_a_device_tree(self):
         dts = self.dir / 'phone2.dts'
         dts.write_text(DTS)

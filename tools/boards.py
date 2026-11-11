@@ -9,6 +9,9 @@
                                        the kernel's (hakios_board_table.h), the loader's (platforms.h) and
                                        user space's (hakios_boards.h), into DIR (build/boards). The builds
                                        and the tests run this themselves.
+  tools/boards.py compare BOARD --dts FILE [--panel NODE]
+                                       a board and its SoC file against an Android device tree: each value as
+                                       in the tree, different, or not in a tree at all; non-zero if one differs
   tools/boards.py new NAME --soc SOC [--dts FILE [--panel NODE]]
                                        start devices/NAME/board.toml (and soc/SOC.toml if it is not there);
                                        with --dts, fill in what an Android device tree source says
@@ -836,6 +839,53 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     print('next: tools/boards.py check, then docs/porting.md')
 
 
+def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
+    """A board and its SoC file against what a device tree says: (the text, how many values differ)."""
+    counts = {'same': 0, 'differ': 0, 'unsaid': 0}
+    out = [f'{name} against {tree_name}', '']
+
+    def side(title, mine, tree, schema, key_value):
+        lines = []
+        for section, values in mine.items():
+            if not isinstance(values, dict) or section not in schema:
+                continue
+            if not any(key in tree.get(section, {}) for key in values):
+                # nothing of the section is in the tree: one line, not one for each value
+                counts['unsaid'] += len(values)
+                lines.append(f'    {"[" + section + "]":34} {len(values)} value{"s" if len(values) != 1 else ""}, '
+                             'none of which the tree says')
+                continue
+            for key, value in values.items():
+                said = tree.get(section, {}).get(key)
+                where = f'[{section}] {key}'
+                if said is None:
+                    counts['unsaid'] += 1
+                    lines.append(f'    {where:34} {key_value(key, value):28} not in the tree')
+                elif said == value:
+                    counts['same'] += 1
+                    lines.append(f'    {where:34} {key_value(key, value):28} as in the tree')
+                else:
+                    counts['differ'] += 1
+                    lines.append(f'    {where:34} {key_value(key, value):28} THE TREE SAYS {key_value(key, said)}')
+        # what the tree has and the file does not: a section to add, or a key
+        for section, values in tree.items():
+            if section not in schema:
+                continue
+            missing = [key for key in values if key in schema[section] and key not in mine.get(section, {})]
+            if missing:
+                lines.append(f'    the tree also has, of [{section}]: ' +
+                             ', '.join(f'{key} = {key_value(key, values[key])}' for key in missing))
+        return [f'  {title}'] + (lines or ['    nothing a device tree says']) + ['']
+
+    out += side(f'soc/{board["soc"]}.toml', soc, tree_soc, SOC_SCHEMA, soc_value)
+    out += side(f'{name}/board.toml', board, tree_board, BOARD_SCHEMA,
+                lambda key, value: f'{value:#05x}' if key in ('pon', 'volume_up') else toml_value(value))
+    out.append(f'{counts["same"]} values as in the tree, {counts["differ"]} differ, {counts["unsaid"]} the tree does not say' +
+               (' (clock offsets, the I/O window, firmware names and what was measured on the phone are never in one)'
+                if counts['unsaid'] else ''))
+    return '\n'.join(out) + '\n', counts['differ']
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--devices', action='append', default=[], type=Path, metavar='DIR',
@@ -848,6 +898,10 @@ def main():
     commands.add_parser('status').add_argument('board')
     commands.add_parser('check')
     commands.add_parser('gen').add_argument('--out', type=Path, default=OUT, metavar='DIR')
+    compare = commands.add_parser('compare')
+    compare.add_argument('board')
+    compare.add_argument('--dts', type=Path, required=True)
+    compare.add_argument('--panel')
     new = commands.add_parser('new')
     new.add_argument('name')
     new.add_argument('--soc', required=True)
@@ -878,6 +932,17 @@ def main():
         if options.board not in boards:
             raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
         print(status_text(options.board, boards[options.board], socs[boards[options.board]['soc']]), end='')
+    elif options.command == 'compare':
+        if options.board not in boards:
+            raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
+        board = boards[options.board]
+        tree_soc, tree_board, notes = from_dts(options.dts.read_text(errors='replace'), options.panel)
+        text, differ = compare_text(options.board, board, socs[board['soc']], tree_soc, tree_board, options.dts.name)
+        print(text, end='')
+        for note in notes:
+            if 'panel' in note:         # (which panel was compared: the one thing the reader had to choose)
+                print(f'note: {note}')
+        return 1 if differ else 0
     elif options.command == 'show':
         if options.board not in boards:
             raise SystemExit(f'no board "{options.board}" (tools/boards.py list)')
