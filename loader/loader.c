@@ -4604,6 +4604,9 @@ fb_command(char *cmd)
 			const char *var = cmd + 7;
 			if (str_eq(var, "product")) {
 				fb_reply("OKAY", "xnuloader");
+			} else if (str_eq(var, "board")) {
+				/* the board it took itself for (its framebuffer; /chosen/darwin-board), for the host to compare */
+				fb_reply("OKAY", PLAT ? PLAT->name : "");
 			} else if (str_eq(var, "version")) {
 				fb_reply("OKAY", "0.5");
 			} else if (str_eq(var, "max-download-size")) {
