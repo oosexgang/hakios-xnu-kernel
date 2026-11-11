@@ -72,6 +72,17 @@ SYSCTL_INT(_kern_redwood, OID_AUTO, battery_soc_estimated, CTLFLAG_RD | CTLFLAG_
 SYSCTL_INT(_kern_redwood, OID_AUTO, battery_charger_action, CTLFLAG_RD | CTLFLAG_LOCKED,
     &battery_charger_action, 0, "last Qualcomm charger action, for diagnostics");
 
+/* what was loaded so far is loaded before what follows (the loader writes the cache on another core) */
+static inline void
+barrier(void)
+{
+#if defined(__arm64__) || defined(__aarch64__)
+	__asm__ volatile ("dmb ishld" ::: "memory");
+#else
+	__asm__ volatile ("" ::: "memory");     /* (the host tests on another processor) */
+#endif
+}
+
 static bool
 battery_snapshot(struct loader_battery *out)
 {
@@ -80,9 +91,9 @@ battery_snapshot(struct loader_battery *out)
 	for (unsigned retry = 0; retry < 4; retry++) {
 		before = shared_battery->sequence;
 		if (before & 1) continue;
-		__asm__ volatile ("dmb ishld" ::: "memory");
+		barrier();
 		memcpy(out, (const void *)(uintptr_t)shared_battery, sizeof(*out));
-		__asm__ volatile ("dmb ishld" ::: "memory");
+		barrier();
 		after = shared_battery->sequence;
 		if (before == after && !(after & 1)) return true;
 	}

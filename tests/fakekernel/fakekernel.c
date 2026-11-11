@@ -218,10 +218,12 @@ nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t *result)
 	*result = nanoseconds;          /* (the fake clock counts nanoseconds) */
 }
 
+unsigned fake_delay_divisor = 1;
+
 void
 delay_for_interval(uint32_t interval, uint32_t scale)
 {
-	uint64_t nanoseconds = (uint64_t)interval * scale;
+	uint64_t nanoseconds = (uint64_t)interval * scale / (fake_delay_divisor ? fake_delay_divisor : 1);
 	struct timespec t = { (time_t)(nanoseconds / 1000000000ull), (long)(nanoseconds % 1000000000ull) };
 
 	nanosleep(&t, NULL);
@@ -322,7 +324,7 @@ PE_parse_boot_argn(const char *name, void *value, int size)
 }
 
 /* sysctl: a table by name ("_hw_backlight.level") */
-static struct sysctl_oid *oids[32];
+static struct sysctl_oid *oids[64];
 static int oid_count;
 
 void

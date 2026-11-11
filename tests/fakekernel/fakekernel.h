@@ -146,6 +146,7 @@ int SecureDTLookupEntry(const DTEntry search, const char *path, DTEntry *entry);
 int SecureDTGetProperty(const DTEntry entry, const char *name, void const **value, unsigned int *size);
 
 /* for the tests (fakekernel.c) */
+extern unsigned fake_delay_divisor;     /* a driver's waits are this many times shorter (1: as long as it asks) */
 extern const char *boot_args;
 extern const char *board;               /* /chosen/darwin-board; NULL: the loader named none */
 bool logged(const char *text);
