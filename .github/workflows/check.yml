@@ -3,7 +3,10 @@
 #                     tests of the kernel's drivers (also under qemu-aarch64) and of the tools
 #   kernel/verify.sh  Apple's pinned release + kernel/overlay + kernel/patches assemble, and exporting
 #                     the assembled tree gives back exactly what is committed
-# The kernel itself is not built here: that needs the Darwin toolchain (docs/building.md).
+#   kernel/syntax-check.sh
+#                     the C files HakiOS adds to the kernel compile, for syntax and types, with the
+#                     runner's clang against the assembled tree's headers
+# The kernel itself is not built or linked here: that needs the Darwin toolchain (docs/building.md).
 name: check
 
 on:
@@ -24,3 +27,5 @@ jobs:
         run: make check
       - name: The kernel sources assemble and export back unchanged
         run: kernel/verify.sh
+      - name: The kernel files HakiOS adds compile (syntax and types only)
+        run: kernel/syntax-check.sh
