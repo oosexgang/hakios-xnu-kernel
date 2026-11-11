@@ -306,6 +306,47 @@ GenericARMPE::start(IOService * provider)
 	 */
 	publishResource("IORTC", this);
 
+	/*
+	 * Boot-arg iokit_busy=S: S seconds after this, the services that are still busy -- matching, starting or
+	 * waiting -- with their busy count, and the registry root's. iOS's configd makes the network's default
+	 * configuration only once the registry is quiet (its InterfaceNamer waits up to 300 s otherwise); this
+	 * says what keeps it from being so. (printf: on the console, which the loader keeps whole, where the
+	 * kernel's message buffer has lost its first minutes by the end of a run.)
+	 */
+	uint32_t busy_after = 0;
+	if (PE_parse_boot_argn("iokit_busy", &busy_after, sizeof(busy_after)) && busy_after != 0) {
+		static thread_call_t busy_call;
+		uint64_t deadline;
+
+		busy_call = thread_call_allocate([](thread_call_param_t, thread_call_param_t) {
+			IORegistryIterator * iter = IORegistryIterator::iterateOver(gIOServicePlane, kIORegistryIterateRecursively);
+			IOService * root = IOService::getServiceRoot();
+			unsigned busy = 0;
+
+			printf("iokit_busy: the registry root is %s (busy %u)\n", root && root->getBusyState() ? "BUSY" : "quiet",
+			    root ? root->getBusyState() : 0);
+			while (iter != NULL) {
+				OSObject * obj;
+				while ((obj = iter->getNextObject()) != NULL) {
+					IOService * service = OSDynamicCast(IOService, obj);
+					if (service != NULL && service->getBusyState() != 0) {
+						printf("iokit_busy: %s (class %s) busy %u, %s\n", service->getName(), service->getMetaClass()->getClassName(),
+						    service->getBusyState(), service->isInactive() ? "inactive" : "active");
+						busy++;
+					}
+				}
+				if (iter->isValid()) {
+					break;
+				}
+				iter->reset();
+			}
+			OSSafeReleaseNULL(iter);
+			printf("iokit_busy: %u busy services\n", busy);
+		}, NULL);
+		clock_interval_to_deadline(busy_after, NSEC_PER_SEC, &deadline);
+		thread_call_enter_delayed(busy_call, deadline);
+	}
+
 	/* Stand-ins for the closed graphics drivers that the iOS window server talks to. */
 	MiniIOSurfaceStart(this);
 	MiniIOMobileFramebufferStart(this);
