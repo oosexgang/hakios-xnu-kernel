@@ -387,6 +387,9 @@ class Check(Sandbox):
         path = self.dir / 'devices/phone/board.toml'
         self.board('"cpufreq-epss"', '"cpufreq-epss", "adsp"')
         self.assertIn('feature "adsp" needs [adsp] in the board file', self.problems())
+        # ... and RPMh, which its supplies are asked of
+        self.assertIn('feature "adsp" needs [rpmh] in soc/sm0001.toml', self.problems())
+        self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
         listed = path.read_text()
         for section, reason in (
                 ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n', None),
@@ -458,7 +461,10 @@ class Check(Sandbox):
         self.assertRegex(said, r'buttons-pmic +needs \[spmi\] in soc/sm0001.toml, \[buttons\] in the board file')
         self.assertRegex(said, r'ddr-rpmh +needs \[rpmh\] in soc/sm0001.toml')
         self.assertRegex(said, r'display-scan +needs intf1 in \[display\] and \[clocks\] in soc/sm0001.toml')
-        self.assertRegex(said, r"wifi-wcn6750 +one part's driver")
+        self.assertRegex(said, r'mic-wcd938x +needs \[pins\] in soc/sm0001.toml')
+        # a part's driver whose addresses are there is still one part's: said, not offered
+        self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[thermal]')
+        self.assertRegex(status(), r"mic-wcd938x +one part's driver")
         self.assertRegex(said, r'touch-goodix +needs \[pins\] in soc/sm0001.toml')
         self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\n[thermal]')
         self.assertRegex(status(), r'buttons-pmic +needs \[buttons\] in the board file')
@@ -535,7 +541,10 @@ class Generate(Sandbox):
         self.assertIn('feature "haptic-aw86927" needs [pins] in soc/sm0001.toml', said)
         self.assertIn('feature "touch-goodix" needs [pins] in soc/sm0001.toml', said)
         self.assertNotIn('feature "touch-goodix" needs [clocks]', said)        # (which this SoC file has)
+        self.assertIn('feature "touch-goodix" needs [rpmh] in soc/sm0001.toml', said)  # (its supply is asked of RPMh)
+        self.assertNotIn('feature "haptic-aw86927" needs [rpmh]', said)
         self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[thermal]')
+        self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
         self.assertEqual(self.problems(), '')
         self.assertIn('.pins = { .tlmm = 0x0f100000 },', boards.table_text(*boards.load()))
 

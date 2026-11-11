@@ -96,11 +96,14 @@ BOARD_SCHEMA = {
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
-                 'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',), 'camera-redwood': ('spmi', 'pins', 'clocks'),
+                 'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
+                 'camera-redwood': ('spmi', 'pins', 'clocks', 'rpmh'),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh'),
-                 # the part drivers that drive the SoC's pins, and switch a bus's clocks on in the GCC
-                 'touch-goodix': ('pins', 'clocks'), 'touch-ft3658u': ('pins', 'clocks'),
-                 'speaker-aw88261': ('pins', 'clocks'), 'haptic-aw86927': ('pins',)}
+                 # the part drivers that drive the SoC's pins, switch a bus's clocks on in the GCC, and ask
+                 # RPMh for a part's supply
+                 'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
+                 'speaker-aw88261': ('pins', 'clocks', 'rpmh'), 'haptic-aw86927': ('pins',),
+                 'adsp': ('rpmh',), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi'), 'mic-wcd938x': ('pins',)}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)

@@ -39,7 +39,8 @@ observer = 0x0e600000               # "obsrvr": reads
 channels = 0x0c600000               # "chnls": writes; optional, needed only by the drivers that write to a PMIC
 ee = 0                              # qcom,ee; optional, 0 if left out
 
-# RPMh, for the feature "ddr-rpmh".
+# RPMh: for the features "ddr-rpmh", "adsp" and "gpu-a660", and for the part drivers that ask it for a
+# supply (the touch controllers', the speaker amplifier's, the cameras', Wi-Fi's).
 [rpmh]
 cmd_db = 0x80860000                 # the reserved-memory node with compatible "qcom,cmd-db": its address
 cmd_db_size = 0x20000               # ... and size

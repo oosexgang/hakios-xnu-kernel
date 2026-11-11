@@ -16,9 +16,9 @@ lives here, with the code, and not in a phone's package.
 | `[platform]` | The interrupt controller, the cores and how they are numbered, the firmware's power interface, one window over the peripherals | A board with a `[loader]` section |
 | `[clocks]` | The global and display clock controllers, and the registers that switch the display block's clocks on | A panel whose brightness is MIPI DCS; `display-scan` |
 | `[display]` | The first DSI controller, and the interface the panel hangs on | The same |
-| `[pins]` | Where the SoC's own pins (TLMM) are | The part drivers that drive pins: the touch controllers, the speaker amplifier, the haptic motor, the cameras |
-| `[spmi]` | The PMIC arbiter's blocks | `buttons-pmic`, and the part drivers that write to a PMIC |
-| `[rpmh]` | The command database and the application processor's sequencer | `ddr-rpmh` |
+| `[pins]` | Where the SoC's own pins (TLMM) are | The part drivers that drive pins: the touch controllers, the speaker amplifier, the microphones' codec, the haptic motor, the cameras, Wi-Fi |
+| `[spmi]` | The PMIC arbiter's blocks | `buttons-pmic`, the part drivers that write to a PMIC, and Wi-Fi, which reads its supplies there |
+| `[rpmh]` | The command database and the application processor's sequencer | `ddr-rpmh`, `adsp`, `gpu-a660`, and the part drivers that ask RPMh for a supply: the touch controllers, the speaker amplifier, the cameras, Wi-Fi |
 | `[adreno]` | The GPU's blocks: the 3D core, the GMU, its clock controller, its SMMU, the fuses | `gpu-a660`, with a board's `[gpu]` |
 | `[thermal]` | The TSENS controllers | A board's `[thermal]` |
 | `[cpufreq]` | The EPSS block and its groups of cores | `cpufreq-epss`, a board's `[thermal]` |

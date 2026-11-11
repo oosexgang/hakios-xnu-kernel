@@ -170,11 +170,16 @@ table(void)
 		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD)) || (b->spmi.core != 0 &&
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
-		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_REDWOOD)) || b->pins.tlmm != 0,
+		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750)) ||
+		    b->pins.tlmm != 0,
 		    "%s: a driver that drives the SoC's pins without [pins]", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
 		    HAKIOS_HAS_CAMERA_REDWOOD)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without [clocks]",
 		    b->name);
+		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
+		    HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->rpmh.cmd_db != 0 &&
+		    b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 && b->rpmh.tcs_offset != 0),
+		    "%s: a driver that asks RPMh for a supply without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
