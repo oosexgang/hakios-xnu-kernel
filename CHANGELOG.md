@@ -21,7 +21,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   `tools/boards.py new NAME --soc SOC --dts FILE` reads the DSI controller, the temperature sensors,
   the CPU frequency block and its groups of cores, the clock controllers' addresses, the interrupt
   controller, the cores, the PSCI method, the panel's brightness range and mode, the PMIC arbiter with
-  the keys, and RPMh. It prints what it could not find. Two things are never in a device tree and are
+  the keys, the SoC's own pins, and RPMh. It prints what it could not find. Two things are never in a device tree and are
   filled in by hand: the display clocks' register offsets and the I/O window.
 - **`tools/boards.py status NAME`** lists every feature for a board: on, ready to be listed, or the
   section it still waits for. `tools/boards.py check` validates every file and says which and why.
@@ -70,8 +70,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **A syntax check without the Darwin toolchain.** `kernel/syntax-check.sh` compiles what HakiOS adds
   for syntax and types with the machine's own clang, in seconds against a tree that is there. It does
   not build or link the kernel.
-- **One log helper.** Eleven drivers each had their own copy of the function that writes to the
-  loader's log. `hakios_say()` in `hakios_log.h` is that function once.
+- **What drivers share is written once.** Eleven drivers each had their own copy of the function that
+  writes to the loader's log: `hakios_say()` in `hakios_log.h`. Fourteen had their own register
+  access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
+  clock are `hakios_time.h`. The PMIC arbiter's protocol, written out in three drivers, is
+  `hakios_spmi.h`, with a test of its own.
 - **No board names in code.** Nothing compares the board's name any more: the name is looked up once,
   for the board's row. [CONTRIBUTING.md](CONTRIBUTING.md) has this and the other rules that keep the
   project portable, and says where each kind of change goes.
