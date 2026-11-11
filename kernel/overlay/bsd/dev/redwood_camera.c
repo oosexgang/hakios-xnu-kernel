@@ -1573,7 +1573,7 @@ show_smps(const char *what, uint16_t id)
 	    what, id, head[0], head[1], status[0], status[1], set[0], set[1], set[2], set[3], set[1] << 8 | set[0]);
 }
 
-#define SMMU_PHYS               0x15000000UL
+#define SMMU_PHYS               ((unsigned long)hakios_board()->smmu.apps)      /* the SoC file's [smmu] */
 #define SMMU_SCR0               0x000
 #define SMMU_IDR0               0x020
 #define SMMU_IDR1               0x024
@@ -4166,8 +4166,10 @@ redwood_camera_init(void)
 		level = 0;
 		return;
 	}
-	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
-		printf("camera: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0 ||
+	    hakios_board()->smmu.apps == 0) {
+		printf("camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh and the SMMU are "
+		    "([pins], [clocks], [rpmh], [smmu])\n");
 		level = 0;
 		return;
 	}
