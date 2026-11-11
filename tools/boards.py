@@ -638,6 +638,32 @@ def write_generated(out, socs, boards):
     return written
 
 
+def board_to_boot(boards, name=None):
+    """The board a boot tool is to start, as (name, board): the one named, or the only package here that has
+    a [boot] section. A SystemExit that says what there is otherwise."""
+    bootable = {n: board for n, board in boards.items() if 'boot' in board}
+    if name is None:
+        if len(bootable) != 1:
+            raise SystemExit('which phone? --board NAME (here: ' + (', '.join(sorted(bootable)) or 'no package with a '
+                             '[boot] section; a phone is brought in with tools/device.py add NAME') + ')')
+        name = next(iter(bootable))
+    if name not in bootable:
+        raise SystemExit(f'no board "{name}" with a [boot] section here (tools/boards.py list); a phone is brought in '
+                         f'with tools/device.py add {name}')
+    return name, bootable[name]
+
+
+def boot_arguments(board, more=()):
+    """The board's boot arguments of a plain run with `more` (NAME or NAME=VALUE each) added: one that
+    names an argument the board has takes its place, the others follow in the order given."""
+    arguments = {argument.split('=', 1)[0]: argument for argument in board['boot']['bootargs']}
+    for argument in more:
+        if not re.fullmatch(r'[A-Za-z0-9_-]+(=\S*)?', argument):
+            raise SystemExit(f'"{argument}" is not NAME or NAME=VALUE')
+        arguments[argument.split('=', 1)[0]] = argument
+    return list(arguments.values())
+
+
 def toml_value(value):
     if isinstance(value, bool):
         return 'true' if value else 'false'

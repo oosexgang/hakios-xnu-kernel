@@ -77,22 +77,11 @@ def check(serial, key, value):
         raise SystemExit(f'Wrong device: expected {key} {value}')
 
 
-bootable = {name: board for name, board in boards.load()[1].items() if 'boot' in board}
-if options.board is None:
-    if len(bootable) != 1:
-        raise SystemExit('which phone? --board NAME (here: ' + (', '.join(sorted(bootable)) or 'no package with a [boot] '
-                         'section; a phone is brought in with tools/device.py add NAME') + ')')
-    options.board = next(iter(bootable))
-board = bootable.get(options.board)
-if board is None:
-    raise SystemExit(f'no board "{options.board}" with a [boot] section here (tools/boards.py list); a phone is '
-                     f'brought in with tools/device.py add {options.board}')
+# which phone, and the boot arguments of its board with this run's own (tools/boards.py; tested there)
+options.board, board = boards.board_to_boot(boards.load()[1], options.board)
 boot = board['boot']
-args = {a.split('=', 1)[0]: a for a in boot['bootargs']}
-for a in options.boot_arg:
-    args[a.split('=', 1)[0]] = a
-if options.return_after:
-    args['loader_return_after'] = f'loader_return_after={options.return_after}'
+boot_args = boards.boot_arguments(board, options.boot_arg + (
+    [f'loader_return_after={options.return_after}'] if options.return_after else []))
 loader = DR / f'prebuilt/{options.board}/resident-usb.img'
 share = DR / f'recovery/assets/{options.board}-ios-share.bin'
 for path in (options.kernel, options.system, options.root, loader, share):
@@ -103,7 +92,7 @@ try:
         validate_apfs(image.read(4096), options.system.stat().st_size)
     data = prepare(share.read_bytes(), time.time(),
                    wifi_mac=validate_mac(options.wifi_mac), kernel=options.kernel.read_bytes(), cpu_count=boot['cpus'],
-                   ramdisk=options.root.read_bytes(), boot_args=list(args.values()))
+                   ramdisk=options.root.read_bytes(), boot_args=boot_args)
 except (OSError, ValueError) as error:
     raise SystemExit(str(error))
 

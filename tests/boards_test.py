@@ -741,6 +741,34 @@ class Repository(unittest.TestCase):
         self.assertEqual(list(problems), [])
         self.assertIn('qemu-virt', found)
 
+    def test_a_boot_tool_is_told_which_phone_and_with_what_arguments(self):
+        plain = {'boot': {'fastboot_product': 'a', 'cpus': 8, 'bootargs': ['gpu=0', 'cpufreq=1', '-v']}}
+        found = {'emulator': {}, 'alpha': plain}
+        # the only phone here is the one, named or not; another name is said not to be here
+        self.assertEqual(boards.board_to_boot(found)[0], 'alpha')
+        self.assertEqual(boards.board_to_boot(found, 'alpha'), ('alpha', plain))
+        with self.assertRaises(SystemExit) as refused:
+            boards.board_to_boot(found, 'beta')
+        self.assertIn('tools/device.py add beta', str(refused.exception))
+        with self.assertRaises(SystemExit) as refused:
+            boards.board_to_boot(found, 'emulator')         # (a board without [boot] is not one to boot)
+        self.assertIn('no board "emulator" with a [boot] section', str(refused.exception))
+        # two phones: the tool does not choose
+        with self.assertRaises(SystemExit) as refused:
+            boards.board_to_boot({**found, 'beta': plain})
+        self.assertIn('which phone? --board NAME (here: alpha, beta)', str(refused.exception))
+        with self.assertRaises(SystemExit) as refused:
+            boards.board_to_boot({'emulator': {}})
+        self.assertIn('no package with a [boot] section', str(refused.exception))
+        # the board's arguments, one replaced in its place, new ones after them
+        self.assertEqual(boards.boot_arguments(plain), ['gpu=0', 'cpufreq=1', '-v'])
+        self.assertEqual(boards.boot_arguments(plain, ['gpu=1', 'cpus=1', 'thermal=2', 'cpus=2']),
+                         ['gpu=1', 'cpufreq=1', '-v', 'cpus=2', 'thermal=2'])
+        self.assertEqual(plain['boot']['bootargs'], ['gpu=0', 'cpufreq=1', '-v'])       # (the board is not changed)
+        with self.assertRaises(SystemExit) as refused:
+            boards.boot_arguments(plain, ['two words'])
+        self.assertIn('"two words" is not NAME or NAME=VALUE', str(refused.exception))
+
     def test_every_feature_says_how_it_is_started_and_the_argument_is_one_the_kernel_reads(self):
         reference = (ROOT / 'docs/boot-args.md').read_text()
         for _, feature in boards.feature_bits():
