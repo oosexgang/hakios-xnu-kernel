@@ -19,13 +19,17 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    # (the whole job takes three minutes; one that hangs is over in twenty, not in the runner's six hours)
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: Tools
-        # (the runner's package mirror is not always there: tried three times before the job gives up)
+        # (the runner's package mirror is not always there, and has been seen to hang: each try has four
+        # minutes, and there are three before the job gives up)
         run: |
           for attempt in 1 2 3; do
-            if sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld; then
+            if sudo timeout 240 apt-get update -q &&
+               sudo timeout 240 apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld; then
               exit 0
             fi
             echo "attempt $attempt failed; waiting"
