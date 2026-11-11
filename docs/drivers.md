@@ -115,7 +115,8 @@ needs its feature in the board's `features`.
    Waits and the clock are `hakios_time.h`'s (`sleep_ms()`, `spin_us()` for where nothing may sleep,
    `now_us()`).
    A resource of RPMh (a supply rail, a regulator, a bus clock manager) is looked up by name with
-   `hakios_cmd_db.h`, in the command database the SoC file's `[rpmh]` names.
+   `hakios_cmd_db.h`, in the command database the SoC file's `[rpmh]` names, and asked for with
+   `hakios_rpmh_send()` of `hakios_rpmh.h`, under `redwood_rpmh_lock()`.
    A driver that reaches a PMIC does it through `hakios_spmi.h`: the arbiter's registers, a channel's
    lookup, one read, one write, and what a status means, for the arbiter the SoC file's `[spmi]`
    names. It takes the bus with `redwood_spmi_lock()`, as the keys', the flashlight's and the
