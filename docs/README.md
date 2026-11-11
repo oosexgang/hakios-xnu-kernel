@@ -12,6 +12,7 @@
 | [metal-glass.md](metal-glass.md) | What exists for Metal on the Adreno, and the steps to Liquid Glass on iOS 27. |
 | [ios26-boot.md](ios26-boot.md) | The lab notebook: how iOS 26 and 27 were brought to the home screen on Renoir, the build and boot commands, measurements. |
 | [ram-budget.md](ram-budget.md) | Fitting the iOS system image into the phone's RAM. |
+| [glossary.md](glossary.md) | The words of three worlds, one line each: this project's, Qualcomm's and Android's, Apple's. |
 | [migrating.md](migrating.md) | For existing branches and patches: where everything went, and how to carry work over. |
 
 Next to the code:

@@ -1,0 +1,126 @@
+# Glossary
+
+The documents and the board files use words from three worlds: this project's own, Qualcomm platforms
+as Android device trees and Linux drivers name them, and Apple's kernel and iOS. Each entry says what
+the term is in general and, where it helps, where it shows in this repository.
+
+## This project
+
+| Term | Meaning |
+| --- | --- |
+| **Assembled tree** | The XNU source tree that is compiled: Apple's pinned release with `kernel/overlay/` copied in and `kernel/patches/` applied. `kernel/assemble.sh` makes it beside the repository (`../xnu-12377-hakios`, or where `XNU_SRC` points); often just "the tree". |
+| **Board** | One machine the kernel can run on: a phone, or the emulator. It is described by a board file and a SoC file, becomes a row of the kernel's table at build, and is found at boot by its name. |
+| **Board file** | `board.toml` of a device package: what one device has. Its SoC, its `features`, and sections such as `[backlight]`, `[buttons]`, `[gpu]`, `[loader]` and `[boot]`. Every key is explained in `devices/_template/board.toml`. |
+| **`build/boards` tables** | Three headers `tools/boards.py gen` writes from the packages and SoC files that are present: `hakios_board_table.h` (the kernel's), `platforms.h` (the loader's), `hakios_boards.h` (the inserted libraries'). Never committed; each build makes them itself. |
+| **`darwin-board`** | The property `/chosen/darwin-board` of the device tree the loader hands the kernel: the board's name. The kernel looks its row up by it (`hakios_board()`, in `kernel/overlay/bsd/dev/hakios_board.c`). |
+| **`darwin-renoir`** | The team's working tree, which has not been published. The scripts of `ios/` look for it beside the repository; see "What is not in this repository" in [architecture.md](architecture.md). |
+| **Device package** | A directory `NAME/` with one phone's `board.toml`, README and notes. Packages are kept on the `devices` branch; `tools/device.py add NAME` copies one into `devices/NAME/` of a checkout. See [devices/README.md](../devices/README.md). |
+| **`devices` branch** | The git branch on which device packages are kept, one directory per phone, with none of the code. The main branch describes no phone. |
+| **Export** | Two unrelated commands. `kernel/export.sh` takes work done in an assembled tree back into `kernel/overlay/` and `kernel/patches/`. `tools/device.py export` copies a package made in a checkout to a checkout of the `devices` branch. |
+| **Fake kernel** | `tests/fakekernel/`: just enough of XNU's interfaces for a driver's own source file to be compiled and run as a host program, against a model of its registers. See [tests/README.md](../tests/README.md). |
+| **Feature** | A name in a board file's `features` list that lets one driver start on that board (`cpufreq-epss`, `gpu-a660`, `touch-goodix`). In the kernel it is a `HAKIOS_HAS_...` bit of `kernel/overlay/bsd/dev/hakios_board.h`, asked with `hakios_board_has()`. |
+| **I/O window** | One range of physical addresses that covers the SoC's peripherals, which the loader tells the kernel of. `io_base` and `io_size` in `[platform]` of the SoC file; it is not in a device tree. |
+| **Inserted library** | A small library of this project that the kernel puts into a named iOS process when it starts (`kern.exec_inject`); also called injected. Sources are `ios/userland/inject_*.c`; the small image's `etc/inject.conf` says which process gets which. |
+| **Loader** | `loader/`: a UEFI application that plays iBoot's part. It finds the payload in RAM, builds the Apple-format device tree and `boot_args`, names the board and jumps to the kernel; afterwards it receives the kernel's log. |
+| **Look-only level** | The value of a driver's boot argument at which it reads and logs but writes nothing, usually 1 (`backlight=1`, `ddr=1`, `thermal=1`). The documents write "look only", "reads only" or "only looks". |
+| **Overlay** | `kernel/overlay/`: the files HakiOS adds to XNU, kept as ordinary sources at their place in the XNU tree. Not a device tree overlay, which [porting.md](porting.md) mentions once. |
+| **`pacstrip`** | `ios/tools/pacstrip.c`: rewrites every PAC instruction of a Mach-O or of a dyld shared cache into its plain equivalent and recomputes the page hashes of the code signature, so that arm64e code runs on cores without pointer authentication. |
+| **Part driver** | A driver written for one part wired the way one phone has it, such as a touch controller or an amplifier. It runs only on a board that lists its feature; "part" in the Portability column of [drivers.md](drivers.md). |
+| **Payload** | What the loader starts: the kernel, the images and the boot arguments in one block of RAM, in the format the documents call "XNUP". `loader/mkpayload.py` packs it. |
+| **`redwood_*`, `hakios_*`** | Prefixes of files and symbols. `redwood_*` is the historical prefix of the platform layer, after the first phone, and says nothing about which phone the code is for; new device-independent code is named `hakios_*`. |
+| **Resident loader** | A loader that stays in memory while the kernel runs, gets the log when the kernel returns and takes the next run over USB. `loader/` works this way; the documents also use the name for a separate USB loader in `darwin-renoir`. |
+| **Small image** | The small APFS root image (`/redwood`): the project's own root tree with the inserted libraries, firmware directories and `etc/inject.conf`. `ios/userland/root26-ios.sh` builds it; also called the root image (`--root` of `ios/tools/boot26.py`). |
+| **SoC file** | `soc/SOC.toml`: where the blocks of one chip are (interrupt controller, cores, clock controllers, DSI controller, sensors). Shared by every board with that chip, so kept on the main branch. Every key is explained in `devices/_template/soc.toml`. |
+| **Stand-in** | Code that takes the place of something closed or absent. Mostly the replacements for Apple's closed kernel extensions in `kernel/overlay/iokit/Kernel/` (files named `Mini...`); also the tests' made-up phones and the substitutes for Apple's `iig`. |
+| **System image** | The large APFS image with iOS itself: the chosen files of the IPSW, with every arm64e Mach-O and the shared cache passed through `pacstrip`, and the launchd jobs. `ios/tools/mkimage26.py` builds it; [ram-budget.md](ram-budget.md) is about its size. |
+| **Tests' phones** | The made-up boards in `tests/devices` (`phone-cmd`, `phone-video`, `phone-keys`) that the host tests run against instead of real packages. Their names are not real, so a real package never collides with them. |
+| **Topic patch** | One of the patches in `kernel/patches/` that hold the changes to Apple's own files, grouped by topic. `kernel/patches/series` says which file belongs to which patch; `kernel/export.sh` regenerates them, so they are not edited by hand. |
+
+## Qualcomm, Android and Linux
+
+| Term | Meaning |
+| --- | --- |
+| **Adreno** | Qualcomm's GPU family. The driver here is for the A660 family (642, 642L, 643, 660): feature `gpu-a660`, `[adreno]` in the SoC file for where its blocks are, `[gpu]` in the board file, `kernel/overlay/bsd/dev/redwood_adreno.c`. |
+| **ADSP** (audio DSP) | A separate signal processor in the SoC that runs Qualcomm's signed audio firmware; the battery manager's service also sits behind it. Feature `adsp`, `[adsp]` in the board file, `kernel/overlay/bsd/dev/redwood_adsp.c`. |
+| **BCM** (bus clock manager) | An RPMh resource that stands for the clock of a bus or of the memory; a system votes on it for the bandwidth it needs. The feature `ddr-rpmh` votes on the memory's, found by name in the command database. |
+| **CBCR** (clock branch control register) | The register of a Qualcomm clock controller that switches one clock branch on and shows whether it runs. Keys ending in `_cbcr` in `[clocks]` of the SoC file; the offsets come from Linux's clock drivers. |
+| **cmd-db** (command database) | A table the boot firmware leaves in reserved memory, which maps the names of RPMh resources to their addresses. `cmd_db` and `cmd_db_size` in `[rpmh]` of the SoC file. |
+| **Command mode and video mode** | The two ways a DSI panel takes its picture. A command-mode panel has frame memory of its own and is sent a frame when there is one; a video-mode panel is fed pixels all the time. `panel_mode` in `[backlight]`; feature `display-scan` is for command mode. |
+| **DCS** (MIPI Display Command Set) | The standard commands a DSI panel understands; command 0x51 sets its brightness. Backlight `type = "dcs"` in the board file; [backlight.md](backlight.md). |
+| **Device tree** | The description of the hardware a boot loader hands Linux: nodes with addresses and properties, a `.dts` file as source. `tools/boards.py new --dts` starts a board and a SoC file from a phone's (`tools/devicetree.py`). The Apple-format tree is another thing: see the Apple section. |
+| **DISPCC** (display clock controller) | The SoC block with the clocks and the power switch of the display subsystem. `dispcc` and the `dispcc_mdss_*` keys in `[clocks]` of the SoC file; the offsets come from Linux's `dispcc-*.c`. |
+| **DSI** (MIPI Display Serial Interface) | The serial link between the SoC and the panel, and the controller in the SoC that drives it. `dsi0` in `[display]` of the SoC file; the `dcs` backlight sends its commands through it. |
+| **EE** (execution environment) | The number by which the PMIC arbiter knows one of the systems that share it (boot loader, modem, the operating system); it decides which channels and interrupts are that system's. `ee` in `[spmi]`, the device tree's `qcom,ee`. |
+| **EPSS** | Qualcomm's hardware block for CPU frequency: it keeps a table of frequencies for each group of cores and switches clock and voltage itself when told which row is wanted. `[cpufreq]` in the SoC file, feature `cpufreq-epss`, `kernel/overlay/bsd/dev/redwood_cpufreq.c`. |
+| **fastboot** | The USB protocol of Android boot loaders, and the host tool that speaks it. `fastboot boot` sends an image into RAM and starts it without writing storage: how the UEFI is started. The loader speaks the same protocol for the next run. |
+| **GCC** (global clock controller) | The SoC's main clock controller, not the compiler. `gcc` and `gcc_disp_ahb_cbcr` in `[clocks]` of the SoC file; the offsets come from Linux's `gcc-*.c`. |
+| **GDSC** (globally distributed switch controller) | A power switch for one block of the SoC, driven by a register (GDSCR) in a clock controller. `dispcc_mdss_gdscr` in `[clocks]` is the display block's. |
+| **GICv3** (Arm Generic Interrupt Controller, version 3) | The interrupt controller: one distributor, and a redistributor for each core. `gic_dist` and `gic_redist` in `[platform]` of the SoC file; `kernel/overlay/osfmk/arm64/gic_v3_irq.c`. |
+| **GMU** (graphics management unit) | A small processor beside an Adreno that runs firmware of its own and manages the GPU's power and clock speed. `gmu` in `[adreno]`; its firmware is `a660_gmu.bin` in the directory `[gpu]` names. |
+| **GPUCC** (GPU clock controller) | The clock controller of the GPU block. `gpucc` in `[adreno]` of the SoC file; `gcc_debug_gpucc` in `[gpu]` is its place in GCC's debug multiplexer. |
+| **INTF** | An interface block of the display processor: it makes the timing for one output, such as a DSI link, and counts its lines and frames. `intf1` in `[display]`, read for the feature `display-scan`. |
+| **kgsl** (Kernel Graphics Support Layer) | Qualcomm's Android driver for the Adreno. Its device tree nodes (`qcom,kgsl-3d0`, `qcom,gmu`) and their reg-names are where the `[adreno]` addresses come from; see `devices/_template/soc.toml`. |
+| **KPDPWR_N, RESIN_N** | The two key inputs of a PMIC's power-on block: KPDPWR_N is the power key, RESIN_N ("reset in") commonly volume down. Read for the feature `buttons-pmic`, through `pon` in `[buttons]`. |
+| **MDSS, MDP** (Mobile Display Subsystem, Mobile Display Processor) | MDSS is the SoC's whole display block; the MDP is the part of it that composes the picture and feeds the interfaces. They show in key names (`dispcc_mdss_*`) and in [backlight.md](backlight.md). |
+| **Mesa, freedreno** | Mesa is the open-source graphics library; freedreno is its driver for the Adreno, written against Linux's msm kernel interface. `ios/userland/mesa26e.sh` builds Mesa, and `kernel/overlay/iokit/Kernel/RedwoodGPU.cpp` offers that interface to it. |
+| **MPIDR** | The Arm register that holds a core's identifying number; the `reg` of a `cpu@` node in the device tree is taken from it. `core_shift` in `[platform]` says where the core's number is in it. |
+| **Mu-Silicium** | An open-source UEFI firmware project for Qualcomm phones, ported device by device. A port of it, started with `fastboot boot`, is the UEFI the loader runs under; [porting.md](porting.md), step 2. |
+| **PDC** (power domain controller) | A sequencer in the always-on part of the SoC that carries out power changes while the rest sleeps. Here only the GPU's: `pdc` in `[adreno]` of the SoC file, which the GMU uses. |
+| **PMIC** (power management IC) | A companion chip that makes the supply voltages and also holds keys, GPIOs and a flash LED module. Reached over SPMI; the board template names a PM8350 and a PMK8350. |
+| **PMIC arbiter** | The SoC block that owns the SPMI bus and shares it among the systems of the SoC; a system reads PMIC registers through its observer channels and writes through its own. `[spmi]` in the SoC file; `tests/spmi_model.h` models it. |
+| **PON** (power-on) | The PMIC block that handles switching on and resets and has the key inputs KPDPWR_N and RESIN_N. `pon` in `[buttons]` of the board file is its SPMI address. |
+| **PSCI** (Power State Coordination Interface) | Arm's standard firmware calls for starting and stopping cores, made by SMC or HVC. `psci` in `[platform]` of the SoC file; `kernel/overlay/osfmk/arm64/psci_smp.c` starts the other cores with it. |
+| **QFPROM** | The SoC's fuses: bits set once at the factory and read as registers, which hold among other things the speed bin. `qfprom` in `[adreno]`; `speed_fuse` and `gaming_fuse` in `[gpu]` are places in it. |
+| **RPMh** (Resource Power Manager, hardened) | The part of the SoC that owns shared resources such as regulators, clocks and bus bandwidth. Each system sends it votes and it applies the sum. `[rpmh]` in the SoC file, feature `ddr-rpmh`. |
+| **RSC** (resource state coordinator) | The block through which one system sends its votes to RPMh; the documents call it the sequencer. `rsc` in `[rpmh]` is the application processor's, `apps_rsc` in the device tree. |
+| **shima, yupik** | Qualcomm's code names for the SM7350 (Snapdragon 780G) and the SM7325 (Snapdragon 778G), as Android device trees and Linux file names use them. `soc/sm7350.toml`, `soc/sm7325.toml`; see [soc/README.md](../soc/README.md). |
+| **SMMU** (system memory management unit) | Arm's IOMMU: it translates the addresses a device uses, so that the device reaches only the memory mapped for it. `smmu` in `[adreno]` is the GPU's own. |
+| **Speed bin** | The grade a chip was sorted into at the factory, recorded in fuses, which decides the frequencies it may run at. `speed_fuse`, `speeds_khz` and `alt_bins` in `[gpu]` of the board file. |
+| **SPMI** (System Power Management Interface) | MIPI's two-wire bus between the SoC and its PMICs. `[buttons]` names a peripheral by its slave number, shifted left by 8, plus the high byte of its register addresses. |
+| **TCS** (trigger command set) | A set of command slots in an RSC; the commands written into one are sent to RPMh together. There are active, sleep and wake sets. `tcs_offset` in `[rpmh]`; the documents call them slot sets. |
+| **TrustZone** | Arm's secure world, in which the SoC's secure firmware runs out of the operating system's reach. It checks signed firmware such as the zap shader: `zap_must_authenticate` in `[gpu]`. |
+| **TSENS** | Qualcomm's temperature sensor controller: one block that reads many sensors across the chip. `tsens` in `[thermal]` and `[adreno]` of the SoC file; `kernel/overlay/bsd/dev/hakios_thermal.c`, [thermal.md](thermal.md). |
+| **UEFI** | The standard firmware interface: it provides a framebuffer and services, and runs applications. On a phone it is a Mu-Silicium port started from RAM; the loader is a UEFI application and knows its board by the framebuffer the UEFI reports. |
+| **virtio** | The standard for the devices an emulator offers its guest: network, block, input, sound. Feature `virtio`, for the emulator's board (`devices/qemu-virt`), not for a phone. |
+| **Zap shader** | A small signed image that TrustZone checks and loads, without which the Adreno's 3D core stays locked in secure mode. `a660_zap.*` in the firmware directory `[gpu]` names; it is signed for one phone. |
+
+## Apple
+
+| Term | Meaning |
+| --- | --- |
+| **AIR** | Apple's shader bitcode, the form in which Metal shaders are kept in a `.metallib`. A compiler from it to the Adreno is in `userland/`; [metal-glass.md](metal-glass.md). |
+| **AMFI** (Apple Mobile File Integrity) | Apple's closed kernel extension that enforces code-signing policy: which signatures and entitlements a program may run with. A stand-in is in `kernel/overlay/libkern/amfi/`. |
+| **APFS** (Apple File System) | The file system of iOS. The kernel has an implementation of its own in `kernel/overlay/bsd/miscfs/apfs/`, which reads the iOS images from RAM; the images are `.apfs` files. |
+| **AppleKeyStore** | Apple's closed kernel extension that keeps the keybags and the keys derived from the passcode. Its stand-in, `kernel/overlay/iokit/Kernel/MiniAppleKeyStore.cpp`, presents a device without a passcode. |
+| **arm64e** | Apple's variant of the arm64 ABI that uses pointer authentication; iOS's own code is compiled for it. The kernel here is plain arm64, and for cores without PAC arm64e programs go through `pacstrip` first. |
+| **backboardd** | The iOS daemon that owns the display and input: CoreAnimation's renderer runs in it, and it hands touches and button presses on. It starts after launchd and before SpringBoard. |
+| **boot-args** (boot arguments) | The line of `name=value` words a boot loader passes to XNU. Each driver here waits for one; [boot-args.md](boot-args.md) lists them, generated by `tools/bootargs.py`. `boot_args`, with an underscore, is the structure the loader fills for the kernel. |
+| **cctools** | Apple's open-source tools for Mach-O files. A port of them with their linker, which theos provides, links the kernel on Linux. |
+| **Code signature** | The part of a Mach-O with a hash of every page of code (the CodeDirectory), which the kernel checks. An ad hoc signature has the hashes but no certificate. `pacstrip` recomputes the hashes; `ldid` signs the project's own programs ad hoc. |
+| **CoreAnimation** | The iOS framework (QuartzCore) that composes the layers of the interface into the picture, inside backboardd. It draws with Metal or with a software renderer; [metal-glass.md](metal-glass.md). |
+| **corecrypto** | Apple's cryptography library, in the kernel and in user space. The kernel's is not in the XNU release: a stand-in is in `kernel/overlay/osfmk/minicrypto/`. `ios/tools/fips26.py` is about the self test of the one in user space. |
+| **cryptex** | A sealed disk image in which iOS ships part of the system apart from the root file system: the OS cryptex, with the dyld shared cache, and the App cryptex. In an extracted IPSW they are `cryptex/os` and `cryptex/app`. |
+| **Device tree (Apple format)** | XNU's own description of the machine, in a binary format unlike Linux's, which iBoot normally builds. Here the loader builds it; `/chosen/darwin-board` is one of its properties, and `loader/identity.h` holds what is taken from an iPhone's. |
+| **DriverKit** | Apple's framework for drivers that run in user space. XNU's build needs its headers, from the macOS SDK, and the generator `iig`: `kernel/build.sh` fetches the headers, and `kernel/syntax-check.sh` takes them with `--driverkit DIR`. |
+| **dyld shared cache** | The set of large files into which nearly all of iOS's system libraries are linked in advance; dyld, the dynamic linker, maps it into every process. `pacstrip` rewrites a copy; [ram-budget.md](ram-budget.md) measures it. |
+| **iBoot** | Apple's boot loader: on an iPhone it loads the kernel and builds its device tree and `boot_args`. The loader in `loader/` plays its part. |
+| **iig** | Apple's closed interface generator: it turns DriverKit's `.iig` files into headers and code during XNU's build. `kernel/host/` has a stand-in that takes its place, and `kernel/iig-impl/` code it would have generated. |
+| **IOKit** | XNU's C++ driver framework: drivers are objects matched against a registry of devices, and user space reaches them as services. Its sources are under `iokit/` of the tree; the additions are in `kernel/overlay/iokit/Kernel/`. |
+| **IOMobileFramebuffer** | Apple's closed display driver family on iOS: user space hands it surfaces to put on the panel and gets vsync from it. The stand-in is `kernel/overlay/iokit/Kernel/MiniIOMobileFramebuffer.cpp`. |
+| **IOSurface** | A pixel buffer managed by the kernel and shared between processes, the display and the GPU. Apple's driver is closed; the stand-in is `kernel/overlay/iokit/Kernel/MiniIOSurface.cpp`. |
+| **IPSW** | The firmware file Apple publishes for a device: an archive with the root file system, the cryptexes and more. iOS is extracted from it on your machine and is never repository content; [ios/README.md](../ios/README.md). |
+| **Kernel extension** | A module loaded into XNU, also "kext". Most of an iPhone's drivers are closed kernel extensions that are not in the XNU release, hence the stand-ins. |
+| **launchd** | The first user process of iOS. It runs the boot tasks and starts every daemon and agent from job files (plists). `ios/userland/root26-ios.sh` makes the jobs, and the system image carries them. |
+| **Liquid Glass** | The translucent, glass-like material of the newer iOS interface. The documents treat it for iOS 27, where only CoreAnimation's Metal renderer draws it; [metal-glass.md](metal-glass.md). |
+| **Mach-O** | The file format of programs, libraries and the kernel on Apple's systems. theos provides the linker that writes it; `pacstrip` and the image builders read it. |
+| **Metal** | Apple's programming interface to the GPU. iOS finds a GPU through a Metal device plug-in; the boot argument `metal=1` lets one be named, and [metal-glass.md](metal-glass.md) says what exists. |
+| **mig** (Mach Interface Generator) | The tool that writes the C code for Mach message interfaces from `.defs` files. One of the host tools the kernel build needs; `kernel/deps/stage1.sh` builds it. |
+| **MobileGestalt** | The iOS library that answers what the device is and can do, such as whether its camera has a flash. It appears once, under `torch` in [boot-args.md](boot-args.md). |
+| **PAC** (pointer authentication) | An ARMv8.3 feature: a pointer is signed into its unused upper bits and checked before use. arm64e code relies on it. For cores without it, `ios/tools/pacstrip.c` rewrites the instructions and `kernel/overlay/osfmk/arm64/redwood_a64emu.c` emulates the few left. |
+| **Platform expert** | The IOKit object that stands for the machine itself: it publishes the CPUs and answers for things like the time of day. Here `kernel/overlay/iokit/Kernel/GenericARMPE.cpp`. |
+| **Registry** | IOKit's tree of devices, drivers and their properties, which user space can read; the device tree appears in it. The inserted libraries read the board's name from `/chosen/darwin-board` there. |
+| **SDK** | Apple's headers and library stubs for building software for one platform. The builds use the iPhoneOS SDK that comes with theos and the DriverKit headers of the macOS SDK; [building.md](building.md). |
+| **SpringBoard** | The iOS application that is the home screen and the lock screen and manages the other applications' windows. Several of the project's libraries are inserted into it (`ios/userland/`). |
+| **sysctl** | BSD's named kernel variables, read and written by name with the tool of the same name. The drivers here publish `hw.board`, `hw.backlight` and `hw.thermal`. |
+| **theos** | A third-party toolchain for building iOS software on Linux, not Apple's. It provides the Mach-O linker, the iPhoneOS SDK and `ldid`; the kernel build and the `ios/` scripts find it through `THEOS`. |
+| **XNU** | Apple's kernel: Mach, BSD and IOKit in one. Apple publishes its source without an iPhone's drivers; `kernel/UPSTREAM` pins the release, to which `kernel/overlay/` and `kernel/patches/` are added. |
