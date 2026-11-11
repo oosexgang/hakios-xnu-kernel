@@ -61,7 +61,8 @@ devices/…  soc/… ──────────┘                         l
   A board that is not in the table has no feature: nothing of a phone is touched on a machine nobody
   described.
 
-Details and every key: [devices/README.md](../devices/README.md), `devices/_template/board.toml`.
+Details and every key: [devices/README.md](../devices/README.md), `devices/_template/board.toml` and
+`soc.toml`.
 
 ## The kernel
 

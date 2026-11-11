@@ -82,3 +82,17 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # default_speed = 4                 # which of them to run at, counted from 1
 # alt_model = "Adreno 643"          # qcom,gpu-models: another name for the parts with the speed bins
 # alt_bins = [0xac, 0xbe]           # ... listed here
+
+# The loader (loader/) under this phone's UEFI, which tells boards apart by the framebuffer the firmware
+# reports. Needs [platform] in the SoC file. Leave the section out while the phone is started another way.
+# [loader]
+# fb_base = 0xE1000000              # what the loader prints at start: "display W x H at ..." (docs/porting.md,
+#                                   # step 3). Only the emulator's board goes without.
+# log_other_cpu = true              # keep notes in the log partition while a kernel starts on another core
+
+# How ios/tools/boot26.py starts this phone (--board NAME).
+# [boot]
+# fastboot_product = "codename"     # what `fastboot getvar product` must answer: the tool refuses any other phone
+# cpus = 8                          # how many cores the kernel is given
+# bootargs = ["cpufreq=1", "backlight=1"]   # the boot arguments of a plain run, NAME or NAME=VALUE each;
+#                                   # `--boot-arg NAME=VALUE` adds to these or replaces one (docs/boot-args.md)

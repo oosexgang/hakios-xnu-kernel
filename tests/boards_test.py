@@ -3,6 +3,8 @@
 that the kernel's committed table is what it writes."""
 import importlib.util
 import io
+import re
+import tomllib
 import contextlib
 import shutil
 import sys
@@ -572,6 +574,34 @@ class Repository(unittest.TestCase):
             self.assertIn(argument, boot['bootargs'])
         names = [argument.split('=')[0] for argument in boot['bootargs']]
         self.assertEqual(len(names), len(set(names)), 'an argument is there twice')
+
+    def test_what_the_tool_takes_is_explained_where_a_porter_looks(self):
+        root = boards.ROOT
+        template = (root / 'devices/_template/board.toml').read_text()
+        readme = (root / 'devices/README.md').read_text()
+        drivers = (root / 'docs/drivers.md').read_text()
+        for _, feature in boards.feature_bits():
+            self.assertIn(feature, template, 'a feature the template does not list')
+            self.assertIn(f'`{feature}`', drivers, 'a feature docs/drivers.md does not have')
+        for section, keys in boards.BOARD_SCHEMA.items():
+            if section:
+                self.assertIn(f'[{section}]', template, 'a section the template does not show')
+                self.assertIn(f'`[{section}]`', readme, 'a section devices/README.md does not name')
+            for key in keys:
+                self.assertTrue(re.search(rf'(?m)^(# )?{key} = ', template), f'[{section}] {key} is not explained in the template')
+        for section in boards.SOC_SCHEMA:
+            if section:
+                self.assertIn(f'`[{section}]`', readme, 'a SoC section devices/README.md does not name')
+        soc_template = (root / 'devices/_template/soc.toml').read_text()
+        for section, keys in boards.SOC_SCHEMA.items():
+            if section:
+                self.assertIn(f'[{section}]', soc_template, 'a section the SoC template does not show')
+            for key in keys:
+                self.assertTrue(re.search(rf'(?m)^{key} = ', soc_template), f'[{section}] {key} is not explained in the SoC template')
+        # the template is a SoC file the tool takes as it is
+        problems = boards.Problems()
+        boards.check_file(root / 'devices/_template/soc.toml', tomllib.loads(soc_template), boards.SOC_SCHEMA, problems)
+        self.assertEqual(list(problems), [])
 
     def test_the_loader_has_its_fallback(self):
         # loader.c names platform_qemu_virt: the machine whose display matches no board

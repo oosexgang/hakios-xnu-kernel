@@ -58,7 +58,8 @@ tools/boards.py gen          # rewrites the kernel's and the loader's tables
 make check
 ```
 
-Leave `features = []` for now. Every key is explained in `devices/_template/board.toml`.
+Leave `features = []` for now. Every key is explained in `devices/_template/board.toml` and
+`devices/_template/soc.toml`.
 
 ## 2. The UEFI
 
