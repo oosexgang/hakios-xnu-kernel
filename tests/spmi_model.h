@@ -44,6 +44,7 @@ static struct spmi_model {
 	uint32_t wstatus[SPMI_CHANNELS], wdata0[SPMI_CHANNELS];                         /* ... and its write */
 	unsigned transfers, writes, denied;
 	unsigned elsewhere;             /* accesses where nothing of the arbiter is, and commands that are none */
+	bool deaf;                      /* the arbiter takes commands and never ends one */
 	pthread_mutex_t lock;
 } spmi = { .version = 0x50000000, .lock = PTHREAD_MUTEX_INITIALIZER };
 
@@ -144,6 +145,8 @@ spmi_model_wr(uintptr_t address, uint32_t value)
 		if (!(value & 1u << 27)) {
 			spmi.elsewhere++;
 			fprintf(stderr, "MODEL: a command through the observer that is not a read: %#x\n", value);
+		} else if (spmi.deaf) {
+			spmi.status[channel] = 0;
 		} else if (p == NULL || p->silent) {
 			spmi.status[channel] = SPMI_DONE | SPMI_FAILURE;
 		} else {
@@ -163,7 +166,9 @@ spmi_model_wr(uintptr_t address, uint32_t value)
 		} else if (reg == 0x00 && !(value & 1u << 27) && (value & 7) == 0) {
 			/* a write of one byte, by the system the channel is of */
 			spmi.transfers++;
-			if (spmi.owner[channel] != spmi.ee) {
+			if (spmi.deaf) {
+				spmi.wstatus[channel] = 0;
+			} else if (spmi.owner[channel] != spmi.ee) {
 				spmi.denied++;
 				spmi.wstatus[channel] = SPMI_DONE | SPMI_DENIED;
 			} else if (p == NULL || p->silent) {
