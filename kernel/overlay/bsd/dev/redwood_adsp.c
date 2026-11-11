@@ -20,8 +20,8 @@
  *   - processor 2 (not 13) in the shared memory; its SMP2P items 443 (its) and 429 (ours), its
  *     last words in item 423; GLINK's three items in our partition with it
  *   - its doorbells are IPCC client 3 (LPASS): signal 0 GLINK, signal 2 SMP2P
- *   - TrustZone knows it as image 1; its memory is 0x86700000, 64 MB (dt: qcom,lpass@3700000,
- *     reserved-memory adsp@86700000), every byte of which the image takes
+ *   - TrustZone knows it as image 1; its memory is the board's ([adsp] memory and memory_size; dt:
+ *     the reserved memory the DSP's node points at), every byte of which the image may take
  *   - the always-on processor is told of it as "adsp"
  *   - the Wi-Fi DSP may be running at the same time (wifi=1): the mailbox to the always-on
  *     processor and the lock for allocating in the shared memory are the two things both use,
@@ -756,9 +756,9 @@ step_survey(void)
 
 /* ---- step 2: the firmware -------------------------------------------------------------------------- */
 
-#define ADSP_MEMORY             0x86700000u     /* dt: reserved-memory adsp@86700000, memory-region of qcom,lpass@3700000 */
+#define ADSP_MEMORY             adsp_memory     /* dt: the reserved memory the DSP's node points at (memory-region) */
 #define ADSP_MEMORY_SIZE        adsp_memory_size
-static uint32_t adsp_memory_size;               /* the board's [adsp] memory_size */
+static uint32_t adsp_memory, adsp_memory_size;  /* the board's [adsp] memory and memory_size */
 static const char *adsp_firmware = "fw";        /* ... and its firmware directory */
 static uint32_t charge_counter_divisor = 1;     /* ... and what its battery manager counts charge in */
 #define PAS_ADSP                1               /* dt: qcom,pas-id */
@@ -1248,8 +1248,8 @@ step_image(void)
 	if (image.segments == 0) {
 		return false;
 	}
-	announce("put the image's segments into the audio DSP's memory (0x86700000, 64 MB: memory of nobody's until TrustZone "
-	    "starts the DSP), with zeroes where a segment is longer than its file, and read them back");
+	announce("put the image's segments into the audio DSP's memory (memory of nobody's until TrustZone starts the DSP), "
+	    "with zeroes where a segment is longer than its file, and read them back");
 	dsp_memory = (volatile uint64_t *)ml_io_map_unmappable(ADSP_MEMORY, ADSP_MEMORY_SIZE, VM_WIMG_WCOMB);
 	snprintf(last_write, sizeof(last_write), "step %u wrote the image at %#x", step, ADSP_MEMORY);
 	for (unsigned s = 0; s < image.segments; s++) {
@@ -2989,7 +2989,8 @@ redwood_adsp_init(void)
 	if (last_step == 0 && (!PE_parse_boot_argn("adsp", &on, sizeof(on)) || on != 1)) {
 		return;
 	}
-	if (!hakios_board_has(HAKIOS_HAS_ADSP) || board->adsp.firmware == NULL || board->adsp.memory_size == 0) {
+	if (!hakios_board_has(HAKIOS_HAS_ADSP) || board->adsp.firmware == NULL || board->adsp.memory == 0 ||
+	    board->adsp.memory_size == 0) {
 		printf("adsp: adsp=1 and adsp_step=N are for a phone's audio DSP: this board's board.toml lists no \"adsp\" with "
 		    "an [adsp] section\n");
 		return;
@@ -3005,6 +3006,7 @@ redwood_adsp_init(void)
 	ipcc.phys = board->ipc.ipcc;
 	smem_lock.phys = board->ipc.smem_lock;
 	adsp_firmware = board->adsp.firmware;
+	adsp_memory = board->adsp.memory;
 	adsp_memory_size = board->adsp.memory_size;
 	if (board->adsp.charge_counter_divisor != 0) {
 		charge_counter_divisor = board->adsp.charge_counter_divisor;
