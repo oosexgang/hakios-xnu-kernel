@@ -252,12 +252,26 @@ bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* o
         if (r.sizeDwords == 0 || r.sizeDwords % 4 != 0) {
             return refuse(why, name() + ": a constant range of " + n(r.sizeDwords) + " dwords, not a whole number of vec4");
         }
-        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
-            return refuse(why, name() + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) + "; " +
-                                   n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset");
-        }
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
             return refuse(why, name() + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
+        }
+        // ir3's range is padded to whole vec4 and past them: tri_cflat reads 16 bytes and the range is 64. Where it runs off the
+        // object's pages the command processor would read past them, so this processor loads it instead: the bound bytes the
+        // range covers -- all a stage may read, by Metal's rules -- and zeros for the padding. iOS 27's window server binds
+        // 48 bytes at the last 48 of a page for a draw whose range is 64 (A2Xghfc), every time the lock screen is swiped.
+        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
+            if (x.buffer->contents() == nullptr) {
+                return refuse(why, name() + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) + "; " +
+                                       n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset, and nothing maps them here to load from");
+            }
+            PushedRange p{r.offsetVec4, r.sizeDwords / 4, 0, std::vector<uint32_t>(r.sizeDwords, 0u)};
+            const uint8_t* at = static_cast<const uint8_t*>(x.buffer->contents()) + x.offset;
+            for (uint32_t d = 0; d < r.sizeDwords; d++) {
+                const uint64_t byte = uint64_t(r.startDword + d) * 4;
+                if (byte + 4 <= bytes) memcpy(&p.words[d], at + byte, 4);
+            }
+            out->push_back(std::move(p));
+            continue;
         }
         PushedRange p{r.offsetVec4, r.sizeDwords / 4, x.buffer->gpuAddress() + x.offset + 4ull * r.startDword, {}};
         if (p.from % 16 != 0) {

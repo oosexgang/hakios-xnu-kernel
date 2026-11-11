@@ -7,6 +7,7 @@
 // (hakios-metal-probe stage 9).
 //
 // SPDX-License-Identifier: MIT
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -2066,11 +2067,22 @@ TEST(a_draw_refuses_a_constant_range_it_cannot_serve_by_name) {
     Bindings odd;
     odd.buffers = {Binding{colour.get(), 2}};
     refusedWith(p, odd, "tri_cflat_fs_air: buffer 0: offset 2 is not a multiple of 4 inside it");
-    // the padded 64-byte range running off the object's pages: a buffer as long as its pages, bound 16 bytes before the end
+    // the padded 64-byte range running off the object's pages: a buffer as long as its pages, bound 16 bytes before the end.
+    // Not a refusal: the CP is not let read past the pages, and the encoder loads the range itself, the 16 bound bytes and
+    // zeros for the padding (iOS 27's window server binds 48 bytes at a page's end for a range of 64)
     auto page = newBuffer(*r.gpu, colour->bo().size(), &why);
+    const uint32_t mark[4] = {0x3f800000u, 0x3e800000u, 0x3f000000u, 0x3f400000u};
+    memcpy(static_cast<uint8_t*>(page->contents()) + page->bo().size() - 16, mark, sizeof(mark));
     Bindings tail;
     tail.buffers = {Binding{page.get(), page->bo().size() - 16}};
-    refusedWith(p, tail, "tri_cflat_fs_air reads 64 bytes at 0 of constant buffer 0; 16 are bound and 16 mapped behind the offset");
+    {
+        Encoded e(r, p, pass, wholeDraw(), render::Options{}, Bindings{}, tail);
+        CHECK(e.ok);
+        std::vector<uint32_t> loaded(mark, mark + 4);
+        loaded.resize(16, 0u);
+        const auto& w = e.stream.words();
+        CHECK(std::search(w.begin(), w.end(), loaded.begin(), loaded.end()) != w.end());
+    }
     // a range past the stage's constlen (the twin of the constlen the fixture carries)
     Program short_ = p;
     short_.fs.k.constlen = 0;
