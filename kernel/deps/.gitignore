@@ -1,0 +1,31 @@
+# Only what is ours is tracked here: deps/setup.sh (the old workspace's way) fetches and builds the rest
+# into this directory. kernel/build.sh itself keeps everything it fetches outside the repository.
+/*
+!/.gitignore
+!/stage1.sh
+!/setup.sh
+!/gen-iig-stubs.py
+!/hostinc/
+!/iig-impl/
+!/host/
+/host/*
+!/host/bin/
+/host/bin/*
+!/host/bin/codesign
+!/host/bin/iig
+!/host/bin/install
+!/host/bin/plutil
+!/host/bin/sw_vers
+!/host/bin/xcrun
+!/host/bin/xnu-clang
+!/build/
+/build/*
+!/build/pthread/
+/build/pthread/*
+!/build/pthread/build.sh
+!/build/pthread/inc/
+!/build/lzbitmap/
+/build/lzbitmap/*
+!/build/lzbitmap/unzbm.c
+!/build/lzbitmap/libzbitmap.c
+!/build/lzbitmap/libzbitmap.h

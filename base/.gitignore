@@ -12,6 +12,8 @@
 !/xnu-build.sh
 !/xnu-env.sh
 !/xnuloader/
+!/xnuloader
+!/xnu-deps
 !/qemu/
 !/tools/
 !/xnu/

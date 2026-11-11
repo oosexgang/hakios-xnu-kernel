@@ -8,16 +8,16 @@
 # From scratch it makes, in order (each step is skipped when its result is already there):
 #   1. $XNU_SRC (default: next to the repository, named after the release): kernel/assemble.sh; a tree
 #      that is there already is brought up to date with the repository (only changed files are touched)
-#   2. $XNUDEPS ($XNU_SRC-deps): links to darwin-renoir's host tools and fetched sources, base/'s
-#      wrappers, its own SDK (links to theos' iPhoneOS16.5.sdk plus usr/local)
+#   2. $XNUDEPS ($XNU_SRC-deps): Apple's open sources and the host tools (kernel/deps/stage1.sh fetches
+#      and builds them there, unless a darwin-renoir checkout has them), kernel/deps' wrappers, its own
+#      SDK (links to theos' iPhoneOS16.5.sdk plus usr/local)
 #   3. the kernel's exported headers, then libfirehose_kernel.a and libpthread_kext.a built against them
 #   4. the kernel: $XNU_SRC/BUILD/obj/mach.development.bcm2837
-# Needs darwin-renoir's xnu-deps (its setup.sh stage 1 done) and theos; see docs/building.md.
+# Needs theos (the cctools and iPhoneOS16.5.sdk); see docs/building.md.
 set -e -o pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 K=$HAKIOS_KERNEL
-RD=$DARWIN_RENOIR/xnu-deps
-BD=$HAKIOS/base/xnu-deps
+BD=$K/deps
 JOBS=$(nproc)
 log() { echo "build.sh: $*"; }
 die() { echo "build.sh: $*" >&2; exit 1; }
@@ -43,8 +43,13 @@ if [ ! -f "$FW" ]; then
 fi
 
 # --- 2. the dependency directory --------------------------------------------------------------
-[ -x "$RD/host/bin/migcom" ] && [ -x "$RD/host/bin/tcsh" ] && [ -d "$RD/libdispatch" ] ||
-	die "darwin-renoir's xnu-deps is not set up ($RD: run its setup.sh --stage1)"
+# Apple's open sources and the host tools (mig, tcsh, unifdef): a darwin-renoir checkout has them
+# fetched and built already; without one they are fetched and built once, beside the tree
+RD=$DARWIN_RENOIR/xnu-deps
+if [ ! -x "$RD/host/bin/migcom" ] || [ ! -x "$RD/host/bin/tcsh" ] || [ ! -d "$RD/libdispatch" ]; then
+	RD=$XNUDEPS/stage1
+	"$BD/stage1.sh" "$RD"
+fi
 CCTOOLS=$THEOS/toolchain/linux/iphone/bin
 IOS_SDK=$THEOS/sdks/iPhoneOS16.5.sdk
 [ -x "$CCTOOLS/ld" ] && [ -d "$IOS_SDK/usr/include" ] || die "no theos toolchain/SDK in $THEOS"
@@ -52,14 +57,14 @@ mkdir -p "$XNUDEPS/host/bin" "$XNUDEPS/build/firehose" "$XNUDEPS/build/pthread" 
 cd "$XNUDEPS"
 for d in AvailabilityVersions libdispatch libpthread MacOSX13.3.sdk; do link "$RD/$d" $d; done
 link "$BD/hostinc" hostinc
-# iig implementation stand-ins: base/'s, plus kernel/iig-impl for classes new in xnu-12377
+# iig implementation stand-ins: kernel/deps', plus kernel/iig-impl for classes new in xnu-12377
 [ -L iig-impl ] && rm iig-impl
 mkdir -p iig-impl
 for f in "$BD"/iig-impl/* "$K"/iig-impl/*; do link "$f" "iig-impl/$(basename "$f")"; done
-# built on this machine by darwin-renoir's setup.sh
+# built on this machine (stage 1)
 for t in mig migcom tcsh unifdef unzbm; do link "$RD/host/bin/$t" host/bin/$t; done
 link tcsh host/bin/csh
-# base/'s wrappers, and our own iig and clang wrappers (kernel/host: xnu-12377's DriverKit
+# kernel/deps' wrappers, and the iig and clang wrappers of this release (kernel/host: xnu-12377's DriverKit
 # headers, and the Apple-only flags xnu-12377 adds)
 for t in codesign install plutil sw_vers xcrun; do link "$BD/host/bin/$t" host/bin/$t; done
 chmod +x "$K/host/xnu-clang" "$K/host/iig"
@@ -95,7 +100,7 @@ chmod +x $SL/libexec/availability.pl
 	update $SL/include/kernel/os/firehose_buffer_private.h
 update $SL/include/kernel/os/firehose_types.defs < libdispatch/src/firehose/firehose_types.defs
 
-# make, with what base/xnu-build.sh passes, but without an external Wi-Fi object. DEFAULT_TARGET=build
+# make, with what the old workspace's xnu-build.sh passes, but without an external Wi-Fi object. DEFAULT_TARGET=build
 # (as darwin-renoir/xnu-build.sh): the kernel, not the kext SDK's symbol sets (config/), whose
 # kextsymboltool check fails on the exports a BCM2837 kernel does not have. xnu-12377's MakeInc.cmd
 # names /usr/bin/plutil, so the no-op wrapper is passed as well.
@@ -107,7 +112,7 @@ xnumake() {
 		HOST_FLEX=flex HOST_BISON=bison HOST_GM4=m4 CC=xnu-clang CXX=xnu-clang++ LOGCOLORS=n "$@")
 }
 
-# objects of arm64 and arm64e builds share BUILD/obj (base/xnu-build.sh): start over on a change
+# objects of arm64 and arm64e builds share BUILD/obj (the old workspace did both): start over on a change
 if [ -f "$XNU_SRC/BUILD/obj/redwood-arch" ] && [ "$(cat "$XNU_SRC/BUILD/obj/redwood-arch")" != "$XNU_ARCH" ]; then
 	log "architecture changed: discarding BUILD/obj"
 	rm -rf "$XNU_SRC/BUILD/obj"
@@ -124,7 +129,7 @@ if [ ! -f $LIB/libfirehose_kernel.a ] || [ ! -f $LIB/libpthread_kext.a ] || [ "$
 	E=$XNU_SRC/BUILD/obj/EXPORT_HDRS
 	[ -d $E/osfmk ] || die "no exported headers in $E"
 	# setup.sh's -DXNU_KERNEL_PRIVATE=0 trips xnu-12377's headers (they test it both with #if and
-	# #ifdef: upsi.h, lock_rw.h), so it is left undefined; TargetConditionals.h comes from base/
+	# #ifdef: upsi.h, lock_rw.h), so it is left undefined; TargetConditionals.h comes from kernel/deps
 	log "building libfirehose_kernel.a"
 	xnu-clang -arch $XNU_ARCH -c -Os -mkernel -nostdinc -fno-builtin \
 		-DKERNEL=1 -DKERNEL_PRIVATE=1 -DPRIVATE=1 -D__DARWIN_64_BIT_INO_T=1 \

@@ -5,8 +5,8 @@
 #   XNU_SRC         the assembled kernel tree (kernel/assemble.sh makes it), next to the repository
 #   XNUDEPS         what the build needs beside the tree: host tools, its own SDK copy, the kernel's two
 #                   static libraries (built against this release's headers)
-#   DARWIN_RENOIR   a darwin-renoir checkout, whose xnu-deps has the host tools (mig, tcsh, unifdef) and
-#                   Apple's open sources already fetched and built
+#   DARWIN_RENOIR   optional: a darwin-renoir checkout whose xnu-deps has the host tools (mig, tcsh,
+#                   unifdef) and Apple's open sources already; without it kernel/deps/stage1.sh makes them
 #   THEOS           theos: the cctools and iPhoneOS16.5.sdk
 # Neither the repository nor darwin-renoir is written to.
 HAKIOS_KERNEL=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

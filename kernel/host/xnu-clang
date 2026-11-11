@@ -1,5 +1,5 @@
 #!/bin/bash
-# clang wrapper for cross-building xnu-12377 on Linux (base/xnu-deps/host/bin/xnu-clang plus the
+# clang wrapper for cross-building xnu-12377 on Linux (kernel/deps/host/bin/xnu-clang plus the
 # flags of Apple's newer clang that xnu-12377's makefiles pass and upstream clang does not know):
 #  - forces an Apple Mach-O target (stock Linux clang defaults to ELF)
 #  - drops flags only Apple's clang understands

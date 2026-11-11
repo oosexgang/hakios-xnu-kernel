@@ -1,10 +1,10 @@
 #!/bin/bash
 # Stand-in for Apple's closed-source iig (DriverKit interface generator) on Linux, for xnu-12377.
-# base/xnu-deps/host/bin/iig takes its headers from the macOS 13.3 SDK (xnu-8796): xnu-12377's .iig
+# kernel/deps/host/bin/iig takes its headers from the macOS 13.3 SDK (xnu-8796): xnu-12377's .iig
 # files added kernel methods (IOUserServer::Panic, IOService::SetPowerOverride/CreatePMAssertion, ...)
 # that only the iig output of the same release carries. The macOS 26.5 SDK (xnu-12377.121) ships that
 # output in Kernel.framework/Headers/DriverKit; build.sh unpacks it into $XNUDEPS.
-# Implementation: $XNUDEPS/iig-impl/<name>.iig.cpp if present, else an empty TU (as base/'s shim).
+# Implementation: $XNUDEPS/iig-impl/<name>.iig.cpp if present, else an empty TU (as that shim).
 XNUDEPS=${XNUDEPS:-$(cd "$(dirname "$0")/../.." && pwd)}
 def=""; hdr=""; impl=""
 while [ $# -gt 0 ]; do case "$1" in
