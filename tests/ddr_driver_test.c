@@ -13,93 +13,12 @@
 
 #define KERNEL 1
 #include "cmd_db_image.h"
+#include "rsc_model.h"
 
 extern char log_text[];
 
-/* ---- the sequencer's first slot set (rpmh-rsc.c) -------------------------------------------------- */
-
-#define COMMANDS        16
-static struct {
-	uint32_t base;                  /* the slot set: the sequencer's address + [rpmh] tcs_offset of the board */
-	uint32_t irq_enable, irq_status, wait, control, enabled;
-	uint32_t message[COMMANDS], address[COMMANDS], data[COMMANDS];
-	bool deaf;                      /* RPMh never says a request is done */
-	bool busy;                      /* the slot set never becomes idle */
-	/* what was sent: each trigger's commands */
-	struct { uint32_t address, data, message; } sent[8];
-	unsigned sends, triggers, writes, elsewhere;
-} rsc;
-
-uint32_t
-hakios_test_rd(vm_offset_t address)
-{
-	uint32_t reg = (uint32_t)(address - rsc.base);
-
-	if (rsc.base != 0 && address >= rsc.base && reg < 0x2a0) {
-		unsigned c = reg >= 0x30 ? (reg - 0x30) / 20 : 0, field = reg >= 0x30 ? (reg - 0x30) % 20 : 0;
-
-		return reg == 0x00 ? rsc.irq_enable : reg == 0x04 ? rsc.irq_status : reg == 0x10 ? rsc.wait : reg == 0x14 ? rsc.control :
-		       reg == 0x18 ? !rsc.busy : reg == 0x1c ? rsc.enabled : reg < 0x30 ? 0 :
-		       field == 0 ? rsc.message[c] : field == 4 ? rsc.address[c] : field == 8 ? rsc.data[c] : 0;
-	}
-	/* (a look at every slot set reads the eight after this one: nothing in them) */
-	if (rsc.base != 0 && address >= rsc.base && reg < 0x2a0 * 9) {
-		return 0;
-	}
-	rsc.elsewhere++;
-	fprintf(stderr, "MODEL: a read at %#lx, where nothing of the sequencer is\n", (unsigned long)address);
-	return 0;
-}
-
-void
-hakios_test_wr(vm_offset_t address, uint32_t value)
-{
-	uint32_t reg = (uint32_t)(address - rsc.base);
-
-	if (rsc.base == 0 || address < rsc.base || reg >= 0x2a0) {
-		rsc.elsewhere++;
-		fprintf(stderr, "MODEL: a write of %#x at %#lx, which is not the first slot set\n", value, (unsigned long)address);
-		return;
-	}
-	rsc.writes++;
-	if (reg == 0x00) {
-		rsc.irq_enable = value;
-	} else if (reg == 0x08) {
-		rsc.irq_status &= ~value;
-	} else if (reg == 0x10) {
-		rsc.wait = value;
-	} else if (reg == 0x1c) {
-		rsc.enabled = value;
-	} else if (reg == 0x14) {
-		bool was = rsc.control & 1u << 24;
-
-		rsc.control = value;
-		if (!was && (value & 1u << 24) && (value & 1u << 16)) {
-			/* triggered: every enabled command goes to RPMh */
-			rsc.triggers++;
-			for (unsigned c = 0; c < COMMANDS; c++) {
-				if ((rsc.enabled & 1u << c) && rsc.sends < 8) {
-					rsc.sent[rsc.sends].address = rsc.address[c];
-					rsc.sent[rsc.sends].data = rsc.data[c];
-					rsc.sent[rsc.sends++].message = rsc.message[c];
-				}
-			}
-			if (!rsc.deaf) {
-				rsc.irq_status |= 1;
-			}
-		}
-	} else if (reg >= 0x30 && (reg - 0x30) / 20 < COMMANDS) {
-		unsigned c = (reg - 0x30) / 20, field = (reg - 0x30) % 20;
-
-		if (field == 0) {
-			rsc.message[c] = value;
-		} else if (field == 4) {
-			rsc.address[c] = value;
-		} else if (field == 8) {
-			rsc.data[c] = value;
-		}
-	}
-}
+uint32_t hakios_test_rd(vm_offset_t address) { return rsc_model_rd(address); }
+void hakios_test_wr(vm_offset_t address, uint32_t value) { rsc_model_wr(address, value); }
 
 /* ---- the kernel around the driver ---------------------------------------------------------------- */
 
@@ -174,6 +93,7 @@ as_found(void)
 	    rsc.irq_status == 0, "the slot set is not as it was found: interrupts %#x, wait %#x, commands %#x, control %#x, status %#x",
 	    rsc.irq_enable, rsc.wait, rsc.enabled, rsc.control, rsc.irq_status);
 	CHECK(rsc.elsewhere == 0, "%u accesses where nothing of the sequencer or the database is", rsc.elsewhere);
+	CHECK(rsc.changed_while_sent == 0, "%u writes to the commands while the slot set was triggered", rsc.changed_while_sent);
 	CHECK(canary_whole(), "something behind the command database was written");
 }
 
@@ -283,7 +203,7 @@ no_answer(void)
 	boot_args = "";
 	rsc.deaf = true;
 	hakios_ddr_init(true);
-	CHECK(logged("ddr: RPMh: no answer to the vote") && logged("SH0 (0x50004): FAILED"), "said: %s", log_text);
+	CHECK(logged("ddr: RPMh: no answer to the request") && logged("SH0 (0x50004): FAILED"), "said: %s", log_text);
 	CHECK(locks == 1 && unlocks == 1, "the slot set is given back all the same");
 	as_found();
 	redwood_ddr_quiesce();

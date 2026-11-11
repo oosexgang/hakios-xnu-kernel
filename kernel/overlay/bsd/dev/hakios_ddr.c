@@ -24,6 +24,7 @@
 #include "hakios_cmd_db.h"
 #include "hakios_log.h"
 #include "hakios_mmio.h"
+#include "hakios_rpmh.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
@@ -134,7 +135,6 @@ ddr_slots(void)
 #define BCM_COMMIT              (1u << 30)
 #define BCM_VALID               (1u << 29)
 #define BCM_VOTE(x, y)          (BCM_COMMIT | BCM_VALID | ((uint32_t)(x) & 0x3fff) << 14 | ((uint32_t)(y) & 0x3fff))
-#define TCS_REG(reg)            (ddr_rsc + hakios_board()->rpmh.tcs_offset + (reg))     /* command slot set 0, an "active" one */
 #define BCM_ACV_APPS            8
 #define DDR_REST                1024            /* the vote left for the loader (ddr_rest=N); see redwood_ddr_quiesce() */
 
@@ -156,49 +156,16 @@ cmd_db_address(const char *name)
 	return entry != NULL ? entry->address : 0;
 }
 
-/* Up to three writes through command slot set 0, and the wait until RPMh has done them (as bsd/dev/redwood_goodix.c) */
+/* A request through command slot set 0, and the wait until RPMh has done it (hakios_rpmh.h); what went wrong is said. */
 static bool
 ddr_rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 {
-	uint32_t irq_enable = rd(TCS_REG(0x00));
-	bool done = false;
+	const char *problem = hakios_rpmh_send(ddr_rsc + hakios_board()->rpmh.tcs_offset, address, data, count);
 
-	for (int i = 0; rd(TCS_REG(0x18)) == 0; i++) {
-		if (i > 2000) {
-			tell("ddr: RPMh: the command slots stay busy\n");
-			return false;
-		}
-		delay_for_interval(100, NSEC_PER_USEC);
+	if (problem != NULL) {
+		tell("ddr: RPMh: %s\n", problem);
 	}
-	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 24));
-	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 16));
-	wr(TCS_REG(0x08), 1);
-	for (unsigned i = 0; i < count; i++) {
-		wr(TCS_REG(0x30 + 20 * i), 0x10008 | 0x100);        /* a 4-byte write, with a response */
-		wr(TCS_REG(0x34 + 20 * i), address[i]);
-		wr(TCS_REG(0x38 + 20 * i), data[i]);
-	}
-	wr(TCS_REG(0x10), (1u << count) - 1);
-	wr(TCS_REG(0x1c), (1u << count) - 1);
-	wr(TCS_REG(0x00), irq_enable | 1);
-	wr(TCS_REG(0x14), 1u << 16);
-	wr(TCS_REG(0x14), 1u << 16 | 1u << 24);
-	for (int i = 0; i < 2000 && !done; i++) {
-		done = (rd(TCS_REG(0x04)) & 1) != 0;
-		if (!done) {
-			delay_for_interval(100, NSEC_PER_USEC);
-		}
-	}
-	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 24));
-	wr(TCS_REG(0x14), rd(TCS_REG(0x14)) & ~(1u << 16));
-	wr(TCS_REG(0x1c), 0);
-	wr(TCS_REG(0x10), 0);
-	wr(TCS_REG(0x08), 1);
-	wr(TCS_REG(0x00), irq_enable);
-	if (!done) {
-		tell("ddr: RPMh: no answer to the vote\n");
-	}
-	return done;
+	return problem == NULL;
 }
 
 static bool
