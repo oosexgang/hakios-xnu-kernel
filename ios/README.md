@@ -66,7 +66,7 @@ The libraries and the images are the same for every phone. Three things are not:
   one package present that has a `[boot]` section. From `[boot]` it reads `fastboot_product` (what the
   phone must answer to `fastboot getvar product`: any other is refused), `cpus` and `bootargs`
   (`--boot-arg` adds or replaces one). The loader's image is looked for in darwin-renoir by the same name.
-- **Which iPhone iOS is told it is,** and through that the screen layout: `loader/identity.h`, not here.
+- **Which iPhone iOS is told it is,** and through that the screen layout: `identity.h`, which `loader/build.sh` makes from the IPSW's device tree (`loader/mkidentity.py`), not here.
 
 The SpringBoard addresses in `inj26.sh` and the values in `fips26.py` belong to an iOS build, not to a phone.
 

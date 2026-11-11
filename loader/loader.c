@@ -3897,7 +3897,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * those of that phone. XNU itself does not care; the hardware is described further down.
 	 */
 	dt_identity(&w, identity_root, sizeof(identity_root) / sizeof(identity_root[0]), identity_root_data);
-	dt_prop_str(&w, "platform-name", "t8150");   /* the A19 Pro of the iPhone 17 Pro (identity.h, from its device tree) */
+	dt_prop_str(&w, "platform-name", IDENTITY_PLATFORM_NAME);  /* the iPhone's SoC (identity.h, from its /arm-io) */
 	/* what iBoot takes from the factory configuration of a real phone; fixed size fields */
 	dt_prop_padded(&w, "serial-number", "RDW00POCOX5P", 32);
 	dt_prop_padded(&w, "mlb-serial-number", "RDW00POCOX5PMLB00", 32);

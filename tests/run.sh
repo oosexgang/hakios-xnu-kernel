@@ -42,8 +42,13 @@ BOARDS=$WORK/boards
 # loader/build.sh; left out where they are not installed)
 if command -v clang > /dev/null && command -v lld-link > /dev/null; then
 	echo "== loader (loader/loader.c with the generated platforms.h)"
+	# (in a directory of its own, with the identity that has nothing of Apple's: identity.h is made from an IPSW,
+	# and one made here must not decide whether this compiles)
+	mkdir -p "$WORK/loader"
+	cp "$HERE/../loader/loader.c" "$HERE/../loader/efi.h" "$WORK/loader/"
+	python3 "$HERE/../loader/mkidentity.py" --placeholder > "$WORK/loader/identity.h"
 	if clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
-		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I"$BOARDS" -c "$HERE/../loader/loader.c" -o "$WORK/loader.obj" &&
+		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I"$BOARDS" -c "$WORK/loader/loader.c" -o "$WORK/loader.obj" &&
 	    lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \
 		"/out:$WORK/loader.efi" "$WORK/loader.obj"; then
 		echo "loader.efi: $(stat -c %s "$WORK/loader.efi") bytes, ok"

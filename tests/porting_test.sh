@@ -53,6 +53,8 @@ says() {
 R=$W/repo
 mkdir -p "$R/kernel/overlay/bsd/dev" "$R/tests"
 cp -r "$REPO/devices" "$REPO/soc" "$REPO/tools" "$REPO/loader" "$R/"
+# (the iPhone identity with nothing of Apple's in it: the one made from an IPSW is somebody's own)
+python3 "$R/loader/mkidentity.py" --placeholder > "$R/loader/identity.h"
 cp "$REPO"/kernel/overlay/bsd/dev/hakios_* "$R/kernel/overlay/bsd/dev/"
 cp -r "$REPO/tests/fakekernel" "$R/tests/"
 B="$R/tools/boards.py"

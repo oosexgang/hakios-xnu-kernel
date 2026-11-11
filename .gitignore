@@ -31,3 +31,6 @@ ios/userland/obj27/
 /resident.img
 /usb-payload.bin
 /run-payload.bin
+
+# made by loader/build.sh from the device tree of your own IPSW (loader/mkidentity.py): Apple's data
+/loader/identity.h
