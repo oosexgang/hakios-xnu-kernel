@@ -77,6 +77,8 @@ SOC_SCHEMA = {
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
     'smmu': {'apps': (int, True)},
+    'lpass': {'tx_macro': (int, True), 'va_macro': (int, True), 'tx_swr': (int, True), 'tx_swr_hctl': (int, True),
+              'lpi': (int, True), 'lpi_slew': (int, True)},
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
             'smem_lock': (int, True)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
@@ -112,7 +114,7 @@ FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'bu
                  # for a part's supply, and give a device its addresses in the SMMU
                  'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
                  'speaker-aw88261': ('pins', 'clocks', 'rpmh', 'smmu'), 'haptic-aw86927': ('pins',),
-                 'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins',)}
+                 'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins', 'lpass')}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
@@ -535,6 +537,13 @@ def table_text(socs, boards):
         pins = soc.get('pins')
         if pins:
             out.append(f'\t\t.pins = {{ .tlmm = {pins["tlmm"]:#010x} }},')
+        lpass = soc.get('lpass')
+        if lpass:
+            out += ['\t\t.lpass = {',
+                    f'\t\t\t.tx_macro = {lpass["tx_macro"]:#010x}, .va_macro = {lpass["va_macro"]:#010x},',
+                    f'\t\t\t.tx_swr = {lpass["tx_swr"]:#010x}, .tx_swr_hctl = {lpass["tx_swr_hctl"]:#010x},',
+                    f'\t\t\t.lpi = {lpass["lpi"]:#010x}, .lpi_slew = {lpass["lpi_slew"]:#010x},',
+                    '\t\t},']
         if 'smmu' in soc:
             out.append(f'\t\t.smmu = {{ .apps = {soc["smmu"]["apps"]:#010x} }},')
         ipc = soc.get('ipc')

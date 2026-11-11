@@ -35,6 +35,15 @@ ee = 0                              # qcom,ee: which of the arbiter's systems th
 [smmu]
 apps = 0x15000000                   # apps_smmu
 
+# The low-power audio subsystem's blocks on the microphones' path (yupik-audio.dtsi), for "mic-wcd938x".
+[lpass]
+tx_macro = 0x03220000               # tx-macro@3220000
+va_macro = 0x03370000               # va-macro@3370000
+tx_swr = 0x03230000                 # the TX SoundWire master
+tx_swr_hctl = 0x032a9000            # its hardware control (qcom,swrm-hctl-reg)
+lpi = 0x033c0000                    # lpi_pinctrl@33c0000: the subsystem's own pins
+lpi_slew = 0x0355a000               # their slew rates (qcom,slew-reg)
+
 # The way to the SoC's other processors: the audio DSP and the Wi-Fi radio are reached through these.
 [ipc]
 aoss = 0x0c300000                   # qmp_aop (qcom,qmp-mbox): the always-on processor's mailbox

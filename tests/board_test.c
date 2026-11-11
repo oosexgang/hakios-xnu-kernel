@@ -192,6 +192,9 @@ table(void)
 		    "%s: a driver that talks to another processor without [ipc]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_WIFI_WCN6750) || (b->wifi.dsp_memory != 0 && b->wifi.dsp_memory_size != 0),
 		    "%s: a radio on the SoC's DSP without the DSP's memory", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_MIC_WCD938X) || (b->lpass.tx_macro != 0 && b->lpass.va_macro != 0 &&
+		    b->lpass.tx_swr != 0 && b->lpass.tx_swr_hctl != 0 && b->lpass.lpi != 0 && b->lpass.lpi_slew != 0),
+		    "%s: the microphones' driver without the audio subsystem's blocks", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
 		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory != 0 && b->adsp.memory_size != 0 &&

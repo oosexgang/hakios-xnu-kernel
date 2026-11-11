@@ -135,6 +135,13 @@ struct hakios_board {
 		uint32_t apps;
 	} smmu;
 
+	/* the low-power audio subsystem's blocks the microphones' path goes through (soc: [lpass]) */
+	struct {
+		uint32_t tx_macro, va_macro;    /* the codec macros for capture */
+		uint32_t tx_swr, tx_swr_hctl;   /* the SoundWire master of the capture side, and its hardware control */
+		uint32_t lpi, lpi_slew;         /* the subsystem's own pins, and their slew rates */
+	} lpass;
+
 	/* the way to the SoC's other processors (soc: [ipc]) */
 	struct {
 		uint32_t aoss;                  /* the always-on processor's mailbox (QMP) */

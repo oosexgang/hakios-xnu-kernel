@@ -466,10 +466,13 @@ class Check(Sandbox):
         self.assertRegex(said, r'buttons-pmic +needs \[spmi\] in soc/sm0001.toml, \[buttons\] in the board file')
         self.assertRegex(said, r'ddr-rpmh +needs \[rpmh\] in soc/sm0001.toml')
         self.assertRegex(said, r'display-scan +needs intf1 in \[display\] and \[clocks\] in soc/sm0001.toml')
-        self.assertRegex(said, r'mic-wcd938x +needs \[pins\] in soc/sm0001.toml')
+        self.assertRegex(said, r'mic-wcd938x +needs \[pins\] in soc/sm0001.toml, \[lpass\] in soc/sm0001.toml')
         # a part's driver whose addresses are there is still one part's: said, not offered
         self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[thermal]')
+        self.soc('[thermal]', '[lpass]\ntx_macro = 0x3220000\nva_macro = 0x3370000\ntx_swr = 0x3230000\ntx_swr_hctl = 0x32a9000\n'
+                              'lpi = 0x33c0000\nlpi_slew = 0x355a000\n[thermal]')
         self.assertRegex(status(), r"mic-wcd938x +one part's driver")
+        self.assertIn('.tx_swr = 0x03230000, .tx_swr_hctl = 0x032a9000,', boards.table_text(*boards.load()))
         self.assertRegex(said, r'touch-goodix +needs \[pins\] in soc/sm0001.toml')
         self.soc('[thermal]', '[spmi]\ncore = 0xc440000\ncnfg = 0xc40a000\nobserver = 0xe600000\n[thermal]')
         self.assertRegex(status(), r'buttons-pmic +needs \[buttons\] in the board file')
