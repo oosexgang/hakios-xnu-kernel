@@ -137,117 +137,25 @@ reset_pin(bool high)
 
 /* ---- I2C by hand (as in redwood_speaker.c) ---------------------------------------------------------- */
 
-static void
-half_bit(void)
-{
-	spin_us(5);                     /* 100 kHz at most */
-}
+#include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken and given back */
 
-static void
-line(unsigned pin, bool high)
-{
-	wr(GPIO_IO(pin), 0);
-	wr(GPIO_CFG(pin), CFG_PULL_UP | (high ? 0 : CFG_OUTPUT));
-}
-
-static bool
-level_of(unsigned pin)
-{
-	return rd(GPIO_IO(pin)) & 1;
-}
-
-static void
-i2c_start(void)
-{
-	line(PIN_SDA, true);
-	line(PIN_SCL, true);
-	half_bit();
-	line(PIN_SDA, false);
-	half_bit();
-	line(PIN_SCL, false);
-	half_bit();
-}
-
-static void
-i2c_stop(void)
-{
-	line(PIN_SDA, false);
-	half_bit();
-	line(PIN_SCL, true);
-	half_bit();
-	line(PIN_SDA, true);
-	half_bit();
-}
-
-static bool
-i2c_bit(bool out)
-{
-	bool in;
-
-	line(PIN_SDA, out);
-	half_bit();
-	line(PIN_SCL, true);
-	for (unsigned stretched = 0; !level_of(PIN_SCL) && stretched < 100; stretched++) {
-		half_bit();
-	}
-	half_bit();
-	in = level_of(PIN_SDA);
-	line(PIN_SCL, false);
-	return in;
-}
-
-static bool
-i2c_write(uint8_t byte)
-{
-	for (int bit = 7; bit >= 0; bit--) {
-		i2c_bit((byte >> bit) & 1);
-	}
-	return !i2c_bit(true);
-}
-
-static uint8_t
-i2c_read(bool more)
-{
-	uint8_t byte = 0;
-
-	for (int bit = 7; bit >= 0; bit--) {
-		byte = (uint8_t)(byte << 1 | i2c_bit(true));
-	}
-	i2c_bit(!more);
-	return byte;
-}
-
-static uint32_t taken_cfg[2], taken_io[2];
+static struct i2c_gpio i2c_bus = { .sda = PIN_SDA, .scl = PIN_SCL };
 
 static bool
 bus_take(void)
 {
-	taken_cfg[0] = rd(GPIO_CFG(PIN_SDA));
-	taken_cfg[1] = rd(GPIO_CFG(PIN_SCL));
-	taken_io[0] = rd(GPIO_IO(PIN_SDA));
-	taken_io[1] = rd(GPIO_IO(PIN_SCL));
-	line(PIN_SDA, true);
-	line(PIN_SCL, true);
-	half_bit();
-	if (!level_of(PIN_SDA) || !level_of(PIN_SCL)) {
-		wr(GPIO_IO(PIN_SDA), taken_io[0] & 2);
-		wr(GPIO_IO(PIN_SCL), taken_io[1] & 2);
-		wr(GPIO_CFG(PIN_SDA), taken_cfg[0]);
-		wr(GPIO_CFG(PIN_SCL), taken_cfg[1]);
-		say("haptic: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
-		    level_of(PIN_SDA), PIN_SCL, level_of(PIN_SCL));
-		return false;
+	if (i2c_gpio_take(&i2c_bus)) {
+		return true;
 	}
-	return true;
+	say("haptic: the I2C bus is not at rest (gpio%u reads %u, gpio%u reads %u): not touched\n", PIN_SDA,
+	    i2c_gpio_level(PIN_SDA), PIN_SCL, i2c_gpio_level(PIN_SCL));
+	return false;
 }
 
 static void
 bus_give_back(void)
 {
-	wr(GPIO_IO(PIN_SDA), taken_io[0] & 2);
-	wr(GPIO_IO(PIN_SCL), taken_io[1] & 2);
-	wr(GPIO_CFG(PIN_SDA), taken_cfg[0]);
-	wr(GPIO_CFG(PIN_SCL), taken_cfg[1]);
+	i2c_gpio_give_back(&i2c_bus);
 }
 
 #define AW_ADDRESS              0x5a
@@ -261,16 +169,16 @@ regs_read(uint8_t reg, uint8_t *values, unsigned count)
 	if (!bus_take()) {
 		return false;
 	}
-	i2c_start();
-	answered = i2c_write(AW_ADDRESS << 1) && i2c_write(reg);
+	i2c_gpio_start(&i2c_bus);
+	answered = i2c_gpio_write(&i2c_bus, AW_ADDRESS << 1) && i2c_gpio_write(&i2c_bus, reg);
 	if (answered) {
-		i2c_start();
-		answered = i2c_write(AW_ADDRESS << 1 | 1);
+		i2c_gpio_start(&i2c_bus);
+		answered = i2c_gpio_write(&i2c_bus, AW_ADDRESS << 1 | 1);
 	}
 	for (unsigned i = 0; answered && i < count; i++) {
-		values[i] = i2c_read(i + 1 < count);
+		values[i] = i2c_gpio_read(&i2c_bus, i + 1 < count);
 	}
-	i2c_stop();
+	i2c_gpio_stop(&i2c_bus);
 	bus_give_back();
 	return answered;
 }
@@ -283,12 +191,12 @@ regs_write(uint8_t reg, const uint8_t *values, unsigned count)
 	if (!bus_take()) {
 		return false;
 	}
-	i2c_start();
-	answered = i2c_write(AW_ADDRESS << 1) && i2c_write(reg);
+	i2c_gpio_start(&i2c_bus);
+	answered = i2c_gpio_write(&i2c_bus, AW_ADDRESS << 1) && i2c_gpio_write(&i2c_bus, reg);
 	for (unsigned i = 0; answered && i < count; i++) {
-		answered = i2c_write(values[i]);
+		answered = i2c_gpio_write(&i2c_bus, values[i]);
 	}
-	i2c_stop();
+	i2c_gpio_stop(&i2c_bus);
 	bus_give_back();
 	return answered;
 }
