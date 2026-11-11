@@ -38,6 +38,9 @@ known_phone(void)
 	CHECK(strcmp(get_string("name"), "renoir") == 0, "hw.board.name %s", get_string("name"));
 	CHECK(strcmp(get_string("soc"), "sm7350") == 0, "hw.board.soc %s", get_string("soc"));
 	CHECK(strstr(get_string("features"), "cpufreq-epss") != NULL, "hw.board.features %s", get_string("features"));
+	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
+	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-renoir") == 0 &&
+	    b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
 	/* its groups of cores: four small, three big, one prime */
 	CHECK(hakios_board_cpu_groups() == 3, "%u groups", hakios_board_cpu_groups());
 	CHECK(hakios_board_cpu_group_of(0) == 0 && hakios_board_cpu_group_of(3) == 0 && hakios_board_cpu_group_of(4) == 1 &&
@@ -95,6 +98,8 @@ gpu_redwood(void)
 	CHECK(p->speed_fuse == 0x1e9 && p->gaming_fuse == 0x1f5 && p->highest_bank_bit == 14 && p->gcc_debug_gpucc == 0x146,
 	    "fuses, bank bit, debug multiplexer");
 	CHECK(!p->zap_must_authenticate, "the firmware's zap shader is fallen back on");
+	CHECK(strcmp(hakios_board()->adsp.firmware, "fw") == 0 && hakios_board()->adsp.memory_size == 0x04000000 &&
+	    hakios_board()->adsp.charge_counter_divisor == 1, "redwood's [adsp]");
 	CHECK(p->speed_count == 4 && p->default_speed == 3, "%u speeds, default %u", p->speed_count, p->default_speed);
 	CHECK(p->speeds[1].khz == 315000 && p->speeds[1].level == 64 && p->speeds[2].khz == 450000 && p->speeds[2].level == 128 &&
 	    p->speeds[3].khz == 550000 && p->speeds[3].level == 192, "the speeds and their supply levels");
@@ -144,6 +149,8 @@ table(void)
 		    "%s: DCS bytes %u", b->name, b->backlight.bytes);
 		CHECK(!(b->features & HAKIOS_HAS_DISPLAY_SCAN) || (b->display.intf != 0 && b->clocks.dispcc != 0 &&
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
+		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory_size != 0 &&
+		    b->adsp.charge_counter_divisor != 0), "%s: adsp without [adsp]", b->name);
 		if (b->features & HAKIOS_HAS_GPU_A660) {
 			CHECK(b->gpu.chip_id != 0 && b->gpu.model != NULL && b->gpu.firmware != NULL, "%s: gpu-a660 without [gpu]", b->name);
 			CHECK(b->gpu.speed_count >= 1 && b->gpu.speed_count <= 5 && b->gpu.default_speed >= 1 &&

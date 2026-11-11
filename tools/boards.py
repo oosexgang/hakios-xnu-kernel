@@ -56,6 +56,7 @@ BOARD_SCHEMA = {
                   'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
                   'byte_order': (('msb-first', 'lsb-first'), False)},
     'thermal': {'floor_mhz': ([int], True)},
+    'adsp': {'firmware': (str, True), 'memory_size': (int, True), 'charge_counter_divisor': (int, False)},
     'gpu': {'model': (str, True), 'chip_id': (int, True), 'firmware': (str, True), 'gmem_kb': (int, True),
             'primitive_fifo': (int, True), 'hang_cycles': (int, True), 'uche_cmdq_config': (int, False),
             'speed_fuse': (int, True), 'gaming_fuse': (int, True), 'highest_bank_bit': (int, True),
@@ -68,7 +69,7 @@ BOARD_SCHEMA = {
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-epss': 'cpufreq', 'display-scan': 'display'}
 # ... and of the board's own file
-FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu'}
+FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp'}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
@@ -196,6 +197,14 @@ def load(problems=None):
             for section in ('clocks', 'display'):
                 if section not in soc:
                     problems.add(rel, f'backlight type "dcs" needs [{section}] in soc/{data.get("soc")}.toml')
+        adsp = data.get('adsp')
+        if adsp is not None:
+            if adsp['memory_size'] == 0 or adsp['memory_size'] & 0xfff:
+                problems.add(f'{rel} [adsp]', 'memory_size: whole pages, and not 0')
+            if adsp.get('charge_counter_divisor', 1) == 0:
+                problems.add(f'{rel} [adsp]', 'charge_counter_divisor must not be 0')
+            if not re.fullmatch(r'[A-Za-z0-9._-]+', adsp['firmware']):
+                problems.add(f'{rel} [adsp]', 'firmware: the name of a directory of the root, without slashes')
         gpu = data.get('gpu')
         if gpu is not None:
             speeds, levels = gpu['speeds_khz'], gpu['speed_levels']
@@ -207,6 +216,8 @@ def load(problems=None):
                 problems.add(f'{rel} [gpu]', 'speeds_khz: from the slowest up, none of them 0')
             elif not 1 <= gpu['default_speed'] <= len(speeds):
                 problems.add(f'{rel} [gpu]', f'default_speed: which of speeds_khz, 1 to {len(speeds)}')
+            if not re.fullmatch(r'[A-Za-z0-9._-]+', gpu['firmware']):
+                problems.add(f'{rel} [gpu]', 'firmware: the name of a directory of the small image, without slashes')
             if gpu['chip_id'] == 0:
                 problems.add(f'{rel} [gpu]', 'chip_id must not be 0')
             if ('alt_model' in gpu) != ('alt_bins' in gpu) or not 1 <= len(gpu.get('alt_bins', [0])) <= 2:
@@ -314,6 +325,10 @@ def table_text(socs, boards):
                     f'\t\t\t.epss = {cpufreq["epss"]:#010x}, .epss_domain_size = {cpufreq["epss_domain_size"]:#x},',
                     f'\t\t\t.domain_cores = {{ {groups} }},',
                     '\t\t},']
+        adsp = board.get('adsp')
+        if adsp:
+            out.append(f'\t\t.adsp = {{ .firmware = {c_string(adsp["firmware"])}, .memory_size = {adsp["memory_size"]:#010x}, '
+                       f'.charge_counter_divisor = {adsp.get("charge_counter_divisor", 1)} }},')
         gpu = board.get('gpu')
         if gpu:
             out += [

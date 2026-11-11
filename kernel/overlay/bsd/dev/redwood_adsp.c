@@ -976,7 +976,9 @@ step_survey(void)
 
 #define ADSP_MEMORY             0x86700000u     /* dt: reserved-memory adsp@86700000, memory-region of qcom,lpass@3700000 */
 #define ADSP_MEMORY_SIZE        adsp_memory_size
-static uint32_t adsp_memory_size = 0x04000000u; /* Redwood 64 MiB; Renoir 48 MiB (shima.dtsi). */
+static uint32_t adsp_memory_size;               /* the board's [adsp] memory_size */
+static const char *adsp_firmware = "fw";        /* ... and its firmware directory */
+static uint32_t charge_counter_divisor = 1;     /* ... and what its battery manager counts charge in */
 #define PAS_ADSP                1               /* dt: qcom,pas-id */
 
 
@@ -999,7 +1001,7 @@ root_file(const char *name, uint64_t *size)
 	if (rootvnode == NULLVP) {
 		return NULL;
 	}
-	snprintf(path, sizeof(path), redwood_board_is("renoir") ? "/fw-audio-renoir/%s" : "/fw/%s", name);
+	snprintf(path, sizeof(path), "/%s/%s", adsp_firmware, name);
 	if (vnode_lookup(path, 0, &vnode, context) != 0) {
 		return NULL;
 	}
@@ -1044,7 +1046,8 @@ redwood_adsp_fw_free(const uint8_t *data, uint64_t size)
 	kfree_data(ours, size);
 }
 
-/* A file of fw/ in the small image (ADSP=1 userland/build.sh puts fw-audio/ there), else of /fw on the root (above). */
+/* A file of fw/ in the small image (ADSP=1 userland/build.sh puts fw-audio/ there), else of the board's firmware
+ * directory on the root (above). */
 extern const uint8_t *redwood_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
 static const uint8_t *
 image_file(const char *name, uint64_t *size)
@@ -1064,8 +1067,8 @@ image_file(const char *name, uint64_t *size)
 			return data;
 		}
 	}
-	printf("adsp: %u: no fw/%s in the small image nor on the root: put the phone's /vendor/firmware_mnt/image/%s into "
-	    "fw-audio/ and run SYSTEM=1 userland/build.sh (or ADSP=1, for the small image)\n", step, name, name);
+	printf("adsp: %u: no fw/%s in the small image nor /%s/%s on the root: put the phone's /vendor/firmware_mnt/image/%s into "
+	    "fw-audio/ and run SYSTEM=1 userland/build.sh (or ADSP=1, for the small image)\n", step, name, adsp_firmware, name, name);
 	return NULL;
 }
 
@@ -2728,14 +2731,13 @@ battmgr_get(uint32_t opcode, uint32_t property, uint32_t *value)
 	return false;
 }
 
-/* Renoir's non-BQ gauge reports charge counter in 1/100 uAh, unlike
- * its full/design capacity fields. OKX qti_battery_charger.c divides this
- * property by 100 for POWER_SUPPLY_PROP_CHARGE_COUNTER. Keep Redwood ABI.
- */
+/* Some gauges report the charge counter in 1/100 uAh, unlike their full and design capacity fields
+ * (Linux's qti_battery_charger.c divides the property by 100 for POWER_SUPPLY_PROP_CHARGE_COUNTER):
+ * the board's [adsp] charge_counter_divisor says which. */
 static uint32_t
 battmgr_charge_uah(uint32_t raw)
 {
-    return redwood_board_is("renoir") ? (raw + 50ull) / 100 : raw;
+	return (uint32_t)((raw + charge_counter_divisor / 2ull) / charge_counter_divisor);
 }
 
 static void
@@ -3217,17 +3219,24 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 void
 redwood_adsp_init(void)
 {
+	const struct hakios_board *board = hakios_board();
 	uint32_t on = 0;
 	thread_t thread;
 
-	adsp_memory_size = redwood_board_is("renoir") ? 0x03000000u : 0x04000000u;
 	PE_parse_boot_argn("adsp_step", &last_step, sizeof(last_step));
 	if (last_step == 0 && (!PE_parse_boot_argn("adsp", &on, sizeof(on)) || on != 1)) {
 		return;
 	}
-	if (!hakios_board_has(HAKIOS_HAS_ADSP) || pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
-		printf("adsp: adsp=1 and adsp_step=N are for the phone's audio DSP, and this is not the phone\n");
+	if (!hakios_board_has(HAKIOS_HAS_ADSP) || board->adsp.firmware == NULL || board->adsp.memory_size == 0 ||
+	    pe_arm_get_soc_base_phys() != REDWOOD_SOC_BASE) {
+		printf("adsp: adsp=1 and adsp_step=N are for a phone's audio DSP: this board's board.toml lists no \"adsp\" with "
+		    "an [adsp] section\n");
 		return;
+	}
+	adsp_firmware = board->adsp.firmware;
+	adsp_memory_size = board->adsp.memory_size;
+	if (board->adsp.charge_counter_divisor != 0) {
+		charge_counter_divisor = board->adsp.charge_counter_divisor;
 	}
 	if (last_step == 0) {
 		/* all of it, on a thread of its own, and left up */

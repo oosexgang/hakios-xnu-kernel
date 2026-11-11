@@ -244,6 +244,28 @@ class Check(Sandbox):
                     for path, text in saved:
                         path.write_text(text)
 
+    def test_an_audio_dsp_is_described(self):
+        path = self.dir / 'devices/phone/board.toml'
+        self.board('"cpufreq-epss"', '"cpufreq-epss", "adsp"')
+        self.assertIn('feature "adsp" needs a [adsp] section', self.problems())
+        listed = path.read_text()
+        for section, reason in (
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n', None),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\ncharge_counter_divisor = 100\n', None),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\ncharge_counter_divisor = 0\n', 'must not be 0'),
+                ('[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000001\n', 'whole pages'),
+                ('[adsp]\nfirmware = "/fw/../etc"\nmemory_size = 0x3000000\n', 'without slashes'),
+                ('[adsp]\nmemory_size = 0x3000000\n', '"firmware" is missing')):
+            with self.subTest(section=section):
+                path.write_text(listed + section)
+                if reason is None:
+                    self.assertEqual(self.problems(), '')
+                else:
+                    self.assertIn(reason, self.problems())
+        path.write_text(listed + '[adsp]\nfirmware = "fw-audio-phone"\nmemory_size = 0x3000000\n')
+        self.assertIn('.adsp = { .firmware = "fw-audio-phone", .memory_size = 0x03000000, .charge_counter_divisor = 1 },',
+                      boards.table_text(*boards.load()))
+
     def test_a_gpu_is_described_in_full(self):
         path = self.dir / 'devices/phone/board.toml'
         plain = path.read_text()

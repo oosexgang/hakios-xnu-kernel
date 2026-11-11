@@ -109,6 +109,13 @@ struct hakios_board {
 		uint32_t speeds_khz[5], speed_levels[5];        /* the core clock's steps and their supply levels */
 	} gpu;
 
+	/* the audio DSP (board: [adsp]) */
+	struct {
+		const char *firmware;           /* the root's directory with the DSP's image (adsp.mdt and its parts) */
+		uint32_t memory_size;           /* how much of its reserved memory the image may take */
+		uint32_t charge_counter_divisor;        /* the battery manager's charge counter, in this many parts of a uAh */
+	} adsp;
+
 	/* CPU frequency (soc: [cpufreq]) */
 	struct {
 		uint32_t epss, epss_domain_size;        /* EPSS: a block of registers a group of cores */

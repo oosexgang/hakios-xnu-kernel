@@ -115,7 +115,7 @@ first. Every argument is in [boot-args.md](boot-args.md); every driver in [drive
 | GPU (Adreno 642, 642L, 643) | `gpu-a660`, `[gpu]` | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
 | Buttons | `buttons-pmic` | `buttons=1` | Each press and release is logged. |
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
-| Audio DSP | `adsp` | `adsp=1` | The DSP's services come up. |
+| Audio DSP | `adsp`, `[adsp]` | `adsp=1` | The DSP's services come up. |
 
 `hw.board.features` in a running system shows what the kernel has for the board.
 

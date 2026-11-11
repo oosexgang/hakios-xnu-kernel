@@ -25,6 +25,11 @@ byte_order = "msb-first"            # qcom,mdss-dsi-bl-inverted-dbv
 [thermal]
 floor_mhz = [1000, 1100, 1100]
 
+# The audio DSP, and the battery manager behind it.
+[adsp]
+firmware = "fw"
+memory_size = 0x04000000            # 64 MiB of the DSP's reserved memory (adsp@86700000)
+
 # The GPU. Sources: yupik-gpu.dtsi, Linux's adreno-gpulist.h and adreno_a6xx_gmu.c.
 [gpu]
 model = "Adreno 642L"

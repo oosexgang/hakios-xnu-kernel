@@ -11,7 +11,7 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 #   ddr-rpmh        memory bandwidth votes through RPMh (ddr=)
 #   battery-uefi    the battery as the firmware reports it to the loader (battery=1)
 #   buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1)
-#   adsp            the audio DSP: sound, and the battery manager behind it (adsp=1)
+#   adsp            the audio DSP: sound, and the battery manager behind it (adsp=1); needs [adsp]
 #   display-scan    a command-mode panel: frames are written ahead of its readout, read from the DSI
 #                   interface's counters (fb_scan); needs intf1 in the SoC file's [display]
 #   gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs [gpu]
@@ -39,6 +39,15 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # [thermal]
 # floor_mhz = [1000, 1100, 1100]    # the slowest each group of cores is held back to: one value for each
 #                                   # group of the SoC file's [cpufreq] domain_cores
+
+# The audio DSP, for the feature "adsp".
+# [adsp]
+# firmware = "fw-audio-NAME"        # the root's directory with this phone's adsp.mdt and adsp.bNN (signed for
+#                                   # the phone: take them from its own firmware partition)
+# memory_size = 0x03000000          # how much of the DSP's reserved memory the image may take: the size of the
+#                                   # reserved-memory node the DSP's memory-region points at
+# charge_counter_divisor = 100      # 100 when the battery manager counts charge in 1/100 uAh (a gauge that is
+#                                   # not a BQ: Linux's qti_battery_charger.c); left out: in uAh
 
 # The GPU, for the feature "gpu-a660" (docs/drivers.md). From the SoC's -gpu.dtsi in the Android device
 # tree and the chip's entry in Linux's adreno-gpulist.h.

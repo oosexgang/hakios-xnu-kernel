@@ -37,6 +37,7 @@ const struct hakios_board hakios_boards[] = {
 			.epss = 0x18591000, .epss_domain_size = 0x1000,
 			.domain_cores = { 4, 3, 1 },
 		},
+		.adsp = { .firmware = "fw", .memory_size = 0x04000000, .charge_counter_divisor = 1 },
 		.gpu = {
 			.model = "Adreno 642L", .firmware = "fw",
 			.alt_model = "Adreno 643", .alt_bins = { 0xac, 0xbe },
@@ -74,6 +75,7 @@ const struct hakios_board hakios_boards[] = {
 			.epss = 0x18591000, .epss_domain_size = 0x1000,
 			.domain_cores = { 4, 3, 1 },
 		},
+		.adsp = { .firmware = "fw-audio-renoir", .memory_size = 0x03000000, .charge_counter_divisor = 100 },
 		.gpu = {
 			.model = "Adreno 642", .firmware = "fw-renoir",
 			.chip_id = 0x06060010, .gmem_bytes = 1536 * 1024,
