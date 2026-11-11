@@ -118,13 +118,16 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 
 ## Porting in one paragraph
 
-A phone is described by one board file and its chip by `soc/SOC.toml`.
-`tools/boards.py new NAME --soc SOC --dts phone.dts` starts both from the phone's Android device tree.
-The kernel starts a driver only on a board that lists it, so a new phone begins with nothing but the
-display and gains hardware one line at a time; `tools/boards.py status NAME` says what can be turned
-on next and what each of the rest still needs. Parts nobody has a driver for yet (a touch controller,
-an amplifier) need one written. When it works, the package goes to the `devices` branch. The guide:
-[docs/porting.md](docs/porting.md).
+A phone is described by one board file and its chip by `soc/SOC.toml`. `tools/boards.py new NAME
+--soc SOC --dts phone.dts` starts both from the phone's Android device tree. The kernel starts a
+driver only on a board that lists it, so a new phone begins with nothing but the display and gains
+hardware one line at a time; `tools/boards.py status NAME` says what can be turned on next and what
+each of the rest still needs, and `tools/boards.py compare NAME --dts phone.dts` holds the files
+against the tree at any time. No driver has the address of a block of the chip in its code: they
+come from the SoC file, once for every phone with that chip. Parts nobody has a driver for yet (a
+touch controller, an amplifier) need one written, from an example that is built and tested with the
+rest ([docs/writing-a-driver.md](docs/writing-a-driver.md)). When it works, the package goes to the
+`devices` branch. The guide: [docs/porting.md](docs/porting.md).
 
 ## What is not in this repository
 

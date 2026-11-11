@@ -116,8 +116,11 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 一部手机由一个板型文件描述，其芯片由 `soc/SOC.toml` 描述。
 `tools/boards.py new NAME --soc SOC --dts phone.dts` 可从手机的 Android 设备树生成这两个文件的初稿。
 内核只在列出了相应驱动的板型上启动该驱动，因此新手机一开始只有显示，之后逐行增加硬件；
-`tools/boards.py status NAME` 会说明接下来可以启用什么，以及其余各项还缺什么。
-尚无驱动的器件（触摸控制器、功放等）需要另写驱动。可用之后，设备包提交到 `devices` 分支。
+`tools/boards.py status NAME` 会说明接下来可以启用什么，以及其余各项还缺什么；
+`tools/boards.py compare NAME --dts phone.dts` 可随时把这两个文件与设备树逐项对照。
+驱动代码里不再写死芯片各模块的地址：它们来自 SoC 文件，同一芯片的所有手机共用。
+尚无驱动的器件（触摸控制器、功放等）需要另写驱动，可从一个随其余部分一起构建并测试的示例入手
+（[docs/writing-a-driver.md](docs/writing-a-driver.md)）。可用之后，设备包提交到 `devices` 分支。
 指南见 [docs/porting.md](docs/porting.md)。
 
 ## 不在本仓库中的内容
