@@ -14,7 +14,7 @@ lives here, with the code, and not in a phone's package.
 | Section | Contents | Needed for |
 | --- | --- | --- |
 | `[platform]` | The interrupt controller, the cores and how they are numbered, the firmware's power interface, one window over the peripherals | A board with a `[loader]` section |
-| `[clocks]` | The global and display clock controllers, and the registers that switch the display block's clocks on | A panel whose brightness is MIPI DCS; `display-scan` |
+| `[clocks]` | The global and display clock controllers, and the registers that switch the display block's clocks on | All of it: a panel whose brightness is MIPI DCS, `display-scan`, `gpu-a660`. The global controller's address alone (`gcc`): the part drivers that switch a bus's clocks on |
 | `[display]` | The first DSI controller, and the interface the panel hangs on | The same |
 | `[pins]` | Where the SoC's own pins (TLMM) are | The part drivers that drive pins: the touch controllers, the speaker amplifier, the microphones' codec, the haptic motor, the cameras, Wi-Fi |
 | `[spmi]` | The PMIC arbiter's blocks | `buttons-pmic`, the part drivers that write to a PMIC, and Wi-Fi, which reads its supplies there |

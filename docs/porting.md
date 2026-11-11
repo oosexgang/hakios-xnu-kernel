@@ -47,8 +47,9 @@ It prints what it could not find. Two things are never in a device tree and are 
 
 - **Clock register offsets** in the SoC file's `[clocks]`: `gcc_disp_ahb_cbcr` (Linux `gcc-SOC.c`,
   `gcc_disp_ahb_clk`), `dispcc_mdss_gdscr` (the MDSS GDSC) and `dispcc_mdss_ahb_cbcr`
-  (`disp_cc_mdss_ahb_clk`), both in `dispcc-SOC.c`. They are only needed for `backlight type = "dcs"`;
-  until you have them, set `type = "soft"`, which works anywhere.
+  (`disp_cc_mdss_ahb_clk`), both in `dispcc-SOC.c`. They are asked for by what touches the display's
+  registers: `backlight type = "dcs"`, `display-scan` and the GPU. Until you have them, set
+  `type = "soft"`, which works anywhere; `gcc` alone is enough for everything else.
 - **The I/O window** in `[platform]`: `io_base` and `io_size`, one range that covers the SoC's
   peripherals and does not start at 0. The 7-series SoCs here use `0x00400000` and `0x3FC00000`.
 
