@@ -12,7 +12,8 @@
 # The tree is a git repository: tag `upstream` is Apple's release, tag `assembled` what this script put
 # there, branch `hakios` where work goes on. An update touches only the files whose contents change, so
 # the next build compiles only those. Work done in the tree goes back to the repository with
-# kernel/export.sh; --update refuses to run over such work.
+# kernel/export.sh. --update never runs over such work: it leaves the tree as it is while the
+# repository has nothing new, and stops when both have changed.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -41,10 +42,21 @@ assembled_tree() {
 	tree_git "$D" read-tree upstream
 	(cd "$OVERLAY" && git --git-dir="$D/.git" --work-tree=. -c core.autocrlf=false add -f --no-all .)
 	for patch in $(series_patches); do
-		[ -f "$PATCHES/$patch" ] || die "patches/series names $patch, which is not there"
+		[ -f "$PATCHES/$patch" ] || continue            # (a topic nothing has changed in yet)
 		tree_git "$D" apply --cached --whitespace=nowarn "$PATCHES/$patch" ||
 			die "patches/$patch does not apply to $UPSTREAM_TAG"
 	done
+	tree_git "$D" write-tree
+	rm -f "$GIT_INDEX_FILE"
+	unset GIT_INDEX_FILE
+}
+
+# The tree object of what lies in the working tree now, new files included.
+working_tree() {
+	export GIT_INDEX_FILE=$D/.git/hakios-assemble-index
+	rm -f "$GIT_INDEX_FILE"
+	tree_git "$D" read-tree HEAD
+	tree_git "$D" add -A .
 	tree_git "$D" write-tree
 	rm -f "$GIT_INDEX_FILE"
 	unset GIT_INDEX_FILE
@@ -55,6 +67,7 @@ if [ $update = 0 ]; then
 	log "fetching $UPSTREAM_TAG from $from"
 	git init -q "$D"
 	D=$(cd "$D" && pwd)
+	trap 'rm -rf "$D"' ERR EXIT                     # (no half-made tree is left behind)
 	git -C "$D" fetch -q --depth 1 "$from" "refs/tags/$UPSTREAM_TAG" ||
 		die "cannot fetch refs/tags/$UPSTREAM_TAG from $from"
 	got=$(git -C "$D" rev-parse 'FETCH_HEAD^{commit}')
@@ -68,24 +81,44 @@ else
 	[ "$(git -C "$D" rev-parse 'upstream^{commit}')" = "$UPSTREAM_COMMIT" ] ||
 		die "$D is of another release than kernel/UPSTREAM names: make a new tree"
 	if [ $discard = 1 ]; then
-		git -C "$D" reset -q --hard
+		git -C "$D" reset -q --hard assembled
 		git -C "$D" clean -q -fd
-	elif [ -n "$(git -C "$D" status --porcelain)" ] ||
-	    [ "$(git -C "$D" rev-parse HEAD)" != "$(git -C "$D" rev-parse 'assembled^{commit}')" ]; then
-		die "$D has work that is not in the repository:
-$(git -C "$D" status --short | head -20)
-take it over with kernel/export.sh $D, or throw it away with --update --discard"
 	fi
 fi
 
 tree=$(assembled_tree)
-if [ $update = 1 ] && [ "$tree" = "$(git -C "$D" rev-parse 'assembled^{tree}')" ]; then
-	log "$D is up to date"
-	exit 0
+if [ $update = 1 ]; then
+	was=$(git -C "$D" rev-parse 'assembled^{tree}')
+	work=$(working_tree)
+	if [ "$work" = "$tree" ]; then
+		# what lies there is what the repository says (work done in the tree and exported, or nothing new)
+		if [ "$was" = "$tree" ] && [ -z "$(git -C "$D" status --porcelain)" ]; then
+			log "$D is up to date"
+			exit 0
+		fi
+	elif [ "$work" != "$was" ]; then
+		# work in the tree that the repository has not got
+		if [ "$tree" = "$was" ]; then
+			log "$D has work that is not in the repository yet (kernel/export.sh $D takes it over): left as it is"
+			exit 0
+		fi
+		die "$D has work that is not in the repository, and the repository has changed since the tree was made:
+$(git -C "$D" status --short | head -20)
+take the work over with kernel/export.sh $D (and settle the two in the repository), or throw it away
+with assemble.sh --update --discard $D"
+	fi
 fi
 commit=$(tree_git "$D" commit-tree "$tree" -p upstream \
 	-m "$UPSTREAM_TAG + HakiOS (kernel/overlay, kernel/patches)")
 changed=$(git -C "$D" diff --name-only "$(git -C "$D" rev-parse -q --verify 'assembled^{commit}' || echo upstream)" "$commit" | wc -l)
-git -C "$D" checkout -q -B hakios "$commit"
+if [ $update = 1 ] && [ "$work" = "$tree" ]; then
+	# the files are right already: only the tree's own history is brought in line, nothing is touched
+	git -C "$D" symbolic-ref HEAD refs/heads/hakios
+	git -C "$D" update-ref refs/heads/hakios "$commit"
+	git -C "$D" read-tree "$commit"
+else
+	git -C "$D" checkout -q -B hakios "$commit"
+fi
 git -C "$D" tag -f assembled "$commit" > /dev/null
+trap - ERR EXIT
 log "$D: $UPSTREAM_TAG + HakiOS, $changed files $([ $update = 1 ] && echo updated || echo "added or changed")"

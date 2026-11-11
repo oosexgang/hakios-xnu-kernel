@@ -21,6 +21,9 @@ run() {
 	fi
 }
 
+echo "== kernel_tools_test"
+"$HERE/kernel_tools_test.sh" || failed=1
+
 run backlight_test -I"$SRC" "$HERE/backlight_test.c"
 run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 
