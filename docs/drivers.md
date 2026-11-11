@@ -114,6 +114,8 @@ needs its feature in the board's `features`.
    instruction (`HAKIOS_MMIO_EXACT`, for what the hypervisor imitates).
    Waits and the clock are `hakios_time.h`'s (`sleep_ms()`, `spin_us()` for where nothing may sleep,
    `now_us()`).
+   The SoC's pins are configured, set and read with `hakios_tlmm.h` (`gpio_configure()`,
+   `gpio_output()`, `gpio_get()`), where the SoC file's `[pins]` says they are.
    A resource of RPMh (a supply rail, a regulator, a bus clock manager) is looked up by name with
    `hakios_cmd_db.h`, in the command database the SoC file's `[rpmh]` names, and asked for with
    `hakios_rpmh_send()` of `hakios_rpmh.h`, under `redwood_rpmh_lock()`.

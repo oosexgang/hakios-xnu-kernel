@@ -74,8 +74,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   writes to the loader's log: `hakios_say()` in `hakios_log.h`. Fourteen had their own register
   access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
   clock are `hakios_time.h`. The PMIC arbiter's protocol, written out in three drivers, is
-  `hakios_spmi.h`, and the lookup in RPMh's command database, written out in eight, is
-  `hakios_cmd_db.h`; each has a test of its own.
+  `hakios_spmi.h`; the lookup in RPMh's command database, written out in eight, is
+  `hakios_cmd_db.h`; a request to RPMh is `hakios_rpmh.h`; the SoC's pins are `hakios_tlmm.h`. Each
+  has a test of its own.
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now.
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
