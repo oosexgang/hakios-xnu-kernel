@@ -29,6 +29,7 @@ f0_calibration = 0x1a
 [touch]
 serial_engine = 0x00b40000
 clocks = [0x29004, 0x29008, 0x2939c]
+vote_register = 0x61010
 votes = [3, 4, 1, 2, 30]
 bus_pins = [140, 141, 142, 143]
 interrupt = 7

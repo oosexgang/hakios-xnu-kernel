@@ -186,7 +186,8 @@ struct hakios_board {
 		uint32_t serial_engine;         /* the SPI engine's registers */
 		uint32_t m_ahb_clock, s_ahb_clock, se_clock;    /* offsets in the clock controller: the wrapper's two bus clocks, the engine's own
 		                                 * (its rate generator's registers follow it) */
-		uint8_t vote[5];                /* bits of the clock controller's vote register: core 2x, core, the two bus clocks, the engine */
+		uint32_t vote_register;         /* the clock controller's register the application processor votes in, as an offset */
+		uint8_t vote[5];                /* its bits for: core 2x, core, the two bus clocks, the engine */
 		uint8_t data_in, data_out, clock, chip_select;  /* the bus's four pins of the SoC */
 		uint8_t interrupt, reset;       /* low: the chip has a report; low: in reset */
 		int16_t analog_enable;          /* a pin that switches the chip's analog supply on, -1: none */

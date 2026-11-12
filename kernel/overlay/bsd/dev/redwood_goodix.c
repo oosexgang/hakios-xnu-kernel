@@ -143,7 +143,7 @@ io_supply_on(void)
 
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_SIZE                0x60000UL
-#define GCC_VOTE                (gcc + 0x52008)         /* the application processor's votes */
+#define GCC_VOTE                (gcc + WIRED->vote_register)    /* the application processor's votes */
 /* (the names are redwood's, serial engine 13, the 6th of the second group; which bits and offsets they are is the board's) */
 #define VOTE_QUP1_CORE_2X       (1u << WIRED->vote[0])
 #define VOTE_QUP1_CORE          (1u << WIRED->vote[1])

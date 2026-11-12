@@ -66,6 +66,7 @@ default_speed = 4                   # which of them to run at, counted from 1
 [touch]
 serial_engine = 0x00988000
 clocks = [0x17004, 0x17008, 0x1726c]
+vote_register = 0x52008
 votes = [9, 8, 6, 7, 12]
 bus_pins = [20, 21, 22, 23]
 interrupt = 31

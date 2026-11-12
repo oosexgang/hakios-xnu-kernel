@@ -94,7 +94,8 @@ BOARD_SCHEMA = {
     'torch': {'flash': (int, True), 'alarm': (int, True)},
     'haptic': {'sda': (int, True), 'scl': (int, True), 'reset': (int, True), 'interrupt': (int, True),
                'f0_calibration': (int, True)},
-    'touch': {'serial_engine': (int, True), 'clocks': ([int], True), 'votes': ([int], True), 'bus_pins': ([int], True),
+    'touch': {'serial_engine': (int, True), 'clocks': ([int], True), 'vote_register': (int, True), 'votes': ([int], True),
+              'bus_pins': ([int], True),
               'interrupt': (int, True), 'reset': (int, True), 'io_supply': (str, True), 'analog_supply': (str, False),
               'analog_enable': (int, False), 'vendor_pins': ([int], False)},
     'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True)},
@@ -407,6 +408,8 @@ def load(problems=None):
             if len(touch['bus_pins']) != 4 or len(touch.get('vendor_pins', [0, 0])) != 2 or \
                     any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
                 problems.add(f'{rel} [touch]', 'bus_pins are four, vendor_pins two; every pin is a different pin of the SoC, 0 to 255')
+            if not 0 < touch['vote_register'] < 0x100000 or touch['vote_register'] & 3:
+                problems.add(f'{rel} [touch]', 'vote_register is an offset in the clock controller: a register\'s, not 0')
             if len(touch['clocks']) != 3 or any(not 0 < offset < 0x100000 for offset in touch['clocks']) or \
                     len(set(touch['clocks'])) != 3:
                 problems.add(f'{rel} [touch]', 'clocks are three different offsets in the clock controller: the two bus clocks, the engine\'s own')
@@ -653,7 +656,7 @@ def table_text(socs, boards):
                 '\t\t.touch = {',
                 f'\t\t\t.serial_engine = {touch["serial_engine"]:#010x},',
                 f'\t\t\t.m_ahb_clock = {clocks[0]:#x}, .s_ahb_clock = {clocks[1]:#x}, .se_clock = {clocks[2]:#x},',
-                f'\t\t\t.vote = {{ {", ".join(str(bit) for bit in touch["votes"])} }},',
+                f'\t\t\t.vote_register = {touch["vote_register"]:#x}, .vote = {{ {", ".join(str(bit) for bit in touch["votes"])} }},',
                 f'\t\t\t.data_in = {pins[0]}, .data_out = {pins[1]}, .clock = {pins[2]}, .chip_select = {pins[3]},',
                 f'\t\t\t.interrupt = {touch["interrupt"]}, .reset = {touch["reset"]},',
                 f'\t\t\t.analog_enable = {touch.get("analog_enable", -1)}, .vendor_pin = {{ {straps[0]}, {straps[1]} }},',

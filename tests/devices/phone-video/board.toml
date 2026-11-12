@@ -53,6 +53,7 @@ write_first = 2042368
 [touch]
 serial_engine = 0x00a94000
 clocks = [0x18004, 0x18008, 0x185fc]
+vote_register = 0x52008
 votes = [18, 19, 20, 21, 27]
 bus_pins = [52, 53, 54, 55]
 interrupt = 81

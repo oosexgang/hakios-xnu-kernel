@@ -87,6 +87,7 @@ as_it_was(void)
 	CHECK(GCC_QUP1_SE5_CMD == was[3] + 0x04 && GCC_QUP1_SE5_CFG == was[3] + 0x08 && GCC_QUP1_SE5_DFSR == was[3] + 0x18 &&
 	    GCC_QUP1_SE5_PERF_CFG(2) == was[3] + 0x28 && GCC_QUP1_SE5_PERF_M(1) == was[3] + 0x64 && GCC_QUP1_SE5_PERF_N(0) == was[3] + 0xa0,
 	    "the rate generator's registers");
+	CHECK((uint32_t)GCC_VOTE == 0x52008, "the register the votes go into: %#x", (uint32_t)GCC_VOTE);
 	CHECK(mappings == 0 && accesses == 0, "(looking at the names touches nothing)");
 }
 
@@ -100,6 +101,7 @@ another_wiring(void)
 	board = "phone-keys";
 	wiring(is);
 	same(is, its, "phone-keys");
+	CHECK((uint32_t)GCC_VOTE == 0x61010, "the register the votes go into is the board's: %#x", (uint32_t)GCC_VOTE);
 	CHECK(strcmp(WIRED->io_supply, "ldob5") == 0, "the supply's name is the board's: %s", WIRED->io_supply);
 }
 

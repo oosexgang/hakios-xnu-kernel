@@ -612,7 +612,7 @@ class Generate(Sandbox):
         self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
         # a touch controller's driver also needs to be told how the controller is wired
         self.assertEqual(self.problems(), 'devices/phone/board.toml: feature "touch-goodix" needs [touch] in the board file')
-        wiring = ('[touch]\nserial_engine = 0xa94000\nclocks = [0x18004, 0x18008, 0x185fc]\nvotes = [18, 19, 20, 21, 27]\n'
+        wiring = ('[touch]\nserial_engine = 0xa94000\nclocks = [0x18004, 0x18008, 0x185fc]\nvote_register = 0x52008\nvotes = [18, 19, 20, 21, 27]\n'
                   'bus_pins = [52, 53, 54, 55]\ninterrupt = 81\nreset = 105\nio_supply = "ldoc2"\n')
         plain = path.read_text()
         path.write_text(plain + wiring)
@@ -631,7 +631,7 @@ class Generate(Sandbox):
         table = boards.table_text(*boards.load())
         self.assertIn('.pins = { .tlmm = 0x0f100000 },', table)
         for line in ('.serial_engine = 0x00a94000,', '.m_ahb_clock = 0x18004, .s_ahb_clock = 0x18008, .se_clock = 0x185fc,',
-                     '.vote = { 18, 19, 20, 21, 27 },', '.data_in = 52, .data_out = 53, .clock = 54, .chip_select = 55,',
+                     '.vote_register = 0x52008, .vote = { 18, 19, 20, 21, 27 },', '.data_in = 52, .data_out = 53, .clock = 54, .chip_select = 55,',
                      '.interrupt = 81, .reset = 105,', '.analog_enable = 107, .vendor_pin = { 68, 96 },', '.io_supply = "ldoc2",'):
             self.assertIn(line, table)
         # the other controller's driver needs its second supply, and no strap
