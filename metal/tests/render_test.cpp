@@ -37,6 +37,8 @@
 #include "fixtures/tri_arr_vs_air.hpp"
 #include "fixtures/tri_flat_fs_air.hpp"
 #include "fixtures/tri_flat_vs_air.hpp"
+#include <chrono>
+
 #include "test.hpp"
 
 using namespace hakios::metal;
@@ -2992,6 +2994,46 @@ Sampler nearestClamp() {
     return s;
 }
 }  // namespace
+
+// (a measurement, not a rule: what a draw costs this machine's processor, the encoding the window server pays for every
+// draw on the phone -- some 30 us there on a big core (metal_fps=1's "draw calls by processor"); HAKIOS_METAL_BENCH=N
+// runs N rounds. Three shapes: one program over and over; a textured one; and two programs taking turns, so that every
+// draw carries its program's whole state, as CoreAnimation's draws mostly do)
+TEST(the_cost_of_a_draw_on_this_machine) {
+    Rig r;
+    auto t = target(r, 828, 1792);
+    auto tex = target(r, 256, 256, kTextureUsageRead);
+    Sampler smp = nearestClamp();
+    RenderPass a;
+    a.color0 = t.get();
+    Bindings fsb;
+    fsb.textures = {tex.get()};
+    fsb.samplers = {&smp};
+    render::Options o;
+    o.gmem = false;
+    const char* env = getenv("HAKIOS_METAL_BENCH");
+    const int rounds = env != nullptr ? atoi(env) : 3;
+    const int draws = 100;
+    const Program fp = flatProgram(), tp = texProgram();
+    for (int shape = 0; shape < 3; shape++) {
+        double best = 1e30;
+        for (int round = 0; round < rounds; round++) {
+            auto cb = r.queue->commandBuffer();
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < draws; i++) {
+                const bool textured = shape == 1 || (shape == 2 && (i & 1));
+                CHECK(cb->draw(textured ? tp : fp, a, wholeDraw(6, 828, 1792), Bindings{}, textured ? fsb : Bindings{}, o));
+            }
+            const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count() / draws;
+            best = std::min(best, us);
+            cb->commit();
+            cb->waitUntilCompleted();
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+        }
+        std::printf("       %s: %.2f us a draw at best (%d draws a buffer, %d rounds)\n",
+                    (const char*[]){"one program", "a textured one", "two taking turns"}[shape], best, draws, rounds);
+    }
+}
 
 // A draw whose program and pass are the last draw's leaves their state out (CommandBuffer::draw's staticKey), and one
 // whose program is not takes it all again: in one pass tri_flat, tri_tex, tri_tex end with the GPU holding tri_tex's
