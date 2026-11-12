@@ -159,7 +159,7 @@ class Repository(unittest.TestCase):
             self.assertIn(f'| `src/{name}` |', readme, f'loader/README.md has no row for src/{name}')
             first = (ROOT / 'loader/src' / name).read_text().split('\n')[0]
             self.assertTrue(first.startswith('/* Part of the loader (included by loader.c, not compiled alone): '), name)
-        self.assertEqual(readme.count('| `src/'), len(included) + 1)       # (and the row of src/ itself)
+        self.assertEqual(len(re.findall(r'(?m)^\| `src/', readme)), len(included) + 1)     # (and the row of src/ itself)
         # the drivers' list: every start function it calls is called once
         calls = re.findall(r'(?m)^\t(\w+_(?:init|start))\(\);', (ROOT / 'kernel/overlay/bsd/dev/hakios_drivers.c').read_text())
         self.assertGreater(len(calls), 20)
@@ -217,7 +217,7 @@ class Repository(unittest.TestCase):
     def test_the_loader_writes_to_storage_where_its_readme_says_and_nowhere_else(self):
         places = {}
         for path in sorted((ROOT / 'loader').rglob('*.[ch]')):
-            count = len(re.findall(r'write_blocks\(', path.read_text())) - len(re.findall(r'\(EFIAPI \*write_blocks\)\(', path.read_text()))
+            count = len(re.findall(r'->write_blocks\(', path.read_text()))
             if count:
                 places[path.relative_to(ROOT / 'loader').as_posix()] = count
         self.assertEqual(places, {'src/logstore.c': 1, 'src/dsu_write.c': 1, 'src/ufs_service.c': 1})
