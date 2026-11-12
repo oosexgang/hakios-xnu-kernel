@@ -285,6 +285,65 @@ lies_about_itself(void)
 	CHECK(hakios_smem_items(&area, dsp_at, 64, found, 16) == 2, "an entry without its canary ends that walk: the two from the top remain");
 	CHECK(!hakios_smem_peek(&area, SIZE - 4, out, 8) && out[0] == 1 && out[7] == 8, "a piece that is half outside is not copied at all");
 	CHECK(!hakios_smem_peek(&area, 0xffffffffffull, out, 8), "nor one far outside");
+	CHECK(!hakios_smem_peek(&area, 0xfffffffffffffffcull, out, 8) && out[0] == 1, "nor one whose end wraps around to the area's start");
+	CHECK(canary_whole(), "nothing behind the area was written");
+}
+
+/* an item that is given out lies inside the area whatever its entry says of itself: a driver reads all of it */
+static void
+items_lie_inside(void)
+{
+	struct smem_partition header;
+	struct smem_entry entry;
+	struct smem_item found[16];
+	unsigned count;
+
+#define FIRST_ENTRY (bytes + dsp_at + sizeof(header))
+#define INSIDE(what) do { \
+	count = hakios_smem_items(&area, dsp_at, 64, found, 16); \
+	for (unsigned i = 0; i < count && i < 16; i++) { \
+		CHECK((uint64_t)found[i].offset + found[i].size <= SIZE && found[i].offset >= dsp_at && \
+		    (uint64_t)found[i].offset + found[i].size <= dsp_at + 0x2000, what ": item %u is given out at %#x, %u bytes", \
+		    found[i].item, found[i].offset, found[i].size); \
+	} } while (0)
+	as_a_boot_loader_lays_it_out();
+	INSIDE("as laid out");
+	CHECK(count == 4, "(four items as laid out: %u)", count);
+	/* padding larger than the item: its size would be a number near four thousand million */
+	memcpy(&entry, FIRST_ENTRY, sizeof(entry));
+	entry.padding_data = (uint16_t)(entry.size + 1);
+	memcpy(FIRST_ENTRY, &entry, sizeof(entry));
+	INSIDE("padding larger than the item");
+	CHECK(count == 2, "that entry ends the walk from the bottom: the two from the top remain (%u)", count);
+	/* a header's padding that puts the item past the partition's end */
+	as_a_boot_loader_lays_it_out();
+	memcpy(&entry, FIRST_ENTRY, sizeof(entry));
+	entry.padding_header = 0xfff0;
+	memcpy(FIRST_ENTRY, &entry, sizeof(entry));
+	INSIDE("an item moved out by its header's padding");
+	CHECK(count == 2, "the same (%u)", count);
+	/* an item that would reach into the part that is still free */
+	as_a_boot_loader_lays_it_out();
+	memcpy(&header, bytes + dsp_at, sizeof(header));
+	memcpy(&entry, FIRST_ENTRY, sizeof(entry));
+	entry.size = header.free_uncached;
+	memcpy(FIRST_ENTRY, &entry, sizeof(entry));
+	INSIDE("an item longer than what is allocated");
+	CHECK(count == 2, "the same (%u)", count);
+	/* from the top: an item that would begin below where the items from the top begin */
+	as_a_boot_loader_lays_it_out();
+	memcpy(&header, bytes + dsp_at, sizeof(header));
+	header.free_cached = header.size - 8;           /* (only the last eight bytes are said to be taken) */
+	memcpy(bytes + dsp_at, &header, sizeof(header));
+	INSIDE("items from the top below their part");
+	CHECK(count == 2, "none from the top is given out: the two from the bottom remain (%u)", count);
+	/* a partition that has grown past the area since it was found (another processor writes while we look) */
+	as_a_boot_loader_lays_it_out();
+	memcpy(&header, bytes + dsp_at, sizeof(header));
+	header.size = SIZE;
+	header.free_cached = SIZE - 64;
+	memcpy(bytes + dsp_at, &header, sizeof(header));
+	CHECK(hakios_smem_items(&area, dsp_at, 64, found, 16) == 0, "a partition that says it reaches past the area has no items");
 	CHECK(canary_whole(), "nothing behind the area was written");
 }
 
@@ -294,7 +353,7 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "partitions_found", partitions_found }, { "items_found", items_found }, { "an_item_of_two", an_item_of_two },
 		{ "smp2p_words", smp2p_words }, { "more_than_room", more_than_room },
-		{ "odd_cacheline", odd_cacheline }, { "not_an_area", not_an_area }, { "lies_about_itself", lies_about_itself },
+		{ "odd_cacheline", odd_cacheline }, { "not_an_area", not_an_area }, { "lies_about_itself", lies_about_itself }, { "items_lie_inside", items_lie_inside },
 	};
 
 	if (argc < 2) {

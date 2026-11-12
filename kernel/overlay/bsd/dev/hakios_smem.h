@@ -57,7 +57,8 @@ struct hakios_smem {
 static inline bool
 hakios_smem_peek(const struct hakios_smem *area, uint64_t offset, void *to, uint32_t size)
 {
-	if (area->at == NULL || offset + size > area->size) {
+	/* (not "offset + size > area->size": an offset near the end of all numbers makes that sum small) */
+	if (area->at == NULL || offset > area->size || size > area->size - offset) {
 		return false;
 	}
 	for (uint32_t i = 0; i < size; i++) {
@@ -107,7 +108,9 @@ hakios_smem_partition(const struct hakios_smem *area, uint16_t one, uint16_t oth
 
 /*
  * The items of the partition at `partition': at most `max' go into `found'; returns how many
- * there are (which can be more).
+ * there are (which can be more). An item that is given out lies inside the partition's part for items
+ * of its kind, and so inside the area: a driver may read all of it. An entry that says otherwise of
+ * itself ends the walk it is in.
  */
 static inline unsigned
 hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t cacheline, struct smem_item *found, unsigned max)
@@ -118,13 +121,14 @@ hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t c
 	unsigned count = 0;
 
 	if (partition == 0 || !hakios_smem_peek(area, partition, &header, sizeof(header)) || header.free_uncached > header.size ||
-	    header.free_cached > header.size) {
+	    header.free_cached > header.size || (uint64_t)partition + header.size > area->size) {
 		return 0;
 	}
 	/* from the bottom: an entry, then its item */
 	for (at = sizeof(header); at + sizeof(entry) <= header.free_uncached;) {
 		if (!hakios_smem_peek(area, partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY ||
-		    entry.size > header.size) {
+		    entry.size > header.size || entry.padding_data > entry.size ||
+		    (uint64_t)at + sizeof(entry) + entry.padding_header + entry.size > header.free_uncached) {
 			break;
 		}
 		if (count < max) {
@@ -141,7 +145,8 @@ hakios_smem_items(const struct hakios_smem *area, uint32_t partition, uint32_t c
 	}
 	step_back = ((uint32_t)sizeof(entry) + cacheline - 1) & ~(cacheline - 1);
 	for (at = header.size - step_back; at > header.free_cached && at < header.size;) {
-		if (!hakios_smem_peek(area, partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > at) {
+		if (!hakios_smem_peek(area, partition + at, &entry, sizeof(entry)) || entry.canary != SMEM_CANARY || entry.size > at ||
+		    entry.padding_data > entry.size || at - entry.size < header.free_cached) {
 			break;
 		}
 		if (count < max) {
