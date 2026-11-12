@@ -38,7 +38,8 @@ struct redwood_touch {
 #ifdef KERNEL
 /* For drivers; not from interrupt context. */
 void redwood_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
-void redwood_input_init(void);
+void hakios_drivers_init(void);         /* every driver started, in order: bsd_init() calls it (bsd/dev/hakios_drivers.c) */
+void redwood_input_init(void);          /* /dev/redwood-touch */
 void redwood_virtio_input_init(void);   /* boot-arg virtio_input=1: QEMU's virtio pointer and keyboard */
 void redwood_rpmh_lock(void);          /* APPS DRV2/TCS0 transaction; thread context only */
 void redwood_rpmh_unlock(void);

@@ -14,8 +14,6 @@
 #include <sys/uio.h>
 #include <pexpert/pexpert.h>
 
-#include "hakios_board.h"
-
 #define TOUCH_QUEUE     512             /* records; a power of two */
 
 /*
@@ -225,41 +223,4 @@ redwood_input_init(void)
 		printf("redwood-touch: cannot create the device\n");
 	}
 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
-	hakios_board_init();            /* which board this is and what it has (bsd/dev/hakios_board.c), in the log */
-	redwood_cpufreq_init();
-	redwood_virtio_input_init();
-	/* the touch screen: the driver of the controller this board has, if it lists one */
-	if (hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U)) {
-		renoir_fts_init();
-	} else if (hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX)) {
-		redwood_goodix_init();
-	} else {
-		uint32_t asked = 0;
-
-		if (PE_parse_boot_argn("touchscreen", &asked, sizeof(asked)) && asked != 0) {
-			printf("touch: touchscreen=1, but this board's board.toml lists no touch controller (\"touch-...\")\n");
-		}
-	}
-	{
-		extern void hakios_prof_start(void);
-
-		hakios_prof_start();           /* boot-arg hakios_prof=NAME: a sampling profiler (osfmk/arm64/hakios_prof.c) */
-	}
-	redwood_buttons_init();
-	redwood_battery_init();
-	redwood_ufs_init();
-	redwood_net_init();
-	redwood_adreno_init();
-	{
-		extern void hakios_backlight_init(void);
-
-		hakios_backlight_init();        /* boot-arg backlight=N: the panel's light, hw.backlight.* (bsd/dev/hakios_backlight.c) */
-	}
-	{
-		extern void hakios_thermal_init(void);
-
-		hakios_thermal_init();          /* boot-arg thermal=N: held back when hot, hw.thermal.* (bsd/dev/hakios_thermal.c) */
-	}
-	redwood_wifi_init();
-	redwood_adsp_init();
 }
