@@ -11,6 +11,12 @@ epss = 0x05591000
 epss_domain_size = 0x2000
 domain_cores = [6, 2]
 
+# (the CPU performance protocol's channel over SCMI, where no real chip has it)
+[scmi_perf]
+shmem = 0x80a40000
+mailbox = 0x1c900000
+doorbell = 0x208
+
 # (RPMh's command database and sequencer elsewhere too, the slot sets further into the sequencer)
 [rpmh]
 cmd_db = 0x90860000
