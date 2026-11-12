@@ -4,7 +4,8 @@
  * addresses, registers of two bytes) and a command database (cmd_db_image.h). What is tested: its
  * look, speaker_probe=1 and 2, which is to read and nothing else; and preparing the amplifiers for
  * sound from Awinic's configuration file, where a wrong value could reach a speaker -- what is
- * written, in which order, and that both are powered down when anything is not as expected.
+ * written, in which order; starting them, the volume, stopping; and that both are powered down
+ * at once when anything is not as expected.
  *
  *   speaker_driver_test SCENARIO     one scenario a process: the driver keeps its state in statics
  */
@@ -41,6 +42,9 @@ static bool register_written[2][128];
 static int first_written[2] = { -1, -1 };       /* the register each one was written first */
 static unsigned soft_resets[2], writes_into[2];
 static unsigned uncalibrated;                   /* the profile's own value written where the calibration goes */
+static int loudest[2] = { -1, -1 }, last_volume[2] = { -1, -1 };       /* the attenuation written, eighths of a dB */
+static int biggest_step;                        /* ... and the largest change from one write to the next */
+static unsigned amplifier_on[2];                /* writes of 0x04 with both power-down bits clear: the power stage runs */
 static int deaf_register = -1;                  /* a register of the first amplifier that does not take what is written */
 
 static void
@@ -56,13 +60,31 @@ amplifier_written(uint8_t index, uint8_t value)
 	uncalibrated += reg == 0x50 && (index & 1) && value == 0x77;
 	if (reg == 0) {
 		/* 0x55aa into the chip ID's register resets the chip; the ID stays what it is */
-		soft_resets[which] += (index & 1) && value == 0xaa;
+		if ((index & 1) && value == 0xaa) {
+			soft_resets[which]++;
+			/* powered down; so that each of the three bits the driver is to keep differs from a profile's
+			 * somewhere, the first comes up muted with its amplifier on, the second the other way round */
+			device.bank[0x04 * 2] = which ? 0x02 : 0x03;
+			device.bank[0x04 * 2 + 1] = which ? 0x03 : 0x01;
+		}
 		return;
 	}
 	if (which == 0 && (int)reg == deaf_register) {
 		return;
 	}
 	device.bank[index] = value;
+	if (reg == 0x05 && (index & 1)) {
+		int word = device.bank[index - 1] << 8 | value, attenuation = ((word & 0x3ff) >> 6) * 48 + (word & 0x3f);
+
+		if (last_volume[which] >= 0 && abs(attenuation - last_volume[which]) > biggest_step) {
+			biggest_step = abs(attenuation - last_volume[which]);
+		}
+		if (loudest[which] < 0 || attenuation < loudest[which]) {
+			loudest[which] = attenuation;
+		}
+		last_volume[which] = attenuation;
+	}
+	amplifier_on[which] += reg == 0x04 && (index & 1) && !(value & 3);
 }
 
 void redwood_speaker_init(void);
@@ -206,11 +228,11 @@ acf_registers(unsigned device_number, unsigned profile, const uint16_t (*pairs)[
 
 /* The Music profile of the two: the first's fuses are to be or-ed (0x14 bit 3), the second's and-ed. */
 static const uint16_t music_a[][2] = {
-	{ 0x03, 0x1234 }, { 0x04, 0x0301 }, { 0x05, 0x1403 }, { 0x06, 0x34e8 }, { 0x08, 0x4a4c }, { 0x14, 0x0018 },
+	{ 0x03, 0x1234 }, { 0x04, 0x0202 }, { 0x05, 0x1403 }, { 0x06, 0x34e8 }, { 0x08, 0x4a4c }, { 0x14, 0x0018 },
 	{ 0x50, 0x7777 }, { 0x52, 0x1f0c },
 };
 static const uint16_t music_b[][2] = {
-	{ 0x03, 0x1234 }, { 0x04, 0x0301 }, { 0x05, 0x1403 }, { 0x06, 0x35e8 }, { 0x08, 0x4a4c }, { 0x14, 0x0010 },
+	{ 0x03, 0x1234 }, { 0x04, 0x0300 }, { 0x05, 0x1403 }, { 0x06, 0x35e8 }, { 0x08, 0x4a4c }, { 0x14, 0x0010 },
 	{ 0x50, 0x7777 }, { 0x52, 0x1f0c },
 };
 static const uint16_t another_profile[][2] = { { 0x04, 0xdead }, { 0x05, 0x0000 }, { 0x08, 0xbeef }, { 0x60, 0xffff } };
@@ -412,8 +434,8 @@ prepared(void)
 			    "amplifier %u: register %#x %s", which, reg, register_written[which][reg] ? "was written" : "was not written");
 		}
 		CHECK(reads(bank, 0x03) == 0xffff, "amplifier %u: every interrupt masked, not %#x", which, reads(bank, 0x03));
-		/* the profile's 0x0301 with the chip's own power-down, amplifier power-down and mute (not the profile's), and the power stage's mute */
-		CHECK(reads(bank, 0x04) == (which ? 0x4302 : 0x4303), "amplifier %u: 0x04 is %#x", which, reads(bank, 0x04));
+		/* the profile's with the chip's own power-down, amplifier power-down and mute (not the profile's), and the power stage's mute */
+		CHECK(reads(bank, 0x04) == (which ? 0x4203 : 0x4301), "amplifier %u: 0x04 is %#x", which, reads(bank, 0x04));
 		CHECK(reads(bank, 0x08) == 0x4a0c, "amplifier %u: the transmitter is off: %#x", which, reads(bank, 0x08));
 		CHECK(reads(bank, 0x05) == 0x17c0, "amplifier %u: the lowest volume, the profile's other bits: %#x", which, reads(bank, 0x05));
 		CHECK(reads(bank, 0x06) == (which ? 0x35e8 : 0x34e8) && reads(bank, 0x52) == 0x1f0c, "amplifier %u: the rest as the profile has it", which);
@@ -499,6 +521,119 @@ file_not_trusted(void)
 	never();
 }
 
+/* both prepared and started on a phone whose amplifiers see the clock and report nothing */
+static void
+running(void)
+{
+	phone_with_file("phone-video");
+	wide(device.reg_b, 0x01, 0x0311);
+	CHECK(redwood_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	/* (the volume is watched from here on: while they are powered down the profile's own goes through) */
+	loudest[0] = loudest[1] = -1;
+	biggest_step = 0;
+	CHECK(redwood_speaker_start(), "started: %s", log_text);
+}
+
+static bool
+down(const uint8_t *bank)
+{
+	return (reads(bank, 0x04) & 1) == 1;            /* powered down */
+}
+
+/* Started: powered up and unmuted, the transmitter as the profile has it, still at the lowest volume. */
+static void
+started(void)
+{
+	running();
+	CHECK(logged("THE AMPLIFIER 0x35, slot 0 RUNS") && logged("THE AMPLIFIER 0x34, slot 1 RUNS"), "said: %s", log_text);
+	for (unsigned which = 0; which < 2; which++) {
+		const uint8_t *bank = which ? device.reg_b : device.reg;
+
+		CHECK((reads(bank, 0x04) & 0x4103) == 0, "amplifier %u: powered up, both mutes off: %#x", which, reads(bank, 0x04));
+		CHECK(reads(bank, 0x08) == 0x4a4c, "amplifier %u: the transmitter as the profile has it: %#x", which, reads(bank, 0x08));
+		CHECK(reads(bank, 0x05) == 0x17c0 && loudest[which] == -1, "amplifier %u: still at the lowest volume", which);
+		CHECK(reads(bank, 0x03) == 0xffff, "amplifier %u: the interrupts masked", which);
+	}
+	never();
+}
+
+/* The volume: in steps of 6 dB at most, never louder than Android's level; stopped: faded, muted, powered down. */
+static void
+volume_and_stop(void)
+{
+	running();
+	CHECK(redwood_speaker_volume(100, 0), "to 12.5 dB below Android's level: %s", log_text);
+	CHECK(reads(device.reg, 0x05) == 0x1487 && reads(device.reg_b, 0x05) == 0x1487, "3 + 100 eighths of a dB: %#x", reads(device.reg, 0x05));
+	CHECK(redwood_speaker_volume(0, 0), "to Android's level: %s", log_text);
+	CHECK(reads(device.reg, 0x05) == 0x1403 && reads(device.reg_b, 0x05) == 0x1403, "the profile's own: %#x", reads(device.reg, 0x05));
+	CHECK(loudest[0] == 3 && loudest[1] == 3, "never louder than Android's level: %d, %d", loudest[0], loudest[1]);
+	CHECK(biggest_step == 48, "6 dB a step at most: %d eighths", biggest_step);
+	CHECK(redwood_speaker_healthy(), "healthy: %s", log_text);
+	redwood_speaker_stop();
+	CHECK(logged("THE AMPLIFIER 0x35, slot 0 IS POWERED DOWN") && logged("THE AMPLIFIER 0x34, slot 1 IS POWERED DOWN"), "said: %s", log_text);
+	for (unsigned which = 0; which < 2; which++) {
+		const uint8_t *bank = which ? device.reg_b : device.reg;
+
+		CHECK(down(bank) && (reads(bank, 0x04) & 0x4000), "amplifier %u: powered down, both mutes on: %#x", which, reads(bank, 0x04));
+		CHECK(reads(bank, 0x08) == 0x4a0c, "amplifier %u: the transmitter off: %#x", which, reads(bank, 0x08));
+		CHECK(reads(bank, 0x05) == 0x17c0, "amplifier %u: at the lowest volume: %#x", which, reads(bank, 0x05));
+	}
+	CHECK(biggest_step == 48, "the fade out in steps of 6 dB too: %d eighths", biggest_step);
+	CHECK(!redwood_speaker_volume(0, 0), "no volume for amplifiers that are stopped");
+	never();
+}
+
+/* the second one's PLL does not lock (no bit clock at it): its power stage stays off, the first, which ran, is powered down */
+static void
+no_clock(void)
+{
+	phone_with_file("phone-video");
+	wide(device.reg_b, 0x01, 0x0300);
+	CHECK(redwood_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(!redwood_speaker_start(), "not started: %s", log_text);
+	CHECK(logged("THE AMPLIFIER 0x35, slot 0 RUNS") && logged("the amplifier 0x34, slot 1: status 0x0300: its PLL DOES NOT LOCK") &&
+	    logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103 && (reads(device.reg_b, 0x04) & 0x103) == 0x103, "both are down and muted: %#x, %#x",
+	    reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	CHECK(amplifier_on[1] == 0, "the second one's power stage was never switched on without a clock");
+	CHECK((reads(device.reg_b, 0x04) & 0x4000) && reads(device.reg_b, 0x08) == 0x4a0c, "nor was it unmuted, or its transmitter switched on");
+	never();
+}
+
+/* an amplifier reports a fault while both play: both are powered down at once, and stay so */
+static void
+fault_while_playing(void)
+{
+	unsigned before[2];
+
+	running();
+	CHECK(redwood_speaker_volume(0, 0) && redwood_speaker_healthy(), "playing: %s", log_text);
+	wide(device.reg_b, 0x01, 0x0311 | 1u << 3);      /* over-current */
+	CHECK(!redwood_speaker_healthy(), "the fault is seen: %s", log_text);
+	CHECK(logged("the amplifier 0x34, slot 1: status 0x0319") && logged("an amplifier reports a fault: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"),
+	    "said: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b) && (reads(device.reg, 0x04) & reads(device.reg_b, 0x04) & 0x100), "both are down and muted: %#x, %#x",
+	    reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	before[0] = writes_into[0];
+	before[1] = writes_into[1];
+	wide(device.reg_b, 0x01, 0x0311);
+	CHECK(!redwood_speaker_volume(0, 0) && !redwood_speaker_healthy() && !redwood_speaker_start(), "nothing is done after that");
+	redwood_speaker_stop();
+	CHECK(writes_into[0] == before[0] && writes_into[1] == before[1], "and nothing more is written");
+	never();
+}
+
+/* the kernel on its way out while they play: both powered down at once */
+static void
+run_ends(void)
+{
+	running();
+	redwood_speaker_quiesce();
+	CHECK(logged("the kernel is on its way out: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK(down(device.reg) && down(device.reg_b), "both are down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
+	never();
+}
+
 /* a board that does not list the part, and a chip whose file does not say where the pins are */
 static void
 not_listed(void)
@@ -523,7 +658,8 @@ main(int argc, char **argv)
 		{ "one_is_missing", one_is_missing }, { "nobody_there", nobody_there }, { "another_amplifier", another_amplifier },
 		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "prepared", prepared }, { "not_this_chip", not_this_chip },
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
-		{ "file_not_trusted", file_not_trusted }, { "not_listed", not_listed },
+		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
+		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "run_ends", run_ends }, { "not_listed", not_listed },
 	};
 
 	if (argc < 2) {
