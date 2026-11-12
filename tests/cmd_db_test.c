@@ -14,7 +14,8 @@ static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 
-static const uint16_t cx_levels[] = { 0, 48, 64, 128, 256, 384, 416 };
+/* (a rail's list is of a fixed length in a real database, filled up with zeros after its last level) */
+static const uint16_t cx_levels[] = { 0, 48, 64, 128, 256, 384, 416, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static const struct { uint32_t unit; uint16_t width; uint8_t vcd, reserved; } mc0 = { 1000, 14, 0, 0 };
 
 static void
@@ -94,7 +95,7 @@ levels_of_a_rail(void)
 
 	as_a_boot_loader_leaves_it();
 	CHECK(hakios_cmd_db_levels(DB, SIZE, "cx.lvl", levels, 16, &count) == 0x30000 && count == 7, "its address and seven levels: %u", count);
-	CHECK(levels[0] == 0 && levels[1] == 48 && levels[6] == 416, "the first may be zero; the list ends at the next: %u %u %u",
+	CHECK(levels[0] == 0 && levels[1] == 48 && levels[6] == 416, "the first may be zero; the list ends at the next zero, not at its sixteen places: %u %u %u",
 	    levels[0], levels[1], levels[6]);
 	CHECK(hakios_cmd_db_levels(DB, SIZE, "cx.lvl", levels, 3, &count) == 0x30000 && count == 3, "no more than asked for: %u", count);
 	CHECK(hakios_cmd_db_levels(DB, SIZE, "mx.lvl", levels, 16, &count) == 0x30010 && count == 0, "a rail without a list: its address, no level");

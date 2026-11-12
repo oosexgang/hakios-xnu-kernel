@@ -25,7 +25,6 @@ CC=${CC:-cc}
 test=$HERE/$name.c
 [ -f "$test" ] || test=$HERE/../docs/examples/$name.c
 [ -f "$test" ] || die "no test $name (tests/$name.c, docs/examples/$name.c)"
-grep -q "\"$source\"" "$test" || die "$name does not include \"$source\""
 # where the test finds the file: beside itself, among the kernel's drivers, in the loader
 original=
 for directory in "$(dirname "$test")" "$SRC" "$SRC/.." "$HERE/../loader"; do
@@ -54,8 +53,10 @@ fi
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
 
 # (the flags of tests/run.sh, the copy's directory first)
-if ! "$CC" -std=gnu11 -w -O2 -pthread -I"$W/copy" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader" \
-	"$HERE/fakekernel/fakekernel.c" "$test" -o "$W/test" 2> "$W/errors"; then
+flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")
+# the test has to take the copy, itself or through a file it includes: a change to a file it never sees is caught by nothing
+"$CC" "${flags[@]}" -MM "$test" 2> /dev/null | grep -qF "$W/copy/$source" || die "$name does not include $source"
+if ! "$CC" "${flags[@]}" "$HERE/fakekernel/fakekernel.c" "$test" -o "$W/test" 2> "$W/errors"; then
 	head -5 "$W/errors" >&2
 	die "the change does not compile"
 fi

@@ -116,6 +116,12 @@ mutation 0 'if (((found_cfg >> 2) & 0xf) != 0) {' 'if (0) {'
 mutation 1 'static bool taken;' 'static bool taken; '
 mutation 2 'static bool taken;' 'static bool taken'
 mutation 2 'text that is not there' ''
-[ "$failed" -ne 0 ] || echo "mutate.sh: 4 checks, ok"
+# ... and a file the test never sees cannot be broken through it
+if "$HERE/mutate.sh" example_led_test hakios_ddr.c 'uint32_t level = 2;' 'uint32_t level = 3;' > "$WORK/mutation" 2>&1 ||
+	! grep -q "does not include hakios_ddr.c" "$WORK/mutation"; then
+	echo "FAIL: a file the test does not include was taken for one it does"
+	failed=1
+fi
+[ "$failed" -ne 0 ] || echo "mutate.sh: 5 checks, ok"
 
 exit $failed
