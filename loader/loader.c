@@ -29,7 +29,10 @@
 #include "src/othercore.c"        /* the kernel on another core: the stub it starts in, its log read while it runs */
 #include "src/charger.c"          /* the battery, read through the firmware's charger protocols */
 #include "src/ufs_survey.c"       /* ufs=1: what the phone's storage holds, read only */
-#include "src/ufs_block.c"        /* ufs=2: the kernel reads the phone's storage through the loader */
+#include "src/ufs_block.c"        /* ufs=2: the kernel reads the phone's storage through the loader: the page they share, the controller, the partitions */
+#include "src/dsu_extents.c"      /* where the DSU image lies in userdata: Android's lp_metadata, read */
+#include "src/dsu_place.c"        /* the DSU image found on the phone, and read through its extents */
+#include "src/ufs_service.c"      /* ufs=2, the service itself: the storage's units and partitions listed, the kernel's requests answered */
 #include "src/charger_start.c"    /* the firmware's charger protocols found, the first reading (charger.c reads) */
 #include "src/othercore_start.c"  /* the kernel on another core: started through the firmware's power interface, watched */
 #include "src/watchdog.c"         /* the hypervisor's watchdog */
