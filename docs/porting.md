@@ -230,16 +230,16 @@ Stated plainly, so nobody finds out the hard way:
 - **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`[rpmh]`), but expects
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
-- **Sound, microphones, camera, Wi-Fi, storage** are written for redwood's parts. They are the
-  largest share of the work on a new phone. Where the SoC's pins, its clock controller, RPMh, its
-  SMMU and the way to its other processors are comes from the SoC file (`[pins]`, `[clocks]`,
-  `[rpmh]`, `[smmu]`, `[ipc]`); which pin a part is on, its bus and the names of its supplies are
-  still in these drivers. For the touch controllers, the keys, the flashlight, the vibration motor
-  and the speaker amplifiers they are data: a phone with one of those parts on other pins needs its
-  section of the board file filled in and no change to the driver. Of the others, the pins are data
-  too (the sound's four in `[speaker]`, the codec's reset in `[mic]`, the radio's pins and its
-  supplies' names in `[wifi]`); what stays in the code is how each part is spoken to, which is one
-  codec, one radio and one camera module.
+- **Sound, microphones, camera and Wi-Fi** are written for redwood's parts: one codec (WCD938x on
+  SoundWire), one radio (WCN6750 on the SoC's Wi-Fi DSP), one camera module. They are the largest share
+  of the work on a new phone. Where the SoC's blocks are comes from the SoC file (`[pins]`, `[clocks]`,
+  `[rpmh]`, `[smmu]`, `[ipc]`, `[lpass]`, `[camera]`), and which pins a part is on from the board file:
+  the sound's four in `[speaker]`, the codec's reset in `[mic]`, the radio's pins and its supplies'
+  names in `[wifi]`. What stays in the code is how each part is spoken to, and for the camera its
+  sensors' table, its PMIC's bus pins and its supplies. For the touch controllers, the keys, the
+  flashlight, the vibration motor and the speaker amplifiers that is all: a phone with one of those
+  parts on other pins needs its section of the board file filled in and no change to the driver.
+  [features.md](features.md) lists what each feature needs.
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
   GPT entry in the board file's `[storage]`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in
