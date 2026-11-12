@@ -1,6 +1,6 @@
 /*
- * Tests of the QMI helpers (bsd/dev/redwood_qmi.c in the kernel tree) on the machine that builds
- * them; tools/qmi-test/run.sh compiles and runs this.
+ * Tests of the QMI helpers (kernel/overlay/bsd/dev/redwood_qmi.c) on the machine that builds
+ * them; tests/qmi/run.sh compiles and runs this, and tests/run.sh runs that.
  *
  * Three kinds:
  *   1. the coding against byte sequences written out by hand from the format's public description

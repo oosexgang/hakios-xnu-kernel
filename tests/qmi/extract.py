@@ -19,7 +19,7 @@ h = open(src + '/qmi.h').read()
 # every table, in the file's order (a table is used by the ones after it)
 found = re.findall(r'static const struct qmi_elem_info \w+\[\] = \{.*?\n\};\n', c, re.S)
 tables = '\n'.join(found)
-print('/* from ath11k\'s qmi.c, by tools/qmi-test/extract.py: not to be edited, not to be committed */')
+print('/* from ath11k\'s qmi.c, by tests/qmi/extract.py: not to be edited, not to be committed */')
 print(tables)
 
 structs = set(re.findall(r'^struct (\w+) \{', h, re.M))

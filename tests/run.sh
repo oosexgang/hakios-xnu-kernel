@@ -61,6 +61,9 @@ echo "== porting_test (docs/porting.md on a made-up phone)"
 echo "== kernel_tools_test"
 "$HERE/kernel_tools_test.sh" || failed=1
 
+echo "== qmi (kernel/overlay/bsd/dev/redwood_qmi.c under the sanitizers)"
+"$HERE/qmi/run.sh" 2>&1 | grep -v "said once" || failed=1
+
 run backlight_test -I"$SRC" "$HERE/backlight_test.c"
 run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 

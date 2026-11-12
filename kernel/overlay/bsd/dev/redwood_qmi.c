@@ -17,7 +17,7 @@
  *     bytes and ends with a zero. (Linux writes the zero one byte past it.)
  *
  * The same file is compiled into the kernel and, for its tests, on the machine that builds it
- * (tools/qmi-test): the few things it needs from an operating system are in the first section.
+ * (tests/qmi): the few things it needs from an operating system are in the first section.
  */
 #include <sys/redwood_qmi.h>
 #include <sys/redwood_qrtr.h>
