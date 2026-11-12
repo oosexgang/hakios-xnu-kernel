@@ -118,6 +118,7 @@ struct ramfs_mount {
 	uint64_t            rm_nodes;
 	uint64_t            rm_pages;           /* file pages in use */
 	uint64_t            rm_max_pages;
+	uint64_t            rm_alloc_failures;
 	struct ramfs_node **rm_hash;            /* every node by its number, for vfs_vget */
 };
 
@@ -548,8 +549,12 @@ ramfs_store(struct ramfs_node *node, uint64_t off, const void *src, size_t len, 
 	}
 	if (node->rn_pages[index] == NULL) {
 		if (*spare == NULL || rm->rm_pages >= rm->rm_max_pages) {
-			printf("ramfs: page allocation failed: inode %llu, offset %llu, spare %p, pages %llu/%llu\n",
-			    node->rn_ino, off, *spare, rm->rm_pages, rm->rm_max_pages);
+			/* Count every failure without flooding the console under pressure. */
+			uint64_t failures = ++rm->rm_alloc_failures;
+			if ((failures & (failures - 1)) == 0) {
+				printf("ramfs: page allocation failed (%llu total): inode %llu, offset %llu, spare %p, pages %llu/%llu\n",
+				    failures, node->rn_ino, off, *spare, rm->rm_pages, rm->rm_max_pages);
+			}
 			return ENOSPC;
 		}
 		node->rn_pages[index] = *spare;
