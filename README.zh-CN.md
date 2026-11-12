@@ -64,7 +64,7 @@ HakiOS 在搭载高通芯片的 Android 手机上运行 Apple 开源 XNU 内核�
 
 每部手机上哪些可用、哪些已编写但尚未在真机验证、哪些仍关闭，见
 [`devices` 分支](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices)上各设备包自己的 README。
-SoC 支持是共享的，位于本分支的 `soc/`：目前有 SM7350 和 SM7325。
+SoC 支持是共享的，位于本分支的 `soc/`：目前有 SM7350 和 SM7325，以及 SM8845 的最初几个模块。
 
 ## 快速开始
 
@@ -72,6 +72,7 @@ SoC 支持是共享的，位于本分支的 `soc/`：目前有 SM7350 和 SM7325
 git clone https://github.com/oosexgang/xnu-kernel-qcom.git
 cd xnu-kernel-qcom
 make check                        # 所有不需要手机的检查
+make kernel-check                 # 用 LLVM 的工具编译内核的每个文件并链接（见 docs/building.md）
 
 tools/device.py available         # 已有设备包的手机
 tools/device.py add renoir        # 带入一个（devices/renoir）

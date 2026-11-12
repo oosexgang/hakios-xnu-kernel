@@ -68,7 +68,7 @@ How the pieces fit together: [docs/architecture.md](docs/architecture.md).
 
 What works on each phone, what is written but not yet verified on it, and what is still off is in the
 package's own README on the [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices).
-SoC support is shared and lives here, in `soc/`: SM7350 and SM7325 so far.
+SoC support is shared and lives here, in `soc/`: SM7350 and SM7325, and the first blocks of SM8845.
 
 ## Quick start
 
@@ -76,6 +76,7 @@ SoC support is shared and lives here, in `soc/`: SM7350 and SM7325 so far.
 git clone https://github.com/oosexgang/xnu-kernel-qcom.git
 cd xnu-kernel-qcom
 make check                        # everything that needs no phone
+make kernel-check                 # every kernel file compiled and the kernel linked, with LLVM's tools (docs/building.md)
 
 tools/device.py available         # the phones there are packages for
 tools/device.py add renoir        # bring one in (devices/renoir)
