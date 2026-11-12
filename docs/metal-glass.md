@@ -21,7 +21,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
 
 ## What stands between that and glass on iOS 27, in order
 
-1. **Kernel, `gpu=1` on the 12377 kernel.** Boot with `--boot-arg gpu=1` and the `fw-renoir/` firmware, and check
+1. **Kernel, `gpu=1` on the 12377 kernel.** Boot with `--boot-arg gpu=1` and the phone's GPU firmware in the small image, and check
    that `HakiosGPU` publishes and that a submit retires.
    Heat: at 490 MHz the GPU sensor read 69.1 °C (`ios26-boot.md`, item 14). hxff's thermal work has to cap the
    GPU's OPP (the profile's 285/365/443/490 table) before long runs. Until then, `adreno_speed=N` (an index into
@@ -66,8 +66,8 @@ the GPU: under Metal the `dcs` backend is unchanged, and the `soft` backend dims
 
 ## What the next person with the phone can do in an afternoon
 
-1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with `fw-renoir/` in
-   place and the renoir package brought in before the kernel was built (`tools/device.py add renoir`).
+1. `python3 ios/tools/boot26.py --wifi-mac … --boot-arg gpu=1 --return-after 300`, with the GPU firmware in
+   place and the phone's package brought in before the kernel was built (`tools/device.py add NAME`).
    Confirm the GPU block starts on 12377, and read the temperature lines.
 2. On the build machine: `userland/tools/metallib.py` on iOS 27's `QuartzCore.framework/default.metallib`, then
    `userland/tools/air/check.sh`. The number of iOS 27 pipelines our compiler accepts tells how far step 4 is.

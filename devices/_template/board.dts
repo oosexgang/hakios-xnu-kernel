@@ -209,9 +209,9 @@
 		//                              // and its sw-ctrl, from the Wi-Fi and Bluetooth nodes' gpios
 		// supplies = "smpb7", "smpb1", "smpb8"; // optional, only looked up: RPMh's names of the regulators behind the
 		//                              // radio's vdd-cx-mx, vdd-1.8-xo and vdd-1.3-rfa (qcom,rpmh-resource-name of each)
-		// board-data = "bd_m20gl.elf"; // optional: the file of the radio's board data that the phone's Android loads
+		// board-data = "bdwlan.elf";   // optional: the file of the radio's board data that the phone's Android loads
 		//                              // (vendor/firmware or the modem partition: bdwlan*, bd_*.elf); board.bin if not said
-		// regdb = "regdb_xiaomi.bin";  // optional: its regulatory database, likewise; regdb.bin if not said
+		// regdb = "regdb_oem.bin";    // optional: its regulatory database, likewise; regdb.bin if not said
 	// };
 
 	// What iOS's interface is told of the screen (ios/userland/inject_statusbar.c). Only for a phone whose
