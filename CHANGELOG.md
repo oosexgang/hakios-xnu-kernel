@@ -143,6 +143,13 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   check of an extent's start and length added the two, and a start or a length near 2^64 made the
   sum small: such an extent was taken. Found by the new test of that reader, which runs it on
   descriptions built to be wrong.
+- **An item of the processors' shared memory is given to a driver only if it lies inside it.** The
+  reader of that memory (`hakios_smem.h`) followed no header outside the area, but it gave out an
+  item as its entry described it: an entry with more padding than length, or pushed past its
+  partition by its header's padding, came out with an address or a length outside the area, which
+  the Wi-Fi's and the audio DSP's drivers then read. Such an entry ends the walk now.
+- **The line that says a board's features is not cut**: its buffer was one byte from full for the
+  phone with the most parts.
 - **With no free memory for the kernel the loader says so**, instead of asking the firmware for a
   window of no pages.
 - **`ddr:` no longer speaks on every boot** of a board without the memory's vote.
