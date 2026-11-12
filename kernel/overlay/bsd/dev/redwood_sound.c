@@ -177,21 +177,26 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 static struct block tlmm = { "pin controller", 0, 0x100000 };   /* where: the SoC file's [pins], at the start */
 #define GPIO_CFG(n)             (0x1000u * (n))         /* [1:0] pull, [5:2] function, [8:6] drive (mA / 2 - 1), [9] output */
 #define GPIO_IO(n)              (0x1000u * (n) + 4)     /* bit 0 in, bit 1 out */
-#define CFG_MI2S0               (1u << 2)
 #define CFG_8MA                 (3u << 6)
 #define CFG_OUTPUT              (1u << 9)
 
-static const struct {
+/*
+ * The sound's four pins. Which pins of the SoC they are, and which of a pin's functions is the sound's,
+ * is the board file's [speaker] (sound_pins in this order, sound_function); what each is set to is
+ * Android's active state for them.
+ */
+#define TDM_PINS                4
+static struct {
 	unsigned pin;
-	const char *name;
-	uint32_t cfg, io;               /* Android's active state */
-} tdm_pins[] = {
-	{ 97, "gpio97 (bit clock)", CFG_MI2S0 | CFG_8MA | CFG_OUTPUT, 2 },
-	{ 100, "gpio100 (frame sync)", CFG_MI2S0 | CFG_8MA | CFG_OUTPUT, 2 },
-	{ 98, "gpio98 (data in)", CFG_MI2S0 | CFG_8MA, 0 },
-	{ 99, "gpio99 (data out)", CFG_MI2S0 | CFG_8MA, 0 },
+	char name[32];                  /* "gpio97 (bit clock)" */
+	const char *what;
+	uint32_t cfg, io;               /* without the function, which is the board's */
+} tdm_pins[TDM_PINS] = {
+	{ .what = "bit clock", .cfg = CFG_8MA | CFG_OUTPUT, .io = 2 },
+	{ .what = "frame sync", .cfg = CFG_8MA | CFG_OUTPUT, .io = 2 },
+	{ .what = "data in", .cfg = CFG_8MA, .io = 0 },
+	{ .what = "data out", .cfg = CFG_8MA, .io = 0 },
 };
-#define TDM_PINS                (sizeof(tdm_pins) / sizeof(tdm_pins[0]))
 static uint32_t found_cfg[TDM_PINS], found_io[TDM_PINS];
 static bool pins_taken;
 
@@ -199,13 +204,17 @@ static void
 pins_on(void)
 {
 	for (unsigned i = 0; i < TDM_PINS; i++) {
+		tdm_pins[i].pin = hakios_board()->speaker.sound_pin[i];
+		snprintf(tdm_pins[i].name, sizeof(tdm_pins[i].name), "gpio%u (%s)", tdm_pins[i].pin, tdm_pins[i].what);
+	}
+	for (unsigned i = 0; i < TDM_PINS; i++) {
 		found_cfg[i] = get(&tlmm, tdm_pins[i].name, GPIO_CFG(tdm_pins[i].pin));
 		found_io[i] = get(&tlmm, tdm_pins[i].name, GPIO_IO(tdm_pins[i].pin));
 	}
 	pins_taken = true;
 	for (unsigned i = 0; i < TDM_PINS; i++) {
 		put(&tlmm, tdm_pins[i].name, GPIO_IO(tdm_pins[i].pin), tdm_pins[i].io);
-		put(&tlmm, tdm_pins[i].name, GPIO_CFG(tdm_pins[i].pin), tdm_pins[i].cfg);
+		put(&tlmm, tdm_pins[i].name, GPIO_CFG(tdm_pins[i].pin), tdm_pins[i].cfg | (uint32_t)hakios_board()->speaker.sound_function << 2);
 	}
 }
 

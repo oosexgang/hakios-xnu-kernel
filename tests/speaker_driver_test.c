@@ -365,6 +365,8 @@ pins_and_supplies(void)
 	CHECK(device.starts == 0 && device.bytes_in == 0 && device.bytes_out == 0, "the bus was used");
 	CHECK(logged("gpio12 (I2C data): function 1, pull 3, 2 mA, input, reads 1"), "the data pin as found: %s", log_text);
 	CHECK(logged("gpio13 (I2C clock): function 1, pull 3"), "the clock pin as found: %s", log_text);
+	CHECK(logged("gpio97 (the sound's bit clock)") && logged("gpio100 (the sound's frame sync)") && logged("gpio98 (the sound's data in)") &&
+	    logged("gpio99 (the sound's data out)"), "the sound's own four pins, as the board has them: %s", log_text);
 	CHECK(logged("gpio102 (the amplifier 0x35's interrupt): function 0, pull 0"), "the first one's interrupt: %s", log_text);
 	CHECK(logged("gpio45 (the amplifier 0x34's interrupt): function 0, pull 0"), "the last pin of the list: %s", log_text);
 	CHECK(logged("supply \"lcx.lvl\" can be asked for at RPMh address 0x30000"), "the first supply: %s", log_text);
@@ -439,6 +441,9 @@ another_wiring(void)
 	CHECK(logged("gpio60 (I2C data): function 1, pull 3") && logged("gpio61 (I2C clock): function 1, pull 3"), "its bus: %s", log_text);
 	CHECK(logged("gpio70 (the amplifier 0x36's interrupt)") && logged("gpio71 (the amplifier 0x37's interrupt)"), "its interrupts: %s", log_text);
 	CHECK(!logged("gpio12 ") && !logged("gpio13 ") && !logged("gpio102 ") && !logged("gpio45 "), "not the first phone's pins: %s", log_text);
+	CHECK(logged("gpio120 (the sound's bit clock)") && logged("gpio121 (the sound's frame sync)") && logged("gpio122 (the sound's data in)") &&
+	    logged("gpio123 (the sound's data out)"), "its sound's pins: %s", log_text);
+	CHECK(!logged("gpio97 ") && !logged("gpio98 ") && !logged("gpio99 ") && !logged("gpio100 "), "not the first phone's: %s", log_text);
 	CHECK(logged("the amplifier 0x36, slot 0 is there: chip ID 0x2113, AW88261"), "the first: %s", log_text);
 	CHECK(logged("the amplifier 0x37, slot 1 is there: chip ID 0x2113, AW88261"), "the second: %s", log_text);
 	CHECK(logged("register 0x01 (status) = 0x0311") && logged("register 0x01 (status) = 0x0211"), "each one's status: %s", log_text);

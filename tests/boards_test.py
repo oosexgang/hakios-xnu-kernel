@@ -584,15 +584,16 @@ class Generate(Sandbox):
         self.assertIn('feature "speaker-aw88261" needs [speaker] in the board file', self.problems())
         path = self.dir / 'devices/phone/board.toml'
         plain = path.read_text()
-        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x35]\ninterrupts = [102, 12]\n')
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x35]\ninterrupts = [102, 12]\nsound_pins = [97, 100, 98, 99]\nsound_function = 1\n')
         said = self.problems()
-        self.assertIn('four different pins', said)                      # (an interrupt on the bus's data line)
+        self.assertIn('eight different pins', said)                      # (an interrupt on the bus's data line)
         self.assertIn('different I2C addresses', said)
-        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35]\ninterrupts = [102, 45]\n')
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35]\ninterrupts = [102, 45]\nsound_pins = [97, 100, 98, 99]\nsound_function = 1\n')
         self.assertIn('different I2C addresses', self.problems())      # (there are two amplifiers)
-        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x34]\ninterrupts = [102, 45]\n')
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x34]\ninterrupts = [102, 45]\nsound_pins = [97, 100, 98, 99]\nsound_function = 1\n')
         self.assertEqual(self.problems(), '')
-        self.assertIn('.speaker = { .sda = 12, .scl = 13, .address = { 0x35, 0x34 }, .interrupt = { 102, 45 } },',
+        self.assertIn('.speaker = { .sda = 12, .scl = 13, .address = { 0x35, 0x34 }, .interrupt = { 102, 45 },\n\t\t\t'
+                      '.sound_pin = { 97, 100, 98, 99 }, .sound_function = 1 },',
                       boards.table_text(*boards.load()))
 
     def test_part_drivers_need_the_pins_and_the_table_carries_them(self):

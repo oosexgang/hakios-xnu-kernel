@@ -200,6 +200,8 @@ struct hakios_board {
 		uint8_t sda, scl;               /* the bus's two lines, pins of the SoC */
 		uint8_t address[2];             /* each one's I2C address; the first plays the sound's slot 0 */
 		uint8_t interrupt[2];           /* each one's interrupt pin (only looked at) */
+		uint8_t sound_pin[4];           /* the sound's own pins: bit clock, frame sync, data in, data out */
+		uint8_t sound_function;         /* which of those pins' functions is the sound's (the SoC's first MI2S: 1) */
 	} speaker;
 
 	/*

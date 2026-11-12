@@ -98,7 +98,8 @@ BOARD_SCHEMA = {
               'bus_pins': ([int], True),
               'interrupt': (int, True), 'reset': (int, True), 'io_supply': (str, True), 'analog_supply': (str, False),
               'analog_enable': (int, False), 'vendor_pins': ([int], False)},
-    'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True)},
+    'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True),
+                'sound_pins': ([int], True), 'sound_function': (int, True)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
              'charge_counter_divisor': (int, False)},
@@ -419,9 +420,12 @@ def load(problems=None):
                 problems.add(f'{rel} [touch]', 'serial_engine is where the engine\'s registers are: a page\'s address, not 0')
         amps = data.get('speaker')
         if amps is not None:
-            wires = [amps['sda'], amps['scl']] + list(amps['interrupts'])
-            if len(amps['interrupts']) != 2 or any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
-                problems.add(f'{rel} [speaker]', 'sda, scl and the two interrupts are four different pins of the SoC, 0 to 255')
+            wires = [amps['sda'], amps['scl']] + list(amps['interrupts']) + list(amps['sound_pins'])
+            if len(amps['interrupts']) != 2 or len(amps['sound_pins']) != 4 or any(not 0 <= pin <= 255 for pin in wires) or \
+                    len(set(wires)) != len(wires):
+                problems.add(f'{rel} [speaker]', 'sda, scl, the two interrupts and the four sound_pins are eight different pins of the SoC, 0 to 255')
+            if not 1 <= amps['sound_function'] <= 15:
+                problems.add(f'{rel} [speaker]', 'sound_function is one of a pin\'s functions, 1 to 15 (0 is the plain pin)')
             if len(amps['addresses']) != 2 or len(set(amps['addresses'])) != 2 or any(not 0x08 <= a <= 0x77 for a in amps['addresses']):
                 problems.add(f'{rel} [speaker]', 'addresses are the two amplifiers\' different I2C addresses, 0x08 to 0x77')
         torch = data.get('torch')
@@ -667,7 +671,9 @@ def table_text(socs, boards):
         if amps:
             out.append(f'\t\t.speaker = {{ .sda = {amps["sda"]}, .scl = {amps["scl"]}, '
                        f'.address = {{ {amps["addresses"][0]:#04x}, {amps["addresses"][1]:#04x} }}, '
-                       f'.interrupt = {{ {amps["interrupts"][0]}, {amps["interrupts"][1]} }} }},')
+                       f'.interrupt = {{ {amps["interrupts"][0]}, {amps["interrupts"][1]} }},\n\t\t\t'
+                       f'.sound_pin = {{ {", ".join(str(pin) for pin in amps["sound_pins"])} }}, '
+                       f'.sound_function = {amps["sound_function"]} }},')
         torch = board.get('torch')
         if torch:
             out.append(f'\t\t.torch = {{ .flash = {torch["flash"]:#05x}, .temp_alarm = {torch["alarm"]:#05x} }},')

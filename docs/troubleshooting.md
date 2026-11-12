@@ -191,7 +191,7 @@ software without it.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `speaker: disabled: the board file does not say which pins the amplifiers are on ([speaker])` | The feature is listed without `[speaker]`; `tools/boards.py check` refuses such a board. | The bus's two lines, the two addresses and the two interrupt pins: `devices/_template/board.toml` says where each is in the device tree. |
+| `speaker: disabled: the board file does not say which pins the amplifiers are on ([speaker])` | The feature is listed without `[speaker]`; `tools/boards.py check` refuses such a board. | The bus's two lines, the two addresses, the two interrupt pins and the sound's four pins with their function: `devices/_template/board.toml` says where each is in the device tree. |
 | `speaker: nobody at I2C address 0xNN: not powered, or not there` | Nothing acknowledged that address. With `speaker_probe=2` before the audio DSP runs this is usual: the amplifiers' supply may be off. | Compare `addresses` with the amplifiers' `reg` in the device tree; look again with `adsp=1`. |
 | `speaker: the I2C bus is not at rest (gpioN reads 0, ...): not touched` | A line of the bus is low before anything was sent. The driver does not drive a bus it did not find idle. | Check `sda` and `scl` against the bus's pinctrl node; level 1 (`speaker_probe=1`) shows how each pin was found. |
 | `speaker: the amplifier 0xNN, slot N is there: chip ID 0x...., an amplifier this list does not know` | Something answers, but it is not a chip of the family the driver names. | The driver configures only an AW88261 (ID 0x2113); another chip needs its own register profile. |

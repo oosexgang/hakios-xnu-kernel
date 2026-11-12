@@ -134,16 +134,13 @@ show_pin(unsigned pin, const char *what)
 static void
 show_pins(void)
 {
-	/* the sound's own pins are the SoC's first MI2S (redwood_sound.c sets them up) */
-	static const struct {
-		unsigned pin;
-		const char *what;
-	} sound[] = { { 97, "MI2S 0 bit clock" }, { 100, "MI2S 0 word select" }, { 98, "MI2S 0 data 0" }, { 99, "MI2S 0 data 1" } };
+	/* the sound's own pins, as the board has them (redwood_sound.c sets them up) */
+	static const char *const sound[4] = { "the sound's bit clock", "the sound's frame sync", "the sound's data in", "the sound's data out" };
 
 	show_pin(PIN_SDA, "I2C data");
 	show_pin(PIN_SCL, "I2C clock");
-	for (unsigned i = 0; i < sizeof(sound) / sizeof(sound[0]); i++) {
-		show_pin(sound[i].pin, sound[i].what);
+	for (unsigned i = 0; i < 4; i++) {
+		show_pin(hakios_board()->speaker.sound_pin[i], sound[i]);
 	}
 	for (unsigned i = 0; i < 2; i++) {
 		char what[40];

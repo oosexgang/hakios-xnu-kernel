@@ -73,7 +73,7 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_audio.c` | `/dev/redwood-audio`: what iOS plays, to whichever sink is there. | — | any |
 | `bsd/dev/redwood_sound.c`, `redwood_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
 | `bsd/dev/redwood_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part |
-| `bsd/dev/redwood_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins and each amplifier's address and interrupt are data (`[speaker]`) |
+| `bsd/dev/redwood_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`[speaker]`) |
 | `bsd/dev/redwood_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`[haptic]`) |
 | `bsd/dev/redwood_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`[spmi]`, `[torch]`) |
 | `bsd/dev/redwood_camera.c` | redwood's four cameras: sensors, CSI, ISP. | `camera-redwood` / `cam=` | part |

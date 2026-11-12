@@ -68,6 +68,8 @@ sda = 12
 scl = 13
 addresses = [0x35, 0x34]
 interrupts = [102, 45]
+sound_pins = [97, 100, 98, 99]
+sound_function = 1
 
 # Its vibration motor's chip: on GPIO 36/37, reset on 35, as Android calibrated this motor.
 [haptic]

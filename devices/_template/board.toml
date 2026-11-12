@@ -91,6 +91,9 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # scl = 13                          # ... and its clock, the second
 # addresses = [0x35, 0x34]          # the two aw882xx_smartpa@NN nodes' reg; the first is the one with sound-channel 0
 # interrupts = [102, 45]            # ... and their irq-gpio, in the same order
+# sound_pins = [97, 100, 98, 99]    # the pins the sound goes to them on (the MI2S or TDM port's pinctrl nodes):
+#                                   # bit clock, frame sync (word select), data in, data out
+# sound_function = 1                # which of those pins' functions that is (pinctrl-SOC.c: "mi2s0_sck" is function 1)
 
 # The vibration motor's chip, for the feature "haptic-aw86927": an Awinic AW86927 on two of the SoC's
 # pins (I2C by hand), its reset and its interrupt, and what Android's driver found for this motor.
