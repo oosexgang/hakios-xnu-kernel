@@ -1203,6 +1203,357 @@ opengl_es(void)
 	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
 }
 
+/* ---- boot-arg dyldcount=1: who asks dyld which image an address is in -------------------------------------------
+ *
+ * The window server spent about half of its processor time in dyld's search for the image that holds an address
+ * (APIs::findImageMappedAt: forEachImageTextSegment, forEachRegion and strncmp, a walk over the shared cache's images
+ * for every question; hakios_prof=backboardd, logs/203533-run.log), and none of it inside the Metal plug-in's draw
+ * calls (metal_fps=sample, logs/204443-run.log). These four are the ways in; each call is counted by the address it
+ * returns to, and every five seconds the call sites that asked most are said, unslid for `ipsw dyld a2s` when they are
+ * in the shared cache. Interposed for the life of the process (dyld applies an inserted library's __interpose to every
+ * image); counted only with the boot-arg, a load and a branch otherwise.
+ */
+#include <ptrauth.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+
+extern bool _dyld_is_memory_immutable(const void *addr, size_t length);
+extern const struct mach_header *dyld_image_header_containing_address(const void *addr);
+extern const char *dyld_image_path_containing_address(const void *addr);
+
+#define DC_SLOTS 512
+static const char *const dc_api[] = { "dladdr", "_dyld_is_memory_immutable", "dyld_image_header_containing_address",
+	"dyld_image_path_containing_address", "syslog", "vsyslog" };
+static struct {
+	_Atomic uintptr_t caller;
+	_Atomic uint32_t count;
+	uint32_t api;
+} dc_seen[DC_SLOTS];
+static int dc_on;
+static _Atomic uint32_t dc_lost;
+
+static void
+dc_count(void *returns_to, uint32_t api)
+{
+	uintptr_t caller = (uintptr_t)ptrauth_strip(returns_to, ptrauth_key_return_address);
+
+	if (!dc_on || caller == 0) {
+		return;
+	}
+	for (unsigned i = (unsigned)(((caller >> 2) * 2654435761u) % DC_SLOTS), n = 0; n < DC_SLOTS; i = (i + 1) % DC_SLOTS, n++) {
+		uintptr_t held = atomic_load_explicit(&dc_seen[i].caller, memory_order_relaxed);
+
+		if (held == 0) {
+			uintptr_t empty = 0;
+
+			if (atomic_compare_exchange_strong(&dc_seen[i].caller, &empty, caller)) {
+				dc_seen[i].api = api;
+				held = caller;
+			} else {
+				held = empty;
+			}
+		}
+		if (held == caller) {
+			atomic_fetch_add_explicit(&dc_seen[i].count, 1, memory_order_relaxed);
+			return;
+		}
+	}
+	atomic_fetch_add_explicit(&dc_lost, 1, memory_order_relaxed);
+}
+
+static int
+dc_dladdr(const void *addr, Dl_info *info)
+{
+	dc_count(__builtin_return_address(0), 0);
+	return dladdr(addr, info);
+}
+static bool
+dc_immutable(const void *addr, size_t length)
+{
+	dc_count(__builtin_return_address(0), 1);
+	return _dyld_is_memory_immutable(addr, length);
+}
+static const struct mach_header *
+dc_header(const void *addr)
+{
+	dc_count(__builtin_return_address(0), 2);
+	return dyld_image_header_containing_address(addr);
+}
+static const char *
+dc_path(const void *addr)
+{
+	dc_count(__builtin_return_address(0), 3);
+	return dyld_image_path_containing_address(addr);
+}
+
+/* (and syslog: the sampler below found dyld working for syslog's os_log shim, called by something deeper) */
+#include <syslog.h>
+static void
+dc_syslog(int priority, const char *format, ...)
+{
+	va_list ap;
+
+	dc_count(__builtin_return_address(0), 4);
+	va_start(ap, format);
+	vsyslog(priority, format, ap);
+	va_end(ap);
+}
+static void
+dc_vsyslog(int priority, const char *format, va_list ap)
+{
+	dc_count(__builtin_return_address(0), 5);
+	vsyslog(priority, format, ap);
+}
+
+#define DC_INTERPOSE(replacement, replacee)                                                                         \
+	__attribute__((used)) static const struct {                                                                   \
+		const void *with;                                                                                       \
+		const void *what;                                                                                       \
+	} dc_interpose_##replacee __attribute__((section("__DATA,__interpose"))) = { (const void *)&replacement,      \
+		(const void *)&replacee }
+DC_INTERPOSE(dc_dladdr, dladdr);
+DC_INTERPOSE(dc_immutable, _dyld_is_memory_immutable);
+DC_INTERPOSE(dc_header, dyld_image_header_containing_address);
+DC_INTERPOSE(dc_path, dyld_image_path_containing_address);
+DC_INTERPOSE(dc_syslog, syslog);
+DC_INTERPOSE(dc_vsyslog, vsyslog);
+
+static void *
+dc_report(void *unused)
+{
+	size_t cache_length = 0;
+	const uintptr_t cache = (uintptr_t)_dyld_get_shared_cache_range(&cache_length);
+
+	(void)unused;
+	for (;;) {
+		uint32_t total = 0, lost;
+
+		sleep(5);
+		lost = atomic_exchange(&dc_lost, 0);
+		/* the eight call sites asked most, each taken out of the running as it is said */
+		uint32_t counts[DC_SLOTS];
+
+		for (unsigned i = 0; i < DC_SLOTS; i++) {
+			counts[i] = atomic_exchange(&dc_seen[i].count, 0);
+			total += counts[i];
+		}
+		say("hakios: dyldcount: %u questions in 5 s (%u from call sites past the %u counted)\n", total + lost, lost,
+		    DC_SLOTS);
+		for (unsigned k = 0; k < 8 && total != 0; k++) {
+			unsigned best = DC_SLOTS;
+
+			for (unsigned i = 0; i < DC_SLOTS; i++) {
+				if (counts[i] != 0 && (best == DC_SLOTS || counts[i] > counts[best])) {
+					best = i;
+				}
+			}
+			if (best == DC_SLOTS) {
+				break;
+			}
+			uintptr_t caller = atomic_load(&dc_seen[best].caller);
+			Dl_info info = { 0 };
+			const char *image = dladdr((const void *)caller, &info) && info.dli_fname != NULL ? info.dli_fname : "?";
+			const char *base = strrchr(image, '/');
+
+			say("hakios: dyldcount: %u %s from %#lx (%s %#lx)\n", counts[best], dc_api[dc_seen[best].api % 6],
+			    (unsigned long)caller, base != NULL ? base + 1 : image,
+			    (unsigned long)(caller >= cache && caller < cache + cache_length ? caller - slide
+			    : caller - (uintptr_t)info.dli_fbase));
+			counts[best] = 0;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * The same question from the other end, because calls from the shared cache's own images to those four are not
+ * interposed (the first boot with dyldcount=1 counted only the Metal plug-in's few): every millisecond each other
+ * thread of the process is stopped, and when it stands inside dyld its frame chain is walked to the first return
+ * address outside dyld and libdyld -- the code that asked. The walk reads through vm_read_overwrite, which a
+ * frame pointer gone wrong cannot fault.
+ */
+#include <mach-o/dyld_images.h>
+#include <os/log.h>
+#include <mach-o/loader.h>
+
+#define DS_SLOTS 256
+static struct {
+	uintptr_t caller, caller2;
+	uint32_t count;
+} ds_seen[DS_SLOTS];
+static uint32_t ds_samples, ds_in_dyld, ds_lost;
+
+/* where an image's __TEXT lies, from its mach header in memory */
+static void
+text_range(const struct mach_header_64 *mh, uintptr_t *lo, uintptr_t *hi)
+{
+	const struct load_command *lc = (const struct load_command *)(mh + 1);
+
+	*lo = *hi = 0;
+	for (uint32_t i = 0; mh != NULL && i < mh->ncmds; i++) {
+		if (lc->cmd == LC_SEGMENT_64 && strcmp(((const struct segment_command_64 *)lc)->segname, "__TEXT") == 0) {
+			*lo = (uintptr_t)mh;
+			*hi = *lo + (uintptr_t)((const struct segment_command_64 *)lc)->vmsize;
+			return;
+		}
+		lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
+	}
+}
+
+static void *
+ds_sampler(void *unused)
+{
+	struct task_dyld_info di;
+	mach_msg_type_number_t n = TASK_DYLD_INFO_COUNT;
+	uintptr_t dlo = 0, dhi = 0, llo = 0, lhi = 0, tlo = 0, thi = 0, alo = 0, ahi = 0;
+	Dl_info me = { 0 }, trace = { 0 }, asl = { 0 };
+	unsigned ticks = 0;
+
+	(void)unused;
+	if (task_info(mach_task_self(), TASK_DYLD_INFO, (task_info_t)&di, &n) == KERN_SUCCESS) {
+		const struct dyld_all_image_infos *all = (const struct dyld_all_image_infos *)(uintptr_t)di.all_image_info_addr;
+
+		text_range((const struct mach_header_64 *)all->dyldImageLoadAddress, &dlo, &dhi);
+	}
+	if (dladdr((const void *)(uintptr_t)ptrauth_strip((void *)&dladdr, ptrauth_key_function_pointer), &me) && me.dli_fbase != NULL) {
+		text_range((const struct mach_header_64 *)me.dli_fbase, &llo, &lhi);
+	}
+	/* (libsystem_trace and libsystem_asl as well: dyld was found working for syslog's os_log shim, and the code that
+	 * asks is the caller of syslog, two libraries further out) */
+	if (dladdr((const void *)(uintptr_t)ptrauth_strip((void *)&os_log_type_enabled, ptrauth_key_function_pointer), &trace) &&
+	    trace.dli_fbase != NULL) {
+		text_range((const struct mach_header_64 *)trace.dli_fbase, &tlo, &thi);
+	}
+	if (dladdr((const void *)(uintptr_t)ptrauth_strip((void *)&vsyslog, ptrauth_key_function_pointer), &asl) && asl.dli_fbase != NULL) {
+		text_range((const struct mach_header_64 *)asl.dli_fbase, &alo, &ahi);
+	}
+	say("hakios: dyldcount: dyld's text %#lx-%#lx, libdyld's %#lx-%#lx, %s's %#lx-%#lx, %s's %#lx-%#lx\n", (unsigned long)dlo,
+	    (unsigned long)dhi, (unsigned long)llo, (unsigned long)lhi, trace.dli_fname ? trace.dli_fname : "?", (unsigned long)tlo,
+	    (unsigned long)thi, asl.dli_fname ? asl.dli_fname : "?", (unsigned long)alo, (unsigned long)ahi);
+	if (dlo == 0) {
+		return NULL;
+	}
+	for (;;) {
+		thread_act_array_t threads;
+		mach_msg_type_number_t count = 0;
+		const thread_t self = mach_thread_self();
+
+		usleep(1000);
+		if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+			for (mach_msg_type_number_t t = 0; t < count; t++) {
+				arm_thread_state64_t st;
+				mach_msg_type_number_t sn = ARM_THREAD_STATE64_COUNT;
+
+				if (threads[t] == self || thread_suspend(threads[t]) != KERN_SUCCESS) {
+					mach_port_deallocate(mach_task_self(), threads[t]);
+					continue;
+				}
+				if (thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) == KERN_SUCCESS) {
+					const uintptr_t pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(st);
+
+					ds_samples++;
+					if (pc >= dlo && pc < dhi) {
+						uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(st), found[2] = { 0, 0 };
+						unsigned got = 0;
+						uintptr_t lr = (uintptr_t)ptrauth_strip((void *)__darwin_arm_thread_state64_get_lr(st),
+						    ptrauth_key_return_address);
+
+						ds_in_dyld++;
+						if (!((lr >= dlo && lr < dhi) || (lr >= llo && lr < lhi) || (lr >= tlo && lr < thi) || (lr >= alo && lr < ahi))) {
+							found[got++] = lr;
+						}
+						for (int d = 0; d < 40 && got < 2 && fp != 0 && (fp & 7) == 0; d++) {
+							uint64_t frame[2];
+							vm_size_t read = 0;
+
+							if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof(frame), (vm_address_t)(uintptr_t)frame,
+							    &read) != KERN_SUCCESS || read != sizeof(frame)) {
+								break;
+							}
+							const uintptr_t ret = (uintptr_t)ptrauth_strip((void *)(uintptr_t)frame[1],
+							    ptrauth_key_return_address);
+
+							if (ret != 0 && !((ret >= dlo && ret < dhi) || (ret >= llo && ret < lhi) || (ret >= tlo && ret < thi) ||
+							    (ret >= alo && ret < ahi))) {
+								found[got++] = ret;
+							}
+							fp = (uintptr_t)frame[0];
+						}
+						if (got != 0) {
+							unsigned i = (unsigned)(((found[0] >> 2) * 2654435761u) % DS_SLOTS), k = 0;
+
+							while (k < DS_SLOTS && ds_seen[i].caller != 0 && ds_seen[i].caller != found[0]) {
+								i = (i + 1) % DS_SLOTS;
+								k++;
+							}
+							if (k == DS_SLOTS) {
+								ds_lost++;
+							} else {
+								ds_seen[i].caller = found[0];
+								ds_seen[i].caller2 = found[1];
+								ds_seen[i].count++;
+							}
+						}
+					}
+				}
+				thread_resume(threads[t]);
+				mach_port_deallocate(mach_task_self(), threads[t]);
+			}
+			vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)threads, count * sizeof(thread_t));
+		}
+		mach_port_deallocate(mach_task_self(), self);
+		if (++ticks % 5000 != 0) {
+			continue;
+		}
+		/* every five thousand looks (some five seconds and more): the callers dyld was found working for */
+		say("hakios: dyldcount: %u threads seen running or waiting, %u of them inside dyld (%u callers past %u)\n",
+		    ds_samples, ds_in_dyld, ds_lost, DS_SLOTS);
+		for (unsigned k = 0; k < 10; k++) {
+			unsigned best = DS_SLOTS;
+
+			for (unsigned i = 0; i < DS_SLOTS; i++) {
+				if (ds_seen[i].count != 0 && (best == DS_SLOTS || ds_seen[i].count > ds_seen[best].count)) {
+					best = i;
+				}
+			}
+			if (best == DS_SLOTS) {
+				break;
+			}
+			Dl_info a = { 0 }, b = { 0 };
+			const uintptr_t c1 = ds_seen[best].caller, c2 = ds_seen[best].caller2;
+			const bool n1 = dladdr((const void *)c1, &a) != 0, n2 = c2 != 0 && dladdr((const void *)c2, &b) != 0;
+			const char *i1 = n1 && a.dli_fname != NULL && strrchr(a.dli_fname, '/') ? strrchr(a.dli_fname, '/') + 1 : "?";
+			const char *i2 = n2 && b.dli_fname != NULL && strrchr(b.dli_fname, '/') ? strrchr(b.dli_fname, '/') + 1 : "?";
+
+			say("hakios: dyldcount: %u from %s %#lx (%s) <- %s %#lx (%s)\n", ds_seen[best].count, i1,
+			    (unsigned long)(c1 - slide), n1 && a.dli_sname ? a.dli_sname : "?", i2, (unsigned long)(c2 - slide),
+			    n2 && b.dli_sname ? b.dli_sname : "?");
+			ds_seen[best].count = 0;
+		}
+		memset(ds_seen, 0, sizeof(ds_seen));
+		ds_samples = ds_in_dyld = ds_lost = 0;
+	}
+	return NULL;
+}
+
+static void
+dyld_count_start(const char *arguments)
+{
+	pthread_t thread;
+
+	if (strstr(arguments, "dyldcount=1") == NULL) {
+		return;
+	}
+	dc_on = 1;
+	if (pthread_create(&thread, NULL, dc_report, NULL) == 0) {
+		pthread_detach(thread);
+	}
+	if (pthread_create(&thread, NULL, ds_sampler, NULL) == 0) {
+		pthread_detach(thread);
+	}
+	say("hakios: dyldcount=1: dyld's address-to-image questions counted by call site, and dyld's callers sampled\n");
+}
+
 __attribute__((constructor))
 static void
 hakios_init(void)
@@ -1230,6 +1581,7 @@ hakios_init(void)
 			setenv("CA_FORCE_TIMER", "1", 1);
 			say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
 		}
+		dyld_count_start(arguments);
 		/*
 		 * Boot-arg caenv=NAME=VALUE (as many as wanted): into the window server's environment, for
 		 * CoreAnimation's own switches (CA_LOG_TRIPLE_BUFFERING=1, CA_FORCE_DOUBLE_BUFFERING=1 ...).

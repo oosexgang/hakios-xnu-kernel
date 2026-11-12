@@ -26,7 +26,8 @@
 #
 # Environment:
 #   XL_CMDLINE   boot arguments of this run, NAME or NAME=VALUE: each replaces the board's argument of
-#                that name or is added (XL_CMDLINE="gpu=1 -v"); XL_PLAIN=1: these alone, without the board's
+#                that name or is added (XL_CMDLINE="gpu=1 -v"); one of NAME=KEY=VALUE by NAME=KEY, so that
+#                several stay (caenv=CA_A=1 caenv=CA_B=1); XL_PLAIN=1: these alone, without the board's
 #   XL_SECS      seconds after which the kernel returns to the loader on its own (default 180; 0: never)
 #   XL_FOLLOW=N  fetch the kernel's log every N seconds of a run (default 10; empty: never), so that a kernel
 #                that hangs leaves what it said in logs/TIME-run.log.live
@@ -237,8 +238,11 @@ run_args() {
 import sys
 board, run, plain, cpus = sys.argv[1].split(), sys.argv[2].split(), sys.argv[3], sys.argv[4]
 arguments = {}
+# (NAME=KEY=VALUE, as caenv=CA_SOMETHING=1, is one of several of that NAME, one for each KEY: its KEY is in the name it
+# replaces by -- two caenv= in XL_CMDLINE used to leave only the second)
 for argument in ([] if plain else board + ([f'cpus={cpus}'] if cpus else [])) + run:
-    arguments[argument.split('=', 1)[0]] = argument
+    parts = argument.split('=', 2)
+    arguments['='.join(parts[:2]) if len(parts) == 3 else parts[0]] = argument
 print(' '.join(arguments.values()))
 PY
 }
