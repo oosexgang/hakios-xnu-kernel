@@ -18,7 +18,7 @@
 #include "hakios_cmd_db.h"
 #include "hakios_spmi.h"
 
-static vm_offset_t se, gcc, tlmm, wrapper, db, tcs, enable_read, enable_write;
+static vm_offset_t se, gcc, tlmm, wrapper, db, rsc_base, enable_read, enable_write;
 static bool returning, enable_changed, uart_changed, pins_changed, rcg_changed;
 static uint32_t added_votes, rail[8], rf_clock, saved_rcg[5], saved_pins[5];
 static unsigned rails_added;
@@ -57,7 +57,7 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	if (!returning) {
 		hakios_rpmh_lock();
 	}
-	problem = hakios_rpmh_send(tcs, address, data, count);
+	problem = hakios_rpmh_send_rsc(rsc_base, hakios_board()->rpmh.tcs_offset, address, data, count);
 	if (!returning) {
 		hakios_rpmh_unlock();
 	}
@@ -559,8 +559,8 @@ bt_thread(__unused void *arg, __unused wait_result_t result)
 	gcc = ml_io_map(b->clocks.gcc, 0x60000);
 	tlmm = ml_io_map(b->pins.tlmm, TLMM_SIZE);
 	db = ml_io_map_wcomb(b->rpmh.cmd_db, b->rpmh.cmd_db_size);
-	tcs = ml_io_map(b->rpmh.rsc, 0x10000) + b->rpmh.tcs_offset;
-	if (!se || !wrapper || !gcc || !tlmm || !db || tcs == b->rpmh.tcs_offset) {
+	rsc_base = ml_io_map(b->rpmh.rsc, 0x10000);
+	if (!se || !wrapper || !gcc || !tlmm || !db || !rsc_base) {
 		hakios_say("bt-uart: mapping failed\n");
 		goto done;
 	}

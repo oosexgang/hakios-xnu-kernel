@@ -134,6 +134,9 @@ hakios_test_rd(vm_offset_t address)
 	if (address >= model.base && address < model.base + 0x100000) {
 		return tlmm_model_rd(address);
 	}
+	if (address == b->rpmh.rsc) {
+		return 0x00020000;      /* RSC_DRV_ID: a version 2 sequencer, as the model's slot set is laid out */
+	}
 	if (address >= rsc.base && address < rsc.base + 0x2a0) {
 		return rsc_model_rd(address);
 	}
