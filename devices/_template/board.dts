@@ -123,7 +123,8 @@
 		// pmic-reset = <0x28a>;        // the PMIC GPIO its reset is on (its node's reset-gpio: <&pm8350c_gpios 3 ...>),
 		//                              // as SPMI slave << 8 | the GPIO's peripheral's high byte: GPIO n is 0x88 + n - 1
 		// test-sensor = "macro";       // optional: the one cam=1 to cam=4 work on (the first, if not said)
-		// ios-sensor = "wide";         // optional: the one whose frames iOS gets with cam=5 (the first, if not said)
+		// ios-sensor = "wide";         // optional: iOS's back camera, whose frames it gets with cam=5 (the first, if not said)
+		// ios-front = "front";         // optional: iOS's front camera (none, if not said)
 		//
 		// sensor@0 {
 			// name = "wide";       // what cam_sensor= picks it by: lower-case letters, digits and dashes
@@ -141,6 +142,8 @@
 			// focus-motor = "dw9800"; // optional: a DW9800 moves the lens (an actuator node with compatible dw9800)
 			// focus-supply = "ldoc9 2800mV"; // optional: its supply, when it is switched (the actuator's
 			//                      // cam_vaf-supply: its RPMh name, and the node's rgltr-min-voltage)
+			// upside-down;         // optional: its pictures come out turned half round from the way iOS has that
+			//                      // camera's -- seen on the phone: add it when iOS shows that camera upside down
 		// };
 	// };
 

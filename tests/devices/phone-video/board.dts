@@ -135,6 +135,7 @@
 		pmic-reset = <0x28a>;           // the PM8350C's (SPMI slave 2) GPIO 3
 		test-sensor = "macro";
 		ios-sensor = "wide";
+		ios-front = "front";
 
 		sensor@0 {
 			name = "macro";
@@ -177,6 +178,7 @@
 			vana = "ldo3 2800mV";
 			vdig = "ldo2 1200mV";
 			vio = "ldo5 1800mV";
+			upside-down;
 		};
 
 		sensor@3 {

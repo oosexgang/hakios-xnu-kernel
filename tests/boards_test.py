@@ -649,9 +649,9 @@ class Generate(Sandbox):
         path.write_text(camera(wide, front))
         self.assertEqual(self.problems(), '')
         table = boards.table_text(*boards.load())
-        for line in ('.pmic_sda = 4, .pmic_scl = 5, .pmic_reset = 0x28a, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0,',
+        for line in ('.pmic_sda = 4, .pmic_scl = 5, .pmic_reset = 0x28a, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0, .ios_front = 0xff,',
                      '{ .name = "wide", .chip = "S5KHM2SD", .cci = 0, .cci_master = 1, .sda = 71, .scl = 72, .reset = 21,',
-                     '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1, .focus_supply = "ldoc9", .focus_mv = 2800,',
+                     '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1, .upside_down = 0, .focus_supply = "ldoc9", .focus_mv = 2800,',
                      '.vana = { 2, 0, 2800, 106, 135 }, .vdig = { 1, 1, 1000, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },',
                      '.vana = { 1, 3, 2800, 0, 0 }, .vdig = { 0, 0, 0, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },'):
             self.assertIn(line, table)
@@ -673,6 +673,15 @@ class Generate(Sandbox):
         self.assertIn("pmic-reset is a PMIC's GPIO", self.problems())         # (a peripheral, not a GPIO's)
         path.write_text(camera(wide, front, head=head.replace('"wide"', '"tele"')))
         self.assertIn("ios-sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
+        # iOS's front camera, and a sensor whose pictures are upside down
+        path.write_text(camera(wide, front.replace('csiphy = <0>;', 'csiphy = <0>;\n\t\t\tupside-down;'),
+                               head=head + '\t\tios-front = "front";\n'))
+        self.assertEqual(self.problems(), '')
+        table = boards.table_text(*boards.load())
+        self.assertIn('.ios_sensor = 0, .ios_front = 1,', table)
+        self.assertIn('.csiphy = 0, .focus_motor = 0, .upside_down = 1,', table)
+        path.write_text(camera(wide, front, head=head + '\t\tios-front = "selfie";\n'))
+        self.assertIn("ios-front = 'selfie': the name of one of its sensors (wide, front)", self.problems())
         more = [front.replace('@1', f'@{n}').replace('"front"', f'"s{n}"') for n in (2, 3, 4)]
         path.write_text(camera(wide, front, *more))
         self.assertIn('5 sensors: the driver has room for 4', self.problems())
@@ -1471,7 +1480,7 @@ class Repository(unittest.TestCase):
                     # tables: a node NAME@0, and each of its keys
                     self.assertTrue(re.search(rf'(?m)^\t\t(// )?{key[:-1]}@0 {{', template), f'the template does not show {key[:-1]}@0 {{ }}')
                     for inner in kind[0]:
-                        self.assertTrue(re.search(rf'(?m)^\t*(// )?{boards.boardfile.name_of(inner)} = ', template),
+                        self.assertTrue(re.search(rf'(?m)^\t*(// )?{boards.boardfile.name_of(inner)}( = |;)', template),
                                         f'{key[:-1]}@N {inner} is not explained in the template')
                     continue
                 self.assertTrue(re.search(rf'(?m)^\t*(// )?{boards.boardfile.name_of(key)}( = |;)', template),

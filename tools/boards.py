@@ -102,7 +102,7 @@ CAMERA_CHIPS = ('OV02B10', 'S5KHM2SD', 'OV16A1Q', 'S5K4H7')
 CAMERA_SENSOR = {'name': (str, True), 'chip': (CAMERA_CHIPS, True), 'cci': ([int], True), 'pins': ([int], True),
                  'reset': (int, True), 'mclk': (int, True), 'mclk_pin': (int, True), 'csiphy': (int, True),
                  'vana': (SUPPLY, False), 'vdig': (SUPPLY, False), 'vio': (SUPPLY, False),
-                 'focus_motor': (('dw9800',), False), 'focus_supply': (FOCUS_SUPPLY, False)}
+                 'focus_motor': (('dw9800',), False), 'focus_supply': (FOCUS_SUPPLY, False), 'upside_down': (bool, False)}
 CAMERA_SENSORS_MOST = 4         # (struct hakios_board's room)
 BOARD_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True), 'soc': (str, True), 'features': ([str], True)},
@@ -130,7 +130,7 @@ BOARD_SCHEMA = {
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'mic': {'codec_reset': (int, True)},
     'camera': {'pmic_pins': ([int], True), 'pmic_reset': (int, True), 'sensors': ([CAMERA_SENSOR], True), 'test_sensor': (str, False),
-               'ios_sensor': (str, False)},
+               'ios_sensor': (str, False), 'ios_front': (str, False)},
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
              'board_data': (str, False), 'regdb': (str, False),
@@ -458,7 +458,7 @@ def camera_problems(where, cameras, problems):
         wires = list(sensor['pins']) + [sensor['reset'], sensor['mclk_pin']] + switches
         if any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
             problems.add(at, 'its pins (the bus\'s two, reset, mclk_pin, a supply\'s switch) are different pins of the SoC, 0 to 255')
-    for key in ('test_sensor', 'ios_sensor'):
+    for key in ('test_sensor', 'ios_sensor', 'ios_front'):
         if key in cameras and cameras[key] not in names:
             problems.add(where, f'{key} = {cameras[key]!r}: the name of one of its sensors ({", ".join(names)})')
 
@@ -884,7 +884,8 @@ def table_text(socs, boards):
                     f'.pmic_reset = {cameras["pmic_reset"]:#05x}, '
                     f'.sensor_count = {len(names)},',
                     f'\t\t\t.test_sensor = {names.index(cameras.get("test_sensor", names[0]))}, '
-                    f'.ios_sensor = {names.index(cameras.get("ios_sensor", names[0]))},',
+                    f'.ios_sensor = {names.index(cameras.get("ios_sensor", names[0]))}, '
+                    f'.ios_front = {names.index(cameras["ios_front"]) if "ios_front" in cameras else "0xff"},',
                     '\t\t\t.sensors = {']
             for sensor in cameras['sensors']:
                 supplies = ', '.join(f'.{key} = {{ {", ".join(str(v) for v in supply_of(sensor.get(key)))} }}'
@@ -893,7 +894,7 @@ def table_text(socs, boards):
                         f'.cci = {sensor["cci"][0]}, .cci_master = {sensor["cci"][1]}, '
                         f'.sda = {sensor["pins"][0]}, .scl = {sensor["pins"][1]}, .reset = {sensor["reset"]},',
                         f'\t\t\t\t  .mclk = {sensor["mclk"]}, .mclk_pin = {sensor["mclk_pin"]}, .csiphy = {sensor["csiphy"]}, '
-                        f'.focus_motor = {int("focus_motor" in sensor)}, '
+                        f'.focus_motor = {int("focus_motor" in sensor)}, .upside_down = {int(sensor.get("upside_down", False))}, '
                         f'.focus_supply = {c_string(FOCUS_SUPPLY.fullmatch(sensor["focus_supply"])[1] if "focus_supply" in sensor else "")}, '
                         f'.focus_mv = {FOCUS_SUPPLY.fullmatch(sensor["focus_supply"])[2] if "focus_supply" in sensor else 0},',
                         f'\t\t\t\t  {supplies} }},']

@@ -1,5 +1,5 @@
 /*
- * /dev/hakios-camera: the phone's wide camera for iOS (boot-arg cam=5; bsd/dev/hakios_camera.c).
+ * /dev/hakios-camera: the phone's cameras for iOS (boot-arg cam=5; bsd/dev/hakios_camera.c).
  *
  *   open()   the first one powers the sensor up and starts its frames (the sensor's mode: boot-arg
  *            cam_mode, else the module file's 4000x3000 one); the last close puts everything down
@@ -37,13 +37,19 @@ struct hakios_camera_frame {
 	uint32_t        frame_lines_min; /* the mode's own length: the shortest frame */
 	uint32_t        frame_lines_max; /* the longest frame it may be given */
 	uint32_t        margin;         /* exposure_lines is at most frame_lines - margin */
-	uint32_t        sensor;         /* which: 0 the macro, 1 the wide, 2 the front, 3 the ultra-wide camera */
+	uint32_t        sensor;         /* which: its number among the board's camera { } sensor@N */
 	uint32_t        focus;          /* the lens's position as last set, 0 (the furthest) to 1023: HAKIOS_CAMERA_NO_FOCUS where it
 	                                 * has no motor (or it does not answer) */
-	uint32_t        reserved[5];
+	char            chip[12];       /* the sensor's chip, as the board names it ("S5KHM2SD") */
+	uint8_t         upside_down;    /* 1: its pictures are turned half round from the way iOS has that camera's */
+	uint8_t         ios_back;       /* which sensors are iOS's back camera ... */
+	uint8_t         ios_front;      /* ... and its front one (HAKIOS_CAMERA_NONE: the phone gives it none) */
+	uint8_t         unused;
+	uint32_t        reserved;
 };
 
 #define HAKIOS_CAMERA_NO_FOCUS 0xffffffffu
+#define HAKIOS_CAMERA_NONE     0xff
 
 enum {
 	HAKIOS_CAMERA_EXPOSURE = 1,    /* a: lines, b: gain, c: frame lines (0: the shortest that holds the exposure) */

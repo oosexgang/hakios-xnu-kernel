@@ -3592,6 +3592,10 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	f.margin = EXPOSURE_MARGIN;
 	f.sensor = hw_index;
 	f.focus = af_position;
+	strlcpy(f.chip, hw->chip, sizeof(f.chip));
+	f.upside_down = hakios_board()->cameras.sensors[hw_index].upside_down;
+	f.ios_back = hakios_board()->cameras.ios_sensor;
+	f.ios_front = hakios_board()->cameras.ios_front;
 	lck_mtx_unlock(&ios_lock);
 
 	error = uiomove((caddr_t)&f, (int)MIN(sizeof(f), (size_t)uio_resid(uio)), uio);

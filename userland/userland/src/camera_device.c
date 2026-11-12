@@ -34,6 +34,7 @@
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
 #include <IOSurface/IOSurfaceRef.h>
+#include <ctype.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -421,21 +422,29 @@ static const char *const output_names[OUTPUTS] = { "PrimaryScaler", "SecondarySc
 /*
  * The device's cameras, a stream each, as the iPhone X's are in CMCapture's D22/AVCaptureSession.plist
  * (its devices' uniqueIDs, and the stream formats its formats and presets are matched to by sensor size
- * and frame rate): the wide camera as the back camera, the front one as the front camera. The kernel
- * gives one sensor's frames at a time; a stream's frames start with its own sensor's (see worker()).
+ * and frame rate). Which of the phone's sensors is the back camera and which the front one is the
+ * board's (camera { } ios-sensor and ios-front), and so is whether a sensor's pictures are upside down:
+ * the kernel says it in every frame's header. It gives one sensor's frames at a time; a stream's frames
+ * start with its own sensor's (see worker()).
  */
 static const struct camera {
-	uint32_t        sensor;         /* the kernel's (the frames' sensor, HAKIOS_CAMERA_SENSOR) */
+	bool            front;          /* the front camera (else the back one) */
 	const char      *name, *unique_id;
-	bool            turned;         /* its sensor the other way up from the iPhone's: the pictures turned half round */
 	double          focal_length, f_number, pixel_size, fov;
 	int             formats[2][3];  /* sensor width, height, frames a second of "Photo" and of a video format */
 } cameras[2] = {
-	{ 1, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", false, 4.0, 1.8, 1.22, 65.0,
+	{ false, "Back Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:0", 4.0, 1.8, 1.22, 65.0,
 	  { { 4032, 3024, 30 }, { 4224, 2376, 60 } } },        /* "Photo", "Video-60" */
-	{ 2, "Front Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:1", true, 2.87, 2.2, 1.0, 70.0,
+	{ true, "Front Camera", "com.apple.avfoundation.avcapturedevice.built-in_video:1", 2.87, 2.2, 1.0, 70.0,
 	  { { 3088, 2320, 30 }, { 3840, 2160, 30 } } },        /* "Photo", "Video-30" */
 };
+
+/* the kernel's sensor whose frames a camera shows: the board's; a phone with no front camera gives the back one's */
+static uint32_t
+sensor_of(const struct camera *camera, const struct hakios_camera_frame *head)
+{
+	return camera->front && head->ios_front != HAKIOS_CAMERA_NONE ? head->ios_front : head->ios_back;
+}
 
 struct stream {
 	CFArrayRef      formats;
@@ -1281,22 +1290,21 @@ af_frame(int device, struct af *af, const struct hakios_camera_frame *f, const u
 	}
 }
 
-/* the sensor's colour tuning, when the image has one (fw/camera-<sensor>.isp, tools/camtuning.py) */
+/* the sensor's colour tuning, when the image has one (fw/camera-<chip>.isp, tools/camtuning.py: the chip in lower case) */
 static void
-load_tuning(struct isp *isp, uint32_t sensor)
+load_tuning(struct isp *isp, const struct hakios_camera_frame *f)
 {
-	static const char *const names[] = { "ov02b10", "s5khm2sd", "ov16a1q", "s5k4h7" };
-	char path[96];
+	char chip[sizeof(f->chip) + 1] = "", path[96];
 
-	if (sensor >= sizeof(names) / sizeof(names[0])) {
-		return;
+	for (size_t i = 0; i < sizeof(f->chip) && f->chip[i] != '\0'; i++) {
+		chip[i] = (char)tolower((unsigned char)f->chip[i]);
 	}
-	snprintf(path, sizeof(path), "/redwood/fw/camera-%s.isp", names[sensor]);
+	snprintf(path, sizeof(path), "/redwood/fw/camera-%s.isp", chip);
 	if (isp_load_tuning(isp, path)) {
-		say("the %s's colour tuning from %s: %u colour matrices' lights, %u lens shadings'", names[sensor], path,
+		say("the %s's colour tuning from %s: %u colour matrices' lights, %u lens shadings'", f->chip, path,
 		    isp->tuning->ccm.lights, isp->tuning->lsc.lights);
 	} else {
-		say("no colour tuning for the %s (%s): no colour matrix, no lens shading", names[sensor], path);
+		say("no colour tuning for the %s (%s): no colour matrix, no lens shading", chip, path);
 		isp_set_ccm(isp, (const float[9]){ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
 		isp->lsc.on = false;
 	}
@@ -1337,13 +1345,13 @@ worker(void *context)
 				}
 				continue;
 			}
-			if (head.sensor != s->camera->sensor) {
+			if (head.sensor != sensor_of(s->camera, &head)) {
 				/* another camera's frames (the kernel's last sensor): changed, and the next ones are this one's */
 				if (!switched) {
-					struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = s->camera->sensor, .b = ~0u };
+					struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = sensor_of(s->camera, &head), .b = ~0u };
 
 					switched = true;
-					say("the kernel's frames are camera %u's: to %u, the %s", head.sensor, s->camera->sensor, s->camera->name);
+					say("the kernel's frames are camera %u's: to %u, the %s", head.sensor, c.a, s->camera->name);
 					(void)write(device, &c, sizeof(c));
 				}
 				continue;
@@ -1372,7 +1380,7 @@ worker(void *context)
 		isp_awb(&isp, &st);
 		if (f->sensor != tuned_for) {
 			tuned_for = f->sensor;
-			load_tuning(&isp, f->sensor);
+			load_tuning(&isp, f);
 		}
 		/*
 		 * Slowly, a second or so: the colour temperature is guessed from the white balance, the tuning it
@@ -1382,7 +1390,7 @@ worker(void *context)
 		cct = cct < 0 ? colour_temperature(&isp) : cct * 0.97f + colour_temperature(&isp) * 0.03f;
 		isp_tune(&isp, lux, cct);
 		isp.zoom = s->zoom;
-		isp.turned = s->camera->turned;
+		isp.turned = f->upside_down;
 		if (isp_ae(&isp, f, &st, &c)) {
 			(void)write(device, &c, sizeof(c));
 		}

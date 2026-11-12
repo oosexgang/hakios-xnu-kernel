@@ -104,6 +104,10 @@ as_before(void)
 		    s->focus_motor, s->exposure);
 	}
 	CHECK(hakios_board()->cameras.test_sensor == 0 && hakios_board()->cameras.ios_sensor == 1, "the macro tested, the wide for iOS");
+	CHECK(hakios_board()->cameras.ios_front == 2, "the front one as iOS's front camera: %u", hakios_board()->cameras.ios_front);
+	for (unsigned i = 0; i < 4; i++) {
+		CHECK(hakios_board()->cameras.sensors[i].upside_down == (i == 2), "%u: upside down only the front one", i);
+	}
 	CHECK(strcmp(hakios_board()->cameras.sensors[1].focus_supply, "ldoc9") == 0 && hakios_board()->cameras.sensors[1].focus_mv == 2800,
 	    "the wide one's lens motor supply");
 	CHECK(accesses == 0, "no register touched: %u", accesses);

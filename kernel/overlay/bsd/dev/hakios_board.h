@@ -265,7 +265,8 @@ struct hakios_board {
 		uint8_t pmic_sda, pmic_scl;     /* the I2C bus of the PMIC whose regulators feed the sensors (a PM8008) */
 		uint16_t pmic_reset;            /* the PMIC GPIO its reset is on: SPMI slave << 8 | the peripheral's high byte */
 		uint8_t sensor_count;           /* 0: the board says nothing of its cameras */
-		uint8_t test_sensor, ios_sensor;        /* which the driver works on by itself (cam=1..4), which for iOS (cam=5) */
+		uint8_t test_sensor;            /* which the driver works on by itself (cam=1..4) */
+		uint8_t ios_sensor, ios_front;  /* iOS's back camera (cam=5) and its front one (0xff: none) */
 		struct hakios_camera_sensor {
 			const char *name;               /* "macro", "wide", ...: what cam_sensor= picks it by */
 			const char *chip;               /* one of the camera driver's chips */
@@ -275,6 +276,7 @@ struct hakios_board {
 			uint8_t mclk, mclk_pin;         /* which of camcc's MCLKs it runs on, and that clock's pin */
 			uint8_t csiphy;                 /* the CSI receiver its lanes go to */
 			uint8_t focus_motor;            /* 1: a DW9800 moves its lens */
+			uint8_t upside_down;            /* 1: its pictures are turned half round from the way iOS has that camera's */
 			char focus_supply[8];           /* the motor's supply, by its RPMh name, when it has to be switched on; "": none */
 			uint16_t focus_mv;              /* ... and its voltage */
 			struct hakios_camera_supply {
