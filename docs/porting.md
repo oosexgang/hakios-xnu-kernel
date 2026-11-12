@@ -130,7 +130,8 @@ Start with one core (`cpus=1`), then all of them. A hang at the second core is P
 `tools/boards.py status NAME` lists every feature for your board: on, ready to be listed, or the
 section it still needs. Each row below is independent. Add the feature to `features`, rebuild, and
 pass the boot argument. Most drivers have a "look only" level that reads and logs without writing: use it
-first. Every argument is in [boot-args.md](boot-args.md); every driver in [drivers.md](drivers.md).
+first. Every argument is in [boot-args.md](boot-args.md); every driver in [drivers.md](drivers.md);
+what each feature needs written down before it can be listed, key by key, in [features.md](features.md).
 
 | Step | In the board or SoC file | Boot argument | It worked when |
 | --- | --- | --- | --- |

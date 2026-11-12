@@ -244,6 +244,55 @@ def feature_needs(feature, board, soc):
     return needs
 
 
+def feature_requirements(feature):
+    """What feature_needs() asks for, as data: ({section of the SoC file: [keys it names beyond the section]},
+    {section of the board file: [its keys]}). A test holds the two to each other."""
+    of_soc = {section: [] for section in FEATURE_NEEDS.get(feature, ())}
+    if feature in WRITES_TO_PMIC:
+        of_soc.setdefault('spmi', []).append('channels')
+    if feature == 'display-scan':
+        of_soc['display'].append('intf1')
+        of_soc['clocks'] = list(DISPLAY_CLOCKS)
+    if feature == 'gpu-a660':
+        of_soc['clocks'].append('gcc_disp_ahb_cbcr')
+    of_board = {}
+    section = FEATURE_NEEDS_OF_BOARD.get(feature)
+    if section:
+        of_board[section] = [key for key, (_, needed) in BOARD_SCHEMA[section].items() if needed] + list(TOUCH_NEEDS.get(feature, ()))
+    if feature == 'wifi-wcn6750':
+        of_board['wifi'] = ['radio_model', 'dsp_memory', 'dsp_memory_size']
+    return of_soc, of_board
+
+
+def features_text():
+    """docs/features.md: every feature a board can list, with what it needs written down first. Made from
+    the tables above, which are the ones `check` holds a board to."""
+    out = ['# What each feature needs',
+           '',
+           'A board lists the drivers it may start in `features` of its `board.toml`. Each needs to be told',
+           'where things are first: sections of the SoC file (shared by every phone with that SoC) and, for a',
+           'part on the board, a section of the board file. `tools/boards.py check` refuses a board that lists',
+           'a feature without them, and `tools/boards.py status NAME` says the same for one phone.',
+           '',
+           'This page is written by `tools/boards.py features` from the tables the checker uses; a test keeps',
+           'the two the same. What each key means is in `devices/_template/soc.toml` and',
+           '`devices/_template/board.toml`.',
+           '',
+           '| Feature | SoC file | Board file | Started with |',
+           '|---|---|---|---|']
+    for _, feature in feature_bits():
+        of_soc, of_board = feature_requirements(feature)
+        cells = ['; '.join(f'`[{section}]`' + (': ' + ', '.join(f'`{key}`' for key in keys) if keys else '')
+                           for section, keys in part.items()) or 'nothing' for part in (of_soc, of_board)]
+        out.append(f'| `{feature}` | {cells[0]} | {cells[1]} | `{FEATURE_BOOTARGS.get(feature, "")}` |')
+    out += ['',
+            'The brightness (`[backlight]`), the thermal floors (`[thermal]`) and the partition that may be',
+            'written (`[storage]`) are not features: a board has them by giving the section. `display-scan`',
+            'is for a command-mode panel only.',
+            '']
+    return '\n'.join(out)
+
+
 def status_text(name, board, soc):
     """One board as a porter wants it: what is on, what could be, what each of the rest waits for."""
     listed = board.get('features', [])
@@ -1113,6 +1162,7 @@ def main():
     commands.add_parser('show').add_argument('board')
     commands.add_parser('status').add_argument('board')
     commands.add_parser('check')
+    commands.add_parser('features')
     commands.add_parser('gen').add_argument('--out', type=Path, default=OUT, metavar='DIR')
     compare = commands.add_parser('compare')
     compare.add_argument('board')
@@ -1131,6 +1181,9 @@ def main():
 
     if options.command == 'new':
         new_board(options.name, options.soc, options.dts, options.panel, options.description)
+        return 0
+    if options.command == 'features':
+        print(features_text(), end='')
         return 0
     if options.command == 'check':
         problems = Problems()

@@ -1201,6 +1201,29 @@ class Repository(unittest.TestCase):
         finally:
             shutil.rmtree(out)
 
+    def test_the_page_of_what_each_feature_needs_is_what_the_checker_asks(self):
+        # the page is the tool's own output
+        self.assertEqual((ROOT / 'docs/features.md').read_text(), boards.features_text(),
+                         'docs/features.md is not what tools/boards.py features prints: write it again')
+        for _, feature in boards.feature_bits():
+            of_soc, of_board = boards.feature_requirements(feature)
+            soc = {section: {key: 1 for key in keys} for section, keys in of_soc.items()}
+            board = {'soc': 'x', **{section: {key: 1 for key in keys} for section, keys in of_board.items()}}
+            # a board with what the page names lacks nothing ...
+            self.assertEqual(boards.feature_needs(feature, board, soc), [], feature)
+            # ... and without any one section or key of it, the checker has something to say
+            for part, sections in ((soc, of_soc), (board, of_board)):
+                for section, keys in sections.items():
+                    kept = part.pop(section)
+                    self.assertNotEqual(boards.feature_needs(feature, board, soc), [], f'{feature} without [{section}]')
+                    part[section] = kept
+                    for key in keys if part is soc or section in ('touch', 'wifi') else ():
+                        if section == 'wifi' and key == 'radio_model' or section == 'touch' and key not in boards.TOUCH_NEEDS[feature]:
+                            continue        # (the schema's, for every board with the section)
+                        value = part[section].pop(key)
+                        self.assertNotEqual(boards.feature_needs(feature, board, soc), [], f'{feature} without {key} in [{section}]')
+                        part[section][key] = value
+
     def test_what_the_tool_takes_is_explained_where_a_porter_looks(self):
         root = boards.ROOT
         template = (root / 'devices/_template/board.toml').read_text()
