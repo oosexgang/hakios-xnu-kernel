@@ -21,6 +21,7 @@ as on 16.5 (enough for the restore-mode boot of the first probes, not for a norm
 import importlib.util
 import os
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
@@ -36,11 +37,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PACSTRIP = HERE + '/pacstrip'
 WORK = os.environ.get("WORK", I + "/image-tree")
 CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
-# Where stage0 mounts the small image. A darwin-renoir tree not yet renamed (tools/rename-image-root.sh)
-# mounts it on /redwood and its root tree says /redwood: the system volume has that path too, as a link
-# to /hakios, so that such a stage0 mounts it there and its paths lead there. Gone once it is renamed.
-IMAGE_ROOT = 'hakios'
-UNRENAMED_ROOT = 'redwood'
+IMAGE_ROOT = 'hakios'                            # where stage0 mounts the small image
+STAGE0 = DR + '/userland/obj/stage0'
+
+
+def stage0_root(path=STAGE0):
+    """The directory the stage0 at path mounts the small image on: the one it runs init from
+    ("/NAME/sbin/init" in it). A stage0 built from an older tree may say another name than IMAGE_ROOT;
+    the system volume then gives that name as a link to IMAGE_ROOT, so it mounts the image there and its
+    paths lead there."""
+    try:
+        with open(path, 'rb') as f:
+            found = re.search(rb'\x00/([A-Za-z0-9_.-]+)/sbin/init\x00', f.read())
+    except OSError:
+        return IMAGE_ROOT
+    return found.group(1).decode() if found else IMAGE_ROOT
 
 MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname', 'usr/bin/sw_vers',
              'usr/bin/id', 'usr/bin/true', 'usr/sbin/sysctl', 'usr/libexec/xpcproxy',
@@ -164,7 +175,7 @@ def selection(minimal):
             with open(os.path.join(jobs, name), 'rb') as f:
                 job = plistlib.load(f)
             program = job.get('Program') or (job.get('ProgramArguments') or [None])[0]
-            if program and program.startswith('/') and not program.startswith((f'/{IMAGE_ROOT}/', f'/{UNRENAMED_ROOT}/')):
+            if program and program.startswith('/') and not program.startswith((f'/{IMAGE_ROOT}/', f'/{stage0_root()}/')):
                 kept_files.add(program[1:])
     chosen = []
     for dp, dn, fns in os.walk(ROOT):
@@ -280,7 +291,9 @@ def main():
     for d in ('dev', IMAGE_ROOT, 'private/var', 'private/preboot', 'private/etc', 'private/tmp', 'System/Library',
               'sbin', 'usr/lib', CACHE_DIR):
         os.makedirs(os.path.join(WORK, d), exist_ok=True)
-    os.symlink(IMAGE_ROOT, os.path.join(WORK, UNRENAMED_ROOT))
+    if stage0_root() != IMAGE_ROOT:
+        print(f'mkimage26: this stage0 mounts the small image on /{stage0_root()}: a link to /{IMAGE_ROOT} there')
+        os.symlink(IMAGE_ROOT, os.path.join(WORK, stage0_root()))
     chosen = list(dict(selection(minimal)).items())      # (one source for each path: the last)
     if PRUNE:
         chosen = [(rel, src) for rel, src in chosen if not pruned(rel)]
@@ -288,7 +301,7 @@ def main():
         stripped = sum(pool.map(place, chosen))
     # launchd: ours first (stage0), Apple's as launchd.ios
     os.replace(os.path.join(WORK, 'sbin/launchd'), os.path.join(WORK, 'sbin/launchd.ios'))
-    shutil.copy2(DR + '/userland/obj/stage0', os.path.join(WORK, 'sbin/launchd'))
+    shutil.copy2(STAGE0, os.path.join(WORK, 'sbin/launchd'))
     for rel, target in links(minimal):
         dst = os.path.join(WORK, rel)
         if os.path.lexists(dst) or rel.startswith('System/Library/LaunchDaemons'):

@@ -1,5 +1,6 @@
 """The parts of the iOS image tool (ios/tools/mkimage26.py) that need no IPSW: which files a pruned image
-leaves out, which Mach-O files are arm64e and go through pacstrip, and the trimming of string tables.
+leaves out, which Mach-O files are arm64e and go through pacstrip, the trimming of string tables, and
+where the stage0 it carries mounts the small image.
 
     python3 tests/ios_tools_test.py
 """
@@ -26,6 +27,25 @@ def thin(cpu, path):
 def fat(cpus, path, big=False):
     entries = b''.join(struct.pack('>ii', *cpu) + bytes(24 if big else 12) for cpu in cpus)
     path.write_bytes(struct.pack('>II', 0xcafebabf if big else 0xcafebabe, len(cpus)) + entries + bytes(64))
+
+
+class Stage0(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def stage0(self, strings):
+        path = self.dir / 'stage0'
+        path.write_bytes(struct.pack('<III', 0xfeedfacf, *ARM64) + bytes(64) + b'\x00'.join(strings) + b'\x00')
+        return str(path)
+
+    def test_the_mount_point_is_where_it_runs_init_from(self):
+        self.assertEqual(mkimage26.stage0_root(self.stage0([b'apfs', b'/hakios/sbin/init', b'/dev/md1'])), 'hakios')
+        # one built from a tree that still says another name: that name, which the system volume then links
+        self.assertEqual(mkimage26.stage0_root(self.stage0([b'/older/sbin/init', b'/older'])), 'older')
+
+    def test_without_one_it_is_the_image_root(self):
+        self.assertEqual(mkimage26.stage0_root(str(self.dir / 'none')), mkimage26.IMAGE_ROOT)
+        self.assertEqual(mkimage26.stage0_root(self.stage0([b'/bin/sh', b'/sbin/initx'])), mkimage26.IMAGE_ROOT)
 
 
 class Arm64e(unittest.TestCase):
