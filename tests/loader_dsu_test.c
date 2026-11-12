@@ -398,6 +398,7 @@ read_through_extents(void)
 	read_count = 0;
 	CHECK(EFI_ERROR(dsu_read(&userdata_io, 4 * 4096, 2 * 4096, into)), "past the image's end");
 	CHECK(EFI_ERROR(dsu_read(&userdata_io, 5 * 4096, 4096, into)), "from its end");
+	CHECK(dsu_read(&userdata_io, 0xfffffffffffff000ULL, 2 * 4096, into) == (EFI_ERROR_BIT | 2), "an offset so large that offset + length wraps around");
 	CHECK(EFI_ERROR(dsu_read(&userdata_io, 512, 4096, into)) && EFI_ERROR(dsu_read(&userdata_io, 0, 512, into)), "not in whole blocks");
 	CHECK(read_count == 0, "none of them reads anything");
 	read_status = EFI_ERROR_BIT | 7;
@@ -460,7 +461,9 @@ only_inside_the_image(void)
 	CHECK(dsu_write(&userdata_io, 5 * 4096, patch, 4096) == 0, "from its end");
 	CHECK(dsu_write(&userdata_io, 0, patch, 6 * 4096) == 0, "more than all of it");
 	CHECK(dsu_write(&userdata_io, 512, patch, 4096) == 0 && dsu_write(&userdata_io, 0, patch, 512) == 0, "not in whole blocks");
-	CHECK(dsu_write(&userdata_io, 0xfffffffffffff000ULL, patch, 2 * 4096) == 0, "an offset so large that offset + length wraps around");
+	said[0] = 0;
+	CHECK(dsu_write(&userdata_io, 0xfffffffffffff000ULL, patch, 2 * 4096) == 0 && strstr(said, "not whole blocks inside the image") != NULL,
+	    "an offset so large that offset + length wraps around is refused as what it is: %s", said);
 	CHECK(write_count == 0 && written_outside == 0, "none of them writes anything: %u writes", write_count);
 	CHECK(strstr(said, "not whole blocks inside the image") != NULL, "and why is said: %s", said);
 	/* an extent that does not start on a block of the storage cannot be written in blocks */

@@ -11,7 +11,7 @@ dsu_write(efi_block_io *data, uint64_t offset, const uint8_t *src, uint64_t n)
 {
 	uint64_t bs = data->media->block_size, image_at = 0;
 
-	if (bs == 0 || offset % bs || n % bs || offset + n > dsu_bytes) {
+	if (bs == 0 || offset % bs || n % bs || offset > dsu_bytes || n > dsu_bytes - offset) {
 		print("dsu: patch at %x of %d bytes: not whole blocks inside the image\n", offset, n);
 		return 0;
 	}

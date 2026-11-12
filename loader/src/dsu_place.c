@@ -51,7 +51,7 @@ dsu_read(efi_block_io *data, uint64_t offset, uint64_t n, uint8_t *dest)
 {
 	uint64_t bs = data->media->block_size, image_at = 0;
 
-	if (offset + n > dsu_bytes || offset % bs || n % bs) {
+	if (offset > dsu_bytes || n > dsu_bytes - offset || offset % bs || n % bs) {
 		return 0x8000000000000002ULL;   /* EFI_INVALID_PARAMETER */
 	}
 	for (unsigned x = 0; x < dsu_extents && n > 0; x++) {
