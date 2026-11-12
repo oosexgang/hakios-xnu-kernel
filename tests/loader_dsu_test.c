@@ -3,8 +3,9 @@
  * compiled as it is into a host program. The image is stored the way Android stores a "DSU" system:
  * as a partition, system_gsi, described by Android's lp_metadata in the metadata partition and lying
  * in pieces (extents) inside userdata. The loader reads that description from the phone -- and with
- * "oem dsu" writes the image through it. So what it takes from the description has to lie inside
- * userdata whatever the description says; this is where that is tried.
+ * "oem dsu patch" writes into the image through it (loader/src/dsu_write.c). So what it takes from the
+ * description has to lie inside userdata whatever the description says, and what it writes inside the
+ * image's extents whatever it is asked; this is where both are tried.
  *
  *   loader_dsu_test SCENARIO
  */
@@ -38,6 +39,7 @@ partition_named(const char *want)
 
 #include "src/dsu_extents.c"
 #include "src/dsu_place.c"
+#include "src/dsu_write.c"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
@@ -236,8 +238,78 @@ userdata_read(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64
 	return 0;
 }
 
+/* ... but what is written into it is kept, so that it reads back: up to STORED blocks, wherever they are */
+#define STORED          4608
+static struct { uint64_t lba; bool used; } stored[STORED];
+static uint8_t stored_bytes[STORED][4096];
+static struct { uint64_t lba, size; } writes[64];
+static unsigned write_count, flushes, written_outside;
+static bool forgetful;                          /* a storage that takes a write and does not keep it */
+static efi_status write_status;
+
+static efi_status EFIAPI
+userdata_write(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t size, void *buffer)
+{
+	if (write_count < 64) {
+		writes[write_count].lba = lba;
+		writes[write_count].size = size;
+	}
+	write_count++;                          /* (every call is counted, also one the storage refuses) */
+	if (media_id != 9 || size % 4096 || lba + size / 4096 > USERDATA_SECTORS / 8) {
+		return EFI_ERROR_BIT | 2;
+	}
+	if (EFI_ERROR(write_status)) {
+		return write_status;
+	}
+	for (uint64_t i = 0; i < size / 4096; i++) {
+		bool inside = false;
+		unsigned slot = 0;
+
+		for (unsigned x = 0; x < dsu_extents; x++) {
+			inside |= (lba + i) * 8 >= dsu_extent[x].sector && (lba + i) * 8 + 8 <= dsu_extent[x].sector + dsu_extent[x].count;
+		}
+		written_outside += !inside;
+		if (forgetful) {
+			continue;
+		}
+		while (slot < STORED && stored[slot].used && stored[slot].lba != lba + i) {
+			slot++;
+		}
+		if (slot == STORED) {
+			return EFI_ERROR_BIT | 9;
+		}
+		stored[slot].used = true;
+		stored[slot].lba = lba + i;
+		memcpy(stored_bytes[slot], (uint8_t *)buffer + i * 4096, 4096);
+	}
+	return 0;
+}
+
+static efi_status EFIAPI
+userdata_read_back(struct efi_block_io *self, uint32_t media_id, uint64_t lba, uint64_t size, void *buffer)
+{
+	efi_status status = userdata_read(self, media_id, lba, size, buffer);
+
+	for (uint64_t i = 0; !EFI_ERROR(status) && i < size / 4096; i++) {
+		for (unsigned slot = 0; slot < STORED && stored[slot].used; slot++) {
+			if (stored[slot].lba == lba + i) {
+				memcpy((uint8_t *)buffer + i * 4096, stored_bytes[slot], 4096);
+			}
+		}
+	}
+	return status;
+}
+
+static efi_status EFIAPI
+userdata_flush(struct efi_block_io *self)
+{
+	flushes++;
+	return 0;
+}
+
 static efi_block_io metadata_io = { .media = &metadata_media, .read_blocks = metadata_read };
-static efi_block_io userdata_io = { .media = &userdata_media, .read_blocks = userdata_read };
+static efi_block_io userdata_io = { .media = &userdata_media, .read_blocks = userdata_read_back, .write_blocks = userdata_write,
+	                            .flush_blocks = userdata_flush };
 
 static void
 phone(void)
@@ -337,13 +409,115 @@ read_through_extents(void)
 	CHECK(EFI_ERROR(dsu_read(&userdata_io, 0, 4096, into)) && read_count == 0, "an extent off the storage's blocks");
 }
 
+/* ---- writing into the image ------------------------------------------------------------------------- */
+
+static uint8_t patch[9u << 20];
+
+/* an image of two extents, 3 and 2 blocks, the second lower on the storage than the first */
+static void
+image(void)
+{
+	phone();
+	dsu_extent[0].sector = 80000, dsu_extent[0].count = 24;
+	dsu_extent[1].sector = 16000, dsu_extent[1].count = 16;
+	dsu_extents = 2;
+	dsu_bytes = 40 * 512;
+	for (unsigned i = 0; i < sizeof(patch); i++) {
+		patch[i] = (uint8_t)(i * 31 + (i >> 12));
+	}
+}
+
+/* what is written goes where the extents say that part of the image lies, is flushed and read back */
+static void
+written_through_extents(void)
+{
+	static uint8_t back[5 * 4096];
+
+	image();
+	CHECK(dsu_write(&userdata_io, 4096, patch, 4 * 4096) == 1, "the image's last four blocks: %s", said);
+	CHECK(write_count == 2 && writes[0].lba == 10001 && writes[0].size == 2 * 4096 && writes[1].lba == 2000 && writes[1].size == 2 * 4096,
+	    "two writes, each inside one extent: %u, %llu + %llu, %llu + %llu", write_count, (unsigned long long)writes[0].lba,
+	    (unsigned long long)writes[0].size, (unsigned long long)writes[1].lba, (unsigned long long)writes[1].size);
+	CHECK(written_outside == 0, "%u blocks were written outside the image's extents", written_outside);
+	CHECK(flushes == 2, "each write is flushed before it is read back: %u", flushes);
+	CHECK(dsu_read(&userdata_io, 4096, 4 * 4096, back) == 0 && memcmp(back, patch, 4 * 4096) == 0, "the image reads back as written");
+	/* the first block was not written: it is as it was */
+	memset(back, 0, sizeof(back));
+	CHECK(dsu_read(&userdata_io, 0, 4096, back) == 0 && back[8] == 0 && *(uint64_t *)back == 10000, "what was not written is untouched");
+	/* a piece that lies in the second extent only */
+	write_count = 0;
+	CHECK(dsu_write(&userdata_io, 4 * 4096, patch + 4096, 4096) == 1 && write_count == 1 && writes[0].lba == 2001 && writes[0].size == 4096,
+	    "the image's last block alone: %u writes, at %llu", write_count, (unsigned long long)writes[0].lba);
+	CHECK(written_outside == 0, "%u blocks were written outside the image's extents", written_outside);
+}
+
+/* asked for more than the image, or for less than whole blocks: nothing is written */
+static void
+only_inside_the_image(void)
+{
+	image();
+	CHECK(dsu_write(&userdata_io, 4 * 4096, patch, 2 * 4096) == 0, "one block past the image's end");
+	CHECK(dsu_write(&userdata_io, 5 * 4096, patch, 4096) == 0, "from its end");
+	CHECK(dsu_write(&userdata_io, 0, patch, 6 * 4096) == 0, "more than all of it");
+	CHECK(dsu_write(&userdata_io, 512, patch, 4096) == 0 && dsu_write(&userdata_io, 0, patch, 512) == 0, "not in whole blocks");
+	CHECK(dsu_write(&userdata_io, 0xfffffffffffff000ULL, patch, 2 * 4096) == 0, "an offset so large that offset + length wraps around");
+	CHECK(write_count == 0 && written_outside == 0, "none of them writes anything: %u writes", write_count);
+	CHECK(strstr(said, "not whole blocks inside the image") != NULL, "and why is said: %s", said);
+	/* an extent that does not start on a block of the storage cannot be written in blocks */
+	dsu_extent[0].sector = 80001;
+	CHECK(dsu_write(&userdata_io, 0, patch, 4096) == 0 && write_count == 0, "an extent off the storage's blocks");
+	/* a storage whose blocks are of no size */
+	userdata_media.block_size = 0;
+	CHECK(dsu_write(&userdata_io, 0, patch, 4096) == 0 && write_count == 0, "a storage that gives no block size");
+	userdata_media.block_size = 4096;
+}
+
+/* a write that fails, or that does not read back as written: said, and nothing more is written */
+static void
+not_written_is_said(void)
+{
+	image();
+	forgetful = true;
+	CHECK(dsu_write(&userdata_io, 0, patch, 5 * 4096) == 0, "a storage that does not keep what it is given");
+	CHECK(write_count == 1 && strstr(said, "failed or did not read back") != NULL, "said after the first piece, the second is not tried: %u, %s",
+	    write_count, said);
+	forgetful = false;
+	write_count = 0;
+	write_status = EFI_ERROR_BIT | 7;
+	CHECK(dsu_write(&userdata_io, 0, patch, 5 * 4096) == 0 && write_count == 1, "a write that fails");
+	write_status = 0;
+	write_count = 0;
+	read_status = EFI_ERROR_BIT | 7;
+	CHECK(dsu_write(&userdata_io, 0, patch, 5 * 4096) == 0 && write_count == 1, "a read back that fails");
+	read_status = 0;
+}
+
+/* a long piece goes in pieces no larger than the buffer it is read back into */
+static void
+long_patch(void)
+{
+	phone();
+	dsu_extent[0].sector = 800000, dsu_extent[0].count = (17u << 20) / 512;
+	dsu_extents = 1;
+	dsu_bytes = 17u << 20;
+	for (unsigned i = 0; i < sizeof(patch); i++) {
+		patch[i] = (uint8_t)(i * 13 + (i >> 11));
+	}
+	CHECK(dsu_write(&userdata_io, 4u << 20, patch, sizeof(patch)) == 1, "9 MB at 4 MB of the image: %s", said);
+	CHECK(write_count == 2 && writes[0].lba == 100000 + 1024 && writes[0].size == 8u << 20 && writes[1].lba == 100000 + 1024 + 2048 &&
+	    writes[1].size == 1u << 20, "8 MB, then the rest behind it: %u writes, %llu + %llu", write_count, (unsigned long long)writes[0].lba,
+	    (unsigned long long)writes[0].size);
+	CHECK(written_outside == 0, "%u blocks were written outside the image's extent", written_outside);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "extents_are_taken", extents_are_taken }, { "another_name", another_name }, { "outside_userdata", outside_userdata },
 		{ "not_of_the_shape_known", not_of_the_shape_known }, { "found_on_the_phone", found_on_the_phone }, { "copies", copies },
-		{ "read_through_extents", read_through_extents },
+		{ "read_through_extents", read_through_extents }, { "written_through_extents", written_through_extents },
+		{ "only_inside_the_image", only_inside_the_image }, { "not_written_is_said", not_written_is_said }, { "long_patch", long_patch },
 	};
 
 	if (argc < 2) {
