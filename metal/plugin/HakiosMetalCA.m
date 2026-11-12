@@ -565,6 +565,9 @@ _Static_assert(sizeof(struct MTLTargetDeviceArch) == 24 && __builtin_offsetof(st
 	hakios_metal_texture *_texture;
 	MTLTextureUsage _usage;             /* what hakios-metal was given: ShaderRead, ShaderWrite, or both */
 	MTLResourceOptions _askedOptions;   /* the descriptor's, for -unfilteredResourceOptions; what was GIVEN is shared memory */
+	BOOL _memoryless;                   /* asked for with MTLStorageModeMemoryless: nothing of it is kept past a pass */
+	BOOL _poolable;                     /* ... and made by hakios_metal_texture_new_levels: its memory goes to hm_memoryless_give */
+	unsigned _shape[5];                 /* ... its type, format, width, height and levels there */
 	BOOL _allowGPUOptimizedContents;    /* the descriptor's word; the layout is linear either way */
 	uint64_t _uniqueIdentifier;         /* from a counter, never 0 and never the object's address: see hm_next_resource_id */
 	IOSurfaceRef _iosurface;            /* the surface whose pixels the texture's rows are (retained), NULL for one of its own */
@@ -611,6 +614,8 @@ static BOOL hm_gmem_on(void);                         /* metal_gmem=1: tiled ren
 - (void)hakiosRefreshShadow;
 - (void)hakiosSetDeallocator:(void (^)(void *, NSUInteger))deallocator bytes:(void *)bytes length:(NSUInteger)length;
 - (unsigned)hakiosStorageKind;   /* metal_fps=timeline: 0 a surface's, else 1 + its storage mode */
+- (BOOL)hakiosMemoryless;         /* asked for with MTLStorageModeMemoryless */
+- (void)hakiosKeepMemoryAs:(const unsigned *)shape;   /* its memory to hm_memoryless_give at dealloc, as a texture of SHAPE */
 @end
 
 /* A sampler state: hakios-metal's four TEX_SAMP words, computed once from the descriptor, under Metal's own base class
@@ -3607,6 +3612,110 @@ hm_compress(MTLTextureDescriptor *descriptor, MTLTextureUsage usage)
 }
 
 /*
+ * Memoryless textures' memory, kept for the next one. iOS 27's window server asks for its main pass's colour attachments
+ * 1 and 2 (RGBA16F and the path renderer's R32F mask, 828x1792 here) memoryless, and anew for every frame: 17.5 MB a
+ * frame from the kernel, zeroed and mapped for the GPU and given back, 40 buffers and 350 MB in 2 s at 10 frames a second
+ * on the home screen at rest (fps: ... buffers, logs/102547-run.log). Nothing of a memoryless texture outlives its pass,
+ * so the memory of one given up is as good as new for the next of the same shape: it is kept here (up to
+ * HM_MEMORYLESS_KEEP bytes) and handed out again, uncleared, as Metal leaves a memoryless texture's contents undefined. A
+ * command buffer still drawing into the old one is no hazard: the GPU takes passes one after the other off one ring, as
+ * it does two passes into the same texture.
+ */
+#define HM_MEMORYLESS_KEEP      (48u << 20)
+#define HM_MEMORYLESS_SLOTS     8
+
+struct hm_memoryless {
+	hakios_metal_texture *texture;  /* NULL: an empty slot */
+	unsigned type, format, width, height, levels;
+	MTLTextureUsage usage;
+	uint64_t bytes, given;          /* its size, and when it was given up (a count): the oldest makes way */
+};
+static uint64_t hm_memoryless_gives;
+static struct hm_memoryless hm_memoryless_kept[HM_MEMORYLESS_SLOTS];
+static uint64_t hm_memoryless_bytes;
+static pthread_mutex_t hm_memoryless_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+	unsigned made, again;           /* for metal_fps: memoryless textures given new memory, and given kept memory */
+	unsigned kept, freed;           /* ... and of those given up, the memory kept and the memory freed for want of room */
+} hm_memoryless_stat;
+
+static uint64_t
+hm_memoryless_size(unsigned format, unsigned width, unsigned height, unsigned levels)
+{
+	unsigned bw = 1, bh = 1, bytes = 0;
+	uint64_t total = 0;
+
+	if (!hakios_metal_format_block(format, &bw, &bh, &bytes) || bytes == 0) return 0;
+	for (unsigned l = 0; l < levels; l++) {
+		const unsigned w = MAX(1u, width >> l), h = MAX(1u, height >> l);
+		total += (uint64_t)((w + bw - 1) / bw) * ((h + bh - 1) / bh) * bytes;
+	}
+	return total;
+}
+
+/* a kept texture of this shape, the caller's now; NULL when there is none */
+static hakios_metal_texture *
+hm_memoryless_take(unsigned type, unsigned format, unsigned width, unsigned height, unsigned levels, MTLTextureUsage usage)
+{
+	hakios_metal_texture *t = NULL;
+
+	pthread_mutex_lock(&hm_memoryless_lock);
+	for (unsigned i = 0; i < HM_MEMORYLESS_SLOTS; i++) {
+		struct hm_memoryless *k = &hm_memoryless_kept[i];
+		if (k->texture != NULL && k->type == type && k->format == format && k->width == width && k->height == height &&
+		    k->levels == levels && k->usage == usage) {
+			t = k->texture;
+			hm_memoryless_bytes -= k->bytes;
+			k->texture = NULL;
+			break;
+		}
+	}
+	if (t != NULL) hm_memoryless_stat.again++;
+	else hm_memoryless_stat.made++;
+	pthread_mutex_unlock(&hm_memoryless_lock);
+	return t;
+}
+
+/* T, of that shape, kept for the next memoryless texture like it, the ones kept longest freed to make room (the lock
+ * screen's shapes are not asked for again on the home screen, and kept they took the room of the home screen's) */
+static void
+hm_memoryless_give(hakios_metal_texture *t, unsigned type, unsigned format, unsigned width, unsigned height, unsigned levels,
+		   MTLTextureUsage usage)
+{
+	const uint64_t bytes = hm_memoryless_size(format, width, height, levels);
+	hakios_metal_texture *out[HM_MEMORYLESS_SLOTS];
+	unsigned outs = 0;
+
+	pthread_mutex_lock(&hm_memoryless_lock);
+	while (bytes != 0 && bytes <= HM_MEMORYLESS_KEEP) {
+		struct hm_memoryless *free_slot = NULL, *oldest = NULL;
+		for (unsigned i = 0; i < HM_MEMORYLESS_SLOTS; i++) {
+			struct hm_memoryless *k = &hm_memoryless_kept[i];
+			if (k->texture == NULL) {
+				if (free_slot == NULL) free_slot = k;
+			} else if (oldest == NULL || k->given < oldest->given) {
+				oldest = k;
+			}
+		}
+		if (free_slot != NULL && hm_memoryless_bytes + bytes <= HM_MEMORYLESS_KEEP) {
+			*free_slot = (struct hm_memoryless){ t, type, format, width, height, levels, usage, bytes, ++hm_memoryless_gives };
+			hm_memoryless_bytes += bytes;
+			t = NULL;
+			break;
+		}
+		if (oldest == NULL) break;
+		out[outs++] = oldest->texture;
+		hm_memoryless_bytes -= oldest->bytes;
+		oldest->texture = NULL;
+	}
+	if (t != NULL) hm_memoryless_stat.freed++;
+	else hm_memoryless_stat.kept++;
+	pthread_mutex_unlock(&hm_memoryless_lock);
+	if (t != NULL) hakios_metal_texture_free(t);
+	for (unsigned i = 0; i < outs; i++) hakios_metal_texture_free(out[i]);
+}
+
+/*
  * The one gate a texture descriptor passes here, by hand. Metal's own validator (-[MTLTextureDescriptorInternal
  * validateWithDevice:]) is an assert that ends in abort(), like every validation context of this Metal, so it is never
  * called; and _MTLDevice has no -newTextureWithDescriptor: of its own to fall back on. What is served is what hakios-metal's
@@ -3718,6 +3827,11 @@ hm_compress(MTLTextureDescriptor *descriptor, MTLTextureUsage usage)
 							    "alpha 5) is served: the descriptor's own swizzle field carries the format's channel "
 							    "order", swizzle.red, swizzle.green, swizzle.blue, swizzle.alpha]);
 	}
+	/* (a memoryless texture of one 1D or 2D slice: its memory from hm_memoryless_take, and back there at its dealloc) */
+	const BOOL memoryless = [descriptor storageMode] == MTLStorageModeMemoryless && !hm_compress(descriptor, usage) &&
+				([descriptor textureType] == MTLTextureType2D || [descriptor textureType] == MTLTextureType1D);
+	const unsigned shape[5] = { (unsigned)[descriptor textureType], (unsigned)[descriptor pixelFormat], (unsigned)[descriptor width],
+				    (unsigned)[descriptor height], (unsigned)[descriptor mipmapLevelCount] };
 	/* the mip levels are the core's (texture.hpp: fdl6_layout's rule, which the TP follows): it refuses a count past the
 	 * bottom of the chain with the numbers */
 	if ([descriptor textureType] == MTLTextureType2DMultisample) {
@@ -3747,9 +3861,15 @@ hm_compress(MTLTextureDescriptor *descriptor, MTLTextureUsage usage)
 				 (unsigned long)[descriptor pixelFormat], texture != NULL ? "made" : hakios_metal_error());
 		}
 	} else {
-		texture = hakios_metal_texture_new_levels(_gpu, (unsigned)[descriptor textureType], (unsigned)[descriptor pixelFormat],
-							  (unsigned)[descriptor width], (unsigned)[descriptor height],
-							  (unsigned)[descriptor mipmapLevelCount], (unsigned)usage);
+		texture = NULL;
+		if (memoryless) {
+			texture = hm_memoryless_take(shape[0], shape[1], shape[2], shape[3], shape[4], usage);
+		}
+		if (texture == NULL) {
+			texture = hakios_metal_texture_new_levels(_gpu, (unsigned)[descriptor textureType], (unsigned)[descriptor pixelFormat],
+								  (unsigned)[descriptor width], (unsigned)[descriptor height],
+								  (unsigned)[descriptor mipmapLevelCount], (unsigned)usage);
+		}
 	}
 	if (texture == NULL) {
 		/* the core's own sentence: the format by name, a size outside 1..32767, or no memory */
@@ -3757,7 +3877,9 @@ hm_compress(MTLTextureDescriptor *descriptor, MTLTextureUsage usage)
 							    (unsigned long)[descriptor height], (unsigned long)[descriptor pixelFormat],
 							    (unsigned long)usage, hakios_metal_error()]);
 	}
-	return [[HakiosMetalTexture alloc] initWithHakiosDevice:self texture:texture descriptor:descriptor usage:usage];
+	HakiosMetalTexture *made = [[HakiosMetalTexture alloc] initWithHakiosDevice:self texture:texture descriptor:descriptor usage:usage];
+	if (memoryless && made != nil) [made hakiosKeepMemoryAs:shape];
+	return made;
 }
 
 /* An IOSurface is the window server's memory, and what CAMetalLayer makes its drawables of: the texture is the
@@ -4256,6 +4378,14 @@ HM_REFUSES_OUT_LOUD
 
 @implementation HakiosMetalTexture
 
+- (BOOL)hakiosMemoryless { return _memoryless; }
+
+- (void)hakiosKeepMemoryAs:(const unsigned *)shape
+{
+	_poolable = YES;
+	memcpy(_shape, shape, sizeof(_shape));
+}
+
 - (unsigned)hakiosStorageKind
 {
 	return _iosurface != NULL ? 0 : 1 + (unsigned)((_askedOptions >> MTLResourceStorageModeShift) & 0xf);
@@ -4289,6 +4419,7 @@ HM_REFUSES_OUT_LOUD
 	_texture = texture;
 	_usage = usage;
 	_askedOptions = [descriptor resourceOptions];
+	_memoryless = [descriptor storageMode] == MTLStorageModeMemoryless;
 	_allowGPUOptimizedContents = [descriptor allowGPUOptimizedContents];
 	_uniqueIdentifier = hm_next_resource_id();
 	return self;
@@ -4296,7 +4427,9 @@ HM_REFUSES_OUT_LOUD
 
 - (void)dealloc
 {
-	if (_texture != NULL && (_parent == nil || _ownsView)) {
+	if (_texture != NULL && _parent == nil && _poolable && _iosurface == NULL) {
+		hm_memoryless_give(_texture, _shape[0], _shape[1], _shape[2], _shape[3], _shape[4], _usage);
+	} else if (_texture != NULL && (_parent == nil || _ownsView)) {
 		hakios_metal_texture_free(_texture);   /* a command buffer still using it keeps its memory */
 	}
 	if (_iosurface != NULL) {
@@ -4662,6 +4795,7 @@ static uint8_t hm_clamp8(float v) { return v <= 0 ? 0 : v >= 255 ? 255 : (uint8_
 	view->_parentSlice = slices.location;
 	view->_usage = _usage;
 	view->_askedOptions = _askedOptions;
+	view->_memoryless = _memoryless;
 	view->_allowGPUOptimizedContents = _allowGPUOptimizedContents;
 	view->_uniqueIdentifier = hm_next_resource_id();
 	if (_iosurface != NULL) {
@@ -5517,6 +5651,13 @@ hm_read_render_pass(MTLRenderPassDescriptor *d, struct hakios_metal_render_pass 
 			if (!hm_store_of(c, i, &store, why, size)) {
 				return NO;
 			}
+			/* A memoryless texture is not kept past its pass, whatever the store action says: in GMEM it is not
+			 * stored. CoreAnimation's main pass has two (RGBA16Float and its path mask, R32Float) and stores both,
+			 * 12 bytes a pixel, 18 MB a frame out of the tiles for nothing */
+			if ([(HakiosMetalTexture *)t hakiosMemoryless] && store != 0 && (hm_gmem_off() & 4096) == 0) {   /* (4096: stored) */
+				HM_ONCE("a memoryless colour attachment asked to be stored: not stored, as Metal keeps nothing of one past its pass\n");
+				store = 0;
+			}
 			m->texture = [(HakiosMetalTexture *)t hakiosTexture];
 			m->level = (unsigned)[c level];
 			m->slice = (unsigned)([t textureType] == MTLTextureType3D ? [c depthPlane] : [c slice]);
@@ -5860,7 +6001,8 @@ hm_fps_draws(void)
  * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier; 256: CoreAnimation's path_blit and path_clear
  * as it asks for them, as metal_paths=0 does; 512: a pass's fetching draws counted as any other against metal_gmem_draws,
  * not weighted; 1024: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE too, as before; 2048: the path
- * renderer's draws left out, a wrong picture, to time what they cost), for a bisect.
+ * renderer's draws left out, a wrong picture, to time what they cost; 4096: a memoryless colour attachment stored when its
+ * pass asks for that, as before), for a bisect.
  * metal_gmem_cycle=N,N,...@SECONDS instead: each of those values in turn, SECONDS (20 when not given) each, from the
  * first command buffer on, and around again -- several settings timed in one boot, each change printed */
 static unsigned
@@ -6164,7 +6306,10 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 			unsigned long long bytes;
 
 			hakios_metal_buffer_counts(&made, &reused, &bytes);
-			hm_print("fps: ... buffers: %u made (%llu KB), %u taken again from the pool\n", made, bytes >> 10, reused);
+			hm_print("fps: ... buffers: %u made (%llu KB), %u taken again from the pool; memoryless textures: %u new, %u over kept memory, "
+				 "%u given up and kept, %u freed\n", made, bytes >> 10, reused, hm_memoryless_stat.made, hm_memoryless_stat.again,
+				 hm_memoryless_stat.kept, hm_memoryless_stat.freed);
+			memset(&hm_memoryless_stat, 0, sizeof(hm_memoryless_stat));
 			if (hm_paths_stat.cut + hm_paths_stat.left + hm_paths_stat.asIs + hm_paths_stat.fills != 0) {
 				hm_print("fps: ... paths: %u path_blit/path_clear cut to %u rectangles, %u left out, %u as they came; the whole mask marked "
 					 "%u times (the last by %s)\n", hm_paths_stat.cut, hm_paths_stat.rects, hm_paths_stat.left, hm_paths_stat.asIs,
