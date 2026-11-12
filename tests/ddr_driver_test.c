@@ -273,11 +273,28 @@ not_listed(void)
 	CHECK(rsc.writes == 0 && rsc.elsewhere == 0 && database_maps == 0, "nothing mapped, read or written");
 }
 
+/* ... and where nothing asked for the vote (no ddr=, the CPU's clocks left alone), not a word: every boot of the emulator is this */
+static void
+not_listed_not_asked(void)
+{
+	phone("qemu-virt", true);
+	rsc.base = 0;
+	boot_args = "";
+	hakios_ddr_init(false);
+	boot_args = "ddr=0";
+	hakios_ddr_init(true);
+	CHECK(!logged("ddr:"), "nothing is said: %s", log_text);
+	boot_args = "ddr=1";
+	hakios_ddr_init(false);
+	CHECK(logged("ddr: no RPMh vote on this board"), "a look that was asked for is answered: %s", log_text);
+	CHECK(rsc.writes == 0 && rsc.elsewhere == 0 && database_maps == 0, "nothing mapped, read or written");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "the_most", the_most }, { "given_back", given_back }, { "other_votes", other_votes }, { "too_much", too_much },
+		{ "not_listed_not_asked", not_listed_not_asked }, { "the_most", the_most }, { "given_back", given_back }, { "other_votes", other_votes }, { "too_much", too_much },
 		{ "not_asked", not_asked }, { "look_only", look_only }, { "no_answer", no_answer }, { "slots_busy", slots_busy },
 		{ "one_missing", one_missing }, { "no_database", no_database }, { "another_soc", another_soc }, { "not_listed", not_listed },
 	};
