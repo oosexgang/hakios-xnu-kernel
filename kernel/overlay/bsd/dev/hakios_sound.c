@@ -49,8 +49,8 @@
  * asoc/msm-dai-q6-v2.c, dsp/q6afe.c, dsp/q6adm.c, dsp/q6asm.c):
  *   - the bit clock: the interface's internal one (clock 0x200, "PRI_TDM_IBIT"), attribute 4
  *     ("invert, couple no", msm-dai-q6-v2.c's default; the tree names none), at 48000 x 32 bits x
- *     2 slots = 3.072 MHz -- the machine driver sets that rate itself (lahaina.c, which on redwood
- *     halves its four slots to two: "Using default tdm max slot: 4" in Android's log), not the
+ *     2 slots = 3.072 MHz -- the machine driver sets that rate itself (lahaina.c, which on the phone this was
+ *     found on halves its four slots to two: "Using default tdm max slot: 4" in Android's log), not the
  *     tree's 1.536 MHz
  *   - the group: ports 0x9000 and 0x9002, two 32-bit slots, mask 3, 48 kHz
  *   - the port: two channels of 32 bits at 48 kHz, linear PCM; sync mode 0, sync source 1, data

@@ -130,7 +130,7 @@ typedef struct efi_gop {
 
 /*
  * Qualcomm's open ChargerEx protocol.  The protocol is implemented by the
- * stock ChargerExDxe in the redwood UEFI image and is safe to use for
+ * stock ChargerExDxe of a phone's UEFI image (it was found in one) and is safe to use for
  * read-only charger/battery queries while boot services remain resident.
  */
 typedef struct {

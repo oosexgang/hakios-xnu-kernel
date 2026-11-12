@@ -232,7 +232,7 @@ stage2() {
 	# the libraries are linked into the kernel image, so they have to be built for its architecture
 	[ "$(cat $lib/.arch 2>/dev/null)" = "${XNU_ARCH:-arm64}" ] || rm -f $lib/libfirehose_kernel.a $lib/libpthread_kext.a
 	log "exporting the kernel's headers (xnu-build.sh exporthdrs)"
-	"$DARWIN_REDWOOD/xnu-build.sh" -j$JOBS exporthdrs > exporthdrs.log 2>&1 && [ -d "$hdrs/osfmk" ] ||
+	"$HAKIOS_BASE/xnu-build.sh" -j$JOBS exporthdrs > exporthdrs.log 2>&1 && [ -d "$hdrs/osfmk" ] ||
 		die "the kernel headers were not exported, see xnu-deps/exporthdrs.log"
 	if [ ! -f $lib/libfirehose_kernel.a ]; then
 		log "building libfirehose_kernel.a"
