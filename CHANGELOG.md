@@ -39,12 +39,16 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     gauge's units), `gpu { }` (the Adreno's profile), `wifi { }` (the radio, its early memory pool, the
     Wi-Fi DSP's memory, the radio's pins and its supplies' names), `mic { }` (the codec's reset pin),
     `camera { }` (the sensors' PMIC bus, and one `sensor@N { }` table a sensor: its chip, CCI
-    master and pins, reset, MCLK, CSI receiver and supplies; the driver's table of four is gone),
+    master and pins, reset, MCLK, CSI receiver, supplies and lens motor's supply; the driver's table of
+    four is gone), `touch { }` `coordinates` (the controller's range), `wifi { }` `board-data` and
+    `regdb` (the radio's files),
     `screen { }` (the status bar's shift past the camera), `loader { }` (framebuffer base,
     `uefi-charger`), `boot { }` (the boot tool's defaults);
   - in the SoC file: `platform { }` (interrupt controller, cores, PSCI, I/O window), `clocks { }`,
     `display { }` (DSI controller, the panel's interface), `spmi { }` (PMIC arbiter), `rpmh { }`, `thermal { }`
-    (TSENS), `cpufreq { }` (the EPSS block and its groups of cores).
+    (TSENS), `cpufreq { }` (the EPSS block and its groups of cores), `smmu { }` `audio-stream`,
+    `wifi-stream`, `camera-stream` (the SMMU streams the parts' DMA comes in on), `lpass { }`
+    `swr-tx-pins` and `swr-tx-slew` (the microphones' SoundWire pins).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
   the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
   `board.dts` and README on the `devices` branch (`renoir` and `redwood` so far). `tools/device.py`
@@ -64,6 +68,13 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   feature and boot argument, and how tied it is to one phone.
 
 ### Building or changing the kernel
+
+- **What the drivers share is written once.** Next to the headers they already shared (registers,
+  waits, RPMh, the command database, pins), `hakios_cache.h` has the cache maintenance and the barrier
+  that seven drivers each wrote out, `hakios_smmu.h` the SMMU's registers that four defined, `hakios_scm.h`
+  the call to TrustZone that three made, and `hakios_kernel.h` the kernel's own functions that 32
+  declared for themselves. On a host the first two hold only the compiler, so a driver that uses them
+  compiles into a host test as it is.
 
 - **The sources are ordinary files.** The kernel was one 75,000-line patch against Apple's release with
   25 patches stacked on it. It is three things now: `kernel/UPSTREAM` pins the Apple release by commit;
