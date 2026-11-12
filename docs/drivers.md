@@ -98,6 +98,30 @@ needs its feature in the board's `features`.
 | `bsd/dev/redwood_ufs.c`, `redwood_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `[platform]` of the SoC file), the controller is taken to be Qualcomm's as on redwood |
 | `bsd/dev/redwood_sparse.c`, `redwood_virtio_blk.c`, `redwood_apfs_check.c` | An image with only some of its blocks; QEMU's block device; a walk of a volume for comparison with the host tools. | any |
 
+## Which of them run on the host
+
+These drivers are compiled unchanged into a host program and run against a model of their hardware
+by `make check`, on the host and under qemu-aarch64. Changing one of them, or moving one of its
+constants into the board file, can be tried without a phone. [tests/README.md](../tests/README.md)
+says what each test covers and what it leaves out.
+
+| Driver | Test | The hardware's model |
+| --- | --- | --- |
+| `hakios_board.c` | `board_test.c` | (none: the generated tables) |
+| `hakios_backlight.c` | `backlight_driver_test.c` | the DSI controller and the display's clocks |
+| `hakios_thermal.c` | `thermal_driver_test.c` | two TSENS controllers, three frequency domains |
+| `hakios_cpufreq.c` | `cpufreq_driver_test.c` | the frequency block's tables |
+| `hakios_ddr.c` | `ddr_driver_test.c` | RPMh's slot set, a command database |
+| `hakios_buttons.c` | `buttons_driver_test.c` | the PMIC arbiter |
+| `redwood_torch.c` | `torch_driver_test.c` | the PMIC arbiter with a flash module behind it |
+| `redwood_battery.c` | `battery_driver_test.c` | the page the loader writes the battery's state into |
+| `redwood_haptic.c` | `haptic_driver_test.c` | the SoC's pins with an I2C chip on them |
+| `redwood_speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
+| `redwood_guard.c` | `guard_test.c` | (none: tones in, samples out) |
+
+The touch, sound, microphone, camera, Wi-Fi, DSP, GPU and storage drivers have no such test: they
+are checked for syntax and types only (`kernel/syntax-check.sh`) and on the phone.
+
 ## Adding one
 
 [writing-a-driver.md](writing-a-driver.md) is the guide: the rules a driver follows and why, the
