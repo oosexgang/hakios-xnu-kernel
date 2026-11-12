@@ -191,6 +191,14 @@ if command -v clang > /dev/null; then
 	refuses "a format that does not go with its arguments fails the check" "format specifies type" "$K/syntax-check.sh" --tree "$T"
 	printf 'int printf(const char *, ...) __attribute__((format(printf, 1, 2)));\nint broken(void)\n{\n\tlong long big = 1;\n\treturn printf("%%lld\\n", big);\n}\n' > "$K/overlay/drivers/broken.c"
 	says "... and one that does passes" "0 need the real build" "$K/syntax-check.sh" --tree "$T"
+	# --analyze: the static analyzer's findings in the overlay's own lines are listed, and nothing fails
+	printf 'int share(int n)\n{\n\tint parts = 0;\n\n\treturn n / parts;\n}\n' > "$K/overlay/drivers/broken.c"
+	says "the analyzer's finding in a file of the overlay is listed" "drivers/broken.c:5:.*Division by zero" \
+		"$K/syntax-check.sh" --tree "$T" --analyze
+	says "... counted, and the check does not fail on it" "the static analyzer: 1 findings in HakiOS' files" \
+		"$K/syntax-check.sh" --tree "$T" --analyze
+	printf 'int broken(void)\n{\n\treturn 0;\n}\n' > "$K/overlay/drivers/broken.c"
+	says "... and a file without one adds none" "the static analyzer: 0 findings" "$K/syntax-check.sh" --tree "$T" --analyze
 	printf 'class thing { };\n' > "$K/overlay/drivers/thing.cpp"
 	says "C++ files wait for the DriverKit headers" "1 C++ files not checked (no --driverkit)" "$K/syntax-check.sh" --tree "$T"
 	mkdir "$W/driverkit"
