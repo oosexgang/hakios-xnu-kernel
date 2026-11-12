@@ -100,6 +100,11 @@ firmware(void *unused __unused)
 			levels[in] = shmem[0x20 / 4];
 			sets++;
 			answer(0, NULL, 0);
+		} else if (message == 0x3) {
+			/* set limits, set level, fast channels, level indexing; rate limit; sustained kHz and level */
+			uint32_t attributes[4] = { 0xea000000u, 0, 2000000 + in, 20 + in };
+
+			answer(0, attributes, 4);
 		} else if (message == 0x6) {
 			uint32_t limits[2] = { 3000 + in, 300 + in };   /* max, min */
 
@@ -144,7 +149,8 @@ only_reads(void)
 		unsigned protocol = asked[i] >> 8, message = asked[i] & 0xff;
 
 		CHECK(protocol == 0x13, "message %u of the performance protocol, not of %#x", i, protocol);
-		CHECK(message == 0x0 || message == 0x1 || message == 0x6 || message == 0x8, "message %u is %#x: not one that only reads", i,
+		CHECK(message == 0x0 || message == 0x1 || message == 0x3 || message == 0x6 || message == 0x8,
+		    "message %u is %#x: not one that only reads", i,
 		    message);
 	}
 }
@@ -161,7 +167,9 @@ reads_and_says(void)
 	CHECK(logged("scmi-perf: SCMI performance 4.0, 3 domains"), "said: %s", log_text);
 	CHECK(logged("scmi-perf: domain 0 current level 1000") && logged("scmi-perf: domain 2 current level 1002"), "each level: %s", log_text);
 	CHECK(logged("scmi-perf: domain 1 limits 301..3001"), "and limits, lowest first: %s", log_text);
-	CHECK(asked_n == 2 + 3 * 2 && rings == asked_n, "two questions, then two a domain: %u", asked_n);
+	CHECK(logged("scmi-perf: domain 1 attributes 0xea000000: set limits 1, set level 1, fast channels 1, level indexing 1, "
+	    "sustained 2000001 kHz at level 21"), "each one's attributes: %s", log_text);
+	CHECK(asked_n == 2 + 3 * 3 && rings == asked_n, "two questions, then three a domain: %u", asked_n);
 	only_reads();
 	CHECK(mapped_elsewhere == 0, "nothing but the channel mapped");
 }
@@ -174,7 +182,7 @@ four_domains_at_most(void)
 	domains = 0xffff;
 	boot_args = "scmi_perf=1";
 	hakios_scmi_perf_init();
-	CHECK(logged("4 domains") && asked_n == 2 + 4 * 2, "four: %u questions: %s", asked_n, log_text);
+	CHECK(logged("4 domains") && asked_n == 2 + 4 * 3, "four: %u questions: %s", asked_n, log_text);
 	only_reads();
 }
 

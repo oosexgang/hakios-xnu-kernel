@@ -7,6 +7,9 @@
  *   scmi_perf=2   each domain is also asked for its highest level (the UI is drawn by the CPUs);
  *                 the level it was found at stays the floor that thermal=2 holds it back to
  *
+ * Each domain's attributes (PERFORMANCE_DOMAIN_ATTRIBUTES) are logged: whether this agent may set its
+ * level and its limits, whether it has fast channels, its sustained frequency.
+ *
  * hakios_thermal.c uses hakios_scmi_perf_domain() and hakios_scmi_perf_set() when the SoC has no EPSS.
  */
 #include <kern/clock.h>
@@ -27,6 +30,7 @@
 #define SCMI_PERF               0x13
 #define SCMI_VERSION            0x0
 #define SCMI_ATTRIBUTES         0x1
+#define SCMI_PERF_DOMAIN_ATTRIBUTES 0x3
 #define SCMI_PERF_LIMITS_GET    0x6
 #define SCMI_PERF_LEVEL_SET     0x7
 #define SCMI_PERF_LEVEL_GET     0x8
@@ -136,8 +140,15 @@ hakios_scmi_perf_init(void)
 	hakios_say("scmi-perf: SCMI performance %u.%u, %u domains\n",
 	    version >> 16, version & 0xffff, domains);
 	for (uint32_t domain = 0; domain < domains; domain++) {
-		uint32_t level = 0, limits[2] = { 0, 0 };
+		uint32_t level = 0, limits[2] = { 0, 0 }, attr[4];
 		bool have_level, have_limits;
+
+		/* what this agent may do with the domain, as the firmware says (PERFORMANCE_DOMAIN_ATTRIBUTES) */
+		if (scmi_query(SCMI_PERF_DOMAIN_ATTRIBUTES, &domain, 1, attr, 4, &words) == 0 && words >= 1) {
+			hakios_say("scmi-perf: domain %u attributes %#x: set limits %u, set level %u, fast channels %u, "
+			    "level indexing %u, sustained %u kHz at level %u\n", domain, attr[0], attr[0] >> 31, (attr[0] >> 30) & 1,
+			    (attr[0] >> 27) & 1, (attr[0] >> 25) & 1, words >= 4 ? attr[2] : 0, words >= 4 ? attr[3] : 0);
+		}
 
 		have_level = scmi_query(SCMI_PERF_LEVEL_GET, &domain, 1, &level, 1, &words) == 0 && words >= 1;
 		if (have_level) {
