@@ -330,7 +330,7 @@ diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
  	ppnum_t pp)
  {
 -	flush_dcache((vm_offset_t) (pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
-+	/* (redwood: the page number is 32 bits wide and memory goes on above 4 GB: widen before shifting) */
++	/* (hakios: the page number is 32 bits wide and memory goes on above 4 GB: widen before shifting) */
 +	flush_dcache((vm_offset_t) pp << PAGE_SHIFT, PAGE_SIZE, TRUE);
  }
  

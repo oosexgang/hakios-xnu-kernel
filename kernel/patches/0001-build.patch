@@ -342,7 +342,7 @@ diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
 -# Link binary support library
 -ifneq ($(CURRENT_MACHINE_CONFIG),NONE)
 +LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel -lpthread_kext
-+# redwood: objects made outside this tree (the Wi-Fi driver, hakios_lx.c), linked when given
++# hakios: objects made outside this tree (the Wi-Fi driver, hakios_lx.c), linked when given
 +LD_KERNEL_ARCHIVES += $(HAKIOS_OBJECTS)
 +
 +# Link binary support library.  redwood: BCM2837 is a non-Apple board with no closed
@@ -382,7 +382,7 @@ diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
  osfmk/arm64/sptm/pmap/pmap_ppl_interface.c	optional nos_arm_asm config_sptm
  osfmk/arm64/sptm/start_sptm.s		optional nos_arm_asm config_sptm
 -osfmk/arm64/amcc_rorgn_sptm.c		optional nos_arm_asm config_sptm
-+#osfmk/arm64/amcc_rorgn_sptm.c		optional nos_arm_asm config_sptm   # redwood: Apple AMCC/CTRR lockdown, N/A on BCM2837
++#osfmk/arm64/amcc_rorgn_sptm.c		optional nos_arm_asm config_sptm   # hakios: Apple AMCC/CTRR lockdown, N/A on BCM2837
  osfmk/arm64/sptm/arm_init_sptm.c	optional config_sptm
  osfmk/arm64/sop.c			optional config_sptm
  
@@ -397,7 +397,7 @@ diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
 +#osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
 +#osfmk/arm64/amcc_rorgn_ppl_amcc.c optional nos_arm_asm config_pmap_ppl
 +#osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
-+#osfmk/arm64/amcc_rorgn_pv_ctrr.c optional nos_arm_asm   # redwood: Apple AMCC/CTRR lockdown, N/A on BCM2837
++#osfmk/arm64/amcc_rorgn_pv_ctrr.c optional nos_arm_asm   # hakios: Apple AMCC/CTRR lockdown, N/A on BCM2837
  osfmk/arm64/bcopy.s standard
  osfmk/arm64/bzero.s standard
  osfmk/arm/caches.c		standard

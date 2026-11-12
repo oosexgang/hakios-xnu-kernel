@@ -318,7 +318,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	}
 -
 +	/*
-+	 * redwood: do not require PERSONA_MGMT_ENTITLEMENT -- nothing is signed here and AMFI is a
++	 * hakios: do not require PERSONA_MGMT_ENTITLEMENT -- nothing is signed here and AMFI is a
 +	 * stub, so no task carries it, yet ordinary programs (and package managers like Sileo, which
 +	 * becomes root by spawning into persona 99) depend on persona spawns.  The uid/gid-0 check
 +	 * below still keeps a non-root caller from gaining root this way.
@@ -333,7 +333,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	if (!persona) {
 -		return ESRCH;
 -	}
-+	/* redwood: no personas exist in this port; a missing one is not an error (see spawn_persona_adopt) */
++	/* hakios: no personas exist in this port; a missing one is not an error (see spawn_persona_adopt) */
  
  	// non-root process should not be allowed to set persona with uid/gid 0
  	if (!kauth_cred_issuser(mycred) &&
@@ -354,7 +354,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	if (!persona) {
 -		return ESRCH;
 +		/*
-+		 * redwood: no personas exist in this port, so persona_lookup() fails for everyone.
++		 * hakios: no personas exist in this port, so persona_lookup() fails for everyone.
 +		 * What a caller asking for a persona actually wants is its credential (uid/gid/groups),
 +		 * not the persona object -- so apply that credential directly to the process instead of
 +		 * failing the spawn with ESRCH (which left callers such as a package manager waiting
@@ -869,7 +869,7 @@ diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
  static memorystatus_policy_t memstat_policy_config = kPolicyDefault;
  
 -#define MEMSTAT_PAGE_SHORTAGE_THRESHOLD_MAX ((uint32_t)(atop_64(max_mem) / 2))
-+#define MEMSTAT_PAGE_SHORTAGE_THRESHOLD_MAX ((uint32_t)(atop_64(memstat_memory_size) / 2)) /* redwood: sane_size, not max_mem (the RAM-disk image is not manageable memory) */
++#define MEMSTAT_PAGE_SHORTAGE_THRESHOLD_MAX ((uint32_t)(atop_64(memstat_memory_size) / 2)) /* hakios: sane_size, not max_mem (the RAM-disk image is not manageable memory) */
  
  /*
   * Jetsam Page Shortage Thresholds (PSTs):
@@ -882,7 +882,7 @@ diff --git a/bsd/kern/kern_memorystatus_internal.h b/bsd/kern/kern_memorystatus_
  
 -#define MEMSTAT_PERCENT_TOTAL_PAGES(p) ((uint32_t)(p * atop_64(max_mem) / 100))
 +/*
-+ * redwood: the memory there is to manage.  max_mem is the kernel's whole memory window, and here
++ * hakios: the memory there is to manage.  max_mem is the kernel's whole memory window, and here
 + * more than half of it is the system image -- a RAM disk the kernel boots from, which is nobody's
 + * to use or give back.  Thresholds taken as a per-cent of max_mem had idle daemons (and soon the
 + * window server) jetsammed with a quarter of the usable memory still free.  sane_size leaves the
@@ -950,7 +950,7 @@ diff --git a/bsd/kern/kern_priv.c b/bsd/kern/kern_priv.c
  	int error;
  
 +	/*
-+	 * redwood: nothing is signed here and no process carries an entitlement (AMFI is a stub), so
++	 * hakios: nothing is signed here and no process carries an entitlement (AMFI is a stub), so
 +	 * every privilege that an entitlement would answer for is refused -- and iOS leans on one of
 +	 * them for ordinary work. A daemon that goes to the network on behalf of an application
 +	 * (trustd checking the certificate for whoever opened the connection, nsurlsessiond carrying

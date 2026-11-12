@@ -52,7 +52,7 @@
 #if SOC_IS_VIRTUALIZED
 #  CPU_COUNTERS_BASE = [ ]
 #else /*!SOC_IS_VIRTUALIZED*/
-#  CPU_COUNTERS_BASE = [  ]   # redwood: BCM2837/Cortex has no Apple CPMU; disables cpc/kpc
+#  CPU_COUNTERS_BASE = [  ]   # hakios: BCM2837/Cortex has no Apple CPMU; disables cpc/kpc
 #endif /*SOC_IS_VIRTUALIZED*/
 #  PERF_DBG_BASE =  [ mach_kdp config_serial_kdp CPU_COUNTERS_BASE kperf ]
 #  PERF_DBG_RELEASE=[ PERF_DBG_BASE ist_kdebug ]

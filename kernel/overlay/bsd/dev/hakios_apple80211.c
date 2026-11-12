@@ -1,5 +1,5 @@
 /*
- * Darwin-on-redwood: Apple80211, answered in the kernel.
+ * HakiOS: Apple80211, answered in the kernel.
  *
  * iOS's Wi-Fi side -- wifid, and through it Settings and the status bar -- talks to a Wi-Fi
  * driver in requests that were once ioctls and are, where the driver offers no user client,
@@ -310,7 +310,7 @@ get(struct apple80211req *request)
 	switch (request->req_type) {
 	case 43:
 	case 44: {                              /* the driver's and the hardware's name: the text alone, in 256 bytes */
-		static const char name[256] = "redwood: ath11k for the WCN6750";
+		static const char name[256] = "hakios: ath11k for the WCN6750";
 
 		return give(request, name, sizeof(name));
 	}

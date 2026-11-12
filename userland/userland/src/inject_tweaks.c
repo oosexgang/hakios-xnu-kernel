@@ -177,7 +177,7 @@ wanted_here(const char *path, const char *name, const char *identifier)
 		if (plist != NULL) {
 			CFRelease(plist);
 		}
-		say("redwood: tweaks: %s is not a property list\n", path);
+		say("hakios: tweaks: %s is not a property list\n", path);
 		return false;
 	}
 	filter_key = CFSTR("Filter");
@@ -246,15 +246,15 @@ load_the_tweaks(void)
 			tried++;
 			if (dlopen(dylib, RTLD_NOW | RTLD_GLOBAL) != NULL) {
 				opened++;
-				say("redwood: tweaks: %s\n", dylib);
+				say("hakios: tweaks: %s\n", dylib);
 			} else {
-				say("redwood: tweaks: %s: %s\n", dylib, dlerror());
+				say("hakios: tweaks: %s: %s\n", dylib, dlerror());
 			}
 		}
 		closedir(dir);
 	}
 	if (tried > 0) {
-		say("redwood: tweaks: %s (%s): %d of %d opened\n", name != NULL ? name : "?",
+		say("hakios: tweaks: %s (%s): %d of %d opened\n", name != NULL ? name : "?",
 		    who != NULL ? who : "no bundle", opened, tried);
 	}
 }

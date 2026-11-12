@@ -1,5 +1,5 @@
 /*
- * Darwin-on-redwood: what stands between the two sides of the station boundary
+ * HakiOS: what stands between the two sides of the station boundary
  * (sys/hakios_sta.h).
  *
  * Whoever wants a network asks from wherever it happens to be: an ioctl of wifid's, the thread

@@ -1,5 +1,5 @@
 /*
- * Darwin-on-redwood: the kernel's side of the Wi-Fi driver's object.
+ * HakiOS: the kernel's side of the Wi-Fi driver's object.
  *
  * The driver of the phone's radio is Linux's ath11k, compiled unmodified outside this tree on a
  * layer that gives it the kernel interfaces it expects, and tied into one object that the

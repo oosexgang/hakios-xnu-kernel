@@ -10,7 +10,7 @@
 extern "C" {
 #include <pexpert/pexpert.h>
 
-extern int master_cpu;   /* redwood: boot CPU number, set by arm_init(); not in a C++-visible header on xnu-12377 */
+extern int master_cpu;   /* hakios: boot CPU number, set by arm_init(); not in a C++-visible header on xnu-12377 */
 #include <pexpert/arm64/board_config.h>
 #include <kern/cpu_number.h>
 }

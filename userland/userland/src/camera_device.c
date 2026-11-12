@@ -28,7 +28,7 @@
  * a lens motor (the wide camera's): by contrast, continuous, and on the window a tap gives (af_frame()).
  *
  * Everything asked of the device and the streams that is not answered here is said in mediaserverd's
- * log ("redwood: camera: ..."), once per property.
+ * log ("hakios: camera: ..."), once per property.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>
@@ -55,7 +55,7 @@ hakios_camera_say(const char *format, ...)
 {
 	char line[400];
 	va_list ap;
-	int n = snprintf(line, sizeof(line), "redwood: camera: ");
+	int n = snprintf(line, sizeof(line), "hakios: camera: ");
 
 	va_start(ap, format);
 	n += vsnprintf(line + n, sizeof(line) - (size_t)n, format, ap);

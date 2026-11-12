@@ -1,5 +1,5 @@
 /*
- * Darwin-on-redwood: the station boundary.
+ * HakiOS: the station boundary.
  *
  * On one side whatever does the scanning and the joining with a radio: the station logic over
  * ath11k on the phone (wifi/lx in the repository). On the other whoever wants a network: the

@@ -243,10 +243,10 @@ say(const char *format, ...)
 	 * report read by position belongs to whichever process happened to be writing -- the lines are
 	 * interleaved, not grouped. Every line names its own program instead.
 	 */
-	if (strncmp(line, "redwood: store: ", 16) == 0) {
+	if (strncmp(line, "hakios: store: ", 16) == 0) {
 		char named[sizeof(line) + 32];
 
-		n = snprintf(named, sizeof(named), "redwood: %s: %s", who, line + 16);
+		n = snprintf(named, sizeof(named), "hakios: %s: %s", who, line + 16);
 		if (n > (int)sizeof(named) - 1) {
 			n = sizeof(named) - 1;
 		}
@@ -279,7 +279,7 @@ step_in(int which)
 	unsigned n = __sync_add_and_fetch(&serial, 1);
 
 	entered[which]++;
-	say("redwood: store: -> #%u %s\n", n, counted[which]);
+	say("hakios: store: -> #%u %s\n", n, counted[which]);
 	return n;
 }
 
@@ -287,7 +287,7 @@ static void
 step_out(int which, unsigned n, bool got_something)
 {
 	returned[which]++;
-	say("redwood: store: <- #%u %s%s\n", n, counted[which], got_something ? "" : " (nil)");
+	say("hakios: store: <- #%u %s%s\n", n, counted[which], got_something ? "" : " (nil)");
 }
 
 /*
@@ -344,7 +344,7 @@ dump_tasks(void)
 {
 	static const char *const states[] = { "running", "suspended", "cancelling", "COMPLETED" };
 
-	say("redwood: store: %u tasks resumed\n", task_count);
+	say("hakios: store: %u tasks resumed\n", task_count);
 	for (unsigned i = 0; i < task_count; i++) {
 		id task = tasks[i];
 		long state = ((long (*)(id, SEL))objc_msgSend)(task, sel_registerName("state"));
@@ -357,7 +357,7 @@ dump_tasks(void)
 		id type = response != NULL ? ((id (*)(id, SEL))objc_msgSend)(response, sel_registerName("MIMEType")) : NULL;
 		char one[96], two[64], three[200];
 
-		say("redwood: store: task %u %s status %ld, %lld bytes, %s%s%s, %s\n", i,
+		say("hakios: store: task %u %s status %ld, %lld bytes, %s%s%s, %s\n", i,
 		    state >= 0 && state < 4 ? states[state] : "?", status, got,
 		    type != NULL ? text_of(type, one, sizeof(one)) : "(no type)",
 		    error != NULL ? ", error " : "", error != NULL ? text_of(error, two, sizeof(two)) : "",
@@ -478,7 +478,7 @@ new_brotli(id self, SEL cmd, void *a, void *b, void *c, void *d)
 	result = old_brotli(self, cmd, a, b, c, d);
 	returned[COUNT_brotli]++;
 	if (returned[COUNT_brotli] <= 4 || result != 1) {
-		say("redwood: store: BROTLI decompressStream -> %ld (call %lu)\n", result, returned[COUNT_brotli]);
+		say("hakios: store: BROTLI decompressStream -> %ld (call %lu)\n", result, returned[COUNT_brotli]);
 	}
 	return result;
 }
@@ -519,7 +519,7 @@ new_dataTaskLocal(id self, SEL cmd, void *request, void *handler)
 	entered[COUNT_dataTaskCreated]++;
 	task = ((id (*)(id, SEL, void *, void *))old_dataTaskLocal)(self, cmd, request, handler);
 	returned[COUNT_dataTaskCreated]++;
-	say("redwood: store: TASK CREATED %s\n", text_of((id)request, buffer, sizeof(buffer)));
+	say("hakios: store: TASK CREATED %s\n", text_of((id)request, buffer, sizeof(buffer)));
 	return task;
 }
 
@@ -539,7 +539,7 @@ new_dataTaskAMS(id self, SEL cmd, void *request, void *handler)
 	entered[COUNT_dataTaskCreated]++;
 	task = ((id (*)(id, SEL, void *, void *))old_dataTaskAMS)(self, cmd, request, handler);
 	returned[COUNT_dataTaskCreated]++;
-	say("redwood: store: TASK CREATED (ams session) %s\n", text_of((id)request, buffer, sizeof(buffer)));
+	say("hakios: store: TASK CREATED (ams session) %s\n", text_of((id)request, buffer, sizeof(buffer)));
 	return task;
 }
 
@@ -553,7 +553,7 @@ new_dataTaskURL(id self, SEL cmd, void *url, void *handler)
 	entered[COUNT_dataTaskCreated]++;
 	task = ((id (*)(id, SEL, void *, void *))old_dataTaskURL)(self, cmd, url, handler);
 	returned[COUNT_dataTaskCreated]++;
-	say("redwood: store: TASK CREATED (url) %s\n", text_of((id)url, buffer, sizeof(buffer)));
+	say("hakios: store: TASK CREATED (url) %s\n", text_of((id)url, buffer, sizeof(buffer)));
 	return task;
 }
 
@@ -568,7 +568,7 @@ new_dataTaskSignpost(id self, SEL cmd, void *request, void *signpost, void *hand
 	entered[COUNT_dataTaskCreated]++;
 	task = ((id (*)(id, SEL, void *, void *, void *))old_dataTaskSignpost)(self, cmd, request, signpost, handler);
 	returned[COUNT_dataTaskCreated]++;
-	say("redwood: store: TASK CREATED (ams) %s\n", text_of((id)request, buffer, sizeof(buffer)));
+	say("hakios: store: TASK CREATED (ams) %s\n", text_of((id)request, buffer, sizeof(buffer)));
 	return task;
 }
 
@@ -582,7 +582,7 @@ new_dataTaskPlain(id self, SEL cmd, void *request)
 	entered[COUNT_dataTaskCreated]++;
 	task = ((id (*)(id, SEL, void *))old_dataTaskPlain)(self, cmd, request);
 	returned[COUNT_dataTaskCreated]++;
-	say("redwood: store: TASK CREATED (no handler) %s\n", text_of((id)request, buffer, sizeof(buffer)));
+	say("hakios: store: TASK CREATED (no handler) %s\n", text_of((id)request, buffer, sizeof(buffer)));
 	return task;
 }
 
@@ -602,11 +602,11 @@ dump_classes(const char *needle)
 
 		if (name != NULL && strstr(name, needle) != NULL) {
 			shown++;
-			say("redwood: store: class %s\n", name);
+			say("hakios: store: class %s\n", name);
 		}
 	}
 	free(classes);
-	say("redwood: store: %u classes in all, %u named like \"%s\"\n", count, shown, needle);
+	say("hakios: store: %u classes in all, %u named like \"%s\"\n", count, shown, needle);
 }
 
 /*
@@ -632,7 +632,7 @@ new_updateStorefront(id self, SEL cmd, void *account)
 	(void)account;
 	entered[COUNT_updateStorefront]++;
 	returned[COUNT_updateStorefront]++;
-	say("redwood: store: INJECTED _updateStorefrontInLocalAccount: answered at once, no update\n");
+	say("hakios: store: INJECTED _updateStorefrontInLocalAccount: answered at once, no update\n");
 	return (void *)((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("ams_localiTunesAccount"));
 }
 
@@ -648,7 +648,7 @@ new_addCookiesBlocking(id self, SEL cmd, void *account, void *client, void *bag,
 	(void)cleanup;
 	entered[COUNT_addCookiesBlocking]++;
 	returned[COUNT_addCookiesBlocking]++;
-	say("redwood: store: INJECTED ams_addCookiesForAccount:...:cleanupGlobalCookies: answered with "
+	say("hakios: store: INJECTED ams_addCookiesForAccount:...:cleanupGlobalCookies: answered with "
 	    "NO COOKIES (not measured; the real one waits for ever on amsaccountsd)\n");
 	return NULL;
 }
@@ -675,7 +675,7 @@ new_processStream(id self, SEL cmd, void *stream, void *verifier, void *options,
 	char one[200];
 
 	entered[COUNT_processStream]++;
-	say("redwood: store: JETPACK processStream: in\n");
+	say("hakios: store: JETPACK processStream: in\n");
 	result = old_processStream(self, cmd, stream, verifier, options, error);
 	returned[COUNT_processStream]++;
 	{
@@ -683,7 +683,7 @@ new_processStream(id self, SEL cmd, void *stream, void *verifier, void *options,
 		char frames[10 * 20 + 1] = "";
 
 		frames_from((uintptr_t)__builtin_frame_address(0), frames, sizeof(frames));
-		say("redwood: store: JETPACK processStream: out, %s, error %s, to%s\n",
+		say("hakios: store: JETPACK processStream: out, %s, error %s, to%s\n",
 		    result != NULL ? "a result" : "(nil)",
 		    error != NULL && *error != NULL ? text_of(*error, one, sizeof(one)) : "(none)", frames);
 	}
@@ -731,7 +731,7 @@ new_postName(id self, SEL cmd, id name, id object, id info)
 
 	notifications++;
 	if (interesting_name(text)) {
-		say("redwood: store: NOTIFICATION %s\n", text);
+		say("hakios: store: NOTIFICATION %s\n", text);
 	}
 	return old_postName(self, cmd, name, object, info);
 }
@@ -746,7 +746,7 @@ new_postNotification(id self, SEL cmd, id note)
 
 	notifications++;
 	if (interesting_name(text)) {
-		say("redwood: store: NOTIFICATION (object) %s\n", text);
+		say("hakios: store: NOTIFICATION (object) %s\n", text);
 	}
 	return old_postNotification(self, cmd, note);
 }
@@ -799,9 +799,9 @@ note_error(id domain, long code)
 static void
 dump_errors(void)
 {
-	say("redwood: store: %u kinds of error made\n", error_count);
+	say("hakios: store: %u kinds of error made\n", error_count);
 	for (unsigned i = 0; i < error_count; i++) {
-		say("redwood: store: error %-40s code %ld, %u time(s)\n", errors[i].domain, errors[i].code,
+		say("hakios: store: error %-40s code %ld, %u time(s)\n", errors[i].domain, errors[i].code,
 		    errors[i].count);
 	}
 }
@@ -866,9 +866,9 @@ note_bagkey(const char *key, bool answered)
 static void
 dump_bagkeys(void)
 {
-	say("redwood: store: %u bag keys asked for\n", bagkey_count);
+	say("hakios: store: %u bag keys asked for\n", bagkey_count);
 	for (unsigned i = 0; i < bagkey_count; i++) {
-		say("redwood: store: bag key %-44s asked %u, answered %u%s\n", bagkeys[i].key, bagkeys[i].asked,
+		say("hakios: store: bag key %-44s asked %u, answered %u%s\n", bagkeys[i].key, bagkeys[i].asked,
 		    bagkeys[i].answered, bagkeys[i].answered == 0 ? "   <-- THE BAG HAS NOT GOT IT" : "");
 	}
 }
@@ -964,11 +964,11 @@ note_label(void *promise, const char *label, const char *frames)
 static void
 dump_promises(void)
 {
-	say("redwood: store: %u promises seen\n", promise_count);
+	say("hakios: store: %u promises seen\n", promise_count);
 	for (unsigned i = 0; i < promise_count; i++) {
 		struct promise_note *note = &promises[i];
 
-		say("redwood: store: promise %p %-16s waiters %2u sync %u finished %u%s tid %llu seen from%s\n",
+		say("hakios: store: promise %p %-16s waiters %2u sync %u finished %u%s tid %llu seen from%s\n",
 		    note->promise, note->label != NULL ? note->label : "", note->waiters, note->sync_waiters,
 		    note->finished,
 		    note->finished == 0 && note->sync_waiters > 0 ? "  <-- NOBODY FULFILS IT" : "",
@@ -994,10 +994,10 @@ dump_threads(void)
 	mach_port_t me = mach_task_self();
 
 	if (task_threads(me, &threads, &count) != KERN_SUCCESS) {
-		say("redwood: store: task_threads() refused\n");
+		say("hakios: store: task_threads() refused\n");
 		return;
 	}
-	say("redwood: store: %u threads\n", count);
+	say("hakios: store: %u threads\n", count);
 	for (unsigned i = 0; i < count; i++) {
 		arm_thread_state64_t state;
 		mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
@@ -1011,11 +1011,11 @@ dump_threads(void)
 			suspend = basic.suspend_count;
 		}
 		if (thread_get_state(threads[i], ARM_THREAD_STATE64, (thread_state_t)&state, &state_count) != KERN_SUCCESS) {
-			say("redwood: store: thread %u: no state (run %d)\n", i, run_state);
+			say("hakios: store: thread %u: no state (run %d)\n", i, run_state);
 			continue;
 		}
 		frames_from((uintptr_t)arm_thread_state64_get_fp(state), text, sizeof(text));
-		say("redwood: store: thread %u: run %d suspend %d pc %#lx lr %#lx from%s\n", i, run_state, suspend,
+		say("hakios: store: thread %u: run %d suspend %d pc %#lx lr %#lx from%s\n", i, run_state, suspend,
 		    (uintptr_t)arm_thread_state64_get_pc(state) - slide,
 		    (uintptr_t)arm_thread_state64_get_lr(state) - slide, text);
 	}
@@ -1038,7 +1038,7 @@ say_the_fault(int signal_number, siginfo_t *info, void *context_in)
 		fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(context->uc_mcontext->__ss);
 	}
 	frames_from(fp, frames, sizeof(frames));
-	say("redwood: store: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
+	say("hakios: store: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
 	    info != NULL ? info->si_addr : NULL, pc - slide, lr - slide, frames);
 	signal(signal_number, SIG_DFL);
 	raise(signal_number);
@@ -1091,7 +1091,7 @@ new_ams_storefront(id self, SEL _cmd)
 		char buffer[128];
 
 		said = true;
-		say("redwood: store: ams_storefront was %s, now " STOREFRONT "\n", text_of(was, buffer, sizeof(buffer)));
+		say("hakios: store: ams_storefront was %s, now " STOREFRONT "\n", text_of(was, buffer, sizeof(buffer)));
 	}
 	returned[COUNT_ams_storefront]++;
 	return was != NULL ? was : (id)storefront;
@@ -1103,7 +1103,7 @@ new_cached_storefront(id self, SEL _cmd)
 	entered[COUNT_cachedStorefront]++;
 	id was = old_cached_storefront != NULL ? old_cached_storefront(self, _cmd) : NULL;
 
-	say("redwood: store: cachedStorefront was %s\n", was != NULL ? "set" : "(nil), now " STOREFRONT);
+	say("hakios: store: cachedStorefront was %s\n", was != NULL ? "set" : "(nil), now " STOREFRONT);
 	returned[COUNT_cachedStorefront]++;
 	return was != NULL ? was : (id)storefront;
 }
@@ -1115,7 +1115,7 @@ new_bag_storefront(id self, SEL _cmd, id media_type)
 	id was = old_bag_storefront != NULL ? old_bag_storefront(self, _cmd, media_type) : NULL;
 	char buffer[128];
 
-	say("redwood: store: bagStorefrontForAccountMediaType:%s was %s\n", text_of(media_type, buffer, sizeof(buffer)),
+	say("hakios: store: bagStorefrontForAccountMediaType:%s was %s\n", text_of(media_type, buffer, sizeof(buffer)),
 	    was != NULL ? "set" : "(nil), now " STOREFRONT);
 	returned[COUNT_bagStorefront_fixed]++;
 	return was != NULL ? was : (id)storefront;
@@ -1128,7 +1128,7 @@ new_bag_storefront_active(id self, SEL _cmd, id media_type)
 	id was = old_bag_storefront_active != NULL ? old_bag_storefront_active(self, _cmd, media_type) : NULL;
 	char buffer[128];
 
-	say("redwood: store: active bagStorefrontForAccountMediaType:%s was %s\n",
+	say("hakios: store: active bagStorefrontForAccountMediaType:%s was %s\n",
 	    text_of(media_type, buffer, sizeof(buffer)), was != NULL ? "set" : "(nil), now " STOREFRONT);
 	returned[COUNT_bagStorefront_active]++;
 	return was != NULL ? was : (id)storefront;
@@ -1140,7 +1140,7 @@ new_copy_storefront(id self, SEL _cmd, id account)
 	entered[COUNT_copyStorefront]++;
 	id was = old_copy_storefront != NULL ? old_copy_storefront(self, _cmd, account) : NULL;
 
-	say("redwood: store: ams_copyStorefrontFromAccount: was %s\n",
+	say("hakios: store: ams_copyStorefrontFromAccount: was %s\n",
 	    was != NULL ? "set" : "(nil), now " STOREFRONT);
 	returned[COUNT_copyStorefront]++;
 	return was != NULL ? was : (id)storefront;
@@ -1155,7 +1155,7 @@ new_bag_account(id self, SEL _cmd, id media_type, bool must_contain_storefront)
 	returned[COUNT_bagAccount]++;
 	char one[128], two[192];
 
-	say("redwood: store: _bagAccountForAccountMediaType:%s mustContainStorefront:%d -> %s\n",
+	say("hakios: store: _bagAccountForAccountMediaType:%s mustContainStorefront:%d -> %s\n",
 	    text_of(media_type, one, sizeof(one)), must_contain_storefront ? 1 : 0, text_of(account, two, sizeof(two)));
 	return account;
 }
@@ -1170,18 +1170,18 @@ new_perform_fetch(id self, SEL _cmd, long attempt, id account, id front)
 
 	id promise;
 
-	say("redwood: store: BAG FETCH attempt %ld, storefront %s, account %s\n", attempt,
+	say("hakios: store: BAG FETCH attempt %ld, storefront %s, account %s\n", attempt,
 	    text_of(front, two, sizeof(two)), text_of(account, one, sizeof(one)));
 	for (size_t i = 0; i < replacement_count(); i++) {
 		if (!replacements[i].done) {
-			say("redwood: store: NOT TAKEN %c[%s %s]\n", replacements[i].class_method ? '+' : '-',
+			say("hakios: store: NOT TAKEN %c[%s %s]\n", replacements[i].class_method ? '+' : '-',
 			    replacements[i].class_name, replacements[i].selector);
 		}
 	}
 	promise = old_perform_fetch(self, _cmd, attempt, account, front);
 	returned[COUNT_performFetch]++;
 	note_label(promise, "THE BAG FETCH", NULL);
-	say("redwood: store: BAG FETCH returned %s\n", promise != NULL ? "a promise" : "(nil)");
+	say("hakios: store: BAG FETCH returned %s\n", promise != NULL ? "a promise" : "(nil)");
 	return promise;
 }
 
@@ -1192,7 +1192,7 @@ new_query_items(id self, SEL _cmd, id client, id profile, id version, id cookies
 	id items = old_query_items(self, _cmd, client, profile, version, cookies, account, front);
 	char one[64], two[160];
 
-	say("redwood: store: BAG QUERY profile %s, storefront %s -> %s\n", text_of(profile, one, sizeof(one)),
+	say("hakios: store: BAG QUERY profile %s, storefront %s -> %s\n", text_of(profile, one, sizeof(one)),
 	    text_of(front, two, sizeof(two)), items != NULL ? "items" : "(nil)");
 	return items;
 }
@@ -1204,7 +1204,7 @@ new_perform_request(id self, SEL _cmd, id request, id completion)
 	entered[COUNT_performRequest]++;
 	char buffer[320];
 
-	say("redwood: store: AMSURLSession performRequest:completion: %s\n", text_of(request, buffer, sizeof(buffer)));
+	say("hakios: store: AMSURLSession performRequest:completion: %s\n", text_of(request, buffer, sizeof(buffer)));
 	return old_perform_request(self, _cmd, request, completion);
 }
 
@@ -1214,7 +1214,7 @@ new_perform_request_block(id self, SEL _cmd, id request, id completion)
 	entered[COUNT_performRequestBlock]++;
 	char buffer[320];
 
-	say("redwood: store: AMSURLSession performRequest:completionBlock: %s\n", text_of(request, buffer, sizeof(buffer)));
+	say("hakios: store: AMSURLSession performRequest:completionBlock: %s\n", text_of(request, buffer, sizeof(buffer)));
 	return old_perform_request_block(self, _cmd, request, completion);
 }
 
@@ -1229,7 +1229,7 @@ say_resume(id task, const char *where)
 	char buffer[320];
 	id request = ((id (*)(id, SEL))objc_msgSend)(task, sel_registerName("originalRequest"));
 
-	say("redwood: store: TASK RESUME (%s) %s\n", where, text_of(request, buffer, sizeof(buffer)));
+	say("hakios: store: TASK RESUME (%s) %s\n", where, text_of(request, buffer, sizeof(buffer)));
 }
 
 static void
@@ -1264,14 +1264,14 @@ dump_selectors(const char *class_name, const char *needle)
 	Method *methods = cls != NULL ? class_copyMethodList(cls, &count) : NULL;
 
 	if (methods == NULL) {
-		say("redwood: store: %s: no such class\n", class_name);
+		say("hakios: store: %s: no such class\n", class_name);
 		return;
 	}
 	for (unsigned i = 0; i < count; i++) {
 		const char *name = sel_getName(method_getName(methods[i]));
 
 		if (needle == NULL || strstr(name, needle) != NULL) {
-			say("redwood: store: %s has -%s\n", class_name, name);
+			say("hakios: store: %s has -%s\n", class_name, name);
 		}
 	}
 	free(methods);
@@ -1282,19 +1282,19 @@ one_report(unsigned seconds)
 {
 	bool first = seconds <= 15;
 
-	say("redwood: store(%s): report at %u s\n", who, seconds);
+	say("hakios: store(%s): report at %u s\n", who, seconds);
 	image_added(NULL, 0);           /* and try again for anything whose class has turned up since */
 	/*
 	 * These two on their own, before the long report: last time the brotli counter was one line of
 	 * sixty and it went missing, and a missing line is what this branch has been wrong about five
 	 * times. A number that matters does not travel in a crowd.
 	 */
-	say("redwood: store: KEY brotli entered %lu returned %lu, processStream entered %lu returned %lu\n",
+	say("hakios: store: KEY brotli entered %lu returned %lu, processStream entered %lu returned %lu\n",
 	    entered[COUNT_brotli], returned[COUNT_brotli], entered[COUNT_processStream], returned[COUNT_processStream]);
 
 	for (size_t i = 0; i < replacement_count(); i++) {
 		if (!replacements[i].done) {
-			say("redwood: store: NOT TAKEN %c[%s %s]\n", replacements[i].class_method ? '+' : '-',
+			say("hakios: store: NOT TAKEN %c[%s %s]\n", replacements[i].class_method ? '+' : '-',
 			    replacements[i].class_name, replacements[i].selector);
 		}
 	}
@@ -1306,7 +1306,7 @@ one_report(unsigned seconds)
 		 * ams_addCookiesForAccount:clientInfo:bag:cleanupGlobalCookies: instead. Hooked and never
 		 * entered can mean the hook is wrong, not the code.
 		 */
-		say("redwood: store: entered %4lu returned %4lu %s%s\n", entered[i], returned[i], counted[i],
+		say("hakios: store: entered %4lu returned %4lu %s%s\n", entered[i], returned[i], counted[i],
 		    entered[i] > returned[i] ? "   <-- STILL IN IT" :
 		    entered[i] == 0 ? "   <-- NEVER ENTERED: suspect the hook, not the code" : "");
 	}
@@ -1324,7 +1324,7 @@ one_report(unsigned seconds)
 		dump_classes("Jet");
 		dump_classes("JE");
 	}
-	say("redwood: store: %lu notifications posted\n", notifications);
+	say("hakios: store: %lu notifications posted\n", notifications);
 }
 
 /*
@@ -1367,7 +1367,7 @@ new_create_request(id self, SEL _cmd, id items)
 	entered[COUNT_createRequest]++;
 	request = old_create_request(self, _cmd, items);
 	returned[COUNT_createRequest]++;
-	say("redwood: store: STEP _createRequestWithQueryItems: -> %s\n", text_of(request, buffer, sizeof(buffer)));
+	say("hakios: store: STEP _createRequestWithQueryItems: -> %s\n", text_of(request, buffer, sizeof(buffer)));
 	note_label(request, "THE BAG REQUEST", NULL);
 	return request;
 }
@@ -1381,7 +1381,7 @@ new_session_promise(id self, SEL _cmd)
 	entered[COUNT_sessionPromise]++;
 	promise = old_session_promise(self, _cmd);
 	returned[COUNT_sessionPromise]++;
-	say("redwood: store: STEP URLSessionPromise -> %s\n", text_of(promise, buffer, sizeof(buffer)));
+	say("hakios: store: STEP URLSessionPromise -> %s\n", text_of(promise, buffer, sizeof(buffer)));
 	return promise;
 }
 
@@ -1394,7 +1394,7 @@ new_data_task_promise(id self, SEL _cmd, id request)
 	entered[COUNT_dataTaskPromise]++;
 	promise = old_data_task_promise(self, _cmd, request);
 	returned[COUNT_dataTaskPromise]++;
-	say("redwood: store: STEP dataTaskPromiseWithRequest: -> %s\n", text_of(promise, buffer, sizeof(buffer)));
+	say("hakios: store: STEP dataTaskPromiseWithRequest: -> %s\n", text_of(promise, buffer, sizeof(buffer)));
 	return promise;
 }
 
@@ -1407,7 +1407,7 @@ new_data_task(id self, SEL _cmd, id request)
 	entered[COUNT_dataTask]++;
 	task = old_data_task(self, _cmd, request);
 	returned[COUNT_dataTask]++;
-	say("redwood: store: STEP dataTaskWithRequest: -> %s\n", text_of(task, buffer, sizeof(buffer)));
+	say("hakios: store: STEP dataTaskWithRequest: -> %s\n", text_of(task, buffer, sizeof(buffer)));
 	return task;
 }
 
@@ -1450,7 +1450,7 @@ new_##name(id self, SEL cmd, void *a) \
 { \
 	unsigned n = step_in(COUNT_##name); \
 	void *result = old_##name(self, cmd, a); \
-	say("redwood: store: #%u is for promise %p\n", n, (void *)self); \
+	say("hakios: store: #%u is for promise %p\n", n, (void *)self); \
 	step_out(COUNT_##name, n, result != NULL); \
 	return result; \
 }
@@ -1517,7 +1517,7 @@ new_fpDeviceType(id self, SEL _cmd)
 	(void)_cmd;
 	entered[COUNT_fpDeviceType]++;
 	returned[COUNT_fpDeviceType]++;
-	say("redwood: store: FairPlay device type answered INJECTED \"" FAIRPLAY_DEVICE_TYPE "\" "
+	say("hakios: store: FairPlay device type answered INJECTED \"" FAIRPLAY_DEVICE_TYPE "\" "
 	    "(not measured; the real one blocks for ever, see src/inject_fairplay.c)\n");
 	return (id)fairplay_device_type;
 }
@@ -1548,7 +1548,7 @@ new_afterUpdating(id self, SEL cmd, void *storefront)
 	entered[COUNT_afterUpdating]++;
 	account = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("ams_localiTunesAccount"));
 	returned[COUNT_afterUpdating]++;
-	say("redwood: store: _ams_localiTunesAccountAfterUpdatingStorefront: answered at once, %s\n",
+	say("hakios: store: _ams_localiTunesAccountAfterUpdatingStorefront: answered at once, %s\n",
 	    account != NULL ? "with the local account" : "with nothing");
 	return account;
 }
@@ -1779,7 +1779,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 		if (super != NULL && method == (r->class_method ? class_getClassMethod(super, selector) :
 		    class_getInstanceMethod(super, selector))) {
 			r->done = true;
-			say("redwood: store: %c[%s %s] is inherited, not this class's: left alone\n",
+			say("hakios: store: %c[%s %s] is inherited, not this class's: left alone\n",
 			    r->class_method ? '+' : '-', r->class_name, r->selector);
 			continue;
 		}
@@ -1789,7 +1789,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 			*r->original = original;
 		}
 		method_setImplementation(method, r->replacement);
-		say("redwood: store: %c[%s %s] taken (was %#lx unslid)\n", r->class_method ? '+' : '-', r->class_name,
+		say("hakios: store: %c[%s %s] taken (was %#lx unslid)\n", r->class_method ? '+' : '-', r->class_name,
 		    r->selector, (uintptr_t)original - slide);
 	}
 }
@@ -1815,7 +1815,7 @@ hakios_store_init(void)
 	storefront = CFStringCreateWithCString(NULL, STOREFRONT, kCFStringEncodingUTF8);
 	fairplay_device_type = CFStringCreateWithCString(NULL, FAIRPLAY_DEVICE_TYPE, kCFStringEncodingUTF8);
 	who = name;
-	say("redwood: store(%s): ours is in, storefront to answer with is " STOREFRONT "\n", name);
+	say("hakios: store(%s): ours is in, storefront to answer with is " STOREFRONT "\n", name);
 	{
 		pthread_t thread;
 

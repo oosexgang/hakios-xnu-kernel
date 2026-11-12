@@ -148,7 +148,7 @@ replace_method_of_kind(char kind, const char *class_name, const char *selector, 
 	IMP original = method ? method_getImplementation(method) : NULL;
 
 	if (original == NULL || (uintptr_t)original != expected + slide) {
-		say("redwood: %c[%s %s]: found %#lx, expected %#lx; left alone\n", kind, class_name, selector,
+		say("hakios: %c[%s %s]: found %#lx, expected %#lx; left alone\n", kind, class_name, selector,
 		    original ? (uintptr_t)original - slide : 0, expected);
 		return NULL;
 	}
@@ -182,7 +182,7 @@ static void
 set_setup_required_reason(id self, SEL selector, long reason)
 {
 	if (reason != 0) {
-		say("redwood: SpringBoard wants the setup assistant (reason %ld); not here\n", reason);
+		say("hakios: SpringBoard wants the setup assistant (reason %ld); not here\n", reason);
 	}
 	original_set_setup_required_reason(self, selector, 0);
 }
@@ -428,7 +428,7 @@ plain_vibrancy(void)
 		return;
 	}
 	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-	say("redwood: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
+	say("hakios: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
@@ -476,7 +476,7 @@ lock_long_press(id self, SEL selector, id recognizer)
 	if (state == GESTURE_BEGAN) {
 		dropping = !lock_button_held();
 		if (dropping) {
-			say("redwood: SpringBoard: a long press of the side button, which was released long ago: dropped\n");
+			say("hakios: SpringBoard: a long press of the side button, which was released long ago: dropped\n");
 		}
 	}
 	if (dropping) {
@@ -502,18 +502,18 @@ unlock(void)
 
 	if (cls == NULL || class_getClassMethod(cls, shared) == NULL || class_getInstanceMethod(cls, locked) == NULL ||
 	    class_getInstanceMethod(cls, unlock_ui) == NULL) {
-		say("redwood: unlock: SBLockScreenManager is not what it was\n");
+		say("hakios: unlock: SBLockScreenManager is not what it was\n");
 		return;
 	}
 	manager = ((id (*)(Class, SEL))objc_msgSend)(cls, shared);
 	if (manager == NULL) {
-		say("redwood: unlock: no lock screen manager yet\n");
+		say("hakios: unlock: no lock screen manager yet\n");
 	} else if (!((BOOL (*)(id, SEL))objc_msgSend)(manager, locked)) {
-		say("redwood: unlock: not locked\n");
+		say("hakios: unlock: not locked\n");
 	} else {
 		BOOL done = ((BOOL (*)(id, SEL, long, id))objc_msgSend)(manager, unlock_ui, UNLOCK_SOURCE_COVER_SHEET, NULL);
 
-		say("redwood: unlock: asked, answer %d\n", done);
+		say("hakios: unlock: asked, answer %d\n", done);
 	}
 }
 
@@ -600,7 +600,7 @@ switcher_wallpaper_overlay(id self, SEL selector)
 		    (at = strstr(args, "switcher_wallpaper=1")) != NULL && (at == args || at[-1] == ' ');
 	}
 	if (told++ == 0) {
-		say("redwood: the switcher's wash of wallpaper is %s\n", wanted ?
+		say("hakios: the switcher's wash of wallpaper is %s\n", wanted ?
 		    "drawn as iOS asks (switcher_wallpaper=1)" : "left out: there is no picture of the wallpaper for it");
 	}
 	if (wanted) {
@@ -651,17 +651,17 @@ prewarm_orb_view_shaders(id self, SEL selector)
 		skip = boot_arg_is_set("siri_orb=0");
 	}
 	if (create == NULL) {
-		say("redwood: Siri's orb: MTLCreateSystemDefaultDevice is not even a symbol here\n");
+		say("hakios: Siri's orb: MTLCreateSystemDefaultDevice is not even a symbol here\n");
 	} else {
-		say("redwood: Siri's orb prewarms its shaders; MTLCreateSystemDefaultDevice() = %s\n",
+		say("hakios: Siri's orb prewarms its shaders; MTLCreateSystemDefaultDevice() = %s\n",
 		    device ? object_getClassName(device) : "nil");
 	}
 	if (skip) {
-		say("redwood: Siri's orb: the prewarm is skipped (siri_orb=0), so what follows is the next wall\n");
+		say("hakios: Siri's orb: the prewarm is skipped (siri_orb=0), so what follows is the next wall\n");
 		return;
 	}
 	original_prewarm_orb_view_shaders(self, selector);
-	say("redwood: Siri's orb: the prewarm RETURNED -- it did not abort this time\n");
+	say("hakios: Siri's orb: the prewarm RETURNED -- it did not abort this time\n");
 }
 
 /*
@@ -681,7 +681,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 	original_prewarm_orb_view_shaders = (void (*)(id, SEL))replace_method("SiriPresentationViewController",
 	    "prewarmOrbViewShaders", 0x1f0144c30UL, (IMP)prewarm_orb_view_shaders);
 	if (!told++) {
-		say("redwood: Siri's orb: the prewarm is %s\n",
+		say("hakios: Siri's orb: the prewarm is %s\n",
 		    original_prewarm_orb_view_shaders ? "watched" : "NOT watched (the address moved)");
 	}
 }
@@ -695,7 +695,7 @@ layer_filter(id filter, const char *what, int depth)
 	size_t n;
 
 	if (!class_respondsToSelector(object_getClass(filter), sel_registerName("type"))) {
-		say("redwood: layers%s: %*s  %s %s\n", layers_of, 2 * depth, "", what, text_of(filter));     /* a name alone */
+		say("hakios: layers%s: %*s  %s %s\n", layers_of, 2 * depth, "", what, text_of(filter));     /* a name alone */
 		return;
 	}
 	n = (size_t)snprintf(line, sizeof(line), "%s %s \"%s\"%s", what, text_of(SEND(id, filter, "type")),
@@ -717,7 +717,7 @@ layer_filter(id filter, const char *what, int depth)
 			n += (size_t)snprintf(line + n, sizeof(line) - n, " %s %s", inputs[i], text_of(value));
 		}
 	}
-	say("redwood: layers%s: %*s  %s\n", layers_of, 2 * depth, "", line);
+	say("hakios: layers%s: %*s  %s\n", layers_of, 2 * depth, "", line);
 }
 
 static void
@@ -833,7 +833,7 @@ layer_line(id layer, const char *role, int depth)
 			    text_of(SEND1(id, keys, "objectAtIndex:", long, i)));
 		}
 	}
-	say("redwood: layers%s: %*s%s%s %p \"%s\" %g,%g %gx%g opacity %g%s\n", layers_of, 2 * depth, "", role, class_name, (void *)layer,
+	say("hakios: layers%s: %*s%s%s %p \"%s\" %g,%g %gx%g opacity %g%s\n", layers_of, 2 * depth, "", role, class_name, (void *)layer,
 	    text_of(SEND(id, layer, "name")), frame.x, frame.y, frame.w, frame.h, (double)SEND(float, layer, "opacity"), more);
 	for (long i = 0; filters != NULL && i < SEND(long, filters, "count"); i++) {
 		layer_filter(SEND1(id, filters, "objectAtIndex:", long, i), "filter", depth);
@@ -871,7 +871,7 @@ web_views(id view, int depth)
 		SEL background = sel_registerName("_isBackground"), pid = sel_registerName("_webProcessIdentifier");
 		SEL responsive = sel_registerName("_webProcessIsResponsive");
 
-		say("redwood: layers%s: a WKWebView %p: in the background %s, web process %d, responsive %s, in a window %s, hidden %s\n",
+		say("hakios: layers%s: a WKWebView %p: in the background %s, web process %d, responsive %s, in a window %s, hidden %s\n",
 		    layers_of, (void *)view, class_respondsToSelector(object_getClass(view), background) ?
 		    (SEND(BOOL, view, "_isBackground") ? "YES" : "no") : "?", class_respondsToSelector(object_getClass(view), pid) ?
 		    SEND(int, view, "_webProcessIdentifier") : -1, class_respondsToSelector(object_getClass(view), responsive) ?
@@ -894,9 +894,9 @@ layers(void)
 	id authentication = application && class_respondsToSelector(object_getClass(application),
 	    sel_registerName("authenticationController")) ? SEND(id, application, "authenticationController") : NULL;
 
-	say("redwood: layers%s: %ld windows\n", layers_of, windows ? SEND(long, windows, "count") : 0L);
+	say("hakios: layers%s: %ld windows\n", layers_of, windows ? SEND(long, windows, "count") : 0L);
 	if (authentication != NULL) {
-		say("redwood: layers: the user is %sauthenticated, %s passcode, the display %sin secure mode\n",
+		say("hakios: layers: the user is %sauthenticated, %s passcode, the display %sin secure mode\n",
 		    SEND(BOOL, authentication, "isAuthenticated") ? "" : "NOT ", SEND(BOOL, authentication, "hasPasscodeSet") ? "a" : "no",
 		    SEND(BOOL, authentication, "inSecureDisplayMode") ? "" : "not ");
 	}
@@ -905,20 +905,20 @@ layers(void)
 		id scene = class_respondsToSelector(object_getClass(w), sel_registerName("windowScene")) ? SEND(id, w, "windowScene") : NULL;
 		id context = class_respondsToSelector(object_getClass(w), sel_registerName("_boundContext")) ? SEND(id, w, "_boundContext") : NULL;
 
-		say("redwood: layers%s: window %s level %g, context %#x (%ssecure, %u commits), scene %s (activation state %ld)\n",
+		say("hakios: layers%s: window %s level %g, context %#x (%ssecure, %u commits), scene %s (activation state %ld)\n",
 		    layers_of, object_getClassName(w), SEND(double, w, "windowLevel"), context ? SEND(unsigned, context, "contextId") : 0,
 		    context && SEND(BOOL, context, "isSecure") ? "" : "not ", context ? (unsigned)SEND(unsigned long long, context, "commitId") : 0,
 		    scene ? text_of(SEND(id, scene, "_persistenceIdentifier")) : "none", scene ? SEND(long, scene, "activationState") : -1L);
 		layer_line(SEND(id, w, "layer"), "", 1);
 	}
 	if (application != NULL) {
-		say("redwood: layers%s: the application's state %ld (0 active, 1 inactive, 2 in the background)\n", layers_of,
+		say("hakios: layers%s: the application's state %ld (0 active, 1 inactive, 2 in the background)\n", layers_of,
 		    SEND(long, application, "applicationState"));
 	}
 	for (long i = 0; windows != NULL && i < SEND(long, windows, "count"); i++) {
 		web_views(SEND1(id, windows, "objectAtIndex:", long, i), 0);
 	}
-	say("redwood: layers%s: end\n", layers_of);
+	say("hakios: layers%s: end\n", layers_of);
 }
 
 /*
@@ -947,11 +947,11 @@ switcher(void)
 	Method method = shared != NULL ? class_getInstanceMethod(object_getClass(shared), activate) : NULL;
 
 	if (method == NULL) {
-		say("redwood: the switcher: %s has no %s\n",
+		say("hakios: the switcher: %s has no %s\n",
 		    coordinator != NULL ? "SBMainSwitcherControllerCoordinator" : "nothing", sel_getName(activate));
 		return;
 	}
-	say("redwood: the switcher: opening it (%s, %s)\n", object_getClassName(shared),
+	say("hakios: the switcher: opening it (%s, %s)\n", object_getClassName(shared),
 	    method_getTypeEncoding(method) != NULL ? method_getTypeEncoding(method) : "?");
 	/*
 	 * It answers whether it took the request. The source is an analytics label and not every one
@@ -964,7 +964,7 @@ switcher(void)
 	for (long source = 0; source < 10; source++) {
 		BOOL taken = ((BOOL (*)(id, SEL, long, BOOL))objc_msgSend)(shared, activate, source, NO);
 
-		say("redwood: the switcher: from source %ld: %s\n", source, taken ? "taken" : "refused");
+		say("hakios: the switcher: from source %ld: %s\n", source, taken ? "taken" : "refused");
 		if (taken) {
 			return;
 		}
@@ -1026,7 +1026,7 @@ add_animation_cc(id self, SEL selector, id animation, id key)
 		SEND1(void, fade, "setDuration:", double, cc_fade_s);
 		SEND1(void, fade, "setTimingFunction:", id, ease);
 		if (cc_fades++ < 3) {
-			say("redwood: Control Center: an opacity animation of %.3f s (%s) made a fade of %.3f s\n",
+			say("hakios: Control Center: an opacity animation of %.3f s (%s) made a fade of %.3f s\n",
 			    SEND(double, animation, "duration"), object_getClassName(animation), cc_fade_s);
 		}
 		animation = fade;
@@ -1065,9 +1065,9 @@ load_tweaks(void)
 		return;                 /* no package manager's prefix here, so no tweaks */
 	}
 	if (dlopen(HAKIOS_TWEAK_LOADER, RTLD_NOW | RTLD_GLOBAL) == NULL) {
-		say("redwood: the tweak loader %s: %s\n", HAKIOS_TWEAK_LOADER, dlerror());
+		say("hakios: the tweak loader %s: %s\n", HAKIOS_TWEAK_LOADER, dlerror());
 	} else {
-		say("redwood: tweaks: %s opened\n", HAKIOS_TWEAK_LOADER);
+		say("hakios: tweaks: %s opened\n", HAKIOS_TWEAK_LOADER);
 	}
 }
 
@@ -1091,7 +1091,7 @@ hakios_springboard_init(void)
 		if ((say_fd = open("/dev/console", O_WRONLY | O_NOCTTY)) < 0) {
 			say_fd = 2;
 		}
-		say("redwood: in %s[%d]: its layers are said on the notification com.hakios.layers\n", name, getpid());
+		say("hakios: in %s[%d]: its layers are said on the notification com.hakios.layers\n", name, getpid());
 		notify_register_dispatch("com.hakios.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 			layers();
 		});
@@ -1115,7 +1115,7 @@ hakios_springboard_init(void)
 	 * the whole fix and it costs nothing: the driver keeps its printf, and we get to read it.
 	 */
 	if (dup2(say_fd, 1) < 0) {
-		say("redwood: stdout could not be pointed at the console; the driver's own lines stay lost\n");
+		say("hakios: stdout could not be pointed at the console; the driver's own lines stay lost\n");
 	}
 	/*
 	 * And unbuffered, which is the half of this that is easy to leave out and would waste the
@@ -1159,13 +1159,13 @@ hakios_springboard_init(void)
 	    0x1c48c2cf4UL, (IMP)ring_charging_level);
 	battery_lvl = (IMP)original_battery_level;
 	battery_st  = (IMP)original_battery_state;
-	say("redwood: SpringBoard: activation %s, setup assistant %s, application snapshots %s, the side button's long press %s, "
+	say("hakios: SpringBoard: activation %s, setup assistant %s, application snapshots %s, the side button's long press %s, "
 	    "battery level %s, battery state %s, poster switcher %s\n",
 	    activation ? "answered here" : "NOT replaced", original_set_setup_required_reason ? "refused" : "NOT replaced",
 	    snapshot_format ? "as JPEG" : "NOT changed", original_lock_long_press ? "checked" : "NOT checked",
 	    battery_lvl ? "from QG" : "NOT replaced", battery_st ? "from QG" : "NOT replaced",
 	    poster_switcher ? "not offered" : "NOT withheld");
-	say("redwood: battery UI: shows%% %s, set-shows%% %s, bolt %s, chargePercent %s, setChargePercent %s, lockscreen ring %s\n",
+	say("hakios: battery UI: shows%% %s, set-shows%% %s, bolt %s, chargePercent %s, setChargePercent %s, lockscreen ring %s\n",
 	    original_battery_view_shows_percentage ? "ok" : "NO",
 	    original_battery_view_set_shows_percentage ? "ok" : "NO",
 	    original_battery_view_should_show_bolt ? "ok" : "NO",
@@ -1205,7 +1205,7 @@ hakios_springboard_init(void)
 				control_center_fades(arguments);
 			}
 		}
-		say("redwood: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
+		say("hakios: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
 		    sysctl_int("kern.hakios.battery_soc"), sysctl_int("kern.hakios.battery_present"),
 		    sysctl_int("kern.hakios.battery_charger_present"), sysctl_int("kern.hakios.battery_charging"));
 		battery_post_notifications();
@@ -1237,7 +1237,7 @@ hakios_springboard_init(void)
 
 		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (arg = strstr(args, "autounlock=0")) != NULL &&
 		    (arg == args || arg[-1] == ' ')) {
-			say("redwood: the lock screen stays until it is swiped away (autounlock=0)\n");
+			say("hakios: the lock screen stays until it is swiped away (autounlock=0)\n");
 			return;
 		}
 	}

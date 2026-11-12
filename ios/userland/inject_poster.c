@@ -95,9 +95,9 @@ coordinator_for(id self, SEL selector, id extension, id *error)
 			}
 			replacing = true;
 			extension = (id)COLLECTIONS;
-			say("redwood: PosterBoard: the collections poster with the default wallpaper, not Mercury (Metal)\n");
+			say("hakios: PosterBoard: the collections poster with the default wallpaper, not Mercury (Metal)\n");
 		} else {
-			say("redwood: PosterBoard: no default wallpaper identifier; Mercury left as it was\n");
+			say("hakios: PosterBoard: no default wallpaper identifier; Mercury left as it was\n");
 		}
 	}
 	return original_coordinator(self, selector, extension, error);
@@ -185,7 +185,7 @@ method_of(const char *class_name, bool class_method, const char *selector, const
 	char found[48] = "?", line[300];
 
 	if (!types_of(m, found, sizeof(found)) || strcmp(found, types) != 0) {
-		snprintf(line, sizeof(line), "redwood: PosterBoard: %c[%s %s] is %s, not %s\n", class_method ? '+' : '-',
+		snprintf(line, sizeof(line), "hakios: PosterBoard: %c[%s %s] is %s, not %s\n", class_method ? '+' : '-',
 		    class_name, selector, found, types);
 		say(line);
 		return NULL;
@@ -204,7 +204,7 @@ poster_init(void)
 	Method create_d = method_of("PBFPosterExtensionStoreCoordinator", false, "createDynamicDescriptorStoreCoordinatorForIdentifier:role:error:", "@@:@@^@");
 
 	if (!initial || !incoming || !coordinator || !static_d || !dynamic_d || !create_d) {
-		say("redwood: PosterBoard: initial poster left alone\n");
+		say("hakios: PosterBoard: initial poster left alone\n");
 		return;
 	}
 	original_initial = (passthrough_fn)method_setImplementation(initial, (IMP)initial_posters);
@@ -213,5 +213,5 @@ poster_init(void)
 	original_static_descriptor = (descriptor_fn)method_setImplementation(static_d, (IMP)static_descriptor);
 	original_dynamic_descriptor = (descriptor_fn)method_setImplementation(dynamic_d, (IMP)dynamic_descriptor);
 	original_create_descriptor = (create_descriptor_fn)method_setImplementation(create_d, (IMP)create_descriptor);
-	say("redwood: PosterBoard: a hero poster asked of Mercury becomes the collections poster\n");
+	say("hakios: PosterBoard: a hero poster asked of Mercury becomes the collections poster\n");
 }

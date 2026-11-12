@@ -52,7 +52,7 @@ say(const char *format, ...)
 	if (n > (int)sizeof(line) - 3) {
 		n = sizeof(line) - 3;
 	}
-	if (n > 9 && strncmp(line, "redwood: ", 9) == 0) {
+	if (n > 9 && strncmp(line, "hakios: ", 9) == 0) {
 		memmove(line + 11, line + 9, (size_t)n - 9 + 1);
 		memcpy(line, "redwood26: ", 11);
 		n += 2;
@@ -167,7 +167,7 @@ service_copy_property(__unused void *target, void *refcon, __unused IOHIDService
 
 		CFSetAddValue(asked, key);
 		CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8);
-		say("redwood: input: the event server asks for property \"%s\", which we do not have\n", name);
+		say("hakios: input: the event server asks for property \"%s\", which we do not have\n", name);
 	}
 	return value ? CFRetain(value) : NULL;
 }
@@ -202,7 +202,7 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 
 		CFNumberGetValue(value, kCFNumberIntType, &mode);
 		if (mode != touch_mode) {
-			say("redwood: input: touch detection mode %#x\n", mode);
+			say("hakios: input: touch detection mode %#x\n", mode);
 		}
 		touch_mode = mode;
 	}
@@ -217,7 +217,7 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 			CFStringGetCString(description, text, sizeof(text), kCFStringEncodingUTF8);
 			CFRelease(description);
 		}
-		say("redwood: input: the event server sets \"%s\" = %s\n", name, text);
+		say("hakios: input: the event server sets \"%s\" = %s\n", name, text);
 	}
 	return true;
 }
@@ -288,7 +288,7 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 		if (made->opened) {
 			break;
 		}
-		say("redwood: input: the event server has not opened \"%s\" (attempt %d): making it again\n", product, attempt);
+		say("hakios: input: the event server has not opened \"%s\" (attempt %d): making it again\n", product, attempt);
 		IOHIDVirtualServiceClientRemove(service);
 		CFRelease(service);
 		service = NULL;
@@ -426,7 +426,7 @@ input_thread(__unused void *arg)
 	}
 	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
 	if (device < 0) {
-		say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+		say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -434,19 +434,19 @@ input_thread(__unused void *arg)
 		/* this waits until the server (this very program) answers */
 		client = IOHIDEventSystemClientCreateWithType(NULL, types[i], NULL);
 		if (client == NULL) {
-			say("redwood: input: no HID client of type %d\n", types[i]);
+			say("hakios: input: no HID client of type %d\n", types[i]);
 			continue;
 		}
 		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("redwood.input", NULL));
 		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
 		if (screen == NULL) {
-			say("redwood: input: a HID client of type %d may not create services\n", types[i]);
+			say("hakios: input: a HID client of type %d may not create services\n", types[i]);
 		}
 	}
 	if (screen != NULL) {
 		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
 	}
-	say("redwood: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
+	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */
 	if (screen == NULL) {
 		return NULL;
@@ -457,7 +457,7 @@ input_thread(__unused void *arg)
 		uint64_t read_at = mach_absolute_time();
 
 		if (t.type == HAKIOS_TOUCH_DOWN || t.type == HAKIOS_TOUCH_UP || count++ < 4) {
-			say("redwood: input: %s finger %u at %u %u (%.0f%% %.0f%%)\n",
+			say("hakios: input: %s finger %u at %u %u (%.0f%% %.0f%%)\n",
 			    t.type == HAKIOS_TOUCH_DOWN ? "DOWN" : t.type == HAKIOS_TOUCH_UP ? "UP  " : "move",
 			    t.finger, t.x, t.y, t.x * 100.0 / 65535, t.y * 100.0 / 65535);
 		}
@@ -488,7 +488,7 @@ input_thread(__unused void *arg)
 			}
 		}
 	}
-	say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+	say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 	return NULL;
 }
 
@@ -521,7 +521,7 @@ script_thread(__unused void *arg)
 
 	pthread_setname_np("redwood taps");
 	if (f == NULL) {
-		say("redwood: taps: no /redwood/taps.txt\n");
+		say("hakios: taps: no /redwood/taps.txt\n");
 		return NULL;
 	}
 	while (fgets(line, sizeof(line), f) != NULL) {
@@ -535,14 +535,14 @@ script_thread(__unused void *arg)
 		if (sscanf(line, "wait %lf", &a) == 1) {
 			usleep((useconds_t)(a * 1000000));
 		} else if (sscanf(line, "tap %lf %lf", &a, &b) == 2) {
-			say("redwood: taps: %u: tap %.0f%% %.0f%%\n", lineno, a, b);
+			say("hakios: taps: %u: tap %.0f%% %.0f%%\n", lineno, a, b);
 			script_touch(HAKIOS_TOUCH_DOWN, a, b);
 			usleep(80000);
 			script_touch(HAKIOS_TOUCH_UP, a, b);
 		} else if (sscanf(line, "swipe %lf %lf %lf %lf %lf", &a, &b, &c, &d, &ms) == 5) {
 			unsigned steps = (unsigned)(ms / 8) + 1;
 
-			say("redwood: taps: %u: swipe %.0f,%.0f -> %.0f,%.0f in %.0f ms\n", lineno, a, b, c, d, ms);
+			say("hakios: taps: %u: swipe %.0f,%.0f -> %.0f,%.0f in %.0f ms\n", lineno, a, b, c, d, ms);
 			script_touch(HAKIOS_TOUCH_DOWN, a, b);
 			for (unsigned i = 1; i <= steps; i++) {
 				usleep(8000);
@@ -553,20 +553,20 @@ script_thread(__unused void *arg)
 			struct hakios_touch press = { .time = mach_absolute_time(), .type = HAKIOS_BUTTON_DOWN,
 				                       .finger = HAKIOS_BUTTON_HOME };
 
-			say("redwood: taps: %u: home\n", lineno);
+			say("hakios: taps: %u: home\n", lineno);
 			send_button(script_buttons, &press);
 			usleep(60000);
 			press.type = HAKIOS_BUTTON_UP;
 			press.time = mach_absolute_time();
 			send_button(script_buttons, &press);
 		} else if (strncmp(line, "say ", 4) == 0) {
-			say("redwood: taps: %u: %s\n", lineno, line + 4);
+			say("hakios: taps: %u: %s\n", lineno, line + 4);
 		} else {
-			say("redwood: taps: %u: not understood: %s\n", lineno, line);
+			say("hakios: taps: %u: not understood: %s\n", lineno, line);
 		}
 	}
 	fclose(f);
-	say("redwood: taps: the script is done\n");
+	say("hakios: taps: the script is done\n");
 	return NULL;
 }
 
@@ -785,7 +785,7 @@ caenv_from_bootargs(void)
 		if ((eq = strchr(setting, '=')) != NULL) {
 			*eq = 0;
 			setenv(setting, eq + 1, 1);
-			say("redwood: caenv: %s=%s\n", setting, eq + 1);
+			say("hakios: caenv: %s=%s\n", setting, eq + 1);
 		}
 	}
 }
@@ -816,7 +816,7 @@ static void
 sb_set_setup_required_reason(id self, SEL sel, long reason)
 {
 	if (reason != 0) {
-		say("redwood: SpringBoard wants the setup assistant (reason %ld); refused\n", reason);
+		say("hakios: SpringBoard wants the setup assistant (reason %ld); refused\n", reason);
 	}
 	if (orig_set_setup_required_reason != NULL) {
 		orig_set_setup_required_reason(self, sel, 0);
@@ -830,7 +830,7 @@ swizzle(const char *class_name, const char *selector, IMP replacement, IMP *orig
 	Method m = cls != NULL ? class_getInstanceMethod(cls, sel_registerName(selector)) : NULL;
 
 	if (m == NULL) {
-		say("redwood: -[%s %s]: not found\n", class_name, selector);
+		say("hakios: -[%s %s]: not found\n", class_name, selector);
 		return 0;
 	}
 	IMP prev = method_setImplementation(m, replacement);
@@ -854,12 +854,12 @@ sb_restore_wallpaper(void *context)
 	SEL restore = sel_registerName("restoreDefaultWallpaper");
 
 	(void)context;
-	say("redwood: SpringBoard: the default wallpaper: asking (%s)\n", service != Nil ? "SBSUIWallpaperService" : "no service class");
+	say("hakios: SpringBoard: the default wallpaper: asking (%s)\n", service != Nil ? "SBSUIWallpaperService" : "no service class");
 	if (service != Nil && class_getClassMethod(service, restore) != NULL) {
 		((void (*)(Class, SEL))objc_msgSend)(service, restore);
-		say("redwood: SpringBoard: the default wallpaper asked for (SBSUIWallpaperService)\n");
+		say("hakios: SpringBoard: the default wallpaper asked for (SBSUIWallpaperService)\n");
 	} else {
-		say("redwood: SpringBoard: no +[SBSUIWallpaperService restoreDefaultWallpaper]\n");
+		say("hakios: SpringBoard: no +[SBSUIWallpaperService restoreDefaultWallpaper]\n");
 	}
 }
 
@@ -874,7 +874,7 @@ static void
 sb_prewarm_done(void *context)
 {
 	(void)context;
-	say("redwood: SpringBoard: PosterBoard: prewarm answered\n");
+	say("hakios: SpringBoard: PosterBoard: prewarm answered\n");
 }
 
 static void
@@ -885,12 +885,12 @@ sb_wake_posterboard(void *context)
 
 	(void)context;
 	if (service_class == Nil) {
-		say("redwood: SpringBoard: no PRSService\n");
+		say("hakios: SpringBoard: no PRSService\n");
 		return;
 	}
 	service = ((id (*)(id, SEL))objc_msgSend)(((id (*)(Class, SEL))objc_msgSend)(service_class, sel_registerName("alloc")),
 	    sel_registerName("init"));
-	say("redwood: SpringBoard: PosterBoard: prewarm asked\n");
+	say("hakios: SpringBoard: PosterBoard: prewarm asked\n");
 	((void (*)(id, SEL, void (^)(void)))objc_msgSend)(service, sel_registerName("prewarmWithCompletion:"), ^{
 		dispatch_async_f(dispatch_get_main_queue(), NULL, sb_prewarm_done);
 	});
@@ -915,7 +915,7 @@ springboard_fixes(void)
 	int setup = swizzle("SBSetupManager", "_setSetupRequiredReason:", (IMP)sb_set_setup_required_reason,
 	    (IMP *)&orig_set_setup_required_reason);
 
-	say("redwood: SpringBoard: activation %s, setup assistant %s\n",
+	say("hakios: SpringBoard: activation %s, setup assistant %s\n",
 	    activation ? "forced on" : "NOT replaced", setup ? "refused" : "NOT replaced");
 }
 
@@ -960,7 +960,7 @@ pb_initial_posters(id self, SEL sel, id provider, id role)
 	char a[160], b[400];
 	id result = orig_initial_posters(self, sel, provider, role);
 
-	say("redwood: PosterBoard: initial posters for %s: %lu (%s)\n", pb_desc(role, a, sizeof(a)), pb_count(result),
+	say("hakios: PosterBoard: initial posters for %s: %lu (%s)\n", pb_desc(role, a, sizeof(a)), pb_count(result),
 	    pb_desc(result, b, sizeof(b)));
 	return result;
 }
@@ -971,7 +971,7 @@ pb_setup_role(id self, SEL sel, id storage)
 	char a[160];
 	id role = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("role"));
 
-	say("redwood: PosterBoard: setting up role %s\n", pb_desc(role, a, sizeof(a)));
+	say("hakios: PosterBoard: setting up role %s\n", pb_desc(role, a, sizeof(a)));
 	orig_setup_role(self, sel, storage);
 }
 
@@ -979,7 +979,7 @@ static void
 pb_setup_coordinators(id self, SEL sel)
 {
 	pb_store = self;
-	say("redwood: PosterBoard: the data store sets up its role coordinators\n");
+	say("hakios: PosterBoard: the data store sets up its role coordinators\n");
 	orig_setup_coordinators(self, sel);
 }
 
@@ -1021,7 +1021,7 @@ pb_store_for_provider(id self, SEL sel, id identifier, id *error)
 	id e = error != NULL ? *error : local;
 
 	if (pb_tracing || (result == nil && failures++ < 20)) {
-		say("redwood: PosterBoard: the store of extension %s: %s%s%s\n", pb_desc(identifier, a, sizeof(a)),
+		say("hakios: PosterBoard: the store of extension %s: %s%s%s\n", pb_desc(identifier, a, sizeof(a)),
 		    result != nil ? "found" : "NONE", e != nil ? ", error " : "", e != nil ? pb_desc(e, b, sizeof(b)) : "");
 	}
 	return result;
@@ -1035,7 +1035,7 @@ pb_static_descriptors(id self, SEL sel, id identifier)
 
 	if (pb_tracing) {
 		BOOL known = result != nil && ((BOOL (*)(id, SEL))objc_msgSend)(result, sel_registerName("hasKnownVersions"));
-		say("redwood: PosterBoard: static descriptor %s: %s\n", pb_desc(identifier, a, sizeof(a)),
+		say("hakios: PosterBoard: static descriptor %s: %s\n", pb_desc(identifier, a, sizeof(a)),
 		    result == nil ? "none" : known ? "with versions" : "no versions");
 	}
 	return result;
@@ -1049,7 +1049,7 @@ pb_create_dynamic(id self, SEL sel, id identifier, id role, id *error)
 	id result = orig_create_dynamic(self, sel, identifier, role, error != NULL ? error : &local);
 	id e = error != NULL ? *error : local;
 
-	say("redwood: PosterBoard: dynamic descriptor %s made: %s%s%s\n", pb_desc(identifier, a, sizeof(a)),
+	say("hakios: PosterBoard: dynamic descriptor %s made: %s%s%s\n", pb_desc(identifier, a, sizeof(a)),
 	    result != nil ? "yes" : "NO", e != nil ? ", error " : "", e != nil ? pb_desc(e, b, sizeof(b)) : "");
 	return result;
 }
@@ -1059,7 +1059,7 @@ pb_hero(id self, SEL sel)
 {
 	BOOL hero = orig_hero(self, sel);
 
-	say("redwood: PosterBoard: the hero poster as the default lock screen: %s\n", hero ? "yes" : "no");
+	say("hakios: PosterBoard: the hero poster as the default lock screen: %s\n", hero ? "yes" : "no");
 	return hero;
 }
 
@@ -1069,7 +1069,7 @@ pb_incoming(id self, SEL sel, id role, id path, id info)
 	char a[300], b[300];
 	id result = orig_incoming(self, sel, role, path, info);
 
-	say("redwood: PosterBoard: incoming configuration from %s: %s\n", pb_desc(path, a, sizeof(a)),
+	say("hakios: PosterBoard: incoming configuration from %s: %s\n", pb_desc(path, a, sizeof(a)),
 	    pb_desc(result, b, sizeof(b)));
 	return result;
 }
@@ -1088,7 +1088,7 @@ pb_state_lock(id store)
 		const char *type = ivar_getTypeEncoding(ivars[i]);
 
 		if (ivar_getOffset(ivars[i]) == 0xc4 && type != NULL && strncmp(type, "{os_unfair_lock", 15) == 0) {
-			say("redwood: PosterBoard: the data store's state lock is %s\n", ivar_getName(ivars[i]));
+			say("hakios: PosterBoard: the data store's state lock is %s\n", ivar_getName(ivars[i]));
 			lock = (os_unfair_lock *)((char *)store + 0xc4);
 		}
 	}
@@ -1118,7 +1118,7 @@ pb_make_initial_posters(id role)
 		for (unsigned long i = 0; i < pb_count(known); i++) {
 			id extension = ((id (*)(id, SEL, unsigned long))objc_msgSend)(known, sel_registerName("objectAtIndex:"), i);
 			id identifier = ((id (*)(id, SEL))objc_msgSend)(extension, sel_registerName("posterExtensionBundleIdentifier"));
-			say("redwood: PosterBoard: known extension %lu: %s\n", i, pb_desc(identifier, a, sizeof(a)));
+			say("hakios: PosterBoard: known extension %lu: %s\n", i, pb_desc(identifier, a, sizeof(a)));
 		}
 	}
 	pb_tracing = 1;
@@ -1127,18 +1127,18 @@ pb_make_initial_posters(id role)
 	if (lock != NULL) {
 		os_unfair_lock_unlock(lock);
 	}
-	say("redwood: PosterBoard: initial posters for %s, asked again: %lu\n", pb_desc(role, a, sizeof(a)),
+	say("hakios: PosterBoard: initial posters for %s, asked again: %lu\n", pb_desc(role, a, sizeof(a)),
 	    pb_count(configurations));
 	for (unsigned long i = 0; i < pb_count(configurations); i++) {
 		id configuration = ((id (*)(id, SEL, unsigned long))objc_msgSend)(configurations, sel_registerName("objectAtIndex:"), i);
 
-		say("redwood: PosterBoard: handing in %s\n", pb_desc(configuration, b, sizeof(b)));
+		say("hakios: PosterBoard: handing in %s\n", pb_desc(configuration, b, sizeof(b)));
 		/* answered (nil, NSError) on failure: only the second argument is looked at */
 		((void (*)(id, SEL, id, void (^)(id, id)))objc_msgSend)(pb_store, ingest, configuration, ^(id result, id error) {
 			char e[600];
 
 			(void)result;
-			say("redwood: PosterBoard: the incoming poster: %s%s\n", error != nil ? "error " : "added",
+			say("hakios: PosterBoard: the incoming poster: %s%s\n", error != nil ? "error " : "added",
 			    error != nil ? pb_desc(error, e, sizeof(e)) : "");
 		});
 	}
@@ -1164,7 +1164,7 @@ pb_report(void *context)
 		id store = shared != nil ? ((id (*)(id, SEL, id *))objc_msgSend)(shared, sel_registerName("_dataStoreWithError:"),
 		    &error) : nil;
 
-		say("redwood: PosterBoard: no data store after 30 s: made one: %s%s%s\n", pb_desc(store, a, sizeof(a)),
+		say("hakios: PosterBoard: no data store after 30 s: made one: %s%s%s\n", pb_desc(store, a, sizeof(a)),
 		    error != nil ? ", error " : "", error != nil ? pb_desc(error, b, sizeof(b)) : "");
 		if (pb_store == nil) {
 			pb_store = store;
@@ -1174,7 +1174,7 @@ pb_report(void *context)
 		}
 	}
 	extensions = ((id (*)(id, SEL))objc_msgSend)(pb_store, sel_registerName("knownExtensions"));
-	say("redwood: PosterBoard: %lu poster extensions known: %s\n", pb_count(extensions), pb_desc(extensions, b, sizeof(b)));
+	say("hakios: PosterBoard: %lu poster extensions known: %s\n", pb_count(extensions), pb_desc(extensions, b, sizeof(b)));
 	roles = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("PBFPosterExtensionDataStore"), sel_registerName("supportedRoles"));
 	roles = ((id (*)(id, SEL))objc_msgSend)(roles, sel_registerName("allObjects"));
 	for (unsigned long i = 0; i < pb_count(roles); i++) {
@@ -1183,7 +1183,7 @@ pb_report(void *context)
 		id posters = ((id (*)(id, SEL, id, id *))objc_msgSend)(pb_store, sel_registerName("posterConfigurationsForRole:error:"),
 		    role, &error);
 
-		say("redwood: PosterBoard: role %s: %lu posters%s%s\n", pb_desc(role, a, sizeof(a)), pb_count(posters),
+		say("hakios: PosterBoard: role %s: %lu posters%s%s\n", pb_desc(role, a, sizeof(a)), pb_count(posters),
 		    error != nil ? ", error " : "", error != nil ? pb_desc(error, b, sizeof(b)) : "");
 		if (error == nil && pb_count(posters) == 0 && pb_count(extensions) != 0 && strcmp(a, "PRPosterRoleLockScreen") == 0) {
 			pb_make_initial_posters(role);
@@ -1207,7 +1207,7 @@ pb_migrate(Class self, SEL sel, id url, unsigned long from, unsigned long to, BO
 	BOOL ok = orig_migrate(self, sel, url, from, to, cleanup, error != NULL ? error : &local);
 	id e = error != NULL ? *error : local;
 
-	say("redwood: PosterBoard: migrate %s from %lu to %lu: %s%s%s\n", pb_desc(url, a, sizeof(a)), from, to,
+	say("hakios: PosterBoard: migrate %s from %lu to %lu: %s%s%s\n", pb_desc(url, a, sizeof(a)), from, to,
 	    ok ? "done" : "FAILED", e != nil ? ", error " : "", e != nil ? pb_desc(e, b, sizeof(b)) : "");
 	return ok;
 }
@@ -1222,7 +1222,7 @@ pb_build(id self, SEL sel, id url, id assertions, id monitor, id observer, BOOL 
 	id store = orig_build(self, sel, url, assertions, monitor, observer, migrated, error != NULL ? error : &local);
 	id e = error != NULL ? *error : local;
 
-	say("redwood: PosterBoard: build data store at %s (migrated %d): %s%s%s\n", pb_desc(url, a, sizeof(a)),
+	say("hakios: PosterBoard: build data store at %s (migrated %d): %s%s%s\n", pb_desc(url, a, sizeof(a)),
 	    (int)migrated, store != nil ? "made" : "NONE", e != nil ? ", error " : "", e != nil ? pb_desc(e, b, sizeof(b)) : "");
 	return store;
 }
@@ -1274,7 +1274,7 @@ pb_url_conform(id self, SEL sel, id values, id *error)
 		}
 		static unsigned said;
 		if (said++ < 12) {
-			say("redwood: PosterBoard: %s does not conform to %s; without the protection class: %s\n",
+			say("hakios: PosterBoard: %s does not conform to %s; without the protection class: %s\n",
 			    pb_desc(self, a, sizeof(a)), pb_desc(values, b, sizeof(b)), ok ? "conforms" : "STILL NOT");
 		}
 		if (ok && error != NULL) {
@@ -1293,14 +1293,14 @@ pb_fm_create(id self, SEL sel, id url, BOOL intermediate, id attributes, id *err
 	id e = error != NULL ? *error : local;
 
 	if (!ok) {
-		say("redwood: PosterBoard: mkdir %s (attributes %s) FAILED: %s\n", pb_desc(url, a, sizeof(a)),
+		say("hakios: PosterBoard: mkdir %s (attributes %s) FAILED: %s\n", pb_desc(url, a, sizeof(a)),
 		    pb_desc(attributes, b, sizeof(b)), pb_desc(e, c, sizeof(c)));
 		/* this port's /var has no data protection classes (no keybag): once more without the class */
 		id plain = pb_without(attributes, "NSFileProtectionKey");
 		if (plain != nil) {
 			local = nil;
 			ok = orig_fm_create(self, sel, url, intermediate, plain, error != NULL ? error : &local);
-			say("redwood: PosterBoard: mkdir %s without NSFileProtectionKey: %s\n", pb_desc(url, a, sizeof(a)),
+			say("hakios: PosterBoard: mkdir %s without NSFileProtectionKey: %s\n", pb_desc(url, a, sizeof(a)),
 			    ok ? "made" : "FAILED again");
 		}
 	}
@@ -1327,17 +1327,17 @@ pb_data_write(id self, SEL sel, id url, unsigned long options, id *error)
 	id e = error != NULL ? *error : local;
 
 	if (!ok) {
-		say("redwood: PosterBoard: write %s (options %#lx) FAILED, errno %d: %s\n", pb_desc(url, a, sizeof(a)), options,
+		say("hakios: PosterBoard: write %s (options %#lx) FAILED, errno %d: %s\n", pb_desc(url, a, sizeof(a)), options,
 		    saved, pb_desc(e, c, sizeof(c)));
 		if (options & 0xf0000000ul) {
 			local = nil;
 			ok = orig_data_write(self, sel, url, options & ~0xf0000000ul, error != NULL ? error : &local);
-			say("redwood: PosterBoard: ... without the protection class: %s\n", ok ? "written" : "FAILED again");
+			say("hakios: PosterBoard: ... without the protection class: %s\n", ok ? "written" : "FAILED again");
 		}
 		if (!ok && (options & 1ul)) {
 			local = nil;
 			ok = orig_data_write(self, sel, url, options & ~0xf0000001ul, error != NULL ? error : &local);
-			say("redwood: PosterBoard: ... and not atomically: %s\n", ok ? "written" : "FAILED again");
+			say("hakios: PosterBoard: ... and not atomically: %s\n", ok ? "written" : "FAILED again");
 		}
 	}
 	return ok;
@@ -1359,7 +1359,7 @@ pb_general_error(id self, SEL sel, long code, id info)
 	if (said++ < 6) {
 		uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
 
-		say("redwood: PosterBoard: general error %ld %s, made by:\n", code, pb_desc(info, b, sizeof(b)));
+		say("hakios: PosterBoard: general error %ld %s, made by:\n", code, pb_desc(info, b, sizeof(b)));
 		for (int i = 0; i < 10 && fp != 0 && (fp & 7) == 0; i++) {
 			uintptr_t *frame = (uintptr_t *)fp;
 			uintptr_t ret = frame[1] & 0x0000007fffffffffUL;
@@ -1369,7 +1369,7 @@ pb_general_error(id self, SEL sel, long code, id info)
 				break;
 			}
 			if (dladdr((void *)ret, &dl) && dl.dli_fname != NULL) {
-				say("redwood: PosterBoard:   %s+%#lx (%s)\n", strrchr(dl.dli_fname, '/') ? strrchr(dl.dli_fname, '/') + 1 :
+				say("hakios: PosterBoard:   %s+%#lx (%s)\n", strrchr(dl.dli_fname, '/') ? strrchr(dl.dli_fname, '/') + 1 :
 				    dl.dli_fname, (unsigned long)(ret - (uintptr_t)dl.dli_fbase), dl.dli_sname != NULL ? dl.dli_sname : "?");
 			}
 			fp = frame[0];
@@ -1392,7 +1392,7 @@ pb_error_with_domain(id self, SEL sel, id domain, long code, id info)
 		char b[600];
 
 		said++;
-		say("redwood: PosterBoard: error %s %ld %s, made by:\n", d, code, pb_desc(info, b, sizeof(b)));
+		say("hakios: PosterBoard: error %s %ld %s, made by:\n", d, code, pb_desc(info, b, sizeof(b)));
 		for (int i = 0; i < 10 && fp != 0 && (fp & 7) == 0; i++) {
 			uintptr_t *frame = (uintptr_t *)fp;
 			uintptr_t ret = frame[1] & 0x0000007fffffffffUL;
@@ -1402,7 +1402,7 @@ pb_error_with_domain(id self, SEL sel, id domain, long code, id info)
 				break;
 			}
 			if (dladdr((void *)ret, &dl) && dl.dli_fname != NULL) {
-				say("redwood: PosterBoard:   %s+%#lx (%s)\n", strrchr(dl.dli_fname, '/') ? strrchr(dl.dli_fname, '/') + 1 :
+				say("hakios: PosterBoard:   %s+%#lx (%s)\n", strrchr(dl.dli_fname, '/') ? strrchr(dl.dli_fname, '/') + 1 :
 				    dl.dli_fname, (unsigned long)(ret - (uintptr_t)dl.dli_fbase), dl.dli_sname != NULL ? dl.dli_sname : "?");
 			}
 			fp = frame[0];
@@ -1433,7 +1433,7 @@ pb_set_purgable(id self, SEL sel, BOOL purgable, id *error)
 
 	if (!ok) {
 		if (said++ < 3) {
-			say("redwood: PosterBoard: %s cannot be marked purgeable here (no APFS): taken as done\n", pb_desc(self, a, sizeof(a)));
+			say("hakios: PosterBoard: %s cannot be marked purgeable here (no APFS): taken as done\n", pb_desc(self, a, sizeof(a)));
 		}
 		if (error != NULL) {
 			*error = nil;
@@ -1452,7 +1452,7 @@ pb_fm_copy(id self, SEL sel, id from, id to, id *error)
 	id e = error != NULL ? *error : local;
 
 	if (!ok) {
-		say("redwood: PosterBoard: copy %s -> %s FAILED: %s\n", pb_desc(from, a, sizeof(a)), pb_desc(to, b, sizeof(b)),
+		say("hakios: PosterBoard: copy %s -> %s FAILED: %s\n", pb_desc(from, a, sizeof(a)), pb_desc(to, b, sizeof(b)),
 		    pb_desc(e, c, sizeof(c)));
 	}
 	return ok;
@@ -1467,13 +1467,13 @@ pb_url_update(id self, SEL sel, id values, id *error)
 	id e = error != NULL ? *error : local;
 
 	if (!ok) {
-		say("redwood: PosterBoard: resource values %s on %s FAILED: %s\n", pb_desc(values, b, sizeof(b)),
+		say("hakios: PosterBoard: resource values %s on %s FAILED: %s\n", pb_desc(values, b, sizeof(b)),
 		    pb_desc(self, a, sizeof(a)), pb_desc(e, c, sizeof(c)));
 		id plain = pb_without(values, "NSURLFileProtectionKey");
 		if (plain != nil) {
 			local = nil;
 			ok = orig_url_update(self, sel, plain, error != NULL ? error : &local);
-			say("redwood: PosterBoard: resource values on %s without NSURLFileProtectionKey: %s\n",
+			say("hakios: PosterBoard: resource values on %s without NSURLFileProtectionKey: %s\n",
 			    pb_desc(self, a, sizeof(a)), ok ? "set" : "FAILED again");
 		}
 	}
@@ -1492,11 +1492,11 @@ pb_say_frame(const char *what, uintptr_t pc)
 
 	if (pc != 0 && dladdr((void *)pc, &info) && info.dli_fname != NULL) {
 		const char *image = strrchr(info.dli_fname, '/') ? strrchr(info.dli_fname, '/') + 1 : info.dli_fname;
-		say("redwood: PosterBoard: trap %s %#lx %s`%s+%#lx\n", what, (unsigned long)pc, image,
+		say("hakios: PosterBoard: trap %s %#lx %s`%s+%#lx\n", what, (unsigned long)pc, image,
 		    info.dli_sname != NULL ? info.dli_sname : "?",
 		    (unsigned long)(pc - (uintptr_t)(info.dli_saddr != NULL ? info.dli_saddr : info.dli_fbase)));
 	} else {
-		say("redwood: PosterBoard: trap %s %#lx\n", what, (unsigned long)pc);
+		say("hakios: PosterBoard: trap %s %#lx\n", what, (unsigned long)pc);
 	}
 }
 
@@ -1509,7 +1509,7 @@ pb_trap(int sig, siginfo_t *si, void *context)
 	uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
 
 	(void)si;
-	say("redwood: PosterBoard: signal %d\n", sig);
+	say("hakios: PosterBoard: signal %d\n", sig);
 	pb_say_frame("pc", pc & 0x0000007fffffffffUL);
 	pb_say_frame("lr", lr & 0x0000007fffffffffUL);
 	for (int i = 0; i < 24 && fp != 0 && (fp & 7) == 0; i++) {
@@ -1558,7 +1558,7 @@ posterboard_fixes(void)
 		if (me != NULL) {
 			orig_general_error = (id (*)(id, SEL, long, id))method_setImplementation(me, (IMP)pb_general_error);
 		} else {
-			say("redwood: +[NSError pbf_generalErrorWithCode:userInfo:]: not found\n");
+			say("hakios: +[NSError pbf_generalErrorWithCode:userInfo:]: not found\n");
 		}
 		me = class_getClassMethod(objc_getClass("NSError"), sel_registerName("errorWithDomain:code:userInfo:"));
 		if (me != NULL) {
@@ -1584,7 +1584,7 @@ posterboard_fixes(void)
 			orig_incoming = (id (*)(id, SEL, id, id, id))method_setImplementation(mi, (IMP)pb_incoming);
 		}
 	}
-	say("redwood: PosterBoard: watching its poster setup (%s)\n", m != NULL ? "all three steps" : "no initial poster helper");
+	say("hakios: PosterBoard: watching its poster setup (%s)\n", m != NULL ? "all three steps" : "no initial poster helper");
 	{
 		struct sigaction sa;
 		memset(&sa, 0, sizeof(sa));
@@ -1617,10 +1617,10 @@ rw_say_pc(const char *tag, unsigned t, const char *what, uintptr_t pc)
 	pc &= 0x0000007fffffffffUL;
 	if (pc != 0 && dladdr((void *)pc, &dl) && dl.dli_fname != NULL) {
 		const char *image = strrchr(dl.dli_fname, '/') ? strrchr(dl.dli_fname, '/') + 1 : dl.dli_fname;
-		say("redwood: sample %s t%u %s %s+%#lx %s\n", tag, t, what, image, (unsigned long)(pc - (uintptr_t)dl.dli_fbase),
+		say("hakios: sample %s t%u %s %s+%#lx %s\n", tag, t, what, image, (unsigned long)(pc - (uintptr_t)dl.dli_fbase),
 		    dl.dli_sname != NULL ? dl.dli_sname : "?");
 	} else {
-		say("redwood: sample %s t%u %s %#lx\n", tag, t, what, (unsigned long)pc);
+		say("hakios: sample %s t%u %s %#lx\n", tag, t, what, (unsigned long)pc);
 	}
 }
 
@@ -1638,7 +1638,7 @@ rw_sample(void *context)
 	if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS) {
 		return;
 	}
-	say("redwood: sample %s: %u threads\n", tag, count);
+	say("hakios: sample %s: %u threads\n", tag, count);
 	for (unsigned t = 0; t < count; t++) {
 		arm_thread_state64_t st;
 		mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
@@ -1673,7 +1673,7 @@ rw_sample(void *context)
 			}
 		}
 		thread_resume(threads[t]);
-		say("redwood: sample %s t%u '%s'\n", tag, t, tname);
+		say("hakios: sample %s t%u '%s'\n", tag, t, tname);
 		for (unsigned i = 0; i < got; i++) {
 			rw_say_pc(tag, t, i == 0 ? "pc" : i == 1 ? "lr" : "fr", pcs[i]);
 		}
@@ -1706,7 +1706,7 @@ redwood26_init(void)
 {
 	const char *name = getprogname();
 
-	say("redwood: loaded into %s (pid %d)\n", name ? name : "?", getpid());
+	say("hakios: loaded into %s (pid %d)\n", name ? name : "?", getpid());
 	caenv_from_bootargs();
 	if (name != NULL && strcmp(name, "backboardd") == 0) {
 		input_start();

@@ -1770,7 +1770,7 @@ hakios_sysctl_switch_root SYSCTL_HANDLER_ARGS
 	}
 	*outgoing++ = '\0';
 	error = vfs_switch_root(buf, outgoing, 0);
-	printf("redwood: %s is the root now, the one before it on /%s: %d\n", buf, outgoing, error);
+	printf("hakios: %s is the root now, the one before it on /%s: %d\n", buf, outgoing, error);
 	if (error == 0) {
 		hakios_root_switched = 1;
 	}

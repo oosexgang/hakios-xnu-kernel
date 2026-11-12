@@ -282,10 +282,10 @@ volume_to_kernel(void)
 	struct hakios_audio_volume v = { (uint32_t)lround(-scalar_to_db(volume) * 8), volume <= 0 };
 
 	if (sink < 0 || ioctl(sink, HAKIOS_AUDIO_SET_VOLUME, &v) < 0) {
-		say("redwood: audio: the volume %.3f could not be given to the kernel (%s)\n", volume, strerror(errno));
+		say("hakios: audio: the volume %.3f could not be given to the kernel (%s)\n", volume, strerror(errno));
 		return;
 	}
-	say("redwood: audio: the volume is %.3f: %s%.1f dB under the loudest\n", volume, v.muted ? "silence, " : "",
+	say("hakios: audio: the volume is %.3f: %s%.1f dB under the loudest\n", volume, v.muted ? "silence, " : "",
 	    v.below / 8.0);
 }
 
@@ -351,7 +351,7 @@ initialize(__unused AudioServerPlugInDriverRef driver, AudioServerPlugInHostRef 
 	mach_timebase_info(&timebase);
 	ticks_per_frame = 1e9 * timebase.denom / timebase.numer / HAKIOS_AUDIO_RATE;
 	sink = open(HAKIOS_AUDIO_DEVICE, O_WRONLY);
-	say("redwood: audio: the speaker is with the HAL (%s: %s)\n", HAKIOS_AUDIO_DEVICE, sink < 0 ? strerror(errno) : "open");
+	say("hakios: audio: the speaker is with the HAL (%s: %s)\n", HAKIOS_AUDIO_DEVICE, sink < 0 ? strerror(errno) : "open");
 	return 0;
 }
 
@@ -663,7 +663,7 @@ unknown(AudioObjectID object, const AudioObjectPropertyAddress *address)
 	unknown_told[unknown_count][1] = s;
 	unknown_told[unknown_count][2] = c;
 	unknown_count++;
-	say("redwood: audio: asked of object %u (%s) what it does not have: '%c%c%c%c' (%#x), scope '%c%c%c%c', element %u\n",
+	say("hakios: audio: asked of object %u (%s) what it does not have: '%c%c%c%c' (%#x), scope '%c%c%c%c', element %u\n",
 	    (unsigned)object, device_of(object) ? CFStringGetCStringPtr(device_of(object)->uid, kCFStringEncodingUTF8) : "-",
 	    (int)(s >> 24 & 0xff), (int)(s >> 16 & 0xff), (int)(s >> 8 & 0xff), (int)(s & 0xff), (unsigned)s,
 	    (int)(c >> 24 & 0xff), (int)(c >> 16 & 0xff), (int)(c >> 8 & 0xff), (int)(c & 0xff), (unsigned)address->mElement);
@@ -841,13 +841,13 @@ codec_open(void)
 	mic = open("/dev/hakios-mic", O_RDONLY | O_NONBLOCK);
 	mic_frames = mic_heard = mic_short = 0;
 	mic_peak = 0;
-	say("redwood: audio: the microphone is listened to (/dev/hakios-mic: %s)\n", mic < 0 ? strerror(errno) : "open");
+	say("hakios: audio: the microphone is listened to (/dev/hakios-mic: %s)\n", mic < 0 ? strerror(errno) : "open");
 }
 
 static void
 codec_close(void)
 {
-	say("redwood: audio: the microphone stops: %llu.%02llu s asked for, %llu.%02llu s of it from the kernel (peak %d of 32768), "
+	say("hakios: audio: the microphone stops: %llu.%02llu s asked for, %llu.%02llu s of it from the kernel (peak %d of 32768), "
 	    "%llu reads short\n", mic_frames / HAKIOS_AUDIO_RATE, mic_frames % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE,
 	    mic_heard / HAKIOS_AUDIO_RATE, mic_heard % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, mic_peak, mic_short);
 	if (mic >= 0) {
@@ -863,7 +863,7 @@ codec_read(int16_t *samples, UInt32 frames)
 	UInt32 have = got > 0 ? (UInt32)got / 2 : 0;
 
 	if (have > 0 && mic_heard == 0) {
-		say("redwood: audio: the microphone's first samples, %llu.%02llu s after the input started\n",
+		say("hakios: audio: the microphone's first samples, %llu.%02llu s after the input started\n",
 		    mic_frames / HAKIOS_AUDIO_RATE, mic_frames % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE);
 	}
 	for (UInt32 i = 0; i < have; i++) {
@@ -893,7 +893,7 @@ start_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unu
 		d->periods = 0;
 		if (d->output != 0) {
 			written = refused = 0;
-			say("redwood: audio: playing\n");
+			say("hakios: audio: playing\n");
 		}
 		if (d->object == OBJECT_CODEC) {
 			codec_open();
@@ -916,7 +916,7 @@ stop_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unus
 		if (d->object == OBJECT_CODEC) {
 			codec_close();
 		} else if (d->output != 0) {
-			say("redwood: audio: stopped after %llu.%02llu s (%llu frames not taken by %s)\n", written / HAKIOS_AUDIO_RATE,
+			say("hakios: audio: stopped after %llu.%02llu s (%llu frames not taken by %s)\n", written / HAKIOS_AUDIO_RATE,
 			    written % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, refused, HAKIOS_AUDIO_DEVICE);
 		}
 	}
@@ -993,7 +993,7 @@ actuator_write(const int16_t *samples, UInt32 frames)
 	}
 	if (peak > 0 && haptic_said < 12) {
 		haptic_said++;
-		say("redwood: audio: the actuator plays: %u frames, peak %d of 32768%s\n", (unsigned)frames, peak,
+		say("hakios: audio: the actuator plays: %u frames, peak %d of 32768%s\n", (unsigned)frames, peak,
 		    haptic >= 0 ? "" : " (no /dev/hakios-haptic: not felt)");
 	}
 }

@@ -108,7 +108,7 @@ power_for(long long mode)
 	if (trace) {
 		char line[128];
 
-		snprintf(line, sizeof(line), "redwood: SpringBoard: display mode %lld (%s): panel %s\n", mode, name[0] ? name : "?",
+		snprintf(line, sizeof(line), "hakios: SpringBoard: display mode %lld (%s): panel %s\n", mode, name[0] ? name : "?",
 		    power == 0 ? "dark" : power == 2 ? "dimmed" : power == 1 ? "lit" : "left alone");
 		say(line);
 	}
@@ -151,12 +151,12 @@ mode_name_init(void)
 	for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]) && mode_name == NULL; i++) {
 		mode_name = (mode_name_fn)dlsym(RTLD_DEFAULT, names[i]);
 		if (mode_name != NULL) {
-			snprintf(line, sizeof(line), "redwood: SpringBoard: display modes named by %s: the panel follows them\n", names[i]);
+			snprintf(line, sizeof(line), "hakios: SpringBoard: display modes named by %s: the panel follows them\n", names[i]);
 			say(line);
 		}
 	}
 	if (mode_name == NULL) {
-		say("redwood: SpringBoard: no function that names a display mode: the panel does not follow them\n");
+		say("hakios: SpringBoard: no function that names a display mode: the panel does not follow them\n");
 	}
 }
 
@@ -176,12 +176,12 @@ idle_timer_init(void)
 	char types[32] = "?", line[160];
 
 	if (m == NULL || !types_of(m, types, sizeof(types)) || strcmp(types, "d@:d") != 0) {
-		snprintf(line, sizeof(line), "redwood: SpringBoard: no -[SBBacklightIdleTimer _effectiveTimeoutForBaseTimeout:] (%s); idle timer left alone\n", types);
+		snprintf(line, sizeof(line), "hakios: SpringBoard: no -[SBBacklightIdleTimer _effectiveTimeoutForBaseTimeout:] (%s); idle timer left alone\n", types);
 		say(line);
 		return;
 	}
 	original_timeout = (timeout_fn)method_setImplementation(m, (IMP)timeout);
-	say("redwood: SpringBoard: the idle timer dims and sleeps a day later\n");
+	say("hakios: SpringBoard: the idle timer dims and sleeps a day later\n");
 }
 
 __attribute__((constructor)) static void
@@ -198,18 +198,18 @@ backlight_init(void)
 	complete_sel = sel_registerName("didCompleteTransitionToDisplayMode:withError:");
 	done = interface ? class_getInstanceMethod(interface, complete_sel) : NULL;
 	if (m == NULL || done == NULL) {
-		say("redwood: SpringBoard: no BLSHOSDisplayInterface display mode methods; backlight left alone\n");
+		say("hakios: SpringBoard: no BLSHOSDisplayInterface display mode methods; backlight left alone\n");
 		return;
 	}
 	if (!types_of(m, types, sizeof(types)) || !types_of(done, done_types, sizeof(done_types)) ||
 	    strcmp(types + 4, "d@?") != 0 || strncmp(types, "v@:", 3) != 0 || !is_integer(types[3]) ||
 	    strlen(done_types) != 5 || strncmp(done_types, "v@:", 3) != 0 || !is_integer(done_types[3]) || done_types[4] != '@') {
-		snprintf(line, sizeof(line), "redwood: SpringBoard: display mode methods are %s / %s; backlight left alone\n",
+		snprintf(line, sizeof(line), "hakios: SpringBoard: display mode methods are %s / %s; backlight left alone\n",
 		    types, done_types);
 		say(line);
 		return;
 	}
 	original_transition = (transition_fn)method_setImplementation(m, (IMP)transition);
-	snprintf(line, sizeof(line), "redwood: SpringBoard: display mode changes complete after their ramp (%s)\n", types);
+	snprintf(line, sizeof(line), "hakios: SpringBoard: display mode changes complete after their ramp (%s)\n", types);
 	say(line);
 }

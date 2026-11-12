@@ -7,7 +7,7 @@ diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
  static uint32_t         gNoIdleFlag = 0;
 -static uint32_t         gSleepDisabledFlag = 0;
 +/*
-+ * redwood: the system does not sleep. There is nothing here to sleep into and nothing that would
++ * hakios: the system does not sleep. There is nothing here to sleep into and nothing that would
 + * wake it: with the screen locked, powerd asks for system sleep within seconds, and that request
 + * ended in IOCPUSleepKernel() -- with one processor it came straight back out, again and again
 + * (every time a round of sleep and wake notifications to all the system); with more than one it

@@ -83,13 +83,13 @@ replace_virtual(const char *what, uintptr_t slot, uintptr_t expected, void *repl
 	void *original;
 
 	if (*entry != expected + slide) {
-		say("redwood: %s: found %#lx, expected %#lx; left alone\n", what, *entry - slide, expected);
+		say("hakios: %s: found %#lx, expected %#lx; left alone\n", what, *entry - slide, expected);
 		return NULL;
 	}
 	/* the tables are in read-only memory shared by every process: get a private writable copy of the page */
 	kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
 	if (kr != KERN_SUCCESS) {
-		say("redwood: %s: cannot make the table writable (%d)\n", what, kr);
+		say("hakios: %s: cannot make the table writable (%d)\n", what, kr);
 		return NULL;
 	}
 	original = (void *)*entry;
@@ -123,7 +123,7 @@ my_is_ready(void *display)
 	int ready = orig_is_ready(display);
 
 	if (ready != last_ready || calls_ready < 3) {
-		say("redwood: is_ready -> %d (call %u, flags %#llx, b233 %#x)\n", ready, calls_ready,
+		say("hakios: is_ready -> %d (call %u, flags %#llx, b233 %#x)\n", ready, calls_ready,
 		    (unsigned long long)DISPLAY_FLAGS(display), DISPLAY_B233(display));
 		last_ready = ready;
 	}
@@ -139,9 +139,9 @@ my_ignore_update_p(void *display, void *update)
 	if (ignore != last_ignore || calls_ignore < 3) {
 		uint64_t *q = (uint64_t *)((char *)display + 0x220);
 
-		say("redwood: ignore_update_p -> %d (call %u, flags %#llx, update flags %#x)\n", ignore, calls_ignore,
+		say("hakios: ignore_update_p -> %d (call %u, flags %#llx, update flags %#x)\n", ignore, calls_ignore,
 		    (unsigned long long)DISPLAY_FLAGS(display), *(uint32_t *)((char *)update + 0xf0));
-		say("redwood:   display +0x220: %#llx %#llx %#llx %#llx %#llx %#llx\n", (unsigned long long)q[0],
+		say("hakios:   display +0x220: %#llx %#llx %#llx %#llx %#llx %#llx\n", (unsigned long long)q[0],
 		    (unsigned long long)q[1], (unsigned long long)q[2], (unsigned long long)q[3], (unsigned long long)q[4],
 		    (unsigned long long)q[5]);
 		last_ignore = ignore;
@@ -156,7 +156,7 @@ my_begin_update(void *display, void *update)
 	uintptr_t r = orig_begin_update(display, update);
 
 	if (calls_begin++ < 6) {
-		say("redwood: begin_update -> %#lx (flags %#llx)\n", r, (unsigned long long)DISPLAY_FLAGS(display));
+		say("hakios: begin_update -> %#lx (flags %#llx)\n", r, (unsigned long long)DISPLAY_FLAGS(display));
 	}
 	return r;
 }
@@ -167,7 +167,7 @@ my_finish_update(void *display, void *update, unsigned flags)
 	uintptr_t r = orig_finish_update(display, update, flags);
 
 	if (calls_finish++ < 6) {
-		say("redwood: finish_update(%#x) -> %#lx\n", flags, r);
+		say("hakios: finish_update(%#x) -> %#lx\n", flags, r);
 	}
 	return r;
 }
@@ -189,10 +189,10 @@ my_renderer(void *server)
 	renderer = orig_renderer(server);
 	if (renderer == NULL) {
 		failed = 1;
-		say("redwood: no accelerated renderer; the software one will draw\n");
+		say("hakios: no accelerated renderer; the software one will draw\n");
 	} else if (!said) {
 		said = 1;
-		say("redwood: the server has an accelerated renderer (%p)\n", renderer);
+		say("hakios: the server has an accelerated renderer (%p)\n", renderer);
 	}
 	return renderer;
 }
@@ -203,7 +203,7 @@ my_render_update(void *server, void *update, unsigned *flags)
 	uintptr_t r = orig_render_update(server, update, flags);
 
 	if (calls_render++ < 6) {
-		say("redwood: render_update -> %#lx (flags %#x)\n", r, flags ? *flags : 0);
+		say("hakios: render_update -> %#lx (flags %#x)\n", r, flags ? *flags : 0);
 	}
 	return r;
 }
@@ -275,7 +275,7 @@ say_the_fault(int signal_number, siginfo_t *info, void *context_in)
 		used += (size_t)snprintf(frames + used, sizeof(frames) - used, " %#lx", ret - slide);
 		fp = next > fp ? next : 0;      /* the chain only ever goes up the stack */
 	}
-	say("redwood: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
+	say("hakios: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
 	    info != NULL ? info->si_addr : NULL, pc - slide, lr - slide, frames);
 	signal(signal_number, SIG_DFL);
 	raise(signal_number);
@@ -353,18 +353,18 @@ give_the_renderer_a_shader(unsigned function, const char *source)
 	vm_address_t page = (vm_address_t)entry & ~(vm_address_t)(vm_page_size - 1);
 
 	if (*entry != 0) {
-		say("redwood: CoreAnimation's function %u has a shader of its own; left alone\n", function);
+		say("hakios: CoreAnimation's function %u has a shader of its own; left alone\n", function);
 		return;
 	}
 	/* the table is read-only memory shared by every process: a private writable copy of the page */
 	if (vm_protect(mach_task_self(), page, vm_page_size, FALSE,
 	    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) != KERN_SUCCESS) {
-		say("redwood: CoreAnimation's function %u: cannot make the table of shaders writable\n", function);
+		say("hakios: CoreAnimation's function %u: cannot make the table of shaders writable\n", function);
 		return;
 	}
 	*entry = (uintptr_t)source;
 	vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ);
-	say("redwood: CoreAnimation's function %u (\"sb3\") is given a shader of ours\n", function);
+	say("hakios: CoreAnimation's function %u (\"sb3\") is given a shader of ours\n", function);
 }
 
 static uint8_t say_yes[90];
@@ -382,7 +382,7 @@ functions_said_yes(const char *arguments)
 
 		if (function < 90) {
 			say_yes[function] = 0;
-			say("redwood: the renderer will not answer that it has CoreAnimation's function %u (\"%.3s\")\n",
+			say("hakios: the renderer will not answer that it has CoreAnimation's function %u (\"%.3s\")\n",
 			    function, names + 4 * function);
 		}
 		argument = *argument == ',' ? argument + 1 : NULL;
@@ -393,7 +393,7 @@ functions_said_yes(const char *arguments)
 
 		if (function < 90) {
 			say_yes[function] = 1;
-			say("redwood: the renderer will answer that it has CoreAnimation's function %u (\"%.3s\")\n",
+			say("hakios: the renderer will answer that it has CoreAnimation's function %u (\"%.3s\")\n",
 			    function, names + 4 * function);
 		}
 		argument = *argument == ',' ? argument + 1 : NULL;
@@ -420,14 +420,14 @@ my_compile_shader(void *context, const char *source)
 	/* that it is called at all is worth one line, because a renderer that compiles nothing here
 	   would mean the text is assembled and compiled somewhere this table does not reach */
 	if (seen++ == 0) {
-		say("redwood: CoreAnimation compiles its shaders through the table (the first of them, %zu characters)\n",
+		say("hakios: CoreAnimation compiles its shaders through the table (the first of them, %zu characters)\n",
 		    source != NULL ? strlen(source) : 0);
 	}
 	if (compile_shaders_said && told < 24) {
 		told++;
-		say("redwood: CoreAnimation compiles a shader, %zu characters:\n", source != NULL ? strlen(source) : 0);
+		say("hakios: CoreAnimation compiles a shader, %zu characters:\n", source != NULL ? strlen(source) : 0);
 		for (size_t at = 0, length = source != NULL ? strlen(source) : 0; at < length; at += 700) {
-			say("redwood:  %.700s\n", source + at);
+			say("hakios:  %.700s\n", source + at);
 		}
 	}
 	return orig_compile_shader(context, source);
@@ -444,7 +444,7 @@ my_function_supported(void *context)
 	if (!supported && function < 90 && say_yes[function] && gl_loaded) {
 		if (!said[function]) {
 			said[function] = 1;
-			say("redwood: CoreAnimation's function %u (\"%.3s\"): the renderer is made to say it has it\n",
+			say("hakios: CoreAnimation's function %u (\"%.3s\"): the renderer is made to say it has it\n",
 			    function, names + 4 * function);
 		}
 		return 1;
@@ -454,7 +454,7 @@ my_function_supported(void *context)
 	}
 	if (!supported && !said[function]) {
 		said[function] = 1;
-		say("redwood: CoreAnimation's OpenGL ES renderer has no function %u (\"%.3s\"): what needs it is not drawn\n",
+		say("hakios: CoreAnimation's OpenGL ES renderer has no function %u (\"%.3s\"): what needs it is not drawn\n",
 		    function, function < 90 ? names + 4 * function : "?");
 	}
 	return supported;
@@ -490,7 +490,7 @@ my_function_uniform(void *context, unsigned index, size_t components, size_t cou
 
 		if (function < 90 && !told[function]) {
 			told[function] = 1;
-			say("redwood: function %u takes its numbers from %#lx %#lx %#lx\n", function,
+			say("hakios: function %u takes its numbers from %#lx %#lx %#lx\n", function,
 			    (uintptr_t)__builtin_return_address(0) - slide,
 			    (uintptr_t)__builtin_return_address(1) - slide,
 			    (uintptr_t)__builtin_return_address(2) - slide);
@@ -557,28 +557,28 @@ keep_metal_from_core_animation(void)
 	unsigned long held;
 
 	if (create == NULL) {
-		say("redwood: metal: this process has no MTLCreateSystemDefaultDevice; nothing to keep\n");
+		say("hakios: metal: this process has no MTLCreateSystemDefaultDevice; nothing to keep\n");
 		return;
 	}
 	if ((device = create()) == NULL) {
-		say("redwood: metal: no device in this process; CoreAnimation keeps OpenGL ES by itself\n");
+		say("hakios: metal: no device in this process; CoreAnimation keeps OpenGL ES by itself\n");
 		return;
 	}
 	if ((array = *slot) == NULL) {
-		say("redwood: metal: a device, but nothing at %#lx; the device list is NOT emptied\n",
+		say("hakios: metal: a device, but nothing at %#lx; the device list is NOT emptied\n",
 		    MTL_DEVICE_ARRAY);
 		return;
 	}
 	if (!((BOOL (*)(id, SEL, Class))objc_msgSend)(array, sel_registerName("isKindOfClass:"),
 	    objc_getClass("NSMutableArray"))) {
-		say("redwood: metal: %#lx holds a %s, not Metal's device array; left alone\n", MTL_DEVICE_ARRAY,
+		say("hakios: metal: %#lx holds a %s, not Metal's device array; left alone\n", MTL_DEVICE_ARRAY,
 		    object_getClassName(array));
 		return;
 	}
 	held = ask(array, sel_registerName("count"));
 	objc_retain(device);
 	tell(array, sel_registerName("removeAllObjects"));
-	say("redwood: metal: %s taken out of the window server (%lu in the list, %lu now); "
+	say("hakios: metal: %s taken out of the window server (%lu in the list, %lu now); "
 	    "MTLCreateSystemDefaultDevice() = %s\n", object_getClassName(device), held,
 	    ask(array, sel_registerName("count")), create() != NULL ? "A DEVICE STILL" : "nil");
 }
@@ -610,7 +610,7 @@ window_server_keeps_opengl_es(void)
 	IMP original;
 
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "camtl=1") != NULL) {
-		say("redwood: camtl=1: CoreAnimation may have the Metal device (it needs "
+		say("hakios: camtl=1: CoreAnimation may have the Metal device (it needs "
 		    "QuartzCore.framework/default.metallib in the image)\n");
 		return;
 	}
@@ -618,7 +618,7 @@ window_server_keeps_opengl_es(void)
 	method = cls ? class_getInstanceMethod(cls, sel_registerName("_detectDisplays")) : NULL;
 	original = method ? method_getImplementation(method) : NULL;
 	if (original == NULL || (uintptr_t)original != CA_DETECT_DISPLAYS + slide) {
-		say("redwood: -[CAWindowServer _detectDisplays]: found %#lx, not what was expected; left alone, "
+		say("hakios: -[CAWindowServer _detectDisplays]: found %#lx, not what was expected; left alone, "
 		    "and CoreAnimation may take the Metal road\n", original ? (uintptr_t)original - slide : 0);
 		return;
 	}
@@ -651,7 +651,7 @@ window_server_fixes(void)
 		   two is not ours to rely on; the hook writes nothing unless glcompile=1 */
 		orig_compile_shader = (uintptr_t (*)(void *, const char *))replace_virtual("compile_shader",
 		    VSLOT(VT_GLES_CONTEXT, 0x060), 0x1883fc808UL, my_compile_shader);
-		say("redwood: the shader compiler of CoreAnimation is %s\n", orig_compile_shader ? "watched" : "NOT watched");
+		say("hakios: the shader compiler of CoreAnimation is %s\n", orig_compile_shader ? "watched" : "NOT watched");
 		watch_for_faults();
 		{
 			char arguments[1024] = "";
@@ -663,7 +663,7 @@ window_server_fixes(void)
 			}
 		}
 	}
-	say("redwood: window server hooks %s\n", orig_is_ready && orig_ignore_update_p && orig_begin_update &&
+	say("hakios: window server hooks %s\n", orig_is_ready && orig_ignore_update_p && orig_begin_update &&
 	    orig_finish_update && orig_renderer && orig_render_update ? "installed" : "INCOMPLETE");
 }
 
@@ -686,7 +686,7 @@ wait_for_als_arrival(__unused id self, __unused SEL selector)
 {
 	if (input_services_made != NULL &&
 	    dispatch_semaphore_wait(input_services_made, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
-		say("redwood: input: no touch screen service after five seconds; going on without\n");
+		say("hakios: input: no touch screen service after five seconds; going on without\n");
 	}
 }
 
@@ -698,7 +698,7 @@ brightness_fixes(void)
 	IMP original = method ? method_getImplementation(method) : NULL;
 
 	if (original == NULL || (uintptr_t)original != 0x1af043734UL + slide) {
-		say("redwood: -[BLControl waitForALSArrival]: found %#lx, not what was expected; left alone\n",
+		say("hakios: -[BLControl waitForALSArrival]: found %#lx, not what was expected; left alone\n",
 		    original ? (uintptr_t)original - slide : 0);
 		return;
 	}
@@ -803,7 +803,7 @@ service_copy_property(__unused void *target, void *refcon, __unused IOHIDService
 
 		CFSetAddValue(asked, key);
 		CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8);
-		say("redwood: input: the event server asks for property \"%s\", which we do not have\n", name);
+		say("hakios: input: the event server asks for property \"%s\", which we do not have\n", name);
 	}
 	return value ? CFRetain(value) : NULL;
 }
@@ -838,7 +838,7 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 
 		CFNumberGetValue(value, kCFNumberIntType, &mode);
 		if (mode != touch_mode) {
-			say("redwood: input: touch detection mode %#x\n", mode);
+			say("hakios: input: touch detection mode %#x\n", mode);
 		}
 		touch_mode = mode;
 	}
@@ -853,7 +853,7 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 			CFStringGetCString(description, text, sizeof(text), kCFStringEncodingUTF8);
 			CFRelease(description);
 		}
-		say("redwood: input: the event server sets \"%s\" = %s\n", name, text);
+		say("hakios: input: the event server sets \"%s\" = %s\n", name, text);
 	}
 	return true;
 }
@@ -924,7 +924,7 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 		if (made->opened) {
 			break;
 		}
-		say("redwood: input: the event server has not opened \"%s\" (attempt %d): making it again\n", product, attempt);
+		say("hakios: input: the event server has not opened \"%s\" (attempt %d): making it again\n", product, attempt);
 		IOHIDVirtualServiceClientRemove(service);
 		CFRelease(service);
 		service = NULL;
@@ -1047,7 +1047,7 @@ input_thread(__unused void *arg)
 	}
 	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
 	if (device < 0) {
-		say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+		say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -1055,19 +1055,19 @@ input_thread(__unused void *arg)
 		/* this waits until the server (this very program) answers */
 		client = IOHIDEventSystemClientCreateWithType(NULL, types[i], NULL);
 		if (client == NULL) {
-			say("redwood: input: no HID client of type %d\n", types[i]);
+			say("hakios: input: no HID client of type %d\n", types[i]);
 			continue;
 		}
 		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("redwood.input", NULL));
 		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
 		if (screen == NULL) {
-			say("redwood: input: a HID client of type %d may not create services\n", types[i]);
+			say("hakios: input: a HID client of type %d may not create services\n", types[i]);
 		}
 	}
 	if (screen != NULL) {
 		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
 	}
-	say("redwood: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
+	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */
 	if (screen == NULL) {
 		return NULL;
@@ -1077,7 +1077,7 @@ input_thread(__unused void *arg)
 		uint64_t read_at = mach_absolute_time();
 
 		if (count++ < 4) {
-			say("redwood: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
+			say("hakios: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
 		}
 		if (t.type > HAKIOS_TOUCH_UP) {
 			if (buttons != NULL) {
@@ -1106,7 +1106,7 @@ input_thread(__unused void *arg)
 			}
 		}
 	}
-	say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+	say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 	return NULL;
 }
 
@@ -1137,12 +1137,12 @@ container_manager_fixes(void)
 	IMP original = method ? method_getImplementation(method) : NULL;
 
 	if (original == NULL || (uintptr_t)original != 0x1c3ea6298UL + slide) {
-		say("redwood: +[MCMUserIdentityCache personasAreSupported]: found %#lx, not what was expected; left alone\n",
+		say("hakios: +[MCMUserIdentityCache personasAreSupported]: found %#lx, not what was expected; left alone\n",
 		    original ? (uintptr_t)original - slide : 0);
 		return;
 	}
 	method_setImplementation(method, (IMP)personas_are_supported);
-	say("redwood: container manager: no personas\n");
+	say("hakios: container manager: no personas\n");
 }
 
 /* ---------------------------------------------------------------------------------------------- */
@@ -1190,11 +1190,11 @@ opengl_es(void)
 		}
 	}
 	if (!wanted) {
-		say("redwood: %s: CoreAnimation keeps its software renderer\n", told ? "gl=0" : "no GPU to draw with");
+		say("hakios: %s: CoreAnimation keeps its software renderer\n", told ? "gl=0" : "no GPU to draw with");
 		return;
 	}
 	if ((library = dlopen(HAKIOS_GL, RTLD_NOW)) == NULL) {
-		say("redwood: %s: %s\n", HAKIOS_GL, dlerror());
+		say("hakios: %s: %s\n", HAKIOS_GL, dlerror());
 		return;
 	}
 	gl_loaded = 1;
@@ -1228,7 +1228,7 @@ hakios_init(void)
 		 */
 		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "ca_vbl=1") != NULL) {
 			setenv("CA_FORCE_TIMER", "1", 1);
-			say("redwood: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
+			say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
 		}
 		/*
 		 * Boot-arg caenv=NAME=VALUE (as many as wanted): into the window server's environment, for
@@ -1247,7 +1247,7 @@ hakios_init(void)
 			if ((equals = strchr(setting, '=')) != NULL) {
 				*equals = 0;
 				setenv(setting, equals + 1, 1);
-				say("redwood: caenv: %s=%s for the window server\n", setting, equals + 1);
+				say("hakios: caenv: %s=%s for the window server\n", setting, equals + 1);
 			}
 		}
 		opengl_es();

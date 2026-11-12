@@ -192,7 +192,7 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  		char buf[EARLY_PANIC_BUFLEN];
  		vsnprintf(buf, EARLY_PANIC_BUFLEN, panic_format_str, *panic_args);
  		paniclog_append_noflush("panic: %s\n", buf);
-+		/* redwood: PE_kputc is not hooked yet, so send the reason to the always-available loader log. */
++		/* hakios: PE_kputc is not hooked yet, so send the reason to the always-available loader log. */
 +		{
 +			extern void loader_log_line(const char *);
 +			loader_log_line("\n== EARLY PANIC: ");
@@ -203,7 +203,7 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  		panic_spin_forever();
  	}
  
-+	/* redwood: capture every panic's reason into the always-available loader log (QEMU bring-up). */
++	/* hakios: capture every panic's reason into the always-available loader log (QEMU bring-up). */
 +	{
 +		extern void loader_log_line(const char *);
 +		char rbuf[256];
@@ -229,7 +229,7 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  void __attribute__((noinline, optnone))
  panic_spin_forever(void)
  {
-+	/* redwood: hand the panic text to the loader log, so a QEMU bring-up boot shows why it stopped. */
++	/* hakios: hand the panic text to the loader log, so a QEMU bring-up boot shows why it stopped. */
 +	{
 +		extern char *debug_buf_base, *debug_buf_ptr;
 +		extern void loader_log_putc(char);
