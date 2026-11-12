@@ -493,7 +493,7 @@ asked_just_before_it_sleeps(void)
 	settle();
 	fake_before_wait = ask_for_300;         /* the next time the thread has nothing to do and goes to sleep for good */
 	set("level", 600);
-	WAIT_FOR(fake_before_wait == NULL && get("shown") == 300, 5000);
+	WAIT_FOR(fake_before_wait == NULL && get("shown") == 300 && last_sent() == bl_level_to_raw(300, 1, 2047), 5000);
 	CHECK(fake_before_wait == NULL, "the thread came to sleep once 600 was shown");
 	CHECK(get("shown") == 300 && last_sent() == bl_level_to_raw(300, 1, 2047), "and what was asked for in that moment is shown: %u", get("shown"));
 	/* the same moment with the display switched off: switched on again just before the thread sleeps, it is lit */
