@@ -22,6 +22,9 @@ extern char log_text[];
 static uint32_t sensor[2][16];          /* status words */
 static uint32_t perf[3];                /* each group's row */
 static unsigned writes, foreign;
+static unsigned same_again;             /* writes of the row a group already had */
+static unsigned between[2][16];         /* a sensor caught between two readings: this many reads in a row give none */
+static unsigned asked[2][16];
 static volatile uint32_t cap = 1000;
 
 /* the frequency table: 300 MHz (alternate source), then multiples of 19.2 MHz, then the last again */
@@ -36,11 +39,21 @@ temperature(unsigned controller, unsigned which, int tenths)
 uint32_t
 hakios_test_rd(vm_offset_t a)
 {
-	if (a >= TSENS0 && a < TSENS0 + 0x200) {
-		return a >= TSENS0 + 0xa0 && a < TSENS0 + 0xe0 ? sensor[0][(a - TSENS0 - 0xa0) / 4] : 0;
-	}
-	if (a >= TSENS1 && a < TSENS1 + 0x200) {
-		return a >= TSENS1 + 0xa0 && a < TSENS1 + 0xe0 ? sensor[1][(a - TSENS1 - 0xa0) / 4] : 0;
+	for (unsigned c = 0; c < 2; c++) {
+		uint32_t base = c ? TSENS1 : TSENS0;
+
+		if (a >= base && a < base + 0x200) {
+			unsigned which = (unsigned)(a - base - 0xa0) / 4;
+
+			if (a < base + 0xa0 || a >= base + 0xe0) {
+				return 0;
+			}
+			/* (of every between + 1 reads the last has the reading) */
+			if (between[c][which] != 0 && asked[c][which]++ % (between[c][which] + 1) != between[c][which]) {
+				return 0;
+			}
+			return sensor[c][which];
+		}
 	}
 	if (a >= EPSS && a < EPSS + 0x3000) {
 		unsigned d = (a - EPSS) / 0x1000, off = (a - EPSS) % 0x1000;
@@ -63,6 +76,7 @@ void
 hakios_test_wr(vm_offset_t a, uint32_t v)
 {
 	if (a >= EPSS && a < EPSS + 0x3000 && (a - EPSS) % 0x1000 == 0x320) {
+		same_again += perf[(a - EPSS) / 0x1000] == v;
 		perf[(a - EPSS) / 0x1000] = v;
 		writes++;
 		return;
@@ -139,6 +153,10 @@ heat_and_cool(void)
 	WAIT_FOR(get("step") == 5 && perf[0] == 3 && perf[1] == 4 && perf[2] == 4 && cap == 600, 3000);
 	CHECK(perf[0] == 3 && perf[1] == 4 && perf[2] == 4, "at the floors: %u %u %u", perf[0], perf[1], perf[2]);
 	CHECK(cap == 600, "the panel held back too: %u", cap);
+	WAIT_FOR(logged("held back 5 of 5 (rows 3 4 4)"), 1000);
+	CHECK(logged("thermal: 72.0 C: held back 1 of 5 (rows 7 7 7)") && logged("held back 5 of 5 (rows 3 4 4)"), "each step is said: %s", log_text);
+	/* the two groups whose floor is a row higher are at it one step before the first: not written again */
+	CHECK(writes == 5 + 4 + 4 && same_again == 0, "a group is written when its row changes: %u writes, %u of the row it had", writes, same_again);
 	phone(660);                            /* between clear and trip */
 	usleep(500000);
 	CHECK(get("step") == 5, "held: %u", get("step"));
@@ -177,6 +195,22 @@ never_raises(void)
 	CHECK(perf[0] == 0 && perf[1] == 0 && perf[2] == 0 && writes == 0, "rows %u %u %u, %u writes", perf[0], perf[1], perf[2],
 	    writes);
 	CHECK(get("most") == 0, "nothing to hold back: %u", get("most"));
+}
+
+/* a sensor caught between two readings has none for a moment: it is asked again, not taken for absent */
+static void
+sensor_between_readings(void)
+{
+	phone(900);                             /* the hottest is 90.0 C, the other 85.0 C */
+	between[0][3] = 3;                      /* the hottest answers every fourth time it is asked */
+	boot_args = "thermal=1 th_period_ms=100";
+	hakios_thermal_init();
+	usleep(500000);
+	CHECK((int32_t)get("hottest") == 900, "the hottest is still seen: %d", (int32_t)get("hottest"));
+	between[0][3] = 5;                      /* ... and one that does not answer in four tries is left out that time */
+	WAIT_FOR((int32_t)get("hottest") == 850, 2000);
+	CHECK((int32_t)get("hottest") == 850, "the other sensor's reading then: %d", (int32_t)get("hottest"));
+	CHECK(writes == 0 && foreign == 0, "looking only");
 }
 
 static void
@@ -250,7 +284,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "heat_and_cool", heat_and_cool },
-		{ "critical", critical }, { "never_raises", never_raises }, { "silent_sensors", silent_sensors },
+		{ "critical", critical }, { "never_raises", never_raises }, { "sensor_between_readings", sensor_between_readings }, { "silent_sensors", silent_sensors },
 		{ "tuned_while_running", tuned_while_running }, { "unknown_board", unknown_board }, { "board_without_thermal", board_without_thermal },
 		{ "bad_policy", bad_policy },
 	};
