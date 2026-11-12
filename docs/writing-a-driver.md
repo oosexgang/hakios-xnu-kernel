@@ -70,7 +70,10 @@ needs it.
 5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree, and its start function
    as one more line of the list in `bsd/dev/hakios_drivers.c`, after what it needs (the list is
    where every driver is started, in order; a driver decides for itself whether it has anything
-   to do). Then `kernel/export.sh` ([kernel/README.md](../kernel/README.md)).
+   to do). Then `kernel/export.sh` ([kernel/README.md](../kernel/README.md)). That it compiles and
+   links in the whole kernel is a build away, on any Linux machine, without theos: with LLVM's tools
+   ([building.md](building.md)) a build from scratch takes minutes, and `XNU_WARNINGS=1` shows what the
+   compiler says of the file (HakiOS' own files give no warning; keep it so).
 6. **Document it**: a comment in the file that names each boot argument as `name=…` (`make docs` puts
    them in [boot-args.md](boot-args.md)), and a row in [drivers.md](drivers.md).
 7. **On the phone**: level 1 first. Send the log lines with the change, and say in the device
