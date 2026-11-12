@@ -127,6 +127,9 @@ struct lx_radio {
 	int8_t signal;				/* dBm, of the last beacon of the network joined */
 	int last_error;
 	unsigned sent, sent_lost, received, received_group, eapol, rekeys;
+	unsigned group_lost, mic_wrong;		/* frames to everybody not made into Ethernet; Michael's check failed */
+	unsigned group_air;			/* frames addressed to everybody on the air (the group's key), as the driver gave them */
+	unsigned told_group, told_arp;		/* of frame_told()'s lines, so many said */
 	unsigned long long joined_at;		/* nanoseconds */
 };
 
@@ -829,14 +832,42 @@ handshake_message(struct lx_radio *radio, const uint8_t *frame, unsigned length)
 	}
 }
 
-/* An Ethernet frame the radio has received. */
+/*
+ * One line for an Ethernet frame E of LENGTH bytes: the first frames to everybody that come in, and the first ARP
+ * the station sends. Whether the network's broadcasts come through and are answered is what decides whether a
+ * computer beside the phone can reach it: its first frame to the phone is an ARP request to everybody, and while
+ * that goes unanswered the computer says "no route to host" although the phone itself reaches the Internet.
+ */
 static void
-ethernet_received(struct lx_radio *radio, struct sk_buff *skb)
+frame_told(const char *what, const uint8_t *e, unsigned length, unsigned flags)
+{
+	const char *how = flags & RX_FLAG_MMIC_ERROR ? ", MICHAEL'S CHECK FAILED" : !(flags & RX_FLAG_8023) && flags & RX_FLAG_DECRYPTED ?
+	    ", to everybody on the air too, deciphered with the group's key" : flags & RX_FLAG_8023 ? ", to us alone on the air (the "
+	    "access point made it so)" : "";
+
+	if (e[12] == 0x08 && e[13] == 0x06 && length >= 42) {
+		lx_tell("lx: %s: ARP %s, %u.%u.%u.%u (%02x:%02x:%02x:%02x:%02x:%02x) asks for %u.%u.%u.%u, %u bytes%s\n", what,
+		    e[21] == 1 ? "request" : e[21] == 2 ? "REPLY" : "of an unknown kind", e[28], e[29], e[30], e[31], e[22], e[23],
+		    e[24], e[25], e[26], e[27], e[38], e[39], e[40], e[41], length, how);
+	} else {
+		lx_tell("lx: %s: type 0x%02x%02x from %02x:%02x:%02x:%02x:%02x:%02x to %02x:%02x:%02x:%02x:%02x:%02x, %u bytes%s\n",
+		    what, e[12], e[13], e[6], e[7], e[8], e[9], e[10], e[11], e[0], e[1], e[2], e[3], e[4], e[5], length, how);
+	}
+}
+
+/* An Ethernet frame the radio has received; FLAGS: the driver's description of it (RX_FLAG_...). */
+static void
+ethernet_received(struct lx_radio *radio, struct sk_buff *skb, unsigned flags)
 {
 	if (skb->len >= 14 && skb->data[12] == 0x88 && skb->data[13] == 0x8e) {
 		handshake_message(radio, skb->data, skb->len);
 	} else if (radio->joined && skb->len >= 14) {
 		*(skb->data[0] & 1 ? &radio->received_group : &radio->received) += 1;
+		radio->mic_wrong += (flags & RX_FLAG_MMIC_ERROR) != 0;
+		if (skb->data[0] & 1 && radio->told_group < 16) {
+			radio->told_group++;
+			frame_told("to everybody", skb->data, skb->len, flags);
+		}
 		lx_os_net_input(skb->data, skb->len);
 	}
 }
@@ -919,17 +950,19 @@ linuxkpi_ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb, struct ieee8
 	const struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
 
 	radio->frames++;
+	radio->group_air += !(status->flag & RX_FLAG_8023) && skb->len >= 24 && (skb->data[0] & 0x0c) == 0x08 && (skb->data[4] & 1);
 	if (status->flag & RX_FLAG_8023) {
-		ethernet_received(radio, skb);
+		ethernet_received(radio, skb, status->flag);
 	} else if (skb->len >= 36 && (skb->data[0] == 0x80 || skb->data[0] == 0x50)) {	/* a beacon, an answer to a probe */
 		heard(radio, skb->data, skb->len, status->freq, status->signal);
 	} else if (skb->len >= 24 && (skb->data[0] & 0x0c) == 0x00) {
 		radio->others++;
 		management_received(radio, skb->data, skb->len);
 	} else if (to_ethernet(skb, (status->flag & RX_FLAG_IV_STRIPPED) != 0)) {
-		ethernet_received(radio, skb);
+		ethernet_received(radio, skb, status->flag);
 	} else {
 		radio->others++;
+		radio->group_lost += skb->len >= 10 && (skb->data[0] & 0x0c) == 0x08 && (skb->data[4] & 1);
 	}
 	dev_kfree_skb_any(skb);
 }
@@ -1868,6 +1901,7 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	}
 	radio->reached = IEEE80211_STA_AUTHORIZED;
 	radio->sent = radio->sent_lost = radio->received = radio->received_group = radio->rekeys = 0;
+	radio->group_lost = radio->mic_wrong = radio->told_group = radio->told_arp = radio->group_air = 0;
 	radio->joined_at = lx_os_nanoseconds();
 	radio->signal = target->signal;
 	radio->joined = true;
@@ -1915,10 +1949,12 @@ lx_station_say(void)
 
 	if (radio != NULL) {
 		lx_tell("lx: the network is %s, %llu s after it was joined: %u frames sent (%u could not be), %u received for us and "
-		    "%u sent to everybody; %u messages of the handshake, the group's key changed %u times; block ack: %u classes "
-		    "taken, %u refused\n", radio->joined ? "joined" : "NOT joined", radio->joined_at != 0 ? (lx_os_nanoseconds() -
+		    "%u sent to everybody (%u of them to everybody on the air; %u more to everybody not understood; Michael's check "
+		    "failed on %u); %u messages of the handshake, the group's key changed %u times; block ack: %u classes taken, %u "
+		    "refused\n", radio->joined ? "joined" : "NOT joined", radio->joined_at != 0 ? (lx_os_nanoseconds() -
 		    radio->joined_at) / 1000000000ull : 0, radio->sent, radio->sent_lost, radio->received, radio->received_group,
-		    radio->eapol, radio->rekeys, radio->ba_sessions, radio->ba_refused);
+		    radio->group_air, radio->group_lost, radio->mic_wrong, radio->eapol, radio->rekeys, radio->ba_sessions,
+		    radio->ba_refused);
 	}
 }
 
@@ -1947,6 +1983,10 @@ lx_station_send(const unsigned char *frame, unsigned long length)
 
 	if (radio == NULL || !radio->joined) {
 		return (ENETDOWN);
+	}
+	if (length >= 42 && frame[12] == 0x08 && frame[13] == 0x06 && radio->told_arp < 16) {
+		radio->told_arp++;
+		frame_told("sent", frame, (unsigned)length, 0);
 	}
 	return (ethernet_send(radio, frame, (unsigned)length) ? 0 : ENOBUFS);
 }

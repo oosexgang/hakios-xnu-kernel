@@ -295,19 +295,47 @@ bus_write32(struct ath11k_base *ab, u32 offset, u32 value)
  */
 #define DATA_BUDGET	64
 
+/*
+ * What the data path threw away and why, where it has: frames the hardware would not pass (rxdma_error: by its
+ * error code, HAL_REO_ENTR_RING_RXDMA_ECODE_ -- 3 deciphering failed, 4 Michael's check, 5 not enciphered) and frames
+ * the reorder engine would not (reo_error: HAL_REO_DEST_RING_ERROR_CODE_ -- 12 a packet number out of order).
+ */
+static void
+errors_say(struct ath11k_base *ab)
+{
+	const struct ath11k_soc_dp_stats *st = &ab->soc_stats;
+	char line[400];
+	int at = 0;
+
+	for (int i = 0; i < HAL_REO_ENTR_RING_RXDMA_ECODE_MAX; i++) {
+		if (st->rxdma_error[i] != 0 && at < (int)sizeof(line) - 40) {
+			at += snprintf(line + at, sizeof(line) - at, " rxdma %d: %u", i, st->rxdma_error[i]);
+		}
+	}
+	for (int i = 0; i < HAL_REO_DEST_RING_ERROR_CODE_MAX; i++) {
+		if (st->reo_error[i] != 0 && at < (int)sizeof(line) - 40) {
+			at += snprintf(line + at, sizeof(line) - at, " reo %d: %u", i, st->reo_error[i]);
+		}
+	}
+	lx_tell("lx: frames the data path threw away: %u through the error ring, %u with a wrong owner;%s\n", st->err_ring_pkts,
+	    st->invalid_rbm, at != 0 ? line : " none by the hardware or the reorder engine");
+}
+
 static void
 bus_looks(void *argument)
 {
 	struct ath11k_base *ab = argument;
-	unsigned long long said = lx_os_nanoseconds();
+	unsigned long long said = lx_os_nanoseconds(), every = 120000000000ull;
 
 	bus.looks = true;
 	while (bus.looking) {
 		bool more = false;
 
-		if (lx_os_nanoseconds() - said > 300000000000ull) {	/* every five minutes: how the station and memory stand */
+		if (lx_os_nanoseconds() - said > every) {	/* after two minutes, then every five: how the station and memory stand */
 			said = lx_os_nanoseconds();
+			every = 300000000000ull;
 			lx_station_say();
+			errors_say(ab);
 			lx_memory_say();
 			if (bus.irq) {
 				irq_say();
