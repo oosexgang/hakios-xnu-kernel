@@ -41,6 +41,11 @@ Requirements:
 
 - Linux (the team builds on Arch under WSL). Packages: `base-devel git curl clang lld python perl xz
   flex bison m4 autoconf automake`.
+- clang 19 or newer for the kernel itself: xnu-12377's headers use `__builtin_clzg` and `__builtin_ctzg`,
+  which clang 18 does not have (`kern/bits.h`: "use of undeclared identifier"). Where the system's
+  `clang` is older, install a newer one beside it and point `XNU_CLANG_DIR` at it; on Ubuntu 24.04:
+  `apt-get install clang-20 lld-20` and `XNU_CLANG_DIR=/usr/lib/llvm-20/bin`. The host tools keep the
+  system's.
 - [theos](https://theos.dev/docs/installation-linux) with its Linux toolchain and `iPhoneOS16.5.sdk`,
   in `~/theos` or wherever `THEOS` points. It provides the Mach-O linker and the SDK headers.
 
@@ -82,6 +87,7 @@ what depends on them. Work done in the tree is never overwritten ([kernel/README
 | `XNU_SRC` | `../xnu-12377-hakios` | The assembled tree. |
 | `XNUDEPS` | `$XNU_SRC-deps` | Fetched sources, host tools, the SDK copy. |
 | `THEOS` | `~/theos` | theos. |
+| `XNU_CLANG_DIR` | `/usr/bin` | The directory of the clang the kernel is compiled with (`kernel/host/xnu-clang`): 19 or newer. |
 | `DARWIN_RENOIR` | `../darwin-renoir` | Optional. If this checkout exists and has its `xnu-deps` built, its host tools are used and step 2 fetches less. |
 
 One kernel serves every board it was built with. It is built as `MACHINE=BCM2837`, the open board configuration the
