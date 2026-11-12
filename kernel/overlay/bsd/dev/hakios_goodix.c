@@ -1,8 +1,7 @@
 /*
- * The touch screen of the POCO X5 Pro (redwood): either a Goodix GT9916 ("Berlin-D") or a
- * FocalTech FT3680 on the SPI bus of the SoC's serial engine 13, as a source of touches for
- * /dev/hakios-touch (sys/hakios_input.h). Only with boot-arg touchscreen=1: every address
- * below belongs to this phone.
+ * A touch screen on SPI: either a Goodix GT9916 ("Berlin-D") or a FocalTech FT3680, as a source of
+ * touches for /dev/hakios-touch (sys/hakios_input.h). Which serial engine, clocks, pins and supplies
+ * is the board's touch { }. Only with boot-arg touchscreen=1.
  *
  * There is no clock, pin, regulator or SPI framework in this kernel, so the driver does all of
  * it itself, in the order the vendor's Linux drivers do:

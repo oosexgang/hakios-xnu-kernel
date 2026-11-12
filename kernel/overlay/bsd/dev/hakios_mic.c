@@ -1,7 +1,7 @@
 /*
- * The phone's microphones, through the audio DSP. Every address and number below belongs to the
- * POCO X5 Pro (redwood), from Android's own live device tree, its mixer paths (fw-audio/android/)
- * and Xiaomi's kernel (redwood-s-oss, techpack/audio: asoc/codecs/bolero/, asoc/codecs/wcd938x/,
+ * The microphones on a WCD938x codec, through the audio DSP. The codec's reset pin is the board's
+ * mic { }, the LPASS blocks the SoC file's lpass { }. The numbers below were found on the first phone,
+ * from Android's own live device tree, its mixer paths (fw-audio/android/) and the vendor's kernel (redwood-s-oss, techpack/audio: asoc/codecs/bolero/, asoc/codecs/wcd938x/,
  * soc/swr-mstr-ctrl.c, soc/pinctrl-lpi.c, dsp/q6afe.c, asoc/codecs/audio-ext-clk-up.c). Nothing
  * here happens unless boot-arg mic=N asks for it, with adsp=1 (hakios_adsp.c), which calls
  * hakios_mic_dsp_up() once the DSP's audio services are up.

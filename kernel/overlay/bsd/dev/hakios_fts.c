@@ -1,11 +1,11 @@
 /*
- * Renoir FT3658U (Android fts_ts, running chip ID 0x5652).
- * Hardware: OKX sm8350-kernel-OKX 08bbb0c150ea, renoir-sm7350.dtsi,
+ * A FocalTech FT3658U touch screen on SPI (Android's fts_ts, running chip ID 0x5652).
+ * Written from: OKX sm8350-kernel-OKX 08bbb0c150ea, renoir-sm7350.dtsi,
  * shima-qupv3.dtsi, pinctrl-shima.c and gcc-shima.c. Protocol facts:
  * focaltech_3658u/focaltech_spi.c and focaltech_core.{c,h}.
  * GENI/RPMh FIFO transport is adapted from this project's hakios_goodix.c.
  * Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins
- * and supplies is the board file's touch { } (the numbers named in comments here are renoir's).
+ * and supplies is the board file's touch { } (the numbers named in comments are the first phone's).
  * No firmware flashing or bootloader
  * commands; the chip must boot its installed application firmware (0x5652).
  * Polling replaces Linux IRQ delivery; Linux IRQ283 is not a GIC interrupt ID.

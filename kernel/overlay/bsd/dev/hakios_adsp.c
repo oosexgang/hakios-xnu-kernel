@@ -1,6 +1,7 @@
 /*
- * The audio DSP of the POCO X5 Pro (redwood), started, and spoken to: step 1 of sound. Every
- * address below belongs to this phone, and nothing here is touched unless a boot-arg asks for it.
+ * The audio DSP, started, and spoken to: step 1 of sound. Its memory and its firmware's directory
+ * are the board's adsp { }, the way to it the SoC file's ipc { } and rpmh { }; nothing here is touched
+ * unless a boot-arg asks for it.
  *
  * The SoC's audio (LPASS: its clocks, its I2S and SoundWire, the codec's macros) does not belong
  * to the application processor. It is the audio DSP's -- a Hexagon of its own inside LPASS,

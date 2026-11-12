@@ -1,9 +1,9 @@
 /*
- * Cameras on an SM7325, written for those of the POCO X5 Pro (redwood): the macro one, an OmniVision
- * OV02B10 (2 MP, Android's camera 2, "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD
- * (108 MP, Android's camera 0, "redwood_sunny_s5khm2sd_wide"), the front one and the ultra-wide one.
- * How each sensor is wired is the board's (camera { } in board.dts: redwood's is described below as an
- * example); what each chip is, and the SoC's camera blocks, are this file's. Every number was found on
+ * Cameras on an SM7325's camera blocks. How each sensor is wired is the board's camera { } and its
+ * sensor@N nodes; what each sensor chip is (chips[] below) and the SoC's camera clock controller are this
+ * file's. It was written on a phone with four: the macro one, an OmniVision OV02B10 (2 MP,
+ * "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD (108 MP, "redwood_sunny_s5khm2sd_wide"),
+ * the front one and the ultra-wide one, described below as an example. Every number was found on
  * that phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
  * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.redwood_*.bin: the
  * slave address, the chip ID and where it is read, the power sequence, the tables) and the drivers

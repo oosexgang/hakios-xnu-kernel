@@ -74,7 +74,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fts_spi_hz` | — |
 | `fts_trace` | — |
 | `touch_flip` | — |
-| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments here are renoir's). |
+| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments are the first phone's). |
 
 ### `bsd/dev/hakios_goodix.c`
 
@@ -85,7 +85,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `touch_poll_us` | touch_poll_us=N: every N microseconds instead of 8000). |
 | `touch_rate` | touch_rate=480: the chip reports twice as often (Xiaomi's game mode; 240 otherwise) |
 | `touch_spi_hz` | touch_spi_hz=N: the bus at N Hz (Android's device tree gives the chip 5 MHz) |
-| `touchscreen` | Only with boot-arg touchscreen=1: every address below belongs to this phone. |
+| `touchscreen` | Only with boot-arg touchscreen=1. |
 
 ### `bsd/dev/hakios_input.c`
 

@@ -1,7 +1,7 @@
 /*
- * The flashlight of the POCO X5 Pro (redwood): the flash LED module of the PM8350C (SPMI slave 2,
- * registers 0xee00; "qcom,pm8350c-flash-led", four channels), the rear flash LED on its channel 0.
- * Every address and number below belongs to this phone, from Android's own device tree, Xiaomi's
+ * The flashlight: the flash LED module of a PM8350C ("qcom,pm8350c-flash-led", four channels), the
+ * rear flash LED on its channel 0. Where the module and the PMIC's temperature alarm are on SPMI is
+ * the board's torch { }. The numbers below were found on the first phone, from Android's device tree, the vendor's
  * driver for it (drivers/leds/leds-qti-flash.c of the phone's kernel, MiCode redwood-s-oss) and
  * what Android does when its own flashlight is switched on (its LED class devices read, nothing
  * written by us):

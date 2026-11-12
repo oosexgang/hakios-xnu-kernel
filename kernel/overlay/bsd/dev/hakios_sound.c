@@ -1,6 +1,6 @@
 /*
- * The phone's sound, step 3: what the audio DSP's services are told so that the speakers play.
- * Every address and number below belongs to the POCO X5 Pro (redwood), and nothing here happens
+ * The sound, step 3: what the audio DSP's services are told so that the speakers play. Which TDM
+ * interface and pins the amplifiers are on is the board's speaker { }; nothing here happens
  * unless boot-arg sound=N asks for it, with adsp=1 (hakios_adsp.c), which starts the DSP and
  * calls hakios_sound_dsp_up() once its audio services are up.
  *

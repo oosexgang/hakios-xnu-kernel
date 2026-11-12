@@ -1,7 +1,7 @@
 /*
- * The GPU of the POCO X5 Pro (redwood), an Adreno 642L, woken step by step up to a picture that
- * it fills and the panel shows. Every address below belongs to this phone, and nothing here is
- * touched unless a boot-arg asks for it.
+ * The GPU: an Adreno of the A660 family (642, 642L, 643), woken step by step up to a picture that
+ * it fills and the panel shows. Where its blocks are is the SoC file's adreno { }, what differs
+ * from one GPU to the next the board's gpu { }; nothing here is touched unless a boot-arg asks for it.
  *
  * Boot-arg gpu=1, on the phone and with the GPU's firmware in the small image: the GPU is
  * started while the system starts and kept for the window server to draw with (the service

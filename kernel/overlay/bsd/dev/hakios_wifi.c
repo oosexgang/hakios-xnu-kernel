@@ -1,6 +1,7 @@
 /*
- * The Wi-Fi of the POCO X5 Pro (redwood), from nothing and step by step. Every address below
- * belongs to this phone, and nothing here is touched unless a boot-arg asks for it.
+ * The Wi-Fi, from nothing and step by step. Where the SoC's blocks are is the SoC file's; the radio's
+ * pins, supplies, memory and files are the board's wifi { }. Nothing here is touched unless a boot-arg
+ * asks for it.
  *
  * The radio is a WCN6750. Its firmware does not run on the application processor but on a
  * processor of its own inside the SoC, the "WPSS" (a Hexagon DSP), which stays in reset until

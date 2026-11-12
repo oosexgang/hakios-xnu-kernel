@@ -1,9 +1,8 @@
 /*
- * Battery monitor for Xiaomi redwood and renoir, through their own resident UEFI.
+ * The battery, as the phone's resident UEFI reports it (feature battery-uefi).
  *
- * Redwood selects PM7325B and qcom,battery-charger over PMIC GLINK/ADSP, not
- * the local PM7250B/QG layout.  The resident UEFI contains the matching
- * Qualcomm charger drivers.  xnuloader owns that firmware context on core 0,
+ * On a phone whose charger is behind the audio DSP (qcom,battery-charger over PMIC GLINK) rather
+ * than a fuel gauge of its own, the resident UEFI carries Qualcomm's charger drivers.  xnuloader owns that firmware context on core 0,
  * polls it, and publishes a read-only cache; XNU only consumes that cache.
  * Charger limits and JEITA protection therefore remain firmware-owned.
  */

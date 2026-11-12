@@ -1,8 +1,8 @@
 /*
- * The speakers of the POCO X5 Pro (redwood): their two amplifiers. Every address below belongs
- * to this phone, and nothing here is touched unless a boot-arg asks for it.
+ * The speakers: two Awinic AW88261 amplifiers. Their bus, addresses, interrupts and the pins of the
+ * sound are the board's speaker { }; nothing here is touched unless a boot-arg asks for it.
  *
- * Each speaker has an amplifier of its own, an Awinic AW88261 (chip ID 0x2113, a "smart PA"),
+ * On the phone it was written for, each speaker has an amplifier of its own, an Awinic AW88261 (chip ID 0x2113, a "smart PA"),
  * set up over I2C -- the bus of the SoC's serial engine 3, GPIO 12 data and 13 clock, on which
  * Android's device tree and its running kernel have these two and nothing else -- and fed by
  * the SoC's first TDM interface ("MI2S 0": GPIO 97 bit clock, 100 frame sync, 99 data out),
