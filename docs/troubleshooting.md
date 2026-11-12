@@ -181,6 +181,15 @@ software without it.
 | `ufs: darwin: no write will be served: its unique GUID is not the one it had` (or its type GUID, where it begins and ends, its blocks, its logical unit, read only) | A partition named `darwin` is there, and one field of its GPT entry is not what `[storage]` says. The loader refuses the whole run's writes. | Compare `[storage]` with the phone's partition table. A partition made anew has a new unique GUID. |
 | `ufs: the loader offers no partition to write into (...)` | The kernel was asked to write and the loader did not offer the partition, or offers it from another block than this kernel's board file says. | `ufs_write=1` goes on the loader's command line too; build the loader and the kernel with the same device package. |
 
+### Reading the storage and the RAM disks
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `ufs: the loader's page at ADDR is not used: REASON` | The page through which the kernel asks the loader for the storage's blocks says something no request could be made with: a buffer that is not whole blocks, a block size that is not a power of two, a partition whose size overflows. No device is made. | The loader and the kernel are not of the same build, or the loader's page was overwritten: build both from the same checkout. |
+| `ufs: native: the whitelist is WRONG, ...` | The kernel's own UFS driver tried its check of commands on made-up ones before its first command, and the check let one through that it must not, or refused one it must pass. The driver is not used; reads go through the loader. | The kernel was built from a changed `redwood_ufshc.c`: `tests/ufs_whitelist_test.c` (part of `make check`) shows what. |
+| `sparse: N of those have an entry that points past the image's blocks: the image is damaged` | The sparse image's table names blocks that are not in it; they read as zeros. | Make the image again with `mksparse.py`. |
+| `redwood_image: /DIR/NAME: a path longer than 95 bytes is not looked up` | A driver asked for a firmware file by a path too long for the lookup. | A shorter name or directory in the board file (`[adsp] firmware`, `[gpu] firmware`). |
+
 ### Touch
 
 | What you see | What it means | What to do |
