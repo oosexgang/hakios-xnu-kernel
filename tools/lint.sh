@@ -5,6 +5,8 @@
 #   - every link and every repository path in the documentation points at something (tools/check-links.py)
 #   - components.toml pins what the fetching scripts pin (tools/components.py)
 #   - nothing that must not be published is there (tools/check-publishable.sh)
+#   - the copies of the kernel's device interfaces that the iOS side compiles against
+#     (userland/userland/src/hakios_*.h of kernel/overlay/bsd/sys/) say what the kernel's say
 # `make lint` runs this; it changes nothing.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -29,6 +31,21 @@ tools/check-links.py || failed=1
 tools/components.py check || failed=1
 
 tools/check-publishable.sh > /dev/null || { tools/check-publishable.sh; failed=1; }
+
+# (each copy's first comment may say where it is used, and its #ifdef KERNEL part is the kernel's own; the rest is
+# what a program sees, and is the kernel's word for word)
+seen_by_programs() {
+	sed '1,/^ \*\/$/d' "$1" | awk '/^#ifdef KERNEL$/ { skip = 1; next } skip && /^#endif/ { skip = 0; next } !skip'
+}
+for copy in userland/userland/src/hakios_*.h; do
+	kernel=kernel/overlay/bsd/sys/$(basename "$copy")
+	[ -f "$kernel" ] || continue
+	if ! diff -q <(seen_by_programs "$kernel") <(seen_by_programs "$copy") > /dev/null; then
+		echo "lint: $copy does not say what $kernel says to programs:"
+		diff <(seen_by_programs "$kernel") <(seen_by_programs "$copy") | head -20
+		failed=1
+	fi
+done
 
 [ $failed = 0 ] && echo "lint: ok"
 exit $failed
