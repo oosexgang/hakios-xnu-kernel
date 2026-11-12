@@ -69,8 +69,10 @@ $(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wild
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
 
 # the metallib sweep (tools/sweep.cpp): every function of the libraries given through the compiler, the refusals counted;
-# `make sweep MESA=1` builds $(HOSTOUT)/sweep, then run it on the libraries where they lie
-$(HOSTOUT)/sweep: tools/sweep.cpp $(HOST) $(wildcard include/hakios-metal/*.hpp)
+# `make sweep MESA=1` builds $(HOSTOUT)/sweep, then run it on the libraries where they lie (relinked when the front end's
+# archive changes, as the tests are: a sweep of the old front end reports refusals the new one does not make)
+$(HOSTOUT)/sweep: tools/sweep.cpp $(HOST) $(wildcard include/hakios-metal/*.hpp) \
+		$(if $(strip $(MESA)),$(MESA_BUILD)/src/compiler/air/libair.a)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ tools/sweep.cpp $(HOST) $(HOSTLIBS)
 

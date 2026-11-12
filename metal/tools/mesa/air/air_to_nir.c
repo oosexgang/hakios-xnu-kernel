@@ -3237,6 +3237,28 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
             return false;
          if (pc->num_components != 1)
             return air_error(c, "instruction: a vector select between pointers");
+         /* TWO PLACES IN ONE BUFFER are one pointer whose offset is chosen: the
+          * offset is a number like any other, so the select is of the offsets
+          * and the result is an ordinary pointer. Not merely tidier than the
+          * choice below: a pointer stepped round a loop by a select -- a binary
+          * search, `p = less ? p : p + half` (RenderBox's uber_vertex over a
+          * path's segments, as IconRendering draws an icon's symbol) -- is then
+          * a phi of one resource at different offsets, which is carried in a
+          * register (resolve_pointer_phi); kept as a choice, the phi was refused.
+          */
+         if (pa->kind == AIR_VAL_PTR && pb->kind == AIR_VAL_PTR &&
+             pa->ptr.class == pb->ptr.class && pa->ptr.binding == pb->ptr.binding &&
+             !pa->ptr.is_image && !pb->ptr.is_image && pa->ptr.pointee == pb->ptr.pointee &&
+             (pa->ptr.class == AIR_PTR_UBO || pa->ptr.class == AIR_PTR_SSBO ||
+              pa->ptr.class == AIR_PTR_SHARED || pa->ptr.class == AIR_PTR_SCRATCH ||
+              pa->ptr.class == AIR_PTR_CONSTANT_DATA)) {
+            struct air_ptr p = pa->ptr;
+            nir_def *oa = pa->ptr.offset ? pa->ptr.offset : nir_imm_int(&c->b, 0);
+            nir_def *ob = pb->ptr.offset ? pb->ptr.offset : nir_imm_int(&c->b, 0);
+            p.offset = nir_bcsel(&c->b, pc, oa, ob);
+            air_set(c, &in->base, air_val_ptr(c, p));
+            return true;
+         }
          air_set(c, &in->base, air_val_ptr_select(c, pc, pa, pb));
          return true;
       }
@@ -5324,6 +5346,86 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, const bool *li
    return true;
 }
 
+/* A phi of an AGGREGATE, as one register per leaf: a struct or an array is a
+ * tree of values in this translator and never a NIR value, so its phi is the
+ * phis of its scalars and vectors, in extractvalue's order (member 0's leaves,
+ * then member 1's, depth first). RenderBox's uber_fragment carries its colour
+ * state round a loop in a struct -- the shader IconRendering draws an icon's
+ * layers with -- and was refused for it.
+ *
+ * phi_regs maps such a phi to a struct agg_phi (the phi's type says which).
+ * A leaf that is a pointer is refused: a pointer has no bits for a register.
+ */
+#define AGG_PHI_LEAVES_MOST 64
+
+struct agg_phi {
+   unsigned n;
+   nir_def *regs[AGG_PHI_LEAVES_MOST];
+};
+
+static bool
+agg_phi_declare(struct air_ctx *c, nir_builder *entry, const struct air_type *t,
+                struct agg_phi *a)
+{
+   if (t->kind == AIR_TYPE_STRUCT || t->kind == AIR_TYPE_ARRAY) {
+      unsigned n = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+      for (unsigned i = 0; i < n; i++)
+         if (!agg_phi_declare(c, entry, t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem, a))
+            return false;
+      return true;
+   }
+   if (t->kind == AIR_TYPE_POINTER)
+      return air_error(c, "instruction: a phi of a struct or an array that holds a pointer, "
+                          "which has no bits for a register");
+   if (a->n == AGG_PHI_LEAVES_MOST)
+      return air_error(c, "instruction: a phi of a struct or an array of more than %u "
+                          "scalars and vectors", AGG_PHI_LEAVES_MOST);
+   a->regs[a->n++] = nir_decl_reg(entry, air_nir_components(t), air_narrow_bits(c, t), 0);
+   return true;
+}
+
+/* the phi's value where it stands: the tree of T, each leaf its register */
+static struct air_val *
+agg_phi_load(struct air_ctx *c, const struct air_type *t, const struct agg_phi *a,
+             unsigned *at)
+{
+   if (t->kind == AIR_TYPE_STRUCT || t->kind == AIR_TYPE_ARRAY) {
+      unsigned n = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+      struct air_val *v = air_val_agg(c, n);
+      for (unsigned i = 0; i < n; i++)
+         v->elems[i] = agg_phi_load(c, t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem, a, at);
+      return v;
+   }
+   return air_val_ssa(c, nir_load_reg(&c->b, a->regs[(*at)++]));
+}
+
+/* the stores of one edge: V's leaves into the registers. A leaf V does not have
+ * (an undef member) is not stored: the register holds whatever it held, which
+ * an undef may be. */
+static bool
+agg_phi_store(struct air_ctx *c, const struct air_type *t, const struct air_val *v,
+              const struct agg_phi *a, unsigned *at)
+{
+   if (t->kind == AIR_TYPE_STRUCT || t->kind == AIR_TYPE_ARRAY) {
+      unsigned n = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+      if (v && (v->kind != AIR_VAL_AGG || v->num_elems != n))
+         return air_error(c, "instruction: a phi of a struct whose operand is not one of its shape");
+      for (unsigned i = 0; i < n; i++)
+         if (!agg_phi_store(c, t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem,
+                            v ? v->elems[i] : NULL, a, at))
+            return false;
+      return true;
+   }
+   nir_def *reg = a->regs[(*at)++];
+   if (!v)
+      return true;
+   if (v->kind != AIR_VAL_SSA || !v->def)
+      return air_error(c, "instruction: a phi of a struct whose operand has a member that is "
+                          "not a value");
+   nir_store_reg(&c->b, v->def, reg);
+   return true;
+}
+
 static bool
 translate_body(struct air_ctx *c)
 {
@@ -5353,10 +5455,13 @@ translate_body(struct air_ctx *c)
           * not what is wrong with it.
           */
          if (in->base.type->kind == AIR_TYPE_STRUCT ||
-             in->base.type->kind == AIR_TYPE_ARRAY)
-            return air_error(c, "instruction: a phi of %s, which NIR has no register for",
-                             in->base.type->kind == AIR_TYPE_STRUCT ? "a struct"
-                                                                    : "an array");
+             in->base.type->kind == AIR_TYPE_ARRAY) {
+            struct agg_phi *a = rzalloc(c->mem_ctx, struct agg_phi);
+            if (!agg_phi_declare(c, &entry, in->base.type, a))
+               return false;
+            _mesa_hash_table_insert(c->phi_regs, in, a);
+            continue;
+         }
          /* A phi of a width NIR has no register for is exact: the register
           * is the next width up and a phi only COPIES, so a canonical value
           * in is a canonical value out (narrow_int_bits). What may be done
@@ -5436,6 +5541,11 @@ translate_body(struct air_ctx *c)
             continue;
          }
          struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);
+         if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY) {
+            unsigned at = 0;
+            air_set(c, &in->base, agg_phi_load(c, in->base.type, e->data, &at));
+            continue;
+         }
          air_set(c, &in->base,
                  air_val_ssa(c, nir_load_reg(&c->b, e->data)));
       }
@@ -5639,6 +5749,16 @@ translate_body(struct air_ctx *c)
                continue; /* an edge from a block the entry cannot reach */
             c->b.cursor = *(nir_cursor *)ce->data;
             nir_def *val;
+            if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY) {
+               unsigned at = 0;
+               struct air_val *ov = undef_operand(in->operands[k]) ? NULL : air_get(c, in->operands[k]);
+               if (!undef_operand(in->operands[k]) && !ov)
+                  return false;
+               if (!agg_phi_store(c, in->base.type, ov, re->data, &at))
+                  return false;
+               *(nir_cursor *)ce->data = c->b.cursor;
+               continue;
+            }
             if (in->base.type->kind == AIR_TYPE_POINTER && undef_operand(in->operands[k]))
                continue;   /* the register holds whatever it held: undef over this edge */
             if (in->base.type->kind == AIR_TYPE_POINTER) {
