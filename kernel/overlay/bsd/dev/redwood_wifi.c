@@ -2441,18 +2441,8 @@ glink_send(const void *data, uint32_t length)
  * services.
  */
 #define REDWOOD_QRTR_MAX        8192            /* the most a datagram holds, either way */
-#define QRTR_US                 1u
-#define QRTR_CONTROL            0xfffffffeu     /* the control port */
+#include "hakios_qrtr_frame.h"             /* the header in either version, its constants, and where the datagram is */
 #define QRTR_FIRST_PORT         0x4000u         /* where Linux begins numbering ports that ask for no number */
-enum { QRTR_DATA = 1, QRTR_HELLO = 2, QRTR_BYE = 3, QRTR_NEW_SERVER = 4, QRTR_DEL_SERVER = 5, QRTR_DEL_CLIENT = 6, QRTR_RESUME_TX = 7 };
-
-struct qrtr_header {                            /* version 1, which Linux sends; version 2 is read as well */
-	uint32_t version, type, from_node, from_port, confirm, size, to_node, to_port;
-};
-struct qrtr_control {
-	uint32_t command;
-	uint32_t words[4];                      /* a server: service, instance, node, port; a client: node, port */
-};
 
 struct redwood_qrtr_port {
 	uint32_t number;                        /* 0: free */
@@ -2606,30 +2596,15 @@ qrtr_input(const uint8_t *data, uint32_t length)
 	void *context = NULL;
 	uint32_t at;
 
-	if (length >= sizeof(header) && data[0] == 1) {
-		memcpy(&header, data, sizeof(header));
-		at = sizeof(header);
-	} else if (length >= 16 && data[0] == 3) {
-		/* version 2: version, type, flags, a length of options; the size; then four numbers of 16 bits */
-		bzero(&header, sizeof(header));
-		header.type = data[1];
-		header.confirm = data[2] & 1;
-		memcpy(&header.size, data + 4, 4);
-		header.from_node = (uint32_t)(data[8] | data[9] << 8);
-		header.from_port = (uint32_t)(data[10] | data[11] << 8);
-		header.to_node = (uint32_t)(data[12] | data[13] << 8);
-		header.to_port = (uint32_t)(data[14] | data[15] << 8);
-		header.from_port = header.from_port == 0xfffe ? QRTR_CONTROL : header.from_port;
-		header.to_port = header.to_port == 0xfffe ? QRTR_CONTROL : header.to_port;
-		at = 16 + data[3];
-	} else {
+	switch (qrtr_frame(data, length, &header, &at)) {
+	case QRTR_FRAME_NO_DATAGRAM:
 		printf("wifi: qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
 		return;
-	}
-	/* (inside the message without adding the two: a size near 2^32 would make the sum small) */
-	if (header.size == 0 || at > length || header.size > length - at) {
+	case QRTR_FRAME_SIZE_WRONG:
 		printf("wifi: qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
 		return;
+	case QRTR_FRAME_OK:
+		break;
 	}
 	qrtr_in++;
 	if (qrtr_peer == 0) {
