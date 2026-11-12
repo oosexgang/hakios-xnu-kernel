@@ -122,6 +122,22 @@ marks_of_nonsense(void)
 	glink_queue_put(QUEUE, SIZE, SIZE * 5 + 1020, "12345678", 8, NULL, 0);
 	CHECK(canaries_whole(), "a head past the end writes inside the queue");
 	CHECK(glink_queue_after(0xfffffff0, 0xfffffff0, SIZE) < SIZE, "the mark after it is inside");
+	/*
+	 * ... and at the place the mark means, also where mark and offset together are more than a number holds:
+	 * in a queue whose size is not a power of two that is another byte than the sum's remainder.
+	 */
+	{
+		static uint8_t odd[1032];
+		const uint32_t tail = 0xfffffff8u, offset = 0x20;
+		uint32_t place = (tail % 1032 + offset % 1032) % 1032;
+
+		for (unsigned i = 0; i < sizeof(odd); i++) {
+			odd[i] = (uint8_t)(i * 7 + (i >> 8));
+		}
+		glink_queue_peek(odd, sizeof(odd), tail, offset, out, 8);
+		CHECK(memcmp(out, odd + place, 8) == 0 && place != (uint32_t)(tail + offset) % 1032, "a mark and an offset whose sum wraps: byte %u", place);
+		CHECK(glink_queue_after(tail, offset, 1032) == place, "the mark after it is that place");
+	}
 }
 
 static void
