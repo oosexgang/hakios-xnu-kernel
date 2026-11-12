@@ -205,6 +205,37 @@ def selection(minimal):
     return chosen
 
 
+def english_lprojs():
+    """
+    The English LANGUAGE.lproj directories of the bundles that went in, made where they are missing. Since iOS
+    16 most bundles keep every language's strings in one .loctable file, and the .lproj directories beside it are
+    empty: they are only how CoreFoundation knows which languages the bundle has. A walk of files never meets
+    an empty directory, so they were not in the image, and every string of such a bundle came out as its key --
+    SpringBoard's low battery alert said LOW_BATT_TITLE, ENABLE_LOW_POWER and CLOSE (select-system.py made
+    them for 16.5's image: KEEP_LANG).
+    """
+    keep = ('en', 'Base', 'English', 'en_US', 'en_GB')
+    made = 0
+    for dp, dn, fns in os.walk(ROOT):
+        for name in dn:
+            if not name.endswith('.lproj') or name[:-len('.lproj')] not in keep:
+                continue
+            full = os.path.join(dp, name)
+            if os.path.islink(full):
+                continue
+            rel = full[len(ROOT) + 1:]
+            if rel.startswith('private/var/staged_system_apps/'):
+                rel = 'Applications/' + rel[len('private/var/staged_system_apps/'):]
+            elif rel.startswith('private/var/'):
+                continue
+            bundle = os.path.join(WORK, os.path.dirname(rel))
+            dst = os.path.join(WORK, rel)
+            if os.path.isdir(bundle) and not os.path.lexists(dst):
+                os.makedirs(dst)
+                made += 1
+    return made
+
+
 def links(minimal):
     """the symbolic links of the root filesystem (all of them: they cost nothing)"""
     out = []
@@ -298,6 +329,7 @@ def main():
         chosen = [(rel, src) for rel, src in chosen if not pruned(rel)]
     with ThreadPoolExecutor(os.cpu_count()) as pool:
         stripped = sum(pool.map(place, chosen))
+    lprojs = english_lprojs()
     # launchd: ours first (stage0), Apple's as launchd.ios
     os.replace(os.path.join(WORK, 'sbin/launchd'), os.path.join(WORK, 'sbin/launchd.ios'))
     shutil.copy2(OBJ + '/stage0', os.path.join(WORK, 'sbin/launchd'))
@@ -344,7 +376,8 @@ def main():
         if name.endswith(('.symbols', '.atlas')):
             continue
         os.link(os.path.join(CACHE, name), os.path.join(WORK, CACHE_DIR, name))
-    print(f'mkimage26: {len(chosen)} files ({stripped} arm64e Mach-Os rewritten by pacstrip), cache from {CACHE}')
+    print(f'mkimage26: {len(chosen)} files ({stripped} arm64e Mach-Os rewritten by pacstrip), {lprojs} empty English '
+          f'.lproj directories, cache from {CACHE}')
     subprocess.run([sys.executable, APFS, '-z', '-o', out[0], 'System=' + WORK], check=True)
     if os.path.getsize(out[0]) > 0xffffffff:
         if not METAL:
