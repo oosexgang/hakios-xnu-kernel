@@ -1067,7 +1067,17 @@ diff --git a/bsd/kern/lockdown_mode.c b/bsd/kern/lockdown_mode.c
 diff --git a/bsd/kern/ubc_subr.c b/bsd/kern/ubc_subr.c
 --- a/bsd/kern/ubc_subr.c
 +++ b/bsd/kern/ubc_subr.c
-@@ -3954,6 +3954,28 @@ ubc_cs_convert_to_multilevel_hash(struct cs_blob *blob)
+@@ -3157,8 +3157,7 @@ ubc_cs_blob_allocate(
+ 			Z_WAITOK | Z_ZERO,
+ 			VM_KERN_MEMORY_SECURITY);
+ 
+-		assert(*blob_addr_p != 0);
+-		kr = KERN_SUCCESS;
++		kr = *blob_addr_p != 0 ? KERN_SUCCESS : KERN_RESOURCE_SHORTAGE;
+ 	}
+ 
+ 	if (kr == KERN_SUCCESS) {
+@@ -3954,6 +3953,28 @@ ubc_cs_convert_to_multilevel_hash(struct cs_blob *blob)
  static void
  cs_blob_cleanup(struct cs_blob *blob)
  {
