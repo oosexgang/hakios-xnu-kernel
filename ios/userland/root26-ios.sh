@@ -193,7 +193,7 @@ if [ -n "${RC_JOBS:-}" ]; then
 	cp "$RC_JOBS" $T/etc/rc.jobs
 else
 cat > $T/etc/rc.jobs <<'EOF'
-# iOS 26 on renoir: towards SpringBoard
+# iOS 26: towards SpringBoard
 /bin/ps -A
 /redwood/bin/net_test waitaddr en0 60
 /bin/ps -A
@@ -202,6 +202,7 @@ cat > $T/etc/rc.jobs <<'EOF'
 EOF
 fi
 cd $DR/userland
-python3 ../tools/apfs/mkapfs.py -z --plain fw --plain fw-renoir --plain fw-wifi-renoir --plain fw-audio-renoir \
-	-o $IOS/root26-ios.apfs redwood=$T | tail -1
+# the firmware directories (fw, fw-wifi-..., fw-audio-...) stay uncompressed: the kernel reads them as they lie
+plain=(); for d in "$T"/fw*/; do if [ -d "$d" ]; then plain+=(--plain "$(basename "$d")"); fi; done
+python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26-ios.apfs redwood=$T | tail -1
 ls -la $IOS/root26-ios.apfs

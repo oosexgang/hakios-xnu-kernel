@@ -198,7 +198,7 @@ cp obj/child root/bin/child
 # copies are editing at once.
 [ -f obj/var_store ] && cp obj/var_store root/bin/
 cp com.hakios.varstore.plist root/LaunchDaemons/
-echo "Darwin on redwood: image built $(date '+%Y-%m-%d %H:%M')" > root/etc/motd
+echo "HakiOS: image built $(date '+%Y-%m-%d %H:%M')" > root/etc/motd
 # 300000 bytes, byte i = (i*31 + (i>>8)) & 0xff; init verifies it through read() and mmap()
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i*31 + (i>>8)) & 0xff for i in range(300000)))" > root/share/pattern.bin
 # EXTRA_SHARE: whole directories of data for a one-off diagnostic, each under its own name. Here and
@@ -642,13 +642,14 @@ if [ -d ../fw-gpu ]; then
 	cp ../fw-gpu/* root/fw/
 fi
 # ... and the image of the Wi-Fi DSP, from /vendor/firmware_mnt/image of the same Android into ../fw-wifi
-# (bsd/dev/hakios_wifi.c; 7.6 MB), with what the radio's firmware is sent once it runs: this phone's
-# board data and the regulatory database (image/qca6750 there; 60 and 24 KB)
+# (bsd/dev/hakios_wifi.c; 7.6 MB), with what the radio's firmware is sent once it runs: the phone's
+# board data and regulatory database (bd*, regdb*, in image/ or a directory of the chip's there), of
+# which the kernel takes those the board's wifi { } names (board-data, regdb)
 if [ -f ../fw-wifi/wpss.mdt ]; then
 	mkdir -p root/fw
 	install -m 0644 ../fw-wifi/wpss.mdt ../fw-wifi/wpss.b0[2-9] root/fw/
-	for f in bd_m20gl.elf regdb_xiaomi.bin; do
-		[ -f ../fw-wifi/qca6750/$f ] && install -m 0644 ../fw-wifi/qca6750/$f root/fw/
+	for f in ../fw-wifi/bd* ../fw-wifi/regdb* ../fw-wifi/*/bd* ../fw-wifi/*/regdb*; do
+		if [ -f "$f" ]; then install -m 0644 "$f" root/fw/; fi
 	done
 	# the network the radio is to join: its name on the first line, its passphrase on the second. Yours, and
 	# so not in the repository; it goes where the firmware goes and the kernel reads it there (wifi_join=1)

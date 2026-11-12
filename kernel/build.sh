@@ -34,8 +34,8 @@ elif git -C "$XNU_SRC" rev-parse -q --verify refs/tags/upstream > /dev/null 2>&1
 else
 	die "$XNU_SRC is not a tree made by kernel/assemble.sh (one of the old apply.sh, perhaps): move it away or set XNU_SRC"
 fi
-# redwood's touch firmware is not ours to publish (tools/mk-focaltech-fw.py makes it from a phone):
-# an empty one keeps hakios_goodix.c compiling; a board without that panel needs none
+# A FocalTech controller's firmware is not ours to publish (tools/mk-focaltech-fw.py makes it from a phone):
+# an empty one keeps hakios_goodix.c compiling; a board without such a controller needs none
 FW=$XNU_SRC/bsd/dev/hakios_focaltech_fw.h
 if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
