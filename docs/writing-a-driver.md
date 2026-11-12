@@ -65,9 +65,10 @@ needs it.
    sequencer), `tests/cmd_db_image.h` (the command database). Write first the scenarios of what the
    driver must never do. Then break the driver on purpose, one line at a time, and see that a
    scenario fails each time: a test that passes whatever the driver does tests nothing.
-5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree and its call at boot
-   (most drivers are started from `redwood_input_init()` in `bsd/dev/redwood_input.c`), then
-   `kernel/export.sh` ([kernel/README.md](../kernel/README.md)).
+5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree, and its start function
+   as one more line of the list in `bsd/dev/hakios_drivers.c`, after what it needs (the list is
+   where every driver is started, in order; a driver decides for itself whether it has anything
+   to do). Then `kernel/export.sh` ([kernel/README.md](../kernel/README.md)).
 6. **Document it**: a comment in the file that names each boot argument as `name=…` (`make docs` puts
    them in [boot-args.md](boot-args.md)), and a row in [drivers.md](drivers.md).
 7. **On the phone**: level 1 first. Send the log lines with the change, and say in the device

@@ -86,6 +86,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   well: the shared memory (`hakios_smem.h`), SMP2P's items (`hakios_smp2p.h`), the arithmetic of
   GLINK's queues (`hakios_glink_queue.h`), the mailbox's and the doorbells' registers
   (`hakios_ipc.h`). Each that has logic has a test of its own.
+- **One list starts every driver.** The starts were spread over the touch queue's file, the audio
+  device's and `bsd_init()`; they are `bsd/dev/hakios_drivers.c` now, in the same order, and a new
+  driver is one line there. A test runs the list on every test board.
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
   from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.

@@ -8,7 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 34 arguments have no comment naming them yet and show "—". To document one, write a comment with
+- 33 arguments have no comment naming them yet and show "—". To document one, write a comment with
   `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
@@ -36,6 +36,12 @@ beside the code, so the file named in each heading has the full explanation.
 | `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys are on from the board file ([buttons]). |
 | `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
 | `touchscreen` | — |
+
+### `bsd/dev/hakios_drivers.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `touchscreen` | touchscreen=1: the touch screen, by the driver of the controller the board lists |
 
 ### `bsd/dev/redwood_adreno.c`
 
@@ -77,7 +83,6 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `touch_lat` | touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every sample posted ("tl: p TYPE FINGER X Y at US", the time in microseconds of mach_absolute_time), to be matched with the window server's lines about reading it (userland/src/inject.c), drawing (eagl.c) and the displa… |
-| `touchscreen` | — |
 
 ### `bsd/dev/redwood_virtio_input.c`
 

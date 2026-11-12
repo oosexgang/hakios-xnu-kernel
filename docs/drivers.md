@@ -27,6 +27,7 @@ needs its feature in the board's `features`.
 | `osfmk/arm64/hakios_prof.c`, `user_exception_trace.c` | A sampling profiler (`hakios_prof=NAME`) and crash descriptions (`systrace=`). | any |
 | `iokit/Kernel/GenericARMPE.cpp` | The platform expert: CPUs, the time of day. | any |
 | `bsd/dev/hakios_board.c` | Which board this is; `hw.board.*`. | data |
+| `bsd/dev/hakios_drivers.c` | The list every driver below is started from, in order. | any |
 
 ## Stand-ins for Apple's closed kernel extensions
 

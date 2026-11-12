@@ -115,7 +115,9 @@ What the overlay provides, in the order a boot meets it:
 3. **File systems** (`bsd/miscfs/apfs/`, `ramfs/`): an APFS implementation that reads the iOS images
    from RAM, and the RAM file system for `/private/var`.
 4. **Drivers** (`bsd/dev/`): display and GPU, touch, buttons, battery, sound, camera, Wi-Fi, storage,
-   CPU frequency, backlight, thermal. Each does nothing until its boot argument asks.
+   CPU frequency, backlight, thermal. Each does nothing until its boot argument asks. All of them
+   are started from one list, `bsd/dev/hakios_drivers.c`, which `bsd_init()` calls once: the list
+   has no knowledge of any board, a driver decides for itself whether it has anything to do.
 5. **What the drivers share** (`bsd/dev/hakios_*.h`): the board's data, the log, registers, waits,
    the SoC's pins, the PMIC arbiter's protocol, RPMh's command database and a request to it, the
    processors' shared memory. Each is written once and, where it has logic, tested on the host;

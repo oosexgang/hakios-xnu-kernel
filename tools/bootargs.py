@@ -98,7 +98,7 @@ def collect():
 
 AREAS = [
     ('Display, graphics and input', ('iokit/Kernel/MiniIOMobileFramebuffer', 'iokit/Kernel/MiniIOSurface', 'iokit/Kernel/RedwoodGPU',
-                                     'bsd/dev/redwood_adreno', 'bsd/dev/hakios_backlight', 'bsd/dev/redwood_input',
+                                     'bsd/dev/redwood_adreno', 'bsd/dev/hakios_backlight', 'bsd/dev/redwood_input', 'bsd/dev/hakios_drivers',
                                      'bsd/dev/redwood_goodix', 'bsd/dev/renoir_fts', 'bsd/dev/hakios_buttons',
                                      'bsd/dev/redwood_virtio_input')),
     ('Power, CPU and temperature', ('bsd/dev/hakios_cpufreq', 'bsd/dev/hakios_ddr', 'bsd/dev/hakios_bench', 'bsd/dev/hakios_thermal', 'bsd/dev/hakios_cputop',
