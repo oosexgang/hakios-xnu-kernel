@@ -306,7 +306,8 @@ run() { # run OEM-COMMAND LABEL
 
 fetch_staged() { # fetch_staged OEM-COMMAND FILE WHAT
 	enter || return 1
-	fb "$1" | grep -q OKAY || { say "the last run left no $3"; return 1; }
+	# shellcheck disable=SC2086  # (the command's words: "oem recording" is two of them for fastboot)
+	fb $1 | grep -q OKAY || { say "the last run left no $3"; return 1; }
 	FB_TIMEOUT=120 fb get_staged "$2" > /dev/null
 }
 
