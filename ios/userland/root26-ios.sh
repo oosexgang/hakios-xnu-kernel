@@ -67,6 +67,17 @@ if [ -z "$SHARE" ] && [ -d "$OBJ/ssh-keys" ] && [ -f "$T/bin/dropbear" ]; then
 	chmod 600 "$T/etc/ssh/"*
 	echo "  ssh: the server, its shell and this machine's keys"
 fi
+# Metal's compiled stages from an earlier boot (ios/tools/metal-cache-pull.sh takes them off a running phone into
+# $OBJ/metal-cache-seed): /private/var starts empty at every boot here, and without them every pipeline and every
+# specialisation of CoreAnimation's uber shader is compiled again the first time a frame needs it, mid-gesture. The
+# plug-in looks in /redwood/share/hakios-metal-cache after its own cache (HakiosMetalCA.m: HM_CACHE_SEED); a stage of
+# another build of the compiler is never taken (its name has the build in it), only room.
+SEED=${METAL_CACHE_SEED:-$OBJ/metal-cache-seed}
+if [ -d "$SEED" ] && [ -n "$(ls "$SEED"/*.stage 2> /dev/null)" ]; then
+	mkdir -p "$T/share/hakios-metal-cache"
+	cp "$SEED"/*.stage "$T/share/hakios-metal-cache/"
+	echo "  Metal: $(ls "$SEED"/*.stage | wc -l) compiled stages from an earlier boot ($(du -sh "$SEED" | cut -f1))"
+fi
 cp "$OBJ"/*.dylib "$T/lib/"
 cp "$US/rc.launchd" "$T/etc/rc"
 # (init reads it back and looks for "Darwin" at its start: one of its checks)
