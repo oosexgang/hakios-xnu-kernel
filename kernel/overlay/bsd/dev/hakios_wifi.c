@@ -173,6 +173,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
@@ -3214,12 +3215,6 @@ step_qrtr(void)
  * its stream match registers cover that stream. Nothing is written.
  */
 static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's smmu { }, at the start */
-#define SMMU_SCR0               0x000           /* bit 0: the whole SMMU off; bit 10: a stream nobody matches faults; bit 3:
-	                                         * streams are numbered with 16 bits */
-#define SMMU_IDR0               0x020           /* [7:0] stream match registers */
-#define SMMU_IDR1               0x024           /* bit 31: 64K pages, [30:28] log2(pages)-1, [7:0] translation contexts */
-#define SMMU_SMR(n)             (0x800 + 4 * (n))       /* bit 31 valid, [30:16] mask, [14:0] stream */
-#define SMMU_S2CR(n)            (0xc00 + 4 * (n))       /* [17:16] 0 translate 1 bypass 2 fault, [7:0] context */
 #define RADIO_STREAM            (hakios_board()->smmu.wifi_stream[0])      /* the SoC file's smmu { } */
 #define RADIO_STREAM_MASK       (hakios_board()->smmu.wifi_stream[1])
 
@@ -3301,32 +3296,9 @@ smmu_look(void)
 #define RADIO_MSI_REGISTER      0x17a10040ull
 #define RADIO_FIRST_SPI         768u
 #define PTE_ADDRESS             0x0000fffffffff000ull
-#define SMMU_SGFSR              0x048           /* what the SMMU as a whole has refused ... */
 #define SMMU_SGFSYNR0           0x050
-#define SMMU_SGFSYNR1           0x054           /* ... and of which stream */
-#define SMMU_CBAR(n)            (4 * (n))       /* in the second page; [17:16] kind of context */
-#define SMMU_CBAR_STAGE_1       (1u << 16 | 3u << 8 | 0xfu << 12)       /* our tables alone decide; weakest defaults */
-#define SMMU_CBA2R(n)           (0x800 + 4 * (n))
-#define SMMU_CBA2R_64_BIT       1
-#define SMMU_CB_SCTLR           0x00            /* a context's own page: bit 0 = translation on */
-#define SMMU_CB_TCR2            0x10
-#define SMMU_CB_TTBR0           0x20
-#define SMMU_CB_TTBR1           0x28
-#define SMMU_CB_TCR             0x30
-#define SMMU_CB_MAIR0           0x38
-#define SMMU_CB_MAIR1           0x3c
-#define SMMU_CB_FSR             0x58
-#define SMMU_CB_FAR             0x60
-#define SMMU_CB_FSYNR0          0x68
-#define SMMU_CB_TLBIASID        0x610
-#define SMMU_CB_TLBSYNC         0x7f0
-#define SMMU_CB_TLBSTATUS       0x7f4
 /* on; faults recorded, no interrupt, and a fault does not hold up the requests after it */
 #define SMMU_SCTLR_ON           (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 8 | 1u << 12)
-#define SMMU_TCR_39_BITS        (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)   /* one table of 4K pages, cached walks */
-#define SMMU_TCR2               (1u | 1u << 4 | 7u << 15)       /* 36 bits of physical address, 16 of context tag */
-#define SMMU_MAIR0              0xf404ff44      /* Linux's: 0 uncached, 1 cached, 2 device */
-#define SMMU_FSR_ALL            0xc00001fe      /* every kind of fault, and "several" */
 
 static struct {
 	uint32_t wanted;                /* wifi_smmu */

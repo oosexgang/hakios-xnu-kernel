@@ -88,6 +88,7 @@
 #include <sys/hakios_camera.h>
 #include <sys/hakios_input.h>
 
+#include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
@@ -1433,11 +1434,6 @@ show_rail(const char *name, uint32_t *address)
 }
 
 #define SMMU_PHYS               ((unsigned long)hakios_board()->smmu.apps)      /* the SoC file's smmu { } */
-#define SMMU_SCR0               0x000
-#define SMMU_IDR0               0x020
-#define SMMU_IDR1               0x024
-#define SMMU_SMR(n)             (0x800 + 4 * (n))       /* bit 31 valid, [30:16] mask, [14:0] stream */
-#define SMMU_S2CR(n)            (0xc00 + 4 * (n))       /* [17:16] 0 translate 1 bypass 2 fault, [7:0] context */
 #define IFE_STREAM              (hakios_board()->smmu.camera_stream[0])     /* the SoC file's smmu { } */
 #define IFE_STREAM_MASK         (hakios_board()->smmu.camera_stream[1])
 
@@ -1815,29 +1811,7 @@ clocks_down(void)
 #define FRAME_ADDRESSES         0x40000000ull           /* the IFE's addresses for it (in dt's iova pool 0x100000-0xfff00000) */
 #define CAM_HEADER_BYTES        4096
 #define CAM_FRAMES              2
-#define SMMU_CBAR(n)            (4 * (n))
-#define SMMU_CBAR_STAGE_1       (1u << 16 | 3u << 8 | 0xfu << 12)
-#define SMMU_CBA2R(n)           (0x800 + 4 * (n))
-#define SMMU_CB_SCTLR           0x00
-#define SMMU_CB_TCR2            0x10
-#define SMMU_CB_TTBR0           0x20
-#define SMMU_CB_TTBR1           0x28
-#define SMMU_CB_TCR             0x30
-#define SMMU_CB_MAIR0           0x38
-#define SMMU_CB_MAIR1           0x3c
-#define SMMU_CB_FSR             0x58
-#define SMMU_CB_FAR             0x60
-#define SMMU_CB_FSYNR0          0x68
-#define SMMU_CB_TLBIASID        0x610
-#define SMMU_CB_TLBSYNC         0x7f0
-#define SMMU_CB_TLBSTATUS       0x7f4
-#define SMMU_SGFSR              0x048
-#define SMMU_SGFSYNR1           0x054
 #define SMMU_SCTLR_ON           (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 8 | 1u << 12)
-#define SMMU_TCR_39_BITS        (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)
-#define SMMU_TCR2               (1u | 1u << 4 | 7u << 15)
-#define SMMU_MAIR0              0xf404ff44
-#define SMMU_FSR_ALL            0xc00001fe
 #define CAM_PTE                 (3ull | 1ull << 6 | 2ull << 8 | 1ull << 10 | 1ull << 11)       /* as hakios_sound.c's */
 
 /* What the loader hands to the host (tools/camraw.py reads it). */

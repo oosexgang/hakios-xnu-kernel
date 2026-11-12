@@ -106,6 +106,7 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
+#include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_adreno_profile.h"
 
@@ -964,19 +965,8 @@ step_rscc(void)
  * The global registers here are the ones the hypervisor imitates; offsets: arm-smmu.h.
  */
 static struct block smmu = { "smmu", 0, 0x20000 };                      /* soc: adreno { } smmu */
-#define SMMU_SCR0               0x000
-#define SMMU_IDR0               0x020           /* [7:0] stream match registers */
-#define SMMU_IDR1               0x024           /* bit 31: 64K pages, [30:28] log2(pages)-1, [7:0] translation contexts */
 #define SMMU_IDR2               0x028
 #define SMMU_IDR7               0x03c
-#define SMMU_SGFSR              0x048
-#define SMMU_SMR(n)             (0x800 + 4 * (n))       /* bit 31 valid, [30:16] mask, [14:0] stream */
-#define SMMU_S2CR(n)            (0xc00 + 4 * (n))       /* [17:16] 0 translate 1 bypass 2 fault, [7:0] context */
-#define SMMU_CBAR(n)            (4 * (n))               /* in the second page; [17:16] kind of context */
-#define SMMU_CB_SCTLR           0x00            /* a context's own page: bit 0 = translation on */
-#define SMMU_CB_TTBR0           0x20
-#define SMMU_CB_TCR             0x30
-#define SMMU_CB_FSR             0x58
 
 static uint32_t smmu_page, smmu_pages, smmu_contexts, smmu_matches;
 
@@ -1115,23 +1105,7 @@ step_gmu_memory(void)
 #define SMMU_S2CR_FAULT         (2u << 16)
 #define SMMU_SMR_VALID          (1u << 31)
 #define SMMU_STREAM_MASK        0x400           /* dt: the second cell of every "iommus" of this SMMU */
-#define SMMU_CBAR_STAGE_1       (1u << 16 | 3u << 8 | 0xfu << 12)       /* our tables alone decide; weakest defaults */
-#define SMMU_CBA2R(n)           (0x800 + 4 * (n))                       /* in the second page, like CBAR */
-#define SMMU_CBA2R_64_BIT       1
-#define SMMU_CB_TCR2            0x10
-#define SMMU_CB_TTBR1           0x28
-#define SMMU_CB_MAIR0           0x38
-#define SMMU_CB_MAIR1           0x3c
-#define SMMU_CB_FAR             0x60
-#define SMMU_CB_FSYNR0          0x68
-#define SMMU_CB_TLBIASID        0x610
-#define SMMU_CB_TLBSYNC         0x7f0
-#define SMMU_CB_TLBSTATUS       0x7f4
 #define SMMU_SCTLR_ON           (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 12) /* on; faults recorded, no interrupt */
-#define SMMU_TCR_39_BITS        (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)   /* one table of 4K pages, cached walks */
-#define SMMU_TCR2               (1u | 1u << 4 | 7u << 15)       /* 36 bits of physical address, 16 of context tag */
-#define SMMU_MAIR0              0xf404ff44      /* Linux's: 0 uncached, 1 cached, 2 device */
-#define SMMU_FSR_ALL            0xc00001fe      /* every kind of fault, and "several" */
 
 extern void loader_return(void);
 

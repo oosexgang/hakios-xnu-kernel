@@ -82,6 +82,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
@@ -484,35 +485,7 @@ afe_off(void)
 static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's smmu { }, at the start */
 static struct block apps_smmu_second = { "apps smmu", 0, 0x1000 };              /* the second page: a word per context */
 static struct block apps_smmu_context = { "apps smmu, the audio context", 0, 0x1000 };
-#define SMMU_SCR0               0x000
-#define SMMU_IDR0               0x020
-#define SMMU_IDR1               0x024
-#define SMMU_SGFSR              0x048
-#define SMMU_SGFSYNR1           0x054
-#define SMMU_SMR(n)             (0x800 + 4 * (n))       /* bit 31 valid, [30:16] mask, [14:0] stream */
-#define SMMU_S2CR(n)            (0xc00 + 4 * (n))       /* [17:16] 0 translate 1 bypass 2 fault, [7:0] context */
-#define SMMU_CBAR(n)            (4 * (n))
-#define SMMU_CBAR_STAGE_1       (1u << 16 | 3u << 8 | 0xfu << 12)
-#define SMMU_CBA2R(n)           (0x800 + 4 * (n))
-#define SMMU_CBA2R_64_BIT       1
-#define SMMU_CB_SCTLR           0x00
-#define SMMU_CB_TCR2            0x10
-#define SMMU_CB_TTBR0           0x20
-#define SMMU_CB_TTBR1           0x28
-#define SMMU_CB_TCR             0x30
-#define SMMU_CB_MAIR0           0x38
-#define SMMU_CB_MAIR1           0x3c
-#define SMMU_CB_FSR             0x58
-#define SMMU_CB_FAR             0x60
-#define SMMU_CB_FSYNR0          0x68
-#define SMMU_CB_TLBIASID        0x610
-#define SMMU_CB_TLBSYNC         0x7f0
-#define SMMU_CB_TLBSTATUS       0x7f4
 #define SMMU_SCTLR_ON           (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 8 | 1u << 12)
-#define SMMU_TCR_39_BITS        (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)
-#define SMMU_TCR2               (1u | 1u << 4 | 7u << 15)
-#define SMMU_MAIR0              0xf404ff44
-#define SMMU_FSR_ALL            0xc00001fe
 #define PTE_ADDRESS             0x0000fffffffff000ull
 #define AUDIO_PTE               (3ull | 1ull << 6 | 2ull << 8 | 1ull << 10 | 1ull << 11)       /* as hakios_wifi.c's */
 
