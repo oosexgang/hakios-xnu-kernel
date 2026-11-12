@@ -228,6 +228,12 @@ struct hakios_board {
 		uint32_t charge_counter_divisor;        /* the battery manager's charge counter, in this many parts of a uAh */
 	} adsp;
 
+	/* the microphones' codec (board: [mic]) */
+	struct {
+		uint8_t wired;                  /* the board gives the section */
+		uint8_t codec_reset;            /* the SoC's pin the codec's reset is on */
+	} mic;
+
 	/* the Wi-Fi radio (board: [wifi]), for the driver's layer under it (redwood_lx.c) */
 	struct {
 		uint32_t radio_model;           /* which radio: 0 a WCN6750 on the SoC's own bus, 1 a WCN6855 on PCIe */

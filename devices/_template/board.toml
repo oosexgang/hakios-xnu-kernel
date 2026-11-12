@@ -84,6 +84,10 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # analog_enable = 107               # touch-goodix: the GPIO that switches its analog supply on (avdd-gpio)
 # vendor_pins = [68, 96]            # touch-goodix: the two straps that say whose controller is fitted
 
+# The microphones' codec, for the feature "mic-wcd938x": a WCD938x on the SoC's SoundWire.
+# [mic]
+# codec_reset = 83                  # the codec's node: reset-gpios (qcom,wcd-rst-gpio-node's pin in vendor trees)
+
 # The speaker's two amplifiers, for the feature "speaker-aw88261": Awinic AW88261 on two of the SoC's
 # pins (I2C by hand), each with an address and an interrupt pin of its own.
 # [speaker]

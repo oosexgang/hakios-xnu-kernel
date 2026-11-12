@@ -235,7 +235,10 @@ Stated plainly, so nobody finds out the hard way:
   `[rpmh]`, `[smmu]`, `[ipc]`); which pin a part is on, its bus and the names of its supplies are
   still in these drivers. For the touch controllers, the keys, the flashlight, the vibration motor
   and the speaker amplifiers they are data: a phone with one of those parts on other pins needs its
-  section of the board file filled in and no change to the driver.
+  section of the board file filled in and no change to the driver. Of the others, the pins are data
+  too (the sound's four in `[speaker]`, the codec's reset in `[mic]`, the radio's pins and its
+  supplies' names in `[wifi]`); what stays in the code is how each part is spoken to, which is one
+  codec, one radio and one camera module.
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
   GPT entry in the board file's `[storage]`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in

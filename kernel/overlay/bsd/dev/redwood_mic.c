@@ -374,6 +374,21 @@ static struct block lpi = { "the LPASS pins", 0, 0x10000 };
 static struct block lpi_high = { "the LPASS pins", 0, 0x1000 };          /* pin 14's two registers: 0xe000 into them */
 static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's [pins], at the start */
 
+/* The codec's reset: which of the SoC's pins it is on is the board's [mic] (the codec node's reset-gpios). */
+#define RESET_PIN               ((uint32_t)hakios_board()->mic.codec_reset)
+#define TLMM_CFG_RESET          (0x1000 * RESET_PIN)
+#define TLMM_IO_RESET           (0x1000 * RESET_PIN + 4)
+
+/* "gpio83 " and what is said of it (for one line at a time: the text is the last asked for) */
+static const char *
+reset_name(const char *what)
+{
+	static char name[64];
+
+	snprintf(name, sizeof(name), "gpio%u %s", RESET_PIN, what);
+	return name;
+}
+
 static void
 look(void)
 {
@@ -406,8 +421,8 @@ look(void)
 	}
 	(void)get(&lpi_high, "gpio14 config (SoundWire TX data 2)", 0);
 	(void)get(&lpi_high, "gpio14 in/out", 4);
-	(void)get(&tlmm, "gpio83 config (the codec's reset)", 0x1000 * 83);
-	(void)get(&tlmm, "gpio83 in/out", 0x1000 * 83 + 4);
+	(void)get(&tlmm, reset_name("config (the codec's reset)"), TLMM_CFG_RESET);
+	(void)get(&tlmm, reset_name("in/out"), TLMM_IO_RESET);
 	/* (last: the master is a block of its own, and not yet known; with its version above 1.5.1 the votes are all it needs) */
 	for (size_t i = 0; i < sizeof(swr) / sizeof(swr[0]); i++) {
 		(void)get(&tx_swr, swr[i].name, swr[i].offset);
@@ -417,8 +432,6 @@ look(void)
 
 /* ---- the codec's reset, the master's pins ------------------------------------------------------------ */
 
-#define TLMM_CFG_83             (0x1000 * 83)
-#define TLMM_IO_83              (0x1000 * 83 + 4)
 static uint32_t found_reset_cfg, found_reset_io;
 static bool reset_taken;
 
@@ -428,16 +441,16 @@ reset_release(void)
 	if (tlmm.base == 0) {
 		tlmm.base = ml_io_map(tlmm.phys, tlmm.size);
 	}
-	found_reset_cfg = rd(tlmm.base + TLMM_CFG_83);
-	found_reset_io = rd(tlmm.base + TLMM_IO_83);
+	found_reset_cfg = rd(tlmm.base + TLMM_CFG_RESET);
+	found_reset_io = rd(tlmm.base + TLMM_IO_RESET);
 	reset_taken = true;
 	/* the sleep state: gpio, 16 mA, no pull, output low; 20 us; the active state: output high */
-	if (!put(&tlmm, "gpio83 out (the codec's reset)", TLMM_IO_83, 0, 2) ||
-	    !put(&tlmm, "gpio83 config: gpio, 16 mA, no pull, output", TLMM_CFG_83, 0x3c0, 0x3ff)) {
+	if (!put(&tlmm, reset_name("out (the codec's reset)"), TLMM_IO_RESET, 0, 2) ||
+	    !put(&tlmm, reset_name("config: gpio, 16 mA, no pull, output"), TLMM_CFG_RESET, 0x3c0, 0x3ff)) {
 		return false;
 	}
 	spin_us(30);
-	if (!put(&tlmm, "gpio83 out: high (the codec out of reset)", TLMM_IO_83, 2, 2)) {
+	if (!put(&tlmm, reset_name("out: high (the codec out of reset)"), TLMM_IO_RESET, 2, 2)) {
 		return false;
 	}
 	spin_us(30);
@@ -451,9 +464,9 @@ reset_restore(void)
 		return;
 	}
 	broken = false;         /* (putting back is done whatever went before) */
-	(void)put(&tlmm, "gpio83 out: low (the codec in reset)", TLMM_IO_83, 0, 2);
-	(void)put(&tlmm, "gpio83 config, as it was found", TLMM_CFG_83, found_reset_cfg, 0x3ff);
-	(void)put(&tlmm, "gpio83 out, as it was found", TLMM_IO_83, found_reset_io & 2, 2);
+	(void)put(&tlmm, reset_name("out: low (the codec in reset)"), TLMM_IO_RESET, 0, 2);
+	(void)put(&tlmm, reset_name("config, as it was found"), TLMM_CFG_RESET, found_reset_cfg, 0x3ff);
+	(void)put(&tlmm, reset_name("out, as it was found"), TLMM_IO_RESET, found_reset_io & 2, 2);
 	reset_taken = false;
 }
 
@@ -1802,6 +1815,11 @@ redwood_mic_dsp_up(void)
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->lpass.tx_macro == 0) {
 		say("mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])\n");
+		level = 0;
+		return;
+	}
+	if (!hakios_board()->mic.wired) {
+		say("mic: disabled: the board file does not say which pin the codec's reset is on ([mic])\n");
 		level = 0;
 		return;
 	}

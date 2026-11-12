@@ -109,6 +109,7 @@ BOARD_SCHEMA = {
             'gcc_debug_gpucc': (int, True), 'zap_must_authenticate': (bool, False),
             'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
             'alt_model': (str, False), 'alt_bins': ([int], False)},
+    'mic': {'codec_reset': (int, True)},
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
              'dsp_memory_size': (int, False), 'pins': ([int], False), 'supplies': ([str], False)},
@@ -152,7 +153,7 @@ FEATURE_BOOTARGS = {
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
-                          'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'touch-goodix': 'touch',
+                          'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'mic-wcd938x': 'mic', 'touch-goodix': 'touch',
                           'touch-ft3658u': 'touch'}
 # ... and what a controller's driver uses of [touch] beyond what every one needs
 TOUCH_NEEDS = {'touch-goodix': ('analog_enable', 'vendor_pins'), 'touch-ft3658u': ('analog_supply',)}
@@ -470,6 +471,8 @@ def load(problems=None):
                 problems.add(f'{rel} [gpu]', 'chip_id must not be 0')
             if ('alt_model' in gpu) != ('alt_bins' in gpu) or not 1 <= len(gpu.get('alt_bins', [0])) <= 2:
                 problems.add(f'{rel} [gpu]', 'alt_model goes with alt_bins, one or two speed bins')
+        if 'mic' in data and not 0 <= data['mic']['codec_reset'] <= 255:
+            problems.add(f'{rel} [mic]', 'codec_reset is a pin of the SoC, 0 to 255')
         radio = data.get('wifi')
         if radio is not None:
             if radio['radio_model'] not in (0, 1):
@@ -654,6 +657,8 @@ def table_text(socs, boards):
         if motor:
             out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
                        f'.interrupt = {motor["interrupt"]}, .f0_calibration = {motor["f0_calibration"]:#04x} }},')
+        if board.get('mic'):
+            out.append(f'\t\t.mic = {{ .wired = 1, .codec_reset = {board["mic"]["codec_reset"]} }},')
         own = board.get('storage')
         if own:
             out.append(f'\t\t.storage = {{ .first_lba = {own["first_lba"]}ULL, .blocks = {own["last_lba"] - own["first_lba"] + 1}ULL, '

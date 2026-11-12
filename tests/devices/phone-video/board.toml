@@ -73,6 +73,10 @@ interrupts = [102, 45]
 sound_pins = [97, 100, 98, 99]
 sound_function = 1
 
+# The microphones' codec (a WCD938x on the SoC's SoundWire): the one pin of the SoC it has, its reset.
+[mic]
+codec_reset = 83
+
 # Its vibration motor's chip: on GPIO 36/37, reset on 35, as Android calibrated this motor.
 [haptic]
 sda = 36
