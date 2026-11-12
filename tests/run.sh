@@ -74,8 +74,14 @@ DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-paramete
 # (the last is the example driver of docs/writing-a-driver.md, which lives beside the guide)
 EXAMPLES=$HERE/../docs/examples
 scenarios() {
-	local runner=$1 binary=$2 scenario
-	for scenario in $($runner "$binary"); do
+	local runner=$1 binary=$2 scenario list
+	list=$($runner "$binary")
+	# a test that names no scenario runs none, and would pass for that
+	if [ -z "$list" ]; then
+		echo "FAIL: $(basename "$binary") lists no scenario"
+		failed=1
+	fi
+	for scenario in $list; do
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }

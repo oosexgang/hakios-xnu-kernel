@@ -79,6 +79,7 @@ RedwoodBatteryReport(const void *state __unused, unsigned size)
 #define KERNEL 1
 #include "hakios_board.c"
 #include "redwood_battery.c"
+#undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

@@ -61,7 +61,9 @@ if ! "$CC" "${flags[@]}" "$HERE/fakekernel/fakekernel.c" "$test" -o "$W/test" 2>
 	die "the change does not compile"
 fi
 caught=
-for scenario in $("$W/test"); do
+list=$("$W/test")
+[ -n "$list" ] || die "$name lists no scenario: nothing would be run"
+for scenario in $list; do
 	timeout 120 "$W/test" "$scenario" > /dev/null 2>&1 || caught="$caught $scenario"
 done
 if [ -n "$caught" ]; then
