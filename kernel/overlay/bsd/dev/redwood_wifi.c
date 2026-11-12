@@ -1222,7 +1222,8 @@ step_mailbox_open_locked(void)
 	}
 	box = get(&aoss, "our mailbox", QMP_OUR_BOX);
 	size = get(&aoss, "our mailbox's size", QMP_OUR_BOX_SIZE);
-	if (size < QMP_MESSAGE + 4 || box < 0x3c || box + size > aoss.size || (box & 3)) {
+	/* (both are the always-on processor's: inside the block without adding them, which could wrap) */
+	if (size < QMP_MESSAGE + 4 || box < 0x3c || box > aoss.size || size > aoss.size - box || (box & 3)) {
 		printf("wifi: %u: our mailbox is not where a message fits\n", step);
 		return false;
 	}
@@ -3608,8 +3609,12 @@ radio_space_off(void)
 static bool
 radio_map(uint64_t physical, uint64_t size, uint64_t attributes, unsigned long long *address)
 {
+	/* (the size is the radio's driver's: held to the space before it is rounded or added, which could wrap) */
+	if (size > RADIO_ADDRESSES_SIZE) {
+		return false;
+	}
 	size = (size + 4095) & ~4095ull;
-	if (radio_space.next + size > RADIO_ADDRESSES_SIZE) {
+	if (size > RADIO_ADDRESSES_SIZE - radio_space.next) {
 		return false;
 	}
 	*address = RADIO_ADDRESSES + radio_space.next;
