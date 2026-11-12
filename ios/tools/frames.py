@@ -8,7 +8,7 @@ The gestures are the bursts of touches (tl: i), and the gestures less than 2 s a
 home screen's pages, Settings' list). For each phase, over the AFTER_S seconds after each gesture (0.7):
 
   frames a second    the panel's frames (tl: v, the presenter's copy done) over the time they took
-  within 18 ms       the share of frame-to-frame times a 60 Hz panel shows as one refresh
+  within 18 ms       the share of frame-to-frame times a 60 Hz panel shows as one refresh (within 10: at 120 Hz)
   gaps over 50 ms    the hitches one sees
   GPU                the window server's command buffers (tl: M), median and 90th percentile
   battery            with battery=1 (tl: b): the charge shown, the current into the battery, whether on a charger
@@ -100,7 +100,8 @@ def main():
             print(head, "no frames")
             continue
         line = (f"{head} {len(gaps) / (sum(gaps) / 1e6):5.1f} frames a second, {100 * sum(1 for x in gaps if x <= 18000) // len(gaps):3d}% "
-                f"within 18 ms, {sum(1 for x in gaps if x >= 50000):3d} gaps over 50 ms (the longest {max(gaps) / 1e3:.0f})")
+                f"within 18 ms ({100 * sum(1 for x in gaps if x <= 10000) // len(gaps)}% within 10), "
+                f"{sum(1 for x in gaps if x >= 50000):3d} gaps over 50 ms (the longest {max(gaps) / 1e3:.0f})")
         if gpu:
             line += f"; GPU {st.median(gpu) / 1e3:.1f} ms, 90% {q(gpu, 0.9) / 1e3:.1f}"
         print(line)
