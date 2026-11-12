@@ -1,5 +1,5 @@
 /*
- * The instructions of arm64e user code that a Cortex-A78/A55 (ARMv8.2, renoir) does not have, done
+ * The instructions of arm64e user code that a Cortex-A78/A55 (ARMv8.2) does not have, done
  * here when one of them traps (undefined instruction from EL0).
  *
  * iOS 26 user space is arm64e only. ios/tools/pacstrip rewrites the code sections of the dyld

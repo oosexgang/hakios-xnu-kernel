@@ -147,7 +147,7 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
 	node->rn_type = type;
 	node->rn_mode = type == VLNK ? 0755 : (type == VDIR ? 0755 : 0644);
 	/*
-	 * renoir: a protection class for every file, D (none) unless one is asked for. iOS 26 checks the
+	 * hakios: a protection class for every file, D (none) unless one is asked for. iOS 26 checks the
 	 * class of what it stores (PosterBoard's data store must be NSFileProtectionNone throughout, and
 	 * migrates it there when it is not); without one the check fails, setting it fails, and the
 	 * wallpaper store is never made. The class is kept and told, nothing is encrypted.
@@ -1432,7 +1432,7 @@ ramfs_readlink(struct vnop_readlink_args *ap)
 }
 
 /*
- * renoir: APFS's "mark purgeable" (APFSIOC_MARK_PURGEABLE, _IOWR('J', 68, uint64_t)), which iOS 26's
+ * hakios: APFS's "mark purgeable" (APFSIOC_MARK_PURGEABLE, _IOWR('J', 68, uint64_t)), which iOS 26's
  * PosterBoard asks of every directory and file of its wallpaper store and fails the store without
  * (errno -1, no poster is ever made). Purgeable files are what APFS may delete when space runs short;
  * this RAM disk deletes nothing on its own, so the mark is taken and nothing more is done.

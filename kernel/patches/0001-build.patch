@@ -208,7 +208,7 @@ diff --git a/iokit/conf/files b/iokit/conf/files
  iokit/Tests/TestServices/TestIODataQueues.cpp optional iokitcpp
 -./Tests/TestServices/TestDextRematch.iig.cpp optional iokitcpp
 -iokit/Tests/TestServices/TestDextRematchKernel.cpp optional iokitcpp
-+# renoir: an xnu-internal DriverKit test whose iig output no SDK carries (Apple's iig is closed and
++# hakios: an xnu-internal DriverKit test whose iig output no SDK carries (Apple's iig is closed and
 +# macOS-only); left out unless the option iig_test_dext_rematch is configured
 +./Tests/TestServices/TestDextRematch.iig.cpp optional iig_test_dext_rematch
 +iokit/Tests/TestServices/TestDextRematchKernel.cpp optional iig_test_dext_rematch
@@ -345,9 +345,9 @@ diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
 +# hakios: objects made outside this tree (the Wi-Fi driver, hakios_lx.c), linked when given
 +LD_KERNEL_ARCHIVES += $(HAKIOS_OBJECTS)
 +
-+# Link binary support library.  redwood: BCM2837 is a non-Apple board with no closed
++# Link binary support library.  hakios: BCM2837 is a non-Apple board with no closed
 +# KernelSupport lib$(CURRENT_MACHINE_CONFIG).os.*.a; its platform code is built into the kernel
-+# (GenericARMPE and the redwood drivers), so skip the force_load for it.
++# (GenericARMPE and the HakiOS drivers), so skip the force_load for it.
 +ifeq ($(filter NONE BCM2837,$(CURRENT_MACHINE_CONFIG)),)
          LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a
  endif

@@ -78,7 +78,7 @@ diff --git a/bsd/miscfs/bindfs/bind_vfsops.c b/bsd/miscfs/bindfs/bind_vfsops.c
 -	/* check entitlement */
 -	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
 +	/*
-+	 * check entitlement -- redwood: or process 1, the port's own init, unsigned, which binds
++	 * check entitlement -- hakios: or process 1, the port's own init, unsigned, which binds
 +	 * its choice of launchd jobs and the like onto the read-only iOS root volume before it
 +	 * hands over to launchd (userland/src/init.c, root_apfs=)
 +	 */
@@ -180,7 +180,7 @@ diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
  	                         ATTR_VOL_MOUNTEXTFLAGS)
  
 +/*
-+ * renoir: with ATTR_CMN_FULLPATH, which this layer builds for any filesystem (attrlist_build_path).
++ * hakios: with ATTR_CMN_FULLPATH, which this layer builds for any filesystem (attrlist_build_path).
 + * iOS 27's CoreServicesInternal reads the root volume's ATTR_VOL_ATTRIBUTES once and drops from
 + * every URL resource property's attribute group what the volume does not list as valid: without
 + * it the canonical path (NSURLCanonicalPathKey) was never asked for, LaunchServices could not make
@@ -204,7 +204,7 @@ diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
  }
  
 +/*
-+ * renoir: boot-arg trace_attr=name[,name...] (p_comm) logs what such a process asks getattrlist,
++ * hakios: boot-arg trace_attr=name[,name...] (p_comm) logs what such a process asks getattrlist,
 + * fgetattrlist and getattrlistbulk for and what it gets (common and extended-common attributes,
 + * options, the full path built for ATTR_CMN_FULLPATH): a newer userland asks for paths in ways this
 + * kernel may answer differently; fsgetpath too (bsd/vfs/vfs_syscalls.c). At most 300 lines a boot.
@@ -420,7 +420,7 @@ diff --git a/bsd/vfs/vfs_lookup.c b/bsd/vfs/vfs_lookup.c
 +		if (!PE_parse_boot_arg_str("trace_open", wanted, sizeof(wanted))) {
 +			wanted[0] = '\0';
 +		}
-+		/* renoir: trace_open_path=SUBSTRING, only the paths with it (the 400 lines go further) */
++		/* hakios: trace_open_path=SUBSTRING, only the paths with it (the 400 lines go further) */
 +		if (!PE_parse_boot_arg_str("trace_open_path", only, sizeof(only))) {
 +			only[0] = '\0';
 +		}
@@ -487,7 +487,7 @@ diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
  	*retval = (user_ssize_t)length; /* may be superseded by error */
  out:
 +	{
-+		/* renoir: boot-arg trace_attr (bsd/vfs/vfs_attrlist.c) */
++		/* hakios: boot-arg trace_attr (bsd/vfs/vfs_attrlist.c) */
 +		extern const char *attr_trace_wanted(void);
 +		extern void loader_log_line(const char *line);
 +		const char *name = attr_trace_wanted();

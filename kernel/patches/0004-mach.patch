@@ -9,7 +9,7 @@ diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
 +	case 7:
 +	case 8:
 +		/*
-+		 * (redwood) Not in the open source: what os_workgroup_interval_start(), _update() and
++		 * (hakios) Not in the open source: what os_workgroup_interval_start(), _update() and
 +		 * _finish() of iOS send, for the performance controller, which is not here either.
 +		 * CoreAudio does it in every I/O cycle and logs an error each time it is refused: fifty
 +		 * lines a second from the audio server's real-time thread. For its threads, and only
@@ -526,7 +526,7 @@ diff --git a/osfmk/kern/work_interval.c b/osfmk/kern/work_interval.c
  }
  
 +/*
-+ * (redwood) What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
++ * (hakios) What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
 + * or WORK_INTERVAL_TYPE_LAST for a thread that has joined none.
 + */
 +uint32_t

@@ -179,7 +179,7 @@ static TUNABLE(uint32_t, gDoubleBuffer, "fb_double", 0);
 static TUNABLE(uint32_t, gThreads, "fb_threads", 4);
 /*
  * Boot-arg fb_small=0: the drawers anywhere, as before. By default, on a phone with slower cores
- * (renoir: three Cortex-A55 beside four A78), the presenter and its helpers are bound to those, one
+ * (three Cortex-A55 beside four A78 on a Snapdragon 780G), the presenter and its helpers are bound to those, one
  * each, and there are no more of them than there are such cores. Kernel threads run above every
  * thread of the user interface: drawing a frame on four of the fast cores at once took them from
  * SpringBoard, the window server and the application for 5 to 9 ms of every frame, and during a
@@ -243,7 +243,7 @@ recStep(void)
 
 /*
  * The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/hakios_adreno.c says where it is
- * read from). Renoir's panel is a command-mode one: at each of its refreshes the display controller
+ * read from). A command-mode panel: at each of its refreshes the display controller
  * reads this framebuffer out to it, top to bottom, in about half a refresh, and leaves it alone the
  * rest. Two things follow from knowing when:
  *   - the refresh told to the window server (the "vsync" of the user client below) is the panel's,

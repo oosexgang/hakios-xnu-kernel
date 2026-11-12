@@ -7,7 +7,7 @@ diff --git a/bsd/dev/arm/kern_machdep.c b/bsd/dev/arm/kern_machdep.c
  				return 9;
 +#if !__has_feature(ptrauth_calls)
 +			/*
-+			 * renoir: a core without pointer authentication runs arm64e code as arm64. Its PAC
++			 * hakios: a core without pointer authentication runs arm64e code as arm64. Its PAC
 +			 * instructions are identities there: pacstrip rewrote them, osfmk/arm64/hakios_a64emu.c
 +			 * does the rest, and nothing is ever signed (exec sets IMGPF_NOJOP, the shared-region and
 +			 * dyld pagers write authenticated pointers unsigned). After any arm64 slice.
@@ -383,7 +383,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  				goto bad;
  			}
 +			/*
-+			 * renoir: iOS 27's libsystem_kernel puts 8 bytes of new fields after psa_sec_flags
++			 * hakios: iOS 27's libsystem_kernel puts 8 bytes of new fields after psa_sec_flags
 +			 * (a uint32_t at 0xac, a byte at 0xb0) and passes attr_size 0x100, not this kernel's
 +			 * 0xf8. The fields after them sit 8 bytes further on: crash count and throttle timeout
 +			 * at 0xb4, kqworkloop soft and hard limits at 0xbc, conclave memory limit at 0xc4
@@ -683,7 +683,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +		}
 +		colon = rule[0] != 0 ? strchr(rule, ':') : NULL;
 +		/*
-+		 * NAME[,NAME...]:VAR=VALUE[;VAR=VALUE...], '~' for a space (boot-args end at spaces). renoir: several
++		 * NAME[,NAME...]:VAR=VALUE[;VAR=VALUE...], '~' for a space (boot-args end at spaces). hakios: several
 +		 * names, for one variable given to a group of programs (OS_ACTIVITY_DT_MODE=1 to the processes of
 +		 * the wallpaper, within the 608 bytes of boot-args)
 +		 */
@@ -788,7 +788,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	proc_setpidversion(p, new_pid_version);
 +	{
 +		/*
-+		 * (redwood) Except when xpcproxy becomes the service it was spawned for: then the process keeps
++		 * (hakios) Except when xpcproxy becomes the service it was spawned for: then the process keeps
 +		 * xpcproxy's identity version, as if launchd had spawned the service itself, which is what launchd
 +		 * means by eliding xpcproxy ("service will attempt to elide xpcproxy"; here it spawns xpcproxy all
 +		 * the same).  RunningBoard keeps the audit token of such a process from before the exec and never
@@ -901,7 +901,7 @@ diff --git a/bsd/kern/kern_newsysctl.c b/bsd/kern/kern_newsysctl.c
  }
  
 +/*
-+ * renoir: boot-arg trace_sysctl=1 logs the names a process asks for that this kernel has not got
++ * hakios: boot-arg trace_sysctl=1 logs the names a process asks for that this kernel has not got
 + * ("sysctl: launchd[1] has no security.mac.foo"), the first 300 of them: a newer userland than the
 + * kernel looks up sysctls the kernel never had, and often abort()s on the answer.
 + */
@@ -1021,7 +1021,7 @@ diff --git a/bsd/kern/kern_sysctl.c b/bsd/kern/kern_sysctl.c
  
  	strlcpy(buf, PE_boot_args(), BOOT_LINE_LENGTH);
 +	/*
-+	 * renoir: the root is a RAM disk (rd=mdN), and iOS 26's launchd takes "rd=md0" in the boot-args
++	 * hakios: the root is a RAM disk (rd=mdN), and iOS 26's launchd takes "rd=md0" in the boot-args
 +	 * for the restore environment: it then runs only the restore boot tasks (no keybagd --init, no
 +	 * usermanagerd --init, so no persona manifest and no personas) and every daemon that needs them
 +	 * waits. The kernel has found its root already; user space is shown the line without that word.
@@ -1046,7 +1046,7 @@ diff --git a/bsd/kern/lockdown_mode.c b/bsd/kern/lockdown_mode.c
  SYSCTL_INT(_security_mac, OID_AUTO, lockdown_mode_state, CTLFLAG_RD | CTLFLAG_LOCKED, &lockdown_mode_state, 0, "Lockdown Mode state");
  
 +/*
-+ * renoir: iOS 27's libsystem_darwin os_lockdown_mode_enabled() reads this one, a 64-bit value
++ * hakios: iOS 27's libsystem_darwin os_lockdown_mode_enabled() reads this one, a 64-bit value
 + * (sysctlbyname into a uint64_t, enabled when it is 1), and abort()s when the name is not there:
 + * launchd died right after "Early boot complete". Same state as lockdown_mode_state.
 + */
@@ -1104,7 +1104,7 @@ diff --git a/bsd/sys/spawn_internal.h b/bsd/sys/spawn_internal.h
  } *_posix_spawnattr_t;
  
 +/*
-+ * renoir: iOS 27's struct _posix_spawnattr (attr_size 0x100): the same as this one up to psa_sec_flags,
++ * hakios: iOS 27's struct _posix_spawnattr (attr_size 0x100): the same as this one up to psa_sec_flags,
 + * then 8 bytes of fields this kernel has not got; psa_crash_count, psa_throttle_timeout,
 + * psa_kqworkloop_soft_limit, psa_kqworkloop_hard_limit and psa_conclave_mem_limit follow from 0xb4.
 + * posix_spawn() reads them from there (bsd/kern/kern_exec.c).

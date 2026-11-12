@@ -8,7 +8,7 @@
  * the two phones this was written on:
  *   power        KPDPWR_N of the power-on block ("PON") of the PMK8350
  *   volume down  RESIN_N of the same block
- *   volume up    GPIO6 of the PM7325 (redwood) or PM8350 (renoir), pulled up; the key pulls it low
+ *   volume up    a PMIC GPIO (GPIO6 of a PM7325 or a PM8350 on the first phones), pulled up; the key pulls it low
  * Both chips sit on the SPMI bus (slaves 0 and 1), and the way to that bus is the SoC's "PMIC
  * arbiter": it owns the bus and gives each of the systems on the chip (this one, the modem, the
  * always-on processor, TrustZone...) a set of registers per PMIC peripheral -- a "channel" -- to

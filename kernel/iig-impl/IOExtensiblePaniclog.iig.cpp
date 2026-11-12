@@ -1,4 +1,4 @@
-/* renoir: stand-in for iig output (as base/xnu-deps/gen-iig-stubs.py makes for the other classes):
+/* hakios: stand-in for iig output (as base/xnu-deps/gen-iig-stubs.py makes for the other classes):
  * IOExtensiblePaniclog is new in xnu-12377 and base/xnu-deps/iig-impl has no stubs for it. Its RPC
  * dispatch (calls from user-space DriverKit drivers) is not available. */
 #include <IOKit/IOLib.h>

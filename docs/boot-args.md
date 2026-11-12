@@ -412,14 +412,14 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `trace_attr` | renoir: boot-arg trace_attr=name[,name...] (p_comm) logs what such a process asks getattrlist, fgetattrlist and getattrlistbulk for and what it gets (common and extended-common attributes, options, the full path built for ATTR_CMN_FULLPATH): a newer userland asks for paths in ways this kernel may an… |
+| `trace_attr` | hakios: boot-arg trace_attr=name[,name...] (p_comm) logs what such a process asks getattrlist, fgetattrlist and getattrlistbulk for and what it gets (common and extended-common attributes, options, the full path built for ATTR_CMN_FULLPATH): a newer userland asks for paths in ways this kernel may an… |
 
 ### `bsd/vfs/vfs_lookup.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `trace_open` | hakios: boot-arg trace_open=name[,name...] (p_comm) puts every path such a process looks up -- open, stat, access, getattrlist all come through here -- and what came of it into the loader's log, to see which file a daemon looks for and does not find. |
-| `trace_open_path` | renoir: trace_open_path=SUBSTRING, only the paths with it (the 400 lines go further) |
+| `trace_open_path` | hakios: trace_open_path=SUBSTRING, only the paths with it (the 400 lines go further) |
 
 ## Kernel core, processes and diagnostics
 
@@ -458,7 +458,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `trace_sysctl` | renoir: boot-arg trace_sysctl=1 logs the names a process asks for that this kernel has not got ("sysctl: launchd[1] has no security.mac.foo"), the first 300 of them: a newer userland than the kernel looks up sysctls the kernel never had, and often abort()s on the answer. |
+| `trace_sysctl` | hakios: boot-arg trace_sysctl=1 logs the names a process asks for that this kernel has not got ("sysctl: launchd[1] has no security.mac.foo"), the first 300 of them: a newer userland than the kernel looks up sysctls the kernel never had, and often abort()s on the answer. |
 
 ### `iokit/Kernel/IOPMrootDomain.cpp`
 

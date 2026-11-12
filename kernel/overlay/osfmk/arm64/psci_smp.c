@@ -41,7 +41,7 @@
 #include <kern/processor.h>
 
 /*
- * The boot processor's number. (Not redwood's master_cpu: nothing sets it in this kernel, it stays -1,
+ * The boot processor's number. (Not the kernel's master_cpu: nothing sets it in this kernel, it stays -1,
  * and with it the boot processor took itself for another core at the return to the loader.)
  */
 static inline int

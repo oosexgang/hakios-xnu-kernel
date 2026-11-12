@@ -109,7 +109,7 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	hakios_rpmh_unlock();return ok;
 }
 
-/* The board's two regulators (renoir: L2C = I/O at 1.8 V, L7C = analog at 3.3 V). */
+/* The board's two regulators (hakios: L2C = I/O at 1.8 V, L7C = analog at 3.3 V). */
 static bool
 supply_on(const char *name, uint32_t millivolts)
 {

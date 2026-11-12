@@ -160,7 +160,7 @@ diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
   */
  
 +
-+#if HAS_STD_PAC        /* renoir: pacib and the key registers do not exist on an ARMv8.2 core */
++#if HAS_STD_PAC        /* hakios: pacib and the key registers do not exist on an ARMv8.2 core */
 +/*
 + * hakios: the IB key a core really uses, before and after rewriting TTBR0 (which the hypervisor may
 + * trap): pacib of a fixed value is its fingerprint, the register read-back what the core claims. A
@@ -959,7 +959,7 @@ diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
 +extern void loader_log_line(const char *line);
 +
 +/*
-+ * redwood/xnu-12377: the slow-core ("secondary") pairing is a big.LITTLE optimization that used
++ * hakios/xnu-12377: the slow-core ("secondary") pairing is a big.LITTLE optimization that used
 + * struct processor's processor_primary field and processor_set_primary(), both removed by
 + * xnu-12377's scheduler refactor.  It is irrelevant on the homogeneous cores this port boots on
 + * (QEMU virt; ml_choose_slow_core_partners() would find no pairs anyway), so both are no-ops here.
@@ -1306,7 +1306,7 @@ diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
 +		if (hk_user_faults++ < 16) {
 +			char line[200];
 +			uint64_t ia = 0, ga = 0;
-+#if HAS_STD_PAC        /* renoir: no key registers on an ARMv8.2 core */
++#if HAS_STD_PAC        /* hakios: no key registers on an ARMv8.2 core */
 +			__asm__ volatile ("mrs %0, APIAKeyLo_EL1" : "=r" (ia));
 +			__asm__ volatile ("mrs %0, APGAKeyLo_EL1" : "=r" (ga));
 +#endif
@@ -1324,7 +1324,7 @@ diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
  			break;
  		}
  #endif /* CONFIG_XNUPOST */
-+		/* renoir: arm64e instructions this ARMv8.2 core lacks (osfmk/arm64/hakios_a64emu.c) */
++		/* hakios: arm64e instructions this ARMv8.2 core lacks (osfmk/arm64/hakios_a64emu.c) */
 +		if (is_user && hakios_a64emu(context)) {
 +			break;
 +		}
@@ -1709,7 +1709,7 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 +	 */
 +	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
 +#endif /* HAS_STD_PAC */
-+#if HAS_STD_PAC        /* renoir: no key registers on an ARMv8.2 core */
++#if HAS_STD_PAC        /* hakios: no key registers on an ARMv8.2 core */
 +	// hakios DIAGNOSTIC (checkpoint 9): report the key registers the kernel actually loaded, as an
 +	// "early exception" (reason 1): esr=0x9d9d elr=APIAKeyLo far=APIBKeyLo lr=TCR_EL1 sp=mem IB lo.
 +	adrp	x9, EXT(loader_stub_slot)@page
@@ -1821,7 +1821,7 @@ diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
  
  	n = PE_get_random_seed(dst, request_size);
 +	/*
-+	 * renoir: our loader hands over SHA512_DIGEST_LENGTH (64) bytes of the firmware's randomness, not
++	 * hakios: our loader hands over SHA512_DIGEST_LENGTH (64) bytes of the firmware's randomness, not
 +	 * the 4 x 64 this kernel asks for on arm64. The rest repeats them, each copy marked with its offset:
 +	 * the kernel's DRBG mixes all of it, and there is no more entropy than the 64 bytes either way --
 +	 * what the kernel of iOS 16.5 started from.
@@ -1952,7 +1952,7 @@ diff --git a/pexpert/pexpert/arm64/boot.h b/pexpert/pexpert/arm64/boot.h
  
 -#define BOOT_LINE_LENGTH 1024
 +/*
-+ * renoir: 608, as before xnu-12377: the layout the resident loader (darwin-renoir xnuloader/loader.c)
++ * hakios: 608, as before xnu-12377: the layout the resident loader (darwin-renoir xnuloader/loader.c)
 + * fills in. At 1024 the kernel read bootFlags and memSizeActual 416 bytes past what the loader wrote,
 + * and sized everything from garbage (thread_max < 0, sys_ulock.c assertion).
 + */

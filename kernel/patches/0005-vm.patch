@@ -7,7 +7,7 @@ diff --git a/bsd/vm/vm_unix.c b/bsd/vm/vm_unix.c
  			error = vnode_lookup(PREBOOT_CRYPTEX_PATH, 0, &preboot_vp, vfs_context_current());
 -			if (error || srfmp->vp->v_mount != preboot_vp->v_mount) {
 +			/*
-+			 * (redwood) Or a volume of its own mounted on a directory right inside it: iOS
++			 * (hakios) Or a volume of its own mounted on a directory right inside it: iOS
 +			 * grafts each cryptex image into the Preboot volume (graftdmg), so its files are
 +			 * that volume's; this port mounts the image there as it is (bsd/miscfs/apfs), a
 +			 * mount of its own whose covered directory is Preboot's Cryptexes/<name>.
@@ -31,7 +31,7 @@ diff --git a/osfmk/mach/shared_region.h b/osfmk/mach/shared_region.h
  #define SHARED_REGION_BASE_ARM64                0x180000000ULL
 -#define SHARED_REGION_SIZE_ARM64                0x180000000ULL
 +/*
-+ * renoir: 7 GiB and not 6. iOS 27's dyld shared cache ends at 0x30794C000 and slides by up to 0x20000000
++ * hakios: 7 GiB and not 6. iOS 27's dyld shared cache ends at 0x30794C000 and slides by up to 0x20000000
 + * (cache header: max slide 512 MiB): at most 0x32794C000, beyond 6 GiB from the base, and dyld's
 + * "syscall to map cache into shared region failed" (KERN_INVALID_ADDRESS) left nothing to run.
 + * A multiple of the 32 MiB a twig table nests on 16 KiB pages.
@@ -48,11 +48,11 @@ diff --git a/osfmk/vm/vm_dyld_pager.c b/osfmk/vm/vm_dyld_pager.c
  #include <ptrauth.h>
  #include <arm/misc_protos.h>
 +#elif defined(__arm64__)
-+#include <ptrauth.h>            /* (ptrauth_key: renoir runs arm64e code without pointer authentication) */
++#include <ptrauth.h>            /* (ptrauth_key: a core without pointer authentication runs arm64e code too) */
  #endif /* defined(HAS_APPLE_PAC) */
  
 +/*
-+ * The arm64e fixup formats: with pointer authentication, and on renoir (arm64 without it) too, where
++ * The arm64e fixup formats: with pointer authentication, and on a core without it (arm64) too, where
 + * an authenticated pointer is written unsigned (see bsd/dev/arm/kern_machdep.c).
 + */
 +#if defined(HAS_APPLE_PAC) || defined(__arm64__)
@@ -83,7 +83,7 @@ diff --git a/osfmk/vm/vm_dyld_pager.c b/osfmk/vm/vm_dyld_pager.c
 +	if (key > ptrauth_key_asdb) {
 +		return KERN_FAILURE;
 +	}
-+	*signedAddr = unsignedAddr;     /* renoir: no pointer authentication, nothing is signed */
++	*signedAddr = unsignedAddr;     /* hakios: no pointer authentication, nothing is signed */
 +	return KERN_SUCCESS;
 +#else /* !defined(HAS_APPLE_PAC) */
  
@@ -157,7 +157,7 @@ diff --git a/osfmk/vm/vm_shared_region.c b/osfmk/vm/vm_shared_region.c
  				memcpy(rebaseLocation, &value, sizeof(value));
  			}
 +#else /* __has_feature(ptrauth_calls) */
-+			/* renoir: no pointer authentication, the pointer stays unsigned (see bsd/dev/arm/kern_machdep.c) */
++			/* hakios: no pointer authentication, the pointer stays unsigned (see bsd/dev/arm/kern_machdep.c) */
 +			memcpy(rebaseLocation, &value, sizeof(value));
  #endif /* __has_feature(ptrauth_calls) */
  		} else {
@@ -176,7 +176,7 @@ diff --git a/osfmk/vm/vm_shared_region.c b/osfmk/vm/vm_shared_region.c
  				memcpy(rebaseLocation, &value, sizeof(value));
  			}
 +#else /* __has_feature(ptrauth_calls) */
-+			/* renoir: no pointer authentication, the pointer stays unsigned (see bsd/dev/arm/kern_machdep.c) */
++			/* hakios: no pointer authentication, the pointer stays unsigned (see bsd/dev/arm/kern_machdep.c) */
 +			memcpy(rebaseLocation, &value, sizeof(value));
  #endif /* __has_feature(ptrauth_calls) */
  		} else {
