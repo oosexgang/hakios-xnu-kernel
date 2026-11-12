@@ -128,7 +128,8 @@ def is_arm64e_macho(path):
         count = struct.unpack_from('>I', head, 4)[0]
         big = struct.unpack_from('>I', head)[0] == 0xcafebabf
         size = 32 if big else 20
-        for i in range(min(count, 16)):
+        # (as many entries as were read: a Java class file has this magic too, with its version where the count is)
+        for i in range(min(count, 16, (len(head) - 8) // size)):
             cputype, subtype = struct.unpack_from('>ii', head, 8 + i * size)
             if cputype == 0x0100000c and (subtype & 0xff) == 2:
                 return True
