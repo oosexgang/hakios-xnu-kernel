@@ -83,7 +83,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `touch_flip` | touch_flip: 1 = mirror left-right, 2 = mirror top-bottom |
 | `touch_lat` | With touch_lat=1 a line for every report read ("tl: c before US seen US read US": the look before, the look that found the line low, the report read), for measuring how long a touch takes to show (tools/latency.py). |
 | `touch_poll_us` | touch_poll_us=N: every N microseconds instead of 8000). |
-| `touch_rate` | touch_rate=480: the chip reports twice as often (Xiaomi's game mode; 240 otherwise) |
+| `touch_rate` | touch_rate=480: the chip reports twice as often (a phone vendor's "game mode"; 240 otherwise) |
 | `touch_spi_hz` | touch_spi_hz=N: the bus at N Hz (Android's device tree gives the chip 5 MHz) |
 | `touchscreen` | Only with boot-arg touchscreen=1. |
 

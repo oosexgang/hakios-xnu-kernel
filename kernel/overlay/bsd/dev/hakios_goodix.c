@@ -618,7 +618,7 @@ goodix_probe(bool verbose)
  * bytes at the command address -- state, acknowledgement, length, command, its data, and the sum of
  * the bytes from the length on -- then the acknowledgement looked for, 0x80 when done.
  */
-#define GOODIX_CMD_HIGH_RATE    0xc0            /* data 1: report 480 times a second instead of 240 (Xiaomi's game mode) */
+#define GOODIX_CMD_HIGH_RATE    0xc0            /* data 1: report 480 times a second instead of 240 (a phone vendor's "game mode") */
 #define GOODIX_ACK_OK           0x80
 #define GOODIX_ACK_BUSY         0x02
 
@@ -1337,7 +1337,7 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 	{
 		uint32_t rate = 0;
 
-		/* boot-arg touch_rate=480: the chip reports twice as often (Xiaomi's game mode; 240 otherwise) */
+		/* boot-arg touch_rate=480: the chip reports twice as often (a phone vendor's "game mode"; 240 otherwise) */
 		if (PE_parse_boot_argn("touch_rate", &rate, sizeof(rate)) && rate == 480 && touch_chip == TOUCH_GOODIX) {
 			bool done = goodix_command(GOODIX_CMD_HIGH_RATE, 1);
 
