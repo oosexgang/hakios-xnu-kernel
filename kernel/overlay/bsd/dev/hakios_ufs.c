@@ -184,7 +184,7 @@ static LCK_MTX_DECLARE(ufs_write_mtx, &ufs_lck_grp);
  * The volume is packed and written by a program, not by this kernel, so the kernel's part is to
  * say when and to let only one program at a time do it:
  *
- *   kern.redwood.var_save   the handshake. The saver writes VAR_SAVE_IDLE when it starts and is
+ *   kern.hakios.var_save   the handshake. The saver writes VAR_SAVE_IDLE when it starts and is
  *                           then the one that will be asked; on the orderly way back to the loader
  *                           (loader_return_after expired, or "xl stop") the kernel writes
  *                           VAR_SAVE_WANTED and waits, and the saver writes VAR_SAVE_DONE when the
@@ -192,7 +192,7 @@ static LCK_MTX_DECLARE(ufs_write_mtx, &ufs_lck_grp);
  *                           nothing waited for, so a run without a saver returns as it always did.
  *                           A panic does not come this way at all -- there is no program left to
  *                           ask -- and then the store simply keeps what it had.
- *   kern.redwood.var_busy   the claim. A write to /dev/rufs_darwin is refused unless the writer
+ *   kern.hakios.var_busy   the claim. A write to /dev/rufs_darwin is refused unless the writer
  *                           holds it, so two savers cannot interleave into one slot. It is held by
  *                           process number, and a claimant may take it from a process that is gone
  *                           (a saver killed in the middle leaves no lock behind for the rest of the
@@ -214,24 +214,24 @@ static volatile bool ufs_write_busy;            /* a write of ours has this kern
 static bool ufs_write_out, ufs_write_was_native;        /* the list is out for writing, and was in before */
 static uint64_t ufs_writes, ufs_write_bytes, ufs_write_errors, ufs_write_refused;
 
-SYSCTL_DECL(_kern_redwood);
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_requests, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_requests,
+SYSCTL_DECL(_kern_hakios);
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_requests, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_requests,
     "requests the phone's storage has answered through the loader");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_errors, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_errors,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_errors, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_errors,
     "requests the phone's storage has refused or not answered");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_bytes,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_bytes,
     "bytes read from the phone's storage");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_wait_us, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_wait_us,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_wait_us, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_wait_us,
     "microseconds spent waiting for core 0's answers");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_copy_us, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_copy_us,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_copy_us, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_copy_us,
     "microseconds spent copying out of the loader's buffer");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_writes, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_writes,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_writes, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_writes,
     "requests written into darwin and read back by the loader");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_write_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_write_bytes,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_write_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_write_bytes,
     "bytes written into darwin");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_write_errors, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_write_errors,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_write_errors, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_write_errors,
     "writes the loader refused or did not finish");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_write_refused, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_write_refused,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_write_refused, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_write_refused,
     "writes refused here: not darwin, or not past what the build writes");
 
 /* The handshake: 1 to register as the saver, 3 to say the volume is in the flash. 2 is the kernel's. */
@@ -256,7 +256,7 @@ ufs_sysctl_var_save(__unused struct sysctl_oid *oidp, __unused void *arg1, __unu
 	return 0;
 }
 
-SYSCTL_PROC(_kern_redwood, OID_AUTO, var_save, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
+SYSCTL_PROC(_kern_hakios, OID_AUTO, var_save, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
     ufs_sysctl_var_save, "I", "the data volume's saver: 1 registers, 2 is the kernel asking, 3 is done");
 
 /* The claim on the store: 1 takes it, 0 gives it back; reading says which process holds it. */
@@ -296,7 +296,7 @@ ufs_sysctl_var_busy(__unused struct sysctl_oid *oidp, __unused void *arg1, __unu
 	return error;
 }
 
-SYSCTL_PROC(_kern_redwood, OID_AUTO, var_busy, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
+SYSCTL_PROC(_kern_hakios, OID_AUTO, var_busy, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
     ufs_sysctl_var_busy, "I", "the claim a writer of /dev/rufs_darwin must hold: 1 takes it, 0 gives it back");
 
 /* what was stored so far is stored, and seen by core 0, before what follows (the loader reads the page there) */
@@ -576,7 +576,7 @@ ufs_native_out(const char *why)
 	return error;
 }
 
-/* The way chosen (ufs_native=, kern.redwood.ufs_native); if this kernel's own fails, the loader's */
+/* The way chosen (ufs_native=, kern.hakios.ufs_native); if this kernel's own fails, the loader's */
 static int
 ufs_read(uint32_t part, uint64_t offset, uint8_t *dst, uint64_t len)
 {
@@ -878,7 +878,7 @@ ufs_cwrite(dev_t dev, struct uio *uio, __unused int ioflag)
 		return EROFS;
 	}
 	if (ufs_var_busy_pid != proc_selfpid()) {
-		/* one writer of the store at a time, and it says so first (kern.redwood.var_busy) */
+		/* one writer of the store at a time, and it says so first (kern.hakios.var_busy) */
 		ufs_write_refused++;
 		return EPERM;
 	}
@@ -1457,7 +1457,7 @@ ufs_native_bench(void)
 	ufshc_report("after the bench");
 }
 
-/* kern.redwood.ufs_native: 1 while reads go through this kernel's own driver; 0 or 1 may be set */
+/* kern.hakios.ufs_native: 1 while reads go through this kernel's own driver; 0 or 1 may be set */
 static int
 ufs_sysctl_native(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
 {
@@ -1474,13 +1474,13 @@ ufs_sysctl_native(__unused struct sysctl_oid *oidp, __unused void *arg1, __unuse
 		ufs_native_on = true;
 	} else {
 		ufs_native_on = false;
-		ufs_native_out("kern.redwood.ufs_native=0");
+		ufs_native_out("kern.hakios.ufs_native=0");
 	}
 	return 0;
 }
-SYSCTL_PROC(_kern_redwood, OID_AUTO, ufs_native, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
+SYSCTL_PROC(_kern_hakios, OID_AUTO, ufs_native, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
     ufs_sysctl_native, "I", "1: the phone's storage is read by this kernel's own UFS driver, 0: through the loader");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_fallbacks, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_native_fallbacks,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_fallbacks, CTLFLAG_RD | CTLFLAG_LOCKED, &ufs_native_fallbacks,
     "times a read of this kernel's own UFS driver failed and the loader's was used instead");
 
 /* ---- bringing it up ---- */
@@ -1646,7 +1646,7 @@ hakios_ufs_init(void)
 				loader_return();
 			}
 			printf("ufs: the partitions (LUN 0-%u) are read by this kernel's own UFS driver, its list in the "
-			    "controller (kern.redwood.ufs_native=0: through the loader)\n", ufs_native_luns - 1);
+			    "controller (kern.hakios.ufs_native=0: through the loader)\n", ufs_native_luns - 1);
 		} else {
 			printf("ufs: this kernel's own UFS driver is not used: through the loader\n");
 		}

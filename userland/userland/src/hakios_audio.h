@@ -11,8 +11,8 @@
  *            real-time thread, which paces itself (48000 frames a second while anything
  *            plays, nothing at all otherwise). What the sink cannot take is dropped.
  */
-#ifndef _SYS_REDWOOD_AUDIO_H_
-#define _SYS_REDWOOD_AUDIO_H_
+#ifndef _SYS_HAKIOS_AUDIO_H_
+#define _SYS_HAKIOS_AUDIO_H_
 
 #include <stdint.h>
 
@@ -89,4 +89,4 @@ void hakios_sound_dsp_down(void);      /* before the DSP is shut down at the run
 void hakios_sound_quiesce(void);       /* on a panic's way out: the amplifiers off, without sleeping */
 #endif
 
-#endif /* _SYS_REDWOOD_AUDIO_H_ */
+#endif /* _SYS_HAKIOS_AUDIO_H_ */

@@ -18,8 +18,8 @@
  * source, type, payload; at most HAKIOS_NET_FRAME_MAX bytes. A radio whose frames are 802.11
  * converts in its driver (or has its firmware do it: "Ethernet decap/encap").
  */
-#ifndef _SYS_REDWOOD_NET_H_
-#define _SYS_REDWOOD_NET_H_
+#ifndef _SYS_HAKIOS_NET_H_
+#define _SYS_HAKIOS_NET_H_
 
 #ifdef KERNEL
 #include <sys/kpi_mbuf.h>
@@ -60,4 +60,4 @@ errno_t hakios_apple80211_ioctl(u_long command, void *data);
 void hakios_virtio_net_init(void);     /* boot-arg virtio_net=1: QEMU's virtio network device */
 #endif /* KERNEL */
 
-#endif /* _SYS_REDWOOD_NET_H_ */
+#endif /* _SYS_HAKIOS_NET_H_ */

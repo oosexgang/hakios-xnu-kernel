@@ -101,7 +101,7 @@
 #                      metal_profile=1 is what makes that possible: it claims Apple2, so
 #                      MPSDevice::GetMPSDevice's ladder finds a yes and SpringBoard no longer
 #                      aborts in the Siri orb (docs/metal.md 10.47). gpu=1 so the kernel has an
-#                      Adreno and kRedwoodSurface can hand a surface's memory over as a GPU
+#                      Adreno and kHakiosSurface can hand a surface's memory over as a GPU
 #                      buffer; touchscreen=1 because the lock screen is swiped away below.
 #                      NO -v, so the kernel's own console does not write on the panel over the
 #                      picture.
@@ -477,7 +477,7 @@
 #
 #   grep -a 'HakiosGPU: request' logs/NNNNNN-run.log
 #       empty. A line here is the kernel being asked something it does not know, and 0x7e
-#       (kRedwoodSurface) is the request the whole drawable depends on.
+#       (kHakiosSurface) is the request the whole drawable depends on.
 #
 #   grep -a 'MiniIOSurface' logs/NNNNNN-run.log
 #       NOT expected to be empty, and that is the point of grepping it. "selector 40 not

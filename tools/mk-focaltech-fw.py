@@ -8,7 +8,7 @@ data = open(sys.argv[1], 'rb').read()
 rows = [', '.join('0x%02x' % b for b in data[i:i + 16]) + ',' for i in range(0, len(data), 16)]
 with open(sys.argv[2], 'w') as out:
     out.write('/* Generated from fw-touch/focaltech_ts_fw_m20.bin. Do not edit. */\n')
-    out.write('#ifndef _REDWOOD_FOCALTECH_FW_H\n#define _REDWOOD_FOCALTECH_FW_H\n\n')
+    out.write('#ifndef _HAKIOS_FOCALTECH_FW_H\n#define _HAKIOS_FOCALTECH_FW_H\n\n')
     out.write('#define FOCALTECH_FW_LENGTH %d\n\n' % len(data))
     out.write('static const unsigned char focaltech_fw[FOCALTECH_FW_LENGTH] = {\n')
     out.write(''.join('\t' + r + '\n' for r in rows))

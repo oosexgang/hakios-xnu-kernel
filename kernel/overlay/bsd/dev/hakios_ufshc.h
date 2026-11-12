@@ -1,8 +1,8 @@
 /*
  * The kernel's own UFS driver (hakios_ufshc.c), as hakios_ufs.c uses it.
  */
-#ifndef _REDWOOD_UFSHC_H_
-#define _REDWOOD_UFSHC_H_
+#ifndef _HAKIOS_UFSHC_H_
+#define _HAKIOS_UFSHC_H_
 
 #include <stdbool.h>
 #include <stdint.h>

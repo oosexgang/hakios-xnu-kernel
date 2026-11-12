@@ -3719,7 +3719,7 @@ draw_every(id<MTLDevice> dev, id<MTLLibrary> library, id<MTLCommandQueue> queue,
  *                     hardware; it is also the band in which every pixel is exactly one
  *                     texel, so every pixel of it can be counted.
  *
- * The pixels reach the panel through the kernel's own GPU service -- kRedwoodShow,
+ * The pixels reach the panel through the kernel's own GPU service -- kHakiosShow,
  * iokit/Kernel/HakiosGPU.cpp, the selector src/gl_test.c already puts its triangle on the
  * screen with -- and that is what `./xl screenshot` reads. Said plainly because it
  * matters: THE PRESENTATION IS A COPY IN THE KERNEL AND IS NOT METAL'S. What is claimed
@@ -3747,7 +3747,7 @@ draw_every(id<MTLDevice> dev, id<MTLLibrary> library, id<MTLCommandQueue> queue,
  */
 enum {
 	/* The panel, not the display. A swap through IOMobileFramebuffer is scaled from the
-	 * 1125x2436 user space sees down to this; kRedwoodShow is not scaled at all -- it is
+	 * 1125x2436 user space sees down to this; kHakiosShow is not scaled at all -- it is
 	 * a row-by-row copy cut to the panel -- so this is the size to draw. */
 	PANEL_W = 1080, PANEL_H = 2400,
 	PIC_TILES = 8,
@@ -4953,7 +4953,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  *                         under any frame rate, and the one number that would catch a
  *                         regression of the 64-slot semaphore bug (10.33) as a slowdown
  *                         rather than as a hang.
- *   the present           -getBytes: of the finished attachment plus the kernel's kRedwoodShow
+ *   the present           -getBytes: of the finished attachment plus the kernel's kHakiosShow
  *                         row copy. NOT Metal's, and said so where it is printed -- but a
  *                         frame that is never shown is not a frame, and this is the only way
  *                         this port has to show one, so a frame rate that leaves it out is a
@@ -4964,7 +4964,7 @@ picture_path(id<MTLDevice> dev, const char *metallib, int seconds)
  * Three ways, in order of how much they can be trusted. The first did not exist when this mode
  * was written and was added because the other two were not enough (docs/metal.md 10.43):
  *
- *   (0) ASK THE KERNEL. Request kRedwoodGPUWorked (0x7d) on HakiosGPU answers
+ *   (0) ASK THE KERNEL. Request kHakiosGPUWorked (0x7d) on HakiosGPU answers
  *       hakios_gpu_worked()'s three numbers -- the microseconds the 3D core worked, on how
  *       many submissions, and the histogram -- taken off CP_ALWAYS_ON_COUNTER. Reading resets
  *       them, so each case is bracketed by two reads and gets the core's own time for its own
@@ -5234,7 +5234,7 @@ tm_make_pipeline(id<MTLDevice> dev, id<MTLFunction> vertex, id<MTLFunction> frag
  * arithmetic that produces a confident wrong answer (docs/metal.md 10.43 shows the three
  * populations it did produce, and the ambiguity in their boundaries).
  *
- * So the kernel now hands the numbers over: request kRedwoodGPUWorked (0x7d) on HakiosGPU
+ * So the kernel now hands the numbers over: request kHakiosGPUWorked (0x7d) on HakiosGPU
  * answers hakios_gpu_worked()'s three outputs -- the microseconds the 3D core itself worked,
  * on how many submissions, and how many of those were under 0.1, 0.25, 0.5, 1, 2 and 4 ms --
  * measured off CP_ALWAYS_ON_COUNTER at 19.2 ticks a microsecond (bsd/dev/hakios_adreno.c).
@@ -6443,7 +6443,7 @@ tm_queue(id<MTLCommandQueue> queue)
  * What it costs to show a frame -- which is NOT Metal's, and is said so where it is printed.
  *
  * This port has no drawable: a finished attachment reaches the panel by being read back into
- * this process (-getBytes:) and handed to the kernel's kRedwoodShow, which copies it row by
+ * this process (-getBytes:) and handed to the kernel's kHakiosShow, which copies it row by
  * row into the boot framebuffer (iokit/Kernel/HakiosGPU.cpp). Both halves are measured
  * because a frame rate that leaves them out is a frame rate for a game nobody can see.
  */
@@ -6490,7 +6490,7 @@ tm_present(id<MTLDevice> dev)
 	}
 	if (pic_connection == 0) {
 		printf("drvtest: time: no GPU service open, so the panel copy is NOT MEASURED "
-		       "(that is the kernel's kRedwoodShow, not Metal's)\n");
+		       "(that is the kernel's kHakiosShow, not Metal's)\n");
 		fflush(stdout);
 		return;
 	}
@@ -6503,7 +6503,7 @@ tm_present(id<MTLDevice> dev)
 		IOConnectCallStructMethod(pic_connection, 0x7f, &req, sizeof(req), NULL, NULL);
 		tm_add(&show, tm_now_ns() - t0);
 	}
-	tm_say_rate("the panel copy in the KERNEL (kRedwoodShow), 1080x2400", &show, bytes,
+	tm_say_rate("the panel copy in the KERNEL (kHakiosShow), 1080x2400", &show, bytes,
 		    "this is counted as Metal's: it is a row-by-row copy in the kernel and the "
 		    "same call src/gl_test.c shows a triangle with");
 

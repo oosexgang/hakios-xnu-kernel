@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS, in one measurement. Showing a frame on this port costs 15.46 ms
  * (docs/metal.md 10.43): -getBytes: pulls a finished attachment into the process (11.96 ms,
- * 867 MB/s) and kRedwoodShow pushes it into the kernel (3.50 ms, 2962 MB/s). That is a
+ * 867 MB/s) and kHakiosShow pushes it into the kernel (3.50 ms, 2962 MB/s). That is a
  * ceiling of 64.7 frames a second with nothing drawn, and about twelve of those
  * milliseconds exist for one reason only: there is nowhere else to put the picture. A
  * drawable is that somewhere else -- memory the display controller already scans out -- and
@@ -39,7 +39,7 @@
  *
  * HOW THE MEMORY GETS HERE. Four layers, and all four now exist:
  *
- *   the kernel     kRedwoodSurface (0x7e) turns an IOSurface into a GPU buffer and reports
+ *   the kernel     kHakiosSurface (0x7e) turns an IOSurface into a GPU buffer and reports
  *                  its size, offset, row length and geometry (HakiosGPU.cpp:821)
  *   the DRM shim   drmPrimeFDToHandle(fd, surface_id, &handle) -- the ID goes where Linux
  *                  puts a dmabuf descriptor (tools/mesa/hakios-drm/hakios_drm.c:189)
@@ -75,7 +75,7 @@
 
 /*
  * The two requests this file needs, by the numbers the kernel answers them on
- * (xnu/files/iokit/Kernel/HakiosGPU.cpp:78-95): kRedwoodSurface is this port's own and
+ * (xnu/files/iokit/Kernel/HakiosGPU.cpp:78-95): kHakiosSurface is this port's own and
  * kDrmGemClose is Linux's. Repeated here rather than shared for the reason the structs are
  * repeated, and it is two lines.
  */
@@ -133,7 +133,7 @@ rwd_gpu_close(io_connect_t connection)
 /*
  * The connection a drawable's buffer lives on, opened once and never closed.
  *
- * This is not a convenience, it is the buffer's lifetime. A buffer made by kRedwoodSurface
+ * This is not a convenience, it is the buffer's lifetime. A buffer made by kHakiosSurface
  * belongs to the user client that asked for it, and IOSurfaceRootUserClient's and
  * HakiosGPUUserClient's clientClose free what their client held -- so a connection closed
  * while a texture still refers to its buffer takes the texture's memory with it. One
@@ -162,7 +162,7 @@ rwd_shared_connection(void)
 }
 
 /*
- * One kRedwoodSurface call. The kernel takes the struct in and hands the same struct back
+ * One kHakiosSurface call. The kernel takes the struct in and hands the same struct back
  * filled (HakiosGPU.cpp:1283 and the common copy at the end of externalMethod), so in and
  * out are one buffer of one size, and asking for fewer bytes back than were sent loses the
  * tail of the answer -- which is the one way to misuse this request.
@@ -451,7 +451,7 @@ rwd_format_of_metal(unsigned metal_pixel_format, uint32_t *fourcc, unsigned *byt
 		 * exists to avoid. The three things it needs are in docs/metal.md 10.46. */
 		rwd_say(why, why_size, "pixel format %u is %s: YCbCr in TWO PLANES, and this "
 		    "import serves one. Missing: per-plane offset and row length from the kernel "
-		    "(kRedwoodSurface reports only the count, HakiosGPU.cpp:849), a Gallium "
+		    "(kHakiosSurface reports only the count, HakiosGPU.cpp:849), a Gallium "
 		    "format for a biplanar Metal texture, and a YCbCr-to-RGB conversion. Refused "
 		    "whole rather than served as its luma plane, which would composite grey and "
 		    "look like a bug elsewhere", metal_pixel_format,

@@ -219,8 +219,8 @@ snapshot_output_format(__unused id self, __unused SEL selector, id snapshot)
  * iOS reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
  * status bar reads it the same way via SBBatteryController. Where the battery has no power source
  * of its own in the kernel (battery=1, the loader's way through Qualcomm's UEFI charger protocols),
- * we hook the UIDevice accessors to return what XNU publishes as kern.redwood.battery_soc (0..100)
- * and kern.redwood.battery_charging.
+ * we hook the UIDevice accessors to return what XNU publishes as kern.hakios.battery_soc (0..100)
+ * and kern.hakios.battery_charging.
  * When the sysctl is missing (battery=1 not in boot-args, or the driver never started) we hand
  * back the value the real implementation computed; the status bar then shows whatever iOS last
  * knew, which is better than crashing.
@@ -265,7 +265,7 @@ battery_power_source(void)
 static float
 battery_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_level ? original_battery_level(self, sel) : -1.0f;
@@ -277,10 +277,10 @@ battery_level(id self, SEL sel)
 static long
 battery_state(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.redwood.battery_charging");
-	int present = sysctl_int("kern.redwood.battery_present");
-	int plugged = sysctl_int("kern.redwood.battery_charger_present");
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int charging = sysctl_int("kern.hakios.battery_charging");
+	int present = sysctl_int("kern.hakios.battery_present");
+	int plugged = sysctl_int("kern.hakios.battery_charger_present");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (charging == -1 || present == -1 || plugged == -1 || soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_state ? original_battery_state(self, sel) : 0;
@@ -298,7 +298,7 @@ battery_state(id self, SEL sel)
 static BOOL
 battery_view_shows_percentage(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return YES;
 	return original_battery_view_shows_percentage ? original_battery_view_shows_percentage(self, sel) : NO;
@@ -307,7 +307,7 @@ battery_view_shows_percentage(id self, SEL sel)
 static void
 battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	original_battery_view_set_shows_percentage(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? YES : shows);
 }
@@ -315,9 +315,9 @@ battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 static BOOL
 battery_view_should_show_bolt(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.redwood.battery_charging");
-	int present = sysctl_int("kern.redwood.battery_present");
-	int plugged = sysctl_int("kern.redwood.battery_charger_present");
+	int charging = sysctl_int("kern.hakios.battery_charging");
+	int present = sysctl_int("kern.hakios.battery_present");
+	int plugged = sysctl_int("kern.hakios.battery_charger_present");
 
 	if (charging != -1 && present != -1 && plugged != -1 && !battery_power_source()) return charging && present && plugged;
 	return original_battery_view_should_show_bolt ? original_battery_view_should_show_bolt(self, sel) : NO;
@@ -333,7 +333,7 @@ battery_view_should_show_bolt(id self, SEL sel)
 static double
 battery_view_charge_percent(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_battery_view_charge_percent ? original_battery_view_charge_percent(self, sel) : 0.0;
@@ -342,7 +342,7 @@ battery_view_charge_percent(id self, SEL sel)
 static void
 battery_view_set_charge_percent(id self, SEL sel, double p)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	original_battery_view_set_charge_percent(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? (double)soc / 100.0 : p);
 }
@@ -351,7 +351,7 @@ battery_view_set_charge_percent(id self, SEL sel, double p)
 static double
 ring_charging_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_ring_charging_level ? original_ring_charging_level(self, sel) : 0.0;
@@ -1206,8 +1206,8 @@ hakios_springboard_init(void)
 			}
 		}
 		say("redwood: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
-		    sysctl_int("kern.redwood.battery_soc"), sysctl_int("kern.redwood.battery_present"),
-		    sysctl_int("kern.redwood.battery_charger_present"), sysctl_int("kern.redwood.battery_charging"));
+		    sysctl_int("kern.hakios.battery_soc"), sysctl_int("kern.hakios.battery_present"),
+		    sysctl_int("kern.hakios.battery_charger_present"), sysctl_int("kern.hakios.battery_charging"));
 		battery_post_notifications();
 	});
 	notify_register_dispatch("com.hakios.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {

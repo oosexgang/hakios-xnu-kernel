@@ -68,7 +68,7 @@
 # numbers every submission on the machine, this test is not the only thing submitting, and the
 # 1694 "tl: q" lines of logs/225409-run.log could be sorted into three populations by eye (7 us
 # while the 4x4 case ran, 246 while 1080x648 ran, 305 while the panel ran) and no finer. So the
-# kernel now hands the numbers over on request: kRedwoodGPUWorked (0x7d) on HakiosGPU answers
+# kernel now hands the numbers over on request: kHakiosGPUWorked (0x7d) on HakiosGPU answers
 # hakios_gpu_worked()'s microseconds, submissions and histogram, reading RESETS them, and --time
 # brackets each case's batched loop with two reads. That needs the kernel parked as
 # mach.development.bcm2837.gputime to be armed (docs/metal.md 10.43 has the cp); an older kernel
@@ -203,7 +203,7 @@
 #                         changed under the driver. Over 50 ms for the upload -> texture
 #                         streaming would be impossible.
 #
-#   the panel copy in the kernel (kRedwoodShow): 3.50 ms, 2962 MB/s; the whole present 15.46 ms
+#   the panel copy in the kernel (kHakiosShow): 3.50 ms, 2962 MB/s; the whole present 15.46 ms
 #     the same again      3-4 ms for the copy, 14-17 ms for the present
 #     what it settles     THE PRESENT IS THE BIGGEST SINGLE COST IN THE WHOLE BOOT. 15.46 ms caps
 #                         this port at 64.7 frames a second with nothing drawn at all, and 12 of

@@ -3,10 +3,10 @@
  * volume is read on the phone, which cannot hold all of it.  Only with boot-arg
  * apfs_sparse=<offset in md0>.  See bsd/dev/hakios_sparse.c.
  */
-#ifndef _SYS_REDWOOD_SPARSE_H_
-#define _SYS_REDWOOD_SPARSE_H_
+#ifndef _SYS_HAKIOS_SPARSE_H_
+#define _SYS_HAKIOS_SPARSE_H_
 
 void hakios_sparse_init(void);
 void hakios_sparse_report(void);
 
-#endif /* _SYS_REDWOOD_SPARSE_H_ */
+#endif /* _SYS_HAKIOS_SPARSE_H_ */

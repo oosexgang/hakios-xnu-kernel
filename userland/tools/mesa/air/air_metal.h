@@ -193,7 +193,7 @@ void rwa_texture_destroy(struct rwa_texture *texture);
  *
  * `surface_id` is the IOSurface's ID, and it goes where Linux puts a dmabuf file descriptor:
  * the DRM shim of this port takes the ID there already (tools/mesa/hakios-drm: the kernel's
- * kRedwoodSurface answers it), so nothing new is asked of the layers underneath. `offset`
+ * kHakiosSurface answers it), so nothing new is asked of the layers underneath. `offset`
  * and `row_bytes` are the kernel's own answer about that surface and are NOT asked again
  * here, because freedreno takes both from the caller.
  *

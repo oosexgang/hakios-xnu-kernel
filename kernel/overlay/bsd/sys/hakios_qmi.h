@@ -19,8 +19,8 @@
  * from the router's delivery thread, with no lock of the helpers held; they may send. A reply
  * wakes the thread waiting in qmi_txn_wait().
  */
-#ifndef _SYS_REDWOOD_QMI_H_
-#define _SYS_REDWOOD_QMI_H_
+#ifndef _SYS_HAKIOS_QMI_H_
+#define _SYS_HAKIOS_QMI_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -211,4 +211,4 @@ kernel_connect(struct socket *sock, void *address, __attribute__((unused)) int l
 }
 #endif
 
-#endif /* _SYS_REDWOOD_QMI_H_ */
+#endif /* _SYS_HAKIOS_QMI_H_ */

@@ -20,7 +20,7 @@
  *   var_store stamp PATH    write a line into PATH saying when: a marker for a run
  *   var_store bootok        tell the loader's boot guard that this generation came up
  *
- * Nobody has to remember to save. `watch` registers with the kernel (kern.redwood.var_save), and
+ * Nobody has to remember to save. `watch` registers with the kernel (kern.hakios.var_save), and
  * on the orderly way back to the loader -- the run's time up, or "xl stop" -- the kernel asks it
  * for the volume and waits, bounded, before it goes (bsd/dev/hakios_ufs.c,
  * hakios_var_save_on_return). A save every SECS seconds is there as well but is not the default:
@@ -28,7 +28,7 @@
  * storage is read through the loader rather than through this kernel's own driver.
  *
  * One saver at a time: a write to the store is refused unless the writer holds the claim
- * (kern.redwood.var_busy), so two of them cannot interleave into one slot. Even if they did, the
+ * (kern.hakios.var_busy), so two of them cannot interleave into one slot. Even if they did, the
  * slot being written is never the one holding the newest good archive, and a header is written
  * last and over a zeroed one -- so the worst an interrupted or doubled save can do is lose itself.
  *
@@ -176,7 +176,7 @@ sysctl_set_int(const char *name, int value)
 static int
 claim(void)
 {
-	if (sysctl_set_int("kern.redwood.var_busy", 1) != 0) {
+	if (sysctl_set_int("kern.hakios.var_busy", 1) != 0) {
 		printf("var_store: the store is claimed by another saver (%s)\n", strerror(errno));
 		return 0;
 	}
@@ -186,7 +186,7 @@ claim(void)
 static void
 release(void)
 {
-	(void)sysctl_set_int("kern.redwood.var_busy", 0);
+	(void)sysctl_set_int("kern.hakios.var_busy", 0);
 }
 
 /* ---- checksum (the same one the loader reads a write back with) ---- */
@@ -1348,7 +1348,7 @@ watch(int seconds)
 	}
 	close(fd);
 	fd = -1;
-	if (sysctl_set_int("kern.redwood.var_save", VAR_SAVE_IDLE) != 0) {
+	if (sysctl_set_int("kern.hakios.var_save", VAR_SAVE_IDLE) != 0) {
 		printf("var_store: this kernel does not keep the data volume (%s)\n", strerror(errno));
 		return 0;
 	}
@@ -1370,7 +1370,7 @@ watch(int seconds)
 			(void)bootok();
 		}
 
-		if (sysctl_int("kern.redwood.var_save", &state) == 0 && state == VAR_SAVE_WANTED) {
+		if (sysctl_int("kern.hakios.var_save", &state) == 0 && state == VAR_SAVE_WANTED) {
 			asked = 1;
 		}
 		gettimeofday(&tv, NULL);
@@ -1383,7 +1383,7 @@ watch(int seconds)
 			last = (uint64_t)tv.tv_sec;
 			if (asked) {
 				/* answered either way: the kernel is waiting on this to go back to the loader */
-				(void)sysctl_set_int("kern.redwood.var_save", VAR_SAVE_DONE);
+				(void)sysctl_set_int("kern.hakios.var_save", VAR_SAVE_DONE);
 				return ok;
 			}
 		}

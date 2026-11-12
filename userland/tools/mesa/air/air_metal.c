@@ -1607,7 +1607,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
        * Linux puts a dmabuf file descriptor, and freedreno's import on Darwin already
        * means exactly that (freedreno_bo.c, fd_bo_from_dmabuf_drm: "what comes in here is
        * an IOSurface, and the file descriptor its ID", and the kernel answers it as
-       * kRedwoodSurface). PIPE_BIND_SHARED is deliberately NOT added to the template:
+       * kHakiosSurface). PIPE_BIND_SHARED is deliberately NOT added to the template:
        * fd_resource_from_handle sets is_shared on the resource itself, which is the flag
        * that matters, and a bind bit the is_format_supported query above was not made with
        * would be a question asked twice and answered once.
@@ -1664,7 +1664,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
       if (device->software || !device->screen->resource_from_handle) {
          say(why, why_size, "%s imports no memory: a texture over an IOSurface is the "
                             "GPU's own import path (fd_resource_from_handle over the "
-                            "kernel's kRedwoodSurface), and a rasterizer in plain C has "
+                            "kernel's kHakiosSurface), and a rasterizer in plain C has "
                             "nowhere to put somebody else's pages. Everything else about "
                             "this request was checked and is fine: a %ux%u %s of %s with "
                             "%u bytes a row", rwa_device_name(device), width, height,

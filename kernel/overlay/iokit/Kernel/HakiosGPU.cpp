@@ -91,10 +91,10 @@ enum {
 	kMsmSubmitQueueNew      = 0x4a,
 	kMsmSubmitQueueClose    = 0x4b,
 	kMsmSubmitQueueQuery    = 0x4c,
-	kRedwoodHost            = 0x7c,         /* ours: pages of the caller's own memory as a buffer (Metal's no-copy buffers) */
-	kRedwoodGPUWorked       = 0x7d,         /* ours: how long the 3D core itself has worked, and on how many */
-	kRedwoodSurface         = 0x7e,         /* ours: an IOSurface's memory as a buffer */
-	kRedwoodShow            = 0x7f,         /* ours: pixels of the caller's onto the panel, to see a test's result */
+	kHakiosHost            = 0x7c,         /* ours: pages of the caller's own memory as a buffer (Metal's no-copy buffers) */
+	kHakiosGPUWorked       = 0x7d,         /* ours: how long the 3D core itself has worked, and on how many */
+	kHakiosSurface         = 0x7e,         /* ours: an IOSurface's memory as a buffer */
+	kHakiosShow            = 0x7f,         /* ours: pixels of the caller's onto the panel, to see a test's result */
 };
 
 struct msm_timespec {
@@ -153,7 +153,7 @@ struct drm_gem_close {
 	uint32_t handle, pad;
 };
 /*
- * kRedwoodHost: `bytes` of the caller's memory from `address` (both 4 KB aligned) as a buffer: the pages are wired and entered
+ * kHakiosHost: `bytes` of the caller's memory from `address` (both 4 KB aligned) as a buffer: the pages are wired and entered
  * into the GPU's address space for as long as the buffer is there, and pushed out of the cache before every submission that
  * names the buffer (the memory is the program's ordinary, cached memory). Back: the buffer.
  */
@@ -163,11 +163,11 @@ struct hakios_host {
 	uint32_t handle;
 	uint32_t flags;                         /* MSM_BO_GPU_READONLY, or 0 */
 };
-#define GPU_BUFFER_HOST         0x40000000u     /* in gpu_buffer.flags: a kRedwoodHost buffer (never kept for another) */
+#define GPU_BUFFER_HOST         0x40000000u     /* in gpu_buffer.flags: a kHakiosHost buffer (never kept for another) */
 
 struct hakios_surface {
 	uint32_t surface;                       /* the IOSurface's ID */
-	uint32_t handle;                        /* kRedwoodDescribe: no buffer is wanted; else, back: the buffer, */
+	uint32_t handle;                        /* kHakiosDescribe: no buffer is wanted; else, back: the buffer, */
 	uint64_t size;                          /* how big it is, */
 	uint32_t offset, rowBytes;              /* where the pixels start in it and how long a row of them is, */
 	uint32_t width, height, pixelFormat, planes;    /* and what they are */
@@ -177,7 +177,7 @@ struct hakios_show {
 	uint32_t width, height, rowBytes, pad;
 };
 /*
- * kRedwoodGPUWorked: the GPU's own side of a measurement a program makes with its own clock.
+ * kHakiosGPUWorked: the GPU's own side of a measurement a program makes with its own clock.
  *
  * A program timing this driver (userland/src/metal_drv_test.m --time) can measure only wall
  * time: the whole of a draw, which is its own work, this ioctl, the submission, the core's
@@ -200,7 +200,7 @@ struct hakios_worked {
 	uint32_t by[7];                         /* ... of which under 0.1, 0.25, 0.5, 1, 2, 4 ms, and longer */
 };
 
-#define kRedwoodDescribe        0xffffffffu
+#define kHakiosDescribe        0xffffffffu
 
 #define MSM_INFO_GET_OFFSET     0
 #define MSM_INFO_GET_IOVA       1
@@ -454,7 +454,7 @@ struct gpu_buffer {
 	bool                            seen;           /* by the program: mapped, and from then on written by it */
 	uint32_t                        fence;          /* the last submission that names it (0: none has) */
 	uint64_t                        flushSize;      /* what of it is pushed out of the cache, when not all (0: all) */
-	IOMemoryMap *                   map;            /* a kRedwoodHost buffer's pages in the kernel (for the cache pushes) */
+	IOMemoryMap *                   map;            /* a kHakiosHost buffer's pages in the kernel (for the cache pushes) */
 };
 
 /*
@@ -988,7 +988,7 @@ HakiosGPUUserClient::hostBuffer(struct hakios_host * request)
  * state on (MiniIOSurface.h). The surface is held for as long as the buffer is there. A surface
  * that is a buffer of this client's already is that buffer again, as with Linux's handles: so
  * the client must not be giving that buffer back at the same moment (freedreno asks under the
- * lock it gives buffers back under). Asked only to describe (kRedwoodDescribe), no buffer is made.
+ * lock it gives buffers back under). Asked only to describe (kHakiosDescribe), no buffer is made.
  */
 IOReturn
 HakiosGPUUserClient::surfaceBuffer(struct hakios_surface * request)
@@ -1025,7 +1025,7 @@ HakiosGPUUserClient::surfaceBuffer(struct hakios_surface * request)
 	request->height = s->info.height;
 	request->pixelFormat = s->info.pixelFormat;
 	request->planes = s->info.planeCount;
-	if (request->handle == kRedwoodDescribe) {
+	if (request->handle == kHakiosDescribe) {
 		request->handle = 0;
 		memory->release();
 		MiniIOSurfaceDrop(s);
@@ -1094,7 +1094,7 @@ HakiosGPUUserClient::clientSurfaceBuffer(MiniIOSurface * s, struct hakios_surfac
 	request->height = s->info.height;
 	request->pixelFormat = s->info.pixelFormat;
 	request->planes = s->info.planeCount;
-	if (request->handle == kRedwoodDescribe) {
+	if (request->handle == kHakiosDescribe) {
 		request->handle = 0;
 		MiniIOSurfaceDrop(s);
 		return kIOReturnSuccess;
@@ -1293,7 +1293,7 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 				b->pushed = began;
 			}
 		} else if (!(b->flags & GPU_BUFFER_HOST) && (!b->seen || !gGPUCached)) {
-			continue;               /* (a kRedwoodHost buffer is the program's cached memory: pushed out every time) */
+			continue;               /* (a kHakiosHost buffer is the program's cached memory: pushed out every time) */
 		}
 		if (b->kernel == NULL) {
 			continue;               /* (a buffer of no kernel mapping: write-combined for the program, nothing cached) */
@@ -1515,7 +1515,7 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 	if (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {
 		return kIOReturnBadArgument;
 	}
-	if (!hakios_gpu_ready() && selector != kRedwoodShow) {
+	if (!hakios_gpu_ready() && selector != kHakiosShow) {
 		return kIOReturnNotReady;                       /* given back: the run is ending */
 	}
 	bzero(&r, sizeof(r));
@@ -1600,7 +1600,7 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		}
 		IOLockUnlock(gGPULock);
 		break;
-	case kRedwoodGPUWorked:
+	case kHakiosGPUWorked:
 		/*
 		 * Under gGPULock because hakios_gpu_worked() calls gpu_times(), which reads the
 		 * scratch page and advances the same counters the submit path advances -- and
@@ -1614,7 +1614,7 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		hakios_gpu_worked(&r.worked.microseconds, &r.worked.submissions, r.worked.by);
 		IOLockUnlock(gGPULock);
 		break;
-	case kRedwoodSurface: {
+	case kHakiosSurface: {
 		static uint32_t said;
 		uint32_t asked = r.surface.handle;
 
@@ -1623,17 +1623,17 @@ HakiosGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 		if (said < 40 && (ret != kIOReturnSuccess || said < 12)) {
 			said++;
 			IOLog("HakiosGPU: surface %u%s for pid %d: %#x (%ux%u '%c%c%c%c', %u a row, offset %u, %llu bytes)\n",
-			    r.surface.surface, asked == kRedwoodDescribe ? " described" : "", proc_selfpid(), ret, r.surface.width,
+			    r.surface.surface, asked == kHakiosDescribe ? " described" : "", proc_selfpid(), ret, r.surface.width,
 			    r.surface.height, (char) (r.surface.pixelFormat >> 24), (char) (r.surface.pixelFormat >> 16),
 			    (char) (r.surface.pixelFormat >> 8), (char) r.surface.pixelFormat, r.surface.rowBytes,
 			    r.surface.offset, r.surface.size);
 		}
 		break;
 	}
-	case kRedwoodShow:
+	case kHakiosShow:
 		ret = show(&r.show);
 		break;
-	case kRedwoodHost:
+	case kHakiosHost:
 		ret = hostBuffer(&r.host);
 		break;
 	default:

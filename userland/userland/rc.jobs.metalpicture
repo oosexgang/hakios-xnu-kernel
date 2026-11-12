@@ -74,7 +74,7 @@
 # state is not reaching the hardware and nothing else in the lower two thirds means much.
 #
 # And what the presentation is, said plainly: the pixels go to the panel through
-# kRedwoodShow (iokit/Kernel/HakiosGPU.cpp), which is a row-by-row copy in the kernel and
+# kHakiosShow (iokit/Kernel/HakiosGPU.cpp), which is a row-by-row copy in the kernel and
 # is the same selector src/gl_test.c puts its triangle on the screen with. That copy is NOT
 # Metal's, and this file does not claim it is. What is claimed is that all 2 592 000 pixels
 # handed to it were computed by Metal pipelines of this driver on the Adreno: no border, no

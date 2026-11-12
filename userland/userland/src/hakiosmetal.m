@@ -1163,7 +1163,7 @@ struct gem_close { uint32_t handle, pad; };
  * committed, so an encoder records and the command buffer runs; dispatching at encode time
  * would be less code and would quietly reorder work. */
 @interface HakiosMetalComputePipeline (HakiosMetalInternal)
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			     compute:(struct rwa_compute *)compute
 				info:(const struct rwa_compute_info *)info
 			  descriptor:(id)descriptor;
@@ -1171,25 +1171,25 @@ struct gem_close { uint32_t handle, pad; };
 @end
 
 @interface HakiosMetalCommandQueue : _MTLCommandQueue
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device descriptor:(id)descriptor;
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device descriptor:(id)descriptor;
 @end
 
 @interface HakiosMetalCommandBuffer : _MTLCommandBuffer
-- (instancetype)initWithRedwoodQueue:(HakiosMetalCommandQueue *)queue;
+- (instancetype)initWithHakiosQueue:(HakiosMetalCommandQueue *)queue;
 - (void)recordWork:(HakiosMetalWork *)work;
 - (id)device;
 @end
 
 @interface HakiosMetalComputeEncoder : _MTLCommandEncoder
-- (instancetype)initWithRedwoodCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer;
+- (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer;
 @end
 
 @interface HakiosMetalBlitEncoder : _MTLCommandEncoder
-- (instancetype)initWithRedwoodCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer;
+- (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer;
 @end
 
 @interface HakiosMetalRenderEncoder : _MTLCommandEncoder
-- (instancetype)initWithRedwoodCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
+- (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
 				  descriptor:(id)descriptor;
 /* Every form of every draw method records through this one, indexed or not: the thirteen
  * lines that copy the encoder's state into the work item are the same either way, and two
@@ -1415,7 +1415,7 @@ rw_bisect_within(void)
 }
 @property (readonly) struct rwa_sampler *mesaSampler;
 - (struct rwa_sampler *)mesaSamplerWithLodMin:(float)lodMin max:(float)lodMax;
-- (void)setRedwoodState:(const struct rwa_sampler_state *)state;
+- (void)setHakiosState:(const struct rwa_sampler_state *)state;
 @end
 
 @interface HakiosMetalDepthStencilState : _MTLDepthStencilState {
@@ -1423,7 +1423,7 @@ rw_bisect_within(void)
 	BOOL _readsDepth, _writesDepth, _readsStencil, _writesStencil;
 }
 @property (readonly) struct rwa_depth_stencil *mesaDepthStencil;
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 				state:(struct rwa_depth_stencil *)state
 			   descriptor:(MTLDepthStencilDescriptor *)descriptor;
 @end
@@ -1435,7 +1435,7 @@ rw_bisect_within(void)
  * The implementation below carries the whole of why.
  */
 @interface HakiosMetalArgumentEncoder : NSObject
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			       layout:(const struct rwa_argbuf_layout *)layout
 			   fromModule:(BOOL)fromModule;
 /* Not part of MTLArgumentEncoder: the mapping between Metal's [[id(n)]] and the index the
@@ -2075,7 +2075,7 @@ static NSData *rw_function_air(id function);
 	if (shape.color_count > 0) {
 		rw_blend_result(info.blend_enabled_mask, info.color_write_masks);
 	}
-	return [[HakiosMetalRenderPipeline alloc] initWithRedwoodDevice:self
+	return [[HakiosMetalRenderPipeline alloc] initWithHakiosDevice:self
 								 render:render
 								   info:&info
 							     descriptor:descriptor];
@@ -2233,7 +2233,7 @@ static NSData *rw_function_air(id function);
  * answered at all.
  *
  * nil and not a texture, because the contract has no call for it. rwa_texture_from_surface takes
- * an IOSurface, which the kernel hands over as a buffer (kRedwoodSurface); a bare pointer into
+ * an IOSurface, which the kernel hands over as a buffer (kHakiosSurface); a bare pointer into
  * the caller's address space is a different import, and a texture made by copying instead would
  * be wrong in a way nothing would report: the caller writes to its own pages and expects the
  * texture to change.
@@ -2278,7 +2278,7 @@ static NSData *rw_function_air(id function);
 		rw_print("%s\n", why);
 		return nil;
 	}
-	return [[HakiosMetalTexture alloc] initWithRedwoodDevice:self
+	return [[HakiosMetalTexture alloc] initWithHakiosDevice:self
 							 texture:texture
 							   shape:&shape];
 }
@@ -2314,10 +2314,10 @@ static NSData *rw_function_air(id function);
 		rw_print("%s\n", why);
 		return nil;
 	}
-	HakiosMetalSampler *object = [[HakiosMetalSampler alloc] initWithRedwoodDevice:self
+	HakiosMetalSampler *object = [[HakiosMetalSampler alloc] initWithHakiosDevice:self
 										  sampler:sampler
 									       descriptor:descriptor];
-	[object setRedwoodState:&state];
+	[object setHakiosState:&state];
 	return object;
 }
 
@@ -2389,7 +2389,7 @@ static NSData *rw_function_air(id function);
 		rw_print("%s\n", why);
 		return nil;
 	}
-	return [[HakiosMetalDepthStencilState alloc] initWithRedwoodDevice:self
+	return [[HakiosMetalDepthStencilState alloc] initWithHakiosDevice:self
 								     state:made
 								descriptor:descriptor];
 }
@@ -2483,7 +2483,7 @@ static NSData *rw_function_air(id function);
 		 * is named by (set, id) exactly as the application named it. */
 		layout.members[i].index = ~0u;
 	}
-	return [[HakiosMetalArgumentEncoder alloc] initWithRedwoodDevice:self layout:&layout
+	return [[HakiosMetalArgumentEncoder alloc] initWithHakiosDevice:self layout:&layout
 							      fromModule:NO];
 }
 
@@ -2547,7 +2547,7 @@ static NSData *rw_function_air(id function);
 		if (sets[i].metal_index != (unsigned)index) {
 			continue;
 		}
-		return [[HakiosMetalArgumentEncoder alloc] initWithRedwoodDevice:self
+		return [[HakiosMetalArgumentEncoder alloc] initWithHakiosDevice:self
 									  layout:&sets[i]
 								      fromModule:YES];
 	}
@@ -2575,7 +2575,7 @@ static NSData *rw_function_air(id function);
 	id use = descriptor != nil ? [[descriptor retain] autorelease] :
 	    [[[MTLCommandQueueDescriptor alloc] init] autorelease];
 
-	return [[HakiosMetalCommandQueue alloc] initWithRedwoodDevice:self descriptor:use];
+	return [[HakiosMetalCommandQueue alloc] initWithHakiosDevice:self descriptor:use];
 }
 
 /*
@@ -2699,7 +2699,7 @@ static NSData *rw_function_air(id function);
 		 * which construct it refused, and an application can act on that. */
 		return [self fail:error with:[NSString stringWithUTF8String:why]];
 	}
-	return [[HakiosMetalComputePipeline alloc] initWithRedwoodDevice:self
+	return [[HakiosMetalComputePipeline alloc] initWithHakiosDevice:self
 								 compute:compute
 								    info:&info
 							      descriptor:descriptor];
@@ -2912,7 +2912,7 @@ static NSData *rw_function_air(id function);
 		RW_AGAIN("no drawable: %s\n", why);
 		return nil;
 	}
-	return [[HakiosMetalTexture alloc] initWithRedwoodDevice:self
+	return [[HakiosMetalTexture alloc] initWithHakiosDevice:self
 							 texture:texture
 							   shape:&shape];
 }
@@ -3437,7 +3437,7 @@ static const struct { uint32_t chip; const char *name; } known_chips[] = {
 	}
 }
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			      texture:(struct rwa_texture *)texture
 				shape:(const struct rwa_texture_shape *)shape
 {
@@ -3708,7 +3708,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 	struct rwa_texture_shape shape = _shape;
 
 	shape.pixel_format = (unsigned)format;
-	return [[HakiosMetalTexture alloc] initWithRedwoodDevice:_owner texture:view shape:&shape];
+	return [[HakiosMetalTexture alloc] initWithHakiosDevice:_owner texture:view shape:&shape];
 }
 - (id)newTextureViewWithPixelFormat:(NSUInteger)format
 			textureType:(NSUInteger)type
@@ -3809,7 +3809,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 
 @implementation HakiosMetalSampler
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			      sampler:(struct rwa_sampler *)sampler
 			   descriptor:(id)descriptor
 {
@@ -3838,7 +3838,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 
 - (struct rwa_sampler *)mesaSampler { return _sampler; }
 
-- (void)setRedwoodState:(const struct rwa_sampler_state *)state { _state = *state; }
+- (void)setHakiosState:(const struct rwa_sampler_state *)state { _state = *state; }
 
 /*
  * This sampler with an encoder's own LOD range, -setFragmentSamplerState:lodMinClamp:lodMaxClamp:atIndex:,
@@ -3884,7 +3884,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 
 @implementation HakiosMetalDepthStencilState
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 				state:(struct rwa_depth_stencil *)state
 			   descriptor:(MTLDepthStencilDescriptor *)descriptor
 {
@@ -3954,7 +3954,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 
 @implementation HakiosMetalComputePipeline
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			     compute:(struct rwa_compute *)compute
 				info:(const struct rwa_compute_info *)info
 			  descriptor:(id)descriptor
@@ -4005,7 +4005,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 
 @implementation HakiosMetalRenderPipeline
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			       render:(struct rwa_render *)render
 				 info:(const struct rwa_render_info *)info
 			   descriptor:(id)descriptor
@@ -4280,7 +4280,7 @@ hakios_clear_semaphore_debt(id commandBuffer)
 	dispatch_queue_t _completionQueue;   /* only used when Apple's own ivar is missing */
 }
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device descriptor:(id)descriptor
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device descriptor:(id)descriptor
 {
 	/* The initialiser IOGPUMetalCommandQueue itself sends to super (0x1ec16dabc). The
 	 * descriptor is not optional: the base validates it at its own line 137 and the first
@@ -4325,7 +4325,7 @@ hakios_clear_semaphore_debt(id commandBuffer)
 
 - (id)commandBuffer
 {
-	return [[[HakiosMetalCommandBuffer alloc] initWithRedwoodQueue:self] autorelease];
+	return [[[HakiosMetalCommandBuffer alloc] initWithHakiosQueue:self] autorelease];
 }
 
 - (id)commandBufferWithUnretainedReferences
@@ -4482,7 +4482,7 @@ hakios_clear_semaphore_debt(id commandBuffer)
  *
  * Every boot log under logs/ was written by the old numbering and none of them is going to be
  * regenerated, so those numbers have to be DATED rather than reinterpreted. That is what the
- * banner in -initWithRedwoodQueue: below is for: it names the numbering of the log that carries
+ * banner in -initWithHakiosQueue: below is for: it names the numbering of the log that carries
  * it, and it is printed out of these constants, so the line cannot drift from what -status
  * answers. A log without that line is older than this change, and in it "status 6" is this
  * completion, "status 4" is a buffer that was only submitted, and 2 and 3 do not occur at all.
@@ -4567,7 +4567,7 @@ enum {
 	return _protectionOptions;
 }
 
-- (instancetype)initWithRedwoodQueue:(HakiosMetalCommandQueue *)queue
+- (instancetype)initWithHakiosQueue:(HakiosMetalCommandQueue *)queue
 {
 	/* what IOGPUMetalCommandBuffer sends to super, retained references and no debug mode.
 	 * THIS CALL BLOCKS when the queue's semaphore is empty -- see the long note above
@@ -4635,7 +4635,7 @@ enum {
 
 - (id)computeCommandEncoder
 {
-	return [[[HakiosMetalComputeEncoder alloc] initWithRedwoodCommandBuffer:self]
+	return [[[HakiosMetalComputeEncoder alloc] initWithHakiosCommandBuffer:self]
 		   autorelease];
 }
 
@@ -4645,7 +4645,7 @@ enum {
 		rw_print("a render pass needs a descriptor\n");
 		return nil;
 	}
-	return [[[HakiosMetalRenderEncoder alloc] initWithRedwoodCommandBuffer:self
+	return [[[HakiosMetalRenderEncoder alloc] initWithHakiosCommandBuffer:self
 								    descriptor:descriptor]
 		   autorelease];
 }
@@ -4661,7 +4661,7 @@ enum {
  * caller, and these are the four that were still missing. */
 - (id)blitCommandEncoder
 {
-	return [[[HakiosMetalBlitEncoder alloc] initWithRedwoodCommandBuffer:self] autorelease];
+	return [[[HakiosMetalBlitEncoder alloc] initWithHakiosCommandBuffer:self] autorelease];
 }
 - (id)blitCommandEncoderWithDescriptor:(id)descriptor
 {
@@ -5353,7 +5353,7 @@ rw_bisect_skipped_group(void)
 	BOOL _complained;
 }
 
-- (instancetype)initWithRedwoodCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
+- (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
 				  descriptor:(MTLRenderPassDescriptor *)descriptor
 {
 	self = [super initWithCommandBuffer:commandBuffer];
@@ -6758,7 +6758,7 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 	HakiosMetalCommandBuffer *_commandBuffer;   /* not retained: it owns the encoder's life */
 }
 
-- (instancetype)initWithRedwoodCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
+- (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
 {
 	self = [super initWithCommandBuffer:commandBuffer];
 	if (self == nil) {
@@ -6994,7 +6994,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 	BOOL _complained;
 }
 
-- (instancetype)initWithRedwoodCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
+- (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer
 {
 	/* the initialiser IOGPUMetalCommandEncoder sends to super (0x1ec171d14 -> 0x181a1ee6c) */
 	self = [super initWithCommandBuffer:commandBuffer];
@@ -7386,7 +7386,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 	}
 }
 
-- (instancetype)initWithRedwoodDevice:(HakiosMetalDevice *)device
+- (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device
 			       layout:(const struct rwa_argbuf_layout *)layout
 			   fromModule:(BOOL)fromModule
 {

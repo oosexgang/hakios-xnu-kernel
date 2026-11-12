@@ -40,7 +40,7 @@ tree_excludes() {
 # phone's own file): this empty one keeps hakios_goodix.c compiling where there is none.
 focaltech_stub() {
 	printf '%s\n' '/* A stub: no FocalTech firmware (redwood only; see tools/mk-focaltech-fw.py) */' \
-		'#ifndef _REDWOOD_FOCALTECH_FW_H' '#define _REDWOOD_FOCALTECH_FW_H' '#define FOCALTECH_FW_LENGTH 0' \
+		'#ifndef _HAKIOS_FOCALTECH_FW_H' '#define _HAKIOS_FOCALTECH_FW_H' '#define FOCALTECH_FW_LENGTH 0' \
 		'static const unsigned char focaltech_fw[1] = { 0 };' '#endif'
 }
 

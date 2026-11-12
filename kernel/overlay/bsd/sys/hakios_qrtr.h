@@ -7,8 +7,8 @@
  * helpers with hakios_qmi_set_transport(). On a development machine a test puts a fake in the
  * same place. Nothing here knows what is inside a datagram.
  */
-#ifndef _SYS_REDWOOD_QRTR_H_
-#define _SYS_REDWOOD_QRTR_H_
+#ifndef _SYS_HAKIOS_QRTR_H_
+#define _SYS_HAKIOS_QRTR_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -46,4 +46,4 @@ struct hakios_qrtr_ops {
 /* The transport there is; NULL takes it away (handles made before keep the one they were made with). */
 void hakios_qmi_set_transport(const struct hakios_qrtr_ops *ops);
 
-#endif /* _SYS_REDWOOD_QRTR_H_ */
+#endif /* _SYS_HAKIOS_QRTR_H_ */

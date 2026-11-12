@@ -10,8 +10,8 @@
  *            EIO when the camera has had a fault: it stays off for the rest of the run.
  *   write()  commands: a struct hakios_camera_command, then what it says follows.
  */
-#ifndef _SYS_REDWOOD_CAMERA_H_
-#define _SYS_REDWOOD_CAMERA_H_
+#ifndef _SYS_HAKIOS_CAMERA_H_
+#define _SYS_HAKIOS_CAMERA_H_
 
 #include <stdint.h>
 
@@ -60,4 +60,4 @@ struct hakios_camera_command {
 	uint32_t        a, b, c, d;
 };
 
-#endif /* _SYS_REDWOOD_CAMERA_H_ */
+#endif /* _SYS_HAKIOS_CAMERA_H_ */

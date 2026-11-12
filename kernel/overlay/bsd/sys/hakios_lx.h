@@ -10,8 +10,8 @@
  * Threads: the driver's code runs on threads made by lx_os_thread() and on the kernel's own
  * threads that call into it; never in an interrupt.
  */
-#ifndef _SYS_REDWOOD_LX_H_
-#define _SYS_REDWOOD_LX_H_
+#ifndef _SYS_HAKIOS_LX_H_
+#define _SYS_HAKIOS_LX_H_
 
 #include "hakios_sta.h"
 

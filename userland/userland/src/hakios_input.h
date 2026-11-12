@@ -10,8 +10,8 @@
  *   write(): one or more records (time is ignored; the kernel stamps them)
  *   read():  blocks until there is at least one record, returns as many whole ones as fit
  */
-#ifndef _SYS_REDWOOD_INPUT_H_
-#define _SYS_REDWOOD_INPUT_H_
+#ifndef _SYS_HAKIOS_INPUT_H_
+#define _SYS_HAKIOS_INPUT_H_
 
 #include <stdint.h>
 
@@ -44,4 +44,4 @@ void hakios_goodix_init(void);         /* boot-arg touchscreen=1: the phone's to
 void hakios_cpufreq_init(void);        /* boot-arg cpufreq=1: the phone's processor at full speed */
 #endif
 
-#endif /* _SYS_REDWOOD_INPUT_H_ */
+#endif /* _SYS_HAKIOS_INPUT_H_ */

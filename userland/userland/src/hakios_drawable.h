@@ -35,7 +35,7 @@ struct rwa_device;
 struct rwa_texture;
 
 /*
- * What the kernel answers about an IOSurface, and the request it answers in: kRedwoodSurface
+ * What the kernel answers about an IOSurface, and the request it answers in: kHakiosSurface
  * (0x7e) on HakiosGPUUserClient, `struct hakios_surface` in
  * xnu/files/iokit/Kernel/HakiosGPU.cpp. Field for field the same, and declared here rather
  * than included for the reason src/hakiosmetal.m gives for the Mesa contract: userland/build.sh
@@ -53,7 +53,7 @@ struct rwd_surface {
 	uint32_t pixelFormat, planes;     /* because MiniIOSurface substitutes some formats */
 };
 
-#define RWD_DESCRIBE 0xffffffffu          /* kRedwoodDescribe: answer, allocate nothing */
+#define RWD_DESCRIBE 0xffffffffu          /* kHakiosDescribe: answer, allocate nothing */
 
 /*
  * The shape, in the same fields and the same order as `struct rwa_texture_shape`

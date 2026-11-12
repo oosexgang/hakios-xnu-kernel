@@ -171,18 +171,18 @@ static uint64_t hc_polls, hc_slot_waits, hc_slot_wait_ticks, hc_lock_ticks, hc_f
 static LCK_GRP_DECLARE(hc_lck_grp, "hakios-ufshc");
 static LCK_MTX_DECLARE(hc_lock, &hc_lck_grp);
 
-SYSCTL_DECL(_kern_redwood);
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_requests, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_requests,
+SYSCTL_DECL(_kern_hakios);
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_requests, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_requests,
     "reads this kernel's own UFS driver has had answered");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_errors, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_errors,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_errors, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_errors,
     "reads of this kernel's own UFS driver that failed");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_bytes,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_bytes,
     "bytes this kernel's own UFS driver has read");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_wait_us, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_wait_us,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_wait_us, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_wait_us,
     "microseconds spent waiting for the controller, summed over the reads");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_refused, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_refused,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_refused, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_refused,
     "commands the whitelist refused (there should never be one)");
-SYSCTL_QUAD(_kern_redwood, OID_AUTO, ufs_native_most_in_flight, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_most_in_flight,
+SYSCTL_QUAD(_kern_hakios, OID_AUTO, ufs_native_most_in_flight, CTLFLAG_RD | CTLFLAG_LOCKED, &hc_most_in_flight,
     "the most reads this kernel's own UFS driver has had in flight at once");
 
 /*

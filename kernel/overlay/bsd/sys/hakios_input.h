@@ -10,8 +10,8 @@
  *   write(): one or more records (time is ignored; the kernel stamps them)
  *   read():  blocks until there is at least one record, returns as many whole ones as fit
  */
-#ifndef _SYS_REDWOOD_INPUT_H_
-#define _SYS_REDWOOD_INPUT_H_
+#ifndef _SYS_HAKIOS_INPUT_H_
+#define _SYS_HAKIOS_INPUT_H_
 
 #include <stdint.h>
 
@@ -56,7 +56,7 @@ void hakios_spmi_lock(void);
 void hakios_spmi_unlock(void);
 /*
  * How the battery is, as the audio DSP's battery manager says (bsd/dev/hakios_adsp.c, with adsp=1):
- * handed to bsd/dev/hakios_battery.c, which keeps it for the sysctls kern.redwood.battery_* and
+ * handed to bsd/dev/hakios_battery.c, which keeps it for the sysctls kern.hakios.battery_* and
  * passes it on to iokit/Kernel/HakiosBattery.cpp, the power source that iOS reads. The structure
  * is repeated there (this header is not seen from iokit/), and `size` tells whether the two agree.
  */
@@ -132,4 +132,4 @@ bool hakios_gpu_recover(void);
 void hakios_gpu_stop(void);
 #endif
 
-#endif /* _SYS_REDWOOD_INPUT_H_ */
+#endif /* _SYS_HAKIOS_INPUT_H_ */

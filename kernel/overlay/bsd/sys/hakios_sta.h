@@ -13,8 +13,8 @@
  *
  * Nothing but C's own types here: the station side is not compiled as XNU's code.
  */
-#ifndef _SYS_REDWOOD_STA_H_
-#define _SYS_REDWOOD_STA_H_
+#ifndef _SYS_HAKIOS_STA_H_
+#define _SYS_HAKIOS_STA_H_
 
 #include <stdbool.h>
 #include <stdint.h>
