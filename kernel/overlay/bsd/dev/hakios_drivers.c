@@ -22,6 +22,7 @@
 #include "hakios_board.h"
 #include "hakios_log.h"
 
+extern void hakios_bt_uart_init(void);
 extern void hakios_scmi_perf_init(void);
 extern void hakios_prof_start(void);            /* osfmk/arm64/hakios_prof.c */
 extern void hakios_backlight_init(void);        /* bsd/dev/hakios_backlight.c */
@@ -76,6 +77,7 @@ hakios_drivers_init(void)
 	hakios_haptic_init();          /* boot-arg haptic=N: the vibration motor */
 	hakios_torch_init();           /* boot-arg torch=N: the flashlight */
 	hakios_camera_init();          /* boot-arg cam=N: the cameras */
+	hakios_bt_uart_init();        /* boot-arg bt=1: Bluetooth UART identification, after RPMh/SPMI users */
 
 	/* storage that is not the phone's own */
 	hakios_virtio_blk_init();      /* /dev/rvblk0: a disk image of the host (QEMU) */

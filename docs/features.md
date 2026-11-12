@@ -28,6 +28,7 @@ the two the same. What each key means is in `devices/_template/soc.dtsi` and
 | `gpu-a660` | `adreno { }`; `clocks { }`: `gcc-disp-ahb-cbcr`; `rpmh { }` | `gpu { }`: `model`, `chip-id`, `firmware`, `gmem-kb`, `primitive-fifo`, `hang-cycles`, `speed-fuse`, `gaming-fuse`, `highest-bank-bit`, `gcc-debug-gpucc`, `speeds-khz`, `speed-levels`, `default-speed` | `gpu=1` |
 | `virtio` | `virtio { }` | nothing | `virtio_net=1, virtio_input=1` |
 | `cpufreq-scmi` | `scmi-perf { }` | nothing | `scmi_perf=1` |
+| `bluetooth-wcn-uart` | `pins { }`; `clocks { }`; `rpmh { }`; `spmi { }`: `channels` | `bluetooth { }`: `serial-engine`, `wrapper`, `clocks`, `clock-source`, `vote-register`, `votes`, `uart-pins`, `uart-function`, `enable-ppid`, `sw-ctrl`, `supplies`, `supply-mv`, `rf-clock` | `bt=-1 looks; bt=1 powers and identifies` |
 
 The brightness (`backlight { }`), the thermal floors (`thermal { }`) and the partition that may be
 written (`storage { }`) are not features: a board has them by giving the section. `display-scan`

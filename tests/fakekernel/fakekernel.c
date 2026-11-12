@@ -697,7 +697,7 @@ PE_parse_boot_argn(const char *name, void *value, int size)
 
 			memcpy(text, a + n + 1, vlen < sizeof(text) - 1 ? vlen : sizeof(text) - 1);
 			text[vlen < sizeof(text) - 1 ? vlen : sizeof(text) - 1] = 0;
-			if (text[0] >= '0' && text[0] <= '9') {
+			if ((text[0] >= '0' && text[0] <= '9') || (text[0] == '-' && text[1] >= '0' && text[1] <= '9')) {
 				uint64_t number = strtoull(text, NULL, 0);
 
 				memcpy(value, &number, (size_t)size < sizeof(number) ? (size_t)size : sizeof(number));

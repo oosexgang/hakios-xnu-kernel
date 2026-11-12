@@ -14,6 +14,7 @@ extern char log_text[];
 
 static char started[1024];
 #define STARTS(name) void name(void); void name(void) { strcat(started, #name " "); }
+STARTS(hakios_bt_uart_init)
 STARTS(hakios_scmi_perf_init)
 STARTS(hakios_input_init) STARTS(hakios_cpufreq_init) STARTS(hakios_virtio_input_init) STARTS(hakios_fts_init)
 STARTS(hakios_goodix_init) STARTS(hakios_prof_start) STARTS(hakios_buttons_init) STARTS(hakios_battery_init)
@@ -61,7 +62,7 @@ static void
 all_once(const char *touch)
 {
 	static const char *const every[] = {
-		"hakios_input_init ", "hakios_board_init ", "hakios_scmi_perf_init ", "hakios_cpufreq_init ", "hakios_virtio_input_init ", "hakios_prof_start ",
+		"hakios_bt_uart_init ", "hakios_input_init ", "hakios_board_init ", "hakios_scmi_perf_init ", "hakios_cpufreq_init ", "hakios_virtio_input_init ", "hakios_prof_start ",
 		"hakios_buttons_init ", "hakios_battery_init ", "hakios_ufs_init ", "hakios_net_init ", "hakios_adreno_init ",
 		"hakios_backlight_init ", "hakios_thermal_init ", "hakios_wifi_init ", "hakios_adsp_init ", "hakios_audio_init ",
 		"hakios_virtio_sound_init ", "hakios_speaker_init ", "hakios_haptic_init ", "hakios_torch_init ", "hakios_camera_init ",
@@ -80,6 +81,9 @@ all_once(const char *touch)
 	before("hakios_cpufreq_init ", "hakios_thermal_init ");        /* the clock tables before what holds them back */
 	before("hakios_buttons_init ", "hakios_wifi_init ");          /* the PMIC arbiter's lock before the others that use the bus */
 	before("hakios_adsp_init ", "hakios_audio_init ");
+	before("hakios_buttons_init ", "hakios_bt_uart_init ");
+	before("hakios_torch_init ", "hakios_bt_uart_init ");
+	before("hakios_camera_init ", "hakios_bt_uart_init ");
 	before("hakios_audio_init ", "hakios_virtio_sound_init ");    /* the device before its sinks */
 	before("hakios_virtio_blk_init ", "hakios_apfs_check_init "); /* the disk before what mounts it */
 	if (*touch) {

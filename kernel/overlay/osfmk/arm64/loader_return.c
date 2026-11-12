@@ -59,6 +59,7 @@ extern void hakios_backlight_quiesce(void);
 extern void hakios_thermal_quiesce(void);
 extern void hakios_camera_quiesce(void);
 extern void hakios_mic_quiesce(void);
+extern void hakios_bt_uart_quiesce(void);
 extern void hakios_ufs_quiesce(void);
 extern void hakios_ufs_close(void);
 extern void hakios_var_save_on_return(void);   /* bsd/dev/hakios_ufs.c: the data volume into the flash */
@@ -519,6 +520,7 @@ loader_return(void)
 	 */
 	psci_smp_stop_others();
 #endif
+	hakios_bt_uart_quiesce();     /* Bluetooth enable low and its power/clock votes dropped */
 	hakios_ufs_quiesce();          /* this kernel's requests to the storage done, UEFI's list as it was, for the log */
 	hakios_adreno_quiesce();       /* the GPU block, if it was started, has tables in memory that is about to be reused */
 	hakios_wifi_quiesce();         /* the Wi-Fi DSP, if it still runs (a panic), is not left to itself */

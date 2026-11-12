@@ -82,8 +82,25 @@ needs its feature in the board's `features`.
 
 ## Wi-Fi, network
 
+Bluetooth first stage (`hakios_bt_uart.c`) is opt-in: absent/`bt=0` performs no mapping or register access;
+`bt=-1` inspects without power, pin, clock or UART writes (SPMI reads use arbiter command registers).
+`bt=1` inspects first, powers the controller, opens 115200 8N1 H4 with CTS/RTS, sends HCI Reset and
+Qualcomm EDL_PATCH_GETVER, and logs raw events plus product/patch/ROM/SoC versions when recognized.
+Every poll has a bound. Failure powers down; loader return lowers BT_EN, stops UART commands, restores
+pins/RCG and removes only the GCC bits it added, then drops RF and rail enable votes in reverse order.
+Use dedicated Bluetooth VRM resources; the helper cannot recover another client's prior RPMh voltage vote.
+There is no firmware download, baud switch, iOS interface or claim of a working Bluetooth stack.
+
+Validated against host register models only, including both wrapper sampling rates and H4 event forms.
+SM8845's Android DT describes a v8 SPMI arbiter: the existing shared helper supports v5/v6 and rejects
+v7 and later before any PMIC transfer. Its map/owner layout needs shared-helper support before this
+board can power BT_EN. UART/PMIC/HCI register facts follow the sources named in the driver and board
+comments; hardware behavior and the controller's actual version-event variant remain unverified.
+
+
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
+| `bsd/dev/hakios_bt_uart.c` | Qualcomm Bluetooth power and H4 identification only. | `bluetooth-wcn-uart` / `bt=-1`, `bt=1` | data (`bluetooth { }`, `pins { }`, `clocks { }`, `rpmh { }`, `spmi { }`); shared SPMI v5/v6 |
 | `bsd/dev/hakios_wifi.c`, `hakios_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`wifi { }`) |
 | `bsd/dev/hakios_lx.c`, `hakios_qmi.c`, `hakios_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/hakios_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
