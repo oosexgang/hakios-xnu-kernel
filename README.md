@@ -64,12 +64,13 @@ How the pieces fit together: [docs/architecture.md](docs/architecture.md).
 | Package | Device | SoC | State |
 | --- | --- | --- | --- |
 | `renoir` | Xiaomi Mi 11 Lite 5G | Snapdragon 780G (SM7350) | iOS 27.2 (24B119) boots from RAM to the home screen. Verified on the phone on 2026-11-10. |
+| `macan` | OnePlus Ace 6T (PLR110) | Snapdragon 8 Gen 5 (SM8845) | iOS 27.2 (24B119) boots from RAM to the home screen with this kernel: SCMI CPU levels, TSENS thermal limiter. Verified on the phone on 2026-11-12. Touch, GPU and other drivers not here yet. |
 | `redwood` | POCO X5 Pro 5G | Snapdragon 778G (SM7325) | The first port, on iOS 16.5 (`base/`). Its drivers are in this kernel; not yet booted with iOS 26/27. |
 | `qemu-virt` | QEMU `virt` | — | In this branch. The iOS 16.5 generation runs there; not yet set up for the current kernel. |
 
 What works on each phone, what is written but not yet verified on it, and what is still off is in the
 package's own README on the [`devices` branch](https://github.com/oosexgang/xnu-kernel-qcom/tree/devices).
-SoC support is shared and lives here, in `soc/`: SM7350 and SM7325, and the first blocks of SM8845.
+SoC support is shared and lives here, in `soc/`: SM7350 and SM7325, and SM8845 (CPU levels, temperature sensors).
 
 ## Quick start
 
