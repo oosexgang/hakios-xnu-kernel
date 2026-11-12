@@ -62,16 +62,18 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-#define PIN_MISO                52
-#define PIN_MOSI                53
-#define PIN_CLK                 54
-#define PIN_CS                  55
-#define PIN_INT                 81      /* low = the chip has a report */
-#define PIN_RESET               105     /* low = in reset */
-#define PIN_AVDD                107     /* high = analog supply on */
-#define PIN_FOCALTECH_ID        68      /* FocalTech if this reads 0 ... */
-#define PIN_GOODIX_ID           96      /* ... and this reads 1 (sm8350-kernel-OKX convention) */
-#define PIN_FUNCTION_SPI        1       /* "qup15" */
+/* Which pins, which serial engine and which of its clocks: the board file's [touch] (hakios_board.h). */
+#define WIRED                   (&hakios_board()->touch)
+#define PIN_MISO                ((unsigned)WIRED->data_in)
+#define PIN_MOSI                ((unsigned)WIRED->data_out)
+#define PIN_CLK                 ((unsigned)WIRED->clock)
+#define PIN_CS                  ((unsigned)WIRED->chip_select)
+#define PIN_INT                 ((unsigned)WIRED->interrupt)    /* low = the chip has a report */
+#define PIN_RESET               ((unsigned)WIRED->reset)        /* low = in reset */
+#define PIN_AVDD                ((unsigned)WIRED->analog_enable)        /* high = analog supply on */
+#define PIN_FOCALTECH_ID        ((unsigned)WIRED->vendor_pin[0])        /* FocalTech if this reads 0 ... */
+#define PIN_GOODIX_ID           ((unsigned)WIRED->vendor_pin[1])        /* ... and this reads 1 (sm8350-kernel-OKX convention) */
+#define PIN_FUNCTION_SPI        1       /* the serial engine's function on its pins */
 
 /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
 
@@ -115,20 +117,20 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	return problem == NULL;
 }
 
-/* The chip's I/O supply: 1.8 V from LDO2 of the PM8350C ("ldoc2"). Nothing else is connected to it. */
+/* The chip's I/O supply: 1.8 V from the regulator the board names (redwood: LDO2 of the PM8350C, "ldoc2"). Nothing else is connected to it. */
 static bool
 io_supply_on(void)
 {
-	uint32_t base = rpmh_address("ldoc2");
+	uint32_t base = rpmh_address(WIRED->io_supply);
 	uint32_t address[3] = { base + VRM_VOLTAGE, base + VRM_ENABLE, base + VRM_MODE };
 	uint32_t data[3] = { 1800, 1, VRM_MODE_LDO_HPM };
 
 	/* addresses of regulators ("VRM") have 4 in bits 19:16; anything else is not what we are looking for */
 	if (base == 0 || (base >> 16 & 0xf) != 4) {
-		printf("goodix: RPMh: no regulator \"ldoc2\" (address %#x)\n", base);
+		printf("goodix: RPMh: no regulator \"%s\" (address %#x)\n", WIRED->io_supply, base);
 		return false;
 	}
-	printf("goodix: RPMh: ldoc2 is at %#x; slot status %#x, control %#x, irq enable %#x status %#x\n", base,
+	printf("goodix: RPMh: %s is at %#x; slot status %#x, control %#x, irq enable %#x status %#x\n", WIRED->io_supply, base,
 	    rd(TCS(TCS_STATUS)), rd(TCS(TCS_CONTROL)), rd(TCS(TCS_IRQ_ENABLE)), rd(TCS(TCS_IRQ_STATUS)));
 	if (!rpmh_write(address, data, 3)) {
 		return false;
@@ -142,20 +144,22 @@ io_supply_on(void)
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + 0x52008)         /* the application processor's votes */
-#define VOTE_QUP1_CORE_2X       (1u << 18)
-#define VOTE_QUP1_CORE          (1u << 19)
-#define VOTE_QUP1_M_AHB         (1u << 20)
-#define VOTE_QUP1_S_AHB         (1u << 21)
-#define VOTE_QUP1_SE5           (1u << 27)             /* serial engine 13 is the 6th of the second group */
-#define GCC_QUP1_M_AHB_CBCR     (gcc + 0x18004)         /* bit 31: the clock is off */
-#define GCC_QUP1_S_AHB_CBCR     (gcc + 0x18008)
-#define GCC_QUP1_SE5_CBCR       (gcc + 0x185fc)
-#define GCC_QUP1_SE5_CMD        (gcc + 0x18600)         /* bit 0: take the new configuration */
-#define GCC_QUP1_SE5_CFG        (gcc + 0x18604)         /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
-#define GCC_QUP1_SE5_DFSR       (gcc + 0x18614)         /* bit 0: the engine chooses among preset rates itself */
-#define GCC_QUP1_SE5_PERF_CFG(l) (gcc + 0x1861c + 4 * (l))
-#define GCC_QUP1_SE5_PERF_M(l)  (gcc + 0x1865c + 4 * (l))
-#define GCC_QUP1_SE5_PERF_N(l)  (gcc + 0x1869c + 4 * (l))
+/* (the names are redwood's, serial engine 13, the 6th of the second group; which bits and offsets they are is the board's) */
+#define VOTE_QUP1_CORE_2X       (1u << WIRED->vote[0])
+#define VOTE_QUP1_CORE          (1u << WIRED->vote[1])
+#define VOTE_QUP1_M_AHB         (1u << WIRED->vote[2])
+#define VOTE_QUP1_S_AHB         (1u << WIRED->vote[3])
+#define VOTE_QUP1_SE5           (1u << WIRED->vote[4])
+#define GCC_QUP1_M_AHB_CBCR     (gcc + WIRED->m_ahb_clock)      /* bit 31: the clock is off */
+#define GCC_QUP1_S_AHB_CBCR     (gcc + WIRED->s_ahb_clock)
+#define GCC_QUP1_SE5_CBCR       (gcc + WIRED->se_clock)
+/* the engine's rate generator follows its clock, at the same distances for every engine */
+#define GCC_QUP1_SE5_CMD        (gcc + WIRED->se_clock + 0x04)  /* bit 0: take the new configuration */
+#define GCC_QUP1_SE5_CFG        (gcc + WIRED->se_clock + 0x08)  /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
+#define GCC_QUP1_SE5_DFSR       (gcc + WIRED->se_clock + 0x18)  /* bit 0: the engine chooses among preset rates itself */
+#define GCC_QUP1_SE5_PERF_CFG(l) (gcc + WIRED->se_clock + 0x20 + 4 * (l))
+#define GCC_QUP1_SE5_PERF_M(l)  (gcc + WIRED->se_clock + 0x60 + 4 * (l))
+#define GCC_QUP1_SE5_PERF_N(l)  (gcc + WIRED->se_clock + 0xa0 + 4 * (l))
 #define CLOCK_OFF               (1u << 31)
 #define XO_HZ                   19200000
 
@@ -228,7 +232,7 @@ clocks_on(void)
 
 /* ---- SPI through the serial engine (GENI) ---------------------------------------------------------- */
 
-#define SE_PHYS                 0x00a94000UL
+#define SE_PHYS                 ((vm_offset_t)WIRED->serial_engine)
 #define SE_SIZE                 0x4000UL
 #define GENI_FORCE_DEFAULT      (se + 0x020)
 #define GENI_OUTPUT_CTRL        (se + 0x024)
@@ -434,7 +438,7 @@ geni_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 
 /* ---- SPI by hand, on the same pins ----------------------------------------------------------------- */
 
-static unsigned bitbang_in = PIN_MISO, bitbang_out = PIN_MOSI;
+static unsigned bitbang_in, bitbang_out;        /* (set before each use: bring_up()) */
 
 static void
 bitbang_init(void)
@@ -1218,7 +1222,7 @@ show_state(const char *when)
 	    rd(GCC_QUP1_S_AHB_CBCR), rd(GCC_QUP1_SE5_CBCR), rd(GCC_QUP1_SE5_CFG), rd(GCC_QUP1_SE5_DFSR), rd(GPIO_CFG(PIN_CS)),
 	    rd(GPIO_CFG(PIN_CLK)), rd(GPIO_CFG(PIN_MOSI)), rd(GPIO_CFG(PIN_MISO)), rd(GPIO_CFG(PIN_RESET)),
 	    rd(GPIO_IO(PIN_RESET)), rd(GPIO_CFG(PIN_INT)), rd(GPIO_IO(PIN_INT)), rd(GPIO_CFG(PIN_AVDD)), rd(GPIO_IO(PIN_AVDD)),
-	    gpio_get(68), gpio_get(96));
+	    gpio_get(PIN_FOCALTECH_ID), gpio_get(PIN_GOODIX_ID));
 }
 
 /* Power the chip up from nothing, in the vendor driver's order. */
@@ -1255,7 +1259,7 @@ bring_up(void)
 
 	show_state("as found");
 	touch_chip = touch_chip_detect();
-	printf("goodix: ID gpio96=%u gpio68=%u: selected %s\n", gpio_get(PIN_GOODIX_ID),
+	printf("goodix: ID gpio%u=%u gpio%u=%u: selected %s\n", PIN_GOODIX_ID, gpio_get(PIN_GOODIX_ID), PIN_FOCALTECH_ID,
 	    gpio_get(PIN_FOCALTECH_ID), chip_name());
 	power_on();
 
@@ -1388,6 +1392,11 @@ redwood_goodix_init(void)
 	/* (called only on a board that lists "touch-goodix": bsd/dev/hakios_drivers.c) */
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
 		printf("touch: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+		return;
+	}
+	if (WIRED->serial_engine == 0 || WIRED->io_supply == NULL || WIRED->analog_enable < 0 || WIRED->vendor_pin[0] < 0 ||
+	    WIRED->vendor_pin[1] < 0) {
+		printf("touch: disabled: the board file does not say how the controller is wired ([touch], with analog_enable and vendor_pins)\n");
 		return;
 	}
 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));

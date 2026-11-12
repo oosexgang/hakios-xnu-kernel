@@ -4,7 +4,9 @@
  * shima-qupv3.dtsi, pinctrl-shima.c and gcc-shima.c. Protocol facts:
  * focaltech_3658u/focaltech_spi.c and focaltech_core.{c,h}.
  * GENI/RPMh FIFO transport is adapted from this project's redwood_goodix.c.
- * Only touchscreen=1 on physical board renoir. No firmware flashing or bootloader
+ * Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins
+ * and supplies is the board file's [touch] (the numbers named in comments here are renoir's).
+ * No firmware flashing or bootloader
  * commands; the chip must boot its installed application firmware (0x5652).
  * Polling replaces Linux IRQ delivery; Linux IRQ283 is not a GIC interrupt ID.
  */
@@ -50,13 +52,15 @@ fts_sleep_ms(uint32_t ms)
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-#define PIN_DATA0                20
-#define PIN_DATA1                21
-#define PIN_CLK                 22
-#define PIN_CS                  23
-#define PIN_INT                 31      /* low = the chip has a report */
-#define PIN_RESET               30     /* low = in reset */
-#define PIN_FUNCTION_SPI        1       /* "qup10" on gpio20..23; all use function 1 */
+/* Which pins, which serial engine and which of its clocks: the board file's [touch] (hakios_board.h). */
+#define WIRED                   (&hakios_board()->touch)
+#define PIN_DATA0               ((unsigned)WIRED->data_in)
+#define PIN_DATA1               ((unsigned)WIRED->data_out)
+#define PIN_CLK                 ((unsigned)WIRED->clock)
+#define PIN_CS                  ((unsigned)WIRED->chip_select)
+#define PIN_INT                 ((unsigned)WIRED->interrupt)    /* low = the chip has a report */
+#define PIN_RESET               ((unsigned)WIRED->reset)        /* low = in reset */
+#define PIN_FUNCTION_SPI        1       /* the serial engine's function on its pins */
 
 /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
 
@@ -108,7 +112,7 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	redwood_rpmh_unlock();return ok;
 }
 
-/* renoir DTS: L2C = I/O at 1.8 V, L7C = analog at 3.3 V. */
+/* The board's two regulators (renoir: L2C = I/O at 1.8 V, L7C = analog at 3.3 V). */
 static bool
 supply_on(const char *name, uint32_t millivolts)
 {
@@ -129,20 +133,22 @@ supply_on(const char *name, uint32_t millivolts)
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + 0x52008)         /* the application processor's votes */
-#define VOTE_QUP0_CORE_2X       (1u << 9)
-#define VOTE_QUP0_CORE          (1u << 8)
-#define VOTE_QUP0_M_AHB         (1u << 6)
-#define VOTE_QUP0_S_AHB         (1u << 7)
-#define VOTE_QUP0_SE2           (1u << 12)             /* SE10 is wrap0 S2, not wrap1 */
-#define GCC_QUP0_M_AHB_CBCR     (gcc + 0x17004)         /* bit 31: the clock is off */
-#define GCC_QUP0_S_AHB_CBCR     (gcc + 0x17008)
-#define GCC_QUP0_SE2_CBCR       (gcc + 0x1726c)
-#define GCC_QUP0_SE2_CMD        (gcc + 0x17270)         /* bit 0: take the new configuration */
-#define GCC_QUP0_SE2_CFG        (gcc + 0x17274)         /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
-#define GCC_QUP0_SE2_DFSR       (gcc + 0x17284)         /* bit 0: the engine chooses among preset rates itself */
-#define GCC_QUP0_SE2_PERF_CFG(l) (gcc + 0x1728c + 4 * (l))
-#define GCC_QUP0_SE2_PERF_M(l)  (gcc + 0x172cc + 4 * (l))
-#define GCC_QUP0_SE2_PERF_N(l)  (gcc + 0x1730c + 4 * (l))
+/* (the names are renoir's, serial engine 10, the third of the first group; which bits and offsets they are is the board's) */
+#define VOTE_QUP0_CORE_2X       (1u << WIRED->vote[0])
+#define VOTE_QUP0_CORE          (1u << WIRED->vote[1])
+#define VOTE_QUP0_M_AHB         (1u << WIRED->vote[2])
+#define VOTE_QUP0_S_AHB         (1u << WIRED->vote[3])
+#define VOTE_QUP0_SE2           (1u << WIRED->vote[4])
+#define GCC_QUP0_M_AHB_CBCR     (gcc + WIRED->m_ahb_clock)      /* bit 31: the clock is off */
+#define GCC_QUP0_S_AHB_CBCR     (gcc + WIRED->s_ahb_clock)
+#define GCC_QUP0_SE2_CBCR       (gcc + WIRED->se_clock)
+/* the engine's rate generator follows its clock, at the same distances for every engine */
+#define GCC_QUP0_SE2_CMD        (gcc + WIRED->se_clock + 0x04)  /* bit 0: take the new configuration */
+#define GCC_QUP0_SE2_CFG        (gcc + WIRED->se_clock + 0x08)  /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
+#define GCC_QUP0_SE2_DFSR       (gcc + WIRED->se_clock + 0x18)  /* bit 0: the engine chooses among preset rates itself */
+#define GCC_QUP0_SE2_PERF_CFG(l) (gcc + WIRED->se_clock + 0x20 + 4 * (l))
+#define GCC_QUP0_SE2_PERF_M(l)  (gcc + WIRED->se_clock + 0x60 + 4 * (l))
+#define GCC_QUP0_SE2_PERF_N(l)  (gcc + WIRED->se_clock + 0xa0 + 4 * (l))
 #define CLOCK_OFF               (1u << 31)
 #define XO_HZ                   19200000
 
@@ -230,7 +236,7 @@ clocks_on(uint32_t target_hz)
 
 /* ---- SPI through the serial engine (GENI) ---------------------------------------------------------- */
 
-#define SE_PHYS                 0x00988000UL
+#define SE_PHYS                 ((vm_offset_t)WIRED->serial_engine)
 #define SE_SIZE                 0x4000UL
 #define GENI_FORCE_DEFAULT      (se + 0x020)
 #define GENI_OUTPUT_CTRL        (se + 0x024)
@@ -578,14 +584,14 @@ fts_probe(void)
 static bool
 fts_bring_up(void)
 {
-    /* DTS: SPI SE10 is wrap0 S2; gpio20..23 are qup10, GPIO30 reset, GPIO31 IRQ. */
-    printf("fts: renoir SE10 0x988000; reset gpio30, IRQ gpio31; L2C/L7C\n");
+    printf("fts: serial engine at %#x; reset gpio%u, IRQ gpio%u; supplies %s and %s\n", WIRED->serial_engine, PIN_RESET, PIN_INT,
+        WIRED->io_supply, WIRED->analog_supply);
     gpio_output(PIN_RESET, false, PULL_UP, 8);
     gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
     fts_sleep_ms(1);
-    if (!supply_on("ldoc2", 1800)) { return false; }
+    if (!supply_on(WIRED->io_supply, 1800)) { return false; }
     fts_sleep_ms(1);
-    if (!supply_on("ldoc7", 3300)) { return false; }
+    if (!supply_on(WIRED->analog_supply, 3300)) { return false; }
     fts_sleep_ms(15);
     const char *problem = "SPI clocks unavailable";
     if (clocks_on(spi_hz)) {
@@ -616,8 +622,8 @@ fts_bring_up(void)
         fts_bitbang_init();
         fts_reset();
         if (fts_probe()) {
-            printf("fts: GPIO SPI ready: MISO gpio%u, MOSI gpio%u, CLK gpio22, CS gpio23\n",
-                bitbang_in, bitbang_out);
+            printf("fts: GPIO SPI ready: MISO gpio%u, MOSI gpio%u, CLK gpio%u, CS gpio%u\n",
+                bitbang_in, bitbang_out, PIN_CLK, PIN_CS);
             return true;
         }
     }
@@ -704,6 +710,10 @@ renoir_fts_init(void)
     /* (called only on a board that lists "touch-ft3658u": bsd/dev/hakios_drivers.c) */
     if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
         printf("fts: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+        return;
+    }
+    if (WIRED->serial_engine == 0 || WIRED->io_supply == NULL || WIRED->analog_supply == NULL) {
+        printf("fts: disabled: the board file does not say how the controller is wired ([touch], with analog_supply)\n");
         return;
     }
     PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
