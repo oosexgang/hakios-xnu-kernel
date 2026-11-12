@@ -212,7 +212,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   the port may not make. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
-  porting guide, and build the loader. They use two stand-in phones in `tests/devices/`.
+  porting guide, and build the loader. They use three stand-in phones in `tests/devices/`.
   [tests/README.md](tests/README.md) lists each test.
 - **CI** runs `make check`, `kernel/verify.sh` and `kernel/syntax-check.sh` on every push and pull
   request. The kernel is not built or linked there.

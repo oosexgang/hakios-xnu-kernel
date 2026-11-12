@@ -91,7 +91,7 @@ no phone. What works on which phone did not change.
 | `devices/renoir/`, `devices/redwood/` on the main branch | Device packages on the `devices` branch: `renoir/` and `redwood/` at its top. `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/` of a checkout, where git ignores it. |
 | `kernel/overlay/bsd/dev/hakios_board_table.h`, `loader/platforms.h`, `ios/userland/hakios_boards.h`, committed | Not in the repository. `tools/boards.py gen` makes them into `build/boards/` (ignored by git), and the builds run it themselves: `kernel/build.sh`, `loader/build.sh`, `ios/userland/inj26.sh`, `kernel/syntax-check.sh`, `tests/run.sh`. |
 | `tools/boards.py gen` before committing, `tools/boards.py gen --check` in `make check` | Gone: there is no committed table to compare. `make boards` validates and writes the tables if you want to look at them. |
-| Host tests against `renoir` and `redwood` | Against two stand-ins in `tests/devices/`: `phone-cmd` and `phone-video`, with the same values under other names. |
+| Host tests against `renoir` and `redwood` | Against stand-ins in `tests/devices/`: `phone-cmd` and `phone-video`, with the same values under other names, and `phone-keys`, with its parts wired otherwise. |
 | The loader asking whether it runs on redwood before it reads the battery | `uefi_charger = true` in the board file's `[loader]` section. |
 
 <!-- end -->
