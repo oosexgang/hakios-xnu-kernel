@@ -56,6 +56,9 @@ static int failures;
 
 static const struct { uint32_t unit; uint16_t width; uint8_t vcd, reserved; } mc0 = { 1000, 14, 0, 0 };
 
+/* which of the three the database lacks, where a phone is asked for without all of them */
+static const char *left_out = "SH0";
+
 /* a phone: the sequencer and the database where its SoC file has them; the slots as a boot loader leaves them */
 static void
 phone(const char *name, bool with_sh0)
@@ -64,7 +67,8 @@ phone(const char *name, bool with_sh0)
 	static const struct resource buses[] = {
 		{ "MC0", 0x50000, &mc0, sizeof(mc0) }, { "SH0", 0x50004, NULL, 0 }, { "ACV", 0x50008, NULL, 0 }, { "CN0", 0x5000c, NULL, 0 },
 	};
-	static const struct resource without[] = { { "MC0", 0x50000, &mc0, sizeof(mc0) }, { "ACV", 0x50008, NULL, 0 } };
+	static struct resource without[3];
+	unsigned kept = 0;
 	const struct hakios_board *b;
 
 	board = name;
@@ -74,7 +78,12 @@ phone(const char *name, bool with_sh0)
 	if (with_sh0) {
 		slave(1, CMD_DB_BCM, buses, 4);
 	} else {
-		slave(1, CMD_DB_BCM, without, 2);
+		for (unsigned i = 0; i < 4; i++) {
+			if (strcmp(buses[i].name, left_out) != 0 && strcmp(buses[i].name, "CN0") != 0) {
+				without[kept++] = buses[i];
+			}
+		}
+		slave(1, CMD_DB_BCM, without, kept);
 	}
 	b = hakios_board();
 	if (b != NULL) {
@@ -145,6 +154,18 @@ other_votes(void)
 	CHECK(rsc.sent[0].data == VOTE(5000) && rsc.sent[1].data == VOTE(5000) && rsc.sent[2].data == KEEP_ON, "5000: %#x", rsc.sent[0].data);
 	redwood_ddr_quiesce();
 	CHECK(rsc.sent[3].data == 1u << 30 && rsc.sent[4].data == 1u << 30, "no request: commit alone (%#x)", rsc.sent[3].data);
+	as_found();
+}
+
+/* what is left for the loader is no more than the fourteen bits either: asked for more, it is the most */
+static void
+rest_too_much(void)
+{
+	phone("phone-cmd", true);
+	boot_args = "ddr_rest=99999";
+	hakios_ddr_init(true);
+	redwood_ddr_quiesce();
+	CHECK(rsc.sent[3].data == VOTE(0x3fff) && rsc.sent[4].data == VOTE(0x3fff), "the most there is: %#x", rsc.sent[3].data);
 	as_found();
 }
 
@@ -232,6 +253,17 @@ one_missing(void)
 	hakios_ddr_init(true);
 	CHECK(logged("ddr: no vote (MC0 0x50000, SH0 0, ACV 0x50008, vote 16383)"), "said, with which: %s", log_text);
 	CHECK(rsc.writes == 0, "nothing sent");
+	/* ... and so for each of the other two */
+	left_out = "MC0";
+	phone("phone-cmd", false);
+	hakios_ddr_init(true);
+	CHECK(logged("ddr: no vote (MC0 0, SH0 0x50004, ACV 0x50008, vote 16383)") && rsc.writes == 0, "without MC0: %s", log_text);
+	left_out = "ACV";
+	phone("phone-cmd", false);
+	hakios_ddr_init(true);
+	CHECK(logged("ddr: no vote (MC0 0x50000, SH0 0x50004, ACV 0, vote 16383)") && rsc.writes == 0, "without ACV: %s", log_text);
+	redwood_ddr_quiesce();
+	CHECK(rsc.writes == 0, "and nothing is given back where nothing was asked for");
 }
 
 /* what is where the database should be is not one */
@@ -294,7 +326,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "not_listed_not_asked", not_listed_not_asked }, { "the_most", the_most }, { "given_back", given_back }, { "other_votes", other_votes }, { "too_much", too_much },
+		{ "not_listed_not_asked", not_listed_not_asked }, { "the_most", the_most }, { "given_back", given_back }, { "other_votes", other_votes }, { "rest_too_much", rest_too_much }, { "too_much", too_much },
 		{ "not_asked", not_asked }, { "look_only", look_only }, { "no_answer", no_answer }, { "slots_busy", slots_busy },
 		{ "one_missing", one_missing }, { "no_database", no_database }, { "another_soc", another_soc }, { "not_listed", not_listed },
 	};
