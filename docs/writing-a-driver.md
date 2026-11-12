@@ -84,7 +84,9 @@ needs it.
    before it is set, a pointer that may be null, a division that may be by zero. It does not know
    that `uiomove()` fills what it is given, and says so of every read; the rest is worth a look.
 6. **Document it**: a comment in the file that names each boot argument as `name=…` (`make docs` puts
-   them in [boot-args.md](boot-args.md)), and a row in [drivers.md](drivers.md).
+   them in [boot-args.md](boot-args.md)), and a row in [drivers.md](drivers.md). A device node's
+   interface in `bsd/sys/hakios_*.h` that the iOS side compiles against has a copy in
+   `userland/userland/src/`: change both (`make lint` holds what programs see of them to be the same).
 7. **On the phone**: level 1 first. Send the log lines with the change, and say in the device
    package's README what was seen ([CONTRIBUTING.md](../CONTRIBUTING.md)).
 

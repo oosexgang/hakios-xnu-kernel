@@ -245,8 +245,9 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **`make check`** runs everything that needs no phone, no iOS files and no kernel toolchain: the lint,
   the validation of the board and SoC files, whether `docs/boot-args.md` is current, the host tests.
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
-  link and repository path in the documentation exists, checks the pins of `components.toml`, and looks
-  for files that must never be published.
+  link and repository path in the documentation exists, checks the pins of `components.toml`, looks
+  for files that must never be published, and holds the iOS side's copies of the kernel's device
+  interfaces (`userland/userland/src/hakios_*.h`) to what the kernel's say.
 - **The host tests** (`tests/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
   unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
   them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
