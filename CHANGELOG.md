@@ -90,6 +90,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   point and a list of 24 parts in `loader/src/` now (the device tree's writer, the kernel's memory,
   the USB commands, the storage, ...), still one compilation unit. The built `loader.efi` is the
   same byte for byte.
+- **The loader's plain-C parts run on the host**: its memory functions, the device tree's writer, the
+  NVRAM image, the payload's directory, the choice of the kernel's memory from a firmware's map, and
+  the reader of Android's partition description (`tests/loader_test.c`, `loader_window_test.c`,
+  `loader_dsu_test.c`). A port's own memory map can be tried there.
 - **One list starts every driver.** The starts were spread over the touch queue's file, the audio
   device's and `bsd_init()`; they are `bsd/dev/hakios_drivers.c` now, in the same order, and a new
   driver is one line there. A test runs the list on every test board.
@@ -133,6 +137,14 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   or the one phone whose package is present.
 - **A branch or patch from the old layout** is carried over with `kernel/import-patch.sh`.
   [docs/migrating.md](docs/migrating.md) has the steps.
+
+- **The loader refuses a system image that does not lie in userdata, however it is described.** The
+  check of an extent's start and length added the two, and a start or a length near 2^64 made the
+  sum small: such an extent was taken. Found by the new test of that reader, which runs it on
+  descriptions built to be wrong.
+- **With no free memory for the kernel the loader says so**, instead of asking the firmware for a
+  window of no pages.
+- **`ddr:` no longer speaks on every boot** of a board without the memory's vote.
 
 ### Repository layout
 
