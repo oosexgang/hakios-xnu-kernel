@@ -1,0 +1,23 @@
+/dts-v1/;
+
+// QEMU's `virt` machine: no phone hardware. Its devices are virtio, found by the drivers themselves.
+/ {
+	name = "qemu-virt";
+	description = "QEMU virt (aarch64)";
+
+	// What the loader tells the kernel of the machine (loader/src/platform.h, struct platform): QEMU's memory map.
+	platform {
+		io-base = <0x08000000>;
+		io-size = <0x08000000>;
+		gic-dist = <0x08000000>;
+		gic-redist = <0x080A0000>;
+		uart = <0x09000000>;            // PL011
+		cores = <8>;
+		core-shift = <0>;
+		psci = "hvc";
+		// QEMU's emulated cores stop each other all the time (every flush of a page from all the TLBs is a
+		// rendezvous of its CPU threads), and the kernel's patience with a spin lock is that of real hardware:
+		// it gets this many times longer.
+		timeout-scale = <20>;
+	};
+};

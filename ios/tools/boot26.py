@@ -23,7 +23,7 @@ from payload import prepare, validate_apfs, validate_mac  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'tools'))
-import boards  # noqa: E402  (devices/NAME/board.toml: what the phone must say it is, its default boot-args)
+import boards  # noqa: E402  (devices/NAME/board.dts: what the phone must say it is, its default boot-args)
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--board', default=os.environ.get('HAKIOS_BOARD'),

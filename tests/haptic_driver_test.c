@@ -315,7 +315,7 @@ not_listed(void)
 	boot_args = "haptic=5";
 	hakios_haptic_init();
 	usleep(50000);
-	CHECK(logged("haptic: disabled: this board's board.toml lists no \"haptic-aw86927\""), "said: %s", log_text);
+	CHECK(logged("haptic: disabled: this board's board.dts lists no \"haptic-aw86927\""), "said: %s", log_text);
 	CHECK(model.writes == 0 && model.elsewhere == 0, "nothing touched");
 	hakios_haptic_quiesce();
 	CHECK(model.writes == 0, "nor at the run's end");

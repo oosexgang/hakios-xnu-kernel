@@ -8,14 +8,14 @@
                                                 the devices branch, to send it there
   tools/device.py list                          the packages that are here, and where each is from
 
-A device package is a directory NAME with board.toml in it (devices/_template/board.toml explains the
+A device package is a directory NAME with board.dts in it (devices/_template/board.dts explains the
 file) and whatever else belongs to the phone: its README, its notes. The repository itself describes no
 phone: packages are kept on its `devices` branch, one directory each, and whoever builds for a phone
 brings its package in. What is built -- the kernel, the loader, the libraries -- then knows the boards
 that are there (tools/boards.py gen).
 
 SOURCE is where packages are taken from:
-  a directory            SOURCE/NAME/board.toml: a checkout of the devices branch, a package of your own
+  a directory            SOURCE/NAME/board.dts: a checkout of the devices branch, a package of your own
   a branch or commit     of this repository, with the packages at its top; `devices` unless told
                          otherwise, fetched from origin first when there is an origin to ask
 
@@ -70,11 +70,11 @@ class Source:
 
     def packages(self):
         if self.directory is not None:
-            return sorted(path.parent.name for path in self.directory.glob('*/board.toml')
+            return sorted(path.parent.name for path in self.directory.glob('*/board.dts')
                           if not path.parent.name.startswith('_'))
         listed = git('ls-tree', '-r', '--name-only', self.commit).stdout.split('\n')
         return sorted(name.split('/')[0] for name in listed
-                      if name.count('/') == 1 and name.endswith('/board.toml') and not name.startswith('_'))
+                      if name.count('/') == 1 and name.endswith('/board.dts') and not name.startswith('_'))
 
     def copy(self, name, to):
         """The package's files into the directory `to`, which is not there yet."""
@@ -100,9 +100,9 @@ def tracked(name):
 def described(directory, name):
     """A package's one line: its name, SoC and description, as its board file has them."""
     try:
-        data = boards.tomllib.loads((directory / name / 'board.toml').read_text())
-    except (OSError, boards.tomllib.TOMLDecodeError):
-        return f'{name:14} (its board.toml cannot be read)'
+        data = boards.boardfile.parse((directory / name / 'board.dts').read_text(), boards.BOARD_SCHEMA)
+    except (OSError, boards.boardfile.FileError):
+        return f'{name:14} (its board.dts cannot be read)'
     return f'{name:14} {data.get("soc", "?"):10} {data.get("description", "")}'
 
 
@@ -131,7 +131,7 @@ def add(names, source):
         print(problem, file=sys.stderr)
     if mine:
         print('the package does not fit this checkout: a package and the code change together when a key is added '
-              '(devices/_template/board.toml has every key of this checkout)', file=sys.stderr)
+              '(devices/_template/board.dts has every key of this checkout)', file=sys.stderr)
         return 1
     for name in names:
         print(f'next: tools/boards.py status {name}; the builds make their tables themselves')
@@ -141,7 +141,7 @@ def add(names, source):
 def remove(names):
     for name in names:
         target = boards.DEVICES / name
-        if not boards.NAME.match(name) or not (target / 'board.toml').exists():
+        if not boards.NAME.match(name) or not (target / 'board.dts').exists():
             raise SystemExit(f'there is no package devices/{name}')
         if tracked(name):
             raise SystemExit(f'devices/{name} is part of the repository itself: not removed')
@@ -153,7 +153,7 @@ def remove(names):
 def export(name, directory):
     """The package as it is here to DIR/NAME, checked first: what is sent is what was validated."""
     source = boards.DEVICES / name
-    if not boards.NAME.match(name) or not (source / 'board.toml').exists():
+    if not boards.NAME.match(name) or not (source / 'board.dts').exists():
         raise SystemExit(f'there is no package devices/{name}')
     directory = Path(directory)
     if not directory.is_dir():
@@ -201,12 +201,12 @@ def main(arguments=None):
             if source.directory is not None:
                 print('  ' + described(source.directory, name))
             else:
-                text = git('show', f'{source.commit}:{name}/board.toml').stdout
+                text = git('show', f'{source.commit}:{name}/board.dts').stdout
                 try:
-                    data = boards.tomllib.loads(text)
+                    data = boards.boardfile.parse(text, boards.BOARD_SCHEMA)
                     print(f'  {name:14} {data.get("soc", "?"):10} {data.get("description", "")}')
-                except boards.tomllib.TOMLDecodeError:
-                    print(f'  {name:14} (its board.toml cannot be read)')
+                except boards.boardfile.FileError:
+                    print(f'  {name:14} (its board.dts cannot be read)')
         return 0
     if options.command == 'add':
         return add(options.names, Source(options.source))

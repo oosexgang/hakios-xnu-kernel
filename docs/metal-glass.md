@@ -12,7 +12,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
 
 | Piece | Where | State |
 | --- | --- | --- |
-| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/hakios_adreno.c`; the profile is `[gpu]` of the renoir package's board file (`renoir/board.toml` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
+| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/hakios_adreno.c`; the profile is `[gpu]` of the renoir package's board file (`renoir/board.dts` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
 | GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/HakiosGPU.cpp` | Mesa's shim and the Metal device both use it |
 | AIR → NIR → ir3 compiler (Mesa frontend) | `userland/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the iOS 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`userland/docs/air.md`) |
 | Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/hakiosmetal.m` | Written and measured against iOS 16 and 26's Metal; not packaged for iOS 27 |

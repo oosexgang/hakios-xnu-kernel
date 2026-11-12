@@ -1,0 +1,148 @@
+/dts-v1/;
+
+// A SoC file with every key, explained: what goes in soc/SOC.dtsi, once for every board with that chip.
+// `tools/boards.py new NAME --soc SOC --dts FILE` writes one with what your device tree says; this is the
+// reference. A section is needed only by what uses it: a board with `features = []` and a "soft"
+// backlight needs none of them. Addresses are the SoC's physical ones, as the Android device tree has
+// them (the SoC's .dtsi).
+
+/ {
+	name = "sm0000";                        // the file's name, and what board files give as `soc`
+	description = "Qualcomm Snapdragon NNN (SM0000, codename)";
+
+	// The clocks the display block's registers need before they can be read: for a "dcs" backlight and
+	// the feature "display-scan". The addresses are in the tree; the offsets are not -- they are in Linux's
+	// clock drivers for the SoC (gcc-CODENAME.c, dispcc-CODENAME.c).
+	clocks {
+		gcc = <0x00100000>;             // clock-controller@100000 (qcom,CODENAME-gcc); the only key of this section
+		                                // that the part drivers need
+		gcc-disp-ahb-cbcr = <0x27004>;  // gcc_disp_ahb_clk: its .halt_reg
+		dispcc = <0x0af00000>;          // clock-controller@af00000 (qcom,CODENAME-dispcc)
+		dispcc-mdss-gdscr = <0x3000>;   // the display block's power switch (mdss_core_gdsc): its .gdscr
+		dispcc-mdss-ahb-cbcr = <0x2080>; // disp_cc_mdss_ahb_clk
+		dispcc-mdss-pclk0-cbcr = <0x2004>; // disp_cc_mdss_pclk0_clk  } optional: only looked at, by display_probe=1
+		dispcc-mdss-mdp-cbcr = <0x200c>; // disp_cc_mdss_mdp_clk    }
+	};
+
+	display {
+		dsi0 = <0x0ae94000>;            // the first DSI controller (cell-index 0), reg "dsi_ctrl"
+		intf1 = <0x0ae6b800>;           // optional, for "display-scan": the same node's reg "mdp_intf_base"
+	};
+
+	// The SoC's own pins (TLMM), for the part drivers that drive them: the touch controllers', the speaker
+	// amplifier's, the haptic motor's, the cameras'.
+	pins {
+		tlmm = <0x0f100000>;            // where GPIO 0's registers are; GPIO n's are 0x1000 n further. The pin
+		                                // controller's node (qcom,CODENAME-pinctrl): in Linux's trees its reg; in
+		                                // the vendor's, whose reg is the whole 16 MiB block, 0x100000 above it
+	};
+
+	// The PMIC arbiter (qcom,spmi-pmic-arb), by its reg-names: for the features "buttons-pmic",
+	// "torch-pm8350c" and "camera-sm7325".
+	spmi {
+		core = <0x0c440000>;            // "core"
+		cnfg = <0x0c40a000>;            // "cnfg"
+		observer = <0x0e600000>;        // "obsrvr": reads
+		channels = <0x0c600000>;        // "chnls": writes; optional, needed only by the drivers that write to a PMIC
+		ee = <0>;                       // qcom,ee; optional, 0 if left out
+	};
+
+	// The SMMU between the SoC's devices and memory, for the part drivers that give a device its addresses
+	// (the speakers' audio path, the cameras, Wi-Fi). The GPU's own is in [adreno].
+	smmu {
+		apps = <0x15000000>;            // apps_smmu (the vendor's apps-smmu@15000000; Linux's iommu@15000000)
+	};
+
+	// The camera subsystem's blocks, for the feature "camera-sm7325". From the SoC's -camera.dtsi (the
+	// vendor's; tools/boards.py new does not read these yet).
+	camera {
+		camcc = <0x0ad00000>;           // the camera clock controller (qcom,CODENAME-camcc)
+		ife = <0x0acc4000>;             // the image front end the driver takes frames through: here the first
+		                                // "lite" one (qcom,ife-lite, reg "ife-lite")
+		csid = <0x0acc8000>;            // ... and its CSI decoder (qcom,csid-lite, reg "csid-lite")
+		csiphy = <0x0ace0000>;          // the first CSI receiver (qcom,csiphy, cell-index 0); the others follow at 0x2000
+	};
+
+	// The low-power audio subsystem's blocks on the microphones' path, for the feature "mic-wcd938x". From the
+	// SoC's -audio.dtsi (the vendor's; tools/boards.py new does not read these yet).
+	lpass {
+		tx-macro = <0x03220000>;        // tx-macro@3220000 (qcom,tx-macro): the codec macro of the capture side
+		va-macro = <0x03370000>;        // va-macro@3370000 (qcom,va-macro)
+		tx-swr = <0x03230000>;          // the SoundWire master under the TX macro (qcom,swr-mstr): its reg
+		tx-swr-hctl = <0x032a9000>;     // ... and its qcom,swrm-hctl-reg
+		lpi = <0x033c0000>;             // the subsystem's own pins: lpi_pinctrl@33c0000 (qcom,lpi-pinctrl)
+		lpi-slew = <0x0355a000>;        // ... and that node's qcom,slew-reg
+	};
+
+	// The way to the SoC's other processors, for the features "adsp" and "wifi-wcn6750".
+	ipc {
+		aoss = <0x0c300000>;            // the always-on processor's mailbox: qcom,qmp-mbox (Linux: qcom,aoss-qmp), its reg
+		ipcc = <0x00408000>;            // qcom,ipcc, its reg: what the processors ring each other through
+		smem = <0x80900000>;            // the memory they share: the memory-region of the qcom,smem node
+		smem-size = <0x200000>;         // ... and its size
+		smem-lock = <0x01f43000>;       // the lock on it: hwlocks = <&tcsr_mutex N> of the qcom,smem node, which is
+		                                // N x 0x1000 into the qcom,tcsr-mutex block (0x1f40000 + 3 x 0x1000)
+	};
+
+	// RPMh: for the features "ddr-rpmh", "adsp" and "gpu-a660", and for the part drivers that ask it for a
+	// supply (the touch controllers', the speaker amplifier's, the cameras', Wi-Fi's).
+	rpmh {
+		cmd-db = <0x80860000>;          // the reserved-memory node with compatible "qcom,cmd-db": its address
+		cmd-db-size = <0x20000>;        // ... and size
+		rsc = <0x18220000>;             // the qcom,rpmh-rsc with qcom,drv-id = <2> (apps_rsc): its reg "drv-2"
+		tcs-offset = <0xd00>;           // qcom,tcs-offset of that node
+	};
+
+	// The Adreno's blocks, for the feature "gpu-a660". From the SoC's -gpu.dtsi (qcom,kgsl-3d0 and qcom,gmu,
+	// by their reg-names) and its main .dtsi. What differs between phones is the board's [gpu].
+	adreno {
+		gpu = <0x03d00000>;             // qcom,kgsl-3d0, reg "kgsl_3d0_reg_memory": the 3D core
+		gmu = <0x03d6a000>;             // qcom,gmu, reg "kgsl_gmu_reg"
+		gpucc = <0x03d90000>;           // the GPU's clock controller (qcom,CODENAME-gpucc)
+		cx-misc = <0x03d9e000>;         // qcom,kgsl-3d0, reg "cx_misc"
+		rscc = <0x03de0000>;            // qcom,kgsl-3d0, reg "rscc"
+		smmu = <0x03da0000>;            // the GPU's SMMU (kgsl-smmu)
+		pdc = <0x0b290000>;             // qcom,gmu, reg "kgsl_gmu_pdc_cfg"
+		qfprom = <0x00780000>;          // the fuses (qfprom), where the board's [gpu] speed_fuse and gaming_fuse are
+		tsens = <0x0c265000>;           // optional: the TSENS controller with the GPU's sensors, read once a minute
+	};
+
+	// Temperature, for a board's [thermal].
+	thermal {
+		tsens = <0x0c263000 0x0c265000>; // the TSENS controllers (at most two), reg "tsens_tm_physical"
+	};
+
+	// CPU frequency through EPSS, for the feature "cpufreq-epss" and a board's [thermal].
+	cpufreq {
+		epss = <0x18591000>;            // qcom,cpufreq-hw-epss: the first of its "freq-domainN" regs
+		epss-domain-size = <0x1000>;    // the distance from one to the next
+		domain-cores = <4 3 1>;         // how many cores each group has, in the cores' order (the cpu@ nodes'
+		                                // qcom,freq-domain); one to four groups, together [platform] cores
+	};
+
+	// What the loader (loader/) tells the kernel of the machine, for boards with a [loader] section.
+	platform {
+		io-base = <0x00400000>;         // one window over the SoC's peripherals; never 0. Not in a device tree;
+		                                // needed once a board has a [loader] section
+		io-size = <0x3FC00000>;         // (these two are what the Snapdragon 7-series ports use)
+		ufs = <0x01D84000>;             // optional: the UFS host controller (the ufshc node's reg "ufs_mem"), for the
+		                                // loader's and the kernel's own requests to the storage (ufs_native=)
+		gic-dist = <0x17A00000>;        // the arm,gic-v3 node's reg: its first entry
+		gic-redist = <0x17A60000>;      // ... its second
+		gic-redist-size = <0x100000>;   // optional: the redistributors' region; 1 MB (eight cores) if left out
+		gic-redist-stride = <0x20000>;  // optional: the distance between redistributors; as the GIC says if left out
+		uart = <0x09000000>;            // optional: a PL011 for the kernel's serial console (the emulator has one)
+		cores = <8>;                    // the cpu@ nodes
+		core-shift = <8>;               // where the core's number is in its reg: 8 for 0x000, 0x100 ..., 0 for 0, 1 ...
+		small-cores = <0x0f>;           // optional: a bit for each core of the lowest capacity-dmips-mhz
+		psci = "smc";                   // the psci node's method: "smc" or "hvc"
+		timeout-scale = <20>;           // optional: how many times longer the kernel waits for a lock; for emulators
+	};
+
+	// Optional SCMI performance channel for the cpufreq-scmi feature.
+	scmi-perf {
+		shmem = <0>;                    // shared-memory channel's physical address
+		mailbox = <0>;                  // mailbox's physical base
+		doorbell = <0>;                 // aligned register offset inside the mailbox page
+	};
+};

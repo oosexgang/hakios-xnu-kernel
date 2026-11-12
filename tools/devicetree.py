@@ -322,7 +322,7 @@ def from_dts(text, panel=None):
     elif ipc:
         notes.append('the way to the other processors was not all found (missing: ' +
                      ', '.join(k for k in wanted if k not in ipc) + '): [ipc] is left out; fill it in from '
-                     'devices/_template/soc.toml for the features "adsp" and "wifi-wcn6750"')
+                     'devices/_template/soc.dtsi for the features "adsp" and "wifi-wcn6750"')
     if all(key in rpmh for key in ('cmd_db', 'cmd_db_size', 'rsc', 'tcs_offset')):
         soc['rpmh'] = rpmh
     wanted = ('gpu', 'gmu', 'gpucc', 'cx_misc', 'rscc', 'smmu', 'pdc', 'qfprom')
@@ -330,7 +330,7 @@ def from_dts(text, panel=None):
         soc['adreno'] = {key: adreno[key] for key in wanted}
     elif any(key in adreno for key in ('gpu', 'gmu', 'smmu')):
         notes.append("the GPU's blocks were not all found (missing: " + ', '.join(k for k in wanted if k not in adreno) +
-                     '): [adreno] is left out; fill it in from devices/_template/soc.toml for the feature "gpu-a660"')
+                     '): [adreno] is left out; fill it in from devices/_template/soc.dtsi for the feature "gpu-a660"')
     if len(radio_pins) == 3 and len(set(radio_pins.values())) == 3:
         board.setdefault('wifi', {})['pins'] = [radio_pins[key] for key in ('enable', 'bt_reset', 'bt_sw_ctrl')]
     if keys:

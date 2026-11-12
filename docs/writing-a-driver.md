@@ -13,7 +13,7 @@ Each is one place in the example, but the one about waiting.
 | A driver | Why | In the example |
 | --- | --- | --- |
 | starts only with its boot argument | A driver nobody asked for must not touch hardware. `led=0` and no argument are the same: nothing read, nothing said. | `example_led_init()`, 1 |
-| starts only on a board that has the part | The kernel is one for every board. A part's driver asks `hakios_board_has(HAKIOS_HAS_…)`, and says which line of `board.toml` is missing when it is refused. | `example_led_init()`, 2 |
+| starts only on a board that has the part | The kernel is one for every board. A part's driver asks `hakios_board_has(HAKIOS_HAS_…)`, and says which line of `board.dts` is missing when it is refused. | `example_led_init()`, 2 |
 | takes addresses from the board | Where a block of the chip is comes from `hakios_board()`, never from a constant. A machine nobody described has no board (`hakios_board()` is NULL). | `ml_io_map(hakios_board()->pins.tlmm, …)` |
 | has a level that only reads | The first run on a new phone should not write. Level 1 reads and logs; what it logs tells whether level 2 is safe. | `look()` |
 | checks before it writes | What is there may not be what the driver expects: another part, a pin in use. Say so and leave it alone. | "is in use as function" |

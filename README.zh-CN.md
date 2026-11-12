@@ -114,7 +114,7 @@ tools/boards.py status renoir     # 已启用什么，接下来可以启用什�
 
 ## 一段话说明移植
 
-一部手机由一个板型文件描述，其芯片由 `soc/SOC.toml` 描述。
+一部手机由一个板型文件描述，其芯片由 `soc/SOC.dtsi` 描述。
 `tools/boards.py new NAME --soc SOC --dts phone.dts` 可从手机的 Android 设备树生成这两个文件的初稿。
 内核只在列出了相应驱动的板型上启动该驱动，因此新手机一开始只有显示，之后逐行增加硬件；
 `tools/boards.py status NAME` 会说明接下来可以启用什么，以及其余各项还缺什么；

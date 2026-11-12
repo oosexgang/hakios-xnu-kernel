@@ -292,7 +292,7 @@ hakios_virtio_net_init(void)
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_VIRTIO)) {
-		printf("net: disabled: this board's board.toml lists no \"virtio\" (an emulator's MMIO transport)\n");
+		printf("net: disabled: this board's board.dts lists no \"virtio\" (an emulator's MMIO transport)\n");
 		return;
 	}
 	if (!virtio_net_start(virtio_link.address) || !hakios_net_attach(&virtio_link)) {

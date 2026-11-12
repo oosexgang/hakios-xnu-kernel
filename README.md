@@ -119,7 +119,7 @@ Then build: [docs/building.md](docs/building.md). For a phone that has no packag
 
 ## Porting in one paragraph
 
-A phone is described by one board file and its chip by `soc/SOC.toml`. `tools/boards.py new NAME
+A phone is described by one board file and its chip by `soc/SOC.dtsi`. `tools/boards.py new NAME
 --soc SOC --dts phone.dts` starts both from the phone's Android device tree. The kernel starts a
 driver only on a board that lists it, so a new phone begins with nothing but the display and gains
 hardware one line at a time; `tools/boards.py status NAME` says what can be turned on next and what

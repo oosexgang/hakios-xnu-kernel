@@ -12,10 +12,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 
 ### Porting to a new phone
 
-- **A phone is data.** `devices/NAME/board.toml` says what a phone has. `soc/SOC.toml` says where the
+- **A phone is data.** `devices/NAME/board.dts` says what a phone has. `soc/SOC.dtsi` says where the
   blocks of its chip are, once for every phone with that chip. Before, each driver carried its own list
   of phones and addresses, and the loader described each machine in C. Every key is explained in
-  `devices/_template/board.toml` and `devices/_template/soc.toml`; [devices/README.md](devices/README.md)
+  `devices/_template/board.dts` and `devices/_template/soc.dtsi`; [devices/README.md](devices/README.md)
   has every section, and the steps for making one more constant data.
 - **A tool starts both files from the phone's Android device tree.** `tools/boards.py new NAME --soc SOC
   --dts FILE` reads the DSI controller, the temperature sensors, the CPU frequency block and its groups
@@ -47,7 +47,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     (TSENS), `[cpufreq]` (the EPSS block and its groups of cores).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
   the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
-  `board.toml` and README on the `devices` branch (`renoir` and `redwood` so far). `tools/device.py`
+  `board.dts` and README on the `devices` branch (`renoir` and `redwood` so far). `tools/device.py`
   brings one into a checkout and takes it out again: `available`, `add`, `list`, `remove`, `export`
   (`make device DEVICE=NAME` is `add`). Packages elsewhere are found through `HAKIOS_DEVICES`.
 - **The board tables are build outputs.** `tools/boards.py gen` writes the kernel's table, the loader's

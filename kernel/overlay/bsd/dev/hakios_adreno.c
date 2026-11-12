@@ -3813,7 +3813,7 @@ static struct block disp_intf;                                          /* the i
 /*
  * Where the clocks and the panel's interface are differs between SoCs (on shima the DSI interfaces are
  * intf1 and intf2 at 0x6b800 and 0x6c000 in the display block; yupik has its one elsewhere), so it is
- * the board's data: soc/SOC.toml, [clocks] and [display] intf1.
+ * the board's data: soc/SOC.dtsi, [clocks] and [display] intf1.
  */
 struct display_layout {
 	uint32_t core_gdscr, pclk0_cbcr, mdp_cbcr, ahb_cbcr;
@@ -4107,7 +4107,7 @@ hakios_adreno_init(void)
 
 	gpu_profile = adreno_profile_for_board();
 	if (gpu_profile == NULL) {
-		printf("adreno: disabled: this board's board.toml has no \"gpu-a660\" with a [gpu] section\n");
+		printf("adreno: disabled: this board's board.dts has no \"gpu-a660\" with a [gpu] section\n");
 		return;
 	}
 	if (!blocks_of_board()) {

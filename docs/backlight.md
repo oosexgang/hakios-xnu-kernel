@@ -77,7 +77,7 @@ Light readings: until a sensor driver reports through `hakios_als_report(millilu
 ## Device data
 
 The driver has no table of its own. It reads the board's row (`hakios_board()`), which comes from
-`[backlight]` in the board file of the phone's device package (`devices/NAME/board.toml` once
+`[backlight]` in the board file of the phone's device package (`devices/NAME/board.dts` once
 `tools/device.py add NAME` has brought it in) and `[clocks]` and `[display]` in the SoC's file:
 
 | Board | Panel | Backend | DSI | Range | Order | Mode |

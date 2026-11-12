@@ -1,0 +1,101 @@
+/dts-v1/;
+
+// A test phone with a command-mode panel: the stand-in the host tests run the kernel's drivers against
+// (tests/run.sh takes this directory as a device search path). Its values are those of a real SM7350
+// phone, so that the tests compute what a phone computes; it is not a device anybody boots.
+/ {
+	name = "phone-cmd";
+	description = "Test phone, command-mode panel";
+	soc = "sm7350";
+
+	// What this board has a working driver for. The kernel starts a driver only where its feature is
+	// listed (and its boot-arg asks for it); docs/porting.md says what each needs.
+	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-ft3658u", "display-scan", "gpu-a660";
+
+	// The panel's light (docs/backlight.md). A command-mode AMOLED panel whose brightness is MIPI DCS 0x51.
+	backlight {
+		type = "dcs";
+		panel-mode = "command";
+		min = <1>;                      // qcom,mdss-dsi-bl-min-level
+		max = <2047>;                   // qcom,mdss-dsi-bl-max-level
+		restore = <0x133>;              // qcom,mdss-brightness-init-level: what the loader is handed back
+		bytes = <2>;
+		byte-order = "msb-first";       // qcom,mdss-dsi-bl-inverted-dbv
+	};
+
+	// The slowest each group of cores is held back to when hot (docs/thermal.md): small, big, prime.
+	thermal {
+		floor-mhz = <1000 1100 1100>;
+	};
+
+	// The keys on the PMICs: a peripheral is SPMI slave << 8 | the high byte of
+	// its registers.
+	buttons {
+		pon = <0x013>;                  // pon_hlos@1300 of the PMK8350 (slave 0): power, and volume down on RESIN_N
+		pon-name = "the PMK8350's power-on block";
+		volume-up = <0x18d>;            // gpio_keys: GPIO6 of the PM8350 (slave 1, pinctrl@8800: 0x8800 + 0x100 * 5)
+		volume-up-name = "GPIO6 of the PM8350";
+	};
+
+	// The audio DSP, and the battery manager behind it.
+	adsp {
+		firmware = "fw-audio-cmd";      // the root's directory with this phone's adsp.mdt and its parts
+		memory = <0x86700000>;          // the DSP's reserved memory (adsp@86700000)
+		memory-size = <0x03000000>;     // 48 MiB of the DSP's reserved memory (adsp@86700000)
+		charge-counter-divisor = <100>; // this gauge counts charge in 1/100 uAh (qti_battery_charger.c)
+	};
+
+	// The GPU. Sources: shima-gpu.dtsi (the fuses, the speeds of speed bin 105), Linux's adreno-gpulist.h
+	// (chip, GMEM, the register values) and debugcc-shima.c.
+	gpu {
+		model = "Adreno 642";
+		chip-id = <0x06060010>;         // qcom,chipid
+		firmware = "fw-cmd";            // the directory of the small image with this phone's a660_zap.*
+		gmem-kb = <1536>;               // adreno-gpulist.h: gmem_size
+		primitive-fifo = <0x00300000>;  // adreno-gpulist.h: prim_fifo_threshold
+		hang-cycles = <0x3ffff>;        // adreno-gpulist.h: hang_detect_cycles
+		uche-cmdq-config = <0x66906>;
+		speed-fuse = <0x1e1>;           // qcom,gpu-speed-bin: where in the fuses (0x780000) the speed bin is
+		gaming-fuse = <0x1ed>;          // qcom,gpu-gaming-bin
+		highest-bank-bit = <14>;        // LPDDR4X (a6xx_init)
+		gcc-debug-gpucc = <0x13c>;      // debugcc-shima.c: gpu_cc_debug_mux
+		zap-must-authenticate;          // the firmware leaves no zap shader loaded: without ours the GPU stays secure
+		speeds-khz = <285000 365000 443000 490000>; // qcom,gpu-pwrlevels, slowest first
+		speed-levels = <64 80 128 144>; // their supply levels: LOW_SVS, LOW_SVS_L1, SVS, SVS_L0
+		default-speed = <4>;            // which of them to run at, counted from 1
+	};
+
+	// The touch controller: on serial engine 10 (SPI), with that engine's clocks; its two supplies by name.
+	touch {
+		serial-engine = <0x00988000>;
+		clocks = <0x17004 0x17008 0x1726c>;
+		vote-register = <0x52008>;
+		votes = <9 8 6 7 12>;
+		bus-pins = <20 21 22 23>;
+		interrupt = <31>;
+		reset = <30>;
+		io-supply = "ldoc2";
+		analog-supply = "ldoc7";
+	};
+
+	// The Wi-Fi radio: a WCN6855 on PCIe, whose driver is not on yet (wifi=0). Its pool is kept from early on.
+	wifi {
+		radio-model = <1>;
+		early-pool-mb = <80>;           // ath11k's pool, in one piece
+	};
+
+	// What iOS's interface is told of the screen: this phone's front camera is a hole at the top left.
+	screen {
+		statusbar-leading-shift = <24>; // points: the status bar's clock and what follows it move right, past the camera
+	};
+
+	// How the boot tool starts this phone (ios/tools/boot26.py --board NAME): what stock fastboot must say it
+	// is, how many cores the kernel is given, and the boot arguments of a plain run. Touch, buttons and the
+	// CPU's clock table are on; Wi-Fi, sound, camera, haptics and battery are off until their iOS 27 ports
+	// land (docs/ios26-boot.md). `--boot-arg NAME=VALUE` adds to these or replaces one.
+	boot {
+		fastboot-product = "phone-cmd";
+		cpus = <8>;
+		bootargs = "haptic=0", "cpufreq=1", "gpu=0", "wifi=0", "adsp=0", "battmgr=0", "speaker_probe=0", "renoir_afe_probe=0", "sound=0", "cam=0", "cam_stream_test=0", "touch_lat=0", "touchscreen=1", "buttons=1", "launchd_unsecure_cache=1", "backlight=1", "thermal=1";
+	};
+};

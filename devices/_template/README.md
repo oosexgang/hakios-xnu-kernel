@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | Device | MAKER MODEL |
-| SoC | CHIP (SOC); `soc/SOC.toml` on the main branch |
+| SoC | CHIP (SOC); `soc/SOC.dtsi` on the main branch |
 | State | One sentence: how far it boots, with which iOS build, and when that was last seen on the phone. |
 
 Nothing in the procedure writes to the phone's storage. It is started with `fastboot boot` and runs
@@ -29,7 +29,7 @@ on the phone" are three different statements: give the date and the iOS build fo
 
 ## Where the values come from
 
-For each section of `board.toml`: the node of the Android device tree, the file of the vendor's kernel
+For each section of `board.dts`: the node of the Android device tree, the file of the vendor's kernel
 or of Linux, or what was measured on the phone. The device tree itself is never committed.
 
 ## What a boot needs besides this package

@@ -343,7 +343,7 @@ hakios_virtio_input_init(void)
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_VIRTIO)) {
-		printf("virtio-input: disabled: this board's board.toml lists no \"virtio\" (an emulator's MMIO transport)\n");
+		printf("virtio-input: disabled: this board's board.dts lists no \"virtio\" (an emulator's MMIO transport)\n");
 		return;
 	}
 	bus = ml_io_map(VIRTIO_BUS, VIRTIO_SLOTS * VIRTIO_SLOT_SIZE);

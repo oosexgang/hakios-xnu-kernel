@@ -2953,7 +2953,7 @@ hakios_adsp_init(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_ADSP) || board->adsp.firmware == NULL || board->adsp.memory == 0 ||
 	    board->adsp.memory_size == 0) {
-		printf("adsp: adsp=1 and adsp_step=N are for a phone's audio DSP: this board's board.toml lists no \"adsp\" with "
+		printf("adsp: adsp=1 and adsp_step=N are for a phone's audio DSP: this board's board.dts lists no \"adsp\" with "
 		    "an [adsp] section\n");
 		return;
 	}

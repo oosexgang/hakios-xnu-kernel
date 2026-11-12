@@ -5,7 +5,7 @@ which parts are data, which are drivers and which are the same for every device.
 
 A realistic target is a Qualcomm phone with an unlockable bootloader and a UEFI port in
 [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium). A phone on a SoC that is already
-described (`soc/sm7325.toml`, `soc/sm7350.toml`) needs the least; a new SoC adds one file.
+described (`soc/sm7325.dtsi`, `soc/sm7350.dtsi`) needs the least; a new SoC adds one file.
 
 Nothing in this procedure writes to the phone's storage. The UEFI is started with `fastboot boot`,
 everything runs from RAM, and a reboot brings Android back.
@@ -30,7 +30,7 @@ the log line to look for at each step.
 tools/boards.py new mido --soc sm7325 --dts phone.dts --description "Maker Model"
 ```
 
-This writes the board file (`devices/NAME/board.toml`, here with `mido` for NAME), and the SoC file in
+This writes the board file (`devices/NAME/board.dts`, here with `mido` for NAME), and the SoC file in
 `soc/` if that SoC is new. The directory `devices/NAME/` is your phone's device package. Git ignores it in
 a checkout of the main branch, because packages are kept on the `devices` branch (step 8); a new SoC file
 is an ordinary new file of the main branch. From the tree it reads:
@@ -74,8 +74,8 @@ tools/boards.py compare mido --dts phone.dts     # each value: as in the tree, d
 There are no tables to regenerate by hand: every build makes them itself from the packages that are
 present (`make boards` validates and writes them into `build/boards/` if you want to look at them).
 
-Leave `features = []` for now. Every key is explained in `devices/_template/board.toml` and
-`devices/_template/soc.toml`. To see how an existing phone is described, bring its package in:
+Leave `features = []` for now. Every key is explained in `devices/_template/board.dts` and
+`devices/_template/soc.dtsi`. To see how an existing phone is described, bring its package in:
 `tools/device.py available` lists them, `tools/device.py add renoir` copies one into `devices/`.
 
 ## 2. The UEFI
@@ -155,7 +155,7 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **one of the touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
-  engine or other pins: fill in `[touch]` of the board file. `devices/_template/board.toml` says
+  engine or other pins: fill in `[touch]` of the board file. `devices/_template/board.dts` says
   where each value is in the device tree and in the SoC's clock driver;
   `tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE` reads the engine's clocks and their votes out of
   that driver for you.
@@ -202,8 +202,8 @@ A port goes to two places:
 
 | What | Where it goes |
 | --- | --- |
-| The device package: the `devices/NAME/` directory with `board.toml`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
-| The SoC file if new (`soc/SOC.toml`), any new driver with its feature, a new key of the board file | The main branch. |
+| The device package: the `devices/NAME/` directory with `board.dts`, and a README and notes if you have them | The `devices` branch, as the directory `NAME/` at its top. |
+| The SoC file if new (`soc/SOC.dtsi`), any new driver with its feature, a new key of the board file | The main branch. |
 
 No generated table is sent: none is in the repository. For the package:
 

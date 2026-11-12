@@ -5,9 +5,9 @@ lives here, with the code, and not in a phone's package.
 
 | File | Chip | Used by |
 | --- | --- | --- |
-| `sm7350.toml` | Qualcomm Snapdragon 780G (SM7350, "shima") | the `renoir` package |
-| `sm7325.toml` | Qualcomm Snapdragon 778G (SM7325, "yupik") | the `redwood` package |
-| `qemu-virt.toml` | QEMU's `virt` machine | `devices/qemu-virt` |
+| `sm7350.dtsi` | Qualcomm Snapdragon 780G (SM7350, "shima") | the `renoir` package |
+| `sm7325.dtsi` | Qualcomm Snapdragon 778G (SM7325, "yupik") | the `redwood` package |
+| `qemu-virt.dtsi` | QEMU's `virt` machine | `devices/qemu-virt` |
 
 ## What a SoC file says
 
@@ -27,12 +27,12 @@ lives here, with the code, and not in a phone's package.
 | `[thermal]` | The TSENS controllers | A board's `[thermal]` |
 | `[cpufreq]` | The EPSS block and its groups of cores | `cpufreq-epss`, a board's `[thermal]` |
 
-Every key is explained in `devices/_template/soc.toml`. A board needs only the sections of what it
+Every key is explained in `devices/_template/soc.dtsi`. A board needs only the sections of what it
 turns on: one with `features = []` and a software backlight needs none.
 
 ## Adding a chip
 
-`tools/boards.py new NAME --soc SOC --dts phone.dts` writes `soc/SOC.toml` with what the phone's
+`tools/boards.py new NAME --soc SOC --dts phone.dts` writes `soc/SOC.dtsi` with what the phone's
 device tree says, when the file is not there yet: every value with what the template says of its
 key. Two things are never in a device tree and are filled in by hand: the display clocks' register
 offsets (from Linux's clock drivers for the chip) and the window over the peripherals.

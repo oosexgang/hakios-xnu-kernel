@@ -54,21 +54,24 @@ FILE = ''.join((
 class QupClocks(unittest.TestCase):
     def values(self, wrapper, engine, text=FILE):
         lines = qupclocks.touch_lines(text, wrapper, engine)
-        return [line.split('#')[0].strip() for line in lines.splitlines()]
+        return [line.split('//')[0].strip() for line in lines.splitlines()]
 
     def test_the_two_phones_engines_come_out_as_their_board_files_have_them(self):
-        self.assertEqual(self.values(1, 5), ['clocks = [0x18004, 0x18008, 0x185fc]', 'vote_register = 0x52008',
-                                             'votes = [18, 19, 20, 21, 27]'])
-        self.assertEqual(self.values(0, 2), ['clocks = [0x17004, 0x17008, 0x1726c]', 'vote_register = 0x52008',
-                                             'votes = [9, 8, 6, 7, 12]'])
+        self.assertEqual(self.values(1, 5), ['clocks = <0x18004 0x18008 0x185fc>;', 'vote-register = <0x52008>;',
+                                             'votes = <18 19 20 21 27>;'])
+        self.assertEqual(self.values(0, 2), ['clocks = <0x17004 0x17008 0x1726c>;', 'vote-register = <0x52008>;',
+                                             'votes = <9 8 6 7 12>;'])
 
     def test_an_engine_is_its_whole_number(self):
         # engine 2 is not engine 20
-        self.assertEqual(self.values(0, 20)[0], 'clocks = [0x17004, 0x17008, 0x17ffc]')
+        self.assertEqual(self.values(0, 20)[0], 'clocks = <0x17004 0x17008 0x17ffc>;')
 
     def test_what_is_printed_is_what_the_board_tool_takes(self):
-        import tomllib
-        table = tomllib.loads(qupclocks.touch_lines(FILE, 1, 5))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
+        import boardfile
+        import boards
+        text = '/ {\n\ttouch {\n' + qupclocks.touch_lines(FILE, 1, 5) + '\t};\n};\n'
+        table = boardfile.parse(text, boards.BOARD_SCHEMA)['touch']
         self.assertEqual(table, {'clocks': [0x18004, 0x18008, 0x185fc], 'vote_register': 0x52008, 'votes': [18, 19, 20, 21, 27]})
 
     def test_what_is_not_there_is_said(self):
@@ -89,7 +92,7 @@ class QupClocks(unittest.TestCase):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 qupclocks.main(['qupclocks.py', str(path), '1', '5'])
-            self.assertIn('votes = [18, 19, 20, 21, 27]', out.getvalue())
+            self.assertIn('votes = <18 19 20 21 27>;', out.getvalue())
             for wrong in (['qupclocks.py'], ['qupclocks.py', str(path), 'one', '5'], ['qupclocks.py', str(path) + '.none', '1', '5'],
                           ['qupclocks.py', str(path), '1', '9']):
                 with self.assertRaises(SystemExit) as stopped:

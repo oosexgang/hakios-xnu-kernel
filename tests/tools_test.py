@@ -81,7 +81,7 @@ class Links(Sandbox):
         self.assertNotIn('thing.py', complained)
 
     def test_placeholders_and_patterns_are_not_paths(self):
-        self.write('README.md', '`devices/NAME/board.toml`, `soc/SOC.toml`, `kernel/patches/*.patch`, `tools/...`\n')
+        self.write('README.md', '`devices/NAME/board.dts`, `soc/SOC.dtsi`, `kernel/patches/*.patch`, `tools/...`\n')
         self.assertEqual(self.run_tool(self.links)[0], 0)
 
     def test_paths_of_the_old_layout_may_be_named_between_the_marks(self):

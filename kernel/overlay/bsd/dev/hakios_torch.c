@@ -644,7 +644,7 @@ hakios_torch_init(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_TORCH_PM8350C)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
-		say("torch: disabled: this board's board.toml lists no \"torch-pm8350c\"\n");
+		say("torch: disabled: this board's board.dts lists no \"torch-pm8350c\"\n");
 		level = 0;
 		return;
 	}

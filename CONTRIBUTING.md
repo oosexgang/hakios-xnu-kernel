@@ -17,8 +17,8 @@ HakiOS' files. There are none now: keep it so.
 
 | The change | Goes in | Then |
 | --- | --- | --- |
-| A new phone, or a value of an existing one | Its device package on the `devices` branch: `NAME/board.toml`, with its README and notes. Not `devices/NAME` on the main branch, which git ignores there. | `tools/boards.py check`, with the package in `devices/` of a checkout of the main branch (`tools/device.py add NAME --from DIR` copies it there from a directory and checks it) |
-| A new SoC, or a value of an existing one | `soc/SOC.toml` on the main branch | `tools/boards.py check` |
+| A new phone, or a value of an existing one | Its device package on the `devices` branch: `NAME/board.dts`, with its README and notes. Not `devices/NAME` on the main branch, which git ignores there. | `tools/boards.py check`, with the package in `devices/` of a checkout of the main branch (`tools/device.py add NAME --from DIR` copies it there from a directory and checks it) |
+| A new SoC, or a value of an existing one | `soc/SOC.dtsi` on the main branch | `tools/boards.py check` |
 | A driver, or anything else HakiOS adds to the kernel | `kernel/overlay/` | — |
 | A change to one of Apple's files | An assembled tree, then `kernel/export.sh` | Never edit `kernel/patches/*.patch` by hand: `kernel/verify.sh` rejects it. |
 | A boot argument | A comment naming it as `name=…` beside its read | `make docs` |

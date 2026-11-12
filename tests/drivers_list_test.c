@@ -116,7 +116,7 @@ board_without_touch(void)
 	boot_args = "touchscreen=1";
 	hakios_drivers_init();
 	all_once("");
-	CHECK(logged("touch: touchscreen=1, but this board's board.toml lists no touch controller"), "said: %s", log_text);
+	CHECK(logged("touch: touchscreen=1, but this board's board.dts lists no touch controller"), "said: %s", log_text);
 }
 
 static void

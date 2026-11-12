@@ -12,6 +12,7 @@ for f in $files; do
 	case "$f" in *.png|*.jpg|*.jpeg) continue ;; esac
 	t=$(file -b "$f")
 	case "$t" in
+	*"Device Tree"*text*) ;;        # a device tree's source (a board.dts, a SoC's .dtsi), not a compiled one
 	*Mach-O*|*ELF*|*"PE32"*|*"Device Tree"*|LLVM*|*"compiled Java"*) say "binary: $f ($t)" ;;
 	esac
 	case "$f" in

@@ -2,7 +2,7 @@
  * Cameras on an SM7325, written for those of the POCO X5 Pro (redwood): the macro one, an OmniVision
  * OV02B10 (2 MP, Android's camera 2, "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD
  * (108 MP, Android's camera 0, "redwood_sunny_s5khm2sd_wide"), the front one and the ultra-wide one.
- * How each sensor is wired is the board's ([camera] in board.toml: redwood's is described below as an
+ * How each sensor is wired is the board's ([camera] in board.dts: redwood's is described below as an
  * example); what each chip is, and the SoC's camera blocks, are this file's. Every number was found on
  * that phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
  * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.hakios_*.bin: the
@@ -141,7 +141,7 @@ static vm_offset_t tlmm;
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
 /*
- * The sensors come from the board ([camera] and its [[camera.sensors]] in board.toml): where each is wired
+ * The sensors come from the board ([camera] and its [[camera.sensors]] in board.dts): where each is wired
  * -- its CCI master's pins (taken by hand), the reset, which MCLK (its pin, function 1, cam_mclk, at 4 mA),
  * the CSIPHY, and how the module file's power sequence switches its supplies (a PM8008 LDO at the device
  * tree's voltage, or a GPIO that switches a fixed regulator). What a sensor is -- its module file, how its
@@ -4057,7 +4057,7 @@ hakios_camera_init(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_CAMERA_SM7325)) {
 		/* the camera blocks are an SM7325's, the sensors' supplies a PM8008's: not on a board that does not say so */
-		say("camera: disabled: this board's board.toml lists no \"camera-sm7325\"\n");
+		say("camera: disabled: this board's board.dts lists no \"camera-sm7325\"\n");
 		level = 0;
 		return;
 	}

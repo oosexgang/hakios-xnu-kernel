@@ -1,13 +1,13 @@
 # What each feature needs
 
-A board lists the drivers it may start in `features` of its `board.toml`. Each needs to be told
+A board lists the drivers it may start in `features` of its `board.dts`. Each needs to be told
 where things are first: sections of the SoC file (shared by every phone with that SoC) and, for a
 part on the board, a section of the board file. `tools/boards.py check` refuses a board that lists
 a feature without them, and `tools/boards.py status NAME` says the same for one phone.
 
 This page is written by `tools/boards.py features` from the tables the checker uses; a test keeps
-the two the same. What each key means is in `devices/_template/soc.toml` and
-`devices/_template/board.toml`.
+the two the same. What each key means is in `devices/_template/soc.dtsi` and
+`devices/_template/board.dts`.
 
 | Feature | SoC file | Board file | Started with |
 |---|---|---|---|

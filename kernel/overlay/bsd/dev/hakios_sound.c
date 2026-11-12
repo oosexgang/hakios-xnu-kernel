@@ -1471,7 +1471,7 @@ hakios_sound_dsp_up(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261)) {
 		/* what the DSP is told here is for those amplifiers and their wiring */
-		say("sound: disabled: this board's board.toml lists no \"speaker-aw88261\"\n");
+		say("sound: disabled: this board's board.dts lists no \"speaker-aw88261\"\n");
 		level = 0;
 		return;
 	}

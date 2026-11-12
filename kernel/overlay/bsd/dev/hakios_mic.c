@@ -1809,7 +1809,7 @@ hakios_mic_dsp_up(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_MIC_WCD938X)) {
 		/* the codec, its pins and its SoundWire wiring below are one phone's */
-		say("mic: disabled: this board's board.toml lists no \"mic-wcd938x\"\n");
+		say("mic: disabled: this board's board.dts lists no \"mic-wcd938x\"\n");
 		level = 0;
 		return;
 	}

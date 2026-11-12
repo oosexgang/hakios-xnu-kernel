@@ -779,7 +779,7 @@ not_listed(void)
 	boot_args = "speaker_probe=2";
 	hakios_speaker_init();
 	usleep(50000);
-	CHECK(logged("speaker: disabled: this board's board.toml lists no \"speaker-aw88261\""), "said: %s", log_text);
+	CHECK(logged("speaker: disabled: this board's board.dts lists no \"speaker-aw88261\""), "said: %s", log_text);
 	CHECK(model.reads == 0 && model.writes == 0, "nothing was read or written");
 	CHECK(!hakios_speaker_prepare(NULL, 0), "nor is it prepared for sound");
 	CHECK(model.reads == 0 && model.writes == 0, "nothing was read or written then either");

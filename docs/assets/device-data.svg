@@ -36,8 +36,8 @@
         <text x="652" y="111">SoC files</text>
       </g>
       <g font-size="17" text-anchor="end">
-        <text x="548" y="110">NAME/board.toml</text>
-        <text x="1118" y="110">soc/SOC.toml</text>
+        <text x="548" y="110">NAME/board.dts</text>
+        <text x="1118" y="110">soc/SOC.dtsi</text>
       </g>
       <g font-size="16">
         <text x="82" y="139">one directory per phone, on the devices branch</text>

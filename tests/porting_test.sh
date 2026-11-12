@@ -109,15 +109,15 @@ cat > "$W/phone.dts" <<'EOF'
 EOF
 
 # --- step 1: describe the board -------------------------------------------------------------------
-says "a board is started from the device tree" "wrote devices/testphone/board.toml" \
+says "a board is started from the device tree" "wrote devices/testphone/board.dts" \
 	"$B" new testphone --soc sm9999 --dts "$W/phone.dts" --description "Maker Testphone"
-check "... and its SoC, which is new" test -f "$R/soc/sm9999.toml"
+check "... and its SoC, which is new" test -f "$R/soc/sm9999.dtsi"
 refuses "what a device tree cannot say is asked for by name" "gcc_disp_ahb_cbcr" "$B" check
 check "... and nothing else is wrong with what was written" \
 	sh -c "\"$B\" check 2>&1 | grep -v 'gcc_disp_ahb_cbcr, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in \\[clocks\\]' | grep -q . && exit 1 || exit 0"
-sed -i -e 's/^# gcc_disp_ahb_cbcr = 0x\.\.\..*/gcc_disp_ahb_cbcr = 0x33004/' \
-	-e 's/^# dispcc_mdss_gdscr = 0x\.\.\..*/dispcc_mdss_gdscr = 0x4000/' \
-	-e 's/^# dispcc_mdss_ahb_cbcr = 0x\.\.\..*/dispcc_mdss_ahb_cbcr = 0x4080/' "$R/soc/sm9999.toml"
+sed -i -e 's|// gcc-disp-ahb-cbcr = <0x\.\.\.>;|gcc-disp-ahb-cbcr = <0x33004>;|' \
+	-e 's|// dispcc-mdss-gdscr = <0x\.\.\.>;|dispcc-mdss-gdscr = <0x4000>;|' \
+	-e 's|// dispcc-mdss-ahb-cbcr = <0x\.\.\.>;|dispcc-mdss-ahb-cbcr = <0x4080>;|' "$R/soc/sm9999.dtsi"
 says "with those filled in, everything is consistent" "ok" "$B" check
 check "the tables are regenerated" "$B" gen
 says "the board is listed" "testphone" "$B" list
@@ -125,12 +125,12 @@ check "the boards that were there are as they were" \
 	sh -c "\"$B\" show qemu-virt > \"$W/after\" && \"$REPO/tools/boards.py\" show qemu-virt > \"$W/before\" && cmp \"$W/before\" \"$W/after\""
 
 # --- step 3: the loader ---------------------------------------------------------------------------
-check "without a [loader] section the loader does not list the board" \
+check "without a loader { } section the loader does not list the board" \
 	sh -c "! grep -q platform_testphone \"$R/build/boards/platforms.h\""
-printf '\n[loader]\nfb_base = 0x9C000000\n' >> "$R/devices/testphone/board.toml"
+printf '\n/ {\n\tloader {\n\t\tfb-base = <0x9C000000>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 refuses "the I/O window, which no tree has, is asked for when the loader is to know the board" \
 	'\[loader\] needs io_base and io_size in \[platform\]' "$B" check
-sed -i -e 's/^# io_base = 0x00400000.*/io_base = 0x01000000/' -e 's/^# io_size = 0x3FC00000.*/io_size = 0x3F000000/' "$R/soc/sm9999.toml"
+sed -i -e 's|// io-base = <0x00400000>;|io-base = <0x01000000>;|' -e 's|// io-size = <0x3FC00000>;|io-size = <0x3F000000>;|' "$R/soc/sm9999.dtsi"
 check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/build/boards/platforms.h\""
 check "... with the machine as the SoC file has it" \
 	sh -c "grep -A14 'platform_testphone = ' \"$R/build/boards/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.uefi_charger = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"
@@ -192,37 +192,37 @@ says "a board the kernel was not told of is still unknown" "unknown" ask otherph
 says "the board that was there answers as before" "name=qemu-virt soc=qemu-virt" ask qemu-virt
 
 # step 5: one thing at a time
-sed -i 's/^features = \[\]/features = ["cpufreq-epss"]/' "$R/devices/testphone/board.toml"
+sed -i 's/features = <>;/features = "cpufreq-epss";/' "$R/devices/testphone/board.dts"
 check "a feature is added and the tables regenerated" sh -c "\"$B\" check && \"$B\" gen"
 says "... and the kernel has it, and only it" "epss=1 touch=0 torch=0" ask testphone
-printf '\n[thermal]\nfloor_mhz = [900, 1200, 1300]\n' >> "$R/devices/testphone/board.toml"
+printf '\n/ {\n\tthermal {\n\t\tfloor-mhz = <900 1200 1300>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 refuses "thermal floors that do not match the SoC's groups are refused" "one value for each of the 2 groups" "$B" check
-sed -i 's/^floor_mhz = \[900, 1200, 1300\]/floor_mhz = [900, 1200]/' "$R/devices/testphone/board.toml"
+sed -i 's/floor-mhz = <900 1200 1300>;/floor-mhz = <900 1200>;/' "$R/devices/testphone/board.dts"
 check "... and taken when they do" sh -c "\"$B\" check && \"$B\" gen"
 says "the thermal limiter gets the SoC's sensor and the board's floors" "thermal tsens=0x4411000,0 floors=900,1200" ask testphone
 says "the tool says what can be turned on next" "buttons-pmic *can be listed" "$B" status testphone
-says "... and what the rest waits for" "gpu-a660 *needs \[adreno\] in soc/sm9999.toml, .*\[gpu\] in the board file" "$B" status testphone
+says "... and what the rest waits for" "gpu-a660 *needs \[adreno\] in soc/sm9999.dtsi, .*\[gpu\] in the board file" "$B" status testphone
 # the keys: the tool found the arbiter and both peripherals in the tree, so the feature is all there is to add
 says "the SoC file has the PMIC arbiter of the tree" "spmi core=0x4440000 cnfg=0x440a000 observer=0x6600000 channels=0x4600000 ee=0" \
 	ask testphone
 says "the keys were found, and are not on until listed" \
 	"buttons=0 pon=0x208 (the PMX200's power-on block) volume_up=0x2c8 (GPIO9 of the PMX200)" ask testphone
-sed -i 's/"cpufreq-epss"/"cpufreq-epss", "buttons-pmic"/' "$R/devices/testphone/board.toml"
+sed -i 's/"cpufreq-epss"/"cpufreq-epss", "buttons-pmic"/' "$R/devices/testphone/board.dts"
 check "the keys' feature is added" sh -c "\"$B\" check && \"$B\" gen"
 says "... and the kernel has it" "buttons=1 pon=0x208" ask testphone
-sed -i '/^\[buttons\]/,/^$/d' "$R/devices/testphone/board.toml"
+sed -i '/^\tbuttons {/,/^\t};/d' "$R/devices/testphone/board.dts"
 refuses "without its section the feature is refused" 'feature "buttons-pmic" needs \[buttons\] in the board file' "$B" check
-printf '\n[buttons]\npon = 0x208\nvolume_up = 0x2c8\n' >> "$R/devices/testphone/board.toml"
+printf '\n/ {\n\tbuttons {\n\t\tpon = <0x208>;\n\t\tvolume-up = <0x2c8>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 check "... and taken again with it written by hand" "$B" check
-sed -i 's/"cpufreq-epss"/"cpufreq-epss", "torch-pm8350c", "warp-drive"/' "$R/devices/testphone/board.toml"
+sed -i 's/"cpufreq-epss"/"cpufreq-epss", "torch-pm8350c", "warp-drive"/' "$R/devices/testphone/board.dts"
 refuses "a feature the kernel has no driver for is refused" 'feature "warp-drive" is not one the kernel knows' "$B" check
 
 # --- step 8: the package is sent to where packages are kept, and brought in from there -------------
-sed -i 's/, "torch-pm8350c", "warp-drive"//' "$R/devices/testphone/board.toml"
+sed -i 's/, "torch-pm8350c", "warp-drive"//' "$R/devices/testphone/board.dts"
 D="$R/tools/device.py"
 mkdir "$W/packages"
 says "the package is exported to a checkout of the devices branch" "the package testphone" "$D" export testphone "$W/packages"
-check "... as one directory, with its board file" test -f "$W/packages/testphone/board.toml"
+check "... as one directory, with its board file" test -f "$W/packages/testphone/board.dts"
 says "... and is listed there" "testphone  *sm9999  *Maker Testphone" "$D" available --from "$W/packages"
 check "it is taken out of the checkout" "$D" remove testphone
 check "(the tables, made anew as a build would)" "$B" gen
@@ -233,7 +233,7 @@ check "(the tables again)" "$B" gen
 says "... and has its board again, with what was turned on" "buttons=1 pon=0x208" ask testphone
 
 # --- the repository itself --------------------------------------------------------------------------
-check "the repository was not touched" sh -c "cd \"$REPO\" && test ! -e devices/testphone && test ! -e soc/sm9999.toml"
+check "the repository was not touched" sh -c "cd \"$REPO\" && test ! -e devices/testphone && test ! -e soc/sm9999.dtsi"
 
 echo "porting_test: $checks checks, $failed failed"
 [ $failed = 0 ]

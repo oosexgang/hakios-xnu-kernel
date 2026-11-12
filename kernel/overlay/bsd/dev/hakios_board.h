@@ -2,7 +2,7 @@
  * The board this kernel runs on, as data.
  *
  * One kernel serves every board. Which one it is, the loader says (/chosen/darwin-board); what that
- * board has and where, the repository's devices/NAME/board.toml and soc/SOC.toml say, and
+ * board has and where, the repository's devices/NAME/board.dts and soc/SOC.dtsi say, and
  * tools/boards.py turns them into the table of hakios_board_table.h. A driver asks here instead of
  * carrying its own list of phones:
  *
@@ -26,7 +26,7 @@
 #include <stdint.h>
 
 /*
- * What a board can have a driver started for. The names in board.toml's `features` are these in
+ * What a board can have a driver started for. The names in board.dts's `features` are these in
  * lower case with dashes ("cpufreq-epss"); tools/boards.py reads this list, so a new one is added
  * here and nowhere else.
  */

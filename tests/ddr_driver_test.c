@@ -301,7 +301,7 @@ not_listed(void)
 	rsc.base = 0;
 	boot_args = "";
 	hakios_ddr_init(true);
-	CHECK(logged("ddr: no RPMh vote on this board (its board.toml lists no \"ddr-rpmh\")"), "said: %s", log_text);
+	CHECK(logged("ddr: no RPMh vote on this board (its board.dts lists no \"ddr-rpmh\")"), "said: %s", log_text);
 	CHECK(rsc.writes == 0 && rsc.elsewhere == 0 && database_maps == 0, "nothing mapped, read or written");
 }
 

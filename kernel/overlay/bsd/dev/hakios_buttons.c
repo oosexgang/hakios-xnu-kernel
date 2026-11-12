@@ -492,7 +492,7 @@ hakios_buttons_init(void)
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_BUTTONS_PMIC)) {
-		printf("buttons: disabled: this board's board.toml lists no \"buttons-pmic\"\n");
+		printf("buttons: disabled: this board's board.dts lists no \"buttons-pmic\"\n");
 		return;
 	}
 	if (board->spmi.core == 0 || board->buttons.pon == 0 || board->buttons.volume_up == 0) {

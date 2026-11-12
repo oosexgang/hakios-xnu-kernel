@@ -3967,7 +3967,7 @@ hakios_wifi_init(void)
 			    "it needs a radio\n");
 			printf("wifi: the driver's start returns %d\n", hakios_lx_start());
 		} else {
-			printf("wifi: wifi=1 and wifi_step=N are for a phone whose board.toml lists \"wifi-wcn6750\", and this is not one\n");
+			printf("wifi: wifi=1 and wifi_step=N are for a phone whose board.dts lists \"wifi-wcn6750\", and this is not one\n");
 		}
 		return;
 	}

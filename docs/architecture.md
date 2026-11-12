@@ -38,7 +38,7 @@ A reboot brings Android back.
 
 | Layer | Where | Changes when |
 | --- | --- | --- |
-| **Device data** | A device package per phone (`NAME/board.toml`, kept on the `devices` branch), `soc/SOC.toml` on the main branch | A new phone, or a new SoC. No code. |
+| **Device data** | A device package per phone (`NAME/board.dts`, kept on the `devices` branch), `soc/SOC.dtsi` on the main branch | A new phone, or a new SoC. No code. |
 | **Drivers for parts** | `kernel/overlay/bsd/dev/`, `kernel/overlay/iokit/Kernel/` | A phone has a part nobody wrote a driver for yet (a touch controller, an amplifier). |
 | **The port itself** | `kernel/patches/`, the rest of `kernel/overlay/`, `loader/`, `ios/` | Apple's kernel or iOS changes, or the port learns something new. Same for every device. |
 
@@ -50,15 +50,15 @@ file to it. Where that is not yet true, [drivers.md](drivers.md) says so driver 
 ![Device packages and SoC files become three tables at build; at boot the loader names the board and the kernel finds its row](assets/device-data.svg)
 
 ```
-device packages (NAME/board.toml) ─┐
+device packages (NAME/board.dts) ─┐
   from the devices branch, or any  │  tools/boards.py gen       build/boards/hakios_board_table.h  (the kernel's table)
   directory on the search path     ├──────────────────────►     build/boards/platforms.h           (the loader's)
-soc/sm7350.toml, soc/… ────────────┘  (run by the builds)       build/boards/hakios_boards.h       (the injected libraries')
+soc/sm7350.dtsi, soc/… ────────────┘  (run by the builds)       build/boards/hakios_boards.h       (the injected libraries')
 ```
 
 - The repository describes no phone. `devices/` on the main branch has the emulator's board
   (`devices/qemu-virt/`) and a template (`devices/_template/`).
-- A phone is a **device package**: a directory `NAME/` with its `board.toml`, its README and its notes.
+- A phone is a **device package**: a directory `NAME/` with its `board.dts`, its README and its notes.
   Packages are kept on the `devices` branch, one directory per phone (`renoir/`, `redwood/`).
   `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/NAME/` of a
   checkout, which git ignores there: a package is changed where it is kept. `tools/device.py available`
@@ -93,7 +93,7 @@ soc/sm7350.toml, soc/… ────────────┘  (run by the bu
   A board that is not in the table has no feature: nothing of a phone is touched on a machine nobody
   described.
 
-Details and every key: [devices/README.md](../devices/README.md), `devices/_template/board.toml` and
+Details and every key: [devices/README.md](../devices/README.md), `devices/_template/board.dts` and
 `soc.toml`.
 
 ## The kernel

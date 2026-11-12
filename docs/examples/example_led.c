@@ -91,7 +91,7 @@ example_led_init(void)
 	}
 	/*
 	 * 2. Only on a board that has it. A driver of a part asks for its feature here --
-	 *        if (!hakios_board_has(HAKIOS_HAS_...)) { say which line of board.toml is missing; return; }
+	 *        if (!hakios_board_has(HAKIOS_HAS_...)) { say which line of board.dts is missing; return; }
 	 *    -- and one that needs addresses asks whether the board has them. hakios_board() is NULL on a
 	 *    machine nobody described.
 	 */

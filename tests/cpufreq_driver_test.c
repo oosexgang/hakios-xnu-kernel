@@ -231,7 +231,7 @@ not_listed(void)
 	epss.size = 0x1000;
 	boot_args = "cpufreq=1";
 	hakios_cpufreq_init();
-	CHECK(logged("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\""), "said: %s", log_text);
+	CHECK(logged("cpufreq: disabled: this board's board.dts lists no \"cpufreq-epss\""), "said: %s", log_text);
 	CHECK(all_writes() == 0 && epss.elsewhere == 0, "nothing read or written");
 }
 

@@ -629,7 +629,7 @@ bool
 hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 {
 	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) || hakios_board()->pins.tlmm == 0) {
-		say("speaker: not on this board: its board.toml lists no \"speaker-aw88261\", or its SoC file has no [pins]\n");
+		say("speaker: not on this board: its board.dts lists no \"speaker-aw88261\", or its SoC file has no [pins]\n");
 		return false;
 	}
 	if (!wired()) {
@@ -1081,7 +1081,7 @@ hakios_speaker_init(void)
 	}
 	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261)) {
 		/* every address below is one phone's: not on a board that does not say it is wired the same */
-		say("speaker: disabled: this board's board.toml lists no \"speaker-aw88261\"\n");
+		say("speaker: disabled: this board's board.dts lists no \"speaker-aw88261\"\n");
 		probe_level = 0;
 		return;
 	}

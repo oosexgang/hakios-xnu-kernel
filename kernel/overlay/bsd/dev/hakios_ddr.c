@@ -227,7 +227,7 @@ hakios_ddr_init(bool with_cpufreq)
 		return;                 /* not asked for: nothing read, nothing said */
 	}
 	if (!hakios_board_has(HAKIOS_HAS_DDR_RPMH)) {
-		tell("ddr: no RPMh vote on this board (its board.toml lists no \"ddr-rpmh\")\n");
+		tell("ddr: no RPMh vote on this board (its board.dts lists no \"ddr-rpmh\")\n");
 	} else if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0) {
 		tell("ddr: no RPMh vote: the SoC file has no [rpmh]\n");
 	} else if (level == 1) {

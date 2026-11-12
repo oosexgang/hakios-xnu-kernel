@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""The clocks of a serial engine, for [touch] of a board file, out of Linux's clock driver for the SoC.
+"""The clocks of a serial engine, for touch { } of a board file, out of Linux's clock driver for the SoC.
 
 usage: tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE
 
 A touch controller on SPI hangs on one of the SoC's serial engines. The engines come in groups
 ("wrappers"), and Linux's drivers/clk/qcom/gcc-SOC.c names the clocks by them: the controller's bus node
 in the device tree says which (its clocks property: <&gcc GCC_QUPV3_WRAP1_S5_CLK> is wrapper 1,
-engine 5). For that engine this prints the three lines of [touch] that are in no device tree:
+engine 5). For that engine this prints the three lines of touch { } that are in no device tree:
 
-    clocks = [0x18004, 0x18008, 0x185fc]
-    vote_register = 0x52008
-    votes = [18, 19, 20, 21, 27]
+    clocks = <0x18004 0x18008 0x185fc>;
+    vote-register = <0x52008>;
+    votes = <18 19 20 21 27>;
 
 It reads the file; nothing is fetched. The vendor's kernel for the phone has the same file with the
 same structures (gcc-CODENAME.c)."""
@@ -37,7 +37,7 @@ def branch(text, name):
 
 
 def touch_lines(text, wrapper, engine):
-    """The three lines of [touch] for that engine, as text."""
+    """The three lines of touch { } for that engine, as text."""
     names = (f'gcc_qupv3_wrap{wrapper}_core_2x_clk', f'gcc_qupv3_wrap{wrapper}_core_clk',
              f'gcc_qupv3_wrap_{wrapper}_m_ahb_clk', f'gcc_qupv3_wrap_{wrapper}_s_ahb_clk',
              f'gcc_qupv3_wrap{wrapper}_s{engine}_clk')
@@ -46,11 +46,11 @@ def touch_lines(text, wrapper, engine):
     if len(registers) != 1:
         raise NotFound('the five clocks are voted for in more than one register (' +
                        ', '.join(f'{r:#x}' for r in registers) + '): the drivers take one')
-    clocks = ', '.join(f'{found[i][0]:#x}' for i in (2, 3, 4))
-    votes = ', '.join(str(bit) for halt, enable, bit in found)
-    return (f'clocks = [{clocks}]             # {names[2]}, {names[3]}, {names[4]}: halt_reg\n'
-            f'vote_register = {registers[0]:#x}           # their enable_reg\n'
-            f'votes = [{votes}]               # enable_mask of {names[0]}, {names[1]} and the three above\n')
+    clocks = ' '.join(f'{found[i][0]:#x}' for i in (2, 3, 4))
+    votes = ' '.join(str(bit) for halt, enable, bit in found)
+    return (f'clocks = <{clocks}>;        // {names[2]}, {names[3]}, {names[4]}: halt_reg\n'
+            f'vote-register = <{registers[0]:#x}>;      // their enable_reg\n'
+            f'votes = <{votes}>;          // enable_mask of {names[0]}, {names[1]} and the three above\n')
 
 
 def main(argv):

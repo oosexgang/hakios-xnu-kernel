@@ -1,6 +1,6 @@
 /*
  * The panel's light, for any device: one driver; what differs between devices is the board's data
- * (hakios_board.h, from devices/NAME/board.toml), and the arithmetic is hakios_backlight_core.h
+ * (hakios_board.h, from devices/NAME/board.dts), and the arithmetic is hakios_backlight_core.h
  * (tested on the host: tests/backlight_test.c, and the driver itself: tests/backlight_driver_test.c).
  *
  * What iOS sees: the sysctls hw.backlight.* (any user may write the first four; the injected library
@@ -51,7 +51,7 @@
  *   bl_auto=1          automatic brightness from the start
  *   bl_floor=N         backend soft: what is kept of a pixel at level 0, of 256 (default 24)
  *
- * Adding a device: [backlight] in its devices/NAME/board.toml -- the panel's
+ * Adding a device: [backlight] in its devices/NAME/board.dts -- the panel's
  * qcom,mdss-dsi-bl-min-level / -max-level, qcom,mdss-dsi-bl-inverted-dbv (MSB first), the panel's mode --
  * and in its SoC's file the DSI controller (mdss_dsi0 "dsi_ctrl") and the display clock controller's
  * offsets (Linux dispcc-*.c). `tools/boards.py new --dts` reads most of it from the device tree. Until
@@ -82,7 +82,7 @@ enum bl_backend { BL_NONE, BL_DCS, BL_SOFT };
 static const char *const bl_backend_names[] = { "none", "dcs", "soft" };
 
 /*
- * What is used: the board's values (hakios_board.h: devices/NAME/board.toml [backlight], and its SoC's
+ * What is used: the board's values (hakios_board.h: devices/NAME/board.dts [backlight], and its SoC's
  * [clocks] and [display]) with the boot-args over them.
  */
 struct bl_profile {

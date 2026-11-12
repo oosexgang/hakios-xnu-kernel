@@ -9,7 +9,7 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | --- | --- |
 | `loader.c` | The loader: its entry point, and the list of its parts. One compilation unit. |
 | `src/` | The parts, by topic (below). `src/platform.h` has `struct platform`, which says what the loader needs to know of a machine. |
-| `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`[loader]` of `devices/NAME/board.toml`) and `soc/SOC.toml` (`[platform]`). |
+| `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`[loader]` of `devices/NAME/board.dts`) and `soc/SOC.dtsi` (`[platform]`). |
 | `efi.h` | The parts of UEFI it uses. |
 | `identity.h`, `mkidentity.py` | Which iPhone iOS is told it runs on, taken from that iPhone's own device tree. |
 | `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments. |
