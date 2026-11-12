@@ -2,7 +2,8 @@
 
 // A chip that is nobody's: the PMIC arbiter and the CPU frequency block at addresses unlike any real
 // SoC's, this system as the arbiter's third (ee = 2), two groups of cores. For the tests of what must
-// come from the SoC file and not from the code (tests/buttons_driver_test.c, cpufreq_driver_test.c);
+// come from the SoC file and not from the code (tests/buttons_driver_test.c, cpufreq_driver_test.c,
+// mic_wiring_test.c);
 // tests/run.sh takes this directory with --soc.
 / {
 	name = "soc-test";
@@ -20,6 +21,19 @@
 		shmem = <0x80a40000>;
 		mailbox = <0x1c900000>;
 		doorbell = <0x208>;
+	};
+
+	// (the microphones' blocks where no real chip has them; three SoundWire pins, not an SM7325's four, with other
+	// slew fields; the hardware control register at another offset in its page)
+	lpass {
+		tx-macro = <0x04220000>;
+		va-macro = <0x04370000>;
+		tx-swr = <0x04230000>;
+		tx-swr-hctl = <0x042a90b0>;
+		lpi = <0x043c0000>;
+		lpi-slew = <0x0455a000>;
+		swr-tx-pins = <3 4 5>;
+		swr-tx-slew = <8 10 12>;
 	};
 
 	// (RPMh's command database and sequencer elsewhere too, the slot sets further into the sequencer)

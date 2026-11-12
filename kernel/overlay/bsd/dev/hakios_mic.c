@@ -473,6 +473,19 @@ static struct block lpi_slew = { "the LPASS pins' slew rates", 0, 0x1000 };     
 static uint32_t found_pin_cfg[4], found_pin_dir[4], found_slew, slew_mask;   /* (the slew bits the pins have) */
 static bool pins_taken;
 
+/* where each block is: the SoC file's pins { } and lpass { } */
+static void
+blocks_from_board(void)
+{
+	tlmm.phys = hakios_board()->pins.tlmm;
+	tx_macro.phys = hakios_board()->lpass.tx_macro;
+	va_macro.phys = hakios_board()->lpass.va_macro;
+	tx_swr.phys = hakios_board()->lpass.tx_swr;
+	tx_hctl.phys = hakios_board()->lpass.tx_swr_hctl & ~0xfffu;
+	lpi.phys = hakios_board()->lpass.lpi;
+	lpi_slew.phys = hakios_board()->lpass.lpi_slew;
+}
+
 static bool
 pins_on(void)
 {
@@ -1815,13 +1828,7 @@ hakios_mic_dsp_up(void)
 		level = 0;
 		return;
 	}
-	tlmm.phys = hakios_board()->pins.tlmm;
-	tx_macro.phys = hakios_board()->lpass.tx_macro;
-	va_macro.phys = hakios_board()->lpass.va_macro;
-	tx_swr.phys = hakios_board()->lpass.tx_swr;
-	tx_hctl.phys = hakios_board()->lpass.tx_swr_hctl & ~0xfffu;
-	lpi.phys = hakios_board()->lpass.lpi;
-	lpi_slew.phys = hakios_board()->lpass.lpi_slew;
+	blocks_from_board();
 	level = level > 4 ? 4 : level;
 	PE_parse_boot_argn("mic_secs", &mic_secs, sizeof(mic_secs));
 	PE_parse_boot_argn("mic_input", &smic_input, sizeof(smic_input));
