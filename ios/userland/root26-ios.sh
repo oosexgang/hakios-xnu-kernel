@@ -303,3 +303,8 @@ rm -rf "$F"
 mkdir -p "$F/sbin" "$F/redwood" "$F/dev" "$F/flash"
 cp "$OBJ/stage0" "$F/sbin/launchd"
 python3 "$IOS_REPO/userland/tools/apfs/mkapfs.py" -o "$IOS/flashboot.apfs" Boot="$F" | tail -1
+# (said again last: the warning above scrolls by in the middle of the build, and an image without the GPU's firmware
+# boots to the software renderer, a run's worth of measurements of nothing)
+if [ ${#PLAIN[@]} = 0 ]; then
+	echo "root26-ios.sh: NO FIRMWARE in this image (board: ${BOARD:-none}; export HAKIOS_DEVICES?): no GPU, no Wi-Fi" >&2
+fi
