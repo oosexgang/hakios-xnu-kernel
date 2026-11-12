@@ -81,7 +81,10 @@ The loader knows the boards whose packages were present when it was built. The r
 no phone: `tools/device.py add NAME` brings a phone's package in from the `devices` branch. Built with
 none, the loader knows only the emulator's board.
 
-No phone is named in the loader's code. What differs between boards beyond the framebuffer is in `[loader]`
+No phone is named in the loader's code, and one phone's values are in it in one place only: the
+GPT entry of the partition a write may reach (`src/ufs_block.c`, `BLOCK_DARWIN_…`), which is
+redwood's. On another phone it matches nothing, so nothing is written there; see "What is still
+tied" in [docs/porting.md](../docs/porting.md). What differs between boards beyond the framebuffer is in `[loader]`
 as well: `uefi_charger = true` says the firmware has Qualcomm's charger protocols, and the loader then
 reads the battery through them.
 

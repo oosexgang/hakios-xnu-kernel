@@ -221,5 +221,13 @@ Stated plainly, so nobody finds out the hard way:
   RPMh, its SMMU and the way to its other processors are comes from the SoC file (`[pins]`, `[clocks]`,
   `[rpmh]`, `[smmu]`, `[ipc]`); which pin a part is on, its
   bus and the names of its supplies are still in each driver.
+- **Writing to the phone's storage.** The loader serves the kernel's reads of any partition, but a
+  write into one partition only: the port's own, proved by its GPT entry. That entry (both GUIDs, the
+  first and last block, and the block from which writing is allowed) is redwood's and is written into
+  the code, in the loader (`loader/src/ufs_block.c`, `BLOCK_DARWIN_…`, `BLOCK_WRITE_FIRST`) and again
+  in the kernel (`bsd/dev/redwood_ufs.c`, `UFS_WRITE_FIRST`). On another phone nothing matches and no
+  write is served: reading works, the data volume lives in RAM. These are constants on purpose: a
+  request has to pass the loader's check, the kernel's and the firmware's own, and a value that
+  decides where a write may go is not one to get wrong in a data file.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).
