@@ -174,6 +174,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   blocks was followed into whatever memory lay after the RAM disk, and the check that the image fits
   the RAM disk added offsets and sizes that could wrap. Both are refused now; a damaged image is
   reported.
+- **The loader's USB commands check their bounds without sums that wrap.** `oem ramdisk patch` followed by
+  `oem ramdisk none` left the patch armed with no image under it, and the next `download:` was allowed a
+  size that wrapped and wrote past the memory window; `oem read` took an offset near 2^64 as inside the
+  partition. Both are refused now.
 - **A loader's storage page that no request could be made with is not used.** A buffer that is not
   whole blocks, a block size of zero or not a power of two, a partition size that overflows: the kernel
   divided and counted with them. It refuses such a page now, with the reason.

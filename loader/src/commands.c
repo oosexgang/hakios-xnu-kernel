@@ -79,8 +79,10 @@ fb_command(char *cmd)
 			}
 			len = parse_number(c, 16);
 			bio = partition_named(name);
+			/* (inside the partition without adding the two: an offset near 2^64 would make the sum small) */
 			if (bio == NULL || len == 0 || len > sizeof(out_buf) || off % bio->media->block_size ||
-			    len % bio->media->block_size || off + len > (bio->media->last_block + 1) * bio->media->block_size ||
+			    len % bio->media->block_size || off > (bio->media->last_block + 1) * bio->media->block_size ||
+			    len > (bio->media->last_block + 1) * bio->media->block_size - off ||
 			    EFI_ERROR(bio->read_blocks(bio, bio->media->media_id, off / bio->media->block_size, len, out_buf))) {
 				fb_reply("FAIL", "no such partition, or out of it");
 				return;
@@ -140,6 +142,8 @@ fb_command(char *cmd)
 
 			if (starts_with(cmd, "oem ramdisk none")) {
 				resident_rd_size = 0;
+				download_to_ramdisk = 0;        /* a patch or an append asked for before has nothing to go into */
+				download_ramdisk_append = 0;
 				fb_reply("OKAY", "");
 				return;
 			}
@@ -168,7 +172,11 @@ fb_command(char *cmd)
 			download_to_ramdisk = 0;
 			uint64_t before = 0;
 
-			if (to_ramdisk == 2) {
+			if (to_ramdisk == 2 && download_ramdisk_patch >= resident_rd_size) {
+				/* the image the patch was for is not there any more: nothing beyond its end, and no end */
+				fb_reply("FAIL", "no resident image there");
+				return;
+			} else if (to_ramdisk == 2) {
 				/* a patch: inside what is there, nothing beyond its end */
 				before = download_ramdisk_patch;
 				limit = resident_rd_size - before;
