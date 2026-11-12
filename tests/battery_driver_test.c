@@ -122,7 +122,8 @@ read_and_followed(void)
 	CHECK(redwood_battery_temperature() == 31, "... and for the flashlight's guard: %d C", redwood_battery_temperature());
 	CHECK(mapped == 1 && mapped_elsewhere == 0, "the cache's page is mapped once, and nothing else");
 	CHECK(logged("battery: Qualcomm UEFI cache at pa") && logged("polling every 5 seconds"), "said where a run can be watched: %s", log_text);
-	CHECK(logged("battery: SOC=73%, V=4012 mV, I=850 mA, T=31 C"), "the first reading too: %s", log_text);
+	/* (the thread takes the values, then says them: the line is waited for on its own) */
+	EVENTUALLY(logged("battery: SOC=73%, V=4012 mV, I=850 mA, T=31 C"), 2000, "the first reading too: %s", log_text);
 	publish(VALID | PRESENT | VOLTAGE_VALID, 72, 3987, -410, 33);
 	WAIT_FOR(s("battery_soc") == 72 && s("battery_current_ma") == -410 && s("battery_charging") == 0 && s("battery_charger_present") == 0, 2000);
 	CHECK(s("battery_soc") == 72 && s("battery_current_ma") == -410 && s("battery_charging") == 0 &&

@@ -282,7 +282,8 @@ fault_while_lit(void)
 	spmi_set(&flash_model, REG_STATUS2, 0x20);      /* over-temperature, the first threshold */
 	WAIT_FOR(!lit_now(), 2000);
 	CHECK(!lit_now(), "off when the module says it is too hot");
-	CHECK(logged("no more writing to the flash module for the rest of the run"), "said in the log");
+	/* (the light goes off, then the line is written: waited for on its own) */
+	EVENTUALLY(logged("no more writing to the flash module for the rest of the run"), 2000, "said in the log");
 	spmi_set(&flash_model, REG_STATUS2, 0);
 	ask_for(0);
 	ask_for(1000);
