@@ -28,7 +28,7 @@ lives here, with the code, and not in a phone's package.
 | `cpufreq { }` | The EPSS block and its groups of cores | `cpufreq-epss`, a board's `thermal { }` |
 
 Every key is explained in `devices/_template/soc.dtsi`. A board needs only the sections of what it
-turns on: one with `features = []` and a software backlight needs none.
+turns on: one with `features = <>;` (none) and a software backlight needs none.
 
 ## Adding a chip
 

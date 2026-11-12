@@ -39,7 +39,8 @@ brings it into a checkout.
 
 - **One kernel for every board.** The board is found at boot; a driver starts only where the board's
   file lists it, so a machine nobody described is never written to.
-- **Boards are data.** A phone is one TOML file and its chip another. Addresses, pins, firmware
+- **Boards are data.** A phone is one file and its chip another, written as a device tree source is
+  (`board.dts`, `SOC.dtsi`). Addresses, pins, firmware
   directories and boot defaults live there, not in the drivers. A tool starts both files from the
   phone's Android device tree and says what can be turned on next.
 - **Device packages.** Phones are kept apart from the code. The kernel, the loader and the libraries

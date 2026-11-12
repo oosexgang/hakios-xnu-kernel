@@ -23,7 +23,7 @@ The builds and `make check` run the same check and stop on the same lines. Every
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `not TOML: ...` | The file does not parse. The rest of the line is the parser's reason, with line and column. | Fix the syntax there. Nothing else of that file is checked until it parses. |
+| `FILE: line N: ...` | A board or SoC file is not written as the format wants (devices/README.md, "The format"): a property without its `;`, a value that is neither `"..."` nor `<...>`, a label or a reference. | Fix the syntax on that line. Nothing else of that file is checked until it parses. |
 | `unknown key "KEY" (known: ...)`, `unknown section [SECTION] (known: ...)` | The file has a key or a section this checkout does not know: a typo, or a package written for newer code. | Compare with the list in the message. A package and the code change together when a key is added ([devices/README.md](../devices/README.md#adding-a-kind-of-data)). |
 | `"KEY" is missing`, `KEY = VALUE: ... expected`, `KEY = VALUE: one of ...` | A required key is not there, or a value is of the wrong kind. | The template says what each key takes. |
 | `name = 'X': the directory is devices/NAME`, `name = 'X': the file is SOC.dtsi` | `name` in the file is not the name of its directory (a board) or of the file (a SoC). | Make the two the same. Names are lower-case letters, digits and dashes. |

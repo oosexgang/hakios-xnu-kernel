@@ -74,7 +74,7 @@ tools/boards.py compare mido --dts phone.dts     # each value: as in the tree, d
 There are no tables to regenerate by hand: every build makes them itself from the packages that are
 present (`make boards` validates and writes them into `build/boards/` if you want to look at them).
 
-Leave `features = []` for now. Every key is explained in `devices/_template/board.dts` and
+Leave `features = <>;` (none) for now. Every key is explained in `devices/_template/board.dts` and
 `devices/_template/soc.dtsi`. To see how an existing phone is described, bring its package in:
 `tools/device.py available` lists them, `tools/device.py add renoir` copies one into `devices/`.
 

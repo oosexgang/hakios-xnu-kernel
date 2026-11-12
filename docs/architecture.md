@@ -94,7 +94,7 @@ soc/sm7350.dtsi, soc/… ────────────┘  (run by the bu
   described.
 
 Details and every key: [devices/README.md](../devices/README.md), `devices/_template/board.dts` and
-`soc.toml`.
+`devices/_template/soc.dtsi`.
 
 ## The kernel
 
