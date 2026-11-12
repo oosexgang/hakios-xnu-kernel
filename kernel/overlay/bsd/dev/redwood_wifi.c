@@ -1994,20 +1994,10 @@ step_start(void)
 #define ITEM_GLINK_THEIR_QUEUE  480
 #include "hakios_glink_queue.h"             /* the descriptor's words, and the arithmetic of the two queues' marks */
 
-enum {
-	GLINK_VERSION = 0, GLINK_VERSION_ACK = 1, GLINK_OPEN = 2, GLINK_CLOSE = 3, GLINK_OPEN_ACK = 4, GLINK_INTENT = 5,
-	GLINK_DONE = 6, GLINK_INTENT_REQUEST = 7, GLINK_INTENT_REQUEST_ACK = 8, GLINK_DATA = 9, GLINK_CLOSE_ACK = 11,
-	GLINK_DATA_MORE = 12, GLINK_READ_NOTIFY = 13, GLINK_DONE_REUSE = 14, GLINK_SIGNALS = 15,
-};
-#define GLINK_VERSION_1         1
 #define GLINK_INTENT_REUSE      1u              /* the feature Linux offers over this transport */
 #define GLINK_CHANNEL           "IPCRTR"
 #define GLINK_US                1               /* our number for that channel */
 
-struct glink_message {
-	uint16_t command, param1;
-	uint32_t param2;
-};
 struct glink_packet {                           /* a whole message from the channel, waiting for the link's thread */
 	struct glink_packet *next;
 	uint32_t length;
@@ -2193,24 +2183,21 @@ glink_pump(void)
 
 	while (glink.up && !glink.broken) {
 		uint32_t waiting = glink_waiting(), length;
-		uint64_t whole = sizeof(message);       /* (64 bits: the counts are the DSP's, and 32-bit sums of them wrap) */
+		uint64_t whole;
+		uint32_t piece = 0;
 
 		if (waiting < sizeof(message)) {
 			return;
 		}
 		glink_peek(&message, 0, sizeof(message));
-		if (message.command == GLINK_OPEN) {
-			whole += message.param2;
-		} else if (message.command == GLINK_INTENT) {
-			whole += 8ull * message.param2;
-		} else if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
+		if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
 			if (waiting < 16) {
 				return;
 			}
 			glink_peek(words, 8, 8);                /* the size of this piece, and what is still to come */
-			whole = 16ull + words[0];
+			piece = words[0];
 		}
-		whole = (whole + 7) & ~7ull;
+		whole = glink_message_length(&message, piece);   /* (64 bits: the counts are the DSP's) */
 		length = whole > UINT32_MAX ? UINT32_MAX : (uint32_t)whole;
 		if (whole > glink.theirs_size - 8) {
 			printf("wifi: glink: A MESSAGE OF %u BYTES (%s %u %#x): not believed, and nothing more is read\n", length,

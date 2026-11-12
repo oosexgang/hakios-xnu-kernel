@@ -4,7 +4,9 @@
  * and the tail of the other's. A mark the other side moves is read from memory it can write at any
  * time: nothing here trusts one to be inside its queue.
  *
- * What goes through the queues, and whose doorbell is rung, is each driver's.
+ * What goes through the queues is a message of a command and two words, and what follows some of them:
+ * their numbers, and how long each is, are here too. Whose doorbell is rung, and what is done with each,
+ * is each driver's.
  */
 #ifndef HAKIOS_GLINK_QUEUE_H
 #define HAKIOS_GLINK_QUEUE_H
@@ -82,6 +84,39 @@ glink_queue_put(volatile uint8_t *queue, uint32_t size, uint32_t head, const voi
 		    i < length ? ((const uint8_t *)second)[i - first_length] : 0;
 	}
 	return padded;
+}
+
+/* What goes through the queues: messages of a command and two words, and what follows some of them. */
+enum {
+	GLINK_VERSION = 0, GLINK_VERSION_ACK = 1, GLINK_OPEN = 2, GLINK_CLOSE = 3, GLINK_OPEN_ACK = 4, GLINK_INTENT = 5,
+	GLINK_DONE = 6, GLINK_INTENT_REQUEST = 7, GLINK_INTENT_REQUEST_ACK = 8, GLINK_DATA = 9, GLINK_CLOSE_ACK = 11,
+	GLINK_DATA_MORE = 12, GLINK_READ_NOTIFY = 13, GLINK_DONE_REUSE = 14, GLINK_SIGNALS = 15,
+};
+#define GLINK_VERSION_1         1
+struct glink_message {
+	uint16_t command, param1;
+	uint32_t param2;
+};
+
+/*
+ * How many bytes the message at the head of the other side's queue takes, filled up to eight: its eight,
+ * and a channel's name after an OPEN (param2 bytes), the intents after an INTENT (param2 of eight bytes),
+ * a piece of data after DATA (eight more, then `piece' bytes: the first word after the message). The
+ * counts are the other side's: the sum is 64 bits wide, for in 32 it wraps -- 2^29 intents are 0 bytes.
+ */
+static inline uint64_t
+glink_message_length(const struct glink_message *message, uint32_t piece)
+{
+	uint64_t whole = sizeof(*message);
+
+	if (message->command == GLINK_OPEN) {
+		whole += message->param2;
+	} else if (message->command == GLINK_INTENT) {
+		whole += 8ull * message->param2;
+	} else if (message->command == GLINK_DATA || message->command == GLINK_DATA_MORE) {
+		whole = 16ull + piece;
+	}
+	return (whole + 7) & ~7ull;
 }
 
 #endif /* HAKIOS_GLINK_QUEUE_H */

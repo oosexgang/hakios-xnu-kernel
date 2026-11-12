@@ -148,12 +148,40 @@ shapes(void)
 	CHECK(!glink_queues_usable(1028, 0x2000) && !glink_queues_usable(0x2000, 1025), "one that is not whole eights");
 }
 
+/* how long a message the other side sends is: what follows it counted, filled up to eight, and no count wraps */
+static void
+message_lengths(void)
+{
+	struct glink_message m = { .command = GLINK_VERSION, .param1 = 1, .param2 = 0x7f };
+
+	CHECK(glink_message_length(&m, 0) == 8, "a message alone: 8");
+	m.command = GLINK_OPEN;
+	m.param2 = 5;                           /* a name of five bytes */
+	CHECK(glink_message_length(&m, 0) == 16, "an OPEN with a name of 5: 16, not 13: %llu", (unsigned long long)glink_message_length(&m, 0));
+	m.command = GLINK_INTENT;
+	m.param2 = 3;                           /* three intents of eight bytes */
+	CHECK(glink_message_length(&m, 0) == 32, "three intents: 32");
+	m.command = GLINK_DATA;
+	CHECK(glink_message_length(&m, 100) == 120, "a piece of 100 bytes: 16 + 100, filled up: 120");
+	m.command = GLINK_DATA_MORE;
+	CHECK(glink_message_length(&m, 0) == 16, "an empty piece: 16");
+	/* counts that 32 bits would wrap */
+	m.command = GLINK_INTENT;
+	m.param2 = 1u << 29;
+	CHECK(glink_message_length(&m, 0) == 8 + (8ull << 29), "2^29 intents are 4 GiB, not 0: %llu", (unsigned long long)glink_message_length(&m, 0));
+	m.command = GLINK_OPEN;
+	m.param2 = 0xfffffff8u;
+	CHECK(glink_message_length(&m, 0) > 0xffffffffull, "a name of nearly 4 GiB is not 0 bytes");
+	m.command = GLINK_DATA;
+	CHECK(glink_message_length(&m, 0xfffffff0u) > 0xffffffffull, "nor is such a piece");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "unread", unread }, { "room", room }, { "in_and_out", in_and_out }, { "around_the_end", around_the_end },
-		{ "marks_of_nonsense", marks_of_nonsense }, { "shapes", shapes },
+		{ "marks_of_nonsense", marks_of_nonsense }, { "shapes", shapes }, { "message_lengths", message_lengths },
 	};
 
 	if (argc < 2) {
