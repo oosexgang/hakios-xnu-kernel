@@ -313,7 +313,7 @@ say_kept(void)
 static void
 settle(void)
 {
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 /* ---- options --------------------------------------------------------------------------------------- */
@@ -1575,7 +1575,7 @@ step_header(void)
 	}
 	memcpy((void *)page, image.header, image.header_size);
 	for (vm_offset_t line = page; line < page + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line));       /* TrustZone reads memory, not this processor's cache */
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");       /* TrustZone reads memory, not this processor's cache */
 	}
 	settle();
 	result = scm("to take the Wi-Fi DSP's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_WPSS, kvtophys(page), 0, &answer);
@@ -3397,7 +3397,7 @@ radio_enter(uint64_t address, uint64_t physical, uint64_t size, uint64_t attribu
 		level3[at >> 12 & 0x1ff] = (physical + offset) | attributes;
 	}
 	for (vm_offset_t line = radio_space.tables; line < radio_space.tables + 4096 * RADIO_TABLES; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line));
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
 	}
 	settle();
 	return true;

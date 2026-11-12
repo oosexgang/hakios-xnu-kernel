@@ -634,9 +634,9 @@ space_on(void)
 		third[(AUDIO_ADDRESSES >> 12 & 0x1ff) + page] = kvtophys(buffer + 4096 * page) | AUDIO_PTE;
 	}
 	for (vm_offset_t line = space.tables; line < space.tables + 3 * 4096; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line));
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
 	}
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 	table_root = kvtophys(space.tables) | (uint64_t)space.context << 48;
 	say("sound: THE SMMU IS ABOUT TO BE WRITTEN: context %u gets page tables of ours (root %#llx) for the %u KB of the periods and the microphones' "
 	    "at %#llx, and match register %u sends stream %#x through it\n", space.context, table_root & PTE_ADDRESS,
@@ -944,9 +944,9 @@ period_fill(unsigned period, bool silent)
 		samples[2 * frame + 1] = sample;
 	}
 	for (vm_offset_t line = (vm_offset_t)samples; line < (vm_offset_t)samples + PERIOD_BYTES; line += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (line));        /* the DSP reads memory, not our caches */
+		__asm__ volatile ("dc cvac, %0" : : "r" (line) : "memory");        /* the DSP reads memory, not our caches */
 	}
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 static bool
@@ -1148,9 +1148,9 @@ period_fill_ios(unsigned period)
 	}
 	guard_periods++;
 	for (vm_offset_t line = (vm_offset_t)samples; line < (vm_offset_t)samples + PERIOD_BYTES; line += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (line));
+		__asm__ volatile ("dc cvac, %0" : : "r" (line) : "memory");
 	}
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 static void

@@ -1200,7 +1200,7 @@ step_header(void)
 	}
 	memcpy((void *)page, image.header, image.header_size);
 	for (vm_offset_t line = page; line < page + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line));
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
 	}
 	settle();
 	result = scm("to take the audio DSP's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_ADSP, kvtophys(page), 0, &answer);

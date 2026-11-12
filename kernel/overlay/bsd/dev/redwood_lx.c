@@ -106,9 +106,9 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 	physical = kvtophys(cached);
 	bzero((void *)cached, size);
 	for (vm_offset_t line = cached; line < cached + size; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line));
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
 	}
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 	uncached = ml_io_map_unmappable(physical, size, VM_WIMG_WCOMB);
 	if (uncached == 0 || !redwood_wifi_radio_map(physical, size, address)) {
 		return NULL;

@@ -1138,7 +1138,7 @@ extern void loader_return(void);
 static void
 settle(void)
 {
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 /* Push what this processor has written to a stretch of memory out of its cache, and forget it: the GPU block reads memory. */
@@ -1146,7 +1146,7 @@ static void
 to_memory(vm_offset_t start, vm_size_t size)
 {
 	for (vm_offset_t line = start & ~(vm_offset_t)63; line < start + size; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line));
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
 	}
 	settle();
 }

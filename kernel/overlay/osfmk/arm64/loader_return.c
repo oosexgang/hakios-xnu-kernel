@@ -418,20 +418,20 @@ loader_jump(uint64_t reason, uint64_t code)
 	 * not survive that: write the log back to RAM first.
 	 */
 	for (uintptr_t p = (uintptr_t)loader_log & ~63UL; p < (uintptr_t)loader_log + loader_log_len; p += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (p));
+		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 	}
 	/* ... and a screen recording, and the note of where it is */
 	for (uintptr_t p = loader_recording[2] & ~63UL; p < loader_recording[2] + loader_recording[1]; p += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (p));
+		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 	}
 	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_recording));
 	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_recording + 16));
 	for (uintptr_t p = loader_sound[2] & ~63UL; p < loader_sound[2] + loader_sound[1]; p += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (p));
+		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 	}
 	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_sound));
 	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_sound + 16));
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 
 	register uint64_t r_ttbr0 __asm__("x0") = static_kvtophys(loader_l1);
 	register uint64_t r_log __asm__("x2") = static_kvtophys(loader_log);

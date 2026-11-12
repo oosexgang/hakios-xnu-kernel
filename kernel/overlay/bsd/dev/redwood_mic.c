@@ -1600,9 +1600,9 @@ listen(bool for_ios)
 			int16_t stereo[2 * 240];
 
 			for (vm_offset_t line = (vm_offset_t)samples; line < (vm_offset_t)samples + MIC_PERIOD_BYTES; line += 64) {
-				__asm__ volatile ("dc ivac, %0" : : "r" (line));
+				__asm__ volatile ("dc ivac, %0" : : "r" (line) : "memory");
 			}
-			__asm__ volatile ("dsb sy");
+			__asm__ volatile ("dsb sy" ::: "memory");
 			got = got > MIC_PERIOD_FRAMES ? MIC_PERIOD_FRAMES : got;
 			empty += got == 0;
 			for (uint32_t i = 0; i < got; i++) {
