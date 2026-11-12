@@ -199,7 +199,7 @@ class Packages(Sandbox):
             (elsewhere / 'odd/board.dts').write_text(board('odd', more='\twarp {\n\t\tfactor = <9>;\n\t};\n'))
             code, _, complained = self.run_tool('add', 'odd', '--from', str(elsewhere))
             self.assertEqual(code, 1)
-            self.assertIn('devices/odd/board.dts: unknown section [warp]', complained)
+            self.assertIn('devices/odd/board.dts: unknown section warp { }', complained)
             self.assertIn('does not fit this checkout', complained)
         finally:
             shutil.rmtree(elsewhere)

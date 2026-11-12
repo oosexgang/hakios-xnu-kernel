@@ -112,9 +112,9 @@ EOF
 says "a board is started from the device tree" "wrote devices/testphone/board.dts" \
 	"$B" new testphone --soc sm9999 --dts "$W/phone.dts" --description "Maker Testphone"
 check "... and its SoC, which is new" test -f "$R/soc/sm9999.dtsi"
-refuses "what a device tree cannot say is asked for by name" "gcc_disp_ahb_cbcr" "$B" check
+refuses "what a device tree cannot say is asked for by name" "gcc-disp-ahb-cbcr" "$B" check
 check "... and nothing else is wrong with what was written" \
-	sh -c "\"$B\" check 2>&1 | grep -v 'gcc_disp_ahb_cbcr, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in \\[clocks\\]' | grep -q . && exit 1 || exit 0"
+	sh -c "\"$B\" check 2>&1 | grep -v 'gcc-disp-ahb-cbcr, dispcc-mdss-gdscr, dispcc-mdss-ahb-cbcr in clocks { }' | grep -q . && exit 1 || exit 0"
 sed -i -e 's|// gcc-disp-ahb-cbcr = <0x\.\.\.>;|gcc-disp-ahb-cbcr = <0x33004>;|' \
 	-e 's|// dispcc-mdss-gdscr = <0x\.\.\.>;|dispcc-mdss-gdscr = <0x4000>;|' \
 	-e 's|// dispcc-mdss-ahb-cbcr = <0x\.\.\.>;|dispcc-mdss-ahb-cbcr = <0x4080>;|' "$R/soc/sm9999.dtsi"
@@ -129,7 +129,7 @@ check "without a loader { } section the loader does not list the board" \
 	sh -c "! grep -q platform_testphone \"$R/build/boards/platforms.h\""
 printf '\n/ {\n\tloader {\n\t\tfb-base = <0x9C000000>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 refuses "the I/O window, which no tree has, is asked for when the loader is to know the board" \
-	'\[loader\] needs io_base and io_size in \[platform\]' "$B" check
+	'loader { } needs io-base and io-size in platform { }' "$B" check
 sed -i -e 's|// io-base = <0x00400000>;|io-base = <0x01000000>;|' -e 's|// io-size = <0x3FC00000>;|io-size = <0x3F000000>;|' "$R/soc/sm9999.dtsi"
 check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/build/boards/platforms.h\""
 check "... with the machine as the SoC file has it" \
@@ -201,7 +201,7 @@ sed -i 's/floor-mhz = <900 1200 1300>;/floor-mhz = <900 1200>;/' "$R/devices/tes
 check "... and taken when they do" sh -c "\"$B\" check && \"$B\" gen"
 says "the thermal limiter gets the SoC's sensor and the board's floors" "thermal tsens=0x4411000,0 floors=900,1200" ask testphone
 says "the tool says what can be turned on next" "buttons-pmic *can be listed" "$B" status testphone
-says "... and what the rest waits for" "gpu-a660 *needs \[adreno\] in soc/sm9999.dtsi, .*\[gpu\] in the board file" "$B" status testphone
+says "... and what the rest waits for" "gpu-a660 *needs adreno { } in soc/sm9999.dtsi, .*gpu { } in the board file" "$B" status testphone
 # the keys: the tool found the arbiter and both peripherals in the tree, so the feature is all there is to add
 says "the SoC file has the PMIC arbiter of the tree" "spmi core=0x4440000 cnfg=0x440a000 observer=0x6600000 channels=0x4600000 ee=0" \
 	ask testphone
@@ -211,7 +211,7 @@ sed -i 's/"cpufreq-epss"/"cpufreq-epss", "buttons-pmic"/' "$R/devices/testphone/
 check "the keys' feature is added" sh -c "\"$B\" check && \"$B\" gen"
 says "... and the kernel has it" "buttons=1 pon=0x208" ask testphone
 sed -i '/^\tbuttons {/,/^\t};/d' "$R/devices/testphone/board.dts"
-refuses "without its section the feature is refused" 'feature "buttons-pmic" needs \[buttons\] in the board file' "$B" check
+refuses "without its section the feature is refused" 'feature "buttons-pmic" needs buttons { } in the board file' "$B" check
 printf '\n/ {\n\tbuttons {\n\t\tpon = <0x208>;\n\t\tvolume-up = <0x2c8>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 check "... and taken again with it written by hand" "$B" check
 sed -i 's/"cpufreq-epss"/"cpufreq-epss", "torch-pm8350c", "warp-drive"/' "$R/devices/testphone/board.dts"

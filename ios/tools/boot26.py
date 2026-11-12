@@ -28,7 +28,7 @@ import boards  # noqa: E402  (devices/NAME/board.dts: what the phone must say it
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--board', default=os.environ.get('HAKIOS_BOARD'),
                help='the phone, by its package\'s name (tools/boards.py list). Without it: $HAKIOS_BOARD, or the '
-                    'one package here that has a [boot] section')
+                    'one package here that has a boot { } section')
 p.add_argument('--wifi-mac', required=True, metavar='MAC', help="this handset's device Wi-Fi MAC")
 p.add_argument('--kernel', type=Path,
                default=DK / 'xnu-12377-hakios/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837')

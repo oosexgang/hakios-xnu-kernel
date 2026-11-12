@@ -135,6 +135,10 @@ BOARD_SCHEMA = {
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
+# every key and section name with an underscore, as a word: what as_written() writes with dashes
+KEY_WITH_UNDERSCORE = re.compile(r'(?<![\w.])(' + '|'.join(sorted(
+    {key for schema in (SOC_SCHEMA, BOARD_SCHEMA) for section, keys in schema.items() for key in list(keys) + [section]
+     if '_' in key} | {key for key in CAMERA_SENSOR if '_' in key}, key=len, reverse=True)) + r')(?![\w(=])')
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
 FEATURE_NEEDS = {'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
@@ -205,9 +209,16 @@ def board_files():
     return [seen[name] for name in sorted(seen)]
 
 
+def as_written(text):
+    """What the tool says, in the files' own terms: a section is a node (`speaker { }`), a key is written with
+    dashes (`dsp-memory`), a camera's sensors are its sensor@N nodes."""
+    text = re.sub(r'\[([a-z][a-z0-9_]*)\](?!\()', lambda m: f'{m[1].replace("_", "-")} {{ }}', text)
+    return KEY_WITH_UNDERSCORE.sub(lambda m: m[0].replace('_', '-'), text)
+
+
 class Problems(list):
     def add(self, where, what):
-        self.append(f'{where}: {what}')
+        self.append(as_written(f'{where}: {what}'))
 
 
 def feature_bits():
@@ -308,7 +319,7 @@ def features_text():
             'written (`[storage]`) are not features: a board has them by giving the section. `display-scan`',
             'is for a command-mode panel only.',
             '']
-    return '\n'.join(out)
+    return as_written('\n'.join(out))
 
 
 def status_text(name, board, soc):
@@ -347,7 +358,7 @@ def status_text(name, board, soc):
     out += ['', 'A feature that is on is started only with its boot argument, in brackets (docs/boot-args.md has',
             'them all); docs/porting.md, step 5, has the order to try them in and the log line that says each',
             'one worked.', '']
-    return '\n'.join(out)
+    return as_written('\n'.join(out))
 
 
 def check_table(where, table, schema, problems):
@@ -991,15 +1002,15 @@ def write_generated(out, socs, boards):
 
 def board_to_boot(boards, name=None):
     """The board a boot tool is to start, as (name, board): the one named, or the only package here that has
-    a [boot] section. A SystemExit that says what there is otherwise."""
+    a boot { } section. A SystemExit that says what there is otherwise."""
     bootable = {n: board for n, board in boards.items() if 'boot' in board}
     if name is None:
         if len(bootable) != 1:
             raise SystemExit('which phone? --board NAME (here: ' + (', '.join(sorted(bootable)) or 'no package with a '
-                             '[boot] section; a phone is brought in with tools/device.py add NAME') + ')')
+                             'boot { } section; a phone is brought in with tools/device.py add NAME') + ')')
         name = next(iter(bootable))
     if name not in bootable:
-        raise SystemExit(f'no board "{name}" with a [boot] section here (tools/boards.py list); a phone is brought in '
+        raise SystemExit(f'no board "{name}" with a boot {{ }} section here (tools/boards.py list); a phone is brought in '
                          f'with tools/device.py add {name}')
     return name, bootable[name]
 
@@ -1223,7 +1234,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     else:
         print(f'{shown(soc_path)} is there already: left as it is')
     for note in notes:
-        print(f'note: {note}')
+        print(as_written(f'note: {note}'))
     print('next: tools/boards.py check, then docs/porting.md')
 
 
@@ -1288,7 +1299,7 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
     out.append(f'{counts["same"]} values as in the tree, {counts["differ"]} differ, {counts["unsaid"]} the tree does not say' +
                (' (clock offsets, the I/O window, firmware names and what was measured on the phone are never in one)'
                 if counts['unsaid'] else ''))
-    return '\n'.join(out) + '\n', counts['differ']
+    return as_written('\n'.join(out)) + '\n', counts['differ']
 
 
 def main():
@@ -1358,7 +1369,7 @@ def main():
         text, differ = compare_text(options.board, board, socs[board['soc']], tree_soc, tree_board, options.dts.name)
         print(text, end='')
         for note in notes:
-            print(f'note: {note}')
+            print(as_written(f'note: {note}'))
         return 1 if differ else 0
     elif options.command == 'show':
         if options.board not in boards:

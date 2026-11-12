@@ -319,40 +319,40 @@ class Check(Sandbox):
             (self.board, 'max = <2047>;', 'max = <1>;', 'min must be below max'),
             (self.board, 'max = <2047>;\n', '', 'type "dcs" needs "max"'),
             (self.board, 'max = <2047>;', 'max = <70000>;', 'max does not fit in 2 byte'),
-            (self.board, 'byte-order = "msb-first";\n', '', 'two bytes need "byte_order"'),
+            (self.board, 'byte-order = "msb-first";\n', '', 'two bytes need "byte-order"'),
             (self.board, 'panel-mode = "command";', 'panel-mode = "sideways";', 'one of command, video'),
             (self.board, 'min = <1>;', 'min = "one";', 'int expected'),
             (self.board, 'min = <1>;', 'min = <1>;\n\t\tbrightness = <5>;', 'unknown key "brightness"'),
-            (self.board, '\tthermal {', '\tthermals {', 'unknown section [thermals]'),
+            (self.board, '\tthermal {', '\tthermals {', 'unknown section thermals { }'),
             (self.board, 'floor-mhz = <1000 1100 1100>;', 'floor-mhz = <1000>;', 'one value for each of the 3 groups'),
             (self.board, 'description = "A phone";\n', '', '"description" is missing'),
             (self.board, 'soc = "sm0001";', 'soc = "sm0001', 'line 4: '),
-            (self.soc, '\tdisplay {\n\t\tdsi0 = <0xae94000>;\n\t};\n', '', 'backlight type "dcs" needs [display]'),
-            (self.soc, '\tcpufreq {\n\t\tepss = <0x18591000>;\n\t\tepss-domain-size = <0x1000>;\n\t\tdomain-cores = <4 3 1>;\n\t};\n', '', 'feature "cpufreq-epss" needs [cpufreq]'),
+            (self.soc, '\tdisplay {\n\t\tdsi0 = <0xae94000>;\n\t};\n', '', 'backlight type "dcs" needs display { }'),
+            (self.soc, '\tcpufreq {\n\t\tepss = <0x18591000>;\n\t\tepss-domain-size = <0x1000>;\n\t\tdomain-cores = <4 3 1>;\n\t};\n', '', 'feature "cpufreq-epss" needs cpufreq { }'),
             (self.soc, 'gcc = <0x100000>;', 'gcc = /bits/ 64 <0x100000000>;', 'a value of 32 bits'),
-            (self.board, '"cpufreq-epss"', '"cpufreq-epss", "ddr-rpmh"', 'feature "ddr-rpmh" needs [rpmh] in soc/sm0001.dtsi'),
+            (self.board, '"cpufreq-epss"', '"cpufreq-epss", "ddr-rpmh"', 'feature "ddr-rpmh" needs rpmh { } in soc/sm0001.dtsi'),
             (self.soc, 'name = "sm0001";', 'name = "sm0002";', 'the file is sm0001.dtsi'),
             (self.board, '\tloader {', '\tboot {\n\t\tfastboot-product = "phone";\n\t\tcpus = <8>;\n\t\tbootargs = "cpus=8", "two words";\n\t};\n\tloader {',
              '"two words" is not NAME or NAME=VALUE'),
             (self.board, '\tloader {', '\tboot {\n\t\tfastboot-product = "phone";\n\t};\n\tloader {', '"bootargs" is missing'),
             (self.board, '\tloader {', '\tboot {\n\t\tfastboot-product = "phone";\n\t\tcpus = <8>;\n\t\tbootargs = "gpu=0", "cpus=8", "gpu=1";\n\t};\n\tloader {',
              'bootargs: "gpu" is there twice'),
-            (self.soc, 'io-base = <0x400000>;', 'io-base = <0>;', 'io_base must not be 0'),
+            (self.soc, 'io-base = <0x400000>;', 'io-base = <0>;', 'io-base must not be 0'),
             (self.board, '"cpufreq-epss"', '"cpufreq-epss", "display-scan"', 'feature "display-scan" needs intf1'),
             (self.board, '"cpufreq-epss";\n\tbacklight {\n\t\ttype = "dcs";\n\t\tpanel-mode = "command";',
              '"display-scan";\n\tbacklight {\n\t\ttype = "dcs";\n\t\tpanel-mode = "video";', 'needs a command-mode panel'),
-            (self.soc, 'domain-cores = <4 3 1>;', 'domain-cores = <4 3>;', 'domain_cores adds up to 7 cores, [platform] has 8'),
+            (self.soc, 'domain-cores = <4 3 1>;', 'domain-cores = <4 3>;', 'domain-cores adds up to 7 cores, platform { } has 8'),
             (self.soc, 'domain-cores = <4 3 1>;', 'domain-cores = <4 2 2>;\n', None),
             (self.soc, 'domain-cores = <4 3 1>;', 'domain-cores = <2 2 2 1 1>;', 'one to four groups'),
             (self.board, 'floor-mhz = <1000 1100 1100>;', 'floor-mhz = <1000 1100>;', 'one value for each of the 3 groups'),
             (self.soc, 'psci = "smc";', 'psci = "telepathy";', 'one of smc, hvc'),
             (self.board, '"cpufreq-epss"', '"cpufreq-epss", "virtio"', 'feature "virtio" is an emulator'),
-            (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <2>;\n\t};\n\tloader {', 'radio_model: 0 (a WCN6750'),
+            (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <2>;\n\t};\n\tloader {', 'radio-model: 0 (a WCN6750'),
             (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <1>;\n\t\tearly-pool-mb = <80>;\n\t};\n\tloader {', None),
             (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <0>;\n\t\tpins = <84 85 86>;\n\t\tsupplies = "smpb7", "smpb1", "smpb8";\n\t};\n\tloader {', None),
             (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <0>;\n\t\tpins = <84 85 85>;\n\t};\n\tloader {', 'pins are three different pins'),
             (self.board, '\tloader {', '\twifi {\n\t\tradio-model = <0>;\n\t\tsupplies = "smpb7", "S1B";\n\t};\n\tloader {', 'supplies are three different names'),
-            (self.soc, 'gic-dist = <0x17a00000>;\n', '', '"gic_dist" is missing'),
+            (self.soc, 'gic-dist = <0x17a00000>;\n', '', '"gic-dist" is missing'),
         ]
         for change, old, new, reason in cases:
             with self.subTest(reason=reason):
@@ -373,8 +373,8 @@ class Check(Sandbox):
         path = self.dir / 'devices/phone/board.dts'
         self.board('"cpufreq-epss"', '"cpufreq-epss", "buttons-pmic"')
         said = self.problems()
-        self.assertIn('feature "buttons-pmic" needs [spmi] in soc/sm0001.dtsi', said)
-        self.assertIn('feature "buttons-pmic" needs [buttons] in the board file', said)
+        self.assertIn('feature "buttons-pmic" needs spmi { } in soc/sm0001.dtsi', said)
+        self.assertIn('feature "buttons-pmic" needs buttons { } in the board file', said)
         self.soc('\tthermal {', '\tspmi {\n\t\tcore = <0xc440000>;\n\t\tcnfg = <0xc40a000>;\n\t\tobserver = <0xe600000>;\n\t};\n\tthermal {')
         listed = path.read_text()
         for section, reason in (
@@ -383,7 +383,7 @@ class Check(Sandbox):
                 ('/ {\n\tbuttons {\n\t\tpon = <0x013>;\n\t\tvolume-up = <0x8d00>;\n\t};\n};\n', 'SPMI slave << 8'),
                 ('/ {\n\tbuttons {\n\t\tpon = <0x100>;\n\t\tvolume-up = <0x18d>;\n\t};\n};\n', 'SPMI slave << 8'),
                 ('/ {\n\tbuttons {\n\t\tpon = <0x18d>;\n\t\tvolume-up = <0x18d>;\n\t};\n};\n', 'two peripherals'),
-                ('/ {\n\tbuttons {\n\t\tpon = <0x013>;\n\t};\n};\n', '"volume_up" is missing')):
+                ('/ {\n\tbuttons {\n\t\tpon = <0x013>;\n\t};\n};\n', '"volume-up" is missing')):
             with self.subTest(section=section):
                 path.write_text(listed + section)
                 if reason is None:
@@ -397,7 +397,7 @@ class Check(Sandbox):
         # a driver that writes to a PMIC needs to be told where writes go as well
         path.write_text(path.read_text().replace('"buttons-pmic"', '"buttons-pmic", "torch-pm8350c"') +
                         '/ {\n\ttorch {\n\t\tflash = <0x2ee>;\n\t\talarm = <0x20a>;\n\t};\n};\n')
-        self.assertIn('feature "torch-pm8350c" needs channels in [spmi] of soc/sm0001.dtsi', self.problems())
+        self.assertIn('feature "torch-pm8350c" needs channels in spmi { } of soc/sm0001.dtsi', self.problems())
         self.soc('observer = <0xe600000>;', 'observer = <0xe600000>;\n\t\tchannels = <0xc600000>;')
         self.assertEqual(self.problems(), '')
         self.assertIn('.channels = 0x0c600000,', boards.table_text(*boards.load()))
@@ -406,10 +406,10 @@ class Check(Sandbox):
     def test_an_audio_dsp_is_described(self):
         path = self.dir / 'devices/phone/board.dts'
         self.board('"cpufreq-epss"', '"cpufreq-epss", "adsp"')
-        self.assertIn('feature "adsp" needs [adsp] in the board file', self.problems())
+        self.assertIn('feature "adsp" needs adsp { } in the board file', self.problems())
         # ... and RPMh, which its supplies are asked of, and the way to the DSP
-        self.assertIn('feature "adsp" needs [rpmh] in soc/sm0001.dtsi', self.problems())
-        self.assertIn('feature "adsp" needs [ipc] in soc/sm0001.dtsi', self.problems())
+        self.assertIn('feature "adsp" needs rpmh { } in soc/sm0001.dtsi', self.problems())
+        self.assertIn('feature "adsp" needs ipc { } in soc/sm0001.dtsi', self.problems())
         self.soc('\tthermal {', '\tipc {\n\t\taoss = <0xc300000>;\n\t\tipcc = <0x408000>;\n\t\tsmem = <0x80900000>;\n\t\tsmem-size = <0x200000>;\n\t\tsmem-lock = <0x1f43000>;\n\t};\n\tthermal {')
         self.soc('\tthermal {', '\trpmh {\n\t\tcmd-db = <0x80860000>;\n\t\tcmd-db-size = <0x20000>;\n\t\trsc = <0x18220000>;\n\t\ttcs-offset = <0xd00>;\n\t};\n\tthermal {')
         listed = path.read_text()
@@ -438,22 +438,22 @@ class Check(Sandbox):
         plain = path.read_text()
         self.board('"cpufreq-epss"', '"cpufreq-epss", "gpu-a660"')
         said = self.problems()
-        self.assertIn('feature "gpu-a660" needs [gpu] in the board file', said)
+        self.assertIn('feature "gpu-a660" needs gpu { } in the board file', said)
         # ... and of its SoC, where the GPU's blocks are and the command database
-        self.assertIn('feature "gpu-a660" needs [adreno] in soc/sm0001.dtsi', said)
-        self.assertIn('feature "gpu-a660" needs [rpmh] in soc/sm0001.dtsi', said)
+        self.assertIn('feature "gpu-a660" needs adreno { } in soc/sm0001.dtsi', said)
+        self.assertIn('feature "gpu-a660" needs rpmh { } in soc/sm0001.dtsi', said)
         self.soc('\tthermal {', GPU_SOC + '\tthermal {')
         with_gpu = path.read_text() + GPU
         cases = [
             ('', '', None),
-            ('speed-levels = <64 144>;', 'speed-levels = <64>;', 'one supply level for each of speeds_khz'),
+            ('speed-levels = <64 144>;', 'speed-levels = <64>;', 'one supply level for each of speeds-khz'),
             ('speeds-khz = <285000 490000>;', 'speeds-khz = <490000 285000>;', 'from the slowest up'),
             ('speeds-khz = <285000 490000>;', 'speeds-khz = <>;', 'one to 5 speeds'),
-            ('default-speed = <2>;', 'default-speed = <3>;', 'which of speeds_khz, 1 to 2'),
-            ('default-speed = <2>;', 'default-speed = <0>;', 'which of speeds_khz, 1 to 2'),
-            ('chip-id = <0x06060010>;', 'chip-id = <0>;', 'chip_id must not be 0'),
-            ('chip-id = <0x06060010>;\n', '', '"chip_id" is missing'),
-            ('default-speed = <2>;', 'default-speed = <2>;\n\t\talt-model = "Adreno 643";', 'alt_model goes with alt_bins'),
+            ('default-speed = <2>;', 'default-speed = <3>;', 'which of speeds-khz, 1 to 2'),
+            ('default-speed = <2>;', 'default-speed = <0>;', 'which of speeds-khz, 1 to 2'),
+            ('chip-id = <0x06060010>;', 'chip-id = <0>;', 'chip-id must not be 0'),
+            ('chip-id = <0x06060010>;\n', '', '"chip-id" is missing'),
+            ('default-speed = <2>;', 'default-speed = <2>;\n\t\talt-model = "Adreno 643";', 'alt-model goes with alt-bins'),
             ('default-speed = <2>;', 'default-speed = <2>;\n\t\talt-model = "Adreno 643";\n\t\talt-bins = <1 2 3>;', 'one or two speed bins'),
             ('default-speed = <2>;', 'default-speed = <2>;\n\t\talt-model = "Adreno 643";\n\t\talt-bins = <0xac>;', None),
             ('default-speed = <2>;', 'default-speed = <2>;\n\t\tzap-must-authenticate = "yes";', 'bool expected'),
@@ -483,22 +483,22 @@ class Check(Sandbox):
         self.assertRegex(said, r'cpufreq-epss +on \(cpufreq=1\)\n')
         self.assertRegex(said, r'battery-uefi +can be listed: what it needs is there \(then battery=1\)')
         # by the same rules as the checker: what is missing is named, file and section
-        self.assertRegex(said, r'buttons-pmic +needs \[spmi\] in soc/sm0001.dtsi, \[buttons\] in the board file')
-        self.assertRegex(said, r'ddr-rpmh +needs \[rpmh\] in soc/sm0001.dtsi')
-        self.assertRegex(said, r'display-scan +needs intf1 in \[display\] and \[clocks\] in soc/sm0001.dtsi')
-        self.assertRegex(said, r'mic-wcd938x +needs \[pins\] in soc/sm0001.dtsi, \[lpass\] in soc/sm0001.dtsi')
+        self.assertRegex(said, r'buttons-pmic +needs spmi \{ \} in soc/sm0001.dtsi, buttons \{ \} in the board file')
+        self.assertRegex(said, r'ddr-rpmh +needs rpmh \{ \} in soc/sm0001.dtsi')
+        self.assertRegex(said, r'display-scan +needs intf1 in display \{ \} and clocks \{ \} in soc/sm0001.dtsi')
+        self.assertRegex(said, r'mic-wcd938x +needs pins \{ \} in soc/sm0001.dtsi, lpass \{ \} in soc/sm0001.dtsi')
         # a part's driver whose addresses are there is still one part's: said, not offered
         self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tthermal {')
         self.soc('\tthermal {', '\tlpass {\n\t\ttx-macro = <0x3220000>;\n\t\tva-macro = <0x3370000>;\n\t\ttx-swr = <0x3230000>;\n'
                               '\t\ttx-swr-hctl = <0x32a9000>;\n\t\tlpi = <0x33c0000>;\n\t\tlpi-slew = <0x355a000>;\n\t};\n\tthermal {')
-        self.assertRegex(status(), r'mic-wcd938x +needs \[mic\] in the board file')        # (the pin its codec's reset is on)
+        self.assertRegex(status(), r'mic-wcd938x +needs mic \{ \} in the board file')        # (the pin its codec's reset is on)
         self.board('\tloader {', '\tmic {\n\t\tcodec-reset = <83>;\n\t};\n\tloader {')
         self.assertRegex(status(), r"mic-wcd938x +one part's driver")
         self.assertIn('.mic = { .wired = 1, .codec_reset = 83 },', boards.table_text(*boards.load()))
         self.assertIn('.tx_swr = 0x03230000, .tx_swr_hctl = 0x032a9000,', boards.table_text(*boards.load()))
-        self.assertRegex(said, r'touch-goodix +needs \[pins\] in soc/sm0001.dtsi')
+        self.assertRegex(said, r'touch-goodix +needs pins \{ \} in soc/sm0001.dtsi')
         self.soc('\tthermal {', '\tspmi {\n\t\tcore = <0xc440000>;\n\t\tcnfg = <0xc40a000>;\n\t\tobserver = <0xe600000>;\n\t};\n\tthermal {')
-        self.assertRegex(status(), r'buttons-pmic +needs \[buttons\] in the board file')
+        self.assertRegex(status(), r'buttons-pmic +needs buttons \{ \} in the board file')
         path = self.dir / 'devices/phone/board.dts'
         path.write_text(path.read_text() + '/ {\n\tbuttons {\n\t\tpon = <0x013>;\n\t\tvolume-up = <0x18d>;\n\t};\n};\n')
         self.assertRegex(status(), r'buttons-pmic +can be listed')
@@ -586,13 +586,13 @@ class Generate(Sandbox):
                       boards.table_text(socs, found))
         for right, wrong, said in (
                 ('type-guid = "7c3457ef-0000-11aa-aa11-00306543ecac";', 'type-guid = "7c3457ef000011aaaa1100306543ecac";',
-                 'type_guid is a GUID as a partition table prints it'),
+                 'type-guid is a GUID as a partition table prints it'),
                 ('unique-guid = "FD6854AD-24AA-4FC3-94FE-290116858D68";', 'unique-guid = "FD6854AD-24AA-4FC3-94FE-290116858D6G";',
-                 'unique_guid is a GUID as a partition table prints it'),
+                 'unique-guid is a GUID as a partition table prints it'),
                 ('last-lba = <30617594>;', 'last-lba = <25374720>;', 'the first is not 0 and before the last'),
                 ('first-lba = <25374720>;', 'first-lba = <0>;', 'the first is not 0 and before the last'),
-                ('write-first = <2042368>;', 'write-first = <0>;', 'write_first is a block of the partition'),
-                ('write-first = <2042368>;', 'write-first = <5242875>;', 'write_first is a block of the partition')):
+                ('write-first = <2042368>;', 'write-first = <0>;', 'write-first is a block of the partition'),
+                ('write-first = <2042368>;', 'write-first = <5242875>;', 'write-first is a block of the partition')):
             path.write_text(plain + own.replace(right, wrong))
             self.assertIn(said, self.problems(), wrong)
         # a board without the section has no such partition: the loader's and the kernel's rows say nothing of one
@@ -605,7 +605,7 @@ class Generate(Sandbox):
         self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tsmmu {\n\t\tapps = <0x15000000>;\n\t};\n\tthermal {')
         self.soc('\tthermal {', '\trpmh {\n\t\tcmd-db = <0x80860000>;\n\t\tcmd-db-size = <0x20000>;\n\t\trsc = <0x18220000>;\n\t\ttcs-offset = <0xd00>;\n\t};\n\tthermal {')
         self.board('"cpufreq-epss"', '"cpufreq-epss", "speaker-aw88261"')
-        self.assertIn('feature "speaker-aw88261" needs [speaker] in the board file', self.problems())
+        self.assertIn('feature "speaker-aw88261" needs speaker { } in the board file', self.problems())
         path = self.dir / 'devices/phone/board.dts'
         plain = path.read_text()
         path.write_text(plain + '/ {\n\tspeaker {\n\t\tsda = <12>;\n\t\tscl = <13>;\n\t\taddresses = <0x35 0x35>;\n\t\tinterrupts = <102 12>;\n\t\tsound-pins = <97 100 98 99>;\n\t\tsound-function = <1>;\n\t};\n};\n')
@@ -656,11 +656,11 @@ class Generate(Sandbox):
             path.write_text(camera(wrong, front))
             self.assertIn(said, self.problems())
         path.write_text(camera(wide, front, head=head.replace('<4 5>', '<4 4>')))
-        self.assertIn('pmic_pins are the PMIC', self.problems())
+        self.assertIn('pmic-pins are the PMIC', self.problems())
         path.write_text(camera(wide, front, head=head.replace('0x28a', '0x203')))
-        self.assertIn('pmic_reset is a PMIC\'s GPIO', self.problems())         # (a peripheral, not a GPIO's)
+        self.assertIn("pmic-reset is a PMIC's GPIO", self.problems())         # (a peripheral, not a GPIO's)
         path.write_text(camera(wide, front, head=head.replace('"wide"', '"tele"')))
-        self.assertIn("ios_sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
+        self.assertIn("ios-sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
         more = [front.replace('@1', f'@{n}').replace('"front"', f'"s{n}"') for n in (2, 3, 4)]
         path.write_text(camera(wide, front, *more))
         self.assertIn('5 sensors: the driver has room for 4', self.problems())
@@ -679,26 +679,26 @@ class Generate(Sandbox):
     def test_part_drivers_need_the_pins_and_the_table_carries_them(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "haptic-aw86927", "touch-goodix"')
         said = self.problems()
-        self.assertIn('feature "haptic-aw86927" needs [pins] in soc/sm0001.dtsi', said)
-        self.assertIn('feature "haptic-aw86927" needs [haptic] in the board file', said)       # (which pins it is on)
+        self.assertIn('feature "haptic-aw86927" needs pins { } in soc/sm0001.dtsi', said)
+        self.assertIn('feature "haptic-aw86927" needs haptic { } in the board file', said)       # (which pins it is on)
         path = self.dir / 'devices/phone/board.dts'
         path.write_text(path.read_text() + '/ {\n\thaptic {\n\t\tsda = <36>;\n\t\tscl = <36>;\n\t\treset = <35>;\n\t\tinterrupt = <18>;\n\t\tf0-calibration = <0x0d>;\n\t};\n};\n')
         self.assertIn('four different pins', self.problems())
         path.write_text(path.read_text().replace('scl = <36>;', 'scl = <37>;'))
-        self.assertIn('feature "touch-goodix" needs [pins] in soc/sm0001.dtsi', said)
-        self.assertNotIn('feature "touch-goodix" needs [clocks]', said)        # (which this SoC file has)
-        self.assertIn('feature "touch-goodix" needs [rpmh] in soc/sm0001.dtsi', said)  # (its supply is asked of RPMh)
-        self.assertNotIn('feature "haptic-aw86927" needs [rpmh]', said)
+        self.assertIn('feature "touch-goodix" needs pins { } in soc/sm0001.dtsi', said)
+        self.assertNotIn('feature "touch-goodix" needs clocks { }', said)        # (which this SoC file has)
+        self.assertIn('feature "touch-goodix" needs rpmh { } in soc/sm0001.dtsi', said)  # (its supply is asked of RPMh)
+        self.assertNotIn('feature "haptic-aw86927" needs rpmh { }', said)
         self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tthermal {')
         self.soc('\tthermal {', '\trpmh {\n\t\tcmd-db = <0x80860000>;\n\t\tcmd-db-size = <0x20000>;\n\t\trsc = <0x18220000>;\n\t\ttcs-offset = <0xd00>;\n\t};\n\tthermal {')
         # a touch controller's driver also needs to be told how the controller is wired
-        self.assertEqual(self.problems(), 'devices/phone/board.dts: feature "touch-goodix" needs [touch] in the board file')
+        self.assertEqual(self.problems(), 'devices/phone/board.dts: feature "touch-goodix" needs touch { } in the board file')
         wiring = ('/ {\n\ttouch {\n\t\tserial-engine = <0xa94000>;\n\t\tclocks = <0x18004 0x18008 0x185fc>;\n\t\tvote-register = <0x52008>;\n\t\tvotes = <18 19 20 21 27>;\n'
                   '\t\tbus-pins = <52 53 54 55>;\n\t\tinterrupt = <81>;\n\t\treset = <105>;\n\t\tio-supply = "ldoc2";\n')
         end = '\t};\n};\n'
         plain = path.read_text()
         path.write_text(plain + wiring + end)
-        self.assertIn('feature "touch-goodix" needs analog_enable and vendor_pins in [touch] of the board file', self.problems())
+        self.assertIn('feature "touch-goodix" needs analog-enable and vendor-pins in touch { } of the board file', self.problems())
         path.write_text(plain + wiring.replace('bus-pins = <52 53 54 55>;', 'bus-pins = <52 53 54 81>;') +
                         '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n' + end)
         self.assertIn('every pin is a different pin of the SoC', self.problems())      # (the interrupt's pin on the bus)
@@ -718,7 +718,7 @@ class Generate(Sandbox):
             self.assertIn(line, table)
         # the other controller's driver needs its second supply, and no strap
         path.write_text((plain + wiring + end).replace('"touch-goodix"', '"touch-ft3658u"'))
-        self.assertEqual(self.problems(), 'devices/phone/board.dts: feature "touch-ft3658u" needs analog_supply in [touch] of the board file')
+        self.assertEqual(self.problems(), 'devices/phone/board.dts: feature "touch-ft3658u" needs analog-supply in touch { } of the board file')
         path.write_text((plain + wiring + '\t\tanalog-supply = "ldoc7";\n' + end).replace('"touch-goodix"', '"touch-ft3658u"'))
         self.assertEqual(self.problems(), '')
         self.assertIn('.analog_enable = -1, .vendor_pin = { -1, -1 },', boards.table_text(*boards.load()))
@@ -730,7 +730,7 @@ class Generate(Sandbox):
                       '.smem_lock = 0x01f43000 },', boards.table_text(*boards.load()))
         # all of it or none: a mailbox without the memory is no way to anybody
         self.soc('smem-lock = <0x1f43000>;\n', '')
-        self.assertIn('"smem_lock" is missing', self.problems())
+        self.assertIn('"smem-lock" is missing', self.problems())
 
     def test_the_way_to_the_other_processors_is_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's: the lock is a slice of a syscon block, the mailbox is a "qmp-mbox"
@@ -774,8 +774,8 @@ class Generate(Sandbox):
     def test_the_display_clocks_are_asked_for_by_what_touches_the_display(self):
         # a SoC file with the clock controller's address alone is one a part's driver can use
         self.soc('gcc-disp-ahb-cbcr = <0x27004>;\n\t\tdispcc = <0xaf00000>;\n\t\tdispcc-mdss-gdscr = <0x3000>;\n\t\tdispcc-mdss-ahb-cbcr = <0x2080>;\n', '')
-        self.assertEqual(self.problems(), 'devices/phone/board.dts: backlight type "dcs" needs gcc_disp_ahb_cbcr, dispcc, '
-                         'dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in [clocks] of soc/sm0001.dtsi')
+        self.assertEqual(self.problems(), 'devices/phone/board.dts: backlight type "dcs" needs gcc-disp-ahb-cbcr, dispcc, '
+                         'dispcc-mdss-gdscr, dispcc-mdss-ahb-cbcr in clocks { } of soc/sm0001.dtsi')
         path = self.dir / 'devices/phone/board.dts'
         path.write_text(re.sub(r'(?s)\tbacklight \{.*?\n\t\};', '\tbacklight {\n\t\ttype = "soft";\n\t};', path.read_text(), count=1))
         self.assertEqual(self.problems(), '')
@@ -788,8 +788,8 @@ class Generate(Sandbox):
 
     def test_the_smmu_is_needed_carried_and_found(self):
         self.board('"cpufreq-epss"', '"cpufreq-epss", "camera-sm7325"')
-        self.assertIn('feature "camera-sm7325" needs [smmu] in soc/sm0001.dtsi', self.problems())
-        self.assertIn('feature "camera-sm7325" needs [camera] in soc/sm0001.dtsi', self.problems())
+        self.assertIn('feature "camera-sm7325" needs smmu { } in soc/sm0001.dtsi', self.problems())
+        self.assertIn('feature "camera-sm7325" needs camera { } in soc/sm0001.dtsi', self.problems())
         self.soc('\tthermal {', '\tcamera {\n\t\tcamcc = <0xad00000>;\n\t\tife = <0xacc4000>;\n\t\tcsid = <0xacc8000>;\n\t\tcsiphy = <0xace0000>;\n\t};\n\tthermal {')
         self.board('"cpufreq-epss", "camera-sm7325"', '"cpufreq-epss"')
         self.soc('\tthermal {', '\tsmmu {\n\t\tapps = <0x15000000>;\n\t};\n\tthermal {')
@@ -832,7 +832,7 @@ class Generate(Sandbox):
         path = self.dir / 'devices/phone/board.dts'
         listed = path.read_text()
         path.write_text(listed + '/ {\n\twifi {\n\t\tradio-model = <0>;\n\t\tdsp-memory = <0x9ae00000>;\n\t};\n};\n')
-        self.assertIn('dsp_memory and dsp_memory_size go together', self.problems())
+        self.assertIn('dsp-memory and dsp-memory-size go together', self.problems())
         path.write_text(listed + '/ {\n\twifi {\n\t\tradio-model = <0>;\n\t\tdsp-memory = <0x9ae00000>;\n\t\tdsp-memory-size = <0x1900000>;\n\t};\n};\n')
         self.assertEqual(self.problems(), '')
         self.assertIn('.wifi = { .radio_model = 0, .early_pool_mb = 0, .dsp_memory = 0x9ae00000, .dsp_memory_size = 0x01900000,\n\t\t\t'
@@ -939,7 +939,7 @@ class Generate(Sandbox):
     def test_the_flashlight_needs_its_peripherals_and_a_tree_has_them(self):
         self.soc('\tthermal {', '\tspmi {\n\t\tcore = <0xc440000>;\n\t\tcnfg = <0xc40a000>;\n\t\tobserver = <0xe600000>;\n\t\tchannels = <0xc600000>;\n\t};\n\tthermal {')
         self.board('"cpufreq-epss"', '"cpufreq-epss", "torch-pm8350c"')
-        self.assertIn('feature "torch-pm8350c" needs [torch] in the board file', self.problems())
+        self.assertIn('feature "torch-pm8350c" needs torch { } in the board file', self.problems())
         path = self.dir / 'devices/phone/board.dts'
         listed = path.read_text()
         path.write_text(listed + '/ {\n\ttorch {\n\t\tflash = <0x200>;\n\t\talarm = <0x20a>;\n\t};\n};\n')
@@ -1113,21 +1113,21 @@ class DeviceTree(Sandbox):
             return boards.compare_text('phone', found['phone'], socs['sm0001'], tree_soc, tree_board, 'phone.dts')
         text, differ = compared()
         self.assertEqual(differ, 3, text)       # this SoC file's cores and their groups are not the tree's
-        self.assertRegex(text, r'\[clocks\] gcc +<0x00100000> +as in the tree')
-        self.assertRegex(text, r'\[clocks\] gcc_disp_ahb_cbcr +<0x00027004> +not in the tree')
-        self.assertRegex(text, r'\[cpufreq\] domain_cores +<4 3 1> +THE TREE SAYS <2 1 1>')
-        self.assertRegex(text, r'\[platform\] cores +<8> +THE TREE SAYS <4>')
-        self.assertRegex(text, r'\[backlight\] max +<2047> +as in the tree')
+        self.assertRegex(text, r'clocks \{ \} gcc +<0x00100000> +as in the tree')
+        self.assertRegex(text, r'clocks \{ \} gcc-disp-ahb-cbcr +<0x00027004> +not in the tree')
+        self.assertRegex(text, r'cpufreq \{ \} domain-cores +<4 3 1> +THE TREE SAYS <2 1 1>')
+        self.assertRegex(text, r'platform \{ \} cores +<8> +THE TREE SAYS <4>')
+        self.assertRegex(text, r'backlight \{ \} max +<2047> +as in the tree')
         # a section the tree knows nothing of is one line; one the file lacks is offered with its values
-        self.assertRegex(text, r'\[thermal\] +1 value, none of which the tree says\n')
-        self.assertIn('the tree also has, of [spmi]: core = <0x0c440000>, cnfg = <0x0c40a000>, observer = <0x0e600000>, '
+        self.assertRegex(text, r'thermal \{ \} +1 value, none of which the tree says\n')
+        self.assertIn('the tree also has, of spmi { }: core = <0x0c440000>, cnfg = <0x0c40a000>, observer = <0x0e600000>, '
                       'ee = <0>, channels = <0x0c600000>', text)
-        self.assertIn('the tree also has, of [buttons]: pon = <0x013>,', text)
-        self.assertIn('the tree also has, of [backlight]: restore = <307>', text)
+        self.assertIn('the tree also has, of buttons { }: pon = <0x013>,', text)
+        self.assertIn('the tree also has, of backlight { }: restore = <307>', text)
         self.assertRegex(text, r'\d+ values as in the tree, 3 differ, \d+ the tree does not say')
         # another panel of the same tree is another answer
         text, differ = compared('qcom,mdss_dsi_second_video')
-        self.assertRegex(text, r'\[backlight\] type +"dcs" +THE TREE SAYS "soft"')
+        self.assertRegex(text, r'backlight \{ \} type +"dcs" +THE TREE SAYS "soft"')
         # a panel's node that does not say how its light is controlled is not taken to say "soft"
         tree_soc, tree_board, notes = boards.tree_to_compare(
             '/ { qcom,mdss_dsi_half { qcom,mdss-dsi-panel-type = "dsi_video_mode"; qcom,mdss-dsi-bl-max-level = <4095>; }; };')
@@ -1158,9 +1158,9 @@ class DeviceTree(Sandbox):
         self.assertIn('wrote soc/sm0002.dtsi', said.getvalue())
         # as written it is refused for exactly what a device tree cannot say, and accepted once that is filled in
         problems = self.problems()
-        self.assertIn('backlight type "dcs" needs gcc_disp_ahb_cbcr, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr in [clocks] of '
+        self.assertIn('backlight type "dcs" needs gcc-disp-ahb-cbcr, dispcc-mdss-gdscr, dispcc-mdss-ahb-cbcr in clocks { } of '
                       'soc/sm0002.dtsi', problems)
-        self.assertEqual([line for line in problems.splitlines() if 'in [clocks] of' not in line], [])
+        self.assertEqual([line for line in problems.splitlines() if 'in clocks { } of' not in line], [])
         path = self.dir / 'soc/sm0002.dtsi'
         text = path.read_text()
         for key, value in (('gcc_disp_ahb_cbcr', '0x27004'), ('dispcc_mdss_gdscr', '0x3000'), ('dispcc_mdss_ahb_cbcr', '0x2080')):
@@ -1172,7 +1172,7 @@ class DeviceTree(Sandbox):
         # the I/O window, which no tree has either, is asked for when the loader is to know the board
         board = self.dir / 'devices/phone2/board.dts'
         board.write_text(board.read_text() + '/ {\n\tloader {\n\t\tfb-base = <0x9c000000>;\n\t};\n};\n')
-        self.assertEqual(self.problems(), 'devices/phone2/board.dts: [loader] needs io_base and io_size in [platform] of '
+        self.assertEqual(self.problems(), 'devices/phone2/board.dts: loader { } needs io-base and io-size in platform { } of '
                          'soc/sm0002.dtsi')
         text = text.replace('// io-base = <0x00400000>;', 'io-base = <0x00400000>;').replace('// io-size = <0x3FC00000>;', 'io-size = <0x3FC00000>;')
         path.write_text(text)
@@ -1337,14 +1337,14 @@ class Repository(unittest.TestCase):
         self.assertIn('tools/device.py add beta', str(refused.exception))
         with self.assertRaises(SystemExit) as refused:
             boards.board_to_boot(found, 'emulator')         # (a board without [boot] is not one to boot)
-        self.assertIn('no board "emulator" with a [boot] section', str(refused.exception))
+        self.assertIn('no board "emulator" with a boot { } section', str(refused.exception))
         # two phones: the tool does not choose
         with self.assertRaises(SystemExit) as refused:
             boards.board_to_boot({**found, 'beta': plain})
         self.assertIn('which phone? --board NAME (here: alpha, beta)', str(refused.exception))
         with self.assertRaises(SystemExit) as refused:
             boards.board_to_boot({'emulator': {}})
-        self.assertIn('no package with a [boot] section', str(refused.exception))
+        self.assertIn('no package with a boot { } section', str(refused.exception))
         # the board's arguments, one replaced in its place, new ones after them
         self.assertEqual(boards.boot_arguments(plain), ['gpu=0', 'cpufreq=1', '-v'])
         self.assertEqual(boards.boot_arguments(plain, ['gpu=1', 'cpus=1', 'thermal=2', 'cpus=2']),
