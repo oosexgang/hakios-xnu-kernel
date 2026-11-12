@@ -243,7 +243,15 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     };
     for (uint32_t slot = 0; slot < nibo; slot++) {
         TexConst d{};
-        if (k.numBufs != 0 || slot < k.numSsbos) {
+        if (k.numBufs == 0 && slot < k.numSsbos && slot < 32 && (k.ssboUndeclared >> slot & 1) &&
+            (slot >= buffers.size() || buffers[slot].buffer == nullptr)) {
+            // a device-buffer slot nothing is bound at, under which the kernel declares no device buffer: ir3 counts
+            // SSBOs up to the highest index, so an index below it may be none of them -- compute_average_luma has its constants at
+            // [[buffer(0)]] and its result at [[buffer(2)]], and binds nothing at 1; refused, the dispatch was dropped
+            // and the glass went without the average of what is behind it. The hole descriptor, as for an image slot
+            // the kernel does not store through; Metal itself does not check.
+            d = bufferIbo(table + kTableHoleAt, 1);
+        } else if (k.numBufs != 0 || slot < k.numSsbos) {
             // a text kernel's @buf, or a device buffer (an SSBO) of an AIR kernel: Metal's [[buffer(slot)]]
             uint64_t address = 0, bytes = 0;
             if (!bound(slot, &address, &bytes)) {

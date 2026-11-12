@@ -163,6 +163,11 @@ struct Kernel {
     // program was uploaded (render.cpp: pushedRanges, uboDescriptors). Plus one so that a fixture written before the
     // field, which leaves it zero, says none.
     uint32_t constantDataUbo;
+    // Of the first numSsbos IBO slots, the ones under which the kernel declares no device buffer (bit n:
+    // [[buffer(n)]]): ir3 counts SSBOs up to the highest index, so a constant buffer or a gap below it is a slot too.
+    // Nothing bound there is no refusal: the dispatch puts its hole descriptor in it. Last, and zero when a fixture
+    // written before it leaves it out: every slot the kernel's.
+    uint32_t ssboUndeclared = 0;
 };
 
 } // namespace hakios::metal

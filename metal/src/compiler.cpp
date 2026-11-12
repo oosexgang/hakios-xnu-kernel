@@ -1014,6 +1014,14 @@ bool fillKernel(Translation& t, const KernelHome& out, uint32_t highestSampler, 
                                    : -1;
     k.numUbos = cs->num_ubos;
     k.numSsbos = v->num_ssbos;
+    k.ssboUndeclared = 0;
+    for (uint32_t slot = 0; slot < k.numSsbos && slot < 32; slot++) {
+        bool declared = false;
+        for (unsigned i = 0; i < t.info.num_resources; i++) {
+            declared |= t.info.resources[i].kind == AIR_RESOURCE_DEVICE_BUFFER && t.info.resources[i].index == slot;
+        }
+        if (!declared) k.ssboUndeclared |= 1u << slot;
+    }
     k.numIbos = v->num_ibos;
     k.numSamp = numSamp;
     for (uint32_t i = 0; i < kMaxUboRanges; i++) {

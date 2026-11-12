@@ -853,6 +853,43 @@ TEST(a_dispatch_of_tex_sample_gid_loads_the_sampler_it_was_given) {
     if (!s.lastDispatch.samp.empty()) CHECK_EQ(s.lastDispatch.samp[0].dword[0], 0x1b60u);
 }
 
+TEST(a_buffer_slot_the_kernel_declares_nothing_under_gets_a_hole_and_a_declared_one_unbound_is_refused) {
+    // compute_average_luma's shape: its constants at [[buffer(0)]] (a constant buffer: no SSBO), nothing at 1, its result
+    // at [[buffer(2)]]; ir3 counts SSBOs 0..2. CoreAnimation binds 0 and 2, and the dispatch was refused for 1 -- which
+    // the kernel never names. Those two get the hole descriptor; the result's slot left unbound is still a refusal.
+    Rig r;
+    Kernel k = kernelLike("luma_like", 3, 3, 1, 1, 1);
+    k.textures[0] = sampled2d(kElemFloat);
+    k.ssboUndeclared = 0x3;
+    auto in = texture(r, PixelFormat::kRGBA8Unorm, 64, 32, kTextureUsageRead);
+    auto out = buffer(r, 4096, 0);
+    Sampler smp = sampler();
+    Encoded e(r, k, kGroups8x4, kLocal8x8, bind({Binding{nullptr, 0}, Binding{nullptr, 0}, Binding{out.get(), 0}}, {in.get()}, {&smp}));
+    CHECK(e.ok);
+    if (!e.ok) std::fprintf(stderr, "       %s\n", e.error.c_str());
+    Raw raw(r);
+    CHECK_EQ(raw.submit(e.stream.words()), 0);
+    FakeGpu::Stats s = r.fake->stats();
+    CHECK_EQ(s.faults, 0u);
+    CHECK_EQ(s.lastDispatch.ibo.size(), size_t(3));
+    if (s.lastDispatch.ibo.size() == 3) {
+        using namespace a6xx;
+        auto base = [](const TexConst& d) {
+            return (d.dword[4] & A6XX_TEX_CONST_4_BASE_LO__MASK) |
+                   uint64_t(fieldOf(d.dword[5], A6XX_TEX_CONST_5_BASE_HI__MASK, A6XX_TEX_CONST_5_BASE_HI__SHIFT)) << 32;
+        };
+        CHECK_EQ(base(s.lastDispatch.ibo[0]), e.table->gpuAddress() + compute::kTableHoleAt);
+        CHECK_EQ(base(s.lastDispatch.ibo[1]), e.table->gpuAddress() + compute::kTableHoleAt);
+        CHECK_EQ(base(s.lastDispatch.ibo[2]), out->gpuAddress());
+    }
+    // the result's slot, which the kernel declares, left unbound: refused by name, as before
+    CHECK(has(refused(r, k, bind({}, {in.get()}, {&smp})), "luma_like: no buffer bound at index 2"));
+    // and a kernel made by hand, which says nothing of its slots, has every one of them its own
+    k.ssboUndeclared = 0;
+    CHECK(has(refused(r, k, bind({Binding{nullptr, 0}, Binding{nullptr, 0}, Binding{out.get(), 0}}, {in.get()}, {&smp})),
+              "luma_like: no buffer bound at index 0"));
+}
+
 TEST(an_image_slot_the_kernel_never_addresses_gets_a_hole_descriptor_over_the_table) {
     // in at [[texture(0)]] sampled, out at [[texture(1)]] an image: IBO 1 is the image and IBO 0, which ir3 counts and
     // nothing addresses, is a one-element buffer descriptor at the table's own kTableHoleAt bytes
