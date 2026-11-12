@@ -116,7 +116,7 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	return problem == NULL;
 }
 
-/* The chip's I/O supply: 1.8 V from the regulator the board names (hakios: LDO2 of the PM8350C, "ldoc2"). Nothing else is connected to it. */
+/* The chip's I/O supply: 1.8 V from the regulator the board names (touch { } io-supply: for example "ldoc2", LDO2 of a PM8350C). Nothing else is connected to it. */
 static bool
 io_supply_on(void)
 {

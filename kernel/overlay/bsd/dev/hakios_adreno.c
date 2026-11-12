@@ -367,7 +367,7 @@ step_fuses(void)
 	bin = bin >> 5 & 0xff;
 	speed_bin = bin;
 	gaming = get8(&qfprom, "gaming bin", QFPROM_CORRECTED + QFPROM_GPU_GAMING_BIN) >> 5 & 1;
-	/* dt: qcom,gpu-models: some speed bins are sold under another name (hakios: 0xac and 0xbe as the 643) */
+	/* dt: qcom,gpu-models: some speed bins are sold under another name (gpu { } alt-model, alt-bins: on the first phone 0xac and 0xbe as the 643) */
 	printf("adreno: %u: speed bin %u: %s; gaming bin %u\n", step, bin,
 	    gpu_profile == NULL ? "unknown" :
 	    gpu_profile->alt_model != NULL && (bin == gpu_profile->alt_bins[0] || bin == gpu_profile->alt_bins[1]) ?
