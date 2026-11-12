@@ -219,6 +219,8 @@ struct hakios_worked {
 #define MSM_SUBMIT_CMD_BUF      1
 #define MSM_SUBMIT_FENCE_FD_OUT 0x20000000
 
+#define MSM_SUBMIT_BO_READ      0x0001          /* a submission's buffer flags: read by it ... */
+#define MSM_SUBMIT_BO_WRITE     0x0002          /* ... written by it */
 #define GPU_BUFFERS             8192            /* a client's, at most */
 #define GPU_BUFFER_MAX          (256u << 20)
 #define GPU_SUBMIT_CMDS         128
@@ -1477,15 +1479,22 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 	/*
 	 * The surfaces named are being drawn into, or read, until this submission is done: the
 	 * display's driver waits for that before it puts one on the panel (MiniIOSurfaceDrawn()).
-	 * (freedreno names every buffer for reading and writing alike, so which it is cannot be
-	 * told; the last submission of a frame names the surface the frame is drawn into.)
+	 * A surface's "drawn" mark is the last submission that WRITES it, where the client says
+	 * which (hakios-metal does: an attachment or a copy's destination is written, a texture read).
+	 * Marked by a read too, a surface that a later submission only read looked drawn again when
+	 * it was swapped before its own frame's submission had come (show() waits for a newer mark
+	 * only when there is none), and the panel showed a picture some frames old: a dismissed alert
+	 * back for one frame. freedreno names every buffer for reading and writing alike, and a buffer
+	 * with neither flag is taken as written, as before.
 	 */
 	for (uint32_t i = 0; request->fence != 0 && i < request->nr_bos; i++) {
 		struct gpu_buffer * b = buffer(bos[i].handle);
+		uint32_t flags = bos[i].flags;
 
 		if (b != NULL) {
 			b->fence = request->fence;
-			if (b->surface != NULL) {
+			if (b->surface != NULL && ((flags & (MSM_SUBMIT_BO_WRITE | GPU_SUBMIT_BO_TRACK)) != 0 ||
+			    (flags & (MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE)) == 0)) {
 				b->surface->drawn = request->fence;
 			}
 		}
