@@ -4,9 +4,12 @@
 # en0 ..."). Then, from this machine, with the key whose public half is in ../ssh/authorized_keys:
 #   ssh -i ../ssh/id_phone root@ADDRESS            a shell (mksh); /redwood/bin first in PATH
 #   scp -O -i ../ssh/id_phone FILE root@ADDRESS:/var/tmp/
-# The server stays after this list is done (the job abandons its process group).
+# The server stays after this list is done (the job abandons its process group), and so does "net_test announce": the
+# phone's address to everybody every 5 s, for a router that does not pass a computer's ARP request on to the phone (a
+# 2.4 GHz client asking for a 5 GHz one's address); the computer takes the answer from the announcement instead.
 /redwood/bin/net_test wifi
 /redwood/bin/dropbear -F -E -s -p 22 -r /redwood/etc/ssh/dropbear_ed25519_host_key -D /redwood/etc/ssh &
+/redwood/bin/net_test announce en0 5 &
 /redwood/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200
 /redwood/bin/net_test waitaddr en0 120
 /redwood/bin/net_test show
