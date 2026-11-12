@@ -54,6 +54,8 @@ cat > "$W/dropbear/localoptions.h" <<'EOF'
 #define DROPBEAR_X11FWD 0
 #define DROPBEAR_SFTPSERVER 0
 #define DEFAULT_PATH "/redwood/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+/* (root's is a PATH of its own; scp -O from this machine runs the phone's scp by name, so it must find it) */
+#define DEFAULT_ROOT_PATH "/redwood/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #define ED25519_PRIV_FILENAME "/redwood/etc/ssh/dropbear_ed25519_host_key"
 /* (Darwin has no setresgid: one user, root, which the server runs as) */
 #define DROPBEAR_SVR_DROP_PRIVS 0

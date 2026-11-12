@@ -1,7 +1,20 @@
 diff -ru a/src/common-session.c b/src/common-session.c
---- a/src/common-session.c	2026-11-12 12:24:02.116948294 +0300
-+++ b/src/common-session.c	2026-11-12 12:24:02.175120407 +0300
-@@ -665,6 +665,21 @@
+--- a/src/common-session.c	2026-07-23 14:00:00.000000000 +0300
++++ b/src/common-session.c	2026-11-12 14:44:05.987336603 +0300
+@@ -68,9 +68,11 @@
+ 	/* Sets it to lowdelay */
+ 	update_channel_prio();
+ 
+-#if !DROPBEAR_SVR_MULTIUSER
++#if !DROPBEAR_SVR_MULTIUSER && !defined(HAKIOS_SHELL)
+ 	/* A sanity check to prevent an accidental configuration option
+ 	   leaving multiuser systems exposed */
++	/* (hakios: not built. iOS has groups, so the check always fails there, but the one account
++	 * that can log in is root, whose keys only this machine has: one user by design) */
+ 	{
+ 		int ret;
+ 		errno = 0;
+@@ -665,6 +667,21 @@
  		m_free(ses.authstate.pw_passwd);
  
  	pw = getpwnam(username);
@@ -23,7 +36,7 @@ diff -ru a/src/common-session.c b/src/common-session.c
  	if (!pw) {
  		return;
  	}
-@@ -672,7 +687,12 @@
+@@ -672,7 +689,12 @@
  	ses.authstate.pw_gid = pw->pw_gid;
  	ses.authstate.pw_name = m_strdup(pw->pw_name);
  	ses.authstate.pw_dir = m_strdup(pw->pw_dir);
@@ -37,8 +50,8 @@ diff -ru a/src/common-session.c b/src/common-session.c
  		char *passwd_crypt = pw->pw_passwd;
  #ifdef HAVE_SHADOW_H
 diff -ru a/src/svr-auth.c b/src/svr-auth.c
---- a/src/svr-auth.c	2026-11-12 12:24:02.120948385 +0300
-+++ b/src/svr-auth.c	2026-11-12 12:24:02.175515817 +0300
+--- a/src/svr-auth.c	2026-07-23 14:00:00.000000000 +0300
++++ b/src/svr-auth.c	2026-11-12 14:44:05.960041421 +0300
 @@ -312,6 +312,12 @@
  		usershell = "/bin/sh";
  	}
