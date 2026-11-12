@@ -10,9 +10,14 @@
 // The libraries are read where they lie (a phone's or an image's /System/Library/...): nothing of them is copied,
 // kept or printed but function names, counts and the compiler's own sentences.
 //
-//   sweep [-v] [-f FUNCTION] [-c INDEX=VALUE]... LIBRARY.metallib...
-//     -v: a line per function; -f: that function alone; -c: a function constant's value, as a pipeline supplies
-//     it (with IR3_SHADER_DEBUG=disasm the listing of one specialisation is what comes out)
+//   sweep [-v] [-f FUNCTION] [-c INDEX=VALUE]... [-k BINDING=HEX] LIBRARY.metallib...
+//     -v: a line per function; -f: that function alone, by name or as fnv:HEX (the 64-bit FNV-1a of its bitcode, as
+//     the plug-in's "specialise:" lines give it); -c: a function constant's value, as a pipeline supplies it (with
+//     IR3_SHADER_DEBUG=disasm the listing of one specialisation is what comes out); -k: the bytes of a constant
+//     buffer known at compile time, as the plug-in specialises an uber shader for what its buffer holds (with -f:
+//     the compile timed, and the words it came to)
+//   sweep -a MODULE.air [-c ...] [-k ...]: one fragment function's module as it is (LLVM's 0x0B17C0DE wrapper),
+//     compiled once and timed -- a module no metallib holds, as tools/airdump.py takes it out of a run's log
 //
 // SPDX-License-Identifier: MIT
 
@@ -23,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <fstream>
@@ -40,6 +46,9 @@ namespace {
 // compile in a child: true when it compiled; else *why is the refusal, or "the compiler aborted: " and the last line
 // the child printed (Mesa's assertion)
 FunctionConstants gConstants;
+KnownBuffer gKnown;
+bool gHaveKnown = false;
+std::vector<KnownBuffer> gMoreKnown;   // (-a with -k more than once: each compiled in turn, as one pipeline's specialisations)
 
 bool compileApart(bool kernel, const uint8_t* bc, uint64_t len, std::string* why) {
     int fds[2];
@@ -160,7 +169,7 @@ int main(int argc, char** argv) {
     unsigned threads = 0;
     std::vector<Compiled> compiled;
     std::deque<std::vector<uint8_t>> kept;
-    std::string only;
+    std::string only, air;
     std::vector<std::string> files;
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-v") == 0) {
@@ -172,22 +181,73 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
             unsigned index = 0;
             unsigned long long value = 0;
-            if (std::sscanf(argv[++i], "%u=%llu", &index, &value) != 2) {
+            // (decimal, or hex after 0x: the plug-in's lines give the bits in hex as INDEX=HEX, so -c INDEX=0xHEX)
+            if (std::sscanf(argv[++i], "%u=%lli", &index, &value) != 2) {
                 std::fprintf(stderr, "sweep: -c takes INDEX=VALUE, not %s\n", argv[i]);
                 return 2;
             }
-            gConstants.push_back(FunctionConstant{index, value});
+            gConstants.push_back(FunctionConstant{index, uint64_t(value)});
+        } else if (std::strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
+            air = argv[++i];
+        } else if (std::strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
+            const char* arg = argv[++i];
+            const char* eq = std::strchr(arg, '=');
+            const size_t hex = eq != nullptr ? std::strlen(eq + 1) : 1;
+            if (eq == nullptr || hex % 2 != 0) {
+                std::fprintf(stderr, "sweep: -k takes BINDING=HEX (two digits a byte), not %s\n", arg);
+                return 2;
+            }
+            KnownBuffer kb;
+            kb.binding = unsigned(std::atoi(arg));
+            for (size_t k = 0; k < hex; k += 2) {
+                unsigned b = 0;
+                std::sscanf(eq + 1 + k, "%2x", &b);
+                kb.bytes.push_back(uint8_t(b));
+            }
+            if (gHaveKnown) gMoreKnown.push_back(kb);
+            else gKnown = kb;
+            gHaveKnown = true;
         } else {
             files.push_back(argv[i]);
         }
     }
-    if (files.empty()) {
+    if (files.empty() && air.empty()) {
         std::fprintf(stderr, "usage: sweep [-v] [-j THREADS] LIBRARY.metallib...\n");
         return 2;
     }
     if (!hasCompiler()) {
         std::fprintf(stderr, "sweep: no compiler in this build (make MESA=1)\n");
         return 2;
+    }
+    if (!air.empty()) {
+        std::ifstream in(air, std::ios::binary);
+        const std::vector<uint8_t> bc((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string why;
+        const auto t0 = std::chrono::steady_clock::now();
+        auto st = bc.empty() ? nullptr : compileStage(bc.data(), bc.size(), &why, gConstants, 0, gHaveKnown ? &gKnown : nullptr);
+        const auto t1 = std::chrono::steady_clock::now();
+        if (st == nullptr) {
+            std::printf("sweep: %s: REFUSED: %s\n", air.c_str(), bc.empty() ? "empty or missing" : why.c_str());
+            return 1;
+        }
+        auto say = [&](const CompiledStage& c, double ms) {
+            uint64_t h = 0xcbf29ce484222325ull;
+            for (uint32_t w : c.words) h = (h ^ w) * 0x100000001b3ull;
+            std::printf("sweep: %s: %zu bytes, %u instruction words (fnv %016llx), %u bytes of private memory, in %.0f ms%s\n", air.c_str(), bc.size(),
+                        c.stage.k.numWords, (unsigned long long)h, c.stage.k.pvtmemSize, ms, gHaveKnown ? ", its buffer known" : "");
+        };
+        say(*st, std::chrono::duration<double, std::milli>(t1 - t0).count());
+        for (const KnownBuffer& kb : gMoreKnown) {
+            const auto a = std::chrono::steady_clock::now();
+            auto more = compileStage(bc.data(), bc.size(), &why, gConstants, 0, &kb);
+            const auto b = std::chrono::steady_clock::now();
+            if (more == nullptr) {
+                std::printf("sweep: %s: REFUSED: %s\n", air.c_str(), why.c_str());
+                return 1;
+            }
+            say(*more, std::chrono::duration<double, std::milli>(b - a).count());
+        }
+        return 0;
     }
     const char* typeName[] = {"vertex", "fragment", "kernel"};
     uint32_t seen[3] = {}, taken[3] = {};
@@ -206,11 +266,19 @@ int main(int argc, char** argv) {
         uint32_t here[3] = {}, hereTaken[3] = {};
         for (const MetalFunction& f : lib.functions()) {
             int t = f.type == MetalFunction::kVertex ? 0 : f.type == MetalFunction::kFragment ? 1 : f.type == MetalFunction::kKernel ? 2 : -1;
-            if (t < 0 || (!only.empty() && f.name != only)) continue;
+            if (t < 0) continue;
             const uint8_t* bc = nullptr;
             uint64_t len = 0;
             std::string why;
             bool ok = false;
+            if (!only.empty() && f.name != only) {
+                // (fnv:HEX: the function whose bitcode hashes so)
+                if (only.compare(0, 4, "fnv:") != 0 || !lib.bitcode(f, &bc, &len)) continue;
+                uint64_t h = 0xcbf29ce484222325ull;
+                for (uint64_t k = 0; k < len; k++) h = (h ^ bc[k]) * 0x100000001b3ull;
+                if (h != std::strtoull(only.c_str() + 4, nullptr, 16)) continue;
+                std::printf("sweep: fnv %016llx is %s\n", (unsigned long long)h, f.name.c_str());
+            }
             if (!lib.bitcode(f, &bc, &len)) {
                 why = "the module's bitcode could not be found";
             } else {
@@ -222,9 +290,13 @@ int main(int argc, char** argv) {
                 // (one function by name is compiled in this process, so that Mesa's own debug output reaches the terminal)
                 if (!only.empty() && t != 2) {
                     // the stage's tables as a draw reads them: what samples what, and through which sampler
-                    auto st = compileStage(bc, len, &why, gConstants);
+                    const auto t0 = std::chrono::steady_clock::now();
+                    auto st = compileStage(bc, len, &why, gConstants, 0, gHaveKnown ? &gKnown : nullptr);
+                    const auto t1 = std::chrono::steady_clock::now();
                     ok = st != nullptr;
                     if (ok) {
+                        std::printf("sweep: %s: %u instruction words in %.0f ms%s\n", f.name.c_str(), st->stage.k.numWords,
+                                    std::chrono::duration<double, std::milli>(t1 - t0).count(), gHaveKnown ? ", its buffer known" : "");
                         const Kernel& k = st->stage.k;
                         std::printf("sweep: %s: %u texture slots, sampler mask %#x, %u prefetch(es)", f.name.c_str(), k.numTextureSlots, k.samplerMask,
                                     unsigned(st->stage.numSamplerPrefetch));

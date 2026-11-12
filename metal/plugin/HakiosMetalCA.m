@@ -8036,9 +8036,45 @@ hm_spec_off(void)
 				hm_print("specialise: %s for its buffer %d: %s; its own program goes on\n", hakios_metal_program_name(_program), _specBinding,
 					 hakios_metal_error());
 			} else if (hm_fps_on()) {
-				hm_print("specialise: %s for %u bytes of its buffer %d: %u instruction words, not %u, in %.0f ms\n", hakios_metal_program_name(_program),
-					 _specLength, _specBinding, hakios_metal_program_stage_words(p, 1), hakios_metal_program_stage_words(_program, 1),
-					 (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
+				/* (and what it was compiled from, for metal/tools/sweep on the host: -f fnv:HEX, -k BINDING=the
+				 * bytes in hex, -c each constant as INDEX=0xBITS) */
+				char what[512];
+				size_t n = 0;
+				const uint8_t *k = [key bytes];
+				for (NSUInteger i = 0; i < [key length] && n + 3 < sizeof(what); i++) n += (size_t)snprintf(what + n, sizeof(what) - n, "%02x", k[i]);
+				for (unsigned i = 0; i < _fsConstantCount && n + 24 < sizeof(what); i++) {
+					n += (size_t)snprintf(what + n, sizeof(what) - n, " %u=%llx", _fsConstants[i].index, (unsigned long long)_fsConstants[i].bits);
+				}
+				uint64_t fnv = 0xcbf29ce484222325ull;
+				const uint8_t *a = [_fsAir bytes];
+				for (NSUInteger i = 0; i < [_fsAir length]; i++) fnv = (fnv ^ a[i]) * 0x100000001b3ull;
+				/* (boot-arg metal_air_dump=1: the module itself, once for each, in lines of 400 bytes as hex --
+				 * "airdump: FNV LENGTH OFFSET HEX" -- for the host to put together again: CoreAnimation builds its uber
+				 * shader at run time, and no metallib on the disk holds it. 400 bytes a line: the console cuts a line at
+				 * 1022 characters, and 480 lost the last three of each) */
+				static uint64_t dumped[8];
+				static int dump = -1;
+				if (dump < 0) {
+					char args[1024] = "";
+					size_t size = sizeof(args) - 1;
+					dump = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_air_dump=1") != NULL;
+				}
+				for (unsigned d = 0; dump && d < 8; d++) {
+					if (dumped[d] == fnv) break;
+					if (dumped[d] != 0) continue;
+					dumped[d] = fnv;
+					for (NSUInteger off = 0; off < [_fsAir length]; off += 400) {
+						char hex[801];
+						const NSUInteger end = MIN([_fsAir length], off + 400);
+						for (NSUInteger i = off; i < end; i++) snprintf(hex + 2 * (i - off), 3, "%02x", a[i]);
+						hm_print("airdump: %016llx %lu %lu %s\n", (unsigned long long)fnv, (unsigned long)[_fsAir length], (unsigned long)off, hex);
+					}
+					break;
+				}
+				hm_print("specialise: %s for %u bytes of its buffer %d: %u instruction words, not %u, in %.0f ms; from AIR of %lu bytes "
+					 "fnv %016llx, %s\n", hakios_metal_program_name(_program), _specLength, _specBinding, hakios_metal_program_stage_words(p, 1),
+					 hakios_metal_program_stage_words(_program, 1), (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6,
+					 (unsigned long)[_fsAir length], (unsigned long long)fnv, what);
 			}
 			@synchronized(self) {
 				if (p != NULL) [_specialised setObject:[NSValue valueWithPointer:p] forKey:key];
