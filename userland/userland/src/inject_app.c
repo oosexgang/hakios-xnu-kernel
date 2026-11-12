@@ -130,7 +130,9 @@ keep_to_the_repositories(void)
 	defaults = get(defaults, sel_registerName("standardUserDefaults"));
 	if (defaults != NULL) {
 		set_bool(defaults, sel_registerName("setBool:forKey:"), 0, key);
-		say("hakios: Sileo: its Canister search is turned off (it is not reachable here)\n", 73);
+		static const char said[] = "hakios: Sileo: its Canister search is turned off (it is not reachable here)\n";
+
+		say(said, sizeof(said) - 1);
 	}
 }
 

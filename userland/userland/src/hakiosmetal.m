@@ -1083,7 +1083,7 @@ _Static_assert(sizeof(struct MTLTargetDeviceArch) == 24 &&
  * driver installs into Metal's own _MTLFunction forwards to (the end of this file says
  * why it has to): the layout is read out of the function's own bitcode, which is the one
  * thing Metal has here and its reflection has not. */
-- (id)redwoodArgumentEncoderForFunction:(id)function bufferIndex:(NSUInteger)index;
+- (id)hakiosArgumentEncoderForFunction:(id)function bufferIndex:(NSUInteger)index;
 @end
 
 /* Declaring the protocol is the gate both assertions in MTLAddDevice read. Done at +load
@@ -1401,7 +1401,7 @@ rw_bisect_within(void)
  * byte per texel. Metal's own -getBytes: has no aspect to name and the compiler library
  * refuses a depth texture through it by name, so a caller that wants to know what a depth
  * buffer holds asks for an aspect here instead. Either pointer may be NULL. */
-- (BOOL)redwoodReadDepth:(float *)depth
+- (BOOL)hakiosReadDepth:(float *)depth
 		 stencil:(uint8_t *)stencil
 	      fromRegion:(MTLRegion)region;
 @end
@@ -1440,9 +1440,9 @@ rw_bisect_within(void)
 			   fromModule:(BOOL)fromModule;
 /* Not part of MTLArgumentEncoder: the mapping between Metal's [[id(n)]] and the index the
  * GPU is programmed with, so a test can read it back instead of trusting it. */
-- (NSUInteger)redwoodMemberCount;
-- (NSUInteger)redwoodMetalIndex;
-- (BOOL)redwoodMember:(NSUInteger)i id:(NSUInteger *)mid kind:(NSUInteger *)kind
+- (NSUInteger)hakiosMemberCount;
+- (NSUInteger)hakiosMetalIndex;
+- (BOOL)hakiosMember:(NSUInteger)i id:(NSUInteger *)mid kind:(NSUInteger *)kind
 		index:(NSUInteger *)index;
 @end
 
@@ -2507,7 +2507,7 @@ static NSData *rw_function_air(id function);
  * The layout is read out of the function's bitcode -- the one thing this port has that
  * Metal's reflection has not -- so the numbers are the module's own.
  */
-- (id)redwoodArgumentEncoderForFunction:(id)function bufferIndex:(NSUInteger)index
+- (id)hakiosArgumentEncoderForFunction:(id)function bufferIndex:(NSUInteger)index
 {
 	static SEL bitcode;
 
@@ -3641,7 +3641,7 @@ rw_surface_hash(IOSurfaceRef surface, size_t rows, size_t bytes)
 	   mipmapLevel:level slice:0];
 }
 
-- (BOOL)redwoodReadDepth:(float *)depth
+- (BOOL)hakiosReadDepth:(float *)depth
 		 stencil:(uint8_t *)stencil
 	      fromRegion:(MTLRegion)region
 {
@@ -4306,16 +4306,16 @@ hakios_clear_semaphore_debt(id commandBuffer)
 
 /* What the queue itself thinks, for a test that wants the number rather than the
  * inference: how many command buffers of this queue still hold one of those slots. */
-- (NSUInteger)redwoodOutstandingCommandBuffers { return _outstanding; }
-- (NSUInteger)redwoodCommandBuffersMade        { return _made; }
+- (NSUInteger)hakiosOutstandingCommandBuffers { return _outstanding; }
+- (NSUInteger)hakiosCommandBuffersMade        { return _made; }
 
-- (void)redwoodTookSlot
+- (void)hakiosTookSlot
 {
 	_outstanding++;
 	_made++;
 }
 
-- (void)redwoodReturnedSlot
+- (void)hakiosReturnedSlot
 {
 	if (_outstanding > 0) {
 		_outstanding--;
@@ -4449,7 +4449,7 @@ hakios_clear_semaphore_debt(id commandBuffer)
 /* What this driver reads when it has something to deliver. Not an override of -completionQueue
  * (the base class's getter reads the same ivar): this is here for the Metal where that ivar
  * is not, so that one missing ivar does not quietly send every handler to the wrong thread. */
-- (dispatch_queue_t)redwoodCompletionQueue
+- (dispatch_queue_t)hakiosCompletionQueue
 {
 	Ivar ivar = hakios_completion_ivar();
 
@@ -4589,7 +4589,7 @@ enum {
 		(unsigned)RW_CB_COMPLETED, (unsigned)RW_CB_ERROR);
 	_status = RW_CB_ENQUEUED;   /* nothing is pending yet */
 	_owesSlot = YES;
-	[queue redwoodTookSlot];
+	[queue hakiosTookSlot];
 	return self;
 }
 
@@ -4599,7 +4599,7 @@ enum {
  * which is the case Apple's _needsCommandBufferSemaphoreSignal exists for and the one that
  * would otherwise lose a slot for the life of the process.
  */
-- (void)redwoodReturnSlot
+- (void)hakiosReturnSlot
 {
 	dispatch_semaphore_t semaphore;
 
@@ -4608,7 +4608,7 @@ enum {
 	}
 	_owesSlot = NO;
 	hakios_clear_semaphore_debt(self);
-	[_queue redwoodReturnedSlot];
+	[_queue hakiosReturnedSlot];
 	semaphore = hakios_queue_semaphore(_queue);
 	if (semaphore != nil) {
 		dispatch_semaphore_signal(semaphore);
@@ -4617,7 +4617,7 @@ enum {
 
 - (void)dealloc
 {
-	[self redwoodReturnSlot];
+	[self hakiosReturnSlot];
 	[_work release];
 	[_error release];
 	[_scheduled release];
@@ -4866,10 +4866,10 @@ done:
 	/* The queue's slot goes back here and on every way out of this method, a failed draw
 	 * included: a buffer that errored is as finished as one that drew, and a slot kept
 	 * because of an error would turn one bad draw into a queue that blocks for ever. */
-	[self redwoodReturnSlot];
+	[self hakiosReturnSlot];
 	/* and only then the handlers, so that a handler which makes the next command buffer
 	 * is not waiting for a slot this one still holds */
-	[self redwoodDeliverHandlers];
+	[self hakiosDeliverHandlers];
 }
 
 /* A draw, built out of what the encoder recorded. Separate from the dispatch loop because the
@@ -5192,9 +5192,9 @@ rw_bisect_skipped_group(void)
  * once rather than dropped: Metal calls that undefined, and losing it would be the kind of
  * silence this driver is trying to stop having.
  */
-- (void)redwoodDeliver:(void (^)(id))handler
+- (void)hakiosDeliver:(void (^)(id))handler
 {
-	dispatch_queue_t queue = [_queue redwoodCompletionQueue];
+	dispatch_queue_t queue = [_queue hakiosCompletionQueue];
 
 	if (queue != nil) {
 		/* dispatch_async copies the block, which retains both this buffer and the
@@ -5213,7 +5213,7 @@ rw_bisect_skipped_group(void)
 	/* scheduled or further, an error included (3, 4, 5): the work this handler is about has
 	 * already run, so it is delivered rather than kept */
 	if (_status >= RW_CB_SCHEDULED) {
-		[self redwoodDeliver:handler];
+		[self hakiosDeliver:handler];
 		return;
 	}
 	if (_scheduled == nil) {
@@ -5228,7 +5228,7 @@ rw_bisect_skipped_group(void)
 		return;
 	}
 	if (_status >= RW_CB_SCHEDULED) {
-		[self redwoodDeliver:handler];
+		[self hakiosDeliver:handler];
 		return;
 	}
 	if (_completed == nil) {
@@ -5239,7 +5239,7 @@ rw_bisect_skipped_group(void)
 
 /* Called from the one place the work is done. The order is Metal's: scheduled first, then
  * the fence, then completed. */
-- (void)redwoodDeliverHandlers
+- (void)hakiosDeliverHandlers
 {
 	NSArray *scheduled = _scheduled;
 	NSArray *completed = _completed;
@@ -5249,7 +5249,7 @@ rw_bisect_skipped_group(void)
 	_completed = nil;
 	_signals = nil;
 	for (id handler in scheduled) {
-		[self redwoodDeliver:(void (^)(id))handler];
+		[self hakiosDeliver:(void (^)(id))handler];
 	}
 	if ([signals count] > 0) {
 		[self waitUntilCompleted];
@@ -5272,7 +5272,7 @@ rw_bisect_skipped_group(void)
 		[self waitUntilCompleted];
 	}
 	for (id handler in completed) {
-		[self redwoodDeliver:(void (^)(id))handler];
+		[self hakiosDeliver:(void (^)(id))handler];
 	}
 	[scheduled release];
 	[completed release];
@@ -5293,8 +5293,8 @@ rw_bisect_skipped_group(void)
 	[self commit];
 }
 
-- (void)addPurgedResource:(id)resource { (void)resource; [self redwoodPurgedNote]; }
-- (void)addPurgedHeap:(id)heap         { (void)heap; [self redwoodPurgedNote]; }
+- (void)addPurgedResource:(id)resource { (void)resource; [self hakiosPurgedNote]; }
+- (void)addPurgedHeap:(id)heap         { (void)heap; [self hakiosPurgedNote]; }
 
 /* Metal records on a command buffer every resource of its that was purged while the buffer
  * referenced it, so that -commit can fail the buffer instead of reading pages that are
@@ -5302,7 +5302,7 @@ rw_bisect_skipped_group(void)
  * MTLPurgeableStateNonVolatile for every resource, which is what they are -- so a report
  * here means Metal and this driver disagree about a resource, and that is worth a line
  * rather than a silent buffer that fails later for no stated reason. */
-- (void)redwoodPurgedNote
+- (void)hakiosPurgedNote
 {
 	RW_ONCE("Metal reported a purged resource on a command buffer, but "
 		"nothing this driver allocates is volatile; the report is noted and the "
@@ -6162,7 +6162,7 @@ rw_bisect_skipped_group(void)
  * Tessellation: the library has no tessellator, so a patch draw records nothing. Said out
  * loud because a draw that silently does nothing is the one failure this driver has already
  * paid for twice (docs/metal.md 10.21, 10.26). */
-- (void)redwoodNoTessellation
+- (void)hakiosNoTessellation
 {
 	RW_ONCE("tessellation is not implemented; this patch draw records "
 		"nothing\n");
@@ -6177,7 +6177,7 @@ patchIndexBufferOffset:(NSUInteger)offset
 {
 	(void)controlPoints; (void)start; (void)count; (void)indexBuffer; (void)offset;
 	(void)instances; (void)baseInstance;
-	[self redwoodNoTessellation];
+	[self hakiosNoTessellation];
 }
 - (void)drawPatches:(NSUInteger)controlPoints
    patchIndexBuffer:(id)indexBuffer
@@ -6187,7 +6187,7 @@ indirectBufferOffset:(NSUInteger)indirectOffset
 {
 	(void)controlPoints; (void)indexBuffer; (void)offset; (void)indirectBuffer;
 	(void)indirectOffset;
-	[self redwoodNoTessellation];
+	[self hakiosNoTessellation];
 }
 - (void)drawIndexedPatches:(NSUInteger)controlPoints
 		patchStart:(NSUInteger)start
@@ -6202,7 +6202,7 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 	(void)controlPoints; (void)start; (void)count; (void)indexBuffer; (void)offset;
 	(void)controlPointBuffer; (void)controlPointOffset; (void)instances;
 	(void)baseInstance;
-	[self redwoodNoTessellation];
+	[self hakiosNoTessellation];
 }
 - (void)drawIndexedPatches:(NSUInteger)controlPoints
 	  patchIndexBuffer:(id)indexBuffer
@@ -6214,25 +6214,25 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 {
 	(void)controlPoints; (void)indexBuffer; (void)offset; (void)controlPointBuffer;
 	(void)controlPointOffset; (void)indirectBuffer; (void)indirectOffset;
-	[self redwoodNoTessellation];
+	[self hakiosNoTessellation];
 }
 - (void)setTessellationFactorBuffer:(id)buffer
 			     offset:(NSUInteger)offset
 		     instanceStride:(NSUInteger)stride
 {
 	(void)buffer; (void)offset; (void)stride;
-	[self redwoodNoTessellation];
+	[self hakiosNoTessellation];
 }
 - (void)setTessellationFactorScale:(float)scale
 {
 	(void)scale;
-	[self redwoodNoTessellation];
+	[self hakiosNoTessellation];
 }
 
 /* Indirect command buffers: a buffer of commands the GPU reads for itself. The device
  * answers no to every indirect-command-buffer query, so this is a path a correct caller
  * does not take; the draws in it would be lost silently if it did. */
-- (void)redwoodNoIndirectCommands
+- (void)hakiosNoIndirectCommands
 {
 	RW_ONCE("indirect command buffers are not implemented; the commands in "
 		"this one are not executed\n");
@@ -6240,21 +6240,21 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 - (void)executeCommandsInBuffer:(id)buffer withRange:(NSRange)range
 {
 	(void)buffer; (void)range;
-	[self redwoodNoIndirectCommands];
+	[self hakiosNoIndirectCommands];
 }
 - (void)executeCommandsInBuffer:(id)buffer
 		 indirectBuffer:(id)indirectBuffer
 	   indirectBufferOffset:(NSUInteger)offset
 {
 	(void)buffer; (void)indirectBuffer; (void)offset;
-	[self redwoodNoIndirectCommands];
+	[self hakiosNoIndirectCommands];
 }
 
 /* Tile shading and imageblocks: a whole second pipeline kind (a tile function that runs over
  * the pass's imageblock), which this driver does not have. Every binding of it is refused
  * together, because one of them answering and the rest not would be worse than all of them
  * refusing: a tile dispatch would then run with half its bindings. */
-- (void)redwoodNoTileShading
+- (void)hakiosNoTileShading
 {
 	RW_ONCE("tile shading and imageblocks are not implemented; this tile "
 		"binding or dispatch is dropped\n");
@@ -6262,51 +6262,51 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 - (void)dispatchThreadsPerTile:(MTLSize)size
 {
 	(void)size;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setThreadgroupMemoryLength:(NSUInteger)length
 			    offset:(NSUInteger)offset
 			   atIndex:(NSUInteger)index
 {
 	(void)length; (void)offset; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileBuffer:(id)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index
 {
 	(void)buffer; (void)offset; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileBufferOffset:(NSUInteger)offset atIndex:(NSUInteger)index
 {
 	(void)offset; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileBuffers:(const id *)buffers
 	       offsets:(const NSUInteger *)offsets
 	     withRange:(NSRange)range
 {
 	(void)buffers; (void)offsets; (void)range;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileBytes:(const void *)bytes length:(NSUInteger)length atIndex:(NSUInteger)index
 {
 	(void)bytes; (void)length; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileTexture:(id)texture atIndex:(NSUInteger)index
 {
 	(void)texture; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileTextures:(const id *)textures withRange:(NSRange)range
 {
 	(void)textures; (void)range;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileSamplerState:(id)sampler atIndex:(NSUInteger)index
 {
 	(void)sampler; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileSamplerState:(id)sampler
 		lodMinClamp:(float)lodMin
@@ -6314,12 +6314,12 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 		    atIndex:(NSUInteger)index
 {
 	(void)sampler; (void)lodMin; (void)lodMax; (void)index;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileSamplerStates:(const id *)samplers withRange:(NSRange)range
 {
 	(void)samplers; (void)range;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 - (void)setTileSamplerStates:(const id *)samplers
 		lodMinClamps:(const float *)lodMin
@@ -6327,13 +6327,13 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 		   withRange:(NSRange)range
 {
 	(void)samplers; (void)lodMin; (void)lodMax; (void)range;
-	[self redwoodNoTileShading];
+	[self hakiosNoTileShading];
 }
 
 /* Function tables: pointers to shader functions, which an AIR module of ours never names
  * and the device answers no to (no ray tracing, no function pointers). A table bound here
  * would be a table a shader cannot call. */
-- (void)redwoodNoFunctionTables
+- (void)hakiosNoFunctionTables
 {
 	RW_ONCE("visible and intersection function tables are not implemented; "
 		"this binding is dropped\n");
@@ -6341,63 +6341,63 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 - (void)setVertexVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setVertexVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setFragmentVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setFragmentVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setTileVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setTileVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setVertexIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setVertexIntersectionFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setFragmentIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setFragmentIntersectionFunctionTables:(const id *)tables
 			      withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setTileIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setTileIntersectionFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 
 /* A line width other than 1 would change the picture, so it is said; the rasterizer this
@@ -6452,7 +6452,7 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
  * together for the same reason the tile bindings are: half of a stage's bindings arriving
  * would be worse than none.
  */
-- (void)redwoodNoMeshStages
+- (void)hakiosNoMeshStages
 {
 	RW_ONCE("mesh and object shader stages are not implemented (the device "
 		"answers no to them); this binding is dropped\n");
@@ -6460,41 +6460,41 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 - (void)setObjectBuffer:(id)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index
 {
 	(void)buffer; (void)offset; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectBufferOffset:(NSUInteger)offset atIndex:(NSUInteger)index
 {
 	(void)offset; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectBuffers:(const id *)buffers
 		 offsets:(const NSUInteger *)offsets
 	       withRange:(NSRange)range
 {
 	(void)buffers; (void)offsets; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectBytes:(const void *)bytes
 		length:(NSUInteger)length
 	       atIndex:(NSUInteger)index
 {
 	(void)bytes; (void)length; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectTexture:(id)texture atIndex:(NSUInteger)index
 {
 	(void)texture; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectTextures:(const id *)textures withRange:(NSRange)range
 {
 	(void)textures; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectSamplerState:(id)sampler atIndex:(NSUInteger)index
 {
 	(void)sampler; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectSamplerState:(id)sampler
 		  lodMinClamp:(float)lodMin
@@ -6502,12 +6502,12 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 		      atIndex:(NSUInteger)index
 {
 	(void)sampler; (void)lodMin; (void)lodMax; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectSamplerStates:(const id *)samplers withRange:(NSRange)range
 {
 	(void)samplers; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectSamplerStates:(const id *)samplers
 		  lodMinClamps:(const float *)lodMin
@@ -6515,64 +6515,64 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 		     withRange:(NSRange)range
 {
 	(void)samplers; (void)lodMin; (void)lodMax; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectThreadgroupMemoryLength:(NSUInteger)length atIndex:(NSUInteger)index
 {
 	(void)length; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectIntersectionFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshBuffer:(id)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index
 {
 	(void)buffer; (void)offset; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshBufferOffset:(NSUInteger)offset atIndex:(NSUInteger)index
 {
 	(void)offset; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshBuffers:(const id *)buffers
 	       offsets:(const NSUInteger *)offsets
 	     withRange:(NSRange)range
 {
 	(void)buffers; (void)offsets; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshBytes:(const void *)bytes length:(NSUInteger)length atIndex:(NSUInteger)index
 {
 	(void)bytes; (void)length; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshTexture:(id)texture atIndex:(NSUInteger)index
 {
 	(void)texture; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshTextures:(const id *)textures withRange:(NSRange)range
 {
 	(void)textures; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshSamplerState:(id)sampler atIndex:(NSUInteger)index
 {
 	(void)sampler; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshSamplerState:(id)sampler
 		lodMinClamp:(float)lodMin
@@ -6580,12 +6580,12 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 		    atIndex:(NSUInteger)index
 {
 	(void)sampler; (void)lodMin; (void)lodMax; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshSamplerStates:(const id *)samplers withRange:(NSRange)range
 {
 	(void)samplers; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshSamplerStates:(const id *)samplers
 		lodMinClamps:(const float *)lodMin
@@ -6593,22 +6593,22 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 		   withRange:(NSRange)range
 {
 	(void)samplers; (void)lodMin; (void)lodMax; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshIntersectionFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 /*
  * The last four of the mesh group are OPTIONAL members of <MTLRenderCommandEncoderSPI>, and
@@ -6621,22 +6621,22 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
 - (void)setMeshIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setMeshAccelerationStructure:(id)structure atBufferIndex:(NSUInteger)index
 {
 	(void)structure; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 - (void)setObjectAccelerationStructure:(id)structure atBufferIndex:(NSUInteger)index
 {
 	(void)structure; (void)index;
-	[self redwoodNoMeshStages];
+	[self hakiosNoMeshStages];
 }
 
 /* A split handler is called when Metal splits one render pass into several submissions,
@@ -7267,7 +7267,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 }
 /* The stage-in region is for a kernel whose arguments arrive as [[stage_in]] -- the
  * non-uniform-grid feature. Nothing in the AIR this driver compiles declares one. */
-- (void)redwoodNoStageIn
+- (void)hakiosNoStageIn
 {
 	RW_ONCE("a kernel stage-in region is not implemented; the dispatch "
 		"covers the whole grid it was given\n");
@@ -7275,13 +7275,13 @@ rw_blit_unknown(id self, SEL sel, ...)
 - (void)setStageInRegion:(MTLRegion)region
 {
 	(void)region;
-	[self redwoodNoStageIn];
+	[self hakiosNoStageIn];
 }
 - (void)setStageInRegionWithIndirectBuffer:(id)buffer
 		      indirectBufferOffset:(NSUInteger)offset
 {
 	(void)buffer; (void)offset;
-	[self redwoodNoStageIn];
+	[self hakiosNoStageIn];
 }
 - (void)setImageblockWidth:(NSUInteger)width height:(NSUInteger)height
 {
@@ -7295,7 +7295,7 @@ rw_blit_unknown(id self, SEL sel, ...)
  * library decides that for itself and there is nothing here to turn off. */
 - (void)setThreadgroupPackingDisabled:(BOOL)disabled { (void)disabled; }
 
-- (void)redwoodNoFunctionTables
+- (void)hakiosNoFunctionTables
 {
 	RW_ONCE("visible and intersection function tables are not implemented; "
 		"this binding is dropped\n");
@@ -7303,22 +7303,22 @@ rw_blit_unknown(id self, SEL sel, ...)
 - (void)setVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setIntersectionFunctionTable:(id)table atBufferIndex:(NSUInteger)index
 {
 	(void)table; (void)index;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 - (void)setIntersectionFunctionTables:(const id *)tables withBufferRange:(NSRange)range
 {
 	(void)tables; (void)range;
-	[self redwoodNoFunctionTables];
+	[self hakiosNoFunctionTables];
 }
 
 /* The same as the render encoder's, for the same measured reason: the superclass retains the
@@ -7424,9 +7424,9 @@ rw_blit_unknown(id self, SEL sel, ...)
 /* Not part of MTLArgumentEncoder: what this encoder is for, so a test can read back the
  * mapping between Metal's [[id(n)]] and the index the GPU is programmed with instead of
  * trusting it. Metal's own pipeline reflection would report the same thing. */
-- (NSUInteger)redwoodMemberCount { return _layout.member_count; }
-- (NSUInteger)redwoodMetalIndex  { return _layout.metal_index; }
-- (BOOL)redwoodMember:(NSUInteger)i id:(NSUInteger *)mid kind:(NSUInteger *)kind
+- (NSUInteger)hakiosMemberCount { return _layout.member_count; }
+- (NSUInteger)hakiosMetalIndex  { return _layout.metal_index; }
+- (BOOL)hakiosMember:(NSUInteger)i id:(NSUInteger *)mid kind:(NSUInteger *)kind
 		index:(NSUInteger *)index
 {
 	if (i >= _layout.member_count) {
@@ -7501,7 +7501,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 /* Whether this encoder is in a state to record, said once per site: an id past the set's
  * own members is the mistake worth naming, because Metal would write a handle into the
  * buffer and the shader would read a descriptor that is not there. */
-- (BOOL)redwoodReady:(NSUInteger)index for:(const char *)what
+- (BOOL)hakiosReady:(NSUInteger)index for:(const char *)what
 {
 	if (_destination == nil) {
 		if (!_complained) {
@@ -7540,7 +7540,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 {
 	char why[512] = { 0 };
 
-	if (![self redwoodReady:index for:"a buffer"]) {
+	if (![self hakiosReady:index for:"a buffer"]) {
 		return;
 	}
 	if (buffer != nil && ![buffer isKindOfClass:[HakiosMetalBuffer class]]) {
@@ -7569,7 +7569,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 {
 	char why[512] = { 0 };
 
-	if (![self redwoodReady:index for:"a texture"]) {
+	if (![self hakiosReady:index for:"a texture"]) {
 		return;
 	}
 	if (texture != nil && ![texture isKindOfClass:[HakiosMetalTexture class]]) {
@@ -7595,7 +7595,7 @@ rw_blit_unknown(id self, SEL sel, ...)
 {
 	char why[512] = { 0 };
 
-	if (![self redwoodReady:index for:"a sampler"]) {
+	if (![self hakiosReady:index for:"a sampler"]) {
 		return;
 	}
 	if (sampler != nil && ![sampler isKindOfClass:[HakiosMetalSampler class]]) {
@@ -7632,7 +7632,7 @@ rw_blit_unknown(id self, SEL sel, ...)
  */
 - (void *)constantDataAtIndex:(NSUInteger)index
 {
-	if (![self redwoodReady:index for:"constant data"]) {
+	if (![self hakiosReady:index for:"constant data"]) {
 		return NULL;
 	}
 	void *bytes = [_destination contents];
@@ -7669,7 +7669,7 @@ rw_blit_unknown(id self, SEL sel, ...)
  * would be a record no draw could use -- and a silent no-op would leave the application
  * believing its set was encoded.
  */
-- (void)redwoodNoSuchMember:(const char *)what atIndex:(NSUInteger)index
+- (void)hakiosNoSuchMember:(const char *)what atIndex:(NSUInteger)index
 {
 	rw_print("%s was encoded at id %lu of an argument buffer, and this port "
 	         "binds a buffer, a texture or a sampler member and refuses the rest when the "
@@ -7679,57 +7679,57 @@ rw_blit_unknown(id self, SEL sel, ...)
 - (void)setRenderPipelineState:(id)state atIndex:(NSUInteger)index
 {
 	(void)state;
-	[self redwoodNoSuchMember:"a render pipeline state" atIndex:index];
+	[self hakiosNoSuchMember:"a render pipeline state" atIndex:index];
 }
 - (void)setRenderPipelineStates:(const id *)states withRange:(NSRange)range
 {
 	(void)states;
-	[self redwoodNoSuchMember:"render pipeline states" atIndex:range.location];
+	[self hakiosNoSuchMember:"render pipeline states" atIndex:range.location];
 }
 - (void)setComputePipelineState:(id)state atIndex:(NSUInteger)index
 {
 	(void)state;
-	[self redwoodNoSuchMember:"a compute pipeline state" atIndex:index];
+	[self hakiosNoSuchMember:"a compute pipeline state" atIndex:index];
 }
 - (void)setComputePipelineStates:(const id *)states withRange:(NSRange)range
 {
 	(void)states;
-	[self redwoodNoSuchMember:"compute pipeline states" atIndex:range.location];
+	[self hakiosNoSuchMember:"compute pipeline states" atIndex:range.location];
 }
 - (void)setIndirectCommandBuffer:(id)buffer atIndex:(NSUInteger)index
 {
 	(void)buffer;
-	[self redwoodNoSuchMember:"an indirect command buffer" atIndex:index];
+	[self hakiosNoSuchMember:"an indirect command buffer" atIndex:index];
 }
 - (void)setIndirectCommandBuffers:(const id *)buffers withRange:(NSRange)range
 {
 	(void)buffers;
-	[self redwoodNoSuchMember:"indirect command buffers" atIndex:range.location];
+	[self hakiosNoSuchMember:"indirect command buffers" atIndex:range.location];
 }
 - (void)setAccelerationStructure:(id)structure atIndex:(NSUInteger)index
 {
 	(void)structure;
-	[self redwoodNoSuchMember:"an acceleration structure" atIndex:index];
+	[self hakiosNoSuchMember:"an acceleration structure" atIndex:index];
 }
 - (void)setVisibleFunctionTable:(id)table atIndex:(NSUInteger)index
 {
 	(void)table;
-	[self redwoodNoSuchMember:"a visible function table" atIndex:index];
+	[self hakiosNoSuchMember:"a visible function table" atIndex:index];
 }
 - (void)setVisibleFunctionTables:(const id *)tables withRange:(NSRange)range
 {
 	(void)tables;
-	[self redwoodNoSuchMember:"visible function tables" atIndex:range.location];
+	[self hakiosNoSuchMember:"visible function tables" atIndex:range.location];
 }
 - (void)setIntersectionFunctionTable:(id)table atIndex:(NSUInteger)index
 {
 	(void)table;
-	[self redwoodNoSuchMember:"an intersection function table" atIndex:index];
+	[self hakiosNoSuchMember:"an intersection function table" atIndex:index];
 }
 - (void)setIntersectionFunctionTables:(const id *)tables withRange:(NSRange)range
 {
 	(void)tables;
-	[self redwoodNoSuchMember:"intersection function tables" atIndex:range.location];
+	[self hakiosNoSuchMember:"intersection function tables" atIndex:range.location];
 }
 
 @end
@@ -7790,7 +7790,7 @@ rw_function_argument_encoder(id self, SEL cmd, NSUInteger index)
 		         "a %s and not ours\n", class_getName(object_getClass(device)));
 		return nil;
 	}
-	return [(HakiosMetalDevice *)device redwoodArgumentEncoderForFunction:self
+	return [(HakiosMetalDevice *)device hakiosArgumentEncoderForFunction:self
 								  bufferIndex:index];
 }
 

@@ -243,10 +243,10 @@ say(const char *format, ...)
 	 * report read by position belongs to whichever process happened to be writing -- the lines are
 	 * interleaved, not grouped. Every line names its own program instead.
 	 */
-	if (strncmp(line, "hakios: store: ", 16) == 0) {
+	if (strncmp(line, "hakios: store: ", sizeof("hakios: store: ") - 1) == 0) {
 		char named[sizeof(line) + 32];
 
-		n = snprintf(named, sizeof(named), "hakios: %s: %s", who, line + 16);
+		n = snprintf(named, sizeof(named), "hakios: %s: %s", who, line + sizeof("hakios: store: ") - 1);
 		if (n > (int)sizeof(named) - 1) {
 			n = sizeof(named) - 1;
 		}

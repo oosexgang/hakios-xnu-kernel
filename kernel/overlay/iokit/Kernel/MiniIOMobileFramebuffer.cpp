@@ -2150,7 +2150,7 @@ publishDisplayNode(void)
 		data = OSData::withBytes("display-subsystem", sizeof("display-subsystem"));
 		props->setObject("device_type", data);
 		OSSafeReleaseNULL(data);
-		data = OSData::withBytes("redwood,framebuffer", sizeof("redwood,framebuffer"));
+		data = OSData::withBytes("hakios,framebuffer", sizeof("hakios,framebuffer"));
 		props->setObject("compatible", data);
 		OSSafeReleaseNULL(data);
 		data = OSData::withBytes("disp0", sizeof("disp0"));

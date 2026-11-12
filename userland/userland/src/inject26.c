@@ -10,7 +10,7 @@
  * Only public-ish IOKit HID calls are used (IOHIDVirtualServiceClient*, IOHIDEvent*), no address
  * inside the shared cache: nothing here depends on a build of iOS. (src/inject.c is the iOS 16.5
  * library, whose window server patches are 16.5's addresses; the input code is the same.)
- * Lines go to stderr and to the console, "redwood26: ...".
+ * Lines go to stderr and to the console, "hakios26: ...".
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
@@ -37,6 +37,10 @@
 
 #include "hakios_input.h"
 
+#define PREFIX          "hakios: "
+#define PREFIX26        "hakios26: "
+_Static_assert(sizeof(PREFIX26) - sizeof(PREFIX) == 2, "two bytes are kept free for the longer prefix");
+
 static void
 say(const char *format, ...)
 {
@@ -44,7 +48,7 @@ say(const char *format, ...)
 	va_list ap;
 	int n, console;
 
-	/* (two bytes kept free for the "redwood26: " below: a line that filled the buffer was moved two bytes past
+	/* (two bytes kept free for the "hakios26: " below: a line that filled the buffer was moved two bytes past
 	 * its end, and the fortified memmove trapped -- PosterBoard died of it on every launch, run glass6) */
 	va_start(ap, format);
 	n = vsnprintf(line, sizeof(line) - 2, format, ap);
@@ -52,10 +56,11 @@ say(const char *format, ...)
 	if (n > (int)sizeof(line) - 3) {
 		n = sizeof(line) - 3;
 	}
-	if (n > 9 && strncmp(line, "hakios: ", 9) == 0) {
-		memmove(line + 11, line + 9, (size_t)n - 9 + 1);
-		memcpy(line, "redwood26: ", 11);
-		n += 2;
+	/* (the two prefixes' lengths from the strings themselves: "hakios: " becomes "hakios26: ", two bytes more) */
+	if (n > (int)sizeof(PREFIX) - 1 && strncmp(line, PREFIX, sizeof(PREFIX) - 1) == 0) {
+		memmove(line + sizeof(PREFIX26) - 1, line + sizeof(PREFIX) - 1, (size_t)n - (sizeof(PREFIX) - 1) + 1);
+		memcpy(line, PREFIX26, sizeof(PREFIX26) - 1);
+		n += (int)(sizeof(PREFIX26) - sizeof(PREFIX));
 		if (n > (int)sizeof(line) - 1) {
 			n = sizeof(line) - 1;
 		}
@@ -695,7 +700,7 @@ rw_swap_begin(IOMobileFramebufferRef fb, int *token)
 	int r = IOMobileFramebufferSwapBegin(fb, token);
 
 	if (swaplog_on()) {
-		swaplog("redwood26: swaplog %u: begin -> %#x token %d\n", swaplog_count, r, token ? *token : -1);
+		swaplog("hakios26: swaplog %u: begin -> %#x token %d\n", swaplog_count, r, token ? *token : -1);
 	}
 	return r;
 }
@@ -706,7 +711,7 @@ rw_swap_end(IOMobileFramebufferRef fb)
 	int r = IOMobileFramebufferSwapEnd(fb);
 
 	if (swaplog_on()) {
-		swaplog("redwood26: swaplog %u: end -> %#x\n", swaplog_count, r);
+		swaplog("hakios26: swaplog %u: end -> %#x\n", swaplog_count, r);
 	}
 	swaplog_count++;
 	return r;
@@ -718,7 +723,7 @@ rw_swap_set_layer(IOMobileFramebufferRef fb, int layer, void *surface, rw_rect b
 	int r = IOMobileFramebufferSwapSetLayer(fb, layer, surface, bounds, frame, flags);
 
 	if (swaplog_on()) {
-		swaplog("redwood26: swaplog %u: layer %d surface %u (%p) bounds %.0f,%.0f %.0fx%.0f frame %.0f,%.0f %.0fx%.0f "
+		swaplog("hakios26: swaplog %u: layer %d surface %u (%p) bounds %.0f,%.0f %.0fx%.0f frame %.0f,%.0f %.0fx%.0f "
 		    "flags %#x -> %#x\n", swaplog_count, layer, surface ? IOSurfaceGetID(surface) : 0, surface, bounds.x,
 		    bounds.y, bounds.w, bounds.h, frame.x, frame.y, frame.w, frame.h, flags, r);
 	}
@@ -731,7 +736,7 @@ rw_swap_event_wait(IOMobileFramebufferRef fb, uint64_t a1, uint64_t a2, uint64_t
 	int r = IOMobileFramebufferSwapSetEventWait(fb, a1, a2, a3, a4, a5);
 
 	if (swaplog_on()) {
-		swaplog("redwood26: swaplog %u: event wait %#llx %#llx %#llx %#llx -> %#x\n", swaplog_count,
+		swaplog("hakios26: swaplog %u: event wait %#llx %#llx %#llx %#llx -> %#x\n", swaplog_count,
 		    (unsigned long long)a1, (unsigned long long)a2, (unsigned long long)a3, (unsigned long long)a4, r);
 	}
 	return r;
@@ -743,7 +748,7 @@ rw_swap_event_signal(IOMobileFramebufferRef fb, uint64_t a1, uint64_t a2, uint64
 	int r = IOMobileFramebufferSwapSetEventSignal(fb, a1, a2, a3, a4, a5);
 
 	if (swaplog_on()) {
-		swaplog("redwood26: swaplog %u: event signal %#llx %#llx %#llx %#llx -> %#x\n", swaplog_count,
+		swaplog("hakios26: swaplog %u: event signal %#llx %#llx %#llx %#llx -> %#x\n", swaplog_count,
 		    (unsigned long long)a1, (unsigned long long)a2, (unsigned long long)a3, (unsigned long long)a4, r);
 	}
 	return r;
@@ -1702,7 +1707,7 @@ rw_schedule_samples(const char *tag)
 
 __attribute__((constructor))
 static void
-redwood26_init(void)
+hakios26_init(void)
 {
 	const char *name = getprogname();
 

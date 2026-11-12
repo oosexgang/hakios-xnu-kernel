@@ -2762,11 +2762,11 @@ fill_depth_texture(id<MTLTexture> tex)
 static bool
 read_depth_buffer(id<MTLTexture> zt, float *depth, const char *what)
 {
-	SEL sel = sel_getUid("redwoodReadDepth:stencil:fromRegion:");
+	SEL sel = sel_getUid("hakiosReadDepth:stencil:fromRegion:");
 
 	if (![zt respondsToSelector:sel]) {
 		printf("drvtest: depth: this texture does not answer "
-		       "redwoodReadDepth:stencil:fromRegion:, so the driver is older than this "
+		       "hakiosReadDepth:stencil:fromRegion:, so the driver is older than this "
 		       "test\n");
 		return false;
 	}
@@ -3953,8 +3953,8 @@ static unsigned long
 pic_queue_state(id<MTLCommandQueue> queue, const char *when)
 {
 	NSUInteger (*ask)(id, SEL) = (NSUInteger (*)(id, SEL))objc_msgSend;
-	SEL outstanding = sel_getUid("redwoodOutstandingCommandBuffers");
-	SEL made = sel_getUid("redwoodCommandBuffersMade");
+	SEL outstanding = sel_getUid("hakiosOutstandingCommandBuffers");
+	SEL made = sel_getUid("hakiosCommandBuffersMade");
 	SEL most = sel_getUid("maxCommandBufferCount");
 
 	if (![queue respondsToSelector:outstanding] || ![queue respondsToSelector:most]) {
@@ -6551,7 +6551,7 @@ tm_slots(id<MTLCommandQueue> queue)
 	/* The queue's own count, asked rather than inferred -- the same two selectors
 	 * pic_queue_state uses, printed here so that every line of this mode reads alike. */
 	NSUInteger (*ask)(id, SEL) = (NSUInteger (*)(id, SEL))objc_msgSend;
-	SEL outstanding = sel_getUid("redwoodOutstandingCommandBuffers");
+	SEL outstanding = sel_getUid("hakiosOutstandingCommandBuffers");
 	SEL most = sel_getUid("maxCommandBufferCount");
 
 	if ([queue respondsToSelector:outstanding] && [queue respondsToSelector:most]) {

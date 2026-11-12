@@ -90,7 +90,7 @@ static void loader_log_put_locked(char c);
 
 /*
  * Lines worth keeping whatever the ring loses: a driver's or a library's of ours being brought up
- * ("dtouch: ", "dgpu: ", "redwood26: ", "exec: ") are copied here as they pass, and appended to the log on
+ * ("dtouch: ", "dgpu: ", "hakios26: ", "exec: ") are copied here as they pass, and appended to the log on
  * the way out (the stock daemons' chatter can push them out of the ring in a minute).
  */
 #define LOADER_KEEP_SIZE (96 * 1024)
@@ -103,7 +103,7 @@ static volatile bool loader_keep_replaying;
 static bool
 loader_keep_wanted(const char *line)
 {
-	static const char *const prefixes[] = { "dtouch: ", "dgpu: ", "redwood26: ", "exec: ", "hakios: crash ", "hakios:   x0 ",
+	static const char *const prefixes[] = { "dtouch: ", "dgpu: ", "hakios26: ", "exec: ", "hakios: crash ", "hakios:   x0 ",
 		"hakios:   frame " };
 	static unsigned dyld_lines;
 
@@ -537,7 +537,7 @@ loader_return(void)
 	 */
 	loader_log_linearize();
 	if (!loader_return_entered && loader_keep_len != 0) {
-		loader_log_puts("\n--- kept lines (dtouch, redwood26, exec) ---\n");
+		loader_log_puts("\n--- kept lines (dtouch, hakios26, exec) ---\n");
 		for (uint32_t i = 0; i < loader_keep_len; i++) {
 			loader_log_putc(loader_keep[i]);
 		}
@@ -598,7 +598,7 @@ loader_keep_replay(void)
 	uint32_t at = 0, end = loader_keep_len;
 
 	loader_keep_replaying = true;
-	loader_log_line("\n--- kept lines (dtouch, redwood26, exec), again ---\n");
+	loader_log_line("\n--- kept lines (dtouch, hakios26, exec), again ---\n");
 	while (at < end) {
 		uint32_t n = 0;
 
