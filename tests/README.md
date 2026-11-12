@@ -104,7 +104,13 @@ tests are built with from these and the repository's own boards.
 - **Wait for everything you then check.** A driver's thread writes its values one after another. A
   test that waits for the first and then compares the second passes a thousand times and fails once
   on a busy machine: `WAIT_FOR(a && b, ms)` before `CHECK(a && b, ...)`, not `WAIT_FOR(a, ms)`.
-- **Break the code on purpose.** Change the driver one line at a time (a copy of it, put first on the
-  include path) and see that a scenario fails each time. A check that no such change can fail checks
-  nothing; a change no scenario notices is a scenario to write, or a line that does nothing.
+- **Break the code on purpose.** Change the driver one line at a time and see that a scenario fails
+  each time: `tests/mutate.sh TEST SOURCE OLD NEW` does it in a copy and says which scenarios caught
+  the change, or that none did. A check that no such change can fail checks nothing; a change no
+  scenario notices is a scenario to write, or a line that does nothing.
+
+  ```sh
+  tests/mutate.sh ddr_driver_test hakios_ddr.c 'level == 0 ||' ''
+  # caught by: not_listed_not_asked
+  ```
 - Add it to `tests/run.sh`.

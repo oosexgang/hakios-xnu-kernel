@@ -64,7 +64,8 @@ needs it.
    `tests/tlmm_model.h` (pins), `tests/spmi_model.h` (the PMIC arbiter), `tests/rsc_model.h` (RPMh's
    sequencer), `tests/cmd_db_image.h` (the command database). Write first the scenarios of what the
    driver must never do. Then break the driver on purpose, one line at a time, and see that a
-   scenario fails each time: a test that passes whatever the driver does tests nothing.
+   scenario fails each time (`tests/mutate.sh` does it in a copy and says which scenario caught the
+   change): a test that passes whatever the driver does tests nothing.
 5. **Add it to the build**: its line in `bsd/conf/files` of an assembled tree, and its start function
    as one more line of the list in `bsd/dev/hakios_drivers.c`, after what it needs (the list is
    where every driver is started, in order; a driver decides for itself whether it has anything
