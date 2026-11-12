@@ -1,7 +1,7 @@
-# Copyright © 2026 Darwin on redwood contributors
+# Copyright © 2026 HakiOS contributors
 # SPDX-License-Identifier: MIT
 
-# The AIR (Metal) frontend. In the Darwin on redwood repository this
+# The AIR (Metal) frontend. In the HakiOS repository this
 # directory is tools/mesa/air, copied to src/compiler/air by the build
 # scripts; tools/mesa/air.patch adds the subdir() that reaches it.
 

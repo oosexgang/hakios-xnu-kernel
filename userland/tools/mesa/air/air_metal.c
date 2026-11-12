@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 HakiOS contributors
  * SPDX-License-Identifier: MIT
  */
 

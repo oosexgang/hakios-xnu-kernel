@@ -7,7 +7,7 @@
 -if dep_libdrm.found()
 +if host_machine.system() == 'darwin' and with_gallium_freedreno
 +  # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
-+  # for libdrm (src/hakios-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
++  # for libdrm (src/hakios-drm, put there by HakiOS's tools/mk-mesa.sh; its one
 +  # source file is built with freedreno's drm layer, src/freedreno/drm).
 +  dep_libdrm = declare_dependency(
 +    include_directories : include_directories('src/hakios-drm'),
@@ -140,7 +140,7 @@
         DRAW == DRAW_INDIRECT_OP_INDIRECT_COUNT)
        ctx->batch->barrier |= FD6_WAIT_FOR_ME;
  
-+   /* Darwin on redwood: a draw that reads the framebuffer reads it through
++   /* HakiOS: a draw that reads the framebuffer reads it through
 +    * UCHE.  Among primitives drawn with FLUSH_PER_OVERLAP the hardware sees
 +    * to it that they read what the ones before them wrote, but it knows
 +    * nothing of what was drawn before that mode was on: the first triangle
@@ -216,7 +216,7 @@
  
 +/*
 + * There is no EGL here. What glEGLImageTargetTexture2DOES is given as an image is the ID of an
-+ * IOSurface, whose memory becomes the texture's where the driver can do that (Darwin on redwood).
++ * IOSurface, whose memory becomes the texture's where the driver can do that (HakiOS).
 + */
 +static bool
 +osmesa_st_get_egl_image(struct pipe_frontend_screen *fscreen, void *image,
@@ -282,7 +282,7 @@ Only in b2/src/gallium/frontends/osmesa: osmesa.c.orig
 +#include "freedreno/driinfo_freedreno.h"
 +};
 +
-+/* The GPU's driver, where the kernel has a GPU to drive (Darwin on redwood); NULL: none. */
++/* The GPU's driver, where the kernel has a GPU to drive (HakiOS); NULL: none. */
 +static struct pipe_screen *
 +osmesa_create_gpu_screen(void)
 +{
@@ -312,7 +312,7 @@ Only in b2/src/gallium/frontends/osmesa: osmesa.c.orig
 +osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface);
 +
 +/*
-+ * The memory of an IOSurface as a texture, to draw into and to draw with (Darwin on redwood):
++ * The memory of an IOSurface as a texture, to draw into and to draw with (HakiOS):
 + * the kernel's GPU driver makes a buffer of the surface. NULL: the screen is not the GPU's, or
 + * the surface is not one plane of 32-bit pixels, blue first, in rows the GPU can address.
 + */
