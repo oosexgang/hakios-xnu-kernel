@@ -4,7 +4,7 @@
  * its own (a rail's levels, a bus clock manager's unit). Every driver that asks RPMh for something
  * looks its resource up here by name; this is that lookup once.
  *
- * Where the database is comes from the SoC file's [rpmh] (hakios_board()->rpmh.cmd_db and
+ * Where the database is comes from the SoC file's rpmh { } (hakios_board()->rpmh.cmd_db and
  * cmd_db_size). The driver maps it -- it is memory, not registers: mapped so that reads of any size
  * and alignment are allowed -- and hands the mapping and its size to the functions here, which
  * never read outside it whatever the database says of itself.

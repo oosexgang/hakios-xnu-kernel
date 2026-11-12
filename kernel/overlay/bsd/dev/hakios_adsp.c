@@ -20,7 +20,7 @@
  *   - processor 2 (not 13) in the shared memory; its SMP2P items 443 (its) and 429 (ours), its
  *     last words in item 423; GLINK's three items in our partition with it
  *   - its doorbells are IPCC client 3 (LPASS): signal 0 GLINK, signal 2 SMP2P
- *   - TrustZone knows it as image 1; its memory is the board's ([adsp] memory and memory_size; dt:
+ *   - TrustZone knows it as image 1; its memory is the board's (adsp { } memory and memory_size; dt:
  *     the reserved memory the DSP's node points at), every byte of which the image may take
  *   - the always-on processor is told of it as "adsp"
  *   - the Wi-Fi DSP may be running at the same time (wifi=1): the mailbox to the always-on
@@ -253,7 +253,7 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 
 /* ---- the shared memory (hakios_wifi.c, step 1) --------------------------------------------------- */
 
-#define SMEM_PHYS               ((unsigned long)hakios_board()->ipc.smem)       /* the SoC file's [ipc] */
+#define SMEM_PHYS               ((unsigned long)hakios_board()->ipc.smem)       /* the SoC file's ipc { } */
 #define SMEM_SIZE               (hakios_board()->ipc.smem_size)
 #define SMEM_US                 0
 #define SMEM_ADSP               2               /* dt: qcom,remote-pid of qcom,smp2p-adsp and qcom,glink/adsp */
@@ -428,11 +428,11 @@ show_crash_reason(void)
 
 #include "hakios_ipc.h"                     /* the mailbox's words and the doorbells' registers */
 
-static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's [ipc], at the start */
+static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's ipc { }, at the start */
 
 #define IPCC_LPASS              3u              /* dt: mboxes of qcom,smp2p-adsp and qcom,glink/adsp */
 
-static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's [ipc], at the start */
+static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's ipc { }, at the start */
 
 static struct {
 	uint32_t glink, smp2p, said;
@@ -600,14 +600,14 @@ out:
  * the list of its levels that the boot loader's command database keeps (cmd-db.c), the first
  * position at or above the level wanted.
  */
-#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's rpmh { } */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
 #include "hakios_cmd_db.h"
 
 static const struct cmd_db_header *cmd_db;
 
-static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's [rpmh], at the start */
+static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's rpmh { }, at the start */
 #define RSC_TCS_BASE            (hakios_board()->rpmh.tcs_offset)
 #define RSC_IRQ_STATUS          (RSC_TCS_BASE + 0x04)   /* a bit per TCS: done */
 #define RSC_IRQ_CLEAR           (RSC_TCS_BASE + 0x08)
@@ -758,7 +758,7 @@ step_survey(void)
 
 #define ADSP_MEMORY             adsp_memory     /* dt: the reserved memory the DSP's node points at (memory-region) */
 #define ADSP_MEMORY_SIZE        adsp_memory_size
-static uint32_t adsp_memory, adsp_memory_size;  /* the board's [adsp] memory and memory_size */
+static uint32_t adsp_memory, adsp_memory_size;  /* the board's adsp { } memory and memory_size */
 static const char *adsp_firmware = "fw";        /* ... and its firmware directory */
 static uint32_t charge_counter_divisor = 1;     /* ... and what its battery manager counts charge in */
 #define PAS_ADSP                1               /* dt: qcom,pas-id */
@@ -1281,7 +1281,7 @@ step_image(void)
 
 /* ---- step 6: our SMP2P item ------------------------------------------------------------------------ */
 
-static struct block smem_lock = { "shared memory's lock", 0, 0x1000 }; /* where: the SoC file's [ipc], at the start */
+static struct block smem_lock = { "shared memory's lock", 0, 0x1000 }; /* where: the SoC file's ipc { }, at the start */
 #define LOCK_OWNER              0x000
 #define LOCK_US                 1u
 
@@ -2457,7 +2457,7 @@ battmgr_get(uint32_t opcode, uint32_t property, uint32_t *value)
 
 /* Some gauges report the charge counter in 1/100 uAh, unlike their full and design capacity fields
  * (Linux's qti_battery_charger.c divides the property by 100 for POWER_SUPPLY_PROP_CHARGE_COUNTER):
- * the board's [adsp] charge_counter_divisor says which. */
+ * the board's adsp { } charge_counter_divisor says which. */
 static uint32_t
 battmgr_charge_uah(uint32_t raw)
 {
@@ -2954,13 +2954,13 @@ hakios_adsp_init(void)
 	if (!hakios_board_has(HAKIOS_HAS_ADSP) || board->adsp.firmware == NULL || board->adsp.memory == 0 ||
 	    board->adsp.memory_size == 0) {
 		printf("adsp: adsp=1 and adsp_step=N are for a phone's audio DSP: this board's board.dts lists no \"adsp\" with "
-		    "an [adsp] section\n");
+		    "an adsp { } section\n");
 		return;
 	}
 	if (board->rpmh.cmd_db == 0 || board->rpmh.rsc == 0 || board->ipc.aoss == 0 || board->ipc.ipcc == 0 ||
 	    board->ipc.smem == 0 || board->ipc.smem_lock == 0) {
-		printf("adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], "
-		    "[ipc]): the DSP's supplies are asked for there, and the DSP is talked to through it\n");
+		printf("adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are (rpmh { }, "
+		    "ipc { }): the DSP's supplies are asked for there, and the DSP is talked to through it\n");
 		return;
 	}
 	rsc.phys = board->rpmh.rsc;

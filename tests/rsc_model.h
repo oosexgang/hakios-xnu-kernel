@@ -14,7 +14,7 @@
 
 #define COMMANDS        16
 static struct {
-	uint32_t base;                  /* the slot set: the sequencer's address + [rpmh] tcs_offset of the board */
+	uint32_t base;                  /* the slot set: the sequencer's address + rpmh { } tcs_offset of the board */
 	uint32_t irq_enable, irq_status, wait, control, enabled;
 	uint32_t message[COMMANDS], address[COMMANDS], data[COMMANDS];
 	bool deaf;                      /* RPMh never says a request is done */

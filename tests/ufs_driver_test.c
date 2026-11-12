@@ -55,7 +55,7 @@ static int failures;
 
 /* the partitions, as the loader's table has them */
 enum { BOOT, UNIT0, DARWIN, SUPER, PARTS };
-/* the board's [storage] (tests/devices/phone-video): darwin's place on its unit and where writing begins */
+/* the board's storage { } (tests/devices/phone-video): darwin's place on its unit and where writing begins */
 #define DARWIN_FIRST    25374720ull
 #define DARWIN_BLOCKS   5242875ull
 #define WRITE_FIRST     2042368ull
@@ -485,7 +485,7 @@ partition_must_be_the_ports(void)
 	case 6: page->part[DARWIN].unit = 1; break;
 	case 7: snprintf(page->part[DARWIN].name, sizeof(page->part[DARWIN].name), "darwin2"); break;
 	case 8: page->write_part_plus_one = PARTS + 1; break;
-	default: board = "phone-cmd"; break;            /* (a board with no [storage]) */
+	default: board = "phone-cmd"; break;            /* (a board with no storage { }) */
 	}
 	hakios_ufs_init();
 	CHECK(logged(cases[i]), "case %u: said why: %s", i, log_text);

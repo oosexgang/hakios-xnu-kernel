@@ -4,7 +4,7 @@
  * each the items, known by number. A driver that talks to another processor (the audio DSP, the
  * Wi-Fi's) finds the other's items here; this is that reading once.
  *
- * Where the memory is comes from the SoC file's [ipc] (hakios_board()->ipc.smem and smem_size).
+ * Where the memory is comes from the SoC file's ipc { } (hakios_board()->ipc.smem and smem_size).
  * The driver maps it -- memory, not registers -- and hands the mapping and its size to the
  * functions here. Other processors write there while we look: everything is copied out before it is
  * believed, and nothing is read outside the mapping whatever a header says of its own sizes.

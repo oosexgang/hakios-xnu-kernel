@@ -3,7 +3,7 @@
  *
  * The boot loader leaves the memory's bus clock at a modest rate; a system that wants more votes for
  * it on the memory's bus clock managers ("BCM"), through its RPMh sequencer. Where the command
- * database and the sequencer are comes from the SoC file's [rpmh] (hakios_board.h). What is taken for
+ * database and the sequencer are comes from the SoC file's rpmh { } (hakios_board.h). What is taken for
  * granted beyond that, as on both phones so far: the sequencer's first slot set is an active one,
  * and the BCMs are named MC0, SH0 and ACV.
  *
@@ -42,7 +42,7 @@ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
  * left, with what is needed to vote for bandwidth on them -- only read. (membench=2 says the cores
  * together get no more from memory than one alone: 12 GB/s; nobody here votes for more.)
  */
-#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)      /* where it is: the SoC file's [rpmh] */
+#define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)      /* where it is: the SoC file's rpmh { } */
 struct cmd_db_bcm {                             /* a BCM's auxiliary data (Linux: struct bcm_db) */
 	uint32_t unit;
 	uint16_t width;
@@ -87,7 +87,7 @@ ddr_look(void)
  * each (sc7280's qcom,tcs-config): every command with an address, and which of them go to the BCMs
  * above -- the bandwidth it asked for, and that is in force whenever the processors are awake.
  */
-#define RSC_SIZE                0x10000UL       /* where it is: the SoC file's [rpmh] */
+#define RSC_SIZE                0x10000UL       /* where it is: the SoC file's rpmh { } */
 #define RSC_TCS(n, reg)         (hakios_board()->rpmh.tcs_offset + 0x2a0 * (n) + (reg))
 #define RSC_TCS_COUNT           9
 #define RSC_CMDS                16
@@ -229,7 +229,7 @@ hakios_ddr_init(bool with_cpufreq)
 	if (!hakios_board_has(HAKIOS_HAS_DDR_RPMH)) {
 		tell("ddr: no RPMh vote on this board (its board.dts lists no \"ddr-rpmh\")\n");
 	} else if (hakios_board()->rpmh.cmd_db == 0 || hakios_board()->rpmh.rsc == 0) {
-		tell("ddr: no RPMh vote: the SoC file has no [rpmh]\n");
+		tell("ddr: no RPMh vote: the SoC file has no rpmh { }\n");
 	} else if (level == 1) {
 		ddr_look();
 		ddr_slots();

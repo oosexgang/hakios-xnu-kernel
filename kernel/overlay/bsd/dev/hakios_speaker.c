@@ -111,13 +111,13 @@ wait_ms(uint32_t ms)
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
-#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's pins { } */
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
 #include "hakios_i2c_gpio.h"                /* the two lines, a bit, a byte, the bus taken and given back */
 
-/* which pins the bus is on, and each amplifier's address and interrupt pin, are the board's ([speaker]) */
+/* which pins the bus is on, and each amplifier's address and interrupt pin, are the board's (speaker { }) */
 static struct i2c_gpio i2c_bus;
 #define PIN_SDA                 (i2c_bus.sda)
 #define PIN_SCL                 (i2c_bus.scl)
@@ -312,7 +312,7 @@ static struct amplifier amplifiers[2] = {
 };
 static bool broken;                     /* something went wrong: both have been powered down, nothing more is done */
 
-/* The board's [speaker] taken: the bus's pins, each amplifier's address. False if the board file has none. */
+/* The board's speaker { } taken: the bus's pins, each amplifier's address. False if the board file has none. */
 static bool
 wired(void)
 {
@@ -629,11 +629,11 @@ bool
 hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 {
 	if (!hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) || hakios_board()->pins.tlmm == 0) {
-		say("speaker: not on this board: its board.dts lists no \"speaker-aw88261\", or its SoC file has no [pins]\n");
+		say("speaker: not on this board: its board.dts lists no \"speaker-aw88261\", or its SoC file has no pins { }\n");
 		return false;
 	}
 	if (!wired()) {
-		say("speaker: the board file does not say which pins the amplifiers are on ([speaker])\n");
+		say("speaker: the board file does not say which pins the amplifiers are on (speaker { })\n");
 		return false;
 	}
 	if (tlmm == 0) {
@@ -1015,9 +1015,9 @@ show_amplifiers(void)
 
 /* ---- power names of the audio subsystem ------------------------------------------------------------- */
 
-#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's rpmh { } */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
-#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
 #define GCC_SIZE                0x60000UL
 
 #include "hakios_cmd_db.h"
@@ -1086,12 +1086,12 @@ hakios_speaker_init(void)
 		return;
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
-		say("speaker: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+		say("speaker: disabled: the SoC file does not say where the pins, the clock controller and RPMh are (pins { }, clocks { }, rpmh { })\n");
 		probe_level = 0;
 		return;
 	}
 	if (!wired()) {
-		say("speaker: disabled: the board file does not say which pins the amplifiers are on ([speaker])\n");
+		say("speaker: disabled: the board file does not say which pins the amplifiers are on (speaker { })\n");
 		probe_level = 0;
 		return;
 	}

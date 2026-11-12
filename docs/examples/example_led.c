@@ -27,7 +27,7 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern kern_return_t thread_terminate(thread_t thread);
 
 /*
- * Where the SoC's pins are is the chip's and comes from the SoC file ([pins]). Which pin the
+ * Where the SoC's pins are is the chip's and comes from the SoC file (pins { }). Which pin the
  * light is on is this part's wiring: a constant here while one phone has the part, a key of the
  * board file once a second phone has it on another pin (devices/README.md, "Adding a kind of data").
  */
@@ -96,7 +96,7 @@ example_led_init(void)
 	 *    machine nobody described.
 	 */
 	if (hakios_board() == NULL || hakios_board()->pins.tlmm == 0) {
-		hakios_say("led: disabled: the SoC file does not say where the pins are ([pins])\n");
+		hakios_say("led: disabled: the SoC file does not say where the pins are (pins { })\n");
 		level = 0;
 		return;
 	}

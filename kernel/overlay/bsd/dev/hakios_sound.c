@@ -8,7 +8,7 @@
  * services: ASM, a stream the samples are written into; ADM, the matrix that routes a stream to
  * a device path ("COPP"); and AFE, the port at the SoC's interface. The two amplifiers
  * (hakios_speaker.c) sit on the primary TDM interface, which the DSP runs: Android's
- * PRI_TDM_RX_0 on redwood (the board's [speaker] tdm says which interface), AFE port 0x9000 in group 0x9100 (with 0x9002, unused). The samples themselves
+ * PRI_TDM_RX_0 on redwood (the board's speaker { } tdm says which interface), AFE port 0x9000 in group 0x9100 (with 0x9002, unused). The samples themselves
  * lie in memory of ours that the DSP reads through the application processors' SMMU, as
  * stream 0x1801 (Android: qcom,msm-audio-ion, iommus <&apps_smmu 0x1801 0>, its addresses from
  * 0x10000000, and the stream's low four bits in bits 32 to 35 of every address the DSP is given:
@@ -174,7 +174,7 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
 
 /* ---- the TDM pins ------------------------------------------------------------------------------------- */
 
-static struct block tlmm = { "pin controller", 0, 0x100000 };   /* where: the SoC file's [pins], at the start */
+static struct block tlmm = { "pin controller", 0, 0x100000 };   /* where: the SoC file's pins { }, at the start */
 #define GPIO_CFG(n)             (0x1000u * (n))         /* [1:0] pull, [5:2] function, [8:6] drive (mA / 2 - 1), [9] output */
 #define GPIO_IO(n)              (0x1000u * (n) + 4)     /* bit 0 in, bit 1 out */
 #define CFG_8MA                 (3u << 6)
@@ -182,7 +182,7 @@ static struct block tlmm = { "pin controller", 0, 0x100000 };   /* where: the So
 
 /*
  * The sound's four pins. Which pins of the SoC they are, and which of a pin's functions is the sound's,
- * is the board file's [speaker] (sound_pins in this order, sound_function); what each is set to is
+ * is the board file's speaker { } (sound_pins in this order, sound_function); what each is set to is
  * Android's active state for them.
  */
 #define TDM_PINS                4
@@ -317,7 +317,7 @@ command(const char *what, uint8_t service, uint16_t port, uint32_t opcode, const
 #define AFE_PARAM_ID_CLOCK_SET                  0x00010290u
 
 /*
- * Which of the SoC's TDM interfaces the amplifiers are on is the board's [speaker] tdm: 0 the primary (redwood's),
+ * Which of the SoC's TDM interfaces the amplifiers are on is the board's speaker { } tdm: 0 the primary (redwood's),
  * 1 the secondary, 2 the tertiary, 3 the quaternary, 4 the quinary. The DSP numbers each interface's ports, its
  * group and its internal bit clock alike (Linux: sound/soc/qcom/qdsp6/q6afe.c, q6afe.h; the group as the
  * vendor's kernel has it, the port's number + 0x100).
@@ -433,7 +433,7 @@ afe_on(void)
 		                            .offsets = { 0, 4, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff } };
 	uint16_t start[2] = { PORT, 0 };
 
-	say("sound: the amplifiers' TDM interface: %u ([speaker] tdm), its port %#x in group %#x (with %#x), its bit clock %#x\n", TDM,
+	say("sound: the amplifiers' TDM interface: %u (speaker { } tdm), its port %#x in group %#x (with %#x), its bit clock %#x\n", TDM,
 	    PORT, GROUP, GROUP_OTHER_PORT, CLOCK_TDM_IBIT);
 	announce("the DSP is asked for the TDM interface's bit clock, the group, the port and its start (AFE)");
 	clock_on = afe_clock(true);
@@ -480,7 +480,7 @@ afe_off(void)
 
 /* ---- the DSP's view of our memory: stream 0x1801 of the SMMU ------------------------------------------- */
 
-static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's [smmu], at the start */
+static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's smmu { }, at the start */
 static struct block apps_smmu_second = { "apps smmu", 0, 0x1000 };              /* the second page: a word per context */
 static struct block apps_smmu_context = { "apps smmu, the audio context", 0, 0x1000 };
 #define SMMU_SCR0               0x000
@@ -1476,7 +1476,7 @@ hakios_sound_dsp_up(void)
 		return;
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->smmu.apps == 0) {
-		say("sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])\n");
+		say("sound: disabled: the SoC file does not say where the pins and the SMMU are (pins { }, smmu { })\n");
 		level = 0;
 		return;
 	}

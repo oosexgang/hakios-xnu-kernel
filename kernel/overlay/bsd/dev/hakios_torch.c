@@ -135,7 +135,7 @@ struct peripheral {
 	bool            found, writable;
 	vm_offset_t     write;          /* its write channel, mapped (only the flash module's) */
 };
-/* (which peripherals of which PMIC: the board's [torch], at the start; 0x2ee and 0x20a where the PM8350C is slave 2) */
+/* (which peripherals of which PMIC: the board's torch { }, at the start; 0x2ee and 0x20a where the PM8350C is slave 2) */
 static struct peripheral flash = { .name = "the PM8350C's flash LED module" };
 static struct peripheral alarm = { .name = "the PM8350C's temperature alarm" };
 
@@ -649,12 +649,12 @@ hakios_torch_init(void)
 		return;
 	}
 	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
-		say("torch: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
+		say("torch: disabled: the SoC file's spmi { } does not say where the arbiter and its channels are\n");
 		level = 0;
 		return;
 	}
 	if (hakios_board()->torch.flash == 0 || hakios_board()->torch.temp_alarm == 0) {
-		say("torch: disabled: the board file does not say which peripherals of the PMIC the light is ([torch])\n");
+		say("torch: disabled: the board file does not say which peripherals of the PMIC the light is (torch { })\n");
 		level = 0;
 		return;
 	}

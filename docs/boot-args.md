@@ -57,7 +57,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys are on from the board file ([buttons]). |
+| `buttons` | Only with boot-arg buttons=1, on a board that lists "buttons-pmic": where the arbiter is comes from the SoC file (spmi { }), which peripherals the keys are on from the board file (buttons { }). |
 | `buttons_steps` | buttons_steps=N stops after the first N: 1 map the arbiter and read its version (the first access to that block) 2 find the channels of the two peripherals (reads of the arbiter's tables) 3 ask each peripheral what it is (the first transfers on the bus) 4 read how the keys' inputs are set up, and wh… |
 | `touchscreen` | — |
 
@@ -74,7 +74,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fts_spi_hz` | — |
 | `fts_trace` | — |
 | `touch_flip` | — |
-| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's [touch] (the numbers named in comments here are renoir's). |
+| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's touch { } (the numbers named in comments here are renoir's). |
 
 ### `bsd/dev/hakios_goodix.c`
 

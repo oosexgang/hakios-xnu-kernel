@@ -156,7 +156,7 @@ board_names_none(void)
 {
 	PLAT = &platform_qemu_virt;
 	the_boards_own();                       /* (a partition that is exactly what "nothing" describes) */
-	CHECK(asked() == 0 && strstr(said, "does not say which partition that is ([storage])") != NULL, "no: %s", said);
+	CHECK(asked() == 0 && strstr(said, "does not say which partition that is (storage { })") != NULL, "no: %s", said);
 	PLAT = &platform_phone_video;
 	the_boards_own();
 	PLAT = &platform_qemu_virt;

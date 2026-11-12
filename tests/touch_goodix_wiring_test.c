@@ -1,9 +1,9 @@
 /*
  * Where the driver of redwood's Goodix or FocalTech controller (kernel/overlay/bsd/dev/hakios_goodix.c) takes its wiring from. The
  * driver is compiled as it is into a host program; nothing of the controller is modelled. What is
- * tested: every address, clock, vote and pin the driver uses is the board's ([touch] of its file); for
+ * tested: every address, clock, vote and pin the driver uses is the board's (touch { } of its file); for
  * the phone the driver was written on they are the numbers that used to be in the code; for a board
- * wired otherwise they are that board's; and without [touch] the driver touches nothing.
+ * wired otherwise they are that board's; and without touch { } the driver touches nothing.
  *
  *   touch_goodix_wiring_test SCENARIO
  */
@@ -105,7 +105,7 @@ another_wiring(void)
 	CHECK(strcmp(WIRED->io_supply, "ldob5") == 0, "the supply's name is the board's: %s", WIRED->io_supply);
 }
 
-/* a board without [touch], asked for touch: said, and nothing mapped or touched */
+/* a board without touch { }, asked for touch: said, and nothing mapped or touched */
 static void
 not_wired(void)
 {

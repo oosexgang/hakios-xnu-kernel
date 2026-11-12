@@ -1,7 +1,7 @@
 /*
  * The vibration motor of the POCO X5 Pro (redwood): a linear resonant actuator driven by an
  * Awinic AW86927 (chip ID 0x9270), Android's "haptic_hv" (Xiaomi's driver aw8692x, version 1.7.0).
- * Which pins the chip is on and the motor's calibration are the board's ([haptic], hakios_board.h);
+ * Which pins the chip is on and the motor's calibration are the board's (haptic { }, hakios_board.h);
  * the chip's registers and Android's values for them are this driver's. On the phone it was written
  * for, from Android's own device tree, its kernel's log and the chip's registers as Android leaves
  * them (read from sysfs, read-only):
@@ -101,11 +101,11 @@ wait_ms(uint32_t ms)
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
-#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's pins { } */
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-/* which pins: the board's [haptic] (on the phone this was written for: 36 data, 37 clock, 35 reset, 18 interrupt) */
+/* which pins: the board's haptic { } (on the phone this was written for: 36 data, 37 clock, 35 reset, 18 interrupt) */
 #define PIN_SDA                 (hakios_board()->haptic.sda)
 #define PIN_SCL                 (hakios_board()->haptic.scl)
 #define PIN_RESET               (hakios_board()->haptic.reset)
@@ -377,7 +377,7 @@ static const uint8_t android_config[][2] = {
 static const uint8_t android_analog[][2] = {
 	{ 0x70, 0x0f }, { 0x71, 0x93 }, { 0x72, 0x69 }, { 0x74, 0x89 }, { 0x75, 0x88 },
 };
-/* ... and Android's f0 calibration of the motor (its log: "f0_cali_data = 0x0D" on the first phone): the board's [haptic] */
+/* ... and Android's f0 calibration of the motor (its log: "f0_cali_data = 0x0D" on the first phone): the board's haptic { } */
 
 /* The analog registers opened or closed for writing (AW_TMCFG reads back as 0 either way: what tells is that the writes stick). */
 static bool
@@ -867,12 +867,12 @@ hakios_haptic_init(void)
 		return;
 	}
 	if (hakios_board()->pins.tlmm == 0) {
-		say("haptic: disabled: the SoC file does not say where the pins are ([pins])\n");
+		say("haptic: disabled: the SoC file does not say where the pins are (pins { })\n");
 		level = 0;
 		return;
 	}
 	if (hakios_board()->haptic.sda == hakios_board()->haptic.scl) {
-		say("haptic: disabled: the board file does not say which pins the chip is on ([haptic])\n");
+		say("haptic: disabled: the board file does not say which pins the chip is on (haptic { })\n");
 		level = 0;
 		return;
 	}

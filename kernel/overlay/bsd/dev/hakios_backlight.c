@@ -51,7 +51,7 @@
  *   bl_auto=1          automatic brightness from the start
  *   bl_floor=N         backend soft: what is kept of a pixel at level 0, of 256 (default 24)
  *
- * Adding a device: [backlight] in its devices/NAME/board.dts -- the panel's
+ * Adding a device: backlight { } in its devices/NAME/board.dts -- the panel's
  * qcom,mdss-dsi-bl-min-level / -max-level, qcom,mdss-dsi-bl-inverted-dbv (MSB first), the panel's mode --
  * and in its SoC's file the DSI controller (mdss_dsi0 "dsi_ctrl") and the display clock controller's
  * offsets (Linux dispcc-*.c). `tools/boards.py new --dts` reads most of it from the device tree. Until
@@ -82,8 +82,8 @@ enum bl_backend { BL_NONE, BL_DCS, BL_SOFT };
 static const char *const bl_backend_names[] = { "none", "dcs", "soft" };
 
 /*
- * What is used: the board's values (hakios_board.h: devices/NAME/board.dts [backlight], and its SoC's
- * [clocks] and [display]) with the boot-args over them.
+ * What is used: the board's values (hakios_board.h: devices/NAME/board.dts backlight { }, and its SoC's
+ * clocks { } and display { }) with the boot-args over them.
  */
 struct bl_profile {
 	const char *board;              /* /chosen darwin-board */

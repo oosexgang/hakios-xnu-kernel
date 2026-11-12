@@ -422,7 +422,7 @@ put(struct block *b, const char *name, uint32_t offset, uint32_t value)
  * how long. Who is who: we are processor 0; the Wi-Fi DSP is 13 (dt: qcom,remote-pid of
  * qcom,smp2p-wpss). Nothing here writes to this memory.
  */
-#define SMEM_PHYS               ((unsigned long)hakios_board()->ipc.smem)       /* the SoC file's [ipc] */
+#define SMEM_PHYS               ((unsigned long)hakios_board()->ipc.smem)       /* the SoC file's ipc { } */
 #define SMEM_SIZE               (hakios_board()->ipc.smem_size)
 #define SMEM_US                 0
 #define SMEM_WPSS               13
@@ -640,14 +640,14 @@ step_smem(void)
  */
 #include "hakios_ipc.h"                     /* the mailbox's words and the doorbells' registers */
 
-static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's [ipc], at the start */
+static struct block aoss = { "mailbox", 0, 0x400 };              /* where: the SoC file's ipc { }, at the start */
 
 /*
  * dt: qcom,ipcc@408000 (its interrupt: SPI 229). A doorbell is a processor ("client") and one
  * of its signals; clients: the always-on processor 0, the Wi-Fi DSP 24; signals: 0 the mailbox
  * or GLINK, 2 SMP2P (dt: the mboxes of power-controller@c300000, qcom,smp2p-wpss, glink wpss).
  */
-static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's [ipc], at the start */
+static struct block ipcc = { "ipcc", 0, 0x1000 };                /* where: the SoC file's ipc { }, at the start */
 #define IPCC_WPSS               24u
 
 static bool
@@ -687,7 +687,7 @@ step_mailbox(void)
 /* ---- step 3: RPMh -------------------------------------------------------------------------------------- */
 
 /* dt: reserved-memory cmd_db@80860000: the boot loader's list of what RPMh can switch (cmd-db.c; as in hakios_adreno.c) */
-#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's rpmh { } */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
 #include "hakios_cmd_db.h"
@@ -759,7 +759,7 @@ show_rpmh_resource(const char *name, const char *what)
  * hold while the processor sleeps and three for when it wakes. What the slots hold now is what
  * was last put there by whoever ran here before us: the boot loader.
  */
-static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's [rpmh], at the start */
+static struct block rsc = { "rsc", 0, 0x10000 };        /* where: the SoC file's rpmh { }, at the start */
 #define RSC_ID                  0x000           /* [23:16] the major version: the layout below is that of versions before 3 */
 #define RSC_CONFIG              0x00c           /* per DRV six bits, the number of its TCSs; [31:27] commands in a TCS */
 #define RSC_TCS(n)              (hakios_board()->rpmh.tcs_offset + 672 * (n))   /* dt: qcom,tcs-offset */
@@ -782,14 +782,14 @@ step_rpmh(void)
 	show_rpmh_resource("cx.lvl", "the DSP's logic; dt: vdd_cx of qcom,wpss@8a00000, asked 384 while it boots");
 	show_rpmh_resource("mx.lvl", "its memories; dt: vdd_mx, the same");
 	show_rpmh_resource("xo.lvl", "the crystal oscillator; dt: its clock \"xo\"");
-	/* the radio's own three, by the names this board's PMIC has them under (the board's [wifi] supplies) */
+	/* the radio's own three, by the names this board's PMIC has them under (the board's wifi { } supplies) */
 	for (unsigned i = 0; i < 3; i++) {
 		static const char *const rails[3] = { "the radio's vdd-cx-mx", "the radio's vdd-1.8-xo", "the radio's vdd-1.3-rfa" };
 
 		if (hakios_board()->wifi.supply[i][0] != 0) {
 			show_rpmh_resource(hakios_board()->wifi.supply[i], rails[i]);
 		} else {
-			printf("wifi: %u: %s: the board file does not name it ([wifi] supplies)\n", step, rails[i]);
+			printf("wifi: %u: %s: the board file does not name it (wifi { } supplies)\n", step, rails[i]);
 		}
 	}
 
@@ -891,7 +891,7 @@ step_rails(void)
 {
 	bool known;
 
-	announce("map the PMIC arbiter (where the SoC file's [spmi] has it; the buttons' driver reads through it too) and "
+	announce("map the PMIC arbiter (where the SoC file's spmi { } has it; the buttons' driver reads through it too) and "
 	    "read its version");
 	known = hakios_spmi_map(&arb);
 	printf("wifi: %u: arbiter version %#x, %u channels\n", step, arb.version, arb.channels);
@@ -962,8 +962,8 @@ step_rails(void)
 /* ---- step 5: pins -------------------------------------------------------------------------------------- */
 
 /*
- * dt: the SoC's pin controller (pin n's registers: 0x1000 * n above the SoC file's [pins] tlmm). Which
- * three pins are the radio's is the board's [wifi] pins. On the first phone of this driver 84 is described
+ * dt: the SoC's pin controller (pin n's registers: 0x1000 * n above the SoC file's pins { } tlmm). Which
+ * three pins are the radio's is the board's wifi { } pins. On the first phone of this driver 84 is described
  * as the radio's enable ("cnss_wlan_en": output, high when active), but no node uses the description;
  * Bluetooth's node calls the same pin "wl-reset" and has 85 as its own reset and 86 as its "sw-ctrl".
  *
@@ -987,7 +987,7 @@ step_pins(void)
 		uint32_t cfg, io;
 
 		if (pin < 0) {
-			printf("wifi: %u: %s: the board file does not say which pin it is ([wifi] pins)\n", step, what[i]);
+			printf("wifi: %u: %s: the board file does not say which pin it is (wifi { } pins)\n", step, what[i]);
 			continue;
 		}
 		tlmm[i].phys = hakios_board()->pins.tlmm + 0x1000 * (uint64_t)pin;
@@ -1005,7 +1005,7 @@ step_pins(void)
 
 #define PAS_WPSS                6               /* dt: qcom,pas-id of qcom,wpss@8a00000 */
 #define WPSS_MEMORY             (hakios_board()->wifi.dsp_memory)       /* dt: the reserved memory the DSP's node points at; */
-#define WPSS_MEMORY_SIZE        (hakios_board()->wifi.dsp_memory_size)  /* the board's [wifi] */
+#define WPSS_MEMORY_SIZE        (hakios_board()->wifi.dsp_memory_size)  /* the board's wifi { } */
 
 extern dev_t mdevlookup(int devid);
 extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
@@ -1672,7 +1672,7 @@ step_image(void)
  * around the allocation only, and released on every way out; Linux waits a second for it,
  * and so does this: a lock that somebody keeps is said, not waited for.
  */
-static struct block smem_lock = { "shared memory's lock", 0, 0x1000 }; /* where: the SoC file's [ipc], at the start */
+static struct block smem_lock = { "shared memory's lock", 0, 0x1000 }; /* where: the SoC file's ipc { }, at the start */
 #define LOCK_OWNER              0x000
 #define LOCK_US                 1u
 
@@ -3219,7 +3219,7 @@ step_qrtr(void)
  * registers -- the ones the hypervisor answers for, see hakios_adreno.c -- and says which of
  * its stream match registers cover that stream. Nothing is written.
  */
-static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's [smmu], at the start */
+static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the SoC file's smmu { }, at the start */
 #define SMMU_SCR0               0x000           /* bit 0: the whole SMMU off; bit 10: a stream nobody matches faults; bit 3:
 	                                         * streams are numbered with 16 bits */
 #define SMMU_IDR0               0x020           /* [7:0] stream match registers */
@@ -3976,8 +3976,8 @@ hakios_wifi_init(void)
 	    hakios_board()->ipc.smem == 0 || hakios_board()->ipc.smem_lock == 0 || hakios_board()->smmu.apps == 0 ||
 	    hakios_board()->wifi.dsp_memory == 0 || hakios_board()->wifi.dsp_memory_size == 0) {
 		printf("wifi: disabled: the SoC file does not say where RPMh, the pins, the PMIC arbiter, the way to the other "
-		    "processors and the SMMU are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's "
-		    "memory is ([wifi] dsp_memory): the radio's supplies, its enable pins, its processor and its addresses are "
+		    "processors and the SMMU are (rpmh { }, pins { }, spmi { }, ipc { }, smmu { }), or the board file where the Wi-Fi DSP's "
+		    "memory is (wifi { } dsp_memory): the radio's supplies, its enable pins, its processor and its addresses are "
 		    "reached there\n");
 		return;
 	}

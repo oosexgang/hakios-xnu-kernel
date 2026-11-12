@@ -75,7 +75,7 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 extern void IOSleep(unsigned int milliseconds);
 extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 
-#define UFSHC_PHYS          (hc_at)             /* where the loader says the controller is (its SoC file's [platform] ufs) */
+#define UFSHC_PHYS          (hc_at)             /* where the loader says the controller is (its SoC file's platform { } ufs) */
 #define UFSHC_SIZE          0x3000
 
 /* UFSHCI registers (JESD223). 0x38..0x48, the UIC error codes, clear when read: never read here. */

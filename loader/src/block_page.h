@@ -42,7 +42,7 @@
  * and a write is refused before that block. The identity is the whole of darwin-write.py's: the
  * same partition, named the same, of the same size, in the same place, on logical unit 0.
  */
-/* (which partition that is on a phone, and from which block: the board file's [storage], in struct platform) */
+/* (which partition that is on a phone, and from which block: the board file's storage { }, in struct platform) */
 #define BLOCK_WRITE_FIRST  (PLAT->own.write_first)      /* darwin's blocks of 4096: past what the build put there */
 #define BLOCK_DARWIN_FIRST (PLAT->own.first_lba)        /* its first and last LBA of unit 0, as the GPT has them */
 #define BLOCK_DARWIN_LAST  (PLAT->own.last_lba)

@@ -41,7 +41,7 @@ enum {
 	HAKIOS_HAS_VIRTIO       = 1u << 15,     /* an emulator's virtio devices on its MMIO transport: network, tablet
 	                                         * and keyboard (hakios_virtio_net.c, hakios_virtio_input.c) */
 	HAKIOS_HAS_GPU_A660     = 1u << 14,     /* an Adreno of the A660 family behind a GMU; what differs from one to
-	                                         * the next is the board's [gpu] (hakios_adreno.c, gpu=1) */
+	                                         * the next is the board's gpu { } (hakios_adreno.c, gpu=1) */
 	/*
 	 * Drivers of one part, wired the way one phone has it (the pins, the bus, the chip): a board lists
 	 * one only if it has that part wired that way. Asked for on any other board, the driver says so and
@@ -53,7 +53,7 @@ enum {
 	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (hakios_haptic.c) */
 	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (hakios_torch.c) */
 	HAKIOS_HAS_CAMERA_SM7325   = 1u << 10,  /* cameras on an SM7325's camera blocks, powered by a PM8008, wired as
-	                                         * the board's [camera] says (hakios_camera.c) */
+	                                         * the board's camera { } says (hakios_camera.c) */
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (hakios_wifi.c) */
 	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (hakios_mic.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
@@ -66,7 +66,7 @@ enum {
 	HAKIOS_BACKLIGHT_SOFT = 2,              /* the display driver darkens the picture */
 };
 
-/* how a camera sensor's supply is switched (board: [[camera.sensors]] vana, vdig, vio) */
+/* how a camera sensor's supply is switched (board: sensor@N { } vana, vdig, vio) */
 enum {
 	HAKIOS_SUPPLY_NONE = 0,                 /* not switched: always on, or not there */
 	HAKIOS_SUPPLY_LDO  = 1,                 /* "ldoN MVmV": a regulator of the sensors' PMIC, at a set point */
@@ -81,19 +81,19 @@ struct hakios_board {
 	const char *soc;
 	uint32_t features;                      /* HAKIOS_HAS_* */
 
-	/* the clocks the display block's registers need (soc: [clocks]) */
+	/* the clocks the display block's registers need (soc: clocks { }) */
 	struct {
 		uint32_t gcc, gcc_disp_ahb_cbcr;
 		uint32_t dispcc, dispcc_mdss_gdscr, dispcc_mdss_ahb_cbcr;
 		uint32_t dispcc_mdss_pclk0_cbcr, dispcc_mdss_mdp_cbcr;  /* only looked at (display_probe=1); 0: not known */
 	} clocks;
 
-	/* the display controller (soc: [display]) */
+	/* the display controller (soc: display { }) */
 	struct {
 		uint32_t intf;                  /* the interface the panel hangs on (INTF_*): its timing and counters */
 	} display;
 
-	/* the panel's light (board: [backlight]; soc: [display]) */
+	/* the panel's light (board: backlight { }; soc: display { }) */
 	struct {
 		uint8_t type;                   /* HAKIOS_BACKLIGHT_* */
 		uint8_t video_mode;             /* a video-mode panel: commands go between frames */
@@ -104,14 +104,14 @@ struct hakios_board {
 		uint32_t raw_restore;           /* what the panel is left at for the loader */
 	} backlight;
 
-	/* the Adreno's blocks (soc: [adreno]); what differs from one phone to the next is [gpu] below */
+	/* the Adreno's blocks (soc: adreno { }); what differs from one phone to the next is gpu { } below */
 	struct {
 		uint32_t gpu, gmu, gpucc, cx_misc, rscc, smmu, pdc;
 		uint32_t qfprom;                /* the fuses, where the speed and gaming bins are */
 		uint32_t tsens;                 /* the TSENS controller with the GPU's two sensors; 0: not read */
 	} adreno;
 
-	/* the GPU (board: [gpu]) */
+	/* the GPU (board: gpu { }) */
 	struct {
 		const char *model;              /* "Adreno 642" */
 		const char *firmware;           /* the small image's directory with a660_gmu.bin, a660_sqe.fw, a660_zap.* */
@@ -127,38 +127,38 @@ struct hakios_board {
 		uint32_t speeds_khz[5], speed_levels[5];        /* the core clock's steps and their supply levels */
 	} gpu;
 
-	/* the PMICs' bus (soc: [spmi]): the blocks of the SPMI arbiter this system reads and writes through */
+	/* the PMICs' bus (soc: spmi { }): the blocks of the SPMI arbiter this system reads and writes through */
 	struct {
 		uint32_t core, cnfg, observer;
 		uint32_t channels;              /* writes; 0: not given, and nothing here writes to a PMIC */
 		uint32_t ee;                    /* who this system is to the arbiter (the device tree's qcom,ee) */
 	} spmi;
 
-	/* the SoC's own pins (soc: [pins]) */
+	/* the SoC's own pins (soc: pins { }) */
 	struct {
 		uint32_t tlmm;                  /* where GPIO 0's registers are; GPIO n's are 0x1000 n further */
 	} pins;
 
-	/* the SMMU that stands between the SoC's devices and memory (soc: [smmu]); the GPU has its own ([adreno]) */
+	/* the SMMU that stands between the SoC's devices and memory (soc: smmu { }); the GPU has its own (adreno { }) */
 	struct {
 		uint32_t apps;
 	} smmu;
 
-	/* the camera subsystem's blocks (soc: [camera]) */
+	/* the camera subsystem's blocks (soc: camera { }) */
 	struct {
 		uint32_t camcc;                 /* its clock controller */
 		uint32_t ife, csid;             /* the image front end the sensors' data goes through, and its CSI decoder */
 		uint32_t csiphy;                /* the first CSI receiver; the others follow, 0x2000 apart */
 	} camera;
 
-	/* the low-power audio subsystem's blocks the microphones' path goes through (soc: [lpass]) */
+	/* the low-power audio subsystem's blocks the microphones' path goes through (soc: lpass { }) */
 	struct {
 		uint32_t tx_macro, va_macro;    /* the codec macros for capture */
 		uint32_t tx_swr, tx_swr_hctl;   /* the SoundWire master of the capture side, and its hardware control */
 		uint32_t lpi, lpi_slew;         /* the subsystem's own pins, and their slew rates */
 	} lpass;
 
-	/* the way to the SoC's other processors (soc: [ipc]) */
+	/* the way to the SoC's other processors (soc: ipc { }) */
 	struct {
 		uint32_t aoss;                  /* the always-on processor's mailbox (QMP) */
 		uint32_t ipcc;                  /* the block the processors ring each other through */
@@ -166,20 +166,20 @@ struct hakios_board {
 		uint32_t smem_lock;             /* the hardware lock that guards its allocations */
 	} ipc;
 
-	/* RPMh (soc: [rpmh]): the command database the firmware left, and this system's sequencer */
+	/* RPMh (soc: rpmh { }): the command database the firmware left, and this system's sequencer */
 	struct {
 		uint32_t cmd_db, cmd_db_size;
 		uint32_t rsc, tcs_offset;       /* the application processor's "drv-2"; where its slot sets begin */
 	} rpmh;
 
-	/* the keys on the PMICs (board: [buttons]); a peripheral is slave << 8 | the high byte of its registers */
+	/* the keys on the PMICs (board: buttons { }); a peripheral is slave << 8 | the high byte of its registers */
 	struct {
 		uint16_t pon;                   /* the power-on block: power, and volume down on its RESIN_N */
 		uint16_t volume_up;             /* the GPIO volume up pulls low */
 		const char *pon_name, *volume_up_name;  /* for the log: "GPIO6 of the PM8350" */
 	} buttons;
 
-	/* the vibration motor's chip (board: [haptic]): which of the SoC's pins it is on, and this motor's calibration */
+	/* the vibration motor's chip (board: haptic { }): which of the SoC's pins it is on, and this motor's calibration */
 	struct {
 		uint8_t sda, scl;               /* its I2C bus's two lines */
 		uint8_t reset;                  /* high: the chip runs */
@@ -188,7 +188,7 @@ struct hakios_board {
 	} haptic;
 
 	/*
-	 * The touch controller's wiring (board: [touch]): the serial engine it is on, that engine's clocks in
+	 * The touch controller's wiring (board: touch { }): the serial engine it is on, that engine's clocks in
 	 * the clock controller, its pins and its supplies. One driver for a controller, any wiring.
 	 */
 	struct {
@@ -204,7 +204,7 @@ struct hakios_board {
 		const char *io_supply, *analog_supply;  /* regulators by their names in RPMh's command database; NULL: none */
 	} touch;
 
-	/* the speaker's two amplifiers (board: [speaker]): the I2C bus they share and what tells them apart */
+	/* the speaker's two amplifiers (board: speaker { }): the I2C bus they share and what tells them apart */
 	struct {
 		uint8_t sda, scl;               /* the bus's two lines, pins of the SoC */
 		uint8_t address[2];             /* each one's I2C address; the first plays the sound's slot 0 */
@@ -215,7 +215,7 @@ struct hakios_board {
 	} speaker;
 
 	/*
-	 * The one partition of the phone's storage a write may reach, the port's own (board: [storage]):
+	 * The one partition of the phone's storage a write may reach, the port's own (board: storage { }):
 	 * where it begins on the first logical unit, how many blocks of 4096 it has, and the first of them
 	 * a write may reach. blocks 0: the board names none, and nothing is ever written. (The loader has
 	 * the same from the same file, and the partition's GUIDs besides.)
@@ -224,13 +224,13 @@ struct hakios_board {
 		uint64_t first_lba, blocks, write_first;
 	} storage;
 
-	/* the flashlight's part on the PMIC (board: [torch]); a peripheral as in [buttons] */
+	/* the flashlight's part on the PMIC (board: torch { }); a peripheral as in buttons { } */
 	struct {
 		uint16_t flash;                 /* the flash LED module */
 		uint16_t temp_alarm;            /* that PMIC's temperature alarm, which the driver watches while the light is on */
 	} torch;
 
-	/* the audio DSP (board: [adsp]) */
+	/* the audio DSP (board: adsp { }) */
 	struct {
 		const char *firmware;           /* the root's directory with the DSP's image (adsp.mdt and its parts) */
 		uint32_t memory;                /* where its reserved memory is */
@@ -238,13 +238,13 @@ struct hakios_board {
 		uint32_t charge_counter_divisor;        /* the battery manager's charge counter, in this many parts of a uAh */
 	} adsp;
 
-	/* the microphones' codec (board: [mic]) */
+	/* the microphones' codec (board: mic { }) */
 	struct {
 		uint8_t wired;                  /* the board gives the section */
 		uint8_t codec_reset;            /* the SoC's pin the codec's reset is on */
 	} mic;
 
-	/* the Wi-Fi radio (board: [wifi]), for the driver's layer under it (hakios_lx.c) */
+	/* the Wi-Fi radio (board: wifi { }), for the driver's layer under it (hakios_lx.c) */
 	struct {
 		uint32_t radio_model;           /* which radio: 0 a WCN6750 on the SoC's own bus, 1 a WCN6855 on PCIe */
 		uint32_t early_pool_mb;         /* memory in one piece kept for the radio's driver from early on; 0: none */
@@ -253,7 +253,7 @@ struct hakios_board {
 		char supply[3][8];              /* RPMh's names of the radio's vdd-cx-mx, 1.8 V and 1.3 V; "": not said */
 	} wifi;
 
-	/* the cameras as the phone has them wired (board: [camera] and its [[camera.sensors]]) */
+	/* the cameras as the phone has them wired (board: camera { } and its sensor@N { }) */
 	struct {
 		uint8_t pmic_sda, pmic_scl;     /* the I2C bus of the PMIC whose regulators feed the sensors (a PM8008) */
 		uint16_t pmic_reset;            /* the PMIC GPIO its reset is on: SPMI slave << 8 | the peripheral's high byte */
@@ -277,18 +277,18 @@ struct hakios_board {
 		} sensors[4];
 	} cameras;
 
-	/* CPU frequency (soc: [cpufreq]) */
+	/* CPU frequency (soc: cpufreq { }) */
 	struct {
 		uint32_t epss, epss_domain_size;        /* EPSS: a block of registers a group of cores */
 		uint8_t domain_cores[HAKIOS_CPU_GROUPS]; /* how many cores each group has, in the cores' order; 0: no more */
 	} cpufreq;
 
-	/* CPU performance mailbox (soc: [scmi_perf]). */
+	/* CPU performance mailbox (soc: scmi-perf { }). */
 	struct {
 		uint32_t shmem, mailbox, doorbell;
 	} scmi_perf;
 
-	/* temperature (soc: [thermal]; board: [thermal]) */
+	/* temperature (soc: thermal { }; board: thermal { }) */
 	struct {
 		uint32_t tsens[2];              /* the TSENS controllers' readings, 0: none */
 		uint32_t floor_mhz[HAKIOS_CPU_GROUPS];  /* the slowest each group of cores is held back to */
@@ -302,7 +302,7 @@ const struct hakios_board *hakios_board(void);
 bool hakios_board_has(uint32_t feature);
 
 /*
- * The groups of cores with a clock of their own (soc: [cpufreq] domain_cores): how many there are, and
+ * The groups of cores with a clock of their own (soc: cpufreq { } domain_cores): how many there are, and
  * which one a core is in, by its number among the cores (0 up; -1 when the board does not say).
  */
 unsigned hakios_board_cpu_groups(void);

@@ -1,8 +1,8 @@
 /*
  * What differs between the Adrenos this driver starts, as the driver wants it. The values are the
- * board's ([gpu] of devices/NAME/board.dts, through hakios_board.h); they come from the phone's device
+ * board's (gpu { } of devices/NAME/board.dts, through hakios_board.h); they come from the phone's device
  * tree (the SoC's -gpu.dtsi), Linux's adreno-gpulist.h and adreno_a6xx_gmu.c. A board has a profile
- * only if it lists the feature "gpu-a660" and has a [gpu] section.
+ * only if it lists the feature "gpu-a660" and has a gpu { } section.
  */
 #ifndef HAKIOS_ADRENO_PROFILE_H
 #define HAKIOS_ADRENO_PROFILE_H

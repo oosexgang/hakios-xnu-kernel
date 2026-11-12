@@ -2,7 +2,7 @@
  * Cameras on an SM7325, written for those of the POCO X5 Pro (redwood): the macro one, an OmniVision
  * OV02B10 (2 MP, Android's camera 2, "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD
  * (108 MP, Android's camera 0, "redwood_sunny_s5khm2sd_wide"), the front one and the ultra-wide one.
- * How each sensor is wired is the board's ([camera] in board.dts: redwood's is described below as an
+ * How each sensor is wired is the board's (camera { } in board.dts: redwood's is described below as an
  * example); what each chip is, and the SoC's camera blocks, are this file's. Every number was found on
  * that phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
  * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.hakios_*.bin: the
@@ -135,13 +135,13 @@ give_up(const char *why)
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 
-#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's pins { } */
 static vm_offset_t tlmm;
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
 /*
- * The sensors come from the board ([camera] and its [[camera.sensors]] in board.dts): where each is wired
+ * The sensors come from the board (camera { } and its sensor@N { } in board.dts): where each is wired
  * -- its CCI master's pins (taken by hand), the reset, which MCLK (its pin, function 1, cam_mclk, at 4 mA),
  * the CSIPHY, and how the module file's power sequence switches its supplies (a PM8008 LDO at the device
  * tree's voltage, or a GPIO that switches a fixed regulator). What a sensor is -- its module file, how its
@@ -242,7 +242,7 @@ sensors_from_board(void)
 		sensor_count = i + 1;
 	}
 	if (sensor_count == 0) {
-		say("camera: disabled: the board's [camera] names no sensor\n");
+		say("camera: disabled: the board's camera { } names no sensor\n");
 		return false;
 	}
 	return true;
@@ -287,7 +287,7 @@ struct bus {
 	const char *    name;
 	struct i2c_gpio pins;
 };
-static struct bus pmic_bus = { .name = "the PM8008i's I2C" };    /* (its pins: the board's [camera] pmic_pins) */
+static struct bus pmic_bus = { .name = "the PM8008i's I2C" };    /* (its pins: the board's camera { } pmic_pins) */
 static struct bus cci_bus;              /* the sensor's (from hw) */
 
 static void
@@ -375,10 +375,10 @@ i2c_transfer(struct bus *b, uint8_t address, const uint8_t *out, unsigned out_co
 
 /* ---- the PMIC arbiter (version 5), for the PMIC GPIO of the PM8008i's reset: as in hakios_torch.c ------ */
 
-/* Where its blocks are: the SoC file's [spmi] (hakios_board.h). */
+/* Where its blocks are: the SoC file's spmi { } (hakios_board.h). */
 #include "hakios_spmi.h"
 
-#define PGPIO_ID                (hakios_board()->cameras.pmic_reset)    /* the board's [camera]: redwood's PM8350C GPIO 3 */
+#define PGPIO_ID                (hakios_board()->cameras.pmic_reset)    /* the board's camera { }: redwood's PM8350C GPIO 3 */
 #define PGPIO_TYPE              0x04    /* 0x10: a GPIO */
 #define PGPIO_SUBTYPE           0x05
 #define PGPIO_RT_STS            0x10    /* [0] what the pin is at */
@@ -698,10 +698,10 @@ ldo_off(unsigned n)
 
 /* ---- the camera's clocks: camcc --------------------------------------------------------------------- */
 
-#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
 #define GCC_CAMERA_AHB_CBCR     0x26004         /* always on (gcc-yupik.c keeps it so) */
 #define GCC_CAMERA_XO_CBCR      0x26028
-#define CAMCC_PHYS              (hakios_board()->camera.camcc)  /* the SoC file's [camera] */
+#define CAMCC_PHYS              (hakios_board()->camera.camcc)  /* the SoC file's camera { } */
 #define CAMCC_SIZE              0x20000UL
 #define MCLK_CMD_RCGR           (hw->mclk_cmd)          /* [0] update, [31] the root is off */
 #define MCLK_CFG_RCGR           (hw->mclk_cmd + 4)      /* [4:0] divider (2n - 1), [10:8] source (0: the crystal), [13:12] M/N mode */
@@ -1374,7 +1374,7 @@ healthy(void)
  * regulators (PM8350C S2 and S10); what the SMMU has for the IFEs' streams (dt: 0x800 and 0xc00 with
  * the mask 0x4e0); camcc's PLL0 and PLL6.
  */
-#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's rpmh { } */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 #define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* DRV 2's (dt: rsc@18200000, drv-id 2) */
 #define RSC_TCS_BASE            (hakios_board()->rpmh.tcs_offset)
@@ -1469,7 +1469,7 @@ show_smps(const char *what, uint16_t id)
 	    what, id, head[0], head[1], status[0], status[1], set[0], set[1], set[2], set[3], set[1] << 8 | set[0]);
 }
 
-#define SMMU_PHYS               ((unsigned long)hakios_board()->smmu.apps)      /* the SoC file's [smmu] */
+#define SMMU_PHYS               ((unsigned long)hakios_board()->smmu.apps)      /* the SoC file's smmu { } */
 #define SMMU_SCR0               0x000
 #define SMMU_IDR0               0x020
 #define SMMU_IDR1               0x024
@@ -2116,7 +2116,7 @@ smmu_down(void)
 
 /* ---- CSID-lite 0 and IFE-lite 0 ----------------------------------------------------------------------- */
 
-#define CSID_PHYS               (hakios_board()->camera.csid)   /* the SoC file's [camera] */
+#define CSID_PHYS               (hakios_board()->camera.csid)   /* the SoC file's camera { } */
 #define IFE_PHYS                (hakios_board()->camera.ife)
 #define CSIPHY_PHYS(n)          (hakios_board()->camera.csiphy + 0x2000UL * (n))
 
@@ -4068,7 +4068,7 @@ hakios_camera_init(void)
 	pmic_bus.pins.sda = hakios_board()->cameras.pmic_sda;
 	pmic_bus.pins.scl = hakios_board()->cameras.pmic_scl;
 	if (hakios_board()->spmi.core == 0 || hakios_board()->spmi.channels == 0) {
-		say("camera: disabled: the SoC file's [spmi] does not say where the arbiter and its channels are\n");
+		say("camera: disabled: the SoC file's spmi { } does not say where the arbiter and its channels are\n");
 		level = 0;
 		return;
 	}
@@ -4076,7 +4076,7 @@ hakios_camera_init(void)
 	    hakios_board()->smmu.apps == 0 || hakios_board()->camera.camcc == 0 || hakios_board()->camera.ife == 0 ||
 	    hakios_board()->camera.csid == 0 || hakios_board()->camera.csiphy == 0) {
 		say("camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the "
-		    "camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])\n");
+		    "camera subsystem's blocks are (pins { }, clocks { }, rpmh { }, smmu { }, camera { })\n");
 		level = 0;
 		return;
 	}

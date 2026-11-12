@@ -58,11 +58,11 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
-#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's pins { } */
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-/* Which pins, which serial engine and which of its clocks: the board file's [touch] (hakios_board.h). */
+/* Which pins, which serial engine and which of its clocks: the board file's touch { } (hakios_board.h). */
 #define WIRED                   (&hakios_board()->touch)
 #define PIN_MISO                ((unsigned)WIRED->data_in)
 #define PIN_MOSI                ((unsigned)WIRED->data_out)
@@ -77,7 +77,7 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
 /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
 
-#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's rpmh { } */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 #define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* the application processor's "DRV 2" */
 #define RSC_SIZE                0x10000UL
@@ -141,7 +141,7 @@ io_supply_on(void)
 
 /* ---- clocks (GCC) -------------------------------------------------------------------------------- */
 
-#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + WIRED->vote_register)    /* the application processor's votes */
 /* (the names are redwood's, serial engine 13, the 6th of the second group; which bits and offsets they are is the board's) */
@@ -1391,12 +1391,12 @@ hakios_goodix_init(void)
 	}
 	/* (called only on a board that lists "touch-goodix": bsd/dev/hakios_drivers.c) */
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
-		printf("touch: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+		printf("touch: disabled: the SoC file does not say where the pins, the clock controller and RPMh are (pins { }, clocks { }, rpmh { })\n");
 		return;
 	}
 	if (WIRED->serial_engine == 0 || WIRED->io_supply == NULL || WIRED->analog_enable < 0 || WIRED->vendor_pin[0] < 0 ||
 	    WIRED->vendor_pin[1] < 0) {
-		printf("touch: disabled: the board file does not say how the controller is wired ([touch], with analog_enable and vendor_pins)\n");
+		printf("touch: disabled: the board file does not say how the controller is wired (touch { }, with analog_enable and vendor_pins)\n");
 		return;
 	}
 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));

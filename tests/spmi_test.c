@@ -93,7 +93,7 @@ another_soc(void)
 	CHECK(spmi.elsewhere == 0, "%u accesses where nothing of the arbiter is", spmi.elsewhere);
 }
 
-/* a board with no [spmi]: nothing is mapped, nothing is touched */
+/* a board with no spmi { }: nothing is mapped, nothing is touched */
 static void
 no_arbiter(void)
 {

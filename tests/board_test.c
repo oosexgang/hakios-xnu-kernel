@@ -42,7 +42,7 @@ known_phone(void)
 	CHECK(hakios_board_has(HAKIOS_HAS_BUTTONS_PMIC) && b != NULL && b->spmi.core == 0x0c440000 && b->spmi.cnfg == 0x0c40a000 &&
 	    b->spmi.observer == 0x0e600000 && b->spmi.ee == 0, "the PMIC arbiter");
 	CHECK(b != NULL && b->buttons.pon == 0x013 && b->buttons.volume_up == 0x18d && b->buttons.volume_up_name != NULL &&
-	    strcmp(b->buttons.volume_up_name, "GPIO6 of the PM8350") == 0, "its [buttons]");
+	    strcmp(b->buttons.volume_up_name, "GPIO6 of the PM8350") == 0, "its buttons { }");
 	CHECK(b != NULL && b->pins.tlmm == 0x0f100000, "the SoC's pins");
 	CHECK(hakios_board_has(HAKIOS_HAS_ADSP) && b != NULL && b->ipc.aoss == 0x0c300000 && b->ipc.ipcc == 0x00408000 &&
 	    b->ipc.smem == 0x80900000 && b->ipc.smem_size == 0x200000 && b->ipc.smem_lock == 0x01f43000,
@@ -51,13 +51,13 @@ known_phone(void)
 	    b->rpmh.rsc == 0x18220000 && b->rpmh.tcs_offset == 0xd00, "RPMh for the memory vote");
 	/* its audio DSP: its own firmware, 48 MiB, a gauge that counts in hundredths */
 	CHECK(b != NULL && b->adsp.firmware != NULL && strcmp(b->adsp.firmware, "fw-audio-cmd") == 0 &&
-	    b->adsp.memory == 0x86700000 && b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its [adsp]");
+	    b->adsp.memory == 0x86700000 && b->adsp.memory_size == 0x03000000 && b->adsp.charge_counter_divisor == 100, "its adsp { }");
 	/* its GPU's blocks, as its SoC's file has them */
 	CHECK(b != NULL && b->adreno.gpu == 0x03d00000 && b->adreno.gmu == 0x03d6a000 && b->adreno.gpucc == 0x03d90000 &&
 	    b->adreno.cx_misc == 0x03d9e000 && b->adreno.rscc == 0x03de0000 && b->adreno.smmu == 0x03da0000 &&
-	    b->adreno.pdc == 0x0b290000 && b->adreno.qfprom == 0x00780000 && b->adreno.tsens == 0x0c265000, "[adreno]");
+	    b->adreno.pdc == 0x0b290000 && b->adreno.qfprom == 0x00780000 && b->adreno.tsens == 0x0c265000, "adreno { }");
 	/* its radio: the one on PCIe, with its pool kept early */
-	CHECK(b != NULL && b->wifi.radio_model == 1 && b->wifi.early_pool_mb == 80, "its [wifi]");
+	CHECK(b != NULL && b->wifi.radio_model == 1 && b->wifi.early_pool_mb == 80, "its wifi { }");
 	/* its groups of cores: four small, three big, one prime */
 	CHECK(hakios_board_cpu_groups() == 3, "%u groups", hakios_board_cpu_groups());
 	CHECK(hakios_board_cpu_group_of(0) == 0 && hakios_board_cpu_group_of(3) == 0 && hakios_board_cpu_group_of(4) == 1 &&
@@ -95,7 +95,7 @@ every_feature_said(void)
 	CHECK(strlen(all) + 1 == HAKIOS_FEATURES_TEXT, "room for all the names is %u, they take %zu", HAKIOS_FEATURES_TEXT, strlen(all) + 1);
 }
 
-/* the GPU as its driver is handed it: the board's [gpu], with "off" before the speeds */
+/* the GPU as its driver is handed it: the board's gpu { }, with "off" before the speeds */
 static void
 gpu_a642(void)
 {
@@ -147,7 +147,7 @@ gpu_a642l(void)
 	    hakios_board()->wifi.dsp_memory == 0x9ae00000 && hakios_board()->wifi.dsp_memory_size == 0x01900000,
 	    "a radio on the SoC's own DSP, and where that DSP's memory is");
 	CHECK(strcmp(hakios_board()->adsp.firmware, "fw-audio-video") == 0 && hakios_board()->adsp.memory_size == 0x04000000 &&
-	    hakios_board()->adsp.charge_counter_divisor == 1, "its [adsp]");
+	    hakios_board()->adsp.charge_counter_divisor == 1, "its adsp { }");
 	CHECK(p->speed_count == 4 && p->default_speed == 3, "%u speeds, default %u", p->speed_count, p->default_speed);
 	CHECK(p->speeds[1].khz == 315000 && p->speeds[1].level == 64 && p->speeds[2].khz == 450000 && p->speeds[2].level == 128 &&
 	    p->speeds[3].khz == 550000 && p->speeds[3].level == 192, "the speeds and their supply levels");
@@ -193,31 +193,31 @@ table(void)
 
 		CHECK(b->name[0] != 0 && b->description[0] != 0 && b->soc[0] != 0, "row %u is named", i);
 		CHECK(!(b->features & HAKIOS_HAS_CPUFREQ_EPSS) || (b->cpufreq.epss != 0 && b->cpufreq.epss_domain_size != 0),
-		    "%s: cpufreq-epss without [cpufreq]", b->name);
+		    "%s: cpufreq-epss without cpufreq { }", b->name);
 		CHECK(b->backlight.type != HAKIOS_BACKLIGHT_DCS || (b->backlight.bytes >= 1 && b->backlight.bytes <= 2),
 		    "%s: DCS bytes %u", b->name, b->backlight.bytes);
 		CHECK(!(b->features & HAKIOS_HAS_DISPLAY_SCAN) || (b->display.intf != 0 && b->clocks.dispcc != 0 &&
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_BUTTONS_PMIC) || (b->spmi.core != 0 && b->spmi.cnfg != 0 && b->spmi.observer != 0 &&
-		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without [spmi] or [buttons]", b->name);
+		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without spmi { } or buttons { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_SM7325)) || (b->spmi.core != 0 &&
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
 		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750)) ||
 		    b->pins.tlmm != 0,
-		    "%s: a driver that drives the SoC's pins without [pins]", b->name);
+		    "%s: a driver that drives the SoC's pins without pins { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
-		    HAKIOS_HAS_CAMERA_SM7325)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without [clocks]",
+		    HAKIOS_HAS_CAMERA_SM7325)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without clocks { }",
 		    b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
 		    HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->rpmh.cmd_db != 0 &&
 		    b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 && b->rpmh.tcs_offset != 0),
-		    "%s: a driver that asks RPMh for a supply without [rpmh]", b->name);
+		    "%s: a driver that asks RPMh for a supply without rpmh { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_WIFI_WCN6750)) ||
-		    b->smmu.apps != 0, "%s: a driver that gives a device its addresses without [smmu]", b->name);
+		    b->smmu.apps != 0, "%s: a driver that gives a device its addresses without smmu { }", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->ipc.aoss != 0 && b->ipc.ipcc != 0 &&
 		    b->ipc.smem != 0 && b->ipc.smem_size != 0 && b->ipc.smem_lock != 0),
-		    "%s: a driver that talks to another processor without [ipc]", b->name);
+		    "%s: a driver that talks to another processor without ipc { }", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_WIFI_WCN6750) || (b->wifi.dsp_memory != 0 && b->wifi.dsp_memory_size != 0),
 		    "%s: a radio on the SoC's DSP without the DSP's memory", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_CAMERA_SM7325) || (b->camera.camcc != 0 && b->camera.ife != 0 && b->camera.csid != 0 &&
@@ -243,15 +243,15 @@ table(void)
 		CHECK(!(b->features & HAKIOS_HAS_TORCH_PM8350C) || (b->torch.flash != 0 && b->torch.temp_alarm != 0),
 		    "%s: the flashlight's driver without its peripherals", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_DDR_RPMH) || (b->rpmh.cmd_db != 0 && b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 &&
-		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without [rpmh]", b->name);
+		    b->rpmh.tcs_offset != 0), "%s: ddr-rpmh without rpmh { }", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_ADSP) || (b->adsp.firmware != NULL && b->adsp.memory != 0 && b->adsp.memory_size != 0 &&
-		    b->adsp.charge_counter_divisor != 0), "%s: adsp without [adsp]", b->name);
+		    b->adsp.charge_counter_divisor != 0), "%s: adsp without adsp { }", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_GPU_A660) || (b->adreno.gpu != 0 && b->adreno.gmu != 0 && b->adreno.gpucc != 0 &&
 		    b->adreno.cx_misc != 0 && b->adreno.rscc != 0 && b->adreno.smmu != 0 && b->adreno.pdc != 0 &&
 		    b->adreno.qfprom != 0 && b->clocks.gcc != 0 && b->rpmh.cmd_db != 0), "%s: gpu-a660 without the GPU's blocks",
 		    b->name);
 		if (b->features & HAKIOS_HAS_GPU_A660) {
-			CHECK(b->gpu.chip_id != 0 && b->gpu.model != NULL && b->gpu.firmware != NULL, "%s: gpu-a660 without [gpu]", b->name);
+			CHECK(b->gpu.chip_id != 0 && b->gpu.model != NULL && b->gpu.firmware != NULL, "%s: gpu-a660 without gpu { }", b->name);
 			CHECK(b->gpu.speed_count >= 1 && b->gpu.speed_count <= 5 && b->gpu.default_speed >= 1 &&
 			    b->gpu.default_speed <= b->gpu.speed_count, "%s: %u GPU speeds, default %u", b->name, b->gpu.speed_count,
 			    b->gpu.default_speed);

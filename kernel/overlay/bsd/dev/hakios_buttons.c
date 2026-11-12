@@ -1,8 +1,8 @@
 /*
  * A phone's buttons -- power, volume up, volume down -- as a source of button records for
  * /dev/hakios-touch (sys/hakios_input.h). Only with boot-arg buttons=1, on a board that lists
- * "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys
- * are on from the board file ([buttons]).
+ * "buttons-pmic": where the arbiter is comes from the SoC file (spmi { }), which peripherals the keys
+ * are on from the board file (buttons { }).
  *
  * None of the three is a pin of the SoC. They are inputs of two of the power management chips; on
  * the two phones this was written on:
@@ -115,7 +115,7 @@ struct peripheral {
 	uint16_t        channel;
 	bool            found;
 };
-/* The board's [buttons]; on both phones so far 0x013 (registers 0x1300 of slave 0) and 0x18d (0x8d00 of slave 1). */
+/* The board's buttons { }; on both phones so far 0x013 (registers 0x1300 of slave 0) and 0x18d (0x8d00 of slave 1). */
 static struct peripheral pon = { .name = "the power-on block" };
 static struct peripheral pin = { .name = "volume up's GPIO" };
 #define REGISTERS(p)            (((p)->id & 0xffu) << 8)        /* where its registers begin, on its slave */
@@ -496,7 +496,7 @@ hakios_buttons_init(void)
 		return;
 	}
 	if (board->spmi.core == 0 || board->buttons.pon == 0 || board->buttons.volume_up == 0) {
-		printf("buttons: disabled: no [spmi] in the SoC file or no [buttons] in the board file\n");
+		printf("buttons: disabled: no spmi { } in the SoC file or no buttons { } in the board file\n");
 		return;
 	}
 	/* buttons_thread still checks the arbiter's version and that each peripheral is of the kind taken for. */

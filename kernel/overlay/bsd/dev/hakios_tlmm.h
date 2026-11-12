@@ -1,7 +1,7 @@
 /*
  * The SoC's own pins (Qualcomm's "TLMM"): a configuration register and a level register for each.
  * What the part drivers that drive pins each had a copy of. Where the pins are comes from the SoC
- * file's [pins] (hakios_board()->pins.tlmm); which pin a part is on is the part driver's.
+ * file's pins { } (hakios_board()->pins.tlmm); which pin a part is on is the part driver's.
  *
  * The file that includes this one has rd() and wr() (hakios_mmio.h), and says where it has the pins
  * mapped before it includes this:

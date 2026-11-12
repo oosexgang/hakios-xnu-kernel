@@ -7,7 +7,7 @@
  * for all of them), whether it asks again after a dropped transfer, what it counts and what it says
  * in its log.
  *
- * Where the blocks are comes from the SoC file's [spmi] (hakios_board()->spmi); nothing here is one
+ * Where the blocks are comes from the SoC file's spmi { } (hakios_board()->spmi); nothing here is one
  * phone's. Register layout: Linux drivers/spmi/spmi-pmic-arb.c.
  *
  *   core        0x000 the version, 0x004 the number of channels, 0x900 + 4n which peripheral channel n is

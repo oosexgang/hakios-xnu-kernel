@@ -59,7 +59,7 @@ lx_os_free(void *memory, unsigned long size)
 }
 
 /* A radio whose driver wants a large pool in one piece (ath11k on PCIe: 80 MiB, wifi/lx/src/lx_base.c)
- * has it kept from before userland fragments RAM: the board's [wifi] early_pool_mb says how much.
+ * has it kept from before userland fragments RAM: the board's wifi { } early_pool_mb says how much.
  * Only lx_os_radio_memory may map it to the radio, after PCIe and the SMMU have been initialized.
  * Boot lifetime, like the driver's pool itself. A failed reservation leaves the normal allocation
  * path available; no device or page table is touched here. */
@@ -247,7 +247,7 @@ lx_os_radio_model(void)
 {
 	const struct hakios_board *board = hakios_board();
 
-	return board != NULL ? board->wifi.radio_model : 0;     /* the board's [wifi] radio_model */
+	return board != NULL ? board->wifi.radio_model : 0;     /* the board's wifi { } radio_model */
 }
 
 int

@@ -3,7 +3,7 @@
  * of the application processor's sequencer, and the wait until RPMh says it has done them. The
  * drivers that ask RPMh for a supply or a vote each had this sequence written out; this is it once.
  *
- * Where the sequencer is and where its slot sets begin comes from the SoC file's [rpmh]
+ * Where the sequencer is and where its slot sets begin comes from the SoC file's rpmh { }
  * (hakios_board()->rpmh.rsc and tcs_offset); a resource's address comes from the command database
  * (hakios_cmd_db.h). The first slot set is taken to be an "active" one, as on every chip so far.
  *

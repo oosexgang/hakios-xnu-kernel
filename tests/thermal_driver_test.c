@@ -253,10 +253,10 @@ unknown_board(void)
 	hakios_thermal_init();
 	usleep(100000);
 	CHECK(writes == 0 && foreign == 0, "nothing touched");
-	CHECK(logged("no [thermal]"), "said so");
+	CHECK(logged("no thermal { }"), "said so");
 }
 
-/* a board the table has, but without [thermal] (QEMU): the same */
+/* a board the table has, but without thermal { } (QEMU): the same */
 static void
 board_without_thermal(void)
 {
@@ -266,7 +266,7 @@ board_without_thermal(void)
 	hakios_thermal_init();
 	usleep(100000);
 	CHECK(writes == 0 && foreign == 0, "nothing touched");
-	CHECK(logged("no [thermal]"), "said so");
+	CHECK(logged("no thermal { }"), "said so");
 }
 
 static void

@@ -68,7 +68,7 @@ device_path_print(uint64_t unit, const efi_device_path *dp)
  * touches the storage; it reads for the kernel (block_poll) and writes the log (write_logs) only
  * while UEFI's list is the one in the controller.
  */
-#define HC_PA              (PLAT->ufs)         /* the SoC file's [platform] ufs: the device tree's ufshc node, "ufs_mem" */
+#define HC_PA              (PLAT->ufs)         /* the SoC file's platform { } ufs: the device tree's ufshc node, "ufs_mem" */
 #define HC_CAP             0x00
 #define HC_VER             0x08
 #define HC_IS              0x20
@@ -210,7 +210,7 @@ hc_init(void)
 		return 0;
 	}
 	if (HC_PA == 0) {
-		print("ufs: native: this board's SoC file does not say where the UFS host controller is ([platform] ufs)\n");
+		print("ufs: native: this board's SoC file does not say where the UFS host controller is (platform { } ufs)\n");
 		return 0;
 	}
 	lo = hc_rd(HC_UTRLBA);

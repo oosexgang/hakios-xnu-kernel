@@ -259,7 +259,7 @@ wait_for(struct block *b, uint32_t offset, uint32_t mask, uint32_t value, uint32
  * among that node's protected-clocks, the ones the hypervisor keeps to itself. Offsets:
  * gcc-sc7280.c. The touch screen driver uses this controller too.
  */
-static struct block gcc = { "gcc", 0, 0x80000 };                        /* soc: [clocks] gcc */
+static struct block gcc = { "gcc", 0, 0x80000 };                        /* soc: clocks { } gcc */
 #define GCC_PLL_VOTE            0x52000         /* bit 15: gcc_gpu_gpll0_clk_src (600 MHz), bit 16: ..._div_clk_src (300 MHz) */
 #define GCC_PLL_VOTE_GPU_DIV    (1u << 16)
 #define GCC_GPU_CFG_AHB_CBCR    0x71004
@@ -270,7 +270,7 @@ static struct block gcc = { "gcc", 0, 0x80000 };                        /* soc: 
 #define CBCR_OFF                (1u << 31)      /* ... and whether it is in fact off */
 
 /* dt: the reserved memory "qcom,cmd-db": the boot loader's list of what RPMh can switch (cmd-db.c);
- * where it is and how long, the SoC file's [rpmh] */
+ * where it is and how long, the SoC file's rpmh { } */
 #define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 
@@ -336,7 +336,7 @@ step_outside(void)
  * (sc7280.dtsi: efuse@784000), and that is the copy it reads under this hypervisor on sibling
  * boards; so that one first.
  */
-static struct block qfprom = { "qfprom", 0, 0x7000 };                   /* soc: [adreno] qfprom */
+static struct block qfprom = { "qfprom", 0, 0x7000 };                   /* soc: adreno { } qfprom */
 #define QFPROM_CORRECTED        0x4000
 #define QFPROM_GPU_SPEED_BIN    (gpu_profile ? gpu_profile->speed_fuse : 0x1e9)
 #define QFPROM_GPU_GAMING_BIN   (gpu_profile ? gpu_profile->gaming_fuse : 0x1f5)
@@ -388,7 +388,7 @@ step_fuses(void)
  * registers answer only while gcc_gpu_cfg_ahb runs, which Linux turns on for good when it
  * starts (gcc-sc7280.c, the end of the probe function).
  */
-static struct block gpucc = { "gpucc", 0, 0x9000 };                     /* soc: [adreno] gpucc */
+static struct block gpucc = { "gpucc", 0, 0x9000 };                     /* soc: adreno { } gpucc */
 #define GPUCC_PLL0_MODE         0x0000          /* the 3D core's PLL: bit 31 locked, bit 0 output on; +4: times 19.2 MHz */
 #define GPUCC_PLL1_MODE         0x0100          /* a 500 MHz PLL, an alternative source for the GMU's clock */
 #define GPUCC_CXO_AON_CBCR      0x1004
@@ -816,7 +816,7 @@ cx_ready(void)
 /*
  * dt: qcom,gmu "kgsl_gmu_reg" at 0x3d6a000, 0x34000 long. Offsets in a6xx_gmu.xml are in words.
  */
-static struct block gmu = { "gmu", 0, 0x34000 };                        /* soc: [adreno] gmu */
+static struct block gmu = { "gmu", 0, 0x34000 };                        /* soc: adreno { } gmu */
 #define GMU_WORD(n)             (4u * (n))
 #define GMU_DTCM                GMU_WORD(0x1c00)        /* the processor's 16K of data memory (its code: 0x0c00) */
 #define GMU_DTCM_VERSIONS       GMU_WORD(0x1c00 + 0xff8) /* five words where loaded firmware carries its versions */
@@ -846,7 +846,7 @@ static struct block gbif = { "gbif", 0, 0x1000 };                       /* the 3
 #define GBIF_SCACHE_CNTL0       (4 * 0x01)
 #define GBIF_HALT               (4 * 0x45)
 #define GBIF_HALT_ACK           (4 * 0x46)
-static struct block cx_misc = { "cx_misc", 0, 0x1000 };                 /* soc: [adreno] cx_misc */
+static struct block cx_misc = { "cx_misc", 0, 0x1000 };                 /* soc: adreno { } cx_misc */
 #define CX_MISC_SYSTEM_CACHE_CNTL_0 (4 * 1)
 #define CX_MISC_SYSTEM_CACHE_CNTL_1 (4 * 2)
 
@@ -902,7 +902,7 @@ step_first_words(void)
  * kernel asks RPMh for the touch screen's supply, but the GMU's own; through them its firmware
  * raises the 3D core's rail. Offsets in words: a6xx_gmu.xml, domain A6XX_RSCC.
  */
-static struct block rscc = { "rscc", 0, 0x2000 };                       /* soc: [adreno] rscc */
+static struct block rscc = { "rscc", 0, 0x2000 };                       /* soc: adreno { } rscc */
 #define RSCC_RSC_STATUS0_DRV0   (4 * 0x004)
 #define RSCC_PDC_SLAVE_ID_DRV0  (4 * 0x00b)
 #define RSCC_SEQ_BUSY_DRV0      (4 * 0x101)
@@ -962,7 +962,7 @@ step_rscc(void)
  * and qcom,gmu, "iommus"): 0 the GPU, 1 its low-priority twin, 2 secure content, 5 the GMU.
  * The global registers here are the ones the hypervisor imitates; offsets: arm-smmu.h.
  */
-static struct block smmu = { "smmu", 0, 0x20000 };                      /* soc: [adreno] smmu */
+static struct block smmu = { "smmu", 0, 0x20000 };                      /* soc: adreno { } smmu */
 #define SMMU_SCR0               0x000
 #define SMMU_IDR0               0x020           /* [7:0] stream match registers */
 #define SMMU_IDR1               0x024           /* bit 31: 64K pages, [30:28] log2(pages)-1, [7:0] translation contexts */
@@ -1923,7 +1923,7 @@ step_gmu_start(void)
  * little program (vendor's a6xx_load_pdc_ucode with pdc_in_aop, a6xx_load_rsc_ucode: after the
  * firmware has started and before the message queues are).
  */
-static struct block pdc = { "pdc", 0, 0x10000 };        /* soc: [adreno] pdc (dt: qcom,gmu "kgsl_gmu_pdc_cfg") */
+static struct block pdc = { "pdc", 0, 0x10000 };        /* soc: adreno { } pdc (dt: qcom,gmu "kgsl_gmu_pdc_cfg") */
 #define PDC_GPU_ENABLE          (4 * 0x1140)
 #define PDC_GPU_SEQ_START_ADDR  (4 * 0x1148)
 #define RSCC_PDC_SEQ_START_ADDR (4 * 0x008)
@@ -2189,7 +2189,7 @@ rail_vote(uint32_t level, const uint16_t *rail, unsigned rail_levels, const uint
 }
 
 /* dt: kgsl_3d0_reg_memory: the 3D core's registers; a6xx.xml counts in words */
-static struct block gpu = { "gpu", 0, 0x40000 };                        /* soc: [adreno] gpu */
+static struct block gpu = { "gpu", 0, 0x40000 };                        /* soc: adreno { } gpu */
 #define GPU_WORD(n)             (4u * (n))
 #define RBBM_INT_0_STATUS       GPU_WORD(0x0201)
 #define RBBM_STATUS             GPU_WORD(0x0210)
@@ -3757,7 +3757,7 @@ static bool(*const steps[])(void) = {
  * sensor caught between two readings has none for a moment and is asked again; one that still
  * has none is put down as -273.0.
  */
-static struct block tsens = { "tsens1", 0, 0x200 };                     /* soc: [adreno] tsens; 0: none to read */
+static struct block tsens = { "tsens1", 0, 0x200 };                     /* soc: adreno { } tsens; 0: none to read */
 #define TSENS_STATUS(sensor)    (0xa0 + 4 * (sensor))
 #define TSENS_VALID             (1u << 21)
 
@@ -3807,19 +3807,19 @@ hakios_adreno_minute(void)
  * count although the register that enables them reads 0; the line counter goes from 0 to 2431,
  * 429 lines in 1.47 ms. (The first clock is found off again by the next kernel.)
  */
-static struct block dispcc = { "dispcc", 0, 0x4000 };                   /* soc: [clocks] dispcc */
+static struct block dispcc = { "dispcc", 0, 0x4000 };                   /* soc: clocks { } dispcc */
 static struct block disp_intf;                                          /* the interface the panel hangs on */
 #define GCC_DISP_AHB_CBCR       (hakios_board()->clocks.gcc_disp_ahb_cbcr)      /* gcc_disp_ahb_clk */
 /*
  * Where the clocks and the panel's interface are differs between SoCs (on shima the DSI interfaces are
  * intf1 and intf2 at 0x6b800 and 0x6c000 in the display block; yupik has its one elsewhere), so it is
- * the board's data: soc/SOC.dtsi, [clocks] and [display] intf1.
+ * the board's data: soc/SOC.dtsi, clocks { } and display { } intf1.
  */
 struct display_layout {
 	uint32_t core_gdscr, pclk0_cbcr, mdp_cbcr, ahb_cbcr;
 	uint32_t intf_page, intf_at;                    /* the interface's page, and its registers within it */
 };
-/* the board's (hakios_board.h: [clocks] and [display] of its SoC's file), once display_layout_known() has said yes */
+/* the board's (hakios_board.h: clocks { } and display { } of its SoC's file), once display_layout_known() has said yes */
 static struct display_layout display_of_board;
 static const struct display_layout *display = &display_of_board;
 
@@ -4064,7 +4064,7 @@ start_by_itself(void)
  * its end -- all that the loader's notes keep -- is about what is being done here.
  */
 /*
- * Where the blocks are: the SoC file's [adreno] (and [clocks] for the global clock controller, [rpmh]
+ * Where the blocks are: the SoC file's adreno { } (and clocks { } for the global clock controller, rpmh { }
  * for the command database), of the board this kernel runs on. False when one is not given: nothing of
  * the GPU is touched at an address somebody guessed.
  */
@@ -4107,11 +4107,11 @@ hakios_adreno_init(void)
 
 	gpu_profile = adreno_profile_for_board();
 	if (gpu_profile == NULL) {
-		printf("adreno: disabled: this board's board.dts has no \"gpu-a660\" with a [gpu] section\n");
+		printf("adreno: disabled: this board's board.dts has no \"gpu-a660\" with a gpu { } section\n");
 		return;
 	}
 	if (!blocks_of_board()) {
-		printf("adreno: disabled: the SoC file does not say where the GPU's blocks are ([adreno], [clocks], [rpmh])\n");
+		printf("adreno: disabled: the SoC file does not say where the GPU's blocks are (adreno { }, clocks { }, rpmh { })\n");
 		gpu_profile = NULL;
 		return;
 	}
@@ -4142,7 +4142,7 @@ hakios_adreno_init(void)
 		if (display_layout_known()) {
 			display_probe();
 		} else {
-			printf("adreno: display_probe=1: this board's SoC file has no [display] intf1 and [clocks]: nothing read\n");
+			printf("adreno: display_probe=1: this board's SoC file has no display { } intf1 and clocks { }: nothing read\n");
 		}
 	}
 	if (!PE_parse_boot_argn("adreno", &last_step, sizeof(last_step))) {

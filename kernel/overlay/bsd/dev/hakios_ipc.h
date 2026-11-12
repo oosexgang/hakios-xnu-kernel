@@ -1,6 +1,6 @@
 /*
  * The registers of the way to the SoC's other processors: the always-on processor's mailbox and the
- * block the processors ring each other through. Where the two are comes from the SoC file's [ipc]
+ * block the processors ring each other through. Where the two are comes from the SoC file's ipc { }
  * (hakios_board()->ipc.aoss and ipcc). The layouts, once, for the drivers that talk to another
  * processor; what is said through them is each driver's.
  *

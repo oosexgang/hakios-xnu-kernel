@@ -33,7 +33,7 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 /*
  * Where the EPSS block is and which cores each of its groups ("domains") has is the board's data
- * (hakios_board.h; soc/SOC.dtsi [cpufreq]): on the two phones this was written for, three groups of
+ * (hakios_board.h; soc/SOC.dtsi cpufreq { }): on the two phones this was written for, three groups of
  * 0x1000 at 0x18591000 -- four small cores, three big, one biggest.
  */
 #define EPSS_DOMAINS            HAKIOS_CPU_GROUPS

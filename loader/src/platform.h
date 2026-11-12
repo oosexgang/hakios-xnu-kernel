@@ -20,7 +20,7 @@ struct platform {
 	uint64_t fb_base;                /* the framebuffer the firmware reports (GOP): it tells this device apart */
 	/*
 	 * The one partition of the phone's storage a write may reach, named "darwin": the port's own. Its
-	 * GPT entry as it was when the port was set up (the board file's [storage]); last_lba 0: the
+	 * GPT entry as it was when the port was set up (the board file's storage { }); last_lba 0: the
 	 * board names none, and nothing is ever written.
 	 */
 	struct {
@@ -33,7 +33,7 @@ struct platform {
 /*
  * The boards the loader knows: platform_NAME for each, and platforms[], the ones told apart by the
  * framebuffer base their UEFI reports (a display that matches none is QEMU's ramfb: platform_qemu_virt).
- * Generated from the repository's devices/NAME/board.dts ([loader]) and soc/SOC.dtsi ([platform]) by
+ * Generated from the repository's devices/NAME/board.dts (loader { }) and soc/SOC.dtsi (platform { }) by
  * tools/boards.py gen; a port to another device adds its files there (docs/porting.md), not code here.
  * The board's name goes to the kernel as /chosen/darwin-board, where the kernel finds its own row
  * (bsd/dev/hakios_board.c).

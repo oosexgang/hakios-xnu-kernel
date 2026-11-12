@@ -55,7 +55,7 @@
 #include <vm/memory_types.h>
 #include "hakios_ufshc.h"
 
-#include "hakios_board.h"             /* [storage]: the one partition a write may reach */
+#include "hakios_board.h"             /* storage { }: the one partition a write may reach */
 
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 extern void IOSleep(unsigned int milliseconds);
@@ -75,7 +75,7 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);   /* osfmk/arm
  * Where a write may go, and nowhere else: darwin, the port's own 20 GiB at the end of logical
  * unit 0, and in it only past what the build puts there from the computer -- the iOS volume
  * and the cryptexes behind it. Which partition that is on a phone, and from which block, is the
- * board file's [storage] (hakios_board.h); a board that names none takes no write at all. The loader
+ * board file's storage { } (hakios_board.h); a board that names none takes no write at all. The loader
  * keeps the same bounds from the same file, and the GUIDs of the partition besides
  * (loader/src/own_partition.c).
  */
@@ -1552,7 +1552,7 @@ hakios_ufs_init(void)
 		uint32_t offered = ufs_page->write_part_plus_one;
 
 		if (!UFS_OWN) {
-			printf("ufs: nothing takes writes: this board's file does not say which partition is the port's own ([storage])\n");
+			printf("ufs: nothing takes writes: this board's file does not say which partition is the port's own (storage { })\n");
 			offered = 0;
 		} else if (offered == 0 || offered > ufs_parts || ufs_page->write_first != UFS_WRITE_FIRST) {
 			printf("ufs: the loader offers no partition to write into (ufs_write=1 on its command "

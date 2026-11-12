@@ -365,16 +365,16 @@ clocks_off(void)
 
 /* ---- the blocks, read ------------------------------------------------------------------------------ */
 
-/* (where each is: the SoC file's [lpass], at the start) */
+/* (where each is: the SoC file's lpass { }, at the start) */
 static struct block tx_macro = { "the TX macro", 0, 0x1000 };
 static struct block va_macro = { "the VA macro", 0, 0x1000 };
 static struct block tx_swr = { "the TX SoundWire master", 0, 0x2000 };
 static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0, 0x1000 };
 static struct block lpi = { "the LPASS pins", 0, 0x10000 };
 static struct block lpi_high = { "the LPASS pins", 0, 0x1000 };          /* pin 14's two registers: 0xe000 into them */
-static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's [pins], at the start */
+static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's pins { }, at the start */
 
-/* The codec's reset: which of the SoC's pins it is on is the board's [mic] (the codec node's reset-gpios). */
+/* The codec's reset: which of the SoC's pins it is on is the board's mic { } (the codec node's reset-gpios). */
 #define RESET_PIN               ((uint32_t)hakios_board()->mic.codec_reset)
 #define TLMM_CFG_RESET          (0x1000 * RESET_PIN)
 #define TLMM_IO_RESET           (0x1000 * RESET_PIN + 4)
@@ -470,7 +470,7 @@ reset_restore(void)
 	reset_taken = false;
 }
 
-static struct block lpi_slew = { "the LPASS pins' slew rates", 0, 0x1000 };     /* where: the SoC file's [lpass] */
+static struct block lpi_slew = { "the LPASS pins' slew rates", 0, 0x1000 };     /* where: the SoC file's lpass { } */
 static const struct { unsigned pin, slew_bit; uint32_t pull; const char *name; } swr_pins[] = {
 	{ 0, 0, 0, "gpio0 (SoundWire TX clock)" }, { 1, 2, 2, "gpio1 (data 0)" }, { 2, 4, 2, "gpio2 (data 1)" },
 	{ 14, 6, 2, "gpio14 (data 2)" },
@@ -1814,12 +1814,12 @@ hakios_mic_dsp_up(void)
 		return;
 	}
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->lpass.tx_macro == 0) {
-		say("mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])\n");
+		say("mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are (pins { }, lpass { })\n");
 		level = 0;
 		return;
 	}
 	if (!hakios_board()->mic.wired) {
-		say("mic: disabled: the board file does not say which pin the codec's reset is on ([mic])\n");
+		say("mic: disabled: the board file does not say which pin the codec's reset is on (mic { })\n");
 		level = 0;
 		return;
 	}

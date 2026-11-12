@@ -5,7 +5,7 @@
  * focaltech_3658u/focaltech_spi.c and focaltech_core.{c,h}.
  * GENI/RPMh FIFO transport is adapted from this project's hakios_goodix.c.
  * Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins
- * and supplies is the board file's [touch] (the numbers named in comments here are renoir's).
+ * and supplies is the board file's touch { } (the numbers named in comments here are renoir's).
  * No firmware flashing or bootloader
  * commands; the chip must boot its installed application firmware (0x5652).
  * Polling replaces Linux IRQ delivery; Linux IRQ283 is not a GIC interrupt ID.
@@ -48,11 +48,11 @@ fts_sleep_ms(uint32_t ms)
 
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
-#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
+#define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's pins { } */
 #define HAKIOS_TLMM             tlmm
 #include "hakios_tlmm.h"                    /* a pin's two registers, and the four things done with them */
 
-/* Which pins, which serial engine and which of its clocks: the board file's [touch] (hakios_board.h). */
+/* Which pins, which serial engine and which of its clocks: the board file's touch { } (hakios_board.h). */
 #define WIRED                   (&hakios_board()->touch)
 #define PIN_DATA0               ((unsigned)WIRED->data_in)
 #define PIN_DATA1               ((unsigned)WIRED->data_out)
@@ -64,7 +64,7 @@ fts_sleep_ms(uint32_t ms)
 
 /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
 
-#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's [rpmh] */
+#define CMD_DB_PHYS             (hakios_board()->rpmh.cmd_db)           /* the SoC file's rpmh { } */
 #define CMD_DB_SIZE             (hakios_board()->rpmh.cmd_db_size)
 #define RSC_PHYS                (hakios_board()->rpmh.rsc)      /* the application processor's "DRV 2" */
 #define RSC_SIZE                0x10000UL
@@ -130,7 +130,7 @@ supply_on(const char *name, uint32_t millivolts)
 
 /* ---- clocks (GCC) -------------------------------------------------------------------------------- */
 
-#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's [clocks] */
+#define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + WIRED->vote_register)    /* the application processor's votes */
 /* (the names are renoir's, serial engine 10, the third of the first group; which bits and offsets they are is the board's) */
@@ -709,11 +709,11 @@ hakios_fts_init(void)
     if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) { return; }
     /* (called only on a board that lists "touch-ft3658u": bsd/dev/hakios_drivers.c) */
     if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
-        printf("fts: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
+        printf("fts: disabled: the SoC file does not say where the pins, the clock controller and RPMh are (pins { }, clocks { }, rpmh { })\n");
         return;
     }
     if (WIRED->serial_engine == 0 || WIRED->io_supply == NULL || WIRED->analog_supply == NULL) {
-        printf("fts: disabled: the board file does not say how the controller is wired ([touch], with analog_supply)\n");
+        printf("fts: disabled: the board file does not say how the controller is wired (touch { }, with analog_supply)\n");
         return;
     }
     PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
