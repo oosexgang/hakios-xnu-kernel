@@ -4,7 +4,11 @@
 #  - forces an Apple Mach-O target (stock Linux clang defaults to ELF)
 #  - drops flags only Apple's clang understands
 #  - links with the cctools ld64
+#  - silences warnings (-w): Apple's code gives thousands with an upstream clang. XNU_WARNINGS=1 keeps them,
+#    to see what the compiler says of a file of HakiOS (touch it, build, and look for its name)
 HB="$(cd "$(dirname "$0")" && pwd)"
+quiet=(-w)
+[ "${XNU_WARNINGS:-0}" = 1 ] && quiet=()
 case "$(basename "$0")" in *++) drv=clang++; extra=(-fno-use-cxa-atexit);; *) drv=clang; extra=();; esac
 args=()
 for a in "$@"; do
@@ -18,4 +22,4 @@ for a in "$@"; do
   esac
 done
 exec "${XNU_CLANG_DIR:-/usr/bin}/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
-  -w "${extra[@]}" "${args[@]}"
+  "${quiet[@]}" "${extra[@]}" "${args[@]}"
