@@ -231,19 +231,26 @@ Stated plainly, so nobody finds out the hard way:
 - **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`rpmh { }`), but expects
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
-- **Sound, microphones, camera and Wi-Fi** are written for redwood's parts: one codec (WCD938x on
-  SoundWire), one radio (WCN6750 on the SoC's Wi-Fi DSP), one camera module. They are the largest share
-  of the work on a new phone. Where the SoC's blocks are comes from the SoC file (`pins { }`, `clocks { }`,
-  `rpmh { }`, `smmu { }`, `ipc { }`, `lpass { }`, `camera { }`), and which pins a part is on from the board file:
-  the sound's four and the audio DSP's TDM interface they are on in `speaker { }`, the codec's reset in
-  `mic { }`, the radio's pins and its supplies' names in `wifi { }`, the cameras in `camera { }`: the bus of the PMIC
-  that feeds them and, for each sensor, its chip, its CCI master's pins, its reset, its MCLK, its CSI
-  receiver and how its supplies are switched. What stays in the code is how each part is spoken to: the
-  sensor chips the camera driver knows, the layout of an SM7325's camera clock controller, and the
-  PM8008's reset on the PM8350C's GPIO 3. For the touch controllers, the keys, the
-  flashlight, the vibration motor and the speaker amplifiers that is all: a phone with one of those
-  parts on other pins needs its section of the board file filled in and no change to the driver.
-  [features.md](features.md) lists what each feature needs.
+- **Sound, microphones, camera and Wi-Fi** are drivers of particular parts: a WCD938x codec on
+  SoundWire, a WCN6750 radio on the SoC's Wi-Fi DSP, four camera sensor chips (`chips[]` in
+  `hakios_camera.c`) on an SM7325's camera blocks. They are the largest share of the work on a new
+  phone. Everything that differs between phones with those parts is data:
+  - in the SoC file: where the blocks are (`pins { }`, `clocks { }`, `rpmh { }`, `ipc { }`, `lpass { }`,
+    `camera { }`), the LPASS pins of the microphones' SoundWire (`lpass { }` `swr-tx-pins`), and the
+    SMMU streams the parts' DMA comes in on (`smmu { }` `audio-stream`, `wifi-stream`, `camera-stream`);
+  - in the board file: the speakers' bus, addresses and sound pins and the TDM interface
+    (`speaker { }`), the codec's reset (`mic { }`), the radio's pins, supplies and firmware files
+    (`wifi { }`), and the cameras (`camera { }`: the PMIC that feeds them, and a `sensor@N` node for each
+    sensor with its chip, its pins, its MCLK, its CSI receiver, its supplies and its lens motor's).
+
+  What stays in the code is how each part is spoken to, and the layout of an SM7325's camera clock
+  controller. For the touch controllers, the keys, the flashlight, the vibration motor and the speaker
+  amplifiers that is all: a phone with one of those parts wired differently needs its section of the
+  board file filled in and no change to the driver. [features.md](features.md) lists what each
+  feature needs.
+- **iOS's camera** (`userland/userland/src/camera_device.c`, of the iOS 16.5 generation) presents two
+  cameras with the first phone's optics (focal length, aperture, formats); another phone's are to be
+  written there.
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
   GPT entry in the board file's `storage { }`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in
