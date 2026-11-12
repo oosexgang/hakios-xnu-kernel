@@ -3,7 +3,8 @@
 # of made-up files the way the port's images are made (two volumes; compressed files, firmware under
 # --plain left as it is), and the kernel's own reader (bsd/miscfs/apfs/apfs_lib.c, as apfs-tool) has to read
 # every entry back as it was (tools/apfs/check-image.py); then the drivers' lookup of firmware in the RAM
-# disks (redwood_image.c) runs on them (tests/image_file_test.c). apfsck, the third reader check-image.sh
+# disks (redwood_image.c) runs on them (tests/image_file_test.c). Before that, the steps of the APFS suite
+# (userland/tools/apfs/run-tests.sh) that need no image of iOS. apfsck, the third reader check-image.sh
 # adds, is not built here: it is fetched from elsewhere.
 #
 #   tests/apfs_image_test.sh
@@ -43,6 +44,14 @@ PY
 ln -s ../etc/small "$in/sys/fw/link"
 
 failed=0
+# the APFS suite's own steps that need no image of iOS: the on-disk layout against apfs.py, holes in files,
+# reading contents without the lock (the steps that need an IPSW's image say they were skipped)
+if "$APFS/run-tests.sh" > "$WORK/suite.txt" 2>&1; then
+	grep -E "^OK|cases, [0-9]+ failed" "$WORK/suite.txt"
+else
+	grep -E "^==|FAIL|failed|not build|^  [^o]" "$WORK/suite.txt"
+	failed=1
+fi
 python3 "$APFS/mkapfs.py" -o "$WORK/md1.img" -z --plain fw sys="$in/sys" data="$in/data" > /dev/null
 python3 "$APFS/mkapfs.py" -o "$WORK/md0.img" -z --plain fw md0="$in/md0" > /dev/null
 check() {
