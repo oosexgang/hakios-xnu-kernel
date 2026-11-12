@@ -32,10 +32,13 @@ Where things are in `overlay/`:
 
 ```sh
 kernel/build.sh             # or: kernel/build.sh -j12
+make kernel-check           # every file compiled and the whole kernel linked, with LLVM's tools and no
+                            # theos, the warnings of HakiOS' files listed: a check, not a kernel to boot
 ```
 
 The first run makes the tree next to the repository (`../xnu-12377-hakios`), then the build
-dependencies, then the kernel: `BUILD/obj/mach.development.bcm2837` in the tree. Later runs bring the
+dependencies, then the kernel: `BUILD/obj/mach.development.bcm2837` in the tree. A build from scratch
+takes a few minutes on an ordinary machine. Later runs bring the
 tree up to date with the repository and recompile only what changed. Requirements and details:
 [docs/building.md](../docs/building.md).
 
