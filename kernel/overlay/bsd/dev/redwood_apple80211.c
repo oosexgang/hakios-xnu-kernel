@@ -232,6 +232,22 @@ channel_fill(struct apple80211_channel *channel, unsigned frequency, unsigned fl
 
 /* ---- what the caller is given back ------------------------------------------------------------------- */
 
+/*
+ * A network's name and information elements as long as the record says, but never past it: the record comes
+ * from the radio's driver, which is built outside this tree, and what is taken from it goes out to iOS.
+ */
+static unsigned
+bss_ssid_length(const struct redwood_sta_bss *bss)
+{
+	return bss->ssid_length <= sizeof(bss->ssid) ? bss->ssid_length : sizeof(bss->ssid);
+}
+
+static unsigned
+bss_elements_length(const struct redwood_sta_bss *bss)
+{
+	return bss->elements_length <= sizeof(bss->elements) ? bss->elements_length : sizeof(bss->elements);
+}
+
 /* At most as many bytes as it has room for. */
 static int
 give(const struct apple80211req *request, const void *data, size_t length)
@@ -245,7 +261,7 @@ static int
 give_network(const struct apple80211req *request, const struct redwood_sta_bss *bss)
 {
 	struct apple80211_scan_result *result = kalloc_data(sizeof(*result), Z_WAITOK | Z_ZERO);
-	unsigned room = sizeof(result->elements);
+	unsigned room = sizeof(result->elements), elements = bss_elements_length(bss);
 	int error;
 
 	if (result == NULL) {
@@ -262,13 +278,13 @@ give_network(const struct apple80211req *request, const struct redwood_sta_bss *
 	result->beacon_interval = bss->beacon_interval;
 	result->capability = bss->capability;
 	memcpy(result->bssid, bss->bssid, sizeof(result->bssid));
-	result->ssid_length = bss->ssid_length;
-	memcpy(result->ssid, bss->ssid, bss->ssid_length);
+	result->ssid_length = (uint8_t)bss_ssid_length(bss);
+	memcpy(result->ssid, bss->ssid, result->ssid_length);
 	result->age_ms = bss->age_ms;
-	result->elements_length = (uint16_t)(bss->elements_length <= room ? bss->elements_length : 0);
+	result->elements_length = (uint16_t)(elements <= room ? elements : 0);
 	memcpy(result->elements, bss->elements, result->elements_length);
 	/* the rates it says it has (elements 1 and 50: units of 500 kbit/s, the top bit marks the ones everybody must have) */
-	for (unsigned at = 0; at + 2 <= bss->elements_length && at + 2 + bss->elements[at + 1] <= bss->elements_length;
+	for (unsigned at = 0; at + 2 <= elements && at + 2 + bss->elements[at + 1] <= elements;
 	    at += 2 + bss->elements[at + 1]) {
 		for (unsigned i = 0; (bss->elements[at] == 1 || bss->elements[at] == 50) && i < bss->elements[at + 1]; i++) {
 			unsigned rate = (bss->elements[at + 2 + i] & 0x7f) / 2;
@@ -402,8 +418,8 @@ get(struct apple80211req *request)
 	case 1:                                 /* its name; the length goes back in the request */
 		if (state->phase != REDWOOD_STA_JOINED) {
 			error = ENXIO;
-		} else if ((error = give(request, state->bss.ssid, state->bss.ssid_length)) == 0) {
-			request->req_len = state->bss.ssid_length;
+		} else if ((error = give(request, state->bss.ssid, bss_ssid_length(&state->bss))) == 0) {
+			request->req_len = bss_ssid_length(&state->bss);
 		}
 		break;
 	case 9:                                 /* its access point's address */
