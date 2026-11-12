@@ -71,7 +71,7 @@ own_class_method(Class cls, SEL sel)
 
 __attribute__((constructor))
 static void
-renoir_statusbar26_init(void)
+statusbar26_init(void)
 {
 	SEL sel = sel_registerName("leadingCenteringOffset");
 	const double shift = leading_shift();

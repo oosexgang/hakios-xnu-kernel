@@ -47,8 +47,8 @@ enum {
 	 * one only if it has that part wired that way. Asked for on any other board, the driver says so and
 	 * does nothing, rather than write to another phone's pins.
 	 */
-	HAKIOS_HAS_TOUCH_GOODIX    = 1u << 5,   /* Goodix GT9916 or FocalTech FT3680 on redwood's SPI (hakios_goodix.c) */
-	HAKIOS_HAS_TOUCH_FT3658U   = 1u << 6,   /* FocalTech FT3658U on renoir's SPI (hakios_fts.c) */
+	HAKIOS_HAS_TOUCH_GOODIX    = 1u << 5,   /* Goodix GT9916 or FocalTech FT3680 on SPI, wired as touch { } says (hakios_goodix.c) */
+	HAKIOS_HAS_TOUCH_FT3658U   = 1u << 6,   /* FocalTech FT3658U on SPI, wired as touch { } says (hakios_fts.c) */
 	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (hakios_speaker.c, hakios_sound.c) */
 	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (hakios_haptic.c) */
 	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (hakios_torch.c) */

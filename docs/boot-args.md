@@ -8,7 +8,7 @@ beside the code, so the file named in each heading has the full explanation.
 - Pass them with `--boot-arg NAME=VALUE` to the boot tool, or in the loader's command line.
 - An argument that is not given leaves its feature off unless the text says otherwise: drivers of a phone's
   hardware do nothing until asked.
-- 33 arguments have no comment naming them yet and show "—". To document one, write a comment with
+- 32 arguments have no comment naming them yet and show "—". To document one, write a comment with
   `name=` in it next to where it is read, then run `make docs`.
 - Apple's own boot arguments (`debug=`, `serial=`, `-v` ...) work as in any XNU and are not listed.
 
@@ -30,13 +30,13 @@ beside the code, so the file named in each heading has the full explanation.
 | `adreno_speed` | adreno_speed=N step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for) |
 | `adreno_stream1` | adreno_stream1=N step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core asks for. |
 | `adreno_watch` | adreno_watch=S after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last |
+| `display_clocks` | display_clocks=1: an opt-in, read-only look at the display clocks' state. |
 | `display_probe` | display_probe=1 before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written) |
 | `gpu` | gpu=1, on the phone and with the GPU's firmware in the small image: the GPU is started while the system starts and kept for the window server to draw with (the service HakiosGPU; "the GPU kept on" below). |
 | `gpu_exact` | gpu_exact=0: the core does not wait to be idle before it notes the time |
 | `gpu_log` | gpu_log=1: a line for every submission and the time the core spent on it |
 | `gpu_recover` | gpu_recover=1: a submission the core never finishes does not cost the rest of the run. |
 | `gpu_va` | gpu_va: 0 (the default) as it has always been. |
-| `renoir_display_clocks` | — |
 
 ### `bsd/dev/hakios_backlight.c`
 

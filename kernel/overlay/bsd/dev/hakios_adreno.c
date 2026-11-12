@@ -4119,9 +4119,9 @@ hakios_adreno_init(void)
 	    gpu_profile->chip_id, gpu_profile->speed_count - 1, gpu_profile->speeds[gpu_profile->speed_count - 1].khz / 1000,
 	    gpu_profile->speeds[gpu_profile->default_speed].khz / 1000);
 
-	/* Opt-in, read-only clock-state probe. MDP itself is deliberately not touched. */
+	/* display_clocks=1: an opt-in, read-only look at the display clocks' state. MDP itself is deliberately not touched. */
 	uint32_t display_clock_probe = 0;
-	if (PE_parse_boot_argn("renoir_display_clocks", &display_clock_probe, sizeof(display_clock_probe)) && display_clock_probe &&
+	if (PE_parse_boot_argn("display_clocks", &display_clock_probe, sizeof(display_clock_probe)) && display_clock_probe &&
 	    display_layout_known()) {
 		const struct hakios_board *board = hakios_board();
 

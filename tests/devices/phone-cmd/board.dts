@@ -96,6 +96,6 @@
 	boot {
 		fastboot-product = "phone-cmd";
 		cpus = <8>;
-		bootargs = "haptic=0", "cpufreq=1", "gpu=0", "wifi=0", "adsp=0", "battmgr=0", "speaker_probe=0", "renoir_afe_probe=0", "sound=0", "cam=0", "cam_stream_test=0", "touch_lat=0", "touchscreen=1", "buttons=1", "launchd_unsecure_cache=1", "backlight=1", "thermal=1";
+		bootargs = "haptic=0", "cpufreq=1", "gpu=0", "wifi=0", "adsp=0", "battmgr=0", "speaker_probe=0", "sound=0", "cam=0", "cam_stream_test=0", "touch_lat=0", "touchscreen=1", "buttons=1", "launchd_unsecure_cache=1", "backlight=1", "thermal=1";
 	};
 };
