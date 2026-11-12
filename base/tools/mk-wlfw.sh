@@ -1,10 +1,10 @@
 #!/bin/bash
 # Give the kernel's build ath11k's descriptions of the messages a WCN6750's firmware speaks, for
-# bsd/dev/redwood_wlfw.c (a stand-in for ath11k's own qmi.c: see there). They are taken out of
+# bsd/dev/hakios_wlfw.c (a stand-in for ath11k's own qmi.c: see there). They are taken out of
 # the driver's sources as they are -- the structures of its qmi.h and the tables of its qmi.c --
 # and written as one header into the kernel's build directory, where the compiler finds it and
 # git does not: ath11k's text is BSD-3-Clause-Clear and is not kept in the repository.
-# Without that header redwood_wlfw.c compiles to a line that says so.
+# Without that header hakios_wlfw.c compiles to a line that says so.
 #
 # usage: tools/mk-wlfw.sh          then build the kernel (./xnu-build.sh); again after a clean build
 set -e
@@ -14,7 +14,7 @@ ATH=$ROOT/xnu-deps/build/ath11k/src/ath11k
 [ -f "$ATH/qmi.c" ] || "$ROOT/tools/mk-ath11k.sh"
 OUT=$XNU_SRC/BUILD/obj/DEVELOPMENT_ARM64_${MACHINE:-BCM2837}/bsd/DEVELOPMENT
 [ -d "$OUT" ] || { echo "mk-wlfw.sh: no build directory $OUT: build the kernel once first" >&2; exit 1; }
-python3 - "$ATH" "$(cat "$ATH/../.release" | cut -d' ' -f1)" > "$OUT/redwood_wlfw_ath11k.h.new" <<'PY'
+python3 - "$ATH" "$(cat "$ATH/../.release" | cut -d' ' -f1)" > "$OUT/hakios_wlfw_ath11k.h.new" <<'PY'
 import re
 import sys
 
@@ -74,6 +74,6 @@ print('#define WLFW_SERVICES\t\t%s\n#define WLFW_SERVICE_COUNT\t%s' % (of('svc_t
 print('#define WLFW_SENDS_INI\t\t%d\t/* fw_wmi_diag_event */' % (of('fw_wmi_diag_event') == 'true'))
 print('#define WLFW_SHADOW_REGISTERS\t%d\t/* supports_shadow_regs */' % (of('supports_shadow_regs') == 'true'))
 PY
-cmp -s "$OUT/redwood_wlfw_ath11k.h.new" "$OUT/redwood_wlfw_ath11k.h" 2>/dev/null && rm "$OUT/redwood_wlfw_ath11k.h.new" ||
-	mv "$OUT/redwood_wlfw_ath11k.h.new" "$OUT/redwood_wlfw_ath11k.h"
-echo "mk-wlfw.sh: $OUT/redwood_wlfw_ath11k.h ($(grep -c 'qmi_elem_info .*\[\] = {' "$OUT/redwood_wlfw_ath11k.h") tables)"
+cmp -s "$OUT/hakios_wlfw_ath11k.h.new" "$OUT/hakios_wlfw_ath11k.h" 2>/dev/null && rm "$OUT/hakios_wlfw_ath11k.h.new" ||
+	mv "$OUT/hakios_wlfw_ath11k.h.new" "$OUT/hakios_wlfw_ath11k.h"
+echo "mk-wlfw.sh: $OUT/hakios_wlfw_ath11k.h ($(grep -c 'qmi_elem_info .*\[\] = {' "$OUT/hakios_wlfw_ath11k.h") tables)"

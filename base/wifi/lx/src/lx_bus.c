@@ -22,7 +22,7 @@
  *
  * What the phone said, 13 October: all of that happens, 270 ms from the start of the bus to
  * "unified ready", with the copy engines looked at once a millisecond, and the scan hears the
- * networks around (bsd/dev/redwood_wifi.c, step_driver(), has the account).
+ * networks around (bsd/dev/hakios_wifi.c, step_driver(), has the account).
  */
 #define LX_QMI_AS_IT_IS				/* (this file is where the driver's requests go past) */
 #include <linux/kernel.h>
@@ -175,7 +175,7 @@ window(struct ath11k_base *ab, u32 offset)
 
 /*
  * The registers answer while the firmware is in mission mode and at no other time: an access
- * outside it ends the kernel (bsd/dev/redwood_wifi.c, step 16). The driver asks for that mode
+ * outside it ends the kernel (bsd/dev/hakios_wifi.c, step 16). The driver asks for that mode
  * before it first touches them; once it has stopped the bus, on its way to asking for the mode
  * "off", nothing is let through any more.
  */

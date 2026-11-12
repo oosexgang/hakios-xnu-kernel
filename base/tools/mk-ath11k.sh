@@ -13,7 +13,7 @@
 #                         headers of FreeBSD that cannot serve under XNU as they are, and the
 #                         functions underneath (locks, sleeping, work, memory, firmware, the
 #                         radio's bus) written on the handful of calls that the kernel's
-#                         bsd/dev/redwood_lx.c offers (bsd/sys/redwood_lx.h of the kernel tree).
+#                         bsd/dev/hakios_lx.c offers (bsd/sys/hakios_lx.h of the kernel tree).
 #
 # Not all of the driver is built yet: DRIVER below lists the files that are. What they call in
 # the files that are not becomes a function that says its name in the log and answers 0
@@ -129,9 +129,9 @@ DFLAGS="-Isrc/ath11k -Isrc -include $W/include/lx_prelude.h -DCONFIG_ATH11K_AHB 
 # helpers (wifi/lx/include/linux/soc/qcom/qmi.h)
 source "$ROOT/xnu-env.sh"
 for h in lx qmi; do
-	[ -f "$XNU_SRC/bsd/sys/redwood_$h.h" ] || { echo "mk-ath11k.sh: the kernel tree has no bsd/sys/redwood_$h.h" >&2; exit 1; }
+	[ -f "$XNU_SRC/bsd/sys/hakios_$h.h" ] || { echo "mk-ath11k.sh: the kernel tree has no bsd/sys/hakios_$h.h" >&2; exit 1; }
 done
-DFLAGS="$DFLAGS -DLX_REDWOOD_LX_H=\"$XNU_SRC/bsd/sys/redwood_lx.h\" -DLX_REDWOOD_QMI_H=\"$XNU_SRC/bsd/sys/redwood_qmi.h\""
+DFLAGS="$DFLAGS -DLX_HAKIOS_LX_H=\"$XNU_SRC/bsd/sys/hakios_lx.h\" -DLX_HAKIOS_QMI_H=\"$XNU_SRC/bsd/sys/hakios_qmi.h\""
 mkdir -p obj out
 rm -f obj/*.err
 compile() {		# compile SOURCE OBJECT [FLAGS]: only when the object is older than anything it was made of
@@ -153,7 +153,7 @@ done
 OBJECTS=$(for f in $DRIVER; do echo obj/ath11k_$f.o; done; for f in "$W"/src/*.c; do echo obj/lx_$(basename "$f" .c).o; done)
 
 # --- tie it all into one object. What it then still wants is one of three things: a call of the
-# kernel's (redwood_lx.h; the QMI helpers; the handful of C library functions XNU has under the same
+# kernel's (hakios_lx.h; the QMI helpers; the handful of C library functions XNU has under the same
 # names with the same meaning), a function of a part of the driver that is not built yet, or a
 # mistake. The second kind gets a stub each that says its name and answers 0; anything else
 # missing ends the build.
@@ -167,7 +167,7 @@ missing=
 for s in $(cat out/undefined.txt); do
 	case " $(echo $KERNEL) " in *" $s "*) continue ;; esac
 	case $s in
-	lx_os_*|qmi_*|redwood_qmi_*|section\$*) continue ;;
+	lx_os_*|qmi_*|hakios_qmi_*|section\$*) continue ;;
 	ath11k_*|__ath11k_*) ;;
 	*) echo "mk-ath11k.sh: nothing defines $s" >&2; missing=1; continue ;;
 	esac
@@ -177,7 +177,7 @@ for s in $(cat out/undefined.txt); do
 done
 [ -z "$missing" ] || exit 1
 $CC -c out/stubs.s -o out/stubs.o
-# four names are shown: where the kernel enters (lx_prepare(), lx_start(), lx_stop() and lx_transmit() of redwood_lx.h)
+# four names are shown: where the kernel enters (lx_prepare(), lx_start(), lx_stop() and lx_transmit() of hakios_lx.h)
 printf '_lx_prepare\n_lx_start\n_lx_stop\n_lx_transmit\n' > out/exported.txt
 $LD -r -arch arm64 -exported_symbols_list out/exported.txt out/all.o out/stubs.o -o out/ath11k.o 2> out/ld.err ||
 	{ cat out/ld.err; exit 1; }
