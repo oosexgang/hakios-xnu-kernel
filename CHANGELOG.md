@@ -73,7 +73,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   exporting give back exactly what is committed. `kernel/import-patch.sh` takes a patch written against
   the tree into the overlay and the topic patches. An update never overwrites work in a tree that has
   not been exported.
-- **`kernel/build.sh` is the one command**, with theos installed. It assembles or updates the tree,
+- **The kernel builds without theos' toolchain.** `kernel/build.sh` takes LLVM's own Mach-O linker and
+  tools (`ld64.lld`, `llvm-libtool-darwin` ...) when theos is not installed, with the iOS SDK's headers
+  alone (`IOS_SDK`): `kernel/host/llvm` makes up for the two places they differ from cctools. It needs
+  clang 19 or newer and GNU awk, which the build now says when they are missing.
+- **`kernel/build.sh` is the one command**, with theos installed or LLVM's tools. It assembles or updates the tree,
   fetches and builds its host tools (`kernel/deps/stage1.sh`), makes the board table and builds. A
   separate darwin-renoir checkout is no longer needed; it is still used if it is there.
 - **A syntax check without the Darwin toolchain.** `kernel/syntax-check.sh` compiles what HakiOS adds
@@ -259,9 +263,10 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
   the ones the code had, the tests hold them, and the drivers compile. That is all that is known.
 - **The loader** compiles on every push. Its last run on a phone was before its board table was
   generated and before `uefi_charger` replaced a board's name in its code.
-- **`kernel/deps/stage1.sh`** has been run end to end once since (Ubuntu 24.04): every source fetched at
-  its pinned commit, the SDK's checksum matched, the host tools built and run. The steps of
-  `kernel/build.sh` after it need theos' toolchain and have not.
+- **`kernel/deps/stage1.sh` and the whole kernel build** have been run end to end once since, on Ubuntu
+  24.04 with LLVM 20's Mach-O tools instead of theos': every file compiled and the kernel linked, with
+  nothing undefined. With theos' cctools, as the team builds, it has not been repeated; a kernel linked
+  by LLVM's linker has not been booted.
 - **The syntax check is not a build.** Ten files and linking still need the real build.
 - **The porting procedure has not been followed on a third real phone.** The test cannot show the
   hardware answering.
