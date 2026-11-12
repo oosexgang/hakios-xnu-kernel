@@ -1344,6 +1344,45 @@ TEST(a_stage_compiled_for_its_constant_buffer_reads_none_of_it) {
     CHECK(other != nullptr && other->listing.find("c0.x") != std::string::npos);
 }
 
+// Three specialisations of one module at once, as the plug-in's three queues start them: one thread translates the
+// module and the two others wait for it and take copies (compiler.cpp: translatedAgain), and each comes out with its own
+// buffer's values -- a copy that carried another's folded values, or a thread that took a half-made one, would show
+// another's constant or none. (A constant the function does not declare makes the module's key one no test has used.)
+TEST(specialisations_of_one_module_at_once_each_fold_their_own_buffer) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: no specialisation ran)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("tri_cflat_fs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    const FunctionConstants fresh = {FunctionConstant{97, 0x5eed}};
+    const float values[3] = {0.125f, 0.375f, 0.625f};
+    std::string listings[3];
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 3; i++) {
+        threads.emplace_back([&, i] {
+            const float c[4] = {values[i], values[i], values[i], 1.0f};
+            KnownBuffer known;
+            known.binding = 0;
+            known.bytes.assign(reinterpret_cast<const uint8_t*>(c), reinterpret_cast<const uint8_t*>(c) + 16);
+            std::string why;
+            auto st = compileStage(bc.data(), bc.size(), &why, fresh, 0, &known);
+            listings[i] = st != nullptr ? st->listing : "REFUSED: " + why;
+        });
+    }
+    for (auto& t : threads) t.join();
+    const char* hex[3] = {"0x3e000000", "0x3ec00000", "0x3f200000"};
+    const char* dec[3] = {"0.125000", "0.375000", "0.625000"};
+    for (int i = 0; i < 3; i++) {
+        CHECK(listings[i].find("c0.") == std::string::npos);
+        CHECK(listings[i].find(hex[i]) != std::string::npos || listings[i].find(dec[i]) != std::string::npos);
+        for (int j = 0; j < 3; j++) {
+            if (j != i) CHECK(listings[i].find(hex[j]) == std::string::npos && listings[i].find(dec[j]) == std::string::npos);
+        }
+    }
+}
+
 TEST(a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less) {
     Kernel with{}, without{};
     with.pvtmemSize = 512, with.maxReg = 47;

@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <cstring>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 
@@ -277,24 +279,137 @@ bool foldKnownLoad(nir_builder* b, nir_intrinsic_instr* intr, void* data) {
     return true;
 }
 
-bool translate(const void* bitcode, size_t size, Translation& t, std::string* why, const FunctionConstants& supplied, const KnownBuffer* known = nullptr) {
-    t.mem = ralloc_context(nullptr);
-    air_constant_value* constants = nullptr;
-    unsigned numConstants = air_module_function_constants(t.mem, bitcode, size, &constants);
-    for (const FunctionConstant& f : supplied) {
-        for (unsigned i = 0; i < numConstants; i++) {
-            if (constants[i].index == f.index) {
-                constants[i].bits = f.bits;
-                constants[i].supplied = true;
+// The front end's NIR of the modules specialised (translate with a known buffer), each translated once into a ralloc
+// context of its own that is never freed: the front end's info points into it, and each specialisation gets a clone of
+// the NIR with that info. Several threads specialise at once (each with its compiler): the list is under a lock, and a
+// clone reads a kept NIR, which nothing writes once kept. Never more than kKeptTranslations and none given up (an info
+// handed out must stay good): CoreAnimation's iOS 27 has two uber shaders.
+struct KeptTranslation {
+    uint64_t key;
+    nir_shader* nir;
+    air_shader_info info;
+};
+std::mutex gKeptLock;
+std::condition_variable gKeptChanged;
+std::vector<KeptTranslation> gKept;
+std::vector<uint64_t> gTranslating;   // (under gKeptLock) the keys a thread is translating now: the others wait for it
+constexpr size_t kKeptTranslations = 6;
+
+// T a clone of KEY's kept NIR, true; or false, and KEY marked as this thread's to translate (doneTranslating after).
+// A thread that asks while another translates KEY waits for that one: the first specialisations of a module came three
+// at a time, one to each queue of the plug-in, and each translated the whole uber shader (3.6 to 9.6 s on the phone)
+bool translatedAgain(uint64_t key, Translation& t) {
+    std::unique_lock<std::mutex> g(gKeptLock);
+    for (;;) {
+        for (const KeptTranslation& k : gKept) {
+            if (k.key != key) continue;
+            t.nir = nir_shader_clone(t.mem, k.nir);
+            t.nir->options = ir3_get_compiler_options(theCompiler());   // (this thread's compiler's: the kept one's may be gone)
+            t.info = k.info;
+            return true;
+        }
+        if (std::find(gTranslating.begin(), gTranslating.end(), key) == gTranslating.end()) break;
+        gKeptChanged.wait(g);
+    }
+    gTranslating.push_back(key);
+    return false;
+}
+
+// KEY's translation by this thread over: T's NIR (made under its own context, with its info) kept, and T given a
+// clone, when there is room (false otherwise: the context is then T's to free); the threads waiting for it woken
+bool doneTranslating(uint64_t key, Translation* t) {
+    std::lock_guard<std::mutex> g(gKeptLock);
+    gTranslating.erase(std::remove(gTranslating.begin(), gTranslating.end(), key), gTranslating.end());
+    gKeptChanged.notify_all();
+    if (t == nullptr || gKept.size() >= kKeptTranslations) return false;
+    gKept.push_back(KeptTranslation{key, t->nir, t->info});
+    t->nir = nir_shader_clone(t->mem, gKept.back().nir);
+    return true;
+}
+
+// store_scratch with no load_scratch anywhere: written and never read, taken away with the scratch size
+bool dropUnreadScratch(nir_shader* nir) {
+    bool reads = false;
+    nir_foreach_function_impl(impl, nir) {
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr(instr, block) {
+                if (instr->type == nir_instr_type_intrinsic && nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_load_scratch) reads = true;
             }
         }
     }
-    air_to_nir_options options{};
-    options.constants = constants;
-    options.num_constants = numConstants;
-    const char* error = nullptr;
-    t.nir = air_to_nir(t.mem, bitcode, size, nullptr, &options, ir3_get_compiler_options(theCompiler()), &t.info, &error);
-    if (t.nir == nullptr) return refuse(why, std::string("the front end refused it: ") + (error ? error : "no reason given"));
+    if (reads || nir->scratch_size == 0) return false;
+    nir_foreach_function_impl(impl, nir) {
+        nir_foreach_block(block, impl) {
+            nir_foreach_instr_safe(instr, block) {
+                if (instr->type == nir_instr_type_intrinsic && nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_store_scratch) {
+                    nir_instr_remove(instr);
+                }
+            }
+        }
+        nir_metadata_preserve(impl, nir_metadata_control_flow);
+    }
+    nir->scratch_size = 0;
+    nir_opt_dce(nir);
+    return true;
+}
+
+// HAKIOS_METAL_PHASES=1: each phase of a stage's compile timed, on standard error (where a specialisation's time goes)
+void phase(const char* what) {
+    static const bool on = getenv("HAKIOS_METAL_PHASES") != nullptr;
+    if (!on) return;
+    static thread_local std::chrono::steady_clock::time_point last;
+    const auto now = std::chrono::steady_clock::now();
+    if (what != nullptr) std::fprintf(stderr, "phase: %-28s %8.1f ms\n", what, std::chrono::duration<double, std::milli>(now - last).count());
+    last = now;
+}
+
+bool translate(const void* bitcode, size_t size, Translation& t, std::string* why, const FunctionConstants& supplied, const KnownBuffer* known = nullptr) {
+    phase(nullptr);
+    t.mem = ralloc_context(nullptr);
+    // A specialisation (KNOWN given) of a module and constants translated before starts from a copy of that NIR: an
+    // uber shader's specialisations differ in the buffer alone, and the front end's 190 ms (this machine) of each was
+    // the same work again
+    uint64_t key = 0;
+    if (known != nullptr) {
+        key = 0xcbf29ce484222325ull;
+        for (size_t i = 0; i < size; i++) key = (key ^ static_cast<const uint8_t*>(bitcode)[i]) * 0x100000001b3ull;
+        for (const FunctionConstant& f : supplied) key = (key ^ (uint64_t(f.index) * 0x9e3779b97f4a7c15ull ^ f.bits)) * 0x100000001b3ull;
+        key ^= size;
+        if (translatedAgain(key, t)) {
+            phase("air_to_nir (a copy)");
+        }
+    }
+    if (t.nir == nullptr) {
+        // (a first specialisation of its module translates into a context of its own, to be kept: keepTranslation)
+        void* mem = known != nullptr ? ralloc_context(nullptr) : t.mem;
+        air_constant_value* constants = nullptr;
+        unsigned numConstants = air_module_function_constants(mem, bitcode, size, &constants);
+        for (const FunctionConstant& f : supplied) {
+            for (unsigned i = 0; i < numConstants; i++) {
+                if (constants[i].index == f.index) {
+                    constants[i].bits = f.bits;
+                    constants[i].supplied = true;
+                }
+            }
+        }
+        air_to_nir_options options{};
+        options.constants = constants;
+        options.num_constants = numConstants;
+        const char* error = nullptr;
+        t.nir = air_to_nir(mem, bitcode, size, nullptr, &options, ir3_get_compiler_options(theCompiler()), &t.info, &error);
+        if (t.nir == nullptr) {
+            if (mem != t.mem) {
+                doneTranslating(key, nullptr);
+                ralloc_free(mem);
+            }
+            return refuse(why, std::string("the front end refused it: ") + (error ? error : "no reason given"));
+        }
+        phase("air_to_nir");
+        if (mem != t.mem && !doneTranslating(key, &t)) {
+            // (not kept: T takes the context over, freed with it)
+            ralloc_steal(t.mem, mem);
+        }
+    }
     // the known buffer's reads folded, its offsets folded first (a field's offset is the front end's arithmetic on the
     // pointer), until nothing more folds: a value read may decide the offset of another read
     // (called directly, not under NIR_PASS: a debug build validates the whole shader after each, and an uber shader
@@ -305,6 +420,23 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
         progress = nir_opt_constant_folding(t.nir);
         progress = nir_shader_intrinsics_pass(t.nir, foldKnownLoad, nir_metadata_control_flow, const_cast<KnownBuffer*>(known)) || progress;
     }
+    // ...and the branches the folded values decide taken away at once, with what only they used: ir3's own passes
+    // would do the same, but only after running over the whole uber shader first (ir3_finalize_nir, 494 of a
+    // specialisation's 700 ms on this machine)
+    if (known != nullptr && getenv("HAKIOS_METAL_NO_EARLY_DCE") == nullptr) {
+        for (bool progress = true; progress;) {
+            progress = nir_opt_dead_cf(t.nir);
+            progress = nir_opt_dce(t.nir) || progress;
+            progress = nir_copy_prop(t.nir) || progress;
+            progress = nir_opt_constant_folding(t.nir) || progress;
+        }
+        // (the local arrays of the branches gone: the front end makes an alloca load_scratch and store_scratch, and a
+        // store has an effect DCE keeps. With no load left the stores are dead, and so is the private memory the
+        // module asked for -- left, ir3 gave a stage of 64 words 512 bytes a fiber, and compileStage compiled it a
+        // second time without its preamble for that)
+        dropUnreadScratch(t.nir);
+    }
+    phase("the known buffer folded");
     return true;
 }
 
@@ -707,6 +839,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     nir_shader_instructions_pass(nir, lowerUclz, nir_metadata_control_flow, nullptr);
     ir3_nir_lower_io_to_temporaries(nir);
     ir3_finalize_nir(compiler, &nirOptions, nir);
+    phase("ir3_finalize_nir");
     if (!lowerFbRead(nir, t.fbTargets, why)) return false;
 
     t.shader = static_cast<ir3_shader*>(rzalloc_size(nullptr, sizeof(ir3_shader)));
@@ -714,6 +847,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     t.shader->type = nir->info.stage;
     t.shader->nir = nir;
     ir3_nir_post_finalize(t.shader);
+    phase("ir3_nir_post_finalize");
     // (and what the widening left -- f2f16 of an f2f32 -- folded as ir3's own passes leave nothing to fold: its variant
     // lowering asserts that the loop has no more to do)
     if (nir_shader_intrinsics_pass(nir, widenHalfVarying, nir_metadata_control_flow, nullptr)) {
@@ -755,6 +889,7 @@ bool compileVariant(Translation& t, PassOrder order, std::string* why) {
     t.shader->variant_count = 1;
     if (nir->info.stage == MESA_SHADER_FRAGMENT && needsQuadHelpers(nir)) nir->info.fs.needs_quad_helper_invocations = true;
     if (ir3_compile_shader_nir(compiler, t.shader, v) != 0) return refuse(why, std::string("ir3 refused ") + t.name());
+    phase("ir3_compile_shader_nir");
     {
         std::string name = t.name();
         if (!fixPrefetchSamplers(nir, v, &name, why)) return false;
@@ -1364,10 +1499,13 @@ std::unique_ptr<CompiledStage> compileStageOnce(const void* bitcode, size_t size
         t.nir->info.num_ssbos += iboBase;
         out->iboBase = iboBase;
     }
+    phase("walks before lowering");
     if (!compileVariant(t, PassOrder::kGraphics, why)) return nullptr;
+    phase("compileVariant (NIR, ir3)");
     KernelHome home{out->stage.k, out->words, out->immediates, out->resources, out->name, out->listing};
     if (!fillKernel(t, home, highestSampler, why)) return nullptr;
     if (!fillStage(t, classes, out->stage, why)) return nullptr;
+    phase("fillKernel, fillStage");
     // the fetch slots lowerFbRead made: sampled 2D floats the draw fills with the targets, and a stage that reads its
     // targets (the barrier before its draws keys on fbRead, which ir3 no longer sees: it has no txf_ms_fb left)
     for (uint32_t i = 0; i < kMaxTextureSlots; i++) {
