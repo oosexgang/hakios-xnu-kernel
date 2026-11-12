@@ -156,7 +156,11 @@ public:
     // kGmemEveryAttachment loads and stores every attachment, kGmemFetchBarrier orders a fetch by the barrier;
     // kGmemFetchNoBarrier leaves a tile's fetch to the rasterizer's ordering alone, kGmemOrderAll puts every draw of a
     // GMEM pass in that ordering and leaves the barrier out (both measurements: their pictures may be wrong)
-    enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4, kGmemFetchNoBarrier = 64, kGmemOrderAll = 128 };
+    // kGmemFetchWeight: a pass's fetching draws count once, as any other draw, against setGmemMinDraws (gmemWeight)
+    // kGmemHeavyBarrier: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE as well
+    // (render::Options::fbReadBarrierLight off)
+    enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4, kGmemFetchNoBarrier = 64, kGmemOrderAll = 128,
+                      kGmemFetchWeight = 512, kGmemHeavyBarrier = 1024 };
     void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for
@@ -166,6 +170,12 @@ public:
     // 22 ms in GMEM against 17 to 31 in sysmem, its passes of 45 to 49 draws 8 to 10 against 6 to 8, its light ones 5
     // against 0.13.
     void setGmemMinDraws(uint32_t draws) { gmemMinDraws_ = draws; }
+    // what a pass weighs against that bar: its draws, and kFetchWeight more for each that reads its attachments -- in
+    // sysmem each such draw waits for the colour cache's flush and reads the target from memory (render::encodeInPass's
+    // barrier), in GMEM it reads the tile. CoreAnimation's paths, path_blit cut to its mask (ca_paths.h), left 47 draws
+    // and 12 fetches in the home screen's main pass: 19 ms in sysmem while the page moved (logs/080158-run.log).
+    static constexpr uint32_t kFetchWeight = 8;
+    uint32_t gmemWeight(uint32_t draws, uint32_t fetches) const { return draws + ((gmemOff_ & kGmemFetchWeight) ? 0 : kFetchWeight * fetches); }
     // render::Options::gmemBinning for this buffer's draws besides each draw's own (either asks for it)
     void setGmemBinning(bool on) { gmemBinning_ = on; }
     // every fragment texture the null texture (1x1, always in the texture cache): wrong pictures, but a draw's time then
@@ -287,6 +297,7 @@ private:
         uint32_t clearWords[kMaxColorOutputs][4] = {};
         uint64_t kind = 0;          // render::tuneKeyOf the pass and its ordinal in the buffer among passes of that kind
         uint32_t ordinal = 0, draws = 0;
+        uint32_t fetches = 0;       // its draws that read their attachments (a framebuffer fetch): gmemWeight
         bool lastFetched = false;   // the last draw read its attachments (render::encodeInPass's AFTER_FETCH for the next)
     };
     void closePass();

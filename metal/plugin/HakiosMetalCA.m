@@ -5858,7 +5858,8 @@ hm_fps_draws(void)
  * hakios_metal_cb_set_gmem_binning; 32: every fragment texture the null one, wrong pictures but each draw's time without
  * its texture reads, hakios_metal_cb_set_null_fs_textures; 64: no barrier before a tile's fetch, the rasterizer's
  * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier; 256: CoreAnimation's path_blit and path_clear
- * as it asks for them, as metal_paths=0 does), for a bisect.
+ * as it asks for them, as metal_paths=0 does; 512: a pass's fetching draws counted as any other against metal_gmem_draws,
+ * not weighted; 1024: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE too, as before), for a bisect.
  * metal_gmem_cycle=N,N,...@SECONDS instead: each of those values in turn, SECONDS (20 when not given) each, from the
  * first command buffer on, and around again -- several settings timed in one boot, each change printed */
 static unsigned

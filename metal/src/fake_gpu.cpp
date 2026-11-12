@@ -1908,6 +1908,11 @@ bool FakeGpu::execDraw(const uint32_t* p, uint32_t count) {
     d.vsConsts = vs_.consts;
     d.fsConsts = fs_.consts;
     stats_.lastDraw = d;
+    // (each draw loads its stages' constants itself -- CP_LOAD_STATE6 is a command, never left out as a register write
+    // the register already holds may be: what one draw loaded is not the next one's, and a tile's replay of a draw
+    // without constants after one with them is not a load past its constlen)
+    vs_.consts.clear();
+    fs_.consts.clear();
     return true;
 }
 

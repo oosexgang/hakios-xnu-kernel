@@ -457,6 +457,8 @@ struct Options {
                                  // kept for the first fetching draw after one that is not (fd6_draw.cc's rule); off: the
                                  // barrier before every fetching draw there too
     bool fbReadOrderAll = false; // ...and in GMEM every draw of the pass in that ordering, not only the fetching ones
+    bool fbReadBarrierLight = true;    // ...in GMEM the barrier as turnip's tu6_emit_flushes has it: CACHE_INVALIDATE then
+                                       // the wait for idle (off: a wait for idle before it as well, as before)
     bool tailDepthFlush = true;  // with a depth attachment: PC_CCU_FLUSH_DEPTH_TS writing a value + the wait for it
     bool tailLrzFlush = true;    // LRZ_FLUSH, 1 word
     bool tailCacheFlush = true;  // CACHE_FLUSH_TS + CP_WAIT_MEM_GTE, as compute's tail

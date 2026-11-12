@@ -1613,8 +1613,11 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // took some 50 ms either way -- and the barrier is what SpringBoard was looked at with)
     const bool ordered = (fs.fbRead || o.fbReadOrderAll) && o.fbReadOrdered && gmem != nullptr;
     const bool barrier = fs.fbRead && o.fbReadBarrier && (!ordered || !afterFetch);
+    // (the CACHE_INVALIDATE event goes down the pipeline behind the draws before it, as turnip's barrier has it -- its
+    // events, then the one wait: the home screen's main pass, 117 draws in 56 tiles, 18.19 ms with a wait before it as
+    // well, 17.57 without, its paths the same to the pixel, metal_gmem_cycle=0,1024@20, logs/085911-run.log)
     if (barrier && gmem != nullptr) {
-        stream.waitForIdle();
+        if (!o.fbReadBarrierLight) stream.waitForIdle();
         event(stream, CACHE_INVALIDATE);
         stream.waitForIdle();
     }
@@ -2897,7 +2900,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             const uint32_t peak = queue_.peakDraws(kind, ordinal);
             if (peak != 0 && peak < gmemMinDraws_ / 2) {
                 gmem = false;
-                gmemWhy_ = "its like had " + std::to_string(peak) + " draws at most lately";
+                gmemWhy_ = "its like weighed " + std::to_string(peak) + " at most lately (draws, fetching ones weighted)";
             } else {
                 dual = true;
             }
@@ -2958,10 +2961,12 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
     if (gmem && (gmemOff_ & (kGmemFetchNoBarrier | kGmemOrderAll))) encodeOptions.fbReadBarrier = false;
     if (gmem && (gmemOff_ & kGmemOrderAll)) encodeOptions.fbReadOrderAll = true;
+    if (gmem && (gmemOff_ & kGmemHeavyBarrier)) encodeOptions.fbReadBarrierLight = false;
+    const bool afterFetch = joins && open_->lastFetched;
     // (a binned pass's draws are skipped by the tiles they miss: USE_VISIBILITY, which an override of 1 ignores)
     if (gmem && (options.gmemBinning || gmemBinning_) && queue_.binningOk() && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
-                              gmem ? &plan : nullptr, joins && open_->lastFetched)) {
+                              gmem ? &plan : nullptr, afterFetch)) {
         gmemClears_ = 0;
         return refuseWork(why);
     }
@@ -2976,6 +2981,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         sysOptions.visCullUse = options.visCullUse;
         sysOptions.fbReadBarrier = options.fbReadBarrier;
         sysOptions.fbReadOrderAll = false;
+        sysOptions.fbReadBarrierLight = options.fbReadBarrierLight;
         if (!render::encodeInPass(bodySys, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, sysTable.gpuAddress(), sysTable.contents(), &why,
                                   sysOptions, nullptr, joins && open_->lastFetched)) {
             gmemClears_ = 0;
@@ -3036,6 +3042,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     open_->lastFetched = program.fs.fbRead != 0;
+    open_->fetches += program.fs.fbRead != 0 ? 1 : 0;
     open_->draws++;
     pm4::Stream& into = open_->gmem ? open_->bodies : stream_;
     const bool timed = profileDraws_ && !open_->gmem && drawsProfiled_.size() < kMaxProfiledDraws;
@@ -3257,16 +3264,19 @@ void CommandBuffer::closePass() {
     if (open_ == nullptr) {
         return;
     }
-    if (open_->kind != 0) queue_.noteDraws(open_->kind, open_->ordinal, open_->draws);
+    const uint32_t weight = gmemWeight(open_->draws, open_->fetches);
+    if (open_->kind != 0) queue_.noteDraws(open_->kind, open_->ordinal, weight);
     if (open_->dual) {
-        // recorded both ways: tiles for a pass of enough draws, else the sysmem words, head and all
-        if (open_->draws >= gmemMinDraws_) {
+        // recorded both ways: tiles for a pass of enough draws (gmemWeight), else the sysmem words, head and all
+        if (weight >= gmemMinDraws_) {
             appendStream(stream_, open_->headGmem);
         } else {
             appendStream(stream_, open_->sysStream);
             open_->gmem = false;
             if ((profile_ || tuning_) && !profiled_.empty()) {
-                profiled_.back().sysmemWhy = std::to_string(open_->draws) + " draws, fewer than metal_gmem_draws=" + std::to_string(gmemMinDraws_);
+                profiled_.back().sysmemWhy = std::to_string(open_->draws) + " draws" +
+                                             (open_->fetches ? " (" + std::to_string(open_->fetches) + " fetching, weighing " + std::to_string(weight) + ")" : "") +
+                                             ", fewer than metal_gmem_draws=" + std::to_string(gmemMinDraws_);
             }
         }
         open_->dual = false;

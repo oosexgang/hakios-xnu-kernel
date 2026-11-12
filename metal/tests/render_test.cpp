@@ -5592,17 +5592,21 @@ TEST(the_queue_picks_gmem_or_sysmem_by_what_each_cost_a_target) {
 
 // GMEM for a pass of enough draws, decided at its end: the pass is recorded both ways and the words of one go to the
 // stream -- 1 draw and 3 draws under a minimum of 2, and 2 fetching draws (whose sysmem side has a table of its own: the
-// fetch reads memory there); and a pass in which a draw a tile cannot replay comes (a visibility count) goes on in
-// sysmem whole, its draws not split off into a pass of their own
+// fetch reads memory there), and 1 fetching draw, which weighs 9 (gmemWeight) unless the weighting is off; and a pass in
+// which a draw a tile cannot replay comes (a visibility count) goes on in sysmem whole, its draws not split off into a
+// pass of their own
 TEST(gmem_for_a_pass_of_enough_draws_decided_at_its_end) {
     Rig r;
     auto t = target(r);
     RenderPass a;
     a.color0 = t.get();
     const Program fb{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
-    for (const auto& [draws, fetch, want] : {std::tuple<int, bool, uint32_t>{1, false, 0}, {3, false, 1}, {1, false, 0}, {2, true, 1}, {1, true, 0}}) {
+    for (const auto& [draws, fetch, want, weighted] :
+         {std::tuple<int, bool, uint32_t, bool>{1, false, 0, true}, {3, false, 1, true}, {1, false, 0, true}, {2, true, 1, true}, {1, true, 1, true},
+          {1, true, 0, false}}) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(2);
+        if (!weighted) cb->setGmemOff(CommandBuffer::kGmemFetchWeight);
         for (int i = 0; i < draws; i++) CHECK(cb->draw(fetch ? fb : flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
         cb->commit();
         cb->waitUntilCompleted();
@@ -5628,6 +5632,31 @@ TEST(gmem_for_a_pass_of_enough_draws_decided_at_its_end) {
     CHECK(cb->counts().gmemPasses == 0 && cb->counts().passes == 1);
 }
 
+// A pass's fetching draws weigh 9 against the bar (gmemWeight): CoreAnimation's path pass with path_blit cut to its mask,
+// 47 draws of which 12 fetch, is GMEM under the phone's bar of 56 -- 35 plain draws are not, and nor are the 47 with the
+// weighting off (metal_gmem_off=512)
+TEST(a_pass_of_fetching_draws_weighs_more_toward_gmem) {
+    Rig r;
+    auto t = target(r);
+    RenderPass a;
+    a.color0 = t.get();
+    const Program fb{kernels::tri_flat_vs_air, kernels::tri_fb_fs_air, Linkage{}, "tri_fb"};
+    for (const auto& [plain, fetching, off, want] :
+         {std::tuple<int, int, bool, uint32_t>{35, 12, false, 1}, {35, 0, false, 0}, {35, 12, true, 0}}) {
+        auto cb = r.queue->commandBuffer();
+        cb->setGmemMinDraws(56);
+        if (off) cb->setGmemOff(CommandBuffer::kGmemFetchWeight);
+        // (the plain ones first: the fake keeps tri_fb's constant load for the stage after it, and a plain program's
+        // constlen of 0 after it reads as a load past the stage's constants there)
+        for (int i = 0; i < plain + fetching; i++) CHECK(cb->draw(i >= plain ? fb : flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        CHECK_EQ(cb->counts().gmemPasses, want);
+    }
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 // A pass whose like has had few draws lately (under half the bar) is recorded for sysmem only: a pass of 10 draws after
 // one of 1 stays in sysmem though 10 clears a bar of 8, saying why; the next like it, after 10, is GMEM again, and so is
 // one after a light one that followed a heavy one (the peak, not the last time, decides)
@@ -5640,7 +5669,7 @@ TEST(a_pass_whose_like_was_light_is_recorded_for_sysmem_alone) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(8);
         for (int i = 0; i < draws; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
-        CHECK_EQ(cb->gmemRefusal().find("draws at most lately") != std::string::npos, light);
+        CHECK_EQ(cb->gmemRefusal().find("at most lately") != std::string::npos, light);
         cb->commit();
         cb->waitUntilCompleted();
         CHECK(cb->status() == CommandBuffer::kCompleted);
