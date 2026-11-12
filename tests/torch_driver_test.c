@@ -249,7 +249,7 @@ for_ios(void)
 	CHECK(logged("THE LIGHT IS IOS'S"), "the device is made: %s", log_text);
 	CHECK(!lit_now() && spmi.writes == 0, "no light, and nothing written, until iOS asks");
 	ask_for(500);
-	WAIT_FOR(lit_now(), 3000);
+	WAIT_FOR(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 4, 3000);
 	CHECK(lit_now() && spmi_get(&flash_model, REG_ITARGET0) == 4, "half is 62.5 mA: code %u", spmi_get(&flash_model, REG_ITARGET0));
 	WAIT_FOR(shown_level() == 500, 1000);
 	CHECK(shown_level() == 500, "a read gives what is lit: %u", shown_level());
@@ -261,7 +261,7 @@ for_ios(void)
 	WAIT_FOR(spmi_get(&flash_model, REG_ITARGET0) == 0, 3000);
 	CHECK(spmi_get(&flash_model, REG_ITARGET0) == 0 && lit_now(), "the least is one step, lit");
 	ask_for(0);
-	WAIT_FOR(!lit_now(), 3000);
+	WAIT_FOR(!lit_now() && shown_level() == 0, 3000);       /* (the light goes out, then the level that is shown follows) */
 	CHECK(!lit_now() && shown_level() == 0, "0 is off");
 	CHECK(times_lit == 1, "one light through the three levels (%u)", times_lit);
 	never();
@@ -303,7 +303,7 @@ pmic_hot(void)
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
 	spmi_set(&alarm_model, 0x08, 0x10);             /* stage 1 */
-	WAIT_FOR(!lit_now(), 2000);
+	WAIT_FOR(!lit_now() && logged("the PMIC's temperature stage 1"), 2000);
 	CHECK(!lit_now() && logged("the PMIC's temperature stage 1"), "off when the PMIC's alarm is at a stage");
 	never();
 }
@@ -333,14 +333,14 @@ time_limit(void)
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
 	CHECK(lit_now(), "lit");
-	WAIT_FOR(!lit_now(), 3000);
+	WAIT_FOR(!lit_now() && logged("on for 1 s, the limit"), 3000);
 	CHECK(!lit_now() && logged("on for 1 s, the limit"), "cut at the limit");
 	usleep(300 * 1000);
 	CHECK(!lit_now() && times_lit == 1, "dark while iOS still asks for it");
 	ask_for(0);
 	usleep(100 * 1000);
 	ask_for(1000);
-	WAIT_FOR(lit_now(), 3000);
+	WAIT_FOR(lit_now() && times_lit == 2, 3000);
 	CHECK(lit_now() && times_lit == 2, "lit again once iOS has asked for 0 and then for more");
 	never();
 	dark_at_the_end();
