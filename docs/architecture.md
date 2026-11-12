@@ -170,7 +170,7 @@ against the scripts that fetch).
 | Apple's XNU release | It is Apple's; only the pin is kept. | `kernel/assemble.sh` fetches it. |
 | iOS itself (IPSW contents) | Apple's files are never redistributed. | Extracted on your machine from Apple's IPSW. |
 | The phone's firmware (GPU, DSP, touch) | The vendor's; taken from the same phone it runs on. | `adb pull` from its Android. |
-| theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. | [theos.dev](https://theos.dev/docs/installation-linux) |
+| theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. The kernel can be linked with LLVM's own Mach-O tools instead, with the SDK's headers alone ([building.md](building.md)); the `ios/` scripts need theos. | [theos.dev](https://theos.dev/docs/installation-linux) |
 | The UEFI for a phone | A port of Mu-Silicium per device. | `base/uefi/` has the redwood port and the changes a port needs. |
 | **Renoir's resident loader, its recovery payload tool and the user-space root tree** | They live in the team's working tree (`darwin-renoir`), which has not been published. | Not available yet. `ios/tools/boot26.py` and the `ios/userland/*.sh` scripts need it. |
 
