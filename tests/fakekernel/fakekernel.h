@@ -130,7 +130,7 @@ struct cdevsw {
 	int (*d_close)(dev_t dev, int flags, int type, struct proc *p);
 	int (*d_read)(dev_t dev, struct uio *uio, int ioflag);
 	int (*d_write)(dev_t dev, struct uio *uio, int ioflag);
-	void *d_ioctl, *d_stop, *d_reset, *d_select, *d_mmap, *d_strategy;
+	void *d_ioctl, *d_stop, *d_reset, *d_ttys, *d_select, *d_mmap, *d_strategy, *d_reserved_1, *d_reserved_2;
 	int d_type;
 };
 #define eno_rdwrt               NULL            /* (a node that cannot be read, or written) */
@@ -148,6 +148,61 @@ void *devfs_make_node(dev_t dev, int type, int uid, int gid, int perms, const ch
 /* for the tests: 0, an errno of the driver's, or -1 when no driver has made a node of that name */
 int fake_dev_write(const char *name, const void *data, size_t size);
 int fake_dev_read(const char *name, void *data, size_t size);
+
+/*
+ * Block devices (sys/buf.h, sys/disk.h): a driver's disk is kept by its node's name too, and a test reads
+ * it as a file system would, a request of whole sectors at a time (fake_disk_read()), and asks it what a
+ * program asks a disk (fake_disk_ioctl()).
+ */
+#include <errno.h>
+typedef struct proc *proc_t;
+typedef struct buf {
+	int flags, error;
+	int64_t blkno;                  /* in 512-byte sectors */
+	uint32_t count, resid;
+	void *data;
+	bool done;
+} *buf_t;
+#define B_READ                  0x00000001
+#define buf_flags(bp)           ((bp)->flags)
+#define buf_blkno(bp)           ((bp)->blkno)
+#define buf_count(bp)           ((bp)->count)
+#define buf_dataptr(bp)         ((uintptr_t)(bp)->data)
+#define buf_seterror(bp, e)     ((bp)->error = (e))
+#define buf_setresid(bp, n)     ((bp)->resid = (uint32_t)(n))
+#define buf_biodone(bp)         ((bp)->done = true)
+struct bdevsw {
+	int (*d_open)(dev_t dev, int flags, int type, proc_t p);
+	int (*d_close)(dev_t dev, int flags, int type, proc_t p);
+	void (*d_strategy)(buf_t bp);
+	int (*d_ioctl)(dev_t dev, u_long cmd, caddr_t data, int fflag, proc_t p);
+	void *d_dump;
+	int (*d_psize)(dev_t dev);
+	int d_type;
+};
+#define eno_dump                NULL
+#define eno_getc                NULL
+#define eno_putc                NULL
+#define D_DISK                  2
+#define DEVFS_BLOCK             1
+#define GID_OPERATOR            5
+#define FREAD                   0x0001
+#define FWRITE                  0x0002
+#define DKIOCGETBLOCKSIZE       0x40046418ul
+#define DKIOCSETBLOCKSIZE       0x80046418ul
+#define DKIOCGETBLOCKCOUNT      0x40086419ul
+#define DKIOCISWRITABLE         0x4004641dul
+int bdevsw_add(int index, const struct bdevsw *devsw);
+int cdevsw_add_with_bdev(int index, const struct cdevsw *devsw, int bdev);
+/*
+ * For the tests. A request of `size` bytes from sector `sector` on, read or written: 0 or the driver's
+ * errno, with what was not transferred in *resid; -1 when no driver has made a disk of that name, -2
+ * when the driver did not finish the request.
+ */
+int fake_disk_read(const char *name, uint64_t sector, void *data, size_t size, size_t *resid);
+int fake_disk_write(const char *name, uint64_t sector, const void *data, size_t size, size_t *resid);
+int fake_disk_open(const char *name, int flags);
+int fake_disk_ioctl(const char *name, unsigned long cmd, void *data);
 
 /* the device tree, of which a driver asks only what the loader named the board (pexpert/device_tree.h) */
 typedef void *DTEntry;

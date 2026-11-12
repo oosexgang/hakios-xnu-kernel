@@ -154,6 +154,8 @@ void thread_set_thread_name(thread_t thread __unused, const char *name __unused)
 /* ---- character devices: the nodes drivers make, by name ---- */
 
 static struct { const struct cdevsw *devsw; char name[48]; } nodes[8];
+static struct { const struct bdevsw *devsw; char name[48]; } disks[4];   /* (the block devices, below) */
+static unsigned disks_n;
 static const struct cdevsw *added[8];
 static unsigned added_n;
 
@@ -172,12 +174,92 @@ devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused
 {
 	unsigned index = major(dev);
 
+	if (index >= 8) {               /* a disk */
+		if (index - 8 >= disks_n) {
+			return NULL;
+		}
+		snprintf(disks[index - 8].name, sizeof(disks[index - 8].name), "%s", name);
+		return &disks[index - 8];
+	}
 	if (index >= added_n) {
 		return NULL;
 	}
 	nodes[index].devsw = added[index];
 	snprintf(nodes[index].name, sizeof(nodes[index].name), "%s", name);
 	return &nodes[index];
+}
+
+/* ---- block devices: the disks drivers make, by name (their numbers begin at 8, apart from the character devices') ---- */
+
+int
+bdevsw_add(int index __unused, const struct bdevsw *devsw)
+{
+	if (disks_n >= 4) {
+		return -1;
+	}
+	disks[disks_n].devsw = devsw;
+	return 8 + (int)disks_n++;
+}
+
+int
+cdevsw_add_with_bdev(int index, const struct cdevsw *devsw, int bdev __unused)
+{
+	return cdevsw_add(index, devsw);
+}
+
+static const struct bdevsw *
+disk_named(const char *name)
+{
+	for (unsigned i = 0; i < disks_n; i++) {
+		if (strcmp(disks[i].name, name) == 0) {
+			return disks[i].devsw;
+		}
+	}
+	return NULL;
+}
+
+static int
+disk_request(const char *name, int flags, uint64_t sector, void *data, size_t size, size_t *resid)
+{
+	const struct bdevsw *devsw = disk_named(name);
+	struct buf request = { .flags = flags, .blkno = (int64_t)sector, .count = (uint32_t)size, .resid = (uint32_t)size, .data = data };
+
+	if (devsw == NULL || devsw->d_strategy == NULL) {
+		return -1;
+	}
+	devsw->d_strategy(&request);
+	if (resid != NULL) {
+		*resid = request.resid;
+	}
+	return request.done ? request.error : -2;
+}
+
+int
+fake_disk_read(const char *name, uint64_t sector, void *data, size_t size, size_t *resid)
+{
+	return disk_request(name, B_READ, sector, data, size, resid);
+}
+
+int
+fake_disk_write(const char *name, uint64_t sector, const void *data, size_t size, size_t *resid)
+{
+	return disk_request(name, 0, sector, __DEVOLATILE(void *, data), size, resid);
+}
+
+int
+fake_disk_open(const char *name, int flags)
+{
+	const struct bdevsw *devsw = disk_named(name);
+
+	return devsw == NULL || devsw->d_open == NULL ? -1 : devsw->d_open(0, flags, 0, NULL);
+}
+
+int
+fake_disk_ioctl(const char *name, unsigned long cmd, void *data)
+{
+	const struct bdevsw *devsw = disk_named(name);
+
+	return devsw == NULL || devsw->d_ioctl == NULL ? -1 : devsw->d_ioctl(0, cmd, data, 0, NULL);
 }
 
 user_ssize_t uio_resid(struct uio *uio) { return (user_ssize_t)uio->resid; }
