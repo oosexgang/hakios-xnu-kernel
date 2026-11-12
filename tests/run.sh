@@ -35,6 +35,8 @@ python3 "$HERE/device_test.py" 2>&1 | tail -3 || failed=1
 BOARDS=$WORK/boards
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" check || failed=1
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$BOARDS" || failed=1
+# (one touch driver includes a controller's firmware, which is not ours to publish: the stub the kernel's build has without it)
+(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$BOARDS/redwood_focaltech_fw.h") || failed=1
 
 # the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
 # loader/build.sh; left out where they are not installed)
@@ -85,7 +87,7 @@ scenarios() {
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in loader_test loader_window_test loader_dsu_test board_test drivers_list_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test guard_test example_led_test; do
+for test in loader_test loader_window_test loader_dsu_test board_test drivers_list_test touch_goodix_wiring_test touch_fts_wiring_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test guard_test example_led_test; do
 	source=$HERE/$test.c
 	[ -f "$source" ] || source=$EXAMPLES/$test.c
 	echo "== $test (host)"

@@ -40,6 +40,13 @@ mach_absolute_time(void)
 	return (uint64_t)t.tv_sec * NSEC_PER_SEC + (uint64_t)t.tv_nsec;
 }
 
+/* (absolute time is nanoseconds here) */
+void
+clock_interval_to_deadline(uint32_t interval, uint32_t scale, uint64_t *deadline)
+{
+	*deadline = mach_absolute_time() + (uint64_t)interval * scale;
+}
+
 void
 absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result)
 {

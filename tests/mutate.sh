@@ -51,6 +51,7 @@ if [ "$(dirname "$original")" = "$(dirname "$test")" ]; then
 	test=$W/copy/$name.c
 fi
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
+(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/redwood_focaltech_fw.h") || die "no stub for the touch firmware"
 
 # (the flags of tests/run.sh, the copy's directory first)
 flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")

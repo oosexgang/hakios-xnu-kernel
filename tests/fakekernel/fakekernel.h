@@ -27,6 +27,7 @@ typedef uintptr_t vm_offset_t;
 typedef uintptr_t vm_size_t;
 typedef int kern_return_t;
 typedef int wait_result_t;
+typedef void *event_t;
 #define THREAD_AWAKENED         0
 typedef struct fake_thread *thread_t;
 typedef void (*thread_continue_t)(void *, wait_result_t);
@@ -41,6 +42,7 @@ typedef void (*thread_continue_t)(void *, wait_result_t);
 uint64_t mach_absolute_time(void);
 void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
 void nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t *result);
+void clock_interval_to_deadline(uint32_t interval, uint32_t scale, uint64_t *deadline);  /* now + interval x scale */
 void delay(int usec);
 void delay_for_interval(uint32_t interval, uint32_t scale);     /* (scale: nanoseconds a unit) */
 typedef unsigned long clock_sec_t;
