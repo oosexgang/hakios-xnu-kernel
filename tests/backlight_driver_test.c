@@ -493,17 +493,17 @@ asked_just_before_it_sleeps(void)
 	settle();
 	fake_before_wait = ask_for_300;         /* the next time the thread has nothing to do and goes to sleep for good */
 	set("level", 600);
-	WAIT_FOR(fake_before_wait == NULL && get("shown") == 300 && last_sent() == bl_level_to_raw(300, 1, 2047), 5000);
-	CHECK(fake_before_wait == NULL, "the thread came to sleep once 600 was shown");
-	CHECK(get("shown") == 300 && last_sent() == bl_level_to_raw(300, 1, 2047), "and what was asked for in that moment is shown: %u", get("shown"));
+	EVENTUALLY(fake_before_wait == NULL, 5000, "the thread came to sleep once 600 was shown");
+	EVENTUALLY(get("shown") == 300 && last_sent() == bl_level_to_raw(300, 1, 2047), 5000, "and what was asked for in that moment is shown: %u",
+	    get("shown"));
 	/* the same moment with the display switched off: switched on again just before the thread sleeps, it is lit */
 	settle();
 	fake_before_wait = display_on;
 	set("power", 0);
-	WAIT_FOR(fake_before_wait == NULL && last_sent() == bl_level_to_raw(300, 1, 2047) && get("shown") == 300, 5000);
+	EVENTUALLY(fake_before_wait == NULL, 5000, "the thread went dark and came to sleep");
+	EVENTUALLY(last_sent() == bl_level_to_raw(300, 1, 2047) && get("shown") == 300, 5000, "and the display that was switched on in that moment is lit: %u",
+	    last_sent());
 	settle();
-	CHECK(fake_before_wait == NULL, "the thread went dark and came to sleep");
-	CHECK(last_sent() == bl_level_to_raw(300, 1, 2047) && get("shown") == 300, "and the display that was switched on in that moment is lit: %u", last_sent());
 	CHECK(m.errors == 0, "%s", m.error);
 }
 

@@ -171,6 +171,13 @@ extern unsigned fake_core;              /* the core "this" code runs on (0) */
 #define __builtin_arm_rsr64(name)       ((uint64_t)fake_core << 8)
 
 /* for the tests (fakekernel.c) */
+/*
+ * For a test: wait (up to `ms') for a condition and then check that very condition. A driver's thread
+ * writes its values one after another; a test that waits for the first and compares the second fails
+ * once in a thousand runs. With this the two cannot differ. (CHECK and WAIT_FOR are the test's own.)
+ */
+#define EVENTUALLY(cond, ms, ...) do { WAIT_FOR(cond, ms); CHECK(cond, __VA_ARGS__); } while (0)
+
 extern unsigned fake_delay_divisor;     /* a driver's waits are this many times shorter (1: as long as it asks) */
 extern const char *boot_args;
 extern const char *board;               /* /chosen/darwin-board; NULL: the loader named none */

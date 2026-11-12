@@ -103,7 +103,8 @@ tests are built with from these and the repository's own boards.
   under qemu-aarch64.
 - **Wait for everything you then check.** A driver's thread writes its values one after another. A
   test that waits for the first and then compares the second passes a thousand times and fails once
-  on a busy machine: `WAIT_FOR(a && b, ms)` before `CHECK(a && b, ...)`, not `WAIT_FOR(a, ms)`.
+  on a busy machine: `WAIT_FOR(a && b, ms)` before `CHECK(a && b, ...)`, not `WAIT_FOR(a, ms)`. `EVENTUALLY(cond, ms,
+  ...)` (`fakekernel/fakekernel.h`) is the two with one condition, so that they cannot differ.
 - **Break the code on purpose.** Change the driver one line at a time and see that a scenario fails
   each time: `tests/mutate.sh TEST SOURCE OLD NEW` does it in a copy and says which scenarios caught
   the change, or that none did. A check that no such change can fail checks nothing; a change no
