@@ -20,7 +20,7 @@
 #   gpu=1              in XL_CMDLINE, or there is no Adreno and no compiler library
 #                      answer; the driver then says so by name and every line below is
 #                      NOT MEASURED rather than a failure.
-#   GL=1 REST=1        in the image, so that /redwood/lib/libredwoodair.dylib is in it,
+#   GL=1 REST=1        in the image, so that /redwood/lib/libhakios-air.dylib is in it,
 #                      and it must be a library built from THIS commit: the encoder's
 #                      records live in that library, and an older one has no
 #                      rwa_argbuf_encoded_members (metal_drv_test says so by name and
@@ -111,7 +111,7 @@
 #
 #   grep -a 'a non-zero offset is not implemented' logs/*-run.log
 #       MUST BE EMPTY. That sentence is deleted by this commit; a hit means the image
-#       carries an older libredwoodmetal.dylib than this list.
+#       carries an older libhakios-metal.dylib than this list.
 #
 #   grep -a 'was never filled through an MTLArgumentEncoder' logs/*-run.log
 #       the refusal this feature is mostly made of. Expected empty in this boot -- nothing

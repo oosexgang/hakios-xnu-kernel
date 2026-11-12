@@ -54,7 +54,7 @@ a pass. The three that occur are kept apart because they mean different things:
   dispatch                      is not a result about the kernel at all.
 
 What agreement here does NOT prove: both sides compile Apple's bitcode with the
-same frontend of ours (libredwoodair.dylib on the device is air_run's own path
+same frontend of ours (libhakios-air.dylib on the device is air_run's own path
 through air_to_nir, tools/mk-mesa.sh), so a mistranslation of the bitcode is on
 both sides and invisible here. What this catches is ir3 and the Adreno
 disagreeing with nir_to_tgsi and softpipe. Independence from our frontend lives

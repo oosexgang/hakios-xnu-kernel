@@ -1,5 +1,5 @@
 /*
- * libredwood-media.dylib: code of ours inside mediaserverd (see inject.c for how it gets there).
+ * libhakios-media.dylib: code of ours inside mediaserverd (see inject.c for how it gets there).
  *
  * mediaserverd is the audio server, and also the camera's: the capture stack of CMCapture lives
  * in the same process. Soon after it starts, that stack "prewarms" the Core Image filters of the

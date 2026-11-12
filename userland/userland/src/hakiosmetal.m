@@ -48,7 +48,7 @@
  * those bytes were checked against our own AIR reader over all eleven functions of
  * AV1SW.metallib -- same lengths, same checksums (docs/metal.md 10.12). The front end that
  * reads them lives in Mesa, so the compiling and the dispatching are asked of
- * /redwood/lib/libredwoodair.dylib through the contract in tools/mesa/air/air_metal.h.
+ * /redwood/lib/libhakios-air.dylib through the contract in tools/mesa/air/air_metal.h.
  *
  * That library is loaded with dlopen rather than linked, for a measured reason: the device
  * object must exist even when there is no GPU. The port starts the Adreno only with the
@@ -178,7 +178,7 @@ static bool rw_is_generic(id base, id values);
  * userland/build.sh, which knows nothing of Mesa's tree, and the declarations are few.
  * tools/mesa/air/air_metal.h is the original and explains each call. */
 struct rwa_device;
-/* libredwoodair's own (tools/mesa/air/air_metal.h): one function constant's value */
+/* libhakios-air's own (tools/mesa/air/air_metal.h): one function constant's value */
 /* air_metal.h's struct rwa_linked_function */
 struct rw_linked_function {
 	const char *name;
@@ -734,7 +734,7 @@ mesa_available(void)
 		return mesa.handle != NULL;
 	}
 	tried = true;
-	mesa.handle = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW);
+	mesa.handle = dlopen("/redwood/lib/libhakios-air.dylib", RTLD_NOW);
 	if (mesa.handle == NULL) {
 		rw_print("no compiler library: %s\n", dlerror());
 		return false;
@@ -1746,7 +1746,7 @@ static NSData *rw_function_air(id function);
 	}
 	if (_mesa == NULL) {
 		return [self fail:error with:@"there is no GPU compiler here: either the Adreno "
-					     @"was not started (gpu=1) or libredwoodair.dylib is "
+					     @"was not started (gpu=1) or libhakios-air.dylib is "
 					     @"missing or older than this driver"];
 	}
 	if (mesa.render_create == NULL) {
@@ -2674,7 +2674,7 @@ static NSData *rw_function_air(id function);
 	}
 	if (_mesa == NULL) {
 		return [self fail:error with:@"there is no GPU compiler here: either the Adreno "
-					     @"was not started (gpu=1) or libredwoodair.dylib "
+					     @"was not started (gpu=1) or libhakios-air.dylib "
 					     @"is missing"];
 	}
 	if (![function respondsToSelector:bitcode]) {
@@ -7842,7 +7842,7 @@ ensure_function_encoder(void)
  *
  * With boot-arg metal_fc=1 those methods are this driver's: the answer is a function of
  * the same class holding the same state as the unspecialised one, plus the constant values,
- * and when a pipeline is made from it (rw_function_air) the values go to libredwoodair with
+ * and when a pipeline is made from it (rw_function_air) the values go to libhakios-air with
  * a copy of the bitcode they belong to (rwa_constants_register).
  *
  * The function is a COPY because it has to be its own object: -newFunctionWithName: hands
@@ -7954,7 +7954,7 @@ rw_specialize(id base, id values)
  * CoreAnimation's GENERIC uber shader: fixed_frag_lph_* with fc_generic true, every feature on and the
  * configuration read from a buffer at run time. Nothing of it folds away -- 189,000 lines of NIR and 1,344 loops --
  * and on the phone backboardd asked for it nine times before its first frame and was killed by jetsam compiling
- * it (run glass1); compiled once and shared (libredwoodair's stage cache) it still froze the lock screen and
+ * it (run glass1); compiled once and shared (libhakios-air's stage cache) it still froze the lock screen and
  * starved the system (glass6). Refused, CoreAnimation presented nothing at all (glass2). CoreAnimation draws with it
  * only until a configuration's specialised pipeline is ready, and those fold to a few seconds' work each.
  *
@@ -8152,7 +8152,7 @@ rw_data_type_size(NSUInteger type)
 
 /*
  * The AIR a pipeline is made from. For a function this driver specialised it is a copy of
- * the bytes -- one per specialisation, so that libredwoodair can tell two specialisations of
+ * the bytes -- one per specialisation, so that libhakios-air can tell two specialisations of
  * one function apart by address -- registered with the values of every constant the
  * function declares. Metal's own -functionConstantsDictionary (read from the library's
  * metadata, no compiler involved) says which constants there are, and the values object
@@ -8177,7 +8177,7 @@ rw_function_air(id function)
 		return own;
 	}
 	if (mesa.constants_register == NULL) {
-		RW_ONCE("libredwoodair.dylib has no rwa_constants_register: it is older than this "
+		RW_ONCE("libhakios-air.dylib has no rwa_constants_register: it is older than this "
 		        "driver, and every function constant stays zero\n");
 		return air;
 	}

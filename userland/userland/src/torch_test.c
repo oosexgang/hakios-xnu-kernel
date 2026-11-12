@@ -1,7 +1,7 @@
 /*
  * torch_test: the flashlight the way a program (and Control Center) works it: AVFlashlight, which
  * asks mediaserverd's FigFlashlight, which sets the back camera's torch level (on this machine:
- * libredwood-media.dylib in mediaserverd, the kernel's /dev/hakios-torch, torch=3).
+ * libhakios-media.dylib in mediaserverd, the kernel's /dev/hakios-torch, torch=3).
  *
  * usage: torch_test STEP...
  *   wait SECONDS

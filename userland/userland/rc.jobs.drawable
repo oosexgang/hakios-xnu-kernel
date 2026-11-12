@@ -36,12 +36,12 @@
 #   gpu=1              in XL_CMDLINE. Without it there is no Adreno to import into, and the
 #                      library says so by name; the test then prints NOT MEASURED and stops,
 #                      which is not a failure and must not be read as one.
-#   an image with GL=1 for /redwood/lib/libredwoodair.dylib, and it must be a library built
+#   an image with GL=1 for /redwood/lib/libhakios-air.dylib, and it must be a library built
 #                      AFTER rwa_texture_from_surface existed. An older one is the refusal
 #                      "the compiler library in this image has no rwa_texture_from_surface",
 #                      and that sentence means the image is stale, not that the path is wrong.
 #                      Check it on the machine before booting:
-#                        nm -gU xnu-deps/build/mesa/out/libredwoodair.dylib | grep from_surface
+#                        nm -gU xnu-deps/build/mesa/out/libhakios-air.dylib | grep from_surface
 #   JOBS=""            not required -- this test shares nothing with the window server -- but
 #                      kept for the first boot so that nothing else is allocating surfaces or
 #                      GPU buffers while the kernel's table is being read.

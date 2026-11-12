@@ -1415,7 +1415,7 @@ test_time(void)
 
 /*
  * etc/inject.conf is one line, "LIBRARY NAME NAME ...": the kernel starts the programs with
- * these file names with the library inserted (sysctl kern.exec_inject, see libredwood).
+ * these file names with the library inserted (sysctl kern.exec_inject, see libhakios).
  */
 static void
 configure_inject(void)

@@ -17,7 +17,7 @@
 #
 # IF THE LIBRARY AND THE DRIVER ARE NOT FROM THE SAME BUILD, nothing below means anything,
 # and this is the one list where that failure is quiet rather than loud. struct rwa_draw grew
-# six fields at its END, so an older /redwood/lib/libredwoodair.dylib reads every field the
+# six fields at its END, so an older /redwood/lib/libhakios-air.dylib reads every field the
 # driver fills above them correctly -- the primitive, the attachments, the count -- and simply
 # does not look at the index buffer. The run then prints two IDENTICAL halves and line 2's
 # verdict reads "a right angle came back on the wrong side". That is what it looks like, and
@@ -25,7 +25,7 @@
 # userland/build.sh) before reading a word of it. On this machine the header and the driver's
 # hand-typed copy of it were checked to agree -- 224 bytes, all twenty field offsets equal.
 #
-# All of this needs gpu=1 and /redwood/lib/libredwoodair.dylib; without either, line 1 says so
+# All of this needs gpu=1 and /redwood/lib/libhakios-air.dylib; without either, line 1 says so
 # and the rest repeat it. One process per line, as rc.jobs.metaldepth and rc.jobs.metalms have
 # it: a draw that hangs this GPU takes the whole boot with it, so every line above a hang stays
 # a measurement and the hang names itself. The regressions come first and the sweep last.

@@ -88,7 +88,7 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
    of version 1 is enough: usermanagerd creates the default personas itself.
 8. **Data migration.** The 16.5 skeleton's `com.apple.migration.plist` names 20F66. iOS 26 then takes
    itself for just updated and shows the migration progress bar. root26-ios.sh writes this build's number.
-9. **Activation and setup.** libredwood-sb answers SpringBoard's activation state and refuses the setup
+9. **Activation and setup.** libhakios-sb answers SpringBoard's activation state and refuses the setup
    assistant, as on 16.5. inj26.sh moves those two hooks to their 23G90 addresses after the methods were
    read and found unchanged. The other SpringBoard hooks still carry 16.5 addresses and are left alone.
 
@@ -156,11 +156,11 @@ What stood between iOS 27 and its home screen, in order:
    bundle had a canonical path, LaunchServices registered no application and SpringBoard died of "Got nil
    for _systemAppInfo". `trace_attr=name` (0017, 0018) logs getattrlist/fsgetpath of those processes.
 6. **linkd** needs `AppIntentSchemas.sqlite` (4.6 MB, over 16.5's size rule): mkimage26 KEPT_FILES.
-7. **The backlight** (libredwood-backlight, in SpringBoard). BacklightServices waits for the display driver
+7. **The backlight** (libhakios-backlight, in SpringBoard). BacklightServices waits for the display driver
    to confirm a display mode change and aborts SpringBoard after a watchdog; the library confirms it after
    the ramp. The idle timer's timeouts are a day longer: the lock screen used to go dark seconds after the
    interface first came up.
-8. **The wallpaper** (libredwood-poster, in PosterBoard). The first poster of a new device is Mercury,
+8. **The wallpaper** (libhakios-poster, in PosterBoard). The first poster of a new device is Mercury,
    drawn with Metal (black) on all but two product types; during the initial setup the library makes it
    the WallpaperKit collections poster with the default wallpaper (Stripe), as on those two.
 9. **Speed.** Measured with `touch_lat=1 cpuload=1000`, `ustacks=top` and gestures by `rwtouch`

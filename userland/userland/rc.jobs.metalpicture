@@ -81,7 +81,7 @@
 # label, no background is drawn by the processor, which is why the three bands add up to
 # the panel exactly (1104 + 648 + 648 = 2400).
 #
-# Needs gpu=1 and an image built with GL=1, for /redwood/lib/libredwoodair.dylib. Without
+# Needs gpu=1 and an image built with GL=1, for /redwood/lib/libhakios-air.dylib. Without
 # either, the first line below says so and the second repeats it, and nothing is drawn.
 #
 # BUILD IT WITH JOBS="" as well, which is how logs/101536-run.log was taken: launchd then

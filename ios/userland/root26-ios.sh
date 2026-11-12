@@ -145,10 +145,10 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
 done
 # PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: ios/userland/inject_poster.c)
-echo "/redwood/lib/libredwood-poster.dylib PosterBoard" >> $T/etc/inject.conf
+echo "/redwood/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
 # ios/userland/inject_backlight.c)
-echo "/redwood/lib/libredwood-backlight.dylib SpringBoard" >> $T/etc/inject.conf
+echo "/redwood/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
 # hw.backlight; backboardd for CoreBrightness's own side (src: ios/userland/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
@@ -178,10 +178,10 @@ conf.write_text(text)
 PY
 # chronod's CoreDuet store cannot create its missing parent directories in the fresh RAM /var.
 printf 'd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet\nd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet/Knowledge\n' >> $T/etc/var.skel
-# CONSOLE_LOG="NAME ...": these programs get libredwood-console.dylib (standard error on the console; with
+# CONSOLE_LOG="NAME ...": these programs get libhakios-console.dylib (standard error on the console; with
 # boot-arg exec_env=NAME,...:OS_ACTIVITY_DT_MODE=1 their os_log as well)
 if [ -n "${CONSOLE_LOG:-}" ]; then
-	echo "/redwood/lib/libredwood-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
+	echo "/redwood/lib/libhakios-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
 fi
 # LOGGING_DEBUG="SUBSYSTEM ...": os_log of those subsystems at every level, Debug included (on the console
 # with boot-arg exec_env=NAME:OS_ACTIVITY_DT_MODE=1); /Library/Preferences is /private/var/preferences

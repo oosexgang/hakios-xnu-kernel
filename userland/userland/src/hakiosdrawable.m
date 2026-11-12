@@ -519,7 +519,7 @@ rwd_import(void)
 	static int looked;
 
 	if (!looked) {
-		void *library = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW | RTLD_NOLOAD);
+		void *library = dlopen("/redwood/lib/libhakios-air.dylib", RTLD_NOW | RTLD_NOLOAD);
 
 		looked = 1;
 		if (library != NULL) {

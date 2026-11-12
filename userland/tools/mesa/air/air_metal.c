@@ -4,7 +4,7 @@
  */
 
 /*
- * libredwoodair: air_run's compute path, as a library a Metal driver calls.
+ * libhakios-air: air_run's compute path, as a library a Metal driver calls.
  *
  * The contract is air_metal.h and nothing else -- no NIR, no Gallium, no ir3 in the
  * caller's view -- because the Metal side (userland/src/hakiosmetal.m) must not grow a

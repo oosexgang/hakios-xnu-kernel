@@ -36,7 +36,7 @@
 #
 #   the image          CRYPTEXES=flash SYSTEM=1 GL=1 REST=1 QUIET=1 \
 #                        RC_JOBS=rc.jobs.metalvertexdesc ./build.sh
-#                      GL=1 for /redwood/lib/libredwoodair.dylib (the compiler library, which
+#                      GL=1 for /redwood/lib/libhakios-air.dylib (the compiler library, which
 #                      must be rebuilt from this tree: air_metal.h grew two arrays in the middle
 #                      of rwa_render_shape and the driver's own copy grew with them -- a driver
 #                      built against one shape and a library built against the other read a
@@ -53,7 +53,7 @@
 #
 #   grep -a -c "carries no vertex attribute layout"
 #     must be 0        That string is gone from the library. Anything but 0 means the image
-#                      carries an older libredwoodair.dylib than this driver, and NOTHING else in
+#                      carries an older libhakios-air.dylib than this driver, and NOTHING else in
 #                      this log is about the new code.
 #
 #   grep -a "vertex descriptor configures"
@@ -149,7 +149,7 @@
 #    layout" to "this descriptor has not got one", and the attribute's NAME and Apple's own type
 #    string come out of the module's metadata on the device.
 #
-#    if it still says "carries no vertex attribute layout": the image's libredwoodair.dylib is
+#    if it still says "carries no vertex attribute layout": the image's libhakios-air.dylib is
 #    older than this driver and the two must be rebuilt together.
 /redwood/bin/metal_drv_test --draw --vertex downsample_blur_vert_lph --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
 #

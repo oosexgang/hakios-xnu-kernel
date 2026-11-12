@@ -1,5 +1,5 @@
 /*
- * libredwood26.dylib: the touch screen and the buttons for iOS 26's backboardd.
+ * libhakios26.dylib: the touch screen and the buttons for iOS 26's backboardd.
  *
  * backboardd is the HID event server, and without Apple's multitouch driver it has no touch
  * screen. This library (inserted by the kernel, see kern.exec_inject and build.sh's INJECT) gives

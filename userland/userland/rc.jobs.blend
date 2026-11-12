@@ -17,7 +17,7 @@
 # THE TRIPWIRE, FIRST, because it is the one thing that would make everything below
 # meaningless. struct rwa_render_shape grew by 260 bytes AT THE END (792 -> 1052) and
 # struct rwa_render_info by 8 (108 -> 116), and userland/src/hakiosmetal.m holds a copy
-# of both typed out by hand. THE DRIVER AND libredwoodair.dylib MUST COME FROM ONE
+# of both typed out by hand. THE DRIVER AND libhakios-air.dylib MUST COME FROM ONE
 # SNAPSHOT. Both files now _Static_assert those sizes and offsets, so a one-sided EDIT
 # fails to build -- but a one-sided INSTALL still cannot be caught at compile time, and it
 # has happened before (logs/235006-run.log carried a fresh driver and an hour-old

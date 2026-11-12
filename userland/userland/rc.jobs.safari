@@ -3,7 +3,7 @@
 # not: WebKit then draws into surfaces of ten bits a colour that come out black), then yandex.ru and example.com
 # opened the way a link opens them (battery_test open URL: SpringBoard is asked to open it), for screenshots of what
 # Safari shows; Safari's layers, application state and web views are said in between (com.hakios.layers, when
-# libredwood-sb.dylib is in it: INJECT with MobileSafari on its line).
+# libhakios-sb.dylib is in it: INJECT with MobileSafari on its line).
 /redwood/bin/mg_test HasExtendedColorDisplay
 /redwood/bin/sound_test springboard
 /redwood/bin/rwtouch wait 10

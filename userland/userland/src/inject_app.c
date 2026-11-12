@@ -1,5 +1,5 @@
 /*
- * libredwood-app.dylib: code of ours inside an application, to find out why it dies (see inject.c
+ * libhakios-app.dylib: code of ours inside an application, to find out why it dies (see inject.c
  * for how it gets there; build.sh's INJECT names the programs).
  *
  * An application that is launched and gone again in a third of a second leaves nothing behind here:

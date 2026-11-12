@@ -1,5 +1,5 @@
 /*
- * libredwood-tweaks.dylib: the tweak loader of this port.
+ * libhakios-tweaks.dylib: the tweak loader of this port.
  *
  * A tweak is a dylib that a package manager put in /var/jb/usr/lib/TweakInject, beside a property
  * list of the same name whose Filter says which programs it belongs in. Something has to be inside

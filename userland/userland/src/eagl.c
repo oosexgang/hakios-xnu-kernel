@@ -1,6 +1,6 @@
 /*
- * libredwood-gl.dylib: an OpenGL ES implementation behind iOS's EAGLContext, inside the window
- * server (backboardd; libredwood.dylib loads this when the image has it: build.sh GL=1).
+ * libhakios-gl.dylib: an OpenGL ES implementation behind iOS's EAGLContext, inside the window
+ * server (backboardd; libhakios.dylib loads this when the image has it: build.sh GL=1).
  *
  * CoreAnimation's render server draws with Metal, or else with OpenGL ES, or else with its own
  * software rasterizer (CA::WindowServer::EAGLServer::renderer()). For OpenGL ES it makes an

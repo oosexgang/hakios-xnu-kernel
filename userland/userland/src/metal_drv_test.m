@@ -2,7 +2,7 @@
  * Does the driver's device object, built as an ordinary library, get through Metal?
  *
  * metal_stubdev proved the contract with classes assembled at runtime. This asks the same
- * question of the real thing: /redwood/lib/libredwoodmetal.dylib, whose HakiosMetalDevice
+ * question of the real thing: /redwood/lib/libhakios-metal.dylib, whose HakiosMetalDevice
  * is declared in source and linked against the private `_OBJC_CLASS_$__MTLDevice`. Whether
  * that symbol binds at all is the first thing this program measures -- if dyld cannot find
  * it, the library does not load and the driver has to go back to building its class at
@@ -68,7 +68,7 @@ extern id MTLCreateSystemDefaultDevice(void);
  * declares the rest of it (tools/mesa/air/air_metal.h is in the Mesa tree and this
  * program must not grow a dependency on it): what textures a module declares.
  *
- * It is asked of the same /redwood/lib/libredwoodair.dylib the driver loaded -- dyld
+ * It is asked of the same /redwood/lib/libhakios-air.dylib the driver loaded -- dyld
  * uniques images by install_name, so this dlopen gets that image and not a second one --
  * and of the same `struct rwa_device` the driver holds, which HakiosMetalDevice hands
  * out through -mesaDevice. So the answer here is the answer the driver will judge a
@@ -140,7 +140,7 @@ argbuf_records(id<MTLBuffer> buffer, size_t offset)
 static void
 load_texture_query(id<MTLDevice> dev)
 {
-	void *lib = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW);
+	void *lib = dlopen("/redwood/lib/libhakios-air.dylib", RTLD_NOW);
 
 	if (lib == NULL) {
 		printf("drvtest: no compiler library to ask what a shader declares: %s\n",
@@ -3469,7 +3469,7 @@ depth_path(id<MTLDevice> dev, const char *metallib)
  * A program that faults on this port leaves nothing behind -- the kernel prints "Failed to
  * send exception EXC_CORPSE_NOTIFY" and that is all -- so the fault has to print itself. The
  * addresses that matter here are not in the shared cache but inside
- * /redwood/lib/libredwoodair.dylib, so the slide trick the other probes use (docs/metal.md
+ * /redwood/lib/libhakios-air.dylib, so the slide trick the other probes use (docs/metal.md
  * section 6) is no help: dladdr gives the image and the offset within it, which
  * llvm-addr2line on the machine turns back into a line.
  */
@@ -7292,7 +7292,7 @@ main(int argc, char **argv)
 	sigaction(SIGBUS, &sa, NULL);
 	sigaction(SIGILL, &sa, NULL);
 	sigaction(SIGABRT, &sa, NULL);
-	const char *path = "/redwood/lib/libredwoodmetal.dylib";
+	const char *path = "/redwood/lib/libhakios-metal.dylib";
 	const char *metallib = "/System/Library/VideoDecoders/AV1SW.metallib";
 	const char *only = NULL;
 	bool as_bundle = false;

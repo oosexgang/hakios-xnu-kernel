@@ -39,7 +39,7 @@
 # hangs this GPU takes the whole boot with it, so every line above a hang stays a
 # measurement and the hang names itself. The cheap and isolated lines come first and the
 # three sweeps last for that reason. All of it needs gpu=1 and
-# /redwood/lib/libredwoodair.dylib; without either, line 1 says so and the rest repeat it.
+# /redwood/lib/libhakios-air.dylib; without either, line 1 says so and the rest repeat it.
 #
 # 1. The proven colour draw, first and unchanged. clearFragment20 over the generated quad
 #    into three RGBA32Uint attachments. It must print the four words it has always

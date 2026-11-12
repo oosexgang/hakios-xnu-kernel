@@ -356,7 +356,7 @@ static int coreimage_over_eagl;
  * an EAGLContext (which on an image built with GL=1, on a phone with gpu=1, is our Mesa behind
  * src/eagl.c) and hand it over.
  */
-#define HAKIOS_GL      "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL      "/redwood/lib/libhakios-gl.dylib"
 
 static EAGLContext *
 make_eagl(void)
@@ -364,7 +364,7 @@ make_eagl(void)
 	EAGLContext *gl;
 
 	/*
-	 * Our OpenGL ES has to be put behind EAGLContext in THIS process first. libredwood.dylib does
+	 * Our OpenGL ES has to be put behind EAGLContext in THIS process first. libhakios.dylib does
 	 * it only for backboardd (src/inject.c, opengl_es(), which is called for that name alone), and
 	 * the way it does it -- replacing methods of EAGLContext through the ObjC runtime -- is local
 	 * to a process. The library installs itself from a constructor, so loading it is enough; what

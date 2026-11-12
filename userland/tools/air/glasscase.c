@@ -1,5 +1,5 @@
 /*
- * glasscase: draw tools/air/glassref's cases again through libredwoodair and say how far each is from what
+ * glasscase: draw tools/air/glassref's cases again through libhakios-air and say how far each is from what
  * Apple's GPU drew (tools/air/glasscase.h). On this Mac (RWA_SOFTWARE=1) that is softpipe or llvmpipe; on the
  * phone it is freedreno and the Adreno 830 -- the one compiler glassref cannot reach, ir3.
  *

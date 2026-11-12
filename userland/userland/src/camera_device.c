@@ -2,7 +2,7 @@
  * The phone's cameras as iOS's capture stack wants them: a FigCaptureDevice with two FigCaptureStreams,
  * the wide camera as the back camera and the front one as the front camera, made for mediaserverd's
  * BWFigCaptureDeviceVendor in place of the device Apple's H10ISP.mediacapture makes of the iPhone's ISP
- * (part of libredwood-media.dylib; inject_media.c gives the vendor our device's create function when
+ * (part of libhakios-media.dylib; inject_media.c gives the vendor our device's create function when
  * the kernel has a camera: cam=5).
  *
  * Both are CoreMedia "derived objects" (CMDerivedObjectCreate): a table of functions for the base

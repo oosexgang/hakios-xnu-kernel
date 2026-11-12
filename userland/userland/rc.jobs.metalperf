@@ -37,7 +37,7 @@
 #
 #   gpu=1              in XL_CMDLINE, or there is no Adreno and the driver refuses every
 #                      pipeline with a readable reason instead of timing one.
-#   an image with GL=1 for /redwood/lib/libredwoodair.dylib, which is the compiler.
+#   an image with GL=1 for /redwood/lib/libhakios-air.dylib, which is the compiler.
 #   JOBS=""            so that no daemon of Apple's shares the GPU, the panel or the one core
 #                      this runs on. With the window server alive these numbers are of a
 #                      machine doing something else as well, and nothing says how much.

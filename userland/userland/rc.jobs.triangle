@@ -70,13 +70,13 @@
 #                      its own inputs are newer or when SYSTEM=1 says so. Without it the boot
 #                      runs the old image, the application is not there, and only step 5 (the --layer line) says
 #                      anything.
-#                      GL=1 for /redwood/lib/libredwoodair.dylib -- no compiler library, no
+#                      GL=1 for /redwood/lib/libhakios-air.dylib -- no compiler library, no
 #                      pipeline, and the driver says so by name. build.sh now hashes
 #                      tools/mesa/air/ against $M/built-from-air and rebuilds it when they
 #                      differ, so the stale-library trap of logs/235006-run.log (docs/metal.md
 #                      10.47: driver rebuilt, library byte for byte the same) is closed; this
 #                      is a double-check and not the only guard:
-#                        nm -gU xnu-deps/build/mesa/out/libredwoodair.dylib | grep from_surface
+#                        nm -gU xnu-deps/build/mesa/out/libhakios-air.dylib | grep from_surface
 #
 #                      QUIET=1 IS NOT OPTIONAL HERE, AND logs/055044-run.log IS WHY: that boot
 #                      had no QUIET, and the whole of this application's output is MISSING from
@@ -433,7 +433,7 @@
 #       EMPTY is the answer.
 #
 #   grep -a 'hakiosdrawable:' logs/NNNNNN-run.log
-#       the bridge's own one-off lines, once a process: whether libredwoodair.dylib is loaded
+#       the bridge's own one-off lines, once a process: whether libhakios-air.dylib is loaded
 #       here and whether it has rwa_texture_from_surface, and whether this process had
 #       IOSurfaceGetID.
 #

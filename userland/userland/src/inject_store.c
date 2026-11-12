@@ -1,5 +1,5 @@
 /*
- * libredwood-store.dylib: code of ours inside appstored (see inject.c for how it gets there).
+ * libhakios-store.dylib: code of ours inside appstored (see inject.c for how it gets there).
  *
  * What it is for. The App Store opens and shows LOADING for ever. The front page is a "bag" --
  * AppleMediaServices' configuration -- and AMS will not load one until it knows the storefront, the

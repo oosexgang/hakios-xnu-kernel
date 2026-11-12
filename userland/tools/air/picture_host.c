@@ -13,9 +13,9 @@
  * hand against the library that build is already producing:
  *
  *   FD=build/mesa-host/build/src/gallium/drivers/freedreno
- *   tools/air/mk-host.sh                                   # if $FD/libredwoodair.so is not there
+ *   tools/air/mk-host.sh                                   # if $FD/libhakios-air.so is not there
  *   gcc -O1 -Wall -I tools/mesa/air -o /tmp/picture_host tools/air/picture_host.c \
- *       -L$FD -l:libredwoodair.so -Wl,-rpath,$PWD/$FD
+ *       -L$FD -l:libhakios-air.so -Wl,-rpath,$PWD/$FD
  *
  * and run it on the modules of the library the device test reads, unpacked from the
  * container (the device gets them from Metal itself, through -[_MTLFunction bitcodeData];

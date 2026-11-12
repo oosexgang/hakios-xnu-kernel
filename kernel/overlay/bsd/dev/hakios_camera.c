@@ -2960,7 +2960,7 @@ capture_sensor(void)
 /* ---- cam=5: the wide camera for iOS (/dev/hakios-camera) ------------------------------------------- */
 
 /*
- * The sensor's frames for a program (iOS's camera stack in mediaserverd, libredwood-media.dylib), for
+ * The sensor's frames for a program (iOS's camera stack in mediaserverd, libhakios-media.dylib), for
  * as long as it holds /dev/hakios-camera open (sys/hakios_camera.h): the sensor powered up and
  * streaming at the first read after the open, everything down again at the last close, after
  * IDLE_MS without a read, and on any fault (and then for the rest of the run). The sequence is

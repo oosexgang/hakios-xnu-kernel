@@ -27,7 +27,7 @@ things, all of them device-independent apart from the kernel's GPU profile:
    GPU's OPP (the profile's 285/365/443/490 table) before long runs. Until then, `adreno_speed=N` (an index into
    that table, 1 and up) is the safe start.
 2. **Mesa for arm64e iOS 27.** `ios/userland/mesa26e.sh` builds OSMesa+freedreno for the GL shim. Extend it
-   to build `libredwoodair.dylib` (Mesa with `air-frontend.patch`, `air-ir3.patch` and `air-metal.patch`,
+   to build `libhakios-air.dylib` (Mesa with `air-frontend.patch`, `air-ir3.patch` and `air-metal.patch`,
    `air_metal.h` contract), then run it through pacstrip and `ldid -Cadhoc` like the other libraries
    (root26-ios.sh).
 3. **Metal device on iOS 27.**

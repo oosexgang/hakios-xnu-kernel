@@ -278,7 +278,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `torch` | What iOS's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libredwood-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours who… |
+| `torch` | What iOS's flashlight is on this machine: the loader says the camera has a flash (with torch=N, /product/camera "flash": MobileGestalt's camera-flash, Control Center's flashlight button), and libhakios-media.dylib in mediaserverd hands FigFlashlight, which finds no camera here, a device of ours whos… |
 | `torch_max_s` | — |
 | `torch_secs` | — |
 

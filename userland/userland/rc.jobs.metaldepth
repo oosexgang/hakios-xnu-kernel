@@ -21,7 +21,7 @@
 # One process per line, and not one process for all of it, for rc.jobs.metaltex's reason: a
 # draw that hangs this GPU takes the whole boot with it, so each line above a hang stays a
 # measurement and the hang names itself. All of this needs gpu=1 and
-# /redwood/lib/libredwoodair.dylib; without either, line 1 says so and the rest will repeat
+# /redwood/lib/libhakios-air.dylib; without either, line 1 says so and the rest will repeat
 # it.
 #
 # 1. The proven colour draw, unchanged, FIRST and on purpose. The depth work changed one

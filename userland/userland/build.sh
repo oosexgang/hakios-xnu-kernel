@@ -42,7 +42,7 @@
 #                                   air_run grew --buffer.
 #                      GL=1         with an OpenGL ES implementation for the window server: Mesa
 #                                   (tools/mk-mesa.sh fetches and builds it) behind src/eagl.c, as
-#                                   lib/libOSMesa.8.dylib (15 MB) and lib/libredwood-gl.dylib. Where the
+#                                   lib/libOSMesa.8.dylib (15 MB) and lib/libhakios-gl.dylib. Where the
 #                                   kernel has started the phone's GPU, CoreAnimation then draws with its
 #                                   OpenGL ES renderer, by that GPU (boot-arg gpu=1); anywhere else -- QEMU,
 #                                   no boot-arg, no firmware in ../fw-gpu -- the library is not even loaded
@@ -136,33 +136,33 @@ IOS_JOBS=${JOBS-"
 # WIFID=0 leaves it out.
 [ "${WIFID-1}" != 0 ] && IOS_JOBS="$IOS_JOBS com.apple.wifid"
 # The programs (file names) started with a library of ours inside them: "LIBRARY NAME..." per line
-# (src/inject.c is libredwood.dylib, src/inject_sb.c is libredwood-sb.dylib, src/inject_media.c is
-# libredwood-media.dylib).
+# (src/inject.c is libhakios.dylib, src/inject_sb.c is libhakios-sb.dylib, src/inject_media.c is
+# libhakios-media.dylib).
 # What Sileo runs from /bin (see the package manager's prefix below): the system image's /bin, or the
 # boot volume's bin, bound over the iOS volume's /bin when that is the root (src/init.c, flash_root).
 SILEO_BIN="chmod cp mkdir mv rm"
-# (libredwood-tweaks is the tweak loader of the package manager's prefix, src/inject_tweaks.c: in
+# (libhakios-tweaks is the tweak loader of the package manager's prefix, src/inject_tweaks.c: in
 # SpringBoard the library above opens it, here it is named for the programs that have no library of
 # ours -- Settings, where a tweak's own pane belongs. Add a program's name to have tweaks in it.)
 # iOS 26: only src/inject26.c, in backboardd (the touch screen and the buttons); the iOS 16.5 libraries
 # patch 16.5's addresses
 case "$(basename "$IOS")" in ios26*) IOS26=1 ;; *) IOS26=0 ;; esac
 if [ "$IOS26" = 1 ]; then
-	INJECT=${INJECT-"/redwood/lib/libredwood26.dylib backboardd SpringBoard PosterBoard"}
+	INJECT=${INJECT-"/redwood/lib/libhakios26.dylib backboardd SpringBoard PosterBoard"}
 fi
-INJECT=${INJECT-"/redwood/lib/libredwood.dylib backboardd containermanagerd containermanagerd_system
-/redwood/lib/libredwood-sb.dylib SpringBoard
-/redwood/lib/libredwood-media.dylib mediaserverd
-/redwood/lib/libredwood-app.dylib Sileo
-/redwood/lib/libredwood-tweaks.dylib Preferences"}
+INJECT=${INJECT-"/redwood/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
+/redwood/lib/libhakios-sb.dylib SpringBoard
+/redwood/lib/libhakios-media.dylib mediaserverd
+/redwood/lib/libhakios-app.dylib Sileo
+/redwood/lib/libhakios-tweaks.dylib Preferences"}
 # STOREFRONT=1: and a library of ours inside appstored as well (src/inject_store.c). It is not in the
 # list above because it changes what the daemon believes: AMS's account is made to answer with the
 # storefront Apple's bag server returned for this device, which is how the App Store is asked whether
 # a storefront is the only thing it is missing. It also writes down whether a bag request is ever
 # built at all. For an experiment, not for an image anybody else boots.
 [ -n "$STOREFRONT" ] && INJECT="$INJECT
-/redwood/lib/libredwood-store.dylib appstored AppStore
-/redwood/lib/libredwood-fairplay.dylib fairplayd.H2"
+/redwood/lib/libhakios-store.dylib appstored AppStore
+/redwood/lib/libhakios-fairplay.dylib fairplayd.H2"
 mkdir -p obj
 
 if [ -z "$PREBUILT" ] && ! command -v ld64 >/dev/null; then PREBUILT=1; fi
@@ -259,9 +259,9 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		# (with src/hakiosdrawable.m beside it: the IOSurface a CAMetalLayer hands a
 		# device, as a texture. A file of its own because it answers CoreAnimation and
 		# not Metal, and the two meet in one method -- docs/metal.md 10.46.)
-		$DYN -dynamiclib -install_name /redwood/lib/libredwoodmetal.dylib \
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios-metal.dylib \
 			-framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
-			-o obj/libredwoodmetal.dylib src/hakiosmetal.m src/hakiosdrawable.m
+			-o obj/libhakios-metal.dylib src/hakiosmetal.m src/hakiosdrawable.m
 		# and the program that walks Metal's own steps 4 and 5 against it
 		$DYN -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
 			-o obj/metal_drv_test src/metal_drv_test.m
@@ -321,34 +321,34 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 			{ ${LDID:-ldid} -Ssrc/wifipw_test.entitlements obj/wifipw_test 2>/dev/null ||
 			  echo "build.sh: no ldid: wifipw_test is unsigned, and the keychain will refuse it (-34018)"; }
 		# our library for inside stock iOS programs (the jobs in INJECT are started with it)
-		$DYN -dynamiclib -install_name /redwood/lib/libredwood.dylib -framework CoreFoundation -framework IOKit -lobjc \
-			-o obj/libredwood.dylib src/inject.c
-		$DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreFoundation -framework IOKit -lobjc \
-			-o obj/libredwood-sb.dylib src/inject_sb.c
-		$DYN -dynamiclib -install_name /redwood/lib/libredwood26.dylib -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
-			-o obj/libredwood26.dylib src/inject26.c src/IOMobileFramebuffer.tbd &&
-			/usr/bin/codesign -f -s - obj/libredwood26.dylib   # iOS 26's dyld: "missing code signature" otherwise
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc \
+			-o obj/libhakios.dylib src/inject.c
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc \
+			-o obj/libhakios-sb.dylib src/inject_sb.c
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios26.dylib -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
+			-o obj/libhakios26.dylib src/inject26.c src/IOMobileFramebuffer.tbd &&
+			/usr/bin/codesign -f -s - obj/libhakios26.dylib   # iOS 26's dyld: "missing code signature" otherwise
 		# ... the tweak loader of the package manager's prefix (src/inject_tweaks.c): it goes into a
 		# program either as the one library the kernel inserts or opened by a library of ours
-		$DYN -dynamiclib -install_name /redwood/lib/libredwood-tweaks.dylib -framework CoreFoundation -lobjc \
-			-o obj/libredwood-tweaks.dylib src/inject_tweaks.c
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc \
+			-o obj/libhakios-tweaks.dylib src/inject_tweaks.c
 		# ... and inside an application, to say what killed it (src/inject_app.c)
-		$DYN -dynamiclib -install_name /redwood/lib/libredwood-app.dylib -lobjc \
-			-o obj/libredwood-app.dylib src/inject_app.c
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libredwood-media.dylib -framework CoreFoundation -framework CoreMedia \
+		$DYN -dynamiclib -install_name /redwood/lib/libhakios-app.dylib -lobjc \
+			-o obj/libhakios-app.dylib src/inject_app.c
+		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios-media.dylib -framework CoreFoundation -framework CoreMedia \
 			-framework CoreVideo -framework IOSurface -lobjc \
-			-o obj/libredwood-media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
+			-o obj/libhakios-media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
 		# ... and inside appstored (STOREFRONT=1), which answers with a storefront and watches for a bag
 		# request being built (src/inject_store.c)
 		# (-lc++abi for __cxa_throw: every C++ exception thrown in the process is watched, which is how
 		#  the jetpack parser's rejections are seen -- a throw somebody catches logs nothing of itself)
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libredwood-store.dylib -framework CoreFoundation -lobjc \
-			-lc++abi -o obj/libredwood-store.dylib src/inject_store.c
+		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc \
+			-lc++abi -o obj/libhakios-store.dylib src/inject_store.c
 		# ... and inside fairplayd.H2, which starts and leaves at once: what it looks for, and where it
 		# gives up (src/inject_fairplay.c; watches only, replaces nothing)
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libredwood-fairplay.dylib -framework CoreFoundation \
+		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios-fairplay.dylib -framework CoreFoundation \
 			-framework IOKit -framework Security -lMobileGestalt \
-			-o obj/libredwood-fairplay.dylib src/inject_fairplay.c
+			-o obj/libhakios-fairplay.dylib src/inject_fairplay.c
 		# the output device of the audio server: a plug-in for CoreAudio's HAL
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
 		# The same driver again as a loadable bundle, which is the form Metal's own
@@ -356,7 +356,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		# and opens it with NSBundle, and -[NSBundle classNamed:] then tests that the class
 		# came out of that bundle (0x1811e0dac). The dylib above cannot serve as the
 		# executable: dyld uniques images by install_name, so a process that already has
-		# /redwood/lib/libredwoodmetal.dylib would bind the bundle to it and fail that test.
+		# /redwood/lib/libhakios-metal.dylib would bind the bundle to it and fail that test.
 		$DYN -bundle -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
 			-o obj/HakiosMetal src/hakiosmetal.m src/hakiosdrawable.m
 		if [ -n "$GL" ]; then
@@ -367,18 +367,18 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 				../tools/mk-mesa.sh
 			# ... and the compiler library separately, because the hash above covers the PATCHES
 			# and the library is built from tools/mesa/air/, which they do not mention. Two boots
-			# of 22 October carried a libredwoodair.dylib three hours older than the driver beside
+			# of 22 October carried a libhakios-air.dylib three hours older than the driver beside
 			# it while rwa_render_shape had grown IN THE MIDDLE -- the image was the mismatch the
 			# contract warns about, and nothing in it said so. Silence is what made it expensive:
 			# the library is stripped, so the driver found the symbols it wanted and read a stride
 			# where a pixel format was.
 			[ "$(cat $M/built-from-air 2>/dev/null)" = "$(cat ../tools/mesa/air/* | sha256sum)" ] || {
-				echo "build.sh: tools/mesa/air/ has changed since libredwoodair.dylib was built"
+				echo "build.sh: tools/mesa/air/ has changed since libhakios-air.dylib was built"
 				AIR=1 ../tools/mk-mesa.sh
 			}
 			./mkeagl.py src/eagl_slots.txt $M/gl.xml $M/exported-gl.txt src/eagl.c > obj/eagl_gen.h
-			$DYN -dynamiclib -install_name /redwood/lib/libredwood-gl.dylib -Iobj -framework CoreFoundation \
-				-framework IOKit -framework IOSurface -lobjc $M/libOSMesa.8.dylib -o obj/libredwood-gl.dylib \
+			$DYN -dynamiclib -install_name /redwood/lib/libhakios-gl.dylib -Iobj -framework CoreFoundation \
+				-framework IOKit -framework IOSurface -lobjc $M/libOSMesa.8.dylib -o obj/libhakios-gl.dylib \
 				src/eagl.c src/gl_osmesa.c
 			$DYN -framework CoreFoundation -framework IOKit $M/libOSMesa.8.dylib -o obj/gl_test src/gl_test.c
 			# ... and what this GPU makes of an unsigned integer turned into a float (src/u2f_test.c)
@@ -394,7 +394,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 			# Adreno out (tools/mesa/air/air_metal.h). It is copied whether or not
 			# GL is wanted, because src/hakiosmetal.m dlopens it by that path --
 			# and its absence is a sentence the driver prints, not a crash.
-			[ -f $M/libredwoodair.dylib ] && cp $M/libredwoodair.dylib obj/
+			[ -f $M/libhakios-air.dylib ] && cp $M/libhakios-air.dylib obj/
 		fi
 	fi
 	# (drawable_test is built in the same block as surf_test, so it is copied with it)
@@ -484,25 +484,25 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 	# devfs is mounted on /dev, and init puts a ramfs on /private/var
 	mkdir -p root/dev root/private/var
 	mkdir -p root/lib
-	cp obj/libredwood.dylib obj/libredwood-sb.dylib obj/libredwood26.dylib root/lib/
-	[ -f obj/libredwood-media.dylib ] && cp obj/libredwood-media.dylib root/lib/     # (as with cpu_test)
-	[ -f obj/libredwood-store.dylib ] && cp obj/libredwood-store.dylib root/lib/
-	[ -f obj/libredwood-fairplay.dylib ] && cp obj/libredwood-fairplay.dylib root/lib/
-	[ -f obj/libredwood-app.dylib ] && cp obj/libredwood-app.dylib root/lib/
-	[ -f obj/libredwood-tweaks.dylib ] && cp obj/libredwood-tweaks.dylib root/lib/
-	[ -f obj/libredwoodmetal.dylib ] && cp obj/libredwoodmetal.dylib root/lib/
-	[ -f obj/libredwoodair.dylib ] && cp obj/libredwoodair.dylib root/lib/
+	cp obj/libhakios.dylib obj/libhakios-sb.dylib obj/libhakios26.dylib root/lib/
+	[ -f obj/libhakios-media.dylib ] && cp obj/libhakios-media.dylib root/lib/     # (as with cpu_test)
+	[ -f obj/libhakios-store.dylib ] && cp obj/libhakios-store.dylib root/lib/
+	[ -f obj/libhakios-fairplay.dylib ] && cp obj/libhakios-fairplay.dylib root/lib/
+	[ -f obj/libhakios-app.dylib ] && cp obj/libhakios-app.dylib root/lib/
+	[ -f obj/libhakios-tweaks.dylib ] && cp obj/libhakios-tweaks.dylib root/lib/
+	[ -f obj/libhakios-metal.dylib ] && cp obj/libhakios-metal.dylib root/lib/
+	[ -f obj/libhakios-air.dylib ] && cp obj/libhakios-air.dylib root/lib/
 	# iOS 26: the Metal driver's compiler and its test program from Mesa 26
 	# (tools/mk-mesa26.sh), which replace the Mesa 25 ones above when they have been built
 	M26=../xnu-deps/build/mesa26/out
-	if [ -f $M26/libredwoodair.dylib ]; then
+	if [ -f $M26/libhakios-air.dylib ]; then
 		[ "$(cat $M26/built-from-air 2>/dev/null)" = "$(cat ../tools/mesa/air/* | shasum -a 256)" ] ||
-			echo "build.sh: WARNING: tools/mesa/air/ changed since $M26/libredwoodair.dylib was built (tools/mk-mesa26.sh)"
-		cp $M26/libredwoodair.dylib root/lib/
+			echo "build.sh: WARNING: tools/mesa/air/ changed since $M26/libhakios-air.dylib was built (tools/mk-mesa26.sh)"
+		cp $M26/libhakios-air.dylib root/lib/
 		mkdir -p root/bin
 		cp $M26/air_run root/bin/
 		# tools/air/glasscase: tools/air/glassref's draws again on the phone's GPU (rc.launchd26.glasscase)
-		$DYN -I../tools/mesa/air -o obj/glasscase ../tools/air/glasscase.c -L$M26 -lredwoodair &&
+		$DYN -I../tools/mesa/air -o obj/glasscase ../tools/air/glasscase.c -L$M26 -lhakios-air &&
 			cp obj/glasscase root/bin/
 	fi
 	# the pipelines a metal_bisect run skips one after another (src/hakiosmetal.m), when there is a list
@@ -530,7 +530,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		cp obj/gl_test root/bin/
 		if [ -f obj/u2f_test ]; then cp obj/u2f_test root/bin/; fi   # an "if": see the inject.conf loop below
 		[ -f obj/air_run ] && cp obj/air_run root/bin/
-		[ "$GL" = test ] || cp obj/libredwood-gl.dylib root/lib/
+		[ "$GL" = test ] || cp obj/libhakios-gl.dylib root/lib/
 	fi
 	# a program is not started with a library that is not there: it would not start at all
 	echo "$INJECT" | while read -r library names; do
@@ -673,7 +673,7 @@ for module in ../fw-camera/com.qti.sensormodule.*.bin; do
 	mkdir -p root/fw
 	../tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null
 done
-# ... and their colour tuning (libredwood-media's processor, src/camera_isp.c), made by tools/camtuning.py out of the
+# ... and their colour tuning (libhakios-media's processor, src/camera_isp.c), made by tools/camtuning.py out of the
 # cameras' tuning files beside them, com.qti.tuned.<phone>_<maker>_<sensor>_<camera>.bin: camera-<sensor>.isp
 for tuned in ../fw-camera/com.qti.tuned.*.bin; do
 	[ -f "$tuned" ] || continue

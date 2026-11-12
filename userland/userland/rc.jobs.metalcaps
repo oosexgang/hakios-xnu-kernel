@@ -20,7 +20,7 @@
 #   the image          CRYPTEXES=flash SYSTEM=1 GL=1 REST=1 QUIET=1 \
 #                        RC_JOBS=rc.jobs.metalcaps ./build.sh
 #                      GL=1 only so the device is the same object a drawing boot has; nothing
-#                      below compiles a shader, so a missing libredwoodair.dylib changes no
+#                      below compiles a shader, so a missing libhakios-air.dylib changes no
 #                      answer here. REST is not needed by this measurement and is listed only
 #                      because a boot without it has fewer processes competing for the log.
 #   XL_CMDLINE         "bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 metal=1"

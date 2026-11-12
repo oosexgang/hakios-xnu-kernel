@@ -20,8 +20,8 @@
 #   gl.xml               their prototypes (the Khronos registry as Mesa has it): for userland/mkeagl.py
 # and with AIR=1, the two things the Metal subsystem needs (docs/air.md, docs/metal.md 10.12):
 #   air_run              the test program: a Metal shader translated, drawn or dispatched, read back
-#   libredwoodair.dylib  the same path as a library (tools/mesa/air/air_metal.h), install name
-#                        /redwood/lib/libredwoodair.dylib, which is what userland's Metal driver
+#   libhakios-air.dylib  the same path as a library (tools/mesa/air/air_metal.h), install name
+#                        /redwood/lib/libhakios-air.dylib, which is what userland's Metal driver
 #                        links against to compile a function Metal hands it
 # Needs on this machine: meson, ninja, bison, flex, python3 with venv (Mako is installed into a
 # private environment), llvm-ar.
@@ -123,11 +123,11 @@ if [ "${AIR:-}" = 1 ]; then
 	# libOSMesa is below -- -x keeps the global symbols, which here are the rwa_* of
 	# tools/mesa/air/air_metal.h, and the install name has to be the path on the device
 	# because meson's own is @rpath.
-	ninja -C $BUILD src/gallium/drivers/freedreno/libredwoodair.dylib >> ninja.log
-	llvm-strip -x -o out/libredwoodair.dylib $BUILD/src/gallium/drivers/freedreno/libredwoodair.dylib
-	install_name_tool -id /redwood/lib/libredwoodair.dylib out/libredwoodair.dylib
-	echo "mk-mesa.sh: $B/out/libredwoodair.dylib ($(stat -c %s out/libredwoodair.dylib) bytes," \
-		"$(nm -gU out/libredwoodair.dylib | grep -c ' _rwa_') rwa_* functions)"
+	ninja -C $BUILD src/gallium/drivers/freedreno/libhakios-air.dylib >> ninja.log
+	llvm-strip -x -o out/libhakios-air.dylib $BUILD/src/gallium/drivers/freedreno/libhakios-air.dylib
+	install_name_tool -id /redwood/lib/libhakios-air.dylib out/libhakios-air.dylib
+	echo "mk-mesa.sh: $B/out/libhakios-air.dylib ($(stat -c %s out/libhakios-air.dylib) bytes," \
+		"$(nm -gU out/libhakios-air.dylib | grep -c ' _rwa_') rwa_* functions)"
 	# what this library was built from, so userland/build.sh can tell that it is older than the
 	# sources and come back here instead of shipping it beside a driver that disagrees with it
 	cat "$ROOT"/tools/mesa/air/* | sha256sum > out/built-from-air
