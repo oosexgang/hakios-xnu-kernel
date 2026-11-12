@@ -20,7 +20,7 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 #   gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs [gpu]
 # and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 # has that part on the same pins and bus (kernel/overlay/bsd/dev/hakios_board.h, docs/drivers.md):
-#   touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-redwood,
+#   touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-sm7325,
 #   wifi-wcn6750, mic-wcd938x
 features = []
 
@@ -103,7 +103,7 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # default), 1 the secondary, 2 the tertiary, 3 the quaternary, 4 the quinary
 #                                   # (the sound card's dai-tdm node: qcom,msm-dai-tdm-pri-rx is 0, ...-tert-rx 2)
 
-# The cameras, for the feature "camera-redwood": the sensors on an SM7325's camera blocks, their
+# The cameras, for the feature "camera-sm7325": the sensors on an SM7325's camera blocks, their
 # supplies from a PM8008's regulators. Each sensor is one [[camera.sensors]] table, in the order iOS's
 # side numbers them; Android's device tree has each as a qcom,cam-sensor node (cam-sensorN).
 # [camera]

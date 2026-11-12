@@ -21,7 +21,7 @@ the two the same. What each key means is in `devices/_template/soc.toml` and
 | `speaker-aw88261` | `[pins]`; `[clocks]`; `[rpmh]`; `[smmu]` | `[speaker]`: `sda`, `scl`, `addresses`, `interrupts`, `sound_pins`, `sound_function` | `speaker_probe=N looks; sound=N with adsp=1` |
 | `haptic-aw86927` | `[pins]` | `[haptic]`: `sda`, `scl`, `reset`, `interrupt`, `f0_calibration` | `haptic=N` |
 | `torch-pm8350c` | `[spmi]`: `channels` | `[torch]`: `flash`, `alarm` | `torch=1 looks; torch=3 is the light for iOS` |
-| `camera-redwood` | `[spmi]`: `channels`; `[pins]`; `[clocks]`; `[rpmh]`; `[smmu]`; `[camera]` | `[camera]`: `pmic_pins`, `pmic_reset`, `sensors` | `cam=N` |
+| `camera-sm7325` | `[spmi]`: `channels`; `[pins]`; `[clocks]`; `[rpmh]`; `[smmu]`; `[camera]` | `[camera]`: `pmic_pins`, `pmic_reset`, `sensors` | `cam=N` |
 | `wifi-wcn6750` | `[rpmh]`; `[pins]`; `[spmi]`; `[ipc]`; `[smmu]` | `[wifi]`: `radio_model`, `dsp_memory`, `dsp_memory_size` | `wifi=1` |
 | `mic-wcd938x` | `[pins]`; `[lpass]` | `[mic]`: `codec_reset` | `mic=N with adsp=1` |
 | `display-scan` | `[display]`: `intf1`; `[clocks]`: `gcc_disp_ahb_cbcr`, `dispcc`, `dispcc_mdss_gdscr`, `dispcc_mdss_ahb_cbcr` | nothing | `fb_scan=1, the default` |

@@ -30,7 +30,7 @@ known_phone(void)
 	CHECK(hakios_board_has(HAKIOS_HAS_DISPLAY_SCAN) && b != NULL && b->display.intf == 0x0ae6b800 && !b->backlight.video_mode,
 	    "its panel's readout: %#x", b ? b->display.intf : 0);
 	CHECK(!hakios_board_has(HAKIOS_HAS_HAPTIC_AW86927) && !hakios_board_has(HAKIOS_HAS_TORCH_PM8350C) &&
-	    !hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) && !hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD) &&
+	    !hakios_board_has(HAKIOS_HAS_SPEAKER_AW88261) && !hakios_board_has(HAKIOS_HAS_CAMERA_SM7325) &&
 	    !hakios_board_has(HAKIOS_HAS_WIFI_WCN6750) && !hakios_board_has(HAKIOS_HAS_MIC_WCD938X),
 	    "no driver wired for another phone's parts");
 	CHECK(b != NULL && b->backlight.type == HAKIOS_BACKLIGHT_DCS && b->backlight.dsi != 0 && b->clocks.dispcc != 0 &&
@@ -200,27 +200,27 @@ table(void)
 		    !b->backlight.video_mode), "%s: display-scan without an interface, or on a video panel", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_BUTTONS_PMIC) || (b->spmi.core != 0 && b->spmi.cnfg != 0 && b->spmi.observer != 0 &&
 		    b->buttons.pon != 0 && b->buttons.volume_up != 0), "%s: buttons-pmic without [spmi] or [buttons]", b->name);
-		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_REDWOOD)) || (b->spmi.core != 0 &&
+		CHECK(!(b->features & (HAKIOS_HAS_TORCH_PM8350C | HAKIOS_HAS_CAMERA_SM7325)) || (b->spmi.core != 0 &&
 		    b->spmi.channels != 0), "%s: a driver that writes to a PMIC without the arbiter's channels", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
-		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750)) ||
+		    HAKIOS_HAS_HAPTIC_AW86927 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_MIC_WCD938X | HAKIOS_HAS_WIFI_WCN6750)) ||
 		    b->pins.tlmm != 0,
 		    "%s: a driver that drives the SoC's pins without [pins]", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
-		    HAKIOS_HAS_CAMERA_REDWOOD)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without [clocks]",
+		    HAKIOS_HAS_CAMERA_SM7325)) || b->clocks.gcc != 0, "%s: a driver that switches a bus's clocks on without [clocks]",
 		    b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_TOUCH_GOODIX | HAKIOS_HAS_TOUCH_FT3658U | HAKIOS_HAS_SPEAKER_AW88261 |
-		    HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->rpmh.cmd_db != 0 &&
+		    HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->rpmh.cmd_db != 0 &&
 		    b->rpmh.cmd_db_size != 0 && b->rpmh.rsc != 0 && b->rpmh.tcs_offset != 0),
 		    "%s: a driver that asks RPMh for a supply without [rpmh]", b->name);
-		CHECK(!(b->features & (HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_CAMERA_REDWOOD | HAKIOS_HAS_WIFI_WCN6750)) ||
+		CHECK(!(b->features & (HAKIOS_HAS_SPEAKER_AW88261 | HAKIOS_HAS_CAMERA_SM7325 | HAKIOS_HAS_WIFI_WCN6750)) ||
 		    b->smmu.apps != 0, "%s: a driver that gives a device its addresses without [smmu]", b->name);
 		CHECK(!(b->features & (HAKIOS_HAS_ADSP | HAKIOS_HAS_WIFI_WCN6750)) || (b->ipc.aoss != 0 && b->ipc.ipcc != 0 &&
 		    b->ipc.smem != 0 && b->ipc.smem_size != 0 && b->ipc.smem_lock != 0),
 		    "%s: a driver that talks to another processor without [ipc]", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_WIFI_WCN6750) || (b->wifi.dsp_memory != 0 && b->wifi.dsp_memory_size != 0),
 		    "%s: a radio on the SoC's DSP without the DSP's memory", b->name);
-		CHECK(!(b->features & HAKIOS_HAS_CAMERA_REDWOOD) || (b->camera.camcc != 0 && b->camera.ife != 0 && b->camera.csid != 0 &&
+		CHECK(!(b->features & HAKIOS_HAS_CAMERA_SM7325) || (b->camera.camcc != 0 && b->camera.ife != 0 && b->camera.csid != 0 &&
 		    b->camera.csiphy != 0), "%s: the cameras' driver without the camera subsystem's blocks", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_MIC_WCD938X) || (b->lpass.tx_macro != 0 && b->lpass.va_macro != 0 &&
 		    b->lpass.tx_swr != 0 && b->lpass.tx_swr_hctl != 0 && b->lpass.lpi != 0 && b->lpass.lpi_slew != 0),

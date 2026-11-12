@@ -4055,9 +4055,9 @@ hakios_camera_init(void)
 	if (!PE_parse_boot_argn("cam", &level, sizeof(level)) || level == 0) {
 		return;
 	}
-	if (!hakios_board_has(HAKIOS_HAS_CAMERA_REDWOOD)) {
+	if (!hakios_board_has(HAKIOS_HAS_CAMERA_SM7325)) {
 		/* the camera blocks are an SM7325's, the sensors' supplies a PM8008's: not on a board that does not say so */
-		say("camera: disabled: this board's board.toml lists no \"camera-redwood\"\n");
+		say("camera: disabled: this board's board.toml lists no \"camera-sm7325\"\n");
 		level = 0;
 		return;
 	}

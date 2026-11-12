@@ -35,7 +35,7 @@ ee = 0                              # qcom,ee: which of the arbiter's systems th
 [smmu]
 apps = 0x15000000                   # apps_smmu
 
-# The camera subsystem's blocks (yupik-camera.dtsi), for "camera-redwood".
+# The camera subsystem's blocks (yupik-camera.dtsi), for "camera-sm7325".
 [camera]
 camcc = 0x0ad00000                  # the camera clock controller
 ife = 0x0acc4000                    # the first IFE "lite", which the driver takes frames through

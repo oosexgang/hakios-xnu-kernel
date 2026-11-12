@@ -7,7 +7,7 @@ soc = "sm7325"
 features = [
     "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp",
     # this phone's own parts, as its drivers have them wired
-    "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-redwood", "wifi-wcn6750",
+    "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-sm7325", "wifi-wcn6750",
     "mic-wcd938x",
     "gpu-a660",                     # the Adreno of [gpu] (gpu=1)
 ]
@@ -114,7 +114,7 @@ speeds_khz = [315000, 450000, 550000]
 speed_levels = [64, 128, 192]
 default_speed = 3
 
-# The cameras (feature "camera-redwood"). The PM8008 whose regulators feed the sensors is on the I2C bus of
+# The cameras (feature "camera-sm7325"). The PM8008 whose regulators feed the sensors is on the I2C bus of
 # GPIO 4 and 5. Each sensor as Android's device tree has it (cam-sensor2, 0, 1 and 3, in this order, which
 # is the one iOS's side numbers them in): its CCI master and that master's pins, its reset, which MCLK and
 # that clock's pin, the CSI receiver, and how the module file's power sequence switches its supplies.

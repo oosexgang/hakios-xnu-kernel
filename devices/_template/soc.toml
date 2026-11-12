@@ -32,7 +32,7 @@ tlmm = 0x0f100000                   # where GPIO 0's registers are; GPIO n's are
                                     # the vendor's, whose reg is the whole 16 MiB block, 0x100000 above it
 
 # The PMIC arbiter (qcom,spmi-pmic-arb), by its reg-names: for the features "buttons-pmic",
-# "torch-pm8350c" and "camera-redwood".
+# "torch-pm8350c" and "camera-sm7325".
 [spmi]
 core = 0x0c440000                   # "core"
 cnfg = 0x0c40a000                   # "cnfg"
@@ -45,7 +45,7 @@ ee = 0                              # qcom,ee; optional, 0 if left out
 [smmu]
 apps = 0x15000000                   # apps_smmu (the vendor's apps-smmu@15000000; Linux's iommu@15000000)
 
-# The camera subsystem's blocks, for the feature "camera-redwood". From the SoC's -camera.dtsi (the
+# The camera subsystem's blocks, for the feature "camera-sm7325". From the SoC's -camera.dtsi (the
 # vendor's; tools/boards.py new does not read these yet).
 [camera]
 camcc = 0x0ad00000                  # the camera clock controller (qcom,CODENAME-camcc)
