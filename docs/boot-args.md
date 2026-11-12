@@ -173,7 +173,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `th_critical` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
 | `th_period_ms` | th_period_ms=N how often it looks (default 1000) |
 | `th_trip` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
-| `thermal` | thermal=1 the hottest reading logged every ten seconds, nothing held back |
+| `thermal` | thermal=1 (the default) looking only: a "tl: h" line a look, the hottest reading logged every ten seconds, nothing written |
 
 ### `iokit/Kernel/GenericARMPE.cpp`
 

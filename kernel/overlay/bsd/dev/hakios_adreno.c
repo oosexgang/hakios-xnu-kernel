@@ -92,6 +92,7 @@
  * vendor kernel agrees on every offset used here, and is the only source for the frequency counter.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
 #include <mach/vm_param.h>
@@ -752,8 +753,24 @@ count_clock(uint32_t ticks)
  * The rate in Hz of one of the GPU clock controller's clocks; 0 if it does not run, MEASURE_FAILED
  * if the counter does not finish. Everything that is changed for it is put back.
  */
+static LCK_GRP_DECLARE(measure_lck_grp, "hakios-adreno-measure");
+static LCK_MTX_DECLARE(measure_lock, &measure_lck_grp);   /* one user of the debug muxes at a time: bring-up, recovery, the thermal lines */
+
+static uint32_t measure_locked(uint32_t select);
+
 static uint32_t
 measure(uint32_t select)
+{
+	uint32_t hz;
+
+	lck_mtx_lock(&measure_lock);
+	hz = measure_locked(select);
+	lck_mtx_unlock(&measure_lock);
+	return hz;
+}
+
+static uint32_t
+measure_locked(uint32_t select)
 {
 	uint32_t gpu_mux = get(&gpucc, "debug mux", GPUCC_DEBUG_MUX), gpu_div = get(&gpucc, "debug divider", GPUCC_DEBUG_DIV);
 	uint32_t gpu_cbcr = get(&gpucc, "debug output", GPUCC_DEBUG_CBCR), mux = get(&gcc, "debug mux", GCC_DEBUG_MUX);
@@ -3354,6 +3371,23 @@ bool
 hakios_gpu_ready(void)
 {
 	return gpu_kept;
+}
+
+/*
+ * The 3D core's clock now, as the SoC's frequency counter measures it, in MHz (28 ms, asleep); 0 when the GPU is
+ * not up or its core has no power. For hakios_thermal.c's lines: the core's speed is the GMU's to set, and a GPU
+ * slowed by heat is told apart from a slow frame only so.
+ */
+uint32_t
+hakios_adreno_core_mhz(void)
+{
+	uint32_t hz;
+
+	if (!gpu_kept || !core_is_on) {
+		return 0;
+	}
+	hz = measure(GPUCC_DEBUG_GX_GFX3D);
+	return hz == MEASURE_FAILED ? 0 : (hz + 500000) / 1000000;
 }
 
 /* The answers to msm's GET_PARAM (Linux's adreno_get_param for this GPU; the numbers are msm_drm.h's). */
