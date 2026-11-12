@@ -7,7 +7,6 @@
 static int
 block_is_darwin(const efi_partition_info *info, const efi_block_io *bio, const struct loader_block_part *bp)
 {
-	static const efi_guid type = BLOCK_DARWIN_TYPE, uniq = BLOCK_DARWIN_UNIQ;
 	static const char name[] = "darwin";
 	const char *why = NULL;
 
@@ -16,9 +15,11 @@ block_is_darwin(const efi_partition_info *info, const efi_block_io *bio, const s
 			return 0;               /* another partition: nothing to say about it */
 		}
 	}
-	if (memcmp(&info->type_guid, &type, sizeof(type)) != 0) {
+	if (BLOCK_DARWIN_LAST == 0 || BLOCK_DARWIN_LAST < BLOCK_DARWIN_FIRST) {
+		why = "this board's file does not say which partition that is ([storage])";
+	} else if (memcmp(&info->type_guid, &PLAT->own.type, sizeof(efi_guid)) != 0) {
 		why = "its type GUID is not the one it had";
-	} else if (memcmp(&info->unique_guid, &uniq, sizeof(uniq)) != 0) {
+	} else if (memcmp(&info->unique_guid, &PLAT->own.unique, sizeof(efi_guid)) != 0) {
 		why = "its unique GUID is not the one it had";
 	} else if (info->start_lba != BLOCK_DARWIN_FIRST || info->end_lba != BLOCK_DARWIN_LAST) {
 		why = "it does not begin and end where it did";

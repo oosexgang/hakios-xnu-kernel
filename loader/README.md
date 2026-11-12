@@ -84,10 +84,8 @@ The loader knows the boards whose packages were present when it was built. The r
 no phone: `tools/device.py add NAME` brings a phone's package in from the `devices` branch. Built with
 none, the loader knows only the emulator's board.
 
-No phone is named in the loader's code, and one phone's values are in it in one place only: the
-GPT entry of the partition a write may reach (`src/ufs_block.c`, `BLOCK_DARWIN_…`), which is
-redwood's. On another phone it matches nothing, so nothing is written there; see "What is still
-tied" in [docs/porting.md](../docs/porting.md). What differs between boards beyond the framebuffer is in `[loader]`
+No phone is named in the loader's code, and no phone's numbers are in it: the partition a write may
+reach is the board file's `[storage]` as well (below). What differs between boards beyond the framebuffer is in `[loader]`
 as well: `uefi_charger = true` says the firmware has Qualcomm's charger protocols, and the loader then
 reads the battery through them.
 
@@ -106,7 +104,7 @@ if you made it:
 | --- | --- | --- |
 | A partition named `logdump` | After a run, its log and the kernel's, so that a run that ends in a reset leaves something. A phone without such a partition keeps the log in RAM only. | `src/logstore.c` |
 | The iOS system image stored as an Android DSU image (`system_gsi`) | Only on `fastboot oem dsu patch OFFSET` followed by a download: into the image's own extents, read back. | `src/dsu_write.c` |
-| The port's own partition `darwin` | Only for a kernel started with `ufs_write=1`, only past what the build wrote there, and only if the partition's GPT entry is the one written into the code (redwood's). | `src/ufs_service.c`, `src/ufs_block.c` |
+| The port's own partition `darwin` | Only for a kernel started with `ufs_write=1`, only past what the build wrote there, and only if the partition's GPT entry is in every field the one the board file's `[storage]` gives. A board without `[storage]` has no such partition. | `src/ufs_service.c`, `src/own_partition.c` |
 
 Nothing else calls the firmware's `write_blocks`, and `make check` fails if a fourth place appears
 without a row here. No partition table is touched, nothing is erased, and no tool in this repository

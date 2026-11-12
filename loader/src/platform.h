@@ -18,6 +18,16 @@ struct platform {
 	uint32_t timeout_scale;          /* a kernel on several cores gets this much longer to wait for a lock, 0: as it is */
 	uint32_t small_cores;            /* a bit for each of the slower cores, by number: "small-core" in the device tree */
 	uint64_t fb_base;                /* the framebuffer the firmware reports (GOP): it tells this device apart */
+	/*
+	 * The one partition of the phone's storage a write may reach, named "darwin": the port's own. Its
+	 * GPT entry as it was when the port was set up (the board file's [storage]); last_lba 0: the
+	 * board names none, and nothing is ever written.
+	 */
+	struct {
+		efi_guid type, unique;          /* the entry's two GUIDs */
+		uint64_t first_lba, last_lba;   /* where it begins and ends on the first logical unit */
+		uint64_t write_first;           /* the first of its blocks (of 4096) a write may reach: past what the build put there */
+	} own;
 };
 
 /*
