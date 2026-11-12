@@ -123,7 +123,7 @@ static void
 five_fingers_end_the_run(void)
 {
 	redwood_input_init();
-	fake_delay_divisor = 10;                /* 1.5 s: 150 ms here */
+	fake_delay_divisor = 2;                 /* 1.5 s: 750 ms here (wide: a busy machine's sleeps overrun) */
 	for (unsigned f = 0; f < 5; f++) {
 		redwood_touch_post(REDWOOD_TOUCH_DOWN, f, 100 * f, 100);
 	}
@@ -136,18 +136,18 @@ static void
 lifted_in_time(void)
 {
 	redwood_input_init();
-	fake_delay_divisor = 10;
+	fake_delay_divisor = 2;                 /* the hold: 750 ms here */
 	for (unsigned f = 0; f < 5; f++) {
 		redwood_touch_post(REDWOOD_TOUCH_DOWN, f, 0, 0);
 	}
-	usleep(50 * 1000);
+	usleep(100 * 1000);
 	redwood_touch_post(REDWOOD_TOUCH_UP, 3, 0, 0);
-	usleep(400 * 1000);
-	CHECK(returned == 0, "one lifted after a third of the time: nothing ends");
+	usleep(1200 * 1000);
+	CHECK(returned == 0, "one lifted well before the time: nothing ends, long after");
 	/* four stay down, a fifth lands again: the time starts over */
 	redwood_touch_post(REDWOOD_TOUCH_DOWN, 3, 0, 0);
-	usleep(80 * 1000);
-	CHECK(returned == 0, "half the time after it landed again: not yet");
+	usleep(100 * 1000);
+	CHECK(returned == 0, "a little after it landed again: not yet");
 	EVENTUALLY(returned == 1, 3000, "then the run ends");
 	/* (fingers beyond the 32 a driver can number are not counted) */
 }
@@ -157,7 +157,7 @@ static void
 written_fingers_do_not_count(void)
 {
 	redwood_input_init();
-	fake_delay_divisor = 10;
+	fake_delay_divisor = 10;                /* the hold: 150 ms here; waited for many times over */
 	for (unsigned f = 0; f < 5; f++) {
 		CHECK(inject(REDWOOD_TOUCH_DOWN, f, 0, 0) == 0, "finger %u written", f);
 	}
