@@ -6,8 +6,8 @@
 	<string>com.hakios.demo</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/redwood/sbin/init</string>
-		<string>/redwood/etc/rc.jobs</string>
+		<string>/hakios/sbin/init</string>
+		<string>/hakios/etc/rc.jobs</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

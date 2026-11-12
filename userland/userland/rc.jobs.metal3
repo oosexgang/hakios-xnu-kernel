@@ -7,14 +7,14 @@
 #
 # Batches because the loader keeps the first 256 KB and the last 1 MB of a boot's log and
 # drops the middle; a count read off a cut log is a lower bound pretending to be a number.
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Uint
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Uint
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_UintPacked
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_UintPacked
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Unorm
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Unorm
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16float /System/Library/VideoDecoders/AV1SW.metallib BlitKernel_Unorm
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Uint
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint,4=2d:rgba16uint,5=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Uint
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Unorm
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint,4=2d:rgba16uint,5=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Unorm
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Uint
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Uint
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_UintPacked
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_UintPacked
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Unorm
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Unorm
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16float /System/Library/VideoDecoders/AV1SW.metallib BlitKernel_Unorm
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Uint
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16uint,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint,4=2d:rgba16uint,5=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Uint
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Unorm
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float,1=2d:rgba16uint,2=2d:rgba16uint,3=2d:rgba16sint,4=2d:rgba16uint,5=2d:rgba16uint /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Unorm

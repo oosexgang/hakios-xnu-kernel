@@ -9,7 +9,7 @@
 	     (src/thermald.c); without the kernel's thermal service it ends at once -->
 	<key>ProgramArguments</key>
 	<array>
-		<string>/redwood/bin/thermald</string>
+		<string>/hakios/bin/thermald</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

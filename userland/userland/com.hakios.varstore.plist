@@ -10,7 +10,7 @@
 	     none by default, because each one costs seconds of the run and a hundred-odd megabytes. -->
 	<key>ProgramArguments</key>
 	<array>
-		<string>/redwood/bin/var_store</string>
+		<string>/hakios/bin/var_store</string>
 		<string>watch</string>
 	</array>
 	<key>RunAtLoad</key>

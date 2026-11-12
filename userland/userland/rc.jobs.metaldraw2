@@ -7,4 +7,4 @@
 # the middle, and the boot's own noise fills most of that first 256 KB -- so about seventy
 # lines of sweep survive per boot. Two single-boot runs stopped at exactly 64 shaders and the
 # limit looked like the driver's until the line number gave it away (2572 of 11480).
-/redwood/bin/metal_drv_test --draw-all 120 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-all 120 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

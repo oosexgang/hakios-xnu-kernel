@@ -5,6 +5,6 @@
 #   mapping          the only road that makes the driver's vnop_pagein run
 #   small read(2)s   what the compressed path is worst at
 #   large read(2)s   the control: a piece per decompression even before any caching
-/redwood/bin/apfs_mmap_test mmap /private/var/apfs-check/usr/sbin
-/redwood/bin/apfs_mmap_test read /private/var/apfs-check/usr/sbin 4096
-/redwood/bin/apfs_mmap_test read /private/var/apfs-check/usr/sbin 65536
+/hakios/bin/apfs_mmap_test mmap /private/var/apfs-check/usr/sbin
+/hakios/bin/apfs_mmap_test read /private/var/apfs-check/usr/sbin 4096
+/hakios/bin/apfs_mmap_test read /private/var/apfs-check/usr/sbin 65536

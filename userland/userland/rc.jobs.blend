@@ -204,4 +204,4 @@
 # priced against six ways of being wrong), so neither should reach a photograph. If one
 # does, the host check is measuring something the device does not do.
 
-/redwood/bin/metal_drv_test --draw-all /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-all /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

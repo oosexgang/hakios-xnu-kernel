@@ -5,7 +5,7 @@
 #   root.apfs        the small image: our init and test programs, etc/rc, and the launchd jobs
 #                    (LaunchDaemons/), an APFS container (../tools/apfs/mkapfs.py). It travels in
 #                    the payload next to the kernel (the second RAM disk, /dev/md1) and is mounted
-#                    on /redwood. Rebuilt every time.
+#                    on /hakios. Rebuilt every time.
 #                      RC=<file>    etc/rc: rc.launchd (default) hands process 1 to the iOS launchd
 #                                   after init's checks; rc.ios runs a few iOS programs and halts
 #                      JOBS="..."   labels of the stock iOS launchd jobs to load (default: IOS_JOBS)
@@ -19,9 +19,9 @@
 #                                   init hands the list to the kernel (etc/inject.conf -> sysctl kern.exec_inject)
 #                      STOREFRONT=1 ... and src/inject_store.c inside appstored: the storefront answered,
 #                                   and a bag request watched for (an experiment; see that file)
-#                      EXTRA="..."  more programs for /redwood/bin (files on this machine): one-off
+#                      EXTRA="..."  more programs for /hakios/bin (files on this machine): one-off
 #                                   diagnostics, which a file given as RC_JOBS can then run
-#                      EXTRA_SHARE="..." directories on this machine to copy whole into /redwood/share,
+#                      EXTRA_SHARE="..." directories on this machine to copy whole into /hakios/share,
 #                                   each under its own name: the data a one-off diagnostic reads, when it
 #                                   needs more than a program (tools/air/intrincheck.py --emit writes such
 #                                   a directory). This goes into the boot volume, which every recipe
@@ -148,21 +148,21 @@ SILEO_BIN="chmod cp mkdir mv rm"
 # patch 16.5's addresses
 case "$(basename "$IOS")" in ios26*) IOS26=1 ;; *) IOS26=0 ;; esac
 if [ "$IOS26" = 1 ]; then
-	INJECT=${INJECT-"/redwood/lib/libhakios26.dylib backboardd SpringBoard PosterBoard"}
+	INJECT=${INJECT-"/hakios/lib/libhakios26.dylib backboardd SpringBoard PosterBoard"}
 fi
-INJECT=${INJECT-"/redwood/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
-/redwood/lib/libhakios-sb.dylib SpringBoard
-/redwood/lib/libhakios-media.dylib mediaserverd
-/redwood/lib/libhakios-app.dylib Sileo
-/redwood/lib/libhakios-tweaks.dylib Preferences"}
+INJECT=${INJECT-"/hakios/lib/libhakios.dylib backboardd containermanagerd containermanagerd_system
+/hakios/lib/libhakios-sb.dylib SpringBoard
+/hakios/lib/libhakios-media.dylib mediaserverd
+/hakios/lib/libhakios-app.dylib Sileo
+/hakios/lib/libhakios-tweaks.dylib Preferences"}
 # STOREFRONT=1: and a library of ours inside appstored as well (src/inject_store.c). It is not in the
 # list above because it changes what the daemon believes: AMS's account is made to answer with the
 # storefront Apple's bag server returned for this device, which is how the App Store is asked whether
 # a storefront is the only thing it is missing. It also writes down whether a bag request is ever
 # built at all. For an experiment, not for an image anybody else boots.
 [ -n "$STOREFRONT" ] && INJECT="$INJECT
-/redwood/lib/libhakios-store.dylib appstored AppStore
-/redwood/lib/libhakios-fairplay.dylib fairplayd.H2"
+/hakios/lib/libhakios-store.dylib appstored AppStore
+/hakios/lib/libhakios-fairplay.dylib fairplayd.H2"
 mkdir -p obj
 
 if [ -z "$PREBUILT" ] && ! command -v ld64 >/dev/null; then PREBUILT=1; fi
@@ -259,7 +259,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		# (with src/hakiosdrawable.m beside it: the IOSurface a CAMetalLayer hands a
 		# device, as a texture. A file of its own because it answers CoreAnimation and
 		# not Metal, and the two meet in one method -- docs/metal.md 10.46.)
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios-metal.dylib \
+		$DYN -dynamiclib -install_name /hakios/lib/libhakios-metal.dylib \
 			-framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
 			-o obj/libhakios-metal.dylib src/hakiosmetal.m src/hakiosdrawable.m
 		# and the program that walks Metal's own steps 4 and 5 against it
@@ -274,9 +274,9 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		# the way src/metal_drv_test.m does. The bundle is assembled further down, where
 		# a PREBUILT tree can assemble it too.
 		# (signed, if ldid is there, for the entitlements an application has and a
-		# /redwood/bin program does not: see src/triangle_app.entitlements, which says
+		# /hakios/bin program does not: see src/triangle_app.entitlements, which says
 		# why none of them is needed to RUN. Signed here rather than in the bundle, so
-		# that the copy in /redwood/bin carries the same signature.)
+		# that the copy in /hakios/bin carries the same signature.)
 		$DYN -framework Foundation -framework UIKit -framework QuartzCore \
 			-framework Metal -framework IOSurface -framework IOKit -lobjc \
 			-o obj/HakiosTriangle src/triangle_app.m &&
@@ -321,32 +321,32 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 			{ ${LDID:-ldid} -Ssrc/wifipw_test.entitlements obj/wifipw_test 2>/dev/null ||
 			  echo "build.sh: no ldid: wifipw_test is unsigned, and the keychain will refuse it (-34018)"; }
 		# our library for inside stock iOS programs (the jobs in INJECT are started with it)
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc \
+		$DYN -dynamiclib -install_name /hakios/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc \
 			-o obj/libhakios.dylib src/inject.c
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc \
+		$DYN -dynamiclib -install_name /hakios/lib/libhakios-sb.dylib -framework CoreFoundation -framework IOKit -lobjc \
 			-o obj/libhakios-sb.dylib src/inject_sb.c
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios26.dylib -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
+		$DYN -dynamiclib -install_name /hakios/lib/libhakios26.dylib -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
 			-o obj/libhakios26.dylib src/inject26.c src/IOMobileFramebuffer.tbd &&
 			/usr/bin/codesign -f -s - obj/libhakios26.dylib   # iOS 26's dyld: "missing code signature" otherwise
 		# ... the tweak loader of the package manager's prefix (src/inject_tweaks.c): it goes into a
 		# program either as the one library the kernel inserts or opened by a library of ours
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc \
+		$DYN -dynamiclib -install_name /hakios/lib/libhakios-tweaks.dylib -framework CoreFoundation -lobjc \
 			-o obj/libhakios-tweaks.dylib src/inject_tweaks.c
 		# ... and inside an application, to say what killed it (src/inject_app.c)
-		$DYN -dynamiclib -install_name /redwood/lib/libhakios-app.dylib -lobjc \
+		$DYN -dynamiclib -install_name /hakios/lib/libhakios-app.dylib -lobjc \
 			-o obj/libhakios-app.dylib src/inject_app.c
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios-media.dylib -framework CoreFoundation -framework CoreMedia \
+		$DYN -O2 -dynamiclib -install_name /hakios/lib/libhakios-media.dylib -framework CoreFoundation -framework CoreMedia \
 			-framework CoreVideo -framework IOSurface -lobjc \
 			-o obj/libhakios-media.dylib src/inject_media.c src/camera_device.c src/camera_isp.c
 		# ... and inside appstored (STOREFRONT=1), which answers with a storefront and watches for a bag
 		# request being built (src/inject_store.c)
 		# (-lc++abi for __cxa_throw: every C++ exception thrown in the process is watched, which is how
 		#  the jetpack parser's rejections are seen -- a throw somebody catches logs nothing of itself)
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios-store.dylib -framework CoreFoundation -lobjc \
+		$DYN -O2 -dynamiclib -install_name /hakios/lib/libhakios-store.dylib -framework CoreFoundation -lobjc \
 			-lc++abi -o obj/libhakios-store.dylib src/inject_store.c
 		# ... and inside fairplayd.H2, which starts and leaves at once: what it looks for, and where it
 		# gives up (src/inject_fairplay.c; watches only, replaces nothing)
-		$DYN -O2 -dynamiclib -install_name /redwood/lib/libhakios-fairplay.dylib -framework CoreFoundation \
+		$DYN -O2 -dynamiclib -install_name /hakios/lib/libhakios-fairplay.dylib -framework CoreFoundation \
 			-framework IOKit -framework Security -lMobileGestalt \
 			-o obj/libhakios-fairplay.dylib src/inject_fairplay.c
 		# the output device of the audio server: a plug-in for CoreAudio's HAL
@@ -356,7 +356,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 		# and opens it with NSBundle, and -[NSBundle classNamed:] then tests that the class
 		# came out of that bundle (0x1811e0dac). The dylib above cannot serve as the
 		# executable: dyld uniques images by install_name, so a process that already has
-		# /redwood/lib/libhakios-metal.dylib would bind the bundle to it and fail that test.
+		# /hakios/lib/libhakios-metal.dylib would bind the bundle to it and fail that test.
 		$DYN -bundle -framework Foundation -framework IOKit -framework Metal -framework IOSurface -lobjc \
 			-o obj/HakiosMetal src/hakiosmetal.m src/hakiosdrawable.m
 		if [ -n "$GL" ]; then
@@ -377,7 +377,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 				AIR=1 ../tools/mk-mesa.sh
 			}
 			./mkeagl.py src/eagl_slots.txt $M/gl.xml $M/exported-gl.txt src/eagl.c > obj/eagl_gen.h
-			$DYN -dynamiclib -install_name /redwood/lib/libhakios-gl.dylib -Iobj -framework CoreFoundation \
+			$DYN -dynamiclib -install_name /hakios/lib/libhakios-gl.dylib -Iobj -framework CoreFoundation \
 				-framework IOKit -framework IOSurface -lobjc $M/libOSMesa.8.dylib -o obj/libhakios-gl.dylib \
 				src/eagl.c src/gl_osmesa.c
 			$DYN -framework CoreFoundation -framework IOKit $M/libOSMesa.8.dylib -o obj/gl_test src/gl_test.c
@@ -428,7 +428,7 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 	[ -f obj/camera_test ] && cp obj/camera_test root/bin/
 	[ -f obj/camera_avtest ] && cp obj/camera_avtest root/bin/
 	[ -f obj/record_test ] && cp obj/record_test root/bin/
-	# The same binary as the application below, under /redwood/bin, for its --layer mode:
+	# The same binary as the application below, under /hakios/bin, for its --layer mode:
 	# a CAMetalLayer with no window and no UIKit, driven once. That mode cannot say whether
 	# a frame reaches the panel, and it answers the two questions that come before it -- does
 	# the driver work outside Apple's daemons, and does nextDrawable give a texture -- in a
@@ -534,14 +534,14 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 	fi
 	# a program is not started with a library that is not there: it would not start at all
 	echo "$INJECT" | while read -r library names; do
-		# a /redwood/lib library only if it was actually built; any other path (e.g. a tweak loader
+		# a /hakios/lib library only if it was actually built; any other path (e.g. a tweak loader
 		# in /var/jb) as it is, since it lives on the prefix and is there at run time
 		case "$library" in
 		"") ;;
 		# an "if" and not "&& echo": a last line whose library is absent would make the loop,
 		# and with it the pipeline and the whole build under set -e, fail -- which is what a tree
 		# with only prebuilt/userland in it does, since not every injection library is shipped there
-		/redwood/lib/*) if [ -f "root/lib/${library#/redwood/lib/}" ]; then echo "$library $names"; fi ;;
+		/hakios/lib/*) if [ -f "root/lib/${library#/hakios/lib/}" ]; then echo "$library $names"; fi ;;
 		*) echo "$library $names" ;;
 		esac
 	done > root/etc/inject.conf
@@ -718,7 +718,7 @@ mkdir -p root/empty root/xpc root/hal
 for f in extensions.plist extensions.plist.sig; do
 	[ -f $IOS/rootfs/System/Library/xpc/$f ] && cp $IOS/rootfs/System/Library/xpc/$f root/xpc/
 done
-[ -d root/lib/HakiosAudio.driver ] && ln -s /redwood/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
+[ -d root/lib/HakiosAudio.driver ] && ln -s /hakios/lib/HakiosAudio.driver root/hal/HakiosAudio.driver
 # iOS 26's dyld loads no arm64e code without a code signature ("missing code signature"), whatever
 # this kernel's AMFI would make of it: every Mach-O of ours that has none gets an ad-hoc one. One that
 # is signed already (with entitlements, by its own rule above) is left as it is.
@@ -744,14 +744,14 @@ if [ "$ARCH" = arm64e ]; then
 fi
 # the image: zlib where it saves room (a small file whole in its attribute, as Apple keeps them); fw/
 # as it is, which the kernel's drivers use where it lies in memory (bsd/dev/hakios_image.c)
-python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs redwood=root | tail -1
-[ -z "$CHECK" ] || ../tools/apfs/check-image.sh root.apfs redwood=root
+python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1
+[ -z "$CHECK" ] || ../tools/apfs/check-image.sh root.apfs hakios=root
 
 # --- the RAM part of a boot off the flash: FLASHBOOT=1 -> flashboot.apfs --------------------------------
 # With the iOS volume on the phone's flash as the root, all that has to come from RAM is what is not
 # on it -- the two cryptexes, OS with the dyld shared cache and App -- and what starts the boot: three
 # APFS containers back to back in the one resident image. The first, the boot volume, is the root the
-# kernel starts from (rd=md0): stage0 as /sbin/launchd mounts the small image on /redwood and runs its
+# kernel starts from (rd=md0): stage0 as /sbin/launchd mounts the small image on /hakios and runs its
 # init, which with boot-arg root_apfs=DEV mounts the volume on /flash, makes it the root and moves the
 # boot volume to the volume's /private/preboot, then mounts the second container -- the OS cryptex -- on
 # the boot volume's empty Cryptexes/OS and the third -- Apple's App cryptex as it is -- on Cryptexes/App:
@@ -765,7 +765,7 @@ python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs redwood=root | tail -
 # them from there, the same containers 1 and 2 of the root's own device.
 if [ -n "$FLASHBOOT" ] && [ -f $CACHE/dyld_shared_cache_$ARCH ]; then
 	rm -rf flashboot flashboot.os
-	mkdir -p flashboot/sbin flashboot/redwood flashboot/dev flashboot/flash flashboot/Cryptexes/OS flashboot/Cryptexes/App
+	mkdir -p flashboot/sbin flashboot/hakios flashboot/dev flashboot/flash flashboot/Cryptexes/OS flashboot/Cryptexes/App
 	cp obj/stage0 flashboot/sbin/launchd
 	# the OS cryptex, and the shared cache in it, only where this image will carry it:
 	# with CRYPTEXES=flash the cryptexes are read from the phone's flash and this tree is
@@ -851,15 +851,15 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	rm -rf sysroot/System/Library/LaunchDaemons sysroot/System/Library/NanoLaunchDaemons \
 		sysroot/System/Library/LaunchAngels sysroot/System/Library/xpc/launchd.plist
 	# iOS 26's launchd counts a job as the system's only when its file is on the system volume: one read
-	# through the symlink into /redwood is "non-system" and may claim no host port or event stream. So
+	# through the symlink into /hakios is "non-system" and may claim no host port or event stream. So
 	# there the jobs are copied in (JOBS_IN_SYSTEM=1, the default for ../ios26), and a change to them
 	# means a new system image.
 	if [ "${JOBS_IN_SYSTEM:-$([ "$IOS26" = 1 ] && echo 1)}" = 1 ]; then
 		cp -R root/LaunchDaemons sysroot/System/Library/LaunchDaemons
 	else
-		ln -s /redwood/LaunchDaemons sysroot/System/Library/LaunchDaemons
+		ln -s /hakios/LaunchDaemons sysroot/System/Library/LaunchDaemons
 	fi
-	mkdir -p sysroot/redwood sysroot/sbin
+	mkdir -p sysroot/hakios sysroot/sbin
 	# where the kernel mounts the iOS root container off the phone's flash (boot-arg apfs_volume=):
 	# iOS has no /System/Volumes, and nothing can make a directory in this image once it is built
 	mkdir -p sysroot/System/Volumes/iOS
@@ -912,7 +912,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	# and a re-upload: SYSTEM=1 is what makes this line run again.
 	if [ -d obj/HakiosTriangle.app ]; then
 		cp -a obj/HakiosTriangle.app sysroot/Applications/
-		echo "  HakiosTriangle.app in /Applications (com.hakios.triangle, scheme redwoodtriangle:)"
+		echo "  HakiosTriangle.app in /Applications (com.hakios.triangle, scheme hakiostriangle:)"
 	fi
 	# Applications from outside this tree: every .app in ../apps, which is kept out of the
 	# repository the way ../fw-* and ../jb are, so that nothing of somebody else's package can
@@ -928,10 +928,10 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	done
 	# our audio device, where the audio server looks for such plug-ins (and for no others: Apple's are left out)
 	mkdir -p sysroot/System/Library/Audio/Plug-Ins/HAL
-	ln -s /redwood/lib/HakiosAudio.driver sysroot/System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver
+	ln -s /hakios/lib/HakiosAudio.driver sysroot/System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver
 	# ... and our Metal plug-in, at the one path Metal's own discovery can open: step 3 composes
 	# "/System/Library/Extensions/" + MetalPluginName + ".bundle" and opens it with NSBundle
-	# (docs/metal.md 1). Same shape as the audio plug-in above -- a link into /redwood/lib, where
+	# (docs/metal.md 1). Same shape as the audio plug-in above -- a link into /hakios/lib, where
 	# the bundle itself travels in the small image -- because this directory is iOS's own and
 	# nothing can be added to it after the image is built.
 	#
@@ -941,7 +941,7 @@ if [ -f $IOS/system.manifest ] && [ -f $CACHE/dyld_shared_cache_$ARCH ] &&
 	# own -- a switch here would cost a 2.5 GB system.apfs rebuild and a re-upload every time it
 	# was flipped, and buy nothing a missing boot-arg does not already buy.
 	mkdir -p sysroot/System/Library/Extensions
-	ln -s /redwood/lib/HakiosMetal.bundle sysroot/System/Library/Extensions/HakiosMetal.bundle
+	ln -s /hakios/lib/HakiosMetal.bundle sysroot/System/Library/Extensions/HakiosMetal.bundle
 	# the OS cryptex: on a device a separate volume grafted at /System/Cryptexes/OS. It holds the dyld
 	# shared cache (dyld looks there first) and a few libraries and resources outside the cache.
 	mkdir -p sysroot/System/Cryptexes

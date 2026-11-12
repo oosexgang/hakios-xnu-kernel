@@ -202,7 +202,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	/*
 +	 * Boot-arg exec_swap=NAME:PATH: a program of that file name is run from PATH instead -- for a job whose
 +	 * definition is on the system image (BlueTool: Apple's knows no Qualcomm chip, "result 10", run w83o2; ours,
-+	 * /redwood/bin/bluetool, answers for the chip the kernel brought up)
++	 * /hakios/bin/bluetool, answers for the chip the kernel brought up)
 +	 */
 +	{
 +		static char swap[128];

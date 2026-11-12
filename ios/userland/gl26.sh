@@ -8,7 +8,7 @@ source ../xnu-env.sh
 O=$RN/userland/obj26
 DYN="xnu-clang -arch arm64e -isysroot ${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk -O1 -mios-version-min=16.0"
 [ -f obj/eagl_gen.h ] || ./mkeagl.py src/eagl_slots.txt ../xnu-deps/build/mesa/out/gl.xml ../xnu-deps/build/mesa/out/exported-gl.txt src/eagl.c > obj/eagl_gen.h
-$DYN -dynamiclib -install_name /redwood/lib/libhakios-gl.dylib -Iobj -framework CoreFoundation \
+$DYN -dynamiclib -install_name /hakios/lib/libhakios-gl.dylib -Iobj -framework CoreFoundation \
 	-framework IOKit -framework IOSurface -lobjc $O/libOSMesa.8.dylib -o $O/libhakios-gl.dylib src/eagl.c src/gl_osmesa.c
 $DYN -framework CoreFoundation -framework IOKit $O/libOSMesa.8.dylib -o $O/gl_test src/gl_test.c
 for f in $O/libhakios-gl.dylib $O/gl_test; do

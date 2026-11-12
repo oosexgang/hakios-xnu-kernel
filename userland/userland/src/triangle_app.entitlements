@@ -6,11 +6,11 @@
 	NOTHING IN THIS PORT NEEDS A SIGNATURE TO RUN. AMFI here is a stand-in that accepts every
 	signature and holds no trust cache (libkern/amfi/miniamfi.c), and the kernel is built
 	without config_enforce_signed_code, so an unsigned binary executes -- every program in
-	/redwood/bin is one. What a signature still buys is ENTITLEMENTS: they are read out of it
+	/hakios/bin is one. What a signature still buys is ENTITLEMENTS: they are read out of it
 	(libkern/amfi/miniamfi_entitlements.cpp) and nowhere else, so a process that wants one has
 	to be signed to hold it.
 
-	These three are insurance against the one thing an application has that a /redwood/bin
+	These three are insurance against the one thing an application has that a /hakios/bin
 	program does not: it is started FOR SpringBoard, by RunningBoard, and the daemons on that
 	path ask about a bundle's identity and its container. The port has already shown that an
 	application with no data container works -- Sileo and TrollStore Helper both launch from

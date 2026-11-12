@@ -359,7 +359,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `apfs_write_at` | apfs_write_at=N where in the file (default 0) |
 | `apfs_write_byte` | apfs_write_byte=N what to fill them with (default 0xa5) |
 | `apfs_write_len` | apfs_write_len=N how many bytes (default 4096, at most APFS_WRITE_MAX) |
-| `apfs_write_path` | apfs_write_path=/redwood/x the file in it, by path from the volume's root |
+| `apfs_write_path` | apfs_write_path=/hakios/x the file in it, by path from the volume's root |
 
 ### `bsd/dev/hakios_sparse.c`
 
@@ -448,7 +448,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `applog` | Bring-up aid, boot-arg applog=1: what applications and other programs started without a terminal say is worth reading here. |
 | `exec_env` | exec_env=NAME:VAR=VALUE: one more environment variable for the programs of that file name -- for jobs whose definition is on the system image and cannot be changed from ours (bluetoothd's BT_HCI_TRANSPORT=H4: launchd took /usr/sbin/bluetoothd and its own job file whatever our LaunchDaemons said, run… |
 | `exec_log` | exec_log=NAME: the whole path each program of that file name is started from (which binary runs) |
-| `exec_swap` | exec_swap=NAME:PATH: a program of that file name is run from PATH instead -- for a job whose definition is on the system image (BlueTool: Apple's knows no Qualcomm chip, "result 10", run w83o2; ours, /redwood/bin/bluetool, answers for the chip the kernel brought up) |
+| `exec_swap` | exec_swap=NAME:PATH: a program of that file name is run from PATH instead -- for a job whose definition is on the system image (BlueTool: Apple's knows no Qualcomm chip, "result 10", run w83o2; ours, /hakios/bin/bluetool, answers for the chip the kernel brought up) |
 | `inject_print` | inject_print=1: and dyld says what it loads (does it take our library?) |
 | `systrace` | — |
 | `xpcproxy_idversion` | xpcproxy_idversion=1: a new version, as XNU. |

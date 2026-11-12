@@ -3,5 +3,5 @@
 # Photo is switched off (its capture wants a video and sound around the shutter), the preview is left
 # to settle, and the shutter is pressed twice. The kernel's "camera:" lines say what the sensor did;
 # mediaserverd's "hakios: camera:" lines what the capture stack asked of the device.
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 10 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 22 tap 0.352 0.067 wait 4 tap 0.5 0.86 wait 12 tap 0.5 0.86 wait 25
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 10 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 22 tap 0.352 0.067 wait 4 tap 0.5 0.86 wait 12 tap 0.5 0.86 wait 25

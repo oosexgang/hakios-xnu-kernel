@@ -5,13 +5,13 @@
 # something to hear -- a tone of three seconds, the lock sound, a keyboard click, a fanfare -- which
 # a recording (rec_sound=N, ./xl sound) shows came through.
 /sbin/mount
-/redwood/bin/vol_ls fs /
-/redwood/bin/vol_ls ls /fw
-/redwood/bin/vol_ls sysctl kern.apfs_stats
-/redwood/bin/apfs_mmap_test read /usr/libexec 65536
-/redwood/bin/apfs_mmap_test mmap /usr/libexec
-/redwood/bin/apfs_mmap_test mmap /usr/libexec
-/redwood/bin/vol_ls sysctl kern.apfs_stats
-/redwood/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
-/redwood/bin/vol_ls sysctl kern.apfs_stats
+/hakios/bin/vol_ls fs /
+/hakios/bin/vol_ls ls /fw
+/hakios/bin/vol_ls sysctl kern.apfs_stats
+/hakios/bin/apfs_mmap_test read /usr/libexec 65536
+/hakios/bin/apfs_mmap_test mmap /usr/libexec
+/hakios/bin/apfs_mmap_test mmap /usr/libexec
+/hakios/bin/vol_ls sysctl kern.apfs_stats
+/hakios/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
+/hakios/bin/vol_ls sysctl kern.apfs_stats
 /bin/ps -A

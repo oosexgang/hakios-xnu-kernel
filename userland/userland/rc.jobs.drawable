@@ -36,7 +36,7 @@
 #   gpu=1              in XL_CMDLINE. Without it there is no Adreno to import into, and the
 #                      library says so by name; the test then prints NOT MEASURED and stops,
 #                      which is not a failure and must not be read as one.
-#   an image with GL=1 for /redwood/lib/libhakios-air.dylib, and it must be a library built
+#   an image with GL=1 for /hakios/lib/libhakios-air.dylib, and it must be a library built
 #                      AFTER rwa_texture_from_surface existed. An older one is the refusal
 #                      "the compiler library in this image has no rwa_texture_from_surface",
 #                      and that sentence means the image is stale, not that the path is wrong.
@@ -80,7 +80,7 @@
 #    WRONG: any of them silent, or 4352 refused. 4352 refused means the agreement between
 #    MINISURF_ROW_ALIGN (64) and a6xx's pitchalign (also 64) has broken on one side, and then
 #    no drawable can exist until it is found.
-/redwood/bin/drawable_test --refusals
+/hakios/bin/drawable_test --refusals
 #
 # 2. THE IMPORT, over a real IOSurface the size of the panel. In order, the log must hold:
 #
@@ -108,7 +108,7 @@
 #        is invisible to any test that reads back through the same path it wrote.
 #      - a texel comes back as another texel's value: the two sides disagree about the stride.
 #        The value says which texel it belongs to, so the arithmetic is in the log already.
-/redwood/bin/drawable_test 1080 2400
+/hakios/bin/drawable_test 1080 2400
 #
 # 3. THE SAME, SMALL, as a second sample from a second process. 64x64 is one page's worth of
 #    rows and a stride of 256 -- already aligned, so it tests the import and not the
@@ -116,7 +116,7 @@
 #    makes one GPU buffer per user client for a surface, so a second process is a second
 #    buffer over the same kind of memory, and a result that holds for only one of them would
 #    be about the client and not about the surface.
-/redwood/bin/drawable_test 64 64
+/hakios/bin/drawable_test 64 64
 #
 # HOW TO READ THE LOG AFTERWARDS (grep -a: the log has NUL bytes in it)
 #

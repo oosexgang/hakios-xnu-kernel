@@ -19,21 +19,21 @@
 #
 # What to read afterwards is in the stage 2 notes; the short of it is that the first ps must show
 # the process at all, and the second must show it still there.
-/redwood/bin/vol_ls ls /Applications/RE4.app
-/redwood/bin/metal_props on
+/hakios/bin/vol_ls ls /Applications/RE4.app
+/hakios/bin/metal_props on
 # the lock screen out of the way, as every job list that wants the home screen does
-/redwood/bin/rwtouch wait 20 swipe 0.5 0.985 0.5 0.3 250 wait 4
+/hakios/bin/rwtouch wait 20 swipe 0.5 0.985 0.5 0.3 250 wait 4
 # did LaunchServices take the bundle? If it did not, the open below fails and says so, and the
 # cause is in the bundle rather than in the game
-/redwood/bin/battery_test open re4://
+/hakios/bin/battery_test open re4://
 # 12 864 static initialisers run before main, and 192 MiB of __TEXT is faulted in a page at a time
 # out of a zlib-compressed RAM disk: this is the one step of the boot where minutes are plausible
 # and a short wait would prove nothing
-/redwood/bin/rwtouch wait 25
+/hakios/bin/rwtouch wait 25
 /bin/ps -A
-/redwood/bin/rwtouch wait 45
+/hakios/bin/rwtouch wait 45
 /bin/ps -A
 # whatever it wrote: a game that cannot find its data says so in a file more often than on a console
-/redwood/bin/vol_ls ls /private/var/mobile/Library/Caches
-/redwood/bin/rwtouch wait 30
+/hakios/bin/vol_ls ls /private/var/mobile/Library/Caches
+/hakios/bin/rwtouch wait 30
 /bin/ps -A

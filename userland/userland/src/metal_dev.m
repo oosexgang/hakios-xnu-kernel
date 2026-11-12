@@ -57,7 +57,7 @@
  * nothing is behind it. This program walks the same steps by hand instead, in its own
  * process, where a crash costs a few lines in a log.
  *
- * Run: /redwood/bin/metal_dev   (RC_JOBS=rc.jobs.metaldev)
+ * Run: /hakios/bin/metal_dev   (RC_JOBS=rc.jobs.metaldev)
  */
 
 #import <Foundation/Foundation.h>

@@ -10,13 +10,13 @@
 # The first minute and a half after the boot the four cores are busy with the start-up's own work
 # and an application started then takes much longer than it should (see rc.jobs.fps): the taps
 # wait for it to be over.
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
-/redwood/bin/rwtouch tap 0.151 0.358 wait 20 button home wait 8
-/redwood/bin/rwtouch tap 0.383 0.358 wait 20 button home wait 8
-/redwood/bin/rwtouch tap 0.614 0.481 wait 20
-/redwood/bin/rwtouch drag 0.5 0.995 0.5 0.62 600 2500 wait 8
-/redwood/bin/rwtouch notify com.hakios.layers wait 30
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
+/hakios/bin/rwtouch tap 0.151 0.358 wait 20 button home wait 8
+/hakios/bin/rwtouch tap 0.383 0.358 wait 20 button home wait 8
+/hakios/bin/rwtouch tap 0.614 0.481 wait 20
+/hakios/bin/rwtouch drag 0.5 0.995 0.5 0.62 600 2500 wait 8
+/hakios/bin/rwtouch notify com.hakios.layers wait 30
 # And what the wallpaper left on the volume for the frosted materials to take their bottom layer
 # from: PaperBoardUI asks its source for a snapshot or a blurred copy, by image or by file name.
 /var/jb/usr/bin/find /var -maxdepth 7 -iname "*allpaper*" -ls

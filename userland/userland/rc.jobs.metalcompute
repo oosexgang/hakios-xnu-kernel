@@ -11,19 +11,19 @@
 #
 # So: 16 kernels bind only buffers, 7 of those cannot end, 9 are here. Each runs in its own
 # process, so that one crash costs one kernel rather than the rest of the list.
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
 #
 # And one triangle, with one of Apple's own fragment shaders: clearFragment20 writes render
 # target 2 and is one of the 255 air_run has drawn and compared pixel by pixel, so there is
 # something to compare the Adreno's answer against. The pipeline is asked for with no vertex
 # function, which is the compiler library's cue to generate a pass-through stage over the
 # whole attachment -- the same road air_run itself draws by.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

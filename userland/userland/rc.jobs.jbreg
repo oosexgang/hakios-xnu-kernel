@@ -4,12 +4,12 @@
 # (RC_JOBS=rc.jobs.jbreg, FLASHBOOT=1 CRYPTEXES=flash, EXTRA=<a package with an application>.deb; with
 # systrace_name=lsd and OSLOG with com.apple.lsd for LaunchServices' side): the package installed by
 # dpkg, and its application registered by uicache, as Sileo does it after an install.
-/redwood/bin/sound_test springboard
+/hakios/bin/sound_test springboard
 /var/jb/bin/sh /var/jb/prep.sh
-/redwood/bin/rwtouch wait 40
-/var/jb/usr/bin/dpkg -i /redwood/bin/trollstorehelper.deb
+/hakios/bin/rwtouch wait 40
+/var/jb/usr/bin/dpkg -i /hakios/bin/trollstorehelper.deb
 /var/jb/usr/bin/ls -la /var/jb/Applications/TrollStorePersistenceHelper.app
 /var/jb/usr/bin/uicache -p /var/jb/Applications/TrollStorePersistenceHelper.app
-/redwood/bin/rwtouch wait 5
+/hakios/bin/rwtouch wait 5
 /var/jb/usr/bin/uicache -p /var/jb/Applications/TrollStorePersistenceHelper.app
-/redwood/bin/rwtouch wait 5
+/hakios/bin/rwtouch wait 5

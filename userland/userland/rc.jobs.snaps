@@ -5,7 +5,7 @@
 # PaperBoardUI takes such a picture from a file (PBUIURLBackedSnapshotSource). These listings say
 # which files those are: first every directory, then every file worth a picture. find comes from
 # the package manager's prefix, because the job runner starts a program without a shell.
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
 /var/jb/usr/bin/find /var/mobile -maxdepth 4 -type d -ls
 /var/jb/usr/bin/find /var/mobile -type f -size +60k -ls

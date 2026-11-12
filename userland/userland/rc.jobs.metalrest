@@ -11,13 +11,13 @@
 # nextSpanID reads used to land four bytes apart instead of two, which turned this input's
 # four lists into a cycle with no sentinel in it. PropagateParents, the same shape, now
 # finishes and changes nothing. If this does the same, the eleven are complete.
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
-/redwood/bin/air_run --zero --buffer 0@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 0@30=ffff010001000a000d000100ff --buffer 0@44=ffff02000200140017000100ff --buffer 0@58=ffff030003001e0021000100ff --buffer 1@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/air_run --zero --buffer 0@0=04000000000000000400000000000000ffff00000000000003000100ff --buffer 0@30=ffff010001000a000d000100ff --buffer 0@44=ffff02000200140017000100ff --buffer 0@58=ffff030003001e0021000100ff --buffer 1@0=0000010002000300 /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
 #
 # And the question docs/air.md section 5 answers one way and the module the other: with
 # zeros rowCount is 0, the guard `icmp ugt rowCount, tid` is false, the walk is never
 # entered and the kernel returns at once -- yet section 5 records three boots out of three
 # not finishing. It goes last because it is the one that can still hang.
-/redwood/bin/air_run --zero /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/air_run --zero /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax

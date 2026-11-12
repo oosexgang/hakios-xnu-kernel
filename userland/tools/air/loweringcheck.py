@@ -685,7 +685,7 @@ def wrap(s, n):
 def emit(outdir):
     """The pack/unpack modules as bitcode, plus the rc.jobs that runs them."""
     os.makedirs(outdir, exist_ok=True)
-    there = "/redwood/share/" + os.path.basename(os.path.normpath(outdir))
+    there = "/hakios/share/" + os.path.basename(os.path.normpath(outdir))
     manifest, greps, expect = [], [], []
     for case in BC_CASES:
         src = os.path.join(outdir, case["id"] + ".ll")
@@ -713,7 +713,7 @@ def emit(outdir):
         f.write(JOBS % dict(there=there, greps="".join(greps),
                             expect="\n".join(expect) + "\n"))
         for m in manifest:
-            f.write("/redwood/bin/air_run %s/%s.bc\n" % (there, m["id"]))
+            f.write("/hakios/bin/air_run %s/%s.bc\n" % (there, m["id"]))
     print("loweringcheck: %d modules in %s, with rc.jobs and manifest.json"
           % (len(manifest), outdir))
     print("loweringcheck: the greps that read its log, whatever carried it:")

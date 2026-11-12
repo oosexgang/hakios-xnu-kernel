@@ -48,7 +48,7 @@
  * those bytes were checked against our own AIR reader over all eleven functions of
  * AV1SW.metallib -- same lengths, same checksums (docs/metal.md 10.12). The front end that
  * reads them lives in Mesa, so the compiling and the dispatching are asked of
- * /redwood/lib/libhakios-air.dylib through the contract in tools/mesa/air/air_metal.h.
+ * /hakios/lib/libhakios-air.dylib through the contract in tools/mesa/air/air_metal.h.
  *
  * That library is loaded with dlopen rather than linked, for a measured reason: the device
  * object must exist even when there is no GPU. The port starts the Adreno only with the
@@ -734,7 +734,7 @@ mesa_available(void)
 		return mesa.handle != NULL;
 	}
 	tried = true;
-	mesa.handle = dlopen("/redwood/lib/libhakios-air.dylib", RTLD_NOW);
+	mesa.handle = dlopen("/hakios/lib/libhakios-air.dylib", RTLD_NOW);
 	if (mesa.handle == NULL) {
 		rw_print("no compiler library: %s\n", dlerror());
 		return false;
@@ -1209,7 +1209,7 @@ struct gem_close { uint32_t handle, pad; };
 #define RW_BISECT_PHASE 5
 
 static uint64_t rw_bisect_start(void);     /* boot-arg metal_bisect (see -runDraw:) */
-/* the names of metal_bisect_names, or of /redwood/bisect.txt (one a line), as "a,b,c"; "" if none */
+/* the names of metal_bisect_names, or of /hakios/bisect.txt (one a line), as "a,b,c"; "" if none */
 static const char *
 rw_bisect_names(void)
 {
@@ -1227,7 +1227,7 @@ rw_bisect_names(void)
 			for (size_t i = 0; at[i] && at[i] != ' ' && i < sizeof(names) - 1; i++) {
 				names[i] = at[i];
 			}
-		} else if (strstr(args, "metal_bisect=") != NULL && (f = fopen("/redwood/bisect.txt", "r")) != NULL) {
+		} else if (strstr(args, "metal_bisect=") != NULL && (f = fopen("/hakios/bisect.txt", "r")) != NULL) {
 			char line[256];
 			size_t n = 0;
 

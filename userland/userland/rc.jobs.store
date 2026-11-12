@@ -40,25 +40,25 @@
 # processes -- and each fetch is a command of its own, so that a dropped burst costs one line, not all
 # of them. The home screen is not drawn before about a minute either, and a tap before that is lost:
 # that is what emptied the first run of this file.
-/redwood/bin/rwtouch wait 55 swipe 0.5 0.985 0.5 0.3 250 wait 20
-/redwood/bin/net_test waitaddr en0 60
-/redwood/bin/net_test fetch https://bag.itunes.apple.com/bag.xml
+/hakios/bin/rwtouch wait 55 swipe 0.5 0.985 0.5 0.3 250 wait 20
+/hakios/bin/net_test waitaddr en0 60
+/hakios/bin/net_test fetch https://bag.itunes.apple.com/bag.xml
 # the account as it stands (setting it from here was tried and cannot work: the value does not keep,
 # AMS's local account being made fresh every boot and accountsd holding no iTunes account at all --
 # see src/store_test.m). The storefront is answered inside appstored instead, by the library
 # src/inject_store.c, which a build with STOREFRONT=1 puts there.
-/redwood/bin/store_test user 501 show
+/hakios/bin/store_test user 501 show
 # and only then the store, open long enough to time out (30 s) and try again
 # twice, because one tap at a fixed moment lands on an undrawn home screen often enough to void a
 # run: open, go home, open again. The second is a warm launch and a cleaner measurement anyway.
-/redwood/bin/rwtouch tap 0.615 0.59 wait 30 button home wait 5 tap 0.615 0.59 wait 40
+/hakios/bin/rwtouch tap 0.615 0.59 wait 30 button home wait 5 tap 0.615 0.59 wait 40
 # the store draws its welcome card first and waits there -- that is why nothing asks for content.
 # "Continue" is at the bottom; after it the Today page is what should load.
 # ... and the welcome card is only the first of the onboarding: after "Continue" comes the choice
 # about personalised ads, and "Turn Off" is the honest answer for a phone with no account at all.
-/redwood/bin/rwtouch tap 0.5 0.895 wait 25
+/hakios/bin/rwtouch tap 0.5 0.895 wait 25
 # ... and then simply wait, with the report ticking every fifteen seconds: whatever the Today tab
 # asks for after onboarding shows up in the task table with its status, length and type.
-/redwood/bin/rwtouch tap 0.5 0.962 wait 200
+/hakios/bin/rwtouch tap 0.5 0.962 wait 200
 /bin/ps -A
-/redwood/bin/rwtouch button home wait 6
+/hakios/bin/rwtouch button home wait 6

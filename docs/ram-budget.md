@@ -77,7 +77,7 @@ and `system.manifest` (mode/uid/gid/symlinks, used by `userland/tools/apfs/mkapf
 cache separately without `.symbols`. `userland/build.sh` (system image section) does the rest:
 
 - hard-links the selection into `sysroot`;
-- replaces LaunchDaemons with a link to `/redwood/LaunchDaemons`;
+- replaces LaunchDaemons with a link to `/hakios/LaunchDaemons`;
 - puts stage0 at `/sbin/launchd`;
 - adds the ADSP firmware (`fw-audio-renoir`), Sileo's `/jb`, and the cryptex with the cache at
   `System/Cryptexes/OS/System/Library/Caches/com.apple.dyld`;

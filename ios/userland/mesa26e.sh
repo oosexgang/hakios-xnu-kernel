@@ -34,7 +34,7 @@ needs_exe_wrapper = true
 INI
 BUILD=build-26.2.5-arm64e
 [ -f $BUILD/build.ninja ] || meson setup $BUILD mesa-26.2.5 --cross-file cross-arm64e.ini --wrap-mode=nofallback \
-	--prefix=/redwood --libdir=lib --buildtype=release -Db_ndebug=true \
+	--prefix=/hakios --libdir=lib --buildtype=release -Db_ndebug=true \
 	-Dplatforms= -Dgallium-drivers=softpipe,freedreno -Dfreedreno-kmds=msm -Dvulkan-drivers= -Dglx=disabled -Degl=disabled -Dgbm=disabled \
 	-Dosmesa=true -Dllvm=disabled -Dshared-glapi=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true \
 	-Dzstd=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
@@ -43,7 +43,7 @@ BUILD=build-26.2.5-arm64e
 ninja -C $BUILD src/gallium/targets/osmesa/libOSMesa.8.dylib > ninja-arm64e.log
 O=$RN/userland/obj26; mkdir -p $O
 llvm-strip -x -o $O/libOSMesa.8.dylib.tmp $BUILD/src/gallium/targets/osmesa/libOSMesa.8.dylib
-install_name_tool -id /redwood/lib/libOSMesa.8.dylib $O/libOSMesa.8.dylib.tmp
+install_name_tool -id /hakios/lib/libOSMesa.8.dylib $O/libOSMesa.8.dylib.tmp
 $RN/tools/pacstrip macho $O/libOSMesa.8.dylib.tmp $O/libOSMesa.8.dylib | tail -6
 rm $O/libOSMesa.8.dylib.tmp
 $THEOS/toolchain/linux/iphone/bin/ldid -S $O/libOSMesa.8.dylib

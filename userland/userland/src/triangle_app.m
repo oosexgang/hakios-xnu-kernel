@@ -3,7 +3,7 @@
  * one of Apple's daemons to ask this Metal driver for a frame.
  *
  * WHY IT EXISTS. Every Metal result this port has was measured inside backboardd,
- * SpringBoard, mediaserverd or a /redwood/bin diagnostic. Three things no daemon can
+ * SpringBoard, mediaserverd or a /hakios/bin diagnostic. Three things no daemon can
  * answer are answered here, and the three are independent:
  *
  *   1  does the driver work in an ORDINARY APPLICATION process -- a bundle in
@@ -81,7 +81,7 @@
  *                   our plug-in device and this process adds NOTHING. This is the road a
  *                   game takes, so it is the more interesting of the two.
  *   discovery OFF   MTLCreateSystemDefaultDevice() answers nil, and this program walks
- *                   discovery's steps 3, 4 and 5 itself out of /redwood/lib/HakiosMetal.bundle
+ *                   discovery's steps 3, 4 and 5 itself out of /hakios/lib/HakiosMetal.bundle
  *                   -- the bundle, the class, -initWithAcceleratorPort:, MTLAddDevice --
  *                   exactly as src/metal_drv_test.m does. Worth keeping, because then the only
  *                   Metal device in the system is the one made here, which makes every frame
@@ -141,7 +141,7 @@ extern id MTLCreateSystemDefaultDevice(void);
 static const char *rwt_metallib =
     "/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib";
 static const char *rwt_fragment = "clearFragment01";
-static const char *rwt_bundle = "/redwood/lib/HakiosMetal.bundle";
+static const char *rwt_bundle = "/hakios/lib/HakiosMetal.bundle";
 
 /* The two colours, as the bytes a BGRA8Unorm attachment must end up holding. */
 static const unsigned char rwt_clear_bgra[4]    = { 255, 0, 0, 255 };     /* pure blue */

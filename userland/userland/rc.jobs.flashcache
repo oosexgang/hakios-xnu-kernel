@@ -7,26 +7,26 @@
 # there -- every pass with its sum (3095b9e298a4df17, 978ed0d4dda1a256), only the totals printed.
 # The results go to a file and are shown at the end, where the kernel's log keeps them.
 sleep 25
-/redwood/bin/vol_ls sysctl kern.apfs_stats kern.hakios_memory >> /private/var/results
-/redwood/bin/vol_ls zero kern.apfs_stats
+/hakios/bin/vol_ls sysctl kern.apfs_stats kern.hakios_memory >> /private/var/results
+/hakios/bin/vol_ls zero kern.apfs_stats
 sleep 30
-/redwood/bin/vol_ls sysctl kern.apfs_stats kern.hakios_memory >> /private/var/results
-/redwood/bin/apfs_mmap_test -q drop /usr/sbin >> /private/var/results
-/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
-/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
-/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
-/redwood/bin/apfs_mmap_test -q drop /usr/sbin >> /private/var/results
-/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
-/redwood/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
-/redwood/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
-/redwood/bin/apfs_mmap_test -q drop /usr/libexec >> /private/var/results
-/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
-/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
-/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
-/redwood/bin/apfs_mmap_test -q drop /usr/libexec >> /private/var/results
-/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
-/redwood/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
-/redwood/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
-/redwood/bin/vol_ls sysctl kern.hakios_memory >> /private/var/results
+/hakios/bin/vol_ls sysctl kern.apfs_stats kern.hakios_memory >> /private/var/results
+/hakios/bin/apfs_mmap_test -q drop /usr/sbin >> /private/var/results
+/hakios/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/hakios/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/hakios/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/hakios/bin/apfs_mmap_test -q drop /usr/sbin >> /private/var/results
+/hakios/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/hakios/bin/apfs_mmap_test -q mmap /usr/sbin >> /private/var/results
+/hakios/bin/apfs_mmap_test -q read /usr/sbin 65536 >> /private/var/results
+/hakios/bin/apfs_mmap_test -q drop /usr/libexec >> /private/var/results
+/hakios/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/hakios/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/hakios/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/hakios/bin/apfs_mmap_test -q drop /usr/libexec >> /private/var/results
+/hakios/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/hakios/bin/apfs_mmap_test -q mmap /usr/libexec >> /private/var/results
+/hakios/bin/apfs_mmap_test -q read /usr/libexec 65536 >> /private/var/results
+/hakios/bin/vol_ls sysctl kern.hakios_memory >> /private/var/results
 /bin/ps -A >> /private/var/results
-/redwood/bin/vol_ls cat /private/var/results 262144
+/hakios/bin/vol_ls cat /private/var/results 262144

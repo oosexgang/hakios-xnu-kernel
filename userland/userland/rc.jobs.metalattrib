@@ -146,13 +146,13 @@
 #    and its own single vertex element: the road 255 pixel-compared draws went down. If it has
 #    changed, the layout work broke the path it was meant to leave alone, and nothing below is
 #    worth reading.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 2. THE MEASUREMENT. One line, because init splits on blanks and quotes nothing: the vertex
 #    library and the gated module are QuartzCore's, the fragment library is the positional
 #    argument, and the fragment function is named so that the default (clearFragment20, which
 #    writes a constant and would make every picture here identical) cannot be used by accident.
-/redwood/bin/metal_drv_test --draw-attrib --vertexlib /System/Library/Frameworks/QuartzCore.framework/default.metallib --vertex std_vert0_lpf --gated fixed_vert_lpf_spc --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-attrib --vertexlib /System/Library/Frameworks/QuartzCore.framework/default.metallib --vertex std_vert0_lpf --gated fixed_vert_lpf_spc --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 3. And the same over the HALF-PRECISION variants of the same two modules, which is the family
 #    the window server itself asked for (its one refused spec named downsample_blur_vert_lph).
@@ -175,4 +175,4 @@
 #    if its words differ from line 2's while line 2's are right, that is the varying's width
 #    and not the fetch, and the thing to do with it is a measurement of its own rather than a
 #    conclusion about the descriptor.
-/redwood/bin/metal_drv_test --draw-attrib --vertexlib /System/Library/Frameworks/QuartzCore.framework/default.metallib --vertex std_vert0_lph --gated fixed_vert_lph_spc --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-attrib --vertexlib /System/Library/Frameworks/QuartzCore.framework/default.metallib --vertex std_vert0_lph --gated fixed_vert_lph_spc --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

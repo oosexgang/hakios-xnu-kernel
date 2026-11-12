@@ -11,7 +11,7 @@
 # Python's own binary16 codec agrees with both; what none of that gives is a
 # GPU. These four are that measurement.
 #
-# Carried into /redwood/share/pack16 by build.sh EXTRA_SHARE. The directory's own name is in
+# Carried into /hakios/share/pack16 by build.sh EXTRA_SHARE. The directory's own name is in
 # the paths at the bottom of this file, so emit it under that name or
 # regenerate this file from the one you used:
 #   python3 tools/air/loweringcheck.py --emit <dir>
@@ -55,7 +55,7 @@
 #   be the LOW field; 22288 19072 3216 41360 is a pack that put the first
 #   element high.
 
-/redwood/bin/air_run /redwood/share/pack16/unpack_13_113.bc
-/redwood/bin/air_run /redwood/share/pack16/unpack_1_neg2.bc
-/redwood/bin/air_run /redwood/share/pack16/unpack_raw.bc
-/redwood/bin/air_run /redwood/share/pack16/pack_13_113.bc
+/hakios/bin/air_run /hakios/share/pack16/unpack_13_113.bc
+/hakios/bin/air_run /hakios/share/pack16/unpack_1_neg2.bc
+/hakios/bin/air_run /hakios/share/pack16/unpack_raw.bc
+/hakios/bin/air_run /hakios/share/pack16/pack_13_113.bc

@@ -55,7 +55,7 @@
  * returns the object, what has been shown is that this port can hold a Metal device, and
  * NOT that Metal can find one here. The two are reported separately for that reason.
  *
- * Run: /redwood/bin/metal_stubdev [CLASS] [--minimal]   (RC_JOBS=rc.jobs.metaldev)
+ * Run: /hakios/bin/metal_stubdev [CLASS] [--minimal]   (RC_JOBS=rc.jobs.metaldev)
  */
 
 #import <Foundation/Foundation.h>

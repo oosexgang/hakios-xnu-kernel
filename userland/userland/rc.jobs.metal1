@@ -7,14 +7,14 @@
 #
 # Batches because the loader keeps the first 256 KB and the last 1 MB of a boot's log and
 # drops the middle; a count read off a cut log is a lower bound pretending to be a number.
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_Clear
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_MinMax
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PopulateCube
-/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeLuma
-/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma1
-/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma2
-/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeLuma
-/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma1
-/redwood/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma2
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_Clear
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_MinMax
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba32float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PopulateCube
+/hakios/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeLuma
+/hakios/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma1
+/hakios/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma2
+/hakios/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeLuma
+/hakios/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma1
+/hakios/bin/metal_drv_test --texslots 0=3d:rgba16float,1=3d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma2

@@ -2,7 +2,7 @@
 # The home screen in edit mode (RC_JOBS=rc.jobs.jiggle, gpu=1): a long press on an empty place makes
 # the icons jiggle and puts the translucent minus on each of them. Then SpringBoard writes down the
 # layers it has on the screen (com.hakios.layers, see inject_sb.c), which names the badge's views.
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 8
-/redwood/bin/rwtouch hold 0.5 0.62 2000
-/redwood/bin/rwtouch wait 6 notify com.hakios.layers wait 10
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 8
+/hakios/bin/rwtouch hold 0.5 0.62 2000
+/hakios/bin/rwtouch wait 6 notify com.hakios.layers wait 10

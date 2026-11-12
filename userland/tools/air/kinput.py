@@ -947,7 +947,7 @@ def wrap(text, indent, width=92):
 def command(name, k):
     args = sum([b.args() for b in k["bufs"]], [])
     flags = ([k["texflags"]] if k.get("texflags") else []) + args
-    return "/redwood/bin/metal_drv_test %s %s %s" % (" ".join(flags), ON_DEVICE, name)
+    return "/hakios/bin/metal_drv_test %s %s %s" % (" ".join(flags), ON_DEVICE, name)
 
 
 def report(kernels, hexonly, jobs):

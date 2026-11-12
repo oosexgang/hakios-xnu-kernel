@@ -4,5 +4,5 @@
 # seconds (1000 Hz left, 440 Hz right), the lock sound, keyboard clicks four seconds apart (each one starts the
 # amplifiers anew: after three seconds of silence they are stopped), three clicks half a second apart (they
 # stay on), a fanfare. The kernel's "sound:" and "speaker:" lines say when the amplifiers started and stopped.
-/redwood/bin/sound_test springboard route wait 3 tone 3 wait 4 system 1100 wait 4 system 1104 wait 4 system 1104 wait 4 system 1104 wait 0.5 system 1104 wait 0.5 system 1104 wait 4 file /System/Library/Audio/UISounds/New/Fanfare.caf wait 5
+/hakios/bin/sound_test springboard route wait 3 tone 3 wait 4 system 1100 wait 4 system 1104 wait 4 system 1104 wait 4 system 1104 wait 0.5 system 1104 wait 0.5 system 1104 wait 4 file /System/Library/Audio/UISounds/New/Fanfare.caf wait 5
 /bin/ps -A

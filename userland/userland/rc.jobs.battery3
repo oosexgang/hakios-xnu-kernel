@@ -2,22 +2,22 @@
 # An hour of use before Settings > Battery is opened (with adsp=1): applications opened in turn -- Settings, Notes,
 # Calendar -- so that the power log has an hour of their use to show; then the battery page, scrolled, and Battery
 # Health & Charging, for screenshots; at the end what the power log has collected (battery_test powerlog).
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 20
-/redwood/bin/battery_test open prefs:root=General
-/redwood/bin/rwtouch wait 600
-/redwood/bin/battery_test open mobilenotes://
-/redwood/bin/rwtouch wait 600
-/redwood/bin/battery_test open calshow://
-/redwood/bin/rwtouch wait 600
-/redwood/bin/battery_test open prefs:root=DISPLAY
-/redwood/bin/rwtouch wait 600
-/redwood/bin/battery_test open mobilenotes://
-/redwood/bin/rwtouch wait 600
-/redwood/bin/battery_test open calshow://
-/redwood/bin/rwtouch wait 600
-/redwood/bin/battery_test open prefs:root=BATTERY_USAGE
-/redwood/bin/rwtouch wait 15 drag 0.5 0.85 0.5 0.35 1500 400 wait 4 drag 0.5 0.85 0.5 0.35 1500 400 wait 6
-/redwood/bin/battery_test open prefs:root=BATTERY_USAGE&path=BATTERY_HEALTH
-/redwood/bin/rwtouch wait 10
-/redwood/bin/battery_test powerlog
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 20
+/hakios/bin/battery_test open prefs:root=General
+/hakios/bin/rwtouch wait 600
+/hakios/bin/battery_test open mobilenotes://
+/hakios/bin/rwtouch wait 600
+/hakios/bin/battery_test open calshow://
+/hakios/bin/rwtouch wait 600
+/hakios/bin/battery_test open prefs:root=DISPLAY
+/hakios/bin/rwtouch wait 600
+/hakios/bin/battery_test open mobilenotes://
+/hakios/bin/rwtouch wait 600
+/hakios/bin/battery_test open calshow://
+/hakios/bin/rwtouch wait 600
+/hakios/bin/battery_test open prefs:root=BATTERY_USAGE
+/hakios/bin/rwtouch wait 15 drag 0.5 0.85 0.5 0.35 1500 400 wait 4 drag 0.5 0.85 0.5 0.35 1500 400 wait 6
+/hakios/bin/battery_test open prefs:root=BATTERY_USAGE&path=BATTERY_HEALTH
+/hakios/bin/rwtouch wait 10
+/hakios/bin/battery_test powerlog

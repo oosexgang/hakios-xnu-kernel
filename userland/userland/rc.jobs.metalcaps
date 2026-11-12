@@ -166,16 +166,16 @@
 # 1. The switch: the two registry properties, so MTLCreateSystemDefaultDevice() reaches this
 #    driver through all five steps of discovery the way an application does (10.14). Nothing
 #    persists -- the properties live in the registry and a boot without metal=1 is clean.
-/redwood/bin/metal_props on
+/hakios/bin/metal_props on
 #
 # 2. The sweep itself. It asks nothing that compiles or draws, so it is the one measurement in
 #    this tree that is about the ANSWERS and not about the work behind them.
-/redwood/bin/metal_caps
+/hakios/bin/metal_caps
 #
 # 3. And the class sweep afterwards, for one reason: it says in this boot's own log that the
 #    chain was alive and the device was ours, so the answers above are answers of this driver's
 #    and not of a device that failed to be created (10.17, 10.37).
-/redwood/bin/metal_drv_test --sweep
+/hakios/bin/metal_drv_test --sweep
 #
 # HOW TO READ THE LOG (the log has NUL bytes in it, so every grep needs -a):
 #

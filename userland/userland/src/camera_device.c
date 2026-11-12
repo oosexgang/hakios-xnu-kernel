@@ -1299,7 +1299,7 @@ load_tuning(struct isp *isp, const struct hakios_camera_frame *f)
 	for (size_t i = 0; i < sizeof(f->chip) && f->chip[i] != '\0'; i++) {
 		chip[i] = (char)tolower((unsigned char)f->chip[i]);
 	}
-	snprintf(path, sizeof(path), "/redwood/fw/camera-%s.isp", chip);
+	snprintf(path, sizeof(path), "/hakios/fw/camera-%s.isp", chip);
 	if (isp_load_tuning(isp, path)) {
 		say("the %s's colour tuning from %s: %u colour matrices' lights, %u lens shadings'", f->chip, path,
 		    isp->tuning->ccm.lights, isp->tuning->lsc.lights);

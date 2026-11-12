@@ -3,6 +3,6 @@
 # /dev/hakios-camera for the macro, the wide, the front and the ultra-wide camera in turn (HAKIOS_CAMERA_SENSOR),
 # 30 frames of each, and says what came of each and how long each change took; twice over. The kernel's "camera:"
 # lines say each sensor's packets and errors at the end of its frames.
-/redwood/bin/sound_test springboard
-/redwood/bin/camera_test cycle 30
-/redwood/bin/camera_test cycle 30
+/hakios/bin/sound_test springboard
+/hakios/bin/camera_test cycle 30
+/hakios/bin/camera_test cycle 30

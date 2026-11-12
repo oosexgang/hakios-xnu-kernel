@@ -8,10 +8,10 @@
 # merely deferred to a quiet moment.
 # find comes from the package manager's prefix, which init grafts onto /var/jb and which a boot can
 # come up without; our own vol_ls needs nothing and lists the places by hand, so both are asked.
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 210
-/redwood/bin/vol_ls ls /var/mobile/Library /var/mobile/Library/Caches /var/mobile/Library/Preferences
-/redwood/bin/vol_ls ls /var/containers/Data /var/mobile/Containers/Data /var/root/Library
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 210
+/hakios/bin/vol_ls ls /var/mobile/Library /var/mobile/Library/Caches /var/mobile/Library/Preferences
+/hakios/bin/vol_ls ls /var/containers/Data /var/mobile/Containers/Data /var/root/Library
 /var/jb/usr/bin/find /var -iname "*allpaper*" -ls
 /var/jb/usr/bin/find /var -iname "*oster*" -ls
 /var/jb/usr/bin/find /var/mobile -type f -size +40k -ls

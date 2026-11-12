@@ -3,7 +3,7 @@
 # preparation the bootstrap wants once per boot, the network, a fresh index, and the phone is yours
 # for the session (XL_SECS). What is installed lives in memory, as all of /private/var: gone at the
 # next boot.
-/redwood/bin/sound_test springboard
+/hakios/bin/sound_test springboard
 /var/jb/bin/sh /var/jb/prep.sh
-/redwood/bin/net_test waitaddr en0 60 resolve apt.procurs.us
+/hakios/bin/net_test waitaddr en0 60 resolve apt.procurs.us
 /var/jb/usr/bin/apt-get update

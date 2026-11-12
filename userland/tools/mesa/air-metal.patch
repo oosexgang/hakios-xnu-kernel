@@ -4,7 +4,7 @@ tools/mesa/air/air_metal.c is air_run's compute path -- a Metal function's LLVM 
 through the AIR frontend into a Gallium compute state and a grid on the Adreno -- behind
 the contract in tools/mesa/air/air_metal.h, which mentions nothing of NIR, Gallium or
 ir3: the Metal driver (userland/src/hakiosmetal.m) must not grow a dependency on Mesa's
-headers for it. On the device it is /redwood/lib/libhakios-air.dylib, which is where
+headers for it. On the device it is /hakios/lib/libhakios-air.dylib, which is where
 -newComputePipelineStateWithDescriptor: will compile the bitcode Metal hands it
 (docs/metal.md 10.12).
 
@@ -34,7 +34,7 @@ to provide shows up as a test that cannot be written.
 +if host_machine.system() == 'darwin'
 +  # the Metal driver links against this by name, so the name has to be where
 +  # tools/mk-mesa.sh installs it on the device
-+  hakios_air_link_args += '-Wl,-install_name,/redwood/lib/libhakios-air.dylib'
++  hakios_air_link_args += '-Wl,-install_name,/hakios/lib/libhakios-air.dylib'
 +endif
 +
 +libhakios_air = shared_library(

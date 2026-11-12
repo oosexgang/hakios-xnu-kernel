@@ -1445,7 +1445,7 @@ main(int argc, char **argv, char **envp)
 		return bootok() ? 0 : 1;
 	}
 	if (strcmp(what, "stamp") == 0) {
-		return stamp(argc > 2 ? argv[2] : "/private/var/redwood-stamp") ? 0 : 1;
+		return stamp(argc > 2 ? argv[2] : "/private/var/hakios-stamp") ? 0 : 1;
 	}
 	buffer = mmap(NULL, BUFFER, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	links = mmap(NULL, LINKS * sizeof(*links), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);

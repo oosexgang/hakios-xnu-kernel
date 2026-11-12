@@ -7,14 +7,14 @@
 #
 # Batches because the loader keeps the first 256 KB and the last 1 MB of a boot's log and
 # drops the middle; a count read off a cut log is a lower bound pretending to be a number.
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba32uint,1=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float,1=2d:rgba32float,2=2d:rgba32float,3=2d:rgba32float,4=2d:rgba32float,5=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPreProcess
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba32float,1=2d:rgba32float,2=2d:rgba32float,3=2d:rgba32float,4=2d:rgba32float,5=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPostProcess
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
-/redwood/bin/metal_drv_test --texslots 0=2d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax1
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba32uint,1=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba32float,1=2d:rgba32float,2=2d:rgba32float,3=2d:rgba32float,4=2d:rgba32float,5=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPreProcess
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba32float,1=2d:rgba32float,2=2d:rgba32float,3=2d:rgba32float,4=2d:rgba32float,5=2d:rgba32float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPostProcess
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
+/hakios/bin/metal_drv_test --texslots 0=2d:rgba16float /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax1
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2

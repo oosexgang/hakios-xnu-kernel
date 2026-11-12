@@ -34,7 +34,7 @@ cc -O2 -o ios/tools/pacstrip ios/tools/pacstrip.c -lcrypto
 ios/tools/pacstrip cache ios26/dyld-strip ios26/dyld/dyld_shared_cache_arm64e{,.[0-9]*}   # not .symbols/.atlas
 python3 ios/tools/fips26.py ios26/dyld-strip
 ios/userland/inj26.sh                      # our libraries, arm64e
-ios/userland/root26-ios.sh                 # /redwood image ios26/root26-ios.apfs, and the jobs ios26/jobs26
+ios/userland/root26-ios.sh                 # /hakios image ios26/root26-ios.apfs, and the jobs ios26/jobs26
 LAUNCHDAEMONS=ios26/jobs26 WORK=ios26/image-tree-prune \
     python3 ios/tools/mkimage26.py --prune ios26/system26-prune.apfs
 ```
@@ -69,7 +69,7 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
    (`pacstrip resign FILE...` does it again after a later edit).
 2. **"Non-system service tried to claim event stream".** iOS 26's launchd treats a job as a system
    service only when its plist was loaded from the system volume. Behind the 16.5 port's link to
-   `/redwood` no job was, and notifyd killed itself on `BUG IN LIBNOTIFY: Event publisher error`. The
+   `/hakios` no job was, and notifyd killed itself on `BUG IN LIBNOTIFY: Event publisher error`. The
    jobs are now part of the system image.
 3. **The restore environment.** launchd reads `rd=md0` in the boot-args as a restore ramdisk. It then runs
    only the restore boot tasks: no `keybagd --init`, no `usermanagerd --init`. Patch 0009 hides that word
@@ -80,7 +80,7 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
    `System/Library/xpc/launchd.plist`. mkimage26 writes one with our jobs, and `launchd_unsecure_cache=1`
    (a number: the loader parses it with strtoul) has it taken without the `.sig` and AMFI.
 6. **Platform binaries.** On a normal boot launchd panics at "unexpected exec of non-platform binary"
-   for our `/redwood/sbin/init`. The kernel's AMFI stand-in counts as platform a signature whose
+   for our `/hakios/sbin/init`. The kernel's AMFI stand-in counts as platform a signature whose
    CodeDirectory carries `CS_ADHOC`; `ldid -S` leaves the flags 0. root26-ios.sh signs everything with
    `ldid -Cadhoc` and keeps the entitlements.
 7. **Personas.** usermanagerd aborts without `/private/var/keybags/persona.kb` ("Daemon failed to load

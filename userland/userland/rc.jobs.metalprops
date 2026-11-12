@@ -10,17 +10,17 @@
 # conditions are asserts, so a daemon handed a device that cannot serve it does not degrade,
 # it aborts, and launchd restarts an aborting daemon -- a loop. Nothing persists: the
 # properties live only in the registry, so ./xl stop and a boot without metal=1 is a clean
-# machine, and /redwood/bin/metal_props off stops new processes taking the Metal road.
+# machine, and /hakios/bin/metal_props off stops new processes taking the Metal road.
 #
 # The last line asks Metal from a program that does not load our dylib, so the log says
 # whether the chain still works with the whole system running.
-/redwood/bin/metal_props show
-/redwood/bin/metal_props on
-/redwood/bin/metal_test
+/hakios/bin/metal_props show
+/hakios/bin/metal_props on
+/hakios/bin/metal_test
 #
 # And the counts, from a process that asks Metal for the system device the way the daemons do
 # -- no dlopen, no MTLAddDevice. Every class of the driver against every method its protocols
 # require, with "unanswered" meaning absent from the chain and an entry that refuses counted
 # as answered (docs/metal.md 10.17, 10.37). 865 required over eleven classes; 116 were absent
 # and 31 more were Apple's own abstract stubs, which abort exactly like a method nobody wrote.
-/redwood/bin/metal_drv_test --sweep
+/hakios/bin/metal_drv_test --sweep

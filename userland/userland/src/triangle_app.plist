@@ -24,8 +24,8 @@
 		AppIcon60x60@3x.png beside it. The icon is a triangle in the application's own
 		two colours, so the home screen states the prediction before anything is run.
 
-	  CFBundleURLTypes -> redwoodtriangle:
-		how the job list starts it. /redwood/bin/battery_test open redwoodtriangle://
+	  CFBundleURLTypes -> hakiostriangle:
+		how the job list starts it. /hakios/bin/battery_test open hakiostriangle://
 		asks SpringBoard to open it (SBSOpenSensitiveURLAndUnlock), which needs no icon
 		to be tapped and no icon position to be guessed. SpringBoard knows the scheme
 		because LaunchServices rebuilds its database by walking /Applications at every
@@ -84,7 +84,7 @@
 			<string>com.hakios.triangle</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>redwoodtriangle</string>
+				<string>hakiostriangle</string>
 			</array>
 		</dict>
 	</array>

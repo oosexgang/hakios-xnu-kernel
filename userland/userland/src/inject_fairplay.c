@@ -84,7 +84,7 @@
  * INTERPOSING CANNOT SEE A LIBSYSTEM-INTERNAL SYSCALL. For arguments to those, the instrument has to
  * be the kernel: systrace already prints the call and the return, and printing the sysctl MIB and
  * the __mac_syscall policy and request beside them is a small addition in the same place
- * (xnu/redwood.patch, systrace_report). That is the next instrument, and it wants a kernel build.
+ * (the kernel's systrace_report). That is the next instrument, and it wants a kernel build.
  * It mattered because this kernel's AMFI stand-in answers exactly two requests, 0x5a and 0x60, and
  * returns ENOPOLICY to every other (bsd/kern/kern_minimac.c), and a daemon refused there would be
  * refused invisibly. MEASURED, AMFI IS CLEARED, and by two roads at once.

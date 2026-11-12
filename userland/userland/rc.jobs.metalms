@@ -19,7 +19,7 @@
 #  2. that the six compile on the Adreno and that the refusal is now METAL'S RULE rather
 #     than this path's absence -- lines 4 to 9 for the first, 10 to 12 for the second.
 #     If any line prints "nothing in this path has bound a multisample texture", the
-#     library in /redwood/lib is older than the driver beside it and nothing else in the
+#     library in /hakios/lib is older than the driver beside it and nothing else in the
 #     run means anything (that is how a measurement was lost on the 21st: the driver
 #     compiled against a new header while the image held the old library).
 #  3. that a multisample texture WORKS on the Adreno. Not reached, and the obstacle is
@@ -39,12 +39,12 @@
 # hangs this GPU takes the whole boot with it, so every line above a hang stays a
 # measurement and the hang names itself. The cheap and isolated lines come first and the
 # three sweeps last for that reason. All of it needs gpu=1 and
-# /redwood/lib/libhakios-air.dylib; without either, line 1 says so and the rest repeat it.
+# /hakios/lib/libhakios-air.dylib; without either, line 1 says so and the rest repeat it.
 #
 # 1. The proven colour draw, first and unchanged. clearFragment20 over the generated quad
 #    into three RGBA32Uint attachments. It must print the four words it has always
 #    printed: 2458616957 2930221209 3401825461 3873429713.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 2. The proven TEXTURED draw: one 4x4 RGBA32Uint texture of air_run's texels bound to
 #    Apple's texturedFragment2DUInt. The generated vertex stage hands every fragment the
@@ -53,7 +53,7 @@
 #    as this machine's --draw. It is here because the multisample work rewrote the check
 #    every attachment of every draw passes through (attachment_shape_fits) and the
 #    creation path every texture passes through.
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DUInt --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DUInt --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 3. The depth draw of 10.30, which is the regression for that same attachment check with
 #    a DEPTH attachment under it -- the one case where it has two kinds of texture to
@@ -62,7 +62,7 @@
 #    readsDepth=YES writesDepth=YES readsStencil=NO writesStencil=NO with 0 methods
 #    unanswered, four draws of status 6 with the far one DISCARDED, the nearer one PASSED,
 #    the control DREW, and the depth buffer 0.5 0.5 0.25 0.75.
-/redwood/bin/metal_drv_test --draw-depth depth32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-depth depth32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 4-9. The six, one process each, and what these lines measure is the FRONT END: this is
 #    the single-draw path, which binds the 4x4 texture of --texslots and not what the
@@ -93,12 +93,12 @@
 #    A line that printed a status and a pixel would mean the binding check is not being
 #    made at all; a line with no pipeline and some other sentence names a translation this
 #    port has never been asked for before.
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DFloatMultisamplePoint --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DFloatMultisampleLinear --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DIntMultisample --texslots 0=2d:rgba32sint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DUIntMultisample --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DDepthMultisample --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --fragment texturedFragment2DStencilMultisample --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DFloatMultisamplePoint --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DFloatMultisampleLinear --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DIntMultisample --texslots 0=2d:rgba32sint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DUIntMultisample --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DDepthMultisample --texslots 0=2d:rgba32float /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --fragment texturedFragment2DStencilMultisample --texslots 0=2d:rgba32uint /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 10-12. The three sweep slices that reach the six through the DECLARATION, which is the
 #    only path in this harness that builds a multisample descriptor at all
@@ -142,6 +142,6 @@
 #    "30 drew, 0 refused, 0 got no pipeline, 1 could not be given the textures they
 #    declare". A sweep that drew one MORE than that would have drawn a multisample shader
 #    against a texture nothing filled, which is the one outcome worse than a refusal.
-/redwood/bin/metal_drv_test --draw-all 0 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw-all 60 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw-all 240 31 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-all 0 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-all 60 60 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-all 240 31 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

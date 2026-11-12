@@ -312,7 +312,7 @@ def emit(outdir):
     with open(os.path.join(outdir, "manifest.json"), "w") as f:
         json.dump(manifest, f)
 
-    there = "/redwood/share/" + os.path.basename(os.path.normpath(outdir))
+    there = "/hakios/share/" + os.path.basename(os.path.normpath(outdir))
     lines = []
     for m in manifest:
         lines.append("# %s must print %s --\n#   %s"
@@ -322,7 +322,7 @@ def emit(outdir):
     with open(os.path.join(outdir, "rc.jobs"), "w") as f:
         f.write(JOBS % dict(there=there, expect=body))
         for m in manifest:
-            f.write("/redwood/bin/air_run %s/%s.bc\n" % (there, m["id"]))
+            f.write("/hakios/bin/air_run %s/%s.bc\n" % (there, m["id"]))
     print("discardcheck: %d modules in %s, with rc.jobs and manifest.json"
           % (len(manifest), outdir))
     print("discardcheck: the greps that read its log, whatever carried it:")

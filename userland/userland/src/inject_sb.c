@@ -381,7 +381,7 @@ battery_post_notifications(void)
 
 /* ---- the lock screen's clock without a GPU ------------------------------------------------------- */
 
-#define HAKIOS_GL "/redwood/lib/libhakios-gl.dylib"
+#define HAKIOS_GL "/hakios/lib/libhakios-gl.dylib"
 
 /* Does the window server draw with OpenGL ES? The same question, asked the same way, as opengl_es() in inject.c. */
 static bool
@@ -1054,7 +1054,7 @@ control_center_fades(const char *arguments)
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
  */
-#define HAKIOS_TWEAK_LOADER    "/redwood/lib/libhakios-tweaks.dylib"
+#define HAKIOS_TWEAK_LOADER    "/hakios/lib/libhakios-tweaks.dylib"
 
 static void
 load_tweaks(void)

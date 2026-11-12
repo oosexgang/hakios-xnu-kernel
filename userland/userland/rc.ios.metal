@@ -13,8 +13,8 @@
 # built in a working copy where tools/mk-ath11k.sh has not run has no Wi-Fi driver in it (weak
 # stubs, bsd/dev/hakios_lx.c: "lx: THE DRIVER IS NOT BUILT IN"), which costs this experiment
 # nothing and costs a boot with wifi=1 everything.
-/redwood/bin/metal_props show
-/redwood/bin/metal_props on
+/hakios/bin/metal_props show
+/hakios/bin/metal_props on
 # the registry's own answer, from a program of Apple's that knows nothing about any of this
 /usr/sbin/ioreg -l -c IOAcceleratorES
 # and off again: the way out without a reboot, measured in the same run
@@ -29,5 +29,5 @@
 # It is run here, under RC=rc.ios.metal, for the reason 10.14 gives: launchd is never born,
 # so no daemon can ask Metal and meet a half-made device. The properties are removed again
 # on the line after it, so nothing outlives this list.
-/redwood/bin/metal_test
-/redwood/bin/metal_props off
+/hakios/bin/metal_test
+/hakios/bin/metal_props off

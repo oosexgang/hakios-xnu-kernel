@@ -4,12 +4,12 @@
 # opened the way a link opens them (battery_test open URL: SpringBoard is asked to open it), for screenshots of what
 # Safari shows; Safari's layers, application state and web views are said in between (com.hakios.layers, when
 # libhakios-sb.dylib is in it: INJECT with MobileSafari on its line).
-/redwood/bin/mg_test HasExtendedColorDisplay
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 10
-/redwood/bin/battery_test open https://yandex.ru
-/redwood/bin/rwtouch wait 8 notify com.hakios.layers wait 15 notify com.hakios.layers wait 7
+/hakios/bin/mg_test HasExtendedColorDisplay
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 10
+/hakios/bin/battery_test open https://yandex.ru
+/hakios/bin/rwtouch wait 8 notify com.hakios.layers wait 15 notify com.hakios.layers wait 7
 /bin/ps -A
-/redwood/bin/battery_test open https://example.com
-/redwood/bin/rwtouch wait 25
+/hakios/bin/battery_test open https://example.com
+/hakios/bin/rwtouch wait 25
 /bin/ps -A

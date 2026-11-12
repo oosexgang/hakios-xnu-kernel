@@ -1,5 +1,5 @@
 #!/bin/bash
-# The small image (/redwood) for an iOS 26 boot towards SpringBoard: darwin-renoir's root with our
+# The small image (/hakios) for an iOS 26 boot towards SpringBoard: darwin-renoir's root with our
 # arm64e libraries; and the launchd jobs, made from iOS 26's own plists (darwin-renoir's mkjobs.py: the
 # named jobs as they are, every other job with Mach services on demand only) into ios26/jobs26, for
 # the system image (LAUNCHDAEMONS=.../jobs26 mkimage26.py): iOS 26's launchd takes a job for a system
@@ -43,7 +43,7 @@ if [ -f $OBJ/HakiosAudio ]; then
 	cp "$(dirname "$RN")/userland/userland/src/audio_plugin.plist" $T/lib/HakiosAudio.driver/Info.plist
 fi
 # iOS 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
-# ("unexpected exec of non-platform binary: /redwood/sbin/init"); the kernel's AMFI stand-in takes a
+# ("unexpected exec of non-platform binary: /hakios/sbin/init"); the kernel's AMFI stand-in takes a
 # signature marked ad hoc (CodeDirectory flag CS_ADHOC) for one. darwin-renoir's programs are either
 # unsigned or signed by ldid -S, which leaves the flags 0: every Mach-O here is signed again with
 # -Cadhoc, keeping the entitlements it has.
@@ -145,14 +145,14 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 		"${f##*/}" "${f##*/}" >> $T/etc/var.skel
 done
 # PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: ios/userland/inject_poster.c)
-echo "/redwood/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
+echo "/hakios/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
 # ios/userland/inject_backlight.c)
-echo "/redwood/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
+echo "/hakios/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
 # The brightness slider (Control Center in SpringBoard, Settings) and Auto-Brightness, to the kernel's
 # hw.backlight; backboardd for CoreBrightness's own side (src: ios/userland/inject_brightness.c). It does
 # nothing where the kernel has no backlight (boot-arg backlight=0).
-echo "/redwood/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
+echo "/hakios/lib/libhakios-brightness.dylib SpringBoard backboardd Preferences" >> $T/etc/inject.conf
 # The kernel matches executable names, not the build template's @apps token.
 python3 - "$T/etc/inject.conf" "$IOS/rootfs" <<'PY'
 import pathlib, plistlib, sys
@@ -181,7 +181,7 @@ printf 'd\t755\t501\t501\t/private/var/mobile/Library/CoreDuet\nd\t755\t501\t501
 # CONSOLE_LOG="NAME ...": these programs get libhakios-console.dylib (standard error on the console; with
 # boot-arg exec_env=NAME,...:OS_ACTIVITY_DT_MODE=1 their os_log as well)
 if [ -n "${CONSOLE_LOG:-}" ]; then
-	echo "/redwood/lib/libhakios-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
+	echo "/hakios/lib/libhakios-console.dylib $CONSOLE_LOG" >> $T/etc/inject.conf
 fi
 # LOGGING_DEBUG="SUBSYSTEM ...": os_log of those subsystems at every level, Debug included (on the console
 # with boot-arg exec_env=NAME:OS_ACTIVITY_DT_MODE=1); /Library/Preferences is /private/var/preferences
@@ -203,14 +203,14 @@ else
 cat > $T/etc/rc.jobs <<'EOF'
 # iOS 26: towards SpringBoard
 /bin/ps -A
-/redwood/bin/net_test waitaddr en0 60
+/hakios/bin/net_test waitaddr en0 60
 /bin/ps -A
-/redwood/bin/net_test waitaddr en0 60
+/hakios/bin/net_test waitaddr en0 60
 /bin/ps -A
 EOF
 fi
 cd $DR/userland
 # the firmware directories (fw, fw-wifi-..., fw-audio-...) stay uncompressed: the kernel reads them as they lie
 plain=(); for d in "$T"/fw*/; do if [ -d "$d" ]; then plain+=(--plain "$(basename "$d")"); fi; done
-python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26-ios.apfs redwood=$T | tail -1
+python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26-ios.apfs hakios=$T | tail -1
 ls -la $IOS/root26-ios.apfs

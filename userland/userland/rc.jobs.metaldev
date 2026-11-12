@@ -16,7 +16,7 @@
 #
 # No GPU is needed for this: the service exists whether or not the Adreno came up, and
 # nothing here draws.
-/redwood/bin/metal_dev
+/hakios/bin/metal_dev
 #
 # Then the experiment metal_dev's answer made possible. Apple's IOGPUMetalDevice init
 # refused with an assertion -- it requires the subclass to conform to MTLDeviceSPI -- and
@@ -24,15 +24,15 @@
 # subclass, stubs every method those protocols require with one that prints its own name,
 # and lets Apple's initialisation interrogate it. The log is then the order of the
 # questions a driver of ours has to answer, measured rather than guessed.
-/redwood/bin/metal_stubdev IOGPUMetalDevice
+/hakios/bin/metal_stubdev IOGPUMetalDevice
 #
 # the same count for a direct subclass of _MTLDevice, which is the size of route A: how
 # many of the methods MTLDeviceSPI and MTLDevice require are answered by nothing in the
 # chain. (Its step 5 is expected to throw: _MTLDevice's init is the abstract stub.)
-/redwood/bin/metal_stubdev _MTLDevice
+/hakios/bin/metal_stubdev _MTLDevice
 #
 # the same against the legacy path, which refused by returning nil rather than by asserting
-/redwood/bin/metal_stubdev MTLIOAccelDevice
+/hakios/bin/metal_stubdev MTLIOAccelDevice
 #
 # And the experiment that decides the first milestone. Reversing MTLAddDevice gave a
 # contract of three methods and two protocol declarations for an object Metal will accept;
@@ -40,26 +40,26 @@
 # candidate featureProfile value, and then hands the survivor to Metal's own MTLAddDevice
 # and asks MTLCreateSystemDefaultDevice() for a device. Discovery is bypassed and said to
 # be bypassed; registration is not.
-/redwood/bin/metal_stubdev _MTLDevice --minimal
+/hakios/bin/metal_stubdev _MTLDevice --minimal
 #
 # And the same question asked of the real driver library rather than of classes assembled at
 # runtime: does a source-declared subclass of the private _MTLDevice link and load here, and
 # does Metal take it? (src/hakiosmetal.m, src/metal_drv_test.m)
-/redwood/bin/metal_drv_test
+/hakios/bin/metal_drv_test
 #
 # And the first dispatch worth trying: MetalFaceMask_InitMinMax takes exactly one device
 # buffer (24 bytes, read_write, `atomicMinMax`) and no textures or samplers, which is what
 # this driver can bind today; it also writes its buffer unconditionally, so an all-zero
 # result afterwards means the dispatch did not happen rather than that the kernel had
 # nothing to say. tools/air/kstruct.py sorted the corpus's 47 kernels for exactly this.
-/redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
 #
 # And the same driver reached the way Metal's own discovery reaches a plug-in: through
 # NSBundle, out of a flat unsigned bundle of ours. This is the one part of discovery that
 # cannot be settled by reading the loader -- whether -[NSBundle classNamed:] gives up our
 # class, since it tests that the class came out of that very bundle. Nothing is published to
 # the service, so Metal is not asked to find anything (docs/metal.md 10.14).
-/redwood/bin/metal_drv_test --bundle
+/hakios/bin/metal_drv_test --bundle
 #
 # and what the system believed about Metal before this, for the contrast
-/redwood/bin/metal_test
+/hakios/bin/metal_test

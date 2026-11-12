@@ -10,9 +10,9 @@
 # on softpipe that pair draws the interpolated picture (texel (0,0) at the near corner, texel
 # (3,3) at the far one). If it draws here and clearVertex does not, the fault is about a
 # program with no varyings, which is a narrow thing to go and look at.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
-/redwood/bin/metal_drv_test --draw --vertex clearVertex /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --vertex clearVertex /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # And the same draw with the texture seeded one row at a time, which is how this test did it
 # until now: four replaceRegion calls at a non-zero region origin. That is the second
@@ -21,4 +21,4 @@
 # anywhere. The two lines differ in nothing else, so whichever way they disagree names the
 # cause. The driver now also prints what it reads back out of the seeded texture, so the
 # answer does not have to be inferred from the drawn pixel at all.
-/redwood/bin/metal_drv_test --draw --seed-rows --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw --seed-rows --vertex texturedVertex2D --fragment texturedFragment2DUInt /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

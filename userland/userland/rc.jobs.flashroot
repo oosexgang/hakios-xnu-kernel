@@ -6,13 +6,13 @@
 # usr/sbin/mediaserverd 895037cd97f96801.
 /sbin/mount
 /bin/df
-/redwood/bin/vol_ls fs /
-/redwood/bin/vol_ls fs /private/preboot
-/redwood/bin/vol_ls ls /
-/redwood/bin/vol_ls ls /Applications
-/redwood/bin/vol_ls ls /System/Cryptexes/OS/System/Library/Caches/com.apple.dyld /redwood
-/redwood/bin/vol_ls cat /System/Library/CoreServices/SystemVersion.plist
-/redwood/bin/vol_ls hash /System/Library/CoreServices/SystemVersion.plist /usr/lib/dyld /usr/sbin/mediaserverd
-/redwood/bin/apfs_mmap_test mmap /usr/sbin
-/redwood/bin/apfs_mmap_test read /usr/sbin 65536
+/hakios/bin/vol_ls fs /
+/hakios/bin/vol_ls fs /private/preboot
+/hakios/bin/vol_ls ls /
+/hakios/bin/vol_ls ls /Applications
+/hakios/bin/vol_ls ls /System/Cryptexes/OS/System/Library/Caches/com.apple.dyld /hakios
+/hakios/bin/vol_ls cat /System/Library/CoreServices/SystemVersion.plist
+/hakios/bin/vol_ls hash /System/Library/CoreServices/SystemVersion.plist /usr/lib/dyld /usr/sbin/mediaserverd
+/hakios/bin/apfs_mmap_test mmap /usr/sbin
+/hakios/bin/apfs_mmap_test read /usr/sbin 65536
 /bin/ps -A

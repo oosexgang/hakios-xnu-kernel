@@ -6,6 +6,6 @@
 # its preview left running for 40 seconds (xl screenshot meanwhile), and then the camera is the hand's: the shutter,
 # the front camera, zoom, a tap to focus. The kernel's "camera:" lines say when the frames came and why they
 # stopped; mediaserverd's "hakios: camera:" lines what the capture stack asked of the device.
-/redwood/bin/sound_test springboard
-/redwood/bin/camera_avtest
-/redwood/bin/rwtouch wait 10 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 40
+/hakios/bin/sound_test springboard
+/hakios/bin/camera_avtest
+/hakios/bin/rwtouch wait 10 swipe 0.5 0.985 0.5 0.3 200 wait 6 tap 0.845 0.36 wait 40

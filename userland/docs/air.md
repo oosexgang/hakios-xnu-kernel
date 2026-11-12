@@ -2390,12 +2390,12 @@ Three references, each independent of the translator:
 
    **The reason this took a night longer than it needed to was a sentence in this document, and
    it was wrong.** It said that "getting that directory into the boot image is the flash-root
-   machinery of subsystem (2), which this work is not supposed to touch". It is not. `/redwood/share`
+   machinery of subsystem (2), which this work is not supposed to touch". It is not. `/hakios/share`
    already existed and already carried a data file that a test reads (`pattern.bin`, which `init`
    verifies through `read()` and `mmap()`), and `EXTRA` already carried arbitrary host files into
-   `/redwood/bin`. `EXTRA_SHARE` is ten lines of `build.sh`. A boundary the brief drew for good
+   `/hakios/bin`. `EXTRA_SHARE` is ten lines of `build.sh`. A boundary the brief drew for good
    reasons had been reached for as the reason not to look into something, and the check that would
-   have cost a minute — reading what `/redwood/share` is for — was never made. A constraint is not
+   have cost a minute — reading what `/hakios/share` is for — was never made. A constraint is not
    evidence about a thing it does not cover.
 
    **What the first run on the phone actually found was in the harness, not the GPU**
@@ -2409,7 +2409,7 @@ Three references, each independent of the translator:
    therefore comparable without the manifest and without a shell.
 
    The other 98 of the 100 modules carried did not run, because the job list ended with
-   `/bin/sh /redwood/share/airops/run.sh` and the answer was
+   `/bin/sh /hakios/share/airops/run.sh` and the answer was
    **`/bin/sh: No such file or directory`, status 127. iOS 16.5's own root has no shell at all**
    — `/bin` holds `df` and `ps`, and nothing else. The `/var/jb/bin/sh` that `rc.jobs.jb` and
    `rc.jobs.sileo` run belongs to the package manager's prefix, which only a `JB=1` image carries.
@@ -2925,7 +2925,7 @@ Mesa cross build (`AIR=1 tools/mk-mesa.sh`), so it links Gallium's own static li
 the Adreno itself — `drmOpenWithType("msm", …)` through `tools/mesa/hakios-drm`, then
 `fd_drm_screen_create_renderonly()`, exactly as `osmesa_create_gpu_screen()` does. It needs
 nothing exported from `libOSMesa` and does not load it: a 9.8 MB arm64 Mach-O against libSystem,
-libz and IOKit alone. `userland/build.sh` puts it in `/redwood/bin`, and `rc.jobs.air` runs it.
+libz and IOKit alone. `userland/build.sh` puts it in `/hakios/bin`, and `rc.jobs.air` runs it.
 
 The same source takes the GPU where there is one and falls back to software where there is not,
 so it is the binary tested on this machine — not a variant of it. Its first line says which it

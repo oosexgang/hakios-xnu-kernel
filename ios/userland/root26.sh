@@ -21,5 +21,5 @@ cd $DR/userland
 M=; [ -f obj/apfs-root-source/manifest ] && M=,manifest=obj/apfs-root-source/manifest
 # the firmware directories (fw, fw-wifi-..., fw-audio-...) stay uncompressed: the kernel reads them as they lie
 plain=(); for d in "$T"/fw*/; do if [ -d "$d" ]; then plain+=(--plain "$(basename "$d")"); fi; done
-python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26.apfs redwood=$T$M | tail -1
+python3 ../tools/apfs/mkapfs.py -z "${plain[@]}" -o $IOS/root26.apfs hakios=$T$M | tail -1
 ls -la $IOS/root26.apfs

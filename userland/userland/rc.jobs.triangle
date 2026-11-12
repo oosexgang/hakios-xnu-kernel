@@ -7,7 +7,7 @@
 # runs two different processes:
 #
 #   1  DOES THE DRIVER WORK OUTSIDE APPLE'S DAEMONS. Every Metal result this port has was
-#      measured inside backboardd, SpringBoard, mediaserverd or a /redwood/bin diagnostic.
+#      measured inside backboardd, SpringBoard, mediaserverd or a /hakios/bin diagnostic.
 #      An application is a different process with a different launch path, a different user
 #      (mobile) and UIKit above it, and nobody has ever tried one.
 #   2  DOES THE DRAWABLE WORK. -[CAMetalLayer nextDrawable] asks a device exactly one thing,
@@ -22,7 +22,7 @@
 # and src/triangle_app.m asks Metal FIRST and only builds its own when Metal has none:
 #
 #   discovery ON    MetalPluginName on the IOAcceleratorES service (boot-arg metal=1 and
-#                   /redwood/bin/metal_props on). MTLCreateSystemDefaultDevice() answers our
+#                   /hakios/bin/metal_props on). MTLCreateSystemDefaultDevice() answers our
 #                   plug-in device and the application adds NOTHING. THIS IS THE ROAD A GAME
 #                   TAKES, so it is the more interesting of the two and the one to prefer.
 #   discovery OFF   MTLCreateSystemDefaultDevice() answers nil and the application walks
@@ -70,7 +70,7 @@
 #                      its own inputs are newer or when SYSTEM=1 says so. Without it the boot
 #                      runs the old image, the application is not there, and only step 5 (the --layer line) says
 #                      anything.
-#                      GL=1 for /redwood/lib/libhakios-air.dylib -- no compiler library, no
+#                      GL=1 for /hakios/lib/libhakios-air.dylib -- no compiler library, no
 #                      pipeline, and the driver says so by name. build.sh now hashes
 #                      tools/mesa/air/ against $M/built-from-air and rebuilds it when they
 #                      differ, so the stale-library trap of logs/235006-run.log (docs/metal.md
@@ -105,7 +105,7 @@
 #                      buffer; touchscreen=1 because the lock screen is swiped away below.
 #                      NO -v, so the kernel's own console does not write on the panel over the
 #                      picture.
-#                      WITH metal=1 IN THE LINE, KEEP /redwood/bin/metal_props on IN STEP 1a
+#                      WITH metal=1 IN THE LINE, KEEP /hakios/bin/metal_props on IN STEP 1a
 #                      BELOW: that is the discovery-on road, and it is the one worth measuring.
 #                      Without metal=1 the metal_props line answers 0xe00002c7, the properties
 #                      stay unset, and the application takes the other road and says so.
@@ -273,7 +273,7 @@
 #    PkgInfo and the two icons -- all REAL FILES owned by root:wheel (vol_ls leaves out "." and
 #    ".."). A symbolic link here is a bundle LaunchServices will refuse ("Unable to register");
 #    nothing here at all means the system image is the old one, and then only the --layer step says anything.
-/redwood/bin/vol_ls ls /Applications/HakiosTriangle.app
+/hakios/bin/vol_ls ls /Applications/HakiosTriangle.app
 #
 # 1a. METAL'S OWN DISCOVERY, SWITCHED ON. Without this the registry has no MetalPluginName and
 #     CoreAnimation keeps OpenGL ES: the boot of 22 October 01:39 had camtl=1 and still logged
@@ -287,28 +287,28 @@
 #     metal_profile=1 claims Apple2, and the boot of 01:18 had SpringBoard alive with it. So
 #     THIS boot is the first that can have both a window server on Metal and an application on
 #     it, and if SpringBoard aborts again that pairing is what the log is about.
-/redwood/bin/metal_props on
+/hakios/bin/metal_props on
 #
 # 2. The lock screen out of the way, the way rc.jobs.unlock does it, and time for SpringBoard
 #    to have finished coming up. Forty seconds is what rc.jobs.launch waits for the same thing.
-/redwood/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 250 wait 6
+/hakios/bin/rwtouch wait 40 swipe 0.5 0.985 0.5 0.3 250 wait 6
 #
 # 3. THE APPLICATION, launched the way a link launches one: SpringBoard is asked to open the
-#    bundle's own URL scheme (src/triangle_app.plist, CFBundleURLTypes -> redwoodtriangle).
+#    bundle's own URL scheme (src/triangle_app.plist, CFBundleURLTypes -> hakiostriangle).
 #    This needs no icon to be tapped and no icon position to be guessed, and SpringBoard knows
 #    the scheme because LaunchServices rebuilt its database by walking /Applications at boot.
 #
 #    IF THIS LINE SAYS "it REFUSES", the launch can still be done by hand and the run is not
 #    wasted: the icon is a blue square with an orange triangle in its lower left corner -- the
 #    same picture the application draws -- and tapping it gives exactly the same log lines.
-/redwood/bin/battery_test open redwoodtriangle://
+/hakios/bin/battery_test open hakiostriangle://
 #
 # 4. Who is running, from a program of Apple's that knows nothing about any of this. The list
 #    must have a HakiosTriangle in it; if it does not, SpringBoard took the URL and the
 #    process died before exec, and the kernel's own lines above are where to look.
 #
 #    TAKE THE SCREENSHOT ANY TIME AFTER THIS LINE: ./xl screenshot logs/triangle.png
-/redwood/bin/rwtouch wait 20
+/hakios/bin/rwtouch wait 20
 /bin/ps -A
 #
 # 5. THE DRAWABLE AGAIN, IN A PROCESS WITH NO WINDOW, and the ORDER HERE IS THE ONE DECISION IN
@@ -344,12 +344,12 @@
 #    never been done here, and the CAImageQueue a drawable is registered in is the layer's. If
 #    this line dies, the last "triangle: step:" line names the call, and nothing the
 #    application already measured is lost, which is the other half of why it runs last.
-/redwood/bin/triangle_app --layer
+/hakios/bin/triangle_app --layer
 #
 # 6. And then nothing but time, so that the application keeps repainting and the screenshot can
 #    be taken again -- once while the application is alone on the GPU and once after step 5 has
 #    also used it, which is worth having as two photographs rather than one.
-/redwood/bin/rwtouch wait 180
+/hakios/bin/rwtouch wait 180
 /bin/ps -A
 #
 # ------------------------------------------------------------------------------------------
@@ -360,7 +360,7 @@
 # of the log is a RING, and it is not in chronological order once it has wrapped. If this
 # application's lines are missing ALTOGETHER -- not even "triangle: start:" -- check for a wrap
 # before concluding anything: if lines stamped later in the boot stand ABOVE lines stamped
-# earlier, or if the job echoes ("$ /redwood/bin/...") stop partway down, then the buffer
+# earlier, or if the job echoes ("$ /hakios/bin/...") stop partway down, then the buffer
 # wrapped and the absence means nothing. That is exactly what logs/055044-run.log is: built
 # without QUIET=1, 1321 of its console lines are launchd's accounting from the single second
 # 05:50:45, the echoes stop after the third job line, and not one line of this application

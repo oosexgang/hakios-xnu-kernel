@@ -36,7 +36,7 @@
 #
 #   the image          CRYPTEXES=flash SYSTEM=1 GL=1 REST=1 QUIET=1 \
 #                        RC_JOBS=rc.jobs.metalvertexdesc ./build.sh
-#                      GL=1 for /redwood/lib/libhakios-air.dylib (the compiler library, which
+#                      GL=1 for /hakios/lib/libhakios-air.dylib (the compiler library, which
 #                      must be rebuilt from this tree: air_metal.h grew two arrays in the middle
 #                      of rwa_render_shape and the driver's own copy grew with them -- a driver
 #                      built against one shape and a library built against the other read a
@@ -136,7 +136,7 @@
 #    element, which is the path 255 pixel-compared draws went through. If it has changed, the
 #    layout work broke the road it was supposed to leave alone, and nothing below is worth
 #    reading.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 2. THE NEW REFUSAL, BY NAME, from a program of ours rather than from the window server:
 #    metal_drv_test builds a pipeline with a supplied vertex function and NO vertexDescriptor
@@ -151,7 +151,7 @@
 #
 #    if it still says "carries no vertex attribute layout": the image's libhakios-air.dylib is
 #    older than this driver and the two must be rebuilt together.
-/redwood/bin/metal_drv_test --draw --vertex downsample_blur_vert_lph --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
+/hakios/bin/metal_drv_test --draw --vertex downsample_blur_vert_lph --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
 #
 # 3. And the same for a module whose attributes are GATED by function constants
 #    (fixed_vert_lph_spc: five attributes, three of them behind vtx_attr_has_texcoords and
@@ -160,16 +160,16 @@
 #    gated one, because a pipeline whose constants make the predicate false may legally configure
 #    nothing at that index. A refusal naming texcoord0, texcoord1 or point_size would mean the
 #    runtime is demanding a binding the API does not owe it.
-/redwood/bin/metal_drv_test --draw --vertex fixed_vert_lph_spc --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
+/hakios/bin/metal_drv_test --draw --vertex fixed_vert_lph_spc --fragment upsample_frag_lph /System/Library/Frameworks/QuartzCore.framework/default.metallib
 #
 # 4. The switch, so that iOS's own daemons take the Metal road and the window server reaches
 #    this driver (10.14, rc.jobs.metalprops): metal_props puts MetalPluginName and
 #    MetalPluginClassName on the IOAcceleratorES service, and from that moment every process
 #    that asks Metal composes HakiosMetal.bundle. Nothing persists -- the properties live in the
 #    registry, and a boot without metal=1 is a clean machine.
-/redwood/bin/metal_props on
+/hakios/bin/metal_props on
 #
 # 5. and the class sweep from a process that asks Metal the way the daemons do, which is here
 #    for one reason: it proves the chain is alive in THIS boot before the window server's own
 #    lines are read as evidence about it (10.17, 10.37).
-/redwood/bin/metal_drv_test --sweep
+/hakios/bin/metal_drv_test --sweep

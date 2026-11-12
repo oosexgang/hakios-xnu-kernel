@@ -20,7 +20,7 @@
 #   gpu=1              in XL_CMDLINE, or there is no Adreno and no compiler library
 #                      answer; the driver then says so by name and every line below is
 #                      NOT MEASURED rather than a failure.
-#   GL=1 REST=1        in the image, so that /redwood/lib/libhakios-air.dylib is in it,
+#   GL=1 REST=1        in the image, so that /hakios/lib/libhakios-air.dylib is in it,
 #                      and it must be a library built from THIS commit: the encoder's
 #                      records live in that library, and an older one has no
 #                      rwa_argbuf_encoded_members (metal_drv_test says so by name and
@@ -79,14 +79,14 @@
 #     matters to the window server.
 #
 # (the full path on every line: nothing here promises these go through a shell)
-/redwood/bin/metal_drv_test --argbuf /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --argbuf /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 # The same three again, in a SECOND process of the same boot. Not a repeat for its own
 # sake: the refusals this work replaces were the window server's, every line of this
 # driver now carries the process that wrote it, and two pids in one log is the cheapest
 # way to see that the prefix is per process and not per library. The library is the same
 # one -- clearFragment20 is in it, and AV1SW.metallib has no fragment shader at all, so
 # asking that one would measure nothing and say so.
-/redwood/bin/metal_drv_test --argbuf /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --argbuf /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # HOW TO READ THE LOG (logs have NUL bytes, so grep -a always):
 #

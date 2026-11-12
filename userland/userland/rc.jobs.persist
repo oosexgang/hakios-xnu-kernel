@@ -8,16 +8,16 @@
 # flash when the kernel says the run is ending -- which is the point: a run that was never told to
 # save keeps what it wrote all the same. Run it twice over, with ./xl reboot in between; the second
 # run's output holds the first run's line and the first run's seconds.
-/redwood/bin/var_store show
-/redwood/bin/vol_ls fs /private/var
-/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
-/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
-/redwood/bin/var_store stamp /private/var/redwood-stamp
+/hakios/bin/var_store show
+/hakios/bin/vol_ls fs /private/var
+/hakios/bin/vol_ls cat /private/var/hakios-stamp 4096
+/hakios/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/hakios/bin/var_store stamp /private/var/hakios-stamp
 sleep 150
-/redwood/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
-/redwood/bin/vol_ls ls /private/var/mobile/Library
-/redwood/bin/vol_ls cat /private/var/redwood-stamp 4096
-/redwood/bin/var_store show
+/hakios/bin/vol_ls ls /private/var/mobile/Library/SpringBoard
+/hakios/bin/vol_ls ls /private/var/mobile/Library
+/hakios/bin/vol_ls cat /private/var/hakios-stamp 4096
+/hakios/bin/var_store show
 # (what the saver then did, and how many writes went into darwin, is at the end of the run: the
 #  kernel's "var_store: the run is ending" and the loader's "ufs: N writes into darwin ... read
 #  back the same; K refused")

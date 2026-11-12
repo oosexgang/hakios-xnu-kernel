@@ -19,7 +19,7 @@ clang -fobjc-arc -O1 -g -Wall -Wno-unused-variable -I"$ROOT/tools/mesa/air" \
 CASE=glasscase; [ "$BUILD" = build-lp ] && CASE=glasscase-lp
 clang -O1 -g -Wall -I"$ROOT/tools/mesa/air" "$ROOT/tools/air/glasscase.c" \
 	-L"$LIB" -lhakios-air -Wl,-rpath,"$LIB" -Wl,-headerpad_max_install_names -o "$OUT/$CASE"
-# (the library's install name is the phone's /redwood/lib path: point the tools at the host build)
-install_name_tool -change /redwood/lib/libhakios-air.dylib "$LIB/libhakios-air.dylib" "$OUT/$NAME"
-install_name_tool -change /redwood/lib/libhakios-air.dylib "$LIB/libhakios-air.dylib" "$OUT/$CASE"
+# (the library's install name is the phone's /hakios/lib path: point the tools at the host build)
+install_name_tool -change /hakios/lib/libhakios-air.dylib "$LIB/libhakios-air.dylib" "$OUT/$NAME"
+install_name_tool -change /hakios/lib/libhakios-air.dylib "$LIB/libhakios-air.dylib" "$OUT/$CASE"
 echo "$OUT/$NAME $OUT/$CASE"

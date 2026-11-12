@@ -9,4 +9,4 @@
 # One process for the whole library on purpose: the loader keeps the first 256 KB and the last
 # 1 MB of a boot's log and drops the middle, so 271 processes would lose the middle of their own
 # table.
-/redwood/bin/metal_drv_test --draw-all /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw-all /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

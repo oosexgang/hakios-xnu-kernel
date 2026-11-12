@@ -7,7 +7,7 @@
  * the loader serves block by block as the partition "dsu" (ufs=2; the kernel's /dev/ufs_dsu,
  * bsd/dev/hakios_ufs.c): only what is read comes off the storage, so the system can be as big as
  * the DSU slot (15 GiB) instead of what fits in the kernel's memory window. This program mounts that
- * volume read only on /flash, makes it the root -- this image goes to /redwood, where the system
+ * volume read only on /flash, makes it the root -- this image goes to /hakios, where the system
  * volume has the directory stage0 mounts it on otherwise (src/stage0.c) -- and runs init from there,
  * as stage0 does: from then on all is as in a boot from the system image in memory.
  */
@@ -16,8 +16,8 @@
 int
 main(int argc, char **argv, char **envp)
 {
-	char *init_argv[] = { "/redwood/sbin/init", NULL };
-	static const char switch_to[] = "/flash redwood";
+	char *init_argv[] = { "/hakios/sbin/init", NULL };
+	static const char switch_to[] = "/flash hakios";
 	int fd = open("/dev/console", O_RDWR, 0), tries;
 
 	(void)argc, (void)argv;
@@ -41,7 +41,7 @@ main(int argc, char **argv, char **envp)
 		printf("stage0dsu: switching the root: %s\n", strerror(errno));
 	} else {
 		chdir("/");
-		printf("stage0dsu: the system volume is the root, this image on /redwood\n");
+		printf("stage0dsu: the system volume is the root, this image on /hakios\n");
 		execve(init_argv[0], init_argv, envp);
 		printf("stage0dsu: cannot run %s: %s\n", init_argv[0], strerror(errno));
 	}

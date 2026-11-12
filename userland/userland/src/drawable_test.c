@@ -29,7 +29,7 @@
  *
  * WHAT IT NEEDS: a kernel booted with gpu=1 (without it the library has no GPU to import
  * into and says so by name, which this program prints and reports as not-measured rather
- * than as a failure), and /redwood/lib/libhakios-air.dylib in the image (GL=1).
+ * than as a failure), and /hakios/lib/libhakios-air.dylib in the image (GL=1).
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOSurface/IOSurfaceRef.h>
@@ -69,7 +69,7 @@ static struct {
 static int
 open_library(void)
 {
-	mesa.handle = dlopen("/redwood/lib/libhakios-air.dylib", RTLD_NOW);
+	mesa.handle = dlopen("/hakios/lib/libhakios-air.dylib", RTLD_NOW);
 	if (mesa.handle == NULL) {
 		printf("drawable_test: NOT MEASURED: no compiler library: %s\n", dlerror());
 		return -1;

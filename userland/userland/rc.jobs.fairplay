@@ -25,9 +25,9 @@
 #   XL_CMDLINE="root_apfs=ufs_darwin ufs=2 ufs_native=1 bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 \
 #               adsp=1 wifi=1" XL_SECS=260 ./xl run
 # built with CRYPTEXES=flash FLASHBOOT=1 PREBUILT=1 REST=1 RC_JOBS=rc.jobs.fairplay OSLOG=com.apple.fairplayd.H2
-/redwood/bin/rwtouch wait 32 swipe 0.5 0.985 0.5 0.3 250 wait 10
+/hakios/bin/rwtouch wait 32 swipe 0.5 0.985 0.5 0.3 250 wait 10
 /bin/ps -A
-/redwood/bin/rwtouch tap 0.615 0.59 wait 30 button home wait 6
-/redwood/bin/rwtouch tap 0.385 0.59 wait 30 button home wait 6
-/redwood/bin/rwtouch tap 0.27 0.18 wait 30 button home wait 6
+/hakios/bin/rwtouch tap 0.615 0.59 wait 30 button home wait 6
+/hakios/bin/rwtouch tap 0.385 0.59 wait 30 button home wait 6
+/hakios/bin/rwtouch tap 0.27 0.18 wait 30 button home wait 6
 /bin/ps -A

@@ -600,7 +600,7 @@ def emit(decl, outdir):
     """Write every case as a module, with a job list and the expectations."""
     import json
     os.makedirs(outdir, exist_ok=True)
-    share = "/redwood/share/" + os.path.basename(outdir.rstrip("/"))
+    share = "/hakios/share/" + os.path.basename(outdir.rstrip("/"))
     manifest, jobs = [], []
     skipped = 0
     for i, (label, src, want, which) in enumerate(cases(decl)):
@@ -623,7 +623,7 @@ def emit(decl, outdir):
             return 1
         os.remove(ll)
         manifest.append(dict(id=ident, label=label, want=want, which=list(which)))
-        jobs.append("%s/air_run %s/%s.bc" % ("/redwood/bin", share, ident))
+        jobs.append("%s/air_run %s/%s.bc" % ("/hakios/bin", share, ident))
     with open(os.path.join(outdir, "manifest.json"), "w") as f:
         json.dump(manifest, f)
     ncompare = sum(1 for m in manifest if m["label"].startswith("compare_func::")
@@ -713,7 +713,7 @@ def emit(decl, outdir):
 #      `sam.s` in the main shader, and if they compare then, the preamble is the
 #      place. Nothing else changes, so the two boots differ in one variable.
 """ % dict(ncompare=ncompare, total=len(manifest)))
-        f.write("/redwood/bin/air_run --disasm "
+        f.write("/hakios/bin/air_run --disasm "
                 "/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib "
                 "clearFragment01\n")
         f.write("\n".join(jobs) + "\n")

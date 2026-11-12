@@ -9,7 +9,7 @@
 # shader there rather than aborting inside it. These two modules are that
 # measurement, and they need a GPU.
 #
-# Carried into /redwood/share/airdiscard by build.sh EXTRA_SHARE. The directory's own name is
+# Carried into /hakios/share/airdiscard by build.sh EXTRA_SHARE. The directory's own name is
 # in the paths at the bottom of this file, so emit it under that name or
 # regenerate this file from the one you used:
 #   python3 tools/air/discardcheck.py --emit <dir>
@@ -40,5 +40,5 @@
 #   neighbour was gone -- but see the comment above: 3 is also what a hoisted
 #   multiply would give, so only a failure here is decisive
 
-/redwood/bin/air_run /redwood/share/airdiscard/discard_all.bc
-/redwood/bin/air_run /redwood/share/airdiscard/discard_quad.bc
+/hakios/bin/air_run /hakios/share/airdiscard/discard_all.bc
+/hakios/bin/air_run /hakios/share/airdiscard/discard_quad.bc

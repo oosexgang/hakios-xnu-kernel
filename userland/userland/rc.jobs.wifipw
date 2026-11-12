@@ -3,6 +3,6 @@
 # OSLOG="com.apple.wifid com.apple.securityd" for their side): once the system has settled, a made-up
 # network's password into the keychain the way wifid puts it there, back, and away again; then
 # keychain_test's own item for comparison.
-/redwood/bin/net_test wait 40
-/redwood/bin/wifipw_test
-/redwood/bin/keychain_test
+/hakios/bin/net_test wait 40
+/hakios/bin/wifipw_test
+/hakios/bin/keychain_test

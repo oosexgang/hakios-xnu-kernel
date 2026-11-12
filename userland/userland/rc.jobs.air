@@ -1,7 +1,7 @@
 # Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 #
 # The first draw on this GPU by a shader Apple compiled for Metal (RC_JOBS=rc.jobs.air).
-# /redwood/bin/air_run translates one function of a .metallib with the AIR frontend
+# /hakios/bin/air_run translates one function of a .metallib with the AIR frontend
 # (docs/air.md), hands the NIR to Gallium as PIPE_SHADER_IR_NIR, draws one quad and prints
 # the pixel it reads back. With the Adreno present it opens the msm device and ir3 compiles
 # the shader; without one it falls back to softpipe and says so in its first line, so the
@@ -21,4 +21,4 @@
 # --disasm makes ir3 print the Adreno instructions it generated. The screen's name proves
 # fd_screen_create won; only ir3's own disassembly proves the shader went through ir3 and not
 # some later software path, and the four floats look identical either way.
-/redwood/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01
+/hakios/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01

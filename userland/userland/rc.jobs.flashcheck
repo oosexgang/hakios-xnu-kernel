@@ -9,15 +9,15 @@
 # /System/Cryptexes/App) -- all of it with APFS alone in RAM. The results also go to a file shown
 # at the end, where the kernel's log keeps them.
 /sbin/mount
-/redwood/bin/vol_ls fs / /redwood /private/preboot /private/preboot/Cryptexes/OS /private/preboot/Cryptexes/App
-/redwood/bin/vol_ls ls /System/Cryptexes/App/usr/libexec
-/redwood/bin/vol_ls ls /fw
-/redwood/bin/net_test show dhcp en0 waitaddr en0 60 >> /private/var/results
-/redwood/bin/net_test resolve example.com fetch https://example.com/ fetch https://www.apple.com/library/test/success.html >> /private/var/results
-/redwood/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
-/redwood/bin/battery_test open https://example.com
-/redwood/bin/rwtouch wait 20
-/redwood/bin/battery_test 1 >> /private/var/results
-/redwood/bin/vol_ls sysctl kern.hakios_memory >> /private/var/results
+/hakios/bin/vol_ls fs / /hakios /private/preboot /private/preboot/Cryptexes/OS /private/preboot/Cryptexes/App
+/hakios/bin/vol_ls ls /System/Cryptexes/App/usr/libexec
+/hakios/bin/vol_ls ls /fw
+/hakios/bin/net_test show dhcp en0 waitaddr en0 60 >> /private/var/results
+/hakios/bin/net_test resolve example.com fetch https://example.com/ fetch https://www.apple.com/library/test/success.html >> /private/var/results
+/hakios/bin/sound_test springboard wait 5 tone 3 wait 3 system 1100 wait 3 system 1104 wait 3 file /System/Library/Audio/UISounds/New/Fanfare.caf
+/hakios/bin/battery_test open https://example.com
+/hakios/bin/rwtouch wait 20
+/hakios/bin/battery_test 1 >> /private/var/results
+/hakios/bin/vol_ls sysctl kern.hakios_memory >> /private/var/results
 /bin/ps -A
-/redwood/bin/vol_ls cat /private/var/results 262144
+/hakios/bin/vol_ls cat /private/var/results 262144

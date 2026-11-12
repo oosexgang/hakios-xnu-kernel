@@ -12,7 +12,7 @@
  * The device is taken from MTLCreateSystemDefaultDevice() and from nowhere else: that is the
  * road a real application takes, so the ivars behind these answers are filled (or not) by
  * exactly the registration Metal itself ran. It needs the two registry properties on the
- * IOAcceleratorES service, so run `/redwood/bin/metal_props on` first (rc.jobs.metalcaps
+ * IOAcceleratorES service, so run `/hakios/bin/metal_props on` first (rc.jobs.metalcaps
  * does). A nil device is reported as such and is not an error of this program's.
  *
  * Every question is sent inside @try. That is not caution: a selector no class in the chain

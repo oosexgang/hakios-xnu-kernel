@@ -53,7 +53,7 @@
 extern const void *_dyld_get_shared_cache_range(size_t *length);
 
 #define CACHE_BASE 0x180000000UL                /* where the cache was built to be, before the slide */
-#define HAKIOS_GL "/redwood/lib/libhakios-gl.dylib"
+#define HAKIOS_GL "/hakios/lib/libhakios-gl.dylib"
 
 static uintptr_t slide;
 

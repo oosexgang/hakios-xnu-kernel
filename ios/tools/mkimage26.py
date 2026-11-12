@@ -12,10 +12,10 @@ usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracte
           tables cut to English and Base, the heavy apps nothing at boot needs and the poster apps
           left out, and Fonts/AppFonts
 
-/sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /redwood and runs its init), the
+/sbin/launchd is darwin-renoir's stage0 (it mounts the small image on /hakios and runs its init), the
 real one /sbin/launchd.ios. With LAUNCHDAEMONS=DIR (ios/userland/root26-ios.sh writes ios26/jobs26)
 the jobs are in /System/Library/LaunchDaemons itself and in the launchd job cache
-System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /redwood/LaunchDaemons,
+System/Library/xpc/launchd.plist; without it /System/Library/LaunchDaemons leads to /hakios/LaunchDaemons,
 as on 16.5 (enough for the restore-mode boot of the first probes, not for a normal one).
 """
 import importlib.util
@@ -159,7 +159,7 @@ def selection(minimal):
             with open(os.path.join(jobs, name), 'rb') as f:
                 job = plistlib.load(f)
             program = job.get('Program') or (job.get('ProgramArguments') or [None])[0]
-            if program and program.startswith('/') and not program.startswith('/redwood/'):
+            if program and program.startswith('/') and not program.startswith('/hakios/'):
                 kept_files.add(program[1:])
     chosen = []
     for dp, dn, fns in os.walk(ROOT):
@@ -272,7 +272,7 @@ def main():
     if os.path.exists(WORK):
         shutil.rmtree(WORK)
     os.makedirs(WORK)
-    for d in ('dev', 'redwood', 'private/var', 'private/preboot', 'private/etc', 'private/tmp', 'System/Library',
+    for d in ('dev', 'hakios', 'private/var', 'private/preboot', 'private/etc', 'private/tmp', 'System/Library',
               'sbin', 'usr/lib', CACHE_DIR):
         os.makedirs(os.path.join(WORK, d), exist_ok=True)
     chosen = list(dict(selection(minimal)).items())      # (one source for each path: the last)
@@ -293,8 +293,8 @@ def main():
     hal = os.path.join(WORK, 'System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver')
     if not os.path.lexists(hal):
         os.makedirs(os.path.dirname(hal), exist_ok=True)
-        os.symlink('/redwood/lib/HakiosAudio.driver', hal)
-    # the jobs are ours (/redwood/LaunchDaemons, from mkjobs.py), as on 16.5: Apple's own lists go
+        os.symlink('/hakios/lib/HakiosAudio.driver', hal)
+    # the jobs are ours (/hakios/LaunchDaemons, from mkjobs.py), as on 16.5: Apple's own lists go
     for rel in ('System/Library/NanoLaunchDaemons', 'System/Library/LaunchAngels', 'System/Library/xpc/launchd.plist'):
         path = os.path.join(WORK, rel)
         if os.path.isdir(path) and not os.path.islink(path):
@@ -303,7 +303,7 @@ def main():
             os.remove(path)
     # LAUNCHDAEMONS=DIR: the jobs go into the system volume itself. iOS 26's launchd counts a job as a
     # system service (one that may claim an event stream: notifyd's com.apple.notifyd.matching) only when
-    # its plist was loaded from there; through the link to /redwood (another volume) none of them is.
+    # its plist was loaded from there; through the link to /hakios (another volume) none of them is.
     ld = os.path.join(WORK, 'System/Library/LaunchDaemons')
     if os.path.isdir(ld) and not os.path.islink(ld):
         shutil.rmtree(ld)
@@ -312,7 +312,7 @@ def main():
         shutil.copytree(jobs, ld)
         write_job_cache(jobs)
     elif not os.path.lexists(ld):
-        os.symlink('/redwood/LaunchDaemons', ld)
+        os.symlink('/hakios/LaunchDaemons', ld)
     if not minimal:
         default_wallpaper()
     if PRUNE:

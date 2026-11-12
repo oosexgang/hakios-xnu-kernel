@@ -8,7 +8,7 @@
 	     "wifi"); without, it ends at once -->
 	<key>ProgramArguments</key>
 	<array>
-		<string>/redwood/bin/net_test</string>
+		<string>/hakios/bin/net_test</string>
 		<string>wifi</string>
 	</array>
 	<key>RunAtLoad</key>

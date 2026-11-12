@@ -37,7 +37,7 @@
 #
 #   gpu=1              in XL_CMDLINE, or there is no Adreno and the driver refuses every
 #                      pipeline with a readable reason instead of timing one.
-#   an image with GL=1 for /redwood/lib/libhakios-air.dylib, which is the compiler.
+#   an image with GL=1 for /hakios/lib/libhakios-air.dylib, which is the compiler.
 #   JOBS=""            so that no daemon of Apple's shares the GPU, the panel or the one core
 #                      this runs on. With the window server alive these numbers are of a
 #                      machine doing something else as well, and nothing says how much.
@@ -250,7 +250,7 @@
 #    not print them is a boot whose timings are of something else, and that must be found out
 #    before 1300 draws are timed rather than after. It printed them in logs/225409-run.log, and
 #    every pixel check inside line 2 passed there as well.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 2. THE MEASUREMENT: everything above, over Apple's own AppleMetalGLRenderer library, which is
 #    where clearFragment01 and the textured blit live -- so the shaders being timed are the
@@ -272,7 +272,7 @@
 #    that did something else", and a case that could not make its attachments prints "NOT
 #    MEASURED" with the megabytes it asked for. A fast number from a draw that did nothing is
 #    the one reading this boot must never produce.
-/redwood/bin/metal_drv_test --time 32 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --time 32 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 3. THE COMPUTE SIDE, which needs a different library: AV1SW.metallib is eleven kernels and no
 #    fragment function at all, and it is the library 10.12 and 10.15 used. Here the mode prints
@@ -293,4 +293,4 @@
 #    produce a dispatch number. If it still says none finished, THAT is a regression against
 #    10.16 (nine compiled, eight finished) and a reason to read this log before reading any
 #    number in line 2.
-/redwood/bin/metal_drv_test --time 16 /System/Library/VideoDecoders/AV1SW.metallib
+/hakios/bin/metal_drv_test --time 16 /System/Library/VideoDecoders/AV1SW.metallib

@@ -85,7 +85,7 @@ show_path(io_service_t service)
 	CFRelease(value);
 	snprintf(path, sizeof(path), "/System/Library/Extensions/%s.bundle", name);
 	printf("metal_props: Metal would open %s: %s\n", path,
-	    access(path, F_OK) == 0 ? "it is there" : "NOT THERE (userland/build.sh links it from /redwood/lib)");
+	    access(path, F_OK) == 0 ? "it is there" : "NOT THERE (userland/build.sh links it from /hakios/lib)");
 }
 
 static int

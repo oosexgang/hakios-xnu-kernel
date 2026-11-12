@@ -27,60 +27,60 @@
 # The first line is the shader M1 is stated against, with --disasm: it proves the GPU is
 # there and that ir3 compiled what ran, which the screen's name alone does not.
 #
-/redwood/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Uint
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Uint
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_UintPacked
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_UintPacked
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Unorm
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Unorm
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitKernel_Unorm
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Uint
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Uint
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Unorm
-/redwood/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Unorm
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_Clear
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_MinMax
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PopulateCube
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeLuma
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma1
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma2
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeLuma
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma1
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma2
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_GenerateMask
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropagateParents
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ResolveAssociations
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DrawSpans
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DrawEye
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_final
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_init
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter1
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice_trilinear
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPreProcess
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPostProcess
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax1
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib confidence
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_AddSeedPoint
-/redwood/bin/air_run /redwood/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run --disasm /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib clearFragment01
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Uint
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Uint
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_UintPacked
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_UintPacked
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitLumaKernel_Unorm
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitChromaKernel_Unorm
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib BlitKernel_Unorm
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Uint
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Uint
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainLumaKernel_Unorm
+/hakios/bin/air_run /System/Library/VideoDecoders/AV1SW.metallib FilmGrainChromaKernel_Unorm
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_Clear
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_MinMax
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_CalcCubeInputScaling
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PopulateCube
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeLuma
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma1
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DilateCubeChroma2
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeLuma
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma1
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ErodeCubeChroma2
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitSpanTable
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_GenerateMask
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ConnectSpans
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropagateParents
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_PropogateAssociations
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_ResolveAssociations
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DrawSpans
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_DrawEye
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_init
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_final
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_init
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter1
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter2
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_pcg_iter3
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_slice_trilinear
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPreProcess
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib spillCorrectionPostProcess
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax0
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax1
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib image_calcminmax2
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib confidence
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_AddSeedPoint
+/hakios/bin/air_run /hakios/share/probes/probe_one_scalar.bc
 #
 # the two measured as hanging on their own, last of all:
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_iter
-/redwood/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_GenerateToothMask
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib fbs_bistochastize_iter
+/hakios/bin/air_run /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_GenerateToothMask

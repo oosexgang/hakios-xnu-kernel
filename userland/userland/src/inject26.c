@@ -498,7 +498,7 @@ input_thread(__unused void *arg)
 }
 
 /*
- * Boot-arg taps=1: a script of touches, /redwood/taps.txt (userland/taps.txt), played on the touch screen as if a
+ * Boot-arg taps=1: a script of touches, /hakios/taps.txt (userland/taps.txt), played on the touch screen as if a
  * finger did them -- to walk through the system's screens in a run nobody is holding the phone for, and record them.
  * One command a line, positions in percent of the screen:
  *   wait SECONDS          tap X Y          swipe X1 Y1 X2 Y2 MS          home          say TEXT
@@ -520,13 +520,13 @@ script_touch(uint32_t type, double x, double y)
 static void *
 script_thread(__unused void *arg)
 {
-	FILE *f = fopen("/redwood/taps.txt", "r");
+	FILE *f = fopen("/hakios/taps.txt", "r");
 	char line[256];
 	unsigned lineno = 0;
 
 	pthread_setname_np("hakios taps");
 	if (f == NULL) {
-		say("hakios: taps: no /redwood/taps.txt\n");
+		say("hakios: taps: no /hakios/taps.txt\n");
 		return NULL;
 	}
 	while (fgets(line, sizeof(line), f) != NULL) {

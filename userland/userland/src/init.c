@@ -1,7 +1,7 @@
 /*
  * Process 1 of the Darwin bring-up, until it hands over to the real launchd.
  *
- * It lives in the small image mounted on /redwood (see stage0.c) and
+ * It lives in the small image mounted on /hakios (see stage0.c) and
  *   - mounts a memory filesystem on /private/var and creates the directories
  *     a system expects there;
  *   - checks what the kernel can do for user space, one line per check;
@@ -117,7 +117,7 @@ synthetic_dir(const char *path)
  * root_apfs=DEV: the root is to be the iOS root volume on /dev/DEV -- the phone's flash, read
  * only.  The kernel has started off the boot volume of flashboot.apfs (the resident image, md0,
  * its first container: stage0, firmware, mount points; the OS cryptex with the dyld shared cache
- * is its second container) and stage0 has mounted this image on /redwood.  What the big system image changes in iOS (userland/build.sh) is put in place on
+ * is its second container) and stage0 has mounted this image on /hakios.  What the big system image changes in iOS (userland/build.sh) is put in place on
  * the volume instead, without writing to it:
  *   - our choice of launchd jobs instead of iOS's 500 (this image's LaunchDaemons, and
  *     nothing for NanoLaunchDaemons, LaunchAngels, nor xpc's launchd.plist, which launchd
@@ -132,7 +132,7 @@ synthetic_dir(const char *path)
  * goes to its /private/preboot, the cryptexes onto that volume's Cryptexes/OS and App: the iOS
  * volume's /System/Cryptexes/OS and App point to /private/preboot/Cryptexes/OS and App, and the
  * kernel takes a shared cache from the first.  This
- * image goes along with it, to /private/preboot/redwood, and is bound back on /redwood, a
+ * image goes along with it, to /private/preboot/hakios, and is bound back on /hakios, a
  * synthetic directory of the volume.  The boot-args stay those of a RAM disk (rd=md0),
  * which is what launchd reads to leave out the boot tasks of a real device.
  */
@@ -192,7 +192,7 @@ flash_root(const char *dev)
 	if (!ok) {
 		return;
 	}
-	check(synthetic_dir("/flash/redwood"), "a synthetic /redwood on it, for this image");
+	check(synthetic_dir("/flash/hakios"), "a synthetic /hakios on it, for this image");
 	check(bind_dir(in_image("/LaunchDaemons"), "/flash/System/Library/LaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/NanoLaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/LaunchAngels") &&
@@ -266,7 +266,7 @@ flash_root(const char *dev)
 	 */
 	mount_cryptex("OS", ",c=1", devpath);
 	mount_cryptex("App", ",c=2", devpath);
-	check(bind_dir("/private/preboot/redwood", "/redwood"), "this image back on /redwood");
+	check(bind_dir("/private/preboot/hakios", "/hakios"), "this image back on /hakios");
 	flash_root_mode = 1;
 }
 
@@ -1493,8 +1493,8 @@ main(int argc, char **argv, char **envp)
 	}
 
 	(void)envp;
-	if (argc > 0 && strncmp(argv[0], "/redwood/", 9) == 0) {
-		base = "/redwood";
+	if (argc > 0 && strncmp(argv[0], "/hakios/", sizeof("/hakios/") - 1) == 0) {
+		base = "/hakios";
 	}
 	/* Not process 1: a command runner, "init FILE" (this is how a launchd job runs a list of commands). */
 	if (getpid() != 1) {

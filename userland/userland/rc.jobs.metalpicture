@@ -81,7 +81,7 @@
 # label, no background is drawn by the processor, which is why the three bands add up to
 # the panel exactly (1104 + 648 + 648 = 2400).
 #
-# Needs gpu=1 and an image built with GL=1, for /redwood/lib/libhakios-air.dylib. Without
+# Needs gpu=1 and an image built with GL=1, for /hakios/lib/libhakios-air.dylib. Without
 # either, the first line below says so and the second repeats it, and nothing is drawn.
 #
 # BUILD IT WITH JOBS="" as well, which is how logs/101536-run.log was taken: launchd then
@@ -97,14 +97,14 @@
 #    must read 100+x, 200+y, 300+x+y, 400 and not sixteen copies of 100 203 303 400. It is
 #    first because it is cheap and because a picture that comes out wrong under a driver
 #    that cannot draw 4x4 would be two findings tangled into one.
-/redwood/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --draw /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
 #
 # 2. A pause, which is a sleep and nothing else (src/rwtouch.c: "wait SECONDS"). Under
 #    JOBS="" there is no lock screen to wait for and these twenty seconds buy nothing but
 #    a quiet console; they are kept because the same file has to work on an image built
 #    with the window server, where src/gl_test.c's job waits exactly this way
 #    (rc.jobs.gltest) for the lock screen to stop drawing over the panel.
-/redwood/bin/rwtouch wait 20
+/hakios/bin/rwtouch wait 20
 #
 # 3. The picture itself. TAKE THE SCREENSHOT AS SOON AS ANYTHING APPEARS ON THE PHONE:
 #    from another terminal, `./xl screenshot logs/metal-picture.png`. The mosaic alone is
@@ -222,4 +222,4 @@
 #    (Nothing here stores to [[depth]]. Apple's texturedFragment2DDepth and
 #    texturedFragment3DDepth hang this GPU outright -- logs/094810-run.log, status 5 and
 #    then a canary that does not finish either -- so they are off the table for a picture.)
-/redwood/bin/metal_drv_test --picture 180 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/hakios/bin/metal_drv_test --picture 180 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib

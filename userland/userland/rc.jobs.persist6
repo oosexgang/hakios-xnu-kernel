@@ -3,11 +3,11 @@
 # Three saves a minute apart, each saying how long it took, how big it is and how much of it was
 # written since the save before -- which is what decides whether saving only the difference is
 # worth building. The job com.hakios.varstore saves once more at the end of the run.
-/redwood/bin/var_store show
+/hakios/bin/var_store show
 sleep 60
-/redwood/bin/var_store save
+/hakios/bin/var_store save
 sleep 60
-/redwood/bin/var_store save
+/hakios/bin/var_store save
 sleep 60
-/redwood/bin/var_store save
-/redwood/bin/vol_ls fs /private/var
+/hakios/bin/var_store save
+/hakios/bin/vol_ls fs /private/var

@@ -3,15 +3,15 @@
 # runs uicache, which rebuilds the database of applications -- the moment a running Sileo used to be
 # killed ("uninstalling app") instead of offering a respring. Afterwards: is Sileo still registered,
 # and is the tweak where the loader will find it.
-/redwood/bin/sound_test springboard
+/hakios/bin/sound_test springboard
 /var/jb/bin/sh /var/jb/prep.sh
-/redwood/bin/net_test waitaddr en0 60 resolve apt.procurs.us
+/hakios/bin/net_test waitaddr en0 60 resolve apt.procurs.us
 /var/jb/usr/bin/apt-get update
-/redwood/bin/rwtouch wait 25
+/hakios/bin/rwtouch wait 25
 /var/jb/usr/bin/uiopen sileo://
-/redwood/bin/rwtouch wait 20
+/hakios/bin/rwtouch wait 20
 /var/jb/usr/bin/apt-get install -y preferenceloader
-/redwood/bin/rwtouch wait 15
+/hakios/bin/rwtouch wait 15
 /var/jb/usr/bin/uicache -a
-/redwood/bin/rwtouch wait 15
+/hakios/bin/rwtouch wait 15
 /bin/ps -A

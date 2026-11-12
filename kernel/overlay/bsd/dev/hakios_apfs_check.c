@@ -1010,7 +1010,7 @@ apfs_check_concurrent(void)
  *
  *   apfs_check=7
  *   apfs_dev=md0              the container to write in (default rvblk0)
- *   apfs_write_path=/redwood/x   the file in it, by path from the volume's root
+ *   apfs_write_path=/hakios/x   the file in it, by path from the volume's root
  *   apfs_write_at=N           where in the file (default 0)
  *   apfs_write_len=N          how many bytes (default 4096, at most APFS_WRITE_MAX)
  *   apfs_write_byte=N         what to fill them with (default 0xa5)

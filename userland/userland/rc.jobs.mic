@@ -9,7 +9,7 @@
 # the two: a program in the background that records shows the orange dot but not the status bar's recording pill, and
 # mediaserverd's MediaSafetyNet stops itself after nine seconds of a microphone in use without the pill, as on
 # an iPhone; the pause lets it see the microphone off.)
-/redwood/bin/sound_test springboard route wait 2 tone 2 wait 4 system 1104 wait 4
-/redwood/bin/record_test 6 vibrate 3
-/redwood/bin/rwtouch wait 3
-/redwood/bin/record_test 4
+/hakios/bin/sound_test springboard route wait 2 tone 2 wait 4 system 1104 wait 4
+/hakios/bin/record_test 6 vibrate 3
+/hakios/bin/rwtouch wait 3
+/hakios/bin/record_test 4

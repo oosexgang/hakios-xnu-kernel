@@ -12,13 +12,13 @@
 # command line: there is no pam.d for sshd in the prefix, and the key is all we want anyway.
 # The switcher of running applications is opened on the way, so that a run serves both purposes:
 # the purple cards are there to look at while the shell is open (see rc.jobs.switcher).
-/redwood/bin/sound_test springboard
-/redwood/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
-/redwood/bin/net_test show
+/hakios/bin/sound_test springboard
+/hakios/bin/rwtouch wait 25 swipe 0.5 0.985 0.5 0.3 200 wait 70
+/hakios/bin/net_test show
 /var/jb/usr/sbin/sshd -D -e -h /var/root/.ssh/ssh_host_ed25519_key -o UsePAM=no -o PasswordAuthentication=no -o PermitRootLogin=prohibit-password -o AuthorizedKeysFile=/var/root/.ssh/authorized_keys &
-/redwood/bin/rwtouch tap 0.151 0.358 wait 20 button home wait 8
-/redwood/bin/rwtouch tap 0.383 0.358 wait 20 button home wait 8
-/redwood/bin/rwtouch tap 0.614 0.481 wait 20
-/redwood/bin/rwtouch drag 0.5 0.995 0.5 0.62 600 2500 wait 8
-/redwood/bin/net_test show
-/redwood/bin/rwtouch wait 900
+/hakios/bin/rwtouch tap 0.151 0.358 wait 20 button home wait 8
+/hakios/bin/rwtouch tap 0.383 0.358 wait 20 button home wait 8
+/hakios/bin/rwtouch tap 0.614 0.481 wait 20
+/hakios/bin/rwtouch drag 0.5 0.995 0.5 0.62 600 2500 wait 8
+/hakios/bin/net_test show
+/hakios/bin/rwtouch wait 900
