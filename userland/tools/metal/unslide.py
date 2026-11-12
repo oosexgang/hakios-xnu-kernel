@@ -49,7 +49,7 @@ KERNEL = re.compile(
     r"shared cache slide\s+(?P<slide>0x[0-9a-f]+);\s+called from:(?P<frames>[\s0-9a-fx]+)")
 
 OURS = re.compile(
-    r"(?:hakios|redwood):\s+signal\s+(?P<sig>\d+)\s+at\s+(?P<raw>0x[0-9a-f]+),\s+"
+    r"[a-z0-9]+:\s+signal\s+(?P<sig>\d+)\s+at\s+(?P<raw>0x[0-9a-f]+),\s+"
     r"pc\s+(?P<pc>0x[0-9a-f]+),\s+lr\s+(?P<lr>0x[0-9a-f]+),\s+"
     r"called from(?P<frames>[\s0-9a-fx]+)\(unslid\)")
 
