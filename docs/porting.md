@@ -84,8 +84,8 @@ Leave `features = <>;` (none) for now. Every key is explained in `devices/_templ
 ## 2. The UEFI
 
 The loader runs under a UEFI. Port Mu-Silicium for the phone: the platform package with the phone's
-memory map, the UEFI drivers extracted from the phone's own firmware -- the redwood package's
-`legacy/uefi/` on the `devices` branch is a whole port, with its README -- and what every port needs,
+memory map, the UEFI drivers extracted from the phone's own firmware -- the first phone's package has a
+whole port under `legacy/uefi/` on the `devices` branch, with its README -- and what every port needs,
 in `base/uefi/` (`apply.sh PHONE_FILES` puts both into a clone): the two changes in
 `base/uefi/mu-silicium.patch`:
 

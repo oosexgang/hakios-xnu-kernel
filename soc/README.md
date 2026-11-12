@@ -5,8 +5,8 @@ lives here, with the code, and not in a phone's package.
 
 | File | Chip | Used by |
 | --- | --- | --- |
-| `sm7350.dtsi` | Qualcomm Snapdragon 780G (SM7350, "shima") | the `renoir` package |
-| `sm7325.dtsi` | Qualcomm Snapdragon 778G (SM7325, "yupik") | the `redwood` package |
+| `sm7350.dtsi` | Qualcomm Snapdragon 780G (SM7350, "shima") | a package on the `devices` branch |
+| `sm7325.dtsi` | Qualcomm Snapdragon 778G (SM7325, "yupik") | a package on the `devices` branch |
 | `qemu-virt.dtsi` | QEMU's `virt` machine | `devices/qemu-virt` |
 
 ## What a SoC file says

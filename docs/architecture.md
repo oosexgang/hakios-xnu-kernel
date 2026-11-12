@@ -59,7 +59,7 @@ soc/sm7350.dtsi, soc/… ────────────┘  (run by the bu
 - The repository describes no phone. `devices/` on the main branch has the emulator's board
   (`devices/qemu-virt/`) and a template (`devices/_template/`).
 - A phone is a **device package**: a directory `NAME/` with its `board.dts`, its README and its notes.
-  Packages are kept on the `devices` branch, one directory per phone (`renoir/`, `redwood/`).
+  Packages are kept on the `devices` branch, one directory per phone.
   `tools/device.py add renoir` (or `make device DEVICE=renoir`) copies one into `devices/NAME/` of a
   checkout, which git ignores there: a package is changed where it is kept. `tools/device.py available`
   lists what the branch has, `list` what is here, `remove` takes one out, and `--from SOURCE` takes
@@ -173,7 +173,7 @@ against the scripts that fetch).
 | iOS itself (IPSW contents) | Apple's files are never redistributed. | Extracted on your machine from Apple's IPSW. |
 | The phone's firmware (GPU, DSP, touch) | The vendor's; taken from the same phone it runs on. | `adb pull` from its Android. |
 | theos (cctools linker, iPhoneOS SDK) | A third-party toolchain. The kernel can be linked with LLVM's own Mach-O tools instead, with the SDK's headers alone ([building.md](building.md)); the `ios/` scripts need theos. | [theos.dev](https://theos.dev/docs/installation-linux) |
-| The UEFI for a phone | A port of Mu-Silicium per device. | `base/uefi/` has the redwood port and the changes a port needs. |
+| The UEFI for a phone | A port of Mu-Silicium per device. | `base/uefi/` has the changes every port needs; a phone's own port is in its package. |
 | **Renoir's resident loader, its recovery payload tool and the user-space root tree** | They live in the team's working tree (`darwin-renoir`), which has not been published. | Not available yet. `ios/tools/boot26.py` and the `ios/userland/*.sh` scripts need it. |
 
 The last row is the gap between this repository and booting Renoir from a clean checkout.
@@ -184,8 +184,8 @@ brings it into a checkout from the `devices` branch ("Device data" above).
 
 ## Legacy
 
-`base/` is the workspace of the first generation: iOS 16.5 on the POCO X5 Pro (redwood) and QEMU, with
+`base/` is the workspace of the first generation: iOS 16.5 on the first phone and QEMU, with
 its own README, scripts and porting notes. Parts of it are still the only place for something (the
 UEFI port, the Wi-Fi compatibility layer, the QEMU scripts) and are waiting to be brought to the
 current kernel. What in it was one phone's own -- its xnu-8796 kernel, superseded by `kernel/`, its UEFI
-platform and device profile -- is in that phone's package on the `devices` branch (`redwood/legacy/`).
+platform and device profile -- is in that phone's package on the `devices` branch, under `legacy/`.

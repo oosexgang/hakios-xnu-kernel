@@ -114,7 +114,7 @@ comments; hardware behavior and the controller's actual version-event variant re
 | `bsd/miscfs/apfs/` | APFS: reads the iOS images in RAM; writes for the data volume. | any |
 | `bsd/miscfs/ramfs/` | The RAM file system for `/private/var`. | any |
 | `bsd/dev/hakios_image.c` | A file of one of the RAM disks by path, for drivers that need firmware before there is a root. | any |
-| `bsd/dev/hakios_ufs.c`, `hakios_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `platform { }` of the SoC file), the controller is taken to be Qualcomm's as on redwood |
+| `bsd/dev/hakios_ufs.c`, `hakios_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `platform { }` of the SoC file), the controller is taken to be Qualcomm's, as on the SM7325 and SM7350 |
 | `bsd/dev/hakios_sparse.c`, `hakios_virtio_blk.c`, `hakios_apfs_check.c` | An image with only some of its blocks; QEMU's block device; a walk of a volume for comparison with the host tools. | any |
 
 ## Which of them run on the host

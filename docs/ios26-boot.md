@@ -97,7 +97,7 @@ look up, in the loader's log), `stacks=name,...` (up to four processes' threads 
 Current configuration (2026-11-10): iOS 27.2 (24B119, iPhone12,1 files), with CPU/software rendering.
 There is no XNU source for iOS 27; patches 0013-0019 supply the newer userland interfaces.
 Unused device-specific CPU/GPU/touch/display/camera/gauge/modem drivers and their loader profiles
-and tools have been deleted; the retained Qualcomm paths are Redwood/Renoir. No external Metal
+and tools have been deleted; the retained Qualcomm paths are those of the SM7325 and SM7350. No external Metal
 plug-in is packaged, and `boot26.py` defaults to `gpu=0`. The rebuilt kernel reached Renoir's home
 screen in a RAM-only boot on 2026-11-10.
 

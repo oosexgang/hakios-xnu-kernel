@@ -71,7 +71,7 @@ moves the slider while brightness is automatic, the curve keeps that offset, as 
 brightness off resets it.
 
 Light readings: until a sensor driver reports through `hakios_als_report(millilux, "name")`, the light comes from
-`hw.backlight.lux` (default 300 lux). On Renoir and Redwood the ambient light sensor sits behind the sensor DSP
+`hw.backlight.lux` (default 300 lux). On the phones so far the ambient light sensor sits behind the sensor DSP
 (SSC, QMI), so it needs a QMI sensor client. That driver feeds this path when it lands, and nothing else changes.
 
 ## Device data
@@ -82,13 +82,12 @@ The driver has no table of its own. It reads the board's row (`hakios_board()`),
 
 | Board | Panel | Backend | DSI | Range | Order | Mode |
 | --- | --- | --- | --- | --- | --- | --- |
-| `renoir` (Mi 11 Lite 5G, SM7350) | `k9_36_02_0a` AMOLED | dcs | 0xae94000 (2.5) | 1–2047 | MSB first | command |
-| `redwood` (POCO X5 Pro, SM7325) | `m20_36_02_0a` AMOLED | dcs | 0xae94000 (2.5) | 8–2047 (4095 = HBM, left out) | MSB first | video |
+| a phone's package | its panel | dcs or soft | its SoC's | its panel's | its panel's | command or video |
 | `qemu-virt` | framebuffer | soft | — | — | — | — |
 | anything else | — | soft | — | — | — | — |
 
-The `renoir` and `redwood` rows are those phones' packages, kept on the `devices` branch. A kernel has
-a phone's row only when it was built with the package present.
+Each phone's row is its package's, kept on the `devices` branch, whose README says which panel it has. A
+kernel has a phone's row only when it was built with the package present.
 
 Adding a device is a `backlight { }` section in its board file. `tools/boards.py new --dts` fills it in
 from the Android device tree:
@@ -122,7 +121,7 @@ When the kernel returns to the loader, the panel goes back to the profile's init
 - `backlight_test.c`: the arithmetic (10k checks).
 - `backlight_driver_test.c`: the driver itself, unchanged, on stubs of the kernel interfaces (`tests/fakekernel`), against a model of the DSI controller and the display clocks. The model rejects anything outside the protocol: a trigger without the command engine, the FIFO written with the TPG off, a length that does not match the words, an access to a register the driver has no business with.
 - The scenarios:
-  - Renoir's command mode and Redwood's video mode, on two of the tests' stand-in phones (`tests/devices/`)
+  - a command-mode and a video-mode panel, on two of the tests' stand-in phones (`tests/devices/`)
   - `backlight=1` reads only
   - off by default
   - an unpowered display block

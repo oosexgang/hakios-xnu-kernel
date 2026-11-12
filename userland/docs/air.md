@@ -3372,7 +3372,7 @@ modules, the bytes for their input buffer, a `manifest.json` of what each should
 phone's Darwin userland and not this machine's shell. `--check` then judges the log wherever it
 was produced: the arithmetic reference never leaves the host.
 
-`0x007506030500` is how freedreno names the redwood's Adreno 7c+ Gen 3 (A635); it has no
+`0x007506030500` is how freedreno names the SM7325's Adreno 7c+ Gen 3 (A635); it has no
 `gpu-id`, which is why `tools/mesa/air-ir3.patch` adds `--chip-id` to that tool.
 
 There is no hosted CI: the corpus is Apple's code and stays out of the repository (and out of
