@@ -216,7 +216,7 @@ send_file(const char *what, const char *name, uint8_t type, uint32_t board_id)
 	const uint8_t *data = redwood_wifi_file(name, &size);
 	uint32_t left, pieces = 0;
 
-	if (data == NULL || size == 0 || size > 256 * 1024) {
+	if (data == NULL || size < 4 || size > 256 * 1024) {      /* (its first four bytes are said below) */
 		say("wifi: %u: %s: fw/%s is not in the small image (or is no such file: %llu bytes): not sent\n", wlfw.step, what, name,
 		    size);
 		return false;
