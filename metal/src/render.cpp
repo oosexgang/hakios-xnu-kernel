@@ -1611,7 +1611,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // ordering alone showed a widget's text cut by a band and the App Library's blur in blocks.
     // (in GMEM only: in sysmem the ordering bought nothing measurable over the barrier -- SpringBoard's heaviest passes
     // took some 50 ms either way -- and the barrier is what SpringBoard was looked at with)
-    const bool ordered = fs.fbRead && o.fbReadOrdered && gmem != nullptr;
+    const bool ordered = (fs.fbRead || o.fbReadOrderAll) && o.fbReadOrdered && gmem != nullptr;
     const bool barrier = fs.fbRead && o.fbReadBarrier && (!ordered || !afterFetch);
     if (barrier && gmem != nullptr) {
         stream.waitForIdle();
@@ -2956,6 +2956,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
+    if (gmem && (gmemOff_ & (kGmemFetchNoBarrier | kGmemOrderAll))) encodeOptions.fbReadBarrier = false;
+    if (gmem && (gmemOff_ & kGmemOrderAll)) encodeOptions.fbReadOrderAll = true;
     // (a binned pass's draws are skipped by the tiles they miss: USE_VISIBILITY, which an override of 1 ignores)
     if (gmem && (options.gmemBinning || gmemBinning_) && queue_.binningOk() && options.gmemBinningStage < 3) encodeOptions.visCullUse = true;
     if (!render::encodeInPass(body, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, table.gpuAddress(), table.contents(), &why, encodeOptions,
@@ -2972,6 +2974,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
         render::Options sysOptions = encodeOptions;
         sysOptions.visCullUse = options.visCullUse;
+        sysOptions.fbReadBarrier = options.fbReadBarrier;
+        sysOptions.fbReadOrderAll = false;
         if (!render::encodeInPass(bodySys, program, pass, d, *vsb, *fsb, vsProgram, fsProgram, sysTable.gpuAddress(), sysTable.contents(), &why,
                                   sysOptions, nullptr, joins && open_->lastFetched)) {
             gmemClears_ = 0;

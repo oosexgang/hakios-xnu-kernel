@@ -5835,11 +5835,16 @@ hm_fps_draws(void)
 /* boot-arg metal_gmem_off=N: GMEM's refinements off by the bits of N (hakios_metal_cb_set_gmem_off; 8: the choice of GMEM
  * or sysmem by what each costs, hakios_metal_cb_set_gmem_tuned; 16: the hardware's binning,
  * hakios_metal_cb_set_gmem_binning; 32: every fragment texture the null one, wrong pictures but each draw's time without
- * its texture reads, hakios_metal_cb_set_null_fs_textures), for a bisect */
+ * its texture reads, hakios_metal_cb_set_null_fs_textures; 64: no barrier before a tile's fetch, the rasterizer's
+ * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier), for a bisect.
+ * metal_gmem_cycle=N,N,...@SECONDS instead: each of those values in turn, SECONDS (20 when not given) each, from the
+ * first command buffer on, and around again -- several settings timed in one boot, each change printed */
 static unsigned
 hm_gmem_off(void)
 {
 	static int bits = -1;
+	static unsigned cycle[8], cycleCount, cycleSeconds = 20, shown = ~0u;
+	static double cycleFrom;
 
 	if (bits < 0) {
 		char args[1024] = {0};
@@ -5847,11 +5852,32 @@ hm_gmem_off(void)
 		const char *at;
 
 		bits = 0;
-		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "metal_gmem_off=")) != NULL) {
-			bits = atoi(at + strlen("metal_gmem_off="));
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+			if ((at = strstr(args, "metal_gmem_off=")) != NULL) {
+				bits = atoi(at + strlen("metal_gmem_off="));
+			}
+			if ((at = strstr(args, "metal_gmem_cycle=")) != NULL) {
+				at += strlen("metal_gmem_cycle=");
+				while (cycleCount < 8 && *at >= '0' && *at <= '9') {
+					cycle[cycleCount++] = (unsigned)strtoul(at, (char **)&at, 10);
+					at += *at == ',' ? 1 : 0;
+				}
+				if (*at == '@' && atoi(at + 1) > 0) {
+					cycleSeconds = (unsigned)atoi(at + 1);
+				}
+				cycleFrom = hm_now();
+			}
 		}
 	}
-	return (unsigned)bits;
+	if (cycleCount == 0) {
+		return (unsigned)bits;
+	}
+	const unsigned i = (unsigned)((hm_now() - cycleFrom) / cycleSeconds) % cycleCount;
+	if (i != shown) {
+		shown = i;
+		hm_print("metal_gmem_cycle: metal_gmem_off=%u from now, for %u s\n", cycle[i], cycleSeconds);
+	}
+	return cycle[i];
 }
 
 /* boot-arg metal_gmem_draws=N: GMEM for a pass whose like had at least N draws in the frame before
@@ -6216,7 +6242,7 @@ hm_sampling(void)
 		char args[1024] = {0};
 		size_t size = sizeof(args) - 1;
 
-		on = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_fps=sample") != NULL;
+		on = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (strstr(args, "metal_fps=sample") != NULL || strstr(args, "metal_sample=1") != NULL);
 	}
 	return on != 0;
 }
@@ -8396,6 +8422,65 @@ hm_luma_boost_left_out(const char *program)
 	return !keep;
 }
 
+/* boot-arg metal_geom=SECONDS (a diagnostic): from SECONDS after the first draw on, 400 draws said with their vertices and
+ * instances, and for CoreAnimation's path renderer the pixels each draw covers, read from its vertex buffers: path_blit's
+ * rectangles (AxisAlignedRect at buffer 1) and path_rect's (PathRect at buffer 1, its clip-space padding in buffer 5) through the
+ * matrix at buffer 2 -- what a draw of the pass costs is mostly how many pixels it covers, which its scissor does not say */
+static void
+hm_geom(const char *program, hakios_metal_buffer *const *vs, const uint64_t *offsets, unsigned count, unsigned vertices, unsigned instances,
+	unsigned baseInstance, const struct hakios_metal_render_pass *pass)
+{
+	static int from = -2;
+	static double start;
+	static unsigned said;
+
+	if (from == -2) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+		const char *at;
+
+		from = -1;
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "metal_geom=")) != NULL) {
+			from = atoi(at + strlen("metal_geom="));
+			start = hm_now();
+		}
+	}
+	if (from < 0 || said >= 400 || hm_now() - start < from || program == NULL) return;
+	said++;
+	const double W = pass->color0 != NULL ? hakios_metal_texture_width(pass->color0) : 0;
+	const double H = pass->color0 != NULL ? hakios_metal_texture_height(pass->color0) : 0;
+	const float *m = NULL;
+	if (count > 2 && vs[2] != NULL && hakios_metal_buffer_length(vs[2]) >= offsets[2] + 64) {
+		m = (const float *)((const uint8_t *)hakios_metal_buffer_contents(vs[2]) + offsets[2]);
+	}
+	double pixels = 0;
+	BOOL known = NO;
+	const BOOL blitRects = strstr(program, "path_blit_vert") != NULL, pathRects = strstr(program, "path_rect_vert") != NULL;
+	if (m != NULL && count > 1 && vs[1] != NULL && W > 0 && (blitRects || pathRects)) {
+		const unsigned stride = blitRects ? 24 : 20;
+		const uint8_t *at = (const uint8_t *)hakios_metal_buffer_contents(vs[1]) + offsets[1];
+		const uint64_t room = hakios_metal_buffer_length(vs[1]) - offsets[1];
+		float pad = 0;
+		if (pathRects && count > 5 && vs[5] != NULL && hakios_metal_buffer_length(vs[5]) >= offsets[5] + 16) {
+			pad = ((const float *)((const uint8_t *)hakios_metal_buffer_contents(vs[5]) + offsets[5]))[3];
+		}
+		known = YES;
+		for (unsigned i = baseInstance; i < baseInstance + instances && (uint64_t)(i + 1) * stride <= room; i++) {
+			const float *r = (const float *)(at + (size_t)i * stride);
+			/* (path_rect's corners go through the matrix's diagonal alone; path_blit's through its first two columns) */
+			const double x0 = r[0] * m[0] + r[1] * (blitRects ? m[4] : 0) + m[12], x1 = r[2] * m[0] + r[3] * (blitRects ? m[4] : 0) + m[12];
+			const double y0 = r[0] * (blitRects ? m[1] : 0) + r[1] * m[5] + m[13], y1 = r[2] * (blitRects ? m[1] : 0) + r[3] * m[5] + m[13];
+			double w = fabs(x1 - x0) * W / 2, h = (fabs(y1 - y0) + 2 * pad) * H / 2;   /* (the padding in clip space) */
+			pixels += w * h;
+		}
+	}
+	if (known) {
+		hm_print("geom: %s %u vertices x %u instances: %.0f pixels (%.2f screens)\n", program, vertices, instances, pixels, pixels / (W * H));
+	} else {
+		hm_print("geom: %s %u vertices x %u instances\n", program, vertices, instances);
+	}
+}
+
 /* YES when the draw is to be left out (metal_skip); prints the kind once when tracing */
 static BOOL
 hm_trace_draw(const void *which, const char *program, const struct hakios_metal_render_pass *pass, hakios_metal_texture *const *textures, unsigned count,
@@ -8527,6 +8612,7 @@ hm_trace_draw(const void *which, const char *program, const struct hakios_metal_
 	hakios_metal_program *program = [_pipeline hakiosProgramFor:fs offsets:_fsOffsets count:_fsHighest];
 
 	hm_dump_config(hakios_metal_program_name(program), fs, _fsOffsets, _fsHighest);
+	hm_geom(hakios_metal_program_name(program), vs, _vsOffsets, _vsHighest, (unsigned)count, (unsigned)instances, (unsigned)baseInstance, &_pass);
 	if (hm_trace_draw([_pipeline hakiosProgram], hakios_metal_program_name([_pipeline hakiosProgram]), &_pass, fsTex, _fsHighestTexture, (unsigned)primitive, 0)) {
 		return;
 	}

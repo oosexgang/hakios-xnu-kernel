@@ -153,8 +153,10 @@ public:
     // render::Options::gmem for this buffer's draws besides each draw's own (both must allow it): the C API's switch
     void setGmem(bool on) { gmem_ = on; }
     // GMEM's refinements off, for a bisect on the phone: kGmemWholeArea tiles the whole window whatever the draws touch,
-    // kGmemEveryAttachment loads and stores every attachment, kGmemFetchBarrier orders a fetch by the barrier
-    enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4 };
+    // kGmemEveryAttachment loads and stores every attachment, kGmemFetchBarrier orders a fetch by the barrier;
+    // kGmemFetchNoBarrier leaves a tile's fetch to the rasterizer's ordering alone, kGmemOrderAll puts every draw of a
+    // GMEM pass in that ordering and leaves the barrier out (both measurements: their pictures may be wrong)
+    enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4, kGmemFetchNoBarrier = 64, kGmemOrderAll = 128 };
     void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for
