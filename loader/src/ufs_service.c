@@ -333,7 +333,7 @@ block_poll(void)
 		block_shared.answer.served++;
 		block_shared.answer.bytes += bytes;
 	}
-	__asm__ volatile ("dmb sy");
+	__asm__ volatile ("dmb sy" ::: "memory");
 	block_shared.answer.answered = request;
 	clean_dcache((uint64_t)(uintptr_t)&block_shared.answer,
 	    (uint64_t)(uintptr_t)&block_shared.answer + sizeof(block_shared.answer));

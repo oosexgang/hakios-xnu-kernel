@@ -72,9 +72,9 @@ flush_dcache(uint64_t start, uint64_t end)
 {
 	uint64_t line = 4ULL << ((READ_SYSREG(CTR_EL0) >> 16) & 0xF);
 	for (uint64_t p = start & ~(line - 1); p < end; p += line) {
-		__asm__ volatile ("dc civac, %0" : : "r" (p));
+		__asm__ volatile ("dc civac, %0" : : "r" (p) : "memory");
 	}
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 static void
@@ -82,7 +82,7 @@ clean_dcache(uint64_t start, uint64_t end)
 {
 	uint64_t line = 4ULL << ((READ_SYSREG(CTR_EL0) >> 16) & 0xF);
 	for (uint64_t p = start & ~(line - 1); p < end; p += line) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (p));
+		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 	}
-	__asm__ volatile ("dsb sy");
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
