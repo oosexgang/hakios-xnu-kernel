@@ -40,7 +40,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
     Wi-Fi DSP's memory, the radio's pins and its supplies' names), `mic { }` (the codec's reset pin),
     `camera { }` (the sensors' PMIC bus, and one `sensor@N { }` table a sensor: its chip, CCI
     master and pins, reset, MCLK, CSI receiver, supplies and lens motor's supply; the driver's table of
-    four is gone), `touch { }` `coordinates` (the controller's range), `wifi { }` `board-data` and
+    four is gone; `ios-sensor` and `ios-front` say which sensors are iOS's back and front cameras, and
+    `upside-down` a sensor whose pictures come out turned half round), `touch { }` `coordinates` (the controller's range), `wifi { }` `board-data` and
     `regdb` (the radio's files),
     `screen { }` (the status bar's shift past the camera), `loader { }` (framebuffer base,
     `uefi-charger`), `boot { }` (the boot tool's defaults);
@@ -234,6 +235,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | `renoir/docs/`, `renoir/tests/` | `docs/`, `tests/` |
 | `base/xnuloader/`, `base/xnu-deps/` | `loader/`, `kernel/deps/` (links stay in `base/`) |
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
+| `redwood_*` and `renoir_fts*` files, functions and `/dev` nodes, `devices/*.toml` | `hakios_*`, `board.dts` and `soc/*.dtsi` |
 
 The full table is in [docs/migrating.md](docs/migrating.md). [docs/architecture.md](docs/architecture.md)
 says how the parts fit together, and [docs/README.md](docs/README.md) is the index of the documentation.
@@ -277,8 +279,6 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 
 Not changed:
 
-- The drivers' files, functions and /dev nodes were named after the first phone (`redwood_*`,
-  `renoir_fts.c`); they are `hakios_*` now (docs/migrating.md has the list).
 - Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, the
   sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is
   wired are board data now; how each part is spoken to is not. They are the largest share of the work on a new phone.
@@ -288,8 +288,9 @@ Not changed:
 
 Not yet verified ([docs/building.md](docs/building.md) has the table):
 
-- **The full kernel build and a boot have not been repeated since the restructuring.** They were last
-  done by the team before it. Renoir's boot to the home screen was verified on the phone on 2026-11-10.
+- **A build with Apple's toolchain and a boot have not been repeated since the restructuring.** They were
+  last done by the team before it; `make kernel-check` compiles and links the kernel with LLVM's tools
+  after every change, which is a check and not a kernel to boot. Renoir's boot to the home screen was verified on the phone on 2026-11-10.
   The assembled tree is byte for byte what the previous patch series produced, but the build's first
   steps changed.
 - **No driver whose constants became board data has run on a phone since.** The GPU's profile, the
