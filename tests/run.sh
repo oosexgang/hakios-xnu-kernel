@@ -67,10 +67,10 @@ echo "== qmi (kernel/overlay/bsd/dev/redwood_qmi.c under the sanitizers)"
 run backlight_test -I"$SRC" "$HERE/backlight_test.c"
 run thermal_test -I"$SRC" "$HERE/thermal_test.c"
 
-# the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
+# the loader's parts that are plain C, and the drivers themselves against models of the hardware, one scenario a process; on the host, then built for
 # aarch64 and run under qemu-aarch64 when both are there (apt: gcc-aarch64-linux-gnu qemu-user)
 DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
-	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" "$HERE/fakekernel/fakekernel.c")
+	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$BOARDS" -I"$HERE/../loader" "$HERE/fakekernel/fakekernel.c")
 # (the last is the example driver of docs/writing-a-driver.md, which lives beside the guide)
 EXAMPLES=$HERE/../docs/examples
 scenarios() {
@@ -79,7 +79,7 @@ scenarios() {
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in board_test drivers_list_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test guard_test example_led_test; do
+for test in loader_test board_test drivers_list_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test guard_test example_led_test; do
 	source=$HERE/$test.c
 	[ -f "$source" ] || source=$EXAMPLES/$test.c
 	echo "== $test (host)"

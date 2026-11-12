@@ -15,6 +15,7 @@ loader is built. What is not installed is left out, and said.
 
 | Test | What it runs | What it shows |
 | --- | --- | --- |
+| `loader_test.c` | The loader's parts that are plain C (`loader/src/base.c`, `devicetree.c`, `nvram.c`, `payload.c`), as they are | Its own `memcpy`, `memset` and `memcmp` at every alignment; the device tree it writes, read back by a reader written from the format's description: counts, names, padding, nesting; the iPhone's properties copied but the display's gamut; the firmware's clock as seconds, with leap years and time zones, and a clock that was never set; the NVRAM image's two checksums; the payload's directory. |
 | `board_test.c` | The kernel's board code (`hakios_board.c`) with a table generated for the tests | The row is found by the loader's name; an unknown board has no feature; `hw.board.*`; the GPU profile a driver is handed. |
 | `drivers_list_test.c` | The list the kernel's drivers are started from (`hakios_drivers.c`), with a stand-in for every start function | Each is called once, in the order they depend on each other, on every board, also one the kernel does not know; a board gets the driver of the touch controller it lists and no other, and is told when it asked for one it does not have. |
 | `backlight_driver_test.c` | The backlight driver, unchanged, against a model of a DSI controller and a panel | What is written to the registers and when: both panel modes, the read-only level, Auto-Brightness, a controller that does not answer. |
