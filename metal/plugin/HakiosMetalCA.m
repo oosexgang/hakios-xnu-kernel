@@ -5859,7 +5859,8 @@ hm_fps_draws(void)
  * its texture reads, hakios_metal_cb_set_null_fs_textures; 64: no barrier before a tile's fetch, the rasterizer's
  * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier; 256: CoreAnimation's path_blit and path_clear
  * as it asks for them, as metal_paths=0 does; 512: a pass's fetching draws counted as any other against metal_gmem_draws,
- * not weighted; 1024: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE too, as before), for a bisect.
+ * not weighted; 1024: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE too, as before; 2048: the path
+ * renderer's draws left out, a wrong picture, to time what they cost), for a bisect.
  * metal_gmem_cycle=N,N,...@SECONDS instead: each of those values in turn, SECONDS (20 when not given) each, from the
  * first command buffer on, and around again -- several settings timed in one boot, each change printed */
 static unsigned
@@ -5898,7 +5899,8 @@ hm_gmem_off(void)
 	const unsigned i = (unsigned)((hm_now() - cycleFrom) / cycleSeconds) % cycleCount;
 	if (i != shown) {
 		shown = i;
-		hm_print("metal_gmem_cycle: metal_gmem_off=%u from now, for %u s\n", cycle[i], cycleSeconds);
+		static unsigned turns;
+		hm_print("metal_gmem_cycle: turn %u: metal_gmem_off=%u from now, for %u s\n", ++turns, cycle[i], cycleSeconds);
 	}
 	return cycle[i];
 }
@@ -6068,9 +6070,21 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 				hm_fps.programs[k].count++;
 				hm_fps.programs[k].us += us;
 			}
-			/* metal_fps=timeline: a heavy buffer's every pass, the first 12 such buffers */
+			/* metal_fps=timeline: a heavy buffer's every pass, the first 80 such buffers (metal_timeline_from=SECONDS: from
+			 * so long after the first buffer timed, past the lock screen's say) */
 			static unsigned heavyListed;
-			const BOOL listAll = gpu > 0.015 && heavyListed < 80 && hm_timeline_on();
+			static double listFrom = -1;
+			if (listFrom < 0) {
+				char args[1024] = "";
+				size_t size = sizeof(args) - 1;
+				const char *at;
+
+				listFrom = hm_now();
+				if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "metal_timeline_from=")) != NULL) {
+					listFrom += atoi(at + strlen("metal_timeline_from="));
+				}
+			}
+			const BOOL listAll = gpu > 0.015 && heavyListed < 80 && hm_timeline_on() && hm_now() >= listFrom;
 			NSMutableString *all = listAll ? [NSMutableString string] : nil;
 
 			heavyListed += listAll ? 1 : 0;
@@ -7647,7 +7661,11 @@ hm_mask_begin(const struct hakios_metal_render_pass *pass, struct ca_paths_map *
 	static unsigned told;
 	if (told < 3) {
 		told++;
-		hm_print("paths: a pass with a mask attachment, %ux%u: %u bands, %s\n", w, h, map->bands, cleared ? "cleared" : "every column marked");
+		hm_print("paths: a pass with a mask attachment, %ux%u: %u bands, %s; attachments 0 format %u load %u store %u, 1 format %u load %u "
+			 "store %u, 2 format %u load %u store %u\n", w, h, map->bands, cleared ? "cleared" : "every column marked",
+			 pass->color0 ? hakios_metal_texture_format(pass->color0) : 0, pass->load_action, pass->store_action,
+			 pass->more[0].texture ? hakios_metal_texture_format(pass->more[0].texture) : 0, pass->more[0].load_action, pass->more[0].store_action,
+			 hakios_metal_texture_format(a->texture), a->load_action, a->store_action);
 	}
 }
 
@@ -8623,6 +8641,27 @@ hm_geom(const char *program, hakios_metal_buffer *const *vs, const uint64_t *off
 			pixels += w * h;
 		}
 	}
+	/* path_cubic: of its pieces, how many have a quad of any height on the target, and how many cubics have one */
+	const unsigned shift = strstr(program, "path_cubic_vert_1") != NULL ? 3 : strstr(program, "path_cubic_vert_0") != NULL ? 1 : 0;
+	if (shift != 0 && m != NULL && count > 1 && vs[1] != NULL && W > 0) {
+		const uint64_t room = hakios_metal_buffer_length(vs[1]) - offsets[1];
+		const float *c0 = (const float *)((const uint8_t *)hakios_metal_buffer_contents(vs[1]) + offsets[1]);
+		unsigned live = 0, liveCubics = 0, lastCubic = ~0u;
+		for (unsigned i = baseInstance; i < baseInstance + instances && (uint64_t)((i >> shift) + 1) * 40 <= room; i++) {
+			const float *c = c0 + (size_t)(i >> shift) * 10;
+			double ey[2];
+			for (int k = 0; k < 2; k++) {
+				const double t = (double)((i & ((1u << shift) - 1)) + k) / (1u << shift);
+				const double x = ((c[2] * t + c[4]) * t + c[6]) * t + c[8], y = ((c[3] * t + c[5]) * t + c[7]) * t + c[9];
+				ey[k] = (1 - (x * m[1] + y * m[5] + m[13])) * 0.5 * H;
+			}
+			const BOOL some = fabs(ey[1] - ey[0]) > 1e-3 && MAX(ey[0], ey[1]) > 0 && MIN(ey[0], ey[1]) < H;
+			live += some;
+			if (some && (i >> shift) != lastCubic) liveCubics++, lastCubic = i >> shift;
+		}
+		hm_print("geom: %s %u vertices x %u instances: %u pieces with height on the target, of %u cubics\n", program, vertices, instances, live, liveCubics);
+		return;
+	}
 	if (known) {
 		hm_print("geom: %s %u vertices x %u instances: %.0f pixels (%.2f screens)\n", program, vertices, instances, pixels, pixels / (W * H));
 	} else {
@@ -8716,6 +8755,10 @@ hm_trace_draw(const void *which, const char *program, const struct hakios_metal_
 			strlcpy(hm_paths_stat.fillBy, hakios_metal_program_name([_pipeline hakiosProgram]), sizeof(hm_paths_stat.fillBy));
 		}
 		return NO;
+	}
+	/* (metal_gmem_off's 2048, a measurement: the path renderer's draws left out, to time the pass without them) */
+	if ((hm_gmem_off() & 2048) != 0) {
+		return YES;
 	}
 	const float *m = hm_vs_bytes(vs, _vsOffsets, _vsHighest, 2, 64);
 	if (role == CA_PATH_RECT || role == CA_PATH_CUBIC) {
