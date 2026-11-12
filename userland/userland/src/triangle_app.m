@@ -1,5 +1,5 @@
 /*
- * RedwoodTriangle -- an application of this port's own, and the first process that is not
+ * HakiosTriangle -- an application of this port's own, and the first process that is not
  * one of Apple's daemons to ask this Metal driver for a frame.
  *
  * WHY IT EXISTS. Every Metal result this port has was measured inside backboardd,
@@ -81,7 +81,7 @@
  *                   our plug-in device and this process adds NOTHING. This is the road a
  *                   game takes, so it is the more interesting of the two.
  *   discovery OFF   MTLCreateSystemDefaultDevice() answers nil, and this program walks
- *                   discovery's steps 3, 4 and 5 itself out of /redwood/lib/RedwoodMetal.bundle
+ *                   discovery's steps 3, 4 and 5 itself out of /redwood/lib/HakiosMetal.bundle
  *                   -- the bundle, the class, -initWithAcceleratorPort:, MTLAddDevice --
  *                   exactly as src/metal_drv_test.m does. Worth keeping, because then the only
  *                   Metal device in the system is the one made here, which makes every frame
@@ -115,7 +115,7 @@ extern id MTLCreateSystemDefaultDevice(void);
 #define MTL_CREATE_DEVICE_UNSLID 0x181a34b3cUL
 #define MTL_ADD_DEVICE_UNSLID    0x181a1875cUL
 
-/* MTLCommandBufferStatus, Metal's own numbers (redwoodmetal.m says them in the log too). */
+/* MTLCommandBufferStatus, Metal's own numbers (hakiosmetal.m says them in the log too). */
 #define RW_CB_COMPLETED 4
 
 /*
@@ -141,7 +141,7 @@ extern id MTLCreateSystemDefaultDevice(void);
 static const char *rwt_metallib =
     "/System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib";
 static const char *rwt_fragment = "clearFragment01";
-static const char *rwt_bundle = "/redwood/lib/RedwoodMetal.bundle";
+static const char *rwt_bundle = "/redwood/lib/HakiosMetal.bundle";
 
 /* The two colours, as the bytes a BGRA8Unorm attachment must end up holding. */
 static const unsigned char rwt_clear_bgra[4]    = { 255, 0, 0, 255 };     /* pure blue */
@@ -317,8 +317,8 @@ rwt_make_device(void)
 		    "NOTHING and asks for no second device -- which is also the road a game "
 		    "takes, and the reason this is the interesting boot", name);
 		rwt_say("triangle: device: it calls itself \"%s\"", [[found name] UTF8String]);
-		if (strcmp(name, "RedwoodMetalDevice") != 0) {
-			rwt_say("triangle: device: and that is NOT RedwoodMetalDevice, so the "
+		if (strcmp(name, "HakiosMetalDevice") != 0) {
+			rwt_say("triangle: device: and that is NOT HakiosMetalDevice, so the "
 			    "frames below belong to something else in this image");
 		}
 		return [found retain];
@@ -335,7 +335,7 @@ rwt_make_device(void)
 		    "no Metal driver to ask", rwt_bundle);
 		return nil;
 	}
-	Class cls = [bundle classNamed:@"RedwoodMetalDevice"];
+	Class cls = [bundle classNamed:@"HakiosMetalDevice"];
 
 	if (cls == Nil) {
 		cls = [bundle principalClass];
@@ -359,7 +359,7 @@ rwt_make_device(void)
 		    "hand the device class");
 		return nil;
 	}
-	rwt_step("-initWithAcceleratorPort: (this opens RedwoodGPU and the compiler library)");
+	rwt_step("-initWithAcceleratorPort: (this opens HakiosGPU and the compiler library)");
 	id device = ((id (*)(id, SEL, io_service_t))objc_msgSend)([cls alloc],
 	    sel_getUid("initWithAcceleratorPort:"), service);
 
@@ -666,7 +666,7 @@ rwt_say_named_pixels(const char *view, const unsigned char *rows, size_t stride,
  * The drawable's own IOSurface, found through CAMetalDrawable's one ivar and validated
  * before it is believed.
  *
- * The driver's texture answers nil to -iosurface (redwoodmetal.m), so there is no way to
+ * The driver's texture answers nil to -iosurface (hakiosmetal.m), so there is no way to
  * ask Metal for it; CoreAnimation keeps it in the private structure of the drawable. The
  * search below is over the ivars of the drawable's class, narrowed to the one whose type
  * encoding names _CAMetalDrawablePrivate, so nothing of another shape is ever
@@ -797,7 +797,7 @@ rwt_frame(struct rwt_frame_state *state)
 		if (drawable == nil) {
 			state->failures++;
 			rwt_say("triangle: frame %u: nextDrawable gave NIL. Either the driver "
-			    "refused the texture -- look for \"redwoodmetal: no drawable:\" "
+			    "refused the texture -- look for \"hakiosmetal: no drawable:\" "
 			    "just above -- or all %lu drawables of the pool are still in "
 			    "flight, which means the presents are not completing",
 			    state->frame,
@@ -1256,7 +1256,7 @@ main(int argc, char *argv[])
 	int layer_mode = argc > 1 && strcmp(argv[1], "--layer") == 0;
 
 	rwt_open_console();
-	rwt_say("triangle: start: RedwoodTriangle, pid %d, uid %d, mode %s", (int)getpid(),
+	rwt_say("triangle: start: HakiosTriangle, pid %d, uid %d, mode %s", (int)getpid(),
 	    (int)getuid(), layer_mode ? "--layer (no UIKit, no window)" : "application");
 	if (layer_mode) {
 		int bad;

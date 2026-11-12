@@ -7,7 +7,7 @@
  * (hakios_board()->rpmh.rsc and tcs_offset); a resource's address comes from the command database
  * (hakios_cmd_db.h). The first slot set is taken to be an "active" one, as on every chip so far.
  *
- * The slot set is one for all its users: whoever sends takes redwood_rpmh_lock() around it (not on
+ * The slot set is one for all its users: whoever sends takes hakios_rpmh_lock() around it (not on
  * the way back to the loader, when the other cores are stopped). It is left as it was found, also
  * when RPMh does not answer.
  *

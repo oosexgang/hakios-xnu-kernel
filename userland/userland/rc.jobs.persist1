@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Boot 1 of the series of rc.jobs.persist5, which is this list with its two minutes of quiet in
 # place of the three lines below: an icon of the home screen picked up and carried to the right
 # (a long press and then a drag, all of it one touch -- rwtouch drag ... GRAB), then home. Whether

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-	What RedwoodTriangle.app is signed with, and why there is anything here at all.
+	What HakiosTriangle.app is signed with, and why there is anything here at all.
 
 	NOTHING IN THIS PORT NEEDS A SIGNATURE TO RUN. AMFI here is a stand-in that accepts every
 	signature and holds no trust cache (libkern/amfi/miniamfi.c), and the kernel is built
@@ -36,7 +36,7 @@
 	                                       above believe about the process.
 
 	DELIBERATELY ABSENT: anything about the GPU, Metal, IOKit or the display. The driver is
-	reached by dlopen of a world-readable bundle and by IOServiceOpen on RedwoodGPU, and
+	reached by dlopen of a world-readable bundle and by IOServiceOpen on HakiosGPU, and
 	SpringBoard already does both as mobile with no entitlement of its own for it. An
 	entitlement asked for here that was not needed would be a claim about this port that this
 	measurement had not made.
@@ -44,7 +44,7 @@
 <plist version="1.0">
 <dict>
 	<key>application-identifier</key>
-	<string>com.redwood.triangle</string>
+	<string>com.hakios.triangle</string>
 	<key>com.apple.private.security.no-container</key>
 	<true/>
 	<key>platform-application</key>

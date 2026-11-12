@@ -8,7 +8,7 @@ method through the Objective-C runtime -- `class_copyMethodList` lists it,
 names the RECEIVER's class, so it reads as if the method were missing from a
 subclass of ours. The first device probe of subsystem (2) read
 "initWithAcceleratorPort: yes, its own" out of the runtime and then died on
-"-[RedwoodMetalDevice initWithAcceleratorPort:]: unrecognized selector". Both
+"-[HakiosMetalDevice initWithAcceleratorPort:]: unrecognized selector". Both
 lines were true.
 
 So the question "what does a driver of ours owe?" cannot be answered from the

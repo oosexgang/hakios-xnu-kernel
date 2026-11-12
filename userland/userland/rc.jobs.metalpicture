@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalpicture).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalpicture).
 #
 # A picture of the whole panel, every pixel of which this port's Metal driver computed on
 # the Adreno (docs/metal.md 10.33). Everything the driver has drawn until now went into a
@@ -29,10 +29,10 @@
 # this driver would have hung anything that drew for two seconds. The mosaic makes exactly
 # 64 and the ladder's first rung asks for the 65th, which is why this file is now the test
 # that catches it: logs/114823-run.log, where rung one blocked in
-# -[RedwoodMetalCommandQueue commandBuffer] and a heartbeat thread proved the process alive
+# -[HakiosMetalCommandQueue commandBuffer] and a heartbeat thread proved the process alive
 # and blocked for four minutes rather than killed.
 #
-# The fix is in userland/src/redwoodmetal.m: the slot goes back at -commit (where this
+# The fix is in userland/src/hakiosmetal.m: the slot goes back at -commit (where this
 # driver's work is actually finished) and at -dealloc for a buffer that was never
 # committed, and Apple's own flag is cleared with it. The queue now also reports its
 # maxCommandBufferCount and how many buffers still hold a slot, so this boot prints the
@@ -74,7 +74,7 @@
 # state is not reaching the hardware and nothing else in the lower two thirds means much.
 #
 # And what the presentation is, said plainly: the pixels go to the panel through
-# kRedwoodShow (iokit/Kernel/RedwoodGPU.cpp), which is a row-by-row copy in the kernel and
+# kRedwoodShow (iokit/Kernel/HakiosGPU.cpp), which is a row-by-row copy in the kernel and
 # is the same selector src/gl_test.c puts its triangle on the screen with. That copy is NOT
 # Metal's, and this file does not claim it is. What is claimed is that all 2 592 000 pixels
 # handed to it were computed by Metal pipelines of this driver on the Adreno: no border, no

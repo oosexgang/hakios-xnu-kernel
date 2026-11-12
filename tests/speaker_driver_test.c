@@ -1,5 +1,5 @@
 /*
- * The speaker amplifiers' driver itself (kernel/overlay/bsd/dev/redwood_speaker.c), run as a host
+ * The speaker amplifiers' driver itself (kernel/overlay/bsd/dev/hakios_speaker.c), run as a host
  * program against the model of the SoC's pins with two amplifiers on them (i2c_device_model.h: two
  * addresses, registers of two bytes) and a command database (cmd_db_image.h). What is tested: its
  * look, speaker_probe=1 and 2, which is to read and nothing else; and preparing the amplifiers for
@@ -87,8 +87,8 @@ amplifier_written(uint8_t index, uint8_t value)
 	amplifier_on[which] += reg == 0x04 && (index & 1) && !(value & 3);
 }
 
-void redwood_speaker_init(void);
-void redwood_speaker_quiesce(void);
+void hakios_speaker_init(void);
+void hakios_speaker_quiesce(void);
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
@@ -96,7 +96,7 @@ void redwood_speaker_quiesce(void);
 #define get speaker_get
 #define put speaker_put
 #include "hakios_board.c"
-#include "redwood_speaker.c"
+#include "hakios_speaker.c"
 #undef get
 #undef put
 
@@ -174,7 +174,7 @@ static void
 look(const char *args)
 {
 	boot_args = args;
-	redwood_speaker_init();
+	hakios_speaker_init();
 	WAIT_FOR(logged("speaker: done"), 20000);
 	CHECK(logged("speaker: done"), "the look ended: %s", log_text);
 }
@@ -346,11 +346,11 @@ off_by_default(void)
 {
 	phone("phone-video");
 	boot_args = "";
-	redwood_speaker_init();
+	hakios_speaker_init();
 	usleep(50000);
 	CHECK(model.writes == 0 && model.reads == 0 && !logged("speaker:"), "nothing read, nothing written, nothing said: %s", log_text);
 	boot_args = "speaker_probe=0";
-	redwood_speaker_init();
+	hakios_speaker_init();
 	usleep(50000);
 	CHECK(model.writes == 0 && model.reads == 0 && !logged("speaker:"), "nor with speaker_probe=0: %s", log_text);
 }
@@ -476,7 +476,7 @@ prepared(void)
 	static const uint8_t expected[] = { 0x00, 0x03, 0x04, 0x05, 0x06, 0x08, 0x14, 0x50, 0x52 };
 
 	phone_with_file("phone-video");
-	CHECK(redwood_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(hakios_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
 	CHECK(logged("BOTH AMPLIFIERS ARE CONFIGURED"), "said: %s", log_text);
 	for (unsigned which = 0; which < 2; which++) {
 		const uint8_t *bank = which ? device.reg_b : device.reg;
@@ -508,7 +508,7 @@ not_this_chip(void)
 {
 	phone_with_file("phone-video");
 	wide(device.reg, 0x00, 0x2032);
-	CHECK(!redwood_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, acf_size), "refused: %s", log_text);
 	CHECK(logged("chip ID 0x2032, AW88266"), "named: %s", log_text);
 	CHECK(writes_into[0] == 0 && writes_into[1] == 0, "nothing was written: %u, %u bytes", writes_into[0], writes_into[1]);
 	never();
@@ -521,7 +521,7 @@ second_is_missing(void)
 	phone_with_file("phone-video");
 	device.address_b = 0;
 	wide(device.reg, 0x04, 0x4000);         /* (as if it had been left running) */
-	CHECK(!redwood_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, acf_size), "refused: %s", log_text);
 	CHECK(logged("nobody at I2C address 0x34") && logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
 	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103, "the first is powered down and muted: %#x", reads(device.reg, 0x04));
 	CHECK(writes_into[1] == 0, "nothing went into the second");
@@ -537,13 +537,13 @@ write_does_not_stick(void)
 	phone_with_file("phone-video");
 	deaf_register = 0x06;
 	wide(device.reg, 0x04, 0x4000);
-	CHECK(!redwood_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, acf_size), "refused: %s", log_text);
 	CHECK(logged("0x06 <- 0x34e8, reads 0x14e8: NOT AS WRITTEN") && logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
 	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103, "the first is powered down and muted: %#x", reads(device.reg, 0x04));
 	CHECK(!register_written[0][0x08] && !register_written[0][0x50], "nothing after the register that failed");
 	CHECK(writes_into[1] == 0, "nothing went into the second");
 	before = writes_into[0];
-	CHECK(!redwood_speaker_start(), "nor is it started after that");
+	CHECK(!hakios_speaker_start(), "nor is it started after that");
 	CHECK(writes_into[0] == before && writes_into[1] == 0, "and nothing more is written");
 	never();
 }
@@ -556,12 +556,12 @@ file_not_trusted(void)
 
 	phone_with_file("phone-video");
 	acf[registers_end - 2] ^= 1;            /* a value of the second amplifier's profile */
-	CHECK(!redwood_speaker_prepare(acf, acf_size), "a sum that is off: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, acf_size), "a sum that is off: %s", log_text);
 	CHECK(logged("device 1's Music profile does not add up"), "said: %s", log_text);
 	file();
-	CHECK(!redwood_speaker_prepare(acf, registers_end - 8), "a file cut short: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, registers_end - 8), "a file cut short: %s", log_text);
 	CHECK(logged("does not fit"), "said: %s", log_text);
-	CHECK(!redwood_speaker_prepare(acf, 0x20), "a file of 32 bytes: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, 0x20), "a file of 32 bytes: %s", log_text);
 	CHECK(logged("not one of Awinic's"), "said: %s", log_text);
 	memset(acf, 0, sizeof(acf));
 	acf_entries = 0;
@@ -569,7 +569,7 @@ file_not_trusted(void)
 	put32(acf + 0x3c, 0x50);
 	acf_registers(0, 0, fuse, 4);
 	acf_registers(1, 0, music_b, 8);
-	CHECK(!redwood_speaker_prepare(acf, acf_size), "a profile that writes a fuse: %s", log_text);
+	CHECK(!hakios_speaker_prepare(acf, acf_size), "a profile that writes a fuse: %s", log_text);
 	CHECK(logged("writes register 0x78, which is not one of the configuration's"), "said: %s", log_text);
 	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
 	never();
@@ -581,11 +581,11 @@ running(void)
 {
 	phone_with_file("phone-video");
 	wide(device.reg_b, 0x01, 0x0311);
-	CHECK(redwood_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(hakios_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
 	/* (the volume is watched from here on: while they are powered down the profile's own goes through) */
 	loudest[0] = loudest[1] = -1;
 	biggest_step = 0;
-	CHECK(redwood_speaker_start(), "started: %s", log_text);
+	CHECK(hakios_speaker_start(), "started: %s", log_text);
 }
 
 static bool
@@ -616,14 +616,14 @@ static void
 volume_and_stop(void)
 {
 	running();
-	CHECK(redwood_speaker_volume(100, 0), "to 12.5 dB below Android's level: %s", log_text);
+	CHECK(hakios_speaker_volume(100, 0), "to 12.5 dB below Android's level: %s", log_text);
 	CHECK(reads(device.reg, 0x05) == 0x1487 && reads(device.reg_b, 0x05) == 0x1487, "3 + 100 eighths of a dB: %#x", reads(device.reg, 0x05));
-	CHECK(redwood_speaker_volume(0, 0), "to Android's level: %s", log_text);
+	CHECK(hakios_speaker_volume(0, 0), "to Android's level: %s", log_text);
 	CHECK(reads(device.reg, 0x05) == 0x1403 && reads(device.reg_b, 0x05) == 0x1403, "the profile's own: %#x", reads(device.reg, 0x05));
 	CHECK(loudest[0] == 3 && loudest[1] == 3, "never louder than Android's level: %d, %d", loudest[0], loudest[1]);
 	CHECK(biggest_step == 48, "6 dB a step at most: %d eighths", biggest_step);
-	CHECK(redwood_speaker_healthy(), "healthy: %s", log_text);
-	redwood_speaker_stop();
+	CHECK(hakios_speaker_healthy(), "healthy: %s", log_text);
+	hakios_speaker_stop();
 	CHECK(logged("THE AMPLIFIER 0x35, slot 0 IS POWERED DOWN") && logged("THE AMPLIFIER 0x34, slot 1 IS POWERED DOWN"), "said: %s", log_text);
 	for (unsigned which = 0; which < 2; which++) {
 		const uint8_t *bank = which ? device.reg_b : device.reg;
@@ -633,7 +633,7 @@ volume_and_stop(void)
 		CHECK(reads(bank, 0x05) == 0x17c0, "amplifier %u: at the lowest volume: %#x", which, reads(bank, 0x05));
 	}
 	CHECK(biggest_step == 48, "the fade out in steps of 6 dB too: %d eighths", biggest_step);
-	CHECK(!redwood_speaker_volume(0, 0), "no volume for amplifiers that are stopped");
+	CHECK(!hakios_speaker_volume(0, 0), "no volume for amplifiers that are stopped");
 	never();
 }
 
@@ -643,8 +643,8 @@ no_clock(void)
 {
 	phone_with_file("phone-video");
 	wide(device.reg_b, 0x01, 0x0300);
-	CHECK(redwood_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
-	CHECK(!redwood_speaker_start(), "not started: %s", log_text);
+	CHECK(hakios_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(!hakios_speaker_start(), "not started: %s", log_text);
 	CHECK(logged("THE AMPLIFIER 0x35, slot 0 RUNS") && logged("the amplifier 0x34, slot 1: status 0x0300: its PLL DOES NOT LOCK") &&
 	    logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
 	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103 && (reads(device.reg_b, 0x04) & 0x103) == 0x103, "both are down and muted: %#x, %#x",
@@ -661,9 +661,9 @@ fault_while_playing(void)
 	unsigned before[2];
 
 	running();
-	CHECK(redwood_speaker_volume(0, 0) && redwood_speaker_healthy(), "playing: %s", log_text);
+	CHECK(hakios_speaker_volume(0, 0) && hakios_speaker_healthy(), "playing: %s", log_text);
 	wide(device.reg_b, 0x01, 0x0311 | 1u << 3);      /* over-current */
-	CHECK(!redwood_speaker_healthy(), "the fault is seen: %s", log_text);
+	CHECK(!hakios_speaker_healthy(), "the fault is seen: %s", log_text);
 	CHECK(logged("the amplifier 0x34, slot 1: status 0x0319") && logged("an amplifier reports a fault: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"),
 	    "said: %s", log_text);
 	CHECK(down(device.reg) && down(device.reg_b) && (reads(device.reg, 0x04) & reads(device.reg_b, 0x04) & 0x100), "both are down and muted: %#x, %#x",
@@ -671,8 +671,8 @@ fault_while_playing(void)
 	before[0] = writes_into[0];
 	before[1] = writes_into[1];
 	wide(device.reg_b, 0x01, 0x0311);
-	CHECK(!redwood_speaker_volume(0, 0) && !redwood_speaker_healthy() && !redwood_speaker_start(), "nothing is done after that");
-	redwood_speaker_stop();
+	CHECK(!hakios_speaker_volume(0, 0) && !hakios_speaker_healthy() && !hakios_speaker_start(), "nothing is done after that");
+	hakios_speaker_stop();
 	CHECK(writes_into[0] == before[0] && writes_into[1] == before[1], "and nothing more is written");
 	never();
 }
@@ -682,9 +682,9 @@ static void
 silent_while_playing(void)
 {
 	running();
-	CHECK(redwood_speaker_volume(0, 0) && redwood_speaker_healthy(), "playing: %s", log_text);
+	CHECK(hakios_speaker_volume(0, 0) && hakios_speaker_healthy(), "playing: %s", log_text);
 	device.absent = true;
-	CHECK(!redwood_speaker_healthy(), "an amplifier that does not answer is not healthy: %s", log_text);
+	CHECK(!hakios_speaker_healthy(), "an amplifier that does not answer is not healthy: %s", log_text);
 	CHECK(logged("status 0xffff") && logged("an amplifier reports a fault"), "said, with the status it could not read: %s", log_text);
 	never();
 }
@@ -714,32 +714,32 @@ monitor(void)
 	before[1] = writes_into[1];
 	measures(device.reg, 25, 4000);
 	measures(device.reg_b, 25, 4000);
-	CHECK(redwood_speaker_monitor(false) == 0, "warm, a full battery: nothing less");
+	CHECK(hakios_speaker_monitor(false) == 0, "warm, a full battery: nothing less");
 	measures(device.reg, 3, 4000);
-	CHECK(redwood_speaker_monitor(false) == 0, "one cool look of two (14 degrees on average): nothing yet");
-	CHECK(redwood_speaker_monitor(false) == 0, "two of three (10 degrees)");
-	CHECK(redwood_speaker_monitor(false) == 24, "three cool looks: 3 dB less");
+	CHECK(hakios_speaker_monitor(false) == 0, "one cool look of two (14 degrees on average): nothing yet");
+	CHECK(hakios_speaker_monitor(false) == 0, "two of three (10 degrees)");
+	CHECK(hakios_speaker_monitor(false) == 24, "three cool looks: 3 dB less");
 	measures(device.reg, 6, 4000);
 	for (int look = 0; look < 3; look++) {
-		CHECK(redwood_speaker_monitor(false) == 24, "6 degrees is between two rows: the last one holds");
+		CHECK(hakios_speaker_monitor(false) == 24, "6 degrees is between two rows: the last one holds");
 	}
 	measures(device.reg, -5, 4000);
-	redwood_speaker_monitor(false);
-	redwood_speaker_monitor(false);
-	CHECK(redwood_speaker_monitor(false) == 64, "cold (a negative reading): 8 dB less");
+	hakios_speaker_monitor(false);
+	hakios_speaker_monitor(false);
+	CHECK(hakios_speaker_monitor(false) == 64, "cold (a negative reading): 8 dB less");
 	measures(device.reg, 25, 4000);
 	measures(device.reg_b, 25, 3700);
-	redwood_speaker_monitor(false);
-	redwood_speaker_monitor(false);
-	CHECK(redwood_speaker_monitor(true) == 13, "the first warm again, the second sees a low battery: 1.625 dB less");
+	hakios_speaker_monitor(false);
+	hakios_speaker_monitor(false);
+	CHECK(hakios_speaker_monitor(true) == 13, "the first warm again, the second sees a low battery: 1.625 dB less");
 	CHECK(logged("the amplifier 0x34, slot 1: 25 degrees, the battery 3704 mV"), "told when asked (629 x 6025 / 1023): %s", log_text);
 	measures(device.reg, 3, 4000);
-	redwood_speaker_monitor(false);
-	redwood_speaker_monitor(false);
-	CHECK(redwood_speaker_monitor(false) == 24, "the larger of the two amplifiers' reductions");
+	hakios_speaker_monitor(false);
+	hakios_speaker_monitor(false);
+	CHECK(hakios_speaker_monitor(false) == 24, "the larger of the two amplifiers' reductions");
 	CHECK(writes_into[0] == before[0] && writes_into[1] == before[1], "the monitor wrote into an amplifier");
-	redwood_speaker_stop();
-	CHECK(redwood_speaker_monitor(false) == 0, "amplifiers that are stopped are not asked");
+	hakios_speaker_stop();
+	CHECK(hakios_speaker_monitor(false) == 0, "amplifiers that are stopped are not asked");
 	never();
 }
 
@@ -750,12 +750,12 @@ monitor_table_not_trusted(void)
 	phone_with_file("phone-video");
 	wide(device.reg_b, 0x01, 0x0311);
 	acf[acf_size - 1] ^= 0x40;              /* in the second amplifier's table */
-	CHECK(redwood_speaker_prepare(acf, acf_size) && redwood_speaker_start(), "prepared and started all the same: %s", log_text);
+	CHECK(hakios_speaker_prepare(acf, acf_size) && hakios_speaker_start(), "prepared and started all the same: %s", log_text);
 	CHECK(logged("device 1's monitor table is not of the shape known: not used"), "said: %s", log_text);
 	measures(device.reg, 25, 4000);
 	measures(device.reg_b, -20, 3000);
 	for (int look = 0; look < 4; look++) {
-		CHECK(redwood_speaker_monitor(false) == 0, "no table, no reduction");
+		CHECK(hakios_speaker_monitor(false) == 0, "no table, no reduction");
 	}
 	never();
 }
@@ -765,7 +765,7 @@ static void
 run_ends(void)
 {
 	running();
-	redwood_speaker_quiesce();
+	hakios_speaker_quiesce();
 	CHECK(logged("the kernel is on its way out: BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
 	CHECK(down(device.reg) && down(device.reg_b), "both are down: %#x, %#x", reads(device.reg, 0x04), reads(device.reg_b, 0x04));
 	never();
@@ -777,13 +777,13 @@ not_listed(void)
 {
 	phone("qemu-virt");
 	boot_args = "speaker_probe=2";
-	redwood_speaker_init();
+	hakios_speaker_init();
 	usleep(50000);
 	CHECK(logged("speaker: disabled: this board's board.toml lists no \"speaker-aw88261\""), "said: %s", log_text);
 	CHECK(model.reads == 0 && model.writes == 0, "nothing was read or written");
-	CHECK(!redwood_speaker_prepare(NULL, 0), "nor is it prepared for sound");
+	CHECK(!hakios_speaker_prepare(NULL, 0), "nor is it prepared for sound");
 	CHECK(model.reads == 0 && model.writes == 0, "nothing was read or written then either");
-	redwood_speaker_quiesce();
+	hakios_speaker_quiesce();
 	CHECK(model.reads == 0 && model.writes == 0, "nor at the run's end");
 }
 

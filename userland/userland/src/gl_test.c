@@ -91,7 +91,7 @@ extern void glReadPixels(int x, int y, int width, int height, unsigned format, u
 #define GL_COLOR_ATTACHMENT0            0x8ce0
 #define GL_FRAMEBUFFER                  0x8d40
 
-/* the kernel's GPU service takes pixels for the panel (iokit/Kernel/RedwoodGPU.cpp: kRedwoodShow) */
+/* the kernel's GPU service takes pixels for the panel (iokit/Kernel/HakiosGPU.cpp: kRedwoodShow) */
 struct show {
 	uint64_t pixels;
 	uint32_t width, height, row_bytes, pad;
@@ -349,7 +349,7 @@ main(int argc, char **argv)
 	    PIXEL(width * 85 / 100, height * 22 / 100), PIXEL(width / 2, height * 80 / 100), coloured,
 	    (unsigned)(width * height), (unsigned)((uint64_t)coloured * 100 / (uint64_t)(width * height)));
 
-	service = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+	service = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
 	if (service == 0 || IOServiceOpen(service, mach_task_self(), 0, &connection) != 0) {
 		printf("gl_test: no GPU service in this kernel to put the picture on the panel with\n");
 		return 0;

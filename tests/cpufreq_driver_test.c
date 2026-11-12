@@ -76,7 +76,7 @@ static bool vote_with_cpufreq;
 void hakios_cpuload_start(void) { load_meters++; }
 void hakios_ddr_init(bool with_cpufreq) { memory_votes++; vote_with_cpufreq = with_cpufreq; }
 void hakios_membench(void) { benchmarks++; }
-void redwood_cpufreq_init(void);
+void hakios_cpufreq_init(void);
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
@@ -129,7 +129,7 @@ every_group(void)
 {
 	phone("phone-cmd", 8);
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8 && epss.wanted[2] == 6, "rows %u %u %u", epss.wanted[0], epss.wanted[1],
 	    epss.wanted[2]);
 	CHECK(epss.writes[0] == 1 && epss.writes[1] == 1 && epss.writes[2] == 1 && epss.writes[3] == 0, "one write a group");
@@ -148,7 +148,7 @@ one_core(void)
 {
 	phone("phone-cmd", 1);
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 7 && epss.writes[0] == 1, "the first group: row %u", epss.wanted[0]);
 	CHECK(epss.wanted[1] == 1 && epss.wanted[2] == 1 && epss.writes[1] + epss.writes[2] == 0, "the groups without a core of ours "
 	    "are as the boot loader left them (%u %u)", epss.wanted[1], epss.wanted[2]);
@@ -162,7 +162,7 @@ some_cores(void)
 {
 	phone("phone-cmd", 5);
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8 && epss.wanted[2] == 1, "rows %u %u %u", epss.wanted[0], epss.wanted[1],
 	    epss.wanted[2]);
 	CHECK(logged("group 1 (1 of our cores)"), "the big group with the one core the kernel has of it");
@@ -174,7 +174,7 @@ another_soc(void)
 {
 	phone("phone-keys", 8);
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(epss.base == 0x05591000 && epss.size == 0x2000, "the block is where that SoC file has it: %#x, %#x", epss.base, epss.size);
 	CHECK(epss.wanted[0] == 7 && epss.wanted[1] == 8, "rows %u %u", epss.wanted[0], epss.wanted[1]);
 	CHECK(epss.writes[2] + epss.writes[3] == 0, "it has no third group");
@@ -199,7 +199,7 @@ odd_tables(void)
 		epss.table[2][row] = 0;         /* the third group has the fixed 300 MHz and nothing above it */
 	}
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(epss.wanted[0] == 1, "a table of one row: row %u", epss.wanted[0]);
 	CHECK(logged("row 2 -> 1 of the frequency table, 960 MHz"), "... which is 50 x 19.2 MHz");
 	CHECK(epss.wanted[1] == ROWS - 1, "a table that fills every row: row %u", epss.wanted[1]);
@@ -214,11 +214,11 @@ off_by_default(void)
 {
 	phone("phone-cmd", 8);
 	boot_args = "";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(all_writes() == 0 && !logged("cpufreq:"), "nothing written, nothing said: %s", log_text);
 	CHECK(memory_votes == 1 && !vote_with_cpufreq && benchmarks == 0, "the memory is not asked for more either");
 	boot_args = "cpufreq=0";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(all_writes() == 0, "cpufreq=0 is off");
 }
 
@@ -230,7 +230,7 @@ not_listed(void)
 	epss.base = 0x18591000;
 	epss.size = 0x1000;
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(logged("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\""), "said: %s", log_text);
 	CHECK(all_writes() == 0 && epss.elsewhere == 0, "nothing read or written");
 }
@@ -241,7 +241,7 @@ unknown_board(void)
 {
 	phone("nobody-described-this", 8);
 	boot_args = "cpufreq=1";
-	redwood_cpufreq_init();
+	hakios_cpufreq_init();
 	CHECK(logged("cpufreq: disabled"), "said: %s", log_text);
 	CHECK(all_writes() == 0 && epss.elsewhere == 0, "nothing read or written");
 }

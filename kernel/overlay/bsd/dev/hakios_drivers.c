@@ -5,7 +5,7 @@
  * called from here and from nowhere else, whatever the board: a driver decides for itself whether it
  * has anything to do -- its boot argument asks for it, the board lists its feature
  * (hakios_board_has()), the SoC file says where its blocks are -- and returns at once if not. So the
- * list has no conditions but one: which touch controller's driver feeds /dev/redwood-touch, since a
+ * list has no conditions but one: which touch controller's driver feeds /dev/hakios-touch, since a
  * board has one.
  *
  * A new driver is one more line here, after what it needs: the board first, then the processor, then
@@ -13,11 +13,11 @@
  */
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
-#include <sys/redwood_apfs_check.h>
-#include <sys/redwood_audio.h>
-#include <sys/redwood_input.h>
-#include <sys/redwood_sparse.h>
-#include <sys/redwood_virtio_blk.h>
+#include <sys/hakios_apfs_check.h>
+#include <sys/hakios_audio.h>
+#include <sys/hakios_input.h>
+#include <sys/hakios_sparse.h>
+#include <sys/hakios_virtio_blk.h>
 
 #include "hakios_board.h"
 #include "hakios_log.h"
@@ -34,9 +34,9 @@ touch_controller_init(void)
 	uint32_t asked = 0;
 
 	if (hakios_board_has(HAKIOS_HAS_TOUCH_FT3658U)) {
-		renoir_fts_init();
+		hakios_fts_init();
 	} else if (hakios_board_has(HAKIOS_HAS_TOUCH_GOODIX)) {
-		redwood_goodix_init();
+		hakios_goodix_init();
 	} else if (PE_parse_boot_argn("touchscreen", &asked, sizeof(asked)) && asked != 0) {
 		hakios_say("touch: touchscreen=1, but this board's board.toml lists no touch controller (\"touch-...\")\n");
 	}
@@ -46,41 +46,41 @@ void
 hakios_drivers_init(void)
 {
 	/* what everything else reads */
-	redwood_input_init();           /* /dev/redwood-touch: the queue every source of touches and keys feeds */
+	hakios_input_init();           /* /dev/hakios-touch: the queue every source of touches and keys feeds */
 	hakios_board_init();            /* which board this is and what it has, in the log (hakios_board.c) */
 
 	/* the processor */
 	hakios_scmi_perf_init();        /* firmware performance levels and limits */
-	redwood_cpufreq_init();         /* boot-arg cpufreq=1: full speed; with it the memory's vote (ddr=) and cpuload=, membench= */
+	hakios_cpufreq_init();         /* boot-arg cpufreq=1: full speed; with it the memory's vote (ddr=) and cpuload=, membench= */
 
 	/* what a person touches and sees */
-	redwood_virtio_input_init();    /* boot-arg virtio_input=1: QEMU's pointer and keyboard */
+	hakios_virtio_input_init();    /* boot-arg virtio_input=1: QEMU's pointer and keyboard */
 	touch_controller_init();        /* boot-arg touchscreen=1: the touch screen, by the driver of the controller the board lists */
 	hakios_prof_start();            /* boot-arg hakios_prof=NAME: a sampling profiler */
-	redwood_buttons_init();         /* boot-arg buttons=1: the power and volume keys */
-	redwood_battery_init();         /* boot-arg battery=1: the charger's state, from the loader */
-	redwood_ufs_init();             /* the phone's storage, read only */
-	redwood_net_init();             /* en0, if something carries its frames */
-	redwood_adreno_init();          /* boot-arg adreno=N: the GPU */
+	hakios_buttons_init();         /* boot-arg buttons=1: the power and volume keys */
+	hakios_battery_init();         /* boot-arg battery=1: the charger's state, from the loader */
+	hakios_ufs_init();             /* the phone's storage, read only */
+	hakios_net_init();             /* en0, if something carries its frames */
+	hakios_adreno_init();          /* boot-arg adreno=N: the GPU */
 	hakios_backlight_init();        /* boot-arg backlight=N: the panel's light, hw.backlight.* */
 	hakios_thermal_init();          /* boot-arg thermal=N: held back when hot, hw.thermal.* */
 
 	/* what talks to the other processors */
-	redwood_wifi_init();            /* boot-arg wifi=1 */
-	redwood_adsp_init();            /* boot-arg adsp=1: the audio DSP; sound, the microphones and the battery's details follow it */
+	hakios_wifi_init();            /* boot-arg wifi=1 */
+	hakios_adsp_init();            /* boot-arg adsp=1: the audio DSP; sound, the microphones and the battery's details follow it */
 
 	/* sound, and the parts that are looked at or switched by hand */
-	redwood_audio_init();           /* /dev/redwood-audio: what iOS plays, to a sink */
-	redwood_virtio_sound_init();    /* boot-arg virtio_sound=1: QEMU's sound device */
-	redwood_speaker_init();         /* boot-arg speaker_probe=N: a look at the speaker amplifiers */
-	redwood_haptic_init();          /* boot-arg haptic=N: the vibration motor */
-	redwood_torch_init();           /* boot-arg torch=N: the flashlight */
-	redwood_camera_init();          /* boot-arg cam=N: the cameras */
+	hakios_audio_init();           /* /dev/hakios-audio: what iOS plays, to a sink */
+	hakios_virtio_sound_init();    /* boot-arg virtio_sound=1: QEMU's sound device */
+	hakios_speaker_init();         /* boot-arg speaker_probe=N: a look at the speaker amplifiers */
+	hakios_haptic_init();          /* boot-arg haptic=N: the vibration motor */
+	hakios_torch_init();           /* boot-arg torch=N: the flashlight */
+	hakios_camera_init();          /* boot-arg cam=N: the cameras */
 
 	/* storage that is not the phone's own */
-	redwood_virtio_blk_init();      /* /dev/rvblk0: a disk image of the host (QEMU) */
-	redwood_sparse_init();          /* /dev/rsp0: part of an image too big to hold */
+	hakios_virtio_blk_init();      /* /dev/rvblk0: a disk image of the host (QEMU) */
+	hakios_sparse_init();          /* /dev/rsp0: part of an image too big to hold */
 #if APFS
-	redwood_apfs_check_init();      /* mounts and walks /dev/rvblk0 once userland has /private/var up */
+	hakios_apfs_check_init();      /* mounts and walks /dev/rvblk0 once userland has /private/var up */
 #endif
 }

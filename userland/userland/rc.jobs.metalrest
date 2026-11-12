@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalrest).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalrest).
 #
 # ConnectSpans alone, because it is the one kernel of the eleven never measured with the
 # input built for it and every attempt so far has been spoiled by something above it: cut

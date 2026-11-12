@@ -10,7 +10,7 @@
  *   - halts the machine if it is still process 1 after that.
  *
  * Started with a file name by anything else, it is a command runner: that is
- * how a launchd job (LaunchDaemons/com.redwood.demo.plist) runs a list of
+ * how a launchd job (LaunchDaemons/com.hakios.demo.plist) runs a list of
  * commands.
  */
 #include "mini.h"
@@ -128,7 +128,7 @@ synthetic_dir(const char *path)
  *     entry of the volume -- not a mount, which whatever registers the system's
  *     applications passed over), made before /private/var is covered by a memory
  *     filesystem.
- * Then the volume becomes the root (sysctl kern.redwood_switch_root) and the boot volume
+ * Then the volume becomes the root (sysctl kern.hakios_switch_root) and the boot volume
  * goes to its /private/preboot, the cryptexes onto that volume's Cryptexes/OS and App: the iOS
  * volume's /System/Cryptexes/OS and App point to /private/preboot/Cryptexes/OS and App, and the
  * kernel takes a shared cache from the first.  This
@@ -247,7 +247,7 @@ flash_root(const char *dev)
 	printf("  %d applications waiting to be installed, %d of them in /Applications\n", apps, bound);
 	check(apps > 0 && bound == apps, "the first boot's applications in /Applications");
 
-	ok = sysctlbyname("kern.redwood_switch_root", NULL, NULL, "/flash private/preboot", 22) == 0;
+	ok = sysctlbyname("kern.hakios_switch_root", NULL, NULL, "/flash private/preboot", 22) == 0;
 	if (!ok) {
 		printf("  switching the root: %s\n", strerror(errno));
 	}

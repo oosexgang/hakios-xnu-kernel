@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalcompute).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalcompute).
 #
 # How many Metal compute kernels of the system's own libraries this driver can actually run.
 #

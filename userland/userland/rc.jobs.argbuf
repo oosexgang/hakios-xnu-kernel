@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.argbuf).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.argbuf).
 #
 # WHAT THIS BOOT IS FOR: MTLArgumentEncoder, and the buffer OFFSET that goes with it.
 #
@@ -105,7 +105,7 @@
 #       Metal's own implementation answered instead, so the replacement did not take
 #       effect -- and then the dylib in that image is older than this list.
 #
-#   grep -a 'redwoodmetal\[' logs/*-run.log
+#   grep -a 'hakiosmetal\[' logs/*-run.log
 #       every sentence of the driver, each now carrying the process that provoked it.
 #       This is the boot to check that on: four or five Metal clients are alive.
 #

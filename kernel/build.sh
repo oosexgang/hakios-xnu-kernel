@@ -35,8 +35,8 @@ else
 	die "$XNU_SRC is not a tree made by kernel/assemble.sh (one of the old apply.sh, perhaps): move it away or set XNU_SRC"
 fi
 # redwood's touch firmware is not ours to publish (tools/mk-focaltech-fw.py makes it from a phone):
-# an empty one keeps redwood_goodix.c compiling; a board without that panel needs none
-FW=$XNU_SRC/bsd/dev/redwood_focaltech_fw.h
+# an empty one keeps hakios_goodix.c compiling; a board without that panel needs none
+FW=$XNU_SRC/bsd/dev/hakios_focaltech_fw.h
 if [ ! -f "$FW" ]; then
 	log "stub $FW (no FocalTech firmware)"
 	focaltech_stub > "$FW"
@@ -147,7 +147,7 @@ update $SL/include/kernel/os/firehose_types.defs < libdispatch/src/firehose/fire
 # kextsymboltool check fails on the exports a BCM2837 kernel does not have. xnu-12377's MakeInc.cmd
 # names /usr/bin/plutil, so the no-op wrapper is passed as well.
 xnumake() {
-	(cd "$XNU_SRC" && make DEFAULT_TARGET=build REDWOOD_OBJECTS= SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=BCM2837 \
+	(cd "$XNU_SRC" && make DEFAULT_TARGET=build HAKIOS_OBJECTS= SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=BCM2837 \
 		KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=$XNU_ARCH RC_DARWIN_KERNEL_VERSION=${UPSTREAM_TAG#xnu-} \
 		BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 BUILD_DSYM=0 PLUTIL=plutil \
 		HOST_CC="clang -include $XNUDEPS/hostinc/hostcompat.h -I$XNUDEPS/hostinc -Wno-unused-command-line-argument -Wno-error=implicit-function-declaration" \
@@ -155,11 +155,11 @@ xnumake() {
 }
 
 # objects of arm64 and arm64e builds share BUILD/obj (the old workspace did both): start over on a change
-if [ -f "$XNU_SRC/BUILD/obj/redwood-arch" ] && [ "$(cat "$XNU_SRC/BUILD/obj/redwood-arch")" != "$XNU_ARCH" ]; then
+if [ -f "$XNU_SRC/BUILD/obj/hakios-arch" ] && [ "$(cat "$XNU_SRC/BUILD/obj/hakios-arch")" != "$XNU_ARCH" ]; then
 	log "architecture changed: discarding BUILD/obj"
 	rm -rf "$XNU_SRC/BUILD/obj"
 fi
-mkdir -p "$XNU_SRC/BUILD/obj" && echo "$XNU_ARCH" > "$XNU_SRC/BUILD/obj/redwood-arch"
+mkdir -p "$XNU_SRC/BUILD/obj" && echo "$XNU_ARCH" > "$XNU_SRC/BUILD/obj/hakios-arch"
 
 # --- 3. the kernel's own static libraries, against this tree's headers -------------------------
 LIB=$SL/lib/kernel

@@ -1,6 +1,6 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The flashlight for iOS (RC_JOBS=rc.jobs.torch, with torch=3): as a program works it (torch_test: AVFlashlight, i.e.
-# mediaserverd's FigFlashlight, i.e. the kernel's /dev/redwood-torch) at full and at a quarter, then off; then from
+# mediaserverd's FigFlashlight, i.e. the kernel's /dev/hakios-torch) at full and at a quarter, then off; then from
 # Control Center, as a finger works it: opened from the top right corner, its flashlight button pressed, pressed again
 # 5 s later, Control Center closed (a tap below its buttons); then on for 8 s, which the kernel cuts with torch_max_s=5
 # (and leaves alone at its default of 30). The kernel's "torch:" lines say what was lit, and the end of the run repeats

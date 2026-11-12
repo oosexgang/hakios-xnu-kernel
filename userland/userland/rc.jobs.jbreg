@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Whether LaunchServices registers an application that a package puts in /var/jb/Applications -- the
 # memory filesystem the package manager's prefix is grafted on -- with the root on the flash
 # (RC_JOBS=rc.jobs.jbreg, FLASHBOOT=1 CRYPTEXES=flash, EXTRA=<a package with an application>.deb; with

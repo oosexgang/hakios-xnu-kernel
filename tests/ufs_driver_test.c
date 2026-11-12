@@ -1,5 +1,5 @@
 /*
- * The storage's driver itself (kernel/overlay/bsd/dev/redwood_ufs.c), run as a host program: the one
+ * The storage's driver itself (kernel/overlay/bsd/dev/hakios_ufs.c), run as a host program: the one
  * place of the kernel from which a write can reach a phone's flash. It asks the loader, which stays on
  * core 0 with UEFI's driver, through a page of memory and a buffer. So the model here is that loader: a
  * thread that answers what the page asks, over a made-up disk, and that notes every request -- above all
@@ -38,7 +38,7 @@ said(const char *format, ...)
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #define printf said
 #include "hakios_board.c"
-#include "redwood_ufs.c"
+#include "hakios_ufs.c"
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 #pragma GCC diagnostic pop
 
@@ -192,7 +192,7 @@ core0(void *unused __unused)
 void FlushPoC_DcacheRegion(vm_offset_t va __unused, size_t length __unused) { flushes++; }
 void loader_return(void) {}
 
-/* this kernel's own driver of the controller (redwood_ufshc.c) is not part of this: it is there, and not used */
+/* this kernel's own driver of the controller (hakios_ufshc.c) is not part of this: it is there, and not used */
 static unsigned switched_out;
 bool ufshc_probe(const struct ufshc_loader *loader __unused, bool only __unused) { return false; }
 bool ufshc_available(void) { return false; }
@@ -271,7 +271,7 @@ partitions_listed(void)
 	uint64_t count = 0;
 
 	loader("");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(logged("ufs: 3 partitions of the phone's storage as /dev/ufs_NAME and /dev/rufs_NAME, read only"), "said: %s", log_text);
 	CHECK(fake_disk_open("ufs_boot", FREAD) == 0 && fake_disk_open("ufs_darwin", FREAD) == 0 && fake_disk_open("ufs_super", FREAD) == 0,
 	    "the three partitions are block devices");
@@ -309,7 +309,7 @@ reads_any_alignment(void)
 	uint64_t end = 32 * 4096;
 
 	loader("");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(fake_dev_pread("rufs_darwin", data, 5000, AT(7) + 100, &done) == 0 && done == 5000 && is_disk(DARWIN, 7 * 4096 + 100, data, 5000),
 	    "5000 bytes from the middle of block 7");
 	CHECK(asked_n == 1 && asked[0].lba == 7 && asked[0].count == 2, "the two blocks that hold them: %llu, %llu",
@@ -342,7 +342,7 @@ read_only_by_default(void)
 	size_t done = 9, resid = 0;
 
 	loader("");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(try_as_root("var_busy", 1) == 0, "(the writer has said it is the one)");
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, AT(WRITE_FIRST), &done) == EROFS && done == 0, "darwin, where a write would go: refused");
 	CHECK(fake_dev_pwrite("rufs_boot", data, 512, 0, &done) == EROFS, "boot: refused");
@@ -360,7 +360,7 @@ writes_only_past_the_build(void)
 	size_t done = 9, resid = 0;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(logged("ufs: /dev/rufs_darwin takes writes, whole blocks from 2042368 on"), "said: %s", log_text);
 	for (unsigned i = 0; i < sizeof(data); i++) {
 		data[i] = (uint8_t)(i * 13 + 5);
@@ -409,7 +409,7 @@ long_write(void)
 	bool same = true;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	for (unsigned i = 0; i < sizeof(data); i++) {
 		data[i] = (uint8_t)(i ^ (i >> 11));
 	}
@@ -432,7 +432,7 @@ writer_claims_first(void)
 	size_t done = 0;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(fake_dev_pwrite("rufs_darwin", data, 4096, AT(WRITE_FIRST), &done) == EPERM && writes_asked == 0, "without the claim: refused");
 	CHECK(try_as_root("var_busy", 7) == EINVAL, "the claim is 1 or 0");
 	fake_pid = 200;
@@ -487,7 +487,7 @@ partition_must_be_the_ports(void)
 	case 8: page->write_part_plus_one = PARTS + 1; break;
 	default: board = "phone-cmd"; break;            /* (a board with no [storage]) */
 	}
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(logged(cases[i]), "case %u: said why: %s", i, log_text);
 	CHECK(!logged("takes writes, whole blocks"), "case %u: and not that anything takes writes: %s", i, log_text);
 	CHECK(try_as_root("var_busy", 1) == 0, "(the writer has said it is the one)");
@@ -505,7 +505,7 @@ loader_fails(void)
 	size_t done = 9;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(try_as_root("var_busy", 1) == 0, "(the writer has said it is the one)");
 	answer_status = (int64_t)0x8000000000000007ull;         /* (EFI_DEVICE_ERROR) */
 	CHECK(fake_dev_pread("rufs_super", data, 4096, 0, &done) == EIO && done == 0, "a read the loader fails: an error, no bytes");
@@ -527,7 +527,7 @@ loader_goes_silent(void)
 	unsigned before;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(fake_dev_pread("rufs_super", data, 4096, 0, &done) == 0, "(a read while it answers)");
 	silent = true;
 	CHECK(fake_dev_pread("rufs_super", data, 4096, AT(1), &done) == EIO && done == 0, "no answer: an error in the end");
@@ -547,7 +547,7 @@ not_while_the_list_is_in(void)
 	size_t done = 9;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(try_as_root("var_busy", 1) == 0, "(the writer has said it is the one)");
 	list_in = true;
 	CHECK(fake_dev_pread("rufs_super", data, 4096, 0, &done) == EIO && done == 0, "a read: an error");
@@ -586,7 +586,7 @@ page_not_usable(void)
 	case 10: page->part[SUPER].blocks = 1ull << 60; break;
 	default: memset(page->part[BOOT].name, 'b', sizeof(page->part[BOOT].name)); break;
 	}
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(logged(cases[i]), "case %u: said: %s", i, log_text);
 	CHECK(fake_dev_open("rufs_darwin", FREAD) == -1 && fake_disk_open("ufs_super", FREAD) == -1 && fake_disk_open("ufs_boot", FREAD) == -1,
 	    "case %u: no devices", i);
@@ -601,10 +601,10 @@ closing(void)
 	size_t done = 9;
 
 	loader("ufs_write=1");
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(try_as_root("var_busy", 1) == 0, "(the writer has said it is the one)");
 	CHECK(fake_dev_pread("rufs_super", data, 4096, 0, &done) == 0, "(a read before)");
-	redwood_ufs_close();
+	hakios_ufs_close();
 	CHECK(fake_dev_pread("rufs_super", data, 4096, AT(1), &done) == EIO && fake_dev_pwrite("rufs_darwin", data, 4096, AT(WRITE_FIRST), &done) == EIO,
 	    "after the close: errors");
 	CHECK(asked_n == 1, "and the loader saw the one request from before: %u", asked_n);
@@ -627,19 +627,19 @@ saver_is_asked(void)
 	pthread_t thread;
 
 	loader("ufs_write=1 var_save_ms=400");
-	redwood_ufs_init();
-	redwood_var_save_on_return();
+	hakios_ufs_init();
+	hakios_var_save_on_return();
 	CHECK(!logged("var_store:"), "no saver registered: nothing is asked, nothing waited for: %s", log_text);
 	CHECK(try_as_root("var_save", VAR_SAVE_DONE) == EINVAL, "done is an answer, not a thing to say unasked");
 	CHECK(try_as_root("var_save", VAR_SAVE_IDLE) == 0 && get("var_save") == VAR_SAVE_IDLE, "a saver registers");
 	pthread_create(&thread, NULL, saver, NULL);
-	redwood_var_save_on_return();
+	hakios_var_save_on_return();
 	pthread_join(thread, NULL);
 	CHECK(logged("var_store: the run is ending: the data volume is asked for") && logged("var_store: the saver has finished after"),
 	    "asked, and its answer taken: %s", log_text);
 	/* one that registered and then does not answer */
 	CHECK(try_as_root("var_save", VAR_SAVE_NONE) == 0 && try_as_root("var_save", VAR_SAVE_IDLE) == 0, "(registered again)");
-	redwood_var_save_on_return();
+	hakios_var_save_on_return();
 	CHECK(logged("var_store: the saver did not answer in 400 ms: the store keeps what it had"), "not waited for longer than said: %s", log_text);
 }
 
@@ -649,10 +649,10 @@ off_without_the_loader(void)
 {
 	loader("");
 	boot_args = "ufs_write=1";
-	redwood_ufs_init();
+	hakios_ufs_init();
 	CHECK(log_text[0] == 0 && fake_dev_open("rufs_darwin", FREAD) == -1, "no devices, nothing said: %s", log_text);
-	redwood_ufs_close();
-	redwood_var_save_on_return();
+	hakios_ufs_close();
+	hakios_var_save_on_return();
 	CHECK(log_text[0] == 0 && asked_n == 0, "nor on the way out: %s", log_text);
 }
 

@@ -345,7 +345,7 @@ main(int argc, char **argv)
 	 *
 	 * On the phone it is there to say which axis the stall is on; here it is the
 	 * reference for its counts AND one honest half of the question. This program calls
-	 * the library directly, so it never goes through redwoodmetal.m -- and the phone
+	 * the library directly, so it never goes through hakiosmetal.m -- and the phone
 	 * stopped inside -renderCommandEncoderWithDescriptor:, which is exactly the part
 	 * this cannot reach. What four passing rungs here DO say is that the library is
 	 * willing to make and draw all four shapes; what they cannot say is anything about

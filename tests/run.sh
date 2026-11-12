@@ -36,7 +36,7 @@ BOARDS=$WORK/boards
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" check || failed=1
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$BOARDS" || failed=1
 # (one touch driver includes a controller's firmware, which is not ours to publish: the stub the kernel's build has without it)
-(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$BOARDS/redwood_focaltech_fw.h") || failed=1
+(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$BOARDS/hakios_focaltech_fw.h") || failed=1
 
 # the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
 # loader/build.sh; left out where they are not installed)
@@ -72,7 +72,7 @@ echo "== kernel_tools_test"
 echo "== APFS images (userland/tools/apfs/mkapfs.py) read back by the kernel's reader, and the drivers' firmware lookup in them"
 "$HERE/apfs_image_test.sh" || failed=1
 
-echo "== qmi (kernel/overlay/bsd/dev/redwood_qmi.c under the sanitizers)"
+echo "== qmi (kernel/overlay/bsd/dev/hakios_qmi.c under the sanitizers)"
 "$HERE/qmi/run.sh" 2>&1 | grep -v "said once" || failed=1
 
 run backlight_test -I"$SRC" "$HERE/backlight_test.c"

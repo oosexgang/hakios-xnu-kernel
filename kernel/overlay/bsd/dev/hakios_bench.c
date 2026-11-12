@@ -9,14 +9,14 @@
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
-#include <sys/redwood_input.h>
+#include <sys/hakios_input.h>
 #include <sys/systm.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_log.h"
 
-extern void redwood_tl(const char *format, ...) __printflike(1, 2);
+extern void hakios_tl(const char *format, ...) __printflike(1, 2);
 extern bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
 
 /* (the loader's log as well: the kernel's own log of a run keeps only its end) */
@@ -196,7 +196,7 @@ load_thread(void *arg __unused, wait_result_t wr __unused)
 			}
 		}
 		then = now;
-		redwood_tl("%s\n", line);
+		hakios_tl("%s\n", line);
 	}
 }
 

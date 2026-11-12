@@ -88,7 +88,7 @@ SOC_SCHEMA = {
 }
 # a camera sensor's supply: a regulator of the sensors' PMIC at a set point, or one that a pin of the SoC switches
 SUPPLY = re.compile(r'ldo([1-9]) (\d{3,4})mV|gpio(\d{1,3}) (\d{3,4})mV (\d{1,4})us')
-# the sensor chips the camera driver knows (redwood_camera.c, chips[]: their registers, colour order and gains)
+# the sensor chips the camera driver knows (hakios_camera.c, chips[]: their registers, colour order and gains)
 CAMERA_CHIPS = ('OV02B10', 'S5KHM2SD', 'OV16A1Q', 'S5K4H7')
 CAMERA_SENSOR = {'name': (str, True), 'chip': (CAMERA_CHIPS, True), 'cci': ([int], True), 'pins': ([int], True),
                  'reset': (int, True), 'mclk': (int, True), 'mclk_pin': (int, True), 'csiphy': (int, True),

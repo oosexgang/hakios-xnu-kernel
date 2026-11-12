@@ -209,9 +209,9 @@ class Repository(unittest.TestCase):
         # take it from the board's file, and the kernel refuses a loader whose value is not its own
         self.assertEqual(ours['BLOCK_WRITE_FIRST'], '(PLAT->own.write_first)')
         self.assertIn('hakios_board()->storage.write_first', theirs['UFS_WRITE_FIRST'])
-        ufs = (ROOT / 'kernel/overlay/bsd/dev/redwood_ufs.c').read_text()
+        ufs = (ROOT / 'kernel/overlay/bsd/dev/hakios_ufs.c').read_text()
         self.assertIn('ufs_page->write_first != UFS_WRITE_FIRST', ufs)
-        for path in loader + [ROOT / 'kernel/overlay/bsd/dev/redwood_ufs.c']:
+        for path in loader + [ROOT / 'kernel/overlay/bsd/dev/hakios_ufs.c']:
             self.assertIsNone(re.search(r'2042368|25374720|30617594|7c3457ef|fd6854ad', path.read_text()),
                               f'{path.name} has a number of one phone\'s partition')
         ours, theirs = structures(loader), structures(kernel)

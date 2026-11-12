@@ -8,7 +8,7 @@
  *     5. [[class alloc] initWithAcceleratorPort:service] -- and that object IS the device
  *
  * The first run of this program answered step 4 (a class built at runtime passes) and
- * then died on step 5: "-[RedwoodMetalDevice initWithAcceleratorPort:]: unrecognized
+ * then died on step 5: "-[HakiosMetalDevice initWithAcceleratorPort:]: unrecognized
  * selector", although the runtime had just said _MTLDevice implements that selector
  * itself. Both statements were true. The cache says why: the whole body of
  * -[_MTLDevice initWithAcceleratorPort:] (0x181aa8bec) is
@@ -333,9 +333,9 @@ main(void)
 	printf("metal_dev: the service is \"%s\" (port %u)\n", sname, (unsigned)svc);
 	fflush(stdout);
 
-	try_candidate("_MTLDevice", "RedwoodMetalDevice", svc);
-	try_candidate("MTLIOAccelDevice", "RedwoodIOAccelDevice", svc);
-	try_candidate("IOGPUMetalDevice", "RedwoodIOGPUDevice", svc);
+	try_candidate("_MTLDevice", "HakiosMetalDevice", svc);
+	try_candidate("MTLIOAccelDevice", "HakiosIOAccelDevice", svc);
+	try_candidate("IOGPUMetalDevice", "HakiosIOGPUDevice", svc);
 
 	/* The way out of writing Apple's layout down: a driver asks the runtime where each
 	 * ivar is, in the build it is actually running against. */

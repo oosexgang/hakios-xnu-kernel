@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalvertexdesc).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalvertexdesc).
 #
 # WHAT THIS BOOT IS FOR. On 21 October the phone's own window server reached our Metal driver
 # and asked it for render pipelines. One specification was refused 80 times -- by us, in our
@@ -58,7 +58,7 @@
 #
 #   grep -a "vertex descriptor configures"
 #     expected         one line per pipeline whose descriptor configures anything:
-#                      "redwoodmetal: this pipeline's vertex descriptor configures 3 attributes,
+#                      "hakiosmetal: this pipeline's vertex descriptor configures 3 attributes,
 #                      the highest from buffer index 0". QuartzCore's stage-in modules declare
 #                      attributes 0, 1 and 3 (position float4, texcoord0 float2, color half4),
 #                      so 2 or 3 attributes a pipeline is the shape to expect.
@@ -165,7 +165,7 @@
 # 4. The switch, so that iOS's own daemons take the Metal road and the window server reaches
 #    this driver (10.14, rc.jobs.metalprops): metal_props puts MetalPluginName and
 #    MetalPluginClassName on the IOAcceleratorES service, and from that moment every process
-#    that asks Metal composes RedwoodMetal.bundle. Nothing persists -- the properties live in the
+#    that asks Metal composes HakiosMetal.bundle. Nothing persists -- the properties live in the
 #    registry, and a boot without metal=1 is a clean machine.
 /redwood/bin/metal_props on
 #

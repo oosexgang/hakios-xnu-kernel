@@ -15,12 +15,12 @@ extern char log_text[];
 static char started[1024];
 #define STARTS(name) void name(void); void name(void) { strcat(started, #name " "); }
 STARTS(hakios_scmi_perf_init)
-STARTS(redwood_input_init) STARTS(redwood_cpufreq_init) STARTS(redwood_virtio_input_init) STARTS(renoir_fts_init)
-STARTS(redwood_goodix_init) STARTS(hakios_prof_start) STARTS(redwood_buttons_init) STARTS(redwood_battery_init)
-STARTS(redwood_ufs_init) STARTS(redwood_net_init) STARTS(redwood_adreno_init) STARTS(hakios_backlight_init)
-STARTS(hakios_thermal_init) STARTS(redwood_wifi_init) STARTS(redwood_adsp_init) STARTS(redwood_audio_init)
-STARTS(redwood_virtio_sound_init) STARTS(redwood_speaker_init) STARTS(redwood_haptic_init) STARTS(redwood_torch_init)
-STARTS(redwood_camera_init) STARTS(redwood_virtio_blk_init) STARTS(redwood_sparse_init) STARTS(redwood_apfs_check_init)
+STARTS(hakios_input_init) STARTS(hakios_cpufreq_init) STARTS(hakios_virtio_input_init) STARTS(hakios_fts_init)
+STARTS(hakios_goodix_init) STARTS(hakios_prof_start) STARTS(hakios_buttons_init) STARTS(hakios_battery_init)
+STARTS(hakios_ufs_init) STARTS(hakios_net_init) STARTS(hakios_adreno_init) STARTS(hakios_backlight_init)
+STARTS(hakios_thermal_init) STARTS(hakios_wifi_init) STARTS(hakios_adsp_init) STARTS(hakios_audio_init)
+STARTS(hakios_virtio_sound_init) STARTS(hakios_speaker_init) STARTS(hakios_haptic_init) STARTS(hakios_torch_init)
+STARTS(hakios_camera_init) STARTS(hakios_virtio_blk_init) STARTS(hakios_sparse_init) STARTS(hakios_apfs_check_init)
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
@@ -61,29 +61,29 @@ static void
 all_once(const char *touch)
 {
 	static const char *const every[] = {
-		"redwood_input_init ", "hakios_board_init ", "hakios_scmi_perf_init ", "redwood_cpufreq_init ", "redwood_virtio_input_init ", "hakios_prof_start ",
-		"redwood_buttons_init ", "redwood_battery_init ", "redwood_ufs_init ", "redwood_net_init ", "redwood_adreno_init ",
-		"hakios_backlight_init ", "hakios_thermal_init ", "redwood_wifi_init ", "redwood_adsp_init ", "redwood_audio_init ",
-		"redwood_virtio_sound_init ", "redwood_speaker_init ", "redwood_haptic_init ", "redwood_torch_init ", "redwood_camera_init ",
-		"redwood_virtio_blk_init ", "redwood_sparse_init ", "redwood_apfs_check_init ",
+		"hakios_input_init ", "hakios_board_init ", "hakios_scmi_perf_init ", "hakios_cpufreq_init ", "hakios_virtio_input_init ", "hakios_prof_start ",
+		"hakios_buttons_init ", "hakios_battery_init ", "hakios_ufs_init ", "hakios_net_init ", "hakios_adreno_init ",
+		"hakios_backlight_init ", "hakios_thermal_init ", "hakios_wifi_init ", "hakios_adsp_init ", "hakios_audio_init ",
+		"hakios_virtio_sound_init ", "hakios_speaker_init ", "hakios_haptic_init ", "hakios_torch_init ", "hakios_camera_init ",
+		"hakios_virtio_blk_init ", "hakios_sparse_init ", "hakios_apfs_check_init ",
 	};
 
 	for (unsigned i = 0; i < sizeof(every) / sizeof(every[0]); i++) {
 		CHECK(times(every[i]) == 1, "%sis started %u times", every[i], times(every[i]));
 	}
-	CHECK(times("renoir_fts_init ") == (strcmp(touch, "renoir_fts_init ") == 0), "the FT3658U's driver: %s", started);
-	CHECK(times("redwood_goodix_init ") == (strcmp(touch, "redwood_goodix_init ") == 0), "the Goodix driver: %s", started);
+	CHECK(times("hakios_fts_init ") == (strcmp(touch, "hakios_fts_init ") == 0), "the FT3658U's driver: %s", started);
+	CHECK(times("hakios_goodix_init ") == (strcmp(touch, "hakios_goodix_init ") == 0), "the Goodix driver: %s", started);
 	/* what the order is for */
-	before("redwood_input_init ", "redwood_virtio_input_init ");    /* the queue before whoever feeds it */
-	before("redwood_input_init ", "redwood_buttons_init ");
-	before("hakios_board_init ", "redwood_cpufreq_init ");          /* the board before whoever asks what it has */
-	before("redwood_cpufreq_init ", "hakios_thermal_init ");        /* the clock tables before what holds them back */
-	before("redwood_buttons_init ", "redwood_wifi_init ");          /* the PMIC arbiter's lock before the others that use the bus */
-	before("redwood_adsp_init ", "redwood_audio_init ");
-	before("redwood_audio_init ", "redwood_virtio_sound_init ");    /* the device before its sinks */
-	before("redwood_virtio_blk_init ", "redwood_apfs_check_init "); /* the disk before what mounts it */
+	before("hakios_input_init ", "hakios_virtio_input_init ");    /* the queue before whoever feeds it */
+	before("hakios_input_init ", "hakios_buttons_init ");
+	before("hakios_board_init ", "hakios_cpufreq_init ");          /* the board before whoever asks what it has */
+	before("hakios_cpufreq_init ", "hakios_thermal_init ");        /* the clock tables before what holds them back */
+	before("hakios_buttons_init ", "hakios_wifi_init ");          /* the PMIC arbiter's lock before the others that use the bus */
+	before("hakios_adsp_init ", "hakios_audio_init ");
+	before("hakios_audio_init ", "hakios_virtio_sound_init ");    /* the device before its sinks */
+	before("hakios_virtio_blk_init ", "hakios_apfs_check_init "); /* the disk before what mounts it */
 	if (*touch) {
-		before("redwood_input_init ", touch);
+		before("hakios_input_init ", touch);
 		before("hakios_board_init ", touch);
 	}
 }
@@ -96,7 +96,7 @@ board_with_ft3658u(void)
 	board = "phone-cmd";
 	boot_args = "touchscreen=1";
 	hakios_drivers_init();
-	all_once("renoir_fts_init ");
+	all_once("hakios_fts_init ");
 }
 
 static void
@@ -105,7 +105,7 @@ board_with_goodix(void)
 	board = "phone-video";
 	boot_args = "";
 	hakios_drivers_init();
-	all_once("redwood_goodix_init ");
+	all_once("hakios_goodix_init ");
 }
 
 /* a board without a touch controller: no touch driver, and that is said when one was asked for */

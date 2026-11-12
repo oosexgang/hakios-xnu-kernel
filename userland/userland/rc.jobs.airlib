@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.airlib).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.airlib).
 #
 # The 124 library functions of PortraitFilters that the generated wrapper can run, on the Adreno.
 #

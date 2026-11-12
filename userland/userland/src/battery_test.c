@@ -1,6 +1,6 @@
 /*
  * The battery as iOS sees it: the kernel's power source (the IOPMPowerSource that powerd reads,
- * iokit/Kernel/RedwoodBattery.cpp) and what powerd has made of it (the power sources list that
+ * iokit/Kernel/HakiosBattery.cpp) and what powerd has made of it (the power sources list that
  * the status bar, the lock screen and Settings get through IOPS), side by side with the kernel's
  * own numbers (kern.redwood.battery_*).
  *

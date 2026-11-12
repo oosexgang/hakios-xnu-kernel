@@ -608,7 +608,7 @@ __attribute__((used)) static struct {
 
 __attribute__((constructor))
 static void
-redwood_fairplay_init(void)
+hakios_fairplay_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;

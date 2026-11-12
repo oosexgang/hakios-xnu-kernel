@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The iOS root volume on the phone's flash as the root, everything in RAM as APFS (flashboot.apfs resident,
 # root.apfs with the kernel, built with GL=1; root_apfs=ufs_darwin ufs=2 ufs_native=1 gpu=1 adsp=1 sound=4
 # rec_sound=12 wifi=1, and no battery=1, which keeps the battery from the audio DSP off): what is mounted
@@ -18,6 +18,6 @@
 /redwood/bin/battery_test open https://example.com
 /redwood/bin/rwtouch wait 20
 /redwood/bin/battery_test 1 >> /private/var/results
-/redwood/bin/vol_ls sysctl kern.redwood_memory >> /private/var/results
+/redwood/bin/vol_ls sysctl kern.hakios_memory >> /private/var/results
 /bin/ps -A
 /redwood/bin/vol_ls cat /private/var/results 262144

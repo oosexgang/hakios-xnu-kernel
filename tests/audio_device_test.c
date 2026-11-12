@@ -1,5 +1,5 @@
 /*
- * /dev/redwood-audio (kernel/overlay/bsd/dev/redwood_audio.c), run as a host program: what iOS plays goes to
+ * /dev/hakios-audio (kernel/overlay/bsd/dev/hakios_audio.c), run as a host program: what iOS plays goes to
  * the driver that plays it, a recording keeps it with its time and never runs past its memory, a line says
  * what was played once the writer stops, and the volume iOS sets is kept for the speakers' driver.
  *
@@ -9,7 +9,7 @@
 
 #include "fakekernel.h"
 #define KERNEL 1                        /* (the header's declarations for the kernel's drivers) */
-#include <sys/redwood_audio.h>
+#include <sys/hakios_audio.h>
 
 extern char log_text[];
 void loader_log_putc(char c);
@@ -30,12 +30,12 @@ said(const char *format, ...)
 
 uint64_t loader_sound[3];
 uint64_t kvtophys(vm_offset_t va) { return (uint64_t)va ^ 0x8000000000000000ull; }    /* (an address the loader would be given) */
-bool redwood_audio_recording_fed(void);
-void redwood_audio_record_fed(const int16_t *frames, uint32_t count);
+bool hakios_audio_recording_fed(void);
+void hakios_audio_record_fed(const int16_t *frames, uint32_t count);
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define printf said
-#include "redwood_audio.c"
+#include "hakios_audio.c"
 #undef printf
 
 static int failures;
@@ -43,7 +43,7 @@ static int failures;
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 #define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
 
-#define NODE            "redwood-audio"
+#define NODE            "hakios-audio"
 
 /* the driver that plays: takes what it is given, or only so much */
 static volatile uint64_t sunk, sink_calls;
@@ -82,22 +82,22 @@ play(uint32_t frames, int16_t level)
 static void
 played_and_said(void)
 {
-	redwood_audio_init();
-	redwood_audio_set_sink("a test's sink", sink);
-	CHECK(logged("redwood-audio: sound goes to a test's sink"), "said: %s", log_text);
+	hakios_audio_init();
+	hakios_audio_set_sink("a test's sink", sink);
+	CHECK(logged("hakios-audio: sound goes to a test's sink"), "said: %s", log_text);
 	CHECK(play(4800, 16384) == 0, "a tenth of a second written");
 	CHECK(sunk == 4800 && sink_calls == 5 && last_sample == -16384, "to the sink, in passes of 1024: %llu frames in %llu calls",
 	    (unsigned long long)sunk, (unsigned long long)sink_calls);
 	WAIT_FOR(logged("s written"), 4000);
-	CHECK(logged("redwood-audio: 0.10 s written, 0.10 s of it sound, peak 50% of full scale"), "once the writer stopped: %s", log_text);
+	CHECK(logged("hakios-audio: 0.10 s written, 0.10 s of it sound, peak 50% of full scale"), "once the writer stopped: %s", log_text);
 }
 
 /* what the sink did not take is counted and said */
 static void
 sink_full(void)
 {
-	redwood_audio_init();
-	redwood_audio_set_sink("a test's sink", sink);
+	hakios_audio_init();
+	hakios_audio_set_sink("a test's sink", sink);
 	sink_takes = 512;
 	CHECK(play(2048, 1000) == 0, "written");
 	WAIT_FOR(logged("lost"), 4000);
@@ -111,8 +111,8 @@ whole_frames(void)
 	int16_t six[3] = { 3, 3, 3 };
 	size_t done = 0;
 
-	redwood_audio_init();
-	redwood_audio_set_sink("a test's sink", sink);
+	hakios_audio_init();
+	hakios_audio_set_sink("a test's sink", sink);
 	CHECK(fake_dev_pwrite(NODE, six, sizeof(six), 0, &done) == 0 && done == 4 && sunk == 1, "one frame of six bytes: %zu bytes, %llu frames",
 	    done, (unsigned long long)sunk);
 	WAIT_FOR(logged("s written"), 4000);
@@ -128,8 +128,8 @@ recording(void)
 	uint64_t used;
 
 	boot_args = "rec_sound=1";
-	redwood_audio_init();
-	CHECK(logged("redwood-audio: recording the first 1 s of sound") && loader_sound[2] != 0 && loader_sound[0] == kvtophys(loader_sound[2]),
+	hakios_audio_init();
+	CHECK(logged("hakios-audio: recording the first 1 s of sound") && loader_sound[2] != 0 && loader_sound[0] == kvtophys(loader_sound[2]),
 	    "a recording is made, and the loader told where: %s", log_text);
 	base = (const uint8_t *)(uintptr_t)loader_sound[2];
 	CHECK(memcmp(base, "RWSND001", 8) == 0, "its header");
@@ -148,7 +148,7 @@ recording(void)
 		at += 16 + 4ull * n;
 	}
 	CHECK(frames >= 48000 && frames < 48000 + 2000, "one second kept, and the write that reached it: %u frames in %u blocks", frames, blocks);
-	CHECK(logged("redwood-audio: recording finished: 1 s"), "and said: %s", log_text);
+	CHECK(logged("hakios-audio: recording finished: 1 s"), "and said: %s", log_text);
 	CHECK(used <= round_page(24 + 48000ull * 4 + 100 * 16), "never past its memory: %llu bytes", (unsigned long long)used);
 }
 
@@ -160,7 +160,7 @@ many_small_writes(void)
 	uint64_t size;
 
 	boot_args = "rec_sound=1";
-	redwood_audio_init();
+	hakios_audio_init();
 	size = round_page(24 + 48000ull * 4 + 100 * 16);
 	for (int i = 0; i < 20000; i++) {
 		CHECK(play(1, 500) == 0, "written");
@@ -177,18 +177,18 @@ many_small_writes(void)
 static void
 volume(void)
 {
-	struct redwood_audio_volume v = { .below = 100, .muted = 0 };
+	struct hakios_audio_volume v = { .below = 100, .muted = 0 };
 	uint32_t below = 7, generation = 0;
 	bool muted = true;
 
-	redwood_audio_init();
-	CHECK(!redwood_audio_volume(&below, &muted, &generation), "none set yet");
-	CHECK(fake_dev_ioctl(NODE, REDWOOD_AUDIO_SET_VOLUME, &v) == 0, "set");
-	CHECK(redwood_audio_volume(&below, &muted, &generation) && below == 100 && !muted && generation == 1, "kept: %u, %d, %u", below, muted,
+	hakios_audio_init();
+	CHECK(!hakios_audio_volume(&below, &muted, &generation), "none set yet");
+	CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == 0, "set");
+	CHECK(hakios_audio_volume(&below, &muted, &generation) && below == 100 && !muted && generation == 1, "kept: %u, %d, %u", below, muted,
 	    generation);
-	CHECK(logged("redwood-audio: the volume: 12.500 dB under the loudest"), "said: %s", log_text);
+	CHECK(logged("hakios-audio: the volume: 12.500 dB under the loudest"), "said: %s", log_text);
 	v.muted = 1;
-	CHECK(fake_dev_ioctl(NODE, REDWOOD_AUDIO_SET_VOLUME, &v) == 0 && redwood_audio_volume(&below, &muted, &generation) && muted &&
+	CHECK(fake_dev_ioctl(NODE, HAKIOS_AUDIO_SET_VOLUME, &v) == 0 && hakios_audio_volume(&below, &muted, &generation) && muted &&
 	    generation == 2, "muted, a second setting");
 	CHECK(fake_dev_ioctl(NODE, 0x1234, &v) == ENOTTY, "nothing else is answered");
 }

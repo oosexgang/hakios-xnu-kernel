@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The App Store and the thing it is actually waiting for (RC_JOBS=rc.jobs.store, built with
 # FLASHBOOT=1 so that the root is the iOS volume on the flash, QUIET=1, and wifi=1 among XL_CMDLINE).
 #
@@ -17,7 +17,7 @@
 # times" -- pushes everything else off /dev/console, and the scenario's output disappears while the
 # scenario itself goes on running. A fetch that printed nothing could not be told from one that never
 # happened, and a whole conclusion was built on exactly that.
-# And no second DHCP: configd configures en0 by itself here (the job com.redwood.wifi, with wifi=1),
+# And no second DHCP: configd configures en0 by itself here (the job com.hakios.wifi, with wifi=1),
 # so "dhcp en0" asks IPConfiguration for a service that is already being made. Wait for the address.
 #
 # Two things are asked at once here, because one window answers both. The storefront is put on the

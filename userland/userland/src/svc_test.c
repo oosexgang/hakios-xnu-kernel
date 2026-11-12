@@ -33,7 +33,7 @@ main(void)
 	printf("svc_test: pid %d, uid %d\n", getpid(), getuid());
 
 	/* notifyd */
-	status = notify_register_check("com.redwood.test", &token);
+	status = notify_register_check("com.hakios.test", &token);
 	check(status == NOTIFY_STATUS_OK, "notifyd: register for a notification");
 	if (status == NOTIFY_STATUS_OK) {
 		notify_check(token, &changed);          /* the first check always reports a change */
@@ -41,7 +41,7 @@ main(void)
 		check(status == NOTIFY_STATUS_OK && notify_get_state(token, &state) == NOTIFY_STATUS_OK && state == 0x1234abcd,
 		    "notifyd: store and fetch a state value");
 		changed = 0;
-		status = notify_post("com.redwood.test");
+		status = notify_post("com.hakios.test");
 		usleep(100000);
 		check(status == NOTIFY_STATUS_OK && notify_check(token, &changed) == NOTIFY_STATUS_OK && changed,
 		    "notifyd: post a notification and see it arrive");
@@ -51,7 +51,7 @@ main(void)
 
 	/* cfprefsd */
 	{
-		CFStringRef app = CFSTR("com.redwood.test"), key = CFSTR("greeting");
+		CFStringRef app = CFSTR("com.hakios.test"), key = CFSTR("greeting");
 		CFStringRef value;
 		char text[64] = "";
 

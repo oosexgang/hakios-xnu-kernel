@@ -8,7 +8,7 @@ diff --git a/bsd/dev/arm/kern_machdep.c b/bsd/dev/arm/kern_machdep.c
 +#if !__has_feature(ptrauth_calls)
 +			/*
 +			 * renoir: a core without pointer authentication runs arm64e code as arm64. Its PAC
-+			 * instructions are identities there: pacstrip rewrote them, osfmk/arm64/redwood_a64emu.c
++			 * instructions are identities there: pacstrip rewrote them, osfmk/arm64/hakios_a64emu.c
 +			 * does the rest, and nothing is ever signed (exec sets IMGPF_NOJOP, the shared-region and
 +			 * dyld pagers write authenticated pointers unsigned). After any arm64 slice.
 +			 */
@@ -132,7 +132,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  #include <net/if_ether.h>               /* for ether_family_init() */
  #include <net/if_gif.h>                 /* for gif_init() */
  #include <miscfs/devfs/devfsdefs.h>     /* for devfs_kernel_mount() */
-+#include <sys/redwood_input.h>          /* hakios_drivers_init() */
++#include <sys/hakios_input.h>          /* hakios_drivers_init() */
  #include <vm/vm_kern.h>                 /* for kmem_suballoc() */
  #include <sys/proc_uuid_policy.h>       /* proc_uuid_policy_init() */
  #include <netinet/flow_divert.h>        /* flow_divert_init() */

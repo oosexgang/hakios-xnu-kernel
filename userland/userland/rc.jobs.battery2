@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Settings > Battery and its usage pages (with adsp=1): opened, left 15 s for its data, scrolled down to the usage
 # charts, then Battery Health & Charging; for a screen recording and the logs of Settings and of the power log, and
 # at the end what the power log has collected (battery_test powerlog).

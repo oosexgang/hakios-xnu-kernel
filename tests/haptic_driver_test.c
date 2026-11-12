@@ -1,5 +1,5 @@
 /*
- * The vibration motor's driver itself (kernel/overlay/bsd/dev/redwood_haptic.c), run as a host program
+ * The vibration motor's driver itself (kernel/overlay/bsd/dev/hakios_haptic.c), run as a host program
  * against the model of the SoC's pins with the motor's chip on them: an I2C device (i2c_device_model.h)
  * that answers only while its reset pin is driven high. This driver moves a motor and switches a
  * boost converter; what is tested here is what it does before it writes anything to the chip, and
@@ -65,16 +65,16 @@ void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
 /* the small image's files, which only the levels that load waveforms ask for: none here */
-const uint8_t *redwood_wifi_file(const char *name, uint64_t *size) { return NULL; }
-void redwood_haptic_init(void);
-void redwood_haptic_quiesce(void);
+const uint8_t *hakios_wifi_file(const char *name, uint64_t *size) { return NULL; }
+void hakios_haptic_init(void);
+void hakios_haptic_quiesce(void);
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
 #define get haptic_get
 #include "hakios_board.c"
-#include "redwood_haptic.c"
+#include "hakios_haptic.c"
 #undef get
 
 static int failures;
@@ -135,10 +135,10 @@ off_by_default(void)
 {
 	phone("phone-video", 0x9270);
 	boot_args = "";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	usleep(50000);
 	CHECK(model.writes == 0 && !logged("haptic:"), "nothing written, nothing said: %s", log_text);
-	redwood_haptic_quiesce();
+	hakios_haptic_quiesce();
 	CHECK(model.writes == 0, "and nothing at the run's end");
 }
 
@@ -148,7 +148,7 @@ look_only(void)
 {
 	phone("phone-video", 0x9270);
 	boot_args = "haptic=1";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 5000);
 	CHECK(logged("haptic: level 1: a look, reading only"), "the level is said: %s", log_text);
 	CHECK(logged("nobody answers at 0x5a") && logged("does not drive high: the chip is held in reset or not powered"),
@@ -156,7 +156,7 @@ look_only(void)
 	CHECK(model.cfg[RESET] == HELD_IN_RESET && resets_released == 0, "the reset pin is as it was found: %#x", model.cfg[RESET]);
 	CHECK(!logged("PUT INTO RESET"), "nothing is given up that was never taken");
 	never();
-	redwood_haptic_quiesce();
+	hakios_haptic_quiesce();
 	CHECK(model.cfg[RESET] == HELD_IN_RESET, "nor at the run's end");
 }
 
@@ -166,7 +166,7 @@ reset_released(void)
 {
 	phone("phone-video", 0x9270);
 	boot_args = "haptic=2";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 10000);
 	CHECK(logged("haptic: the reset is released: gpio35 low for 5 ms, then high") && resets_released == 1, "released once: %u",
 	    resets_released);
@@ -174,7 +174,7 @@ reset_released(void)
 	CHECK(logged("registers differ from what Android leaves in them"), "its registers are read and compared");
 	CHECK(!in_reset(), "the chip stays out of reset while the run goes on");
 	never();
-	redwood_haptic_quiesce();
+	hakios_haptic_quiesce();
 	CHECK(in_reset(), "at the run's end the chip is back in reset");
 	never();
 }
@@ -214,7 +214,7 @@ configured(void)
 
 	phone("phone-video", 0x9270);
 	boot_args = "haptic=3";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 20000);
 	CHECK(logged("haptic: Android's configuration is written"), "said: %s", log_text);
 	for (unsigned i = 0; i < sizeof(androids) / sizeof(androids[0]); i++) {
@@ -227,7 +227,7 @@ configured(void)
 	CHECK(logged("no aw8697_haptic.bin in fw/"), "without the waveforms' file nothing is loaded, and that is said");
 	CHECK(!logged("PUT INTO RESET") && !in_reset(), "nothing was wrong: the chip stays out of reset for the run");
 	CHECK(device.driven_high == 0 && model.elsewhere == 0, "the bus was used as a bus");
-	redwood_haptic_quiesce();
+	hakios_haptic_quiesce();
 	CHECK(in_reset(), "at the run's end the chip is back in reset");
 }
 
@@ -237,7 +237,7 @@ another_wiring(void)
 {
 	phone("phone-keys", 0x9270);
 	boot_args = "haptic=3";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 20000);
 	CHECK(model.base == 0x01100000 && sda_pin == 110 && scl_pin == 111 && reset_pin_of_chip == 9, "that board's pins: %#x, %u/%u, %u",
 	    model.base, sda_pin, scl_pin, reset_pin_of_chip);
@@ -247,7 +247,7 @@ another_wiring(void)
 	    device.reg[0x79]);
 	CHECK(model.cfg[36] == 0 && model.cfg[37] == 0 && model.cfg[35] == 0 && model.io[35] == 0, "the first phone's pins are not touched");
 	CHECK(device.driven_high == 0 && model.elsewhere == 0 && analog_while_closed == 0, "and the rest is as on the first");
-	redwood_haptic_quiesce();
+	hakios_haptic_quiesce();
 	CHECK(in_reset(), "back in reset at the run's end");
 }
 
@@ -258,7 +258,7 @@ write_does_not_stick(void)
 	phone("phone-video", 0x9270);
 	deaf_register = 0x1d;
 	boot_args = "haptic=3";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 20000);
 	CHECK(logged("0x1d <- 0xcf, reads 0000: NOT AS WRITTEN"), "said which and what it reads: %s", log_text);
 	CHECK(logged("a register did not read back as written: THE CHIP IS PUT INTO RESET") && in_reset(), "into reset");
@@ -273,7 +273,7 @@ fault_reported(void)
 	phone("phone-video", 0x9270);
 	device.reg[0x02] = 0x20;
 	boot_args = "haptic=3";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 20000);
 	CHECK(logged("after the configuration: the chip reports 0x20: UNDER-VOLTAGE"), "said which: %s", log_text);
 	CHECK(logged("a fault: THE CHIP IS PUT INTO RESET") && in_reset(), "into reset");
@@ -286,7 +286,7 @@ another_chip(void)
 {
 	phone("phone-video", 0x9260);
 	boot_args = "haptic=3";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 10000);
 	CHECK(logged("haptic: the chip at 0x5a is 0x9260: NOT THE AW86927 EXPECTED"), "said: %s", log_text);
 	CHECK(logged("THE CHIP IS PUT INTO RESET") && in_reset(), "and it is back in reset");
@@ -300,7 +300,7 @@ nobody_there(void)
 	phone("phone-video", 0x9270);
 	model.after_write = changed;            /* (no chip: the reset pin frees nobody) */
 	boot_args = "haptic=4";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	WAIT_FOR(logged("haptic: done"), 10000);
 	CHECK(logged("nobody answers at 0x5a") && logged("drives high: the chip should answer"), "said: %s", log_text);
 	CHECK(logged("the chip does not answer: THE CHIP IS PUT INTO RESET") && in_reset(), "the pin is low again");
@@ -313,11 +313,11 @@ not_listed(void)
 {
 	phone("qemu-virt", 0x9270);
 	boot_args = "haptic=5";
-	redwood_haptic_init();
+	hakios_haptic_init();
 	usleep(50000);
 	CHECK(logged("haptic: disabled: this board's board.toml lists no \"haptic-aw86927\""), "said: %s", log_text);
 	CHECK(model.writes == 0 && model.elsewhere == 0, "nothing touched");
-	redwood_haptic_quiesce();
+	hakios_haptic_quiesce();
 	CHECK(model.writes == 0, "nor at the run's end");
 }
 

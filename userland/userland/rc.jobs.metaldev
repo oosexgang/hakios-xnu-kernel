@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldev).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaldev).
 #
 # The first question of subsystem (2), the Metal object graph: can this port make a
 # subclass of Metal's private _MTLDevice, and what does its -initWithAcceleratorPort:
@@ -44,7 +44,7 @@
 #
 # And the same question asked of the real driver library rather than of classes assembled at
 # runtime: does a source-declared subclass of the private _MTLDevice link and load here, and
-# does Metal take it? (src/redwoodmetal.m, src/metal_drv_test.m)
+# does Metal take it? (src/hakiosmetal.m, src/metal_drv_test.m)
 /redwood/bin/metal_drv_test
 #
 # And the first dispatch worth trying: MetalFaceMask_InitMinMax takes exactly one device

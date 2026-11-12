@@ -12,17 +12,17 @@ things, all of them device-independent apart from the kernel's GPU profile:
 
 | Piece | Where | State |
 | --- | --- | --- |
-| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/redwood_adreno.c`; the profile is `[gpu]` of the renoir package's board file (`renoir/board.toml` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
-| GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/RedwoodGPU.cpp` | Mesa's shim and the Metal device both use it |
+| Adreno 642 bring-up, Renoir profile (chip 0x06060010, 285–490 MHz, zap shader via TrustZone) | `kernel/overlay/bsd/dev/hakios_adreno.c`; the profile is `[gpu]` of the renoir package's board file (`renoir/board.toml` on the `devices` branch) | `gpu=1` started it on 2026-11-07: GPU clock measured at 490,001,684 Hz |
+| GPU service for user space (msm-shaped GEM/submit through IOKit) | `iokit/Kernel/HakiosGPU.cpp` | Mesa's shim and the Metal device both use it |
 | AIR → NIR → ir3 compiler (Mesa frontend) | `userland/tools/mesa/air/`, `air-*.patch` | 321/321 entry points of the iOS 16 corpus compile; 255 numerically identical to LLVM; 30 ran on an Adreno (`userland/docs/air.md`) |
-| Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/redwoodmetal.m` | Written and measured against iOS 16 and 26's Metal; not packaged for iOS 27 |
+| Metal device plug-in (`_MTLDevice` subclass, buffers, textures, render/compute, depth/stencil, argument buffers) | `userland/userland/src/hakiosmetal.m` | Written and measured against iOS 16 and 26's Metal; not packaged for iOS 27 |
 | Liquid Glass validation: QuartzCore's own pipelines drawn by Apple's GPU and by ours, compared pixel by pixel | `userland/tools/air/glassref.m`, `glasscase.c`, `glasscases.sh` | Built for iOS 26's `default.metallib`; needs a Mac with an Apple GPU to record cases |
-| MetalPerformanceShaders for CA's blurs (`productName` = "Paravirtual device") | `redwoodmetal.m` | iOS 26 |
+| MetalPerformanceShaders for CA's blurs (`productName` = "Paravirtual device") | `hakiosmetal.m` | iOS 26 |
 
 ## What stands between that and glass on iOS 27, in order
 
 1. **Kernel, `gpu=1` on the 12377 kernel.** Boot with `--boot-arg gpu=1` and the `fw-renoir/` firmware, and check
-   that `RedwoodGPU` publishes and that a submit retires.
+   that `HakiosGPU` publishes and that a submit retires.
    Heat: at 490 MHz the GPU sensor read 69.1 °C (`ios26-boot.md`, item 14). hxff's thermal work has to cap the
    GPU's OPP (the profile's 285/365/443/490 table) before long runs. Until then, `adreno_speed=N` (an index into
    that table, 1 and up) is the safe start.
@@ -34,14 +34,14 @@ things, all of them device-independent apart from the kernel's GPU profile:
    - Diff Metal's requirements between 26 and 27 with the existing tools (`userland/tools/metal/owes.py`,
      `refusals.py`, `protometh.py` against iOS 27's Metal): `MTLAddDevice` asserts on `MTLDevice`/`MTLDeviceSPI`
      conformance and four methods, and iOS 27 may add required SPI.
-   - Rebuild `redwoodmetal.m` for 24B119 and put it in the root image.
+   - Rebuild `hakiosmetal.m` for 24B119 and put it in the root image.
    - Publish the plug-in name on the accelerator service. On iOS 16.5 that was the only thing keeping Metal from
      finding a driver of ours. The 12377 cleanup had removed it; `IOAcceleratorES::setProperties` in `kernel/overlay/iokit/Kernel/MiniIOMobileFramebuffer.cpp`
      restores it. With boot-arg `metal=1`, a user process may set `MetalPluginName`/`MetalPluginClassName` on
      `IOAcceleratorES`; nothing else is accepted, and an empty string removes them. Without it (the default),
      CoreAnimation keeps its software renderer, as in the release.
    - Keep the system image's QuartzCore `default.metallib` (mkimage26 `KEPT_FILES` already keeps it) and its
-     `default.pipelinelib`. The plug-in's `newLibraryWithFile` path was the first crash on 26 (`redwoodmetal.m`).
+     `default.pipelinelib`. The plug-in's `newLibraryWithFile` path was the first crash on 26 (`hakiosmetal.m`).
 4. **QuartzCore's iOS 27 shaders.**
    - Extract the AIR slice of iOS 27's `QuartzCore.framework/default.metallib` (`userland/tools/metallib.py`).
    - Run `userland/tools/air/check.sh` over it: what our reader, the NIR translation and ir3 accept.

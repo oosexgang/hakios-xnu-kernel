@@ -36,15 +36,15 @@ $DYN -dynamiclib -install_name /redwood/lib/libredwood.dylib -framework CoreFoun
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-sb.dylib $O/src/inject_sb.c -I$O/boards $RN/userland/inject_statusbar.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-statusbar.dylib -framework CoreFoundation -framework IOKit -lobjc -o $O/libredwood-statusbar.dylib -I$O/boards $RN/userland/inject_statusbar.c
 # the audio server's output device (AudioServerPlugIn, arm64e: the audio server is): the speaker route and its
-# volume, Control Center's slider included; the samples go to /dev/redwood-audio when the kernel has it
-$DYN -bundle -framework CoreFoundation -o $O/RedwoodAudio "$(dirname "$RN")/userland/userland/src/audio_plugin.c"
+# volume, Control Center's slider included; the samples go to /dev/hakios-audio when the kernel has it
+$DYN -bundle -framework CoreFoundation -o $O/HakiosAudio "$(dirname "$RN")/userland/userland/src/audio_plugin.c"
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-app.dylib -lobjc -o $O/libredwood-app.dylib $O/src/inject_app.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-console.dylib -o $O/libredwood-console.dylib $RN/userland/console_log.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-poster.dylib -framework CoreFoundation -lobjc -o $O/libredwood-poster.dylib $RN/userland/inject_poster.c
 $DYN -dynamiclib -install_name /redwood/lib/libredwood-backlight.dylib -framework CoreFoundation -lobjc -o $O/libredwood-backlight.dylib $RN/userland/inject_backlight.c
 # the brightness slider and Auto-Brightness to the kernel's hw.backlight (any device: ios/userland/inject_brightness.c)
 $DYN -dynamiclib -install_name /redwood/lib/libhakios-brightness.dylib -framework CoreFoundation -lobjc -o $O/libhakios-brightness.dylib $RN/userland/inject_brightness.c
-for f in $O/*.dylib $O/RedwoodAudio; do
+for f in $O/*.dylib $O/HakiosAudio; do
   $RN/tools/pacstrip macho $f $f.strip > /dev/null && mv $f.strip $f
   ${THEOS}/toolchain/linux/iphone/bin/ldid -S $f
   file -b $f | cut -c1-70

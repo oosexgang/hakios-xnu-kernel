@@ -19,7 +19,7 @@ Each is one place in the example, but the one about waiting.
 | checks before it writes | What is there may not be what the driver expects: another part, a pin in use. Say so and leave it alone. | "is in use as function" |
 | says what it does | `hakios_say()` puts a line in the loader's log at once, where it can be read while the phone runs, and in the kernel's. The lines are also what the test checks. | every `hakios_say()` |
 | does not hold up the boot | Work that waits goes into a thread of the driver's own. | `kernel_thread_start()` |
-| declares its wait, then looks again | A thread that sleeps until it is poked reads its state, then sleeps. A poke between the two wakes nobody. So: `assert_wait()`, look once more at what the poke would have changed, `clear_wait()` and go round if it did, and only then `thread_block()`. A wait with a time (`assert_wait_timeout()`) is late at worst; one without sleeps on. | not in the example; `hakios_backlight.c` (`pokes`), `redwood_lx.c` |
+| declares its wait, then looks again | A thread that sleeps until it is poked reads its state, then sleeps. A poke between the two wakes nobody. So: `assert_wait()`, look once more at what the poke would have changed, `clear_wait()` and go round if it did, and only then `thread_block()`. A wait with a time (`assert_wait_timeout()`) is late at worst; one without sleeps on. | not in the example; `hakios_backlight.c` (`pokes`), `hakios_lx.c` |
 | leaves the hardware as it found it | On the way back to the loader each driver undoes what it did. Nothing there sleeps or takes a lock. | `example_led_quiesce()` |
 
 ## What a driver has at hand
@@ -35,9 +35,9 @@ hardware has a test of its own in `tests/`.
 | `hakios_time.h` | `sleep_ms()`, `sleep_us()`, `spin_us()` (where nothing may sleep), `now_us()`. | — |
 | `hakios_tlmm.h` | The SoC's pins: `gpio_configure()`, `gpio_output()`, `gpio_set()`, `gpio_get()`. | `[pins]` of the SoC file |
 | `hakios_i2c_gpio.h` | I2C by hand on two of those pins, for a part on a bus nobody here drives: the bus taken and given back, a start, a byte out, a byte in. | — |
-| `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `redwood_spmi_lock()`. | `[spmi]` |
+| `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `hakios_spmi_lock()`. | `[spmi]` |
 | `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `[rpmh]` |
-| `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `redwood_rpmh_lock()`. | `[rpmh]` |
+| `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `hakios_rpmh_lock()`. | `[rpmh]` |
 | `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `[ipc]` |
 | `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors, and whether the mailbox it gives is one a message fits in. | `[ipc]` |
 | `hakios_smp2p.h` | An SMP2P item's shape, and a word of it by name: how two processors tell each other their state. | — |

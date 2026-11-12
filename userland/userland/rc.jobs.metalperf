@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalperf).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalperf).
 #
 # WHAT THIS BOOT IS FOR. Every other metal job list in this directory asks whether the driver
 # is RIGHT. Not one of them has ever asked what it COSTS: 263 of Apple's 271 fragment shaders
@@ -17,7 +17,7 @@
 # them to a frame rate, is docs/metal.md 10.43.
 #
 # WHERE THE TIME GOES HERE, BECAUSE IT IS NOT WHERE AN APPLICATION EXPECTS IT.
-# -[RedwoodMetalCommandBuffer commit] does the work (docs/metal.md 10.13): the encoder only
+# -[HakiosMetalCommandBuffer commit] does the work (docs/metal.md 10.13): the encoder only
 # records, and -commit walks the recorded list calling rwa_render_draw, each of which flushes
 # the Gallium context and WAITS ON ITS OWN FENCE before returning (air_metal.c,
 # finish_or_say_why with required = true). So -commit is the whole frame and
@@ -68,8 +68,8 @@
 # numbers every submission on the machine, this test is not the only thing submitting, and the
 # 1694 "tl: q" lines of logs/225409-run.log could be sorted into three populations by eye (7 us
 # while the 4x4 case ran, 246 while 1080x648 ran, 305 while the panel ran) and no finer. So the
-# kernel now hands the numbers over on request: kRedwoodGPUWorked (0x7d) on RedwoodGPU answers
-# redwood_gpu_worked()'s microseconds, submissions and histogram, reading RESETS them, and --time
+# kernel now hands the numbers over on request: kRedwoodGPUWorked (0x7d) on HakiosGPU answers
+# hakios_gpu_worked()'s microseconds, submissions and histogram, reading RESETS them, and --time
 # brackets each case's batched loop with two reads. That needs the kernel parked as
 # mach.development.bcm2837.gputime to be armed (docs/metal.md 10.43 has the cp); an older kernel
 # answers kIOReturnUnsupported and the mode prints "this kernel does not report GPU time" instead
@@ -82,12 +82,12 @@
 #       -- and the increase at the big sizes is the GPU's fill and the bandwidth of one pass
 #       over the attachment. The test prints this subtraction itself.
 #   (b) BY THE KERNEL'S OWN COUNTER, from this same log. With gpu_log=1, bsd/dev/
-#       redwood_adreno.c times every submission off the GPU's always-on counter (19.2 ticks a
+#       hakios_adreno.c times every submission off the GPU's always-on counter (19.2 ticks a
 #       microsecond) and writes
 #
 #         tl: q <fence> took <microseconds>
 #
-#       and RedwoodGPU.cpp prints, every five seconds in which something was submitted,
+#       and HakiosGPU.cpp prints, every five seconds in which something was submitted,
 #       "the GPU worked N us on each of M (K under 0.1 ms, ...)". Those are the GPU's side.
 #       Subtract from the test's own median for the same case and the remainder is ours.
 #       Two cautions, both of them real: the per-submission lines are written one submission
@@ -105,7 +105,7 @@
 # THE PREDICTION THAT MATTERED MOST, AND IT WAS WRONG -- WHICH IS A RESULT
 #
 # Written down before the run: the kernel waits for a fence by POLLING every 200 microseconds
-# (GPU_ASK_AGAIN_US, iokit/Kernel/RedwoodGPU.cpp), so the per-draw medians would land near
+# (GPU_ASK_AGAIN_US, iokit/Kernel/HakiosGPU.cpp), so the per-draw medians would land near
 # multiples of 200 us and the cheapest big win would be in the kernel's poll.
 #
 # REFUTED BY MEASUREMENT. A 4x4 draw costs 41 us -- a fifth of the quantum -- so gpuWait sees the

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.blend).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.blend).
 #
 # WHAT THIS BOOT IS FOR. The contract carried no blend state at all, so every pipeline
 # this library made was opaque -- create_blend_state with nothing but colormask RGBA --
@@ -16,7 +16,7 @@
 #
 # THE TRIPWIRE, FIRST, because it is the one thing that would make everything below
 # meaningless. struct rwa_render_shape grew by 260 bytes AT THE END (792 -> 1052) and
-# struct rwa_render_info by 8 (108 -> 116), and userland/src/redwoodmetal.m holds a copy
+# struct rwa_render_info by 8 (108 -> 116), and userland/src/hakiosmetal.m holds a copy
 # of both typed out by hand. THE DRIVER AND libredwoodair.dylib MUST COME FROM ONE
 # SNAPSHOT. Both files now _Static_assert those sizes and offsets, so a one-sided EDIT
 # fails to build -- but a one-sided INSTALL still cannot be caught at compile time, and it

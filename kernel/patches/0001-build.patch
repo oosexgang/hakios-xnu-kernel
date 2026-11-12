@@ -86,46 +86,46 @@ diff --git a/bsd/conf/files b/bsd/conf/files
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c         optional config_cpu_counters
-+bsd/dev/redwood_input.c	standard
++bsd/dev/hakios_input.c	standard
 +bsd/dev/hakios_drivers.c	standard
-+bsd/dev/redwood_virtio_input.c	standard
-+bsd/dev/redwood_goodix.c	standard
-+bsd/dev/renoir_fts.c	standard
++bsd/dev/hakios_virtio_input.c	standard
++bsd/dev/hakios_goodix.c	standard
++bsd/dev/hakios_fts.c	standard
 +bsd/dev/hakios_cputop.c	standard
 +bsd/dev/hakios_buttons.c	standard
-+bsd/dev/redwood_battery.c	standard
-+bsd/dev/redwood_ufs.c	standard
-+bsd/dev/redwood_ufshc.c	standard
-+bsd/dev/redwood_net.c	standard
-+bsd/dev/redwood_virtio_net.c	standard
-+bsd/dev/redwood_apple80211.c	standard
++bsd/dev/hakios_battery.c	standard
++bsd/dev/hakios_ufs.c	standard
++bsd/dev/hakios_ufshc.c	standard
++bsd/dev/hakios_net.c	standard
++bsd/dev/hakios_virtio_net.c	standard
++bsd/dev/hakios_apple80211.c	standard
 +bsd/dev/hakios_cpufreq.c	standard
 +bsd/dev/hakios_scmi_perf.c	standard
 +bsd/dev/hakios_ddr.c	standard
 +bsd/dev/hakios_bench.c	standard
-+bsd/dev/redwood_adreno.c	standard
-+bsd/dev/redwood_audio.c	standard
-+bsd/dev/redwood_virtio_sound.c	standard
-+bsd/dev/redwood_speaker.c	standard
-+bsd/dev/redwood_guard.c	standard
-+bsd/dev/redwood_haptic.c	standard
-+bsd/dev/redwood_torch.c	standard
++bsd/dev/hakios_adreno.c	standard
++bsd/dev/hakios_audio.c	standard
++bsd/dev/hakios_virtio_sound.c	standard
++bsd/dev/hakios_speaker.c	standard
++bsd/dev/hakios_guard.c	standard
++bsd/dev/hakios_haptic.c	standard
++bsd/dev/hakios_torch.c	standard
 +bsd/dev/hakios_board.c	standard
 +bsd/dev/hakios_backlight.c	standard
 +bsd/dev/hakios_thermal.c	standard
-+bsd/dev/redwood_camera.c	standard
-+bsd/dev/redwood_mic.c	standard
-+bsd/dev/redwood_wifi.c	standard
-+bsd/dev/redwood_adsp.c	standard
-+bsd/dev/redwood_image.c	standard
-+bsd/dev/redwood_virtio_blk.c	standard
-+bsd/dev/redwood_sparse.c	standard
-+bsd/dev/redwood_sound.c	standard
-+bsd/dev/redwood_qmi.c	standard
-+bsd/dev/redwood_wlfw.c	standard
-+bsd/dev/redwood_lx.c	standard
-+bsd/dev/redwood_sta.c	standard
-+bsd/dev/redwood_apfs_check.c	optional apfs
++bsd/dev/hakios_camera.c	standard
++bsd/dev/hakios_mic.c	standard
++bsd/dev/hakios_wifi.c	standard
++bsd/dev/hakios_adsp.c	standard
++bsd/dev/hakios_image.c	standard
++bsd/dev/hakios_virtio_blk.c	standard
++bsd/dev/hakios_sparse.c	standard
++bsd/dev/hakios_sound.c	standard
++bsd/dev/hakios_qmi.c	standard
++bsd/dev/hakios_wlfw.c	standard
++bsd/dev/hakios_lx.c	standard
++bsd/dev/hakios_sta.c	standard
++bsd/dev/hakios_apfs_check.c	optional apfs
  
  bsd/libkern/crc32.c			standard
  bsd/libkern/random.c			standard
@@ -194,9 +194,9 @@ diff --git a/iokit/conf/files b/iokit/conf/files
 +iokit/Kernel/GenericARMPE.cpp			optional iokitcpp
 +iokit/Kernel/MiniIOSurface.cpp			optional iokitcpp
 +iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
-+iokit/Kernel/RedwoodGPU.cpp				optional iokitcpp
-+iokit/Kernel/RedwoodWLAN.cpp			optional iokitcpp
-+iokit/Kernel/RedwoodBattery.cpp			optional iokitcpp
++iokit/Kernel/HakiosGPU.cpp				optional iokitcpp
++iokit/Kernel/HakiosWLAN.cpp			optional iokitcpp
++iokit/Kernel/HakiosBattery.cpp			optional iokitcpp
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
  iokit/Kernel/IOPlatformIO.cpp				optional iokitcpp
@@ -342,8 +342,8 @@ diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
 -# Link binary support library
 -ifneq ($(CURRENT_MACHINE_CONFIG),NONE)
 +LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel -lpthread_kext
-+# redwood: objects made outside this tree (the Wi-Fi driver, redwood_lx.c), linked when given
-+LD_KERNEL_ARCHIVES += $(REDWOOD_OBJECTS)
++# redwood: objects made outside this tree (the Wi-Fi driver, hakios_lx.c), linked when given
++LD_KERNEL_ARCHIVES += $(HAKIOS_OBJECTS)
 +
 +# Link binary support library.  redwood: BCM2837 is a non-Apple board with no closed
 +# KernelSupport lib$(CURRENT_MACHINE_CONFIG).os.*.a; its platform code is built into the kernel
@@ -405,13 +405,13 @@ diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
  osfmk/arm64/x86_64_compat.c	standard
  
  osfmk/arm/counter.c	standard
-+osfmk/arm64/redwood_kernelsupport.c	standard
++osfmk/arm64/hakios_kernelsupport.c	standard
 +osfmk/arm64/generic_arm64_support.c	optional nos_arm_asm
 +osfmk/arm64/loader_return.c	optional nos_arm_asm
 +osfmk/arm64/user_exception_trace.c	standard
 +osfmk/arm64/gic_v3_irq.c	optional nos_arm_asm
 +osfmk/arm64/psci_smp.c	optional nos_arm_asm
-+osfmk/arm64/redwood_a64emu.c	standard
++osfmk/arm64/hakios_a64emu.c	standard
 +osfmk/arm64/hakios_prof.c	standard
 +osfmk/arm64/hakios_cpu_idle.c	standard
  

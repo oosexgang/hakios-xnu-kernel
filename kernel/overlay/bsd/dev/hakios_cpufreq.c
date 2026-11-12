@@ -18,7 +18,7 @@
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
-#include <sys/redwood_input.h>
+#include <sys/hakios_input.h>
 #include <sys/systm.h>
 
 #include "hakios_board.h"
@@ -93,7 +93,7 @@ raise_domain(uint32_t domain, uint32_t cores)
 }
 
 void
-redwood_cpufreq_init(void)
+hakios_cpufreq_init(void)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
 	uint32_t enabled = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;

@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Does iOS ever bake the wallpaper here (RC_JOBS=rc.jobs.bake, gpu=1)? The bottom layer of every
 # frosted material is a blurred copy of the wallpaper, which PaperBoardUI takes from a snapshot
 # source; on a phone that copy is made once, when a wallpaper is set, and kept on the data volume.

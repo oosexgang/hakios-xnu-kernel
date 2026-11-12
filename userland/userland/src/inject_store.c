@@ -1796,7 +1796,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 
 __attribute__((constructor))
 static void
-redwood_store_init(void)
+hakios_store_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;

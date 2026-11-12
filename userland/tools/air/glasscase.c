@@ -276,7 +276,7 @@ gc_draw(struct rwa_device *device, const struct gc_case *c, float *ours, int ver
 	memset(streams, 0, sizeof(streams));
 	memset(&info, 0, sizeof(info));
 
-	/* our own copies of the bitcode, registered with the constants as the driver does it (redwoodmetal.m) */
+	/* our own copies of the bitcode, registered with the constants as the driver does it (hakiosmetal.m) */
 	vcopy = malloc(c->vertex_air.size);
 	fcopy = malloc(c->fragment_air.size);
 	if (vcopy == NULL || fcopy == NULL) {

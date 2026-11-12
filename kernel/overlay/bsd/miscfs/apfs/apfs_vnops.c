@@ -1138,7 +1138,7 @@ apfs_vnop_mnomap(__unused struct vnop_mnomap_args *ap)
  * pieces nobody was reading.  Here each file gives it back as soon as it is closed, and
  * the cache still covers what it is for: the reads of one file, one after another.
  * (This was first suspected of resetting the phone on long walks; it was not -- memory
- * stayed flat throughout -- see redwood_apfs_check.c for what was.)
+ * stayed flat throughout -- see hakios_apfs_check.c for what was.)
  */
 static int
 apfs_vnop_inactive(struct vnop_inactive_args *ap)

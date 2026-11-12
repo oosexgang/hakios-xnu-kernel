@@ -1,5 +1,5 @@
 /*
- * The sparse image's driver itself (kernel/overlay/bsd/dev/redwood_sparse.c), run as a host program. It
+ * The sparse image's driver itself (kernel/overlay/bsd/dev/hakios_sparse.c), run as a host program. It
  * serves a disk out of a table and some blocks that sit at the end of the RAM disk, on the word of a
  * header there. So the model is that memory, as the build writes it and as it must not be believed:
  * with a table that points outside the image, with sizes whose sums wrap.
@@ -103,7 +103,7 @@ image(void)
 }
 
 #define printf said
-#include "redwood_sparse.c"
+#include "hakios_sparse.c"
 #undef printf                           /* (the driver's is its own: what the test prints is the test's) */
 
 static int failures;
@@ -140,7 +140,7 @@ served(void)
 	uint64_t count = 0;
 
 	image();
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(there(), "the disk is there: %s", log_text);
 	CHECK(logged("/dev/rsp0 stands in for 8 blocks of 4096, 3 of them here"), "said: %s", log_text);
 	CHECK(fake_disk_read("rsp0", 0, data, BLOCK, &resid) == 0 && resid == 0 && all(data, BLOCK, 0xa0), "block 0: %#x", data[0]);
@@ -148,7 +148,7 @@ served(void)
 	CHECK(fake_disk_read("rsp0", 7 * 8, data, BLOCK, &resid) == 0 && all(data, BLOCK, 0xa2), "block 7: %#x", data[0]);
 	memset(data, 0x55, sizeof(data));
 	CHECK(fake_disk_read("rsp0", 1 * 8, data, BLOCK, &resid) == 0 && resid == 0 && all(data, BLOCK, 0), "block 1, which is not here: zeros");
-	redwood_sparse_report();
+	hakios_sparse_report();
 	CHECK(logged("sparse: 3 blocks served, 1 asked for that are not in the image"), "counted: %s", log_text);
 	CHECK(!logged("damaged"), "and nothing is said of damage: %s", log_text);
 	/* what a program asks a disk */
@@ -168,7 +168,7 @@ across_blocks(void)
 	size_t resid = 99;
 
 	image();
-	redwood_sparse_init();
+	hakios_sparse_init();
 	memset(data, 0x55, sizeof(data));
 	/* from sector 3 of block 4 (not here) over all of block 5 into block 6 (not here) */
 	CHECK(fake_disk_read("rsp0", 4 * 8 + 3, data, 5 * 512 + BLOCK + 512, &resid) == 0 && resid == 0, "read");
@@ -192,7 +192,7 @@ read_only(void)
 	size_t resid = 0;
 
 	image();
-	redwood_sparse_init();
+	hakios_sparse_init();
 	memset(data, 0x77, sizeof(data));
 	CHECK(fake_disk_open("rsp0", FREAD | FWRITE) == EROFS, "not opened for writing");
 	CHECK(fake_disk_write("rsp0", 0, data, BLOCK, &resid) == EROFS, "a write is refused");
@@ -209,14 +209,14 @@ table_points_outside(void)
 	image();
 	put32(TABLE_AT + 4 * 2, HERE + 1);      /* block 2: the first block after the image, which is the memory after the RAM disk */
 	put32(TABLE_AT + 4 * 3, 0xffffffffu);   /* block 3: gigabytes away */
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(there(), "the disk is there: %s", log_text);
 	memset(data, 0x55, sizeof(data));
 	CHECK(fake_disk_read("rsp0", 2 * 8, data, BLOCK, &resid) == 0 && all(data, BLOCK, 0), "block 2 reads as zeros, not as what follows the disk: %#x", data[0]);
 	memset(data, 0x55, sizeof(data));
 	CHECK(fake_disk_read("rsp0", 3 * 8, data, BLOCK, &resid) == 0 && all(data, BLOCK, 0), "block 3 too: %#x", data[0]);
 	CHECK(fake_disk_read("rsp0", 7 * 8, data, BLOCK, &resid) == 0 && all(data, BLOCK, 0xa2), "the last one that is here is still served");
-	redwood_sparse_report();
+	hakios_sparse_report();
 	CHECK(logged("2 of those have an entry that points past the image's blocks: the image is damaged"), "and it is said: %s", log_text);
 }
 
@@ -241,7 +241,7 @@ does_not_fit(void)
 	if (wrong[i].at == AT_BLOCK_COUNT && wrong[i].value > BLOCKS) {
 		put64(AT_PRESENT, HERE);
 	}
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there(), "%s: no disk: %s", wrong[i].what, log_text);
 	CHECK(logged("sparse: the image does not fit in md0") || logged("sparse: the header makes no sense"), "%s: said: %s", wrong[i].what, log_text);
 }
@@ -263,7 +263,7 @@ header_makes_no_sense(void)
 	} else {
 		put64(wrong[i].at, wrong[i].value);
 	}
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there() && logged("sparse: the header makes no sense"), "case %u: no disk: %s", i, log_text);
 }
 
@@ -273,7 +273,7 @@ no_image_there(void)
 {
 	image();
 	memory[ROOT + 13] = '2';
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there() && logged("sparse: no sparse image at offset 8192 in md0"), "no disk: %s", log_text);
 }
 
@@ -287,7 +287,7 @@ offset_past_the_disk(void)
 
 	image();
 	boot_args = offsets[i];
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there() && logged("is past the end of md0"), "%s: no disk: %s", offsets[i], log_text);
 }
 
@@ -297,7 +297,7 @@ no_ram_disk(void)
 {
 	image();
 	no_disk = true;
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there() && logged("sparse: md0 is not a memory disk this can be read from"), "no disk: %s", log_text);
 }
 
@@ -307,12 +307,12 @@ off_by_default(void)
 {
 	image();
 	boot_args = "";
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there() && log_text[0] == 0, "without the boot argument: nothing, and nothing said: %s", log_text);
 	boot_args = "apfs_sparse=0";
-	redwood_sparse_init();
+	hakios_sparse_init();
 	CHECK(!there() && log_text[0] == 0, "nor with 0: %s", log_text);
-	redwood_sparse_report();
+	hakios_sparse_report();
 	CHECK(log_text[0] == 0, "and nothing to report: %s", log_text);
 }
 

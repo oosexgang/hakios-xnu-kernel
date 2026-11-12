@@ -23,7 +23,7 @@ needs its feature in the board's `features`.
 | `osfmk/arm64/gic_v3_irq.c` | Interrupts through a GICv3. | any (addresses from the loader) |
 | `osfmk/arm64/psci_smp.c` | The other cores, started through PSCI. `cpus=N`. | any |
 | `osfmk/arm64/loader_return.c` | Return to the loader with the log, on exit and on panic. | any |
-| `osfmk/arm64/redwood_a64emu.c` | The few arm64e instructions an ARMv8.2 core lacks, emulated when they trap. | any |
+| `osfmk/arm64/hakios_a64emu.c` | The few arm64e instructions an ARMv8.2 core lacks, emulated when they trap. | any |
 | `osfmk/arm64/hakios_prof.c`, `user_exception_trace.c` | A sampling profiler (`hakios_prof=NAME`) and crash descriptions (`systrace=`). | any |
 | `iokit/Kernel/GenericARMPE.cpp` | The platform expert: CPUs, the time of day. | any |
 | `bsd/dev/hakios_board.c` | Which board this is; `hw.board.*`. | data |
@@ -36,9 +36,9 @@ needs its feature in the board's `features`.
 | `iokit/Kernel/MiniIOMobileFramebuffer.cpp` | The display driver family: swaps, vsync, scaling to the panel, software dimming, the Metal plug-in gate (`metal=1`). | any; `fb_scan` timing is **data** (`display-scan`, `[display]` intf1) |
 | `iokit/Kernel/MiniIOSurface.cpp` | IOSurface. | any |
 | `iokit/Kernel/MiniAppleKeyStore.cpp` | AppleKeyStore: a device without a passcode. | any |
-| `iokit/Kernel/MiniIONetworkStack.cpp`, `RedwoodWLAN.cpp` | The registry entries by which iOS finds network interfaces. | any |
-| `iokit/Kernel/RedwoodBattery.cpp` | The battery as iOS looks for it (IOPMPowerSource). Fed by `redwood_battery.c` or the audio DSP. | any |
-| `iokit/Kernel/RedwoodGPU.cpp` | The GPU for user space: the interface of Linux's msm DRM driver, as Mesa's freedreno speaks it. | any Adreno the kernel has started |
+| `iokit/Kernel/MiniIONetworkStack.cpp`, `HakiosWLAN.cpp` | The registry entries by which iOS finds network interfaces. | any |
+| `iokit/Kernel/HakiosBattery.cpp` | The battery as iOS looks for it (IOPMPowerSource). Fed by `hakios_battery.c` or the audio DSP. | any |
+| `iokit/Kernel/HakiosGPU.cpp` | The GPU for user space: the interface of Linux's msm DRM driver, as Mesa's freedreno speaks it. | any Adreno the kernel has started |
 | `libkern/amfi/`, `bsd/kern/kern_minimac.c` | AMFI and Sandbox policies. | any |
 | `osfmk/minicrypto/` | corecrypto. | any |
 
@@ -47,12 +47,12 @@ needs its feature in the board's `features`.
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
 | `bsd/dev/hakios_backlight.c` | Panel brightness: MIPI DCS through a Qualcomm DSI controller, or software. Automatic brightness. | `[backlight]` / `backlight=` | data |
-| `bsd/dev/redwood_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `[gpu]` / `gpu=1`, `adreno=` | data for a 642 or 642L (`[gpu]`, and `[adreno]` of the SoC file for where its blocks are); another Adreno generation: the driver |
-| `bsd/dev/redwood_input.c` | `/dev/redwood-touch`: the queue of touches and button presses every source feeds. | — | any |
-| `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1` | part; which engine, its clocks, the pins and the supply are data (`[touch]`) |
-| `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1` | part; which engine, its clocks, the pins and the supplies are data (`[touch]`) |
+| `bsd/dev/hakios_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `[gpu]` / `gpu=1`, `adreno=` | data for a 642 or 642L (`[gpu]`, and `[adreno]` of the SoC file for where its blocks are); another Adreno generation: the driver |
+| `bsd/dev/hakios_input.c` | `/dev/hakios-touch`: the queue of touches and button presses every source feeds. | — | any |
+| `bsd/dev/hakios_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1` | part; which engine, its clocks, the pins and the supply are data (`[touch]`) |
+| `bsd/dev/hakios_fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1` | part; which engine, its clocks, the pins and the supplies are data (`[touch]`) |
 | `bsd/dev/hakios_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
-| `bsd/dev/redwood_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
+| `bsd/dev/hakios_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
 
 ## Power, CPU, temperature
 
@@ -63,32 +63,32 @@ needs its feature in the board's `features`.
 | `bsd/dev/hakios_ddr.c` | Memory bandwidth votes through RPMh. | `ddr-rpmh` / `ddr=` | data (`[rpmh]`), with the slot layout and BCM names of the 7-series |
 | `bsd/dev/hakios_bench.c` | Measurements: how fast the cores get at memory, how busy each core is. | — / `membench=`, `cpuload=` | any |
 | `bsd/dev/hakios_thermal.c` | Reads TSENS; holds CPU groups and the panel back when hot. | `[thermal]` / `thermal=` | data |
-| `bsd/dev/redwood_battery.c` | The battery as the UEFI's charger drivers report it to the loader. | `battery-uefi` / `battery=1` | any phone whose loader provides it |
+| `bsd/dev/hakios_battery.c` | The battery as the UEFI's charger drivers report it to the loader. | `battery-uefi` / `battery=1` | any phone whose loader provides it |
 | `bsd/dev/hakios_cputop.c` | Which processes use the CPU (`cputop=S`). | — | any |
 
 ## Sound, camera, haptics, flashlight
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/redwood_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `[adsp]` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`[adsp]`); the DSP's own addresses are the 7-series' |
-| `bsd/dev/redwood_audio.c` | `/dev/redwood-audio`: what iOS plays, to whichever sink is there. | — | any |
-| `bsd/dev/redwood_sound.c`, `redwood_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
-| `bsd/dev/redwood_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`[mic]`) |
-| `bsd/dev/redwood_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`[speaker]`) |
-| `bsd/dev/redwood_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`[haptic]`) |
-| `bsd/dev/redwood_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`[spmi]`, `[torch]`) |
-| `bsd/dev/redwood_camera.c` | cameras on an SM7325 as the board's `[camera]` wires them: sensors (four chips known), CSI, ISP. | `camera-redwood` / `cam=` | part |
-| `bsd/dev/redwood_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
+| `bsd/dev/hakios_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `[adsp]` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`[adsp]`); the DSP's own addresses are the 7-series' |
+| `bsd/dev/hakios_audio.c` | `/dev/hakios-audio`: what iOS plays, to whichever sink is there. | — | any |
+| `bsd/dev/hakios_sound.c`, `hakios_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
+| `bsd/dev/hakios_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`[mic]`) |
+| `bsd/dev/hakios_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`[speaker]`) |
+| `bsd/dev/hakios_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`[haptic]`) |
+| `bsd/dev/hakios_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`[spmi]`, `[torch]`) |
+| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `[camera]` wires them: sensors (four chips known), CSI, ISP. | `camera-redwood` / `cam=` | part |
+| `bsd/dev/hakios_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
 
 ## Wi-Fi, network
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/redwood_wifi.c`, `redwood_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`[wifi]`) |
-| `bsd/dev/redwood_lx.c`, `redwood_qmi.c`, `redwood_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
-| `bsd/dev/redwood_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
-| `bsd/dev/redwood_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |
-| `bsd/dev/redwood_virtio_net.c` | QEMU's network device behind `en0`. | `virtio` / `virtio_net=1` | any (QEMU) |
+| `bsd/dev/hakios_wifi.c`, `hakios_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`[wifi]`) |
+| `bsd/dev/hakios_lx.c`, `hakios_qmi.c`, `hakios_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
+| `bsd/dev/hakios_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
+| `bsd/dev/hakios_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |
+| `bsd/dev/hakios_virtio_net.c` | QEMU's network device behind `en0`. | `virtio` / `virtio_net=1` | any (QEMU) |
 
 ## Storage, file systems
 
@@ -96,9 +96,9 @@ needs its feature in the board's `features`.
 | --- | --- | --- |
 | `bsd/miscfs/apfs/` | APFS: reads the iOS images in RAM; writes for the data volume. | any |
 | `bsd/miscfs/ramfs/` | The RAM file system for `/private/var`. | any |
-| `bsd/dev/redwood_image.c` | A file of one of the RAM disks by path, for drivers that need firmware before there is a root. | any |
-| `bsd/dev/redwood_ufs.c`, `redwood_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `[platform]` of the SoC file), the controller is taken to be Qualcomm's as on redwood |
-| `bsd/dev/redwood_sparse.c`, `redwood_virtio_blk.c`, `redwood_apfs_check.c` | An image with only some of its blocks; QEMU's block device; a walk of a volume for comparison with the host tools. | any |
+| `bsd/dev/hakios_image.c` | A file of one of the RAM disks by path, for drivers that need firmware before there is a root. | any |
+| `bsd/dev/hakios_ufs.c`, `hakios_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `[platform]` of the SoC file), the controller is taken to be Qualcomm's as on redwood |
+| `bsd/dev/hakios_sparse.c`, `hakios_virtio_blk.c`, `hakios_apfs_check.c` | An image with only some of its blocks; QEMU's block device; a walk of a volume for comparison with the host tools. | any |
 
 ## Which of them run on the host
 
@@ -115,20 +115,20 @@ says what each test covers and what it leaves out.
 | `hakios_cpufreq.c` | `cpufreq_driver_test.c` | the frequency block's tables |
 | `hakios_ddr.c` | `ddr_driver_test.c` | RPMh's slot set, a command database |
 | `hakios_buttons.c` | `buttons_driver_test.c` | the PMIC arbiter |
-| `redwood_torch.c` | `torch_driver_test.c` | the PMIC arbiter with a flash module behind it |
-| `redwood_battery.c` | `battery_driver_test.c` | the page the loader writes the battery's state into |
-| `redwood_haptic.c` | `haptic_driver_test.c` | the SoC's pins with an I2C chip on them |
-| `redwood_speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
-| `redwood_guard.c` | `guard_test.c` | (none: tones in, samples out) |
-| `redwood_ufs.c` | `ufs_driver_test.c` | the loader on core 0: its page and buffer over a made-up disk, noting every write and whether the port may make it |
-| `redwood_ufshc.c` (its whitelist) | `ufs_whitelist_test.c` | (none: commands made up and never sent) |
+| `hakios_torch.c` | `torch_driver_test.c` | the PMIC arbiter with a flash module behind it |
+| `hakios_battery.c` | `battery_driver_test.c` | the page the loader writes the battery's state into |
+| `hakios_haptic.c` | `haptic_driver_test.c` | the SoC's pins with an I2C chip on them |
+| `hakios_speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
+| `hakios_guard.c` | `guard_test.c` | (none: tones in, samples out) |
+| `hakios_ufs.c` | `ufs_driver_test.c` | the loader on core 0: its page and buffer over a made-up disk, noting every write and whether the port may make it |
+| `hakios_ufshc.c` (its whitelist) | `ufs_whitelist_test.c` | (none: commands made up and never sent) |
 | `hakios_scmi_perf.c` | `scmi_perf_test.c` | the firmware behind the SCMI channel: its shared memory and doorbell, answering, late, wrongly or not at all |
-| `redwood_audio.c` | `audio_device_test.c` | (none: a program's writes and volume in, a sink and the recording's memory out) |
-| `redwood_sta.c` | `station_test.c` | the radio's driver, built outside this tree: power, scan, join and leave noted, answered as a scenario says, and saying more than there is room for |
-| `redwood_apple80211.c` | `apple80211_test.c` | the station layer: its networks, its state and what was asked of it, with records that say more than there is room for |
-| `redwood_input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/redwood-touch` out) |
-| `redwood_sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
-| `redwood_goodix.c`, `renoir_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
+| `hakios_audio.c` | `audio_device_test.c` | (none: a program's writes and volume in, a sink and the recording's memory out) |
+| `hakios_sta.c` | `station_test.c` | the radio's driver, built outside this tree: power, scan, join and leave noted, answered as a scenario says, and saying more than there is room for |
+| `hakios_apple80211.c` | `apple80211_test.c` | the station layer: its networks, its state and what was asked of it, with records that say more than there is room for |
+| `hakios_input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/hakios-touch` out) |
+| `hakios_sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
+| `hakios_goodix.c`, `hakios_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 
 The two touch drivers are compiled into host programs too, but nothing of a controller is modelled:
 their tests cover the wiring only. The sound, microphone, camera, Wi-Fi, DSP, GPU and storage drivers have no such test: they

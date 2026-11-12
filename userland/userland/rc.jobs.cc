@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Control Center pulled down from the top right corner and closed (home button), three times, three seconds open
 # and three closed: for a screen recording (rec_secs=N rec_start=S) and glframes=1, to see in which frame each of
 # its parts appears.

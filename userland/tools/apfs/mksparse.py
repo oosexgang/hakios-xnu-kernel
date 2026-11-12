@@ -13,7 +13,7 @@
 # touches.  A cache of a different size only changes how often a block is re-read, not
 # which blocks are needed, so the set is safe to hand to the kernel.
 #
-# Layout of what comes out (little-endian), as bsd/dev/redwood_sparse.c reads it:
+# Layout of what comes out (little-endian), as bsd/dev/hakios_sparse.c reads it:
 #
 #   header, one block:  "REDWOODSPARSE1\0\0", block size, block count of the container,
 #                       how many blocks are present, the offsets of the table and the data

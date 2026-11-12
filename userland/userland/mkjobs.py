@@ -82,7 +82,7 @@ import sys
 # It respawns and does it again: 18 crashes in a seven-minute session where the same image without it has
 # none. The boot is not held up -- it reaches the same 118 processes against 119 -- so the trade is 103
 # failed lookups a session against a process dying every fifteen seconds for ever, which is a bad one.
-# Stubbing the first driver is the kind of work RedwoodBattery already is, but the second is an Apple
+# Stubbing the first driver is the kind of work HakiosBattery already is, but the second is an Apple
 # baseband on PCIe, and this phone's modem is on the SoC and speaks QMI to a Qualcomm subsystem -- so what
 # is behind the driver is missing too, not just the driver.
 # cloudd and appstored are IN, and getting there was the most instructive thing in this file.
@@ -130,7 +130,7 @@ import sys
 # (four queries, answers of 159, 842, 200 and 107 bytes), and trustd, geod, maild, gamed, cloudd,
 # StocksWidget and nsurlsessiond all open TLS to Apple and Akamai (17.248.214.x, 17.253.39.x,
 # 2.16.56.93, 23.11.40.157, 95.100.176.233). "net_test: en0: flags 0x8802" was read 0.1 s into user
-# space, before configd had configured it: com.redwood.wifi does that by itself with wifi=1, so a
+# space, before configd had configured it: com.hakios.wifi does that by itself with wifi=1, so a
 # scenario must not ask for DHCP again -- only "waitaddr en0 60".
 # The storefront question is therefore OPEN, and the next measurement has to be made over a channel
 # that does not drop: ssh to the phone (rc.jobs.ssh) and fetch the bag by hand.

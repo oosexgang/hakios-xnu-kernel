@@ -334,7 +334,7 @@ watch(const char *name, const char *selector, IMP ours, void *theirs)
 
 __attribute__((constructor))
 static void
-redwood_app_init(void)
+hakios_app_init(void)
 {
 	static const int signals[] = { SIGTRAP, SIGABRT, SIGILL, SIGSEGV, SIGBUS, SIGSYS };
 	struct sigaction action = { 0 };

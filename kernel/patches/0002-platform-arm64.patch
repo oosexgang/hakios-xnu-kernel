@@ -922,7 +922,7 @@ diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
  }
  
 +extern void loader_return(void);
-+extern void redwood_adreno_stop(void);
++extern void hakios_adreno_stop(void);
 +
  __attribute__((noreturn))
  void
@@ -932,7 +932,7 @@ diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
  		PEHaltRestart(kPEHaltCPU);
  	}
 +	/* No platform driver powers the machine off: hand control (and the log) back to the loader. */
-+	redwood_adreno_stop();
++	hakios_adreno_stop();
 +	loader_return();
  	while (1) {
  		;
@@ -1283,7 +1283,7 @@ diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
  extern kern_return_t arm_fast_fault(pmap_t, vm_map_address_t, vm_prot_t, bool, bool);
  
  static void handle_uncategorized(arm_saved_state_t *);
-+extern bool redwood_a64emu(arm_context_t *context);
++extern bool hakios_a64emu(arm_context_t *context);
  
  static void handle_kernel_breakpoint(arm_saved_state_t *, uint64_t);
  
@@ -1324,8 +1324,8 @@ diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
  			break;
  		}
  #endif /* CONFIG_XNUPOST */
-+		/* renoir: arm64e instructions this ARMv8.2 core lacks (osfmk/arm64/redwood_a64emu.c) */
-+		if (is_user && redwood_a64emu(context)) {
++		/* renoir: arm64e instructions this ARMv8.2 core lacks (osfmk/arm64/hakios_a64emu.c) */
++		if (is_user && hakios_a64emu(context)) {
 +			break;
 +		}
  		handle_uncategorized(&context->ss);

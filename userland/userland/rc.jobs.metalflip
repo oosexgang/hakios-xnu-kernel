@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalflip).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalflip).
 #
 # Two questions the last two boots left open, in one boot because the log holds both.
 #

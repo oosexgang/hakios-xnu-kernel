@@ -37,10 +37,10 @@ ml_io_map_wcomb(vm_offset_t phys, vm_size_t size)
 }
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
-void redwood_rpmh_lock(void) { locks++; }
-void redwood_rpmh_unlock(void) { unlocks++; }
+void hakios_rpmh_lock(void) { locks++; }
+void hakios_rpmh_unlock(void) { unlocks++; }
 void hakios_ddr_init(bool with_cpufreq);
-void redwood_ddr_quiesce(void);
+void hakios_ddr_quiesce(void);
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define HAKIOS_MMIO_TEST 1
@@ -132,14 +132,14 @@ given_back(void)
 	phone("phone-cmd", true);
 	boot_args = "";
 	hakios_ddr_init(true);
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.triggers == 2 && rsc.sends == 5, "a second request, of two commands: %u, %u", rsc.triggers, rsc.sends);
 	CHECK(rsc.sent[3].address == 0x50000 && rsc.sent[3].data == VOTE(1024) && rsc.sent[4].address == 0x50004 &&
 	    rsc.sent[4].data == VOTE(1024), "1024 on MC0 and SH0: %#x <- %#x, %#x <- %#x", rsc.sent[3].address, rsc.sent[3].data,
 	    rsc.sent[4].address, rsc.sent[4].data);
 	CHECK(logged("ddr: memory bandwidth vote 1024 for the loader: done"), "said: %s", log_text);
 	CHECK(locks == 1, "nothing is waited for on the way out: the others are stopped (%u)", locks);
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.triggers == 2, "once: a second way out sends nothing");
 	as_found();
 }
@@ -152,7 +152,7 @@ other_votes(void)
 	boot_args = "ddr_vote=5000 ddr_rest=0";
 	hakios_ddr_init(true);
 	CHECK(rsc.sent[0].data == VOTE(5000) && rsc.sent[1].data == VOTE(5000) && rsc.sent[2].data == KEEP_ON, "5000: %#x", rsc.sent[0].data);
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.sent[3].data == 1u << 30 && rsc.sent[4].data == 1u << 30, "no request: commit alone (%#x)", rsc.sent[3].data);
 	as_found();
 }
@@ -164,7 +164,7 @@ rest_too_much(void)
 	phone("phone-cmd", true);
 	boot_args = "ddr_rest=99999";
 	hakios_ddr_init(true);
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.sent[3].data == VOTE(0x3fff) && rsc.sent[4].data == VOTE(0x3fff), "the most there is: %#x", rsc.sent[3].data);
 	as_found();
 }
@@ -180,7 +180,7 @@ too_much(void)
 	boot_args = "ddr_vote=0";
 	hakios_ddr_init(true);
 	CHECK(rsc.writes == 0, "a vote of nothing is not sent either");
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.writes == 0, "... and nothing is given back that was not taken");
 }
 
@@ -227,7 +227,7 @@ no_answer(void)
 	CHECK(logged("ddr: RPMh: no answer to the request") && logged("SH0 (0x50004): FAILED"), "said: %s", log_text);
 	CHECK(locks == 1 && unlocks == 1, "the slot set is given back all the same");
 	as_found();
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.triggers == 1, "nothing more is sent on the way out");
 }
 
@@ -262,7 +262,7 @@ one_missing(void)
 	phone("phone-cmd", false);
 	hakios_ddr_init(true);
 	CHECK(logged("ddr: no vote (MC0 0x50000, SH0 0x50004, ACV 0, vote 16383)") && rsc.writes == 0, "without ACV: %s", log_text);
-	redwood_ddr_quiesce();
+	hakios_ddr_quiesce();
 	CHECK(rsc.writes == 0, "and nothing is given back where nothing was asked for");
 }
 

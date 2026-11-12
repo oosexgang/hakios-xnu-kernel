@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The dark strip in Search, on demand (RC_JOBS=rc.jobs.strip, a run of about a minute and a half;
 # the way the user found): Search pulled down, then the gesture from the bottom edge begun and let
 # go after half a centimetre, eight times. Each time the strip under the status bar used to darken

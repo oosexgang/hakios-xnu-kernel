@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The network (RC_JOBS=rc.jobs.net, with a kernel that has en0: under QEMU, QEMU_NET=1): the
 # interface as the kernel has it, then configured by configd's IPConfiguration over DHCP, a name
 # resolved, a page fetched over plain TCP and over CFNetwork's HTTPS. See src/net_test.m.

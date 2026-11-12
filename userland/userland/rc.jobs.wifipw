@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # wifid's way of keeping a network's password (RC_JOBS=rc.jobs.wifipw, with WIFID=1 and
 # OSLOG="com.apple.wifid com.apple.securityd" for their side): once the system has settled, a made-up
 # network's password into the keychain the way wifid puts it there, back, and away again; then

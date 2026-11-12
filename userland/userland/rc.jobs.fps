@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The everyday cases for frame pacing (boot-arg touch_lat=1; tools/frames.py): unlock, then 100 s for the
 # start-up's background work to be over, then home-screen page swipes both ways, Search pulled down and
 # closed, Control Center from the top right corner and closed, Settings opened (the zoom), its list flung

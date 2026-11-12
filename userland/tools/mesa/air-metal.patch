@@ -3,7 +3,7 @@ Build the AIR compute path as a shared library for the Metal driver.
 tools/mesa/air/air_metal.c is air_run's compute path -- a Metal function's LLVM module
 through the AIR frontend into a Gallium compute state and a grid on the Adreno -- behind
 the contract in tools/mesa/air/air_metal.h, which mentions nothing of NIR, Gallium or
-ir3: the Metal driver (userland/src/redwoodmetal.m) must not grow a dependency on Mesa's
+ir3: the Metal driver (userland/src/hakiosmetal.m) must not grow a dependency on Mesa's
 headers for it. On the device it is /redwood/lib/libredwoodair.dylib, which is where
 -newComputePipelineStateWithDescriptor: will compile the bitcode Metal hands it
 (docs/metal.md 10.12).
@@ -25,7 +25,7 @@ to provide shows up as a test that cannot be written.
  
 +# libredwoodair: the same path air_run takes -- a Metal shader through the AIR frontend
 +# into a compute state and a grid on the Adreno -- as a shared library, for the Metal
-+# driver in userland/src/redwoodmetal.m. Its contract is src/compiler/air/air_metal.h and
++# driver in userland/src/hakiosmetal.m. Its contract is src/compiler/air/air_metal.h and
 +# mentions nothing of Mesa; this is only where it is built, beside air_run and for the
 +# same reason, that libgallium exists here and not where the frontend is read. The
 +# dependencies are deliberately air_run's: a driver that links this gets the path the

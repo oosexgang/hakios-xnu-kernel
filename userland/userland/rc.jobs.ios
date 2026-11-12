@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The iOS root container on the phone's flash, which the kernel mounts read only on
 # /System/Volumes/iOS at boot (ufs=2 apfs_volume=ufs_darwin, with bootcpu=7): what user space
 # sees of it, in an ordinary session.  iOS's own mount and df first, then ours (vol_ls: ls, cat,

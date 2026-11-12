@@ -32,15 +32,15 @@ ln -s $IOS/cryptex/app $S/cryptex-app
 
 J=$IOS/jobs26
 rm -rf $T $J; cp -a $DR/userland/root $T
-mkdir -p $J; cp $T/LaunchDaemons/com.redwood.demo.plist $J/
+mkdir -p $J; cp $T/LaunchDaemons/com.hakios.demo.plist $J/
 rm -f $T/LaunchDaemons/*.plist
 cp $OBJ/*.dylib $T/lib/
 cp $OBJ/gl_test $T/bin/gl_test
 # the audio server's output device (inj26.sh): arm64e, in place of 16.5's arm64 one, which the audio server cannot load;
-# the system image links /System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver to it (mkimage26.py)
-if [ -f $OBJ/RedwoodAudio ]; then
-	cp $OBJ/RedwoodAudio $T/lib/RedwoodAudio.driver/RedwoodAudio
-	cp "$(dirname "$RN")/userland/userland/src/audio_plugin.plist" $T/lib/RedwoodAudio.driver/Info.plist
+# the system image links /System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver to it (mkimage26.py)
+if [ -f $OBJ/HakiosAudio ]; then
+	cp $OBJ/HakiosAudio $T/lib/HakiosAudio.driver/HakiosAudio
+	cp "$(dirname "$RN")/userland/userland/src/audio_plugin.plist" $T/lib/HakiosAudio.driver/Info.plist
 fi
 # iOS 26's launchd, on a normal boot, refuses to start a job whose program is not a platform binary
 # ("unexpected exec of non-platform binary: /redwood/sbin/init"); the kernel's AMFI stand-in takes a

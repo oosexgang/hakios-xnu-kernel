@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # What the prefix brings with it before anything is installed over the network
 # (RC_JOBS=rc.jobs.preinstalled): the versions in dpkg's database, that launchctl and preferenceloader
 # are really there, and that the tweak loader finds PreferenceLoader and puts it into Settings.

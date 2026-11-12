@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The iOS root volume on the phone's flash as the root (flashboot.apfs resident, root_apfs=ufs_darwin
 # ufs=2 [ufs_native=1] adsp=1 sound=4): what is mounted, the firmware on /fw, reading files through
 # read(2) and through a mapping (page-in) with the APFS driver's numbers before and after, then

@@ -5,7 +5,7 @@ owes.py counts what the PROTOCOLS require, and across 865 selectors it reported
 0 unanswered. It was not wrong; it was answering a narrower question. The window
 server died 78 times in one boot on
 
-    -[RedwoodMetalCommandBuffer setProtectionOptions:]: unrecognized selector
+    -[HakiosMetalCommandBuffer setProtectionOptions:]: unrecognized selector
 
 and that selector is in no protocol. It is declared on a CLASS --
 IOGPUMetalCommandBuffer, whose own _protectionOptions ivar it is -- and our
@@ -53,14 +53,14 @@ a selector it never messages) AND an instruction in __text that reaches it.
 Either one alone is reported as such and not counted.
 
 The method is checked against the boot that prompted it, which is the only test
-it could fail. Run with --src pointing at redwoodmetal.m as it stood before
+it could fail. Run with --src pointing at hakiosmetal.m as it stood before
 7fdc217 -- the source that was on the phone at 01:51 -- it names
 
     setProtectionOptions:  fatal  ours  QuartzCore: 10 message
           objc_stub 0x18830223c  CA::OGL::MetalContext::start_command_buffer(...)
     protectionOptions      fatal  ours  QuartzCore: 13 message
 
-at the top of RedwoodMetalCommandBuffer's 68, and `ipsw dyld disass -q -a
+at the top of HakiosMetalCommandBuffer's 68, and `ipsw dyld disass -q -a
 0x188302228 -c 10` shows the pair in one place: a read of -protectionOptions,
 a compare, and a -setProtectionOptions: if they differ. Run against the source
 as it is now it names neither, because both are answered.
@@ -107,7 +107,7 @@ usage:
                --sender backboardd=ios165/rootfs/usr/libexec/backboardd \
                --sender SpringBoard=.../SpringBoard.app/SpringBoard \
                --sender RE4='.../Resident Evil 4' \
-               [--sent] [--verbose] [--class RedwoodMetalCommandBuffer]
+               [--sent] [--verbose] [--class HakiosMetalCommandBuffer]
 """
 
 import argparse
@@ -815,7 +815,7 @@ def verdict(sites):
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="append", default=[], required=True)
-    ap.add_argument("--src", default=os.path.join(ROOT, "userland/src/redwoodmetal.m"))
+    ap.add_argument("--src", default=os.path.join(ROOT, "userland/src/hakiosmetal.m"))
     ap.add_argument("--images", help="directory of `ipsw dyld extract` output")
     ap.add_argument("--selmap", action="append", default=[])
     ap.add_argument("--sender", action="append", default=[], metavar="NAME=PATH")

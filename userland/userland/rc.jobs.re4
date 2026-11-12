@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # Does a third-party game -- a 282 MB Mach-O built against the iOS 18.1 SDK, running on 16.5 --
 # get from exec to its first Metal call? (RC_JOBS=rc.jobs.re4, with ../apps/RE4.app in the image;
 # see the stage 2 notes. XL_SECS=600 and up: the waits below add to about four minutes, and the

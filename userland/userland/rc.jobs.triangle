@@ -1,6 +1,6 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.triangle).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.triangle).
 #
-# WHAT THIS BOOT IS FOR. RedwoodTriangle.app -- an application of this port's own, a plain
+# WHAT THIS BOOT IS FOR. HakiosTriangle.app -- an application of this port's own, a plain
 # bundle in /Applications that SpringBoard launches -- opens a window, makes a CAMetalLayer,
 # takes a drawable from it, draws one triangle and presents it. Three things that no measurement
 # so far could even ask are asked here, and they fail SEPARATELY, which is why the list below
@@ -12,7 +12,7 @@
 #      (mobile) and UIKit above it, and nobody has ever tried one.
 #   2  DOES THE DRAWABLE WORK. -[CAMetalLayer nextDrawable] asks a device exactly one thing,
 #      -newTextureWithDescriptor:iosurface:plane: (docs/metal.md 10.46). That method landed in
-#      src/redwoodmetal.m today and HAS NEVER EXECUTED. This boot is its first caller.
+#      src/hakiosmetal.m today and HAS NEVER EXECUTED. This boot is its first caller.
 #   3  DOES PRESENTATION REACH THE SCREEN. Presentation goes through no device at all: the
 #      drawable's IOSurface is registered in the layer's CAImageQueue by surface id and the
 #      window server takes it from there. A triangle on the panel is that whole chain at once,
@@ -269,11 +269,11 @@
 #
 # 1. IS THE BUNDLE EVEN IN THE IMAGE. Cheapest possible line and it comes first, because a
 #    forgotten SYSTEM=1 makes everything below meaningless in a way that is otherwise hard to
-#    tell apart from a refused launch. It must list FIVE entries -- RedwoodTriangle, Info.plist,
+#    tell apart from a refused launch. It must list FIVE entries -- HakiosTriangle, Info.plist,
 #    PkgInfo and the two icons -- all REAL FILES owned by root:wheel (vol_ls leaves out "." and
 #    ".."). A symbolic link here is a bundle LaunchServices will refuse ("Unable to register");
 #    nothing here at all means the system image is the old one, and then only the --layer step says anything.
-/redwood/bin/vol_ls ls /Applications/RedwoodTriangle.app
+/redwood/bin/vol_ls ls /Applications/HakiosTriangle.app
 #
 # 1a. METAL'S OWN DISCOVERY, SWITCHED ON. Without this the registry has no MetalPluginName and
 #     CoreAnimation keeps OpenGL ES: the boot of 22 October 01:39 had camtl=1 and still logged
@@ -304,7 +304,7 @@
 /redwood/bin/battery_test open redwoodtriangle://
 #
 # 4. Who is running, from a program of Apple's that knows nothing about any of this. The list
-#    must have a RedwoodTriangle in it; if it does not, SpringBoard took the URL and the
+#    must have a HakiosTriangle in it; if it does not, SpringBoard took the URL and the
 #    process died before exec, and the kernel's own lines above are where to look.
 #
 #    TAKE THE SCREENSHOT ANY TIME AFTER THIS LINE: ./xl screenshot logs/triangle.png
@@ -426,13 +426,13 @@
 #       here would mean the kernel stopped aligning and the import should then be REFUSED by
 #       name rather than succeed.
 #
-#   grep -a 'redwoodmetal: no drawable:' logs/NNNNNN-run.log
+#   grep -a 'hakiosmetal: no drawable:' logs/NNNNNN-run.log
 #       the driver's own refusals, which are the second reference for every nil above: the
 #       plane, the surface id, the pixel format, the geometry disagreement, the Adreno pitch
 #       rule, or a compiler library without rwa_texture_from_surface. Each names its number.
 #       EMPTY is the answer.
 #
-#   grep -a 'redwooddrawable:' logs/NNNNNN-run.log
+#   grep -a 'hakiosdrawable:' logs/NNNNNN-run.log
 #       the bridge's own one-off lines, once a process: whether libredwoodair.dylib is loaded
 #       here and whether it has rwa_texture_from_surface, and whether this process had
 #       IOSurfaceGetID.
@@ -446,14 +446,14 @@
 #       WHICH ROAD THE DEVICE CAME BY, which is the first thing to read in this log now that
 #       there are two. In order it must say:
 #
-#         "the registry switch is MetalPluginName RedwoodMetal, MetalPluginClassName
-#          RedwoodMetalDevice, so Metal's own discovery WILL run" -- read out of the registry
+#         "the registry switch is MetalPluginName HakiosMetal, MetalPluginClassName
+#          HakiosMetalDevice, so Metal's own discovery WILL run" -- read out of the registry
 #          before Metal is asked anything, and it must agree with what metal_props printed.
 #          "(none)" here with metal=1 in the command line means metal_props failed.
 #
 #       and then exactly ONE of these two, never both:
 #
-#         "Metal's own discovery gave RedwoodMetalDevice, so this process adds NOTHING"
+#         "Metal's own discovery gave HakiosMetalDevice, so this process adds NOTHING"
 #              the discovery-on road, and the road a game takes. Nothing else of the device
 #              section follows it: no bundle, no step 4, no step 5, no MTLAddDevice.
 #         "MTLCreateSystemDefaultDevice() = nil, so Metal has no device of its own here and
@@ -465,7 +465,7 @@
 #       cannot be read off the log afterwards because the process would be dead -- see the next
 #       grep, which is the one that catches it.
 #
-#   grep -a 'userabort: triangle_app\|userabort: RedwoodTriangle' logs/NNNNNN-run.log
+#   grep -a 'userabort: triangle_app\|userabort: HakiosTriangle' logs/NNNNNN-run.log
 #       must be EMPTY. If a frame of it unslides to MTLCreateSystemDefaultDevice + 140
 #       (0x181a34bc8), the process registered a second Metal device and Apple's own assertion
 #       killed it -- "MTLCreateSystemDefaultDevice doesn't know what to do with more than one
@@ -475,7 +475,7 @@
 #   grep -a 'triangle: step:' logs/NNNNNN-run.log | tail -3
 #       where it stopped, if it stopped.
 #
-#   grep -a 'RedwoodGPU: request' logs/NNNNNN-run.log
+#   grep -a 'HakiosGPU: request' logs/NNNNNN-run.log
 #       empty. A line here is the kernel being asked something it does not know, and 0x7e
 #       (kRedwoodSurface) is the request the whole drawable depends on.
 #

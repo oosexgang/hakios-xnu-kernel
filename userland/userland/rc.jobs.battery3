@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # An hour of use before Settings > Battery is opened (with adsp=1): applications opened in turn -- Settings, Notes,
 # Calendar -- so that the power log has an hour of their use to show; then the battery page, scrolled, and Battery
 # Health & Charging, for screenshots; at the end what the power log has collected (battery_test powerlog).

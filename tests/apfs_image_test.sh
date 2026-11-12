@@ -3,7 +3,7 @@
 # of made-up files the way the port's images are made (two volumes; compressed files, firmware under
 # --plain left as it is), and the kernel's own reader (bsd/miscfs/apfs/apfs_lib.c, as apfs-tool) has to read
 # every entry back as it was (tools/apfs/check-image.py); then the drivers' lookup of firmware in the RAM
-# disks (redwood_image.c) runs on them (tests/image_file_test.c). Before that, the steps of the APFS suite
+# disks (hakios_image.c) runs on them (tests/image_file_test.c). Before that, the steps of the APFS suite
 # (userland/tools/apfs/run-tests.sh) that need no image of iOS. apfsck, the third reader check-image.sh
 # adds, is not built here: it is fetched from elsewhere.
 #

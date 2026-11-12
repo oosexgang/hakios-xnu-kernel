@@ -14,6 +14,30 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Display, graphics and input
 
+### `bsd/dev/hakios_adreno.c`
+
+| Argument | What the source says |
+| --- | --- |
+| `adreno` | adreno=N performs steps 1 to N and stops; a step says what it is about to touch before it touches it and what it found after, reads come before writes, and a step that does not find what it needs ends the sequence instead of going on blind. |
+| `adreno_blind` | adreno_blind=1: the command processor is started with its microcode at an address where nothing is. |
+| `adreno_dirty` | adreno_dirty=1 makes every ending a panic's in this respect, to see that work. |
+| `adreno_fine` | adreno_fine=1 the newest step waits like that before every single access |
+| `adreno_keep` | With boot-arg adreno_keep=1 the steps are not undone: the GPU block stays as step 21 leaves it, the 3D core powered and taking commands, and the service HakiosGPU (iokit/Kernel/HakiosGPU.cpp) hands it to programs through the interface of Linux's msm driver, which is what Mesa's freedreno speaks. |
+| `adreno_only` | adreno_only=K step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them) |
+| `adreno_pause` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
+| `adreno_return` | adreno_return=1 when all is over, go back to the loader instead of starting the system |
+| `adreno_skip` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
+| `adreno_speed` | adreno_speed=N step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for) |
+| `adreno_stream1` | adreno_stream1=N step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core asks for. |
+| `adreno_watch` | adreno_watch=S after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last |
+| `display_probe` | display_probe=1 before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written) |
+| `gpu` | gpu=1, on the phone and with the GPU's firmware in the small image: the GPU is started while the system starts and kept for the window server to draw with (the service HakiosGPU; "the GPU kept on" below). |
+| `gpu_exact` | gpu_exact=0: the core does not wait to be idle before it notes the time |
+| `gpu_log` | gpu_log=1: a line for every submission and the time the core spent on it |
+| `gpu_recover` | gpu_recover=1: a submission the core never finishes does not cost the rest of the run. |
+| `gpu_va` | gpu_va: 0 (the default) as it has always been. |
+| `renoir_display_clocks` | — |
+
 ### `bsd/dev/hakios_backlight.c`
 
 | Argument | What the source says |
@@ -43,31 +67,16 @@ beside the code, so the file named in each heading has the full explanation.
 | --- | --- |
 | `touchscreen` | touchscreen=1: the touch screen, by the driver of the controller the board lists |
 
-### `bsd/dev/redwood_adreno.c`
+### `bsd/dev/hakios_fts.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `adreno` | adreno=N performs steps 1 to N and stops; a step says what it is about to touch before it touches it and what it found after, reads come before writes, and a step that does not find what it needs ends the sequence instead of going on blind. |
-| `adreno_blind` | adreno_blind=1: the command processor is started with its microcode at an address where nothing is. |
-| `adreno_dirty` | adreno_dirty=1 makes every ending a panic's in this respect, to see that work. |
-| `adreno_fine` | adreno_fine=1 the newest step waits like that before every single access |
-| `adreno_keep` | With boot-arg adreno_keep=1 the steps are not undone: the GPU block stays as step 21 leaves it, the 3D core powered and taking commands, and the service RedwoodGPU (iokit/Kernel/RedwoodGPU.cpp) hands it to programs through the interface of Linux's msm driver, which is what Mesa's freedreno speaks. |
-| `adreno_only` | adreno_only=K step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them) |
-| `adreno_pause` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
-| `adreno_return` | adreno_return=1 when all is over, go back to the loader instead of starting the system |
-| `adreno_skip` | "adreno=21 adreno_skip=0x1c00 adreno_pause=0 adreno_keep=1" asks for at length: the steps that only look (10 to 12) left out, no pauses, no watch. |
-| `adreno_speed` | adreno_speed=N step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for) |
-| `adreno_stream1` | adreno_stream1=N step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core asks for. |
-| `adreno_watch` | adreno_watch=S after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last |
-| `display_probe` | display_probe=1 before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written) |
-| `gpu` | gpu=1, on the phone and with the GPU's firmware in the small image: the GPU is started while the system starts and kept for the window server to draw with (the service RedwoodGPU; "the GPU kept on" below). |
-| `gpu_exact` | gpu_exact=0: the core does not wait to be idle before it notes the time |
-| `gpu_log` | gpu_log=1: a line for every submission and the time the core spent on it |
-| `gpu_recover` | gpu_recover=1: a submission the core never finishes does not cost the rest of the run. |
-| `gpu_va` | gpu_va: 0 (the default) as it has always been. |
-| `renoir_display_clocks` | — |
+| `fts_spi_hz` | — |
+| `fts_trace` | — |
+| `touch_flip` | — |
+| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's [touch] (the numbers named in comments here are renoir's). |
 
-### `bsd/dev/redwood_goodix.c`
+### `bsd/dev/hakios_goodix.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -78,26 +87,27 @@ beside the code, so the file named in each heading has the full explanation.
 | `touch_spi_hz` | touch_spi_hz=N: the bus at N Hz (Android's device tree gives the chip 5 MHz) |
 | `touchscreen` | Only with boot-arg touchscreen=1: every address below belongs to this phone. |
 
-### `bsd/dev/redwood_input.c`
+### `bsd/dev/hakios_input.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `touch_lat` | touch_lat=1: for measuring how long a touch takes to reach the panel, a line for every sample posted ("tl: p TYPE FINGER X Y at US", the time in microseconds of mach_absolute_time), to be matched with the window server's lines about reading it (userland/src/inject.c), drawing (eagl.c) and the displa… |
 
-### `bsd/dev/redwood_virtio_input.c`
+### `bsd/dev/hakios_virtio_input.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `virtio_input` | Only with boot-arg virtio_input=1: the bus address is QEMU's and means nothing on the phone. |
 
-### `bsd/dev/renoir_fts.c`
+### `iokit/Kernel/HakiosGPU.cpp`
 
 | Argument | What the source says |
 | --- | --- |
-| `fts_spi_hz` | — |
-| `fts_trace` | — |
-| `touch_flip` | — |
-| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's [touch] (the numbers named in comments here are renoir's). |
+| `gpu_cached` | freedreno; boot-arg gpu_cached=1 makes them ordinary memory, pushed out of the cache whenever the GPU is given something to do: see submit()). |
+| `gpu_client_snapshot` | gpu_client_snapshot, default 1) The pixels as they are now, copied into memory of the GPU's own, rather than the program's pages themselves: iconservicesagent hands the window server an icon made around its own memory and then draws the next picture -- a label -- into that same memory, and the icons… |
+| `gpu_fair_ms` | gpu_fair_ms=N: the GPU has one ring and no preemption, so a program that hands it frame after frame (the wallpaper's 40-55 ms ones, widgets) has the window server's frames wait behind all of them. |
+| `gpu_keep` | gpu_keep=0 (a test): none kept; gpu_keep=2: kept ones cleared when given again |
+| `touch_lat` | touch_lat=1: a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up (tools/frames.py). |
 
 ### `iokit/Kernel/MiniIOMobileFramebuffer.cpp`
 
@@ -109,7 +119,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fb_filter` | fb_filter=0: the picture is scaled to the panel nearest neighbour, as it once was. |
 | `fb_hz` | 60 Hz (boot-arg fb_hz=N: at N), with one colour mode, 8-bit RGB. |
 | `fb_queue` | By default two frames may wait (boot-arg fb_queue=1: one, as before): CoreAnimation draws on a clock of its own, and a SwapEnd held past its next tick makes that tick late, the clock going on from there (rc.jobs.fps: 28% of the frames over 16.7 ms with two, 33% with one). |
-| `fb_scan` | The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/redwood_adreno.c says where it is read from). |
+| `fb_scan` | The panel's own refresh (boot-arg fb_scan, on by default; bsd/dev/hakios_adreno.c says where it is read from). |
 | `fb_scan_lead` | — |
 | `fb_small` | fb_small=0: the drawers anywhere, as before. |
 | `fb_threads` | fb_threads=N (1 to 8): so many processors scale a frame onto the panel together (see drawRows()). |
@@ -117,7 +127,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fbscale` | fbscale=2: the same 375 x 812 points drawn at two pixels a point instead of three. |
 | `fbtrace` | fbtrace=N: log the first N calls of every selector (default 3). |
 | `fbwidth` | fbwidth= and fbheight= change the size reported. |
-| `metal` | With boot-arg metal=1 a user process may put those two properties here, which is the whole of what keeps Metal from finding a driver of ours (userland/src/redwoodmetal.m); see setProperties below and docs/metal-glass.md. |
+| `metal` | With boot-arg metal=1 a user process may put those two properties here, which is the whole of what keeps Metal from finding a driver of ours (userland/src/hakiosmetal.m); see setProperties below and docs/metal-glass.md. |
 | `rec_mb` | rec_secs=N [rec_start=S] [rec_mb=M]: from S seconds after the first frame, for N seconds, every frame that is shown is also kept -- one pixel of every REC_STEP in each direction, three bytes a pixel -- in a piece of memory of M megabytes (default 480, which is 520 frames) that is left in place when… |
 | `rec_ring` | rec_ring=1: when the memory is full the recording does not stop but goes on over its oldest frames, so that what it holds at the end is the last of the run: for something that happens once in a long session, the run is ended right after it (five fingers) and the frames before it are there. |
 | `rec_secs` | rec_secs=N [rec_start=S] [rec_mb=M]: from S seconds after the first frame, for N seconds, every frame that is shown is also kept -- one pixel of every REC_STEP in each direction, three bytes a pixel -- in a piece of memory of M megabytes (default 480, which is 520 frames) that is left in place when… |
@@ -133,17 +143,14 @@ beside the code, so the file named in each heading has the full explanation.
 | `surftrace` | surftrace=N: log the first N surfaces created (default 24). |
 | `surftrace_of` | surftrace_of=NAME: only the surfaces made by programs whose name begins with NAME count for surftrace (then up to N of theirs), and what becomes of them is said as well: the ports made for them and who looks them up from a port (another program, which shows it: the window server for a layer). |
 
-### `iokit/Kernel/RedwoodGPU.cpp`
+## Power, CPU and temperature
+
+### `bsd/dev/hakios_battery.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `gpu_cached` | freedreno; boot-arg gpu_cached=1 makes them ordinary memory, pushed out of the cache whenever the GPU is given something to do: see submit()). |
-| `gpu_client_snapshot` | gpu_client_snapshot, default 1) The pixels as they are now, copied into memory of the GPU's own, rather than the program's pages themselves: iconservicesagent hands the window server an icon made around its own memory and then draws the next picture -- a label -- into that same memory, and the icons… |
-| `gpu_fair_ms` | gpu_fair_ms=N: the GPU has one ring and no preemption, so a program that hands it frame after frame (the wallpaper's 40-55 ms ones, widgets) has the window server's frames wait behind all of them. |
-| `gpu_keep` | gpu_keep=0 (a test): none kept; gpu_keep=2: kept ones cleared when given again |
-| `touch_lat` | touch_lat=1: a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up (tools/frames.py). |
-
-## Power, CPU and temperature
+| `battery` | — |
+| `battery_shared_pa` | — |
 
 ### `bsd/dev/hakios_bench.c`
 
@@ -169,7 +176,7 @@ beside the code, so the file named in each heading has the full explanation.
 | Argument | What the source says |
 | --- | --- |
 | `ddr` | ddr=1: the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read. |
-| `ddr_rest` | the vote left for the loader (ddr_rest=N); see redwood_ddr_quiesce() |
+| `ddr_rest` | the vote left for the loader (ddr_rest=N); see hakios_ddr_quiesce() |
 | `ddr_vote` | ddr_vote=N: N instead of the most (16383). |
 
 ### `bsd/dev/hakios_thermal.c`
@@ -182,13 +189,6 @@ beside the code, so the file named in each heading has the full explanation.
 | `th_trip` | th_trip=N th_clear=N th_critical=N in tenths of a degree (default 700, 620, 950) |
 | `thermal` | thermal=1 the hottest reading logged every ten seconds, nothing held back |
 
-### `bsd/dev/redwood_battery.c`
-
-| Argument | What the source says |
-| --- | --- |
-| `battery` | — |
-| `battery_shared_pa` | — |
-
 ### `iokit/Kernel/GenericARMPE.cpp`
 
 | Argument | What the source says |
@@ -199,11 +199,11 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Sound, camera, haptics, flashlight
 
-### `bsd/dev/redwood_adsp.c`
+### `bsd/dev/hakios_adsp.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `adsp` | Once everything is up with adsp=1, the sound's path takes over (redwood_sound.c, boot-arg sound=N): redwood_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
+| `adsp` | Once everything is up with adsp=1, the sound's path takes over (hakios_sound.c, boot-arg sound=N): hakios_adsp_apr() is how it speaks to the audio services (any service, port and token; what nobody waits for goes to its handler of events), and it is stopped before the DSP is. |
 | `adsp_apr_wait` | — |
 | `adsp_listen` | — |
 | `adsp_new` | More boot-args: adsp_new=K (steps K on have not been seen to work, and wait adsp_pause=MS after each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader… |
@@ -212,21 +212,21 @@ beside the code, so the file named in each heading has the full explanation.
 | `adsp_wait` | each announcement, default 2200: what the loader needs to note the end of the log), adsp_wait=S (how long step 7 watches for "up", default 10), adsp_keep=1, adsp_again=1, adsp_return=1 (back to the loader when the steps are over). |
 | `battmgr` | The properties' numbers are this phone's firmware's, read with battmgr=2 and checked against what Android shows at the same moment (dumpsys battery, /sys/class/power_supply/battery): up to 9 they are those of Linux's qcom_battmgr.c (sm8350), from there on one more property comes before the temperatu… |
 
-### `bsd/dev/redwood_audio.c`
+### `bsd/dev/hakios_audio.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `rec_sound` | into a recording, with boot-arg rec_sound=N: the first N seconds of sound are also kept in one piece of memory that is left in place when the kernel returns to the loader, which hands it to the host ("xl sound"; under QEMU, the monitor's pmemsave), where tools/sound.py makes a WAV file of it. |
-| `rec_sound_fed` | With rec_sound_fed=1 as well, the recording has instead what the speakers' guard let through (redwood_guard.c, on the phone): what reaches the amplifiers. |
-| `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (redwood_mic.c, mic=3), in both channels. |
+| `rec_sound_fed` | With rec_sound_fed=1 as well, the recording has instead what the speakers' guard let through (hakios_guard.c, on the phone): what reaches the amplifiers. |
+| `rec_sound_mic` | rec_sound_mic=1, what the main microphone hears (hakios_mic.c, mic=3), in both channels. |
 
-### `bsd/dev/redwood_camera.c`
+### `bsd/dev/hakios_camera.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `cam` | sensors, modes and frame headers are cam=5's, from the same tables in fw/, but nothing of the phone is touched: the frames are a colour chart made here -- eight bars (white, beige, red, yellow, green, cyan, blue, 18 % grey) over a grey ramp -- in RAW10 in the sensor's own Bayer order, as bright as t… |
 | `cam_after` | — |
-| `cam_fake` | cam_fake=1 (with cam=5; for QEMU): /dev/redwood-camera without the phone's camera. |
+| `cam_fake` | cam_fake=1 (with cam=5; for QEMU): /dev/hakios-camera without the phone's camera. |
 | `cam_fake_fps` | — |
 | `cam_frames` | — |
 | `cam_gain` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
@@ -238,18 +238,18 @@ beside the code, so the file named in each heading has the full explanation.
 | `cam_shutter` | for a look in other light, written the sensor's way: cam_shutter= LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; |
 | `cam_vblank` | LINES, cam_gain=N (OV02B10: 0x22, 16 is 1x; S5KHM2SD: 0x0204, 32 is 1x), cam_vblank=LINES (the frame that much longer: OV02B10 0x14/0x15; |
 
-### `bsd/dev/redwood_haptic.c`
+### `bsd/dev/hakios_haptic.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for iOS until the run ends: what iOS plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /dev/re… |
+| `haptic` | haptic=5 ... configured and loaded as for 3, and instead of the effect the motor for iOS until the run ends: what iOS plays on its "Actuator" device (the HAL plug-in's, userland/src/audio_plugin.c: the system's feedbacks and vibrations, CoreHaptics' patterns, UIKit's feedbacks) is written to /dev/ha… |
 | `haptic_effect` | and one short effect played (haptic_effect=N, default 1: Android's effect 0) |
 
-### `bsd/dev/redwood_mic.c`
+### `bsd/dev/hakios_mic.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `mic` | here happens unless boot-arg mic=N asks for it, with adsp=1 (redwood_adsp.c), which calls redwood_mic_dsp_up() once the DSP's audio services are up. |
+| `mic` | here happens unless boot-arg mic=N asks for it, with adsp=1 (hakios_adsp.c), which calls hakios_mic_dsp_up() once the DSP's audio services are up. |
 | `mic_adc` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
 | `mic_input` | mic_input=N: TX SMIC MUX1's input (1 SWR_MIC0, Android's; 0 ZERO, a test) |
 | `mic_main` | clipped tone at about the bus clock / 560, whatever the microphone hears (mic_main=1 shows it). |
@@ -257,24 +257,24 @@ beside the code, so the file named in each heading has the full explanation.
 | `mic_tap` | mic_tap=1 with haptic=5 (the vibration motor from 2 s to 3 s of listening: the motor's 175.5 Hz in the samples) |
 | `mic_test` | mic_adc=0 (ADC1 left off), mic_test=1 (no mic bias), mic_test=2 (ADC1's input held), |
 
-### `bsd/dev/redwood_sound.c`
+### `bsd/dev/hakios_sound.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `sound` | unless boot-arg sound=N asks for it, with adsp=1 (redwood_adsp.c), which starts the DSP and calls redwood_sound_dsp_up() once its audio services are up. |
+| `sound` | unless boot-arg sound=N asks for it, with adsp=1 (hakios_adsp.c), which starts the DSP and calls hakios_sound_dsp_up() once its audio services are up. |
 | `sound_below` | and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
 | `sound_gain` | — |
 | `sound_guard_as` | sound_guard_as=N, for a test: the guard reckons the amplifiers N eighths of a dB under Android's level (louder than they are) and holds back as it would there -- with sound_below=720 (the amplifiers at -90 dB) what it does at the loudest can be seen in the log and the recording without a sound. |
 | `sound_pause` | — |
 | `sound_secs` | — |
 
-### `bsd/dev/redwood_speaker.c`
+### `bsd/dev/hakios_speaker.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `speaker_probe` | ---- speaker_probe=N: a look ------------------------------------------------------------------------ |
 
-### `bsd/dev/redwood_torch.c`
+### `bsd/dev/hakios_torch.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -282,7 +282,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `torch_max_s` | — |
 | `torch_secs` | — |
 
-### `bsd/dev/redwood_virtio_sound.c`
+### `bsd/dev/hakios_virtio_sound.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -290,24 +290,24 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Wi-Fi and network
 
-### `bsd/dev/redwood_net.c`
+### `bsd/dev/hakios_net.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `net_names` | net_names=1: a line for every name asked of a DNS server and for every TCP connection begun from here -- which is how to see what a system that has just been given a network does with it (up to NAMES_MAX lines). |
 | `net_trace` | net_trace=N: a line in the log for each of the first N frames, either way. |
 
-### `bsd/dev/redwood_virtio_net.c`
+### `bsd/dev/hakios_virtio_net.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `virtio_net` | Only with boot-arg virtio_net=1: the bus address is QEMU's and means nothing on the phone. |
 
-### `bsd/dev/redwood_wifi.c`
+### `bsd/dev/hakios_wifi.c`
 
 | Argument | What the source says |
 | --- | --- |
-| `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/redwood_sta.h: iOS's Wi-Fi side does, through bsd/dev/redwood_apple80211.c), the network of fw/network joined i… |
+| `wifi` | wifi=1 is all of it for whoever uses the phone: the steps that are needed (not the ones that only look), ath11k as step 15 for real, its station given to the rest of the kernel to ask (sys/hakios_sta.h: iOS's Wi-Fi side does, through bsd/dev/hakios_apple80211.c), the network of fw/network joined if… |
 | `wifi_again` | wifi_again=1 start the DSP although the one before it was shut down without having acknowledged a stop: THAT HAS RESET THE PHONE, twice of two |
 | `wifi_ask` | wifi_ask=1 step 14 also asks that service a question (its capabilities) and writes down the beginning of an answer |
 | `wifi_dirty` | wifi_dirty=1 the DSP is not stopped: left as a kernel that died leaves it |
@@ -316,7 +316,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `wifi_listen` | wifi_listen=S how long step 14 waits for the Wi-Fi firmware's service (default 3) |
 | `wifi_loud` | (wifi_loud=1 with it: nothing is kept back, for looking into a start that goes wrong.) The rest of this comment is about the steps one by one, wifi_step=N, which is how all this was found out. |
 | `wifi_lx` | With wifi_lx=2 and wifi_smmu=2, 100 words of ring set-up go into the registers of copy engines 0, 1, 2, 3, 4, 5 and 7 without an abort, 510 buffers are posted on each of the three receiving rings, and 9 ms later the firmware's first message is in a buffer of copy engine 2: HTC's "ready" (2 credits o… |
-| `wifi_mac` | wifi_mac=A the radio's own address for the driver (redwood_wifi_radio_address() below; xl takes it from a file that is not in the repository) |
+| `wifi_mac` | wifi_mac=A the radio's own address for the driver (hakios_wifi_radio_address() below; xl takes it from a file that is not in the repository) |
 | `wifi_new` | wifi_new=K steps K and later have not been seen to work (default: the last one) |
 | `wifi_pause` | wifi_pause=MS how long such a step waits after announcing a group of accesses (default 2200: the loader, watching from another core, notes the end of our log every two seconds, and after a silent reset that is all there is) |
 | `wifi_radio_read` | with wifi_radio_read=1, and only with the firmware in mission mode (outside it a read there has ended the kernel) Steps 1 to 5 are the survey; they write to nothing but the arbiter's command word. |
@@ -325,7 +325,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `wifi_wait` | wifi_wait=S how long step 11 watches for the DSP to say that it is up (default 10) |
 | `wifi_watch` | wifi_watch=S ... and how long it goes on watching once it has (default 3) |
 
-### `bsd/dev/redwood_wlfw.c`
+### `bsd/dev/hakios_wlfw.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -335,7 +335,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 ## Storage and file systems
 
-### `bsd/dev/redwood_apfs_check.c`
+### `bsd/dev/hakios_apfs_check.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -343,7 +343,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `apfs_chunk` | — |
 | `apfs_contents` | apfs_contents=0: no file is read at all, only looked up and stat'ed -- how long the walk itself takes, the directories and the inodes. |
 | `apfs_depth` | apfs_depth=N go no deeper than N levels below where the walk starts (1 = only the entries of that directory; 0 = no limit). |
-| `apfs_dev` | apfs_dev=md1 the store volume (default rvblk0); its name must be RedwoodStore |
+| `apfs_dev` | apfs_dev=md1 the store volume (default rvblk0); its name must be HakiosStore |
 | `apfs_hash` | apfs_hash=0 reads every byte all the same and does not hash it (the sums are then not the ones to compare); hash_ticks is how long the hashing took otherwise. |
 | `apfs_max` | apfs_max=N stop after N entries (and say how memory stood on the way): for finding out what a walk that never comes back runs into |
 | `apfs_mnt` | apfs_mnt=/lib where to mount it for mode 6 (default /private/var/apfs-check) |
@@ -361,13 +361,13 @@ beside the code, so the file named in each heading has the full explanation.
 | `apfs_write_len` | apfs_write_len=N how many bytes (default 4096, at most APFS_WRITE_MAX) |
 | `apfs_write_path` | apfs_write_path=/redwood/x the file in it, by path from the volume's root |
 
-### `bsd/dev/redwood_sparse.c`
+### `bsd/dev/hakios_sparse.c`
 
 | Argument | What the source says |
 | --- | --- |
 | `apfs_sparse` | apfs_sparse=<offset>. |
 
-### `bsd/dev/redwood_ufs.c`
+### `bsd/dev/hakios_ufs.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -380,7 +380,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `ufs_write` | With ufs_write=1 one character device alone takes writes -- /dev/rufs_darwin, the port's own partition -- and in it only whole blocks from UFS_WRITE_FIRST on, past the iOS volume and both cryptexes that the build writes from the computer (tools/darwin-write.py); that is where the data volume of iOS… |
 | `var_save_ms` | at most this long on the way out (var_save_ms=N) |
 
-### `bsd/dev/redwood_ufshc.c`
+### `bsd/dev/hakios_ufshc.c`
 
 | Argument | What the source says |
 | --- | --- |
@@ -390,7 +390,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `ufs_native_slots` | — |
 | `ufs_native_spin` | — |
 
-### `bsd/dev/redwood_virtio_blk.c`
+### `bsd/dev/hakios_virtio_blk.c`
 
 | Argument | What the source says |
 | --- | --- |

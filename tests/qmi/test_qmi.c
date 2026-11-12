@@ -1,5 +1,5 @@
 /*
- * Tests of the QMI helpers (kernel/overlay/bsd/dev/redwood_qmi.c) on the machine that builds
+ * Tests of the QMI helpers (kernel/overlay/bsd/dev/hakios_qmi.c) on the machine that builds
  * them; tests/qmi/run.sh compiles and runs this, and tests/run.sh runs that.
  *
  * Three kinds:
@@ -10,7 +10,7 @@
  *      tables filled at random, encoded, decoded and compared; filled to the brim and the length
  *      compared with the ..._MAX_LEN its header gives; a hundred thousand damaged messages decoded
  *      under the address sanitizer;
- *   3. the helpers over a router made up here (struct redwood_qrtr_ops): lookup, a server coming
+ *   3. the helpers over a router made up here (struct hakios_qrtr_ops): lookup, a server coming
  *      and going, requests and replies as transactions (in time, late, never, crossed, undecodable),
  *      indications to handlers, and the whole exchange a WCN6750's firmware and ath11k have up to
  *      "firmware ready", played by a firmware made up here.
@@ -25,8 +25,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <sys/redwood_qmi.h>
-#include <sys/redwood_qrtr.h>
+#include <sys/hakios_qmi.h>
+#include <sys/hakios_qrtr.h>
 
 #define HZ 250                          /* what a Linux might have: qmi_txn_wait() must take it from here */
 #define msecs_to_jiffies(ms)    ((unsigned long)(ms) * HZ / 1000)
@@ -206,11 +206,11 @@ test_own_tables(void)
 	o.big_valid = 1;
 	strcpy(o.big.name, "xyz");
 	o.big.n = 42;
-	n = redwood_qmi_encode(QMI_REQUEST, 0xabcd, 0x1234, outer_ei, &o, buffer, sizeof(buffer));
+	n = hakios_qmi_encode(QMI_REQUEST, 0xabcd, 0x1234, outer_ei, &o, buffer, sizeof(buffer));
 	check_bytes(buffer, n, full, sizeof(full), "own table, everything there");
 
 	memset(&back, 0, sizeof(back));
-	n = redwood_qmi_decode(full, sizeof(full), outer_ei, &back);
+	n = hakios_qmi_decode(full, sizeof(full), outer_ei, &back);
 	check(n == (int)sizeof(full), "own table: decoding gives %d, not the message's %zu bytes", n, sizeof(full));
 	check(back.first == 0x7f && back.second_valid == 1 && back.second == 0x12345678 && back.list_valid == 1 &&
 	    back.list_len == 2 && back.list[0] == 1 && back.list[1] == 0xffff && back.fixed[0] == 0x0102030405060708ULL &&
@@ -225,13 +225,13 @@ test_own_tables(void)
 	o.kind = 5;
 	o.second = 77;                  /* not valid: must not be sent */
 	o.list_len = 3;
-	n = redwood_qmi_encode(QMI_INDICATION, 1, 0, outer_ei, &o, buffer, sizeof(buffer));
+	n = hakios_qmi_encode(QMI_INDICATION, 1, 0, outer_ei, &o, buffer, sizeof(buffer));
 	check_bytes(buffer, n, bare, sizeof(bare), "own table, nothing optional");
 
 	memset(&back, 0xee, sizeof(back));
 	memset(&back, 0, offsetof(struct outer, fixed));
 	back.inners_valid = back.text_valid = back.big_valid = 0;
-	n = redwood_qmi_decode(shuffled, sizeof(shuffled), outer_ei, &back);
+	n = hakios_qmi_decode(shuffled, sizeof(shuffled), outer_ei, &back);
 	check(n == (int)sizeof(shuffled) && back.kind == 9 && back.first == 0x11 && back.second_valid == 1 && back.second == 2 &&
 	    back.list_valid == 1 && back.list_len == 0 && back.inners_valid == 0 && back.text_valid == 0 && back.big_valid == 0,
 	    "own table: TLVs out of order, unknown ones and a repeated one (%d)", n);
@@ -239,15 +239,15 @@ test_own_tables(void)
 
 	/* what must be refused */
 	memset(&o, 0, sizeof(o));
-	check(redwood_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, 34) == -EMSGSIZE, "a buffer one byte too small is not refused");
-	check(redwood_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, 35) == 35, "a buffer of exactly the size is refused");
+	check(hakios_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, 34) == -EMSGSIZE, "a buffer one byte too small is not refused");
+	check(hakios_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, 35) == 35, "a buffer of exactly the size is refused");
 	o.list_valid = 1;
 	o.list_len = 6;
-	check(redwood_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, sizeof(buffer)) == -EINVAL, "a count over the array's size is encoded");
+	check(hakios_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, sizeof(buffer)) == -EINVAL, "a count over the array's size is encoded");
 	o.list_len = 0;
 	o.text_valid = 1;
 	memset(o.text, 'a', sizeof(o.text));
-	check(redwood_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, sizeof(buffer)) == -EINVAL, "a string with no end is encoded");
+	check(hakios_qmi_encode(QMI_REQUEST, 1, 1, outer_ei, &o, buffer, sizeof(buffer)) == -EINVAL, "a string with no end is encoded");
 	{
 		static const uint8_t count_too_big[] = { 0, 0, 0, 0, 0, 0x0f, 0, 0x11, 0x0c, 0, 0x06, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0 };
 		static const uint8_t tlv_past_end[] = { 0, 0, 0, 0, 0, 0x04, 0, 0x01, 0x05, 0, 0x01 };
@@ -258,18 +258,18 @@ test_own_tables(void)
 		uint8_t long_string[7 + 3 + 300];
 
 		memset(&back, 0, sizeof(back));
-		check(redwood_qmi_decode(count_too_big, sizeof(count_too_big), outer_ei, &back) == -EINVAL, "a count over the array's size is decoded");
-		check(redwood_qmi_decode(tlv_past_end, sizeof(tlv_past_end), outer_ei, &back) == -EINVAL, "a TLV longer than the message is decoded");
-		check(redwood_qmi_decode(value_past_tlv, sizeof(value_past_tlv), outer_ei, &back) == -EINVAL, "a number longer than its TLV is decoded");
-		check(redwood_qmi_decode(length_lies, sizeof(length_lies), outer_ei, &back) == -EINVAL, "a header that says more than there is, is believed");
-		check(redwood_qmi_decode(stray_byte, sizeof(stray_byte), outer_ei, &back) == -EINVAL, "a stray byte after the last TLV is let pass");
-		check(redwood_qmi_decode(inner_short, sizeof(inner_short), outer_ei, &back) == -EINVAL, "a structure cut short is decoded");
+		check(hakios_qmi_decode(count_too_big, sizeof(count_too_big), outer_ei, &back) == -EINVAL, "a count over the array's size is decoded");
+		check(hakios_qmi_decode(tlv_past_end, sizeof(tlv_past_end), outer_ei, &back) == -EINVAL, "a TLV longer than the message is decoded");
+		check(hakios_qmi_decode(value_past_tlv, sizeof(value_past_tlv), outer_ei, &back) == -EINVAL, "a number longer than its TLV is decoded");
+		check(hakios_qmi_decode(length_lies, sizeof(length_lies), outer_ei, &back) == -EINVAL, "a header that says more than there is, is believed");
+		check(hakios_qmi_decode(stray_byte, sizeof(stray_byte), outer_ei, &back) == -EINVAL, "a stray byte after the last TLV is let pass");
+		check(hakios_qmi_decode(inner_short, sizeof(inner_short), outer_ei, &back) == -EINVAL, "a structure cut short is decoded");
 		memset(long_string, 'b', sizeof(long_string));
 		memcpy(long_string, "\0\0\0\0\0\x2f\x01\x13\x2c\x01", 10);     /* a string of exactly 300 */
-		check(redwood_qmi_decode(long_string, sizeof(long_string), outer_ei, &back) == -EINVAL, "a string that fills its buffer is decoded");
+		check(hakios_qmi_decode(long_string, sizeof(long_string), outer_ei, &back) == -EINVAL, "a string that fills its buffer is decoded");
 		long_string[5] = 0x2e;
 		long_string[8] = 0x2b;                                          /* 299: fits, with its zero */
-		check(redwood_qmi_decode(long_string, sizeof(long_string) - 1, outer_ei, &back) == 7 + 3 + 299 && strlen(back.text) == 299,
+		check(hakios_qmi_decode(long_string, sizeof(long_string) - 1, outer_ei, &back) == 7 + 3 + 299 && strlen(back.text) == 299,
 		    "a string one short of its buffer is not decoded");
 	}
 	/* the reply every response starts with */
@@ -282,11 +282,11 @@ test_own_tables(void)
 		};
 		struct qmi_response_type_v01 r = { 0xffff, 0xffff };
 
-		check(redwood_qmi_decode(ok, sizeof(ok), reply_ei, &r) == 14 && r.result == QMI_RESULT_SUCCESS_V01 && r.error == QMI_ERR_NONE_V01,
+		check(hakios_qmi_decode(ok, sizeof(ok), reply_ei, &r) == 14 && r.result == QMI_RESULT_SUCCESS_V01 && r.error == QMI_ERR_NONE_V01,
 		    "the common reply, success");
-		check(redwood_qmi_decode(no, sizeof(no), reply_ei, &r) == 14 && r.result == QMI_RESULT_FAILURE_V01 &&
+		check(hakios_qmi_decode(no, sizeof(no), reply_ei, &r) == 14 && r.result == QMI_RESULT_FAILURE_V01 &&
 		    r.error == QMI_ERR_NOT_SUPPORTED_V01, "the common reply, failure");
-		check_bytes(buffer, redwood_qmi_encode(QMI_RESPONSE, 0x22, 7, reply_ei, &r, buffer, sizeof(buffer)), no, sizeof(no), "the common reply");
+		check_bytes(buffer, hakios_qmi_encode(QMI_RESPONSE, 0x22, 7, reply_ei, &r, buffer, sizeof(buffer)), no, sizeof(no), "the common reply");
 	}
 	/* a request with nothing in it */
 	{
@@ -294,8 +294,8 @@ test_own_tables(void)
 		static const struct qmi_elem_info none_ei[] = { { QMI_EOTI, 0, 0, NO_ARRAY, 0, 0, NULL } };
 		uint8_t nothing = 0;
 
-		check_bytes(buffer, redwood_qmi_encode(QMI_REQUEST, 0x24, 9, none_ei, &nothing, buffer, sizeof(buffer)), empty, sizeof(empty), "an empty request");
-		check_bytes(buffer, redwood_qmi_encode(QMI_REQUEST, 0x24, 9, NULL, NULL, buffer, sizeof(buffer)), empty, sizeof(empty), "a request with no table");
+		check_bytes(buffer, hakios_qmi_encode(QMI_REQUEST, 0x24, 9, none_ei, &nothing, buffer, sizeof(buffer)), empty, sizeof(empty), "an empty request");
+		check_bytes(buffer, hakios_qmi_encode(QMI_REQUEST, 0x24, 9, NULL, NULL, buffer, sizeof(buffer)), empty, sizeof(empty), "a request with no table");
 	}
 }
 
@@ -335,7 +335,7 @@ test_wlfw_by_hand(void)
 		req.cal_done_enable_valid = 1;
 		req.cal_done_enable = 1;
 		req.pin_connect_result_enable = 1;      /* (not valid: stays out) */
-		check_bytes(buffer, redwood_qmi_encode(QMI_REQUEST, 0x20, 5, qmi_wlanfw_ind_register_req_msg_v01_ei, &req, buffer,
+		check_bytes(buffer, hakios_qmi_encode(QMI_REQUEST, 0x20, 5, qmi_wlanfw_ind_register_req_msg_v01_ei, &req, buffer,
 		    sizeof(buffer)), want, sizeof(want), "WLFW indication register request");
 	}
 	/* the mode: one number that is always there, one byte that may be */
@@ -348,10 +348,10 @@ test_wlfw_by_hand(void)
 		struct qmi_wlanfw_wlan_mode_req_msg_v01 req = { .mode = 7, .hw_debug_valid = 1, .hw_debug = 0 };
 		struct qmi_wlanfw_wlan_mode_req_msg_v01 back;
 
-		check_bytes(buffer, redwood_qmi_encode(QMI_REQUEST, 0x22, 9, qmi_wlanfw_wlan_mode_req_msg_v01_ei, &req, buffer,
+		check_bytes(buffer, hakios_qmi_encode(QMI_REQUEST, 0x22, 9, qmi_wlanfw_wlan_mode_req_msg_v01_ei, &req, buffer,
 		    sizeof(buffer)), want, sizeof(want), "WLFW mode request");
 		memset(&back, 0, sizeof(back));
-		check(redwood_qmi_decode(want, sizeof(want), qmi_wlanfw_wlan_mode_req_msg_v01_ei, &back) == (int)sizeof(want) &&
+		check(hakios_qmi_decode(want, sizeof(want), qmi_wlanfw_wlan_mode_req_msg_v01_ei, &back) == (int)sizeof(want) &&
 		    back.mode == 7 && back.hw_debug_valid == 1 && back.hw_debug == 0, "WLFW mode request, decoded");
 	}
 	/* a piece of the board file: an array of bytes with a 2-byte count */
@@ -383,10 +383,10 @@ test_wlfw_by_hand(void)
 		req.end = 1;
 		req.bdf_type_valid = 1;
 		req.bdf_type = 1;
-		check_bytes(buffer, redwood_qmi_encode(QMI_REQUEST, 0x25, 0x0102, qmi_wlanfw_bdf_download_req_msg_v01_ei, &req, buffer,
+		check_bytes(buffer, hakios_qmi_encode(QMI_REQUEST, 0x25, 0x0102, qmi_wlanfw_bdf_download_req_msg_v01_ei, &req, buffer,
 		    sizeof(buffer)), want, sizeof(want), "WLFW board data request");
 		memset(&back, 0, sizeof(back));
-		check(redwood_qmi_decode(want, sizeof(want), qmi_wlanfw_bdf_download_req_msg_v01_ei, &back) == (int)sizeof(want) &&
+		check(hakios_qmi_decode(want, sizeof(want), qmi_wlanfw_bdf_download_req_msg_v01_ei, &back) == (int)sizeof(want) &&
 		    back.data_valid == 1 && back.data_len == 5 && memcmp(back.data, "\xde\xad\xbe\xef\x01", 5) == 0 && back.seg_id == 2 &&
 		    back.end == 1 && back.bdf_type == 1, "WLFW board data request, decoded");
 	}
@@ -408,7 +408,7 @@ test_wlfw_by_hand(void)
 		static struct qmi_wlanfw_cap_resp_msg_v01 cap;
 
 		memset(&cap, 0, sizeof(cap));
-		check(redwood_qmi_decode(reply, sizeof(reply), qmi_wlanfw_cap_resp_msg_v01_ei, &cap) == (int)sizeof(reply),
+		check(hakios_qmi_decode(reply, sizeof(reply), qmi_wlanfw_cap_resp_msg_v01_ei, &cap) == (int)sizeof(reply),
 		    "WLFW capabilities reply is not decoded");
 		check(cap.resp.result == 0 && cap.chip_info_valid == 1 && cap.chip_info.chip_id == 0x18 && cap.chip_info.chip_family == 0x0b &&
 		    cap.board_info_valid == 1 && cap.board_info.board_id == 0xff && cap.soc_info_valid == 1 && cap.soc_info.soc_id == 0x40020320 &&
@@ -416,7 +416,7 @@ test_wlfw_by_hand(void)
 		    strcmp(cap.fw_version_info.fw_build_timestamp, "2023-04-15 01:27") == 0 && cap.fw_build_id_valid == 1 &&
 		    strcmp(cap.fw_build_id, "WLAN.MSL.1.0.1-01277-QCAMSLSWCBT-1") == 0 && cap.num_macs_valid == 1 && cap.num_macs == 2 &&
 		    cap.voltage_mv_valid == 0, "WLFW capabilities reply: the fields are not what the bytes say");
-		check_bytes(buffer, redwood_qmi_encode(QMI_RESPONSE, 0x24, 3, qmi_wlanfw_cap_resp_msg_v01_ei, &cap, buffer, sizeof(buffer)),
+		check_bytes(buffer, hakios_qmi_encode(QMI_RESPONSE, 0x24, 3, qmi_wlanfw_cap_resp_msg_v01_ei, &cap, buffer, sizeof(buffer)),
 		    reply, sizeof(reply), "WLFW capabilities reply, encoded again");
 	}
 	/* "give me memory": an array of structures, each with an array of structures in it */
@@ -432,7 +432,7 @@ test_wlfw_by_hand(void)
 		static struct qmi_wlanfw_request_mem_ind_msg_v01 ind;
 
 		memset(&ind, 0, sizeof(ind));
-		check(redwood_qmi_decode(indication, sizeof(indication), qmi_wlanfw_request_mem_ind_msg_v01_ei, &ind) == (int)sizeof(indication),
+		check(hakios_qmi_decode(indication, sizeof(indication), qmi_wlanfw_request_mem_ind_msg_v01_ei, &ind) == (int)sizeof(indication),
 		    "WLFW memory request is not decoded");
 		check(ind.mem_seg_len == 2 && ind.mem_seg[0].size == 0x400000 && ind.mem_seg[0].type == 1 && ind.mem_seg[0].mem_cfg_len == 1 &&
 		    ind.mem_seg[1].size == 0x80000 && ind.mem_seg[1].type == 4 && ind.mem_seg[1].mem_cfg_len == 0,
@@ -597,7 +597,7 @@ test_ath11k_tables(void)
 
 		/* filled to the brim: as long as ath11k's header says the message can get */
 		fill(m->ei, a, true, FILL_MOST);
-		length = redwood_qmi_encode(QMI_REQUEST, 1, 1, m->ei, a, message, sizeof(message));
+		length = hakios_qmi_encode(QMI_REQUEST, 1, 1, m->ei, a, message, sizeof(message));
 		check(length >= QMI_HEADER_SIZE, "%s: cannot be encoded when full (%d)", m->name, length);
 		if (m->limit >= 0) {
 			/*
@@ -614,7 +614,7 @@ test_ath11k_tables(void)
 			check(length - QMI_HEADER_SIZE == expected, "%s: full, it encodes to %d bytes, not %d (ath11k's header says %d at most)",
 			    m->name, length - QMI_HEADER_SIZE, expected, m->limit);
 		}
-		check(redwood_qmi_decode(message, (size_t)length, m->ei, b) == length && same(m->ei, a, b, true), "%s: full, it does not come back the same",
+		check(hakios_qmi_decode(message, (size_t)length, m->ei, b) == length && same(m->ei, a, b, true), "%s: full, it does not come back the same",
 		    m->name);
 		/* (the bytes after a structure are guard bytes: nothing may have been written there) */
 		check(memcmp(b + m->size, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) == 0, "%s: decoding wrote past the structure", m->name);
@@ -624,12 +624,12 @@ test_ath11k_tables(void)
 			memset(a, 0, m->size);
 			memset(b, 0, m->size);
 			fill(m->ei, a, true, FILL_RANDOM);
-			length = redwood_qmi_encode(QMI_INDICATION, (uint16_t)rnd(), (uint16_t)rnd(), m->ei, a, message, sizeof(message));
-			if (length < 0 || redwood_qmi_decode(message, (size_t)length, m->ei, b) != length || !same(m->ei, a, b, true)) {
+			length = hakios_qmi_encode(QMI_INDICATION, (uint16_t)rnd(), (uint16_t)rnd(), m->ei, a, message, sizeof(message));
+			if (length < 0 || hakios_qmi_decode(message, (size_t)length, m->ei, b) != length || !same(m->ei, a, b, true)) {
 				check(false, "%s: round %d: does not come back the same (%d)", m->name, round, length);
 				break;
 			}
-			second = redwood_qmi_encode(message[0], (uint16_t)(message[3] | message[4] << 8), (uint16_t)(message[1] | message[2] << 8),
+			second = hakios_qmi_encode(message[0], (uint16_t)(message[3] | message[4] << 8), (uint16_t)(message[1] | message[2] << 8),
 			    m->ei, b, again, sizeof(again));
 			if (second != length || memcmp(message, again, (size_t)length) != 0) {
 				check(false, "%s: round %d: encoded again, the bytes differ", m->name, round);
@@ -653,7 +653,7 @@ test_ath11k_tables(void)
 					uint8_t *exact = malloc(cut ? cut : 1);
 
 					memcpy(exact, damaged, cut);
-					(void)redwood_qmi_decode(exact, cut, m->ei, b);
+					(void)hakios_qmi_decode(exact, cut, m->ei, b);
 					free(exact);
 				}
 				checks++;
@@ -674,9 +674,9 @@ test_ath11k_tables(void)
 #define SERVER_NODE     7
 #define SERVER_PORT     0x4001
 
-struct redwood_qrtr_port {
-	redwood_qrtr_receive_t receive;
-	redwood_qrtr_server_t server;
+struct hakios_qrtr_port {
+	hakios_qrtr_receive_t receive;
+	hakios_qrtr_server_t server;
 	void *context;
 	bool open;
 	unsigned lookups, sent, closed;
@@ -686,12 +686,12 @@ struct redwood_qrtr_port {
 	size_t last_length;
 	int send_error;                 /* what send answers */
 	/* what the other side does with a datagram: called from send (as a router that delivers at once would) */
-	void (*peer)(struct redwood_qrtr_port *port, const uint8_t *data, size_t length);
+	void (*peer)(struct hakios_qrtr_port *port, const uint8_t *data, size_t length);
 };
-static struct redwood_qrtr_port router;
+static struct hakios_qrtr_port router;
 
-static struct redwood_qrtr_port *
-router_open(redwood_qrtr_receive_t receive, redwood_qrtr_server_t server, void *context)
+static struct hakios_qrtr_port *
+router_open(hakios_qrtr_receive_t receive, hakios_qrtr_server_t server, void *context)
 {
 	memset(&router, 0, sizeof(router));
 	router.receive = receive;
@@ -702,7 +702,7 @@ router_open(redwood_qrtr_receive_t receive, redwood_qrtr_server_t server, void *
 }
 
 static int
-router_send(struct redwood_qrtr_port *port, uint32_t node, uint32_t to_port, const void *data, size_t length)
+router_send(struct hakios_qrtr_port *port, uint32_t node, uint32_t to_port, const void *data, size_t length)
 {
 	if (port->send_error) {
 		return port->send_error;
@@ -719,7 +719,7 @@ router_send(struct redwood_qrtr_port *port, uint32_t node, uint32_t to_port, con
 }
 
 static int
-router_lookup(struct redwood_qrtr_port *port, uint32_t service, uint32_t version, uint32_t instance)
+router_lookup(struct hakios_qrtr_port *port, uint32_t service, uint32_t version, uint32_t instance)
 {
 	port->lookups++;
 	port->looked_service = service;
@@ -729,13 +729,13 @@ router_lookup(struct redwood_qrtr_port *port, uint32_t service, uint32_t version
 }
 
 static void
-router_close(struct redwood_qrtr_port *port)
+router_close(struct hakios_qrtr_port *port)
 {
 	port->open = false;
 	port->closed++;
 }
 
-static const struct redwood_qrtr_ops router_ops = { router_open, router_send, router_lookup, router_close };
+static const struct hakios_qrtr_ops router_ops = { router_open, router_send, router_lookup, router_close };
 
 /* A datagram from the server to the handle, as the router's thread would bring it. */
 static void
@@ -883,7 +883,7 @@ static const struct qmi_msg_handler handle_handlers[] = {
 
 /* The peer of the simplest kind: answers "ask" with twice the number, at once. */
 static void
-doubling_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length)
+doubling_peer(struct hakios_qrtr_port *port, const uint8_t *data, size_t length)
 {
 	uint8_t reply[32];
 	size_t n;
@@ -924,7 +924,7 @@ asker_thread(void *argument)
 	a->id = (uint16_t)qmi_txn_init(a->qmi, &txn, answer_ei, &a->answer);
 	a->result = qmi_send_request(a->qmi, NULL, &txn, MESSAGE_ASK, 16, ask_ei, &ask);
 	if (a->result == 0) {
-		a->result = redwood_qmi_txn_wait_ms(&txn, 3000);
+		a->result = hakios_qmi_txn_wait_ms(&txn, 3000);
 	}
 	return NULL;
 }
@@ -942,10 +942,10 @@ test_helpers(void)
 	int id, result;
 
 	/* no router: no handle */
-	redwood_qmi_set_transport(NULL);
+	hakios_qmi_set_transport(NULL);
 	check(qmi_handle_init(&qmi, 8192, &handle_ops, handle_handlers) == -ENXIO && qmi.sock == NULL, "a handle is made with no router there");
 
-	redwood_qmi_set_transport(&router_ops);
+	hakios_qmi_set_transport(&router_ops);
 	memset(&seen, 0, sizeof(seen));
 	check(qmi_handle_init(&qmi, 8192, &handle_ops, handle_handlers) == 0 && qmi.sock != NULL && router.open, "no handle with a router there");
 
@@ -975,7 +975,7 @@ test_helpers(void)
 		check_bytes(router.last, (int)router.last_length, want, sizeof(want), "the request as the router got it");
 		check(router.last_node == SERVER_NODE && router.last_port == SERVER_PORT, "the request goes to %u:%u", router.last_node, router.last_port);
 	}
-	result = redwood_qmi_txn_wait_ms(&txn, 1000);
+	result = hakios_qmi_txn_wait_ms(&txn, 1000);
 	check(result == 21 && answer.resp.result == 0 && answer.twice_valid == 1 && answer.twice == 42, "the reply does not arrive (%d, %u)", result,
 	    answer.twice);
 
@@ -1026,7 +1026,7 @@ test_helpers(void)
 	reply[1] ^= 0x40;
 	reply[8] = 9;                                   /* the TLV says more than the message has */
 	deliver(reply, n);
-	result = redwood_qmi_txn_wait_ms(&txn, 200);
+	result = hakios_qmi_txn_wait_ms(&txn, 200);
 	check(result == -EINVAL, "a reply that cannot be decoded gives %d", result);
 
 	/* three at once have three numbers; two threads ask, the replies come in the other order */
@@ -1121,7 +1121,7 @@ test_helpers(void)
 
 	qmi_handle_release(&qmi);
 	check(router.closed == 1 && !router.open && qmi.sock == NULL, "release does not close the port");
-	redwood_qmi_set_transport(NULL);
+	hakios_qmi_set_transport(NULL);
 }
 
 #ifndef NO_ATH11K
@@ -1155,7 +1155,7 @@ firmware_indicates(uint16_t message, unsigned ms)
 }
 
 static void
-firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length)
+firmware_peer(struct hakios_qrtr_port *port, const uint8_t *data, size_t length)
 {
 	static uint8_t reply[512];
 	uint16_t message = (uint16_t)(data[3] | data[4] << 8);
@@ -1174,9 +1174,9 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 		struct qmi_wlanfw_ind_register_resp_msg_v01 resp = { .fw_status_valid = 1, .fw_status = 0 };
 
 		memset(&req, 0, sizeof(req));
-		firmware.bad |= redwood_qmi_decode(data, length, qmi_wlanfw_ind_register_req_msg_v01_ei, &req) < 0 || !req.fw_ready_enable ||
+		firmware.bad |= hakios_qmi_decode(data, length, qmi_wlanfw_ind_register_req_msg_v01_ei, &req) < 0 || !req.fw_ready_enable ||
 		    !req.fw_init_done_enable || !req.cal_done_enable || req.request_mem_enable_valid;
-		n = redwood_qmi_encode(QMI_RESPONSE, message, (uint16_t)(data[1] | data[2] << 8), qmi_wlanfw_ind_register_resp_msg_v01_ei, &resp,
+		n = hakios_qmi_encode(QMI_RESPONSE, message, (uint16_t)(data[1] | data[2] << 8), qmi_wlanfw_ind_register_resp_msg_v01_ei, &resp,
 		    reply, sizeof(reply));
 		break;
 	}
@@ -1184,7 +1184,7 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 		static struct qmi_wlanfw_host_cap_req_msg_v01 req;
 
 		memset(&req, 0, sizeof(req));
-		firmware.bad |= redwood_qmi_decode(data, length, qmi_wlanfw_host_cap_req_msg_v01_ei, &req) < 0 || !req.num_clients_valid ||
+		firmware.bad |= hakios_qmi_decode(data, length, qmi_wlanfw_host_cap_req_msg_v01_ei, &req) < 0 || !req.num_clients_valid ||
 		    req.num_clients != 1 || !req.mem_cfg_mode_valid || req.m3_support != 0;
 		break;
 	}
@@ -1205,7 +1205,7 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 		resp.fw_build_id_valid = 1;
 		strcpy(resp.fw_build_id, "WLAN.MSL.1.0.1-01277-QCAMSLSWCBT-1");
 		firmware.bad |= length != QMI_HEADER_SIZE;
-		n = redwood_qmi_encode(QMI_RESPONSE, message, (uint16_t)(data[1] | data[2] << 8), qmi_wlanfw_cap_resp_msg_v01_ei, &resp, reply,
+		n = hakios_qmi_encode(QMI_RESPONSE, message, (uint16_t)(data[1] | data[2] << 8), qmi_wlanfw_cap_resp_msg_v01_ei, &resp, reply,
 		    sizeof(reply));
 		break;
 	}
@@ -1213,7 +1213,7 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 		struct qmi_wlanfw_device_info_resp_msg_v01 resp = { .bar_addr = 0x17a00000, .bar_size = 0x200000, .bar_addr_valid = 1,
 			                                            .bar_size_valid = 1 };
 
-		n = redwood_qmi_encode(QMI_RESPONSE, message, (uint16_t)(data[1] | data[2] << 8), qmi_wlfw_device_info_resp_msg_v01_ei, &resp,
+		n = hakios_qmi_encode(QMI_RESPONSE, message, (uint16_t)(data[1] | data[2] << 8), qmi_wlfw_device_info_resp_msg_v01_ei, &resp,
 		    reply, sizeof(reply));
 		break;
 	}
@@ -1221,7 +1221,7 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 		static struct qmi_wlanfw_bdf_download_req_msg_v01 req;
 
 		memset(&req, 0, sizeof(req));
-		if (redwood_qmi_decode(data, length, qmi_wlanfw_bdf_download_req_msg_v01_ei, &req) < 0 || !req.valid || !req.data_valid ||
+		if (hakios_qmi_decode(data, length, qmi_wlanfw_bdf_download_req_msg_v01_ei, &req) < 0 || !req.valid || !req.data_valid ||
 		    req.seg_id != firmware.segments || req.total_size != sizeof(firmware.file) ||
 		    firmware.got_length + req.data_len > sizeof(firmware.got)) {
 			firmware.bad = true;
@@ -1239,7 +1239,7 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 	case 0x22: {                    /* mode */
 		struct qmi_wlanfw_wlan_mode_req_msg_v01 req = { 0 };
 
-		firmware.bad |= redwood_qmi_decode(data, length, qmi_wlanfw_wlan_mode_req_msg_v01_ei, &req) < 0 || firmware.modes >= 4;
+		firmware.bad |= hakios_qmi_decode(data, length, qmi_wlanfw_wlan_mode_req_msg_v01_ei, &req) < 0 || firmware.modes >= 4;
 		firmware.mode[firmware.modes++ & 3] = req.mode;
 		if (req.mode == 7) {            /* cold boot calibration: done after a while, then ready */
 			firmware_indicates(QMI_WLFW_COLD_BOOT_CAL_DONE_IND_V01, 30);
@@ -1251,7 +1251,7 @@ firmware_peer(struct redwood_qrtr_port *port, const uint8_t *data, size_t length
 		static struct qmi_wlanfw_wlan_cfg_req_msg_v01 req;
 
 		memset(&req, 0, sizeof(req));
-		firmware.bad |= redwood_qmi_decode(data, length, qmi_wlanfw_wlan_cfg_req_msg_v01_ei, &req) < 0 || !req.tgt_cfg_valid ||
+		firmware.bad |= hakios_qmi_decode(data, length, qmi_wlanfw_wlan_cfg_req_msg_v01_ei, &req) < 0 || !req.tgt_cfg_valid ||
 		    req.tgt_cfg_len != 9 || req.tgt_cfg[8].pipe_num != 8 || !req.svc_cfg_valid || req.svc_cfg_len != 20 ||
 		    strcmp(req.host_version, "WIN") != 0;
 		break;
@@ -1391,7 +1391,7 @@ test_conversation(void)
 	for (size_t i = 0; i < sizeof(firmware.file); i++) {
 		firmware.file[i] = (unsigned char)(rnd() >> 11);
 	}
-	redwood_qmi_set_transport(&router_ops);
+	hakios_qmi_set_transport(&router_ops);
 	check(qmi_handle_init(&qmi, ATH11K_QMI_RESP_LEN_MAX, &host_ops, host_handlers) == 0, "conversation: no handle");
 	router.peer = firmware_peer;
 	check(qmi_add_lookup(&qmi, ATH11K_QMI_WLFW_SERVICE_ID_V01, ATH11K_QMI_WLFW_SERVICE_VERS_V01,
@@ -1524,7 +1524,7 @@ test_conversation(void)
 		pthread_join(firmware.threads[i], NULL);
 	}
 	qmi_handle_release(&qmi);
-	redwood_qmi_set_transport(NULL);
+	hakios_qmi_set_transport(NULL);
 }
 
 #endif /* !NO_ATH11K */

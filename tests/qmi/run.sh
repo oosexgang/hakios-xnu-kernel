@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build and run the tests of the QMI helpers (kernel/overlay/bsd/dev/redwood_qmi.c) on this machine,
+# Build and run the tests of the QMI helpers (kernel/overlay/bsd/dev/hakios_qmi.c) on this machine,
 # under the address and undefined-behaviour sanitizers. tests/run.sh runs this.
 #
 # With ath11k's sources at hand (ATH11K=<the directory with its qmi.c and qmi.h>;
@@ -14,10 +14,10 @@ trap 'rm -rf "$B"' EXIT
 FLAGS=(-std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -pthread)
 if [ -n "${ATH11K:-}" ] && [ -f "$ATH11K/qmi.c" ]; then
 	"$HERE/extract.py" "$ATH11K" > "$B/tables.inc"
-	"${CC:-cc}" "${FLAGS[@]}" -I"$K" -I"$B" -I"$HERE/shim" -I"$ATH11K" -o "$B/test" "$HERE/test_qmi.c" "$K/dev/redwood_qmi.c"
+	"${CC:-cc}" "${FLAGS[@]}" -I"$K" -I"$B" -I"$HERE/shim" -I"$ATH11K" -o "$B/test" "$HERE/test_qmi.c" "$K/dev/hakios_qmi.c"
 	echo "qmi: with ath11k's tables from $ATH11K"
 else
 	echo "qmi: no ath11k sources (ATH11K=DIR): only the tests that need none"
-	"${CC:-cc}" "${FLAGS[@]}" -DNO_ATH11K -I"$K" -o "$B/test" "$HERE/test_qmi.c" "$K/dev/redwood_qmi.c"
+	"${CC:-cc}" "${FLAGS[@]}" -DNO_ATH11K -I"$K" -o "$B/test" "$HERE/test_qmi.c" "$K/dev/hakios_qmi.c"
 fi
 "$B/test"

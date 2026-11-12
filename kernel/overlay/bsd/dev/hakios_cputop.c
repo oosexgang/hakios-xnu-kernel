@@ -18,7 +18,7 @@
 #define CPUTOP_PROCS            640
 #define CPUTOP_SHOWN            12
 
-extern void redwood_tl(const char *format, ...) __printflike(1, 2);
+extern void hakios_tl(const char *format, ...) __printflike(1, 2);
 extern task_t proc_task(proc_t);
 
 struct cputop_entry {
@@ -111,7 +111,7 @@ cputop_thread(void *arg __unused, wait_result_t w __unused)
 			}
 		}
 		absolutetime_to_nanoseconds(all, &ns);
-		redwood_tl("cputop: %u s: %llu ms of CPU in %u processes (%u new, %u gone); most, ms:%s\n", cputop_seconds,
+		hakios_tl("cputop: %u s: %llu ms of CPU in %u processes (%u new, %u gone); most, ms:%s\n", cputop_seconds,
 		    ns / NSEC_PER_MSEC, cputop_now_count, cputop_new, gone, line);
 		bcopy(cputop_now, cputop_was, sizeof(cputop_now[0]) * cputop_now_count);
 		cputop_was_count = cputop_now_count;

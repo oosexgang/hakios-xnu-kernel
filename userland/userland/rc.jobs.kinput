@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.kinput).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.kinput).
 #
 # Two questions in one boot, because a boot costs a cold reboot: where clip y = -1 lands on
 # the Adreno, and which of the kernels docs/air.md section 5 calls undispatchable will end

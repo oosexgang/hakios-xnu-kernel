@@ -11,7 +11,7 @@
  *                entries of their virtual tables.
  *                It is also where input enters the system: backboardd is the HID event server,
  *                and without Apple's multitouch driver it has no touch screen. We give it one:
- *                a "virtual" HID service that turns the samples of /dev/redwood-touch into the
+ *                a "virtual" HID service that turns the samples of /dev/hakios-touch into the
  *                events that driver would have sent.
  *
  *                And it does not wait five seconds for an ambient light sensor.
@@ -47,13 +47,13 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#include "redwood_gl.h"
-#include "redwood_input.h"
+#include "hakios_gl.h"
+#include "hakios_input.h"
 
 extern const void *_dyld_get_shared_cache_range(size_t *length);
 
 #define CACHE_BASE 0x180000000UL                /* where the cache was built to be, before the slide */
-#define REDWOOD_GL "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL "/redwood/lib/libredwood-gl.dylib"
 
 static uintptr_t slide;
 
@@ -373,7 +373,7 @@ static int compile_shaders_said;                /* boot-arg glcompile=1: write d
 static void
 functions_said_yes(const char *arguments)
 {
-	static const char names[] = REDWOOD_CA_FUNCTIONS;
+	static const char names[] = HAKIOS_CA_FUNCTIONS;
 	const char *argument = strstr(arguments, "glno=");
 
 	/* glno=N[,N...]: and the other way about, for seeing what a function of ours stands in for */
@@ -436,7 +436,7 @@ my_compile_shader(void *context, const char *source)
 static int
 my_function_supported(void *context)
 {
-	static const char names[] = REDWOOD_CA_FUNCTIONS;
+	static const char names[] = HAKIOS_CA_FUNCTIONS;
 	static uint8_t said[256];
 	int supported = orig_function_supported(context);
 	uint8_t function = *(*(uint8_t **)((char *)context + 0x10) + 0x10);
@@ -934,20 +934,20 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 
 /* One frame of the touch screen: the hand, and under it every finger that is down or has just lifted. */
 static void
-send_touch(IOHIDServiceClientRef screen, const struct redwood_touch *t)
+send_touch(IOHIDServiceClientRef screen, const struct hakios_touch *t)
 {
-	uint32_t change = t->type == REDWOOD_TOUCH_MOVE ? DIGITIZER_POSITION : DIGITIZER_RANGE | DIGITIZER_TOUCH;
+	uint32_t change = t->type == HAKIOS_TOUCH_MOVE ? DIGITIZER_POSITION : DIGITIZER_RANGE | DIGITIZER_TOUCH;
 	IOHIDEventRef hand, finger;
 	bool any = false;
 	unsigned f = t->finger;
 
-	if (f >= MAX_FINGERS || (t->type != REDWOOD_TOUCH_DOWN && !fingers[f].touching)) {
+	if (f >= MAX_FINGERS || (t->type != HAKIOS_TOUCH_DOWN && !fingers[f].touching)) {
 		return;
 	}
-	fingers[f].touching = t->type != REDWOOD_TOUCH_UP;
+	fingers[f].touching = t->type != HAKIOS_TOUCH_UP;
 	fingers[f].x = t->x / 65535.0;
 	fingers[f].y = t->y / 65535.0;
-	if (t->type == REDWOOD_TOUCH_DOWN) {
+	if (t->type == HAKIOS_TOUCH_DOWN) {
 		fingers[f].edge = fingers[f].x < EDGE_SIDE || fingers[f].x > 1 - EDGE_SIDE || fingers[f].y < EDGE_TOP ||
 		    fingers[f].y > 1 - EDGE_BOTTOM;
 	}
@@ -984,7 +984,7 @@ publish_lock_button(bool down)
 {
 	static int token = NOTIFY_TOKEN_INVALID;
 
-	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.redwood.button.lock", &token) != NOTIFY_STATUS_OK) {
+	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.hakios.button.lock", &token) != NOTIFY_STATUS_OK) {
 		token = NOTIFY_TOKEN_INVALID;
 		return;
 	}
@@ -992,20 +992,20 @@ publish_lock_button(bool down)
 }
 
 static void
-send_button(IOHIDServiceClientRef buttons, const struct redwood_touch *t)
+send_button(IOHIDServiceClientRef buttons, const struct hakios_touch *t)
 {
-	uint32_t usage = t->finger == REDWOOD_BUTTON_LOCK ? HID_USAGE_POWER : t->finger == REDWOOD_BUTTON_HOME ? HID_USAGE_MENU :
-	    t->finger == REDWOOD_BUTTON_VOLUME_UP ? HID_USAGE_VOLUME_UP : t->finger == REDWOOD_BUTTON_VOLUME_DOWN ?
+	uint32_t usage = t->finger == HAKIOS_BUTTON_LOCK ? HID_USAGE_POWER : t->finger == HAKIOS_BUTTON_HOME ? HID_USAGE_MENU :
+	    t->finger == HAKIOS_BUTTON_VOLUME_UP ? HID_USAGE_VOLUME_UP : t->finger == HAKIOS_BUTTON_VOLUME_DOWN ?
 	    HID_USAGE_VOLUME_DOWN : 0;
 	IOHIDEventRef event;
 
 	if (usage == 0) {
 		return;
 	}
-	if (t->finger == REDWOOD_BUTTON_LOCK) {
-		publish_lock_button(t->type == REDWOOD_BUTTON_DOWN);
+	if (t->finger == HAKIOS_BUTTON_LOCK) {
+		publish_lock_button(t->type == HAKIOS_BUTTON_DOWN);
 	}
-	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == REDWOOD_BUTTON_DOWN, 0);
+	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == HAKIOS_BUTTON_DOWN, 0);
 	IOHIDEventSetIntegerValue(event, FIELD_IS_BUILT_IN, 1);
 	IOHIDVirtualServiceClientDispatchEvent(buttons, event);
 	CFRelease(event);
@@ -1031,7 +1031,7 @@ input_thread(__unused void *arg)
 	static const int types[] = { HID_CLIENT_SIMPLE, HID_CLIENT_RATE_CONTROLLED };
 	IOHIDEventSystemClientRef client = NULL;
 	IOHIDServiceClientRef screen = NULL, buttons = NULL;
-	struct redwood_touch t;
+	struct hakios_touch t;
 	unsigned count = 0, waking = 0;         /* waking: the fingers whose touch went into waking the display */
 	int device;
 
@@ -1045,9 +1045,9 @@ input_thread(__unused void *arg)
 		}
 		mach_timebase_info(&timebase);
 	}
-	device = open(REDWOOD_TOUCH_DEVICE, O_RDONLY);
+	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
 	if (device < 0) {
-		say("redwood: input: %s: %s\n", REDWOOD_TOUCH_DEVICE, strerror(errno));
+		say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -1059,13 +1059,13 @@ input_thread(__unused void *arg)
 			continue;
 		}
 		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("redwood.input", NULL));
-		screen = make_service(client, "Redwood touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
+		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
 		if (screen == NULL) {
 			say("redwood: input: a HID client of type %d may not create services\n", types[i]);
 		}
 	}
 	if (screen != NULL) {
-		buttons = make_service(client, "Redwood buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
+		buttons = make_service(client, "HakiOS buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
 	}
 	say("redwood: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */
@@ -1079,23 +1079,23 @@ input_thread(__unused void *arg)
 		if (count++ < 4) {
 			say("redwood: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
 		}
-		if (t.type > REDWOOD_TOUCH_UP) {
+		if (t.type > HAKIOS_TOUCH_UP) {
 			if (buttons != NULL) {
 				send_button(buttons, &t);
 			}
-		} else if (t.type == REDWOOD_TOUCH_DOWN && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
+		} else if (t.type == HAKIOS_TOUCH_DOWN && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
 			/*
 			 * The display is off and a tap is to wake it. The lock button is what wakes it here:
 			 * press it for the finger, and keep the rest of this touch to ourselves.
 			 */
-			struct redwood_touch press = { .time = t.time, .type = REDWOOD_BUTTON_DOWN, .finger = REDWOOD_BUTTON_LOCK };
+			struct hakios_touch press = { .time = t.time, .type = HAKIOS_BUTTON_DOWN, .finger = HAKIOS_BUTTON_LOCK };
 
 			send_button(buttons, &press);
-			press.type = REDWOOD_BUTTON_UP;
+			press.type = HAKIOS_BUTTON_UP;
 			send_button(buttons, &press);
 			waking |= 1u << (t.finger & 31);
 		} else if (waking & (1u << (t.finger & 31))) {
-			if (t.type == REDWOOD_TOUCH_UP) {
+			if (t.type == HAKIOS_TOUCH_UP) {
 				waking &= ~(1u << (t.finger & 31));
 			}
 		} else {
@@ -1106,7 +1106,7 @@ input_thread(__unused void *arg)
 			}
 		}
 	}
-	say("redwood: input: %s: %s\n", REDWOOD_TOUCH_DEVICE, strerror(errno));
+	say("redwood: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 	return NULL;
 }
 
@@ -1151,7 +1151,7 @@ container_manager_fixes(void)
  * An OpenGL ES implementation for CoreAnimation (src/eagl.c, Mesa behind it): loaded, it puts
  * itself behind EAGLContext, and the renderer the server then gets is the OpenGL ES one. That
  * is worth it where a GPU does the drawing, and only there: on the phone, when the kernel has
- * started the GPU and keeps it (boot-arg gpu=1), which the service RedwoodGPU says (it is there
+ * started the GPU and keeps it (boot-arg gpu=1), which the service HakiosGPU says (it is there
  * before the first program runs, or not at all). Everywhere else -- QEMU, a run without the
  * boot-arg, a phone without the GPU's firmware in the image, a GPU that did not start --
  * nothing is loaded, and CoreAnimation draws with its own software renderer as in an image
@@ -1169,7 +1169,7 @@ opengl_es(void)
 	void *library;
 	int wanted = -1, told = 0;
 
-	if (access(REDWOOD_GL, R_OK) != 0) {
+	if (access(HAKIOS_GL, R_OK) != 0) {
 		return;                                 /* (an image built without it) */
 	}
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
@@ -1183,7 +1183,7 @@ opengl_es(void)
 		}
 	}
 	if (wanted < 0) {
-		gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+		gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
 		wanted = gpu != 0;
 		if (gpu != 0) {
 			IOObjectRelease(gpu);
@@ -1193,19 +1193,19 @@ opengl_es(void)
 		say("redwood: %s: CoreAnimation keeps its software renderer\n", told ? "gl=0" : "no GPU to draw with");
 		return;
 	}
-	if ((library = dlopen(REDWOOD_GL, RTLD_NOW)) == NULL) {
-		say("redwood: %s: %s\n", REDWOOD_GL, dlerror());
+	if ((library = dlopen(HAKIOS_GL, RTLD_NOW)) == NULL) {
+		say("redwood: %s: %s\n", HAKIOS_GL, dlerror());
 		return;
 	}
 	gl_loaded = 1;
 	gl_function_values = (void (*)(void *, unsigned, unsigned, size_t, size_t, const float *))dlsym(library,
-	    "redwood_gl_function_values");
-	gl_function_refused = (void (*)(unsigned))dlsym(library, "redwood_gl_function_refused");
+	    "hakios_gl_function_values");
+	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
 }
 
 __attribute__((constructor))
 static void
-redwood_init(void)
+hakios_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;

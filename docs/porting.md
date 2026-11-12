@@ -171,8 +171,8 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
   `hakios_board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
   and its test to start from, and the headers a driver has at hand: the SoC's pins, I2C by hand on
-  two of them, the PMICs, RPMh. `renoir_fts.c` beside `redwood_goodix.c` shows two parts of a kind:
-  two touch controllers, one interface to iOS (`/dev/redwood-touch`, `bsd/sys/redwood_input.h`).
+  two of them, the PMICs, RPMh. `hakios_fts.c` beside `hakios_goodix.c` shows two parts of a kind:
+  two touch controllers, one interface to iOS (`/dev/hakios-touch`, `bsd/sys/hakios_input.h`).
 
 [drivers.md](drivers.md) lists every driver with the part it is for and how tied to one phone it is.
 Touch first: without it the phone is a picture.
@@ -222,7 +222,7 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 
 Stated plainly, so nobody finds out the hard way:
 
-- **GPU.** `redwood_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
+- **GPU.** `hakios_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
   is data (`[gpu]` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
   (`[adreno]` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
   (the GMU's registers, the clock controller's layout, the zap shader's hand-over) has only been run on
@@ -247,7 +247,7 @@ Stated plainly, so nobody finds out the hard way:
   GPT entry in the board file's `[storage]`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in
   every field (`loader/src/own_partition.c`), the kernel asks for one only there
-  (`bsd/dev/redwood_ufs.c`), and the firmware bounds it to the partition. A board without
+  (`bsd/dev/hakios_ufs.c`), and the firmware bounds it to the partition. A board without
   `[storage]` is never written; reading works, the data volume lives in RAM.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).

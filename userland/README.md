@@ -163,13 +163,13 @@ fastboot boot ──► UEFI (Mu-Silicium) ──► xnuloader (EFI application)
               ├─ APFS (images in RAM, iOS volume on flash), ramfs (/private/var, /tmp)
               ├─ minicrypto instead of corecrypto, AMFI and Sandbox stand-ins (MAC policies)
               ├─ driver replacements: IOSurface, IOMobileFramebuffer, AppleKeyStore, network stack
-              ├─ input: /dev/redwood-touch ◄─ Goodix GT9916 (phone) / virtio-input (QEMU)
+              ├─ input: /dev/hakios-touch ◄─ Goodix GT9916 (phone) / virtio-input (QEMU)
               ├─ GPU: Adreno 642L, Wi-Fi: WCN6750 (ath11k via LinuxKPI), sound: ADSP / virtio-sound
               ▼
    iOS 16.5 launchd → logd, notifyd, cfprefsd, runningboardd, backboardd, SpringBoard, apps
               ├─ our libraries are injected into backboardd, SpringBoard and mediaserverd
               │  (virtual HID services, a few ObjC method swaps — in memory only)
-              └─ mediaserverd gets our CoreAudio output device (RedwoodAudio.driver)
+              └─ mediaserverd gets our CoreAudio output device (HakiosAudio.driver)
 ```
 
 The iOS programs, frameworks and dyld shared cache are not changed by a single byte: what they miss is done by the

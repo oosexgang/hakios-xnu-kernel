@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # A photograph (RC_JOBS=rc.jobs.photo, with cam=5): Camera.app is opened as a finger opens it, Live
 # Photo is switched off (its capture wants a video and sound around the shutter), the preview is left
 # to settle, and the shutter is pressed twice. The kernel's "camera:" lines say what the sensor did;

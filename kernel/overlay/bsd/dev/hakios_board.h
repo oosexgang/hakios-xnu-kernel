@@ -33,29 +33,29 @@
 enum {
 	HAKIOS_HAS_CPUFREQ_EPSS = 1u << 0,      /* CPU frequency through Qualcomm's EPSS (bsd/dev/hakios_cpufreq.c) */
 	HAKIOS_HAS_DDR_RPMH     = 1u << 1,      /* memory bandwidth votes through RPMh (hakios_ddr.c) */
-	HAKIOS_HAS_BATTERY_UEFI = 1u << 2,      /* the battery as the firmware reports it to the loader (redwood_battery.c) */
+	HAKIOS_HAS_BATTERY_UEFI = 1u << 2,      /* the battery as the firmware reports it to the loader (hakios_battery.c) */
 	HAKIOS_HAS_BUTTONS_PMIC = 1u << 3,      /* power and volume keys on the PMIC, through the SPMI arbiter (hakios_buttons.c) */
-	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (redwood_adsp.c) */
+	HAKIOS_HAS_ADSP         = 1u << 4,      /* the audio DSP: sound, and the battery manager behind it (hakios_adsp.c) */
 	HAKIOS_HAS_DISPLAY_SCAN = 1u << 13,     /* a command-mode panel whose readout is followed on the DSI interface's
-	                                         * counters, for frames without tearing (redwood_adreno.c, fb_scan) */
+	                                         * counters, for frames without tearing (hakios_adreno.c, fb_scan) */
 	HAKIOS_HAS_VIRTIO       = 1u << 15,     /* an emulator's virtio devices on its MMIO transport: network, tablet
-	                                         * and keyboard (redwood_virtio_net.c, redwood_virtio_input.c) */
+	                                         * and keyboard (hakios_virtio_net.c, hakios_virtio_input.c) */
 	HAKIOS_HAS_GPU_A660     = 1u << 14,     /* an Adreno of the A660 family behind a GMU; what differs from one to
-	                                         * the next is the board's [gpu] (redwood_adreno.c, gpu=1) */
+	                                         * the next is the board's [gpu] (hakios_adreno.c, gpu=1) */
 	/*
 	 * Drivers of one part, wired the way one phone has it (the pins, the bus, the chip): a board lists
 	 * one only if it has that part wired that way. Asked for on any other board, the driver says so and
 	 * does nothing, rather than write to another phone's pins.
 	 */
-	HAKIOS_HAS_TOUCH_GOODIX    = 1u << 5,   /* Goodix GT9916 or FocalTech FT3680 on redwood's SPI (redwood_goodix.c) */
-	HAKIOS_HAS_TOUCH_FT3658U   = 1u << 6,   /* FocalTech FT3658U on renoir's SPI (renoir_fts.c) */
-	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (redwood_speaker.c, redwood_sound.c) */
-	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (redwood_haptic.c) */
-	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (redwood_torch.c) */
+	HAKIOS_HAS_TOUCH_GOODIX    = 1u << 5,   /* Goodix GT9916 or FocalTech FT3680 on redwood's SPI (hakios_goodix.c) */
+	HAKIOS_HAS_TOUCH_FT3658U   = 1u << 6,   /* FocalTech FT3658U on renoir's SPI (hakios_fts.c) */
+	HAKIOS_HAS_SPEAKER_AW88261 = 1u << 7,   /* two Awinic AW88261 amplifiers on I2C (hakios_speaker.c, hakios_sound.c) */
+	HAKIOS_HAS_HAPTIC_AW86927  = 1u << 8,   /* an Awinic AW86927 vibration motor driver (hakios_haptic.c) */
+	HAKIOS_HAS_TORCH_PM8350C   = 1u << 9,   /* the flash LED module of a PM8350C (hakios_torch.c) */
 	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* cameras on an SM7325's camera blocks, powered by a PM8008, wired as
-	                                         * the board's [camera] says (redwood_camera.c) */
-	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (redwood_wifi.c) */
-	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (redwood_mic.c) */
+	                                         * the board's [camera] says (hakios_camera.c) */
+	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (hakios_wifi.c) */
+	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (hakios_mic.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 
@@ -244,7 +244,7 @@ struct hakios_board {
 		uint8_t codec_reset;            /* the SoC's pin the codec's reset is on */
 	} mic;
 
-	/* the Wi-Fi radio (board: [wifi]), for the driver's layer under it (redwood_lx.c) */
+	/* the Wi-Fi radio (board: [wifi]), for the driver's layer under it (hakios_lx.c) */
 	struct {
 		uint32_t radio_model;           /* which radio: 0 a WCN6750 on the SoC's own bus, 1 a WCN6855 on PCIe */
 		uint32_t early_pool_mb;         /* memory in one piece kept for the radio's driver from early on; 0: none */

@@ -21,19 +21,19 @@
  *                              attachment) is the screen; or it is a picture to be shown
  *
  * A GPU's driver does the last two by using the IOSurface's memory as the texture's, and so it
- * is done here where the library can (redwood_gl_surface_texture(); surface_shared()): nothing
+ * is done here where the library can (hakios_gl_surface_texture(); surface_shared()): nothing
  * is copied, and a frame's end waits for the GPU. Where it cannot (a software driver, a surface
  * the GPU cannot address, a picture to be turned over) the texture is an ordinary one, filled
  * from the IOSurface when that has changed (its seed) and read back into it when a frame ends
  * (glFlush, glFinish), with nothing but OpenGL ES calls. Either way this file does not know
- * what draws: the library is reached through its gl* functions and the functions of redwood_gl.h.
+ * what draws: the library is reached through its gl* functions and the functions of hakios_gl.h.
  *
  * Where CoreAnimation relies on iOS's library being what it is, this stands in between:
  * blue-first pixels into a texture called GL_RGBA (internal_format()), shaders that read
  * textures at coordinates in pixels (my_glShaderSource()), and draws made with no program
  * (plain_draw_begin()).
  *
- * What CoreAnimation asks of OpenGL ES is written down as it goes (the log lines "redwood-gl:"):
+ * What CoreAnimation asks of OpenGL ES is written down as it goes (the log lines "hakios-gl:"):
  * strings and limits it reads, texture formats and sizes, calls and triangles per frame. More
  * with the kernel's boot-args: gltrace=FIRST-LAST writes down every call of those frames (lines
  * "gl:"; with each draw what it is made of -- the texture, the first corners -- and after it a
@@ -73,7 +73,7 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
-#include "redwood_gl.h"
+#include "hakios_gl.h"
 
 /* ---- OpenGL ES: the types, the few names used here, the library's functions --------------------- */
 
@@ -242,7 +242,7 @@ struct image {
 struct eagl {
 	void *table[SLOTS];             /* [0] is the context itself: what every entry gets as its first argument */
 	id object;                      /* the EAGLContext */
-	struct redwood_gl *gl;
+	struct hakios_gl *gl;
 	unsigned long api;
 	struct image images[256];
 	unsigned image_count;
@@ -350,7 +350,7 @@ static int blit_targets = 1;
 /*
  * A frame that is handed to the display must have been drawn. The display's driver waits for
  * the GPU itself before it puts a surface on the panel, on a thread of its own, and says so in
- * the registry ("RedwoodWaitsForGPU"); the window server is then at its next frame meanwhile.
+ * the registry ("HakiosWaitsForGPU"); the window server is then at its next frame meanwhile.
  * With a driver that does not, the frame is waited for here (glFinish). Boot-arg glwait=1:
  * here in any case; glwait=0: nowhere, to see what the waiting costs (and frames half drawn).
  */
@@ -383,8 +383,8 @@ static void
 eagl_enter(struct eagl *e, unsigned offset)
 {
 	if (current != e) {
-		if (!redwood_gl_make_current(e->gl)) {
-			say("redwood-gl: the context cannot be made this thread's\n");
+		if (!hakios_gl_make_current(e->gl)) {
+			say("hakios-gl: the context cannot be made this thread's\n");
 		}
 		current = e;
 	}
@@ -402,7 +402,7 @@ eagl_leave(struct eagl *e, unsigned offset)
 
 	if (check_errors && offset != 0x338 && (error = glGetError()) != 0) {
 		if (e->errors++ < 60) {
-			say("redwood-gl: %s: error %#x\n", eagl_slot_name(offset), error);
+			say("hakios-gl: %s: error %#x\n", eagl_slot_name(offset), error);
 		}
 	}
 	if (slow_calls_us != 0) {
@@ -424,7 +424,7 @@ eagl_missing(void *context, unsigned offset)
 
 	eagl_enter(e, offset);
 	if (slot_calls[offset / 8] == 1) {
-		say("redwood-gl: CALLED AND NOT THERE: entry %#x, %s\n", offset, eagl_slot_name(offset));
+		say("hakios-gl: CALLED AND NOT THERE: entry %#x, %s\n", offset, eagl_slot_name(offset));
 	}
 	return 0;
 }
@@ -476,7 +476,7 @@ note_format(const char *how, GLenum internal, GLenum format, GLenum type, GLsize
 		use->internal = internal;
 		use->format = format;
 		use->type = type;
-		say("redwood-gl: a new kind of texture: %s, internal format %#x, format %#x, type %#x, %d x %d\n", how, internal,
+		say("hakios-gl: a new kind of texture: %s, internal format %#x, format %#x, type %#x, %d x %d\n", how, internal,
 		    format, type, width, height);
 	}
 	if ((unsigned)width > use->widest) {
@@ -492,7 +492,7 @@ summary(struct eagl *e)
 {
 	unsigned frames = e->frames ? e->frames : 1;
 
-	say("redwood-gl: after %u frames: %llu calls, %llu draws and %llu triangles a frame on average; the most in one: "
+	say("hakios-gl: after %u frames: %llu calls, %llu draws and %llu triangles a frame on average; the most in one: "
 	    "%u calls, %u triangles; %llu us a frame, of which %llu handing the commands on, %llu waiting for the picture "
 	    "to be drawn and %llu copying it out, and before each %llu making textures of IOSurfaces; %u IOSurfaces were "
 	    "the textures' memory, %u had to be copied; %u shaders, %u programs; biggest texture %u x %u; %u errors\n",
@@ -500,12 +500,12 @@ summary(struct eagl *e)
 	    e->most_triangles, e->frame_us / frames, e->flush_us / frames, e->wait_us / frames, e->readback_us / frames,
 	    e->attach_us / frames, e->shared, e->refused, e->shaders, e->programs, widest_texture, tallest_texture, e->errors);
 	for (unsigned i = 0; i < sizeof(formats) / sizeof(formats[0]) && formats[i].count; i++) {
-		say("redwood-gl:   textures: %s %#x/%#x/%#x: %u times, up to %u x %u\n", formats[i].how, formats[i].internal,
+		say("hakios-gl:   textures: %s %#x/%#x/%#x: %u times, up to %u x %u\n", formats[i].how, formats[i].internal,
 		    formats[i].format, formats[i].type, formats[i].count, formats[i].widest, formats[i].tallest);
 	}
 	for (unsigned offset = 8; offset < SLOTS * 8; offset += 8) {
 		if (slot_calls[offset / 8]) {
-			say("redwood-gl:   %-28s %u\n", eagl_slot_name(offset), slot_calls[offset / 8]);
+			say("hakios-gl:   %-28s %u\n", eagl_slot_name(offset), slot_calls[offset / 8]);
 		}
 	}
 }
@@ -530,7 +530,7 @@ image_new(struct eagl *e, GLuint texture, IOSurfaceRef surface)
 
 	if (image == NULL) {
 		if (e->image_count == sizeof(e->images) / sizeof(e->images[0])) {
-			say("redwood-gl: more textures with IOSurfaces than there is room for\n");
+			say("hakios-gl: more textures with IOSurfaces than there is room for\n");
 			return NULL;
 		}
 		image = &e->images[e->image_count++];
@@ -606,7 +606,7 @@ surface_mirrored(struct eagl *e, struct image *image)
 	glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
 	glGenTextures(1, &image->mirror);
 	glBindTexture(GL_TEXTURE_2D, image->mirror);
-	if (!redwood_gl_surface_texture(e->gl, IOSurfaceGetID(surface))) {
+	if (!hakios_gl_surface_texture(e->gl, IOSurfaceGetID(surface))) {
 		glBindTexture(GL_TEXTURE_2D, (GLuint)bound);
 		glDeleteTextures(1, &image->mirror);
 		image->mirror = 0;
@@ -629,7 +629,7 @@ surface_shared(struct eagl *e, struct image *image)
 	if (!share_surfaces || image->invert || image->alpha_first || image->format != GL_BGRA || image->type != GL_UNSIGNED_BYTE ||
 	    image->plane != 0 || (size_t)image->width != IOSurfaceGetWidth(surface) ||
 	    (size_t)image->height != IOSurfaceGetHeight(surface) ||
-	    !redwood_gl_surface_texture(e->gl, IOSurfaceGetID(surface))) {
+	    !hakios_gl_surface_texture(e->gl, IOSurfaceGetID(surface))) {
 		e->refused++;
 		return false;
 	}
@@ -687,7 +687,7 @@ surface_to_texture(struct eagl *e, struct image *image)
 		return;
 	}
 	if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL) != 0) {
-		say("redwood-gl: an IOSurface cannot be locked\n");
+		say("hakios-gl: an IOSurface cannot be locked\n");
 		return;
 	}
 	base = planar ? IOSurfaceGetBaseAddressOfPlane(surface, image->plane) : IOSurfaceGetBaseAddress(surface);
@@ -849,7 +849,7 @@ skip_draw(struct eagl *e)
 			if (telling < sizeof(told) / sizeof(told[0])) {
 				told[telling++] = e->program;
 			}
-			say("redwood-gl: the draws of program %u are left out\n", e->program);
+			say("hakios-gl: the draws of program %u are left out\n", e->program);
 			return true;
 		}
 	}
@@ -883,7 +883,7 @@ say_sizes(void)
 		used += (size_t)snprintf(line + used, sizeof(line) - used, " %u:%dx%d", name, width, height);
 	}
 	glBindTexture(GL_TEXTURE_2D, (GLuint)bound);
-	say("redwood-gl: glshow: the textures there are:%s\n", line);
+	say("hakios-gl: glshow: the textures there are:%s\n", line);
 }
 
 /* glshow=WxH: the first texture of that size there is (names are handed out afresh every run). */
@@ -924,14 +924,14 @@ show_texture(struct eagl *e, struct image *image)
 		static unsigned said;
 
 		if (said++ == 0) {
-			say("redwood-gl: glshow: there is no texture of %d x %d\n", shown_wanted[0], shown_wanted[1]);
+			say("hakios-gl: glshow: there is no texture of %d x %d\n", shown_wanted[0], shown_wanted[1]);
 			say_sizes();
 		}
 		return;
 	}
 	if (shown_told != texture) {
 		shown_told = texture;
-		say("redwood-gl: glshow: the texture %u, %d of it by %d, every pixel a square of %d\n", texture,
+		say("hakios-gl: glshow: the texture %u, %d of it by %d, every pixel a square of %d\n", texture,
 		    shown_part[0] > 0 ? shown_part[0] : -1, shown_part[1] > 0 ? shown_part[1] : -1, shown_zoom);
 	}
 	glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
@@ -1088,7 +1088,7 @@ frame_end(struct eagl *e, bool finished)
 		 * scissor box -- CoreAnimation draws only what has changed, inside that box, and leaves the
 		 * rest of the surface as it was --; and the draws of the blur whose radius varies.
 		 */
-		say("redwood-gl: f %u at %llu.%03llu s: %u draws, %u clears; display surface %u, %u draws into it, box %s %d,%d %dx%d; "
+		say("hakios-gl: f %u at %llu.%03llu s: %u draws, %u clears; display surface %u, %u draws into it, box %s %d,%d %dx%d; "
 		    "vrd %u vrb %u; %u in place, %u copied; spans %u solid %u blended, ends %u %u; other %u %u\n", e->frames,
 		    after / 1000000, after / 1000 % 1000, e->draws, e->clears, e->line.surface, e->line.into_display, e->line.boxed ? "on" : "off", e->line.box[0], e->line.box[1],
 		    e->line.box[2], e->line.box[3], e->line.vrd, e->line.vrb, in_place, copied, e->line.solid_spans, e->line.blended_spans,
@@ -1099,7 +1099,7 @@ frame_end(struct eagl *e, bool finished)
 	if (in_place == 0 && copied == 0 && e->draws != 0 && unfollowed < 8) {
 		/* (whatever it was drawn into is shown as it is, drawn or not: this is to be seen in the log) */
 		unfollowed++;
-		say("redwood-gl: frame %u: %u draws, and none into an IOSurface that is known here (framebuffer %u, texture %u)\n",
+		say("hakios-gl: frame %u: %u draws, and none into an IOSurface that is known here (framebuffer %u, texture %u)\n",
 		    e->frames, e->draws, e->framebuffer, e->colour);
 	}
 	e->all_calls += e->calls;
@@ -1117,7 +1117,7 @@ frame_end(struct eagl *e, bool finished)
 		e->most_triangles = e->triangles;
 	}
 	if (e->frames <= 40 || e->frames % 20 == 0) {
-		say("redwood-gl: frame %u: %u GL calls, %u draws, %u triangles, %u clears; %u textures refilled from IOSurfaces "
+		say("hakios-gl: frame %u: %u GL calls, %u draws, %u triangles, %u clears; %u textures refilled from IOSurfaces "
 		    "(%llu KB); %u picture%s copied out, %u drawn in place; %llu us (%llu handing on, %llu waiting, %llu copying "
 		    "out), %llu before it for the IOSurfaces\n", e->frames, e->calls, e->draws, e->triangles, e->clears, e->uploads,
 		    e->upload_bytes >> 10, copied, copied == 1 ? "" : "s", in_place, after - e->began, e->flushing, waited - before,
@@ -1682,7 +1682,7 @@ static const char table_fragment[] =
 /*
  * Two more are told apart by the "function" itself, which CoreAnimation's context has in a known
  * place while it draws (and which our library in the window server hands over with the context:
- * redwood_gl_function_values() below, called from inject.c). Both take a colour matrix, four
+ * hakios_gl_function_values() below, called from inject.c). Both take a colour matrix, four
  * columns and what is added, the numbers function_values[] keeps.
  *
  *   "vcm" (45), the filter vibrantColorMatrix: the layer is not drawn, it says how much of the
@@ -1817,7 +1817,7 @@ static uint8_t function_given[90];
 
 /* From inject.c, at every GLContext::function_uniform(): the numbers a function is given, which no shader of CoreAnimation's takes. */
 void
-redwood_gl_function_values(void *context, unsigned function, unsigned index, size_t components, size_t count, const float *values)
+hakios_gl_function_values(void *context, unsigned function, unsigned index, size_t components, size_t count, const float *values)
 {
 	static uint8_t said[90];
 
@@ -1830,7 +1830,7 @@ redwood_gl_function_values(void *context, unsigned function, unsigned index, siz
 	if (!said[function] || (function_numbers && said[function] < 12 &&
 	    memcmp(function_values[function], values, components * count * sizeof(values[0])) != 0)) {
 		said[function]++;
-		say("redwood-gl: CoreAnimation gives its function %u numbers: %zu of %zu:%s%s%s%s%s%s%s%s%s%s\n", function, count,
+		say("hakios-gl: CoreAnimation gives its function %u numbers: %zu of %zu:%s%s%s%s%s%s%s%s%s%s\n", function, count,
 		    components, number_text(values, 0, components * count), number_text(values, 4, components * count),
 		    number_text(values, 8, components * count), number_text(values, 12, components * count),
 		    number_text(values, 16, components * count), "", "", "", "", "");
@@ -2009,7 +2009,7 @@ vblur_program(const char *vertex, const char *fragment, const char *what)
 	glBindAttribLocation(program, 3, "vertex_texcoord1");
 	glLinkProgram(program);
 	glGetProgramiv(program, GL_LINK_STATUS, &good);
-	say("redwood-gl: a program of ours for the blur whose radius varies (%s): %s %s\n", what, good ? "made" : "NOT MADE", said);
+	say("hakios-gl: a program of ours for the blur whose radius varies (%s): %s %s\n", what, good ? "made" : "NOT MADE", said);
 	return good ? program : 0;
 }
 
@@ -2196,7 +2196,7 @@ plain_program(const char *fragment, const char *what)
 	glBindAttribLocation(program, 2, "vertex_texcoord0");
 	glLinkProgram(program);
 	glGetProgramiv(program, GL_LINK_STATUS, &good);
-	say("redwood-gl: a program of ours for the draws CoreAnimation makes with none (%s): %s\n", what, good ? "made" : "NOT MADE");
+	say("hakios-gl: a program of ours for the draws CoreAnimation makes with none (%s): %s\n", what, good ? "made" : "NOT MADE");
 	return program;
 }
 
@@ -2232,7 +2232,7 @@ static uint64_t census_told;
 static const char *
 census_name(unsigned function)
 {
-	static const char names[] = REDWOOD_CA_FUNCTIONS;
+	static const char names[] = HAKIOS_CA_FUNCTIONS;
 	static char name[4];
 
 	memcpy(name, function < 90 ? names + 4 * function : "?  ", 3);
@@ -2243,7 +2243,7 @@ census_name(unsigned function)
 static uint16_t frame_refused[90], frame_noprog[90][CENSUS_KINDS];     /* (glframes=1) this frame's, by function */
 
 void
-redwood_gl_function_refused(unsigned function)
+hakios_gl_function_refused(unsigned function)
 {
 	if (frame_lines && function < 90) {
 		frame_refused[function]++;
@@ -2305,7 +2305,7 @@ census_draw(struct eagl *e, unsigned function, unsigned kind)
 	glGetIntegerv(GL_BLEND_SRC_RGB, &source);
 	glGetIntegerv(GL_BLEND_DST_RGB, &destination);
 	glGetIntegerv(GL_VIEWPORT, viewport);
-	say("redwood-gl: census: function %u (\"%s\") with no program, %s: first at %g,%g to %g,%g of framebuffer %u (%d x %d); "
+	say("hakios-gl: census: function %u (\"%s\") with no program, %s: first at %g,%g to %g,%g of framebuffer %u (%d x %d); "
 	    "textures%s; blending %s (%#x, %#x); its numbers:%s\n", function, census_name(function), census_kinds[kind], (double)low[0],
 	    (double)low[1], (double)high[0], (double)high[1], e->framebuffer, viewport[2], viewport[3], textures[0] ? textures : " none",
 	    glIsEnabled(GL_BLEND) ? "on" : "off", (unsigned)source, (unsigned)destination, numbers[0] ? numbers : " none");
@@ -2341,7 +2341,7 @@ frame_functions(struct eagl *e)
 	}
 	group_covered = group_laid = group_flattened = 0;
 	if (used != 0 && strcmp(text, said) != 0) {
-		say("redwood-gl: f %u functions:%s\n", e->frames, text);
+		say("hakios-gl: f %u functions:%s\n", e->frames, text);
 	}
 	memcpy(said, text, used + 1);
 	bzero(frame_refused, sizeof(frame_refused));
@@ -2387,8 +2387,8 @@ census_report(void)
 		c->refused_lately = 0;
 	}
 	if (lately[0] != 0) {
-		say("redwood-gl: census: in the last ten seconds:%s\n", lately);
-		say("redwood-gl: census: since the start:%s\n", all);
+		say("hakios-gl: census: in the last ten seconds:%s\n", lately);
+		say("hakios-gl: census: since the start:%s\n", all);
 	}
 }
 
@@ -2446,7 +2446,7 @@ vblur_draw_begin(struct eagl *e, struct vblur_chain *chain, GLint enabled[4])
 		if (at != NULL && e->arrays[3].type == GL_FLOAT) {
 			memcpy(first, at, sizeof(first));
 		}
-		say("redwood-gl: a blur whose radius varies, read by its mask: %d levels of texture %u (%d x %d), radius %g, numbers %g %g "
+		say("hakios-gl: a blur whose radius varies, read by its mask: %d levels of texture %u (%d x %d), radius %g, numbers %g %g "
 		    "%g; the mask's coordinates at the first corner %g %g\n", levels, chain->picture, chain->width, chain->height,
 		    (double)function_values[FUNCTION_VARIABLE_BLUR][0], (double)function_values[FUNCTION_VARIABLE_BLUR][1],
 		    (double)function_values[FUNCTION_VARIABLE_BLUR][2], (double)function_values[FUNCTION_VARIABLE_BLUR][3],
@@ -2476,7 +2476,7 @@ vblur_draw_begin(struct eagl *e, struct vblur_chain *chain, GLint enabled[4])
 				used += (size_t)snprintf(said + used, sizeof(said) - used, " %d:%u,%u,%u,%u", y, column[4 * y], column[4 * y + 1],
 				    column[4 * y + 2], column[4 * y + 3]);
 			}
-			say("redwood-gl: the mask of the blur whose radius varies (texture %u, 1 x %d), from its first row:%s (error %#x)\n",
+			say("hakios-gl: the mask of the blur whose radius varies (texture %u, 1 x %d), from its first row:%s (error %#x)\n",
 			    e->bound[1], height, said, glGetError());
 		}
 	}
@@ -2738,7 +2738,7 @@ group_draw_begin(struct eagl *e, GLint enabled[4])
 
 		if (function < 90 && !said[function]) {
 			said[function] = 1;
-			say("redwood-gl: a group that holds a vibrant layer is drawn with CoreAnimation's function %u (\"%s\"): %s\n",
+			say("hakios-gl: a group that holds a vibrant layer is drawn with CoreAnimation's function %u (\"%s\"): %s\n",
 			    function, census_name(function), laid ? "the layer over what is behind it" : "made what it would have been");
 		}
 		if (!laid || !group_uniform(e, "vertex_matrix", matrix)) {
@@ -2853,7 +2853,7 @@ plain_draw_begin(struct eagl *e, GLint enabled[4])
 		vblur_level(e, (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0]);
 		census_draw(e, function, CENSUS_LEVEL);
 		if (told++ < 8) {
-			say("redwood-gl: a blur whose radius varies: level %d of texture %u made of level %d\n",
+			say("hakios-gl: a blur whose radius varies: level %d of texture %u made of level %d\n",
 			    (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0] + 1, e->bound[0],
 			    (int)function_values[FUNCTION_VARIABLE_DOWNSAMPLE][0]);
 		}
@@ -2874,7 +2874,7 @@ plain_draw_begin(struct eagl *e, GLint enabled[4])
 	}
 	if (function < 90 && !said[function]) {
 		said[function] = 1;
-		say("redwood-gl: a draw with no program is CoreAnimation's function %u (\"%s\")\n", function, census_name(function));
+		say("hakios-gl: a draw with no program is CoreAnimation's function %u (\"%s\")\n", function, census_name(function));
 	}
 	if ((int)function == trace_function && --trace_function_after == 0) {
 		trace_function_met = 1;
@@ -2999,7 +2999,7 @@ plain_draw_begin(struct eagl *e, GLint enabled[4])
 		const GLfloat *position = e->arrays[0].pointer, *where = e->arrays[2].pointer;
 
 		e->plain_said++;
-		say("redwood-gl: a draw with no program, into framebuffer %u: texture %u on the first unit%s; arrays %d %d %d; first "
+		say("hakios-gl: a draw with no program, into framebuffer %u: texture %u on the first unit%s; arrays %d %d %d; first "
 		    "corner %g %g, texture coordinates %g %g\n", e->framebuffer, e->bound[0], rows == 1 ? ", a table on the second" : "",
 		    enabled[0], enabled[1], enabled[2], position ? (double)position[0] : 0, position ? (double)position[1] : 0,
 		    where ? (double)where[0] : 0, where ? (double)where[1] : 0);
@@ -3273,12 +3273,12 @@ my_glGetString(void *context, GLenum name)
 	if (name == GL_EXTENSIONS && string != NULL) {
 		size_t length = strlen((const char *)string);
 
-		say("redwood-gl: asked for string %#x, %zu characters:\n", name, length);
+		say("hakios-gl: asked for string %#x, %zu characters:\n", name, length);
 		for (size_t at = 0; at < length; at += 700) {
-			say("redwood-gl:  %.700s\n", (const char *)string + at);
+			say("hakios-gl:  %.700s\n", (const char *)string + at);
 		}
 	} else {
-		say("redwood-gl: asked for string %#x: %.900s\n", name, string ? (const char *)string : "(none)");
+		say("hakios-gl: asked for string %#x: %.900s\n", name, string ? (const char *)string : "(none)");
 	}
 	EAGL_LEAVE(e, 0x3b0);
 	return string;
@@ -3294,7 +3294,7 @@ my_glGetIntegerv(void *context, GLenum name, GLint *values)
 	glGetIntegerv(name, values);
 	if (said < 40) {
 		said++;
-		say("redwood-gl: asked for number %#x: %d\n", name, values[0]);
+		say("hakios-gl: asked for number %#x: %d\n", name, values[0]);
 	}
 	EAGL_LEAVE(e, 0x348);
 }
@@ -3409,7 +3409,7 @@ say_callers(const char *what)
 		}
 		used += (size_t)snprintf(line + used, sizeof(line) - used, " %#lx", callers[i] - slide);
 	}
-	say("redwood-gl: %s, asked for by%s\n", what, line);
+	say("hakios-gl: %s, asked for by%s\n", what, line);
 }
 
 /*
@@ -3452,9 +3452,9 @@ astc_thumbnail(GLenum internal, GLsizei width, GLsizei height, GLsizei size, con
 				used += (size_t)snprintf(line + used, sizeof(line) - used, " ......");
 			}
 		}
-		say("redwood-gl: astc %u x %u, row %u:%s\n", across, down, by, line);
+		say("hakios-gl: astc %u x %u, row %u:%s\n", across, down, by, line);
 	}
-	say("redwood-gl: astc %u x %u: %u of the %u blocks looked at hold one colour\n", across, down, flat, seen);
+	say("hakios-gl: astc %u x %u: %u of the %u blocks looked at hold one colour\n", across, down, flat, seen);
 }
 
 static void
@@ -3494,7 +3494,7 @@ my_glCompressedTexImage2D(void *context, GLenum target, GLint level, GLenum inte
 			snprintf(head + 3 * i, 4, " %02x", ((const uint8_t *)data)[i]);
 		}
 		told++;
-		say("redwood-gl: a compressed picture into texture %u: internal format %#x, %d x %d, "
+		say("hakios-gl: a compressed picture into texture %u: internal format %#x, %d x %d, "
 		    "level %d, %d bytes%s, it begins%s\n", e->bound[e->unit], internal, width, height,
 		    level, size, error == 0 ? "" : error == 0x500 ? " -- refused, no such format" : " -- refused",
 		    head);
@@ -3582,7 +3582,7 @@ my_glFramebufferParameteriAPPLE(void *context, GLenum target, GLenum name, GLint
 
 	EAGL_ENTER(e, 0x2008);
 	if (slot_calls[0x2008 / 8] <= 4) {
-		say("redwood-gl: glFramebufferParameteriAPPLE(%#x, %#x, %d): nothing done\n", target, name, value);
+		say("hakios-gl: glFramebufferParameteriAPPLE(%#x, %#x, %d): nothing done\n", target, name, value);
 	}
 }
 
@@ -3641,9 +3641,9 @@ static const char fragment_start[] =
     "#define textureCube texture\n"
     "#define sampler2DRect sampler2D\n"
     "#define texture2DRect(s, c) texture(s, (c) / vec2(textureSize(s, 0)))\n"
-    "highp vec4 redwood_data[1];\n"
-    "#define gl_FragData redwood_data\n"
-    "#define gl_FragColor redwood_data[0]\n";
+    "highp vec4 hakios_data[1];\n"
+    "#define gl_FragData hakios_data\n"
+    "#define gl_FragColor hakios_data[0]\n";
 /*
  * What a fragment shader of the first version writes to (gl_FragData), and with the extension a
  * GPU's driver offers and CoreAnimation then uses (EXT_shader_framebuffer_fetch) reads what is
@@ -3652,21 +3652,21 @@ static const char fragment_start[] =
  * that variable before and writes it after.
  */
 static const char fragment_plain[] =
-    "layout(location = 0) out highp vec4 redwood_colour;\n"
-    "#define main redwood_main\n"
+    "layout(location = 0) out highp vec4 hakios_colour;\n"
+    "#define main hakios_main\n"
     "#line 1\n";
 static const char fragment_plain_end[] =
     "\n#undef main\n"
-    "void main() { redwood_main(); redwood_colour = redwood_data[0]; }\n";
+    "void main() { hakios_main(); hakios_colour = hakios_data[0]; }\n";
 static const char fragment_fetch[] =
-    "layout(location = 0) inout highp vec4 redwood_colour;\n"
-    "highp vec4 redwood_last[1];\n"
-    "#define gl_LastFragData redwood_last\n"
-    "#define main redwood_main\n"
+    "layout(location = 0) inout highp vec4 hakios_colour;\n"
+    "highp vec4 hakios_last[1];\n"
+    "#define gl_LastFragData hakios_last\n"
+    "#define main hakios_main\n"
     "#line 1\n";
 static const char fragment_fetch_end[] =
     "\n#undef main\n"
-    "void main() { redwood_last[0] = redwood_colour; redwood_main(); redwood_colour = redwood_data[0]; }\n";
+    "void main() { hakios_last[0] = hakios_colour; hakios_main(); hakios_colour = hakios_data[0]; }\n";
 static const char vertex_start[] =
     "#define attribute in\n"
     "#define varying out\n"
@@ -3739,7 +3739,7 @@ my_glShaderSource(void *context, GLuint shader, GLsizei count, const GLchar *con
 static void
 say_long(const char *what, const char *text)
 {
-	say("redwood-gl: %s:\n", what);
+	say("hakios-gl: %s:\n", what);
 	for (size_t at = 0, length = strlen(text); at < length; at += 900) {
 		write(2, text + at, length - at < 900 ? length - at : 900);
 	}
@@ -3759,12 +3759,12 @@ my_glCompileShader(void *context, GLuint shader)
 	e->shaders++;
 	if (!good) {
 		glGetShaderInfoLog(shader, sizeof(said), NULL, said);
-		say("redwood-gl: A SHADER DOES NOT COMPILE (shader %u): %s\n", shader, said);
+		say("hakios-gl: A SHADER DOES NOT COMPILE (shader %u): %s\n", shader, said);
 		if (e->sources[shader % 256] != NULL) {
 			say_long("its text", e->sources[shader % 256]);
 		}
 	} else if ((e->shaders <= 2 || all_shaders) && e->sources[shader % 256] != NULL) {
-		say("redwood-gl: shader %u:\n", shader);
+		say("hakios-gl: shader %u:\n", shader);
 		say_long(all_shaders ? "a shader" : "the first shaders, for the record", e->sources[shader % 256]);
 	}
 	EAGL_LEAVE(e, 0x12a8);
@@ -3783,7 +3783,7 @@ my_glLinkProgram(void *context, GLuint program)
 	e->programs++;
 	if (!good) {
 		glGetProgramInfoLog(program, sizeof(said), NULL, said);
-		say("redwood-gl: A PROGRAM DOES NOT LINK (program %u): %s\n", program, said);
+		say("hakios-gl: A PROGRAM DOES NOT LINK (program %u): %s\n", program, said);
 	}
 	EAGL_LEAVE(e, 0x12c0);
 }
@@ -3822,11 +3822,11 @@ my_initWithAPI(id self, SEL selector, unsigned long api, id properties)
 	for (place = 0; place < sizeof(contexts) / sizeof(contexts[0]) && contexts[place] != NULL; place++) {
 	}
 	if (api < 2 || api > 3 || place == sizeof(contexts) / sizeof(contexts[0]) || (e = calloc(1, sizeof(*e))) == NULL) {
-		say("redwood-gl: no context of API %lu\n", api);
+		say("hakios-gl: no context of API %lu\n", api);
 		return nil;
 	}
-	if ((e->gl = redwood_gl_create((int)api)) == NULL || !redwood_gl_make_current(e->gl)) {
-		say("redwood-gl: %s gives no OpenGL ES %lu context\n", redwood_gl_library(), api);
+	if ((e->gl = hakios_gl_create((int)api)) == NULL || !hakios_gl_make_current(e->gl)) {
+		say("hakios-gl: %s gives no OpenGL ES %lu context\n", hakios_gl_library(), api);
 		free(e);
 		return nil;
 	}
@@ -3836,7 +3836,7 @@ my_initWithAPI(id self, SEL selector, unsigned long api, id properties)
 	e->table[0] = e;
 	eagl_fill_table(e->table);
 	contexts[place] = e;
-	say("redwood-gl: an OpenGL ES %lu context for CoreAnimation, by %s: %s; %s; shaders %s\n", api, redwood_gl_library(),
+	say("hakios-gl: an OpenGL ES %lu context for CoreAnimation, by %s: %s; %s; shaders %s\n", api, hakios_gl_library(),
 	    (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER),
 	    (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION));
 	return self;
@@ -3869,7 +3869,7 @@ my_sharegroup(id self, SEL selector)
 	(void)selector;
 	if (!said) {
 		said = 1;
-		say("redwood-gl: -sharegroup asked for: none (nothing here shares a context)\n");
+		say("hakios-gl: -sharegroup asked for: none (nothing here shares a context)\n");
 	}
 	return nil;
 }
@@ -3879,7 +3879,7 @@ my_setParameter(id self, SEL selector, unsigned parameter, const int32_t *values
 {
 	(void)self;
 	(void)selector;
-	say("redwood-gl: -setParameter:%#x to:%d: noted\n", parameter, values ? values[0] : 0);
+	say("hakios-gl: -setParameter:%#x to:%d: noted\n", parameter, values ? values[0] : 0);
 	return 0;
 }
 
@@ -3911,7 +3911,7 @@ my_texImageIOSurface(id self, SEL selector, IOSurfaceRef surface, unsigned long 
 	clear_now(e);
 	glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
 	if (target != GL_TEXTURE_2D || texture == 0 || (image = image_new(e, (GLuint)texture, surface)) == NULL) {
-		say("redwood-gl: -texImageIOSurface: target %#lx, texture %d: not done\n", target, texture);
+		say("hakios-gl: -texImageIOSurface: target %#lx, texture %d: not done\n", target, texture);
 		return NO;
 	}
 	image->to = (GLenum)target;
@@ -3925,7 +3925,7 @@ my_texImageIOSurface(id self, SEL selector, IOSurfaceRef surface, unsigned long 
 	note_format(invert ? "IOSurface shown, inverted" : "IOSurface shown", image->internal, image->format, image->type, width,
 	    height);
 	if (shown++ < 24) {
-		say("redwood-gl: -texImageIOSurface: surface %u ('%.4s' %zu x %zu, %zu planes) as texture %d: %d x %d, plane %u%s\n",
+		say("hakios-gl: -texImageIOSurface: surface %u ('%.4s' %zu x %zu, %zu planes) as texture %d: %d x %d, plane %u%s\n",
 		    IOSurfaceGetID(surface), (const char *)&(uint32_t){ __builtin_bswap32(IOSurfaceGetPixelFormat(surface)) },
 		    IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface), IOSurfaceGetPlaneCount(surface), texture, width,
 		    height, plane, invert ? ", inverted" : "");
@@ -3963,7 +3963,7 @@ my_attachImage(id self, SEL selector, unsigned long target, IOSurfaceRef surface
 	if (target != GL_TEXTURE_2D || texture == 0 || (pixels != 'BGRA' && pixels != 0) ||
 	    IOSurfaceGetBytesPerElement(surface) != 4 || IOSurfaceGetPlaneCount(surface) != 0 ||
 	    (image = image_new(e, (GLuint)texture, surface)) == NULL) {
-		say("redwood-gl: -attachImage: target %#lx, texture %d, an IOSurface of '%.4s': not done\n", target, texture,
+		say("hakios-gl: -attachImage: target %#lx, texture %d, an IOSurface of '%.4s': not done\n", target, texture,
 		    (const char *)&(uint32_t){ __builtin_bswap32(pixels) });
 		return NO;
 	}
@@ -3998,7 +3998,7 @@ my_attachImage(id self, SEL selector, unsigned long target, IOSurfaceRef surface
 	}
 	e->attaching += now_us() - began;
 	if (attached++ < 24) {
-		say("redwood-gl: -attachImage: texture %d is IOSurface %u ('%.4s' %d x %d, %zu bytes a row)%s%s\n", texture,
+		say("hakios-gl: -attachImage: texture %d is IOSurface %u ('%.4s' %d x %d, %zu bytes a row)%s%s\n", texture,
 		    IOSurfaceGetID(surface), (const char *)&(uint32_t){ __builtin_bswap32(pixels) }, image->width, image->height,
 		    IOSurfaceGetBytesPerRow(surface), inverted ? ", drawn inverted" : "", image->shared ? ": its memory" :
 		    image->mirror != 0 ? ": a texture, copied into its memory by the GPU" : ": a copy");
@@ -4014,7 +4014,7 @@ my_dealloc(id self, SEL selector)
 	struct eagl *e = context_of(self);
 
 	if (e != NULL) {
-		say("redwood-gl: the context goes\n");
+		say("hakios-gl: the context goes\n");
 		summary(e);
 		for (unsigned i = 0; i < sizeof(contexts) / sizeof(contexts[0]); i++) {
 			if (contexts[i] == e) {
@@ -4022,10 +4022,10 @@ my_dealloc(id self, SEL selector)
 			}
 		}
 		if (current == e) {
-			redwood_gl_make_current(NULL);
+			hakios_gl_make_current(NULL);
 			current = NULL;
 		}
-		redwood_gl_destroy(e->gl);
+		hakios_gl_destroy(e->gl);
 		free(e);
 	}
 	((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&super, selector);
@@ -4042,7 +4042,7 @@ display_waits(void)
 	if (display == 0) {
 		return false;
 	}
-	says = IORegistryEntryCreateCFProperty(display, CFSTR("RedwoodWaitsForGPU"), kCFAllocatorDefault, 0);
+	says = IORegistryEntryCreateCFProperty(display, CFSTR("HakiosWaitsForGPU"), kCFAllocatorDefault, 0);
 	waits = says == kCFBooleanTrue;
 	if (says != NULL) {
 		CFRelease(says);
@@ -4160,7 +4160,7 @@ install(void)
 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
 			wait_for_frames = 0;
 		}
-		say("redwood-gl: a frame is waited for %s\n", wait_for_frames ? "here, before it is handed to the display" :
+		say("hakios-gl: a frame is waited for %s\n", wait_for_frames ? "here, before it is handed to the display" :
 		    "by the display's driver, not here");
 		for (argument = arguments; (argument = strstr(argument, "glenv=")) != NULL; argument += 6) {
 			char setting[128];
@@ -4173,14 +4173,14 @@ install(void)
 				if ((value = strchr(setting, '=')) != NULL) {
 					*value = 0;
 					setenv(setting, value + 1, 1);
-					say("redwood-gl: in the environment: %s=%s\n", setting, value + 1);
+					say("hakios-gl: in the environment: %s=%s\n", setting, value + 1);
 				}
 			}
 		}
 	}
 
 	if (class == Nil) {
-		say("redwood-gl: this program has no EAGLContext: nothing to do\n");
+		say("hakios-gl: this program has no EAGLContext: nothing to do\n");
 		return;
 	}
 	for (unsigned i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
@@ -4188,10 +4188,10 @@ install(void)
 		Method method = class_getInstanceMethod(class, selector);
 
 		if (method == NULL) {
-			say("redwood-gl: EAGLContext has no -%s\n", methods[i].name);
+			say("hakios-gl: EAGLContext has no -%s\n", methods[i].name);
 			continue;
 		}
-		say("redwood-gl: -[EAGLContext %s] (%s) replaced\n", methods[i].name, method_getTypeEncoding(method));
+		say("hakios-gl: -[EAGLContext %s] (%s) replaced\n", methods[i].name, method_getTypeEncoding(method));
 		if (method == class_getInstanceMethod(class_getSuperclass(class), selector)) {
 			/* inherited: the class gets one of its own, the one it inherits is everybody's */
 			class_addMethod(class, selector, methods[i].ours, method_getTypeEncoding(method));
@@ -4200,6 +4200,6 @@ install(void)
 		}
 		replaced++;
 	}
-	say("redwood-gl: %u of %zu methods of EAGLContext are ours; OpenGL ES by %s\n", replaced,
-	    sizeof(methods) / sizeof(methods[0]), redwood_gl_library());
+	say("hakios-gl: %u of %zu methods of EAGLContext are ours; OpenGL ES by %s\n", replaced,
+	    sizeof(methods) / sizeof(methods[0]), hakios_gl_library());
 }

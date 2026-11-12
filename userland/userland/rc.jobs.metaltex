@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaltex).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaltex).
 #
 # The fifteen fragment shaders of Apple's GL renderer that declare a texture, one process
 # each, each bound the kind and format its own module declares (tools/air/texdecl.sh prints

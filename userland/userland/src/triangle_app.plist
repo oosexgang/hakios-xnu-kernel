@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-	Info.plist of RedwoodTriangle.app (src/triangle_app.m), and every key in it is here
+	Info.plist of HakiosTriangle.app (src/triangle_app.m), and every key in it is here
 	because something reads it; the shape is copied from the system's own small
 	applications rather than invented.
 
@@ -46,13 +46,13 @@
 	<key>CFBundleDisplayName</key>
 	<string>Triangle</string>
 	<key>CFBundleExecutable</key>
-	<string>RedwoodTriangle</string>
+	<string>HakiosTriangle</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.redwood.triangle</string>
+	<string>com.hakios.triangle</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>RedwoodTriangle</string>
+	<string>HakiosTriangle</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -81,7 +81,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.redwood.triangle</string>
+			<string>com.hakios.triangle</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>redwoodtriangle</string>

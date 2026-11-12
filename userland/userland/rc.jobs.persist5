@@ -1,7 +1,7 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # What persistence buys, boot after boot (var_store=1 ufs_write=1; see rc.jobs.persist0 and
 # rc.jobs.persist1, which are this list with a little before it). Everything here is a measurement,
-# nothing here saves: the job com.redwood.varstore writes the volume when the kernel says the run is
+# nothing here saves: the job com.hakios.varstore writes the volume when the kernel says the run is
 # ending. Boot it five times over and compare the boots:
 #   the store at the start, and how much room the volume has;
 #   the line every run before this one left, and the keychain item an earlier boot wrote ("keep"

@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "redwood_camera.h"
+#include "hakios_camera.h"
 
 struct isp_stats {
 	double          mean[3];        /* R, G, B above black, in 10-bit steps */
@@ -88,11 +88,11 @@ void isp_init(struct isp *isp);
  * green's steps between neighbouring blocks of 4x4 cells, over green's level squared -- higher is sharper,
  * the same scene at any exposure the same; and green's mean level there (level, may be NULL).
  */
-float isp_sharpness(const struct redwood_camera_frame *f, const uint8_t *raw, float x0, float y0, float x1, float y1, float *level);
+float isp_sharpness(const struct hakios_camera_frame *f, const uint8_t *raw, float x0, float y0, float x1, float y1, float *level);
 /* the levels, from every 4th cell of every 4th pair of lines (with the processor's lens shading and white balance, if isp) */
-void isp_measure(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, struct isp_stats *s);
+void isp_measure(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, struct isp_stats *s);
 /* the exposure for the frames to come: true, and the command filled in, when it should change */
-bool isp_ae(struct isp *isp, const struct redwood_camera_frame *f, const struct isp_stats *s, struct redwood_camera_command *c);
+bool isp_ae(struct isp *isp, const struct hakios_camera_frame *f, const struct isp_stats *s, struct hakios_camera_command *c);
 /*
  * The white balance: grey world -- of the nearly grey, when enough is -- kept to the line of the
  * tuning's reference lights when there is one, a little of the way at a time.
@@ -103,9 +103,9 @@ void isp_awb(struct isp *isp, const struct isp_stats *s);
  * (rows from first_row to end_row only, for doing it in pieces). NV12: y and uv planes, full range (420f) or video
  * range (420v); BGRA: y only.
  */
-void isp_render_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
+void isp_render_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
     uint8_t *uv, size_t uv_stride, uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row, bool video_range);
-void isp_render_bgra(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *out, size_t stride,
+void isp_render_bgra(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *out, size_t stride,
     uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row);
 /*
  * Every pixel at the sensor's own size (f->width x f->height): the two colours a site does not have
@@ -116,17 +116,17 @@ void isp_render_bgra(const struct isp *isp, const struct redwood_camera_frame *f
  * moving pictures are) demosaiced as isp_render_full_nv12() does, and scaled to the picture between the
  * two nearest lines and pixels; rows from first_row to end_row (even), NV12.
  */
-void isp_render_still_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y,
+void isp_render_still_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y,
     size_t y_stride, uint8_t *uv, size_t uv_stride, uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row,
     bool video_range);
-void isp_render_full_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
+void isp_render_full_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
     uint8_t *uv, size_t uv_stride, uint32_t first_row, uint32_t end_row, bool video_range);
 /*
  * Lens shading measured from a frame of a flat field (a white sheet held over the lens, evenly lit):
  * each colour's level at each grid point (a block's mean) over the brightest of its own; false if
  * the frame is too dark or clipped for it. min_ratio: the darkest point's level over the brightest's.
  */
-bool isp_lsc_from_flat(struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, float *min_ratio);
+bool isp_lsc_from_flat(struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, float *min_ratio);
 void isp_set_ccm(struct isp *isp, const float m[9]);
 /* the tuning in PATH (tools/camtuning.py's) in place of the one there was: false, and none, if it is not one */
 bool isp_load_tuning(struct isp *isp, const char *path);

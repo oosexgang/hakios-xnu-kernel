@@ -1,5 +1,5 @@
 /*
- * iOS's Wi-Fi requests (kernel/overlay/bsd/dev/redwood_apple80211.c), run as a host program: SIOCGA80211 and
+ * iOS's Wi-Fi requests (kernel/overlay/bsd/dev/hakios_apple80211.c), run as a host program: SIOCGA80211 and
  * SIOCSA80211 as wifid sends them, answered from the station layer -- here a model of it that answers as a
  * scenario says, and whose records come from a radio's driver built outside this tree, so may say more
  * than there is room for. What goes back into the caller's buffer never passes the length it gave, and
@@ -9,25 +9,25 @@
  */
 #include "fakekernel.h"
 #define KERNEL 1
-#include <sys/redwood_sta.h>
+#include <sys/hakios_sta.h>
 
 /* ---- the station layer ------------------------------------------------------------------------------- */
 
-static struct redwood_sta_bss heard[4];
+static struct hakios_sta_bss heard[4];
 static unsigned heard_n;
-static struct redwood_sta_state state = { .phase = REDWOOD_STA_IDLE };
-static struct redwood_sta_join asked_join;
-static struct redwood_sta_scan asked_scan;
+static struct hakios_sta_state state = { .phase = HAKIOS_STA_IDLE };
+static struct hakios_sta_join asked_join;
+static struct hakios_sta_scan asked_scan;
 static unsigned joins, scans;
 
-bool redwood_sta_present(void) { return true; }
-bool redwood_sta_powered(void) { return true; }
-int redwood_sta_ask_power(bool on) { (void)on; return 0; }
-int redwood_sta_ask_leave(void) { return 0; }
-void redwood_sta_state(struct redwood_sta_state *out) { *out = state; }
+bool hakios_sta_present(void) { return true; }
+bool hakios_sta_powered(void) { return true; }
+int hakios_sta_ask_power(bool on) { (void)on; return 0; }
+int hakios_sta_ask_leave(void) { return 0; }
+void hakios_sta_state(struct hakios_sta_state *out) { *out = state; }
 
 bool
-redwood_sta_heard(unsigned index, struct redwood_sta_bss *bss)
+hakios_sta_heard(unsigned index, struct hakios_sta_bss *bss)
 {
 	if (index >= heard_n) {
 		return false;
@@ -37,20 +37,20 @@ redwood_sta_heard(unsigned index, struct redwood_sta_bss *bss)
 }
 
 unsigned
-redwood_sta_channels(struct redwood_sta_channel *channels, unsigned most)
+hakios_sta_channels(struct hakios_sta_channel *channels, unsigned most)
 {
 	static const uint16_t frequencies[] = { 2412, 2437, 5180, 5500 };
 	unsigned n = 0;
 
 	for (; n < 4 && n < most; n++) {
 		channels[n].frequency = frequencies[n];
-		channels[n].flags = frequencies[n] == 5500 ? REDWOOD_STA_CHANNEL_RADAR : 0;
+		channels[n].flags = frequencies[n] == 5500 ? HAKIOS_STA_CHANNEL_RADAR : 0;
 	}
 	return n;
 }
 
 int
-redwood_sta_ask_join(const struct redwood_sta_join *what)
+hakios_sta_ask_join(const struct hakios_sta_join *what)
 {
 	asked_join = *what;
 	joins++;
@@ -58,7 +58,7 @@ redwood_sta_ask_join(const struct redwood_sta_join *what)
 }
 
 int
-redwood_sta_ask_scan(const struct redwood_sta_scan *what)
+hakios_sta_ask_scan(const struct hakios_sta_scan *what)
 {
 	asked_scan = *what;
 	scans++;
@@ -87,12 +87,12 @@ printed_has(const char *text)
 }
 
 /* (the fake kernel's get and set are the sysctls' helpers; the driver has its own) */
-#include <sys/redwood_input.h>                  /* (before printf is the test's: they name it in a format attribute) */
-#include <sys/redwood_net.h>
+#include <sys/hakios_input.h>                  /* (before printf is the test's: they name it in a format attribute) */
+#include <sys/hakios_net.h>
 #define get apple80211_get
 #define set apple80211_set
 #define printf driver_printf
-#include "redwood_apple80211.c"
+#include "hakios_apple80211.c"
 #undef get
 #undef set
 #undef printf
@@ -110,7 +110,7 @@ request(bool is_set, int32_t type, void *buffer, uint32_t length, struct apple80
 {
 	struct apple80211req request = { .req_if_name = "en0", .req_type = type, .req_len = length,
 		                         .req_data = (user_addr_t)(uintptr_t)buffer };
-	int error = redwood_apple80211_ioctl(is_set ? SIOCSA80211 : SIOCGA80211, &request);
+	int error = hakios_apple80211_ioctl(is_set ? SIOCSA80211 : SIOCGA80211, &request);
 
 	if (out != NULL) {
 		*out = request;
@@ -131,10 +131,10 @@ untouched(const void *buffer, size_t from, size_t size)
 }
 
 /* a network the radio heard, saying more than there is room for when `wild` */
-static struct redwood_sta_bss
+static struct hakios_sta_bss
 network(const char *name, bool wild)
 {
-	struct redwood_sta_bss bss = { .bssid = { 2, 4, 6, 8, 10, 12 }, .frequency = 5180, .rssi = -55, .beacon_interval = 100 };
+	struct hakios_sta_bss bss = { .bssid = { 2, 4, 6, 8, 10, 12 }, .frequency = 5180, .rssi = -55, .beacon_interval = 100 };
 
 	bss.ssid_length = (uint8_t)strlen(name);
 	memcpy(bss.ssid, name, bss.ssid_length);
@@ -177,7 +177,7 @@ scan_results(void)
 	}
 	CHECK(request(false, 11, &result, sizeof(result), NULL) == EIO, "that was all");
 	/* a scan that is over starts the list again, and iOS is told */
-	redwood_apple80211_event(REDWOOD_STA_SCAN_DONE, 0);
+	hakios_apple80211_event(HAKIOS_STA_SCAN_DONE, 0);
 	CHECK(fake_events == 1 && fake_last_event.kev_class == KEV_IEEE80211_CLASS && fake_last_event.kev_subclass == 1 &&
 	    fake_last_event.event_code == EVENT_SCAN_DONE && fake_last_event.dv[0].data_length == 16,
 	    "a scan's end said as Apple80211's event 10: %u events, code %u", fake_events, fake_last_event.event_code);
@@ -202,7 +202,7 @@ radio_says_too_much(void)
 	uint8_t name[64];
 	struct apple80211req answered;
 
-	state.phase = REDWOOD_STA_JOINED;
+	state.phase = HAKIOS_STA_JOINED;
 	state.bss = heard[0];
 	memset(name, FILL, sizeof(name));
 	CHECK(request(false, 1, name, sizeof(name), &answered) == 0, "the name given");
@@ -261,7 +261,7 @@ join(void)
 	assoc.key_length = 10;
 	memcpy(assoc.key, "secretpass", 10);
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0, "asked");
-	CHECK(joins == 1 && asked_join.security == REDWOOD_STA_WPA2_PSK && asked_join.passphrase_length == 10 &&
+	CHECK(joins == 1 && asked_join.security == HAKIOS_STA_WPA2_PSK && asked_join.passphrase_length == 10 &&
 	    memcmp(asked_join.passphrase, "secretpass", 10) == 0 && asked_join.ssid_length == 4, "WPA2 with the passphrase");
 	CHECK(!printed_has("secretpass") && !printed_has("home"), "neither the name nor the key in the log: %s", printed);
 	CHECK(printed_has("a name of 4 bytes, any access point"), "lengths only: %s", printed);
@@ -278,13 +278,13 @@ join(void)
 	assoc.key_cipher = CIPHER_PMK;
 	assoc.key_length = 32;
 	CHECK(request(true, 20, &assoc, sizeof(assoc), NULL) == 0 && asked_join.passphrase_length == 0 &&
-	    asked_join.security == REDWOOD_STA_WPA2_PSK, "the key itself");
+	    asked_join.security == HAKIOS_STA_WPA2_PSK, "the key itself");
 	CHECK(joins == 2, "nothing refused reached the station: %u", joins);
 
 	/* how it went, in Apple80211's numbers */
 	static const struct { int status; int32_t result; } outcomes[] = { { 0, 1 }, { EAUTH, 21 }, { ETIMEDOUT, 9 }, { EIO, 2 } };
 	for (unsigned i = 0; i < 4; i++) {
-		redwood_apple80211_event(REDWOOD_STA_JOIN_DONE, outcomes[i].status);
+		hakios_apple80211_event(HAKIOS_STA_JOIN_DONE, outcomes[i].status);
 		CHECK(request(false, 21, NULL, 0, &answered) == 0 && answered.req_val == outcomes[i].result, "%d: %d, not %d",
 		    outcomes[i].status, answered.req_val, outcomes[i].result);
 		CHECK(fake_last_event.event_code == EVENT_ASSOC_DONE, "event 9 posted");
@@ -328,14 +328,14 @@ refusals(void)
 {
 	uint8_t buffer[64];
 
-	CHECK(redwood_apple80211_ioctl(0xc0206911, buffer) == EOPNOTSUPP, "another ioctl");
+	CHECK(hakios_apple80211_ioctl(0xc0206911, buffer) == EOPNOTSUPP, "another ioctl");
 	CHECK(request(false, 999, buffer, sizeof(buffer), NULL) == EOPNOTSUPP, "a get not built");
 	CHECK(request(true, 999, buffer, sizeof(buffer), NULL) == EOPNOTSUPP, "a set not built");
 	CHECK(request(false, 1, buffer, sizeof(buffer), NULL) == ENXIO, "the name of no network");
 	CHECK(request(false, 103, buffer, sizeof(buffer), NULL) == ENXIO, "the network, none");
 	char line[96];
 
-	redwood_apple80211_summary();
+	hakios_apple80211_summary();
 	snprintf(line, sizeof(line), "get 999 (?) 1 times, answered 0 times; the last refusal: %d (not built)", EOPNOTSUPP);
 	CHECK(printed_has(line), "said at the end: %s", printed);
 }

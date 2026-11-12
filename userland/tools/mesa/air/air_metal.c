@@ -7,7 +7,7 @@
  * libredwoodair: air_run's compute path, as a library a Metal driver calls.
  *
  * The contract is air_metal.h and nothing else -- no NIR, no Gallium, no ir3 in the
- * caller's view -- because the Metal side (userland/src/redwoodmetal.m) must not grow a
+ * caller's view -- because the Metal side (userland/src/hakiosmetal.m) must not grow a
  * dependency on Mesa's headers and this side must stay free to change how it compiles.
  *
  * Almost everything here is lifted from air_run.c (tools/mesa/air/air_run.c), which has
@@ -681,8 +681,8 @@ rwa_device_open(char *why, size_t why_size)
       int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
       if (fd < 0) {
          /* The ordinary case on this port, and not an error anybody should be
-          * surprised by: without gpu=1 the kernel starts no RedwoodGPU service, so
-          * there is no msm device for the shim to open (tools/mesa/redwood-drm).
+          * surprised by: without gpu=1 the kernel starts no HakiosGPU service, so
+          * there is no msm device for the shim to open (tools/mesa/hakios-drm).
           */
          say(why, why_size, "there is no GPU here: no msm device to open, which is what "
                             "a kernel booted without gpu=1 looks like");
@@ -821,7 +821,7 @@ const char *
 rwa_device_name(struct rwa_device *device)
 {
    /* Mesa's own name for the chip it opened ("Adreno 7c+ Gen 3"), which is where
-    * -[RedwoodMetalDevice name] gets the half it does not read out of the kernel.
+    * -[HakiosMetalDevice name] gets the half it does not read out of the kernel.
     */
    const char *name = device->screen->get_name(device->screen);
    return name ? name : "unknown GPU";
@@ -5396,7 +5396,7 @@ rwa_depth_stencil_destroy(struct rwa_depth_stencil *state)
  *
  * The numbers are Apple's own and were read out of the SDK this driver is built against
  * -- iPhoneOS16.5.sdk's Metal.framework/Headers/MTLVertexDescriptor.h -- rather than
- * remembered, and userland/src/redwoodmetal.m carries a _Static_assert per row against
+ * remembered, and userland/src/hakiosmetal.m carries a _Static_assert per row against
  * those enumerators, so a disagreement between this table and Apple's header is a build
  * failure of the driver and not a wrong fetch on the phone. That SDK's enumeration ends
  * at Half (53): FloatRG11B10 and FloatRGB9E5 are iOS 17's, and nothing on this device
@@ -6164,7 +6164,7 @@ vertex_reads_attributes(nir_shader *vs)
  * WHERE THESE NUMBERS COME FROM, and it is two sources that do not share a copy:
  *
  *   1. Apple's own MTLRenderPipeline.h for this release, which is on the build machine
- *      and not in this tree. userland/src/redwoodmetal.m compiles against it and
+ *      and not in this tree. userland/src/hakiosmetal.m compiles against it and
  *      _Static_asserts every value this table assumes, so a disagreement is a BUILD
  *      FAILURE of the driver rather than a wrong picture. (The same declarations are
  *      byte for byte identical in every iOS SDK from 10.3 to 16.5 and in macOS 13.3's,
@@ -6188,7 +6188,7 @@ vertex_reads_attributes(nir_shader *vs)
  * THE SHAPE OF THE TWO STRUCTS THE METAL DRIVER TYPES OUT BY HAND, stated here as
  * numbers so that an edit to one side alone fails to build on that side.
  *
- * The same four numbers are asserted in userland/src/redwoodmetal.m against ITS
+ * The same four numbers are asserted in userland/src/hakiosmetal.m against ITS
  * definitions. Neither file can see the other's structs, so this is not a comparison --
  * it is two independent statements of one agreement, which is the most a hand-copied
  * struct admits of. This port has paid twice for getting it wrong: a primitive type that
@@ -6207,12 +6207,12 @@ static_assert(sizeof(struct rwa_color_blend) == 32 &&
                  offsetof(struct rwa_render_shape, vertex_layout) == 420 &&
                  offsetof(struct rwa_render_shape, color_blend) == 792 &&
                  offsetof(struct rwa_render_shape, color_blend_count) == 1048,
-              "struct rwa_render_shape is not the shape redwoodmetal.m asserts: a field "
+              "struct rwa_render_shape is not the shape hakiosmetal.m asserts: a field "
               "was added in the middle, or only one of the two copies was rebuilt");
 static_assert(sizeof(struct rwa_render_info) == 116 &&
                  offsetof(struct rwa_render_info, vertex_argbuf_mask) == 100 &&
                  offsetof(struct rwa_render_info, blend_enabled_mask) == 108,
-              "struct rwa_render_info is not the shape redwoodmetal.m asserts, and this "
+              "struct rwa_render_info is not the shape hakiosmetal.m asserts, and this "
               "one the LIBRARY writes into: a driver with a shorter one is overrun");
 
 /* MTLBlendFactor, spelled out so a refusal names what the caller passed rather than

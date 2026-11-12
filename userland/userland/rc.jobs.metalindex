@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalindex).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalindex).
 #
 # Indexed drawing (docs/metal.md 10.35). Every drawing call in a real application is
 # -drawIndexedPrimitives:, and this driver had only -drawPrimitives:vertexStart:vertexCount:
@@ -42,7 +42,7 @@
 #    same attachments, which is why they are one process. Expect, in order:
 #
 #      - the draw of line 1 again, with its four words and its 4x4 grid;
-#      - "the index buffer is a RedwoodMetalBuffer of 14 bytes, holding 0 1 2 3 1 2 3". A
+#      - "the index buffer is a HakiosMetalBuffer of 14 bytes, holding 0 1 2 3 1 2 3". A
 #        buffer of another class means it came from the kernel path and has no Gallium
 #        resource behind it, and the draw will be refused with that sentence;
 #      - step 0, the non-indexed strip: "####/####/####/####  16 of 16 pixels, (0,0) drawn,
@@ -93,7 +93,7 @@
 # 5. The depth draw of 10.30, which is the regression for the same function with a DEPTH
 #    attachment under it -- the one case where it has two kinds of attachment to agree about,
 #    and the only path that sets the rasterizer's clip_halfz. Expect what logs/080758-run.log
-#    printed: a RedwoodMetalTexture of pixel format 252, -getBytes: on it REFUSED with the
+#    printed: a HakiosMetalTexture of pixel format 252, -getBytes: on it REFUSED with the
 #    library's sentence about two aspects, readsDepth=YES writesDepth=YES readsStencil=NO
 #    writesStencil=NO with 0 methods unanswered, four draws of status 6 with the far one
 #    DISCARDED, the nearer one PASSED, the control DREW, and the depth buffer 0.5 0.5 0.25 0.75.

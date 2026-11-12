@@ -1,5 +1,5 @@
 /*
- * Where the driver of redwood's Goodix or FocalTech controller (kernel/overlay/bsd/dev/redwood_goodix.c) takes its wiring from. The
+ * Where the driver of redwood's Goodix or FocalTech controller (kernel/overlay/bsd/dev/hakios_goodix.c) takes its wiring from. The
  * driver is compiled as it is into a host program; nothing of the controller is modelled. What is
  * tested: every address, clock, vote and pin the driver uses is the board's ([touch] of its file); for
  * the phone the driver was written on they are the numbers that used to be in the code; for a board
@@ -18,16 +18,16 @@ uint32_t hakios_test_rd(vm_offset_t address __unused) { accesses++; return 0; }
 void hakios_test_wr(vm_offset_t address __unused, uint32_t value __unused) { accesses++; }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { mappings++; return phys; }
 vm_offset_t ml_io_map_wcomb(vm_offset_t phys, vm_size_t size __unused) { mappings++; return phys; }
-void redwood_touch_post(uint32_t type __unused, uint32_t finger __unused, uint32_t x __unused, uint32_t y __unused) { }
-void redwood_tl(const char *format __unused, ...) { }
-void redwood_rpmh_lock(void) { }
-void redwood_rpmh_unlock(void) { }
+void hakios_touch_post(uint32_t type __unused, uint32_t finger __unused, uint32_t x __unused, uint32_t y __unused) { }
+void hakios_tl(const char *format __unused, ...) { }
+void hakios_rpmh_lock(void) { }
+void hakios_rpmh_unlock(void) { }
 
 #pragma GCC diagnostic ignored "-Wformat"
 #define KERNEL 1
 #define HAKIOS_MMIO_TEST 1
 #include "hakios_board.c"
-#include "redwood_goodix.c"
+#include "hakios_goodix.c"
 #undef printf
 
 static int failures;
@@ -111,7 +111,7 @@ not_wired(void)
 {
 	board = "qemu-virt";
 	boot_args = "touchscreen=1";
-	redwood_goodix_init();
+	hakios_goodix_init();
 	usleep(100 * 1000);
 	CHECK(logged("disabled:"), "said: %s", log_text);
 	CHECK(mappings == 0 && accesses == 0, "nothing mapped (%u), nothing touched (%u)", mappings, accesses);
@@ -123,7 +123,7 @@ off_by_default(void)
 {
 	board = "phone-video";
 	boot_args = "";
-	redwood_goodix_init();
+	hakios_goodix_init();
 	usleep(100 * 1000);
 	CHECK(mappings == 0 && accesses == 0 && log_text[0] == 0, "nothing mapped, touched or said: %s", log_text);
 }

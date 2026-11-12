@@ -1,9 +1,9 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalcaps).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalcaps).
 #
 # WHAT THIS BOOT IS FOR. An application decides its whole render path at startup from what the
 # device says it supports, and this port answers almost none of those questions itself:
 # -supportsFamily:, -supportsFeatureSet: and some forty more are INHERITED from Apple's private
-# _MTLDevice, which derives them from one number redwoodmetal.m supplies -- -featureProfile,
+# _MTLDevice, which derives them from one number hakiosmetal.m supplies -- -featureProfile,
 # which returns 0. Reading Metal's own code says what 0 produces (docs/metal.md 10.48). Nothing
 # has ever asked the device. This boot asks it.
 #
@@ -25,7 +25,7 @@
 #                      because a boot without it has fewer processes competing for the log.
 #   XL_CMDLINE         "bootcpu=7 cpus=8 cpufreq=1 touchscreen=1 gpu=1 metal=1"
 #                      metal=1 for the two registry properties metal_props sets below; gpu=1 so
-#                      -initWithAcceleratorPort: finds RedwoodGPU and the device is the real one
+#                      -initWithAcceleratorPort: finds HakiosGPU and the device is the real one
 #                      rather than the compiler-less fallback.
 #   XL_SECS=180        nothing here waits for the window server.
 #
@@ -33,7 +33,7 @@
 # of these is a disassembly result and not a measurement, which is the whole point of the boot.
 #
 #   caps: featureProfile = 0
-#         redwoodmetal.m returns 0. If this is not 0, nothing else below is predicted at all,
+#         hakiosmetal.m returns 0. If this is not 0, nothing else below is predicted at all,
 #         because every answer is a function of it. (Apple's own A11 driver answers 5:
 #         -[AGXA11FamilyDevice featureProfile] is `mov w0, #5; ret` at 0x209210f10.)
 #
@@ -96,7 +96,7 @@
 #   caps:   supportsTextureSampleCount(1) yes / supportsSampleCount(1) yes
 #   caps:   supportsTextureSampleCount(2) no  / supportsSampleCount(2) no     (4 and 8 likewise)
 #         -supportsTextureSampleCount: is one instruction that tail-calls -supportsSampleCount:,
-#         which only redwoodmetal.m implements (`count == 1`). The two must agree; if they do
+#         which only hakiosmetal.m implements (`count == 1`). The two must agree; if they do
 #         not, something other than our method is answering the forward.
 #
 #   caps:   maxThreadsPerThreadgroup                   1024 x 1024 x 64
@@ -141,7 +141,7 @@
 #         port fails uniquely, and answering the TRUTHFUL profile would not change it.
 #
 #         -gpuCoreCount is answered by nothing in this port's chain: only Apple's own
-#         AGXA11FamilyDevice declares it, _MTLDevice has no entry, and redwoodmetal.m does not
+#         AGXA11FamilyDevice declares it, _MTLDevice has no entry, and hakiosmetal.m does not
 #         implement it. MetalFX guards it with respondsToSelector:, so it is a no and not an
 #         abort -- and the "respondsToSelector(gpuCoreCount) no" line above is there to record
 #         that the only thing between this device and an unrecognized selector is somebody
@@ -157,7 +157,7 @@
 #         wrong feature profile turns a refusal into a promise.
 #
 # AND THE ONE OUTCOME THAT IS NOT A LINE: the log stopping, or an "unrecognized selector" naming
-# RedwoodMetalDevice. Each question is sent inside @try and prints
+# HakiosMetalDevice. Each question is sent inside @try and prints
 # "NOT ANSWERED by anything in the chain" when respondsToSelector: says no, so a missing method
 # should be a line and not a death. A crash here would mean an inherited answer read an ivar
 # nothing filled -- the targetDeviceInfo shape -- and the selector printed last in the log is

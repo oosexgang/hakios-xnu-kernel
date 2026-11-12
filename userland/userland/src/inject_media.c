@@ -13,7 +13,7 @@
  * and the stock wallpaper of iOS 16, whose layers are four such pictures, is its gradient alone.
  * There is no hardware decoder here; VideoToolbox takes its software one (VCPHEVC.videocodec).
  *
- * The flashlight (only where the kernel has one: torch=3, /dev/redwood-torch): Control Center's
+ * The flashlight (only where the kernel has one: torch=3, /dev/hakios-torch): Control Center's
  * button and AVFlashlight reach FigFlashlight in here, which asks the capture stack's device vendor
  * (+[BWFigCaptureDeviceVendor sharedCaptureDeviceVendor]) for the camera device and its back
  * camera's stream, and sets the stream's "TorchLevel" (0 to 1). Without a camera there is no
@@ -22,7 +22,7 @@
  * by where it calls from -- is given one of ours, with a device and a stream whose torch level goes
  * to the kernel (see flashlight_*() below). Everybody else still gets none, as before.
  *
- * The camera (only where the kernel has one: cam=5, /dev/redwood-camera): the vendor is made for
+ * The camera (only where the kernel has one: cam=5, /dev/hakios-camera): the vendor is made for
  * everybody, with the create function of our capture device (camera_device.c) in place of the
  * one H10ISP.mediacapture would give for the iPhone's ISP; the capture graph is built around it and
  * its frames reach Camera.app's preview (see camera_device.c). Its stream takes the torch level too,
@@ -81,9 +81,9 @@ prewarm_portrait_filter(__unused id self, __unused SEL selector, __unused int ve
 
 /* ---- the flashlight ------------------------------------------------------------------------------- */
 
-static int torch = -1;                  /* /dev/redwood-torch */
-static bool camera;                     /* /dev/redwood-camera is there */
-extern int redwood_camera_device_create(const void *allocator, const void *options, void **out);
+static int torch = -1;                  /* /dev/hakios-torch */
+static bool camera;                     /* /dev/hakios-camera is there */
+extern int hakios_camera_device_create(const void *allocator, const void *options, void **out);
 static Class vendor_class, device_class, stream_class;
 static IMP original_shared_vendor;
 static unsigned torch_said;
@@ -108,9 +108,9 @@ shared_vendor(id self, SEL selector)
 	if (vendor != NULL) {
 		return vendor;
 	}
-	if (!camera && access("/dev/redwood-camera", F_OK) == 0) {
+	if (!camera && access("/dev/hakios-camera", F_OK) == 0) {
 		camera = true;          /* (should the kernel have made it after mediaserverd started) */
-		say("redwood: mediaserverd: the kernel has a camera (/dev/redwood-camera)\n");
+		say("redwood: mediaserverd: the kernel has a camera (/dev/hakios-camera)\n");
 	}
 	if (camera) {
 		pthread_mutex_lock(&lock);
@@ -118,7 +118,7 @@ shared_vendor(id self, SEL selector)
 			id made = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("BWFigCaptureDeviceVendor"), sel_registerName("alloc"));
 
 			camera_vendor = ((id (*)(id, SEL, void *))objc_msgSend)(made, sel_registerName("initWithDeviceCreateFunction:"),
-			    (void *)redwood_camera_device_create);
+			    (void *)hakios_camera_device_create);
 			say("redwood: mediaserverd: the camera's device vendor %s\n", camera_vendor ? "made (camera_device.c)" :
 			    "CANNOT BE MADE");
 		}
@@ -145,7 +145,7 @@ flashlight_set(uint32_t level)
 	if (written != (ssize_t)sizeof(level) || torch_said < 40) {
 		torch_said++;
 		say("redwood: mediaserverd: the flashlight at %u of 1000%s\n", level, written == (ssize_t)sizeof(level) ? "" :
-		    " (NOT TAKEN by /dev/redwood-torch)");
+		    " (NOT TAKEN by /dev/hakios-torch)");
 	}
 }
 
@@ -473,9 +473,9 @@ flashlight_classes(void)
 		{ "setProperty:value:", "i@:@@", (IMP)flashlight_stream_set },
 	};
 
-	vendor_class = make_class("RedwoodFlashlightVendor", vendor, sizeof(vendor) / sizeof(vendor[0]));
-	device_class = make_class("RedwoodFlashlightDevice", NULL, 0);
-	stream_class = make_class("RedwoodFlashlightStream", stream, sizeof(stream) / sizeof(stream[0]));
+	vendor_class = make_class("HakiosFlashlightVendor", vendor, sizeof(vendor) / sizeof(vendor[0]));
+	device_class = make_class("HakiosFlashlightDevice", NULL, 0);
+	stream_class = make_class("HakiosFlashlightStream", stream, sizeof(stream) / sizeof(stream[0]));
 }
 
 /*
@@ -639,7 +639,7 @@ image_added(__unused const struct mach_header *header, __unused intptr_t image_s
 
 __attribute__((constructor))
 static void
-redwood_media_init(void)
+hakios_media_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;
@@ -656,14 +656,14 @@ redwood_media_init(void)
 		say("redwood: mediaserverd: the Metal device leaves this process as soon as Metal is in "
 		    "it (mediamtl=1 leaves it there)\n");
 	}
-	torch = open("/dev/redwood-torch", O_WRONLY);
-	camera = access("/dev/redwood-camera", F_OK) == 0;
+	torch = open("/dev/hakios-torch", O_WRONLY);
+	camera = access("/dev/hakios-camera", F_OK) == 0;
 	if (torch >= 0) {
 		flashlight_classes();
-		say("redwood: mediaserverd: the kernel has a flashlight (/dev/redwood-torch)\n");
+		say("redwood: mediaserverd: the kernel has a flashlight (/dev/hakios-torch)\n");
 	}
 	if (camera) {
-		say("redwood: mediaserverd: the kernel has a camera (/dev/redwood-camera)\n");
+		say("redwood: mediaserverd: the kernel has a camera (/dev/hakios-camera)\n");
 		register_hevc_encoder();
 	}
 	_dyld_register_func_for_add_image(image_added);         /* also called for every image already there */

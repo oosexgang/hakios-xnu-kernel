@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metalattrib).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalattrib).
 #
 # WHAT THIS BOOT IS FOR. docs/metal.md 10.44 put MTLVertexDescriptor into the contract and
 # measured it on the host: the offsets, the stride, the formats, the buffer index, the step
@@ -73,7 +73,7 @@
 #
 #   grep -a "vertex descriptor configures"
 #     expected 10      one line per pipeline this mode builds with a descriptor that configures
-#                      something: "redwoodmetal: this pipeline's vertex descriptor configures 3
+#                      something: "hakiosmetal: this pipeline's vertex descriptor configures 3
 #                      attributes, the highest from buffer index 5" (and 2 for the gated step,
 #                      which leaves three attributes alone). This is the first line in any log
 #                      of this port that says a vertex layout arrived at all.

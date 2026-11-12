@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.metaldraw1).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metaldraw1).
 #
 # Slice 1 of the fragment-shader sweep: shaders 60..119 of
 # AppleMetalGLRenderer's library, drawn through the Metal driver, one line each.

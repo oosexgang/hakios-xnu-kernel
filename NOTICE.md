@@ -16,7 +16,7 @@
 
 ## Linux
 
-Our drivers (`redwood_*.c`, `RedwoodGPU.cpp`, ...) name the Linux drivers whose register layouts and bring-up
+Our drivers (`hakios_*.c`, `HakiosGPU.cpp`, ...) name the Linux drivers whose register layouts and bring-up
 order they follow (msm/adreno, qcom clocks and PHYs, cs35l41, spi-geni, ...). They are written for xnu, not copied.
 The optional Wi-Fi build script (`base/tools/mk-ath11k.sh`) fetches Linux's ath11k
 (BSD-3-Clause-Clear, with an ISC header) and FreeBSD's LinuxKPI headers (BSD-2-Clause).
@@ -27,5 +27,5 @@ an external Wi-Fi object.
 
 Firmware and binaries of others are not repository content; `tools/check-publishable.sh` looks for them:
 Apple's iOS files and shaders, Qualcomm/Xiaomi firmware (ADSP, GPU, Wi-Fi, Bluetooth, touch), device trees,
-prebuilt UEFI drivers, and the touch firmware header `redwood_focaltech_fw.h`
+prebuilt UEFI drivers, and the touch firmware header `hakios_focaltech_fw.h`
 (make it from your own phone with `tools/mk-focaltech-fw.py`).

@@ -1,5 +1,5 @@
 /*
- * The lookup of a file in the port's RAM disks (kernel/overlay/bsd/dev/redwood_image.c), run as a host
+ * The lookup of a file in the port's RAM disks (kernel/overlay/bsd/dev/hakios_image.c), run as a host
  * program on an image tools/apfs/mkapfs.py made: the way the GPU's, the Wi-Fi DSP's and the audio DSP's
  * firmware reach their drivers before there is a root. The reader under it is the kernel's own
  * (bsd/miscfs/apfs/apfs_lib.c), built for this host as apfs-tool is. tests/apfs_image_test.sh makes the
@@ -52,7 +52,7 @@ mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size)
 }
 
 #define printf said
-#include "redwood_image.c"
+#include "hakios_image.c"
 #undef printf
 
 static int failures;
@@ -118,48 +118,48 @@ main(int argc, char **argv)
 	disk[0] = read_file(argv[2], &disk_size[0]);
 
 	/* firmware stored as it is, in one piece: used where it lies, no copy */
-	data = redwood_image_file("fw", "a660_zap.mbn", &size, &from);
+	data = hakios_image_file("fw", "a660_zap.mbn", &size, &from);
 	CHECK(data != NULL && from == 1 && same(argv[3], "fw", "a660_zap.mbn", data, size), "fw/a660_zap.mbn of md1: %p, %llu bytes",
 	    (const void *)data, (unsigned long long)size);
 	CHECK(data != NULL && inside(1, data, size), "where it lies in md1's memory");
 
 	/* a file stored compressed: read out once into memory of its own, and kept */
-	data = redwood_image_file("etc", "big.txt", &size, &from);
+	data = hakios_image_file("etc", "big.txt", &size, &from);
 	CHECK(data != NULL && same(argv[3], "etc", "big.txt", data, size), "etc/big.txt, decompressed: %llu bytes", (unsigned long long)size);
 	CHECK(data != NULL && !inside(1, data, size), "in memory of its own");
-	again = redwood_image_file("etc", "big.txt", &size2, NULL);
+	again = hakios_image_file("etc", "big.txt", &size2, NULL);
 	CHECK(again == data && size2 == size, "asked again: the same copy, not another");
 
 	/* one in a directory below, and a small one whole in its attribute */
-	data = redwood_image_file("etc/deep/er", "random.bin", &size, NULL);
+	data = hakios_image_file("etc/deep/er", "random.bin", &size, NULL);
 	CHECK(data != NULL && same(argv[3], "etc/deep/er", "random.bin", data, size), "etc/deep/er/random.bin");
-	data = redwood_image_file("etc", "small", &size, NULL);
+	data = hakios_image_file("etc", "small", &size, NULL);
 	CHECK(data != NULL && same(argv[3], "etc", "small", data, size), "etc/small, in its attribute");
 
 	/* what is not a file of some size is nothing */
-	CHECK(redwood_image_file("fw", "missing.bin", &size, NULL) == NULL, "a file that is not there");
-	CHECK(redwood_image_file("etc", "deep", &size, NULL) == NULL, "a directory");
-	CHECK(redwood_image_file("etc", "empty", &size, NULL) == NULL, "an empty file");
+	CHECK(hakios_image_file("fw", "missing.bin", &size, NULL) == NULL, "a file that is not there");
+	CHECK(hakios_image_file("etc", "deep", &size, NULL) == NULL, "a directory");
+	CHECK(hakios_image_file("etc", "empty", &size, NULL) == NULL, "an empty file");
 
 	/* md0 when md1 does not have it, md1 first when both do */
-	data = redwood_image_file("fw", "only0.bin", &size, &from);
+	data = hakios_image_file("fw", "only0.bin", &size, &from);
 	CHECK(data != NULL && from == 0 && inside(0, data, size), "a file only md0 has comes from md0: %d", from);
 	no_md1 = true;
-	data = redwood_image_file("fw", "a660_zap.mbn", &size, &from);
+	data = hakios_image_file("fw", "a660_zap.mbn", &size, &from);
 	CHECK(data != NULL && from == 0 && inside(0, data, size), "without md1, md0's own copy: %d", from);
 	no_md1 = false;
 
 	/* a path longer than the lookup holds is not cut short into another file's */
 	memset(longname, 'x', sizeof(longname) - 1);
 	longname[sizeof(longname) - 1] = 0;
-	CHECK(redwood_image_file("fw", longname, &size, NULL) == NULL && strstr(log_text, "is not looked up") != NULL,
+	CHECK(hakios_image_file("fw", longname, &size, NULL) == NULL && strstr(log_text, "is not looked up") != NULL,
 	    "a path too long: nothing, and said: %s", log_text);
 
 	/* a RAM disk that is not an APFS container */
 	memset(disk[0] + 32, 0, 4);
 	disk[1] = disk[0];
 	disk_size[1] = disk_size[0];
-	CHECK(redwood_image_file("fw", "only0.bin", &size, NULL) == NULL, "neither disk is a container: nothing");
+	CHECK(hakios_image_file("fw", "only0.bin", &size, NULL) == NULL, "neither disk is a container: nothing");
 
 	fprintf(stderr, "image_file_test: %s\n", failures ? "FAILED" : "ok");
 	return failures ? 1 : 0;

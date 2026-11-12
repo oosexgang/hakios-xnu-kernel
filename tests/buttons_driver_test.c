@@ -45,7 +45,7 @@ static unsigned posted_n;
 static pthread_mutex_t posted_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void
-redwood_touch_post(uint32_t type, uint32_t finger, uint32_t x __unused, uint32_t y __unused)
+hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x __unused, uint32_t y __unused)
 {
 	pthread_mutex_lock(&posted_lock);
 	if (posted_n < 64) {
@@ -128,12 +128,12 @@ press_and_release(void (*press)(void), void (*release)(void), uint32_t button, c
 
 	press();
 	WAIT_FOR(posts() == before + 1, 2000);
-	CHECK(posts() == before + 1 && posted[before].type == REDWOOD_BUTTON_DOWN && posted[before].button == button,
+	CHECK(posts() == before + 1 && posted[before].type == HAKIOS_BUTTON_DOWN && posted[before].button == button,
 	    "%s pressed: %u records, the last of type %u for button %u", name, posts() - before, posted[before].type,
 	    posted[before].button);
 	release();
 	WAIT_FOR(posts() == before + 2, 2000);
-	CHECK(posts() == before + 2 && posted[before + 1].type == REDWOOD_BUTTON_UP && posted[before + 1].button == button,
+	CHECK(posts() == before + 2 && posted[before + 1].type == HAKIOS_BUTTON_UP && posted[before + 1].button == button,
 	    "%s released", name);
 }
 
@@ -158,7 +158,7 @@ three_keys(void)
 {
 	phone("phone-cmd");
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
 	CHECK(logged("step 5: watching power volume-up volume-down"), "the driver watches all three: %s", log_text);
 	CHECK(logged("channel 3 is the PMK8350's power-on block"), "the power-on block's channel, by the board's name for it");
@@ -167,9 +167,9 @@ three_keys(void)
 	CHECK(logged("read the type of GPIO6 of the PM8350 through channel 9"), "which is the one read through");
 	usleep(100 * 1000);
 	CHECK(posts() == 0, "nothing is reported while nothing is pressed (%u)", posts());
-	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
-	press_and_release(volume_down_down, pon_up, REDWOOD_BUTTON_VOLUME_DOWN, "volume down");
-	press_and_release(volume_up_down, volume_up_up, REDWOOD_BUTTON_VOLUME_UP, "volume up");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
+	press_and_release(volume_down_down, pon_up, HAKIOS_BUTTON_VOLUME_DOWN, "volume down");
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
 	no_write();
 }
 
@@ -180,16 +180,16 @@ another_wiring(void)
 {
 	phone("phone-keys");
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
 	CHECK(logged("map the PMIC arbiter (0x4440000, 0x440a000, 0x6600000)"), "the arbiter where the SoC file has it: %s", log_text);
 	CHECK(logged("channel 3 is the PMX200's power-on block (0x20800); written by system 2"), "its power-on block");
 	CHECK(logged("channel 9 is GPIO9 of the PMX200 (0x2c800); written by system 2"), "its pin, through this system's channel");
 	CHECK(logged("registers 0xc840 to 0xc847, 0xc810"), "the registers said are the peripheral's own");
 	CHECK(logged("step 5: watching power volume-up volume-down"), "all three are watched");
-	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
-	press_and_release(volume_down_down, pon_up, REDWOOD_BUTTON_VOLUME_DOWN, "volume down");
-	press_and_release(volume_up_down, volume_up_up, REDWOOD_BUTTON_VOLUME_UP, "volume up");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
+	press_and_release(volume_down_down, pon_up, HAKIOS_BUTTON_VOLUME_DOWN, "volume down");
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
 	no_write();
 }
 
@@ -199,7 +199,7 @@ with_the_touch_screen(void)
 {
 	phone("phone-cmd");
 	boot_args = "touchscreen=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching"), 3000);
 	CHECK(logged("step 5: watching"), "the keys come with the touch screen");
 }
@@ -209,7 +209,7 @@ off_when_told(void)
 {
 	phone("phone-cmd");
 	boot_args = "touchscreen=1 buttons=0";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	usleep(200 * 1000);
 	CHECK(spmi.transfers == 0 && log_text[0] == 0, "buttons=0: not a read, not a word (%u transfers)", spmi.transfers);
 }
@@ -221,7 +221,7 @@ held_at_start(void)
 	phone("phone-cmd");
 	set_volume_up(true);
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching"), 3000);
 	CHECK(logged("a key reads as held before anything was watched: volume-up"), "said in the log");
 	usleep(200 * 1000);
@@ -229,7 +229,7 @@ held_at_start(void)
 	set_volume_up(false);
 	WAIT_FOR(logged("volume up is released now"), 2000);
 	CHECK(logged("volume up is released now: believed from here on"), "believed once released");
-	press_and_release(volume_up_down, volume_up_up, REDWOOD_BUTTON_VOLUME_UP, "volume up");
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
 	no_write();
 }
 
@@ -273,7 +273,7 @@ one_look_is_not_a_press(void)
 
 	phone("phone-cmd");
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
 	usleep(100 * 1000);
 	CHECK(posts() == 0, "nothing before (%u)", posts());
@@ -283,8 +283,8 @@ one_look_is_not_a_press(void)
 	WAIT_FOR(plan_at == sizeof(looks), 3000);
 	usleep(100 * 1000);
 	CHECK(plan_at == sizeof(looks), "every look of the plan was taken: %u", plan_at);
-	CHECK(posts() == 2 && posted[0].type == REDWOOD_BUTTON_DOWN && posted[0].button == REDWOOD_BUTTON_LOCK &&
-	    posted[1].type == REDWOOD_BUTTON_UP && posted[1].button == REDWOOD_BUTTON_LOCK, "one press and one release of power, and nothing else: %u records",
+	CHECK(posts() == 2 && posted[0].type == HAKIOS_BUTTON_DOWN && posted[0].button == HAKIOS_BUTTON_LOCK &&
+	    posted[1].type == HAKIOS_BUTTON_UP && posted[1].button == HAKIOS_BUTTON_LOCK, "one press and one release of power, and nothing else: %u records",
 	    posts());
 	no_write();
 }
@@ -296,11 +296,11 @@ presses_are_counted(void)
 	phone("phone-cmd");
 	fake_delay_divisor = 20;                /* the summary comes after 10 s of looks: half a second here */
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
-	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
-	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
-	press_and_release(volume_up_down, volume_up_up, REDWOOD_BUTTON_VOLUME_UP, "volume up");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
+	press_and_release(volume_up_down, volume_up_up, HAKIOS_BUTTON_VOLUME_UP, "volume up");
 	WAIT_FOR(logged("buttons: so far"), 30000);       /* (as many looks as 10 s hold: long on a busy machine) */
 	CHECK(logged("buttons: so far 2 presses of power, 1 of volume up, 0 of volume down; now none held"), "the summary: %s", log_text);
 	no_write();
@@ -315,7 +315,7 @@ bus_stops_answering(void)
 	phone("phone-cmd");
 	fake_delay_divisor = 40;
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
 	pon_model.silent = true;
 	pin_model.silent = true;
@@ -336,11 +336,11 @@ another_part_at_the_pin(void)
 	phone("phone-cmd");
 	pin_model.reg[0x04] = 0x21;                 /* not a GPIO */
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching power volume-down,"), 3000);
 	CHECK(logged("which is not what this driver knows"), "said in the log");
 	CHECK(logged("step 5: watching power volume-down,"), "power and volume down are watched, volume up is not");
-	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
+	press_and_release(power_down, pon_up, HAKIOS_BUTTON_LOCK, "power");
 	set_volume_up(true);
 	usleep(200 * 1000);
 	CHECK(posts() == 2, "nothing is believed of a pin that is something else (%u records)", posts());
@@ -354,7 +354,7 @@ pin_not_set_up(void)
 	phone("phone-cmd");
 	pin_model.reg[0x42] = 0x05;                 /* no pull */
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching"), 3000);
 	CHECK(logged("volume up is left alone"), "said in the log");
 	no_write();
@@ -367,7 +367,7 @@ another_arbiter(void)
 	phone("phone-cmd");
 	spmi.version = 0x70000000;
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("no buttons"), 3000);
 	CHECK(logged("this driver knows version 5 of the arbiter only"), "said in the log: %s", log_text);
 	usleep(100 * 1000);
@@ -382,7 +382,7 @@ nobody_there(void)
 	phone("phone-cmd");
 	pon_model.silent = true;
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("step 5: watching volume-up,"), 3000);
 	CHECK(logged("the transfer failed"), "said in the log");
 	CHECK(logged("step 5: watching volume-up,"), "volume up alone is watched");
@@ -395,7 +395,7 @@ first_steps_only(void)
 {
 	phone("phone-cmd");
 	boot_args = "buttons=1 buttons_steps=2";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	WAIT_FOR(logged("stopping here (buttons_steps=2)"), 3000);
 	CHECK(logged("stopping here (buttons_steps=2)"), "stops where told");
 	CHECK(spmi.transfers == 0, "no transfer on the bus yet (%u)", spmi.transfers);
@@ -407,7 +407,7 @@ board_without_keys(void)
 {
 	phone("qemu-virt");
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	usleep(100 * 1000);
 	CHECK(logged("lists no \"buttons-pmic\""), "said in the log: %s", log_text);
 	CHECK(spmi.transfers == 0 && spmi.elsewhere == 0 && spmi.writes == 0, "nothing read or written");
@@ -418,7 +418,7 @@ unknown_board(void)
 {
 	board = "a-phone-nobody-described";
 	boot_args = "buttons=1";
-	redwood_buttons_init();
+	hakios_buttons_init();
 	usleep(100 * 1000);
 	CHECK(logged("lists no \"buttons-pmic\""), "said in the log: %s", log_text);
 	CHECK(spmi.elsewhere == 0 && spmi.writes == 0, "nothing read or written");

@@ -1,6 +1,6 @@
 /*
  * A phone's buttons -- power, volume up, volume down -- as a source of button records for
- * /dev/redwood-touch (sys/redwood_input.h). Only with boot-arg buttons=1, on a board that lists
+ * /dev/hakios-touch (sys/hakios_input.h). Only with boot-arg buttons=1, on a board that lists
  * "buttons-pmic": where the arbiter is comes from the SoC file ([spmi]), which peripherals the keys
  * are on from the board file ([buttons]).
  *
@@ -30,7 +30,7 @@
  * No interrupt is used; what one would take is said at the end of this file.
  *
  * The mapping: the phone has what the iPhone X has, whose user space runs here -- a side button
- * and two volume keys, no home button. Power is the side button (REDWOOD_BUTTON_LOCK).
+ * and two volume keys, no home button. Power is the side button (HAKIOS_BUTTON_LOCK).
  *
  * The bring-up is made in steps, each said in the log before it is made. Boot-arg
  * buttons_steps=N stops after the first N:
@@ -50,7 +50,7 @@
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
 #include <pexpert/pexpert.h>
-#include <sys/redwood_input.h>
+#include <sys/hakios_input.h>
 #include <sys/systm.h>
 
 #include "hakios_board.h"
@@ -91,20 +91,20 @@ static struct hakios_spmi arb;
 
 /*
  * One transfer at a time through the arbiter for this system, whoever asks (the flashlight's
- * driver, bsd/dev/redwood_torch.c, as well): with two at once the arbiter drops one ("the transfer
+ * driver, bsd/dev/hakios_torch.c, as well): with two at once the arbiter drops one ("the transfer
  * was dropped"), as Linux never lets happen (one lock for the bus).
  */
-static LCK_GRP_DECLARE(spmi_lck_grp, "redwood-spmi");
+static LCK_GRP_DECLARE(spmi_lck_grp, "hakios-spmi");
 static LCK_SPIN_DECLARE(spmi_lock, &spmi_lck_grp);
 
 void
-redwood_spmi_lock(void)
+hakios_spmi_lock(void)
 {
 	lck_spin_lock(&spmi_lock);
 }
 
 void
-redwood_spmi_unlock(void)
+hakios_spmi_unlock(void)
 {
 	lck_spin_unlock(&spmi_lock);
 }
@@ -135,9 +135,9 @@ spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t coun
 	uint64_t start = mach_absolute_time(), taken;
 	const char *problem;
 
-	redwood_spmi_lock();
+	hakios_spmi_lock();
 	problem = hakios_spmi_read(hakios_spmi_observer(&arb, p->channel), reg, bytes, count);
-	redwood_spmi_unlock();
+	hakios_spmi_unlock();
 	absolutetime_to_nanoseconds(mach_absolute_time() - start, &taken);
 	bus.reads++;
 	bus.total_ns += taken;
@@ -211,16 +211,16 @@ find_channel(struct peripheral *p)
 
 static struct button {
 	const char *    name;
-	uint32_t        record;         /* REDWOOD_BUTTON_* */
+	uint32_t        record;         /* HAKIOS_BUTTON_* */
 	bool            usable;         /* its input is what it was taken for */
 	bool            live;           /* it has been seen released */
 	bool            last;           /* the look before this one */
 	bool            down;           /* as reported */
 	uint64_t        since;          /* when it went down */
 	uint32_t        presses;
-} power = { .name = "power", .record = REDWOOD_BUTTON_LOCK },
-    volume_up = { .name = "volume up", .record = REDWOOD_BUTTON_VOLUME_UP },
-    volume_down = { .name = "volume down", .record = REDWOOD_BUTTON_VOLUME_DOWN };
+} power = { .name = "power", .record = HAKIOS_BUTTON_LOCK },
+    volume_up = { .name = "volume up", .record = HAKIOS_BUTTON_VOLUME_UP },
+    volume_down = { .name = "volume down", .record = HAKIOS_BUTTON_VOLUME_DOWN };
 
 /* "12.345 s (08:13:05.918 UTC)": since boot as in the log's own stamps, and as the daemons' lines have it */
 static void
@@ -267,7 +267,7 @@ button_look(struct button *b, bool pressed)
 		absolutetime_to_nanoseconds(now - b->since, &held);
 		printf("buttons: %s released at %s, after %llu ms\n", b->name, when, held / NSEC_PER_MSEC);
 	}
-	redwood_touch_post(pressed ? REDWOOD_BUTTON_DOWN : REDWOOD_BUTTON_UP, b->record, 0, 0);
+	hakios_touch_post(pressed ? HAKIOS_BUTTON_DOWN : HAKIOS_BUTTON_UP, b->record, 0, 0);
 }
 
 /* One look at both peripherals. */
@@ -473,7 +473,7 @@ out:
 }
 
 void
-redwood_buttons_init(void)
+hakios_buttons_init(void)
 {
 	const struct hakios_board *board = hakios_board();
 	uint32_t enabled = 0, steps = 5;

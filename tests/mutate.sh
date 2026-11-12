@@ -6,7 +6,7 @@
 #   tests/mutate.sh TEST SOURCE OLD NEW
 #
 #   TEST     a test that tests/run.sh runs scenario by scenario: speaker_driver_test, loader_window_test, ...
-#   SOURCE   the file to break, as the test includes it: redwood_speaker.c, src/window.c, example_led.c
+#   SOURCE   the file to break, as the test includes it: hakios_speaker.c, src/window.c, example_led.c
 #   OLD NEW  the text to replace and what to put there; OLD is replaced where it first occurs
 #
 # for example
@@ -51,7 +51,7 @@ if [ "$(dirname "$original")" = "$(dirname "$test")" ]; then
 	test=$W/copy/$name.c
 fi
 "$HERE/../tools/boards.py" --devices "$HERE/devices" --soc "$HERE/soc" gen --out "$W/boards" > /dev/null || die "the test boards' tables could not be made"
-(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/redwood_focaltech_fw.h") || die "no stub for the touch firmware"
+(source "$HERE/../kernel/lib.sh" && focaltech_stub > "$W/boards/hakios_focaltech_fw.h") || die "no stub for the touch firmware"
 
 # (the flags of tests/run.sh, the copy's directory first)
 flags=(-std=gnu11 -w -O2 -pthread -I"$W/copy" -I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$W/boards" -I"$HERE/../loader")

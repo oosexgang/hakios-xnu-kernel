@@ -346,7 +346,7 @@ minimal_subclass(Class base, long profile, unsigned attempt)
 {
 	char name[64];
 
-	snprintf(name, sizeof(name), "RedwoodMinimalDevice%ld_%u", profile, attempt);
+	snprintf(name, sizeof(name), "HakiosMinimalDevice%ld_%u", profile, attempt);
 	Class sub = objc_allocateClassPair(base, name, 0);
 	if (sub == Nil) {
 		printf("stubdev: objc_allocateClassPair(%s) failed\n", name);
@@ -805,7 +805,7 @@ main(int argc, char **argv)
 		printf("stubdev: %s is not in this process\n", base_name);
 		return 1;
 	}
-	snprintf(sub_name, sizeof(sub_name), "Redwood%sStub", base_name);
+	snprintf(sub_name, sizeof(sub_name), "HakiOS%sStub", base_name);
 	Class sub = objc_allocateClassPair(base, sub_name, 0);
 	if (sub == Nil) {
 		printf("stubdev: objc_allocateClassPair(%s) failed\n", sub_name);

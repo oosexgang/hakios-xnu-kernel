@@ -261,7 +261,7 @@ load_the_tweaks(void)
 
 __attribute__((constructor))
 static void
-redwood_tweaks_init(void)
+hakios_tweaks_init(void)
 {
 	static bool done;
 

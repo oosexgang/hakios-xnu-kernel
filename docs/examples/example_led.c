@@ -79,7 +79,7 @@ led_thread(__unused void *parameter, __unused wait_result_t result)
 	thread_terminate(current_thread());
 }
 
-/* Called once at boot (a line in bsd/dev/redwood_input.c's start, or wherever the driver belongs). */
+/* Called once at boot (a line in bsd/dev/hakios_input.c's start, or wherever the driver belongs). */
 void
 example_led_init(void)
 {

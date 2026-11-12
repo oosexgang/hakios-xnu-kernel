@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.redwood.audio</string>
+	<string>com.hakios.audio</string>
 	<key>CFBundleName</key>
-	<string>RedwoodAudio</string>
+	<string>HakiosAudio</string>
 	<key>CFBundleExecutable</key>
-	<string>RedwoodAudio</string>
+	<string>HakiosAudio</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -29,7 +29,7 @@
 	<key>CFPlugInFactories</key>
 	<dict>
 		<key>7C3E5B0A-52D4-4F6B-9E0D-6B1A2D7F0C51</key>
-		<string>RedwoodAudio_Create</string>
+		<string>HakiosAudio_Create</string>
 	</dict>
 </dict>
 </plist>

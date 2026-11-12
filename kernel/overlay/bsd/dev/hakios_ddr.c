@@ -17,7 +17,7 @@
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
-#include <sys/redwood_input.h>
+#include <sys/hakios_input.h>
 #include <sys/systm.h>
 
 #include "hakios_board.h"
@@ -31,7 +31,7 @@ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 
 /*
  * The loader's log as well: this runs early, and the kernel's own log of a run keeps only its end. With
- * interrupts off -- on the way back to the loader (redwood_ddr_quiesce()) -- the loader's log only: the
+ * interrupts off -- on the way back to the loader (hakios_ddr_quiesce()) -- the loader's log only: the
  * kernel's console may not be written there, and printf was a panic ("Console I/O from interrupt-disabled
  * context") at the end of every run once the memory vote was taken away on the way back.
  */
@@ -124,7 +124,7 @@ ddr_slots(void)
  * on for this processor (ACV, bit 3, which the boot loader's firmware had set already, the same).
  * All cores together got 12.4 GB/s writing without it (membench=2: what one core gets alone), 14.8
  * with it; frames over 16.7 ms 28% instead of 34-36%. ddr_vote=N: N instead of the most (16383).
- * When the kernel goes back to the loader (redwood_ddr_quiesce(), on every way back, a panic's too)
+ * When the kernel goes back to the loader (hakios_ddr_quiesce(), on every way back, a panic's too)
  * the vote goes down to ddr_rest=N (default 1024). What the firmware had voted cannot be read back,
  * but what the cores get from memory can be measured (membench=2, writing): with any vote from 4
  * to 4096 12.0 to 12.4 GB/s, as before the first vote (12.4); with the most, 15.4; with none at all
@@ -136,15 +136,15 @@ ddr_slots(void)
 #define BCM_VALID               (1u << 29)
 #define BCM_VOTE(x, y)          (BCM_COMMIT | BCM_VALID | ((uint32_t)(x) & 0x3fff) << 14 | ((uint32_t)(y) & 0x3fff))
 #define BCM_ACV_APPS            8
-#define DDR_REST                1024            /* the vote left for the loader (ddr_rest=N); see redwood_ddr_quiesce() */
+#define DDR_REST                1024            /* the vote left for the loader (ddr_rest=N); see hakios_ddr_quiesce() */
 
 static vm_offset_t ddr_rsc;
 static uint32_t ddr_mc0, ddr_sh0, ddr_acv;
 static bool ddr_voted;
 
-/* (bsd/dev/redwood_input.c: command slot set 0 is the touch driver's and Wi-Fi's too, on renoir) */
-extern void redwood_rpmh_lock(void);
-extern void redwood_rpmh_unlock(void);
+/* (bsd/dev/hakios_input.c: command slot set 0 is the touch driver's and Wi-Fi's too, on renoir) */
+extern void hakios_rpmh_lock(void);
+extern void hakios_rpmh_unlock(void);
 
 /* What RPMh is told for the bus clock manager of that name; 0: the command database has none. */
 static uint32_t
@@ -191,15 +191,15 @@ ddr_raise(void)
 		return;
 	}
 	ddr_rsc = ml_io_map(hakios_board()->rpmh.rsc, RSC_SIZE);
-	redwood_rpmh_lock();
+	hakios_rpmh_lock();
 	ddr_voted = ddr_vote(vote);
-	redwood_rpmh_unlock();
+	hakios_rpmh_unlock();
 	tell("ddr: memory bandwidth vote %u on MC0 (%#x) and SH0 (%#x)%s\n", vote, ddr_mc0, ddr_sh0, ddr_voted ? "" : ": FAILED");
 }
 
 /* On the way back to the loader (osfmk/arm64/loader_return.c: loader_return(), whatever the reason; the other processors are stopped) */
 void
-redwood_ddr_quiesce(void)
+hakios_ddr_quiesce(void)
 {
 	uint32_t address[2] = { ddr_mc0, ddr_sh0 };
 	uint32_t rest = DDR_REST, data[2];

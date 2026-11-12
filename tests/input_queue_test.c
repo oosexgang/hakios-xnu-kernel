@@ -1,5 +1,5 @@
 /*
- * The queue between the touch and key drivers and iOS (kernel/overlay/bsd/dev/redwood_input.c, /dev/redwood-touch),
+ * The queue between the touch and key drivers and iOS (kernel/overlay/bsd/dev/hakios_input.c, /dev/hakios-touch),
  * run as a host program: what a driver posts reaches a reader whole and in order, a queue nobody reads
  * keeps the newest, and the way out of a run with five fingers held is a driver's fingers' alone -- a
  * program that writes samples to the device (inject.c does) cannot end the run with them.
@@ -9,16 +9,16 @@
 #include <unistd.h>
 
 #include "fakekernel.h"
-#include <sys/redwood_input.h>
+#include <sys/hakios_input.h>
 
 extern char log_text[];
 
 /* what the driver calls on the way out */
 static volatile unsigned returned, gpu_stopped;
 void loader_return(void) { returned++; }
-void redwood_adreno_stop(void) { gpu_stopped++; }
-void redwood_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
-void redwood_input_init(void);
+void hakios_adreno_stop(void) { gpu_stopped++; }
+void hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
+void hakios_input_init(void);
 
 /* the loader's log, where the latency lines go: kept where logged() looks */
 void loader_log_putc(char c);
@@ -33,7 +33,7 @@ loader_log_line(const char *line)
 /* (the kernel's printf takes %llu for a uint64_t, which on this host is an unsigned long of the same size) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat"
-#include "redwood_input.c"
+#include "hakios_input.c"
 #pragma GCC diagnostic pop
 
 static int failures;
@@ -41,12 +41,12 @@ static int failures;
 	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 
 #define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
-#define RECORD          sizeof(struct redwood_touch)
-#define NODE            "redwood-touch"
+#define RECORD          sizeof(struct hakios_touch)
+#define NODE            "hakios-touch"
 
 /* n records read by a program, and how many came */
 static unsigned
-take(struct redwood_touch *out, unsigned n)
+take(struct hakios_touch *out, unsigned n)
 {
 	size_t done = 0;
 
@@ -57,7 +57,7 @@ take(struct redwood_touch *out, unsigned n)
 static int
 inject(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 {
-	struct redwood_touch t = { .type = type, .finger = finger, .x = x, .y = y };
+	struct hakios_touch t = { .type = type, .finger = finger, .x = x, .y = y };
 
 	return fake_dev_write(NODE, &t, sizeof(t));
 }
@@ -68,24 +68,24 @@ inject(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 static void
 in_order(void)
 {
-	struct redwood_touch got[8];
+	struct hakios_touch got[8];
 	uint64_t before;
 
-	redwood_input_init();
+	hakios_input_init();
 	before = mach_absolute_time();
-	redwood_touch_post(REDWOOD_TOUCH_DOWN, 0, 100, 200);
-	redwood_touch_post(REDWOOD_TOUCH_MOVE, 0, 110, 210);
-	redwood_touch_post(REDWOOD_TOUCH_UP, 0, 120, 220);
+	hakios_touch_post(HAKIOS_TOUCH_DOWN, 0, 100, 200);
+	hakios_touch_post(HAKIOS_TOUCH_MOVE, 0, 110, 210);
+	hakios_touch_post(HAKIOS_TOUCH_UP, 0, 120, 220);
 	CHECK(take(got, 2) == 2, "two records into room for two");
-	CHECK(got[0].type == REDWOOD_TOUCH_DOWN && got[0].x == 100 && got[0].y == 200 && got[1].type == REDWOOD_TOUCH_MOVE && got[1].x == 110,
+	CHECK(got[0].type == HAKIOS_TOUCH_DOWN && got[0].x == 100 && got[0].y == 200 && got[1].type == HAKIOS_TOUCH_MOVE && got[1].x == 110,
 	    "the first two, in order");
-	CHECK(got[0].time >= before && got[1].time >= got[0].time && redwood_touch_last >= got[0].time, "with their times");
-	CHECK(take(got, 8) == 1 && got[0].type == REDWOOD_TOUCH_UP && got[0].y == 220, "then the third");
+	CHECK(got[0].time >= before && got[1].time >= got[0].time && hakios_touch_last >= got[0].time, "with their times");
+	CHECK(take(got, 8) == 1 && got[0].type == HAKIOS_TOUCH_UP && got[0].y == 220, "then the third");
 	/* a key, as the keys' driver posts one */
-	redwood_touch_post(REDWOOD_BUTTON_DOWN, REDWOOD_BUTTON_VOLUME_UP, 0, 0);
-	CHECK(take(got, 1) == 1 && got[0].type == REDWOOD_BUTTON_DOWN && got[0].finger == REDWOOD_BUTTON_VOLUME_UP, "a key");
+	hakios_touch_post(HAKIOS_BUTTON_DOWN, HAKIOS_BUTTON_VOLUME_UP, 0, 0);
+	CHECK(take(got, 1) == 1 && got[0].type == HAKIOS_BUTTON_DOWN && got[0].finger == HAKIOS_BUTTON_VOLUME_UP, "a key");
 	/* a position past the panel is held at its edge */
-	redwood_touch_post(REDWOOD_TOUCH_DOWN, 1, 70000, 1u << 31);
+	hakios_touch_post(HAKIOS_TOUCH_DOWN, 1, 70000, 1u << 31);
 	CHECK(take(got, 1) == 1 && got[0].x == 65535 && got[0].y == 65535, "past the edge: %u, %u", got[0].x, got[0].y);
 }
 
@@ -93,12 +93,12 @@ in_order(void)
 static void
 nobody_reads(void)
 {
-	static struct redwood_touch got[600];
+	static struct hakios_touch got[600];
 	unsigned n;
 
-	redwood_input_init();
+	hakios_input_init();
 	for (unsigned i = 0; i < 600; i++) {
-		redwood_touch_post(REDWOOD_TOUCH_MOVE, 0, i, i);
+		hakios_touch_post(HAKIOS_TOUCH_MOVE, 0, i, i);
 	}
 	n = take(got, 600);
 	CHECK(n == 512, "%u records kept", n);
@@ -109,23 +109,23 @@ nobody_reads(void)
 static void
 written_samples(void)
 {
-	struct redwood_touch got[4], two[2] = { { .type = REDWOOD_TOUCH_DOWN, .x = 5 }, { .type = REDWOOD_TOUCH_UP, .x = 6 } };
+	struct hakios_touch got[4], two[2] = { { .type = HAKIOS_TOUCH_DOWN, .x = 5 }, { .type = HAKIOS_TOUCH_UP, .x = 6 } };
 
-	redwood_input_init();
+	hakios_input_init();
 	CHECK(fake_dev_write(NODE, two, sizeof(two)) == 0, "two samples written");
 	CHECK(take(got, 4) == 2 && got[0].x == 5 && got[1].x == 6, "and read");
-	CHECK(inject(0, 0, 0, 0) == EINVAL && inject(REDWOOD_BUTTON_UP + 1, 0, 0, 0) == EINVAL, "a type there is not: refused");
-	CHECK(inject(REDWOOD_BUTTON_DOWN, REDWOOD_BUTTON_LOCK, 0, 0) == 0 && take(got, 4) == 1, "a key, written");
+	CHECK(inject(0, 0, 0, 0) == EINVAL && inject(HAKIOS_BUTTON_UP + 1, 0, 0, 0) == EINVAL, "a type there is not: refused");
+	CHECK(inject(HAKIOS_BUTTON_DOWN, HAKIOS_BUTTON_LOCK, 0, 0) == 0 && take(got, 4) == 1, "a key, written");
 }
 
 /* five of a driver's fingers held for a second and a half end the run: the GPU first, then back to the loader */
 static void
 five_fingers_end_the_run(void)
 {
-	redwood_input_init();
+	hakios_input_init();
 	fake_delay_divisor = 2;                 /* 1.5 s: 750 ms here (wide: a busy machine's sleeps overrun) */
 	for (unsigned f = 0; f < 5; f++) {
-		redwood_touch_post(REDWOOD_TOUCH_DOWN, f, 100 * f, 100);
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 100 * f, 100);
 	}
 	EVENTUALLY(returned == 1, 3000, "the run ends: %u", returned);
 	CHECK(gpu_stopped == 1, "with the GPU given back first");
@@ -135,17 +135,17 @@ five_fingers_end_the_run(void)
 static void
 lifted_in_time(void)
 {
-	redwood_input_init();
+	hakios_input_init();
 	fake_delay_divisor = 2;                 /* the hold: 750 ms here */
 	for (unsigned f = 0; f < 5; f++) {
-		redwood_touch_post(REDWOOD_TOUCH_DOWN, f, 0, 0);
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 0, 0);
 	}
 	usleep(100 * 1000);
-	redwood_touch_post(REDWOOD_TOUCH_UP, 3, 0, 0);
+	hakios_touch_post(HAKIOS_TOUCH_UP, 3, 0, 0);
 	usleep(1200 * 1000);
 	CHECK(returned == 0, "one lifted well before the time: nothing ends, long after");
 	/* four stay down, a fifth lands again: the time starts over */
-	redwood_touch_post(REDWOOD_TOUCH_DOWN, 3, 0, 0);
+	hakios_touch_post(HAKIOS_TOUCH_DOWN, 3, 0, 0);
 	usleep(100 * 1000);
 	CHECK(returned == 0, "a little after it landed again: not yet");
 	EVENTUALLY(returned == 1, 3000, "then the run ends");
@@ -156,18 +156,18 @@ lifted_in_time(void)
 static void
 written_fingers_do_not_count(void)
 {
-	redwood_input_init();
+	hakios_input_init();
 	fake_delay_divisor = 10;                /* the hold: 150 ms here; waited for many times over */
 	for (unsigned f = 0; f < 5; f++) {
-		CHECK(inject(REDWOOD_TOUCH_DOWN, f, 0, 0) == 0, "finger %u written", f);
+		CHECK(inject(HAKIOS_TOUCH_DOWN, f, 0, 0) == 0, "finger %u written", f);
 	}
 	usleep(500 * 1000);
 	CHECK(returned == 0 && gpu_stopped == 0, "three times the hold, and the run goes on");
 	/* nor do they add to a driver's: four from a driver and one written */
 	for (unsigned f = 0; f < 4; f++) {
-		redwood_touch_post(REDWOOD_TOUCH_DOWN, f, 0, 0);
+		hakios_touch_post(HAKIOS_TOUCH_DOWN, f, 0, 0);
 	}
-	CHECK(inject(REDWOOD_TOUCH_DOWN, 4, 0, 0) == 0, "a fifth written");
+	CHECK(inject(HAKIOS_TOUCH_DOWN, 4, 0, 0) == 0, "a fifth written");
 	usleep(500 * 1000);
 	CHECK(returned == 0, "four of a driver's and one written: the run goes on");
 }
@@ -177,8 +177,8 @@ static void
 latency_lines_on(void)
 {
 	boot_args = "touch_lat=1";
-	redwood_input_init();
-	redwood_touch_post(REDWOOD_TOUCH_MOVE, 2, 300, 400);
+	hakios_input_init();
+	hakios_touch_post(HAKIOS_TOUCH_MOVE, 2, 300, 400);
 	CHECK(logged("tl: p 2 2 300 400 at "), "the line: %s", log_text);
 }
 

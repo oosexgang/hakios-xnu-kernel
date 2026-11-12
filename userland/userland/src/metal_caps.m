@@ -4,7 +4,7 @@
  * An application decides its whole render path at startup from this family of questions, and
  * this port answers almost none of them itself: -supportsFamily:, -supportsFeatureSet: and
  * some forty more are INHERITED from Apple's private _MTLDevice, which computes them from one
- * number the driver does supply -- -featureProfile, which redwoodmetal.m returns 0 from.
+ * number the driver does supply -- -featureProfile, which hakiosmetal.m returns 0 from.
  * Reading Metal's code says what 0 should produce (docs/metal.md 10.48); this program is the
  * other half, because an inherited answer is Apple's code running against ivars nothing in
  * this port fills, and that shape has already cost one crash here (-targetDeviceInfo, 10.40).
@@ -239,7 +239,7 @@ main(int argc, char **argv)
 
 	printf("caps: -- sample counts, where the driver answers for itself --\n");
 	/* -supportsTextureSampleCount: is one instruction in _MTLDevice (0x181a17890) that tail
-	 * calls -supportsSampleCount:, which _MTLDevice does not implement; redwoodmetal.m does,
+	 * calls -supportsSampleCount:, which _MTLDevice does not implement; hakiosmetal.m does,
 	 * and answers count == 1. Both are asked here so that the forward is measured and not
 	 * assumed: if they ever disagree, one of them is being answered by something else. */
 	for (NSUInteger n = 1; n <= 8; n *= 2) {

@@ -3,7 +3,7 @@
  * that reaches a PMIC shares: where the arbiter's registers are, how a channel is found, how one
  * transfer is started and what its status says.
  *
- * What a driver keeps to itself: when it takes the bus (redwood_spmi_lock(), one transfer at a time
+ * What a driver keeps to itself: when it takes the bus (hakios_spmi_lock(), one transfer at a time
  * for all of them), whether it asks again after a dropped transfer, what it counts and what it says
  * in its log.
  *

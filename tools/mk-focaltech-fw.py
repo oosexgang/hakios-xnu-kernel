@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Make bsd/dev/redwood_focaltech_fw.h (the touch firmware the redwood driver loads) from your own phone's
+# Make bsd/dev/hakios_focaltech_fw.h (the touch firmware the redwood driver loads) from your own phone's
 # focaltech_ts_fw_m20.bin; the firmware is not ours to publish. Only redwood (POCO X5 Pro 5G) needs it.
-#   mk-focaltech-fw.py focaltech_ts_fw_m20.bin XNU_TREE/bsd/dev/redwood_focaltech_fw.h
+#   mk-focaltech-fw.py focaltech_ts_fw_m20.bin XNU_TREE/bsd/dev/hakios_focaltech_fw.h
 import sys
 
 data = open(sys.argv[1], 'rb').read()

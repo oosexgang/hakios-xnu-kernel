@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (RC_JOBS=rc.jobs.drawable).
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.drawable).
 #
 # WHAT THIS BOOT IS FOR. The port has no drawable, and that is the single most expensive
 # thing about it: showing one finished frame costs 15.46 ms -- -getBytes: 11.96 ms to pull a
@@ -10,7 +10,7 @@
 # -[CAMetalLayer nextDrawable] asks a Metal device exactly one thing for this:
 # -newTextureWithDescriptor:iosurface:plane:, a texture over an IOSurface CoreAnimation
 # allocated (docs/metal.md 10.46). The library grew rwa_texture_from_surface for it and
-# userland/src/redwooddrawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
+# userland/src/hakiosdrawable.m is the bridge. NOTHING OF EITHER HAS EVER RUN ON THE PHONE.
 # This list is the first time, and it asks the one question that separates a texture over the
 # surface's own pages from a texture over a copy of them.
 #
@@ -134,10 +134,10 @@
 #       the geometry both sides agreed on, which is the number to quote in any write-up.
 #   grep -a 'drawable_test: the GPU is' logs/*-run.log
 #       must say an Adreno. "softpipe" here invalidates lines (d) to (f).
-#   grep -a 'redwooddrawable:' logs/*-run.log
+#   grep -a 'hakiosdrawable:' logs/*-run.log
 #       the bridge's own one-off lines: whether the compiler library is loaded and whether it
 #       has rwa_texture_from_surface, and whether this process had IOSurfaceGetID.
-#   grep -a 'RedwoodGPU: request' logs/*-run.log
+#   grep -a 'HakiosGPU: request' logs/*-run.log
 #       empty. A line here means the kernel was asked something it does not know, and 0x7e is
 #       the request this list depends on.
 #   grep -a 'MiniIOSurface' logs/*-run.log

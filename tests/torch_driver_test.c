@@ -1,5 +1,5 @@
 /*
- * The flashlight's driver itself (kernel/overlay/bsd/dev/redwood_torch.c), run as a host program
+ * The flashlight's driver itself (kernel/overlay/bsd/dev/hakios_torch.c), run as a host program
  * against the model of the PMIC arbiter (spmi_model.h) with a flash LED module and the PMIC's
  * temperature alarm behind it. This driver writes to a PMIC, which makes the phone's supplies, so what
  * is tested first is what it must never do: a write to a register that is not one of the module's six,
@@ -85,14 +85,14 @@ uint32_t hakios_test_rd(vm_offset_t address) { return spmi_model_rd(address); }
 void hakios_test_wr(vm_offset_t address, uint32_t value) { spmi_model_wr(address, value); }
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 
-/* the battery's temperature, which the driver asks for (bsd/dev/redwood_battery.c in the kernel) */
+/* the battery's temperature, which the driver asks for (bsd/dev/hakios_battery.c in the kernel) */
 static int battery_c = 30;
-int redwood_battery_temperature(void) { return battery_c; }
+int hakios_battery_temperature(void) { return battery_c; }
 
 /* the one lock of the bus is the buttons' driver's (bsd/dev/hakios_buttons.c) */
 static pthread_mutex_t bus = PTHREAD_MUTEX_INITIALIZER;
-void redwood_spmi_lock(void) { pthread_mutex_lock(&bus); }
-void redwood_spmi_unlock(void) { pthread_mutex_unlock(&bus); }
+void hakios_spmi_lock(void) { pthread_mutex_lock(&bus); }
+void hakios_spmi_unlock(void) { pthread_mutex_unlock(&bus); }
 
 /* The driver's includes are the kernel's: the fake kernel answers for them. (Its uint64_t is an unsigned
  * long long, which is what it prints it as; and two of its own names are taken on a host: get() by the
@@ -103,7 +103,7 @@ void redwood_spmi_unlock(void) { pthread_mutex_unlock(&bus); }
 #define get torch_get
 #define alarm torch_alarm
 #include "hakios_board.c"
-#include "redwood_torch.c"
+#include "hakios_torch.c"
 #undef get
 #undef alarm
 
@@ -158,7 +158,7 @@ never(void)
 static void
 dark_at_the_end(void)
 {
-	redwood_torch_quiesce();
+	hakios_torch_quiesce();
 	CHECK(!lit_now(), "the light is on at the run's end");
 	CHECK(spmi_get(&flash_model, REG_MODULE_EN) == 0 && (spmi_get(&flash_model, REG_EN_LED) & 0x01) == 0 &&
 	    (spmi_get(&flash_model, REG_ITARGET0) & 0x7f) == 0, "the module is not as it was found: enable %#x, channels %#x, target %#x",
@@ -168,7 +168,7 @@ dark_at_the_end(void)
 static void
 ask_for(uint32_t permille)
 {
-	CHECK(fake_dev_write("redwood-torch", &permille, sizeof(permille)) == 0, "/dev/redwood-torch takes a level");
+	CHECK(fake_dev_write("hakios-torch", &permille, sizeof(permille)) == 0, "/dev/hakios-torch takes a level");
 }
 
 static uint32_t
@@ -176,7 +176,7 @@ shown_level(void)
 {
 	uint32_t value = 0xffffffff;
 
-	CHECK(fake_dev_read("redwood-torch", &value, sizeof(value)) == 0, "/dev/redwood-torch is read");
+	CHECK(fake_dev_read("hakios-torch", &value, sizeof(value)) == 0, "/dev/hakios-torch is read");
 	return value;
 }
 
@@ -188,7 +188,7 @@ look_only(void)
 {
 	phone("phone-video");
 	boot_args = "torch=1";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("channel 20 is the PM8350C's flash LED module (0x2ee00); written by system 0, which is us"),
 	    "the module's channel that is this system's: %s", log_text);
@@ -204,7 +204,7 @@ light_once(void)
 {
 	phone("phone-video");
 	boot_args = "torch=2 torch_secs=1";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(lit_now(), 5000);
 	CHECK(lit_now(), "the light comes on: %s", log_text);
 	CHECK(spmi_get(&flash_model, REG_ITARGET0) == 9 && (spmi_get(&flash_model, REG_IRES) & 0x01) == 0,
@@ -227,7 +227,7 @@ another_chip(void)
 {
 	phone("phone-keys");
 	boot_args = "torch=2 torch_secs=1";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(lit_now(), 5000);
 	CHECK(logged("channel 20 is the PM8350C's flash LED module (0x3ee00); written by system 2, which is us"),
 	    "the channel of this system, which is the arbiter's third: %s", log_text);
@@ -244,7 +244,7 @@ for_ios(void)
 {
 	phone("phone-video");
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	CHECK(logged("THE LIGHT IS IOS'S"), "the device is made: %s", log_text);
 	CHECK(!lit_now() && spmi.writes == 0, "no light, and nothing written, until iOS asks");
@@ -274,7 +274,7 @@ fault_while_lit(void)
 {
 	phone("phone-video");
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
@@ -302,7 +302,7 @@ lit_then(void (*goes_wrong)(void), const char *said, const char *what)
 {
 	phone("phone-video");
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
@@ -343,7 +343,7 @@ channel_changes_hands(void)
 
 	phone("phone-video");
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	spmi_channel(20, &somebody_else, spmi.ee);
 	ask_for(1000);
@@ -359,7 +359,7 @@ pmic_hot(void)
 {
 	phone("phone-video");
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
@@ -376,7 +376,7 @@ battery_hot(void)
 	phone("phone-video");
 	battery_c = 46;
 	boot_args = "torch=2 torch_secs=1";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("not lit: the battery is at 46 C"), "said in the log: %s", log_text);
 	CHECK(times_lit == 0 && spmi.writes == 0, "not lit, nothing written (%u writes)", spmi.writes);
@@ -389,7 +389,7 @@ time_limit(void)
 {
 	phone("phone-video");
 	boot_args = "torch=3 torch_max_s=1";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
 	ask_for(1000);
 	WAIT_FOR(lit_now(), 3000);
@@ -414,7 +414,7 @@ write_does_not_stick(void)
 	phone("phone-video");
 	stuck = true;
 	boot_args = "torch=2 torch_secs=1";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("a register that did not read back as written"), "said in the log: %s", log_text);
 	CHECK(spmi.writes == 1 && times_lit == 0, "one write, no more (%u), and no light", spmi.writes);
@@ -428,7 +428,7 @@ not_ours_to_write(void)
 	phone("phone-video");
 	spmi.owner[20] = 3;
 	boot_args = "torch=2";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("the channel is not ours to write through: nothing written"), "said in the log: %s", log_text);
 	CHECK(spmi.writes == 0 && spmi.denied == 0, "not even tried (%u refused)", spmi.denied);
@@ -442,10 +442,10 @@ another_part(void)
 	phone("phone-video");
 	flash_model.reg[0x05] = 0x03;
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("NOT WHAT WAS EXPECTED"), "said in the log");
-	CHECK(spmi.writes == 0 && fake_dev_write("redwood-torch", "\0\0\0\0", 4) == -1, "nothing written, no device made");
+	CHECK(spmi.writes == 0 && fake_dev_write("hakios-torch", "\0\0\0\0", 4) == -1, "nothing written, no device made");
 	never();
 }
 
@@ -455,7 +455,7 @@ another_arbiter(void)
 	phone("phone-video");
 	spmi.version = 0x70000000;
 	boot_args = "torch=2";
-	redwood_torch_init();
+	hakios_torch_init();
 	WAIT_FOR(logged("torch: done"), 5000);
 	CHECK(logged("PMIC arbiter version 0x70000000, not 5: nothing done"), "said in the log: %s", log_text);
 	CHECK(spmi.transfers == 0, "not a transfer on the bus (%u)", spmi.transfers);
@@ -468,7 +468,7 @@ board_without_the_part(void)
 {
 	phone("phone-cmd");
 	boot_args = "torch=3";
-	redwood_torch_init();
+	hakios_torch_init();
 	usleep(200 * 1000);
 	CHECK(logged("lists no \"torch-pm8350c\""), "said in the log: %s", log_text);
 	CHECK(spmi.transfers == 0 && spmi.elsewhere == 0, "nothing read or written");
@@ -479,10 +479,10 @@ off_by_default(void)
 {
 	phone("phone-video");
 	boot_args = "";
-	redwood_torch_init();
+	hakios_torch_init();
 	usleep(200 * 1000);
 	CHECK(spmi.transfers == 0 && log_text[0] == 0, "without torch=N: not a read, not a word");
-	redwood_torch_quiesce();
+	hakios_torch_quiesce();
 	CHECK(spmi.transfers == 0, "... at the run's end either");
 }
 

@@ -10,9 +10,9 @@ osfmk/arm64/hakios_cpu_idle.c
 osfmk/arm64/hakios_prof.c
 osfmk/arm64/loader_return.c
 osfmk/arm64/psci_smp.c
-osfmk/arm64/redwood_a64emu.c
+osfmk/arm64/hakios_a64emu.c
 osfmk/arm64/user_exception_trace.c
 
 # the network stack's and the MAC framework's private headers
-bsd/dev/redwood_net.c
+bsd/dev/hakios_net.c
 bsd/kern/kern_minimac.c

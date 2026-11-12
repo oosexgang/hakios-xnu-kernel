@@ -266,7 +266,7 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 
 Not changed:
 
-- Drivers did not move or change names. `redwood_*` is the historical prefix of the platform layer, not
+- Drivers did not move or change names. `hakios_*` is the historical prefix of the platform layer, not
   a statement about which phone the code is for.
 - Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, the
   sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is

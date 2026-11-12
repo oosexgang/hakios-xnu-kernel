@@ -1,4 +1,4 @@
-# Commands run by the launchd job com.redwood.demo (see com.redwood.demo.plist).
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
 # The package manager for a person to use (RC_JOBS=rc.jobs.jb): nothing pressed by a script -- the
 # preparation the bootstrap wants once per boot, the network, a fresh index, and the phone is yours
 # for the session (XL_SECS). What is installed lives in memory, as all of /private/var: gone at the
