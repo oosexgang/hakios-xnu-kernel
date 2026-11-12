@@ -3162,6 +3162,91 @@ narrow_int_gate(struct air_ctx *c, const struct air_inst *in)
    return true;
 }
 
+/* A POINTER kept in a local that is plain scratch -- RenderBox's stitched custom_fn puts a texture into an RB::Layer
+ * {texture2d, float2[5]} whose floats it fills in a loop, so the local cannot be a translation-time slot (an index
+ * computed at run time) and its texture cannot be bytes. At a constant offset it is neither: the store keeps the
+ * resolution here and a pointer load from that offset takes it back. Stored more than once at an offset, the load
+ * must be in the block of the last store translated, or which one it reads would depend on the path. */
+struct scratch_ptr {
+   struct air_val *val;
+   const struct air_block *block;
+   unsigned stores;
+};
+
+static bool
+scratch_const_offset(const struct air_val *p, uint64_t *off)
+{
+   if (!p || p->kind != AIR_VAL_PTR || p->ptr.class != AIR_PTR_SCRATCH)
+      return false;
+   if (!p->ptr.offset) {
+      *off = 0;
+      return true;
+   }
+   if (!nir_src_is_const(nir_src_for_ssa(p->ptr.offset)))
+      return false;
+   *off = nir_src_as_uint(nir_src_for_ssa(p->ptr.offset));
+   return true;
+}
+
+static void
+scratch_ptr_store(struct air_ctx *c, uint64_t off, struct air_val *v, const struct air_block *block)
+{
+   if (!c->scratch_ptrs)
+      c->scratch_ptrs = _mesa_pointer_hash_table_create(c->mem_ctx);
+   struct hash_entry *e = _mesa_hash_table_search(c->scratch_ptrs, (void *)(uintptr_t)(off + 1));
+   struct scratch_ptr *sp = e ? e->data : rzalloc(c->mem_ctx, struct scratch_ptr);
+   if (!e)
+      _mesa_hash_table_insert(c->scratch_ptrs, (void *)(uintptr_t)(off + 1), sp);
+   sp->val = v;
+   sp->block = block;
+   sp->stores++;
+}
+
+/* whether V is the alloca A, or an address made from it (getelementptr, a cast) */
+static bool
+derives_from(const struct air_value *v, const struct air_inst *a, unsigned depth)
+{
+   if (v == &a->base)
+      return true;
+   if (!v || depth == 0 || v->kind != AIR_VALUE_INSTRUCTION)
+      return false;
+   const struct air_inst *in = (const struct air_inst *)v;
+   if ((in->op != AIR_OP_GEP && in->op != AIR_OP_CAST) || !in->num_operands)
+      return false;
+   return derives_from(in->operands[0], a, depth - 1);
+}
+
+/* Whether a local whose type holds a pointer needs a translation-time slot: a store into it of an AGGREGATE that holds
+ * a pointer, or its address handed to a call (anything but llvm.lifetime.*, which writes nothing). Otherwise it is
+ * plain scratch, which can take an index computed at run time, and a bare pointer stored into it at a constant offset
+ * is kept beside it (scratch_ptr_store): RenderBox's stitched custom_fn fills the five float2 of an RB::Layer
+ * {texture2d, float2[5]} in a loop, and stores the texture at its offset 0. */
+static bool
+alloca_gets_pointer(struct air_ctx *c, const struct air_inst *a)
+{
+   const struct air_function *f = c->fn;
+   for (unsigned bi = 0; f && bi < f->num_blocks; bi++) {
+      const struct air_block *blk = &f->blocks[bi];
+      for (unsigned i = 0; i < blk->num_insts; i++) {
+         const struct air_inst *in = blk->insts[i];
+         /* (a bare pointer stored at a constant offset is kept beside the scratch: scratch_ptr_store) */
+         if (in->op == AIR_OP_STORE && in->num_operands >= 2 && derives_from(in->operands[1], a, 16) &&
+             in->operands[0] && in->operands[0]->type && in->operands[0]->type->kind != AIR_TYPE_POINTER &&
+             type_has_pointer(in->operands[0]->type, 8))
+            return true;
+         if (in->op == AIR_OP_CALL && in->num_operands >= 1) {
+            const struct air_value *callee = in->operands[0];
+            const bool lifetime = callee && callee->name && !strncmp(callee->name, "llvm.lifetime.", 14);
+            for (unsigned k = 1; !lifetime && k < in->num_operands; k++) {
+               if (derives_from(in->operands[k], a, 16))
+                  return true;
+            }
+         }
+      }
+   }
+   return false;
+}
+
 static bool
 translate_instruction(struct air_ctx *c, const struct air_inst *in)
 {
@@ -3455,7 +3540,7 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
        * array would need an index, and an index into a tree of values is the
        * thing this deliberately does not do.
        */
-      if (count == 1 && type_has_pointer(in->aux_type, 8)) {
+      if (count == 1 && type_has_pointer(in->aux_type, 8) && alloca_gets_pointer(c, in)) {
          struct air_ptr sp = {
             .class = AIR_PTR_SLOT,
             .binding = new_slot(c, in->aux_type, NULL),
@@ -3532,6 +3617,19 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
       }
       if (p->kind != AIR_VAL_PTR)
          return air_error(c, "instruction: a load from something that is not a pointer");
+      uint64_t loff;
+      if (in->base.type && in->base.type->kind == AIR_TYPE_POINTER && scratch_const_offset(p, &loff)) {
+         struct hash_entry *e = c->scratch_ptrs ? _mesa_hash_table_search(c->scratch_ptrs, (void *)(uintptr_t)(loff + 1)) : NULL;
+         struct scratch_ptr *sp = e ? e->data : NULL;
+         if (!sp)
+            return air_error(c, "instruction: a load of a pointer from a local at byte %u, where "
+                                "no pointer was stored", (unsigned)loff);
+         if (sp->stores > 1 && sp->block != in->parent)
+            return air_error(c, "instruction: a load of a pointer from a local at byte %u, stored "
+                                "%u times: which one it reads depends on the path", (unsigned)loff, sp->stores);
+         air_set(c, &in->base, sp->val);
+         return true;
+      }
       /* An argument buffer resolves before it loads: the byte offset names a
        * member and the member's descriptor names a binding, so this load
        * becomes a pointer and not an instruction.
@@ -3598,6 +3696,11 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
          return air_error(c, "instruction: a store at an offset computed at run time "
                              "into a local that holds a pointer, so which member it "
                              "names is not decidable here");
+      uint64_t poff;
+      if (sv->kind == AIR_VAL_PTR && scratch_const_offset(p, &poff)) {
+         scratch_ptr_store(c, poff, sv, in->parent);
+         return true;
+      }
       if (val_is_pointerish(sv))
          return air_error(c, "instruction: a store of a pointer into memory, which this "
                              "frontend has no address to write");
@@ -4160,10 +4263,105 @@ rebind_here(struct air_ctx *c, struct air_val *v, unsigned arg)
  * phis are all keyed on this function's own objects, and leaving the caller's
  * entries in place would let a callee resolve a value it cannot see.
  */
+/* -- linked visible functions -------------------------------------------
+ *
+ * A pipeline may link visible functions (MTLLinkedFunctions) that its stages
+ * call by name: the module declares the function, `NAME.MTL_VISIBLE_FN_REF`,
+ * and its !air.visible_function_references gives NAME. RenderBox's custom
+ * effects are drawn so -- the glass on an icon's symbol that IconRendering
+ * asks for. Each linked function's module is read and its globals planned as
+ * a stitched node's are (stitch_prepare), before the body, so that its static
+ * initializers run at the top of the entry point; a call of the declared
+ * function is then a call of the linked one, translated with its own module
+ * current.
+ */
+static const struct air_function *visible_function_of(const struct air_module *m, const struct air_md **entry);
+
+struct linked_fn {
+   const char *name;
+   const struct air_function *f;
+   const struct air_md *entry;
+   struct air_module *m;
+   struct air_global_plan *plan;
+};
+
+/* the name the module links the declared function F by, or NULL */
+static const char *
+linked_name_of(struct air_ctx *c, const struct air_function *f)
+{
+   const struct air_named_md *n = named_md(c->m, "air.visible_function_references");
+   for (unsigned i = 0; n && i < n->num_ops; i++) {
+      const struct air_md *node = n->ops[i];
+      if (!node || node->kind != AIR_MD_NODE || node->num_ops < 3 || !node->ops[1] ||
+          node->ops[1]->kind != AIR_MD_VALUE || node->ops[1]->value != &f->base)
+         continue;
+      return air_md_string(node->ops[2]);
+   }
+   return NULL;
+}
+
+static bool
+linked_prepare_all(struct air_ctx *c)
+{
+   const unsigned n = c->options ? c->options->num_linked : 0;
+   if (!n)
+      return true;
+   c->linked = rzalloc_array(c->mem_ctx, struct linked_fn, n);
+   for (unsigned i = 0; i < n; i++) {
+      const struct air_stitch_function *src = &c->options->linked[i];
+      struct linked_fn *lf = &c->linked[c->num_linked];
+      const char *why = NULL;
+      lf->name = src->name;
+      lf->m = air_module_read(c->mem_ctx, src->bitcode, src->size, &why);
+      if (!lf->m)
+         return air_error(c, "linked: %s: reader: %s", src->name ? src->name : "?", why ? why : "?");
+      lf->f = visible_function_of(lf->m, &lf->entry);
+      if (!lf->f)
+         return air_error(c, "linked: %s is not an air.visible function of its module, so "
+                             "nothing can call it", src->name ? src->name : "?");
+      const struct air_module *saved_m = c->m;
+      struct air_global_plan *saved_plan = c->global_plan;
+      c->m = lf->m;
+      c->global_plan = NULL;
+      plan_globals(c);
+      lf->plan = c->global_plan;
+      if (!c->error[0])
+         run_static_initializers(c);
+      c->m = saved_m;
+      c->global_plan = saved_plan;
+      if (c->error[0])
+         return false;
+      c->num_linked++;
+   }
+   return true;
+}
+
 static nir_function *
 translate_callee(struct air_ctx *c, const struct air_function *f,
                  struct air_val **argv, bool *is_param)
 {
+   /* a function the module declares and the pipeline links: the linked one */
+   if (f->is_declaration && c->num_linked) {
+      const char *name = linked_name_of(c, f);
+      for (unsigned i = 0; name && i < c->num_linked; i++) {
+         struct linked_fn *lf = &c->linked[i];
+         if (!lf->name || strcmp(lf->name, name))
+            continue;
+         if (lf->f->num_args != f->num_args) {
+            air_error(c, "linked: %s takes %u arguments where its caller passes %u", name,
+                      lf->f->num_args, f->num_args);
+            return NULL;
+         }
+         const struct air_module *saved_m = c->m;
+         struct air_global_plan *saved_plan = c->global_plan;
+         c->m = lf->m;
+         c->global_plan = lf->plan;
+         nir_function *fn = translate_callee(c, lf->f, argv, is_param);
+         c->m = saved_m;
+         c->global_plan = saved_plan;
+         return fn;
+      }
+   }
    /* A texture, sampler or buffer argument is not a value in this frontend: it
     * is resolved at translation time into a binding, and tex_handle wants an
     * AIR_VAL_PTR rather than an SSA def. Such an argument is bound from the
@@ -4226,8 +4424,14 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
       return e->data;
 
    if (f->is_declaration || !f->num_blocks) {
-      air_error(c, "intrinsic: a call of %s, which the module only declares",
-                f->base.name ? f->base.name : "a function");
+      const char *linked = f->is_declaration ? linked_name_of(c, f) : NULL;
+      if (linked)
+         air_error(c, "intrinsic: a call of %s, which the module only declares and links as %s: "
+                      "the pipeline links no function of that name (%u linked)",
+                   f->base.name ? f->base.name : "a function", linked, c->num_linked);
+      else
+         air_error(c, "intrinsic: a call of %s, which the module only declares",
+                   f->base.name ? f->base.name : "a function");
       return NULL;
    }
 
@@ -6767,7 +6971,7 @@ air_to_nir(void *mem_ctx, const void *bitcode, size_t size, const char *entry_po
          wrap_library_function(&c, rn && rn->num_ops ? rn->ops[0] : NULL,
                                entry->num_ops > 2 ? entry->ops[2] : NULL);
       }
-      else
+      else if (linked_prepare_all(&c))
          translate_body(&c);
    }
 

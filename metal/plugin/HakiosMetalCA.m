@@ -1842,6 +1842,37 @@ hm_dump_function(const char *label, id function, const char *key, const hakios_m
 	}
 }
 
+/* boot-arg metal_air_dump=1: BYTES (a module of LENGTH) as "airdump: FNV LENGTH OFFSET HEX" lines of 400 bytes, which
+ * tools/airdump.py puts together again on the host -- for a module no metallib holds (a linked stitched function) */
+static void
+hm_air_dump_bytes(const uint8_t *bytes, size_t length)
+{
+	static int dump = -1;
+	uint64_t fnv = 0xcbf29ce484222325ull;
+
+	if (dump < 0) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		dump = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_air_dump=1") != NULL;
+	}
+	if (!dump || bytes == NULL) {
+		return;
+	}
+	for (size_t i = 0; i < length; i++) {
+		fnv = (fnv ^ bytes[i]) * 0x100000001b3ull;
+	}
+	for (size_t off = 0; off < length; off += 400) {
+		char hex[801];
+		const size_t end = MIN(length, off + 400);
+
+		for (size_t i = off; i < end; i++) {
+			snprintf(hex + 2 * (i - off), 3, "%02x", bytes[i]);
+		}
+		hm_print("airdump: %016llx %lu %lu %s\n", (unsigned long long)fnv, (unsigned long)length, (unsigned long)off, hex);
+	}
+}
+
 static void
 hm_dump_refused(const char *label, id function)
 {
@@ -3266,9 +3297,9 @@ hm_set_vertex_descriptor(hakios_metal_program *program, MTLVertexDescriptor *vd)
 	if ([d maxVertexAmplificationCount] > 1) {
 		return [NSString stringWithFormat:@"maxVertexAmplificationCount %lu; profile 0 amplifies nothing (1)", (unsigned long)[d maxVertexAmplificationCount]];
 	}
-	if ([[[d vertexLinkedFunctions] functions] count] != 0 || [[[d vertexLinkedFunctions] binaryFunctions] count] != 0 ||
-	    [[[d fragmentLinkedFunctions] functions] count] != 0 || [[[d fragmentLinkedFunctions] binaryFunctions] count] != 0) {
-		return @"linked functions (dynamic linking, visible functions) are not served; each stage is one module compiled whole";
+	/* linked functions are compiled into the stage that calls them (hm_linked_of); binary ones are a GPU's own code */
+	if ([[[d vertexLinkedFunctions] binaryFunctions] count] != 0 || [[[d fragmentLinkedFunctions] binaryFunctions] count] != 0) {
+		return @"linked binary functions are not served (another GPU's code); visible functions given as AIR are";
 	}
 	if ([[d vertexPreloadedLibraries] count] != 0 || [[d fragmentPreloadedLibraries] count] != 0) {
 		return @"preloaded dynamic libraries are not served";
@@ -3332,6 +3363,46 @@ hm_describe_function(id f)
  * output's class -- its refusals name the construct), then Metal's base initialiser with a descriptor already known to
  * pass its asserts. Nothing is asked of Metal's -compiler, which this device has not got.
  */
+/*
+ * The visible functions a render pipeline links -- its stages' MTLLinkedFunctions, functions and privateFunctions --
+ * as names and AIR, into OUT (at most MOST); how many. A stage calls one by name through a function it only declares
+ * (RenderBox's custom effects: custom_fn, custom_blend, the stitched wrappers of IconRendering's glass), and the
+ * compiler links it in (hakios_metal_program_new_bitcode_linked). Their AIR is kept alive by KEEP.
+ */
+static unsigned
+hm_linked_of(MTLRenderPipelineDescriptor *d, NSString *label, hakios_metal_linked *out, unsigned most, NSMutableArray *keep)
+{
+	unsigned n = 0;
+	SEL bitcode = sel_getUid("bitcodeData");
+
+	for (id lf in @[ [d vertexLinkedFunctions] ?: [NSNull null], [d fragmentLinkedFunctions] ?: [NSNull null] ]) {
+		if (lf == [NSNull null]) {
+			continue;
+		}
+		NSMutableArray *all = [NSMutableArray arrayWithArray:[lf functions] ?: @[]];
+		if ([lf respondsToSelector:@selector(privateFunctions)]) {
+			[all addObjectsFromArray:[lf privateFunctions] ?: @[]];
+		}
+		for (id f in all) {
+			NSData *air = [f respondsToSelector:bitcode] ? hm_bitcode_for(f, label, NO) : nil;
+			const char *name = [[f name] UTF8String];
+
+			if (n == most || air == nil || [air length] == 0 || name == NULL) {
+				HM_ONCE("a linked function %s was not taken (%s)\n", name ? name : "?",
+				    n == most ? "too many" : "no AIR to read");
+				continue;
+			}
+			[keep addObject:air];
+			[keep addObject:[f name]];
+			out[n].name = name;
+			out[n].bitcode = [air bytes];
+			out[n].size = [air length];
+			n++;
+		}
+	}
+	return n;
+}
+
 - (id)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor error:(NSError **)error
 {
 	SEL bitcode = sel_getUid("bitcodeData");
@@ -3365,9 +3436,29 @@ hm_describe_function(id f)
 		hakios_metal_constant vsConstants[64], fsConstants[64];
 		unsigned vsCount = hm_function_constants(vs, vsConstants, 64), fsCount = hm_function_constants(fs, fsConstants, 64);
 
-		program = hakios_metal_program_new_bitcode_constants([vsAir bytes], [vsAir length], vsConstants, vsCount, fsAir != nil ? [fsAir bytes] : NULL,
-								     fsAir != nil ? [fsAir length] : 0,
-								     fsConstants, fsCount, format);
+		hakios_metal_linked linked[16];
+		NSMutableArray *keep = [NSMutableArray array];
+		const unsigned linkedCount = hm_linked_of(descriptor, [descriptor label], linked, 16, keep);
+
+		if (linkedCount != 0) {
+			static unsigned told;
+
+			if (told++ < 8) {
+				NSMutableString *names = [NSMutableString string];
+
+				for (unsigned i = 0; i < linkedCount; i++) {
+					[names appendFormat:@" %s (%zu bytes of AIR)", linked[i].name, linked[i].size];
+				}
+				hm_print("a render pipeline, %s + %s, links%s\n", [[vs name] UTF8String], [[fs name] UTF8String], [names UTF8String]);
+			}
+			program = hakios_metal_program_new_bitcode_linked([vsAir bytes], [vsAir length], vsConstants, vsCount,
+									  fsAir != nil ? [fsAir bytes] : NULL, fsAir != nil ? [fsAir length] : 0, fsConstants,
+									  fsCount, linked, linkedCount, format);
+		} else {
+			program = hakios_metal_program_new_bitcode_constants([vsAir bytes], [vsAir length], vsConstants, vsCount,
+									     fsAir != nil ? [fsAir bytes] : NULL, fsAir != nil ? [fsAir length] : 0,
+									     fsConstants, fsCount, format);
+		}
 		if (program != NULL) {
 			hm_dump_function("vs", vs, "metal_dump=fn", vsConstants, vsCount);
 			if (fs != nil) hm_dump_function("fs", fs, "metal_dump=fn", fsConstants, fsCount);
@@ -3382,6 +3473,14 @@ hm_describe_function(id f)
 			}
 			hm_dump_refused("vs", vs);
 			hm_dump_refused("fs", fs);
+			for (unsigned i = 0; i < linkedCount; i++) {
+				hm_print("airdump of the linked %s follows\n", linked[i].name);
+				hm_air_dump_bytes(linked[i].bitcode, linked[i].size);
+			}
+			if (linkedCount != 0 && fsAir != nil) {
+				hm_print("airdump of the fragment function %s follows\n", [[fs name] UTF8String]);
+				hm_air_dump_bytes([fsAir bytes], [fsAir length]);
+			}
 			return [self hakiosRefuse:error what:"a render pipeline"
 					      why:[NSString stringWithFormat:@"%@ + %@ for pixel format %u (fragment constants not 0:%@): %s", [vs name], [fs name],
 							       format, fc, hakios_metal_error()]];
@@ -3605,6 +3704,36 @@ hm_describe_function(id f)
 	if (library == nil) {
 		hm_print("refused: a library from source: Metal's compiler service gave none: %s\n",
 			 mine != nil ? [[mine localizedDescription] UTF8String] : "no error said");
+	}
+	if (error != NULL) {
+		*error = mine;
+	}
+	return library;
+}
+
+/* A stitched library -- a graph of visible functions made into one, as RenderBox wraps IconRendering's glass effects
+ * into custom_fn -- is the base class's to make (Metal's compiler service makes AIR of the graph); said here, what came
+ * of it, since a pipeline then links its functions (hm_linked_of) */
+- (id)newLibraryWithStitchedDescriptor:(id)descriptor error:(NSError **)error
+{
+	struct objc_super up = { self, [self superclass] };
+	NSError *mine = nil;
+	id library = nil;
+
+	if ([[self superclass] instancesRespondToSelector:_cmd]) {
+		library = ((id (*)(struct objc_super *, SEL, id, NSError **))objc_msgSendSuper)(&up, _cmd, descriptor, &mine);
+	}
+	{
+		static unsigned told;
+
+		if (told++ < 6) {
+			hm_print("a stitched library (%lu functions, %lu graphs): %s%s\n",
+			    (unsigned long)[[descriptor functions] count], (unsigned long)[[descriptor functionGraphs] count],
+			    library != nil ? "made; its functions: " : "NONE: ",
+			    library != nil ? [[[library functionNames] componentsJoinedByString:@", "] UTF8String]
+					   : mine != nil ? [[mine localizedDescription] UTF8String]
+							 : "the base class does not make them");
+		}
 	}
 	if (error != NULL) {
 		*error = mine;

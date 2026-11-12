@@ -132,6 +132,8 @@ struct air_argbuf {
    struct air_argbuf_member *members;
 };
 
+struct linked_fn;   /* air_to_nir.c: a linked function's module, read and planned */
+
 struct air_ctx {
    void *mem_ctx;
    const struct air_module *m;
@@ -175,6 +177,15 @@ struct air_ctx {
     */
    struct hash_table *fns;
    nir_deref_instr *ret_deref;
+
+   /* the functions the pipeline links (options->linked), their modules read and
+    * their globals planned before the body is translated (linked_prepare_all) */
+   struct linked_fn *linked;
+   unsigned num_linked;
+
+   /* pointers stored into scratch at a constant byte offset (scratch_ptr_store): a pointer has no bytes, so the
+    * resolution is kept here, keyed by the offset + 1, and a load of a pointer from the same offset gives it back */
+   struct hash_table *scratch_ptrs;
 
    /* ... and, for a callee whose return type is a STRUCT, one out-parameter per
     * member instead of one for the whole value: a NIR function parameter

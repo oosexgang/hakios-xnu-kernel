@@ -21,6 +21,8 @@
  * usage: air_run FILE[.metallib] [FUNCTION]
  *        air_run --library FILE.metallib FUNCTION      one air.visible function, wrapped
  *        air_run --stitch "f(in0); g(n0)" FILE.metallib   a graph of them, stitched
+ *        air_run --link NAME=FILE.bc ... FILE            NAME, a visible function the shader only declares,
+ *                                                        linked from FILE (MTLLinkedFunctions)
  */
 
 #include <stdio.h>
@@ -161,6 +163,10 @@ static bool library_fill = false;
 
 /* set by --stitch: a function-stitching graph, as air_stitch.c reads it */
 static const char *stitch_text = NULL;
+
+/* set by --link NAME=FILE: the visible functions the shader links, by name */
+static struct air_stitch_function linked_fns[8];
+static unsigned num_linked_fns;
 
 /* set by --zero: every buffer the shader reads is zeroed instead of patterned.
  *
@@ -1729,6 +1735,28 @@ main(int argc, char **argv)
          want_library = library_fill = true;
          argv++;
          argc--;
+      } else if (!strcmp(argv[1], "--link") && argc > 2) {
+         const char *eq = strchr(argv[2], '=');
+         FILE *lf = eq ? fopen(eq + 1, "rb") : NULL;
+         if (!lf || num_linked_fns == ARRAY_SIZE(linked_fns)) {
+            fprintf(stderr, "air_run: --link NAME=FILE: cannot read %s\n", argv[2]);
+            return 1;
+         }
+         fseek(lf, 0, SEEK_END);
+         long n = ftell(lf);
+         fseek(lf, 0, SEEK_SET);
+         void *bytes = malloc(n);
+         if (fread(bytes, 1, n, lf) != (size_t)n) {
+            fprintf(stderr, "air_run: --link: short read of %s\n", eq + 1);
+            return 1;
+         }
+         fclose(lf);
+         linked_fns[num_linked_fns].name = strndup(argv[2], eq - argv[2]);
+         linked_fns[num_linked_fns].bitcode = bytes;
+         linked_fns[num_linked_fns].size = n;
+         num_linked_fns++;
+         argv += 2;
+         argc -= 2;
       } else if (!strcmp(argv[1], "--stitch") && argc > 2) {
          /* A graph of air.visible functions, dispatched as one kernel. The
           * argument buffer is filled the wrapper's way for the same reason the
@@ -1917,7 +1945,9 @@ main(int argc, char **argv)
                                             .library_wrapper = want_library,
                                             .stitch = graph,
                                             .stitch_functions = stitch_fns,
-                                            .num_stitch_functions = num_stitch_fns };
+                                            .num_stitch_functions = num_stitch_fns,
+                                            .linked = linked_fns,
+                                            .num_linked = num_linked_fns };
    struct air_shader_info info;
    const char *err;
    nir_shader *fs = air_to_nir(ctx, bitcode, bitcode_size, NULL, &air_options, options,

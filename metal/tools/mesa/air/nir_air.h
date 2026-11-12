@@ -549,6 +549,16 @@ struct air_to_nir_options {
    const struct air_stitch_function *stitch_functions;
    unsigned num_stitch_functions;
 
+   /* The visible functions a pipeline links (MTLLinkedFunctions' functions and
+    * privateFunctions), by name. A call of a function the module only
+    * declares, which its air.visible_function_references names NAME --
+    * RenderBox's custom effects call `custom_fn.MTL_VISIBLE_FN_REF`, named
+    * "custom_fn" -- is a call of the linked function called NAME, translated
+    * from its own module as a stitched node's function is.
+    */
+   const struct air_stitch_function *linked;
+   unsigned num_linked;
+
    /* Read the entry point's interface -- its outputs, its inputs and every
     * member of its argument buffers, with the bindings allocated as a full
     * translation allocates them -- and stop there: *info is complete, the body

@@ -131,6 +131,24 @@ struct KnownBuffer {
 };
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {},
                                            uint32_t iboBase = 0, const KnownBuffer* known = nullptr);
+// The visible functions a pipeline links (MTLLinkedFunctions), for the compiles on this thread while a LinkedScope
+// lives: a call of a function a stage only declares, named NAME by its air.visible_function_references, is a call of
+// the linked function called NAME (the front end's air_to_nir_options::linked). Part of a compiled stage's cache name:
+// the same stage linked with another function is another stage.
+struct LinkedFunction {
+    std::string name;
+    std::vector<uint8_t> bitcode;
+};
+class LinkedScope {
+public:
+    explicit LinkedScope(std::vector<LinkedFunction> functions);
+    ~LinkedScope();
+    LinkedScope(const LinkedScope&) = delete;
+    LinkedScope& operator=(const LinkedScope&) = delete;
+
+private:
+    std::vector<LinkedFunction> saved_;
+};
 // compileStage's choice for a stage that spilled with ir3's preamble (WITH) and was compiled again without it (WITHOUT):
 // the one that spills less, then the one with fewer registers; WITH on a tie. (CoreAnimation's fixed_frag_lph_cpf: 48
 // registers and 512 bytes of spills with the preamble, 21 and none without; its draws 6.6 ms each so, 2.6 without.)

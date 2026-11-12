@@ -1417,6 +1417,35 @@ TEST(a_stage_that_writes_its_device_buffers_is_told_from_one_that_reads_them) {
 // filed in the writable directory and comes back word for word; filed instead in a read-only seed directory (the
 // system image's, from an earlier boot) it is found there, after a seed that does not exist, and nothing is compiled
 // or written into the writable directory -- the window server's first minute without its 66 to 103 compiles
+// A stage that calls a visible function it only declares (linked_fs: `custom_fn.MTL_VISIBLE_FN_REF`, as RenderBox's
+// custom effects do) compiles with the function linked by its name, and is refused without it -- by that name, or
+// with only a function of another name linked. (userland/tools/air/linked_fs.ll runs it on softpipe with air_run.)
+TEST(a_stage_that_calls_a_function_it_only_declares_compiles_with_it_linked) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: nothing linked)\n");
+        return;
+    }
+    std::vector<uint8_t> fs = bitcodeOf("linked_fs"), fn = bitcodeOf("linked_fn");
+    CHECK(!fs.empty() && !fn.empty());
+    if (fs.empty() || fn.empty()) return;
+    std::string why;
+    CHECK(compileStage(fs.data(), fs.size(), &why) == nullptr);
+    CHECK(why.find("links as custom_fn") != std::string::npos);
+    {
+        LinkedScope scope({LinkedFunction{"custom_fn", fn}});
+        why.clear();
+        std::shared_ptr<CompiledStage> s = compileStage(fs.data(), fs.size(), &why);
+        CHECK(s != nullptr);
+        if (s == nullptr) std::printf("       %s\n", why.c_str());
+    }
+    {
+        LinkedScope scope({LinkedFunction{"other_fn", fn}});
+        why.clear();
+        CHECK(compileStage(fs.data(), fs.size(), &why) == nullptr);
+        CHECK(why.find("1 linked") != std::string::npos);
+    }
+}
+
 TEST(a_compiled_stage_comes_back_from_the_cache_and_from_a_seed) {
     if (!hasCompiler()) {
         std::printf("       (no compiler in this build: the cache did not run)\n");

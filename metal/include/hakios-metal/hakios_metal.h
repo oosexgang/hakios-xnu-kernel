@@ -280,6 +280,18 @@ hakios_metal_program *hakios_metal_program_new_bitcode(const void *vs_bitcode, s
 hakios_metal_program *hakios_metal_program_new_bitcode_constants(const void *vs_bitcode, size_t vs_size,
     const hakios_metal_constant *vs_constants, unsigned vs_count, const void *fs_bitcode, size_t fs_size,
     const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned color_pixel_format);
+/* a visible function a pipeline links (MTLLinkedFunctions' functions and privateFunctions): its name and its AIR */
+typedef struct hakios_metal_linked {
+    const char *name;
+    const void *bitcode;
+    size_t size;
+} hakios_metal_linked;
+/* ...with the COUNT functions the two stages link: a call of a function a stage only declares, which the module names
+ * NAME (air.visible_function_references), is a call of LINKED's function called NAME */
+hakios_metal_program *hakios_metal_program_new_bitcode_linked(const void *vs_bitcode, size_t vs_size,
+    const hakios_metal_constant *vs_constants, unsigned vs_count, const void *fs_bitcode, size_t fs_size,
+    const hakios_metal_constant *fs_constants, unsigned fs_count, const hakios_metal_linked *linked, unsigned count,
+    unsigned color_pixel_format);
 /* BASE again with its fragment stage (FS_BITCODE and FS_CONSTANTS, as BASE was made) compiled for the LENGTH BYTES its
  * constant buffer at [[buffer(BINDING)]] holds (compileStage's KnownBuffer): the branches those bytes decide are decided
  * at compile time. Draws whose buffer holds exactly these bytes may use it in BASE's place; BASE's blending, vertex

@@ -16,7 +16,7 @@
 //     IR3_SHADER_DEBUG=disasm the listing of one specialisation is what comes out); -k: the bytes of a constant
 //     buffer known at compile time, as the plug-in specialises an uber shader for what its buffer holds (with -f:
 //     the compile timed, and the words it came to)
-//   sweep -a MODULE.air [-c ...] [-k ...]: one fragment function's module as it is (LLVM's 0x0B17C0DE wrapper),
+//   sweep -a MODULE.air [-c ...] [-k ...] [-l NAME=FILE]: one fragment function's module as it is (LLVM's 0x0B17C0DE wrapper),
 //     compiled once and timed -- a module no metallib holds, as tools/airdump.py takes it out of a run's log
 //
 // SPDX-License-Identifier: MIT
@@ -46,6 +46,7 @@ namespace {
 // compile in a child: true when it compiled; else *why is the refusal, or "the compiler aborted: " and the last line
 // the child printed (Mesa's assertion)
 FunctionConstants gConstants;
+std::vector<LinkedFunction> gLinked;   // -l NAME=FILE
 KnownBuffer gKnown;
 bool gHaveKnown = false;
 std::vector<KnownBuffer> gMoreKnown;   // (-a with -k more than once: each compiled in turn, as one pipeline's specialisations)
@@ -189,6 +190,17 @@ int main(int argc, char** argv) {
             gConstants.push_back(FunctionConstant{index, uint64_t(value)});
         } else if (std::strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
             air = argv[++i];
+        } else if (std::strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            // -l NAME=FILE: a visible function the module only declares, linked from FILE (MTLLinkedFunctions)
+            const char* arg = argv[++i];
+            const char* eq = std::strchr(arg, '=');
+            std::ifstream lf(eq != nullptr ? eq + 1 : "", std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(lf)), std::istreambuf_iterator<char>());
+            if (eq == nullptr || bytes.empty()) {
+                std::fprintf(stderr, "sweep: -l takes NAME=FILE, a module it can read, not %s\n", arg);
+                return 2;
+            }
+            gLinked.push_back(LinkedFunction{std::string(arg, size_t(eq - arg)), std::move(bytes)});
         } else if (std::strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
             const char* arg = argv[++i];
             const char* eq = std::strchr(arg, '=');
@@ -219,6 +231,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "sweep: no compiler in this build (make MESA=1)\n");
         return 2;
     }
+    LinkedScope linkedScope(gLinked);
     if (!air.empty()) {
         std::ifstream in(air, std::ios::binary);
         const std::vector<uint8_t> bc((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());

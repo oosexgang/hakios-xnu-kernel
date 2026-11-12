@@ -24,6 +24,13 @@
 
 namespace hakios::metal {
 
+namespace {
+thread_local std::vector<LinkedFunction> tLinked;   // LinkedScope's
+}
+
+LinkedScope::LinkedScope(std::vector<LinkedFunction> functions) : saved_(std::move(tLinked)) { tLinked = std::move(functions); }
+LinkedScope::~LinkedScope() { tLinked = std::move(saved_); }
+
 #ifndef HAKIOS_METAL_MESA
 
 bool hasCompiler() { return false; }
@@ -374,6 +381,10 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
         key = 0xcbf29ce484222325ull;
         for (size_t i = 0; i < size; i++) key = (key ^ static_cast<const uint8_t*>(bitcode)[i]) * 0x100000001b3ull;
         for (const FunctionConstant& f : supplied) key = (key ^ (uint64_t(f.index) * 0x9e3779b97f4a7c15ull ^ f.bits)) * 0x100000001b3ull;
+        for (const LinkedFunction& l : tLinked) {
+            for (uint8_t b : l.bitcode) key = (key ^ b) * 0x100000001b3ull;
+            for (char ch : l.name) key = (key ^ uint8_t(ch)) * 0x100000001b3ull;
+        }
         key ^= size;
         if (translatedAgain(key, t)) {
             phase("air_to_nir (a copy)");
@@ -395,6 +406,10 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
         air_to_nir_options options{};
         options.constants = constants;
         options.num_constants = numConstants;
+        std::vector<air_stitch_function> linked;
+        for (const LinkedFunction& l : tLinked) linked.push_back(air_stitch_function{l.name.c_str(), l.bitcode.data(), l.bitcode.size()});
+        options.linked = linked.empty() ? nullptr : linked.data();
+        options.num_linked = unsigned(linked.size());
         const char* error = nullptr;
         t.nir = air_to_nir(mem, bitcode, size, nullptr, &options, ir3_get_compiler_options(theCompiler()), &t.info, &error);
         if (t.nir == nullptr) {
@@ -1323,6 +1338,10 @@ std::string stageCacheName(const void* bitcode, size_t size, const FunctionConst
     mix(kCacheBuild, strlen(kCacheBuild));
     mix(layout, sizeof(layout));
     mix(bitcode, size);
+    for (const LinkedFunction& l : tLinked) {
+        mix(l.name.data(), l.name.size() + 1);
+        mix(l.bitcode.data(), l.bitcode.size());
+    }
     for (const FunctionConstant& c : constants) {
         mix(&c.index, sizeof(c.index));
         mix(&c.bits, sizeof(c.bits));

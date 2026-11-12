@@ -1125,6 +1125,20 @@ hakios_metal_program* hakios_metal_program_new_bitcode(const void* vsBitcode, si
     return hakios_metal_program_new_bitcode_constants(vsBitcode, vsSize, nullptr, 0, fsBitcode, fsSize, nullptr, 0, colorPixelFormat);
 }
 
+hakios_metal_program* hakios_metal_program_new_bitcode_linked(const void* vsBitcode, size_t vsSize, const hakios_metal_constant* vsConstants, unsigned vsCount,
+                                                              const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants, unsigned fsCount,
+                                                              const hakios_metal_linked* linked, unsigned count, unsigned colorPixelFormat) {
+    std::vector<LinkedFunction> functions;
+    for (unsigned i = 0; i < count; i++) {
+        if (linked[i].name == nullptr || linked[i].bitcode == nullptr) continue;
+        const uint8_t* b = static_cast<const uint8_t*>(linked[i].bitcode);
+        functions.push_back(LinkedFunction{linked[i].name, std::vector<uint8_t>(b, b + linked[i].size)});
+    }
+    LinkedScope scope(std::move(functions));
+    return hakios_metal_program_new_bitcode_constants(vsBitcode, vsSize, vsConstants, vsCount, fsBitcode, fsSize, fsConstants, fsCount,
+                                                      colorPixelFormat);
+}
+
 hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsBitcode, size_t vsSize, const hakios_metal_constant* vsConstants, unsigned vsCount,
                                                                  const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants, unsigned fsCount,
                                                                  unsigned colorPixelFormat) {
