@@ -191,6 +191,9 @@ redwood_sta_attach(const struct redwood_sta_ops *ops)
 		sta_thread_made = true;
 	}
 	channel_count = ops->channels(channels, CHANNELS_MOST);
+	if (channel_count > CHANNELS_MOST) {
+		channel_count = CHANNELS_MOST;  /* (the radio's driver is built elsewhere: what it says is held to the list's room) */
+	}
 	lck_mtx_lock(&sta_lock);
 	sta_ops = ops;
 	sta_on = true;
