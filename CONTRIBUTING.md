@@ -9,7 +9,9 @@ make check
 It must pass. It runs the lint, validates the board and SoC files, checks that `docs/boot-args.md` is
 current and runs the host tests. CI runs the same, plus `kernel/verify.sh` and `kernel/syntax-check.sh`. After
 a change to a driver, `kernel/syntax-check.sh --tree DIR` says in seconds whether it still compiles,
-without the kernel toolchain.
+without the kernel toolchain; before you send a change to the kernel, `make kernel-check` compiles
+every file and links the whole kernel with LLVM's tools in a few minutes, and lists any warning in
+HakiOS' files. There are none now: keep it so.
 
 ## Where a change goes
 
