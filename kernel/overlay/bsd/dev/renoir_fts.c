@@ -27,6 +27,14 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #include "hakios_board.h"
 #include "hakios_mmio.h"
 
+/*
+ * What the driver says goes to the loader's log as it is said, and to the kernel's: the kernel's own
+ * reaches the loader only when a run is over, and a touch screen that does not answer is looked for
+ * while the phone runs.
+ */
+#include "hakios_log.h"
+#define printf hakios_say
+
 static char sleep_event;
 static void
 fts_sleep_ms(uint32_t ms)

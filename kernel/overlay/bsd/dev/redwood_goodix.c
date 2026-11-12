@@ -48,6 +48,14 @@ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 #include "hakios_mmio.h"
 #include "hakios_time.h"
 
+/*
+ * What the driver says goes to the loader's log as it is said, and to the kernel's: the kernel's own
+ * reaches the loader only when a run is over, and a touch screen that does not answer is looked for
+ * while the phone runs.
+ */
+#include "hakios_log.h"
+#define printf hakios_say
+
 /* ---- pins (TLMM) ------------------------------------------------------------------------------- */
 
 #define TLMM_PHYS               (hakios_board()->pins.tlmm)     /* the SoC file's [pins] */
