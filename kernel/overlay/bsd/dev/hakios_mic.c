@@ -1541,7 +1541,7 @@ listen(bool for_ios)
 	bool unmuted = false, settled = false;
 	uint64_t began = mach_absolute_time(), now, elapsed_ms;
 
-	struct hakios_apr_answer answer;
+	struct hakios_apr_answer answer = { 0 };      /* (said when the DSP did not answer) */
 
 	read_ready = 0;
 	reads_done = read_errors = 0;
