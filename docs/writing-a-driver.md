@@ -41,7 +41,7 @@ hardware has a test of its own in `tests/`.
 | `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `[ipc]` |
 | `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors. | `[ipc]` |
 | `hakios_smp2p.h` | An SMP2P item's shape, and a word of it by name: how two processors tell each other their state. | — |
-| `hakios_glink_queue.h` | The two queues GLINK runs over in that memory: the arithmetic of their marks, the messages' commands and how long each message is. | `tests/glink_queue_test.c` |
+| `hakios_glink_queue.h` | The two queues GLINK runs over in that memory: the arithmetic of their marks, the messages' commands and how long each message is. | — |
 
 What is not there yet is written in the driver first, and moves to a header when a second driver
 needs it.
