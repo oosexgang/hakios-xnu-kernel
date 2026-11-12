@@ -232,13 +232,11 @@ Stated plainly, so nobody finds out the hard way:
   still in these drivers. For the touch controllers, the keys, the flashlight, the vibration motor
   and the speaker amplifiers they are data: a phone with one of those parts on other pins needs its
   section of the board file filled in and no change to the driver.
-- **Writing to the phone's storage.** The loader serves the kernel's reads of any partition, but a
-  write into one partition only: the port's own, proved by its GPT entry. That entry (both GUIDs, the
-  first and last block, and the block from which writing is allowed) is redwood's and is written into
-  the code, in the loader (`loader/src/ufs_block.c`, `BLOCK_DARWIN_…`, `BLOCK_WRITE_FIRST`) and again
-  in the kernel (`bsd/dev/redwood_ufs.c`, `UFS_WRITE_FIRST`). On another phone nothing matches and no
-  write is served: reading works, the data volume lives in RAM. These are constants on purpose: a
-  request has to pass the loader's check, the kernel's and the firmware's own, and a value that
-  decides where a write may go is not one to get wrong in a data file.
+- **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
+  GPT entry in the board file's `[storage]`: both GUIDs, the first and last block, and the block from
+  which writing is allowed. The loader serves a write only into a partition that is that entry in
+  every field (`loader/src/own_partition.c`), the kernel asks for one only there
+  (`bsd/dev/redwood_ufs.c`), and the firmware bounds it to the partition. A board without
+  `[storage]` is never written; reading works, the data volume lives in RAM.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).

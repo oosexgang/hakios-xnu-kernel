@@ -170,6 +170,14 @@ software without it.
 | --- | --- | --- |
 | `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])`, `mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])`, `adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], [ipc]): ...`, `sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])`, `wifi: disabled: the SoC file does not say where ... are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's memory is ([wifi] dsp_memory): ...` | The driver's feature is listed, but the SoC file lacks a section the driver takes addresses from. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
 
+### Writing to the storage
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `ufs: darwin: no write will be served: this board's file does not say which partition that is ([storage])`, `ufs: nothing takes writes: this board's file does not say which partition is the port's own ([storage])` | `ufs_write=1` on a board without `[storage]`. Nothing is written, by design. | Make the partition, then describe it: `devices/_template/board.toml` says which line of the partition table each value is. |
+| `ufs: darwin: no write will be served: its unique GUID is not the one it had` (or its type GUID, where it begins and ends, its blocks, its logical unit, read only) | A partition named `darwin` is there, and one field of its GPT entry is not what `[storage]` says. The loader refuses the whole run's writes. | Compare `[storage]` with the phone's partition table. A partition made anew has a new unique GUID. |
+| `ufs: the loader offers no partition to write into (...)` | The kernel was asked to write and the loader did not offer the partition, or offers it from another block than this kernel's board file says. | `ufs_write=1` goes on the loader's command line too; build the loader and the kernel with the same device package. |
+
 ### Touch
 
 | What you see | What it means | What to do |

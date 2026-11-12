@@ -101,6 +101,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
   from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
+- **The partition a write may reach is the board's.** The loader and the kernel each had the GPT
+  entry of redwood's own partition in their code: nothing could be written on another phone
+  without changing both. It is `[storage]` of the board file; a board without it is never written.
+  `tools/boards.py check` refuses an entry that cannot be one, and the loader's answer to "is this
+  the partition?" has a test in which every field is off alone.
 - **A touch controller on another serial engine or other pins is a board file.** The two touch
   drivers had the engine's address, its clocks and votes, the pins and the supplies' names of the
   phone each was written on. They are `[touch]` now. A test compiles each driver on the host and
