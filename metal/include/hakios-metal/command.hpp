@@ -160,7 +160,7 @@ public:
     // kGmemHeavyBarrier: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE as well
     // (render::Options::fbReadBarrierLight off)
     enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4, kGmemFetchNoBarrier = 64, kGmemOrderAll = 128,
-                      kGmemFetchWeight = 512, kGmemHeavyBarrier = 1024 };
+                      kGmemFetchWeight = 512, kGmemHeavyBarrier = 1024, kGmemNoShare = 8192 };
     void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for

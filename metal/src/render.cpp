@@ -2251,6 +2251,31 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     return true;
 }
 
+bool gmemShare(GmemPlan* plan, uint32_t touched) {
+    const uint32_t top = kGmemCcuColorOffset & ~0x3fffu;
+    bool changed = false;
+    for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
+        if (plan->bpp[i] == 0) continue;
+        if (((touched >> i) & 1) == 0) {
+            plan->bpp[i] = 0;
+            plan->room[i] = 0;
+            changed = true;
+            continue;
+        }
+        // (up to the next touched attachment's bin: the bases rise with the index, gmemPlan's shares in order)
+        uint32_t end = top;
+        for (uint32_t j = i + 1; j < kMaxColorOutputs; j++) {
+            if (plan->bpp[j] != 0 && ((touched >> j) & 1) != 0) {
+                end = plan->base[j];
+                break;
+            }
+        }
+        if (end - plan->base[i] != plan->room[i]) changed = true;
+        plan->room[i] = end - plan->base[i];
+    }
+    return changed;
+}
+
 uint64_t tuneKeyOf(const RenderPass& pass) {
     uint64_t k = 0xcbf29ce484222325ull;   // FNV-1a over the window and each attachment's format
     auto mix = [&](uint64_t v) {
@@ -3302,12 +3327,18 @@ void CommandBuffer::closePass() {
         // (a Clear in the tiles clears what they cover: a pass that clears so is tiled over the whole window, as the
         // fill it stands in for covers it -- over the draws' area alone the rest kept its old pixels, probe "a Clear in
         // the tiles": 1224468 of them)
+        // (and of GMEM only the attachments the tiles touch take a share: CoreAnimation's passes after its main one keep
+        // the RGBA16Float screen and the path mask attached and draw into the first screen alone, in 56 bins where 14 do)
+        const uint32_t touched = (gmemOff_ & kGmemEveryAttachment) ? ~0u : (open_->written | open_->read | open_->clears);
+        const bool shared = !(gmemOff_ & kGmemNoShare) && render::gmemShare(&plan, touched);
         if (open_->area[0] <= open_->area[2] && open_->area[1] <= open_->area[3] && !(gmemOff_ & kGmemWholeArea) && open_->clears == 0) {
             render::gmemTiles(&plan, open_->area);
+        } else if (shared) {
+            const uint32_t whole[4] = {0, 0, W - 1, H - 1};
+            render::gmemTiles(&plan, whole);
         }
         // (past the right edge the granules land in the row's own padding, which gmemPlan saw the pitch hold; only the
         // rows past the bottom may be another layer's or level's)
-        (void)W;
         const bool inside = render::alignUp(plan.area[3] + 1, a6xx::kGmemAlignH) <= H;
         uint32_t load = 0, store = 0;
         for (uint32_t i = 0; i < kMaxColorOutputs; i++) {

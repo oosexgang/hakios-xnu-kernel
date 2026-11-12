@@ -516,6 +516,11 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why);
 // (gmemPlan picks the width; a fetch's descriptor holds it), as tall as every attachment's room holds. A pass whose draws touch a corner of the screen is drawn in the
 // tiles over that corner, and loads and stores no more. False when no bin fits (the plan unchanged).
 bool gmemTiles(GmemPlan* plan, const uint32_t area[4]);
+// PLAN's GMEM given to the attachments in TOUCHED alone (a mask: the draws write or read them, or the tiles clear them):
+// each takes the shares of the untouched ones after it up to the next touched one's base, and an untouched one has no
+// bin (bpp 0), so gmemTiles fits taller bins. The bases stay where the draws were encoded with them. False when it
+// changes nothing.
+bool gmemShare(GmemPlan* plan, uint32_t touched);
 // the pixels a draw can touch, X0 Y0 X1 Y1 inclusive: its viewport clamped to the window, within its scissor (both as
 // encodeInPass writes them); false for a draw it would refuse for them
 bool drawArea(const RenderPass& pass, const Draw& draw, uint32_t area[4]);

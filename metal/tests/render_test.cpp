@@ -5491,7 +5491,9 @@ TEST(a_gmem_pass_split_by_a_draw_stores_what_dontcare_would_drop) {
 // CoreAnimation's main pass: two screen-sized attachments, the second with DontCare as its load. GMEM below the colour
 // cache is shared out between them by bytes a pixel, so the tiles are half as tall as one attachment's. tri_mrt writes
 // both: each tile loads and stores both, and both come back as they were (the fake draws nothing; a bin overlapping
-// the other's would scramble one of them). tri_flat writes the first alone: the second is neither loaded nor stored.
+// the other's would scramble one of them). tri_flat writes the first alone: the second is neither loaded nor stored,
+// and has no bin, the first's taking all of GMEM -- bins 208 rows tall, 24 tiles instead of 52 (metal_gmem_off 8192:
+// the 52 as before).
 TEST(a_pass_of_two_attachments_in_gmem_loads_and_stores_those_drawn) {
     const Program mrt{kernels::tri_flat_vs_air, kernels::tri_mrt_fs_air, Linkage{}, "tri_mrt"};
     for (int both = 0; both < 2; both++) {
@@ -5518,10 +5520,43 @@ TEST(a_pass_of_two_attachments_in_gmem_loads_and_stores_those_drawn) {
         if (s.faults) std::printf("       %s\n", s.lastFault.c_str());
         CHECK_EQ(cb->counts().gmemPasses, 1u);
         const uint32_t per = both ? 2 : 1;
-        CHECK(s.tiles == p.tiles() && s.tileLoads == per * p.tiles() && s.tileStores == per * p.tiles());
+        const uint32_t tiles = both ? p.tiles() : 24u;
+        CHECK_EQ(p.tiles(), 52u);
+        CHECK(s.tiles == tiles && s.tileLoads == per * tiles && s.tileStores == per * tiles);
         CHECK_EQ(coordsWrong(*t), 0u);
         CHECK_EQ(coordsWrong(*u, 0x80000000u), 0u);
     }
+}
+
+// the share of GMEM by the attachments touched: the bases stay, an untouched one's share goes to the touched one before
+// it, a touched one after an untouched one keeps its own
+TEST(gmem_goes_to_the_attachments_the_tiles_touch) {
+    render::GmemPlan p;
+    // (gmemPlan's shares of CoreAnimation's main pass: BGRA8, RGBA16Float and the R32Float mask, 4 + 8 + 4 bytes)
+    const uint32_t top = a6xx::kGmemCcuColorOffset & ~0x3fffu;
+    p.bpp[0] = 4, p.bpp[1] = 8, p.bpp[2] = 4;
+    p.base[0] = 0, p.base[1] = (top / 4) & ~0x3fffu, p.base[2] = (top / 4 * 3) & ~0x3fffu;
+    p.room[0] = p.base[1], p.room[1] = p.base[2] - p.base[1], p.room[2] = top - p.base[2];
+    render::GmemPlan q = p;
+    CHECK(!render::gmemShare(&q, 7));
+    CHECK(q.room[0] == p.room[0] && q.room[1] == p.room[1] && q.room[2] == p.room[2]);
+    q = p;
+    CHECK(render::gmemShare(&q, 1));
+    CHECK(q.room[0] == top && q.bpp[1] == 0 && q.bpp[2] == 0);
+    q = p;
+    CHECK(render::gmemShare(&q, 3));
+    CHECK(q.room[0] == p.base[1] && q.room[1] == top - p.base[1] && q.bpp[2] == 0);
+    q = p;
+    CHECK(render::gmemShare(&q, 5));
+    CHECK(q.room[0] == p.base[2] && q.bpp[1] == 0 && q.room[2] == top - p.base[2]);
+    // the bins of a plan given to attachment 0 alone: as tall as its room holds at the plan's width
+    q = p;
+    q.binW = 832;
+    render::gmemShare(&q, 1);
+    const uint32_t area[4] = {0, 0, 827, 1791};
+    CHECK(render::gmemTiles(&q, area));
+    CHECK_EQ(q.rows, 13u);   // (144 rows of 832 pixels in 480 KiB; 56 bins when attachment 0 had its quarter)
+    CHECK(q.rows * q.binH >= 1792 && q.binH * 832 * 4 <= top);
 }
 
 // A pass whose draws touch a corner is tiled over that corner alone: tri_flat at a 100 x 50 viewport at (300, 1000)
