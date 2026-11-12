@@ -424,13 +424,13 @@ loader_jump(uint64_t reason, uint64_t code)
 	for (uintptr_t p = loader_recording[2] & ~63UL; p < loader_recording[2] + loader_recording[1]; p += 64) {
 		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 	}
-	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_recording));
-	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_recording + 16));
+	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_recording) : "memory");
+	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_recording + 16) : "memory");
 	for (uintptr_t p = loader_sound[2] & ~63UL; p < loader_sound[2] + loader_sound[1]; p += 64) {
 		__asm__ volatile ("dc cvac, %0" : : "r" (p) : "memory");
 	}
-	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_sound));
-	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_sound + 16));
+	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_sound) : "memory");
+	__asm__ volatile ("dc cvac, %0" : : "r" ((uintptr_t)loader_sound + 16) : "memory");
 	__asm__ volatile ("dsb sy" ::: "memory");
 
 	register uint64_t r_ttbr0 __asm__("x0") = static_kvtophys(loader_l1);
