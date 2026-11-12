@@ -76,7 +76,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **The kernel builds without theos' toolchain.** `kernel/build.sh` takes LLVM's own Mach-O linker and
   tools (`ld64.lld`, `llvm-libtool-darwin` ...) when theos is not installed, with the iOS SDK's headers
   alone (`IOS_SDK`): `kernel/host/llvm` makes up for the two places they differ from cctools. It needs
-  clang 19 or newer and GNU awk, which the build now says when they are missing.
+  clang 19 or newer and GNU awk, which the build now says when they are missing. LLVM's linker does not
+  lay the kernel out as cctools' does (`-image_base`, `-segaddr`): such a kernel is a check that every
+  file compiles and links, not one to boot.
 - **`kernel/build.sh` is the one command**, with theos installed or LLVM's tools. It assembles or updates the tree,
   fetches and builds its host tools (`kernel/deps/stage1.sh`), makes the board table and builds. A
   separate darwin-renoir checkout is no longer needed; it is still used if it is there.
@@ -264,9 +266,9 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
 - **The loader** compiles on every push. Its last run on a phone was before its board table was
   generated and before `uefi_charger` replaced a board's name in its code.
 - **`kernel/deps/stage1.sh` and the whole kernel build** have been run end to end once since, on Ubuntu
-  24.04 with LLVM 20's Mach-O tools instead of theos': every file compiled and the kernel linked, with
-  nothing undefined. With theos' cctools, as the team builds, it has not been repeated; a kernel linked
-  by LLVM's linker has not been booted.
+  24.04 with LLVM 20's Mach-O tools instead of theos': every file compiled, HakiOS' without a warning,
+  and the kernel linked with nothing undefined. With theos' cctools, as the team builds, it has not been
+  repeated; a kernel linked by LLVM's linker is not laid out for a phone and has not been booted.
 - **The syntax check is not a build.** Ten files and linking still need the real build.
 - **The porting procedure has not been followed on a third real phone.** The test cannot show the
   hardware answering.

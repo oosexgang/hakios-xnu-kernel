@@ -115,6 +115,8 @@ cctools)
 llvm)
 	[ -x "$XNU_CLANG_DIR/ld64.lld" ] || die "TOOLCHAIN=llvm: no ld64.lld in $XNU_CLANG_DIR (XNU_CLANG_DIR=DIR)"
 	log "Mach-O tools: LLVM's, in $XNU_CLANG_DIR"
+	log "  (ld64.lld does not implement -image_base, -segaddr and -segment_order: the kernel shows that everything"
+	log "   compiles and links, but it is not laid out as cctools' ld64 lays it out. Do not boot it.)"
 	for t in nm otool strip lipo install-name-tool; do
 		[ -x "$XNU_CLANG_DIR/llvm-$t" ] || die "TOOLCHAIN=llvm: no llvm-$t in $XNU_CLANG_DIR"
 		link "$XNU_CLANG_DIR/llvm-$t" "host/bin/${t//-/_}"

@@ -57,10 +57,14 @@ Requirements:
     in its `sdks` repository, and `git clone --depth 1 --filter=blob:none --sparse
     https://github.com/theos/sdks && git -C sdks sparse-checkout set iPhoneOS16.5.sdk` fetches that one
     directory (233 MB). `IOS_SDK` says where it is. `kernel/host/llvm` makes up for what LLVM's linker
-    and libtool take differently.
+    and libtool take differently. **The kernel this makes is not one to boot**: `ld64.lld` does not
+    implement `-image_base`, `-segaddr` and `-segment_order`, with which XNU lays the kernel out, and
+    says so. What it shows is that every file compiles and the whole kernel links, on any Linux
+    machine, in minutes.
 
   `kernel/build.sh` takes theos' when it is there and LLVM's otherwise; `TOOLCHAIN=cctools` or
-  `TOOLCHAIN=llvm` chooses. A whole build with LLVM's tools and no theos, on Ubuntu 24.04:
+  `TOOLCHAIN=llvm` chooses. A whole build with LLVM's tools and no theos, on Ubuntu 24.04 (to check a
+  change compiles and links; a kernel for a phone is linked by theos' `ld64`):
 
   ```sh
   sudo apt-get install build-essential git curl clang lld python3 perl xz-utils flex bison m4 autoconf \
@@ -108,6 +112,7 @@ what depends on them. Work done in the tree is never overwritten ([kernel/README
 | `THEOS` | `~/theos` | theos. |
 | `TOOLCHAIN` | theos' if there, else LLVM's | `cctools` (theos) or `llvm` (`ld64.lld` and the rest beside clang in `XNU_CLANG_DIR`). |
 | `IOS_SDK` | `$THEOS/sdks/iPhoneOS16.5.sdk` | The SDK whose headers the build uses. |
+| `XNU_WARNINGS` | `0` | `1`: the compiler's warnings are shown (Apple's code gives many; touch a file of HakiOS to see its own). |
 | `XNU_CLANG_DIR` | `/usr/bin` | The directory of the clang the kernel is compiled with (`kernel/host/xnu-clang`): 19 or newer. |
 | `DARWIN_RENOIR` | `../darwin-renoir` | Optional. If this checkout exists and has its `xnu-deps` built, its host tools are used and step 2 fetches less. |
 
@@ -127,7 +132,7 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | The loader build | Compiles without a warning with the boards of the repository and the tests' stand-in phones, on every push; the parts that are plain C (the payload, the device tree, NVRAM, the memory window, a download's bounds, the system image's place, the partition a write may reach) also run on the host. Its last on-phone run was before its board table was generated and before `uefi_charger` replaced a board's name in its code. |
 | The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |
 | Drivers whose constants became board data | The GPU's profile and blocks, the audio DSP's firmware and memory, the keys, the PMIC arbiter, RPMh and the Wi-Fi radio now come from a device package and `soc/`. The values are the ones the code had and the drivers compile. The keys' driver and the flashlight's also run on the host and under `qemu-aarch64` against a model of the arbiter, on two chips (`tests/buttons_driver_test.c`, `tests/torch_driver_test.c`), the CPU frequency driver against a model of the EPSS block (`tests/cpufreq_driver_test.c`), and the memory vote against a model of the RPMh sequencer (`tests/ddr_driver_test.c`). None has run on a phone since the change. |
-| The full kernel build | Run to the end on Ubuntu 24.04 (2026-11-12) with LLVM 20's tools and no theos, from a tree `kernel/assemble.sh` made: every file compiled, the ten `syntax-check.sh` cannot check among them, and the kernel linked with nothing undefined (18 MB, the 212 functions of HakiOS' drivers in it), with the two device packages. The team builds with theos' cctools; with them the build was last run before this restructuring. |
+| The full kernel build | Run to the end on Ubuntu 24.04 (2026-11-12) with LLVM 20's tools and no theos, from a tree `kernel/assemble.sh` made: every file compiled, the ten `syntax-check.sh` cannot check among them, and the kernel linked with nothing undefined (18 MB, the 212 functions of HakiOS' drivers in it), with the two device packages. With `XNU_WARNINGS=1` the files of HakiOS give no warning. LLVM's linker does not lay the kernel out as cctools' does, so this is a check, not a kernel for a phone: with theos' cctools, as the team builds, the build was last run before this restructuring. |
 | A boot | Not since the restructuring: it needs a phone. A kernel linked by LLVM's linker has not been booted at all. |
 | `kernel/deps/stage1.sh` | Run end to end on Ubuntu 24.04 (2026-11-12): every pinned source fetched at its commit, the macOS 13.3 SDK's checksum matched, `mig`, `migcom`, `tcsh`, `unifdef` and `unzbm` built and run. Not in CI: it fetches several hundred megabytes. |
 
