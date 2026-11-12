@@ -95,8 +95,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   of them, which three drivers had, is `hakios_i2c_gpio.h`. What
   the audio DSP's driver and the Wi-Fi's both had of the way to another processor is shared as
   well: the shared memory (`hakios_smem.h`), SMP2P's items (`hakios_smp2p.h`), the arithmetic of
-  GLINK's queues (`hakios_glink_queue.h`), the mailbox's and the doorbells' registers
-  (`hakios_ipc.h`). Each that has logic has a test of its own.
+  GLINK's queues and the length of its messages (`hakios_glink_queue.h`), QRTR's framing
+  (`hakios_qrtr_frame.h`), the checks of a DSP's firmware image (`hakios_mdt.h`), the mailbox's and the
+  doorbells' registers and whether the mailbox is usable (`hakios_ipc.h`). Each that has logic has a test
+  of its own; the four checks that wrapped in both drivers were the first to move there.
 - **The loader is parts by topic.** `loader/loader.c` was one file of 5100 lines; it is the entry
   point and a list of 24 parts in `loader/src/` now (the device tree's writer, the kernel's memory,
   the USB commands, the storage, ...), still one compilation unit. The built `loader.efi` is the
