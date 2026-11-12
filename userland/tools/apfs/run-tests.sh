@@ -26,15 +26,10 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 
-# the header lives in the kernel tree; xnu/files/ has the exported copy
-HDR_DIR=""
-for d in "$ROOT/xnu-src/xnu-8796.121.2/bsd/miscfs/apfs" "$ROOT/xnu/files/bsd/miscfs/apfs"; do
-	[ -f "$d/apfs_format.h" ] && { HDR_DIR=$d; break; }
-done
-if [ -z "$HDR_DIR" ]; then
-	echo "run-tests.sh: apfs_format.h is in neither the kernel tree nor xnu/files" >&2
-	exit 1
-fi
+# the header lives with the kernel's sources (apfs-src.sh says where)
+# shellcheck source=userland/tools/apfs/apfs-src.sh
+. "$HERE/apfs-src.sh"
+HDR_DIR=$(apfs_src_find "$ROOT") || exit 1
 
 echo "== 1. apfs_format.h ($HDR_DIR) against the offsets apfs.py reads at"
 cc -std=c11 -Wall -Wextra -I"$HDR_DIR" -o "$TMP/fmt_check" "$HERE/fmt_check.c" || exit 1

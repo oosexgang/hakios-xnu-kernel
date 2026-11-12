@@ -33,8 +33,10 @@ fi
 TOOL=$ROOT/apfs-work/apfs-tool
 stale=""
 [ -x "$TOOL" ] || stale=1
-for f in "$HERE/apfs-tool.c" "$HERE/build-tool.sh" \
-	"$ROOT"/xnu/files/bsd/miscfs/apfs/*.[ch] "$ROOT"/xnu/files/bsd/miscfs/apfs/libzbitmap/*.[ch]; do
+# shellcheck source=userland/tools/apfs/apfs-src.sh
+. "$HERE/apfs-src.sh"
+SRC=$(apfs_src_find "$ROOT")
+for f in "$HERE/apfs-tool.c" "$HERE/build-tool.sh" "$SRC"/*.[ch] "$SRC"/libzbitmap/*.[ch]; do
 	[ -n "$stale" ] && break
 	[ "$f" -nt "$TOOL" ] && stale=1
 done
