@@ -100,4 +100,22 @@ for test in loader_test loader_window_test loader_dsu_test board_test drivers_li
 	fi
 done
 
+# the helper that breaks a driver on purpose (tests/mutate.sh), on the example driver: a change that
+# matters is caught, one that changes nothing is not, one that does not compile is said to be that
+echo "== mutate.sh (on docs/examples/example_led.c)"
+mutation() {    # mutation WANTED-EXIT OLD NEW
+	local wanted=$1 got=0
+	"$HERE/mutate.sh" example_led_test example_led.c "$2" "$3" > "$WORK/mutation" 2>&1 || got=$?
+	if [ "$got" -ne "$wanted" ]; then
+		echo "FAIL: replacing \"$2\" by \"$3\": exit $got, wanted $wanted"
+		sed 's/^/    /' "$WORK/mutation"
+		failed=1
+	fi
+}
+mutation 0 'if (((found_cfg >> 2) & 0xf) != 0) {' 'if (0) {'
+mutation 1 'static bool taken;' 'static bool taken; '
+mutation 2 'static bool taken;' 'static bool taken'
+mutation 2 'text that is not there' ''
+[ "$failed" -ne 0 ] || echo "mutate.sh: 4 checks, ok"
+
 exit $failed
