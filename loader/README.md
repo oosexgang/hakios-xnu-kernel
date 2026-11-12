@@ -25,7 +25,8 @@ as when it was one file.
 | --- | --- |
 | `src/conventions.h` | What the boot shim, the packer and the kernel agree on with the loader. |
 | `src/xnu.h` | The kernel's own structures the loader fills in or reads. |
-| `src/util.c` | The loader's globals, printing, the caches. |
+| `src/base.c` | The loader's globals, memory and strings. |
+| `src/console.c` | What the loader says, on the screen and into its log; the caches. |
 | `src/logstore.c` | The log kept across runs: a raw write to a partition (phone only). |
 | `src/devicetree.c` | The writer of the Apple-format device tree. |
 | `src/platform.h` | `struct platform`: what the loader needs to know of a machine; includes the generated `platforms.h`. |
@@ -47,6 +48,10 @@ as when it was one file.
 | `src/dsu.c` | The iOS system image as an Android DSU image ("oem dsu"). |
 | `src/commands.c` | The commands taken over USB. |
 | `src/ramfb.c` | QEMU's display in the shape of the phone's screen. |
+
+`tests/loader_test.c` runs the parts that are plain C (`base.c`, `devicetree.c`, `nvram.c`,
+`payload.c`) on the host; the whole loader is compiled without a warning and linked by `make check`
+where clang and lld are installed.
 
 Where to look for a change:
 

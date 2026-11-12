@@ -20,7 +20,8 @@
  */
 #include "src/conventions.h"      /* what the boot shim, the packer and the kernel agree on with the loader */
 #include "src/xnu.h"              /* the kernel's own structures the loader fills in or reads */
-#include "src/util.c"             /* the loader's globals, printing, the caches */
+#include "src/base.c"             /* the loader's globals, memory and strings */
+#include "src/console.c"          /* what the loader says, on the screen and into its log; the caches */
 #include "src/logstore.c"         /* the log kept across runs: a raw write to a partition (phone only) */
 #include "src/devicetree.c"       /* the writer of the Apple-format device tree */
 #include "src/platform.h"         /* struct platform: what the loader needs to know of a machine; includes the generated platforms.h */
