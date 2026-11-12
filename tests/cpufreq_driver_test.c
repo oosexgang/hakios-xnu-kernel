@@ -182,7 +182,7 @@ another_soc(void)
 	CHECK(epss.elsewhere == 0, "%u accesses where nothing of the block is", epss.elsewhere);
 }
 
-/* a table of one row above the fixed source, and one that never repeats: the top is still found */
+/* a table of one row above the fixed source, one that never repeats, and one of the fixed source alone: the top is still found */
 static void
 odd_tables(void)
 {
@@ -195,11 +195,16 @@ odd_tables(void)
 		rising[i] = (uint8_t)(20 + i);
 	}
 	table(1, sizeof(rising), rising);
+	for (unsigned row = 0; row < ROWS; row++) {
+		epss.table[2][row] = 0;         /* the third group has the fixed 300 MHz and nothing above it */
+	}
 	boot_args = "cpufreq=1";
 	redwood_cpufreq_init();
 	CHECK(epss.wanted[0] == 1, "a table of one row: row %u", epss.wanted[0]);
 	CHECK(logged("row 2 -> 1 of the frequency table, 960 MHz"), "... which is 50 x 19.2 MHz");
 	CHECK(epss.wanted[1] == ROWS - 1, "a table that fills every row: row %u", epss.wanted[1]);
+	CHECK(epss.wanted[2] == 0 && logged("-> 0 of the frequency table, 300 MHz"), "a table of the fixed source alone: row %u, said as 300 MHz: %s",
+	    epss.wanted[2], log_text);
 	CHECK(epss.elsewhere == 0, "the table is not read past its end (%u)", epss.elsewhere);
 }
 
