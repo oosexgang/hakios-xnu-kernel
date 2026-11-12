@@ -300,7 +300,8 @@ struct amplifier {
 	bool prepared, started;
 	/* the monitor's tables (from the file) and what was last seen */
 	struct { int16_t min, max; uint16_t less; } temp_rows[MONITOR_ROWS], vbat_rows[MONITOR_ROWS];
-	unsigned temp_count, vbat_count, looks;
+	unsigned temp_count, vbat_count;
+	uint64_t looks;                 /* (64 bits: the average divides by as many as there have been, up to three) */
 	int temps[3], vbats[3];
 	int temp_row, vbat_row;
 };
