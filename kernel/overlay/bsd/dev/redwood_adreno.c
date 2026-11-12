@@ -2211,12 +2211,17 @@ static uint32_t core_khz;               /* the 3D core's speed, as asked of the 
 static bool
 step_core_power(void)
 {
-	const struct adreno_speed *speeds = gpu_profile ? gpu_profile->speeds : NULL;
+	const struct adreno_speed *speeds;
 	static struct hfi_perf_table perf;
 	static struct hfi_bw_table bw;
 	uint32_t core_start[2] = { 0, 0 }, start[1] = { 0 }, vote[4] = { 0, 1, 3, HFI_NO_INDEX }, granted = 0, speed = 0;
 	uint16_t gfx[16], cx[16], mx[16];
 	unsigned gfx_levels, cx_levels, mx_levels;
+
+	if (gpu_profile == NULL) {
+		return false;           /* (the driver does not start without one: redwood_adreno_init) */
+	}
+	speeds = gpu_profile->speeds;
 
 	if (!cx_ready() || !gmu_talks) {
 		return false;
