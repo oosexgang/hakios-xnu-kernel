@@ -34,6 +34,8 @@ struct hakios_touch {
 	uint32_t finger;                /* which finger, from 0 (or which button) */
 	uint32_t x, y;                  /* position on the display, 0 = left/top edge, 65535 = right/bottom edge */
 };
+/* (posted by the kernel, read by the iOS side, built apart: its size changes in both or not at all) */
+_Static_assert(sizeof(struct hakios_touch) == 24, "a touch sample is 24 bytes");
 
 #ifdef KERNEL
 /* For drivers; not from interrupt context. */

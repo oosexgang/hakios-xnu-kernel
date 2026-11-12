@@ -35,6 +35,7 @@ struct hakios_audio_volume {
 	uint32_t below;                 /* eighths of a dB */
 	uint32_t muted;
 };
+_Static_assert(sizeof(struct hakios_audio_volume) == 8, "the volume is 8 bytes (the ioctl's number carries the size)");
 #define HAKIOS_AUDIO_SET_VOLUME _IOW('r', 1, struct hakios_audio_volume)
 
 #ifdef KERNEL
