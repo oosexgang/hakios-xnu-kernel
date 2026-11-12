@@ -38,6 +38,8 @@ volume_up_name = "GPIO6 of the PM7325"
 radio_model = 0
 dsp_memory = 0x9ae00000
 dsp_memory_size = 0x01900000
+pins = [84, 85, 86]                 # the radio's enable, Bluetooth's reset, Bluetooth's sw-ctrl
+supplies = ["smpb7", "smpb1", "smpb8"]      # PM7325 S7, S1, S8: vdd-cx-mx, vdd-1.8-xo, vdd-1.3-rfa
 
 # The port's own partition on its storage, "darwin": the one a write may reach, from the block past what the
 # build puts there. Its GPT entry as the phone's partition table prints it.

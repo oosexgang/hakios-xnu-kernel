@@ -782,9 +782,16 @@ step_rpmh(void)
 	show_rpmh_resource("cx.lvl", "the DSP's logic; dt: vdd_cx of qcom,wpss@8a00000, asked 384 while it boots");
 	show_rpmh_resource("mx.lvl", "its memories; dt: vdd_mx, the same");
 	show_rpmh_resource("xo.lvl", "the crystal oscillator; dt: its clock \"xo\"");
-	show_rpmh_resource("smpb7", "PM7325 S7: the radio's vdd-cx-mx");
-	show_rpmh_resource("smpb1", "PM7325 S1: the radio's vdd-1.8-xo");
-	show_rpmh_resource("smpb8", "PM7325 S8: the radio's vdd-1.3-rfa");
+	/* the radio's own three, by the names this board's PMIC has them under (the board's [wifi] supplies) */
+	for (unsigned i = 0; i < 3; i++) {
+		static const char *const rails[3] = { "the radio's vdd-cx-mx", "the radio's vdd-1.8-xo", "the radio's vdd-1.3-rfa" };
+
+		if (hakios_board()->wifi.supply[i][0] != 0) {
+			show_rpmh_resource(hakios_board()->wifi.supply[i], rails[i]);
+		} else {
+			printf("wifi: %u: %s: the board file does not name it ([wifi] supplies)\n", step, rails[i]);
+		}
+	}
 
 	announce("read the application processor's RPMh sequencer (the first access to that block): its version, "
 	    "and the commands its slots hold");
@@ -955,36 +962,40 @@ step_rails(void)
 /* ---- step 5: pins -------------------------------------------------------------------------------------- */
 
 /*
- * dt: pinctrl@f000000 (pin n's registers: 0x1000 * n above 0xf100000). Pin 84 is described there
- * as the radio's enable ("cnss_wlan_en": output, high when active), but no node uses the
- * description; Bluetooth's node calls the same pin "wl-reset" and has 85 as its own reset and 86
- * as its "sw-ctrl".
+ * dt: the SoC's pin controller (pin n's registers: 0x1000 * n above the SoC file's [pins] tlmm). Which
+ * three pins are the radio's is the board's [wifi] pins. On the first phone of this driver 84 is described
+ * as the radio's enable ("cnss_wlan_en": output, high when active), but no node uses the description;
+ * Bluetooth's node calls the same pin "wl-reset" and has 85 as its own reset and 86 as its "sw-ctrl".
  *
  * (The DSP's clocks -- three in the global clock controller have its name: gcc-sc7280.c,
  * gcc_wpss_ahb_clk at 0x9d154 and two more -- are not looked at: a read there is answered with
  * an external abort, which ends the kernel. They are TrustZone's; the device tree gives the
  * loader's node the crystal alone.)
  */
-#define FIRST_PIN               84
-static struct block tlmm = { "tlmm", 0, 0x3000 };       /* the three pins' registers: FIRST_PIN's on, in the SoC file's [pins] */
-#define GPIO_CFG(n)             (0x1000 * ((n) - FIRST_PIN))            /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
-#define GPIO_IO(n)              (0x1000 * ((n) - FIRST_PIN) + 4)        /* bit 0 in, bit 1 out */
+static struct block tlmm[3] = { { "tlmm", 0, 0x1000 }, { "tlmm", 0, 0x1000 }, { "tlmm", 0, 0x1000 } };      /* one pin's registers each */
+#define GPIO_CFG                0               /* [1:0] pull, [5:2] function, [8:6] drive, [9] output */
+#define GPIO_IO                 4               /* bit 0 in, bit 1 out */
 
 static bool
 step_pins(void)
 {
-	static const struct {
-		unsigned pin;
-		const char *what;
-	} pins[] = { { 84, "the radio's enable or reset" }, { 85, "Bluetooth's reset" }, { 86, "Bluetooth's sw-ctrl" } };
+	static const char *const what[3] = { "the radio's enable or reset", "Bluetooth's reset", "Bluetooth's sw-ctrl" };
 
 	announce("read how the firmware left the radio's pins (registers the touch screen's driver uses too)");
-	need(&tlmm);
-	for (unsigned i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-		uint32_t cfg = rd(tlmm.base + GPIO_CFG(pins[i].pin)), io = rd(tlmm.base + GPIO_IO(pins[i].pin));
+	for (unsigned i = 0; i < 3; i++) {
+		int pin = hakios_board()->wifi.pin[i];
+		uint32_t cfg, io;
 
-		printf("wifi: %u: gpio%u (%s): configuration %#x: function %u, pull %u, %u mA, %s; reads %u\n", step, pins[i].pin,
-		    pins[i].what, cfg, (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & 1u << 9) ? (io & 2 ? "DRIVES HIGH" :
+		if (pin < 0) {
+			printf("wifi: %u: %s: the board file does not say which pin it is ([wifi] pins)\n", step, what[i]);
+			continue;
+		}
+		tlmm[i].phys = hakios_board()->pins.tlmm + 0x1000 * (uint64_t)pin;
+		need(&tlmm[i]);
+		cfg = rd(tlmm[i].base + GPIO_CFG);
+		io = rd(tlmm[i].base + GPIO_IO);
+		printf("wifi: %u: gpio%d (%s): configuration %#x: function %u, pull %u, %u mA, %s; reads %u\n", step, pin,
+		    what[i], cfg, (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & 1u << 9) ? (io & 2 ? "DRIVES HIGH" :
 		    "DRIVES LOW") : "an input", io & 1);
 	}
 	return true;
@@ -4011,7 +4022,6 @@ redwood_wifi_init(void)
 	ipcc.phys = hakios_board()->ipc.ipcc;
 	smem_lock.phys = hakios_board()->ipc.smem_lock;
 	rsc.phys = hakios_board()->rpmh.rsc;
-	tlmm.phys = hakios_board()->pins.tlmm + 0x1000 * FIRST_PIN;
 	redwood_qmi_set_transport(&qrtr_ops);
 	if (last_step == 0) {
 		if (image_file("wpss.mdt", &size) == NULL) {

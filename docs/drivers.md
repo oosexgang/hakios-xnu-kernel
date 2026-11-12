@@ -83,7 +83,7 @@ needs its feature in the board's `features`.
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/redwood_wifi.c`, `redwood_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part |
+| `bsd/dev/redwood_wifi.c`, `redwood_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`[wifi]`) |
 | `bsd/dev/redwood_lx.c`, `redwood_qmi.c`, `redwood_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/redwood_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
 | `bsd/dev/redwood_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |

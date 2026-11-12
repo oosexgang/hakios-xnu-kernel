@@ -333,6 +333,9 @@ class Check(Sandbox):
             (self.board, '"cpufreq-epss"', '"cpufreq-epss", "virtio"', 'feature "virtio" is an emulator'),
             (self.board, '[loader]', '[wifi]\nradio_model = 2\n[loader]', 'radio_model: 0 (a WCN6750'),
             (self.board, '[loader]', '[wifi]\nradio_model = 1\nearly_pool_mb = 80\n[loader]', None),
+            (self.board, '[loader]', '[wifi]\nradio_model = 0\npins = [84, 85, 86]\nsupplies = ["smpb7", "smpb1", "smpb8"]\n[loader]', None),
+            (self.board, '[loader]', '[wifi]\nradio_model = 0\npins = [84, 85, 85]\n[loader]', 'pins are three different pins'),
+            (self.board, '[loader]', '[wifi]\nradio_model = 0\nsupplies = ["smpb7", "S1B"]\n[loader]', 'supplies are three different names'),
             (self.soc, 'gic_dist = 0x17a00000\n', '', '"gic_dist" is missing'),
         ]
         for change, old, new, reason in cases:
@@ -754,7 +757,8 @@ class Generate(Sandbox):
         self.assertIn('dsp_memory and dsp_memory_size go together', self.problems())
         path.write_text(listed + '[wifi]\nradio_model = 0\ndsp_memory = 0x9ae00000\ndsp_memory_size = 0x1900000\n')
         self.assertEqual(self.problems(), '')
-        self.assertIn('.wifi = { .radio_model = 0, .early_pool_mb = 0, .dsp_memory = 0x9ae00000, .dsp_memory_size = 0x01900000 },',
+        self.assertIn('.wifi = { .radio_model = 0, .early_pool_mb = 0, .dsp_memory = 0x9ae00000, .dsp_memory_size = 0x01900000,\n\t\t\t'
+                      '.pin = { -1, -1, -1 }, .supply = { "", "", "" } },',
                       boards.table_text(*boards.load()))
         socs, found = boards.load()
         self.assertNotIn('dsp_memory and dsp_memory_size in [wifi] of the board file',

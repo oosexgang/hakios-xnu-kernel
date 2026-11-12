@@ -111,7 +111,7 @@ BOARD_SCHEMA = {
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
-             'dsp_memory_size': (int, False)},
+             'dsp_memory_size': (int, False), 'pins': ([int], False), 'supplies': ([str], False)},
     'storage': {'type_guid': (str, True), 'unique_guid': (str, True), 'first_lba': (U64, True), 'last_lba': (U64, True),
                 'write_first': (U64, True)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
@@ -479,6 +479,14 @@ def load(problems=None):
             if ('dsp_memory' in radio) != ('dsp_memory_size' in radio) or radio.get('dsp_memory', 0x1000) & 0xfff or \
                     radio.get('dsp_memory_size', 0x1000) & 0xfff or 0 in (radio.get('dsp_memory', 1), radio.get('dsp_memory_size', 1)):
                 problems.add(f'{rel} [wifi]', 'dsp_memory and dsp_memory_size go together: an address and a size in whole pages')
+            pins = radio.get('pins', [0, 1, 2])
+            if len(pins) != 3 or len(set(pins)) != 3 or any(not 0 <= pin <= 255 for pin in pins):
+                problems.add(f'{rel} [wifi]', 'pins are three different pins of the SoC, 0 to 255: the radio\'s enable, Bluetooth\'s reset, '
+                             'Bluetooth\'s sw-ctrl')
+            supplies = radio.get('supplies', ['a', 'b', 'c'])
+            if len(supplies) != 3 or len(set(supplies)) != 3 or any(not re.fullmatch(r'[a-z0-9.]{1,7}', name) for name in supplies):
+                problems.add(f'{rel} [wifi]', 'supplies are three different names of RPMh resources, as the command database has them '
+                             '("smpb7": up to 7 lower-case letters, digits and dots): the radio\'s vdd-cx-mx, 1.8 V and 1.3 V')
         if 'virtio' in data.get('features', []) and len(data['features']) > 1:
             problems.add(rel, 'feature "virtio" is an emulator\'s: not beside the features of a phone')
         if data.get('screen', {}).get('statusbar_leading_shift', 0) > 200:
@@ -685,7 +693,9 @@ def table_text(socs, boards):
         radio = board.get('wifi')
         if radio:
             out.append(f'\t\t.wifi = {{ .radio_model = {radio["radio_model"]}, .early_pool_mb = {radio.get("early_pool_mb", 0)}, '
-                       f'.dsp_memory = {radio.get("dsp_memory", 0):#010x}, .dsp_memory_size = {radio.get("dsp_memory_size", 0):#010x} }},')
+                       f'.dsp_memory = {radio.get("dsp_memory", 0):#010x}, .dsp_memory_size = {radio.get("dsp_memory_size", 0):#010x},\n\t\t\t'
+                       f'.pin = {{ {", ".join(str(pin) for pin in radio.get("pins", [-1, -1, -1]))} }}, '
+                       f'.supply = {{ {", ".join(f'"{name}"' for name in radio.get("supplies", ["", "", ""]))} }} }},')
         gpu = board.get('gpu')
         if gpu:
             out += [
