@@ -48,6 +48,7 @@ as when it was one file.
 | `src/pac.c` | Pointer authentication of the kernel image: keys, and the image's pointers signed. |
 | `src/run.c` | The kernel loaded, given its device tree and boot arguments, and run. |
 | `src/usb.c` | The USB command channel: a small server of the fastboot protocol. |
+| `src/dsu_write.c` | The system image written through its extents, and nowhere else. |
 | `src/dsu.c` | The iOS system image as an Android DSU image ("oem dsu"). |
 | `src/commands.c` | The commands taken over USB. |
 | `src/ramfb.c` | QEMU's display in the shape of the phone's screen. |

@@ -43,6 +43,7 @@
 #include "src/pac.c"              /* pointer authentication of the kernel image: keys, and the image's pointers signed */
 #include "src/run.c"              /* the kernel loaded, given its device tree and boot arguments, and run */
 #include "src/usb.c"              /* the USB command channel: a small server of the fastboot protocol */
+#include "src/dsu_write.c"        /* the system image written through its extents, and nowhere else */
 #include "src/dsu.c"              /* the iOS system image as an Android DSU image ("oem dsu") */
 #include "src/commands.c"         /* the commands taken over USB */
 #include "src/ramfb.c"            /* QEMU's display in the shape of the phone's screen */
