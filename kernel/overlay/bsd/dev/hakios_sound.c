@@ -176,7 +176,7 @@ static struct block tlmm = { "pin controller", 0, 0x100000 };   /* where: the So
 #define TDM_PINS                4
 static struct {
 	unsigned pin;
-	char name[32];                  /* "gpio97 (bit clock)" */
+	char name[32];                  /* "gpioN (bit clock)" */
 	const char *what;
 	uint32_t cfg, io;               /* without the function, which is the board's */
 } tdm_pins[TDM_PINS] = {
@@ -236,6 +236,17 @@ pin_activity(unsigned pin, const char *name, uint32_t *changes, uint32_t *ones)
 		last = now;
 	}
 	say("sound: %s: %u changes and %u ones in %u reads (%llu us)\n", name, *changes, *ones, reads, now_us() - began);
+}
+
+/* Whether the interface's bit clock and frame sync run, seen at the board's pins for them. */
+static bool
+tdm_clock_runs(void)
+{
+	uint32_t changes, ones, sync_changes, sync_ones;
+
+	pin_activity(tdm_pins[0].pin, tdm_pins[0].name, &changes, &ones);
+	pin_activity(tdm_pins[1].pin, tdm_pins[1].name, &sync_changes, &sync_ones);
+	return changes > 100 && sync_changes > 4;
 }
 
 /* ---- APR ------------------------------------------------------------------------------------------- */
@@ -1304,7 +1315,6 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 {
 	const uint8_t *acf = NULL;
 	uint64_t acf_size = 0;
-	uint32_t changes, ones, sync_changes, sync_ones;
 	bool ok = false;
 
 	lck_mtx_lock(&sound_lock);
@@ -1337,15 +1347,13 @@ sound_thread(__unused void *parameter, __unused wait_result_t result)
 		ok = false;
 		hakios_adsp_apr_events(events);
 	}
-	announce("the TDM pins (GPIO 97 to 100) to the interface, as Android's active state has them");
+	announce("the TDM pins (the board's speaker { } sound-pins) to the interface, as Android's active state has them");
 	pins_on();
 	if (!afe_on()) {
 		goto out;
 	}
 	sleep_ms(20);
-	pin_activity(97, "the bit clock (gpio97)", &changes, &ones);
-	pin_activity(100, "the frame sync (gpio100)", &sync_changes, &sync_ones);
-	say("sound: %s\n", changes > 100 && sync_changes > 4 ? "THE TDM CLOCK AND FRAME SYNC RUN at the pins" :
+	say("sound: %s\n", tdm_clock_runs() ? "THE TDM CLOCK AND FRAME SYNC RUN at the pins" :
 	    "THE PINS DO NOT SHOW A RUNNING TDM CLOCK");
 	if (level == 1) {
 		sleep_ms(seconds * 1000);
