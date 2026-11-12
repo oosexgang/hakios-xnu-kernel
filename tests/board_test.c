@@ -67,6 +67,34 @@ known_phone(void)
 	CHECK(logged("board: phone-cmd (Test phone, command-mode panel, sm7350): cpufreq-epss"), "said in the log: %s", log_text);
 }
 
+/* a board is said with every feature it has, however many: the line is not cut */
+static void
+every_feature_said(void)
+{
+	char all[1024] = "";
+	const struct hakios_board *b;
+
+	board = "phone-video";
+	b = hakios_board();
+	CHECK(b != NULL, "the board is known");
+	hakios_board_init();
+	for (unsigned bit = 0; b != NULL && bit < hakios_feature_count; bit++) {
+		if (b->features & (1u << bit)) {
+			char name[64];
+
+			/* (as a word of its own: the name, then a space or the line's end) */
+			snprintf(name, sizeof(name), " %s%s", hakios_feature_names[bit], "");
+			CHECK(logged(name), "%s is not in the line: %s", hakios_feature_names[bit], log_text);
+		}
+	}
+	CHECK(log_text[strlen(log_text) - 1] == '\n', "the line has its end");
+	/* ... and so would a board that has all of them: the buffer the tool sized takes every name */
+	for (unsigned bit = 0; bit < hakios_feature_count; bit++) {
+		snprintf(all + strlen(all), sizeof(all) - strlen(all), "%s%s", bit ? " " : "", hakios_feature_names[bit]);
+	}
+	CHECK(strlen(all) + 1 == HAKIOS_FEATURES_TEXT, "room for all the names is %u, they take %zu", HAKIOS_FEATURES_TEXT, strlen(all) + 1);
+}
+
 /* the GPU as its driver is handed it: the board's [gpu], with "off" before the speeds */
 static void
 gpu_a642(void)
@@ -251,7 +279,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "known_phone", known_phone }, { "gpu_a642", gpu_a642 }, { "gpu_a642l", gpu_a642l },
+		{ "known_phone", known_phone }, { "every_feature_said", every_feature_said }, { "gpu_a642", gpu_a642 }, { "gpu_a642l", gpu_a642l },
 		{ "emulator", emulator }, { "unknown", unknown }, { "unnamed", unnamed }, { "almost_named", almost_named }, { "table", table },
 	};
 

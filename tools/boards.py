@@ -650,6 +650,8 @@ def table_text(socs, boards):
             '/* the features by their bit, as board.toml spells them */',
             f'const char *const hakios_feature_names[] = {{ {names} }};',
             'const unsigned hakios_feature_count = sizeof(hakios_feature_names) / sizeof(hakios_feature_names[0]);',
+            '/* ... and room for all of them in one line, a space between two and the end */',
+            f'#define HAKIOS_FEATURES_TEXT {sum(len(bits.get(bit, "?")) + 1 for bit in range(max(bits) + 1))}',
             '',
             '#endif /* _HAKIOS_BOARD_TABLE_H */',
             '']

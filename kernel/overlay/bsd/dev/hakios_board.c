@@ -116,7 +116,7 @@ void
 hakios_board_init(void)
 {
 	const struct hakios_board *board = hakios_board();
-	char line[256], features[160];
+	char features[HAKIOS_FEATURES_TEXT], line[160 + HAKIOS_FEATURES_TEXT];   /* (a board with every feature fits) */
 
 	features_text(board, features, sizeof(features));
 	if (board != NULL) {
@@ -141,7 +141,7 @@ sysctl_board SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg1)
 	const struct hakios_board *board = hakios_board();
-	char features[160];
+	char features[HAKIOS_FEATURES_TEXT];
 	const char *text;
 
 	switch (arg2) {
