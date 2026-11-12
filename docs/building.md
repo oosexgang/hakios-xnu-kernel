@@ -101,7 +101,7 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |
 | Drivers whose constants became board data | The GPU's profile and blocks, the audio DSP's firmware and memory, the keys, the PMIC arbiter, RPMh and the Wi-Fi radio now come from a device package and `soc/`. The values are the ones the code had and the drivers compile. The keys' driver and the flashlight's also run on the host and under `qemu-aarch64` against a model of the arbiter, on two chips (`tests/buttons_driver_test.c`, `tests/torch_driver_test.c`), the CPU frequency driver against a model of the EPSS block (`tests/cpufreq_driver_test.c`), and the memory vote against a model of the RPMh sequencer (`tests/ddr_driver_test.c`). None has run on a phone since the change. |
 | The full kernel build, and a boot | By the team, on their machines, before this restructuring. Not repeated since: it needs the Darwin toolchain and a phone. |
-| `kernel/deps/stage1.sh` | Not run end to end. It runs the commands of the setup script the team builds with. |
+| `kernel/deps/stage1.sh` | Run end to end on Ubuntu 24.04 (2026-11-12): every pinned source fetched at its commit, the macOS 13.3 SDK's checksum matched, `mig`, `migcom`, `tcsh`, `unifdef` and `unzbm` built and run. Not in CI: it fetches several hundred megabytes. |
 
 The first full build after the restructuring is the one to watch. If it fails to build, look first at
 `kernel/build.sh` steps 1 and 2, the parts of the build whose behaviour changed, and at the ten files

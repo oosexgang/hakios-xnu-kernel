@@ -259,8 +259,9 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
   the ones the code had, the tests hold them, and the drivers compile. That is all that is known.
 - **The loader** compiles on every push. Its last run on a phone was before its board table was
   generated and before `uefi_charger` replaced a board's name in its code.
-- **`kernel/deps/stage1.sh` has not been run end to end.** It runs the commands of the setup script the
-  team builds with.
+- **`kernel/deps/stage1.sh`** has been run end to end once since (Ubuntu 24.04): every source fetched at
+  its pinned commit, the SDK's checksum matched, the host tools built and run. The steps of
+  `kernel/build.sh` after it need theos' toolchain and have not.
 - **The syntax check is not a build.** Ten files and linking still need the real build.
 - **The porting procedure has not been followed on a third real phone.** The test cannot show the
   hardware answering.
