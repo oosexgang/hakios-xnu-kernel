@@ -120,6 +120,7 @@ says what each test covers and what it leaves out.
 | `redwood_speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
 | `redwood_guard.c` | `guard_test.c` | (none: tones in, samples out) |
 | `redwood_ufs.c` | `ufs_driver_test.c` | the loader on core 0: its page and buffer over a made-up disk, noting every write and whether the port may make it |
+| `redwood_input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/redwood-touch` out) |
 | `redwood_sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
 | `redwood_goodix.c`, `renoir_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 
