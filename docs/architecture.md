@@ -122,7 +122,10 @@ What the overlay provides, in the order a boot meets it:
    has no knowledge of any board, a driver decides for itself whether it has anything to do.
 5. **What the drivers share** (`bsd/dev/hakios_*.h`): the board's data, the log, registers, waits,
    the SoC's pins, the PMIC arbiter's protocol, RPMh's command database and a request to it, the
-   processors' shared memory. Each is written once and, where it has logic, tested on the host;
+   way to the other processors (their shared memory, SMP2P, GLINK's queues and messages, QRTR's
+   framing, a DSP's firmware image, the mailbox). What another processor sends is checked there, once,
+   rather than in each driver that talks to one. Each is written once and, where it has logic, tested
+   on the host;
    [writing-a-driver.md](writing-a-driver.md) lists them.
 
 Naming: files and symbols called `redwood_*` carry the name of the first phone. It is the historical
