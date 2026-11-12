@@ -151,7 +151,10 @@ an amplifier has its own registers. These are drivers, in `kernel/overlay/bsd/de
 feature named after the part and the wiring it expects (`touch-goodix`, `haptic-aw86927`, ...).
 
 - If your phone has **the same part wired the same way**, list the feature and try it.
-- If it has **the same part on other pins or another bus**, the driver needs those made data. Move
+- If it has **one of the touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
+  engine or other pins: fill in `[touch]` of the board file. `devices/_template/board.toml` says
+  where each value is in the device tree and in the SoC's clock driver.
+- If it has **the same part on other pins or another bus** and the driver has them in its code, the driver needs those made data. Move
   the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
   in `[buttons]`, the flashlight's in `[torch]`, the vibration motor's pins in `[haptic]` and the
   speaker amplifiers' bus and addresses in `[speaker]`:
@@ -222,11 +225,13 @@ Stated plainly, so nobody finds out the hard way:
 - **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`[rpmh]`), but expects
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
-- **Sound, microphones, camera, Wi-Fi, haptics, flashlight, storage** are written for redwood's parts.
-  They are the largest share of the work on a new phone. Where the SoC's pins, its clock controller,
-  RPMh, its SMMU and the way to its other processors are comes from the SoC file (`[pins]`, `[clocks]`,
-  `[rpmh]`, `[smmu]`, `[ipc]`); which pin a part is on, its
-  bus and the names of its supplies are still in each driver.
+- **Sound, microphones, camera, Wi-Fi, storage** are written for redwood's parts. They are the
+  largest share of the work on a new phone. Where the SoC's pins, its clock controller, RPMh, its
+  SMMU and the way to its other processors are comes from the SoC file (`[pins]`, `[clocks]`,
+  `[rpmh]`, `[smmu]`, `[ipc]`); which pin a part is on, its bus and the names of its supplies are
+  still in these drivers. For the touch controllers, the keys, the flashlight, the vibration motor
+  and the speaker amplifiers they are data: a phone with one of those parts on other pins needs its
+  section of the board file filled in and no change to the driver.
 - **Writing to the phone's storage.** The loader serves the kernel's reads of any partition, but a
   write into one partition only: the port's own, proved by its GPT entry. That entry (both GUIDs, the
   first and last block, and the block from which writing is allowed) is redwood's and is written into

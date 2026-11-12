@@ -49,8 +49,8 @@ needs its feature in the board's `features`.
 | `bsd/dev/hakios_backlight.c` | Panel brightness: MIPI DCS through a Qualcomm DSI controller, or software. Automatic brightness. | `[backlight]` / `backlight=` | data |
 | `bsd/dev/redwood_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `[gpu]` / `gpu=1`, `adreno=` | data for a 642 or 642L (`[gpu]`, and `[adreno]` of the SoC file for where its blocks are); another Adreno generation: the driver |
 | `bsd/dev/redwood_input.c` | `/dev/redwood-touch`: the queue of touches and button presses every source feeds. | — | any |
-| `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on redwood's SPI. | `touch-goodix` / `touchscreen=1` | part |
-| `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on Renoir's SPI. | `touch-ft3658u` / `touchscreen=1` | part |
+| `bsd/dev/redwood_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1` | part; which engine, its clocks, the pins and the supply are data (`[touch]`) |
+| `bsd/dev/renoir_fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1` | part; which engine, its clocks, the pins and the supplies are data (`[touch]`) |
 | `bsd/dev/hakios_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
 | `bsd/dev/redwood_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
 
@@ -119,8 +119,10 @@ says what each test covers and what it leaves out.
 | `redwood_haptic.c` | `haptic_driver_test.c` | the SoC's pins with an I2C chip on them |
 | `redwood_speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
 | `redwood_guard.c` | `guard_test.c` | (none: tones in, samples out) |
+| `redwood_goodix.c`, `renoir_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 
-The touch, sound, microphone, camera, Wi-Fi, DSP, GPU and storage drivers have no such test: they
+The two touch drivers are compiled into host programs too, but nothing of a controller is modelled:
+their tests cover the wiring only. The sound, microphone, camera, Wi-Fi, DSP, GPU and storage drivers have no such test: they
 are checked for syntax, types and the formats of what they print only (`kernel/syntax-check.sh`), and on the phone.
 
 ## Adding one

@@ -97,7 +97,7 @@ beside the code, so the file named in each heading has the full explanation.
 | `fts_spi_hz` | — |
 | `fts_trace` | — |
 | `touch_flip` | — |
-| `touchscreen` | Only touchscreen=1 on physical board renoir. |
+| `touchscreen` | Only with touchscreen=1 on a board that lists "touch-ft3658u"; which serial engine, clocks, pins and supplies is the board file's [touch] (the numbers named in comments here are renoir's). |
 
 ### `iokit/Kernel/MiniIOMobileFramebuffer.cpp`
 

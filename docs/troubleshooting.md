@@ -170,6 +170,15 @@ software without it.
 | --- | --- | --- |
 | `touch: disabled: ...`, `fts: disabled: ...`, `speaker: disabled: ...`, `camera: disabled: the SoC file does not say where the pins, the clock controller, RPMh, the SMMU and the camera subsystem's blocks are ([pins], [clocks], [rpmh], [smmu], [camera])`, `haptic: disabled: the SoC file does not say where the pins are ([pins])`, `mic: disabled: the SoC file does not say where the pins and the audio subsystem's blocks are ([pins], [lpass])`, `adsp: disabled: the SoC file does not say where RPMh and the way to the other processors are ([rpmh], [ipc]): ...`, `sound: disabled: the SoC file does not say where the pins and the SMMU are ([pins], [smmu])`, `wifi: disabled: the SoC file does not say where ... are ([rpmh], [pins], [spmi], [ipc], [smmu]), or the board file where the Wi-Fi DSP's memory is ([wifi] dsp_memory): ...` | The driver's feature is listed, but the SoC file lacks a section the driver takes addresses from. `tools/boards.py check` refuses such a board, so this is a kernel built from other files than the ones checked. | Fill in the section (`devices/_template/soc.toml` says where each value is in the device tree) and build again. |
 
+### Touch
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `touch: disabled: the board file does not say how the controller is wired ([touch], with analog_enable and vendor_pins)`, `fts: disabled: ... ([touch], with analog_supply)` | The feature is listed without `[touch]`, or without the keys that controller's driver uses; `tools/boards.py check` refuses such a board. | Fill in `[touch]`: `devices/_template/board.toml` says where each value comes from. |
+| `goodix: clocks stay off: ...`, `fts: clocks stay off: ...` | The serial engine's clocks did not start after they were voted for. | `clocks` and `votes` of `[touch]` are the engine's and its wrapper's in your SoC's clock driver (`gcc-SOC.c`): the three `halt_reg` and the five `enable_mask` bits. An engine of another wrapper has other bits. |
+| `goodix: RPMh: no regulator "NAME"`, `fts: no RPMh regulator NAME` | The command database has no regulator of that name. | `io_supply` and `analog_supply` are RPMh's names: regulator L2 of the third PMIC is `ldoc2`. `ddr=1` and `speaker_probe=1` print names the database has. |
+| `fts: no application ID 0x5652 ...`, `goodix: ... no answer` | The controller does not answer on the bus. | With the clocks running this is the pins: `bus_pins`, `reset` and `interrupt` against the bus's and the controller's nodes in the device tree. Both drivers also try the bus by hand on the same pins and say which data pin answered. |
+
 ### Speaker amplifiers
 
 | What you see | What it means | What to do |

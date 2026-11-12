@@ -101,6 +101,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **One file, one job.** The CPU frequency driver also voted for the memory's bandwidth and measured
   memory speed; those are `hakios_ddr.c` and `hakios_bench.c` now. It and the keys' driver work
   from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
+- **A touch controller on another serial engine or other pins is a board file.** The two touch
+  drivers had the engine's address, its clocks and votes, the pins and the supplies' names of the
+  phone each was written on. They are `[touch]` now. A test compiles each driver on the host and
+  compares every value with the number that was in its code, and with those of a board wired
+  otherwise; the drivers before the change pass the first and fail the second.
 - **Three parts on other wiring are a board file.** Where the flashlight's module is on the PMICs' bus
   (`[torch]`), which pins the vibration motor's chip is on, with the motor's calibration
   (`[haptic]`), and the speaker amplifiers' bus, addresses and interrupts (`[speaker]`) were in the
