@@ -1,6 +1,6 @@
 /*
- * pacstrip: make arm64e code run on a CPU without pointer authentication (renoir: Cortex-A78/A55,
- * ARMv8.2 + RCpc, no PAuth) by rewriting every PAC instruction 1:1 into its identity, in a copy.
+ * pacstrip: make arm64e code run on a CPU without pointer authentication (an ARMv8.2 core such as the
+ * Cortex-A78/A55 of a Snapdragon 7-series: RCpc, no PAuth) by rewriting every PAC instruction 1:1 into its identity, in a copy.
  *
  *   pacstrip cache OUTDIR FILE...   copy every file of a dyld shared cache (main file + subcaches;
  *                                   .symbols/.atlas and other non-cache files are copied unchanged)
@@ -35,7 +35,7 @@
  *   LDAPUR{B,H,,} Rt,[Xn,#0]         -> LDAPR{B,H,,} Rt,[Xn]
  *   STLUR{B,H,,} Rt,[Xn,#0]          -> STLR{B,H,,} Rt,[Xn]
  * Hint-space PAC (PACIBSP, AUTIBSP, XPACLRI, *1716, ...) are NOPs on ARMv8.2 and stay. Everything
- * else renoir cannot execute is counted as left over (for the kernel's EL0 emulator), per class and
+ * else such a CPU cannot execute is counted as left over (for the kernel's EL0 emulator), per class and
  * per image. Data words inside code sections that happen to match are rewritten too (upper bound).
  */
 #define _GNU_SOURCE /* copy_file_range */
@@ -85,7 +85,7 @@ static const char *const rew_name[NREW] = {
 	"STLUR{B,H,W,X} #0 -> STLR",
 };
 
-/* left over: what renoir cannot execute and pacstrip cannot rewrite */
+/* left over: what such a CPU cannot execute and pacstrip cannot rewrite */
 struct lclass {
 	const char *name;
 	uint32_t mask, value; /* 0, 0: decided in classify() */
@@ -318,7 +318,7 @@ report(int census, int cache)
 		total_rew += rew[c];
 	}
 	printf("%12llu  total\n\nkept (hint space, NOP on ARMv8.2):\n%12llu  PACI*SP/Z, AUTI*SP/Z, *1716, "
-	    "XPACLRI\n\nleft over (UNDEFINED on renoir, for the EL0 emulator):\n",
+	    "XPACLRI\n\nleft over (UNDEFINED on ARMv8.2, for the EL0 emulator):\n",
 	    (unsigned long long)total_rew, (unsigned long long)hint);
 	for (int l = 0; l < NLEFT; l++) {
 		printf("%12llu  %s\n", (unsigned long long)left[l], left_class[l].name);

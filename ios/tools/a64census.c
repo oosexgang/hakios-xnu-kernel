@@ -4,7 +4,7 @@
  *
  *   a64census FILE...          (every file of a cache: the main file and its subcaches)
  *
- * The A78/A55 of renoir report: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid
+ * The A78/A55 of a Snapdragon 780G report: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid
  * asimdrdm lrcpc dcpop asimddp. No pointer authentication: the PAC instructions of the hint space
  * (PACIBSP, AUTIBSP, XPACLRI, ...) are NOPs there, every other one is UNDEFINED. Counted are those,
  * and the later extensions arm64e code built for A12/A13 may use. Words that are data in a text
@@ -37,7 +37,7 @@ static struct class classes[] = {
 	{ "XPACI/XPACD",                 0xfffffbe0, 0xdac143e0, 0 },
 	{ "PACGA",                       0xffe0fc00, 0x9ac03000, 0 },
 	{ "ERETAA/ERETAB",               0xfffffbff, 0xd69f0bff, 0 },
-	/* hint-space PAC: NOPs on renoir (harmless, for the record) */
+	/* hint-space PAC: NOPs on ARMv8.2 (harmless, for the record) */
 	{ "hint PAC SP/Z forms (NOP here)", 0xffffff1f, 0xd503231f, 0 },
 	/* ARMv8.3+ besides PAuth */
 	{ "FJCVTZS (JSCVT)",             0xfffffc00, 0x1e7e0000, 0 },

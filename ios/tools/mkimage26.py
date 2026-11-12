@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The iOS 26 system image for renoir (the RAM disk /dev/md0 the loader stages), arm64e code made runnable
-on its ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
+"""The iOS 26 system image (the RAM disk /dev/md0 the loader stages), arm64e code made runnable on a
+phone's ARMv8.2 cores: every arm64e Mach-O goes through pacstrip, the dyld shared cache is the one
 pacstrip rewrote (ios26/dyld-strip).
 
 usage: [IOS=DIR] mkimage26.py [--min | --prune] OUT.apfs      (IOS: the extracted IPSW, default ios26)
