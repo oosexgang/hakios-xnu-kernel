@@ -9,7 +9,7 @@
  * slave address, the chip ID and where it is read, the power sequence, the tables) and the drivers
  * of the phone's kernel (MiCode redwood-s-oss: cam_sensor_util.c, qcom_pm8008-regulator.c,
  * camcc-yupik.c, gdsc-regulator.c, pinctrl-yupik.c, pinctrl-spmi-gpio.c, cam_csiphy_*), read as
- * data. The macro one (the others' differences are in redwood's board file, chips[] below and capture_sensor()):
+ * data. The macro one (the others' differences are in the board file, chips[] below and capture_sensor()):
  *
  *   the sensor     on CCI 1, master 0 (GPIO 73 data, 74 clock, function cci_i2c, internal pull-ups),
  *                  slave address 0x3c; done by hand here, as the other drivers do their I2C (the
