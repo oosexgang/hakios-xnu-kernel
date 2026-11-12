@@ -3,7 +3,7 @@
  * they are into a host program: its own memory and string functions, the writer of the device tree
  * the kernel is given, the NVRAM image, the payload's directory, the firmware's clock read as
  * seconds. What they write is read back here by code written from the formats' descriptions, not by
- * the loader's own.
+ * the loader's own; and what the packer writes (loader/mkpayload.py) is read by the loader's reader.
  *
  *   loader_test SCENARIO
  */
@@ -399,12 +399,63 @@ payload(void)
 	CHECK(parse_payload(&info, 0) == 1 && info.kernel != NULL && info.usb_mode == 0, "nor past the size the header gives");
 }
 
+/* what the packer writes (loader/mkpayload.py), the loader reads: the two are run against each other */
+static int
+packed(const char *directory, const char *arguments)
+{
+	char command[2048], tools[1024], path[1024];
+	FILE *file;
+	size_t length;
+
+	/* (the packer is beside the loader: this file is tests/loader_test.c of the same tree) */
+	snprintf(tools, sizeof(tools), "%s", __FILE__);
+	*strrchr(tools, '/') = 0;
+	snprintf(path, sizeof(path), "%s/payload.bin", directory);
+	snprintf(command, sizeof(command), "cd '%s' && python3 '%s/../loader/mkpayload.py' -o payload.bin %s > /dev/null", directory, tools,
+	    arguments);
+	if (system(command) != 0 || (file = fopen(path, "rb")) == NULL) {
+		return 0;
+	}
+	memset(payload_area, 0xee, sizeof(payload_area));       /* (whatever was in memory before the payload) */
+	length = fread(payload_area, 1, sizeof(payload_area), file);
+	fclose(file);
+	said[0] = 0;
+	return length > 8 && length < sizeof(payload_area);
+}
+
+static void
+packed_payload(void)
+{
+	char directory[512], command[1024];
+	struct payload_info info;
+
+	snprintf(directory, sizeof(directory), "%s/loader_test.XXXXXX", getenv("TMPDIR") != NULL ? getenv("TMPDIR") : "/tmp");
+	if (mkdtemp(directory) == NULL) {
+		CHECK(0, "no directory to work in");
+		return;
+	}
+	snprintf(command, sizeof(command), "cd '%s' && printf 'the kernel, 21 bytes.' > k && printf 'an image of 20 bytes' > r", directory);
+	CHECK(system(command) == 0, "the files to pack");
+	CHECK(packed(directory, "kernel=k ramdisk=r --cmdline 'debug=0x14e cpus=8' --physbase 0xA2000000 --rdres 4C000000 --checkpoint 17"), "packed");
+	CHECK(parse_payload(&info, 0) == 1, "the loader takes what the packer wrote: %s", said);
+	CHECK(info.kernel != NULL && memcmp(info.kernel, "the kernel, 21 bytes.", 21) == 0, "the kernel's bytes");
+	CHECK(info.ramdisk != NULL && info.ramdisk_size == 20 && memcmp(info.ramdisk, "an image of 20 bytes", 20) == 0, "the image and its size");
+	CHECK(strcmp(info.cmdline, "debug=0x14e cpus=8") == 0, "the boot arguments: %s", info.cmdline);
+	CHECK(info.forced_base == 0xa2000000ULL && info.resident_rd == 0x4c000000ULL && info.checkpoint == 17 && info.usb_mode == 0,
+	    "the numbers, however their hexadecimal was written: %llx %llx %llu", (unsigned long long)info.forced_base,
+	    (unsigned long long)info.resident_rd, (unsigned long long)info.checkpoint);
+	CHECK(packed(directory, "--usb"), "packed with --usb alone");
+	CHECK(parse_payload(&info, 0) == 1 && info.usb_mode == 1 && info.kernel == NULL && info.cmdline[0] == 0, "a payload that only says: take commands");
+	snprintf(command, sizeof(command), "rm -rf '%s'", directory);
+	CHECK(system(command) == 0, "the directory removed");
+}
+
 int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "memory_and_strings", memory_and_strings }, { "device_tree", device_tree }, { "identity", identity },
-		{ "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload },
+		{ "clock_as_seconds", clock_as_seconds }, { "nvram", nvram }, { "payload", payload }, { "packed_payload", packed_payload },
 	};
 
 	if (argc < 2) {
