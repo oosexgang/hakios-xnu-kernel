@@ -233,6 +233,102 @@ held_at_start(void)
 	no_write();
 }
 
+/*
+ * What the power-on block says at each of the driver's looks, one after another: for what a key that
+ * bounces, or a read that comes out wrong once, must not be taken for.
+ */
+static const uint8_t *plan;
+static unsigned plan_length, plan_at;
+
+static void
+pon_looked_at(struct spmi_peripheral *p, uint8_t reg)
+{
+	if (reg == 0x10 && plan_at < plan_length) {
+		p->reg[0x10] = plan[plan_at++];
+	}
+}
+
+static unsigned
+said_times(const char *text)
+{
+	unsigned count = 0;
+
+	for (const char *at = log_text; (at = strstr(at, text)) != NULL; at += strlen(text)) {
+		count++;
+	}
+	return count;
+}
+
+/* a key is believed when two looks in a row agree: one look that differs is nothing, pressed or released */
+static void
+one_look_is_not_a_press(void)
+{
+	static const uint8_t looks[] = {
+		0, PON_KPDPWR, 0, 0,                    /* pressed at one look only: nothing */
+		PON_KPDPWR, PON_KPDPWR,                 /* at two: pressed */
+		0, PON_KPDPWR, PON_KPDPWR,              /* released at one look only while held: still held */
+		0, 0,                                   /* at two: released */
+		PON_RESIN, 0, PON_RESIN, 0, 0,          /* the other key of the block, never twice in a row: nothing */
+	};
+
+	phone("phone-cmd");
+	boot_args = "buttons=1";
+	redwood_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	usleep(100 * 1000);
+	CHECK(posts() == 0, "nothing before (%u)", posts());
+	plan = looks;
+	plan_length = sizeof(looks);
+	pon_model.looked_at = pon_looked_at;
+	WAIT_FOR(plan_at == sizeof(looks), 3000);
+	usleep(100 * 1000);
+	CHECK(plan_at == sizeof(looks), "every look of the plan was taken: %u", plan_at);
+	CHECK(posts() == 2 && posted[0].type == REDWOOD_BUTTON_DOWN && posted[0].button == REDWOOD_BUTTON_LOCK &&
+	    posted[1].type == REDWOOD_BUTTON_UP && posted[1].button == REDWOOD_BUTTON_LOCK, "one press and one release of power, and nothing else: %u records",
+	    posts());
+	no_write();
+}
+
+/* what the driver says of a run: how many presses of each key, in the summary it gives early on */
+static void
+presses_are_counted(void)
+{
+	phone("phone-cmd");
+	fake_delay_divisor = 20;                /* the summary comes after 10 s of looks: half a second here */
+	boot_args = "buttons=1";
+	redwood_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
+	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
+	press_and_release(volume_up_down, volume_up_up, REDWOOD_BUTTON_VOLUME_UP, "volume up");
+	WAIT_FOR(logged("buttons: so far"), 5000);
+	CHECK(logged("buttons: so far 2 presses of power, 1 of volume up, 0 of volume down; now none held"), "the summary: %s", log_text);
+	no_write();
+}
+
+/* a PMIC that stops answering while its keys are watched: said a few times, not at every look; then the driver gives up */
+static void
+bus_stops_answering(void)
+{
+	unsigned transfers;
+
+	phone("phone-cmd");
+	fake_delay_divisor = 40;
+	boot_args = "buttons=1";
+	redwood_buttons_init();
+	WAIT_FOR(logged("step 5: watching power volume-up volume-down"), 3000);
+	pon_model.silent = true;
+	pin_model.silent = true;
+	WAIT_FOR(logged("giving up"), 20000);
+	CHECK(logged("more than half of") && logged("reads have failed: giving up"), "said: gives up");
+	CHECK(said_times("buttons: reading ") == 8, "the failing reads are said 8 times, not %u", said_times("buttons: reading "));
+	CHECK(posts() == 0, "a read that fails is no key (%u records)", posts());
+	transfers = spmi.transfers;
+	usleep(200 * 1000);
+	CHECK(spmi.transfers == transfers, "and the bus is left alone after that (%u more transfers)", spmi.transfers - transfers);
+	no_write();
+}
+
 /* a peripheral that is not of the kind the driver knows is left alone; the other keys work */
 static void
 another_part_at_the_pin(void)
@@ -333,7 +429,8 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "three_keys", three_keys }, { "another_wiring", another_wiring }, { "with_the_touch_screen", with_the_touch_screen }, { "off_when_told", off_when_told },
-		{ "held_at_start", held_at_start }, { "another_part_at_the_pin", another_part_at_the_pin },
+		{ "held_at_start", held_at_start }, { "one_look_is_not_a_press", one_look_is_not_a_press },
+		{ "presses_are_counted", presses_are_counted }, { "bus_stops_answering", bus_stops_answering }, { "another_part_at_the_pin", another_part_at_the_pin },
 		{ "pin_not_set_up", pin_not_set_up }, { "another_arbiter", another_arbiter }, { "nobody_there", nobody_there },
 		{ "first_steps_only", first_steps_only }, { "board_without_keys", board_without_keys },
 		{ "unknown_board", unknown_board },

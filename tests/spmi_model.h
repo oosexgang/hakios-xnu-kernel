@@ -32,6 +32,8 @@ struct spmi_peripheral {
 	bool silent;                    /* nobody at that address: a transfer fails */
 	/* a write the test wants to see or to change; NULL: the register takes the value */
 	void (*written)(struct spmi_peripheral *p, uint8_t reg, uint8_t value);
+	/* called before a read is answered: a test that wants a register to hold something for exactly one read */
+	void (*looked_at)(struct spmi_peripheral *p, uint8_t reg);
 	unsigned writes;
 };
 
@@ -150,6 +152,9 @@ spmi_model_wr(uintptr_t address, uint32_t value)
 		} else if (p == NULL || p->silent) {
 			spmi.status[channel] = SPMI_DONE | SPMI_FAILURE;
 		} else {
+			if (p->looked_at != NULL) {
+				p->looked_at(p, (uint8_t)reg);
+			}
 			for (uint32_t i = 0; i < count; i++) {
 				bytes[i] = p->reg[(reg + i) & 0xff];
 			}
