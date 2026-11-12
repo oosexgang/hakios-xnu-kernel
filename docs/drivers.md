@@ -119,6 +119,7 @@ says what each test covers and what it leaves out.
 | `redwood_haptic.c` | `haptic_driver_test.c` | the SoC's pins with an I2C chip on them |
 | `redwood_speaker.c` | `speaker_driver_test.c` | the pins with two amplifiers, a configuration file |
 | `redwood_guard.c` | `guard_test.c` | (none: tones in, samples out) |
+| `redwood_sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
 | `redwood_goodix.c`, `renoir_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 
 The two touch drivers are compiled into host programs too, but nothing of a controller is modelled:

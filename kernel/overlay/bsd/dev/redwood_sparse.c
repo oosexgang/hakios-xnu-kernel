@@ -15,7 +15,9 @@
  * -- and apfs_sparse is the byte offset where it starts.
  *
  * A block that is not in the image reads as zeros and is counted.  Nothing should ask for
- * one; the count is printed so that it does not go unnoticed if something does.
+ * one; the count is printed so that it does not go unnoticed if something does.  So does a
+ * block whose entry of the table points past the blocks that are here: the image is taken
+ * from the RAM disk as it arrived, and nothing is read from outside it on its word.
  *
  * Read only.
  */
@@ -55,7 +57,7 @@ static uint64_t sparse_block_count;
 static uint64_t sparse_present;
 static bool sparse_ready;
 static int sparse_bmajor = -1, sparse_cmajor = -1;
-static uint64_t sparse_hits, sparse_misses;
+static uint64_t sparse_hits, sparse_misses, sparse_bad;
 
 static int
 sparse_open(__unused dev_t dev, int flags, __unused int devtype, __unused proc_t p)
@@ -84,6 +86,10 @@ sparse_block(uint64_t blk)
 	}
 	memcpy(&slot, sparse_table + blk * 4, sizeof(slot));
 	if (slot == 0) {
+		return NULL;
+	}
+	if (slot > sparse_present) {
+		sparse_bad++;           /* (an entry that points past the image's own blocks) */
 		return NULL;
 	}
 	return sparse_data + (uint64_t)(slot - 1) * sparse_block_size;
@@ -209,6 +215,17 @@ redwood_sparse_report(void)
 	}
 	printf("sparse: %llu blocks served, %llu asked for that are not in the image\n",
 	    (unsigned long long)sparse_hits, (unsigned long long)sparse_misses);
+	if (sparse_bad != 0) {
+		printf("sparse: %llu of those have an entry that points past the image's blocks: the image is damaged\n",
+		    (unsigned long long)sparse_bad);
+	}
+}
+
+/* `count` pieces of `each` bytes, `start` bytes into what begins at `off`, are inside `size` (no sum here can wrap) */
+static bool
+sparse_inside(uint64_t off, uint64_t start, uint64_t count, uint64_t each, uint64_t size)
+{
+	return off <= size && start <= size - off && count <= (size - off - start) / each;
 }
 
 void
@@ -228,7 +245,7 @@ redwood_sparse_init(void)
 		printf("sparse: md0 is not a memory disk this can be read from\n");
 		return;
 	}
-	if (off + sizeof(*hdr) > size) {
+	if (!sparse_inside(off, 0, 1, sizeof(*hdr), size)) {
 		printf("sparse: offset %llu is past the end of md0 (%llu bytes)\n",
 		    (unsigned long long)off, (unsigned long long)size);
 		return;
@@ -248,8 +265,9 @@ redwood_sparse_init(void)
 		printf("sparse: the header makes no sense\n");
 		return;
 	}
-	if (off + hdr->sh_data_off + sparse_present * sparse_block_size > size ||
-	    off + hdr->sh_table_off + sparse_block_count * 4 > size) {
+	if (!sparse_inside(off, hdr->sh_data_off, sparse_present, sparse_block_size, size) ||
+	    !sparse_inside(off, hdr->sh_table_off, sparse_block_count, 4, size) ||
+	    sparse_block_count > UINT64_MAX / sparse_block_size) {
 		printf("sparse: the image does not fit in md0 (%llu bytes)\n",
 		    (unsigned long long)size);
 		return;
