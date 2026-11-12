@@ -59,7 +59,7 @@
 		tx-macro = <0x03220000>;        // tx-macro@3220000
 		va-macro = <0x03370000>;        // va-macro@3370000
 		tx-swr = <0x03230000>;          // the TX SoundWire master
-		tx-swr-hctl = <0x032a9000>;     // its hardware control (qcom,swrm-hctl-reg)
+		tx-swr-hctl = <0x032a90a8>;     // its hardware control register (qcom,swrm-hctl-reg)
 		lpi = <0x033c0000>;             // lpi_pinctrl@33c0000: the subsystem's own pins
 		lpi-slew = <0x0355a000>;        // their slew rates (qcom,slew-reg)
 		swr-tx-pins = <0 1 2 14>;       // the TX SoundWire's: clock, data 0, 1 and 2 (lpi_pinctrl's tx_swr_* groups)

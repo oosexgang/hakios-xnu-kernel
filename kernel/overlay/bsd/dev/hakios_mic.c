@@ -367,7 +367,8 @@ clocks_off(void)
 static struct block tx_macro = { "the TX macro", 0, 0x1000 };
 static struct block va_macro = { "the VA macro", 0, 0x1000 };
 static struct block tx_swr = { "the TX SoundWire master", 0, 0x2000 };
-static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0, 0x1000 };
+static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0, 0x1000 };        /* the page of its register ... */
+#define HCTL                    (hakios_board()->lpass.tx_swr_hctl & 0xfffu)            /* ... and where in it that is */
 static struct block lpi = { "the LPASS pins", 0, 0x10000 };
 static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's pins { }, at the start */
 /* the TX SoundWire's pins (the SoC file's lpass { } swr-tx-pins): the clock without a pull, the data lines pulled down */
@@ -425,7 +426,7 @@ look(void)
 	for (size_t i = 0; i < sizeof(swr) / sizeof(swr[0]); i++) {
 		(void)get(&tx_swr, swr[i].name, swr[i].offset);
 	}
-	(void)get(&tx_hctl, "HCTL (0x32a90a8)", 0x0a8);
+	(void)get(&tx_hctl, "HCTL", HCTL);
 }
 
 /* ---- the codec's reset, the master's pins ------------------------------------------------------------ */
@@ -622,10 +623,10 @@ master_on(void)
 	if (tx_hctl.base == 0) {
 		tx_hctl.base = ml_io_map(tx_hctl.phys, tx_hctl.size);
 	}
-	found_hctl = rd(tx_hctl.base + 0x0a8);
+	found_hctl = rd(tx_hctl.base + HCTL);
 	master_taken = true;
 	/* "SW workaround to gate hw_ctl for SWR version >= 1.6" */
-	if (!put(&tx_hctl, "HCTL: bit 1 cleared", 0x0a8, found_hctl & ~2u, 0x3)) {
+	if (!put(&tx_hctl, "HCTL: bit 1 cleared", HCTL, found_hctl & ~2u, 0x3)) {
 		return false;
 	}
 	spin_us(505);
@@ -673,7 +674,7 @@ master_off(void)
 	(void)put(&tx_swr, "INTERRUPT_EN: none", SWRM_INTERRUPT_EN, 0, 0);
 	(void)put(&tx_swr, "CPU1_INTERRUPT_EN: none", SWRM_CPU1_INTERRUPT_EN, 0, 0);
 	(void)put(&tx_swr, "COMP_SW_RESET", SWRM_COMP_SW_RESET, 1, 0);
-	(void)put(&tx_hctl, "HCTL, as it was found", 0x0a8, found_hctl, 0x3);
+	(void)put(&tx_hctl, "HCTL, as it was found", HCTL, found_hctl, 0x3);
 	master_taken = false;
 }
 
@@ -1818,7 +1819,7 @@ hakios_mic_dsp_up(void)
 	tx_macro.phys = hakios_board()->lpass.tx_macro;
 	va_macro.phys = hakios_board()->lpass.va_macro;
 	tx_swr.phys = hakios_board()->lpass.tx_swr;
-	tx_hctl.phys = hakios_board()->lpass.tx_swr_hctl;
+	tx_hctl.phys = hakios_board()->lpass.tx_swr_hctl & ~0xfffu;
 	lpi.phys = hakios_board()->lpass.lpi;
 	lpi_slew.phys = hakios_board()->lpass.lpi_slew;
 	level = level > 4 ? 4 : level;

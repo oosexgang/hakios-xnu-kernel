@@ -74,7 +74,7 @@
 		tx-macro = <0x03220000>;        // tx-macro@3220000 (qcom,tx-macro): the codec macro of the capture side
 		va-macro = <0x03370000>;        // va-macro@3370000 (qcom,va-macro)
 		tx-swr = <0x03230000>;          // the SoundWire master under the TX macro (qcom,swr-mstr): its reg
-		tx-swr-hctl = <0x032a9000>;     // ... and its qcom,swrm-hctl-reg
+		tx-swr-hctl = <0x032a90a8>;     // ... and its hardware control register, its qcom,swrm-hctl-reg
 		lpi = <0x033c0000>;             // the subsystem's own pins: lpi_pinctrl@33c0000 (qcom,lpi-pinctrl)
 		lpi-slew = <0x0355a000>;        // ... and that node's qcom,slew-reg
 		swr-tx-pins = <0 1 2 14>;       // the TX SoundWire master's pins among them, its clock first, then its data

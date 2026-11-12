@@ -485,6 +485,8 @@ def load(problems=None):
                     any(not 0 <= pin < 16 for pin in pins) or any(bit > 30 or bit & 1 for bit in slew):
                 problems.add(f'{shown(path)} [lpass]', 'swr_tx_pins are the TX SoundWire\'s clock and data pins of the LPASS '
                              '(two to four, 0 to 15), swr_tx_slew each one\'s field in the slew register (an even bit, 0 to 30)')
+        if isinstance(lpass, dict) and isinstance(lpass.get('tx_swr_hctl'), int) and lpass['tx_swr_hctl'] & 3:
+            problems.add(f'{shown(path)} [lpass]', 'tx_swr_hctl is a register: its address is a multiple of 4')
         smmu = data.get('smmu')
         if isinstance(smmu, dict):
             for key in ('audio_stream', 'wifi_stream', 'camera_stream'):
