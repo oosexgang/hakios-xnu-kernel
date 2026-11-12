@@ -224,6 +224,8 @@ for f in $T/var/preferences/FeatureFlags/Domain/*.plist; do
 done
 # PosterBoard: a first wallpaper that draws without Metal, the collections poster (src: ios/userland/inject_poster.c)
 echo "/redwood/lib/libhakios-poster.dylib PosterBoard" >> $T/etc/inject.conf
+# CollectionsPoster, the WallpaperKit extension that draws the collections poster (src: ios/userland/inject_wallpaper.m)
+echo "/redwood/lib/libhakios-wallpaper.dylib CollectionsPoster" >> $T/etc/inject.conf
 # SpringBoard: display mode changes that complete, there being no display driver to say so (src:
 # ios/userland/inject_backlight.c)
 echo "/redwood/lib/libhakios-backlight.dylib SpringBoard" >> $T/etc/inject.conf
