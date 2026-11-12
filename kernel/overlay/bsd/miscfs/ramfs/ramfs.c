@@ -126,6 +126,7 @@ struct ramfs_mount {
 
 /* file pages in use on all the mounts together (each mount has its own lock): for the kernel's memory report */
 _Atomic uint64_t ramfs_pages_in_use;
+extern unsigned int vm_page_free_count;      /* osfmk/vm/vm_resident.c, for a refusal's line */
 
 #define RAMFS_MP(mp)    ((struct ramfs_mount *)vfs_fsprivate(mp))
 #define RAMFS_NODE(vp)  ((struct ramfs_node *)vnode_fsnode(vp))
@@ -209,14 +210,56 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
  * of kernel_map each, as the contents of a RAM disk are. wait=false: never wait for memory (the
  * page-out path, which may be the pageout daemon looking for some).
  */
+/* the kernel's address ranges, for the line said when one of them is full (osfmk/vm/vm_kern.c) */
+extern struct mach_vm_range *kmem_range(vm_map_range_id_t range_id);
+
+static void
+ramfs_say_ranges(void)
+{
+	static const char *const names[] = { "ptr0", "ptr1", "ptr2", "io", "data", "data-shared" };
+
+	for (unsigned id = KMEM_RANGE_ID_FIRST; id <= KMEM_RANGE_ID_MAX; id++) {
+		struct mach_vm_range *r = kmem_range((vm_map_range_id_t)id);
+
+		printf("ramfs: kernel range %s: %#llx-%#llx (%llu MB)\n", names[id - KMEM_RANGE_ID_FIRST],
+		    (unsigned long long)r->min_address, (unsigned long long)r->max_address,
+		    (unsigned long long)((r->max_address - r->min_address) >> 20));
+	}
+}
+
+/*
+ * A page of file data. It is mapped in the kernel's shared data range (KMA_DATA_SHARED), and in the
+ * private one (KMA_DATA) only once that has no room left. Kept in the private range alone, an iOS session
+ * with a 4 GB system image filled it (KERN_NO_SPACE with free pages to spare: the addresses, not the memory, ran
+ * out), and the code-signature blobs that also live there could no longer be allocated -- launchd then
+ * stops the system on "unexpected exec of non-platform binary". Both ranges are as large and hold bags
+ * of bytes; kmem_free() finds either by its address.
+ */
 static void *
 ramfs_page_alloc(bool wait)
 {
 	vm_offset_t addr = 0;
-	kma_flags_t flags = KMA_KOBJECT | KMA_DATA | KMA_ZERO | (wait ? KMA_NONE : KMA_NOPAGEWAIT);
+	kma_flags_t flags = KMA_KOBJECT | KMA_ZERO | (wait ? KMA_NONE : KMA_NOPAGEWAIT);
+	kern_return_t kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA_SHARED, VM_KERN_MEMORY_FILE);
+	static _Atomic uint32_t private, refusals;
 
-	return kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags, VM_KERN_MEMORY_FILE) == KERN_SUCCESS ?
-	       (void *)addr : NULL;
+	if (kr == KERN_NO_SPACE) {
+		if (os_atomic_inc(&private, relaxed) == 1) {
+			printf("ramfs: the kernel's shared data range is full: pages go to the private data range\n");
+			ramfs_say_ranges();
+		}
+		kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA, VM_KERN_MEMORY_FILE);
+	}
+	if (kr != KERN_SUCCESS) {
+		/* Which refusal it was: no page (the free list), or no room in the kernel's data ranges. */
+		uint32_t n = os_atomic_inc(&refusals, relaxed);
+		if ((n & (n - 1)) == 0) {
+			printf("ramfs: kmem_alloc refused a page (%u total): kern_return %d, waiting %d, free pages %u\n",
+			    n, kr, wait, vm_page_free_count);
+		}
+		return NULL;
+	}
+	return (void *)addr;
 }
 
 static void
