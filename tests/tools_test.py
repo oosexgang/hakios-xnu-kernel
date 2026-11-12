@@ -147,6 +147,24 @@ class Repository(unittest.TestCase):
         for name in ('README.md', 'README.zh-CN.md'):
             self.assertIn(f'badge/XNU-{tag}-', (ROOT / name).read_text(), f"{name}'s badge is of another release")
 
+    def test_the_loader_is_its_parts_and_its_readme_names_each(self):
+        # every file of loader/src is included by loader.c once, and has its row in the README's table
+        unit = (ROOT / 'loader/loader.c').read_text()
+        readme = (ROOT / 'loader/README.md').read_text()
+        included = re.findall(r'(?m)^#include "src/([\w.]+)"', unit)
+        there = sorted(path.name for path in (ROOT / 'loader/src').iterdir())
+        self.assertEqual(sorted(included), there)
+        self.assertEqual(len(included), len(set(included)))
+        for name in included:
+            self.assertIn(f'| `src/{name}` |', readme, f'loader/README.md has no row for src/{name}')
+            first = (ROOT / 'loader/src' / name).read_text().split('\n')[0]
+            self.assertTrue(first.startswith('/* Part of the loader (included by loader.c, not compiled alone): '), name)
+        self.assertEqual(readme.count('| `src/'), len(included) + 1)       # (and the row of src/ itself)
+        # the drivers' list: every start function it calls is called once
+        calls = re.findall(r'(?m)^\t(\w+_(?:init|start))\(\);', (ROOT / 'kernel/overlay/bsd/dev/hakios_drivers.c').read_text())
+        self.assertGreater(len(calls), 20)
+        self.assertEqual(len(calls), len(set(calls)))
+
     def test_the_pictures_are_pictures_and_nothing_else(self):
         pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
         self.assertIn('banner.svg', [path.name for path in pictures])
