@@ -26,36 +26,9 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
 #include "hakios_kernel.h"
-#include "hakios_board.h"
-
-#define VIRTIO_BUS              ((vm_offset_t)hakios_board()->virtio.mmio)       /* the SoC file's virtio { } */
-#define VIRTIO_SLOTS            ((int)hakios_board()->virtio.transports)
-#define VIRTIO_SLOT_SIZE        0x200
-
-#define VIRTIO_MAGIC            0x000           /* "virt" */
-#define VIRTIO_VERSION          0x004
-#define VIRTIO_DEVICE_ID        0x008
-#define VIRTIO_DRIVER_FEATURES  0x020
-#define VIRTIO_DRIVER_FEATURES_SEL 0x024
-#define VIRTIO_QUEUE_SEL        0x030
-#define VIRTIO_QUEUE_NUM_MAX    0x034
-#define VIRTIO_QUEUE_NUM        0x038
-#define VIRTIO_QUEUE_READY      0x044
-#define VIRTIO_QUEUE_NOTIFY     0x050
-#define VIRTIO_STATUS           0x070
-#define VIRTIO_QUEUE_DESC       0x080
-#define VIRTIO_QUEUE_DRIVER     0x090
-#define VIRTIO_QUEUE_DEVICE     0x0a0
-
-#define VIRTIO_ID_INPUT         18
-#define STATUS_ACKNOWLEDGE      1
-#define STATUS_DRIVER           2
-#define STATUS_DRIVER_OK        4
-#define STATUS_FEATURES_OK      8
+#include "hakios_virtio.h"
 
 #define QUEUE_SIZE              64
-#define DESC_F_WRITE            2
-#define AVAIL_F_NO_INTERRUPT    1
 
 struct vq_desc {
 	uint64_t addr;
