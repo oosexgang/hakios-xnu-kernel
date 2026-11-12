@@ -130,6 +130,8 @@ struct lx_radio {
 	unsigned group_lost, mic_wrong;		/* frames to everybody not made into Ethernet; Michael's check failed */
 	unsigned group_air;			/* frames addressed to everybody on the air (the group's key), as the driver gave them */
 	unsigned told_group, told_arp;		/* of frame_told()'s lines, so many said */
+	unsigned told_action;			/* action frames from the access point said */
+	unsigned long long sent_at, received_at;	/* nanoseconds: the last data frame sent, received */
 	unsigned long long joined_at;		/* nanoseconds */
 };
 
@@ -750,6 +752,7 @@ ethernet_send(struct lx_radio *radio, const uint8_t *frame, unsigned length)
 	IEEE80211_SKB_CB(skb)->flags |= IEEE80211_TX_CTL_HW_80211_ENCAP;
 	IEEE80211_SKB_CB(skb)->control.hw_key = radio->pairwise_key;
 	radio->sent++;
+	radio->sent_at = lx_os_nanoseconds();
 	frame_send(radio, skb);
 	return (true);
 }
@@ -863,6 +866,7 @@ ethernet_received(struct lx_radio *radio, struct sk_buff *skb, unsigned flags)
 		handshake_message(radio, skb->data, skb->len);
 	} else if (radio->joined && skb->len >= 14) {
 		*(skb->data[0] & 1 ? &radio->received_group : &radio->received) += 1;
+		radio->received_at = lx_os_nanoseconds();
 		radio->mic_wrong += (flags & RX_FLAG_MMIC_ERROR) != 0;
 		if (skb->data[0] & 1 && radio->told_group < 16) {
 			radio->told_group++;
@@ -870,6 +874,13 @@ ethernet_received(struct lx_radio *radio, struct sk_buff *skb, unsigned flags)
 		}
 		lx_os_net_input(skb->data, skb->len);
 	}
+}
+
+/* Whole seconds since AT (nanoseconds; 0: never, and 0 is said) */
+static unsigned long long
+seconds_since(unsigned long long at)
+{
+	return at != 0 ? (lx_os_nanoseconds() - at) / 1000000000ull : 0;
 }
 
 /* A management frame from the access point of the network being joined. */
@@ -882,6 +893,12 @@ management_received(struct lx_radio *radio, const uint8_t *f, unsigned length)
 	if (radio->sta == NULL || length < 26 || memcmp(f + 10, radio->target.address, ETH_ALEN) != 0 ||
 	    memcmp(f + 4, radio->vif->addr, ETH_ALEN) != 0) {
 		return;
+	}
+	if (f[0] == 0xd0 && length >= 26 && radio->told_action < 16) {
+		/* (what the access point asks that is not answered here: 10/7 a request to move to another (802.11v), 8/0 a
+		 * question whether we are still the station it knows (SA query)) */
+		radio->told_action++;
+		lx_tell("lx: an action frame from the access point: category %u, action %u, %u bytes\n", f[24], f[25], length);
 	}
 	if (f[0] == 0xb0 && length >= 30) {		/* authentication: algorithm, step (2: the answer), status */
 		status = f[28] | f[29] << 8;
@@ -921,7 +938,9 @@ management_received(struct lx_radio *radio, const uint8_t *f, unsigned length)
 	} else if (f[0] == 0xc0 || f[0] == 0xa0) {	/* the access point shows us the door: with a reason */
 		status = f[24] | f[25] << 8;
 		answer = ANSWER_GONE;
-		lx_tell("lx: THE ACCESS POINT %s US, reason %u\n", f[0] == 0xc0 ? "DEAUTHENTICATES" : "DISASSOCIATES", status);
+		lx_tell("lx: THE ACCESS POINT %s US, reason %u, %llu s after we joined; the last data frame sent %llu s before, "
+		    "received %llu s before\n", f[0] == 0xc0 ? "DEAUTHENTICATES" : "DISASSOCIATES", status, seconds_since(radio->joined_at),
+		    seconds_since(radio->sent_at), seconds_since(radio->received_at));
 		if (radio->joined) {
 			radio->joined = false;
 			radio->last_error = ECONNRESET;
@@ -1901,7 +1920,7 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	}
 	radio->reached = IEEE80211_STA_AUTHORIZED;
 	radio->sent = radio->sent_lost = radio->received = radio->received_group = radio->rekeys = 0;
-	radio->group_lost = radio->mic_wrong = radio->told_group = radio->told_arp = radio->group_air = 0;
+	radio->group_lost = radio->mic_wrong = radio->told_group = radio->told_arp = radio->group_air = radio->told_action = 0;
 	radio->joined_at = lx_os_nanoseconds();
 	radio->signal = target->signal;
 	radio->joined = true;
