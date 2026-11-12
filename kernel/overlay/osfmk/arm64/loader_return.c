@@ -849,9 +849,10 @@ hk_crash_report(const char *name, int pid, int sig)
 	if (ss == NULL || !is_saved_state64(ss)) {
 		return;
 	}
-	snprintf(line, sizeof(line), "hakios: crash %s[%d] signal %d pc %llx lr %llx sp %llx far %llx esr %x slide %x\n",
+	snprintf(line, sizeof(line), "hakios: crash %s[%d] signal %d pc %llx lr %llx sp %llx far %llx esr %llx slide %llx\n",
 	    name, pid, sig, HK_USER_ADDR(get_saved_state_pc(ss)), HK_USER_ADDR(get_saved_state_lr(ss)),
-	    get_saved_state_sp(ss), get_saved_state_far(ss), get_saved_state_esr(ss), task->task_shared_region_slide);
+	    get_saved_state_sp(ss), get_saved_state_far(ss), (unsigned long long)get_saved_state_esr(ss),
+	    (unsigned long long)task->task_shared_region_slide);
 	loader_log_line(line);
 	snprintf(line, sizeof(line), "hakios:   x0 %llx x1 %llx x2 %llx x3 %llx x8 %llx x16 %llx\n",
 	    get_saved_state_reg(ss, 0), get_saved_state_reg(ss, 1), get_saved_state_reg(ss, 2),
