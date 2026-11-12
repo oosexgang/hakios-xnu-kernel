@@ -122,7 +122,7 @@ def from_dts(text, panel=None):
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys, rpmh, adreno, ipc = {}, {}, {}, {}, {}
+    platform, keys, rpmh, adreno, ipc, radio_pins = {}, {}, {}, {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -221,6 +221,14 @@ def from_dts(text, panel=None):
             region = referred(tree, node.props.get('memory-region'))
             if region is not None and only_reg(region)[0]:
                 board['wifi'] = dict(zip(('dsp_memory', 'dsp_memory_size'), only_reg(region)))
+        # the radio's pins, as the vendors' Wi-Fi and Bluetooth nodes name them (<&tlmm PIN FLAGS>): its enable,
+        # Bluetooth's reset and Bluetooth's sw-ctrl
+        for key, names in (('enable', ('wlan-en-gpio', 'qcom,wl-reset-gpio')), ('bt_reset', ('qcom,bt-reset-gpio',)),
+                           ('bt_sw_ctrl', ('qcom,bt-sw-ctrl-gpio',))):
+            for name in names:
+                pin = cells(node.props.get(name))
+                if len(pin) >= 2:
+                    radio_pins.setdefault(key, pin[-2])
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
         if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):
@@ -288,6 +296,8 @@ def from_dts(text, panel=None):
     elif any(key in adreno for key in ('gpu', 'gmu', 'smmu')):
         notes.append("the GPU's blocks were not all found (missing: " + ', '.join(k for k in wanted if k not in adreno) +
                      '): [adreno] is left out; fill it in from devices/_template/soc.toml for the feature "gpu-a660"')
+    if len(radio_pins) == 3 and len(set(radio_pins.values())) == 3:
+        board.setdefault('wifi', {})['pins'] = [radio_pins[key] for key in ('enable', 'bt_reset', 'bt_sw_ctrl')]
     if keys:
         board['buttons'] = keys
     if tsens:

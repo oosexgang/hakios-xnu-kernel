@@ -988,6 +988,18 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                   f'# memory = {dsp["memory"]:#010x}',
                   f'# memory_size = {dsp["memory_size"]:#010x}',
                   '']
+    radio = board.get('wifi', {})
+    if 'dsp_memory' in radio:
+        lines += ['# The Wi-Fi radio on the SoC\'s own DSP, for the feature "wifi-wcn6750": the DSP\'s reserved memory is',
+                  '# from the tree,',
+                  '# with the radio\'s pins where the Bluetooth node names them (devices/_template/board.toml has the rest).',
+                  '# [wifi]',
+                  '# radio_model = 0',
+                  f'# dsp_memory = {radio["dsp_memory"]:#010x}',
+                  f'# dsp_memory_size = {radio["dsp_memory_size"]:#010x}']
+        if 'pins' in radio:
+            lines.append(f'# pins = {radio["pins"]}')
+        lines.append('')
     board_path.parent.mkdir(parents=True)
     board_path.write_text('\n'.join(lines))
     print(f'wrote {shown(board_path)}')

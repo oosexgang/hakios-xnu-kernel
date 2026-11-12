@@ -771,6 +771,29 @@ class Generate(Sandbox):
             reserved-memory { pil_wpss_mem: wlan@9ae00000 { no-map; reg = <0x0 0x9ae00000 0x0 0x1900000>; }; };
             soc { qcom,wpss@8a00000 { qcom,firmware-name = "wpss"; memory-region = <&pil_wpss_mem>; }; }; };''')
         self.assertEqual(board['wifi'], {'dsp_memory': 0x9ae00000, 'dsp_memory_size': 0x1900000})
+        # ... and which pins the radio has, where the Bluetooth node names all three
+        source = '''/ {
+            reserved-memory { pil_wpss_mem: wlan@9ae00000 { no-map; reg = <0x0 0x9ae00000 0x0 0x1900000>; }; };
+            soc { qcom,wpss@8a00000 { qcom,firmware-name = "wpss"; memory-region = <&pil_wpss_mem>; };
+                bt_wcn6750 { compatible = "qcom,wcn6750-bt"; qcom,bt-reset-gpio = <&tlmm 85 0>;
+                    qcom,bt-sw-ctrl-gpio = <&tlmm 86 0>; qcom,wl-reset-gpio = <&tlmm 84 0>; }; }; };'''
+        soc, board, notes = devicetree.from_dts(source)
+        self.assertEqual(board['wifi'], {'dsp_memory': 0x9ae00000, 'dsp_memory_size': 0x1900000, 'pins': [84, 85, 86]})
+        # (a radio on PCIe: its enable is on its own node, and there is no DSP's memory)
+        soc, board, notes = devicetree.from_dts('''/ { soc { cnss { wlan-en-gpio = <&tlmm 64 0>; };
+            bt { qcom,bt-reset-gpio = <&tlmm 65 0>; qcom,bt-sw-ctrl-gpio = <&tlmm 91 0>; }; }; };''')
+        self.assertEqual(board['wifi'], {'pins': [64, 65, 91]})
+        # (two of the three, or one pin under two names, are not the radio's pins)
+        soc, board, notes = devicetree.from_dts('/ { bt { qcom,bt-reset-gpio = <&tlmm 65 0>; qcom,bt-sw-ctrl-gpio = <&tlmm 91 0>; }; };')
+        self.assertNotIn('wifi', board)
+        # a board started from the tree has them, in a section still to be switched on
+        dts = self.dir / 'radio.dts'
+        dts.write_text(source)
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone7', 'sm0001', dts)
+        text = (self.dir / 'devices/phone7/board.toml').read_text()
+        self.assertIn('# [wifi]\n# radio_model = 0\n# dsp_memory = 0x9ae00000\n# dsp_memory_size = 0x01900000\n# pins = [84, 85, 86]\n', text)
+        self.assertEqual(self.problems(), '')
 
     def test_the_storage_controller_is_found_and_reaches_the_loader(self):
         soc, board, notes = devicetree.from_dts('''/ { soc { ufshc_mem: ufshc@1d84000 { compatible = "qcom,ufshc";
