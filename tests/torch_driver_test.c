@@ -292,6 +292,66 @@ fault_while_lit(void)
 	dark_at_the_end();
 }
 
+/*
+ * Each of the other things the module can say is wrong, on its own: lit, then that, then dark within a
+ * moment and for the rest of the run. (One fault a process: the driver gives up for good.)
+ */
+static void
+lit_then(void (*goes_wrong)(void), const char *said, const char *what)
+{
+	phone("phone-video");
+	boot_args = "torch=3";
+	redwood_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
+	ask_for(1000);
+	WAIT_FOR(lit_now(), 3000);
+	CHECK(lit_now(), "lit");
+	goes_wrong();
+	WAIT_FOR(!lit_now() && logged(said), 2000);
+	CHECK(!lit_now(), "off when %s", what);
+	CHECK(logged(said), "and why is said (\"%s\"): %s", said, log_text);
+	ask_for(0);
+	ask_for(1000);
+	usleep(300 * 1000);
+	CHECK(!lit_now() && times_lit == 1, "and stays off for the rest of the run (%u times lit)", times_lit);
+	never();
+	dark_at_the_end();
+}
+
+static void the_module_faults(void) { spmi_set(&flash_model, REG_RT_STS, flash_model.reg[REG_RT_STS] | 0x01); }
+static void a_channel_faults(void) { spmi_set(&flash_model, REG_STATUS1, 0x01); }
+static void second_threshold(void) { spmi_set(&flash_model, REG_STATUS2, 0x10); }
+static void the_supply_droops(void) { spmi_set(&flash_model, REG_STATUS2, 0x01); }
+static void the_alarm_goes_silent(void) { pthread_mutex_lock(&spmi.lock); alarm_model.silent = true; pthread_mutex_unlock(&spmi.lock); }
+
+static void module_fault(void) { lit_then(the_module_faults, "the module says fault 0x11", "the module says its LED is open, shorted or without supply"); }
+static void channel_fault(void) { lit_then(a_channel_faults, "channels 0x1", "a channel is open or shorted"); }
+static void hotter_still(void) { lit_then(second_threshold, "temperature and supply 0x10", "the module is past its second temperature threshold"); }
+static void supply_droops(void) { lit_then(the_supply_droops, "temperature and supply 0x1", "the supply droops"); }
+/* what cannot be read is not taken for good news */
+static void flags_not_readable(void) { lit_then(the_alarm_goes_silent, "a read of the flags that failed", "the PMIC's alarm cannot be read any more"); }
+
+/*
+ * The arbiter's table changes under the driver (another system re-programmed it): the channel that was the
+ * module's is somebody else's now. Not one byte goes through it.
+ */
+static void
+channel_changes_hands(void)
+{
+	static struct spmi_peripheral somebody_else = { .id = 0x4c0 };
+
+	phone("phone-video");
+	boot_args = "torch=3";
+	redwood_torch_init();
+	WAIT_FOR(logged("THE LIGHT IS IOS'S"), 5000);
+	spmi_channel(20, &somebody_else, spmi.ee);
+	ask_for(1000);
+	WAIT_FOR(logged("the arbiter's channel is no longer the flash module's"), 3000);
+	CHECK(logged("the arbiter's channel is no longer the flash module's"), "said: %s", log_text);
+	usleep(200 * 1000);
+	CHECK(somebody_else.writes == 0 && !lit_now() && times_lit == 0, "nothing is written through it: %u writes", somebody_else.writes);
+}
+
 /* the PMIC's own temperature alarm at a stage: the same */
 static void
 pmic_hot(void)
@@ -431,7 +491,9 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "look_only", look_only }, { "light_once", light_once }, { "another_chip", another_chip },
 		{ "for_ios", for_ios },
-		{ "fault_while_lit", fault_while_lit }, { "pmic_hot", pmic_hot }, { "battery_hot", battery_hot },
+		{ "fault_while_lit", fault_while_lit }, { "module_fault", module_fault }, { "channel_fault", channel_fault },
+		{ "hotter_still", hotter_still }, { "supply_droops", supply_droops }, { "flags_not_readable", flags_not_readable },
+		{ "channel_changes_hands", channel_changes_hands }, { "pmic_hot", pmic_hot }, { "battery_hot", battery_hot },
 		{ "time_limit", time_limit }, { "write_does_not_stick", write_does_not_stick },
 		{ "not_ours_to_write", not_ours_to_write }, { "another_part", another_part }, { "another_arbiter", another_arbiter },
 		{ "board_without_the_part", board_without_the_part },
