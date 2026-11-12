@@ -126,7 +126,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **Three parts on other wiring are a board file.** Where the flashlight's module is on the PMICs' bus
   (`[torch]`), which pins the vibration motor's chip is on, with the motor's calibration
   (`[haptic]`), and the speaker amplifiers' bus, addresses and interrupts with the four pins the
-  sound goes to them on and those pins' function (`[speaker]`) were in the drivers. Each driver's test runs a second phone with the part elsewhere.
+  sound goes to them on, those pins' function and the audio DSP's TDM interface (`[speaker]`) were in
+  the drivers. Each driver's test runs a second phone with the part elsewhere.
 - **The speaker amplifiers' driver runs on the host.** Two modelled amplifiers on a modelled bus and a
   configuration file built in the test: what is written and in which order, the volume's steps, the
   monitor, and that both are powered down at once on a missing clock, a fault or a write that does
