@@ -610,6 +610,8 @@ static BOOL hm_fps_on(void);                          /* metal_fps: command buff
 #define HM_CACHE_DIR  "/private/var/db/hakios-metal-cache"     /* compiled stages, kept across boots by var_store */
 #define HM_CACHE_SEED "/redwood/share/hakios-metal-cache"     /* the same, baked into the image (read-only) */
 static BOOL hm_gmem_on(void);                         /* metal_gmem=1: tiled rendering where a pass allows it */
+static BOOL hm_binning_on(void);                      /* metal_gmem_binning=1: the hardware's binning in GMEM passes */
+static unsigned hm_gmem_off(void);                    /* metal_gmem_off=N: GMEM's refinements off, by bit */
 - (void)hakiosShadowYCbCr:(IOSurfaceRef)surface format:(MTLPixelFormat)format;
 - (void)hakiosRefreshShadow;
 - (void)hakiosSetDeallocator:(void (^)(void *, NSUInteger))deallocator bytes:(void *)bytes length:(NSUInteger)length;
@@ -5511,7 +5513,7 @@ HM_REFUSES_OUT_LOUD
 		hakios_metal_cb_set_profile(_cb, hm_fps_on());
 		hakios_metal_cb_set_gmem(_cb, hm_gmem_on() || hm_gmem_draws() != 0);
 		hakios_metal_cb_set_gmem_min_draws(_cb, hm_gmem_draws());
-		hakios_metal_cb_set_gmem_binning(_cb, (hm_gmem_off() & 16) == 0);   /* metal_gmem_off's 16: every draw in every tile */
+		hakios_metal_cb_set_gmem_binning(_cb, hm_binning_on());
 		hakios_metal_cb_set_null_fs_textures(_cb, (hm_gmem_off() & 32) != 0);   /* 32: no texture reads, to time the shaders alone */
 		hakios_metal_cb_set_gmem_off(_cb, hm_gmem_off());
 		hakios_metal_cb_set_gmem_tuned(_cb, (hm_gmem_off() & 8) == 0);   /* metal_gmem_off's 8: GMEM wherever a pass can have it */
@@ -6042,6 +6044,27 @@ hm_gmem_on(void)
 	return on != 0;
 }
 
+/*
+ * The hardware's binning in a GMEM pass -- a pass over the draws first, so that each tile is given only the draws that
+ * reach it -- off unless boot-arg metal_gmem_binning=1 (and metal_gmem_off's 16 off with it). With it, an alert drawn
+ * over the home screen was left out of every other frame while a finger moved on it (a recording, frame by frame: 7 and
+ * 26 frames in 750 shown between two without the alert, each drawn anew); with every draw in every tile, none in 1057
+ * (metal_gmem_cycle=0,8192,16,8208@12, logs/172853-run.log), at the same number of frames.
+ */
+static BOOL
+hm_binning_on(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		char args[1024] = {0};
+		size_t size = sizeof(args) - 1;
+
+		on = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_gmem_binning=1") != NULL;
+	}
+	return on != 0 && (hm_gmem_off() & 16) == 0;
+}
+
 /* metal_fps=draws: each draw of a sysmem pass timed alone, by program (only sysmem passes are: without metal_gmem=1) */
 static BOOL
 hm_fps_draws(void)
@@ -6058,8 +6081,8 @@ hm_fps_draws(void)
 }
 
 /* boot-arg metal_gmem_off=N: GMEM's refinements off by the bits of N (hakios_metal_cb_set_gmem_off; 8: the choice of GMEM
- * or sysmem by what each costs, hakios_metal_cb_set_gmem_tuned; 16: the hardware's binning,
- * hakios_metal_cb_set_gmem_binning; 32: every fragment texture the null one, wrong pictures but each draw's time without
+ * or sysmem by what each costs, hakios_metal_cb_set_gmem_tuned; 16: the hardware's binning, where metal_gmem_binning=1
+ * turns it on (hm_binning_on), hakios_metal_cb_set_gmem_binning; 32: every fragment texture the null one, wrong pictures but each draw's time without
  * its texture reads, hakios_metal_cb_set_null_fs_textures; 64: no barrier before a tile's fetch, the rasterizer's
  * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier; 256: CoreAnimation's path_blit and path_clear
  * as it asks for them, as metal_paths=0 does; 512: a pass's fetching draws counted as any other against metal_gmem_draws,
