@@ -69,7 +69,8 @@
 	};
 
 	// The low-power audio subsystem's blocks on the microphones' path, for the feature "mic-wcd938x". From the
-	// SoC's -audio.dtsi (the vendor's; tools/boards.py new does not read these yet).
+	// SoC's -audio.dtsi (the vendor's). tools/boards.py new finds the addresses and leaves the section commented
+	// out, with the SoundWire pins to fill in.
 	lpass {
 		tx-macro = <0x03220000>;        // tx-macro@3220000 (qcom,tx-macro): the codec macro of the capture side
 		va-macro = <0x03370000>;        // va-macro@3370000 (qcom,va-macro)

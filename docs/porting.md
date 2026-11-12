@@ -45,7 +45,10 @@ is an ordinary new file of the main branch. From the tree it reads:
   controller under its bus), as a `touch { }` section for you to complete;
 - the SoC's own pins, its SMMU, the way to its other processors, the UFS host controller, the audio
   DSP's reserved memory;
-- RPMh's command database and the application processor's sequencer.
+- RPMh's command database and the application processor's sequencer;
+- the blocks on the microphones' path (the TX and VA macros, the SoundWire master and its hardware
+  control register, the audio subsystem's own pins), in an `lpass { }` left commented out: the
+  SoundWire pins are not in words the tool reads, and only `mic-wcd938x` needs the section.
 
 It prints what it could not find. Two things are never in a device tree and are yours to fill in:
 

@@ -150,7 +150,7 @@ def from_dts(text, panel=None):
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys, rpmh, adreno, ipc, radio_pins, streams = {}, {}, {}, {}, {}, {}, {}
+    platform, keys, rpmh, adreno, ipc, radio_pins, streams, lpass = {}, {}, {}, {}, {}, {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -279,6 +279,24 @@ def from_dts(text, panel=None):
             out, into = cells(node.props['qcom,msm-mi2s-rx-lines']), cells(node.props['qcom,msm-mi2s-tx-lines'])
             if len(pins) == 4 and None not in pins and out in ([1], [2]) and into in ([1], [2]) and out != into:
                 board.setdefault('speaker', {})['sound_pins'] = [pins[0], pins[1], pins[1 + into[0]], pins[1 + out[0]]]
+        # the low-power audio subsystem's blocks on the microphones' path: the capture side's codec macro (TX) and
+        # the VA macro, the SoundWire master under the TX macro with its hardware control register, and the
+        # subsystem's own pin controller with its slew register
+        if 'qcom,tx-macro' in compatible and unit_address(node) is not None:
+            lpass['tx_macro'] = unit_address(node)
+            for child in node.children:
+                if 'qcom,swr-mstr' in strings(child.props.get('compatible')):
+                    base, hctl = cells(child.props.get('swrm-io-base')), cells(child.props.get('qcom,swrm-hctl-reg'))
+                    if base:
+                        lpass['tx_swr'] = base[0]
+                    if hctl:
+                        lpass['tx_swr_hctl'] = hctl[0]
+        if 'qcom,va-macro' in compatible and unit_address(node) is not None:
+            lpass['va_macro'] = unit_address(node)
+        if 'qcom,lpi-pinctrl' in compatible and cells(node.props.get('reg')):
+            lpass['lpi'] = cells(node.props['reg'])[0]
+            if cells(node.props.get('qcom,slew-reg')):
+                lpass['lpi_slew'] = cells(node.props['qcom,slew-reg'])[0]
         # the microphones' codec: its reset is a pin driven through a node of its own (qcom,msm-cdc-pinctrl),
         # whose active state names the pin
         if 'qcom,wcd-rst-gpio-node' in node.props and 'mic' not in board:
@@ -353,6 +371,8 @@ def from_dts(text, panel=None):
     elif any(key in adreno for key in ('gpu', 'gmu', 'smmu')):
         notes.append("the GPU's blocks were not all found (missing: " + ', '.join(k for k in wanted if k not in adreno) +
                      '): [adreno] is left out; fill it in from devices/_template/soc.dtsi for the feature "gpu-a660"')
+    if lpass:
+        soc['lpass'] = lpass
     if len(radio_pins) == 3 and len(set(radio_pins.values())) == 3:
         board.setdefault('wifi', {})['pins'] = [radio_pins[key] for key in ('enable', 'bt_reset', 'bt_sw_ctrl')]
     if keys:

@@ -1175,11 +1175,12 @@ def template_says(template):
     return above, after
 
 
-def soc_section(out, section, values, above, after, keys=None, more=()):
+def soc_section(out, section, values, above, after, keys=None, more=(), commented=False):
     """A section of a new SoC file: each value with what the template says of its key; a key it has no
-    value for is left commented out, to be filled in. more: (key, value, comment) to offer commented out."""
+    value for is left commented out, to be filled in. more: (key, value, comment) to offer commented out.
+    commented: the whole section, for one that cannot be complete from a tree and is needed by one feature only."""
     out.comment(*above.get(section, []))
-    out.node(boardfile.name_of(section))
+    out.node(boardfile.name_of(section), commented=commented)
     for key, value, why in more:
         out.prop(f'{boardfile.name_of(key)} = {soc_value(key, value)};', [why], commented=True)
     for key in keys or values:
@@ -1299,6 +1300,11 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         for part in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'smmu', 'adreno', 'thermal', 'cpufreq'):
             if part in soc:
                 soc_section(out, part, soc[part], above, after)
+        if 'lpass' in soc:
+            # the microphones' SoundWire pins are in no tree's words the tool reads: the section waits, commented out,
+            # until they are filled in for the feature that needs it
+            soc_section(out, 'lpass', soc['lpass'], above, after, commented=True,
+                        keys=('tx_macro', 'va_macro', 'tx_swr', 'tx_swr_hctl', 'lpi', 'lpi_slew', 'swr_tx_pins', 'swr_tx_slew'))
         if 'platform' in soc:
             soc_section(out, 'platform', soc['platform'], above, after, more=(
                 ('io_base', 0x00400000, 'TO FILL IN for loader { }: one window over the SoC\'s peripherals, never 0'),

@@ -929,6 +929,26 @@ class Generate(Sandbox):
                       '\t\t// pins = <84 85 86>;\n\t// };\n', text)
         self.assertEqual(self.problems(), '')
 
+    def test_the_microphones_blocks_are_found_and_wait_commented_out(self):
+        source = '''/ { soc {
+            lpi_pinctrl@33c0000 { compatible = "qcom,lpi-pinctrl"; reg = <0x33c0000 0x0>; qcom,slew-reg = <0x355a000 0x0>; };
+            va-macro@3370000 { compatible = "qcom,va-macro"; reg = <0x3370000 0x0>; };
+            tx-macro@3220000 { compatible = "qcom,tx-macro"; reg = <0x3220000 0x0>;
+                tx_swr_master { compatible = "qcom,swr-mstr"; swrm-io-base = <0x3230000 0x0>; qcom,swrm-hctl-reg = <0x32a90a8>; }; }; }; };'''
+        soc, board, notes = devicetree.from_dts(source)
+        self.assertEqual(soc['lpass'], {'lpi': 0x33c0000, 'lpi_slew': 0x355a000, 'va_macro': 0x3370000, 'tx_macro': 0x3220000,
+                                        'tx_swr': 0x3230000, 'tx_swr_hctl': 0x32a90a8})
+        # a new SoC file has them in its lpass { }, commented out until the SoundWire pins are filled in
+        dts = self.dir / 'mics.dts'
+        dts.write_text(source)
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone6', 'sm0006', dts)
+        text = (self.dir / 'soc/sm0006.dtsi').read_text()
+        self.assertRegex(text, r'\t// lpass \{\n\t\t// tx-macro = <0x03220000>; +// ')
+        self.assertRegex(text, r'\t\t// tx-swr-hctl = <0x032a90a8>; +// ')
+        self.assertRegex(text, r'\t\t// swr-tx-pins = <0x\.\.\.>; +// TO FILL IN')
+        self.assertNotIn('lpass', boards.boardfile.parse(text, boards.SOC_SCHEMA))      # (a section not yet there)
+
     def test_the_sounds_pins_are_found_in_a_tree(self):
         # the port's four pin states in order -- bit clock, word select, data 0, data 1 -- and data 1 the line out
         source = '''/ { soc { tlmm {
