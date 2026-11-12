@@ -53,14 +53,10 @@
 #include <sys/hakios_input.h>
 #include <libkern/crc.h>
 #include <vm/memory_types.h>
+#include "hakios_kernel.h"
 #include "hakios_ufshc.h"
 
 #include "hakios_board.h"             /* storage { }: the one partition a write may reach */
-
-extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
-extern void IOSleep(unsigned int milliseconds);
-extern void loader_return(void);        /* osfmk/arm64/loader_return.c */
-extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);   /* osfmk/arm64/caches_asm.s */
 
 /* the page the loader publishes: the same layout as struct loader_block in xnuloader/loader.c */
 #define BLOCK_MAGIC        0x4b434f4c42574452ULL       /* "RDWBLOCK" */

@@ -35,8 +35,7 @@
 #include <sys/systm.h>
 #include <sys/hakios_sparse.h>
 
-extern dev_t mdevlookup(int devid);
-extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
+#include "hakios_kernel.h"
 
 #define SPARSE_MAGIC   "HAKIOSSPARSE1\0\0\0"     /* (userland/tools/apfs/mksparse.py writes it) */
 #define SPARSE_SECTOR  512

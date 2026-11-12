@@ -32,13 +32,9 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_kernel.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
-
-extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
-extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
-extern kern_return_t thread_terminate(thread_t thread);
-extern void thread_set_thread_name(thread_t thread, const char *name);
 
 #define say hakios_wifi_say
 

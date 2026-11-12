@@ -41,12 +41,11 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#include "hakios_kernel.h"
 #include "hakios_board.h"
 #include "hakios_thermal_core.h"
 #include "hakios_log.h"
 
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern void thread_set_thread_name(thread_t thread, const char *name);
 extern void hakios_backlight_set_cap(uint32_t level);
 
 #define say hakios_say

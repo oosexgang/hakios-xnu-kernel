@@ -14,6 +14,8 @@
 #include <sys/uio.h>
 #include <pexpert/pexpert.h>
 
+#include "hakios_kernel.h"
+
 #define TOUCH_QUEUE     512             /* records; a power of two */
 
 /*
@@ -73,8 +75,6 @@ static uint32_t touch_head, touch_tail;        /* read from head, add at tail */
  */
 #define EXIT_FINGERS    5
 #define EXIT_HOLD_MS    1500
-
-extern void loader_return(void);
 
 static thread_call_t exit_call;
 static uint32_t fingers_down;           /* one bit for each finger a driver says is down */

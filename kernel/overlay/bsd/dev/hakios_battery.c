@@ -15,12 +15,11 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#include "hakios_kernel.h"
 #include "hakios_board.h"
 /* what is said goes to the loader's log as it is said, and to the kernel's (hakios_log.h) */
 #include "hakios_log.h"
 #define printf hakios_say
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 #define LOADER_BATTERY_MAGIC            0x2154544142574452ULL
 #define LOADER_BATTERY_VERSION          1

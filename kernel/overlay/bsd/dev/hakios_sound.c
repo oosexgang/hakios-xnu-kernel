@@ -82,15 +82,12 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_kernel.h"
 #include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
 #include "hakios_time.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern uint64_t kvtophys(vm_offset_t va);
-extern kern_return_t thread_terminate(thread_t thread);
 
 /* The SMMU's match registers and contexts are found free and taken by the Wi-Fi's start as well (hakios_wifi.c). */
 extern lck_mtx_t hakios_smmu_lock;

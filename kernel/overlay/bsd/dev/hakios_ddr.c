@@ -20,14 +20,12 @@
 #include <sys/hakios_input.h>
 #include <sys/systm.h>
 
+#include "hakios_kernel.h"
 #include "hakios_board.h"
 #include "hakios_cmd_db.h"
 #include "hakios_log.h"
 #include "hakios_mmio.h"
 #include "hakios_rpmh.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 
 /*
  * The loader's log as well: this runs early, and the kernel's own log of a run keeps only its end. With

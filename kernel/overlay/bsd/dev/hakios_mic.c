@@ -71,13 +71,10 @@
 #include <sys/systm.h>
 #include <sys/uio.h>
 
+#include "hakios_kernel.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern kern_return_t thread_terminate(thread_t thread);
-extern void loader_log_putc(char c);
 
 static LCK_GRP_DECLARE(mic_lock_group, "hakios-mic");
 static LCK_MTX_DECLARE(mic_lock, &mic_lock_group);      /* what is asked for, and given back */

@@ -64,16 +64,12 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <vm/memory_types.h>
+#include "hakios_kernel.h"
 #include "hakios_cache.h"
 #include "hakios_ufshc.h"
 #include "hakios_log.h"
 
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
-extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 extern boolean_t pmap_valid_address(uint64_t addr);
-extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
-extern void IOSleep(unsigned int milliseconds);
 extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 
 #define UFSHC_PHYS          (hc_at)             /* where the loader says the controller is (its SoC file's platform { } ufs) */

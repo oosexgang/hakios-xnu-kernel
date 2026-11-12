@@ -20,8 +20,7 @@
 #include <sys/systm.h>
 #include <miscfs/apfs/apfs_lib.h>
 
-extern dev_t mdevlookup(int devid);
-extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
+#include "hakios_kernel.h"
 
 const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
 

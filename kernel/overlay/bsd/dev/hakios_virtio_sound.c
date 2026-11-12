@@ -31,8 +31,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
+#include "hakios_kernel.h"
 
 #define VIRTIO_BUS              0x0a000000UL    /* QEMU virt: 32 transports of 0x200 bytes */
 #define VIRTIO_SLOTS            32

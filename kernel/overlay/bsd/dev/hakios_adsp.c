@@ -98,17 +98,11 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <sys/hakios_audio.h>
 #include <sys/hakios_input.h>
+#include "hakios_kernel.h"
 #include "hakios_scm.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
-extern void ml_io_unmap(vm_offset_t addr, vm_size_t sz);
-extern uint64_t kvtophys(vm_offset_t va);
-extern void loader_return(void);
-extern kern_return_t thread_terminate(thread_t thread);
 
 /* What the Wi-Fi's DSP and this one both use (hakios_wifi.c). */
 extern lck_mtx_t hakios_aop_mailbox_lock;
@@ -128,7 +122,6 @@ static bool leaving;                    /* on the way back to the loader after a
  * Every line goes to the log the loader reads from another core as well (as in hakios_wifi.c);
  * with adsp=1 only the few that say how it went (tell()), the rest to the kernel's own log.
  */
-extern void loader_log_putc(char c);
 
 static LCK_MTX_DECLARE(say_lock, &adsp_lock_group);
 static bool quiet;
@@ -759,7 +752,6 @@ static const char *adsp_firmware = "fw";        /* ... and its firmware director
 static uint32_t charge_counter_divisor = 1;     /* ... and what its battery manager counts charge in */
 #define PAS_ADSP                1               /* dt: qcom,pas-id */
 
-
 /*
  * A file of /fw on the root file system, read whole into memory of ours: the system image, where
  * userland/build.sh puts fw-audio/ when it makes that image. It is compressed there, which the file
@@ -850,10 +842,8 @@ image_file(const char *name, uint64_t *size)
 	return NULL;
 }
 
-
 #include "hakios_mdt.h"                    /* the header file and its segments, checked */
 #define MAX_SEGMENTS            48
-
 
 static struct {
 	const uint8_t *header;
@@ -983,7 +973,6 @@ step_mailbox(void)
 }
 
 /* ---- TrustZone, and stopping the DSP --------------------------------------------------------------- */
-
 
 static LCK_MTX_DECLARE(dsp_lock, &adsp_lock_group);     /* the DSP being started or stopped */
 static bool rails_asked;                /* our request for its rails stands (until it asks for its own, or is shut down) */

@@ -19,13 +19,10 @@
 #include <sys/hakios_input.h>
 #include <sys/systm.h>
 
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
-extern kern_return_t thread_terminate(thread_t thread);
-
 static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 
 #define HAKIOS_MMIO_SYNC
+#include "hakios_kernel.h"
 #include "hakios_board.h"
 #include "hakios_mmio.h"
 

@@ -42,7 +42,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
-extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
+#include "hakios_kernel.h"
 
 #define CHUNK_FRAMES    1024            /* what one pass of write() moves */
 #define QUIET_MS        500             /* no write for this long: the writer has stopped */

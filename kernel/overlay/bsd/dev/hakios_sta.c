@@ -28,7 +28,7 @@
 #include <sys/hakios_sta.h>
 #include <sys/systm.h>
 
-extern void thread_set_thread_name(thread_t thread, const char *name);
+#include "hakios_kernel.h"
 
 #define HEARD_MOST      128
 #define CHANNELS_MOST   96

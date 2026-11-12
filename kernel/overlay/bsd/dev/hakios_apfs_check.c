@@ -97,7 +97,8 @@
 #include <sys/buf.h>
 #include <sys/fcntl.h>
 
-extern void loader_return(void);        /* osfmk/arm64/loader_return.c */
+#include "hakios_kernel.h"
+
 extern void apfs_stats_print(void);     /* bsd/miscfs/apfs/apfs_vfsops.c */
 extern void hakios_sparse_report(void);
 

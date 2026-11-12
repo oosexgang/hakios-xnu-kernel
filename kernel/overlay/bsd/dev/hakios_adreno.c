@@ -102,10 +102,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
-extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
-
+#include "hakios_kernel.h"
 #include "hakios_scm.h"
 #include "hakios_smmu.h"
 #include "hakios_cache.h"
@@ -160,7 +157,6 @@ rd8(vm_offset_t address)
 	__asm__ volatile ("ldrb %w0, [%1]" : "=r" (value) : "r" (address) : "memory");
 	return value;
 }
-
 
 /* A stretch of registers; mapped when a step first needs it. */
 struct block {
@@ -1108,8 +1104,6 @@ step_gmu_memory(void)
 #define SMMU_STREAM_MASK        0x400           /* dt: the second cell of every "iommus" of this SMMU */
 #define SMMU_SCTLR_ON           (1u << 0 | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 12) /* on; faults recorded, no interrupt */
 
-extern void loader_return(void);
-
 /* Push what this processor has written to a stretch of memory out of its cache, and forget it: the GPU block reads memory. */
 static void
 to_memory(vm_offset_t start, vm_size_t size)
@@ -1464,10 +1458,6 @@ step_trustzone(void)
 }
 
 /* ---- step 12: the zap shader's signature ----------------------------------------------------------------- */
-
-extern dev_t mdevlookup(int devid);
-extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
-
 
 /*
  * A file of the small image that travels with the kernel -- userland/build.sh puts what is in
@@ -3037,8 +3027,6 @@ hakios_adreno_quiesce(void)
 		second_space_is_on = false;
 	}
 }
-
-
 
 /* ---- the GPU kept on, for the system to draw with --------------------------------------------------- */
 

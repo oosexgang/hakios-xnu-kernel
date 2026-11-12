@@ -17,10 +17,9 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#include "hakios_kernel.h"
 #include "hakios_board.h"
 #include "hakios_board_table.h"
-
-extern void loader_log_putc(char c);
 
 static const struct hakios_board *found;
 static bool looked;

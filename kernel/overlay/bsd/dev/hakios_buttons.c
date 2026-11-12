@@ -53,11 +53,9 @@
 #include <sys/hakios_input.h>
 #include <sys/systm.h>
 
+#include "hakios_kernel.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern kern_return_t thread_terminate(thread_t thread);
 
 /*
  * Every line goes to the loader's log directly as well: without -v the kernel's own messages

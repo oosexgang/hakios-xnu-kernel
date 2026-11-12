@@ -173,19 +173,12 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_kernel.h"
 #include "hakios_scm.h"
 #include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
-extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
-extern void ml_io_unmap(vm_offset_t addr, vm_size_t sz);
-extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
-extern void loader_return(void);
-extern kern_return_t thread_terminate(thread_t thread);
 
 static LCK_GRP_DECLARE(wifi_lock_group, "hakios-wifi");
 
@@ -206,7 +199,6 @@ static uint32_t new_from;               /* the first of the steps that have not 
 static char last_write[96] = "nothing written";
 
 /* As in hakios_adreno.c: every line goes to the log the loader reads from another core as well. */
-extern void loader_log_putc(char c);
 
 static int say(const char *format, ...) __printflike(1, 2);
 
@@ -1004,10 +996,6 @@ step_pins(void)
 #define WPSS_MEMORY             (hakios_board()->wifi.dsp_memory)       /* dt: the reserved memory the DSP's node points at; */
 #define WPSS_MEMORY_SIZE        (hakios_board()->wifi.dsp_memory_size)  /* the board's wifi { } */
 
-extern dev_t mdevlookup(int devid);
-extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
-
-
 /*
  * A file of fw/ in the small image that travels with the kernel -- userland/build.sh puts what
  * is in fw-wifi/ there --, found in the memory of the RAM disk itself (see hakios_adreno.c).
@@ -1034,7 +1022,6 @@ image_file(const char *name, uint64_t *size)
  */
 #include "hakios_mdt.h"                    /* the header file and its segments, checked */
 #define MAX_SEGMENTS            16
-
 
 static struct {
 	const uint8_t *header;
@@ -3766,7 +3753,6 @@ hakios_wifi_quiesce(void)
 	new_from = ~0u;                         /* (no pauses) */
 	dsp_shutdown("the kernel is on its way back to the loader");
 }
-
 
 /* The steps' end: the DSP stopped, or left as asked. */
 static void

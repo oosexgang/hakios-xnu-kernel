@@ -88,13 +88,11 @@
 #include <sys/hakios_camera.h>
 #include <sys/hakios_input.h>
 
+#include "hakios_kernel.h"
 #include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern kern_return_t thread_terminate(thread_t thread);
 
 static uint32_t level;
 static bool broken, leaving;
@@ -1389,7 +1387,6 @@ healthy(void)
 
 #include "hakios_cmd_db.h"
 
-extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 static const struct cmd_db_header *cmd_db;
 static vm_offset_t rsc;
 
@@ -1829,7 +1826,6 @@ struct cam_header {
 };
 
 extern uint64_t loader_recording[3];
-extern uint64_t kvtophys(vm_offset_t va);
 extern lck_mtx_t hakios_smmu_lock;
 
 static vm_offset_t frames, smmu_second, smmu_context, page_tables;

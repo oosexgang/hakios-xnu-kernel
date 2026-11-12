@@ -8,12 +8,11 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 
+#include "hakios_kernel.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
 #include <sys/systm.h>
-
-extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 #define SCMI_SHMEM_SIZE 0x80UL
 #define SCMI_MAILBOX_SIZE 0x1000UL
