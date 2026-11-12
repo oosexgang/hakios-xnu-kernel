@@ -740,8 +740,11 @@ static uint32_t hv_wdt_enabled;
 
 #define MEMORY_REPORT_BEATS     6               /* a line about memory every so many heartbeats */
 
-extern unsigned int memorystatus_available_pages, memorystatus_available_pages_critical,
-    memorystatus_available_pages_critical_base;
+extern unsigned int memorystatus_available_pages;
+/* xnu-12377 keeps the jetsam thresholds behind these; the old memorystatus_available_pages_critical
+ * names are only this port's stand-ins for the closed KernelSupport library and stay 0. */
+extern uint32_t memorystatus_get_idle_exit_page_shortage_threshold(void);
+extern uint32_t memorystatus_get_critical_page_shortage_threshold(void);
 extern uint32_t c_segment_pages_compressed;
 extern _Atomic uint64_t ramfs_pages_in_use;
 extern void MiniIOSurfaceUsage(uint32_t *count, uint64_t *bytes);
@@ -770,7 +773,8 @@ hakios_memory_line(char *buf, size_t len)
 	    MB(os_atomic_load(&ramfs_pages_in_use, relaxed)),
 	    MB(VM_PAGE_COMPRESSOR_COUNT), MB(c_segment_pages_compressed),
 	    MB(memorystatus_available_pages),
-	    MB(memorystatus_available_pages_critical), MB(memorystatus_available_pages_critical_base));
+	    MB(memorystatus_get_idle_exit_page_shortage_threshold()),
+	    MB(memorystatus_get_critical_page_shortage_threshold()));
 #undef MB
 }
 
