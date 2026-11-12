@@ -605,6 +605,11 @@ class Generate(Sandbox):
         self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tsmmu {\n\t\tapps = <0x15000000>;\n\t};\n\tthermal {')
         self.soc('\tthermal {', '\trpmh {\n\t\tcmd-db = <0x80860000>;\n\t\tcmd-db-size = <0x20000>;\n\t\trsc = <0x18220000>;\n\t\ttcs-offset = <0xd00>;\n\t};\n\tthermal {')
         self.board('"cpufreq-epss"', '"cpufreq-epss", "speaker-aw88261"')
+        # the audio DSP reads the samples through the SMMU, on a stream the SoC file names
+        self.assertIn('feature "speaker-aw88261" needs audio-stream in smmu { } of soc/sm0001.dtsi', self.problems())
+        self.soc('\t\tapps = <0x15000000>;', '\t\tapps = <0x15000000>;\n\t\taudio-stream = <0x1801 0x10000>;')
+        self.assertIn('audio-stream is a stream ID and its mask', self.problems())
+        self.soc('<0x1801 0x10000>', '<0x1801 0x0>')
         self.assertIn('feature "speaker-aw88261" needs speaker { } in the board file', self.problems())
         path = self.dir / 'devices/phone/board.dts'
         plain = path.read_text()

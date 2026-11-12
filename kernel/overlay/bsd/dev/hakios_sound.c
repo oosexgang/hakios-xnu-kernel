@@ -515,9 +515,10 @@ static struct block apps_smmu_context = { "apps smmu, the audio context", 0, 0x1
 #define PTE_ADDRESS             0x0000fffffffff000ull
 #define AUDIO_PTE               (3ull | 1ull << 6 | 2ull << 8 | 1ull << 10 | 1ull << 11)       /* as hakios_wifi.c's */
 
-#define AUDIO_STREAM            0x1801
+#define AUDIO_STREAM            (hakios_board()->smmu.audio_stream[0])     /* the SoC file's smmu { } */
+#define AUDIO_STREAM_MASK       (hakios_board()->smmu.audio_stream[1])
 #define AUDIO_ADDRESSES         0x10000000ull   /* dt: qcom,iommu-dma-addr-pool of qcom,msm-audio-ion */
-#define AUDIO_STREAM_BITS       (1ull << 32)    /* the stream's low bits (0x1801 & 0xf), where the DSP takes them from */
+#define AUDIO_STREAM_BITS       ((uint64_t)(AUDIO_STREAM & 0xf) << 32)    /* the stream's low bits, where the DSP takes them from */
 
 #define PERIODS                 8
 #define PERIOD_FRAMES           960             /* 20 ms */
@@ -620,7 +621,7 @@ static bool
 space_on(void)
 {
 	uint64_t *root, *second, *third, table_root;
-	uint32_t smr = SMMU_SMR(space.match), s2cr = SMMU_S2CR(space.match), sees = 1u << 31 | AUDIO_STREAM;
+	uint32_t smr = SMMU_SMR(space.match), s2cr = SMMU_S2CR(space.match), sees = 1u << 31 | (uint32_t)AUDIO_STREAM_MASK << 16 | AUDIO_STREAM;
 
 	if (kmem_alloc(kernel_map, &space.tables, 3 * 4096, KMA_KOBJECT | KMA_ZERO | KMA_DATA, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 		return false;

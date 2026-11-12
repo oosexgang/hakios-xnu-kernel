@@ -1475,8 +1475,8 @@ show_smps(const char *what, uint16_t id)
 #define SMMU_IDR1               0x024
 #define SMMU_SMR(n)             (0x800 + 4 * (n))       /* bit 31 valid, [30:16] mask, [14:0] stream */
 #define SMMU_S2CR(n)            (0xc00 + 4 * (n))       /* [17:16] 0 translate 1 bypass 2 fault, [7:0] context */
-#define IFE_STREAM              0x800                   /* dt: msm_cam_smmu_ife, iommus 0x800.. 0xce0, mask 0x4e0 */
-#define IFE_STREAM_MASK         0x4e0
+#define IFE_STREAM              (hakios_board()->smmu.camera_stream[0])     /* the SoC file's smmu { } */
+#define IFE_STREAM_MASK         (hakios_board()->smmu.camera_stream[1])
 
 static vm_offset_t smmu;
 

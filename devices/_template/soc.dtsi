@@ -51,6 +51,11 @@
 	// (the speakers' audio path, the cameras, Wi-Fi). The GPU's own is in [adreno].
 	smmu {
 		apps = <0x15000000>;            // apps_smmu (the vendor's apps-smmu@15000000; Linux's iommu@15000000)
+		audio-stream = <0x1801 0x0>;    // for "speaker-aw88261": the stream the audio DSP reads our samples on,
+		                                // ID and mask: the iommus of qcom,msm-audio-ion
+		wifi-stream = <0x1c00 0x1>;     // for "wifi-wcn6750": the Wi-Fi DSP's (the iommus of qcom,wpss or its
+		                                // remoteproc node)
+		camera-stream = <0x800 0x4e0>;  // for "camera-sm7325": the IFEs' (the iommus of msm_cam_smmu_ife)
 	};
 
 	// The camera subsystem's blocks, for the feature "camera-sm7325". From the SoC's -camera.dtsi (the

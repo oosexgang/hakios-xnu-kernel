@@ -81,7 +81,8 @@ SOC_SCHEMA = {
     'adreno': {'gpu': (int, True), 'gmu': (int, True), 'gpucc': (int, True), 'cx_misc': (int, True), 'rscc': (int, True),
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
-    'smmu': {'apps': (int, True)},
+    'smmu': {'apps': (int, True), 'audio_stream': ([int], False), 'wifi_stream': ([int], False),
+             'camera_stream': ([int], False)},
     'camera': {'camcc': (int, True), 'ife': (int, True), 'csid': (int, True), 'csiphy': (int, True)},
     'lpass': {'tx_macro': (int, True), 'va_macro': (int, True), 'tx_swr': (int, True), 'tx_swr_hctl': (int, True),
               'lpi': (int, True), 'lpi_slew': (int, True)},
@@ -150,6 +151,8 @@ FEATURE_NEEDS = {'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), '
                  'touch-goodix': ('pins', 'clocks', 'rpmh'), 'touch-ft3658u': ('pins', 'clocks', 'rpmh'),
                  'speaker-aw88261': ('pins', 'clocks', 'rpmh', 'smmu'), 'haptic-aw86927': ('pins',),
                  'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins', 'lpass')}
+# ... and the stream of the SMMU that a part's DMA comes in on: [stream ID, mask], from the device tree's iommus
+STREAM_OF = {'speaker-aw88261': 'audio_stream', 'wifi-wcn6750': 'wifi_stream', 'camera-sm7325': 'camera_stream'}
 WRITES_TO_PMIC = ('torch-pm8350c', 'camera-sm7325')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
@@ -259,6 +262,9 @@ def feature_needs(feature, board, soc):
     spmi, display = soc.get('spmi'), soc.get('display')
     if feature in WRITES_TO_PMIC and isinstance(spmi, dict) and 'channels' not in spmi:
         needs.append(f'channels in [spmi] of {soc_file}')
+    smmu = soc.get('smmu')
+    if feature in STREAM_OF and isinstance(smmu, dict) and STREAM_OF[feature] not in smmu:
+        needs.append(f'{STREAM_OF[feature]} in [smmu] of {soc_file}')
     if feature == 'display-scan' and isinstance(display, dict) and ('intf1' not in display or 'clocks' not in soc):
         needs.append(f'intf1 in [display] and [clocks] in {soc_file}')
     if feature == 'display-scan' and clocks_missing(soc):
@@ -280,6 +286,8 @@ def feature_requirements(feature):
     of_soc = {section: [] for section in FEATURE_NEEDS.get(feature, ())}
     if feature in WRITES_TO_PMIC:
         of_soc.setdefault('spmi', []).append('channels')
+    if feature in STREAM_OF:
+        of_soc['smmu'].append(STREAM_OF[feature])
     if feature == 'display-scan':
         of_soc['display'].append('intf1')
         of_soc['clocks'] = list(DISPLAY_CLOCKS)
@@ -466,6 +474,12 @@ def load(problems=None):
         check_file(path, data, SOC_SCHEMA, problems)
         if data.get('name') != path.stem:
             problems.add(shown(path), f'name = {data.get("name")!r}: the file is {path.stem}.dtsi')
+        smmu = data.get('smmu')
+        if isinstance(smmu, dict):
+            for key in ('audio_stream', 'wifi_stream', 'camera_stream'):
+                if key in smmu and (len(smmu[key]) != 2 or any(not 0 <= v <= 0x7fff for v in smmu[key])):
+                    problems.add(f'{shown(path)} [smmu]', f'{key} is a stream ID and its mask (the device tree\'s iommus), '
+                                 'two numbers of 15 bits')
         socs[path.stem] = data
     known = features_of_header()
     for path in board_files():
@@ -781,7 +795,9 @@ def table_text(socs, boards):
                     f'\t\t\t.lpi = {lpass["lpi"]:#010x}, .lpi_slew = {lpass["lpi_slew"]:#010x},',
                     '\t\t},']
         if 'smmu' in soc:
-            out.append(f'\t\t.smmu = {{ .apps = {soc["smmu"]["apps"]:#010x} }},')
+            streams = ''.join(f', .{key} = {{ {soc["smmu"][key][0]:#x}, {soc["smmu"][key][1]:#x} }}'
+                              for key in ('audio_stream', 'wifi_stream', 'camera_stream') if key in soc['smmu'])
+            out.append(f'\t\t.smmu = {{ .apps = {soc["smmu"]["apps"]:#010x}{streams} }},')
         ipc = soc.get('ipc')
         if ipc:
             out.append(f'\t\t.ipc = {{ .aoss = {ipc["aoss"]:#010x}, .ipcc = {ipc["ipcc"]:#010x}, .smem = {ipc["smem"]:#010x}, '

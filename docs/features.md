@@ -18,11 +18,11 @@ the two the same. What each key means is in `devices/_template/soc.dtsi` and
 | `adsp` | `rpmh { }`; `ipc { }` | `adsp { }`: `firmware`, `memory`, `memory-size` | `adsp=1` |
 | `touch-goodix` | `pins { }`; `clocks { }`; `rpmh { }` | `touch { }`: `serial-engine`, `clocks`, `vote-register`, `votes`, `bus-pins`, `interrupt`, `reset`, `io-supply`, `analog-enable`, `vendor-pins`, `coordinates` | `touchscreen=1` |
 | `touch-ft3658u` | `pins { }`; `clocks { }`; `rpmh { }` | `touch { }`: `serial-engine`, `clocks`, `vote-register`, `votes`, `bus-pins`, `interrupt`, `reset`, `io-supply`, `analog-supply` | `touchscreen=1` |
-| `speaker-aw88261` | `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }` | `speaker { }`: `sda`, `scl`, `addresses`, `interrupts`, `sound-pins`, `sound-function` | `speaker_probe=N looks; sound=N with adsp=1` |
+| `speaker-aw88261` | `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }`: `audio-stream` | `speaker { }`: `sda`, `scl`, `addresses`, `interrupts`, `sound-pins`, `sound-function` | `speaker_probe=N looks; sound=N with adsp=1` |
 | `haptic-aw86927` | `pins { }` | `haptic { }`: `sda`, `scl`, `reset`, `interrupt`, `f0-calibration` | `haptic=N` |
 | `torch-pm8350c` | `spmi { }`: `channels` | `torch { }`: `flash`, `alarm` | `torch=1 looks; torch=3 is the light for iOS` |
-| `camera-sm7325` | `spmi { }`: `channels`; `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }`; `camera { }` | `camera { }`: `pmic-pins`, `pmic-reset`, `sensors` | `cam=N` |
-| `wifi-wcn6750` | `rpmh { }`; `pins { }`; `spmi { }`; `ipc { }`; `smmu { }` | `wifi { }`: `radio-model`, `dsp-memory`, `dsp-memory-size` | `wifi=1` |
+| `camera-sm7325` | `spmi { }`: `channels`; `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }`: `camera-stream`; `camera { }` | `camera { }`: `pmic-pins`, `pmic-reset`, `sensors` | `cam=N` |
+| `wifi-wcn6750` | `rpmh { }`; `pins { }`; `spmi { }`; `ipc { }`; `smmu { }`: `wifi-stream` | `wifi { }`: `radio-model`, `dsp-memory`, `dsp-memory-size` | `wifi=1` |
 | `mic-wcd938x` | `pins { }`; `lpass { }` | `mic { }`: `codec-reset` | `mic=N with adsp=1` |
 | `display-scan` | `display { }`: `intf1`; `clocks { }`: `gcc-disp-ahb-cbcr`, `dispcc`, `dispcc-mdss-gdscr`, `dispcc-mdss-ahb-cbcr` | nothing | `fb_scan=1, the default` |
 | `gpu-a660` | `adreno { }`; `clocks { }`: `gcc-disp-ahb-cbcr`; `rpmh { }` | `gpu { }`: `model`, `chip-id`, `firmware`, `gmem-kb`, `primitive-fifo`, `hang-cycles`, `speed-fuse`, `gaming-fuse`, `highest-bank-bit`, `gcc-debug-gpucc`, `speeds-khz`, `speed-levels`, `default-speed` | `gpu=1` |

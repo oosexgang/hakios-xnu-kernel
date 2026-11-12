@@ -3227,8 +3227,8 @@ static struct block apps_smmu = { "apps smmu", 0, 0x2000 };     /* where: the So
 #define SMMU_IDR1               0x024           /* bit 31: 64K pages, [30:28] log2(pages)-1, [7:0] translation contexts */
 #define SMMU_SMR(n)             (0x800 + 4 * (n))       /* bit 31 valid, [30:16] mask, [14:0] stream */
 #define SMMU_S2CR(n)            (0xc00 + 4 * (n))       /* [17:16] 0 translate 1 bypass 2 fault, [7:0] context */
-#define RADIO_STREAM            0x1c00
-#define RADIO_STREAM_MASK       0x0001
+#define RADIO_STREAM            (hakios_board()->smmu.wifi_stream[0])      /* the SoC file's smmu { } */
+#define RADIO_STREAM_MASK       (hakios_board()->smmu.wifi_stream[1])
 
 static void
 smmu_look(void)

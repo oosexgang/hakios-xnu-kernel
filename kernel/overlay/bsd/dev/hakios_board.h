@@ -142,6 +142,8 @@ struct hakios_board {
 	/* the SMMU that stands between the SoC's devices and memory (soc: smmu { }); the GPU has its own (adreno { }) */
 	struct {
 		uint32_t apps;
+		/* the streams parts' DMA comes in on: ID and mask (the device tree's iommus); 0, 0: not said */
+		uint16_t audio_stream[2], wifi_stream[2], camera_stream[2];
 	} smmu;
 
 	/* the camera subsystem's blocks (soc: camera { }) */

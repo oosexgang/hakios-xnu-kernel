@@ -41,6 +41,9 @@
 	// The SMMU between the SoC's devices and memory (the GPU has its own, in [adreno]).
 	smmu {
 		apps = <0x15000000>;            // apps_smmu
+		audio-stream = <0x1801 0x0>;    // qcom,msm-audio-ion: iommus <&apps_smmu 0x1801 0x0>
+		wifi-stream = <0x1c00 0x1>;     // the Wi-Fi DSP's (qcom,wpss): iommus <&apps_smmu 0x1c00 0x1>
+		camera-stream = <0x800 0x4e0>;  // msm_cam_smmu_ife: iommus 0x800 .. 0xce0, mask 0x4e0
 	};
 
 	// The camera subsystem's blocks (yupik-camera.dtsi), for "camera-sm7325".
