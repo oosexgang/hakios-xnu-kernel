@@ -278,6 +278,104 @@ load_thread(void *arg __unused, wait_result_t wr __unused)
 	}
 }
 
+/*
+ * The small cores parked while the big ones have room (boot-arg park_small=0: not). The scheduler of this kernel
+ * (Clutch, on a configuration without SMT) treats every core alike, so the window server's and SpringBoard's threads
+ * landed on the Cortex-A55s as often as anywhere, some two and a half times slower than on a Cortex-A78 -- the 16.5
+ * kernel made each small core the SMT sibling of a big one, which Clutch refuses ("The clutch scheduler does not
+ * support CONFIG_SCHED_SMT"). Measured on the phone (rc.jobs.fps, the 0.7 s after each gesture): with the three small
+ * cores, 47.8 frames a second on the home screen's pages and 19 gaps of 50 ms or more; with cpus=4, the big ones alone,
+ * 51.5 and 6 (logs/110921-run.log, logs/112454-run.log). The small cores are not taken away, though: they are left out
+ * of the scheduler's recommended cores (as Apple's performance controller does with cores it wants idle) while the big
+ * ones have time to spare, and recommended again as soon as every big core was busy for most of PARK_MS -- a build or
+ * a burst of compiles gets all seven, a gesture the four. The scheduler's own failsafe gives every core back to a
+ * real-time thread that would otherwise wait.
+ */
+#define PARK_MS                 8               /* how often the big cores' load is looked at */
+#define PARK_BUSY               85              /* % busy of the least busy big core: every big core is taken */
+#define PARK_CALM               60              /* % busy of the least busy big core under which the small ones go again */
+#define PARK_CALM_TIMES         8               /* ... that many looks in a row (64 ms) */
+extern void sched_perfcontrol_update_recommended_cores(uint32_t recommended_cores);
+
+static struct {
+	uint32_t looks, unparked, parks;        /* since the last line in the log */
+} park_stat;
+
+static void
+park_thread(void *arg __unused, wait_result_t wr __unused)
+{
+	const ml_topology_info_t *topology = ml_get_topology_info();
+	uint64_t idle_before[MAX_CPUS] = { 0 }, then = mach_absolute_time(), said = then, ten;
+	uint32_t big = 0, all = 0, calm = 0;
+	bool parked;
+
+	for (unsigned int i = 0; i < topology->num_cpus && i < MAX_CPUS && i < 32; i++) {
+		all |= 1u << i;
+		if (topology->cpus[i].l2_access_penalty == 0) {
+			big |= 1u << i;
+		}
+	}
+	if (big == all || big == 0) {
+		return;
+	}
+	nanoseconds_to_absolutetime(10 * NSEC_PER_SEC, &ten);
+	sched_perfcontrol_update_recommended_cores(big);
+	parked = true;
+	park_stat.parks++;
+	printf("cpufreq: small cores %#x parked while the big ones (%#x) have room (park_small=0: not)\n", all & ~big, big);
+	for (;;) {
+		uint64_t now, least = 100;
+
+		delay_for_interval(PARK_MS, NSEC_PER_MSEC);
+		now = mach_absolute_time();
+		for (unsigned int i = 0; i < topology->num_cpus && i < MAX_CPUS && i < 32; i++) {
+			uint64_t idle = 0, busy;
+
+			if (!ml_cpu_idle_time((int)i, &idle)) {
+				continue;
+			}
+			busy = (now - then) > (idle - idle_before[i]) ? (now - then) - (idle - idle_before[i]) : 0;
+			idle_before[i] = idle;
+			if ((big >> i) & 1) {
+				least = MIN(least, 100 * busy / (now - then));
+			}
+		}
+		then = now;
+		park_stat.looks++;
+		if (parked && least >= PARK_BUSY) {
+			sched_perfcontrol_update_recommended_cores(all);
+			parked = false;
+			calm = 0;
+			park_stat.unparked++;
+		} else if (!parked) {
+			calm = least < PARK_CALM ? calm + 1 : 0;
+			if (calm >= PARK_CALM_TIMES) {
+				sched_perfcontrol_update_recommended_cores(big);
+				parked = true;
+				park_stat.parks++;
+			}
+		}
+		if (now - said >= ten) {
+			hakios_tl("tl: k %u looks, %u times the small cores taken, %u times parked again\n", park_stat.looks,
+			    park_stat.unparked, park_stat.parks);
+			memset(&park_stat, 0, sizeof(park_stat));
+			said = now;
+		}
+	}
+}
+
+static void
+park_start(void)
+{
+	uint32_t on = 1;
+	thread_t thread;
+
+	PE_parse_boot_argn("park_small", &on, sizeof(on));
+	if (on && kernel_thread_start(park_thread, NULL, &thread) == KERN_SUCCESS) {
+		thread_deallocate(thread);
+	}
+}
+
 static void
 load_start(void)
 {
@@ -555,6 +653,7 @@ hakios_cpufreq_init(void)
 	uint32_t enabled = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;
 
 	load_start();
+	park_start();
 	enabled = 2;
 	PE_parse_boot_argn("ddr", &enabled, sizeof(enabled));
 	/*
