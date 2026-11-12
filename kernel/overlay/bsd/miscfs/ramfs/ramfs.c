@@ -1341,11 +1341,16 @@ ramfs_write(struct vnop_write_args *ap)
 		if (error) {
 			break;
 		}
-		if (spare == NULL) {
-			spare = ramfs_page_alloc(true);
-		}
-		ramfs_reserve_slots(rm, node, off / PAGE_SIZE);
+		uint64_t index = off / PAGE_SIZE;
 		lck_mtx_lock(&rm->rm_lock);
+		if (index >= node->rn_nslots || node->rn_pages[index] == NULL) {
+			lck_mtx_unlock(&rm->rm_lock);
+			ramfs_reserve_slots(rm, node, index);
+			if (spare == NULL) {
+				spare = ramfs_page_alloc(true);
+			}
+			lck_mtx_lock(&rm->rm_lock);
+		}
 		error = ramfs_store(node, off, bounce, len, &spare, true);
 		lck_mtx_unlock(&rm->rm_lock);
 		if (error) {
