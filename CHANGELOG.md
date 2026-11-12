@@ -93,6 +93,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   (`[torch]`), which pins the vibration motor's chip is on, with the motor's calibration
   (`[haptic]`), and the speaker amplifiers' bus, addresses and interrupts (`[speaker]`) were in the
   drivers. Each driver's test runs a second phone with the part elsewhere.
+- **The speaker amplifiers' driver runs on the host.** Two modelled amplifiers on a modelled bus and a
+  configuration file built in the test: what is written and in which order, the volume's steps, the
+  monitor, and that both are powered down at once on a missing clock, a fault or a write that does
+  not read back (`tests/speaker_driver_test.c`, 21 scenarios, on the host and under qemu-aarch64).
 - **A guide to writing a driver**, with an example driver and its test that `make check` builds and
   runs: [docs/writing-a-driver.md](docs/writing-a-driver.md).
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
