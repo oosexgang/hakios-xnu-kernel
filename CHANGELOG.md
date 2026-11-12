@@ -119,7 +119,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
   clock controller, RPMh, the SMMU, the PMIC arbiter and the way to the other processors were
   constants in up to eight drivers each; they are `[pins]`, `[clocks]`, `[rpmh]`, `[smmu]`, `[spmi]`
-  and `[ipc]` of the SoC file. What is left in the part drivers is the part's own wiring.
+  and `[ipc]` of the SoC file. No driver names an address of a chip any more, and `make check`
+  fails one that does. What is left in some part drivers is the part's own wiring.
 - **No board names in code.** Nothing compares the board's name any more: the name is looked up once,
   for the board's row. [CONTRIBUTING.md](CONTRIBUTING.md) has this and the other rules that keep the
   project portable, and says where each kind of change goes.

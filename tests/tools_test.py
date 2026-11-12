@@ -225,6 +225,17 @@ class Repository(unittest.TestCase):
         for place in places:
             self.assertIn(f'`{place}`', section, f'loader/README.md does not say that {place} writes to the storage')
 
+    def test_no_driver_has_an_address_of_a_chip(self):
+        # Where a block of the SoC is comes from the board's data: a driver that names an address is one
+        # phone's. (Offsets inside a block, which are the block's own, are not addresses of a chip.)
+        named = []
+        for path in sorted((ROOT / 'kernel/overlay/bsd/dev').glob('*.[ch]')):
+            text = path.read_text()
+            named += [f'{path.name}: {line.strip()}' for line in text.split('\n')
+                      if re.search(r'#define\s+\w*(PHYS|_PA|_BASE)\s+\(?0x[0-9a-fA-F]{6,}', line) or
+                      re.search(r'ml_io_map(_wcomb)?\(\s*0x', line)]
+        self.assertEqual(named, [])
+
     def test_the_pictures_are_pictures_and_nothing_else(self):
         pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
         self.assertIn('banner.svg', [path.name for path in pictures])
