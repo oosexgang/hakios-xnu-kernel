@@ -337,6 +337,10 @@ private:
     std::atomic<Status> status_{kNotEnqueued};
     std::string error_;
     pm4::Stream stream_;
+    // a draw's own words before they join the pass (render.cpp: draw), kept from one draw to the next: made anew for
+    // every draw, each grew from nothing a word at a time -- nine allocations for a draw's 350 words, and the phone's
+    // allocator hands large frees back to the system (madvise), which the samples of a draw call showed beside them
+    pm4::Stream drawBody_, drawBodySys_;
     std::vector<BoUse> uses_;
     std::vector<std::shared_ptr<const Buffer>> kept_;   // the buffers it uses stay alive until it completes
     std::vector<std::shared_ptr<const void>> keptAny_;

@@ -76,10 +76,15 @@ public:
 
     const std::vector<uint32_t>& words() const { return words_; }
     size_t size() const { return words_.size(); }
-    void clear() { words_.clear(); }
+    void clear() { words_.clear(); }   // (the memory stays: a stream used again grows no more)
+    void reserve(size_t words) { words_.reserve(words); }
 
 private:
     void command(uint32_t opcode, uint32_t count);
+    // a stream's first words: room for a draw's at once (most streams are a draw's or a pass's head), not a word at a time
+    void ready() {
+        if (words_.capacity() == 0) words_.reserve(512);
+    }
     void address(uint64_t a) {
         words_.push_back(uint32_t(a));
         words_.push_back(uint32_t(a >> 32));

@@ -29,11 +29,13 @@ Header decode(uint32_t word) {
 
 void Stream::command(uint32_t opcode, uint32_t count) {
     assert(count <= kMaxType7Count);
+    ready();
     words_.push_back(type7(opcode, count));
 }
 
 void Stream::registers(uint32_t reg, const uint32_t* values, uint32_t count) {
     // more than a header can count goes as several packets, each starting where the one before stopped
+    ready();
     while (count > 0) {
         uint32_t n = count < kMaxType4Count ? count : kMaxType4Count;
         words_.push_back(type4(reg, n));

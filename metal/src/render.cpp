@@ -2944,7 +2944,11 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     Piece passTable;
-    pm4::Stream head, body, headSys, bodySys;
+    pm4::Stream head, headSys;
+    pm4::Stream& body = drawBody_;
+    pm4::Stream& bodySys = drawBodySys_;
+    body.clear();
+    bodySys.clear();
     if (!joins) {
         if (!piece(render::kTableBytes, &passTable, &why)) {
             return fail(std::string("no memory for the pass's table: ") + why);
@@ -2971,6 +2975,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     // deduplication forget what the registers hold (staticKey emptied then).
     std::vector<uint8_t> staticKey;
     if (options.dedupRegs) {
+        staticKey.reserve(2 * sizeof(void*) + 3 * sizeof(uint32_t) + sizeof program.blend + sizeof program.moreBlend + sizeof encodeOptions);
         const void* ptrs[2] = {program.vs.k.words, program.fs.k.words};
         const uint32_t sizes[3] = {program.vs.k.numWords, program.fs.k.numWords, program.samples};
         auto add = [&](const void* p, size_t n) { staticKey.insert(staticKey.end(), static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n); };
