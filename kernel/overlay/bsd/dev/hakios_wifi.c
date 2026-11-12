@@ -3666,15 +3666,14 @@ hakios_wifi_dsp_is_up(void)
 
 /*
  * ath11k asks for files by the names Linux's firmware tree has ("ath11k/WCN6750/hw1.0/board.bin");
- * this phone has what Android's driver loads (fw-wifi/, see userland/build.sh): its board's own
- * data file and regulatory database, which are what the two names below stand for. The others
- * it asks for first and can do without (a container of several boards' data, a table of the
- * firmware's features) are not there.
+ * fw-wifi/ has what the phone's Android loads, under the names the board's wifi { } gives
+ * (board-data, regdb). The others it asks for first and can do without (a container of several
+ * boards' data, a table of the firmware's features) are not there.
  */
 const uint8_t *
 hakios_wifi_driver_file(const char *name, uint64_t *size)
 {
-	static const char *const files[][2] = { { "board.bin", "bd_m20gl.elf" }, { "regdb.bin", "regdb_xiaomi.bin" } };
+	const char *const files[][2] = { { "board.bin", hakios_board()->wifi.board_data }, { "regdb.bin", hakios_board()->wifi.regdb } };
 	const char *last = strrchr(name, '/');
 
 	last = last == NULL ? name : last + 1;

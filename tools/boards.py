@@ -129,6 +129,7 @@ BOARD_SCHEMA = {
                'ios_sensor': (str, False)},
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
+             'board_data': (str, False), 'regdb': (str, False),
              'dsp_memory_size': (int, False), 'pins': ([int], False), 'supplies': ([str], False)},
     'storage': {'type_guid': (str, True), 'unique_guid': (str, True), 'first_lba': (U64, True), 'last_lba': (U64, True),
                 'write_first': (U64, True)},
@@ -838,7 +839,8 @@ def table_text(socs, boards):
             out.append(f'\t\t.wifi = {{ .radio_model = {radio["radio_model"]}, .early_pool_mb = {radio.get("early_pool_mb", 0)}, '
                        f'.dsp_memory = {radio.get("dsp_memory", 0):#010x}, .dsp_memory_size = {radio.get("dsp_memory_size", 0):#010x},\n\t\t\t'
                        f'.pin = {{ {", ".join(str(pin) for pin in radio.get("pins", [-1, -1, -1]))} }}, '
-                       f'.supply = {{ {", ".join(f'"{name}"' for name in radio.get("supplies", ["", "", ""]))} }} }},')
+                       f'.supply = {{ {", ".join(f'"{name}"' for name in radio.get("supplies", ["", "", ""]))} }},\n\t\t\t'
+                       f'.board_data = {c_string(radio.get("board_data", "board.bin"))}, .regdb = {c_string(radio.get("regdb", "regdb.bin"))} }},')
         cameras = board.get('camera')
         if cameras:
             names = [sensor['name'] for sensor in cameras['sensors']]

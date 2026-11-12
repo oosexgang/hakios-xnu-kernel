@@ -251,6 +251,7 @@ struct hakios_board {
 		uint32_t dsp_memory, dsp_memory_size;   /* the Wi-Fi DSP's reserved memory, for a radio on the SoC's own DSP */
 		int16_t pin[3];                 /* the radio's enable, Bluetooth's reset and its sw-ctrl; -1: not said */
 		char supply[3][8];              /* RPMh's names of the radio's vdd-cx-mx, 1.8 V and 1.3 V; "": not said */
+		const char *board_data, *regdb; /* the radio's board data and regulatory database, in fw-wifi/ */
 	} wifi;
 
 	/* the cameras as the phone has them wired (board: camera { } and its sensor@N { }) */

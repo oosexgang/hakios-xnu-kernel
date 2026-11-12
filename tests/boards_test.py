@@ -836,7 +836,7 @@ class Generate(Sandbox):
         path.write_text(listed + '/ {\n\twifi {\n\t\tradio-model = <0>;\n\t\tdsp-memory = <0x9ae00000>;\n\t\tdsp-memory-size = <0x1900000>;\n\t};\n};\n')
         self.assertEqual(self.problems(), '')
         self.assertIn('.wifi = { .radio_model = 0, .early_pool_mb = 0, .dsp_memory = 0x9ae00000, .dsp_memory_size = 0x01900000,\n\t\t\t'
-                      '.pin = { -1, -1, -1 }, .supply = { "", "", "" } },',
+                      '.pin = { -1, -1, -1 }, .supply = { "", "", "" },\n\t\t\t.board_data = "board.bin", .regdb = "regdb.bin" },',
                       boards.table_text(*boards.load()))
         socs, found = boards.load()
         self.assertNotIn('dsp_memory and dsp_memory_size in [wifi] of the board file',
