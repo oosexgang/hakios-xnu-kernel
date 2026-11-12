@@ -2,7 +2,7 @@
  * The flashlight: the flash LED module of a PM8350C ("qcom,pm8350c-flash-led", four channels), the
  * rear flash LED on its channel 0. Where the module and the PMIC's temperature alarm are on SPMI is
  * the board's torch { }. The numbers below were found on the first phone, from Android's device tree, the vendor's
- * driver for it (drivers/leds/leds-qti-flash.c of the phone's kernel, MiCode redwood-s-oss) and
+ * driver for it (drivers/leds/leds-qti-flash.c of the phone vendor's open kernel) and
  * what Android does when its own flashlight is switched on (its LED class devices read, nothing
  * written by us):
  *

@@ -45,7 +45,7 @@
  *
  * The numbers are Android's own, from the phone's live device tree (qcom,msm-dai-tdm-pri-rx and
  * its port, the pins pri_tdm_*_active), its mixer paths (the speaker: PRI_TDM_RX_0 at 48 kHz,
- * two channels, S32_LE) and its kernel (Xiaomi's redwood-s-oss, techpack/audio: asoc/lahaina.c,
+ * two channels, S32_LE) and its vendor's open kernel (techpack/audio: asoc/lahaina.c,
  * asoc/msm-dai-q6-v2.c, dsp/q6afe.c, dsp/q6adm.c, dsp/q6asm.c):
  *   - the bit clock: the interface's internal one (clock 0x200, "PRI_TDM_IBIT"), attribute 4
  *     ("invert, couple no", msm-dai-q6-v2.c's default; the tree names none), at 48000 x 32 bits x

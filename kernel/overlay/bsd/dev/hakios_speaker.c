@@ -17,7 +17,7 @@
  *
  *   hakios_speaker_prepare() and the rest (sys/hakios_audio.h), for boot-arg sound=3 of
  *   hakios_sound.c: the amplifiers set up and run exactly as Android's own driver does it
- *   (Xiaomi's redwood-s-oss kernel, techpack/audio/asoc/codecs/aw88263s_m20: aw882xx_device.c,
+ *   (the vendor's open kernel, techpack/audio/asoc/codecs/aw88263s_m20: aw882xx_device.c,
  *   aw882xx_init.c and aw882xx_pid_2113_reg.h; the phone runs its version 2.0.0), with the
  *   registers' values from Android's own configuration file -- /vendor/etc/aw882xx_acf.bin of
  *   the phone, which userland/build.sh puts into /fw of the system image from fw-audio/ and

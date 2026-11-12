@@ -2,12 +2,12 @@
  * Cameras on an SM7325's camera blocks. How each sensor is wired is the board's camera { } and its
  * sensor@N nodes; what each sensor chip is (chips[] below) and the SoC's camera clock controller are this
  * file's. It was written on a phone with four: the macro one, an OmniVision OV02B10 (2 MP,
- * "redwood_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD (108 MP, "redwood_sunny_s5khm2sd_wide"),
+ * "<phone>_aac_ov02b10_macro"), the wide one, a Samsung S5KHM2SD (108 MP, "<phone>_sunny_s5khm2sd_wide"),
  * the front one and the ultra-wide one, described below as an example. Every number was found on
  * that phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
- * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.redwood_*.bin: the
+ * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.<phone>_*.bin: the
  * slave address, the chip ID and where it is read, the power sequence, the tables) and the drivers
- * of the phone's kernel (MiCode redwood-s-oss: cam_sensor_util.c, qcom_pm8008-regulator.c,
+ * of the phone's open kernel (its device package names the tree: cam_sensor_util.c, qcom_pm8008-regulator.c,
  * camcc-yupik.c, gdsc-regulator.c, pinctrl-yupik.c, pinctrl-spmi-gpio.c, cam_csiphy_*), read as
  * data. The macro one (the others' differences are in the board file, chips[] below and capture_sensor()):
  *
@@ -2640,7 +2640,7 @@ sensor_write(uint16_t address, uint16_t value, bool sixteen)
 
 /*
  * The wide camera's lens: a voice-coil motor driven by a Dongwoon DW9800 on the sensor's own I2C at
- * 0x0c (the module file's actuatorDriver, "redwood_sunny_s5khm2sd_dw9800_wide"), powered by the
+ * 0x0c (the module file's actuatorDriver, "<phone>_sunny_s5khm2sd_dw9800_wide"), powered by the
  * PM8350C's L9 (the device tree's actuator0: cam_vaf at 2.8 V, a regulator the SD card's slot has as
  * its vdd too; RPMh's "ldoc9"). The module file's initialisation, as it is: 0x02 = 0x01 (power down),
  * 0x02 = 0x00 and 1 ms, 0x02 = 0x02 (ring control), 0x06 = 0x40 (SAC3), 0x07 = 0x07 (its timing), the
