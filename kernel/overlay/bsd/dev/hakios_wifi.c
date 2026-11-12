@@ -173,6 +173,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
 
@@ -309,13 +310,6 @@ say_kept(void)
 	}
 }
 #define printf say
-
-/* Until every write to memory so far has been carried out. */
-static void
-settle(void)
-{
-	__asm__ volatile ("dsb sy" ::: "memory");
-}
 
 /* ---- options --------------------------------------------------------------------------------------- */
 
@@ -1376,7 +1370,7 @@ dsp_listen(const struct smp2p *theirs)
 		printf("wifi: %u: the DSP's flags say it has restarted (%#x): about to answer in our flags at %#lx (bit 1 = %u) and ring "
 		    "its SMP2P doorbell\n", step, theirs->flags, SMEM_PHYS + our_item + SMP2P_AT_FLAGS, smp2p_restart_acked);
 		smem_poke(our_item + SMP2P_AT_FLAGS, (ours.flags & ~SMP2P_RESTART_ACK) | (smp2p_restart_acked ? SMP2P_RESTART_ACK : 0));
-		settle();
+		hakios_barrier();
 		wr(ipcc.base + IPCC_SEND, IPCC_WPSS << 16 | IPCC_SMP2P);
 	}
 }
@@ -1420,7 +1414,7 @@ dsp_ask_to_stop(uint32_t bound_ms)
 	snprintf(last_write, sizeof(last_write), "step %u asked the DSP to stop", step);
 	hold(true);
 	smem_poke(value_at, ours.entry[entry].value | DSP_STOP);
-	settle();
+	hakios_barrier();
 	wr(ipcc.base + IPCC_SEND, IPCC_WPSS << 16 | IPCC_SMP2P);
 	asked = now = now_us();
 	while (now - asked < bound_ms * 1000ull) {
@@ -1436,7 +1430,7 @@ dsp_ask_to_stop(uint32_t bound_ms)
 	    theirs.flags);
 	/* (taken back, as Linux does, before TrustZone is asked) */
 	smem_poke(value_at, ours.entry[entry].value & ~DSP_STOP);
-	settle();
+	hakios_barrier();
 	wr(ipcc.base + IPCC_SEND, IPCC_WPSS << 16 | IPCC_SMP2P);
 	return (state & DSP_STOP_ACK) != 0;
 }
@@ -1575,10 +1569,9 @@ step_header(void)
 		return false;
 	}
 	memcpy((void *)page, image.header, image.header_size);
-	for (vm_offset_t line = page; line < page + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");       /* TrustZone reads memory, not this processor's cache */
-	}
-	settle();
+	/* TrustZone reads memory, not this processor's cache */
+	hakios_cache_flush(page, page + PAGE_SIZE);
+	hakios_barrier();
 	result = scm("to take the Wi-Fi DSP's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_WPSS, kvtophys(page), 0, &answer);
 	if (result != 0 || answer != 0) {
 		printf("wifi: %u: TRUSTZONE DOES NOT TAKE THE HEADER: the call returns %d, its answer is %#llx\n", step, result, answer);
@@ -1647,7 +1640,7 @@ step_image(void)
 		written += image.segment[s].file_size;
 		cleared += image.segment[s].memory_size - image.segment[s].file_size;
 	}
-	settle();
+	hakios_barrier();
 	for (unsigned s = 0; s < image.segments; s++) {
 		volatile uint64_t *from = dsp_memory + image.segment[s].at / 8;
 
@@ -1657,7 +1650,7 @@ step_image(void)
 	}
 	printf("wifi: %u: %llu bytes written and %llu cleared; read back, %llu words of eight bytes differ\n", step, written, cleared,
 	    wrong);
-	settle();
+	hakios_barrier();
 	ml_io_unmap((vm_offset_t)dsp_memory, WPSS_MEMORY_SIZE);
 	image_written = wrong == 0;
 	return image_written;
@@ -1746,9 +1739,9 @@ our_item_make_locked(uint32_t partition)
 	smem_poke(partition + at + 4, item_size);
 	smem_poke(partition + at + 8, item_size - (uint32_t)sizeof(struct smp2p));     /* padding behind the item; none in front */
 	smem_poke(partition + at + 12, 0);
-	settle();
+	hakios_barrier();
 	smem_poke(partition + __offsetof(struct smem_partition, free_uncached), at + need);
-	settle();
+	hakios_barrier();
 	made = true;
 out:
 	wr(smem_lock.base + LOCK_OWNER, 0);
@@ -1799,7 +1792,7 @@ step_our_item(void)
 	for (uint32_t at = 0; at < sizeof(ours); at += 4) {
 		smem_poke(our_item + at, 0);
 	}
-	settle();
+	hakios_barrier();
 	smem_poke(our_item, SMP2P_MAGIC);
 	smem_poke(our_item + SMP2P_AT_PROCESSORS, SMEM_US | SMEM_WPSS << 16);
 	for (uint32_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
@@ -1812,9 +1805,9 @@ step_our_item(void)
 	}
 	smem_poke(our_item + SMP2P_AT_COUNTS, 16 | (uint32_t)(sizeof(names) / sizeof(names[0])) << 16);
 	smem_poke(our_item + SMP2P_AT_VERSION, SMP2P_RESTART_ACKS << 8);
-	settle();
+	hakios_barrier();
 	smem_poke(our_item + SMP2P_AT_VERSION, SMP2P_RESTART_ACKS << 8 | SMP2P_VERSION);
-	settle();
+	hakios_barrier();
 	smp2p_agreed = smp2p_restart_acks = smp2p_restart_acked = false;
 	ring(IPCC_WPSS, IPCC_SMP2P, "the DSP's SMP2P doorbell");
 	if (!smem_peek(our_item, &ours, sizeof(ours)) || ours.magic != SMP2P_MAGIC || smp2p_entry(&ours, OUR_ENTRY_STOP) < 0) {
@@ -2061,7 +2054,7 @@ glink_reset(void)
 		hold(true);
 		smem_poke(descriptor + GLINK_OUR_HEAD, 0);
 		smem_poke(descriptor + GLINK_THEIR_TAIL, 0);
-		settle();
+		hakios_barrier();
 	}
 }
 
@@ -2106,9 +2099,9 @@ glink_put(const void *first, uint32_t first_length, const void *second, uint32_t
 		return false;
 	}
 	(void)glink_queue_put(queue, glink.ours_size, head, first, first_length, second, second_length);
-	settle();
+	hakios_barrier();
 	smem_poke(glink.descriptor + GLINK_OUR_HEAD, glink_queue_after(head, padded, glink.ours_size));
-	settle();
+	hakios_barrier();
 	wr(ipcc.base + IPCC_SEND, IPCC_WPSS << 16 | IPCC_GLINK);
 	glink.said++;
 	return true;
@@ -3397,10 +3390,8 @@ radio_enter(uint64_t address, uint64_t physical, uint64_t size, uint64_t attribu
 		}
 		level3[at >> 12 & 0x1ff] = (physical + offset) | attributes;
 	}
-	for (vm_offset_t line = radio_space.tables; line < radio_space.tables + 4096 * RADIO_TABLES; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	settle();
+	hakios_cache_flush(radio_space.tables, radio_space.tables + 4096 * RADIO_TABLES);
+	hakios_barrier();
 	return true;
 }
 

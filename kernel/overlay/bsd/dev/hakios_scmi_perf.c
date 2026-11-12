@@ -8,6 +8,7 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 
+#include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
 #include <sys/systm.h>
@@ -26,17 +27,6 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 static vm_offset_t scmi_shmem, scmi_mailbox;
 static uint32_t scmi_token, scmi_doorbell;
-
-/* what was written has reached the shared memory and the mailbox before what follows (a compiler's barrier on a host) */
-static inline void
-scmi_barrier(void)
-{
-#if defined(__arm64__) || defined(__aarch64__)
-	__asm__ volatile ("dsb sy" ::: "memory");
-#else
-	__asm__ volatile ("" ::: "memory");
-#endif
-}
 
 static volatile uint32_t *
 scmi_word(unsigned offset)
@@ -67,11 +57,11 @@ scmi_query(uint32_t message, const uint32_t *in, unsigned nin, uint32_t *out, un
 	for (i = 0; i < nin; i++) {
 		*scmi_word(0x1c + 4 * i) = in[i];
 	}
-	scmi_barrier();
+	hakios_barrier();
 	*scmi_word(0x4) = 0;
-	scmi_barrier();
+	hakios_barrier();
 	*(volatile uint32_t *)(scmi_mailbox + scmi_doorbell) = 1;
-	scmi_barrier();
+	hakios_barrier();
 	for (i = 0; i < 5000 && !(*scmi_word(0x4) & 1); i++) {
 		delay_for_interval(10, NSEC_PER_USEC);
 	}

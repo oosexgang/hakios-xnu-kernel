@@ -32,6 +32,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_cache.h"
 #include "hakios_board.h"
 
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
@@ -105,10 +106,7 @@ lx_os_radio_memory(unsigned long size, unsigned long long *address)
 	}
 	physical = kvtophys(cached);
 	bzero((void *)cached, size);
-	for (vm_offset_t line = cached; line < cached + size; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_flush(cached, cached + size);
 	uncached = ml_io_map_unmappable(physical, size, VM_WIMG_WCOMB);
 	if (uncached == 0 || !hakios_wifi_radio_map(physical, size, address)) {
 		return NULL;

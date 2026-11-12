@@ -71,6 +71,7 @@
 #include <sys/systm.h>
 #include <sys/uio.h>
 
+#include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
 
@@ -1595,10 +1596,7 @@ listen(bool for_ios)
 			uint32_t got = read_sizes[next] / 2;
 			int16_t stereo[2 * 240];
 
-			for (vm_offset_t line = (vm_offset_t)samples; line < (vm_offset_t)samples + MIC_PERIOD_BYTES; line += 64) {
-				__asm__ volatile ("dc ivac, %0" : : "r" (line) : "memory");
-			}
-			__asm__ volatile ("dsb sy" ::: "memory");
+			hakios_cache_invalidate((uintptr_t)samples, (uintptr_t)samples + MIC_PERIOD_BYTES);
 			got = got > MIC_PERIOD_FRAMES ? MIC_PERIOD_FRAMES : got;
 			empty += got == 0;
 			for (uint32_t i = 0; i < got; i++) {

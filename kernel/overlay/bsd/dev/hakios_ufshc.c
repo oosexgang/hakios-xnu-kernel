@@ -64,6 +64,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <vm/memory_types.h>
+#include "hakios_cache.h"
 #include "hakios_ufshc.h"
 #include "hakios_log.h"
 
@@ -222,18 +223,6 @@ hc_say_late(const char *format, ...)
 	va_end(list);
 }
 
-/* every access before this one has reached its device, or memory, before anything after it (and on a host, which
- * runs this file's tests, the compiler keeps the order) */
-static inline void
-hc_barrier(void)
-{
-#if defined(__arm64__) || defined(__aarch64__)
-	__asm__ volatile ("dsb sy" ::: "memory");
-#else
-	__asm__ volatile ("" ::: "memory");
-#endif
-}
-
 static inline uint32_t
 hc_read(uint32_t reg)
 {
@@ -243,9 +232,9 @@ hc_read(uint32_t reg)
 static inline void
 hc_write(uint32_t reg, uint32_t value)
 {
-	hc_barrier();
+	hakios_barrier();
 	*(volatile uint32_t *)(hc + reg) = value;
-	hc_barrier();
+	hakios_barrier();
 }
 
 static uint64_t
@@ -515,7 +504,7 @@ hc_place(struct hc_slot *s, const struct hc_cmd *c, uint32_t bytes)
 	s->utrd[5] = (uint32_t)(s->ucd_pa >> 32);
 	s->utrd[6] = ((UCD_RESPONSE / 4) << 16) | (UCD_RESPONSE / 4);   /* response: offset, length in dwords */
 	s->utrd[7] = ((UCD_PRDT / 4) << 16) | n;                        /* PRD table: offset in dwords, entries */
-	hc_barrier();
+	hakios_barrier();
 	for (int i = 0; i < 8; i++) {
 		back[i] = s->ucd[i];
 	}
@@ -675,7 +664,7 @@ hc_complete(struct hc_slot *s, const char *what, bool tur)
 		hc_done &= ~bit;
 		lck_mtx_unlock(&hc_lock);
 	}
-	hc_barrier();
+	hakios_barrier();
 	os_atomic_add(&hc_polls, polls, relaxed);
 	if (!tur) {
 		os_atomic_add(&hc_wait_us, hc_us_since(started), relaxed);
@@ -1324,7 +1313,7 @@ hakios_ufs_quiesce(void)
 		return;
 	}
 	hc_closed = true;
-	hc_barrier();
+	hakios_barrier();
 	hc_say_late("ufs: native: at the end: entered with doorbell %08x, %u reads of this kernel's in flight, its list %s\n",
 	    hc_read(UFSHC_UTRLDBR), hc_in_flight, hc_in ? "in" : "out");
 	if (!hc_in && hc_read(UFSHC_UTRLBA) == hc_loader.uefi_lo && hc_read(UFSHC_UTRLBAU) == hc_loader.uefi_hi &&

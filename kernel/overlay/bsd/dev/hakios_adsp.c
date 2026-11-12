@@ -98,6 +98,7 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <sys/hakios_audio.h>
 #include <sys/hakios_input.h>
+#include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
 
@@ -181,13 +182,6 @@ tell(const char *format, ...)
 	return length;
 }
 #define printf say
-
-/* Until every write to memory so far has been carried out. */
-static void
-settle(void)
-{
-	__asm__ volatile ("dsb sy" ::: "memory");
-}
 
 static bool
 option(const char *name)
@@ -710,7 +704,7 @@ rails_locked(uint32_t level)
 	}
 	wr(rsc.base + RSC_TCS(RPMH_TCS) + TCS_WAIT_FOR_DONE, 3);
 	wr(rsc.base + RSC_TCS(RPMH_TCS) + TCS_ENABLED, 3);
-	settle();
+	hakios_barrier();
 	wr(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL, rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL) & ~TCS_TRIGGER);
 	wr(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL, rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL) | TCS_ACTIVE_MODE);
 	wr(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL, rd(rsc.base + RSC_TCS(RPMH_TCS) + TCS_CONTROL) | TCS_TRIGGER);
@@ -1075,7 +1069,7 @@ dsp_listen(const struct smp2p *theirs)
 		printf("adsp: %u: the DSP's flags say it has restarted (%#x): answered in our flags (bit 1 = %u), and its SMP2P doorbell\n",
 		    step, theirs->flags, smp2p_restart_acked);
 		smem_poke(our_item + SMP2P_AT_FLAGS, (ours.flags & ~SMP2P_RESTART_ACK) | (smp2p_restart_acked ? SMP2P_RESTART_ACK : 0));
-		settle();
+		hakios_barrier();
 		wr(ipcc.base + IPCC_SEND, IPCC_LPASS << 16 | IPCC_SMP2P);
 	}
 }
@@ -1113,7 +1107,7 @@ dsp_ask_to_stop(uint32_t bound_ms)
 	    OUR_ENTRY_STOP, SMEM_PHYS + value_at);
 	snprintf(last_write, sizeof(last_write), "step %u asked the audio DSP to stop", step);
 	smem_poke(value_at, ours.entry[entry].value | DSP_STOP);
-	settle();
+	hakios_barrier();
 	wr(ipcc.base + IPCC_SEND, IPCC_LPASS << 16 | IPCC_SMP2P);
 	asked = now = now_us();
 	while (now - asked < bound_ms * 1000ull) {
@@ -1128,7 +1122,7 @@ dsp_ask_to_stop(uint32_t bound_ms)
 	    "THE AUDIO DSP ACKNOWLEDGES THE STOP" : "THE AUDIO DSP DOES NOT ACKNOWLEDGE THE STOP", (now - asked) / 1000,
 	    (now - asked) % 1000, state);
 	smem_poke(value_at, ours.entry[entry].value & ~DSP_STOP);
-	settle();
+	hakios_barrier();
 	wr(ipcc.base + IPCC_SEND, IPCC_LPASS << 16 | IPCC_SMP2P);
 	return (state & DSP_STOP_ACK) != 0;
 }
@@ -1200,10 +1194,8 @@ step_header(void)
 		return false;
 	}
 	memcpy((void *)page, image.header, image.header_size);
-	for (vm_offset_t line = page; line < page + PAGE_SIZE; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	settle();
+	hakios_cache_flush(page, page + PAGE_SIZE);
+	hakios_barrier();
 	result = scm("to take the audio DSP's header", SCM_PAS_INIT_IMAGE, SCM_VALUE_AND_BUFFER, PAS_ADSP, kvtophys(page), 0, &answer);
 	if (result != 0 || answer != 0) {
 		printf("adsp: %u: TRUSTZONE DOES NOT TAKE THE HEADER: the call returns %d, its answer is %#llx\n", step, result, answer);
@@ -1263,7 +1255,7 @@ step_image(void)
 		written += image.segment[s].file_size;
 		cleared += image.segment[s].memory_size - image.segment[s].file_size;
 	}
-	settle();
+	hakios_barrier();
 	for (unsigned s = 0; s < image.segments; s++) {
 		volatile uint64_t *from = dsp_memory + image.segment[s].at / 8;
 
@@ -1273,7 +1265,7 @@ step_image(void)
 	}
 	printf("adsp: %u: %u segments, %llu bytes written and %llu cleared; read back, %llu words of eight bytes differ\n", step,
 	    image.segments, written, cleared, wrong);
-	settle();
+	hakios_barrier();
 	ml_io_unmap((vm_offset_t)dsp_memory, ADSP_MEMORY_SIZE);
 	image_written = wrong == 0;
 	image_forget();                         /* (it is in the DSP's memory now: what was read of the root, given back) */
@@ -1339,9 +1331,9 @@ our_item_make(uint32_t partition)
 	smem_poke(partition + at + 4, item_size);
 	smem_poke(partition + at + 8, item_size - (uint32_t)sizeof(struct smp2p));
 	smem_poke(partition + at + 12, 0);
-	settle();
+	hakios_barrier();
 	smem_poke(partition + __offsetof(struct smem_partition, free_uncached), at + need_bytes);
-	settle();
+	hakios_barrier();
 	made = true;
 out:
 	wr(smem_lock.base + LOCK_OWNER, 0);
@@ -1385,7 +1377,7 @@ step_our_item(void)
 	for (uint32_t at = 0; at < sizeof(ours); at += 4) {
 		smem_poke(our_item + at, 0);
 	}
-	settle();
+	hakios_barrier();
 	smem_poke(our_item, SMP2P_MAGIC);
 	smem_poke(our_item + SMP2P_AT_PROCESSORS, SMEM_US | SMEM_ADSP << 16);
 	strlcpy((char *)name, OUR_ENTRY_STOP, sizeof(name));
@@ -1394,9 +1386,9 @@ step_our_item(void)
 	}
 	smem_poke(our_item + SMP2P_AT_COUNTS, 16 | 1u << 16);
 	smem_poke(our_item + SMP2P_AT_VERSION, SMP2P_RESTART_ACKS << 8);
-	settle();
+	hakios_barrier();
 	smem_poke(our_item + SMP2P_AT_VERSION, SMP2P_RESTART_ACKS << 8 | SMP2P_VERSION);
-	settle();
+	hakios_barrier();
 	smp2p_agreed = smp2p_restart_acks = smp2p_restart_acked = false;
 	need(&ipcc);
 	wr(ipcc.base + IPCC_SEND, IPCC_LPASS << 16 | IPCC_SMP2P);
@@ -1659,7 +1651,7 @@ glink_reset(void)
 		printf("adsp: %u: about to write our two marks there (+4, +8): 0\n", step);
 		smem_poke(descriptor + GLINK_OUR_HEAD, 0);
 		smem_poke(descriptor + GLINK_THEIR_TAIL, 0);
-		settle();
+		hakios_barrier();
 	}
 }
 
@@ -1701,9 +1693,9 @@ glink_put(const void *first, uint32_t first_length, const void *second, uint32_t
 		return false;
 	}
 	(void)glink_queue_put(queue, glink.ours_size, head, first, first_length, second, second_length);
-	settle();
+	hakios_barrier();
 	smem_poke(glink.descriptor + GLINK_OUR_HEAD, glink_queue_after(head, padded, glink.ours_size));
-	settle();
+	hakios_barrier();
 	wr(ipcc.base + IPCC_SEND, IPCC_LPASS << 16 | IPCC_GLINK);
 	glink.said++;
 	return true;

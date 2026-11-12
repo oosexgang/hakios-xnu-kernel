@@ -106,6 +106,7 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
+#include "hakios_cache.h"
 #include "hakios_adreno_profile.h"
 
 #include "hakios_board.h"
@@ -1134,21 +1135,12 @@ step_gmu_memory(void)
 
 extern void loader_return(void);
 
-/* Until every write to memory so far has been carried out. */
-static void
-settle(void)
-{
-	__asm__ volatile ("dsb sy" ::: "memory");
-}
-
 /* Push what this processor has written to a stretch of memory out of its cache, and forget it: the GPU block reads memory. */
 static void
 to_memory(vm_offset_t start, vm_size_t size)
 {
-	for (vm_offset_t line = start & ~(vm_offset_t)63; line < start + size; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	settle();
+	hakios_cache_flush(start, start + size);
+	hakios_barrier();
 }
 
 #define SPACE_TABLES            1024            /* 2 GB of addresses, were they all in use */
@@ -2138,7 +2130,7 @@ hfi_send(const char *what, uint32_t id, uint32_t *message, uint32_t words)
 		at = (at + 1) % HFI_QUEUE_WORDS;
 	}
 	queue->write = at;
-	settle();
+	hakios_barrier();
 	wr(gmu.base + GMU_HOST2GMU_INTR_SET, 1);
 	for (int i = 0; i < 10000 && !answered; i++) {
 		sleep_us(100);
@@ -2622,7 +2614,7 @@ step_zap_load(void)
 	for (uint64_t i = 0; i < 0x1000; i++) {
 		memory[i] = i < size ? segment[i] : 0;
 	}
-	settle();
+	hakios_barrier();
 	if (scm("to authenticate the zap shader and run it", SCM_64 | SCM_SIP | SCM_PAS_AUTH_AND_RESET, SCM_ONE_VALUE, PAS_GPU, 0,
 	    0, &answer) != 0 || answer != 0) {
 		printf("adreno: %u: TrustZone does not authenticate the zap shader (%#llx)\n", step, answer);

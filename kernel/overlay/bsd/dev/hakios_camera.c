@@ -88,6 +88,7 @@
 #include <sys/hakios_camera.h>
 #include <sys/hakios_input.h>
 
+#include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_log.h"
 
@@ -1890,10 +1891,7 @@ frames_alloc(uint32_t width, uint32_t height, uint32_t stride, uint32_t source)
 	h->source = source;
 	strlcpy(h->sensor, !source ? "CSID TPG" : hw->chip, sizeof(h->sensor));
 	/* (what the processor wrote out of its caches; the IFE writes past them) */
-	for (vm_offset_t line = frames; line < frames + frames_bytes; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_flush(frames, frames + frames_bytes);
 	loader_recording[0] = kvtophys(frames);
 	loader_recording[1] = frames_bytes;
 	loader_recording[2] = (uint64_t)frames;
@@ -1986,10 +1984,7 @@ smmu_up(void)
 			third[p] = kvtophys(frames + 4096ull * (t * 512 + p)) | CAM_PTE;
 		}
 	}
-	for (vm_offset_t line = page_tables; line < page_tables + (2 + thirds) * 4096; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_flush(page_tables, page_tables + (2 + thirds) * 4096);
 	table_root = kvtophys(page_tables) | (uint64_t)smmu_context_n << 48;
 	say("camera: SMMU: context %u gets our tables for %llu KB at %#llx; match register %u sends streams %#x/%#x through it\n",
 	    smmu_context_n, frames_bytes >> 10, FRAME_ADDRESSES, smmu_match, IFE_STREAM, IFE_STREAM_MASK);
@@ -2177,7 +2172,7 @@ static bool
 blk_put(vm_offset_t base, const char *what, uint32_t offset, uint32_t value, bool check)
 {
 	wr(base + offset, value);
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_barrier();
 	if (check && rd(base + offset) != value) {
 		say("camera: %s %#x <- %#x, but it reads %#x\n", what, offset, value, rd(base + offset));
 		give_up("a camera register that did not read back");
@@ -2424,16 +2419,11 @@ capture_tpg(void)
 	smmu_faults();
 	titan_down();
 	/* (what the IFE wrote, a look: the first bytes of the frame, past the processor's caches) */
-	for (vm_offset_t line = frames; line < frames + CAM_HEADER_BYTES + 256; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_flush(frames, frames + CAM_HEADER_BYTES + 256);
 	const uint8_t *p = (const uint8_t *)(frames + CAM_HEADER_BYTES);
 	say("camera: the frame's first bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x ... (frames done: %u)\n", p[0], p[1], p[2],
 	    p[3], p[4], p[5], p[6], p[7], p[8], p[9], h->frames);
-	for (vm_offset_t line = frames; line < frames + CAM_HEADER_BYTES; line += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (line) : "memory");
-	}
+	hakios_cache_clean(frames, frames + CAM_HEADER_BYTES);
 }
 
 /* ---- cam=4: the sensor's own frames ------------------------------------------------------------------ */
@@ -3011,16 +3001,11 @@ capture_sensor(void)
 	smmu_faults();
 	csiphy_down();
 	titan_down();
-	for (vm_offset_t line = frames; line < frames + CAM_HEADER_BYTES + 256; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_flush(frames, frames + CAM_HEADER_BYTES + 256);
 	const uint8_t *p = (const uint8_t *)(frames + CAM_HEADER_BYTES);
 	say("camera: the frame's first bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x ... (frames done: %u)\n", p[0], p[1], p[2],
 	    p[3], p[4], p[5], p[6], p[7], p[8], p[9], h->frames);
-	for (vm_offset_t line = frames; line < frames + CAM_HEADER_BYTES; line += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (line) : "memory");
-	}
+	hakios_cache_clean(frames, frames + CAM_HEADER_BYTES);
 }
 
 /* ---- cam=5: the wide camera for iOS (/dev/hakios-camera) ------------------------------------------- */
@@ -3180,10 +3165,7 @@ ring_alloc(uint32_t frame_bytes)
 		ring = 0;
 		return false;
 	}
-	for (vm_offset_t line = ring; line < ring + ring_bytes; line += 64) {
-		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_flush(ring, ring + ring_bytes);
 	frames = ring;                  /* (what smmu_up() maps) */
 	frames_bytes = ring_bytes;
 	ring_tables_bytes = (2 + ((ring_bytes + 0x1fffff) >> 21)) * 4096;
@@ -3670,10 +3652,7 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		uint64_t t0 = mach_absolute_time(), t1, t2;
 
 		/* (what the IFE wrote went past the processor's caches) */
-		for (vm_offset_t line = at & ~63ul; line < at + n; line += 64) {
-			__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
-		}
-		__asm__ volatile ("dsb sy" ::: "memory");
+		hakios_cache_flush(at, at + n);
 		t1 = mach_absolute_time();
 		error = uiomove((caddr_t)at, (int)n, uio);
 		t2 = mach_absolute_time();
@@ -3721,10 +3700,7 @@ keep_picture(const struct hakios_camera_command *c, struct uio *uio)
 	strlcpy(h->sensor, "iOS", sizeof(h->sensor));
 	int error = uiomove((caddr_t)(keep + CAM_HEADER_BYTES), (int)MIN((uint64_t)c->bytes, (uint64_t)uio_resid(uio)), uio);
 	h->frames = error == 0 ? 1 : 0;
-	for (vm_offset_t line = keep; line < keep + want; line += 64) {
-		__asm__ volatile ("dc cvac, %0" : : "r" (line) : "memory");
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
+	hakios_cache_clean(keep, keep + want);
 	loader_recording[0] = kvtophys(keep);
 	loader_recording[1] = want;
 	loader_recording[2] = (uint64_t)keep;
