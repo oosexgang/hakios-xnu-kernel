@@ -120,13 +120,21 @@ with open(sys.argv[1], 'wb') as f:
 PY
 printf 'd\t700\t0\t0\t/private/var/keybags\nf\t600\t0\t0\t/private/var/keybags/persona.kb\t/var/keybags/persona.kb\n' >> $T/etc/var.skel
 # Feature flags (/Library/Preferences/FeatureFlags is /private/var/preferences/FeatureFlags; Domain/NAME.plist,
-# {feature: {Enabled: bool}}). MobileTimerFlags/core_data off: with it, mobiletimerd keeps alarms and timers in a
-# Core Data store that never finishes loading here, and answers every request "System isn't ready..." -- the
-# Clock's start button and Control Center's timer do nothing. Off, it keeps them in its defaults, as before.
+# {feature: {Enabled: bool}}). MobileTimerFlags/core_data, on iOS 26: off. With it, mobiletimerd keeps alarms
+# and timers in a Core Data store that never finishes loading here, and answers every request "System isn't
+# ready..." -- the Clock's start button and Control Center's timer do nothing. Off, it keeps them in its
+# defaults, as before. On iOS 27: on. There the timers have no other store: with core_data off
+# -[MTTimerStorage coreDataReady] is always false, every request fails with MTTimerStorage error 4 and
+# nothing is kept; on, the store loads (seen with 24B119: a 10-second timer ran and fired).
 mkdir -p $T/var/preferences/FeatureFlags/Domain
-python3 - "$T/var/preferences/FeatureFlags/Domain" <<'PY'
+python3 - "$T/var/preferences/FeatureFlags/Domain" "$IOS/rootfs/System/Library/CoreServices/SystemVersion.plist" <<'PY'
 import plistlib, sys
-flags = {'MobileTimerFlags': {'core_data': {'Enabled': False}}}
+try:
+    with open(sys.argv[2], 'rb') as f:
+        major = int(plistlib.load(f)['ProductVersion'].split('.')[0])
+except (OSError, KeyError, ValueError):
+    major = 26                      # (the version cannot be read: as it always was)
+flags = {'MobileTimerFlags': {'core_data': {'Enabled': major >= 27}}}
 for domain, features in flags.items():
     with open(f'{sys.argv[1]}/{domain}.plist', 'wb') as f:
         plistlib.dump(features, f)
