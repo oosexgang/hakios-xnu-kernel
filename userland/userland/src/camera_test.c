@@ -1,5 +1,5 @@
 /*
- * camera_test: the wide camera's frames as a program gets them (cam=5).
+ * camera_test: the cameras' frames as a program gets them (cam=5).
  *
  * usage: camera_test raw [FRAMES] [noae] [noawb] [keepraw|full] [ccm M] [sensor N]
  *        camera_test cycle [FRAMES]
@@ -9,16 +9,16 @@
  *   on them, says what came and how fast, and leaves the last one as a picture for the host (xl
  *   camera: logs/, never the repository): one pixel a cell, NV12, or with full every pixel (bilinear
  *   demosaic, at the sensor's size), or with keepraw the frame itself.
- *   With sensor N, another sensor first (0 the macro, 1 the wide, 2 the front, 3 the ultra-wide); with
+ *   With sensor N, another sensor first (its number among the board's camera { } sensor@N); with
  *   noawb, no white balance (gains of 1: for colour bars, whose colours are known); with ccm M, the
  *   colour matrix M (nine numbers, row by row, separated by commas: a check of the matrix's path).
- *   cycle: each of the four sensors in turn, FRAMES frames each (default 30), the kernel's exposure:
+ *   cycle: each of the board's sensors in turn, FRAMES frames each (default 30), the kernel's exposure:
  *   what came of each, and how long the change from one to the next took.
  *   noise: the sensor's black level and noise in the dark (the lens covered, or a dark room): at the
  *   longest exposure of its usual frame and 1x, 2x, 4x, 8x and its most gain, two frames each: per
  *   site of the 2x2 cell the mean (the black level), the temporal noise (the two frames' difference,
  *   over the square root of 2), the fixed pattern (what is left of the two frames' mean), the rows'
- *   noise (how much whole lines move together); for one sensor (0 to 3) or all four.
+ *   noise (how much whole lines move together); for one sensor or all of them.
  */
 #include <dispatch/dispatch.h>
 #include <errno.h>
@@ -54,8 +54,6 @@ ticks_ms(uint64_t ticks)
 	return (double)ticks * tb.numer / tb.denom / 1e6;
 }
 
-static const char *const sensor_names[4] = { "macro", "wide", "front", "ultra-wide" };
-
 /* HAKIOS_CAMERA_SENSOR: the kernel changes to that sensor (its usual mode) before the next frames */
 static bool
 choose_sensor(int device, unsigned n)
@@ -63,10 +61,19 @@ choose_sensor(int device, unsigned n)
 	struct hakios_camera_command c = { .command = HAKIOS_CAMERA_SENSOR, .a = n, .b = ~0u };
 
 	if (write(device, &c, sizeof(c)) != (ssize_t)sizeof(c)) {
-		printf("camera_test: the %s camera cannot be chosen: %s\n", n < 4 ? sensor_names[n] : "?", strerror(errno));
+		if (errno != EINVAL) {
+			printf("camera_test: sensor %u cannot be chosen: %s\n", n, strerror(errno));
+		}
 		return false;
 	}
 	return true;
+}
+
+/* past the board's last sensor: the kernel refuses its number */
+static bool
+no_such_sensor(void)
+{
+	return errno == EINVAL;
 }
 
 static int
@@ -80,20 +87,24 @@ cycle(int frames)
 		perror("camera_test: " HAKIOS_CAMERA_DEVICE);
 		return 1;
 	}
-	for (unsigned n = 0; n < 4; n++) {
+	for (unsigned n = 0;; n++) {
 		struct hakios_camera_frame head, *f = &head;
 		uint64_t asked = mach_absolute_time(), first = 0, last_seq = 0, first_seq = 0;
 		int got = 0;
 		ssize_t r;
 
 		if (!choose_sensor(device, n)) {
+			if (no_such_sensor()) {
+				printf("camera_test: %u sensors\n", n);
+				break;
+			}
 			failures++;
 			continue;
 		}
 		for (int tries = 0; (r = read(device, &head, sizeof(head))) < 0 && errno == EAGAIN && tries < 3; tries++) {
 		}
 		if (r != (ssize_t)sizeof(head) || memcmp(head.magic, HAKIOS_CAMERA_MAGIC, 8) != 0 || head.sensor != n) {
-			printf("camera_test: the %s camera: no frames (%s, header of sensor %u)\n", sensor_names[n],
+			printf("camera_test: sensor %u: no frames (%s, header of sensor %u)\n", n,
 			    r < 0 ? strerror(errno) : "short", r == (ssize_t)sizeof(head) ? head.sensor : 99);
 			failures++;
 			if (r < 0 && errno == EIO) {
@@ -114,7 +125,7 @@ cycle(int frames)
 		for (int i = 0; i < frames; i++) {
 			r = read(device, buffer, want);
 			if (r != (ssize_t)want) {
-				printf("camera_test: the %s camera: a read gave %zd of %zu bytes (%s)\n", sensor_names[n], r, want,
+				printf("camera_test: sensor %u (%.12s): a read gave %zd of %zu bytes (%s)\n", n, head.chip, r, want,
 				    r < 0 ? strerror(errno) : "short");
 				break;
 			}
@@ -129,8 +140,8 @@ cycle(int frames)
 			continue;
 		}
 		isp_measure(NULL, f, buffer + f->header_bytes, &s);
-		printf("camera_test: the %s camera (sensor %u): %ux%u, stride %u, Bayer %u; the first frame %.0f ms after it was asked "
-		    "for; %d frames of %llu in %.2f s (%.1f a second); R %.1f G %.1f B %.1f above black\n", sensor_names[n], f->sensor,
+		printf("camera_test: sensor %u (%.12s): %ux%u, stride %u, Bayer %u; the first frame %.0f ms after it was asked "
+		    "for; %d frames of %llu in %.2f s (%.1f a second); R %.1f G %.1f B %.1f above black\n", f->sensor, f->chip,
 		    f->width, f->height, f->stride, f->bayer, changed_ms, got, last_seq - first_seq + 1, ticks_ms(f->time - first) / 1000,
 		    got > 1 ? (got - 1) * 1000.0 / ticks_ms(f->time - first) : 0.0, s.mean[0], s.mean[1], s.mean[2]);
 	}
@@ -174,12 +185,12 @@ noise_one(int device, unsigned n)
 	ssize_t r;
 
 	if (!choose_sensor(device, n)) {
-		return 1;
+		return no_such_sensor() ? -1 : 1;
 	}
 	for (int tries = 0; (r = read(device, &head, sizeof(head))) < 0 && errno == EAGAIN && tries < 3; tries++) {
 	}
 	if (r != (ssize_t)sizeof(head) || head.sensor != n) {
-		printf("camera_test: noise: no frames from the %s camera\n", sensor_names[n]);
+		printf("camera_test: noise: no frames from sensor %u\n", n);
 		return 1;
 	}
 	bytes = sizeof(head) + (size_t)head.stride * head.height;
@@ -187,8 +198,8 @@ noise_one(int device, unsigned n)
 	b = malloc(bytes);
 	uint32_t lines = head.frame_lines_min - head.margin, gains[5] = { 1, 2, 4, 8, 0 };
 
-	printf("camera_test: noise of the %s camera: %ux%u, black %u, exposure %.1f ms (%u lines); per site of the cell (R, G1, "
-	    "G2, B in its order) the mean, temporal noise, fixed pattern, and the rows' noise, in 10-bit steps\n", sensor_names[n],
+	printf("camera_test: noise of sensor %u (%.12s): %ux%u, black %u, exposure %.1f ms (%u lines); per site of the cell (R, G1, "
+	    "G2, B in its order) the mean, temporal noise, fixed pattern, and the rows' noise, in 10-bit steps\n", n, head.chip,
 	    head.width, head.height, head.black, lines * (double)head.line_ns / 1e6, lines);
 	for (int k = 0; k < 5; k++) {
 		uint32_t gain = gains[k] ? gains[k] * head.gain_unity : head.gain_max;
@@ -199,7 +210,7 @@ noise_one(int device, unsigned n)
 		}
 		if (write(device, &c, sizeof(c)) != (ssize_t)sizeof(c) || !read_settled(device, a, bytes, lines, gain) ||
 		    read(device, b, bytes) != (ssize_t)bytes) {
-			printf("camera_test: noise: the %s camera at gain %u: no frames with that exposure\n", sensor_names[n], gain);
+			printf("camera_test: noise: sensor %u at gain %u: no frames with that exposure\n", n, gain);
 			continue;
 		}
 		const struct hakios_camera_frame *f = (const void *)a;
@@ -260,9 +271,22 @@ noise(const char *which)
 		perror("camera_test: " HAKIOS_CAMERA_DEVICE);
 		return 1;
 	}
-	for (unsigned n = 0; n < 4; n++) {
-		if (strcmp(which, "all") == 0 || (unsigned)atoi(which) == n) {
-			failures += noise_one(device, n);
+	if (strcmp(which, "all") != 0) {
+		unsigned n = (unsigned)atoi(which);
+
+		if (noise_one(device, n) != 0) {
+			printf("camera_test: noise: sensor %u failed, or the board has none of that number\n", n);
+			failures++;
+		}
+	} else {
+		/* every sensor, until the kernel refuses the next number (-1) */
+		for (unsigned n = 0;; n++) {
+			int result = noise_one(device, n);
+
+			if (result < 0) {
+				break;
+			}
+			failures += result;
 		}
 	}
 	close(device);
