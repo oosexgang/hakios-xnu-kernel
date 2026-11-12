@@ -76,8 +76,21 @@ public:
 
     const std::vector<uint32_t>& words() const { return words_; }
     size_t size() const { return words_.size(); }
+    size_t capacity() const { return words_.capacity(); }
     void clear() { words_.clear(); }   // (the memory stays: a stream used again grows no more)
     void reserve(size_t words) { words_.reserve(words); }
+    // the words' memory handed on, the stream left empty; and memory taken over, emptied: a command buffer's stream goes
+    // back to its queue once its words are in the GPU's buffer, so that the next command buffer does not grow its own
+    // from 512 words again, every doubling a copy and every large free a madvise (CommandQueue::submit)
+    std::vector<uint32_t> release() {
+        std::vector<uint32_t> w = std::move(words_);
+        words_.clear();
+        return w;
+    }
+    void adopt(std::vector<uint32_t>&& w) {
+        w.clear();
+        words_ = std::move(w);
+    }
 
 private:
     void command(uint32_t opcode, uint32_t count);

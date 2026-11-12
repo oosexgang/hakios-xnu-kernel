@@ -187,6 +187,7 @@ public:
     const std::string& gmemRefusal() const { return gmemWhy_; }
     // the words recorded so far (what the command processor will read)
     size_t streamWords() const { return stream_.words().size(); }
+    size_t streamCapacity() const { return stream_.capacity(); }   // (words it holds room for: the queue's memory, takePass)
     std::vector<PassTime> passTimes() const;
     // why profiled pass I of a draw was drawn in sysmem ("" for a GMEM pass, or one not profiled); valid while the buffer lives
     const char* passSysmemWhy(size_t i) const { return i < profiled_.size() ? profiled_[i].sysmemWhy.c_str() : ""; }
@@ -307,6 +308,13 @@ private:
         bool lastFetched = false;   // the last draw read its attachments (render::encodeInPass's AFTER_FETCH for the next)
     };
     void closePass();
+    // A pass's record, the one closed last kept with its streams' and shadows' memory for the next pass of this buffer:
+    // made anew for every pass, its streams grew from nothing to a pass's size each time, and the frees of the large ones
+    // went back to the system -- madvise was 8-13% of the window server's time inside draw calls (metal_fps=sample,
+    // logs/204443-run.log)
+    std::unique_ptr<OpenPass> takePass();
+    void retirePass();
+    std::unique_ptr<OpenPass> sparePass_;
     void useAttachments(const RenderPass& pass);
     std::unique_ptr<OpenPass> open_;
     // A piece of a larger buffer, for a draw's or a dispatch's table and a program's words. A buffer of its own for each
@@ -447,6 +455,8 @@ private:
     std::condition_variable changed_;
     std::deque<std::shared_ptr<CommandBuffer>> inFlight_;
     std::vector<std::unique_ptr<Bo>> idle_;
+    // (under lock_) command buffers' streams' memory, given back at submit for the next command buffer (pm4::Stream::release)
+    std::vector<std::vector<uint32_t>> spareStreams_;
     bool quit_ = false;
     std::thread thread_;
 };

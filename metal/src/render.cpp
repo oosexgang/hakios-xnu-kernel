@@ -3047,7 +3047,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
                 }
             }
         }
-        open_ = std::make_unique<OpenPass>();
+        open_ = takePass();
         open_->pass = pass;
         open_->options = options;
         open_->table = passTable.gpuAddress();
@@ -3329,7 +3329,7 @@ void CommandBuffer::closePass() {
         const std::vector<uint32_t>& w = open_->bodies.words();
         if (!piece(4 * w.size(), &ib, &why)) {
             // (the draws were encoded for tiles: they cannot run in sysmem instead)
-            open_.reset();
+            retirePass();
             fail(std::string("no memory for a GMEM pass's draws: ") + why);
             return;
         }
@@ -3371,7 +3371,7 @@ void CommandBuffer::closePass() {
         if ((open_->options.gmemBinning || gmemBinning_) && queue_.binningOk()) {
             std::shared_ptr<Buffer> v = queue_.vscBuffer(&why);
             if (v == nullptr) {
-                open_.reset();
+                retirePass();
                 fail(std::string("no memory for the visibility streams: ") + why);
                 return;
             }
@@ -3398,7 +3398,35 @@ void CommandBuffer::closePass() {
     render::encodeEnd(tail, open_->pass, open_->table, open_->options);
     appendStream(stream_, tail);
     stampEnd();
-    open_.reset();
+    retirePass();
+}
+
+std::unique_ptr<CommandBuffer::OpenPass> CommandBuffer::takePass() {
+    if (sparePass_ != nullptr) return std::move(sparePass_);
+    return std::make_unique<OpenPass>();
+}
+
+// the closed pass's record back to what a new one is, but for the memory of its streams and shadows (takePass)
+void CommandBuffer::retirePass() {
+    if (open_ == nullptr) return;
+    OpenPass& p = *open_;
+    pm4::Stream bodies = std::move(p.bodies), sys = std::move(p.sysStream), head = std::move(p.headGmem);
+    RegShadow regs = std::move(p.regs), bodyRegs = std::move(p.bodyRegs);
+    std::vector<uint8_t> key = std::move(p.staticKey);
+    p = OpenPass{};
+    bodies.clear();
+    sys.clear();
+    head.clear();
+    regs.clear();
+    bodyRegs.clear();
+    key.clear();
+    p.bodies = std::move(bodies);
+    p.sysStream = std::move(sys);
+    p.headGmem = std::move(head);
+    p.regs = std::move(regs);
+    p.bodyRegs = std::move(bodyRegs);
+    p.staticKey = std::move(key);
+    sparePass_ = std::move(open_);
 }
 
 bool CommandBuffer::clear(const RenderPass& pass, const render::Options& options) {

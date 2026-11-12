@@ -12,6 +12,7 @@ namespace hakios::metal {
 
 namespace {
 constexpr size_t kCommandBo = 64 * 1024;           // one command buffer's packets, at most (grown when needed)
+constexpr size_t kSpareStreams = 4;                 // command buffers' stream memory a queue keeps for the next ones
 constexpr int64_t kPatienceNs = 5000000000;        // a fence not passed in 5 s: the GPU is hung, the buffer is an error
 constexpr uint32_t kFillHead = 64;                 // words written by CP_MEM_WRITE before the copies double them
 // The most one CP_MEMCPY moves. On the phone (27 October) 125 000 words in one packet took 4.2 ms, and 4 Mi words (16 MB)
@@ -538,7 +539,13 @@ CommandQueue::~CommandQueue() {
 }
 
 std::shared_ptr<CommandBuffer> CommandQueue::commandBuffer() {
-    return std::shared_ptr<CommandBuffer>(new CommandBuffer(*this));
+    std::shared_ptr<CommandBuffer> cb(new CommandBuffer(*this));
+    std::lock_guard<std::mutex> g(lock_);
+    if (!spareStreams_.empty()) {
+        cb->stream_.adopt(std::move(spareStreams_.back()));
+        spareStreams_.pop_back();
+    }
+    return cb;
 }
 
 std::shared_ptr<Texture> CommandQueue::nullTexture(std::string* why) {
@@ -620,10 +627,13 @@ void CommandQueue::submit(std::shared_ptr<CommandBuffer> cb) {
     }
     // the stream is written in order, as write-combined memory wants it, and read back by nobody
     memcpy(cb->commands_->cpu(), w.data(), 4 * w.size());
+    const uint32_t words = uint32_t(w.size());
     std::unique_lock<std::mutex> g(lock_);  // the fences of one queue are handed out in commit order
+    // (its words are in the GPU's buffer now: the memory goes to the next command buffer, a few kept at most)
+    if (spareStreams_.size() < kSpareStreams) spareStreams_.push_back(cb->stream_.release());
     cb->status_ = CommandBuffer::kCommitted;
     cb->faultsAtCommit_ = gpu_.faults();
-    int e = gpu_.submit(id_, *cb->commands_, 0, uint32_t(w.size()), cb->uses_, &cb->fence_);
+    int e = gpu_.submit(id_, *cb->commands_, 0, words, cb->uses_, &cb->fence_);
     if (e != 0) {
         cb->error_ = std::string("the driver refused the submission: ") + strerror(e);
         idle_.push_back(std::move(cb->commands_));

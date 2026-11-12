@@ -2875,6 +2875,55 @@ TEST(a_draw_in_an_open_pass_leaves_out_registers_already_holding_their_values) {
     CHECK_EQ(r.fake->stats().faults, 0u);
 }
 
+// A command buffer's passes take turns at one record (CommandBuffer::takePass): the pass closed last is kept with its
+// streams' memory for the next, so it must start as a new one would -- above all its register shadow empty, or the next
+// pass's head would leave out registers as "already holding" what the pass before wrote, with another target. So what
+// deduplication saves in a's pass is the same whether a comes first in its buffer (a new record) or after b's pass (b's
+// record, recycled), measured as the words with dedupRegs on against off. And the stream's memory goes back to the queue
+// at submit: the next command buffer starts empty with room for what the last one wrote.
+TEST(a_pass_on_a_recycled_record_starts_as_a_new_one) {
+    Rig r;
+    auto t = target(r), u = target(r);
+    RenderPass a, b;
+    a.color0 = t.get();
+    b.color0 = u.get();
+    size_t fresh[2] = {}, after[2] = {}, last = 0;
+    for (int dedup = 0; dedup < 2; dedup++) {
+        render::Options o;
+        o.dedupRegs = dedup != 0;
+        o.gmem = false;
+        {
+            auto cb = r.queue->commandBuffer();
+            const size_t at0 = cb->streamWords();
+            CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}, o));
+            fresh[dedup] = cb->streamWords() - at0;
+            cb->commit();
+            cb->waitUntilCompleted();
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+        }
+        {
+            auto cb = r.queue->commandBuffer();
+            CHECK_EQ(cb->streamWords(), 0u);
+            CHECK(cb->draw(flatProgram(), b, wholeDraw(), Bindings{}, Bindings{}, o));
+            const size_t at1 = cb->streamWords();
+            CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}, o));   // b's tail, then a's pass
+            after[dedup] = cb->streamWords() - at1;
+            last = cb->streamWords();
+            cb->commit();
+            cb->waitUntilCompleted();
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+        }
+    }
+    std::printf("       a's pass alone: %zu words in full, %zu deduplicated; after b's: %zu and %zu (b's tail with it)\n", fresh[0],
+                fresh[1], after[0], after[1]);
+    CHECK(fresh[1] < fresh[0]);   // (deduplication saves something within a pass, or the comparison says nothing)
+    CHECK_EQ(after[0] - after[1], fresh[0] - fresh[1]);
+    auto next = r.queue->commandBuffer();
+    CHECK_EQ(next->streamWords(), 0u);
+    CHECK(next->streamCapacity() >= last);
+    CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
 TEST(the_words_of_a_draw_counted) {
     Rig r;
     auto t = target(r);
