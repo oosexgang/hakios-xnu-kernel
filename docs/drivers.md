@@ -72,12 +72,12 @@ needs its feature in the board's `features`.
 | --- | --- | --- | --- |
 | `bsd/dev/hakios_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `adsp { }` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`adsp { }`); the DSP's own addresses are the 7-series' |
 | `bsd/dev/hakios_audio.c` | `/dev/hakios-audio`: what iOS plays, to whichever sink is there. | — | any |
-| `bsd/dev/hakios_sound.c`, `hakios_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
-| `bsd/dev/hakios_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`mic { }`) |
+| `bsd/dev/hakios_sound.c`, `hakios_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part; the sound's pins, its TDM interface and the DSP's stream are data (`speaker { }`, `smmu { }`) |
+| `bsd/dev/hakios_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`mic { }`), and so are the LPASS blocks and the SoundWire pins (`lpass { }`) |
 | `bsd/dev/hakios_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`speaker { }`) |
 | `bsd/dev/hakios_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`haptic { }`) |
 | `bsd/dev/hakios_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`spmi { }`, `torch { }`) |
-| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part |
+| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part; each sensor's wiring and supplies, and which is iOS's back and front camera, are data (`camera { }`) |
 | `bsd/dev/hakios_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
 
 ## Wi-Fi, network
