@@ -1,5 +1,6 @@
 #!/bin/bash
-# The kernel's source tools (kernel/assemble.sh, export.sh, verify.sh, syntax-check.sh) on a small made-up release: no
+# The kernel's source tools (kernel/assemble.sh, export.sh, verify.sh, syntax-check.sh, and the LLVM stand-ins for cctools
+# in kernel/host/llvm) on a small made-up release: no
 # network, a few seconds. What is checked is what a kernel developer relies on: the tree is what the
 # repository says, an update touches only what changed, work in a tree is never run over, and an export
 # brings it back.
@@ -214,6 +215,25 @@ sed -i 's/^UPSTREAM_COMMIT=.*/UPSTREAM_COMMIT=0000000000000000000000000000000000
 refuses "a release that is not the pinned commit is not used" "not using it" "$K/assemble.sh" "$W/other"
 check "... and no half-made tree is left behind" test ! -e "$W/other"
 refuses "a directory that is no assembled tree is not exported" "not a tree" "$K/export.sh" "$W/upstream"
+
+# --- LLVM's Mach-O tools in the place of cctools' (kernel/host/llvm) ------------------------------
+# a stand-in for LLVM's directory whose tools print what they are given, one argument a line
+L=$W/llvm
+mkdir -p "$L"
+for t in ld64.lld llvm-libtool-darwin; do
+	printf '#!/bin/sh\nfor a; do echo "$a"; done\n' > "$L/$t"
+	chmod +x "$L/$t"
+done
+printf ' _vm_map_external  _vm_map\n _IOMallocData_external _IOMallocData\n\n' > "$W/aliases.exp"
+LLVM=$HERE/../kernel/host/llvm
+XNU_CLANG_DIR=$L XNU_SDK_VERSION=16.5 "$LLVM/ld" -arch arm64 -alias_list "$W/aliases.exp" -o kernel a.o > "$W/ld.args"
+check "the linker is told the platform first" test "$(head -4 "$W/ld.args" | tr '\n' ' ')" = "-platform_version ios 16.5 16.5 "
+check "an alias list becomes one -alias a line, in order, and the rest is passed on" \
+	test "$(tail -n +5 "$W/ld.args" | tr '\n' ' ')" = "-arch arm64 -alias _vm_map_external _vm_map -alias _IOMallocData_external _IOMallocData -o kernel a.o "
+XNU_CLANG_DIR=$L "$LLVM/libtool" -ca -filelist f -o out.a > "$W/libtool.args"
+check "a static archive asked for as -ca is asked for as -static" test "$(tr '\n' ' ' < "$W/libtool.args")" = "-static -filelist f -o out.a "
+refuses "a tool the kernel's build does not use says so when it is called" "not part of a build with LLVM" "$LLVM/unused" -x
+refuses "the linker without LLVM's directory says what is missing" "XNU_CLANG_DIR" env -u XNU_CLANG_DIR "$LLVM/ld" a.o
 
 echo "kernel_tools_test: $checks checks, $failed failed"
 [ $failed = 0 ]

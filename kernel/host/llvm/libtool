@@ -1,0 +1,11 @@
+#!/bin/bash
+# LLVM's libtool in the place of cctools', for a build without theos' toolchain (kernel/build.sh:
+# TOOLCHAIN=llvm). XNU asks cctools' for a static archive with -ca; LLVM's says -static.
+args=()
+for a in "$@"; do
+	case "$a" in
+		-ca) args+=(-static) ;;
+		*) args+=("$a") ;;
+	esac
+done
+exec "${XNU_CLANG_DIR:?XNU_CLANG_DIR: the directory of clang and llvm-libtool-darwin}/llvm-libtool-darwin" "${args[@]}"
