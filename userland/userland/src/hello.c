@@ -1,5 +1,5 @@
 /*
- * First user-space program for the Darwin-on-redwood bring-up.
+ * The first user-space program of a bring-up.
  *
  * A static arm64 Mach-O with no libc and no dyld: it talks to the kernel with
  * raw system calls. The kernel's mockfs presents the ramdisk (this very file)

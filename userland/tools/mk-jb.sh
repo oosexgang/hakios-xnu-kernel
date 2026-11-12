@@ -129,7 +129,7 @@ EOF
 # and in this port trustd's own connections go unanswered (it talks to Apple and gets nothing back).
 # So apt is pointed at that file directly, which needs no trust store at all.
 mkdir -p "$OUT/root/var/jb/etc/apt/apt.conf.d"
-cat > "$OUT/root/var/jb/etc/apt/apt.conf.d/10redwood.conf" <<'EOF'
+cat > "$OUT/root/var/jb/etc/apt/apt.conf.d/10hakios.conf" <<'EOF'
 Acquire::https::CaInfo "/var/jb/etc/ssl/certs/cacert.pem";
 EOF
 

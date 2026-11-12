@@ -7,7 +7,7 @@ tree, with a small part of it:
 
     // a comment to the end of the line; /* ... */ as well
     / {
-        name = "redwood";                       // a string
+        name = "phone";                         // a string
         features = "cpufreq-epss", "adsp";      // several
         memory = <0x9d400000>;                  // a number, in cells: decimal or 0x hexadecimal
         bus-pins = <52 53 54 55>;               // several

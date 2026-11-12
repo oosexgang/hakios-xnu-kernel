@@ -3040,8 +3040,8 @@ static NSData *rw_function_air(id function);
 
 /* Mesa's renderer names for the chips this port has run on; any other is named by its number */
 static const struct { uint32_t chip; const char *name; } known_chips[] = {
-	{ 0x06030500, "Adreno 7c+ Gen 3" },     /* redwood (SM7325): docs/air.md */
-	{ 0x06060010, "Adreno 642" },           /* renoir (SM7350): the kernel's GPU profile */
+	{ 0x06030500, "Adreno 7c+ Gen 3" },     /* SM7325: docs/air.md */
+	{ 0x06060010, "Adreno 642" },           /* SM7350: the kernel's GPU profile */
 };
 
 - (NSString *)name

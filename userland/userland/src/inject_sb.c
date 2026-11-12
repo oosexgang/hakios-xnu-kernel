@@ -213,7 +213,7 @@ snapshot_output_format(__unused id self, __unused SEL selector, id snapshot)
 	return SNAPSHOT_FORMAT_PNG;
 }
 
-/* ---- battery state from redwood's Qualcomm charger stack ----------------------------------------- */
+/* ---- battery state from the Qualcomm charger stack --------------------------------------------------- */
 
 /*
  * iOS reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's

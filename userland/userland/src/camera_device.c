@@ -1773,7 +1773,7 @@ static CFStringRef
 device_description(CMBaseObjectRef o)
 {
 	(void)o;
-	return CFRetain(CFSTR("<HakiosCaptureDevice: the POCO X5 Pro's wide camera>"));
+	return CFRetain(CFSTR("<HakiosCaptureDevice: the back camera>"));
 }
 
 static const struct base_class device_base = {

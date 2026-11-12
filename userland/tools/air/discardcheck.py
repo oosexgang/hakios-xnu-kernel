@@ -56,7 +56,7 @@ AIR_RUN = os.environ.get(
     os.path.join(ROOT, "build/mesa-host/build/src/gallium/drivers/freedreno/air_run"))
 IR3 = os.environ.get(
     "IR3", os.path.join(ROOT, "build/mesa-host/build/src/gallium/drivers/freedreno/ir3_compiler"))
-# the redwood's Adreno 7c+ Gen 3 (A635), as corpus.py names it
+# the SM7325's Adreno 7c+ Gen 3 (A635), as corpus.py names it
 CHIP_ID = os.environ.get("AIR_CHIP_ID", "0x007506030500")
 
 HEAD = """source_filename = "dc"

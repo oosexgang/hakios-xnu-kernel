@@ -385,10 +385,10 @@ dump_tasks(void)
  * engine is alive and posting.
  * AND THE READER IS PLAINLY HAPPY. With the counters printed on their own line, early, instead of as
  * one line of a sixty-line report:
- *   redwood: AppStore: JETPACK processStream: in
- *   redwood: AppStore: JETPACK processStream: out, a result, error (none)
- *   redwood: AppStore: KEY brotli entered 0 returned 0, processStream entered 2 returned 2
- *   redwood: appstored: KEY brotli entered 0 returned 0, processStream entered 0 returned 0
+ *   hakios: AppStore: JETPACK processStream: in
+ *   hakios: AppStore: JETPACK processStream: out, a result, error (none)
+ *   hakios: AppStore: KEY brotli entered 0 returned 0, processStream entered 2 returned 2
+ *   hakios: appstored: KEY brotli entered 0 returned 0, processStream entered 0 returned 0
  * -[JPReader processStream:signatureVerifier:options:error:] is entered twice -- once per fetch --
  * and both times it RETURNS A RESULT WITH NO ERROR. So the page is fetched whole and parsed without
  * complaint: it is not the signature, not the package format, and not Brotli (which never runs at
@@ -696,7 +696,7 @@ new_processStream(id self, SEL cmd, void *stream, void *verifier, void *options,
  * MEASURES. There was an interpose on __cxa_throw here, to see every C++ exception by name. It
  * answered its question -- std::future_error is AMSPromise being deallocated, see above -- and then,
  * when it was trimmed to print only the first few and count the rest, both daemons began to die:
- *   redwood: appstored: signal 6 ... called from _abort, demangling_terminate_handler,
+ *   hakios: appstored: signal 6 ... called from _abort, demangling_terminate_handler,
  *   _objc_terminate, std::__terminate
  * which is an exception reaching std::terminate instead of its handler. appstored went from one
  * start a session to eight, each ending in SIGABRT, and the App Store with it. The runs before that
@@ -1506,7 +1506,7 @@ new_##name(id self, SEL cmd, void *a, void *b, void *c) \
  * refused. A daemon that is absent fails fast; a daemon launchd keeps restarting makes its clients
  * wait for ever. That is the README's "look at what launchd restarts" bullet seen from the client.
  */
-#define FAIRPLAY_DEVICE_TYPE "REDWOOD-INJECTED-NOT-A-FAIRPLAY-DEVICE"
+#define FAIRPLAY_DEVICE_TYPE "HAKIOS-INJECTED-NOT-A-FAIRPLAY-DEVICE"
 
 static CFStringRef fairplay_device_type;
 

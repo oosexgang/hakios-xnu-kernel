@@ -29,7 +29,7 @@ AIR2NIR = os.environ.get(
     "AIR2NIR", os.path.join(ROOT, "build/mesa-host/build/src/compiler/air/air2nir"))
 IR3 = os.environ.get(
     "IR3", os.path.join(ROOT, "build/mesa-host/build/src/gallium/drivers/freedreno/ir3_compiler"))
-# the redwood's Adreno 7c+ Gen 3 (A635), as freedreno names it
+# the SM7325's Adreno 7c+ Gen 3 (A635), as freedreno names it
 CHIP_ID = os.environ.get("AIR_CHIP_ID", "0x007506030500")
 
 

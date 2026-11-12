@@ -8,7 +8,7 @@
  * on this machine), its meters read every tenth of a second. With "vibrate AT", AT seconds into the
  * recording the phone's motor runs for one second (CoreHaptics, a continuous event at full strength):
  * something the microphone hears that nobody needs to say, at a frequency one can look for, the
- * motor's resonance (175.5 Hz on the POCO X5 Pro). Then the file is read back: how loud each tenth
+ * motor's resonance (175.5 Hz on the phone this was written on). Then the file is read back: how loud each tenth
  * of a second is, and how strong 175.5 Hz is before the vibration and while it lasts.
  *
  * On this machine the samples come from the kernel's /dev/hakios-mic (boot-arg mic=4), through
