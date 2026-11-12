@@ -64,7 +64,8 @@ Requirements:
     `…/mach.development.bcm2837.llvm-link-check`, and the usual path has no kernel.
 
   `kernel/build.sh` takes theos' when it is there and LLVM's otherwise; `TOOLCHAIN=cctools` or
-  `TOOLCHAIN=llvm` chooses. A whole build with LLVM's tools and no theos, on Ubuntu 24.04 (to check a
+  `TOOLCHAIN=llvm` chooses. `make kernel-check` is the check with LLVM's tools and the compiler's
+  warnings shown, whatever else is installed. A whole build with LLVM's tools and no theos, on Ubuntu 24.04 (to check a
   change compiles and links; a kernel for a phone is linked by theos' `ld64`):
 
   ```sh

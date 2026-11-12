@@ -19,6 +19,7 @@ help:
 	@echo "make verify-kernel  Apple's release + overlay + patches assemble and export back unchanged (network)"
 	@echo "make syntax-kernel  compile the kernel files HakiOS adds, for syntax and types, with this machine's clang (network)"
 	@echo "make kernel         build the kernel (kernel/build.sh; docs/building.md says what it needs)"
+	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos; not a kernel to boot)"
 
 .PHONY: check
 check: lint boards-check docs-check test
@@ -68,3 +69,7 @@ syntax-kernel:
 .PHONY: kernel
 kernel:
 	kernel/build.sh
+
+.PHONY: kernel-check
+kernel-check:
+	TOOLCHAIN=llvm XNU_WARNINGS=1 kernel/build.sh
