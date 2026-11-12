@@ -63,6 +63,20 @@ struct fake_lock { pthread_mutex_t mutex; };
 int msleep(void *channel, struct fake_lock *lock, int priority, const char *why, void *time);
 void wakeup(void *channel);
 
+/*
+ * A call to be made later on a thread of its own (kern/thread_call.h): entered with a deadline, it runs then
+ * unless it was cancelled or entered again meanwhile. The deadline is shortened by fake_delay_divisor, as
+ * a driver's waits are.
+ */
+typedef void *thread_call_param_t;
+typedef struct fake_thread_call *thread_call_t;
+typedef void (*thread_call_func_t)(thread_call_param_t p0, thread_call_param_t p1);
+#define PZERO                           22
+#define PCATCH                          0x100
+thread_call_t thread_call_allocate(thread_call_func_t func, thread_call_param_t p0);
+bool thread_call_enter_delayed(thread_call_t call, uint64_t deadline);
+bool thread_call_cancel(thread_call_t call);
+
 /* memory (kern/kalloc.h): the host's, zeroed */
 #define Z_WAITOK                        0
 #define kalloc_data(size, flags)        calloc(1, (size))

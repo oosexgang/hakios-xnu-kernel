@@ -419,6 +419,83 @@ crc32(uint32_t crc, const void *data, size_t size)
 	return ~crc;
 }
 
+/* ---- calls made later ---- */
+
+struct fake_thread_call {
+	thread_call_func_t func;
+	thread_call_param_t p0;
+	uint64_t deadline;
+	unsigned generation;            /* entered again or cancelled: a waiting one runs only if it is still this */
+	pthread_mutex_t lock;
+};
+
+thread_call_t
+thread_call_allocate(thread_call_func_t func, thread_call_param_t p0)
+{
+	thread_call_t call = calloc(1, sizeof(*call));
+
+	call->func = func;
+	call->p0 = p0;
+	pthread_mutex_init(&call->lock, NULL);
+	return call;
+}
+
+struct fake_call_wait {
+	thread_call_t call;
+	unsigned generation;
+};
+
+static void *
+thread_call_main(void *p)
+{
+	struct fake_call_wait wait = *(struct fake_call_wait *)p;
+	bool still;
+
+	free(p);
+	for (;;) {
+		uint64_t now = mach_absolute_time();
+
+		pthread_mutex_lock(&wait.call->lock);
+		still = wait.call->generation == wait.generation;
+		pthread_mutex_unlock(&wait.call->lock);
+		if (!still || now >= wait.call->deadline) {
+			break;
+		}
+		usleep(200);
+	}
+	if (still) {
+		wait.call->func(wait.call->p0, NULL);
+	}
+	return NULL;
+}
+
+bool
+thread_call_enter_delayed(thread_call_t call, uint64_t deadline)
+{
+	struct fake_call_wait *wait = malloc(sizeof(*wait));
+	uint64_t now = mach_absolute_time();
+	pthread_t thread;
+
+	pthread_mutex_lock(&call->lock);
+	call->generation++;
+	call->deadline = now + (deadline > now ? (deadline - now) / fake_delay_divisor : 0);
+	wait->call = call;
+	wait->generation = call->generation;
+	pthread_mutex_unlock(&call->lock);
+	pthread_create(&thread, NULL, thread_call_main, wait);
+	pthread_detach(thread);
+	return false;
+}
+
+bool
+thread_call_cancel(thread_call_t call)
+{
+	pthread_mutex_lock(&call->lock);
+	call->generation++;
+	pthread_mutex_unlock(&call->lock);
+	return true;
+}
+
 thread_t current_thread(void) { return NULL; }
 
 kern_return_t
