@@ -152,6 +152,27 @@ recording(void)
 	CHECK(used <= round_page(24 + 48000ull * 4 + 100 * 16), "never past its memory: %llu bytes", (unsigned long long)used);
 }
 
+/* a writer of one frame at a time: each write is a block with a header of its own, more than the memory was made
+ * for; the recording stops at the memory's end, not past it */
+static void
+many_small_writes(void)
+{
+	uint64_t size;
+
+	boot_args = "rec_sound=1";
+	redwood_audio_init();
+	size = round_page(24 + 48000ull * 4 + 100 * 16);
+	for (int i = 0; i < 20000; i++) {
+		CHECK(play(1, 500) == 0, "written");
+		if (failures) {
+			return;
+		}
+	}
+	CHECK(loader_sound[1] <= size, "the recording ends inside its memory: %llu of %llu bytes", (unsigned long long)loader_sound[1],
+	    (unsigned long long)size);
+	CHECK(loader_sound[1] > size - 20, "and fills it: %llu of %llu", (unsigned long long)loader_sound[1], (unsigned long long)size);
+}
+
 /* the volume iOS sets is kept for the speakers' driver, with how many times it was set */
 static void
 volume(void)
@@ -177,7 +198,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "played_and_said", played_and_said }, { "sink_full", sink_full }, { "whole_frames", whole_frames },
-		{ "recording", recording }, { "volume", volume },
+		{ "recording", recording }, { "many_small_writes", many_small_writes }, { "volume", volume },
 	};
 
 	if (argc < 2) {
