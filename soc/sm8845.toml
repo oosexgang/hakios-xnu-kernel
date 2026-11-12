@@ -1,0 +1,9 @@
+# Shared SoC data for Snapdragon 8 Gen 5. Add register blocks with their backends.
+name = "sm8845"
+description = "Qualcomm Snapdragon 8 Gen 5 (SM8845)"
+
+# Channel used by the Ace 6T SM8845 reference port.
+[scmi_perf]
+shmem = 0x81f08100
+mailbox = 0x19980000
+doorbell = 0x104

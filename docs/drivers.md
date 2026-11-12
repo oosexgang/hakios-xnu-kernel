@@ -59,6 +59,7 @@ needs its feature in the board's `features`.
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
 | `bsd/dev/hakios_cpufreq.c` | CPU frequency through EPSS. | `cpufreq-epss` / `cpufreq=1` | data (`[cpufreq]`) |
+| `bsd/dev/hakios_scmi_perf.c` | CPU performance levels and limits through SCMI. | `cpufreq-scmi` / `scmi_perf=1` | data (`[scmi_perf]`) |
 | `bsd/dev/hakios_ddr.c` | Memory bandwidth votes through RPMh. | `ddr-rpmh` / `ddr=` | data (`[rpmh]`), with the slot layout and BCM names of the 7-series |
 | `bsd/dev/hakios_bench.c` | Measurements: how fast the cores get at memory, how busy each core is. | — / `membench=`, `cpuload=` | any |
 | `bsd/dev/hakios_thermal.c` | Reads TSENS; holds CPU groups and the panel back when hot. | `[thermal]` / `thermal=` | data |

@@ -22,6 +22,7 @@
 #include "hakios_board.h"
 #include "hakios_log.h"
 
+extern void hakios_scmi_perf_init(void);
 extern void hakios_prof_start(void);            /* osfmk/arm64/hakios_prof.c */
 extern void hakios_backlight_init(void);        /* bsd/dev/hakios_backlight.c */
 extern void hakios_thermal_init(void);          /* bsd/dev/hakios_thermal.c */
@@ -49,6 +50,7 @@ hakios_drivers_init(void)
 	hakios_board_init();            /* which board this is and what it has, in the log (hakios_board.c) */
 
 	/* the processor */
+	hakios_scmi_perf_init();        /* firmware performance levels and limits */
 	redwood_cpufreq_init();         /* boot-arg cpufreq=1: full speed; with it the memory's vote (ddr=) and cpuload=, membench= */
 
 	/* what a person touches and sees */

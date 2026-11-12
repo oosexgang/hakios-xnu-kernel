@@ -8,6 +8,7 @@ soc = "sm0000"                      # soc/sm0000.toml: where the blocks of the c
 # The drivers this board may start. Empty at first: add one once its driver has been seen to work
 # here, in the order of docs/porting.md. The kernel knows these:
 #   cpufreq-epss    CPU frequency through Qualcomm's EPSS (boot-arg cpufreq=1); needs [cpufreq] in the SoC file
+#   cpufreq-scmi    firmware CPU performance queries (scmi_perf=1); needs [scmi_perf] in the SoC file
 #   ddr-rpmh        memory bandwidth votes through RPMh (ddr=); needs [rpmh] in the SoC file
 #   battery-uefi    the battery as the firmware reports it to the loader (battery=1)
 #   buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1); needs [buttons],

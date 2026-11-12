@@ -55,6 +55,7 @@ enum {
 	HAKIOS_HAS_CAMERA_REDWOOD  = 1u << 10,  /* redwood's four cameras and their wiring (redwood_camera.c) */
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (redwood_wifi.c) */
 	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (redwood_mic.c) */
+	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 
 /* how the panel's light is set (bsd/dev/hakios_backlight.c) */
@@ -248,6 +249,11 @@ struct hakios_board {
 		uint32_t epss, epss_domain_size;        /* EPSS: a block of registers a group of cores */
 		uint8_t domain_cores[HAKIOS_CPU_GROUPS]; /* how many cores each group has, in the cores' order; 0: no more */
 	} cpufreq;
+
+	/* CPU performance mailbox (soc: [scmi_perf]). */
+	struct {
+		uint32_t shmem, mailbox, doorbell;
+	} scmi_perf;
 
 	/* temperature (soc: [thermal]; board: [thermal]) */
 	struct {

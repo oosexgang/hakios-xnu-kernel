@@ -122,3 +122,9 @@ core_shift = 8                      # where the core's number is in its reg: 8 f
 small_cores = 0x0f                  # optional: a bit for each core of the lowest capacity-dmips-mhz
 psci = "smc"                        # the psci node's method: "smc" or "hvc"
 timeout_scale = 20                  # optional: how many times longer the kernel waits for a lock; for emulators
+
+# Optional SCMI performance channel for the cpufreq-scmi feature.
+[scmi_perf]
+shmem = 0                         # shared-memory channel's physical address
+mailbox = 0                       # mailbox's physical base
+doorbell = 0                      # aligned register offset inside the mailbox page

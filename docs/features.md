@@ -27,6 +27,7 @@ the two the same. What each key means is in `devices/_template/soc.toml` and
 | `display-scan` | `[display]`: `intf1`; `[clocks]`: `gcc_disp_ahb_cbcr`, `dispcc`, `dispcc_mdss_gdscr`, `dispcc_mdss_ahb_cbcr` | nothing | `fb_scan=1, the default` |
 | `gpu-a660` | `[adreno]`; `[clocks]`: `gcc_disp_ahb_cbcr`; `[rpmh]` | `[gpu]`: `model`, `chip_id`, `firmware`, `gmem_kb`, `primitive_fifo`, `hang_cycles`, `speed_fuse`, `gaming_fuse`, `highest_bank_bit`, `gcc_debug_gpucc`, `speeds_khz`, `speed_levels`, `default_speed` | `gpu=1` |
 | `virtio` | nothing | nothing | `virtio_net=1, virtio_input=1` |
+| `cpufreq-scmi` | `[scmi_perf]` | nothing | `scmi_perf=1` |
 
 The brightness (`[backlight]`), the thermal floors (`[thermal]`) and the partition that may be
 written (`[storage]`) are not features: a board has them by giving the section. `display-scan`

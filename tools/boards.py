@@ -83,6 +83,7 @@ SOC_SCHEMA = {
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
             'smem_lock': (int, True)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
+    'scmi_perf': {'shmem': (int, True), 'mailbox': (int, True), 'doorbell': (int, True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
 BOARD_SCHEMA = {
@@ -119,7 +120,7 @@ BOARD_SCHEMA = {
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
+FEATURE_NEEDS = {'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
                  'camera-redwood': ('spmi', 'pins', 'clocks', 'rpmh', 'smmu', 'camera'),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh'),
@@ -132,6 +133,7 @@ WRITES_TO_PMIC = ('torch-pm8350c', 'camera-redwood')    # ... these through the 
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
 FEATURE_BOOTARGS = {
+    'cpufreq-scmi': 'scmi_perf=1',
     'cpufreq-epss': 'cpufreq=1',
     'ddr-rpmh': 'ddr=1 looks; ddr=2 with cpufreq=1 votes',
     'battery-uefi': 'battery=1',
@@ -656,6 +658,10 @@ def table_text(socs, boards):
             ]
         else:
             out.append(f'\t\t.backlight = {{ .type = {kind} }},')
+        scmi = soc.get('scmi_perf')
+        if scmi:
+            out.append(f'\t\t.scmi_perf = {{ .shmem = {scmi["shmem"]:#010x}, .mailbox = {scmi["mailbox"]:#010x}, '
+                       f'.doorbell = {scmi["doorbell"]:#x} }},')
         if cpufreq:
             groups = ', '.join(str(n) for n in cpufreq['domain_cores'])
             out += ['\t\t.cpufreq = {',
