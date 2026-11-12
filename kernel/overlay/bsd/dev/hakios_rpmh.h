@@ -42,12 +42,25 @@
 #define RPMH_SAYS_NOT_ONE       "a request is one to sixteen commands"
 
 /*
- * Send `count' writes (address[i] <- data[i]) through the slot set at `tcs' (mapped: the sequencer
- * plus tcs_offset) and wait for RPMh. NULL when RPMh has said done, else what went wrong; a slot
- * set that is in use is not written to at all.
+ * Where a slot set's registers are. Version 3 of the sequencer and later (Linux rpmh-rsc.c, "v3" register
+ * offsets; read in RSC_DRV_ID at the sequencer's beginning, bits 23:16) moved all but the first three.
+ */
+struct hakios_rpmh_layout {
+	uint32_t        wait, control, status, cmd_enable, msgid, stride;
+};
+#define RPMH_LAYOUT_V2          ((struct hakios_rpmh_layout){ 0x10, 0x14, 0x18, 0x1c, 0x30, 20 })
+#define RPMH_LAYOUT_V3          ((struct hakios_rpmh_layout){ 0x20, 0x24, 0x28, 0x2c, 0x34, 24 })
+#define RSC_DRV_ID              0x00
+#define RSC_MAJOR(id)           (((id) >> 16) & 0xff)
+
+/*
+ * Send `count' writes (address[i] <- data[i]) through the slot set at `tcs' laid out as `l', and wait
+ * for RPMh. NULL when RPMh has said done, else what went wrong; a slot set that is in use is not
+ * written to at all.
  */
 static inline const char *
-hakios_rpmh_send(vm_offset_t tcs, const uint32_t *address, const uint32_t *data, unsigned count)
+hakios_rpmh_send_with(vm_offset_t tcs, struct hakios_rpmh_layout l, const uint32_t *address, const uint32_t *data,
+    unsigned count)
 {
 	uint32_t irq_enable;
 	bool done = false;
@@ -57,38 +70,54 @@ hakios_rpmh_send(vm_offset_t tcs, const uint32_t *address, const uint32_t *data,
 	}
 	irq_enable = rd(tcs + TCS_IRQ_ENABLE);
 	/* the slot set must be idle, and switched off the way the hardware wants it: trigger, then enable */
-	for (int i = 0; rd(tcs + TCS_STATUS) == 0; i++) {
+	for (int i = 0; rd(tcs + l.status) == 0; i++) {
 		if (i > RPMH_TRIES) {
 			return RPMH_SAYS_BUSY;
 		}
 		sleep_us(100);
 	}
-	wr(tcs + TCS_CONTROL, rd(tcs + TCS_CONTROL) & ~TCS_CONTROL_TRIGGER);
-	wr(tcs + TCS_CONTROL, rd(tcs + TCS_CONTROL) & ~TCS_CONTROL_ENABLE);
+	wr(tcs + l.control, rd(tcs + l.control) & ~TCS_CONTROL_TRIGGER);
+	wr(tcs + l.control, rd(tcs + l.control) & ~TCS_CONTROL_ENABLE);
 	wr(tcs + TCS_IRQ_CLEAR, 1);
 	for (unsigned i = 0; i < count; i++) {
-		wr(tcs + TCS_CMD_MSGID(i), MSGID_WRITE_4_BYTES | MSGID_RESPONSE);
-		wr(tcs + TCS_CMD_ADDR(i), address[i]);
-		wr(tcs + TCS_CMD_DATA(i), data[i]);
+		wr(tcs + l.msgid + l.stride * i, MSGID_WRITE_4_BYTES | MSGID_RESPONSE);
+		wr(tcs + l.msgid + l.stride * i + 4, address[i]);
+		wr(tcs + l.msgid + l.stride * i + 8, data[i]);
 	}
-	wr(tcs + TCS_WAIT_FOR_COMPLETION, (uint32_t)((1ull << count) - 1));
-	wr(tcs + TCS_CMD_ENABLE, (uint32_t)((1ull << count) - 1));
+	wr(tcs + l.wait, (uint32_t)((1ull << count) - 1));
+	wr(tcs + l.cmd_enable, (uint32_t)((1ull << count) - 1));
 	wr(tcs + TCS_IRQ_ENABLE, irq_enable | 1);       /* the status bit follows the enable; the interrupt itself stays masked */
-	wr(tcs + TCS_CONTROL, TCS_CONTROL_ENABLE);
-	wr(tcs + TCS_CONTROL, TCS_CONTROL_ENABLE | TCS_CONTROL_TRIGGER);
+	wr(tcs + l.control, TCS_CONTROL_ENABLE);
+	wr(tcs + l.control, TCS_CONTROL_ENABLE | TCS_CONTROL_TRIGGER);
 	for (int i = 0; i < RPMH_TRIES && !done; i++) {
 		done = (rd(tcs + TCS_IRQ_STATUS) & 1) != 0;
 		if (!done) {
 			sleep_us(100);
 		}
 	}
-	wr(tcs + TCS_CONTROL, rd(tcs + TCS_CONTROL) & ~TCS_CONTROL_TRIGGER);
-	wr(tcs + TCS_CONTROL, rd(tcs + TCS_CONTROL) & ~TCS_CONTROL_ENABLE);
-	wr(tcs + TCS_CMD_ENABLE, 0);
-	wr(tcs + TCS_WAIT_FOR_COMPLETION, 0);
+	wr(tcs + l.control, rd(tcs + l.control) & ~TCS_CONTROL_TRIGGER);
+	wr(tcs + l.control, rd(tcs + l.control) & ~TCS_CONTROL_ENABLE);
+	wr(tcs + l.cmd_enable, 0);
+	wr(tcs + l.wait, 0);
 	wr(tcs + TCS_IRQ_CLEAR, 1);
 	wr(tcs + TCS_IRQ_ENABLE, irq_enable);
 	return done ? NULL : RPMH_SAYS_NO_ANSWER;
+}
+
+/* the same through a sequencer of version 2 (every chip before SM8845): `tcs' is the sequencer plus tcs_offset */
+static inline const char *
+hakios_rpmh_send(vm_offset_t tcs, const uint32_t *address, const uint32_t *data, unsigned count)
+{
+	return hakios_rpmh_send_with(tcs, RPMH_LAYOUT_V2, address, data, count);
+}
+
+/* the same, the layout chosen by the sequencer's own version: `rsc' is the sequencer, mapped */
+static inline const char *
+hakios_rpmh_send_rsc(vm_offset_t rsc, uint32_t tcs_offset, const uint32_t *address, const uint32_t *data,
+    unsigned count)
+{
+	return hakios_rpmh_send_with(rsc + tcs_offset, RSC_MAJOR(rd(rsc + RSC_DRV_ID)) >= 3 ? RPMH_LAYOUT_V3 : RPMH_LAYOUT_V2,
+	           address, data, count);
 }
 
 #endif /* HAKIOS_RPMH_H */
