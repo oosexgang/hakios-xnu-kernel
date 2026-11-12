@@ -51,6 +51,7 @@ void clock_get_calendar_microtime(clock_sec_t *seconds, clock_usec_t *micro);
 
 /* locks (kern/locks.h): one a declaration, a mutex of the host's behind each */
 struct fake_lock { pthread_mutex_t mutex; };
+typedef struct fake_lock lck_mtx_t;
 #define LCK_GRP_DECLARE(group, name)    int group __attribute__((unused))
 #define LCK_SPIN_DECLARE(lock, group)   struct fake_lock lock = { PTHREAD_MUTEX_INITIALIZER }
 #define lck_spin_lock(lock)             pthread_mutex_lock(&(lock)->mutex)
@@ -137,6 +138,7 @@ kern_return_t thread_terminate(thread_t thread);        /* (the calling thread's
 
 bool ml_get_interrupts_enabled(void);
 bool PE_parse_boot_argn(const char *name, void *value, int size);
+bool PE_parse_boot_arg_str(const char *name, char *value, int size);
 
 /* sysctl */
 struct sysctl_oid;

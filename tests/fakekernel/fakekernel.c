@@ -715,6 +715,13 @@ PE_parse_boot_argn(const char *name, void *value, int size)
 	return false;
 }
 
+/* (the kernel's own: a string argument, as PE_parse_boot_argn() takes one) */
+bool
+PE_parse_boot_arg_str(const char *name, char *value, int size)
+{
+	return PE_parse_boot_argn(name, value, size);
+}
+
 /* sysctl: a table by name ("_hw_backlight.level") */
 static struct sysctl_oid *oids[64];
 static int oid_count;
