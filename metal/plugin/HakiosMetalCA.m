@@ -6229,7 +6229,8 @@ hm_fps_draws(void)
  * as it asks for them, as metal_paths=0 does; 512: a pass's fetching draws counted as any other against metal_gmem_draws,
  * not weighted; 1024: a tile's fetch barrier with a wait for idle before its CACHE_INVALIDATE too, as before; 2048: the path
  * renderer's draws left out, a wrong picture, to time what they cost; 4096: a memoryless colour attachment stored when its
- * pass asks for that, as before), for a bisect.
+ * pass asks for that, as before; 16384: a fetching draw in sysmem with the barrier alone, its own primitives unordered,
+ * as before -- RenderBox's icons then lose rows), for a bisect.
  * metal_gmem_cycle=N,N,...@SECONDS instead: each of those values in turn, SECONDS (20 when not given) each, from the
  * first command buffer on, and around again -- several settings timed in one boot, each change printed */
 static unsigned

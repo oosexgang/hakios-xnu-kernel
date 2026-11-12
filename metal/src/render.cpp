@@ -1611,7 +1611,15 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     // ordering alone showed a widget's text cut by a band and the App Library's blur in blocks.
     // (in GMEM only: in sysmem the ordering bought nothing measurable over the barrier -- SpringBoard's heaviest passes
     // took some 50 ms either way -- and the barrier is what SpringBoard was looked at with)
+    // In sysmem the barrier stays and the rasterizer's ordering comes on top of it, for what the barrier cannot order:
+    // one draw's own primitives over each other. RenderBox accumulates a path's coverage by programmable blending --
+    // its uber_fragment reads [[color(1)]], a float2, adds its own and writes it back -- with every edge of the path in
+    // ONE draw, overlapping; unordered, a fragment read the coverage before the primitive under it had written it, and
+    // iconservicesagent's icons came out with rows missing and their right edges cut straight (the contributions of the
+    // right-hand edges lost). FLUSH_PER_OVERLAP_AND_OVERWRITE is turnip's mode for a sysmem feedback loop
+    // (tu6_emit_prim_mode_sysmem, tu_pipeline.cc:3351-3380): flushed where primitives overlap, nothing where they do not.
     const bool ordered = (fs.fbRead || o.fbReadOrderAll) && o.fbReadOrdered && gmem != nullptr;
+    const bool orderedSysmem = fs.fbRead && o.fbReadOrderedSysmem && gmem == nullptr;
     const bool barrier = fs.fbRead && o.fbReadBarrier && (!ordered || !afterFetch);
     // (the CACHE_INVALIDATE event goes down the pipeline behind the draws before it, as turnip's barrier has it -- its
     // events, then the one wait: the home screen's main pass, 117 draws in 56 tiles, 18.19 ms with a wait before it as
@@ -1993,7 +2001,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // fragment over one not yet written and flushes between them (turnip's rasterization_order_attachment_access,
         // tu_pipeline.cc:3351-3380 and 3955-3983: FLUSH_PER_OVERLAP_AND_OVERWRITE in sysmem, FLUSH_PER_OVERLAP in GMEM)
         reg(stream, REG_A6XX_GRAS_SC_CNTL,
-            ordered ? A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP) : grasScCntlSysmem());
+            ordered         ? A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP)
+            : orderedSysmem ? A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2) | A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP_AND_OVERWRITE)
+                            : grasScCntlSysmem());
         // primitive restart on for an indexed draw (Metal restarts at the all-ones index; tu6_draw_common's primitive_restart,
         // :5851-5862, which is off for a draw without indices, where the index register would be stale)
         reg(stream, REG_A6XX_PC_PRIMITIVE_CNTL_0, draw.indexBuffer != nullptr ? A6XX_PC_PRIMITIVE_CNTL_0_PRIMITIVE_RESTART : 0u);
@@ -2990,6 +3000,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         }
     }
     if (gmemOff_ & kGmemFetchBarrier) encodeOptions.fbReadOrdered = false;
+    if (gmemOff_ & kGmemSysmemUnordered) encodeOptions.fbReadOrderedSysmem = false;
     if (gmem && (gmemOff_ & (kGmemFetchNoBarrier | kGmemOrderAll))) encodeOptions.fbReadBarrier = false;
     if (gmem && (gmemOff_ & kGmemOrderAll)) encodeOptions.fbReadOrderAll = true;
     if (gmem && (gmemOff_ & kGmemHeavyBarrier)) encodeOptions.fbReadBarrierLight = false;

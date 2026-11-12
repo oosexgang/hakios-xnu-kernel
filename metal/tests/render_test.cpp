@@ -4303,11 +4303,11 @@ TEST(a_draw_writes_two_colour_targets_each_into_its_own_attachment) {
 }
 
 // A framebuffer fetch: tri_fb_fs reads [[color(0)]] through ir3's isamm at the slot after its textures (it has none:
-// slot 0), so colour attachment 0's sampled descriptor goes there. With fbReadOrdered the rasterizer keeps the fetches in
-// raster order (GRAS_SC_CNTL.SINGLE_PRIM_MODE FLUSH_PER_OVERLAP_AND_OVERWRITE in sysmem) and there is no barrier; by
-// default, before the draw the colour CCU is flushed on the draw table's own word and the texture caches invalidated,
-// so that it reads what the draws before it wrote. Two such draws in one pass: each its own flush, on its
-// own table.
+// slot 0), so colour attachment 0's sampled descriptor goes there. Before the draw in sysmem the colour CCU is flushed on
+// the draw table's own word and the texture caches invalidated, so that it reads what the draws before it wrote, and
+// the rasterizer keeps the draw's own primitives in raster order (GRAS_SC_CNTL.SINGLE_PRIM_MODE
+// FLUSH_PER_OVERLAP_AND_OVERWRITE), which the barrier cannot; fbReadOrderedSysmem off leaves NO_FLUSH. Two such draws
+// in one pass: each its own flush, on its own table.
 TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_before_it) {
     using namespace a6xx;
     Rig r;
@@ -4318,14 +4318,21 @@ TEST(a_draw_that_reads_its_target_gets_the_target_as_a_texture_and_a_barrier_bef
     RenderPass pass;
     pass.color0 = t.get();
     {
-        // In sysmem a fetch is never left to the rasterizer's ordering (FLUSH_PER_OVERLAP_AND_OVERWRITE flushes at every
-        // overlap): the barrier, NO_FLUSH. In a tile it is: FLUSH_PER_OVERLAP, and the texture caches dropped before the
-        // first fetching draw of a run alone (a CACHE_INVALIDATE before the draw; none for the one after it).
+        // In sysmem a fetch is never left to the rasterizer's ordering ALONE: the barrier, and
+        // FLUSH_PER_OVERLAP_AND_OVERWRITE for the draw's own primitives over each other (NO_FLUSH with
+        // fbReadOrderedSysmem off). In a tile it is: FLUSH_PER_OVERLAP, and the texture caches dropped before the first
+        // fetching draw of a run alone (a CACHE_INVALIDATE before the draw; none for the one after it).
         render::Options ord;
         ord.fbReadOrdered = true;
         Encoded o(r, fb, pass, wholeDraw(6), ord);
         CHECK(o.ok);
-        CHECK_EQ(o.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK, 0u);
+        CHECK_EQ((o.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK) >> A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__SHIFT,
+                 uint32_t(FLUSH_PER_OVERLAP_AND_OVERWRITE));
+        render::Options unord = ord;
+        unord.fbReadOrderedSysmem = false;
+        Encoded u(r, fb, pass, wholeDraw(6), unord);
+        CHECK(u.ok);
+        CHECK_EQ(u.reg(REG_A6XX_GRAS_SC_CNTL) & A6XX_GRAS_SC_CNTL_SINGLE_PRIM_MODE__MASK, 0u);
         auto invalidates = [&](const pm4::Stream& st) {
             uint32_t n = 0;
             for (size_t i = 0; i + 1 < st.words().size();) {

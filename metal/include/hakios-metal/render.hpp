@@ -457,6 +457,9 @@ struct Options {
                                  // kept for the first fetching draw after one that is not (fd6_draw.cc's rule); off: the
                                  // barrier before every fetching draw there too
     bool fbReadOrderAll = false; // ...and in GMEM every draw of the pass in that ordering, not only the fetching ones
+    bool fbReadOrderedSysmem = true;   // ...in sysmem the barrier AND the rasterizer's ordering within the draw
+                                       // (FLUSH_PER_OVERLAP_AND_OVERWRITE, turnip's for a sysmem feedback loop); off:
+                                       // the barrier alone, which orders nothing between one draw's own primitives
     bool fbReadBarrierLight = true;    // ...in GMEM the barrier as turnip's tu6_emit_flushes has it: CACHE_INVALIDATE then
                                        // the wait for idle (off: a wait for idle before it as well, as before)
     bool tailDepthFlush = true;  // with a depth attachment: PC_CCU_FLUSH_DEPTH_TS writing a value + the wait for it
