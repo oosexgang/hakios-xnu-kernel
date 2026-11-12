@@ -19,6 +19,7 @@ struct lx_wpa {
 	unsigned char own_nonce[32];		/* 32 bytes nobody can guess, fresh for every handshake */
 	const unsigned char *rsn;		/* the station's RSN element as its association request had it ... */
 	unsigned rsn_length;			/* ... which goes into message 2 */
+	unsigned group_cipher;			/* what the access point ciphers frames to everybody with: 4 CCMP, 2 TKIP */
 	/* from here on: lx_wpa.c's */
 	unsigned char peer_nonce[32];
 	unsigned char kck[16], kek[16];		/* the keys the handshake's own messages are signed and ciphered with */
@@ -26,7 +27,9 @@ struct lx_wpa {
 	int have_keys, replay_known;
 	/* what comes out of it */
 	unsigned char pairwise[16];		/* the key for frames between the two ("TK", CCMP) */
-	unsigned char group[32];		/* the key the access point sends to everybody with ("GTK") ... */
+	unsigned char group[32];		/* the key the access point sends to everybody with ("GTK": 16 bytes for CCMP,
+						 * 32 for TKIP -- its key, then the Michael keys to receive and to send with,
+						 * already the station's way round) ... */
 	unsigned group_length, group_index;	/* ... its length, and its number (1 to 3) */
 	unsigned char group_counter[8];		/* ... and the packet number its frames have got to ("RSC") */
 };

@@ -1377,8 +1377,9 @@ protection(const struct lx_target *target, unsigned *group_cipher)
 	for (; count != 0 && end - at >= 4; count--, at += 4) {
 		passphrase |= at[0] == 0x00 && at[1] == 0x0f && at[2] == 0xac && at[3] == 2;
 	}
-	if (*group_cipher != 4) {
-		return ("it ciphers frames to everybody with something other than CCMP (TKIP, for old stations), which is not done here");
+	/* (TKIP for what goes to everybody, CCMP between the two: WPA/WPA2 mixed, many routers' default, for old stations) */
+	if (*group_cipher != 4 && *group_cipher != 2) {
+		return ("it ciphers frames to everybody with something other than CCMP or TKIP, which is not done here");
 	}
 	if (!ccmp) {
 		return ("it does not offer CCMP");
@@ -1392,24 +1393,28 @@ protection(const struct lx_target *target, unsigned *group_cipher)
 	return (NULL);
 }
 
-/* A key for the driver to give the firmware: CCMP, for frames between us and the access point or for the group's. */
+/*
+ * A key for the driver to give the firmware: CCMP for frames between us and the access point, and for the group's
+ * CCMP or TKIP (KEYLEN 32: its key and the two Michael keys, the one to receive with at 24, as mac80211 lays it out).
+ */
 static struct ieee80211_key_conf *
-key_set(struct lx_radio *radio, const uint8_t *key, unsigned index, bool pairwise, int *error)
+key_set(struct lx_radio *radio, const uint8_t *key, unsigned keylen, unsigned index, bool pairwise, int *error)
 {
-	struct ieee80211_key_conf *conf = kzalloc(sizeof(*conf) + 16, GFP_KERNEL);
+	struct ieee80211_key_conf *conf = kzalloc(sizeof(*conf) + 32, GFP_KERNEL);
+	const bool tkip = keylen == 32;
 
 	if (conf == NULL) {
 		*error = -ENOMEM;
 		return (NULL);
 	}
-	conf->cipher = WLAN_CIPHER_SUITE_CCMP;
+	conf->cipher = tkip ? WLAN_CIPHER_SUITE_TKIP : WLAN_CIPHER_SUITE_CCMP;
 	conf->keyidx = (uint8_t)index;
-	conf->keylen = 16;
+	conf->keylen = (uint8_t)keylen;
 	conf->iv_len = 8;
-	conf->icv_len = 8;
+	conf->icv_len = tkip ? 4 : 8;
 	conf->flags = pairwise ? IEEE80211_KEY_FLAG_PAIRWISE : 0;
 	conf->link_id = -1;
-	memcpy(conf->key, key, 16);
+	memcpy(conf->key, key, keylen);
 	mutex_lock(&radio->wiphy->mtx);
 	*error = radio->ops->set_key(&radio->hw, SET_KEY, radio->vif, pairwise ? radio->sta : NULL, conf);
 	mutex_unlock(&radio->wiphy->mtx);
@@ -1423,7 +1428,7 @@ key_drop(struct lx_radio *radio, struct ieee80211_key_conf **conf, bool pairwise
 		mutex_lock(&radio->wiphy->mtx);
 		radio->ops->set_key(&radio->hw, DISABLE_KEY, radio->vif, pairwise ? radio->sta : NULL, *conf);
 		mutex_unlock(&radio->wiphy->mtx);
-		explicit_bzero((*conf)->key, 16);
+		explicit_bzero((*conf)->key, (*conf)->keylen);
 		kfree(*conf);
 		*conf = NULL;
 	}
@@ -1438,7 +1443,7 @@ group_rekey(struct work_struct *work)
 	int error = 0;
 
 	radio->rekeys++;
-	fresh = key_set(radio, radio->wpa.group, radio->wpa.group_index, false, &error);
+	fresh = key_set(radio, radio->wpa.group, radio->wpa.group_length, radio->wpa.group_index, false, &error);
 	lx_tell("lx: the group's new key (number %u) is given to the driver: %d\n", radio->wpa.group_index, error);
 	if (error != 0) {
 		/*
@@ -1446,7 +1451,7 @@ group_rekey(struct work_struct *work)
 		 * new configuration, which key_set() returns even then, is wiped and freed; nothing was installed to disable.
 		 */
 		if (fresh != NULL) {
-			explicit_bzero(fresh->key, 16);
+			explicit_bzero(fresh->key, fresh->keylen);
 			kfree(fresh);
 		}
 		return;
@@ -1678,8 +1683,9 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	    "%u units; HT %s, VHT %s, WMM %s; %s%s\n", channel != NULL ? channel_of(channel->center_freq) : 0, channel != NULL ?
 	    channel->center_freq : 0, target->signal, target->capability, target->interval, element(target->elements,
 	    target->elements_length, 45) ? "yes" : "no", element(target->elements, target->elements_length, 191) ? "yes" : "no",
-	    vendor_element(target->elements, target->elements_length, wmm) ? "yes" : "no", obstacle == NULL ? "WPA2 with a "
-	    "passphrase and CCMP: it can be joined" : "IT CANNOT BE JOINED: ", obstacle == NULL ? "" : obstacle);
+	    vendor_element(target->elements, target->elements_length, wmm) ? "yes" : "no", obstacle == NULL ? (group_cipher == 2 ?
+	    "WPA2 with a passphrase, CCMP, and TKIP to everybody: it can be joined" : "WPA2 with a passphrase and CCMP: it can be joined") :
+	    "IT CANNOT BE JOINED: ", obstacle == NULL ? "" : obstacle);
 	if (obstacle != NULL || channel == NULL || (channel->flags & IEEE80211_CHAN_DISABLED)) {
 		return (ENOTSUP);
 	}
@@ -1687,6 +1693,7 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 	/* the key of the name and the passphrase, and what the handshake needs besides */
 	began = lx_os_nanoseconds();
 	bzero(&radio->wpa, sizeof(radio->wpa));
+	radio->wpa.group_cipher = group_cipher;
 	if (what->passphrase_length != 0) {
 		lx_wpa_pmk(what->passphrase, what->passphrase_length, name, name_length, radio->wpa.pmk);
 	} else {
@@ -1848,9 +1855,9 @@ station_join(struct lx_radio *radio, const struct hakios_sta_join *what)
 		goto out;
 	}
 	lx_pause_ms(30);			/* (for message 4 to have left unciphered, before there is a key to cipher with) */
-	radio->pairwise_key = key_set(radio, radio->wpa.pairwise, 0, true, &ret);
+	radio->pairwise_key = key_set(radio, radio->wpa.pairwise, 16, 0, true, &ret);
 	if (ret == 0) {
-		radio->group_key = key_set(radio, radio->wpa.group, radio->wpa.group_index, false, &ret);
+		radio->group_key = key_set(radio, radio->wpa.group, radio->wpa.group_length, radio->wpa.group_index, false, &ret);
 	}
 	lx_tell("lx: THE KEYS ARE GIVEN TO THE DRIVER, %llu ms after the association: ours with the access point, and the group's "
 	    "(number %u, %u bytes): %d\n", (lx_os_nanoseconds() - began) / 1000000ull, radio->wpa.group_index,

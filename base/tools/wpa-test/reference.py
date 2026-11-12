@@ -41,8 +41,12 @@ def case(n):
     name = bytes(rnd.randrange(32, 127) for _ in range(rnd.randint(1, 32)))
     ap, station = bytes([2] + [rnd.randrange(256) for _ in range(5)]), bytes([2] + [rnd.randrange(256) for _ in range(5)])
     anonce, snonce = rnd.randbytes(32), rnd.randbytes(32)
-    rsn = bytes.fromhex('30140100000fac040100000fac040100000fac020000')      # CCMP, CCMP, PSK, no capabilities
-    group, group_index, group2 = rnd.randbytes(16), rnd.randint(1, 3), rnd.randbytes(16)
+    # every third network WPA/WPA2 mixed: TKIP to everybody (a group key of 32 bytes: its key, then the Michael keys to
+    # send and to receive with, the access point's way round), CCMP between the two
+    tkip = n % 3 == 2
+    rsn = bytes.fromhex('30140100000fac%s0100000fac040100000fac020000' % ('02' if tkip else '04'))   # group, CCMP, PSK
+    glen = 32 if tkip else 16
+    group, group_index, group2 = rnd.randbytes(glen), rnd.randint(1, 3), rnd.randbytes(glen)
     version = rnd.choice([1, 2])
     counter = rnd.randrange(1 << 40)
     replay = lambda k: struct.pack('>Q', counter + k)
@@ -77,6 +81,7 @@ def case(n):
     entry = '{ %s, %d }' % (', '.join('c%d_%s, sizeof(c%d_%s)' % (n, k, n, k) for k in (
         'passphrase', 'name', 'ap', 'station', 'snonce', 'rsn', 'pmk', 'tk', 'group', 'group2', 'm1', 'm2', 'm3', 'm4', 'g1',
         'g2', 'm3_wrong')), group_index)
+    entry = entry[:-1] + ', %d }' % (1 if tkip else 0)
     return text, entry
 
 

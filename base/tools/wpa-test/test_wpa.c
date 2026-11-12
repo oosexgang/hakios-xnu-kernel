@@ -55,7 +55,19 @@ struct handshake {
 	const unsigned char *g2; size_t g2_length;
 	const unsigned char *m3_wrong; size_t m3_wrong_length;
 	unsigned group_index;
+	unsigned tkip;			/* TKIP to everybody: a group key of 32 bytes */
 };
+
+/* the group key as the station installs it: as sent, or TKIP's Michael keys the station's way round (lx_wpa.c: group_key) */
+static int
+group_is(const struct lx_wpa *wpa, const unsigned char *sent, unsigned tkip)
+{
+	if (!tkip) {
+		return wpa->group_length == 16 && memcmp(wpa->group, sent, 16) == 0;
+	}
+	return wpa->group_length == 32 && memcmp(wpa->group, sent, 16) == 0 && memcmp(wpa->group + 16, sent + 24, 8) == 0 &&
+	       memcmp(wpa->group + 24, sent + 16, 8) == 0;
+}
 
 #include "cases.inc"
 
@@ -155,6 +167,7 @@ whole(void)
 		struct lx_wpa wpa;
 
 		memset(&wpa, 0, sizeof(wpa));
+		wpa.group_cipher = h->tkip ? 2 : 4;
 		lx_wpa_pmk(h->passphrase, (unsigned)h->passphrase_length, h->name, (unsigned)h->name_length, wpa.pmk);
 		check(memcmp(wpa.pmk, h->pmk, 32) == 0, "the PMK against Python's pbkdf2_hmac", (int)n);
 		memcpy(wpa.own, h->station, 6);
@@ -180,7 +193,8 @@ whole(void)
 
 		check(lx_wpa_message(&wpa, h->m3, (unsigned)h->m3_length, reply, &length, &why) == LX_WPA_KEYS &&
 		    length == h->m4_length && memcmp(reply, h->m4, length) == 0, "message 4 is the reference's", (int)n);
-		check(wpa.group_length == 16 && memcmp(wpa.group, h->group, 16) == 0 && wpa.group_index == h->group_index,
+		check(group_is(&wpa, h->group, h->tkip) && wpa.group_index == h->group_index,
+		    h->tkip ? "the TKIP group key (its Michael keys swapped) and its number are the reference's" :
 		    "the group key and its number are the reference's", (int)n);
 		check(memcmp(wpa.group_counter, h->m3 + AT_RSC, 8) == 0, "the group key's packet number is message 3's", (int)n);
 
@@ -192,7 +206,7 @@ whole(void)
 		check(lx_wpa_message(&wpa, h->g1, (unsigned)h->g1_length, reply, &length, &why) == LX_WPA_GROUP &&
 		    length == h->g2_length && memcmp(reply, h->g2, length) == 0, "the answer to a new group key is the reference's",
 		    (int)n);
-		check(memcmp(wpa.group, h->group2, 16) == 0 && wpa.group_index == h->group_index % 3 + 1,
+		check(group_is(&wpa, h->group2, h->tkip) && wpa.group_index == h->group_index % 3 + 1,
 		    "the new group key and its number are the reference's", (int)n);
 
 		/* a network that wants another kind of key management says so in the descriptor's version */

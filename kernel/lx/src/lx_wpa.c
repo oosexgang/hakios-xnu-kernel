@@ -424,15 +424,23 @@ group_key(struct lx_wpa *wpa, const uint8_t *data, unsigned length, const uint8_
 			break;				/* (padding from here on) */
 		}
 		/*
-		 * Only a CCMP group key is joined (protection() in lx_80211.c), so the key is 16 bytes -- the length key_set() copies --
-		 * and its number is 1 to 3 (IEEE 802.11-2020, 12.7.2: number 0 is the pairwise key's): a KDE of another length or number
-		 * is not installed with stale bytes of `group` filling it out.
+		 * A CCMP group key is 16 bytes, a TKIP one 32 (protection() in lx_80211.c joins those two; group_cipher says which),
+		 * and its number is 1 to 3 (IEEE 802.11-2020, 12.7.2: number 0 is the pairwise key's): a KDE of another length or
+		 * number is not installed with stale bytes of `group` filling it out. A TKIP key is the access point's way round,
+		 * its Michael key to send with (bytes 16-23) before the one to receive with: the station receives with the first,
+		 * and the driver takes the key to receive with at 24 -- the two swapped, as wpa_supplicant installs a TKIP GTK.
 		 */
+		const unsigned want = wpa->group_cipher == 2 ? 32 : 16;
+
 		if (e[0] == 0xdd && e[1] >= 6 + 5 && e[2] == 0x00 && e[3] == 0x0f && e[4] == 0xac && e[5] == 1 &&
-		    e[1] - 6u == 16 && (e[6] & 3) != 0) {
+		    e[1] - 6u == want && (e[6] & 3) != 0) {
 			wpa->group_index = e[6] & 3;
-			wpa->group_length = e[1] - 6u;
-			memcpy(wpa->group, e + 8, wpa->group_length);
+			wpa->group_length = want;
+			memcpy(wpa->group, e + 8, 16);
+			if (want == 32) {
+				memcpy(wpa->group + 16, e + 8 + 24, 8);
+				memcpy(wpa->group + 24, e + 8 + 16, 8);
+			}
 			memcpy(wpa->group_counter, counter, 8);
 			return (0);
 		}
