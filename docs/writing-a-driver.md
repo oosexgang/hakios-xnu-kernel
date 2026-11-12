@@ -8,7 +8,7 @@ when a phone needs a new one.
 
 ## The rules, and why
 
-Each is one place in the example.
+Each is one place in the example, but the one about waiting.
 
 | A driver | Why | In the example |
 | --- | --- | --- |
@@ -19,6 +19,7 @@ Each is one place in the example.
 | checks before it writes | What is there may not be what the driver expects: another part, a pin in use. Say so and leave it alone. | "is in use as function" |
 | says what it does | `hakios_say()` puts a line in the loader's log at once, where it can be read while the phone runs, and in the kernel's. The lines are also what the test checks. | every `hakios_say()` |
 | does not hold up the boot | Work that waits goes into a thread of the driver's own. | `kernel_thread_start()` |
+| declares its wait, then looks again | A thread that sleeps until it is poked reads its state, then sleeps. A poke between the two wakes nobody. So: `assert_wait()`, look once more at what the poke would have changed, `clear_wait()` and go round if it did, and only then `thread_block()`. A wait with a time (`assert_wait_timeout()`) is late at worst; one without sleeps on. | not in the example; `hakios_backlight.c` (`pokes`), `redwood_lx.c` |
 | leaves the hardware as it found it | On the way back to the loader each driver undoes what it did. Nothing there sleeps or takes a lock. | `example_led_quiesce()` |
 
 ## What a driver has at hand
