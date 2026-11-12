@@ -102,18 +102,9 @@ def numbers(text, line):
 def read_tree(text):
     """The file as nodes: {'props': {name: Value}, 'nodes': [(name, unit or None, node, line)]}."""
     stream = tokens(text)
-    pending = None
 
     def take():
-        nonlocal pending
-        if pending is not None:
-            token, pending = pending, None
-            return token
         return next(stream)
-
-    def put_back(token):
-        nonlocal pending
-        pending = token
 
     def expect(kind, text_=None, what=''):
         token = take()
@@ -202,15 +193,13 @@ def key_of(name):
 
 
 def typed(value, kind):
-    """A value as its key's schema type wants it, or as written when it is not that (the check says so)."""
-    list_of = isinstance(kind, list) and not isinstance(kind[0], dict)
-    if kind is bool:
-        return True if value.kind == 'flag' else value.plain()
-    if list_of:
-        return list(value.items) if value.kind != 'flag' else True
-    if value.kind != 'flag' and len(value.items) == 1:
-        return value.items[0]
-    return value.plain() if value.kind != 'flag' else True
+    """A value as its key's schema type wants it: a flag is True, a list's key gets a list even of one, any
+    other one value alone. What is not of the key's type comes out as written, for the check to say so."""
+    if value.kind == 'flag':
+        return True
+    if isinstance(kind, list) and not isinstance(kind[0], dict):
+        return list(value.items)
+    return value.plain()
 
 
 def parse(text, schema):
