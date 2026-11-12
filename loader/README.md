@@ -34,7 +34,10 @@ as when it was one file.
 | `src/othercore.c` | The kernel on another core: the stub it starts in, its log read while it runs. |
 | `src/charger.c` | The battery, read through the firmware's charger protocols. |
 | `src/ufs_survey.c` | `ufs=1`: what the phone's storage holds, read only. |
-| `src/ufs_block.c` | `ufs=2`: the kernel reads the phone's storage through the loader: the page they share, the controller, the partitions. |
+| `src/block_page.h` | The page through which the kernel asks for the storage's blocks, as both sides lay it out. |
+| `src/ufs_block.c` | `ufs=2`: the kernel reads the phone's storage through the loader: the page's place, the controller, the firmware's tables. |
+| `src/own_partition.c` | The one partition a write may reach: is this it? |
+| `src/partition_named.c` | A partition of the phone's storage, by its name. |
 | `src/dsu_extents.c` | Where the DSU image lies in userdata: Android's `lp_metadata`, read. |
 | `src/dsu_place.c` | The DSU image found on the phone, and read through its extents. |
 | `src/ufs_service.c` | `ufs=2`, the service itself: the storage's units and partitions listed, the kernel's requests answered. |
