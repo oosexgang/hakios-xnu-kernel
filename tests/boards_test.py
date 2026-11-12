@@ -594,12 +594,15 @@ class Generate(Sandbox):
         said = self.problems()
         self.assertIn('eight different pins', said)                      # (an interrupt on the bus's data line)
         self.assertIn('different I2C addresses', said)
+        path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x34]\ninterrupts = [102, 45]\nsound_pins = [97, 100, 98, 99]\n'
+                        'sound_function = 1\ntdm = 5\n')
+        self.assertIn('tdm is the TDM interface', self.problems())          # (there is no sixth)
         path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35]\ninterrupts = [102, 45]\nsound_pins = [97, 100, 98, 99]\nsound_function = 1\n')
         self.assertIn('different I2C addresses', self.problems())      # (there are two amplifiers)
         path.write_text(plain + '[speaker]\nsda = 12\nscl = 13\naddresses = [0x35, 0x34]\ninterrupts = [102, 45]\nsound_pins = [97, 100, 98, 99]\nsound_function = 1\n')
         self.assertEqual(self.problems(), '')
         self.assertIn('.speaker = { .sda = 12, .scl = 13, .address = { 0x35, 0x34 }, .interrupt = { 102, 45 },\n\t\t\t'
-                      '.sound_pin = { 97, 100, 98, 99 }, .sound_function = 1 },',
+                      '.sound_pin = { 97, 100, 98, 99 }, .sound_function = 1, .tdm = 0 },',
                       boards.table_text(*boards.load()))
 
     def test_part_drivers_need_the_pins_and_the_table_carries_them(self):

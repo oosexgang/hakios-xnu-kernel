@@ -100,7 +100,7 @@ BOARD_SCHEMA = {
               'interrupt': (int, True), 'reset': (int, True), 'io_supply': (str, True), 'analog_supply': (str, False),
               'analog_enable': (int, False), 'vendor_pins': ([int], False)},
     'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True),
-                'sound_pins': ([int], True), 'sound_function': (int, True)},
+                'sound_pins': ([int], True), 'sound_function': (int, True), 'tdm': (int, False)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
              'charge_counter_divisor': (int, False)},
@@ -476,6 +476,9 @@ def load(problems=None):
             if len(amps['interrupts']) != 2 or len(amps['sound_pins']) != 4 or any(not 0 <= pin <= 255 for pin in wires) or \
                     len(set(wires)) != len(wires):
                 problems.add(f'{rel} [speaker]', 'sda, scl, the two interrupts and the four sound_pins are eight different pins of the SoC, 0 to 255')
+            if not 0 <= amps.get('tdm', 0) <= 4:
+                problems.add(f'{rel} [speaker]', 'tdm is the TDM interface: 0 the primary, 1 the secondary, 2 the tertiary, 3 the quaternary, '
+                             '4 the quinary')
             if not 1 <= amps['sound_function'] <= 15:
                 problems.add(f'{rel} [speaker]', 'sound_function is one of a pin\'s functions, 1 to 15 (0 is the plain pin)')
             if len(amps['addresses']) != 2 or len(set(amps['addresses'])) != 2 or any(not 0x08 <= a <= 0x77 for a in amps['addresses']):
@@ -741,7 +744,7 @@ def table_text(socs, boards):
                        f'.address = {{ {amps["addresses"][0]:#04x}, {amps["addresses"][1]:#04x} }}, '
                        f'.interrupt = {{ {amps["interrupts"][0]}, {amps["interrupts"][1]} }},\n\t\t\t'
                        f'.sound_pin = {{ {", ".join(str(pin) for pin in amps["sound_pins"])} }}, '
-                       f'.sound_function = {amps["sound_function"]} }},')
+                       f'.sound_function = {amps["sound_function"]}, .tdm = {amps.get("tdm", 0)} }},')
         torch = board.get('torch')
         if torch:
             out.append(f'\t\t.torch = {{ .flash = {torch["flash"]:#05x}, .temp_alarm = {torch["alarm"]:#05x} }},')

@@ -234,8 +234,8 @@ Stated plainly, so nobody finds out the hard way:
   SoundWire), one radio (WCN6750 on the SoC's Wi-Fi DSP), one camera module. They are the largest share
   of the work on a new phone. Where the SoC's blocks are comes from the SoC file (`[pins]`, `[clocks]`,
   `[rpmh]`, `[smmu]`, `[ipc]`, `[lpass]`, `[camera]`), and which pins a part is on from the board file:
-  the sound's four in `[speaker]`, the codec's reset in `[mic]`, the radio's pins and its supplies'
-  names in `[wifi]`. What stays in the code is how each part is spoken to, and for the camera its
+  the sound's four and the audio DSP's TDM interface they are on in `[speaker]`, the codec's reset in
+  `[mic]`, the radio's pins and its supplies' names in `[wifi]`. What stays in the code is how each part is spoken to, and for the camera its
   sensors' table, its PMIC's bus pins and its supplies. For the touch controllers, the keys, the
   flashlight, the vibration motor and the speaker amplifiers that is all: a phone with one of those
   parts on other pins needs its section of the board file filled in and no change to the driver.

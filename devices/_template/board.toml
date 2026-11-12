@@ -99,6 +99,9 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # sound_pins = [97, 100, 98, 99]    # the pins the sound goes to them on (the MI2S or TDM port's pinctrl nodes):
 #                                   # bit clock, frame sync (word select), data in, data out
 # sound_function = 1                # which of those pins' functions that is (pinctrl-SOC.c: "mi2s0_sck" is function 1)
+# tdm = 0                           # optional: which TDM interface of the audio DSP that port is: 0 the primary (the
+#                                   # default), 1 the secondary, 2 the tertiary, 3 the quaternary, 4 the quinary
+#                                   # (the sound card's dai-tdm node: qcom,msm-dai-tdm-pri-rx is 0, ...-tert-rx 2)
 
 # The vibration motor's chip, for the feature "haptic-aw86927": an Awinic AW86927 on two of the SoC's
 # pins (I2C by hand), its reset and its interrupt, and what Android's driver found for this motor.

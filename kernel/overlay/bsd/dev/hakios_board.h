@@ -203,6 +203,7 @@ struct hakios_board {
 		uint8_t interrupt[2];           /* each one's interrupt pin (only looked at) */
 		uint8_t sound_pin[4];           /* the sound's own pins: bit clock, frame sync, data in, data out */
 		uint8_t sound_function;         /* which of those pins' functions is the sound's (the SoC's first MI2S: 1) */
+		uint8_t tdm;                    /* which of the SoC's TDM interfaces they are on: 0 the primary ... 4 the quinary */
 	} speaker;
 
 	/*

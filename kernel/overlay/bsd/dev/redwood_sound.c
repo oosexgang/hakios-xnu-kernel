@@ -8,7 +8,7 @@
  * services: ASM, a stream the samples are written into; ADM, the matrix that routes a stream to
  * a device path ("COPP"); and AFE, the port at the SoC's interface. The two amplifiers
  * (redwood_speaker.c) sit on the primary TDM interface, which the DSP runs: Android's
- * PRI_TDM_RX_0, AFE port 0x9000 in group 0x9100 (with 0x9002, unused). The samples themselves
+ * PRI_TDM_RX_0 on redwood (the board's [speaker] tdm says which interface), AFE port 0x9000 in group 0x9100 (with 0x9002, unused). The samples themselves
  * lie in memory of ours that the DSP reads through the application processors' SMMU, as
  * stream 0x1801 (Android: qcom,msm-audio-ion, iommus <&apps_smmu 0x1801 0>, its addresses from
  * 0x10000000, and the stream's low four bits in bits 32 to 35 of every address the DSP is given:
@@ -316,11 +316,18 @@ command(const char *what, uint8_t service, uint16_t port, uint32_t opcode, const
 #define AFE_MODULE_CLOCK_SET                    0x0001028fu
 #define AFE_PARAM_ID_CLOCK_SET                  0x00010290u
 
-#define PORT                    0x9000          /* PRI_TDM_RX_0 */
-#define GROUP                   0x9100          /* PRI_TDM_RX */
-#define GROUP_OTHER_PORT        0x9002
+/*
+ * Which of the SoC's TDM interfaces the amplifiers are on is the board's [speaker] tdm: 0 the primary (redwood's),
+ * 1 the secondary, 2 the tertiary, 3 the quaternary, 4 the quinary. The DSP numbers each interface's ports, its
+ * group and its internal bit clock alike (Linux: sound/soc/qcom/qdsp6/q6afe.c, q6afe.h; the group as the
+ * vendor's kernel has it, the port's number + 0x100).
+ */
+#define TDM                     ((uint32_t)hakios_board()->speaker.tdm)
+#define PORT                    (0x9000u + 0x10u * TDM)         /* *_TDM_RX_0 */
+#define GROUP                   (PORT + 0x100u)                 /* *_TDM_RX */
+#define GROUP_OTHER_PORT        (PORT + 2u)                     /* *_TDM_RX_1 */
 #define PORT_INVALID            0xffff
-#define CLOCK_PRI_TDM_IBIT      0x200
+#define CLOCK_TDM_IBIT          (0x200u + 2u * TDM)             /* Q6AFE_LPASS_CLK_ID_*_TDM_IBIT */
 #define CLOCK_INVERT_COUPLE_NO  4
 #define RATE                    48000
 #define SLOTS                   2
@@ -403,9 +410,9 @@ static bool clock_on, group_on, port_on;
 static bool
 afe_clock(bool on)
 {
-	struct afe_clock_set clock = { 1, CLOCK_PRI_TDM_IBIT, RATE * SLOT_BITS * SLOTS, CLOCK_INVERT_COUPLE_NO, 0, on };
+	struct afe_clock_set clock = { 1, CLOCK_TDM_IBIT, RATE * SLOT_BITS * SLOTS, CLOCK_INVERT_COUPLE_NO, 0, on };
 
-	return afe_service_param(on ? "the TDM bit clock (0x200) at 3.072 MHz, on" : "the TDM bit clock, off", AFE_MODULE_CLOCK_SET,
+	return afe_service_param(on ? "the TDM bit clock at 3.072 MHz, on" : "the TDM bit clock, off", AFE_MODULE_CLOCK_SET,
 	           AFE_PARAM_ID_CLOCK_SET, &clock, sizeof(clock));
 }
 
@@ -426,25 +433,27 @@ afe_on(void)
 		                            .offsets = { 0, 4, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff } };
 	uint16_t start[2] = { PORT, 0 };
 
+	say("sound: the amplifiers' TDM interface: %u ([speaker] tdm), its port %#x in group %#x (with %#x), its bit clock %#x\n", TDM,
+	    PORT, GROUP, GROUP_OTHER_PORT, CLOCK_TDM_IBIT);
 	announce("the DSP is asked for the TDM interface's bit clock, the group, the port and its start (AFE)");
 	clock_on = afe_clock(true);
 	if (!clock_on) {
 		return false;
 	}
-	group_on = afe_service_param("the group 0x9100: ports 0x9000 0x9002, 2 slots of 32 bits, 48 kHz", AFE_MODULE_GROUP_DEVICE,
+	group_on = afe_service_param("the group: its two ports, 2 slots of 32 bits, 48 kHz", AFE_MODULE_GROUP_DEVICE,
 	    AFE_PARAM_ID_GROUP_DEVICE_TDM_CONFIG, &group, sizeof(group)) &&
-	    afe_service_param("the group 0x9100, on", AFE_MODULE_GROUP_DEVICE, AFE_PARAM_ID_GROUP_DEVICE_ENABLE, &enable,
+	    afe_service_param("the group, on", AFE_MODULE_GROUP_DEVICE, AFE_PARAM_ID_GROUP_DEVICE_ENABLE, &enable,
 	    sizeof(enable));
 	if (!group_on) {
 		return false;
 	}
-	if (!afe_port_param("the port 0x9000: 2 channels of 32 bits at 48 kHz in 2 slots, sync 0 1, inverted, delay 1",
+	if (!afe_port_param("the port: 2 channels of 32 bits at 48 kHz in 2 slots, sync 0 1, inverted, delay 1",
 	    AFE_MODULE_AUDIO_DEV_INTERFACE, AFE_PARAM_ID_TDM_CONFIG, &tdm, sizeof(tdm)) ||
 	    !afe_port_param("the port's slots: channels at bytes 0 and 4", AFE_MODULE_TDM, AFE_PARAM_ID_PORT_SLOT_MAPPING_CONFIG,
 	    &mapping, sizeof(mapping))) {
 		return false;
 	}
-	port_on = command("the port 0x9000, started", APR_SVC_AFE, 0, AFE_PORT_CMD_DEVICE_START, start, sizeof(start), 0, NULL);
+	port_on = command("the port, started", APR_SVC_AFE, 0, AFE_PORT_CMD_DEVICE_START, start, sizeof(start), 0, NULL);
 	return port_on;
 }
 
@@ -455,11 +464,11 @@ afe_off(void)
 	struct afe_group_enable disable = { GROUP, 0 };
 
 	if (port_on) {
-		command("the port 0x9000, stopped", APR_SVC_AFE, 0, AFE_PORT_CMD_DEVICE_STOP, stop, sizeof(stop), 0, NULL);
+		command("the port, stopped", APR_SVC_AFE, 0, AFE_PORT_CMD_DEVICE_STOP, stop, sizeof(stop), 0, NULL);
 		port_on = false;
 	}
 	if (group_on) {
-		afe_service_param("the group 0x9100, off", AFE_MODULE_GROUP_DEVICE, AFE_PARAM_ID_GROUP_DEVICE_ENABLE, &disable,
+		afe_service_param("the group, off", AFE_MODULE_GROUP_DEVICE, AFE_PARAM_ID_GROUP_DEVICE_ENABLE, &disable,
 		    sizeof(disable));
 		group_on = false;
 	}

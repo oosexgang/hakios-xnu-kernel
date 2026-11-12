@@ -47,6 +47,7 @@ addresses = [0x36, 0x37]
 interrupts = [70, 71]
 sound_pins = [120, 121, 122, 123]
 sound_function = 3
+tdm = 2                             # the tertiary TDM interface: port 0x9020, group 0x9120, bit clock 0x204
 
 # (its PM8350C is the bus's fourth chip, not the third)
 [torch]
