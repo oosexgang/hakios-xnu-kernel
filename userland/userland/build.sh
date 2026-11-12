@@ -664,19 +664,19 @@ if [ -f ../fw-haptic/aw8697_haptic.bin ]; then
 fi
 # ... and the cameras' register tables (bsd/dev/hakios_camera.c, cam=2 and up), made by tools/camsensor.py out of
 # the sensors' module files of Android's camera stack, the phone's /vendor/lib64/camera/com.qti.sensormodule.
-# hakios_<maker>_<sensor>_<camera>.bin, in ../fw-camera (the vendor's: neither they nor the tables are in the
+# <phone>_<maker>_<sensor>_<camera>.bin, in ../fw-camera (the vendor's: neither they nor the tables are in the
 # repository): camera-<sensor>.tab
-for module in ../fw-camera/com.qti.sensormodule.hakios_*.bin; do
+for module in ../fw-camera/com.qti.sensormodule.*.bin; do
 	[ -f "$module" ] || continue
-	sensor=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.hakios_[a-z]*_\([a-z0-9]*\)_.*/\1/')
+	sensor=$(basename "$module" .bin | sed 's/^com\.qti\.sensormodule\.[a-z0-9]*_[a-z]*_\([a-z0-9]*\)_.*/\1/')
 	mkdir -p root/fw
 	../tools/camsensor.py "$module" "root/fw/camera-$sensor.tab" >/dev/null
 done
 # ... and their colour tuning (libredwood-media's processor, src/camera_isp.c), made by tools/camtuning.py out of the
-# cameras' tuning files beside them, com.qti.tuned.hakios_<maker>_<sensor>_<camera>.bin: camera-<sensor>.isp
-for tuned in ../fw-camera/com.qti.tuned.hakios_*.bin; do
+# cameras' tuning files beside them, com.qti.tuned.<phone>_<maker>_<sensor>_<camera>.bin: camera-<sensor>.isp
+for tuned in ../fw-camera/com.qti.tuned.*.bin; do
 	[ -f "$tuned" ] || continue
-	sensor=$(basename "$tuned" .bin | sed 's/^com\.qti\.tuned\.hakios_[a-z]*_\([a-z0-9]*\)_.*/\1/')
+	sensor=$(basename "$tuned" .bin | sed 's/^com\.qti\.tuned\.[a-z0-9]*_[a-z]*_\([a-z0-9]*\)_.*/\1/')
 	mkdir -p root/fw
 	../tools/camtuning.py "$tuned" "root/fw/camera-$sensor.isp" >/dev/null
 done

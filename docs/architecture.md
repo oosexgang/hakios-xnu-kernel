@@ -128,10 +128,9 @@ What the overlay provides, in the order a boot meets it:
    on the host;
    [writing-a-driver.md](writing-a-driver.md) lists them.
 
-Naming: files and symbols called `hakios_*` carry the name of the first phone. It is the historical
-prefix of the platform layer and of the kernel/user-space interfaces (`/dev/hakios-touch`, the
-`HakiosGPU` service), not a statement about which phone the code is for. New device-independent code
-is named `hakios_*`.
+Naming: the project's files and symbols are `hakios_*` (`/dev/hakios-touch`, the `HakiosGPU`
+service), named for what they do; a driver of one part is named after the part. No name in the code
+says which phone it is for: that is the board's to say.
 
 More: [kernel/README.md](../kernel/README.md), [kernel/patches/README.md](../kernel/patches/README.md).
 

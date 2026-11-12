@@ -266,8 +266,8 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 
 Not changed:
 
-- Drivers did not move or change names. `hakios_*` is the historical prefix of the platform layer, not
-  a statement about which phone the code is for.
+- The drivers' files, functions and /dev nodes were named after the first phone (`redwood_*`,
+  `renoir_fts.c`); they are `hakios_*` now (docs/migrating.md has the list).
 - Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, the
   sensor chips of its cameras. Which pins they are on, the radio's supplies and how each camera sensor is
   wired are board data now; how each part is spoken to is not. They are the largest share of the work on a new phone.

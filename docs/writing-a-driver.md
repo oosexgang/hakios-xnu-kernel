@@ -50,8 +50,8 @@ needs it.
 
 ## Steps
 
-1. **Copy the example** to `kernel/overlay/bsd/dev/NAME.c`. Files named `hakios_*` work on any board
-   from its data; a driver of one part is named after the part.
+1. **Copy the example** to `kernel/overlay/bsd/dev/NAME.c`. A driver works on any board from its
+   data; one of a single part is named after the part.
 2. **Data.** A part gets a feature: a `HAKIOS_HAS_…` bit in `hakios_board.h` and its name in
    `tools/boards.py`. An address the driver needs that no section has yet becomes a key:
    [devices/README.md](../devices/README.md), "Adding a kind of data", has the seven places.

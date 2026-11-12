@@ -5,7 +5,7 @@
  * How each sensor is wired is the board's (camera { } in board.dts: redwood's is described below as an
  * example); what each chip is, and the SoC's camera blocks, are this file's. Every number was found on
  * that phone, from Android's own device tree (cam-sensor0 to cam-sensor3 and
- * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.hakios_*.bin: the
+ * what they point to), the sensors' module files of Android's camera stack (/vendor/lib64/camera/com.qti.sensormodule.redwood_*.bin: the
  * slave address, the chip ID and where it is read, the power sequence, the tables) and the drivers
  * of the phone's kernel (MiCode redwood-s-oss: cam_sensor_util.c, qcom_pm8008-regulator.c,
  * camcc-yupik.c, gdsc-regulator.c, pinctrl-yupik.c, pinctrl-spmi-gpio.c, cam_csiphy_*), read as
