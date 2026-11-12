@@ -5,6 +5,10 @@
 # frame to the next") give the frame times while they move, the plug-in's (metal_fps=1) the GPU's share of them.
 # A new device's first boot may ask whether Wallet may send notifications, in an alert over the home screen that takes
 # every gesture: the tap goes where its "Don't Allow" is and the home screen has no icon (between the third row's first two).
+# (Wi-Fi and the SSH server first, when the image has it (ios/userland/ssh.sh): after the gestures the stages the
+# run compiled can be taken off the phone for the next image, ios/tools/metal-cache-pull.sh ADDRESS)
+/redwood/bin/net_test wifi
+/redwood/bin/dropbear -F -E -s -p 22 -r /redwood/etc/ssh/dropbear_ed25519_host_key -D /redwood/etc/ssh &
 /redwood/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200 wait 25 tap 0.27 0.582 wait 3
 /redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1 swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1
 /redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1 swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1
@@ -14,4 +18,6 @@
 /redwood/bin/rwtouch swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1 swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1
 /redwood/bin/rwtouch swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1 swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 3
 /redwood/bin/rwtouch swipe 0.5 0.995 0.5 0.55 150 wait 3
+/redwood/bin/net_test waitaddr en0 30
+/redwood/bin/net_test show
 /bin/ps -A
