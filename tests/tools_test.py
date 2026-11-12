@@ -205,8 +205,15 @@ class Repository(unittest.TestCase):
             self.assertEqual(ours[name], theirs[name], f'{name} is not the same in the loader and in the kernel')
         for name in ('BLOCK_MAGIC', 'BLOCK_VERSION', 'LOADER_BATTERY_MAGIC', 'LOADER_BATTERY_VERSION'):
             self.assertIn(name, both)
-        # the block from which the kernel may write into the port's partition: two names, one number
-        self.assertEqual(ours['BLOCK_WRITE_FIRST'], theirs['UFS_WRITE_FIRST'])
+        # the block from which the kernel may write into the port's partition is no number in either: both
+        # take it from the board's file, and the kernel refuses a loader whose value is not its own
+        self.assertEqual(ours['BLOCK_WRITE_FIRST'], '(PLAT->own.write_first)')
+        self.assertIn('hakios_board()->storage.write_first', theirs['UFS_WRITE_FIRST'])
+        ufs = (ROOT / 'kernel/overlay/bsd/dev/redwood_ufs.c').read_text()
+        self.assertIn('ufs_page->write_first != UFS_WRITE_FIRST', ufs)
+        for path in loader + [ROOT / 'kernel/overlay/bsd/dev/redwood_ufs.c']:
+            self.assertIsNone(re.search(r'2042368|25374720|30617594|7c3457ef|fd6854ad', path.read_text()),
+                              f'{path.name} has a number of one phone\'s partition')
         ours, theirs = structures(loader), structures(kernel)
         for name in ('loader_block', 'loader_block_part', 'loader_battery'):
             self.assertIn(name, ours)
