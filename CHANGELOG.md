@@ -184,6 +184,12 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   `oem ramdisk none` left the patch armed with no image under it, and the next `download:` was allowed a
   size that wrapped and wrote past the memory window; `oem read` took an offset near 2^64 as inside the
   partition. Both are refused now.
+- **An APFS image of several volumes shows all of them.** `mkapfs.py` wrote a container's limit of
+  volumes from its size alone, so a small image of two volumes said it held one, and the kernel's reader
+  saw only the first.
+- **The iOS image tool does not stop on a file that only looks like a Mach-O.** A Java class file
+  begins with the fat Mach-O magic; the tool read past what it had read of it and ended on an error.
+- **The crash line of a process gives its ESR and slide whole**: they were printed 32 bits wide.
 - **A loader's storage page that no request could be made with is not used.** A buffer that is not
   whole blocks, a block size of zero or not a power of two, a partition size that overflows: the kernel
   divided and counted with them. It refuses such a page now, with the reason.
