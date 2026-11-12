@@ -1,0 +1,201 @@
+/*
+ * /dev/redwood-audio (kernel/overlay/bsd/dev/redwood_audio.c), run as a host program: what iOS plays goes to
+ * the driver that plays it, a recording keeps it with its time and never runs past its memory, a line says
+ * what was played once the writer stops, and the volume iOS sets is kept for the speakers' driver.
+ *
+ *   audio_device_test SCENARIO      one scenario a process: the driver keeps its state in statics
+ */
+#include <unistd.h>
+
+#include "fakekernel.h"
+#define KERNEL 1                        /* (the header's declarations for the kernel's drivers) */
+#include <sys/redwood_audio.h>
+
+extern char log_text[];
+void loader_log_putc(char c);
+
+static void
+said(const char *format, ...)
+{
+	char line[512];
+	va_list arguments;
+
+	va_start(arguments, format);
+	vsnprintf(line, sizeof(line), format, arguments);
+	va_end(arguments);
+	for (const char *c = line; *c != 0; c++) {
+		loader_log_putc(*c);
+	}
+}
+
+uint64_t loader_sound[3];
+uint64_t kvtophys(vm_offset_t va) { return (uint64_t)va ^ 0x8000000000000000ull; }    /* (an address the loader would be given) */
+bool redwood_audio_recording_fed(void);
+void redwood_audio_record_fed(const int16_t *frames, uint32_t count);
+
+#pragma GCC diagnostic ignored "-Wformat"
+#define printf said
+#include "redwood_audio.c"
+#undef printf
+
+static int failures;
+#define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
+	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
+#define WAIT_FOR(cond, ms) do { for (int waited = 0; !(cond) && waited < (ms); waited += 5) usleep(5000); } while (0)
+
+#define NODE            "redwood-audio"
+
+/* the driver that plays: takes what it is given, or only so much */
+static volatile uint64_t sunk, sink_calls;
+static volatile uint32_t sink_takes = 1u << 30;
+static int16_t last_sample;
+
+static uint32_t
+sink(const int16_t *frames, uint32_t count)
+{
+	uint32_t taken = count < sink_takes ? count : sink_takes;
+
+	sink_calls++;
+	sunk += taken;
+	if (count > 0) {
+		last_sample = frames[2 * count - 1];
+	}
+	return taken;
+}
+
+/* `frames' frames of a tone at that level, written by a program */
+static int
+play(uint32_t frames, int16_t level)
+{
+	static int16_t buffer[2 * 48000];
+	size_t done = 0;
+
+	for (uint32_t i = 0; i < 2 * frames; i++) {
+		buffer[i] = (int16_t)(i % 2 ? -level : level);
+	}
+	return fake_dev_pwrite(NODE, buffer, 4 * (size_t)frames, 0, &done) == 0 && done == 4 * (size_t)frames ? 0 : -1;
+}
+
+/* ---- scenarios -------------------------------------------------------------------------------------- */
+
+/* what is written goes to the sink, a pass of 1024 frames at a time; a line says what was played once it stops */
+static void
+played_and_said(void)
+{
+	redwood_audio_init();
+	redwood_audio_set_sink("a test's sink", sink);
+	CHECK(logged("redwood-audio: sound goes to a test's sink"), "said: %s", log_text);
+	CHECK(play(4800, 16384) == 0, "a tenth of a second written");
+	CHECK(sunk == 4800 && sink_calls == 5 && last_sample == -16384, "to the sink, in passes of 1024: %llu frames in %llu calls",
+	    (unsigned long long)sunk, (unsigned long long)sink_calls);
+	WAIT_FOR(logged("s written"), 4000);
+	CHECK(logged("redwood-audio: 0.10 s written, 0.10 s of it sound, peak 50% of full scale"), "once the writer stopped: %s", log_text);
+}
+
+/* what the sink did not take is counted and said */
+static void
+sink_full(void)
+{
+	redwood_audio_init();
+	redwood_audio_set_sink("a test's sink", sink);
+	sink_takes = 512;
+	CHECK(play(2048, 1000) == 0, "written");
+	WAIT_FOR(logged("lost"), 4000);
+	CHECK(logged("ms lost (the sink was full)"), "what did not go in is said: %s", log_text);
+}
+
+/* a write of part of a frame takes the whole frames only; silence is not sound */
+static void
+whole_frames(void)
+{
+	int16_t six[3] = { 3, 3, 3 };
+	size_t done = 0;
+
+	redwood_audio_init();
+	redwood_audio_set_sink("a test's sink", sink);
+	CHECK(fake_dev_pwrite(NODE, six, sizeof(six), 0, &done) == 0 && done == 4 && sunk == 1, "one frame of six bytes: %zu bytes, %llu frames",
+	    done, (unsigned long long)sunk);
+	WAIT_FOR(logged("s written"), 4000);
+	CHECK(logged("0.00 s of it sound"), "a level of 3 is silence: %s", log_text);
+}
+
+/* rec_sound=1: the first second kept, each write as a block with its time, and nothing past the memory */
+static void
+recording(void)
+{
+	const uint8_t *base;
+	uint32_t blocks, rate, frames = 0;
+	uint64_t used;
+
+	boot_args = "rec_sound=1";
+	redwood_audio_init();
+	CHECK(logged("redwood-audio: recording the first 1 s of sound") && loader_sound[2] != 0 && loader_sound[0] == kvtophys(loader_sound[2]),
+	    "a recording is made, and the loader told where: %s", log_text);
+	base = (const uint8_t *)(uintptr_t)loader_sound[2];
+	CHECK(memcmp(base, "RWSND001", 8) == 0, "its header");
+	for (int i = 0; i < 30; i++) {
+		CHECK(play(2000, (int16_t)(100 * i)) == 0, "written");
+	}
+	memcpy(&rate, base + 8, 4);
+	memcpy(&blocks, base + 16, 4);
+	used = loader_sound[1];
+	CHECK(rate == 48000, "at 48 kHz: %u", rate);
+	for (uint64_t at = 24; at < used;) {
+		uint32_t n;
+
+		memcpy(&n, base + at + 8, 4);
+		frames += n;
+		at += 16 + 4ull * n;
+	}
+	CHECK(frames >= 48000 && frames < 48000 + 2000, "one second kept, and the write that reached it: %u frames in %u blocks", frames, blocks);
+	CHECK(logged("redwood-audio: recording finished: 1 s"), "and said: %s", log_text);
+	CHECK(used <= round_page(24 + 48000ull * 4 + 100 * 16), "never past its memory: %llu bytes", (unsigned long long)used);
+}
+
+/* the volume iOS sets is kept for the speakers' driver, with how many times it was set */
+static void
+volume(void)
+{
+	struct redwood_audio_volume v = { .below = 100, .muted = 0 };
+	uint32_t below = 7, generation = 0;
+	bool muted = true;
+
+	redwood_audio_init();
+	CHECK(!redwood_audio_volume(&below, &muted, &generation), "none set yet");
+	CHECK(fake_dev_ioctl(NODE, REDWOOD_AUDIO_SET_VOLUME, &v) == 0, "set");
+	CHECK(redwood_audio_volume(&below, &muted, &generation) && below == 100 && !muted && generation == 1, "kept: %u, %d, %u", below, muted,
+	    generation);
+	CHECK(logged("redwood-audio: the volume: 12.500 dB under the loudest"), "said: %s", log_text);
+	v.muted = 1;
+	CHECK(fake_dev_ioctl(NODE, REDWOOD_AUDIO_SET_VOLUME, &v) == 0 && redwood_audio_volume(&below, &muted, &generation) && muted &&
+	    generation == 2, "muted, a second setting");
+	CHECK(fake_dev_ioctl(NODE, 0x1234, &v) == ENOTTY, "nothing else is answered");
+}
+
+int
+main(int argc, char **argv)
+{
+	static const struct { const char *name; void (*run)(void); } scenarios[] = {
+		{ "played_and_said", played_and_said }, { "sink_full", sink_full }, { "whole_frames", whole_frames },
+		{ "recording", recording }, { "volume", volume },
+	};
+
+	if (argc < 2) {
+		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+			printf("%s\n", scenarios[i].name);
+		}
+		return 0;
+	}
+	for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+		if (strcmp(argv[1], scenarios[i].name) == 0) {
+			if (freopen("/dev/null", "w", stdout) == NULL) {
+				return 2;
+			}
+			scenarios[i].run();
+			fprintf(stderr, "%-18s %s\n", argv[1], failures ? "FAILED" : "ok");
+			return failures ? 1 : 0;
+		}
+	}
+	fprintf(stderr, "no scenario %s\n", argv[1]);
+	return 2;
+}
