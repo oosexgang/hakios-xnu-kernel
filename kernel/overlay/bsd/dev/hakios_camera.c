@@ -57,11 +57,10 @@
  *           and blocks without the sensor (capture_tpg() below)
  *   cam=4   the sensor's own frames that way, through its CSIPHY (capture_sensor() below)
  *
- * Boot-arg cam_sensor=wide picks the wide sensor; without it, the macro one.
+ * Which sensor it works on is the board's: see sensors_from_board() below.
  *
- * Limits, whatever asks: Android's voltages only (the device tree's: 1.8 and 2.8 V for the macro
- * one, 1.0 and 1.8 V for the wide one, 1.2, 1.8 and 2.8 V for the front one, 1.8 and 2.8 V for the
- * ultra-wide one; nothing else is ever written to the LDOs' set points); only the registers named above are written (a list each, checked at every
+ * Limits, whatever asks: Android's voltages only (each sensor's supplies as the board's sensor@N gives
+ * them, from the device tree; nothing else is ever written to the LDOs' set points); only the registers named above are written (a list each, checked at every
  * write) and each is read back; any write that does not read back, a regulator that is not ready
  * in time or reports over-current, a byte nobody acknowledges, and everything is switched off again
  * in the power-down's order and nothing more is done. At the run's end (and on a panic's way out)
@@ -127,7 +126,7 @@ static vm_offset_t tlmm;
  * tree's voltage, or a GPIO that switches a fixed regulator). What a sensor is -- its module file, how its
  * exposure registers are laid out, its colour order and gains -- is its chip's, in chips[] below. Boot-arg
  * cam_sensor=NAME picks one by its name in the board (the start of it, up to a dash, will do: "ultra");
- * without it, the board's test_sensor, and for cam=5 its ios_sensor.
+ * without it, the board's test-sensor, and for cam=5 its ios-sensor (the back camera; ios-front, the front one).
  */
 enum {
 	REGS_OV_PAGED,                  /* OmniVision, 8-bit registers in pages (0xfd): exposure 0x0e/0x0f, gain 0x22, VTS 0x14/0x15 */
