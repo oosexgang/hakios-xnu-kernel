@@ -93,5 +93,18 @@ tests are built with from these and the repository's own boards.
   behind one seam and model it. `backlight_driver_test.c` is the example.
 - **For a tool:** a small repository or directory of its own for each test, never the checkout
   (`boards_test.py`: `Sandbox`).
+- **For a part of the loader:** a part that is plain C is included by a host program as it is, with
+  a made-up firmware behind the calls it makes (`loader_window_test.c`: a memory map; `loader_dsu_test.c`:
+  two partitions). A part that cannot be included alone can be cut where its plain C ends; the built
+  `loader.efi` has to stay the same byte for byte (`loader/README.md`).
 - A test says what it is for in its first lines, and a check says what was expected when it fails.
+- **One scenario a process.** Drivers keep their state in statics; a test's `main` lists its
+  scenarios when called without one, and `run.sh` runs each in a process of its own, on the host and
+  under qemu-aarch64.
+- **Wait for everything you then check.** A driver's thread writes its values one after another. A
+  test that waits for the first and then compares the second passes a thousand times and fails once
+  on a busy machine: `WAIT_FOR(a && b, ms)` before `CHECK(a && b, ...)`, not `WAIT_FOR(a, ms)`.
+- **Break the code on purpose.** Change the driver one line at a time (a copy of it, put first on the
+  include path) and see that a scenario fails each time. A check that no such change can fail checks
+  nothing; a change no scenario notices is a scenario to write, or a line that does nothing.
 - Add it to `tests/run.sh`.
