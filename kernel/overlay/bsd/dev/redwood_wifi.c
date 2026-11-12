@@ -2636,7 +2636,8 @@ qrtr_input(const uint8_t *data, uint32_t length)
 		printf("wifi: qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
 		return;
 	}
-	if (header.size == 0 || at + header.size > length) {
+	/* (inside the message without adding the two: a size near 2^32 would make the sum small) */
+	if (header.size == 0 || at > length || header.size > length - at) {
 		printf("wifi: qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
 		return;
 	}

@@ -2171,7 +2171,8 @@ qrtr_input(const uint8_t *data, uint32_t length)
 		printf("adsp: qrtr: %u bytes that are no datagram (they begin %#x)\n", length, length ? data[0] : 0);
 		return;
 	}
-	if (header.size == 0 || at + header.size > length) {
+	/* (inside the message without adding the two: a size near 2^32 would make the sum small) */
+	if (header.size == 0 || at > length || header.size > length - at) {
 		printf("adsp: qrtr: a datagram of %u bytes in a message of %u: dropped\n", header.size, length);
 		return;
 	}
@@ -2255,8 +2256,9 @@ apr_input(const uint8_t *data, uint32_t length)
 	}
 	memcpy(&header, data, sizeof(header));
 	header_length = ((header.field >> 4) & 0xf) * 4;
-	if (header_length < sizeof(header) || header_length > length) {
-		printf("adsp: apr: a header of %u bytes in a packet of %u: dropped\n", header_length, length);
+	if (header_length < sizeof(header) || header_length > length || header.size < header_length) {
+		printf("adsp: apr: a header of %u bytes in a packet of %u that says it has %u: dropped\n", header_length, length,
+		    header.size);
 		return;
 	}
 	payload = (header.size < length ? header.size : length) - header_length;
