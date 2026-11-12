@@ -88,8 +88,9 @@ played_and_said(void)
 	CHECK(play(4800, 16384) == 0, "a tenth of a second written");
 	CHECK(sunk == 4800 && sink_calls == 5 && last_sample == -16384, "to the sink, in passes of 1024: %llu frames in %llu calls",
 	    (unsigned long long)sunk, (unsigned long long)sink_calls);
-	WAIT_FOR(logged("s written"), 4000);
-	CHECK(logged("hakios-audio: 0.10 s written, 0.10 s of it sound, peak 50% of full scale"), "once the writer stopped: %s", log_text);
+	/* (the line comes from the driver's own thread once it sees the writer gone: on a loaded machine, late) */
+	EVENTUALLY(logged("hakios-audio: 0.10 s written, 0.10 s of it sound, peak 50% of full scale"), 15000, "once the writer stopped: %s",
+	    log_text);
 }
 
 /* what the sink did not take is counted and said */
@@ -100,8 +101,7 @@ sink_full(void)
 	hakios_audio_set_sink("a test's sink", sink);
 	sink_takes = 512;
 	CHECK(play(2048, 1000) == 0, "written");
-	WAIT_FOR(logged("lost"), 4000);
-	CHECK(logged("ms lost (the sink was full)"), "what did not go in is said: %s", log_text);
+	EVENTUALLY(logged("ms lost (the sink was full)"), 15000, "what did not go in is said: %s", log_text);
 }
 
 /* a write of part of a frame takes the whole frames only; silence is not sound */
@@ -115,8 +115,7 @@ whole_frames(void)
 	hakios_audio_set_sink("a test's sink", sink);
 	CHECK(fake_dev_pwrite(NODE, six, sizeof(six), 0, &done) == 0 && done == 4 && sunk == 1, "one frame of six bytes: %zu bytes, %llu frames",
 	    done, (unsigned long long)sunk);
-	WAIT_FOR(logged("s written"), 4000);
-	CHECK(logged("0.00 s of it sound"), "a level of 3 is silence: %s", log_text);
+	EVENTUALLY(logged("0.00 s of it sound"), 15000, "a level of 3 is silence: %s", log_text);
 }
 
 /* rec_sound=1: the first second kept, each write as a block with its time, and nothing past the memory */
