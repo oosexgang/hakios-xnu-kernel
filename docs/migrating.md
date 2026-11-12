@@ -63,6 +63,14 @@ Edit a driver in `kernel/overlay/` and run `kernel/build.sh`, or edit in the tre
   of writing to redwood's pins. When you port one of them to Renoir, add its feature to
   `hakios_board.h` and to the board file of the renoir package (`renoir/board.toml` on the `devices`
   branch).
+- **A part's wiring is in the board file, and a package from before lacks it.** The touch
+  controller's serial engine, clocks, pins and supplies (`[touch]`), the keys (`[buttons]`), the
+  flashlight (`[torch]`), the vibration motor (`[haptic]`), the speaker amplifiers (`[speaker]`) and
+  the partition the kernel may write (`[storage]`) were numbers in the drivers and in the loader.
+  The packages on the `devices` branch have them now. A package of your own made before this is
+  refused by `tools/boards.py check`, which names each section that is missing; the values are the
+  ones the code had, and `devices/_template/board.toml` says where each comes from. Without
+  `[storage]` nothing is refused: the kernel just never writes to the phone's storage.
 - **`kernel/build.sh` no longer needs a darwin-renoir checkout** for the host tools. It still uses one
   if it is there.
 - **The loader's boards and the kernel's boards come from the same files.** Their tables
