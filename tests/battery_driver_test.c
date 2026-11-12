@@ -63,14 +63,18 @@ publish(uint32_t flags, int soc, int mv, int ma, int c)
 	cache->sequence++;
 }
 
-/* what the kernel's power source would be handed (iokit/Kernel/HakiosBattery.cpp) */
+/* what the kernel's power source would be handed (iokit/Kernel/HakiosBattery.cpp): the last one kept */
 static unsigned reported, reported_size;
+static unsigned char last_report[256];
 void
-HakiosBatteryReport(const void *state __unused, unsigned size)
+HakiosBatteryReport(const void *state, unsigned size)
 {
 	reported++;
 	reported_size = size;
+	memcpy(last_report, state, size < sizeof(last_report) ? size : sizeof(last_report));
 }
+
+void hakios_tl(const char *format __unused, ...) {}
 
 /* the driver's includes are the kernel's: the fake kernel answers for them */
 #pragma GCC diagnostic ignored "-Wformat"
@@ -236,6 +240,97 @@ board_without_it(void)
 	CHECK(mapped == 0 && mapped_elsewhere == 0 && s("battery_soc") == -1, "a board that does not list the feature maps nothing");
 }
 
+/* ---- what iOS is told, from the firmware's readings (hakios_battery_core.h) ----------------------- */
+
+static const struct hakios_battery_state *told(void) { return (const struct hakios_battery_state *)(const void *)last_report; }
+
+/* the arithmetic: the table, the resistance, the firmware's figure believed only when the voltage agrees */
+static void
+the_arithmetic(void)
+{
+	CHECK(bat_tenths_at(3880) == 500 && bat_tenths_at(3300) == 0 && bat_tenths_at(4500) == 1000, "the table's ends and a row");
+	CHECK(bat_tenths_at(3910) == 550, "between two rows: %d", bat_tenths_at(3910));
+	CHECK(bat_ocv_mv(4347, 557) == 4391 && bat_ocv_mv(4410, -397) == 4379, "redwood's two readings come to one cell: %d, %d",
+	    bat_ocv_mv(4347, 557), bat_ocv_mv(4410, -397));
+	CHECK(bat_estimate_tenths(73, 0, 4012, 850) == 730, "a figure the voltage agrees with is the firmware's");
+	CHECK(bat_estimate_tenths(15, 0, 4405, -373) >= 990, "15%% at 4.4 V is not: %d", bat_estimate_tenths(15, 0, 4405, -373));
+	CHECK(bat_estimate_tenths(40, 1, 3880, 0) == 500, "an estimate of the firmware's own gives way to this one's");
+	CHECK(bat_estimate_tenths(40, 0, -1, 0) == 400, "no voltage: the firmware's figure as it is");
+	CHECK(bat_shown_tenths(-1, 640, 0) == 640, "the first look is shown as it is");
+	CHECK(bat_shown_tenths(640, 600, 0) == 638 && bat_shown_tenths(640, 600, 1) == 640, "down a little while it gives charge, not while it takes it");
+	CHECK(bat_shown_tenths(640, 680, 1) == 642 && bat_shown_tenths(640, 680, 0) == 640, "up a little while it takes charge, not while it gives it");
+	CHECK(bat_shown_tenths(150, 990, 0) == 170, "far off, toward it whichever way: %d", bat_shown_tenths(150, 990, 0));
+}
+
+/* redwood's day: the firmware said 15%% at 4.4 V on a computer's port, taking 373 mA */
+static void
+a_stale_figure_is_not_shown(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID | CHARGING, 15, 4405, -373, 45);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	CHECK(reported > 0 && reported_size == sizeof(struct hakios_battery_state), "iOS is told");
+	CHECK(told()->percent_hundredths >= 9900, "nearly full, not 15%%: %d", told()->percent_hundredths);
+	CHECK(told()->status == 1 && told()->external == 1 && told()->current_ua == 373000, "charging, 373 mA in, iOS's way round: %d %d %d",
+	    told()->status, told()->external, told()->current_ua);
+	CHECK(told()->voltage_uv == 4405000 && told()->temperature_hundredths == 4500 && told()->present == 1, "the rest as read");
+	CHECK(s("battery_soc") == 15 && s("battery_shown") >= 990, "the sysctls: the firmware's figure, and what is shown: %d, %d",
+	    s("battery_soc"), s("battery_shown"));
+}
+
+/* on a computer's port, drawing more than it gives: on a charger, not charging */
+static void
+on_a_port_that_gives_too_little(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID | CHARGING, 60, 3900, 450, 40);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	CHECK(told()->external == 1 && told()->status == 3 && told()->current_ua == -450000, "not charging: %d, %d mA",
+	    told()->status, told()->current_ua / 1000);
+	CHECK(told()->percent_hundredths == 6000, "the firmware's 60%%, which its voltage under load agrees with: %d", told()->percent_hundredths);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 60, 3880, 300, 40);
+	WAIT_FOR(told()->external == 0, 2000);
+	CHECK(told()->external == 0 && told()->status == 2, "off the charger: discharging (%d)", told()->status);
+}
+
+/* what is shown follows the firmware a little at a time: a drop of 4 points in one reading is not shown at once */
+static void
+shown_a_little_at_a_time(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 64, 3960, 200, 30);
+	hakios_battery_init();
+	WAIT_FOR(s("battery_shown") == 640, 2000);
+	CHECK(s("battery_shown") == 640, "the first: %d", s("battery_shown"));
+	publish(VALID | PRESENT | VOLTAGE_VALID, 60, 3950, 200, 30);
+	WAIT_FOR(s("battery_shown") < 640, 2000);
+	CHECK(s("battery_shown") >= 636 && s("battery_shown") <= 638, "two tenths a look: %d", s("battery_shown"));
+	WAIT_FOR(s("battery_shown") == 600, 3000);
+	CHECK(s("battery_shown") == 600, "and there in the end: %d", s("battery_shown"));
+}
+
+/* once the audio DSP's battery manager speaks, the firmware's readings are not passed on */
+static void
+the_dsp_knows_better(void)
+{
+	struct hakios_battery_state state = {
+		.size = sizeof(state), .percent_hundredths = 5100, .voltage_uv = 3900000, .current_ua = -100000,
+		.temperature_hundredths = 3000, .present = 1, .external = 0, .status = 2,
+	};
+
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 64, 3960, 200, 30);
+	hakios_battery_init();
+	WAIT_FOR(reported > 0, 2000);
+	hakios_battery_report(&state);
+	reported = 0;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 20, 3700, 200, 30);
+	usleep(250 * 1000);
+	CHECK(reported == 0, "nothing more from the firmware: %u", reported);
+}
+
 /* what the audio DSP's battery manager reports instead: kept for the sysctls, handed on to iOS's power source */
 static void
 from_the_dsp(void)
@@ -268,7 +363,9 @@ main(int argc, char **argv)
 		{ "read_and_followed", read_and_followed }, { "estimated_and_without_voltage", estimated_and_without_voltage },
 		{ "torn_update", torn_update }, { "impossible_values", impossible_values }, { "not_a_cache", not_a_cache },
 		{ "another_version", another_version }, { "no_address", no_address }, { "off_by_default", off_by_default },
-		{ "board_without_it", board_without_it }, { "from_the_dsp", from_the_dsp },
+		{ "board_without_it", board_without_it }, { "from_the_dsp", from_the_dsp }, { "the_arithmetic", the_arithmetic },
+		{ "a_stale_figure_is_not_shown", a_stale_figure_is_not_shown }, { "on_a_port_that_gives_too_little", on_a_port_that_gives_too_little },
+		{ "shown_a_little_at_a_time", shown_a_little_at_a_time }, { "the_dsp_knows_better", the_dsp_knows_better },
 	};
 
 	if (argc < 2) {

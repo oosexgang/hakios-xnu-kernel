@@ -17,6 +17,7 @@
 #include <sys/systm.h>
 
 #include "hakios_board.h"
+#include "hakios_battery_core.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
@@ -100,6 +101,56 @@ battery_snapshot(struct loader_battery *out)
 	return false;
 }
 
+static int battery_source_dsp;
+static int battery_shown_tenths = -1;   /* what iOS is shown, tenths of a percent (-1: nothing yet) */
+
+SYSCTL_INT(_kern_hakios, OID_AUTO, battery_shown, CTLFLAG_RD | CTLFLAG_LOCKED, &battery_shown_tenths, 0,
+    "the charge iOS is shown, tenths of a percent: the firmware's when the voltage agrees, else the voltage's (-1 if none)");
+
+extern void HakiosBatteryReport(const void *state, unsigned size);     /* iokit/Kernel/HakiosBattery.cpp */
+extern void hakios_tl(const char *format, ...) __printflike(1, 2);
+
+/*
+ * The firmware's reading as iOS's power source wants it (iokit/Kernel/HakiosBattery.cpp): the charge judged by
+ * hakios_battery_core.h, the current the other way round (iOS's is more than 0 while the battery takes charge), and
+ * charging only while charge goes in -- on a computer's port the phone can draw more than the port gives, and is
+ * then on a charger and not charging, as iOS says of a battery on hold. Not while the audio DSP's battery manager
+ * reports (hakios_battery_report): it knows better.
+ */
+static void
+battery_tell_ios(const struct loader_battery *sample)
+{
+	const int mv = (sample->flags & LOADER_BATTERY_VOLTAGE_VALID) ? sample->voltage_mv : -1;
+	const int external = (sample->flags & LOADER_BATTERY_CHARGER_PRESENT) != 0;
+	const int gaining = external && sample->current_ma < BAT_GAINING_MA;
+	struct hakios_battery_state state;
+
+	if (battery_source_dsp) {
+		return;
+	}
+	battery_shown_tenths = bat_shown_tenths(battery_shown_tenths,
+	    bat_estimate_tenths(sample->soc_percent, (sample->flags & LOADER_BATTERY_SOC_ESTIMATED) != 0, mv, sample->current_ma), gaining);
+	memset(&state, 0, sizeof(state));
+	state.size = sizeof(state);
+	state.percent_hundredths = battery_shown_tenths * 10;
+	state.voltage_uv = mv > 0 ? mv * 1000 : 0;
+	state.current_ua = -sample->current_ma * 1000;
+	state.temperature_hundredths = sample->temperature_c * 100;
+	state.present = (sample->flags & LOADER_BATTERY_PRESENT) != 0;
+	state.external = external;
+	/* (POWER_SUPPLY_STATUS_*: charging 1, discharging 2, not charging 3, full 4) */
+	state.status = !external ? 2 : gaining ? 1 : battery_shown_tenths >= 1000 ? 4 : 3;
+	HakiosBatteryReport(&state, sizeof(state));
+	{
+		uint64_t now_ns;
+
+		/* (a line a look, beside the thermal ones: ios/tools/frames.py shows what the battery did in each phase) */
+		absolutetime_to_nanoseconds(mach_absolute_time(), &now_ns);
+		hakios_tl("tl: b at %llu shown %d mv %d ma %d c %d external %d\n", now_ns / 1000, battery_shown_tenths, mv,
+		    -sample->current_ma, sample->temperature_c, external);
+	}
+}
+
 static void
 battery_poll(void)
 {
@@ -121,6 +172,7 @@ battery_poll(void)
 	battery_soc_estimated = (sample.flags & LOADER_BATTERY_SOC_ESTIMATED) != 0;
 	battery_charger_action = (int)sample.charger_action;
 	battery_updates++;
+	battery_tell_ios(&sample);
 }
 
 /*
@@ -128,7 +180,7 @@ battery_poll(void)
  * the values that Android shows, from where Android takes them. They are kept here for the sysctls
  * and passed on to the power source that iOS reads (iokit/Kernel/HakiosBattery.cpp).
  */
-static int battery_full_uah, battery_design_uah, battery_cycles, battery_source_dsp;
+static int battery_full_uah, battery_design_uah, battery_cycles;
 
 SYSCTL_INT(_kern_hakios, OID_AUTO, battery_full_uah, CTLFLAG_RD | CTLFLAG_LOCKED,
     &battery_full_uah, 0, "the battery's full charge as the fuel gauge has learnt it, in uAh (0 if unknown)");
@@ -138,8 +190,6 @@ SYSCTL_INT(_kern_hakios, OID_AUTO, battery_cycles, CTLFLAG_RD | CTLFLAG_LOCKED,
     &battery_cycles, 0, "the battery's charge cycles (0 if unknown)");
 SYSCTL_INT(_kern_hakios, OID_AUTO, battery_from_dsp, CTLFLAG_RD | CTLFLAG_LOCKED,
     &battery_source_dsp, 0, "1 when the values come from the audio DSP's battery manager");
-
-extern void HakiosBatteryReport(const void *state, unsigned size);     /* iokit/Kernel/HakiosBattery.cpp */
 
 void
 hakios_battery_report(const struct hakios_battery_state *b)
