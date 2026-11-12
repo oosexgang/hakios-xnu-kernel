@@ -45,6 +45,10 @@
 		observer = <0x0e600000>;        // "obsrvr": reads
 		channels = <0x0c600000>;        // "chnls": writes; optional, needed only by the drivers that write to a PMIC
 		ee = <0>;                       // qcom,ee; optional, 0 if left out
+		channel-map = <0>;              // arbiter version 8 only: its table of channels (the "core" node's
+		//                              // second block); cnfg is then the table of owners, observer and
+		//                              // channels 0x20 and 0x200 a channel (Linux spmi-pmic-arb.c).
+		//                              // Optional; 0 or left out for version 5
 	};
 
 	// The SMMU between the SoC's devices and memory, for the part drivers that give a device its addresses

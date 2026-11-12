@@ -132,6 +132,7 @@ struct hakios_board {
 	/* the PMICs' bus (soc: spmi { }): the blocks of the SPMI arbiter this system reads and writes through */
 	struct {
 		uint32_t core, cnfg, observer;
+		uint32_t channel_map;           /* version 8: the table of channels; 0: version 5 (in core) */
 		uint32_t channels;              /* writes; 0: not given, and nothing here writes to a PMIC */
 		uint32_t ee;                    /* who this system is to the arbiter (the device tree's qcom,ee) */
 	} spmi;

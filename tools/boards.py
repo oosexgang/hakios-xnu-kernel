@@ -78,7 +78,7 @@ SOC_SCHEMA = {
     'display': {'dsi0': (int, True), 'intf1': (int, False)},
     'thermal': {'tsens': ([int], True)},
     'spmi': {'core': (int, True), 'cnfg': (int, True), 'observer': (int, True), 'channels': (int, False),
-             'ee': (int, False)},
+             'ee': (int, False), 'channel_map': (int, False)},
     'adreno': {'gpu': (int, True), 'gmu': (int, True), 'gpucc': (int, True), 'cx_misc': (int, True), 'rscc': (int, True),
                'smmu': (int, True), 'pdc': (int, True), 'qfprom': (int, True), 'tsens': (int, False)},
     'pins': {'tlmm': (int, True)},
@@ -823,7 +823,8 @@ def table_text(socs, boards):
         if spmi:
             out.append(f'\t\t.spmi = {{ .core = {spmi["core"]:#010x}, .cnfg = {spmi["cnfg"]:#010x}, '
                        f'.observer = {spmi["observer"]:#010x}, .channels = {spmi.get("channels", 0):#010x}, '
-                       f'.ee = {spmi.get("ee", 0)} }},')
+                       f'.ee = {spmi.get("ee", 0)}'
+                       + (f', .channel_map = {spmi["channel_map"]:#010x}' if spmi.get('channel_map') else '') + ' },')
         adreno = soc.get('adreno')
         if adreno:
             out += ['\t\t.adreno = {',
