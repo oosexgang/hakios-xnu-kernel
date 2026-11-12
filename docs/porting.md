@@ -41,6 +41,8 @@ is an ordinary new file of the main branch. From the tree it reads:
 - the panel: brightness range, byte order, command or video mode. Pass `--panel NODE` if it reports
   several panels;
 - the PMIC arbiter, and which PMIC peripherals the power and volume keys and the flashlight are on;
+- the touch controller's reset and interrupt pins (and its serial engine, where the tree has the
+  controller under its bus), as a `[touch]` section for you to complete;
 - the SoC's own pins, its SMMU, the way to its other processors, the UFS host controller, the audio
   DSP's reserved memory;
 - RPMh's command database and the application processor's sequencer.

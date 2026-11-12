@@ -199,6 +199,18 @@ def from_dts(text, panel=None):
                           if 'qcom,spmi-temp-alarm' in strings(n.props.get('compatible')) and unit_address(n) is not None), None)
             if slave is not None and alarm is not None:
                 board['torch'] = {'flash': slave << 8 | unit_address(node) >> 8, 'alarm': slave << 8 | unit_address(alarm) >> 8}
+        # the touch controller on an SPI bus: its reset and its interrupt, pins of the SoC (<&tlmm PIN FLAGS>), as the
+        # vendors' drivers name them; and the bus it is on, where the tree has the controller under it
+        if 'spi-max-frequency' in node.props:
+            for vendor in ('focaltech', 'goodix'):
+                reset, wakes = cells(node.props.get(f'{vendor},reset-gpio')), cells(node.props.get(f'{vendor},irq-gpio'))
+                if len(reset) >= 2 and len(wakes) >= 2:
+                    touch = board.setdefault('touch', {})
+                    touch['reset'], touch['interrupt'] = reset[-2], wakes[-2]
+                    bus = node.parent
+                    if bus is not None and 'qcom,spi-geni' in strings(bus.props.get('compatible')) and only_reg(bus)[0]:
+                        touch['serial_engine'] = only_reg(bus)[0]
+                    break
         # the audio DSP's reserved memory: what the node that loads "adsp" points at
         if strings(node.props.get('qcom,firmware-name')) == ['adsp']:
             region = referred(tree, node.props.get('memory-region'))

@@ -945,6 +945,16 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                   f'flash = {light_part["flash"]:#05x}',
                   f'alarm = {light_part["alarm"]:#05x}',
                   '']
+    wired = board.get('touch', {})
+    if 'reset' in wired and 'interrupt' in wired:
+        lines += ['# The touch controller\'s wiring, for a feature "touch-...": its reset and its interrupt are from the tree'
+                  + (', and the serial engine it is on' if 'serial_engine' in wired else '') + ';',
+                  "# the engine's clocks and votes, the bus's pins and the supplies are yours to fill in",
+                  '# (devices/_template/board.toml says where each is).',
+                  '# [touch]']
+        if 'serial_engine' in wired:
+            lines.append(f'# serial_engine = {wired["serial_engine"]:#010x}')
+        lines += [f'# interrupt = {wired["interrupt"]}', f'# reset = {wired["reset"]}', '']
     dsp = board.get('adsp', {})
     if 'memory' in dsp:
         lines += ['# The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',

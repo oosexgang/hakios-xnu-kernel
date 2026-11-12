@@ -803,6 +803,31 @@ class Generate(Sandbox):
         self.assertIn('[torch]\nflash = 0x2ee\nalarm = 0x20a\n', (self.dir / 'devices/phone5/board.toml').read_text())
         self.assertEqual(self.problems(), '')
 
+    def test_the_touch_controllers_reset_and_interrupt_are_found_in_a_tree(self):
+        # under its bus, as a whole tree has it: the bus's registers too
+        soc, board, notes = devicetree.from_dts('''/ { soc { spi@a94000 { compatible = "qcom,spi-geni"; reg = <0xa94000 0x4000>;
+            touch@0 { compatible = "goodix,9916r-spi"; reg = <0>; spi-max-frequency = <12000000>;
+                goodix,reset-gpio = <&tlmm 105 0x00>; goodix,irq-gpio = <&tlmm 81 0x2800>; }; }; }; };''')
+        self.assertEqual(board['touch'], {'reset': 105, 'interrupt': 81, 'serial_engine': 0xa94000})
+        # in an overlay, whose target is not in the file: the two pins
+        overlay = '''/ { fragment@66 { target = <0xffffffff>; __overlay__ { status = "ok";
+            xiaomi_k9_touch@0 { compatible = "xiaomi,k9-spi"; reg = <0x00>; spi-max-frequency = <0x5b8d80>;
+                focaltech,reset-gpio = <0xffffffff 0x1e 0x00>; focaltech,irq-gpio = <0xffffffff 0x1f 0x2008>; }; }; }; };'''
+        soc, board, notes = devicetree.from_dts(overlay)
+        self.assertEqual(board['touch'], {'reset': 30, 'interrupt': 31})
+        # a controller on I2C that the same vendor's driver also knows is another part: not taken
+        soc, board, notes = devicetree.from_dts('''/ { soc { i2c@980000 { focaltech@38 { compatible = "focaltech,fts_ts"; reg = <0x38>;
+            focaltech,reset-gpio = <&tlmm 22 0>; focaltech,irq-gpio = <&tlmm 23 0x2008>; }; }; }; };''')
+        self.assertNotIn('touch', board)
+        # a board started from the tree has the two, in a section still to be completed and switched on
+        dts = self.dir / 'touch.dts'
+        dts.write_text(overlay)
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone6', 'sm0001', dts)
+        text = (self.dir / 'devices/phone6/board.toml').read_text()
+        self.assertIn('# [touch]\n# interrupt = 31\n# reset = 30\n', text)
+        self.assertEqual(self.problems(), '')
+
     def test_the_pins_are_found_in_a_vendors_tree_and_in_linuxs(self):
         # the vendor's node is the whole block, in which the pins begin 1 MiB in
         soc, board, notes = devicetree.from_dts('''/ { soc { tlmm: pinctrl@f000000 { compatible = "qcom,shima-pinctrl";
