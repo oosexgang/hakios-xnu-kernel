@@ -1,5 +1,5 @@
 #!/bin/bash
-# Compile the files HakiOS adds to the kernel -- for syntax and types only, with the machine's own
+# Compile the files HakiOS adds to the kernel -- for syntax, types and what they print, with the machine's own
 # clang, against the headers of an assembled tree. No Darwin toolchain, no SDK, nothing is linked: it
 # says in a minute or two whether a driver still compiles, where the kernel build (kernel/build.sh)
 # takes a toolchain and much longer.
@@ -67,7 +67,7 @@ if [ -x "$KERNEL_DIR/../tools/boards.py" ]; then
 	"$KERNEL_DIR/../tools/boards.py" gen --out "$gen" > /dev/null
 fi
 
-flags=(--target=arm64-apple-ios16.5 -fsyntax-only -w -ferror-limit=5 -nostdinc
+flags=(--target=arm64-apple-ios16.5 -fsyntax-only -ferror-limit=5 -nostdinc
 	-isystem "$(clang -print-resource-dir)/include"
 	-include "$KERNEL_DIR/deps/hostinc/xnu_clang_compat.h" -mkernel
 	-DKERNEL -DKERNEL_PRIVATE -DXNU_KERNEL_PRIVATE -DBSD_KERNEL_PRIVATE -DPRIVATE -D__arm64__
@@ -75,11 +75,14 @@ flags=(--target=arm64-apple-ios16.5 -fsyntax-only -w -ferror-limit=5 -nostdinc
 	-I"$gen" -I"$X/bsd" -I"$X/osfmk" -I"$X/osfmk/libsa" -I"$X/libkern" -I"$X/iokit" -I"$X/pexpert"
 	-I"$X/EXTERNAL_HEADERS" -I"$X/security" -I"$X/san/memory")
 
-# compile FILE: quiet when it compiles; its first errors otherwise
+# compile FILE: quiet when it compiles; its first errors otherwise. A file that compiles is compiled
+# once more for what it prints: a format that does not go with its arguments is an error in the real
+# build (-Werror=format), and the first pass, which silences every warning, cannot see it.
 compile() {
 	local language=(-std=gnu11)
 	case "$1" in *.cpp) language=(-x c++ -std=gnu++20 -fno-exceptions -fno-rtti -fapple-kext) ;; esac
-	(cd "$X" && clang "${flags[@]}" "${language[@]}" "$1" 2>&1)
+	(cd "$X" && clang "${flags[@]}" -w "${language[@]}" "$1" 2>&1) || return 1
+	(cd "$X" && clang "${flags[@]}" -Wno-everything -Wformat -Werror=format "${language[@]}" "$1" 2>&1)
 }
 
 skipped() {
@@ -128,4 +131,4 @@ done
 [ $failed = 0 ] || die "$failed of ${#files[@]} files failed (above)"
 more=
 [ $without_driverkit = 0 ] || more="; $without_driverkit C++ files not checked (no --driverkit)"
-log "ok: $compiled files compile (syntax and types); $left_out need the real build (kernel/syntax-check.skip)$more"
+log "ok: $compiled files compile (syntax, types and formats); $left_out need the real build (kernel/syntax-check.skip)$more"

@@ -121,7 +121,7 @@ says what each test covers and what it leaves out.
 | `redwood_guard.c` | `guard_test.c` | (none: tones in, samples out) |
 
 The touch, sound, microphone, camera, Wi-Fi, DSP, GPU and storage drivers have no such test: they
-are checked for syntax and types only (`kernel/syntax-check.sh`) and on the phone.
+are checked for syntax, types and the formats of what they print only (`kernel/syntax-check.sh`), and on the phone.
 
 ## Adding one
 

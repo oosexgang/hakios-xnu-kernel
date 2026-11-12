@@ -14,7 +14,7 @@ for every board it was built with. The board is identified at boot from `/chosen
 | `export.sh` | Takes work done in a tree back into `overlay/` and `patches/`. |
 | `import-patch.sh` | Takes a patch written against the tree into `overlay/` and `patches/`. |
 | `verify.sh` | Checks that assembling and exporting give back exactly what is committed. |
-| `syntax-check.sh` | Compiles the files of `overlay/` for syntax and types with the machine's clang: no Darwin toolchain needed. `syntax-check.skip` lists the files only the real build can check. |
+| `syntax-check.sh` | Compiles the files of `overlay/` for syntax, types and the formats of what they print with the machine's clang: no Darwin toolchain needed. `syntax-check.skip` lists the files only the real build can check. |
 | `build.sh`, `env.sh` | The build on Linux. `build.sh` also makes the board table from the device packages that are present (below). |
 | `host/`, `iig-impl/` | Build wrappers: clang and stand-ins for Apple's closed `iig`. |
 
@@ -78,7 +78,7 @@ git diff                                         # review, commit
 
 ```sh
 kernel/verify.sh            # the release assembles and exports back unchanged
-kernel/syntax-check.sh      # the files HakiOS adds compile (syntax and types), with any clang
+kernel/syntax-check.sh      # the files HakiOS adds compile (syntax, types, formats), with any clang
 tests/run.sh                # host tests of drivers, also under qemu-aarch64
 ```
 

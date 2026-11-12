@@ -95,7 +95,7 @@ the earlier `apply.sh`. Move it away or point `XNU_SRC` elsewhere.
 | | Verified |
 | --- | --- |
 | `make check`, `kernel/verify.sh` | On every push, in CI. |
-| The kernel's drivers compile | `kernel/syntax-check.sh`, on every push: the 53 C files of `kernel/overlay` that a stock clang can check, for syntax and types. With the DriverKit headers also the 9 C++ files. The 10 of `kernel/syntax-check.skip` and linking need the real build. |
+| The kernel's drivers compile | `kernel/syntax-check.sh`, on every push: the C files of `kernel/overlay` that a stock clang can check, for syntax, types and the formats of what they print (an error in the real build). With the DriverKit headers also the C++ files. The files of `kernel/syntax-check.skip` and linking need the real build; the script prints how many of each there are. |
 | The assembled tree | Byte for byte what the previous patch series produced. |
 | The loader build | Compiles without a warning with the boards of the repository and the tests' two phones, on every push. Its last on-phone run was before its board table was generated and before `uefi_charger` replaced a board's name in its code. |
 | The porting procedure | Its tool and data steps run on a made-up phone in `tests/porting_test.sh`, on every push. Not on a third real phone. |

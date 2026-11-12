@@ -173,7 +173,7 @@ if command -v clang > /dev/null; then
 	mkdir -p "$K/deps/hostinc"
 	cp "$HERE/../kernel/deps/hostinc/xnu_clang_compat.h" "$K/deps/hostinc/"
 	: > "$K/syntax-check.skip"
-	says "the overlay's files compile" "ok: [0-9]* files compile (syntax and types); 0 need the real build" \
+	says "the overlay's files compile" "ok: [0-9]* files compile (syntax, types and formats); 0 need the real build" \
 		"$K/syntax-check.sh" --tree "$T"
 	says "one file can be asked for" "ok: 1 files compile" "$K/syntax-check.sh" --tree "$T" drivers/ours.c
 	refuses "a file that is not there is said to be" "is not a file of the tree" "$K/syntax-check.sh" --tree "$T" drivers/none.c
@@ -185,6 +185,11 @@ if command -v clang > /dev/null; then
 	printf 'int broken(void)\n{\n\treturn 0;\n}\n' > "$K/overlay/drivers/broken.c"
 	refuses "... and must come off the list once it compiles" "take it off" "$K/syntax-check.sh" --tree "$T"
 	: > "$K/syntax-check.skip"
+	# what a file prints is checked as the real build checks it: a format that does not go with its arguments
+	printf 'int printf(const char *, ...) __attribute__((format(printf, 1, 2)));\nint broken(void)\n{\n\tlong long big = 1;\n\treturn printf("%%d of %%s\\n", big);\n}\n' > "$K/overlay/drivers/broken.c"
+	refuses "a format that does not go with its arguments fails the check" "format specifies type" "$K/syntax-check.sh" --tree "$T"
+	printf 'int printf(const char *, ...) __attribute__((format(printf, 1, 2)));\nint broken(void)\n{\n\tlong long big = 1;\n\treturn printf("%%lld\\n", big);\n}\n' > "$K/overlay/drivers/broken.c"
+	says "... and one that does passes" "0 need the real build" "$K/syntax-check.sh" --tree "$T"
 	printf 'class thing { };\n' > "$K/overlay/drivers/thing.cpp"
 	says "C++ files wait for the DriverKit headers" "1 C++ files not checked (no --driverkit)" "$K/syntax-check.sh" --tree "$T"
 	mkdir "$W/driverkit"

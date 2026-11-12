@@ -46,7 +46,7 @@ brings it into a checkout.
   are built for the packages that are present.
 - **Checks that need no phone.** The drivers run on the host against models of the hardware, the
   porting guide is run on a made-up phone, the kernel sources are verified against Apple's release and
-  compiled for syntax and types, on every push.
+  compiled for syntax, types and the formats of what they print, on every push.
 - **Pinned inputs.** Everything taken from elsewhere is in [`components.toml`](components.toml), at an
   exact version.
 
