@@ -13,7 +13,7 @@
 #      SDK (links to theos' iPhoneOS16.5.sdk plus usr/local)
 #   3. the kernel's exported headers, then libfirehose_kernel.a and libpthread_kext.a built against them
 #   4. the kernel: $XNU_SRC/BUILD/obj/mach.development.bcm2837
-# Needs theos (the cctools and iPhoneOS16.5.sdk); see docs/building.md.
+# Needs iPhoneOS16.5.sdk's headers, and Mach-O tools: theos' cctools, or LLVM's; see docs/building.md.
 set -e -o pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 # shellcheck source=lib.sh
@@ -56,9 +56,20 @@ if [ ! -x "$RD/host/bin/migcom" ] || [ ! -x "$RD/host/bin/tcsh" ] || [ ! -d "$RD
 	RD=$XNUDEPS/stage1
 	"$BD/stage1.sh" "$RD"
 fi
+# The Mach-O tools: theos' cctools (TOOLCHAIN=cctools), or LLVM's beside the clang the kernel is compiled
+# with (TOOLCHAIN=llvm: ld64.lld and its fellows in XNU_CLANG_DIR, through kernel/host/llvm). Unset: theos'
+# when it is there, else LLVM's when they are. The SDK's headers are theos' unless IOS_SDK says where.
 CCTOOLS=$THEOS/toolchain/linux/iphone/bin
-IOS_SDK=$THEOS/sdks/iPhoneOS16.5.sdk
-[ -x "$CCTOOLS/ld" ] && [ -d "$IOS_SDK/usr/include" ] || die "no theos toolchain/SDK in $THEOS"
+IOS_SDK=${IOS_SDK:-$THEOS/sdks/iPhoneOS16.5.sdk}
+export XNU_CLANG_DIR=${XNU_CLANG_DIR:-/usr/bin}
+if [ -z "${TOOLCHAIN:-}" ]; then
+	if [ -x "$CCTOOLS/ld" ]; then
+		TOOLCHAIN=cctools
+	elif [ -x "$XNU_CLANG_DIR/ld64.lld" ]; then
+		TOOLCHAIN=llvm
+	fi
+fi
+[ -d "$IOS_SDK/usr/include" ] || die "no iPhoneOS16.5.sdk at $IOS_SDK (theos' sdks/, or IOS_SDK=DIR)"
 mkdir -p "$XNUDEPS/host/bin" "$XNUDEPS/build/firehose" "$XNUDEPS/build/pthread" "$XNUDEPS/sdk/Platforms/iPhoneOS.platform"
 cd "$XNUDEPS"
 for d in AvailabilityVersions libdispatch libpthread MacOSX13.3.sdk; do link "$RD/$d" $d; done
@@ -93,10 +104,29 @@ if [ ! -d $MACOS26/System/Library/Frameworks/Kernel.framework/Headers/DriverKit 
 	tar -xJf macos26.tar.xz --wildcards "*$MACOS26/System/Library/Frameworks/Kernel.framework*" || die "cannot unpack $U"
 	rm -f macos26.tar.xz
 fi
-for t in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool; do
-	link "$CCTOOLS/$t" host/bin/$t
-done
-link "$CCTOOLS/ld" host/bin/ld64
+case ${TOOLCHAIN:-} in
+cctools)
+	[ -x "$CCTOOLS/ld" ] || die "TOOLCHAIN=cctools: no theos toolchain in $THEOS"
+	for t in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool; do
+		link "$CCTOOLS/$t" host/bin/$t
+	done
+	link "$CCTOOLS/ld" host/bin/ld64
+	;;
+llvm)
+	[ -x "$XNU_CLANG_DIR/ld64.lld" ] || die "TOOLCHAIN=llvm: no ld64.lld in $XNU_CLANG_DIR (XNU_CLANG_DIR=DIR)"
+	log "Mach-O tools: LLVM's, in $XNU_CLANG_DIR"
+	for t in nm otool strip lipo install-name-tool; do
+		[ -x "$XNU_CLANG_DIR/llvm-$t" ] || die "TOOLCHAIN=llvm: no llvm-$t in $XNU_CLANG_DIR"
+		link "$XNU_CLANG_DIR/llvm-$t" "host/bin/${t//-/_}"
+	done
+	link "$K/host/llvm/libtool" host/bin/libtool
+	link "$K/host/llvm/ld" host/bin/ld64
+	for t in nmedit ctf_insert codesign_allocate; do link "$K/host/llvm/unused" host/bin/$t; done
+	;;
+*)
+	die "no Mach-O linker: theos' toolchain in $THEOS, or LLVM's (ld64.lld) in XNU_CLANG_DIR; see docs/building.md"
+	;;
+esac
 if [ ! -d "$XNU_SDK_PATH/usr/include" ]; then
 	log "making the SDK: links to $IOS_SDK"
 	rm -rf "$XNU_SDK_PATH"
