@@ -94,12 +94,14 @@ SOC_SCHEMA = {
 }
 # a camera sensor's supply: a regulator of the sensors' PMIC at a set point, or one that a pin of the SoC switches
 SUPPLY = re.compile(r'ldo([1-9]) (\d{3,4})mV|gpio(\d{1,3}) (\d{3,4})mV (\d{1,4})us')
+# the supply a lens motor may need switched on: an RPMh regulator by its name in the command database, at a voltage
+FOCUS_SUPPLY = re.compile(r'([a-z]{3,4}[a-z]?[0-9]{1,2}) (\d{3,4})mV')
 # the sensor chips the camera driver knows (hakios_camera.c, chips[]: their registers, colour order and gains)
 CAMERA_CHIPS = ('OV02B10', 'S5KHM2SD', 'OV16A1Q', 'S5K4H7')
 CAMERA_SENSOR = {'name': (str, True), 'chip': (CAMERA_CHIPS, True), 'cci': ([int], True), 'pins': ([int], True),
                  'reset': (int, True), 'mclk': (int, True), 'mclk_pin': (int, True), 'csiphy': (int, True),
                  'vana': (SUPPLY, False), 'vdig': (SUPPLY, False), 'vio': (SUPPLY, False),
-                 'focus_motor': (('dw9800',), False)}
+                 'focus_motor': (('dw9800',), False), 'focus_supply': (FOCUS_SUPPLY, False)}
 CAMERA_SENSORS_MOST = 4         # (struct hakios_board's room)
 BOARD_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True), 'soc': (str, True), 'features': ([str], True)},
@@ -887,7 +889,9 @@ def table_text(socs, boards):
                         f'.cci = {sensor["cci"][0]}, .cci_master = {sensor["cci"][1]}, '
                         f'.sda = {sensor["pins"][0]}, .scl = {sensor["pins"][1]}, .reset = {sensor["reset"]},',
                         f'\t\t\t\t  .mclk = {sensor["mclk"]}, .mclk_pin = {sensor["mclk_pin"]}, .csiphy = {sensor["csiphy"]}, '
-                        f'.focus_motor = {int("focus_motor" in sensor)},',
+                        f'.focus_motor = {int("focus_motor" in sensor)}, '
+                        f'.focus_supply = {c_string(FOCUS_SUPPLY.fullmatch(sensor["focus_supply"])[1] if "focus_supply" in sensor else "")}, '
+                        f'.focus_mv = {FOCUS_SUPPLY.fullmatch(sensor["focus_supply"])[2] if "focus_supply" in sensor else 0},',
                         f'\t\t\t\t  {supplies} }},']
             out += ['\t\t\t},', '\t\t},']
         gpu = board.get('gpu')

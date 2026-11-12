@@ -162,6 +162,7 @@
 			vdig = "ldo1 1000mV";
 			vio = "ldo5 1800mV";
 			focus-motor = "dw9800";
+			focus-supply = "ldoc9 2800mV";  // cam_vaf: the PM8350C's L9
 		};
 
 		sensor@2 {

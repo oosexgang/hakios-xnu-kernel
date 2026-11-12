@@ -139,6 +139,8 @@
 			// vio = "ldo5 1800mV"; // rgltr-min-voltage the set point), or "gpioN MVmV USus", a fixed regulator a
 			//                      // pin switches (its gpio, its voltage, its startup-delay-us); left out: not switched
 			// focus-motor = "dw9800"; // optional: a DW9800 moves the lens (an actuator node with compatible dw9800)
+			// focus-supply = "ldoc9 2800mV"; // optional: its supply, when it is switched (the actuator's
+			//                      // cam_vaf-supply: its RPMh name, and the node's rgltr-min-voltage)
 		// };
 	// };
 

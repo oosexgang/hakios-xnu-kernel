@@ -275,6 +275,8 @@ struct hakios_board {
 			uint8_t mclk, mclk_pin;         /* which of camcc's MCLKs it runs on, and that clock's pin */
 			uint8_t csiphy;                 /* the CSI receiver its lanes go to */
 			uint8_t focus_motor;            /* 1: a DW9800 moves its lens */
+			char focus_supply[8];           /* the motor's supply, by its RPMh name, when it has to be switched on; "": none */
+			uint16_t focus_mv;              /* ... and its voltage */
 			struct hakios_camera_supply {
 				uint8_t kind;           /* HAKIOS_SUPPLY_NONE, _LDO (one of the PMIC's), _GPIO (a pin switches it) */
 				uint8_t ldo;            /* _LDO: which */

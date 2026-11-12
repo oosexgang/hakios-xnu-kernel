@@ -1431,44 +1431,6 @@ show_rail(const char *name, uint32_t *address)
 	}
 }
 
-/* A PMIC peripheral's registers, read through the arbiter's observer (any channel that is that peripheral's). */
-static bool
-pmic_peek(uint16_t id, uint8_t reg, uint8_t *values, unsigned count)
-{
-	for (uint32_t n = 0; n < arb.channels; n++) {
-		uint32_t map = hakios_spmi_channel_map(&arb, n);
-
-		if (map == 0 || SPMI_ID_OF(map) != id) {
-			continue;
-		}
-		for (unsigned i = 0; i < count; i++) {
-			const char *problem;
-
-			lock();
-			problem = hakios_spmi_read(hakios_spmi_observer(&arb, n), (uint8_t)(reg + i), &values[i], 1);
-			unlock();
-			if (problem != NULL) {
-				return false;
-			}
-		}
-		return true;
-	}
-	return false;
-}
-
-static void
-show_smps(const char *what, uint16_t id)
-{
-	uint8_t head[2] = { 0, 0 }, set[4] = { 0, 0, 0, 0 }, status[2] = { 0, 0 };
-
-	if (!pmic_peek(id, 0x04, head, 2) || !pmic_peek(id, 0x40, set, 4) || !pmic_peek(id, 0x08, status, 2)) {
-		say("camera: %s (peripheral %#x): cannot be read\n", what, id);
-		return;
-	}
-	say("camera: %s (peripheral %#x): type %#04x subtype %#04x, status %02x %02x, 0x40-0x43: %02x %02x %02x %02x (%u mV?)\n",
-	    what, id, head[0], head[1], status[0], status[1], set[0], set[1], set[2], set[3], set[1] << 8 | set[0]);
-}
-
 #define SMMU_PHYS               ((unsigned long)hakios_board()->smmu.apps)      /* the SoC file's smmu { } */
 #define SMMU_SCR0               0x000
 #define SMMU_IDR0               0x020
@@ -1536,8 +1498,6 @@ look_around(void)
 	}
 	show_rail("cx.lvl", &cx);
 	show_rail("mx.lvl", &mx);
-	show_smps("PM8350C S2 (VDD_CX)", 0x217);
-	show_smps("PM8350C S10 (VDD_MX)", 0x22f);
 	show_smmu();
 	show_plls();
 }
@@ -2746,16 +2706,16 @@ sensor_write(uint16_t address, uint16_t value, bool sixteen)
  * its vdd too; RPMh's "ldoc9"). The module file's initialisation, as it is: 0x02 = 0x01 (power down),
  * 0x02 = 0x00 and 1 ms, 0x02 = 0x02 (ring control), 0x06 = 0x40 (SAC3), 0x07 = 0x07 (its timing), the
  * position 0x190 and 20 ms, then 0x12c. The position is ten bits, 0x03 (the high two) and 0x04 written
- * together (its registerParam). Those registers only are written. The other three cameras' lenses
- * are fixed. When the motor does not answer, L9 is switched on (and back off at the end) and it is
- * asked again; at the end the lens is let down to 0 and the chip powered down.
+ * together (its registerParam). Those registers only are written. A sensor without focus-motor has a
+ * fixed lens. When the motor does not answer, its supply (the sensor node's focus-supply) is switched
+ * on (and back off at the end) and it is asked again; at the end the lens is let down to 0 and the chip
+ * powered down.
  */
 #define AF_ADDRESS              0x0c
 #define AF_CONTROL              0x02            /* [0] power down, [1] ring control */
 #define AF_POSITION             0x03            /* and 0x04: ten bits */
 #define AF_MODE                 0x06
 #define AF_TIMING               0x07
-#define VAF_MV                  2800
 #define VRM_VOLTAGE             0x0             /* an RPMh VRM resource's registers (rpmh-regulator.c) */
 #define VRM_ENABLE              0x4
 #define VRM_MODE                0x8
@@ -2793,28 +2753,34 @@ af_write(uint8_t reg, uint16_t value)
 	return i2c_transfer(&cci_bus, AF_ADDRESS, out, reg == AF_POSITION ? 3 : 2, NULL, 0);
 }
 
-/* L9C at 2.8 V in high power mode, or given back. True: RPMh has said done. */
+/* The lens motor's supply (the sensor node's focus-supply) on in high power mode, or given back. True: RPMh has said done. */
 static bool
 vaf(bool on)
 {
+	const struct hakios_camera_sensor *wired = &hakios_board()->cameras.sensors[hw_index];
 	uint16_t levels[1];
 	unsigned count;
-	uint32_t base = rpmh_resource("ldoc9", levels, 1, &count), addresses[3], values[3];
+	uint32_t base, addresses[3], values[3];
 	bool done;
 
-	if (base == 0) {
-		say("camera: RPMh has no ldoc9 (the lens motor's supply)\n");
+	if (wired->focus_supply[0] == 0) {
+		say("camera: the board names no supply for the lens motor (focus-supply)\n");
+		return false;
+	}
+	if ((base = rpmh_resource(wired->focus_supply, levels, 1, &count)) == 0) {
+		say("camera: RPMh has no %s (the lens motor's supply)\n", wired->focus_supply);
 		return false;
 	}
 	addresses[0] = base + VRM_VOLTAGE;
-	values[0] = VAF_MV;
+	values[0] = wired->focus_mv;
 	addresses[1] = base + VRM_MODE;
 	values[1] = VRM_MODE_HPM;
 	addresses[2] = base + VRM_ENABLE;
 	values[2] = on;
 	done = on ? rpmh_write(3, addresses, values) : rpmh_write(1, &addresses[2], &values[2]);
 	vaf_voted = on && done;
-	say("camera: RPMh %s L9C (%#x) %s\n", done ? "took" : "DID NOT SAY IT TOOK", base, on ? "on at 2800 mV" : "off");
+	say("camera: RPMh %s %s (%#x) %s, %u mV\n", done ? "took" : "DID NOT SAY IT TOOK", wired->focus_supply, base, on ? "on" : "off",
+	    wired->focus_mv);
 	return done;
 }
 

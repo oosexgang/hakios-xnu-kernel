@@ -638,7 +638,8 @@ class Generate(Sandbox):
         plain = path.read_text()
         wide = ('\t\tsensor@0 {\n\t\t\tname = "wide";\n\t\t\tchip = "S5KHM2SD";\n\t\t\tcci = <0 1>;\n\t\t\tpins = <71 72>;\n'
                 '\t\t\treset = <21>;\n\t\t\tmclk = <1>;\n\t\t\tmclk-pin = <65>;\n\t\t\tcsiphy = <1>;\n'
-                '\t\t\tvana = "gpio106 2800mV 135us";\n\t\t\tvdig = "ldo1 1000mV";\n\t\t\tfocus-motor = "dw9800";\n\t\t};\n')
+                '\t\t\tvana = "gpio106 2800mV 135us";\n\t\t\tvdig = "ldo1 1000mV";\n\t\t\tfocus-motor = "dw9800";\n'
+                '\t\t\tfocus-supply = "ldoc9 2800mV";\n\t\t};\n')
         front = ('\t\tsensor@1 {\n\t\t\tname = "front";\n\t\t\tchip = "OV16A1Q";\n\t\t\tcci = <0 0>;\n\t\t\tpins = <69 70>;\n'
                  '\t\t\treset = <20>;\n\t\t\tmclk = <0>;\n\t\t\tmclk-pin = <64>;\n\t\t\tcsiphy = <0>;\n\t\t\tvana = "ldo3 2800mV";\n\t\t};\n')
         head = '\t\tpmic-pins = <4 5>;\n\t\tpmic-reset = <0x28a>;\n\t\tios-sensor = "wide";\n'
@@ -650,13 +651,14 @@ class Generate(Sandbox):
         table = boards.table_text(*boards.load())
         for line in ('.pmic_sda = 4, .pmic_scl = 5, .pmic_reset = 0x28a, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0,',
                      '{ .name = "wide", .chip = "S5KHM2SD", .cci = 0, .cci_master = 1, .sda = 71, .scl = 72, .reset = 21,',
-                     '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1,',
+                     '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1, .focus_supply = "ldoc9", .focus_mv = 2800,',
                      '.vana = { 2, 0, 2800, 106, 135 }, .vdig = { 1, 1, 1000, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },',
                      '.vana = { 1, 3, 2800, 0, 0 }, .vdig = { 0, 0, 0, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },'):
             self.assertIn(line, table)
         # what a sensor's node may not say, each with the reason
         for wrong, said in ((wide.replace('"S5KHM2SD"', '"IMX766"'), 'chip = \'IMX766\': one of OV02B10'),
                             (wide.replace('"ldo1 1000mV"', '"ldo1 1V"'), "vdig = 'ldo1 1V': not in the form"),
+                            (wide.replace('"ldoc9 2800mV"', '"L9C"'), "focus-supply = 'L9C': not in the form"),
                             (wide.replace('mclk = <1>;', 'mclk = <4>;'), 'mclk and csiphy are numbers'),
                             (wide.replace('cci = <0 1>;', 'cci = <2 1>;'), 'cci is the CCI and its master'),
                             (wide.replace('reset = <21>;', 'reset = <106>;'), 'different pins of the SoC'),    # (the supply's switch)
