@@ -17,8 +17,17 @@ Drawn by the GPU, as CoreAnimation means them to look:
 Four boots of 240–300 s ran with no crash of backboardd. The last one, with every fix below, had no refusal by
 the plug-in before the run's end, except an accounting setter it takes without keeping.
 
-Speed: the GPU works about 50 ms per command buffer on the glass screens (HakiosGPU's five-second lines). That
-gives about 20 frames a second. With the software renderer the lock screen ran at 60, without the glass.
+Speed, measured with `rc.jobs.fps` and `ios/tools/frames.py` (the 0.7 s after each gesture; `logs/113822-run.log`):
+
+| Scene | Frames a second | Within 18 ms | GPU per frame, median / 90% |
+| --- | --- | --- | --- |
+| The lock screen, its clock and glass | 60 | | |
+| The home screen's pages swiped | 51 | 65% | 9.8 / 15.2 ms |
+| Settings' list flung under the glass search field | 57 | 86% | 7.8 / 8.8 ms |
+| An app opening or closing | 12–20 | | up to 0.5 s |
+
+At rest the home screen's frame is 16–19 ms of GPU time, drawn when the clock icon's hand moves (10 a second). A
+week before these were 20 frames a second everywhere and 31–36 ms for the home screen's main pass alone.
 
 ## The pieces
 
@@ -100,19 +109,52 @@ Each item was found on the phone, in this order:
 5. 48 bytes of constants bound at the last 48 of a page, for a range ir3 pads to 64. The driver now loads such a
    range itself, from the processor, instead of refusing the draw.
 
+## Where the time went
+
+What made the frames faster, in the order it was found (each commit has its measurements):
+
+1. **The path renderer** (iOS 27's, not in 16.5): its coverage mask blitted and cleared over whole bands of the
+   screen for every path. `ca_paths.c` keeps a map of where the mask can be non-zero and cuts `path_blit` and
+   `path_clear` to it. The default wallpaper's six stripes are rasterized once
+   (`ios/userland/inject_wallpaper.m`) rather than drawn by the path renderer every frame.
+2. **The driver's per-draw cost**: small bytes in an arena of the command buffer, CoreAnimation's buffers read
+   with `memcpy` from write-combined memory, each thread its own compiler.
+3. **GMEM**: a fetch barrier as turnip's; fetching passes weigh toward GMEM; an attachment the draws do not touch
+   has no bin; memoryless attachments are neither stored nor made anew each frame.
+4. **Specialisation**: while a pipeline's uber shader is specialised for its buffer, CoreAnimation draws with the
+   uber shader itself, 17.7 ms for one full-screen draw. A specialisation took 1.3–6 s on the phone; now about
+   0.3 s (the folded branches taken away early, unread scratch dropped, the front end's NIR kept per module).
+
+To measure: `metal_fps=1` (every two seconds), `metal_fps=timeline` (a heavy frame's passes), `metal_fps=draws`
+(each draw of a sysmem pass timed), `gpu_log=1 touch_lat=1` with `frames.py`. To reproduce a specialisation on
+this machine: `metal_air_dump=1`, `metal/tools/airdump.py`, `sweep -a MODULE.air -k 0=HEX -c ...`
+(`HAKIOS_METAL_PHASES=1` times each phase).
+
 ## What is next
 
-- **Speed.** On the lock screen a command buffer takes about 37 ms of GPU time, measured with `metal_fps=draws`.
-  One full-screen pass, 90 draws in 56 tiles of GMEM, takes 32 ms of it. Its cost is iOS 27's path renderer,
-  which 16.5 did not have:
-  - `path_cubic_*` draws a path's coverage into a float render target (up to 1696 instances a draw);
-  - `path_blit_frag` reads that coverage back by framebuffer fetch and composites it;
-  - `path_clear_frag` resets the target.
-
-  Kept in system memory (`metal_gmem_draws=1000`), the same pass takes 95 ms. There `path_blit` costs 5.2 ms a draw
-  and `path_clear` 1.6 ms, about 12 times per buffer, so GMEM is already worth 3 times. What is left is the fetch
-  barrier, paid per tile per path. `SINGLE_PRIM_MODE` instead of it broke SpringBoard on 16.5. That is the place
-  to measure next, with the probe.
+- **Opening and closing an app.** The rasterized wallpaper is drawn again into its 896x1856 texture, by the path
+  renderer, in a pass of a handful of draws: 293 ms when it went to sysmem.
+- **The small cores.** This kernel's scheduler (Clutch, without SMT) puts the window server's threads on the
+  Cortex-A55s as often as on the A78s; with `cpus=4` (the big cores alone) the home screen's pages ran at 51.5
+  frames a second against 47.8, with a third of the long gaps.
+- **120 Hz.** The panel already runs at 120 Hz: `display_probe=1` counts 2432 lines at 119.926 Hz. The display
+  driver presents at 60 unless told otherwise (`fb_hz`, default 60); 16.5 reached 100–118 frames a second with
+  `fb_hz=120 ca_vbl=1 anim_max=1 touch_poll_us=4000`. What stands in the way here is the presenter's copy of each
+  frame to the panel, 10–12 ms on the processor: enough for 60, not for 8.3 ms.
+- **Compiled stages across boots.** `/private/var` starts empty at every boot of iOS 27 here. The stages a run
+  compiled are taken off the phone over SSH (`ios/tools/metal-cache-pull.sh`) into the next small image, where
+  the plug-in reads them after its own cache (`/redwood/share/hakios-metal-cache`).
+- **Other processes.** Only the window server is shown the device (`metal_procs=NAME,NAME` shows it to others).
+  iconservicesagent draws iOS 26's icons with RenderBox, SwiftUI's renderer, and downsamples them with CoreImage.
+  With `metal_procs=iconservicesagent` every pipeline it asks for now compiles: its custom effects link the visible
+  functions they call (`custom_fn`, through the pipeline's linked functions), and CoreImage's stitched kernels
+  (`ci_asgDownH_affine_nearest` and its kin) build their samplers in a function that returns them. RenderBox
+  accumulates a path's coverage by programmable blending, every edge of the path in one draw; in a sysmem pass
+  those draws are now kept in raster order (`FLUSH_PER_OVERLAP_AND_OVERWRITE`), without which the icons lost rows
+  and had their right edges cut straight. The Settings rows looked at then have their icons, after some 20 s of
+  compiles on the first look. Not yet the default: the stages it compiles are not in the seeded cache, and the whole
+  of it has had one boot.
+  Without the device it draws the home screen's icons on the processor and leaves some of Settings' rows empty.
 - **Tile shaders** stay refused while `supportsTileShaders` is NO, as it is.
 - **Other phones' GPUs.** The driver's tables are the A635's (chip 0x06030500, redwood's Adreno 642L). It
   refuses another chip by name rather than hang it (`hakios_metal_chip_known`). Renoir's Adreno 642
