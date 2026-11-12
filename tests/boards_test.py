@@ -612,11 +612,11 @@ class Generate(Sandbox):
                 'mclk_pin = 65\ncsiphy = 1\nvana = "gpio106 2800mV 135us"\nvdig = "ldo1 1000mV"\nfocus_motor = "dw9800"\n')
         front = ('[[camera.sensors]]\nname = "front"\nchip = "OV16A1Q"\ncci = [0, 0]\npins = [69, 70]\nreset = 20\nmclk = 0\n'
                  'mclk_pin = 64\ncsiphy = 0\nvana = "ldo3 2800mV"\n')
-        camera = '[camera]\npmic_pins = [4, 5]\nios_sensor = "wide"\n'
+        camera = '[camera]\npmic_pins = [4, 5]\npmic_reset = 0x28a\nios_sensor = "wide"\n'
         path.write_text(plain + camera + wide + front)
         self.assertEqual(self.problems(), '')
         table = boards.table_text(*boards.load())
-        for line in ('.pmic_sda = 4, .pmic_scl = 5, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0,',
+        for line in ('.pmic_sda = 4, .pmic_scl = 5, .pmic_reset = 0x28a, .sensor_count = 2,', '.test_sensor = 0, .ios_sensor = 0,',
                      '{ .name = "wide", .chip = "S5KHM2SD", .cci = 0, .cci_master = 1, .sda = 71, .scl = 72, .reset = 21,',
                      '.mclk = 1, .mclk_pin = 65, .csiphy = 1, .focus_motor = 1,',
                      '.vana = { 2, 0, 2800, 106, 135 }, .vdig = { 1, 1, 1000, 0, 0 }, .vio = { 0, 0, 0, 0, 0 } },',
@@ -635,6 +635,8 @@ class Generate(Sandbox):
             self.assertIn(said, self.problems())
         path.write_text(plain + camera.replace('[4, 5]', '[4, 4]') + wide + front)
         self.assertIn('pmic_pins are the PMIC', self.problems())
+        path.write_text(plain + camera.replace('0x28a', '0x203') + wide + front)
+        self.assertIn('pmic_reset is a PMIC\'s GPIO', self.problems())         # (a peripheral, not a GPIO's)
         path.write_text(plain + camera.replace('"wide"', '"tele"') + wide + front)
         self.assertIn("ios_sensor = 'tele': the name of one of its sensors (wide, front)", self.problems())
         path.write_text(plain + camera + wide + front + front.replace('"front"', '"b"') + front.replace('"front"', '"c"') +

@@ -256,6 +256,7 @@ struct hakios_board {
 	/* the cameras as the phone has them wired (board: [camera] and its [[camera.sensors]]) */
 	struct {
 		uint8_t pmic_sda, pmic_scl;     /* the I2C bus of the PMIC whose regulators feed the sensors (a PM8008) */
+		uint16_t pmic_reset;            /* the PMIC GPIO its reset is on: SPMI slave << 8 | the peripheral's high byte */
 		uint8_t sensor_count;           /* 0: the board says nothing of its cameras */
 		uint8_t test_sensor, ios_sensor;        /* which the driver works on by itself (cam=1..4), which for iOS (cam=5) */
 		struct hakios_camera_sensor {

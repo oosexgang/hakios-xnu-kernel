@@ -120,6 +120,7 @@ default_speed = 3
 # that clock's pin, the CSI receiver, and how the module file's power sequence switches its supplies.
 [camera]
 pmic_pins = [4, 5]
+pmic_reset = 0x28a                    # the PM8350C's (SPMI slave 2) GPIO 3
 test_sensor = "macro"
 ios_sensor = "wide"
 

@@ -120,7 +120,7 @@ BOARD_SCHEMA = {
             'speeds_khz': ([int], True), 'speed_levels': ([int], True), 'default_speed': (int, True),
             'alt_model': (str, False), 'alt_bins': ([int], False)},
     'mic': {'codec_reset': (int, True)},
-    'camera': {'pmic_pins': ([int], True), 'sensors': ([CAMERA_SENSOR], True), 'test_sensor': (str, False),
+    'camera': {'pmic_pins': ([int], True), 'pmic_reset': (int, True), 'sensors': ([CAMERA_SENSOR], True), 'test_sensor': (str, False),
                'ios_sensor': (str, False)},
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
@@ -410,6 +410,8 @@ def camera_problems(where, cameras, problems):
     pmic = cameras['pmic_pins']
     if len(pmic) != 2 or pmic[0] == pmic[1] or any(not 0 <= pin <= 255 for pin in pmic):
         problems.add(where, 'pmic_pins are the PMIC\'s bus: SDA then SCL, two different pins of the SoC, 0 to 255')
+    if not 0x100 <= cameras['pmic_reset'] <= 0xfff or (cameras['pmic_reset'] & 0xff) < 0x88:
+        problems.add(where, 'pmic_reset is a PMIC\'s GPIO as SPMI slave << 8 | its peripheral\'s high byte: GPIO n is 0x88 + n - 1')
     if len(sensors) > CAMERA_SENSORS_MOST:
         problems.add(where, f'{len(sensors)} sensors: the driver has room for {CAMERA_SENSORS_MOST}')
     names = [sensor['name'] for sensor in sensors]
@@ -825,6 +827,7 @@ def table_text(socs, boards):
             names = [sensor['name'] for sensor in cameras['sensors']]
             out += ['\t\t.cameras = {',
                     f'\t\t\t.pmic_sda = {cameras["pmic_pins"][0]}, .pmic_scl = {cameras["pmic_pins"][1]}, '
+                    f'.pmic_reset = {cameras["pmic_reset"]:#05x}, '
                     f'.sensor_count = {len(names)},',
                     f'\t\t\t.test_sensor = {names.index(cameras.get("test_sensor", names[0]))}, '
                     f'.ios_sensor = {names.index(cameras.get("ios_sensor", names[0]))},',

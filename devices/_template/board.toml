@@ -108,6 +108,8 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 # side numbers them; Android's device tree has each as a qcom,cam-sensor node (cam-sensorN).
 # [camera]
 # pmic_pins = [4, 5]                # the PM8008's I2C bus: the pins of its qcom,i2c node's pinctrl, SDA then SCL
+# pmic_reset = 0x28a                # the PMIC GPIO its reset is on (its node's reset-gpio: <&pm8350c_gpios 3 ...>),
+#                                   # as SPMI slave << 8 | the GPIO's peripheral's high byte: GPIO n is 0x88 + n - 1
 # test_sensor = "macro"             # optional: the one cam=1 to cam=4 work on (the first, if not said)
 # ios_sensor = "wide"               # optional: the one whose frames iOS gets with cam=5 (the first, if not said)
 #

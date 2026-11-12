@@ -373,12 +373,12 @@ i2c_transfer(struct bus *b, uint8_t address, const uint8_t *out, unsigned out_co
 	return answered;
 }
 
-/* ---- the PMIC arbiter (version 5), for the PM8350C's GPIO 3: as in redwood_torch.c ------------------ */
+/* ---- the PMIC arbiter (version 5), for the PMIC GPIO of the PM8008i's reset: as in redwood_torch.c ------ */
 
 /* Where its blocks are: the SoC file's [spmi] (hakios_board.h). */
 #include "hakios_spmi.h"
 
-#define PGPIO_ID                0x28a   /* the PM8350C (slave 2), GPIO 3's peripheral (0x8800 + 0x100 x 2) */
+#define PGPIO_ID                (hakios_board()->cameras.pmic_reset)    /* the board's [camera]: redwood's PM8350C GPIO 3 */
 #define PGPIO_TYPE              0x04    /* 0x10: a GPIO */
 #define PGPIO_SUBTYPE           0x05
 #define PGPIO_RT_STS            0x10    /* [0] what the pin is at */
@@ -434,11 +434,11 @@ pgpio_put(uint8_t reg, uint8_t value, bool force)
 
 	if ((broken && !force) || !pgpio_writable || pgpio_write == 0 || (reg != PGPIO_MODE_CTL && reg != PGPIO_DIG_VIN_CTL &&
 	    reg != PGPIO_DIG_PULL_CTL && reg != PGPIO_OUT_SOURCE_CTL && reg != PGPIO_EN_CTL)) {
-		give_up("a write to the PM8350C that may not be made");
+		give_up("a write to the PMIC that may not be made");
 		return false;
 	}
 	if (SPMI_ID_OF(hakios_spmi_channel_map(&arb, pgpio_channel)) != PGPIO_ID) {
-		give_up("the arbiter's channel is no longer the PM8350C's GPIO 3");
+		give_up("the arbiter's channel is no longer the PM8008i's reset GPIO");
 		return false;
 	}
 	for (int tries = 0; tries < 3; tries++) {
@@ -450,8 +450,8 @@ pgpio_put(uint8_t reg, uint8_t value, bool force)
 		}
 	}
 	if (problem != NULL || (problem = pgpio_read(reg, &back)) != NULL || back != value) {
-		say("camera: PM8350C GPIO 3 %#04x <- %#04x: %s (reads %#04x)\n", reg, value, problem ? problem : "does not read back", back);
-		give_up("a write to the PM8350C that failed");
+		say("camera: the PM8008i's reset GPIO %#04x <- %#04x: %s (reads %#04x)\n", reg, value, problem ? problem : "does not read back", back);
+		give_up("a write to the PMIC that failed");
 		return false;
 	}
 	return true;
@@ -467,7 +467,7 @@ pgpio_find(void)
 			continue;
 		}
 		owner = hakios_spmi_channel_owner(&arb, n);
-		say("camera: channel %u is the PM8350C's GPIO 3 (%#x); written by system %u%s\n", n, map, owner,
+		say("camera: channel %u is the PM8008i's reset GPIO (%#x); written by system %u%s\n", n, map, owner,
 		    owner == arb.system ? ", which is us" : "");
 		if (!pgpio_found || owner == arb.system) {
 			pgpio_found = true;
@@ -1204,7 +1204,7 @@ power_down(void)
 				all &= pgpio_put(pgpio_which[i], pgpio_found_regs[i], true);
 			}
 		}
-		say("camera: the PM8350C's GPIO 3 %s\n", all ? "back as it was found" : "COULD NOT BE PUT BACK");
+		say("camera: the PM8008i's reset GPIO %s\n", all ? "back as it was found" : "COULD NOT BE PUT BACK");
 		pgpio_changed = false;
 	}
 	if (reset_driven && pins_found) {
@@ -1227,7 +1227,7 @@ pm8008_up(void)
 	uint8_t regs[5], revid[4] = { 0 }, enable = 0;
 
 	if (!pgpio_read_all(regs)) {
-		give_up("the PM8350C's GPIO 3 cannot be read");
+		give_up("the PM8008i's reset GPIO cannot be read");
 		return false;
 	}
 	if (!pgpio_changed) {           /* (as Android left it, which is what the run's end puts back) */
@@ -3968,10 +3968,10 @@ look(void)
 	}
 	if (!pgpio_found || pgpio_read(PGPIO_TYPE, &type) != NULL || pgpio_read(PGPIO_SUBTYPE, &subtype) != NULL ||
 	    pgpio_read(PGPIO_RT_STS, &sts) != NULL || !pgpio_read_all(regs)) {
-		say("camera: the PM8350C's GPIO 3 cannot be read\n");
+		say("camera: the PM8008i's reset GPIO cannot be read\n");
 		return;
 	}
-	say("camera: the PM8350C's GPIO 3 (the PM8008i's reset): type %#04x subtype %#04x, at %u; vin %#04x pull %#04x mode %#04x "
+	say("camera: the PM8008i's reset GPIO: type %#04x subtype %#04x, at %u; vin %#04x pull %#04x mode %#04x "
 	    "source %#04x enable %#04x: %s\n", type, subtype, sts & 1, regs[0], regs[1], regs[2], regs[3], regs[4],
 	    pgpio_active(regs) ? "as Android's pm8008i_active (out of reset)" : "not as Android's pm8008i_active");
 	if (!pm8008_get(PM8008_CHIP, REVID_BASE, revid, 4)) {
@@ -4014,7 +4014,7 @@ camera_thread(__unused void *parameter, __unused wait_result_t result)
 	gcc = ml_io_map(GCC_PHYS, 0x30000);
 	camcc = ml_io_map(CAMCC_PHYS, CAMCC_SIZE);
 	if (!hakios_spmi_map(&arb)) {
-		say("camera: PMIC arbiter version %#x, not 5: the PM8350C's GPIO 3 is left alone\n", arb.version);
+		say("camera: PMIC arbiter version %#x, not 5: the PM8008i's reset GPIO is left alone\n", arb.version);
 		arb.channels = 0;       /* (no channel is looked for, so nothing of a PMIC is read or written) */
 	}
 	say("camera: cam=%u: the %s camera%s\n", level, hw->name, level == 5 ? ": its frames for iOS" :
