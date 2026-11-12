@@ -1,9 +1,10 @@
-# A test phone wired unlike the real ones: its keys on the third PMIC of the bus, volume up on its ninth
-# GPIO, behind an arbiter that is elsewhere and that knows this system as its third
-# (tests/soc/soc-test.toml). A value of the first phones that is still written into a driver shows here
-# as a key that is never read, or a write that goes nowhere.
+# A test phone wired unlike the real ones, on a chip of its own (tests/soc/soc-test.toml): its keys on the
+# third PMIC of the bus, volume up on its ninth GPIO, behind an arbiter that is elsewhere and that knows
+# this system as its third; its flashlight, vibration motor, speaker amplifiers and touch controller on
+# other pins, buses and serial engines than the first phones'. A value of the first phones that is still
+# written into a driver shows here as a part that never answers, or a write that goes nowhere.
 name = "phone-keys"
-description = "Test phone, keys on another PMIC"
+description = "Test phone, its parts wired otherwise"
 soc = "soc-test"
 
 features = [
