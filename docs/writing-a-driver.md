@@ -39,7 +39,7 @@ hardware has a test of its own in `tests/`.
 | `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `[rpmh]` |
 | `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `redwood_rpmh_lock()`. | `[rpmh]` |
 | `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `[ipc]` |
-| `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors. | `[ipc]` |
+| `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors, and whether the mailbox it gives is one a message fits in. | `[ipc]` |
 | `hakios_smp2p.h` | An SMP2P item's shape, and a word of it by name: how two processors tell each other their state. | — |
 | `hakios_glink_queue.h` | The two queues GLINK runs over in that memory: the arithmetic of their marks, the messages' commands and how long each message is. | — |
 | `hakios_mdt.h` | A processor's firmware image as Qualcomm splits it: the header file checked, its segments, which are loaded and whether each lies in the processor's memory. | The board's `[adsp]`, `[wifi]` (the memory) |

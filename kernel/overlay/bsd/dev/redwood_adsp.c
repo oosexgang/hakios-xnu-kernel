@@ -500,8 +500,7 @@ mailbox_open(void)
 	}
 	box = get(&aoss, "our mailbox", QMP_OUR_BOX);
 	size = get(&aoss, "our mailbox's size", QMP_OUR_BOX_SIZE);
-	/* (both are the always-on processor's: inside the block without adding them, which could wrap) */
-	if (size < QMP_MESSAGE + 4 || box < 0x3c || box > aoss.size || size > aoss.size - box || (box & 3)) {
+	if (!qmp_box_usable(box, size, aoss.size)) {
 		printf("adsp: %u: our mailbox is not where a message fits\n", step);
 		return false;
 	}

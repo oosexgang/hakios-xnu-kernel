@@ -16,6 +16,9 @@
 #ifndef HAKIOS_IPC_H
 #define HAKIOS_IPC_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
 /* the mailbox's words */
 #define QMP_MAGIC               0x00
 #define QMP_MAGIC_VALUE         0x4d41494c      /* "LIAM" */
@@ -36,6 +39,18 @@
 #define QMP_UP                  0x0000ffffu
 #define QMP_DOWN                0xffff0000u
 #define QMP_MESSAGE             64              /* what Linux sends, whatever the text's length */
+#define QMP_BOXES_FROM          0x3c            /* the mailboxes lie after the words above */
+
+/*
+ * Is our mailbox, as the always-on processor says where it is and how big (QMP_OUR_BOX, QMP_OUR_BOX_SIZE),
+ * one a message fits in, after the words above and inside the block of `block' bytes? Both numbers are the
+ * other processor's: they are not added, which could wrap.
+ */
+static inline bool
+qmp_box_usable(uint32_t box, uint32_t size, uint64_t block)
+{
+	return size >= QMP_MESSAGE + 4 && box >= QMP_BOXES_FROM && !(box & 3) && box <= block && size <= block - box;
+}
 
 /* the doorbells' registers */
 #define IPCC_SEND               0x0c            /* write client << 16 | signal: ring it */
