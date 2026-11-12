@@ -3,7 +3,7 @@
 #
 # usage: common/build.sh <device> [userland/build.sh variables...]
 #   common/build.sh qemu-virt
-#   common/build.sh redwood GL=1
+#   common/build.sh DEVICE GL=1
 #
 #   1. kernel   xnu/apply.sh, xnu-deps/setup.sh, xnu-build.sh   -- only with theos + iPhoneOS16.5.sdk,
 #                                                                  otherwise prebuilt/ is used

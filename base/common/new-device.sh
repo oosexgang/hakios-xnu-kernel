@@ -52,7 +52,7 @@ fi
 
 cat > "$PLATC" <<EOF
 /*
- * $CODE: paste into xnuloader/loader.c next to platform_redwood and add &platform_$CODE to platforms[].
+ * $CODE: paste into xnuloader/loader.c next to the other platform_* entries and add &platform_$CODE to platforms[].
  * Every value is explained in docs/PORTING.md ("The loader").
  */
 static const struct platform platform_$CODE = {

@@ -32,7 +32,7 @@
 #               the small one the firmware starts on (the loader then watches from the first core, and a
 #               kernel that hangs still gets its log out); cpufreq=1 sets that core to its top speed;
 #               touchscreen=1 turns the touch screen on.
-#   XL_RAMDISK  the image sent with the kernel: the small one that is mounted on /redwood
+#   XL_RAMDISK  the image sent with the kernel: the small one that is mounted on /hakios
 #               (default userland/root.apfs; "none" sends none). Without a system image in the
 #               phone's RAM it is the root itself (e.g. XL_RAMDISK=userland/hello).
 # One phone, several working copies: a run holds a lock, and `stop` and `reboot` from another working

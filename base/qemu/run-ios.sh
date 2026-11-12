@@ -83,7 +83,7 @@ if [ -n "$QEMU_NET" ] && [ "$QEMU_NET" != 0 ]; then
 	NET=(-netdev user,id=net0 -device virtio-net-device,netdev=net0)
 	CMDLINE="virtio_net=1 $CMDLINE"
 fi
-# the sound device (QEMU 8.2 or newer has one for this machine): the kernel's sink for /dev/redwood-audio
+# the sound device (QEMU 8.2 or newer has one for this machine): the kernel's sink for /dev/hakios-audio
 SOUND=()
 if qemu-system-aarch64 -device help 2>/dev/null | grep -q '"virtio-sound-device"'; then
 	case "${AUDIO:-none}" in

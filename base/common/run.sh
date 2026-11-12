@@ -3,7 +3,7 @@
 #
 # usage: common/run.sh <device> [seconds]
 #   common/run.sh qemu-virt          QEMU window, 20 minutes (mouse = finger, H = home, L = lock)
-#   common/run.sh redwood 900        the phone over USB: loader in RAM, system image in RAM, 15 minutes
+#   common/run.sh DEVICE 900         the phone over USB: loader in RAM, system image in RAM, 15 minutes
 #
 # Nothing is flashed: on a phone everything lives in RAM and `./xl reboot` (or a power-key reset)
 # brings back Android. The session's log is printed (QEMU) or saved in logs/ (phones).

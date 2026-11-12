@@ -33,7 +33,7 @@ __pycache__/
 !/userland/build.sh
 !/userland/*.py
 !/userland/rc.*
-!/userland/com.redwood.*.plist
+!/userland/com.hakios.*.plist
 !/userland/src/
 !/userland/libmini/
 !/userland/var/

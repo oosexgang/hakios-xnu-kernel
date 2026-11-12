@@ -1,5 +1,5 @@
 /**
-  XNU loader for redwood, stage 0: diagnostics only.
+  XNU loader, stage 0: diagnostics only.
 
   Runs when BDS finds nothing to boot. Collects what the real loader will need
   (exception level, CPU feature registers, framebuffer, memory map, payload),

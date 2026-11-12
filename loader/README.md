@@ -95,7 +95,7 @@ reads the battery through them.
 ## Where it runs
 
 Under a UEFI started with `fastboot boot`: [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
-on the phones (`base/uefi/` has the redwood port and the two changes the UEFI needs), stock firmware
+on the phones (`base/uefi/` has the two changes the UEFI needs, and a phone's package its own port), stock firmware
 under QEMU.
 
 ## What it writes to the phone's storage
