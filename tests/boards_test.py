@@ -544,6 +544,39 @@ class Generate(Sandbox):
         self.assertIn('.rpmh = { .cmd_db = 0x80860000, .cmd_db_size = 0x20000, .rsc = 0x18220000, .tcs_offset = 0xd00 },',
                       boards.table_text(*boards.load()))
 
+    def test_the_partition_a_write_may_reach_is_the_boards(self):
+        path = self.dir / 'devices/phone/board.toml'
+        plain = path.read_text()
+        own = ('[storage]\ntype_guid = "7c3457ef-0000-11aa-aa11-00306543ecac"\nunique_guid = "FD6854AD-24AA-4FC3-94FE-290116858D68"\n'
+               'first_lba = 25374720\nlast_lba = 30617594\nwrite_first = 2042368\n')
+        path.write_text(plain + own)
+        self.assertEqual(self.problems(), '')
+        socs, found = boards.load()
+        platforms = boards.platforms_text(socs, found)
+        # the GUIDs as the loader's efi_guid has them: three numbers, then the eight bytes in the order they are printed
+        self.assertIn('.own = { .type = { 0x7c3457ef, 0x0000, 0x11aa, { 0xaa, 0x11, 0x00, 0x30, 0x65, 0x43, 0xec, 0xac } }, '
+                      '.unique = { 0xfd6854ad, 0x24aa, 0x4fc3, { 0x94, 0xfe, 0x29, 0x01, 0x16, 0x85, 0x8d, 0x68 } },', platforms)
+        self.assertIn('.first_lba = 25374720ULL, .last_lba = 30617594ULL, .write_first = 2042368ULL }', platforms)
+        # ... and the kernel has where it begins, how long it is and from where it may write: the same file
+        self.assertIn('.storage = { .first_lba = 25374720ULL, .blocks = 5242875ULL, .write_first = 2042368ULL },',
+                      boards.table_text(socs, found))
+        for right, wrong, said in (
+                ('type_guid = "7c3457ef-0000-11aa-aa11-00306543ecac"', 'type_guid = "7c3457ef000011aaaa1100306543ecac"',
+                 'type_guid is a GUID as a partition table prints it'),
+                ('unique_guid = "FD6854AD-24AA-4FC3-94FE-290116858D68"', 'unique_guid = "FD6854AD-24AA-4FC3-94FE-290116858D6G"',
+                 'unique_guid is a GUID as a partition table prints it'),
+                ('last_lba = 30617594', 'last_lba = 25374720', 'the first is not 0 and before the last'),
+                ('first_lba = 25374720', 'first_lba = 0', 'the first is not 0 and before the last'),
+                ('write_first = 2042368', 'write_first = 0', 'write_first is a block of the partition'),
+                ('write_first = 2042368', 'write_first = 5242875', 'write_first is a block of the partition')):
+            path.write_text(plain + own.replace(right, wrong))
+            self.assertIn(said, self.problems(), wrong)
+        # a board without the section has no such partition: the loader's and the kernel's rows say nothing of one
+        path.write_text(plain)
+        socs, found = boards.load()
+        self.assertNotIn('.own', boards.platforms_text(socs, found))
+        self.assertNotIn('.storage', boards.table_text(socs, found))
+
     def test_the_speaker_amplifiers_need_their_wiring(self):
         self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[smmu]\napps = 0x15000000\n[thermal]')
         self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')

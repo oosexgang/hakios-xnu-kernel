@@ -39,6 +39,15 @@ radio_model = 0
 dsp_memory = 0x9ae00000
 dsp_memory_size = 0x01900000
 
+# The port's own partition on its storage, "darwin": the one a write may reach, from the block past what the
+# build puts there. Its GPT entry as the phone's partition table prints it.
+[storage]
+type_guid = "7c3457ef-0000-11aa-aa11-00306543ecac"
+unique_guid = "fd6854ad-24aa-4fc3-94fe-290116858d68"
+first_lba = 25374720
+last_lba = 30617594
+write_first = 2042368
+
 # Its touch controller: on serial engine 13 (SPI), with that engine's clocks; reset, interrupt, the pin that
 # switches its analog supply on and the two straps that say whose controller is fitted.
 [touch]

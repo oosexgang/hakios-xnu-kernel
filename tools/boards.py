@@ -110,6 +110,8 @@ BOARD_SCHEMA = {
     'screen': {'statusbar_leading_shift': (int, True)},
     'wifi': {'radio_model': (int, True), 'early_pool_mb': (int, False), 'dsp_memory': (int, False),
              'dsp_memory_size': (int, False)},
+    'storage': {'type_guid': (str, True), 'unique_guid': (str, True), 'first_lba': (U64, True), 'last_lba': (U64, True),
+                'write_first': (U64, True)},
     'loader': {'fb_base': (U64, False), 'log_other_cpu': (bool, False), 'uefi_charger': (bool, False)},
     'boot': {'fastboot_product': (str, True), 'cpus': (int, True), 'bootargs': ([str], True)},
 }
@@ -386,6 +388,18 @@ def load(problems=None):
                 problems.add(f'{rel} [haptic]', 'sda, scl, reset and interrupt are four different pins of the SoC, 0 to 255')
             if not 0 <= motor['f0_calibration'] <= 0x3f:
                 problems.add(f'{rel} [haptic]', 'f0_calibration is the six bits of the chip\'s trim register')
+        written = data.get('storage')
+        if written is not None:
+            for key in ('type_guid', 'unique_guid'):
+                if not GUID.fullmatch(written[key]):
+                    problems.add(f'{rel} [storage]', f'{key} is a GUID as a partition table prints it: 8-4-4-4-12 hexadecimal digits')
+            # (LBAs are the unit's blocks and so are the partition's: 4096 bytes on the storage this is for)
+            if not 0 < written['first_lba'] < written['last_lba']:
+                problems.add(f'{rel} [storage]', 'first_lba and last_lba are where the partition begins and ends: the first is not 0 and before the last')
+            elif not 0 < written['write_first'] <= written['last_lba'] - written['first_lba']:
+                problems.add(f'{rel} [storage]', 'write_first is a block of the partition, past what the build puts at its start: not 0, and inside it')
+            if 'loader' not in data:
+                problems.add(f'{rel} [storage]', 'the loader serves the writes: the board needs [loader] as well')
         touch = data.get('touch')
         if touch is not None:
             wires = list(touch['bus_pins']) + [touch['interrupt'], touch['reset']] + list(touch.get('vendor_pins', [])) + \
@@ -507,6 +521,16 @@ def load(problems=None):
     return socs, boards
 
 
+GUID = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+
+
+def c_guid(text):
+    """A GUID as a partition table prints it, as the initialiser of the loader's efi_guid: three numbers, then eight bytes."""
+    a, b, c, d, e = text.lower().split('-')
+    rest = ', '.join(f'0x{byte}' for byte in re.findall('..', d + e))
+    return f'{{ 0x{a}, 0x{b}, 0x{c}, {{ {rest} }} }}'
+
+
 def c_string(text):
     return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
@@ -615,6 +639,10 @@ def table_text(socs, boards):
         if motor:
             out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
                        f'.interrupt = {motor["interrupt"]}, .f0_calibration = {motor["f0_calibration"]:#04x} }},')
+        own = board.get('storage')
+        if own:
+            out.append(f'\t\t.storage = {{ .first_lba = {own["first_lba"]}ULL, .blocks = {own["last_lba"] - own["first_lba"] + 1}ULL, '
+                       f'.write_first = {own["write_first"]}ULL }},')
         touch = board.get('touch')
         if touch:
             pins, clocks = touch['bus_pins'], touch['clocks']
@@ -726,6 +754,11 @@ def platforms_text(socs, boards):
                    f'.timeout_scale = {platform.get("timeout_scale", 0)}',
                    f'.small_cores = {platform.get("small_cores", 0):#x}',
                    f'.fb_base = {loader.get("fb_base", 0):#010x}']
+        own = board.get('storage')
+        if own:
+            fields.append(f'.own = {{ .type = {c_guid(own["type_guid"])}, .unique = {c_guid(own["unique_guid"])},\n'
+                          f'\t\t.first_lba = {own["first_lba"]}ULL, .last_lba = {own["last_lba"]}ULL, '
+                          f'.write_first = {own["write_first"]}ULL }}')
         out += [f'/* {board["description"]} ({board["soc"]}) */',
                 f'static const struct platform {symbol} = {{']
         out += [f'\t{field},' for field in fields]

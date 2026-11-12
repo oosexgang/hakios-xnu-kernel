@@ -201,6 +201,16 @@ struct hakios_board {
 		uint8_t interrupt[2];           /* each one's interrupt pin (only looked at) */
 	} speaker;
 
+	/*
+	 * The one partition of the phone's storage a write may reach, the port's own (board: [storage]):
+	 * where it begins on the first logical unit, how many blocks of 4096 it has, and the first of them
+	 * a write may reach. blocks 0: the board names none, and nothing is ever written. (The loader has
+	 * the same from the same file, and the partition's GUIDs besides.)
+	 */
+	struct {
+		uint64_t first_lba, blocks, write_first;
+	} storage;
+
 	/* the flashlight's part on the PMIC (board: [torch]); a peripheral as in [buttons] */
 	struct {
 		uint16_t flash;                 /* the flash LED module */

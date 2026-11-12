@@ -235,6 +235,8 @@ table(void)
 		    b->touch.vendor_pin[1] >= 0), "%s: the Goodix driver without its analog supply's pin and the two straps", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_TOUCH_FT3658U) || b->touch.analog_supply != NULL,
 		    "%s: the FT3658U's driver without its analog supply", b->name);
+		CHECK(b->storage.blocks == 0 || (b->storage.first_lba != 0 && b->storage.write_first != 0 &&
+		    b->storage.write_first < b->storage.blocks), "%s: a partition to write into that begins at 0, or from a block outside it", b->name);
 		CHECK(!(b->features & HAKIOS_HAS_SPEAKER_AW88261) || (b->speaker.sda != b->speaker.scl &&
 		    b->speaker.address[0] != 0 && b->speaker.address[1] != 0 && b->speaker.address[0] != b->speaker.address[1]),
 		    "%s: the speaker amplifiers' driver without their bus and addresses", b->name);

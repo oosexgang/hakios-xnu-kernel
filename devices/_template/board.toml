@@ -52,6 +52,18 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # on the slave its PMIC is (qcom,pm8350@1: 1)
 # volume_up_name = "GPIO6 of the PM8350"
 
+# The port's own partition on the phone's storage: the one partition the kernel may write (ufs_write=1),
+# and only from the block past what the build puts at its start. Leave the section out and nothing is
+# ever written; reading the storage needs none of this. The partition is named "darwin"; these are its
+# GPT entry as you made it (sgdisk -i N /dev/block/sda, or parted's "unit s print").
+# [storage]
+# type_guid = "7c3457ef-0000-11aa-aa11-00306543ecac"        # "Partition GUID code"
+# unique_guid = "fd6854ad-24aa-4fc3-94fe-290116858d68"      # "Partition unique GUID"
+# first_lba = 25374720              # "First sector", in the storage's blocks of 4096 bytes
+# last_lba = 30617594               # "Last sector"
+# write_first = 2042368             # the partition's first block that is not the build's: past the iOS volume and
+#                                   # what follows it (tools/darwin-write.py prints where they end)
+
 # The touch controller's wiring, for a feature "touch-...": the SPI serial engine it is on, that engine's
 # clocks in the clock controller, its pins and its supplies. The controller's node in the device tree is
 # under its bus's node (qupv3_seN_spi); the numbers below are one phone's.
