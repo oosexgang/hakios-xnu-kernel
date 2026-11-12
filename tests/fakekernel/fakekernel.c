@@ -411,6 +411,13 @@ msleep(void *channel __unused, struct fake_lock *lock, int priority __unused, co
 
 void wakeup(void *channel __unused) {}
 
+wait_result_t
+lck_mtx_sleep(struct fake_lock *lock, int flags __unused, event_t event, int interruptible __unused)
+{
+	msleep(event, lock, 0, NULL, NULL);
+	return THREAD_AWAKENED;
+}
+
 void
 IOSleep(unsigned int milliseconds)
 {

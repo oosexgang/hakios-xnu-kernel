@@ -61,6 +61,9 @@ struct fake_lock { pthread_mutex_t mutex; };
 /* sleeping on a channel with a mutex given up meanwhile, and its wake-up: a short sleep here, for whoever asks looks again */
 #define PRIBIO                          16
 int msleep(void *channel, struct fake_lock *lock, int priority, const char *why, void *time);
+/* the same, as kern/locks.h names it (every caller looks at its condition again when it returns) */
+#define LCK_SLEEP_DEFAULT               0
+wait_result_t lck_mtx_sleep(struct fake_lock *lock, int flags, event_t event, int interruptible);
 void wakeup(void *channel);
 
 /*
