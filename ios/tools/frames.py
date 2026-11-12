@@ -11,6 +11,10 @@ home screen's pages, Settings' list). For each phase, over the AFTER_S seconds a
   within 18 ms       the share of frame-to-frame times a 60 Hz panel shows as one refresh
   gaps over 50 ms    the hitches one sees
   GPU                the window server's command buffers (tl: M), median and 90th percentile
+  battery            with battery=1 (tl: b): the charge shown, the current into the battery, whether on a charger
+  heat               with the kernel's thermal lines (tl: h, thermal=1, the default): the hottest sensor, and the
+                     least each group of cores was allowed by the SoC's own limits hardware (below what was asked
+                     for: throttled by heat) and the GPU's clock, over the phase
 
 The time between gestures is left out: with nothing moving the window server draws when the clock ticks, and that is
 no frame rate."""
@@ -41,7 +45,7 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     after = float(sys.argv[2]) * 1e6 if len(sys.argv) > 2 else 0.7e6
-    panel, touches, buffers, swaps = set(), set(), set(), set()
+    panel, touches, buffers, swaps, heat, battery = set(), set(), set(), set(), set(), set()
     for line in lines_of(sys.argv[1]):
         i = line.find('tl: ')
         if i < 0:
@@ -62,6 +66,14 @@ def main():
         m = re.match(r's \d+ at (\d+)', t)
         if m:
             swaps.add(int(m.group(1)))
+            continue
+        m = re.match(r'h at (\d+) hottest (-?\d+) sensor \d+ limit (\S+) asked (\S+) gpu (\d+)', t)
+        if m:
+            heat.add((int(m.group(1)), int(m.group(2)), m.group(3), m.group(4), int(m.group(5))))
+            continue
+        m = re.match(r'b at (\d+) shown (-?\d+) mv (-?\d+) ma (-?\d+) c (-?\d+) external (\d)', t)
+        if m:
+            battery.add(tuple(int(x) for x in m.groups()))
     if not panel or not touches:
         sys.exit('frames.py: no tl: v or tl: i lines (boot-args gpu_log=1 touch_lat=1?)')
     panel, touches, buffers = sorted(panel), sorted(touches), sorted(buffers)
@@ -92,6 +104,24 @@ def main():
         if gpu:
             line += f"; GPU {st.median(gpu) / 1e3:.1f} ms, 90% {q(gpu, 0.9) / 1e3:.1f}"
         print(line)
+        hot = [h for h in heat if ph[0] - 1e6 <= h[0] <= ph[-1] + after + 1e6]
+        if hot:
+            least = asked = None
+            for h in hot:
+                if h[2] == '-':
+                    continue
+                lim = [int(x) for x in h[2].split(',')]
+                least = lim if least is None else [min(a, b) for a, b in zip(least, lim)]
+                asked = [int(x) for x in h[3].split(',')]
+            gpus = [h[4] for h in hot if h[4] > 0]
+            print(f"  {'':27s} heat: up to {max(h[1] for h in hot) / 10:.1f} C"
+                  + (f"; cores allowed at least {'/'.join(map(str, least))} MHz of {'/'.join(map(str, asked))}" if least else "")
+                  + (f"; GPU {min(gpus)}-{max(gpus)} MHz" if gpus else ""))
+        bat = sorted(b for b in battery if ph[0] - 5e6 <= b[0] <= ph[-1] + after + 5e6)
+        if bat:
+            print(f"  {'':27s} battery: {bat[0][1] / 10:.1f}% to {bat[-1][1] / 10:.1f}%, "
+                  f"{min(b[3] for b in bat)} to {max(b[3] for b in bat)} mA in (less than 0: out), "
+                  f"{'on a charger' if any(b[5] for b in bat) else 'not on a charger'}, {max(b[4] for b in bat)} C")
 
 
 if __name__ == '__main__':
