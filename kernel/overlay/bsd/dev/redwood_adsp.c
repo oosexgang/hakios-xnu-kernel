@@ -2977,7 +2977,7 @@ whole_thread(__unused void *parameter, __unused wait_result_t result)
 	thread_terminate(current_thread());
 }
 
-/* Called while the system starts (bsd/dev/redwood_input.c), after the Wi-Fi's start has been set going. */
+/* Called while the system starts (bsd/dev/hakios_drivers.c), after the Wi-Fi's start has been set going. */
 void
 redwood_adsp_init(void)
 {

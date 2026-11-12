@@ -1377,7 +1377,7 @@ redwood_goodix_init(void)
 	if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) {
 		return;
 	}
-	/* (called only on a board that lists "touch-goodix": bsd/dev/redwood_input.c) */
+	/* (called only on a board that lists "touch-goodix": bsd/dev/hakios_drivers.c) */
 	if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
 		printf("touch: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
 		return;

@@ -693,7 +693,7 @@ renoir_fts_init(void)
     uint32_t enabled = 0;
     thread_t thread;
     if (!PE_parse_boot_argn("touchscreen", &enabled, sizeof(enabled)) || !enabled) { return; }
-    /* (called only on a board that lists "touch-ft3658u": bsd/dev/redwood_input.c) */
+    /* (called only on a board that lists "touch-ft3658u": bsd/dev/hakios_drivers.c) */
     if (hakios_board()->pins.tlmm == 0 || hakios_board()->clocks.gcc == 0 || hakios_board()->rpmh.cmd_db == 0) {
         printf("fts: disabled: the SoC file does not say where the pins, the clock controller and RPMh are ([pins], [clocks], [rpmh])\n");
         return;
