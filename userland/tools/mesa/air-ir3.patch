@@ -7,7 +7,7 @@ ir3 the port's Mesa uses, with the same options, and that a regression in ir3
 shows against AIR as it does against the others.
 
 --chip-id takes the Adreno's chip id instead of the old gpu-id, because the
-redwood's Adreno 7c+ Gen 3 (A635) has no gpu-id of its own: freedreno knows it
+SM7325's Adreno 7c+ Gen 3 (A635) has no gpu-id of its own: freedreno knows it
 only as chip_id 0x007506030500.
 
 It also declares air_run here, next to ir3_compiler: air_run draws with a translated shader and

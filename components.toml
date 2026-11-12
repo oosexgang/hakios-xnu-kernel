@@ -105,7 +105,7 @@ what = "the UEFI the loader runs under, ported per phone"
 source = "https://github.com/Project-Silicium/Mu-Silicium"
 pins = ["e51cd877e31c8fbb322032dc4cb6715e83d25ad3"]
 pinned_in = "base/uefi/BASE"
-used_for = "UEFI (redwood port)"
+used_for = "UEFI ports (base/uefi; a phone's platform is in its device package)"
 licence = "BSD-2-Clause-Patent"
 
 [[component]]
