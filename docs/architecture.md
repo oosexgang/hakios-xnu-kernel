@@ -132,8 +132,9 @@ More: [kernel/README.md](../kernel/README.md), [kernel/patches/README.md](../ker
 
 ## The loader
 
-`loader/loader.c` is one file: UEFI glue, the payload format ("XNUP": kernel + images + boot
-arguments), the device tree it builds for XNU, the USB link. It needs nothing of EDK2 to build.
+The loader is one compilation unit, `loader/loader.c`, made of parts by topic in `loader/src/`: UEFI
+glue, the payload format ("XNUP": kernel + images + boot arguments), the device tree it builds for
+XNU, the kernel's memory, the USB link, the phone's storage. It needs nothing of EDK2 to build.
 Its knowledge of machines is `platforms.h`, which `loader/build.sh` generates from the device packages
 that are present. No phone is named in its code: what differs between boards, down to whether the battery
 is read through the firmware's Qualcomm charger protocols (`uefi_charger`), is in the board file's

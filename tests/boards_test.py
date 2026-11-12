@@ -1113,7 +1113,7 @@ class Repository(unittest.TestCase):
         self.assertEqual(list(problems), [])
 
     def test_the_loader_has_its_fallback(self):
-        # loader.c names platform_qemu_virt: the machine whose display matches no board
+        # the loader names platform_qemu_virt: the machine whose display matches no board
         self.assertIn('static const struct platform platform_qemu_virt = {', boards.platforms_text(*boards.load()))
 
 

@@ -39,7 +39,7 @@ BOARDS=$WORK/boards
 # the loader with the generated platforms: it compiles without a warning and links (clang and lld, as
 # loader/build.sh; left out where they are not installed)
 if command -v clang > /dev/null && command -v lld-link > /dev/null; then
-	echo "== loader (loader/loader.c with the generated platforms.h)"
+	echo "== loader (loader/loader.c and its parts in loader/src, with the generated platforms.h)"
 	if clang --target=aarch64-unknown-windows -ffreestanding -fno-builtin -fno-stack-protector -fshort-wchar \
 		-mgeneral-regs-only -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I"$BOARDS" -c "$HERE/../loader/loader.c" -o "$WORK/loader.obj" &&
 	    lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /base:0xA1000000 /Brepro \

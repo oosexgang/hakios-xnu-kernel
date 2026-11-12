@@ -87,7 +87,7 @@ epss = 0x18591000                   # cpufreq-hw: one block of registers a group
 epss_domain_size = 0x1000
 domain_cores = [4, 3, 1]            # the cores of each group, in the cores' order (qcom,freq-domain): small, big, prime
 
-# What the loader tells the kernel of the machine (loader/loader.c, struct platform).
+# What the loader tells the kernel of the machine (loader/src/platform.h, struct platform).
 [platform]
 io_base = 0x00400000                # one window over the SoC's peripherals; never 0
 io_size = 0x3FC00000

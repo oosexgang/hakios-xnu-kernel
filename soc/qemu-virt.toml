@@ -2,7 +2,7 @@
 name = "qemu-virt"
 description = "QEMU virt (aarch64)"
 
-# What the loader tells the kernel of the machine (loader/loader.c, struct platform): QEMU's memory map.
+# What the loader tells the kernel of the machine (loader/src/platform.h, struct platform): QEMU's memory map.
 [platform]
 io_base = 0x08000000
 io_size = 0x08000000

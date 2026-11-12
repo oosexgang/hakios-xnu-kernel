@@ -86,6 +86,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   well: the shared memory (`hakios_smem.h`), SMP2P's items (`hakios_smp2p.h`), the arithmetic of
   GLINK's queues (`hakios_glink_queue.h`), the mailbox's and the doorbells' registers
   (`hakios_ipc.h`). Each that has logic has a test of its own.
+- **The loader is parts by topic.** `loader/loader.c` was one file of 5100 lines; it is the entry
+  point and a list of 24 parts in `loader/src/` now (the device tree's writer, the kernel's memory,
+  the USB commands, the storage, ...), still one compilation unit. The built `loader.efi` is the
+  same byte for byte.
 - **One list starts every driver.** The starts were spread over the touch queue's file, the audio
   device's and `bsd_init()`; they are `bsd/dev/hakios_drivers.c` now, in the same order, and a new
   driver is one line there. A test runs the list on every test board.

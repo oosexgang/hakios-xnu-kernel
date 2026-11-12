@@ -20,7 +20,7 @@ without the kernel toolchain.
 | A driver, or anything else HakiOS adds to the kernel | `kernel/overlay/` | — |
 | A change to one of Apple's files | An assembled tree, then `kernel/export.sh` | Never edit `kernel/patches/*.patch` by hand: `kernel/verify.sh` rejects it. |
 | A boot argument | A comment naming it as `name=…` beside its read | `make docs` |
-| The loader | `loader/loader.c` | `loader/build.sh`; boards come from the board files, not from code. |
+| The loader | `loader/loader.c`, `loader/src/` | `loader/build.sh`; boards come from the board files, not from code. |
 | A library inserted into an iOS process | `ios/userland/` | — |
 
 [docs/architecture.md](docs/architecture.md) explains the split; [kernel/README.md](kernel/README.md)
