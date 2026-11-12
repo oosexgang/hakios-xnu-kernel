@@ -855,8 +855,10 @@ class Container:
         struct.pack_into('<QQ', nx, 88, self.next_oid, XID + 1)
         struct.pack_into('<IIQQIIIIII', nx, 104, self.desc_blocks, self.data_blocks, self.desc_base, self.data_base,
                          2, self.eph_blocks, 0, 2, 0, self.eph_blocks)
+        # how many volumes the container may hold: one per 512 MiB as newfs_apfs has it, but never fewer than
+        # it holds -- a reader lists only that many (a small image of two volumes had its second unseen)
         struct.pack_into('<QQQII', nx, 152, self.sm_oid, self.nx_omap_bno, self.reaper_oid, 0,
-                         min(100, div_up(bc * BS, 512 * 1024 * 1024)))
+                         max(len(self.vols), min(100, div_up(bc * BS, 512 * 1024 * 1024))))
         for i, v in enumerate(self.vols):
             struct.pack_into('<Q', nx, 184 + 8 * i, v.oid)
         min_blocks = main_fq_node_limit(bc) if bc * BS < 128 * 1024 * 1024 else 8
