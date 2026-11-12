@@ -122,7 +122,7 @@ id = "mesa-26"
 what = "the same for the arm64e iOS 26 user space"
 source = "https://archive.mesa3d.org/"
 pins = ["26.2.5", "794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5"]
-pinned_in = "base/tools/mk-mesa26.sh"
+pinned_in = "userland/tools/mk-mesa26.sh"
 used_for = "user space graphics (iOS 26/27)"
 licence = "MIT"
 

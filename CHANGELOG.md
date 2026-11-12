@@ -237,7 +237,7 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 | Lists of phones inside drivers and the loader | Device packages on the `devices` branch, `soc/` |
 | `redwood_*` and `renoir_fts*` files, functions and `/dev` nodes, `devices/*.toml` | `hakios_*`, `board.dts` and `soc/*.dtsi` |
 | `/redwood`, `libredwood*.dylib` (the small image's mount point and libraries) | `/hakios`, `libhakios*.dylib` |
-| The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile, Mesa patch) | `redwood/legacy/` of the `devices` branch |
+| The first phone's own files in `base/` (its xnu-8796 kernel, UEFI platform, device profile) | `redwood/legacy/` of the `devices` branch |
 
 The full table is in [docs/migrating.md](docs/migrating.md). [docs/architecture.md](docs/architecture.md)
 says how the parts fit together, and [docs/README.md](docs/README.md) is the index of the documentation.

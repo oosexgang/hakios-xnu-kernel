@@ -8,7 +8,7 @@
 > are `../kernel/deps/` (`xnuloader` and `xnu-deps` here are links to them), devices are described in
 > `../devices/`. What was the phone's own -- the old xnu-8796 kernel (`xnu/`), its UEFI platform
 > (`uefi/files/Platforms/Xiaomi/redwoodPkg`, `uefi/files/Resources/Configs/redwood.toml`), its device
-> profile (`common/devices/redwood.conf`) and its Mesa 26 patch (`tools/mesa26/redwood.patch`) -- is in
+> profile (`common/devices/redwood.conf`) -- is in
 > the phone's package on the `devices` branch, `redwood/legacy/`, at the same paths: copy it back here
 > (`cp -R redwood/legacy/. base/`) to build this generation. What is still only here: the rest of the UEFI
 > port (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
