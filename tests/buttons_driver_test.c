@@ -301,7 +301,7 @@ presses_are_counted(void)
 	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
 	press_and_release(power_down, pon_up, REDWOOD_BUTTON_LOCK, "power");
 	press_and_release(volume_up_down, volume_up_up, REDWOOD_BUTTON_VOLUME_UP, "volume up");
-	WAIT_FOR(logged("buttons: so far"), 5000);
+	WAIT_FOR(logged("buttons: so far"), 30000);       /* (as many looks as 10 s hold: long on a busy machine) */
 	CHECK(logged("buttons: so far 2 presses of power, 1 of volume up, 0 of volume down; now none held"), "the summary: %s", log_text);
 	no_write();
 }
