@@ -97,7 +97,7 @@ scenarios() {
 		timeout 120 $runner "$binary" "$scenario" || failed=1
 	done
 }
-for test in loader_test loader_window_test loader_download_test loader_dsu_test loader_own_partition_test board_test drivers_list_test touch_goodix_wiring_test touch_fts_wiring_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test qrtr_frame_test mdt_test ipc_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test scmi_perf_test audio_device_test sparse_driver_test ufs_driver_test ufs_whitelist_test input_queue_test guard_test example_led_test; do
+for test in loader_test loader_window_test loader_download_test loader_dsu_test loader_own_partition_test board_test drivers_list_test touch_goodix_wiring_test touch_fts_wiring_test spmi_test cmd_db_test rpmh_test tlmm_test i2c_gpio_test smem_test glink_queue_test qrtr_frame_test mdt_test ipc_test backlight_driver_test thermal_driver_test cpufreq_driver_test ddr_driver_test buttons_driver_test torch_driver_test battery_driver_test haptic_driver_test speaker_driver_test scmi_perf_test audio_device_test station_test sparse_driver_test ufs_driver_test ufs_whitelist_test input_queue_test guard_test example_led_test; do
 	source=$HERE/$test.c
 	[ -f "$source" ] || source=$EXAMPLES/$test.c
 	echo "== $test (host)"
