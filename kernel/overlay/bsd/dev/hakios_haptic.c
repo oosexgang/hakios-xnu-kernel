@@ -87,15 +87,7 @@ say(const char *format, ...)
 #include "hakios_mmio.h"
 #include "hakios_time.h"
 
-static void
-wait_ms(uint32_t ms)
-{
-	if (leaving) {
-		spin_us(ms * 1000);
-	} else {
-		delay_for_interval(ms, NSEC_PER_MSEC);
-	}
-}
+#define wait_ms(ms)             hakios_wait_ms((ms), leaving)   /* (spun on the way out) */
 
 /* ---- pins ------------------------------------------------------------------------------------------ */
 

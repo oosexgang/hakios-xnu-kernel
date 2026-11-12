@@ -4,6 +4,7 @@
  *   sleep_us(), sleep_ms()     wait and let others run: from a driver's own thread only
  *   spin_us()                  wait without sleeping: also with interrupts off, and on a run's way
  *                              out when the other cores are stopped. For microseconds, not more.
+ *   hakios_wait_ms()           milliseconds, slept -- or spun, on a run's way out (spin: true)
  *   now_us()                   microseconds since the kernel's clock began
  *
  * A wait in a bring-up sequence is part of the part's data sheet: say in a comment where the
@@ -14,6 +15,7 @@
 
 #include <kern/clock.h>
 #include <mach/mach_types.h>
+#include <stdbool.h>
 
 static inline void
 sleep_us(uint32_t us)
@@ -35,6 +37,16 @@ spin_us(uint32_t us)
 	nanoseconds_to_absolutetime((uint64_t)us * NSEC_PER_USEC, &until);
 	until += mach_absolute_time();
 	while (mach_absolute_time() < until) {
+	}
+}
+
+static inline void
+hakios_wait_ms(uint32_t ms, bool spin)
+{
+	if (spin) {
+		spin_us(ms * 1000);
+	} else {
+		sleep_ms(ms);
 	}
 }
 
