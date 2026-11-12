@@ -34,7 +34,9 @@ struct dsi_model {
 	unsigned errors;                /* something done out of the protocol */
 	char error[160];
 	unsigned accesses;
+	unsigned writes;                /* writes into the controller's registers */
 	bool cmd_mode_during_send;
+	bool to_be_emptied, reset_asked;        /* the FIFO after a command: reset before the next */
 } m;
 
 struct clock_model {
@@ -69,6 +71,20 @@ model_trigger(void)
 	if ((m.dma_ctrl & (1u << 28)) == 0 || (m.dma_ctrl & (3u << 30)) != 0) {
 		model_error("triggered without embedded mode, or broadcast");
 	}
+	if (m.dma_ctrl & (1u << 26)) {
+		model_error("triggered in low power mode: a panel takes its brightness at high speed");
+	}
+	/* a command goes between two frames: after one's end (video), not while one is on its way (command) */
+	if ((m.ctrl & 2) && !(m.int_status & 0x10000)) {
+		model_error("triggered in the middle of a frame (video mode)");
+	}
+	if (!(m.ctrl & 2) && m.busy_reads != 0) {
+		model_error("triggered while a frame is on its way to the panel (command mode)");
+	}
+	if (m.to_be_emptied) {
+		model_error("the FIFO was not emptied after the command before");
+	}
+	m.to_be_emptied = true;
 	if (m.fifo_n == 0 || (m.fifo_n & 1) != 0 || m.length == 0 || m.length > m.fifo_n * 4 || (m.length & 3) != 0) {
 		model_error("FIFO words and length do not agree");
 	}
@@ -146,6 +162,7 @@ hakios_test_wr(vm_offset_t a, uint32_t v)
 
 	if (a >= DSI_BASE && a < DSI_BASE + 0x400) {
 		m.accesses++;
+		m.writes++;
 		switch (a - DSI_BASE) {
 		case 0x004:
 			m.ctrl = v;
@@ -182,7 +199,9 @@ hakios_test_wr(vm_offset_t a, uint32_t v)
 		case 0x1ec:
 			if (v == 0) {
 				m.fifo_n = 0;
+				m.to_be_emptied = m.to_be_emptied && !m.reset_asked;
 			}
+			m.reset_asked = v == 1;
 			return;
 		default:
 			model_error("write to a DSI register the driver has no business with");
@@ -293,6 +312,73 @@ command_panel(void)
 	CHECK(m.errors == 0, "%s", m.error);
 	hakios_backlight_quiesce();
 	CHECK(last_sent() == 0x133, "left at the init level for the loader: %u", last_sent());
+}
+
+/* what the firmware left in the controller's setup for commands is put aside for a command and put back */
+static void
+setup_put_back(void)
+{
+	const uint32_t left = (3u << 30) | (1u << 26) | 0x55;   /* broadcast to both controllers, low power, and more */
+
+	phone("phone-cmd", false);
+	m.dma_ctrl = left;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	WAIT_FOR(m.sent_n >= 1, 1000);
+	set("level", 900);
+	WAIT_FOR(last_sent() == bl_level_to_raw(900, 1, 2047), 3000);
+	settle();
+	CHECK(last_sent() == bl_level_to_raw(900, 1, 2047) && m.sent_n >= 2, "commands were sent: %u, the last %u", m.sent_n, last_sent());
+	CHECK(m.errors == 0, "each to this controller alone, at high speed: %s", m.error);
+	CHECK(m.dma_ctrl == left, "and the setup is as the firmware left it: %#x", m.dma_ctrl);
+}
+
+/* a controller without the command FIFO (before 2.2), and one the firmware did not leave running: not touched */
+static void
+controller_not_usable(void)
+{
+	phone("phone-cmd", false);
+	m.version = 0x10030000;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	usleep(300000);
+	CHECK(logged("not a DSI controller of 2.2 or later"), "an old controller is said to be one: %s", log_text);
+	CHECK(m.sent_n == 0 && m.writes == 0 && m.errors == 0, "and nothing is written into it: %u commands, %u writes", m.sent_n, m.writes);
+	set("level", 1000);
+	usleep(300000);
+	CHECK(m.sent_n == 0 && m.writes == 0, "nor later, when a level is asked for");
+}
+
+static void
+controller_off(void)
+{
+	phone("phone-cmd", false);
+	m.ctrl &= ~1u;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	usleep(300000);
+	CHECK(logged("the controller is off (the firmware did not leave the panel lit through it)"), "said: %s", log_text);
+	CHECK(m.sent_n == 0 && m.writes == 0 && m.errors == 0, "nothing is written into it: %u commands, %u writes", m.sent_n, m.writes);
+}
+
+/* a board file that says command mode on a phone whose controller runs a video panel: the controller is believed */
+static void
+panel_of_the_other_mode(void)
+{
+	uint32_t ctrl0;
+
+	phone("phone-cmd", true);
+	ctrl0 = m.ctrl;
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	CHECK(logged("the controller runs a video-mode panel, the profile says command mode: going by the controller"), "said: %s", log_text);
+	WAIT_FOR(m.sent_n >= 1, 1000);
+	set("level", 1000);
+	WAIT_FOR(last_sent() == 2047, 3000);
+	settle();
+	CHECK(last_sent() == 2047, "the level is sent: %u", last_sent());
+	CHECK(m.errors == 0, "as to a video panel, between two frames: %s", m.error);
+	CHECK(m.cmd_mode_during_send && m.ctrl == ctrl0, "with the command engine on for the command only: %#x", m.ctrl);
 }
 
 static void
@@ -469,7 +555,8 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "command_panel", command_panel }, { "video_panel", video_panel }, { "look_only", look_only },
+		{ "command_panel", command_panel }, { "setup_put_back", setup_put_back }, { "controller_not_usable", controller_not_usable },
+		{ "controller_off", controller_off }, { "panel_of_the_other_mode", panel_of_the_other_mode }, { "video_panel", video_panel }, { "look_only", look_only },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
 		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
