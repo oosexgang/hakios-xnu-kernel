@@ -243,6 +243,19 @@ class Repository(unittest.TestCase):
                       re.search(r'ml_io_map(_wcomb)?\(\s*0x', line)]
         self.assertEqual(named, [])
 
+    def test_every_barrier_tells_the_compiler_it_touches_memory(self):
+        # a volatile asm without a "memory" clobber is not ordered against the loads and stores around it: a
+        # barrier or a cache instruction without one may end up on the wrong side of what it was to separate
+        barrier = re.compile(r'__asm__\s+(?:__volatile__|volatile)\s*\(\s*"\s*(dsb|dmb|isb|dc\s)[^;]*?\)\s*;', re.S)
+        wrong = []
+        for path in sorted(list((ROOT / 'kernel/overlay').rglob('*.[ch]')) + list((ROOT / 'kernel/overlay').rglob('*.cpp')) +
+                           list((ROOT / 'loader').rglob('*.[ch]'))):
+            text = path.read_text(errors='replace')
+            for found in barrier.finditer(text):
+                if '"memory"' not in found.group(0):
+                    wrong.append(f'{path.relative_to(ROOT)}:{text.count(chr(10), 0, found.start()) + 1}: {found.group(0)[:60]}')
+        self.assertEqual(wrong, [], 'barriers without a "memory" clobber')
+
     def test_the_pictures_are_pictures_and_nothing_else(self):
         pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
         self.assertIn('banner.svg', [path.name for path in pictures])
