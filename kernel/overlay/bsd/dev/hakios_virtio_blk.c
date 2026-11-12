@@ -39,10 +39,11 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
+#include "hakios_board.h"
 #include "hakios_kernel.h"
 
-#define VIRTIO_BUS              0x0a000000UL    /* QEMU virt: 32 transports of 0x200 bytes */
-#define VIRTIO_SLOTS            32
+#define VIRTIO_BUS              ((vm_offset_t)hakios_board()->virtio.mmio)       /* the SoC file's virtio { } */
+#define VIRTIO_SLOTS            ((int)hakios_board()->virtio.transports)
 #define VIRTIO_SLOT_SIZE        0x200
 
 #define VIRTIO_MAGIC            0x000           /* "virt" */
@@ -484,6 +485,10 @@ hakios_virtio_blk_init(void)
 	int slot;
 
 	if (!PE_parse_boot_argn("virtio_blk", &enabled, sizeof(enabled)) || !enabled) {
+		return;
+	}
+	if (!hakios_board_has(HAKIOS_HAS_VIRTIO)) {
+		printf("virtio-blk: disabled: this board's board.dts lists no \"virtio\"\n");
 		return;
 	}
 	bus = ml_io_map(VIRTIO_BUS, VIRTIO_SLOTS * VIRTIO_SLOT_SIZE);

@@ -28,8 +28,8 @@
 #include "hakios_kernel.h"
 #include "hakios_board.h"
 
-#define VIRTIO_BUS              0x0a000000UL    /* QEMU virt: 32 transports of 0x200 bytes */
-#define VIRTIO_SLOTS            32
+#define VIRTIO_BUS              ((vm_offset_t)hakios_board()->virtio.mmio)       /* the SoC file's virtio { } */
+#define VIRTIO_SLOTS            ((int)hakios_board()->virtio.transports)
 #define VIRTIO_SLOT_SIZE        0x200
 
 #define VIRTIO_MAGIC            0x000           /* "virt" */

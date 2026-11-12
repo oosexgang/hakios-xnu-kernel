@@ -90,6 +90,7 @@ SOC_SCHEMA = {
             'smem_lock': (int, True)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
     'scmi_perf': {'shmem': (int, True), 'mailbox': (int, True), 'doorbell': (int, True)},
+    'virtio': {'mmio': (int, True), 'transports': (int, True)},
     'cpufreq': {'epss': (int, True), 'epss_domain_size': (int, True), 'domain_cores': ([int], True)},
 }
 # a camera sensor's supply: a regulator of the sensors' PMIC at a set point, or one that a pin of the SoC switches
@@ -144,7 +145,7 @@ KEY_WITH_UNDERSCORE = re.compile(r'(?<![\w.])(' + '|'.join(sorted(
     {key for schema in (SOC_SCHEMA, BOARD_SCHEMA) for section, keys in schema.items() for key in list(keys) + [section]
      if '_' in key} | {key for key in CAMERA_SENSOR if '_' in key}, key=len, reverse=True)) + r')(?![\w(=])')
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
+FEATURE_NEEDS = {'virtio': ('virtio',), 'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
                  'camera-sm7325': ('spmi', 'pins', 'clocks', 'rpmh', 'smmu', 'camera'),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh'),
@@ -767,6 +768,9 @@ def table_text(socs, boards):
             ]
         else:
             out.append(f'\t\t.backlight = {{ .type = {kind} }},')
+        virtio = soc.get('virtio')
+        if virtio:
+            out.append(f'\t\t.virtio = {{ .mmio = {virtio["mmio"]:#010x}, .transports = {virtio["transports"]} }},')
         scmi = soc.get('scmi_perf')
         if scmi:
             out.append(f'\t\t.scmi_perf = {{ .shmem = {scmi["shmem"]:#010x}, .mailbox = {scmi["mailbox"]:#010x}, '

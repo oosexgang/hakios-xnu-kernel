@@ -148,6 +148,11 @@
 	};
 
 	// Optional SCMI performance channel for the cpufreq-scmi feature.
+	virtio {
+		mmio = <0x0a000000>;            // for "virtio" (an emulator): the first virtio,mmio node's reg
+		transports = <32>;              // how many of those nodes follow it, 0x200 bytes apart
+	};
+
 	scmi-perf {
 		shmem = <0>;                    // shared-memory channel's physical address
 		mailbox = <0>;                  // mailbox's physical base

@@ -292,6 +292,12 @@ struct hakios_board {
 		uint8_t domain_cores[HAKIOS_CPU_GROUPS]; /* how many cores each group has, in the cores' order; 0: no more */
 	} cpufreq;
 
+	/* an emulator's virtio devices on its MMIO transports (soc: virtio { }) */
+	struct {
+		uint32_t mmio;                  /* the first transport; the others follow, 0x200 bytes apart */
+		uint32_t transports;
+	} virtio;
+
 	/* CPU performance mailbox (soc: scmi-perf { }). */
 	struct {
 		uint32_t shmem, mailbox, doorbell;

@@ -20,4 +20,10 @@
 		// it gets this many times longer.
 		timeout-scale = <20>;
 	};
+
+	// Its virtio devices (network, tablet and keyboard, disk, sound), on MMIO transports.
+	virtio {
+		mmio = <0x0a000000>;            // virtio_mmio@a000000: the first of them
+		transports = <32>;              // ... 0x200 bytes each
+	};
 };

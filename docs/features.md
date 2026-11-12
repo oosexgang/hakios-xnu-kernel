@@ -26,7 +26,7 @@ the two the same. What each key means is in `devices/_template/soc.dtsi` and
 | `mic-wcd938x` | `pins { }`; `lpass { }` | `mic { }`: `codec-reset` | `mic=N with adsp=1` |
 | `display-scan` | `display { }`: `intf1`; `clocks { }`: `gcc-disp-ahb-cbcr`, `dispcc`, `dispcc-mdss-gdscr`, `dispcc-mdss-ahb-cbcr` | nothing | `fb_scan=1, the default` |
 | `gpu-a660` | `adreno { }`; `clocks { }`: `gcc-disp-ahb-cbcr`; `rpmh { }` | `gpu { }`: `model`, `chip-id`, `firmware`, `gmem-kb`, `primitive-fifo`, `hang-cycles`, `speed-fuse`, `gaming-fuse`, `highest-bank-bit`, `gcc-debug-gpucc`, `speeds-khz`, `speed-levels`, `default-speed` | `gpu=1` |
-| `virtio` | nothing | nothing | `virtio_net=1, virtio_input=1` |
+| `virtio` | `virtio { }` | nothing | `virtio_net=1, virtio_input=1` |
 | `cpufreq-scmi` | `scmi-perf { }` | nothing | `scmi_perf=1` |
 
 The brightness (`backlight { }`), the thermal floors (`thermal { }`) and the partition that may be
