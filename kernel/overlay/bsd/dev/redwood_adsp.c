@@ -1777,25 +1777,27 @@ glink_pump(void)
 	char name[33];
 
 	while (glink.up && !glink.broken) {
-		uint32_t waiting = glink_waiting(), length = sizeof(message);
+		uint32_t waiting = glink_waiting(), length;
+		uint64_t whole = sizeof(message);       /* (64 bits: the counts are the DSP's, and 32-bit sums of them wrap) */
 
 		if (waiting < sizeof(message)) {
 			return;
 		}
 		glink_peek(&message, 0, sizeof(message));
 		if (message.command == GLINK_OPEN) {
-			length += message.param2;
+			whole += message.param2;
 		} else if (message.command == GLINK_INTENT) {
-			length += 8 * message.param2;
+			whole += 8ull * message.param2;
 		} else if (message.command == GLINK_DATA || message.command == GLINK_DATA_MORE) {
 			if (waiting < 16) {
 				return;
 			}
 			glink_peek(words, 8, 8);
-			length = 16 + words[0];
+			whole = 16ull + words[0];
 		}
-		length = (length + 7) & ~7u;
-		if (length > glink.theirs_size - 8) {
+		whole = (whole + 7) & ~7ull;
+		length = whole > UINT32_MAX ? UINT32_MAX : (uint32_t)whole;
+		if (whole > glink.theirs_size - 8) {
 			printf("adsp: glink: A MESSAGE OF %u BYTES (%s %u %#x): not believed, and nothing more is read\n", length,
 			    glink_name(message.command), message.param1, message.param2);
 			glink.broken = true;
