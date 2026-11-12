@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 #ifdef HAKIOS_METAL_MESA
 // Mesa's headers carry their own C++ guards (and templates behind them: no extern "C" around these) and are not clean
@@ -49,11 +50,15 @@ bool argumentBufferLayout(const void*, size_t, uint32_t, std::vector<std::pair<u
 
 namespace {
 
-std::mutex gCompilerLock;   // ir3 keeps state in the compiler object; one compilation at a time
-
-// one compiler for the chip, as the kernel names it: Mesa's table resolves 0x06030500 to the Adreno 7c+ Gen 3 row
-ir3_compiler* theCompiler() {
-    static ir3_compiler* compiler = [] {
+// A compiler for the chip, as the kernel names it (Mesa's table resolves 0x06030500 to the Adreno 7c+ Gen 3 row), one for
+// each thread that compiles: ir3 keeps state in the compiler object (compileStage turns its preamble off and on again),
+// and with one for the process and a lock around every compilation the window server's thread waited for whatever the
+// specialising thread had begun -- 1 to 2.5 s an uber shader variant on the phone, 140 of them behind Settings, and a
+// buffer took up to 5 s from made to committed (logs/064041-run.log). The front end keeps nothing between calls. What
+// one thread compiles is what the same compilation alone makes: sweep -j compares them word for word.
+struct ThreadCompiler {
+    ir3_compiler* compiler = nullptr;
+    ThreadCompiler() {
         fd_dev_id id{};
         id.gpu_id = 0;
         id.chip_id = a6xx::kChipId;
@@ -63,11 +68,19 @@ ir3_compiler* theCompiler() {
         ir3_compiler_options options{};
         options.bindless_fb_read_descriptor = -1;
         // the GLSL type cache, which ir3 uses for the driver UBOs' types (get_driver_ubo_type: a module's constant table
-        // is read through one); held for the life of the process, as the compiler is
+        // is read through one); a reference for each compiler, given back with it
         glsl_type_singleton_init_or_ref();
-        return ir3_compiler_create(nullptr, &id, fd_dev_info_raw(&id), &options);
-    }();
-    return compiler;
+        compiler = ir3_compiler_create(nullptr, &id, fd_dev_info_raw(&id), &options);
+    }
+    ~ThreadCompiler() {
+        if (compiler != nullptr) ir3_compiler_destroy(compiler);
+        glsl_type_singleton_decref();
+    }
+};
+
+ir3_compiler* theCompiler() {
+    thread_local ThreadCompiler mine;   // (made at a thread's first compilation, gone with the thread)
+    return mine.compiler;
 }
 
 bool refuse(std::string* why, const std::string& text) {
@@ -1068,7 +1081,6 @@ const char* className(uint8_t element) { return element == kElemFloat ? "floats"
 bool hasCompiler() { return theCompiler() != nullptr; }
 
 std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants) {
-    std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
@@ -1218,7 +1230,8 @@ void stageCacheSave(const std::string& path, const CompiledStage& s) {
     w.u32(s.writesMemory ? 1 : 0);
     w.str(s.name);
     w.str(s.listing);
-    const std::string tmp = path + ".tmp";
+    // (a name of this thread's own: two threads may compile the same stage at once, and each renames whole files)
+    const std::string tmp = path + "." + std::to_string(std::hash<std::thread::id>()(std::this_thread::get_id())) + ".tmp";
     FILE* f = fopen(tmp.c_str(), "wb");
     if (f == nullptr) return;
     const bool written = fwrite(w.out.data(), 1, w.out.size(), f) == w.out.size();
@@ -1277,7 +1290,6 @@ std::unique_ptr<CompiledStage> stageCacheLoad(const std::string& path) {
 
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants, uint32_t iboBase,
                                            const KnownBuffer* known) {
-    std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
         refuse(why, "ir3 has no compiler for chip 0x06030500");
         return nullptr;
@@ -1552,10 +1564,9 @@ std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage> vs, 
 }
 
 bool argumentBufferLayout(const void* bitcode, size_t size, uint32_t set, std::vector<std::pair<uint32_t, uint32_t>>* members, std::string* why) {
-    // under the compilers' lock as well: the front end and theCompiler() are the same ones compileAir uses, and Resident
-    // Evil 4 asks for encoders on one thread while it compiles on others -- unlocked, the same function's layout came
-    // back with 23 members, then 12, its set numbers garbage, and the encoders built from it wrote nothing
-    std::lock_guard<std::mutex> g(gCompilerLock);
+    // (Resident Evil 4 asks for encoders on one thread while it compiles on others: with one compiler for the process and
+    // no lock around this, the same function's layout came back with 23 members, then 12, its set numbers garbage, and
+    // the encoders built from it wrote nothing; each thread has its own compiler now)
     // the interface alone: a body the front end cannot translate yet does not keep a set's layout from being known
     Translation t;
     t.mem = ralloc_context(nullptr);

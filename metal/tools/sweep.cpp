@@ -20,11 +20,15 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "hakios-metal/compiler.hpp"
@@ -104,13 +108,65 @@ std::string causeOf(const std::string& why, const std::string& name) {
 }
 }  // namespace
 
+// what one function compiles to, in this process: its words, empty when it was refused
+std::vector<uint32_t> wordsOf(bool kernel, const uint8_t* bc, uint64_t len) {
+    std::string why;
+    if (kernel) {
+        auto k = compileAir(bc, len, &why, gConstants);
+        return k != nullptr ? k->words : std::vector<uint32_t>();
+    }
+    auto st = compileStage(bc, len, &why, gConstants);
+    return st != nullptr ? st->words : std::vector<uint32_t>();
+}
+
+// -j N: the functions that compiled, compiled again in this process, one after another and then N threads at a time,
+// and the words compared: each thread has a compiler of its own and no lock is held, so what the threads make must be
+// what one compilation alone makes, word for word
+struct Compiled {
+    std::string name;
+    bool kernel;
+    const uint8_t* bc;
+    uint64_t len;
+};
+int threadsCompare(const std::vector<Compiled>& fns, unsigned threads) {
+    using clock = std::chrono::steady_clock;
+    std::vector<std::vector<uint32_t>> alone(fns.size()), together(fns.size());
+    const auto t0 = clock::now();
+    for (size_t i = 0; i < fns.size(); i++) alone[i] = wordsOf(fns[i].kernel, fns[i].bc, fns[i].len);
+    const auto t1 = clock::now();
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> pool;
+    for (unsigned t = 0; t < threads; t++) {
+        pool.emplace_back([&] {
+            for (size_t i; (i = next++) < fns.size();) together[i] = wordsOf(fns[i].kernel, fns[i].bc, fns[i].len);
+        });
+    }
+    for (auto& th : pool) th.join();
+    const auto t2 = clock::now();
+    unsigned differ = 0;
+    for (size_t i = 0; i < fns.size(); i++) {
+        if (alone[i] != together[i]) {
+            if (differ++ < 10) std::printf("sweep: -j: %s DIFFERS: %zu words alone, %zu among the threads\n", fns[i].name.c_str(), alone[i].size(), together[i].size());
+        }
+    }
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    std::printf("sweep: -j %u: %zu functions, %.0f ms one after another, %.0f ms %u at a time; %u differ\n", threads, fns.size(), ms(t0, t1), ms(t1, t2), threads,
+                differ);
+    return differ == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     bool verbose = false;
+    unsigned threads = 0;
+    std::vector<Compiled> compiled;
+    std::deque<std::vector<uint8_t>> kept;
     std::string only;
     std::vector<std::string> files;
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-v") == 0) {
             verbose = true;
+        } else if (std::strcmp(argv[i], "-j") == 0 && i + 1 < argc) {
+            threads = unsigned(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
             only = argv[++i];
         } else if (std::strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
@@ -126,7 +182,7 @@ int main(int argc, char** argv) {
         }
     }
     if (files.empty()) {
-        std::fprintf(stderr, "usage: sweep [-v] LIBRARY.metallib...\n");
+        std::fprintf(stderr, "usage: sweep [-v] [-j THREADS] LIBRARY.metallib...\n");
         return 2;
     }
     if (!hasCompiler()) {
@@ -139,7 +195,9 @@ int main(int argc, char** argv) {
     std::map<std::string, std::string> example;
     for (const std::string& path : files) {
         std::ifstream in(path, std::ios::binary);
-        std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // (kept to the end: -j compiles from it again)
+        kept.emplace_back((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const std::vector<uint8_t>& data = kept.back();
         MetalLibrary lib;
         if (data.empty() || !lib.parse(data.data(), data.size())) {
             std::printf("sweep: %s: not read as a metallib: %s\n", path.c_str(), data.empty() ? "empty or missing" : lib.why().c_str());
@@ -184,6 +242,7 @@ int main(int argc, char** argv) {
             if (ok) {
                 taken[t]++;
                 hereTaken[t]++;
+                if (threads != 0) compiled.push_back(Compiled{f.name, t == 2, bc, len});
             } else {
                 const std::string c = std::string(typeName[t]) + ": " + causeOf(why, f.name);
                 if (causes[c]++ == 0) example[c] = f.name;
@@ -198,5 +257,5 @@ int main(int argc, char** argv) {
     for (const auto& [c, n] : causes) sorted.push_back({n, c});
     std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     for (const auto& [n, c] : sorted) std::printf("sweep: %5u x %s  (e.g. %s)\n", n, c.c_str(), example[c].c_str());
-    return 0;
+    return threads != 0 ? threadsCompare(compiled, threads) : 0;
 }
