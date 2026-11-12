@@ -1037,6 +1037,14 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                   f'# memory = {dsp["memory"]:#010x}',
                   f'# memory_size = {dsp["memory_size"]:#010x}',
                   '']
+    amplifiers = board.get('speaker', {})
+    if 'sound_pins' in amplifiers:
+        lines += ['# The speaker\'s amplifiers, for the feature "speaker-aw88261": the sound\'s four pins are from the tree',
+                  '# (bit clock, frame sync, data in, data out); the bus, the addresses, the interrupts and the pins\'',
+                  '# function are yours to fill in (devices/_template/board.toml says where each is).',
+                  '# [speaker]',
+                  f'# sound_pins = {amplifiers["sound_pins"]}',
+                  '']
     codec = board.get('mic', {})
     if 'codec_reset' in codec:
         lines += ['# The microphones\' codec, for the feature "mic-wcd938x": its reset pin is from the tree.',

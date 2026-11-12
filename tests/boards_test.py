@@ -795,6 +795,34 @@ class Generate(Sandbox):
         self.assertIn('# [wifi]\n# radio_model = 0\n# dsp_memory = 0x9ae00000\n# dsp_memory_size = 0x01900000\n# pins = [84, 85, 86]\n', text)
         self.assertEqual(self.problems(), '')
 
+    def test_the_sounds_pins_are_found_in_a_tree(self):
+        # the port's four pin states in order -- bit clock, word select, data 0, data 1 -- and data 1 the line out
+        source = '''/ { soc { tlmm {
+                mi2s0_sck: sck { mux { pins = "gpio97"; function = "mi2s0_sck"; }; };
+                mi2s0_ws: ws { mux { pins = "gpio100"; }; };
+                mi2s0_sd0: sd0 { mux { pins = "gpio98"; }; };
+                mi2s0_sd1: sd1 { mux { pins = "gpio99"; }; }; };
+            dai_mi2s0 { qcom,msm-mi2s-rx-lines = <2>; qcom,msm-mi2s-tx-lines = <1>;
+                pinctrl-0 = <&mi2s0_sck &mi2s0_ws &mi2s0_sd0 &mi2s0_sd1>; }; }; };'''
+        soc, board, notes = devicetree.from_dts(source)
+        self.assertEqual(board['speaker'], {'sound_pins': [97, 100, 98, 99]})
+        # the other way round, and compiled: phandles
+        soc, board, notes = devicetree.from_dts('''/ { a { phandle = <0x10>; pins = "gpio5"; }; b { phandle = <0x11>; pins = "gpio6"; };
+            c { phandle = <0x12>; pins = "gpio7"; }; d { phandle = <0x13>; pins = "gpio8"; };
+            dai { qcom,msm-mi2s-rx-lines = <0x01>; qcom,msm-mi2s-tx-lines = <0x02>; pinctrl-0 = <0x10 0x11 0x12 0x13>; }; };''')
+        self.assertEqual(board['speaker'], {'sound_pins': [5, 6, 8, 7]})
+        # an overlay whose pin states are in the tree it is laid on: nothing
+        soc, board, notes = devicetree.from_dts('''/ { fragment@55 { __overlay__ { qcom,msm-mi2s-rx-lines = <0x02>;
+            qcom,msm-mi2s-tx-lines = <0x01>; pinctrl-0 = <0xffffffff 0xffffffff 0xffffffff 0xffffffff>; }; }; };''')
+        self.assertNotIn('speaker', board)
+        # a board started from the tree has them, in a section still to be completed
+        dts = self.dir / 'sound.dts'
+        dts.write_text(source)
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone9', 'sm0001', dts)
+        self.assertIn('# [speaker]\n# sound_pins = [97, 100, 98, 99]\n', (self.dir / 'devices/phone9/board.toml').read_text())
+        self.assertEqual(self.problems(), '')
+
     def test_the_codecs_reset_is_found_in_a_tree(self):
         # as a vendor's overlay has it, compiled and dumped again: the codec names a node by its phandle, that
         # node's active state names the pin

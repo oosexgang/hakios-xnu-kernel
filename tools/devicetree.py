@@ -107,6 +107,16 @@ def referred(tree, value):
     return next((node for node in tree.walk() if cells(node.props.get('phandle')) == numbers[:1]), None)
 
 
+def referred_all(tree, value):
+    """Every node a list of references points at, in order (None for one that is not in the tree): <&a &b> in a
+    source, <phandle phandle> once compiled."""
+    labels = re.findall(r'&([\w,.+-]+)', value or '')
+    if labels:
+        return [next((node for node in tree.walk() if label in node.labels), None) for label in labels]
+    return [next((node for node in tree.walk() if cells(node.props.get('phandle')) == [number]), None)
+            for number in cells(value)]
+
+
 def pin_of(node):
     """The SoC's pin a pin configuration is for: pins = "gpioN" in it or in one of its children (mux, config)."""
     for candidate in [node] + list(node.children):
@@ -238,6 +248,15 @@ def from_dts(text, panel=None):
                 pin = cells(node.props.get(name))
                 if len(pin) >= 2:
                     radio_pins.setdefault(key, pin[-2])
+        # the sound's own pins: the MI2S port a vendor's sound card drives, whose default pin states are its bit
+        # clock, its word select and its two data lines, in that order; which data line goes out to the
+        # amplifiers and which comes in is in the port's rx and tx lines (bit n: data line n)
+        if 'qcom,msm-mi2s-rx-lines' in node.props and 'qcom,msm-mi2s-tx-lines' in node.props:
+            states = referred_all(tree, node.props.get('pinctrl-0'))
+            pins = [pin_of(state) if state is not None else None for state in states]
+            out, into = cells(node.props['qcom,msm-mi2s-rx-lines']), cells(node.props['qcom,msm-mi2s-tx-lines'])
+            if len(pins) == 4 and None not in pins and out in ([1], [2]) and into in ([1], [2]) and out != into:
+                board.setdefault('speaker', {})['sound_pins'] = [pins[0], pins[1], pins[1 + into[0]], pins[1 + out[0]]]
         # the microphones' codec: its reset is a pin driven through a node of its own (qcom,msm-cdc-pinctrl),
         # whose active state names the pin
         if 'qcom,wcd-rst-gpio-node' in node.props and 'mic' not in board:
