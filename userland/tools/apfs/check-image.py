@@ -21,9 +21,11 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import mkapfs  # noqa: E402  (the same reading of DIR and manifest)
 
-APFSCK = os.path.join(ROOT, 'xnu-deps/build/apfsprogs/apfsck/apfsck')
-TOOL = os.path.join(ROOT, 'apfs-work/apfs-tool')
-FNVSUM = os.path.join(ROOT, 'apfs-work/fnvsum')
+# (each may be given in the environment: the repository's checks build the two programs elsewhere, and
+# have no apfsck -- APFSCK= empty leaves step 1 out, and says so)
+APFSCK = os.environ.get('APFSCK', os.path.join(ROOT, 'xnu-deps/build/apfsprogs/apfsck/apfsck'))
+TOOL = os.environ.get('APFS_TOOL', os.path.join(ROOT, 'apfs-work/apfs-tool'))
+FNVSUM = os.environ.get('APFS_FNVSUM', os.path.join(ROOT, 'apfs-work/fnvsum'))
 
 
 def fnv1a(data):
@@ -63,10 +65,14 @@ def main():
     image = sys.argv[1]
     if not os.path.exists(FNVSUM) or os.path.getmtime(FNVSUM) < os.path.getmtime(os.path.join(HERE, 'fnvsum.c')):
         subprocess.run(['cc', '-O2', '-o', FNVSUM, os.path.join(HERE, 'fnvsum.c')], check=True)
-    r = subprocess.run([APFSCK, '-cw', image], capture_output=True, text=True)
-    print('check-image.py: apfsck -cw: %s%s' % ('clean' if r.returncode == 0 else 'NOT CLEAN (exit %d)' % r.returncode,
-                                               (': ' + (r.stdout + r.stderr).strip()) if (r.stdout + r.stderr).strip() else ''))
-    bad = r.returncode != 0
+    bad = False
+    if APFSCK:
+        r = subprocess.run([APFSCK, '-cw', image], capture_output=True, text=True)
+        print('check-image.py: apfsck -cw: %s%s' % ('clean' if r.returncode == 0 else 'NOT CLEAN (exit %d)' % r.returncode,
+                                                   (': ' + (r.stdout + r.stderr).strip()) if (r.stdout + r.stderr).strip() else ''))
+        bad = r.returncode != 0
+    else:
+        print('check-image.py: apfsck: not run (APFSCK is empty)')
     for index, spec in enumerate(sys.argv[2:]):
         if '=' in spec.split(',')[0]:
             spec = spec.split('=', 1)[1]
