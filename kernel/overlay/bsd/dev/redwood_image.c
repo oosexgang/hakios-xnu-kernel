@@ -71,7 +71,12 @@ apfs_file(int disk, const uint8_t *base, uint64_t length, const char *dir, const
 	if (length < 4096 || memcmp(base + 32, "NXSB", 4) != 0) {
 		return NULL;
 	}
-	snprintf(path, sizeof(path), "/%s/%s", dir, name);
+	/* a path that does not fit is no file: cut short it could be another one's */
+	if ((size_t)snprintf(path, sizeof(path), "/%s/%s", dir, name) >= sizeof(path)) {
+		printf("redwood_image: /%s/%s: a path longer than %lu bytes is not looked up\n", dir, name,
+		    (unsigned long)sizeof(path) - 1);
+		return NULL;
+	}
 	lck_mtx_lock(&image_lock);
 	for (i = 0; i < sizeof(kept) / sizeof(kept[0]) && kept[i].data != NULL; i++) {
 		if (kept[i].disk == disk && strcmp(kept[i].path, path) == 0) {
