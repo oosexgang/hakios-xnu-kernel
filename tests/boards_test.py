@@ -307,7 +307,22 @@ class Sandbox(unittest.TestCase):
         path.write_text(text.replace(old, new))
 
 
+    def scmi_thermal(self):
+        self.soc('\tcpufreq {\n\t\tepss = <0x18591000>;\n\t\tepss-domain-size = <0x1000>;\n\t\tdomain-cores = <4 3 1>;\n\t};\n',
+                 '\tscmi-perf {\n\t\tshmem = <0x81f08100>;\n\t\tmailbox = <0x19980000>;\n\t\tdoorbell = <0x104>;\n\t};\n')
+        self.board('"cpufreq-epss"', '"cpufreq-scmi"')
+        self.board('\t\tfloor-mhz = <1000 1100 1100>;\n', '')
+
+
 class Check(Sandbox):
+    def test_empty_thermal_needs_sensors_and_a_frequency_backend(self):
+        self.scmi_thermal()
+        self.assertEqual(self.problems(), '')
+        self.soc('scmi-perf {\n\t\tshmem = <0x81f08100>;\n\t\tmailbox = <0x19980000>;\n\t\tdoorbell = <0x104>;\n\t};', '')
+        self.assertIn('thermal { } needs cpufreq { } or scmi-perf { }', self.problems())
+        self.soc('thermal {\n\t\ttsens = <0xc263000 0xc265000>;\n\t};', '')
+        self.assertIn('thermal { } needs thermal { }', self.problems())
+
     def test_a_complete_board_is_accepted(self):
         self.assertEqual(self.problems(), '')
 
@@ -325,6 +340,10 @@ class Check(Sandbox):
             (self.board, 'min = <1>;', 'min = <1>;\n\t\tbrightness = <5>;', 'unknown key "brightness"'),
             (self.board, '\tthermal {', '\tthermals {', 'unknown section thermals { }'),
             (self.board, 'floor-mhz = <1000 1100 1100>;', 'floor-mhz = <1000>;', 'one value for each of the 3 groups'),
+            (self.board, 'floor-mhz = <1000 1100 1100>;\n', '', 'floor-mhz: needed with EPSS'),
+            (self.soc, 'tsens = <0xc263000 0xc265000>;', 'tsens = <' + ' '.join(['0xc263000'] * 9) + '>;',
+             'at most 8 TSENS controllers'),
+            (self.soc, 'tsens = <0xc263000 0xc265000>;', 'tsens = <' + ' '.join(['0xc263000'] * 8) + '>;', None),
             (self.board, 'description = "A phone";\n', '', '"description" is missing'),
             (self.board, 'soc = "sm0001";', 'soc = "sm0001', 'line 4: '),
             (self.soc, '\tdisplay {\n\t\tdsi0 = <0xae94000>;\n\t};\n', '', 'backlight type "dcs" needs display { }'),
@@ -540,12 +559,23 @@ class Check(Sandbox):
 
 
 class Generate(Sandbox):
+    def test_empty_scmi_thermal_carries_all_eight_controllers(self):
+        self.scmi_thermal()
+        addresses = [0xc229000 + i * 0x1000 for i in range(8)]
+        self.soc('tsens = <0xc263000 0xc265000>;', 'tsens = <' + ' '.join(hex(v) for v in addresses) + '>;')
+        self.assertEqual(self.problems(), '')
+        text = boards.table_text(*boards.load())
+        self.assertIn('.tsens = { ' + ', '.join(f'{v:#010x}' for v in addresses) + ' },', text)
+        self.assertIn('.floor_mhz = { 0 },', text)
+        self.board('\tthermal {\n\t};\n', '')
+        self.assertNotIn('.thermal = {', boards.table_text(*boards.load()))
+
     def test_the_table_carries_the_values(self):
         text = boards.table_text(*boards.load())
         for expected in ('.name = "phone"', '.soc = "sm0001"', '.features = HAKIOS_HAS_CPUFREQ_EPSS,',
                          '.type = HAKIOS_BACKLIGHT_DCS, .video_mode = 0, .bytes = 2,', '.dsi = 0x0ae94000,',
                          '.raw_min = 1, .raw_max = 2047, .raw_restore = 0,', '.dispcc_mdss_gdscr = 0x3000,',
-                         '.tsens = { 0x0c263000, 0x0c265000 },', '.floor_mhz = { 1000, 1100, 1100 },',
+                         '.tsens = { 0x0c263000, 0x0c265000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000 },', '.floor_mhz = { 1000, 1100, 1100 },',
                          '.epss = 0x18591000, .epss_domain_size = 0x1000,', '.domain_cores = { 4, 3, 1 },', '"cpufreq-epss"'):
             self.assertIn(expected, text)
         self.assertNotIn('*/board.dts', text, 'a path with */ in it would close the header\'s comment')

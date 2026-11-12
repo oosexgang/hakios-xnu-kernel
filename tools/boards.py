@@ -64,6 +64,7 @@ class U64(int):
 
 
 # key: (type, required). Types: str, int (32-bit), U64, bool, [int] and so on; a tuple of strings is a choice.
+TSENS_MAX = 8   # HAKIOS_TSENS_MAX (kernel/overlay/bsd/dev/hakios_board.h)
 SOC_SCHEMA = {
     '': {'name': (str, True), 'description': (str, True)},
     'platform': {'io_base': (U64, False), 'io_size': (U64, False), 'gic_dist': (U64, True), 'gic_redist': (U64, True),
@@ -109,7 +110,7 @@ BOARD_SCHEMA = {
     'backlight': {'type': (('dcs', 'soft', 'none'), True), 'panel_mode': (('command', 'video'), False),
                   'min': (int, False), 'max': (int, False), 'restore': (int, False), 'bytes': (int, False),
                   'byte_order': (('msb-first', 'lsb-first'), False)},
-    'thermal': {'floor_mhz': ([int], True)},
+    'thermal': {'floor_mhz': ([int], False)},
     'torch': {'flash': (int, True), 'alarm': (int, True)},
     'haptic': {'sda': (int, True), 'scl': (int, True), 'reset': (int, True), 'interrupt': (int, True),
                'f0_calibration': (int, True)},
@@ -350,8 +351,8 @@ def status_text(name, board, soc):
                        'soft': 'the picture is darkened in software',
                        'none': 'none'}.get(light.get('type'), 'no [backlight] section'))
     line('thermal', 'its floors are set (thermal=1 looks, thermal=2 limits)' if 'thermal' in board else
-         'no [thermal] section' + ('' if 'thermal' in soc and 'cpufreq' in soc else
-                                   f': needs [thermal] and [cpufreq] in soc/{board["soc"]}.dtsi first'))
+         'no [thermal] section' + ('' if 'thermal' in soc and ('cpufreq' in soc or 'scmi_perf' in soc) else
+                                   f': needs [thermal] and [cpufreq] or [scmi_perf] in soc/{board["soc"]}.dtsi first'))
     out.append('')
     for _, feature in feature_bits():
         needs = feature_needs(feature, board, soc)
@@ -678,14 +679,17 @@ def load(problems=None):
                               f'{soc["platform"].get("cores")}')
         thermal = data.get('thermal')
         if thermal is not None:
+            if 'cpufreq' in soc and 'floor_mhz' not in thermal:
+                problems.add(f'{rel} [thermal]', 'floor_mhz: needed with EPSS (the SoC\'s [cpufreq])')
             if groups and len(thermal.get('floor_mhz', [])) != len(groups):
                 problems.add(f'{rel} [thermal]', f'floor_mhz: one value for each of the {len(groups)} groups of cores '
                                                  f'(soc/{data.get("soc")}.dtsi [cpufreq] domain_cores)')
-            for section in ('thermal', 'cpufreq'):
-                if section not in soc:
-                    problems.add(rel, f'[thermal] needs [{section}] in soc/{data.get("soc")}.dtsi')
-            if len(soc.get('thermal', {}).get('tsens', [])) > 2:
-                problems.add(rel, f'soc/{data.get("soc")}.dtsi: at most two TSENS controllers')
+            if 'thermal' not in soc:
+                problems.add(rel, f'[thermal] needs [thermal] in soc/{data.get("soc")}.dtsi')
+            if 'cpufreq' not in soc and 'scmi_perf' not in soc:
+                problems.add(rel, f'[thermal] needs [cpufreq] or [scmi_perf] in soc/{data.get("soc")}.dtsi')
+            if len(soc.get('thermal', {}).get('tsens', [])) > TSENS_MAX:
+                problems.add(rel, f'soc/{data.get("soc")}.dtsi: at most {TSENS_MAX} TSENS controllers')
     fallbacks = [name for name, data in boards.items() if 'loader' in data and 'fb_base' not in data['loader']]
     if len(fallbacks) > 1:
         problems.add('devices', 'more than one board with [loader] and no fb_base (' + ', '.join(fallbacks) +
@@ -734,7 +738,8 @@ def table_text(socs, boards):
         clocks = soc.get('clocks', {})
         light = board.get('backlight', {})
         thermal = board.get('thermal', {})
-        tsens = (soc.get('thermal', {}).get('tsens', []) + [0, 0])[:2] if thermal else [0, 0]
+        has_thermal = 'thermal' in board         # (a section may be empty: SCMI needs no floors)
+        tsens = (soc.get('thermal', {}).get('tsens', []) + [0] * TSENS_MAX)[:TSENS_MAX] if has_thermal else [0] * TSENS_MAX
         cpufreq = soc.get('cpufreq', {})
         dcs = light.get('type') == 'dcs'
         out += [
@@ -922,11 +927,11 @@ def table_text(socs, boards):
                 f'\t\t\t.speed_levels = {{ {", ".join(str(v) for v in gpu["speed_levels"])} }},',
                 '\t\t},',
             ]
-        if thermal:
-            floors = ', '.join(str(v) for v in thermal['floor_mhz'])
+        if has_thermal:
+            floors = ', '.join(str(v) for v in thermal.get('floor_mhz', [])) or '0'
             out += [
                 '\t\t.thermal = {',
-                f'\t\t\t.tsens = {{ {tsens[0]:#010x}, {tsens[1]:#010x} }},',
+                f'\t\t\t.tsens = {{ {", ".join(f"{v:#010x}" for v in tsens)} }},',
                 f'\t\t\t.floor_mhz = {{ {floors} }},',
                 '\t\t},',
             ]

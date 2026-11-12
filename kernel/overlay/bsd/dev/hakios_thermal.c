@@ -4,7 +4,7 @@
  * cpufreq { } of its SoC's file), and the arithmetic is hakios_thermal_core.h (tested on the host:
  * tests/thermal_test.c, and the driver itself: tests/thermal_driver_test.c).
  *
- * Every second the SoC's temperature sensors are read (both TSENS controllers, every sensor that has a
+ * Every second the SoC's temperature sensors are read (every TSENS controller, every sensor that has a
  * reading: Linux's tsens-v2.c; read only, never written), and from the hottest of them:
  *
  *   - the processors: each group's (EPSS domain's) frequency row is held back one row a second while the
@@ -52,7 +52,7 @@ extern void hakios_backlight_set_cap(uint32_t level);
 
 /* ---- what differs between devices: the board's data (hakios_board.h) -------------------------------- */
 
-#define TH_CONTROLLERS          2               /* a SoC has up to two TSENS controllers ... */
+#define TH_CONTROLLERS          HAKIOS_TSENS_MAX        /* a SoC has up to so many TSENS controllers ... */
 #define TH_SENSORS              16              /* ... of up to 16 sensors each */
 #define TH_DOMAINS              HAKIOS_CPU_GROUPS       /* the groups of cores, at most (the board says how many) */
 
@@ -88,7 +88,7 @@ rows_text(const uint32_t *rows, char *text, size_t size)
 	return text;
 }
 
-/* the hottest reading of every sensor of both controllers */
+/* the hottest reading of every sensor of every controller */
 static int32_t
 read_hottest(void)
 {

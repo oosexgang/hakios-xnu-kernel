@@ -11,4 +11,9 @@
 		mailbox = <0x19980000>;
 		doorbell = <0x104>;
 	};
+	// TSENS v2, reg "tm" of tsens0..tsens6 in the Ace 6T's Android device tree (SROT at 0x0c222000..0x0c228000
+	// is not needed: the hardware gives calibrated readings). Read only.
+	thermal {
+		tsens = <0x0c229000 0x0c22a000 0x0c22b000 0x0c22c000 0x0c22d000 0x0c22e000 0x0c22f000>;
+	};
 };

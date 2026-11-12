@@ -117,7 +117,7 @@
 
 	// Temperature, for a board's thermal { }.
 	thermal {
-		tsens = <0x0c263000 0x0c265000>; // the TSENS controllers (at most two), reg "tsens_tm_physical"
+		tsens = <0x0c263000 0x0c265000>; // the TSENS controllers (at most eight), reg "tsens_tm_physical"
 	};
 
 	// CPU frequency through EPSS, for the feature "cpufreq-epss" and a board's thermal { }.

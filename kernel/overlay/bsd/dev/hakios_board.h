@@ -74,6 +74,7 @@ enum {
 };
 
 #define HAKIOS_CPU_GROUPS       4               /* groups of cores with a clock of their own, at most */
+#define HAKIOS_TSENS_MAX        8               /* TSENS controllers of a SoC, at most (SM8845 has seven) */
 
 struct hakios_board {
 	const char *name;                       /* /chosen/darwin-board */
@@ -307,7 +308,7 @@ struct hakios_board {
 
 	/* temperature (soc: thermal { }; board: thermal { }) */
 	struct {
-		uint32_t tsens[2];              /* the TSENS controllers' readings, 0: none */
+		uint32_t tsens[HAKIOS_TSENS_MAX];       /* the TSENS controllers' readings, 0: none */
 		uint32_t floor_mhz[HAKIOS_CPU_GROUPS];  /* the slowest each group of cores is held back to */
 	} thermal;
 };
