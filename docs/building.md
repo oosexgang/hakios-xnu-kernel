@@ -114,7 +114,7 @@ what depends on them. Work done in the tree is never overwritten ([kernel/README
 | `THEOS` | `~/theos` | theos. |
 | `TOOLCHAIN` | theos' if there, else LLVM's | `cctools` (theos) or `llvm` (`ld64.lld` and the rest beside clang in `XNU_CLANG_DIR`). |
 | `IOS_SDK` | `$THEOS/sdks/iPhoneOS16.5.sdk` | The SDK whose headers the build uses. |
-| `XNU_WARNINGS` | `0` | `1`: the compiler's warnings are shown (Apple's code gives many; touch a file of HakiOS to see its own). |
+| `XNU_WARNINGS` | `0` | `1`: the compiler's warnings are shown, and at the end those in HakiOS' own files are listed (`$XNUDEPS/warnings-ours.txt`), of the files that build compiled. |
 | `XNU_CLANG_DIR` | `/usr/bin` | The directory of the clang the kernel is compiled with (`kernel/host/xnu-clang`): 19 or newer. |
 | `DARWIN_RENOIR` | `../darwin-renoir` | Optional. If this checkout exists and has its `xnu-deps` built, its host tools are used and step 2 fetches less. |
 

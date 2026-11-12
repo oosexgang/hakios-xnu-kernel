@@ -199,7 +199,18 @@ fi
 # --- 4. the kernel ----------------------------------------------------------------------------
 cd "$XNU_SRC"
 [ $# -gt 0 ] || set -- -j$JOBS
-xnumake "$@"
+xnumake "$@" 2>&1 | tee "$XNUDEPS/build.log"
+# XNU_WARNINGS=1: of the compiler's warnings, those in HakiOS' own files (kernel/overlay), which are to have none
+if [ "${XNU_WARNINGS:-0}" = 1 ]; then
+	ours=$(cd "$K/overlay" && find . -type f -name '*.[ch]*' | sed "s|^\./|$XNU_SRC/|")
+	grep -F -f <(printf '%s:\n' $ours) "$XNUDEPS/build.log" | grep ': warning: ' | sort -u > "$XNUDEPS/warnings-ours.txt" || true
+	if [ -s "$XNUDEPS/warnings-ours.txt" ]; then
+		log "warnings in HakiOS' files ($(wc -l < "$XNUDEPS/warnings-ours.txt")):"
+		sed "s|^$XNU_SRC/|  |" "$XNUDEPS/warnings-ours.txt"
+	else
+		log "no warning in HakiOS' files (of those this build compiled)"
+	fi
+fi
 KF=$XNU_SRC/BUILD/obj/mach.development.bcm2837
 [ -f "$KF" ] || die "no $KF"
 if [ "$TOOLCHAIN" = llvm ]; then
