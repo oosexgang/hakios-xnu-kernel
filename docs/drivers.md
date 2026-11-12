@@ -125,6 +125,7 @@ says what each test covers and what it leaves out.
 | `hakios_scmi_perf.c` | `scmi_perf_test.c` | the firmware behind the SCMI channel: its shared memory and doorbell, answering, late, wrongly or not at all |
 | `redwood_audio.c` | `audio_device_test.c` | (none: a program's writes and volume in, a sink and the recording's memory out) |
 | `redwood_sta.c` | `station_test.c` | the radio's driver, built outside this tree: power, scan, join and leave noted, answered as a scenario says, and saying more than there is room for |
+| `redwood_apple80211.c` | `apple80211_test.c` | the station layer: its networks, its state and what was asked of it, with records that say more than there is room for |
 | `redwood_input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/redwood-touch` out) |
 | `redwood_sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
 | `redwood_goodix.c`, `renoir_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |

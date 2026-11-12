@@ -316,6 +316,54 @@ uiomove(caddr_t kernel, int n, struct uio *uio)
 	return 0;
 }
 
+/* a caller's buffer is a host pointer; none at all is a fault, as in the kernel */
+size_t fake_copied_out;
+
+int
+copyin(user_addr_t from, void *to, size_t length)
+{
+	if (from == USER_ADDR_NULL) {
+		return EFAULT;
+	}
+	memcpy(to, (const void *)(uintptr_t)from, length);
+	return 0;
+}
+
+int
+copyout(const void *from, user_addr_t to, size_t length)
+{
+	if (to == USER_ADDR_NULL) {
+		return EFAULT;
+	}
+	memcpy((void *)(uintptr_t)to, from, length);
+	fake_copied_out = length;
+	return 0;
+}
+
+void
+proc_selfname(char *buffer, int size)
+{
+	snprintf(buffer, (size_t)size, "wifid");
+}
+
+int
+memset_s(void *to, size_t room, int value, size_t length)
+{
+	memset(to, value, length < room ? length : room);
+	return 0;
+}
+
+struct kev_msg fake_last_event;
+unsigned fake_events;
+
+int
+kev_post_msg(struct kev_msg *message)
+{
+	fake_last_event = *message;
+	fake_events++;
+	return 0;
+}
+
 int
 fake_dev_pwrite(const char *name, const void *data, size_t size, off_t offset, size_t *done)
 {

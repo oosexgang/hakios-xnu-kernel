@@ -476,7 +476,7 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
 	struct apple80211_scan_request *asked;
 	struct redwood_sta_scan *what;
 	unsigned unknown = 0;
-	int error;
+	int error = 0;
 
 	/* iOS 26's wifid sends 5528 bytes (72 more than the layout above, iOS 16's): the fields above are read from its start */
 	if (request->req_len < sizeof(*asked)) {
@@ -509,7 +509,7 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
 	}
 	snprintf(said, said_size, " (a scan: type %u, %u channels of which %u are not the radio's, %u ms on each, a name of %u bytes, "
 	    "%u more names, flags %#llx)", asked->scan_type, asked->channel_count, unknown, asked->dwell_ms, asked->ssid_length,
-	    asked->name_count, asked->flags);
+	    asked->name_count, (unsigned long long)asked->flags);
 	if (asked->channel_count != 0 && asked->channel_count <= 64 && what->frequency_count == 0) {
 		error = EINVAL;                 /* (nothing of what is asked for is a channel of this radio's) */
 	} else {
@@ -533,7 +533,7 @@ set_join(const struct apple80211req *request, char *said, size_t said_size)
 {
 	struct apple80211_assoc *asked;
 	struct redwood_sta_join *what;
-	int error;
+	int error = 0;
 
 	if (request->req_len < offsetof(struct apple80211_assoc, rest)) {
 		return EINVAL;

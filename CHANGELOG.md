@@ -237,7 +237,8 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
   them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
   flashlight, the battery, the vibration motor, the speaker amplifiers, the touch controllers' wiring,
   the sparse image and the storage driver, whose test holds that the loader is never asked for a write
-  the port may not make. What the drivers share
+  the port may not make, and iOS's Wi-Fi requests, whose test holds that nothing a radio reports goes
+  back to iOS past the room Apple's layouts and the caller's buffer have. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
   porting guide, and build the loader. They use three stand-in phones in `tests/devices/`.

@@ -307,6 +307,36 @@ extern unsigned fake_cores;             /* how many cores the kernel has (1) */
 extern unsigned fake_core;              /* the core "this" code runs on (0) */
 #define __builtin_arm_rsr64(name)       ((uint64_t)fake_core << 8)
 
+/*
+ * What an interface's ioctl reaches (sys/kern_event.h, sys/kpi_mbuf.h): a request's buffer in the caller's memory
+ * is a host pointer here, copied as it is; a kernel event is kept, the last of them, for the test to read.
+ */
+typedef int errno_t;
+typedef struct fake_mbuf *mbuf_t;
+typedef uint64_t user_addr_t;
+#define USER_ADDR_NULL                  ((user_addr_t)0)
+#ifndef EAUTH
+#define EAUTH                           80
+#endif
+int copyin(user_addr_t from, void *to, size_t length);
+int copyout(const void *from, user_addr_t to, size_t length);
+extern size_t fake_copied_out;          /* how many bytes the last copyout() wrote */
+void proc_selfname(char *buffer, int size);
+int memset_s(void *to, size_t room, int value, size_t length);
+#define KEV_VENDOR_APPLE                1
+#define KEV_IEEE80211_CLASS             6
+struct kev_d_vectors {
+	uint32_t data_length;
+	void *data_ptr;
+};
+struct kev_msg {
+	uint32_t vendor_code, kev_class, kev_subclass, event_code;
+	struct kev_d_vectors dv[5];
+};
+int kev_post_msg(struct kev_msg *message);
+extern struct kev_msg fake_last_event;  /* (its data pointers are the poster's, gone once it returns) */
+extern unsigned fake_events;            /* how many were posted */
+
 /* for the tests (fakekernel.c) */
 /*
  * For a test: wait (up to `ms') for a condition and then check that very condition. A driver's thread
