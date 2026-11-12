@@ -127,12 +127,13 @@ says what each test covers and what it leaves out.
 | `hakios_sta.c` | `station_test.c` | the radio's driver, built outside this tree: power, scan, join and leave noted, answered as a scenario says, and saying more than there is room for |
 | `hakios_apple80211.c` | `apple80211_test.c` | the station layer: its networks, its state and what was asked of it, with records that say more than there is room for |
 | `hakios_camera.c` (its sensors) | `camera_wiring_test.c` | (none: only where it takes its sensors from) |
+| `hakios_sound.c` (its pins) | `sound_pins_test.c` | the pin controller's registers, with pins that toggle |
 | `hakios_input.c` | `input_queue_test.c` | (none: the drivers' posts in, a program's reads and writes of `/dev/hakios-touch` out) |
 | `hakios_sparse.c` | `sparse_driver_test.c` | the RAM disk's memory, with the image at its end as the build writes it and as it must not be believed |
 | `hakios_goodix.c`, `hakios_fts.c` | `touch_goodix_wiring_test.c`, `touch_fts_wiring_test.c` | (none: only where each takes its wiring from) |
 
-The two touch drivers are compiled into host programs too, but nothing of a controller is modelled:
-their tests cover the wiring only. The sound, microphone, camera, Wi-Fi, DSP, GPU and storage drivers have no such test: they
+The two touch drivers, the camera's and the sound's are compiled into host programs too, but nothing of
+their parts is modelled: their tests cover the wiring only. The microphone, Wi-Fi, DSP, GPU and storage drivers have no such test: they
 are checked for syntax, types and the formats of what they print only (`kernel/syntax-check.sh`), and on the phone.
 
 ## Adding one
