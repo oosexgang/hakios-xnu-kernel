@@ -7601,11 +7601,16 @@ hm_spec_off(void)
 }
 
 /* the program for a draw whose fragment buffers are BUFFERS: the one compiled for what the deciding buffer holds, or
- * the pipeline's own while that one compiles (on a queue of its own: a compilation is 0.4 s on the host, and a frame
- * must not wait for it). 64 contents at most a pipeline; past them the pipeline's own. */
+ * the pipeline's own while that one compiles (on queues of their own: a compilation is 0.4 s on the host and 1 to 2.5 s
+ * on the phone, and a frame must not wait for it). HM_SPEC_QUEUES of them, a variant to each in turn: Settings asked
+ * for 140 in a minute, one queue took them one after another, and its draws went unspecialised (3 to 8 ms each instead
+ * of tens of microseconds) all that time; every thread has its own compiler (hakios-metal's compiler.cpp), so they
+ * compile at once on the cores the window server leaves. 64 contents at most a pipeline; past them the pipeline's own. */
+#define HM_SPEC_QUEUES 3
 - (hakios_metal_program *)hakiosProgramFor:(hakios_metal_buffer *const *)buffers offsets:(const uint64_t *)offsets count:(unsigned)count
 {
-	static dispatch_queue_t compiling;
+	static dispatch_queue_t compiling[HM_SPEC_QUEUES];
+	static unsigned turn;
 	static dispatch_once_t once;
 
 	if (_specBinding < 0 || (unsigned)_specBinding >= count || buffers[_specBinding] == NULL) return _program;
@@ -7628,10 +7633,12 @@ hm_spec_off(void)
 	}
 	if (start) {
 		dispatch_once(&once, ^{
-			compiling = dispatch_queue_create("hakios.metal.specialise", DISPATCH_QUEUE_SERIAL);
+			for (unsigned i = 0; i < HM_SPEC_QUEUES; i++) {
+				compiling[i] = dispatch_queue_create("hakios.metal.specialise", DISPATCH_QUEUE_SERIAL);
+			}
 		});
 		[self retain];
-		dispatch_async(compiling, ^{
+		dispatch_async(compiling[__atomic_fetch_add(&turn, 1, __ATOMIC_RELAXED) % HM_SPEC_QUEUES], ^{
 			struct timespec t0, t1;
 
 			clock_gettime(CLOCK_MONOTONIC, &t0);
