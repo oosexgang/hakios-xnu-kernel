@@ -107,6 +107,15 @@ def referred(tree, value):
     return next((node for node in tree.walk() if cells(node.props.get('phandle')) == numbers[:1]), None)
 
 
+def pin_of(node):
+    """The SoC's pin a pin configuration is for: pins = "gpioN" in it or in one of its children (mux, config)."""
+    for candidate in [node] + list(node.children):
+        names = strings(candidate.props.get('pins'))
+        if len(names) == 1 and re.fullmatch(r'gpio\d+', names[0]):
+            return int(names[0][4:])
+    return None
+
+
 def pmic_of(node):
     """(SPMI slave, name) of the PMIC a peripheral's node is in: qcom,pm8350@1 { ... } is slave 1, "PM8350"."""
     pmic = node.parent
@@ -229,6 +238,13 @@ def from_dts(text, panel=None):
                 pin = cells(node.props.get(name))
                 if len(pin) >= 2:
                     radio_pins.setdefault(key, pin[-2])
+        # the microphones' codec: its reset is a pin driven through a node of its own (qcom,msm-cdc-pinctrl),
+        # whose active state names the pin
+        if 'qcom,wcd-rst-gpio-node' in node.props and 'mic' not in board:
+            control = referred(tree, node.props['qcom,wcd-rst-gpio-node'])
+            state = referred(tree, control.props.get('pinctrl-0')) if control is not None else None
+            if state is not None and pin_of(state) is not None:
+                board['mic'] = {'codec_reset': pin_of(state)}
         if 'qcom,mdss-dsi-panel-type' in node.props:
             panels.append(node)
         if 'qcom,spmi-pmic-arb' in compatible and all(reg_named(node, n) for n in ('core', 'cnfg', 'obsrvr')):

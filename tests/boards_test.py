@@ -795,6 +795,34 @@ class Generate(Sandbox):
         self.assertIn('# [wifi]\n# radio_model = 0\n# dsp_memory = 0x9ae00000\n# dsp_memory_size = 0x01900000\n# pins = [84, 85, 86]\n', text)
         self.assertEqual(self.problems(), '')
 
+    def test_the_codecs_reset_is_found_in_a_tree(self):
+        # as a vendor's overlay has it, compiled and dumped again: the codec names a node by its phandle, that
+        # node's active state names the pin
+        dumped = '''/ { fragment@1 { __overlay__ {
+            wcd938x-codec { compatible = "qcom,wcd938x-codec"; qcom,wcd-rst-gpio-node = <0x43>; };
+            msm_cdc_pinctrl@35 { compatible = "qcom,msm-cdc-pinctrl"; pinctrl-0 = <0x4a>; pinctrl-1 = <0x4b>; phandle = <0x43>; };
+            wcd938x_reset_active { phandle = <0x4a>; mux { pins = "gpio132"; function = "gpio"; };
+                config { pins = "gpio132"; drive-strength = <0x10>; output-high; }; };
+            wcd938x_reset_sleep { phandle = <0x4b>; mux { pins = "gpio132"; }; }; }; };
+            fragment@2 { __overlay__ { wcd938x-codec { qcom,wcd-rst-gpio-node = <0x00>; }; }; }; };'''
+        soc, board, notes = devicetree.from_dts(dumped)
+        self.assertEqual(board['mic'], {'codec_reset': 132})
+        # in a source, by labels
+        soc, board, notes = devicetree.from_dts('''/ { codec { qcom,wcd-rst-gpio-node = <&wcd_gpio>; };
+            wcd_gpio: msm_cdc_pinctrl { pinctrl-0 = <&wcd_reset_active>; };
+            wcd_reset_active: reset_active { pins = "gpio83"; }; };''')
+        self.assertEqual(board['mic'], {'codec_reset': 83})
+        # a node that points nowhere (the overlay's placeholder) is no pin
+        soc, board, notes = devicetree.from_dts('/ { codec { qcom,wcd-rst-gpio-node = <0x00>; }; };')
+        self.assertNotIn('mic', board)
+        # a board started from the tree has the section
+        dts = self.dir / 'codec.dts'
+        dts.write_text(dumped)
+        with contextlib.redirect_stdout(io.StringIO()):
+            boards.new_board('phone8', 'sm0001', dts)
+        self.assertIn('[mic]\ncodec_reset = 132\n', (self.dir / 'devices/phone8/board.toml').read_text())
+        self.assertEqual(self.problems(), '')
+
     def test_the_storage_controller_is_found_and_reaches_the_loader(self):
         soc, board, notes = devicetree.from_dts('''/ { soc { ufshc_mem: ufshc@1d84000 { compatible = "qcom,ufshc";
             reg = <0x1d84000 0x3000>, <0x1d88000 0x8000>; reg-names = "ufs_mem", "ufs_ice"; }; }; };''')

@@ -1037,6 +1037,12 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                   f'# memory = {dsp["memory"]:#010x}',
                   f'# memory_size = {dsp["memory_size"]:#010x}',
                   '']
+    codec = board.get('mic', {})
+    if 'codec_reset' in codec:
+        lines += ['# The microphones\' codec, for the feature "mic-wcd938x": its reset pin is from the tree.',
+                  '[mic]',
+                  f'codec_reset = {codec["codec_reset"]}',
+                  '']
     radio = board.get('wifi', {})
     if 'dsp_memory' in radio:
         lines += ['# The Wi-Fi radio on the SoC\'s own DSP, for the feature "wifi-wcn6750": the DSP\'s reserved memory is',

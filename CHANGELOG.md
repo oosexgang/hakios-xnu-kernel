@@ -22,7 +22,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   the CPU frequency block and its groups of cores, the clock controllers' addresses, the interrupt
   controller, the cores, the PSCI method, the panel's brightness range and mode, the PMIC arbiter
   with the keys and the flashlight, the SoC's own pins, its SMMU, the way to its other processors,
-  RPMh, the UFS host controller, and the reserved memory of the audio and Wi-Fi DSPs. It prints what
+  RPMh, the UFS host controller, the reserved memory of the audio and Wi-Fi DSPs, the radio's pins and
+  the microphones' codec reset. It prints what
   it could not find. Two things are never in a device tree and are filled in by hand: the display
   clocks' register offsets and the I/O window.
 - **`tools/boards.py compare NAME --dts FILE`** holds a board and its SoC file against a device tree:
