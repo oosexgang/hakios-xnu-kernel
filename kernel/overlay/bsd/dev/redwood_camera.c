@@ -3735,8 +3735,11 @@ camdev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	struct redwood_camera_command c;
 	int error;
 
-	if (uio_resid(uio) < (user_ssize_t)sizeof(c) || (error = uiomove((caddr_t)&c, sizeof(c), uio)) != 0) {
+	if (uio_resid(uio) < (user_ssize_t)sizeof(c)) {
 		return EINVAL;
+	}
+	if ((error = uiomove((caddr_t)&c, sizeof(c), uio)) != 0) {
+		return error;           /* (the writer's memory could not be read: its own error, not "invalid") */
 	}
 	if (c.command == REDWOOD_CAMERA_EXPOSURE) {
 		lck_mtx_lock(&ios_lock);
