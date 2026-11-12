@@ -193,6 +193,51 @@ not_a_cache(void)
 	usleep(250 * 1000);
 	CHECK(s("battery_soc") == -1 && s("battery_temperature_c") == -273, "unknown stays unknown: %d%%, %d C", s("battery_soc"),
 	    s("battery_temperature_c"));
+	CHECK(logged("battery: bad xnuloader cache at") && !logged("polling every 5 seconds"), "said, and not watched: %s", log_text);
+}
+
+/* a page shorter than the layout this driver reads: the same */
+static void
+shorter_cache(void)
+{
+	phone("phone-cmd");
+	cache->size = sizeof(*cache) - 4;
+	publish(VALID, 50, 0, 0, 20);
+	redwood_battery_init();
+	usleep(250 * 1000);
+	CHECK(s("battery_soc") == -1, "not read: %d", s("battery_soc"));
+	CHECK(logged("battery: bad xnuloader cache at") && !logged("polling every 5 seconds"), "said, and not watched: %s", log_text);
+}
+
+/*
+ * A page that was good when the driver started and is not any more (a loader that stopped, memory written
+ * over): every look checks it again, and the last good values stand.
+ */
+static void
+goes_bad_later(void)
+{
+	phone("phone-cmd");
+	publish(VALID | PRESENT | VOLTAGE_VALID, 61, 3900, 0, 27);
+	redwood_battery_init();
+	WAIT_FOR(s("battery_soc") == 61, 2000);
+	cache->magic ^= 1;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 11, 3400, 0, 27);
+	usleep(250 * 1000);
+	CHECK(s("battery_soc") == 61, "another magic: %d", s("battery_soc"));
+	cache->magic ^= 1;
+	cache->version = 9;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 12, 3400, 0, 27);
+	usleep(250 * 1000);
+	CHECK(s("battery_soc") == 61, "another version: %d", s("battery_soc"));
+	cache->version = 1;
+	cache->size = 8;
+	publish(VALID | PRESENT | VOLTAGE_VALID, 13, 3400, 0, 27);
+	usleep(250 * 1000);
+	CHECK(s("battery_soc") == 61, "a size that leaves out what is read: %d", s("battery_soc"));
+	cache->size = sizeof(*cache);
+	publish(VALID | PRESENT | VOLTAGE_VALID, 14, 3400, 0, 27);
+	WAIT_FOR(s("battery_soc") == 14 && s("battery_voltage_mv") == 3400, 2000);
+	CHECK(s("battery_soc") == 14 && s("battery_voltage_mv") == 3400, "whole again, it is read again: %d", s("battery_soc"));
 }
 
 static void
@@ -276,7 +321,7 @@ main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "read_and_followed", read_and_followed }, { "estimated_and_without_voltage", estimated_and_without_voltage },
-		{ "torn_update", torn_update }, { "impossible_values", impossible_values }, { "not_a_cache", not_a_cache },
+		{ "torn_update", torn_update }, { "impossible_values", impossible_values }, { "not_a_cache", not_a_cache }, { "shorter_cache", shorter_cache }, { "goes_bad_later", goes_bad_later },
 		{ "another_version", another_version }, { "no_address", no_address }, { "off_by_default", off_by_default },
 		{ "board_without_it", board_without_it }, { "from_the_dsp", from_the_dsp },
 	};
