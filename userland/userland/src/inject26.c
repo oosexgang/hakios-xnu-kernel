@@ -272,7 +272,7 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 	CFDictionarySetValue(properties, CFSTR("DeviceUsagePairs"), pairs);
 	CFDictionarySetValue(properties, CFSTR("Built-In"), kCFBooleanTrue);
 	CFDictionarySetValue(properties, CFSTR("Transport"), CFSTR("SPI"));
-	CFDictionarySetValue(properties, CFSTR("Manufacturer"), CFSTR("redwood"));
+	CFDictionarySetValue(properties, CFSTR("Manufacturer"), CFSTR("HakiOS"));
 	CFDictionarySetValue(properties, CFSTR("Product"), name);
 	CFDictionarySetValue(properties, CFSTR("VendorID"), zero);
 	CFDictionarySetValue(properties, CFSTR("ProductID"), zero);
@@ -419,7 +419,7 @@ input_thread(__unused void *arg)
 	unsigned count = 0, waking = 0;         /* waking: the fingers whose touch went into waking the display */
 	int device;
 
-	pthread_setname_np("redwood input");
+	pthread_setname_np("hakios input");
 	{
 		char arguments[1024] = "";
 		size_t size = sizeof(arguments) - 1;
@@ -442,7 +442,7 @@ input_thread(__unused void *arg)
 			say("hakios: input: no HID client of type %d\n", types[i]);
 			continue;
 		}
-		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("redwood.input", NULL));
+		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("hakios.input", NULL));
 		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
 		if (screen == NULL) {
 			say("hakios: input: a HID client of type %d may not create services\n", types[i]);
@@ -524,7 +524,7 @@ script_thread(__unused void *arg)
 	char line[256];
 	unsigned lineno = 0;
 
-	pthread_setname_np("redwood taps");
+	pthread_setname_np("hakios taps");
 	if (f == NULL) {
 		say("hakios: taps: no /redwood/taps.txt\n");
 		return NULL;

@@ -231,7 +231,7 @@ static struct device devices[] = {
  * is one microphone here, at the bottom: 'imic', the iPhone's internal (bottom) one.
  */
 #define MIC_SOURCE              'imic'
-#define MANUFACTURER            CFSTR("redwood")
+#define MANUFACTURER            CFSTR("HakiOS")
 /* how often a device says where its clock is, in frames: also the largest I/O buffer the HAL will use */
 #define TIMESTAMP_PERIOD        16384
 

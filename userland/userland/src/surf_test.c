@@ -129,14 +129,14 @@ main(int argc, char **argv)
 
 	/* values */
 	text = CFSTR("a value");
-	IOSurfaceSetValue(surface, CFSTR("redwood.test"), text);
-	value = IOSurfaceCopyValue(surface, CFSTR("redwood.test"));
+	IOSurfaceSetValue(surface, CFSTR("hakios.test"), text);
+	value = IOSurfaceCopyValue(surface, CFSTR("hakios.test"));
 	CHECK(value != NULL && CFEqual(value, text), "value did not come back");
 	if (value) {
 		CFRelease(value);
 	}
 	value = num(42);
-	IOSurfaceSetValue(surface, CFSTR("redwood.number"), value);
+	IOSurfaceSetValue(surface, CFSTR("hakios.number"), value);
 	CFRelease(value);
 	value = IOSurfaceCopyAllValues(surface);
 	CHECK(value != NULL && CFGetTypeID(value) == CFDictionaryGetTypeID() && CFDictionaryGetCount(value) >= 2,
@@ -144,10 +144,10 @@ main(int argc, char **argv)
 	if (value) {
 		CFRelease(value);
 	}
-	IOSurfaceRemoveValue(surface, CFSTR("redwood.test"));
-	value = IOSurfaceCopyValue(surface, CFSTR("redwood.test"));
+	IOSurfaceRemoveValue(surface, CFSTR("hakios.test"));
+	value = IOSurfaceCopyValue(surface, CFSTR("hakios.test"));
 	CHECK(value == NULL, "value still there after removing it");
-	value = IOSurfaceCopyValue(surface, CFSTR("redwood.number"));
+	value = IOSurfaceCopyValue(surface, CFSTR("hakios.number"));
 	CHECK(value != NULL, "the other value is gone");
 	if (value) {
 		CFRelease(value);
