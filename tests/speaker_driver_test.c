@@ -181,8 +181,8 @@ look(const char *args)
 
 /* ---- the configuration file, as Awinic's tool writes it (the part the driver reads) ---------------- */
 
-static uint8_t acf[0x400];
-static unsigned acf_size, acf_entries;
+static uint8_t acf[0x600];
+static unsigned acf_size, acf_entries, registers_end;   /* (where the last list of registers ends) */
 
 static void
 put32(uint8_t *at, uint32_t value)
@@ -221,10 +221,57 @@ acf_registers(unsigned device_number, unsigned profile, const uint16_t (*pairs)[
 	}
 	put32(block, sum);
 	acf_size += length;
+	registers_end = acf_size;
 	acf_entries++;
 	put32(acf + 0x34, acf_entries * 0x30);
 	put32(acf + 0x38, acf_entries);
 }
+
+/* one more entry: that device's monitor table -- rows of lowest, highest, (boost current,) reduction, vmax */
+struct row { int16_t min, max; uint16_t less; int32_t vmax; };
+
+static void
+acf_monitor_table(unsigned device_number, const struct row *temps, unsigned temp_count, const struct row *vbats, unsigned vbat_count)
+{
+	uint8_t *entry = acf + 0x50 + acf_entries * 0x30, *block = acf + acf_size;
+	uint32_t length = 0x48 + 12 * (temp_count + vbat_count), sum = 0;
+
+	memcpy(entry + 4, "aw88261", 8);
+	entry[20] = (uint8_t)device_number;
+	put32(entry + 28, 10);                  /* a monitor's table */
+	put32(entry + 32, length);
+	put32(entry + 36, acf_size);
+	put32(block + 0x2c, temp_count);
+	put32(block + 0x30, 12);
+	put32(block + 0x34, 0x48);
+	put32(block + 0x3c, vbat_count);
+	put32(block + 0x40, 12);
+	put32(block + 0x44, 0x48 + 12 * temp_count);
+	for (unsigned i = 0; i < temp_count + vbat_count; i++) {
+		const struct row *row = i < temp_count ? &temps[i] : &vbats[i - temp_count];
+		uint8_t *at = block + 0x48 + 12 * i;
+
+		at[0] = (uint8_t)row->min;
+		at[1] = (uint8_t)((uint16_t)row->min >> 8);
+		at[2] = (uint8_t)row->max;
+		at[3] = (uint8_t)((uint16_t)row->max >> 8);
+		at[6] = (uint8_t)row->less;
+		at[7] = (uint8_t)(row->less >> 8);
+		put32(at + 8, (uint32_t)row->vmax);
+	}
+	for (uint32_t i = 4; i < length; i++) {
+		sum += block[i];
+	}
+	put32(block, sum);
+	acf_size += length;
+	acf_entries++;
+	put32(acf + 0x34, acf_entries * 0x30);
+	put32(acf + 0x38, acf_entries);
+}
+
+/* warm: nothing; cool: 3 dB less (and the vmax that goes with it), cold more; a low battery: a vmax only */
+static const struct row temps[] = { { 7, 100, 0, 0 }, { 2, 5, 24, -2400 }, { -2, 0, 36, -3600 }, { -50, -5, 64, -6400 } };
+static const struct row vbats[] = { { 3850, 5000, 0, 0 }, { 3650, 3750, 0, -1300 }, { 0, 3550, 0, -2500 } };
 
 /* The Music profile of the two: the first's fuses are to be or-ed (0x14 bit 3), the second's and-ed. */
 static const uint16_t music_a[][2] = {
@@ -242,11 +289,13 @@ file(void)
 {
 	memset(acf, 0, sizeof(acf));
 	acf_entries = 0;
-	acf_size = 0x50 + 4 * 0x30;             /* the header, then room for four entries */
+	acf_size = 0x50 + 6 * 0x30;             /* the header, then room for six entries */
 	put32(acf + 0x3c, 0x50);
 	acf_registers(0, 0, music_a, 8);
 	acf_registers(0, 1, another_profile, 4);        /* (a profile that is not Music: not to be used) */
 	acf_registers(1, 0, music_b, 8);
+	acf_monitor_table(0, temps, 4, vbats, 3);
+	acf_monitor_table(1, temps, 4, vbats, 3);
 }
 
 /* a phone whose amplifiers take what is written, with their fuses, and the file */
@@ -501,11 +550,11 @@ file_not_trusted(void)
 	static const uint16_t fuse[][2] = { { 0x04, 0x0300 }, { 0x05, 0x1403 }, { 0x08, 0x4a4c }, { 0x78, 0x0001 } };
 
 	phone_with_file("phone-video");
-	acf[acf_size - 2] ^= 1;                 /* a value of the second amplifier's profile */
+	acf[registers_end - 2] ^= 1;            /* a value of the second amplifier's profile */
 	CHECK(!redwood_speaker_prepare(acf, acf_size), "a sum that is off: %s", log_text);
 	CHECK(logged("device 1's Music profile does not add up"), "said: %s", log_text);
 	file();
-	CHECK(!redwood_speaker_prepare(acf, acf_size - 8), "a file cut short: %s", log_text);
+	CHECK(!redwood_speaker_prepare(acf, registers_end - 8), "a file cut short: %s", log_text);
 	CHECK(logged("does not fit"), "said: %s", log_text);
 	CHECK(!redwood_speaker_prepare(acf, 0x20), "a file of 32 bytes: %s", log_text);
 	CHECK(logged("not one of Awinic's"), "said: %s", log_text);
@@ -623,6 +672,77 @@ fault_while_playing(void)
 	never();
 }
 
+/* what an amplifier measures: its temperature (ten bits, two's complement) and the battery (x 6025 / 1023 mV) */
+static void
+measures(uint8_t *bank, int degrees, int millivolts)
+{
+	wide(bank, 0x22, (uint16_t)(degrees & 0x3ff));
+	wide(bank, 0x21, (uint16_t)((millivolts * 1023 + 6024) / 6025));
+}
+
+/*
+ * The monitor: the average of the last three looks picks a row of the file's table; between rows the last
+ * one holds; the reduction is the larger of the two amplifiers'. It reads and never writes.
+ */
+static void
+monitor(void)
+{
+	unsigned before[2];
+
+	running();
+	CHECK(logged("the amplifier 0x35, slot 0's monitor: at 2 to 5 degrees, 3.000 dB less"), "the table was read: %s", log_text);
+	/* (a battery row has a vmax only: turned into dB in the proportion of the first temperature row that has both) */
+	CHECK(logged("the amplifier 0x34, slot 1's monitor: at 3650 to 3750 mV, 1.625 dB less"), "the battery's rows: %s", log_text);
+	before[0] = writes_into[0];
+	before[1] = writes_into[1];
+	measures(device.reg, 25, 4000);
+	measures(device.reg_b, 25, 4000);
+	CHECK(redwood_speaker_monitor(false) == 0, "warm, a full battery: nothing less");
+	measures(device.reg, 3, 4000);
+	CHECK(redwood_speaker_monitor(false) == 0, "one cool look of two (14 degrees on average): nothing yet");
+	CHECK(redwood_speaker_monitor(false) == 0, "two of three (10 degrees)");
+	CHECK(redwood_speaker_monitor(false) == 24, "three cool looks: 3 dB less");
+	measures(device.reg, 6, 4000);
+	for (int look = 0; look < 3; look++) {
+		CHECK(redwood_speaker_monitor(false) == 24, "6 degrees is between two rows: the last one holds");
+	}
+	measures(device.reg, -5, 4000);
+	redwood_speaker_monitor(false);
+	redwood_speaker_monitor(false);
+	CHECK(redwood_speaker_monitor(false) == 64, "cold (a negative reading): 8 dB less");
+	measures(device.reg, 25, 4000);
+	measures(device.reg_b, 25, 3700);
+	redwood_speaker_monitor(false);
+	redwood_speaker_monitor(false);
+	CHECK(redwood_speaker_monitor(true) == 13, "the first warm again, the second sees a low battery: 1.625 dB less");
+	CHECK(logged("the amplifier 0x34, slot 1: 25 degrees, the battery 3704 mV"), "told when asked (629 x 6025 / 1023): %s", log_text);
+	measures(device.reg, 3, 4000);
+	redwood_speaker_monitor(false);
+	redwood_speaker_monitor(false);
+	CHECK(redwood_speaker_monitor(false) == 24, "the larger of the two amplifiers' reductions");
+	CHECK(writes_into[0] == before[0] && writes_into[1] == before[1], "the monitor wrote into an amplifier");
+	redwood_speaker_stop();
+	CHECK(redwood_speaker_monitor(false) == 0, "amplifiers that are stopped are not asked");
+	never();
+}
+
+/* a monitor table whose sum is off is not used: the amplifiers still play, nothing is ever reduced */
+static void
+monitor_table_not_trusted(void)
+{
+	phone_with_file("phone-video");
+	wide(device.reg_b, 0x01, 0x0311);
+	acf[acf_size - 1] ^= 0x40;              /* in the second amplifier's table */
+	CHECK(redwood_speaker_prepare(acf, acf_size) && redwood_speaker_start(), "prepared and started all the same: %s", log_text);
+	CHECK(logged("device 1's monitor table is not of the shape known: not used"), "said: %s", log_text);
+	measures(device.reg, 25, 4000);
+	measures(device.reg_b, -20, 3000);
+	for (int look = 0; look < 4; look++) {
+		CHECK(redwood_speaker_monitor(false) == 0, "no table, no reduction");
+	}
+	never();
+}
+
 /* the kernel on its way out while they play: both powered down at once */
 static void
 run_ends(void)
@@ -659,7 +779,8 @@ main(int argc, char **argv)
 		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "prepared", prepared }, { "not_this_chip", not_this_chip },
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
 		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
-		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "run_ends", run_ends }, { "not_listed", not_listed },
+		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "monitor", monitor },
+		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "run_ends", run_ends }, { "not_listed", not_listed },
 	};
 
 	if (argc < 2) {
