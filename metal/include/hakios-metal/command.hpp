@@ -288,6 +288,10 @@ private:
         // write and read (a framebuffer fetch), as masks -- what closePass tiles, loads and stores
         uint32_t area[4] = {~0u, ~0u, 0, 0};
         uint32_t written = 0, read = 0;
+        // closed for a draw the tiles cannot replay, and the same pass going on in sysmem after it: what the tiles wrote
+        // is stored whatever the store action, as the rest of the pass draws on over it (a DontCare or memoryless
+        // attachment is undefined after the pass, not in the middle of it: CoreAnimation's path mask)
+        bool goesOn = false;
         // Both ways at once (setGmemMinDraws): the draws gathered for tiles in BODIES and, beside them, as a sysmem pass in
         // SYS_STREAM (its head included, deduplicated through REGS), the GMEM head held in HEAD_GMEM; closePass takes the
         // one the pass's draws call for, now that they are known

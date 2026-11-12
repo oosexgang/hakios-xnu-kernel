@@ -2874,6 +2874,7 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (joins && open_->gmem && !tileable) {
         gmemWhy_ = gmemWhy;
         joins = false;
+        open_->goesOn = true;
     }
     if (!joins) {
         closePass();
@@ -3317,7 +3318,7 @@ void CommandBuffer::closePass() {
             const LoadAction la = i == 0 ? open_->pass.load : open_->pass.more[i - 1].load;
             const StoreAction sa = i == 0 ? open_->pass.store : open_->pass.more[i - 1].store;
             if (!cleared && (every || !(la == LoadAction::kDontCare && inside))) load |= 1u << i;
-            if ((every || cleared || ((open_->written >> i) & 1)) && sa != StoreAction::kDontCare) store |= 1u << i;
+            if ((every || cleared || ((open_->written >> i) & 1)) && (sa != StoreAction::kDontCare || open_->goesOn)) store |= 1u << i;
         }
         uint64_t vsc = 0;
         if ((open_->options.gmemBinning || gmemBinning_) && queue_.binningOk()) {

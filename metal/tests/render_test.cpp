@@ -5456,6 +5456,38 @@ TEST(a_draw_gmem_cannot_replay_sends_the_pass_to_sysmem) {
     CHECK_EQ(coordsWrong(*t), 0u);
 }
 
+// The same split with a store action of DontCare (a memoryless attachment's, CoreAnimation's path mask): the pass goes
+// on in sysmem over what the tile wrote, so the tile stores it all the same; a DontCare pass that is not split stores
+// nothing (the twin: the store is the split's doing)
+TEST(a_gmem_pass_split_by_a_draw_stores_what_dontcare_would_drop) {
+    for (int split = 0; split < 2; split++) {
+        Rig r;
+        auto t = target(r);
+        fillCoords(*t);
+        std::string why;
+        auto vis = newBuffer(*r.gpu, 64, &why);
+        RenderPass a;
+        a.color0 = t.get();
+        a.store = StoreAction::kDontCare;
+        auto cb = r.queue->commandBuffer();
+        CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
+        Draw d = wholeDraw();
+        if (split) {
+            d.visibilityMode = 1;
+            d.visibility = vis.get();
+        }
+        CHECK(cb->draw(flatProgram(), a, d, Bindings{}, Bindings{}));
+        cb->commit();
+        cb->waitUntilCompleted();
+        CHECK(cb->status() == CommandBuffer::kCompleted);
+        const auto s = r.fake->stats();
+        CHECK_EQ(s.faults, 0u);
+        CHECK_EQ(cb->counts().gmemPasses, 1u);
+        CHECK_EQ(cb->counts().passes, split ? 2u : 1u);
+        CHECK_EQ(s.tileStores, split ? 1u : 0u);
+    }
+}
+
 // CoreAnimation's main pass: two screen-sized attachments, the second with DontCare as its load. GMEM below the colour
 // cache is shared out between them by bytes a pixel, so the tiles are half as tall as one attachment's. tri_mrt writes
 // both: each tile loads and stores both, and both come back as they were (the fake draws nothing; a bin overlapping
