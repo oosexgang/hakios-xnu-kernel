@@ -43,7 +43,7 @@ void hakios_input_init(void);          /* /dev/hakios-touch */
 void hakios_virtio_input_init(void);   /* boot-arg virtio_input=1: QEMU's virtio pointer and keyboard */
 void hakios_rpmh_lock(void);          /* APPS DRV2/TCS0 transaction; thread context only */
 void hakios_rpmh_unlock(void);
-void hakios_fts_init(void);             /* touchscreen=1 on renoir: FocalTech FT3658U */
+void hakios_fts_init(void);             /* touchscreen=1: FocalTech FT3658U (feature touch-ft3658u) */
 void hakios_goodix_init(void);         /* boot-arg touchscreen=1: the phone's Goodix or FocalTech touch screen */
 void hakios_buttons_init(void);        /* boot-arg buttons=1: the phone's power and volume keys */
 void hakios_ufs_init(void);           /* ufs=2 to xnuloader: the phone's storage, read only, through the loader (ufs_shared_pa=) */

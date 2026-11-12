@@ -4034,7 +4034,7 @@ static bool
 start_by_itself(void)
 {
 	static const char *const files[] = { "a660_gmu.bin", "a660_sqe.fw", "a660_zap.mdt", "a660_zap.b02" };
-	/* where the steps read it from: the profile's directory (renoir: fw-renoir), not redwood's fw */
+	/* where the steps read it from: the profile's firmware directory (gpu { } firmware) */
 	const char *directory = gpu_profile ? gpu_profile->firmware_directory : "fw";
 	const char *missing = NULL;
 	uint64_t size;
@@ -4128,14 +4128,14 @@ hakios_adreno_init(void)
 		need(&gcc);
 		if (gcc.base) {
 			uint32_t cfg = rd(gcc.base + board->clocks.gcc_disp_ahb_cbcr);
-			printf("renoir-display-clocks: gcc display ahb %#x\n", cfg);
+			printf("display-clocks: gcc display ahb %#x\n", cfg);
 			if (cfg & 1) {
 				vm_offset_t cc = ml_io_map(board->clocks.dispcc, 0x5000);
 				if (cc) {
 					uint32_t gdsc = rd(cc + board->clocks.dispcc_mdss_gdscr), ahb = rd(cc + board->clocks.dispcc_mdss_ahb_cbcr);
-					printf("renoir-display-clocks: gdsc %#x mdss ahb %#x\n", gdsc, ahb);
+					printf("display-clocks: gdsc %#x mdss ahb %#x\n", gdsc, ahb);
 				}
-			} else printf("renoir-display-clocks: upstream clock disabled; not reading DISPCC\n");
+			} else printf("display-clocks: upstream clock disabled; not reading DISPCC\n");
 		}
 	}
 	if (PE_parse_boot_argn("display_probe", &only, sizeof(only)) && only) {

@@ -87,7 +87,7 @@ image(void)
 	memset(memory, 0x11, ROOT);
 	memset(memory + ROOT, 0, IMAGE);
 	memset(memory + ROOT + IMAGE, 0xee, AFTER);
-	memcpy(memory + ROOT, "REDWOODSPARSE1\0\0", 16);
+	memcpy(memory + ROOT, "HAKIOSSPARSE1\0\0\0", 16);
 	put32(AT_BLOCK_SIZE, BLOCK);
 	put64(AT_BLOCK_COUNT, BLOCKS);
 	put64(AT_PRESENT, HERE);

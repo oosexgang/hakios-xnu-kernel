@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 The redwood bring-up. All rights reserved.
+ * Copyright (c) 2026 The HakiOS authors. All rights reserved.
  *
  * Standard ARMv8.3+/ARMv9 pointer authentication, as opposed to Apple's own
  * implementation (osfmk/arm64/pac_asm.h, HAS_APPLE_PAC && !HAS_STD_PAC).

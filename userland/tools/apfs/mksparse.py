@@ -15,7 +15,7 @@
 #
 # Layout of what comes out (little-endian), as bsd/dev/hakios_sparse.c reads it:
 #
-#   header, one block:  "REDWOODSPARSE1\0\0", block size, block count of the container,
+#   header, one block:  "HAKIOSSPARSE1\0\0\0", block size, block count of the container,
 #                       how many blocks are present, the offsets of the table and the data
 #   table:              one 32-bit entry per container block -- 0 absent, else the index
 #                       into the data area plus one
@@ -35,7 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apfs
 
-MAGIC = b"REDWOODSPARSE1\0\0"
+MAGIC = b"HAKIOSSPARSE1\0\0\0"
 HEADER_SIZE = 4096
 
 
