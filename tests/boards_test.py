@@ -1111,6 +1111,26 @@ class DeviceTree(Sandbox):
         soc, board, notes = devicetree.from_dts('/ { soc { clock-controller@3d90000 { compatible = "qcom,x-gpucc"; }; }; };')
         self.assertFalse(any('GPU' in note for note in notes), notes)
 
+    def test_the_smmu_streams_and_the_touch_range_are_found(self):
+        parts = """
+            qcom,msm-audio-ion { compatible = "qcom,msm-audio-ion"; iommus = <SMMU0x1801 0x00>; };
+            remoteproc-wpss@8a00000 { qcom,firmware-name = "wpss"; iommus = <SMMU0x1c00 0x01>; };
+            msm_cam_smmu_ife { compatible = "qcom,msm-cam-smmu-cb"; iommus = <SMMU0x800 0x4e0>, <SMMU0x820 0x4e0>; };
+            spi@a94000 { compatible = "qcom,spi-geni"; reg = <0xa94000 0x4000>;
+                touch@0 { spi-max-frequency = <0x5f5e10>; goodix,reset-gpio = <&tlmm 105 0>; goodix,irq-gpio = <&tlmm 81 0x2008>;
+                    goodix,panel-max-x = <10800>; goodix,panel-max-y = <24000>; }; }; };"""
+        # a vendor's source, and the same compiled (where the SMMU is a number that comes first)
+        for smmu, head in (('&apps_smmu ', '/ { apps_smmu: apps-smmu@15000000 { compatible = "qcom,qsmmu-v500"; reg = <0x15000000 0x100000>; };'),
+                           ('0x05 ', '/ { apps-smmu@15000000 { compatible = "qcom,qsmmu-v500"; reg = <0x15000000 0x100000>; };')):
+            soc, board, notes = devicetree.from_dts(head + parts.replace('SMMU', smmu))
+            self.assertEqual(soc['smmu'], {'apps': 0x15000000, 'audio_stream': [0x1801, 0], 'wifi_stream': [0x1c00, 1],
+                                           'camera_stream': [0x800, 0x4e0]}, smmu)
+            self.assertEqual(board['touch']['coordinates'], [10800, 24000])
+        soc, board, notes = devicetree.from_dts("""/ { spi@a94000 { compatible = "qcom,spi-geni"; reg = <0xa94000 0x4000>;
+            touch@0 { spi-max-frequency = <1>; focaltech,reset-gpio = <&tlmm 105 0>; focaltech,irq-gpio = <&tlmm 81 0>;
+                focaltech,display-coords = <0 0 10800 24000>; }; }; };""")
+        self.assertEqual(board['touch']['coordinates'], [10800, 24000])
+
     def test_a_key_that_is_not_on_a_pmic_is_left_to_be_filled_in(self):
         soc, board, notes = devicetree.from_dts('''/ { tlmm: pinctrl@f000000 { phandle = <0x10>; };
             gpio_keys { compatible = "gpio-keys"; vol_up { gpios = <0x10 0x20 0x01>; linux,code = <0x73>; }; }; };''')

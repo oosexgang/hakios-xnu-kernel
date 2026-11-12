@@ -136,12 +136,21 @@ def pmic_of(node):
     return slave, pmic.name.split('@')[0].split(',')[-1].upper()
 
 
+def first_stream(node):
+    """The first entry of a node's iommus: [stream, mask]. In a source the SMMU is a reference (&apps_smmu ...),
+    in a compiled tree a number that comes first."""
+    value = node.props.get('iommus', '')
+    found = cells(value)
+    found = found if '&' in value else found[1:]
+    return found[:2] if len(found) >= 2 else None
+
+
 def from_dts(text, panel=None):
     """What a device tree says of a board, and what it leaves open. Returns (soc_values, board_values, notes)."""
     tree = parse_dts(text)
     soc, board, notes = {}, {}, []
     tsens, panels, cpus = [], [], []
-    platform, keys, rpmh, adreno, ipc, radio_pins = {}, {}, {}, {}, {}, {}
+    platform, keys, rpmh, adreno, ipc, radio_pins, streams = {}, {}, {}, {}, {}, {}, {}
     for node in tree.walk():
         compatible = strings(node.props.get('compatible'))
         if 'arm,gic-v3' in compatible:
@@ -226,10 +235,23 @@ def from_dts(text, panel=None):
                 if len(reset) >= 2 and len(wakes) >= 2:
                     touch = board.setdefault('touch', {})
                     touch['reset'], touch['interrupt'] = reset[-2], wakes[-2]
+                    # the range of its coordinates: Goodix's two properties, or FocalTech's corners
+                    size = cells(node.props.get('goodix,panel-max-x')) + cells(node.props.get('goodix,panel-max-y'))
+                    corners = cells(node.props.get('focaltech,display-coords'))
+                    size = size if len(size) == 2 else corners[2:4] if len(corners) == 4 else []
+                    if len(size) == 2 and all(size):
+                        touch['coordinates'] = size
                     bus = node.parent
                     if bus is not None and 'qcom,spi-geni' in strings(bus.props.get('compatible')) and only_reg(bus)[0]:
                         touch['serial_engine'] = only_reg(bus)[0]
                     break
+        # the SMMU streams the parts' DMA comes in on: the audio DSP's reads of our memory, the Wi-Fi DSP's, the IFEs'
+        if 'qcom,msm-audio-ion' in compatible and first_stream(node):
+            streams.setdefault('audio_stream', first_stream(node))
+        if strings(node.props.get('qcom,firmware-name')) == ['wpss'] and first_stream(node):
+            streams.setdefault('wifi_stream', first_stream(node))
+        if (node.name == 'msm_cam_smmu_ife' or 'msm_cam_smmu_ife' in node.labels) and first_stream(node):
+            streams.setdefault('camera_stream', first_stream(node))
         # the audio DSP's reserved memory: what the node that loads "adsp" points at
         if strings(node.props.get('qcom,firmware-name')) == ['adsp']:
             region = referred(tree, node.props.get('memory-region'))
@@ -335,6 +357,8 @@ def from_dts(text, panel=None):
         board.setdefault('wifi', {})['pins'] = [radio_pins[key] for key in ('enable', 'bt_reset', 'bt_sw_ctrl')]
     if keys:
         board['buttons'] = keys
+    if 'smmu' in soc:
+        soc['smmu'].update(streams)
     if tsens:
         soc['thermal'] = {'tsens': sorted(set(tsens))[:2]}
     if cpus:

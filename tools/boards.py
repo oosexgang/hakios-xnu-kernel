@@ -1240,7 +1240,7 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                  + (', and the serial engine it is on' if 'serial_engine' in wired else '') + ';',
                  "the engine's clocks and votes, the bus's pins and the supplies are yours to fill in",
                  '(devices/_template/board.dts says where each is).'), 'touch',
-                [(key, wired[key]) for key in ('serial_engine', 'interrupt', 'reset') if key in wired], commented=True)
+                [(key, wired[key]) for key in ('serial_engine', 'interrupt', 'reset', 'coordinates') if key in wired], commented=True)
     dsp = board.get('adsp', {})
     if 'memory' in dsp:
         section(('The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',
