@@ -85,6 +85,12 @@ from the phone's own firmware, and the two changes in `base/uefi/mu-silicium.pat
 - the boot shim copies the payload that follows the UEFI image to a reserved address;
 - the boot manager starts the loader from it instead of showing a menu.
 
+The reserved address is a convention between the shim and the loader: 0xF0000000, 64 MB, on the
+first phones. It has to be RAM in your phone's memory map that the firmware does not use for
+anything else. If it cannot be there, change it in the shim and build the loader to match
+(`LOADER_CFLAGS="-DPAYLOAD_BASE=... -DPAYLOAD_MAX_SIZE=..." loader/build.sh`;
+`loader/src/conventions.h` has both). The loader keeps the kernel's memory clear of that range.
+
 ## 3. The loader
 
 Build it and start it once without a kernel:
