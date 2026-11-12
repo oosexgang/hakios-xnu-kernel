@@ -147,10 +147,13 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **the same part on other pins or another bus**, the driver needs those made data. Move
   the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
-  in `[buttons]` and the flashlight's in `[torch]`:
-  [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. The
-  flashlight's driver is the example of how that is kept safe: its test runs it on a second phone
-  with the part elsewhere on the bus (`tests/torch_driver_test.c`).
+  in `[buttons]`, the flashlight's in `[torch]`, the vibration motor's pins in `[haptic]` and the
+  speaker amplifiers' bus and addresses in `[speaker]`:
+  [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. Those
+  drivers are the example of how that is kept safe: the test of each runs it on a second phone
+  with the part elsewhere (`tests/torch_driver_test.c`, `haptic_driver_test.c`,
+  `speaker_driver_test.c`), so a value of the first phone left in the code shows as a part that
+  does not answer.
 - If it has **another part**, write a driver next to the existing one and add a feature for it in
   `hakios_board.h`. [writing-a-driver.md](writing-a-driver.md) is the guide, with an example driver
   and its test to start from, and the headers a driver has at hand: the SoC's pins, I2C by hand on
