@@ -1,0 +1,17 @@
+# iOS 26/27 (RC_JOBS=ios/userland/rc.jobs.fps root26-ios.sh): frame pacing with something moving. The lock screen
+# swiped up once SpringBoard has drawn it, 25 s for the start-up's background work, then the home screen's pages swiped
+# both ways, then Settings (the third row's second icon, the default layout) opened, its list flung down and up under
+# the glass search field, and closed with the home gesture. The display driver's lines every five seconds ("from one
+# frame to the next") give the frame times while they move, the plug-in's (metal_fps=1) the GPU's share of them.
+# A new device's first boot may ask whether Wallet may send notifications, in an alert over the home screen that takes
+# every gesture: the tap goes where its "Don't Allow" is and the home screen has no icon (between the third row's first two).
+/redwood/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200 wait 25 tap 0.27 0.582 wait 3
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1 swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1 swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1
+/redwood/bin/rwtouch swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 1 swipe 0.85 0.5 0.15 0.5 250 wait 1 swipe 0.15 0.5 0.85 0.5 250 wait 3
+/redwood/bin/rwtouch tap 0.385 0.57 wait 4
+/redwood/bin/rwtouch swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1 swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1
+/redwood/bin/rwtouch swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1 swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1
+/redwood/bin/rwtouch swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 1 swipe 0.5 0.8 0.5 0.3 150 wait 1 swipe 0.5 0.3 0.5 0.8 150 wait 3
+/redwood/bin/rwtouch swipe 0.5 0.995 0.5 0.55 150 wait 3
+/bin/ps -A
