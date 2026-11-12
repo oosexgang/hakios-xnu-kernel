@@ -143,7 +143,7 @@ heat_and_cool(void)
 	usleep(500000);
 	CHECK(get("step") == 5, "held: %u", get("step"));
 	phone(550);
-	WAIT_FOR(get("step") == 0, 3000);
+	WAIT_FOR(get("step") == 0 && perf[0] == ROWS - 1 && perf[1] == ROWS - 1 && perf[2] == ROWS - 1 && cap == 1000, 3000);
 	CHECK(perf[0] == ROWS - 1 && perf[1] == ROWS - 1 && perf[2] == ROWS - 1, "all given back: %u %u %u", perf[0], perf[1],
 	    perf[2]);
 	CHECK(cap == 1000, "the panel too: %u", cap);
@@ -158,7 +158,7 @@ critical(void)
 	hakios_thermal_init();
 	usleep(200000);
 	phone(960);
-	WAIT_FOR(perf[0] == 3, 500);
+	WAIT_FOR(get("step") == 5 && perf[0] == 3 && perf[1] == 4, 500);
 	CHECK(get("step") == 5 && perf[0] == 3 && perf[1] == 4, "all the way at once: step %u", get("step"));
 	hakios_thermal_quiesce();
 	CHECK(perf[0] == ROWS - 1 && perf[1] == ROWS - 1, "the loader gets them back: %u %u", perf[0], perf[1]);
@@ -191,7 +191,7 @@ silent_sensors(void)
 			sensor[c][s] = s & 1 ? (1u << 21) | 0x7ff : 0;     /* nonsense or nothing */
 		}
 	}
-	WAIT_FOR(get("step") == 0, 3000);
+	WAIT_FOR(get("step") == 0 && (int32_t)get("hottest") == TH_NONE, 3000);
 	CHECK(get("step") == 0, "no reading is no reason to stay slow: %u", get("step"));
 	CHECK((int32_t)get("hottest") == TH_NONE, "%d", (int32_t)get("hottest"));
 }
