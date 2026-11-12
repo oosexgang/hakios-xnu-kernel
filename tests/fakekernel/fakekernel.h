@@ -27,6 +27,7 @@ typedef uintptr_t vm_offset_t;
 typedef uintptr_t vm_size_t;
 typedef int kern_return_t;
 typedef int wait_result_t;
+#define THREAD_AWAKENED         0
 typedef struct fake_thread *thread_t;
 typedef void (*thread_continue_t)(void *, wait_result_t);
 #define KERN_SUCCESS            0
@@ -60,6 +61,12 @@ void thread_wakeup(void *event);
 kern_return_t kernel_thread_start(thread_continue_t fn, void *arg, thread_t *thread);
 void thread_deallocate(thread_t thread);
 thread_t current_thread(void);
+kern_return_t clear_wait(thread_t thread, wait_result_t result);   /* a wait that was declared is taken back */
+/*
+ * Called, if a test sets it, when a thread is about to declare a wait without a time: the moment between
+ * what the thread last read and its sleep, where a wake-up from elsewhere wakes nobody.
+ */
+extern void (*fake_before_wait)(void);
 kern_return_t thread_terminate(thread_t thread);        /* (the calling thread's end) */
 
 bool ml_get_interrupts_enabled(void);

@@ -467,6 +467,46 @@ soft_unknown_board(void)
 	CHECK(m.accesses == 0, "no hardware");
 }
 
+/*
+ * A level that is asked for in the moment between the thread's last look and its sleep: the wake-up finds
+ * nobody asleep. The thread must not then sleep on what it read before.
+ */
+static void
+ask_for_300(void)
+{
+	set("level", 300);
+}
+
+static void
+display_on(void)
+{
+	set("power", 1);
+}
+
+static void
+asked_just_before_it_sleeps(void)
+{
+	phone("phone-cmd", false);
+	boot_args = "backlight=2 bl_level=500";
+	hakios_backlight_init();
+	WAIT_FOR(m.sent_n >= 1 && get("shown") == 500, 1000);
+	settle();
+	fake_before_wait = ask_for_300;         /* the next time the thread has nothing to do and goes to sleep for good */
+	set("level", 600);
+	WAIT_FOR(fake_before_wait == NULL && get("shown") == 300, 5000);
+	CHECK(fake_before_wait == NULL, "the thread came to sleep once 600 was shown");
+	CHECK(get("shown") == 300 && last_sent() == bl_level_to_raw(300, 1, 2047), "and what was asked for in that moment is shown: %u", get("shown"));
+	/* the same moment with the display switched off: switched on again just before the thread sleeps, it is lit */
+	settle();
+	fake_before_wait = display_on;
+	set("power", 0);
+	WAIT_FOR(fake_before_wait == NULL && last_sent() == bl_level_to_raw(300, 1, 2047) && get("shown") == 300, 5000);
+	settle();
+	CHECK(fake_before_wait == NULL, "the thread went dark and came to sleep");
+	CHECK(last_sent() == bl_level_to_raw(300, 1, 2047) && get("shown") == 300, "and the display that was switched on in that moment is lit: %u", last_sent());
+	CHECK(m.errors == 0, "%s", m.error);
+}
+
 static void
 automatic_brightness(void)
 {
@@ -558,7 +598,7 @@ main(int argc, char **argv)
 		{ "command_panel", command_panel }, { "setup_put_back", setup_put_back }, { "controller_not_usable", controller_not_usable },
 		{ "controller_off", controller_off }, { "panel_of_the_other_mode", panel_of_the_other_mode }, { "video_panel", video_panel }, { "look_only", look_only },
 		{ "off_by_default", off_by_default }, { "display_unpowered", display_unpowered },
-		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "automatic", automatic_brightness },
+		{ "deaf_controller", deaf_controller }, { "soft_unknown_board", soft_unknown_board }, { "asked_just_before_it_sleeps", asked_just_before_it_sleeps }, { "automatic", automatic_brightness },
 		{ "display_power", display_power }, { "soft_power", soft_power },
 	};
 

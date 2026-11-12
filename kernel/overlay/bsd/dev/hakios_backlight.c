@@ -187,9 +187,12 @@ static bool broken;                             /* backend dcs: something went w
 static int poke;                                /* the thread's wait channel */
 static void (*soft_redraw)(void);
 
+static volatile uint32_t pokes;                 /* how many times it was poked: what a turn of the thread read may be older */
+
 static void
 bl_poke(void)
 {
+	pokes++;
 	thread_wakeup(&poke);
 }
 
@@ -467,7 +470,7 @@ bl_thread(__unused void *argument, __unused wait_result_t result)
 
 	apply(user_level);
 	for (;;) {
-		uint32_t want = wanted_level(), goal;
+		uint32_t seen = pokes, want = wanted_level(), goal;
 
 		if (power == 0) {
 			if (!dark) {
@@ -475,6 +478,10 @@ bl_thread(__unused void *argument, __unused wait_result_t result)
 				dark = true;
 			}
 			assert_wait(&poke, THREAD_UNINT);
+			if (pokes != seen) {
+				clear_wait(current_thread(), THREAD_AWAKENED);  /* (as at the loop's end: poked since `power' was read) */
+				continue;
+			}
 			thread_block(THREAD_CONTINUE_NULL);
 			continue;
 		}
@@ -502,6 +509,15 @@ bl_thread(__unused void *argument, __unused wait_result_t result)
 			assert_wait(&poke, THREAD_UNINT);
 		} else {
 			assert_wait_timeout(&poke, THREAD_UNINT, TICK_MS, NSEC_PER_MSEC);
+		}
+		/*
+		 * A poke that came after this turn read what it acted on and before the wait above was
+		 * declared has woken nobody: without this look the thread would sleep on what it no longer
+		 * knows to be true -- for good, where it waits without a time.
+		 */
+		if (pokes != seen) {
+			clear_wait(current_thread(), THREAD_AWAKENED);
+			continue;
 		}
 		thread_block(THREAD_CONTINUE_NULL);
 	}

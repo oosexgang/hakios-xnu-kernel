@@ -52,9 +52,17 @@ delay(int usec)
 	usleep((useconds_t)(usec > 0 ? usec : 0));
 }
 
+void (*fake_before_wait)(void);
+
 void
 assert_wait(void *event, int interruptible __unused)
 {
+	if (fake_before_wait != NULL) {
+		void (*now)(void) = fake_before_wait;
+
+		fake_before_wait = NULL;        /* (once) */
+		now();
+	}
 	pthread_mutex_lock(&big);
 	wait_event = event;
 	wait_until_ns = 0;
@@ -91,6 +99,13 @@ thread_block(thread_continue_t continuation __unused)
 	wait_event = NULL;
 	pthread_mutex_unlock(&big);
 	return 0;
+}
+
+/* (a wait is only declared until thread_block(): taking it back is to do nothing) */
+kern_return_t
+clear_wait(thread_t thread __unused, wait_result_t result __unused)
+{
+	return KERN_SUCCESS;
 }
 
 void
