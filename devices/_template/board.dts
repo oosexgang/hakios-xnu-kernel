@@ -10,17 +10,17 @@
 
 	// The drivers this board may start. Empty at first: add one once its driver has been seen to work
 	// here, in the order of docs/porting.md. The kernel knows these:
-	// cpufreq-epss    CPU frequency through Qualcomm's EPSS (boot-arg cpufreq=1); needs [cpufreq] in the SoC file
-	// cpufreq-scmi    firmware CPU performance queries (scmi_perf=1); needs [scmi_perf] in the SoC file
-	// ddr-rpmh        memory bandwidth votes through RPMh (ddr=); needs [rpmh] in the SoC file
+	// cpufreq-epss    CPU frequency through Qualcomm's EPSS (boot-arg cpufreq=1); needs cpufreq { } in the SoC file
+	// cpufreq-scmi    firmware CPU performance queries (scmi_perf=1); needs scmi-perf { } in the SoC file
+	// ddr-rpmh        memory bandwidth votes through RPMh (ddr=); needs rpmh { } in the SoC file
 	// battery-uefi    the battery as the firmware reports it to the loader (battery=1)
-	// buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1); needs [buttons],
-	// and [spmi] in the SoC file
-	// adsp            the audio DSP: sound, and the battery manager behind it (adsp=1); needs [adsp]
+	// buttons-pmic    power and volume keys on the PMIC through the SPMI arbiter (buttons=1); needs buttons { },
+	// and spmi { } in the SoC file
+	// adsp            the audio DSP: sound, and the battery manager behind it (adsp=1); needs adsp { }
 	// display-scan    a command-mode panel: frames are written ahead of its readout, read from the DSI
-	// interface's counters (fb_scan); needs intf1 in the SoC file's [display]
+	// interface's counters (fb_scan); needs intf1 in the SoC file's display { }
 	// virtio          an emulator's virtio devices (network, tablet, keyboard): for QEMU's board, not a phone
-	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs [gpu]
+	// gpu-a660        an Adreno of the A660 family (642, 642L, 643, 660 ...) behind a GMU (gpu=1); needs gpu { }
 	// and these, each a driver of one part wired the way one phone has it -- list one only if your phone
 	// has that part on the same pins and bus (kernel/overlay/bsd/dev/hakios_board.h, docs/drivers.md):
 	// touch-goodix, touch-ft3658u, speaker-aw88261, haptic-aw86927, torch-pm8350c, camera-sm7325,
@@ -41,11 +41,11 @@
 		// byte-order = "msb-first";    // "msb-first" when the node has qcom,mdss-dsi-bl-inverted-dbv, else "lsb-first"
 	};
 
-	// Holding the processors back when hot (docs/thermal.md). Leave the section out until [thermal] and
-	// [cpufreq] are in the SoC file.
+	// Holding the processors back when hot (docs/thermal.md). Leave the section out until thermal { } and
+	// cpufreq { } are in the SoC file.
 	// thermal {
 		// floor-mhz = <1000 1100 1100>; // the slowest each group of cores is held back to: one value for each
-		//                              // group of the SoC file's [cpufreq] domain_cores
+		//                              // group of the SoC file's cpufreq { } domain-cores
 	// };
 
 	// The keys, for the feature "buttons-pmic". A peripheral is SPMI slave << 8 | the high byte of its
@@ -54,7 +54,7 @@
 		// pon = <0x013>;               // the power-on block (pon_hlos@1300 under the PMIC with reg = <0 ...>): power on
 		//                              // KPDPWR_N, volume down on RESIN_N
 		// pon-name = "the PMK8350's power-on block"; // for the log
-		// volume-up = <0x18d>;         // the GPIO of gpio_keys' volume_up: GPIO n of pinctrl@8800 is 0x88 + n - 1,
+		// volume-up = <0x18d>;         // the GPIO of gpio_keys' volume-up: GPIO n of pinctrl@8800 is 0x88 + n - 1,
 		//                              // on the slave its PMIC is (qcom,pm8350@1: 1)
 		// volume-up-name = "GPIO6 of the PM8350";
 	// };
@@ -116,7 +116,7 @@
 	// };
 
 	// The cameras, for the feature "camera-sm7325": the sensors on an SM7325's camera blocks, their
-	// supplies from a PM8008's regulators. Each sensor is one [[camera.sensors]] table, in the order iOS's
+	// supplies from a PM8008's regulators. Each sensor is one sensor@N { } table, in the order iOS's
 	// side numbers them; Android's device tree has each as a qcom,cam-sensor node (cam-sensorN).
 	// camera {
 		// pmic-pins = <4 5>;           // the PM8008's I2C bus: the pins of its qcom,i2c node's pinctrl, SDA then SCL
@@ -221,7 +221,7 @@
 	// };
 
 	// The loader (loader/) under this phone's UEFI, which tells boards apart by the framebuffer the firmware
-	// reports. Needs [platform] in the SoC file. Leave the section out while the phone is started another way.
+	// reports. Needs platform { } in the SoC file. Leave the section out while the phone is started another way.
 	// loader {
 		// fb-base = <0xE1000000>;      // what the loader prints at start: "display W x H at ..." (docs/porting.md,
 		//                              // step 3). Only the emulator's board goes without.

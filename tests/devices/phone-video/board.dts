@@ -120,7 +120,7 @@
 		gaming-fuse = <0x1f5>;
 		highest-bank-bit = <14>;        // LPDDR4X (a6xx_init)
 		gcc-debug-gpucc = <0x146>;
-		// (not zap_must_authenticate: this phone's firmware leaves a zap shader loaded, which is used when ours is refused)
+		// (not zap-must-authenticate: this phone's firmware leaves a zap shader loaded, which is used when ours is refused)
 		speeds-khz = <315000 450000 550000>;
 		speed-levels = <64 128 192>;
 		default-speed = <3>;

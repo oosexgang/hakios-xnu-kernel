@@ -48,7 +48,7 @@
 	};
 
 	// The SMMU between the SoC's devices and memory, for the part drivers that give a device its addresses
-	// (the speakers' audio path, the cameras, Wi-Fi). The GPU's own is in [adreno].
+	// (the speakers' audio path, the cameras, Wi-Fi). The GPU's own is in adreno { }.
 	smmu {
 		apps = <0x15000000>;            // apps_smmu (the vendor's apps-smmu@15000000; Linux's iommu@15000000)
 		audio-stream = <0x1801 0x0>;    // for "speaker-aw88261": the stream the audio DSP reads our samples on,
@@ -102,36 +102,36 @@
 	};
 
 	// The Adreno's blocks, for the feature "gpu-a660". From the SoC's -gpu.dtsi (qcom,kgsl-3d0 and qcom,gmu,
-	// by their reg-names) and its main .dtsi. What differs between phones is the board's [gpu].
+	// by their reg-names) and its main .dtsi. What differs between phones is the board's gpu { }.
 	adreno {
 		gpu = <0x03d00000>;             // qcom,kgsl-3d0, reg "kgsl_3d0_reg_memory": the 3D core
 		gmu = <0x03d6a000>;             // qcom,gmu, reg "kgsl_gmu_reg"
 		gpucc = <0x03d90000>;           // the GPU's clock controller (qcom,CODENAME-gpucc)
-		cx-misc = <0x03d9e000>;         // qcom,kgsl-3d0, reg "cx_misc"
+		cx-misc = <0x03d9e000>;         // qcom,kgsl-3d0, reg "cx-misc"
 		rscc = <0x03de0000>;            // qcom,kgsl-3d0, reg "rscc"
 		smmu = <0x03da0000>;            // the GPU's SMMU (kgsl-smmu)
 		pdc = <0x0b290000>;             // qcom,gmu, reg "kgsl_gmu_pdc_cfg"
-		qfprom = <0x00780000>;          // the fuses (qfprom), where the board's [gpu] speed_fuse and gaming_fuse are
+		qfprom = <0x00780000>;          // the fuses (qfprom), where the board's gpu { } speed-fuse and gaming-fuse are
 		tsens = <0x0c265000>;           // optional: the TSENS controller with the GPU's sensors, read once a minute
 	};
 
-	// Temperature, for a board's [thermal].
+	// Temperature, for a board's thermal { }.
 	thermal {
 		tsens = <0x0c263000 0x0c265000>; // the TSENS controllers (at most two), reg "tsens_tm_physical"
 	};
 
-	// CPU frequency through EPSS, for the feature "cpufreq-epss" and a board's [thermal].
+	// CPU frequency through EPSS, for the feature "cpufreq-epss" and a board's thermal { }.
 	cpufreq {
 		epss = <0x18591000>;            // qcom,cpufreq-hw-epss: the first of its "freq-domainN" regs
 		epss-domain-size = <0x1000>;    // the distance from one to the next
 		domain-cores = <4 3 1>;         // how many cores each group has, in the cores' order (the cpu@ nodes'
-		                                // qcom,freq-domain); one to four groups, together [platform] cores
+		                                // qcom,freq-domain); one to four groups, together platform { } cores
 	};
 
-	// What the loader (loader/) tells the kernel of the machine, for boards with a [loader] section.
+	// What the loader (loader/) tells the kernel of the machine, for boards with a loader { } section.
 	platform {
 		io-base = <0x00400000>;         // one window over the SoC's peripherals; never 0. Not in a device tree;
-		                                // needed once a board has a [loader] section
+		                                // needed once a board has a loader { } section
 		io-size = <0x3FC00000>;         // (these two are what the Snapdragon 7-series ports use)
 		ufs = <0x01D84000>;             // optional: the UFS host controller (the ufshc node's reg "ufs_mem"), for the
 		                                // loader's and the kernel's own requests to the storage (ufs_native=)
