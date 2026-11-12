@@ -3067,6 +3067,7 @@ static uint32_t ring_frame_bytes, ios_odd_frames;
 static const struct ctab_mode *ios_mode;
 static uint32_t ios_mode_n, ios_line_ns;
 static volatile bool ios_open, ios_streaming, ios_wanted;  /* open; frames coming; a read wants them */
+#define IOS_OPEN_CHANNEL        ((void *)(uintptr_t)&ios_open)  /* what a wait on ios_open sleeps on: its address */
 static uint64_t ios_last_read, ios_given, ios_frames_done, ios_writes_late;
 static struct { uint32_t lines, gain, frame_lines; bool pending; uint32_t focus; bool focus_pending; } ios_ask;
 static struct { uint32_t lines, gain, frame_lines; uint64_t from; } ios_now, ios_next;
@@ -3585,7 +3586,7 @@ camdev_close(__unused dev_t dev, __unused int flags, __unused int type, __unused
 {
 	ios_open = false;
 	ios_wanted = false;
-	wakeup(&ios_open);
+	wakeup(IOS_OPEN_CHANNEL);
 	return 0;
 }
 
@@ -3600,7 +3601,7 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 	ios_last_read = ios_ms();
 	if (!ios_streaming && !ios_wanted) {
 		ios_wanted = true;
-		wakeup(&ios_open);
+		wakeup(IOS_OPEN_CHANNEL);
 	}
 	for (;;) {
 		if (broken) {
@@ -3622,7 +3623,7 @@ camdev_read(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		}
 		if (!ios_streaming && !ios_wanted) {
 			ios_wanted = true;      /* (the frames stopped meanwhile: another sensor) */
-			wakeup(&ios_open);
+			wakeup(IOS_OPEN_CHANNEL);
 		}
 		struct timespec ts = { 0, 100 * NSEC_PER_MSEC };
 		error = msleep(&ios_frames_done, &ios_lock, PZERO | PCATCH, "redwood-camera", &ts);
@@ -3764,7 +3765,7 @@ camdev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 		ios_switch_mode = c.b;
 		ios_switch_to = c.a + 1;
 		lck_mtx_unlock(&ios_lock);
-		wakeup(&ios_open);
+		wakeup(IOS_OPEN_CHANNEL);
 		return 0;
 	}
 	return EINVAL;
@@ -3867,7 +3868,7 @@ serve_ios(void)
 	while (!broken) {
 		lck_mtx_lock(&ios_lock);
 		while (!broken && !(ios_open && ios_wanted) && ios_switch_to == 0) {
-			(void)msleep(&ios_open, &ios_lock, PZERO, "redwood-camera-idle", NULL);
+			(void)msleep(IOS_OPEN_CHANNEL, &ios_lock, PZERO, "redwood-camera-idle", NULL);
 		}
 		unsigned to = ios_switch_to;
 
