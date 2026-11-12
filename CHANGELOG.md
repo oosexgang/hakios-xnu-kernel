@@ -250,13 +250,15 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **The host tests** (`tests/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
   unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
   them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
-  flashlight, the battery, the vibration motor, the speaker amplifiers, the touch controllers' wiring,
-  the sparse image and the storage driver, whose test holds that the loader is never asked for a write
+  flashlight, the battery, the vibration motor, the speaker amplifiers, the wiring of the touch
+  controllers, the cameras, the sound's pins and the microphones' blocks (the last two on a board and a
+  chip unlike the first phones', which is how the sound driver was found watching that phone's pins), the sparse image and the storage driver, whose test holds that the loader is never asked for a write
   the port may not make, and iOS's Wi-Fi requests, whose test holds that nothing a radio reports goes
   back to iOS past the room Apple's layouts and the caller's buffer have. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
-  porting guide, and build the loader. They use three stand-in phones in `tests/devices/`.
+  porting guide, and build the loader. They use stand-in phones in `tests/devices/` and a made-up chip in
+  `tests/soc/`.
   [tests/README.md](tests/README.md) lists each test.
 - **CI** runs `make check`, `kernel/verify.sh` and `kernel/syntax-check.sh` on every push and pull
   request. The kernel is not built or linked there.
