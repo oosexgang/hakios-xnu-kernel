@@ -109,6 +109,11 @@ choose_window(const struct payload_info *pi)
 	if (best_size > MAX_MEM_SIZE) {
 		best_size = MAX_MEM_SIZE;
 	}
+	if (best_size == 0) {
+		/* (said here: what a firmware answers to a claim of no pages at address 0 is its own affair) */
+		print("no free range of 32 MB in the firmware's memory map: the kernel has nowhere to run (\"oem memmap\" shows the map)\n");
+		return 0;
+	}
 	/* UEFI stays alive while the kernel runs, so the kernel must own all of its window. */
 	uint64_t claim = best_base;
 	efi_status s = BS->allocate_pages(AllocateAddress, EfiLoaderData, best_size >> 12, &claim);

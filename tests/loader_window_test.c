@@ -100,7 +100,7 @@ allocate_pages(int how, int kind, uint64_t pages, uint64_t *at)
 		}
 		return low_status;
 	}
-	return pages == 0 ? (EFI_ERROR_BIT | 2) : claim_status; /* (nothing cannot be claimed) */
+	return claim_status;            /* (also for a claim of nothing: firmwares differ) */
 }
 
 static efi_boot_services services = { .get_memory_map = get_memory_map, .allocate_pages = allocate_pages };
@@ -216,6 +216,8 @@ nothing_free(void)
 	range(4, 0x80000000ULL, 0x280000000ULL);
 	range(EfiConventionalMemory, 0x40001000ULL, 0x41fff000ULL);     /* (31.99 MB) */
 	CHECK(choose() == 0 && win_size == 0, "no window: %#llx + %#llx", (unsigned long long)win_base, (unsigned long long)win_size);
+	CHECK(claim_count == 0, "the firmware is not asked for a window of nothing");
+	CHECK(strstr(said, "no free range of 32 MB") != NULL, "and why is said: %s", said);
 }
 
 /* the firmware refuses the claim (the range is not free after all), or has no map: no window */
