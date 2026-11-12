@@ -5771,7 +5771,7 @@ TEST(gmem_for_a_pass_of_enough_draws_decided_at_its_end) {
           {1, true, 0, false}}) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(2);
-        if (!weighted) cb->setGmemOff(CommandBuffer::kGmemFetchWeight);
+        cb->setGmemOff(CommandBuffer::kGmemAlwaysDual | (weighted ? 0u : CommandBuffer::kGmemFetchWeight));
         for (int i = 0; i < draws; i++) CHECK(cb->draw(fetch ? fb : flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
         cb->commit();
         cb->waitUntilCompleted();
@@ -5784,6 +5784,7 @@ TEST(gmem_for_a_pass_of_enough_draws_decided_at_its_end) {
     auto vis = newBuffer(*r.gpu, 64, &why);
     auto cb = r.queue->commandBuffer();
     cb->setGmemMinDraws(2);
+    cb->setGmemOff(CommandBuffer::kGmemAlwaysDual);   // (both ways, decided at the end: what this is about)
     CHECK(cb->draw(flatProgram(), a, wholeDraw(), Bindings{}, Bindings{}));
     Draw d = wholeDraw();
     d.visibilityMode = 1;
@@ -5810,7 +5811,7 @@ TEST(a_pass_of_fetching_draws_weighs_more_toward_gmem) {
          {std::tuple<int, int, bool, uint32_t>{35, 12, false, 1}, {35, 0, false, 0}, {35, 12, true, 0}}) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(56);
-        if (off) cb->setGmemOff(CommandBuffer::kGmemFetchWeight);
+        cb->setGmemOff(CommandBuffer::kGmemAlwaysDual | (off ? CommandBuffer::kGmemFetchWeight : 0u));
         // (the plain ones first: the fake keeps tri_fb's constant load for the stage after it, and a plain program's
         // constlen of 0 after it reads as a load past the stage's constants there)
         for (int i = 0; i < plain + fetching; i++) CHECK(cb->draw(i >= plain ? fb : flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
@@ -5833,6 +5834,7 @@ TEST(a_pass_whose_like_was_light_is_recorded_for_sysmem_alone) {
     for (const auto& [draws, want, light] : {std::tuple<int, uint32_t, bool>{1, 0, false}, {10, 0, true}, {10, 1, false}, {1, 0, false}, {10, 1, false}}) {
         auto cb = r.queue->commandBuffer();
         cb->setGmemMinDraws(8);
+        cb->setGmemOff(CommandBuffer::kGmemAlwaysDual);   // (both ways, decided at the end: what this is about)
         for (int i = 0; i < draws; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
         CHECK_EQ(cb->gmemRefusal().find("at most lately") != std::string::npos, light);
         cb->commit();
@@ -5841,6 +5843,33 @@ TEST(a_pass_whose_like_was_light_is_recorded_for_sysmem_alone) {
         CHECK_EQ(cb->counts().gmemPasses, want);
     }
     CHECK_EQ(r.fake->stats().faults, 0u);
+}
+
+// A pass whose like cleared the bar last time is recorded for tiles alone, its head straight onto the stream (a pass
+// recorded both ways keeps both off the stream until it closes): with a bar of 8, the second pass of 10 draws is, and so
+// is a light one after it (3 draws, drawn in tiles this once); the next one, after that light one, is recorded both ways
+// again and closes in sysmem. With metal_gmem_off=32768 every one is recorded both ways, as before.
+TEST(a_pass_whose_like_was_heavy_is_recorded_for_tiles_alone) {
+    for (const bool off : {false, true}) {
+        Rig r;
+        auto t = target(r);
+        RenderPass a;
+        a.color0 = t.get();
+        for (const auto& [draws, straight, want] :
+             {std::tuple<int, bool, uint32_t>{10, false, 1}, {10, true, 1}, {3, true, 1}, {3, false, 0}}) {
+            auto cb = r.queue->commandBuffer();
+            cb->setGmemMinDraws(8);
+            if (off) cb->setGmemOff(CommandBuffer::kGmemAlwaysDual);
+            CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+            CHECK_EQ(cb->streamWords() != 0, straight && !off);
+            for (int i = 1; i < draws; i++) CHECK(cb->draw(flatProgram(), a, wholeDraw(6), Bindings{}, Bindings{}));
+            cb->commit();
+            cb->waitUntilCompleted();
+            CHECK(cb->status() == CommandBuffer::kCompleted);
+            CHECK_EQ(cb->counts().gmemPasses, off && draws < 8 ? 0u : want);
+        }
+        CHECK_EQ(r.fake->stats().faults, 0u);
+    }
 }
 
 // A DontCare attachment is not loaded when the granules past its edge stay in its rows: 100 x 36 (the right edge in the

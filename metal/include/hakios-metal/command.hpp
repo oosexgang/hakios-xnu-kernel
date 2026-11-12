@@ -161,8 +161,10 @@ public:
     // (render::Options::fbReadBarrierLight off)
     // kGmemSysmemUnordered: a fetching draw in sysmem with the barrier alone, its own primitives unordered
     // (render::Options::fbReadOrderedSysmem off: a wrong picture wherever one draw's primitives overlap)
+    // kGmemAlwaysDual: a pass whose like cleared the bar last time recorded both ways all the same, as before
     enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4, kGmemFetchNoBarrier = 64, kGmemOrderAll = 128,
-                      kGmemFetchWeight = 512, kGmemHeavyBarrier = 1024, kGmemNoShare = 8192, kGmemSysmemUnordered = 16384 };
+                      kGmemFetchWeight = 512, kGmemHeavyBarrier = 1024, kGmemNoShare = 8192, kGmemSysmemUnordered = 16384,
+                      kGmemAlwaysDual = 32768 };
     void setGmemOff(uint32_t bits) { gmemOff_ = bits; }
     // GMEM or sysmem for each pass by CommandQueue::preferGmem (each pass stamped for it) rather than GMEM whenever a
     // pass can have it: what the plug-in asks; off by default, so that a test gets the mode it asks for

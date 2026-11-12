@@ -2933,10 +2933,16 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
             // GPU time 2.98 s to 4.42). One that grows past the bar after all stays in sysmem this once.
             kind = render::tuneKeyOf(pass);
             ordinal = ordinals_[kind]++;
-            const uint32_t peak = queue_.peakDraws(kind, ordinal);
+            const uint32_t peak = queue_.peakDraws(kind, ordinal), last = queue_.lastDraws(kind, ordinal);
             if (peak != 0 && peak < gmemMinDraws_ / 2) {
                 gmem = false;
                 gmemWhy_ = "its like weighed " + std::to_string(peak) + " at most lately (draws, fetching ones weighted)";
+            } else if (last >= gmemMinDraws_ && !(gmemOff_ & kGmemAlwaysDual)) {
+                // ...and tiles alone for one whose like cleared the bar last time (and so at its peak): the home screen's
+                // main pass, some 100 draws every frame, was recorded twice for the one recording closePass then took --
+                // the second the window server's processor time in the frame's chain, which waits for the GPU and then
+                // encodes. One that comes out light after all is drawn in tiles this once, as the bar's other side of
+                // the same guess.
             } else {
                 dual = true;
             }

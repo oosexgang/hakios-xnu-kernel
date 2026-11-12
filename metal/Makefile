@@ -125,6 +125,11 @@ out/ios/hakios-metal-probe: tools/probe.cpp out/ios/libhakios-metal.a $(wildcard
 	$(IOS_CXX) $(IOS_CXXFLAGS) -Iinclude -o $@ tools/probe.cpp out/ios/libhakios-metal.a $(IOS_LIBS) \
 		-framework IOKit -framework CoreFoundation -framework IOSurface
 
+# render_test on the phone, the fake GPU as on the host: the same encoding timed on both processors
+# (HAKIOS_METAL_BENCH=N out/ios/hakios-metal-tests the_cost_of_a_draw)
+out/ios/hakios-metal-tests: tests/main.cpp tests/render_test.cpp tests/test.hpp out/ios/libhakios-metal.a $(wildcard tests/fixtures/*.hpp)
+	$(IOS_CXX) $(IOS_CXXFLAGS) -Iinclude -Itests -o $@ tests/main.cpp tests/render_test.cpp out/ios/libhakios-metal.a $(IOS_LIBS) \
+		-framework IOKit -framework CoreFoundation -framework IOSurface
 
 # a kernel's bitcode as a header, for a probe that compiles it on the phone (our own kernels only: tools/kernels/*.ll)
 tests/fixtures/%_bc.hpp: out/host/kernels/%.bc tools/bc-header.py
