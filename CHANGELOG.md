@@ -36,7 +36,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **What was a constant in a driver and is a section now:**
   - in the board file: `[backlight]` (how brightness is set, its range and byte order), `[thermal]`
     (the floors), `[buttons]` (the keys' PMIC peripherals), `[adsp]` (firmware directory, memory, the
-    gauge's units), `[gpu]` (the Adreno's profile), `[wifi]` (the radio and its early memory pool),
+    gauge's units), `[gpu]` (the Adreno's profile), `[wifi]` (the radio, its early memory pool, the
+    Wi-Fi DSP's memory, the radio's pins and its supplies' names), `[mic]` (the codec's reset pin),
     `[screen]` (the status bar's shift past the camera), `[loader]` (framebuffer base,
     `uefi_charger`), `[boot]` (the boot tool's defaults);
   - in the SoC file: `[platform]` (interrupt controller, cores, PSCI, I/O window), `[clocks]`,
@@ -54,6 +55,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   package back in eight steps, with the log line that shows each piece worked, and ends with what is
   still tied to the first two phones. `tests/porting_test.sh` runs its tool and data steps (1, 3, 8 and
   the data side of 4 and 5) on a made-up phone with a made-up SoC, on every push.
+- **What each feature needs, key by key.** [docs/features.md](docs/features.md) is written by
+  `tools/boards.py features` from the tables the checker uses: for every feature, the sections and keys
+  of the SoC file and of the board file it needs first, and the boot argument that starts it.
 - **A catalog of drivers.** [docs/drivers.md](docs/drivers.md) lists every driver with its part, its
   feature and boot argument, and how tied it is to one phone.
 
@@ -166,6 +170,13 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   nobody, and the thread slept until something else poked it: the panel stayed at the old level, or
   dark. Found when a check of the host tests failed once; the fake kernel can now put a request
   into exactly that moment, and the test does.
+- **The sparse image reads nothing from outside itself.** A table entry that pointed past the image's
+  blocks was followed into whatever memory lay after the RAM disk, and the check that the image fits
+  the RAM disk added offsets and sizes that could wrap. Both are refused now; a damaged image is
+  reported.
+- **A loader's storage page that no request could be made with is not used.** A buffer that is not
+  whole blocks, a block size of zero or not a power of two, a partition size that overflows: the kernel
+  divided and counted with them. It refuses such a page now, with the reason.
 - **With no free memory for the kernel the loader says so**, instead of asking the firmware for a
   window of no pages.
 - **`ddr:` no longer speaks on every boot** of a board without the memory's vote.
@@ -193,10 +204,12 @@ says how the parts fit together, and [docs/README.md](docs/README.md) is the ind
 - **The lint** (`tools/lint.sh`) checks that every script parses, runs shellcheck, checks that every
   link and repository path in the documentation exists, checks the pins of `components.toml`, and looks
   for files that must never be published.
-- **The host tests** (`tests/run.sh`) run eight drivers unchanged against models of their hardware, on
-  the host and as arm64 code under `qemu-aarch64`: the backlight, the thermal limiter, CPU frequency,
-  the memory vote through RPMh, the keys, the flashlight, the battery, and the vibration motor's
-  first two levels. What the drivers share
+- **The host tests** (`tests/run.sh`) run the drivers listed in [docs/drivers.md](docs/drivers.md)
+  unchanged against models of their hardware, on the host and as arm64 code under `qemu-aarch64`: among
+  them the backlight, the thermal limiter, CPU frequency, the memory vote through RPMh, the keys, the
+  flashlight, the battery, the vibration motor, the speaker amplifiers, the touch controllers' wiring,
+  the sparse image and the storage driver, whose test holds that the loader is never asked for a write
+  the port may not make. What the drivers share
   (the PMIC arbiter's protocol, the lookup in RPMh's command database) has tests of its own. They
   also test the kernel's board code, the board and package tools, the kernel source tools, the boot-argument reference and the
   porting guide, and build the loader. They use two stand-in phones in `tests/devices/`.
@@ -224,8 +237,9 @@ Not changed:
 
 - Drivers did not move or change names. `redwood_*` is the historical prefix of the platform layer, not
   a statement about which phone the code is for.
-- Sound, microphones, camera, Wi-Fi, haptics, flashlight and storage are still written for redwood's
-  parts. They are the largest share of the work on a new phone.
+- Sound, microphones, camera and Wi-Fi are still written for redwood's parts: one codec, one radio, one
+  camera module. Which pins they are on, and the radio's supplies, are board data now; how each part is
+  spoken to is not. They are the largest share of the work on a new phone.
 - The GPU driver's sequence has only been run on the two phones' chips: another generation of Adreno
   needs work in the driver. The memory bandwidth vote expects the RPMh layout both phones have.
 - redwood has not been booted with iOS 26/27. The emulator's board is not set up for this kernel.
