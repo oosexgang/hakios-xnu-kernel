@@ -2179,6 +2179,67 @@ hm_m2v_missing(const char *class, const char *selector)
 	hm_print("metal2vulkan: no -[%s %s]\n", class, selector);
 }
 
+/*
+ * The processes shown the device besides the window server: those whose Metal was seen to work (a comma-separated
+ * list; none yet). iconservicesagent was tried: it draws icons with RenderBox (SwiftUI's renderer) and IconRendering's
+ * effects, and with the device its home screen icons came out with parts of their symbols missing -- RenderBox's
+ * custom effects call visible functions this plug-in does not link (custom_fn, custom_blend) -- where without one it
+ * draws them whole on the processor. metal_procs=iconservicesagent shows it the device again, to work on that.
+ */
+#define HM_SHOWN        ""
+
+/* whether this process is the window server, the client the CoreAnimation-only parts of this plug-in were made for */
+static bool
+hm_window_server(void)
+{
+	static int is = -1;
+
+	if (is < 0) {
+		const char *name = getprogname();
+
+		is = name != NULL && strcmp(name, "backboardd") == 0;
+	}
+	return is != 0;
+}
+
+/* whether the process NAME is shown the device: the window server, HM_SHOWN, boot-arg metal_procs=NAME,NAME, or
+ * every process with metal_all=1 */
+static bool
+hm_shown(const char *name)
+{
+	char args[1024] = "", list[512];
+	size_t size = sizeof(args) - 1;
+	const char *at;
+
+	if (name == NULL) {
+		return false;
+	}
+	if (strcmp(name, "backboardd") == 0) {
+		return true;
+	}
+	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0) {
+		args[0] = 0;
+	}
+	if (strstr(args, "metal_all=1") != NULL) {
+		return true;
+	}
+	snprintf(list, sizeof(list), "%s", HM_SHOWN);
+	if ((at = strstr(args, "metal_procs=")) != NULL) {
+		size_t used = strlen(list);
+
+		snprintf(list + used, sizeof(list) - used, ",%.*s", (int)strcspn(at + 12, " "), at + 12);
+	}
+	for (char *word = list, *next; word != NULL; word = next) {
+		if ((next = strchr(word, ',')) != NULL) {
+			*next++ = 0;
+		}
+		if (*word != 0 && strcmp(word, name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool
 hm_boot_arg_set(const char *what)
 {
@@ -2190,20 +2251,16 @@ hm_boot_arg_set(const char *what)
 
 - (instancetype)initWithAcceleratorPort:(io_service_t)port
 {
-	/* (hakios) the window server alone is shown the device: every other client of this image's Metal (SpringBoard
-	 * through SiriUICore, mediaserverd, ...) finds pipeline libraries made for Apple's GPUs with no default.metallib
-	 * beside them and aborts, while without a device it takes the road it takes today. Boot-arg metal_all=1: all. */
+	/* (hakios) the window server is shown the device, and the processes of hm_shown(): every other client of this
+	 * image's Metal (SpringBoard through SiriUICore, mediaserverd, ...) finds pipeline libraries made for Apple's GPUs
+	 * with no default.metallib beside them and aborts, while without a device it takes the road it takes today.
+	 * Boot-arg metal_all=1: all. */
 	{
-		static int all = -1;
-		char args[1024] = "";
-		size_t size = sizeof(args) - 1;
 		const char *name = getprogname();
 
-		if (all < 0) {
-			all = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_all=1") != NULL;
-		}
-		if (!all && (name == NULL || strcmp(name, "backboardd") != 0)) {
-			HM_ONCE("%s is not shown the device: the window server alone is (metal_all=1: every process)\n", name ? name : "?");
+		if (!hm_shown(name)) {
+			HM_ONCE("%s is not shown the device: the window server is%s%s (metal_all=1: every process; "
+			    "metal_procs=NAME,NAME: those too)\n", name ? name : "?", HM_SHOWN[0] ? ", and " : "", HM_SHOWN);
 			return nil;     /* (not released: before -init, _MTLDevice's -dealloc reads what -init never set) */
 		}
 	}
@@ -2462,6 +2519,12 @@ hm_boot_arg_set(const char *what)
  * it set rotation 3 over the display surface with NO answered here as well -- so the answer is the truth for whoever
  * does ask, not what keeps backboardd going. */
 - (BOOL)supportsRenderTargetTextureRotation { return NO; }
+
+/* where a texture over a buffer's bytes may start, and its rows' pitch: what the texture processor takes from memory as
+ * it lies (-[HakiosMetalBuffer newTextureWithDescriptor:offset:bytesPerRow:]). IconRendering lays its textures out by
+ * these; the zeros a missing method returned told it any offset would do. */
+- (NSUInteger)minimumLinearTextureAlignmentForPixelFormat:(MTLPixelFormat)format { (void)format; return 64; }
+- (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(MTLPixelFormat)format { (void)format; return 64; }
 
 /* The answer that cannot be nil: see the header. A zeroed struct with an empty name is what Metal's own second cache
  * (the one for `functions`) builds for itself, which is the measurement that says this shape is acceptable; the pipeline
@@ -7970,7 +8033,9 @@ hm_spec_off(void)
 - (void)hakiosKeepFragment:(NSData *)air constants:(const hakios_metal_constant *)constants count:(unsigned)count
 {
 	_specBinding = -1;
-	if (hm_spec_off() || hakios_metal_program_stage_words(_program, 1) < 4096) return;
+	/* (CoreAnimation's uber shaders, in the window server: RenderBox's uber_fragment in iconservicesagent reads its
+	 * buffer 6 the same way, and specialised on it drew icons with pieces missing that its own program draws) */
+	if (hm_spec_off() || hakios_metal_program_stage_words(_program, 1) < 4096 || !hm_window_server()) return;
 	for (unsigned i = 0; i < hakios_metal_program_resource_count(_program, 1); i++) {
 		unsigned kind, index, size;
 
