@@ -201,10 +201,28 @@ enter() {
 		FB_TIMEOUT=40 fb boot resident.img | grep -q OKAY || { sleep 3; continue; }
 		touch "$PHONE.ours"
 		sleep 6
-		wait_for loader 30 && { rm -f "$PHONE.ran"; return 0; }
+		wait_for loader 30 && { rm -f "$PHONE.ran"; resident_again; return 0; }
 		[ "$(state)" = fastboot ] || break
 	done
 	die "the loader did not come up on USB ($(describe "$(state)"))"
+}
+
+# A loader started anew has no resident image: the phone went back to Android in between (the loader's watchdog
+# resets it after 180 s without a word from this machine -- a build between two runs is enough), and a run would
+# have no root ("exec of /sbin/launchd failed, errno 2"). The image the record names is sent again if it is small
+# (a flashboot image: 4 MB, a second); a big one is only named.
+resident_again() {
+	local rwho rwhat rsize
+	[ -s "$PHONE.ramdisk" ] || return 0
+	IFS=$'\t' read -r rwho rwhat rsize < "$PHONE.ramdisk"
+	rm -f "$PHONE.ramdisk"
+	if [ -f "$rwhat" ] && [ "$(stat -c %s "$rwhat")" = "$rsize" ] && [ "$rsize" -le $((64 << 20)) ] &&
+		fb oem ramdisk | grep -q OKAY && FB_TIMEOUT=600 fb stage "$rwhat" | grep -q OKAY; then
+		printf '%s\t%s\t%s\n' "$rwho" "$rwhat" "$rsize" > "$PHONE.ramdisk"
+		say "the loader was started anew: its resident image sent again ($rwhat)"
+	else
+		say "the loader was started anew, without the resident image $rwhat: send it again (xl ramdisk FILE)" >&2
+	fi
 }
 
 fetch_log() { # fetch_log FILE
