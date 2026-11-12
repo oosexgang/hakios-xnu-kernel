@@ -856,12 +856,9 @@ image_file(const char *name, uint64_t *size)
 }
 
 
-#define MDT_HASH(flags)         (((flags) >> 24 & 7) == 2)
+#include "hakios_mdt.h"                    /* the header file and its segments, checked */
 #define MAX_SEGMENTS            48
 
-struct elf_segment {
-	uint32_t type, offset, vaddr, paddr, file_size, memory_size, flags, align;
-};
 
 static struct {
 	const uint8_t *header;
@@ -915,23 +912,22 @@ step_firmware(void)
 	}
 	image.header = header;
 	image.header_size = size;
-	count = size >= 52 + 2 * 32 ? header[44] | header[45] << 8 : 0;
-	if (size < 52 + 3 * 32 || memcmp(header, "\177ELF\1", 5) != 0 || count < 3 || count > MAX_SEGMENTS || 52 + 32 * count > size || size > PAGE_SIZE) {
-		printf("adsp: %u: adsp.mdt is not such a header (%u segments, %llu bytes)\n", step, count, size);
+	count = mdt_segment_count(header, size, MAX_SEGMENTS, PAGE_SIZE);
+	if (count == 0) {
+		printf("adsp: %u: adsp.mdt is not such a header (%llu bytes)\n", step, size);
 		goto fail;
 	}
 	for (uint32_t i = 0; i < count; i++) {
 		char name[16];
 
-		memcpy(&segment, header + 52 + 32 * i, sizeof(segment));
+		mdt_segment(header, i, &segment);
 		if (MDT_HASH(segment.flags)) {
 			hashes = segment.file_size;
 		}
-		if (segment.type != 1 || MDT_HASH(segment.flags) || segment.memory_size == 0) {
+		if (!mdt_loaded(&segment)) {
 			continue;
 		}
-		if (segment.paddr < ADSP_MEMORY || segment.file_size > segment.memory_size ||
-		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)ADSP_MEMORY + ADSP_MEMORY_SIZE) {
+		if (!mdt_within(&segment, ADSP_MEMORY, ADSP_MEMORY_SIZE)) {
 			printf("adsp: %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
 			    segment.memory_size);
 			goto fail;
@@ -959,7 +955,7 @@ step_firmware(void)
 		highest = segment.paddr + segment.memory_size > highest ? segment.paddr + segment.memory_size : highest;
 		image.segments++;
 	}
-	if (image.segments == 0 || lowest != ADSP_MEMORY || 52 + 32 * count + (uint64_t)hashes != size) {
+	if (image.segments == 0 || lowest != ADSP_MEMORY || !mdt_header_whole(count, hashes, size)) {
 		printf("adsp: %u: not what TrustZone takes: %u segments to load, the lowest at %#x; the header file has %llu bytes, "
 		    "the header %u and the hashes %u\n", step, image.segments, lowest, size, 52 + 32 * count, hashes);
 		goto fail;

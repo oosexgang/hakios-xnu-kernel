@@ -1035,12 +1035,9 @@ image_file(const char *name, uint64_t *size)
  * segments are a file each, wpss.bNN for segment NN. The segments are "relocatable": they go
  * where the memory reserved for the DSP is, which on this phone is where they say they are.
  */
-#define MDT_HASH(flags)         (((flags) >> 24 & 7) == 2)      /* the segment that is the block of hashes */
+#include "hakios_mdt.h"                    /* the header file and its segments, checked */
 #define MAX_SEGMENTS            16
 
-struct elf_segment {
-	uint32_t type, offset, vaddr, paddr, file_size, memory_size, flags, align;
-};
 
 static struct {
 	const uint8_t *header;
@@ -1068,25 +1065,23 @@ step_firmware(void)
 	if (header == NULL) {
 		return false;
 	}
-	/* a 32-bit ELF: the count of segments at 44, the table of them at 52, 32 bytes each */
-	count = size >= 52 + 2 * 32 ? header[44] | header[45] << 8 : 0;
-	if (memcmp(header, "\177ELF\1", 5) != 0 || count < 3 || count > MAX_SEGMENTS || 52 + 32 * count > size || size > PAGE_SIZE) {
-		printf("wifi: %u: fw/wpss.mdt is not such a header (%02x %02x %02x %02x, %u segments, %llu bytes)\n", step, header[0],
-		    header[1], header[2], header[3], count, size);
+	count = mdt_segment_count(header, size, MAX_SEGMENTS, PAGE_SIZE);
+	if (count == 0) {
+		printf("wifi: %u: fw/wpss.mdt is not such a header (%llu bytes, beginning %02x %02x %02x %02x)\n", step, size,
+		    size > 0 ? header[0] : 0, size > 1 ? header[1] : 0, size > 2 ? header[2] : 0, size > 3 ? header[3] : 0);
 		return false;
 	}
 	for (uint32_t i = 0; i < count; i++) {
 		char name[16];
 
-		memcpy(&segment, header + 52 + 32 * i, sizeof(segment));
+		mdt_segment(header, i, &segment);
 		if (MDT_HASH(segment.flags)) {
 			hashes = segment.file_size;
 		}
-		if (segment.type != 1 || MDT_HASH(segment.flags) || segment.memory_size == 0) {
+		if (!mdt_loaded(&segment)) {
 			continue;                       /* (not one that is loaded) */
 		}
-		if (segment.paddr < WPSS_MEMORY || segment.file_size > segment.memory_size ||
-		    (uint64_t)segment.paddr + segment.memory_size > (uint64_t)WPSS_MEMORY + WPSS_MEMORY_SIZE) {
+		if (!mdt_within(&segment, WPSS_MEMORY, WPSS_MEMORY_SIZE)) {
 			printf("wifi: %u: segment %u (%#x, %#x bytes) is not within the DSP's memory\n", step, i, segment.paddr,
 			    segment.memory_size);
 			return false;
@@ -1115,7 +1110,7 @@ step_firmware(void)
 		highest = segment.paddr + segment.memory_size > highest ? segment.paddr + segment.memory_size : highest;
 		image.segments++;
 	}
-	if (image.segments == 0 || lowest != WPSS_MEMORY || 52 + 32 * count + (uint64_t)hashes != size) {
+	if (image.segments == 0 || lowest != WPSS_MEMORY || !mdt_header_whole(count, hashes, size)) {
 		printf("wifi: %u: not what TrustZone takes: %u segments to load, the lowest at %#x; the header file has %llu bytes, "
 		    "the header %u and the hashes %u\n", step, image.segments, lowest, size, 52 + 32 * count, hashes);
 		image.segments = 0;
