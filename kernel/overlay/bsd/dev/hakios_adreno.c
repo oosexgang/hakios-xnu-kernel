@@ -3588,8 +3588,11 @@ gpu_times(void)
 			unsigned by = 0;
 
 			if (gpu_log) {
-				/* "tl: q FENCE took US": what the core spent on that submission (iokit/Kernel/HakiosGPU.cpp: tl: Q) */
-				hakios_tl("tl: q %u took %llu\n", gpu_timed, ticks * 10 / 192);
+				/* "tl: q FENCE took US from US": what the core spent on that submission, and when it began by the
+				 * GPU's always-on counter (19.2 MHz, as the processor's; from another origin, some 21525 s from mach
+				 * time on redwood, so against iokit/Kernel/HakiosGPU.cpp's tl: Q, when it was given, the gaps
+				 * between submissions are what compare) */
+				hakios_tl("tl: q %u took %llu from %llu\n", gpu_timed, ticks * 10 / 192, times[2 * slot] * 10 / 192);
 			}
 
 			while (by < 6 && ticks >= under[by]) {
