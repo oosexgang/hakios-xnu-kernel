@@ -155,7 +155,9 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **one of the touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
   engine or other pins: fill in `[touch]` of the board file. `devices/_template/board.toml` says
-  where each value is in the device tree and in the SoC's clock driver.
+  where each value is in the device tree and in the SoC's clock driver;
+  `tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE` reads the engine's clocks and their votes out of
+  that driver for you.
 - If it has **the same part on other pins or another bus** and the driver has them in its code, the driver needs those made data. Move
   the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
   in `[buttons]`, the flashlight's in `[torch]`, the vibration motor's pins in `[haptic]` and the
