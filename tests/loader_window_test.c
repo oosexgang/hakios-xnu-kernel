@@ -1,0 +1,282 @@
+/*
+ * The loader's choice of the kernel's memory (loader/src/window.c), compiled as it is into a host
+ * program and given memory maps a firmware might report. The kernel gets one block of RAM, the
+ * largest free one, clear of the payload that sits in memory the firmware calls free; the loader
+ * claims it from the firmware, which stays resident. A phone with another memory map is the first
+ * thing a port meets: this is where its map can be tried.
+ *
+ *   loader_window_test SCENARIO      one scenario a process: the window is chosen once
+ */
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "efi.h"
+
+#define memset loader_memset
+#define memcpy loader_memcpy
+#define memcmp loader_memcmp
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+
+static char said[8192];
+static void
+print(const char *format, ...)
+{
+	snprintf(said + strlen(said), sizeof(said) - strlen(said), "%s", format);
+}
+
+#include "src/conventions.h"
+#include "src/base.c"
+#include "src/payload.c"
+#include "src/window.c"
+
+#undef memset
+#undef memcpy
+#undef memcmp
+
+static int failures;
+#define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \
+	fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
+
+#define MB              (1ULL << 20)
+#define GB              (1ULL << 30)
+
+/* ---- a firmware -------------------------------------------------------------------------------- */
+
+static struct { uint32_t type; uint64_t from, to; } ranges[16];
+static unsigned range_count, descriptor_size = sizeof(efi_memory_descriptor);
+static unsigned maps_asked;
+static efi_status map_status, claim_status, low_status;
+static struct { int how, kind; uint64_t pages, at; } claims[4];
+static unsigned claim_count;
+
+static void
+range(uint32_t type, uint64_t from, uint64_t to)
+{
+	ranges[range_count].type = type;
+	ranges[range_count].from = from;
+	ranges[range_count++].to = to;
+}
+
+static efi_status EFIAPI
+get_memory_map(uint64_t *size, void *map, uint64_t *key, uint64_t *desc_size, uint32_t *desc_ver)
+{
+	maps_asked++;
+	if (EFI_ERROR(map_status)) {
+		return map_status;
+	}
+	if (*size < range_count * descriptor_size) {
+		return EFI_BUFFER_TOO_SMALL;
+	}
+	memset(map, 0xff, range_count * descriptor_size);      /* (what a larger descriptor has after the fields known) */
+	for (unsigned i = 0; i < range_count; i++) {
+		efi_memory_descriptor d = { .type = ranges[i].type, .phys_start = ranges[i].from, .pages = (ranges[i].to - ranges[i].from) >> 12 };
+
+		memcpy((uint8_t *)map + i * descriptor_size, &d, sizeof(d));
+	}
+	*size = range_count * descriptor_size;
+	*desc_size = descriptor_size;
+	*desc_ver = 1;
+	*key = 7;
+	return 0;
+}
+
+static efi_status EFIAPI
+allocate_pages(int how, int kind, uint64_t pages, uint64_t *at)
+{
+	if (claim_count < 4) {
+		claims[claim_count].how = how;
+		claims[claim_count].kind = kind;
+		claims[claim_count].pages = pages;
+		claims[claim_count].at = *at;
+	}
+	claim_count++;
+	if (how == AllocateMaxAddress) {
+		if (!EFI_ERROR(low_status)) {
+			*at = 0x90000000ULL;            /* somewhere under the limit it gave */
+		}
+		return low_status;
+	}
+	return pages == 0 ? (EFI_ERROR_BIT | 2) : claim_status; /* (nothing cannot be claimed) */
+}
+
+static efi_boot_services services = { .get_memory_map = get_memory_map, .allocate_pages = allocate_pages };
+static struct payload_info payload;
+
+static int
+choose(void)
+{
+	BS = &services;
+	return choose_window(&payload);
+}
+
+/* what holds for every window that is chosen: whole blocks of 32 MB in one free range, clear of the payload, claimed as it is */
+static void
+sound(void)
+{
+	bool inside = false;
+
+	CHECK(win_size != 0 && (win_base & (BASE_ALIGN - 1)) == 0 && (win_size & (BASE_ALIGN - 1)) == 0, "the window %#llx + %#llx is whole blocks of 32 MB",
+	    (unsigned long long)win_base, (unsigned long long)win_size);
+	CHECK(win_size <= MAX_MEM_SIZE, "no more than the kernel's first page tables cover: %#llx", (unsigned long long)win_size);
+	CHECK(win_base + win_size <= PAYLOAD_BASE || win_base >= PAYLOAD_BASE + PAYLOAD_MAX_SIZE, "the window is clear of the payload");
+	for (unsigned i = 0; i < range_count; i++) {
+		inside |= ranges[i].type == EfiConventionalMemory && win_base >= ranges[i].from && win_base + win_size <= ranges[i].to;
+	}
+	CHECK(inside || payload.forced_base != 0, "the window lies in one range the firmware calls free");
+	CHECK(claims[0].how == AllocateAddress && claims[0].kind == EfiLoaderData && claims[0].at == win_base && claims[0].pages == win_size >> 12,
+	    "the firmware was asked for exactly the window: %#llx, %llu pages", (unsigned long long)claims[0].at, (unsigned long long)claims[0].pages);
+}
+
+/* ---- scenarios ---------------------------------------------------------------------------------- */
+
+/* a phone of 8 GB: the payload lies in the largest free range, nearer its start -- the window is what follows it */
+static void
+phone_8gb(void)
+{
+	range(EfiConventionalMemory, 0x80000000ULL, 0x9fe00000ULL);
+	range(0, 0x9fe00000ULL, 0xc0000000ULL);                 /* the firmware's own, the other processors' */
+	range(EfiConventionalMemory, 0xc0000000ULL, 0x27fe00000ULL);
+	range(4, 0x27fe00000ULL, 0x280000000ULL);               /* boot services' data at the top */
+	CHECK(choose() == 1, "a window is found");
+	CHECK(win_base == 0xf4000000ULL && win_size == 0x27e000000ULL - 0xf4000000ULL, "from the payload's end to the last whole 32 MB: %#llx + %#llx",
+	    (unsigned long long)win_base, (unsigned long long)win_size);
+	sound();
+	CHECK(claim_count == 2 && claims[1].how == AllocateMaxAddress && claims[1].at == 0xffffffffULL && claims[1].pages == LOW_DMA_SIZE >> 12,
+	    "memory under 4 GB is asked for as well, once");
+	CHECK(low_dma == 0x90000000ULL, "and kept: %#llx", (unsigned long long)low_dma);
+	/* asked again (the next run of a kernel): the same window, the firmware is not asked */
+	CHECK(choose() == 1 && maps_asked == 1 && claim_count == 2, "the window is chosen once");
+}
+
+/* the payload nearer the range's end: the window is what precedes it */
+static void
+payload_near_the_end(void)
+{
+	range(EfiConventionalMemory, 0x80000000ULL, 0xf8000000ULL);
+	CHECK(choose() == 1 && win_base == 0x80000000ULL && win_size == 0x70000000ULL, "up to the payload: %#llx + %#llx", (unsigned long long)win_base,
+	    (unsigned long long)win_size);
+	sound();
+}
+
+/* a free range the payload is not in is taken whole; ends that are not on 32 MB are cut to it */
+static void
+ends_are_cut(void)
+{
+	range(EfiConventionalMemory, 0x100001000ULL, 0x17ffff000ULL);
+	range(EfiConventionalMemory, 0x40000000ULL, 0x48000000ULL);
+	CHECK(choose() == 1 && win_base == 0x102000000ULL && win_size == 0x17e000000ULL - 0x102000000ULL, "%#llx + %#llx", (unsigned long long)win_base,
+	    (unsigned long long)win_size);
+	sound();
+}
+
+/* more RAM than the kernel's first page tables cover: the window is that much, from the range's start */
+static void
+more_than_the_kernel_takes(void)
+{
+	range(EfiConventionalMemory, 0x100000000ULL, 0x400000000ULL);  /* 12 GB */
+	CHECK(choose() == 1 && win_base == 0x100000000ULL && win_size == MAX_MEM_SIZE, "%#llx + %#llx", (unsigned long long)win_base,
+	    (unsigned long long)win_size);
+	sound();
+}
+
+/* the largest of several, whatever their order; memory that is not free does not count however large */
+static void
+largest_free_range(void)
+{
+	range(EfiConventionalMemory, 0x40000000ULL, 0x60000000ULL);
+	range(3, 0x100000000ULL, 0x300000000ULL);               /* boot services' code: not free */
+	range(EfiConventionalMemory, 0x300000000ULL, 0x340000000ULL);
+	range(EfiConventionalMemory, 0x60000000ULL, 0x70000000ULL);
+	CHECK(choose() == 1 && win_base == 0x300000000ULL && win_size == 1 * GB, "%#llx + %#llx", (unsigned long long)win_base,
+	    (unsigned long long)win_size);
+	sound();
+}
+
+/* a firmware whose descriptors are longer than the fields known here (they are: the map says how long) */
+static void
+longer_descriptors(void)
+{
+	descriptor_size = sizeof(efi_memory_descriptor) + 8;
+	range(EfiConventionalMemory, 0x40000000ULL, 0x60000000ULL);
+	range(EfiConventionalMemory, 0x100000000ULL, 0x180000000ULL);
+	range(EfiConventionalMemory, 0x60000000ULL, 0x70000000ULL);
+	CHECK(choose() == 1 && win_base == 0x100000000ULL && win_size == 2 * GB, "%#llx + %#llx", (unsigned long long)win_base,
+	    (unsigned long long)win_size);
+	sound();
+}
+
+/* no free range of 32 MB anywhere: no window, and the kernel is not run */
+static void
+nothing_free(void)
+{
+	range(4, 0x80000000ULL, 0x280000000ULL);
+	range(EfiConventionalMemory, 0x40001000ULL, 0x41fff000ULL);     /* (31.99 MB) */
+	CHECK(choose() == 0 && win_size == 0, "no window: %#llx + %#llx", (unsigned long long)win_base, (unsigned long long)win_size);
+}
+
+/* the firmware refuses the claim (the range is not free after all), or has no map: no window */
+static void
+firmware_says_no(void)
+{
+	range(EfiConventionalMemory, 0x100000000ULL, 0x180000000ULL);
+	claim_status = EFI_ERROR_BIT | 14;
+	CHECK(choose() == 0 && win_size == 0, "a claim that is refused is no window");
+	CHECK(claim_count == 1, "and no other memory is asked for after it");
+	claim_status = 0;
+	map_status = EFI_ERROR_BIT | 2;
+	CHECK(choose() == 0 && win_size == 0 && strstr(said, "GetMemoryMap failed") != NULL, "nor is there one without a map: %s", said);
+	map_status = 0;
+	CHECK(choose() == 1 && win_base == 0x100000000ULL, "once both work, there is");
+}
+
+/* no memory under 4 GB to be had: the window stands, the kernel is told there is none */
+static void
+no_low_memory(void)
+{
+	range(EfiConventionalMemory, 0x100000000ULL, 0x180000000ULL);
+	low_status = EFI_ERROR_BIT | 9;
+	CHECK(choose() == 1 && win_size == 2 * GB && low_dma == 0, "the window without it: low memory at %#llx", (unsigned long long)low_dma);
+	sound();
+}
+
+/* "physbase" in the payload (a testing aid): the window is put there, whatever the map says */
+static void
+forced_base(void)
+{
+	range(EfiConventionalMemory, 0x100000000ULL, 0x180000000ULL);
+	payload.forced_base = 0x200000000ULL;
+	CHECK(choose() == 1 && win_base == 0x200000000ULL && win_size == MAX_MEM_SIZE, "%#llx + %#llx", (unsigned long long)win_base,
+	    (unsigned long long)win_size);
+	sound();
+}
+
+int
+main(int argc, char **argv)
+{
+	static const struct { const char *name; void (*run)(void); } scenarios[] = {
+		{ "phone_8gb", phone_8gb }, { "payload_near_the_end", payload_near_the_end }, { "ends_are_cut", ends_are_cut },
+		{ "more_than_the_kernel_takes", more_than_the_kernel_takes }, { "largest_free_range", largest_free_range },
+		{ "longer_descriptors", longer_descriptors }, { "nothing_free", nothing_free }, { "firmware_says_no", firmware_says_no },
+		{ "no_low_memory", no_low_memory }, { "forced_base", forced_base },
+	};
+
+	if (argc < 2) {
+		for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+			printf("%s\n", scenarios[i].name);
+		}
+		return 0;
+	}
+	for (unsigned i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+		if (strcmp(argv[1], scenarios[i].name) == 0) {
+			scenarios[i].run();
+			fprintf(stderr, "%-30s %s\n", argv[1], failures ? "FAILED" : "ok");
+			return failures ? 1 : 0;
+		}
+	}
+	fprintf(stderr, "no scenario %s\n", argv[1]);
+	return 2;
+}
