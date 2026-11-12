@@ -178,6 +178,22 @@ struct hakios_board {
 		uint8_t f0_calibration;         /* what Android's driver found for this motor's resonance (its trim register) */
 	} haptic;
 
+	/*
+	 * The touch controller's wiring (board: [touch]): the serial engine it is on, that engine's clocks in
+	 * the clock controller, its pins and its supplies. One driver for a controller, any wiring.
+	 */
+	struct {
+		uint32_t serial_engine;         /* the SPI engine's registers */
+		uint32_t m_ahb_clock, s_ahb_clock, se_clock;    /* offsets in the clock controller: the wrapper's two bus clocks, the engine's own
+		                                 * (its rate generator's registers follow it) */
+		uint8_t vote[5];                /* bits of the clock controller's vote register: core 2x, core, the two bus clocks, the engine */
+		uint8_t data_in, data_out, clock, chip_select;  /* the bus's four pins of the SoC */
+		uint8_t interrupt, reset;       /* low: the chip has a report; low: in reset */
+		int16_t analog_enable;          /* a pin that switches the chip's analog supply on, -1: none */
+		int16_t vendor_pin[2];          /* two straps that say which maker's controller is fitted, -1: none */
+		const char *io_supply, *analog_supply;  /* regulators by their names in RPMh's command database; NULL: none */
+	} touch;
+
 	/* the speaker's two amplifiers (board: [speaker]): the I2C bus they share and what tells them apart */
 	struct {
 		uint8_t sda, scl;               /* the bus's two lines, pins of the SoC */

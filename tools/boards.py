@@ -94,6 +94,9 @@ BOARD_SCHEMA = {
     'torch': {'flash': (int, True), 'alarm': (int, True)},
     'haptic': {'sda': (int, True), 'scl': (int, True), 'reset': (int, True), 'interrupt': (int, True),
                'f0_calibration': (int, True)},
+    'touch': {'serial_engine': (int, True), 'clocks': ([int], True), 'votes': ([int], True), 'bus_pins': ([int], True),
+              'interrupt': (int, True), 'reset': (int, True), 'io_supply': (str, True), 'analog_supply': (str, False),
+              'analog_enable': (int, False), 'vendor_pins': ([int], False)},
     'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
     'adsp': {'firmware': (str, True), 'memory': (int, True), 'memory_size': (int, True),
@@ -145,7 +148,10 @@ FEATURE_BOOTARGS = {
 PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
 FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
-                          'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker'}
+                          'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'touch-goodix': 'touch',
+                          'touch-ft3658u': 'touch'}
+# ... and what a controller's driver uses of [touch] beyond what every one needs
+TOUCH_NEEDS = {'touch-goodix': ('analog_enable', 'vendor_pins'), 'touch-ft3658u': ('analog_supply',)}
 GPU_SPEEDS = 5          # (struct hakios_board: gpu.speeds_khz)
 
 
@@ -212,6 +218,9 @@ def feature_needs(feature, board, soc):
     section = FEATURE_NEEDS_OF_BOARD.get(feature)
     if section and section not in board:
         needs.append(f'[{section}] in the board file')
+    touch = board.get('touch')
+    if isinstance(touch, dict) and any(key not in touch for key in TOUCH_NEEDS.get(feature, ())):
+        needs.append(' and '.join(key for key in TOUCH_NEEDS[feature] if key not in touch) + ' in [touch] of the board file')
     spmi, display = soc.get('spmi'), soc.get('display')
     if feature in WRITES_TO_PMIC and isinstance(spmi, dict) and 'channels' not in spmi:
         needs.append(f'channels in [spmi] of {soc_file}')
@@ -377,6 +386,20 @@ def load(problems=None):
                 problems.add(f'{rel} [haptic]', 'sda, scl, reset and interrupt are four different pins of the SoC, 0 to 255')
             if not 0 <= motor['f0_calibration'] <= 0x3f:
                 problems.add(f'{rel} [haptic]', 'f0_calibration is the six bits of the chip\'s trim register')
+        touch = data.get('touch')
+        if touch is not None:
+            wires = list(touch['bus_pins']) + [touch['interrupt'], touch['reset']] + list(touch.get('vendor_pins', [])) + \
+                ([touch['analog_enable']] if 'analog_enable' in touch else [])
+            if len(touch['bus_pins']) != 4 or len(touch.get('vendor_pins', [0, 0])) != 2 or \
+                    any(not 0 <= pin <= 255 for pin in wires) or len(set(wires)) != len(wires):
+                problems.add(f'{rel} [touch]', 'bus_pins are four, vendor_pins two; every pin is a different pin of the SoC, 0 to 255')
+            if len(touch['clocks']) != 3 or any(not 0 < offset < 0x100000 for offset in touch['clocks']) or \
+                    len(set(touch['clocks'])) != 3:
+                problems.add(f'{rel} [touch]', 'clocks are three different offsets in the clock controller: the two bus clocks, the engine\'s own')
+            if len(touch['votes']) != 5 or any(not 0 <= bit <= 31 for bit in touch['votes']) or len(set(touch['votes'])) != 5:
+                problems.add(f'{rel} [touch]', 'votes are five different bits of the vote register, 0 to 31')
+            if touch['serial_engine'] == 0 or touch['serial_engine'] & 0xfff:
+                problems.add(f'{rel} [touch]', 'serial_engine is where the engine\'s registers are: a page\'s address, not 0')
         amps = data.get('speaker')
         if amps is not None:
             wires = [amps['sda'], amps['scl']] + list(amps['interrupts'])
@@ -592,6 +615,23 @@ def table_text(socs, boards):
         if motor:
             out.append(f'\t\t.haptic = {{ .sda = {motor["sda"]}, .scl = {motor["scl"]}, .reset = {motor["reset"]}, '
                        f'.interrupt = {motor["interrupt"]}, .f0_calibration = {motor["f0_calibration"]:#04x} }},')
+        touch = board.get('touch')
+        if touch:
+            pins, clocks = touch['bus_pins'], touch['clocks']
+            straps = touch.get('vendor_pins', [-1, -1])
+            supplies = f'.io_supply = {c_string(touch["io_supply"])}' + (
+                f', .analog_supply = {c_string(touch["analog_supply"])}' if 'analog_supply' in touch else '')
+            out += [
+                '\t\t.touch = {',
+                f'\t\t\t.serial_engine = {touch["serial_engine"]:#010x},',
+                f'\t\t\t.m_ahb_clock = {clocks[0]:#x}, .s_ahb_clock = {clocks[1]:#x}, .se_clock = {clocks[2]:#x},',
+                f'\t\t\t.vote = {{ {", ".join(str(bit) for bit in touch["votes"])} }},',
+                f'\t\t\t.data_in = {pins[0]}, .data_out = {pins[1]}, .clock = {pins[2]}, .chip_select = {pins[3]},',
+                f'\t\t\t.interrupt = {touch["interrupt"]}, .reset = {touch["reset"]},',
+                f'\t\t\t.analog_enable = {touch.get("analog_enable", -1)}, .vendor_pin = {{ {straps[0]}, {straps[1]} }},',
+                f'\t\t\t{supplies},',
+                '\t\t},',
+            ]
         amps = board.get('speaker')
         if amps:
             out.append(f'\t\t.speaker = {{ .sda = {amps["sda"]}, .scl = {amps["scl"]}, '

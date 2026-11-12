@@ -62,6 +62,17 @@ speeds_khz = [285000, 365000, 443000, 490000]       # qcom,gpu-pwrlevels, slowes
 speed_levels = [64, 80, 128, 144]   # their supply levels: LOW_SVS, LOW_SVS_L1, SVS, SVS_L0
 default_speed = 4                   # which of them to run at, counted from 1
 
+# The touch controller: on serial engine 10 (SPI), with that engine's clocks; its two supplies by name.
+[touch]
+serial_engine = 0x00988000
+clocks = [0x17004, 0x17008, 0x1726c]
+votes = [9, 8, 6, 7, 12]
+bus_pins = [20, 21, 22, 23]
+interrupt = 31
+reset = 30
+io_supply = "ldoc2"
+analog_supply = "ldoc7"
+
 # The Wi-Fi radio: a WCN6855 on PCIe, whose driver is not on yet (wifi=0). Its pool is kept from early on.
 [wifi]
 radio_model = 1

@@ -39,6 +39,19 @@ radio_model = 0
 dsp_memory = 0x9ae00000
 dsp_memory_size = 0x01900000
 
+# Its touch controller: on serial engine 13 (SPI), with that engine's clocks; reset, interrupt, the pin that
+# switches its analog supply on and the two straps that say whose controller is fitted.
+[touch]
+serial_engine = 0x00a94000
+clocks = [0x18004, 0x18008, 0x185fc]
+votes = [18, 19, 20, 21, 27]
+bus_pins = [52, 53, 54, 55]
+interrupt = 81
+reset = 105
+io_supply = "ldoc2"
+analog_enable = 107
+vendor_pins = [68, 96]
+
 # Its speaker's two amplifiers: their I2C bus on GPIO 12/13, at 0x35 and 0x34, interrupts on GPIO 102 and 45.
 [speaker]
 sda = 12

@@ -52,6 +52,24 @@ type = "soft"                       # "dcs": MIPI DCS 0x51 through the DSI contr
 #                                   # on the slave its PMIC is (qcom,pm8350@1: 1)
 # volume_up_name = "GPIO6 of the PM8350"
 
+# The touch controller's wiring, for a feature "touch-...": the SPI serial engine it is on, that engine's
+# clocks in the clock controller, its pins and its supplies. The controller's node in the device tree is
+# under its bus's node (qupv3_seN_spi); the numbers below are one phone's.
+# [touch]
+# serial_engine = 0x00a94000        # the bus's node: reg (qupv3_se13_spi: spi@a94000)
+# clocks = [0x18004, 0x18008, 0x185fc]      # in the clock controller (gcc-SOC.c): the wrapper's two bus clocks,
+#                                   # gcc_qupv3_wrap_N_m_ahb_clk and ..._s_ahb_clk, and the engine's own,
+#                                   # gcc_qupv3_wrapN_sM_clk: each one's halt_reg
+# votes = [18, 19, 20, 21, 27]      # the same file, enable_mask of: gcc_qupv3_wrapN_core_2x_clk, ..._core_clk, the two
+#                                   # bus clocks and the engine's, as bit numbers (BIT(18) is 18)
+# bus_pins = [52, 53, 54, 55]       # the bus's pinctrl node: data in (MISO), data out (MOSI), clock, chip select
+# interrupt = 81                    # the controller's node: its interrupt GPIO
+# reset = 105                       # ... and its reset GPIO
+# io_supply = "ldoc2"               # its 1.8 V supply (vdd/iovdd-supply) by its RPMh name: L2C is "ldoc2"
+# analog_supply = "ldoc7"           # touch-ft3658u: its 3.3 V supply the same way
+# analog_enable = 107               # touch-goodix: the GPIO that switches its analog supply on (avdd-gpio)
+# vendor_pins = [68, 96]            # touch-goodix: the two straps that say whose controller is fitted
+
 # The speaker's two amplifiers, for the feature "speaker-aw88261": Awinic AW88261 on two of the SoC's
 # pins (I2C by hand), each with an address and an interrupt pin of its own.
 # [speaker]

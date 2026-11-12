@@ -577,8 +577,36 @@ class Generate(Sandbox):
         self.assertNotIn('feature "haptic-aw86927" needs [rpmh]', said)
         self.soc('[thermal]', '[pins]\ntlmm = 0xf100000\n[thermal]')
         self.soc('[thermal]', '[rpmh]\ncmd_db = 0x80860000\ncmd_db_size = 0x20000\nrsc = 0x18220000\ntcs_offset = 0xd00\n[thermal]')
+        # a touch controller's driver also needs to be told how the controller is wired
+        self.assertEqual(self.problems(), 'devices/phone/board.toml: feature "touch-goodix" needs [touch] in the board file')
+        wiring = ('[touch]\nserial_engine = 0xa94000\nclocks = [0x18004, 0x18008, 0x185fc]\nvotes = [18, 19, 20, 21, 27]\n'
+                  'bus_pins = [52, 53, 54, 55]\ninterrupt = 81\nreset = 105\nio_supply = "ldoc2"\n')
+        plain = path.read_text()
+        path.write_text(plain + wiring)
+        self.assertIn('feature "touch-goodix" needs analog_enable and vendor_pins in [touch] of the board file', self.problems())
+        path.write_text(plain + wiring.replace('bus_pins = [52, 53, 54, 55]', 'bus_pins = [52, 53, 54, 81]') +
+                        'analog_enable = 107\nvendor_pins = [68, 96]\n')
+        self.assertIn('every pin is a different pin of the SoC', self.problems())      # (the interrupt's pin on the bus)
+        path.write_text(plain + wiring.replace('votes = [18, 19, 20, 21, 27]', 'votes = [18, 19, 20, 21, 32]') +
+                        'analog_enable = 107\nvendor_pins = [68, 96]\n')
+        self.assertIn('votes are five different bits of the vote register', self.problems())
+        path.write_text(plain + wiring.replace('clocks = [0x18004, 0x18008, 0x185fc]', 'clocks = [0x18004, 0x18008]') +
+                        'analog_enable = 107\nvendor_pins = [68, 96]\n')
+        self.assertIn('clocks are three different offsets', self.problems())
+        path.write_text(plain + wiring + 'analog_enable = 107\nvendor_pins = [68, 96]\n')
         self.assertEqual(self.problems(), '')
-        self.assertIn('.pins = { .tlmm = 0x0f100000 },', boards.table_text(*boards.load()))
+        table = boards.table_text(*boards.load())
+        self.assertIn('.pins = { .tlmm = 0x0f100000 },', table)
+        for line in ('.serial_engine = 0x00a94000,', '.m_ahb_clock = 0x18004, .s_ahb_clock = 0x18008, .se_clock = 0x185fc,',
+                     '.vote = { 18, 19, 20, 21, 27 },', '.data_in = 52, .data_out = 53, .clock = 54, .chip_select = 55,',
+                     '.interrupt = 81, .reset = 105,', '.analog_enable = 107, .vendor_pin = { 68, 96 },', '.io_supply = "ldoc2",'):
+            self.assertIn(line, table)
+        # the other controller's driver needs its second supply, and no strap
+        path.write_text((plain + wiring).replace('"touch-goodix"', '"touch-ft3658u"'))
+        self.assertEqual(self.problems(), 'devices/phone/board.toml: feature "touch-ft3658u" needs analog_supply in [touch] of the board file')
+        path.write_text((plain + wiring + 'analog_supply = "ldoc7"\n').replace('"touch-goodix"', '"touch-ft3658u"'))
+        self.assertEqual(self.problems(), '')
+        self.assertIn('.analog_enable = -1, .vendor_pin = { -1, -1 },', boards.table_text(*boards.load()))
 
     def test_the_table_carries_the_way_to_the_other_processors(self):
         self.soc('[thermal]', '[ipc]\naoss = 0xc300000\nipcc = 0x408000\nsmem = 0x80900000\nsmem_size = 0x200000\nsmem_lock = 0x1f43000\n[thermal]')

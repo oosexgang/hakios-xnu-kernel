@@ -25,6 +25,19 @@ reset = 9
 interrupt = 200
 f0_calibration = 0x1a
 
+# (a touch controller's wiring unlike either phone's: no driver is listed for it, the drivers' tests read it)
+[touch]
+serial_engine = 0x00b40000
+clocks = [0x29004, 0x29008, 0x2939c]
+votes = [3, 4, 1, 2, 30]
+bus_pins = [140, 141, 142, 143]
+interrupt = 7
+reset = 201
+io_supply = "ldob5"
+analog_supply = "ldob9"
+analog_enable = 77
+vendor_pins = [150, 151]
+
 [speaker]
 sda = 60
 scl = 61
