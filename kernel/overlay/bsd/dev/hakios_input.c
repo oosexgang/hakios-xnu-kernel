@@ -61,7 +61,7 @@ latency_lines(void)
 static LCK_GRP_DECLARE(touch_lck_grp, "hakios-touch");
 static LCK_MTX_DECLARE(touch_lock, &touch_lck_grp);
 
-/* APPS DRV2/TCS0 is shared by Renoir touch and Wi-Fi regulator requests. */
+/* the application processor's RPMh command slots (DRV2, TCS0): the touch driver's, the Wi-Fi's and the memory vote's, one at a time */
 static LCK_MTX_DECLARE(rpmh_slot_lock, &touch_lck_grp);
 void hakios_rpmh_lock(void) { lck_mtx_lock(&rpmh_slot_lock); }
 void hakios_rpmh_unlock(void) { lck_mtx_unlock(&rpmh_slot_lock); }

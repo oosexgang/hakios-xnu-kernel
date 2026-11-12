@@ -871,7 +871,8 @@ hk_crash_report(const char *name, int pid, int sig)
 		fp = frame[0];
 	}
 	/* and where this project's own libraries were loaded in it, for the frames that are in them
-	 * (dyld's all_image_infos: version, count, then the array of { load address, path, date }) */
+	 * (dyld's all_image_infos: version, count, then the array of { load address, path, date });
+	 * ours are those of the small image, which stage0 mounts at /redwood */
 	if (task->all_image_info_addr != 0) {
 		uint32_t head[2];
 		uint64_t array = 0;
@@ -892,7 +893,7 @@ hk_crash_report(const char *name, int pid, int sig)
 
 				(void)copyinstr((user_addr_t)info[1], path, sizeof(path) - 1, &got);
 				path[sizeof(path) - 1] = '\0';
-				if (strnstr(path, "redwood", sizeof(path)) == NULL) {
+				if (strnstr(path, "/redwood/", sizeof(path)) == NULL) {
 					continue;
 				}
 				snprintf(line, sizeof(line), "hakios:   frame image %llx %s\n", info[0], path);

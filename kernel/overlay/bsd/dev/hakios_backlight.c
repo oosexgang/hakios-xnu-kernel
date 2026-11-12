@@ -345,7 +345,7 @@ dcs_send(uint32_t raw)
 		int_clear(INT_VIDEO_DONE);
 		(void)int_wait(INT_VIDEO_DONE, 40000);
 	} else {
-		/* not while a frame is on its way to the panel (8.6 ms of every 16.7 on renoir) */
+		/* not while a frame is on its way to a command-mode panel (about half of every frame) */
 		uint64_t until = now_us() + 20000;
 
 		while ((rd(dsi + DSI_STATUS) & DSI_STATUS_CMD_MDP_BUSY) && now_us() < until) {

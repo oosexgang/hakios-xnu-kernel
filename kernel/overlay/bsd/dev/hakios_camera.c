@@ -358,7 +358,7 @@ i2c_transfer(struct bus *b, uint8_t address, const uint8_t *out, unsigned out_co
 /* Where its blocks are: the SoC file's spmi { } (hakios_board.h). */
 #include "hakios_spmi.h"
 
-#define PGPIO_ID                (hakios_board()->cameras.pmic_reset)    /* the board's camera { }: redwood's PM8350C GPIO 3 */
+#define PGPIO_ID                (hakios_board()->cameras.pmic_reset)    /* the board's camera { } pmic-reset */
 #define PGPIO_TYPE              0x04    /* 0x10: a GPIO */
 #define PGPIO_SUBTYPE           0x05
 #define PGPIO_RT_STS            0x10    /* [0] what the pin is at */

@@ -140,7 +140,7 @@ static vm_offset_t ddr_rsc;
 static uint32_t ddr_mc0, ddr_sh0, ddr_acv;
 static bool ddr_voted;
 
-/* (bsd/dev/hakios_input.c: command slot set 0 is the touch driver's and Wi-Fi's too, on renoir) */
+/* (bsd/dev/hakios_input.c: the RPMh command slots are the touch driver's and the Wi-Fi's too) */
 extern void hakios_rpmh_lock(void);
 extern void hakios_rpmh_unlock(void);
 

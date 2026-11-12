@@ -6,11 +6,12 @@
  *
  * Under Android the speakers' sound goes from the audio server through three of the DSP's
  * services: ASM, a stream the samples are written into; ADM, the matrix that routes a stream to
- * a device path ("COPP"); and AFE, the port at the SoC's interface. The two amplifiers
- * (hakios_speaker.c) sit on the primary TDM interface, which the DSP runs: Android's
- * PRI_TDM_RX_0 on redwood (the board's speaker { } tdm says which interface), AFE port 0x9000 in group 0x9100 (with 0x9002, unused). The samples themselves
- * lie in memory of ours that the DSP reads through the application processors' SMMU, as
- * stream 0x1801 (Android: qcom,msm-audio-ion, iommus <&apps_smmu 0x1801 0>, its addresses from
+ * a device path ("COPP"); and AFE, the port at the SoC's interface. The amplifiers
+ * (hakios_speaker.c) sit on one of the SoC's TDM interfaces, which the DSP runs; the board's
+ * speaker { } tdm says which (the primary is Android's PRI_TDM_RX_0, AFE port 0x9000 in group
+ * 0x9100). The samples themselves lie in memory of ours that the DSP reads through the
+ * application processors' SMMU, as the SoC file's smmu { } audio-stream (Android:
+ * qcom,msm-audio-ion, e.g. iommus <&apps_smmu 0x1801 0>, its addresses from
  * 0x10000000, and the stream's low four bits in bits 32 to 35 of every address the DSP is given:
  * qcom,smmu-sid-mask 0xf, msm_audio_ion.c).
  *
@@ -304,7 +305,7 @@ command(const char *what, uint8_t service, uint16_t port, uint32_t opcode, const
 #define AFE_PARAM_ID_CLOCK_SET                  0x00010290u
 
 /*
- * Which of the SoC's TDM interfaces the amplifiers are on is the board's speaker { } tdm: 0 the primary (redwood's),
+ * Which of the SoC's TDM interfaces the amplifiers are on is the board's speaker { } tdm: 0 the primary,
  * 1 the secondary, 2 the tertiary, 3 the quaternary, 4 the quinary. The DSP numbers each interface's ports, its
  * group and its internal bit clock alike (Linux: sound/soc/qcom/qdsp6/q6afe.c, q6afe.h; the group as the
  * vendor's kernel has it, the port's number + 0x100).
