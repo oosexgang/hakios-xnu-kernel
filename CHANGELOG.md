@@ -150,6 +150,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   the Wi-Fi's and the audio DSP's drivers then read. Such an entry ends the walk now.
 - **The line that says a board's features is not cut**: its buffer was one byte from full for the
   phone with the most parts.
+- **The backlight no longer sleeps through a request.** A level, or the display switched on,
+  asked for in the moment between the driver's thread reading its state and going to sleep woke
+  nobody, and the thread slept until something else poked it: the panel stayed at the old level, or
+  dark. Found when a check of the host tests failed once; the fake kernel can now put a request
+  into exactly that moment, and the test does.
 - **With no free memory for the kernel the loader says so**, instead of asking the firmware for a
   window of no pages.
 - **`ddr:` no longer speaks on every boot** of a board without the memory's vote.
