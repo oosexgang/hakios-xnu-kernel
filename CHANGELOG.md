@@ -192,6 +192,10 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   Wi-Fi's), an APR packet smaller than its own header made its payload's length wrap, and a network's
   name or elements longer than their arrays were read past the record, the name copied out to the
   process that asked. Each is held to its bounds now.
+- **Barriers keep the order they are written for.** Forty-nine `dsb`, `dmb`, `isb` and `dc` in the
+  kernel's drivers and the loader did not tell the compiler they touch memory, so it was free to move the
+  writes into a DSP's shared memory, a camera frame's reads, or the values handed to the loader, across
+  them. They do now, and a repository check keeps it so.
 - **An APFS image of several volumes shows all of them.** `mkapfs.py` wrote a container's limit of
   volumes from its size alone, so a small image of two volumes said it held one, and the kernel's reader
   saw only the first.
