@@ -187,4 +187,5 @@ brings it into a checkout from the `devices` branch ("Device data" above).
 `base/` is the workspace of the first generation: iOS 16.5 on the POCO X5 Pro (redwood) and QEMU, with
 its own README, scripts and porting notes. Parts of it are still the only place for something (the
 UEFI port, the Wi-Fi compatibility layer, the QEMU scripts) and are waiting to be brought to the
-current kernel. Its kernel (`base/xnu/`) is superseded by `kernel/`.
+current kernel. What in it was one phone's own -- its xnu-8796 kernel, superseded by `kernel/`, its UEFI
+platform and device profile -- is in that phone's package on the `devices` branch (`redwood/legacy/`).

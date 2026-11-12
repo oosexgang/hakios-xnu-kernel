@@ -4,10 +4,14 @@
 > (redwood) and QEMU. What follows describes that generation, and its paths are those of that workspace,
 > not of this repository. The current project starts at the [top-level README](../README.md).
 >
-> What moved out: the kernel is `../kernel/` (this directory's `xnu/` is the old xnu-8796 one), the loader
-> is `../loader/`, the kernel build's dependencies are `../kernel/deps/` (`xnuloader` and `xnu-deps` here
-> are links to them), devices are described in `../devices/`. What is still only here: the UEFI port
-> (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
+> What moved out: the kernel is `../kernel/`, the loader is `../loader/`, the kernel build's dependencies
+> are `../kernel/deps/` (`xnuloader` and `xnu-deps` here are links to them), devices are described in
+> `../devices/`. What was the phone's own -- the old xnu-8796 kernel (`xnu/`), its UEFI platform
+> (`uefi/files/Platforms/Xiaomi/redwoodPkg`, `uefi/files/Resources/Configs/redwood.toml`), its device
+> profile (`common/devices/redwood.conf`) and its Mesa 26 patch (`tools/mesa26/redwood.patch`) -- is in
+> the phone's package on the `devices` branch, `redwood/legacy/`, at the same paths: copy it back here
+> (`cp -R redwood/legacy/. base/`) to build this generation. What is still only here: the rest of the UEFI
+> port (`uefi/`), the Wi-Fi compatibility layer (`wifi/`), the QEMU scripts (`qemu/`), and tools.
 
 **HakiOS** boots Apple's open-source **XNU kernel** (`xnu-8796.121.2`, the kernel of iOS 16.5) on Android phone
 hardware and runs the **unmodified iOS 16.5 user space** on top of it: launchd → backboardd → SpringBoard →
@@ -185,7 +189,7 @@ kernel (driver replacements) or by a library the kernel injects with `DYLD_INSER
 | `common/` | `setup.sh` (workspace), `build.sh` / `run.sh` (per device), `new-device.sh`, `devices/*.conf`, `ugit` |
 | `xl` | drives the phone over USB: loader, kernel runs, logs, screenshots, screen and sound recording |
 | `xnuloader/` | the loader: `loader.c` (UEFI application), `mkpayload.py` (kernel + images + arguments container) |
-| `xnu/` | our XNU changes: patch, new files, `apply.sh` / `export.sh` |
+| `xnu/` | our XNU changes: patch, new files, `apply.sh` / `export.sh` (in `redwood/legacy/` of the `devices` branch now) |
 | `xnu-deps/` | everything for building XNU on Linux: `setup.sh`, tool wrappers, stubs |
 | `xnu-build.sh`, `xnu-env.sh` | kernel build |
 | `uefi/`, `mkxnuimg.py` | the UEFI port and packing the boot image for `fastboot boot` |
