@@ -86,6 +86,24 @@ bool thread_call_cancel(thread_call_t call);
 #define kfree_type(type, pointer)       free(pointer)
 #define __DECONST(type, var)            ((type)(uintptr_t)(const void *)(var))
 #define os_atomic_add(pointer, value, order)    __sync_add_and_fetch((pointer), (value))
+#define os_atomic_inc(pointer, order)           __sync_add_and_fetch((pointer), 1)
+#define os_atomic_cmpxchg(pointer, old, new, order)     __sync_bool_compare_and_swap((pointer), (old), (new))
+typedef int boolean_t;
+#ifndef TRUE
+#define TRUE                            1
+#define FALSE                           0
+#endif
+/* memory of the kernel's map in one piece (vm/vm_kern.h): the host's, aligned; the map and the flags are not looked at */
+#define PAGE_SIZE                       16384
+#define PAGE_MASK                       (PAGE_SIZE - 1)
+#define round_page(x)                   (((x) + PAGE_MASK) & ~(vm_offset_t)PAGE_MASK)
+#define KMA_ZERO                        0x1
+#define KMA_KOBJECT                     0x2
+#define KMA_DATA                        0x4
+#define VM_KERN_MEMORY_IOKIT            1
+extern void *kernel_map;
+int kmem_alloc_contig(void *map, vm_offset_t *address, vm_size_t size, vm_offset_t mask, int max_pnum, int pnum_mask,
+    int flags, int tag);
 #include <sched.h>
 #define __builtin_arm_yield()           sched_yield()
 void IOSleep(unsigned int milliseconds);

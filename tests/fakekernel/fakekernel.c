@@ -496,6 +496,22 @@ thread_call_cancel(thread_call_t call)
 	return true;
 }
 
+void *kernel_map;
+
+int
+kmem_alloc_contig(void *map __unused, vm_offset_t *address, vm_size_t size, vm_offset_t mask, int max_pnum __unused,
+    int pnum_mask __unused, int flags __unused, int tag __unused)
+{
+	void *memory = NULL;
+
+	if (posix_memalign(&memory, mask + 1 > sizeof(void *) ? mask + 1 : sizeof(void *), size) != 0) {
+		return KERN_FAILURE;
+	}
+	memset(memory, 0, size);
+	*address = (vm_offset_t)memory;
+	return KERN_SUCCESS;
+}
+
 thread_t current_thread(void) { return NULL; }
 
 kern_return_t
