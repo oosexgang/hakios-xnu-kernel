@@ -11,6 +11,8 @@
 
 #include "fakekernel.h"
 
+extern char log_text[];
+
 /* ---- the loader's page -------------------------------------------------------------------------- */
 
 #define PAGE            0x4000ul
@@ -117,6 +119,8 @@ read_and_followed(void)
 	    s("battery_soc_estimated") == 0 && s("battery_charger_action") == 7, "the flags, one a sysctl");
 	CHECK(redwood_battery_temperature() == 31, "... and for the flashlight's guard: %d C", redwood_battery_temperature());
 	CHECK(mapped == 1 && mapped_elsewhere == 0, "the cache's page is mapped once, and nothing else");
+	CHECK(logged("battery: Qualcomm UEFI cache at pa") && logged("polling every 5 seconds"), "said where a run can be watched: %s", log_text);
+	CHECK(logged("battery: SOC=73%, V=4012 mV, I=850 mA, T=31 C"), "the first reading too: %s", log_text);
 	publish(VALID | PRESENT | VOLTAGE_VALID, 72, 3987, -410, 33);
 	WAIT_FOR(s("battery_soc") == 72, 2000);
 	CHECK(s("battery_soc") == 72 && s("battery_current_ma") == -410 && s("battery_charging") == 0 &&
@@ -198,6 +202,7 @@ another_version(void)
 	redwood_battery_init();
 	usleep(250 * 1000);
 	CHECK(s("battery_soc") == -1, "a cache of a layout this driver does not know is not read: %d", s("battery_soc"));
+	CHECK(logged("battery: bad xnuloader cache at") && logged("version 2"), "and why is said: %s", log_text);
 }
 
 /* a loader that gave no address, a kernel that was not asked, a board without the feature: nothing mapped */
@@ -210,6 +215,7 @@ no_address(void)
 	redwood_battery_init();
 	usleep(150 * 1000);
 	CHECK(mapped == 0 && mapped_elsewhere == 0 && s("battery_soc") == -1, "nothing mapped, nothing known");
+	CHECK(logged("battery: xnuloader did not provide battery_shared_pa"), "and why is said: %s", log_text);
 }
 
 static void
@@ -224,6 +230,7 @@ off_by_default(void)
 	redwood_battery_init();
 	usleep(150 * 1000);
 	CHECK(mapped == 0 && s("battery_soc") == -1, "without battery=1 the page is not even mapped");
+	CHECK(!logged("battery:"), "and nothing is said: %s", log_text);
 }
 
 static void
@@ -234,6 +241,7 @@ board_without_it(void)
 	redwood_battery_init();
 	usleep(150 * 1000);
 	CHECK(mapped == 0 && mapped_elsewhere == 0 && s("battery_soc") == -1, "a board that does not list the feature maps nothing");
+	CHECK(!logged("battery:"), "and says nothing: %s", log_text);
 }
 
 /* what the audio DSP's battery manager reports instead: kept for the sysctls, handed on to iOS's power source */
