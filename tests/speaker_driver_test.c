@@ -1,9 +1,10 @@
 /*
  * The speaker amplifiers' driver itself (kernel/overlay/bsd/dev/redwood_speaker.c), run as a host
  * program against the model of the SoC's pins with two amplifiers on them (i2c_device_model.h: two
- * addresses, registers of two bytes) and a command database (cmd_db_image.h). What is tested is its
- * look, speaker_probe=1 and 2, which is to read and nothing else: nothing is written into an
- * amplifier, no pin is left other than it was found.
+ * addresses, registers of two bytes) and a command database (cmd_db_image.h). What is tested: its
+ * look, speaker_probe=1 and 2, which is to read and nothing else; and preparing the amplifiers for
+ * sound from Awinic's configuration file, where a wrong value could reach a speaker -- what is
+ * written, in which order, and that both are powered down when anything is not as expected.
  *
  *   speaker_driver_test SCENARIO     one scenario a process: the driver keeps its state in statics
  */
@@ -34,6 +35,35 @@ void hakios_test_wr(vm_offset_t address, uint32_t value) { tlmm_model_wr(address
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 /* the command database is memory the boot loader left: the image */
 vm_offset_t ml_io_map_wcomb(vm_offset_t phys __unused, vm_size_t size __unused) { return (vm_offset_t)&image; }
+
+/* what is written into the amplifiers, for the scenarios that prepare them: [0] the first, [1] the second */
+static bool register_written[2][128];
+static int first_written[2] = { -1, -1 };       /* the register each one was written first */
+static unsigned soft_resets[2], writes_into[2];
+static unsigned uncalibrated;                   /* the profile's own value written where the calibration goes */
+static int deaf_register = -1;                  /* a register of the first amplifier that does not take what is written */
+
+static void
+amplifier_written(uint8_t index, uint8_t value)
+{
+	unsigned which = device.bank == device.reg_b, reg = index / 2;
+
+	writes_into[which]++;
+	register_written[which][reg & 127] = true;
+	if (first_written[which] < 0) {
+		first_written[which] = (int)reg;
+	}
+	uncalibrated += reg == 0x50 && (index & 1) && value == 0x77;
+	if (reg == 0) {
+		/* 0x55aa into the chip ID's register resets the chip; the ID stays what it is */
+		soft_resets[which] += (index & 1) && value == 0xaa;
+		return;
+	}
+	if (which == 0 && (int)reg == deaf_register) {
+		return;
+	}
+	device.bank[index] = value;
+}
 
 void redwood_speaker_init(void);
 void redwood_speaker_quiesce(void);
@@ -125,6 +155,116 @@ look(const char *args)
 	redwood_speaker_init();
 	WAIT_FOR(logged("speaker: done"), 20000);
 	CHECK(logged("speaker: done"), "the look ended: %s", log_text);
+}
+
+/* ---- the configuration file, as Awinic's tool writes it (the part the driver reads) ---------------- */
+
+static uint8_t acf[0x400];
+static unsigned acf_size, acf_entries;
+
+static void
+put32(uint8_t *at, uint32_t value)
+{
+	at[0] = (uint8_t)value;
+	at[1] = (uint8_t)(value >> 8);
+	at[2] = (uint8_t)(value >> 16);
+	at[3] = (uint8_t)(value >> 24);
+}
+
+/* one more entry: a list of 16-bit registers for that device (Android's sound-channel) and profile */
+static void
+acf_registers(unsigned device_number, unsigned profile, const uint16_t (*pairs)[2], unsigned count)
+{
+	uint8_t *entry = acf + 0x50 + acf_entries * 0x30, *block = acf + acf_size;
+	uint32_t length = 0x3c + 4 + 4 * count, sum = 0;
+
+	memcpy(entry + 4, "aw88261", 8);
+	entry[20] = (uint8_t)device_number;
+	entry[26] = (uint8_t)profile;
+	put32(entry + 28, 4);                   /* registers */
+	put32(entry + 32, length);
+	put32(entry + 36, acf_size);
+	put32(block + 0x10, 4 + 4 * count);
+	put32(block + 0x20, 2);                 /* a register's number and its value are two bytes each */
+	put32(block + 0x24, 2);
+	put32(block + 0x3c, count);
+	for (unsigned i = 0; i < count; i++) {
+		block[0x40 + 4 * i] = (uint8_t)pairs[i][0];
+		block[0x41 + 4 * i] = (uint8_t)(pairs[i][0] >> 8);
+		block[0x42 + 4 * i] = (uint8_t)pairs[i][1];
+		block[0x43 + 4 * i] = (uint8_t)(pairs[i][1] >> 8);
+	}
+	for (uint32_t i = 4; i < length; i++) {
+		sum += block[i];
+	}
+	put32(block, sum);
+	acf_size += length;
+	acf_entries++;
+	put32(acf + 0x34, acf_entries * 0x30);
+	put32(acf + 0x38, acf_entries);
+}
+
+/* The Music profile of the two: the first's fuses are to be or-ed (0x14 bit 3), the second's and-ed. */
+static const uint16_t music_a[][2] = {
+	{ 0x03, 0x1234 }, { 0x04, 0x0301 }, { 0x05, 0x1403 }, { 0x06, 0x34e8 }, { 0x08, 0x4a4c }, { 0x14, 0x0018 },
+	{ 0x50, 0x7777 }, { 0x52, 0x1f0c },
+};
+static const uint16_t music_b[][2] = {
+	{ 0x03, 0x1234 }, { 0x04, 0x0301 }, { 0x05, 0x1403 }, { 0x06, 0x35e8 }, { 0x08, 0x4a4c }, { 0x14, 0x0010 },
+	{ 0x50, 0x7777 }, { 0x52, 0x1f0c },
+};
+static const uint16_t another_profile[][2] = { { 0x04, 0xdead }, { 0x05, 0x0000 }, { 0x08, 0xbeef }, { 0x60, 0xffff } };
+
+static void
+file(void)
+{
+	memset(acf, 0, sizeof(acf));
+	acf_entries = 0;
+	acf_size = 0x50 + 4 * 0x30;             /* the header, then room for four entries */
+	put32(acf + 0x3c, 0x50);
+	acf_registers(0, 0, music_a, 8);
+	acf_registers(0, 1, another_profile, 4);        /* (a profile that is not Music: not to be used) */
+	acf_registers(1, 0, music_b, 8);
+}
+
+/* a phone whose amplifiers take what is written, with their fuses, and the file */
+static void
+phone_with_file(const char *name)
+{
+	phone(name);
+	device.written = amplifier_written;
+	wide(device.reg, 0x78, 0x0005);         /* the calibration fuses, two copies of each */
+	wide(device.reg, 0x7c, 0x0003);
+	wide(device.reg, 0x79, 0x03fe);
+	wide(device.reg, 0x7d, 0x03fe);
+	memcpy(device.reg_b + 0x78 * 2, device.reg + 0x78 * 2, 12);
+	file();
+}
+
+static uint16_t
+reads(const uint8_t *bank, uint8_t reg)
+{
+	return (uint16_t)(bank[reg * 2] << 8 | bank[reg * 2 + 1]);
+}
+
+/* what preparing never does, however it ends: a line driven high, a pin other than the bus's touched, a fuse written */
+static void
+never(void)
+{
+	CHECK(device.driven_high == 0, "a line of the bus was driven high %u times", device.driven_high);
+	CHECK(model.elsewhere == 0, "%u accesses outside the pins' registers", model.elsewhere);
+	CHECK(model.cfg[I2C_DEVICE_SDA] == AS_FOUND && model.cfg[I2C_DEVICE_SCL] == AS_FOUND, "the bus's pins are not as they were found");
+	for (unsigned i = 0; i < PINS; i++) {
+		if (i != I2C_DEVICE_SDA && i != I2C_DEVICE_SCL && (model.cfg[i] != 0 || model.io[i] != 0)) {
+			CHECK(false, "pin %u was touched", i);
+			break;
+		}
+	}
+	for (unsigned which = 0; which < 2; which++) {
+		for (unsigned reg = 0x70; reg < 128; reg++) {
+			CHECK(!register_written[which][reg], "the fuses' register %#x was written", reg);
+		}
+	}
 }
 
 /* ---- scenarios ---------------------------------------------------------------------------------- */
@@ -249,6 +389,116 @@ bus_not_at_rest(void)
 	only_read();
 }
 
+/*
+ * Prepared for sound: each amplifier is reset first, then gets its Music profile and nothing else, with the
+ * interrupts masked, the transmitter off, the calibration computed from its own fuses, the lowest volume --
+ * and stays powered down and muted.
+ */
+static void
+prepared(void)
+{
+	static const uint8_t expected[] = { 0x00, 0x03, 0x04, 0x05, 0x06, 0x08, 0x14, 0x50, 0x52 };
+
+	phone_with_file("phone-video");
+	CHECK(redwood_speaker_prepare(acf, acf_size), "prepared: %s", log_text);
+	CHECK(logged("BOTH AMPLIFIERS ARE CONFIGURED"), "said: %s", log_text);
+	for (unsigned which = 0; which < 2; which++) {
+		const uint8_t *bank = which ? device.reg_b : device.reg;
+
+		CHECK(first_written[which] == 0 && soft_resets[which] == 1, "amplifier %u: reset first, once (first %d, %u resets)", which,
+		    first_written[which], soft_resets[which]);
+		for (unsigned reg = 0; reg < 128; reg++) {
+			CHECK(register_written[which][reg] == (memchr(expected, (int)reg, sizeof(expected)) != NULL),
+			    "amplifier %u: register %#x %s", which, reg, register_written[which][reg] ? "was written" : "was not written");
+		}
+		CHECK(reads(bank, 0x03) == 0xffff, "amplifier %u: every interrupt masked, not %#x", which, reads(bank, 0x03));
+		/* the profile's 0x0301 with the chip's own power-down, amplifier power-down and mute (not the profile's), and the power stage's mute */
+		CHECK(reads(bank, 0x04) == (which ? 0x4302 : 0x4303), "amplifier %u: 0x04 is %#x", which, reads(bank, 0x04));
+		CHECK(reads(bank, 0x08) == 0x4a0c, "amplifier %u: the transmitter is off: %#x", which, reads(bank, 0x08));
+		CHECK(reads(bank, 0x05) == 0x17c0, "amplifier %u: the lowest volume, the profile's other bits: %#x", which, reads(bank, 0x05));
+		CHECK(reads(bank, 0x06) == (which ? 0x35e8 : 0x34e8) && reads(bank, 0x52) == 0x1f0c, "amplifier %u: the rest as the profile has it", which);
+		/* 8192 * icalk / vcalk: fuses 5 and 3 or-ed are 7, and-ed 1; 0x3fe is -2 */
+		CHECK(reads(bank, 0x50) == (which ? 8192 * 1001 / 998 : 8192 * 1007 / 998), "amplifier %u: the calibration is %#x", which,
+		    reads(bank, 0x50));
+		CHECK(uncalibrated == 0, "the profile's own value was written where the calibration goes");
+		CHECK(reads(bank, 0x60) == 0, "amplifier %u: another profile's register was written", which);
+	}
+	never();
+}
+
+/* a chip that is not the one the profile is for: nothing is written into either */
+static void
+not_this_chip(void)
+{
+	phone_with_file("phone-video");
+	wide(device.reg, 0x00, 0x2032);
+	CHECK(!redwood_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(logged("chip ID 0x2032, AW88266"), "named: %s", log_text);
+	CHECK(writes_into[0] == 0 && writes_into[1] == 0, "nothing was written: %u, %u bytes", writes_into[0], writes_into[1]);
+	never();
+}
+
+/* the second does not answer: the first, already configured, is powered down at once */
+static void
+second_is_missing(void)
+{
+	phone_with_file("phone-video");
+	device.address_b = 0;
+	wide(device.reg, 0x04, 0x4000);         /* (as if it had been left running) */
+	CHECK(!redwood_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(logged("nobody at I2C address 0x34") && logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103, "the first is powered down and muted: %#x", reads(device.reg, 0x04));
+	CHECK(writes_into[1] == 0, "nothing went into the second");
+	never();
+}
+
+/* a register that does not read back as written: both powered down, nothing more is written */
+static void
+write_does_not_stick(void)
+{
+	unsigned before;
+
+	phone_with_file("phone-video");
+	deaf_register = 0x06;
+	wide(device.reg, 0x04, 0x4000);
+	CHECK(!redwood_speaker_prepare(acf, acf_size), "refused: %s", log_text);
+	CHECK(logged("0x06 <- 0x34e8, reads 0x14e8: NOT AS WRITTEN") && logged("BOTH AMPLIFIERS ARE POWERED DOWN AT ONCE"), "said: %s", log_text);
+	CHECK((reads(device.reg, 0x04) & 0x103) == 0x103, "the first is powered down and muted: %#x", reads(device.reg, 0x04));
+	CHECK(!register_written[0][0x08] && !register_written[0][0x50], "nothing after the register that failed");
+	CHECK(writes_into[1] == 0, "nothing went into the second");
+	before = writes_into[0];
+	CHECK(!redwood_speaker_start(), "nor is it started after that");
+	CHECK(writes_into[0] == before && writes_into[1] == 0, "and nothing more is written");
+	never();
+}
+
+/* a file that is not what it says: its sum is off, it is cut short, it writes a fuse -- the bus is not used */
+static void
+file_not_trusted(void)
+{
+	static const uint16_t fuse[][2] = { { 0x04, 0x0300 }, { 0x05, 0x1403 }, { 0x08, 0x4a4c }, { 0x78, 0x0001 } };
+
+	phone_with_file("phone-video");
+	acf[acf_size - 2] ^= 1;                 /* a value of the second amplifier's profile */
+	CHECK(!redwood_speaker_prepare(acf, acf_size), "a sum that is off: %s", log_text);
+	CHECK(logged("device 1's Music profile does not add up"), "said: %s", log_text);
+	file();
+	CHECK(!redwood_speaker_prepare(acf, acf_size - 8), "a file cut short: %s", log_text);
+	CHECK(logged("does not fit"), "said: %s", log_text);
+	CHECK(!redwood_speaker_prepare(acf, 0x20), "a file of 32 bytes: %s", log_text);
+	CHECK(logged("not one of Awinic's"), "said: %s", log_text);
+	memset(acf, 0, sizeof(acf));
+	acf_entries = 0;
+	acf_size = 0x50 + 4 * 0x30;
+	put32(acf + 0x3c, 0x50);
+	acf_registers(0, 0, fuse, 4);
+	acf_registers(1, 0, music_b, 8);
+	CHECK(!redwood_speaker_prepare(acf, acf_size), "a profile that writes a fuse: %s", log_text);
+	CHECK(logged("writes register 0x78, which is not one of the configuration's"), "said: %s", log_text);
+	CHECK(device.starts == 0 && writes_into[0] == 0 && writes_into[1] == 0, "the bus was not used");
+	never();
+}
+
 /* a board that does not list the part, and a chip whose file does not say where the pins are */
 static void
 not_listed(void)
@@ -271,7 +521,9 @@ main(int argc, char **argv)
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
 		{ "off_by_default", off_by_default }, { "pins_and_supplies", pins_and_supplies }, { "both_answer", both_answer },
 		{ "one_is_missing", one_is_missing }, { "nobody_there", nobody_there }, { "another_amplifier", another_amplifier },
-		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "not_listed", not_listed },
+		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "prepared", prepared }, { "not_this_chip", not_this_chip },
+		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
+		{ "file_not_trusted", file_not_trusted }, { "not_listed", not_listed },
 	};
 
 	if (argc < 2) {
