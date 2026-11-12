@@ -60,7 +60,8 @@ Requirements:
     and libtool take differently. **The kernel this makes is not one to boot**: `ld64.lld` does not
     implement `-image_base`, `-segaddr` and `-segment_order`, with which XNU lays the kernel out, and
     says so. What it shows is that every file compiles and the whole kernel links, on any Linux
-    machine, in minutes.
+    machine, in minutes. So that it is not booted by mistake, the build moves it aside:
+    `…/mach.development.bcm2837.llvm-link-check`, and the usual path has no kernel.
 
   `kernel/build.sh` takes theos' when it is there and LLVM's otherwise; `TOOLCHAIN=cctools` or
   `TOOLCHAIN=llvm` chooses. A whole build with LLVM's tools and no theos, on Ubuntu 24.04 (to check a

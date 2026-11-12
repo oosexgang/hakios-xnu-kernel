@@ -202,4 +202,11 @@ cd "$XNU_SRC"
 xnumake "$@"
 KF=$XNU_SRC/BUILD/obj/mach.development.bcm2837
 [ -f "$KF" ] || die "no $KF"
+if [ "$TOOLCHAIN" = llvm ]; then
+	# not where the boot tool and the loader's host side take a kernel from: this one is not laid out to boot
+	real=$(readlink -f "$KF")
+	mv -f "$real" "$real.llvm-link-check"
+	log "linked with LLVM's tools, as a check: $real.llvm-link-check ($(stat -c %s "$real.llvm-link-check") bytes); not a kernel to boot"
+	exit 0
+fi
 log "kernel: $KF ($(stat -L -c %s "$KF") bytes)"
