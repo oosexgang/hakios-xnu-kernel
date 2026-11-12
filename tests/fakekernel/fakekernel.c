@@ -375,6 +375,50 @@ fake_dev_close(const char *name)
 	return added[major(dev)]->d_close(dev, 0, 0, NULL);
 }
 
+/* ---- processes, sleeps on a channel, and what else of the kernel a storage driver uses ---- */
+
+int fake_pid = 100, fake_other_pid;
+
+int proc_selfpid(void) { return fake_pid; }
+struct proc *proc_find(int pid) { return pid != 0 && (pid == fake_pid || pid == fake_other_pid) ? (struct proc *)&fake_pid : NULL; }
+void proc_rele(struct proc *p __unused) {}
+
+int
+msleep(void *channel __unused, struct fake_lock *lock, int priority __unused, const char *why __unused, void *time __unused)
+{
+	if (lock != NULL) {
+		pthread_mutex_unlock(&lock->mutex);
+	}
+	usleep(200);
+	if (lock != NULL) {
+		pthread_mutex_lock(&lock->mutex);
+	}
+	return 0;
+}
+
+void wakeup(void *channel __unused) {}
+
+void
+IOSleep(unsigned int milliseconds)
+{
+	usleep(milliseconds * 1000 / fake_delay_divisor);
+}
+
+uint32_t
+crc32(uint32_t crc, const void *data, size_t size)
+{
+	const uint8_t *byte = data;
+
+	crc = ~crc;
+	while (size-- > 0) {
+		crc ^= *byte++;
+		for (int bit = 0; bit < 8; bit++) {
+			crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
+		}
+	}
+	return ~crc;
+}
+
 thread_t current_thread(void) { return NULL; }
 
 kern_return_t
@@ -543,7 +587,9 @@ sysctl_io_number(struct sysctl_req *req, long long value, size_t size, void *poi
 	}
 	if (req->newptr != NULL) {
 		memcpy(pointer, req->newptr, size);
-		*changed = 1;
+		if (changed != NULL) {
+			*changed = 1;
+		}
 	}
 	return 0;
 }
@@ -597,6 +643,21 @@ set(const char *name, uint32_t value)
 	oid->handler(oid, oid->arg1, oid->arg2, &req);
 }
 
+
+uint64_t
+get64(const char *name)
+{
+	return *(volatile uint64_t *)oid_named(name)->arg1;
+}
+
+int
+try_as_root(const char *name, int32_t value)
+{
+	struct sysctl_oid *oid = oid_named(name);
+	struct sysctl_req req = { &value, sizeof(value), NULL, 0, 0 };
+
+	return oid->handler(oid, oid->arg1, oid->arg2, &req);
+}
 
 /* a sysctl root may write (no CTLFLAG_ANYBODY): a plain number */
 void

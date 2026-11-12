@@ -55,6 +55,31 @@ struct fake_lock { pthread_mutex_t mutex; };
 #define LCK_SPIN_DECLARE(lock, group)   struct fake_lock lock = { PTHREAD_MUTEX_INITIALIZER }
 #define lck_spin_lock(lock)             pthread_mutex_lock(&(lock)->mutex)
 #define lck_spin_unlock(lock)           pthread_mutex_unlock(&(lock)->mutex)
+#define LCK_MTX_DECLARE(lock, group)    struct fake_lock lock = { PTHREAD_MUTEX_INITIALIZER }
+#define lck_mtx_lock(lock)              pthread_mutex_lock(&(lock)->mutex)
+#define lck_mtx_unlock(lock)            pthread_mutex_unlock(&(lock)->mutex)
+/* sleeping on a channel with a mutex given up meanwhile, and its wake-up: a short sleep here, for whoever asks looks again */
+#define PRIBIO                          16
+int msleep(void *channel, struct fake_lock *lock, int priority, const char *why, void *time);
+void wakeup(void *channel);
+
+/* memory (kern/kalloc.h): the host's, zeroed */
+#define Z_WAITOK                        0
+#define kalloc_data(size, flags)        calloc(1, (size))
+#define kfree_data(pointer, size)       free(pointer)
+#define os_atomic_add(pointer, value, order)    __sync_add_and_fetch((pointer), (value))
+#include <sched.h>
+#define __builtin_arm_yield()           sched_yield()
+void IOSleep(unsigned int milliseconds);
+#define VM_WIMG_DEFAULT                 0       /* how memory is mapped (vm/memory_types.h): the host maps nothing */
+#define VM_WIMG_WCOMB                   1
+uint32_t crc32(uint32_t crc, const void *data, size_t size);    /* libkern/crc.h: zlib's */
+
+/* processes (sys/proc.h): the calling one is fake_pid, and the processes alive are it and fake_other_pid (0: none) */
+extern int fake_pid, fake_other_pid;
+int proc_selfpid(void);
+struct proc *proc_find(int pid);
+void proc_rele(struct proc *p);
 
 void assert_wait(void *event, int interruptible);
 void assert_wait_timeout(void *event, int interruptible, uint32_t interval, uint64_t scale);
@@ -111,6 +136,8 @@ int fake_sysctl_out(struct sysctl_req *req, const void *data, size_t size);
 #define SYSCTL_PROC(parent, nbr, name, access, ptr, arg, handler, fmt, descr) FAKE_OID(parent, name, 0, ptr, arg, handler, access)
 #define SYSCTL_UINT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 1, (void *)(ptr), val, NULL, access)
 #define SYSCTL_INT(parent, nbr, name, access, ptr, val, descr) FAKE_OID(parent, name, 2, (void *)(ptr), val, NULL, access)
+#define SYSCTL_QUAD(parent, nbr, name, access, ptr, descr) FAKE_OID(parent, name, 3, (void *)(ptr), 0, NULL, access)
+#define SYSCTL_DECL(name) extern int fake_unused_decl_##name
 
 /*
  * Character devices (sys/conf.h, sys/uio.h, miscfs/devfs/devfs.h): a driver's /dev node is kept by its
@@ -203,6 +230,8 @@ struct bdevsw {
 #define DKIOCSETBLOCKSIZE       0x80046418ul
 #define DKIOCGETBLOCKCOUNT      0x40086419ul
 #define DKIOCISWRITABLE         0x4004641dul
+#define DKIOCGETMAXBLOCKCOUNTREAD 0x40086440ul
+#define DKIOCGETPHYSICALBLOCKSIZE 0x4004644dul
 int bdevsw_add(int index, const struct bdevsw *devsw);
 int cdevsw_add_with_bdev(int index, const struct cdevsw *devsw, int bdev);
 /*
@@ -254,4 +283,6 @@ uint32_t get(const char *name);
 const char *get_string(const char *name);
 void set(const char *name, uint32_t value);
 void set_as_root(const char *name, int32_t value);
+int try_as_root(const char *name, int32_t value);       /* the same, with what the sysctl's handler answered (an errno) */
+uint64_t get64(const char *name);                       /* a 64-bit counter (SYSCTL_QUAD) */
 #endif
