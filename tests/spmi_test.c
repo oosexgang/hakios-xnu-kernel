@@ -63,6 +63,22 @@ mapped(void)
 	CHECK(spmi.elsewhere == 0, "%u accesses where nothing of the arbiter is", spmi.elsewhere);
 }
 
+/* an arbiter that says nothing sensible of its number of channels: the most there can be are looked through */
+static void
+channels_not_said(void)
+{
+	phone("phone-video");
+	spmi.says_channels = 0 + 1;             /* none */
+	CHECK(hakios_spmi_map(&arb) && arb.channels == 512, "no channels said: %u", arb.channels);
+	spmi.says_channels = 0x7ff + 1;         /* more than an arbiter has */
+	CHECK(hakios_spmi_map(&arb) && arb.channels == 512, "2047 said: %u", arb.channels);
+	spmi.says_channels = 512 + 1;
+	CHECK(hakios_spmi_map(&arb) && arb.channels == 512, "512 said: %u", arb.channels);
+	spmi.says_channels = 40 + 1;
+	CHECK(hakios_spmi_map(&arb) && arb.channels == 40, "40 said: %u", arb.channels);
+	CHECK(spmi.elsewhere == 0, "%u accesses where nothing of the arbiter is", spmi.elsewhere);
+}
+
 /* a SoC whose arbiter is elsewhere and where this system is its third */
 static void
 another_soc(void)
@@ -185,7 +201,7 @@ int
 main(int argc, char **argv)
 {
 	static const struct { const char *name; void (*run)(void); } scenarios[] = {
-		{ "mapped", mapped }, { "another_soc", another_soc }, { "no_arbiter", no_arbiter }, { "another_version", another_version },
+		{ "mapped", mapped }, { "channels_not_said", channels_not_said }, { "another_soc", another_soc }, { "no_arbiter", no_arbiter }, { "another_version", another_version },
 		{ "reads", reads }, { "writes", writes }, { "no_answer", no_answer }, { "statuses", statuses },
 	};
 

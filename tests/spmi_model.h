@@ -40,6 +40,7 @@ struct spmi_peripheral {
 static struct spmi_model {
 	uint32_t core, cnfg, observer, channels;        /* observer: this system's part of the block */
 	uint32_t version, ee;
+	uint32_t says_channels;         /* what the arbiter says of its number of channels, if not the model's own */
 	uint32_t map[SPMI_CHANNELS], owner[SPMI_CHANNELS];
 	struct spmi_peripheral *peripheral[SPMI_PERIPHERALS];
 	uint32_t status[SPMI_CHANNELS], data0[SPMI_CHANNELS], data1[SPMI_CHANNELS];     /* a channel's read */
@@ -111,7 +112,7 @@ spmi_model_rd(uintptr_t address)
 	if (address >= spmi.core && address < spmi.core + 0x1100) {
 		uint32_t reg = (uint32_t)(address - spmi.core);
 
-		value = reg == 0x000 ? spmi.version : reg == 0x004 ? SPMI_CHANNELS :
+		value = reg == 0x000 ? spmi.version : reg == 0x004 ? (spmi.says_channels ? spmi.says_channels - 1 : SPMI_CHANNELS) :
 		    reg >= 0x900 && reg < 0x900 + 4 * SPMI_CHANNELS ? spmi.map[(reg - 0x900) / 4] : 0;
 	} else if (address >= spmi.cnfg && address < spmi.cnfg + 0x1000) {
 		uint32_t reg = (uint32_t)(address - spmi.cnfg);
