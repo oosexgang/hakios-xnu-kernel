@@ -1084,32 +1084,65 @@ def show_text(data, depth=0):
     return '\n'.join(line for line in out if line) + '\n'
 
 
-def toml_value(value):
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    if isinstance(value, int):
-        return f'{value:#x}' if value > 4096 else str(value)
-    if isinstance(value, list):
-        return '[' + ', '.join(toml_value(v) for v in value) + ']'
-    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
-
-
 COUNTS = ('cores', 'core_shift', 'ee', 'timeout_scale', 'domain_cores')     # numbers a person counts in
 
 
-def soc_value(key, value):
-    """A value of a SoC file as a person writes it: addresses in eight hex digits, offsets and masks in
+def soc_number(key, value):
+    """A number of a SoC file as a person writes it: addresses in eight hex digits, offsets and masks in
     hex, counts in decimal."""
-    if isinstance(value, bool) or not isinstance(value, (int, list)) or key in COUNTS:
-        return toml_value(value)
-    if isinstance(value, list):
-        return '[' + ', '.join(soc_value(key, v) for v in value) + ']'
+    if key in COUNTS:
+        return str(value)
     return f'{value:#010x}' if value >= 0x10000 else f'{value:#x}'
 
 
+def soc_value(key, value):
+    return boardfile.value_text(value, lambda v: soc_number(key, v))
+
+
+class Writer:
+    """A board or SoC file being written: comments, nodes and properties, indented with tabs, a value's
+    comment at the files' column."""
+
+    def __init__(self):
+        self.lines, self.open_nodes = [], []
+
+    def comment(self, *texts):
+        depth = len(self.open_nodes)
+        self.lines += ['\t' * depth + ('// ' + text if text else '//') for text in texts]
+
+    def blank(self):
+        self.lines.append('')
+
+    def node(self, name, commented=False):
+        self.lines.append('\t' * len(self.open_nodes) + ('// ' if commented else '') + name + ' {')
+        self.open_nodes.append(commented)
+
+    def end(self):
+        while self.lines and self.lines[-1] == '':
+            self.lines.pop()
+        commented = self.open_nodes.pop()
+        self.lines.append('\t' * len(self.open_nodes) + ('// ' if commented else '') + '};')
+
+    def prop(self, text, said=(), commented=None):
+        """A property, as `name = <...>;` text; said: the lines of the comment after it."""
+        commented = self.open_nodes[-1] if commented is None and self.open_nodes else bool(commented)
+        indent = '\t' * len(self.open_nodes)
+        line = indent + ('// ' if commented else '') + text
+        for i, more in enumerate(said):
+            if i:
+                line = indent + ('//' if commented else '')
+            width = len(line.expandtabs(8))
+            self.lines.append(line + ' ' * max(1, boardfile.COMMENT_COLUMN - width) + '// ' + more)
+        if not said:
+            self.lines.append(line)
+
+    def text(self):
+        return '/dts-v1/;\n\n' + '\n'.join(self.lines).rstrip() + '\n'
+
+
 def template_says(template):
-    """What the template of a SoC file says of each section and key: {section: lines above its header},
-    {(section, key): the comment after the value, with the lines that continue it}."""
+    """What the template of a SoC file says of each section and key: {section: the comment lines above
+    its node}, {(section, key): the comment after the value, with the lines that continue it}."""
     above, after, section, pending, last = {}, {}, '', [], None
     for line in template.read_text().splitlines() if template.exists() else []:
         text = line.strip()
@@ -1124,24 +1157,28 @@ def template_says(template):
         elif text.startswith('//') and last and len(line.expandtabs(8)) - len(line.expandtabs(8).lstrip()) >= 24:
             after[last].append(text[2:].strip())                  # a comment that goes on under the value's
         elif text.startswith('//'):
-            pending, last = pending + ['#' + text[2:]], None
+            pending, last = pending + [text[2:].strip()], None
         else:
             pending, last = [], None
     return above, after
 
 
-def soc_lines(section, values, above, after, keys=None):
-    """A section of a new SoC file: each value with what the template says of its key."""
-    lines = above.get(section, []) + [f'[{section}]']
+def soc_section(out, section, values, above, after, keys=None, more=()):
+    """A section of a new SoC file: each value with what the template says of its key; a key it has no
+    value for is left commented out, to be filled in. more: (key, value, comment) to offer commented out."""
+    out.comment(*above.get(section, []))
+    out.node(boardfile.name_of(section))
+    for key, value, why in more:
+        out.prop(f'{boardfile.name_of(key)} = {soc_value(key, value)};', [why], commented=True)
     for key in keys or values:
+        name = boardfile.name_of(key)
         if key in values:
-            said = after.get((section, key), [])
-            lines.append(f'{key} = {soc_value(key, values[key])}'.ljust(36) + (f'# {said[0]}' if said else ''))
-            lines += [' ' * 36 + f'# {more}' for more in said[1:]]
-            lines[-1 - len(said[1:])] = lines[-1 - len(said[1:])].rstrip()
+            out.prop(f'{name} = {soc_value(key, values[key])};', after.get((section, key), []))
         else:
-            lines.append(f'# {key} = 0x...            # TO FILL IN' + (f': {after[(section, key)][0]}' if (section, key) in after else ''))
-    return lines + ['']
+            said = after.get((section, key), [''])
+            out.prop(f'{name} = <0x...>;', [('TO FILL IN: ' + said[0]).rstrip(': ')], commented=True)
+    out.end()
+    out.blank()
 
 
 def new_board(name, soc_name, dts=None, panel=None, description=None):
@@ -1152,88 +1189,78 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
     if board_path.exists():
         raise SystemExit(f'{shown(board_path)} is there already')
     soc, board, notes = from_dts(dts.read_text(errors='replace'), panel) if dts else ({}, {}, [])
+    started = 'Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.'
+    out = Writer()
+    out.comment(f'{description or name}. {started}',
+                'Every value here is to be checked against the device before it is relied on (docs/porting.md).')
+    out.node('/')
+    out.prop(f'name = "{name}";', ['what the loader puts in /chosen/darwin-board'])
+    out.prop(f'description = {boardfile.value_text(description or name)};')
+    out.prop(f'soc = "{soc_name}";')
+    out.blank()
+    out.comment('Nothing yet: a feature is listed once its driver has been seen to work on this board',
+                '(docs/porting.md goes through them in the order to try).')
+    out.prop('features = <>;')
+    out.blank()
     light = board.get('backlight', {'type': 'soft'})
-    lines = [f'# {description or name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
-             '# Every value here is to be checked against the device before it is relied on (docs/porting.md).',
-             f'name = "{name}"                     # what the loader puts in /chosen/darwin-board',
-             f'description = {toml_value(description or name)}',
-             f'soc = "{soc_name}"',
-             '',
-             '# Nothing yet: a feature is listed once its driver has been seen to work on this board',
-             '# (docs/porting.md goes through them in the order to try).',
-             'features = []',
-             '']
     if light.get('panel'):
-        lines.append(f'# The panel: {light["panel"]}' + (f' ("{light["panel_name"]}")' if light.get('panel_name') else ''))
-    lines.append('[backlight]')
+        out.comment(f'The panel: {light["panel"]}' + (f' ("{light["panel_name"]}")' if light.get('panel_name') else ''))
+    out.node('backlight')
     for key in ('type', 'panel_mode', 'min', 'max', 'restore', 'bytes', 'byte_order'):
         if key in light:
-            lines.append(f'{key} = {toml_value(light[key])}')
-    lines.append('')
+            out.prop(boardfile.property_line(key, light[key]))
+    out.end()
+
+    def section(title, node, values, commented=False):
+        out.blank()
+        out.comment(*title)
+        out.node(node, commented)
+        for key, value in values:
+            out.prop(boardfile.property_line(key, value, lambda v: f'{v:#05x}' if node in ('buttons', 'torch') else
+                                                     f'{v:#010x}' if v >= 0x10000 else str(v)))
+        out.end()
+
     keys = board.get('buttons', {})
     if 'pon' in keys and 'volume_up' in keys:
-        lines += ['# The keys on the PMICs, for the feature "buttons-pmic": SPMI slave << 8 | the high byte of the',
-                  "# peripheral's registers.",
-                  '[buttons]']
-        lines += [f'{key} = {keys[key]:#05x}' if isinstance(keys[key], int) else f'{key} = {toml_value(keys[key])}'
-                  for key in ('pon', 'pon_name', 'volume_up', 'volume_up_name') if key in keys]
-        lines.append('')
-    light_part = board.get('torch', {})
-    if 'flash' in light_part and 'alarm' in light_part:
-        lines += ['# The flashlight\'s part on the PMIC, for the feature "torch-pm8350c": the flash LED module and that',
-                  "# PMIC's temperature alarm, each as SPMI slave << 8 | the high byte of its registers.",
-                  '[torch]',
-                  f'flash = {light_part["flash"]:#05x}',
-                  f'alarm = {light_part["alarm"]:#05x}',
-                  '']
+        section(('The keys on the PMICs, for the feature "buttons-pmic": SPMI slave << 8 | the high byte of the',
+                 "peripheral's registers."), 'buttons',
+                [(key, keys[key]) for key in ('pon', 'pon_name', 'volume_up', 'volume_up_name') if key in keys])
+    torch = board.get('torch', {})
+    if 'flash' in torch and 'alarm' in torch:
+        section(('The flashlight\'s part on the PMIC, for the feature "torch-pm8350c": the flash LED module and that',
+                 "PMIC's temperature alarm, each as SPMI slave << 8 | the high byte of its registers."), 'torch',
+                [('flash', torch['flash']), ('alarm', torch['alarm'])])
     wired = board.get('touch', {})
     if 'reset' in wired and 'interrupt' in wired:
-        lines += ['# The touch controller\'s wiring, for a feature "touch-...": its reset and its interrupt are from the tree'
-                  + (', and the serial engine it is on' if 'serial_engine' in wired else '') + ';',
-                  "# the engine's clocks and votes, the bus's pins and the supplies are yours to fill in",
-                  '# (devices/_template/board.dts says where each is).',
-                  '# [touch]']
-        if 'serial_engine' in wired:
-            lines.append(f'# serial_engine = {wired["serial_engine"]:#010x}')
-        lines += [f'# interrupt = {wired["interrupt"]}', f'# reset = {wired["reset"]}', '']
+        section(('The touch controller\'s wiring, for a feature "touch-...": its reset and its interrupt are from the tree'
+                 + (', and the serial engine it is on' if 'serial_engine' in wired else '') + ';',
+                 "the engine's clocks and votes, the bus's pins and the supplies are yours to fill in",
+                 '(devices/_template/board.dts says where each is).'), 'touch',
+                [(key, wired[key]) for key in ('serial_engine', 'interrupt', 'reset') if key in wired], commented=True)
     dsp = board.get('adsp', {})
     if 'memory' in dsp:
-        lines += ['# The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',
-                  "# this phone's adsp.mdt and its parts is yours to name (devices/_template/board.dts).",
-                  '# [adsp]',
-                  '# firmware = "fw-audio-' + name + '"',
-                  f'# memory = {dsp["memory"]:#010x}',
-                  f'# memory_size = {dsp["memory_size"]:#010x}',
-                  '']
+        section(('The audio DSP, for the feature "adsp": its reserved memory is from the tree; the directory with',
+                 "this phone's adsp.mdt and its parts is yours to name (devices/_template/board.dts)."), 'adsp',
+                [('firmware', f'fw-audio-{name}'), ('memory', dsp['memory']), ('memory_size', dsp['memory_size'])], commented=True)
     amplifiers = board.get('speaker', {})
     if 'sound_pins' in amplifiers:
-        lines += ['# The speaker\'s amplifiers, for the feature "speaker-aw88261": the sound\'s four pins are from the tree',
-                  '# (bit clock, frame sync, data in, data out); the bus, the addresses, the interrupts and the pins\'',
-                  '# function are yours to fill in (devices/_template/board.dts says where each is).',
-                  '# [speaker]',
-                  f'# sound_pins = {amplifiers["sound_pins"]}',
-                  '']
+        section(('The speaker\'s amplifiers, for the feature "speaker-aw88261": the sound\'s four pins are from the tree',
+                 '(bit clock, frame sync, data in, data out); the bus, the addresses, the interrupts and the pins\'',
+                 'function are yours to fill in (devices/_template/board.dts says where each is).'), 'speaker',
+                [('sound_pins', amplifiers['sound_pins'])], commented=True)
     codec = board.get('mic', {})
     if 'codec_reset' in codec:
-        lines += ['# The microphones\' codec, for the feature "mic-wcd938x": its reset pin is from the tree.',
-                  '[mic]',
-                  f'codec_reset = {codec["codec_reset"]}',
-                  '']
+        section(('The microphones\' codec, for the feature "mic-wcd938x": its reset pin is from the tree.',), 'mic',
+                [('codec_reset', codec['codec_reset'])])
     radio = board.get('wifi', {})
     if 'dsp_memory' in radio:
-        lines += ['# The Wi-Fi radio on the SoC\'s own DSP, for the feature "wifi-wcn6750": the DSP\'s reserved memory is',
-                  '# from the tree,',
-                  '# with the radio\'s pins where the Bluetooth node names them (devices/_template/board.dts has the rest).',
-                  '# [wifi]',
-                  '# radio_model = 0',
-                  f'# dsp_memory = {radio["dsp_memory"]:#010x}',
-                  f'# dsp_memory_size = {radio["dsp_memory_size"]:#010x}']
-        if 'pins' in radio:
-            lines.append(f'# pins = {radio["pins"]}')
-        lines.append('')
+        section(('The Wi-Fi radio on the SoC\'s own DSP, for the feature "wifi-wcn6750": the DSP\'s reserved memory is',
+                 'from the tree,', 'with the radio\'s pins where the Bluetooth node names them (devices/_template/board.dts has the rest).'),
+                'wifi', [('radio_model', 0), ('dsp_memory', radio['dsp_memory']), ('dsp_memory_size', radio['dsp_memory_size'])] +
+                ([('pins', radio['pins'])] if 'pins' in radio else []), commented=True)
+    out.end()
     board_path.parent.mkdir(parents=True)
-    # (made as the files of before were, and written in this format: comments and all, as convert does)
-    board_path.write_text(boardfile.from_toml('\n'.join(lines)))
+    board_path.write_text(out.text())
     print(f'wrote {shown(board_path)}')
     # the package's README, from the template: what works is for the porter to say
     template = DEVICES / '_template' / 'README.md'
@@ -1243,28 +1270,29 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
                           .replace('soc/SOC.dtsi', f'soc/{soc_name}.dtsi').replace('(SOC)', f'({soc_name})'))
         print(f'wrote {shown(readme)}: say there what works, and how it was verified')
     if not soc_path.exists():
-        text = [f'# {soc_name}. Started by tools/boards.py new' + (f' from {dts.name}' if dts else '') + '.',
-                '# What every board with this SoC shares: where its blocks are (docs/porting.md).',
-                f'name = "{soc_name}"',
-                f'description = "{soc_name}"',
-                '']
+        out = Writer()
+        out.comment(f'{soc_name}. {started}', 'What every board with this SoC shares: where its blocks are (docs/porting.md).')
+        out.node('/')
+        out.prop(f'name = "{soc_name}";')
+        out.prop(f'description = "{soc_name}";')
+        out.blank()
         # each value with what the template says of its key: the file explains itself
         template = DEVICES / '_template' / 'soc.dtsi'
         above, after = template_says(template if template.exists() else
                                      Path(__file__).resolve().parent.parent / 'devices' / '_template' / 'soc.dtsi')
         clocks = soc.get('clocks', {})
         if light.get('type') == 'dcs' or clocks:
-            text += soc_lines('clocks', clocks, above, after,
-                              ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'))
-        for section in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'smmu', 'adreno', 'thermal', 'cpufreq'):
-            if section in soc:
-                text += soc_lines(section, soc[section], above, after)
+            soc_section(out, 'clocks', clocks, above, after,
+                        ('gcc', 'gcc_disp_ahb_cbcr', 'dispcc', 'dispcc_mdss_gdscr', 'dispcc_mdss_ahb_cbcr'))
+        for part in ('display', 'pins', 'spmi', 'rpmh', 'ipc', 'smmu', 'adreno', 'thermal', 'cpufreq'):
+            if part in soc:
+                soc_section(out, part, soc[part], above, after)
         if 'platform' in soc:
-            lines = soc_lines('platform', soc['platform'], above, after)
-            at = lines.index('[platform]') + 1
-            text += lines[:at] + ['# io_base = 0x00400000          # TO FILL IN for [loader]: one window over the SoC\'s peripherals, never 0',
-                                  '# io_size = 0x3FC00000          # (these two are what the Snapdragon 7-series ports use)'] + lines[at:]
-        soc_path.write_text(boardfile.from_toml('\n'.join(text)))
+            soc_section(out, 'platform', soc['platform'], above, after, more=(
+                ('io_base', 0x00400000, 'TO FILL IN for loader { }: one window over the SoC\'s peripherals, never 0'),
+                ('io_size', 0x3FC00000, '(these two are what the Snapdragon 7-series ports use)')))
+        out.end()
+        soc_path.write_text(out.text())
         print(f'wrote {shown(soc_path)}')
     else:
         print(f'{shown(soc_path)} is there already: left as it is')
@@ -1328,7 +1356,7 @@ def compare_text(name, board, soc, tree_soc, tree_board, tree_name):
                              ', '.join(f'{key} = {key_value(key, values[key])}' for key in missing))
         return [f'  {title}'] + (lines or ['    nothing a device tree says']) + ['']
 
-    out += side(f'soc/{board["soc"]}.dtsi', soc, tree_soc, SOC_SCHEMA, lambda key, value: dts_value(key, value, soc_value))
+    out += side(f'soc/{board["soc"]}.dtsi', soc, tree_soc, SOC_SCHEMA, lambda key, value: dts_value(key, value, soc_number))
     out += side(f'{name}/board.dts', board, tree_board, BOARD_SCHEMA,
                 lambda key, value: f'<{value:#05x}>' if key in ('pon', 'volume_up', 'flash', 'alarm') else dts_value(key, value))
     out.append(f'{counts["same"]} values as in the tree, {counts["differ"]} differ, {counts["unsaid"]} the tree does not say' +

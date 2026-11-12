@@ -1190,7 +1190,7 @@ class DeviceTree(Sandbox):
         board.write_text(board.read_text() + '/ {\n\tloader {\n\t\tfb-base = <0x9c000000>;\n\t};\n};\n')
         self.assertEqual(self.problems(), 'devices/phone2/board.dts: loader { } needs io-base and io-size in platform { } of '
                          'soc/sm0002.dtsi')
-        text = text.replace('// io-base = <0x00400000>;', 'io-base = <0x00400000>;').replace('// io-size = <0x3FC00000>;', 'io-size = <0x3FC00000>;')
+        text = text.replace('// io-base = <0x00400000>;', 'io-base = <0x00400000>;').replace('// io-size = <0x3fc00000>;', 'io-size = <0x3fc00000>;')
         path.write_text(text)
         self.assertEqual(self.problems(), '')
         self.assertIn('.raw_min = 1, .raw_max = 2047, .raw_restore = 307,', boards.table_text(*boards.load()))

@@ -130,7 +130,7 @@ check "without a loader { } section the loader does not list the board" \
 printf '\n/ {\n\tloader {\n\t\tfb-base = <0x9C000000>;\n\t};\n};\n' >> "$R/devices/testphone/board.dts"
 refuses "the I/O window, which no tree has, is asked for when the loader is to know the board" \
 	'loader { } needs io-base and io-size in platform { }' "$B" check
-sed -i -e 's|// io-base = <0x00400000>;|io-base = <0x01000000>;|' -e 's|// io-size = <0x3FC00000>;|io-size = <0x3F000000>;|' "$R/soc/sm9999.dtsi"
+sed -i -e 's|// io-base = <0x00400000>;|io-base = <0x01000000>;|' -e 's|// io-size = <0x3fc00000>;|io-size = <0x3F000000>;|' "$R/soc/sm9999.dtsi"
 check "with its framebuffer base it does" sh -c "\"$B\" gen && grep -q '&platform_testphone,' \"$R/build/boards/platforms.h\""
 check "... with the machine as the SoC file has it" \
 	sh -c "grep -A14 'platform_testphone = ' \"$R/build/boards/platforms.h\" | tr -d '\n\t' | grep -q '.io_base = 0x01000000,.io_size = 0x3f000000,.gic_dist = 0x17100000,.gic_redist = 0x17180000,.psci_hvc = 0,.log_other_cpu = 0,.uefi_charger = 0,.cores = 6,.core_shift = 8,.timeout_scale = 0,.small_cores = 0xf,.fb_base = 0x9c000000,'"
