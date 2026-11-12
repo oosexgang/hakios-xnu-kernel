@@ -86,6 +86,10 @@ hakios_test_wr(vm_offset_t a, uint32_t v)
 
 vm_offset_t ml_io_map(vm_offset_t phys, vm_size_t size __unused) { return phys; }
 void hakios_backlight_set_cap(uint32_t level) { cap = level; }
+/* the test boards have EPSS: SCMI has no domains here, and is never asked */
+static unsigned scmi_asked;
+int hakios_scmi_perf_domain(unsigned domain __unused, uint32_t *found __unused, uint32_t *top __unused) { return 0; }
+int hakios_scmi_perf_set(unsigned domain __unused, uint32_t level __unused) { scmi_asked++; return -1; }
 
 #include "hakios_board.c"
 #define HAKIOS_MMIO_TEST 1
@@ -166,6 +170,7 @@ heat_and_cool(void)
 	    perf[2]);
 	CHECK(cap == 1000, "the panel too: %u", cap);
 	CHECK(foreign == 0, "no other register");
+	CHECK(scmi_asked == 0, "an EPSS board never asks SCMI: %u", scmi_asked);
 }
 
 static void

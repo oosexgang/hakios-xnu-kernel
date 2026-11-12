@@ -433,7 +433,7 @@ beside the code, so the file named in each heading has the full explanation.
 
 | Argument | What the source says |
 | --- | --- |
-| `scmi_perf` | scmi_perf=1 queries firmware levels and limits without changing them. |
+| `scmi_perf` | scmi_perf=2 each domain is also asked for its highest level (the UI is drawn by the CPUs); the level it was found at stays the floor that thermal=2 holds it back to |
 
 ### `bsd/kern/kern_exec.c`
 

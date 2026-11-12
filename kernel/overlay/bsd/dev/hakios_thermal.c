@@ -27,6 +27,10 @@
  * sysctl hw.thermal: hottest (tenths of a degree), step and most (how far held back, of how far it can
  * be), trip, clear, critical (root may change them while it runs: tuning without a new kernel).
  *
+ * A SoC without EPSS whose firmware has SCMI performance domains (SM8845: scmi_perf=2) is held back the
+ * same way, a domain's levels standing for the rows, from the highest the firmware allows down to the
+ * level the domain was found at.
+ *
  * Adding a device: the TSENS controllers ("tsens_tm_physical") and the EPSS block ("cpufreq-hw") in its
  * SoC's file, the floors in its board file. GPU frequency is not touched here: the GPU's speed belongs to
  * its GMU (bsd/dev/hakios_adreno.c, boot-arg adreno_speed); hakios_thermal_step() tells it how far to go.
@@ -47,6 +51,8 @@
 #include "hakios_log.h"
 
 extern void hakios_backlight_set_cap(uint32_t level);
+extern int hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top);
+extern int hakios_scmi_perf_set(unsigned domain, uint32_t level);
 
 #define say hakios_say
 
@@ -69,6 +75,7 @@ static struct th_policy policy = { 700, 620, 950 };
 static vm_offset_t tsens[TH_CONTROLLERS], epss[TH_DOMAINS];
 static uint32_t top_row[TH_DOMAINS], floor_row[TH_DOMAINS], row_now[TH_DOMAINS];
 static unsigned groups;                         /* how many groups of cores the board has */
+static bool scmi;                               /* the groups are SCMI performance domains (no EPSS) */
 static volatile int32_t hottest = TH_NONE;
 static volatile uint32_t step, most;
 
@@ -141,7 +148,11 @@ apply(uint32_t s)
 	for (unsigned d = 0; d < TH_DOMAINS; d++) {
 		uint32_t row = th_row(top_row[d], floor_row[d], s);
 
-		if (epss[d] != 0 && row != row_now[d]) {
+		if (d < groups && scmi && row != row_now[d]) {
+			if (hakios_scmi_perf_set(d, row) == 0) {
+				row_now[d] = row;
+			}
+		} else if (epss[d] != 0 && row != row_now[d]) {
 			wr(epss[d] + EPSS_PERF_STATE, row);
 			row_now[d] = row;
 		}
@@ -229,8 +240,18 @@ hakios_thermal_init(void)
 		return;
 	}
 	if (mode >= 2 && this_board->cpufreq.epss == 0) {
-		say("thermal: this board's SoC file has no cpufreq { }: looking only\n");
-		mode = 1;
+		uint32_t found, top;
+
+		/* SCMI: the firmware's levels are the rows, its highest the top, where it was found the floor */
+		for (groups = 0; groups < TH_DOMAINS && hakios_scmi_perf_domain(groups, &found, &top); groups++) {
+			top_row[groups] = row_now[groups] = top;
+			floor_row[groups] = found;
+		}
+		scmi = groups > 0;
+		if (!scmi) {
+			say("thermal: this board's SoC file has no cpufreq { } and SCMI gave no levels (scmi_perf=2): looking only\n");
+			mode = 1;
+		}
 	}
 	if (PE_parse_boot_argn("th_trip", &value, sizeof(value))) {
 		policy.trip = value;
@@ -253,8 +274,14 @@ hakios_thermal_init(void)
 		tsens[c] = this_board->thermal.tsens[c] ? ml_io_map(this_board->thermal.tsens[c], 0x200) : 0;
 	}
 	most = 0;
-	groups = hakios_board_cpu_groups();
-	for (unsigned d = 0; d < groups && mode >= 2; d++) {
+	if (scmi) {
+		for (unsigned d = 0; d < groups; d++) {
+			most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
+		}
+	} else {
+		groups = hakios_board_cpu_groups();
+	}
+	for (unsigned d = 0; d < groups && mode >= 2 && !scmi; d++) {
 		epss[d] = ml_io_map(this_board->cpufreq.epss + d * this_board->cpufreq.epss_domain_size, this_board->cpufreq.epss_domain_size);
 		read_table(d);
 		most = top_row[d] - floor_row[d] > most ? top_row[d] - floor_row[d] : most;
@@ -277,7 +304,9 @@ hakios_thermal_init(void)
 void
 hakios_thermal_quiesce(void)
 {
-	if (mode < 2 || step == 0) {
+	/* SCMI: nothing is asked here -- the other processors are stopped and no lock may be taken; the
+	 * loader runs at whatever level the firmware has, as it does after any SCMI request */
+	if (mode < 2 || step == 0 || scmi) {
 		return;
 	}
 	for (unsigned d = 0; d < TH_DOMAINS; d++) {

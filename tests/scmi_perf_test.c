@@ -1,7 +1,7 @@
 /*
- * The CPU performance diagnostics over SCMI (kernel/overlay/bsd/dev/hakios_scmi_perf.c), run as a host program.
+ * The CPU performance control over SCMI (kernel/overlay/bsd/dev/hakios_scmi_perf.c), run as a host program.
  * The driver asks the firmware, through a channel in shared memory and a doorbell, for its version, its
- * domains and each one's level and limits -- and promises to change nothing. So the model is that firmware:
+ * domains and each one's level and limits, and sets levels only with scmi_perf=2. The model is that firmware:
  * a thread that answers what the shared memory asks when the doorbell rings, notes every message, and
  * answers wrongly, late or not at all when a scenario says so.
  *
@@ -43,6 +43,9 @@ static volatile unsigned asked[64], asked_n, rings;
 enum { ANSWERS, SILENT, WITH_ERROR, OTHER_TOKEN, TOO_LONG, REFUSES };
 static volatile int behaviour = ANSWERS;
 static volatile uint32_t domains = 3;
+static volatile uint32_t levels[4] = { 1000, 1001, 1002, 1003 };
+static unsigned sets;
+static bool missing_level;
 
 static void
 answer(uint32_t status, const uint32_t *words, unsigned n)
@@ -90,9 +93,13 @@ firmware(void *unused __unused)
 
 			answer(0, &attributes, 1);
 		} else if (message == 0x8) {
-			uint32_t level = 1000 + in;
+			uint32_t level = levels[in];
 
-			answer(0, &level, 1);
+			answer(0, &level, missing_level && in == 1 ? 0 : 1);
+		} else if (message == 0x7) {
+			levels[in] = shmem[0x20 / 4];
+			sets++;
+			answer(0, NULL, 0);
 		} else if (message == 0x6) {
 			uint32_t limits[2] = { 3000 + in, 300 + in };   /* max, min */
 
@@ -197,9 +204,62 @@ only_when_asked(void)
 	channel();
 	boot_args = "";
 	hakios_scmi_perf_init();
+	boot_args = "scmi_perf=3";
+	hakios_scmi_perf_init();
+	CHECK(asked_n == 0 && log_text[0] == 0, "not without scmi_perf=1 or 2: %s", log_text);
+}
+
+/* mode 2 raises each complete domain to its allowed top, keeping the found level as its floor */
+static void
+raises_when_asked(void)
+{
+	channel();
 	boot_args = "scmi_perf=2";
 	hakios_scmi_perf_init();
-	CHECK(asked_n == 0 && log_text[0] == 0, "not without scmi_perf=1: %s", log_text);
+	CHECK(sets == 3, "one set per domain: %u", sets);
+	for (unsigned d = 0; d < 3; d++) {
+		uint32_t found, top;
+
+		CHECK(hakios_scmi_perf_domain(d, &found, &top) && found == 1000 + d && top == 3000 + d,
+		    "domain %u keeps its found level and top", d);
+		CHECK(levels[d] == top, "domain %u raised: %u", d, levels[d]);
+	}
+}
+
+/* thermal requests are bounded by the firmware top; a refused request never changes the cached level */
+static void
+sets_are_clamped_and_errors_preserve_state(void)
+{
+	channel();
+	boot_args = "scmi_perf=1";
+	hakios_scmi_perf_init();
+	CHECK(sets == 0, "mode 1 only reads");
+	CHECK(hakios_scmi_perf_set(0, UINT32_MAX) == 0 && levels[0] == 3000, "clamped to the top");
+	CHECK(hakios_scmi_perf_set(0, 1200) == 0 && levels[0] == 1200, "a lower thermal level accepted");
+	behaviour = REFUSES;
+	CHECK(hakios_scmi_perf_set(0, 1300) == -1 && scmi_now[0] == 1200 && levels[0] == 1200,
+	    "a refusal leaves the level as it was");
+	unsigned before = asked_n;
+	uint32_t found, top;
+
+	CHECK(hakios_scmi_perf_set(3, 1000) == -1 && asked_n == before, "no message for an unknown domain");
+	CHECK(!hakios_scmi_perf_domain(3, &found, &top), "an unknown domain has no levels");
+}
+
+/* an incomplete reply leaves a gap: later domains cannot be renumbered into its place */
+static void
+incomplete_domains_are_not_exposed(void)
+{
+	channel();
+	missing_level = true;
+	boot_args = "scmi_perf=2";
+	hakios_scmi_perf_init();
+	uint32_t found, top;
+
+	CHECK(hakios_scmi_perf_domain(0, &found, &top), "the complete prefix is usable");
+	CHECK(!hakios_scmi_perf_domain(1, &found, &top) && !hakios_scmi_perf_domain(2, &found, &top),
+	    "no gap, and no domain shifted over it");
+	CHECK(sets == 1 && levels[1] == 1001 && levels[2] == 1002, "only the complete prefix raised");
 }
 
 /* (the board is looked up once a process: another board is another scenario) */
@@ -220,6 +280,9 @@ main(int argc, char **argv)
 		{ "reads_and_says", reads_and_says, 1 }, { "four_domains_at_most", four_domains_at_most, 1 },
 		{ "does_not_answer", does_not_answer, 5 }, { "only_when_asked", only_when_asked, 1 },
 		{ "board_without_it", board_without_it, 1 },
+		{ "raises_when_asked", raises_when_asked, 1 },
+		{ "sets_are_clamped_and_errors_preserve_state", sets_are_clamped_and_errors_preserve_state, 1 },
+		{ "incomplete_domains_are_not_exposed", incomplete_domains_are_not_exposed, 1 },
 	};
 
 	if (argc < 2) {

@@ -1,9 +1,16 @@
 /*
- * SM8845 CPU performance diagnostics over SCMI.
+ * SM8845 CPU performance over SCMI.
  * Transport adapted from hakios-sm8845 (805567b), macan power driver.
- * The firmware owns the clock and thermal policy.
+ * The firmware owns the clocks and its own (LMh) limits; it clamps every level asked for to them.
+ *
+ *   scmi_perf=1   the levels and limits are logged, nothing changed
+ *   scmi_perf=2   each domain is also asked for its highest level (the UI is drawn by the CPUs);
+ *                 the level it was found at stays the floor that thermal=2 holds it back to
+ *
+ * hakios_thermal.c uses hakios_scmi_perf_domain() and hakios_scmi_perf_set() when the SoC has no EPSS.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
 #include <libkern/libkern.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
@@ -21,11 +28,16 @@
 #define SCMI_VERSION            0x0
 #define SCMI_ATTRIBUTES         0x1
 #define SCMI_PERF_LIMITS_GET    0x6
+#define SCMI_PERF_LEVEL_SET     0x7
 #define SCMI_PERF_LEVEL_GET     0x8
 #define SCMI_DOMAINS_MAX  4
 
 static vm_offset_t scmi_shmem, scmi_mailbox;
 static uint32_t scmi_token, scmi_doorbell;
+static unsigned scmi_domains;                   /* domains with both their level and limits known */
+static uint32_t scmi_found[SCMI_DOMAINS_MAX], scmi_top[SCMI_DOMAINS_MAX], scmi_now[SCMI_DOMAINS_MAX];
+static LCK_GRP_DECLARE(scmi_lock_group, "hakios-scmi-perf");
+static LCK_MTX_DECLARE(scmi_lock, &scmi_lock_group);   /* one message on the channel at a time */
 
 static volatile uint32_t *
 scmi_word(unsigned offset)
@@ -87,8 +99,9 @@ scmi_query(uint32_t message, const uint32_t *in, unsigned nin, uint32_t *out, un
 	return (int)*scmi_word(0x1c);
 }
 
-void
-hakios_scmi_perf_init(void);
+void hakios_scmi_perf_init(void);
+int hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top);
+int hakios_scmi_perf_set(unsigned domain, uint32_t level);
 
 void
 hakios_scmi_perf_init(void)
@@ -97,9 +110,8 @@ hakios_scmi_perf_init(void)
 	uint32_t version, attributes, enabled = 0;
 	unsigned words;
 
-	/* scmi_perf=1 queries firmware levels and limits without changing them. */
 	if (!hakios_board_has(HAKIOS_HAS_CPUFREQ_SCMI) ||
-	    !PE_parse_boot_argn("scmi_perf", &enabled, sizeof(enabled)) || enabled != 1) {
+	    !PE_parse_boot_argn("scmi_perf", &enabled, sizeof(enabled)) || enabled < 1 || enabled > 2) {
 		return;
 	}
 	scmi_doorbell = board->scmi_perf.doorbell;
@@ -124,13 +136,72 @@ hakios_scmi_perf_init(void)
 	hakios_say("scmi-perf: SCMI performance %u.%u, %u domains\n",
 	    version >> 16, version & 0xffff, domains);
 	for (uint32_t domain = 0; domain < domains; domain++) {
-		uint32_t level, limits[2];
+		uint32_t level = 0, limits[2] = { 0, 0 };
+		bool have_level, have_limits;
 
-		if (scmi_query(SCMI_PERF_LEVEL_GET, &domain, 1, &level, 1, &words) == 0 && words >= 1) {
+		have_level = scmi_query(SCMI_PERF_LEVEL_GET, &domain, 1, &level, 1, &words) == 0 && words >= 1;
+		if (have_level) {
 			hakios_say("scmi-perf: domain %u current level %u\n", domain, level);
 		}
-		if (scmi_query(SCMI_PERF_LIMITS_GET, &domain, 1, limits, 2, &words) == 0 && words >= 2) {
+		have_limits = scmi_query(SCMI_PERF_LIMITS_GET, &domain, 1, limits, 2, &words) == 0 && words >= 2;
+		if (have_limits) {
 			hakios_say("scmi-perf: domain %u limits %u..%u\n", domain, limits[1], limits[0]);
 		}
+		/* only a prefix of domains that answered both is handed on: a gap would shift the numbering */
+		if (!have_level || !have_limits || domain != scmi_domains || limits[0] < level) {
+			continue;
+		}
+		scmi_found[domain] = scmi_now[domain] = level;
+		scmi_top[domain] = limits[0];
+		scmi_domains++;
 	}
+	if (enabled >= 2) {
+		for (unsigned domain = 0; domain < scmi_domains; domain++) {
+			int status = hakios_scmi_perf_set(domain, scmi_top[domain]);
+			uint32_t level = 0;
+
+			lck_mtx_lock(&scmi_lock);
+			if (scmi_query(SCMI_PERF_LEVEL_GET, &domain, 1, &level, 1, &words) != 0 || words < 1) {
+				level = UINT32_MAX;
+			}
+			lck_mtx_unlock(&scmi_lock);
+			hakios_say("scmi-perf: domain %u asked for level %u: status %d, now %d\n", domain,
+			    scmi_top[domain], status, (int)level);
+		}
+	}
+}
+
+/* A domain's levels for the thermal limiter: 0 when there is no such domain. */
+int
+hakios_scmi_perf_domain(unsigned domain, uint32_t *found, uint32_t *top)
+{
+	if (domain >= scmi_domains) {
+		return 0;
+	}
+	*found = scmi_found[domain];
+	*top = scmi_top[domain];
+	return 1;
+}
+
+/* Ask for a domain's level (clamped to what was found and the top); the SCMI status, 0: done. */
+int
+hakios_scmi_perf_set(unsigned domain, uint32_t level)
+{
+	uint32_t in[2];
+	unsigned words;
+	int status;
+
+	if (domain >= scmi_domains) {
+		return -1;
+	}
+	level = MIN(level, scmi_top[domain]);
+	in[0] = domain;
+	in[1] = level;
+	lck_mtx_lock(&scmi_lock);
+	status = scmi_query(SCMI_PERF_LEVEL_SET, in, 2, NULL, 0, &words);
+	if (status == 0) {
+		scmi_now[domain] = level;
+	}
+	lck_mtx_unlock(&scmi_lock);
+	return status;
 }
