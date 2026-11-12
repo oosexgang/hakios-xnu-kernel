@@ -1860,7 +1860,7 @@ step_gmu_queues(void)
 	if (!cx_ready() || !gmu_runs) {
 		return false;
 	}
-	announce("enable the GPU's part of the always-on sequencer (pdc, 0xb294500 and 0xb294520: a part of the SoC not "
+	announce("enable the GPU's part of the always-on sequencer (pdc: a part of the SoC not "
 	    "touched before)");
 	get(&pdc, "gpu_enable", PDC_GPU_ENABLE);
 	get(&pdc, "gpu_seq_start_addr", PDC_GPU_SEQ_START_ADDR);
@@ -3795,7 +3795,7 @@ display_probe(void)
 		printf("adreno: 0: the display's clock controller has no bus clock, and does not get one: nothing more is read\n");
 		goto out;
 	}
-	announce("the display block's power switch and clocks, in its clock controller (0xaf00000: NOT READ BEFORE)");
+	announce("the display block's power switch and clocks, in its clock controller (NOT READ BEFORE)");
 	get(&dispcc, "mdss_mdp_cbcr", DISPCC_MDSS_MDP_CBCR);
 	get(&dispcc, "mdss_pclk0_cbcr", DISPCC_MDSS_PCLK0_CBCR);
 	if (!(get(&dispcc, "mdss_core_gdscr", DISPCC_MDSS_CORE_GDSCR) & GDSC_POWER_ON)) {
@@ -3805,7 +3805,7 @@ display_probe(void)
 	bus = get(&dispcc, "mdss_ahb_cbcr", DISPCC_MDSS_AHB_CBCR);
 	if (bus & CBCR_OFF) {
 		/* (seen: the power switch on, the display's own clock and the pixel clock running, this one off: 0x80000000) */
-		announce("turn the bus clock of the display block's registers on (dispcc 0xaf01050 bit 0: THE ONE WRITE THERE)");
+		announce("turn the bus clock of the display block's registers on (dispcc mdss_ahb_cbcr bit 0: THE ONE WRITE THERE)");
 		put(&dispcc, "mdss_ahb_cbcr", DISPCC_MDSS_AHB_CBCR, bus | CBCR_ENABLE);
 		sleep_ms(10);
 		bus = get(&dispcc, "mdss_ahb_cbcr", DISPCC_MDSS_AHB_CBCR);
@@ -3815,7 +3815,7 @@ display_probe(void)
 		printf("adreno: 0: the bus clock of the display block's registers does not run (%#x): nothing more is read\n", bus);
 		goto out;
 	}
-	announce("the timing of the interface the panel hangs on (0xae36000: NOT READ BEFORE)");
+	announce("the timing of the interface the panel hangs on (NOT READ BEFORE)");
 	get(&disp_intf, "timing_engine_en", INTF_TIMING_ENGINE_EN);
 	line = get(&disp_intf, "hsync_ctl", INTF_HSYNC_CTL) >> 16;
 	frame = get(&disp_intf, "vsync_period", INTF_VSYNC_PERIOD);

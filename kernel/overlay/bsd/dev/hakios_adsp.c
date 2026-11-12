@@ -727,7 +727,7 @@ step_survey(void)
 	struct smp2p words;
 	uint32_t size = 0;
 
-	announce("read our partition with the audio DSP in the shared memory (0x80900000), and its items");
+	announce("read our partition with the audio DSP in the shared memory, and its items");
 	show_partition();
 	if (dsp_words(&words)) {
 		show_words("the DSP's item (443) is there: it has run since the phone was started", &words);

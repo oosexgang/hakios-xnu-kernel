@@ -586,7 +586,7 @@ step_smem(void)
 	struct smp2p words;
 	uint32_t version = 0, size = 0, at;
 
-	announce("map the shared memory area (0x80900000, 2 MB: memory, not registers) and read how the boot loader laid it out");
+	announce("map the shared memory area (memory, not registers) and read how the boot loader laid it out");
 	if (!smem_peek(SMEM_VERSION, &version, sizeof(version)) || !smem_peek(SMEM_SIZE - 0x1000, &table, sizeof(table))) {
 		return false;
 	}
@@ -644,7 +644,7 @@ step_mailbox(void)
 {
 	uint32_t magic, box, size;
 
-	announce("read the description at the start of the always-on processor's message memory (0xc300000)");
+	announce("read the description at the start of the always-on processor's message memory");
 	magic = get(&aoss, "magic", QMP_MAGIC);
 	get(&aoss, "version", QMP_VERSION);
 	get(&aoss, "features", QMP_FEATURES);
@@ -1578,7 +1578,7 @@ step_image(void)
 	if (image.segments == 0) {
 		return false;
 	}
-	announce("put the image's segments into the DSP's memory (0x9ae00000, 25 MB: memory of nobody's until TrustZone "
+	announce("put the image's segments into the DSP's memory (memory of nobody's until TrustZone "
 	    "starts the DSP), with zeroes where a segment is longer than its file, and read them back");
 	/*
 	 * (The memory is looked at only now: TrustZone has just said that it is not its own. And it
@@ -1736,7 +1736,7 @@ step_our_item(void)
 		printf("wifi: %u: item %u is there, at %#lx: a kernel before this one made it, and it is used again\n", step,
 		    ITEM_SMP2P_OURS, SMEM_PHYS + our_item);
 	} else {
-		announce("make the item: the SoC's lock for the shared memory (0x1f43000: the first access to that block) around it");
+		announce("make the item: the SoC's lock for the shared memory (the first access to that block) around it");
 		if (!our_item_make(partition)) {
 			return false;
 		}
@@ -3188,7 +3188,7 @@ smmu_look(void)
 		                             "(the number is", "of a reserved kind (the number is" };
 	uint32_t scr0, idr0, idr1, matches, valid = 0, covering = 0;
 
-	printf("wifi: 0: read the global registers of the application processors' SMMU (0x15000000: the first access of ours to "
+	printf("wifi: 0: read the global registers of the application processors' SMMU (the first access of ours to "
 	    "that block; the hypervisor answers for them)\n");
 	sleep_ms(pause_ms);
 	scr0 = get(&apps_smmu, "scr0", SMMU_SCR0);
