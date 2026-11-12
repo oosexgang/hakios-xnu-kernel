@@ -4,7 +4,7 @@ A device is described by data, in two places:
 
 | What | Where | What it says |
 | --- | --- | --- |
-| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`), what iOS's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
+| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`, `bluetooth { }`), what iOS's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
 | A **SoC file** | `soc/SOC.dtsi` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`platform { }`), clock controllers (`clocks { }`), the DSI controller (`display { }`), its own pins (`pins { }`), the PMIC arbiter (`spmi { }`), its SMMU (`smmu { }`), the camera subsystem's blocks (`camera { }`), the audio subsystem's blocks on the microphones' path (`lpass { }`), the way to its other processors (`ipc { }`), RPMh (`rpmh { }`), the GPU's blocks (`adreno { }`), temperature sensors (`thermal { }`), the CPU frequency block and its groups of cores (`cpufreq { }`), its SCMI performance mailbox (`scmi-perf { }`), and an emulator's virtio transports (`virtio { }`). |
 
 `devices/_template/board.dts` and `devices/_template/soc.dtsi` explain every key;
@@ -113,6 +113,13 @@ were present: bring the package in, then build. The tests make their own, with t
 (`tests/devices`).
 
 `sysctl hw.board` shows what the running kernel found: `name`, `soc`, `description`, `features`.
+
+Bluetooth H4 wiring is `bluetooth { }`: the UART SE and wrapper pages, explicit GCC halt/RCG/vote
+offsets, CTS/RTS/TX/RX pins and function, PMIC enable PPID, sw-ctrl input, ordered VRM supplies and
+millivolts, and the RF VRM clock name. `bt=-1` inspects first; `bt=1` powers and identifies only.
+`tools/boards.py new --dts` extracts a Bluetooth child's UART and PMIC/TLMM GPIO references when
+unambiguous. Vendor power nodes without a UART link require manual association; clock votes and
+resource names still need checking against the clock/power drivers. See the template for every key.
 
 ## Adding a phone
 

@@ -245,6 +245,32 @@ def from_dts(text, panel=None):
                     if bus is not None and 'qcom,spi-geni' in strings(bus.props.get('compatible')) and only_reg(bus)[0]:
                         touch['serial_engine'] = only_reg(bus)[0]
                     break
+        # A Bluetooth child of a GENI UART is unambiguous; a separate vendor power node is not a
+        # UART selector. Never guess among the several serial engines a vendor tree may enable.
+        if any('bluetooth' in c or re.fullmatch(r'qcom,wcn[0-9]+-bt', c) for c in compatible):
+            bt = board.setdefault('bluetooth', {})
+            bus = node.parent
+            if bus is not None and any(c in strings(bus.props.get('compatible')) for c in
+                                       ('qcom,msm-geni-serial-hs', 'qcom,geni-uart')):
+                if only_reg(bus)[0]:
+                    bt['serial_engine'] = only_reg(bus)[0]
+                if bus.parent is not None and unit_address(bus.parent):
+                    bt['wrapper'] = unit_address(bus.parent)
+            for prop, key in (('qcom,bt-reset-gpio', 'enable_ppid'), ('qcom,bt-sw-ctrl-gpio', 'sw_ctrl')):
+                controller = referred(tree, node.props.get(prop))
+                pins = cells(node.props.get(prop))
+                if controller is None or len(pins) < 2:
+                    continue
+                pin = pins[-2]
+                if key == 'enable_ppid':
+                    sid, _ = pmic_of(controller)
+                    base = unit_address(controller)
+                    if sid is not None and base is not None and 1 <= pin <= 16:
+                        bt[key] = sid << 8 | ((base + (pin - 1) * 0x100) >> 8)
+                elif 'gpio-controller' in controller.props and any('tlmm' in c or 'pinctrl' in c for c in strings(controller.props.get('compatible'))):
+                    bt[key] = pin
+            if not bt:
+                board.pop('bluetooth')
         # the SMMU streams the parts' DMA comes in on: the audio DSP's reads of our memory, the Wi-Fi DSP's, the IFEs'
         if 'qcom,msm-audio-ion' in compatible and first_stream(node):
             streams.setdefault('audio_stream', first_stream(node))

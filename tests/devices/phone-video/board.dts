@@ -7,7 +7,7 @@
 	description = "Test phone, video-mode panel";
 	soc = "sm7325";
 
-	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-sm7325", "wifi-wcn6750", "mic-wcd938x", "gpu-a660";
+	features = "cpufreq-epss", "ddr-rpmh", "battery-uefi", "buttons-pmic", "adsp", "touch-goodix", "speaker-aw88261", "haptic-aw86927", "torch-pm8350c", "camera-sm7325", "wifi-wcn6750", "mic-wcd938x", "gpu-a660", "bluetooth-wcn-uart";
 
 	// A video-mode AMOLED panel whose brightness is MIPI DCS 0x51.
 	backlight {
@@ -201,5 +201,23 @@
 		fb-base = <0x9B000000>;         // (no phone's: a real package beside this one must not look the same to the loader)
 		log-other-cpu;
 		uefi-charger;                   // the UEFI's Qualcomm charger protocols give the battery's state
+	};
+
+	// Bluetooth H4: synthetic register-model fixture; no hardware verification.
+	// Feature "bluetooth-wcn-uart": bt=-1 inspects, bt=1 powers and identifies only.
+	bluetooth {
+		serial-engine = <0x898000>;     // UART SE register page
+		wrapper = <0x8c0000>;           // QUP wrapper common registers (HW_VER at +4)
+		clocks = <0x23298 0x2329c 0x1e76c>; // GCC halt offsets: m_ahb, s_ahb, SE
+		clock-source = <0x1e77c>;       // GCC CMD_RCGR offset, independent of SE halt
+		vote-register = <0x52010>;      // GCC application processor votes
+		votes = <3 0 2 1 10>;           // core_2x, core, m_ahb, s_ahb, SE bit numbers
+		uart-pins = <24 25 26 27>;      // TLMM CTS, RTS, TX, RX, in that order
+		uart-function = <1>;           // TLMM alternate function
+		enable-ppid = <0x38a>;          // PMIC GPIO: (sid << 8) | (base >> 8)
+		sw-ctrl = <18>;                // TLMM input, controller ready
+		supplies = "L2D_E0", "S2D_E0", "S4D_E0", "S4F_E0", "L3D_E0", "S3D_E0"; // RPMh VRM names, power order
+		supply-mv = <1800 864 1840 1256 1200 2156>; // millivolts, same order
+		rf-clock = "C1A_E0";            // VRM clock: enable register at resource address +4
 	};
 };

@@ -56,6 +56,7 @@ enum {
 	                                         * the board's camera { } says (hakios_camera.c) */
 	HAKIOS_HAS_WIFI_WCN6750    = 1u << 11,  /* a WCN6750 radio on the SoC's own Wi-Fi DSP (hakios_wifi.c) */
 	HAKIOS_HAS_MIC_WCD938X     = 1u << 12,  /* the microphones on a WCD938x codec, through the audio DSP (hakios_mic.c) */
+	HAKIOS_HAS_BLUETOOTH_WCN_UART = 1u << 17, /* Qualcomm Bluetooth over a GENI UART (hakios_bt_uart.c) */
 	HAKIOS_HAS_CPUFREQ_SCMI = 1u << 16,     /* CPU performance queries via SCMI */
 };
 
@@ -210,6 +211,17 @@ struct hakios_board {
 		const char *io_supply, *analog_supply;  /* regulators by their names in RPMh's command database; NULL: none */
 		uint32_t max_x, max_y;          /* the largest coordinates the controller reports; 0: not said */
 	} touch;
+
+	/* Bluetooth H4 wiring (board: bluetooth { }); GCC offsets are explicit, including the RCG. */
+	struct {
+		uint32_t serial_engine, wrapper;
+		uint32_t clocks[3], clock_source, vote_register;
+		uint8_t votes[5], uart_pins[4], uart_function, sw_ctrl;
+		uint16_t enable_ppid;
+		uint8_t supply_count;
+		const char *supplies[8], *rf_clock;
+		uint16_t supply_mv[8];
+	} bluetooth;
 
 	/* the speaker's two amplifiers (board: speaker { }): the I2C bus they share and what tells them apart */
 	struct {

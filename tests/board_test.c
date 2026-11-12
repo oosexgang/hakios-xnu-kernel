@@ -77,6 +77,10 @@ every_feature_said(void)
 	board = "phone-video";
 	b = hakios_board();
 	CHECK(b != NULL, "the board is known");
+	CHECK(b && hakios_board_has(HAKIOS_HAS_BLUETOOTH_WCN_UART) && b->bluetooth.serial_engine == 0x898000 &&
+	    b->bluetooth.clock_source == 0x1e77c && b->bluetooth.wrapper == 0x8c0000 && b->bluetooth.enable_ppid == 0x38a &&
+	    b->bluetooth.supply_count == 6 && b->bluetooth.supply_mv[5] == 2156 &&
+	    !strcmp(b->bluetooth.supplies[0], "L2D_E0") && !strcmp(b->bluetooth.rf_clock, "C1A_E0"), "Bluetooth board data");
 	hakios_board_init();
 	for (unsigned bit = 0; b != NULL && bit < hakios_feature_count; bit++) {
 		if (b->features & (1u << bit)) {

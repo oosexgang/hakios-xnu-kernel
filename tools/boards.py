@@ -118,6 +118,10 @@ BOARD_SCHEMA = {
               'bus_pins': ([int], True),
               'interrupt': (int, True), 'reset': (int, True), 'io_supply': (str, True), 'analog_supply': (str, False),
               'analog_enable': (int, False), 'vendor_pins': ([int], False), 'coordinates': ([int], False)},
+    'bluetooth': {'serial_engine': (int, True), 'wrapper': (int, True), 'clocks': ([int], True),
+                  'clock_source': (int, True), 'vote_register': (int, True), 'votes': ([int], True),
+                  'uart_pins': ([int], True), 'uart_function': (int, True), 'enable_ppid': (int, True),
+                  'sw_ctrl': (int, True), 'supplies': ([str], True), 'supply_mv': ([int], True), 'rf_clock': (str, True)},
     'speaker': {'sda': (int, True), 'scl': (int, True), 'addresses': ([int], True), 'interrupts': ([int], True),
                 'sound_pins': ([int], True), 'sound_function': (int, True), 'tdm': (int, False)},
     'buttons': {'pon': (int, True), 'volume_up': (int, True), 'pon_name': (str, False), 'volume_up_name': (str, False)},
@@ -146,7 +150,7 @@ KEY_WITH_UNDERSCORE = re.compile(r'(?<![\w.])(' + '|'.join(sorted(
     {key for schema in (SOC_SCHEMA, BOARD_SCHEMA) for section, keys in schema.items() for key in list(keys) + [section]
      if '_' in key} | {key for key in CAMERA_SENSOR if '_' in key}, key=len, reverse=True)) + r')(?![\w(=])')
 # what a feature needs of the SoC file: a board cannot list a feature its SoC has no addresses for
-FEATURE_NEEDS = {'virtio': ('virtio',), 'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
+FEATURE_NEEDS = {'bluetooth-wcn-uart': ('pins', 'clocks', 'rpmh', 'spmi'), 'virtio': ('virtio',), 'cpufreq-scmi': ('scmi_perf',), 'cpufreq-epss': ('cpufreq',), 'display-scan': ('display',), 'buttons-pmic': ('spmi',),
                  'torch-pm8350c': ('spmi',), 'ddr-rpmh': ('rpmh',),
                  'camera-sm7325': ('spmi', 'pins', 'clocks', 'rpmh', 'smmu', 'camera'),
                  'gpu-a660': ('adreno', 'clocks', 'rpmh'),
@@ -157,10 +161,11 @@ FEATURE_NEEDS = {'virtio': ('virtio',), 'cpufreq-scmi': ('scmi_perf',), 'cpufreq
                  'adsp': ('rpmh', 'ipc'), 'wifi-wcn6750': ('rpmh', 'pins', 'spmi', 'ipc', 'smmu'), 'mic-wcd938x': ('pins', 'lpass')}
 # ... and the stream of the SMMU that a part's DMA comes in on: [stream ID, mask], from the device tree's iommus
 STREAM_OF = {'speaker-aw88261': 'audio_stream', 'wifi-wcn6750': 'wifi_stream', 'camera-sm7325': 'camera_stream'}
-WRITES_TO_PMIC = ('torch-pm8350c', 'camera-sm7325')    # ... these through the arbiter's channels as well
+WRITES_TO_PMIC = ('bluetooth-wcn-uart', 'torch-pm8350c', 'camera-sm7325')    # ... these through the arbiter's channels as well
 # The boot arguments that start a feature's driver, as a porter is to try them: the level that only looks
 # first where there is one. (docs/boot-args.md has every argument; a test holds these names to it.)
 FEATURE_BOOTARGS = {
+    'bluetooth-wcn-uart': 'bt=-1 looks; bt=1 powers and identifies',
     'cpufreq-scmi': 'scmi_perf=1',
     'cpufreq-epss': 'cpufreq=1',
     'ddr-rpmh': 'ddr=1 looks; ddr=2 with cpufreq=1 votes',
@@ -180,9 +185,9 @@ FEATURE_BOOTARGS = {
     'mic-wcd938x': 'mic=N with adsp=1',
 }
 # features that are a driver of one part as one phone has it wired, by the first word of their names
-PART_DRIVERS = ('touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
+PART_DRIVERS = ('bluetooth', 'touch', 'speaker', 'haptic', 'torch', 'camera', 'wifi', 'mic')
 # ... and of the board's own file
-FEATURE_NEEDS_OF_BOARD = {'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
+FEATURE_NEEDS_OF_BOARD = {'bluetooth-wcn-uart': 'bluetooth', 'gpu-a660': 'gpu', 'adsp': 'adsp', 'buttons-pmic': 'buttons', 'torch-pm8350c': 'torch',
                           'haptic-aw86927': 'haptic', 'speaker-aw88261': 'speaker', 'mic-wcd938x': 'mic', 'touch-goodix': 'touch',
                           'touch-ft3658u': 'touch', 'camera-sm7325': 'camera'}
 # ... and what a controller's driver uses of [touch] beyond what every one needs
@@ -464,6 +469,29 @@ def camera_problems(where, cameras, problems):
             problems.add(where, f'{key} = {cameras[key]!r}: the name of one of its sensors ({", ".join(names)})')
 
 
+def bluetooth_problems(where, bt, problems):
+    for key in ('serial_engine', 'wrapper'):
+        if not 0 < bt[key] <= 0xffffffff or bt[key] & 0xfff:
+            problems.add(where, f'{key} is a nonzero page address')
+    offsets = bt['clocks'] + [bt['clock_source'], bt['vote_register']]
+    if len(bt['clocks']) != 3 or len(set(offsets)) != 5 or any(not 0 < n < 0x60000 or n & 3 for n in offsets) or bt['clock_source'] > 0x5ffec:
+        problems.add(where, 'clocks, clock_source and vote_register are distinct aligned GCC offsets below 0x60000')
+    if len(bt['votes']) != 5 or len(set(bt['votes'])) != 5 or any(not 0 <= n < 32 for n in bt['votes']):
+        problems.add(where, 'votes are five distinct bit numbers, 0 to 31')
+    pins = bt['uart_pins'] + [bt['sw_ctrl']]
+    if len(bt['uart_pins']) != 4 or len(set(pins)) != 5 or any(not 0 <= n <= 255 for n in pins):
+        problems.add(where, 'uart_pins (CTS RTS TX RX) and sw_ctrl are five distinct TLMM pins, 0 to 255')
+    if not 1 <= bt['uart_function'] <= 15:
+        problems.add(where, 'uart_function is a TLMM alternate function, 1 to 15')
+    if not 0 < bt['enable_ppid'] <= 0xfff or bt['enable_ppid'] & 0xff < 0x88:
+        problems.add(where, 'enable_ppid is a PMIC GPIO PPID (sid << 8 | base >> 8)')
+    names = bt['supplies'] + [bt['rf_clock']]
+    if not 1 <= len(bt['supplies']) <= 8 or len(names) != len(set(names)) or any(not re.fullmatch(r'[A-Za-z0-9_]{1,8}', n) for n in names):
+        problems.add(where, 'supplies and rf_clock are distinct command database names, 1 to 8 characters; at most eight supplies')
+    if len(bt['supplies']) != len(bt['supply_mv']) or any(not 1 <= n <= 5000 for n in bt['supply_mv']):
+        problems.add(where, 'supply_mv matches supplies in order, each 1 to 5000 millivolts')
+
+
 def load(problems=None):
     """Every SoC and board, checked. Returns (socs, boards) by name; problems are collected or raised."""
     own = problems is None
@@ -562,6 +590,9 @@ def load(problems=None):
         cameras = data.get('camera')
         if cameras is not None:
             camera_problems(f'{rel} [camera]', cameras, problems)
+        bt = data.get('bluetooth')
+        if bt is not None:
+            bluetooth_problems(f'{rel} [bluetooth]', bt, problems)
         touch = data.get('touch')
         if touch is not None:
             wires = list(touch['bus_pins']) + [touch['interrupt'], touch['reset']] + list(touch.get('vendor_pins', [])) + \
@@ -843,6 +874,15 @@ def table_text(socs, boards):
         if own:
             out.append(f'\t\t.storage = {{ .first_lba = {own["first_lba"]}ULL, .blocks = {own["last_lba"] - own["first_lba"] + 1}ULL, '
                        f'.write_first = {own["write_first"]}ULL }},')
+        bt = board.get('bluetooth')
+        if bt:
+            out.append('\t\t.bluetooth = {')
+            for key in ('serial_engine', 'wrapper', 'clock_source', 'vote_register', 'uart_function', 'enable_ppid', 'sw_ctrl'):
+                out.append(f'\t\t\t.{key} = {bt[key]:#x},')
+            for key in ('clocks', 'votes', 'uart_pins', 'supply_mv'):
+                out.append(f'\t\t\t.{key} = {{ {", ".join(str(n) for n in bt[key])} }},')
+            out.append(f'\t\t\t.supply_count = {len(bt["supplies"])}, .supplies = {{ {", ".join(c_string(n) for n in bt["supplies"])} }},')
+            out.append(f'\t\t\t.rf_clock = {c_string(bt["rf_clock"])},\n\t\t}},')
         touch = board.get('touch')
         if touch:
             pins, clocks = touch['bus_pins'], touch['clocks']
@@ -1243,6 +1283,12 @@ def new_board(name, soc_name, dts=None, panel=None, description=None):
         section(('The flashlight\'s part on the PMIC, for the feature "torch-pm8350c": the flash LED module and that',
                  "PMIC's temperature alarm, each as SPMI slave << 8 | the high byte of its registers."), 'torch',
                 [('flash', torch['flash']), ('alarm', torch['alarm'])])
+    bt = board.get('bluetooth', {})
+    if bt:
+        section(('Bluetooth H4, feature "bluetooth-wcn-uart": only values the tree associates explicitly.',
+                 'Fill the remaining bluetooth keys from devices/_template/board.dts; clock votes and',
+                 'VRM resource names need the clock/power drivers. Inspect with bt=-1 first.'),
+                'bluetooth', list(bt.items()), commented=True)
     wired = board.get('touch', {})
     if 'reset' in wired and 'interrupt' in wired:
         section(('The touch controller\'s wiring, for a feature "touch-...": its reset and its interrupt are from the tree'

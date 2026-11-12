@@ -16,4 +16,28 @@
 	thermal {
 		tsens = <0x0c229000 0x0c22a000 0x0c22b000 0x0c22c000 0x0c22d000 0x0c22e000 0x0c22f000>;
 	};
+
+	// Ace 6T Android DT: clock-controller@100000; TLMM's per-pin registers start 1 MiB into its aperture.
+	clocks {
+		gcc = <0x00100000>;
+	};
+	pins {
+		tlmm = <0x0f100000>;
+	};
+	// Android reserved-memory/aop_cmd_db_region and apps_rsc/ drv@2, channel@0.
+	rpmh {
+		cmd-db = <0x81c60000>;
+		cmd-db-size = <0x20000>;
+		rsc = <0x18920000>;
+		tcs-offset = <0xd00>;
+	};
+	// Android arbiter@c400000 and spmi@c426000. The v8 map/owner layout needs a future shared
+	// SPMI helper update: current helpers refuse it by version before any PMIC transfer.
+	spmi {
+		core = <0x0c400000>;
+		cnfg = <0x0c426000>;
+		observer = <0x0c4c0000>;
+		channels = <0x0c900000>;
+		ee = <0>;
+	};
 };

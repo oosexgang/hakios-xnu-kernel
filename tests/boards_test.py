@@ -323,6 +323,45 @@ class Check(Sandbox):
         self.soc('thermal {\n\t\ttsens = <0xc263000 0xc265000>;\n\t};', '')
         self.assertIn('thermal { } needs thermal { }', self.problems())
 
+    def test_bluetooth_dt_references_are_not_guessed(self):
+        tree = '''/ {
+            tlmm: pinctrl@f000000 { compatible = "qcom,test-tlmm"; gpio-controller; };
+            pmic@3 { compatible = "qcom,spmi-pmic"; reg = <3 0>;
+                gpio: pinctrl@8800 { gpio-controller; }; };
+            wrapper@8c0000 { uart@898000 { compatible = "qcom,geni-uart"; reg = <0x898000 0x4000>;
+                bluetooth { compatible = "qcom,wcn7750-bt";
+                    qcom,bt-reset-gpio = <&gpio 3 0>; qcom,bt-sw-ctrl-gpio = <&tlmm 18 0>; };
+            }; };
+        };'''
+        _, board, _ = devicetree.from_dts(tree)
+        self.assertEqual(board['bluetooth'], {'serial_engine': 0x898000, 'wrapper': 0x8c0000, 'enable_ppid': 0x38a, 'sw_ctrl': 18})
+        _, board, _ = devicetree.from_dts(tree.replace('"qcom,geni-uart"', '"other-uart"'))
+        self.assertNotIn('serial_engine', board['bluetooth'])
+
+    def test_bluetooth_wiring_is_validated_and_generated(self):
+        fixture = boards.boardfile.parse((ROOT / 'tests/devices/phone-video/board.dts').read_text(), boards.BOARD_SCHEMA)['bluetooth']
+        problems = boards.Problems()
+        boards.bluetooth_problems('bluetooth', fixture, problems)
+        self.assertFalse(problems)
+        for key, value in (('uart_pins', [24, 24, 26, 27]), ('votes', [1, 2]),
+                           ('clock_source', fixture['clocks'][2]), ('supply_mv', [1800]),
+                           ('supplies', ['long_resource_name']), ('wrapper', 1), ('enable_ppid', 0x301)):
+            bad = dict(fixture, **{key: value})
+            problems = boards.Problems()
+            boards.bluetooth_problems('bluetooth', bad, problems)
+            self.assertTrue(problems, key)
+        path = self.dir / 'devices/phone/board.dts'
+        original = path.read_text()
+        text = boards.show_text({'bluetooth': fixture})
+        path.write_text(original + '/ {\n' + text + '};\n')
+        self.assertEqual(self.problems(), '')
+        table = boards.table_text(*boards.load())
+        self.assertIn('.clock_source = 0x1e77c,', table)
+        self.assertIn('.supply_count = 6,', table)
+        self.assertIn('.rf_clock = "C1A_E0",', table)
+        path.write_text(original.replace('"cpufreq-epss"', '"bluetooth-wcn-uart"'))
+        self.assertIn('feature "bluetooth-wcn-uart" needs bluetooth { }', self.problems())
+
     def test_a_complete_board_is_accepted(self):
         self.assertEqual(self.problems(), '')
 
