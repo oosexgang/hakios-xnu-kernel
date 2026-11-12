@@ -1429,7 +1429,7 @@ class Repository(unittest.TestCase):
             if section:
                 self.assertTrue(re.search(rf'(?m)^\t(// )?{boards.boardfile.name_of(section)} {{', template),
                                 f'the template does not show {section} {{ }}')
-                self.assertTrue(f'`[{section}]`' in readme, f'devices/README.md does not name [{section}]')
+                self.assertTrue(f'`{boards.boardfile.name_of(section)} {{ }}`' in readme, f'devices/README.md does not name {section} {{ }}')
             for key, (kind, _) in keys.items():
                 if isinstance(kind, list) and isinstance(kind[0], dict):
                     # tables: a node NAME@0, and each of its keys
@@ -1442,7 +1442,8 @@ class Repository(unittest.TestCase):
                                 f'[{section}] {key} is not explained in the template')
         for section in boards.SOC_SCHEMA:
             if section:
-                self.assertTrue(f'`[{section}]`' in readme, f'devices/README.md does not name the SoC section [{section}]')
+                self.assertTrue(f'`{boards.boardfile.name_of(section)} {{ }}`' in readme,
+                                f'devices/README.md does not name the SoC section {section} {{ }}')
         soc_template = (root / 'devices/_template/soc.dtsi').read_text()
         for section, keys in boards.SOC_SCHEMA.items():
             if section:

@@ -33,7 +33,7 @@ needs its feature in the board's `features`.
 
 | File | Stands in for | Portability |
 | --- | --- | --- |
-| `iokit/Kernel/MiniIOMobileFramebuffer.cpp` | The display driver family: swaps, vsync, scaling to the panel, software dimming, the Metal plug-in gate (`metal=1`). | any; `fb_scan` timing is **data** (`display-scan`, `[display]` intf1) |
+| `iokit/Kernel/MiniIOMobileFramebuffer.cpp` | The display driver family: swaps, vsync, scaling to the panel, software dimming, the Metal plug-in gate (`metal=1`). | any; `fb_scan` timing is **data** (`display-scan`, `display { }` intf1) |
 | `iokit/Kernel/MiniIOSurface.cpp` | IOSurface. | any |
 | `iokit/Kernel/MiniAppleKeyStore.cpp` | AppleKeyStore: a device without a passcode. | any |
 | `iokit/Kernel/MiniIONetworkStack.cpp`, `HakiosWLAN.cpp` | The registry entries by which iOS finds network interfaces. | any |
@@ -46,23 +46,23 @@ needs its feature in the board's `features`.
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/hakios_backlight.c` | Panel brightness: MIPI DCS through a Qualcomm DSI controller, or software. Automatic brightness. | `[backlight]` / `backlight=` | data |
-| `bsd/dev/hakios_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `[gpu]` / `gpu=1`, `adreno=` | data for a 642 or 642L (`[gpu]`, and `[adreno]` of the SoC file for where its blocks are); another Adreno generation: the driver |
+| `bsd/dev/hakios_backlight.c` | Panel brightness: MIPI DCS through a Qualcomm DSI controller, or software. Automatic brightness. | `backlight { }` / `backlight=` | data |
+| `bsd/dev/hakios_adreno.c` | Adreno 642/642L bring-up, step by step: clocks, GMU, zap shader, first frame. | `gpu-a660`, `gpu { }` / `gpu=1`, `adreno=` | data for a 642 or 642L (`gpu { }`, and `adreno { }` of the SoC file for where its blocks are); another Adreno generation: the driver |
 | `bsd/dev/hakios_input.c` | `/dev/hakios-touch`: the queue of touches and button presses every source feeds. | — | any |
-| `bsd/dev/hakios_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1` | part; which engine, its clocks, the pins and the supply are data (`[touch]`) |
-| `bsd/dev/hakios_fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1` | part; which engine, its clocks, the pins and the supplies are data (`[touch]`) |
-| `bsd/dev/hakios_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`[spmi]`, `[buttons]`); arbiter version 5 |
+| `bsd/dev/hakios_goodix.c` | Goodix GT9916 or FocalTech FT3680 touch controller on an SPI serial engine. | `touch-goodix` / `touchscreen=1` | part; which engine, its clocks, the pins and the supply are data (`touch { }`) |
+| `bsd/dev/hakios_fts.c` | FocalTech FT3658U touch controller on an SPI serial engine. | `touch-ft3658u` / `touchscreen=1` | part; which engine, its clocks, the pins and the supplies are data (`touch { }`) |
+| `bsd/dev/hakios_buttons.c` | Power and volume keys on the PMIC, through the SPMI arbiter. | `buttons-pmic` / `buttons=1` | data (`spmi { }`, `buttons { }`); arbiter version 5 |
 | `bsd/dev/hakios_virtio_input.c` | QEMU's tablet and keyboard as touch and buttons. | `virtio` / `virtio_input=1` | any (QEMU) |
 
 ## Power, CPU, temperature
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/hakios_cpufreq.c` | CPU frequency through EPSS. | `cpufreq-epss` / `cpufreq=1` | data (`[cpufreq]`) |
-| `bsd/dev/hakios_scmi_perf.c` | CPU performance levels and limits through SCMI. | `cpufreq-scmi` / `scmi_perf=1` | data (`[scmi_perf]`) |
-| `bsd/dev/hakios_ddr.c` | Memory bandwidth votes through RPMh. | `ddr-rpmh` / `ddr=` | data (`[rpmh]`), with the slot layout and BCM names of the 7-series |
+| `bsd/dev/hakios_cpufreq.c` | CPU frequency through EPSS. | `cpufreq-epss` / `cpufreq=1` | data (`cpufreq { }`) |
+| `bsd/dev/hakios_scmi_perf.c` | CPU performance levels and limits through SCMI. | `cpufreq-scmi` / `scmi-perf=1` | data (`scmi-perf { }`) |
+| `bsd/dev/hakios_ddr.c` | Memory bandwidth votes through RPMh. | `ddr-rpmh` / `ddr=` | data (`rpmh { }`), with the slot layout and BCM names of the 7-series |
 | `bsd/dev/hakios_bench.c` | Measurements: how fast the cores get at memory, how busy each core is. | — / `membench=`, `cpuload=` | any |
-| `bsd/dev/hakios_thermal.c` | Reads TSENS; holds CPU groups and the panel back when hot. | `[thermal]` / `thermal=` | data |
+| `bsd/dev/hakios_thermal.c` | Reads TSENS; holds CPU groups and the panel back when hot. | `thermal { }` / `thermal=` | data |
 | `bsd/dev/hakios_battery.c` | The battery as the UEFI's charger drivers report it to the loader. | `battery-uefi` / `battery=1` | any phone whose loader provides it |
 | `bsd/dev/hakios_cputop.c` | Which processes use the CPU (`cputop=S`). | — | any |
 
@@ -70,21 +70,21 @@ needs its feature in the board's `features`.
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/hakios_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `[adsp]` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`[adsp]`); the DSP's own addresses are the 7-series' |
+| `bsd/dev/hakios_adsp.c` | The audio DSP: started, and spoken to. Also carries the battery manager. | `adsp`, `adsp { }` / `adsp=1` | phone: the firmware directory, memory size and the gauge's units are data (`adsp { }`); the DSP's own addresses are the 7-series' |
 | `bsd/dev/hakios_audio.c` | `/dev/hakios-audio`: what iOS plays, to whichever sink is there. | — | any |
 | `bsd/dev/hakios_sound.c`, `hakios_guard.c` | What the DSP is told so the AW88261 speakers play; speaker protection. | `speaker-aw88261` / `sound=N` with `adsp=1` | part |
-| `bsd/dev/hakios_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`[mic]`) |
-| `bsd/dev/hakios_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`[speaker]`) |
-| `bsd/dev/hakios_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`[haptic]`) |
-| `bsd/dev/hakios_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`[spmi]`, `[torch]`) |
-| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `[camera]` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part |
+| `bsd/dev/hakios_mic.c` | The microphones on a WCD938x codec, through the DSP. | `mic-wcd938x` / `mic=N` with `adsp=1` | part; the codec's reset pin is data (`mic { }`) |
+| `bsd/dev/hakios_speaker.c` | Two Awinic AW88261 amplifiers on I2C. | `speaker-aw88261` / `speaker_probe=` | part; the bus's pins, each amplifier's address and interrupt and the sound's four pins are data (`speaker { }`) |
+| `bsd/dev/hakios_haptic.c` | An Awinic AW86927 vibration motor driver. | `haptic-aw86927` / `haptic=` | part; which pins it is on and the motor's calibration are data (`haptic { }`) |
+| `bsd/dev/hakios_torch.c` | The flash LED module of a PM8350C. | `torch-pm8350c` / `torch=` | part; the arbiter and where the module is on the PMICs' bus are data (`spmi { }`, `torch { }`) |
+| `bsd/dev/hakios_camera.c` | cameras on an SM7325 as the board's `camera { }` wires them: sensors (four chips known), CSI, ISP. | `camera-sm7325` / `cam=` | part |
 | `bsd/dev/hakios_virtio_sound.c` | QEMU's sound device as the sink. | QEMU only | any (QEMU) |
 
 ## Wi-Fi, network
 
 | File | Part | Feature / boot argument | Portability |
 | --- | --- | --- | --- |
-| `bsd/dev/hakios_wifi.c`, `hakios_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`[wifi]`) |
+| `bsd/dev/hakios_wifi.c`, `hakios_wlfw.c` | A WCN6750 on the SoC's Wi-Fi DSP: firmware load, bring-up. | `wifi-wcn6750` / `wifi=1` | part; the DSP's memory, the radio's pins and its supplies' names are data (`wifi { }`) |
 | `bsd/dev/hakios_lx.c`, `hakios_qmi.c`, `hakios_sta.c` | The kernel's side of the Linux Wi-Fi driver's object; QMI; the station boundary. | — | any |
 | `bsd/dev/hakios_apple80211.c` | Apple80211 requests of iOS's Wi-Fi daemon, answered in the kernel. | — | any |
 | `bsd/dev/hakios_net.c` | `en0`, an Ethernet interface as far as iOS can tell. | — | any |
@@ -97,7 +97,7 @@ needs its feature in the board's `features`.
 | `bsd/miscfs/apfs/` | APFS: reads the iOS images in RAM; writes for the data volume. | any |
 | `bsd/miscfs/ramfs/` | The RAM file system for `/private/var`. | any |
 | `bsd/dev/hakios_image.c` | A file of one of the RAM disks by path, for drivers that need firmware before there is a root. | any |
-| `bsd/dev/hakios_ufs.c`, `hakios_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `[platform]` of the SoC file), the controller is taken to be Qualcomm's as on redwood |
+| `bsd/dev/hakios_ufs.c`, `hakios_ufshc.c` | The phone's UFS: through the resident UEFI's driver, or the host controller directly (read only). | Through UEFI: any phone the loader runs on. Directly: where the controller is is data (`ufs` in `platform { }` of the SoC file), the controller is taken to be Qualcomm's as on redwood |
 | `bsd/dev/hakios_sparse.c`, `hakios_virtio_blk.c`, `hakios_apfs_check.c` | An image with only some of its blocks; QEMU's block device; a walk of a volume for comparison with the host tools. | any |
 
 ## Which of them run on the host

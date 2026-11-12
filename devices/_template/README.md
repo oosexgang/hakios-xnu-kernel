@@ -20,8 +20,8 @@ on the phone" are three different statements: give the date and the iOS build fo
 | Touch | | |
 | Buttons | `buttons-pmic` / `buttons=1` | |
 | CPU frequency | `cpufreq-epss` / `cpufreq=1` | |
-| Brightness | `[backlight]` / `backlight=` | |
-| Temperature | `[thermal]` / `thermal=` | |
+| Brightness | `backlight { }` / `backlight=` | |
+| Temperature | `thermal { }` / `thermal=` | |
 | GPU | `gpu-a660` / `gpu=1` | |
 | Sound, camera, Wi-Fi, haptics | | |
 

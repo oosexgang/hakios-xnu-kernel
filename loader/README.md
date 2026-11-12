@@ -9,7 +9,7 @@ the loader takes commands over USB (the fastboot protocol) for the next run.
 | --- | --- |
 | `loader.c` | The loader: its entry point, and the list of its parts. One compilation unit. |
 | `src/` | The parts, by topic (below). `src/platform.h` has `struct platform`, which says what the loader needs to know of a machine. |
-| `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`[loader]` of `devices/NAME/board.dts`) and `soc/SOC.dtsi` (`[platform]`). |
+| `platforms.h` | The boards it knows. **Generated** at build time, not in the repository: `build.sh` runs `tools/boards.py gen`, which writes it into `build/boards/` from the device packages that are present (`loader { }` of `devices/NAME/board.dts`) and `soc/SOC.dtsi` (`platform { }`). |
 | `efi.h` | The parts of UEFI it uses. |
 | `identity.h`, `mkidentity.py` | Which iPhone iOS is told it runs on, taken from that iPhone's own device tree. |
 | `mkpayload.py` | Packs the "XNUP" payload: kernel + images + boot arguments. |
@@ -65,7 +65,7 @@ where clang and lld are installed.
 
 Where to look for a change:
 
-- a new board needs none of them: `[loader]` in its board file and `[platform]` in its SoC file;
+- a new board needs none of them: `loader { }` in its board file and `platform { }` in its SoC file;
 - something the kernel is to be told of the machine: `src/platform.h` for the value, `src/run.c` where the
   device tree and the boot arguments are made, `tools/boards.py` for the key;
 - a new command over USB: `src/commands.c`;
@@ -73,14 +73,14 @@ Where to look for a change:
 
 ## How it knows the board
 
-The UEFI reports a framebuffer; the loader compares its base with `fb_base` of each board and takes the
+The UEFI reports a framebuffer; the loader compares its base with `fb-base` of each board and takes the
 one that matches. A display that matches none is QEMU's. The board's name then goes to the kernel as
 `/chosen/darwin-board`, where the kernel finds its own row (`kernel/overlay/bsd/dev/hakios_board.c`).
 
 The storage controller the loader and the kernel may use directly (`ufs_native=`) is where
-`ufs` of `[platform]` says; without that key it is not touched.
+`ufs` of `platform { }` says; without that key it is not touched.
 
-So a new device needs no code here: its `[loader]` section and its SoC's `[platform]` section, then
+So a new device needs no code here: its `loader { }` section and its SoC's `platform { }` section, then
 `build.sh`. [docs/porting.md](../docs/porting.md) says where each value comes from.
 
 The loader knows the boards whose packages were present when it was built. The repository describes
@@ -88,8 +88,8 @@ no phone: `tools/device.py add NAME` brings a phone's package in from the `devic
 none, the loader knows only the emulator's board.
 
 No phone is named in the loader's code, and no phone's numbers are in it: the partition a write may
-reach is the board file's `[storage]` as well (below). What differs between boards beyond the framebuffer is in `[loader]`
-as well: `uefi_charger = true` says the firmware has Qualcomm's charger protocols, and the loader then
+reach is the board file's `storage { }` as well (below). What differs between boards beyond the framebuffer is in `loader { }`
+as well: `uefi-charger = true` says the firmware has Qualcomm's charger protocols, and the loader then
 reads the battery through them.
 
 ## Where it runs
@@ -107,7 +107,7 @@ if you made it:
 | --- | --- | --- |
 | A partition named `logdump` | After a run, its log and the kernel's, so that a run that ends in a reset leaves something. A phone without such a partition keeps the log in RAM only. | `src/logstore.c` |
 | The iOS system image stored as an Android DSU image (`system_gsi`) | Only on `fastboot oem dsu patch OFFSET` followed by a download: into the image's own extents, read back. | `src/dsu_write.c` |
-| The port's own partition `darwin` | Only for a kernel started with `ufs_write=1`, only past what the build wrote there, and only if the partition's GPT entry is in every field the one the board file's `[storage]` gives. A board without `[storage]` has no such partition. | `src/ufs_service.c`, `src/own_partition.c` |
+| The port's own partition `darwin` | Only for a kernel started with `ufs_write=1`, only past what the build wrote there, and only if the partition's GPT entry is in every field the one the board file's `storage { }` gives. A board without `storage { }` has no such partition. | `src/ufs_service.c`, `src/own_partition.c` |
 
 Nothing else calls the firmware's `write_blocks`, and `make check` fails if a fourth place appears
 without a row here. No partition table is touched, nothing is erased, and no tool in this repository

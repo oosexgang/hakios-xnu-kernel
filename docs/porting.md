@@ -42,20 +42,20 @@ is an ordinary new file of the main branch. From the tree it reads:
   several panels;
 - the PMIC arbiter, and which PMIC peripherals the power and volume keys and the flashlight are on;
 - the touch controller's reset and interrupt pins (and its serial engine, where the tree has the
-  controller under its bus), as a `[touch]` section for you to complete;
+  controller under its bus), as a `touch { }` section for you to complete;
 - the SoC's own pins, its SMMU, the way to its other processors, the UFS host controller, the audio
   DSP's reserved memory;
 - RPMh's command database and the application processor's sequencer.
 
 It prints what it could not find. Two things are never in a device tree and are yours to fill in:
 
-- **Clock register offsets** in the SoC file's `[clocks]`: `gcc_disp_ahb_cbcr` (Linux `gcc-SOC.c`,
-  `gcc_disp_ahb_clk`), `dispcc_mdss_gdscr` (the MDSS GDSC) and `dispcc_mdss_ahb_cbcr`
+- **Clock register offsets** in the SoC file's `clocks { }`: `gcc-disp-ahb-cbcr` (Linux `gcc-SOC.c`,
+  `gcc_disp_ahb_clk`), `dispcc-mdss-gdscr` (the MDSS GDSC) and `dispcc-mdss-ahb-cbcr`
   (`disp_cc_mdss_ahb_clk`), both in `dispcc-SOC.c`. They are asked for by what touches the display's
   registers: `backlight type = "dcs"`, `display-scan` and the GPU. Until you have them, set
   `type = "soft"`, which works anywhere; `gcc` alone is enough for everything else.
-- **The I/O window** in `[platform]`: `io_base` and `io_size`, one range that covers the SoC's
-  peripherals and does not start at 0. It is asked for once the board has a `[loader]` section (step 3). The 7-series SoCs here use `0x00400000` and `0x3FC00000`.
+- **The I/O window** in `platform { }`: `io-base` and `io-size`, one range that covers the SoC's
+  peripherals and does not start at 0. It is asked for once the board has a `loader { }` section (step 3). The 7-series SoCs here use `0x00400000` and `0x3FC00000`.
 
 Then:
 
@@ -103,9 +103,10 @@ loader/build.sh
 
 At start it prints `display W x H at ADDRESS`. Put that address in the board file:
 
-```toml
-[loader]
-fb_base = 0xE1000000
+```dts
+	loader {
+		fb-base = <0xE1000000>;
+	};
 ```
 
 and run `loader/build.sh` again (it makes its table of boards itself). From now on the loader
@@ -123,7 +124,7 @@ comes back through the loader. Look for, in this order:
 | launchd, then SpringBoard | iOS is up, drawn in software. |
 
 Start with one core (`cpus=1`), then all of them. A hang at the second core is PSCI: check `psci` and
-`core_shift` in the SoC file.
+`core-shift` in the SoC file.
 
 ## 5. Turn hardware on, one piece at a time
 
@@ -135,15 +136,15 @@ what each feature needs written down before it can be listed, key by key, in [fe
 
 | Step | In the board or SoC file | Boot argument | It worked when |
 | --- | --- | --- | --- |
-| Frames without tearing (command-mode panels) | `display-scan`, `[display]` intf1 | `fb_scan=1` (the default) | `panel scan:` lines with a period near 16.7 ms. Without it frames are written on a timer, which works. |
-| Brightness | `[backlight]`, `[clocks]`, `[display]` | `backlight=1` (reads only), then `backlight=2` | `backlight: dcs: DSI controller at …: version 2.x … (on, …)`, then the panel follows the slider. `NOT SENT` means the wrong controller or mode. [backlight.md](backlight.md) |
-| Temperature | `[thermal]` in both files | `thermal=1` | `thermal: hottest sensor NN.N C` with plausible numbers. Compare with Android's. [thermal.md](thermal.md) |
-| CPU frequency | `cpufreq-epss`, `[cpufreq]` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
-| Memory bandwidth | `ddr-rpmh`, `[rpmh]` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
-| GPU (Adreno 642, 642L, 643) | `gpu-a660`, `[gpu]`, `[adreno]` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
-| Buttons | `buttons-pmic`, `[spmi]`, `[buttons]` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
+| Frames without tearing (command-mode panels) | `display-scan`, `display { }` intf1 | `fb_scan=1` (the default) | `panel scan:` lines with a period near 16.7 ms. Without it frames are written on a timer, which works. |
+| Brightness | `backlight { }`, `clocks { }`, `display { }` | `backlight=1` (reads only), then `backlight=2` | `backlight: dcs: DSI controller at …: version 2.x … (on, …)`, then the panel follows the slider. `NOT SENT` means the wrong controller or mode. [backlight.md](backlight.md) |
+| Temperature | `thermal { }` in both files | `thermal=1` | `thermal: hottest sensor NN.N C` with plausible numbers. Compare with Android's. [thermal.md](thermal.md) |
+| CPU frequency | `cpufreq-epss`, `cpufreq { }` | `cpufreq=1` | `cpufreq: group N …: row A -> B …, NNNN MHz` for each group. Then `thermal=2`. |
+| Memory bandwidth | `ddr-rpmh`, `rpmh { }` | `ddr=1` (looks), `ddr=2` with `cpufreq=1` | The `ddr:` lines show the RPMh resources found, then the vote. |
+| GPU (Adreno 642, 642L, 643) | `gpu-a660`, `gpu { }`, `adreno { }` in the SoC file | `gpu=1` | `adreno: NAME: Adreno … (chip …)`, then the numbered steps up to the GPU's clock being measured at the speed asked for. Not needed for a picture: iOS draws in software without it. [metal-glass.md](metal-glass.md) |
+| Buttons | `buttons-pmic`, `spmi { }`, `buttons { }` | `buttons=1` | `buttons: PMIC arbiter version 0x5…`, each key's peripheral found and of the kind expected, then each press and release logged. The driver only reads. |
 | Battery | `battery-uefi` | `battery=1` | A state of charge that matches Android's. |
-| Audio DSP | `adsp`, `[adsp]` | `adsp=1` | The DSP's services come up. |
+| Audio DSP | `adsp`, `adsp { }` | `adsp=1` | The DSP's services come up. |
 
 `hw.board.features` in a running system shows what the kernel has for the board.
 
@@ -155,14 +156,14 @@ feature named after the part and the wiring it expects (`touch-goodix`, `haptic-
 
 - If your phone has **the same part wired the same way**, list the feature and try it.
 - If it has **one of the touch controllers** (`touch-goodix`, `touch-ft3658u`) on another serial
-  engine or other pins: fill in `[touch]` of the board file. `devices/_template/board.dts` says
+  engine or other pins: fill in `touch { }` of the board file. `devices/_template/board.dts` says
   where each value is in the device tree and in the SoC's clock driver;
   `tools/qupclocks.py gcc-SOC.c WRAPPER ENGINE` reads the engine's clocks and their votes out of
   that driver for you.
 - If it has **the same part on other pins or another bus** and the driver has them in its code, the driver needs those made data. Move
   the constants into the board file and `hakios_board.h`, as the buttons' driver has its peripherals
-  in `[buttons]`, the flashlight's in `[torch]`, the vibration motor's pins in `[haptic]` and the
-  speaker amplifiers' bus and addresses in `[speaker]`:
+  in `buttons { }`, the flashlight's in `torch { }`, the vibration motor's pins in `haptic { }` and the
+  speaker amplifiers' bus and addresses in `speaker { }`:
   [devices/README.md](../devices/README.md#adding-a-kind-of-data) goes through the steps. Those
   drivers are the example of how that is kept safe: the test of each runs it on a second phone
   with the part elsewhere (`tests/torch_driver_test.c`, `haptic_driver_test.c`,
@@ -186,9 +187,9 @@ The user-space side is the same for every phone: the libraries in `ios/userland/
 built by `ios/tools/`. What depends on the device is small:
 
 - which iPhone iOS is told it is (`loader/identity.h`), and through that the screen layout;
-- the status bar's clock offset for a hole-punch camera at the top left: `[screen]
-  statusbar_leading_shift` in the board file, in points (`ios/userland/inject_statusbar.c` applies it);
-- the boot defaults, in the board file's `[boot]` section.
+- the status bar's clock offset for a hole-punch camera at the top left: `statusbar-leading-shift`
+  of `screen { }` in the board file, in points (`ios/userland/inject_statusbar.c` applies it);
+- the boot defaults, in the board file's `boot { }` section.
 
 How the images are built and what iOS needed on the way to the home screen: [ios26-boot.md](ios26-boot.md).
 
@@ -223,19 +224,19 @@ together: say so in both. [CONTRIBUTING.md](../CONTRIBUTING.md) has the rest.
 Stated plainly, so nobody finds out the hard way:
 
 - **GPU.** `hakios_adreno.c` starts an Adreno of the A660 family. What differed between the two phones
-  is data (`[gpu]` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
-  (`[adreno]` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
+  is data (`gpu { }` in the board file, feature `gpu-a660`), and so is where the GPU's blocks are
+  (`adreno { }` in the SoC file), so a third 642 or 642L is two sections to fill in. The sequence itself
   (the GMU's registers, the clock controller's layout, the zap shader's hand-over) has only been run on
   these two chips: another generation of Adreno needs work in the driver.
-- **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`[rpmh]`), but expects
+- **The memory bandwidth vote** (`ddr-rpmh`) has its addresses in the SoC file (`rpmh { }`), but expects
   what both phones have: the sequencer's first slot set is an active one, and the memory's bus clock
   managers are named MC0, SH0 and ACV. `ddr=1` only looks and prints what your SoC has.
 - **Sound, microphones, camera and Wi-Fi** are written for redwood's parts: one codec (WCD938x on
   SoundWire), one radio (WCN6750 on the SoC's Wi-Fi DSP), one camera module. They are the largest share
-  of the work on a new phone. Where the SoC's blocks are comes from the SoC file (`[pins]`, `[clocks]`,
-  `[rpmh]`, `[smmu]`, `[ipc]`, `[lpass]`, `[camera]`), and which pins a part is on from the board file:
-  the sound's four and the audio DSP's TDM interface they are on in `[speaker]`, the codec's reset in
-  `[mic]`, the radio's pins and its supplies' names in `[wifi]`, the cameras in `[camera]`: the bus of the PMIC
+  of the work on a new phone. Where the SoC's blocks are comes from the SoC file (`pins { }`, `clocks { }`,
+  `rpmh { }`, `smmu { }`, `ipc { }`, `lpass { }`, `camera { }`), and which pins a part is on from the board file:
+  the sound's four and the audio DSP's TDM interface they are on in `speaker { }`, the codec's reset in
+  `mic { }`, the radio's pins and its supplies' names in `wifi { }`, the cameras in `camera { }`: the bus of the PMIC
   that feeds them and, for each sensor, its chip, its CCI master's pins, its reset, its MCLK, its CSI
   receiver and how its supplies are switched. What stays in the code is how each part is spoken to: the
   sensor chips the camera driver knows, the layout of an SM7325's camera clock controller, and the
@@ -244,10 +245,10 @@ Stated plainly, so nobody finds out the hard way:
   parts on other pins needs its section of the board file filled in and no change to the driver.
   [features.md](features.md) lists what each feature needs.
 - **Writing to the phone's storage** needs a partition of the port's own, named `darwin`, and its
-  GPT entry in the board file's `[storage]`: both GUIDs, the first and last block, and the block from
+  GPT entry in the board file's `storage { }`: both GUIDs, the first and last block, and the block from
   which writing is allowed. The loader serves a write only into a partition that is that entry in
   every field (`loader/src/own_partition.c`), the kernel asks for one only there
   (`bsd/dev/hakios_ufs.c`), and the firmware bounds it to the partition. A board without
-  `[storage]` is never written; reading works, the data volume lives in RAM.
+  `storage { }` is never written; reading works, the data volume lives in RAM.
 - **Renoir's own boot path** uses a loader and tools that are not in this repository yet
   (see "What is not in this repository" in [architecture.md](architecture.md)).

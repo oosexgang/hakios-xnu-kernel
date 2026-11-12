@@ -33,16 +33,16 @@ hardware has a test of its own in `tests/`.
 | `hakios_log.h` | `hakios_say()`: a line to both logs; to the loader's only where the kernel's may not be written. | — |
 | `hakios_mmio.h` | `rd()`, `wr()`: 32-bit registers. `HAKIOS_MMIO_SYNC` when a write must have arrived before the next line, `HAKIOS_MMIO_EXACT` for what the hypervisor imitates. With `HAKIOS_MMIO_TEST` they are the test's. | — |
 | `hakios_time.h` | `sleep_ms()`, `sleep_us()`, `spin_us()` (where nothing may sleep), `now_us()`. | — |
-| `hakios_tlmm.h` | The SoC's pins: `gpio_configure()`, `gpio_output()`, `gpio_set()`, `gpio_get()`. | `[pins]` of the SoC file |
+| `hakios_tlmm.h` | The SoC's pins: `gpio_configure()`, `gpio_output()`, `gpio_set()`, `gpio_get()`. | `pins { }` of the SoC file |
 | `hakios_i2c_gpio.h` | I2C by hand on two of those pins, for a part on a bus nobody here drives: the bus taken and given back, a start, a byte out, a byte in. | — |
-| `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `hakios_spmi_lock()`. | `[spmi]` |
-| `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `[rpmh]` |
-| `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `hakios_rpmh_lock()`. | `[rpmh]` |
-| `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `[ipc]` |
-| `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors, and whether the mailbox it gives is one a message fits in. | `[ipc]` |
+| `hakios_spmi.h` | The PMICs, through the arbiter: a channel's lookup, one read, one write, what a status means. Under `hakios_spmi_lock()`. | `spmi { }` |
+| `hakios_cmd_db.h` | RPMh's resources by name: a supply rail and its levels, a regulator, a bus clock manager. | `rpmh { }` |
+| `hakios_rpmh.h` | `hakios_rpmh_send()`: a request to RPMh and the wait for it. Under `hakios_rpmh_lock()`. | `rpmh { }` |
+| `hakios_smem.h` | The memory the SoC's processors share: the partition of two processors, and its items by number. | `ipc { }` |
+| `hakios_ipc.h` | The registers of the always-on processor's mailbox and of the doorbells between the processors, and whether the mailbox it gives is one a message fits in. | `ipc { }` |
 | `hakios_smp2p.h` | An SMP2P item's shape, and a word of it by name: how two processors tell each other their state. | — |
 | `hakios_glink_queue.h` | The two queues GLINK runs over in that memory: the arithmetic of their marks, the messages' commands and how long each message is. | — |
-| `hakios_mdt.h` | A processor's firmware image as Qualcomm splits it: the header file checked, its segments, which are loaded and whether each lies in the processor's memory. | The board's `[adsp]`, `[wifi]` (the memory) |
+| `hakios_mdt.h` | A processor's firmware image as Qualcomm splits it: the header file checked, its segments, which are loaded and whether each lies in the processor's memory. | The board's `adsp { }`, `wifi { }` (the memory) |
 | `hakios_qrtr_frame.h` | QRTR's datagrams as they arrive over GLINK: the header in either version, and where the datagram's bytes are. | — |
 
 What is not there yet is written in the driver first, and moves to a header when a second driver

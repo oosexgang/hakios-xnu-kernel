@@ -34,17 +34,17 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   `features`. A driver asks for its feature after its boot argument. On a board that does not list it,
   the driver prints which line is missing and does nothing. A machine nobody described has no feature.
 - **What was a constant in a driver and is a section now:**
-  - in the board file: `[backlight]` (how brightness is set, its range and byte order), `[thermal]`
-    (the floors), `[buttons]` (the keys' PMIC peripherals), `[adsp]` (firmware directory, memory, the
-    gauge's units), `[gpu]` (the Adreno's profile), `[wifi]` (the radio, its early memory pool, the
-    Wi-Fi DSP's memory, the radio's pins and its supplies' names), `[mic]` (the codec's reset pin),
-    `[camera]` (the sensors' PMIC bus, and one `[[camera.sensors]]` table a sensor: its chip, CCI
+  - in the board file: `backlight { }` (how brightness is set, its range and byte order), `thermal { }`
+    (the floors), `buttons { }` (the keys' PMIC peripherals), `adsp { }` (firmware directory, memory, the
+    gauge's units), `gpu { }` (the Adreno's profile), `wifi { }` (the radio, its early memory pool, the
+    Wi-Fi DSP's memory, the radio's pins and its supplies' names), `mic { }` (the codec's reset pin),
+    `camera { }` (the sensors' PMIC bus, and one `sensor@N { }` table a sensor: its chip, CCI
     master and pins, reset, MCLK, CSI receiver and supplies; the driver's table of four is gone),
-    `[screen]` (the status bar's shift past the camera), `[loader]` (framebuffer base,
-    `uefi_charger`), `[boot]` (the boot tool's defaults);
-  - in the SoC file: `[platform]` (interrupt controller, cores, PSCI, I/O window), `[clocks]`,
-    `[display]` (DSI controller, the panel's interface), `[spmi]` (PMIC arbiter), `[rpmh]`, `[thermal]`
-    (TSENS), `[cpufreq]` (the EPSS block and its groups of cores).
+    `screen { }` (the status bar's shift past the camera), `loader { }` (framebuffer base,
+    `uefi-charger`), `boot { }` (the boot tool's defaults);
+  - in the SoC file: `platform { }` (interrupt controller, cores, PSCI, I/O window), `clocks { }`,
+    `display { }` (DSI controller, the panel's interface), `spmi { }` (PMIC arbiter), `rpmh { }`, `thermal { }`
+    (TSENS), `cpufreq { }` (the EPSS block and its groups of cores).
 - **Phones are device packages, kept apart from the code.** The main branch describes no phone: it has
   the emulator's board (`devices/qemu-virt/`) and the template. A phone is a directory with its
   `board.dts` and README on the `devices` branch (`renoir` and `redwood` so far). `tools/device.py`
@@ -117,18 +117,18 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   from a board's data and are named so: `hakios_cpufreq.c`, `hakios_buttons.c`.
 - **The partition a write may reach is the board's.** The loader and the kernel each had the GPT
   entry of redwood's own partition in their code: nothing could be written on another phone
-  without changing both. It is `[storage]` of the board file; a board without it is never written.
+  without changing both. It is `storage { }` of the board file; a board without it is never written.
   `tools/boards.py check` refuses an entry that cannot be one, and the loader's answer to "is this
   the partition?" has a test in which every field is off alone.
 - **A touch controller on another serial engine or other pins is a board file.** The two touch
   drivers had the engine's address, its clocks and votes, the pins and the supplies' names of the
-  phone each was written on. They are `[touch]` now. A test compiles each driver on the host and
+  phone each was written on. They are `touch { }` now. A test compiles each driver on the host and
   compares every value with the number that was in its code, and with those of a board wired
   otherwise; the drivers before the change pass the first and fail the second.
 - **Three parts on other wiring are a board file.** Where the flashlight's module is on the PMICs' bus
-  (`[torch]`), which pins the vibration motor's chip is on, with the motor's calibration
-  (`[haptic]`), and the speaker amplifiers' bus, addresses and interrupts with the four pins the
-  sound goes to them on, those pins' function and the audio DSP's TDM interface (`[speaker]`) were in
+  (`torch { }`), which pins the vibration motor's chip is on, with the motor's calibration
+  (`haptic { }`), and the speaker amplifiers' bus, addresses and interrupts with the four pins the
+  sound goes to them on, those pins' function and the audio DSP's TDM interface (`speaker { }`) were in
   the drivers. Each driver's test runs a second phone with the part elsewhere.
 - **The speaker amplifiers' driver runs on the host.** Two modelled amplifiers on a modelled bus and a
   configuration file built in the test: what is written and in which order, the volume's steps, the
@@ -138,8 +138,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   runs: [docs/writing-a-driver.md](docs/writing-a-driver.md).
 - **Where the chip's blocks are is data in every driver that was touched.** The pin controller, the
   clock controller, RPMh, the SMMU, the PMIC arbiter and the way to the other processors were
-  constants in up to eight drivers each; they are `[pins]`, `[clocks]`, `[rpmh]`, `[smmu]`, `[spmi]`
-  and `[ipc]` of the SoC file. No driver names an address of a chip any more, and `make check`
+  constants in up to eight drivers each; they are `pins { }`, `clocks { }`, `rpmh { }`, `smmu { }`, `spmi { }`
+  and `ipc { }` of the SoC file. No driver names an address of a chip any more, and `make check`
   fails one that does. What is left in some part drivers is the part's own wiring.
 - **No board names in code.** Nothing compares the board's name any more: the name is looked up once,
   for the board's row. [CONTRIBUTING.md](CONTRIBUTING.md) has this and the other rules that keep the
@@ -285,7 +285,7 @@ Not yet verified ([docs/building.md](docs/building.md) has the table):
   audio DSP's firmware and memory, the keys, the PMIC arbiter and RPMh are named there. The values are
   the ones the code had, the tests hold them, and the drivers compile. That is all that is known.
 - **The loader** compiles on every push. Its last run on a phone was before its board table was
-  generated and before `uefi_charger` replaced a board's name in its code.
+  generated and before `uefi-charger` replaced a board's name in its code.
 - **`kernel/deps/stage1.sh` and the whole kernel build** have been run end to end once since, on Ubuntu
   24.04 with LLVM 20's Mach-O tools instead of theos': every file compiled, HakiOS' without a warning,
   and the kernel linked with nothing undefined. With theos' cctools, as the team builds, it has not been

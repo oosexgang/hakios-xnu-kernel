@@ -142,8 +142,8 @@ glue, the payload format ("XNUP": kernel + images + boot arguments), the device 
 XNU, the kernel's memory, the USB link, the phone's storage. It needs nothing of EDK2 to build.
 Its knowledge of machines is `platforms.h`, which `loader/build.sh` generates from the device packages
 that are present. No phone is named in its code: what differs between boards, down to whether the battery
-is read through the firmware's Qualcomm charger protocols (`uefi_charger`), is in the board file's
-`[loader]` section.
+is read through the firmware's Qualcomm charger protocols (`uefi-charger`), is in the board file's
+`loader { }` section.
 More: [loader/README.md](../loader/README.md).
 
 ## iOS user space

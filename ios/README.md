@@ -44,7 +44,7 @@ name, checks their types, and leaves alone what is not as it expects.
 | `a64census.c` | Counts, in the executable mappings of a dyld shared cache, the instructions an ARMv8.2 core cannot execute. | Compiles from a clean checkout: a C compiler. Its input is Apple's cache. |
 | `fips26.py` | Puts the HMAC that corecrypto computes over its rewritten code in place of the stored one, so that the FIPS self test at boot passes; then `pacstrip resign`. The values in the file are iOS 26.6.2's (23G90); another build's are given as arguments. | Runs from a clean checkout: Python, `pacstrip` built beside it. Its input is the rewritten cache. |
 | `mkimage26.py` | The system image, the RAM disk the loader stages: the chosen files of the IPSW, every arm64e Mach-O through `pacstrip`, the rewritten cache, the launchd jobs and job cache (`LAUNCHDAEMONS=DIR`). `--min` for a few programs only, `--prune` for 6 GB of RAM. Refuses an image above fastboot's 4 GiB - 1. | darwin-renoir (`ios165/select-system.py`, `userland/obj/stage0`, `mkapfs.py`, `font_trim.py`), the IPSW with `dyld-strip/`, `pacstrip` built. |
-| `boot26.py` | Boots a phone from RAM: stock fastboot starts the resident loader, which takes the system image, then the kernel and the root image, over USB. Nothing is flashed or erased. | darwin-renoir (`recovery/payload.py`, `prebuilt/NAME/resident-usb.img`, `recovery/assets/NAME-ios-share.bin`), a device package with `[boot]`, fastboot, the kernel and both images. |
+| `boot26.py` | Boots a phone from RAM: stock fastboot starts the resident loader, which takes the system image, then the kernel and the root image, over USB. Nothing is flashed or erased. | darwin-renoir (`recovery/payload.py`, `prebuilt/NAME/resident-usb.img`, `recovery/assets/NAME-ios-share.bin`), a device package with `boot { }`, fastboot, the kernel and both images. |
 | `ram-budget/` | The measurements behind [docs/ram-budget.md](../docs/ram-budget.md), by the six scripts below. Their intermediate files go to `/tmp`. | |
 | `ram-budget/zchunks.py` | The size of files as the image stores them, compressed in 64 KB pieces; writes the pieces to a pickle. | Runs from a clean checkout: Python. Its input is the cache files. |
 | `ram-budget/cache_images.py` | The cache's images, the dependency closure of what a boot runs (`jobs`, `apps`, `broad`), and how much of the compressed cache lies outside it. | The IPSW, the pickle of `zchunks.py`. |
@@ -57,13 +57,13 @@ name, checks their types, and leaves alone what is not as it expects.
 
 The libraries and the images are the same for every phone. Three things are not:
 
-- **The status bar's shift:** `[screen] statusbar_leading_shift` of the board file, in points. `inj26.sh`
+- **The status bar's shift:** `screen { } statusbar_leading_shift` of the board file, in points. `inj26.sh`
   runs `tools/boards.py gen` and compiles the generated `hakios_boards.h` into the library, which finds
   its row at run time by the name in `/chosen/darwin-board`. So the library knows the boards whose
   packages were present when it was built: `tools/device.py add NAME` first. On a board that is not in
   the table, or gives no shift, it does nothing.
 - **The boot defaults:** `boot26.py` takes the phone from `--board NAME`, else `$HAKIOS_BOARD`, else the
-  one package present that has a `[boot]` section. From `[boot]` it reads `fastboot_product` (what the
+  one package present that has a `boot { }` section. From `boot { }` it reads `fastboot-product` (what the
   phone must answer to `fastboot getvar product`: any other is refused), `cpus` and `bootargs`
   (`--boot-arg` adds or replaces one). The loader's image is looked for in darwin-renoir by the same name.
 - **Which iPhone iOS is told it is,** and through that the screen layout: `loader/identity.h`, not here.
@@ -77,7 +77,7 @@ extracted IPSW; the scripts' own default is `ios26/` beside the repository.
 
 ```sh
 # needs neither darwin-renoir nor iOS
-tools/device.py add renoir                 # the phone's package: [screen], [boot]
+tools/device.py add renoir                 # the phone's package: screen { }, boot { }
 kernel/build.sh
 cc -O2 -o ios/tools/pacstrip ios/tools/pacstrip.c -lcrypto
 

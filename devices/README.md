@@ -4,12 +4,57 @@ A device is described by data, in two places:
 
 | What | Where | What it says |
 | --- | --- | --- |
-| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`[backlight]`), thermal floors (`[thermal]`), the one partition of its storage that may be written (`[storage]`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`[buttons]`, `[touch]`, `[torch]`, `[haptic]`, `[speaker]`, `[mic]`, `[camera]` with a `[[camera.sensors]]` table each, `[adsp]`, `[gpu]`, `[wifi]`), what iOS's interface is told of its screen (`[screen]`), how the loader recognises it (`[loader]`), its default boot arguments (`[boot]`). |
-| A **SoC file** | `soc/SOC.dtsi` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`[platform]`), clock controllers (`[clocks]`), the DSI controller (`[display]`), its own pins (`[pins]`), the PMIC arbiter (`[spmi]`), its SMMU (`[smmu]`), the camera subsystem's blocks (`[camera]`), the audio subsystem's blocks on the microphones' path (`[lpass]`), the way to its other processors (`[ipc]`), RPMh (`[rpmh]`), the GPU's blocks (`[adreno]`), temperature sensors (`[thermal]`), the CPU frequency block and its groups of cores (`[cpufreq]`), and its SCMI performance mailbox (`[scmi_perf]`). |
+| A **device package** | `NAME/board.dts`, with the phone's README and notes beside it | What the device has: its SoC, the drivers it may start (`features`), its panel's brightness control (`backlight { }`), thermal floors (`thermal { }`), the one partition of its storage that may be written (`storage { }`), its keys, touch controller, flashlight, vibration motor, speaker amplifiers, microphones' codec, cameras, audio DSP, GPU and Wi-Fi radio (`buttons { }`, `touch { }`, `torch { }`, `haptic { }`, `speaker { }`, `mic { }`, `camera { }` with a `sensor@N { }` table each, `adsp { }`, `gpu { }`, `wifi { }`), what iOS's interface is told of its screen (`screen { }`), how the loader recognises it (`loader { }`), its default boot arguments (`boot { }`). |
+| A **SoC file** | `soc/SOC.dtsi` | Where the blocks of the chip are, once for every board with that chip: the interrupt controller and cores (`platform { }`), clock controllers (`clocks { }`), the DSI controller (`display { }`), its own pins (`pins { }`), the PMIC arbiter (`spmi { }`), its SMMU (`smmu { }`), the camera subsystem's blocks (`camera { }`), the audio subsystem's blocks on the microphones' path (`lpass { }`), the way to its other processors (`ipc { }`), RPMh (`rpmh { }`), the GPU's blocks (`adreno { }`), temperature sensors (`thermal { }`), the CPU frequency block and its groups of cores (`cpufreq { }`), and its SCMI performance mailbox (`scmi-perf { }`). |
 
 `devices/_template/board.dts` and `devices/_template/soc.dtsi` explain every key;
 `devices/_template/README.md` is the form of a package's README, which `tools/boards.py new` copies
 into a new package.
+
+## The format
+
+Both files are written as a device tree source is: the syntax of the phone's Android tree, the one a
+porter reads all day, so a value can be carried over as it is written there. Only a small part of
+that syntax is taken (`tools/boardfile.py` reads it, strictly, and says on which line something is
+not right):
+
+```dts
+/dts-v1/;
+
+// A comment to the end of the line; /* ... */ as well.
+/ {
+	name = "mido";                          // a string
+	soc = "sm7350";
+	features = "cpufreq-epss", "buttons-pmic";      // several strings
+
+	backlight {                             // a section is a node
+		type = "dcs";
+		min = <1>;                      // a number, in <>: decimal or 0x...
+		max = <2047>;
+	};
+	thermal {
+		floor-mhz = <1000 1100 1100>;   // several numbers
+	};
+	loader {
+		fb-base = <0xE1000000>;
+		uefi-charger;                   // a flag: written, it is on; left out, off
+	};
+	camera {
+		pmic-pins = <4 5>;
+		sensor@0 {                      // several tables of one kind: NAME@0, NAME@1, ...
+			name = "wide";
+		};
+	};
+};
+```
+
+- Names are written with dashes (`floor-mhz`, `dsp-memory`); an address that does not fit in 32 bits
+  is written `/bits/ 64 <0x1c0000000>`.
+- What a device tree has besides (labels, `&references`, `#include`, deletions) is not taken: these
+  files are read by a tool, not compiled, and every value in them is written out.
+- The root node may be opened again lower in the file (`/ { ... };` twice), as `dtc` allows.
+- A `board.toml` or `SOC.toml` of before is converted with `tools/boards.py convert FILE`, its comments
+  kept.
 
 ## Where packages are kept
 
@@ -57,9 +102,9 @@ tools/boards.py compare renoir --dts device-tree.dts        # a board and its So
   `/chosen/darwin-board`. Drivers ask `hakios_board()` for addresses and
   `hakios_board_has(HAKIOS_HAS_...)` before they start (`hakios_board.h` lists the features). A board
   that is not in the table gets no feature: nothing of a phone is touched on a machine nobody described.
-- `platforms.h`, the loader's, for the boards with a `[loader]` section. The loader tells them apart by
+- `platforms.h`, the loader's, for the boards with a `loader { }` section. The loader tells them apart by
   the framebuffer address their UEFI reports.
-- `hakios_boards.h`, what the libraries injected into iOS's processes know of a board (`[screen]`).
+- `hakios_boards.h`, what the libraries injected into iOS's processes know of a board (`screen { }`).
   They read the board's name from `/chosen/darwin-board` in the registry.
 
 None of the three is kept in the repository. The builds make them (`kernel/build.sh`,
@@ -88,7 +133,7 @@ not data: they live in `kernel/overlay/bsd/dev/` and are started for the boards 
 ## Adding a kind of data
 
 When a driver needs something of a device that no section has yet (an address, a pin, a firmware
-directory), it becomes a key, not a constant in the driver. The `[spmi]` and `[buttons]` sections are a
+directory), it becomes a key, not a constant in the driver. The `spmi { }` and `buttons { }` sections are a
 small example to copy; each step is one place:
 
 1. **The kernel's struct.** A field in `struct hakios_board` (`kernel/overlay/bsd/dev/hakios_board.h`),

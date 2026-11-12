@@ -7,7 +7,7 @@
 > - The kernel is built with `kernel/build.sh` from `kernel/overlay/` and `kernel/patches/`. The patch
 >   numbers in the text (0005 to 0022) are those of the earlier patch series; the same changes are now in
 >   the topic patches, mapped in [kernel/patches/README.md](../kernel/patches/README.md).
-> - Renoir's default boot arguments are in `[boot]` of its board file, not in `boot26.py`.
+> - Renoir's default boot arguments are in `boot { }` of its board file, not in `boot26.py`.
 > - The main branch no longer describes Renoir. Its board file is in the renoir package
 >   (`renoir/board.dts` on the `devices` branch); `tools/device.py add renoir` copies the package into
 >   `devices/` of a checkout. The kernel build, `inj26.sh` and `boot26.py` take the board from there, so

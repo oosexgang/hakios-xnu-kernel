@@ -77,8 +77,8 @@ Light readings: until a sensor driver reports through `hakios_als_report(millilu
 ## Device data
 
 The driver has no table of its own. It reads the board's row (`hakios_board()`), which comes from
-`[backlight]` in the board file of the phone's device package (`devices/NAME/board.dts` once
-`tools/device.py add NAME` has brought it in) and `[clocks]` and `[display]` in the SoC's file:
+`backlight { }` in the board file of the phone's device package (`devices/NAME/board.dts` once
+`tools/device.py add NAME` has brought it in) and `clocks { }` and `display { }` in the SoC's file:
 
 | Board | Panel | Backend | DSI | Range | Order | Mode |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -90,15 +90,15 @@ The driver has no table of its own. It reads the board's row (`hakios_board()`),
 The `renoir` and `redwood` rows are those phones' packages, kept on the `devices` branch. A kernel has
 a phone's row only when it was built with the package present.
 
-Adding a device is a `[backlight]` section in its board file. `tools/boards.py new --dts` fills it in
+Adding a device is a `backlight { }` section in its board file. `tools/boards.py new --dts` fills it in
 from the Android device tree:
-- `mdss_dsi0` `reg` "dsi_ctrl" gives the DSI address (the SoC file's `[display]`).
+- `mdss_dsi0` `reg` "dsi_ctrl" gives the DSI address (the SoC file's `display { }`).
 - The panel node gives `qcom,mdss-dsi-bl-min-level` and `-max-level`.
 - `qcom,mdss-dsi-bl-inverted-dbv` present means MSB first.
 - `qcom,mdss-brightness-init-level` is the level left for the loader.
 
 The display clock controller's MDSS GDSC and `mdss_ahb` offsets are not in a device tree. They come from
-Linux `dispcc-*.c` and go in the SoC file's `[clocks]`.
+Linux `dispcc-*.c` and go in the SoC file's `clocks { }`.
 
 To try values before writing them down, pass the `bl_*` boot arguments. A board with no description at
 all gets the `soft` backend.
