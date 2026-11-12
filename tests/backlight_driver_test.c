@@ -411,7 +411,7 @@ automatic_brightness(void)
 	WAIT_FOR(get("shown") == 260, 15000);
 	CHECK(get("shown") == 260, "dark, the user's preference kept: %u", get("shown"));
 	set("auto", 0);
-	WAIT_FOR(get("shown") == 730, 2000);
+	WAIT_FOR(get("shown") == 730 && get("offset") == 0, 2000);
 	CHECK(get("shown") == 730 && get("offset") == 0, "by hand again: %u", get("shown"));
 	CHECK(m.errors == 0, "%s", m.error);
 }

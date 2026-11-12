@@ -135,7 +135,8 @@ heat_and_cool(void)
 	phone(720);
 	WAIT_FOR(get("step") >= 2, 2000);
 	CHECK(perf[0] <= ROWS - 3 && perf[0] >= 3, "a step a look: row %u", perf[0]);
-	WAIT_FOR(get("step") == 5, 3000);
+	/* (the step is counted, then the groups' rows and the panel's limit follow it: waited for all of them) */
+	WAIT_FOR(get("step") == 5 && perf[0] == 3 && perf[1] == 4 && perf[2] == 4 && cap == 600, 3000);
 	CHECK(perf[0] == 3 && perf[1] == 4 && perf[2] == 4, "at the floors: %u %u %u", perf[0], perf[1], perf[2]);
 	CHECK(cap == 600, "the panel held back too: %u", cap);
 	phone(660);                            /* between clear and trip */

@@ -111,7 +111,8 @@ read_and_followed(void)
 	publish(VALID | PRESENT | CHARGER | VOLTAGE_VALID | CHARGING, 73, 4012, 850, 31);
 	CHECK(redwood_battery_temperature() == -273, "the temperature is not known before the first look");
 	redwood_battery_init();
-	WAIT_FOR(s("battery_soc") == 73, 2000);
+	/* (a look's values are taken one after another: waited for until the last of them is in) */
+	WAIT_FOR(s("battery_soc") == 73 && s("battery_temperature_c") == 31 && s("battery_charger_action") == 7, 2000);
 	CHECK(s("battery_soc") == 73 && s("battery_voltage_mv") == 4012 && s("battery_current_ma") == 850 &&
 	    s("battery_temperature_c") == 31, "charge %d, %d mV, %d mA, %d C", s("battery_soc"), s("battery_voltage_mv"),
 	    s("battery_current_ma"), s("battery_temperature_c"));
@@ -122,7 +123,7 @@ read_and_followed(void)
 	CHECK(logged("battery: Qualcomm UEFI cache at pa") && logged("polling every 5 seconds"), "said where a run can be watched: %s", log_text);
 	CHECK(logged("battery: SOC=73%, V=4012 mV, I=850 mA, T=31 C"), "the first reading too: %s", log_text);
 	publish(VALID | PRESENT | VOLTAGE_VALID, 72, 3987, -410, 33);
-	WAIT_FOR(s("battery_soc") == 72, 2000);
+	WAIT_FOR(s("battery_soc") == 72 && s("battery_current_ma") == -410 && s("battery_charging") == 0 && s("battery_charger_present") == 0, 2000);
 	CHECK(s("battery_soc") == 72 && s("battery_current_ma") == -410 && s("battery_charging") == 0 &&
 	    s("battery_charger_present") == 0, "the next look has the change: %d%%, %d mA", s("battery_soc"), s("battery_current_ma"));
 	CHECK(s("battery_from_dsp") == 0, "from the firmware, not the audio DSP");
@@ -156,7 +157,7 @@ torn_update(void)
 	    s("battery_soc"), s("battery_voltage_mv"));
 	cache->voltage_mv = 4100;
 	cache->sequence++;                      /* ... and ends */
-	WAIT_FOR(s("battery_soc") == 99, 2000);
+	WAIT_FOR(s("battery_soc") == 99 && s("battery_voltage_mv") == 4100, 2000);
 	CHECK(s("battery_soc") == 99 && s("battery_voltage_mv") == 4100, "and the whole update is taken once it is whole");
 }
 
