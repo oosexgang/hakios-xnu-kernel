@@ -122,8 +122,12 @@ struct uio {
 	char *base;
 	size_t resid;
 	bool to_kernel;                 /* a write(): the bytes go from the program to the driver */
+	off_t offset;                   /* where in the device the next byte is */
 };
 user_ssize_t uio_resid(struct uio *uio);
+off_t uio_offset(struct uio *uio);
+void uio_setoffset(struct uio *uio, off_t offset);
+void uio_setresid(struct uio *uio, user_ssize_t resid);
 int uiomove(caddr_t kernel, int n, struct uio *uio);
 struct cdevsw {
 	int (*d_open)(dev_t dev, int flags, int type, struct proc *p);
@@ -148,6 +152,11 @@ void *devfs_make_node(dev_t dev, int type, int uid, int gid, int perms, const ch
 /* for the tests: 0, an errno of the driver's, or -1 when no driver has made a node of that name */
 int fake_dev_write(const char *name, const void *data, size_t size);
 int fake_dev_read(const char *name, void *data, size_t size);
+/* ... the same at an offset of the device (pread(), pwrite()), with how many bytes went in *done; and its open and close */
+int fake_dev_pwrite(const char *name, const void *data, size_t size, off_t offset, size_t *done);
+int fake_dev_pread(const char *name, void *data, size_t size, off_t offset, size_t *done);
+int fake_dev_open(const char *name, int flags);
+int fake_dev_close(const char *name);
 
 /*
  * Block devices (sys/buf.h, sys/disk.h): a driver's disk is kept by its node's name too, and a test reads
@@ -158,6 +167,7 @@ int fake_dev_read(const char *name, void *data, size_t size);
 typedef struct proc *proc_t;
 typedef struct buf {
 	int flags, error;
+	dev_t dev;                      /* the node the request is for */
 	int64_t blkno;                  /* in 512-byte sectors */
 	uint32_t count, resid;
 	void *data;
@@ -165,6 +175,7 @@ typedef struct buf {
 } *buf_t;
 #define B_READ                  0x00000001
 #define buf_flags(bp)           ((bp)->flags)
+#define buf_device(bp)          ((bp)->dev)
 #define buf_blkno(bp)           ((bp)->blkno)
 #define buf_count(bp)           ((bp)->count)
 #define buf_dataptr(bp)         ((uintptr_t)(bp)->data)

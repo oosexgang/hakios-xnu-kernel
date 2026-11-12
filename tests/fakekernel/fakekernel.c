@@ -151,54 +151,40 @@ kernel_thread_start(thread_continue_t fn, void *arg, thread_t *thread)
 void thread_deallocate(thread_t thread __unused) {}
 void thread_set_thread_name(thread_t thread __unused, const char *name __unused) {}
 
-/* ---- character devices: the nodes drivers make, by name ---- */
+/* ---- devices: the nodes drivers make, by name ---- */
 
-static struct { const struct cdevsw *devsw; char name[48]; } nodes[8];
-static struct { const struct bdevsw *devsw; char name[48]; } disks[4];   /* (the block devices, below) */
-static unsigned disks_n;
-static const struct cdevsw *added[8];
+/*
+ * A driver adds its switch and gets a major number (character devices 0 to 7, block devices 8 to 11), then
+ * makes nodes of it, one for each minor number. A test reaches a node by its name, as a program would.
+ */
+#define CHAR_MAJORS             8
+#define BLOCK_MAJORS            4
+#define NODES                   512
+static const struct cdevsw *added[CHAR_MAJORS];
 static unsigned added_n;
+static const struct bdevsw *disks[BLOCK_MAJORS];
+static unsigned disks_n;
+static struct { dev_t dev; char name[48]; } nodes[NODES];
+static unsigned nodes_n;
 
 int
 cdevsw_add(int index __unused, const struct cdevsw *devsw)
 {
-	if (added_n >= 8) {
+	if (added_n >= CHAR_MAJORS) {
 		return -1;
 	}
 	added[added_n] = devsw;
 	return (int)added_n++;
 }
 
-void *
-devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused, int perms __unused, const char *name, ...)
-{
-	unsigned index = major(dev);
-
-	if (index >= 8) {               /* a disk */
-		if (index - 8 >= disks_n) {
-			return NULL;
-		}
-		snprintf(disks[index - 8].name, sizeof(disks[index - 8].name), "%s", name);
-		return &disks[index - 8];
-	}
-	if (index >= added_n) {
-		return NULL;
-	}
-	nodes[index].devsw = added[index];
-	snprintf(nodes[index].name, sizeof(nodes[index].name), "%s", name);
-	return &nodes[index];
-}
-
-/* ---- block devices: the disks drivers make, by name (their numbers begin at 8, apart from the character devices') ---- */
-
 int
 bdevsw_add(int index __unused, const struct bdevsw *devsw)
 {
-	if (disks_n >= 4) {
+	if (disks_n >= BLOCK_MAJORS) {
 		return -1;
 	}
-	disks[disks_n].devsw = devsw;
-	return 8 + (int)disks_n++;
+	disks[disks_n] = devsw;
+	return CHAR_MAJORS + (int)disks_n++;
 }
 
 int
@@ -207,24 +193,56 @@ cdevsw_add_with_bdev(int index, const struct cdevsw *devsw, int bdev __unused)
 	return cdevsw_add(index, devsw);
 }
 
-static const struct bdevsw *
-disk_named(const char *name)
+/* (the name is a format with its arguments, as devfs takes it; a name that is there already is refused) */
+void *
+devfs_make_node(dev_t dev, int type __unused, int uid __unused, int gid __unused, int perms __unused, const char *name, ...)
 {
-	for (unsigned i = 0; i < disks_n; i++) {
-		if (strcmp(disks[i].name, name) == 0) {
-			return disks[i].devsw;
+	unsigned index = major(dev);
+	char text[48];
+	va_list arguments;
+
+	va_start(arguments, name);
+	vsnprintf(text, sizeof(text), name, arguments);
+	va_end(arguments);
+	if (nodes_n >= NODES || (index < CHAR_MAJORS ? index >= added_n : index - CHAR_MAJORS >= disks_n)) {
+		return NULL;
+	}
+	for (unsigned i = 0; i < nodes_n; i++) {
+		if (strcmp(nodes[i].name, text) == 0) {
+			return NULL;
 		}
 	}
-	return NULL;
+	nodes[nodes_n].dev = dev;
+	snprintf(nodes[nodes_n].name, sizeof(nodes[nodes_n].name), "%s", text);
+	return &nodes[nodes_n++];
 }
+
+/* the node of that name and of that kind: its number, or false */
+static bool
+node_named(const char *name, bool disk, dev_t *dev)
+{
+	for (unsigned i = 0; i < nodes_n; i++) {
+		if (strcmp(nodes[i].name, name) == 0 && (major(nodes[i].dev) >= CHAR_MAJORS) == disk) {
+			*dev = nodes[i].dev;
+			return true;
+		}
+	}
+	return false;
+}
+
+/* ---- block devices ---- */
 
 static int
 disk_request(const char *name, int flags, uint64_t sector, void *data, size_t size, size_t *resid)
 {
-	const struct bdevsw *devsw = disk_named(name);
 	struct buf request = { .flags = flags, .blkno = (int64_t)sector, .count = (uint32_t)size, .resid = (uint32_t)size, .data = data };
+	const struct bdevsw *devsw;
 
-	if (devsw == NULL || devsw->d_strategy == NULL) {
+	if (!node_named(name, true, &request.dev)) {
+		return -1;
+	}
+	devsw = disks[major(request.dev) - CHAR_MAJORS];
+	if (devsw->d_strategy == NULL) {
 		return -1;
 	}
 	devsw->d_strategy(&request);
@@ -249,20 +267,38 @@ fake_disk_write(const char *name, uint64_t sector, const void *data, size_t size
 int
 fake_disk_open(const char *name, int flags)
 {
-	const struct bdevsw *devsw = disk_named(name);
+	dev_t dev;
 
-	return devsw == NULL || devsw->d_open == NULL ? -1 : devsw->d_open(0, flags, 0, NULL);
+	if (!node_named(name, true, &dev) || disks[major(dev) - CHAR_MAJORS]->d_open == NULL) {
+		return -1;
+	}
+	return disks[major(dev) - CHAR_MAJORS]->d_open(dev, flags, 0, NULL);
 }
 
 int
 fake_disk_ioctl(const char *name, unsigned long cmd, void *data)
 {
-	const struct bdevsw *devsw = disk_named(name);
+	dev_t dev;
 
-	return devsw == NULL || devsw->d_ioctl == NULL ? -1 : devsw->d_ioctl(0, cmd, data, 0, NULL);
+	if (!node_named(name, true, &dev) || disks[major(dev) - CHAR_MAJORS]->d_ioctl == NULL) {
+		return -1;
+	}
+	return disks[major(dev) - CHAR_MAJORS]->d_ioctl(dev, cmd, data, 0, NULL);
 }
 
+/* ---- character devices ---- */
+
 user_ssize_t uio_resid(struct uio *uio) { return (user_ssize_t)uio->resid; }
+off_t uio_offset(struct uio *uio) { return uio->offset; }
+void uio_setoffset(struct uio *uio, off_t offset) { uio->offset = offset; }
+
+/* (what was not moved after all is the program's again: the bytes are where they were) */
+void
+uio_setresid(struct uio *uio, user_ssize_t resid)
+{
+	uio->base -= (size_t)resid - uio->resid;
+	uio->resid = (size_t)resid;
+}
 
 int
 uiomove(caddr_t kernel, int n, struct uio *uio)
@@ -276,36 +312,67 @@ uiomove(caddr_t kernel, int n, struct uio *uio)
 	}
 	uio->base += count;
 	uio->resid -= count;
+	uio->offset += (off_t)count;
 	return 0;
 }
 
-static const struct cdevsw *
-node_named(const char *name)
+int
+fake_dev_pwrite(const char *name, const void *data, size_t size, off_t offset, size_t *done)
 {
-	for (unsigned i = 0; i < 8; i++) {
-		if (nodes[i].devsw != NULL && strcmp(nodes[i].name, name) == 0) {
-			return nodes[i].devsw;
-		}
+	struct uio uio = { __DEVOLATILE(char *, data), size, true, offset };
+	dev_t dev;
+	int error;
+
+	if (!node_named(name, false, &dev) || added[major(dev)]->d_write == NULL) {
+		return -1;
 	}
-	return NULL;
+	error = added[major(dev)]->d_write(dev, &uio, 0);
+	if (done != NULL) {
+		*done = size - uio.resid;
+	}
+	return error;
 }
 
 int
-fake_dev_write(const char *name, const void *data, size_t size)
+fake_dev_pread(const char *name, void *data, size_t size, off_t offset, size_t *done)
 {
-	const struct cdevsw *devsw = node_named(name);
-	struct uio uio = { __DEVOLATILE(char *, data), size, true };
+	struct uio uio = { data, size, false, offset };
+	dev_t dev;
+	int error;
 
-	return devsw == NULL || devsw->d_write == NULL ? -1 : devsw->d_write(0, &uio, 0);
+	if (!node_named(name, false, &dev) || added[major(dev)]->d_read == NULL) {
+		return -1;
+	}
+	error = added[major(dev)]->d_read(dev, &uio, 0);
+	if (done != NULL) {
+		*done = size - uio.resid;
+	}
+	return error;
+}
+
+int fake_dev_write(const char *name, const void *data, size_t size) { return fake_dev_pwrite(name, data, size, 0, NULL); }
+int fake_dev_read(const char *name, void *data, size_t size) { return fake_dev_pread(name, data, size, 0, NULL); }
+
+int
+fake_dev_open(const char *name, int flags)
+{
+	dev_t dev;
+
+	if (!node_named(name, false, &dev) || added[major(dev)]->d_open == NULL) {
+		return -1;
+	}
+	return added[major(dev)]->d_open(dev, flags, 0, NULL);
 }
 
 int
-fake_dev_read(const char *name, void *data, size_t size)
+fake_dev_close(const char *name)
 {
-	const struct cdevsw *devsw = node_named(name);
-	struct uio uio = { data, size, false };
+	dev_t dev;
 
-	return devsw == NULL || devsw->d_read == NULL ? -1 : devsw->d_read(0, &uio, 0);
+	if (!node_named(name, false, &dev) || added[major(dev)]->d_close == NULL) {
+		return -1;
+	}
+	return added[major(dev)]->d_close(dev, 0, 0, NULL);
 }
 
 thread_t current_thread(void) { return NULL; }
