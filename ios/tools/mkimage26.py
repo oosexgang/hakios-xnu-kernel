@@ -36,6 +36,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PACSTRIP = HERE + '/pacstrip'
 WORK = os.environ.get("WORK", I + "/image-tree")
 CACHE_DIR = 'System/Cryptexes/OS/System/Library/Caches/com.apple.dyld'
+# Where stage0 mounts the small image. A darwin-renoir tree not yet renamed (tools/rename-image-root.sh)
+# mounts it on /redwood and its root tree says /redwood: the system volume has that path too, as a link
+# to /hakios, so that such a stage0 mounts it there and its paths lead there. Gone once it is renamed.
+IMAGE_ROOT = 'hakios'
+UNRENAMED_ROOT = 'redwood'
 
 MIN_FILES = ['usr/lib/dyld', 'sbin/launchd', 'bin/ps', 'bin/df', 'usr/bin/uname', 'usr/bin/sw_vers',
              'usr/bin/id', 'usr/bin/true', 'usr/sbin/sysctl', 'usr/libexec/xpcproxy',
@@ -159,7 +164,7 @@ def selection(minimal):
             with open(os.path.join(jobs, name), 'rb') as f:
                 job = plistlib.load(f)
             program = job.get('Program') or (job.get('ProgramArguments') or [None])[0]
-            if program and program.startswith('/') and not program.startswith('/hakios/'):
+            if program and program.startswith('/') and not program.startswith((f'/{IMAGE_ROOT}/', f'/{UNRENAMED_ROOT}/')):
                 kept_files.add(program[1:])
     chosen = []
     for dp, dn, fns in os.walk(ROOT):
@@ -272,9 +277,10 @@ def main():
     if os.path.exists(WORK):
         shutil.rmtree(WORK)
     os.makedirs(WORK)
-    for d in ('dev', 'hakios', 'private/var', 'private/preboot', 'private/etc', 'private/tmp', 'System/Library',
+    for d in ('dev', IMAGE_ROOT, 'private/var', 'private/preboot', 'private/etc', 'private/tmp', 'System/Library',
               'sbin', 'usr/lib', CACHE_DIR):
         os.makedirs(os.path.join(WORK, d), exist_ok=True)
+    os.symlink(IMAGE_ROOT, os.path.join(WORK, UNRENAMED_ROOT))
     chosen = list(dict(selection(minimal)).items())      # (one source for each path: the last)
     if PRUNE:
         chosen = [(rel, src) for rel, src in chosen if not pruned(rel)]
