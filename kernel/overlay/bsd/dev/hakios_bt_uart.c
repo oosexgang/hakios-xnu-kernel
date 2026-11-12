@@ -270,10 +270,9 @@ clocks_on(void)
 }
 
 static bool
-uart_init(void)
+uart_init(unsigned sampling, bool flow)
 {
-	uint32_t version = rd(wrapper + 4), depth = (rd(SE(0xe24)) >> 16) & 0x3f;
-	unsigned sampling = version >= 0x20050000u ? 16 : 32;
+	uint32_t depth = (rd(SE(0xe24)) >> 16) & 0x3f;
 	unsigned div = 7372800 / (115200 * sampling);
 
 	if (depth < 4 || ((rd(SE(0xe24)) >> 24) & 0x3f) != 32) {
@@ -307,7 +306,7 @@ uart_init(void)
 	wr(SE(0x614), 0x7fc0007f);
 	wr(SE(0x644), 0x7fc0007f);
 	wr(SE(0x22c), 0);
-	wr(SE(0x25c), 0);                 /* CTS mask clear: hardware flow control */
+	wr(SE(0x25c), flow ? 0 : 2);      /* UART_CTS_MASK clear: hardware flow control; set: CTS ignored */
 	wr(SE(0x268), 8);
 	wr(SE(0x26c), 0);
 	wr(SE(0x280), 0);
@@ -326,7 +325,8 @@ uart_init(void)
 	wr(SE(0x48), (div << 4) | 1);
 	wr(SE(0x4c), (div << 4) | 1);
 	wr(SE(0x630), START);             /* UART_START_READ, once for both commands */
-	hakios_say("bt-uart: UART 115200 8N1, CTS/RTS, sampling %u divider %u, RX started\n", sampling, div);
+	hakios_say("bt-uart: UART 115200 8N1, %s, sampling %u divider %u, RX started\n", flow ? "CTS/RTS" : "no flow control",
+	    sampling, div);
 	return true;
 }
 
@@ -404,6 +404,57 @@ receive_byte(uint8_t *byte, uint64_t deadline)
 		sleep_us(100);
 	}
 	return false;
+}
+
+/* What the engine and its lines say, for a log read afterwards. */
+static void
+uart_state(const char *when)
+{
+	hakios_say("bt-uart: %s: M_IRQ %#x S_IRQ %#x TX FIFO %#x RX FIFO %#x status %#x; RCG cfg %#x m %#x n %#x d %#x; "
+	    "lines CTS %u RFR %u TX %u RX %u\n", when, rd(SE(0x610)), rd(SE(0x640)), rd(SE(0x800)), rd(SE(0x804)),
+	    rd(SE(0x40)), rd(RCG(4)), rd(RCG(8)), rd(RCG(12)), rd(RCG(16)), gpio_get(W->uart_pins[0]),
+	    gpio_get(W->uart_pins[1]), gpio_get(W->uart_pins[2]), gpio_get(W->uart_pins[3]));
+}
+
+/* Stop the read command and empty the receive FIFO, so the next configuration starts clean. */
+static void
+uart_stop_rx(void)
+{
+	wr(SE(0x634), 1u << 2);         /* S_CMD_CTRL: cancel */
+	bt_wait_us(2000);
+	for (unsigned i = 0; i < 64 && (rd(SE(0x804)) & 0x1ffffff); i++) {
+		(void)rd(SE(0x780));
+	}
+	wr(SE(0x648), 0xffffffff);
+	rx_word = 0;
+	rx_left = 0;
+}
+
+static bool receive_byte(uint8_t *byte, uint64_t deadline);
+
+/* The engine's own loopback (TX to RX, RFR to CTS): whether sending and receiving work at all. */
+static bool
+uart_loopback(void)
+{
+	static const uint8_t probe[] = { 0x55, 0xa5, 0x0f, 0xf0, 0x3c };
+	uint8_t back[sizeof(probe)];
+	uint64_t deadline;
+	unsigned got = 0;
+
+	wr(SE(0x22c), 3);
+	bt_wait_us(1000);
+	if (transmit(probe, sizeof(probe))) {
+		deadline = now_us() + 100000;
+		while (got < sizeof(probe) && receive_byte(&back[got], deadline)) {
+			got++;
+		}
+	}
+	wr(SE(0x22c), 0);
+	hakios_say("bt-uart: loopback: %u of %u bytes back%s\n", got, (unsigned)sizeof(probe),
+	    got == sizeof(probe) && !memcmp(back, probe, sizeof(probe)) ? ", the same" : "");
+	uart_stop_rx();
+	wr(SE(0x630), START);
+	return got == sizeof(probe) && !memcmp(back, probe, sizeof(probe));
 }
 
 static uint32_t
@@ -567,12 +618,32 @@ bt_thread(__unused void *arg, __unused wait_result_t result)
 	if (!inspect() || mode == -1) {
 		goto done;
 	}
-	if (!power_on() || !clocks_on() || !uart_init()) {
+	if (!power_on() || !clocks_on()) {
 		goto failed;
 	}
-	hakios_say("bt-uart: sending HCI_Reset\n");
-	if (!transmit(reset, sizeof(reset)) || !wait_event(false)) {
-		goto failed;
+	/* The engine's oversampling (16 from QUP 2.5, 32 before) and the controller's CTS are what the first
+	 * answer depends on; each way is tried in turn, the engine's own loopback first. */
+	{
+		static const struct { unsigned sampling; bool flow; } ways[] = { { 16, true }, { 16, false }, { 32, true }, { 32, false } };
+		bool answered = false;
+
+		hakios_say("bt-uart: QUP HW version %#x\n", rd(wrapper + 4));
+		for (unsigned w = 0; w < sizeof(ways) / sizeof(ways[0]) && !answered; w++) {
+			if (w > 0) {
+				uart_stop_rx();
+			}
+			if (!uart_init(ways[w].sampling, ways[w].flow)) {
+				goto failed;
+			}
+			uart_state("after setup");
+			(void)uart_loopback();
+			hakios_say("bt-uart: sending HCI_Reset\n");
+			answered = transmit(reset, sizeof(reset)) && wait_event(false);
+			uart_state(answered ? "answered" : "no answer");
+		}
+		if (!answered) {
+			goto failed;
+		}
 	}
 	hakios_say("bt-uart: sending Qualcomm EDL_PATCH_GETVER\n");
 	if (!transmit(getver, sizeof(getver)) || !wait_event(true)) {

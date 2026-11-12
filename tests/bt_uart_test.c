@@ -12,6 +12,7 @@ static const struct hakios_board *b;
 static struct spmi_peripheral en;
 static uint32_t engine[0x1000], clocks[0x60000 / 4];
 static unsigned touches, mappings, unexpected, pmic_reads, tx_commands, read_starts, rpmh_count;
+static unsigned loopbacks, rx_cancels;
 static unsigned rpmh_locks, spmi_locks, lock_at_return, power_steps;
 static bool in_return, silent, wrong_protocol, stuck_clock, stuck_tx, bad_reset, short_version, cc_version;
 static bool rcg_stuck, rx_error, coalesced, sw_low;
@@ -58,17 +59,37 @@ peer(void)
 	static const uint8_t reset_evt[] = { 4, 0x0e, 4, 1, 3, 0x0c, 0 };
 	static const uint8_t version[] = { 4, 0xff, 14, 0, 2, 0x50, 0x77, 0, 0, 0x34, 0x12, 0x78, 0x56, 0x44, 0x33, 0x22, 0x11 };
 	static const uint8_t complete[] = { 4, 0x0e, 16, 1, 0, 0xfc, 0, 0x50, 0x77, 0, 0, 0x34, 0x12, 0x78, 0x56, 0x44, 0x33, 0x22, 0x11 };
-	CHECK(read_starts == 1, "RX started once, before TX");
-	CHECK(engine[0x25c / 4] == 0 && engine[0x2ac / 4] == 0, "CTS/RTS enabled");
+	bool loopback = (engine[0x22c / 4] & 1) != 0;
+	if (loopback) {
+		static const uint8_t probe[] = { 0x55, 0xa5, 0x0f, 0xf0, 0x3c };
+		loopbacks++;
+		CHECK(tx_size == sizeof(probe) && !memcmp(tx, probe, sizeof(probe)), "exact internal loopback probe");
+		CHECK(engine[0x22c / 4] == 3, "TX/RX and RFR/CTS loopback enabled");
+	}
+	CHECK(loopbacks >= 1 && loopbacks <= 4, "one probe per UART configuration");
+	CHECK(read_starts == 2 * loopbacks - loopback, "RX setup and loopback restart before TX (%u)", read_starts);
+	CHECK(rx_cancels == 2 * loopbacks - 1 - loopback, "RX cancelled after probe and between configurations (%u)", rx_cancels);
+	CHECK(engine[0x25c / 4] == (loopbacks % 2 ? 0u : 2u) && engine[0x2ac / 4] == 0,
+	    "CTS/RTS enabled in first/third configuration, CTS ignored in second/fourth");
+	CHECK(engine[0x48 / 4] == (loopbacks <= 2 ? 0x41u : 0x21u) && engine[0x4c / 4] == engine[0x48 / 4],
+	    "16x sampling first, then 32x");
 	CHECK(engine[0x268 / 4] == 8 && engine[0x28c / 4] == 8 && !engine[0x26c / 4] &&
-	    !engine[0x280 / 4] && !engine[0x2a4 / 4] && !engine[0x2a8 / 4] && !engine[0x22c / 4] &&
-	    engine[0x294 / 4] == 160, "UART 8N1, no loopback, stale count");
+	    !engine[0x280 / 4] && !engine[0x2a4 / 4] && !engine[0x2a8 / 4] &&
+	    (loopback || !engine[0x22c / 4]) && engine[0x294 / 4] == 160, "UART 8N1, loopback disabled for HCI, stale count");
 	CHECK(!(engine[0x258 / 4] & 1) && !engine[0xe18 / 4] && engine[0x810 / 4] == 13 &&
 	    engine[0x814 / 4] == 14 && !engine[0x80c / 4], "FIFO mode/watermarks");
 	for (unsigned i = 0; i < 4; i++) {
 		CHECK(model.cfg[b->bluetooth.uart_pins[i]] == (uint32_t)b->bluetooth.uart_function << 2, "board UART pin function");
 	}
-	if (++tx_commands == 1) {
+	if (loopback) {
+		/* Internal engine loopback works even when the external controller is silent. */
+		memcpy(rx, tx, tx_size);
+		rx_size = tx_size;
+		rx_pos = 0;
+		engine[0x610 / 4] = stuck_tx ? 0 : 1;
+		return;
+	}
+	if (++tx_commands == loopbacks) {
 		CHECK(tx_size == sizeof(reset_cmd) && !memcmp(tx, reset_cmd, sizeof(reset_cmd)), "exact H4 reset");
 		memcpy(rx, reset_evt, sizeof(reset_evt));
 		rx_size = sizeof(reset_evt);
@@ -168,6 +189,10 @@ hakios_test_wr(vm_offset_t address, uint32_t value)
 		} else if (reg == 0x630) {
 			CHECK(value == 1u << 27, "UART RX opcode");
 			read_starts++;
+		} else if (reg == 0x634) {
+			CHECK(value == 1u << 2 || value == 2, "RX cancel or cleanup abort");
+			rx_cancels += value == 1u << 2;
+			engine[reg / 4] = value;
 		} else if (reg == 0x700) {
 			for (unsigned i = 0; i < 4 && tx_size < engine[0x270 / 4]; i++) {
 				CHECK(tx_size < sizeof(tx), "TX buffer bounds");
@@ -322,7 +347,7 @@ packing_and_clock(void)
 	CHECK(clocks[cmd + 1] == (1 | 6 << 8 | 2 << 12), "RCG parent/HID/MND");
 	CHECK(clocks[cmd + 2] == 384 && clocks[cmd + 3] == ((~(15625u - 384)) & 0xffff) &&
 	    clocks[cmd + 4] == ((~15625u) & 0xffff), "16-bit M/N/D");
-	CHECK(engine[0x48 / 4] == (sw_low ? 0x21u : 0x41u) && engine[0x4c / 4] == engine[0x48 / 4], "baud divider/sampling");
+	CHECK(engine[0x48 / 4] == 0x41u && engine[0x4c / 4] == engine[0x48 / 4], "first configuration uses 16x sampling regardless of wrapper version");
 }
 
 int
@@ -380,10 +405,16 @@ main(int argc, char **argv)
 		} else if (silent || stuck_clock || rcg_stuck || stuck_tx || bad_reset || short_version || rx_error) {
 			CHECK(logged("bring-up stopped; powering down") && !logged("identification complete"), "failure is explicit: %s", log_text);
 			CHECK(!en.reg[0x44], "failure powers down");
-			if (silent) { CHECK(tx_commands == 1 && logged("reset response timed out"), "silent reset times out before getver"); }
+			if (silent) {
+				CHECK(loopbacks == 4 && tx_commands == 4 && logged("reset response timed out"), "silent controller tries all four configurations without getver");
+				CHECK(read_starts == 8 && rx_cancels == 7, "four RX setups, four loopback restarts, seven cancels");
+				CHECK(logged("loopback: 5 of 5 bytes back, the same"), "internal loopback succeeds with silent controller");
+			}
 		} else {
 			CHECK(logged("product id 0x7750, patch version 0x1234, ROM version 0x5678, SoC id 0x11223344"), "decoded version: %s", log_text);
 			CHECK(logged("identification complete") && tx_commands == 2, "both commands completed");
+			CHECK(loopbacks == 1 && read_starts == 2 && rx_cancels == 1, "first configuration succeeds after loopback RX restart");
+			CHECK(logged("loopback: 5 of 5 bytes back, the same"), "all probe bytes echoed intact");
 			CHECK(en.reg[0x44] == 0x80, "enable high until quiesce");
 			packing_and_clock();
 			unsigned count = rpmh_count;
