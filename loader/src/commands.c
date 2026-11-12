@@ -164,30 +164,24 @@ fb_command(char *cmd)
 			download_to_ramdisk = 1;
 			fb_reply("OKAY", "");
 		} else if (starts_with(cmd, "download:")) {
-			uint64_t total = parse_number(cmd + 9, 16), got = 0;
-			uint64_t limit = PAYLOAD_MAX_SIZE - 0x100000;
+			uint64_t total = parse_number(cmd + 9, 16), got = 0, before, limit;
 			uint8_t *dest = (uint8_t *)PAYLOAD_BASE;
 			int to_ramdisk = download_to_ramdisk;
+			const char *no_room = download_room(to_ramdisk, download_ramdisk_append, download_ramdisk_patch, resident_rd_size,
+			    win_size, &before, &limit);
 
 			download_to_ramdisk = 0;
-			uint64_t before = 0;
-
-			if (to_ramdisk == 2 && download_ramdisk_patch >= resident_rd_size) {
-				/* the image the patch was for is not there any more: nothing beyond its end, and no end */
-				fb_reply("FAIL", "no resident image there");
+			download_ramdisk_append = 0;
+			if (no_room != NULL) {
+				fb_reply("FAIL", no_room);
 				return;
-			} else if (to_ramdisk == 2) {
-				/* a patch: inside what is there, nothing beyond its end */
-				before = download_ramdisk_patch;
-				limit = resident_rd_size - before;
+			}
+			if (to_ramdisk) {
 				dest = (uint8_t *)(win_base + RESIDENT_RD_OFFSET + before);
-			} else if (to_ramdisk) {
-				before = download_ramdisk_append ? resident_rd_size : 0;
-				limit = win_size - RESIDENT_RD_OFFSET - RESIDENT_RD_RESERVE - before;
-				dest = (uint8_t *)(win_base + RESIDENT_RD_OFFSET + before);
+			}
+			if (to_ramdisk == 1) {
 				resident_rd_size = before;
 			}
-			download_ramdisk_append = 0;
 			if (total == 0 || total > limit) {
 				fb_reply("FAIL", "bad size");
 				return;

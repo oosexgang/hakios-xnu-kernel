@@ -48,6 +48,7 @@
 #include "src/usb.c"              /* the USB command channel: a small server of the fastboot protocol */
 #include "src/dsu_write.c"        /* the system image written through its extents, and nowhere else */
 #include "src/dsu.c"              /* the iOS system image as an Android DSU image ("oem dsu") */
+#include "src/download.c"         /* where a download over USB goes, and how much of it fits */
 #include "src/commands.c"         /* the commands taken over USB */
 #include "src/ramfb.c"            /* QEMU's display in the shape of the phone's screen */
 

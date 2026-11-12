@@ -53,11 +53,14 @@ as when it was one file.
 | `src/usb.c` | The USB command channel: a small server of the fastboot protocol. |
 | `src/dsu_write.c` | The system image written through its extents, and nowhere else. |
 | `src/dsu.c` | The iOS system image as an Android DSU image ("oem dsu"). |
+| `src/download.c` | Where a download over USB goes, and how much of it fits. |
 | `src/commands.c` | The commands taken over USB. |
 | `src/ramfb.c` | QEMU's display in the shape of the phone's screen. |
 
 `tests/loader_test.c` runs the parts that are plain C (`base.c`, `devicetree.c`, `nvram.c`,
-`payload.c`) on the host; the whole loader is compiled without a warning and linked by `make check`
+`payload.c`) on the host, and `tests/loader_window_test.c`, `loader_download_test.c`, `loader_dsu_test.c` and
+`loader_own_partition_test.c` the choice of the kernel's memory, the bounds of a download, the finding of the
+system image and the one partition a write may reach; the whole loader is compiled without a warning and linked by `make check`
 where clang and lld are installed.
 
 Where to look for a change:
