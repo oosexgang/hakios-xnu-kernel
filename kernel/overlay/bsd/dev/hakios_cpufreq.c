@@ -300,6 +300,139 @@ extern void sched_perfcontrol_update_recommended_cores(uint32_t recommended_core
 static struct {
 	uint32_t looks, unparked, parks;        /* since the last line in the log */
 } park_stat;
+static bool park_wanted;
+
+/*
+ * The speed of each group of cores by its load (boot-arg cpu_gov=0: every group at its top row all along, as
+ * before). With cpufreq=1 every group was raised to its top row and kept there: idle cores too stood at the top
+ * row's voltage, and the SoC ran at 81-86 C on rc.jobs.fps (its thermal lines, logs/140658-run.log), where its
+ * own limits hardware held the big cores to 2131 of 2400 MHz and the prime to 2208. Now, at every look (PARK_MS),
+ * each group the kernel has all of is set to the lowest row of its table that covers what its busiest core did
+ * at the speed it had, with GOV_HEADROOM_PCT to spare: up at once, to the top at once from GOV_UP_BUSY, and down
+ * only after GOV_DOWN_LOOKS looks wanted it, to the most any of them wanted. A group with a core the kernel has
+ * not got -- the small one, whose core 0 is the loader's, serving the flash while the kernel runs -- stays at
+ * its top row. Not with thermal=2, which holds the rows back itself. At the run's end every group is put back
+ * at its top row (hakios_ddr_quiesce, on every way back).
+ */
+#define GOV_HEADROOM_PCT        125
+#define GOV_UP_BUSY             90
+#define GOV_DOWN_LOOKS          4
+#define GOV_ROWS                40
+static struct gov_group {
+	vm_offset_t base;               /* 0: not governed */
+	uint32_t rows, khz[GOV_ROWS], top, row, down_looks, down_most;
+	uint32_t cores;                 /* the kernel's cores in it, by cpu number */
+	uint64_t looks_at[GOV_ROWS];    /* (for the log: how many looks at each row) */
+} gov[EPSS_DOMAINS];
+static bool gov_on;
+
+static void
+gov_set(struct gov_group *g, uint32_t row)
+{
+	if (row != g->row) {
+		*(volatile uint32_t *)(g->base + EPSS_PERF_STATE) = row;
+		g->row = row;
+	}
+}
+
+/* the groups the kernel has every core of: their tables, and the governor on (cpufreq=1 has raised them) */
+static void
+gov_start(void)
+{
+	const ml_topology_info_t *topology = ml_get_topology_info();
+	const struct hakios_board *board = hakios_board();
+	uint32_t on = 1, thermal = 1, had[EPSS_DOMAINS] = { 0 };
+
+	PE_parse_boot_argn("cpu_gov", &on, sizeof(on));
+	PE_parse_boot_argn("thermal", &thermal, sizeof(thermal));
+	if (!on || thermal >= 2) {
+		printf("cpufreq: every group at its top row (%s)\n", !on ? "cpu_gov=0" : "thermal=2 holds them back itself");
+		return;
+	}
+	for (unsigned int i = 0; i < topology->num_cpus && i < 32; i++) {
+		int d = domain_of(topology->cpus[i].phys_id);
+
+		if (d >= 0) {
+			gov[d].cores |= 1u << i;
+			had[d]++;
+		}
+	}
+	for (uint32_t d = 0; d < EPSS_DOMAINS; d++) {
+		struct gov_group *g = &gov[d];
+		uint32_t top_khz = 0;
+
+		if (had[d] == 0 || had[d] != board->cpufreq.domain_cores[d]) {
+			continue;               /* (none of ours, or a core of the loader's in it) */
+		}
+		g->base = ml_io_map(board->cpufreq.epss + d * board->cpufreq.epss_domain_size, board->cpufreq.epss_domain_size);
+		for (uint32_t row = 0; row < GOV_ROWS && row < EPSS_TABLE_ROWS; row++) {
+			uint32_t entry = *(volatile uint32_t *)(g->base + EPSS_FREQ_TABLE + 4 * row);
+			uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
+
+			if (row > 0 && khz <= top_khz) {
+				break;
+			}
+			g->khz[row] = top_khz = khz;
+			g->rows = row + 1;
+		}
+		g->top = g->rows - 1;
+		g->row = *(volatile uint32_t *)(g->base + EPSS_PERF_STATE);
+		gov_on = true;
+		printf("cpufreq: group %u (cores %#x) by its load: %u rows, %u to %u MHz\n", d, g->cores, g->rows, g->khz[0] / 1000,
+		    g->khz[g->top] / 1000);
+	}
+}
+
+/* a look: BUSY the share of the last look each core was busy, in percent */
+static void
+gov_look(const uint32_t *busy)
+{
+	for (uint32_t d = 0; d < EPSS_DOMAINS; d++) {
+		struct gov_group *g = &gov[d];
+		uint32_t most = 0, want, need;
+
+		if (g->base == 0) {
+			continue;
+		}
+		for (unsigned int i = 0; i < 32; i++) {
+			if ((g->cores >> i) & 1) {
+				most = MAX(most, busy[i]);
+			}
+		}
+		/* what the busiest core did, at the speed it had, with room to spare */
+		need = (uint32_t)((uint64_t)g->khz[g->row] * most * GOV_HEADROOM_PCT / 10000);
+		for (want = 0; want < g->top && g->khz[want] < need; want++) {
+		}
+		if (most >= GOV_UP_BUSY) {
+			want = g->top;
+		}
+		if (want >= g->row) {
+			gov_set(g, want);
+			g->down_looks = 0;
+			g->down_most = 0;
+		} else {
+			g->down_most = MAX(g->down_most, want);
+			if (++g->down_looks >= GOV_DOWN_LOOKS) {
+				gov_set(g, g->down_most);
+				g->down_looks = 0;
+				g->down_most = 0;
+			}
+		}
+		g->looks_at[g->row]++;
+	}
+}
+
+/* (every way back to the loader, interrupts off: each governed group at its top row again) */
+static void
+gov_quiesce(void)
+{
+	for (uint32_t d = 0; d < EPSS_DOMAINS; d++) {
+		if (gov[d].base != 0) {
+			*(volatile uint32_t *)(gov[d].base + EPSS_PERF_STATE) = gov[d].top;
+		}
+	}
+	gov_on = false;
+}
 
 static void
 park_thread(void *arg __unused, wait_result_t wr __unused)
@@ -315,16 +448,21 @@ park_thread(void *arg __unused, wait_result_t wr __unused)
 			big |= 1u << i;
 		}
 	}
-	if (big == all || big == 0) {
+	const bool parking = park_wanted && big != all && big != 0;
+
+	if (!parking && !gov_on) {
 		return;
 	}
 	nanoseconds_to_absolutetime(10 * NSEC_PER_SEC, &ten);
-	sched_perfcontrol_update_recommended_cores(big);
-	parked = true;
-	park_stat.parks++;
-	printf("cpufreq: small cores %#x parked while the big ones (%#x) have room (park_small=0: not)\n", all & ~big, big);
+	parked = parking;
+	if (parking) {
+		sched_perfcontrol_update_recommended_cores(big);
+		park_stat.parks++;
+		printf("cpufreq: small cores %#x parked while the big ones (%#x) have room (park_small=0: not)\n", all & ~big, big);
+	}
 	for (;;) {
 		uint64_t now, least = 100;
+		uint32_t busy_of[32] = { 0 };
 
 		delay_for_interval(PARK_MS, NSEC_PER_MSEC);
 		now = mach_absolute_time();
@@ -336,13 +474,19 @@ park_thread(void *arg __unused, wait_result_t wr __unused)
 			}
 			busy = (now - then) > (idle - idle_before[i]) ? (now - then) - (idle - idle_before[i]) : 0;
 			idle_before[i] = idle;
+			busy_of[i] = (uint32_t)MIN(100, 100 * busy / (now - then));
 			if ((big >> i) & 1) {
 				least = MIN(least, 100 * busy / (now - then));
 			}
 		}
 		then = now;
 		park_stat.looks++;
-		if (parked && least >= PARK_BUSY) {
+		if (gov_on) {
+			gov_look(busy_of);
+		}
+		if (!parking) {
+			/* (no parking: the governor alone) */
+		} else if (parked && least >= PARK_BUSY) {
 			sched_perfcontrol_update_recommended_cores(all);
 			parked = false;
 			calm = 0;
@@ -356,8 +500,24 @@ park_thread(void *arg __unused, wait_result_t wr __unused)
 			}
 		}
 		if (now - said >= ten) {
-			hakios_tl("tl: k %u looks, %u times the small cores taken, %u times parked again\n", park_stat.looks,
-			    park_stat.unparked, park_stat.parks);
+			char rows[96] = "";
+			size_t at = 0;
+
+			/* (and how many looks each governed group spent at each row, its top last: "g1 0:12 7:30 ...") */
+			for (uint32_t d = 0; gov_on && d < EPSS_DOMAINS && at < sizeof(rows) - 16; d++) {
+				if (gov[d].base == 0) {
+					continue;
+				}
+				at += (size_t)snprintf(rows + at, sizeof(rows) - at, " g%u", d);
+				for (uint32_t r = 0; r < gov[d].rows && at < sizeof(rows) - 12; r++) {
+					if (gov[d].looks_at[r] != 0) {
+						at += (size_t)snprintf(rows + at, sizeof(rows) - at, " %u:%llu", r, gov[d].looks_at[r]);
+					}
+				}
+				memset(gov[d].looks_at, 0, sizeof(gov[d].looks_at));
+			}
+			hakios_tl("tl: k %u looks, %u times the small cores taken, %u times parked again;%s\n", park_stat.looks,
+			    park_stat.unparked, park_stat.parks, rows);
 			memset(&park_stat, 0, sizeof(park_stat));
 			said = now;
 		}
@@ -371,7 +531,8 @@ park_start(void)
 	thread_t thread;
 
 	PE_parse_boot_argn("park_small", &on, sizeof(on));
-	if (on && kernel_thread_start(park_thread, NULL, &thread) == KERN_SUCCESS) {
+	park_wanted = on != 0;
+	if ((park_wanted || gov_on) && kernel_thread_start(park_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}
 }
@@ -635,6 +796,9 @@ hakios_ddr_quiesce(void)
 	uint32_t rest = DDR_REST, data[2];
 	bool done;
 
+	if (gov_on) {
+		gov_quiesce();
+	}
 	if (!ddr_voted) {
 		return;
 	}
@@ -653,7 +817,6 @@ hakios_cpufreq_init(void)
 	uint32_t enabled = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;
 
 	load_start();
-	park_start();
 	enabled = 2;
 	PE_parse_boot_argn("ddr", &enabled, sizeof(enabled));
 	/*
@@ -673,10 +836,12 @@ hakios_cpufreq_init(void)
 	}
 	enabled = 0;
 	if (!PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled)) || !enabled) {
+		park_start();           /* (the small cores parked all the same: no clocks are touched for that) */
 		return;
 	}
 	if (!hakios_board_has(HAKIOS_HAS_CPUFREQ_EPSS)) {
 		printf("cpufreq: disabled: this board's board.toml lists no \"cpufreq-epss\"\n");
+		park_start();
 		return;
 	}
 	for (unsigned int i = 0; i < topology->num_cpus; i++) {
@@ -695,6 +860,9 @@ hakios_cpufreq_init(void)
 		}
 	}
 	printf("cpufreq: on core %u a loop ran at %u, now at %u\n", here, before, loop_speed());
+	/* the groups by their load from here on (cpu_gov), and the small cores parked (park_small): one thread looks */
+	gov_start();
+	park_start();
 	if (PE_parse_boot_argn("membench", &enabled, sizeof(enabled)) && enabled == 1) {
 		memory_bench();
 	} else if (enabled == 2) {
