@@ -184,6 +184,11 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   `oem ramdisk none` left the patch armed with no image under it, and the next `download:` was allowed a
   size that wrapped and wrote past the memory window; `oem read` took an offset near 2^64 as inside the
   partition. Both are refused now.
+- **What the DSPs and the radio's driver send is held to the bounds of what was received.** A QRTR
+  datagram's size near 2^32 passed the check against its message (in the audio DSP's driver and the
+  Wi-Fi's), an APR packet smaller than its own header made its payload's length wrap, and a network's
+  name or elements longer than their arrays were read past the record, the name copied out to the
+  process that asked. Each is held to its bounds now.
 - **An APFS image of several volumes shows all of them.** `mkapfs.py` wrote a container's limit of
   volumes from its size alone, so a small image of two volumes said it held one, and the kernel's reader
   saw only the first.
