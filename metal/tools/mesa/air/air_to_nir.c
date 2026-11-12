@@ -592,7 +592,13 @@ static const struct glsl_type *
 param_glsl_type(struct air_ctx *c, const struct air_type *t)
 {
    unsigned bits = air_nir_bit_size(c, t);
-   return glsl_vector_type(bits == 16 ? GLSL_TYPE_FLOAT16 :
+   /* An i1 is a 1-bit boolean here, and a variable of it has to load as one: as
+    * a uint it came back 32 bits wide, and a `br i1` on the result of a call --
+    * airstitcher's `_ci_early_out` in every stitched CoreImage kernel -- became
+    * a 32-bit condition that nir_lower_goto_ifs asserts on.
+    */
+   return glsl_vector_type(bits == 1  ? GLSL_TYPE_BOOL :
+                           bits == 16 ? GLSL_TYPE_FLOAT16 :
                            bits == 64 ? GLSL_TYPE_UINT64 : GLSL_TYPE_UINT,
                            air_nir_components(t));
 }
@@ -4690,6 +4696,72 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
    return ok ? fn : NULL;
 }
 
+/* A call of a function that RETURNS a pointer -- or a struct holding one --
+ * translated in place, in the caller's own impl, instead of as a nir_call.
+ *
+ * A pointer here is a resolution made while translating (which resource, which
+ * byte offset), not bits, so no out-parameter can carry one back out of a
+ * nir_function: emit_return stores numbers only, and the members it cannot
+ * store came back NULL. Apple's airstitcher makes exactly this call. A
+ * stitched CoreImage kernel builds each `coreimage::Sampler` with
+ * `_ci_sampler_builder` -- four insertvalues of its arguments (a texture, a
+ * sampler, the transform's constant pointer, a float2) and a ret -- and hands
+ * the members to the sampling function after it. Called the usual way, the
+ * texture and sampler members came back empty and the next call stopped at "a
+ * call passing a pointer inside a value": iconservicesagent's
+ * `ci_asgDownH_affine_nearest` and `..._asgDownV_nearest`, the downsampling
+ * that draws the glyphs on Settings' icons. Translated here, the arguments
+ * ARE the caller's resolutions and the struct the body returns holds them.
+ *
+ * One block only, because the body's instructions go straight into the
+ * caller's current block and a branch inside the callee would need a CFG of
+ * its own there. The callee's values go into a copy of the caller's table:
+ * the two never share a key (they are different functions' values), the
+ * module's globals the caller already built are in it, and nothing the
+ * callee defines outlives the call except through what it returns.
+ */
+static bool
+call_in_place(struct air_ctx *c, const struct air_inst *in, const struct air_function *f,
+              struct air_val **argv)
+{
+   const char *name = f->base.name ? f->base.name : "a function";
+   if (f->num_blocks != 1)
+      return air_error(c, "intrinsic: a call of %s, which returns a pointer and has %u "
+                          "blocks: a pointer comes back from a call only when the callee "
+                          "is one block", name, f->num_blocks);
+   const struct air_block *blk = &f->blocks[0];
+   const struct air_inst *term = blk->num_insts ? blk->insts[blk->num_insts - 1] : NULL;
+   if (!term || term->op != AIR_OP_RET)
+      return air_error(c, "intrinsic: a call of %s, which returns a pointer from a block "
+                          "that does not end in ret", name);
+
+   const struct air_function *saved_fn = c->fn;
+   struct hash_table *saved_values = c->values;
+   c->fn = f;
+   c->values = _mesa_hash_table_clone(saved_values, c->mem_ctx);
+   for (unsigned i = 0; i < f->num_args; i++)
+      air_set(c, &f->args[i], argv[i]);
+
+   bool ok = true;
+   for (unsigned i = 0; ok && i + 1 < blk->num_insts; i++) {
+      const struct air_inst *bi = blk->insts[i];
+      ok = bi->op != AIR_OP_PHI ? translate_instruction(c, bi) && !c->error[0]
+                                : air_error(c, "intrinsic: a call of %s, a one-block "
+                                               "function with a phi", name);
+   }
+   struct air_val *ret = NULL;
+   if (ok && term->num_operands)
+      ok = (ret = air_get(c, term->operands[0])) != NULL;
+
+   c->fn = saved_fn;
+   c->values = saved_values;
+   if (!ok)
+      return false;   /* the instruction that failed has said why */
+   if (ret)
+      air_set(c, &in->base, ret);
+   return true;
+}
+
 /* A call of a function this module defines. The callee is translated as a
  * nir_function (above) and the call becomes a nir_call, which
  * nir_inline_functions folds in after the whole shader is translated.
@@ -4728,6 +4800,10 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
       if (!argv[i])
          return false;
    }
+
+   /* a pointer coming back: call_in_place */
+   if (!f->is_declaration && f->num_blocks && type_has_pointer(f->fn_type->elem, 8))
+      return call_in_place(c, in, f, argv);
 
    nir_function *fn = translate_callee(c, f, argv, is_param);
    if (!fn)
