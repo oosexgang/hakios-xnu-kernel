@@ -219,6 +219,7 @@ int fake_dev_read(const char *name, void *data, size_t size);
 int fake_dev_pwrite(const char *name, const void *data, size_t size, off_t offset, size_t *done);
 int fake_dev_pread(const char *name, void *data, size_t size, off_t offset, size_t *done);
 int fake_dev_open(const char *name, int flags);
+int fake_dev_ioctl(const char *name, unsigned long cmd, void *data);     /* -1 when there is no such node or it takes none */
 int fake_dev_close(const char *name);
 
 /*

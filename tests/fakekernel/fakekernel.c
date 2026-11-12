@@ -365,6 +365,19 @@ fake_dev_open(const char *name, int flags)
 }
 
 int
+fake_dev_ioctl(const char *name, unsigned long cmd, void *data)
+{
+	int (*ioctl)(dev_t, unsigned long, caddr_t, int, struct proc *);
+	dev_t dev;
+
+	if (!node_named(name, false, &dev) || added[major(dev)]->d_ioctl == NULL) {
+		return -1;
+	}
+	ioctl = (int (*)(dev_t, unsigned long, caddr_t, int, struct proc *))added[major(dev)]->d_ioctl;
+	return ioctl(dev, cmd, (caddr_t)data, 0, NULL);
+}
+
+int
 fake_dev_close(const char *name)
 {
 	dev_t dev;
