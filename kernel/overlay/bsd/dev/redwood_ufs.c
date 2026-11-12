@@ -299,6 +299,47 @@ ufs_sysctl_var_busy(__unused struct sysctl_oid *oidp, __unused void *arg1, __unu
 SYSCTL_PROC(_kern_redwood, OID_AUTO, var_busy, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0,
     ufs_sysctl_var_busy, "I", "the claim a writer of /dev/rufs_darwin must hold: 1 takes it, 0 gives it back");
 
+/* what was stored so far is stored, and seen by core 0, before what follows (the loader reads the page there) */
+static inline void
+ufs_barrier(void)
+{
+#if defined(__arm64__) || defined(__aarch64__)
+	__asm__ volatile ("dmb sy" ::: "memory");
+#else
+	__asm__ volatile ("" ::: "memory");     /* (the host tests on another processor) */
+#endif
+}
+
+/*
+ * What the page says of its buffer and its partitions is divided by and counted with in every request.
+ * Why a page is not one to use, or NULL: a buffer that is not whole blocks, a partition whose block
+ * size is not a power of two that fits the buffer, whose size in bytes is more than 64 bits hold, or
+ * whose name has no end.
+ */
+static const char *
+ufs_page_wrong(void)
+{
+	uint32_t buffer = ufs_page->buffer_size;
+
+	if (ufs_page->buffer_pa == 0 || buffer < 4096 || buffer % 4096 != 0) {
+		return "its buffer is not whole blocks of 4096 bytes";
+	}
+	for (uint32_t i = 0; i < ufs_page->parts; i++) {
+		uint32_t bs = ufs_page->part[i].block_size;
+
+		if (bs < 512 || bs > buffer || (bs & (bs - 1)) != 0) {
+			return "a partition's block size is not a power of two from 512 up to the buffer's size";
+		}
+		if (ufs_page->part[i].blocks > UINT64_MAX / bs) {
+			return "a partition's size in bytes is more than 64 bits hold";
+		}
+		if (memchr((const void *)ufs_page->part[i].name, 0, sizeof(ufs_page->part[i].name)) == NULL) {
+			return "a partition's name has no end";
+		}
+	}
+	return NULL;
+}
+
 /*
  * Native blocks [lba, lba + count) of partition part, one request of at most the buffer's size:
  * read into dst, or, with src, written from there. Called with ufs_lock held.
@@ -332,9 +373,9 @@ ufs_request(uint32_t op, uint32_t part, uint64_t lba, uint64_t count, uint8_t *d
 	ufs_page->ask.lba = lba;
 	ufs_page->ask.count = count;
 	ufs_page->ask.op = op;
-	__asm__ volatile ("dmb sy" ::: "memory");
+	ufs_barrier();
 	ufs_page->ask.request = seq;
-	__asm__ volatile ("dmb sy" ::: "memory");
+	ufs_barrier();
 
 	started = mach_absolute_time();
 	while (ufs_page->answer.answered != seq) {
@@ -358,7 +399,7 @@ ufs_request(uint32_t op, uint32_t part, uint64_t lba, uint64_t count, uint8_t *d
 			return EIO;
 		}
 	}
-	__asm__ volatile ("dmb sy" ::: "memory");
+	ufs_barrier();
 	{
 		uint64_t ns;
 
@@ -1463,10 +1504,14 @@ redwood_ufs_init(void)
 		    pa, ufs_page->magic, ufs_page->version, ufs_page->size);
 		return;
 	}
+	if (ufs_page_wrong() != NULL) {
+		printf("ufs: the loader's page at %llx is not used: %s\n", pa, ufs_page_wrong());
+		return;
+	}
 	ufs_parts = ufs_page->parts;
 	ufs_buffer_size = ufs_page->buffer_size;
 	buffer_pa = ufs_page->buffer_pa;
-	ufs_buffer = (const uint8_t *)(ml_io_map_unmappable((vm_offset_t)(buffer_pa & ~(UFS_PAGE - 1)),
+	ufs_buffer = (uint8_t *)(ml_io_map_unmappable((vm_offset_t)(buffer_pa & ~(UFS_PAGE - 1)),
 	    ((buffer_pa & (UFS_PAGE - 1)) + ufs_buffer_size + UFS_PAGE - 1) & ~(UFS_PAGE - 1), VM_WIMG_DEFAULT) +
 	    (buffer_pa & (UFS_PAGE - 1)));
 	ufs_seq = ufs_page->answer.answered;      /* a loader that served an earlier kernel counts on from there */
@@ -1643,7 +1688,7 @@ redwood_ufs_close(void)
 		return;
 	}
 	ufs_closing = true;
-	__asm__ volatile ("dmb sy" ::: "memory");
+	ufs_barrier();
 	clock_interval_to_deadline(2, NSEC_PER_SEC, &deadline);
 	while (ufs_page->answer.answered != ufs_page->ask.request && mach_absolute_time() < deadline) {
 		__builtin_arm_yield();
