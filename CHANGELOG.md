@@ -73,8 +73,9 @@ Renoir ("What you will notice" below). What has not been verified since is at th
   fetches and builds its host tools (`kernel/deps/stage1.sh`), makes the board table and builds. A
   separate darwin-renoir checkout is no longer needed; it is still used if it is there.
 - **A syntax check without the Darwin toolchain.** `kernel/syntax-check.sh` compiles what HakiOS adds
-  for syntax and types with the machine's own clang, in seconds against a tree that is there. It does
-  not build or link the kernel.
+  for syntax and types with the machine's own clang, in seconds against a tree that is there, and for
+  the formats of what it prints, which the real build treats as errors. It does not build or link
+  the kernel.
 - **What drivers share is written once.** Eleven drivers each had their own copy of the function that
   writes to the loader's log: `hakios_say()` in `hakios_log.h`. Fourteen had their own register
   access, in three variants: `hakios_mmio.h` has the three and says when each is needed. Waits and the
@@ -145,6 +146,8 @@ Renoir ("What you will notice" below). What has not been verified since is at th
 - **With no free memory for the kernel the loader says so**, instead of asking the firmware for a
   window of no pages.
 - **`ddr:` no longer speaks on every boot** of a board without the memory's vote.
+- **The touch drivers' messages reach the loader's log as they are said**, like every other
+  driver's, not only when a run is over.
 
 ### Repository layout
 
