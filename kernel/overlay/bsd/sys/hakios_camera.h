@@ -66,4 +66,8 @@ struct hakios_camera_command {
 	uint32_t        a, b, c, d;
 };
 
+/* (the kernel and the iOS side are built apart: what they exchange keeps its size, or both change together) */
+_Static_assert(sizeof(struct hakios_camera_frame) == 120, "a frame's header is 120 bytes");
+_Static_assert(sizeof(struct hakios_camera_command) == 24, "a command is 24 bytes");
+
 #endif /* _SYS_HAKIOS_CAMERA_H_ */
