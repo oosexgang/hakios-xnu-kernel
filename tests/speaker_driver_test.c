@@ -677,6 +677,18 @@ fault_while_playing(void)
 	never();
 }
 
+/* the amplifiers stop answering while they play: a fault, said as a status of 0xffff (not what memory held), and down */
+static void
+silent_while_playing(void)
+{
+	running();
+	CHECK(redwood_speaker_volume(0, 0) && redwood_speaker_healthy(), "playing: %s", log_text);
+	device.absent = true;
+	CHECK(!redwood_speaker_healthy(), "an amplifier that does not answer is not healthy: %s", log_text);
+	CHECK(logged("status 0xffff") && logged("an amplifier reports a fault"), "said, with the status it could not read: %s", log_text);
+	never();
+}
+
 /* what an amplifier measures: its temperature (ten bits, two's complement) and the battery (x 6025 / 1023 mV) */
 static void
 measures(uint8_t *bank, int degrees, int millivolts)
@@ -784,7 +796,7 @@ main(int argc, char **argv)
 		{ "another_wiring", another_wiring }, { "bus_not_at_rest", bus_not_at_rest }, { "prepared", prepared }, { "not_this_chip", not_this_chip },
 		{ "second_is_missing", second_is_missing }, { "write_does_not_stick", write_does_not_stick },
 		{ "file_not_trusted", file_not_trusted }, { "started", started }, { "volume_and_stop", volume_and_stop },
-		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "monitor", monitor },
+		{ "no_clock", no_clock }, { "fault_while_playing", fault_while_playing }, { "silent_while_playing", silent_while_playing }, { "monitor", monitor },
 		{ "monitor_table_not_trusted", monitor_table_not_trusted }, { "run_ends", run_ends }, { "not_listed", not_listed },
 	};
 

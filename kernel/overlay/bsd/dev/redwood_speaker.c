@@ -613,11 +613,12 @@ set_volume(struct amplifier *a, uint16_t volume)
 	return true;
 }
 
-/* What the status register says, and whether it says a fault. */
+/* What the status register says, and whether it says a fault. A status that could not be read is a fault, and reads as 0xffff. */
 static bool
 faulty(struct amplifier *a, uint16_t *status)
 {
 	if (!get(a, AW_SYSST, status)) {
+		*status = 0xffff;       /* (said in the line that reports the fault: not what was in memory) */
 		return true;
 	}
 	return (*status & SYSST_FAULTS) != 0;
