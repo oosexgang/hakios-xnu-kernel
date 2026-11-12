@@ -29,7 +29,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             if sudo timeout 240 apt-get update -q &&
-               sudo timeout 240 apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld; then
+               sudo timeout 240 apt-get install -y -q gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev; then
               exit 0
             fi
             echo "attempt $attempt failed; waiting"

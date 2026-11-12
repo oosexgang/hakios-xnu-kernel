@@ -66,6 +66,9 @@ echo "== porting_test (docs/porting.md on a made-up phone)"
 echo "== kernel_tools_test"
 "$HERE/kernel_tools_test.sh" || failed=1
 
+echo "== APFS images (userland/tools/apfs/mkapfs.py) read back by the kernel's reader, and the drivers' firmware lookup in them"
+"$HERE/apfs_image_test.sh" || failed=1
+
 echo "== qmi (kernel/overlay/bsd/dev/redwood_qmi.c under the sanitizers)"
 "$HERE/qmi/run.sh" 2>&1 | grep -v "said once" || failed=1
 

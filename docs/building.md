@@ -21,7 +21,7 @@ or iOS: the tests run against two stand-in phones in `tests/devices/`. CI runs t
 `kernel/verify.sh` and `kernel/syntax-check.sh` against Apple's release. Debian/Ubuntu packages for everything optional:
 
 ```sh
-sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld
+sudo apt-get install gcc-aarch64-linux-gnu qemu-user shellcheck clang lld zlib1g-dev libssl-dev
 ```
 
 ## The loader

@@ -67,6 +67,10 @@ void wakeup(void *channel);
 #define Z_WAITOK                        0
 #define kalloc_data(size, flags)        calloc(1, (size))
 #define kfree_data(pointer, size)       free(pointer)
+#define Z_ZERO                          0
+#define kalloc_type(type, flags)        ((type *)calloc(1, sizeof(type)))
+#define kfree_type(type, pointer)       free(pointer)
+#define __DECONST(type, var)            ((type)(uintptr_t)(const void *)(var))
 #define os_atomic_add(pointer, value, order)    __sync_add_and_fetch((pointer), (value))
 #include <sched.h>
 #define __builtin_arm_yield()           sched_yield()
