@@ -165,6 +165,55 @@ class Repository(unittest.TestCase):
         self.assertGreater(len(calls), 20)
         self.assertEqual(len(calls), len(set(calls)))
 
+    def test_what_the_loader_and_the_kernel_share_is_written_the_same_in_both(self):
+        # The loader and the kernel are built apart and talk through pages of memory: the storage's
+        # requests, the battery's state. Each side has its own copy of the page's layout and of the
+        # constants; a copy that drifts is found here and not on a phone.
+        def sources(*patterns):
+            return [path for pattern in patterns for path in sorted(ROOT.glob(pattern))]
+
+        def defines(paths):
+            found = {}
+            for path in paths:
+                for name, value in re.findall(r'(?m)^#define[ \t]+(\w+)[ \t]+(.+?)[ \t]*(?:/\*.*)?$', path.read_text()):
+                    found.setdefault(name, re.sub(r'\s+', ' ', value))
+            return found
+
+        def structures(paths):
+            found = {}
+            for path in paths:
+                for name, body in re.findall(r'(?ms)^struct (\w+) \{\n(.*?)^\}', path.read_text()):
+                    fields = []
+                    for declaration in re.sub(r'/\*.*?\*/', '', body, flags=re.S).split(';'):
+                        words = declaration.split()
+                        if not words:
+                            continue
+                        # "int32_t a, b" is two fields of one type; a field's own "*" or "[n]" stays with its name
+                        first = len(words) - 1 - sum(1 for word in words[:-1] if word.endswith(','))
+                        kind = ' '.join(words[:first])
+                        fields += [(kind, name.rstrip(',')) for name in words[first:]]
+                    found.setdefault(name, fields)
+            return found
+
+        loader = sources('loader/src/*.c', 'loader/src/*.h')
+        kernel = sources('kernel/overlay/bsd/dev/*.c', 'kernel/overlay/bsd/dev/*.h', 'kernel/overlay/bsd/sys/*.h',
+                         'kernel/overlay/osfmk/arm64/*.c', 'kernel/overlay/osfmk/arm64/*.h')
+        ours, theirs = defines(loader), defines(kernel)
+        both = sorted(set(ours) & set(theirs))
+        self.assertGreater(len(both), 15)                               # (the two pages' and the firmware calls')
+        for name in both:
+            self.assertEqual(ours[name], theirs[name], f'{name} is not the same in the loader and in the kernel')
+        for name in ('BLOCK_MAGIC', 'BLOCK_VERSION', 'LOADER_BATTERY_MAGIC', 'LOADER_BATTERY_VERSION'):
+            self.assertIn(name, both)
+        # the block from which the kernel may write into the port's partition: two names, one number
+        self.assertEqual(ours['BLOCK_WRITE_FIRST'], theirs['UFS_WRITE_FIRST'])
+        ours, theirs = structures(loader), structures(kernel)
+        for name in ('loader_block', 'loader_block_part', 'loader_battery'):
+            self.assertIn(name, ours)
+            self.assertIn(name, theirs)
+            self.assertGreater(len(ours[name]), 4)
+            self.assertEqual(ours[name], theirs[name], f'struct {name} is not the same in the loader and in the kernel')
+
     def test_the_pictures_are_pictures_and_nothing_else(self):
         pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
         self.assertIn('banner.svg', [path.name for path in pictures])
