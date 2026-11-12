@@ -698,23 +698,27 @@ class Generate(Sandbox):
         end = '\t};\n};\n'
         plain = path.read_text()
         path.write_text(plain + wiring + end)
-        self.assertIn('feature "touch-goodix" needs analog-enable and vendor-pins in touch { } of the board file', self.problems())
+        self.assertIn('feature "touch-goodix" needs analog-enable and vendor-pins and coordinates in touch { } of the board file',
+                      self.problems())
         path.write_text(plain + wiring.replace('bus-pins = <52 53 54 55>;', 'bus-pins = <52 53 54 81>;') +
-                        '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n' + end)
+                        '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n\t\tcoordinates = <10800 24000>;\n' + end)
         self.assertIn('every pin is a different pin of the SoC', self.problems())      # (the interrupt's pin on the bus)
         path.write_text(plain + wiring.replace('votes = <18 19 20 21 27>;', 'votes = <18 19 20 21 32>;') +
-                        '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n' + end)
+                        '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n\t\tcoordinates = <10800 24000>;\n' + end)
         self.assertIn('votes are five different bits of the vote register', self.problems())
         path.write_text(plain + wiring.replace('clocks = <0x18004 0x18008 0x185fc>;', 'clocks = <0x18004 0x18008>;') +
-                        '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n' + end)
+                        '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n\t\tcoordinates = <10800 24000>;\n' + end)
         self.assertIn('clocks are three different offsets', self.problems())
-        path.write_text(plain + wiring + '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n' + end)
+        path.write_text(plain + wiring + '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n\t\tcoordinates = <10800 0>;\n' + end)
+        self.assertIn('coordinates are the largest x and y the controller reports', self.problems())
+        path.write_text(plain + wiring + '\t\tanalog-enable = <107>;\n\t\tvendor-pins = <68 96>;\n\t\tcoordinates = <10800 24000>;\n' + end)
         self.assertEqual(self.problems(), '')
         table = boards.table_text(*boards.load())
         self.assertIn('.pins = { .tlmm = 0x0f100000 },', table)
         for line in ('.serial_engine = 0x00a94000,', '.m_ahb_clock = 0x18004, .s_ahb_clock = 0x18008, .se_clock = 0x185fc,',
                      '.vote_register = 0x52008, .vote = { 18, 19, 20, 21, 27 },', '.data_in = 52, .data_out = 53, .clock = 54, .chip_select = 55,',
-                     '.interrupt = 81, .reset = 105,', '.analog_enable = 107, .vendor_pin = { 68, 96 },', '.io_supply = "ldoc2",'):
+                     '.interrupt = 81, .reset = 105,', '.analog_enable = 107, .vendor_pin = { 68, 96 },', '.io_supply = "ldoc2",',
+                     '.max_x = 10800, .max_y = 24000,'):
             self.assertIn(line, table)
         # the other controller's driver needs its second supply, and no strap
         path.write_text((plain + wiring + end).replace('"touch-goodix"', '"touch-ft3658u"'))

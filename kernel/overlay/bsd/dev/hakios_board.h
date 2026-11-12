@@ -202,6 +202,7 @@ struct hakios_board {
 		int16_t analog_enable;          /* a pin that switches the chip's analog supply on, -1: none */
 		int16_t vendor_pin[2];          /* two straps that say which maker's controller is fitted, -1: none */
 		const char *io_supply, *analog_supply;  /* regulators by their names in RPMh's command database; NULL: none */
+		uint32_t max_x, max_y;          /* the largest coordinates the controller reports; 0: not said */
 	} touch;
 
 	/* the speaker's two amplifiers (board: speaker { }): the I2C bus they share and what tells them apart */

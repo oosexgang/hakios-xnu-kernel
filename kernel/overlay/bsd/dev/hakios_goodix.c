@@ -484,7 +484,7 @@ static bool (*spi_transfer)(const uint8_t *tx, uint8_t *rx, uint32_t length);
 static uint8_t spi_tx[8 + GOODIX_MAX_READ], spi_rx[8 + GOODIX_MAX_READ];
 static uint32_t touch_address, command_address;
 static const char *report_rate = "240";        /* what the status line says (touch_rate=480) */
-static uint32_t max_x = 10800, max_y = 24000;   /* the device tree's; the chip may say otherwise */
+static uint32_t max_x, max_y;   /* the board's touch { } coordinates; the chip may say otherwise */
 
 static bool
 goodix_read(uint32_t address, uint8_t *data, uint32_t length)
@@ -1069,7 +1069,7 @@ focaltech_probe(bool verbose)
  *                                 are packed in with it)
  *   report[2 + 6*i + 5] = AREA:  touch area / major
  * Coordinates are 15-bit "super-high resolution" sub-pixel values; the touch panel's actual
- * extent is reported through the device tree as x_max/y_max (10800 x 24000 for redwood).
+ * extent is the board's touch { } coordinates (the device tree's focaltech,display-coords).
  */
 #define FOCALTECH_EVENT_DOWN        0
 #define FOCALTECH_EVENT_UP          1
@@ -1122,8 +1122,8 @@ focaltech_contact_update(uint32_t id, uint32_t event, uint32_t x, uint32_t y,
 	}
 }
 
-/* Panel size in the FT3680 super-high-resolution reports (device tree x_max/y_max on redwood). */
-static uint32_t focaltech_max_x = 10800, focaltech_max_y = 24000;
+/* Panel size in the FT3680 super-high-resolution reports: the board's touch { } coordinates. */
+static uint32_t focaltech_max_x, focaltech_max_y;
 
 static void
 focaltech_report(const uint8_t *report)
@@ -1394,10 +1394,13 @@ hakios_goodix_init(void)
 		return;
 	}
 	if (WIRED->serial_engine == 0 || WIRED->io_supply == NULL || WIRED->analog_enable < 0 || WIRED->vendor_pin[0] < 0 ||
-	    WIRED->vendor_pin[1] < 0) {
-		printf("touch: disabled: the board file does not say how the controller is wired (touch { }, with analog_enable and vendor_pins)\n");
+	    WIRED->vendor_pin[1] < 0 || WIRED->max_x == 0 || WIRED->max_y == 0) {
+		printf("touch: disabled: the board file does not say how the controller is wired (touch { }, with analog-enable, "
+		    "vendor-pins and coordinates)\n");
 		return;
 	}
+	max_x = focaltech_max_x = WIRED->max_x;
+	max_y = focaltech_max_y = WIRED->max_y;
 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
 	if (kernel_thread_start(goodix_thread, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);

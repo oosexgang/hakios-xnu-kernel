@@ -67,6 +67,7 @@
 		io-supply = "ldoc2";
 		analog-enable = <107>;
 		vendor-pins = <68 96>;
+		coordinates = <10800 24000>;            // goodix,panel-max-x and -y
 	};
 
 	// Its speaker's two amplifiers: their I2C bus on GPIO 12/13, at 0x35 and 0x34, interrupts on GPIO 102 and 45.

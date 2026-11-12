@@ -16,7 +16,7 @@ the two the same. What each key means is in `devices/_template/soc.dtsi` and
 | `battery-uefi` | nothing | nothing | `battery=1` |
 | `buttons-pmic` | `spmi { }` | `buttons { }`: `pon`, `volume-up` | `buttons=1` |
 | `adsp` | `rpmh { }`; `ipc { }` | `adsp { }`: `firmware`, `memory`, `memory-size` | `adsp=1` |
-| `touch-goodix` | `pins { }`; `clocks { }`; `rpmh { }` | `touch { }`: `serial-engine`, `clocks`, `vote-register`, `votes`, `bus-pins`, `interrupt`, `reset`, `io-supply`, `analog-enable`, `vendor-pins` | `touchscreen=1` |
+| `touch-goodix` | `pins { }`; `clocks { }`; `rpmh { }` | `touch { }`: `serial-engine`, `clocks`, `vote-register`, `votes`, `bus-pins`, `interrupt`, `reset`, `io-supply`, `analog-enable`, `vendor-pins`, `coordinates` | `touchscreen=1` |
 | `touch-ft3658u` | `pins { }`; `clocks { }`; `rpmh { }` | `touch { }`: `serial-engine`, `clocks`, `vote-register`, `votes`, `bus-pins`, `interrupt`, `reset`, `io-supply`, `analog-supply` | `touchscreen=1` |
 | `speaker-aw88261` | `pins { }`; `clocks { }`; `rpmh { }`; `smmu { }` | `speaker { }`: `sda`, `scl`, `addresses`, `interrupts`, `sound-pins`, `sound-function` | `speaker_probe=N looks; sound=N with adsp=1` |
 | `haptic-aw86927` | `pins { }` | `haptic { }`: `sda`, `scl`, `reset`, `interrupt`, `f0-calibration` | `haptic=N` |
