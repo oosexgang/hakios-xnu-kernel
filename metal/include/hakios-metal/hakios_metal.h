@@ -318,6 +318,10 @@ int hakios_metal_program_set_samples(hakios_metal_program *program, unsigned sam
 int hakios_metal_program_set_blend_at(hakios_metal_program *program, unsigned index, int enabled, unsigned rgb_op, unsigned alpha_op,
     unsigned src_rgb, unsigned dst_rgb, unsigned src_alpha, unsigned dst_alpha, unsigned write_mask);
 
+/* the colour attachments a draw of PROGRAM writes, as a mask: those its fragment function writes ([[color(n)]]) with a
+ * write mask that lets something through (as hakios_metal_program_set_blend_at left it) */
+unsigned hakios_metal_program_color_writes(hakios_metal_program *program);
+
 struct hakios_metal_viewport { double x, y, width, height, znear, zfar; };   /* MTLViewport: origin top left, NDC y up */
 struct hakios_metal_scissor { unsigned x, y, width, height; };              /* MTLScissorRect */
 

@@ -1279,6 +1279,17 @@ int hakios_metal_program_set_blend_at(hakios_metal_program* p, unsigned index, i
     return 0;
 }
 
+unsigned hakios_metal_program_color_writes(hakios_metal_program* p) {
+    const Program& program = p->program->program;
+    unsigned mask = 0;
+    for (uint32_t i = 0; i < kMaxColorOutputs && i < program.fs.numColorOutputs; i++) {
+        if (i == 1 && program.fs.dualSrcBlend) continue;   // (the blend's second source, not attachment 1)
+        const ColorBlend& cb = i == 0 ? program.blend : program.moreBlend[i - 1];
+        if (program.fs.colorRegid[i] != a6xx::kRegidNone && (cb.writeMask & 0xf) != 0) mask |= 1u << i;
+    }
+    return mask;
+}
+
 // the C interface's pass as the core's: attachment 0, 1 to 7, the depth attachment and their actions
 static RenderPass passOf(const struct hakios_metal_render_pass* pass) {
     RenderPass rp;

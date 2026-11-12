@@ -4,7 +4,7 @@
 # system image links into /System/Library/Extensions (mkimage26.py). Metal loads it in every program that asks for
 # a device once the kernel names it (boot-arg metal=1), CoreAnimation's renderer in backboardd first.
 #
-# It is metal/plugin/HakiosMetalCA.m, the plug-in that serves CoreAnimation, over metal/'s driver built with its
+# It is metal/plugin/HakiosMetalCA.m, the plug-in that serves CoreAnimation (with plugin/ca_paths.c), over metal/'s driver built with its
 # compiler (make ios MESA=1) and Mesa's compiler archives (metal/tools/mk-mesa.sh). Like the other libraries:
 # pacstrip, then ldid; root26-ios.sh signs it ad hoc with the rest.
 set -e
@@ -33,7 +33,7 @@ for f in open first_problem status formats variant_hook; do
 done
 # shellcheck disable=SC2086  # (DYN, MESA_LIBS and M2V_LEFT are lists of words)
 $DYN -bundle -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
-	-I"$M/include" -o "$OBJ/HakiosMetal" "$M/plugin/HakiosMetalCA.m" "$M/out/ios/libhakios-metal.a" $MESA_LIBS -lc++ \
+	-I"$M/include" -I"$M/plugin" -o "$OBJ/HakiosMetal" "$M/plugin/HakiosMetalCA.m" "$M/plugin/ca_paths.c" "$M/out/ios/libhakios-metal.a" $MESA_LIBS -lc++ \
 	$M2V_LEFT
 "$PACSTRIP" macho "$OBJ/HakiosMetal" "$OBJ/HakiosMetal.strip" > /dev/null && mv "$OBJ/HakiosMetal.strip" "$OBJ/HakiosMetal"
 "$LDID" -S "$OBJ/HakiosMetal"

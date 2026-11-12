@@ -106,6 +106,7 @@
 #include <unistd.h>
 
 #include "hakios-metal/hakios_metal.h"
+#include "ca_paths.h"
 
 /* --- printing ----------------------------------------------------------------------------------------------- */
 
@@ -406,6 +407,14 @@ hm_ivar(const char *className, const char *ivarName)
 
 	return cls != Nil ? class_getInstanceVariable(cls, ivarName) : NULL;
 }
+
+/* what the map of CoreAnimation's path mask did (hm_mask_*, ca_paths.h), for metal_fps's lines: path_blit and path_clear
+ * cut (into how many rectangles), left out, drawn as they came; and how often something it cannot follow marked every
+ * column, the last by which program */
+static struct {
+	unsigned cut, rects, left, asIs, fills;
+	char fillBy[96];
+} hm_paths_stat;
 
 /* host time as Metal's CFTimeInterval reports it (seconds of mach_absolute_time) */
 static double
@@ -1250,10 +1259,20 @@ HM_REFUSES_OUT_LOUD
 	int _specBinding;
 	unsigned _specLength;
 	NSMutableDictionary *_specialised;
+	/* what it is to CoreAnimation's path renderer (ca_paths.h): CA_PATH_NONE for every other pipeline */
+	unsigned _pathRole, _pathShift;
+	BOOL _pathKeepsOnZero;   /* path_blit: its colour times a coverage of 0 leaves the attachments as they were */
+	BOOL _pathZeroes;        /* path_blit, path_clear: it writes the mask, unblended: 0 wherever it draws */
+	unsigned _colorWrites;   /* the colour attachments it writes (hakios_metal_program_color_writes) */
 }
 - (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device program:(hakios_metal_program *)program
 			  descriptor:(MTLRenderPipelineDescriptor *)descriptor;
 - (hakios_metal_program *)hakiosProgram;
+- (unsigned)hakiosPathRole;
+- (unsigned)hakiosPathShift;
+- (BOOL)hakiosPathKeepsOnZero;
+- (BOOL)hakiosPathZeroes;
+- (unsigned)hakiosColorWrites;
 - (void)hakiosKeepFragment:(NSData *)air constants:(const hakios_metal_constant *)constants count:(unsigned)count;
 - (hakios_metal_program *)hakiosProgramFor:(hakios_metal_buffer *const *)buffers offsets:(const uint64_t *)offsets count:(unsigned)count;
 @end
@@ -1370,6 +1389,8 @@ HM_REFUSES_OUT_LOUD
 	MTLWinding _frontFacingWinding;             /* -setFrontFacingWinding:'s, also in _pass.winding for the draws */
 	char _refused[160];                         /* a binding or state this encoder could not take: the next draw is failed by it */
 	NSMutableIndexSet *_visibilityCounted;      /* the result words (offset / 8) a draw of this encoder has counted into */
+	struct ca_paths_map _mask;                  /* CoreAnimation's path mask: each band's columns where it may not be 0 */
+	BOOL _inPathDraw;                           /* -hakiosPathDraw: is drawing (its draw is not judged again) */
 }
 - (instancetype)initWithHakiosCommandBuffer:(HakiosMetalCommandBuffer *)commandBuffer pass:(const struct hakios_metal_render_pass *)pass
 			       colorTexture:(HakiosMetalTexture *)texture;
@@ -5836,7 +5857,8 @@ hm_fps_draws(void)
  * or sysmem by what each costs, hakios_metal_cb_set_gmem_tuned; 16: the hardware's binning,
  * hakios_metal_cb_set_gmem_binning; 32: every fragment texture the null one, wrong pictures but each draw's time without
  * its texture reads, hakios_metal_cb_set_null_fs_textures; 64: no barrier before a tile's fetch, the rasterizer's
- * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier), for a bisect.
+ * ordering alone; 128: every draw of a GMEM pass in that ordering, no barrier; 256: CoreAnimation's path_blit and path_clear
+ * as it asks for them, as metal_paths=0 does), for a bisect.
  * metal_gmem_cycle=N,N,...@SECONDS instead: each of those values in turn, SECONDS (20 when not given) each, from the
  * first command buffer on, and around again -- several settings timed in one boot, each change printed */
 static unsigned
@@ -6128,6 +6150,12 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 
 			hakios_metal_buffer_counts(&made, &reused, &bytes);
 			hm_print("fps: ... buffers: %u made (%llu KB), %u taken again from the pool\n", made, bytes >> 10, reused);
+			if (hm_paths_stat.cut + hm_paths_stat.left + hm_paths_stat.asIs + hm_paths_stat.fills != 0) {
+				hm_print("fps: ... paths: %u path_blit/path_clear cut to %u rectangles, %u left out, %u as they came; the whole mask marked "
+					 "%u times (the last by %s)\n", hm_paths_stat.cut, hm_paths_stat.rects, hm_paths_stat.left, hm_paths_stat.asIs,
+					 hm_paths_stat.fills, hm_paths_stat.fillBy[0] ? hm_paths_stat.fillBy : "-");
+				memset(&hm_paths_stat, 0, sizeof(hm_paths_stat));
+			}
 		}
 		if (hm_fps.drawCalls != 0) {
 			char by[200] = "";
@@ -7520,6 +7548,116 @@ hm_rows_texture(HakiosMetalBlitCommandEncoder *self, hakios_metal_cb *cb, hakios
  * The render pipeline state: one linked vertex + fragment program
  * ============================================================================================================ */
 
+/* --- CoreAnimation's path renderer: where its coverage mask can be other than 0 (plugin/ca_paths.h says what and why)
+ * ---------------------------------------------------------------------------------------------------------------------
+ * The home screen's main pass, path_blit and path_clear over the whole screen for each stripe of the wallpaper: 36 ms on
+ * the GPU; cut to the map, 18 (metal_gmem_cycle=0,256@20, logs/075602-run.log), 220 of their 480 draws in 2 s left out
+ * and the rest cut to some 53 rectangles each. The picture is the same to the pixel. Boot-arg metal_paths=0 draws them as
+ * CoreAnimation asks. */
+#define HM_MASK_CUT_MAX 512         /* rectangles a cut draw may have; more and it goes as it is */
+
+
+static BOOL
+hm_paths_on(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		on = !(sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_paths=0") != NULL);
+	}
+	return on == 1;
+}
+
+/* a blend that leaves the attachment as it was where the fragment's colour is 0: the source times anything is 0, so an
+ * addition (or the source taken from the destination) with a destination factor that is 1 for a source of 0 */
+static BOOL
+hm_blend_keeps_on_zero(MTLRenderPipelineColorAttachmentDescriptor *c)
+{
+	if (c == nil || [c pixelFormat] == MTLPixelFormatInvalid || [c writeMask] == MTLColorWriteMaskNone) return YES;
+	if (![c isBlendingEnabled]) return NO;
+	const MTLBlendOperation ops[2] = {[c rgbBlendOperation], [c alphaBlendOperation]};
+	const MTLBlendFactor dst[2] = {[c destinationRGBBlendFactor], [c destinationAlphaBlendFactor]};
+	for (int i = 0; i < 2; i++) {
+		if (ops[i] != MTLBlendOperationAdd && ops[i] != MTLBlendOperationReverseSubtract) return NO;
+		if (dst[i] != MTLBlendFactorOne && dst[i] != MTLBlendFactorOneMinusSourceAlpha && dst[i] != MTLBlendFactorOneMinusSourceColor) return NO;
+	}
+	return YES;
+}
+
+/* what a pipeline is to the path renderer, by its functions' names; WRITES the attachments it writes */
+static void
+hm_path_judge(MTLRenderPipelineDescriptor *d, unsigned writes, unsigned *role, unsigned *shift, BOOL *keeps, BOOL *zeroes)
+{
+	NSString *v = [[d vertexFunction] name], *f = [[d fragmentFunction] name];
+	MTLRenderPipelineColorAttachmentDescriptor *mask = [[d colorAttachments] objectAtIndexedSubscript:CA_PATHS_MASK];
+
+	*role = CA_PATH_NONE, *shift = 0, *keeps = NO, *zeroes = NO;
+	if (v == nil || f == nil || !(writes >> CA_PATHS_MASK & 1)) {
+		return;
+	}
+	if ([v hasPrefix:@"path_rect_vert"] && [f hasPrefix:@"path_rect_frag"]) {
+		*role = CA_PATH_RECT;
+	} else if ([v hasPrefix:@"path_cubic_vert_0"] && [f hasPrefix:@"path_cubic_frag"]) {
+		*role = CA_PATH_CUBIC, *shift = 1;   /* (each cubic in two pieces: the instance over 2 is the cubic) */
+	} else if ([v hasPrefix:@"path_cubic_vert_1"] && [f hasPrefix:@"path_cubic_frag"]) {
+		*role = CA_PATH_CUBIC, *shift = 3;   /* (in eight) */
+	} else if ([v hasPrefix:@"path_blit_vert"] && [f hasPrefix:@"path_blit_frag"]) {
+		*role = CA_PATH_BLIT;
+	} else if ([v hasPrefix:@"path_blit_vert"] && [f hasPrefix:@"path_clear_frag"] && writes == 1u << CA_PATHS_MASK) {
+		*role = CA_PATH_CLEAR;
+	}
+	*zeroes = (*role == CA_PATH_BLIT || *role == CA_PATH_CLEAR) && ![mask isBlendingEnabled] && ([mask writeMask] & MTLColorWriteMaskRed) != 0;
+	if (*role == CA_PATH_BLIT) {
+		/* every colour it writes kept where the coverage is 0, and the mask either written 0 (where it is 0) or kept */
+		*keeps = *zeroes || hm_blend_keeps_on_zero(mask);
+		for (unsigned i = 0; i < 8; i++) {
+			if (i != CA_PATHS_MASK && (writes >> i & 1) && !hm_blend_keeps_on_zero([[d colorAttachments] objectAtIndexedSubscript:i])) *keeps = NO;
+		}
+	}
+	if (*role == CA_PATH_CLEAR) {
+		*keeps = *zeroes;   /* (0 written where it is 0) */
+	}
+	if ([v hasPrefix:@"path_"]) {
+		hm_print("paths: %s+%s is %s: writes %#x; the mask %s, write mask %#lx; %s%s\n", [v UTF8String], [f UTF8String],
+			 (const char *[]){"none of the four", "path_rect", "path_cubic", "path_blit", "path_clear"}[*role], writes,
+			 [mask isBlendingEnabled] ? "blended" : "not blended", (unsigned long)[mask writeMask],
+			 *keeps ? "cut to the map" : "drawn as it is", *zeroes ? ", the mask 0 after it" : "");
+	}
+}
+
+/* the map at an encoder's start: when its pass has an attachment for the mask, every column of every band unless the
+ * pass clears the mask to 0 */
+static void
+hm_mask_begin(const struct hakios_metal_render_pass *pass, struct ca_paths_map *map)
+{
+	const struct hakios_metal_color_attachment *a = &pass->more[CA_PATHS_MASK - 1];
+
+	memset(map, 0, sizeof(*map));
+	if (!hm_paths_on() || (hm_gmem_off() & 256) != 0 || a->texture == NULL) {   /* (metal_gmem_off's 256: as metal_paths=0, to cycle) */
+		return;
+	}
+	const unsigned w = MAX(1u, hakios_metal_texture_width(a->texture) >> a->level), h = MAX(1u, hakios_metal_texture_height(a->texture) >> a->level);
+	const BOOL cleared = a->load_action == 2 && a->clear_color[0] == 0;
+
+	ca_paths_begin(map, w, h, cleared);
+	static unsigned told;
+	if (told < 3) {
+		told++;
+		hm_print("paths: a pass with a mask attachment, %ux%u: %u bands, %s\n", w, h, map->bands, cleared ? "cleared" : "every column marked");
+	}
+}
+
+/* NEED bytes of the vertex stage's buffer I from its offset, or NULL */
+static const void *
+hm_vs_bytes(hakios_metal_buffer *const *vs, const uint64_t *offsets, unsigned count, unsigned i, uint64_t need)
+{
+	if (i >= count || vs[i] == NULL || hakios_metal_buffer_contents(vs[i]) == NULL || hakios_metal_buffer_length(vs[i]) < offsets[i] + need) return NULL;
+	return (const uint8_t *)hakios_metal_buffer_contents(vs[i]) + offsets[i];
+}
+
 @implementation HakiosMetalRenderPipelineState
 
 /* the base declares the public protocol itself; declared again so that a conformsToProtocol: is a static yes whatever
@@ -7567,8 +7705,16 @@ HM_REFUSES_OUT_LOUD
 	_hakiosDevice = [device retain];
 	_program = program;
 	_hakiosUniqueIdentifier = hm_next_resource_id();
+	_colorWrites = hakios_metal_program_color_writes(program);
+	hm_path_judge(descriptor, _colorWrites, &_pathRole, &_pathShift, &_pathKeepsOnZero, &_pathZeroes);
 	return self;
 }
+
+- (unsigned)hakiosPathRole { return _pathRole; }
+- (unsigned)hakiosPathShift { return _pathShift; }
+- (BOOL)hakiosPathKeepsOnZero { return _pathKeepsOnZero; }
+- (BOOL)hakiosPathZeroes { return _pathZeroes; }
+- (unsigned)hakiosColorWrites { return _colorWrites; }
 
 - (void)dealloc
 {
@@ -7769,6 +7915,7 @@ hm_spec_off(void)
 	_colorTexture = [texture retain];
 	_pass = *pass;
 	_frontFacingWinding = MTLWindingClockwise;   /* Metal's default */
+	hm_mask_begin(&_pass, &_mask);
 	return self;
 }
 
@@ -7810,6 +7957,7 @@ hm_spec_off(void)
 	}
 	[_scratch release];
 	[_visibilityCounted release];
+	ca_paths_end(&_mask);
 	[super dealloc];
 }
 
@@ -8546,10 +8694,99 @@ hm_trace_draw(const void *which, const char *program, const struct hakios_metal_
 	if (began != 0) hm_fps.lastTpidr = tpidr;
 }
 
+/* A draw of CoreAnimation's path renderer, or one that writes its mask, against the map (ca_paths.h): YES when it has
+ * been drawn here (path_blit and path_clear, cut to the map, or not at all), NO when it is to be drawn as it is (the map
+ * brought up to date with it first) */
+- (BOOL)hakiosPathDraw:(MTLPrimitiveType)primitive vertexStart:(NSUInteger)start vertexCount:(NSUInteger)count
+	 instanceCount:(NSUInteger)instances baseInstance:(NSUInteger)baseInstance
+{
+	const unsigned role = [_pipeline hakiosPathRole];
+	const struct ca_paths_viewport vp = _hasViewport ? (struct ca_paths_viewport){_viewport.x, _viewport.y, _viewport.width, _viewport.height}
+						      : (struct ca_paths_viewport){0, 0, _mask.width, _mask.height};
+	hakios_metal_buffer *vs[HM_MAX_BUFFERS];
+
+	for (unsigned i = 0; i < _vsHighest; i++) {
+		vs[i] = _vsBuffers[i] != nil ? [_vsBuffers[i] hakiosBuffer] : NULL;
+	}
+	if (role == CA_PATH_NONE) {
+		if ([_pipeline hakiosColorWrites] >> CA_PATHS_MASK & 1) {
+			ca_paths_fill(&_mask);
+			hm_paths_stat.fills++;
+			strlcpy(hm_paths_stat.fillBy, hakios_metal_program_name([_pipeline hakiosProgram]), sizeof(hm_paths_stat.fillBy));
+		}
+		return NO;
+	}
+	const float *m = hm_vs_bytes(vs, _vsOffsets, _vsHighest, 2, 64);
+	if (role == CA_PATH_RECT || role == CA_PATH_CUBIC) {
+		const uint8_t *edges = hm_vs_bytes(vs, _vsOffsets, _vsHighest, 1, 1);
+		const uint64_t room = edges != NULL ? hakios_metal_buffer_length(vs[1]) - _vsOffsets[1] : 0;
+
+		if (!ca_paths_cover(&_mask, (enum ca_path_role)role, [_pipeline hakiosPathShift], &vp, m, hm_vs_bytes(vs, _vsOffsets, _vsHighest, 5, 16),
+				    edges, room, (unsigned)instances, (unsigned)baseInstance)) {
+			ca_paths_fill(&_mask);
+			hm_paths_stat.fills++;
+			strlcpy(hm_paths_stat.fillBy, "(edges it could not read)", sizeof(hm_paths_stat.fillBy));
+		}
+		return NO;
+	}
+	/* path_blit, path_clear: four vertices a rectangle (buffer 1), through the matrix at buffer 2 */
+	const uint8_t *rects = hm_vs_bytes(vs, _vsOffsets, _vsHighest, 1, (uint64_t)(baseInstance + instances) * 24);
+	if (m == NULL || rects == NULL || count != 4 || primitive != MTLPrimitiveTypeTriangleStrip || start != 0) {
+		return NO;
+	}
+	rects += (size_t)baseInstance * 24;
+	uint8_t *cut = malloc(HM_MASK_CUT_MAX * 24);
+	const int n = cut != NULL && [_pipeline hakiosPathKeepsOnZero] ? ca_paths_cut(&_mask, &vp, m, rects, (unsigned)instances, cut, HM_MASK_CUT_MAX) : -1;
+	_inPathDraw = YES;
+	hm_paths_stat.cut += n > 0, hm_paths_stat.rects += n > 0 ? (unsigned)n : 0, hm_paths_stat.left += n == 0, hm_paths_stat.asIs += n < 0;
+	if (n > 0) {
+		HakiosMetalBuffer *old = [_vsBuffers[1] retain];
+		const uint64_t oldOffset = _vsOffsets[1];
+
+		[self setVertexBytes:cut length:(NSUInteger)n * 24 atIndex:1];
+		[self hakiosDrawOnce:primitive vertexStart:start vertexCount:count instanceCount:(NSUInteger)n indexBuffer:nil indexType:MTLIndexTypeUInt16
+			 indexOffset:0 baseVertex:0 baseInstance:0];
+		[self setVertexBuffer:old offset:oldOffset atIndex:1];
+		[old release];
+	} else if (n < 0) {
+		[self hakiosDrawOnce:primitive vertexStart:start vertexCount:count instanceCount:instances indexBuffer:nil indexType:MTLIndexTypeUInt16
+			 indexOffset:0 baseVertex:0 baseInstance:baseInstance];
+	}
+	/* (n 0: the mask is 0 under every rectangle, so the draw would change nothing) */
+	_inPathDraw = NO;
+	free(cut);
+	if ([_pipeline hakiosPathZeroes]) {
+		const unsigned scissor[4] = {_scissor.x, _scissor.y, _scissor.width, _scissor.height};
+		unsigned before = 0, after = 0;
+		for (unsigned b = 0; b < _mask.bands; b++) before += _mask.hi[b] > _mask.lo[b];
+		ca_paths_zeroed(&_mask, &vp, m, rects, (unsigned)instances, _hasScissor ? scissor : NULL);
+		for (unsigned b = 0; b < _mask.bands; b++) after += _mask.hi[b] > _mask.lo[b];
+		/* (once or twice: a draw that wrote 0 and emptied no band of the map -- its rectangles, as the map read them) */
+		static unsigned told;
+		if (before != 0 && after == before && told < 2) {
+			told++;
+			NSMutableString *line = [NSMutableString string];
+			for (unsigned i = 0; i < instances && i < 16; i++) {
+				const float *r = (const float *)(rects + (size_t)i * 24);
+				[line appendFormat:@" (%.4f,%.4f)-(%.4f,%.4f)", vp.x + (r[0] * m[0] + m[12] + 1) * 0.5 * vp.w, vp.y + (1 - (r[1] * m[5] + m[13])) * 0.5 * vp.h,
+					vp.x + (r[2] * m[0] + m[12] + 1) * 0.5 * vp.w, vp.y + (1 - (r[3] * m[5] + m[13])) * 0.5 * vp.h];
+			}
+			hm_print("paths: %s wrote 0 and emptied none of %u bands; viewport %g,%g %gx%g, scissor %s %u,%u %ux%u; its %lu rectangles:%s\n",
+				 role == CA_PATH_BLIT ? "path_blit" : "path_clear", before, vp.x, vp.y, vp.w, vp.h, _hasScissor ? "set" : "none", _scissor.x,
+				 _scissor.y, _scissor.width, _scissor.height, (unsigned long)instances, [line UTF8String]);
+		}
+	}
+	return YES;
+}
+
 - (void)hakiosDrawOnce:(MTLPrimitiveType)primitive vertexStart:(NSUInteger)start vertexCount:(NSUInteger)count instanceCount:(NSUInteger)instances
 	   indexBuffer:(id)indexBuffer indexType:(MTLIndexType)indexType indexOffset:(NSUInteger)indexOffset baseVertex:(NSInteger)baseVertex
 	  baseInstance:(NSUInteger)baseInstance
 {
+	if (_mask.bands != 0 && !_inPathDraw && _pipeline != nil && indexBuffer == nil && _indirectArgs == nil && _refused[0] == '\0' &&
+	    [self hakiosPathDraw:primitive vertexStart:start vertexCount:count instanceCount:instances baseInstance:baseInstance]) {
+		return;
+	}
 	hakios_metal_cb *cb = [self hakiosCb];
 	int drawn;
 	hakios_metal_buffer *vs[HM_MAX_BUFFERS], *fs[HM_MAX_BUFFERS];

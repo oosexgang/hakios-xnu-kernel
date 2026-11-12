@@ -63,7 +63,7 @@ TESTS     = $(wildcard tests/*_test.cpp) tests/main.cpp
 .PHONY: test tsan asan check ios darwin clean sweep
 
 # (and the front end's archive: a test binary linked before the front end changed passed or failed for the old one)
-$(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wildcard tests/fixtures/*.hpp) tests/test.hpp \
+$(HOSTOUT)/tests: $(HOST) $(TESTS) $(wildcard include/hakios-metal/*.hpp) $(wildcard tests/fixtures/*.hpp) tests/test.hpp plugin/ca_paths.c plugin/ca_paths.h \
 		$(if $(strip $(MESA)),$(MESA_BUILD)/src/compiler/air/libair.a)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(HOST) $(TESTS) $(HOSTLIBS)
