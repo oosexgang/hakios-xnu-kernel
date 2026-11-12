@@ -47,4 +47,21 @@ hakios_say(const char *format, ...)
 	return length;
 }
 
+/*
+ * A driver's own say(): to the loader's log, and to the kernel's while `kernel_log_too` holds -- its
+ * own rule, as "not on the way back to the loader" (where interrupts are off).
+ */
+#define HAKIOS_DEFINE_SAY(kernel_log_too)                                       \
+	static int __printflike(1, 2)                                           \
+	say(const char *format, ...)                                            \
+	{                                                                       \
+		va_list list;                                                   \
+		int length;                                                     \
+                                                                                \
+		va_start(list, format);                                         \
+		length = hakios_vsay((kernel_log_too), format, list);           \
+		va_end(list);                                                   \
+		return length;                                                  \
+	}
+
 #endif /* _HAKIOS_LOG_H */

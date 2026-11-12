@@ -68,19 +68,7 @@
 static uint32_t level;
 static bool broken, leaving;
 
-static int say(const char *format, ...) __printflike(1, 2);
-
-static int
-say(const char *format, ...)
-{
-	va_list list;
-	int length;
-
-	va_start(list, format);
-	length = hakios_vsay(!leaving && ml_get_interrupts_enabled(), format, list);
-	va_end(list);
-	return length;
-}
+HAKIOS_DEFINE_SAY(!leaving && ml_get_interrupts_enabled())
 
 /*
  * The events that matter (lit, off, cut, trouble) are also kept, and said again at the run's end:

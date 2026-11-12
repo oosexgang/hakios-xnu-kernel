@@ -128,19 +128,7 @@ static bool quiet;                      /* repeating accesses that have been ann
  * as well, before the next register is touched.
  */
 
-static int say(const char *format, ...) __printflike(1, 2);
-
-static int
-say(const char *format, ...)
-{
-	va_list list;
-	int length;
-
-	va_start(list, format);
-	length = hakios_vsay(true, format, list);
-	va_end(list);
-	return length;
-}
+HAKIOS_DEFINE_SAY(true)
 #define printf say
 
 /* ---- register access ------------------------------------------------------------------------------- */

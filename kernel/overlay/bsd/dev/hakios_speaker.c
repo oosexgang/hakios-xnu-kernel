@@ -79,19 +79,7 @@ static uint32_t probe_level;
 static bool leaving;                    /* on a panic's way out: nothing sleeps, nothing is said but to the loader */
 
 /* Every line to the loader's log as well: what is written to the amplifiers should be known even if the kernel dies. */
-static int say(const char *format, ...) __printflike(1, 2);
-
-static int
-say(const char *format, ...)
-{
-	va_list list;
-	int length;
-
-	va_start(list, format);
-	length = hakios_vsay(!leaving, format, list);
-	va_end(list);
-	return length;
-}
+HAKIOS_DEFINE_SAY(!leaving)
 
 #include "hakios_mmio.h"
 #include "hakios_time.h"
