@@ -1,5 +1,5 @@
 /*
- * Where the driver of renoir's FT3658U (kernel/overlay/bsd/dev/hakios_fts.c) takes its wiring from. The
+ * Where the FocalTech FT3658U driver (kernel/overlay/bsd/dev/hakios_fts.c) takes its wiring from. The
  * driver is compiled as it is into a host program; nothing of the controller is modelled. What is
  * tested: every address, clock, vote and pin the driver uses is the board's (touch { } of its file); for
  * the phone the driver was written on they are the numbers that used to be in the code; for a board
@@ -40,14 +40,14 @@ wiring(uint32_t *w)
 {
 	gcc = 0;                                /* (the clocks as offsets in the clock controller) */
 	w[0] = (uint32_t)SE_PHYS;
-	w[1] = (uint32_t)GCC_QUP0_M_AHB_CBCR;
-	w[2] = (uint32_t)GCC_QUP0_S_AHB_CBCR;
-	w[3] = (uint32_t)GCC_QUP0_SE2_CBCR;
-	w[4] = VOTE_QUP0_CORE_2X;
-	w[5] = VOTE_QUP0_CORE;
-	w[6] = VOTE_QUP0_M_AHB;
-	w[7] = VOTE_QUP0_S_AHB;
-	w[8] = VOTE_QUP0_SE2;
+	w[1] = (uint32_t)GCC_QUP_M_AHB_CBCR;
+	w[2] = (uint32_t)GCC_QUP_S_AHB_CBCR;
+	w[3] = (uint32_t)GCC_SE_CBCR;
+	w[4] = VOTE_QUP_CORE_2X;
+	w[5] = VOTE_QUP_CORE;
+	w[6] = VOTE_QUP_M_AHB;
+	w[7] = VOTE_QUP_S_AHB;
+	w[8] = VOTE_SE;
 	w[9] = PIN_DATA0;
 	w[10] = PIN_DATA1;
 	w[11] = PIN_CLK;
@@ -84,8 +84,8 @@ as_it_was(void)
 	wiring(is);
 	same(is, was, "phone-cmd");
 	/* the engine's rate generator follows its clock at distances that are the same for every engine */
-	CHECK(GCC_QUP0_SE2_CMD == was[3] + 0x04 && GCC_QUP0_SE2_CFG == was[3] + 0x08 && GCC_QUP0_SE2_DFSR == was[3] + 0x18 &&
-	    GCC_QUP0_SE2_PERF_CFG(2) == was[3] + 0x28 && GCC_QUP0_SE2_PERF_M(1) == was[3] + 0x64 && GCC_QUP0_SE2_PERF_N(0) == was[3] + 0xa0,
+	CHECK(GCC_SE_CMD == was[3] + 0x04 && GCC_SE_CFG == was[3] + 0x08 && GCC_SE_DFSR == was[3] + 0x18 &&
+	    GCC_SE_PERF_CFG(2) == was[3] + 0x28 && GCC_SE_PERF_M(1) == was[3] + 0x64 && GCC_SE_PERF_N(0) == was[3] + 0xa0,
 	    "the rate generator's registers");
 	CHECK((uint32_t)GCC_VOTE == 0x52008, "the register the votes go into: %#x", (uint32_t)GCC_VOTE);
 	CHECK(mappings == 0 && accesses == 0, "(looking at the names touches nothing)");

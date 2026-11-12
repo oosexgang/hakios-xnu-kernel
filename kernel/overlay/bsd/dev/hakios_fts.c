@@ -130,22 +130,22 @@ supply_on(const char *name, uint32_t millivolts)
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + WIRED->vote_register)    /* the application processor's votes */
-/* (the names are renoir's, serial engine 10, the third of the first group; which bits and offsets they are is the board's) */
-#define VOTE_QUP0_CORE_2X       (1u << WIRED->vote[0])
-#define VOTE_QUP0_CORE          (1u << WIRED->vote[1])
-#define VOTE_QUP0_M_AHB         (1u << WIRED->vote[2])
-#define VOTE_QUP0_S_AHB         (1u << WIRED->vote[3])
-#define VOTE_QUP0_SE2           (1u << WIRED->vote[4])
-#define GCC_QUP0_M_AHB_CBCR     (gcc + WIRED->m_ahb_clock)      /* bit 31: the clock is off */
-#define GCC_QUP0_S_AHB_CBCR     (gcc + WIRED->s_ahb_clock)
-#define GCC_QUP0_SE2_CBCR       (gcc + WIRED->se_clock)
+/* the clocks of the touch controller's serial engine (SE) and of its group (QUP): which bits and offsets is the board's */
+#define VOTE_QUP_CORE_2X        (1u << WIRED->vote[0])
+#define VOTE_QUP_CORE           (1u << WIRED->vote[1])
+#define VOTE_QUP_M_AHB          (1u << WIRED->vote[2])
+#define VOTE_QUP_S_AHB          (1u << WIRED->vote[3])
+#define VOTE_SE                 (1u << WIRED->vote[4])
+#define GCC_QUP_M_AHB_CBCR      (gcc + WIRED->m_ahb_clock)      /* bit 31: the clock is off */
+#define GCC_QUP_S_AHB_CBCR      (gcc + WIRED->s_ahb_clock)
+#define GCC_SE_CBCR             (gcc + WIRED->se_clock)
 /* the engine's rate generator follows its clock, at the same distances for every engine */
-#define GCC_QUP0_SE2_CMD        (gcc + WIRED->se_clock + 0x04)  /* bit 0: take the new configuration */
-#define GCC_QUP0_SE2_CFG        (gcc + WIRED->se_clock + 0x08)  /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
-#define GCC_QUP0_SE2_DFSR       (gcc + WIRED->se_clock + 0x18)  /* bit 0: the engine chooses among preset rates itself */
-#define GCC_QUP0_SE2_PERF_CFG(l) (gcc + WIRED->se_clock + 0x20 + 4 * (l))
-#define GCC_QUP0_SE2_PERF_M(l)  (gcc + WIRED->se_clock + 0x60 + 4 * (l))
-#define GCC_QUP0_SE2_PERF_N(l)  (gcc + WIRED->se_clock + 0xa0 + 4 * (l))
+#define GCC_SE_CMD              (gcc + WIRED->se_clock + 0x04)  /* bit 0: take the new configuration */
+#define GCC_SE_CFG              (gcc + WIRED->se_clock + 0x08)  /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
+#define GCC_SE_DFSR             (gcc + WIRED->se_clock + 0x18)  /* bit 0: the engine chooses among preset rates itself */
+#define GCC_SE_PERF_CFG(l)      (gcc + WIRED->se_clock + 0x20 + 4 * (l))
+#define GCC_SE_PERF_M(l)        (gcc + WIRED->se_clock + 0x60 + 4 * (l))
+#define GCC_SE_PERF_N(l)        (gcc + WIRED->se_clock + 0xa0 + 4 * (l))
 #define CLOCK_OFF               (1u << 31)
 #define XO_HZ                   19200000
 
@@ -183,12 +183,12 @@ rcg_rate(uint32_t cfg, uint32_t m, uint32_t not_n_minus_m)
 static bool
 clocks_on(uint32_t target_hz)
 {
-	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP0_CORE_2X | VOTE_QUP0_CORE | VOTE_QUP0_M_AHB | VOTE_QUP0_S_AHB);
-	if (rd(GCC_QUP0_SE2_DFSR) & 1) {
+	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB);
+	if (rd(GCC_SE_DFSR) & 1) {
 		/* Pick a source no lower than the requested SPI frequency. */
 		for (uint32_t level = 0; level < 8; level++) {
-			uint32_t hz = rcg_rate(rd(GCC_QUP0_SE2_PERF_CFG(level)), rd(GCC_QUP0_SE2_PERF_M(level)),
-			    rd(GCC_QUP0_SE2_PERF_N(level)));
+			uint32_t hz = rcg_rate(rd(GCC_SE_PERF_CFG(level)), rd(GCC_SE_PERF_M(level)),
+			    rd(GCC_SE_PERF_N(level)));
 
 			if (hz >= target_hz && (se_source_hz == 0 || hz < se_source_hz)) {
 				se_source_hz = hz;
@@ -201,33 +201,33 @@ clocks_on(uint32_t target_hz)
 		}
 	} else {
 		/* the crystal, undivided: nothing else has to be running */
-		wr(GCC_QUP0_SE2_CFG, (rd(GCC_QUP0_SE2_CFG) & ~0x371fu) | 1);
-		wr(GCC_QUP0_SE2_CMD, rd(GCC_QUP0_SE2_CMD) | 1);
-		for (int i = 0; i < 500 && (rd(GCC_QUP0_SE2_CMD) & 1); i++) {
+		wr(GCC_SE_CFG, (rd(GCC_SE_CFG) & ~0x371fu) | 1);
+		wr(GCC_SE_CMD, rd(GCC_SE_CMD) | 1);
+		for (int i = 0; i < 500 && (rd(GCC_SE_CMD) & 1); i++) {
 			sleep_us(10);
 		}
-		if (rd(GCC_QUP0_SE2_CMD) & 1) {
-			printf("fts: the serial engine's clock does not take its configuration (%#x)\n", rd(GCC_QUP0_SE2_CMD));
+		if (rd(GCC_SE_CMD) & 1) {
+			printf("fts: the serial engine's clock does not take its configuration (%#x)\n", rd(GCC_SE_CMD));
 			return false;
 		}
 		se_source_hz = XO_HZ;
 		se_clock_select = 0;
 	}
-	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP0_SE2);
-	const uint32_t votes = VOTE_QUP0_CORE_2X | VOTE_QUP0_CORE | VOTE_QUP0_M_AHB | VOTE_QUP0_S_AHB | VOTE_QUP0_SE2;
+	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_SE);
+	const uint32_t votes = VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB | VOTE_SE;
 	if ((rd(GCC_VOTE) & votes) != votes) {
 		printf("fts: GCC clock votes not accepted (%#x)\n", rd(GCC_VOTE));
 		return false;
 	}
 	for (int i = 0; i < 1000; i++) {
-		if (fts_ahb_clock_ready(rd(GCC_QUP0_M_AHB_CBCR)) &&
-		    fts_ahb_clock_ready(rd(GCC_QUP0_S_AHB_CBCR)) && !(rd(GCC_QUP0_SE2_CBCR) & CLOCK_OFF)) {
+		if (fts_ahb_clock_ready(rd(GCC_QUP_M_AHB_CBCR)) &&
+		    fts_ahb_clock_ready(rd(GCC_QUP_S_AHB_CBCR)) && !(rd(GCC_SE_CBCR) & CLOCK_OFF)) {
 			return true;
 		}
 		sleep_us(10);
 	}
-	printf("fts: clocks stay off: %#x %#x %#x\n", rd(GCC_QUP0_M_AHB_CBCR), rd(GCC_QUP0_S_AHB_CBCR),
-	    rd(GCC_QUP0_SE2_CBCR));
+	printf("fts: clocks stay off: %#x %#x %#x\n", rd(GCC_QUP_M_AHB_CBCR), rd(GCC_QUP_S_AHB_CBCR),
+	    rd(GCC_SE_CBCR));
 	return false;
 }
 
@@ -611,7 +611,7 @@ fts_bring_up(void)
         printf("fts: %s; trying GPIO SPI mode 0\n", problem);
     }
     spi_transfer = fts_bitbang_transfer;
-    /* As in redwood's fallback, accept a data-pin orientation only after ID+CRC.
+    /* Accept a data-pin orientation only once the chip's ID and CRC read back right.
      * CS stays high while directions change; use the minimum 2 mA drive. */
     for (unsigned attempt = 0; attempt < 2; attempt++) {
         bitbang_in = attempt == 0 ? PIN_DATA0 : PIN_DATA1;

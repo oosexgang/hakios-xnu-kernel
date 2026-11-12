@@ -140,22 +140,22 @@ io_supply_on(void)
 #define GCC_PHYS                (hakios_board()->clocks.gcc)    /* the SoC file's clocks { } */
 #define GCC_SIZE                0x60000UL
 #define GCC_VOTE                (gcc + WIRED->vote_register)    /* the application processor's votes */
-/* (the names are redwood's, serial engine 13, the 6th of the second group; which bits and offsets they are is the board's) */
-#define VOTE_QUP1_CORE_2X       (1u << WIRED->vote[0])
-#define VOTE_QUP1_CORE          (1u << WIRED->vote[1])
-#define VOTE_QUP1_M_AHB         (1u << WIRED->vote[2])
-#define VOTE_QUP1_S_AHB         (1u << WIRED->vote[3])
-#define VOTE_QUP1_SE5           (1u << WIRED->vote[4])
-#define GCC_QUP1_M_AHB_CBCR     (gcc + WIRED->m_ahb_clock)      /* bit 31: the clock is off */
-#define GCC_QUP1_S_AHB_CBCR     (gcc + WIRED->s_ahb_clock)
-#define GCC_QUP1_SE5_CBCR       (gcc + WIRED->se_clock)
+/* the clocks of the touch controller's serial engine (SE) and of its group (QUP): which bits and offsets is the board's */
+#define VOTE_QUP_CORE_2X        (1u << WIRED->vote[0])
+#define VOTE_QUP_CORE           (1u << WIRED->vote[1])
+#define VOTE_QUP_M_AHB          (1u << WIRED->vote[2])
+#define VOTE_QUP_S_AHB          (1u << WIRED->vote[3])
+#define VOTE_SE                 (1u << WIRED->vote[4])
+#define GCC_QUP_M_AHB_CBCR      (gcc + WIRED->m_ahb_clock)      /* bit 31: the clock is off */
+#define GCC_QUP_S_AHB_CBCR      (gcc + WIRED->s_ahb_clock)
+#define GCC_SE_CBCR             (gcc + WIRED->se_clock)
 /* the engine's rate generator follows its clock, at the same distances for every engine */
-#define GCC_QUP1_SE5_CMD        (gcc + WIRED->se_clock + 0x04)  /* bit 0: take the new configuration */
-#define GCC_QUP1_SE5_CFG        (gcc + WIRED->se_clock + 0x08)  /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
-#define GCC_QUP1_SE5_DFSR       (gcc + WIRED->se_clock + 0x18)  /* bit 0: the engine chooses among preset rates itself */
-#define GCC_QUP1_SE5_PERF_CFG(l) (gcc + WIRED->se_clock + 0x20 + 4 * (l))
-#define GCC_QUP1_SE5_PERF_M(l)  (gcc + WIRED->se_clock + 0x60 + 4 * (l))
-#define GCC_QUP1_SE5_PERF_N(l)  (gcc + WIRED->se_clock + 0xa0 + 4 * (l))
+#define GCC_SE_CMD              (gcc + WIRED->se_clock + 0x04)  /* bit 0: take the new configuration */
+#define GCC_SE_CFG              (gcc + WIRED->se_clock + 0x08)  /* [4:0] 2*divider-1, [10:8] source, [13:12] mode */
+#define GCC_SE_DFSR             (gcc + WIRED->se_clock + 0x18)  /* bit 0: the engine chooses among preset rates itself */
+#define GCC_SE_PERF_CFG(l)      (gcc + WIRED->se_clock + 0x20 + 4 * (l))
+#define GCC_SE_PERF_M(l)        (gcc + WIRED->se_clock + 0x60 + 4 * (l))
+#define GCC_SE_PERF_N(l)        (gcc + WIRED->se_clock + 0xa0 + 4 * (l))
 #define CLOCK_OFF               (1u << 31)
 #define XO_HZ                   19200000
 
@@ -184,12 +184,12 @@ rcg_rate(uint32_t cfg, uint32_t m, uint32_t not_n_minus_m)
 static bool
 clocks_on(void)
 {
-	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP1_CORE_2X | VOTE_QUP1_CORE | VOTE_QUP1_M_AHB | VOTE_QUP1_S_AHB);
-	if (rd(GCC_QUP1_SE5_DFSR) & 1) {
+	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP_CORE_2X | VOTE_QUP_CORE | VOTE_QUP_M_AHB | VOTE_QUP_S_AHB);
+	if (rd(GCC_SE_DFSR) & 1) {
 		/* preset rates: the lowest that is at least 4 MHz */
 		for (uint32_t level = 0; level < 8; level++) {
-			uint32_t hz = rcg_rate(rd(GCC_QUP1_SE5_PERF_CFG(level)), rd(GCC_QUP1_SE5_PERF_M(level)),
-			    rd(GCC_QUP1_SE5_PERF_N(level)));
+			uint32_t hz = rcg_rate(rd(GCC_SE_PERF_CFG(level)), rd(GCC_SE_PERF_M(level)),
+			    rd(GCC_SE_PERF_N(level)));
 
 			if (hz >= 4000000 && (se_source_hz == 0 || hz < se_source_hz)) {
 				se_source_hz = hz;
@@ -202,27 +202,27 @@ clocks_on(void)
 		}
 	} else {
 		/* the crystal, undivided: nothing else has to be running */
-		wr(GCC_QUP1_SE5_CFG, (rd(GCC_QUP1_SE5_CFG) & ~0x371fu) | 1);
-		wr(GCC_QUP1_SE5_CMD, rd(GCC_QUP1_SE5_CMD) | 1);
-		for (int i = 0; i < 500 && (rd(GCC_QUP1_SE5_CMD) & 1); i++) {
+		wr(GCC_SE_CFG, (rd(GCC_SE_CFG) & ~0x371fu) | 1);
+		wr(GCC_SE_CMD, rd(GCC_SE_CMD) | 1);
+		for (int i = 0; i < 500 && (rd(GCC_SE_CMD) & 1); i++) {
 			sleep_us(10);
 		}
-		if (rd(GCC_QUP1_SE5_CMD) & 1) {
-			printf("goodix: the serial engine's clock does not take its configuration (%#x)\n", rd(GCC_QUP1_SE5_CMD));
+		if (rd(GCC_SE_CMD) & 1) {
+			printf("goodix: the serial engine's clock does not take its configuration (%#x)\n", rd(GCC_SE_CMD));
 			return false;
 		}
 		se_source_hz = XO_HZ;
 		se_clock_select = 0;
 	}
-	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP1_SE5);
+	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_SE);
 	for (int i = 0; i < 1000; i++) {
-		if (!((rd(GCC_QUP1_M_AHB_CBCR) | rd(GCC_QUP1_S_AHB_CBCR) | rd(GCC_QUP1_SE5_CBCR)) & CLOCK_OFF)) {
+		if (!((rd(GCC_QUP_M_AHB_CBCR) | rd(GCC_QUP_S_AHB_CBCR) | rd(GCC_SE_CBCR)) & CLOCK_OFF)) {
 			return true;
 		}
 		sleep_us(10);
 	}
-	printf("goodix: clocks stay off: %#x %#x %#x\n", rd(GCC_QUP1_M_AHB_CBCR), rd(GCC_QUP1_S_AHB_CBCR),
-	    rd(GCC_QUP1_SE5_CBCR));
+	printf("goodix: clocks stay off: %#x %#x %#x\n", rd(GCC_QUP_M_AHB_CBCR), rd(GCC_QUP_S_AHB_CBCR),
+	    rd(GCC_SE_CBCR));
 	return false;
 }
 
@@ -1214,8 +1214,8 @@ static void
 show_state(const char *when)
 {
 	printf("goodix: %s: votes %#x, clocks %#x %#x %#x, rate cfg %#x dfs %#x; pins cs/clk/mosi/miso cfg %#x %#x %#x %#x,"
-	    " reset %#x/%u, int %#x/%u, avdd %#x/%u, straps %u %u\n", when, rd(GCC_VOTE), rd(GCC_QUP1_M_AHB_CBCR),
-	    rd(GCC_QUP1_S_AHB_CBCR), rd(GCC_QUP1_SE5_CBCR), rd(GCC_QUP1_SE5_CFG), rd(GCC_QUP1_SE5_DFSR), rd(GPIO_CFG(PIN_CS)),
+	    " reset %#x/%u, int %#x/%u, avdd %#x/%u, straps %u %u\n", when, rd(GCC_VOTE), rd(GCC_QUP_M_AHB_CBCR),
+	    rd(GCC_QUP_S_AHB_CBCR), rd(GCC_SE_CBCR), rd(GCC_SE_CFG), rd(GCC_SE_DFSR), rd(GPIO_CFG(PIN_CS)),
 	    rd(GPIO_CFG(PIN_CLK)), rd(GPIO_CFG(PIN_MOSI)), rd(GPIO_CFG(PIN_MISO)), rd(GPIO_CFG(PIN_RESET)),
 	    rd(GPIO_IO(PIN_RESET)), rd(GPIO_CFG(PIN_INT)), rd(GPIO_IO(PIN_INT)), rd(GPIO_CFG(PIN_AVDD)), rd(GPIO_IO(PIN_AVDD)),
 	    gpio_get(PIN_FOCALTECH_ID), gpio_get(PIN_GOODIX_ID));
