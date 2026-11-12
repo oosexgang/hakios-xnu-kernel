@@ -31,11 +31,13 @@
 		rsc = <0x18920000>;
 		tcs-offset = <0xd00>;
 	};
-	// Android arbiter@c400000 and spmi@c426000. The v8 map/owner layout needs a future shared
-	// SPMI helper update: current helpers refuse it by version before any PMIC transfer.
+	// PMIC arbiter version 8 (Android arbiter@c400000, spmi@c426000; tables as Linux spmi-pmic-arb.c
+	// reads them): channel-map is the table of channels, cnfg the table of their owners, observer
+	// 0x20 a channel, channels (writes) 0x200 a channel.
 	spmi {
 		core = <0x0c400000>;
-		cnfg = <0x0c426000>;
+		channel-map = <0x0c403000>;
+		cnfg = <0x0c42a000>;
 		observer = <0x0c4c0000>;
 		channels = <0x0c900000>;
 		ee = <0>;
