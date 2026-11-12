@@ -75,7 +75,10 @@ needs it.
    to do). Then `kernel/export.sh` ([kernel/README.md](../kernel/README.md)). That it compiles and
    links in the whole kernel is a build away, on any Linux machine, without theos: with LLVM's tools
    ([building.md](building.md)) a build from scratch takes minutes, and `XNU_WARNINGS=1` shows what the
-   compiler says of the file (HakiOS' own files give no warning; keep it so).
+   compiler says of the file (HakiOS' own files give no warning; keep it so). `make analyze-kernel`
+   runs clang's static analyzer over them and lists what it finds in HakiOS' lines: a value used
+   before it is set, a pointer that may be null, a division that may be by zero. It does not know
+   that `uiomove()` fills what it is given, and says so of every read; the rest is worth a look.
 6. **Document it**: a comment in the file that names each boot argument as `name=…` (`make docs` puts
    them in [boot-args.md](boot-args.md)), and a row in [drivers.md](drivers.md).
 7. **On the phone**: level 1 first. Send the log lines with the change, and say in the device

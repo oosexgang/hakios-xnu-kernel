@@ -18,6 +18,7 @@ help:
 	@echo "make docs           regenerate docs/boot-args.md from the sources"
 	@echo "make verify-kernel  Apple's release + overlay + patches assemble and export back unchanged (network)"
 	@echo "make syntax-kernel  compile the kernel files HakiOS adds, for syntax and types, with this machine's clang (network)"
+	@echo "make analyze-kernel clang's static analyzer on the files HakiOS adds; what it finds, to be judged (network; TREE=DIR)"
 	@echo "make kernel         build the kernel (kernel/build.sh; docs/building.md says what it needs)"
 	@echo "make kernel-check   compile every file and link the kernel with LLVM's tools, warnings shown (no theos; not a kernel to boot)"
 
@@ -65,6 +66,10 @@ verify-kernel:
 .PHONY: syntax-kernel
 syntax-kernel:
 	kernel/syntax-check.sh $(if $(TREE),--tree $(TREE)) $(if $(DRIVERKIT),--driverkit $(DRIVERKIT))
+
+.PHONY: analyze-kernel
+analyze-kernel:
+	kernel/syntax-check.sh --analyze $(if $(TREE),--tree $(TREE))
 
 .PHONY: kernel
 kernel:
