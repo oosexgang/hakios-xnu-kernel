@@ -158,6 +158,9 @@ struct hakios_board {
 		uint32_t tx_macro, va_macro;    /* the codec macros for capture */
 		uint32_t tx_swr, tx_swr_hctl;   /* the SoundWire master of the capture side, and its hardware control */
 		uint32_t lpi, lpi_slew;         /* the subsystem's own pins, and their slew rates */
+		uint8_t swr_tx_pin_count;
+		uint8_t swr_tx_pins[4];         /* the TX SoundWire's pins among them: its clock, then its data lines */
+		uint8_t swr_tx_slew[4];         /* ... each one's field (two bits) in the slew register */
 	} lpass;
 
 	/* the way to the SoC's other processors (soc: ipc { }) */

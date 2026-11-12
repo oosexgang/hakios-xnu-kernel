@@ -85,7 +85,7 @@ SOC_SCHEMA = {
              'camera_stream': ([int], False)},
     'camera': {'camcc': (int, True), 'ife': (int, True), 'csid': (int, True), 'csiphy': (int, True)},
     'lpass': {'tx_macro': (int, True), 'va_macro': (int, True), 'tx_swr': (int, True), 'tx_swr_hctl': (int, True),
-              'lpi': (int, True), 'lpi_slew': (int, True)},
+              'lpi': (int, True), 'lpi_slew': (int, True), 'swr_tx_pins': ([int], True), 'swr_tx_slew': ([int], True)},
     'ipc': {'aoss': (int, True), 'ipcc': (int, True), 'smem': (int, True), 'smem_size': (int, True),
             'smem_lock': (int, True)},
     'rpmh': {'cmd_db': (int, True), 'cmd_db_size': (int, True), 'rsc': (int, True), 'tcs_offset': (int, True)},
@@ -474,6 +474,13 @@ def load(problems=None):
         check_file(path, data, SOC_SCHEMA, problems)
         if data.get('name') != path.stem:
             problems.add(shown(path), f'name = {data.get("name")!r}: the file is {path.stem}.dtsi')
+        lpass = data.get('lpass')
+        if isinstance(lpass, dict) and isinstance(lpass.get('swr_tx_pins'), list) and isinstance(lpass.get('swr_tx_slew'), list):
+            pins, slew = lpass['swr_tx_pins'], lpass['swr_tx_slew']
+            if not 2 <= len(pins) <= 4 or len(slew) != len(pins) or len(set(pins)) != len(pins) or \
+                    any(not 0 <= pin < 16 for pin in pins) or any(bit > 30 or bit & 1 for bit in slew):
+                problems.add(f'{shown(path)} [lpass]', 'swr_tx_pins are the TX SoundWire\'s clock and data pins of the LPASS '
+                             '(two to four, 0 to 15), swr_tx_slew each one\'s field in the slew register (an even bit, 0 to 30)')
         smmu = data.get('smmu')
         if isinstance(smmu, dict):
             for key in ('audio_stream', 'wifi_stream', 'camera_stream'):
@@ -793,6 +800,9 @@ def table_text(socs, boards):
                     f'\t\t\t.tx_macro = {lpass["tx_macro"]:#010x}, .va_macro = {lpass["va_macro"]:#010x},',
                     f'\t\t\t.tx_swr = {lpass["tx_swr"]:#010x}, .tx_swr_hctl = {lpass["tx_swr_hctl"]:#010x},',
                     f'\t\t\t.lpi = {lpass["lpi"]:#010x}, .lpi_slew = {lpass["lpi_slew"]:#010x},',
+                    f'\t\t\t.swr_tx_pin_count = {len(lpass["swr_tx_pins"])}, '
+                    f'.swr_tx_pins = {{ {", ".join(str(v) for v in lpass["swr_tx_pins"])} }}, '
+                    f'.swr_tx_slew = {{ {", ".join(str(v) for v in lpass["swr_tx_slew"])} }},',
                     '\t\t},']
         if 'smmu' in soc:
             streams = ''.join(f', .{key} = {{ {soc["smmu"][key][0]:#x}, {soc["smmu"][key][1]:#x} }}'

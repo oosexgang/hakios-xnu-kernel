@@ -62,6 +62,8 @@
 		tx-swr-hctl = <0x032a9000>;     // its hardware control (qcom,swrm-hctl-reg)
 		lpi = <0x033c0000>;             // lpi_pinctrl@33c0000: the subsystem's own pins
 		lpi-slew = <0x0355a000>;        // their slew rates (qcom,slew-reg)
+		swr-tx-pins = <0 1 2 14>;       // the TX SoundWire's: clock, data 0, 1 and 2 (lpi_pinctrl's tx_swr_* groups)
+		swr-tx-slew = <0 2 4 6>;        // each one's slew field (pinctrl-lpi.c: the pins' slew_offset)
 	};
 
 	// The way to the SoC's other processors: the audio DSP and the Wi-Fi radio are reached through these.

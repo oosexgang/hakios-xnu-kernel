@@ -490,12 +490,17 @@ class Check(Sandbox):
         # a part's driver whose addresses are there is still one part's: said, not offered
         self.soc('\tthermal {', '\tpins {\n\t\ttlmm = <0xf100000>;\n\t};\n\tthermal {')
         self.soc('\tthermal {', '\tlpass {\n\t\ttx-macro = <0x3220000>;\n\t\tva-macro = <0x3370000>;\n\t\ttx-swr = <0x3230000>;\n'
-                              '\t\ttx-swr-hctl = <0x32a9000>;\n\t\tlpi = <0x33c0000>;\n\t\tlpi-slew = <0x355a000>;\n\t};\n\tthermal {')
+                              '\t\ttx-swr-hctl = <0x32a9000>;\n\t\tlpi = <0x33c0000>;\n\t\tlpi-slew = <0x355a000>;\n\t\tswr-tx-pins = <0 1 2 14>;\n\t\tswr-tx-slew = <0 2 4 6>;\n\t};\n\tthermal {')
         self.assertRegex(status(), r'mic-wcd938x +needs mic \{ \} in the board file')        # (the pin its codec's reset is on)
         self.board('\tloader {', '\tmic {\n\t\tcodec-reset = <83>;\n\t};\n\tloader {')
         self.assertRegex(status(), r"mic-wcd938x +one part's driver")
         self.assertIn('.mic = { .wired = 1, .codec_reset = 83 },', boards.table_text(*boards.load()))
         self.assertIn('.tx_swr = 0x03230000, .tx_swr_hctl = 0x032a9000,', boards.table_text(*boards.load()))
+        self.assertIn('.swr_tx_pin_count = 4, .swr_tx_pins = { 0, 1, 2, 14 }, .swr_tx_slew = { 0, 2, 4, 6 },',
+                      boards.table_text(*boards.load()))
+        self.soc('swr-tx-slew = <0 2 4 6>;', 'swr-tx-slew = <0 2 4 5>;')
+        self.assertIn('swr-tx-slew each one\'s field in the slew register', self.problems())     # (a field is two bits: an even one)
+        self.soc('swr-tx-slew = <0 2 4 5>;', 'swr-tx-slew = <0 2 4 6>;')
         self.assertRegex(said, r'touch-goodix +needs pins \{ \} in soc/sm0001.dtsi')
         self.soc('\tthermal {', '\tspmi {\n\t\tcore = <0xc440000>;\n\t\tcnfg = <0xc40a000>;\n\t\tobserver = <0xe600000>;\n\t};\n\tthermal {')
         self.assertRegex(status(), r'buttons-pmic +needs buttons \{ \} in the board file')

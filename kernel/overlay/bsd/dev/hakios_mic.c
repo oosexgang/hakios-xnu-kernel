@@ -371,8 +371,12 @@ static struct block va_macro = { "the VA macro", 0, 0x1000 };
 static struct block tx_swr = { "the TX SoundWire master", 0, 0x2000 };
 static struct block tx_hctl = { "the TX SoundWire master's HCTL", 0, 0x1000 };
 static struct block lpi = { "the LPASS pins", 0, 0x10000 };
-static struct block lpi_high = { "the LPASS pins", 0, 0x1000 };          /* pin 14's two registers: 0xe000 into them */
 static struct block tlmm = { "the pin controller", 0, 0x100000 };       /* where: the SoC file's pins { }, at the start */
+/* the TX SoundWire's pins (the SoC file's lpass { } swr-tx-pins): the clock without a pull, the data lines pulled down */
+#define SWR_PINS                (hakios_board()->lpass.swr_tx_pin_count)
+#define SWR_PIN(i)              ((unsigned)hakios_board()->lpass.swr_tx_pins[i])
+#define SWR_SLEW_BIT(i)         ((unsigned)hakios_board()->lpass.swr_tx_slew[i])
+#define SWR_PULL(i)             ((i) == 0 ? 0u : 2u)
 
 /* The codec's reset: which of the SoC's pins it is on is the board's mic { } (the codec node's reset-gpios). */
 #define RESET_PIN               ((uint32_t)hakios_board()->mic.codec_reset)
@@ -403,24 +407,20 @@ look(void)
 		{ "ENUMERATOR_STATUS", 0x504 }, { "MCP_FRAME_CTRL_BANK0", 0x101c }, { "MCP_BUS_CTRL", 0x1044 },
 		{ "MCP_CFG", 0x1048 }, { "MCP_STATUS", 0x104c }, { "MCP_SLV_STATUS", 0x1090 },
 	};
-	static const unsigned pins[] = { 0, 1, 2 };
-
 	for (size_t i = 0; i < sizeof(tx) / sizeof(tx[0]); i++) {
 		(void)get(&tx_macro, tx[i].name, tx[i].offset);
 	}
 	for (size_t i = 0; i < sizeof(va) / sizeof(va[0]); i++) {
 		(void)get(&va_macro, va[i].name, va[i].offset);
 	}
-	for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+	for (unsigned i = 0; i < SWR_PINS; i++) {
 		char name[48];
 
-		snprintf(name, sizeof(name), "gpio%u config (SoundWire TX)", pins[i]);
-		(void)get(&lpi, name, 0x1000 * pins[i]);
-		snprintf(name, sizeof(name), "gpio%u in/out", pins[i]);
-		(void)get(&lpi, name, 0x1000 * pins[i] + 4);
+		snprintf(name, sizeof(name), "gpio%u config (SoundWire TX)", SWR_PIN(i));
+		(void)get(&lpi, name, 0x1000 * SWR_PIN(i));
+		snprintf(name, sizeof(name), "gpio%u in/out", SWR_PIN(i));
+		(void)get(&lpi, name, 0x1000 * SWR_PIN(i) + 4);
 	}
-	(void)get(&lpi_high, "gpio14 config (SoundWire TX data 2)", 0);
-	(void)get(&lpi_high, "gpio14 in/out", 4);
 	(void)get(&tlmm, reset_name("config (the codec's reset)"), TLMM_CFG_RESET);
 	(void)get(&tlmm, reset_name("in/out"), TLMM_IO_RESET);
 	/* (last: the master is a block of its own, and not yet known; with its version above 1.5.1 the votes are all it needs) */
@@ -471,12 +471,7 @@ reset_restore(void)
 }
 
 static struct block lpi_slew = { "the LPASS pins' slew rates", 0, 0x1000 };     /* where: the SoC file's lpass { } */
-static const struct { unsigned pin, slew_bit; uint32_t pull; const char *name; } swr_pins[] = {
-	{ 0, 0, 0, "gpio0 (SoundWire TX clock)" }, { 1, 2, 2, "gpio1 (data 0)" }, { 2, 4, 2, "gpio2 (data 1)" },
-	{ 14, 6, 2, "gpio14 (data 2)" },
-};
-#define SWR_PINS                (sizeof(swr_pins) / sizeof(swr_pins[0]))
-static uint32_t found_pin_cfg[SWR_PINS], found_pin_dir[SWR_PINS], found_slew;
+static uint32_t found_pin_cfg[4], found_pin_dir[4], found_slew, slew_mask;   /* (the slew bits the pins have) */
 static bool pins_taken;
 
 static bool
@@ -491,24 +486,25 @@ pins_on(void)
 		lpi_slew.base = ml_io_map(lpi_slew.phys, lpi_slew.size);
 	}
 	for (unsigned i = 0; i < SWR_PINS; i++) {
-		found_pin_cfg[i] = rd(lpi.base + 0x1000 * swr_pins[i].pin);
-		found_pin_dir[i] = rd(lpi.base + 0x1000 * swr_pins[i].pin + 4);
+		found_pin_cfg[i] = rd(lpi.base + 0x1000 * SWR_PIN(i));
+		found_pin_dir[i] = rd(lpi.base + 0x1000 * SWR_PIN(i) + 4);
 	}
 	found_slew = rd(lpi_slew.base);
 	pins_taken = true;
 	slew = found_slew;
 	for (unsigned i = 0; i < SWR_PINS; i++) {
-		slew = (slew & ~(3u << swr_pins[i].slew_bit)) | (1u << swr_pins[i].slew_bit);
+		slew = (slew & ~(3u << SWR_SLEW_BIT(i))) | (1u << SWR_SLEW_BIT(i));
+		slew_mask |= 3u << SWR_SLEW_BIT(i);
 	}
-	if (!put(&lpi_slew, "slew rates: 1 for the four", 0, slew, 0xff)) {
+	if (!put(&lpi_slew, "slew rates: 1 for the SoundWire's pins", 0, slew, slew_mask)) {
 		return false;
 	}
 	for (unsigned i = 0; i < SWR_PINS; i++) {
 		/* [1:0] pull, [5:2] function, [8:6] drive (mA / 2 - 1), [9] output: function 1, 2 mA, not an output */
-		uint32_t cfg = (found_pin_cfg[i] & ~0x3ffu) | swr_pins[i].pull | 1u << 2;
+		uint32_t cfg = (found_pin_cfg[i] & ~0x3ffu) | SWR_PULL(i) | 1u << 2;
 
-		if (!put(&lpi, swr_pins[i].name, 0x1000 * swr_pins[i].pin, cfg, 0x3ff) ||
-		    !put(&lpi, "its direction: in", 0x1000 * swr_pins[i].pin + 4, 0, 2)) {
+		if (!put(&lpi, i == 0 ? "the SoundWire TX clock's pin" : "a SoundWire TX data pin", 0x1000 * SWR_PIN(i), cfg, 0x3ff) ||
+		    !put(&lpi, "its direction: in", 0x1000 * SWR_PIN(i) + 4, 0, 2)) {
 			return false;
 		}
 	}
@@ -523,10 +519,10 @@ pins_restore(void)
 	}
 	broken = false;
 	for (unsigned i = 0; i < SWR_PINS; i++) {
-		(void)put(&lpi, "a pin, as it was found", 0x1000 * swr_pins[i].pin, found_pin_cfg[i], 0x3ff);
-		(void)put(&lpi, "its direction, as it was found", 0x1000 * swr_pins[i].pin + 4, found_pin_dir[i], 2);
+		(void)put(&lpi, "a pin, as it was found", 0x1000 * SWR_PIN(i), found_pin_cfg[i], 0x3ff);
+		(void)put(&lpi, "its direction, as it was found", 0x1000 * SWR_PIN(i) + 4, found_pin_dir[i], 2);
 	}
-	(void)put(&lpi_slew, "slew rates, as they were found", 0, found_slew, 0xff);
+	(void)put(&lpi_slew, "slew rates, as they were found", 0, found_slew, slew_mask);
 	pins_taken = false;
 }
 
@@ -1829,7 +1825,6 @@ hakios_mic_dsp_up(void)
 	tx_swr.phys = hakios_board()->lpass.tx_swr;
 	tx_hctl.phys = hakios_board()->lpass.tx_swr_hctl;
 	lpi.phys = hakios_board()->lpass.lpi;
-	lpi_high.phys = hakios_board()->lpass.lpi + 0xe000;
 	lpi_slew.phys = hakios_board()->lpass.lpi_slew;
 	level = level > 4 ? 4 : level;
 	PE_parse_boot_argn("mic_secs", &mic_secs, sizeof(mic_secs));

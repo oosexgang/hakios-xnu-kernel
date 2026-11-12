@@ -77,6 +77,9 @@
 		tx-swr-hctl = <0x032a9000>;     // ... and its qcom,swrm-hctl-reg
 		lpi = <0x033c0000>;             // the subsystem's own pins: lpi_pinctrl@33c0000 (qcom,lpi-pinctrl)
 		lpi-slew = <0x0355a000>;        // ... and that node's qcom,slew-reg
+		swr-tx-pins = <0 1 2 14>;       // the TX SoundWire master's pins among them, its clock first, then its data
+		                                // lines (the lpi_pinctrl groups the swr-mstr node's pinctrl names)
+		swr-tx-slew = <0 2 4 6>;        // each pin's field in that slew register (the vendor's pinctrl-lpi.c)
 	};
 
 	// The way to the SoC's other processors, for the features "adsp" and "wifi-wcn6750".
