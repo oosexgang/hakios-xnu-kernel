@@ -98,6 +98,7 @@
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <sys/hakios_audio.h>
 #include <sys/hakios_input.h>
+#include "hakios_scm.h"
 #include "hakios_cache.h"
 #include "hakios_board.h"
 #include "hakios_time.h"
@@ -983,17 +984,6 @@ step_mailbox(void)
 
 /* ---- TrustZone, and stopping the DSP --------------------------------------------------------------- */
 
-#define SCM_64                  (1ull << 30)
-#define SCM_SIP                 (2ull << 24)
-#define SCM_CALL(service, command) ((uint64_t)(service) << 8 | (command))
-#define SCM_PAS_INIT_IMAGE      SCM_CALL(2, 1)
-#define SCM_PAS_MEM_SETUP       SCM_CALL(2, 2)
-#define SCM_PAS_AUTH_AND_RESET  SCM_CALL(2, 5)
-#define SCM_PAS_SHUTDOWN        SCM_CALL(2, 6)
-#define SCM_ONE_VALUE           1
-#define SCM_THREE_VALUES        3
-#define SCM_VALUE_AND_BUFFER    (2 | 2 << 6)
-#define SCM_INTERRUPTED         1
 
 static LCK_MTX_DECLARE(dsp_lock, &adsp_lock_group);     /* the DSP being started or stopped */
 static bool rails_asked;                /* our request for its rails stands (until it asks for its own, or is shut down) */
@@ -1005,33 +995,19 @@ static bool smp2p_agreed, smp2p_restart_acks, smp2p_restart_acked;
 static int32_t
 scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third, uint64_t *answer)
 {
-	uint64_t session = 0;
+	int result;
 
 	function |= SCM_64 | SCM_SIP;
 	printf("adsp: %u: about to ask TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", step, what, function, first,
 	    second, third);
 	snprintf(last_write, sizeof(last_write), "step %u asked TrustZone %#llx(%#llx, %#llx)", step, function, first, second);
-	for (int i = 0; i < 100; i++) {
-		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
-		register uint64_t x1 __asm__("x1") = arguments;
-		register uint64_t x2 __asm__("x2") = first;
-		register uint64_t x3 __asm__("x3") = second;
-		register uint64_t x4 __asm__("x4") = third;
-		register uint64_t x5 __asm__("x5") = 0;
-		register uint64_t x6 __asm__("x6") = session;
-		register uint64_t x7 __asm__("x7") = 0;
-
-		__asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3), "+r" (x4), "+r" (x5), "+r" (x6),
-		    "+r" (x7) : : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
-		session = x6;
-		if (x0 != SCM_INTERRUPTED) {
-			printf("adsp: %u: TrustZone returns %d, answer %#llx\n", step, (int32_t)x0, x1);
-			*answer = x1;
-			return (int32_t)x0;
-		}
+	result = hakios_scm_call(function, arguments, first, second, third, answer);
+	if (result == SCM_GAVE_UP) {
+		printf("adsp: %u: TrustZone keeps saying the call was interrupted\n", step);
+		return -1;
 	}
-	printf("adsp: %u: TrustZone keeps saying the call was interrupted\n", step);
-	return -1;
+	printf("adsp: %u: TrustZone returns %d, answer %#llx\n", step, result, *answer);
+	return result;
 }
 
 static uint32_t

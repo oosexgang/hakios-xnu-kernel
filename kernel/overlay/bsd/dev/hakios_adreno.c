@@ -106,6 +106,7 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);       /* pmap_paddr_t */
 
+#include "hakios_scm.h"
 #include "hakios_smmu.h"
 #include "hakios_cache.h"
 #include "hakios_adreno_profile.h"
@@ -1395,18 +1396,6 @@ space_off(struct gpu_space *space, uint32_t match)
  * it, Linux's or the vendor's, so what the answer for the GPU means is not known beforehand.
  * A call is an SMC, which the hypervisor passes on; convention: qcom_scm-smc.c.
  */
-#define SCM_FAST                (1ull << 31)            /* answered at once; without it a call may be preempted */
-#define SCM_64                  (1ull << 30)
-#define SCM_SIP                 (2ull << 24)            /* a call of the SoC maker's, not one of the Arm standard */
-#define SCM_CALL(service, command) ((uint64_t)(service) << 8 | (command))
-#define SCM_IS_CALL_AVAILABLE   SCM_CALL(6, 1)
-#define SCM_PAS_INIT_IMAGE      SCM_CALL(2, 1)
-#define SCM_PAS_AUTH_AND_RESET  SCM_CALL(2, 5)
-#define SCM_PAS_SHUTDOWN        SCM_CALL(2, 6)
-#define SCM_PAS_IS_SUPPORTED    SCM_CALL(2, 7)
-#define SCM_ONE_VALUE           1                       /* the word describing the arguments: one, a plain number */
-#define SCM_VALUE_AND_BUFFER    (2 | 2 << 6)            /* two: a number, and the address of memory it may read and write */
-#define SCM_INTERRUPTED         1                       /* a call that was preempted says so, and is made again so */
 #define PAS_GPU                 13
 
 /* One call. What TrustZone returns: 0 or an error of its own, and a word of answer. */
@@ -1414,33 +1403,19 @@ static int32_t
 scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third,
     uint64_t *answer)
 {
-	uint64_t session = 0;
+	int result;
 
 	printf("adreno: %u: about to ask TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", step, what, function, first,
 	    second, third);
 	snprintf(last_write, sizeof(last_write), "step %u asked TrustZone %#llx(%#llx, %#llx)", step, function, first, second);
 	hold(true);
-	for (int i = 0; i < 100; i++) {
-		register uint64_t x0 __asm__("x0") = i == 0 ? function : SCM_INTERRUPTED;
-		register uint64_t x1 __asm__("x1") = arguments;
-		register uint64_t x2 __asm__("x2") = first;
-		register uint64_t x3 __asm__("x3") = second;
-		register uint64_t x4 __asm__("x4") = third;
-		register uint64_t x5 __asm__("x5") = 0;
-		register uint64_t x6 __asm__("x6") = session;
-		register uint64_t x7 __asm__("x7") = 0;
-
-		__asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3), "+r" (x4), "+r" (x5), "+r" (x6),
-		    "+r" (x7) : : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
-		session = x6;
-		if (x0 != SCM_INTERRUPTED) {
-			printf("adreno: %u: TrustZone returns %d, answer %#llx\n", step, (int32_t)x0, x1);
-			*answer = x1;
-			return (int32_t)x0;
-		}
+	result = hakios_scm_call(function, arguments, first, second, third, answer);
+	if (result == SCM_GAVE_UP) {
+		printf("adreno: %u: TrustZone keeps saying the call was interrupted\n", step);
+		return -1;
 	}
-	printf("adreno: %u: TrustZone keeps saying the call was interrupted\n", step);
-	return -1;
+	printf("adreno: %u: TrustZone returns %d, answer %#llx\n", step, result, *answer);
+	return result;
 }
 
 static bool
@@ -2521,8 +2496,6 @@ step_core_space(void)
  */
 #define ZAP_MEMORY              0x8b71a000ull
 #define ZAP_MEMORY_SIZE         0x2000u
-#define SCM_PAS_MEM_SETUP       SCM_CALL(2, 2)
-#define SCM_THREE_VALUES        3
 
 /* TrustZone is to give the zap shader up, and its memory with it. */
 static bool
