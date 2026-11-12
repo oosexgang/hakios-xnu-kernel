@@ -54,6 +54,19 @@ cp "$OBJ/init" "$T/sbin/init"
 cp "$OBJ/child" "$T/bin/child"           # (init execs it and collects its exit status: one of its checks)
 cp "$OBJ/net_test" "$T/bin/net_test"
 cp "$OBJ/rwtouch" "$T/bin/rwtouch"
+# the SSH server and its shell, when ios/userland/ssh.sh has built them (rc.jobs.ssh starts the server); the keys of
+# this machine's ../ssh/ with them, unless SHARE=1 (an image for somebody else: no host key of ours in it). dropbear
+# refuses keys whose file or directory anyone but their owner may write: 600 and 700
+for p in dropbear scp sh; do
+	[ -f "$OBJ/$p" ] && cp "$OBJ/$p" "$T/bin/$p"
+done
+if [ -z "$SHARE" ] && [ -d "$OBJ/ssh-keys" ] && [ -f "$T/bin/dropbear" ]; then
+	mkdir -p "$T/etc/ssh"
+	cp "$OBJ/ssh-keys/authorized_keys" "$OBJ/ssh-keys/dropbear_ed25519_host_key" "$T/etc/ssh/"
+	chmod 700 "$T/etc/ssh"
+	chmod 600 "$T/etc/ssh/"*
+	echo "  ssh: the server, its shell and this machine's keys"
+fi
 cp "$OBJ"/*.dylib "$T/lib/"
 cp "$US/rc.launchd" "$T/etc/rc"
 # (init reads it back and looks for "Darwin" at its start: one of its checks)

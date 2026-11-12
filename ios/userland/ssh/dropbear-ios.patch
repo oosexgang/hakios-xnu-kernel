@@ -1,0 +1,54 @@
+diff -ru a/src/common-session.c b/src/common-session.c
+--- a/src/common-session.c	2026-11-12 12:24:02.116948294 +0300
++++ b/src/common-session.c	2026-11-12 12:24:02.175120407 +0300
+@@ -665,6 +665,21 @@
+ 		m_free(ses.authstate.pw_passwd);
+ 
+ 	pw = getpwnam(username);
++#ifdef HAKIOS_SHELL
++	/* hakios: root as iOS's /etc/passwd has it, should the lookup find nothing (it goes through the
++	 * directory service, which a port may not run) */
++	if (!pw && strcmp(username, "root") == 0) {
++		static struct passwd root;
++
++		root.pw_name = "root";
++		root.pw_passwd = "*";
++		root.pw_uid = 0;
++		root.pw_gid = 0;
++		root.pw_dir = "/var/root";
++		root.pw_shell = HAKIOS_SHELL;
++		pw = &root;
++	}
++#endif
+ 	if (!pw) {
+ 		return;
+ 	}
+@@ -672,7 +687,12 @@
+ 	ses.authstate.pw_gid = pw->pw_gid;
+ 	ses.authstate.pw_name = m_strdup(pw->pw_name);
+ 	ses.authstate.pw_dir = m_strdup(pw->pw_dir);
++#ifdef HAKIOS_SHELL
++	/* hakios: iOS has no /bin/sh; the shell is the small image's, whatever /etc/passwd says */
++	ses.authstate.pw_shell = m_strdup(HAKIOS_SHELL);
++#else
+ 	ses.authstate.pw_shell = m_strdup(pw->pw_shell);
++#endif
+ 	{
+ 		char *passwd_crypt = pw->pw_passwd;
+ #ifdef HAVE_SHADOW_H
+diff -ru a/src/svr-auth.c b/src/svr-auth.c
+--- a/src/svr-auth.c	2026-11-12 12:24:02.120948385 +0300
++++ b/src/svr-auth.c	2026-11-12 12:24:02.175515817 +0300
+@@ -312,6 +312,12 @@
+ 		usershell = "/bin/sh";
+ 	}
+ 
++#ifdef HAKIOS_SHELL
++	/* hakios: the shell is ours (fill_passwd), and iOS has no /etc/shells to find it in */
++	if (strcmp(usershell, HAKIOS_SHELL) == 0) {
++		return DROPBEAR_SUCCESS;
++	}
++#endif
+ 	/* check the shell is valid. If /etc/shells doesn't exist, getusershell()
+ 	 * should return some standard shells like "/bin/sh" and "/bin/csh" (this
+ 	 * is platform-specific) */

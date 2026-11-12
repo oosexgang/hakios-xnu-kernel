@@ -1,0 +1,13 @@
+# iOS 26/27 (RC_JOBS=ios/userland/rc.jobs.ssh root26-ios.sh, after ios/userland/ssh.sh; wifi=1 and a long XL_SECS):
+# a shell over the network. The SSH server starts as soon as Wi-Fi is asked for (it listens before there is an
+# address), the lock screen is swiped away as rc.jobs.unlock does, and the address goes to the log ("net_test:
+# en0 ..."). Then, from this machine, with the key whose public half is in ../ssh/authorized_keys:
+#   ssh -i ../ssh/id_phone root@ADDRESS            a shell (mksh); /redwood/bin first in PATH
+#   scp -O -i ../ssh/id_phone FILE root@ADDRESS:/var/tmp/
+# The server stays after this list is done (the job abandons its process group).
+/redwood/bin/net_test wifi
+/redwood/bin/dropbear -F -E -s -p 22 -r /redwood/etc/ssh/dropbear_ed25519_host_key -D /redwood/etc/ssh &
+/redwood/bin/rwtouch wait 100 swipe 0.5 0.985 0.5 0.3 200
+/redwood/bin/net_test waitaddr en0 120
+/redwood/bin/net_test show
+/bin/ps -A
