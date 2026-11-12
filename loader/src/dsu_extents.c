@@ -55,7 +55,8 @@ dsu_parse(const uint8_t *p, uint64_t room, uint64_t userdata_sectors)
 			const uint8_t *ex = t + eo + (uint64_t)(first + x) * es;
 			uint64_t count = *(const uint64_t *)ex, sector = *(const uint64_t *)(ex + 12);
 
-			if (*(const uint32_t *)(ex + 8) != 0 /* linear */ || sector + count > userdata_sectors) {
+			/* (not "sector + count > userdata_sectors": a start or a length near 2^64 makes that sum small) */
+			if (*(const uint32_t *)(ex + 8) != 0 /* linear */ || count > userdata_sectors || sector > userdata_sectors - count) {
 				return 0;
 			}
 			dsu_extent[x].sector = sector;
