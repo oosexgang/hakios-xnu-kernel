@@ -214,6 +214,17 @@ class Repository(unittest.TestCase):
             self.assertGreater(len(ours[name]), 4)
             self.assertEqual(ours[name], theirs[name], f'struct {name} is not the same in the loader and in the kernel')
 
+    def test_the_loader_writes_to_storage_where_its_readme_says_and_nowhere_else(self):
+        places = {}
+        for path in sorted((ROOT / 'loader').rglob('*.[ch]')):
+            count = len(re.findall(r'write_blocks\(', path.read_text())) - len(re.findall(r'\(EFIAPI \*write_blocks\)\(', path.read_text()))
+            if count:
+                places[path.relative_to(ROOT / 'loader').as_posix()] = count
+        self.assertEqual(places, {'src/logstore.c': 1, 'src/dsu_write.c': 1, 'src/ufs_service.c': 1})
+        section = (ROOT / 'loader/README.md').read_text().split('## What it writes to the phone\'s storage')[1]
+        for place in places:
+            self.assertIn(f'`{place}`', section, f'loader/README.md does not say that {place} writes to the storage')
+
     def test_the_pictures_are_pictures_and_nothing_else(self):
         pictures = sorted((ROOT / 'docs/assets').glob('*.svg'))
         self.assertIn('banner.svg', [path.name for path in pictures])

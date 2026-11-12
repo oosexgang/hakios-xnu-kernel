@@ -92,7 +92,22 @@ reads the battery through them.
 
 Under a UEFI started with `fastboot boot`: [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)
 on the phones (`base/uefi/` has the redwood port and the two changes the UEFI needs), stock firmware
-under QEMU. Nothing is written to the phone's storage.
+under QEMU.
+
+## What it writes to the phone's storage
+
+On a phone as it comes: nothing. The loader has three places where it writes, and each exists only
+if you made it:
+
+| Where | When | The code |
+| --- | --- | --- |
+| A partition named `logdump` | After a run, its log and the kernel's, so that a run that ends in a reset leaves something. A phone without such a partition keeps the log in RAM only. | `src/logstore.c` |
+| The iOS system image stored as an Android DSU image (`system_gsi`) | Only on `fastboot oem dsu patch OFFSET` followed by a download: into the image's own extents, read back. | `src/dsu_write.c` |
+| The port's own partition `darwin` | Only for a kernel started with `ufs_write=1`, only past what the build wrote there, and only if the partition's GPT entry is the one written into the code (redwood's). | `src/ufs_service.c`, `src/ufs_block.c` |
+
+Nothing else calls the firmware's `write_blocks`, and `make check` fails if a fourth place appears
+without a row here. No partition table is touched, nothing is erased, and no tool in this repository
+flashes anything.
 
 Renoir is currently started by a resident USB loader from the team's working tree, which is not in this
 repository; it passes the same board name.
