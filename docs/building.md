@@ -40,7 +40,10 @@ The link is reproducible: the same sources and the same packages give the same f
 Requirements:
 
 - Linux (the team builds on Arch under WSL). Packages: `base-devel git curl clang lld python perl xz
-  flex bison m4 autoconf automake`.
+  flex bison m4 autoconf automake gawk`. GNU awk is needed even where another awk is the default (Debian's
+  and Ubuntu's mawk): the syscall table's generator writes an escape that mawk keeps as it is. On
+  Ubuntu: `apt-get install build-essential git curl clang lld python3 perl xz-utils flex bison m4 autoconf
+  automake gawk`.
 - clang 19 or newer for the kernel itself: xnu-12377's headers use `__builtin_clzg` and `__builtin_ctzg`,
   which clang 18 does not have (`kern/bits.h`: "use of undeclared identifier"). Where the system's
   `clang` is older, install a newer one beside it and point `XNU_CLANG_DIR` at it; on Ubuntu 24.04:

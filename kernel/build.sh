@@ -69,6 +69,10 @@ mkdir -p iig-impl
 for f in "$BD"/iig-impl/* "$K"/iig-impl/*; do link "$f" "iig-impl/$(basename "$f")"; done
 # built on this machine (stage 1)
 for t in mig migcom tcsh unifdef unzbm; do link "$RD/host/bin/$t" host/bin/$t; done
+# GNU awk as awk: the syscall table's generator (bsd/kern/makesyscalls.sh) writes "\(" in a string, which
+# mawk -- Debian's and Ubuntu's awk -- keeps as it is, and init_sysent.c then does not compile
+GAWK=$(command -v gawk) || die "GNU awk (gawk) is needed: the kernel's syscall table is generated with it"
+link "$GAWK" host/bin/awk
 link tcsh host/bin/csh
 # kernel/deps' wrappers, and the iig and clang wrappers of this release (kernel/host: xnu-12377's DriverKit
 # headers, and the Apple-only flags xnu-12377 adds)
