@@ -55,6 +55,8 @@
 #include <vm/memory_types.h>
 #include "redwood_ufshc.h"
 
+#include "hakios_board.h"             /* [storage]: the one partition a write may reach */
+
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 extern void IOSleep(unsigned int milliseconds);
 extern void loader_return(void);        /* osfmk/arm64/loader_return.c */
@@ -72,12 +74,15 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);   /* osfmk/arm
 /*
  * Where a write may go, and nowhere else: darwin, the port's own 20 GiB at the end of logical
  * unit 0, and in it only past what the build puts there from the computer -- the iOS volume
- * (blocks 0..1374207) and the two cryptexes behind it (..2042367). The loader keeps the same
- * bounds and the GUIDs of the partition besides (xnuloader/loader.c, BLOCK_WRITE_FIRST).
+ * and the cryptexes behind it. Which partition that is on a phone, and from which block, is the
+ * board file's [storage] (hakios_board.h); a board that names none takes no write at all. The loader
+ * keeps the same bounds from the same file, and the GUIDs of the partition besides
+ * (loader/src/own_partition.c).
  */
-#define UFS_WRITE_FIRST    2042368ULL                  /* darwin's blocks of 4096 */
-#define UFS_DARWIN_FIRST   25374720ULL                 /* its first LBA on the unit, as the GPT has it */
-#define UFS_DARWIN_BLOCKS  5242875ULL
+#define UFS_OWN            (hakios_board() != NULL && hakios_board()->storage.blocks != 0)
+#define UFS_WRITE_FIRST    (UFS_OWN ? hakios_board()->storage.write_first : UINT64_MAX)        /* darwin's blocks of 4096 */
+#define UFS_DARWIN_FIRST   (UFS_OWN ? hakios_board()->storage.first_lba : UINT64_MAX)          /* its first LBA on the unit, as the GPT has it */
+#define UFS_DARWIN_BLOCKS  (UFS_OWN ? hakios_board()->storage.blocks : 0)
 
 struct loader_block_part {
 	char name[36];
@@ -1501,9 +1506,13 @@ redwood_ufs_init(void)
 	if (PE_parse_boot_argn("ufs_write", &check, sizeof(check)) && check == 1) {
 		uint32_t offered = ufs_page->write_part_plus_one;
 
-		if (offered == 0 || offered > ufs_parts || ufs_page->write_first != UFS_WRITE_FIRST) {
+		if (!UFS_OWN) {
+			printf("ufs: nothing takes writes: this board's file does not say which partition is the port's own ([storage])\n");
+			offered = 0;
+		} else if (offered == 0 || offered > ufs_parts || ufs_page->write_first != UFS_WRITE_FIRST) {
 			printf("ufs: the loader offers no partition to write into (ufs_write=1 on its command "
-			    "line too, and a loader that knows about writes)\n");
+			    "line too, and a loader that knows about writes, built with the same board file)\n");
+			offered = 0;
 		}
 		for (uint32_t i = 0; offered != 0 && i < ufs_parts; i++) {
 			const char *why = NULL;
